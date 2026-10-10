@@ -1,0 +1,6 @@
+/target/
+/temp/
+# Valve assets are imported for personal use into a cache outside the repo;
+# any local copy must never be committed.
+/cache/
+*.vpk
