@@ -840,7 +840,7 @@ fn readouts(
             Readout::PanelName => p
                 .and_then(|p| bota_client_core::hero(p.hero.0))
                 .map(|hero| hero.name.to_string())
-                .or(unit.map(|u| format!("{:?}", u.kind)))
+                .or(unit.map(|u| kind_name(u.kind).to_string()))
                 .unwrap_or_default(),
             Readout::PanelLevel => unit
                 .filter(|u| u.level > 0)
@@ -1341,17 +1341,39 @@ fn portrait(
                 .file(&format!("portrait.hero.{name}.tall"))
                 .or(manifest.file(&format!("portrait.hero.{name}")))
         });
+    let path_missing = path.is_none();
     let handle: Handle<Image> = path.map(|p| server.load(p)).unwrap_or_default();
     if image.image != handle {
         image.image = handle;
     }
-    let tint = if p.is_some_and(|p| p.unit.is_none()) {
+    // Nothing in place of a portrait the cache has not, rather than white.
+    let tint = if path_missing {
+        Color::NONE
+    } else if p.is_some_and(|p| p.unit.is_none()) {
         Color::srgb(0.3, 0.3, 0.3)
     } else {
         Color::WHITE
     };
     if image.color != tint {
         image.color = tint;
+    }
+}
+
+/// What the panel calls a unit that is not a hero.
+fn kind_name(kind: UnitKind) -> &'static str {
+    match kind {
+        UnitKind::Hero => "Hero",
+        UnitKind::CreepMelee => "Melee Creep",
+        UnitKind::CreepFlagbearer => "Flagbearer Creep",
+        UnitKind::CreepRanged => "Ranged Creep",
+        UnitKind::CreepSiege => "Siege Creep",
+        UnitKind::CreepNeutral => "Neutral Creep",
+        UnitKind::Tower => "Tower",
+        UnitKind::Ancient => "Ancient",
+        UnitKind::Barracks => "Barracks",
+        UnitKind::Fountain => "Fountain",
+        UnitKind::Ward => "Ward",
+        UnitKind::Courier => "Courier",
     }
 }
 

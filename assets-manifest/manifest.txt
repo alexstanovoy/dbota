@@ -253,6 +253,8 @@ texture icon.item.magic_stick panorama/images/items/magic_stick_png.vtex_c icons
 texture icon.item.magic_wand panorama/images/items/magic_wand_png.vtex_c icons/items/magic_wand.png
 texture icon.item.recipe panorama/images/items/recipe_png.vtex_c icons/items/recipe.png
 texture icon.item.enchanted_mango panorama/images/items/enchanted_mango_png.vtex_c icons/items/enchanted_mango.png
+texture icon.item.wind_lace panorama/images/items/wind_lace_png.vtex_c icons/items/wind_lace.png
+texture icon.item.blood_grenade panorama/images/items/blood_grenade_png.vtex_c icons/items/blood_grenade.png
 # Buff bar icons only: the fountain's regeneration and the flagbearer's aura.
 texture icon.item.bottle panorama/images/items/bottle_png.vtex_c icons/items/bottle.png
 texture icon.item.headdress panorama/images/items/headdress_png.vtex_c icons/items/headdress.png

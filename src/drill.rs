@@ -74,8 +74,26 @@ fn drill(
     };
     // `DBOTA_DRILL=talents` (with a server honouring cheats): to level 15,
     // two talents learned, the tree pinned open and photographed.
-    let talents = std::env::var("DBOTA_DRILL").is_ok_and(|d| d == "talents");
-    let steps: &[(f32, &str)] = if talents {
+    let kind = std::env::var("DBOTA_DRILL").unwrap_or_default();
+    let talents = kind == "talents";
+    // `DBOTA_DRILL=items` (cheats too, with --open-shop): two grenades and
+    // a lace bought, the shop photographed, a grenade thrown at the enemy
+    // creeps at mid and one of them photographed with its debuff.
+    let items = kind == "items";
+    let steps: &[(f32, &str)] = if items {
+        &[
+            (0.5, "gold"),
+            (1.5, "buy grenade"),
+            (2.0, "buy grenade"),
+            (2.5, "buy lace"),
+            (4.0, "photograph shop"),
+            (5.0, "walk to mid"),
+            (20.0, "throw"),
+            (21.0, "select"),
+            (22.5, "photograph debuff"),
+            (24.0, "exit"),
+        ]
+    } else if talents {
         &[
             (0.5, "levels"),
             (2.0, "learn talent 1"),
@@ -104,6 +122,58 @@ fn drill(
     state.step += 1;
     report(what);
     let intent = match what {
+        "gold" => {
+            core.send_order(bota_proto::Order::Cheat {
+                cheat: bota_proto::Cheat::Gold { amount: 3000 },
+            });
+            return;
+        }
+        "buy grenade" => Intent::Buy(53),
+        "buy lace" => Intent::Buy(52),
+        "walk to mid" => Intent::MoveTo((7600.0, 7600.0)),
+        "photograph shop" | "photograph debuff" => {
+            let path = format!("temp/shots/drill-{}.png", &what[11..]);
+            commands
+                .spawn(bevy::render::view::screenshot::Screenshot::primary_window())
+                .observe(bevy::render::view::screenshot::save_to_disk(path));
+            return;
+        }
+        "throw" | "select" => {
+            let Some(view) = core.view.as_ref() else {
+                return;
+            };
+            let creep = view
+                .units
+                .iter()
+                .filter(|u| u.team != hero.team && bota_client_core::is_creep(u.kind))
+                .map(|u| (u.pos.x.to_f32(), u.pos.y.to_f32()))
+                .filter(|(cx, cy)| (cx - x).hypot(cy - y) < 850.0)
+                .min_by_key(|(cx, cy)| ((cx - x).hypot(cy - y)) as i64);
+            let Some(at) = creep else {
+                // Wait for the creeps to come within a throw, the clock
+                // with the drill.
+                state.step -= 1;
+                state.started = Some(started + time.delta_secs());
+                return;
+            };
+            if what == "select" {
+                Intent::SelectAt(at)
+            } else {
+                let Some(slot) = hero
+                    .items
+                    .iter()
+                    .position(|i| i.is_some_and(|i| i.id.0 == 53))
+                else {
+                    info!("drill: no grenade carried");
+                    return;
+                };
+                core.act(Intent::Press {
+                    slot: Slot::Item(slot as u8),
+                    ctrl: false,
+                });
+                Intent::Aimed(at)
+            }
+        }
         "levels" => {
             core.send_order(bota_proto::Order::Cheat {
                 cheat: bota_proto::Cheat::Levels { count: 14 },

@@ -285,6 +285,20 @@ fn spawn_panel(commands: &mut Commands, fonts: &Fonts, manifest: &Manifest, serv
                 Pickable::IGNORE,
                 ChildOf(cell),
             ));
+            // What the side's shop has left, for an item of a limited stock.
+            commands.spawn((
+                Stock(face.id),
+                Node {
+                    position_type: PositionType::Absolute,
+                    left: px(3),
+                    top: px(1),
+                    ..default()
+                },
+                ui::text("", &fonts.bold, 13.0, ui::INK),
+                ui::shadow(),
+                Pickable::IGNORE,
+                ChildOf(cell),
+            ));
         }
     }
     let sell = commands
@@ -326,10 +340,17 @@ fn show(panels: Res<Panels>, mut panel: Single<&mut Visibility, With<ShopPanel>>
     }
 }
 
-/// The price of every cell for this seat, dimmed when out of reach.
+/// What the side's shop has left of a cell's item, over its icon.
+#[derive(Component)]
+struct Stock(u16);
+
+/// The price of every cell for this seat, dimmed when out of reach; the
+/// stock left of an item sold from a limited one, and the wait for the next
+/// when there is none.
 fn prices(
     session: NonSend<Session>,
-    mut texts: Query<(&Price, &mut Text, &mut TextColor)>,
+    mut texts: Query<(&Price, &mut Text, &mut TextColor), Without<Stock>>,
+    mut stocks: Query<(&Stock, &mut Text, &mut TextColor), Without<Price>>,
     panels: Res<Panels>,
 ) {
     if !panels.shop {
@@ -342,6 +363,23 @@ fn prices(
         .and_then(|v| v.players.iter().find(|p| Some(p.slot) == core.my_slot))
         .and_then(|p| p.gold)
         .unwrap_or(0);
+    let rate = u32::from(core.tick_rate.max(1));
+    for (stock, mut text, mut color) in &mut stocks {
+        let (s, c) = match core.stock_of(stock.0) {
+            Some(st) if st.left > 0 => (st.left.to_string(), ui::INK),
+            Some(st) => (
+                format!("0  {}s", st.restock_left.div_ceil(rate)),
+                Color::srgb(1.0, 0.45, 0.35),
+            ),
+            None => (String::new(), ui::INK),
+        };
+        if text.0 != s {
+            text.0 = s;
+        }
+        if color.0 != c {
+            color.0 = c;
+        }
+    }
     for (price, mut text, mut color) in &mut texts {
         let (now, _) = core.price_of(price.0);
         let s = now.to_string();

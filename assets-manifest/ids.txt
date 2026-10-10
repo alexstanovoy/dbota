@@ -63,6 +63,8 @@ item 48 demon_edge
 item 49 blitz_knuckles
 item 50 recipe
 item 51 monkey_king_bar
+item 52 wind_lace
+item 53 blood_grenade
 ability 4 pudge_meat_hook
 ability 5 pudge_rot
 ability 6 pudge_flesh_heap
@@ -112,3 +114,4 @@ effect 17 icon.ability.nevermore_requiem
 effect 18 icon.ability.nevermore_requiem
 effect 19 icon.ability.nevermore_frenzy
 effect 20 icon.ability.nevermore_frenzy
+effect 21 icon.item.blood_grenade
