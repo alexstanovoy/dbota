@@ -490,7 +490,10 @@ impl Vmat {
                 ])
             };
             let a = read(format!("g_vColorTint{layer}")).unwrap_or([1.0; 3]);
-            let b = read(format!("g_vColorTintB{layer}")).unwrap_or(a);
+            // A white second tint is no second tint at all.
+            let b = read(format!("g_vColorTintB{layer}"))
+                .filter(|b| b.iter().any(|c| *c < 0.99))
+                .unwrap_or(a);
             for c in 0..3 {
                 *tint.get_mut(c).expect("three channels") =
                     srgb_to_linear((a[c] + b[c]) * 0.5);

@@ -11,14 +11,19 @@ mod camera;
 mod capture;
 mod config;
 mod coords;
+mod effects;
 mod fog;
 mod hud;
 mod input;
 mod manifest;
 mod map;
+mod menu;
 mod minimap;
 mod overlay;
 mod session;
+mod shop;
+mod sound;
+mod synth;
 mod terrain;
 mod trees;
 mod ui;
@@ -152,7 +157,8 @@ fn main() -> AppExit {
             capture::plugin,
             trees::plugin,
         ))
-        .add_plugins((ui::plugin, bars::plugin, overlay::plugin, hud::plugin, input::plugin, minimap::plugin));
+        .add_plugins((ui::plugin, bars::plugin, overlay::plugin, hud::plugin, input::plugin, minimap::plugin))
+        .add_plugins((sound::plugin, effects::plugin, shop::plugin, menu::plugin));
     app.run()
 }
 

@@ -93,6 +93,7 @@ fn pan_and_zoom(
     args: Res<crate::Args>,
     panels: Res<crate::input::Panels>,
     typing: Res<crate::input::Typing>,
+    over: Res<crate::input::OverHud>,
 ) {
     let mut dir = Vec2::ZERO; // sim axes: x east, y north
     for (key, d) in [
@@ -122,10 +123,10 @@ fn pan_and_zoom(
         cam.focus += Vec3::new(step.x, 0.0, -step.y);
     }
 
-    let lines = match scroll.unit {
+    let lines = if over.0 { 0.0 } else { match scroll.unit {
         MouseScrollUnit::Line => scroll.delta.y,
         MouseScrollUnit::Pixel => scroll.delta.y / 40.0,
-    };
+    } };
     if lines != 0.0 {
         cam.distance =
             (cam.distance * (1.0 - ZOOM_PER_LINE).powf(lines)).clamp(MIN_DISTANCE, MAX_DISTANCE);

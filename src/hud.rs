@@ -104,7 +104,7 @@ pub struct Blocker;
 pub fn plugin(app: &mut App) {
     app.init_resource::<Ping>().add_systems(Startup, spawn_hud).add_systems(
         Update,
-        (readouts, gauges, slots, portrait, seats).run_if(|k: Res<crate::session::MatchKnown>| k.0),
+        (readouts, gauges, slots, portrait, seats, stash).run_if(|k: Res<crate::session::MatchKnown>| k.0),
     );
 }
 
@@ -402,14 +402,28 @@ fn spawn_slot_box(
         bottom: bottom.map_or(Val::Auto, px),
         ..default()
     };
-    label(commands, Part::Seconds, Node {
-        position_type: PositionType::Absolute,
-        width: percent(100),
-        height: percent(100),
-        justify_content: JustifyContent::Center,
-        align_items: AlignItems::Center,
-        ..default()
-    }, 22.0, ui::INK);
+    let centre = commands
+        .spawn((
+            Node {
+                position_type: PositionType::Absolute,
+                width: percent(100),
+                height: percent(100),
+                justify_content: JustifyContent::Center,
+                align_items: AlignItems::Center,
+                ..default()
+            },
+            Pickable::IGNORE,
+            ChildOf(slot),
+        ))
+        .id();
+    commands.spawn((
+        Part::Seconds,
+        PartOf(slot),
+        ui::text("", &fonts.bold, 22.0, ui::INK),
+        TextShadow::default(),
+        Pickable::IGNORE,
+        ChildOf(centre),
+    ));
     if keyed {
         label(commands, Part::Key, at(Some(3.0), Some(1.0), None, None), 12.0, ui::INK);
     }
@@ -850,6 +864,7 @@ fn gauges(session: NonSend<Session>, mut gauges: Query<(&Gauge, &mut Node, &mut 
 /// Everything a slot box shows of what is in it.
 struct SlotFace {
     icon: Option<String>,
+    seconds: String,
     look: Look,
     sweep: f32,
     key: String,
@@ -869,7 +884,9 @@ fn ability_face(core: &Core, manifest: &Manifest, settings: &Settings, unit: Opt
     let look = ability_look(Some(a), mana);
     let own = unit.is_some_and(|u| core.drives(u.id)) || (kit.is_some() && core.panel_slot() == core.my_slot);
     let aiming = own && core.aiming == Some(bota_client_core::Slot::Ability(slot));
+    let rate = u32::from(core.tick_rate.max(1));
     Some(SlotFace {
+        seconds: if a.cooldown_left > 0 { (a.cooldown_left / rate + 1).to_string() } else { String::new() },
         icon: manifest.ability_icon(a.id.0),
         look,
         sweep: unit.map_or(0.0, |u| core.derived.wait_left(u.id, slot, a.cooldown_left)),
@@ -896,7 +913,9 @@ fn item_face(core: &Core, manifest: &Manifest, settings: &Settings, unit: Option
     let mana = unit.map_or(0, |u| u.mana);
     let look = item_look(Some(&item), slot, mana);
     let held = core.held_item == Some(slot);
+    let rate = u32::from(core.tick_rate.max(1));
     Some(SlotFace {
+        seconds: if item.cooldown_left > 0 { (item.cooldown_left / rate + 1).to_string() } else { String::new() },
         icon: manifest.item_icon(item.id.0),
         look,
         sweep: unit.map_or(0.0, |u| core.derived.wait_left(u.id, bota_client_core::ITEM_WAIT_BASE + slot, item.cooldown_left)),
@@ -1018,7 +1037,7 @@ fn dress(
         (label, f) => {
             if let Some(mut text) = text {
                 let s = f.map_or(String::new(), |f| match label {
-                    Part::Seconds if f.look.cooldown_left > 0 => (f.look.cooldown_left / 30 + 1).to_string(),
+                    Part::Seconds => f.seconds.clone(),
                     Part::Key => f.key.clone(),
                     Part::Cost => f.cost.clone(),
                     Part::Charges => f.charges.clone(),
@@ -1085,5 +1104,22 @@ fn seats(
         if border.top != edge {
             *border = BorderColor::all(edge);
         }
+    }
+}
+
+/// Shows the stash while it holds anything, at the home shop, or while an
+/// item is carried by the cursor.
+fn stash(session: NonSend<Session>, mut strip: Single<&mut Visibility, With<StashStrip>>) {
+    let core = &session.0;
+    let full = core
+        .view
+        .as_ref()
+        .and_then(|v| v.players.iter().find(|p| Some(p.slot) == core.my_slot))
+        .and_then(|p| p.stash.as_ref())
+        .is_some_and(|s| s.iter().any(Option::is_some));
+    let show = full || core.at_home_shop() || core.held_item.is_some();
+    let want = if show { Visibility::Inherited } else { Visibility::Hidden };
+    if **strip != want {
+        **strip = want;
     }
 }
