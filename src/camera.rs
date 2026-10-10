@@ -94,6 +94,7 @@ fn pan_and_zoom(
     panels: Res<crate::input::Panels>,
     typing: Res<crate::input::Typing>,
     over: Res<crate::input::OverHud>,
+    settings: Res<crate::config::Settings>,
 ) {
     let mut dir = Vec2::ZERO; // sim axes: x east, y north
     for (key, d) in [
@@ -107,6 +108,7 @@ fn pan_and_zoom(
         }
     }
     if window.focused
+        && settings.aids.edge_pan
         && args.screenshot_at.is_empty()
         && let Some(p) = window.cursor_position()
     {

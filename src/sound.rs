@@ -138,9 +138,7 @@ fn play(
     }
     let core = &mut session.0;
     let cues: Vec<Cue> = std::mem::take(&mut core.cues);
-    if settings.muted || args.mute {
-        return;
-    }
+    let silent = settings.muted || args.mute;
     let focus = Vec2::new(cam.focus.x, -cam.focus.z);
     let mut sound = |kind: Kind, gain: f32, at: Option<(f32, f32)>| {
         let far = at.map_or(0.0, |(x, y)| Vec2::new(x, y).distance(focus));
@@ -148,7 +146,7 @@ fn play(
         let Some((_, voice)) = voices.0.iter_mut().find(|(k, _)| *k == kind) else {
             return;
         };
-        if voice.rest > 0.0 || voice.sources.is_empty() || fall * gain < 0.03 {
+        if silent || voice.rest > 0.0 || voice.sources.is_empty() || fall * gain < 0.03 {
             return;
         }
         voice.rest = REST;
@@ -159,7 +157,9 @@ fn play(
             PlaybackSettings::DESPAWN.with_volume(Volume::Linear(gain * fall)),
         ));
     };
+    let tick = core.view.as_ref().map_or(0, |v| v.tick);
     for cue in cues {
+        debug!("cue {:?} at tick {tick}", cue.kind);
         sound(Kind::Cue(cue.kind), cue.gain, cue.at);
     }
     shots(core, &mut sound);

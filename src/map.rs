@@ -154,7 +154,9 @@ fn prepare_map(
     parts: Query<(&Mesh3d, &GlobalTransform, &MeshMaterial3d<StandardMaterial>, Option<&GltfMaterialExtras>)>,
     mut assets: MapAssets,
     mut ground: ResMut<Ground>,
+    args: Res<crate::Args>,
 ) {
+    let without = |what: &str| args.without.iter().any(|w| w == what);
     let Ok((root, mut wait)) = pending.single_mut() else {
         return;
     };
@@ -191,6 +193,8 @@ fn prepare_map(
             // Glows, light shafts and fountain sprays are particles in all
             // but name: drawn as plain meshes they cover the ground.
             _ if vmat.additive => continue,
+            _ if without("props") => continue,
+            _ if without("overlays") && vmat.translucent => continue,
             _ => {
                 if let Some(mut m) = assets.materials.get_mut(&material.0) {
                     dress_prop(&mut m, &vmat);
@@ -243,10 +247,16 @@ fn dress_prop(m: &mut StandardMaterial, vmat: &Vmat) {
 /// Map meshes sharing a material and a vertex layout, merged in world space.
 struct Batch {
     material: Handle<StandardMaterial>,
+    /// The map chunk the batch's meshes are centred in.
+    chunk: (i32, i32),
     layout: Vec<bevy::mesh::MeshVertexAttributeId>,
     terrain: bool,
     mesh: Mesh,
 }
+
+/// World units of a side of the map chunks meshes are merged within, so the
+/// camera and the shadows leave out what they do not see.
+const BATCH_CHUNK: f32 = 2048.0;
 
 /// Vertices a merged map mesh holds at most before another one is begun.
 const BATCH_VERTICES: usize = 1 << 20;
@@ -263,8 +273,15 @@ fn add_to_batches(batches: &mut Vec<Batch>, mesh: Mesh, global: &GlobalTransform
         return;
     };
     let mesh = bake_transform(mesh, global);
+    let Some(aabb) = bevy::camera::primitives::MeshAabb::compute_aabb(&mesh) else {
+        return;
+    };
+    let chunk = ((aabb.center.x / BATCH_CHUNK) as i32, (aabb.center.z / BATCH_CHUNK) as i32);
     let found = batches.iter_mut().find(|b| {
-        b.material == material && b.layout == layout && b.mesh.count_vertices() + mesh.count_vertices() < BATCH_VERTICES
+        b.material == material
+            && b.chunk == chunk
+            && b.layout == layout
+            && b.mesh.count_vertices() + mesh.count_vertices() < BATCH_VERTICES
     });
     match found {
         Some(batch) => {
@@ -274,6 +291,7 @@ fn add_to_batches(batches: &mut Vec<Batch>, mesh: Mesh, global: &GlobalTransform
         }
         None => batches.push(Batch {
             material,
+            chunk,
             layout,
             terrain,
             mesh,

@@ -25,6 +25,7 @@ mod shop;
 mod sound;
 mod synth;
 mod terrain;
+mod tips;
 mod trees;
 mod ui;
 mod units;
@@ -158,7 +159,7 @@ fn main() -> AppExit {
             trees::plugin,
         ))
         .add_plugins((ui::plugin, bars::plugin, overlay::plugin, hud::plugin, input::plugin, minimap::plugin))
-        .add_plugins((sound::plugin, effects::plugin, shop::plugin, menu::plugin));
+        .add_plugins((sound::plugin, effects::plugin, shop::plugin, menu::plugin, tips::plugin));
     app.run()
 }
 
