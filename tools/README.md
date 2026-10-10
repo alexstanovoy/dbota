@@ -33,7 +33,7 @@ malformed output.
 | `verify_assets.py` | checks glTF meshes/skins/clips/textures, wearable joints, PNG sizes, WAV format |
 | `inspect_gltf.py` | prints a model's meshes, skins and animations (`--json` for machines) |
 
-## What the cache holds (366 MB, 124 MB of it the CLI)
+## What the cache holds (480 MB, 124 MB of it the CLI)
 
 | path | content | size |
 | --- | --- | --- |
@@ -41,10 +41,12 @@ malformed output.
 | `models/creep/` | Radiant/Dire melee, ranged, flagbearer (6 clips each) | 37 MB |
 | `models/tower/` | Radiant (`radiant_tower002` + base) and Dire (`dire_tower002`) tier-1 towers | 4 MB |
 | `models/tree/` | the 9 tree models the map uses around mid (standing mesh + stump) | 8 MB |
-| `map/mid/` | `mid.glb`, the default map cropped to the mid lane, its textures, `trees.txt` | 134 MB |
-| `textures/ground/` | terrain layer textures (also used by `map.mid`) | 33 MB |
+| `models/building/` | ancients, melee/ranged barracks (static, plus `*_destruction` collapse models), fountains | 70 MB |
+| `models/courier/` | default donkey courier, Radiant and Dire, walking and flying | 4 MB |
+| `map/mid/` | `mid.glb`, the default map from fountain to fountain around mid, its textures, `trees.txt` | 172 MB |
+| `textures/ground/` | terrain layer textures (also used by `map.mid`) | 37 MB |
 | `textures/particle/` | 13 effect textures (smoke, glow, sparks, ground cracks, fire, ...) | 1 MB |
-| `icons/`, `hud/`, `minimap/` | item and ability icons, hero portraits and minimap icons, HUD art, minimap | 2 MB |
+| `icons/`, `hud/`, `minimap/` | item and ability icons, hero portraits, minimap hero/creep/tower/building icons, HUD art, minimap | 2 MB |
 | `sounds/` | 39 WAVs resolved through sound events | 10 MB |
 
 Formats: glTF 2.0 binary (`.glb`) with PNG textures next to it (relative URIs), PNG, WAV. All WAVs
@@ -71,15 +73,21 @@ Bevy's `wav` feature plays both.
   approximate (setting metallic to 0 usually looks closer to Dota). Emissive textures carry the
   self-illumination mask with the default `emissiveFactor` 0. Every material keeps Valve's shader
   parameters in `extras.vmat`.
+- **Buildings** (ancients, barracks, fountains) are static meshes without animations. When one dies,
+  swap in its `*.destruction` model and play its `death` clip once.
+- **Couriers**: `courier.<side>.model` is the walking donkey (idle/run/death/spawn),
+  `courier.<side>.flying.model` the winged one (idle/run/death).
 - **Flagbearers** use the melee meshes with their own animations; Dota attaches the banner at runtime
   on attachment `attach_banner`, which is not part of the exported model.
 
 ## The mid-lane map (`map.mid`)
 
 `maps/dota.vpk`'s world is exported whole and cropped by `crop_world.py` to nodes touching the band
-`|dota.x − dota.y| / √2 ≤ 2600`, `−7600 ≤ (dota.x + dota.y) / √2 ≤ 7400`, i.e. both mid lanes from
-ancient to ancient. Towers and trees are removed (the client spawns them, since they can be destroyed
-or cut); nodes are flattened to world matrices; skins, animations and morph targets are dropped.
+`|dota.x − dota.y| / √2 ≤ 4200`, `−11800 ≤ (dota.x + dota.y) / √2 ≤ 11700`: the mid lane from
+fountain to fountain with both base plateaus. Towers, trees, barracks, ancients and fountain
+buildings are removed (the client spawns them as units; see `EXCLUDE` in `crop_world.py`); shops,
+statues, walls, decorations and the fountains' water/glow meshes stay. Nodes are flattened to world
+matrices; skins, animations and morph targets are dropped.
 
 - **Terrain** meshes use Valve's 4-layer `multiblend.vfx`; the glTF material only carries layer 0, the
   blend weights are in the custom vertex attributes `_TEXCOORD_1.._3`, and `extras.vmat.TextureParams`
@@ -94,6 +102,6 @@ or cut); nodes are flattened to world matrices; skins, animations and morph targ
 ## Not exported
 
 - Particle systems (only a few of their textures, first frame of sprite sheets).
-- The tier-1 tower destruction models and non-default (event/crystal/mega) creep variants.
+- Tower destruction models and non-default (event/crystal/mega) creep variants.
 - The full map outside the mid band (export it by raising `half_width` / `v_min` / `v_max` on the
   `world` line; the whole map with materials is ~330 MB).

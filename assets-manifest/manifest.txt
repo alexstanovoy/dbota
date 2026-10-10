@@ -17,6 +17,7 @@
 #   world   <logical> <vpk .vwrld_c> <out .glb> vpk=<map vpk under game/dota> half_width= v_min= v_max=
 #           layers=<dir> trees=<file>: the default map cropped to a band around the mid-lane diagonal
 #           (see tools/README.md for the coordinate convention, terrain layers and trees).
+#           Models without anims= are static (buildings, fountains, trees, wearables).
 #
 # Coordinates: glTF Y-up metres; gltf.x = dota.y * 0.0254, gltf.y = height * 0.0254,
 # gltf.z = dota.x * 0.0254; bota = dota + 9216 on both axes. Models face +Z (Dota +x at yaw 0).
@@ -113,8 +114,72 @@ model tree.dire_tree004b models/props_tree/dire_tree004b.vmdl_c models/tree/dire
 model tree.dire_tree007 models/props_tree/dire_tree007.vmdl_c models/tree/dire_tree007/dire_tree007.glb meshes=dire_tree007_model,tree_dire_07_stump_model
 model tree.dire_tree008 models/props_tree/dire_tree008.vmdl_c models/tree/dire_tree008/dire_tree008.glb meshes=dire_tree008_model,tree_dire_08_stump_model
 
-# --- Default map, mid-lane band (towers and trees removed: the client spawns those itself)
-world map.mid maps/dota/world.vwrld_c map/mid/mid.glb vpk=maps/dota.vpk half_width=2600 v_min=-7600 v_max=7400 layers=textures/ground trees=map/mid/trees.txt
+# --- Default map, fountain-to-fountain band around mid with both bases (towers, trees, barracks,
+# ancients and fountains removed: the client spawns those itself; shops, statues, walls stay)
+world map.mid maps/dota/world.vwrld_c map/mid/mid.glb vpk=maps/dota.vpk half_width=4200 v_min=-11800 v_max=11700 layers=textures/ground trees=map/mid/trees.txt
+
+# --- Base buildings (npc_units.txt models; static, no animations). The *.destruction models are
+# what Dota swaps in when the building dies: one-shot collapse animation, then hide.
+model ancient.radiant.model models/props_structures/radiant_ancient001.vmdl_c models/building/ancient_radiant/ancient_radiant.glb
+model ancient.dire.model models/props_structures/dire_ancient_base001.vmdl_c models/building/ancient_dire/ancient_dire.glb
+model ancient.dire.destruction models/props_structures/dire_ancient_base001_destruction.vmdl_c models/building/ancient_dire_destruction/ancient_dire_destruction.glb anims=dire_ancient_base001_destruction_death
+clip ancient.dire.destruction death dire_ancient_base001_destruction_death 11.633
+model ancient.radiant.destruction models/props_structures/radiant_ancient001_rock_destruction.vmdl_c models/building/ancient_radiant_destruction/ancient_radiant_destruction.glb anims=radiant_ancient001_rock_destruction_death
+clip ancient.radiant.destruction death radiant_ancient001_rock_destruction_death 10.000
+model ancient.radiant.destruction_tree models/props_structures/radiant_ancient001_tree_destruction.vmdl_c models/building/ancient_radiant_destruction_tree/ancient_radiant_destruction_tree.glb anims=radiant_ancient001_tree_destruction_death
+clip ancient.radiant.destruction_tree death radiant_ancient001_tree_destruction_death 10.000
+model barracks.radiant.melee.model models/props_structures/radiant_melee_barracks001.vmdl_c models/building/barracks_radiant_melee/barracks_radiant_melee.glb
+model barracks.radiant.melee.destruction models/props_structures/radiant_melee_barracks001_destruction.vmdl_c models/building/barracks_radiant_melee_destruction/barracks_radiant_melee_destruction.glb anims=radiant_melee_barracks001_destruction_death
+clip barracks.radiant.melee.destruction death radiant_melee_barracks001_destruction_death 6.667
+model barracks.radiant.ranged.model models/props_structures/radiant_ranged_barracks001.vmdl_c models/building/barracks_radiant_ranged/barracks_radiant_ranged.glb
+model barracks.radiant.ranged.destruction models/props_structures/radiant_ranged_barracks001_destruction.vmdl_c models/building/barracks_radiant_ranged_destruction/barracks_radiant_ranged_destruction.glb anims=radiant_ranged_barracks001_destruction_death
+clip barracks.radiant.ranged.destruction death radiant_ranged_barracks001_destruction_death 6.667
+model barracks.dire.melee.model models/props_structures/dire_barracks_melee001.vmdl_c models/building/barracks_dire_melee/barracks_dire_melee.glb
+model barracks.dire.melee.destruction models/props_structures/dire_barracks_melee001_destruction.vmdl_c models/building/barracks_dire_melee_destruction/barracks_dire_melee_destruction.glb anims=dire_barracks_melee001_destruction_death
+clip barracks.dire.melee.destruction death dire_barracks_melee001_destruction_death 6.667
+model barracks.dire.ranged.model models/props_structures/dire_barracks_ranged001.vmdl_c models/building/barracks_dire_ranged/barracks_dire_ranged.glb
+model barracks.dire.ranged.destruction models/props_structures/dire_barracks_ranged001_destruction.vmdl_c models/building/barracks_dire_ranged_destruction/barracks_dire_ranged_destruction.glb anims=dire_barracks_ranged001_destruction_death
+clip barracks.dire.ranged.destruction death dire_barracks_ranged001_destruction_death 6.667
+# Fountains (the map adds water/glow effect meshes fountain_*_00 around them; those stay in map.mid)
+model fountain.radiant.model models/props_structures/radiant_fountain002.vmdl_c models/building/fountain_radiant/fountain_radiant.glb
+model fountain.dire.model models/props_structures/dire_fountain002.vmdl_c models/building/fountain_dire/fountain_dire.glb
+
+# --- Default courier (npc_dota_courier: donkey; Dire uses donkey_dire). The *.flying models are the winged couriers.
+model courier.radiant.model models/props_gameplay/donkey.vmdl_c models/courier/radiant/courier_radiant.glb anims=donkey_idle,donkey_run,donkey_death,donkey_spawn
+clip courier.radiant.model idle donkey_idle 5.267
+clip courier.radiant.model run donkey_run 0.533
+clip courier.radiant.model death donkey_death 1.367
+clip courier.radiant.model spawn donkey_spawn 1.233
+model courier.radiant.flying.model models/props_gameplay/donkey_wings.vmdl_c models/courier/radiant_flying/courier_radiant_flying.glb anims=donkey_wings_idle,donkey_wings_run,donkey_wings_die
+clip courier.radiant.flying.model idle donkey_wings_idle 2.000
+clip courier.radiant.flying.model run donkey_wings_run 2.000
+clip courier.radiant.flying.model death donkey_wings_die 2.000
+model courier.dire.model models/props_gameplay/donkey_dire.vmdl_c models/courier/dire/courier_dire.glb anims=donkey_idle,donkey_run,donkey_death,donkey_spawn
+clip courier.dire.model idle donkey_idle 5.267
+clip courier.dire.model run donkey_run 0.533
+clip courier.dire.model death donkey_death 1.367
+clip courier.dire.model spawn donkey_spawn 1.967
+model courier.dire.flying.model models/props_gameplay/donkey_dire_wings.vmdl_c models/courier/dire_flying/courier_dire_flying.glb anims=donkey_wings_idle,donkey_wings_run,donkey_wings_die
+clip courier.dire.flying.model idle donkey_wings_idle 2.000
+clip courier.dire.flying.model run donkey_wings_run 2.000
+clip courier.dire.flying.model death donkey_wings_die 2.000
+
+# --- Minimap icons (white masks the HUD tints by team; materials/vgui/hud)
+texture icon.minimap.creep materials/vgui/hud/minimap_creep_psd_ac79f11d.vtex_c icons/minimap/creep.png
+texture icon.minimap.siege materials/vgui/hud/minimap_siege_psd_7bc7809c.vtex_c icons/minimap/siege.png
+texture icon.minimap.tower materials/vgui/hud/minimap_tower_psd_ec6783b6.vtex_c icons/minimap/tower.png
+texture icon.minimap.tower45 materials/vgui/hud/minimap_tower45_psd_da58cb65.vtex_c icons/minimap/tower45.png
+texture icon.minimap.tower90 materials/vgui/hud/minimap_tower90_psd_a98bbc61.vtex_c icons/minimap/tower90.png
+texture icon.minimap.barracks45 materials/vgui/hud/minimap_racks45_psd_2d62119d.vtex_c icons/minimap/barracks45.png
+texture icon.minimap.barracks90 materials/vgui/hud/minimap_racks90_psd_83ad2f93.vtex_c icons/minimap/barracks90.png
+texture icon.minimap.ancient materials/vgui/hud/minimap_ancient_psd_1bfdd08d.vtex_c icons/minimap/ancient.png
+texture icon.minimap.courier materials/vgui/hud/minimap_courier_psd_7de56262.vtex_c icons/minimap/courier.png
+texture icon.minimap.shop materials/vgui/hud/minimap_shop_psd_3f08fa0e.vtex_c icons/minimap/shop.png
+texture icon.minimap.building materials/vgui/hud/minimap_miscbuilding_psd_b56d0d26.vtex_c icons/minimap/building.png
+texture icon.minimap.hero_circle materials/vgui/hud/minimap_herocircle_psd_9c6f9996.vtex_c icons/minimap/hero_circle.png
+texture icon.minimap.death materials/vgui/hud/minimap_death_psd_6987e15d.vtex_c icons/minimap/death.png
+texture icon.minimap.ward_observer materials/vgui/hud/minimap_ward_obs_psd_adc970aa.vtex_c icons/minimap/ward_observer.png
+texture icon.minimap.camera materials/vgui/hud/minimap_camerabounds_psd_85459004.vtex_c icons/minimap/camera.png
 
 # --- Ground textures (also the terrain layers of map.mid, same files)
 texture ground.grass materials/nature/grass_long_00_color_psd_e36d65e.vtex_c textures/ground/grass_long_00_color_psd_e36d65e.png

@@ -4,8 +4,8 @@
 Keeps static scenery whose world-space bounds touch a band around the mid-lane
 diagonal, flattens the node tree (each kept mesh node becomes a root with its
 world matrix), drops skins/animations/morph targets, removes nodes whose name
-matches --exclude (trees and towers: the client spawns those itself because
-they can be cut or destroyed), and writes a .glb whose images stay external
+matches --exclude (trees, towers, barracks, ancients, fountains: the client
+spawns those itself because they can be cut or destroyed), and writes a .glb whose images stay external
 files copied next to it.
 
 Coordinates: the exporter writes glTF Y-up metres with
@@ -25,6 +25,11 @@ STRIP_ATTRIBUTES = ("JOINTS_0", "WEIGHTS_0", "JOINTS_1", "WEIGHTS_1")
 LAYERED_SHADERS = ("multiblend.vfx", "water_dota.vfx")
 SKIP_LAYER = re.compile(r"(refl|specular|height)")
 TREE = re.compile(r"^(tree_|dire_tree)")
+# Node names left out of the crop: trees, towers, barracks, ancients and fountains (the client spawns
+# those as units), the end-game cameras, and the lower-detail world layers (n0_lr1+).
+EXCLUDE = (r"^(tree_|dire_tree|radiant_tower|dire_tower|n0_lr[1-9]|radiant_ancient001|dire_ancient_base001"
+           r"|radiant_(melee|ranged)_barracks001|dire_barracks_(melee|ranged)001|radiant_fountain002"
+           r"|dire_fountain002|bad_ancient_destruction_camera|radiant_endcam)")
 
 
 def mat_mul(a: list[float], b: list[float]) -> list[float]:
@@ -252,7 +257,7 @@ def main() -> None:
     parser.add_argument("--half-width", type=float, default=2600.0, help="band half-width across the lane, Dota units")
     parser.add_argument("--v-min", type=float, default=-7600.0, help="band start along the lane (Radiant side)")
     parser.add_argument("--v-max", type=float, default=7400.0, help="band end along the lane (Dire side)")
-    parser.add_argument("--exclude", default=r"^(tree_|dire_tree|radiant_tower|dire_tower|n0_lr[1-9])")
+    parser.add_argument("--exclude", default=EXCLUDE)
     parser.add_argument("--layers-out", type=Path, help="write the terrain/water layer .vtex_c paths here")
     parser.add_argument("--trees-out", type=Path, help="write every map tree (model, Dota position, yaw, scale) here")
     args = parser.parse_args()
