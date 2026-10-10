@@ -179,7 +179,7 @@ fn keys(
         return;
     }
     if core.phase == bota_client_core::Phase::Lobby {
-        for (i, key) in [KeyCode::Digit1, KeyCode::Digit2, KeyCode::Digit3]
+        for (i, key) in [KeyCode::Digit1, KeyCode::Digit2]
             .into_iter()
             .enumerate()
         {

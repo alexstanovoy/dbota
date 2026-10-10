@@ -33,7 +33,7 @@ struct Burst {
 }
 
 /// The ability id of a Blood Grenade in flight.
-const GRENADE: u16 = 20;
+const GRENADE: u16 = 16;
 /// A grenade's burst against a raze's, 300 wide to 250.
 const GRENADE_SIZE: f32 = 1.2;
 

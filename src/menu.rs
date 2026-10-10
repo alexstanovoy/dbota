@@ -241,7 +241,7 @@ fn lobby(session: NonSend<Session>, mut card: Single<&mut Text, With<LobbyCard>>
             match (core.my_slot.is_some(), core.ready, core.me.is_some()) {
                 (true, true, _) => "Ready - waiting for the others (R to cancel)".to_string(),
                 (true, false, _) => {
-                    "Pick a hero: [1] Sylla  [2] Pudge  [3] Shadow Fiend, then [R] when ready"
+                    "Pick a hero: [1] Pudge  [2] Shadow Fiend, then [R] when ready"
                         .to_string()
                 }
                 (false, _, true) => "Spectating - waiting for the match to start".to_string(),
