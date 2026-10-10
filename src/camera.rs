@@ -70,7 +70,10 @@ fn spawn_camera(mut commands: Commands, args: Res<crate::Args>) {
         Msaa::Sample4
     };
     let cam = RtsCamera {
-        focus: Vec3::new(9216.0, 128.0, -9216.0),
+        focus: match args.look_at[..] {
+            [x, y] => Vec3::new(x, 128.0, -y),
+            _ => Vec3::new(9216.0, 128.0, -9216.0),
+        },
         distance: args
             .distance
             .unwrap_or(DEFAULT_DISTANCE)
@@ -86,7 +89,11 @@ fn spawn_camera(mut commands: Commands, args: Res<crate::Args>) {
         }),
         // MSAA 4 is the default; spelled out because VRAM scales with it.
         msaa,
-        bevy::core_pipeline::tonemapping::Tonemapping::AcesFitted,
+        if crate::look("aces", 0.0) > 0.5 {
+            bevy::core_pipeline::tonemapping::Tonemapping::AcesFitted
+        } else {
+            bevy::core_pipeline::tonemapping::Tonemapping::TonyMcMapface
+        },
         // Layer 1 holds what the minimap's photograph leaves out.
         bevy::camera::visibility::RenderLayers::from_layers(&[0, 1]),
         Transform::from_translation(camera_translation(&cam)).with_rotation(camera_rotation()),
@@ -197,7 +204,11 @@ fn follow(
     settings: Res<crate::config::Settings>,
     panels: Res<crate::input::Panels>,
     mut cam: Single<&mut RtsCamera>,
+    args: Res<crate::Args>,
 ) {
+    if !args.look_at.is_empty() {
+        return;
+    }
     let core = &mut session.0;
     if !core.found_my_hero
         && core.my_hero().is_some()

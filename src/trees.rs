@@ -331,6 +331,20 @@ fn rebuild(
 }
 
 /// Copies of a model mesh at every tree given, merged into one mesh.
+/// A mesh's attributes and triangles alone: the Radiant trees carry wind
+/// morph targets, which a merged chunk with no morph weights cannot be drawn
+/// with.
+fn plain(source: &Mesh) -> Mesh {
+    let mut mesh = Mesh::new(source.primitive_topology(), source.asset_usage);
+    for (attribute, values) in source.attributes() {
+        mesh.insert_attribute(*attribute, values.clone());
+    }
+    if let Some(indices) = source.indices() {
+        mesh.insert_indices(indices.clone());
+    }
+    mesh
+}
+
 fn merge<'a>(source: &Mesh, trees: impl Iterator<Item = &'a Planted>) -> Option<Mesh> {
     let mut out: Option<Mesh> = None;
     for t in trees {
@@ -338,7 +352,7 @@ fn merge<'a>(source: &Mesh, trees: impl Iterator<Item = &'a Planted>) -> Option<
         let transform = Transform::from_translation(t.at)
             .with_rotation(Quat::from_rotation_y(t.yaw + std::f32::consts::PI))
             .with_scale(Vec3::splat(UNITS_PER_METRE * t.scale));
-        let mut copy = source.clone();
+        let mut copy = plain(source);
         if let Some(Indices::U16(i)) = copy.indices() {
             let wide: Vec<u32> = i.iter().map(|v| u32::from(*v)).collect();
             copy.insert_indices(Indices::U32(wide));

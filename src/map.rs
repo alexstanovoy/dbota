@@ -84,7 +84,7 @@ pub fn plugin(app: &mut App) {
     app.init_resource::<Ground>()
         .insert_resource(GlobalAmbientLight {
             color: Color::srgb(0.72, 0.80, 1.0),
-            brightness: 330.0,
+            brightness: crate::look("ambient", 330.0),
             ..default()
         })
         .insert_resource(ClearColor(Color::srgb(0.02, 0.03, 0.04)))
@@ -95,8 +95,11 @@ pub fn plugin(app: &mut App) {
 fn spawn_sun(mut commands: Commands, args: Res<crate::Args>) {
     commands.spawn((
         DirectionalLight {
-            illuminance: 13_000.0,
-            color: Color::srgb(1.0, 0.88, 0.70),
+            illuminance: crate::look("sun", 13_000.0),
+            color: {
+                let warm = crate::look("warm", 0.3);
+                Color::srgb(1.0, 0.97 - 0.09 * warm, 0.92 - 0.22 * warm)
+            },
             shadow_maps_enabled: !args.without.iter().any(|w| w == "shadows"),
             ..default()
         },
@@ -175,6 +178,9 @@ fn prepare_map(
         wait.frames -= 1;
         return;
     }
+    let skipped: Vec<String> = std::env::var("DBOTA_SKIP")
+        .map(|v| v.split(',').map(str::to_string).collect())
+        .unwrap_or_default();
     let mut means = LayerMeans::new(assets.manifest.root.clone());
     let detail_mean = means.detail(&assets.manifest);
     let terrain_material = assets
@@ -207,21 +213,23 @@ fn prepare_map(
             // but name: drawn as plain meshes they cover the ground.
             _ if vmat.additive => continue,
             _ if without("props") => continue,
+            _ if skipped.iter().any(|s| vmat.name.contains(s.as_str())) => continue,
             _ if without("overlays") && vmat.translucent => continue,
             _ => {
                 let Some(mut m) = assets.materials.get_mut(&material.0) else {
                     continue;
                 };
                 // Path borders, ground edges and wagon tracks are tinted
-                // by what the export leaves out, all but black: drawn as
-                // they come they smear the lanes with dark bands.
-                if vmat.overlay
-                    && m.base_color
-                        .to_linear()
-                        .to_f32_array_no_alpha()
-                        .iter()
-                        .all(|c| *c < 0.05)
-                {
+                // by what the export leaves out (per-vertex tints, or all
+                // but black): drawn as they come they lay dark brown bands
+                // along the lanes.
+                let black = m
+                    .base_color
+                    .to_linear()
+                    .to_f32_array_no_alpha()
+                    .iter()
+                    .all(|c| *c < 0.05);
+                if vmat.overlay && (black || vmat.name.contains("tint")) {
                     continue;
                 }
                 dress_prop(&mut m, &vmat);
@@ -535,6 +543,8 @@ fn terrain_material(server: &AssetServer, manifest: &Manifest) -> StandardMateri
 /// tints of its four layers.
 #[derive(Clone, Debug, Default)]
 struct Vmat {
+    /// Dota's path of the material.
+    name: String,
     shader: String,
     /// Whether the material adds its light rather than covering.
     additive: bool,
@@ -582,6 +592,7 @@ impl Vmat {
         });
         let flag = |key: &str| vmat["IntParams"][key].as_i64().unwrap_or(0) != 0;
         Vmat {
+            name: vmat["Name"].as_str().unwrap_or_default().to_string(),
             shader,
             additive: flag("F_ADDITIVE_BLEND"),
             translucent: flag("F_TRANSLUCENT") || flag("F_OVERLAY") || flag("F_BLEND_MODE"),
@@ -644,7 +655,9 @@ fn bake_terrain(mesh: &mut Mesh, vmat: &Vmat, means: &mut LayerMeans, detail: f3
                 let layered = w0 * t[0][ch] + w1 * t[1][ch] + w2 * t[2][ch] + w3 * t[3][ch];
                 // Dota doubles its terrain's light; the detail texture's
                 // own brightness is taken back out.
-                c[ch] = (layered * srgb_to_linear(p[ch]) * TERRAIN_GAIN / detail).min(1.5);
+                c[ch] = (layered * srgb_to_linear(p[ch]) * crate::look("gain", TERRAIN_GAIN)
+                    / detail)
+                    .min(1.5);
             }
             c
         })

@@ -14,6 +14,7 @@ mod camera;
 mod capture;
 mod config;
 mod coords;
+mod drill;
 mod effects;
 mod fog;
 mod hud;
@@ -97,6 +98,9 @@ pub struct Args {
     /// Debug: open the shop at the start.
     #[arg(long)]
     pub open_shop: bool,
+    /// Debug: hold the camera over this bota world point, `x,y`.
+    #[arg(long, value_name = "X,Y", value_delimiter = ',', num_args = 2)]
+    pub look_at: Vec<f32>,
     /// Debug: the camera's distance from the ground at the start.
     #[arg(long, value_name = "UNITS")]
     pub distance: Option<f32>,
@@ -110,6 +114,20 @@ pub struct Args {
     /// Play no sound.
     #[arg(long)]
     pub mute: bool,
+}
+
+/// Debug: a look parameter from `DBOTA_LOOK` (`key=value,...`), else the
+/// default, to compare grades without rebuilding.
+pub fn look(key: &str, default: f32) -> f32 {
+    std::env::var("DBOTA_LOOK")
+        .ok()
+        .and_then(|all| {
+            all.split(',').find_map(|kv| {
+                let (k, v) = kv.split_once('=')?;
+                (k == key).then(|| v.parse().ok()).flatten()
+            })
+        })
+        .unwrap_or(default)
 }
 
 /// Where the settings are saved; absent when there is nowhere to.
@@ -178,6 +196,7 @@ fn main() -> AppExit {
             shop::plugin,
             menu::plugin,
             tips::plugin,
+            drill::plugin,
         ));
     app.run()
 }
@@ -189,7 +208,9 @@ fn default_plugins(args: &Args) -> impl PluginGroup {
             primary_window: Some(Window {
                 title: "dbota".into(),
                 resolution: WindowResolution::new(1600, 900),
-                present_mode: if args.no_vsync {
+                // `DBOTA_NO_VSYNC` for runs started by a launcher, as the
+                // drill is: vsync stalls while the screen is locked.
+                present_mode: if args.no_vsync || std::env::var_os("DBOTA_NO_VSYNC").is_some() {
                     PresentMode::AutoNoVsync
                 } else {
                     PresentMode::AutoVsync

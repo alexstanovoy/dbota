@@ -108,7 +108,41 @@ pub fn plugin(app: &mut App) {
         .add_systems(
             Update,
             (build_graphs, sync_units, fall, bind_wearables).chain(),
-        );
+        )
+        .add_systems(PostUpdate, lift_heroes);
+}
+
+/// Lets every hero's own colours glow faintly, so a dark model on dark
+/// ground still reads, as Dota's hero rim light does.
+fn lift_heroes(
+    added: Query<
+        (Entity, &MeshMaterial3d<StandardMaterial>),
+        Added<MeshMaterial3d<StandardMaterial>>,
+    >,
+    parents: Query<&ChildOf>,
+    units: Query<&Unit>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+) {
+    let lift = crate::look("lift", 1200.0);
+    for (entity, material) in &added {
+        let hero = parents
+            .iter_ancestors(entity)
+            .any(|a| units.get(a).is_ok_and(|u| u.kind == UnitKind::Hero));
+        if !hero {
+            continue;
+        }
+        // Materials are shared by every instance of a model: lift once.
+        if materials
+            .get(&material.0)
+            .is_none_or(|m| m.emissive_texture.is_some())
+        {
+            continue;
+        }
+        if let Some(mut m) = materials.get_mut(&material.0) {
+            m.emissive_texture = m.base_color_texture.clone();
+            m.emissive = LinearRgba::rgb(lift, lift, lift);
+        }
+    }
 }
 
 fn load_models(mut bank: ResMut<ModelBank>, server: Res<AssetServer>, manifest: Res<Manifest>) {

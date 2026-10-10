@@ -133,15 +133,27 @@ fn draw(
 /// camera follows.
 fn picks(gizmos: &mut Gizmos, ctx: &Ctx<'_, '_, '_>) {
     let core = ctx.core;
-    if let Some(me) = core.my_hero().and_then(|id| ctx.at(id)) {
-        ring(
-            gizmos,
-            ctx,
-            (me.at.x, me.at.y),
-            52.0,
-            GOOD.with_alpha(0.8),
-            false,
-        );
+    // A ring at every hero's feet in its side's colour, as Dota marks them,
+    // so a dark model on dark ground still reads; one's own is brightest.
+    let side = core.fog_team().or_else(|| core.my_team());
+    if let Some(view) = &core.view {
+        for hero in view.units.iter().filter(|u| u.kind == UnitKind::Hero) {
+            let Some(body) = ctx.at(hero.id) else {
+                continue;
+            };
+            let friend = side.map_or(hero.team == Team::Radiant, |t| t == hero.team);
+            let mine = Some(hero.id) == core.my_hero();
+            let color = if friend { GOOD } else { BAD };
+            let alpha = if mine { 0.9 } else { 0.6 };
+            ring(
+                gizmos,
+                ctx,
+                (body.at.x, body.at.y),
+                52.0,
+                color.with_alpha(alpha),
+                false,
+            );
+        }
     }
     if let Some(picked) = core
         .selected

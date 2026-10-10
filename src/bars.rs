@@ -308,7 +308,12 @@ fn bars(
         if let Some(name) = bar.name
             && let Ok(mut t) = texts.get_mut(name)
         {
-            let s = live.owner.map(|o| core.seat_name(o)).unwrap_or_default();
+            // The player's name only: the hero is plain to see.
+            let s = live
+                .owner
+                .and_then(|o| core.player_name(o))
+                .unwrap_or_default()
+                .to_string();
             if t.0 != s {
                 t.0 = s;
             }
@@ -438,6 +443,9 @@ fn floaters(
         &mut Node,
         &mut Visibility,
     )>,
+    index: Res<crate::units::UnitIndex>,
+    units: Query<&crate::units::Unit>,
+    fog: Res<crate::fog::FogGrid>,
 ) {
     let core = &session.0;
     let (camera, cam_gt) = *camera;
@@ -453,6 +461,8 @@ fn floaters(
                     FloaterKind::Gold | FloaterKind::Deny | FloaterKind::Level
                 )
         })
+        // Nothing over what the watched side does not see.
+        .filter(|f| fog.team.is_none() || fog.lit(f.world.0, f.world.1))
         .rev()
         .take(FLOATERS)
         .collect();
@@ -479,9 +489,16 @@ fn floaters(
         let (size, tint) = look(f.kind);
         let pop = 1.0 + 0.35 * (1.0 - (k * 6.0).min(1.0));
         let rise = (1.0 - (1.0 - k) * (1.0 - k)) * 110.0;
-        let (x, y) = f.world;
-        // Above the health bars, which float about 260 over a hero.
-        let at = Vec3::new(x, ground.at(x, y) + 300.0 + rise, -y);
+        // Over its unit while the unit is drawn, else where it was.
+        let body = index.0.get(&f.unit).and_then(|e| units.get(*e).ok());
+        let (x, y) = body.map_or(f.world, |u| (u.at.x, u.at.y));
+        // Above the health bars, which float about 260 over a hero and
+        // lower over everything else.
+        let over = match body.map(|u| u.kind) {
+            Some(UnitKind::Hero) | None => 300.0,
+            Some(_) => 220.0,
+        };
+        let at = Vec3::new(x, ground.at(x, y) + over + rise, -y);
         let Ok(screen) = camera.world_to_viewport(cam_gt, at) else {
             *visibility = Visibility::Hidden;
             continue;

@@ -59,6 +59,8 @@ enum Readout {
     Score(Team),
     PanelName,
     PanelLevel,
+    Damage,
+    DamageBonus,
     Stats,
     Attributes,
     Hp,
@@ -72,8 +74,6 @@ enum Readout {
     Hint,
     Fps,
     SeatLevel(u8),
-    SeatScore(u8),
-    SeatName(u8),
     SeatDead(u8),
 }
 
@@ -84,10 +84,6 @@ enum Gauge {
     Mana,
     SeatHp(u8),
 }
-
-/// The round trip to the server in milliseconds, once the protocol tells it.
-#[derive(Resource, Default)]
-pub struct Ping(pub Option<u32>);
 
 /// The portrait image of the bottom panel.
 #[derive(Component)]
@@ -102,13 +98,11 @@ pub struct HudRoot;
 pub struct Blocker;
 
 pub fn plugin(app: &mut App) {
-    app.init_resource::<Ping>()
-        .add_systems(Startup, spawn_hud)
-        .add_systems(
-            Update,
-            (readouts, gauges, slots, portrait, seats, stash)
-                .run_if(|k: Res<crate::session::MatchKnown>| k.0),
-        );
+    app.add_systems(Startup, spawn_hud).add_systems(
+        Update,
+        (readouts, gauges, slots, portrait, seats, stash)
+            .run_if(|k: Res<crate::session::MatchKnown>| k.0),
+    );
 }
 
 fn spawn_hud(mut commands: Commands, fonts: Res<Fonts>) {
@@ -219,6 +213,29 @@ fn spawn_numbers(commands: &mut Commands, fonts: &Fonts, bar: Entity) {
         ui::text("", &fonts.bold, 15.0, ui::INK),
         TextLayout::no_wrap(),
         ChildOf(column),
+    ));
+    // Damage as Dota shows it: the range a swing draws from, the bonus
+    // on top in green.
+    let damage = commands
+        .spawn((
+            Node {
+                column_gap: px(4),
+                ..default()
+            },
+            ChildOf(column),
+        ))
+        .id();
+    commands.spawn((
+        Readout::Damage,
+        ui::text("", &fonts.regular, 13.0, ui::INK_DIM),
+        TextLayout::no_wrap(),
+        ChildOf(damage),
+    ));
+    commands.spawn((
+        Readout::DamageBonus,
+        ui::text("", &fonts.bold, 13.0, ui::HP_MINE),
+        TextLayout::no_wrap(),
+        ChildOf(damage),
     ));
     commands.spawn((
         Readout::Stats,
@@ -670,18 +687,6 @@ fn spawn_seat(commands: &mut Commands, fonts: &Fonts, parent: Entity, seat: u8) 
         })),
         ChildOf(well),
     ));
-    commands.spawn((
-        Readout::SeatScore(seat),
-        ui::text("", &fonts.bold, 12.0, ui::INK_DIM),
-        ui::shadow(),
-        ChildOf(column),
-    ));
-    commands.spawn((
-        Readout::SeatName(seat),
-        ui::text("", &fonts.regular, 11.0, ui::INK_DIM),
-        ui::shadow(),
-        ChildOf(column),
-    ));
 }
 
 /// One's own numbers in the top-left corner, the feed and the frame rate in
@@ -809,7 +814,6 @@ fn readouts(
     session: NonSend<Session>,
     settings: Res<Settings>,
     diagnostics: Res<bevy::diagnostic::DiagnosticsStore>,
-    ping: Res<Ping>,
     mut texts: Query<(&Readout, &mut Text)>,
 ) {
     let core = &session.0;
@@ -832,12 +836,28 @@ fn readouts(
                 .sum::<u32>()
                 .to_string(),
             Readout::PanelName => p
-                .map(|p| core.seat_name(p.slot))
+                .and_then(|p| bota_client_core::hero(p.hero.0))
+                .map(|hero| hero.name.to_string())
                 .or(unit.map(|u| format!("{:?}", u.kind)))
                 .unwrap_or_default(),
             Readout::PanelLevel => unit
                 .filter(|u| u.level > 0)
                 .map(|u| u.level.to_string())
+                .unwrap_or_default(),
+            Readout::Damage => unit
+                .map(|u| {
+                    let d = bota_client_core::damage_range(u);
+                    if d.min == d.max {
+                        format!("DMG {}", d.min)
+                    } else {
+                        format!("DMG {}\u{2013}{}", d.min, d.max)
+                    }
+                })
+                .unwrap_or_default(),
+            Readout::DamageBonus => unit
+                .map(|u| bota_client_core::damage_range(u).bonus)
+                .filter(|bonus| *bonus > 0)
+                .map(|bonus| format!("+{bonus}"))
                 .unwrap_or_default(),
             Readout::Stats => unit.map(stat_lines).unwrap_or_default(),
             Readout::Attributes => unit.map(attribute_line).unwrap_or_default(),
@@ -871,17 +891,13 @@ fn readouts(
                     .get(&bevy::diagnostic::FrameTimeDiagnosticsPlugin::FPS)
                     .and_then(|d| d.smoothed())
                     .unwrap_or(0.0);
-                let ping = ping.0.map_or("-".to_string(), |ms| format!("{ms} ms"));
+                let ping = core
+                    .order_delay_ms()
+                    .map_or("-".to_string(), |ms| format!("{ms} ms"));
                 format!("ping {ping}   {fps:.0} fps")
             }
             Readout::SeatLevel(seat) => seat_of(view, seat)
                 .map(|p| p.level.to_string())
-                .unwrap_or_default(),
-            Readout::SeatScore(seat) => seat_of(view, seat)
-                .map(|p| format!("{}/{}  {}-{}", p.last_hits, p.denies, p.kills, p.deaths))
-                .unwrap_or_default(),
-            Readout::SeatName(seat) => seat_of(view, seat)
-                .map(|p| core.seat_name(p.slot))
                 .unwrap_or_default(),
             Readout::SeatDead(seat) => seat_of(view, seat)
                 .filter(|p| p.unit.is_none())
@@ -905,8 +921,7 @@ fn seat_of(view: &bota_proto::WorldView, seat: u8) -> Option<&PlayerView> {
 
 fn stat_lines(u: &UnitView) -> String {
     format!(
-        "DMG {}\nARM {:.1}\nMS {:.0}\nATK {:.2}/s\nRNG {:.0}",
-        u.attack_damage,
+        "ARM {:.1}\nMS {:.0}\nATK {:.2}/s\nRNG {:.0}",
         u.armor.to_f32(),
         u.move_speed.to_f32(),
         1000.0 / u.attack_time.max(1) as f32,
