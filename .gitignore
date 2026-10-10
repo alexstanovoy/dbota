@@ -4,3 +4,4 @@
 # any local copy must never be committed.
 /cache/
 *.vpk
+__pycache__/

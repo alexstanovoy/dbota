@@ -7,15 +7,18 @@ use bevy::{
 };
 
 use crate::coords::world_to_sim;
+use crate::map::Ground;
+use crate::session::Session;
+use crate::units::{Unit, UnitIndex};
 
 /// Camera pitch below the horizon.
 const PITCH_DEG: f32 = 58.0;
 /// Vertical field of view: narrow, like Dota's long lens.
 const FOV_Y_DEG: f32 = 25.0;
 /// Distance from the focus point; 2500 shows ~2000x1300 world units at 16:9.
-const DEFAULT_DISTANCE: f32 = 2500.0;
-const MIN_DISTANCE: f32 = 1200.0;
-const MAX_DISTANCE: f32 = 4000.0;
+const DEFAULT_DISTANCE: f32 = 4400.0;
+const MIN_DISTANCE: f32 = 1600.0;
+const MAX_DISTANCE: f32 = 6500.0;
 /// Pan speed in world units per second at the default distance.
 const PAN_SPEED: f32 = 2000.0;
 /// Cursor within this many logical pixels of a window edge pans the camera.
@@ -37,13 +40,13 @@ pub struct CursorGround(pub Option<Vec3>);
 pub fn plugin(app: &mut App) {
     app.init_resource::<CursorGround>()
         .add_systems(Startup, spawn_camera)
-        .add_systems(Update, (pan_and_zoom, apply_camera_transform).chain())
+        .add_systems(Update, (pan_and_zoom, follow, apply_camera_transform).chain())
         // Picking needs the camera's GlobalTransform of this frame.
         .add_systems(
             PostUpdate,
             pick_cursor_ground.after(TransformSystems::Propagate),
         )
-        .add_systems(Update, (log_window_size, draw_cursor_marker));
+        .add_systems(Update, log_window_size);
 }
 
 /// Camera rotation: yaw 0 (looking north = -Z), pitched down. Constant, so billboards can
@@ -57,10 +60,11 @@ fn camera_translation(cam: &RtsCamera) -> Vec3 {
     cam.focus - camera_rotation() * Vec3::NEG_Z * cam.distance
 }
 
-fn spawn_camera(mut commands: Commands) {
+fn spawn_camera(mut commands: Commands, args: Res<crate::Args>) {
+    let msaa = if args.without.iter().any(|w| w == "msaa") { Msaa::Off } else { Msaa::Sample4 };
     let cam = RtsCamera {
-        focus: Vec3::ZERO,
-        distance: DEFAULT_DISTANCE,
+        focus: Vec3::new(9216.0, 128.0, -9216.0),
+        distance: args.distance.unwrap_or(DEFAULT_DISTANCE).clamp(MIN_DISTANCE / 2.0, MAX_DISTANCE),
     };
     commands.spawn((
         Camera3d::default(),
@@ -71,7 +75,9 @@ fn spawn_camera(mut commands: Commands) {
             ..default()
         }),
         // MSAA 4 is the default; spelled out because VRAM scales with it.
-        Msaa::Sample4,
+        msaa,
+        // Layer 1 holds what the minimap's photograph leaves out.
+        bevy::camera::visibility::RenderLayers::from_layers(&[0, 1]),
         Transform::from_translation(camera_translation(&cam)).with_rotation(camera_rotation()),
         cam,
     ));
@@ -83,6 +89,10 @@ fn pan_and_zoom(
     scroll: Res<AccumulatedMouseScroll>,
     window: Single<&Window, With<PrimaryWindow>>,
     mut cam: Single<&mut RtsCamera>,
+    mut session: NonSendMut<Session>,
+    args: Res<crate::Args>,
+    panels: Res<crate::input::Panels>,
+    typing: Res<crate::input::Typing>,
 ) {
     let mut dir = Vec2::ZERO; // sim axes: x east, y north
     for (key, d) in [
@@ -91,11 +101,12 @@ fn pan_and_zoom(
         (KeyCode::ArrowUp, Vec2::Y),
         (KeyCode::ArrowDown, Vec2::NEG_Y),
     ] {
-        if keys.pressed(key) {
+        if keys.pressed(key) && *typing == crate::input::Typing::No {
             dir += d;
         }
     }
     if window.focused
+        && args.screenshot_at.is_empty()
         && let Some(p) = window.cursor_position()
     {
         let size = window.size();
@@ -105,7 +116,11 @@ fn pan_and_zoom(
     }
     let speed = PAN_SPEED * cam.distance / DEFAULT_DISTANCE * time.delta_secs();
     let step = dir.normalize_or_zero() * speed;
-    cam.focus += Vec3::new(step.x, 0.0, -step.y);
+    if step != Vec2::ZERO && !panels.camera_lock {
+        // Driving the camera by hand lets go of whatever carried it.
+        session.0.pinned = None;
+        cam.focus += Vec3::new(step.x, 0.0, -step.y);
+    }
 
     let lines = match scroll.unit {
         MouseScrollUnit::Line => scroll.delta.y,
@@ -123,29 +138,72 @@ fn apply_camera_transform(mut q: Query<(&RtsCamera, &mut Transform), Changed<Rts
     }
 }
 
-/// Cursor -> world: ray from the camera through the cursor, intersected with y = 0.
+/// Cursor -> world: ray from the camera through the cursor, met with the
+/// ground by stepping between the ground's height and the ray.
 fn pick_cursor_ground(
     window: Single<&Window, With<PrimaryWindow>>,
     camera: Single<(&Camera, &GlobalTransform)>,
+    ground: Res<Ground>,
     mut out: ResMut<CursorGround>,
 ) {
     let (camera, camera_transform) = *camera;
     out.0 = window
         .cursor_position() // logical pixels, origin top-left
         .and_then(|p| camera.viewport_to_world(camera_transform, p).ok())
-        .and_then(|ray| {
-            let t = ray.intersect_plane(Vec3::ZERO, InfinitePlane3d::new(Vec3::Y))?;
-            Some(ray.get_point(t))
-        });
+        .and_then(|ray| ray_to_ground(ray, &ground));
 }
 
-fn draw_cursor_marker(cursor: Res<CursorGround>, mut gizmos: Gizmos) {
-    if let Some(p) = cursor.0 {
-        let flat = Isometry3d::new(
-            p + Vec3::Y,
-            Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2),
-        );
-        gizmos.circle(flat, 24.0, Color::srgb(0.2, 1.0, 0.4));
+/// Where a ray meets the ground.
+pub fn ray_to_ground(ray: Ray3d, ground: &Ground) -> Option<Vec3> {
+    let mut height = 128.0;
+    let mut hit = None;
+    for _ in 0..4 {
+        let t = ray.intersect_plane(Vec3::new(0.0, height, 0.0), InfinitePlane3d::new(Vec3::Y))?;
+        let p = ray.get_point(t);
+        height = ground.at(p.x, -p.z);
+        hit = Some(Vec3::new(p.x, height, p.z));
+    }
+    hit
+}
+
+/// Carries the camera with the unit it is pinned to, with one's own hero
+/// while the camera is locked or the centre key is held, and puts it on
+/// one's own hero the first time that hero stands.
+#[allow(clippy::too_many_arguments)]
+fn follow(
+    mut session: NonSendMut<Session>,
+    index: Res<UnitIndex>,
+    units: Query<&Unit>,
+    ground: Res<Ground>,
+    time: Res<Time>,
+    keys: Res<ButtonInput<KeyCode>>,
+    settings: Res<crate::config::Settings>,
+    panels: Res<crate::input::Panels>,
+    mut cam: Single<&mut RtsCamera>,
+) {
+    let core = &mut session.0;
+    if !core.found_my_hero
+        && core.my_hero().is_some()
+        && let Some(slot) = core.my_slot
+    {
+        core.found_my_hero = true;
+        core.pinned = Some(bota_client_core::Pin::Hero(slot));
+    }
+    let live = matches!(core.source, bota_client_core::Source::Live(_));
+    let centre = live && keys.pressed(settings.key(crate::config::Action::CenterHero));
+    let carrier = if centre || panels.camera_lock {
+        core.my_hero()
+    } else {
+        core.pinned_unit()
+    };
+    let Some(unit) = carrier.and_then(|id| index.0.get(&id)).and_then(|e| units.get(*e).ok()) else {
+        return;
+    };
+    let target = Vec3::new(unit.at.x, ground.at(unit.at.x, unit.at.y), -unit.at.y);
+    let k = if centre { 1.0 } else { (time.delta_secs() * 8.0).min(1.0) };
+    let focus = cam.focus + (target - cam.focus) * k;
+    if focus.distance_squared(cam.focus) > 1e-4 {
+        cam.focus = focus;
     }
 }
 

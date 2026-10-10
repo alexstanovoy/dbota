@@ -1,238 +1,1089 @@
-//! HUD: bottom panel with ability icons (absolute-path PNG), custom TTF text, conic
-//! cooldown sweep, and UiScale tied to the window's logical height.
-//!
-//! UI units are logical pixels: Bevy multiplies by the window scale factor (2 on this
-//! HiDPI display) and then by `UiScale`, so no manual HiDPI handling is needed.
+//! Dota's HUD: the bottom panel with the portrait, the numbers, the health
+//! and mana bars, the abilities and the items; the top bar with the clock and
+//! both heroes; one's own numbers in the corner; the kill feed and the
+//! passing notices.
 
 use std::f32::consts::TAU;
 
-use bevy::{
-    diagnostic::{DiagnosticsStore, FrameTimeDiagnosticsPlugin},
-    prelude::*,
-    window::{PrimaryWindow, WindowResized},
-};
+use bevy::prelude::*;
+use bota_client_core::{App as Core, BAG_SLOTS, INVENTORY_SLOTS, Look, ability_look, item_look};
+use bota_proto::{AbilityView, Attribute, ItemView, Kit, PlayerView, Team, UnitKind, UnitView};
 
-use crate::{camera::CursorGround, coords::world_to_sim, fallback::FoundAssets};
+use crate::config::{Action, Settings, key_name};
+use crate::manifest::Manifest;
+use crate::session::Session;
+use crate::ui::{self, Fonts};
 
-const FONT_PATH: &str = "fonts/bota-sans-bold.ttf";
-const ICON_SIZE: f32 = 64.0;
-const PANEL_HEIGHT: f32 = 96.0;
-/// Logical window height at which UiScale is 1.
-const REFERENCE_HEIGHT: f32 = 900.0;
-const SLOT_KEYS: [&str; 4] = ["Q", "W", "E", "R"];
-const SLOT_COOLDOWNS: [f32; 4] = [3.0, 5.0, 8.0, 20.0];
+/// The size of an ability box.
+const ABILITY: f32 = 58.0;
+/// The size of an item box.
+const ITEM: (f32, f32) = (60.0, 44.0);
+/// The effect that counts the souls a Shadow Fiend holds.
+const SOULS_EFFECT: u16 = 11;
 
-#[derive(Component)]
-struct Cooldown {
-    total: f32,
+/// An ability box of the bottom panel, by slot.
+#[derive(Component, Clone, Copy)]
+pub struct AbilityBox(pub u8);
+
+/// An item box of the bottom panel or the stash, by slot: bag below
+/// [`BAG_SLOTS`], stash from it.
+#[derive(Component, Clone, Copy)]
+pub struct ItemBox(pub u8);
+
+/// A seat's portrait in the top bar, by seat.
+#[derive(Component, Clone, Copy)]
+pub struct SeatBox(pub u8);
+
+/// What a part of a slot box shows.
+#[derive(Component, Clone, Copy, PartialEq, Eq)]
+enum Part {
+    Icon,
+    Sweep,
+    Seconds,
+    Key,
+    Cost,
+    Pip(u8),
+    Shade,
+    Plus,
+    Charges,
 }
 
-#[derive(Component)]
-struct CooldownText;
+/// The parent box of a part, to find a part's slot.
+#[derive(Component, Clone, Copy)]
+struct PartOf(Entity);
 
+/// A text the HUD keeps up to date, by what it says.
+#[derive(Component, Clone, Copy, PartialEq, Eq)]
+enum Readout {
+    Clock,
+    Score(Team),
+    PanelName,
+    PanelLevel,
+    Stats,
+    Attributes,
+    Hp,
+    Mana,
+    LastHits,
+    Kda,
+    Gold,
+    Souls,
+    Feed,
+    Notice,
+    Hint,
+    Fps,
+    SeatLevel(u8),
+    SeatScore(u8),
+    SeatName(u8),
+    SeatDead(u8),
+}
+
+/// A bar the HUD keeps filled.
+#[derive(Component, Clone, Copy, PartialEq, Eq)]
+enum Gauge {
+    Hp,
+    Mana,
+    SeatHp(u8),
+}
+
+/// The round trip to the server in milliseconds, once the protocol tells it.
+#[derive(Resource, Default)]
+pub struct Ping(pub Option<u32>);
+
+/// The portrait image of the bottom panel.
 #[derive(Component)]
-struct DebugText;
+struct Portrait;
+
+/// The whole HUD, hidden in the lobby.
+#[derive(Component)]
+pub struct HudRoot;
+
+/// A part of the HUD that swallows clicks meant for the world.
+#[derive(Component)]
+pub struct Blocker;
 
 pub fn plugin(app: &mut App) {
-    app.add_systems(Startup, spawn_hud)
-        .add_systems(Update, (update_cooldowns, update_debug_text, scale_ui));
+    app.init_resource::<Ping>().add_systems(Startup, spawn_hud).add_systems(
+        Update,
+        (readouts, gauges, slots, portrait, seats).run_if(|k: Res<crate::session::MatchKnown>| k.0),
+    );
 }
 
-fn spawn_hud(mut commands: Commands, server: Res<AssetServer>, found: Res<FoundAssets>) {
-    let font: Handle<Font> = server.load(FONT_PATH);
-    // Raw absolute path: refused under UnapprovedPathMode::Deny unless overridden per load.
-    let icon: Handle<Image> = server
-        .load_builder()
-        .override_unapproved()
-        .load(found.icon.clone());
+fn spawn_hud(mut commands: Commands, fonts: Res<Fonts>) {
+    let root = commands
+        .spawn((
+            HudRoot,
+            Node {
+                position_type: PositionType::Absolute,
+                width: percent(100),
+                height: percent(100),
+                ..default()
+            },
+            Pickable::IGNORE,
+        ))
+        .id();
+    spawn_bottom(&mut commands, &fonts, root);
+    spawn_top(&mut commands, &fonts, root);
+    spawn_corner(&mut commands, &fonts, root);
+}
 
-    commands.spawn((
-        DebugText,
-        Text::new(""),
-        TextFont {
-            font: font.clone().into(),
-            font_size: FontSize::Px(16.0),
-            ..default()
-        },
-        TextColor(Color::srgb(0.9, 0.9, 0.8)),
-        TextShadow {
-            offset: Vec2::splat(1.5),
-            ..default()
-        },
-        Node {
-            position_type: PositionType::Absolute,
-            top: px(8),
-            left: px(10),
-            ..default()
-        },
-    ));
+/// A dark panel that blocks world clicks.
+fn panel(node: Node) -> impl Bundle {
+    (
+        node,
+        BackgroundColor(ui::PANEL),
+        BorderColor::all(ui::EDGE),
+        Interaction::default(),
+        Blocker,
+    )
+}
 
-    let panel = commands
+/// The bottom panel, centred along the window's foot.
+fn spawn_bottom(commands: &mut Commands, fonts: &Fonts, root: Entity) {
+    let bottom = commands
         .spawn((
             Node {
                 position_type: PositionType::Absolute,
                 bottom: px(0),
-                left: percent(25),
-                width: percent(50),
-                height: px(PANEL_HEIGHT),
-                flex_direction: FlexDirection::Row,
+                width: percent(100),
                 justify_content: JustifyContent::Center,
-                align_items: AlignItems::Center,
-                column_gap: px(10),
-                border_radius: BorderRadius::top(px(10)),
                 ..default()
             },
-            BackgroundColor(Color::srgba(0.06, 0.07, 0.09, 0.9)),
+            Pickable::IGNORE,
+            ChildOf(root),
         ))
         .id();
-    for (i, (key, total)) in SLOT_KEYS.iter().zip(SLOT_COOLDOWNS).enumerate() {
-        let slot = spawn_slot(&mut commands, icon.clone(), font.clone(), key, total, i);
-        commands.entity(panel).add_child(slot);
+    let bar = commands
+        .spawn((
+            panel(Node {
+                flex_direction: FlexDirection::Row,
+                align_items: AlignItems::FlexEnd,
+                padding: UiRect::all(px(8)),
+                column_gap: px(10),
+                border: UiRect::top(px(2)).with_left(px(2)).with_right(px(2)),
+                border_radius: BorderRadius::top(px(10)),
+                ..default()
+            }),
+            ChildOf(bottom),
+        ))
+        .id();
+    let portrait = commands
+        .spawn((
+            Portrait,
+            Node {
+                width: px(124),
+                height: px(140),
+                border: UiRect::all(px(2)),
+                ..default()
+            },
+            BorderColor::all(ui::EDGE),
+            BackgroundColor(ui::PANEL_DEEP),
+            ImageNode::default(),
+            ChildOf(bar),
+        ))
+        .id();
+    commands.spawn((
+        Readout::PanelLevel,
+        ui::text("", &fonts.bold, 18.0, ui::GOLDEN),
+        TextShadow::default(),
+        Node {
+            position_type: PositionType::Absolute,
+            right: px(6),
+            bottom: px(4),
+            ..default()
+        },
+        ChildOf(portrait),
+    ));
+    spawn_numbers(commands, fonts, bar);
+    spawn_middle(commands, fonts, bar);
+    spawn_items(commands, fonts, bar);
+}
+
+/// The name and the stat lines.
+fn spawn_numbers(commands: &mut Commands, fonts: &Fonts, bar: Entity) {
+    let column = commands
+        .spawn((
+            Node {
+                flex_direction: FlexDirection::Column,
+                width: px(118),
+                row_gap: px(4),
+                ..default()
+            },
+            ChildOf(bar),
+        ))
+        .id();
+    commands.spawn((Readout::PanelName, ui::text("", &fonts.bold, 16.0, ui::INK), ChildOf(column)));
+    commands.spawn((Readout::Stats, ui::text("", &fonts.regular, 13.0, ui::INK_DIM), ChildOf(column)));
+    commands.spawn((Readout::Attributes, ui::text("", &fonts.bold, 13.0, ui::INK), ChildOf(column)));
+}
+
+/// The ability row with the health and mana bars under it.
+fn spawn_middle(commands: &mut Commands, fonts: &Fonts, bar: Entity) {
+    let column = commands
+        .spawn((
+            Node {
+                flex_direction: FlexDirection::Column,
+                row_gap: px(6),
+                ..default()
+            },
+            ChildOf(bar),
+        ))
+        .id();
+    commands.spawn((
+        Readout::Hint,
+        ui::text("", &fonts.bold, 13.0, ui::GOLDEN),
+        ChildOf(column),
+    ));
+    let row = commands
+        .spawn((
+            Node {
+                flex_direction: FlexDirection::Row,
+                column_gap: px(6),
+                ..default()
+            },
+            ChildOf(column),
+        ))
+        .id();
+    for slot in 0..6u8 {
+        spawn_slot_box(commands, fonts, row, (ABILITY, ABILITY), AbilityBox(slot), true);
+    }
+    for (gauge, readout, height, color) in [
+        (Gauge::Hp, Readout::Hp, 20.0, ui::HP_FRIEND),
+        (Gauge::Mana, Readout::Mana, 15.0, ui::MANA),
+    ] {
+        let well = commands
+            .spawn((
+                Node {
+                    width: px(6.0 * ABILITY + 5.0 * 6.0),
+                    height: px(height),
+                    justify_content: JustifyContent::Center,
+                    align_items: AlignItems::Center,
+                    ..default()
+                },
+                BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.8)),
+                ChildOf(column),
+            ))
+            .id();
+        commands.spawn((
+            gauge,
+            Node {
+                position_type: PositionType::Absolute,
+                left: px(0),
+                top: px(0),
+                height: percent(100),
+                width: percent(100),
+                ..default()
+            },
+            BackgroundColor(color),
+            ChildOf(well),
+        ));
+        commands.spawn((
+            readout,
+            ui::text("", &fonts.bold, height - 5.0, ui::INK),
+            TextShadow::default(),
+            ChildOf(well),
+        ));
     }
 }
 
-fn spawn_slot(
-    commands: &mut Commands,
-    icon: Handle<Image>,
-    font: Handle<Font>,
-    key: &str,
-    total: f32,
-    index: usize,
-) -> Entity {
-    let text_font = |size: f32| TextFont {
-        font: font.clone().into(),
-        font_size: FontSize::Px(size),
-        ..default()
-    };
-    commands
+/// The inventory, the backpack below it and the stash above it.
+fn spawn_items(commands: &mut Commands, fonts: &Fonts, bar: Entity) {
+    let grid = commands
         .spawn((
             Node {
-                width: px(ICON_SIZE),
-                height: px(ICON_SIZE),
-                border: UiRect::all(px(2)),
-                justify_content: JustifyContent::Center,
-                align_items: AlignItems::Center,
+                display: Display::Grid,
+                grid_template_columns: RepeatedGridTrack::px(3, ITEM.0),
+                column_gap: px(5),
+                row_gap: px(5),
                 ..default()
             },
-            BorderColor::all(Color::srgb(0.35, 0.35, 0.4)),
-            // Tint differs per slot so the four copies of one icon are distinguishable.
-            ImageNode::new(icon).with_color(Color::hsl(index as f32 * 80.0, 0.5, 0.85)),
+            ChildOf(bar),
         ))
-        .with_children(|slot| {
-            // Cooldown sweep: a full-size overlay whose conic gradient is transparent over
-            // the elapsed angle and dark over the remaining one (clockwise from 12 o'clock).
-            slot.spawn((
-                Node {
-                    position_type: PositionType::Absolute,
-                    width: percent(100),
-                    height: percent(100),
-                    ..default()
-                },
-                BackgroundGradient::from(sweep_gradient(0.0)),
-                Cooldown { total },
-            ));
-            slot.spawn((
-                CooldownText,
-                Text::new(""),
-                text_font(22.0),
-                TextShadow {
-                    offset: Vec2::splat(1.5),
-                    ..default()
-                },
-            ));
-            slot.spawn((
-                Text::new(key),
-                text_font(13.0),
-                Node {
-                    position_type: PositionType::Absolute,
-                    top: px(1),
-                    left: px(3),
-                    ..default()
-                },
-            ));
-        })
-        .id()
+        .id();
+    for slot in 0..BAG_SLOTS {
+        let size = if slot >= INVENTORY_SLOTS {
+            (ITEM.0, 26.0)
+        } else {
+            ITEM
+        };
+        spawn_slot_box(commands, fonts, grid, size, ItemBox(slot), slot < INVENTORY_SLOTS);
+    }
+    let stash = commands
+        .spawn((
+            Node {
+                position_type: PositionType::Absolute,
+                bottom: percent(100),
+                right: px(8),
+                display: Display::Grid,
+                grid_template_columns: RepeatedGridTrack::px(3, ITEM.0),
+                column_gap: px(5),
+                row_gap: px(5),
+                padding: UiRect::all(px(6)),
+                ..default()
+            },
+            BackgroundColor(ui::PANEL_DEEP),
+            Interaction::default(),
+            Blocker,
+            StashStrip,
+            ChildOf(bar),
+        ))
+        .id();
+    for slot in BAG_SLOTS..BAG_SLOTS + 6 {
+        spawn_slot_box(commands, fonts, stash, (ITEM.0, 30.0), ItemBox(slot), false);
+    }
 }
 
-fn sweep_gradient(elapsed_fraction: f32) -> ConicGradient {
-    let a = elapsed_fraction.clamp(0.0, 1.0) * TAU;
-    let clear = Color::NONE;
-    let dark = Color::srgba(0.0, 0.0, 0.0, 0.7);
-    // Two stops at the same angle make a hard edge.
+/// The stash strip, shown while it holds anything or at home.
+#[derive(Component)]
+pub struct StashStrip;
+
+/// One clickable slot box with its icon, its wait and its labels.
+fn spawn_slot_box(
+    commands: &mut Commands,
+    fonts: &Fonts,
+    parent: Entity,
+    (w, h): (f32, f32),
+    tag: impl Component,
+    keyed: bool,
+) {
+    let slot = commands
+        .spawn((
+            tag,
+            Button,
+            Node {
+                width: px(w),
+                height: px(h),
+                border: UiRect::all(px(1)),
+                ..default()
+            },
+            BorderColor::all(Color::srgb(0.2, 0.22, 0.27)),
+            BackgroundColor(ui::PANEL_DEEP),
+            ChildOf(parent),
+        ))
+        .id();
+    let full = || Node {
+        position_type: PositionType::Absolute,
+        width: percent(100),
+        height: percent(100),
+        ..default()
+    };
+    commands.spawn((Part::Icon, PartOf(slot), full(), ImageNode::default(), Pickable::IGNORE, ChildOf(slot)));
+    commands.spawn((
+        Part::Shade,
+        PartOf(slot),
+        full(),
+        BackgroundColor(Color::NONE),
+        Pickable::IGNORE,
+        ChildOf(slot),
+    ));
+    commands.spawn((
+        Part::Sweep,
+        PartOf(slot),
+        full(),
+        BackgroundGradient::from(sweep(0.0)),
+        Pickable::IGNORE,
+        ChildOf(slot),
+    ));
+    let label = |commands: &mut Commands, part: Part, node: Node, size: f32, color: Color| {
+        commands.spawn((
+            part,
+            PartOf(slot),
+            ui::text("", &fonts.bold, size, color),
+            TextShadow::default(),
+            node,
+            Pickable::IGNORE,
+            ChildOf(slot),
+        ));
+    };
+    let at = |left: Option<f32>, top: Option<f32>, right: Option<f32>, bottom: Option<f32>| Node {
+        position_type: PositionType::Absolute,
+        left: left.map_or(Val::Auto, px),
+        top: top.map_or(Val::Auto, px),
+        right: right.map_or(Val::Auto, px),
+        bottom: bottom.map_or(Val::Auto, px),
+        ..default()
+    };
+    label(commands, Part::Seconds, Node {
+        position_type: PositionType::Absolute,
+        width: percent(100),
+        height: percent(100),
+        justify_content: JustifyContent::Center,
+        align_items: AlignItems::Center,
+        ..default()
+    }, 22.0, ui::INK);
+    if keyed {
+        label(commands, Part::Key, at(Some(3.0), Some(1.0), None, None), 12.0, ui::INK);
+    }
+    label(commands, Part::Cost, at(None, None, Some(3.0), Some(2.0)), 12.0, Color::srgb(0.55, 0.75, 1.0));
+    label(commands, Part::Charges, at(None, None, Some(3.0), Some(1.0)), 13.0, ui::INK);
+    label(commands, Part::Plus, at(None, Some(1.0), Some(3.0), None), 18.0, ui::GOLDEN);
+    for pip in 0..4u8 {
+        commands.spawn((
+            Part::Pip(pip),
+            PartOf(slot),
+            Node {
+                position_type: PositionType::Absolute,
+                left: px(4.0 + f32::from(pip) * 10.0),
+                bottom: px(2),
+                width: px(8),
+                height: px(4),
+                ..default()
+            },
+            BackgroundColor(Color::NONE),
+            Pickable::IGNORE,
+            ChildOf(slot),
+        ));
+    }
+}
+
+/// A conic gradient darkening the part of a box still waiting, clockwise
+/// from twelve o'clock: `left` is the share still to run.
+fn sweep(left: f32) -> ConicGradient {
+    let a = (1.0 - left.clamp(0.0, 1.0)) * TAU;
+    let dark = Color::srgba(0.0, 0.0, 0.0, if left > 0.0 { 0.68 } else { 0.0 });
     ConicGradient::new(
         UiPosition::CENTER,
         vec![
-            AngularColorStop::new(clear, 0.0),
-            AngularColorStop::new(clear, a),
+            AngularColorStop::new(Color::NONE, 0.0),
+            AngularColorStop::new(Color::NONE, a),
             AngularColorStop::new(dark, a),
             AngularColorStop::new(dark, TAU),
         ],
     )
 }
 
-fn update_cooldowns(
-    time: Res<Time>,
-    mut sweeps: Query<(&Cooldown, &mut BackgroundGradient, &ChildOf)>,
-    children: Query<&Children>,
-    mut texts: Query<&mut Text, With<CooldownText>>,
+/// The clock and the seats along the top.
+fn spawn_top(commands: &mut Commands, fonts: &Fonts, root: Entity) {
+    let top = commands
+        .spawn((
+            Node {
+                position_type: PositionType::Absolute,
+                top: px(0),
+                width: percent(100),
+                justify_content: JustifyContent::Center,
+                align_items: AlignItems::FlexStart,
+                column_gap: px(6),
+                ..default()
+            },
+            Pickable::IGNORE,
+            ChildOf(root),
+        ))
+        .id();
+    spawn_seat(commands, fonts, top, 0);
+    let clock = commands
+        .spawn((
+            panel(Node {
+                width: px(150),
+                height: px(54),
+                flex_direction: FlexDirection::Row,
+                justify_content: JustifyContent::SpaceBetween,
+                align_items: AlignItems::Center,
+                padding: UiRect::horizontal(px(10)),
+                border: UiRect::bottom(px(2)).with_left(px(2)).with_right(px(2)),
+                border_radius: BorderRadius::bottom(px(8)),
+                ..default()
+            }),
+            ChildOf(top),
+        ))
+        .id();
+    commands.spawn((Readout::Score(Team::Radiant), ui::text("0", &fonts.bold, 20.0, crate::overlay::team_color(Team::Radiant)), ChildOf(clock)));
+    commands.spawn((Readout::Clock, ui::text("0:00", &fonts.bold, 22.0, ui::INK), ChildOf(clock)));
+    commands.spawn((Readout::Score(Team::Dire), ui::text("0", &fonts.bold, 20.0, crate::overlay::team_color(Team::Dire)), ChildOf(clock)));
+    spawn_seat(commands, fonts, top, 1);
+}
+
+/// One seat's box in the top bar: portrait, level, health, score.
+fn spawn_seat(commands: &mut Commands, fonts: &Fonts, parent: Entity, seat: u8) {
+    let column = commands
+        .spawn((
+            Node {
+                flex_direction: FlexDirection::Column,
+                align_items: AlignItems::Center,
+                row_gap: px(2),
+                margin: UiRect::top(px(4)),
+                ..default()
+            },
+            ChildOf(parent),
+        ))
+        .id();
+    let card = commands
+        .spawn((
+            SeatBox(seat),
+            Button,
+            Node {
+                width: px(86),
+                height: px(48),
+                border: UiRect::all(px(2)),
+                ..default()
+            },
+            BorderColor::all(ui::EDGE),
+            BackgroundColor(ui::PANEL_DEEP),
+            ImageNode::default(),
+            ChildOf(column),
+        ))
+        .id();
+    commands.spawn((
+        Readout::SeatLevel(seat),
+        ui::text("", &fonts.bold, 15.0, ui::GOLDEN),
+        TextShadow::default(),
+        Node {
+            position_type: PositionType::Absolute,
+            right: px(3),
+            bottom: px(1),
+            ..default()
+        },
+        ChildOf(card),
+    ));
+    commands.spawn((
+        Readout::SeatDead(seat),
+        ui::text("", &fonts.bold, 22.0, ui::INK),
+        TextShadow::default(),
+        Node {
+            position_type: PositionType::Absolute,
+            width: percent(100),
+            height: percent(100),
+            justify_content: JustifyContent::Center,
+            align_items: AlignItems::Center,
+            ..default()
+        },
+        BackgroundColor(Color::NONE),
+        ChildOf(card),
+    ));
+    let well = commands
+        .spawn((
+            Node {
+                width: px(86),
+                height: px(6),
+                ..default()
+            },
+            BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.8)),
+            ChildOf(column),
+        ))
+        .id();
+    commands.spawn((
+        Gauge::SeatHp(seat),
+        Node {
+            height: percent(100),
+            width: percent(100),
+            ..default()
+        },
+        BackgroundColor(crate::overlay::team_color(if seat == 0 { Team::Radiant } else { Team::Dire })),
+        ChildOf(well),
+    ));
+    commands.spawn((Readout::SeatScore(seat), ui::text("", &fonts.bold, 12.0, ui::INK_DIM), TextShadow::default(), ChildOf(column)));
+    commands.spawn((Readout::SeatName(seat), ui::text("", &fonts.regular, 11.0, ui::INK_DIM), TextShadow::default(), ChildOf(column)));
+}
+
+/// One's own numbers in the top-left corner, the feed and the frame rate in
+/// the top-right, and the notices in the middle.
+fn spawn_corner(commands: &mut Commands, fonts: &Fonts, root: Entity) {
+    let plate = commands
+        .spawn((
+            panel(Node {
+                position_type: PositionType::Absolute,
+                left: px(8),
+                top: px(8),
+                flex_direction: FlexDirection::Row,
+                column_gap: px(16),
+                padding: UiRect::axes(px(12), px(6)),
+                border: UiRect::all(px(1)),
+                border_radius: BorderRadius::all(px(6)),
+                ..default()
+            }),
+            ChildOf(root),
+        ))
+        .id();
+    for (label, readout, color) in [
+        ("LH / DN", Readout::LastHits, ui::INK),
+        ("K / D / A", Readout::Kda, ui::INK),
+        ("GOLD", Readout::Gold, ui::GOLDEN),
+        ("SOULS", Readout::Souls, Color::srgb(0.85, 0.45, 1.0)),
+    ] {
+        let cell = commands
+            .spawn((Node { flex_direction: FlexDirection::Column, ..default() }, ChildOf(plate)))
+            .id();
+        commands.spawn((ui::text(label, &fonts.bold, 10.0, ui::INK_DIM), ChildOf(cell)));
+        commands.spawn((readout, ui::text("-", &fonts.bold, 20.0, color), ChildOf(cell)));
+    }
+    commands.spawn((
+        Readout::Fps,
+        ui::text("", &fonts.regular, 11.0, ui::INK_DIM),
+        Node {
+            position_type: PositionType::Absolute,
+            right: px(10),
+            top: px(6),
+            ..default()
+        },
+        ChildOf(root),
+    ));
+    commands.spawn((
+        Readout::Feed,
+        ui::text("", &fonts.regular, 14.0, ui::INK),
+        TextShadow::default(),
+        TextLayout::justify(Justify::Right),
+        Node {
+            position_type: PositionType::Absolute,
+            right: px(10),
+            top: px(30),
+            ..default()
+        },
+        ChildOf(root),
+    ));
+    let middle = commands
+        .spawn((
+            Node {
+                position_type: PositionType::Absolute,
+                width: percent(100),
+                top: percent(28),
+                justify_content: JustifyContent::Center,
+                ..default()
+            },
+            Pickable::IGNORE,
+            ChildOf(root),
+        ))
+        .id();
+    commands.spawn((
+        Readout::Notice,
+        ui::text("", &fonts.bold, 20.0, ui::INK),
+        TextShadow::default(),
+        TextLayout::justify(Justify::Center),
+        ChildOf(middle),
+    ));
+}
+
+/// Sets a text when it changed.
+fn put(text: &mut Text, s: String) {
+    if text.0 != s {
+        text.0 = s;
+    }
+}
+
+/// The seat, unit and kit the bottom panel is about.
+fn subject(core: &Core) -> (Option<&PlayerView>, Option<&UnitView>, Option<&Kit>) {
+    let Some(view) = &core.view else {
+        return (None, None, None);
+    };
+    if let Some((unit, _)) = core.selected.and_then(|id| core.known(id))
+        && unit.kind != UnitKind::Hero
+    {
+        return (None, Some(unit), None);
+    }
+    let Some(p) = core.panel_slot().and_then(|s| view.players.iter().find(|p| p.slot == s)) else {
+        return (None, None, None);
+    };
+    let unit = core.body_of(p.slot).and_then(|id| core.known(id)).map(|(u, _)| u);
+    (Some(p), unit, p.kit.as_ref())
+}
+
+/// Every text of the HUD.
+fn readouts(
+    session: NonSend<Session>,
+    settings: Res<Settings>,
+    diagnostics: Res<bevy::diagnostic::DiagnosticsStore>,
+    ping: Res<Ping>,
+    mut texts: Query<(&Readout, &mut Text)>,
 ) {
-    for (cd, mut gradient, child_of) in &mut sweeps {
-        // Restart the cooldown every `total + 1` seconds (1 s "ready" gap).
-        let t = time.elapsed_secs() % (cd.total + 1.0);
-        let remaining = (cd.total - t).max(0.0);
-        let elapsed_angle = (t / cd.total).min(1.0) * TAU;
-        // Mutate the two boundary stops in place: no per-frame Vec allocation.
-        if let Some(Gradient::Conic(conic)) = gradient.0.first_mut() {
-            conic.stops[1].angle = Some(elapsed_angle);
-            conic.stops[2].angle = Some(elapsed_angle);
-        }
-        let label = if remaining > 0.0 {
-            format!("{}", remaining.ceil() as u32)
-        } else {
-            String::new()
+    let core = &session.0;
+    let Some(view) = &core.view else {
+        return;
+    };
+    let rate = u32::from(core.tick_rate.max(1));
+    let (p, unit, _) = subject(core);
+    let mine = core.panel_slot().and_then(|s| view.players.iter().find(|p| p.slot == s));
+    for (readout, mut text) in &mut texts {
+        let s = match *readout {
+            Readout::Clock => clock(i64::from(view.tick) - i64::from(core.pregame_ticks), rate),
+            Readout::Score(team) => view.players.iter().filter(|p| p.team == team).map(|p| u32::from(p.kills)).sum::<u32>().to_string(),
+            Readout::PanelName => p.map(|p| core.seat_name(p.slot)).or(unit.map(|u| format!("{:?}", u.kind))).unwrap_or_default(),
+            Readout::PanelLevel => unit.filter(|u| u.level > 0).map(|u| u.level.to_string()).unwrap_or_default(),
+            Readout::Stats => unit.map(stat_lines).unwrap_or_default(),
+            Readout::Attributes => unit.map(attribute_line).unwrap_or_default(),
+            Readout::Hp => unit.map(|u| format!("{} / {}", u.hp.max(0), u.max_hp)).unwrap_or_default(),
+            Readout::Mana => unit.filter(|u| u.max_mana > 0).map(|u| format!("{} / {}", u.mana.max(0), u.max_mana)).unwrap_or_default(),
+            Readout::LastHits => mine.map(|p| format!("{} / {}", p.last_hits, p.denies)).unwrap_or_default(),
+            Readout::Kda => mine.map(|p| format!("{} / {} / {}", p.kills, p.deaths, p.assists)).unwrap_or_default(),
+            Readout::Gold => mine.and_then(|p| p.gold).map_or("-".to_string(), |g| g.to_string()),
+            Readout::Souls => souls(core, mine),
+            Readout::Feed => core.feed.iter().map(|f| f.text.as_str()).collect::<Vec<_>>().join("\n"),
+            Readout::Notice => notice(core, rate),
+            Readout::Hint => hint(core, unit, &settings),
+            Readout::Fps => {
+                let fps = diagnostics.get(&bevy::diagnostic::FrameTimeDiagnosticsPlugin::FPS).and_then(|d| d.smoothed()).unwrap_or(0.0);
+                let ping = ping.0.map_or("-".to_string(), |ms| format!("{ms} ms"));
+                format!("ping {ping}   {fps:.0} fps")
+            }
+            Readout::SeatLevel(seat) => seat_of(view, seat).map(|p| p.level.to_string()).unwrap_or_default(),
+            Readout::SeatScore(seat) => seat_of(view, seat).map(|p| format!("{}/{}  {}-{}", p.last_hits, p.denies, p.kills, p.deaths)).unwrap_or_default(),
+            Readout::SeatName(seat) => seat_of(view, seat).map(|p| core.seat_name(p.slot)).unwrap_or_default(),
+            Readout::SeatDead(seat) => seat_of(view, seat)
+                .filter(|p| p.unit.is_none())
+                .map(|p| (p.respawn_left / rate + 1).to_string())
+                .unwrap_or_default(),
         };
-        for sibling in children.iter_descendants(child_of.parent()) {
-            if let Ok(mut text) = texts.get_mut(sibling)
-                && text.0 != label
-            {
-                text.0.clone_from(&label);
+        put(&mut text, s);
+    }
+}
+
+/// The game clock, negative before the horn.
+fn clock(ticks: i64, rate: u32) -> String {
+    let seconds = ticks.div_euclid(i64::from(rate));
+    let sign = if seconds < 0 { "-" } else { "" };
+    format!("{sign}{}:{:02}", seconds.abs() / 60, seconds.abs() % 60)
+}
+
+fn seat_of(view: &bota_proto::WorldView, seat: u8) -> Option<&PlayerView> {
+    view.players.get(usize::from(seat))
+}
+
+fn stat_lines(u: &UnitView) -> String {
+    format!(
+        "DMG {}\nARM {:.1}\nMS {:.0}\nATK {:.2}/s\nRNG {:.0}",
+        u.attack_damage,
+        u.armor.to_f32(),
+        u.move_speed.to_f32(),
+        1000.0 / u.attack_time.max(1) as f32,
+        u.attack_range.to_f32()
+    )
+}
+
+fn attribute_line(u: &UnitView) -> String {
+    let a = &u.attributes;
+    let mark = |which: Attribute| if u.primary == Some(which) { "*" } else { "" };
+    if a.strength.to_f32() == 0.0 && a.agility.to_f32() == 0.0 {
+        return String::new();
+    }
+    format!(
+        "S {:.0}{}  A {:.0}{}  I {:.0}{}",
+        a.strength.to_f32().floor(),
+        mark(Attribute::Strength),
+        a.agility.to_f32().floor(),
+        mark(Attribute::Agility),
+        a.intelligence.to_f32().floor(),
+        mark(Attribute::Intelligence)
+    )
+}
+
+fn souls(core: &Core, p: Option<&PlayerView>) -> String {
+    p.and_then(|p| core.body_of(p.slot))
+        .and_then(|id| core.known(id))
+        .and_then(|(u, _)| u.effects.iter().find(|e| e.id.0 == SOULS_EFFECT))
+        .and_then(|e| e.stacks)
+        .map_or("-".to_string(), |s| format!("{s}/20"))
+}
+
+/// The word of the moment in the middle of the screen.
+fn notice(core: &Core, rate: u32) -> String {
+    if core.lost {
+        return "CONNECTION LOST".to_string();
+    }
+    if let Some((winner, _)) = &core.over {
+        return match winner {
+            Team::Radiant => "RADIANT VICTORY".to_string(),
+            Team::Dire => "DIRE VICTORY".to_string(),
+            Team::Neutral => "DRAW".to_string(),
+        };
+    }
+    let dead = core
+        .my_slot
+        .and_then(|s| core.view.as_ref()?.players.iter().find(|p| p.slot == s))
+        .filter(|p| p.unit.is_none());
+    if let Some(p) = dead {
+        return format!("Respawn in {}", p.respawn_left / rate + 1);
+    }
+    if let Some((reason, _)) = &core.reject {
+        return reason.clone();
+    }
+    if let Some(line) = &core.console {
+        return format!("> {line}_");
+    }
+    if core.attack_move_armed {
+        return "ATTACK: click a target or a point".to_string();
+    }
+    if core.aiming.is_some() {
+        return "Left-click to aim, right-click or Esc to cancel".to_string();
+    }
+    String::new()
+}
+
+/// The line over the ability row: unspent points and how to spend them.
+fn hint(core: &Core, unit: Option<&UnitView>, settings: &Settings) -> String {
+    let Some(u) = unit.filter(|u| Some(u.id) == core.my_hero()) else {
+        return String::new();
+    };
+    let spent: u8 = u.abilities.iter().map(|a| a.level).sum();
+    if u.level > spent {
+        let key = key_name(settings.key(Action::Ability(0)));
+        format!("+{} ability point  (Ctrl+{key}...)", u.level - spent)
+    } else {
+        String::new()
+    }
+}
+
+/// The health and mana bars of the panel and the seats.
+fn gauges(session: NonSend<Session>, mut gauges: Query<(&Gauge, &mut Node, &mut BackgroundColor)>) {
+    let core = &session.0;
+    let (_, unit, _) = subject(core);
+    let Some(view) = &core.view else {
+        return;
+    };
+    for (gauge, mut node, mut bg) in &mut gauges {
+        let share = match *gauge {
+            Gauge::Hp => unit.map_or(0.0, |u| u.hp.max(0) as f32 / u.max_hp.max(1) as f32),
+            Gauge::Mana => unit.map_or(0.0, |u| u.mana.max(0) as f32 / u.max_mana.max(1) as f32),
+            Gauge::SeatHp(seat) => seat_of(view, seat)
+                .and_then(|p| p.unit)
+                .and_then(|id| view.units.iter().find(|u| u.id == id))
+                .map_or(0.0, |u| u.hp.max(0) as f32 / u.max_hp.max(1) as f32),
+        };
+        let width = percent(share * 100.0);
+        if node.width != width {
+            node.width = width;
+        }
+        if *gauge == Gauge::Hp {
+            let color = if share < 0.25 { ui::HP_FOE } else { ui::HP_FRIEND };
+            if bg.0 != color {
+                bg.0 = color;
             }
         }
     }
 }
 
-fn update_debug_text(
-    diagnostics: Res<DiagnosticsStore>,
-    cursor: Res<CursorGround>,
-    mut text: Single<&mut Text, With<DebugText>>,
-) {
-    let fps = diagnostics
-        .get(&FrameTimeDiagnosticsPlugin::FPS)
-        .and_then(|d| d.smoothed())
-        .unwrap_or(0.0);
-    let cursor = cursor
-        .0
-        .map(|p| {
-            let s = world_to_sim(p);
-            format!("({:.0}, {:.0})", s.x, s.y)
-        })
-        .unwrap_or_else(|| "-".into());
-    text.0 = format!(
-        "{fps:.0} fps | cursor sim {cursor}\narrows/edge: pan  wheel: zoom  space: anim mode  +/-: idle speed  [/]: volume"
-    );
+/// Everything a slot box shows of what is in it.
+struct SlotFace {
+    icon: Option<String>,
+    look: Look,
+    sweep: f32,
+    key: String,
+    cost: String,
+    pips: (u8, u8),
+    plus: bool,
+    charges: String,
+    no_mana: bool,
+    frame: Color,
 }
 
-/// Scale the whole HUD with the window's logical height (on top of the DPI scale).
-fn scale_ui(
-    mut resized: MessageReader<WindowResized>,
-    window: Single<&Window, With<PrimaryWindow>>,
-    mut ui_scale: ResMut<UiScale>,
+/// The face of an ability slot.
+fn ability_face(core: &Core, manifest: &Manifest, settings: &Settings, unit: Option<&UnitView>, kit: Option<&Kit>, slot: u8) -> Option<SlotFace> {
+    let abilities: &[AbilityView] = kit.map(|k| k.abilities.as_slice()).or(unit.map(|u| u.abilities.as_slice()))?;
+    let a = abilities.get(usize::from(slot))?;
+    let mana = if kit.is_some() { 0 } else { unit.map_or(0, |u| u.mana) };
+    let look = ability_look(Some(a), mana);
+    let own = unit.is_some_and(|u| core.drives(u.id)) || (kit.is_some() && core.panel_slot() == core.my_slot);
+    let aiming = own && core.aiming == Some(bota_client_core::Slot::Ability(slot));
+    Some(SlotFace {
+        icon: manifest.ability_icon(a.id.0),
+        look,
+        sweep: unit.map_or(0.0, |u| core.derived.wait_left(u.id, slot, a.cooldown_left)),
+        key: if look.passive { String::new() } else { key_name(settings.ability_key(slot, abilities.len())).to_string() },
+        cost: if a.level > 0 && a.mana_cost > 0 { a.mana_cost.to_string() } else { String::new() },
+        pips: (a.level, a.max_level),
+        plus: own && a.can_level,
+        charges: String::new(),
+        no_mana: a.level > 0 && mana < a.mana_cost,
+        frame: if aiming { ui::GOLDEN } else if look.toggled { Color::srgb(0.35, 0.95, 0.85) } else { Color::srgb(0.2, 0.22, 0.27) },
+    })
+}
+
+/// The face of an item slot.
+fn item_face(core: &Core, manifest: &Manifest, settings: &Settings, unit: Option<&UnitView>, kit: Option<&Kit>, slot: u8) -> Option<SlotFace> {
+    let item: ItemView = if slot >= BAG_SLOTS {
+        let view = core.view.as_ref()?;
+        let p = view.players.iter().find(|p| Some(p.slot) == core.my_slot)?;
+        (*p.stash.as_ref()?.get(usize::from(slot - BAG_SLOTS))?)?
+    } else {
+        let items = kit.map(|k| k.items.as_slice()).or(unit.map(|u| u.items.as_slice()))?;
+        (*items.get(usize::from(slot))?)?
+    };
+    let mana = unit.map_or(0, |u| u.mana);
+    let look = item_look(Some(&item), slot, mana);
+    let held = core.held_item == Some(slot);
+    Some(SlotFace {
+        icon: manifest.item_icon(item.id.0),
+        look,
+        sweep: unit.map_or(0.0, |u| core.derived.wait_left(u.id, bota_client_core::ITEM_WAIT_BASE + slot, item.cooldown_left)),
+        key: if slot < INVENTORY_SLOTS && !look.passive { key_name(settings.key(Action::Item(slot))).to_string() } else { String::new() },
+        cost: String::new(),
+        pips: (0, 0),
+        plus: false,
+        charges: item.charges.filter(|c| *c > 0).map(|c| c.to_string()).unwrap_or_default(),
+        no_mana: mana < item.mana_cost,
+        frame: if held { ui::GOLDEN } else { Color::srgb(0.2, 0.22, 0.27) },
+    })
+}
+
+/// Fills every slot box with what is in it.
+#[allow(clippy::type_complexity)]
+fn slots(
+    session: NonSend<Session>,
+    manifest: Res<Manifest>,
+    settings: Res<Settings>,
+    server: Res<AssetServer>,
+    mut boxes: Query<(Entity, Option<&AbilityBox>, Option<&ItemBox>, &mut BorderColor, &mut Visibility), Or<(With<AbilityBox>, With<ItemBox>)>>,
+    mut parts: Query<(&Part, &PartOf, Option<&mut ImageNode>, Option<&mut Text>, Option<&mut BackgroundColor>, Option<&mut BackgroundGradient>), Without<AbilityBox>>,
+    mut faces: Local<Vec<(Entity, Option<SlotFace>)>>,
 ) {
-    if resized.read().last().is_none() {
-        return;
+    let core = &session.0;
+    let (_, unit, kit) = subject(core);
+    faces.clear();
+    for (entity, ability, item, mut border, mut visibility) in &mut boxes {
+        let face = match (ability, item) {
+            (Some(AbilityBox(slot)), _) => ability_face(core, &manifest, &settings, unit, kit, *slot),
+            (_, Some(ItemBox(slot))) => item_face(core, &manifest, &settings, unit, kit, *slot),
+            _ => None,
+        };
+        let show = face.is_some() || item.is_some();
+        let want = if show { Visibility::Inherited } else { Visibility::Hidden };
+        if *visibility != want {
+            *visibility = want;
+        }
+        let frame = face.as_ref().map_or(Color::srgb(0.16, 0.18, 0.22), |f| f.frame);
+        if border.top != frame {
+            *border = BorderColor::all(frame);
+        }
+        faces.push((entity, face));
     }
-    let scale = (window.height() / REFERENCE_HEIGHT).clamp(0.75, 2.0);
-    if ui_scale.0 != scale {
-        ui_scale.0 = scale;
+    for (part, of, image, text, bg, gradient) in &mut parts {
+        let Some((_, face)) = faces.iter().find(|(e, _)| *e == of.0) else {
+            continue;
+        };
+        dress(part, face.as_ref(), &server, image, text, bg, gradient);
+    }
+}
+
+/// Sets one part of a slot box from the slot's face.
+fn dress(
+    part: &Part,
+    face: Option<&SlotFace>,
+    server: &AssetServer,
+    image: Option<Mut<ImageNode>>,
+    text: Option<Mut<Text>>,
+    bg: Option<Mut<BackgroundColor>>,
+    gradient: Option<Mut<BackgroundGradient>>,
+) {
+    match (part, face) {
+        (Part::Icon, f) => {
+            if let Some(mut image) = image {
+                let want: Option<Handle<Image>> = f.and_then(|f| f.icon.clone()).map(|p| server.load(p));
+                let handle = want.unwrap_or_default();
+                if image.image != handle {
+                    image.image = handle;
+                }
+                let tint = match f {
+                    Some(f) if !f.look.learned => Color::srgb(0.35, 0.35, 0.35),
+                    Some(_) => Color::WHITE,
+                    None => Color::NONE,
+                };
+                if image.color != tint {
+                    image.color = tint;
+                }
+            }
+        }
+        (Part::Shade, f) => {
+            if let Some(mut bg) = bg {
+                let c = match f {
+                    Some(f) if !f.look.learned => Color::srgba(0.0, 0.0, 0.0, 0.55),
+                    Some(f) if f.no_mana && !f.look.passive => Color::srgba(0.05, 0.12, 0.5, 0.45),
+                    _ => Color::NONE,
+                };
+                if bg.0 != c {
+                    bg.0 = c;
+                }
+            }
+        }
+        (Part::Sweep, f) => {
+            if let Some(mut g) = gradient {
+                let left = f.filter(|f| f.look.cooldown_left > 0).map_or(0.0, |f| f.sweep.max(0.02));
+                let a = (1.0 - left) * TAU;
+                if let Some(Gradient::Conic(conic)) = g.0.first_mut() {
+                    let dark = Color::srgba(0.0, 0.0, 0.0, if left > 0.0 { 0.68 } else { 0.0 });
+                    conic.stops[1].angle = Some(a);
+                    conic.stops[2].angle = Some(a);
+                    conic.stops[2].color = dark;
+                    conic.stops[3].color = dark;
+                }
+            }
+        }
+        (Part::Pip(i), f) => {
+            if let Some(mut bg) = bg {
+                let c = match f.map(|f| f.pips) {
+                    Some((lit, max)) if *i < max => {
+                        if *i < lit { ui::GOLDEN } else { Color::srgb(0.15, 0.15, 0.17) }
+                    }
+                    _ => Color::NONE,
+                };
+                if bg.0 != c {
+                    bg.0 = c;
+                }
+            }
+        }
+        (label, f) => {
+            if let Some(mut text) = text {
+                let s = f.map_or(String::new(), |f| match label {
+                    Part::Seconds if f.look.cooldown_left > 0 => (f.look.cooldown_left / 30 + 1).to_string(),
+                    Part::Key => f.key.clone(),
+                    Part::Cost => f.cost.clone(),
+                    Part::Charges => f.charges.clone(),
+                    Part::Plus if f.plus => "+".to_string(),
+                    _ => String::new(),
+                });
+                put(&mut text, s);
+            }
+        }
+    }
+}
+
+/// The bottom panel's portrait: the hero's Dota portrait.
+fn portrait(
+    session: NonSend<Session>,
+    manifest: Res<Manifest>,
+    server: Res<AssetServer>,
+    mut image: Single<&mut ImageNode, With<Portrait>>,
+) {
+    let core = &session.0;
+    let (p, unit, _) = subject(core);
+    let hero = p.map(|p| p.hero.0).or(unit.and_then(|u| u.hero.map(|h| h.0)));
+    let path = hero
+        .and_then(|h| manifest.dota_name("hero", h))
+        .and_then(|name| manifest.file(&format!("portrait.hero.{name}.tall")).or(manifest.file(&format!("portrait.hero.{name}"))));
+    let handle: Handle<Image> = path.map(|p| server.load(p)).unwrap_or_default();
+    if image.image != handle {
+        image.image = handle;
+    }
+    let tint = if p.is_some_and(|p| p.unit.is_none()) { Color::srgb(0.3, 0.3, 0.3) } else { Color::WHITE };
+    if image.color != tint {
+        image.color = tint;
+    }
+}
+
+/// The seat portraits of the top bar.
+fn seats(
+    session: NonSend<Session>,
+    manifest: Res<Manifest>,
+    server: Res<AssetServer>,
+    mut cards: Query<(&SeatBox, &mut ImageNode, &mut BorderColor)>,
+) {
+    let core = &session.0;
+    let Some(view) = &core.view else {
+        return;
+    };
+    for (seat, mut image, mut border) in &mut cards {
+        let Some(p) = seat_of(view, seat.0) else {
+            continue;
+        };
+        let path = manifest
+            .dota_name("hero", p.hero.0)
+            .and_then(|name| manifest.file(&format!("portrait.hero.{name}")));
+        let handle: Handle<Image> = path.map(|p| server.load(p)).unwrap_or_default();
+        if image.image != handle {
+            image.image = handle;
+        }
+        let tint = if p.unit.is_none() { Color::srgb(0.3, 0.3, 0.3) } else { Color::WHITE };
+        if image.color != tint {
+            image.color = tint;
+        }
+        let picked = p.unit.is_some() && p.unit == core.selected;
+        let edge = if picked { Color::WHITE } else { crate::overlay::team_color(p.team) };
+        if border.top != edge {
+            *border = BorderColor::all(edge);
+        }
     }
 }

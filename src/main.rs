@@ -1,16 +1,27 @@
-//! dbota: Bevy 0.19 client spike for the bota simulator.
+//! dbota: a Dota-looking front end for the bota simulator, on Bevy.
 //!
-//! World mapping (see `coords`): simulator (x, y) with y = north maps to Bevy (x, 0, -y);
-//! one simulator unit is one Bevy unit; the ground is the y = 0 plane.
+//! The game logic lives in `bota-client-core`; this crate draws it with
+//! Dota's own assets from a local cache (see `tools/README.md`) or with
+//! stand-ins when the cache is missing. World mapping (see `coords`): bota
+//! (x, y) with y north maps to Bevy (x, height, -y).
 
-mod audio;
+mod anim;
+mod bars;
 mod camera;
 mod capture;
+mod config;
 mod coords;
-mod fallback;
-mod ground;
-mod hero;
+mod fog;
 mod hud;
+mod input;
+mod manifest;
+mod map;
+mod minimap;
+mod overlay;
+mod session;
+mod terrain;
+mod trees;
+mod ui;
 mod units;
 
 use std::path::PathBuf;
@@ -30,52 +41,98 @@ use clap::Parser;
 /// Name of the asset source rooted at the exported-asset cache (`cache://...`).
 pub const CACHE_SOURCE: &str = "cache";
 
+/// dbota: watch or play a bota match with Dota's look.
 #[derive(Parser, Debug, Clone, Resource)]
-#[command(about = "dbota Bevy client spike")]
+#[command(version, about)]
 pub struct Args {
-    /// Save a PNG of the primary window after `--frames` frames, then exit.
-    #[arg(long, requires = "frames")]
-    pub screenshot: Option<PathBuf>,
-    /// Number of frames to run before printing frame statistics (and exiting).
+    /// Where the server listens.
+    #[arg(long, default_value = "127.0.0.1:4455")]
+    pub addr: String,
+    /// What the lobby shows.
+    #[arg(long, default_value = "player")]
+    pub name: String,
+    /// Watch instead of playing.
     #[arg(long)]
-    pub frames: Option<u32>,
-    /// Present without vsync, to measure uncapped frame time.
-    #[arg(long)]
-    pub no_vsync: bool,
-    /// Disable directional-light shadow maps.
-    #[arg(long)]
-    pub no_shadows: bool,
-    /// Initial hero animation mode (Space toggles at runtime).
-    #[arg(long, value_enum, default_value_t = hero::AnimMode::SimAttack)]
-    pub anim: hero::AnimMode,
-    /// Initial playback speed of the clip-timed idle loop.
-    #[arg(long, default_value_t = 1.0)]
-    pub idle_speed: f32,
-    /// Do not play any sound.
-    #[arg(long)]
-    pub mute: bool,
+    pub spectate: bool,
+    /// Play this replay file instead of connecting anywhere.
+    #[arg(long, value_name = "FILE", conflicts_with_all = ["spectate"])]
+    pub replay: Option<PathBuf>,
+    /// Watch a replay as this seat sees it: its fog, its panel, its shop.
+    #[arg(long, value_name = "SEAT", requires = "replay")]
+    pub pov: Option<u8>,
+    /// Keep the camera on this seat's hero in a replay.
+    #[arg(long, value_name = "SEAT", requires = "replay")]
+    pub follow: Option<u8>,
     /// Root of the exported Dota asset cache.
     #[arg(long, default_value_os_t = default_cache_dir())]
     pub cache_dir: PathBuf,
+    /// The settings file; `~/.config/dbota/client.conf` when absent.
+    #[arg(long, value_name = "FILE")]
+    pub config: Option<PathBuf>,
+    /// Debug: save the screen once a replay reaches each of these ticks,
+    /// then exit after the last.
+    #[arg(long, value_name = "TICK", value_delimiter = ',', requires = "replay")]
+    pub screenshot_at: Vec<u32>,
+    /// Debug: where `--screenshot-at` saves.
+    #[arg(long, value_name = "DIR", default_value = "temp/shots")]
+    pub screenshot_dir: PathBuf,
+    /// Debug: what `--screenshot-at` file names start with.
+    #[arg(long, default_value = "shot-")]
+    pub screenshot_prefix: String,
+    /// Debug: save the screen to this file after `--frames` frames, then exit.
+    #[arg(long, requires = "frames")]
+    pub screenshot: Option<PathBuf>,
+    /// Debug: frames to run before `--screenshot`.
+    #[arg(long)]
+    pub frames: Option<u32>,
+    /// Debug: open the shop at the start.
+    #[arg(long)]
+    pub open_shop: bool,
+    /// Debug: the camera's distance from the ground at the start.
+    #[arg(long, value_name = "UNITS")]
+    pub distance: Option<f32>,
+    /// Debug: leave things out to time the rest: any of `trees`, `shadows`,
+    /// `msaa`, `map`, `units`, `ui`.
+    #[arg(long, value_delimiter = ',')]
+    pub without: Vec<String>,
+    /// Present without vsync.
+    #[arg(long)]
+    pub no_vsync: bool,
+    /// Play no sound.
+    #[arg(long)]
+    pub mute: bool,
 }
 
+/// Where the settings are saved; absent when there is nowhere to.
+#[derive(Resource, Clone, Debug)]
+pub struct SettingsPath(pub Option<PathBuf>);
+
 fn default_cache_dir() -> PathBuf {
-    let home = std::env::var_os("HOME").expect("HOME must be set");
+    if let Some(dir) = std::env::var_os("DBOTA_ASSETS").filter(|d| !d.is_empty()) {
+        return PathBuf::from(dir);
+    }
+    let home = std::env::var_os("HOME").unwrap_or_default();
     PathBuf::from(home).join(".cache/dbota")
 }
 
 fn main() -> AppExit {
     let args = Args::parse();
-    if let Some(frames) = args.frames {
-        assert!(frames > 0, "--frames must be positive");
-    }
-    assert!(args.idle_speed.is_finite(), "--idle-speed must be finite");
-    let fallback_dir = PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/temp/fallback"));
-    let found = fallback::resolve(&args.cache_dir, &fallback_dir);
-
+    let session = match session::open(&args) {
+        Ok(session) => session,
+        Err(err) => {
+            eprintln!("dbota: {err}");
+            return AppExit::error();
+        }
+    };
+    let manifest = manifest::Manifest::load(&args.cache_dir);
+    let settings_path = args.config.clone().or_else(config::default_path);
+    let settings = settings_path.as_deref().map(config::load).unwrap_or_default();
     let mut app = App::new();
     app.insert_resource(args.clone())
-        .insert_resource(found)
+        .insert_resource(manifest)
+        .insert_resource(settings)
+        .insert_resource(SettingsPath(settings_path))
+        .insert_non_send(session)
         // Must be registered before AssetPlugin (part of DefaultPlugins) builds the sources.
         .register_asset_source(
             CACHE_SOURCE,
@@ -83,52 +140,54 @@ fn main() -> AppExit {
                 args.cache_dir.to_string_lossy().into_owned(),
             )),
         )
-        .add_plugins(
-            DefaultPlugins
-                .set(WindowPlugin {
-                    primary_window: Some(Window {
-                        title: "dbota".into(),
-                        // Logical size: winit creates the window with LogicalSize, so on a
-                        // scale-factor-2 display this becomes 3200x1800 physical pixels.
-                        resolution: WindowResolution::new(1600, 900),
-                        present_mode: if args.no_vsync {
-                            PresentMode::AutoNoVsync
-                        } else {
-                            PresentMode::AutoVsync
-                        },
-                        resizable: true,
-                        ..default()
-                    }),
-                    ..default()
-                })
-                .set(AssetPlugin {
-                    // Default is relative to CARGO_MANIFEST_DIR when run via cargo but to the
-                    // executable's directory otherwise; pin it so `target/release/dbota` works.
-                    file_path: concat!(env!("CARGO_MANIFEST_DIR"), "/assets").into(),
-                    // Raw absolute paths are refused unless a load opts in with
-                    // `load_builder().override_unapproved()` (see `hud`).
-                    unapproved_path_mode: UnapprovedPathMode::Deny,
-                    ..default()
-                })
-                .set(GltfPlugin {
-                    // Make `Transform::forward()` of the scene root match the glTF model's front.
-                    convert_coordinates: GltfConvertCoordinates {
-                        rotate_scene_entity: true,
-                        ..default()
-                    },
-                    ..default()
-                }),
-        )
+        .add_plugins(default_plugins(&args))
         .add_plugins(FrameTimeDiagnosticsPlugin::default())
-        .add_systems(Startup, fallback::log_found)
         .add_plugins((
-            camera::plugin,
-            ground::plugin,
-            hero::plugin,
+            session::plugin,
+            map::plugin,
+            fog::plugin,
             units::plugin,
-            hud::plugin,
-            audio::plugin,
+            anim::plugin,
+            camera::plugin,
             capture::plugin,
-        ));
+            trees::plugin,
+        ))
+        .add_plugins((ui::plugin, bars::plugin, overlay::plugin, hud::plugin, input::plugin, minimap::plugin));
     app.run()
+}
+
+/// Bevy's plugins as dbota sets them up.
+fn default_plugins(args: &Args) -> impl PluginGroup {
+    DefaultPlugins
+        .set(WindowPlugin {
+            primary_window: Some(Window {
+                title: "dbota".into(),
+                resolution: WindowResolution::new(1600, 900),
+                present_mode: if args.no_vsync {
+                    PresentMode::AutoNoVsync
+                } else {
+                    PresentMode::AutoVsync
+                },
+                resizable: true,
+                ..default()
+            }),
+            ..default()
+        })
+        .set(AssetPlugin {
+            file_path: concat!(env!("CARGO_MANIFEST_DIR"), "/assets").into(),
+            unapproved_path_mode: UnapprovedPathMode::Deny,
+            ..default()
+        })
+        .set(
+            GltfPlugin {
+                convert_coordinates: GltfConvertCoordinates {
+                    rotate_scene_entity: true,
+                    ..default()
+                },
+                ..default()
+            }
+            .add_custom_vertex_attribute("TEXCOORD_1", map::ATTRIBUTE_BLEND_WEIGHTS)
+            .add_custom_vertex_attribute("TEXCOORD_2", map::ATTRIBUTE_BLEND_ALPHAS)
+            .add_custom_vertex_attribute("TEXCOORD_3", map::ATTRIBUTE_PAINTED_TINT),
+        )
 }
