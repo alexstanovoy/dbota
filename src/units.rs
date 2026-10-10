@@ -52,15 +52,9 @@ pub struct ModelOf(pub Entity);
 #[derive(Component)]
 pub struct Pivot(pub Entity);
 
-/// A model scene whose instance is ready, and the entity of its animation
-/// player, if it has one.
+/// A model scene whose instance is ready.
 #[derive(Component)]
-pub struct Posable {
-    /// The unit root above it.
-    pub unit: Entity,
-    /// The animation player inside it.
-    pub player: Option<Entity>,
-}
+pub struct Posable;
 
 /// The animation player of a unit's model, on the unit's root.
 #[derive(Component)]
@@ -111,7 +105,10 @@ pub fn plugin(app: &mut App) {
     app.init_resource::<UnitIndex>()
         .init_resource::<ModelBank>()
         .add_systems(Startup, (load_models, make_stand_ins))
-        .add_systems(Update, (build_graphs, sync_units, fall, bind_wearables).chain());
+        .add_systems(
+            Update,
+            (build_graphs, sync_units, fall, bind_wearables).chain(),
+        );
 }
 
 fn load_models(mut bank: ResMut<ModelBank>, server: Res<AssetServer>, manifest: Res<Manifest>) {
@@ -236,7 +233,11 @@ struct SyncParams<'w, 's> {
 
 /// Spawns what came into view, moves what stays, and lets go of what left:
 /// a unit that left where its side could still see it has died, and falls.
-fn sync_units(session: NonSend<Session>, mut p: SyncParams, mut units: Query<(&mut Unit, &mut Transform)>) {
+fn sync_units(
+    session: NonSend<Session>,
+    mut p: SyncParams,
+    mut units: Query<(&mut Unit, &mut Transform)>,
+) {
     let core = &session.0;
     let Some(view) = &core.view else {
         return;
@@ -267,7 +268,13 @@ fn sync_units(session: NonSend<Session>, mut p: SyncParams, mut units: Query<(&m
             }
         }
     }
-    let gone: Vec<EntityId> = p.index.0.keys().filter(|id| !seen.contains(id)).copied().collect();
+    let gone: Vec<EntityId> = p
+        .index
+        .0
+        .keys()
+        .filter(|id| !seen.contains(id))
+        .copied()
+        .collect();
     for id in gone {
         let Some(entity) = p.index.0.remove(&id) else {
             continue;
@@ -290,7 +297,8 @@ fn sync_units(session: NonSend<Session>, mut p: SyncParams, mut units: Query<(&m
 
 /// Spawns one unit: a root at its place, and its model or stand-in.
 fn spawn_unit(p: &mut SyncParams, u: &UnitView, at: Vec2, facing: f32, place: Vec3) -> Entity {
-    let model = model_name(u).and_then(|name| p.bank.0.iter().position(|m| m.model.logical == name));
+    let model =
+        model_name(u).and_then(|name| p.bank.0.iter().position(|m| m.model.logical == name));
     let root = p
         .commands
         .spawn((
@@ -338,11 +346,13 @@ fn spawn_unit(p: &mut SyncParams, u: &UnitView, at: Vec2, facing: f32, place: Ve
                             ready: false,
                         },
                     ))
-                    .observe(|ready: On<WorldInstanceReady>, mut wearables: Query<&mut Wearable>| {
-                        if let Ok(mut w) = wearables.get_mut(ready.entity) {
-                            w.ready = true;
-                        }
-                    });
+                    .observe(
+                        |ready: On<WorldInstanceReady>, mut wearables: Query<&mut Wearable>| {
+                            if let Ok(mut w) = wearables.get_mut(ready.entity) {
+                                w.ready = true;
+                            }
+                        },
+                    );
             }
         }
         None => spawn_stand_in(p, u, pivot),
@@ -360,7 +370,11 @@ fn spawn_stand_in(p: &mut SyncParams, u: &UnitView, pivot: Entity) {
         u.kind,
         UnitKind::Tower | UnitKind::Barracks | UnitKind::Ancient | UnitKind::Fountain
     );
-    let mesh = if building { art.building.clone() } else { art.body.clone() };
+    let mesh = if building {
+        art.building.clone()
+    } else {
+        art.body.clone()
+    };
     let material = match u.team {
         Team::Radiant => art.radiant.clone(),
         Team::Dire => art.dire.clone(),
@@ -419,7 +433,18 @@ fn on_model_ready(
         commands.entity(player).insert(AnimationGraphHandle(graph));
         commands.entity(unit).insert(Rig(player));
     }
-    commands.entity(ready.entity).insert(Posable { unit, player });
+    commands.entity(ready.entity).insert(Posable);
+    // Buildings stand in the fog too, and are drawn dulled there.
+    if units.get(unit).is_ok_and(|u| {
+        matches!(
+            u.kind,
+            UnitKind::Tower | UnitKind::Barracks | UnitKind::Ancient | UnitKind::Fountain
+        )
+    }) {
+        for part in children.iter_descendants(ready.entity) {
+            commands.entity(part).insert(crate::fog::Fogged);
+        }
+    }
 }
 
 /// Points every ready wearable's skin at its wearer's joints of the same
@@ -443,7 +468,6 @@ fn bind_wearables(
             }
         }
         let parts: Vec<Entity> = children.iter_descendants(entity).collect();
-        let mut bound = 0;
         for part in parts {
             let Ok(mut skin) = skins.get_mut(part) else {
                 continue;
@@ -460,12 +484,12 @@ fn bind_wearables(
                         .unwrap_or(*joint)
                 })
                 .collect();
-            bound += rebound.iter().zip(&skin.joints).filter(|(a, b)| a != b).count();
             skin.joints = rebound;
             // Its bounds were worked out on its own skeleton.
-            commands.entity(part).insert(bevy::camera::visibility::NoFrustumCulling);
+            commands
+                .entity(part)
+                .insert(bevy::camera::visibility::NoFrustumCulling);
         }
-        debug!("wearable bound {bound} joints to {} named joints", joints.len());
         commands.entity(entity).remove::<Wearable>();
     }
 }

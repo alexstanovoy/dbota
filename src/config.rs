@@ -111,7 +111,7 @@ impl Default for Settings {
             ui_scale: 1.0,
             aids: Aids {
                 numbers: true,
-                attack_range: true,
+                attack_range: false,
                 raze_marks: true,
                 last_hit_marks: true,
                 tower_ranges: true,
@@ -192,7 +192,8 @@ impl Settings {
     /// The settings as the text of a file [`Settings::parse`] reads back.
     pub fn render(&self) -> String {
         let flag = |on: bool| if on { "true" } else { "false" };
-        let mut out = String::from("# dbota settings. Keys use the names listed in the client README.\n");
+        let mut out =
+            String::from("# dbota settings. Keys use the names listed in the client README.\n");
         out.push_str(&format!("volume = {:.2}\n", self.volume));
         out.push_str(&format!("muted = {}\n", flag(self.muted)));
         out.push_str(&format!("ui_scale = {:.2}\n", self.ui_scale));

@@ -36,17 +36,32 @@ struct Minimap {
     view: Entity,
 }
 
+/// The photograph on the minimap.
+#[derive(Component)]
+struct Photo;
+
 /// The camera that takes the photograph, and the frames until it stops.
 #[derive(Component)]
 struct PhotoCamera(u8);
 
+/// Whether the photograph is taken: the fog waits for it, so the map is
+/// photographed unfogged.
+#[derive(Resource, Default)]
+pub struct PhotoTaken(pub bool);
+
 pub fn plugin(app: &mut App) {
-    app.add_systems(Startup, spawn)
+    app.init_resource::<PhotoTaken>()
+        .add_systems(Startup, spawn)
         .add_systems(Update, (photograph, marks, clicks));
 }
 
 fn spawn(mut commands: Commands, mut images: ResMut<Assets<Image>>) {
-    let photo = images.add(Image::new_target_texture(PHOTO, PHOTO, TextureFormat::Bgra8UnormSrgb, None));
+    let photo = images.add(Image::new_target_texture(
+        PHOTO,
+        PHOTO,
+        TextureFormat::Bgra8UnormSrgb,
+        None,
+    ));
     let frame = commands
         .spawn((
             Node {
@@ -58,7 +73,7 @@ fn spawn(mut commands: Commands, mut images: ResMut<Assets<Image>>) {
                 border: UiRect::all(px(3)),
                 ..default()
             },
-            BackgroundColor(Color::srgb(0.03, 0.04, 0.05)),
+            BackgroundColor(Color::srgb(0.08, 0.11, 0.07)),
             BorderColor::all(Color::srgb(0.18, 0.2, 0.24)),
             Interaction::default(),
             Blocker,
@@ -70,9 +85,22 @@ fn spawn(mut commands: Commands, mut images: ResMut<Assets<Image>>) {
         height: percent(100),
         ..default()
     };
-    commands.spawn((full(), ImageNode::new(photo.clone()), Pickable::IGNORE, ChildOf(frame)));
+    // Hidden until the photograph is taken: a target never rendered is black.
+    commands.spawn((
+        Photo,
+        full(),
+        ImageNode::new(photo.clone()),
+        Visibility::Hidden,
+        Pickable::IGNORE,
+        ChildOf(frame),
+    ));
     let fog = commands
-        .spawn((full(), ImageNode::default(), Pickable::IGNORE, ChildOf(frame)))
+        .spawn((
+            full(),
+            ImageNode::default(),
+            Pickable::IGNORE,
+            ChildOf(frame),
+        ))
         .id();
     let marks = (0..MARKS)
         .map(|_| {
@@ -122,8 +150,10 @@ fn photograph(
     ready: Res<crate::trees::SceneryReady>,
     minimap: Res<Minimap>,
     mut cameras: Query<(Entity, &mut PhotoCamera, &mut Camera)>,
+    mut shown: Single<&mut Visibility, With<Photo>>,
     mut started: Local<f32>,
     time: Res<Time>,
+    mut taken: ResMut<PhotoTaken>,
 ) {
     if !ready.0 {
         return;
@@ -141,6 +171,8 @@ fn photograph(
             if frames.0 == 0 {
                 camera.is_active = false;
                 commands.entity(entity).despawn();
+                **shown = Visibility::Inherited;
+                taken.0 = true;
             } else {
                 frames.0 -= 1;
             }
@@ -185,7 +217,6 @@ fn on_map(x: f32, y: f32) -> Vec2 {
 
 /// Puts a mark on every unit shown, the fog over the photo, and the camera's
 /// frame.
-#[allow(clippy::too_many_arguments)]
 fn marks(
     session: NonSend<Session>,
     minimap: Res<Minimap>,
@@ -210,7 +241,9 @@ fn marks(
     let me = core.my_hero();
     let shown = view.units.iter().filter(|u| {
         !matches!(u.kind, UnitKind::Ward)
-            && (!hidden || Some(u.team) == grid.team || grid.lit(u.pos.x.to_f32(), u.pos.y.to_f32()))
+            && (!hidden
+                || Some(u.team) == grid.team
+                || grid.lit(u.pos.x.to_f32(), u.pos.y.to_f32()))
     });
     let mut used = 0;
     for u in shown.take(MARKS) {
@@ -248,7 +281,13 @@ fn marks(
     }
     let (camera, cam_gt) = *camera;
     let size = window.size();
-    let corners = [Vec2::ZERO, Vec2::new(size.x, 0.0), size, Vec2::new(0.0, size.y)].map(|p| {
+    let corners = [
+        Vec2::ZERO,
+        Vec2::new(size.x, 0.0),
+        size,
+        Vec2::new(0.0, size.y),
+    ]
+    .map(|p| {
         camera
             .viewport_to_world(cam_gt, p)
             .ok()
@@ -256,9 +295,10 @@ fn marks(
             .map(|g| on_map(g.x, -g.z))
             .unwrap_or_default()
     });
-    let (min, max) = corners
-        .iter()
-        .fold((Vec2::splat(f32::MAX), Vec2::splat(f32::MIN)), |(lo, hi), c| (lo.min(*c), hi.max(*c)));
+    let (min, max) = corners.iter().fold(
+        (Vec2::splat(f32::MAX), Vec2::splat(f32::MIN)),
+        |(lo, hi), c| (lo.min(*c), hi.max(*c)),
+    );
     if let Ok((mut node, _, _)) = nodes.get_mut(minimap.view) {
         node.left = px(min.x);
         node.top = px(min.y);
@@ -297,7 +337,10 @@ fn clicks(
         core.pinned = None;
         cam.focus = Vec3::new(x, ground.at(x, y), -y);
     }
-    if buttons.just_pressed(MouseButton::Right) && core.my_hero().is_some() && core.controls_selection() {
+    if buttons.just_pressed(MouseButton::Right)
+        && core.my_hero().is_some()
+        && core.controls_selection()
+    {
         core.act(Intent::MoveTo((x, y)));
     }
 }

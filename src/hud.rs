@@ -102,10 +102,13 @@ pub struct HudRoot;
 pub struct Blocker;
 
 pub fn plugin(app: &mut App) {
-    app.init_resource::<Ping>().add_systems(Startup, spawn_hud).add_systems(
-        Update,
-        (readouts, gauges, slots, portrait, seats, stash).run_if(|k: Res<crate::session::MatchKnown>| k.0),
-    );
+    app.init_resource::<Ping>()
+        .add_systems(Startup, spawn_hud)
+        .add_systems(
+            Update,
+            (readouts, gauges, slots, portrait, seats, stash)
+                .run_if(|k: Res<crate::session::MatchKnown>| k.0),
+        );
 }
 
 fn spawn_hud(mut commands: Commands, fonts: Res<Fonts>) {
@@ -184,7 +187,7 @@ fn spawn_bottom(commands: &mut Commands, fonts: &Fonts, root: Entity) {
     commands.spawn((
         Readout::PanelLevel,
         ui::text("", &fonts.bold, 18.0, ui::GOLDEN),
-        TextShadow::default(),
+        ui::shadow(),
         Node {
             position_type: PositionType::Absolute,
             right: px(6),
@@ -211,9 +214,22 @@ fn spawn_numbers(commands: &mut Commands, fonts: &Fonts, bar: Entity) {
             ChildOf(bar),
         ))
         .id();
-    commands.spawn((Readout::PanelName, ui::text("", &fonts.bold, 16.0, ui::INK), ChildOf(column)));
-    commands.spawn((Readout::Stats, ui::text("", &fonts.regular, 13.0, ui::INK_DIM), ChildOf(column)));
-    commands.spawn((Readout::Attributes, ui::text("", &fonts.bold, 13.0, ui::INK), ChildOf(column)));
+    commands.spawn((
+        Readout::PanelName,
+        ui::text("", &fonts.bold, 15.0, ui::INK),
+        TextLayout::no_wrap(),
+        ChildOf(column),
+    ));
+    commands.spawn((
+        Readout::Stats,
+        ui::text("", &fonts.regular, 13.0, ui::INK_DIM),
+        ChildOf(column),
+    ));
+    commands.spawn((
+        Readout::Attributes,
+        ui::text("", &fonts.bold, 13.0, ui::INK),
+        ChildOf(column),
+    ));
 }
 
 /// The ability row with the health and mana bars under it.
@@ -244,7 +260,14 @@ fn spawn_middle(commands: &mut Commands, fonts: &Fonts, bar: Entity) {
         ))
         .id();
     for slot in 0..6u8 {
-        spawn_slot_box(commands, fonts, row, (ABILITY, ABILITY), AbilityBox(slot), true);
+        spawn_slot_box(
+            commands,
+            fonts,
+            row,
+            (ABILITY, ABILITY),
+            AbilityBox(slot),
+            true,
+        );
     }
     for (gauge, readout, height, color) in [
         (Gauge::Hp, Readout::Hp, 20.0, ui::HP_FRIEND),
@@ -279,7 +302,7 @@ fn spawn_middle(commands: &mut Commands, fonts: &Fonts, bar: Entity) {
         commands.spawn((
             readout,
             ui::text("", &fonts.bold, height - 5.0, ui::INK),
-            TextShadow::default(),
+            ui::shadow(),
             ChildOf(well),
         ));
     }
@@ -305,7 +328,14 @@ fn spawn_items(commands: &mut Commands, fonts: &Fonts, bar: Entity) {
         } else {
             ITEM
         };
-        spawn_slot_box(commands, fonts, grid, size, ItemBox(slot), slot < INVENTORY_SLOTS);
+        spawn_slot_box(
+            commands,
+            fonts,
+            grid,
+            size,
+            ItemBox(slot),
+            slot < INVENTORY_SLOTS,
+        );
     }
     let stash = commands
         .spawn((
@@ -366,7 +396,14 @@ fn spawn_slot_box(
         height: percent(100),
         ..default()
     };
-    commands.spawn((Part::Icon, PartOf(slot), full(), ImageNode::default(), Pickable::IGNORE, ChildOf(slot)));
+    commands.spawn((
+        Part::Icon,
+        PartOf(slot),
+        full(),
+        ImageNode::default(),
+        Pickable::IGNORE,
+        ChildOf(slot),
+    ));
     commands.spawn((
         Part::Shade,
         PartOf(slot),
@@ -388,7 +425,7 @@ fn spawn_slot_box(
             part,
             PartOf(slot),
             ui::text("", &fonts.bold, size, color),
-            TextShadow::default(),
+            ui::shadow(),
             node,
             Pickable::IGNORE,
             ChildOf(slot),
@@ -420,16 +457,40 @@ fn spawn_slot_box(
         Part::Seconds,
         PartOf(slot),
         ui::text("", &fonts.bold, 22.0, ui::INK),
-        TextShadow::default(),
+        ui::shadow(),
         Pickable::IGNORE,
         ChildOf(centre),
     ));
     if keyed {
-        label(commands, Part::Key, at(Some(3.0), Some(1.0), None, None), 12.0, ui::INK);
+        label(
+            commands,
+            Part::Key,
+            at(Some(3.0), Some(1.0), None, None),
+            12.0,
+            ui::INK,
+        );
     }
-    label(commands, Part::Cost, at(None, None, Some(3.0), Some(2.0)), 12.0, Color::srgb(0.55, 0.75, 1.0));
-    label(commands, Part::Charges, at(None, None, Some(3.0), Some(1.0)), 13.0, ui::INK);
-    label(commands, Part::Plus, at(None, Some(1.0), Some(3.0), None), 18.0, ui::GOLDEN);
+    label(
+        commands,
+        Part::Cost,
+        at(None, None, Some(3.0), Some(2.0)),
+        12.0,
+        Color::srgb(0.55, 0.75, 1.0),
+    );
+    label(
+        commands,
+        Part::Charges,
+        at(None, None, Some(3.0), Some(1.0)),
+        13.0,
+        ui::INK,
+    );
+    label(
+        commands,
+        Part::Plus,
+        at(None, Some(1.0), Some(3.0), None),
+        18.0,
+        ui::GOLDEN,
+    );
     for pip in 0..4u8 {
         commands.spawn((
             Part::Pip(pip),
@@ -499,9 +560,31 @@ fn spawn_top(commands: &mut Commands, fonts: &Fonts, root: Entity) {
             ChildOf(top),
         ))
         .id();
-    commands.spawn((Readout::Score(Team::Radiant), ui::text("0", &fonts.bold, 20.0, crate::overlay::team_color(Team::Radiant)), ChildOf(clock)));
-    commands.spawn((Readout::Clock, ui::text("0:00", &fonts.bold, 22.0, ui::INK), ChildOf(clock)));
-    commands.spawn((Readout::Score(Team::Dire), ui::text("0", &fonts.bold, 20.0, crate::overlay::team_color(Team::Dire)), ChildOf(clock)));
+    commands.spawn((
+        Readout::Score(Team::Radiant),
+        ui::text(
+            "0",
+            &fonts.bold,
+            20.0,
+            crate::overlay::team_color(Team::Radiant),
+        ),
+        ChildOf(clock),
+    ));
+    commands.spawn((
+        Readout::Clock,
+        ui::text("0:00", &fonts.bold, 22.0, ui::INK),
+        ChildOf(clock),
+    ));
+    commands.spawn((
+        Readout::Score(Team::Dire),
+        ui::text(
+            "0",
+            &fonts.bold,
+            20.0,
+            crate::overlay::team_color(Team::Dire),
+        ),
+        ChildOf(clock),
+    ));
     spawn_seat(commands, fonts, top, 1);
 }
 
@@ -538,7 +621,7 @@ fn spawn_seat(commands: &mut Commands, fonts: &Fonts, parent: Entity, seat: u8) 
     commands.spawn((
         Readout::SeatLevel(seat),
         ui::text("", &fonts.bold, 15.0, ui::GOLDEN),
-        TextShadow::default(),
+        ui::shadow(),
         Node {
             position_type: PositionType::Absolute,
             right: px(3),
@@ -550,7 +633,7 @@ fn spawn_seat(commands: &mut Commands, fonts: &Fonts, parent: Entity, seat: u8) 
     commands.spawn((
         Readout::SeatDead(seat),
         ui::text("", &fonts.bold, 22.0, ui::INK),
-        TextShadow::default(),
+        ui::shadow(),
         Node {
             position_type: PositionType::Absolute,
             width: percent(100),
@@ -580,11 +663,25 @@ fn spawn_seat(commands: &mut Commands, fonts: &Fonts, parent: Entity, seat: u8) 
             width: percent(100),
             ..default()
         },
-        BackgroundColor(crate::overlay::team_color(if seat == 0 { Team::Radiant } else { Team::Dire })),
+        BackgroundColor(crate::overlay::team_color(if seat == 0 {
+            Team::Radiant
+        } else {
+            Team::Dire
+        })),
         ChildOf(well),
     ));
-    commands.spawn((Readout::SeatScore(seat), ui::text("", &fonts.bold, 12.0, ui::INK_DIM), TextShadow::default(), ChildOf(column)));
-    commands.spawn((Readout::SeatName(seat), ui::text("", &fonts.regular, 11.0, ui::INK_DIM), TextShadow::default(), ChildOf(column)));
+    commands.spawn((
+        Readout::SeatScore(seat),
+        ui::text("", &fonts.bold, 12.0, ui::INK_DIM),
+        ui::shadow(),
+        ChildOf(column),
+    ));
+    commands.spawn((
+        Readout::SeatName(seat),
+        ui::text("", &fonts.regular, 11.0, ui::INK_DIM),
+        ui::shadow(),
+        ChildOf(column),
+    ));
 }
 
 /// One's own numbers in the top-left corner, the feed and the frame rate in
@@ -613,10 +710,23 @@ fn spawn_corner(commands: &mut Commands, fonts: &Fonts, root: Entity) {
         ("SOULS", Readout::Souls, Color::srgb(0.85, 0.45, 1.0)),
     ] {
         let cell = commands
-            .spawn((Node { flex_direction: FlexDirection::Column, ..default() }, ChildOf(plate)))
+            .spawn((
+                Node {
+                    flex_direction: FlexDirection::Column,
+                    ..default()
+                },
+                ChildOf(plate),
+            ))
             .id();
-        commands.spawn((ui::text(label, &fonts.bold, 10.0, ui::INK_DIM), ChildOf(cell)));
-        commands.spawn((readout, ui::text("-", &fonts.bold, 20.0, color), ChildOf(cell)));
+        commands.spawn((
+            ui::text(label, &fonts.bold, 10.0, ui::INK_DIM),
+            ChildOf(cell),
+        ));
+        commands.spawn((
+            readout,
+            ui::text("-", &fonts.bold, 20.0, color),
+            ChildOf(cell),
+        ));
     }
     commands.spawn((
         Readout::Fps,
@@ -632,7 +742,7 @@ fn spawn_corner(commands: &mut Commands, fonts: &Fonts, root: Entity) {
     commands.spawn((
         Readout::Feed,
         ui::text("", &fonts.regular, 14.0, ui::INK),
-        TextShadow::default(),
+        ui::shadow(),
         TextLayout::justify(Justify::Right),
         Node {
             position_type: PositionType::Absolute,
@@ -658,7 +768,7 @@ fn spawn_corner(commands: &mut Commands, fonts: &Fonts, root: Entity) {
     commands.spawn((
         Readout::Notice,
         ui::text("", &fonts.bold, 20.0, ui::INK),
-        TextShadow::default(),
+        ui::shadow(),
         TextLayout::justify(Justify::Center),
         ChildOf(middle),
     ));
@@ -681,10 +791,16 @@ fn subject(core: &Core) -> (Option<&PlayerView>, Option<&UnitView>, Option<&Kit>
     {
         return (None, Some(unit), None);
     }
-    let Some(p) = core.panel_slot().and_then(|s| view.players.iter().find(|p| p.slot == s)) else {
+    let Some(p) = core
+        .panel_slot()
+        .and_then(|s| view.players.iter().find(|p| p.slot == s))
+    else {
         return (None, None, None);
     };
-    let unit = core.body_of(p.slot).and_then(|id| core.known(id)).map(|(u, _)| u);
+    let unit = core
+        .body_of(p.slot)
+        .and_then(|id| core.known(id))
+        .map(|(u, _)| u);
     (Some(p), unit, p.kit.as_ref())
 }
 
@@ -702,32 +818,71 @@ fn readouts(
     };
     let rate = u32::from(core.tick_rate.max(1));
     let (p, unit, _) = subject(core);
-    let mine = core.panel_slot().and_then(|s| view.players.iter().find(|p| p.slot == s));
+    let mine = core
+        .panel_slot()
+        .and_then(|s| view.players.iter().find(|p| p.slot == s));
     for (readout, mut text) in &mut texts {
         let s = match *readout {
             Readout::Clock => clock(i64::from(view.tick) - i64::from(core.pregame_ticks), rate),
-            Readout::Score(team) => view.players.iter().filter(|p| p.team == team).map(|p| u32::from(p.kills)).sum::<u32>().to_string(),
-            Readout::PanelName => p.map(|p| core.seat_name(p.slot)).or(unit.map(|u| format!("{:?}", u.kind))).unwrap_or_default(),
-            Readout::PanelLevel => unit.filter(|u| u.level > 0).map(|u| u.level.to_string()).unwrap_or_default(),
+            Readout::Score(team) => view
+                .players
+                .iter()
+                .filter(|p| p.team == team)
+                .map(|p| u32::from(p.kills))
+                .sum::<u32>()
+                .to_string(),
+            Readout::PanelName => p
+                .map(|p| core.seat_name(p.slot))
+                .or(unit.map(|u| format!("{:?}", u.kind)))
+                .unwrap_or_default(),
+            Readout::PanelLevel => unit
+                .filter(|u| u.level > 0)
+                .map(|u| u.level.to_string())
+                .unwrap_or_default(),
             Readout::Stats => unit.map(stat_lines).unwrap_or_default(),
             Readout::Attributes => unit.map(attribute_line).unwrap_or_default(),
-            Readout::Hp => unit.map(|u| format!("{} / {}", u.hp.max(0), u.max_hp)).unwrap_or_default(),
-            Readout::Mana => unit.filter(|u| u.max_mana > 0).map(|u| format!("{} / {}", u.mana.max(0), u.max_mana)).unwrap_or_default(),
-            Readout::LastHits => mine.map(|p| format!("{} / {}", p.last_hits, p.denies)).unwrap_or_default(),
-            Readout::Kda => mine.map(|p| format!("{} / {} / {}", p.kills, p.deaths, p.assists)).unwrap_or_default(),
-            Readout::Gold => mine.and_then(|p| p.gold).map_or("-".to_string(), |g| g.to_string()),
+            Readout::Hp => unit
+                .map(|u| format!("{} / {}", u.hp.max(0), u.max_hp))
+                .unwrap_or_default(),
+            Readout::Mana => unit
+                .filter(|u| u.max_mana > 0)
+                .map(|u| format!("{} / {}", u.mana.max(0), u.max_mana))
+                .unwrap_or_default(),
+            Readout::LastHits => mine
+                .map(|p| format!("{} / {}", p.last_hits, p.denies))
+                .unwrap_or_default(),
+            Readout::Kda => mine
+                .map(|p| format!("{} / {} / {}", p.kills, p.deaths, p.assists))
+                .unwrap_or_default(),
+            Readout::Gold => mine
+                .and_then(|p| p.gold)
+                .map_or("-".to_string(), |g| g.to_string()),
             Readout::Souls => souls(core, mine),
-            Readout::Feed => core.feed.iter().map(|f| f.text.as_str()).collect::<Vec<_>>().join("\n"),
+            Readout::Feed => core
+                .feed
+                .iter()
+                .map(|f| f.text.as_str())
+                .collect::<Vec<_>>()
+                .join("\n"),
             Readout::Notice => notice(core, rate),
             Readout::Hint => hint(core, unit, &settings),
             Readout::Fps => {
-                let fps = diagnostics.get(&bevy::diagnostic::FrameTimeDiagnosticsPlugin::FPS).and_then(|d| d.smoothed()).unwrap_or(0.0);
+                let fps = diagnostics
+                    .get(&bevy::diagnostic::FrameTimeDiagnosticsPlugin::FPS)
+                    .and_then(|d| d.smoothed())
+                    .unwrap_or(0.0);
                 let ping = ping.0.map_or("-".to_string(), |ms| format!("{ms} ms"));
                 format!("ping {ping}   {fps:.0} fps")
             }
-            Readout::SeatLevel(seat) => seat_of(view, seat).map(|p| p.level.to_string()).unwrap_or_default(),
-            Readout::SeatScore(seat) => seat_of(view, seat).map(|p| format!("{}/{}  {}-{}", p.last_hits, p.denies, p.kills, p.deaths)).unwrap_or_default(),
-            Readout::SeatName(seat) => seat_of(view, seat).map(|p| core.seat_name(p.slot)).unwrap_or_default(),
+            Readout::SeatLevel(seat) => seat_of(view, seat)
+                .map(|p| p.level.to_string())
+                .unwrap_or_default(),
+            Readout::SeatScore(seat) => seat_of(view, seat)
+                .map(|p| format!("{}/{}  {}-{}", p.last_hits, p.denies, p.kills, p.deaths))
+                .unwrap_or_default(),
+            Readout::SeatName(seat) => seat_of(view, seat)
+                .map(|p| core.seat_name(p.slot))
+                .unwrap_or_default(),
             Readout::SeatDead(seat) => seat_of(view, seat)
                 .filter(|p| p.unit.is_none())
                 .map(|p| (p.respawn_left / rate + 1).to_string())
@@ -853,7 +1008,11 @@ fn gauges(session: NonSend<Session>, mut gauges: Query<(&Gauge, &mut Node, &mut 
             node.width = width;
         }
         if *gauge == Gauge::Hp {
-            let color = if share < 0.25 { ui::HP_FOE } else { ui::HP_FRIEND };
+            let color = if share < 0.25 {
+                ui::HP_FOE
+            } else {
+                ui::HP_FRIEND
+            };
             if bg.0 != color {
                 bg.0 = color;
             }
@@ -877,37 +1036,78 @@ struct SlotFace {
 }
 
 /// The face of an ability slot.
-fn ability_face(core: &Core, manifest: &Manifest, settings: &Settings, unit: Option<&UnitView>, kit: Option<&Kit>, slot: u8) -> Option<SlotFace> {
-    let abilities: &[AbilityView] = kit.map(|k| k.abilities.as_slice()).or(unit.map(|u| u.abilities.as_slice()))?;
+fn ability_face(
+    core: &Core,
+    manifest: &Manifest,
+    settings: &Settings,
+    unit: Option<&UnitView>,
+    kit: Option<&Kit>,
+    slot: u8,
+) -> Option<SlotFace> {
+    let abilities: &[AbilityView] = kit
+        .map(|k| k.abilities.as_slice())
+        .or(unit.map(|u| u.abilities.as_slice()))?;
     let a = abilities.get(usize::from(slot))?;
-    let mana = if kit.is_some() { 0 } else { unit.map_or(0, |u| u.mana) };
+    let mana = if kit.is_some() {
+        0
+    } else {
+        unit.map_or(0, |u| u.mana)
+    };
     let look = ability_look(Some(a), mana);
-    let own = unit.is_some_and(|u| core.drives(u.id)) || (kit.is_some() && core.panel_slot() == core.my_slot);
+    let own = unit.is_some_and(|u| core.drives(u.id))
+        || (kit.is_some() && core.panel_slot() == core.my_slot);
     let aiming = own && core.aiming == Some(bota_client_core::Slot::Ability(slot));
     let rate = u32::from(core.tick_rate.max(1));
     Some(SlotFace {
-        seconds: if a.cooldown_left > 0 { (a.cooldown_left / rate + 1).to_string() } else { String::new() },
+        seconds: if a.cooldown_left > 0 {
+            (a.cooldown_left / rate + 1).to_string()
+        } else {
+            String::new()
+        },
         icon: manifest.ability_icon(a.id.0),
         look,
         sweep: unit.map_or(0.0, |u| core.derived.wait_left(u.id, slot, a.cooldown_left)),
-        key: if look.passive { String::new() } else { key_name(settings.ability_key(slot, abilities.len())).to_string() },
-        cost: if a.level > 0 && a.mana_cost > 0 { a.mana_cost.to_string() } else { String::new() },
+        key: if look.passive {
+            String::new()
+        } else {
+            key_name(settings.ability_key(slot, abilities.len())).to_string()
+        },
+        cost: if a.level > 0 && a.mana_cost > 0 {
+            a.mana_cost.to_string()
+        } else {
+            String::new()
+        },
         pips: (a.level, a.max_level),
         plus: own && a.can_level,
         charges: String::new(),
         no_mana: a.level > 0 && mana < a.mana_cost,
-        frame: if aiming { ui::GOLDEN } else if look.toggled { Color::srgb(0.35, 0.95, 0.85) } else { Color::srgb(0.2, 0.22, 0.27) },
+        frame: if aiming {
+            ui::GOLDEN
+        } else if look.toggled {
+            Color::srgb(0.35, 0.95, 0.85)
+        } else {
+            Color::srgb(0.2, 0.22, 0.27)
+        },
     })
 }
 
 /// The face of an item slot.
-fn item_face(core: &Core, manifest: &Manifest, settings: &Settings, unit: Option<&UnitView>, kit: Option<&Kit>, slot: u8) -> Option<SlotFace> {
+fn item_face(
+    core: &Core,
+    manifest: &Manifest,
+    settings: &Settings,
+    unit: Option<&UnitView>,
+    kit: Option<&Kit>,
+    slot: u8,
+) -> Option<SlotFace> {
     let item: ItemView = if slot >= BAG_SLOTS {
         let view = core.view.as_ref()?;
         let p = view.players.iter().find(|p| Some(p.slot) == core.my_slot)?;
         (*p.stash.as_ref()?.get(usize::from(slot - BAG_SLOTS))?)?
     } else {
-        let items = kit.map(|k| k.items.as_slice()).or(unit.map(|u| u.items.as_slice()))?;
+        let items = kit
+            .map(|k| k.items.as_slice())
+            .or(unit.map(|u| u.items.as_slice()))?;
         (*items.get(usize::from(slot))?)?
     };
     let mana = unit.map_or(0, |u| u.mana);
@@ -915,29 +1115,69 @@ fn item_face(core: &Core, manifest: &Manifest, settings: &Settings, unit: Option
     let held = core.held_item == Some(slot);
     let rate = u32::from(core.tick_rate.max(1));
     Some(SlotFace {
-        seconds: if item.cooldown_left > 0 { (item.cooldown_left / rate + 1).to_string() } else { String::new() },
+        seconds: if item.cooldown_left > 0 {
+            (item.cooldown_left / rate + 1).to_string()
+        } else {
+            String::new()
+        },
         icon: manifest.item_icon(item.id.0),
         look,
-        sweep: unit.map_or(0.0, |u| core.derived.wait_left(u.id, bota_client_core::ITEM_WAIT_BASE + slot, item.cooldown_left)),
-        key: if slot < INVENTORY_SLOTS && !look.passive { key_name(settings.key(Action::Item(slot))).to_string() } else { String::new() },
+        sweep: unit.map_or(0.0, |u| {
+            core.derived.wait_left(
+                u.id,
+                bota_client_core::ITEM_WAIT_BASE + slot,
+                item.cooldown_left,
+            )
+        }),
+        key: if slot < INVENTORY_SLOTS && !look.passive {
+            key_name(settings.key(Action::Item(slot))).to_string()
+        } else {
+            String::new()
+        },
         cost: String::new(),
         pips: (0, 0),
         plus: false,
-        charges: item.charges.filter(|c| *c > 0).map(|c| c.to_string()).unwrap_or_default(),
+        charges: item
+            .charges
+            .filter(|c| *c > 0)
+            .map(|c| c.to_string())
+            .unwrap_or_default(),
         no_mana: mana < item.mana_cost,
-        frame: if held { ui::GOLDEN } else { Color::srgb(0.2, 0.22, 0.27) },
+        frame: if held {
+            ui::GOLDEN
+        } else {
+            Color::srgb(0.2, 0.22, 0.27)
+        },
     })
 }
 
 /// Fills every slot box with what is in it.
-#[allow(clippy::type_complexity)]
 fn slots(
     session: NonSend<Session>,
     manifest: Res<Manifest>,
     settings: Res<Settings>,
     server: Res<AssetServer>,
-    mut boxes: Query<(Entity, Option<&AbilityBox>, Option<&ItemBox>, &mut BorderColor, &mut Visibility), Or<(With<AbilityBox>, With<ItemBox>)>>,
-    mut parts: Query<(&Part, &PartOf, Option<&mut ImageNode>, Option<&mut Text>, Option<&mut BackgroundColor>, Option<&mut BackgroundGradient>), Without<AbilityBox>>,
+    mut boxes: Query<
+        (
+            Entity,
+            Option<&AbilityBox>,
+            Option<&ItemBox>,
+            &mut BorderColor,
+            &mut Visibility,
+        ),
+        Or<(With<AbilityBox>, With<ItemBox>)>,
+    >,
+    mut parts: Query<
+        (
+            &Part,
+            &PartOf,
+            Option<&mut ImageNode>,
+            Option<&mut Text>,
+            Option<&mut BackgroundColor>,
+            Option<&mut BackgroundGradient>,
+        ),
+        Without<AbilityBox>,
+    >,
     mut faces: Local<Vec<(Entity, Option<SlotFace>)>>,
 ) {
     let core = &session.0;
@@ -945,16 +1185,24 @@ fn slots(
     faces.clear();
     for (entity, ability, item, mut border, mut visibility) in &mut boxes {
         let face = match (ability, item) {
-            (Some(AbilityBox(slot)), _) => ability_face(core, &manifest, &settings, unit, kit, *slot),
+            (Some(AbilityBox(slot)), _) => {
+                ability_face(core, &manifest, &settings, unit, kit, *slot)
+            }
             (_, Some(ItemBox(slot))) => item_face(core, &manifest, &settings, unit, kit, *slot),
             _ => None,
         };
         let show = face.is_some() || item.is_some();
-        let want = if show { Visibility::Inherited } else { Visibility::Hidden };
+        let want = if show {
+            Visibility::Inherited
+        } else {
+            Visibility::Hidden
+        };
         if *visibility != want {
             *visibility = want;
         }
-        let frame = face.as_ref().map_or(Color::srgb(0.16, 0.18, 0.22), |f| f.frame);
+        let frame = face
+            .as_ref()
+            .map_or(Color::srgb(0.16, 0.18, 0.22), |f| f.frame);
         if border.top != frame {
             *border = BorderColor::all(frame);
         }
@@ -981,7 +1229,8 @@ fn dress(
     match (part, face) {
         (Part::Icon, f) => {
             if let Some(mut image) = image {
-                let want: Option<Handle<Image>> = f.and_then(|f| f.icon.clone()).map(|p| server.load(p));
+                let want: Option<Handle<Image>> =
+                    f.and_then(|f| f.icon.clone()).map(|p| server.load(p));
                 let handle = want.unwrap_or_default();
                 if image.image != handle {
                     image.image = handle;
@@ -1010,7 +1259,9 @@ fn dress(
         }
         (Part::Sweep, f) => {
             if let Some(mut g) = gradient {
-                let left = f.filter(|f| f.look.cooldown_left > 0).map_or(0.0, |f| f.sweep.max(0.02));
+                let left = f
+                    .filter(|f| f.look.cooldown_left > 0)
+                    .map_or(0.0, |f| f.sweep.max(0.02));
                 let a = (1.0 - left) * TAU;
                 if let Some(Gradient::Conic(conic)) = g.0.first_mut() {
                     let dark = Color::srgba(0.0, 0.0, 0.0, if left > 0.0 { 0.68 } else { 0.0 });
@@ -1025,7 +1276,11 @@ fn dress(
             if let Some(mut bg) = bg {
                 let c = match f.map(|f| f.pips) {
                     Some((lit, max)) if *i < max => {
-                        if *i < lit { ui::GOLDEN } else { Color::srgb(0.15, 0.15, 0.17) }
+                        if *i < lit {
+                            ui::GOLDEN
+                        } else {
+                            Color::srgb(0.15, 0.15, 0.17)
+                        }
                     }
                     _ => Color::NONE,
                 };
@@ -1059,15 +1314,25 @@ fn portrait(
 ) {
     let core = &session.0;
     let (p, unit, _) = subject(core);
-    let hero = p.map(|p| p.hero.0).or(unit.and_then(|u| u.hero.map(|h| h.0)));
+    let hero = p
+        .map(|p| p.hero.0)
+        .or(unit.and_then(|u| u.hero.map(|h| h.0)));
     let path = hero
         .and_then(|h| manifest.dota_name("hero", h))
-        .and_then(|name| manifest.file(&format!("portrait.hero.{name}.tall")).or(manifest.file(&format!("portrait.hero.{name}"))));
+        .and_then(|name| {
+            manifest
+                .file(&format!("portrait.hero.{name}.tall"))
+                .or(manifest.file(&format!("portrait.hero.{name}")))
+        });
     let handle: Handle<Image> = path.map(|p| server.load(p)).unwrap_or_default();
     if image.image != handle {
         image.image = handle;
     }
-    let tint = if p.is_some_and(|p| p.unit.is_none()) { Color::srgb(0.3, 0.3, 0.3) } else { Color::WHITE };
+    let tint = if p.is_some_and(|p| p.unit.is_none()) {
+        Color::srgb(0.3, 0.3, 0.3)
+    } else {
+        Color::WHITE
+    };
     if image.color != tint {
         image.color = tint;
     }
@@ -1095,12 +1360,20 @@ fn seats(
         if image.image != handle {
             image.image = handle;
         }
-        let tint = if p.unit.is_none() { Color::srgb(0.3, 0.3, 0.3) } else { Color::WHITE };
+        let tint = if p.unit.is_none() {
+            Color::srgb(0.3, 0.3, 0.3)
+        } else {
+            Color::WHITE
+        };
         if image.color != tint {
             image.color = tint;
         }
         let picked = p.unit.is_some() && p.unit == core.selected;
-        let edge = if picked { Color::WHITE } else { crate::overlay::team_color(p.team) };
+        let edge = if picked {
+            Color::WHITE
+        } else {
+            crate::overlay::team_color(p.team)
+        };
         if border.top != edge {
             *border = BorderColor::all(edge);
         }
@@ -1118,7 +1391,11 @@ fn stash(session: NonSend<Session>, mut strip: Single<&mut Visibility, With<Stas
         .and_then(|p| p.stash.as_ref())
         .is_some_and(|s| s.iter().any(Option::is_some));
     let show = full || core.at_home_shop() || core.held_item.is_some();
-    let want = if show { Visibility::Inherited } else { Visibility::Hidden };
+    let want = if show {
+        Visibility::Inherited
+    } else {
+        Visibility::Hidden
+    };
     if **strip != want {
         **strip = want;
     }

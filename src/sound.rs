@@ -64,12 +64,26 @@ fn sources_of(kind: Kind) -> (&'static [&'static str], Option<Sfx>) {
             CueKind::HeroKill => (&[], Some(Sfx::HeroKill)),
             CueKind::Refused => (&["sound.no_gold"], Some(Sfx::Refused)),
         },
-        Kind::CreepShot => (&["sound.creep.radiant.ranged.attack.", "sound.creep.dire.ranged.attack."], None),
-        Kind::TowerShot => (&["sound.tower.radiant.attack", "sound.tower.dire.attack"], None),
+        Kind::CreepShot => (
+            &[
+                "sound.creep.radiant.ranged.attack.",
+                "sound.creep.dire.ranged.attack.",
+            ],
+            None,
+        ),
+        Kind::TowerShot => (
+            &["sound.tower.radiant.attack", "sound.tower.dire.attack"],
+            None,
+        ),
     }
 }
 
-fn load(mut voices: ResMut<Voices>, manifest: Res<Manifest>, server: Res<AssetServer>, mut audio: ResMut<Assets<AudioSource>>) {
+fn load(
+    mut voices: ResMut<Voices>,
+    manifest: Res<Manifest>,
+    server: Res<AssetServer>,
+    mut audio: ResMut<Assets<AudioSource>>,
+) {
     let kinds = [
         CueKind::Attack,
         CueKind::Hit,
@@ -118,7 +132,11 @@ fn volume(settings: Res<Settings>, args: Res<crate::Args>, mut global: ResMut<Gl
     if !settings.is_changed() {
         return;
     }
-    let v = if settings.muted || args.mute { 0.0 } else { settings.volume };
+    let v = if settings.muted || args.mute {
+        0.0
+    } else {
+        settings.volume
+    };
     global.volume = Volume::Linear(v);
 }
 
@@ -157,9 +175,7 @@ fn play(
             PlaybackSettings::DESPAWN.with_volume(Volume::Linear(gain * fall)),
         ));
     };
-    let tick = core.view.as_ref().map_or(0, |v| v.tick);
     for cue in cues {
-        debug!("cue {:?} at tick {tick}", cue.kind);
         sound(Kind::Cue(cue.kind), cue.gain, cue.at);
     }
     shots(core, &mut sound);
@@ -174,7 +190,11 @@ fn shots(core: &bota_client_core::App, sound: &mut impl FnMut(Kind, f32, Option<
         return;
     }
     for p in view.projectiles.iter().filter(|p| p.ability.is_none()) {
-        if prev.projectiles.binary_search_by_key(&p.id, |q| q.id).is_ok() {
+        if prev
+            .projectiles
+            .binary_search_by_key(&p.id, |q| q.id)
+            .is_ok()
+        {
             continue;
         }
         let (px, py) = (p.pos.x.to_f32(), p.pos.y.to_f32());
@@ -185,8 +205,12 @@ fn shots(core: &bota_client_core::App, sound: &mut impl FnMut(Kind, f32, Option<
             .map(|u| (u, (u.pos.x.to_f32() - px).hypot(u.pos.y.to_f32() - py)))
             .min_by(|a, b| a.1.total_cmp(&b.1));
         match from {
-            Some((u, d)) if u.kind == UnitKind::Tower && d < 300.0 => sound(Kind::TowerShot, 0.7, Some((px, py))),
-            Some((u, d)) if u.kind == UnitKind::CreepRanged && d < 150.0 => sound(Kind::CreepShot, 0.35, Some((px, py))),
+            Some((u, d)) if u.kind == UnitKind::Tower && d < 300.0 => {
+                sound(Kind::TowerShot, 0.7, Some((px, py)))
+            }
+            Some((u, d)) if u.kind == UnitKind::CreepRanged && d < 150.0 => {
+                sound(Kind::CreepShot, 0.35, Some((px, py)))
+            }
             _ => {}
         }
     }

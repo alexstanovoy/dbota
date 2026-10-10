@@ -21,7 +21,7 @@ const BURST: f32 = 0.9;
 
 /// A missile on the map, by its wire handle.
 #[derive(Component)]
-struct Missile(EntityId);
+struct Missile;
 
 /// A burst on the ground, aging to its end.
 #[derive(Component)]
@@ -80,7 +80,9 @@ fn make_art(
         radiant: materials.add(glow(Color::srgb(0.6, 1.0, 0.5))),
         dire: materials.add(glow(Color::srgb(1.0, 0.45, 0.25))),
         soul_mat: materials.add(glow(Color::srgb(0.75, 0.3, 1.0))),
-        cracks: manifest.file("particle.ground_cracks").map(|p| server.load(p)),
+        cracks: manifest
+            .file("particle.ground_cracks")
+            .map(|p| server.load(p)),
     });
 }
 
@@ -111,7 +113,9 @@ fn missiles(
         let at = Vec3::new(f.x, ground.at(f.x, f.y) + FLIGHT, -f.y);
         let dir = Vec3::new(f.x - f.tail_x, 0.0, -(f.y - f.tail_y));
         let rotation = if dir.length_squared() > 1e-3 {
-            Transform::default().looking_to(dir.normalize(), Vec3::Y).rotation
+            Transform::default()
+                .looking_to(dir.normalize(), Vec3::Y)
+                .rotation
         } else {
             Quat::IDENTITY
         };
@@ -132,7 +136,7 @@ fn missiles(
                 };
                 let e = commands
                     .spawn((
-                        Missile(f.missile.id),
+                        Missile,
                         Mesh3d(mesh),
                         MeshMaterial3d(material),
                         Transform::from_translation(at).with_rotation(rotation),
@@ -175,7 +179,6 @@ fn bursts(
         if !(RAZE_NEAR..RAZE_NEAR + 3).contains(&id) || flying.burst.contains(&p.id) {
             continue;
         }
-        debug!("raze burst at tick {}", view.tick);
         flying.burst.push(p.id);
         if flying.burst.len() > 64 {
             flying.burst.remove(0);
@@ -198,7 +201,10 @@ fn bursts(
             ..default()
         });
         commands.spawn((
-            Burst { age: 0.0, material: scorch.clone() },
+            Burst {
+                age: 0.0,
+                material: scorch.clone(),
+            },
             Mesh3d(art.disc.clone()),
             MeshMaterial3d(scorch),
             Transform::from_translation(base).with_rotation(flat),
@@ -206,7 +212,10 @@ fn bursts(
             NotShadowReceiver,
         ));
         commands.spawn((
-            Burst { age: 0.0, material: flash.clone() },
+            Burst {
+                age: 0.0,
+                material: flash.clone(),
+            },
             Mesh3d(art.ring.clone()),
             MeshMaterial3d(flash),
             Transform::from_translation(base + Vec3::Y * 4.0).with_rotation(flat),

@@ -83,7 +83,9 @@ impl Manifest {
                     }
                 }
                 ["texture" | "sound", logical, _, path, ..] if present(path) => {
-                    manifest.files.push(((*logical).to_string(), (*path).to_string()));
+                    manifest
+                        .files
+                        .push(((*logical).to_string(), (*path).to_string()));
                 }
                 ["world", _, _, path, ..] if present(path) => {
                     manifest.map = Some(cache_path(path));
@@ -168,7 +170,9 @@ fn model(logical: &str, path: &str, rest: &[&str]) -> Model {
     Model {
         logical: logical.to_string(),
         path: cache_path(path),
-        scale: field("model_scale=").and_then(|s| s.parse().ok()).unwrap_or(1.0),
+        scale: field("model_scale=")
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(1.0),
         attach: field("attach=").map(str::to_string),
         clips: Vec::new(),
     }

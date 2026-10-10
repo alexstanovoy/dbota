@@ -52,12 +52,17 @@ fn shoot(
                 exit.write(AppExit::Success);
                 return;
             }
-            player.speed = if tick + SETTLE_TICKS < next { FAST } else { 1.0 };
+            player.speed = if tick + SETTLE_TICKS < next {
+                FAST
+            } else {
+                1.0
+            };
         }
         if tick < next {
             return;
         }
-        args.screenshot_dir.join(format!("{}{next:06}.png", args.screenshot_prefix))
+        args.screenshot_dir
+            .join(format!("{}{next:06}.png", args.screenshot_prefix))
     } else if let (Some(frames), Some(path)) = (args.frames, &args.screenshot) {
         if shots.frames < frames || shots.taken > 0 {
             return;
@@ -80,7 +85,9 @@ fn shoot(
     }
     let mut save = save_to_disk(path.clone());
     commands.spawn(Screenshot::primary_window()).observe(
-        move |captured: On<ScreenshotCaptured>, mut shots: ResMut<Shots>, mut exit: MessageWriter<AppExit>| {
+        move |captured: On<ScreenshotCaptured>,
+              mut shots: ResMut<Shots>,
+              mut exit: MessageWriter<AppExit>| {
             save(captured);
             info!("saved {}", path.display());
             shots.waiting = false;

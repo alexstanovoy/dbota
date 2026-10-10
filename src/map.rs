@@ -19,6 +19,10 @@ use crate::manifest::Manifest;
 use crate::session::{MatchKnown, Session};
 use crate::terrain::{self, CELL};
 
+/// How bright the baked terrain is against the lighting: Dota doubles its
+/// terrain's light, the rest of the scene does not.
+const TERRAIN_GAIN: f32 = 1.6;
+
 /// Source 2 inches to the metres the exporter writes, inverted.
 pub const UNITS_PER_METRE: f32 = 1.0 / 0.0254;
 /// Where Dota's origin lies in bota's coordinates, on both axes.
@@ -66,11 +70,6 @@ impl Ground {
     }
 }
 
-/// The Bevy point of a bota world point on the ground.
-pub fn on_ground(ground: &Ground, x: f32, y: f32) -> Vec3 {
-    Vec3::new(x, ground.at(x, y), -y)
-}
-
 /// The root of the map scene.
 #[derive(Component)]
 struct MapRoot;
@@ -84,8 +83,8 @@ struct MapPending {
 pub fn plugin(app: &mut App) {
     app.init_resource::<Ground>()
         .insert_resource(GlobalAmbientLight {
-            color: Color::srgb(0.85, 0.88, 1.0),
-            brightness: 420.0,
+            color: Color::srgb(0.72, 0.80, 1.0),
+            brightness: 330.0,
             ..default()
         })
         .insert_resource(ClearColor(Color::srgb(0.02, 0.03, 0.04)))
@@ -96,8 +95,8 @@ pub fn plugin(app: &mut App) {
 fn spawn_sun(mut commands: Commands, args: Res<crate::Args>) {
     commands.spawn((
         DirectionalLight {
-            illuminance: 9_000.0,
-            color: Color::srgb(1.0, 0.95, 0.85),
+            illuminance: 13_000.0,
+            color: Color::srgb(1.0, 0.88, 0.70),
             shadow_maps_enabled: !args.without.iter().any(|w| w == "shadows"),
             ..default()
         },
@@ -120,7 +119,12 @@ fn map_transform() -> Transform {
         .with_scale(Vec3::splat(UNITS_PER_METRE))
 }
 
-fn spawn_map(mut commands: Commands, server: Res<AssetServer>, manifest: Res<Manifest>, args: Res<crate::Args>) {
+fn spawn_map(
+    mut commands: Commands,
+    server: Res<AssetServer>,
+    manifest: Res<Manifest>,
+    args: Res<crate::Args>,
+) {
     if args.without.iter().any(|w| w == "map") {
         return;
     }
@@ -131,7 +135,9 @@ fn spawn_map(mut commands: Commands, server: Res<AssetServer>, manifest: Res<Man
     commands
         .spawn((MapRoot, WorldAssetRoot(scene), map_transform()))
         .observe(|ready: On<WorldInstanceReady>, mut commands: Commands| {
-            commands.entity(ready.entity).insert(MapPending { frames: 2 });
+            commands
+                .entity(ready.entity)
+                .insert(MapPending { frames: 2 });
         });
 }
 
@@ -151,7 +157,12 @@ fn prepare_map(
     mut commands: Commands,
     mut pending: Query<(Entity, &mut MapPending)>,
     children: Query<&Children>,
-    parts: Query<(&Mesh3d, &GlobalTransform, &MeshMaterial3d<StandardMaterial>, Option<&GltfMaterialExtras>)>,
+    parts: Query<(
+        &Mesh3d,
+        &GlobalTransform,
+        &MeshMaterial3d<StandardMaterial>,
+        Option<&GltfMaterialExtras>,
+    )>,
     mut assets: MapAssets,
     mut ground: ResMut<Ground>,
     args: Res<crate::Args>,
@@ -166,7 +177,9 @@ fn prepare_map(
     }
     let mut means = LayerMeans::new(assets.manifest.root.clone());
     let detail_mean = means.detail(&assets.manifest);
-    let terrain_material = assets.materials.add(terrain_material(&assets.server, &assets.manifest));
+    let terrain_material = assets
+        .materials
+        .add(terrain_material(&assets.server, &assets.manifest));
     let water_material = assets.materials.add(StandardMaterial {
         base_color: Color::srgba(0.10, 0.22, 0.26, 0.82),
         perceptual_roughness: 0.15,
@@ -196,13 +209,30 @@ fn prepare_map(
             _ if without("props") => continue,
             _ if without("overlays") && vmat.translucent => continue,
             _ => {
-                if let Some(mut m) = assets.materials.get_mut(&material.0) {
-                    dress_prop(&mut m, &vmat);
+                let Some(mut m) = assets.materials.get_mut(&material.0) else {
+                    continue;
+                };
+                // Path borders, ground edges and wagon tracks are tinted
+                // by what the export leaves out, all but black: drawn as
+                // they come they smear the lanes with dark bands.
+                if vmat.overlay
+                    && m.base_color
+                        .to_linear()
+                        .to_f32_array_no_alpha()
+                        .iter()
+                        .all(|c| *c < 0.05)
+                {
+                    continue;
                 }
+                dress_prop(&mut m, &vmat);
                 (material.0.clone(), false)
             }
         };
-        for attr in [&ATTRIBUTE_BLEND_WEIGHTS, &ATTRIBUTE_BLEND_ALPHAS, &ATTRIBUTE_PAINTED_TINT] {
+        for attr in [
+            &ATTRIBUTE_BLEND_WEIGHTS,
+            &ATTRIBUTE_BLEND_ALPHAS,
+            &ATTRIBUTE_PAINTED_TINT,
+        ] {
             mesh.remove_attribute(attr.id);
         }
         add_to_batches(&mut batches, mesh, global, material, terrain);
@@ -210,11 +240,11 @@ fn prepare_map(
     commands.entity(root).despawn();
     let count = batches.len();
     for batch in batches {
-        debug!("map batch: terrain {} vertices {}", batch.terrain, batch.mesh.count_vertices());
         let mut entity = commands.spawn((
             Mesh3d(assets.meshes.add(batch.mesh)),
             MeshMaterial3d(batch.material),
             Transform::IDENTITY,
+            crate::fog::Fogged,
         ));
         if batch.terrain {
             entity.insert(bevy::light::NotShadowCaster);
@@ -228,8 +258,12 @@ fn prepare_map(
         Mesh3d(assets.meshes.add(floor(&ground, 30.0))),
         MeshMaterial3d(assets.materials.add(floor_material)),
         bevy::light::NotShadowCaster,
+        crate::fog::Fogged,
     ));
-    info!("map prepared: {count} merged meshes, ground known on {} cells", ground.n * ground.n);
+    info!(
+        "map prepared: {count} merged meshes, ground known on {} cells",
+        ground.n * ground.n
+    );
 }
 
 /// Sets a prop's material the way its Dota shader blends: additive glows add,
@@ -263,7 +297,13 @@ const BATCH_VERTICES: usize = 1 << 20;
 
 /// Bakes a mesh's transform into it and appends it to the batch of its
 /// material and layout.
-fn add_to_batches(batches: &mut Vec<Batch>, mesh: Mesh, global: &GlobalTransform, material: Handle<StandardMaterial>, terrain: bool) {
+fn add_to_batches(
+    batches: &mut Vec<Batch>,
+    mesh: Mesh,
+    global: &GlobalTransform,
+    material: Handle<StandardMaterial>,
+    terrain: bool,
+) {
     if mesh.primitive_topology() != PrimitiveTopology::TriangleList {
         return;
     }
@@ -276,7 +316,10 @@ fn add_to_batches(batches: &mut Vec<Batch>, mesh: Mesh, global: &GlobalTransform
     let Some(aabb) = bevy::camera::primitives::MeshAabb::compute_aabb(&mesh) else {
         return;
     };
-    let chunk = ((aabb.center.x / BATCH_CHUNK) as i32, (aabb.center.z / BATCH_CHUNK) as i32);
+    let chunk = (
+        (aabb.center.x / BATCH_CHUNK) as i32,
+        (aabb.center.z / BATCH_CHUNK) as i32,
+    );
     let found = batches.iter_mut().find(|b| {
         b.material == material
             && b.chunk == chunk
@@ -318,7 +361,7 @@ fn compact(mesh: Mesh) -> Option<Mesh> {
     let mut out = Mesh::new(mesh.primitive_topology(), mesh.asset_usage);
     for (attribute, values) in mesh.attributes() {
         let picked = pick(values, &kept)?;
-        out.insert_attribute(attribute.clone(), picked);
+        out.insert_attribute(*attribute, picked);
     }
     out.insert_indices(Indices::U32(out_indices));
     Some(out)
@@ -345,17 +388,23 @@ fn pick(values: &VertexAttributeValues, kept: &[u32]) -> Option<VertexAttributeV
 fn bake_transform(mut mesh: Mesh, global: &GlobalTransform) -> Mesh {
     let affine = global.affine();
     let normal_matrix = Mat3::from(affine.matrix3).inverse().transpose();
-    if let Some(VertexAttributeValues::Float32x3(positions)) = mesh.attribute_mut(Mesh::ATTRIBUTE_POSITION) {
+    if let Some(VertexAttributeValues::Float32x3(positions)) =
+        mesh.attribute_mut(Mesh::ATTRIBUTE_POSITION)
+    {
         for p in positions.iter_mut() {
             *p = affine.transform_point3(Vec3::from(*p)).into();
         }
     }
-    if let Some(VertexAttributeValues::Float32x3(normals)) = mesh.attribute_mut(Mesh::ATTRIBUTE_NORMAL) {
+    if let Some(VertexAttributeValues::Float32x3(normals)) =
+        mesh.attribute_mut(Mesh::ATTRIBUTE_NORMAL)
+    {
         for n in normals.iter_mut() {
             *n = (normal_matrix * Vec3::from(*n)).normalize_or_zero().into();
         }
     }
-    if let Some(VertexAttributeValues::Float32x4(tangents)) = mesh.attribute_mut(Mesh::ATTRIBUTE_TANGENT) {
+    if let Some(VertexAttributeValues::Float32x4(tangents)) =
+        mesh.attribute_mut(Mesh::ATTRIBUTE_TANGENT)
+    {
         for t in tangents.iter_mut() {
             let v = (Mat3::from(affine.matrix3) * Vec3::new(t[0], t[1], t[2])).normalize_or_zero();
             *t = [v.x, v.y, v.z, t[3]];
@@ -364,7 +413,7 @@ fn bake_transform(mut mesh: Mesh, global: &GlobalTransform) -> Mesh {
     if affine.matrix3.determinant() < 0.0
         && let Some(Indices::U32(indices)) = mesh.indices_mut()
     {
-        for tri in indices.chunks_exact_mut(3) {
+        for tri in indices.as_chunks_mut::<3>().0 {
             tri.swap(1, 2);
         }
     }
@@ -393,14 +442,21 @@ impl LayerMeans {
     /// The mean linear colour of a Dota texture path's exported PNG; white
     /// when it cannot be read.
     fn of(&mut self, vtex: &str) -> [f32; 3] {
-        let name = vtex.rsplit('/').next().unwrap_or(vtex).trim_end_matches(".vtex").to_string();
+        let name = vtex
+            .rsplit('/')
+            .next()
+            .unwrap_or(vtex)
+            .trim_end_matches(".vtex")
+            .to_string();
         if let Some(mean) = self.known.get(&name) {
             return *mean;
         }
         let mean = self
             .root
             .as_ref()
-            .and_then(|root| std::fs::read(root.join("textures/ground").join(format!("{name}.png"))).ok())
+            .and_then(|root| {
+                std::fs::read(root.join("textures/ground").join(format!("{name}.png"))).ok()
+            })
             .and_then(|bytes| mean_color(&bytes))
             .unwrap_or([0.5; 3]);
         self.known.insert(name, mean);
@@ -484,6 +540,8 @@ struct Vmat {
     additive: bool,
     /// Whether the material lets what is behind show through.
     translucent: bool,
+    /// Whether the material is a decal laid on other surfaces.
+    overlay: bool,
     /// Each layer's tint, the mean of its two tints, linear RGB.
     tints: [[f32; 3]; 4],
     /// Each layer's colour texture, as Dota names it.
@@ -513,8 +571,7 @@ impl Vmat {
                 .filter(|b| b.iter().any(|c| *c < 0.99))
                 .unwrap_or(a);
             for c in 0..3 {
-                *tint.get_mut(c).expect("three channels") =
-                    srgb_to_linear((a[c] + b[c]) * 0.5);
+                *tint.get_mut(c).expect("three channels") = srgb_to_linear((a[c] + b[c]) * 0.5);
             }
         }
         let textures = [0, 1, 2, 3].map(|layer| {
@@ -528,6 +585,7 @@ impl Vmat {
             shader,
             additive: flag("F_ADDITIVE_BLEND"),
             translucent: flag("F_TRANSLUCENT") || flag("F_OVERLAY") || flag("F_BLEND_MODE"),
+            overlay: flag("F_OVERLAY"),
             tints,
             textures,
         }
@@ -586,7 +644,7 @@ fn bake_terrain(mesh: &mut Mesh, vmat: &Vmat, means: &mut LayerMeans, detail: f3
                 let layered = w0 * t[0][ch] + w1 * t[1][ch] + w2 * t[2][ch] + w3 * t[3][ch];
                 // Dota doubles its terrain's light; the detail texture's
                 // own brightness is taken back out.
-                c[ch] = (layered * srgb_to_linear(p[ch]) * 2.0 / detail).min(1.5);
+                c[ch] = (layered * srgb_to_linear(p[ch]) * TERRAIN_GAIN / detail).min(1.5);
             }
             c
         })
@@ -697,7 +755,10 @@ pub fn floor(ground: &Ground, below: f32) -> Mesh {
             indices.extend_from_slice(&[a, b, d, a, d, c]);
         }
     }
-    let mut mesh = Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::RENDER_WORLD);
+    let mut mesh = Mesh::new(
+        PrimitiveTopology::TriangleList,
+        RenderAssetUsages::RENDER_WORLD,
+    );
     mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, positions);
     mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, uvs);
     mesh.insert_indices(Indices::U32(indices));
@@ -724,7 +785,10 @@ fn build_fallback_ground(
     let core = &session.0;
     let n = core.terrain_cells;
     let built = terrain::build(&core.terrain, n, 512.0);
-    let mut mesh = Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::RENDER_WORLD);
+    let mut mesh = Mesh::new(
+        PrimitiveTopology::TriangleList,
+        RenderAssetUsages::RENDER_WORLD,
+    );
     let to_bevy = |p: &[f32; 3]| [p[0], p[2], -p[1]];
     mesh.insert_attribute(
         Mesh::ATTRIBUTE_POSITION,
@@ -736,7 +800,9 @@ fn build_fallback_ground(
     );
     // Under a map from the cache it only shows where the map was cut off.
     let sink = if manifest.map.is_some() { 40.0 } else { 0.0 };
-    if let Some(VertexAttributeValues::Float32x3(positions)) = mesh.attribute_mut(Mesh::ATTRIBUTE_POSITION) {
+    if let Some(VertexAttributeValues::Float32x3(positions)) =
+        mesh.attribute_mut(Mesh::ATTRIBUTE_POSITION)
+    {
         for p in positions.iter_mut() {
             p[1] -= sink;
         }

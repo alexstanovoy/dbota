@@ -64,11 +64,18 @@ enum CornerButton {
 pub fn plugin(app: &mut App) {
     app.add_systems(Startup, spawn).add_systems(
         Update,
-        (show, prices, filter, clicks, scroll, texts).run_if(|k: Res<crate::session::MatchKnown>| k.0),
+        (show, prices, filter, clicks, scroll, texts)
+            .run_if(|k: Res<crate::session::MatchKnown>| k.0),
     );
 }
 
-fn spawn(mut commands: Commands, fonts: Res<Fonts>, manifest: Res<Manifest>, server: Res<AssetServer>, settings: Res<Settings>) {
+fn spawn(
+    mut commands: Commands,
+    fonts: Res<Fonts>,
+    manifest: Res<Manifest>,
+    server: Res<AssetServer>,
+    settings: Res<Settings>,
+) {
     let corner = commands
         .spawn((
             Node {
@@ -83,7 +90,10 @@ fn spawn(mut commands: Commands, fonts: Res<Fonts>, manifest: Res<Manifest>, ser
             Pickable::IGNORE,
         ))
         .id();
-    for (button, text) in [(CornerButton::Courier, ShopText::Courier), (CornerButton::Quick, ShopText::Quick)] {
+    for (button, text) in [
+        (CornerButton::Courier, ShopText::Courier),
+        (CornerButton::Quick, ShopText::Quick),
+    ] {
         let b = commands
             .spawn((
                 button,
@@ -123,11 +133,28 @@ fn spawn(mut commands: Commands, fonts: Res<Fonts>, manifest: Res<Manifest>, ser
         ))
         .id();
     if let Some(coin) = manifest.file("hud.gold") {
-        commands.spawn((ImageNode::new(server.load(coin)), Node { width: px(26), height: px(26), ..default() }, ChildOf(button)));
+        commands.spawn((
+            ImageNode::new(server.load(coin)),
+            Node {
+                width: px(26),
+                height: px(26),
+                ..default()
+            },
+            ChildOf(button),
+        ));
     }
-    commands.spawn((ShopText::Gold, ui::text("0", &fonts.bold, 24.0, ui::GOLDEN), ChildOf(button)));
     commands.spawn((
-        ui::text(format!("SHOP [{}]", key_name(settings.key(Action::Shop))), &fonts.bold, 11.0, ui::INK_DIM),
+        ShopText::Gold,
+        ui::text("0", &fonts.bold, 24.0, ui::GOLDEN),
+        ChildOf(button),
+    ));
+    commands.spawn((
+        ui::text(
+            format!("SHOP [{}]", key_name(settings.key(Action::Shop))),
+            &fonts.bold,
+            11.0,
+            ui::INK_DIM,
+        ),
         ChildOf(button),
     ));
     spawn_panel(&mut commands, &fonts, &manifest, &server);
@@ -173,7 +200,11 @@ fn spawn_panel(commands: &mut Commands, fonts: &Fonts, manifest: &Manifest, serv
             ChildOf(panel),
         ))
         .id();
-    commands.spawn((ShopText::Search, ui::text("", &fonts.regular, 14.0, ui::INK_DIM), ChildOf(search)));
+    commands.spawn((
+        ShopText::Search,
+        ui::text("", &fonts.regular, 14.0, ui::INK_DIM),
+        ChildOf(search),
+    ));
     let grid = commands
         .spawn((
             ShopGrid,
@@ -190,9 +221,20 @@ fn spawn_panel(commands: &mut Commands, fonts: &Fonts, manifest: &Manifest, serv
         .id();
     for (group, name) in SHOP_GROUPS.iter().enumerate() {
         let block = commands
-            .spawn((GroupBlock(group), Node { flex_direction: FlexDirection::Column, row_gap: px(4), ..default() }, ChildOf(grid)))
+            .spawn((
+                GroupBlock(group),
+                Node {
+                    flex_direction: FlexDirection::Column,
+                    row_gap: px(4),
+                    ..default()
+                },
+                ChildOf(grid),
+            ))
             .id();
-        commands.spawn((ui::text(name.to_ascii_uppercase(), &fonts.bold, 11.0, ui::GOLDEN), ChildOf(block)));
+        commands.spawn((
+            ui::text(name.to_ascii_uppercase(), &fonts.bold, 11.0, ui::GOLDEN),
+            ChildOf(block),
+        ));
         let row = commands
             .spawn((
                 Node {
@@ -223,9 +265,26 @@ fn spawn_panel(commands: &mut Commands, fonts: &Fonts, manifest: &Manifest, serv
                     ChildOf(row),
                 ))
                 .id();
-            let icon = manifest.item_icon(face.id).map(|p| server.load(p)).unwrap_or_default();
-            commands.spawn((ImageNode::new(icon), Node { width: px(64), height: px(46), ..default() }, Pickable::IGNORE, ChildOf(cell)));
-            commands.spawn((Price(face.id), ui::text("", &fonts.bold, 12.0, ui::GOLDEN), Pickable::IGNORE, ChildOf(cell)));
+            let icon = manifest
+                .item_icon(face.id)
+                .map(|p| server.load(p))
+                .unwrap_or_default();
+            commands.spawn((
+                ImageNode::new(icon),
+                Node {
+                    width: px(64),
+                    height: px(46),
+                    ..default()
+                },
+                Pickable::IGNORE,
+                ChildOf(cell),
+            ));
+            commands.spawn((
+                Price(face.id),
+                ui::text("", &fonts.bold, 12.0, ui::GOLDEN),
+                Pickable::IGNORE,
+                ChildOf(cell),
+            ));
         }
     }
     let sell = commands
@@ -245,21 +304,34 @@ fn spawn_panel(commands: &mut Commands, fonts: &Fonts, manifest: &Manifest, serv
         ))
         .id();
     commands.spawn((
-        ui::text("drop an item here to sell it   right-click: quick-buy", &fonts.regular, 12.0, ui::INK_DIM),
+        ui::text(
+            "drop an item here to sell it   right-click: quick-buy",
+            &fonts.regular,
+            12.0,
+            ui::INK_DIM,
+        ),
         ChildOf(sell),
     ));
 }
 
 /// Shows the panel while the shop is open.
 fn show(panels: Res<Panels>, mut panel: Single<&mut Visibility, With<ShopPanel>>) {
-    let want = if panels.shop { Visibility::Inherited } else { Visibility::Hidden };
+    let want = if panels.shop {
+        Visibility::Inherited
+    } else {
+        Visibility::Hidden
+    };
     if **panel != want {
         **panel = want;
     }
 }
 
 /// The price of every cell for this seat, dimmed when out of reach.
-fn prices(session: NonSend<Session>, mut texts: Query<(&Price, &mut Text, &mut TextColor)>, panels: Res<Panels>) {
+fn prices(
+    session: NonSend<Session>,
+    mut texts: Query<(&Price, &mut Text, &mut TextColor)>,
+    panels: Res<Panels>,
+) {
     if !panels.shop {
         return;
     }
@@ -276,7 +348,11 @@ fn prices(session: NonSend<Session>, mut texts: Query<(&Price, &mut Text, &mut T
         if text.0 != s {
             text.0 = s;
         }
-        let c = if gold >= now { ui::GOLDEN } else { Color::srgb(0.55, 0.45, 0.3) };
+        let c = if gold >= now {
+            ui::GOLDEN
+        } else {
+            Color::srgb(0.55, 0.45, 0.3)
+        };
         if color.0 != c {
             color.0 = c;
         }
@@ -284,7 +360,11 @@ fn prices(session: NonSend<Session>, mut texts: Query<(&Price, &mut Text, &mut T
 }
 
 /// Hides the cells and groups the search does not answer.
-fn filter(panels: Res<Panels>, mut cells: Query<(&ShopCell, &mut Node), Without<GroupBlock>>, mut blocks: Query<(&GroupBlock, &mut Node), Without<ShopCell>>) {
+fn filter(
+    panels: Res<Panels>,
+    mut cells: Query<(&ShopCell, &mut Node), Without<GroupBlock>>,
+    mut blocks: Query<(&GroupBlock, &mut Node), Without<ShopCell>>,
+) {
     if !panels.is_changed() {
         return;
     }
@@ -301,7 +381,11 @@ fn filter(panels: Res<Panels>, mut cells: Query<(&ShopCell, &mut Node), Without<
         }
     }
     for (block, mut node) in &mut blocks {
-        let display = if groups[block.0] { Display::Flex } else { Display::None };
+        let display = if groups[block.0] {
+            Display::Flex
+        } else {
+            Display::None
+        };
         if node.display != display {
             node.display = display;
         }
@@ -309,7 +393,6 @@ fn filter(panels: Res<Panels>, mut cells: Query<(&ShopCell, &mut Node), Without<
 }
 
 /// Clicks on the shop and its buttons.
-#[allow(clippy::too_many_arguments)]
 fn clicks(
     mut session: NonSendMut<Session>,
     buttons: Res<ButtonInput<MouseButton>>,
@@ -348,7 +431,11 @@ fn clicks(
         if left && live {
             core.act(Intent::Buy(cell.0));
         } else if right {
-            core.quick_buy = if core.quick_buy == Some(cell.0) { None } else { Some(cell.0) };
+            core.quick_buy = if core.quick_buy == Some(cell.0) {
+                None
+            } else {
+                Some(cell.0)
+            };
         }
     }
     if buttons.just_released(MouseButton::Left)
@@ -386,12 +473,21 @@ fn texts(
     mut corner: Query<(&CornerButton, &mut Visibility)>,
 ) {
     let core = &session.0;
-    let me = core.view.as_ref().and_then(|v| v.players.iter().find(|p| Some(p.slot) == core.my_slot));
-    let quick = core.quick_buy.and_then(|id| ITEMS.iter().find(|f| f.id == id));
-    let stash_full = me.and_then(|p| p.stash.as_ref()).is_some_and(|s| s.iter().any(Option::is_some));
+    let me = core
+        .view
+        .as_ref()
+        .and_then(|v| v.players.iter().find(|p| Some(p.slot) == core.my_slot));
+    let quick = core
+        .quick_buy
+        .and_then(|id| ITEMS.iter().find(|f| f.id == id));
+    let stash_full = me
+        .and_then(|p| p.stash.as_ref())
+        .is_some_and(|s| s.iter().any(Option::is_some));
     for (which, mut text) in &mut texts {
         let s = match which {
-            ShopText::Gold => me.and_then(|p| p.gold).map_or("-".to_string(), |g| g.to_string()),
+            ShopText::Gold => me
+                .and_then(|p| p.gold)
+                .map_or("-".to_string(), |g| g.to_string()),
             ShopText::Search => match (*typing == Typing::Search, panels.search.is_empty()) {
                 (true, _) => format!("{}_", panels.search),
                 (false, true) => "Search (click here)".to_string(),
@@ -403,9 +499,17 @@ fn texts(
                     .iter()
                     .filter_map(|p| ITEMS.iter().find(|i| i.id == p.0).map(|i| i.name))
                     .collect();
-                format!("Quick-buy {} [{}]: {}", f.name, key_name(settings.key(Action::QuickBuy)), missing.join(", "))
+                format!(
+                    "Quick-buy {} [{}]: {}",
+                    f.name,
+                    key_name(settings.key(Action::QuickBuy)),
+                    missing.join(", ")
+                )
             }),
-            ShopText::Courier => format!("Courier: deliver [{}]", key_name(settings.key(Action::CourierDeliver))),
+            ShopText::Courier => format!(
+                "Courier: deliver [{}]",
+                key_name(settings.key(Action::CourierDeliver))
+            ),
         };
         if text.0 != s {
             text.0 = s;
@@ -416,7 +520,11 @@ fn texts(
             CornerButton::Quick => quick.is_some(),
             CornerButton::Courier => stash_full && !core.at_home_shop(),
         };
-        let want = if show { Visibility::Inherited } else { Visibility::Hidden };
+        let want = if show {
+            Visibility::Inherited
+        } else {
+            Visibility::Hidden
+        };
         if *vis != want {
             *vis = want;
         }

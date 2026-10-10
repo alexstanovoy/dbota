@@ -35,56 +35,6 @@ pub enum Sfx {
     HeroKill,
     /// An order turned down.
     Refused,
-    /// A click on the interface.
-    Click,
-}
-
-/// Every effect, in the order [`Sfx::index`] counts them.
-pub const ALL_SFX: [Sfx; 14] = [
-    Sfx::Attack,
-    Sfx::Hit,
-    Sfx::LastHit,
-    Sfx::Deny,
-    Sfx::Raze,
-    Sfx::Requiem,
-    Sfx::LowHp,
-    Sfx::Buy,
-    Sfx::LevelUp,
-    Sfx::TowerShot,
-    Sfx::HeroDeath,
-    Sfx::HeroKill,
-    Sfx::Refused,
-    Sfx::Click,
-];
-
-impl Sfx {
-    /// The name a cached replacement of this effect is filed under.
-    pub fn name(self) -> &'static str {
-        match self {
-            Sfx::Attack => "attack",
-            Sfx::Hit => "hit",
-            Sfx::LastHit => "last_hit",
-            Sfx::Deny => "deny",
-            Sfx::Raze => "raze",
-            Sfx::Requiem => "requiem",
-            Sfx::LowHp => "low_hp",
-            Sfx::Buy => "buy",
-            Sfx::LevelUp => "level_up",
-            Sfx::TowerShot => "tower_shot",
-            Sfx::HeroDeath => "hero_death",
-            Sfx::HeroKill => "hero_kill",
-            Sfx::Refused => "refused",
-            Sfx::Click => "click",
-        }
-    }
-
-    /// Where this effect sits in [`ALL_SFX`].
-    pub fn index(self) -> usize {
-        ALL_SFX
-            .iter()
-            .position(|sfx| *sfx == self)
-            .expect("every effect is listed")
-    }
 }
 
 /// The samples of one effect, mono, in `-1..=1`.
@@ -103,7 +53,6 @@ pub fn synth(sfx: Sfx) -> Vec<f32> {
         Sfx::HeroDeath => (hero_death(), 0.50),
         Sfx::HeroKill => (hero_kill(), 0.45),
         Sfx::Refused => (refused(), 0.28),
-        Sfx::Click => (click(), 0.22),
     };
     normalize(&mut wave, peak);
     wave
@@ -371,15 +320,6 @@ fn refused() -> Vec<f32> {
     let mut lp = LowPass(0.0);
     for s in wave.iter_mut() {
         *s = lp.step(*s, 1800.0);
-    }
-    wave
-}
-
-fn click() -> Vec<f32> {
-    let mut wave = vec![0.0; len(0.02)];
-    let mut noise = Noise(0x0c11_c4ed);
-    for (i, s) in wave.iter_mut().enumerate() {
-        *s = noise.next() * env(at(i), 0.0005, 0.003);
     }
     wave
 }

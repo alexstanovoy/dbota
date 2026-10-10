@@ -5,6 +5,9 @@
 //! stand-ins when the cache is missing. World mapping (see `coords`): bota
 //! (x, y) with y north maps to Bevy (x, height, -y).
 
+// Bevy systems take their data as arguments and queries.
+#![allow(clippy::too_many_arguments, clippy::type_complexity)]
+
 mod anim;
 mod bars;
 mod camera;
@@ -132,7 +135,10 @@ fn main() -> AppExit {
     };
     let manifest = manifest::Manifest::load(&args.cache_dir);
     let settings_path = args.config.clone().or_else(config::default_path);
-    let settings = settings_path.as_deref().map(config::load).unwrap_or_default();
+    let settings = settings_path
+        .as_deref()
+        .map(config::load)
+        .unwrap_or_default();
     let mut app = App::new();
     app.insert_resource(args.clone())
         .insert_resource(manifest)
@@ -158,8 +164,21 @@ fn main() -> AppExit {
             capture::plugin,
             trees::plugin,
         ))
-        .add_plugins((ui::plugin, bars::plugin, overlay::plugin, hud::plugin, input::plugin, minimap::plugin))
-        .add_plugins((sound::plugin, effects::plugin, shop::plugin, menu::plugin, tips::plugin));
+        .add_plugins((
+            ui::plugin,
+            bars::plugin,
+            overlay::plugin,
+            hud::plugin,
+            input::plugin,
+            minimap::plugin,
+        ))
+        .add_plugins((
+            sound::plugin,
+            effects::plugin,
+            shop::plugin,
+            menu::plugin,
+            tips::plugin,
+        ));
     app.run()
 }
 

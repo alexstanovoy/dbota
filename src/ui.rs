@@ -66,6 +66,14 @@ pub fn text(s: impl Into<String>, font: &Handle<Font>, size: f32, color: Color) 
     )
 }
 
+/// The thin dark outline every HUD text carries, so it reads on any ground.
+pub fn shadow() -> TextShadow {
+    TextShadow {
+        offset: Vec2::splat(1.0),
+        color: Color::srgba(0.0, 0.0, 0.0, 0.9),
+    }
+}
+
 /// A node placed at a corner of its parent.
 pub fn absolute(left: f32, top: f32, width: f32, height: f32) -> Node {
     Node {

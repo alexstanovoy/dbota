@@ -47,7 +47,10 @@ pub fn plugin(app: &mut App) {
     app.init_resource::<Bars>()
         .init_resource::<Floaters>()
         .add_systems(Startup, spawn_layer)
-        .add_systems(PostUpdate, (bars, floaters).after(TransformSystems::Propagate));
+        .add_systems(
+            PostUpdate,
+            (bars, floaters).after(TransformSystems::Propagate),
+        );
 }
 
 fn spawn_layer(mut commands: Commands, fonts: Res<Fonts>, mut pool: ResMut<Floaters>) {
@@ -67,10 +70,7 @@ fn spawn_layer(mut commands: Commands, fonts: Res<Fonts>, mut pool: ResMut<Float
         let text = commands
             .spawn((
                 ui::text("", &fonts.bold, 16.0, Color::WHITE),
-                TextShadow {
-                    offset: Vec2::splat(1.5),
-                    ..default()
-                },
+                ui::shadow(),
                 Node {
                     position_type: PositionType::Absolute,
                     ..default()
@@ -154,7 +154,11 @@ fn spawn_bar(commands: &mut Commands, layer: Entity, fonts: &Fonts, kind: UnitKi
             ))
             .id();
         commands
-            .spawn((ui::absolute(0.0, 0.0, w, 4.0), BackgroundColor(ui::MANA), ChildOf(well)))
+            .spawn((
+                ui::absolute(0.0, 0.0, w, 4.0),
+                BackgroundColor(ui::MANA),
+                ChildOf(well),
+            ))
             .id()
     });
     let level = hero.then(|| {
@@ -182,7 +186,8 @@ fn spawn_bar(commands: &mut Commands, layer: Entity, fonts: &Fonts, kind: UnitKi
         commands
             .spawn((
                 ui::text("", &fonts.bold, 12.0, ui::INK),
-                TextShadow::default(),
+                ui::shadow(),
+                TextLayout::no_wrap(),
                 Node {
                     position_type: PositionType::Absolute,
                     bottom: px(h + 3.0),
@@ -218,7 +223,6 @@ struct BarParams<'w, 's> {
     camera: Single<'w, 's, (&'static Camera, &'static GlobalTransform)>,
 }
 
-#[allow(clippy::type_complexity)]
 fn bars(
     session: NonSend<Session>,
     mut p: BarParams,
@@ -233,16 +237,27 @@ fn bars(
     let layer = layer.0;
     let (camera, cam_gt) = *p.camera;
     let scale = p.ui_scale.0.max(0.1);
-    let me = core.ears().and_then(|id| view.units.iter().find(|u| u.id == id));
+    let me = core
+        .ears()
+        .and_then(|id| view.units.iter().find(|u| u.id == id));
     let mut alive = Vec::new();
     for (entity, unit, dying) in &units {
         let Some((w, h)) = bar_size(unit.kind) else {
             continue;
         };
-        let Some(live) = view.units.iter().find(|u| u.id == unit.id).filter(|_| !dying) else {
+        let Some(live) = view
+            .units
+            .iter()
+            .find(|u| u.id == unit.id)
+            .filter(|_| !dying)
+        else {
             continue;
         };
-        let head = Vec3::new(unit.at.x, p.ground.at(unit.at.x, unit.at.y) + bar_height(unit.kind), -unit.at.y);
+        let head = Vec3::new(
+            unit.at.x,
+            p.ground.at(unit.at.x, unit.at.y) + bar_height(unit.kind),
+            -unit.at.y,
+        );
         let Ok(screen) = camera.world_to_viewport(cam_gt, head) else {
             continue;
         };
@@ -264,8 +279,20 @@ fn bars(
         let share = live.hp.max(0) as f32 / max;
         let ghost = core.derived.ghost(live.id, live.hp) / max;
         let color = bar_color(core, live);
-        set(&mut nodes, bar.fill, |n| n.width = px(w * share), None, Some(color));
-        set(&mut nodes, bar.ghost, |n| n.width = px(w * ghost.min(1.0)), None, None);
+        set(
+            &mut nodes,
+            bar.fill,
+            |n| n.width = px(w * share),
+            None,
+            Some(color),
+        );
+        set(
+            &mut nodes,
+            bar.ghost,
+            |n| n.width = px(w * ghost.min(1.0)),
+            None,
+            None,
+        );
         if let Some(mana) = bar.mana {
             let m = live.mana.max(0) as f32 / live.max_mana.max(1) as f32;
             set(&mut nodes, mana, |n| n.width = px(w * m), None, None);
@@ -286,13 +313,28 @@ fn bars(
                 t.0 = s;
             }
         }
-        kill_mark(&mut nodes, &bar, live, me, w, p.settings.aids.last_hit_marks);
+        kill_mark(
+            &mut nodes,
+            &bar,
+            live,
+            me,
+            w,
+            p.settings.aids.last_hit_marks,
+        );
         let threat = me.is_some_and(|me| {
-            live.kind != UnitKind::Hero && live.team != me.team && crate::overlay::targets(core, live.id, me.id)
+            live.kind != UnitKind::Hero
+                && live.team != me.team
+                && crate::overlay::targets(core, live.id, me.id)
         });
         set(&mut nodes, bar.threat, |_| {}, Some(threat), None);
     }
-    let gone: Vec<Entity> = p.bars.0.keys().filter(|e| !alive.contains(e)).copied().collect();
+    let gone: Vec<Entity> = p
+        .bars
+        .0
+        .keys()
+        .filter(|e| !alive.contains(e))
+        .copied()
+        .collect();
     for entity in gone {
         if let Some(bar) = p.bars.0.remove(&entity) {
             p.commands.entity(bar.root).despawn();
@@ -313,7 +355,11 @@ fn set(
     };
     layout(&mut node);
     if let Some(show) = show {
-        let want = if show { Visibility::Inherited } else { Visibility::Hidden };
+        let want = if show {
+            Visibility::Inherited
+        } else {
+            Visibility::Hidden
+        };
         if *visibility != want {
             *visibility = want;
         }
@@ -385,34 +431,57 @@ fn floaters(
     settings: Res<Settings>,
     ui_scale: Res<UiScale>,
     camera: Single<(&Camera, &GlobalTransform)>,
-    mut texts: Query<(&mut Text, &mut TextFont, &mut TextColor, &mut Node, &mut Visibility)>,
+    mut texts: Query<(
+        &mut Text,
+        &mut TextFont,
+        &mut TextColor,
+        &mut Node,
+        &mut Visibility,
+    )>,
 ) {
     let core = &session.0;
     let (camera, cam_gt) = *camera;
     let scale = ui_scale.0.max(0.1);
     let numbers = settings.aids.numbers;
-    let mut shown = core
+    let shown: Vec<_> = core
         .floaters
         .iter()
-        .filter(|f| numbers || matches!(f.kind, FloaterKind::Gold | FloaterKind::Deny | FloaterKind::Level))
+        .filter(|f| {
+            numbers
+                || matches!(
+                    f.kind,
+                    FloaterKind::Gold | FloaterKind::Deny | FloaterKind::Level
+                )
+        })
         .rev()
-        .take(FLOATERS);
+        .take(FLOATERS)
+        .collect();
     for (i, entity) in pool.0.iter().enumerate() {
-        let Ok((mut text, mut font, mut color, mut node, mut visibility)) = texts.get_mut(*entity) else {
+        let Ok((mut text, mut font, mut color, mut node, mut visibility)) = texts.get_mut(*entity)
+        else {
             continue;
         };
-        let Some(f) = shown.next() else {
+        let Some(f) = shown.get(i) else {
             if *visibility != Visibility::Hidden {
                 *visibility = Visibility::Hidden;
             }
             continue;
         };
+        // Floaters set off together from one place stack upwards.
+        let stacked = shown[..i]
+            .iter()
+            .filter(|g| {
+                (g.age - f.age).abs() < 0.6
+                    && Vec2::from(g.world).distance(Vec2::from(f.world)) < 120.0
+            })
+            .count();
         let k = (f.age / FLOATER_LIFE).clamp(0.0, 1.0);
         let (size, tint) = look(f.kind);
-        let pop = 1.0 + 0.45 * (1.0 - (k * 6.0).min(1.0));
-        let rise = (1.0 - (1.0 - k) * (1.0 - k)) * 120.0;
+        let pop = 1.0 + 0.35 * (1.0 - (k * 6.0).min(1.0));
+        let rise = (1.0 - (1.0 - k) * (1.0 - k)) * 110.0;
         let (x, y) = f.world;
-        let at = Vec3::new(x, ground.at(x, y) + 200.0 + rise, -y);
+        // Above the health bars, which float about 260 over a hero.
+        let at = Vec3::new(x, ground.at(x, y) + 300.0 + rise, -y);
         let Ok(screen) = camera.world_to_viewport(cam_gt, at) else {
             *visibility = Visibility::Hidden;
             continue;
@@ -423,9 +492,9 @@ fn floaters(
         }
         font.font_size = FontSize::Px(size * pop);
         color.0 = tint.with_alpha(fade);
-        let jitter = ((i % 3) as f32 - 1.0) * 10.0;
-        node.left = px(screen.x / scale - size * 0.4 * f.text.len() as f32 * 0.5 + jitter);
-        node.top = px(screen.y / scale - size);
+        let width = size * pop * 0.56 * f.text.chars().count() as f32;
+        node.left = px(screen.x / scale - width / 2.0);
+        node.top = px(screen.y / scale - size - stacked as f32 * (size + 2.0));
         *visibility = Visibility::Inherited;
     }
 }

@@ -4,7 +4,10 @@
 //! the HUD's boxes.
 
 use bevy::{
-    input::{ButtonState, keyboard::{Key, KeyboardInput}},
+    input::{
+        ButtonState,
+        keyboard::{Key, KeyboardInput},
+    },
     prelude::*,
     window::PrimaryWindow,
 };
@@ -49,7 +52,10 @@ pub fn plugin(app: &mut App) {
     app.init_resource::<OverHud>()
         .init_resource::<Typing>()
         .init_resource::<Panels>()
-        .add_systems(Startup, |mut panels: ResMut<Panels>, args: Res<crate::Args>| panels.shop = args.open_shop)
+        .add_systems(
+            Startup,
+            |mut panels: ResMut<Panels>, args: Res<crate::Args>| panels.shop = args.open_shop,
+        )
         .add_systems(Update, (over_hud, typing, keys, mouse, boxes).chain());
 }
 
@@ -131,7 +137,6 @@ fn typing(
 }
 
 /// The hotkeys.
-#[allow(clippy::too_many_arguments)]
 fn keys(
     mut session: NonSendMut<Session>,
     keys: Res<ButtonInput<KeyCode>>,
@@ -174,7 +179,10 @@ fn keys(
         return;
     }
     if core.phase == bota_client_core::Phase::Lobby {
-        for (i, key) in [KeyCode::Digit1, KeyCode::Digit2, KeyCode::Digit3].into_iter().enumerate() {
+        for (i, key) in [KeyCode::Digit1, KeyCode::Digit2, KeyCode::Digit3]
+            .into_iter()
+            .enumerate()
+        {
             if keys.just_pressed(key) {
                 core.act(Intent::PickHero(i as u16));
             }
@@ -238,7 +246,11 @@ pub fn press(core: &mut bota_client_core::App, slot: Slot, ctrl: bool) {
 
 /// Escape lets go of what is half done, closes what is open, and leaves when
 /// the match is over.
-fn escape(core: &mut bota_client_core::App, panels: &mut Panels, exit: &mut MessageWriter<AppExit>) {
+fn escape(
+    core: &mut bota_client_core::App,
+    panels: &mut Panels,
+    exit: &mut MessageWriter<AppExit>,
+) {
     if core.attack_move_armed || core.aiming.is_some() || core.held_item.is_some() {
         core.attack_move_armed = false;
         core.aiming = None;
@@ -300,7 +312,6 @@ fn mouse(
 
 /// Clicks and drags on the HUD's boxes: an ability box presses its slot, an
 /// item box is picked up and dropped on another box, a seat, or the world.
-#[allow(clippy::type_complexity)]
 fn boxes(
     mut session: NonSendMut<Session>,
     buttons: Res<ButtonInput<MouseButton>>,
@@ -319,8 +330,14 @@ fn boxes(
             press(core, Slot::Ability(*slot), ctrl);
         }
     }
-    let hovered_item = items.iter().find(|(i, _)| **i != Interaction::None).map(|(_, b)| b.0);
-    let hovered_seat = seats.iter().find(|(i, _)| **i != Interaction::None).map(|(_, b)| b.0);
+    let hovered_item = items
+        .iter()
+        .find(|(i, _)| **i != Interaction::None)
+        .map(|(_, b)| b.0);
+    let hovered_seat = seats
+        .iter()
+        .find(|(i, _)| **i != Interaction::None)
+        .map(|(_, b)| b.0);
     if buttons.just_pressed(MouseButton::Left) {
         if let Some(slot) = hovered_item
             && controls

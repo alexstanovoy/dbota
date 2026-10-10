@@ -47,7 +47,6 @@ struct Wanted {
     t: f32,
 }
 
-#[allow(clippy::type_complexity)]
 fn animate(
     session: NonSend<Session>,
     bank: Res<ModelBank>,
@@ -72,8 +71,13 @@ fn animate(
         let clip = |name: &str| clips.iter().find(|c| c.0 == name && c.2 > 0.0);
         let live = view.units.iter().find(|u| u.id == unit.id);
         let wanted = match (dying, live) {
-            (Some(d), _) => Wanted { clip: "death", t: d.0 },
-            (None, Some(u)) => choose(core, u, unit, &mut pose, dt, |name| clip(name).map(|c| (c.2, c.3))),
+            (Some(d), _) => Wanted {
+                clip: "death",
+                t: d.0,
+            },
+            (None, Some(u)) => choose(core, u, unit, &mut pose, dt, |name| {
+                clip(name).map(|c| (c.2, c.3))
+            }),
             (None, None) => continue,
         };
         let Some((_, node, duration, _)) = clip(wanted.clip).or_else(|| clip("idle")) else {
@@ -108,7 +112,8 @@ fn choose(
     if let Some(began) = core.derived.cast_began(u.id) {
         let (name, cast_point) = cast_clip(core, u);
         if let Some((duration, point)) = clip(name) {
-            let elapsed = (core.view.as_ref().map_or(began, |v| v.tick) - began) as f32 / rate + sub / rate;
+            let elapsed =
+                (core.view.as_ref().map_or(began, |v| v.tick) - began) as f32 / rate + sub / rate;
             let point = point.unwrap_or(duration * 0.5);
             pose.since_strike = None;
             return Wanted {
@@ -123,8 +128,16 @@ fn choose(
             .ok()
             .and_then(|at| view.aggro[at].swing)
     });
-    let attack = if pose.swings % 2 == 0 { "attack" } else { "attack2" };
-    let attack = if clip(attack).is_some() { attack } else { "attack" };
+    let attack = if pose.swings.is_multiple_of(2) {
+        "attack"
+    } else {
+        "attack2"
+    };
+    let attack = if clip(attack).is_some() {
+        attack
+    } else {
+        "attack"
+    };
     if let (Some(swing), Some((_, point))) = (swing, clip(attack)) {
         let tick = core.view.as_ref().map_or(0, |v| v.tick);
         let due = tick + swing.strike_in;
@@ -147,7 +160,11 @@ fn choose(
     }
     if let Some(since) = pose.since_strike.as_mut() {
         *since += dt;
-        let last = if pose.swings % 2 == 1 { "attack" } else { "attack2" };
+        let last = if pose.swings % 2 == 1 {
+            "attack"
+        } else {
+            "attack2"
+        };
         let last = if clip(last).is_some() { last } else { "attack" };
         if let Some((duration, point)) = clip(last) {
             let t = point.unwrap_or(0.4) + *since * pose.swing_tempo.max(0.5);

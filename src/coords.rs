@@ -10,10 +10,6 @@ use std::f32::consts::FRAC_PI_2;
 
 use bevy::prelude::*;
 
-pub fn sim_to_world(sim: Vec2) -> Vec3 {
-    Vec3::new(sim.x, 0.0, -sim.y)
-}
-
 pub fn world_to_sim(world: Vec3) -> Vec2 {
     Vec2::new(world.x, -world.z)
 }

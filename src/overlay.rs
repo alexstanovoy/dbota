@@ -45,7 +45,9 @@ pub fn plugin(app: &mut App) {
 fn configure(mut store: ResMut<GizmoConfigStore>) {
     let (config, _) = store.config_mut::<DefaultGizmoConfigGroup>();
     config.line.width = 2.5;
-    config.depth_bias = -0.05;
+    // Rings follow the coarse ground height; a stronger bias keeps rocks
+    // and roots from cutting them into dashes.
+    config.depth_bias = -0.2;
     config.render_layers = bevy::camera::visibility::RenderLayers::layer(1);
 }
 
@@ -69,7 +71,14 @@ impl Ctx<'_, '_, '_> {
 }
 
 /// A circle on the ground, solid or dashed.
-fn ring(gizmos: &mut Gizmos, ctx: &Ctx<'_, '_, '_>, (x, y): (f32, f32), r: f32, color: Color, dashed: bool) {
+fn ring(
+    gizmos: &mut Gizmos,
+    ctx: &Ctx<'_, '_, '_>,
+    (x, y): (f32, f32),
+    r: f32,
+    color: Color,
+    dashed: bool,
+) {
     let steps = ((r / 14.0) as usize).clamp(24, 160);
     let point = |i: usize| {
         let a = i as f32 / steps as f32 * TAU;
@@ -84,7 +93,6 @@ fn ring(gizmos: &mut Gizmos, ctx: &Ctx<'_, '_, '_>, (x, y): (f32, f32), r: f32, 
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 fn draw(
     mut gizmos: Gizmos,
     session: NonSend<Session>,
@@ -107,7 +115,10 @@ fn draw(
     };
     let show_all = keys.pressed(settings.key(Action::ShowRanges));
     picks(&mut gizmos, &ctx);
-    if let Some(me) = core.ears().and_then(|id| view.units.iter().find(|u| u.id == id)) {
+    if let Some(me) = core
+        .ears()
+        .and_then(|id| view.units.iter().find(|u| u.id == id))
+    {
         own_ranges(&mut gizmos, &ctx, me, &settings, show_all);
         tower_rings(&mut gizmos, &ctx, me, &settings, show_all);
     }
@@ -123,15 +134,32 @@ fn draw(
 fn picks(gizmos: &mut Gizmos, ctx: &Ctx<'_, '_, '_>) {
     let core = ctx.core;
     if let Some(me) = core.my_hero().and_then(|id| ctx.at(id)) {
-        ring(gizmos, ctx, (me.at.x, me.at.y), 52.0, GOOD.with_alpha(0.8), false);
+        ring(
+            gizmos,
+            ctx,
+            (me.at.x, me.at.y),
+            52.0,
+            GOOD.with_alpha(0.8),
+            false,
+        );
     }
-    if let Some(picked) = core.selected.filter(|id| Some(*id) != core.my_hero()).and_then(|id| ctx.at(id)) {
+    if let Some(picked) = core
+        .selected
+        .filter(|id| Some(*id) != core.my_hero())
+        .and_then(|id| ctx.at(id))
+    {
         ring(gizmos, ctx, (picked.at.x, picked.at.y), 56.0, GOLDEN, false);
     }
 }
 
 /// The attack range ring and the three raze spots of the watched hero.
-fn own_ranges(gizmos: &mut Gizmos, ctx: &Ctx<'_, '_, '_>, me: &UnitView, settings: &Settings, show_all: bool) {
+fn own_ranges(
+    gizmos: &mut Gizmos,
+    ctx: &Ctx<'_, '_, '_>,
+    me: &UnitView,
+    settings: &Settings,
+    show_all: bool,
+) {
     let Some(body) = ctx.at(me.id) else {
         return;
     };
@@ -140,7 +168,14 @@ fn own_ranges(gizmos: &mut Gizmos, ctx: &Ctx<'_, '_, '_>, me: &UnitView, setting
     if settings.aids.attack_range || show_all || aiming {
         let reach = me.attack_range.to_f32() + me.bound.to_f32();
         let a = if show_all || aiming { 0.6 } else { 0.22 };
-        ring(gizmos, ctx, (x, y), reach, Color::WHITE.with_alpha(a), true);
+        ring(
+            gizmos,
+            ctx,
+            (x, y),
+            reach,
+            Color::WHITE.with_alpha(a),
+            false,
+        );
     }
     if !(settings.aids.raze_marks || show_all) {
         return;
@@ -151,13 +186,19 @@ fn own_ranges(gizmos: &mut Gizmos, ctx: &Ctx<'_, '_, '_>, me: &UnitView, setting
             continue;
         }
         let ready = ability.cooldown_left == 0 && me.mana >= ability.mana_cost;
-        let a = match (show_all, ready) {
-            (true, _) => 0.75,
-            (false, true) => 0.3,
-            (false, false) => 0.08,
-        };
+        if !ready && !show_all {
+            continue;
+        }
+        let a = if show_all { 0.7 } else { 0.22 };
         let spot = raze_spot(x, y, body.facing, which);
-        ring(gizmos, ctx, spot, RAZE_RADIUS, SOUL_RED.with_alpha(a), true);
+        ring(
+            gizmos,
+            ctx,
+            spot,
+            RAZE_RADIUS,
+            SOUL_RED.with_alpha(a),
+            false,
+        );
     }
 }
 
@@ -169,7 +210,13 @@ pub fn raze_spot(x: f32, y: f32, facing: f32, which: usize) -> (f32, f32) {
 
 /// The reach of every enemy tower the watched hero is near, solid when the
 /// tower is set on it.
-fn tower_rings(gizmos: &mut Gizmos, ctx: &Ctx<'_, '_, '_>, me: &UnitView, settings: &Settings, show_all: bool) {
+fn tower_rings(
+    gizmos: &mut Gizmos,
+    ctx: &Ctx<'_, '_, '_>,
+    me: &UnitView,
+    settings: &Settings,
+    show_all: bool,
+) {
     if !settings.aids.tower_ranges && !show_all {
         return;
     }
@@ -179,7 +226,11 @@ fn tower_rings(gizmos: &mut Gizmos, ctx: &Ctx<'_, '_, '_>, me: &UnitView, settin
     let Some(my_body) = ctx.at(me.id) else {
         return;
     };
-    for tower in view.units.iter().filter(|u| u.kind == UnitKind::Tower && u.team != me.team) {
+    for tower in view
+        .units
+        .iter()
+        .filter(|u| u.kind == UnitKind::Tower && u.team != me.team)
+    {
         let Some(body) = ctx.at(tower.id) else {
             continue;
         };
@@ -194,7 +245,14 @@ fn tower_rings(gizmos: &mut Gizmos, ctx: &Ctx<'_, '_, '_>, me: &UnitView, settin
             ring(gizmos, ctx, (body.at.x, body.at.y), reach, BAD, false);
         } else {
             let a = 0.25 + 0.5 * closeness;
-            ring(gizmos, ctx, (body.at.x, body.at.y), reach, BAD.with_alpha(a), true);
+            ring(
+                gizmos,
+                ctx,
+                (body.at.x, body.at.y),
+                reach,
+                BAD.with_alpha(a),
+                false,
+            );
         }
     }
 }
@@ -267,7 +325,11 @@ fn aggro(gizmos: &mut Gizmos, ctx: &Ctx<'_, '_, '_>) {
             (true, false) => BAD.with_alpha(0.45),
             (false, _) => team_color(from.team).with_alpha(if swinging { 0.8 } else { 0.35 }),
         };
-        gizmos.line(ctx.point(from.at.x, from.at.y), ctx.point(to.at.x, to.at.y), color);
+        gizmos.line(
+            ctx.point(from.at.x, from.at.y),
+            ctx.point(to.at.x, to.at.y),
+            color,
+        );
     }
 }
 
@@ -290,11 +352,23 @@ fn casts(gizmos: &mut Gizmos, ctx: &Ctx<'_, '_, '_>) {
         match cast_ability(core, u) {
             Some(id) if (RAZE_NEAR..RAZE_NEAR + 3).contains(&id) => {
                 let k = (elapsed / RAZE_CAST_POINT).clamp(0.0, 1.0);
-                let spot = raze_spot(body.at.x, body.at.y, body.facing, usize::from(id - RAZE_NEAR));
+                let spot = raze_spot(
+                    body.at.x,
+                    body.at.y,
+                    body.facing,
+                    usize::from(id - RAZE_NEAR),
+                );
                 ring(gizmos, ctx, spot, RAZE_RADIUS, SOUL_RED, false);
                 for f in [0.25, 0.5, 0.75, 1.0] {
                     if f <= k {
-                        ring(gizmos, ctx, spot, RAZE_RADIUS * f * k, SOUL_RED.with_alpha(0.5), false);
+                        ring(
+                            gizmos,
+                            ctx,
+                            spot,
+                            RAZE_RADIUS * f * k,
+                            SOUL_RED.with_alpha(0.5),
+                            false,
+                        );
                     }
                 }
             }
@@ -302,7 +376,14 @@ fn casts(gizmos: &mut Gizmos, ctx: &Ctx<'_, '_, '_>) {
                 let k = (elapsed / REQUIEM_CAST_POINT).clamp(0.0, 1.0);
                 let at = (body.at.x, body.at.y);
                 ring(gizmos, ctx, at, REQUIEM_REACH, SOUL_VIOLET, true);
-                ring(gizmos, ctx, at, REQUIEM_REACH * (1.0 - k).max(0.05), SOUL_RED, false);
+                ring(
+                    gizmos,
+                    ctx,
+                    at,
+                    REQUIEM_REACH * (1.0 - k).max(0.05),
+                    SOUL_RED,
+                    false,
+                );
             }
             _ => {}
         }
@@ -346,7 +427,14 @@ fn orders(gizmos: &mut Gizmos, ctx: &Ctx<'_, '_, '_>) {
             Target::None => None,
         };
         if let Some((x, y, body)) = spot {
-            ring(gizmos, ctx, (x, y), body + 18.0 + 30.0 * fade, color.with_alpha(fade.max(0.0)), false);
+            ring(
+                gizmos,
+                ctx,
+                (x, y),
+                body + 18.0 + 30.0 * fade,
+                color.with_alpha(fade.max(0.0)),
+                false,
+            );
         }
     }
 }
@@ -363,7 +451,14 @@ fn aim(gizmos: &mut Gizmos, ctx: &Ctx<'_, '_, '_>, cursor: Option<Vec3>) {
     let reach = core.reach_of(slot) as f32;
     let aim = core.aim_in(slot);
     if reach > 0.0 && aim != Some(Aim::Building) {
-        ring(gizmos, ctx, (caster.at.x, caster.at.y), reach, Color::srgb(0.45, 0.85, 1.0), false);
+        ring(
+            gizmos,
+            ctx,
+            (caster.at.x, caster.at.y),
+            reach,
+            Color::srgb(0.45, 0.85, 1.0),
+            false,
+        );
     }
     let Some(cursor) = cursor else {
         return;

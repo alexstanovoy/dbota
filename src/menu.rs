@@ -44,7 +44,12 @@ pub fn plugin(app: &mut App) {
         .add_systems(Update, (show, clicks, values, lobby));
 }
 
-fn spawn(mut commands: Commands, fonts: Res<Fonts>, manifest: Res<Manifest>, path: Res<crate::SettingsPath>) {
+fn spawn(
+    mut commands: Commands,
+    fonts: Res<Fonts>,
+    manifest: Res<Manifest>,
+    path: Res<crate::SettingsPath>,
+) {
     let overlay = commands
         .spawn((
             Overlay,
@@ -68,10 +73,25 @@ fn spawn(mut commands: Commands, fonts: Res<Fonts>, manifest: Res<Manifest>, pat
             Visibility::Hidden,
         ))
         .id();
-    commands.spawn((ui::text("SETTINGS", &fonts.bold, 20.0, ui::INK), ChildOf(overlay)));
-    commands.spawn((Values, ui::text("", &fonts.regular, 14.0, ui::INK), ChildOf(overlay)));
+    commands.spawn((
+        ui::text("SETTINGS", &fonts.bold, 20.0, ui::INK),
+        ChildOf(overlay),
+    ));
+    commands.spawn((
+        Values,
+        ui::text("", &fonts.regular, 14.0, ui::INK),
+        ChildOf(overlay),
+    ));
     let buttons = commands
-        .spawn((Node { flex_wrap: FlexWrap::Wrap, column_gap: px(6), row_gap: px(6), ..default() }, ChildOf(overlay)))
+        .spawn((
+            Node {
+                flex_wrap: FlexWrap::Wrap,
+                column_gap: px(6),
+                row_gap: px(6),
+                ..default()
+            },
+            ChildOf(overlay),
+        ))
         .id();
     for (row, label) in [
         (Row::VolumeDown, "Volume -"),
@@ -107,13 +127,31 @@ fn spawn(mut commands: Commands, fonts: Res<Fonts>, manifest: Res<Manifest>, pat
         .iter()
         .map(|(_, name, key)| format!("{} {}", name.replace('_', " "), key_name(*key)))
         .collect();
-    commands.spawn((ui::text(format!("KEYS (defaults)\n{}", keys.join("   ")), &fonts.regular, 12.0, ui::INK_DIM), ChildOf(overlay)));
-    let file = path.0.as_ref().map_or("no settings file".to_string(), |p| format!("Settings file: {} (keys are set there)", p.display()));
-    commands.spawn((ui::text(format!("{}\n{file}", manifest.census()), &fonts.regular, 12.0, ui::INK_DIM), ChildOf(overlay)));
+    commands.spawn((
+        ui::text(
+            format!("KEYS (defaults)\n{}", keys.join("   ")),
+            &fonts.regular,
+            12.0,
+            ui::INK_DIM,
+        ),
+        ChildOf(overlay),
+    ));
+    let file = path.0.as_ref().map_or("no settings file".to_string(), |p| {
+        format!("Settings file: {} (keys are set there)", p.display())
+    });
+    commands.spawn((
+        ui::text(
+            format!("{}\n{file}", manifest.census()),
+            &fonts.regular,
+            12.0,
+            ui::INK_DIM,
+        ),
+        ChildOf(overlay),
+    ));
     commands.spawn((
         LobbyCard,
         ui::text("", &fonts.bold, 20.0, ui::INK),
-        TextShadow::default(),
+        ui::shadow(),
         Node {
             position_type: PositionType::Absolute,
             left: percent(10),
@@ -124,7 +162,11 @@ fn spawn(mut commands: Commands, fonts: Res<Fonts>, manifest: Res<Manifest>, pat
 }
 
 fn show(panels: Res<Panels>, mut overlay: Single<&mut Visibility, With<Overlay>>) {
-    let want = if panels.settings { Visibility::Inherited } else { Visibility::Hidden };
+    let want = if panels.settings {
+        Visibility::Inherited
+    } else {
+        Visibility::Hidden
+    };
     if **overlay != want {
         **overlay = want;
     }
@@ -195,17 +237,32 @@ fn values(settings: Res<Settings>, mut text: Single<&mut Text, With<Values>>) {
 fn lobby(session: NonSend<Session>, mut card: Single<&mut Text, With<LobbyCard>>) {
     let core = &session.0;
     let s = if core.phase == Phase::Lobby {
-        let mut lines = vec![match (core.my_slot.is_some(), core.ready, core.me.is_some()) {
-            (true, true, _) => "Ready - waiting for the others (R to cancel)".to_string(),
-            (true, false, _) => "Pick a hero: [1] Sylla  [2] Pudge  [3] Shadow Fiend, then [R] when ready".to_string(),
-            (false, _, true) => "Spectating - waiting for the match to start".to_string(),
-            (false, _, false) => "Connecting...".to_string(),
-        }];
+        let mut lines = vec![
+            match (core.my_slot.is_some(), core.ready, core.me.is_some()) {
+                (true, true, _) => "Ready - waiting for the others (R to cancel)".to_string(),
+                (true, false, _) => {
+                    "Pick a hero: [1] Sylla  [2] Pudge  [3] Shadow Fiend, then [R] when ready"
+                        .to_string()
+                }
+                (false, _, true) => "Spectating - waiting for the match to start".to_string(),
+                (false, _, false) => "Connecting...".to_string(),
+            },
+        ];
         for seat in &core.lobby {
-            let hero = seat.hero.and_then(|h| bota_client_core::hero(h.0)).map_or("-", |h| h.name);
+            let hero = seat
+                .hero
+                .and_then(|h| bota_client_core::hero(h.0))
+                .map_or("-", |h| h.name);
             let ready = if seat.ready { "  READY" } else { "" };
-            let name = if seat.name.is_empty() { "open" } else { seat.name.as_str() };
-            lines.push(format!("{:?} seat {}: {name} as {hero}{ready}", seat.team, seat.slot.0));
+            let name = if seat.name.is_empty() {
+                "open"
+            } else {
+                seat.name.as_str()
+            };
+            lines.push(format!(
+                "{:?} seat {}: {name} as {hero}{ready}",
+                seat.team, seat.slot.0
+            ));
         }
         lines.join("\n")
     } else {

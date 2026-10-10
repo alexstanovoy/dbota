@@ -44,10 +44,13 @@ pub fn cell_height(cells: &[u8], n: usize, cx: usize, cy: usize) -> f32 {
             let mut top = 0.0f32;
             for (dx, dy) in [(-1i32, 0i32), (1, 0), (0, -1), (0, 1)] {
                 let (x, y) = (cx as i32 + dx, cy as i32 + dy);
-                if x >= 0 && y >= 0 && (x as usize) < n && (y as usize) < n {
-                    if let Ground::Land(t) = ground_of(cells[y as usize * n + x as usize]) {
-                        top = top.max(f32::from(t) * TIER_HEIGHT);
-                    }
+                if x >= 0
+                    && y >= 0
+                    && (x as usize) < n
+                    && (y as usize) < n
+                    && let Ground::Land(t) = ground_of(cells[y as usize * n + x as usize])
+                {
+                    top = top.max(f32::from(t) * TIER_HEIGHT);
                 }
             }
             top + TIER_HEIGHT * 0.6
@@ -71,7 +74,9 @@ pub struct GroundMesh {
 
 /// The height at every cell corner: the mean of the cells around it.
 fn corner_heights(cells: &[u8], n: usize) -> Vec<f32> {
-    let heights: Vec<f32> = (0..n * n).map(|i| cell_height(cells, n, i % n, i / n)).collect();
+    let heights: Vec<f32> = (0..n * n)
+        .map(|i| cell_height(cells, n, i % n, i / n))
+        .collect();
     let m = n + 1;
     let mut corners = vec![0.0f32; m * m];
     for cy in 0..m {
@@ -117,7 +122,11 @@ fn corner_color(cells: &[u8], n: usize, cx: usize, cy: usize) -> [f32; 4] {
 }
 
 fn lerp3(a: [f32; 3], b: [f32; 3], k: f32) -> [f32; 3] {
-    [a[0] + (b[0] - a[0]) * k, a[1] + (b[1] - a[1]) * k, a[2] + (b[2] - a[2]) * k]
+    [
+        a[0] + (b[0] - a[0]) * k,
+        a[1] + (b[1] - a[1]) * k,
+        a[2] + (b[2] - a[2]) * k,
+    ]
 }
 
 /// Builds the ground mesh of `n` by `n` cells, row-major from the

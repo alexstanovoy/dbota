@@ -40,7 +40,10 @@ pub struct CursorGround(pub Option<Vec3>);
 pub fn plugin(app: &mut App) {
     app.init_resource::<CursorGround>()
         .add_systems(Startup, spawn_camera)
-        .add_systems(Update, (pan_and_zoom, follow, apply_camera_transform).chain())
+        .add_systems(
+            Update,
+            (pan_and_zoom, follow, apply_camera_transform).chain(),
+        )
         // Picking needs the camera's GlobalTransform of this frame.
         .add_systems(
             PostUpdate,
@@ -61,10 +64,17 @@ fn camera_translation(cam: &RtsCamera) -> Vec3 {
 }
 
 fn spawn_camera(mut commands: Commands, args: Res<crate::Args>) {
-    let msaa = if args.without.iter().any(|w| w == "msaa") { Msaa::Off } else { Msaa::Sample4 };
+    let msaa = if args.without.iter().any(|w| w == "msaa") {
+        Msaa::Off
+    } else {
+        Msaa::Sample4
+    };
     let cam = RtsCamera {
         focus: Vec3::new(9216.0, 128.0, -9216.0),
-        distance: args.distance.unwrap_or(DEFAULT_DISTANCE).clamp(MIN_DISTANCE / 2.0, MAX_DISTANCE),
+        distance: args
+            .distance
+            .unwrap_or(DEFAULT_DISTANCE)
+            .clamp(MIN_DISTANCE / 2.0, MAX_DISTANCE),
     };
     commands.spawn((
         Camera3d::default(),
@@ -76,6 +86,7 @@ fn spawn_camera(mut commands: Commands, args: Res<crate::Args>) {
         }),
         // MSAA 4 is the default; spelled out because VRAM scales with it.
         msaa,
+        bevy::core_pipeline::tonemapping::Tonemapping::AcesFitted,
         // Layer 1 holds what the minimap's photograph leaves out.
         bevy::camera::visibility::RenderLayers::from_layers(&[0, 1]),
         Transform::from_translation(camera_translation(&cam)).with_rotation(camera_rotation()),
@@ -125,10 +136,14 @@ fn pan_and_zoom(
         cam.focus += Vec3::new(step.x, 0.0, -step.y);
     }
 
-    let lines = if over.0 { 0.0 } else { match scroll.unit {
-        MouseScrollUnit::Line => scroll.delta.y,
-        MouseScrollUnit::Pixel => scroll.delta.y / 40.0,
-    } };
+    let lines = if over.0 {
+        0.0
+    } else {
+        match scroll.unit {
+            MouseScrollUnit::Line => scroll.delta.y,
+            MouseScrollUnit::Pixel => scroll.delta.y / 40.0,
+        }
+    };
     if lines != 0.0 {
         cam.distance =
             (cam.distance * (1.0 - ZOOM_PER_LINE).powf(lines)).clamp(MIN_DISTANCE, MAX_DISTANCE);
@@ -172,7 +187,6 @@ pub fn ray_to_ground(ray: Ray3d, ground: &Ground) -> Option<Vec3> {
 /// Carries the camera with the unit it is pinned to, with one's own hero
 /// while the camera is locked or the centre key is held, and puts it on
 /// one's own hero the first time that hero stands.
-#[allow(clippy::too_many_arguments)]
 fn follow(
     mut session: NonSendMut<Session>,
     index: Res<UnitIndex>,
@@ -199,11 +213,18 @@ fn follow(
     } else {
         core.pinned_unit()
     };
-    let Some(unit) = carrier.and_then(|id| index.0.get(&id)).and_then(|e| units.get(*e).ok()) else {
+    let Some(unit) = carrier
+        .and_then(|id| index.0.get(&id))
+        .and_then(|e| units.get(*e).ok())
+    else {
         return;
     };
     let target = Vec3::new(unit.at.x, ground.at(unit.at.x, unit.at.y), -unit.at.y);
-    let k = if centre { 1.0 } else { (time.delta_secs() * 8.0).min(1.0) };
+    let k = if centre {
+        1.0
+    } else {
+        (time.delta_secs() * 8.0).min(1.0)
+    };
     let focus = cam.focus + (target - cam.focus) * k;
     if focus.distance_squared(cam.focus) > 1e-4 {
         cam.focus = focus;

@@ -1,24 +1,25 @@
-//! The fog of war of the side watched through: which cells it sees, and a
-//! dark veil laid over the ground everywhere else, easing in and out.
+//! The fog of war of the side watched through: which cells it sees, and the
+//! ground, trees and buildings everywhere else dulled and darkened, easing
+//! in and out.
+
+use std::collections::HashMap;
 
 use bevy::{
-    asset::RenderAssetUsages,
+    asset::{RenderAssetUsages, embedded_asset},
     image::{ImageSampler, ImageSamplerDescriptor},
-    light::{NotShadowCaster, NotShadowReceiver},
-    mesh::{Indices, PrimitiveTopology},
+    pbr::{ExtendedMaterial, MaterialExtension},
     prelude::*,
-    render::render_resource::{Extent3d, TextureDimension, TextureFormat},
+    render::render_resource::{AsBindGroup, Extent3d, TextureDimension, TextureFormat},
+    shader::ShaderRef,
 };
 use bota_proto::Team;
 
-use crate::map::Ground;
 use crate::session::Session;
 use crate::terrain::CELL;
 
-/// How dark the veil is at full strength, 0 to 1.
-const VEIL: f32 = 0.62;
-/// World units the veil floats over the ground.
-const LIFT: f32 = 10.0;
+/// The image's alpha of a fully fogged cell: what the minimap lays over its
+/// photograph, and what the fog shader reads as full strength.
+const VEIL: f32 = 0.74;
 
 /// The cells the watched side sees, worked out once a tick.
 #[derive(Resource, Default)]
@@ -51,17 +52,44 @@ impl FogGrid {
 #[derive(Resource)]
 pub struct VeilImage(pub Handle<Image>);
 
-/// The veil over the ground and the image it is drawn from.
+/// The fog image and the fogged copies of the materials made so far.
 #[derive(Resource)]
 struct Veil {
-    entity: Entity,
     image: Handle<Image>,
-    material: Handle<StandardMaterial>,
+    /// World units the image spans.
+    span: f32,
+    made: HashMap<AssetId<StandardMaterial>, Handle<FoggedMaterial>>,
+}
+
+/// Marks a mesh whose material the fog darkens: the ground, the trees and
+/// the buildings. Units need none: those in the fog are not drawn.
+#[derive(Component)]
+pub struct Fogged;
+
+/// The standard material with the fog laid over its lit colour.
+pub type FoggedMaterial = ExtendedMaterial<StandardMaterial, FogExt>;
+
+#[derive(Asset, AsBindGroup, Reflect, Clone)]
+pub struct FogExt {
+    #[texture(100)]
+    #[sampler(101)]
+    veil: Handle<Image>,
+    #[uniform(102)]
+    extent: Vec4,
+}
+
+impl MaterialExtension for FogExt {
+    fn fragment_shader() -> ShaderRef {
+        "embedded://dbota/fog.wgsl".into()
+    }
 }
 
 pub fn plugin(app: &mut App) {
+    embedded_asset!(app, "fog.wgsl");
     app.init_resource::<FogGrid>()
-        .add_systems(Update, (work_out, spawn_veil, shade_veil).chain());
+        .add_plugins(MaterialPlugin::<FoggedMaterial>::default())
+        .add_systems(Update, (work_out, spawn_veil, shade_veil).chain())
+        .add_systems(PostUpdate, wrap);
 }
 
 /// Works out the lit cells when a new tick or a new side comes.
@@ -86,20 +114,16 @@ fn work_out(session: NonSend<Session>, mut grid: ResMut<FogGrid>) {
     }
     grid.stamp = Some((view.tick, team));
     bota_client_core::light(core, view, team, &mut grid.cells);
-    debug!("fog of {team:?} at tick {}: {} cells lit", view.tick, grid.cells.iter().filter(|c| **c).count());
 }
 
-/// Lays the veil over the ground once the ground is known.
+/// Makes the fog image once the fog is known.
 fn spawn_veil(
     mut commands: Commands,
     grid: Res<FogGrid>,
-    ground: Res<Ground>,
     veil: Option<Res<Veil>>,
-    mut meshes: ResMut<Assets<Mesh>>,
     mut images: ResMut<Assets<Image>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
-    if veil.is_some() || grid.n == 0 || !ground.known() {
+    if veil.is_some() || grid.n == 0 {
         return;
     }
     let n = grid.n;
@@ -116,59 +140,49 @@ fn spawn_veil(
     );
     image.sampler = ImageSampler::Descriptor(ImageSamplerDescriptor::linear());
     let image = images.add(image);
-    let material = materials.add(StandardMaterial {
-        base_color: Color::WHITE,
-        base_color_texture: Some(image.clone()),
-        unlit: true,
-        alpha_mode: AlphaMode::Blend,
-        ..default()
-    });
-    let entity = commands
-        .spawn((
-            Mesh3d(meshes.add(drape(&ground, n))),
-            MeshMaterial3d(material.clone()),
-            Transform::IDENTITY,
-            NotShadowCaster,
-            NotShadowReceiver,
-            bevy::camera::visibility::RenderLayers::layer(1),
-        ))
-        .id();
     commands.insert_resource(VeilImage(image.clone()));
     commands.insert_resource(Veil {
-        entity,
         image,
-        material,
+        span: n as f32 * CELL,
+        made: HashMap::new(),
     });
-    debug!("fog veil laid over {n}x{n} cells");
 }
 
-/// A grid over the whole map one cell apart, laid on the ground.
-fn drape(ground: &Ground, n: usize) -> Mesh {
-    let m = n + 1;
-    let mut positions = Vec::with_capacity(m * m);
-    let mut uvs = Vec::with_capacity(m * m);
-    for cy in 0..m {
-        for cx in 0..m {
-            let (x, y) = (cx as f32 * CELL, cy as f32 * CELL);
-            positions.push([x, ground.at(x, y) + LIFT, -y]);
-            uvs.push([cx as f32 / n as f32, 1.0 - cy as f32 / n as f32]);
-        }
+/// Gives every mesh marked [`Fogged`] the fogged copy of its material.
+fn wrap(
+    mut commands: Commands,
+    veil: Option<ResMut<Veil>>,
+    parts: Query<(Entity, &MeshMaterial3d<StandardMaterial>), With<Fogged>>,
+    standard: Res<Assets<StandardMaterial>>,
+    mut fogged: ResMut<Assets<FoggedMaterial>>,
+) {
+    let Some(mut veil) = veil else {
+        return;
+    };
+    let veil = &mut *veil;
+    for (entity, material) in &parts {
+        let handle = match veil.made.get(&material.id()) {
+            Some(handle) => handle.clone(),
+            None => {
+                let Some(base) = standard.get(&material.0) else {
+                    continue;
+                };
+                let handle = fogged.add(FoggedMaterial {
+                    base: base.clone(),
+                    extension: FogExt {
+                        veil: veil.image.clone(),
+                        extent: Vec4::new(veil.span, VEIL, 0.0, 0.0),
+                    },
+                });
+                veil.made.insert(material.id(), handle.clone());
+                handle
+            }
+        };
+        commands
+            .entity(entity)
+            .remove::<MeshMaterial3d<StandardMaterial>>()
+            .insert(MeshMaterial3d(handle));
     }
-    let mut indices = Vec::with_capacity(n * n * 6);
-    for cy in 0..n {
-        for cx in 0..n {
-            let a = (cy * m + cx) as u32;
-            let (b, c) = (a + 1, a + m as u32);
-            let d = c + 1;
-            indices.extend_from_slice(&[a, b, d, a, d, c]);
-        }
-    }
-    let mut mesh = Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::RENDER_WORLD);
-    mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, positions);
-    mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, vec![[0.0, 1.0, 0.0]; m * m]);
-    mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, uvs);
-    mesh.insert_indices(Indices::U32(indices));
-    mesh
 }
 
 /// Eases every cell's darkness towards lit or fogged and writes the image
@@ -178,27 +192,23 @@ fn shade_veil(
     mut grid: ResMut<FogGrid>,
     veil: Option<Res<Veil>>,
     mut images: ResMut<Assets<Image>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
-    mut visibility: Query<&mut Visibility>,
+    mut materials: ResMut<Assets<FoggedMaterial>>,
+    photo: Res<crate::minimap::PhotoTaken>,
 ) {
     let Some(veil) = veil else {
         return;
     };
-    let shown = grid.team.is_some();
-    if let Ok(mut v) = visibility.get_mut(veil.entity) {
-        let want = if shown { Visibility::Inherited } else { Visibility::Hidden };
-        if *v != want {
-            *v = want;
-        }
-    }
-    if !shown {
+    // The minimap's photograph is of the map unfogged; when everything is
+    // seen the shades ease back to lit.
+    if !photo.0 {
         return;
     }
     let step = (time.delta_secs() * 5.0).clamp(0.05, 1.0);
     let grid = &mut *grid;
     let mut changed = false;
+    let fogged = grid.team.is_some();
     for (shade, lit) in grid.shade.iter_mut().zip(&grid.cells) {
-        let target = if *lit { 0.0 } else { 1.0 };
+        let target = if *lit || !fogged { 0.0 } else { 1.0 };
         if (*shade - target).abs() > 0.003 {
             *shade += (target - *shade) * step;
             changed = true;
@@ -221,10 +231,12 @@ fn shade_veil(
         for cx in 0..n {
             let at = ((n - 1 - cy) * n + cx) * 4;
             let a = (grid.shade[cy * n + cx] * VEIL * 255.0) as u8;
-            data[at..at + 4].copy_from_slice(&[4, 6, 14, a]);
+            data[at..at + 4].copy_from_slice(&[18, 20, 26, a]);
         }
     }
-    // The material's binding of the image is only rebuilt when the
-    // material itself is touched.
-    let _ = materials.get_mut(&veil.material);
+    // A material's binding of the image is only rebuilt when the material
+    // itself is touched.
+    for handle in veil.made.values() {
+        let _ = materials.get_mut(handle);
+    }
 }

@@ -18,8 +18,10 @@ struct Tip;
 struct TipText;
 
 pub fn plugin(app: &mut App) {
-    app.add_systems(Startup, spawn)
-        .add_systems(Update, show.run_if(|k: Res<crate::session::MatchKnown>| k.0));
+    app.add_systems(Startup, spawn).add_systems(
+        Update,
+        show.run_if(|k: Res<crate::session::MatchKnown>| k.0),
+    );
 }
 
 fn spawn(mut commands: Commands, fonts: Res<Fonts>) {
@@ -41,11 +43,15 @@ fn spawn(mut commands: Commands, fonts: Res<Fonts>) {
             Visibility::Hidden,
         ))
         .id();
-    commands.spawn((TipText, ui::text("", &fonts.regular, 14.0, ui::INK), Pickable::IGNORE, ChildOf(tip)));
+    commands.spawn((
+        TipText,
+        ui::text("", &fonts.regular, 14.0, ui::INK),
+        Pickable::IGNORE,
+        ChildOf(tip),
+    ));
 }
 
 /// Puts the popup by the cursor over whatever slot or cell it is on.
-#[allow(clippy::too_many_arguments)]
 fn show(
     session: NonSend<Session>,
     abilities: Query<(&Interaction, &AbilityBox)>,
@@ -58,29 +64,48 @@ fn show(
 ) {
     let core = &session.0;
     let rate = u32::from(core.tick_rate.max(1));
-    let unit = core.slot_unit().or_else(|| core.ears().and_then(|id| core.known(id)).map(|(u, _)| u));
-    let hovered_ability = abilities.iter().find(|(i, _)| **i != Interaction::None).map(|(_, b)| b.0);
-    let hovered_item = items.iter().find(|(i, _)| **i != Interaction::None).map(|(_, b)| b.0);
-    let hovered_cell = cells.iter().find(|(i, _)| **i != Interaction::None).map(|(_, c)| c.0);
+    let unit = core
+        .slot_unit()
+        .or_else(|| core.ears().and_then(|id| core.known(id)).map(|(u, _)| u));
+    let hovered_ability = abilities
+        .iter()
+        .find(|(i, _)| **i != Interaction::None)
+        .map(|(_, b)| b.0);
+    let hovered_item = items
+        .iter()
+        .find(|(i, _)| **i != Interaction::None)
+        .map(|(_, b)| b.0);
+    let hovered_cell = cells
+        .iter()
+        .find(|(i, _)| **i != Interaction::None)
+        .map(|(_, c)| c.0);
     let body = if let Some(slot) = hovered_ability {
-        unit.and_then(|u| u.abilities.get(usize::from(slot))).and_then(|a| {
-            let face = ability(a.id.0)?;
-            let mut lines = vec![format!("{}  (level {}/{})", face.name, a.level, a.max_level), face.blurb.to_string()];
-            if a.mana_cost > 0 && a.level > 0 {
-                lines.push(format!("Mana {}", a.mana_cost));
-            }
-            if a.cooldown_left > 0 {
-                lines.push(format!("Ready in {} s", a.cooldown_left / rate + 1));
-            }
-            if a.can_level {
-                lines.push("Ctrl + its key: learn".to_string());
-            }
-            Some(lines.join("\n"))
-        })
+        unit.and_then(|u| u.abilities.get(usize::from(slot)))
+            .and_then(|a| {
+                let face = ability(a.id.0)?;
+                let mut lines = vec![
+                    format!("{}  (level {}/{})", face.name, a.level, a.max_level),
+                    face.blurb.to_string(),
+                ];
+                if a.mana_cost > 0 && a.level > 0 {
+                    lines.push(format!("Mana {}", a.mana_cost));
+                }
+                if a.cooldown_left > 0 {
+                    lines.push(format!("Ready in {} s", a.cooldown_left / rate + 1));
+                }
+                if a.can_level {
+                    lines.push("Ctrl + its key: learn".to_string());
+                }
+                Some(lines.join("\n"))
+            })
     } else if let Some(slot) = hovered_item {
         core.item_in(slot).and_then(|i| {
             let face = item(i.id.0)?;
-            let mut lines = vec![face.name.to_string(), face.stats.to_string(), face.blurb.to_string()];
+            let mut lines = vec![
+                face.name.to_string(),
+                face.stats.to_string(),
+                face.blurb.to_string(),
+            ];
             if i.cooldown_left > 0 {
                 lines.push(format!("Ready in {} s", i.cooldown_left / rate + 1));
             }
@@ -92,7 +117,11 @@ fn show(
     } else if let Some(id) = hovered_cell {
         item(id).map(|face| {
             let (now, whole) = core.price_of(id);
-            let mut lines = vec![format!("{}  {} gold", face.name, now), face.stats.to_string(), face.blurb.to_string()];
+            let mut lines = vec![
+                format!("{}  {} gold", face.name, now),
+                face.stats.to_string(),
+                face.blurb.to_string(),
+            ];
             if now < whole {
                 lines.push(format!("{} gold of it is already in hand.", whole - now));
             }

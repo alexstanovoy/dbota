@@ -99,7 +99,6 @@ fn map_trees(manifest: &Manifest) -> Vec<MapTree> {
 
 /// Places one tree at every tree of the match once the match and the ground
 /// are known, and starts loading the models they need.
-#[allow(clippy::too_many_arguments)]
 fn plant(
     session: NonSend<Session>,
     manifest: Res<Manifest>,
@@ -110,14 +109,20 @@ fn plant(
     mut done: Local<bool>,
 ) {
     let core = &session.0;
-    if *done || core.trees.is_empty() || !ground.known() || args.without.iter().any(|w| w == "trees") {
+    if *done
+        || core.trees.is_empty()
+        || !ground.known()
+        || args.without.iter().any(|w| w == "trees")
+    {
         return;
     }
     *done = true;
     let known = map_trees(&manifest);
     let mut grid: HashMap<(i32, i32), Vec<usize>> = HashMap::new();
     for (i, t) in known.iter().enumerate() {
-        grid.entry(((t.x / 64.0) as i32, (t.y / 64.0) as i32)).or_default().push(i);
+        grid.entry(((t.x / 64.0) as i32, (t.y / 64.0) as i32))
+            .or_default()
+            .push(i);
     }
     let mut names: Vec<String> = Vec::new();
     for (index, &(x, y)) in core.trees.iter().enumerate() {
@@ -128,9 +133,20 @@ fn plant(
             .flatten()
             .map(|i| &known[*i])
             .filter(|t| (t.x - x).hypot(t.y - y) <= MATCH_REACH)
-            .min_by(|a, b| (a.x - x).hypot(a.y - y).total_cmp(&(b.x - x).hypot(b.y - y)));
-        let fallback = if x + y < 18432.0 { "tree_oak_01" } else { "dire_tree004" };
-        let (name, yaw, scale) = near.map_or((fallback, (index as f32 * 2.4) % 6.28, 1.0), |t| (t.model.as_str(), t.yaw, t.scale));
+            .min_by(|a, b| {
+                (a.x - x)
+                    .hypot(a.y - y)
+                    .total_cmp(&(b.x - x).hypot(b.y - y))
+            });
+        let fallback = if x + y < 18432.0 {
+            "tree_oak_01"
+        } else {
+            "dire_tree004"
+        };
+        let (name, yaw, scale) = near.map_or(
+            (fallback, (index as f32 * 2.4) % std::f32::consts::TAU, 1.0),
+            |t| (t.model.as_str(), t.yaw, t.scale),
+        );
         if manifest.model(&format!("tree.{name}")).is_none() {
             continue;
         }
@@ -158,7 +174,11 @@ fn plant(
             stump: None,
         })
         .collect();
-    info!("forest: {} trees of {} models", forest.trees.len(), forest.kinds.len());
+    info!(
+        "forest: {} trees of {} models",
+        forest.trees.len(),
+        forest.kinds.len()
+    );
 }
 
 /// Takes each tree model's standing and stump meshes once its file loads.
@@ -184,7 +204,11 @@ fn read_kinds(
             let Some(primitive) = mesh.primitives.first() else {
                 continue;
             };
-            let Some(source) = primitive.material.as_ref().and_then(|m| gltf_materials.get(m)) else {
+            let Some(source) = primitive
+                .material
+                .as_ref()
+                .and_then(|m| gltf_materials.get(m))
+            else {
                 continue;
             };
             let material = materials.add(StandardMaterial {
@@ -218,7 +242,12 @@ fn rebuild(
     mut ready: ResMut<SceneryReady>,
     ground: Res<Ground>,
 ) {
-    if forest.kinds.is_empty() && ground.known() && forest.trees.is_empty() && !ready.0 && session.0.view.is_some() {
+    if forest.kinds.is_empty()
+        && ground.known()
+        && forest.trees.is_empty()
+        && !ready.0
+        && session.0.view.is_some()
+    {
         // Nothing to plant: the ground alone is the scenery.
         ready.0 = !session.0.trees.is_empty();
     }
@@ -234,7 +263,12 @@ fn rebuild(
         felled
             .iter()
             .filter(|t| forest.felled.binary_search(t).is_err())
-            .chain(forest.felled.iter().filter(|t| felled.binary_search(t).is_err()))
+            .chain(
+                forest
+                    .felled
+                    .iter()
+                    .filter(|t| felled.binary_search(t).is_err()),
+            )
             .copied()
             .collect()
     } else {
@@ -270,12 +304,22 @@ fn rebuild(
                 continue;
             };
             let placed = forest.trees.iter().enumerate().filter(|(i, t)| {
-                t.model == key.2 && chunk_of(t.at) == (key.0, key.1) && (felled.binary_search(&(*i as u32)).is_ok() == stumps)
+                t.model == key.2
+                    && chunk_of(t.at) == (key.0, key.1)
+                    && (felled.binary_search(&(*i as u32)).is_ok() == stumps)
             });
             let Some(merged) = merge(&source, placed.map(|(_, t)| t)) else {
                 continue;
             };
-            spawned.push(commands.spawn((Mesh3d(meshes.add(merged)), MeshMaterial3d(material.clone()))).id());
+            spawned.push(
+                commands
+                    .spawn((
+                        Mesh3d(meshes.add(merged)),
+                        MeshMaterial3d(material.clone()),
+                        crate::fog::Fogged,
+                    ))
+                    .id(),
+            );
         }
         forest.chunks.insert(key, spawned);
     }
