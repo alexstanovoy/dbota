@@ -57,6 +57,8 @@ fn show(
     abilities: Query<(&Interaction, &AbilityBox)>,
     items: Query<(&Interaction, &ItemBox)>,
     cells: Query<(&Interaction, &ShopCell)>,
+    buffs: Query<(&Interaction, &crate::buffs::BuffChip)>,
+    talent_cells: Query<(&Interaction, &crate::talents::TalentCell)>,
     window: Single<&Window, With<PrimaryWindow>>,
     ui_scale: Res<UiScale>,
     mut tip: Single<(&mut Node, &mut Visibility), With<Tip>>,
@@ -79,7 +81,41 @@ fn show(
         .iter()
         .find(|(i, _)| **i != Interaction::None)
         .map(|(_, c)| c.0);
-    let body = if let Some(slot) = hovered_ability {
+    let hovered_buff = buffs
+        .iter()
+        .find(|(i, _)| **i != Interaction::None)
+        .and_then(|(_, b)| b.shown);
+    let hovered_talent = talent_cells
+        .iter()
+        .find(|(i, _)| **i != Interaction::None)
+        .map(|(_, c)| c.0);
+    let body = if let Some(shown) = hovered_buff {
+        bota_client_core::effect(shown.id).map(|face| {
+            let mut lines = vec![face.name.to_string(), face.blurb.to_string()];
+            if let Some(n) = shown.stacks.filter(|n| *n > 0) {
+                lines.push(format!("{n} stacks"));
+            }
+            if let Some(t) = shown.ticks_left {
+                lines.push(format!("{:.1} s left", t as f32 / rate as f32));
+            }
+            lines.join("\n")
+        })
+    } else if let Some(slot) = hovered_talent {
+        crate::hud::subject(core)
+            .1
+            .and_then(|u| u.hero)
+            .and_then(|h| bota_client_core::talents(h.0))
+            .map(|tree| {
+                let face = &tree[usize::from(slot)];
+                let level = bota_client_core::TALENT_LEVELS[usize::from(slot / 2)];
+                format!(
+                    "{}\n{}\nOpens at level {level}; the other of its tier at {}.",
+                    face.name,
+                    face.blurb,
+                    bota_client_core::TALENT_SECOND_LEVELS[usize::from(slot / 2)]
+                )
+            })
+    } else if let Some(slot) = hovered_ability {
         unit.and_then(|u| u.abilities.get(usize::from(slot)))
             .and_then(|a| {
                 let face = ability(a.id.0)?;

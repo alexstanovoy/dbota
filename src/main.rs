@@ -10,6 +10,7 @@
 
 mod anim;
 mod bars;
+mod buffs;
 mod camera;
 mod capture;
 mod config;
@@ -25,9 +26,11 @@ mod menu;
 mod minimap;
 mod overlay;
 mod session;
+mod sheet;
 mod shop;
 mod sound;
 mod synth;
+mod talents;
 mod terrain;
 mod tips;
 mod trees;
@@ -98,6 +101,10 @@ pub struct Args {
     /// Debug: open the shop at the start.
     #[arg(long)]
     pub open_shop: bool,
+    /// Debug: cover the window with every icon of a kind (`items`,
+    /// `abilities`, `effects`) and the Dota art it is drawn from.
+    #[arg(long, value_name = "KIND")]
+    pub sheet: Option<String>,
     /// Debug: hold the camera over this bota world point, `x,y`.
     #[arg(long, value_name = "X,Y", value_delimiter = ',', num_args = 2)]
     pub look_at: Vec<f32>,
@@ -197,6 +204,9 @@ fn main() -> AppExit {
             menu::plugin,
             tips::plugin,
             drill::plugin,
+            buffs::plugin,
+            talents::plugin,
+            sheet::plugin,
         ));
     app.run()
 }

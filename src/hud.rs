@@ -266,6 +266,7 @@ fn spawn_middle(commands: &mut Commands, fonts: &Fonts, bar: Entity) {
         ui::text("", &fonts.bold, 13.0, ui::GOLDEN),
         ChildOf(column),
     ));
+    crate::buffs::spawn_row(commands, fonts, column);
     let row = commands
         .spawn((
             Node {
@@ -276,6 +277,7 @@ fn spawn_middle(commands: &mut Commands, fonts: &Fonts, bar: Entity) {
             ChildOf(column),
         ))
         .id();
+    crate::talents::spawn_button(commands, fonts, row, ABILITY);
     for slot in 0..6u8 {
         spawn_slot_box(
             commands,
@@ -787,7 +789,7 @@ fn put(text: &mut Text, s: String) {
 }
 
 /// The seat, unit and kit the bottom panel is about.
-fn subject(core: &Core) -> (Option<&PlayerView>, Option<&UnitView>, Option<&Kit>) {
+pub(crate) fn subject(core: &Core) -> (Option<&PlayerView>, Option<&UnitView>, Option<&Kit>) {
     let Some(view) = &core.view else {
         return (None, None, None);
     };

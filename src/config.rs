@@ -237,18 +237,18 @@ pub fn load(path: &Path) -> Settings {
         Ok(file) => file,
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Settings::default(),
         Err(err) => {
-            eprintln!("bota-client: settings {}: {err}", path.display());
+            eprintln!("dbota settings {}: {err}", path.display());
             return Settings::default();
         }
     };
     let mut text = String::new();
     if let Err(err) = file.take(MAX_BYTES).read_to_string(&mut text) {
-        eprintln!("bota-client: settings {}: {err}", path.display());
+        eprintln!("dbota settings {}: {err}", path.display());
         return Settings::default();
     }
     let (settings, complaints) = Settings::parse(&text);
     for complaint in complaints {
-        eprintln!("bota-client: settings {}: {complaint}", path.display());
+        eprintln!("dbota settings {}: {complaint}", path.display());
     }
     settings
 }

@@ -1,0 +1,234 @@
+//! The buffs and debuffs of the unit the bottom panel is about, in a row
+//! over its abilities as Dota draws them: round icons, buffs first with a
+//! green rim, debuffs after with a red one, a dark sweep for the time gone
+//! and the stack count in the corner. The hover popup tells what each does.
+
+use std::collections::HashMap;
+use std::f32::consts::TAU;
+
+use bevy::prelude::*;
+use bota_client_core::effect;
+use bota_proto::EntityId;
+
+use crate::manifest::Manifest;
+use crate::session::Session;
+use crate::ui::{self, Fonts};
+
+/// Chips in the row at most.
+const CHIPS: usize = 12;
+/// A chip's side in interface pixels.
+const CHIP: f32 = 30.0;
+/// Effects never listed: the rot shows on its ability.
+const UNLISTED: [u16; 1] = [16];
+
+const BUFF_RIM: Color = Color::srgb(0.35, 0.8, 0.4);
+const DEBUFF_RIM: Color = Color::srgb(0.9, 0.25, 0.2);
+
+/// One chip of the row and the effect it shows, for the hover popup.
+#[derive(Component, Default)]
+pub struct BuffChip {
+    pub shown: Option<Shown>,
+}
+
+/// What a chip shows.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Shown {
+    pub id: u16,
+    pub ticks_left: Option<u32>,
+    pub stacks: Option<u32>,
+}
+
+#[derive(Component)]
+struct Chips(Vec<Entity>);
+
+pub fn plugin(app: &mut App) {
+    app.add_systems(
+        Update,
+        update.run_if(|k: Res<crate::session::MatchKnown>| k.0),
+    );
+}
+
+/// Lays the row over the top of `parent`, the ability column.
+pub fn spawn_row(commands: &mut Commands, fonts: &Fonts, parent: Entity) {
+    let row = commands
+        .spawn((
+            Node {
+                position_type: PositionType::Absolute,
+                bottom: percent(100),
+                left: px(0),
+                margin: UiRect::bottom(px(8)),
+                column_gap: px(4),
+                ..default()
+            },
+            Pickable::IGNORE,
+            ChildOf(parent),
+        ))
+        .id();
+    let mut chips = Vec::with_capacity(CHIPS);
+    for _ in 0..CHIPS {
+        let chip = commands
+            .spawn((
+                BuffChip::default(),
+                Button,
+                Node {
+                    width: px(CHIP),
+                    height: px(CHIP),
+                    border: UiRect::all(px(2)),
+                    border_radius: BorderRadius::all(px(CHIP / 2.0)),
+                    overflow: Overflow::clip(),
+                    ..default()
+                },
+                BorderColor::all(BUFF_RIM),
+                BackgroundColor(ui::PANEL_DEEP),
+                Visibility::Hidden,
+                ChildOf(row),
+            ))
+            .id();
+        let full = || Node {
+            position_type: PositionType::Absolute,
+            width: percent(100),
+            height: percent(100),
+            ..default()
+        };
+        commands.spawn((
+            full(),
+            ImageNode::default(),
+            Pickable::IGNORE,
+            ChildOf(chip),
+        ));
+        commands.spawn((
+            full(),
+            BackgroundGradient::from(sweep(1.0)),
+            Pickable::IGNORE,
+            ChildOf(chip),
+        ));
+        commands.spawn((
+            Node {
+                position_type: PositionType::Absolute,
+                right: px(1),
+                bottom: px(-1),
+                ..default()
+            },
+            ui::text("", &fonts.bold, 12.0, ui::INK),
+            ui::shadow(),
+            Pickable::IGNORE,
+            ChildOf(chip),
+        ));
+        chips.push(chip);
+    }
+    commands.entity(row).insert(Chips(chips));
+}
+
+/// The dark part of a chip for the share of its time gone.
+fn sweep(left: f32) -> ConicGradient {
+    let a = (1.0 - left.clamp(0.0, 1.0)) * TAU;
+    let dark = Color::srgba(0.0, 0.0, 0.0, 0.6);
+    ConicGradient::new(
+        UiPosition::CENTER,
+        vec![
+            AngularColorStop::new(dark, 0.0),
+            AngularColorStop::new(dark, a),
+            AngularColorStop::new(Color::NONE, a),
+            AngularColorStop::new(Color::NONE, TAU),
+        ],
+    )
+}
+
+#[allow(clippy::type_complexity)]
+fn update(
+    session: NonSend<Session>,
+    manifest: Res<Manifest>,
+    server: Res<AssetServer>,
+    rows: Query<&Chips>,
+    mut chips: Query<(&mut BuffChip, &mut Visibility, &mut BorderColor, &Children)>,
+    mut icons: Query<&mut ImageNode>,
+    mut sweeps: Query<&mut BackgroundGradient>,
+    mut texts: Query<&mut Text>,
+    // The longest time left seen of each effect on each unit: its whole
+    // length, for the sweep.
+    mut lengths: Local<HashMap<(EntityId, u16), u32>>,
+    mut art: Local<HashMap<u16, Handle<Image>>>,
+) {
+    let core = &session.0;
+    let unit = crate::hud::subject(core).1;
+    let mut shown: Vec<Shown> = unit
+        .map(|u| {
+            u.effects
+                .iter()
+                .filter(|e| !UNLISTED.contains(&e.id.0) && effect(e.id.0).is_some())
+                .map(|e| Shown {
+                    id: e.id.0,
+                    ticks_left: e.ticks_left,
+                    stacks: e.stacks,
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    // Buffs first, debuffs after, as Dota lays them.
+    shown.sort_by_key(|s| effect(s.id).is_some_and(|f| f.harmful));
+    if lengths.len() > 512 {
+        lengths.clear();
+    }
+    let Ok(row) = rows.single() else {
+        return;
+    };
+    for (i, entity) in row.0.iter().enumerate() {
+        let Ok((mut chip, mut visibility, mut rim, children)) = chips.get_mut(*entity) else {
+            continue;
+        };
+        let now = shown.get(i).copied();
+        let want = if now.is_some() {
+            Visibility::Inherited
+        } else {
+            Visibility::Hidden
+        };
+        if *visibility != want {
+            *visibility = want;
+        }
+        if chip.shown != now {
+            chip.shown = now;
+        }
+        let (Some(s), Some(u)) = (now, unit) else {
+            continue;
+        };
+        let harmful = effect(s.id).is_some_and(|f| f.harmful);
+        *rim = BorderColor::all(if harmful { DEBUFF_RIM } else { BUFF_RIM });
+        if let Some(mut image) = children.first().and_then(|c| icons.get_mut(*c).ok()) {
+            let handle = art
+                .entry(s.id)
+                .or_insert_with(|| {
+                    manifest
+                        .effect_icon(s.id)
+                        .map(|p| server.load(p))
+                        .unwrap_or_default()
+                })
+                .clone();
+            if image.image != handle {
+                image.image = handle;
+            }
+        }
+        let left = match s.ticks_left {
+            Some(t) => {
+                let whole = lengths.entry((u.id, s.id)).or_insert(t);
+                if t > *whole {
+                    *whole = t;
+                }
+                t as f32 / (*whole).max(1) as f32
+            }
+            None => 1.0,
+        };
+        if let Some(mut g) = children.get(1).and_then(|c| sweeps.get_mut(*c).ok()) {
+            *g = BackgroundGradient::from(sweep(left));
+        }
+        if let Some(mut text) = children.get(2).and_then(|c| texts.get_mut(*c).ok()) {
+            let s = s
+                .stacks
+                .filter(|n| *n > 0)
+                .map(|n| n.to_string())
+                .unwrap_or_default();
+            if text.0 != s {
+                text.0 = s;
+            }
+        }
+    }
+}
