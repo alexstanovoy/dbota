@@ -520,7 +520,6 @@ fn floaters(
 fn look(kind: FloaterKind) -> (f32, Color) {
     match kind {
         FloaterKind::Damage => (15.0, Color::srgb(1.0, 0.94, 0.84)),
-        FloaterKind::Crit => (22.0, Color::srgb(1.0, 0.32, 0.18)),
         FloaterKind::Magic => (16.0, Color::srgb(0.72, 0.62, 1.0)),
         FloaterKind::Miss => (13.0, Color::srgb(0.75, 0.77, 0.82)),
         FloaterKind::Heal => (16.0, Color::srgb(0.45, 1.0, 0.5)),

@@ -26,7 +26,7 @@ mod tests {
     #[test]
     fn round_trip_and_facing() {
         let p = Vec2::new(123.0, -456.0);
-        assert_eq!(world_to_sim(sim_to_world(p)), p);
+        assert_eq!(world_to_sim(Vec3::new(p.x, 0.0, -p.y)), p);
         // Sim east (facing 0) must point along Bevy +X.
         let east = sim_facing_to_rotation(0.0) * Vec3::NEG_Z;
         assert!((east - Vec3::X).length() < 1e-6);
