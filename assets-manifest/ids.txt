@@ -1,0 +1,92 @@
+# Which Dota 2 name stands for which bota id. Copied from
+# bota-visual/crates/bota-client/assets/dota-assets.txt; the `icon.*` and
+# `sound.*` entries of manifest.txt are named after these Dota names.
+#
+#   item <item id> <dota item name>        icon.item.<name>    (panorama/images/items/<name>_png)
+#   ability <ability id> <dota ability>    icon.ability.<name> (panorama/images/spellicons/<name>_png)
+#   hero <hero id> <dota hero>             icon.hero.<name>, portrait.hero.<name>, minimap.hero.<name>
+#   sound <effect> <regex>                 legacy regexes of the old client; manifest.txt resolves
+#                                          sounds through sound events instead (sound.<effect>)
+#
+# The files are Valve's: tools/import_assets.sh exports them into a local
+# cache for personal use; they are never committed.
+item 0 boots
+item 1 clarity
+item 2 flask
+item 3 branches
+item 4 ward_observer
+item 5 quelling_blade
+item 6 ward_sentry
+item 7 tango
+item 8 tpscroll
+item 9 circlet
+item 10 gauntlets
+item 11 slippers
+item 12 mantle
+item 13 belt_of_strength
+item 14 boots_of_elves
+item 15 robe
+item 16 ogre_axe
+item 17 blade_of_alacrity
+item 18 staff_of_wizardry
+item 19 gloves
+item 20 blades_of_attack
+item 21 broadsword
+item 22 quarterstaff
+item 23 ring_of_protection
+item 24 chainmail
+item 25 ring_of_regen
+item 26 sobi_mask
+item 27 vitality_booster
+item 28 energy_booster
+item 29 power_treads
+item 30 phase_boots
+item 31 blink
+item 32 bracer
+item 33 wraith_band
+item 34 null_talisman
+item 35 magic_stick
+item 36 magic_wand
+item 37 recipe
+item 38 recipe
+item 39 recipe
+item 40 recipe
+item 41 recipe
+item 42 famango
+item 43 eagle
+item 44 claymore
+item 45 talisman_of_evasion
+item 46 butterfly
+item 47 javelin
+item 48 demon_edge
+item 49 blitz_knuckles
+item 50 recipe
+item 51 monkey_king_bar
+ability 4 pudge_meat_hook
+ability 5 pudge_rot
+ability 6 pudge_flesh_heap
+ability 7 pudge_dismember
+ability 8 courier_burst
+ability 9 courier_return_to_base
+ability 10 courier_take_stash_items
+ability 11 courier_transfer_items
+ability 12 courier_shield
+ability 13 nevermore_shadowraze1
+ability 14 nevermore_shadowraze2
+ability 15 nevermore_shadowraze3
+ability 16 nevermore_requiem
+ability 17 nevermore_necromastery
+ability 18 nevermore_dark_lord
+ability 19 nevermore_frenzy
+hero 1 pudge
+hero 2 nevermore
+sound attack ^sounds/weapons/hero/(shadow_fiend|nevermore)/.*attack.*\.vsnd_c$
+sound hit ^sounds/weapons/hero/(shadow_fiend|nevermore)/.*(impact|hit).*\.vsnd_c$
+sound last_hit ^sounds/ui/coins?\.vsnd_c$
+sound deny ^sounds/.*deny.*\.vsnd_c$
+sound raze ^sounds/weapons/hero/(shadow_fiend|nevermore)/.*shadowraze.*\.vsnd_c$
+sound requiem ^sounds/weapons/hero/(shadow_fiend|nevermore)/.*requiem.*\.vsnd_c$
+sound buy ^sounds/ui/.*(buy|purchase).*\.vsnd_c$
+sound level_up ^sounds/.*level_?up.*\.vsnd_c$
+sound tower_shot ^sounds/weapons/(building|buildings)/.*tower.*\.vsnd_c$
+sound click ^sounds/ui/.*click.*\.vsnd_c$

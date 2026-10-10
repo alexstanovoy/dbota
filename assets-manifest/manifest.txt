@@ -1,0 +1,283 @@
+# dbota asset manifest: every Valve asset the client uses, exported by tools/import_assets.sh
+# into the cache ($DBOTA_ASSETS, default ~/.cache/dbota). Outputs are relative to the cache root.
+#
+# Line kinds (whitespace-separated, '#' starts a comment):
+#   model   <logical> <vpk .vmdl_c> <out .glb> [anims=a,b,c] [meshes=m,n] [attach=<model>] [model_scale=x]
+#           glTF 2.0 binary; textures are PNG files next to the .glb (referenced by relative uri).
+#           anims= lists the exported animations (none without it); meshes= keeps only those
+#           render meshes (drops event/alternate variants that would overlap the default one).
+#           attach= marks a wearable: a skinned mesh whose joints share names with the parent's
+#           skeleton; bind its joints to the parent's joint entities by name, ignoring case
+#           (Dota "bonemerge"; e.g. the arms say root0_jnt where Shadow Fiend says Root0_JNT).
+#   clip    <model> <logical clip> <glTF animation name> <duration s> [point=<s>]
+#           point = the Dota attack/cast point in seconds at base speed (npc scripts), not a frame.
+#   texture <logical> <vpk .vtex_c> <out .png>
+#   sound   <logical> <vpk .vsnd_c> <out .wav> event=<Dota sound event that plays it>
+#           16-bit PCM WAV, 44.1 kHz. Events with several variants list one line per variant.
+#   world   <logical> <vpk .vwrld_c> <out .glb> vpk=<map vpk under game/dota> half_width= v_min= v_max=
+#           layers=<dir> trees=<file>: the default map cropped to a band around the mid-lane diagonal
+#           (see tools/README.md for the coordinate convention, terrain layers and trees).
+#
+# Coordinates: glTF Y-up metres; gltf.x = dota.y * 0.0254, gltf.y = height * 0.0254,
+# gltf.z = dota.x * 0.0254; bota = dota + 9216 on both axes. Models face +Z (Dota +x at yaw 0).
+
+
+# --- Shadow Fiend (npc_dota_hero_nevermore: BAT 1.6, attack point 0.5 s, raze cast point 0.55 s, requiem 1.67 s)
+model hero.nevermore.model models/heroes/shadow_fiend/shadow_fiend.vmdl_c models/hero/nevermore/nevermore.glb anims=idle,run,attack01,attack02,cast1_shadowraze_a,cast1_shadowraze_b,cast1_shadowraze_c,cast6_requiem,death,idle_rare,idle_injured,run_haste,run_injured,stun,flail,teleport,spawn model_scale=0.98
+clip hero.nevermore.model idle idle 1.600
+clip hero.nevermore.model run run 1.100
+clip hero.nevermore.model attack attack01 1.100 point=0.5
+clip hero.nevermore.model attack2 attack02 1.100 point=0.5
+clip hero.nevermore.model cast1 cast1_shadowraze_a 0.765 point=0.55
+clip hero.nevermore.model cast2 cast1_shadowraze_b 0.765 point=0.55
+clip hero.nevermore.model cast3 cast1_shadowraze_c 0.824 point=0.55
+clip hero.nevermore.model requiem cast6_requiem 2.467 point=1.67
+clip hero.nevermore.model death death 1.600
+clip hero.nevermore.model idle_rare idle_rare 9.600
+clip hero.nevermore.model idle_injured idle_injured 6.400
+clip hero.nevermore.model run_haste run_haste 5.730
+clip hero.nevermore.model run_injured run_injured 1.100
+clip hero.nevermore.model stun stun 2.067
+clip hero.nevermore.model flail flail 0.686
+clip hero.nevermore.model teleport teleport 2.233
+clip hero.nevermore.model spawn spawn 1.000
+# Default wearables (items_game.txt default_item for npc_dota_hero_nevermore: 387 head, 486 shoulders, 488 arms)
+model hero.nevermore.head models/heroes/shadow_fiend/shadow_fiend_head.vmdl_c models/hero/nevermore_head/nevermore_head.glb attach=hero.nevermore.model
+model hero.nevermore.shoulders models/heroes/shadow_fiend/shadow_fiend_shoulders.vmdl_c models/hero/nevermore_shoulders/nevermore_shoulders.glb attach=hero.nevermore.model
+model hero.nevermore.arms models/heroes/shadow_fiend/shadow_fiend_arms.vmdl_c models/hero/nevermore_arms/nevermore_arms.glb attach=hero.nevermore.model
+
+# --- Lane creeps (npc_units.txt; attack rate 1.0; attack point melee 0.467 s, ranged 0.5 s)
+# The flagbearers are the melee meshes with their own animations; Dota adds the banner at runtime on
+# attachment attach_banner (bone Root_0, offset 0.898 0.915 0.089 in, angles -12.6 10.1 1.5); it is not exported.
+model creep.radiant.melee.model models/creeps/lane_creeps/creep_radiant_melee/radiant_melee.vmdl_c models/creep/radiant_melee/radiant_melee.glb anims=idle,run,attack,attack2,death,stun model_scale=0.93
+clip creep.radiant.melee.model idle idle 1.433
+clip creep.radiant.melee.model run run 0.800
+clip creep.radiant.melee.model attack attack 1.000 point=0.467
+clip creep.radiant.melee.model attack2 attack2 1.000 point=0.467
+clip creep.radiant.melee.model death death 1.033
+clip creep.radiant.melee.model stun stun 2.150
+model creep.radiant.flagbearer.model models/creeps/lane_creeps/creep_radiant_melee/radiant_flagbearer.vmdl_c models/creep/radiant_flagbearer/radiant_flagbearer.glb anims=idle,run,attack,attack2,death,stun model_scale=0.93
+clip creep.radiant.flagbearer.model idle idle 1.433
+clip creep.radiant.flagbearer.model run run 0.800
+clip creep.radiant.flagbearer.model attack attack 1.000 point=0.467
+clip creep.radiant.flagbearer.model attack2 attack2 1.000 point=0.467
+clip creep.radiant.flagbearer.model death death 1.033
+clip creep.radiant.flagbearer.model stun stun 2.150
+model creep.radiant.ranged.model models/creeps/lane_creeps/creep_radiant_ranged/radiant_ranged.vmdl_c models/creep/radiant_ranged/radiant_ranged.glb anims=idle,run,attack,attack2,death,stun model_scale=0.88
+clip creep.radiant.ranged.model idle idle 1.600
+clip creep.radiant.ranged.model run run 0.700
+clip creep.radiant.ranged.model attack attack 1.000 point=0.5
+clip creep.radiant.ranged.model attack2 attack2 1.000 point=0.5
+clip creep.radiant.ranged.model death death 0.867
+clip creep.radiant.ranged.model stun stun 1.400
+model creep.dire.melee.model models/creeps/lane_creeps/creep_bad_melee/creep_bad_melee.vmdl_c models/creep/dire_melee/dire_melee.glb anims=idle,run,attack,attackAlt,die,stun meshes=creep_bad_melee_model model_scale=0.93
+clip creep.dire.melee.model idle idle 1.700
+clip creep.dire.melee.model run run 0.767
+clip creep.dire.melee.model attack attack 0.933 point=0.467
+clip creep.dire.melee.model attack2 attackAlt 0.933 point=0.467
+clip creep.dire.melee.model death die 1.700
+clip creep.dire.melee.model stun stun 1.067
+model creep.dire.flagbearer.model models/creeps/lane_creeps/creep_bad_melee/creep_bad_flagbearer.vmdl_c models/creep/dire_flagbearer/dire_flagbearer.glb anims=idle,run,attack,attackAlt,die,stun meshes=creep_bad_melee_model model_scale=0.93
+clip creep.dire.flagbearer.model idle idle 1.700
+clip creep.dire.flagbearer.model run run 0.767
+clip creep.dire.flagbearer.model attack attack 0.933 point=0.467
+clip creep.dire.flagbearer.model attack2 attackAlt 0.933 point=0.467
+clip creep.dire.flagbearer.model death die 1.700
+clip creep.dire.flagbearer.model stun stun 1.067
+model creep.dire.ranged.model models/creeps/lane_creeps/creep_bad_ranged/lane_dire_ranged.vmdl_c models/creep/dire_ranged/dire_ranged.glb anims=idle,run,attack,attack2,death,stun model_scale=0.93
+clip creep.dire.ranged.model idle idle 1.967
+clip creep.dire.ranged.model run run 0.633
+clip creep.dire.ranged.model attack attack 0.967 point=0.5
+clip creep.dire.ranged.model attack2 attack2 0.967 point=0.5
+clip creep.dire.ranged.model death death 1.300
+clip creep.dire.ranged.model stun stun 1.967
+
+# --- Tier-1 towers: the models the default map places (npc_units.txt names tower_good.vmdl, the map overrides it).
+# Attack rate 0.9, attack point 0.6 s. Their attack poses are single frames (duration 0).
+model tower.radiant.model models/props_structures/radiant_tower002.vmdl_c models/tower/radiant/radiant_tower.glb anims=radiant_tower001_idle,radiant_tower002_attack
+clip tower.radiant.model idle radiant_tower001_idle 3.000
+clip tower.radiant.model attack radiant_tower002_attack 0.000 point=0.6
+model tower.dire.model models/props_structures/dire_tower002.vmdl_c models/tower/dire/dire_tower.glb anims=dire_tower002_idle_showcase,dire_tower002_attack
+clip tower.dire.model idle dire_tower002_idle_showcase 0.000
+clip tower.dire.model attack dire_tower002_attack 0.000 point=0.6
+
+# --- Trees the default map uses around mid (static; per-tree placement in map/mid/trees.txt).
+# Two meshes each: <tree>_model (standing tree) and the stump (show it once the tree is cut).
+model tree.tree_pine_01 models/props_tree/tree_pine_01.vmdl_c models/tree/tree_pine_01/tree_pine_01.glb meshes=tree_pine_01_model,tree_pine_01_stump_model
+model tree.tree_pine_02 models/props_tree/tree_pine_02.vmdl_c models/tree/tree_pine_02/tree_pine_02.glb meshes=tree_pine_02_model,tree_pine_02_stump_model
+model tree.tree_oak_01 models/props_tree/tree_oak_01.vmdl_c models/tree/tree_oak_01/tree_oak_01.glb meshes=tree_oak_01_model,tree_oak_01_stump_model
+model tree.tree_oak_01b models/props_tree/tree_oak_01b.vmdl_c models/tree/tree_oak_01b/tree_oak_01b.glb meshes=tree_oak_01b_model,tree_oak_01b_stump_model
+model tree.tree_oak_02 models/props_tree/tree_oak_02.vmdl_c models/tree/tree_oak_02/tree_oak_02.glb meshes=tree_oak_02_model,tree_oak_02_stump_model
+model tree.dire_tree004 models/props_tree/dire_tree004.vmdl_c models/tree/dire_tree004/dire_tree004.glb meshes=dire_tree004_model,tree_dire_04_stump_model
+model tree.dire_tree004b models/props_tree/dire_tree004b.vmdl_c models/tree/dire_tree004b/dire_tree004b.glb meshes=dire_tree004b_model,tree_dire_04b_stump_model
+model tree.dire_tree007 models/props_tree/dire_tree007.vmdl_c models/tree/dire_tree007/dire_tree007.glb meshes=dire_tree007_model,tree_dire_07_stump_model
+model tree.dire_tree008 models/props_tree/dire_tree008.vmdl_c models/tree/dire_tree008/dire_tree008.glb meshes=dire_tree008_model,tree_dire_08_stump_model
+
+# --- Default map, mid-lane band (towers and trees removed: the client spawns those itself)
+world map.mid maps/dota/world.vwrld_c map/mid/mid.glb vpk=maps/dota.vpk half_width=2600 v_min=-7600 v_max=7400 layers=textures/ground trees=map/mid/trees.txt
+
+# --- Ground textures (also the terrain layers of map.mid, same files)
+texture ground.grass materials/nature/grass_long_00_color_psd_e36d65e.vtex_c textures/ground/grass_long_00_color_psd_e36d65e.png
+texture ground.grass2 materials/nature/grass_long_01_color_psd_3fbdd738.vtex_c textures/ground/grass_long_01_color_psd_3fbdd738.png
+texture ground.grass.normal materials/nature/grass_long_00_normal_psd_241b7552.vtex_c textures/ground/grass_long_00_normal_psd_241b7552.png
+texture ground.path materials/nature/sand_path009_color_psd_a290f30d.vtex_c textures/ground/sand_path009_color_psd_a290f30d.png
+texture ground.path.normal materials/nature/sand_path001_normal_psd_5df4e78b.vtex_c textures/ground/sand_path001_normal_psd_5df4e78b.png
+texture ground.stone_path materials/stone/stone_path001_angled_color_psd_150d1d7b.vtex_c textures/ground/stone_path001_angled_color_psd_150d1d7b.png
+texture ground.cliff materials/rock/cliff_wall002_color_psd_2e327b30.vtex_c textures/ground/cliff_wall002_color_psd_2e327b30.png
+texture ground.cliff.normal materials/rock/cliff_wall001_normal_psd_529e2179.vtex_c textures/ground/cliff_wall001_normal_psd_529e2179.png
+texture ground.dire materials/nature/dirt_cracked_patchy_00_psd_3956639e.vtex_c textures/ground/dirt_cracked_patchy_00_psd_3956639e.png
+texture ground.dire.normal materials/nature/dirt_cracked_patchy_00_normal_psd_2367b365.vtex_c textures/ground/dirt_cracked_patchy_00_normal_psd_2367b365.png
+texture ground.dire2 materials/nature/sand_cracked001_color_psd_1017aede.vtex_c textures/ground/sand_cracked001_color_psd_1017aede.png
+texture ground.dire_path materials/stone/stone_path007_tintable_psd_6b1a56e8.vtex_c textures/ground/stone_path007_tintable_psd_6b1a56e8.png
+texture ground.river_rock materials/nature/river_rock001_color_psd_db6ff875.vtex_c textures/ground/river_rock001_color_psd_db6ff875.png
+texture ground.water.normal materials/water/water_river_normal_sharp_temp_normal_tga_4ab60bd5.vtex_c textures/ground/water_river_normal_sharp_temp_normal_tga_4ab60bd5.png
+texture ground.water.noise materials/water/water_noise_000_tga_d68b7ee6.vtex_c textures/ground/water_noise_000_tga_d68b7ee6.png
+
+# --- Particle textures (raze / requiem / attack effects); particle systems themselves are not ported
+texture particle.smoke materials/particle/smoke/static/static_smoke.vtex_c textures/particle/static_smoke.png
+texture particle.wispy materials/particle/smoke/maya_wispy/wispy_v2.vtex_c textures/particle/wispy_v2.png
+texture particle.glow materials/particle/particle_glow_01.vtex_c textures/particle/particle_glow_01.png
+texture particle.glow_soft materials/particle/particle_glow_05.vtex_c textures/particle/particle_glow_05.png
+texture particle.sparks materials/particle/sparks/sparks.vtex_c textures/particle/sparks.png
+texture particle.flare_red materials/particle/particle_flares/aircraft_red.vtex_c textures/particle/aircraft_red.png
+texture particle.ring_wavy materials/particle/particle_ring_wavy6.vtex_c textures/particle/particle_ring_wavy6.png
+texture particle.fleks materials/particle/impact/fleks.vtex_c textures/particle/fleks.png
+texture particle.ground_cracks materials/particle/ground/ground_cracks_mod.vtex_c textures/particle/ground_cracks_mod.png
+texture particle.ground_cracks_projected materials/particle/projected_groundcracks_02.vtex_c textures/particle/projected_groundcracks_02.png
+texture particle.fire materials/particle/fire_particle_10/fire_particle_10_low.vtex_c textures/particle/fire_particle_10_low.png
+texture particle.swoop materials/particle/swoop_03.vtex_c textures/particle/swoop_03.png
+texture particle.arc materials/particle/electrical_arc2/electrical_arc_white_2_05.vtex_c textures/particle/electrical_arc_white_2_05.png
+
+# --- Item icons (88x64, a few narrower), every Dota item name in ids.txt
+texture icon.item.boots panorama/images/items/boots_png.vtex_c icons/items/boots.png
+texture icon.item.clarity panorama/images/items/clarity_png.vtex_c icons/items/clarity.png
+texture icon.item.flask panorama/images/items/flask_png.vtex_c icons/items/flask.png
+texture icon.item.branches panorama/images/items/branches_png.vtex_c icons/items/branches.png
+texture icon.item.ward_observer panorama/images/items/ward_observer_png.vtex_c icons/items/ward_observer.png
+texture icon.item.quelling_blade panorama/images/items/quelling_blade_png.vtex_c icons/items/quelling_blade.png
+texture icon.item.ward_sentry panorama/images/items/ward_sentry_png.vtex_c icons/items/ward_sentry.png
+texture icon.item.tango panorama/images/items/tango_png.vtex_c icons/items/tango.png
+texture icon.item.tpscroll panorama/images/items/tpscroll_png.vtex_c icons/items/tpscroll.png
+texture icon.item.circlet panorama/images/items/circlet_png.vtex_c icons/items/circlet.png
+texture icon.item.gauntlets panorama/images/items/gauntlets_png.vtex_c icons/items/gauntlets.png
+texture icon.item.slippers panorama/images/items/slippers_png.vtex_c icons/items/slippers.png
+texture icon.item.mantle panorama/images/items/mantle_png.vtex_c icons/items/mantle.png
+texture icon.item.belt_of_strength panorama/images/items/belt_of_strength_png.vtex_c icons/items/belt_of_strength.png
+texture icon.item.boots_of_elves panorama/images/items/boots_of_elves_png.vtex_c icons/items/boots_of_elves.png
+texture icon.item.robe panorama/images/items/robe_png.vtex_c icons/items/robe.png
+texture icon.item.ogre_axe panorama/images/items/ogre_axe_png.vtex_c icons/items/ogre_axe.png
+texture icon.item.blade_of_alacrity panorama/images/items/blade_of_alacrity_png.vtex_c icons/items/blade_of_alacrity.png
+texture icon.item.staff_of_wizardry panorama/images/items/staff_of_wizardry_png.vtex_c icons/items/staff_of_wizardry.png
+texture icon.item.gloves panorama/images/items/gloves_png.vtex_c icons/items/gloves.png
+texture icon.item.blades_of_attack panorama/images/items/blades_of_attack_png.vtex_c icons/items/blades_of_attack.png
+texture icon.item.broadsword panorama/images/items/broadsword_png.vtex_c icons/items/broadsword.png
+texture icon.item.quarterstaff panorama/images/items/quarterstaff_png.vtex_c icons/items/quarterstaff.png
+texture icon.item.ring_of_protection panorama/images/items/ring_of_protection_png.vtex_c icons/items/ring_of_protection.png
+texture icon.item.chainmail panorama/images/items/chainmail_png.vtex_c icons/items/chainmail.png
+texture icon.item.ring_of_regen panorama/images/items/ring_of_regen_png.vtex_c icons/items/ring_of_regen.png
+texture icon.item.sobi_mask panorama/images/items/sobi_mask_png.vtex_c icons/items/sobi_mask.png
+texture icon.item.vitality_booster panorama/images/items/vitality_booster_png.vtex_c icons/items/vitality_booster.png
+texture icon.item.energy_booster panorama/images/items/energy_booster_png.vtex_c icons/items/energy_booster.png
+texture icon.item.power_treads panorama/images/items/power_treads_png.vtex_c icons/items/power_treads.png
+texture icon.item.phase_boots panorama/images/items/phase_boots_png.vtex_c icons/items/phase_boots.png
+texture icon.item.blink panorama/images/items/blink_png.vtex_c icons/items/blink.png
+texture icon.item.bracer panorama/images/items/bracer_png.vtex_c icons/items/bracer.png
+texture icon.item.wraith_band panorama/images/items/wraith_band_png.vtex_c icons/items/wraith_band.png
+texture icon.item.null_talisman panorama/images/items/null_talisman_png.vtex_c icons/items/null_talisman.png
+texture icon.item.magic_stick panorama/images/items/magic_stick_png.vtex_c icons/items/magic_stick.png
+texture icon.item.magic_wand panorama/images/items/magic_wand_png.vtex_c icons/items/magic_wand.png
+texture icon.item.recipe panorama/images/items/recipe_png.vtex_c icons/items/recipe.png
+texture icon.item.famango panorama/images/items/famango_png.vtex_c icons/items/famango.png
+texture icon.item.eagle panorama/images/items/eagle_png.vtex_c icons/items/eagle.png
+texture icon.item.claymore panorama/images/items/claymore_png.vtex_c icons/items/claymore.png
+texture icon.item.talisman_of_evasion panorama/images/items/talisman_of_evasion_png.vtex_c icons/items/talisman_of_evasion.png
+texture icon.item.butterfly panorama/images/items/butterfly_png.vtex_c icons/items/butterfly.png
+texture icon.item.javelin panorama/images/items/javelin_png.vtex_c icons/items/javelin.png
+texture icon.item.demon_edge panorama/images/items/demon_edge_png.vtex_c icons/items/demon_edge.png
+texture icon.item.blitz_knuckles panorama/images/items/blitz_knuckles_png.vtex_c icons/items/blitz_knuckles.png
+texture icon.item.monkey_king_bar panorama/images/items/monkey_king_bar_png.vtex_c icons/items/monkey_king_bar.png
+
+# --- Ability icons (128x128), every ability in ids.txt (nevermore_frenzy = Feast of Souls)
+texture icon.ability.pudge_meat_hook panorama/images/spellicons/pudge_meat_hook_png.vtex_c icons/abilities/pudge_meat_hook.png
+texture icon.ability.pudge_rot panorama/images/spellicons/pudge_rot_png.vtex_c icons/abilities/pudge_rot.png
+texture icon.ability.pudge_flesh_heap panorama/images/spellicons/pudge_flesh_heap_png.vtex_c icons/abilities/pudge_flesh_heap.png
+texture icon.ability.pudge_dismember panorama/images/spellicons/pudge_dismember_png.vtex_c icons/abilities/pudge_dismember.png
+texture icon.ability.courier_burst panorama/images/spellicons/courier_burst_png.vtex_c icons/abilities/courier_burst.png
+texture icon.ability.courier_return_to_base panorama/images/spellicons/courier_return_to_base_png.vtex_c icons/abilities/courier_return_to_base.png
+texture icon.ability.courier_take_stash_items panorama/images/spellicons/courier_take_stash_items_png.vtex_c icons/abilities/courier_take_stash_items.png
+texture icon.ability.courier_transfer_items panorama/images/spellicons/courier_transfer_items_png.vtex_c icons/abilities/courier_transfer_items.png
+texture icon.ability.courier_shield panorama/images/spellicons/courier_shield_png.vtex_c icons/abilities/courier_shield.png
+texture icon.ability.nevermore_shadowraze1 panorama/images/spellicons/nevermore_shadowraze1_png.vtex_c icons/abilities/nevermore_shadowraze1.png
+texture icon.ability.nevermore_shadowraze2 panorama/images/spellicons/nevermore_shadowraze2_png.vtex_c icons/abilities/nevermore_shadowraze2.png
+texture icon.ability.nevermore_shadowraze3 panorama/images/spellicons/nevermore_shadowraze3_png.vtex_c icons/abilities/nevermore_shadowraze3.png
+texture icon.ability.nevermore_requiem panorama/images/spellicons/nevermore_requiem_png.vtex_c icons/abilities/nevermore_requiem.png
+texture icon.ability.nevermore_necromastery panorama/images/spellicons/nevermore_necromastery_png.vtex_c icons/abilities/nevermore_necromastery.png
+texture icon.ability.nevermore_dark_lord panorama/images/spellicons/nevermore_dark_lord_png.vtex_c icons/abilities/nevermore_dark_lord.png
+texture icon.ability.nevermore_frenzy panorama/images/spellicons/nevermore_frenzy_png.vtex_c icons/abilities/nevermore_frenzy.png
+
+# --- Hero art: landscape portrait, tall selection portrait, minimap icon
+texture portrait.hero.pudge panorama/images/heroes/npc_dota_hero_pudge_png.vtex_c icons/heroes/pudge.png
+texture portrait.hero.pudge.tall panorama/images/heroes/selection/npc_dota_hero_pudge_png.vtex_c icons/heroes/pudge_tall.png
+texture minimap.hero.pudge panorama/images/heroes/icons/npc_dota_hero_pudge_png.vtex_c icons/minimap/pudge.png
+texture portrait.hero.nevermore panorama/images/heroes/npc_dota_hero_nevermore_png.vtex_c icons/heroes/nevermore.png
+texture portrait.hero.nevermore.tall panorama/images/heroes/selection/npc_dota_hero_nevermore_png.vtex_c icons/heroes/nevermore_tall.png
+texture minimap.hero.nevermore panorama/images/heroes/icons/npc_dota_hero_nevermore_png.vtex_c icons/minimap/nevermore.png
+
+# --- HUD art and the minimap background
+texture hud.gold panorama/images/hud/icon_gold_psd.vtex_c hud/icon_gold_psd.png
+texture hud.gold_large panorama/images/hud/reborn/gold_large_png.vtex_c hud/gold_large_png.png
+texture hud.gold_small panorama/images/hud/reborn/gold_small_psd.vtex_c hud/gold_small_psd.png
+texture hud.armor panorama/images/hud/reborn/icon_armor_psd.vtex_c hud/icon_armor_psd.png
+texture hud.damage panorama/images/hud/reborn/icon_damage_psd.vtex_c hud/icon_damage_psd.png
+texture hud.speed panorama/images/hud/reborn/icon_speed_psd.vtex_c hud/icon_speed_psd.png
+texture hud.death panorama/images/hud/reborn/icon_death_psd.vtex_c hud/icon_death_psd.png
+texture hud.day panorama/images/hud/reborn/icon_sun_psd.vtex_c hud/icon_sun_psd.png
+texture hud.night panorama/images/hud/reborn/icon_moon_psd.vtex_c hud/icon_moon_psd.png
+texture hud.ability_bg panorama/images/hud/reborn/ability_bg_psd.vtex_c hud/ability_bg_psd.png
+texture hud.ability_bevel panorama/images/hud/reborn/ability_bevel_psd.vtex_c hud/ability_bevel_psd.png
+texture hud.levelup panorama/images/hud/reborn/levelup_plus_fill_psd.vtex_c hud/levelup_plus_fill_psd.png
+texture hud.minimap_border panorama/images/hud/default/actionpanel/minimapborder_png.vtex_c hud/minimapborder_png.png
+texture minimap.map panorama/images/minimap/dotamap_psd.vtex_c minimap/dotamap_psd.png
+texture minimap.radiant_buildings panorama/images/minimap/dotamap_radiant_buildings_psd.vtex_c minimap/dotamap_radiant_buildings_psd.png
+texture minimap.dire_buildings panorama/images/minimap/dotamap_dire_buildings_psd.vtex_c minimap/dotamap_dire_buildings_psd.png
+
+# --- Sounds, resolved through their sound events (soundevents/*.vsndevts_c)
+sound sound.nevermore.attack.1 sounds/weapons/hero/nevermore/attack01.vsnd_c sounds/weapons/hero/nevermore/attack01.wav event=Hero_Nevermore.Attack
+sound sound.nevermore.attack.2 sounds/weapons/hero/nevermore/attack02.vsnd_c sounds/weapons/hero/nevermore/attack02.wav event=Hero_Nevermore.Attack
+sound sound.nevermore.attack_impact sounds/weapons/hero/witch_doctor/projectile_impact.vsnd_c sounds/weapons/hero/witch_doctor/projectile_impact.wav event=Hero_Nevermore.ProjectileImpact
+sound sound.raze sounds/weapons/hero/nevermore/shadowraze.vsnd_c sounds/weapons/hero/nevermore/shadowraze.wav event=Hero_Nevermore.Shadowraze
+sound sound.requiem_cast sounds/weapons/hero/nevermore/requiem_cast.vsnd_c sounds/weapons/hero/nevermore/requiem_cast.wav event=Hero_Nevermore.RequiemOfSoulsCast
+sound sound.requiem sounds/weapons/hero/nevermore/requiem_of_souls.vsnd_c sounds/weapons/hero/nevermore/requiem_of_souls.wav event=Hero_Nevermore.RequiemOfSouls
+sound sound.nevermore.frenzy sounds/weapons/hero/nevermore/frenzy.vsnd_c sounds/weapons/hero/nevermore/frenzy.wav event=Hero_Nevermore.Frenzy
+sound sound.nevermore.death sounds/physics/deaths/specials/shadowfiend_death.vsnd_c sounds/physics/deaths/specials/shadowfiend_death.wav event=Hero_Nevermore.Death
+sound sound.last_hit sounds/ui/coins.vsnd_c sounds/ui/coins.wav event=General.Coins
+sound sound.deny sounds/ui/last_hit.vsnd_c sounds/ui/last_hit.wav event=UI.Deny.Melee
+sound sound.creep.melee.attack.1 sounds/weapons/creep/shared/melee_hit01.vsnd_c sounds/weapons/creep/shared/melee_hit01.wav event=Creep_Good_Melee.Attack
+sound sound.creep.melee.attack.2 sounds/weapons/creep/shared/melee_hit02.vsnd_c sounds/weapons/creep/shared/melee_hit02.wav event=Creep_Good_Melee.Attack
+sound sound.creep.melee.attack.3 sounds/weapons/creep/shared/melee_hit03.vsnd_c sounds/weapons/creep/shared/melee_hit03.wav event=Creep_Good_Melee.Attack
+sound sound.creep.melee.preattack.1 sounds/weapons/creep/shared/whoosh01.vsnd_c sounds/weapons/creep/shared/whoosh01.wav event=Creep_Good_Melee.PreAttack
+sound sound.creep.melee.preattack.2 sounds/weapons/creep/shared/whoosh02.vsnd_c sounds/weapons/creep/shared/whoosh02.wav event=Creep_Good_Melee.PreAttack
+sound sound.creep.radiant.ranged.attack.1 sounds/weapons/creep/good/range_projectile_launch.vsnd_c sounds/weapons/creep/good/range_projectile_launch.wav event=Creep_Good_Range.Attack
+sound sound.creep.radiant.ranged.attack.2 sounds/weapons/creep/good/range_projectile_launch2.vsnd_c sounds/weapons/creep/good/range_projectile_launch2.wav event=Creep_Good_Range.Attack
+sound sound.creep.radiant.ranged.impact.1 sounds/weapons/creep/good/range_projectile_impact.vsnd_c sounds/weapons/creep/good/range_projectile_impact.wav event=Creep_Good_Range.ProjectileImpact
+sound sound.creep.radiant.ranged.impact.2 sounds/weapons/creep/good/range_projectile_impact2.vsnd_c sounds/weapons/creep/good/range_projectile_impact2.wav event=Creep_Good_Range.ProjectileImpact
+sound sound.creep.dire.ranged.attack.1 sounds/weapons/creep/bad/range_projectile_launch.vsnd_c sounds/weapons/creep/bad/range_projectile_launch.wav event=Creep_Bad_Range.Attack
+sound sound.creep.dire.ranged.attack.2 sounds/weapons/creep/bad/range_projectile_launch2.vsnd_c sounds/weapons/creep/bad/range_projectile_launch2.wav event=Creep_Bad_Range.Attack
+sound sound.creep.dire.ranged.impact.1 sounds/weapons/creep/bad/range_projectile_impact.vsnd_c sounds/weapons/creep/bad/range_projectile_impact.wav event=Creep_Bad_Range.ProjectileImpact
+sound sound.creep.dire.ranged.impact.2 sounds/weapons/creep/bad/range_projectile_impact2.vsnd_c sounds/weapons/creep/bad/range_projectile_impact2.wav event=Creep_Bad_Range.ProjectileImpact
+sound sound.tower.radiant.attack sounds/weapons/towers/attack_radiant.vsnd_c sounds/weapons/towers/attack_radiant.wav event=Tower.Water.Attack
+sound sound.tower.dire.attack sounds/weapons/towers/attack_dire.vsnd_c sounds/weapons/towers/attack_dire.wav event=Tower.Fire.Attack
+sound sound.tower.impact sounds/physics/damage/npc/tower_projectile.vsnd_c sounds/physics/damage/npc/tower_projectile.wav event=Tower.Water.ProjectileImpact
+sound sound.tower.hero_impact sounds/physics/damage/player/tower_projectile01.vsnd_c sounds/physics/damage/player/tower_projectile01.wav event=Tower.HeroImpact
+sound sound.tower.radiant.destroyed sounds/physics/damage/building/radiant_tower_destruction_01.vsnd_c sounds/physics/damage/building/radiant_tower_destruction_01.wav event=Building_RadiantTower.Destruction
+sound sound.tower.dire.destroyed sounds/physics/damage/building/dire_tower_destruction_01.vsnd_c sounds/physics/damage/building/dire_tower_destruction_01.wav event=Building_DireTower.Destruction
+sound sound.click sounds/ui/buttonclick.vsnd_c sounds/ui/buttonclick.wav event=General.ButtonClick
+sound sound.buy sounds/ui/buy.vsnd_c sounds/ui/buy.wav event=General.Buy
+sound sound.no_gold sounds/ui/ui_general_deny.vsnd_c sounds/ui/ui_general_deny.wav event=General.NoGold
+sound sound.level_up sounds/ui/power_up_06.vsnd_c sounds/ui/power_up_06.wav event=General.LevelUp
+sound sound.item.tango sounds/items/tango.vsnd_c sounds/items/tango.wav event=DOTA_Item.Tango.Activate
+sound sound.item.flask sounds/items/healing_salve.vsnd_c sounds/items/healing_salve.wav event=DOTA_Item.HealingSalve.Activate
+sound sound.item.clarity sounds/items/clarity_potion.vsnd_c sounds/items/clarity_potion.wav event=DOTA_Item.ClarityPotion.Activate
+sound sound.item.magic_stick sounds/items/magic_stick_activate.vsnd_c sounds/items/magic_stick_activate.wav event=DOTA_Item.MagicStick.Activate
+sound sound.item.phase_boots sounds/items/phase_boots_activate.vsnd_c sounds/items/phase_boots_activate.wav event=DOTA_Item.PhaseBoots.Activate
+sound sound.item.blink sounds/weapons/hero/antimage/blink_out.vsnd_c sounds/weapons/hero/antimage/blink_out.wav event=DOTA_Item.BlinkDagger.Activate

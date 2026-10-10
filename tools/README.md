@@ -1,0 +1,99 @@
+# Dota 2 asset import
+
+`import_assets.sh` exports the Dota 2 models, map, textures and sounds that dbota draws into a local
+cache. **Valve's files are for personal use only**: they live in the cache, outside any repository,
+and are never committed or published. Only our own tooling and the manifest are in git.
+
+```sh
+tools/import_assets.sh                      # Flatpak Steam, then ~/.steam/steam, then ~/.local/share/Steam
+tools/import_assets.sh --dota-path "/path/to/steamapps/common/dota 2 beta"
+DBOTA_ASSETS=/elsewhere tools/import_assets.sh   # cache location (default ~/.cache/dbota)
+```
+
+Requirements: an installed Dota 2, `curl`, `unzip`, `sha256sum`, `python3` (stdlib only), Linux x64.
+The script downloads [Source2Viewer-CLI](https://github.com/ValveResourceFormat/ValveResourceFormat)
+**20.0** (`cli-linux-x64.zip`, released 2026-08-17, SHA256
+`3e8af47cd6ce52e8068904f2aa1dda23c56a6b96a8310b25090f0711cda76a8a`) into `<cache>/tools/s2v-20.0/`
+and refuses an archive with any other checksum.
+
+A first run takes about 3.5 minutes; it stages the full map export (~330 MB) in a `mktemp` directory
+under `$TMPDIR` (tmpfs on this machine) and removes it on exit. Re-running is a no-op in under a second: textures and sounds are skipped when their output
+exists; models and the map are re-exported only when their manifest line (or `EXPORT_REV` in the
+script) changed. Each run ends with `verify_assets.py`, which fails the import on any missing or
+malformed output.
+
+## Files
+
+| file | role |
+| --- | --- |
+| `../assets-manifest/manifest.txt` | every exported asset: logical name, VPK source, cache path, clips; format in its header |
+| `../assets-manifest/ids.txt` | bota item/ability/hero ids → Dota names (copied from bota-visual) |
+| `import_assets.sh` | the importer |
+| `crop_world.py` | crops the exported map to the mid-lane band, lists terrain layers and trees |
+| `verify_assets.py` | checks glTF meshes/skins/clips/textures, wearable joints, PNG sizes, WAV format |
+| `inspect_gltf.py` | prints a model's meshes, skins and animations (`--json` for machines) |
+
+## What the cache holds (366 MB, 124 MB of it the CLI)
+
+| path | content | size |
+| --- | --- | --- |
+| `models/hero/nevermore/` | Shadow Fiend, 17 clips, plus `nevermore_{head,shoulders,arms}/` default wearables | 16 MB |
+| `models/creep/` | Radiant/Dire melee, ranged, flagbearer (6 clips each) | 37 MB |
+| `models/tower/` | Radiant (`radiant_tower002` + base) and Dire (`dire_tower002`) tier-1 towers | 4 MB |
+| `models/tree/` | the 9 tree models the map uses around mid (standing mesh + stump) | 8 MB |
+| `map/mid/` | `mid.glb`, the default map cropped to the mid lane, its textures, `trees.txt` | 134 MB |
+| `textures/ground/` | terrain layer textures (also used by `map.mid`) | 33 MB |
+| `textures/particle/` | 13 effect textures (smoke, glow, sparks, ground cracks, fire, ...) | 1 MB |
+| `icons/`, `hud/`, `minimap/` | item and ability icons, hero portraits and minimap icons, HUD art, minimap | 2 MB |
+| `sounds/` | 39 WAVs resolved through sound events | 10 MB |
+
+Formats: glTF 2.0 binary (`.glb`) with PNG textures next to it (relative URIs), PNG, WAV. All WAVs
+are PCM 44.1/22.05 kHz, 16-bit except `sounds/ui/ui_general_deny.wav` (8-bit, as Valve ships it);
+Bevy's `wav` feature plays both.
+
+## Using the models
+
+- **Coordinates.** glTF Y-up metres (Source inches × 0.0254): `gltf.x = dota.y`, `gltf.y = height`,
+  `gltf.z = dota.x`. bota positions are Dota + 9216 on both axes. Models face +Z (Dota +x at yaw 0).
+  `model_scale=` in the manifest is the unit's Dota `ModelScale`.
+- **Clips.** `clip` lines map logical clips (`idle`, `run`, `attack`, `cast1..3`, `requiem`,
+  `death`, ...) to glTF animation names and durations; `point=` is the Dota attack/cast point in
+  seconds at base speed (SF attack 0.5, raze 0.55, requiem 1.67; creeps 0.467 melee / 0.5 ranged;
+  towers 0.6). Raze 1/2/3 use `cast1_shadowraze_a/b/c` (`ACT_DOTA_RAZE_1/2/3`). Tower "attack"
+  clips are single-frame poses.
+- **Wearables.** Shadow Fiend's default head, shoulders and arms are separate skinned meshes. Spawn
+  them alongside the hero and point their skin joints at the hero's joint entities with the same
+  name, **ignoring case** (`root0_jnt` vs `Root0_JNT`); `verify_assets.py` checks every wearable joint
+  exists in the hero skeleton.
+- **Materials.** Source2Viewer 20.0 cannot read Dota's current shader files (VCS v72), so materials
+  are mapped by texture name: base colour and normal maps are right; the metallic/roughness,
+  occlusion and `KHR_materials_specular` channels come from Valve's mask textures and are
+  approximate (setting metallic to 0 usually looks closer to Dota). Emissive textures carry the
+  self-illumination mask with the default `emissiveFactor` 0. Every material keeps Valve's shader
+  parameters in `extras.vmat`.
+- **Flagbearers** use the melee meshes with their own animations; Dota attaches the banner at runtime
+  on attachment `attach_banner`, which is not part of the exported model.
+
+## The mid-lane map (`map.mid`)
+
+`maps/dota.vpk`'s world is exported whole and cropped by `crop_world.py` to nodes touching the band
+`|dota.x − dota.y| / √2 ≤ 2600`, `−7600 ≤ (dota.x + dota.y) / √2 ≤ 7400`, i.e. both mid lanes from
+ancient to ancient. Towers and trees are removed (the client spawns them, since they can be destroyed
+or cut); nodes are flattened to world matrices; skins, animations and morph targets are dropped.
+
+- **Terrain** meshes use Valve's 4-layer `multiblend.vfx`; the glTF material only carries layer 0, the
+  blend weights are in the custom vertex attributes `_TEXCOORD_1.._3`, and `extras.vmat.TextureParams`
+  names every layer texture (`g_tColor0..3`, `g_tNormal0..3`, masks), exported to
+  `textures/ground/<basename>.png`. A custom Bevy material can register those attributes to blend the
+  layers; without one, the terrain shows layer 0 everywhere.
+- **Water** (`water_dota.vfx`) has no colour texture; its normal/noise/flow maps are in `textures/ground/`.
+- **Trees.** `map/mid/trees.txt` lists every tree on the whole map:
+  `model dota_x dota_y height yaw_deg scale` (models under `models/tree/` exist for the 9 kinds used
+  around mid; meshes `<tree>_model` and the stump).
+
+## Not exported
+
+- Particle systems (only a few of their textures, first frame of sprite sheets).
+- The tier-1 tower destruction models and non-default (event/crystal/mega) creep variants.
+- The full map outside the mid band (export it by raising `half_width` / `v_min` / `v_max` on the
+  `world` line; the whole map with materials is ~330 MB).
