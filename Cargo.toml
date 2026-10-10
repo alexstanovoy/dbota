@@ -1,0 +1,17 @@
+[package]
+name = "dbota"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+bevy = { version = "=0.19.1", features = ["wav"] }
+clap = { version = "4", features = ["derive"] }
+
+[profile.dev]
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 3
+# Dependency debuginfo is ~5 GB of target/ for bevy and rarely used; the crate keeps its own.
+debug = false
