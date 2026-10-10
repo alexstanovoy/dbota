@@ -252,7 +252,10 @@ texture icon.item.null_talisman panorama/images/items/null_talisman_png.vtex_c i
 texture icon.item.magic_stick panorama/images/items/magic_stick_png.vtex_c icons/items/magic_stick.png
 texture icon.item.magic_wand panorama/images/items/magic_wand_png.vtex_c icons/items/magic_wand.png
 texture icon.item.recipe panorama/images/items/recipe_png.vtex_c icons/items/recipe.png
-texture icon.item.famango panorama/images/items/famango_png.vtex_c icons/items/famango.png
+texture icon.item.enchanted_mango panorama/images/items/enchanted_mango_png.vtex_c icons/items/enchanted_mango.png
+# Buff bar icons only: the fountain's regeneration and the flagbearer's aura.
+texture icon.item.bottle panorama/images/items/bottle_png.vtex_c icons/items/bottle.png
+texture icon.item.headdress panorama/images/items/headdress_png.vtex_c icons/items/headdress.png
 texture icon.item.eagle panorama/images/items/eagle_png.vtex_c icons/items/eagle.png
 texture icon.item.claymore panorama/images/items/claymore_png.vtex_c icons/items/claymore.png
 texture icon.item.talisman_of_evasion panorama/images/items/talisman_of_evasion_png.vtex_c icons/items/talisman_of_evasion.png

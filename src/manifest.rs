@@ -50,7 +50,8 @@ pub struct Manifest {
     pub files: Vec<(String, String)>,
     /// The map file, when present.
     pub map: Option<String>,
-    /// Our ids to Dota names: kind (`item`, `ability`, `hero`), id, name.
+    /// Our ids to Dota names: kind (`item`, `ability`, `hero`, `effect`), id,
+    /// name (for an effect, the logical name of its icon).
     pub ids: Vec<(String, u16, String)>,
 }
 
@@ -98,7 +99,7 @@ impl Manifest {
             .filter_map(|line| {
                 let mut words = line.split_whitespace();
                 let kind = words.next()?;
-                if !matches!(kind, "item" | "ability" | "hero") {
+                if !matches!(kind, "item" | "ability" | "hero" | "effect") {
                     return None;
                 }
                 let id = words.next()?.parse().ok()?;
@@ -147,6 +148,11 @@ impl Manifest {
     /// The asset path of an ability's icon.
     pub fn ability_icon(&self, id: u16) -> Option<String> {
         self.file(&format!("icon.ability.{}", self.dota_name("ability", id)?))
+    }
+
+    /// The asset path of the icon Dota shows for an effect on the buff bar.
+    pub fn effect_icon(&self, id: u16) -> Option<String> {
+        self.file(self.dota_name("effect", id)?)
     }
 
     /// How much of the cache is there, in words, for the settings overlay.

@@ -5,6 +5,7 @@
 #   item <item id> <dota item name>        icon.item.<name>    (panorama/images/items/<name>_png)
 #   ability <ability id> <dota ability>    icon.ability.<name> (panorama/images/spellicons/<name>_png)
 #   hero <hero id> <dota hero>             icon.hero.<name>, portrait.hero.<name>, minimap.hero.<name>
+#   effect <effect id> <logical icon>      the icon Dota shows on the buff bar: an item's or an ability's
 #   sound <effect> <regex>                 legacy regexes of the old client; manifest.txt resolves
 #                                          sounds through sound events instead (sound.<effect>)
 #
@@ -52,7 +53,7 @@ item 38 recipe
 item 39 recipe
 item 40 recipe
 item 41 recipe
-item 42 famango
+item 42 enchanted_mango
 item 43 eagle
 item 44 claymore
 item 45 talisman_of_evasion
@@ -90,3 +91,24 @@ sound buy ^sounds/ui/.*(buy|purchase).*\.vsnd_c$
 sound level_up ^sounds/.*level_?up.*\.vsnd_c$
 sound tower_shot ^sounds/weapons/(building|buildings)/.*tower.*\.vsnd_c$
 sound click ^sounds/ui/.*click.*\.vsnd_c$
+effect 0 icon.item.gloves
+effect 1 icon.item.flask
+effect 2 icon.item.clarity
+effect 3 icon.item.bottle
+effect 4 icon.ability.pudge_dismember
+effect 5 icon.ability.pudge_rot
+effect 6 icon.ability.pudge_rot
+effect 7 icon.ability.courier_burst
+effect 8 icon.ability.courier_shield
+effect 9 icon.item.phase_boots
+effect 10 icon.ability.pudge_flesh_heap
+effect 11 icon.ability.nevermore_necromastery
+effect 12 icon.ability.nevermore_dark_lord
+effect 13 icon.item.chainmail
+effect 14 icon.item.headdress
+effect 15 icon.ability.nevermore_shadowraze1
+effect 16 icon.ability.pudge_rot
+effect 17 icon.ability.nevermore_requiem
+effect 18 icon.ability.nevermore_requiem
+effect 19 icon.ability.nevermore_frenzy
+effect 20 icon.ability.nevermore_frenzy
