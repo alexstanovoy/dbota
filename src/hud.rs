@@ -277,7 +277,7 @@ fn spawn_middle(commands: &mut Commands, fonts: &Fonts, bar: Entity) {
             ChildOf(column),
         ))
         .id();
-    crate::talents::spawn_button(commands, fonts, row, ABILITY);
+    crate::talents::spawn_button(commands, fonts, row, column, ABILITY);
     for slot in 0..6u8 {
         spawn_slot_box(
             commands,

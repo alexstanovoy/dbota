@@ -101,6 +101,9 @@ pub struct Args {
     /// Debug: open the shop at the start.
     #[arg(long)]
     pub open_shop: bool,
+    /// Debug: pin the talent tree open at the start.
+    #[arg(long)]
+    pub open_talents: bool,
     /// Debug: cover the window with every icon of a kind (`items`,
     /// `abilities`, `effects`) and the Dota art it is drawn from.
     #[arg(long, value_name = "KIND")]

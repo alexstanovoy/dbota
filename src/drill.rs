@@ -28,6 +28,7 @@ fn drill(
     time: Res<Time>,
     mut state: Local<Drill>,
     mut exit: MessageWriter<AppExit>,
+    mut commands: Commands,
     diagnostics: Res<bevy::diagnostic::DiagnosticsStore>,
 ) {
     let fps = diagnostics
@@ -71,16 +72,29 @@ fn drill(
                 .collect::<Vec<_>>()
         );
     };
-    let steps: [(f32, &str); 8] = [
-        (0.5, "learn Q"),
-        (1.5, "buy Tango"),
-        (3.0, "move"),
-        (10.0, "attack-move to mid"),
-        (24.0, "cast Q"),
-        (26.0, "stop"),
-        (30.0, "report"),
-        (31.0, "exit"),
-    ];
+    // `DBOTA_DRILL=talents` (with a server honouring cheats): to level 15,
+    // two talents learned, the tree pinned open and photographed.
+    let talents = std::env::var("DBOTA_DRILL").is_ok_and(|d| d == "talents");
+    let steps: &[(f32, &str)] = if talents {
+        &[
+            (0.5, "levels"),
+            (2.0, "learn talent 1"),
+            (3.0, "learn talent 2"),
+            (5.0, "photograph"),
+            (7.0, "exit"),
+        ]
+    } else {
+        &[
+            (0.5, "learn Q"),
+            (1.5, "buy Tango"),
+            (3.0, "move"),
+            (10.0, "attack-move to mid"),
+            (24.0, "cast Q"),
+            (26.0, "stop"),
+            (30.0, "report"),
+            (31.0, "exit"),
+        ]
+    };
     let Some(&(due, what)) = steps.get(state.step) else {
         return;
     };
@@ -90,6 +104,23 @@ fn drill(
     state.step += 1;
     report(what);
     let intent = match what {
+        "levels" => {
+            core.send_order(bota_proto::Order::Cheat {
+                cheat: bota_proto::Cheat::Levels { count: 14 },
+            });
+            return;
+        }
+        "learn talent 1" | "learn talent 2" => {
+            core.learn_talent(if what.ends_with('1') { 1 } else { 2 });
+            return;
+        }
+        "photograph" => {
+            let path = "temp/shots/drill-talents.png";
+            commands
+                .spawn(bevy::render::view::screenshot::Screenshot::primary_window())
+                .observe(bevy::render::view::screenshot::save_to_disk(path));
+            return;
+        }
         "learn Q" => Intent::Press {
             slot: Slot::Ability(0),
             ctrl: true,

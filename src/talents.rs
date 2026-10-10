@@ -48,7 +48,13 @@ pub fn plugin(app: &mut App) {
 }
 
 /// The button, of the ability slots' height, as the first of their row.
-pub fn spawn_button(commands: &mut Commands, fonts: &Fonts, row: Entity, height: f32) {
+pub fn spawn_button(
+    commands: &mut Commands,
+    fonts: &Fonts,
+    row: Entity,
+    column: Entity,
+    height: f32,
+) {
     let button = commands
         .spawn((
             TalentButton,
@@ -103,7 +109,7 @@ pub fn spawn_button(commands: &mut Commands, fonts: &Fonts, row: Entity, height:
                 position_type: PositionType::Absolute,
                 bottom: percent(100),
                 left: px(0),
-                margin: UiRect::bottom(px(46)),
+                margin: UiRect::bottom(px(44)),
                 flex_direction: FlexDirection::Column,
                 row_gap: px(4),
                 padding: UiRect::all(px(8)),
@@ -115,7 +121,7 @@ pub fn spawn_button(commands: &mut Commands, fonts: &Fonts, row: Entity, height:
             BorderColor::all(ui::EDGE),
             GlobalZIndex(20),
             Visibility::Hidden,
-            ChildOf(button),
+            ChildOf(column),
         ))
         .id();
     commands.spawn((
@@ -206,10 +212,12 @@ fn toggle(
     mut session: NonSendMut<Session>,
     button: Query<&Interaction, (Changed<Interaction>, With<TalentButton>)>,
     cells: Query<(&Interaction, &TalentCell), Changed<Interaction>>,
-    mut pinned: Local<bool>,
+    mut pinned: Local<Option<bool>>,
+    args: Res<crate::Args>,
     mut panel: Query<&mut Visibility, With<TalentPanel>>,
     hovered: Query<&Interaction, Or<(With<TalentButton>, With<TalentPanel>, With<TalentCell>)>>,
 ) {
+    let pinned = pinned.get_or_insert(args.open_talents);
     if button.iter().any(|i| *i == Interaction::Pressed) {
         *pinned = !*pinned;
     }
@@ -218,7 +226,12 @@ fn toggle(
             learn(&mut session.0, cell.0);
         }
     }
-    let open = *pinned || hovered.iter().any(|i| *i != Interaction::None);
+    let has_tree = crate::hud::subject(&session.0)
+        .1
+        .and_then(|u| u.hero)
+        .and_then(|h| talents(h.0))
+        .is_some();
+    let open = has_tree && (*pinned || hovered.iter().any(|i| *i != Interaction::None));
     for mut v in &mut panel {
         let want = if open {
             Visibility::Inherited
