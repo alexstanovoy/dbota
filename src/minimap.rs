@@ -25,6 +25,12 @@ pub const SIDE: f32 = 250.0;
 const PHOTO: u32 = 512;
 /// Unit marks shown at most.
 const MARKS: usize = 160;
+/// Teleport pings shown at most.
+const PINGS: usize = 10;
+/// Interface pixels across a ping at its smallest and at its widest.
+const PING_SIZES: (f32, f32) = (10.0, 30.0);
+/// Ticks one swell of a ping takes.
+const PING_PERIOD: u32 = 30;
 
 /// The minimap's frame, the photo, the marks and the camera frame.
 #[derive(Resource)]
@@ -33,6 +39,7 @@ struct Minimap {
     photo: Handle<Image>,
     fog: Entity,
     marks: Vec<Entity>,
+    pings: Vec<Entity>,
     view: Entity,
 }
 
@@ -52,7 +59,7 @@ pub struct PhotoTaken(pub bool);
 pub fn plugin(app: &mut App) {
     app.init_resource::<PhotoTaken>()
         .add_systems(Startup, spawn)
-        .add_systems(Update, (photograph, marks, clicks));
+        .add_systems(Update, (photograph, marks, pings, clicks));
 }
 
 fn spawn(mut commands: Commands, mut images: ResMut<Assets<Image>>) {
@@ -122,6 +129,24 @@ fn spawn(mut commands: Commands, mut images: ResMut<Assets<Image>>) {
                 .id()
         })
         .collect();
+    let pings = (0..PINGS)
+        .map(|_| {
+            commands
+                .spawn((
+                    Node {
+                        position_type: PositionType::Absolute,
+                        border: UiRect::all(px(2)),
+                        border_radius: BorderRadius::MAX,
+                        ..default()
+                    },
+                    BorderColor::all(Color::WHITE),
+                    Visibility::Hidden,
+                    Pickable::IGNORE,
+                    ChildOf(frame),
+                ))
+                .id()
+        })
+        .collect();
     let view = commands
         .spawn((
             Node {
@@ -139,6 +164,7 @@ fn spawn(mut commands: Commands, mut images: ResMut<Assets<Image>>) {
         photo,
         fog,
         marks,
+        pings,
         view,
     });
 }
@@ -305,6 +331,46 @@ fn marks(
         node.top = px(min.y);
         node.width = px((max.x - min.x).max(2.0));
         node.height = px((max.y - min.y).max(2.0));
+    }
+}
+
+/// How wide a ping is after `elapsed` ticks of a channel: it swells and
+/// starts over, so it draws the eye for as long as the channel runs.
+fn ping_size(elapsed: u32) -> f32 {
+    let swell = (elapsed % PING_PERIOD) as f32 / PING_PERIOD as f32;
+    PING_SIZES.0 + (PING_SIZES.1 - PING_SIZES.0) * swell
+}
+
+/// Rings the landing of every teleport under way, in its player's colour,
+/// whichever side it brings: Dota marks both, through the fog.
+fn pings(
+    session: NonSend<Session>,
+    minimap: Res<Minimap>,
+    mut nodes: Query<(&mut Node, &mut BorderColor, &mut Visibility)>,
+) {
+    let core = &session.0;
+    let teleports = core.view.as_ref().map_or(&[][..], |v| &v.teleports[..]);
+    for (at, ping) in minimap.pings.iter().enumerate() {
+        let Ok((mut node, mut border, mut visibility)) = nodes.get_mut(*ping) else {
+            continue;
+        };
+        let (Some(teleport), Some(view)) = (teleports.get(at), &core.view) else {
+            if *visibility != Visibility::Hidden {
+                *visibility = Visibility::Hidden;
+            }
+            continue;
+        };
+        let size = ping_size(teleport.ticks_total.saturating_sub(teleport.ticks_left));
+        let centre = on_map(
+            teleport.destination.x.to_f32(),
+            teleport.destination.y.to_f32(),
+        );
+        node.left = px(centre.x - size / 2.0);
+        node.top = px(centre.y - size / 2.0);
+        node.width = px(size);
+        node.height = px(size);
+        *border = BorderColor::all(crate::teleport::player_color(view, teleport.slot));
+        *visibility = Visibility::Inherited;
     }
 }
 

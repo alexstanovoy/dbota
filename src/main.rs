@@ -33,6 +33,7 @@ mod shop;
 mod sound;
 mod synth;
 mod talents;
+mod teleport;
 mod terrain;
 mod tips;
 mod trees;
@@ -225,6 +226,7 @@ fn main() -> AppExit {
         .add_plugins((
             sound::plugin,
             effects::plugin,
+            teleport::plugin,
             shop::plugin,
             menu::plugin,
             tips::plugin,

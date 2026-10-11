@@ -2,11 +2,12 @@
 //! one, synthesized stand-ins for what the cache lacks; quieter the farther
 //! from the camera, under the player's volume.
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use bevy::{audio::Volume, prelude::*};
 use bota_client_core::{Cue, CueKind};
-use bota_proto::UnitKind;
+use bota_proto::{SlotId, UnitKind};
 
 use crate::camera::RtsCamera;
 use crate::config::Settings;
@@ -18,6 +19,9 @@ use crate::synth::{RATE, Sfx, synth};
 const EARSHOT: f32 = 1200.0;
 /// World units over which a sound fades out past [`EARSHOT`].
 const FADE: f32 = 3000.0;
+/// Ticks before its end within which a vanished teleport counts as landed
+/// rather than broken off, since a view may skip a tick.
+const LANDING_SLACK: u32 = 3;
 /// Seconds a kind of sound rests before it may sound again.
 const REST: f32 = 0.05;
 
@@ -38,12 +42,28 @@ enum Kind {
     Cue(CueKind),
     CreepShot,
     TowerShot,
+    /// The hum over a teleport's landing.
+    PortalArriving,
+    /// The hum where a hero is leaving.
+    PortalLeaving,
+    /// A hero landing from a teleport.
+    HeroArrived,
+    /// A hero gone by a teleport.
+    HeroLeft,
+}
+
+/// The loops of one teleport under way, and what its landing needs.
+struct Humming {
+    loops: Vec<Entity>,
+    landing: (f32, f32),
+    origin: Option<(f32, f32)>,
+    ticks_left: u32,
 }
 
 pub fn plugin(app: &mut App) {
     app.init_resource::<Voices>()
         .add_systems(Startup, load)
-        .add_systems(Update, (volume, play));
+        .add_systems(Update, (volume, play, portals));
 }
 
 /// The cached sounds a cue plays, by logical name prefix, and its stand-in.
@@ -75,6 +95,10 @@ fn sources_of(kind: Kind) -> (&'static [&'static str], Option<Sfx>) {
             &["sound.tower.radiant.attack", "sound.tower.dire.attack"],
             None,
         ),
+        Kind::PortalArriving => (&["sound.portal.loop_appear"], None),
+        Kind::PortalLeaving => (&["sound.portal.loop_disappear"], None),
+        Kind::HeroArrived => (&["sound.portal.hero_appear"], None),
+        Kind::HeroLeft => (&["sound.portal.hero_disappear"], None),
     }
 }
 
@@ -101,7 +125,14 @@ fn load(
     ]
     .map(Kind::Cue)
     .into_iter()
-    .chain([Kind::CreepShot, Kind::TowerShot]);
+    .chain([
+        Kind::CreepShot,
+        Kind::TowerShot,
+        Kind::PortalArriving,
+        Kind::PortalLeaving,
+        Kind::HeroArrived,
+        Kind::HeroLeft,
+    ]);
     for kind in kinds {
         let (names, stand_in) = sources_of(kind);
         let mut sources: Vec<Handle<AudioSource>> = names
@@ -159,8 +190,7 @@ fn play(
     let silent = settings.muted || args.mute;
     let focus = Vec2::new(cam.focus.x, -cam.focus.z);
     let mut sound = |kind: Kind, gain: f32, at: Option<(f32, f32)>| {
-        let far = at.map_or(0.0, |(x, y)| Vec2::new(x, y).distance(focus));
-        let fall = (1.0 - (far - EARSHOT).max(0.0) / FADE).clamp(0.0, 1.0);
+        let fall = at.map_or(1.0, |at| fall_off(at, focus));
         let Some((_, voice)) = voices.0.iter_mut().find(|(k, _)| *k == kind) else {
             return;
         };
@@ -179,6 +209,95 @@ fn play(
         sound(Kind::Cue(cue.kind), cue.gain, cue.at);
     }
     shots(core, &mut sound);
+}
+
+/// How much of its volume a sound at a place keeps for a listener at `focus`.
+fn fall_off((x, y): (f32, f32), focus: Vec2) -> f32 {
+    let far = Vec2::new(x, y).distance(focus);
+    (1.0 - (far - EARSHOT).max(0.0) / FADE).clamp(0.0, 1.0)
+}
+
+/// Hums over every teleport under way, at the landing and, when the hero is
+/// in sight, where it stands; a teleport that runs out lands with a sound at
+/// both ends, one that vanishes sooner was broken off and only goes quiet.
+fn portals(
+    mut commands: Commands,
+    session: NonSend<Session>,
+    voices: Res<Voices>,
+    cam: Single<&RtsCamera>,
+    settings: Res<Settings>,
+    args: Res<crate::Args>,
+    mut humming: Local<HashMap<SlotId, Humming>>,
+) {
+    let Some(view) = &session.0.view else {
+        return;
+    };
+    let silent = settings.muted || args.mute;
+    let focus = Vec2::new(cam.focus.x, -cam.focus.z);
+    let play = |commands: &mut Commands, kind: Kind, at: (f32, f32), looped: bool| {
+        let source = voices
+            .0
+            .iter()
+            .find(|(k, _)| *k == kind)
+            .and_then(|(_, voice)| voice.sources.first().cloned())?;
+        let gain = fall_off(at, focus);
+        if silent || gain < 0.03 {
+            return None;
+        }
+        let playback = if looped {
+            PlaybackSettings::LOOP
+        } else {
+            PlaybackSettings::DESPAWN
+        };
+        Some(
+            commands
+                .spawn((
+                    AudioPlayer::new(source),
+                    playback.with_volume(Volume::Linear(gain)),
+                ))
+                .id(),
+        )
+    };
+    let ended: Vec<SlotId> = humming
+        .keys()
+        .filter(|slot| !view.teleports.iter().any(|t| t.slot == **slot))
+        .copied()
+        .collect();
+    for slot in ended {
+        let Some(hum) = humming.remove(&slot) else {
+            continue;
+        };
+        for entity in hum.loops {
+            commands.entity(entity).despawn();
+        }
+        if hum.ticks_left <= LANDING_SLACK {
+            play(&mut commands, Kind::HeroArrived, hum.landing, false);
+            if let Some(origin) = hum.origin {
+                play(&mut commands, Kind::HeroLeft, origin, false);
+            }
+        }
+    }
+    for teleport in &view.teleports {
+        let landing = (
+            teleport.destination.x.to_f32(),
+            teleport.destination.y.to_f32(),
+        );
+        let hum = humming.entry(teleport.slot).or_insert_with(|| {
+            let origin = crate::teleport::origin(view, teleport);
+            let loops = [
+                play(&mut commands, Kind::PortalArriving, landing, true),
+                origin.and_then(|at| play(&mut commands, Kind::PortalLeaving, at, true)),
+            ];
+            Humming {
+                loops: loops.into_iter().flatten().collect(),
+                landing,
+                origin,
+                ticks_left: teleport.ticks_left,
+            }
+        });
+        hum.ticks_left = teleport.ticks_left;
+        hum.origin = crate::teleport::origin(view, teleport).or(hum.origin);
+    }
 }
 
 /// The shots of creeps and towers that let a missile go this tick.

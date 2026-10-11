@@ -407,6 +407,13 @@ sound sound.item.magic_stick sounds/items/magic_stick_activate.vsnd_c sounds/ite
 sound sound.item.phase_boots sounds/items/phase_boots_activate.vsnd_c sounds/items/phase_boots_activate.wav event=DOTA_Item.PhaseBoots.Activate
 sound sound.item.blink sounds/weapons/hero/antimage/blink_out.vsnd_c sounds/weapons/hero/antimage/blink_out.wav event=DOTA_Item.BlinkDagger.Activate
 
+# Town portal scroll: the hum over the landing (Loop_Appear) and over the leaving hero (Loop_Disappear), both
+# 4 s loops, and the sounds of the hero arriving and leaving.
+sound sound.portal.loop_appear sounds/ui/portal_loop.vsnd_c sounds/ui/portal_loop.wav event=Portal.Loop_Appear
+sound sound.portal.loop_disappear sounds/ui/portal_loop_alt.vsnd_c sounds/ui/portal_loop_alt.wav event=Portal.Loop_Disappear
+sound sound.portal.hero_appear sounds/ui/portal_appear.vsnd_c sounds/ui/portal_appear.wav event=Portal.Hero_Appear
+sound sound.portal.hero_disappear sounds/ui/portal_disappear.vsnd_c sounds/ui/portal_disappear.wav event=Portal.Hero_Disappear
+
 # HUD and announcer. sound.level_up above is General.LevelUp; sound.click above is the old General.ButtonClick,
 # sound.ui.click the Panorama button click. The horn is two positional sounds in Dota (one at each ancient,
 # both at 0:00); here they are the two variants of sound.horn.

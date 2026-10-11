@@ -11,7 +11,7 @@ use bevy::{
     prelude::*,
     window::PrimaryWindow,
 };
-use bota_client_core::{BAG_SLOTS, Intent, Slot, Source};
+use bota_client_core::{BAG_SLOTS, Intent, Slot, Source, TOWN_PORTAL_SLOT};
 
 use crate::camera::CursorGround;
 use crate::config::{Action, Settings};
@@ -224,6 +224,9 @@ fn keys(
             press(core, Slot::Item(slot), false);
         }
     }
+    if pressed(Action::TownPortal) {
+        press(core, Slot::Item(TOWN_PORTAL_SLOT), false);
+    }
 }
 
 /// Presses a slot; one taken up for aiming disarms a pending attack-move.
@@ -345,10 +348,12 @@ fn boxes(
             core.held_item = None;
             if to == from {
                 press(core, Slot::Item(from), false);
-            } else {
+            } else if from != TOWN_PORTAL_SLOT {
                 core.act(Intent::Swap { from, to });
             }
-        } else if let Some(seat) = hovered_seat {
+        } else if let Some(seat) = hovered_seat
+            && from != TOWN_PORTAL_SLOT
+        {
             core.held_item = None;
             core.act(Intent::HandTo {
                 slot: from,

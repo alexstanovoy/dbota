@@ -145,7 +145,9 @@ fn show(
             if i.cooldown_left > 0 {
                 lines.push(format!("Ready in {} s", i.cooldown_left / rate + 1));
             }
-            if slot >= bota_client_core::INVENTORY_SLOTS {
+            if slot >= bota_client_core::INVENTORY_SLOTS
+                && slot != bota_client_core::TOWN_PORTAL_SLOT
+            {
                 lines.push("Drag it into the inventory to use it.".to_string());
             }
             Some(lines.join("\n"))
