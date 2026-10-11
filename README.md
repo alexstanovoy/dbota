@@ -28,24 +28,14 @@ Dota 2 install. Bots don't need it.
 
    ```sh
    cargo build --release             # binary: target/release/dbota
-   (cd ../bota && cargo build --release -p bota-server -p bota-bot)
+   (cd ../bota && cargo build --release -p bota-server)
    ```
 
 ## Play
 
-Start a server, a bot and dbota (three terminals, or background the first two):
-
-```sh
-../bota/target/release/bota-server --map 2 --players 2
-../bota/target/release/bota-bot
-target/release/dbota --name you
-```
-
-On the hero screen click a portrait, then click Ready. The game starts once both seats are ready.
-
-To play against the bots of [drysua](https://github.com/alexstanovoy/drysua), clone it next to bota
-and dbota and run its launcher, which builds everything, starts the server and the bot, and opens
-dbota:
+Against a bot: the bots live in [drysua](https://github.com/alexstanovoy/drysua). Clone it next to
+bota and dbota and run its launcher, which builds everything, starts the server and the bot, and
+opens dbota:
 
 ```sh
 python3 drysua/scripts/play_match.py --opponent brain
@@ -53,6 +43,20 @@ python3 drysua/scripts/play_match.py --opponent brain
 
 `--help` lists the opponents and options (side, seed, immortal towers or heroes, watching instead
 of playing).
+
+Two people: start a server and connect two dbota clients (from another machine use
+`--addr <host>:4455`):
+
+```sh
+../bota/target/release/bota-server --map 2 --players 2
+target/release/dbota --name alice
+target/release/dbota --name bob
+```
+
+Alone, for practice: `bota-server --map 2 --players 2 --dummy-seat` gives the other seat to a hero
+that never leaves its fountain.
+
+On the hero screen click a portrait, then click Ready. The game starts once both seats are ready.
 
 ## Controls
 
