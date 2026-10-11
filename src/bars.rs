@@ -403,7 +403,7 @@ fn floaters(
                 )
         })
         // Nothing over what the watched side does not see.
-        .filter(|f| fog.team.is_none() || fog.lit(f.world.0, f.world.1))
+        .filter(|f| !fog.on || fog.lit(f.world.0, f.world.1))
         .rev()
         .take(FLOATERS)
         .collect();

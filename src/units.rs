@@ -354,7 +354,7 @@ fn sync_units(
         return;
     };
     let shown = bodies(view, core.prev_view.as_ref(), core.smooth.alpha());
-    let hidden = view.viewer.is_none() && p.fog.team.is_some();
+    let hidden = view.viewer.is_none() && p.fog.on;
     let mut seen = Vec::with_capacity(shown.len());
     let dt = p.time.delta_secs().max(1e-4);
     for body in &shown {
@@ -394,7 +394,7 @@ fn sync_units(
             prev.units.iter().any(|u| {
                 u.id == id
                     && u.kind != UnitKind::Courier
-                    && (p.fog.team.is_none() || p.fog.lit(u.pos.x.to_f32(), u.pos.y.to_f32()))
+                    && (!p.fog.on || p.fog.lit(u.pos.x.to_f32(), u.pos.y.to_f32()))
                     && u.hp * 2 < u.max_hp.max(1)
             })
         });

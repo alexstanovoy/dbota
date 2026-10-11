@@ -237,7 +237,7 @@ fn marks(
     {
         image.image = veil.0.clone();
     }
-    let hidden = view.viewer.is_none() && grid.team.is_some();
+    let hidden = view.viewer.is_none() && grid.on;
     let me = core.my_hero();
     let shown = view.units.iter().filter(|u| {
         !matches!(u.kind, UnitKind::Ward)

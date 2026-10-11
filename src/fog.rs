@@ -28,14 +28,18 @@ const VEIL: f32 = 0.74;
 /// The cells the watched side sees, worked out once a tick.
 #[derive(Resource, Default)]
 pub struct FogGrid {
-    /// The side the fog is of; absent when everything is seen.
+    /// The side the fog is of; absent for both sides' vision together, or
+    /// when there is no fog.
     pub team: Option<Team>,
+    /// Whether there is fog at all: one side's, or both sides' together
+    /// (a spectator's and a replay's default, as in Dota).
+    pub on: bool,
     /// Cells per axis.
     pub n: usize,
     /// One per cell, row-major from the south-west.
     pub cells: Vec<bool>,
     /// The tick and side the cells were worked out for.
-    stamp: Option<(u32, Team)>,
+    stamp: Option<(u32, Option<Team>)>,
     /// How dark each cell is drawn now, 0 lit to 1 fogged.
     shade: Vec<f32>,
 }
@@ -93,7 +97,51 @@ pub fn plugin(app: &mut App) {
     app.init_resource::<FogGrid>()
         .add_plugins(MaterialPlugin::<FoggedMaterial>::default())
         .add_systems(Update, (work_out, spawn_veil, shade_veil).chain())
-        .add_systems(PostUpdate, wrap);
+        .add_systems(PostUpdate, wrap)
+        .add_systems(Startup, spawn_label)
+        .add_systems(Update, label);
+}
+
+/// The vision a spectator or a replay is shown with, under the clock.
+#[derive(Component)]
+struct VisionLabel;
+
+fn spawn_label(mut commands: Commands, fonts: Res<crate::ui::Fonts>) {
+    commands.spawn((
+        VisionLabel,
+        crate::ui::text("", &fonts.bold, 13.0, crate::ui::INK),
+        crate::ui::shadow(),
+        Node {
+            position_type: PositionType::Absolute,
+            top: px(76),
+            left: percent(50),
+            margin: UiRect::left(px(-90)),
+            width: px(180),
+            justify_content: JustifyContent::Center,
+            ..default()
+        },
+        TextLayout::justify(Justify::Center),
+    ));
+}
+
+fn label(
+    session: NonSend<Session>,
+    grid: Res<FogGrid>,
+    mut text: Single<&mut Text, With<VisionLabel>>,
+) {
+    let core = &session.0;
+    let s = if core.my_slot.is_some() && core.pov.is_none() {
+        String::new()
+    } else {
+        match (grid.on, grid.team) {
+            (true, None) => "VISION: BOTH TEAMS [Tab]".to_string(),
+            (true, Some(team)) => format!("VISION: {} [Tab]", format!("{team:?}").to_uppercase()),
+            (false, _) => "VISION: ALL [Tab]".to_string(),
+        }
+    };
+    if text.0 != s {
+        text.0 = s;
+    }
 }
 
 /// Works out the lit cells when a new tick or a new side comes.
@@ -101,10 +149,18 @@ fn work_out(session: NonSend<Session>, mut grid: ResMut<FogGrid>, mut lighting: 
     let core = &session.0;
     let team = core.fog_team();
     let n = core.terrain_cells;
-    grid.team = team;
-    let (Some(team), Some(view)) = (team, &core.view) else {
+    let Some(view) = &core.view else {
         return;
     };
+    // Without a side of one's own, a fogless stream (a replay, a spectator
+    // seeing everything) is shown with the fog of both sides together:
+    // lit wherever either side's units see.
+    let union = team.is_none() && core.my_slot.is_none() && view.viewer.is_none();
+    grid.team = team;
+    grid.on = team.is_some() || union;
+    if !grid.on {
+        return;
+    }
     if n == 0 {
         return;
     }
@@ -142,7 +198,17 @@ fn work_out(session: NonSend<Session>, mut grid: ResMut<FogGrid>, mut lighting: 
     let view = view.clone();
     lighting.task = Some(AsyncComputeTaskPool::get().spawn(async move {
         let mut cells = vec![false; n * n];
-        bota_client_core::light_on(&ground, &view, team, &mut cells);
+        match team {
+            Some(team) => bota_client_core::light_on(&ground, &view, team, &mut cells),
+            None => {
+                let mut dire = vec![false; n * n];
+                bota_client_core::light_on(&ground, &view, Team::Radiant, &mut cells);
+                bota_client_core::light_on(&ground, &view, Team::Dire, &mut dire);
+                for (c, d) in cells.iter_mut().zip(dire) {
+                    *c |= d;
+                }
+            }
+        }
         ((view.tick, team), cells)
     }));
 }
@@ -150,7 +216,7 @@ fn work_out(session: NonSend<Session>, mut grid: ResMut<FogGrid>, mut lighting: 
 /// The lighting under way on another thread, and the ground it reads.
 #[derive(Default)]
 struct Lighting {
-    task: Option<Task<((u32, Team), Vec<bool>)>>,
+    task: Option<Task<((u32, Option<Team>), Vec<bool>)>>,
     /// The ground, with how many trees had fallen or grown back when it was
     /// taken: sight changes with the forest.
     ground: Option<(usize, Arc<FogGround>)>,
@@ -245,7 +311,7 @@ fn shade_veil(
     let step = (time.delta_secs() * 5.0).clamp(0.05, 1.0);
     let grid = &mut *grid;
     let mut changed = false;
-    let fogged = grid.team.is_some();
+    let fogged = grid.on;
     for (shade, lit) in grid.shade.iter_mut().zip(&grid.cells) {
         let target = if *lit || !fogged { 0.0 } else { 1.0 };
         if (*shade - target).abs() > 0.003 {

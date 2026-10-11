@@ -208,7 +208,7 @@ pub fn run(image: &Image, c: &Checks) -> bool {
 /// on screen away from the HUD, the units and the border.
 fn fog(shot: &Shot, c: &Checks, report: &mut impl FnMut(&str, bool, String)) {
     let grid = &*c.fog;
-    if grid.team.is_none() || grid.n == 0 {
+    if !grid.on || grid.n == 0 {
         report("fog", false, "no fog: run with --pov".into());
         return;
     }

@@ -92,7 +92,7 @@ stash shows at the home shop.
 target/release/dbota --spectate --addr 127.0.0.1:4455
 ```
 
-`Tab` switches whose vision you see.
+A replay or a spectator sees both teams' vision together (fog where neither side sees), as in Dota; `Tab` cycles both teams → Radiant → Dire, and the mode shows under the clock.
 
 ## Replays
 
