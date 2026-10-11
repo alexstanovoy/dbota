@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Check every manifest output in the cache: glTF structure and clips, PNG size, WAV format.
+"""Check every manifest output in the cache: glTF structure and clips, PNG size, WAV/MP3 format.
 
 Usage: verify_assets.py <manifest.txt> <cache dir>. Exits non-zero when anything is missing or wrong.
 """
@@ -51,6 +51,19 @@ def wav_info(path: Path) -> str:
     return f"pcm{bits} {channels}ch {rate}Hz {size / byte_rate:.2f}s"
 
 
+def mp3_info(path: Path) -> str:
+    data = path.read_bytes()
+    pos = 0
+    if data[:3] == b"ID3":  # skip an ID3v2 tag: 10-byte header, syncsafe size
+        pos = 10 + sum((b & 0x7F) << (7 * (3 - i)) for i, b in enumerate(data[6:10]))
+    if len(data) < pos + 4 or data[pos] != 0xFF or data[pos + 1] & 0xE0 != 0xE0:
+        raise ValueError("not an MPEG audio stream")
+    rate = {0: 44100, 1: 48000, 2: 32000}.get((data[pos + 2] >> 2) & 3)
+    if rate is None or (data[pos + 1] >> 3) & 3 != 3 or (data[pos + 1] >> 1) & 3 != 1:
+        raise ValueError("not MPEG-1 layer III")
+    return f"mp3 {rate}Hz {len(data)} bytes"
+
+
 def joint_names(doc: dict) -> set[str]:
     """Lower-cased: Source bone-merges by case-insensitive name (wearables say root0_jnt, SF Root0_JNT)."""
     return {doc["nodes"][j].get("name", "").lower() for skin in doc.get("skins", []) for j in skin["joints"]}
@@ -80,8 +93,8 @@ def check_model(path: Path, keys: dict[str, str], clips: list[list[str]], parent
             f"materials={len(doc.get('materials', []))} images={len(images)} anims={len(anims)}")
 
 
-def check(kind: str, fields: list[str], keys: dict[str, str], clips, outputs: dict[str, Path]) -> str:
-    path = outputs[fields[0]]
+def check(kind: str, fields: list[str], keys: dict[str, str], clips, outputs: dict[str, Path], cache: Path) -> str:
+    path = cache / fields[2]  # its own output: sound variants share one logical name
     if not path.is_file():
         raise ValueError("missing")
     if kind in ("model", "world"):
@@ -89,7 +102,7 @@ def check(kind: str, fields: list[str], keys: dict[str, str], clips, outputs: di
         return check_model(path, keys, [c for c in clips if c[0] == fields[0]], parent)
     if kind == "texture":
         return "%dx%d" % png_size(path)
-    return wav_info(path)
+    return mp3_info(path) if path.suffix == ".mp3" else wav_info(path)
 
 
 def main() -> None:
@@ -102,7 +115,7 @@ def main() -> None:
         if kind == "clip":
             continue
         try:
-            detail = check(kind, fields, keys, clips, outputs)
+            detail = check(kind, fields, keys, clips, outputs, cache)
             print(f"ok   {fields[0]:44} {fields[2]:60} {detail}")
         except (OSError, ValueError, KeyError, struct.error) as err:
             failures += 1

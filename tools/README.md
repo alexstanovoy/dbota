@@ -30,10 +30,10 @@ malformed output.
 | `../assets-manifest/ids.txt` | bota item/ability/hero ids → Dota names (copied from bota-visual) |
 | `import_assets.sh` | the importer |
 | `crop_world.py` | crops the exported map to the mid-lane band, lists terrain layers and trees |
-| `verify_assets.py` | checks glTF meshes/skins/clips/textures, wearable joints, PNG sizes, WAV format |
+| `verify_assets.py` | checks glTF meshes/skins/clips/textures, wearable joints, PNG sizes, WAV/MP3 format |
 | `inspect_gltf.py` | prints a model's meshes, skins and animations (`--json` for machines) |
 
-## What the cache holds (489 MB, 124 MB of it the CLI)
+## What the cache holds (493 MB, 124 MB of it the CLI)
 
 | path | content | size |
 | --- | --- | --- |
@@ -48,11 +48,12 @@ malformed output.
 | `textures/ground/` | terrain layer textures (also used by `map.mid`) | 37 MB |
 | `textures/particle/` | 13 effect textures (smoke, glow, sparks, ground cracks, fire, ...) | 1 MB |
 | `icons/`, `hud/`, `minimap/` | item and ability icons, hero portraits, minimap hero/creep/tower/building icons, HUD art, minimap | 2 MB |
-| `sounds/` | 39 WAVs resolved through sound events | 10 MB |
+| `sounds/` | 42 WAVs and 50 MP3s (announcer, hero move/attack voice lines) resolved through sound events | 14 MB |
 
-Formats: glTF 2.0 binary (`.glb`) with PNG textures next to it (relative URIs), PNG, WAV. All WAVs
+Formats: glTF 2.0 binary (`.glb`) with PNG textures next to it (relative URIs), PNG, WAV, MP3. All WAVs
 are PCM 44.1/22.05 kHz, 16-bit except `sounds/ui/ui_general_deny.wav` (8-bit, as Valve ships it);
-Bevy's `wav` feature plays both.
+Bevy's `wav` feature plays both. Voice lines (`sounds/vo/`) ship as MPEG-1 layer III, 44.1 kHz mono,
+and are kept as `.mp3` (the stdlib cannot transcode them); playing them needs Bevy's `mp3` feature.
 
 ## Using the models
 

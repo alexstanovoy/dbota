@@ -12,8 +12,10 @@
 #   clip    <model> <logical clip> <glTF animation name> <duration s> [point=<s>]
 #           point = the Dota attack/cast point in seconds at base speed (npc scripts), not a frame.
 #   texture <logical> <vpk .vtex_c> <out .png>
-#   sound   <logical> <vpk .vsnd_c> <out .wav> event=<Dota sound event that plays it>
-#           16-bit PCM WAV, 44.1 kHz. Events with several variants list one line per variant.
+#   sound   <logical> <vpk .vsnd_c> <out .wav|.mp3> event=<Dota sound event that plays it>
+#           PCM WAV as Valve ships it (16-bit 44.1 kHz, a few 8-bit or 22.05 kHz); voice lines are MP3
+#           in the game and stay MP3 (out .mp3). Events with several variants list one line per variant;
+#           variants of one random pick (a hero's move acknowledgements) share the logical name.
 #   world   <logical> <vpk .vwrld_c> <out .glb> vpk=<map vpk under game/dota> half_width= v_min= v_max=
 #           layers=<dir> trees=<file>: the default map cropped to a band around the mid-lane diagonal
 #           (see tools/README.md for the coordinate convention, terrain layers and trees).
@@ -401,3 +403,63 @@ sound sound.item.clarity sounds/items/clarity_potion.vsnd_c sounds/items/clarity
 sound sound.item.magic_stick sounds/items/magic_stick_activate.vsnd_c sounds/items/magic_stick_activate.wav event=DOTA_Item.MagicStick.Activate
 sound sound.item.phase_boots sounds/items/phase_boots_activate.vsnd_c sounds/items/phase_boots_activate.wav event=DOTA_Item.PhaseBoots.Activate
 sound sound.item.blink sounds/weapons/hero/antimage/blink_out.vsnd_c sounds/weapons/hero/antimage/blink_out.wav event=DOTA_Item.BlinkDagger.Activate
+
+# HUD and announcer. sound.level_up above is General.LevelUp; sound.click above is the old General.ButtonClick,
+# sound.ui.click the Panorama button click. The horn is two positional sounds in Dota (one at each ancient,
+# both at 0:00); here they are the two variants of sound.horn.
+sound sound.ui.click sounds/ui/panorama/panorama_generic_button_click_01.vsnd_c sounds/ui/panorama/panorama_generic_button_click_01.wav event=ui_generic_button_click
+sound sound.announcer.choose_hero sounds/vo/announcer/announcer_choose_hero.vsnd_c sounds/vo/announcer/announcer_choose_hero.mp3 event=announcer_announcer_choose_hero
+sound sound.announcer.battle_begins sounds/vo/announcer/announcer_battle_begin_01.vsnd_c sounds/vo/announcer/announcer_battle_begin_01.mp3 event=announcer_announcer_battle_begin_01
+sound sound.horn sounds/ambient/horn_radiant.vsnd_c sounds/ambient/horn_radiant.wav event=GameStart.RadiantAncient
+sound sound.horn sounds/ambient/horn_dire.vsnd_c sounds/ambient/horn_dire.wav event=GameStart.DireAncient
+
+# Order acknowledgements (one vo event per line; all variants share the logical name, the first 12 of each).
+# Not taken: nev_move_14/15, pud_move_15/16/17, pud_attack_14/15/16.
+sound sound.voice.nevermore.move sounds/vo/nevermore/nev_move_01.vsnd_c sounds/vo/nevermore/nev_move_01.mp3 event=nevermore_nev_move_01
+sound sound.voice.nevermore.move sounds/vo/nevermore/nev_move_02.vsnd_c sounds/vo/nevermore/nev_move_02.mp3 event=nevermore_nev_move_02
+sound sound.voice.nevermore.move sounds/vo/nevermore/nev_move_03.vsnd_c sounds/vo/nevermore/nev_move_03.mp3 event=nevermore_nev_move_03
+sound sound.voice.nevermore.move sounds/vo/nevermore/nev_move_04.vsnd_c sounds/vo/nevermore/nev_move_04.mp3 event=nevermore_nev_move_04
+sound sound.voice.nevermore.move sounds/vo/nevermore/nev_move_05.vsnd_c sounds/vo/nevermore/nev_move_05.mp3 event=nevermore_nev_move_05
+sound sound.voice.nevermore.move sounds/vo/nevermore/nev_move_06.vsnd_c sounds/vo/nevermore/nev_move_06.mp3 event=nevermore_nev_move_06
+sound sound.voice.nevermore.move sounds/vo/nevermore/nev_move_07.vsnd_c sounds/vo/nevermore/nev_move_07.mp3 event=nevermore_nev_move_07
+sound sound.voice.nevermore.move sounds/vo/nevermore/nev_move_09.vsnd_c sounds/vo/nevermore/nev_move_09.mp3 event=nevermore_nev_move_09
+sound sound.voice.nevermore.move sounds/vo/nevermore/nev_move_10.vsnd_c sounds/vo/nevermore/nev_move_10.mp3 event=nevermore_nev_move_10
+sound sound.voice.nevermore.move sounds/vo/nevermore/nev_move_11.vsnd_c sounds/vo/nevermore/nev_move_11.mp3 event=nevermore_nev_move_11
+sound sound.voice.nevermore.move sounds/vo/nevermore/nev_move_12.vsnd_c sounds/vo/nevermore/nev_move_12.mp3 event=nevermore_nev_move_12
+sound sound.voice.nevermore.move sounds/vo/nevermore/nev_move_13.vsnd_c sounds/vo/nevermore/nev_move_13.mp3 event=nevermore_nev_move_13
+sound sound.voice.nevermore.attack sounds/vo/nevermore/nev_attack_01.vsnd_c sounds/vo/nevermore/nev_attack_01.mp3 event=nevermore_nev_attack_01
+sound sound.voice.nevermore.attack sounds/vo/nevermore/nev_attack_02.vsnd_c sounds/vo/nevermore/nev_attack_02.mp3 event=nevermore_nev_attack_02
+sound sound.voice.nevermore.attack sounds/vo/nevermore/nev_attack_03.vsnd_c sounds/vo/nevermore/nev_attack_03.mp3 event=nevermore_nev_attack_03
+sound sound.voice.nevermore.attack sounds/vo/nevermore/nev_attack_04.vsnd_c sounds/vo/nevermore/nev_attack_04.mp3 event=nevermore_nev_attack_04
+sound sound.voice.nevermore.attack sounds/vo/nevermore/nev_attack_05.vsnd_c sounds/vo/nevermore/nev_attack_05.mp3 event=nevermore_nev_attack_05
+sound sound.voice.nevermore.attack sounds/vo/nevermore/nev_attack_06.vsnd_c sounds/vo/nevermore/nev_attack_06.mp3 event=nevermore_nev_attack_06
+sound sound.voice.nevermore.attack sounds/vo/nevermore/nev_attack_07.vsnd_c sounds/vo/nevermore/nev_attack_07.mp3 event=nevermore_nev_attack_07
+sound sound.voice.nevermore.attack sounds/vo/nevermore/nev_attack_08.vsnd_c sounds/vo/nevermore/nev_attack_08.mp3 event=nevermore_nev_attack_08
+sound sound.voice.nevermore.attack sounds/vo/nevermore/nev_attack_09.vsnd_c sounds/vo/nevermore/nev_attack_09.mp3 event=nevermore_nev_attack_09
+sound sound.voice.nevermore.attack sounds/vo/nevermore/nev_attack_10.vsnd_c sounds/vo/nevermore/nev_attack_10.mp3 event=nevermore_nev_attack_10
+sound sound.voice.nevermore.attack sounds/vo/nevermore/nev_attack_11.vsnd_c sounds/vo/nevermore/nev_attack_11.mp3 event=nevermore_nev_attack_11
+sound sound.voice.nevermore.attack sounds/vo/nevermore/nev_attack_12.vsnd_c sounds/vo/nevermore/nev_attack_12.mp3 event=nevermore_nev_attack_12
+sound sound.voice.pudge.move sounds/vo/pudge/pud_move_01.vsnd_c sounds/vo/pudge/pud_move_01.mp3 event=pudge_pud_move_01
+sound sound.voice.pudge.move sounds/vo/pudge/pud_move_03.vsnd_c sounds/vo/pudge/pud_move_03.mp3 event=pudge_pud_move_03
+sound sound.voice.pudge.move sounds/vo/pudge/pud_move_04.vsnd_c sounds/vo/pudge/pud_move_04.mp3 event=pudge_pud_move_04
+sound sound.voice.pudge.move sounds/vo/pudge/pud_move_05.vsnd_c sounds/vo/pudge/pud_move_05.mp3 event=pudge_pud_move_05
+sound sound.voice.pudge.move sounds/vo/pudge/pud_move_06.vsnd_c sounds/vo/pudge/pud_move_06.mp3 event=pudge_pud_move_06
+sound sound.voice.pudge.move sounds/vo/pudge/pud_move_07.vsnd_c sounds/vo/pudge/pud_move_07.mp3 event=pudge_pud_move_07
+sound sound.voice.pudge.move sounds/vo/pudge/pud_move_09.vsnd_c sounds/vo/pudge/pud_move_09.mp3 event=pudge_pud_move_09
+sound sound.voice.pudge.move sounds/vo/pudge/pud_move_10.vsnd_c sounds/vo/pudge/pud_move_10.mp3 event=pudge_pud_move_10
+sound sound.voice.pudge.move sounds/vo/pudge/pud_move_11.vsnd_c sounds/vo/pudge/pud_move_11.mp3 event=pudge_pud_move_11
+sound sound.voice.pudge.move sounds/vo/pudge/pud_move_12.vsnd_c sounds/vo/pudge/pud_move_12.mp3 event=pudge_pud_move_12
+sound sound.voice.pudge.move sounds/vo/pudge/pud_move_13.vsnd_c sounds/vo/pudge/pud_move_13.mp3 event=pudge_pud_move_13
+sound sound.voice.pudge.move sounds/vo/pudge/pud_move_14.vsnd_c sounds/vo/pudge/pud_move_14.mp3 event=pudge_pud_move_14
+sound sound.voice.pudge.attack sounds/vo/pudge/pud_attack_01.vsnd_c sounds/vo/pudge/pud_attack_01.mp3 event=pudge_pud_attack_01
+sound sound.voice.pudge.attack sounds/vo/pudge/pud_attack_02.vsnd_c sounds/vo/pudge/pud_attack_02.mp3 event=pudge_pud_attack_02
+sound sound.voice.pudge.attack sounds/vo/pudge/pud_attack_03.vsnd_c sounds/vo/pudge/pud_attack_03.mp3 event=pudge_pud_attack_03
+sound sound.voice.pudge.attack sounds/vo/pudge/pud_attack_04.vsnd_c sounds/vo/pudge/pud_attack_04.mp3 event=pudge_pud_attack_04
+sound sound.voice.pudge.attack sounds/vo/pudge/pud_attack_05.vsnd_c sounds/vo/pudge/pud_attack_05.mp3 event=pudge_pud_attack_05
+sound sound.voice.pudge.attack sounds/vo/pudge/pud_attack_06.vsnd_c sounds/vo/pudge/pud_attack_06.mp3 event=pudge_pud_attack_06
+sound sound.voice.pudge.attack sounds/vo/pudge/pud_attack_08.vsnd_c sounds/vo/pudge/pud_attack_08.mp3 event=pudge_pud_attack_08
+sound sound.voice.pudge.attack sounds/vo/pudge/pud_attack_09.vsnd_c sounds/vo/pudge/pud_attack_09.mp3 event=pudge_pud_attack_09
+sound sound.voice.pudge.attack sounds/vo/pudge/pud_attack_10.vsnd_c sounds/vo/pudge/pud_attack_10.mp3 event=pudge_pud_attack_10
+sound sound.voice.pudge.attack sounds/vo/pudge/pud_attack_11.vsnd_c sounds/vo/pudge/pud_attack_11.mp3 event=pudge_pud_attack_11
+sound sound.voice.pudge.attack sounds/vo/pudge/pud_attack_12.vsnd_c sounds/vo/pudge/pud_attack_12.mp3 event=pudge_pud_attack_12
+sound sound.voice.pudge.attack sounds/vo/pudge/pud_attack_13.vsnd_c sounds/vo/pudge/pud_attack_13.mp3 event=pudge_pud_attack_13
