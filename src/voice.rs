@@ -14,6 +14,9 @@ use crate::session::Session;
 /// Tenths of a second the start horn honks before it fades (Dota's
 /// horn_radiant.wav is loud for its first 6.5 s).
 const HORN_HONK_TENTHS: u32 = 65;
+/// Tenths of a second "the battle begins" lasts (announcer_battle_begin_01,
+/// 1.65 s decoded).
+const BATTLE_BEGINS_TENTHS: u32 = 17;
 /// Seconds a hero keeps quiet after answering an order.
 const VOICE_REST: f32 = 6.0;
 
@@ -186,15 +189,19 @@ fn announce(
             say(&mut commands, source, 0.9);
         }
     }
-    // Dota sounds the horn at 0:00 and the announcer's "the battle begins"
-    // once the horn has honked (its workshop trigger, IsGameStart, follows
-    // the horn): each on its own game tick, whatever the frame rate.
+    // The horn, then the announcer's "the battle begins" once the horn has
+    // honked, timed to end as the clock reaches 0:00: each on its own game
+    // tick, whatever the frame rate.
     let Some(view) = core.view.as_ref() else {
         return;
     };
     let rate = u32::from(core.tick_rate.max(1));
-    let horn_tick = core.pregame_ticks;
-    let line_tick = horn_tick + HORN_HONK_TENTHS * rate / 10;
+    // The whole sequence ends on 0:00: the horn, then the line, then the
+    // clock starts.
+    let line_tick = core
+        .pregame_ticks
+        .saturating_sub(BATTLE_BEGINS_TENTHS * rate / 10);
+    let horn_tick = line_tick.saturating_sub(HORN_HONK_TENTHS * rate / 10);
     // Not for a match joined, or a replay opened, well after the start.
     let fresh = |at: u32| view.tick >= at && view.tick < at + 2 * rate;
     if fresh(horn_tick) && !heard.begun {
