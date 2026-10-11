@@ -332,7 +332,8 @@ fn shade_veil(
     let Some(data) = image.data.as_mut() else {
         return;
     };
-    // A tent blur over a cell either way rounds the border's cell steps.
+    // A binomial blur over two cells either way rounds the cell steps of
+    // the border (the high ground's edge is a staircase of cells).
     let shade = &grid.shade;
     let at = |x: isize, y: isize| -> f32 {
         let (x, y) = (
@@ -345,13 +346,13 @@ fn shade_veil(
         for cx in 0..n {
             let (x, y) = (cx as isize, cy as isize);
             let mut sum = 0.0;
-            for (dy, wy) in [(-1, 1.0), (0, 2.0), (1, 1.0)] {
-                for (dx, wx) in [(-1, 1.0), (0, 2.0), (1, 1.0)] {
+            for (dy, wy) in [(-2, 1.0), (-1, 4.0), (0, 6.0), (1, 4.0), (2, 1.0)] {
+                for (dx, wx) in [(-2, 1.0), (-1, 4.0), (0, 6.0), (1, 4.0), (2, 1.0)] {
                     sum += wx * wy * at(x + dx, y + dy);
                 }
             }
             let o = ((n - 1 - cy) * n + cx) * 4;
-            let a = (sum / 16.0 * VEIL * 255.0) as u8;
+            let a = (sum / 256.0 * VEIL * 255.0) as u8;
             data[o..o + 4].copy_from_slice(&[18, 20, 26, a]);
         }
     }

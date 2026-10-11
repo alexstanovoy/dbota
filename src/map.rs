@@ -212,6 +212,11 @@ fn prepare_map(
         /// The four terrain layers' colours, for a terrain part.
         layers: Option<[[f32; 3]; 4]>,
     }
+    impl TerrainJob for Job {
+        fn is_terrain(&self) -> bool {
+            self.layers.is_some()
+        }
+    }
     let mut jobs: Vec<Job> = Vec::new();
     for entity in children.iter_descendants(root) {
         let Ok((mesh3d, global, material, extras)) = parts.get(entity) else {
@@ -296,6 +301,8 @@ fn prepare_map(
             });
         }
     });
+    let mut placed = placed;
+    let field = smooth_terrain(&jobs, &mut placed);
     for (job, placed) in jobs.iter().zip(placed) {
         if let Some((mesh, aabb)) = placed {
             add_to_batches(
@@ -323,9 +330,9 @@ fn prepare_map(
     *ground = samples.finish();
     // A floor under the map wherever the map has a hole.
     let mut floor_material = self::terrain_material(&assets.server, &assets.manifest);
-    floor_material.base_color = Color::srgb(0.42, 0.45, 0.30);
+    floor_material.base_color = Color::WHITE;
     commands.spawn((
-        Mesh3d(assets.meshes.add(floor(&ground, 30.0))),
+        Mesh3d(assets.meshes.add(floor(&ground, 30.0, Some(&field)))),
         MeshMaterial3d(assets.materials.add(floor_material)),
         bevy::light::NotShadowCaster,
         crate::fog::Fogged,
@@ -340,6 +347,222 @@ fn prepare_map(
         "map prepared: {count} merged meshes, ground known on {} cells",
         ground.n * ground.n
     );
+}
+
+/// World units a cell of the terrain colour grid spans.
+const COLOUR_CELL: f32 = 32.0;
+/// Cells either side the terrain colours are blurred over.
+const COLOUR_BLUR: i32 = 3;
+
+/// Makes the terrain's baked colours continuous across its chunks: every
+/// terrain vertex's colour is splatted into one map-wide grid, the grid is
+/// blurred a little, and each vertex takes the grid's colour where it
+/// stands. Neighbouring chunks of the map are painted with different layer
+/// textures and tints, and their baked colours step where they meet; Dota's
+/// own shader blends them per pixel. This is the cheap way to the same
+/// smooth ground.
+fn smooth_terrain<A>(
+    jobs: &[A],
+    placed: &mut [Option<(Mesh, bevy::camera::primitives::Aabb)>],
+) -> ColourField
+where
+    A: TerrainJob,
+{
+    let n = (terrain::MAP_CELLS as f32 * terrain::CELL / COLOUR_CELL) as usize + 2;
+    let mut sum = vec![[0.0f32; 3]; n * n];
+    let mut weight = vec![0.0f32; n * n];
+    let cell = |x: f32, z: f32| -> Option<usize> {
+        let (cx, cy) = (x / COLOUR_CELL, -z / COLOUR_CELL);
+        (cx >= 0.0 && cy >= 0.0 && (cx as usize) < n && (cy as usize) < n)
+            .then(|| cy as usize * n + cx as usize)
+    };
+    let terrain = |i: usize| jobs[i].is_terrain();
+    for (i, entry) in placed.iter().enumerate() {
+        let Some((mesh, _)) = entry else { continue };
+        if !terrain(i) {
+            continue;
+        }
+        let (
+            Some(VertexAttributeValues::Float32x3(pos)),
+            Some(VertexAttributeValues::Float32x4(col)),
+        ) = (
+            mesh.attribute(Mesh::ATTRIBUTE_POSITION),
+            mesh.attribute(Mesh::ATTRIBUTE_COLOR),
+        )
+        else {
+            continue;
+        };
+        for (p, c) in pos.iter().zip(col) {
+            if let Some(k) = cell(p[0], p[2]) {
+                for ch in 0..3 {
+                    sum[k][ch] += c[ch];
+                }
+                weight[k] += 1.0;
+            }
+        }
+    }
+    // A separable box blur, twice: near enough a gaussian, and cells no
+    // vertex fell in take their neighbours' colour.
+    let mut grid: Vec<[f32; 4]> = sum
+        .iter()
+        .zip(&weight)
+        .map(|(s, w)| [s[0], s[1], s[2], *w])
+        .collect();
+    for _ in 0..2 {
+        for axis in 0..2 {
+            let mut out = vec![[0.0f32; 4]; n * n];
+            for y in 0..n {
+                for x in 0..n {
+                    let mut acc = [0.0f32; 4];
+                    for d in -COLOUR_BLUR..=COLOUR_BLUR {
+                        let (sx, sy) = if axis == 0 {
+                            (x as i32 + d, y as i32)
+                        } else {
+                            (x as i32, y as i32 + d)
+                        };
+                        if sx < 0 || sy < 0 || sx as usize >= n || sy as usize >= n {
+                            continue;
+                        }
+                        let v = grid[sy as usize * n + sx as usize];
+                        for k in 0..4 {
+                            acc[k] += v[k];
+                        }
+                    }
+                    out[y * n + x] = acc;
+                }
+            }
+            grid = out;
+        }
+    }
+    // Cells far from any terrain take their neighbours' colour, spread out
+    // until the grid is full: the floor under the map's holes is painted
+    // with the ground it meets, no step at the edge.
+    let mut filled: Vec<Option<[f32; 3]>> = grid
+        .iter()
+        .map(|g| (g[3] > 1e-3).then(|| [g[0] / g[3], g[1] / g[3], g[2] / g[3]]))
+        .collect();
+    for _ in 0..n {
+        let snapshot = filled.clone();
+        let mut changed = false;
+        for y in 0..n {
+            for x in 0..n {
+                if snapshot[y * n + x].is_some() {
+                    continue;
+                }
+                let mut acc = [0.0f32; 3];
+                let mut k = 0.0;
+                for (dx, dy) in [(1i32, 0i32), (-1, 0), (0, 1), (0, -1)] {
+                    let (sx, sy) = (x as i32 + dx, y as i32 + dy);
+                    if sx < 0 || sy < 0 || sx as usize >= n || sy as usize >= n {
+                        continue;
+                    }
+                    if let Some(c) = snapshot[sy as usize * n + sx as usize] {
+                        for ch in 0..3 {
+                            acc[ch] += c[ch];
+                        }
+                        k += 1.0;
+                    }
+                }
+                if k > 0.0 {
+                    filled[y * n + x] = Some(acc.map(|a| a / k));
+                    changed = true;
+                }
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
+    let field = ColourField {
+        n,
+        cells: filled
+            .into_iter()
+            .map(|c| c.unwrap_or([0.3, 0.35, 0.2]))
+            .collect(),
+    };
+    let sample = |x: f32, z: f32| -> Option<[f32; 3]> {
+        let (fx, fy) = (x / COLOUR_CELL - 0.5, -z / COLOUR_CELL - 0.5);
+        let (x0, y0) = (fx.floor(), fy.floor());
+        let (tx, ty) = (fx - x0, fy - y0);
+        let mut acc = [0.0f32; 4];
+        for (dx, dy, w) in [
+            (0, 0, (1.0 - tx) * (1.0 - ty)),
+            (1, 0, tx * (1.0 - ty)),
+            (0, 1, (1.0 - tx) * ty),
+            (1, 1, tx * ty),
+        ] {
+            let (cx, cy) = (x0 as i32 + dx, y0 as i32 + dy);
+            if cx < 0 || cy < 0 || cx as usize >= n || cy as usize >= n {
+                continue;
+            }
+            let v = grid[cy as usize * n + cx as usize];
+            for k in 0..4 {
+                acc[k] += v[k] * w;
+            }
+        }
+        (acc[3] > 1e-3).then(|| [acc[0] / acc[3], acc[1] / acc[3], acc[2] / acc[3]])
+    };
+    for (i, entry) in placed.iter_mut().enumerate() {
+        let Some((mesh, _)) = entry else { continue };
+        if !terrain(i) {
+            continue;
+        }
+        let Some(VertexAttributeValues::Float32x3(pos)) = mesh.attribute(Mesh::ATTRIBUTE_POSITION)
+        else {
+            continue;
+        };
+        let pos = pos.clone();
+        let Some(VertexAttributeValues::Float32x4(col)) = mesh.attribute_mut(Mesh::ATTRIBUTE_COLOR)
+        else {
+            continue;
+        };
+        for (p, c) in pos.iter().zip(col.iter_mut()) {
+            if let Some(s) = sample(p[0], p[2]) {
+                c[0] = s[0];
+                c[1] = s[1];
+                c[2] = s[2];
+            }
+        }
+    }
+    field
+}
+
+/// The terrain's colours over the whole map, a cell [`COLOUR_CELL`] wide,
+/// for the floor under the map's holes.
+pub struct ColourField {
+    n: usize,
+    cells: Vec<[f32; 3]>,
+}
+
+impl ColourField {
+    /// The colour at a Bevy ground point, bilinear.
+    pub fn at(&self, x: f32, z: f32) -> [f32; 3] {
+        let n = self.n;
+        let (fx, fy) = (x / COLOUR_CELL - 0.5, -z / COLOUR_CELL - 0.5);
+        let (x0, y0) = (fx.floor(), fy.floor());
+        let (tx, ty) = (fx - x0, fy - y0);
+        let at = |cx: f32, cy: f32| {
+            let (cx, cy) = (
+                (cx.max(0.0) as usize).min(n - 1),
+                (cy.max(0.0) as usize).min(n - 1),
+            );
+            self.cells[cy * n + cx]
+        };
+        let (a, b, c, d) = (
+            at(x0, y0),
+            at(x0 + 1.0, y0),
+            at(x0, y0 + 1.0),
+            at(x0 + 1.0, y0 + 1.0),
+        );
+        [0, 1, 2].map(|k| {
+            (a[k] * (1.0 - tx) + b[k] * tx) * (1.0 - ty) + (c[k] * (1.0 - tx) + d[k] * tx) * ty
+        })
+    }
+}
+
+/// What the smoothing needs of a map part.
+trait TerrainJob {
+    fn is_terrain(&self) -> bool;
 }
 
 /// Sets a prop's material the way its Dota shader blends: additive glows add,
@@ -817,7 +1040,7 @@ impl Samples {
 
 /// A grid over the whole map one cell apart, `below` world units under the
 /// ground.
-pub fn floor(ground: &Ground, below: f32) -> Mesh {
+pub fn floor(ground: &Ground, below: f32, colours: Option<&ColourField>) -> Mesh {
     let n = ground.n;
     let m = n + 1;
     let mut positions = Vec::with_capacity(m * m);
@@ -844,6 +1067,17 @@ pub fn floor(ground: &Ground, below: f32) -> Mesh {
     );
     mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, positions);
     mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, uvs);
+    // Painted with the ground's own colours where it shows through a hole.
+    if let Some(field) = colours {
+        let colors: Vec<[f32; 4]> = (0..m * m)
+            .map(|i| {
+                let (x, y) = ((i % m) as f32 * CELL, (i / m) as f32 * CELL);
+                let c = field.at(x, -y);
+                [c[0], c[1], c[2], 1.0]
+            })
+            .collect();
+        mesh.insert_attribute(Mesh::ATTRIBUTE_COLOR, colors);
+    }
     mesh.insert_indices(Indices::U32(indices));
     mesh.compute_normals();
     mesh
