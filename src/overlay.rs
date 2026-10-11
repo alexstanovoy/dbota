@@ -37,8 +37,14 @@ const GOLDEN: Color = Color::srgb(1.0, 0.8, 0.3);
 const SOUL_RED: Color = Color::srgb(1.0, 0.25, 0.2);
 const SOUL_VIOLET: Color = Color::srgb(0.72, 0.42, 1.0);
 
+/// Range and radius rings drawn this frame, for the visual check: none
+/// unless the show-ranges key is held.
+#[derive(Resource, Default)]
+pub struct RangeRings(pub u32);
+
 pub fn plugin(app: &mut App) {
-    app.add_systems(Startup, configure)
+    app.init_resource::<RangeRings>()
+        .add_systems(Startup, configure)
         .add_systems(Update, draw);
 }
 
@@ -102,6 +108,7 @@ fn draw(
     settings: Res<Settings>,
     keys: Res<ButtonInput<KeyCode>>,
     cursor: Res<CursorGround>,
+    mut rings: ResMut<RangeRings>,
 ) {
     let core = &session.0;
     let Some(view) = &core.view else {
@@ -117,7 +124,9 @@ fn draw(
     picks(&mut gizmos, &ctx);
     // Ranges and radii only while the show-ranges key is held, as Dota
     // keeps the ground clean.
+    let mut ranges = 0;
     if show_all {
+        ranges += 1;
         if let Some(me) = core
             .ears()
             .and_then(|id| view.units.iter().find(|u| u.id == id))
@@ -127,6 +136,7 @@ fn draw(
         }
         casts(&mut gizmos, &ctx);
     }
+    rings.0 = ranges;
     tower_shots(&mut gizmos, &ctx);
     aggro(&mut gizmos, &ctx);
     orders(&mut gizmos, &ctx);

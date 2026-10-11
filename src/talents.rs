@@ -34,7 +34,26 @@ struct CellText(u8);
 
 /// The level badge of a tier.
 #[derive(Component)]
-struct TierLevel;
+struct TierLevel(u8);
+
+/// The branch from a tier's badge to one of its choices, by talent slot.
+#[derive(Component)]
+struct Branch(u8);
+
+/// The talent button's size, and the tree's width.
+const BUTTON: (f32, f32) = (30.0, 38.0);
+const PANEL_WIDTH: f32 = 560.0;
+
+fn branch() -> impl Bundle {
+    (
+        Node {
+            width: px(16),
+            height: px(4),
+            ..default()
+        },
+        BackgroundColor(Color::srgb(0.22, 0.24, 0.28)),
+    )
+}
 
 const GOLD: Color = Color::srgb(0.95, 0.75, 0.3);
 const OPEN: Color = Color::srgb(0.75, 0.78, 0.84);
@@ -48,21 +67,25 @@ pub fn plugin(app: &mut App) {
 }
 
 /// The button, of the ability slots' height, as the first of their row.
-pub fn spawn_button(
-    commands: &mut Commands,
-    fonts: &Fonts,
-    row: Entity,
-    column: Entity,
-    height: f32,
-) {
+pub fn spawn_button(commands: &mut Commands, fonts: &Fonts, column: Entity) {
+    // Over the middle of the abilities, as Dota's tree icon sits.
     let button = commands
         .spawn((
             TalentButton,
             Button,
             Node {
-                width: px(height * 0.55),
-                height: px(height),
+                position_type: PositionType::Absolute,
+                bottom: percent(100),
+                left: percent(50),
+                width: px(BUTTON.0),
+                height: px(BUTTON.1),
+                margin: UiRect {
+                    left: px(-BUTTON.0 / 2.0),
+                    bottom: px(4),
+                    ..default()
+                },
                 border: UiRect::all(px(1)),
+                border_radius: BorderRadius::all(px(8)),
                 flex_direction: FlexDirection::Column,
                 justify_content: JustifyContent::SpaceEvenly,
                 align_items: AlignItems::Center,
@@ -70,7 +93,7 @@ pub fn spawn_button(
             },
             BorderColor::all(Color::srgb(0.2, 0.22, 0.27)),
             BackgroundColor(ui::PANEL_DEEP),
-            ChildOf(row),
+            ChildOf(column),
         ))
         .id();
     // The level-25 tier on top, as the tree.
@@ -108,8 +131,13 @@ pub fn spawn_button(
             Node {
                 position_type: PositionType::Absolute,
                 bottom: percent(100),
-                left: px(0),
-                margin: UiRect::bottom(px(44)),
+                left: percent(50),
+                margin: UiRect {
+                    left: px(-PANEL_WIDTH / 2.0),
+                    bottom: px(BUTTON.1 + 10.0),
+                    ..default()
+                },
+                width: px(PANEL_WIDTH),
                 flex_direction: FlexDirection::Column,
                 row_gap: px(4),
                 padding: UiRect::all(px(8)),
@@ -125,7 +153,26 @@ pub fn spawn_button(
         ))
         .id();
     commands.spawn((
-        ui::text("TALENTS", &fonts.bold, 12.0, ui::INK_DIM),
+        ui::text("TALENT TREE", &fonts.bold, 12.0, ui::INK_DIM),
+        Node {
+            align_self: AlignSelf::Center,
+            ..default()
+        },
+        Pickable::IGNORE,
+        ChildOf(panel),
+    ));
+    // The trunk the level badges sit on.
+    commands.spawn((
+        Node {
+            position_type: PositionType::Absolute,
+            left: percent(50),
+            top: px(30),
+            bottom: px(14),
+            width: px(4),
+            margin: UiRect::left(px(-2)),
+            ..default()
+        },
+        BackgroundColor(Color::srgb(0.22, 0.24, 0.28)),
         Pickable::IGNORE,
         ChildOf(panel),
     ));
@@ -133,8 +180,8 @@ pub fn spawn_button(
         let line = commands
             .spawn((
                 Node {
-                    column_gap: px(6),
                     align_items: AlignItems::Center,
+                    justify_content: JustifyContent::Center,
                     ..default()
                 },
                 ChildOf(panel),
@@ -143,8 +190,9 @@ pub fn spawn_button(
         for side in 0..2u8 {
             let slot = tier * 2 + side;
             if side == 1 {
+                commands.spawn((Branch(tier * 2), branch(), Pickable::IGNORE, ChildOf(line)));
                 commands.spawn((
-                    TierLevel,
+                    TierLevel(tier),
                     Node {
                         width: px(34),
                         height: px(34),
@@ -165,6 +213,12 @@ pub fn spawn_button(
                         ),
                         Pickable::IGNORE,
                     )],
+                    ChildOf(line),
+                ));
+                commands.spawn((
+                    Branch(tier * 2 + 1),
+                    branch(),
+                    Pickable::IGNORE,
                     ChildOf(line),
                 ));
             }
@@ -261,7 +315,12 @@ fn show(
     session: NonSend<Session>,
     time: Res<Time>,
     mut pips: Query<(&Pip, &mut BackgroundColor), Without<TalentCell>>,
-    mut cells: Query<(&TalentCell, &mut BorderColor, &mut BackgroundColor), Without<Pip>>,
+    mut cells: Query<
+        (&TalentCell, &mut BorderColor, &mut BackgroundColor),
+        (Without<Pip>, Without<Branch>, Without<TierLevel>),
+    >,
+    mut branches: Query<(&Branch, &mut BackgroundColor), (Without<Pip>, Without<TalentCell>)>,
+    mut badges: Query<(&TierLevel, &mut BorderColor), (Without<TalentCell>, Without<TalentButton>)>,
     mut texts: Query<(&CellText, &mut Text, &mut TextColor)>,
     mut button: Query<
         (&mut Visibility, &mut BorderColor),
@@ -313,6 +372,19 @@ fn show(
         if bg.0 != c {
             bg.0 = c;
         }
+    }
+    for (branch, mut bg) in &mut branches {
+        bg.0 = if learned(branch.0) {
+            GOLD
+        } else if learnable(branch.0) {
+            GOLD.with_alpha(0.3 + 0.5 * glow)
+        } else {
+            Color::srgb(0.22, 0.24, 0.28)
+        };
+    }
+    for (badge, mut rim) in &mut badges {
+        let lit = learned(badge.0 * 2) || learned(badge.0 * 2 + 1);
+        *rim = BorderColor::all(if lit { GOLD } else { ui::EDGE });
     }
     for (cell, mut rim, mut bg) in &mut cells {
         let (r, b) = if learned(cell.0) {

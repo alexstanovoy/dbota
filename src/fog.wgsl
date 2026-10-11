@@ -29,7 +29,9 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
         out.color = pbr_input.material.base_color;
     }
     let grey = dot(out.color.rgb, vec3(0.2126, 0.7152, 0.0722));
-    let dull = mix(out.color.rgb, vec3(grey), 0.7) * vec3(0.30, 0.33, 0.42);
+    // Dota-dense: about two fifths of the seen ground's brightness on screen
+    // (a tenth and a half in linear light), and most of its colour gone.
+    let dull = mix(out.color.rgb, vec3(grey), 0.92) * vec3(0.135, 0.14, 0.16);
     out.color = vec4(mix(out.color.rgb, dull, fog), out.color.a);
     out.color = main_pass_post_lighting_processing(pbr_input, out.color);
     return out;

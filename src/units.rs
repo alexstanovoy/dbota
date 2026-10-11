@@ -264,6 +264,23 @@ fn model_name(unit: &UnitView, manifest: &Manifest) -> Option<String> {
     })
 }
 
+/// Which way a unit is drawn facing: buildings never turn, as in Dota
+/// (the wire turns a tower to its target for bota's attack rules), and
+/// stand as the map places them; everything else as the wire says.
+fn drawn_facing(unit: &UnitView, facing: f32) -> f32 {
+    use std::f32::consts::FRAC_PI_4;
+    let building = matches!(
+        unit.kind,
+        UnitKind::Tower | UnitKind::Barracks | UnitKind::Ancient | UnitKind::Fountain
+    );
+    match (building, unit.team) {
+        // Both sides' building models are made facing the same way on the
+        // map: Dire's mirror Radiant's in the art, not by a half turn.
+        (true, Team::Radiant | Team::Dire) => FRAC_PI_4,
+        _ => facing,
+    }
+}
+
 /// The model of a hero, by the Dota name ids.txt gives its id.
 fn hero_model(hero: u16, manifest: &Manifest) -> Option<String> {
     Some(format!("hero.{}.model", manifest.dota_name("hero", hero)?))
@@ -353,11 +370,11 @@ fn sync_units(
                 let moved = at.distance(unit.at) / dt;
                 unit.speed += (moved - unit.speed) * (dt * 10.0).min(1.0);
                 unit.at = at;
-                unit.facing = body.facing;
+                unit.facing = drawn_facing(u, body.facing);
                 transform.translation = place;
             }
             None => {
-                let entity = spawn_unit(&mut p, u, at, body.facing, place);
+                let entity = spawn_unit(&mut p, u, at, drawn_facing(u, body.facing), place);
                 p.index.0.insert(u.id, entity);
             }
         }

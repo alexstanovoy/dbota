@@ -89,7 +89,11 @@ fn drill(
     // `DBOTA_DRILL=look`: the hero walked out of the fountain and
     // photographed, to see it drawn.
     let look = kind == "look";
-    let steps: &[(f32, &str)] = if look {
+    // `DBOTA_DRILL=bench`: a minute and more in the lane, for frame times.
+    let bench = kind == "bench";
+    let steps: &[(f32, &str)] = if bench {
+        &[(1.0, "attack-move to mid"), (30.0, "exit")]
+    } else if look {
         &[
             (1.0, "walk to mid"),
             (6.0, "photograph look"),

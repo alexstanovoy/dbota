@@ -21,6 +21,8 @@ struct Shots {
     taken: usize,
     frames: u32,
     waiting: bool,
+    /// Whether a visual check has failed.
+    failed: bool,
 }
 
 pub fn plugin(app: &mut App) {
@@ -49,7 +51,13 @@ fn shoot(
         };
         if let Source::Replay(player) = &mut core.source {
             if player.finished() || player.error().is_some() {
-                exit.write(AppExit::Success);
+                // A visual check that never reached its tick checked nothing.
+                if args.visual_check {
+                    println!("visual check: FAIL the replay ended before tick {next}");
+                    exit.write(AppExit::error());
+                } else {
+                    exit.write(AppExit::Success);
+                }
                 return;
             }
             player.speed = if tick + SETTLE_TICKS < next {
@@ -78,6 +86,7 @@ fn shoot(
         .and_then(|d| d.average());
     info!("frame time over the last frames: {fps:.2?} ms");
     let last = shots.taken >= args.screenshot_at.len().max(1);
+    let checking = args.visual_check;
     if let Some(dir) = path.parent()
         && let Err(err) = std::fs::create_dir_all(dir)
     {
@@ -87,12 +96,24 @@ fn shoot(
     commands.spawn(Screenshot::primary_window()).observe(
         move |captured: On<ScreenshotCaptured>,
               mut shots: ResMut<Shots>,
-              mut exit: MessageWriter<AppExit>| {
+              mut exit: MessageWriter<AppExit>,
+              checks: crate::visual::Checks,
+              mut failed: Local<bool>| {
+            if checking && !crate::visual::run(&captured.image, &checks) {
+                *failed = true;
+            }
             save(captured);
             info!("saved {}", path.display());
             shots.waiting = false;
+            if *failed {
+                shots.failed = true;
+            }
             if last {
-                exit.write(AppExit::Success);
+                exit.write(if shots.failed {
+                    AppExit::error()
+                } else {
+                    AppExit::Success
+                });
             }
         },
     );

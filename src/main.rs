@@ -18,6 +18,7 @@ mod coords;
 mod drill;
 mod effects;
 mod fog;
+mod framestats;
 mod hud;
 mod input;
 mod manifest;
@@ -37,6 +38,7 @@ mod tips;
 mod trees;
 mod ui;
 mod units;
+mod visual;
 mod voice;
 
 use std::path::PathBuf;
@@ -103,6 +105,11 @@ pub struct Args {
     /// Debug: open the shop at the start.
     #[arg(long)]
     pub open_shop: bool,
+    /// Debug: measure each `--screenshot-at` shot against the picture's
+    /// requirements (see `visual.rs`), print them, and exit non-zero when one
+    /// fails.
+    #[arg(long)]
+    pub visual_check: bool,
     /// Debug: pin the talent tree open at the start.
     #[arg(long)]
     pub open_talents: bool,
@@ -226,6 +233,7 @@ fn main() -> AppExit {
             sheet::plugin,
             voice::plugin,
             select::plugin,
+            framestats::plugin,
         ));
     app.run()
 }
@@ -248,6 +256,20 @@ fn default_plugins(args: &Args) -> impl PluginGroup {
                 ..default()
             }),
             ..default()
+        })
+        // DBOTA_THREADS caps the threads Bevy's pools take (all cores by
+        // default), to time a busy machine.
+        .set(TaskPoolPlugin {
+            task_pool_options: match std::env::var("DBOTA_THREADS")
+                .ok()
+                .and_then(|t| t.parse().ok())
+            {
+                Some(max) => TaskPoolOptions {
+                    max_total_threads: max,
+                    ..default()
+                },
+                None => TaskPoolOptions::default(),
+            },
         })
         .set(AssetPlugin {
             file_path: concat!(env!("CARGO_MANIFEST_DIR"), "/assets").into(),

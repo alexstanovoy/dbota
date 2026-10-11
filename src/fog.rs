@@ -12,6 +12,10 @@ use bevy::{
     render::render_resource::{AsBindGroup, Extent3d, TextureDimension, TextureFormat},
     shader::ShaderRef,
 };
+use std::sync::Arc;
+
+use bevy::tasks::{AsyncComputeTaskPool, Task, block_on, futures_lite::future::poll_once};
+use bota_client_core::FogGround;
 use bota_proto::Team;
 
 use crate::session::Session;
@@ -93,7 +97,7 @@ pub fn plugin(app: &mut App) {
 }
 
 /// Works out the lit cells when a new tick or a new side comes.
-fn work_out(session: NonSend<Session>, mut grid: ResMut<FogGrid>) {
+fn work_out(session: NonSend<Session>, mut grid: ResMut<FogGrid>, mut lighting: Local<Lighting>) {
     let core = &session.0;
     let team = core.fog_team();
     let n = core.terrain_cells;
@@ -109,11 +113,47 @@ fn work_out(session: NonSend<Session>, mut grid: ResMut<FogGrid>) {
         grid.cells = vec![true; n * n];
         grid.shade = vec![0.0; n * n];
     }
-    if grid.stamp == Some((view.tick, team)) {
+    // The last lighting worked out, once its task is done.
+    if let Some(task) = &mut lighting.task
+        && let Some((stamp, cells)) = block_on(poll_once(task))
+    {
+        lighting.task = None;
+        if cells.len() == n * n {
+            grid.cells = cells;
+            grid.stamp = Some(stamp);
+        }
+    }
+    if lighting.task.is_some() || grid.stamp == Some((view.tick, team)) {
         return;
     }
-    grid.stamp = Some((view.tick, team));
-    bota_client_core::light(core, view, team, &mut grid.cells);
+    // Lighting walks a line to every cell each unit could see, several
+    // milliseconds a tick: it runs on another thread, a frame behind.
+    let trees = view.felled_trees.len() + view.planted_trees.len();
+    if lighting
+        .ground
+        .as_ref()
+        .is_none_or(|(at, g)| *at != trees || g.cells != n)
+    {
+        lighting.ground = Some((trees, Arc::new(FogGround::of(core))));
+    }
+    let Some((_, ground)) = lighting.ground.clone() else {
+        return;
+    };
+    let view = view.clone();
+    lighting.task = Some(AsyncComputeTaskPool::get().spawn(async move {
+        let mut cells = vec![false; n * n];
+        bota_client_core::light_on(&ground, &view, team, &mut cells);
+        ((view.tick, team), cells)
+    }));
+}
+
+/// The lighting under way on another thread, and the ground it reads.
+#[derive(Default)]
+struct Lighting {
+    task: Option<Task<((u32, Team), Vec<bool>)>>,
+    /// The ground, with how many trees had fallen or grown back when it was
+    /// taken: sight changes with the forest.
+    ground: Option<(usize, Arc<FogGround>)>,
 }
 
 /// Makes the fog image once the fog is known.
@@ -192,7 +232,6 @@ fn shade_veil(
     mut grid: ResMut<FogGrid>,
     veil: Option<Res<Veil>>,
     mut images: ResMut<Assets<Image>>,
-    mut materials: ResMut<Assets<FoggedMaterial>>,
     photo: Res<crate::minimap::PhotoTaken>,
 ) {
     let Some(veil) = veil else {
@@ -227,16 +266,30 @@ fn shade_veil(
     let Some(data) = image.data.as_mut() else {
         return;
     };
+    // A tent blur over a cell either way rounds the border's cell steps.
+    let shade = &grid.shade;
+    let at = |x: isize, y: isize| -> f32 {
+        let (x, y) = (
+            x.clamp(0, n as isize - 1) as usize,
+            y.clamp(0, n as isize - 1) as usize,
+        );
+        shade[y * n + x]
+    };
     for cy in 0..n {
         for cx in 0..n {
-            let at = ((n - 1 - cy) * n + cx) * 4;
-            let a = (grid.shade[cy * n + cx] * VEIL * 255.0) as u8;
-            data[at..at + 4].copy_from_slice(&[18, 20, 26, a]);
+            let (x, y) = (cx as isize, cy as isize);
+            let mut sum = 0.0;
+            for (dy, wy) in [(-1, 1.0), (0, 2.0), (1, 1.0)] {
+                for (dx, wx) in [(-1, 1.0), (0, 2.0), (1, 1.0)] {
+                    sum += wx * wy * at(x + dx, y + dy);
+                }
+            }
+            let o = ((n - 1 - cy) * n + cx) * 4;
+            let a = (sum / 16.0 * VEIL * 255.0) as u8;
+            data[o..o + 4].copy_from_slice(&[18, 20, 26, a]);
         }
     }
-    // A material's binding of the image is only rebuilt when the material
-    // itself is touched.
-    for handle in veil.made.values() {
-        let _ = materials.get_mut(handle);
-    }
+    // The image keeps its GPU texture when its data changes (Bevy writes
+    // the new texels into it), so the materials bound to it need no
+    // touching: touching them all rebuilt every one's bind group each frame.
 }

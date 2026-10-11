@@ -11,6 +11,9 @@ use crate::config::Settings;
 use crate::manifest::Manifest;
 use crate::session::Session;
 
+/// Tenths of a second the start horn honks before it fades (Dota's
+/// horn_radiant.wav is loud for its first 6.5 s).
+const HORN_HONK_TENTHS: u32 = 65;
 /// Seconds a hero keeps quiet after answering an order.
 const VOICE_REST: f32 = 6.0;
 
@@ -64,8 +67,10 @@ struct Heard {
     rest: f32,
     /// Whether the announcer has asked for a hero.
     asked: bool,
-    /// Whether the battle has begun, as far as the voices know.
+    /// Whether the horn has sounded.
     begun: bool,
+    /// Whether the battle has been announced.
+    announced: bool,
 }
 
 pub fn plugin(app: &mut App) {
@@ -181,22 +186,29 @@ fn announce(
             say(&mut commands, source, 0.9);
         }
     }
-    let begun = core
-        .view
-        .as_ref()
-        .is_some_and(|v| v.tick >= core.pregame_ticks);
-    if begun && !heard.begun {
+    // Dota sounds the horn at 0:00 and the announcer's "the battle begins"
+    // once the horn has honked (its workshop trigger, IsGameStart, follows
+    // the horn): each on its own game tick, whatever the frame rate.
+    let Some(view) = core.view.as_ref() else {
+        return;
+    };
+    let rate = u32::from(core.tick_rate.max(1));
+    let horn_tick = core.pregame_ticks;
+    let line_tick = horn_tick + HORN_HONK_TENTHS * rate / 10;
+    // Not for a match joined, or a replay opened, well after the start.
+    let fresh = |at: u32| view.tick >= at && view.tick < at + 2 * rate;
+    if fresh(horn_tick) && !heard.begun {
         heard.begun = true;
-        // Not for a match joined, or a replay opened, well after the start.
-        let fresh = core
-            .view
-            .as_ref()
-            .is_some_and(|v| v.tick < core.pregame_ticks + 60);
-        if fresh && !silent {
+        if !silent {
             // The horn of one's own side's ancient.
             let dire = core.my_team() == Some(bota_proto::Team::Dire);
             let horn = voices.horns[usize::from(dire)].take();
             say(&mut commands, horn, 0.8);
+        }
+    }
+    if fresh(line_tick) && !heard.announced {
+        heard.announced = true;
+        if !silent {
             let line = voices.begins.take();
             say(&mut commands, line, 0.9);
         }

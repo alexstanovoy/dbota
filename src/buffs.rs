@@ -55,8 +55,14 @@ pub fn spawn_row(commands: &mut Commands, fonts: &Fonts, parent: Entity) {
             Node {
                 position_type: PositionType::Absolute,
                 bottom: percent(100),
-                left: px(0),
-                margin: UiRect::bottom(px(8)),
+                // Right of the talent tree button, which sits over the
+                // middle of the abilities.
+                left: percent(50),
+                margin: UiRect {
+                    left: px(24),
+                    bottom: px(8),
+                    ..default()
+                },
                 column_gap: px(4),
                 ..default()
             },
@@ -88,6 +94,7 @@ pub fn spawn_row(commands: &mut Commands, fonts: &Fonts, parent: Entity) {
             position_type: PositionType::Absolute,
             width: percent(100),
             height: percent(100),
+            border_radius: BorderRadius::MAX,
             ..default()
         };
         commands.spawn((
@@ -119,6 +126,35 @@ pub fn spawn_row(commands: &mut Commands, fonts: &Fonts, parent: Entity) {
     commands.entity(row).insert(Chips(chips));
 }
 
+/// A status icon: its square art and the same cut to a circle.
+struct Art {
+    source: Handle<Image>,
+    round: Option<Handle<Image>>,
+}
+
+/// An RGBA8 image with everything outside its inscribed circle made
+/// transparent, the edge softened over a pixel.
+pub fn round_cut(image: &Image) -> Option<Image> {
+    let mut out = image.clone();
+    let format = out.texture_descriptor.format;
+    if format.block_copy_size(None) != Some(4) {
+        return None;
+    }
+    let (w, h) = (out.width() as usize, out.height() as usize);
+    let data = out.data.as_mut()?;
+    let (cx, cy) = (w as f32 / 2.0, h as f32 / 2.0);
+    let r = cx.min(cy);
+    for y in 0..h {
+        for x in 0..w {
+            let d = ((x as f32 + 0.5 - cx).powi(2) + (y as f32 + 0.5 - cy).powi(2)).sqrt();
+            let keep = (r - d).clamp(0.0, 1.0);
+            let a = &mut data[(y * w + x) * 4 + 3];
+            *a = (f32::from(*a) * keep) as u8;
+        }
+    }
+    Some(out)
+}
+
 /// The dark part of a chip for the share of its time gone.
 fn sweep(left: f32) -> ConicGradient {
     let a = (1.0 - left.clamp(0.0, 1.0)) * TAU;
@@ -147,7 +183,8 @@ fn update(
     // The longest time left seen of each effect on each unit: its whole
     // length, for the sweep.
     mut lengths: Local<HashMap<(EntityId, u16), u32>>,
-    mut art: Local<HashMap<u16, Handle<Image>>>,
+    mut art: Local<HashMap<u16, Art>>,
+    mut images: ResMut<Assets<Image>>,
 ) {
     let core = &session.0;
     let unit = crate::hud::subject(core).1;
@@ -194,15 +231,21 @@ fn update(
         let harmful = effect(s.id).is_some_and(|f| f.harmful);
         *rim = BorderColor::all(if harmful { DEBUFF_RIM } else { BUFF_RIM });
         if let Some(mut image) = children.first().and_then(|c| icons.get_mut(*c).ok()) {
-            let handle = art
-                .entry(s.id)
-                .or_insert_with(|| {
-                    manifest
-                        .effect_icon(s.id)
-                        .map(|p| server.load(p))
-                        .unwrap_or_default()
-                })
-                .clone();
+            let art = art.entry(s.id).or_insert_with(|| Art {
+                source: manifest
+                    .effect_icon(s.id)
+                    .map(|p| server.load(p))
+                    .unwrap_or_default(),
+                round: None,
+            });
+            // The icon cut to the circle once it has loaded, as Dota's
+            // status icons are: nothing square inside the rim.
+            if art.round.is_none()
+                && let Some(round) = images.get(&art.source).and_then(round_cut)
+            {
+                art.round = Some(images.add(round));
+            }
+            let handle = art.round.clone().unwrap_or_default();
             if image.image != handle {
                 image.image = handle;
             }

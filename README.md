@@ -108,3 +108,12 @@ target/release/dbota --replay match.brp --follow 1   # camera stays on seat 1's 
 A replay opens only with the bota version that recorded it.
 
 `dbota --help` lists everything else, including the debug options for screenshots.
+
+## Checking the picture
+
+`tools/visual_check.sh` records a short match of two bota bots and measures dbota's picture of it:
+fogged ground at most 45% of seen ground's luminance and saturation with a 1–5 cell border, heroes
+drawn with their models, buildings that never turn, no range rings without `Alt`, no gold or souls
+in the top-left block, round buff icons. It needs bota next to dbota, the asset cache and a display,
+and exits non-zero when a check fails (`cargo test --release -- --ignored` runs it too).
+`DBOTA_FRAMES=1` logs frame times (median, 95th and 99th percentiles) every ten seconds.
