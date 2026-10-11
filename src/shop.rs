@@ -523,9 +523,22 @@ fn texts(
         .is_some_and(|s| s.iter().any(Option::is_some));
     for (which, mut text) in &mut texts {
         let s = match which {
-            ShopText::Gold => me
-                .and_then(|p| p.gold)
-                .map_or("-".to_string(), |g| g.to_string()),
+            // One's own gold when playing; in a replay or as a spectator,
+            // that of the hero selected or watched (the stream tells all).
+            ShopText::Gold => {
+                let playing = matches!(core.source, bota_client_core::Source::Live(_))
+                    && core.my_slot.is_some();
+                let seat = if playing {
+                    core.my_slot
+                } else {
+                    core.panel_slot()
+                };
+                core.view
+                    .as_ref()
+                    .and_then(|v| v.players.iter().find(|p| Some(p.slot) == seat))
+                    .and_then(|p| p.gold)
+                    .map_or("-".to_string(), |g| g.to_string())
+            }
             ShopText::Search => match (*typing == Typing::Search, panels.search.is_empty()) {
                 (true, _) => format!("{}_", panels.search),
                 (false, true) => "Search (click here)".to_string(),
