@@ -29,7 +29,7 @@ TREE = re.compile(r"^(tree_|dire_tree)")
 # those as units), the end-game cameras, and the lower-detail world layers (n0_lr1+).
 EXCLUDE = (r"^(tree_|dire_tree|radiant_tower|dire_tower|n0_lr[1-9]|radiant_ancient001|dire_ancient_base001"
            r"|radiant_(melee|ranged)_barracks001|dire_barracks_(melee|ranged)001|radiant_fountain002"
-           r"|dire_fountain002|bad_ancient_destruction_camera|radiant_endcam)")
+           r"|dire_fountain002|radiant_statue001|dire_column001|bad_ancient_destruction_camera|radiant_endcam)")
 
 
 def mat_mul(a: list[float], b: list[float]) -> list[float]:
@@ -252,7 +252,7 @@ def tree_lines(doc: dict) -> list[str]:
 
 BUILDING = re.compile(r"^(radiant_tower|dire_tower|radiant_ancient001|dire_ancient_base001"
                       r"|radiant_(melee|ranged)_barracks001|dire_barracks_(melee|ranged)001"
-                      r"|radiant_fountain002|dire_fountain002)")
+                      r"|radiant_fountain002|dire_fountain002|radiant_statue001|dire_column001)")
 
 
 def building_lines(doc: dict) -> list[str]:

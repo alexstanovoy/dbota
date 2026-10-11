@@ -298,6 +298,7 @@ fn model_name(unit: &UnitView, manifest: &Manifest) -> Option<String> {
         UnitKind::Ancient => format!("ancient.{side}.model"),
         UnitKind::Barracks => format!("barracks.{side}.melee.model"),
         UnitKind::Fountain => format!("fountain.{side}.model"),
+        UnitKind::Filler => format!("filler.{side}.model"),
         UnitKind::Courier => format!("courier.{side}.model"),
         _ => return None,
     })
@@ -307,7 +308,11 @@ fn model_name(unit: &UnitView, manifest: &Manifest) -> Option<String> {
 pub fn is_building(kind: UnitKind) -> bool {
     matches!(
         kind,
-        UnitKind::Tower | UnitKind::Barracks | UnitKind::Ancient | UnitKind::Fountain
+        UnitKind::Tower
+            | UnitKind::Barracks
+            | UnitKind::Ancient
+            | UnitKind::Fountain
+            | UnitKind::Filler
     )
 }
 
@@ -355,6 +360,9 @@ impl BuildingYaws {
             UnitKind::Barracks => "barracks",
             UnitKind::Ancient => "ancient",
             UnitKind::Fountain => "fountain",
+            // Radiant's fillers are statues, Dire's columns.
+            UnitKind::Filler if unit.team == Team::Dire => "column",
+            UnitKind::Filler => "statue",
             _ => return None,
         };
         let (_, _, yaw) = self
@@ -403,6 +411,7 @@ fn required_models(manifest: &Manifest) -> Vec<String> {
             "ancient.{}.model",
             "barracks.{}.melee.model",
             "fountain.{}.model",
+            "filler.{}.model",
             "courier.{}.model",
         ] {
             names.push(kind.replace("{}", side));
@@ -590,7 +599,11 @@ fn spawn_stand_in(p: &mut SyncParams, u: &UnitView, pivot: Entity) {
     let (r, h) = stand_in_size(u.kind, u.bound.to_f32());
     let building = matches!(
         u.kind,
-        UnitKind::Tower | UnitKind::Barracks | UnitKind::Ancient | UnitKind::Fountain
+        UnitKind::Tower
+            | UnitKind::Barracks
+            | UnitKind::Ancient
+            | UnitKind::Fountain
+            | UnitKind::Filler
     );
     let mesh = if building {
         art.building.clone()
@@ -671,7 +684,11 @@ fn on_model_ready(
     if units.get(unit).is_ok_and(|u| {
         matches!(
             u.kind,
-            UnitKind::Tower | UnitKind::Barracks | UnitKind::Ancient | UnitKind::Fountain
+            UnitKind::Tower
+                | UnitKind::Barracks
+                | UnitKind::Ancient
+                | UnitKind::Fountain
+                | UnitKind::Filler
         )
     }) {
         for part in children.iter_descendants(ready.entity) {

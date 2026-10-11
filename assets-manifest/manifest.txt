@@ -195,6 +195,9 @@ clip barracks.dire.ranged.destruction death dire_barracks_ranged001_destruction_
 # Fountains (the map adds water/glow effect meshes fountain_*_00 around them; those stay in map.mid)
 model fountain.radiant.model models/props_structures/radiant_fountain002.vmdl_c models/building/fountain_radiant/fountain_radiant.glb
 model fountain.dire.model models/props_structures/dire_fountain002.vmdl_c models/building/fountain_dire/fountain_dire.glb
+# Base fillers (the map's entities use 001; npc_units names 002).
+model filler.radiant.model models/props_structures/radiant_statue001.vmdl_c models/building/filler_radiant/filler_radiant.glb
+model filler.dire.model models/props_structures/dire_column001.vmdl_c models/building/filler_dire/filler_dire.glb
 
 # --- Default courier (npc_dota_courier: donkey; Dire uses donkey_dire). The *.flying models are the winged couriers.
 model courier.radiant.model models/props_gameplay/donkey.vmdl_c models/courier/radiant/courier_radiant.glb anims=donkey_idle,donkey_run,donkey_death,donkey_spawn

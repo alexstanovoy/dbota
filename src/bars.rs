@@ -96,6 +96,7 @@ fn bar_size(kind: UnitKind) -> Option<(f32, f32)> {
     match kind {
         UnitKind::Hero => Some((92.0, 9.0)),
         UnitKind::Tower | UnitKind::Barracks | UnitKind::Ancient => Some((120.0, 8.0)),
+        UnitKind::Filler => Some((90.0, 7.0)),
         UnitKind::Fountain | UnitKind::Ward => None,
         UnitKind::Courier => Some((40.0, 5.0)),
         _ => Some((54.0, 6.0)),
@@ -108,6 +109,7 @@ fn bar_height(kind: UnitKind) -> f32 {
         UnitKind::Hero => 260.0,
         UnitKind::Tower => 560.0,
         UnitKind::Barracks | UnitKind::Ancient => 420.0,
+        UnitKind::Filler => 330.0,
         UnitKind::CreepSiege => 170.0,
         _ => 165.0,
     }
