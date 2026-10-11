@@ -57,12 +57,8 @@ pub fn spawn_row(commands: &mut Commands, fonts: &Fonts, parent: Entity) {
                 bottom: percent(100),
                 // Right of the talent tree button, which sits over the
                 // middle of the abilities.
-                left: percent(50),
-                margin: UiRect {
-                    left: px(24),
-                    bottom: px(8),
-                    ..default()
-                },
+                left: px(0),
+                margin: UiRect::bottom(px(8)),
                 column_gap: px(4),
                 ..default()
             },
@@ -109,17 +105,32 @@ pub fn spawn_row(commands: &mut Commands, fonts: &Fonts, parent: Entity) {
             Pickable::IGNORE,
             ChildOf(chip),
         ));
+        // The count in the middle of the circle: a centring box, the text
+        // in it nudged down a pixel to sit on the digits' visual middle
+        // (the font's ascent is taller than its descent).
+        let middle = commands
+            .spawn((
+                Node {
+                    position_type: PositionType::Absolute,
+                    width: percent(100),
+                    height: percent(100),
+                    justify_content: JustifyContent::Center,
+                    align_items: AlignItems::Center,
+                    ..default()
+                },
+                Pickable::IGNORE,
+                ChildOf(chip),
+            ))
+            .id();
         commands.spawn((
+            ui::text("", &fonts.bold, 13.0, ui::INK),
+            ui::shadow(),
             Node {
-                position_type: PositionType::Absolute,
-                right: px(1),
-                bottom: px(-1),
+                top: px(1),
                 ..default()
             },
-            ui::text("", &fonts.bold, 12.0, ui::INK),
-            ui::shadow(),
             Pickable::IGNORE,
-            ChildOf(chip),
+            ChildOf(middle),
         ));
         chips.push(chip);
     }
@@ -180,6 +191,7 @@ fn update(
     mut icons: Query<&mut ImageNode>,
     mut sweeps: Query<&mut BackgroundGradient>,
     mut texts: Query<&mut Text>,
+    kids: Query<&Children, Without<BuffChip>>,
     // The longest time left seen of each effect on each unit: its whole
     // length, for the sweep.
     mut lengths: Local<HashMap<(EntityId, u16), u32>>,
@@ -263,7 +275,11 @@ fn update(
         if let Some(mut g) = children.get(1).and_then(|c| sweeps.get_mut(*c).ok()) {
             *g = BackgroundGradient::from(sweep(left));
         }
-        if let Some(mut text) = children.get(2).and_then(|c| texts.get_mut(*c).ok()) {
+        let count = children
+            .get(2)
+            .and_then(|c| kids.get(*c).ok())
+            .and_then(|k| k.first().copied());
+        if let Some(mut text) = count.and_then(|c| texts.get_mut(c).ok()) {
             let s = s
                 .stacks
                 .filter(|n| *n > 0)

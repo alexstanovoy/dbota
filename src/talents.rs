@@ -41,7 +41,7 @@ struct TierLevel(u8);
 struct Branch(u8);
 
 /// The talent button's size, and the tree's width.
-const BUTTON: (f32, f32) = (30.0, 38.0);
+const BUTTON: f32 = 48.0;
 const PANEL_WIDTH: f32 = 560.0;
 
 fn branch() -> impl Bundle {
@@ -67,41 +67,48 @@ pub fn plugin(app: &mut App) {
 }
 
 /// The button, of the ability slots' height, as the first of their row.
-pub fn spawn_button(commands: &mut Commands, fonts: &Fonts, column: Entity) {
-    // Over the middle of the abilities, as Dota's tree icon sits.
+pub fn spawn_button(commands: &mut Commands, fonts: &Fonts, row: Entity, column: Entity) {
+    // Left of the abilities, round, a small tree drawn in it: a trunk and
+    // a pip for each talent, lit as they are learned, as Dota's.
     let button = commands
         .spawn((
             TalentButton,
             Button,
             Node {
-                position_type: PositionType::Absolute,
-                bottom: percent(100),
-                left: percent(50),
-                width: px(BUTTON.0),
-                height: px(BUTTON.1),
-                margin: UiRect {
-                    left: px(-BUTTON.0 / 2.0),
-                    bottom: px(4),
-                    ..default()
-                },
-                border: UiRect::all(px(1)),
-                border_radius: BorderRadius::all(px(8)),
+                width: px(BUTTON),
+                height: px(BUTTON),
+                align_self: AlignSelf::Center,
+                border: UiRect::all(px(2)),
+                border_radius: BorderRadius::MAX,
                 flex_direction: FlexDirection::Column,
-                justify_content: JustifyContent::SpaceEvenly,
+                justify_content: JustifyContent::Center,
                 align_items: AlignItems::Center,
+                row_gap: px(3),
                 ..default()
             },
             BorderColor::all(Color::srgb(0.2, 0.22, 0.27)),
             BackgroundColor(ui::PANEL_DEEP),
-            ChildOf(column),
+            ChildOf(row),
         ))
         .id();
+    commands.spawn((
+        Node {
+            position_type: PositionType::Absolute,
+            width: px(3),
+            top: px(9),
+            bottom: px(9),
+            ..default()
+        },
+        BackgroundColor(Color::srgb(0.45, 0.42, 0.36)),
+        Pickable::IGNORE,
+        ChildOf(button),
+    ));
     // The level-25 tier on top, as the tree.
     for tier in (0..4u8).rev() {
         let line = commands
             .spawn((
                 Node {
-                    column_gap: px(3),
+                    column_gap: px(5),
                     ..default()
                 },
                 Pickable::IGNORE,
@@ -112,8 +119,8 @@ pub fn spawn_button(commands: &mut Commands, fonts: &Fonts, column: Entity) {
             commands.spawn((
                 Pip(tier * 2 + side),
                 Node {
-                    width: px(10),
-                    height: px(6),
+                    width: px(8),
+                    height: px(5),
                     border_radius: BorderRadius::all(px(2)),
                     ..default()
                 },
@@ -134,7 +141,7 @@ pub fn spawn_button(commands: &mut Commands, fonts: &Fonts, column: Entity) {
                 left: percent(50),
                 margin: UiRect {
                     left: px(-PANEL_WIDTH / 2.0),
-                    bottom: px(BUTTON.1 + 10.0),
+                    bottom: px(10.0),
                     ..default()
                 },
                 width: px(PANEL_WIDTH),

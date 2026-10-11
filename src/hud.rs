@@ -85,6 +85,54 @@ enum Gauge {
 #[derive(Component)]
 struct Portrait;
 
+/// The ring round the panel's level, filled with the experience gathered
+/// towards the next.
+#[derive(Component)]
+struct XpRing;
+
+/// Total experience at each hero level, from the first (bota's, Dota's).
+const XP_THRESHOLDS: [i32; 30] = [
+    0, 240, 640, 1160, 1760, 2440, 3200, 4000, 4900, 5900, 7000, 8200, 9500, 10900, 12400, 14000,
+    15700, 17500, 19400, 21400, 23600, 26000, 28600, 31400, 34400, 38400, 43400, 49400, 56400,
+    63900,
+];
+
+/// The share of the way from a level to the next a hero's experience is.
+fn xp_share(level: u8, xp: i32) -> f32 {
+    let at = usize::from(level.max(1)) - 1;
+    match (XP_THRESHOLDS.get(at), XP_THRESHOLDS.get(at + 1)) {
+        (Some(&from), Some(&to)) => {
+            ((xp - from) as f32 / (to - from).max(1) as f32).clamp(0.0, 1.0)
+        }
+        _ => 1.0,
+    }
+}
+
+fn xp_ring(share: f32) -> ConicGradient {
+    let a = share.clamp(0.0, 1.0) * TAU;
+    let gold = Color::srgb(0.95, 0.75, 0.3);
+    let empty = Color::srgba(0.1, 0.1, 0.12, 0.9);
+    ConicGradient::new(
+        UiPosition::CENTER,
+        vec![
+            AngularColorStop::new(gold, 0.0),
+            AngularColorStop::new(gold, a),
+            AngularColorStop::new(empty, a),
+            AngularColorStop::new(empty, TAU),
+        ],
+    )
+}
+
+/// Fills the level ring with the panel hero's experience.
+fn xp(session: NonSend<Session>, mut ring: Single<&mut BackgroundGradient, With<XpRing>>) {
+    let core = &session.0;
+    let share = match subject(core) {
+        (Some(p), _, _) => xp_share(p.level, p.xp),
+        _ => 0.0,
+    };
+    **ring = BackgroundGradient::from(xp_ring(share));
+}
+
 /// The whole HUD, hidden in the lobby.
 #[derive(Component)]
 pub struct HudRoot;
@@ -96,7 +144,7 @@ pub struct Blocker;
 pub fn plugin(app: &mut App) {
     app.add_systems(Startup, spawn_hud).add_systems(
         Update,
-        (readouts, gauges, slots, portrait, seats, stash)
+        (readouts, gauges, slots, portrait, seats, stash, xp)
             .run_if(|k: Res<crate::session::MatchKnown>| k.0),
     );
 }
@@ -174,17 +222,43 @@ fn spawn_bottom(commands: &mut Commands, fonts: &Fonts, root: Entity) {
             ChildOf(bar),
         ))
         .id();
+    // The level in a ring that fills with the experience to the next.
+    let ring = commands
+        .spawn((
+            XpRing,
+            Node {
+                position_type: PositionType::Absolute,
+                right: px(4),
+                bottom: px(4),
+                width: px(34),
+                height: px(34),
+                border_radius: BorderRadius::MAX,
+                justify_content: JustifyContent::Center,
+                align_items: AlignItems::Center,
+                ..default()
+            },
+            BackgroundGradient::from(xp_ring(0.0)),
+            ChildOf(portrait),
+        ))
+        .id();
+    let disc = commands
+        .spawn((
+            Node {
+                width: px(26),
+                height: px(26),
+                border_radius: BorderRadius::MAX,
+                justify_content: JustifyContent::Center,
+                align_items: AlignItems::Center,
+                ..default()
+            },
+            BackgroundColor(Color::srgba(0.02, 0.025, 0.035, 0.95)),
+            ChildOf(ring),
+        ))
+        .id();
     commands.spawn((
         Readout::PanelLevel,
-        ui::text("", &fonts.bold, 18.0, ui::GOLDEN),
-        ui::shadow(),
-        Node {
-            position_type: PositionType::Absolute,
-            right: px(6),
-            bottom: px(4),
-            ..default()
-        },
-        ChildOf(portrait),
+        ui::text("", &fonts.bold, 15.0, ui::GOLDEN),
+        ChildOf(disc),
     ));
     spawn_numbers(commands, fonts, bar);
     spawn_middle(commands, fonts, bar);
@@ -273,7 +347,8 @@ fn spawn_middle(commands: &mut Commands, fonts: &Fonts, bar: Entity) {
             ChildOf(column),
         ))
         .id();
-    crate::talents::spawn_button(commands, fonts, column);
+
+    crate::talents::spawn_button(commands, fonts, row, column);
     for slot in 0..6u8 {
         spawn_slot_box(
             commands,

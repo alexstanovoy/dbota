@@ -95,7 +95,7 @@ sound tower_shot ^sounds/weapons/(building|buildings)/.*tower.*\.vsnd_c$
 sound click ^sounds/ui/.*click.*\.vsnd_c$
 effect 1 icon.item.flask
 effect 2 icon.item.clarity
-effect 3 icon.item.bottle
+effect 3 icon.ability.fountain_heal
 effect 4 icon.ability.pudge_dismember
 effect 5 icon.ability.pudge_rot
 effect 6 icon.ability.pudge_rot
@@ -105,8 +105,8 @@ effect 9 icon.item.phase_boots
 effect 10 icon.ability.pudge_flesh_heap
 effect 11 icon.ability.nevermore_necromastery
 effect 12 icon.ability.nevermore_dark_lord
-effect 13 icon.item.chainmail
-effect 14 icon.item.headdress
+effect 13 icon.ability.tower_armor_aura
+effect 14 icon.ability.flagbearer_creep_aura_effect
 effect 15 icon.ability.nevermore_shadowraze1
 effect 16 icon.ability.pudge_rot
 effect 17 icon.ability.nevermore_requiem
