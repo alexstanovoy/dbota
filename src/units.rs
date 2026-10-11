@@ -362,17 +362,9 @@ impl BuildingYaws {
             .iter()
             .filter(|(m, p, _)| m.starts_with(side) && m.contains(kind) && p.distance(at) < 600.0)
             .min_by(|a, b| a.1.distance(at).total_cmp(&b.1.distance(at)))?;
-        // A Radiant building model's face is its +x, as a unit's is: the
-        // map's yaw is its facing. Dire's models are built mirrored, their
-        // face at -x, so they turn half round more (the map's Dire top
-        // towers, yaw 0, look west down their lane; Dire's barracks pairs,
-        // turned so, face each other).
-        let mirrored = if unit.team == Team::Dire {
-            std::f32::consts::PI
-        } else {
-            0.0
-        };
-        Some(yaw + mirrored)
+        // A building model's face is its +x, as a unit's is, for both sides:
+        // the map's yaw is its facing.
+        Some(*yaw)
     }
 }
 
