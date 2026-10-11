@@ -117,8 +117,9 @@ pub struct Args {
     /// `abilities`, `effects`) and the Dota art it is drawn from.
     #[arg(long, value_name = "KIND")]
     pub sheet: Option<String>,
-    /// Debug: hold the camera over this bota world point, `x,y`.
-    #[arg(long, value_name = "X,Y", value_delimiter = ',', num_args = 2)]
+    /// Debug: hold the camera over this bota world point, `x y`; given
+    /// again, each `--screenshot-at` shot in turn is taken over the next.
+    #[arg(long, value_name = "X Y", num_args = 2, action = clap::ArgAction::Append)]
     pub look_at: Vec<f32>,
     /// Debug: the camera's distance from the ground at the start.
     #[arg(long, value_name = "UNITS")]

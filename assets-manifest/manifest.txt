@@ -168,7 +168,7 @@ model tree.dire_tree008 models/props_tree/dire_tree008.vmdl_c models/tree/dire_t
 
 # --- Default map, fountain-to-fountain band around mid with both bases (towers, trees, barracks,
 # ancients and fountains removed: the client spawns those itself; shops, statues, walls stay)
-world map.mid maps/dota/world.vwrld_c map/mid/mid.glb vpk=maps/dota.vpk half_width=4200 v_min=-11800 v_max=11700 layers=textures/ground trees=map/mid/trees.txt
+world map.mid maps/dota/world.vwrld_c map/mid/mid.glb vpk=maps/dota.vpk half_width=13100 v_min=-11800 v_max=11700 layers=textures/ground trees=map/mid/trees.txt
 
 # --- Base buildings (npc_units.txt models; static, no animations). The *.destruction models are
 # what Dota swaps in when the building dies: one-shot collapse animation, then hide.

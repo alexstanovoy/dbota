@@ -110,6 +110,12 @@ const FALL_SECONDS: f32 = 1.6;
 
 pub fn plugin(app: &mut App) {
     app.init_resource::<UnitIndex>()
+        .add_systems(
+            PreStartup,
+            |mut commands: Commands, manifest: Res<Manifest>| {
+                commands.insert_resource(BuildingYaws::load(manifest.root.as_deref()));
+            },
+        )
         .init_resource::<ModelBank>()
         .add_systems(Startup, (load_models, make_stand_ins))
         .add_systems(
@@ -305,21 +311,71 @@ pub fn is_building(kind: UnitKind) -> bool {
     )
 }
 
-/// Which way a unit is drawn facing: buildings never turn, as in Dota
-/// (the wire turns a tower to its target for bota's attack rules), and
-/// stand as the map places them; everything else as the wire says.
-fn drawn_facing(unit: &UnitView, facing: f32) -> f32 {
-    use std::f32::consts::FRAC_PI_4;
-    let building = matches!(
-        unit.kind,
-        UnitKind::Tower | UnitKind::Barracks | UnitKind::Ancient | UnitKind::Fountain
-    );
-    match (building, unit.team) {
-        // Both sides' building models are made facing the same way on the
-        // map: Dire's mirror Radiant's in the art, not by a half turn.
-        (true, Team::Radiant | Team::Dire) => FRAC_PI_4,
-        _ => facing,
+/// How every building stands on Dota's map: its model's name, its bota
+/// position, and the yaw the map turns the model by (radians, as the trees
+/// are turned), read from the map export.
+#[derive(Resource, Default)]
+pub struct BuildingYaws(pub Vec<(String, Vec2, f32)>);
+
+impl BuildingYaws {
+    pub fn load(root: Option<&std::path::Path>) -> BuildingYaws {
+        let Some(text) =
+            root.and_then(|r| std::fs::read_to_string(r.join("map/mid/buildings.txt")).ok())
+        else {
+            return BuildingYaws::default();
+        };
+        BuildingYaws(
+            text.lines()
+                .filter(|l| !l.starts_with('#'))
+                .filter_map(|l| {
+                    let w: Vec<&str> = l.split_whitespace().collect();
+                    let [model, x, y, yaw] = w.as_slice() else {
+                        return None;
+                    };
+                    let at = Vec2::new(
+                        x.parse::<f32>().ok()? + 9216.0,
+                        y.parse::<f32>().ok()? + 9216.0,
+                    );
+                    Some((model.to_string(), at, yaw.parse::<f32>().ok()?.to_radians()))
+                })
+                .collect(),
+        )
     }
+
+    /// The facing a building at a place is drawn with: the map's yaw of the
+    /// same side's building of the same kind nearest it, within 600 units.
+    pub fn facing(&self, unit: &UnitView, at: Vec2) -> Option<f32> {
+        let side = match unit.team {
+            Team::Radiant => "radiant",
+            Team::Dire => "dire",
+            Team::Neutral => return None,
+        };
+        let kind = match unit.kind {
+            UnitKind::Tower => "tower",
+            UnitKind::Barracks => "barracks",
+            UnitKind::Ancient => "ancient",
+            UnitKind::Fountain => "fountain",
+            _ => return None,
+        };
+        let (_, _, yaw) = self
+            .0
+            .iter()
+            .filter(|(m, p, _)| m.starts_with(side) && m.contains(kind) && p.distance(at) < 600.0)
+            .min_by(|a, b| a.1.distance(at).total_cmp(&b.1.distance(at)))?;
+        // The pivot turns a model by facing - 90 degrees; the map by yaw +
+        // 180 degrees (see the trees).
+        Some(yaw + 1.5 * std::f32::consts::PI)
+    }
+}
+
+/// Which way a unit is drawn facing: a building never turns (the wire
+/// turns a tower to its target for bota's attack rules) and stands as
+/// Dota's map places it; everything else as the wire says.
+fn drawn_facing(unit: &UnitView, facing: f32, at: Vec2, yaws: &BuildingYaws) -> f32 {
+    if is_building(unit.kind) {
+        return yaws.facing(unit, at).unwrap_or(std::f32::consts::FRAC_PI_4);
+    }
+    facing
 }
 
 /// The model of a hero, by the Dota name ids.txt gives its id.
@@ -377,6 +433,7 @@ struct SyncParams<'w, 's> {
     index: ResMut<'w, UnitIndex>,
     bank: Res<'w, ModelBank>,
     manifest: Res<'w, Manifest>,
+    yaws: Res<'w, BuildingYaws>,
     stand_ins: Option<Res<'w, StandIns>>,
     ground: Res<'w, Ground>,
     fog: Res<'w, FogGrid>,
@@ -416,7 +473,7 @@ fn sync_units(
                 let moved = at.distance(unit.at) / dt;
                 unit.speed += (moved - unit.speed) * (dt * 10.0).min(1.0);
                 unit.at = at;
-                unit.facing = drawn_facing(u, body.facing);
+                unit.facing = drawn_facing(u, body.facing, at, &p.yaws);
                 transform.translation = place;
             }
             None => {
@@ -427,7 +484,8 @@ fn sync_units(
                 if waiting {
                     continue;
                 }
-                let entity = spawn_unit(&mut p, u, at, drawn_facing(u, body.facing), place);
+                let facing = drawn_facing(u, body.facing, at, &p.yaws);
+                let entity = spawn_unit(&mut p, u, at, facing, place);
                 p.index.0.insert(u.id, entity);
             }
         }

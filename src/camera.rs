@@ -70,7 +70,7 @@ fn spawn_camera(mut commands: Commands, args: Res<crate::Args>) {
         Msaa::Sample4
     };
     let cam = RtsCamera {
-        focus: match args.look_at[..] {
+        focus: match args.look_at[..args.look_at.len().min(2)] {
             [x, y] => Vec3::new(x, 128.0, -y),
             _ => Vec3::new(9216.0, 128.0, -9216.0),
         },

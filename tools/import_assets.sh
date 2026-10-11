@@ -9,7 +9,7 @@ set -euo pipefail
 readonly S2V_VERSION="20.0"
 readonly S2V_SHA256="3e8af47cd6ce52e8068904f2aa1dda23c56a6b96a8310b25090f0711cda76a8a"
 # Bump when the export flags change so existing models/maps are re-exported.
-readonly EXPORT_REV="rev2"
+readonly EXPORT_REV="rev3"
 readonly S2V_URL="https://github.com/ValveResourceFormat/ValveResourceFormat/releases/download/${S2V_VERSION}/cli-linux-x64.zip"
 
 readonly TOOLS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -182,7 +182,8 @@ export_world() {
         [[ -s "${raw}/world.gltf" ]] || die "map export produced nothing"
         python3 -B "${TOOLS_DIR}/crop_world.py" "${raw}/world.gltf" "${staged}/$(basename "${out}")" \
             --half-width "${opt[half_width]}" --v-min "${opt[v_min]}" --v-max "${opt[v_max]}" \
-            --layers-out "${STAGE}/layers.txt" --trees-out "${staged}/$(basename "${opt[trees]}")"
+            --layers-out "${STAGE}/layers.txt" --trees-out "${staged}/$(basename "${opt[trees]}")" \
+            --buildings-out "${staged}/buildings.txt"
         rm -rf "${raw}"
         local layer
         while read -r layer; do

@@ -46,6 +46,7 @@ pub struct Checks<'w, 's> {
     window: Single<'w, 's, &'static Window, With<PrimaryWindow>>,
     rings: Res<'w, crate::overlay::RangeRings>,
     bars: Res<'w, crate::bars::Bars>,
+    yaws: Res<'w, crate::units::BuildingYaws>,
     tree: Query<'w, 's, &'static Children>,
     meshes: Query<'w, 's, (&'static Mesh3d, &'static ViewVisibility)>,
     wearables: Query<'w, 's, (), With<crate::units::WearableMarker>>,
@@ -168,20 +169,34 @@ pub fn run(image: &Image, c: &Checks) -> bool {
     let turned: Vec<String> = c
         .units
         .iter()
-        .filter(|u| {
-            matches!(
-                u.kind,
-                UnitKind::Tower | UnitKind::Barracks | UnitKind::Ancient | UnitKind::Fountain
-            )
+        .filter(|u| crate::units::is_building(u.kind) && u.team != bota_proto::Team::Neutral)
+        .filter_map(|u| {
+            let view = c.session.0.view.as_ref()?;
+            let wire = view.units.iter().find(|w| w.id == u.id)?;
+            let want = c.yaws.facing(wire, u.at);
+            match want {
+                Some(want)
+                    if ((u.facing - want).rem_euclid(std::f32::consts::TAU)) < 1e-3
+                        || ((want - u.facing).rem_euclid(std::f32::consts::TAU)) < 1e-3 =>
+                {
+                    None
+                }
+                Some(want) => Some(format!(
+                    "{:?} {:?} at {:.0},{:.0}: {:.2} against the map's {:.2}",
+                    u.team, u.kind, u.at.x, u.at.y, u.facing, want
+                )),
+                None => Some(format!(
+                    "{:?} {:?} at {:.0},{:.0}: not on the map",
+                    u.team, u.kind, u.at.x, u.at.y
+                )),
+            }
         })
-        .filter(|u| (u.facing - std::f32::consts::FRAC_PI_4).abs() > 1e-3)
-        .map(|u| format!("{:?} {:?} at {:.2}", u.team, u.kind, u.facing))
         .collect();
     report(
-        "buildings never turn",
+        "buildings stand as the map places them",
         turned.is_empty(),
         if turned.is_empty() {
-            "every building at its map orientation".into()
+            "every building at the map's yaw".into()
         } else {
             turned.join(", ")
         },

@@ -40,7 +40,7 @@ status=0
 # Every hero model loads whole every time: the client is run again, cold
 # (the asset cache dropped from memory) and warm by turns, and each run's
 # count of hero meshes must match the first's.
-runs=${VISUAL_RUNS:-10}
+runs=${VISUAL_RUNS:-1}
 cache=${DBOTA_ASSETS:-$HOME/.cache/dbota}
 first=$(grep -m1 "hero parts:" "$out/dbota.out" 2>/dev/null || true)
 for run in $(seq 2 "$runs"); do

@@ -250,6 +250,30 @@ def tree_lines(doc: dict) -> list[str]:
     return lines
 
 
+BUILDING = re.compile(r"^(radiant_tower|dire_tower|radiant_ancient001|dire_ancient_base001"
+                      r"|radiant_(melee|ranged)_barracks001|dire_barracks_(melee|ranged)001"
+                      r"|radiant_fountain002|dire_fountain002)")
+
+
+def building_lines(doc: dict) -> list[str]:
+    """Every building node on the map as `name dota_x dota_y yaw_deg`, the yaw as the
+    map places the model (the same convention as the trees')."""
+    seen, lines = set(), []
+    for index, world in sorted(world_matrices(doc).items()):
+        name = doc["nodes"][index].get("name", "")
+        if "mesh" not in doc["nodes"][index] or not BUILDING.search(name):
+            continue
+        model = name.split(".")[0]
+        dota = (world[14] / INCH, world[12] / INCH)
+        key = (model, round(dota[0] / 32), round(dota[1] / 32))
+        if key in seen:
+            continue
+        seen.add(key)
+        yaw = math.degrees(math.atan2(-world[2], world[0]))
+        lines.append(f"{model} {dota[0]:.1f} {dota[1]:.1f} {yaw:.1f}")
+    return lines
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("gltf", type=Path)
@@ -260,6 +284,7 @@ def main() -> None:
     parser.add_argument("--exclude", default=EXCLUDE)
     parser.add_argument("--layers-out", type=Path, help="write the terrain/water layer .vtex_c paths here")
     parser.add_argument("--trees-out", type=Path, help="write every map tree (model, Dota position, yaw, scale) here")
+    parser.add_argument("--buildings-out", type=Path, help="write every building node (model, Dota position, yaw) here")
     args = parser.parse_args()
 
     doc = json.loads(args.gltf.read_text())
@@ -277,6 +302,9 @@ def main() -> None:
     if args.trees_out:
         header = "# model dota_x dota_y height yaw_deg scale (bota = dota + 9216 on x and y)\n"
         args.trees_out.write_text(header + "".join(line + "\n" for line in tree_lines(doc)))
+    if args.buildings_out:
+        header = "# model dota_x dota_y yaw_deg (bota = dota + 9216 on x and y)\n"
+        args.buildings_out.write_text(header + "".join(line + "\n" for line in building_lines(doc)))
     print(f"kept {len(out['nodes'])} nodes, {len(out['meshes'])} meshes, {len(packer.new['materials'])} materials, "
           f"{len(packer.new['images'])} images, {len(packer.out_blob) / 1e6:.1f} MB geometry")
 
