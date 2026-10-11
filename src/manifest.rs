@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use bevy::prelude::*;
 
 /// The manifest, compiled in.
-const MANIFEST: &str = include_str!("../assets-manifest/manifest.txt");
+pub const MANIFEST: &str = include_str!("../assets-manifest/manifest.txt");
 /// Our ids to Dota names, compiled in.
 const IDS: &str = include_str!("../assets-manifest/ids.txt");
 

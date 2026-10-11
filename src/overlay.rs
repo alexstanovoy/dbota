@@ -115,16 +115,20 @@ fn draw(
     };
     let show_all = keys.pressed(settings.key(Action::ShowRanges));
     picks(&mut gizmos, &ctx);
-    if let Some(me) = core
-        .ears()
-        .and_then(|id| view.units.iter().find(|u| u.id == id))
-    {
-        own_ranges(&mut gizmos, &ctx, me, &settings, show_all);
-        tower_rings(&mut gizmos, &ctx, me, &settings, show_all);
+    // Ranges and radii only while the show-ranges key is held, as Dota
+    // keeps the ground clean.
+    if show_all {
+        if let Some(me) = core
+            .ears()
+            .and_then(|id| view.units.iter().find(|u| u.id == id))
+        {
+            own_ranges(&mut gizmos, &ctx, me);
+            tower_rings(&mut gizmos, &ctx, me);
+        }
+        casts(&mut gizmos, &ctx);
     }
     tower_shots(&mut gizmos, &ctx);
     aggro(&mut gizmos, &ctx);
-    casts(&mut gizmos, &ctx);
     orders(&mut gizmos, &ctx);
     aim(&mut gizmos, &ctx, cursor.0);
 }
@@ -165,43 +169,26 @@ fn picks(gizmos: &mut Gizmos, ctx: &Ctx<'_, '_, '_>) {
 }
 
 /// The attack range ring and the three raze spots of the watched hero.
-fn own_ranges(
-    gizmos: &mut Gizmos,
-    ctx: &Ctx<'_, '_, '_>,
-    me: &UnitView,
-    settings: &Settings,
-    show_all: bool,
-) {
+fn own_ranges(gizmos: &mut Gizmos, ctx: &Ctx<'_, '_, '_>, me: &UnitView) {
     let Some(body) = ctx.at(me.id) else {
         return;
     };
     let (x, y) = (body.at.x, body.at.y);
-    let aiming = ctx.core.attack_move_armed;
-    if settings.aids.attack_range || show_all || aiming {
-        let reach = me.attack_range.to_f32() + me.bound.to_f32();
-        let a = if show_all || aiming { 0.6 } else { 0.22 };
-        ring(
-            gizmos,
-            ctx,
-            (x, y),
-            reach,
-            Color::WHITE.with_alpha(a),
-            false,
-        );
-    }
-    if !(settings.aids.raze_marks || show_all) {
-        return;
-    }
+    let reach = me.attack_range.to_f32() + me.bound.to_f32();
+    ring(
+        gizmos,
+        ctx,
+        (x, y),
+        reach,
+        Color::WHITE.with_alpha(0.6),
+        false,
+    );
     for ability in &me.abilities {
         let which = usize::from(ability.id.0.wrapping_sub(RAZE_NEAR));
         if which >= 3 || ability.level == 0 {
             continue;
         }
-        let ready = ability.cooldown_left == 0 && me.mana >= ability.mana_cost;
-        if !ready && !show_all {
-            continue;
-        }
-        let a = if show_all { 0.7 } else { 0.22 };
+        let a = 0.7;
         let spot = raze_spot(x, y, body.facing, which);
         ring(
             gizmos,
@@ -222,16 +209,7 @@ pub fn raze_spot(x: f32, y: f32, facing: f32, which: usize) -> (f32, f32) {
 
 /// The reach of every enemy tower the watched hero is near, solid when the
 /// tower is set on it.
-fn tower_rings(
-    gizmos: &mut Gizmos,
-    ctx: &Ctx<'_, '_, '_>,
-    me: &UnitView,
-    settings: &Settings,
-    show_all: bool,
-) {
-    if !settings.aids.tower_ranges && !show_all {
-        return;
-    }
+fn tower_rings(gizmos: &mut Gizmos, ctx: &Ctx<'_, '_, '_>, me: &UnitView) {
     let Some(view) = &ctx.core.view else {
         return;
     };
@@ -248,9 +226,6 @@ fn tower_rings(
         };
         let reach = tower.attack_range.to_f32() + tower.bound.to_f32() + me.bound.to_f32();
         let far = body.at.distance(my_body.at);
-        if far > reach + TOWER_WARNING && !show_all {
-            continue;
-        }
         let on_me = targets(ctx.core, tower.id, me.id);
         let closeness = 1.0 - ((far - reach).max(0.0) / TOWER_WARNING).min(1.0);
         if on_me {

@@ -18,8 +18,6 @@ use crate::ui::{self, Fonts};
 const ABILITY: f32 = 58.0;
 /// The size of an item box.
 const ITEM: (f32, f32) = (60.0, 44.0);
-/// The effect that counts the souls a Shadow Fiend holds.
-const SOULS_EFFECT: u16 = 11;
 
 /// An ability box of the bottom panel, by slot.
 #[derive(Component, Clone, Copy)]
@@ -67,8 +65,6 @@ enum Readout {
     Mana,
     LastHits,
     Kda,
-    Gold,
-    Souls,
     Feed,
     Notice,
     Hint,
@@ -713,8 +709,6 @@ fn spawn_corner(commands: &mut Commands, fonts: &Fonts, root: Entity) {
     for (label, readout, color) in [
         ("LH / DN", Readout::LastHits, ui::INK),
         ("K / D / A", Readout::Kda, ui::INK),
-        ("GOLD", Readout::Gold, ui::GOLDEN),
-        ("SOULS", Readout::Souls, Color::srgb(0.85, 0.45, 1.0)),
     ] {
         let cell = commands
             .spawn((
@@ -876,10 +870,6 @@ fn readouts(
             Readout::Kda => mine
                 .map(|p| format!("{} / {} / {}", p.kills, p.deaths, p.assists))
                 .unwrap_or_default(),
-            Readout::Gold => mine
-                .and_then(|p| p.gold)
-                .map_or("-".to_string(), |g| g.to_string()),
-            Readout::Souls => souls(core, mine),
             Readout::Feed => core
                 .feed
                 .iter()
@@ -946,14 +936,6 @@ fn attribute_line(u: &UnitView) -> String {
         a.intelligence.to_f32().floor(),
         mark(Attribute::Intelligence)
     )
-}
-
-fn souls(core: &Core, p: Option<&PlayerView>) -> String {
-    p.and_then(|p| core.body_of(p.slot))
-        .and_then(|id| core.known(id))
-        .and_then(|(u, _)| u.effects.iter().find(|e| e.id.0 == SOULS_EFFECT))
-        .and_then(|e| e.stacks)
-        .map_or("-".to_string(), |s| format!("{s}/20"))
 }
 
 /// The word of the moment in the middle of the screen.

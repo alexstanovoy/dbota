@@ -1,12 +1,11 @@
 //! Health bars over units, Dota's way: screen-space bars that keep their
 //! size, the health just lost trailing off, notches every 250 on heroes,
-//! level and name, and the mark where one's next hit kills a creep. Also the
-//! numbers and words that rise off units.
+//! level and name. Also the numbers and words that rise off units.
 
 use std::collections::HashMap;
 
 use bevy::prelude::*;
-use bota_client_core::{FLOATER_LIFE, FloaterKind, is_creep, next_hit};
+use bota_client_core::{FLOATER_LIFE, FloaterKind};
 use bota_proto::{UnitKind, UnitView};
 
 use crate::config::Settings;
@@ -27,7 +26,6 @@ struct Bar {
     mana: Option<Entity>,
     level: Option<Entity>,
     name: Option<Entity>,
-    mark: Entity,
     threat: Entity,
 }
 
@@ -128,14 +126,6 @@ fn spawn_bar(commands: &mut Commands, layer: Entity, fonts: &Fonts, kind: UnitKi
     };
     let ghost = part(commands, Color::srgba(1.0, 0.9, 0.7, 0.85));
     let fill = part(commands, ui::HP_FOE);
-    let mark = commands
-        .spawn((
-            ui::absolute(0.0, -2.0, 2.0, h + 4.0),
-            BackgroundColor(Color::WHITE),
-            Visibility::Hidden,
-            ChildOf(root),
-        ))
-        .id();
     let threat = commands
         .spawn((
             ui::absolute(w / 2.0 - 5.0, -12.0, 10.0, 8.0),
@@ -205,7 +195,6 @@ fn spawn_bar(commands: &mut Commands, layer: Entity, fonts: &Fonts, kind: UnitKi
         mana,
         level,
         name,
-        mark,
         threat,
     }
 }
@@ -218,7 +207,6 @@ struct BarParams<'w, 's> {
     layer: Option<Res<'w, Layer>>,
     fonts: Res<'w, Fonts>,
     ground: Res<'w, Ground>,
-    settings: Res<'w, Settings>,
     ui_scale: Res<'w, UiScale>,
     camera: Single<'w, 's, (&'static Camera, &'static GlobalTransform)>,
 }
@@ -318,14 +306,6 @@ fn bars(
                 t.0 = s;
             }
         }
-        kill_mark(
-            &mut nodes,
-            &bar,
-            live,
-            me,
-            w,
-            p.settings.aids.last_hit_marks,
-        );
         let threat = me.is_some_and(|me| {
             live.kind != UnitKind::Hero
                 && live.team != me.team
@@ -387,45 +367,6 @@ fn bar_color(core: &bota_client_core::App, u: &UnitView) -> Color {
         Some(_) => ui::HP_FOE,
         None => crate::overlay::team_color(u.team),
     }
-}
-
-/// The tick on a creep's bar where one's next hit kills it, glowing when it
-/// kills now: white for a foe's last hit, blue for a friend's deny below
-/// half.
-fn kill_mark(
-    nodes: &mut Query<(&mut Node, &mut Visibility, Option<&mut BackgroundColor>)>,
-    bar: &Bar,
-    u: &UnitView,
-    me: Option<&UnitView>,
-    w: f32,
-    enabled: bool,
-) {
-    let mark = me.filter(|_| enabled && is_creep(u.kind)).and_then(|me| {
-        let foe = u.team != me.team;
-        (foe || u.hp * 2 < u.max_hp).then(|| (next_hit(me, u), foe))
-    });
-    let Some((hit, foe)) = mark else {
-        set(nodes, bar.mark, |_| {}, Some(false), None);
-        return;
-    };
-    let share = (hit as f32 / u.max_hp.max(1) as f32).min(1.0);
-    let now = u.hp <= hit;
-    let color = match (foe, now) {
-        (true, true) => Color::srgb(1.0, 0.85, 0.3),
-        (true, false) => Color::WHITE,
-        (false, true) => Color::srgb(0.4, 0.8, 1.0),
-        (false, false) => Color::srgb(0.6, 0.85, 1.0),
-    };
-    set(
-        nodes,
-        bar.mark,
-        |n| {
-            n.left = px(w * share - 1.0);
-            n.width = px(if now { 3.0 } else { 2.0 });
-        },
-        Some(true),
-        Some(color),
-    );
 }
 
 /// Puts the client's floaters on the pool of texts.

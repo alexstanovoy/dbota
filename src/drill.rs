@@ -38,10 +38,16 @@ fn drill(
     let core = &mut session.0;
     if !state.readied && core.my_slot.is_some() && core.view.is_none() {
         state.readied = true;
-        // Shadow Fiend, whose first slot is a raze.
-        core.act(Intent::PickHero(2));
+        // Shadow Fiend, whose first slot is a raze, or the hero named by
+        // DBOTA_DRILL_HERO.
+        let name = std::env::var("DBOTA_DRILL_HERO").unwrap_or_else(|_| "Shadow Fiend".into());
+        let hero = bota_client_core::HEROES
+            .iter()
+            .find(|h| h.name == name)
+            .map_or(0, |h| h.id);
+        core.act(Intent::PickHero(hero));
         core.act(Intent::ToggleReady);
-        info!("drill: picked Shadow Fiend, ready");
+        info!("drill: picked {name}, ready");
     }
     let Some(hero) = core
         .my_hero()
@@ -80,7 +86,16 @@ fn drill(
     // a lace bought, the shop photographed, a grenade thrown at the enemy
     // creeps at mid and one of them photographed with its debuff.
     let items = kind == "items";
-    let steps: &[(f32, &str)] = if items {
+    // `DBOTA_DRILL=look`: the hero walked out of the fountain and
+    // photographed, to see it drawn.
+    let look = kind == "look";
+    let steps: &[(f32, &str)] = if look {
+        &[
+            (1.0, "walk to mid"),
+            (6.0, "photograph look"),
+            (7.0, "exit"),
+        ]
+    } else if items {
         &[
             (0.5, "gold"),
             (1.5, "buy grenade"),
@@ -131,7 +146,7 @@ fn drill(
         "buy grenade" => Intent::Buy(53),
         "buy lace" => Intent::Buy(52),
         "walk to mid" => Intent::MoveTo((7600.0, 7600.0)),
-        "photograph shop" | "photograph debuff" => {
+        "photograph shop" | "photograph debuff" | "photograph look" => {
             let path = format!("temp/shots/drill-{}.png", &what[11..]);
             commands
                 .spawn(bevy::render::view::screenshot::Screenshot::primary_window())

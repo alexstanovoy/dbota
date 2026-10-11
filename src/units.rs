@@ -109,7 +109,25 @@ pub fn plugin(app: &mut App) {
             Update,
             (build_graphs, sync_units, fall, bind_wearables).chain(),
         )
-        .add_systems(PostUpdate, lift_heroes);
+        .add_systems(PostUpdate, lift_heroes)
+        .add_systems(
+            PostUpdate,
+            hold_roots
+                .after(bevy::app::AnimationSystems)
+                .before(bevy::transform::TransformSystems::Propagate),
+        );
+}
+
+/// A root joint held in place across the ground, by its bind translation.
+#[derive(Component)]
+struct RootLock(Vec3);
+
+/// Takes root motion out of the animations: the joint keeps its height.
+fn hold_roots(mut roots: Query<(&RootLock, &mut Transform)>) {
+    for (lock, mut t) in &mut roots {
+        t.translation.x = lock.0.x;
+        t.translation.z = lock.0.z;
+    }
 }
 
 /// Lets every hero's own colours glow faintly, so a dark model on dark
@@ -146,6 +164,16 @@ fn lift_heroes(
 }
 
 fn load_models(mut bank: ResMut<ModelBank>, server: Res<AssetServer>, manifest: Res<Manifest>) {
+    // A model the cache lacks is drawn as a stand-in: loudly, not silently.
+    if manifest.root.is_some() {
+        for name in required_models(&manifest) {
+            if manifest.model(&name).is_none() {
+                error!(
+                    "model {name} is not in the asset cache: drawn as a stand-in; run tools/import_assets.sh"
+                );
+            }
+        }
+    }
     for model in manifest.models.iter().filter(|m| m.attach.is_none()) {
         if model.logical.starts_with("tree.") {
             continue;
@@ -215,18 +243,16 @@ fn build_graphs(
 }
 
 /// The logical name of the model a unit is drawn with.
-fn model_name(unit: &UnitView) -> Option<String> {
+fn model_name(unit: &UnitView, manifest: &Manifest) -> Option<String> {
     let side = match unit.team {
         Team::Radiant => "radiant",
         Team::Dire => "dire",
         Team::Neutral => return None,
     };
     Some(match unit.kind {
-        UnitKind::Hero => match unit.hero.map(|h| h.0) {
-            Some(2) => "hero.nevermore.model".to_string(),
-            _ => return None,
-        },
-        UnitKind::CreepMelee | UnitKind::CreepSiege => format!("creep.{side}.melee.model"),
+        UnitKind::Hero => hero_model(unit.hero?.0, manifest)?,
+        UnitKind::CreepMelee => format!("creep.{side}.melee.model"),
+        UnitKind::CreepSiege => format!("creep.{side}.siege.model"),
         UnitKind::CreepFlagbearer => format!("creep.{side}.flagbearer.model"),
         UnitKind::CreepRanged => format!("creep.{side}.ranged.model"),
         UnitKind::Tower => format!("tower.{side}.model"),
@@ -236,6 +262,39 @@ fn model_name(unit: &UnitView) -> Option<String> {
         UnitKind::Courier => format!("courier.{side}.model"),
         _ => return None,
     })
+}
+
+/// The model of a hero, by the Dota name ids.txt gives its id.
+fn hero_model(hero: u16, manifest: &Manifest) -> Option<String> {
+    Some(format!("hero.{}.model", manifest.dota_name("hero", hero)?))
+}
+
+/// Every model a match can need: each hero's and each lane unit's of both
+/// sides. One missing from the cache is drawn as a stand-in, and said so.
+fn required_models(manifest: &Manifest) -> Vec<String> {
+    let mut names: Vec<String> = bota_client_core::HEROES
+        .iter()
+        .map(|h| {
+            hero_model(h.id, manifest)
+                .unwrap_or_else(|| format!("hero #{} (no Dota name in ids.txt)", h.id))
+        })
+        .collect();
+    for side in ["radiant", "dire"] {
+        for kind in [
+            "creep.{}.melee.model",
+            "creep.{}.flagbearer.model",
+            "creep.{}.ranged.model",
+            "creep.{}.siege.model",
+            "tower.{}.model",
+            "ancient.{}.model",
+            "barracks.{}.melee.model",
+            "fountain.{}.model",
+            "courier.{}.model",
+        ] {
+            names.push(kind.replace("{}", side));
+        }
+    }
+    names
 }
 
 /// The radius and height of a unit's stand-in, in world units.
@@ -259,6 +318,7 @@ struct SyncParams<'w, 's> {
     commands: Commands<'w, 's>,
     index: ResMut<'w, UnitIndex>,
     bank: Res<'w, ModelBank>,
+    manifest: Res<'w, Manifest>,
     stand_ins: Option<Res<'w, StandIns>>,
     ground: Res<'w, Ground>,
     fog: Res<'w, FogGrid>,
@@ -331,8 +391,8 @@ fn sync_units(
 
 /// Spawns one unit: a root at its place, and its model or stand-in.
 fn spawn_unit(p: &mut SyncParams, u: &UnitView, at: Vec2, facing: f32, place: Vec3) -> Entity {
-    let model =
-        model_name(u).and_then(|name| p.bank.0.iter().position(|m| m.model.logical == name));
+    let model = model_name(u, &p.manifest)
+        .and_then(|name| p.bank.0.iter().position(|m| m.model.logical == name));
     let root = p
         .commands
         .spawn((
@@ -444,6 +504,7 @@ fn on_model_ready(
     players: Query<(), With<AnimationPlayer>>,
     units: Query<&Unit>,
     bank: Res<ModelBank>,
+    joints: Query<(&Name, &Transform)>,
 ) {
     let Some(unit) = parents
         .get(ready.entity)
@@ -468,6 +529,16 @@ fn on_model_ready(
         commands.entity(unit).insert(Rig(player));
     }
     commands.entity(ready.entity).insert(Posable);
+    // Pudge's run carries him forward eight metres a cycle on his root
+    // joint (Dota moves the unit, not the bone): the root is held where
+    // its bind pose puts it, up and down aside.
+    for part in children.iter_descendants(ready.entity) {
+        if let Ok((name, t)) = joints.get(part)
+            && name.as_str() == "root"
+        {
+            commands.entity(part).insert(RootLock(t.translation));
+        }
+    }
     // Buildings stand in the fog too, and are drawn dulled there.
     if units.get(unit).is_ok_and(|u| {
         matches!(
@@ -534,6 +605,26 @@ fn fall(mut commands: Commands, time: Res<Time>, mut dying: Query<(Entity, &mut 
         d.0 += time.delta_secs();
         if d.0 > FALL_SECONDS {
             commands.entity(entity).despawn();
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Every hero and lane unit has a model line in the manifest: what the
+    /// importer exports and the client draws.
+    #[test]
+    fn every_unit_a_match_can_show_has_a_model_in_the_manifest() {
+        let manifest = Manifest::load(std::path::Path::new("/nonexistent"));
+        let listed: Vec<&str> = crate::manifest::MANIFEST
+            .lines()
+            .filter_map(|l| l.strip_prefix("model "))
+            .filter_map(|l| l.split_whitespace().next())
+            .collect();
+        for name in required_models(&manifest) {
+            assert!(listed.contains(&name.as_str()), "no model line for {name}");
         }
     }
 }

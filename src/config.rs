@@ -76,14 +76,6 @@ pub const BINDINGS: [(Action, &str, KeyCode); 25] = [
 pub struct Aids {
     /// Damage, gold and deny numbers rising off units.
     pub numbers: bool,
-    /// A dashed ring at one's own hero's attack range.
-    pub attack_range: bool,
-    /// The three spots one's own razes land on.
-    pub raze_marks: bool,
-    /// A mark on a creep's health bar where one's next hit kills it.
-    pub last_hit_marks: bool,
-    /// The reach of an enemy tower while one's hero is near it.
-    pub tower_ranges: bool,
     /// Whether the cursor at the window edge pans the camera.
     pub edge_pan: bool,
 }
@@ -95,6 +87,8 @@ pub struct Settings {
     pub volume: f32,
     /// Whether all sound is off.
     pub muted: bool,
+    /// Whether one's hero answers orders in its own voice.
+    pub voice: bool,
     /// The interface size against the one chosen for the window, 0.5 to 2.
     pub ui_scale: f32,
     /// Which aids are drawn.
@@ -108,13 +102,10 @@ impl Default for Settings {
         Settings {
             volume: 0.7,
             muted: false,
+            voice: true,
             ui_scale: 1.0,
             aids: Aids {
                 numbers: true,
-                attack_range: false,
-                raze_marks: true,
-                last_hit_marks: true,
-                tower_ranges: true,
                 edge_pan: true,
             },
             keys: BINDINGS.map(|(_, _, key)| key),
@@ -179,10 +170,10 @@ impl Settings {
             "ui_scale" => self.ui_scale = parse_unit(value, 0.5, 2.0)?,
             "muted" => self.muted = flag()?,
             "damage_numbers" => self.aids.numbers = flag()?,
-            "attack_range" => self.aids.attack_range = flag()?,
-            "raze_marks" => self.aids.raze_marks = flag()?,
-            "last_hit_marks" => self.aids.last_hit_marks = flag()?,
-            "tower_ranges" => self.aids.tower_ranges = flag()?,
+            "voice_responses" => self.voice = flag()?,
+            // Ranges show only while their key is held; the old switches
+            // are read and forgotten.
+            "attack_range" | "raze_marks" | "last_hit_marks" | "tower_ranges" => {}
             "edge_pan" => self.aids.edge_pan = flag()?,
             other => return Err(format!("no setting called '{other}'")),
         }
@@ -196,13 +187,10 @@ impl Settings {
             String::from("# dbota settings. Keys use the names listed in the client README.\n");
         out.push_str(&format!("volume = {:.2}\n", self.volume));
         out.push_str(&format!("muted = {}\n", flag(self.muted)));
+        out.push_str(&format!("voice_responses = {}\n", flag(self.voice)));
         out.push_str(&format!("ui_scale = {:.2}\n", self.ui_scale));
         for (name, on) in [
             ("damage_numbers", self.aids.numbers),
-            ("attack_range", self.aids.attack_range),
-            ("raze_marks", self.aids.raze_marks),
-            ("last_hit_marks", self.aids.last_hit_marks),
-            ("tower_ranges", self.aids.tower_ranges),
             ("edge_pan", self.aids.edge_pan),
         ] {
             out.push_str(&format!("{name} = {}\n", flag(on)));

@@ -101,6 +101,22 @@ fn spawn_camera(mut commands: Commands, args: Res<crate::Args>) {
     ));
 }
 
+/// Which way the cursor at the window's edge pans, in sim axes (x east, y
+/// north), all in logical pixels whatever the scale factor. The HUD bars do
+/// not stop it, as in Dota. A cursor that left the window across an edge
+/// (onto a title bar or a panel above a window that is not fullscreen) keeps
+/// panning that way until it comes back.
+fn edge_pan(cursor: Option<Vec2>, last: Option<Vec2>, size: Vec2) -> Vec2 {
+    let Some(p) = cursor.or(last) else {
+        return Vec2::ZERO;
+    };
+    let m = EDGE_PAN_MARGIN;
+    let x = f32::from(p.x >= size.x - m) - f32::from(p.x <= m);
+    // Window y grows downward; sim y is north (up on screen).
+    let y = f32::from(p.y <= m) - f32::from(p.y >= size.y - m);
+    Vec2::new(x, y)
+}
+
 fn pan_and_zoom(
     time: Res<Time>,
     keys: Res<ButtonInput<KeyCode>>,
@@ -113,6 +129,7 @@ fn pan_and_zoom(
     typing: Res<crate::input::Typing>,
     over: Res<crate::input::OverHud>,
     settings: Res<crate::config::Settings>,
+    mut last_cursor: Local<Option<Vec2>>,
 ) {
     let mut dir = Vec2::ZERO; // sim axes: x east, y north
     for (key, d) in [
@@ -125,15 +142,12 @@ fn pan_and_zoom(
             dir += d;
         }
     }
-    if window.focused
-        && settings.aids.edge_pan
-        && args.screenshot_at.is_empty()
-        && let Some(p) = window.cursor_position()
-    {
-        let size = window.size();
-        dir.x += f32::from(p.x >= size.x - EDGE_PAN_MARGIN) - f32::from(p.x <= EDGE_PAN_MARGIN);
-        // Window y grows downward; sim y is north (up on screen).
-        dir.y += f32::from(p.y <= EDGE_PAN_MARGIN) - f32::from(p.y >= size.y - EDGE_PAN_MARGIN);
+    let cursor = window.cursor_position();
+    if window.focused && settings.aids.edge_pan && args.screenshot_at.is_empty() {
+        dir += edge_pan(cursor, *last_cursor, window.size());
+    }
+    if cursor.is_some() || !window.focused {
+        *last_cursor = cursor;
     }
     let speed = PAN_SPEED * cam.distance / DEFAULT_DISTANCE * time.delta_secs();
     let step = dir.normalize_or_zero() * speed;
@@ -266,5 +280,43 @@ fn log_window_size(
         && let Some(p) = cursor.0
     {
         info!("cursor ground: bevy={p} sim={}", world_to_sim(p));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// All four edges pan their way at scale factors 1 and 1.5 (logical
+    /// sizes 1600x900 of a 1600x900 and a 2400x1350 window), the cursor on
+    /// a HUD bar or not; a cursor gone over an edge keeps panning.
+    #[test]
+    fn every_edge_pans_its_way() {
+        for size in [Vec2::new(1600.0, 900.0), Vec2::new(2400.0, 1350.0) / 1.5] {
+            let mid = size / 2.0;
+            let at = |x: f32, y: f32| edge_pan(Some(Vec2::new(x, y)), None, size);
+            // The top bar of the HUD spans the top edge; the bottom panel the
+            // bottom one: neither matters.
+            assert_eq!(at(mid.x, 0.0), Vec2::Y, "top");
+            assert_eq!(at(mid.x, 2.0), Vec2::Y, "top, inside the margin");
+            assert_eq!(at(mid.x, size.y - 1.0), Vec2::NEG_Y, "bottom");
+            assert_eq!(at(0.0, mid.y), Vec2::NEG_X, "left");
+            assert_eq!(at(size.x - 1.0, mid.y), Vec2::X, "right");
+            assert_eq!(at(0.0, 0.0), Vec2::new(-1.0, 1.0), "top-left corner");
+            assert_eq!(at(mid.x, mid.y), Vec2::ZERO, "middle");
+            assert_eq!(
+                at(mid.x, 40.0),
+                Vec2::ZERO,
+                "over the top bar, off the edge"
+            );
+            // Left through the top: no cursor now, the last one at the edge.
+            let gone = edge_pan(None, Some(Vec2::new(mid.x, 0.0)), size);
+            assert_eq!(gone, Vec2::Y, "left across the top");
+            assert_eq!(
+                edge_pan(None, Some(mid), size),
+                Vec2::ZERO,
+                "left elsewhere"
+            );
+        }
     }
 }

@@ -20,10 +20,7 @@ enum Row {
     ScaleDown,
     ScaleUp,
     Numbers,
-    AttackRange,
-    RazeMarks,
-    LastHits,
-    TowerRanges,
+    Voice,
     EdgePan,
 }
 
@@ -100,10 +97,7 @@ fn spawn(
         (Row::ScaleDown, "Interface -"),
         (Row::ScaleUp, "Interface +"),
         (Row::Numbers, "Damage numbers"),
-        (Row::AttackRange, "Attack range ring"),
-        (Row::RazeMarks, "Raze marks"),
-        (Row::LastHits, "Last-hit marks"),
-        (Row::TowerRanges, "Tower range"),
+        (Row::Voice, "Voice responses"),
         (Row::EdgePan, "Edge pan"),
     ] {
         let b = commands
@@ -194,10 +188,7 @@ fn clicks(
             Row::ScaleDown => s.ui_scale = (s.ui_scale - 0.1).max(0.5),
             Row::ScaleUp => s.ui_scale = (s.ui_scale + 0.1).min(2.0),
             Row::Numbers => s.aids.numbers = !s.aids.numbers,
-            Row::AttackRange => s.aids.attack_range = !s.aids.attack_range,
-            Row::RazeMarks => s.aids.raze_marks = !s.aids.raze_marks,
-            Row::LastHits => s.aids.last_hit_marks = !s.aids.last_hit_marks,
-            Row::TowerRanges => s.aids.tower_ranges = !s.aids.tower_ranges,
+            Row::Voice => s.voice = !s.voice,
             Row::EdgePan => s.aids.edge_pan = !s.aids.edge_pan,
         }
     }
@@ -220,15 +211,12 @@ fn values(settings: Res<Settings>, mut text: Single<&mut Text, With<Values>>) {
     let on = |b: bool| if b { "on" } else { "off" };
     let a = &settings.aids;
     text.0 = format!(
-        "Volume {:.0}%  {}   Interface {:.0}%\nDamage numbers {}   Attack range {}   Raze marks {}\nLast-hit marks {}   Tower range {}   Edge pan {}",
+        "Volume {:.0}%  {}   Interface {:.0}%\nDamage numbers {}   Voice responses {}   Edge pan {}",
         settings.volume * 100.0,
         if settings.muted { "(muted)" } else { "" },
         settings.ui_scale * 100.0,
         on(a.numbers),
-        on(a.attack_range),
-        on(a.raze_marks),
-        on(a.last_hit_marks),
-        on(a.tower_ranges),
+        on(settings.voice),
         on(a.edge_pan),
     );
 }
@@ -241,8 +229,7 @@ fn lobby(session: NonSend<Session>, mut card: Single<&mut Text, With<LobbyCard>>
             match (core.my_slot.is_some(), core.ready, core.me.is_some()) {
                 (true, true, _) => "Ready - waiting for the others (R to cancel)".to_string(),
                 (true, false, _) => {
-                    "Pick a hero: [1] Pudge  [2] Shadow Fiend, then [R] when ready"
-                        .to_string()
+                    "Pick a hero: [1] Pudge  [2] Shadow Fiend, then [R] when ready".to_string()
                 }
                 (false, _, true) => "Spectating - waiting for the match to start".to_string(),
                 (false, _, false) => "Connecting...".to_string(),

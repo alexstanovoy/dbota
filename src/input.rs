@@ -179,10 +179,7 @@ fn keys(
         return;
     }
     if core.phase == bota_client_core::Phase::Lobby {
-        for (i, key) in [KeyCode::Digit1, KeyCode::Digit2]
-            .into_iter()
-            .enumerate()
-        {
+        for (i, key) in [KeyCode::Digit1, KeyCode::Digit2].into_iter().enumerate() {
             if keys.just_pressed(key) {
                 core.act(Intent::PickHero(i as u16));
             }
