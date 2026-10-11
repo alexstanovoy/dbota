@@ -1,33 +1,58 @@
 # dbota
 
-A Dota-looking client for bota: play against a bot, watch a bot game live, or replay a match.
-It draws with Dota 2's own models, textures, icons and sounds, taken from your local Dota 2
-install. Bots never need it; it is for people.
+A Dota-looking client for [bota](https://github.com/alexstanovoy/bota), a simplified, deterministic
+Dota 2 for bots and humans. With dbota a person can play a bota match, watch one live, or replay a
+recorded one. It draws with Dota 2's own models, textures, icons and sounds, taken from a local
+Dota 2 install. Bots don't need it.
 
-## Play against the brain (the usual way)
+## Setup
 
-From the workspace root (`~/Workspace/bots`):
+1. Clone dbota and bota side by side (dbota builds against `../bota`):
+
+   ```sh
+   git clone https://github.com/alexstanovoy/bota
+   git clone https://github.com/alexstanovoy/dbota
+   ```
+
+2. Install Dota 2 through Steam (the regular or the Flatpak install is found automatically), then
+   export the assets dbota uses into `~/.cache/dbota`:
+
+   ```sh
+   cd dbota
+   tools/import_assets.sh            # or: tools/import_assets.sh --dota-path "<...>/dota 2 beta"
+   ```
+
+   Valve's files stay in that cache for personal use; they are never part of this repository.
+
+3. Build:
+
+   ```sh
+   cargo build --release             # binary: target/release/dbota
+   (cd ../bota && cargo build --release -p bota-server -p bota-bot)
+   ```
+
+## Play
+
+Start a server, a bot and dbota (three terminals, or background the first two):
 
 ```sh
-./play.sh --opponent brain
+../bota/target/release/bota-server --map 2 --players 2
+../bota/target/release/bota-bot
+target/release/dbota --name you
 ```
 
-That builds bota, drysua and dbota, starts a server and the bot, and opens dbota. The first run
-builds for a few minutes. In the lobby press `2` for Shadow Fiend (`1` is Pudge), then `R` when
-ready. The game starts once both sides are ready.
+On the hero screen click a portrait, then click Ready. The game starts once both seats are ready.
 
-Useful options:
+To play against the bots of [drysua](https://github.com/alexstanovoy/drysua), clone it next to bota
+and dbota and run its launcher, which builds everything, starts the server and the bot, and opens
+dbota:
 
-| Option | What it does |
-|---|---|
-| `--opponent teacher` / `harass-push` / `farmer` / `dummy` | another bot (`dummy` stands in its fountain) |
-| `--human-side dire` | play Dire |
-| `--seed N` | another match seed |
-| `--immortal-towers`, `--immortal-heroes` | practice without the game ending |
-| `--watch brain` | watch the brain play instead of you (spectator) |
-| `--no-build` | skip rebuilding |
+```sh
+python3 drysua/scripts/play_match.py --opponent brain
+```
 
-The match is recorded to `drysua/artifacts/temp/play-*/match.brp`.
+`--help` lists the opponents and options (side, seed, immortal towers or heroes, watching instead
+of playing).
 
 ## Controls
 
@@ -56,49 +81,25 @@ The match is recorded to `drysua/artifacts/temp/play-*/match.brp`.
 Talents: the small button left of the abilities opens the talent tree; when you have a point,
 click a talent to learn it. Buffs and debuffs of the selected unit sit above the abilities.
 
-## Watch (spectate)
-
-Live, with bots playing each other:
+## Watch a live match
 
 ```sh
-./play.sh --watch brain --opponent teacher
-```
-
-Or connect to any running bota server yourself:
-
-```sh
-dbota --spectate --addr 127.0.0.1:4455
+target/release/dbota --spectate --addr 127.0.0.1:4455
 ```
 
 `Tab` switches whose vision you see.
 
 ## Replays
 
+The server records a match with `bota-server --replay FILE`.
+
 ```sh
-dbota --replay path/to/match.brp            # whole map
-dbota --replay match.brp --pov 0            # as seat 0 sees it (its fog, panel, shop)
-dbota --replay match.brp --follow 1         # camera stays on seat 1's hero
+target/release/dbota --replay match.brp              # whole map
+target/release/dbota --replay match.brp --pov 0      # as seat 0 sees it (its fog, panel, shop)
+target/release/dbota --replay match.brp --follow 1   # camera stays on seat 1's hero
 ```
 
 `Space` pause, `=` / `-` faster / slower, `.` one step, `Tab` switch vision.
-Replays only open with the bota version that recorded them.
+A replay opens only with the bota version that recorded it.
 
-## Dota assets (once)
-
-dbota needs Dota 2 installed (Steam, Flatpak path is found automatically). Export the assets it
-uses into `~/.cache/dbota`:
-
-```sh
-tools/import_assets.sh            # or: tools/import_assets.sh --dota-path "<...>/dota 2 beta"
-```
-
-Valve's files stay in that cache for personal use; they are never committed.
-
-## Build by hand
-
-```sh
-cargo build --release             # binary: target/release/dbota
-```
-
-It builds against `../bota` (bota-client-core and bota-proto), so keep the two checkouts side by side.
-`dbota --help` lists the rest, including the debug options for screenshots.
+`dbota --help` lists everything else, including the debug options for screenshots.
