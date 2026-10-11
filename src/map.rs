@@ -134,10 +134,18 @@ fn spawn_map(
     let Some(path) = &manifest.map else {
         return;
     };
-    let scene = server.load(bevy::gltf::GltfAssetLabel::Scene(0).from_asset(path.clone()));
+    // The map's own meshes are read once, merged and let go: they need never
+    // reach the GPU.
+    let scene = server
+        .load_builder()
+        .with_settings(|s: &mut bevy::gltf::GltfLoaderSettings| {
+            s.load_meshes = bevy::asset::RenderAssetUsages::MAIN_WORLD;
+        })
+        .load(bevy::gltf::GltfAssetLabel::Scene(0).from_asset(path.clone()));
     commands
         .spawn((MapRoot, WorldAssetRoot(scene), map_transform()))
         .observe(|ready: On<WorldInstanceReady>, mut commands: Commands| {
+            info!("startup: map scene ready at {:.2} s", crate::since_start());
             commands
                 .entity(ready.entity)
                 .insert(MapPending { frames: 2 });
@@ -181,6 +189,7 @@ fn prepare_map(
     let skipped: Vec<String> = std::env::var("DBOTA_SKIP")
         .map(|v| v.split(',').map(str::to_string).collect())
         .unwrap_or_default();
+    let began = std::time::Instant::now();
     let mut means = LayerMeans::new(assets.manifest.root.clone());
     let detail_mean = means.detail(&assets.manifest);
     let terrain_material = assets
@@ -194,21 +203,24 @@ fn prepare_map(
     });
     let mut samples = Samples::new(terrain::MAP_CELLS);
     let mut batches: Vec<Batch> = Vec::new();
+    // What each map part becomes, worked out on the main thread; the heavy
+    // vertex work then runs on every core.
+    struct Job {
+        mesh: Handle<Mesh>,
+        global: GlobalTransform,
+        material: Handle<StandardMaterial>,
+        /// The four terrain layers' colours, for a terrain part.
+        layers: Option<[[f32; 3]; 4]>,
+    }
+    let mut jobs: Vec<Job> = Vec::new();
     for entity in children.iter_descendants(root) {
         let Ok((mesh3d, global, material, extras)) = parts.get(entity) else {
             continue;
         };
         let vmat = extras.map(|e| Vmat::parse(&e.value)).unwrap_or_default();
-        let Some(mut mesh) = assets.meshes.get(&mesh3d.0).cloned() else {
-            continue;
-        };
-        let (material, terrain) = match vmat.shader.as_str() {
-            "multiblend.vfx" => {
-                bake_terrain(&mut mesh, &vmat, &mut means, detail_mean);
-                samples.add(&mesh, global);
-                (terrain_material.clone(), true)
-            }
-            "water_dota.vfx" => (water_material.clone(), false),
+        let (material, layers) = match vmat.shader.as_str() {
+            "multiblend.vfx" => (terrain_material.clone(), Some(means.layers(&vmat))),
+            "water_dota.vfx" => (water_material.clone(), None),
             // Glows, light shafts and fountain sprays are particles in all
             // but name: drawn as plain meshes they cover the ground.
             _ if vmat.additive => continue,
@@ -233,17 +245,67 @@ fn prepare_map(
                     continue;
                 }
                 dress_prop(&mut m, &vmat);
-                (material.0.clone(), false)
+                (material.0.clone(), None)
             }
         };
-        for attr in [
-            &ATTRIBUTE_BLEND_WEIGHTS,
-            &ATTRIBUTE_BLEND_ALPHAS,
-            &ATTRIBUTE_PAINTED_TINT,
-        ] {
-            mesh.remove_attribute(attr.id);
+        jobs.push(Job {
+            mesh: mesh3d.0.clone(),
+            global: *global,
+            material,
+            layers,
+        });
+    }
+    let gain = crate::look("gain", TERRAIN_GAIN);
+    let pool = bevy::tasks::ComputeTaskPool::get();
+    // Each part cut down to its own vertices, the terrain's layers baked.
+    let meshes = &assets.meshes;
+    let local: Vec<Option<Mesh>> = pool.scope(|scope| {
+        for job in &jobs {
+            scope.spawn(async move {
+                let source = meshes.get(&job.mesh)?;
+                if source.primitive_topology() != PrimitiveTopology::TriangleList {
+                    return None;
+                }
+                let mut mesh = compact(source)?;
+                if let Some(layers) = &job.layers {
+                    bake_terrain(&mut mesh, layers, detail_mean, gain);
+                }
+                for attr in [
+                    &ATTRIBUTE_BLEND_WEIGHTS,
+                    &ATTRIBUTE_BLEND_ALPHAS,
+                    &ATTRIBUTE_PAINTED_TINT,
+                ] {
+                    mesh.remove_attribute(attr.id);
+                }
+                Some(mesh)
+            });
         }
-        add_to_batches(&mut batches, mesh, global, material, terrain);
+    });
+    for (job, mesh) in jobs.iter().zip(&local) {
+        if let (Some(_), Some(mesh)) = (&job.layers, mesh) {
+            samples.add(mesh, &job.global);
+        }
+    }
+    // Then placed in the world and measured, again on every core.
+    let placed: Vec<Option<(Mesh, bevy::camera::primitives::Aabb)>> = pool.scope(|scope| {
+        for (job, mesh) in jobs.iter().zip(local) {
+            scope.spawn(async move {
+                let mesh = bake_transform(mesh?, &job.global);
+                let aabb = bevy::camera::primitives::MeshAabb::compute_aabb(&mesh)?;
+                Some((mesh, aabb))
+            });
+        }
+    });
+    for (job, placed) in jobs.iter().zip(placed) {
+        if let Some((mesh, aabb)) = placed {
+            add_to_batches(
+                &mut batches,
+                mesh,
+                aabb,
+                job.material.clone(),
+                job.layers.is_some(),
+            );
+        }
     }
     commands.entity(root).despawn();
     let count = batches.len();
@@ -268,6 +330,12 @@ fn prepare_map(
         bevy::light::NotShadowCaster,
         crate::fog::Fogged,
     ));
+    info!(
+        "startup: map prepared at {:.2} s in {:.2} s, {:.2} s of it reading layer colours",
+        crate::since_start(),
+        began.elapsed().as_secs_f32(),
+        means.spent.as_secs_f32()
+    );
     info!(
         "map prepared: {count} merged meshes, ground known on {} cells",
         ground.n * ground.n
@@ -308,22 +376,12 @@ const BATCH_VERTICES: usize = 1 << 20;
 fn add_to_batches(
     batches: &mut Vec<Batch>,
     mesh: Mesh,
-    global: &GlobalTransform,
+    aabb: bevy::camera::primitives::Aabb,
     material: Handle<StandardMaterial>,
     terrain: bool,
 ) {
-    if mesh.primitive_topology() != PrimitiveTopology::TriangleList {
-        return;
-    }
     let mut layout: Vec<_> = mesh.attributes().map(|(a, _)| a.id).collect();
     layout.sort();
-    let Some(mesh) = compact(mesh) else {
-        return;
-    };
-    let mesh = bake_transform(mesh, global);
-    let Some(aabb) = bevy::camera::primitives::MeshAabb::compute_aabb(&mesh) else {
-        return;
-    };
     let chunk = (
         (aabb.center.x / BATCH_CHUNK) as i32,
         (aabb.center.z / BATCH_CHUNK) as i32,
@@ -352,7 +410,7 @@ fn add_to_batches(
 
 /// A mesh cut down to the vertices its triangles use: the exporter gives a
 /// world piece the whole vertex buffer of its mesh set.
-fn compact(mesh: Mesh) -> Option<Mesh> {
+fn compact(mesh: &Mesh) -> Option<Mesh> {
     let indices: Vec<u32> = mesh.indices()?.iter().map(|i| i as u32).collect();
     let count = mesh.count_vertices();
     let mut remap = vec![u32::MAX; count];
@@ -366,7 +424,11 @@ fn compact(mesh: Mesh) -> Option<Mesh> {
         }
         out_indices.push(*slot);
     }
-    let mut out = Mesh::new(mesh.primitive_topology(), mesh.asset_usage);
+    // The map's source meshes stay on the CPU; what is made of them is drawn.
+    let mut out = Mesh::new(
+        mesh.primitive_topology(),
+        bevy::asset::RenderAssetUsages::default(),
+    );
     for (attribute, values) in mesh.attributes() {
         let picked = pick(values, &kept)?;
         out.insert_attribute(*attribute, picked);
@@ -437,6 +499,8 @@ fn bake_transform(mut mesh: Mesh, global: &GlobalTransform) -> Mesh {
 struct LayerMeans {
     root: Option<std::path::PathBuf>,
     known: std::collections::HashMap<String, [f32; 3]>,
+    /// Time spent decoding, for the startup log.
+    spent: std::time::Duration,
 }
 
 impl LayerMeans {
@@ -444,6 +508,7 @@ impl LayerMeans {
         LayerMeans {
             root,
             known: std::collections::HashMap::new(),
+            spent: std::time::Duration::ZERO,
         }
     }
 
@@ -459,6 +524,7 @@ impl LayerMeans {
         if let Some(mean) = self.known.get(&name) {
             return *mean;
         }
+        let began = std::time::Instant::now();
         let mean = self
             .root
             .as_ref()
@@ -468,7 +534,17 @@ impl LayerMeans {
             .and_then(|bytes| mean_color(&bytes))
             .unwrap_or([0.5; 3]);
         self.known.insert(name, mean);
+        self.spent += began.elapsed();
         mean
+    }
+
+    /// The four layers of a terrain material, each its tint times its
+    /// texture's mean colour.
+    fn layers(&mut self, vmat: &Vmat) -> [[f32; 3]; 4] {
+        [0, 1, 2, 3].map(|i| {
+            let mean = self.of(&vmat.textures[i]);
+            [0, 1, 2].map(|c| vmat.tints[i][c] * mean[c])
+        })
     }
 
     /// The mean of the detail texture the terrain material tiles.
@@ -622,11 +698,7 @@ fn modulate(weight: f32, softness: f32) -> f32 {
 
 /// Writes one terrain mesh's vertex colours: its four layers blended by the
 /// vertex's weights, each in its layer's tint, under the painted tint.
-fn bake_terrain(mesh: &mut Mesh, vmat: &Vmat, means: &mut LayerMeans, detail: f32) {
-    let layers: [[f32; 3]; 4] = [0, 1, 2, 3].map(|i| {
-        let mean = means.of(&vmat.textures[i]);
-        [0, 1, 2].map(|c| vmat.tints[i][c] * mean[c])
-    });
+fn bake_terrain(mesh: &mut Mesh, layers: &[[f32; 3]; 4], detail: f32, gain: f32) {
     let read = |mesh: &Mesh, attr: &MeshVertexAttribute| -> Option<Vec<[f32; 4]>> {
         match mesh.attribute(attr.id)? {
             VertexAttributeValues::Float32x4(v) => Some(v.clone()),
@@ -651,13 +723,11 @@ fn bake_terrain(mesh: &mut Mesh, vmat: &Vmat, means: &mut LayerMeans, detail: f3
             let w0 = (1.0 - w1 - w2 - w3).max(0.0);
             let mut c = [0.0, 0.0, 0.0, 1.0];
             for ch in 0..3 {
-                let t = &layers;
+                let t = layers;
                 let layered = w0 * t[0][ch] + w1 * t[1][ch] + w2 * t[2][ch] + w3 * t[3][ch];
                 // Dota doubles its terrain's light; the detail texture's
                 // own brightness is taken back out.
-                c[ch] = (layered * srgb_to_linear(p[ch]) * crate::look("gain", TERRAIN_GAIN)
-                    / detail)
-                    .min(1.5);
+                c[ch] = (layered * srgb_to_linear(p[ch]) * gain / detail).min(1.5);
             }
             c
         })

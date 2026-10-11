@@ -152,7 +152,19 @@ fn default_cache_dir() -> PathBuf {
     PathBuf::from(home).join(".cache/dbota")
 }
 
+/// When the process started, for the startup timings in the log.
+pub static STARTED: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
+
+/// Seconds since the process started.
+pub fn since_start() -> f32 {
+    STARTED
+        .get_or_init(std::time::Instant::now)
+        .elapsed()
+        .as_secs_f32()
+}
+
 fn main() -> AppExit {
+    STARTED.get_or_init(std::time::Instant::now);
     let args = Args::parse();
     let session = match session::open(&args) {
         Ok(session) => session,

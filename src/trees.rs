@@ -327,6 +327,7 @@ fn rebuild(
     forest.built = true;
     if !ready.0 {
         ready.0 = true;
+        info!("startup: forest built at {:.2} s", crate::since_start());
     }
 }
 
