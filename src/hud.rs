@@ -1401,17 +1401,12 @@ fn seats(
     }
 }
 
-/// Shows the stash while it holds anything, at the home shop, or while an
-/// item is carried by the cursor.
+/// Shows the stash as Dota does: at the home shop, or while an item is held
+/// for moving. Away from home what waits there is the courier's to fetch;
+/// the courier's own bag shows in the panel when the courier is selected.
 fn stash(session: NonSend<Session>, mut strip: Single<&mut Visibility, With<StashStrip>>) {
     let core = &session.0;
-    let full = core
-        .view
-        .as_ref()
-        .and_then(|v| v.players.iter().find(|p| Some(p.slot) == core.my_slot))
-        .and_then(|p| p.stash.as_ref())
-        .is_some_and(|s| s.iter().any(Option::is_some));
-    let show = full || core.at_home_shop() || core.held_item.is_some();
+    let show = core.at_home_shop() || core.held_item.is_some();
     let want = if show {
         Visibility::Inherited
     } else {

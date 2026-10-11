@@ -1,14 +1,12 @@
-//! The settings overlay (F10) and the lobby card: sound, interface size, the
-//! aids, the keys, and where the art and the sound come from.
+//! The settings overlay (F10): sound, interface size, the aids, the keys,
+//! and where the art and the sound come from.
 
 use bevy::prelude::*;
-use bota_client_core::Phase;
 
 use crate::config::{BINDINGS, Settings, key_name};
 use crate::hud::Blocker;
 use crate::input::Panels;
 use crate::manifest::Manifest;
-use crate::session::Session;
 use crate::ui::{self, Fonts};
 
 /// One line of the overlay that can be changed.
@@ -32,13 +30,9 @@ struct Overlay;
 #[derive(Component)]
 struct Values;
 
-/// The lobby card.
-#[derive(Component)]
-struct LobbyCard;
-
 pub fn plugin(app: &mut App) {
     app.add_systems(Startup, spawn)
-        .add_systems(Update, (show, clicks, values, lobby));
+        .add_systems(Update, (show, clicks, values));
 }
 
 fn spawn(
@@ -142,17 +136,6 @@ fn spawn(
         ),
         ChildOf(overlay),
     ));
-    commands.spawn((
-        LobbyCard,
-        ui::text("", &fonts.bold, 20.0, ui::INK),
-        ui::shadow(),
-        Node {
-            position_type: PositionType::Absolute,
-            left: percent(10),
-            top: percent(20),
-            ..default()
-        },
-    ));
 }
 
 fn show(panels: Res<Panels>, mut overlay: Single<&mut Visibility, With<Overlay>>) {
@@ -219,43 +202,4 @@ fn values(settings: Res<Settings>, mut text: Single<&mut Text, With<Values>>) {
         on(settings.voice),
         on(a.edge_pan),
     );
-}
-
-/// The lobby: who sits where, and how to pick and ready.
-fn lobby(session: NonSend<Session>, mut card: Single<&mut Text, With<LobbyCard>>) {
-    let core = &session.0;
-    let s = if core.phase == Phase::Lobby {
-        let mut lines = vec![
-            match (core.my_slot.is_some(), core.ready, core.me.is_some()) {
-                (true, true, _) => "Ready - waiting for the others (R to cancel)".to_string(),
-                (true, false, _) => {
-                    "Pick a hero: [1] Pudge  [2] Shadow Fiend, then [R] when ready".to_string()
-                }
-                (false, _, true) => "Spectating - waiting for the match to start".to_string(),
-                (false, _, false) => "Connecting...".to_string(),
-            },
-        ];
-        for seat in &core.lobby {
-            let hero = seat
-                .hero
-                .and_then(|h| bota_client_core::hero(h.0))
-                .map_or("-", |h| h.name);
-            let ready = if seat.ready { "  READY" } else { "" };
-            let name = if seat.name.is_empty() {
-                "open"
-            } else {
-                seat.name.as_str()
-            };
-            lines.push(format!(
-                "{:?} seat {}: {name} as {hero}{ready}",
-                seat.team, seat.slot.0
-            ));
-        }
-        lines.join("\n")
-    } else {
-        String::new()
-    };
-    if card.0 != s {
-        card.0 = s;
-    }
 }

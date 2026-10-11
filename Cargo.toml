@@ -5,7 +5,7 @@ edition = "2024"
 publish = false
 
 [dependencies]
-bevy = { version = "=0.19.1", features = ["wav"] }
+bevy = { version = "=0.19.1", features = ["wav", "mp3"] }
 bota-client-core = { path = "../bota/crates/bota-client-core" }
 bota-proto = { path = "../bota/crates/bota-proto" }
 clap = { version = "4", features = ["derive"] }

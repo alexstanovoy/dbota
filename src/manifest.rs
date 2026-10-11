@@ -127,7 +127,9 @@ impl Manifest {
     pub fn sounds(&self, prefix: &str) -> Vec<String> {
         self.files
             .iter()
-            .filter(|(name, path)| name.starts_with(prefix) && path.ends_with(".wav"))
+            .filter(|(name, path)| {
+                name.starts_with(prefix) && (path.ends_with(".wav") || path.ends_with(".mp3"))
+            })
             .map(|(_, path)| cache_path(path))
             .collect()
     }

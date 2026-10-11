@@ -68,18 +68,19 @@ of playing).
 | `1` … `6` | use the item in that slot |
 | `B` | shop (right click an item: buy; drag an item onto the shop: sell) |
 | `F5` | quick-buy |
-| `F2` / `F3` | select courier / courier delivers |
+| `F2` / `F3` | select courier (its bag shows in the panel) / courier delivers |
 | `F1` | select your hero |
 | `Space` | centre the camera on your hero |
 | `Y` | lock the camera to your hero |
-| Arrows, screen edges | pan the camera; mouse wheel zooms |
-| hold `Alt` | show attack and ability ranges |
+| Arrows, screen edges | pan the camera (all four edges, the HUD bars included); mouse wheel zooms |
+| hold `Alt` | show attack, tower and ability ranges (they are never drawn otherwise) |
 | `M` | mute |
-| `F10` | settings (keys can be rebound; saved to `~/.config/dbota/client.conf`) |
+| `F10` | settings: volume, damage numbers, your hero's voice answers, edge pan; keys can be rebound (saved to `~/.config/dbota/client.conf`) |
 | `Esc` | cancel / close / leave |
 
 Talents: the small button left of the abilities opens the talent tree; when you have a point,
-click a talent to learn it. Buffs and debuffs of the selected unit sit above the abilities.
+click a talent to learn it. Buffs and debuffs of the selected unit sit above the abilities. The
+stash shows at the home shop.
 
 ## Watch a live match
 

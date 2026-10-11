@@ -1,0 +1,221 @@
+//! The voices: one's hero answering its move and attack orders as in Dota
+//! (now and then, not on every click), the announcer at hero selection and
+//! when the battle begins with the horn, and the click of the interface.
+//! Silent where the cache has no such sound.
+
+use bevy::{audio::Volume, prelude::*};
+use bota_client_core::Phase;
+use bota_proto::Order;
+
+use crate::config::Settings;
+use crate::manifest::Manifest;
+use crate::session::Session;
+
+/// Seconds a hero keeps quiet after answering an order.
+const VOICE_REST: f32 = 6.0;
+
+/// The sounds of one logical name, played in turn.
+#[derive(Default)]
+struct Lines {
+    sources: Vec<Handle<AudioSource>>,
+    next: usize,
+}
+
+impl Lines {
+    fn load(manifest: &Manifest, server: &AssetServer, name: &str) -> Lines {
+        Lines {
+            sources: manifest
+                .sounds(name)
+                .into_iter()
+                .map(|p| server.load(p))
+                .collect(),
+            next: 0,
+        }
+    }
+
+    /// The next of the sounds, if there are any.
+    fn take(&mut self) -> Option<Handle<AudioSource>> {
+        let source = self
+            .sources
+            .get(self.next % self.sources.len().max(1))?
+            .clone();
+        self.next += 1;
+        Some(source)
+    }
+}
+
+#[derive(Resource, Default)]
+struct Voices {
+    /// By hero Dota name: its move and attack answers.
+    heroes: Vec<(String, Lines, Lines)>,
+    click: Lines,
+    choose: Lines,
+    begins: Lines,
+    /// The horn at each side's ancient: Radiant's, then Dire's.
+    horns: [Lines; 2],
+}
+
+/// What the voices remember between frames.
+#[derive(Default)]
+struct Heard {
+    /// The last order sent that was looked at.
+    seq: u32,
+    /// Seconds before the hero may answer again.
+    rest: f32,
+    /// Whether the announcer has asked for a hero.
+    asked: bool,
+    /// Whether the battle has begun, as far as the voices know.
+    begun: bool,
+}
+
+pub fn plugin(app: &mut App) {
+    app.init_resource::<Voices>()
+        .add_systems(Startup, load)
+        .add_systems(Update, (answer, announce, click));
+}
+
+fn load(mut voices: ResMut<Voices>, manifest: Res<Manifest>, server: Res<AssetServer>) {
+    for hero in bota_client_core::HEROES {
+        let Some(name) = manifest.dota_name("hero", hero.id) else {
+            continue;
+        };
+        let moves = Lines::load(&manifest, &server, &format!("sound.voice.{name}.move"));
+        let attacks = Lines::load(&manifest, &server, &format!("sound.voice.{name}.attack"));
+        voices.heroes.push((name.to_string(), moves, attacks));
+    }
+    voices.click = Lines::load(&manifest, &server, "sound.ui.click");
+    voices.choose = Lines::load(&manifest, &server, "sound.announcer.choose_hero");
+    voices.begins = Lines::load(&manifest, &server, "sound.announcer.battle_begins");
+    for (i, side) in ["radiant", "dire"].into_iter().enumerate() {
+        voices.horns[i] = Lines {
+            sources: manifest
+                .sounds("sound.horn")
+                .into_iter()
+                .filter(|p| p.contains(side))
+                .map(|p| server.load(p))
+                .collect(),
+            next: 0,
+        };
+    }
+}
+
+fn say(commands: &mut Commands, source: Option<Handle<AudioSource>>, gain: f32) {
+    if let Some(source) = source {
+        commands.spawn((
+            AudioPlayer::new(source),
+            PlaybackSettings::DESPAWN.with_volume(Volume::Linear(gain)),
+        ));
+    }
+}
+
+/// One's hero answers a move or an attack order, then keeps quiet a while.
+fn answer(
+    mut commands: Commands,
+    session: NonSend<Session>,
+    manifest: Res<Manifest>,
+    mut voices: ResMut<Voices>,
+    settings: Res<Settings>,
+    args: Res<crate::Args>,
+    time: Res<Time>,
+    mut heard: Local<Heard>,
+) {
+    let core = &session.0;
+    heard.rest = (heard.rest - time.delta_secs()).max(0.0);
+    if core.seq == heard.seq {
+        return;
+    }
+    heard.seq = core.seq;
+    if !settings.voice || settings.muted || args.mute || heard.rest > 0.0 {
+        return;
+    }
+    let (Some(slot), Some(view)) = (core.my_slot, &core.view) else {
+        return;
+    };
+    let Some(order) = core
+        .shown_orders
+        .iter()
+        .find(|s| s.slot == slot && s.unit.is_none_or(|u| Some(u) == core.my_hero()))
+        .map(|s| s.order)
+    else {
+        return;
+    };
+    let attack = match order {
+        Order::Move { .. } => false,
+        Order::Attack { .. } => true,
+        _ => return,
+    };
+    let Some(name) = view
+        .players
+        .iter()
+        .find(|p| p.slot == slot)
+        .and_then(|p| manifest.dota_name("hero", p.hero.0))
+    else {
+        return;
+    };
+    let Some((_, moves, attacks)) = voices.heroes.iter_mut().find(|(n, _, _)| n == name) else {
+        return;
+    };
+    let source = if attack { attacks.take() } else { moves.take() };
+    if source.is_some() {
+        heard.rest = VOICE_REST;
+    }
+    say(&mut commands, source, 0.8);
+}
+
+/// The announcer asks for a hero once the selection opens, and the horn
+/// and the announcer start the battle when the clock reaches zero.
+fn announce(
+    mut commands: Commands,
+    session: NonSend<Session>,
+    mut voices: ResMut<Voices>,
+    settings: Res<Settings>,
+    args: Res<crate::Args>,
+    mut heard: Local<Heard>,
+) {
+    let core = &session.0;
+    let silent = settings.muted || args.mute;
+    if core.phase == Phase::Lobby && core.my_slot.is_some() && !heard.asked {
+        heard.asked = true;
+        if !silent {
+            let source = voices.choose.take();
+            say(&mut commands, source, 0.9);
+        }
+    }
+    let begun = core
+        .view
+        .as_ref()
+        .is_some_and(|v| v.tick >= core.pregame_ticks);
+    if begun && !heard.begun {
+        heard.begun = true;
+        // Not for a match joined, or a replay opened, well after the start.
+        let fresh = core
+            .view
+            .as_ref()
+            .is_some_and(|v| v.tick < core.pregame_ticks + 60);
+        if fresh && !silent {
+            // The horn of one's own side's ancient.
+            let dire = core.my_team() == Some(bota_proto::Team::Dire);
+            let horn = voices.horns[usize::from(dire)].take();
+            say(&mut commands, horn, 0.8);
+            let line = voices.begins.take();
+            say(&mut commands, line, 0.9);
+        }
+    }
+}
+
+/// The click of any button of the interface.
+fn click(
+    mut commands: Commands,
+    mut voices: ResMut<Voices>,
+    buttons: Query<&Interaction, (Changed<Interaction>, With<Button>)>,
+    settings: Res<Settings>,
+    args: Res<crate::Args>,
+) {
+    if settings.muted || args.mute {
+        return;
+    }
+    if buttons.iter().any(|i| *i == Interaction::Pressed) {
+        let source = voices.click.take();
+        say(&mut commands, source, 0.5);
+    }
+}

@@ -63,7 +63,7 @@ struct Flying {
 pub fn plugin(app: &mut App) {
     app.init_resource::<Flying>()
         .add_systems(Startup, make_art)
-        .add_systems(Update, (missiles, bursts, age_bursts));
+        .add_systems(Update, (missiles, bursts, age_bursts, level_ups));
 }
 
 fn glow(color: Color) -> StandardMaterial {
@@ -290,6 +290,44 @@ fn burst(
         NotShadowCaster,
         NotShadowReceiver,
     ));
+}
+
+/// A golden ring at a hero's feet when it gains a level.
+fn level_ups(
+    mut commands: Commands,
+    session: NonSend<Session>,
+    art: Option<Res<Art>>,
+    ground: Res<Ground>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    mut levels: Local<HashMap<EntityId, u8>>,
+) {
+    let (core, Some(art)) = (&session.0, art) else {
+        return;
+    };
+    let Some(view) = &core.view else {
+        return;
+    };
+    for u in view
+        .units
+        .iter()
+        .filter(|u| u.kind == bota_proto::UnitKind::Hero)
+    {
+        let before = levels.insert(u.id, u.level);
+        if before.is_some_and(|b| u.level > b) {
+            burst(
+                &mut commands,
+                &art,
+                &mut materials,
+                &ground,
+                (u.pos.x.to_f32(), u.pos.y.to_f32()),
+                0.5,
+                (
+                    Color::srgba(1.0, 0.8, 0.3, 0.9),
+                    LinearRgba::rgb(2.0, 1.5, 0.4),
+                ),
+            );
+        }
+    }
 }
 
 /// Ages every burst: the ring grows and every part fades away.

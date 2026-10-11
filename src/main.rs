@@ -25,6 +25,7 @@ mod map;
 mod menu;
 mod minimap;
 mod overlay;
+mod select;
 mod session;
 mod sheet;
 mod shop;
@@ -36,6 +37,7 @@ mod tips;
 mod trees;
 mod ui;
 mod units;
+mod voice;
 
 use std::path::PathBuf;
 
@@ -222,6 +224,8 @@ fn main() -> AppExit {
             buffs::plugin,
             talents::plugin,
             sheet::plugin,
+            voice::plugin,
+            select::plugin,
         ));
     app.run()
 }

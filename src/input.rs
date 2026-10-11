@@ -178,15 +178,8 @@ fn keys(
         }
         return;
     }
+    // Heroes are picked and readied with the mouse, on the selection screen.
     if core.phase == bota_client_core::Phase::Lobby {
-        for (i, key) in [KeyCode::Digit1, KeyCode::Digit2].into_iter().enumerate() {
-            if keys.just_pressed(key) {
-                core.act(Intent::PickHero(i as u16));
-            }
-        }
-        if keys.just_pressed(KeyCode::KeyR) {
-            core.act(Intent::ToggleReady);
-        }
         return;
     }
     if pressed(Action::SelectHero) {
