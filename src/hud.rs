@@ -65,7 +65,8 @@ enum Readout {
     Damage,
     DamageBonus,
     Stats,
-    Attributes,
+    Attribute(u8),
+    AttributeBonus(u8),
     Hp,
     Mana,
     HpRegen,
@@ -319,11 +320,35 @@ fn spawn_numbers(commands: &mut Commands, fonts: &Fonts, bar: Entity) {
         ui::text("", &fonts.regular, 13.0, ui::INK_DIM),
         ChildOf(column),
     ));
-    commands.spawn((
-        Readout::Attributes,
-        ui::text("", &fonts.bold, 13.0, ui::INK),
-        ChildOf(column),
-    ));
+    // Strength, agility, intelligence: the level's own white, what items,
+    // souls and buffs add green, as Dota shows them.
+    let attributes = commands
+        .spawn((
+            Node {
+                column_gap: px(3),
+                ..default()
+            },
+            ChildOf(column),
+        ))
+        .id();
+    for k in 0..3u8 {
+        commands.spawn((
+            Readout::Attribute(k),
+            ui::text("", &fonts.bold, 13.0, ui::INK),
+            TextLayout::no_wrap(),
+            ChildOf(attributes),
+        ));
+        commands.spawn((
+            Readout::AttributeBonus(k),
+            ui::text("", &fonts.bold, 13.0, ui::HP_MINE),
+            TextLayout::no_wrap(),
+            Node {
+                margin: UiRect::right(px(6)),
+                ..default()
+            },
+            ChildOf(attributes),
+        ));
+    }
 }
 
 /// The ability row with the health and mana bars under it.
@@ -988,7 +1013,8 @@ fn readouts(
                 .map(|bonus| format!("+{bonus}"))
                 .unwrap_or_default(),
             Readout::Stats => unit.map(stat_lines).unwrap_or_default(),
-            Readout::Attributes => unit.map(attribute_line).unwrap_or_default(),
+            Readout::Attribute(k) => unit.map(|u| attribute_text(u, k).0).unwrap_or_default(),
+            Readout::AttributeBonus(k) => unit.map(|u| attribute_text(u, k).1).unwrap_or_default(),
             Readout::Hp => unit
                 .map(|u| format!("{} / {}", u.hp.max(0), u.max_hp))
                 .unwrap_or_default(),
@@ -1058,21 +1084,35 @@ fn stat_lines(u: &UnitView) -> String {
     )
 }
 
-fn attribute_line(u: &UnitView) -> String {
+/// One attribute of the panel: its letter and the level's own points, and
+/// the green bonus on top, if any.
+fn attribute_text(u: &UnitView, k: u8) -> (String, String) {
     let a = &u.attributes;
-    let mark = |which: Attribute| if u.primary == Some(which) { "*" } else { "" };
     if a.strength.to_f32() == 0.0 && a.agility.to_f32() == 0.0 {
-        return String::new();
+        return (String::new(), String::new());
     }
-    format!(
-        "S {:.0}{}  A {:.0}{}  I {:.0}{}",
-        a.strength.to_f32().floor(),
-        mark(Attribute::Strength),
-        a.agility.to_f32().floor(),
-        mark(Attribute::Agility),
-        a.intelligence.to_f32().floor(),
-        mark(Attribute::Intelligence)
-    )
+    let (letter, which, total) = match k {
+        0 => ("S", Attribute::Strength, a.strength),
+        1 => ("A", Attribute::Agility, a.agility),
+        _ => ("I", Attribute::Intelligence, a.intelligence),
+    };
+    let total = total.to_f32().floor() as i32;
+    let mark = if u.primary == Some(which) { "*" } else { "" };
+    match bota_client_core::base_attributes(u) {
+        Some(base) => {
+            let base = base[usize::from(k)].min(total);
+            let bonus = total - base;
+            (
+                format!("{letter}{mark} {base}"),
+                if bonus > 0 {
+                    format!("+{bonus}")
+                } else {
+                    String::new()
+                },
+            )
+        }
+        None => (format!("{letter}{mark} {total}"), String::new()),
+    }
 }
 
 /// The word of the moment in the middle of the screen.
