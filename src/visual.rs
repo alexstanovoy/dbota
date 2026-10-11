@@ -46,6 +46,9 @@ pub struct Checks<'w, 's> {
     window: Single<'w, 's, &'static Window, With<PrimaryWindow>>,
     rings: Res<'w, crate::overlay::RangeRings>,
     bars: Res<'w, crate::bars::Bars>,
+    tree: Query<'w, 's, &'static Children>,
+    meshes: Query<'w, 's, (&'static Mesh3d, &'static ViewVisibility)>,
+    wearables: Query<'w, 's, (), With<crate::units::WearableMarker>>,
     texts: Query<'w, 's, &'static Text>,
     chips: Query<
         'w,
@@ -131,6 +134,35 @@ pub fn run(image: &Image, c: &Checks) -> bool {
         );
         ok &= pass;
     };
+    // Every mesh of every hero's model and wearables is there and drawn:
+    // the counts, printed in one line, must match from run to run.
+    let mut parts: Vec<String> = Vec::new();
+    for entity in c.index.0.values() {
+        let Ok(unit) = c.units.get(*entity) else {
+            continue;
+        };
+        if unit.kind != UnitKind::Hero {
+            continue;
+        }
+        let all: Vec<Entity> = c.tree.iter_descendants(*entity).collect();
+        let meshes = all.iter().filter(|e| c.meshes.contains(**e)).count();
+        let drawn = all
+            .iter()
+            .filter(|e| c.meshes.get(**e).is_ok_and(|(_, v)| v.get()))
+            .count();
+        let pending = all.iter().filter(|e| c.wearables.contains(**e)).count();
+        parts.push(format!(
+            "{:?}: {meshes} meshes, {drawn} drawn, {pending} wearables unbound",
+            unit.team
+        ));
+    }
+    parts.sort();
+    println!("visual check: hero parts: {}", parts.join("; "));
+    report(
+        "hero parts all loaded",
+        !parts.is_empty() && parts.iter().all(|p| p.ends_with(" 0 wearables unbound")),
+        parts.join("; "),
+    );
     fog(&shot, c, &mut report);
     heroes(&shot, c, &mut report);
     let turned: Vec<String> = c

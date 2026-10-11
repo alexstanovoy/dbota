@@ -31,6 +31,33 @@ done
 wait "${bots[@]}" || true
 kill $server 2>/dev/null || true
 wait $server 2>/dev/null || true
+status=0
 "$here/target/release/dbota" --replay "$replay" --pov 0 --screenshot-at "$tick" \
     --screenshot-dir "$out" --screenshot-prefix check- --distance 6500 \
-    --visual-check --mute --no-vsync 2> "$out/dbota.log"
+    --visual-check --mute --no-vsync 2> "$out/dbota.log" | tee "$out/dbota.out" || status=$?
+[ "$status" -eq 0 ] || exit "$status"
+
+# Every hero model loads whole every time: the client is run again, cold
+# (the asset cache dropped from memory) and warm by turns, and each run's
+# count of hero meshes must match the first's.
+runs=${VISUAL_RUNS:-10}
+cache=${DBOTA_ASSETS:-$HOME/.cache/dbota}
+first=$(grep -m1 "hero parts:" "$out/dbota.out" 2>/dev/null || true)
+for run in $(seq 2 "$runs"); do
+    if [ $((run % 2)) -eq 0 ]; then
+        python3 -c 'import os,sys
+for d,_,fs in os.walk(sys.argv[1]):
+    for f in fs:
+        try:
+            fd=os.open(os.path.join(d,f),os.O_RDONLY); os.posix_fadvise(fd,0,0,os.POSIX_FADV_DONTNEED); os.close(fd)
+        except OSError: pass' "$cache"
+    fi
+    line=$("$here/target/release/dbota" --replay "$replay" --pov 0 --screenshot-at "$tick" \
+        --screenshot-dir "$out" --screenshot-prefix repeat- --distance 6500 \
+        --visual-check --mute --no-vsync 2>/dev/null | grep -m1 "hero parts:" || true)
+    if [ "$line" != "$first" ]; then
+        echo "visual check: FAIL hero parts differ on run $run: '$line' against '$first'"
+        exit 1
+    fi
+done
+echo "visual check: PASS hero parts identical over $runs runs: ${first#*hero parts: }"

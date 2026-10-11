@@ -62,10 +62,14 @@ pub struct Rig(pub Entity);
 
 /// A wearable scene waiting for its own instance and its wearer's.
 #[derive(Component)]
-struct Wearable {
+pub struct Wearable {
     wearer: Entity,
     ready: bool,
 }
+
+/// Marks a wearable not yet bound to its wearer's skeleton, for the visual
+/// check.
+pub type WearableMarker = Wearable;
 
 /// One model the units may be drawn with.
 pub struct BankModel {
@@ -82,6 +86,9 @@ pub struct BankModel {
     pub clips: Vec<(String, AnimationNodeIndex, f32, Option<f32>)>,
     /// The graph of its clips once the file is loaded.
     pub graph: Option<Handle<AnimationGraph>>,
+    /// Whether the model, its wearables and everything they need are all
+    /// loaded: no unit is drawn with it before, so no part goes missing.
+    pub loaded: bool,
 }
 
 /// Every model the units may be drawn with.
@@ -191,6 +198,7 @@ fn load_models(mut bank: ResMut<ModelBank>, server: Res<AssetServer>, manifest: 
             wearables,
             clips: Vec::new(),
             graph: None,
+            loaded: false,
         });
     }
 }
@@ -221,6 +229,31 @@ fn build_graphs(
     gltfs: Res<Assets<Gltf>>,
     mut graphs: ResMut<Assets<AnimationGraph>>,
 ) {
+    use bevy::asset::RecursiveDependencyLoadState as State;
+    for entry in bank.0.iter_mut().filter(|m| !m.loaded) {
+        // The scenes and all they need: meshes, skins, materials, images.
+        // (The file's own handle never settles as loaded with everything:
+        // it lists sub-assets no scene uses. Its clips are waited for by the
+        // graph.)
+        let states: Vec<State> =
+            std::iter::once(server.recursive_dependency_load_state(&entry.scene))
+                .chain(
+                    entry
+                        .wearables
+                        .iter()
+                        .map(|w| server.recursive_dependency_load_state(w)),
+                )
+                .collect();
+        if states.iter().any(|s| matches!(s, State::Failed(_))) {
+            error!(
+                "model {}: a part failed to load ({states:?}); its units are drawn as stand-ins",
+                entry.model.logical
+            );
+            entry.loaded = true;
+            continue;
+        }
+        entry.loaded = states.iter().all(|s| matches!(s, State::Loaded));
+    }
     for entry in bank.0.iter_mut().filter(|m| m.graph.is_none()) {
         if !server.is_loaded(&entry.gltf) {
             continue;
@@ -387,6 +420,13 @@ fn sync_units(
                 transform.translation = place;
             }
             None => {
+                // Not before its model has loaded whole, wearables and all.
+                let waiting = model_name(u, &p.manifest)
+                    .and_then(|name| p.bank.0.iter().find(|m| m.model.logical == name))
+                    .is_some_and(|m| !m.loaded || m.graph.is_none());
+                if waiting {
+                    continue;
+                }
                 let entity = spawn_unit(&mut p, u, at, drawn_facing(u, body.facing), place);
                 p.index.0.insert(u.id, entity);
             }
