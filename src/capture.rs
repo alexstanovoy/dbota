@@ -23,6 +23,8 @@ struct Shots {
     failed: bool,
     /// Frames left to settle after the camera moved for a shot.
     settle: u32,
+    /// Frames waited at the wanted tick for the fog to ease in.
+    settled: u32,
 }
 
 pub fn plugin(app: &mut App) {
@@ -39,6 +41,7 @@ fn shoot(
     mut exit: MessageWriter<AppExit>,
     diagnostics: Res<bevy::diagnostic::DiagnosticsStore>,
     mut cam: Single<&mut crate::camera::RtsCamera>,
+    photo: Res<crate::minimap::PhotoTaken>,
 ) {
     if shots.waiting {
         return;
@@ -93,6 +96,15 @@ fn shoot(
             return;
         }
         if tick < next {
+            return;
+        }
+        // Not before the scene is whole: the minimap photographed and the
+        // fog eased in (a seek can reach an early tick in a second).
+        if !photo.0 {
+            return;
+        }
+        if shots.settled < 45 {
+            shots.settled += 1;
             return;
         }
         // Several places to look at: the camera goes to this shot's and the

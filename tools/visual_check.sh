@@ -36,6 +36,12 @@ status=0
     --screenshot-dir "$out" --screenshot-prefix check- --distance 6500 \
     --visual-check --mute --no-vsync 2> "$out/dbota.log" | tee "$out/dbota.out" || status=$?
 [ "$status" -eq 0 ] || exit "$status"
+# The same seen by the other side, one window more.
+dire=$("$here/target/release/dbota" --replay "$replay" --pov 1 --screenshot-at "$tick" \
+    --screenshot-dir "$out" --screenshot-prefix check-dire- --distance 6500 \
+    --visual-check --mute --no-vsync 2>> "$out/dbota.log" || true)
+echo "$dire" | sed 's/^visual check: /visual check (Dire): /'
+if echo "$dire" | grep -q "FAIL"; then exit 1; fi
 
 # Every hero model loads whole every time: the client is run again, cold
 # (the asset cache dropped from memory) and warm by turns, and each run's

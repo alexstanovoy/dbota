@@ -241,6 +241,26 @@ pub fn run(image: &Image, c: &Checks) -> bool {
             enemy.len()
         ),
     );
+    // A side sees by its own units alone: the enemy's fountain, always
+    // drawn, lights nothing for the side watching.
+    if let (Some(side), Some(view)) = (c.fog.team, c.session.0.view.as_ref()) {
+        let enemy_home = view.units.iter().find(|u| {
+            u.kind == UnitKind::Fountain && u.team != side && u.team != bota_proto::Team::Neutral
+        });
+        if let Some(f) = enemy_home {
+            let lit = c.fog.lit(f.pos.x.to_f32(), f.pos.y.to_f32());
+            report(
+                "the enemy base is fogged",
+                !lit,
+                format!(
+                    "{:?}'s view of the {:?} fountain: {}",
+                    side,
+                    f.team,
+                    if lit { "lit" } else { "fogged" }
+                ),
+            );
+        }
+    }
     report(
         "no range rings without the key",
         c.rings.0 == 0,
