@@ -1546,6 +1546,7 @@ fn kind_name(kind: UnitKind) -> &'static str {
         UnitKind::Fountain => "Fountain",
         UnitKind::Ward => "Ward",
         UnitKind::Courier => "Courier",
+        UnitKind::Filler => "Filler",
     }
 }
 
