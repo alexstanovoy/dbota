@@ -63,6 +63,8 @@ enum Readout {
     Attributes,
     Hp,
     Mana,
+    HpRegen,
+    ManaRegen,
     LastHits,
     Kda,
     Feed,
@@ -359,9 +361,21 @@ fn spawn_middle(commands: &mut Commands, fonts: &Fonts, bar: Entity) {
             true,
         );
     }
-    for (gauge, readout, height, color) in [
-        (Gauge::Hp, Readout::Hp, 20.0, ui::HP_FRIEND),
-        (Gauge::Mana, Readout::Mana, 15.0, ui::MANA),
+    for (gauge, readout, regen, height, color) in [
+        (
+            Gauge::Hp,
+            Readout::Hp,
+            Readout::HpRegen,
+            20.0,
+            ui::HP_FRIEND,
+        ),
+        (
+            Gauge::Mana,
+            Readout::Mana,
+            Readout::ManaRegen,
+            15.0,
+            ui::MANA,
+        ),
     ] {
         let well = commands
             .spawn((
@@ -395,6 +409,17 @@ fn spawn_middle(commands: &mut Commands, fonts: &Fonts, bar: Entity) {
         commands.spawn((
             readout,
             ui::text("", &fonts.bold, height - 5.0, ui::INK),
+            ui::shadow(),
+            ChildOf(well),
+        ));
+        commands.spawn((
+            regen,
+            Node {
+                position_type: PositionType::Absolute,
+                right: px(6),
+                ..default()
+            },
+            ui::text("", &fonts.bold, height - 7.0, ui::INK),
             ui::shadow(),
             ChildOf(well),
         ));
@@ -941,6 +966,11 @@ fn readouts(
             Readout::Mana => unit
                 .filter(|u| u.max_mana > 0)
                 .map(|u| format!("{} / {}", u.mana.max(0), u.max_mana))
+                .unwrap_or_default(),
+            Readout::HpRegen => unit.map(|u| regen_text(u.hp_regen)).unwrap_or_default(),
+            Readout::ManaRegen => unit
+                .filter(|u| u.max_mana > 0)
+                .map(|u| regen_text(u.mana_regen))
                 .unwrap_or_default(),
             Readout::LastHits => mine
                 .map(|p| format!("{} / {}", p.last_hits, p.denies))
@@ -1492,5 +1522,14 @@ fn stash(session: NonSend<Session>, mut strip: Single<&mut Visibility, With<Stas
     };
     if **strip != want {
         **strip = want;
+    }
+}
+
+/// A regeneration as a pool bar shows it: "+1.5" a second, nothing when none.
+fn regen_text(per_second: bota_proto::Fixed) -> String {
+    if per_second > bota_proto::Fixed::ZERO {
+        format!("+{:.1}", per_second.to_f32())
+    } else {
+        String::new()
     }
 }
