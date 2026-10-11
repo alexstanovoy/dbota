@@ -366,7 +366,10 @@ fn spawn_middle(commands: &mut Commands, fonts: &Fonts, bar: Entity) {
         let well = commands
             .spawn((
                 Node {
+                    // Under the abilities, from the first to the ultimate,
+                    // past the talent button left of them.
                     width: px(6.0 * ABILITY + 5.0 * 6.0),
+                    margin: UiRect::left(px(crate::talents::BUTTON + 6.0)),
                     height: px(height),
                     justify_content: JustifyContent::Center,
                     align_items: AlignItems::Center,

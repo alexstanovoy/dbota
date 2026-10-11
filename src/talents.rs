@@ -41,7 +41,7 @@ struct TierLevel(u8);
 struct Branch(u8);
 
 /// The talent button's size, and the tree's width.
-const BUTTON: f32 = 48.0;
+pub const BUTTON: f32 = 48.0;
 const PANEL_WIDTH: f32 = 560.0;
 
 fn branch() -> impl Bundle {
