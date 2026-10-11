@@ -264,6 +264,14 @@ fn model_name(unit: &UnitView, manifest: &Manifest) -> Option<String> {
     })
 }
 
+/// Whether a unit is a building: always shown, whatever the fog.
+pub fn is_building(kind: UnitKind) -> bool {
+    matches!(
+        kind,
+        UnitKind::Tower | UnitKind::Barracks | UnitKind::Ancient | UnitKind::Fountain
+    )
+}
+
 /// Which way a unit is drawn facing: buildings never turn, as in Dota
 /// (the wire turns a tower to its target for bota's attack rules), and
 /// stand as the map places them; everything else as the wire says.
@@ -359,7 +367,12 @@ fn sync_units(
     let dt = p.time.delta_secs().max(1e-4);
     for body in &shown {
         let u = body.unit;
-        if hidden && Some(u.team) != p.fog.team && !p.fog.lit(body.x, body.y) {
+        // Buildings are seen through the fog, as in Dota.
+        if hidden
+            && Some(u.team) != p.fog.team
+            && !is_building(u.kind)
+            && !p.fog.lit(body.x, body.y)
+        {
             continue;
         }
         seen.push(u.id);

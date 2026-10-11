@@ -45,6 +45,7 @@ pub struct Checks<'w, 's> {
     camera: Single<'w, 's, (&'static Camera, &'static GlobalTransform), With<RtsCamera>>,
     window: Single<'w, 's, &'static Window, With<PrimaryWindow>>,
     rings: Res<'w, crate::overlay::RangeRings>,
+    bars: Res<'w, crate::bars::Bars>,
     texts: Query<'w, 's, &'static Text>,
     chips: Query<
         'w,
@@ -152,6 +153,46 @@ pub fn run(image: &Image, c: &Checks) -> bool {
         } else {
             turned.join(", ")
         },
+    );
+    // Every enemy building, in the fog or not, is drawn with its bar.
+    let side = c.fog.team.unwrap_or(bota_proto::Team::Radiant);
+    let enemy: Vec<(Entity, bool)> = c
+        .index
+        .0
+        .values()
+        .filter_map(|e| Some((*e, c.units.get(*e).ok()?)))
+        .filter(|(_, u)| {
+            crate::units::is_building(u.kind)
+                && u.team != side
+                && u.team != bota_proto::Team::Neutral
+        })
+        .map(|(e, u)| (e, c.fog.lit(u.at.x, u.at.y)))
+        .collect();
+    let fogged = enemy.iter().filter(|(_, lit)| !lit).count();
+    // The fountain has no bar, in Dota as here.
+    let barless = enemy
+        .iter()
+        .filter(|(e, _)| {
+            c.units.get(*e).is_ok_and(|u| u.kind != UnitKind::Fountain) && !c.bars.has(*e)
+        })
+        .count();
+    let expected = c.session.0.view.as_ref().map_or(0, |v| {
+        v.units
+            .iter()
+            .filter(|u| {
+                crate::units::is_building(u.kind)
+                    && u.team != side
+                    && u.team != bota_proto::Team::Neutral
+            })
+            .count()
+    });
+    report(
+        "enemy buildings seen through the fog",
+        fogged > 0 && enemy.len() == expected && barless == 0,
+        format!(
+            "{} of {expected} enemy buildings drawn, {fogged} of them fogged, {barless} without a health bar",
+            enemy.len()
+        ),
     );
     report(
         "no range rings without the key",

@@ -243,6 +243,7 @@ fn marks(
         !matches!(u.kind, UnitKind::Ward)
             && (!hidden
                 || Some(u.team) == grid.team
+                || crate::units::is_building(u.kind)
                 || grid.lit(u.pos.x.to_f32(), u.pos.y.to_f32()))
     });
     let mut used = 0;

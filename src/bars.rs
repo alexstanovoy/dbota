@@ -19,7 +19,7 @@ const FLOATERS: usize = 48;
 
 /// One unit's bar and its parts.
 #[derive(Clone, Copy)]
-struct Bar {
+pub struct Bar {
     root: Entity,
     ghost: Entity,
     fill: Entity,
@@ -31,7 +31,14 @@ struct Bar {
 
 /// The bar of every unit root.
 #[derive(Resource, Default)]
-struct Bars(HashMap<Entity, Bar>);
+pub struct Bars(HashMap<Entity, Bar>);
+
+impl Bars {
+    /// Whether a unit root has a health bar.
+    pub fn has(&self, unit: Entity) -> bool {
+        self.0.contains_key(&unit)
+    }
+}
 
 /// The pool of floating texts.
 #[derive(Resource, Default)]
