@@ -408,7 +408,13 @@ fn fog(shot: &Shot, c: &Checks, report: &mut impl FnMut(&str, bool, String)) {
         .iter()
         .map(|v| (v.len() >= 5).then(|| v.iter().sum::<f32>() / v.len() as f32))
         .collect();
-    let (Some(lo), Some(hi)) = (profile[0], profile[10]) else {
+    // The levels either side, each the mean of the cells well off the
+    // border, so the ground's own shading does not move them.
+    let level = |range: std::ops::Range<usize>| -> Option<f32> {
+        let v: Vec<f32> = profile[range].iter().flatten().copied().collect();
+        (!v.is_empty()).then(|| v.iter().sum::<f32>() / v.len() as f32)
+    };
+    let (Some(lo), Some(hi)) = (level(0..3), level(7..11)) else {
         report("fog border", false, "no profile".into());
         return;
     };
