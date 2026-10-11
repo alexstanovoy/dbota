@@ -6,7 +6,9 @@
 use std::f32::consts::TAU;
 
 use bevy::prelude::*;
-use bota_client_core::{App as Core, BAG_SLOTS, INVENTORY_SLOTS, Look, ability_look, item_look};
+use bota_client_core::{
+    App as Core, BAG_SLOTS, INVENTORY_SLOTS, Look, TOWN_PORTAL_SLOT, ability_look, item_look,
+};
 use bota_proto::{AbilityView, Attribute, ItemView, Kit, PlayerView, Team, UnitKind, UnitView};
 
 use crate::config::{Action, Settings, key_name};
@@ -18,13 +20,16 @@ use crate::ui::{self, Fonts};
 const ABILITY: f32 = 58.0;
 /// The size of an item box.
 const ITEM: (f32, f32) = (60.0, 44.0);
+/// The height of a backpack box, and of the gap under the inventory rows that
+/// the town portal slot keeps clear of.
+const BACKPACK_ROW: f32 = 26.0;
 
 /// An ability box of the bottom panel, by slot.
 #[derive(Component, Clone, Copy)]
 pub struct AbilityBox(pub u8);
 
 /// An item box of the bottom panel or the stash, by slot: bag below
-/// [`BAG_SLOTS`], stash from it.
+/// [`BAG_SLOTS`], stash from it, then the town portal slot.
 #[derive(Component, Clone, Copy)]
 pub struct ItemBox(pub u8);
 
@@ -442,7 +447,7 @@ fn spawn_items(commands: &mut Commands, fonts: &Fonts, bar: Entity) {
         .id();
     for slot in 0..BAG_SLOTS {
         let size = if slot >= INVENTORY_SLOTS {
-            (ITEM.0, 26.0)
+            (ITEM.0, BACKPACK_ROW)
         } else {
             ITEM
         };
@@ -455,6 +460,7 @@ fn spawn_items(commands: &mut Commands, fonts: &Fonts, bar: Entity) {
             slot < INVENTORY_SLOTS,
         );
     }
+    spawn_town_portal(commands, fonts, bar);
     let stash = commands
         .spawn((
             Node {
@@ -478,6 +484,29 @@ fn spawn_items(commands: &mut Commands, fonts: &Fonts, bar: Entity) {
     for slot in BAG_SLOTS..BAG_SLOTS + 6 {
         spawn_slot_box(commands, fonts, stash, (ITEM.0, 30.0), ItemBox(slot), false);
     }
+}
+
+/// Dota's own slot for scrolls, a small square at the right of the inventory
+/// rows.
+fn spawn_town_portal(commands: &mut Commands, fonts: &Fonts, bar: Entity) {
+    let column = commands
+        .spawn((
+            Node {
+                height: px(2.0 * ITEM.1 + 5.0),
+                margin: UiRect::bottom(px(BACKPACK_ROW + 5.0)),
+                ..default()
+            },
+            ChildOf(bar),
+        ))
+        .id();
+    spawn_slot_box(
+        commands,
+        fonts,
+        column,
+        (ITEM.1, ITEM.1),
+        ItemBox(TOWN_PORTAL_SLOT),
+        true,
+    );
 }
 
 /// The stash strip, shown while it holds anything or at home.
@@ -1207,7 +1236,12 @@ fn item_face(
     kit: Option<&Kit>,
     slot: u8,
 ) -> Option<SlotFace> {
-    let item: ItemView = if slot >= BAG_SLOTS {
+    let item: ItemView = if slot == TOWN_PORTAL_SLOT {
+        match kit {
+            Some(kit) => kit.town_portal?,
+            None => unit?.town_portal?,
+        }
+    } else if slot >= BAG_SLOTS {
         let view = core.view.as_ref()?;
         let p = view.players.iter().find(|p| Some(p.slot) == core.my_slot)?;
         (*p.stash.as_ref()?.get(usize::from(slot - BAG_SLOTS))?)?
@@ -1236,10 +1270,9 @@ fn item_face(
                 item.cooldown_left,
             )
         }),
-        key: if slot < INVENTORY_SLOTS && !look.passive {
-            key_name(settings.key(Action::Item(slot))).to_string()
-        } else {
-            String::new()
+        key: match item_action(slot) {
+            Some(action) if !look.passive => key_name(settings.key(action)).to_string(),
+            _ => String::new(),
         },
         cost: String::new(),
         pips: (0, 0),
@@ -1256,6 +1289,15 @@ fn item_face(
             Color::srgb(0.2, 0.22, 0.27)
         },
     })
+}
+
+/// The action whose key uses an item slot, if the slot has one.
+fn item_action(slot: u8) -> Option<Action> {
+    match slot {
+        TOWN_PORTAL_SLOT => Some(Action::TownPortal),
+        _ if slot < INVENTORY_SLOTS => Some(Action::Item(slot)),
+        _ => None,
+    }
 }
 
 /// Fills every slot box with what is in it.

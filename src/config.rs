@@ -20,6 +20,8 @@ pub enum Action {
     Ultimate,
     /// Uses one of the six inventory slots, `0..6`.
     Item(u8),
+    /// Uses the town portal slot beside the inventory.
+    TownPortal,
     /// Opens and closes the shop.
     Shop,
     /// Picks one's own hero; twice pins the camera to it.
@@ -43,7 +45,7 @@ pub enum Action {
 }
 
 /// Every action with its name in the file and its key out of the box.
-pub const BINDINGS: [(Action, &str, KeyCode); 25] = [
+pub const BINDINGS: [(Action, &str, KeyCode); 26] = [
     (Action::AttackMove, "attack_move", KeyCode::KeyA),
     (Action::Stop, "stop", KeyCode::KeyS),
     (Action::Hold, "hold", KeyCode::KeyH),
@@ -59,6 +61,7 @@ pub const BINDINGS: [(Action, &str, KeyCode); 25] = [
     (Action::Item(3), "item_4", KeyCode::Digit4),
     (Action::Item(4), "item_5", KeyCode::Digit5),
     (Action::Item(5), "item_6", KeyCode::Digit6),
+    (Action::TownPortal, "town_portal", KeyCode::KeyT),
     (Action::Shop, "shop", KeyCode::KeyB),
     (Action::SelectHero, "select_hero", KeyCode::F1),
     (Action::SelectCourier, "select_courier", KeyCode::F2),
@@ -355,4 +358,17 @@ pub fn key_name(key: KeyCode) -> &'static str {
         .iter()
         .find(|(_, named)| *named == key)
         .map_or("?", |(name, _)| name)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn no_two_default_actions_share_a_key() {
+        for (at, (_, name, key)) in BINDINGS.iter().enumerate() {
+            let twin = BINDINGS[at + 1..].iter().find(|(_, _, other)| other == key);
+            assert!(twin.is_none(), "{name} and {:?} share {key:?}", twin);
+        }
+    }
 }

@@ -26,6 +26,8 @@ pub struct Bar {
     mana: Option<Entity>,
     level: Option<Entity>,
     name: Option<Entity>,
+    /// The well and the fill of a hero's teleport channel.
+    channel: Option<(Entity, Entity)>,
     threat: Entity,
 }
 
@@ -158,6 +160,24 @@ fn spawn_bar(commands: &mut Commands, layer: Entity, fonts: &Fonts, kind: UnitKi
             ))
             .id()
     });
+    let channel = hero.then(|| {
+        let well = commands
+            .spawn((
+                ui::absolute(0.0, h + 6.0, w, 4.0),
+                BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.85)),
+                Visibility::Hidden,
+                ChildOf(root),
+            ))
+            .id();
+        let fill = commands
+            .spawn((
+                ui::absolute(0.0, 0.0, 0.0, 4.0),
+                BackgroundColor(ui::GOLDEN),
+                ChildOf(well),
+            ))
+            .id();
+        (well, fill)
+    });
     let level = hero.then(|| {
         let plate = commands
             .spawn((
@@ -202,6 +222,7 @@ fn spawn_bar(commands: &mut Commands, layer: Entity, fonts: &Fonts, kind: UnitKi
         mana,
         level,
         name,
+        channel,
         threat,
     }
 }
@@ -291,6 +312,17 @@ fn bars(
         if let Some(mana) = bar.mana {
             let m = live.mana.max(0) as f32 / live.max_mana.max(1) as f32;
             set(&mut nodes, mana, |n| n.width = px(w * m), None, None);
+        }
+        if let Some((well, fill)) = bar.channel {
+            let share = crate::teleport::channel_share(view, live.id);
+            set(&mut nodes, well, |_| {}, Some(share.is_some()), None);
+            set(
+                &mut nodes,
+                fill,
+                |n| n.width = px(w * share.unwrap_or(0.0)),
+                None,
+                None,
+            );
         }
         if let Some(level) = bar.level
             && let Ok(mut t) = texts.get_mut(level)

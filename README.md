@@ -70,6 +70,7 @@ On the hero screen click a portrait, then click Ready. The game starts once both
 | `R` | Requiem of Souls |
 | `D` `F` | other ability slots |
 | `1` … `6` | use the item in that slot |
+| `T` | town portal scroll: take it up and click a building to teleport near it; `T` again goes to the fountain. Drag a scroll stack from the stash onto the small slot beside the inventory. Every teleport under way is ringed on the map and the minimap, for both sides |
 | `B` | shop (right click an item: buy; drag an item onto the shop: sell) |
 | `F5` | quick-buy |
 | `F2` / `F3` | select courier (its bag shows in the panel) / courier delivers |
