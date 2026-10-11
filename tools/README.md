@@ -33,12 +33,13 @@ malformed output.
 | `verify_assets.py` | checks glTF meshes/skins/clips/textures, wearable joints, PNG sizes, WAV format |
 | `inspect_gltf.py` | prints a model's meshes, skins and animations (`--json` for machines) |
 
-## What the cache holds (480 MB, 124 MB of it the CLI)
+## What the cache holds (489 MB, 124 MB of it the CLI)
 
 | path | content | size |
 | --- | --- | --- |
 | `models/hero/nevermore/` | Shadow Fiend, 17 clips, plus `nevermore_{head,shoulders,arms}/` default wearables | 16 MB |
-| `models/creep/` | Radiant/Dire melee, ranged, flagbearer (6 clips each) | 37 MB |
+| `models/hero/pudge/` | Pudge, 18 clips, plus `pudge_{weapon,back,offhand,shoulder,arms,head,belt}/` default wearables | 4 MB |
+| `models/creep/` | Radiant/Dire melee, ranged, flagbearer (6 clips each); siege (3 clips) and its `*_destruction` break-apart model | 42 MB |
 | `models/tower/` | Radiant (`radiant_tower002` + base) and Dire (`dire_tower002`) tier-1 towers | 4 MB |
 | `models/tree/` | the 9 tree models the map uses around mid (standing mesh + stump) | 8 MB |
 | `models/building/` | ancients, melee/ranged barracks (static, plus `*_destruction` collapse models), fountains | 70 MB |
@@ -60,10 +61,13 @@ Bevy's `wav` feature plays both.
   `model_scale=` in the manifest is the unit's Dota `ModelScale`.
 - **Clips.** `clip` lines map logical clips (`idle`, `run`, `attack`, `cast1..3`, `requiem`,
   `death`, ...) to glTF animation names and durations; `point=` is the Dota attack/cast point in
-  seconds at base speed (SF attack 0.5, raze 0.55, requiem 1.67; creeps 0.467 melee / 0.5 ranged;
-  towers 0.6). Raze 1/2/3 use `cast1_shadowraze_a/b/c` (`ACT_DOTA_RAZE_1/2/3`). Tower "attack"
-  clips are single-frame poses.
-- **Wearables.** Shadow Fiend's default head, shoulders and arms are separate skinned meshes. Spawn
+  seconds at base speed (SF attack 0.5, raze 0.55, requiem 1.67; Pudge attack 0.5, hook and
+  dismember 0.3, rot 0; creeps 0.467 melee / 0.5 ranged / 0.7 siege; towers 0.6). Raze 1/2/3 use
+  `cast1_shadowraze_a/b/c` (`ACT_DOTA_RAZE_1/2/3`). Pudge: `cast1` Meat Hook throw, `hook_end` while
+  the hook returns, `cast2` Rot, `dismember` then the looping `dismember_channel`. Siege creeps have
+  only idle/run/attack; they die by swapping in `creep.<side>.siege.destruction` (play `death` once).
+  Tower "attack" clips are single-frame poses.
+- **Wearables.** Shadow Fiend's default head, shoulders and arms (and Pudge's seven default items) are separate skinned meshes. Spawn
   them alongside the hero and point their skin joints at the hero's joint entities with the same
   name, **ignoring case** (`root0_jnt` vs `Root0_JNT`); `verify_assets.py` checks every wearable joint
   exists in the hero skeleton.

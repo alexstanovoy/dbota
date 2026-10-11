@@ -47,6 +47,41 @@ model hero.nevermore.head models/heroes/shadow_fiend/shadow_fiend_head.vmdl_c mo
 model hero.nevermore.shoulders models/heroes/shadow_fiend/shadow_fiend_shoulders.vmdl_c models/hero/nevermore_shoulders/nevermore_shoulders.glb attach=hero.nevermore.model
 model hero.nevermore.arms models/heroes/shadow_fiend/shadow_fiend_arms.vmdl_c models/hero/nevermore_arms/nevermore_arms.glb attach=hero.nevermore.model
 
+# --- Pudge (npc_dota_hero_pudge: BAT 1.7, attack point 0.5 s; Meat Hook and Dismember cast point 0.3 s, Rot 0)
+# Ability clips follow Shadow Fiend's: cast1/cast2 for abilities 1/2 (Meat Hook ACT_DOTA_OVERRIDE_ABILITY_1, Rot
+# ACT_DOTA_CAST_ABILITY_ROT), the ultimate by name (Dismember ACT_DOTA_CAST_ABILITY_4, then its channel loop
+# ACT_DOTA_CHANNEL_ABILITY_4); hook_end is ACT_DOTA_CHANNEL_ABILITY_1, played while the hook comes back.
+# meshes= drops hitbox_fix, a 2-triangle helper quad.
+model hero.pudge.model models/heroes/pudge/pudge.vmdl_c models/hero/pudge/pudge.glb anims=pudge_idle_anim,pudge_walkN_anim,pudge_attack1_anim,pudge_attack2_anim,pudge_meathook_start_anim,pudge_meathook_end,pudge_rot,pudge_dismember_start,pudge_dismember_mid_anim,pudge_death,pudge_idle_alt_anim,pudge_idle_injured,pudge_run_haste_anim,pudge_walkN_injured,pudge_stun_anim,pudge_flail_anim,teleport_anim,pudge_spawn_anim meshes=head,upper_body,lower_body model_scale=0.98
+clip hero.pudge.model idle pudge_idle_anim 2.000
+clip hero.pudge.model run pudge_walkN_anim 1.000
+clip hero.pudge.model attack pudge_attack1_anim 1.333 point=0.5
+clip hero.pudge.model attack2 pudge_attack2_anim 1.333 point=0.5
+clip hero.pudge.model cast1 pudge_meathook_start_anim 0.900 point=0.3
+clip hero.pudge.model hook_end pudge_meathook_end 0.600
+clip hero.pudge.model cast2 pudge_rot 1.000 point=0
+clip hero.pudge.model dismember pudge_dismember_start 0.300 point=0.3
+clip hero.pudge.model dismember_channel pudge_dismember_mid_anim 2.333
+clip hero.pudge.model death pudge_death 1.800
+clip hero.pudge.model idle_rare pudge_idle_alt_anim 2.000
+clip hero.pudge.model idle_injured pudge_idle_injured 5.167
+clip hero.pudge.model run_haste pudge_run_haste_anim 0.800
+clip hero.pudge.model run_injured pudge_walkN_injured 1.250
+clip hero.pudge.model stun pudge_stun_anim 2.000
+clip hero.pudge.model flail pudge_flail_anim 1.600
+clip hero.pudge.model teleport teleport_anim 2.933
+clip hero.pudge.model spawn pudge_spawn_anim 1.333
+# Default wearables (items_game.txt default_item for npc_dota_hero_pudge, named by item slot: 47 weapon
+# (Rusty Meathook), 258 back (rings and apron), 259 offhand_weapon (cleaver), 260 shoulder (left arm),
+# 261 arms (bracer), 262 head (toupee), 470 belt)
+model hero.pudge.weapon models/heroes/pudge/righthook.vmdl_c models/hero/pudge_weapon/pudge_weapon.glb attach=hero.pudge.model
+model hero.pudge.back models/heroes/pudge/back.vmdl_c models/hero/pudge_back/pudge_back.glb attach=hero.pudge.model
+model hero.pudge.offhand models/heroes/pudge/leftweapon.vmdl_c models/hero/pudge_offhand/pudge_offhand.glb attach=hero.pudge.model
+model hero.pudge.shoulder models/heroes/pudge/leftarm.vmdl_c models/hero/pudge_shoulder/pudge_shoulder.glb attach=hero.pudge.model
+model hero.pudge.arms models/heroes/pudge/bracer.vmdl_c models/hero/pudge_arms/pudge_arms.glb attach=hero.pudge.model
+model hero.pudge.head models/heroes/pudge/hair.vmdl_c models/hero/pudge_head/pudge_head.glb attach=hero.pudge.model
+model hero.pudge.belt models/heroes/pudge/belt.vmdl_c models/hero/pudge_belt/pudge_belt.glb attach=hero.pudge.model
+
 # --- Lane creeps (npc_units.txt; attack rate 1.0; attack point melee 0.467 s, ranged 0.5 s)
 # The flagbearers are the melee meshes with their own animations; Dota adds the banner at runtime on
 # attachment attach_banner (bone Root_0, offset 0.898 0.915 0.089 in, angles -12.6 10.1 1.5); it is not exported.
@@ -92,6 +127,21 @@ clip creep.dire.ranged.model attack attack 0.967 point=0.5
 clip creep.dire.ranged.model attack2 attack2 0.967 point=0.5
 clip creep.dire.ranged.model death death 1.300
 clip creep.dire.ranged.model stun stun 1.967
+
+# Siege creeps (npc_dota_{goodguys,badguys}_siege: attack rate 3.0, attack point 0.7 s). Their models have no
+# death or stun animation: Dota swaps in a baked "deathsim" break-apart model (*.destruction, play death once, hide).
+model creep.radiant.siege.model models/creeps/lane_creeps/creep_good_siege/creep_good_siege.vmdl_c models/creep/radiant_siege/radiant_siege.glb anims=creep_good_siege_idle,creep_good_siege_run,creep_good_siege_attack model_scale=0.65
+clip creep.radiant.siege.model idle creep_good_siege_idle 1.333
+clip creep.radiant.siege.model run creep_good_siege_run 1.333
+clip creep.radiant.siege.model attack creep_good_siege_attack 2.333 point=0.7
+model creep.radiant.siege.destruction models/creeps/lane_creeps/creep_good_siege/creep_good_siege_new_deathsim.vmdl_c models/creep/radiant_siege_destruction/radiant_siege_destruction.glb anims=anim_1 model_scale=0.65
+clip creep.radiant.siege.destruction death anim_1 4.000
+model creep.dire.siege.model models/creeps/lane_creeps/creep_bad_siege/creep_bad_siege.vmdl_c models/creep/dire_siege/dire_siege.glb anims=creep_bad_siege_idle,creep_bad_siege_run,creep_bad_siege_attack model_scale=0.8
+clip creep.dire.siege.model idle creep_bad_siege_idle 1.600
+clip creep.dire.siege.model run creep_bad_siege_run 1.600
+clip creep.dire.siege.model attack creep_bad_siege_attack 2.333 point=0.7
+model creep.dire.siege.destruction models/creeps/lane_creeps/creep_bad_siege/creep_bad_siege_deathsim.vmdl_c models/creep/dire_siege_destruction/dire_siege_destruction.glb anims=deathsim1 model_scale=0.8
+clip creep.dire.siege.destruction death deathsim1 6.633
 
 # --- Tier-1 towers: the models the default map places (npc_units.txt names tower_good.vmdl, the map overrides it).
 # Attack rate 0.9, attack point 0.6 s. Their attack poses are single frames (duration 0).
