@@ -163,7 +163,7 @@ fn drill(
             let creep = view
                 .units
                 .iter()
-                .filter(|u| u.team != hero.team && bota_client_core::is_creep(u.kind))
+                .filter(|u| u.team != hero.team && bota_core::kind_def(u.kind).creep)
                 .map(|u| (u.pos.x.to_f32(), u.pos.y.to_f32()))
                 .filter(|(cx, cy)| (cx - x).hypot(cy - y) < 850.0)
                 .min_by_key(|(cx, cy)| ((cx - x).hypot(cy - y)) as i64);
