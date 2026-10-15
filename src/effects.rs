@@ -7,8 +7,8 @@ use bevy::{
     light::{NotShadowCaster, NotShadowReceiver},
     prelude::*,
 };
-use bota_client_core::{RAZE_NEAR, REQUIEM, flights};
-use bota_proto::{EntityId, Team};
+use bota_client_core::flights;
+use bota_proto::{AbilityId, EntityId, Team};
 
 use crate::manifest::Manifest;
 use crate::map::Ground;
@@ -32,10 +32,9 @@ struct Burst {
     size: f32,
 }
 
-/// The ability id of a Blood Grenade in flight.
-const GRENADE: u16 = 16;
-/// A grenade's burst against a raze's, 300 wide to 250.
-const GRENADE_SIZE: f32 = 1.2;
+/// A grenade's burst against a raze's.
+const GRENADE_SIZE: f32 =
+    bota_core::rules::GRENADE_RADIUS as f32 / bota_core::rules::RAZE_RADIUS as f32;
 
 /// The shared meshes and materials of the effects.
 #[derive(Resource)]
@@ -116,9 +115,9 @@ fn missiles(
     let shown = flights(view, core.prev_view(), core.smooth.alpha());
     let mut alive = Vec::with_capacity(shown.len());
     for f in &shown {
-        let ability = f.missile.ability.map(|a| a.0);
-        let soul = ability == Some(REQUIEM);
-        let grenade = ability == Some(GRENADE);
+        let ability = f.missile.ability;
+        let soul = ability == Some(AbilityId::REQUIEM);
+        let grenade = ability == Some(AbilityId::THROW_GRENADE);
         if ability.is_some() && !soul && !grenade {
             continue;
         }
@@ -213,10 +212,14 @@ fn bursts(
         return;
     };
     for p in &view.projectiles {
-        let Some(id) = p.ability.map(|a| a.0) else {
+        let Some(id) = p.ability else {
             continue;
         };
-        if !(RAZE_NEAR..RAZE_NEAR + 3).contains(&id) || flying.burst.contains(&p.id) {
+        if !matches!(
+            id,
+            AbilityId::RAZE_NEAR | AbilityId::RAZE_MID | AbilityId::RAZE_FAR
+        ) || flying.burst.contains(&p.id)
+        {
             continue;
         }
         flying.burst.push(p.id);

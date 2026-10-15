@@ -4,15 +4,13 @@
 //! idling, running and the follow-through keep the clip's own pace.
 
 use bevy::prelude::*;
-use bota_client_core::{App as Core, RAZE_NEAR, REQUIEM};
-use bota_proto::{AbilityId, Order, UnitKind, UnitView};
+use bota_client_core::App as Core;
+use bota_proto::{AbilityId, UnitKind, UnitView};
 
 use crate::coords::sim_facing_to_rotation;
 use crate::session::Session;
 use crate::units::{Dying, ModelBank, ModelOf, Rig, Unit};
 
-/// Pudge's Dismember, by ability id.
-const PUDGE_DISMEMBER: u16 = 3;
 /// Seconds a cast clip is stretched over at the least.
 const MIN_CAST_POINT: f32 = 0.05;
 /// World units a second at which a run clip plays at its own pace.
@@ -191,25 +189,17 @@ fn choose(
 /// in seconds, from the latest order its seat is known to have given. A
 /// cast whose order is not known shows the first raze.
 fn cast_clip(core: &Core, u: &UnitView) -> (&'static str, f32) {
-    let ability = u.owner.and_then(|owner| {
-        core.shown_orders
-            .iter()
-            .find(|s| s.slot == owner && s.unit.is_none_or(|id| id == u.id))
-            .and_then(|s| match s.order {
-                Order::Cast { slot, .. } => u.abilities.get(usize::from(slot.0)).map(|a| a.id.0),
-                _ => None,
-            })
-    });
+    let ability = crate::overlay::cast_ability(core, u);
     // A cast whose order is unknown shows the first raze.
-    let id = ability.unwrap_or(RAZE_NEAR);
+    let id = ability.unwrap_or(AbilityId::RAZE_NEAR);
     let name = match id {
-        id if id == RAZE_NEAR + 1 => "cast2",
-        id if id == RAZE_NEAR + 2 => "cast3",
-        REQUIEM => "requiem",
-        PUDGE_DISMEMBER => "dismember",
+        AbilityId::RAZE_MID => "cast2",
+        AbilityId::RAZE_FAR => "cast3",
+        AbilityId::REQUIEM => "requiem",
+        AbilityId::DISMEMBER => "dismember",
         _ => "cast1",
     };
-    let point = core.cast_point_secs(u, AbilityId(id)).unwrap_or(0.0);
+    let point = core.cast_point_secs(u, id).unwrap_or(0.0);
     // A clip is stretched over the point; one of no length plays at its own pace.
     (name, point.max(MIN_CAST_POINT))
 }
