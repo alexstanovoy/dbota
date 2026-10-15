@@ -1154,10 +1154,9 @@ fn hint(core: &Core, unit: Option<&UnitView>, settings: &Settings) -> String {
     let Some(u) = unit.filter(|u| Some(u.id) == core.my_hero()) else {
         return String::new();
     };
-    let spent: u8 = u.abilities.iter().map(|a| a.level).sum();
-    if u.level > spent {
+    if u.abilities.iter().any(|a| a.can_level) {
         let key = key_name(settings.key(Action::Ability(0)));
-        format!("+{} ability point  (Ctrl+{key}...)", u.level - spent)
+        format!("+ ability point  (Ctrl+{key}...)")
     } else {
         String::new()
     }
