@@ -6,7 +6,7 @@
 //! the tree of whichever hero the bottom panel is about, an enemy's too.
 
 use bevy::prelude::*;
-use bota_client_core::{TALENT_LEVELS, talents};
+use bota_client_core::{has_talents, talent_levels, talents};
 use bota_proto::TalentSlot;
 
 use crate::session::Session;
@@ -213,7 +213,7 @@ pub fn spawn_button(commands: &mut Commands, fonts: &Fonts, row: Entity, column:
                     BackgroundColor(ui::PANEL_DEEP),
                     children![(
                         ui::text(
-                            TALENT_LEVELS[usize::from(tier)].to_string(),
+                            talent_levels(TalentSlot(2 * tier)).0.to_string(),
                             &fonts.bold,
                             14.0,
                             OPEN
@@ -290,8 +290,7 @@ fn toggle(
     let has_tree = crate::hud::subject(&session.0)
         .1
         .and_then(|u| u.hero)
-        .and_then(|h| talents(h.0))
-        .is_some();
+        .is_some_and(|h| has_talents(h.0));
     let open = has_tree && (*pinned || hovered.iter().any(|i| *i != Interaction::None));
     for mut v in &mut panel {
         let want = if open {
@@ -365,7 +364,7 @@ fn show(
     let (Some(tree), Some(unit)) = (tree, unit) else {
         return;
     };
-    let open = |slot: u8| unit.level >= TALENT_LEVELS[usize::from(slot / 2)];
+    let open = |slot: u8| unit.level >= talent_levels(TalentSlot(slot)).0;
     for (pip, mut bg) in &mut pips {
         let c = if learned(pip.0) {
             GOLD
@@ -407,9 +406,9 @@ fn show(
         }
     }
     for (cell, mut text, mut color) in &mut texts {
-        let name = tree[usize::from(cell.0)].name;
-        if text.0 != name {
-            text.0 = name.to_string();
+        let name = &tree[usize::from(cell.0)].name;
+        if text.0 != *name {
+            text.0.clone_from(name);
         }
         color.0 = if learned(cell.0) {
             Color::WHITE

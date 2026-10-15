@@ -2408,6 +2408,7 @@ version = "0.1.0"
 dependencies = [
  "bevy",
  "bota_client_core",
+ "bota_core",
  "bota_proto",
  "clap",
  "serde_json",
