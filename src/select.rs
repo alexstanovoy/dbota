@@ -157,7 +157,7 @@ fn spawn(
 
 /// The screen while the match has not begun.
 fn show(session: NonSend<Session>, mut screen: Single<&mut Visibility, With<Screen>>) {
-    let want = if session.0.phase == Phase::Lobby && session.0.view.is_none() {
+    let want = if session.0.phase == Phase::Lobby && session.0.view().is_none() {
         Visibility::Inherited
     } else {
         Visibility::Hidden

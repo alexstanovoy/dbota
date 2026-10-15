@@ -111,7 +111,7 @@ fn draw(
     mut rings: ResMut<RangeRings>,
 ) {
     let core = &session.0;
-    let Some(view) = &core.view else {
+    let Some(view) = core.view() else {
         return;
     };
     let ctx = Ctx {
@@ -150,7 +150,7 @@ fn picks(gizmos: &mut Gizmos, ctx: &Ctx<'_, '_, '_>) {
     // A ring at every hero's feet in its side's colour, as Dota marks them,
     // so a dark model on dark ground still reads; one's own is brightest.
     let side = core.fog_team().or_else(|| core.my_team());
-    if let Some(view) = &core.view {
+    if let Some(view) = core.view() {
         for hero in view.units.iter().filter(|u| u.kind == UnitKind::Hero) {
             let Some(body) = ctx.at(hero.id) else {
                 continue;
@@ -220,7 +220,7 @@ pub fn raze_spot(x: f32, y: f32, facing: f32, which: usize) -> (f32, f32) {
 /// The reach of every enemy tower the watched hero is near, solid when the
 /// tower is set on it.
 fn tower_rings(gizmos: &mut Gizmos, ctx: &Ctx<'_, '_, '_>, me: &UnitView) {
-    let Some(view) = &ctx.core.view else {
+    let Some(view) = ctx.core.view() else {
         return;
     };
     let Some(my_body) = ctx.at(me.id) else {
@@ -256,7 +256,7 @@ fn tower_rings(gizmos: &mut Gizmos, ctx: &Ctx<'_, '_, '_>, me: &UnitView) {
 
 /// Whether one unit is set on another, by the aggro list.
 pub fn targets(core: &Core, unit: bota_proto::EntityId, on: bota_proto::EntityId) -> bool {
-    core.view.as_ref().is_some_and(|view| {
+    core.view().is_some_and(|view| {
         view.aggro
             .binary_search_by_key(&unit, |a| a.unit)
             .ok()
@@ -267,7 +267,7 @@ pub fn targets(core: &Core, unit: bota_proto::EntityId, on: bota_proto::EntityId
 /// A line from every tower to what it is set on, red when that is the
 /// watched hero.
 fn tower_shots(gizmos: &mut Gizmos, ctx: &Ctx<'_, '_, '_>) {
-    let Some(view) = &ctx.core.view else {
+    let Some(view) = ctx.core.view() else {
         return;
     };
     let me = ctx.core.ears();
@@ -296,7 +296,7 @@ fn tower_shots(gizmos: &mut Gizmos, ctx: &Ctx<'_, '_, '_>) {
 /// a foe winds up a swing at it.
 fn aggro(gizmos: &mut Gizmos, ctx: &Ctx<'_, '_, '_>) {
     let core = ctx.core;
-    let Some(view) = &core.view else {
+    let Some(view) = core.view() else {
         return;
     };
     let Some(focus) = core.commanded().or(core.ears()) else {
@@ -334,12 +334,12 @@ fn aggro(gizmos: &mut Gizmos, ctx: &Ctx<'_, '_, '_>) {
 /// burn filling up, the requiem's reach closing in.
 fn casts(gizmos: &mut Gizmos, ctx: &Ctx<'_, '_, '_>) {
     let core = ctx.core;
-    let Some(view) = &core.view else {
+    let Some(view) = core.view() else {
         return;
     };
-    let rate = f32::from(core.tick_rate.max(1));
+    let rate = f32::from(core.tick_rate().max(1));
     for u in &view.units {
-        let Some(began) = core.derived.cast_began(u.id) else {
+        let Some(began) = core.cast_began(u.id) else {
             continue;
         };
         let Some(body) = ctx.at(u.id) else {
@@ -404,7 +404,7 @@ pub fn cast_ability(core: &Core, u: &UnitView) -> Option<u16> {
 /// A shrinking ring where each known order was aimed.
 fn orders(gizmos: &mut Gizmos, ctx: &Ctx<'_, '_, '_>) {
     let core = ctx.core;
-    let Some(view) = &core.view else {
+    let Some(view) = core.view() else {
         return;
     };
     for shown in &core.shown_orders {
@@ -464,7 +464,7 @@ fn aim(gizmos: &mut Gizmos, ctx: &Ctx<'_, '_, '_>, cursor: Option<Vec3>) {
     let within = reach <= 0.0 || caster.at.distance(Vec2::new(wx, wy)) <= reach;
     let color = if within { GOOD } else { BAD };
     if aim == Some(Aim::Unit)
-        && let Some(view) = &core.view
+        && let Some(view) = core.view()
         && let Some(mark) = unit_under_cursor(view, (wx, wy), None, true).and_then(|id| ctx.at(id))
     {
         ring(gizmos, ctx, (mark.at.x, mark.at.y), 60.0, color, false);

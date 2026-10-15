@@ -110,10 +110,10 @@ fn missiles(
     let (core, Some(art)) = (&session.0, art) else {
         return;
     };
-    let Some(view) = &core.view else {
+    let Some(view) = core.view() else {
         return;
     };
-    let shown = flights(view, core.prev_view.as_ref(), core.smooth.alpha());
+    let shown = flights(view, core.prev_view(), core.smooth.alpha());
     let mut alive = Vec::with_capacity(shown.len());
     for f in &shown {
         let ability = f.missile.ability.map(|a| a.0);
@@ -209,7 +209,7 @@ fn bursts(
     let (core, Some(art)) = (&session.0, art) else {
         return;
     };
-    let Some(view) = &core.view else {
+    let Some(view) = core.view() else {
         return;
     };
     for p in &view.projectiles {
@@ -304,7 +304,7 @@ fn level_ups(
     let (core, Some(art)) = (&session.0, art) else {
         return;
     };
-    let Some(view) = &core.view else {
+    let Some(view) = core.view() else {
         return;
     };
     for u in view

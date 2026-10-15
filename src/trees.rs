@@ -110,7 +110,7 @@ fn plant(
 ) {
     let core = &session.0;
     if *done
-        || core.trees.is_empty()
+        || core.trees().is_empty()
         || !ground.known()
         || args.without.iter().any(|w| w == "trees")
     {
@@ -125,7 +125,8 @@ fn plant(
             .push(i);
     }
     let mut names: Vec<String> = Vec::new();
-    for (index, &(x, y)) in core.trees.iter().enumerate() {
+    for (index, tree) in core.trees().iter().enumerate() {
+        let (x, y) = (tree.x.to_f32(), tree.y.to_f32());
         let (cx, cy) = ((x / 64.0) as i32, (y / 64.0) as i32);
         let near = (-1..=1)
             .flat_map(|dx| (-1..=1).map(move |dy| (cx + dx, cy + dy)))
@@ -246,12 +247,12 @@ fn rebuild(
         && ground.known()
         && forest.trees.is_empty()
         && !ready.0
-        && session.0.view.is_some()
+        && session.0.view().is_some()
     {
         // Nothing to plant: the ground alone is the scenery.
-        ready.0 = !session.0.trees.is_empty();
+        ready.0 = !session.0.trees().is_empty();
     }
-    let Some(view) = &session.0.view else {
+    let Some(view) = session.0.view() else {
         return;
     };
     if forest.trees.is_empty() || forest.kinds.iter().any(|k| k.tree.is_none()) {

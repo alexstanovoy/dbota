@@ -148,8 +148,8 @@ fn label(
 fn work_out(session: NonSend<Session>, mut grid: ResMut<FogGrid>, mut lighting: Local<Lighting>) {
     let core = &session.0;
     let team = core.fog_team();
-    let n = core.terrain_cells;
-    let Some(view) = &core.view else {
+    let n = core.terrain_cells();
+    let Some(view) = core.view() else {
         return;
     };
     // Without a side of one's own, a fogless stream (a replay, a spectator

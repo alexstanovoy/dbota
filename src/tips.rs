@@ -65,7 +65,7 @@ fn show(
     mut text: Single<&mut Text, With<TipText>>,
 ) {
     let core = &session.0;
-    let rate = u32::from(core.tick_rate.max(1));
+    let rate = u32::from(core.tick_rate().max(1));
     let unit = core
         .slot_unit()
         .or_else(|| core.ears().and_then(|id| core.known(id)).map(|(u, _)| u));

@@ -358,12 +358,11 @@ fn prices(
     }
     let core = &session.0;
     let gold = core
-        .view
-        .as_ref()
+        .view()
         .and_then(|v| v.players.iter().find(|p| Some(p.slot) == core.my_slot))
         .and_then(|p| p.gold)
         .unwrap_or(0);
-    let rate = u32::from(core.tick_rate.max(1));
+    let rate = u32::from(core.tick_rate().max(1));
     for (stock, mut text, mut color) in &mut stocks {
         let (s, c) = match core.stock_of(stock.0) {
             Some(st) if st.left > 0 => (st.left.to_string(), ui::INK),
@@ -512,8 +511,7 @@ fn texts(
 ) {
     let core = &session.0;
     let me = core
-        .view
-        .as_ref()
+        .view()
         .and_then(|v| v.players.iter().find(|p| Some(p.slot) == core.my_slot));
     let quick = core
         .quick_buy
@@ -533,8 +531,7 @@ fn texts(
                 } else {
                     core.panel_slot()
                 };
-                core.view
-                    .as_ref()
+                core.view()
                     .and_then(|v| v.players.iter().find(|p| Some(p.slot) == seat))
                     .and_then(|p| p.gold)
                     .map_or("-".to_string(), |g| g.to_string())

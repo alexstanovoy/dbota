@@ -59,7 +59,7 @@ fn animate(
     mut players: Query<&mut AnimationPlayer>,
 ) {
     let core = &session.0;
-    let Some(view) = &core.view else {
+    let Some(view) = core.view() else {
         return;
     };
     let dt = time.delta_secs();
@@ -110,13 +110,13 @@ fn choose(
     dt: f32,
     clip: impl Fn(&str) -> Option<(f32, Option<f32>)>,
 ) -> Wanted {
-    let rate = f32::from(core.tick_rate.max(1));
+    let rate = f32::from(core.tick_rate().max(1));
     let sub = core.smooth.alpha();
-    if let Some(began) = core.derived.cast_began(u.id) {
+    if let Some(began) = core.cast_began(u.id) {
         let (name, cast_point) = cast_clip(core, u);
         if let Some((duration, point)) = clip(name) {
             let elapsed =
-                (core.view.as_ref().map_or(began, |v| v.tick) - began) as f32 / rate + sub / rate;
+                (core.view().map_or(began, |v| v.tick) - began) as f32 / rate + sub / rate;
             let point = point.unwrap_or(duration * 0.5);
             pose.since_strike = None;
             return Wanted {
@@ -125,7 +125,7 @@ fn choose(
             };
         }
     }
-    let swing = core.view.as_ref().and_then(|view| {
+    let swing = core.view().and_then(|view| {
         view.aggro
             .binary_search_by_key(&u.id, |a| a.unit)
             .ok()
@@ -142,7 +142,7 @@ fn choose(
         "attack"
     };
     if let (Some(swing), Some((_, point))) = (swing, clip(attack)) {
-        let tick = core.view.as_ref().map_or(0, |v| v.tick);
+        let tick = core.view().map_or(0, |v| v.tick);
         let due = tick + swing.strike_in;
         if pose.swing_due.is_some_and(|d| d.abs_diff(due) > 1) {
             pose.swings += 1;

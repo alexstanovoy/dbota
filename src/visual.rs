@@ -171,7 +171,7 @@ pub fn run(image: &Image, c: &Checks) -> bool {
         .iter()
         .filter(|u| crate::units::is_building(u.kind) && u.team != bota_proto::Team::Neutral)
         .filter_map(|u| {
-            let view = c.session.0.view.as_ref()?;
+            let view = c.session.0.view()?;
             let wire = view.units.iter().find(|w| w.id == u.id)?;
             let want = c.yaws.facing(wire, u.at);
             match want {
@@ -223,7 +223,7 @@ pub fn run(image: &Image, c: &Checks) -> bool {
             c.units.get(*e).is_ok_and(|u| u.kind != UnitKind::Fountain) && !c.bars.has(*e)
         })
         .count();
-    let expected = c.session.0.view.as_ref().map_or(0, |v| {
+    let expected = c.session.0.view().map_or(0, |v| {
         v.units
             .iter()
             .filter(|u| {
@@ -243,7 +243,7 @@ pub fn run(image: &Image, c: &Checks) -> bool {
     );
     // A side sees by its own units alone: the enemy's fountain, always
     // drawn, lights nothing for the side watching.
-    if let (Some(side), Some(view)) = (c.fog.team, c.session.0.view.as_ref()) {
+    if let (Some(side), Some(view)) = (c.fog.team, c.session.0.view()) {
         let enemy_home = view.units.iter().find(|u| {
             u.kind == UnitKind::Fountain && u.team != side && u.team != bota_proto::Team::Neutral
         });
@@ -328,8 +328,7 @@ fn fog(shot: &Shot, c: &Checks, report: &mut impl FnMut(&str, bool, String)) {
     let units: Vec<Vec2> = c
         .session
         .0
-        .view
-        .as_ref()
+        .view()
         .map(|v| {
             v.units
                 .iter()

@@ -941,7 +941,7 @@ fn put(text: &mut Text, s: String) {
 
 /// The seat, unit and kit the bottom panel is about.
 pub(crate) fn subject(core: &Core) -> (Option<&PlayerView>, Option<&UnitView>, Option<&Kit>) {
-    let Some(view) = &core.view else {
+    let Some(view) = core.view() else {
         return (None, None, None);
     };
     if let Some((unit, _)) = core.selected.and_then(|id| core.known(id))
@@ -970,17 +970,17 @@ fn readouts(
     mut texts: Query<(&Readout, &mut Text)>,
 ) {
     let core = &session.0;
-    let Some(view) = &core.view else {
+    let Some(view) = core.view() else {
         return;
     };
-    let rate = u32::from(core.tick_rate.max(1));
+    let rate = u32::from(core.tick_rate().max(1));
     let (p, unit, _) = subject(core);
     let mine = core
         .panel_slot()
         .and_then(|s| view.players.iter().find(|p| p.slot == s));
     for (readout, mut text) in &mut texts {
         let s = match *readout {
-            Readout::Clock => clock(i64::from(view.tick) - i64::from(core.pregame_ticks), rate),
+            Readout::Clock => clock(i64::from(view.tick) - i64::from(core.pregame_ticks()), rate),
             Readout::Score(team) => view
                 .players
                 .iter()
@@ -1129,7 +1129,7 @@ fn notice(core: &Core, rate: u32) -> String {
     }
     let dead = core
         .my_slot
-        .and_then(|s| core.view.as_ref()?.players.iter().find(|p| p.slot == s))
+        .and_then(|s| core.view()?.players.iter().find(|p| p.slot == s))
         .filter(|p| p.unit.is_none());
     if let Some(p) = dead {
         return format!("Respawn in {}", p.respawn_left / rate + 1);
@@ -1167,7 +1167,7 @@ fn hint(core: &Core, unit: Option<&UnitView>, settings: &Settings) -> String {
 fn gauges(session: NonSend<Session>, mut gauges: Query<(&Gauge, &mut Node, &mut BackgroundColor)>) {
     let core = &session.0;
     let (_, unit, _) = subject(core);
-    let Some(view) = &core.view else {
+    let Some(view) = core.view() else {
         return;
     };
     for (gauge, mut node, mut bg) in &mut gauges {
@@ -1233,7 +1233,7 @@ fn ability_face(
     let own = unit.is_some_and(|u| core.drives(u.id))
         || (kit.is_some() && core.panel_slot() == core.my_slot);
     let aiming = own && core.aiming == Some(bota_client_core::Slot::Ability(slot));
-    let rate = u32::from(core.tick_rate.max(1));
+    let rate = u32::from(core.tick_rate().max(1));
     Some(SlotFace {
         seconds: if a.cooldown_left > 0 {
             (a.cooldown_left / rate + 1).to_string()
@@ -1282,7 +1282,7 @@ fn item_face(
             None => unit?.town_portal?,
         }
     } else if slot >= BAG_SLOTS {
-        let view = core.view.as_ref()?;
+        let view = core.view()?;
         let p = view.players.iter().find(|p| Some(p.slot) == core.my_slot)?;
         (*p.stash.as_ref()?.get(usize::from(slot - BAG_SLOTS))?)?
     } else {
@@ -1294,7 +1294,7 @@ fn item_face(
     let mana = unit.map_or(0, |u| u.mana);
     let look = item_look(Some(&item), slot, mana);
     let held = core.held_item == Some(slot);
-    let rate = u32::from(core.tick_rate.max(1));
+    let rate = u32::from(core.tick_rate().max(1));
     Some(SlotFace {
         seconds: if item.cooldown_left > 0 {
             (item.cooldown_left / rate + 1).to_string()
@@ -1558,7 +1558,7 @@ fn seats(
     mut cards: Query<(&SeatBox, &mut ImageNode, &mut BorderColor)>,
 ) {
     let core = &session.0;
-    let Some(view) = &core.view else {
+    let Some(view) = core.view() else {
         return;
     };
     for (seat, mut image, mut border) in &mut cards {

@@ -229,7 +229,7 @@ fn portals(
     args: Res<crate::Args>,
     mut humming: Local<HashMap<SlotId, Humming>>,
 ) {
-    let Some(view) = &session.0.view else {
+    let Some(view) = session.0.view() else {
         return;
     };
     let silent = settings.muted || args.mute;
@@ -302,7 +302,7 @@ fn portals(
 
 /// The shots of creeps and towers that let a missile go this tick.
 fn shots(core: &bota_client_core::App, sound: &mut impl FnMut(Kind, f32, Option<(f32, f32)>)) {
-    let (Some(view), Some(prev)) = (&core.view, &core.prev_view) else {
+    let (Some(view), Some(prev)) = (core.view(), core.prev_view()) else {
         return;
     };
     if view.tick == prev.tick || core.smooth.since > 0.0 {
