@@ -1,6 +1,6 @@
 //! dbota: a Dota-looking front end for the bota simulator, on Bevy.
 //!
-//! The game logic lives in `bota-client-core`; this crate draws it with
+//! The game logic lives in `bota_client_core`; this crate draws it with
 //! Dota's own assets from a local cache (see `tools/README.md`) or with
 //! stand-ins when the cache is missing. World mapping (see `coords`): bota
 //! (x, y) with y north maps to Bevy (x, height, -y).

@@ -1937,14 +1937,14 @@ dependencies = [
 ]
 
 [[package]]
-name = "bota-client-core"
+name = "bota_client_core"
 version = "0.1.0"
 dependencies = [
- "bota-proto",
+ "bota_proto",
 ]
 
 [[package]]
-name = "bota-proto"
+name = "bota_proto"
 version = "0.1.0"
 dependencies = [
  "postcard",
@@ -2399,8 +2399,8 @@ name = "dbota"
 version = "0.1.0"
 dependencies = [
  "bevy",
- "bota-client-core",
- "bota-proto",
+ "bota_client_core",
+ "bota_proto",
  "clap",
  "serde_json",
 ]

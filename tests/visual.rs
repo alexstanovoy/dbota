@@ -1,6 +1,6 @@
 //! The picture checks of `tools/visual_check.sh`: ignored by default, as
-//! they need a display, the Dota asset cache and bota next to dbota. Run
-//! with `cargo test --release -- --ignored`.
+//! they need a display, the Dota asset cache and a recorded match. Run
+//! with `VISUAL_REPLAY=REPLAY.brp cargo test --release -- --ignored`.
 
 #[test]
 #[ignore]
