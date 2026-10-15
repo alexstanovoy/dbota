@@ -6,7 +6,7 @@ use std::f32::consts::TAU;
 
 use bevy::{gizmos::config::GizmoConfigStore, prelude::*};
 use bota_client_core::{App as Core, RAZE_NEAR, REQUIEM, unit_under_cursor};
-use bota_proto::{Aim, Order, Target, Team, UnitKind, UnitView};
+use bota_proto::{AbilityId, Aim, Order, Target, Team, UnitKind, UnitView};
 
 use crate::camera::CursorGround;
 use crate::config::{Action, Settings};
@@ -18,10 +18,6 @@ use crate::units::{Unit, UnitIndex};
 pub const RAZE_REACH: [f32; 3] = [200.0, 450.0, 700.0];
 /// How wide a raze burns, in world units.
 pub const RAZE_RADIUS: f32 = 250.0;
-/// Seconds from a raze order to its burst.
-const RAZE_CAST_POINT: f32 = 0.55;
-/// Seconds from a requiem order to its release.
-const REQUIEM_CAST_POINT: f32 = 1.67;
 /// How far a requiem's lines fly, in world units.
 const REQUIEM_REACH: f32 = 1000.0;
 /// World units past its reach within which an enemy tower's ring shows.
@@ -346,9 +342,14 @@ fn casts(gizmos: &mut Gizmos, ctx: &Ctx<'_, '_, '_>) {
             continue;
         };
         let elapsed = (view.tick.saturating_sub(began) as f32 + core.smooth.alpha()) / rate;
-        match cast_ability(core, u) {
+        let ability = cast_ability(core, u);
+        let point = ability
+            .and_then(|id| core.cast_point_secs(u, AbilityId(id)))
+            .unwrap_or(0.0)
+            .max(0.001);
+        match ability {
             Some(id) if (RAZE_NEAR..RAZE_NEAR + 3).contains(&id) => {
-                let k = (elapsed / RAZE_CAST_POINT).clamp(0.0, 1.0);
+                let k = (elapsed / point).clamp(0.0, 1.0);
                 let spot = raze_spot(
                     body.at.x,
                     body.at.y,
@@ -370,7 +371,7 @@ fn casts(gizmos: &mut Gizmos, ctx: &Ctx<'_, '_, '_>) {
                 }
             }
             Some(REQUIEM) => {
-                let k = (elapsed / REQUIEM_CAST_POINT).clamp(0.0, 1.0);
+                let k = (elapsed / point).clamp(0.0, 1.0);
                 let at = (body.at.x, body.at.y);
                 ring(gizmos, ctx, at, REQUIEM_REACH, SOUL_VIOLET, true);
                 ring(

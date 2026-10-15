@@ -5,19 +5,16 @@
 
 use bevy::prelude::*;
 use bota_client_core::{App as Core, RAZE_NEAR, REQUIEM};
-use bota_proto::{Order, UnitKind, UnitView};
+use bota_proto::{AbilityId, Order, UnitKind, UnitView};
 
 use crate::coords::sim_facing_to_rotation;
 use crate::session::Session;
 use crate::units::{Dying, ModelBank, ModelOf, Rig, Unit};
 
-/// Seconds of a raze's cast point in the simulator.
-const RAZE_CAST_POINT: f32 = 0.55;
-/// Pudge's Meat Hook and Dismember, by ability id.
-const PUDGE_HOOK: u16 = 0;
+/// Pudge's Dismember, by ability id.
 const PUDGE_DISMEMBER: u16 = 3;
-/// Seconds of a requiem's cast point in the simulator.
-const REQUIEM_CAST_POINT: f32 = 1.67;
+/// Seconds a cast clip is stretched over at the least.
+const MIN_CAST_POINT: f32 = 0.05;
 /// World units a second at which a run clip plays at its own pace.
 const RUN_PACE: f32 = 300.0;
 /// World units a second above which a unit counts as running.
@@ -203,13 +200,16 @@ fn cast_clip(core: &Core, u: &UnitView) -> (&'static str, f32) {
                 _ => None,
             })
     });
-    match ability {
-        Some(id) if id == RAZE_NEAR + 1 => ("cast2", RAZE_CAST_POINT),
-        Some(id) if id == RAZE_NEAR + 2 => ("cast3", RAZE_CAST_POINT),
-        Some(REQUIEM) => ("requiem", REQUIEM_CAST_POINT),
-        // Pudge: Meat Hook and Dismember, 0.3 s cast points.
-        Some(PUDGE_HOOK) => ("cast1", 0.3),
-        Some(PUDGE_DISMEMBER) => ("dismember", 0.3),
-        _ => ("cast1", RAZE_CAST_POINT),
-    }
+    // A cast whose order is unknown shows the first raze.
+    let id = ability.unwrap_or(RAZE_NEAR);
+    let name = match id {
+        id if id == RAZE_NEAR + 1 => "cast2",
+        id if id == RAZE_NEAR + 2 => "cast3",
+        REQUIEM => "requiem",
+        PUDGE_DISMEMBER => "dismember",
+        _ => "cast1",
+    };
+    let point = core.cast_point_secs(u, AbilityId(id)).unwrap_or(0.0);
+    // A clip is stretched over the point; one of no length plays at its own pace.
+    (name, point.max(MIN_CAST_POINT))
 }
