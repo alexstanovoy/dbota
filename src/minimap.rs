@@ -18,7 +18,7 @@ use crate::map::Ground;
 use crate::session::Session;
 
 /// World units of the map along each axis.
-const MAP_SIZE: f32 = 18432.0;
+const MAP_SIZE: f32 = bota_core::rules::MAP_SIZE as f32;
 /// Interface pixels of the minimap's side.
 pub const SIDE: f32 = 250.0;
 /// Pixels of the photograph's side.

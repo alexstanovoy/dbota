@@ -98,17 +98,13 @@ struct Portrait;
 #[derive(Component)]
 struct XpRing;
 
-/// Total experience at each hero level, from the first (bota's, Dota's).
-const XP_THRESHOLDS: [i32; 30] = [
-    0, 240, 640, 1160, 1760, 2440, 3200, 4000, 4900, 5900, 7000, 8200, 9500, 10900, 12400, 14000,
-    15700, 17500, 19400, 21400, 23600, 26000, 28600, 31400, 34400, 38400, 43400, 49400, 56400,
-    63900,
-];
-
 /// The share of the way from a level to the next a hero's experience is.
 fn xp_share(level: u8, xp: i32) -> f32 {
     let at = usize::from(level.max(1)) - 1;
-    match (XP_THRESHOLDS.get(at), XP_THRESHOLDS.get(at + 1)) {
+    match (
+        bota_core::rules::XP_THRESHOLDS.get(at),
+        bota_core::rules::XP_THRESHOLDS.get(at + 1),
+    ) {
         (Some(&from), Some(&to)) => {
             ((xp - from) as f32 / (to - from).max(1) as f32).clamp(0.0, 1.0)
         }

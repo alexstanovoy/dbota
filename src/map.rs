@@ -1049,7 +1049,7 @@ pub fn floor(ground: &Ground, below: f32, colours: Option<&ColourField>) -> Mesh
         for cx in 0..m {
             let (x, y) = (cx as f32 * CELL, cy as f32 * CELL);
             positions.push([x, ground.at(x, y) - below, -y]);
-            uvs.push([x / 64.0, y / 64.0]);
+            uvs.push([x / CELL, y / CELL]);
         }
     }
     let mut indices = Vec::with_capacity(n * n * 6);
