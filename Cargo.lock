@@ -1940,6 +1940,14 @@ dependencies = [
 name = "bota_client_core"
 version = "0.1.0"
 dependencies = [
+ "bota_core",
+ "bota_proto",
+]
+
+[[package]]
+name = "bota_core"
+version = "0.1.0"
+dependencies = [
  "bota_proto",
 ]
 
