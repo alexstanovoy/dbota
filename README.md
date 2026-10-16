@@ -109,3 +109,7 @@ drawn with their models, buildings that never turn, no range rings without `Alt`
 in the top-left block, round buff icons. It needs the asset cache and a display, and exits non-zero when a check fails
 (`VISUAL_REPLAY=REPLAY.brp cargo test --release -- --ignored` runs it too).
 `DBOTA_FRAMES=1` logs frame times (median, 95th and 99th percentiles) every ten seconds.
+
+## License
+
+MIT, see [LICENSE](LICENSE).
