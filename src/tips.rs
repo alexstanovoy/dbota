@@ -3,6 +3,7 @@
 
 use bevy::{prelude::*, window::PrimaryWindow};
 use bota_client_core::{ability, item};
+use bota_proto::TalentSlot;
 
 use crate::hud::{AbilityBox, ItemBox};
 use crate::session::Session;
@@ -65,7 +66,7 @@ fn show(
     mut text: Single<&mut Text, With<TipText>>,
 ) {
     let core = &session.0;
-    let rate = u32::from(core.tick_rate.max(1));
+    let rate = u32::from(core.tick_rate().max(1));
     let unit = core
         .slot_unit()
         .or_else(|| core.ears().and_then(|id| core.known(id)).map(|(u, _)| u));
@@ -91,7 +92,7 @@ fn show(
         .map(|(_, c)| c.0);
     let body = if let Some(shown) = hovered_buff {
         bota_client_core::effect(shown.id).map(|face| {
-            let mut lines = vec![face.name.to_string(), face.blurb.to_string()];
+            let mut lines = vec![face.name.to_string(), face.blurb()];
             if let Some(n) = shown.stacks.filter(|n| *n > 0) {
                 lines.push(format!("{n} stacks"));
             }
@@ -107,12 +108,10 @@ fn show(
             .and_then(|h| bota_client_core::talents(h.0))
             .map(|tree| {
                 let face = &tree[usize::from(slot)];
-                let level = bota_client_core::TALENT_LEVELS[usize::from(slot / 2)];
+                let (level, second) = bota_client_core::talent_levels(TalentSlot(slot));
                 format!(
-                    "{}\n{}\nOpens at level {level}; the other of its tier at {}.",
-                    face.name,
-                    face.blurb,
-                    bota_client_core::TALENT_SECOND_LEVELS[usize::from(slot / 2)]
+                    "{}\n{}\nOpens at level {level}; the other of its tier at {second}.",
+                    face.name, face.blurb
                 )
             })
     } else if let Some(slot) = hovered_ability {
@@ -121,7 +120,7 @@ fn show(
                 let face = ability(a.id.0)?;
                 let mut lines = vec![
                     format!("{}  (level {}/{})", face.name, a.level, a.max_level),
-                    face.blurb.to_string(),
+                    face.blurb(),
                 ];
                 if a.mana_cost > 0 && a.level > 0 {
                     lines.push(format!("Mana {}", a.mana_cost));
@@ -137,11 +136,7 @@ fn show(
     } else if let Some(slot) = hovered_item {
         core.item_in(slot).and_then(|i| {
             let face = item(i.id.0)?;
-            let mut lines = vec![
-                face.name.to_string(),
-                face.stats.to_string(),
-                face.blurb.to_string(),
-            ];
+            let mut lines = vec![face.name.to_string(), face.stats(), face.blurb()];
             if i.cooldown_left > 0 {
                 lines.push(format!("Ready in {} s", i.cooldown_left / rate + 1));
             }
@@ -157,8 +152,8 @@ fn show(
             let (now, whole) = core.price_of(id);
             let mut lines = vec![
                 format!("{}  {} gold", face.name, now),
-                face.stats.to_string(),
-                face.blurb.to_string(),
+                face.stats(),
+                face.blurb(),
             ];
             if now < whole {
                 lines.push(format!("{} gold of it is already in hand.", whole - now));

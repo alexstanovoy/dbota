@@ -28,32 +28,23 @@ Dota 2 install. Bots don't need it.
 
    ```sh
    cargo build --release             # binary: target/release/dbota
-   (cd ../bota && cargo build --release -p bota-server)
+   (cd ../bota && cargo build --release -p bota_server)
    ```
 
 ## Play
 
-Against a bot: the bots live in [drysua](https://github.com/alexstanovoy/drysua). Clone it next to
-bota and dbota and run its launcher, which builds everything, starts the server and the bot, and
-opens dbota:
-
-```sh
-python3 drysua/scripts/play_match.py --opponent brain
-```
-
-`--help` lists the opponents and options (side, seed, immortal towers or heroes, watching instead
-of playing).
+A bot is any program that speaks bota's protocol: it takes a seat as a player does.
 
 Two people: start a server and connect two dbota clients (from another machine use
 `--addr <host>:4455`):
 
 ```sh
-../bota/target/release/bota-server --map 2 --players 2
+../bota/target/release/bota_server --map 2 --players 2
 target/release/dbota --name alice
 target/release/dbota --name bob
 ```
 
-Alone, for practice: `bota-server --map 2 --players 2 --dummy-seat` gives the other seat to a hero
+Alone, for practice: `bota_server --map 2 --players 2 --dummy-seat` gives the other seat to a hero
 that never leaves its fountain.
 
 On the hero screen click a portrait, then click Ready. The game starts once both seats are ready.
@@ -97,7 +88,7 @@ A replay or a spectator sees both teams' vision together (fog where neither side
 
 ## Replays
 
-The server records a match with `bota-server --replay FILE`.
+The server records a match with `bota_server --replay FILE`.
 
 ```sh
 target/release/dbota --replay match.brp              # whole map
@@ -112,9 +103,9 @@ A replay opens only with the bota version that recorded it.
 
 ## Checking the picture
 
-`tools/visual_check.sh` records a short match of two bota bots and measures dbota's picture of it:
+`tools/visual_check.sh REPLAY.brp` measures dbota's picture of a recorded Map 2 match:
 fogged ground at most 45% of seen ground's luminance and saturation with a 1–5 cell border, heroes
 drawn with their models, buildings that never turn, no range rings without `Alt`, no gold or souls
-in the top-left block, round buff icons. It needs bota next to dbota, the asset cache and a display,
-and exits non-zero when a check fails (`cargo test --release -- --ignored` runs it too).
+in the top-left block, round buff icons. It needs the asset cache and a display, and exits non-zero when a check fails
+(`VISUAL_REPLAY=REPLAY.brp cargo test --release -- --ignored` runs it too).
 `DBOTA_FRAMES=1` logs frame times (median, 95th and 99th percentiles) every ten seconds.

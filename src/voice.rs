@@ -129,14 +129,14 @@ fn answer(
 ) {
     let core = &session.0;
     heard.rest = (heard.rest - time.delta_secs()).max(0.0);
-    if core.seq == heard.seq {
+    if core.seq() == heard.seq {
         return;
     }
-    heard.seq = core.seq;
+    heard.seq = core.seq();
     if !settings.voice || settings.muted || args.mute || heard.rest > 0.0 {
         return;
     }
-    let (Some(slot), Some(view)) = (core.my_slot, &core.view) else {
+    let (Some(slot), Some(view)) = (core.my_slot, core.view()) else {
         return;
     };
     let Some(order) = core
@@ -192,14 +192,14 @@ fn announce(
     // The horn, then the announcer's "the battle begins" once the horn has
     // honked, timed to end as the clock reaches 0:00: each on its own game
     // tick, whatever the frame rate.
-    let Some(view) = core.view.as_ref() else {
+    let Some(view) = core.view() else {
         return;
     };
-    let rate = u32::from(core.tick_rate.max(1));
+    let rate = u32::from(core.tick_rate().max(1));
     // The whole sequence ends on 0:00: the horn, then the line, then the
     // clock starts.
     let line_tick = core
-        .pregame_ticks
+        .pregame_ticks()
         .saturating_sub(BATTLE_BEGINS_TENTHS * rate / 10);
     let horn_tick = line_tick.saturating_sub(HORN_HONK_TENTHS * rate / 10);
     // Not for a match joined, or a replay opened, well after the start.

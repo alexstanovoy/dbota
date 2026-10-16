@@ -15,7 +15,7 @@ use bevy::{
 use std::sync::Arc;
 
 use bevy::tasks::{AsyncComputeTaskPool, Task, block_on, futures_lite::future::poll_once};
-use bota_client_core::FogGround;
+use bota_client_core::SightGround;
 use bota_proto::Team;
 
 use crate::session::Session;
@@ -148,8 +148,8 @@ fn label(
 fn work_out(session: NonSend<Session>, mut grid: ResMut<FogGrid>, mut lighting: Local<Lighting>) {
     let core = &session.0;
     let team = core.fog_team();
-    let n = core.terrain_cells;
-    let Some(view) = &core.view else {
+    let n = core.terrain_cells();
+    let Some(view) = core.view() else {
         return;
     };
     // Without a side of one's own, a fogless stream (a replay, a spectator
@@ -184,26 +184,30 @@ fn work_out(session: NonSend<Session>, mut grid: ResMut<FogGrid>, mut lighting: 
     }
     // Lighting walks a line to every cell each unit could see, several
     // milliseconds a tick: it runs on another thread, a frame behind.
-    let trees = view.felled_trees.len() + view.planted_trees.len();
+    let Some(statics) = core.statics() else {
+        return;
+    };
     if lighting
         .ground
         .as_ref()
-        .is_none_or(|(at, g)| *at != trees || g.cells != n)
+        .is_none_or(|ground| !ground.fits(view))
     {
-        lighting.ground = Some((trees, Arc::new(FogGround::of(core))));
+        lighting.ground = SightGround::lay(statics, Some(view)).map(Arc::new);
     }
-    let Some((_, ground)) = lighting.ground.clone() else {
+    // The sight rule is laid on one grid size; any other has no fog.
+    let Some(ground) = lighting.ground.clone() else {
+        grid.on = false;
         return;
     };
     let view = view.clone();
     lighting.task = Some(AsyncComputeTaskPool::get().spawn(async move {
         let mut cells = vec![false; n * n];
         match team {
-            Some(team) => bota_client_core::light_on(&ground, &view, team, &mut cells),
+            Some(team) => ground.lit(&view, team, &mut cells),
             None => {
                 let mut dire = vec![false; n * n];
-                bota_client_core::light_on(&ground, &view, Team::Radiant, &mut cells);
-                bota_client_core::light_on(&ground, &view, Team::Dire, &mut dire);
+                ground.lit(&view, Team::Radiant, &mut cells);
+                ground.lit(&view, Team::Dire, &mut dire);
                 for (c, d) in cells.iter_mut().zip(dire) {
                     *c |= d;
                 }
@@ -217,9 +221,8 @@ fn work_out(session: NonSend<Session>, mut grid: ResMut<FogGrid>, mut lighting: 
 #[derive(Default)]
 struct Lighting {
     task: Option<Task<((u32, Option<Team>), Vec<bool>)>>,
-    /// The ground, with how many trees had fallen or grown back when it was
-    /// taken: sight changes with the forest.
-    ground: Option<(usize, Arc<FogGround>)>,
+    /// The ground, laid again when the forest changes.
+    ground: Option<Arc<SightGround>>,
 }
 
 /// Makes the fog image once the fog is known.

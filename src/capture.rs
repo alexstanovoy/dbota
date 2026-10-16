@@ -48,7 +48,7 @@ fn shoot(
     }
     shots.frames += 1;
     let core = &mut session.0;
-    let tick = core.view.as_ref().map(|v| v.tick);
+    let tick = core.view().map(|v| v.tick);
     let path = if let Some(&next) = args.screenshot_at.get(shots.taken) {
         if let Source::Replay(player) = &core.source
             && let Some(err) = player.error()
@@ -79,17 +79,14 @@ fn shoot(
         // motion and effects have settled when the shot is taken.
         if tick + SETTLE_TICKS < next {
             let began = std::time::Instant::now();
-            while core
-                .view
-                .as_ref()
-                .is_some_and(|v| v.tick + SETTLE_TICKS < next)
+            while core.view().is_some_and(|v| v.tick + SETTLE_TICKS < next)
                 && began.elapsed() < std::time::Duration::from_millis(250)
             {
-                let before = core.view.as_ref().map(|v| v.tick);
+                let before = core.view().map(|v| v.tick);
                 core.pump(1.0);
                 core.cues.clear();
                 core.floaters.clear();
-                if core.view.as_ref().map(|v| v.tick) == before {
+                if core.view().map(|v| v.tick) == before {
                     break;
                 }
             }

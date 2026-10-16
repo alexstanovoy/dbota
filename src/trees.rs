@@ -18,6 +18,8 @@ use crate::session::Session;
 /// World units within which a tree of the real map stands for one of the
 /// match.
 const MATCH_REACH: f32 = 48.0;
+/// World units of one bucket of the lookup that pairs trees with models.
+const HASH_CELL: f32 = 64.0;
 /// World units of a side of a forest chunk.
 const CHUNK: f32 = 2304.0;
 
@@ -110,7 +112,7 @@ fn plant(
 ) {
     let core = &session.0;
     if *done
-        || core.trees.is_empty()
+        || core.trees().is_empty()
         || !ground.known()
         || args.without.iter().any(|w| w == "trees")
     {
@@ -120,13 +122,14 @@ fn plant(
     let known = map_trees(&manifest);
     let mut grid: HashMap<(i32, i32), Vec<usize>> = HashMap::new();
     for (i, t) in known.iter().enumerate() {
-        grid.entry(((t.x / 64.0) as i32, (t.y / 64.0) as i32))
+        grid.entry(((t.x / HASH_CELL) as i32, (t.y / HASH_CELL) as i32))
             .or_default()
             .push(i);
     }
     let mut names: Vec<String> = Vec::new();
-    for (index, &(x, y)) in core.trees.iter().enumerate() {
-        let (cx, cy) = ((x / 64.0) as i32, (y / 64.0) as i32);
+    for (index, tree) in core.trees().iter().enumerate() {
+        let (x, y) = (tree.x.to_f32(), tree.y.to_f32());
+        let (cx, cy) = ((x / HASH_CELL) as i32, (y / HASH_CELL) as i32);
         let near = (-1..=1)
             .flat_map(|dx| (-1..=1).map(move |dy| (cx + dx, cy + dy)))
             .filter_map(|key| grid.get(&key))
@@ -138,7 +141,7 @@ fn plant(
                     .hypot(a.y - y)
                     .total_cmp(&(b.x - x).hypot(b.y - y))
             });
-        let fallback = if x + y < 18432.0 {
+        let fallback = if x + y < bota_core::rules::MAP_SIZE as f32 {
             "tree_oak_01"
         } else {
             "dire_tree004"
@@ -246,12 +249,12 @@ fn rebuild(
         && ground.known()
         && forest.trees.is_empty()
         && !ready.0
-        && session.0.view.is_some()
+        && session.0.view().is_some()
     {
         // Nothing to plant: the ground alone is the scenery.
-        ready.0 = !session.0.trees.is_empty();
+        ready.0 = !session.0.trees().is_empty();
     }
-    let Some(view) = &session.0.view else {
+    let Some(view) = session.0.view() else {
         return;
     };
     if forest.trees.is_empty() || forest.kinds.iter().any(|k| k.tree.is_none()) {

@@ -51,7 +51,7 @@ fn hold_replay(
     mut held: Local<bool>,
     time: Res<Time>,
 ) {
-    let started = session.0.view.is_some();
+    let started = session.0.view().is_some();
     let bota_client_core::Source::Replay(player) = &mut session.0.source else {
         return;
     };
@@ -70,7 +70,7 @@ fn hold_replay(
 fn pump(mut session: NonSendMut<Session>, time: Res<Time>, mut known: ResMut<MatchKnown>) {
     let core = &mut session.0;
     core.pump(time.delta_secs());
-    let ready = core.terrain_cells > 0 && core.view.is_some();
+    let ready = core.terrain_cells() > 0 && core.view().is_some();
     if known.0 != ready {
         known.0 = ready;
     }

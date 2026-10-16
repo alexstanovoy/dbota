@@ -18,7 +18,7 @@ use crate::map::Ground;
 use crate::session::Session;
 
 /// World units of the map along each axis.
-const MAP_SIZE: f32 = 18432.0;
+const MAP_SIZE: f32 = bota_core::rules::MAP_SIZE as f32;
 /// Interface pixels of the minimap's side.
 pub const SIDE: f32 = 250.0;
 /// Pixels of the photograph's side.
@@ -255,7 +255,7 @@ fn marks(
     mut images: Query<&mut ImageNode>,
 ) {
     let core = &session.0;
-    let Some(view) = &core.view else {
+    let Some(view) = core.view() else {
         return;
     };
     if let (Some(veil), Ok(mut image)) = (veil, images.get_mut(minimap.fog))
@@ -349,12 +349,12 @@ fn pings(
     mut nodes: Query<(&mut Node, &mut BorderColor, &mut Visibility)>,
 ) {
     let core = &session.0;
-    let teleports = core.view.as_ref().map_or(&[][..], |v| &v.teleports[..]);
+    let teleports = core.view().map_or(&[][..], |v| &v.teleports[..]);
     for (at, ping) in minimap.pings.iter().enumerate() {
         let Ok((mut node, mut border, mut visibility)) = nodes.get_mut(*ping) else {
             continue;
         };
-        let (Some(teleport), Some(view)) = (teleports.get(at), &core.view) else {
+        let (Some(teleport), Some(view)) = (teleports.get(at), core.view()) else {
             if *visibility != Visibility::Hidden {
                 *visibility = Visibility::Hidden;
             }

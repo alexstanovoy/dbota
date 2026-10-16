@@ -136,7 +136,7 @@ fn portals(
     let (core, Some(art)) = (&session.0, art) else {
         return;
     };
-    let Some(view) = &core.view else {
+    let Some(view) = core.view() else {
         return;
     };
     let mut wanted = Vec::with_capacity(2 * view.teleports.len());

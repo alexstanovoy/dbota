@@ -36,7 +36,7 @@ fn drill(
         .and_then(|d| d.smoothed())
         .unwrap_or(0.0);
     let core = &mut session.0;
-    if !state.readied && core.my_slot.is_some() && core.view.is_none() {
+    if !state.readied && core.my_slot.is_some() && core.view().is_none() {
         state.readied = true;
         // Shadow Fiend, whose first slot is a raze, or the hero named by
         // DBOTA_DRILL_HERO.
@@ -61,8 +61,7 @@ fn drill(
     let at = now - started;
     let (x, y) = (hero.pos.x.to_f32(), hero.pos.y.to_f32());
     let gold = core
-        .view
-        .as_ref()
+        .view()
         .and_then(|v| v.players.iter().find(|p| Some(p.slot) == core.my_slot))
         .and_then(|p| p.gold);
     let report = |what: &str| {
@@ -158,13 +157,13 @@ fn drill(
             return;
         }
         "throw" | "select" => {
-            let Some(view) = core.view.as_ref() else {
+            let Some(view) = core.view() else {
                 return;
             };
             let creep = view
                 .units
                 .iter()
-                .filter(|u| u.team != hero.team && bota_client_core::is_creep(u.kind))
+                .filter(|u| u.team != hero.team && bota_core::kind_def(u.kind).creep)
                 .map(|u| (u.pos.x.to_f32(), u.pos.y.to_f32()))
                 .filter(|(cx, cy)| (cx - x).hypot(cy - y) < 850.0)
                 .min_by_key(|(cx, cy)| ((cx - x).hypot(cy - y)) as i64);

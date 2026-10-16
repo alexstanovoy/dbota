@@ -2,10 +2,10 @@
 //! tiers, with smooth slopes between tiers and the river sunk below them.
 
 /// Terrain cells per axis of the map.
-pub const MAP_CELLS: usize = 288;
+pub const MAP_CELLS: usize = bota_core::rules::GRID_CELLS;
 
 /// World units of one terrain cell.
-pub const CELL: f32 = 64.0;
+pub const CELL: f32 = bota_core::rules::GRID_CELL_SIZE as f32;
 /// World units one elevation tier stands above the one below.
 pub const TIER_HEIGHT: f32 = 128.0;
 /// How far water lies below the ground of tier zero.

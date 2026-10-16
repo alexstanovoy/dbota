@@ -6,8 +6,9 @@ publish = false
 
 [dependencies]
 bevy = { version = "=0.19.1", features = ["wav", "mp3"] }
-bota-client-core = { path = "../bota/crates/bota-client-core" }
-bota-proto = { path = "../bota/crates/bota-proto" }
+bota_client_core = { path = "../bota/crates/bota_client_core", features = ["ui"] }
+bota_core = { path = "../bota/crates/bota_core" }
+bota_proto = { path = "../bota/crates/bota_proto" }
 clap = { version = "4", features = ["derive"] }
 serde_json = "1"
 

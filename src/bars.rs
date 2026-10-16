@@ -249,7 +249,7 @@ fn bars(
     mut texts: Query<&mut Text>,
 ) {
     let core = &session.0;
-    let (Some(view), Some(layer)) = (&core.view, &p.layer) else {
+    let (Some(view), Some(layer)) = (core.view(), &p.layer) else {
         return;
     };
     let layer = layer.0;

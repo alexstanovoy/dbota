@@ -457,10 +457,10 @@ fn sync_units(
     mut units: Query<(&mut Unit, &mut Transform)>,
 ) {
     let core = &session.0;
-    let Some(view) = &core.view else {
+    let Some(view) = core.view() else {
         return;
     };
-    let shown = bodies(view, core.prev_view.as_ref(), core.smooth.alpha());
+    let shown = bodies(view, core.prev_view(), core.smooth.alpha());
     let hidden = view.viewer.is_none() && p.fog.on;
     let mut seen = Vec::with_capacity(shown.len());
     let dt = p.time.delta_secs().max(1e-4);
@@ -510,7 +510,7 @@ fn sync_units(
         let Some(entity) = p.index.0.remove(&id) else {
             continue;
         };
-        let died = core.prev_view.as_ref().is_some_and(|prev| {
+        let died = core.prev_view().is_some_and(|prev| {
             prev.units.iter().any(|u| {
                 u.id == id
                     && u.kind != UnitKind::Courier

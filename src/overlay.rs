@@ -5,8 +5,9 @@
 use std::f32::consts::TAU;
 
 use bevy::{gizmos::config::GizmoConfigStore, prelude::*};
-use bota_client_core::{App as Core, RAZE_NEAR, REQUIEM, unit_under_cursor};
-use bota_proto::{Aim, Order, Target, Team, UnitKind, UnitView};
+use bota_client_core::{App as Core, unit_under_cursor};
+use bota_core::{raze_landing, rules};
+use bota_proto::{AbilityId, Aim, Order, Target, Team, UnitKind, UnitView};
 
 use crate::camera::CursorGround;
 use crate::config::{Action, Settings};
@@ -14,16 +15,10 @@ use crate::map::Ground;
 use crate::session::Session;
 use crate::units::{Unit, UnitIndex};
 
-/// How far ahead each raze lands, near to far, in world units.
-pub const RAZE_REACH: [f32; 3] = [200.0, 450.0, 700.0];
 /// How wide a raze burns, in world units.
-pub const RAZE_RADIUS: f32 = 250.0;
-/// Seconds from a raze order to its burst.
-const RAZE_CAST_POINT: f32 = 0.55;
-/// Seconds from a requiem order to its release.
-const REQUIEM_CAST_POINT: f32 = 1.67;
+const RAZE_RADIUS: f32 = rules::RAZE_RADIUS as f32;
 /// How far a requiem's lines fly, in world units.
-const REQUIEM_REACH: f32 = 1000.0;
+const REQUIEM_REACH: f32 = rules::REQUIEM_LINE_DISTANCE as f32;
 /// World units past its reach within which an enemy tower's ring shows.
 const TOWER_WARNING: f32 = 650.0;
 /// World units the lines float over the ground.
@@ -111,7 +106,7 @@ fn draw(
     mut rings: ResMut<RangeRings>,
 ) {
     let core = &session.0;
-    let Some(view) = &core.view else {
+    let Some(view) = core.view() else {
         return;
     };
     let ctx = Ctx {
@@ -150,7 +145,7 @@ fn picks(gizmos: &mut Gizmos, ctx: &Ctx<'_, '_, '_>) {
     // A ring at every hero's feet in its side's colour, as Dota marks them,
     // so a dark model on dark ground still reads; one's own is brightest.
     let side = core.fog_team().or_else(|| core.my_team());
-    if let Some(view) = &core.view {
+    if let Some(view) = core.view() {
         for hero in view.units.iter().filter(|u| u.kind == UnitKind::Hero) {
             let Some(body) = ctx.at(hero.id) else {
                 continue;
@@ -194,12 +189,11 @@ fn own_ranges(gizmos: &mut Gizmos, ctx: &Ctx<'_, '_, '_>, me: &UnitView) {
         false,
     );
     for ability in &me.abilities {
-        let which = usize::from(ability.id.0.wrapping_sub(RAZE_NEAR));
-        if which >= 3 || ability.level == 0 {
+        let Some(which) = raze_index(ability.id).filter(|_| ability.level > 0) else {
             continue;
-        }
+        };
         let a = 0.7;
-        let spot = raze_spot(x, y, body.facing, which);
+        let spot = raze_spot(me, which);
         ring(
             gizmos,
             ctx,
@@ -211,16 +205,26 @@ fn own_ranges(gizmos: &mut Gizmos, ctx: &Ctx<'_, '_, '_>, me: &UnitView) {
     }
 }
 
-/// Where raze `which` lands from a caster at `(x, y)` facing `facing`.
-pub fn raze_spot(x: f32, y: f32, facing: f32, which: usize) -> (f32, f32) {
-    let reach = RAZE_REACH[which.min(2)];
-    (x + facing.cos() * reach, y + facing.sin() * reach)
+/// Which of the three razes an ability is, near to far.
+fn raze_index(id: AbilityId) -> Option<usize> {
+    match id {
+        AbilityId::RAZE_NEAR => Some(0),
+        AbilityId::RAZE_MID => Some(1),
+        AbilityId::RAZE_FAR => Some(2),
+        _ => None,
+    }
+}
+
+/// Where raze `which` lands from the caster, as the server lands it.
+fn raze_spot(caster: &UnitView, which: usize) -> (f32, f32) {
+    let at = raze_landing(caster.pos, caster.facing, which);
+    (at.x.to_f32(), at.y.to_f32())
 }
 
 /// The reach of every enemy tower the watched hero is near, solid when the
 /// tower is set on it.
 fn tower_rings(gizmos: &mut Gizmos, ctx: &Ctx<'_, '_, '_>, me: &UnitView) {
-    let Some(view) = &ctx.core.view else {
+    let Some(view) = ctx.core.view() else {
         return;
     };
     let Some(my_body) = ctx.at(me.id) else {
@@ -256,7 +260,7 @@ fn tower_rings(gizmos: &mut Gizmos, ctx: &Ctx<'_, '_, '_>, me: &UnitView) {
 
 /// Whether one unit is set on another, by the aggro list.
 pub fn targets(core: &Core, unit: bota_proto::EntityId, on: bota_proto::EntityId) -> bool {
-    core.view.as_ref().is_some_and(|view| {
+    core.view().is_some_and(|view| {
         view.aggro
             .binary_search_by_key(&unit, |a| a.unit)
             .ok()
@@ -267,7 +271,7 @@ pub fn targets(core: &Core, unit: bota_proto::EntityId, on: bota_proto::EntityId
 /// A line from every tower to what it is set on, red when that is the
 /// watched hero.
 fn tower_shots(gizmos: &mut Gizmos, ctx: &Ctx<'_, '_, '_>) {
-    let Some(view) = &ctx.core.view else {
+    let Some(view) = ctx.core.view() else {
         return;
     };
     let me = ctx.core.ears();
@@ -296,7 +300,7 @@ fn tower_shots(gizmos: &mut Gizmos, ctx: &Ctx<'_, '_, '_>) {
 /// a foe winds up a swing at it.
 fn aggro(gizmos: &mut Gizmos, ctx: &Ctx<'_, '_, '_>) {
     let core = ctx.core;
-    let Some(view) = &core.view else {
+    let Some(view) = core.view() else {
         return;
     };
     let Some(focus) = core.commanded().or(core.ears()) else {
@@ -334,27 +338,27 @@ fn aggro(gizmos: &mut Gizmos, ctx: &Ctx<'_, '_, '_>) {
 /// burn filling up, the requiem's reach closing in.
 fn casts(gizmos: &mut Gizmos, ctx: &Ctx<'_, '_, '_>) {
     let core = ctx.core;
-    let Some(view) = &core.view else {
+    let Some(view) = core.view() else {
         return;
     };
-    let rate = f32::from(core.tick_rate.max(1));
+    let rate = f32::from(core.tick_rate().max(1));
     for u in &view.units {
-        let Some(began) = core.derived.cast_began(u.id) else {
+        let Some(began) = core.cast_began(u.id) else {
             continue;
         };
         let Some(body) = ctx.at(u.id) else {
             continue;
         };
         let elapsed = (view.tick.saturating_sub(began) as f32 + core.smooth.alpha()) / rate;
-        match cast_ability(core, u) {
-            Some(id) if (RAZE_NEAR..RAZE_NEAR + 3).contains(&id) => {
-                let k = (elapsed / RAZE_CAST_POINT).clamp(0.0, 1.0);
-                let spot = raze_spot(
-                    body.at.x,
-                    body.at.y,
-                    body.facing,
-                    usize::from(id - RAZE_NEAR),
-                );
+        let ability = cast_ability(core, u);
+        let point = ability
+            .and_then(|id| core.cast_point_secs(u, id))
+            .unwrap_or(0.0)
+            .max(0.001);
+        match ability {
+            Some(id) if raze_index(id).is_some() => {
+                let k = (elapsed / point).clamp(0.0, 1.0);
+                let spot = raze_spot(u, raze_index(id).unwrap_or(0));
                 ring(gizmos, ctx, spot, RAZE_RADIUS, SOUL_RED, false);
                 for f in [0.25, 0.5, 0.75, 1.0] {
                     if f <= k {
@@ -369,8 +373,8 @@ fn casts(gizmos: &mut Gizmos, ctx: &Ctx<'_, '_, '_>) {
                     }
                 }
             }
-            Some(REQUIEM) => {
-                let k = (elapsed / REQUIEM_CAST_POINT).clamp(0.0, 1.0);
+            Some(AbilityId::REQUIEM) => {
+                let k = (elapsed / point).clamp(0.0, 1.0);
                 let at = (body.at.x, body.at.y);
                 ring(gizmos, ctx, at, REQUIEM_REACH, SOUL_VIOLET, true);
                 ring(
@@ -389,14 +393,14 @@ fn casts(gizmos: &mut Gizmos, ctx: &Ctx<'_, '_, '_>) {
 
 /// Which ability a unit in a cast point is casting, by the latest order its
 /// seat is known to have given it.
-pub fn cast_ability(core: &Core, u: &UnitView) -> Option<u16> {
+pub fn cast_ability(core: &Core, u: &UnitView) -> Option<AbilityId> {
     let owner = u.owner?;
     let shown = core
         .shown_orders
         .iter()
         .find(|s| s.slot == owner && s.unit.is_none_or(|id| id == u.id))?;
     match shown.order {
-        Order::Cast { slot, .. } => u.abilities.get(usize::from(slot.0)).map(|a| a.id.0),
+        Order::Cast { slot, .. } => u.abilities.get(usize::from(slot.0)).map(|a| a.id),
         _ => None,
     }
 }
@@ -404,7 +408,7 @@ pub fn cast_ability(core: &Core, u: &UnitView) -> Option<u16> {
 /// A shrinking ring where each known order was aimed.
 fn orders(gizmos: &mut Gizmos, ctx: &Ctx<'_, '_, '_>) {
     let core = ctx.core;
-    let Some(view) = &core.view else {
+    let Some(view) = core.view() else {
         return;
     };
     for shown in &core.shown_orders {
@@ -464,7 +468,7 @@ fn aim(gizmos: &mut Gizmos, ctx: &Ctx<'_, '_, '_>, cursor: Option<Vec3>) {
     let within = reach <= 0.0 || caster.at.distance(Vec2::new(wx, wy)) <= reach;
     let color = if within { GOOD } else { BAD };
     if aim == Some(Aim::Unit)
-        && let Some(view) = &core.view
+        && let Some(view) = core.view()
         && let Some(mark) = unit_under_cursor(view, (wx, wy), None, true).and_then(|id| ctx.at(id))
     {
         ring(gizmos, ctx, (mark.at.x, mark.at.y), 60.0, color, false);

@@ -4,20 +4,15 @@
 //! idling, running and the follow-through keep the clip's own pace.
 
 use bevy::prelude::*;
-use bota_client_core::{App as Core, RAZE_NEAR, REQUIEM};
-use bota_proto::{Order, UnitKind, UnitView};
+use bota_client_core::App as Core;
+use bota_proto::{AbilityId, UnitKind, UnitView};
 
 use crate::coords::sim_facing_to_rotation;
 use crate::session::Session;
 use crate::units::{Dying, ModelBank, ModelOf, Rig, Unit};
 
-/// Seconds of a raze's cast point in the simulator.
-const RAZE_CAST_POINT: f32 = 0.55;
-/// Pudge's Meat Hook and Dismember, by ability id.
-const PUDGE_HOOK: u16 = 0;
-const PUDGE_DISMEMBER: u16 = 3;
-/// Seconds of a requiem's cast point in the simulator.
-const REQUIEM_CAST_POINT: f32 = 1.67;
+/// Seconds a cast clip is stretched over at the least.
+const MIN_CAST_POINT: f32 = 0.05;
 /// World units a second at which a run clip plays at its own pace.
 const RUN_PACE: f32 = 300.0;
 /// World units a second above which a unit counts as running.
@@ -59,7 +54,7 @@ fn animate(
     mut players: Query<&mut AnimationPlayer>,
 ) {
     let core = &session.0;
-    let Some(view) = &core.view else {
+    let Some(view) = core.view() else {
         return;
     };
     let dt = time.delta_secs();
@@ -110,13 +105,13 @@ fn choose(
     dt: f32,
     clip: impl Fn(&str) -> Option<(f32, Option<f32>)>,
 ) -> Wanted {
-    let rate = f32::from(core.tick_rate.max(1));
+    let rate = f32::from(core.tick_rate().max(1));
     let sub = core.smooth.alpha();
-    if let Some(began) = core.derived.cast_began(u.id) {
+    if let Some(began) = core.cast_began(u.id) {
         let (name, cast_point) = cast_clip(core, u);
         if let Some((duration, point)) = clip(name) {
             let elapsed =
-                (core.view.as_ref().map_or(began, |v| v.tick) - began) as f32 / rate + sub / rate;
+                (core.view().map_or(began, |v| v.tick) - began) as f32 / rate + sub / rate;
             let point = point.unwrap_or(duration * 0.5);
             pose.since_strike = None;
             return Wanted {
@@ -125,7 +120,7 @@ fn choose(
             };
         }
     }
-    let swing = core.view.as_ref().and_then(|view| {
+    let swing = core.view().and_then(|view| {
         view.aggro
             .binary_search_by_key(&u.id, |a| a.unit)
             .ok()
@@ -142,7 +137,7 @@ fn choose(
         "attack"
     };
     if let (Some(swing), Some((_, point))) = (swing, clip(attack)) {
-        let tick = core.view.as_ref().map_or(0, |v| v.tick);
+        let tick = core.view().map_or(0, |v| v.tick);
         let due = tick + swing.strike_in;
         if pose.swing_due.is_some_and(|d| d.abs_diff(due) > 1) {
             pose.swings += 1;
@@ -194,22 +189,17 @@ fn choose(
 /// in seconds, from the latest order its seat is known to have given. A
 /// cast whose order is not known shows the first raze.
 fn cast_clip(core: &Core, u: &UnitView) -> (&'static str, f32) {
-    let ability = u.owner.and_then(|owner| {
-        core.shown_orders
-            .iter()
-            .find(|s| s.slot == owner && s.unit.is_none_or(|id| id == u.id))
-            .and_then(|s| match s.order {
-                Order::Cast { slot, .. } => u.abilities.get(usize::from(slot.0)).map(|a| a.id.0),
-                _ => None,
-            })
-    });
-    match ability {
-        Some(id) if id == RAZE_NEAR + 1 => ("cast2", RAZE_CAST_POINT),
-        Some(id) if id == RAZE_NEAR + 2 => ("cast3", RAZE_CAST_POINT),
-        Some(REQUIEM) => ("requiem", REQUIEM_CAST_POINT),
-        // Pudge: Meat Hook and Dismember, 0.3 s cast points.
-        Some(PUDGE_HOOK) => ("cast1", 0.3),
-        Some(PUDGE_DISMEMBER) => ("dismember", 0.3),
-        _ => ("cast1", RAZE_CAST_POINT),
-    }
+    let ability = crate::overlay::cast_ability(core, u);
+    // A cast whose order is unknown shows the first raze.
+    let id = ability.unwrap_or(AbilityId::RAZE_NEAR);
+    let name = match id {
+        AbilityId::RAZE_MID => "cast2",
+        AbilityId::RAZE_FAR => "cast3",
+        AbilityId::REQUIEM => "requiem",
+        AbilityId::DISMEMBER => "dismember",
+        _ => "cast1",
+    };
+    let point = core.cast_point_secs(u, id).unwrap_or(0.0);
+    // A clip is stretched over the point; one of no length plays at its own pace.
+    (name, point.max(MIN_CAST_POINT))
 }
