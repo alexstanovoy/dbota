@@ -3,7 +3,7 @@
 
 use bevy::prelude::*;
 
-use crate::config::{BINDINGS, Settings, key_name};
+use crate::config::{BINDINGS, PRESETS, Quality, Settings, key_name};
 use crate::hud::Blocker;
 use crate::input::Panels;
 use crate::manifest::Manifest;
@@ -20,7 +20,16 @@ enum Row {
     Numbers,
     Voice,
     EdgePan,
+    Quality,
+    Shadows,
+    ResolutionDown,
+    ResolutionUp,
+    FpsCap,
+    AutoQuality,
 }
+
+/// The frame caps the overlay steps through; 0 for none.
+const FPS_CAPS: [u32; 5] = [0, 30, 60, 120, 144];
 
 /// The overlay.
 #[derive(Component)]
@@ -93,6 +102,12 @@ fn spawn(
         (Row::Numbers, "Damage numbers"),
         (Row::Voice, "Voice responses"),
         (Row::EdgePan, "Edge pan"),
+        (Row::Quality, "Quality"),
+        (Row::Shadows, "Shadows"),
+        (Row::ResolutionDown, "Resolution -"),
+        (Row::ResolutionUp, "Resolution +"),
+        (Row::FpsCap, "Frame cap"),
+        (Row::AutoQuality, "Auto quality"),
     ] {
         let b = commands
             .spawn((
@@ -173,6 +188,28 @@ fn clicks(
             Row::Numbers => s.aids.numbers = !s.aids.numbers,
             Row::Voice => s.voice = !s.voice,
             Row::EdgePan => s.aids.edge_pan = !s.aids.edge_pan,
+            Row::Quality => {
+                let at = s
+                    .quality
+                    .preset_name()
+                    .and_then(|name| PRESETS.iter().position(|p| *p == name));
+                let next = PRESETS[at.map_or(0, |at| (at + 1) % PRESETS.len())];
+                let auto = s.quality.auto;
+                s.quality = Quality::preset(next).unwrap_or_default();
+                s.quality.auto = auto;
+            }
+            Row::Shadows => s.quality.shadows = (s.quality.shadows + 1) % 3,
+            Row::ResolutionDown => {
+                s.quality.render_scale = (s.quality.render_scale - 0.125).max(0.25);
+            }
+            Row::ResolutionUp => {
+                s.quality.render_scale = (s.quality.render_scale + 0.125).min(1.0);
+            }
+            Row::FpsCap => {
+                let at = FPS_CAPS.iter().position(|c| *c == s.quality.fps_cap);
+                s.quality.fps_cap = FPS_CAPS[at.map_or(0, |at| (at + 1) % FPS_CAPS.len())];
+            }
+            Row::AutoQuality => s.quality.auto = !s.quality.auto,
         }
     }
     if *was_open && !panels.settings && *dirty {
@@ -193,13 +230,30 @@ fn values(settings: Res<Settings>, mut text: Single<&mut Text, With<Values>>) {
     }
     let on = |b: bool| if b { "on" } else { "off" };
     let a = &settings.aids;
+    let q = &settings.quality;
     text.0 = format!(
-        "Volume {:.0}%  {}   Interface {:.0}%\nDamage numbers {}   Voice responses {}   Edge pan {}",
+        "Volume {:.0}%  {}   Interface {:.0}%\nDamage numbers {}   Voice responses {}   Edge pan {}\n\
+         Quality {}   Shadows {}   Multisampling {}x   Resolution {:.0}%\n\
+         Frame cap {}   Auto quality {}\n\
+         On restart: textures up to {}, map props {}, GPU batching {}",
         settings.volume * 100.0,
         if settings.muted { "(muted)" } else { "" },
         settings.ui_scale * 100.0,
         on(a.numbers),
         on(settings.voice),
         on(a.edge_pan),
+        q.preset_name().unwrap_or("custom"),
+        ["off", "low", "high"][usize::from(q.shadows.min(2))],
+        q.msaa,
+        q.render_scale * 100.0,
+        if q.fps_cap == 0 {
+            "none".to_string()
+        } else {
+            q.fps_cap.to_string()
+        },
+        on(q.auto),
+        q.texture_size,
+        on(q.props),
+        on(q.gpu_batching),
     );
 }

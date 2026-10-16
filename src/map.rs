@@ -8,7 +8,6 @@ use bevy::{
     asset::RenderAssetUsages,
     gltf::GltfMaterialExtras,
     image::{ImageAddressMode, ImageLoaderSettings, ImageSampler, ImageSamplerDescriptor},
-    light::CascadeShadowConfigBuilder,
     math::Affine2,
     mesh::{Indices, MeshVertexAttribute, PrimitiveTopology, VertexAttributeValues, VertexFormat},
     prelude::*,
@@ -92,7 +91,12 @@ pub fn plugin(app: &mut App) {
         .add_systems(Update, (prepare_map, build_fallback_ground));
 }
 
-fn spawn_sun(mut commands: Commands, args: Res<crate::Args>) {
+fn spawn_sun(
+    mut commands: Commands,
+    args: Res<crate::Args>,
+    settings: Res<crate::config::Settings>,
+) {
+    let shadows = settings.quality.shadows;
     commands.spawn((
         DirectionalLight {
             illuminance: crate::look("sun", 13_000.0),
@@ -100,17 +104,11 @@ fn spawn_sun(mut commands: Commands, args: Res<crate::Args>) {
                 let warm = crate::look("warm", 0.3);
                 Color::srgb(1.0, 0.97 - 0.09 * warm, 0.92 - 0.22 * warm)
             },
-            shadow_maps_enabled: !args.without.iter().any(|w| w == "shadows"),
+            shadow_maps_enabled: shadows > 0 && !args.without.iter().any(|w| w == "shadows"),
             ..default()
         },
         Transform::from_rotation(Quat::from_euler(EulerRot::YXZ, -0.6, -0.95, 0.0)),
-        CascadeShadowConfigBuilder {
-            num_cascades: 2,
-            first_cascade_far_bound: 3_000.0,
-            maximum_distance: 8_000.0,
-            ..default()
-        }
-        .build(),
+        crate::quality::cascades(shadows),
     ));
 }
 
@@ -177,8 +175,11 @@ fn prepare_map(
     mut assets: MapAssets,
     mut ground: ResMut<Ground>,
     args: Res<crate::Args>,
+    settings: Res<crate::config::Settings>,
 ) {
-    let without = |what: &str| args.without.iter().any(|w| w == what);
+    let without = |what: &str| {
+        args.without.iter().any(|w| w == what) || (what == "props" && !settings.quality.props)
+    };
     let Ok((root, mut wait)) = pending.single_mut() else {
         return;
     };

@@ -27,6 +27,7 @@ mod map;
 mod menu;
 mod minimap;
 mod overlay;
+mod quality;
 mod select;
 mod session;
 mod sheet;
@@ -88,6 +89,11 @@ pub struct Args {
     /// The settings file; `~/.config/dbota/client.conf` when absent.
     #[arg(long, value_name = "FILE")]
     pub config: Option<PathBuf>,
+    /// A setting for this run, as a line of the settings file says it, over
+    /// the file's: `--set quality=low`, `--set render_scale=0.6`. Given
+    /// again for more.
+    #[arg(long, value_name = "NAME=VALUE")]
+    pub set: Vec<String>,
     /// Debug: save the screen once a replay reaches each of these ticks,
     /// then exit after the last.
     #[arg(long, value_name = "TICK", value_delimiter = ',', requires = "replay")]
@@ -127,7 +133,7 @@ pub struct Args {
     #[arg(long, value_name = "UNITS")]
     pub distance: Option<f32>,
     /// Debug: leave things out to time the rest: any of `trees`, `shadows`,
-    /// `msaa`, `map`, `units`, `ui`.
+    /// `msaa`, `map`, `props` (the map's), `overlays` (the map's decals).
     #[arg(long, value_delimiter = ',')]
     pub without: Vec<String>,
     /// Debug: start a replay at this tick, read through as fast as the
@@ -142,6 +148,9 @@ pub struct Args {
     /// Debug: seconds `--bench` lets pass before it starts timing.
     #[arg(long, value_name = "SECONDS", default_value_t = 2.0)]
     pub bench_warmup: f32,
+    /// The window's size at the start, in logical pixels, `WIDTHxHEIGHT`.
+    #[arg(long, value_name = "WxH", default_value = "1600x900", value_parser = parse_size)]
+    pub window: (u32, u32),
     /// Present without vsync.
     #[arg(long)]
     pub no_vsync: bool,
@@ -199,14 +208,24 @@ fn main() -> AppExit {
     };
     let manifest = manifest::Manifest::load(&args.cache_dir);
     let settings_path = args.config.clone().or_else(config::default_path);
-    let settings = settings_path
+    let mut settings = settings_path
         .as_deref()
         .map(config::load)
         .unwrap_or_default();
+    for line in &args.set {
+        let set = line
+            .split_once('=')
+            .ok_or_else(|| "expected NAME=VALUE".to_string())
+            .and_then(|(name, value)| settings.set(name.trim(), value.trim()));
+        if let Err(why) = set {
+            eprintln!("dbota: --set {line}: {why}");
+            return AppExit::error();
+        }
+    }
     let mut app = App::new();
     app.insert_resource(args.clone())
         .insert_resource(manifest)
-        .insert_resource(settings)
+        .insert_resource(settings.clone())
         .insert_resource(SettingsPath(settings_path))
         .insert_non_send(session)
         // Must be registered before AssetPlugin (part of DefaultPlugins) builds the sources.
@@ -216,7 +235,7 @@ fn main() -> AppExit {
                 args.cache_dir.to_string_lossy().into_owned(),
             )),
         )
-        .add_plugins(default_plugins(&args))
+        .add_plugins(default_plugins(&args, &settings))
         .add_plugins(FrameTimeDiagnosticsPlugin::default())
         .add_plugins((
             session::plugin,
@@ -250,17 +269,32 @@ fn main() -> AppExit {
             voice::plugin,
             select::plugin,
             framestats::plugin,
+            quality::plugin,
         ));
     app.run()
 }
 
+/// A `WIDTHxHEIGHT` size, each side 64 to 16384.
+fn parse_size(text: &str) -> Result<(u32, u32), String> {
+    let (w, h) = text
+        .split_once('x')
+        .ok_or_else(|| format!("'{text}' is not WIDTHxHEIGHT"))?;
+    let side = |s: &str| {
+        s.parse::<u32>()
+            .ok()
+            .filter(|v| (64..=16_384).contains(v))
+            .ok_or_else(|| format!("'{s}' is not a side of 64 to 16384 pixels"))
+    };
+    Ok((side(w)?, side(h)?))
+}
+
 /// Bevy's plugins as dbota sets them up.
-fn default_plugins(args: &Args) -> impl PluginGroup {
+fn default_plugins(args: &Args, settings: &config::Settings) -> impl PluginGroup {
     DefaultPlugins
         .set(WindowPlugin {
             primary_window: Some(Window {
                 title: "dbota".into(),
-                resolution: WindowResolution::new(1600, 900),
+                resolution: WindowResolution::new(args.window.0, args.window.1),
                 // `DBOTA_NO_VSYNC` for runs started by a launcher, as the
                 // drill is: vsync stalls while the screen is locked.
                 present_mode: if args.no_vsync || std::env::var_os("DBOTA_NO_VSYNC").is_some() {
@@ -286,6 +320,10 @@ fn default_plugins(args: &Args) -> impl PluginGroup {
                 },
                 None => TaskPoolOptions::default(),
             },
+        })
+        .set(bevy::pbr::PbrPlugin {
+            use_gpu_instance_buffer_builder: settings.quality.gpu_batching,
+            ..default()
         })
         .set(AssetPlugin {
             file_path: concat!(env!("CARGO_MANIFEST_DIR"), "/assets").into(),
