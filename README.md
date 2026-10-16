@@ -29,7 +29,7 @@ Dota 2 install. Bots don't need it.
 
    ```sh
    cargo build --release             # binary: target/release/dbota
-   cargo build --profile dist        # smaller, link-time optimised: target/dist/dbota (~14 min)
+   cargo build --profile dist        # smaller, link-time optimised: target/dist/dbota (~6 min)
    (cd ../bota && cargo build --release -p bota_server)
    ```
 

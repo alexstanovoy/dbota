@@ -65,13 +65,15 @@ opt-level = 3
 # Dependency debuginfo is ~5 GB of target/ for bevy and rarely used; the crate keeps its own.
 debug = false
 
-# `release` stays Cargo's default, for a short rebuild in checks and play. `--profile dist` (fat
-# link-time optimisation, one codegen unit, symbols stripped) is what ships and what the size
-# reports measure: 64.5 MiB against release's 160 (93 stripped), but a full build takes ~14 min
-# and relinking after one changed file ~10.
+# `release` stays Cargo's default, for a short rebuild in checks and play. `--profile dist` is what
+# ships and what the size reports measure: thin link-time optimisation in one codegen unit, symbols
+# stripped. 70.6 MiB against release's 160 (93 stripped); a full build takes ~6 min, a rebuild after
+# one changed file ~3.6 (fat LTO: 64.5 MiB for ~13 and ~8.6 min; nearly all of it LLVM optimising
+# Bevy, wgpu and naga as one module, only 2.3 of 61 MB of code being generics instantiated for
+# dbota's own types).
 [profile.dist]
 inherits = "release"
-lto = "fat"
+lto = "thin"
 codegen-units = 1
 strip = true
 
