@@ -65,3 +65,24 @@ opt-level = 3
 # Dependency debuginfo is ~5 GB of target/ for bevy and rarely used; the crate keeps its own.
 debug = false
 
+# `release` stays Cargo's default, for a short rebuild in checks and play. `--profile dist` (fat
+# link-time optimisation, one codegen unit, symbols stripped) is what ships and what the size
+# reports measure: 64.5 MiB against release's 160 (93 stripped), but a full build takes ~14 min
+# and relinking after one changed file ~10.
+[profile.dist]
+inherits = "release"
+lto = "fat"
+codegen-units = 1
+strip = true
+
+# `--profile profiling` keeps the symbols and line tables, for profilers and backtraces.
+[profile.profiling]
+inherits = "release"
+debug = "line-tables-only"
+
+# For the browser: link-time optimisation makes the wasm three times larger (18.4 MB against 6.3).
+# `cargo build --profile web --target wasm32-unknown-unknown`.
+[profile.web]
+inherits = "dist"
+lto = false
+codegen-units = 16

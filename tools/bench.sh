@@ -17,9 +17,10 @@
 #   BENCH_WRAP=""           a command every dbota run goes through, e.g. a
 #                           memory-capped `systemd-run --user --scope -p MemoryMax=8G --`
 #                           (it must exec dbota, so its pid is dbota's)
+#   BENCH_PROFILE=release   the cargo profile built and timed (`dist` is what ships)
 #   BENCH_BUILD=1           0: use the binary already built
 #   DBOTA_BIN               the binary to time (default target/release/dbota; implies BENCH_BUILD=0)
-#   BENCH_WASM=0            1: also build for wasm32 and report its size
+#   BENCH_WASM=0            1: also build for wasm32 (profile `web`) and report its size
 #   DBOTA_ASSETS            the asset cache (default ~/.cache/dbota/v<assets-manifest/version>)
 # A display is needed (DISPLAY or WAYLAND_DISPLAY).
 set -euo pipefail
@@ -38,15 +39,16 @@ server=${BENCH_SERVER-$here/../bota/target/release/bota_server}
 read -r -a extra <<< "${BENCH_ARGS:-}"
 read -r -a wrap <<< "${BENCH_WRAP:-}"
 cache=${DBOTA_ASSETS:-$HOME/.cache/dbota/v$(tr -d '[:space:]' < "$here/assets-manifest/version")}
-bin=${DBOTA_BIN:-$here/target/release/dbota}
+profile=${BENCH_PROFILE:-release}
+bin=${DBOTA_BIN:-$here/target/$profile/dbota}
 out=$here/temp/bench
 mkdir -p "$out"
 
 if [ "${BENCH_BUILD:-1}" = 1 ] && [ -z "${DBOTA_BIN:-}" ]; then
-    cargo build --release --quiet --manifest-path "$here/Cargo.toml"
+    cargo build --profile "$profile" --quiet --manifest-path "$here/Cargo.toml"
 fi
 if [ "${BENCH_WASM:-0}" = 1 ]; then
-    cargo build --release --quiet --target wasm32-unknown-unknown --manifest-path "$here/Cargo.toml"
+    cargo build --profile web --quiet --target wasm32-unknown-unknown --manifest-path "$here/Cargo.toml"
 fi
 
 # Drops the asset cache and the binary from the page cache: a cold start.
@@ -104,7 +106,7 @@ median() {
 size=$(stat -c %s "$bin")
 strip -o "$out/dbota.stripped" "$bin"
 stripped=$(stat -c %s "$out/dbota.stripped")
-wasm=$here/target/wasm32-unknown-unknown/release/dbota.wasm
+wasm=$here/target/wasm32-unknown-unknown/web/dbota.wasm
 wasm_size=$([ -f "$wasm" ] && stat -c %s "$wasm" || echo "-")
 
 scene=(--replay "$replay" --seek "$tick" --follow 0 --distance "$distance" --bench "$seconds")
