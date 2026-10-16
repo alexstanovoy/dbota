@@ -7,19 +7,21 @@ and are never committed or published. Only our own tooling and the manifest are 
 ```sh
 tools/import_assets.sh                      # Flatpak Steam, then ~/.steam/steam, then ~/.local/share/Steam
 tools/import_assets.sh --dota-path "/path/to/steamapps/common/dota 2 beta"
-DBOTA_ASSETS=/elsewhere tools/import_assets.sh   # cache location (default ~/.cache/dbota)
+DBOTA_ASSETS=/elsewhere tools/import_assets.sh   # cache location (default ~/.cache/dbota/v<N>)
 ```
 
 Requirements: an installed Dota 2, `curl`, `unzip`, `sha256sum`, `python3` (stdlib only), Linux x64.
 The script downloads [Source2Viewer-CLI](https://github.com/ValveResourceFormat/ValveResourceFormat)
 **20.0** (`cli-linux-x64.zip`, released 2026-08-17, SHA256
-`3e8af47cd6ce52e8068904f2aa1dda23c56a6b96a8310b25090f0711cda76a8a`) into `<cache>/tools/s2v-20.0/`
+`3e8af47cd6ce52e8068904f2aa1dda23c56a6b96a8310b25090f0711cda76a8a`) into `~/.cache/dbota/tools/s2v-20.0/`
+(shared by every version's folder; `$DBOTA_ASSETS/tools/` when that is set)
 and refuses an archive with any other checksum.
 
 A first run takes about 3.5 minutes; it stages the full map export (~330 MB) in a `mktemp` directory
 under `$TMPDIR` (tmpfs on this machine) and removes it on exit. Re-running is a no-op in under a second: textures and sounds are skipped when their output
-exists; models and the map are re-exported only when their manifest line (or `EXPORT_REV` in the
-script) changed. Each run ends with `verify_assets.py`, which fails the import on any missing or
+exists; models and the map are re-exported only when their manifest line (or the export version,
+`../assets-manifest/version`) changed. A new version exports into a new folder, `~/.cache/dbota/v<N>`;
+the client reads the folder of the version it was built with. Each run ends with `verify_assets.py`, which fails the import on any missing or
 malformed output.
 
 ## Files
@@ -27,13 +29,14 @@ malformed output.
 | file | role |
 | --- | --- |
 | `../assets-manifest/manifest.txt` | every exported asset: logical name, VPK source, cache path, clips; format in its header |
+| `../assets-manifest/version` | the export version: the cache folder `v<N>`, and the stamps that force a re-export |
 | `../assets-manifest/ids.txt` | bota item/ability/hero ids → Dota names (copied from bota-visual) |
 | `import_assets.sh` | the importer |
 | `crop_world.py` | crops the exported map to the mid-lane band, lists terrain layers and trees |
 | `verify_assets.py` | checks glTF meshes/skins/clips/textures, wearable joints, PNG sizes, WAV/MP3 format |
 | `inspect_gltf.py` | prints a model's meshes, skins and animations (`--json` for machines) |
 
-## What the cache holds (493 MB, 124 MB of it the CLI)
+## What the cache holds (689 MB, 124 MB of it the CLI)
 
 | path | content | size |
 | --- | --- | --- |
@@ -44,7 +47,7 @@ malformed output.
 | `models/tree/` | the 9 tree models the map uses around mid (standing mesh + stump) | 8 MB |
 | `models/building/` | ancients, melee/ranged barracks (static, plus `*_destruction` collapse models), fountains | 70 MB |
 | `models/courier/` | default donkey courier, Radiant and Dire, walking and flying | 4 MB |
-| `map/mid/` | `mid.glb`, the default map from fountain to fountain around mid, its textures, `trees.txt` | 172 MB |
+| `map/mid/` | `mid.glb`, the default map from fountain to fountain around mid, its textures, `trees.txt` | 354 MB |
 | `textures/ground/` | terrain layer textures (also used by `map.mid`) | 37 MB |
 | `textures/particle/` | 13 effect textures (smoke, glow, sparks, ground cracks, fire, ...) | 1 MB |
 | `icons/`, `hud/`, `minimap/` | item and ability icons, hero portraits, minimap hero/creep/tower/building icons, HUD art, minimap | 2 MB |
@@ -92,7 +95,10 @@ and are kept as `.mp3` (the stdlib cannot transcode them); playing them needs Be
 fountain to fountain with both base plateaus. Towers, trees, barracks, ancients and fountain
 buildings are removed (the client spawns them as units; see `EXCLUDE` in `crop_world.py`); shops,
 statues, walls, decorations and the fountains' water/glow meshes stay. Nodes are flattened to world
-matrices; skins, animations and morph targets are dropped.
+matrices; skins, animations and morph targets are dropped. Each triangle list using less than half of
+its mesh set's vertices gets its own vertices: the exporter shares a set's whole vertex buffers among
+its pieces, and a glTF loader copies them whole for every piece (2.6 GB of vertices loaded for 70 MB
+of geometry before this; 236 MB after, for a 213 MB file instead of 129 MB).
 
 - **Terrain** meshes use Valve's 4-layer `multiblend.vfx`; the glTF material only carries layer 0, the
   blend weights are in the custom vertex attributes `_TEXCOORD_1.._3`, and `extras.vmat.TextureParams`

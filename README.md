@@ -15,7 +15,8 @@ Dota 2 install. Bots don't need it.
    ```
 
 2. Install Dota 2 through Steam (the regular or the Flatpak install is found automatically), then
-   export the assets dbota uses into `~/.cache/dbota`:
+   export the assets dbota uses into `~/.cache/dbota/v<N>` (`N` is `assets-manifest/version`; each
+   export version keeps a folder of its own, so older and newer clients share a machine):
 
    ```sh
    cd dbota

@@ -20,7 +20,7 @@
 #   BENCH_BUILD=1           0: use the binary already built
 #   DBOTA_BIN               the binary to time (default target/release/dbota; implies BENCH_BUILD=0)
 #   BENCH_WASM=0            1: also build for wasm32 and report its size
-#   DBOTA_ASSETS            the asset cache (default ~/.cache/dbota)
+#   DBOTA_ASSETS            the asset cache (default ~/.cache/dbota/v<assets-manifest/version>)
 # A display is needed (DISPLAY or WAYLAND_DISPLAY).
 set -euo pipefail
 here=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)
@@ -37,7 +37,7 @@ runs=${BENCH_RUNS:-3}
 server=${BENCH_SERVER-$here/../bota/target/release/bota_server}
 read -r -a extra <<< "${BENCH_ARGS:-}"
 read -r -a wrap <<< "${BENCH_WRAP:-}"
-cache=${DBOTA_ASSETS:-$HOME/.cache/dbota}
+cache=${DBOTA_ASSETS:-$HOME/.cache/dbota/v$(tr -d '[:space:]' < "$here/assets-manifest/version")}
 bin=${DBOTA_BIN:-$here/target/release/dbota}
 out=$here/temp/bench
 mkdir -p "$out"

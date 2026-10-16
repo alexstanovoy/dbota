@@ -178,12 +178,20 @@ pub fn look(key: &str, default: f32) -> f32 {
 #[derive(Resource, Clone, Debug)]
 pub struct SettingsPath(pub Option<PathBuf>);
 
+/// The export version of the asset cache this client reads, as
+/// `tools/import_assets.sh` writes it: each version has a folder of its own
+/// under `~/.cache/dbota`, so clients of different versions share a machine.
+const ASSET_VERSION: &str = include_str!("../assets-manifest/version");
+
+/// `$DBOTA_ASSETS`, else `~/.cache/dbota/v<ASSET_VERSION>`.
 fn default_cache_dir() -> PathBuf {
     if let Some(dir) = std::env::var_os("DBOTA_ASSETS").filter(|d| !d.is_empty()) {
         return PathBuf::from(dir);
     }
     let home = std::env::var_os("HOME").unwrap_or_default();
-    PathBuf::from(home).join(".cache/dbota")
+    PathBuf::from(home)
+        .join(".cache/dbota")
+        .join(format!("v{}", ASSET_VERSION.trim()))
 }
 
 /// When the process started, for the startup timings in the log.
