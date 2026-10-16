@@ -7,7 +7,8 @@ use std::f32::consts::TAU;
 
 use bevy::prelude::*;
 use bota_client_core::{
-    App as Core, BAG_SLOTS, INVENTORY_SLOTS, Look, TOWN_PORTAL_SLOT, ability_look, item_look,
+    App as Core, BAG_SLOTS, ClientSession, INVENTORY_SLOTS, Look, TOWN_PORTAL_SLOT, ability_look,
+    item_look,
 };
 use bota_proto::{AbilityView, Attribute, ItemView, Kit, PlayerView, Team, UnitKind, UnitView};
 
@@ -1043,7 +1044,8 @@ fn readouts(
                     .and_then(|d| d.smoothed())
                     .unwrap_or(0.0);
                 let ping = core
-                    .order_delay_ms()
+                    .session()
+                    .and_then(ClientSession::order_delay_ms)
                     .map_or("-".to_string(), |ms| format!("{ms} ms"));
                 format!("ping {ping}   {fps:.0} fps")
             }

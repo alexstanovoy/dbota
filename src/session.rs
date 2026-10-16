@@ -2,7 +2,7 @@
 //! once a frame, and read by every other system.
 
 use bevy::prelude::*;
-use bota_client_core::{App as Core, Net, Pin, ReplayPlayer, Source};
+use bota_client_core::{App as Core, Net, Pin, ReplayPlayer, Source, Transport};
 use bota_proto::{ClientMsg, Role, SlotId};
 
 use crate::Args;
@@ -40,7 +40,7 @@ pub fn open(args: &Args) -> std::io::Result<Session> {
         role,
         name: args.name.clone(),
         key: None,
-    });
+    })?;
     Ok(Session(Core::new(Source::Live(net))))
 }
 

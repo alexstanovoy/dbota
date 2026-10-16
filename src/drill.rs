@@ -4,7 +4,7 @@
 //! proves the wire end to end where nobody is at the keys.
 
 use bevy::prelude::*;
-use bota_client_core::{Intent, Slot};
+use bota_client_core::{ClientSession, Intent, Slot};
 
 use crate::session::Session;
 
@@ -69,7 +69,7 @@ fn drill(
             "drill {at:5.1}s {what}: hero at ({x:.0}, {y:.0}) hp {} mana {} gold {gold:?} ping {:?} ms, refusal {:?}, {fps:.0} fps, abilities {:?}",
             hero.hp,
             hero.mana,
-            core.order_delay_ms(),
+            core.session().and_then(ClientSession::order_delay_ms),
             core.reject.as_ref().map(|r| r.0.clone()),
             hero.abilities
                 .iter()
