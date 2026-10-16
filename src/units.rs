@@ -16,7 +16,7 @@ use bota_proto::{EntityId, Team, UnitKind, UnitView};
 
 use crate::coords::sim_facing_to_rotation;
 use crate::fog::FogGrid;
-use crate::manifest::{Manifest, Model, load_model};
+use crate::manifest::{Manifest, Model, load_unit_model};
 use crate::map::{Ground, UNITS_PER_METRE};
 use crate::session::Session;
 
@@ -198,12 +198,12 @@ fn load_models(mut bank: ResMut<ModelBank>, server: Res<AssetServer>, manifest: 
             .models
             .iter()
             .filter(|w| w.attach.as_deref() == Some(model.logical.as_str()))
-            .map(|w| load_model(&server, GltfAssetLabel::Scene(0).from_asset(w.path.clone())))
+            .map(|w| load_unit_model(&server, GltfAssetLabel::Scene(0).from_asset(w.path.clone())))
             .collect();
         bank.0.push(BankModel {
             model: model.clone(),
-            gltf: load_model(&server, model.path.clone()),
-            scene: load_model(
+            gltf: load_unit_model(&server, model.path.clone()),
+            scene: load_unit_model(
                 &server,
                 GltfAssetLabel::Scene(0).from_asset(model.path.clone()),
             ),
