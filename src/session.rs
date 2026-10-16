@@ -39,6 +39,7 @@ pub fn open(args: &Args) -> std::io::Result<Session> {
     net.send(&ClientMsg::Hello {
         role,
         name: args.name.clone(),
+        key: None,
     });
     Ok(Session(Core::new(Source::Live(net))))
 }
