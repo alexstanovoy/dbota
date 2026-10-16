@@ -118,6 +118,7 @@ fn bench(
     units: Res<crate::units::UnitIndex>,
     entities: Query<()>,
     assets: (Res<Assets<Image>>, Res<Assets<Mesh>>),
+    device: Option<Res<bevy::render::renderer::RenderDevice>>,
     mut state: Local<Bench>,
     mut exit: MessageWriter<AppExit>,
 ) {
@@ -180,7 +181,40 @@ fn bench(
             .sum::<usize>()
             >> 20,
     );
+    if let Some(device) = device {
+        gpu_report(&device);
+    }
     exit.write(AppExit::Success);
+}
+
+/// The GPU memory the allocator holds, by what it was allocated for, on
+/// stderr: `vram:` lines, largest first.
+fn gpu_report(device: &bevy::render::renderer::RenderDevice) {
+    let Some(report) = device.wgpu_device().generate_allocator_report() else {
+        eprintln!("vram: no allocator report on this backend");
+        return;
+    };
+    let mut by_name: std::collections::HashMap<&str, (u64, usize)> = Default::default();
+    for a in &report.allocations {
+        let name = a.name.split(['(', '#']).next().unwrap_or("").trim();
+        let entry = by_name.entry(name).or_default();
+        entry.0 += a.size;
+        entry.1 += 1;
+    }
+    let mut rows: Vec<_> = by_name.into_iter().collect();
+    rows.sort_by_key(|(_, (bytes, _))| std::cmp::Reverse(*bytes));
+    eprintln!(
+        "vram: allocated {} MiB, reserved {} MiB in {} blocks",
+        report.total_allocated_bytes >> 20,
+        report.total_reserved_bytes >> 20,
+        report.blocks.len()
+    );
+    for (name, (bytes, count)) in rows.into_iter().take(16) {
+        eprintln!(
+            "vram: {:7.1} MiB  {count:5}x  {name}",
+            bytes as f64 / 1048576.0
+        );
+    }
 }
 
 /// The process's resident memory now and at its peak, and how much of it
