@@ -499,7 +499,11 @@ fn sync_units(
                 unit.speed += (moved - unit.speed) * (dt * 10.0).min(1.0);
                 unit.at = at;
                 unit.facing = drawn_facing(u, body.facing, at, &p.yaws);
-                transform.translation = place;
+                // Moved only when it moves: a changed root sends its whole
+                // model, skeleton and all, through transform propagation.
+                if transform.translation != place {
+                    transform.translation = place;
+                }
             }
             None => {
                 // Not before its model has loaded whole, wearables and all.

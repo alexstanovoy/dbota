@@ -379,7 +379,11 @@ fn set(
     let Ok((mut node, mut visibility, background)) = nodes.get_mut(entity) else {
         return;
     };
-    layout(&mut node);
+    // Written only when it moved: a changed node is laid out again, and
+    // every bar's every part each frame was most of the interface's cost.
+    let mut laid = node.clone();
+    layout(&mut laid);
+    node.set_if_neq(laid);
     if let Some(show) = show {
         let want = if show {
             Visibility::Inherited

@@ -302,6 +302,7 @@ fn shade_veil(
     veil: Option<Res<Veil>>,
     mut images: ResMut<Assets<Image>>,
     photo: Res<crate::minimap::PhotoTaken>,
+    mut rows: Local<Vec<f32>>,
 ) {
     let Some(veil) = veil else {
         return;
@@ -335,27 +336,32 @@ fn shade_veil(
     let Some(data) = image.data.as_mut() else {
         return;
     };
-    // A tent blur over a cell either way rounds the border's cell steps.
+    // A tent blur over a cell either way rounds the border's cell steps:
+    // 1-2-1 along each row, then along each column, the edges repeated.
     let shade = &grid.shade;
-    let at = |x: isize, y: isize| -> f32 {
-        let (x, y) = (
-            x.clamp(0, n as isize - 1) as usize,
-            y.clamp(0, n as isize - 1) as usize,
-        );
-        shade[y * n + x]
-    };
+    rows.resize(n * n, 0.0);
+    for (row, out) in shade.chunks_exact(n).zip(rows.chunks_exact_mut(n)) {
+        for x in 0..n {
+            out[x] = row[x.saturating_sub(1)] + 2.0 * row[x] + row[(x + 1).min(n - 1)];
+        }
+    }
     for cy in 0..n {
-        for cx in 0..n {
-            let (x, y) = (cx as isize, cy as isize);
-            let mut sum = 0.0;
-            for (dy, wy) in [(-1, 1.0), (0, 2.0), (1, 1.0)] {
-                for (dx, wx) in [(-1, 1.0), (0, 2.0), (1, 1.0)] {
-                    sum += wx * wy * at(x + dx, y + dy);
-                }
-            }
-            let o = ((n - 1 - cy) * n + cx) * 4;
+        let line = |y: usize| &rows[y * n..(y + 1) * n];
+        let (south, here, north) = (
+            line(cy.saturating_sub(1)),
+            line(cy),
+            line((cy + 1).min(n - 1)),
+        );
+        let o = (n - 1 - cy) * n * 4;
+        for (cx, texel) in data[o..o + n * 4]
+            .as_chunks_mut::<4>()
+            .0
+            .iter_mut()
+            .enumerate()
+        {
+            let sum = south[cx] + 2.0 * here[cx] + north[cx];
             let a = (sum / 16.0 * VEIL * 255.0) as u8;
-            data[o..o + 4].copy_from_slice(&[18, 20, 26, a]);
+            texel.copy_from_slice(&[18, 20, 26, a]);
         }
     }
     // The image keeps its GPU texture when its data changes (Bevy writes

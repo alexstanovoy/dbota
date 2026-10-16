@@ -240,7 +240,11 @@ fn update(
         let (Some(s), Some(u)) = (now, unit) else {
             continue;
         };
-        *rim = BorderColor::all(if harmful(s.id) { DEBUFF_RIM } else { BUFF_RIM });
+        rim.set_if_neq(BorderColor::all(if harmful(s.id) {
+            DEBUFF_RIM
+        } else {
+            BUFF_RIM
+        }));
         if let Some(mut image) = children.first().and_then(|c| icons.get_mut(*c).ok()) {
             let art = art.entry(s.id).or_insert_with(|| Art {
                 source: manifest
@@ -272,7 +276,7 @@ fn update(
             None => 1.0,
         };
         if let Some(mut g) = children.get(1).and_then(|c| sweeps.get_mut(*c).ok()) {
-            *g = BackgroundGradient::from(sweep(left));
+            g.set_if_neq(BackgroundGradient::from(sweep(left)));
         }
         let count = children
             .get(2)

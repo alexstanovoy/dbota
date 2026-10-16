@@ -284,11 +284,15 @@ fn marks(
             _ => 5.0,
         };
         let at = on_map(u.pos.x.to_f32(), u.pos.y.to_f32());
-        node.left = px(at.x - size / 2.0);
-        node.top = px(at.y - size / 2.0);
-        node.width = px(size);
-        node.height = px(size);
-        bg.0 = if Some(u.id) == me {
+        // Written only when changed: a changed node is laid out again.
+        node.set_if_neq(Node {
+            left: px(at.x - size / 2.0),
+            top: px(at.y - size / 2.0),
+            width: px(size),
+            height: px(size),
+            ..node.clone()
+        });
+        bg.set_if_neq(BackgroundColor(if Some(u.id) == me {
             Color::srgb(0.5, 1.0, 0.55)
         } else {
             match u.team {
@@ -296,8 +300,8 @@ fn marks(
                 Team::Dire => Color::srgb(0.85, 0.2, 0.15),
                 Team::Neutral => Color::srgb(0.8, 0.7, 0.4),
             }
-        };
-        *vis = Visibility::Inherited;
+        }));
+        vis.set_if_neq(Visibility::Inherited);
     }
     for mark in &minimap.marks[used..] {
         if let Ok((_, _, mut vis)) = nodes.get_mut(*mark)
@@ -327,10 +331,13 @@ fn marks(
         |(lo, hi), c| (lo.min(*c), hi.max(*c)),
     );
     if let Ok((mut node, _, _)) = nodes.get_mut(minimap.view) {
-        node.left = px(min.x);
-        node.top = px(min.y);
-        node.width = px((max.x - min.x).max(2.0));
-        node.height = px((max.y - min.y).max(2.0));
+        node.set_if_neq(Node {
+            left: px(min.x),
+            top: px(min.y),
+            width: px((max.x - min.x).max(2.0)),
+            height: px((max.y - min.y).max(2.0)),
+            ..node.clone()
+        });
     }
 }
 

@@ -61,7 +61,10 @@ fn animate(
     let dt = time.delta_secs();
     for (unit, mut pose, model_of, rig, dying) in &mut units {
         if let Ok(mut pivot) = pivots.get_mut(model_of.0) {
-            pivot.rotation = sim_facing_to_rotation(unit.facing);
+            let rotation = sim_facing_to_rotation(unit.facing);
+            if pivot.rotation != rotation {
+                pivot.rotation = rotation;
+            }
         }
         let (Some(rig), Some(model)) = (rig, unit.model) else {
             continue;
