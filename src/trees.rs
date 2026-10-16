@@ -172,7 +172,7 @@ fn plant(
         .iter()
         .filter_map(|name| manifest.model(&format!("tree.{name}")))
         .map(|m| Kind {
-            gltf: server.load(m.path.clone()),
+            gltf: crate::manifest::load_model(&server, m.path.clone()),
             tree: None,
             stump: None,
         })
@@ -311,18 +311,22 @@ fn rebuild(
                     && chunk_of(t.at) == (key.0, key.1)
                     && (felled.binary_search(&(*i as u32)).is_ok() == stumps)
             });
-            let Some(merged) = merge(&source, placed.map(|(_, t)| t)) else {
+            let Some(mut merged) = merge(&source, placed.map(|(_, t)| t)) else {
                 continue;
             };
-            spawned.push(
-                commands
-                    .spawn((
-                        Mesh3d(meshes.add(merged)),
-                        MeshMaterial3d(material.clone()),
-                        crate::fog::Fogged,
-                    ))
-                    .id(),
-            );
+            // Drawn only: its vertices leave the CPU once on the GPU, its
+            // bounds taken first.
+            let aabb = bevy::camera::primitives::MeshAabb::compute_aabb(&merged);
+            merged.asset_usage = bevy::asset::RenderAssetUsages::RENDER_WORLD;
+            let mut chunk = commands.spawn((
+                Mesh3d(meshes.add(merged)),
+                MeshMaterial3d(material.clone()),
+                crate::fog::Fogged,
+            ));
+            if let Some(aabb) = aabb {
+                chunk.insert(aabb);
+            }
+            spawned.push(chunk.id());
         }
         forest.chunks.insert(key, spawned);
     }

@@ -186,6 +186,22 @@ fn model(logical: &str, path: &str, rest: &[&str]) -> Model {
     }
 }
 
+/// Settings for loading a model or the map: its textures are kept on the
+/// GPU alone. Nothing reads their pixels on the CPU, and a copy of every
+/// one would hold most of a gigabyte. Every load of a file must use the
+/// same settings, or the file is read twice.
+pub fn gpu_textures(settings: &mut bevy::gltf::GltfLoaderSettings) {
+    settings.load_materials = bevy::asset::RenderAssetUsages::RENDER_WORLD;
+}
+
+/// Loads (a part of) a model's glTF file with [`gpu_textures`].
+pub fn load_model<A: Asset>(
+    server: &AssetServer,
+    path: impl Into<bevy::asset::AssetPath<'static>>,
+) -> Handle<A> {
+    server.load_builder().with_settings(gpu_textures).load(path)
+}
+
 /// The asset path of a file relative to the cache.
 pub fn cache_path(rel: &str) -> String {
     format!("{}://{rel}", crate::CACHE_SOURCE)

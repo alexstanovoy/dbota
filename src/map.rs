@@ -137,6 +137,7 @@ fn spawn_map(
     let scene = server
         .load_builder()
         .with_settings(|s: &mut bevy::gltf::GltfLoaderSettings| {
+            crate::manifest::gpu_textures(s);
             s.load_meshes = bevy::asset::RenderAssetUsages::MAIN_WORLD;
         })
         .load(bevy::gltf::GltfAssetLabel::Scene(0).from_asset(path.clone()));
@@ -317,13 +318,20 @@ fn prepare_map(
     }
     commands.entity(root).despawn();
     let count = batches.len();
-    for batch in batches {
+    for mut batch in batches {
+        // Drawn only: its vertices leave the CPU once on the GPU, its bounds
+        // taken first.
+        let aabb = bevy::camera::primitives::MeshAabb::compute_aabb(&batch.mesh);
+        batch.mesh.asset_usage = RenderAssetUsages::RENDER_WORLD;
         let mut entity = commands.spawn((
             Mesh3d(assets.meshes.add(batch.mesh)),
             MeshMaterial3d(batch.material),
             Transform::IDENTITY,
             crate::fog::Fogged,
         ));
+        if let Some(aabb) = aabb {
+            entity.insert(aabb);
+        }
         if batch.terrain {
             entity.insert(bevy::light::NotShadowCaster);
         }

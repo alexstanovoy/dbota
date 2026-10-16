@@ -20,6 +20,7 @@ mod drill;
 mod effects;
 mod fog;
 mod framestats;
+mod heap;
 mod hud;
 mod input;
 mod manifest;
@@ -270,6 +271,7 @@ fn main() -> AppExit {
             select::plugin,
             framestats::plugin,
             quality::plugin,
+            heap::plugin,
         ));
     app.run()
 }
