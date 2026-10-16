@@ -110,6 +110,11 @@ in the top-left block, round buff icons. It needs the asset cache and a display,
 (`VISUAL_REPLAY=REPLAY.brp cargo test --release -- --ignored` runs it too).
 `DBOTA_FRAMES=1` logs frame times (median, 95th and 99th percentiles) every ten seconds.
 
+`tools/bench.sh REPLAY.brp` measures the binary's size, cold and warm start, and the frame times,
+CPU, RAM and VRAM of a busy stretch of the replay and of a live match against a local
+`bota_server` (settings at the top of the script). It rests on `--bench SECONDS`, which times
+that many seconds of frames once the scene is whole and prints them on one `bench:` line.
+
 ## License
 
 MIT, see [LICENSE](LICENSE).

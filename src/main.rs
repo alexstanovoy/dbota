@@ -130,6 +130,18 @@ pub struct Args {
     /// `msaa`, `map`, `units`, `ui`.
     #[arg(long, value_delimiter = ',')]
     pub without: Vec<String>,
+    /// Debug: start a replay at this tick, read through as fast as the
+    /// reader goes.
+    #[arg(long, value_name = "TICK", requires = "replay")]
+    pub seek: Option<u32>,
+    /// Debug: once the scene is whole (and a `--seek` tick reached), time
+    /// this many seconds of frames, print them and the startup timings on
+    /// one `bench:` line, and exit.
+    #[arg(long, value_name = "SECONDS")]
+    pub bench: Option<f32>,
+    /// Debug: seconds `--bench` lets pass before it starts timing.
+    #[arg(long, value_name = "SECONDS", default_value_t = 2.0)]
+    pub bench_warmup: f32,
     /// Present without vsync.
     #[arg(long)]
     pub no_vsync: bool,
