@@ -12,6 +12,8 @@ mod ability_art;
 mod anim;
 mod bars;
 mod buffs;
+#[cfg(not(target_arch = "wasm32"))]
+mod cachefs;
 mod camera;
 mod capture;
 mod config;
@@ -48,10 +50,7 @@ mod voice;
 use std::path::PathBuf;
 
 use bevy::{
-    asset::{
-        UnapprovedPathMode,
-        io::{AssetSource, AssetSourceBuilder},
-    },
+    asset::{UnapprovedPathMode, io::AssetSourceBuilder},
     diagnostic::FrameTimeDiagnosticsPlugin,
     gltf::{GltfPlugin, convert_coordinates::GltfConvertCoordinates},
     prelude::*,
@@ -232,18 +231,14 @@ fn main() -> AppExit {
         }
     }
     let mut app = App::new();
+    let source = cache_source(&mut app, &args.cache_dir);
     app.insert_resource(args.clone())
         .insert_resource(manifest)
         .insert_resource(settings.clone())
         .insert_resource(SettingsPath(settings_path))
         .insert_non_send(session)
         // Must be registered before AssetPlugin (part of DefaultPlugins) builds the sources.
-        .register_asset_source(
-            CACHE_SOURCE,
-            AssetSourceBuilder::new(AssetSource::get_default_reader(
-                args.cache_dir.to_string_lossy().into_owned(),
-            )),
-        )
+        .register_asset_source(CACHE_SOURCE, source)
         .add_plugins(default_plugins(&args, &settings))
         .add_plugins(FrameTimeDiagnosticsPlugin::default())
         .add_plugins((
@@ -296,6 +291,29 @@ fn parse_size(text: &str) -> Result<(u32, u32), String> {
             .ok_or_else(|| format!("'{s}' is not a side of 64 to 16384 pixels"))
     };
     Ok((side(w)?, side(h)?))
+}
+
+/// The asset source over the cache folder: read straight from disk where
+/// there is one, textures within a decode budget (see `cachefs`); else as
+/// Bevy reads files.
+fn cache_source(app: &mut App, root: &std::path::Path) -> AssetSourceBuilder {
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let budget = cachefs::DecodeBudget::default();
+        app.insert_resource(budget.clone())
+            .add_plugins(cachefs::plugin);
+        let root = root.to_path_buf();
+        AssetSourceBuilder::new(move || {
+            Box::new(cachefs::CacheReader::new(root.clone(), budget.clone()))
+        })
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        let _ = app;
+        AssetSourceBuilder::new(bevy::asset::io::AssetSource::get_default_reader(
+            root.to_string_lossy().into_owned(),
+        ))
+    }
 }
 
 /// Bevy's plugins as dbota sets them up.
