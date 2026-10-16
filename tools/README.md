@@ -47,7 +47,7 @@ malformed output.
 | `models/tree/` | the 9 tree models the map uses around mid (standing mesh + stump) | 8 MB |
 | `models/building/` | ancients, melee/ranged barracks (static, plus `*_destruction` collapse models), fountains | 70 MB |
 | `models/courier/` | default donkey courier, Radiant and Dire, walking and flying | 4 MB |
-| `map/mid/` | `mid.glb`, the default map from fountain to fountain around mid, its textures, `trees.txt` | 354 MB |
+| `map/mid/` | `mid.gltf` with its geometry in `mid.bin`, the default map from fountain to fountain around mid, its textures, `trees.txt` | 354 MB |
 | `textures/ground/` | terrain layer textures (also used by `map.mid`) | 37 MB |
 | `textures/particle/` | 13 effect textures (smoke, glow, sparks, ground cracks, fire, ...) | 1 MB |
 | `icons/`, `hud/`, `minimap/` | item and ability icons, hero portraits, minimap hero/creep/tower/building icons, HUD art, minimap | 2 MB |

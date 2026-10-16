@@ -5,7 +5,7 @@ Keeps static scenery whose world-space bounds touch a band around the mid-lane
 diagonal, flattens the node tree (each kept mesh node becomes a root with its
 world matrix), drops skins/animations/morph targets, removes nodes whose name
 matches --exclude (trees, towers, barracks, ancients, fountains: the client
-spawns those itself because they can be cut or destroyed), and writes a .glb whose images stay external
+spawns those itself because they can be cut or destroyed), and writes a .gltf (or .glb) whose images stay external
 files copied next to it.
 
 Coordinates: the exporter writes glTF Y-up metres with
@@ -255,6 +255,15 @@ class Packer:
         return {"name": mesh.get("name", ""), "primitives": prims}
 
 
+def write_gltf(path: Path, doc: dict, blob: bytes) -> None:
+    """A .gltf with its geometry in a .bin beside it: a loader reads the .bin once, where it copies a
+    .glb's binary chunk out of the file it read whole (the mid band's 213 MB three times over)."""
+    bin_path = path.with_suffix(".bin")
+    bin_path.write_bytes(bytes(blob) + b"\0" * (-len(blob) % 4))
+    doc = dict(doc, buffers=[dict(doc["buffers"][0], uri=bin_path.name)])
+    path.write_text(json.dumps(doc, separators=(",", ":")))
+
+
 def write_glb(path: Path, doc: dict, blob: bytes) -> None:
     raw = json.dumps(doc, separators=(",", ":")).encode()
     raw += b" " * (-len(raw) % 4)
@@ -352,7 +361,7 @@ def building_lines(doc: dict) -> list[str]:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("gltf", type=Path)
-    parser.add_argument("out", type=Path, help="output .glb; images are copied next to it")
+    parser.add_argument("out", type=Path, help="output .gltf (geometry in a .bin beside it) or .glb; images are copied next to it")
     parser.add_argument("--half-width", type=float, default=2600.0, help="band half-width across the lane, Dota units")
     parser.add_argument("--v-min", type=float, default=-7600.0, help="band start along the lane (Radiant side)")
     parser.add_argument("--v-max", type=float, default=7400.0, help="band end along the lane (Dire side)")
@@ -371,7 +380,7 @@ def main() -> None:
     for image in packer.new["images"]:
         if "uri" in image:
             shutil.copyfile(args.gltf.parent / image["uri"], args.out.parent / image["uri"])
-    write_glb(args.out, out, packer.out_blob)
+    (write_gltf if args.out.suffix == ".gltf" else write_glb)(args.out, out, packer.out_blob)
     if args.layers_out:
         args.layers_out.write_text("".join(p + "\n" for p in layer_textures(packer.new["materials"])))
     if args.trees_out:
