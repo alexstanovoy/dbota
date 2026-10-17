@@ -1389,20 +1389,12 @@ fn dress(
     match (part, face) {
         (Part::Icon, f) => {
             if let Some(mut image) = image {
-                let want: Option<Handle<Image>> =
-                    f.and_then(|f| f.icon.clone()).map(|p| server.load(p));
-                let handle = want.unwrap_or_default();
-                if image.image != handle {
-                    image.image = handle;
-                }
                 let tint = match f {
                     Some(f) if !f.look.learned => Color::srgb(0.35, 0.35, 0.35),
                     Some(_) => Color::WHITE,
                     None => Color::NONE,
                 };
-                if image.color != tint {
-                    image.color = tint;
-                }
+                set_image(&mut image, server, f.and_then(|f| f.icon.clone()), tint);
             }
         }
         (Part::Shade, f) => {
@@ -1478,19 +1470,23 @@ fn portrait(
         .map(|p| p.hero.0)
         .or(unit.and_then(|u| u.hero.map(|h| h.0)));
     let path = hero.and_then(|h| manifest.portrait(h));
-    let path_missing = path.is_none();
-    let handle: Handle<Image> = path.map(|p| server.load(p)).unwrap_or_default();
-    if image.image != handle {
-        image.image = handle;
-    }
     // Nothing in place of a portrait the cache has not, rather than white.
-    let tint = if path_missing {
+    let tint = if path.is_none() {
         Color::NONE
     } else if p.is_some_and(|p| p.unit.is_none()) {
         Color::srgb(0.3, 0.3, 0.3)
     } else {
         Color::WHITE
     };
+    set_image(&mut image, &server, path, tint);
+}
+
+/// Shows the cache's image at `path` (none: the default image) in a tint.
+fn set_image(image: &mut Mut<ImageNode>, server: &AssetServer, path: Option<String>, tint: Color) {
+    let handle: Handle<Image> = path.map(|p| server.load(p)).unwrap_or_default();
+    if image.image != handle {
+        image.image = handle;
+    }
     if image.color != tint {
         image.color = tint;
     }
@@ -1518,13 +1514,7 @@ fn time_of_day(
     } else {
         Color::NONE
     };
-    let handle: Handle<Image> = path.map(|p| server.load(p)).unwrap_or_default();
-    if image.image != handle {
-        image.image = handle;
-    }
-    if image.color != tint {
-        image.color = tint;
-    }
+    set_image(&mut image, &server, path, tint);
 }
 
 /// What the panel calls a unit that is not a hero.
@@ -1564,18 +1554,12 @@ fn seats(
         let path = manifest
             .dota_name("hero", p.hero.0)
             .and_then(|name| manifest.file(&format!("portrait.hero.{name}")));
-        let handle: Handle<Image> = path.map(|p| server.load(p)).unwrap_or_default();
-        if image.image != handle {
-            image.image = handle;
-        }
         let tint = if p.unit.is_none() {
             Color::srgb(0.3, 0.3, 0.3)
         } else {
             Color::WHITE
         };
-        if image.color != tint {
-            image.color = tint;
-        }
+        set_image(&mut image, &server, path, tint);
         let picked = p.unit.is_some() && p.unit == core.selected;
         let edge = if picked {
             Color::WHITE
