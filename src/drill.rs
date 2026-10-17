@@ -38,16 +38,7 @@ fn drill(
     let core = &mut session.0;
     if !state.readied && core.my_slot.is_some() && core.view().is_none() {
         state.readied = true;
-        // Shadow Fiend, whose first slot is a raze, or the hero named by
-        // DBOTA_DRILL_HERO.
-        let name = std::env::var("DBOTA_DRILL_HERO").unwrap_or_else(|_| "Shadow Fiend".into());
-        let hero = bota_core::HEROES
-            .iter()
-            .position(|h| h.name == name)
-            .map_or(0, |id| id as u16);
-        core.act(Intent::PickHero(hero));
-        core.act(Intent::ToggleReady);
-        info!("drill: picked {name}, ready");
+        pick(core);
     }
     let Some(hero) = core
         .my_hero()
@@ -77,61 +68,7 @@ fn drill(
                 .collect::<Vec<_>>()
         );
     };
-    // `DBOTA_DRILL=talents` (with a server honouring cheats): to level 15,
-    // two talents learned, the tree pinned open and photographed.
-    let kind = std::env::var("DBOTA_DRILL").unwrap_or_default();
-    let talents = kind == "talents";
-    // `DBOTA_DRILL=items` (cheats too, with --open-shop): two grenades and
-    // a lace bought, the shop photographed, a grenade thrown at the enemy
-    // creeps at mid and one of them photographed with its debuff.
-    let items = kind == "items";
-    // `DBOTA_DRILL=look`: the hero walked out of the fountain and
-    // photographed, to see it drawn.
-    let look = kind == "look";
-    // `DBOTA_DRILL=bench`: two minutes in the lane, for frame times
-    // (`--bench` ends it sooner).
-    let bench = kind == "bench";
-    let steps: &[(f32, &str)] = if bench {
-        &[(1.0, "attack-move to mid"), (120.0, "exit")]
-    } else if look {
-        &[
-            (1.0, "walk to mid"),
-            (6.0, "photograph look"),
-            (7.0, "exit"),
-        ]
-    } else if items {
-        &[
-            (0.5, "gold"),
-            (1.5, "buy grenade"),
-            (2.0, "buy grenade"),
-            (2.5, "buy lace"),
-            (4.0, "photograph shop"),
-            (5.0, "walk to mid"),
-            (20.0, "throw"),
-            (21.0, "select"),
-            (22.5, "photograph debuff"),
-            (24.0, "exit"),
-        ]
-    } else if talents {
-        &[
-            (0.5, "levels"),
-            (2.0, "learn talent 1"),
-            (3.0, "learn talent 2"),
-            (5.0, "photograph"),
-            (7.0, "exit"),
-        ]
-    } else {
-        &[
-            (0.5, "learn Q"),
-            (1.5, "buy Tango"),
-            (3.0, "move"),
-            (10.0, "attack-move to mid"),
-            (24.0, "cast Q"),
-            (26.0, "stop"),
-            (30.0, "report"),
-            (31.0, "exit"),
-        ]
-    };
+    let steps = steps(&std::env::var("DBOTA_DRILL").unwrap_or_default());
     let Some(&(due, what)) = steps.get(state.step) else {
         return;
     };
@@ -151,24 +88,17 @@ fn drill(
         "buy lace" => Intent::Buy(52),
         "walk to mid" => Intent::MoveTo((7600.0, 7600.0)),
         "photograph shop" | "photograph debuff" | "photograph look" => {
-            let path = format!("temp/shots/drill-{}.png", &what[11..]);
-            commands
-                .spawn(bevy::render::view::screenshot::Screenshot::primary_window())
-                .observe(bevy::render::view::screenshot::save_to_disk(path));
+            photograph(
+                &mut commands,
+                format!("temp/shots/drill-{}.png", &what[11..]),
+            );
             return;
         }
         "throw" | "select" => {
             let Some(view) = core.view() else {
                 return;
             };
-            let creep = view
-                .units
-                .iter()
-                .filter(|u| u.team != hero.team && bota_core::kind_def(u.kind).creep)
-                .map(|u| (u.pos.x.to_f32(), u.pos.y.to_f32()))
-                .filter(|(cx, cy)| (cx - x).hypot(cy - y) < 850.0)
-                .min_by_key(|(cx, cy)| ((cx - x).hypot(cy - y)) as i64);
-            let Some(at) = creep else {
+            let Some(at) = creep_within_throw(view, &hero) else {
                 // Wait for the creeps to come within a throw, the clock
                 // with the drill.
                 state.step -= 1;
@@ -204,10 +134,7 @@ fn drill(
             return;
         }
         "photograph" => {
-            let path = "temp/shots/drill-talents.png";
-            commands
-                .spawn(bevy::render::view::screenshot::Screenshot::primary_window())
-                .observe(bevy::render::view::screenshot::save_to_disk(path));
+            photograph(&mut commands, "temp/shots/drill-talents.png".into());
             return;
         }
         "learn Q" => Intent::Press {
@@ -234,4 +161,87 @@ fn drill(
         _ => return,
     };
     core.act(intent);
+}
+
+/// The steps of a drill, `DBOTA_DRILL`'s value: seconds after the hero is
+/// first seen, and what is done then.
+fn steps(kind: &str) -> &'static [(f32, &'static str)] {
+    match kind {
+        // Two minutes in the lane, for frame times (`--bench` ends it sooner).
+        "bench" => &[(1.0, "attack-move to mid"), (120.0, "exit")],
+        // The hero walked out of the fountain and photographed, to see it drawn.
+        "look" => &[
+            (1.0, "walk to mid"),
+            (6.0, "photograph look"),
+            (7.0, "exit"),
+        ],
+        // (Cheats, with --open-shop.) Two grenades and a lace bought, the
+        // shop photographed, a grenade thrown at the enemy creeps at mid and
+        // one of them photographed with its debuff.
+        "items" => &[
+            (0.5, "gold"),
+            (1.5, "buy grenade"),
+            (2.0, "buy grenade"),
+            (2.5, "buy lace"),
+            (4.0, "photograph shop"),
+            (5.0, "walk to mid"),
+            (20.0, "throw"),
+            (21.0, "select"),
+            (22.5, "photograph debuff"),
+            (24.0, "exit"),
+        ],
+        // (Cheats.) To level 15, two talents learned, the tree pinned open
+        // and photographed.
+        "talents" => &[
+            (0.5, "levels"),
+            (2.0, "learn talent 1"),
+            (3.0, "learn talent 2"),
+            (5.0, "photograph"),
+            (7.0, "exit"),
+        ],
+        _ => &[
+            (0.5, "learn Q"),
+            (1.5, "buy Tango"),
+            (3.0, "move"),
+            (10.0, "attack-move to mid"),
+            (24.0, "cast Q"),
+            (26.0, "stop"),
+            (30.0, "report"),
+            (31.0, "exit"),
+        ],
+    }
+}
+
+/// Saves the screen to a file.
+fn photograph(commands: &mut Commands, path: String) {
+    commands
+        .spawn(bevy::render::view::screenshot::Screenshot::primary_window())
+        .observe(bevy::render::view::screenshot::save_to_disk(path));
+}
+
+/// Picks Shadow Fiend, whose first slot is a raze, or the hero named by
+/// `DBOTA_DRILL_HERO`, and readies.
+fn pick(core: &mut bota_client_core::App) {
+    let name = std::env::var("DBOTA_DRILL_HERO").unwrap_or_else(|_| "Shadow Fiend".into());
+    let hero = bota_core::HEROES
+        .iter()
+        .position(|h| h.name == name)
+        .map_or(0, |id| id as u16);
+    core.act(Intent::PickHero(hero));
+    core.act(Intent::ToggleReady);
+    info!("drill: picked {name}, ready");
+}
+
+/// The nearest enemy creep within a grenade's throw of the hero.
+fn creep_within_throw(
+    view: &bota_proto::WorldView,
+    hero: &bota_proto::UnitView,
+) -> Option<(f32, f32)> {
+    let (x, y) = (hero.pos.x.to_f32(), hero.pos.y.to_f32());
+    view.units
+        .iter()
+        .filter(|u| u.team != hero.team && bota_core::kind_def(u.kind).creep)
+        .map(|u| (u.pos.x.to_f32(), u.pos.y.to_f32()))
+        .filter(|(cx, cy)| (cx - x).hypot(cy - y) < 850.0)
+        .min_by_key(|(cx, cy)| ((cx - x).hypot(cy - y)) as i64)
 }
