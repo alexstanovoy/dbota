@@ -344,7 +344,6 @@ fn fog(shot: &Shot, c: &Checks, report: &mut impl FnMut(&str, bool, String)) {
     let scale = c.window.scale_factor();
     let (lw, lh) = (c.window.width(), c.window.height());
     let n = grid.n;
-    let lit = |cx: usize, cy: usize| grid.cells[cy * n + cx];
     let units: Vec<Vec2> = c
         .session
         .0
@@ -356,25 +355,6 @@ fn fog(shot: &Shot, c: &Checks, report: &mut impl FnMut(&str, bool, String)) {
                 .collect()
         })
         .unwrap_or_default();
-    // Signed distance in cells to the nearest cell of the other state, up
-    // to four: negative inside the fog.
-    let border_distance = |cx: usize, cy: usize| -> i32 {
-        let me = lit(cx, cy);
-        for d in 1..=4i32 {
-            for dy in -d..=d {
-                for dx in -d..=d {
-                    let (x, y) = (cx as i32 + dx, cy as i32 + dy);
-                    if x < 0 || y < 0 || x as usize >= n || y as usize >= n {
-                        continue;
-                    }
-                    if lit(x as usize, y as usize) != me {
-                        return if me { d } else { -d };
-                    }
-                }
-            }
-        }
-        if me { 5 } else { -5 }
-    };
     let mut seen = Vec::new();
     let mut fogged = Vec::new();
     let mut by_distance: Vec<Vec<f32>> = vec![Vec::new(); 11];
@@ -394,7 +374,7 @@ fn fog(shot: &Shot, c: &Checks, report: &mut impl FnMut(&str, bool, String)) {
             let Some(color) = shot.mean(p.x * scale, p.y * scale, 2) else {
                 continue;
             };
-            let d = border_distance(cx, cy);
+            let d = border_distance(grid, cx, cy);
             by_distance[(d + 5) as usize].push(luminance(color));
             if d.abs() >= 4 {
                 if d > 0 {
@@ -444,7 +424,34 @@ fn fog(shot: &Shot, c: &Checks, report: &mut impl FnMut(&str, bool, String)) {
             FOG_SATURATION_MAX * 100.0
         ),
     );
-    // The luminance profile across the border, cell by cell.
+    fog_border(&by_distance, report);
+}
+
+/// Signed distance in cells from a cell to the nearest cell of the other
+/// state, up to four (five beyond): negative inside the fog.
+fn border_distance(grid: &FogGrid, cx: usize, cy: usize) -> i32 {
+    let n = grid.n;
+    let lit = |cx: usize, cy: usize| grid.cells[cy * n + cx];
+    let me = lit(cx, cy);
+    for d in 1..=4i32 {
+        for dy in -d..=d {
+            for dx in -d..=d {
+                let (x, y) = (cx as i32 + dx, cy as i32 + dy);
+                if x < 0 || y < 0 || x as usize >= n || y as usize >= n {
+                    continue;
+                }
+                if lit(x as usize, y as usize) != me {
+                    return if me { d } else { -d };
+                }
+            }
+        }
+    }
+    if me { 5 } else { -5 }
+}
+
+/// The width of the fog's border, from the luminance profile across it:
+/// the mean luminance of the ground cells at each signed distance.
+fn fog_border(by_distance: &[Vec<f32>], report: &mut impl FnMut(&str, bool, String)) {
     let profile: Vec<Option<f32>> = by_distance
         .iter()
         .map(|v| (v.len() >= 5).then(|| v.iter().sum::<f32>() / v.len() as f32))
