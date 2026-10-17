@@ -4,7 +4,7 @@
 
 #[test]
 #[ignore]
-fn the_picture_meets_the_owners_checks() {
+fn the_picture_meets_its_checks() {
     let script = concat!(env!("CARGO_MANIFEST_DIR"), "/tools/visual_check.sh");
     let status = std::process::Command::new(script)
         .status()

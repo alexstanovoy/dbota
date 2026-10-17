@@ -1,5 +1,4 @@
-# Which Dota 2 name stands for which bota id. Copied from
-# bota-visual/crates/bota-client/assets/dota-assets.txt; the `icon.*` and
+# Which Dota 2 name stands for which bota id. The `icon.*` and
 # `sound.*` entries of manifest.txt are named after these Dota names.
 #
 #   item <item id> <dota item name>        icon.item.<name>    (panorama/images/items/<name>_png)

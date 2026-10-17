@@ -5,6 +5,10 @@
 # icons. Takes a bota replay (.brp, first argument or VISUAL_REPLAY) of a Map 2
 # match whose heroes are on the map at VISUAL_TICK, the asset cache, and a
 # display (DISPLAY or WAYLAND_DISPLAY). Exits non-zero when a check fails.
+# The fog checks compare fogged ground with the seen ground on screen, so they
+# hold only where the scene gives a fair comparison: VISUAL_TICK 4000 (day,
+# the default) and 12000 (night) are the contract ticks; other ticks may fail
+# on the ground in view, not on the fog.
 set -euo pipefail
 here=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)
 replay=${1:-${VISUAL_REPLAY:-}}
