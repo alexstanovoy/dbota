@@ -425,6 +425,8 @@ sound sound.announcer.choose_hero sounds/vo/announcer/announcer_choose_hero.vsnd
 sound sound.announcer.battle_begins sounds/vo/announcer/announcer_battle_begin_01.vsnd_c sounds/vo/announcer/announcer_battle_begin_01.mp3 event=announcer_announcer_battle_begin_01
 sound sound.horn sounds/ambient/horn_radiant.vsnd_c sounds/ambient/horn_radiant.wav event=GameStart.RadiantAncient
 sound sound.horn sounds/ambient/horn_dire.vsnd_c sounds/ambient/horn_dire.wav event=GameStart.DireAncient
+sound sound.day sounds/ambient/morning.vsnd_c sounds/ambient/morning.wav event=General.Morning
+sound sound.night sounds/ambient/night.vsnd_c sounds/ambient/night.wav event=General.Night
 
 # Order acknowledgements (one vo event per line; all variants share the logical name, the first 12 of each).
 # Not taken: nev_move_14/15, pud_move_15/16/17, pud_attack_14/15/16.

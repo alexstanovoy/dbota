@@ -1,6 +1,7 @@
 //! The voices: one's hero answering its move and attack orders as in Dota
 //! (now and then, not on every click), the announcer at hero selection and
-//! when the battle begins with the horn, and the click of the interface.
+//! when the battle begins with the horn, the rooster at daybreak and the
+//! wolf at nightfall, and the click of the interface.
 //! Silent where the cache has no such sound.
 
 use bevy::{audio::Volume, prelude::*};
@@ -59,6 +60,9 @@ struct Voices {
     begins: Lines,
     /// The horn at each side's ancient: Radiant's, then Dire's.
     horns: [Lines; 2],
+    /// Daybreak's birds and rooster, and nightfall's howl.
+    day: Lines,
+    night: Lines,
 }
 
 /// What the voices remember between frames.
@@ -79,7 +83,7 @@ struct Heard {
 pub fn plugin(app: &mut App) {
     app.init_resource::<Voices>()
         .add_systems(Startup, load)
-        .add_systems(Update, (answer, announce, click));
+        .add_systems(Update, (answer, announce, herald, click));
 }
 
 fn load(mut voices: ResMut<Voices>, manifest: Res<Manifest>, server: Res<AssetServer>) {
@@ -94,6 +98,8 @@ fn load(mut voices: ResMut<Voices>, manifest: Res<Manifest>, server: Res<AssetSe
     voices.click = Lines::load(&manifest, &server, "sound.ui.click");
     voices.choose = Lines::load(&manifest, &server, "sound.announcer.choose_hero");
     voices.begins = Lines::load(&manifest, &server, "sound.announcer.battle_begins");
+    voices.day = Lines::load(&manifest, &server, "sound.day");
+    voices.night = Lines::load(&manifest, &server, "sound.night");
     for (i, side) in ["radiant", "dire"].into_iter().enumerate() {
         voices.horns[i] = Lines {
             sources: manifest
@@ -220,6 +226,35 @@ fn announce(
             say(&mut commands, line, 0.9);
         }
     }
+}
+
+/// Daybreak and nightfall, as Dota sounds them (`General.Morning`,
+/// `General.Night`), when the time of day turns between two views of the
+/// match; never for the first view, so joining or opening a replay at night
+/// howls at nobody.
+fn herald(
+    mut commands: Commands,
+    session: NonSend<Session>,
+    mut voices: ResMut<Voices>,
+    settings: Res<Settings>,
+    args: Res<crate::Args>,
+    mut was_night: Local<Option<bool>>,
+) {
+    let night = session
+        .0
+        .view()
+        .map(|view| bota_core::time_of_day(view.tick).night);
+    let turned = matches!((*was_night, night), (Some(was), Some(now)) if was != now);
+    *was_night = night;
+    if !turned || settings.muted || args.mute {
+        return;
+    }
+    let source = if night == Some(true) {
+        voices.night.take()
+    } else {
+        voices.day.take()
+    };
+    say(&mut commands, source, 0.5);
 }
 
 /// The click of any button of the interface.
