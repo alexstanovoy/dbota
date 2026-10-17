@@ -1101,6 +1101,9 @@ fn notice(core: &Core, rate: u32) -> String {
     if core.lost {
         return "CONNECTION LOST".to_string();
     }
+    if core.over.is_none() && core.source.is_redialing() {
+        return "RECONNECTING...".to_string();
+    }
     if let Some((winner, _)) = &core.over {
         return match winner {
             Team::Radiant => "RADIANT VICTORY".to_string(),
