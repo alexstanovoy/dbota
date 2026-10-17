@@ -352,7 +352,7 @@ fn prices(
     let core = &session.0;
     let gold = core
         .view()
-        .and_then(|v| v.players.iter().find(|p| Some(p.slot) == core.my_slot))
+        .and_then(|v| v.player(core.my_slot?))
         .and_then(|p| p.gold)
         .unwrap_or(0);
     let rate = u32::from(core.tick_rate().max(1));
@@ -495,9 +495,7 @@ fn texts(
     mut corner: Query<(&CornerButton, &mut Visibility)>,
 ) {
     let core = &session.0;
-    let me = core
-        .view()
-        .and_then(|v| v.players.iter().find(|p| Some(p.slot) == core.my_slot));
+    let me = core.view().and_then(|v| v.player(core.my_slot?));
     let quick = core
         .quick_buy
         .and_then(|id| ITEMS.iter().find(|f| f.id == id));
@@ -517,7 +515,7 @@ fn texts(
                     core.panel_slot()
                 };
                 core.view()
-                    .and_then(|v| v.players.iter().find(|p| Some(p.slot) == seat))
+                    .and_then(|v| v.player(seat?))
                     .and_then(|p| p.gold)
                     .map_or("-".to_string(), |g| g.to_string())
             }

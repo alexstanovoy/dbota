@@ -204,7 +204,7 @@ fn buildings(c: &Checks, report: &mut impl FnMut(&str, bool, String)) {
         .filter(|u| crate::units::is_building(u.kind) && u.team != bota_proto::Team::Neutral)
         .filter_map(|u| {
             let view = c.session.0.view()?;
-            let wire = crate::session::unit_of(view, u.id)?;
+            let wire = view.unit(u.id)?;
             let want = c.yaws.facing(wire, u.at);
             match want {
                 Some(want)

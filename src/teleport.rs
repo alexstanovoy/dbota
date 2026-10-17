@@ -82,7 +82,7 @@ fn make_art(
 
 /// Dota's colour of a seat: the order of its side's seats picks it.
 pub fn player_color(view: &WorldView, slot: SlotId) -> Color {
-    let Some(player) = view.players.iter().find(|p| p.slot == slot) else {
+    let Some(player) = view.player(slot) else {
         return Color::WHITE;
     };
     let rank = view
@@ -112,12 +112,8 @@ pub fn progress(teleport: &TeleportView) -> f32 {
 
 /// Where the channelling hero of a teleport stands, when it is in sight.
 pub fn origin(view: &WorldView, teleport: &TeleportView) -> Option<(f32, f32)> {
-    let unit = view
-        .players
-        .iter()
-        .find(|p| p.slot == teleport.slot)?
-        .unit?;
-    let unit = crate::session::unit_of(view, unit)?;
+    let unit = view.player(teleport.slot)?.unit?;
+    let unit = view.unit(unit)?;
     Some((unit.pos.x.to_f32(), unit.pos.y.to_f32()))
 }
 

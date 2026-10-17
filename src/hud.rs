@@ -929,10 +929,7 @@ pub(crate) fn subject(core: &Core) -> (Option<&PlayerView>, Option<&UnitView>, O
     {
         return (None, Some(unit), None);
     }
-    let Some(p) = core
-        .panel_slot()
-        .and_then(|s| view.players.iter().find(|p| p.slot == s))
-    else {
+    let Some(p) = core.panel_slot().and_then(|s| view.player(s)) else {
         return (None, None, None);
     };
     let unit = core
@@ -955,9 +952,7 @@ fn readouts(
     };
     let rate = u32::from(core.tick_rate().max(1));
     let (p, unit, _) = subject(core);
-    let mine = core
-        .panel_slot()
-        .and_then(|s| view.players.iter().find(|p| p.slot == s));
+    let mine = core.panel_slot().and_then(|s| view.player(s));
     for (readout, mut text) in &mut texts {
         let s = match *readout {
             Readout::Clock => clock(i64::from(view.tick) - i64::from(core.pregame_ticks()), rate),
@@ -1113,7 +1108,7 @@ fn notice(core: &Core, rate: u32) -> String {
     }
     let dead = core
         .my_slot
-        .and_then(|s| core.view()?.players.iter().find(|p| p.slot == s))
+        .and_then(|s| core.view()?.player(s))
         .filter(|p| p.unit.is_none());
     if let Some(p) = dead {
         return format!("Respawn in {}", p.respawn_left / rate + 1);
@@ -1159,7 +1154,7 @@ fn gauges(session: NonSend<Session>, mut gauges: Query<(&Gauge, &mut Node, &mut 
             Gauge::Mana => unit.map_or(0.0, |u| u.mana.max(0) as f32 / u.max_mana.max(1) as f32),
             Gauge::SeatHp(seat) => seat_of(view, seat)
                 .and_then(|p| p.unit)
-                .and_then(|id| crate::session::unit_of(view, id))
+                .and_then(|id| view.unit(id))
                 .map_or(0.0, |u| u.hp.max(0) as f32 / u.max_hp.max(1) as f32),
         };
         let width = percent(share * 100.0);
@@ -1264,7 +1259,7 @@ fn item_face(
         }
     } else if slot >= BAG_SLOTS {
         let view = core.view()?;
-        let p = view.players.iter().find(|p| Some(p.slot) == core.my_slot)?;
+        let p = view.player(core.my_slot?)?;
         (*p.stash.as_ref()?.get(usize::from(slot - BAG_SLOTS))?)?
     } else {
         let items = kit

@@ -3,19 +3,13 @@
 
 use bevy::prelude::*;
 use bota_client_core::{App as Core, Pin, ReplayPlayer, Source};
-use bota_proto::{EntityId, SlotId, UnitView, WorldView};
+use bota_proto::SlotId;
 
 use crate::Args;
 
 /// The client core. Not `Send`: a replay reads through a boxed reader, so
 /// the systems that touch it run on the main thread.
 pub struct Session(pub Core);
-
-/// A unit of a view by its id: a view keeps its units sorted by id.
-pub fn unit_of(view: &WorldView, id: EntityId) -> Option<&UnitView> {
-    let at = view.units.binary_search_by_key(&id, |u| u.id).ok()?;
-    view.units.get(at)
-}
 
 /// Whether a match is under way: set once the match's terrain is known.
 #[derive(Resource, Default, Debug, Clone, Copy, PartialEq, Eq)]

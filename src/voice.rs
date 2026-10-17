@@ -159,9 +159,7 @@ fn answer(
         _ => return,
     };
     let Some(name) = view
-        .players
-        .iter()
-        .find(|p| p.slot == slot)
+        .player(slot)
         .and_then(|p| manifest.dota_name("hero", p.hero.0))
     else {
         return;

@@ -71,7 +71,7 @@ fn animate(
         };
         let clips = &bank.0[model].clips;
         let clip = |name: &str| clips.iter().find(|c| c.0 == name && c.2 > 0.0);
-        let live = crate::session::unit_of(view, unit.id);
+        let live = view.unit(unit.id);
         let wanted = match (dying, live) {
             (Some(d), _) => Wanted {
                 clip: "death",

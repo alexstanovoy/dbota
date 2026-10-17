@@ -63,7 +63,7 @@ fn drill(
     let (x, y) = (hero.pos.x.to_f32(), hero.pos.y.to_f32());
     let gold = core
         .view()
-        .and_then(|v| v.players.iter().find(|p| Some(p.slot) == core.my_slot))
+        .and_then(|v| v.player(core.my_slot?))
         .and_then(|p| p.gold);
     let report = |what: &str| {
         info!(

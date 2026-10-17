@@ -10,7 +10,7 @@ use bota_proto::{UnitKind, UnitView};
 
 use crate::config::Settings;
 use crate::map::Ground;
-use crate::session::{Session, unit_of};
+use crate::session::Session;
 use crate::ui::{self, Fonts};
 use crate::units::{Dying, Unit};
 
@@ -246,13 +246,13 @@ fn bars(
     let layer = layer.0;
     let (camera, cam_gt) = *p.camera;
     let scale = p.ui_scale.0.max(0.1);
-    let me = core.ears().and_then(|id| unit_of(view, id));
+    let me = core.ears().and_then(|id| view.unit(id));
     let mut alive = Vec::new();
     for (entity, unit, dying) in &units {
         let Some((w, h)) = bar_size(unit.kind) else {
             continue;
         };
-        let Some(live) = unit_of(view, unit.id).filter(|_| !dying) else {
+        let Some(live) = view.unit(unit.id).filter(|_| !dying) else {
             continue;
         };
         let head = Vec3::new(
