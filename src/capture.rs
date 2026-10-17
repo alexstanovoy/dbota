@@ -10,6 +10,10 @@ use bota_client_core::Source;
 use crate::Args;
 use crate::session::Session;
 
+/// Seconds a replay is held at a wanted tick before the shot: five times the
+/// fog's easing time.
+const HOLD_SECONDS: f32 = 1.0;
+
 /// Ticks before a wanted tick a replay slows back to its own pace.
 const SETTLE_TICKS: u32 = 90;
 
@@ -23,8 +27,9 @@ struct Shots {
     failed: bool,
     /// Frames left to settle after the camera moved for a shot.
     settle: u32,
-    /// Frames waited at the wanted tick for the fog to ease in.
-    settled: u32,
+    /// Seconds the replay has been held at the wanted tick, for the fog to
+    /// ease in.
+    held: f32,
 }
 
 pub fn plugin(app: &mut App) {
@@ -84,6 +89,7 @@ fn shoot(
     diagnostics: Res<bevy::diagnostic::DiagnosticsStore>,
     mut cam: Single<&mut crate::camera::RtsCamera>,
     photo: Res<crate::minimap::PhotoTaken>,
+    time: Res<Time<bevy::time::Real>>,
 ) {
     if shots.waiting {
         return;
@@ -126,8 +132,15 @@ fn shoot(
         if !photo.0 {
             return;
         }
-        if shots.settled < 45 {
-            shots.settled += 1;
+        // The replay is held at the wanted tick while the fog eases in for a
+        // second, whatever the frame rate: a count of frames let a fast
+        // machine shoot a later tick through a fog still easing, and the
+        // border measured wider or narrower from run to run.
+        if let Source::Replay(player) = &mut core.source {
+            player.paused = true;
+        }
+        if shots.held < HOLD_SECONDS {
+            shots.held += time.delta_secs();
             return;
         }
         // Several places to look at: the camera goes to this shot's and the
@@ -159,6 +172,11 @@ fn shoot(
     };
     shots.taken += 1;
     shots.waiting = true;
+    shots.held = 0.0;
+    // The frame being drawn is the one saved; the replay goes on after it.
+    if let Source::Replay(player) = &mut session.0.source {
+        player.paused = false;
+    }
     let fps = diagnostics
         .get(&bevy::diagnostic::FrameTimeDiagnosticsPlugin::FRAME_TIME)
         .and_then(|d| d.average());
