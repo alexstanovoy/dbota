@@ -1,5 +1,5 @@
 # dbota asset manifest: every Valve asset the client uses, exported by tools/import_assets.sh
-# into the cache ($DBOTA_ASSETS, default ~/.cache/dbota). Outputs are relative to the cache root.
+# into the cache ($DBOTA_ASSETS, default ~/.cache/dbota/v<N>, N being the export version). Outputs are relative to the cache root.
 #
 # Line kinds (whitespace-separated, '#' starts a comment):
 #   model   <logical> <vpk .vmdl_c> <out .glb> [anims=a,b,c] [meshes=m,n] [attach=<model>] [model_scale=x]

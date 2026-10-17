@@ -1,5 +1,5 @@
-//! The sound effects, made from sine waves, noise and envelopes when the
-//! client starts. No recorded sound is used.
+//! The stand-in sound effects, made from sine waves, noise and envelopes when
+//! the client starts: used where the cache has no recorded sound for a cue.
 
 use std::f32::consts::TAU;
 

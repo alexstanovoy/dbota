@@ -1,4 +1,4 @@
-//! The ground: Dota's own mid-lane map from the cache, its terrain layers
+//! The ground: Dota's own map, the band around the mid lane, from the cache, its terrain layers
 //! baked into vertex colours, or a terrain built from the match's cells when
 //! the cache has no map. Also the sun, and the height of the ground anywhere.
 

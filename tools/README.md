@@ -18,7 +18,7 @@ The script downloads [Source2Viewer-CLI](https://github.com/ValveResourceFormat/
 and refuses an archive with any other checksum.
 
 A first run takes about 3.5 minutes; it stages the full map export (~330 MB) in a `mktemp` directory
-under `$TMPDIR` (tmpfs on this machine) and removes it on exit. Re-running is a no-op in under a second: textures and sounds are skipped when their output
+under `$TMPDIR` and removes it on exit. Re-running is a no-op in under a second: textures and sounds are skipped when their output
 exists; models and the map are re-exported only when their manifest line (or the export version,
 `../assets-manifest/version`) changed. A new version exports into a new folder, `~/.cache/dbota/v<N>`;
 the client reads the folder of the version it was built with. Each run ends with `verify_assets.py`, which fails the import on any missing or
@@ -32,26 +32,28 @@ malformed output.
 | `../assets-manifest/version` | the export version: the cache folder `v<N>`, and the stamps that force a re-export |
 | `../assets-manifest/ids.txt` | bota item/ability/hero ids → Dota names |
 | `import_assets.sh` | the importer |
+| `visual_check.sh` | measures the picture of a recorded match (see the main README) |
+| `bench.sh` | measures the binary's size, start and frame times |
 | `crop_world.py` | crops the exported map to the mid-lane band, lists terrain layers and trees |
 | `verify_assets.py` | checks glTF meshes/skins/clips/textures, wearable joints, PNG sizes, WAV/MP3 format |
 | `inspect_gltf.py` | prints a model's meshes, skins and animations (`--json` for machines) |
 
-## What the cache holds (689 MB, 124 MB of it the CLI)
+## What the cache holds (556 MB per `v<N>` folder, plus 124 MB of the CLI shared by all)
 
 | path | content | size |
 | --- | --- | --- |
 | `models/hero/nevermore/` | Shadow Fiend, 17 clips, plus `nevermore_{head,shoulders,arms}/` default wearables | 16 MB |
 | `models/hero/pudge/` | Pudge, 18 clips, plus `pudge_{weapon,back,offhand,shoulder,arms,head,belt}/` default wearables | 4 MB |
-| `models/creep/` | Radiant/Dire melee, ranged, flagbearer (6 clips each); siege (3 clips) and its `*_destruction` break-apart model | 42 MB |
+| `models/creep/` | Radiant/Dire melee, ranged, flagbearer (6 clips each); siege (3 clips) and its `*_destruction` break-apart model | 41 MB |
 | `models/tower/` | Radiant (`radiant_tower002` + base) and Dire (`dire_tower002`) tier-1 towers | 4 MB |
 | `models/tree/` | the 9 tree models the map uses around mid (standing mesh + stump) | 8 MB |
-| `models/building/` | ancients, melee/ranged barracks (static, plus `*_destruction` collapse models), fountains | 70 MB |
+| `models/building/` | ancients, melee/ranged barracks (static, plus `*_destruction` collapse models), fountains | 73 MB |
 | `models/courier/` | default donkey courier, Radiant and Dire, walking and flying | 4 MB |
-| `map/mid/` | `mid.gltf` with its geometry in `mid.bin`, the default map from fountain to fountain around mid, its textures, `trees.txt` | 354 MB |
+| `map/mid/` | `mid.gltf` with its geometry in `mid.bin`, the default map from fountain to fountain around mid, its textures, `trees.txt`, `buildings.txt` (the towers' places) | 354 MB |
 | `textures/ground/` | terrain layer textures (also used by `map.mid`) | 37 MB |
 | `textures/particle/` | 13 effect textures (smoke, glow, sparks, ground cracks, fire, ...) | 1 MB |
 | `icons/`, `hud/`, `minimap/` | item and ability icons, hero portraits, minimap hero/creep/tower/building icons, HUD art, minimap | 2 MB |
-| `sounds/` | 42 WAVs and 50 MP3s (announcer, hero move/attack voice lines) resolved through sound events | 14 MB |
+| `sounds/` | 48 WAVs and 50 MP3s (announcer, hero move/attack voice lines, the horns, `ambient/morning.wav` and `night.wav`) resolved through sound events | 17 MB |
 
 Formats: glTF 2.0 binary (`.glb`) with PNG textures next to it (relative URIs), PNG, WAV, MP3. All WAVs
 are PCM 44.1/22.05 kHz, 16-bit except `sounds/ui/ui_general_deny.wav` (8-bit, as Valve ships it);
@@ -91,8 +93,8 @@ and are kept as `.mp3` (the stdlib cannot transcode them); playing them needs Be
 ## The mid-lane map (`map.mid`)
 
 `maps/dota.vpk`'s world is exported whole and cropped by `crop_world.py` to nodes touching the band
-`|dota.x − dota.y| / √2 ≤ 4200`, `−11800 ≤ (dota.x + dota.y) / √2 ≤ 11700`: the mid lane from
-fountain to fountain with both base plateaus. Towers, trees, barracks, ancients and fountain
+`|dota.x − dota.y| / √2 ≤ 13100`, `−11800 ≤ (dota.x + dota.y) / √2 ≤ 11700`: the mid lane from
+fountain to fountain with both base plateaus and the ground the band touches either side of it. Towers, trees, barracks, ancients and fountain
 buildings are removed (the client spawns them as units; see `EXCLUDE` in `crop_world.py`); shops,
 statues, walls, decorations and the fountains' water/glow meshes stay. Nodes are flattened to world
 matrices; skins, animations and morph targets are dropped. Each triangle list using less than half of
@@ -115,4 +117,4 @@ of geometry before this; 236 MB after, for a 213 MB file instead of 129 MB).
 - Particle systems (only a few of their textures, first frame of sprite sheets).
 - Tower destruction models and non-default (event/crystal/mega) creep variants.
 - The full map outside the mid band (export it by raising `half_width` / `v_min` / `v_max` on the
-  `world` line; the whole map with materials is ~330 MB).
+  `world` line (they are 13100 and −11800 / 11700 now); the whole map with materials is ~330 MB).

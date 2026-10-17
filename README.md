@@ -28,6 +28,9 @@ Dota 2 install. Bots don't need it.
    (cd ../bota && cargo build --release -p bota_server)
    ```
 
+   A live match needs a client and a server built from the same bota: a server that sees another wire
+   fingerprint refuses the client. A replay opens only with the bota that recorded it.
+
 ## Play
 
 A bot is any program that speaks bota's protocol: it takes a seat as a player does.
@@ -40,6 +43,10 @@ Two people: start a server and connect two dbota clients (from another machine u
 target/release/dbota --name alice
 target/release/dbota --name bob
 ```
+
+The match has a day and a night: by night the light turns to moonlight, units see less far, and the
+clock shows the sun or the moon. dbota always joins a live match without a seat key, so it cannot take a seat
+that a server has reserved for a key.
 
 Alone, for practice: `bota_server --map 2 --players 2 --dummy-seat` gives the other seat to a hero
 that never leaves its fountain.
@@ -74,6 +81,23 @@ On the hero screen click a portrait, then click Ready. The game starts once both
 | `M` | mute |
 | `F10` | settings: volume, damage numbers, your hero's voice answers, edge pan, picture quality; keys can be rebound by editing `~/.config/dbota/client.conf` |
 | `Esc` | cancel / close / leave |
+
+Keys are rebound by writing `key.<action> = <key>` lines in `~/.config/dbota/client.conf` (the
+settings overlay changes volume and the toggles, not keys); a key is a letter, a digit, `F1`..`F12`,
+`Space`, `Tab` or one of the punctuation names the file accepts. The actions and their keys out of
+the box:
+
+| action | key | action | key |
+|---|---|---|---|
+| `attack_move` | `A` | `town_portal` | `T` |
+| `stop` | `S` | `shop` | `B` |
+| `hold` | `H` | `select_hero` | `F1` |
+| `ability_1` .. `ability_3` | `Q` `W` `E` | `select_courier` | `F2` |
+| `ability_4`, `ability_5` | `D`, `F` | `courier_deliver` | `F3` |
+| `ultimate` | `R` | `quick_buy` | `F5` |
+| `item_1` .. `item_6` | `1` .. `6` | `camera_lock` | `Y` |
+| `center_hero` | `Space` | `settings` | `F10` |
+| `mute` | `M` | `show_ranges` | left `Alt` |
 
 Talents: the small button left of the abilities opens the talent tree; when you have a point,
 click a talent to learn it; the Attribute Bonus button right of the abilities spends a point on its next level. Buffs and debuffs of the selected unit sit above the abilities. The
@@ -121,16 +145,17 @@ target/release/dbota --replay match.brp --pov 0      # as seat 0 sees it (its fo
 target/release/dbota --replay match.brp --follow 1   # camera stays on seat 1's hero
 ```
 
-`Space` pause, `=` / `-` faster / slower, `.` one step, `Tab` switch vision.
+`Space` pause, `=` / `-` (or the numpad's `+` / `-`) faster / slower, `.` one step, `Tab` switch vision.
 A replay opens only with the bota version that recorded it.
+
+The browser build is described in `web/README.md`.
 
 `dbota --help` lists everything else, including the debug options for screenshots.
 
 ## Checking the picture
 
 `tools/visual_check.sh REPLAY.brp` measures dbota's picture of a recorded Map 2 match:
-fogged ground at most 45% of seen ground's luminance and saturation with a 1–5 cell border (compared across the ground on screen, so the tick matters: ticks 4000, by day, and 12000, by night, are the contract; `VISUAL_TICK`, `VISUAL_RUNS` and `VISUAL_DIR` set the tick, the repeats and the output folder), both seats' views, heroes
-drawn with their models whole, enemy buildings seen through fog, buildings that never turn, no range rings without `Alt`, no gold or souls
+fogged ground at most 45% of seen ground's luminance and saturation with a 1–5 cell border (compared across the ground on screen, so the tick matters: 4000, by day, and 12000, by night, are the contract ticks; `VISUAL_TICK`, `VISUAL_RUNS` and `VISUAL_DIR` set the tick, the repeats of the hero-model check and the output folder), seen from both seats: every hero model loads whole and is drawn with detail, buildings stand as the map places them, enemy buildings are seen through the fog and the enemy base is fogged, no range rings without `Alt`, no gold or souls
 in the top-left block, round buff icons. It needs the asset cache and a display, and exits non-zero when a check fails
 (`VISUAL_REPLAY=REPLAY.brp cargo test --release -- --ignored` runs it too).
 `DBOTA_FRAMES=1` logs frame times (median, 95th and 99th percentiles) every ten seconds.
