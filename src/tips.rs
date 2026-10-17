@@ -60,6 +60,7 @@ fn show(
     cells: Query<(&Interaction, &ShopCell)>,
     buffs: Query<(&Interaction, &crate::buffs::BuffChip)>,
     talent_cells: Query<(&Interaction, &crate::talents::TalentCell)>,
+    attribute: Query<&Interaction, With<crate::talents::AttributeButton>>,
     window: Single<&Window, With<PrimaryWindow>>,
     ui_scale: Res<UiScale>,
     mut tip: Single<(&mut Node, &mut Visibility), With<Tip>>,
@@ -90,7 +91,16 @@ fn show(
         .iter()
         .find(|(i, _)| **i != Interaction::None)
         .map(|(_, c)| c.0);
-    let body = if let Some(shown) = hovered_buff {
+    let hovered_attribute = attribute.iter().any(|i| *i != Interaction::None);
+    let body = if hovered_attribute {
+        let level = crate::hud::subject(core)
+            .0
+            .and_then(|p| core.talents_of(p.slot))
+            .map_or(0, |t| t.attribute_bonus);
+        Some(format!(
+            "Attribute Bonus  (level {level}/7)\n+2 to all attributes per level.\nClick: spend a skill point on it"
+        ))
+    } else if let Some(shown) = hovered_buff {
         bota_client_core::effect(shown.id).map(|face| {
             let mut lines = vec![face.name().to_string(), face.blurb()];
             if let Some(n) = shown.stacks.filter(|n| *n > 0) {

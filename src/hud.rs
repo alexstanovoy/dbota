@@ -388,6 +388,7 @@ fn spawn_middle(commands: &mut Commands, fonts: &Fonts, bar: Entity) {
             true,
         );
     }
+    crate::talents::spawn_attribute_button(commands, fonts, row);
     for (gauge, readout, regen, height, color) in [
         (
             Gauge::Hp,
