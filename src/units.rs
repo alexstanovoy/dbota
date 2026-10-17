@@ -394,11 +394,10 @@ fn hero_model(hero: u16, manifest: &Manifest) -> Option<String> {
 /// Every model a match can need: each hero's and each lane unit's of both
 /// sides. One missing from the cache is drawn as a stand-in, and said so.
 fn required_models(manifest: &Manifest) -> Vec<String> {
-    let mut names: Vec<String> = bota_client_core::HEROES
-        .iter()
-        .map(|h| {
-            hero_model(h.id, manifest)
-                .unwrap_or_else(|| format!("hero #{} (no Dota name in ids.txt)", h.id))
+    let mut names: Vec<String> = (0..bota_core::HEROES.len() as u16)
+        .map(|id| {
+            hero_model(id, manifest)
+                .unwrap_or_else(|| format!("hero #{id} (no Dota name in ids.txt)"))
         })
         .collect();
     for side in ["radiant", "dire"] {

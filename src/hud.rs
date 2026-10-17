@@ -986,7 +986,7 @@ fn readouts(
                 .sum::<u32>()
                 .to_string(),
             Readout::PanelName => p
-                .and_then(|p| bota_client_core::hero(p.hero.0))
+                .and_then(|p| bota_core::hero_def(p.hero))
                 .map(|hero| hero.name.to_string())
                 .or(unit.map(|u| kind_name(u.kind).to_string()))
                 .unwrap_or_default(),

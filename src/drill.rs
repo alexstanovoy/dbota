@@ -41,10 +41,10 @@ fn drill(
         // Shadow Fiend, whose first slot is a raze, or the hero named by
         // DBOTA_DRILL_HERO.
         let name = std::env::var("DBOTA_DRILL_HERO").unwrap_or_else(|_| "Shadow Fiend".into());
-        let hero = bota_client_core::HEROES
+        let hero = bota_core::HEROES
             .iter()
-            .find(|h| h.name == name)
-            .map_or(0, |h| h.id);
+            .position(|h| h.name == name)
+            .map_or(0, |id| id as u16);
         core.act(Intent::PickHero(hero));
         core.act(Intent::ToggleReady);
         info!("drill: picked {name}, ready");

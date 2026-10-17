@@ -8,7 +8,7 @@ use std::f32::consts::TAU;
 
 use bevy::prelude::*;
 use bota_client_core::effect;
-use bota_proto::EntityId;
+use bota_proto::{EffectId, EntityId};
 
 use crate::manifest::Manifest;
 use crate::session::Session;
@@ -214,7 +214,7 @@ fn update(
         })
         .unwrap_or_default();
     // Buffs first, debuffs after, as Dota lays them.
-    shown.sort_by_key(|s| effect(s.id).is_some_and(|f| f.harmful));
+    shown.sort_by_key(|s| harmful(s.id));
     if lengths.len() > 512 {
         lengths.clear();
     }
@@ -240,8 +240,7 @@ fn update(
         let (Some(s), Some(u)) = (now, unit) else {
             continue;
         };
-        let harmful = effect(s.id).is_some_and(|f| f.harmful);
-        *rim = BorderColor::all(if harmful { DEBUFF_RIM } else { BUFF_RIM });
+        *rim = BorderColor::all(if harmful(s.id) { DEBUFF_RIM } else { BUFF_RIM });
         if let Some(mut image) = children.first().and_then(|c| icons.get_mut(*c).ok()) {
             let art = art.entry(s.id).or_insert_with(|| Art {
                 source: manifest
@@ -290,4 +289,9 @@ fn update(
             }
         }
     }
+}
+
+/// Whether an effect hurts whoever wears it.
+fn harmful(id: u16) -> bool {
+    bota_core::effect_def(EffectId(id)).is_some_and(|def| def.harmful)
 }
