@@ -16,7 +16,8 @@ use std::sync::Arc;
 
 use bevy::tasks::{AsyncComputeTaskPool, Task, block_on, futures_lite::future::poll_once};
 use bota_client_core::SightGround;
-use bota_proto::Team;
+use bota_core::kind_def;
+use bota_proto::{Team, UnitView};
 
 use crate::session::Session;
 use crate::terrain::CELL;
@@ -53,6 +54,12 @@ pub struct FogGrid {
 }
 
 impl FogGrid {
+    /// Whether a spectator's fog hides a unit drawn at a bota world point: it
+    /// is of the other side, no building and out of the light.
+    pub fn hides(&self, unit: &UnitView, x: f32, y: f32) -> bool {
+        Some(unit.team) != self.team && !kind_def(unit.kind).always_seen && !self.lit(x, y)
+    }
+
     /// Whether a bota world point is seen; everything is before the fog is
     /// known.
     pub fn lit(&self, x: f32, y: f32) -> bool {

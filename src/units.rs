@@ -12,6 +12,7 @@ use bevy::{
     world_serialization::WorldInstanceReady,
 };
 use bota_client_core::bodies;
+use bota_core::kind_def;
 use bota_proto::{EntityId, Team, UnitKind, UnitView};
 
 use crate::coords::sim_facing_to_rotation;
@@ -308,18 +309,6 @@ fn model_name(unit: &UnitView, manifest: &Manifest) -> Option<String> {
     })
 }
 
-/// Whether a unit is a building: always shown, whatever the fog.
-pub fn is_building(kind: UnitKind) -> bool {
-    matches!(
-        kind,
-        UnitKind::Tower
-            | UnitKind::Barracks
-            | UnitKind::Ancient
-            | UnitKind::Fountain
-            | UnitKind::Filler
-    )
-}
-
 /// How every building stands on Dota's map: its model's name, its bota
 /// position, and the yaw the map turns the model by (radians, as the trees
 /// are turned), read from the map export.
@@ -387,7 +376,7 @@ impl BuildingYaws {
 /// turns a tower to its target for bota's attack rules) and stands as
 /// Dota's map places it; everything else as the wire says.
 fn drawn_facing(unit: &UnitView, facing: f32, at: Vec2, yaws: &BuildingYaws) -> f32 {
-    if is_building(unit.kind) {
+    if kind_def(unit.kind).structure {
         return yaws.facing(unit, at).unwrap_or(std::f32::consts::FRAC_PI_4);
     }
     facing
@@ -482,11 +471,7 @@ fn sync_units(
     for body in &shown {
         let u = body.unit;
         // Buildings are seen through the fog, as in Dota.
-        if hidden
-            && Some(u.team) != p.fog.team
-            && !is_building(u.kind)
-            && !p.fog.lit(body.x, body.y)
-        {
+        if hidden && p.fog.hides(u, body.x, body.y) {
             continue;
         }
         seen.push(u.id);
@@ -617,7 +602,7 @@ fn spawn_stand_in(p: &mut SyncParams, u: &UnitView, pivot: Entity) {
         return;
     };
     let (r, h) = stand_in_size(u.kind, u.bound.to_f32());
-    let building = is_building(u.kind);
+    let building = kind_def(u.kind).structure;
     let mesh = if building {
         art.building.clone()
     } else {
@@ -694,7 +679,7 @@ fn on_model_ready(
         }
     }
     // Buildings stand in the fog too, and are drawn dulled there.
-    if units.get(unit).is_ok_and(|u| is_building(u.kind)) {
+    if units.get(unit).is_ok_and(|u| kind_def(u.kind).structure) {
         for part in children.iter_descendants(ready.entity) {
             commands.entity(part).insert(crate::fog::Fogged);
         }

@@ -24,7 +24,7 @@ pub(crate) const TERRAIN_GAIN: f32 = 1.6;
 pub const UNITS_PER_METRE: f32 = 1.0 / 0.0254;
 /// Where Dota's origin, the middle of the map, lies in bota's coordinates,
 /// on both axes.
-pub const DOTA_ORIGIN: f32 = 9216.0;
+pub const DOTA_ORIGIN: f32 = bota_core::rules::MAP_SIZE as f32 / 2.0;
 
 /// The terrain blend weights of a Dota terrain vertex.
 pub const ATTRIBUTE_BLEND_WEIGHTS: MeshVertexAttribute =

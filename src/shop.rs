@@ -4,7 +4,7 @@
 //! item on the panel's foot.
 
 use bevy::{input::mouse::AccumulatedMouseScroll, prelude::*};
-use bota_client_core::{ITEMS, Intent, SHOP_GROUPS, answers, group_of};
+use bota_client_core::{ITEMS, Intent, SHOP_GROUPS, answers, group_of, item};
 
 use crate::config::{Action, Settings, key_name};
 use crate::hud::Blocker;
@@ -392,7 +392,7 @@ fn filter(
     }
     let mut groups = [false; SHOP_GROUPS.len()];
     for (cell, mut node) in &mut cells {
-        let face = ITEMS.iter().find(|f| f.id == cell.0);
+        let face = item(cell.0);
         let shown = face.is_some_and(|f| answers(f, &panels.search));
         if shown {
             groups[group_of(cell.0)] = true;
@@ -496,9 +496,7 @@ fn texts(
 ) {
     let core = &session.0;
     let me = core.view().and_then(|v| v.player(core.my_slot?));
-    let quick = core
-        .quick_buy
-        .and_then(|id| ITEMS.iter().find(|f| f.id == id));
+    let quick = core.quick_buy.and_then(item);
     let stash_full = me
         .and_then(|p| p.stash.as_ref())
         .is_some_and(|s| s.iter().any(Option::is_some));
@@ -528,7 +526,7 @@ fn texts(
                 let missing: Vec<&str> = core
                     .missing_for(f.id)
                     .iter()
-                    .filter_map(|p| ITEMS.iter().find(|i| i.id == p.0).map(|i| i.name))
+                    .filter_map(|p| item(p.0).map(|i| i.name))
                     .collect();
                 format!(
                     "Quick-buy {} [{}]: {}",

@@ -966,7 +966,7 @@ fn readouts(
             Readout::PanelName => p
                 .and_then(|p| bota_core::hero_def(p.hero))
                 .map(|hero| hero.name.to_string())
-                .or(unit.map(|u| kind_name(u.kind).to_string()))
+                .or(unit.map(|u| bota_core::kind_def(u.kind).name.to_string()))
                 .unwrap_or_default(),
             Readout::PanelLevel => unit
                 .filter(|u| u.level > 0)
@@ -1513,25 +1513,6 @@ fn time_of_day(
         Color::NONE
     };
     set_image(&mut image, &server, path, tint);
-}
-
-/// What the panel calls a unit that is not a hero.
-fn kind_name(kind: UnitKind) -> &'static str {
-    match kind {
-        UnitKind::Hero => "Hero",
-        UnitKind::CreepMelee => "Melee Creep",
-        UnitKind::CreepFlagbearer => "Flagbearer Creep",
-        UnitKind::CreepRanged => "Ranged Creep",
-        UnitKind::CreepSiege => "Siege Creep",
-        UnitKind::CreepNeutral => "Neutral Creep",
-        UnitKind::Tower => "Tower",
-        UnitKind::Ancient => "Ancient",
-        UnitKind::Barracks => "Barracks",
-        UnitKind::Fountain => "Fountain",
-        UnitKind::Ward => "Ward",
-        UnitKind::Courier => "Courier",
-        UnitKind::Filler => "Filler",
-    }
 }
 
 /// The seat portraits of the top bar.

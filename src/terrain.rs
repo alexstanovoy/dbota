@@ -1,6 +1,8 @@
 //! The ground as a mesh: the terrain cells of the match raised to their
 //! tiers, with smooth slopes between tiers and the river sunk below them.
 
+use bota_core::{cell_is_walkable, cell_is_water, cell_tier};
+
 /// Terrain cells per axis of the map.
 pub const MAP_CELLS: usize = bota_core::rules::GRID_CELLS;
 
@@ -22,15 +24,14 @@ pub enum Ground {
     Rock,
 }
 
-/// Reads one terrain byte: bit 7 walkable, bit 6 water, the low bits the
-/// tier.
+/// Reads one terrain byte.
 pub fn ground_of(byte: u8) -> Ground {
-    if byte & 0x80 == 0 {
+    if !cell_is_walkable(byte) {
         Ground::Rock
-    } else if byte & 0x40 != 0 {
+    } else if cell_is_water(byte) {
         Ground::Water
     } else {
-        Ground::Land(byte & 0x1f)
+        Ground::Land(cell_tier(byte))
     }
 }
 

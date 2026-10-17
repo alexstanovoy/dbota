@@ -201,7 +201,7 @@ fn buildings(c: &Checks, report: &mut impl FnMut(&str, bool, String)) {
     let turned: Vec<String> = c
         .units
         .iter()
-        .filter(|u| crate::units::is_building(u.kind) && u.team != bota_proto::Team::Neutral)
+        .filter(|u| bota_core::kind_def(u.kind).structure && u.team != bota_proto::Team::Neutral)
         .filter_map(|u| {
             let view = c.session.0.view()?;
             let wire = view.unit(u.id)?;
@@ -241,7 +241,7 @@ fn buildings(c: &Checks, report: &mut impl FnMut(&str, bool, String)) {
         .values()
         .filter_map(|e| Some((*e, c.units.get(*e).ok()?)))
         .filter(|(_, u)| {
-            crate::units::is_building(u.kind)
+            bota_core::kind_def(u.kind).structure
                 && u.team != side
                 && u.team != bota_proto::Team::Neutral
         })
@@ -259,7 +259,7 @@ fn buildings(c: &Checks, report: &mut impl FnMut(&str, bool, String)) {
         v.units
             .iter()
             .filter(|u| {
-                crate::units::is_building(u.kind)
+                bota_core::kind_def(u.kind).structure
                     && u.team != side
                     && u.team != bota_proto::Team::Neutral
             })

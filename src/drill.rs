@@ -42,11 +42,7 @@ fn drill(
     if !state.readied && core.my_slot.is_some() && core.view().is_none() {
         state.readied = true;
         // Shadow Fiend: his first slot is a raze.
-        let hero = bota_core::HEROES
-            .iter()
-            .position(|h| h.name == "Shadow Fiend")
-            .map_or(0, |id| id as u16);
-        core.act(Intent::PickHero(hero));
+        core.act(Intent::PickHero(bota_proto::HeroId::SHADOW_FIEND.0));
         core.act(Intent::ToggleReady);
         info!("drill: picked Shadow Fiend, ready");
     }

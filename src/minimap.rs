@@ -261,10 +261,7 @@ fn marks(
     let me = core.my_hero();
     let shown = view.units.iter().filter(|u| {
         !matches!(u.kind, UnitKind::Ward)
-            && (!hidden
-                || Some(u.team) == grid.team
-                || crate::units::is_building(u.kind)
-                || grid.lit(u.pos.x.to_f32(), u.pos.y.to_f32()))
+            && !(hidden && grid.hides(u, u.pos.x.to_f32(), u.pos.y.to_f32()))
     });
     let mut used = 0;
     for u in shown.take(MARKS) {
