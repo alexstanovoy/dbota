@@ -15,7 +15,8 @@ Dota 2 install. Bots don't need it.
    ```
 
 2. Install Dota 2 through Steam (the regular or the Flatpak install is found automatically), then
-   export the assets dbota uses into `~/.cache/dbota`:
+   export the assets dbota uses into `~/.cache/dbota/v<N>` (`N` is `assets-manifest/version`; each
+   export version keeps a folder of its own, so older and newer clients share a machine):
 
    ```sh
    cd dbota
@@ -28,6 +29,7 @@ Dota 2 install. Bots don't need it.
 
    ```sh
    cargo build --release             # binary: target/release/dbota
+   cargo build --profile dist        # smaller, link-time optimised: target/dist/dbota (~6 min)
    (cd ../bota && cargo build --release -p bota_server)
    ```
 
@@ -71,12 +73,36 @@ On the hero screen click a portrait, then click Ready. The game starts once both
 | Arrows, screen edges | pan the camera (all four edges, the HUD bars included); mouse wheel zooms |
 | hold `Alt` | show attack, tower and ability ranges (they are never drawn otherwise) |
 | `M` | mute |
-| `F10` | settings: volume, damage numbers, your hero's voice answers, edge pan; keys can be rebound (saved to `~/.config/dbota/client.conf`) |
+| `F10` | settings: volume, damage numbers, your hero's voice answers, edge pan, picture quality; keys can be rebound (saved to `~/.config/dbota/client.conf`) |
 | `Esc` | cancel / close / leave |
 
 Talents: the small button left of the abilities opens the talent tree; when you have a point,
 click a talent to learn it. Buffs and debuffs of the selected unit sit above the abilities. The
 stash shows at the home shop.
+
+## Picture quality
+
+For a slow machine, `~/.config/dbota/client.conf` (or `--set NAME=VALUE` for one run, as many
+times as needed) sets what the picture may cost:
+
+| setting | values | default |
+|---|---|---|
+| `quality` | `high`, `medium`, `low`, `potato`: sets all of the below at once | `high` |
+| `shadows` | `off`, `low` (one cascade, 1024 texels), `high` (two, 2048) | `high` |
+| `msaa` | `1`, `2`, `4` samples a pixel | `4` |
+| `render_scale` | the 3D scene's resolution against the window's, `0.25` to `1`; the interface stays sharp | `1` |
+| `texture_size` | largest texture side of models and the map; bigger ones are halved as they load | `16384` |
+| `props` | the map's walls, statues, rocks and decals | `true` |
+| `fps_cap` | frames a second at most, `0` for none | `0` |
+| `gpu_batching` | cull and batch draws on the GPU with compute shaders; off for a software renderer, which runs them several times slower | `true` |
+| `auto_quality` | lower multisampling, shadows, then resolution while frames run slower than the cap (or 30 fps) | `false` |
+
+`medium` is shadows `low`, `msaa` 2 and 2048 textures; `low` adds no shadows, no multisampling,
+`render_scale` 0.75 and 1024 textures; `potato` is `render_scale` 0.5, 512 textures, no props,
+no GPU batching and a 30 fps cap. Later lines override earlier ones (`quality = low` then
+`shadows = low`). `texture_size`, `props` and `gpu_batching` take effect on the next start; the
+rest at once. `--window WxH` sets the window's starting size. With no GPU at all, Mesa's software
+Vulkan driver (lavapipe, `VK_ICD_FILENAMES=.../lvp_icd.json`) draws it at `--set quality=potato`.
 
 ## Watch a live match
 
@@ -109,6 +135,11 @@ drawn with their models, buildings that never turn, no range rings without `Alt`
 in the top-left block, round buff icons. It needs the asset cache and a display, and exits non-zero when a check fails
 (`VISUAL_REPLAY=REPLAY.brp cargo test --release -- --ignored` runs it too).
 `DBOTA_FRAMES=1` logs frame times (median, 95th and 99th percentiles) every ten seconds.
+
+`tools/bench.sh REPLAY.brp` measures the binary's size, cold and warm start, and the frame times,
+CPU, RAM and VRAM of a busy stretch of the replay and of a live match against a local
+`bota_server` (settings at the top of the script). It rests on `--bench SECONDS`, which times
+that many seconds of frames once the scene is whole and prints them on one `bench:` line.
 
 ## License
 

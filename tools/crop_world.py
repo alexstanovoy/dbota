@@ -5,7 +5,7 @@ Keeps static scenery whose world-space bounds touch a band around the mid-lane
 diagonal, flattens the node tree (each kept mesh node becomes a root with its
 world matrix), drops skins/animations/morph targets, removes nodes whose name
 matches --exclude (trees, towers, barracks, ancients, fountains: the client
-spawns those itself because they can be cut or destroyed), and writes a .glb whose images stay external
+spawns those itself because they can be cut or destroyed), and writes a .gltf (or .glb) whose images stay external
 files copied next to it.
 
 Coordinates: the exporter writes glTF Y-up metres with
@@ -13,6 +13,7 @@ Coordinates: the exporter writes glTF Y-up metres with
 (Dota map units; bota uses dota + 9216 on both axes).
 """
 import argparse
+import array
 import json
 import math
 import re
@@ -21,6 +22,12 @@ import struct
 from pathlib import Path
 
 INCH = 0.0254
+# Bytes of one glTF component by componentType; index arrays by componentType.
+COMPONENT_BYTES = {5120: 1, 5121: 1, 5122: 2, 5123: 2, 5125: 4, 5126: 4}
+INDEX_TYPECODE = {5121: "B", 5123: "H", 5125: "I"}
+# A triangle list is cut down to its own vertices unless it uses at least 1/SHARE_ABOVE of its set's.
+SHARE_ABOVE = 2
+TYPE_COMPONENTS = {"SCALAR": 1, "VEC2": 2, "VEC3": 3, "VEC4": 4, "MAT4": 16}
 STRIP_ATTRIBUTES = ("JOINTS_0", "WEIGHTS_0", "JOINTS_1", "WEIGHTS_1")
 LAYERED_SHADERS = ("multiblend.vfx", "water_dota.vfx")
 SKIP_LAYER = re.compile(r"(refl|specular|height)")
@@ -167,17 +174,94 @@ class Packer:
             for value in obj:
                 self._fix_texture_refs(value)
 
+    def _accessor_bytes(self, index: int) -> tuple[dict, bytes, int]:
+        """An accessor, its tightly packed data and the bytes of one of its elements."""
+        acc = self.doc["accessors"][index]
+        if "sparse" in acc or "bufferView" not in acc:
+            raise ValueError("sparse or view-less accessors are not supported")
+        view = self.doc["bufferViews"][acc["bufferView"]]
+        size = COMPONENT_BYTES[acc["componentType"]] * TYPE_COMPONENTS[acc["type"]]
+        if view.get("byteStride", size) != size:
+            raise ValueError("interleaved buffer views are not supported")
+        start = view.get("byteOffset", 0) + acc.get("byteOffset", 0)
+        return acc, self.blob[start : start + acc["count"] * size], size
+
+    def _append(self, data: bytes, target: int, acc: dict, count: int, component: int) -> int:
+        """A new accessor over `data`, in a buffer view of its own."""
+        while len(self.out_blob) % 4:
+            self.out_blob.append(0)
+        self.new["bufferViews"].append(
+            {"buffer": 0, "byteOffset": len(self.out_blob), "byteLength": len(data), "target": target}
+        )
+        self.out_blob += data
+        new = {k: v for k, v in acc.items() if k not in ("bufferView", "byteOffset", "count", "min", "max")}
+        new.update(bufferView=len(self.new["bufferViews"]) - 1, count=count, componentType=component)
+        self.new["accessors"].append(new)
+        return len(self.new["accessors"]) - 1
+
+    def compact_primitive(self, prim: dict) -> tuple[dict, int] | None:
+        """A triangle list's attributes cut down to the vertices its indices use, in the order they are
+        first used: the exporter hands every piece of a mesh set the set's whole vertex buffers, and a
+        loader copies all of them for each piece (2.6 GB for the mid band's 70 MB of vertices)."""
+        acc, raw, _ = self._accessor_bytes(prim["indices"])
+        indices = array.array(INDEX_TYPECODE[acc["componentType"]], raw)
+        remap: dict[int, int] = {}
+        kept: list[int] = []
+        out = array.array("I", bytes(4 * len(indices)))
+        for at, i in enumerate(indices):
+            slot = remap.get(i)
+            if slot is None:
+                slot = remap[i] = len(kept)
+                kept.append(i)
+            out[at] = slot
+        # A piece using most of the set's vertices keeps the set's shared buffers: cutting them would
+        # cost more file than it saves loading.
+        vertices = self.doc["accessors"][prim["attributes"]["POSITION"]]["count"]
+        if len(kept) * SHARE_ABOVE >= vertices:
+            return None
+        if len(kept) < 1 << 16:
+            index_data, component = array.array("H", out).tobytes(), 5123
+        else:
+            index_data, component = out.tobytes(), 5125
+        new_indices = self._append(index_data, 34963, acc, len(out), component)
+        attrs = {}
+        for name, index in prim["attributes"].items():
+            if name in STRIP_ATTRIBUTES:
+                continue
+            acc, raw, size = self._accessor_bytes(index)
+            data = b"".join(raw[i * size : (i + 1) * size] for i in kept)
+            attrs[name] = self._append(data, 34962, acc, len(kept), acc["componentType"])
+            if name == "POSITION":
+                xyz = array.array("f", data)
+                self.new["accessors"][-1]["min"] = [min(xyz[c::3]) for c in range(3)]
+                self.new["accessors"][-1]["max"] = [max(xyz[c::3]) for c in range(3)]
+        return attrs, new_indices
+
     def mesh(self, mesh: dict) -> dict:
         prims = []
         for prim in mesh["primitives"]:
-            attrs = {k: self.accessor(v) for k, v in prim["attributes"].items() if k not in STRIP_ATTRIBUTES}
-            new = {"attributes": attrs, "mode": prim.get("mode", 4)}
-            if "indices" in prim:
-                new["indices"] = self.accessor(prim["indices"])
+            compact = self.compact_primitive(prim) if "indices" in prim and prim.get("mode", 4) == 4 else None
+            if compact:
+                attrs, indices = compact
+                new = {"attributes": attrs, "mode": 4, "indices": indices}
+            else:
+                attrs = {k: self.accessor(v) for k, v in prim["attributes"].items() if k not in STRIP_ATTRIBUTES}
+                new = {"attributes": attrs, "mode": prim.get("mode", 4)}
+                if "indices" in prim:
+                    new["indices"] = self.accessor(prim["indices"])
             if "material" in prim:
                 new["material"] = self.material(prim["material"])
             prims.append(new)
         return {"name": mesh.get("name", ""), "primitives": prims}
+
+
+def write_gltf(path: Path, doc: dict, blob: bytes) -> None:
+    """A .gltf with its geometry in a .bin beside it: a loader reads the .bin once, where it copies a
+    .glb's binary chunk out of the file it read whole (the mid band's 213 MB three times over)."""
+    bin_path = path.with_suffix(".bin")
+    bin_path.write_bytes(bytes(blob) + b"\0" * (-len(blob) % 4))
+    doc = dict(doc, buffers=[dict(doc["buffers"][0], uri=bin_path.name)])
+    path.write_text(json.dumps(doc, separators=(",", ":")))
 
 
 def write_glb(path: Path, doc: dict, blob: bytes) -> None:
@@ -277,7 +361,7 @@ def building_lines(doc: dict) -> list[str]:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("gltf", type=Path)
-    parser.add_argument("out", type=Path, help="output .glb; images are copied next to it")
+    parser.add_argument("out", type=Path, help="output .gltf (geometry in a .bin beside it) or .glb; images are copied next to it")
     parser.add_argument("--half-width", type=float, default=2600.0, help="band half-width across the lane, Dota units")
     parser.add_argument("--v-min", type=float, default=-7600.0, help="band start along the lane (Radiant side)")
     parser.add_argument("--v-max", type=float, default=7400.0, help="band end along the lane (Dire side)")
@@ -296,7 +380,7 @@ def main() -> None:
     for image in packer.new["images"]:
         if "uri" in image:
             shutil.copyfile(args.gltf.parent / image["uri"], args.out.parent / image["uri"])
-    write_glb(args.out, out, packer.out_blob)
+    (write_gltf if args.out.suffix == ".gltf" else write_glb)(args.out, out, packer.out_blob)
     if args.layers_out:
         args.layers_out.write_text("".join(p + "\n" for p in layer_textures(packer.new["materials"])))
     if args.trees_out:

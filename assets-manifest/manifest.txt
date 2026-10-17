@@ -16,7 +16,7 @@
 #           PCM WAV as Valve ships it (16-bit 44.1 kHz, a few 8-bit or 22.05 kHz); voice lines are MP3
 #           in the game and stay MP3 (out .mp3). Events with several variants list one line per variant;
 #           variants of one random pick (a hero's move acknowledgements) share the logical name.
-#   world   <logical> <vpk .vwrld_c> <out .glb> vpk=<map vpk under game/dota> half_width= v_min= v_max=
+#   world   <logical> <vpk .vwrld_c> <out .gltf> vpk=<map vpk under game/dota> half_width= v_min= v_max=
 #           layers=<dir> trees=<file>: the default map cropped to a band around the mid-lane diagonal
 #           (see tools/README.md for the coordinate convention, terrain layers and trees).
 #           Models without anims= are static (buildings, fountains, trees, wearables).
@@ -168,7 +168,7 @@ model tree.dire_tree008 models/props_tree/dire_tree008.vmdl_c models/tree/dire_t
 
 # --- Default map, fountain-to-fountain band around mid with both bases (towers, trees, barracks,
 # ancients and fountains removed: the client spawns those itself; shops, statues, walls stay)
-world map.mid maps/dota/world.vwrld_c map/mid/mid.glb vpk=maps/dota.vpk half_width=13100 v_min=-11800 v_max=11700 layers=textures/ground trees=map/mid/trees.txt
+world map.mid maps/dota/world.vwrld_c map/mid/mid.gltf vpk=maps/dota.vpk half_width=13100 v_min=-11800 v_max=11700 layers=textures/ground trees=map/mid/trees.txt
 
 # --- Base buildings (npc_units.txt models; static, no animations). The *.destruction models are
 # what Dota swaps in when the building dies: one-shot collapse animation, then hide.

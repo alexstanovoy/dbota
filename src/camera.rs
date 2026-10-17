@@ -63,12 +63,12 @@ fn camera_translation(cam: &RtsCamera) -> Vec3 {
     cam.focus - camera_rotation() * Vec3::NEG_Z * cam.distance
 }
 
-fn spawn_camera(mut commands: Commands, args: Res<crate::Args>) {
-    let msaa = if args.without.iter().any(|w| w == "msaa") {
-        Msaa::Off
-    } else {
-        Msaa::Sample4
-    };
+fn spawn_camera(
+    mut commands: Commands,
+    args: Res<crate::Args>,
+    settings: Res<crate::config::Settings>,
+) {
+    let msaa = crate::quality::msaa_of(&settings, &args);
     let cam = RtsCamera {
         focus: match args.look_at[..args.look_at.len().min(2)] {
             [x, y] => Vec3::new(x, 128.0, -y),
@@ -87,7 +87,7 @@ fn spawn_camera(mut commands: Commands, args: Res<crate::Args>) {
             far: 20_000.0,
             ..default()
         }),
-        // MSAA 4 is the default; spelled out because VRAM scales with it.
+        // As the quality settings ask; VRAM scales with it.
         msaa,
         if crate::look("aces", 0.0) > 0.5 {
             bevy::core_pipeline::tonemapping::Tonemapping::AcesFitted

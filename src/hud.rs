@@ -1449,8 +1449,12 @@ fn dress(
                     .filter(|f| f.look.cooldown_left > 0)
                     .map_or(0.0, |f| f.sweep.max(0.02));
                 let a = (1.0 - left) * TAU;
-                if let Some(Gradient::Conic(conic)) = g.0.first_mut() {
-                    let dark = Color::srgba(0.0, 0.0, 0.0, if left > 0.0 { 0.68 } else { 0.0 });
+                let dark = Color::srgba(0.0, 0.0, 0.0, if left > 0.0 { 0.68 } else { 0.0 });
+                // Touched only when the sweep moved: a changed gradient is
+                // prepared for drawing again.
+                let same = matches!(g.0.first(), Some(Gradient::Conic(conic))
+                    if conic.stops[1].angle == Some(a) && conic.stops[2].color == dark);
+                if !same && let Some(Gradient::Conic(conic)) = g.0.first_mut() {
                     conic.stops[1].angle = Some(a);
                     conic.stops[2].angle = Some(a);
                     conic.stops[2].color = dark;

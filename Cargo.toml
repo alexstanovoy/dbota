@@ -6,12 +6,56 @@ license = "MIT"
 publish = false
 
 [dependencies]
-bevy = { version = "=0.19.1", features = ["wav", "mp3"] }
+# Bevy's parts dbota draws and plays with, nothing more: no gamepads, no
+# clipboard, no system-info polling, no mesh or sprite picking, no post
+# processing or anti-aliasing passes besides MSAA, no built-in font.
+bevy = { version = "=0.19.1", default-features = false, features = [
+    # The app, its window and its threads.
+    "std",
+    "async_executor",
+    "multi_threaded",
+    "bevy_asset",
+    "bevy_log",
+    "reflect_auto_register",
+    "bevy_winit",
+    "x11",
+    "wayland",
+    # The 3D scene: glTF models and their clips, the sun, PBR, gizmos.
+    "bevy_render",
+    "bevy_core_pipeline",
+    "bevy_pbr",
+    "bevy_light",
+    "bevy_gltf",
+    "gltf_animation",
+    "bevy_animation",
+    "bevy_mikktspace",
+    "bevy_gizmos",
+    "bevy_gizmos_render",
+    "png",
+    # Tony McMapface tonemapping reads its table from a zstd KTX2 file.
+    "tonemapping_luts",
+    "ktx2",
+    "zstd_rust",
+    # The interface, and clicks on it.
+    "bevy_ui",
+    "bevy_ui_render",
+    "bevy_text",
+    "bevy_picking",
+    "ui_picking",
+    # Sound: Valve's WAVs and voice lines.
+    "bevy_audio",
+    "wav",
+    "mp3",
+] }
 bota_client_core = { path = "../bota/crates/bota_client_core", features = ["ui"] }
 bota_core = { path = "../bota/crates/bota_core" }
 bota_proto = { path = "../bota/crates/bota_proto" }
 clap = { version = "4", features = ["derive"] }
 serde_json = "1"
+
+# In a browser, Bevy draws through WebGL2, as its default features had it.
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+bevy = { version = "=0.19.1", default-features = false, features = ["webgl2"] }
 
 [profile.dev]
 opt-level = 1
@@ -20,3 +64,27 @@ opt-level = 1
 opt-level = 3
 # Dependency debuginfo is ~5 GB of target/ for bevy and rarely used; the crate keeps its own.
 debug = false
+
+# `release` stays Cargo's default, for a short rebuild in checks and play. `--profile dist` is what
+# ships and what the size reports measure: thin link-time optimisation in one codegen unit, symbols
+# stripped. 70.6 MiB against release's 160 (93 stripped); a full build takes ~6 min, a rebuild after
+# one changed file ~3.6 (fat LTO: 64.5 MiB for ~13 and ~8.6 min; nearly all of it LLVM optimising
+# Bevy, wgpu and naga as one module, only 2.3 of 61 MB of code being generics instantiated for
+# dbota's own types).
+[profile.dist]
+inherits = "release"
+lto = "thin"
+codegen-units = 1
+strip = true
+
+# `--profile profiling` keeps the symbols and line tables, for profilers and backtraces.
+[profile.profiling]
+inherits = "release"
+debug = "line-tables-only"
+
+# For the browser: link-time optimisation makes the wasm three times larger (18.4 MB against 6.3).
+# `cargo build --profile web --target wasm32-unknown-unknown`.
+[profile.web]
+inherits = "dist"
+lto = false
+codegen-units = 16

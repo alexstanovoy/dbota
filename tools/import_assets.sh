@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Export the Dota 2 assets listed in assets-manifest/manifest.txt into the dbota cache
-# ($DBOTA_ASSETS, default ~/.cache/dbota) with a pinned, checksum-verified Source2Viewer-CLI.
+# ($DBOTA_ASSETS, default ~/.cache/dbota/v<assets-manifest/version>, one folder per export version so
+# clients of different versions share a machine) with a pinned, checksum-verified Source2Viewer-CLI.
 # Valve files are for personal use: they only ever land in the cache, never in a repo.
 # Re-running skips every output that already exists (models and the map also compare a stamp
 # of their manifest line plus EXPORT_REV). Scratch goes to a mktemp dir under $TMPDIR that is removed on exit.
@@ -8,14 +9,19 @@ set -euo pipefail
 
 readonly S2V_VERSION="20.0"
 readonly S2V_SHA256="3e8af47cd6ce52e8068904f2aa1dda23c56a6b96a8310b25090f0711cda76a8a"
-# Bump when the export flags change so existing models/maps are re-exported.
-readonly EXPORT_REV="rev4"
 readonly S2V_URL="https://github.com/ValveResourceFormat/ValveResourceFormat/releases/download/${S2V_VERSION}/cli-linux-x64.zip"
 
 readonly TOOLS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 readonly MANIFEST="${TOOLS_DIR}/../assets-manifest/manifest.txt"
-readonly CACHE="${DBOTA_ASSETS:-${HOME}/.cache/dbota}"
-readonly CLI_DIR="${CACHE}/tools/s2v-${S2V_VERSION}"
+# Bump assets-manifest/version when the export changes: the client reads its own version's folder,
+# and the stamps make every model and the map export again.
+VERSION="$(tr -d '[:space:]' < "${TOOLS_DIR}/../assets-manifest/version")"
+readonly VERSION
+readonly EXPORT_REV="rev${VERSION}"
+readonly ROOT="${HOME}/.cache/dbota"
+readonly CACHE="${DBOTA_ASSETS:-${ROOT}/v${VERSION}}"
+# The CLI is shared by every version's folder of the default cache.
+readonly CLI_DIR="${DBOTA_ASSETS:-${ROOT}}/tools/s2v-${S2V_VERSION}"
 readonly CLI="${CLI_DIR}/Source2Viewer-CLI"
 
 DOTA_PATH=""

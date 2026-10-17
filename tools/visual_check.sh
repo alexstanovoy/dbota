@@ -32,7 +32,7 @@ if echo "$dire" | grep -q "FAIL"; then exit 1; fi
 # (the asset cache dropped from memory) and warm by turns, and each run's
 # count of hero meshes must match the first's.
 runs=${VISUAL_RUNS:-1}
-cache=${DBOTA_ASSETS:-$HOME/.cache/dbota}
+cache=${DBOTA_ASSETS:-$HOME/.cache/dbota/v$(tr -d '[:space:]' < "$here/assets-manifest/version")}
 first=$(grep -m1 "hero parts:" "$out/dbota.out" 2>/dev/null || true)
 for run in $(seq 2 "$runs"); do
     if [ $((run % 2)) -eq 0 ]; then

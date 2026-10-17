@@ -83,6 +83,117 @@ pub struct Aids {
     pub edge_pan: bool,
 }
 
+/// What the picture may cost; see `quality.rs`. The defaults draw it whole.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Quality {
+    /// The sun's shadows: 0 none, 1 one cascade of 1024 texels, 2 two
+    /// cascades of 2048.
+    pub shadows: u8,
+    /// Multisampling: 1 (none), 2 or 4 samples a pixel.
+    pub msaa: u8,
+    /// The 3D scene's resolution against the window's, 0.25 to 1; the
+    /// interface is always drawn whole.
+    pub render_scale: f32,
+    /// Texels of a model's or the map's texture side at most: larger ones
+    /// are halved as they load (takes effect on the next start).
+    pub texture_size: u32,
+    /// Whether the map's props (walls, statues, rocks, decals) are drawn
+    /// (takes effect on the next start).
+    pub props: bool,
+    /// Frames a second at most; 0 for no cap.
+    pub fps_cap: u32,
+    /// Whether draws are culled and batched on the GPU with compute shaders
+    /// (takes effect on the next start). A software renderer runs those
+    /// several times slower than the CPU builds the batches.
+    pub gpu_batching: bool,
+    /// Whether the settings above are lowered a step at a time while frames
+    /// run slower than the cap (or 30 fps) allows.
+    pub auto: bool,
+}
+
+/// The quality presets by name, best first.
+pub const PRESETS: [&str; 4] = ["high", "medium", "low", "potato"];
+
+impl Quality {
+    /// A preset by name.
+    pub fn preset(name: &str) -> Option<Quality> {
+        let high = Quality::default();
+        Some(match name.to_ascii_lowercase().as_str() {
+            "high" => high,
+            "medium" => Quality {
+                shadows: 1,
+                msaa: 2,
+                texture_size: 2048,
+                ..high
+            },
+            "low" => Quality {
+                shadows: 0,
+                msaa: 1,
+                render_scale: 0.75,
+                texture_size: 1024,
+                ..high
+            },
+            "potato" => Quality {
+                shadows: 0,
+                msaa: 1,
+                render_scale: 0.5,
+                texture_size: 512,
+                props: false,
+                fps_cap: 30,
+                gpu_batching: false,
+                ..high
+            },
+            _ => return None,
+        })
+    }
+
+    /// The name of the preset these settings are, if any (`auto` aside).
+    pub fn preset_name(&self) -> Option<&'static str> {
+        PRESETS
+            .iter()
+            .find(|name| {
+                Quality::preset(name).is_some_and(|p| {
+                    Quality {
+                        auto: self.auto,
+                        ..p
+                    } == *self
+                })
+            })
+            .copied()
+    }
+
+    /// One step cheaper of what can change while the client runs, if any:
+    /// multisampling, then shadows, then the scene's resolution.
+    pub fn lowered(&self) -> Option<Quality> {
+        let mut q = *self;
+        if q.msaa > 1 {
+            q.msaa = 1;
+        } else if q.shadows > 0 {
+            q.shadows -= 1;
+        } else if q.render_scale > 0.5 {
+            q.render_scale = (q.render_scale - 0.125).max(0.5);
+        } else {
+            return None;
+        }
+        Some(q)
+    }
+}
+
+impl Default for Quality {
+    fn default() -> Quality {
+        Quality {
+            shadows: 2,
+            msaa: 4,
+            render_scale: 1.0,
+            texture_size: 16_384,
+            props: true,
+            fps_cap: 0,
+            gpu_batching: true,
+            auto: false,
+        }
+    }
+}
+
 /// Everything the settings file holds.
 #[derive(Clone, Debug, PartialEq, bevy::prelude::Resource)]
 pub struct Settings {
@@ -98,6 +209,8 @@ pub struct Settings {
     pub aids: Aids,
     /// The key of every action, in [`BINDINGS`] order.
     pub keys: [KeyCode; BINDINGS.len()],
+    /// What the picture may cost.
+    pub quality: Quality,
 }
 
 impl Default for Settings {
@@ -112,6 +225,7 @@ impl Default for Settings {
                 edge_pan: true,
             },
             keys: BINDINGS.map(|(_, _, key)| key),
+            quality: Quality::default(),
         }
     }
 }
@@ -157,8 +271,8 @@ impl Settings {
         (settings, complaints)
     }
 
-    /// Sets one named value.
-    fn set(&mut self, name: &str, value: &str) -> Result<(), String> {
+    /// Sets one named value, as a line `name = value` of the file does.
+    pub fn set(&mut self, name: &str, value: &str) -> Result<(), String> {
         if let Some(action) = name.strip_prefix("key.") {
             let at = BINDINGS
                 .iter()
@@ -178,6 +292,35 @@ impl Settings {
             // are read and forgotten.
             "attack_range" | "raze_marks" | "last_hit_marks" | "tower_ranges" => {}
             "edge_pan" => self.aids.edge_pan = flag()?,
+            "quality" => {
+                self.quality = Quality::preset(value).ok_or_else(|| {
+                    format!("no quality called '{value}'; one of {}", PRESETS.join(", "))
+                })?
+            }
+            "shadows" => {
+                self.quality.shadows = match value.to_ascii_lowercase().as_str() {
+                    "off" | "none" | "0" => 0,
+                    "low" | "1" => 1,
+                    "high" | "2" => 2,
+                    _ => return Err(format!("'{value}' is not off, low or high")),
+                }
+            }
+            "msaa" => {
+                self.quality.msaa = match value {
+                    "1" | "off" => 1,
+                    "2" => 2,
+                    "4" => 4,
+                    _ => return Err(format!("'{value}' is not 1, 2 or 4")),
+                }
+            }
+            "render_scale" => self.quality.render_scale = parse_unit(value, 0.25, 1.0)?,
+            "texture_size" => {
+                self.quality.texture_size = parse_unit(value, 64.0, 16_384.0)? as u32;
+            }
+            "props" => self.quality.props = flag()?,
+            "fps_cap" => self.quality.fps_cap = parse_unit(value, 0.0, 1000.0)? as u32,
+            "gpu_batching" => self.quality.gpu_batching = flag()?,
+            "auto_quality" => self.quality.auto = flag()?,
             other => return Err(format!("no setting called '{other}'")),
         }
         Ok(())
@@ -198,6 +341,18 @@ impl Settings {
         ] {
             out.push_str(&format!("{name} = {}\n", flag(on)));
         }
+        let q = &self.quality;
+        out.push_str(&format!(
+            "shadows = {}\n",
+            ["off", "low", "high"][usize::from(q.shadows.min(2))]
+        ));
+        out.push_str(&format!("msaa = {}\n", q.msaa));
+        out.push_str(&format!("render_scale = {:.3}\n", q.render_scale));
+        out.push_str(&format!("texture_size = {}\n", q.texture_size));
+        out.push_str(&format!("props = {}\n", flag(q.props)));
+        out.push_str(&format!("fps_cap = {}\n", q.fps_cap));
+        out.push_str(&format!("gpu_batching = {}\n", flag(q.gpu_batching)));
+        out.push_str(&format!("auto_quality = {}\n", flag(q.auto)));
         for ((_, name, _), key) in BINDINGS.iter().zip(self.keys) {
             out.push_str(&format!("key.{name} = {}\n", key_name(key)));
         }
@@ -369,6 +524,22 @@ mod tests {
         for (at, (_, name, key)) in BINDINGS.iter().enumerate() {
             let twin = BINDINGS[at + 1..].iter().find(|(_, _, other)| other == key);
             assert!(twin.is_none(), "{name} and {:?} share {key:?}", twin);
+        }
+    }
+
+    /// Settings written to the file read back the same, whatever quality
+    /// they hold.
+    #[test]
+    fn every_quality_preset_survives_the_file() {
+        for name in PRESETS {
+            let settings = Settings {
+                quality: Quality::preset(name).expect("a preset"),
+                ..Settings::default()
+            };
+            let (read, complaints) = Settings::parse(&settings.render());
+            assert!(complaints.is_empty(), "{name}: {complaints:?}");
+            assert_eq!(read, settings, "{name}");
+            assert_eq!(read.quality.preset_name(), Some(name));
         }
     }
 }

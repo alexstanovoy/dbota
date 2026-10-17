@@ -69,7 +69,7 @@ fn hold_replay(
 }
 
 /// Takes in whatever arrived and moves the client's clocks on.
-fn pump(mut session: NonSendMut<Session>, time: Res<Time>, mut known: ResMut<MatchKnown>) {
+pub fn pump(mut session: NonSendMut<Session>, time: Res<Time>, mut known: ResMut<MatchKnown>) {
     let core = &mut session.0;
     core.pump(time.delta_secs());
     let ready = core.terrain_cells() > 0 && core.view().is_some();

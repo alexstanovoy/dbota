@@ -379,7 +379,11 @@ fn set(
     let Ok((mut node, mut visibility, background)) = nodes.get_mut(entity) else {
         return;
     };
-    layout(&mut node);
+    // Written only when it moved: a changed node is laid out again, and
+    // every bar's every part each frame was most of the interface's cost.
+    let mut laid = node.clone();
+    layout(&mut laid);
+    node.set_if_neq(laid);
     if let Some(show) = show {
         let want = if show {
             Visibility::Inherited
@@ -424,6 +428,7 @@ fn floaters(
         &mut TextColor,
         &mut Node,
         &mut Visibility,
+        &mut UiTransform,
     )>,
     index: Res<crate::units::UnitIndex>,
     units: Query<&crate::units::Unit>,
@@ -449,7 +454,8 @@ fn floaters(
         .take(FLOATERS)
         .collect();
     for (i, entity) in pool.0.iter().enumerate() {
-        let Ok((mut text, mut font, mut color, mut node, mut visibility)) = texts.get_mut(*entity)
+        let Ok((mut text, mut font, mut color, mut node, mut visibility, mut transform)) =
+            texts.get_mut(*entity)
         else {
             continue;
         };
@@ -489,9 +495,15 @@ fn floaters(
         if text.0 != f.text {
             text.0.clone_from(&f.text);
         }
-        font.font_size = FontSize::Px(size * pop);
+        // The pop scales the laid-out text: a font size that changed every
+        // frame had every glyph drawn again at each new size, into new atlases.
+        font.set_if_neq(TextFont {
+            font_size: FontSize::Px(size),
+            ..font.clone()
+        });
+        transform.scale = Vec2::splat(pop);
         color.0 = tint.with_alpha(fade);
-        let width = size * pop * 0.56 * f.text.chars().count() as f32;
+        let width = size * 0.56 * f.text.chars().count() as f32;
         node.left = px(screen.x / scale - width / 2.0);
         node.top = px(screen.y / scale - size - stacked as f32 * (size + 2.0));
         *visibility = Visibility::Inherited;

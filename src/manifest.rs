@@ -186,6 +186,38 @@ fn model(logical: &str, path: &str, rest: &[&str]) -> Model {
     }
 }
 
+/// Settings for loading a model or the map: its textures are kept on the
+/// GPU alone. Nothing reads their pixels on the CPU, and a copy of every
+/// one would hold most of a gigabyte. Every load of a file must use the
+/// same settings, or the file is read twice.
+pub fn gpu_textures(settings: &mut bevy::gltf::GltfLoaderSettings) {
+    settings.load_materials = bevy::asset::RenderAssetUsages::RENDER_WORLD;
+}
+
+/// Loads (a part of) a tree model's glTF file with [`gpu_textures`]: the
+/// forest copies the trees' meshes into its chunks, so they stay on the CPU.
+pub fn load_model<A: Asset>(
+    server: &AssetServer,
+    path: impl Into<bevy::asset::AssetPath<'static>>,
+) -> Handle<A> {
+    server.load_builder().with_settings(gpu_textures).load(path)
+}
+
+/// Loads (a part of) a unit model's glTF file, its meshes as well as its
+/// textures on the GPU alone: units draw them and nothing reads them back.
+pub fn load_unit_model<A: Asset>(
+    server: &AssetServer,
+    path: impl Into<bevy::asset::AssetPath<'static>>,
+) -> Handle<A> {
+    server
+        .load_builder()
+        .with_settings(|settings: &mut bevy::gltf::GltfLoaderSettings| {
+            gpu_textures(settings);
+            settings.load_meshes = bevy::asset::RenderAssetUsages::RENDER_WORLD;
+        })
+        .load(path)
+}
+
 /// The asset path of a file relative to the cache.
 pub fn cache_path(rel: &str) -> String {
     format!("{}://{rel}", crate::CACHE_SOURCE)

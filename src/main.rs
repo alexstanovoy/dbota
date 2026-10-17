@@ -12,6 +12,8 @@ mod ability_art;
 mod anim;
 mod bars;
 mod buffs;
+#[cfg(not(target_arch = "wasm32"))]
+mod cachefs;
 mod camera;
 mod capture;
 mod config;
@@ -20,6 +22,7 @@ mod drill;
 mod effects;
 mod fog;
 mod framestats;
+mod heap;
 mod hud;
 mod input;
 mod manifest;
@@ -27,6 +30,7 @@ mod map;
 mod menu;
 mod minimap;
 mod overlay;
+mod quality;
 mod select;
 mod session;
 mod sheet;
@@ -46,10 +50,7 @@ mod voice;
 use std::path::PathBuf;
 
 use bevy::{
-    asset::{
-        UnapprovedPathMode,
-        io::{AssetSource, AssetSourceBuilder},
-    },
+    asset::{UnapprovedPathMode, io::AssetSourceBuilder},
     diagnostic::FrameTimeDiagnosticsPlugin,
     gltf::{GltfPlugin, convert_coordinates::GltfConvertCoordinates},
     prelude::*,
@@ -88,6 +89,11 @@ pub struct Args {
     /// The settings file; `~/.config/dbota/client.conf` when absent.
     #[arg(long, value_name = "FILE")]
     pub config: Option<PathBuf>,
+    /// A setting for this run, as a line of the settings file says it, over
+    /// the file's: `--set quality=low`, `--set render_scale=0.6`. Given
+    /// again for more.
+    #[arg(long, value_name = "NAME=VALUE")]
+    pub set: Vec<String>,
     /// Debug: save the screen once a replay reaches each of these ticks,
     /// then exit after the last.
     #[arg(long, value_name = "TICK", value_delimiter = ',', requires = "replay")]
@@ -127,9 +133,24 @@ pub struct Args {
     #[arg(long, value_name = "UNITS")]
     pub distance: Option<f32>,
     /// Debug: leave things out to time the rest: any of `trees`, `shadows`,
-    /// `msaa`, `map`, `units`, `ui`.
+    /// `msaa`, `map`, `props` (the map's), `overlays` (the map's decals).
     #[arg(long, value_delimiter = ',')]
     pub without: Vec<String>,
+    /// Debug: start a replay at this tick, read through as fast as the
+    /// reader goes.
+    #[arg(long, value_name = "TICK", requires = "replay")]
+    pub seek: Option<u32>,
+    /// Debug: once the scene is whole (and a `--seek` tick reached), time
+    /// this many seconds of frames, print them and the startup timings on
+    /// one `bench:` line, and exit.
+    #[arg(long, value_name = "SECONDS")]
+    pub bench: Option<f32>,
+    /// Debug: seconds `--bench` lets pass before it starts timing.
+    #[arg(long, value_name = "SECONDS", default_value_t = 2.0)]
+    pub bench_warmup: f32,
+    /// The window's size at the start, in logical pixels, `WIDTHxHEIGHT`.
+    #[arg(long, value_name = "WxH", default_value = "1600x900", value_parser = parse_size)]
+    pub window: (u32, u32),
     /// Present without vsync.
     #[arg(long)]
     pub no_vsync: bool,
@@ -156,12 +177,20 @@ pub fn look(key: &str, default: f32) -> f32 {
 #[derive(Resource, Clone, Debug)]
 pub struct SettingsPath(pub Option<PathBuf>);
 
+/// The export version of the asset cache this client reads, as
+/// `tools/import_assets.sh` writes it: each version has a folder of its own
+/// under `~/.cache/dbota`, so clients of different versions share a machine.
+const ASSET_VERSION: &str = include_str!("../assets-manifest/version");
+
+/// `$DBOTA_ASSETS`, else `~/.cache/dbota/v<ASSET_VERSION>`.
 fn default_cache_dir() -> PathBuf {
     if let Some(dir) = std::env::var_os("DBOTA_ASSETS").filter(|d| !d.is_empty()) {
         return PathBuf::from(dir);
     }
     let home = std::env::var_os("HOME").unwrap_or_default();
-    PathBuf::from(home).join(".cache/dbota")
+    PathBuf::from(home)
+        .join(".cache/dbota")
+        .join(format!("v{}", ASSET_VERSION.trim()))
 }
 
 /// When the process started, for the startup timings in the log.
@@ -187,24 +216,30 @@ fn main() -> AppExit {
     };
     let manifest = manifest::Manifest::load(&args.cache_dir);
     let settings_path = args.config.clone().or_else(config::default_path);
-    let settings = settings_path
+    let mut settings = settings_path
         .as_deref()
         .map(config::load)
         .unwrap_or_default();
+    for line in &args.set {
+        let set = line
+            .split_once('=')
+            .ok_or_else(|| "expected NAME=VALUE".to_string())
+            .and_then(|(name, value)| settings.set(name.trim(), value.trim()));
+        if let Err(why) = set {
+            eprintln!("dbota: --set {line}: {why}");
+            return AppExit::error();
+        }
+    }
     let mut app = App::new();
+    let source = cache_source(&mut app, &args.cache_dir);
     app.insert_resource(args.clone())
         .insert_resource(manifest)
-        .insert_resource(settings)
+        .insert_resource(settings.clone())
         .insert_resource(SettingsPath(settings_path))
         .insert_non_send(session)
         // Must be registered before AssetPlugin (part of DefaultPlugins) builds the sources.
-        .register_asset_source(
-            CACHE_SOURCE,
-            AssetSourceBuilder::new(AssetSource::get_default_reader(
-                args.cache_dir.to_string_lossy().into_owned(),
-            )),
-        )
-        .add_plugins(default_plugins(&args))
+        .register_asset_source(CACHE_SOURCE, source)
+        .add_plugins(default_plugins(&args, &settings))
         .add_plugins(FrameTimeDiagnosticsPlugin::default())
         .add_plugins((
             session::plugin,
@@ -238,17 +273,56 @@ fn main() -> AppExit {
             voice::plugin,
             select::plugin,
             framestats::plugin,
+            quality::plugin,
+            heap::plugin,
         ));
     app.run()
 }
 
+/// A `WIDTHxHEIGHT` size, each side 64 to 16384.
+fn parse_size(text: &str) -> Result<(u32, u32), String> {
+    let (w, h) = text
+        .split_once('x')
+        .ok_or_else(|| format!("'{text}' is not WIDTHxHEIGHT"))?;
+    let side = |s: &str| {
+        s.parse::<u32>()
+            .ok()
+            .filter(|v| (64..=16_384).contains(v))
+            .ok_or_else(|| format!("'{s}' is not a side of 64 to 16384 pixels"))
+    };
+    Ok((side(w)?, side(h)?))
+}
+
+/// The asset source over the cache folder: read straight from disk where
+/// there is one, textures within a decode budget (see `cachefs`); else as
+/// Bevy reads files.
+fn cache_source(app: &mut App, root: &std::path::Path) -> AssetSourceBuilder {
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let budget = cachefs::DecodeBudget::default();
+        app.insert_resource(budget.clone())
+            .add_plugins(cachefs::plugin);
+        let root = root.to_path_buf();
+        AssetSourceBuilder::new(move || {
+            Box::new(cachefs::CacheReader::new(root.clone(), budget.clone()))
+        })
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        let _ = app;
+        AssetSourceBuilder::new(bevy::asset::io::AssetSource::get_default_reader(
+            root.to_string_lossy().into_owned(),
+        ))
+    }
+}
+
 /// Bevy's plugins as dbota sets them up.
-fn default_plugins(args: &Args) -> impl PluginGroup {
+fn default_plugins(args: &Args, settings: &config::Settings) -> impl PluginGroup {
     DefaultPlugins
         .set(WindowPlugin {
             primary_window: Some(Window {
                 title: "dbota".into(),
-                resolution: WindowResolution::new(1600, 900),
+                resolution: WindowResolution::new(args.window.0, args.window.1),
                 // `DBOTA_NO_VSYNC` for runs started by a launcher, as the
                 // drill is: vsync stalls while the screen is locked.
                 present_mode: if args.no_vsync || std::env::var_os("DBOTA_NO_VSYNC").is_some() {
@@ -274,6 +348,10 @@ fn default_plugins(args: &Args) -> impl PluginGroup {
                 },
                 None => TaskPoolOptions::default(),
             },
+        })
+        .set(bevy::pbr::PbrPlugin {
+            use_gpu_instance_buffer_builder: settings.quality.gpu_batching,
+            ..default()
         })
         .set(AssetPlugin {
             file_path: concat!(env!("CARGO_MANIFEST_DIR"), "/assets").into(),

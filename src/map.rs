@@ -6,13 +6,11 @@ use std::f32::consts::FRAC_PI_2;
 
 use bevy::{
     asset::RenderAssetUsages,
-    gltf::GltfMaterialExtras,
+    gltf::{Gltf, GltfAssetLabel, GltfMesh, GltfNode},
     image::{ImageAddressMode, ImageLoaderSettings, ImageSampler, ImageSamplerDescriptor},
-    light::CascadeShadowConfigBuilder,
     math::Affine2,
     mesh::{Indices, MeshVertexAttribute, PrimitiveTopology, VertexAttributeValues, VertexFormat},
     prelude::*,
-    world_serialization::WorldInstanceReady,
 };
 
 use crate::manifest::Manifest;
@@ -70,15 +68,10 @@ impl Ground {
     }
 }
 
-/// The root of the map scene.
-#[derive(Component)]
-struct MapRoot;
-
-/// A map scene that is spawned but not yet prepared.
-#[derive(Component)]
-struct MapPending {
-    frames: u8,
-}
+/// The map's glTF file while it loads and until it is prepared; let go
+/// after, with every mesh and node of it.
+#[derive(Resource)]
+struct MapFile(Handle<Gltf>);
 
 pub fn plugin(app: &mut App) {
     app.init_resource::<Ground>()
@@ -92,7 +85,12 @@ pub fn plugin(app: &mut App) {
         .add_systems(Update, (prepare_map, build_fallback_ground));
 }
 
-fn spawn_sun(mut commands: Commands, args: Res<crate::Args>) {
+fn spawn_sun(
+    mut commands: Commands,
+    args: Res<crate::Args>,
+    settings: Res<crate::config::Settings>,
+) {
+    let shadows = settings.quality.shadows;
     commands.spawn((
         DirectionalLight {
             illuminance: crate::look("sun", 13_000.0),
@@ -100,17 +98,11 @@ fn spawn_sun(mut commands: Commands, args: Res<crate::Args>) {
                 let warm = crate::look("warm", 0.3);
                 Color::srgb(1.0, 0.97 - 0.09 * warm, 0.92 - 0.22 * warm)
             },
-            shadow_maps_enabled: !args.without.iter().any(|w| w == "shadows"),
+            shadow_maps_enabled: shadows > 0 && !args.without.iter().any(|w| w == "shadows"),
             ..default()
         },
         Transform::from_rotation(Quat::from_euler(EulerRot::YXZ, -0.6, -0.95, 0.0)),
-        CascadeShadowConfigBuilder {
-            num_cascades: 2,
-            first_cascade_far_bound: 3_000.0,
-            maximum_distance: 8_000.0,
-            ..default()
-        }
-        .build(),
+        crate::quality::cascades(shadows),
     ));
 }
 
@@ -135,21 +127,81 @@ fn spawn_map(
         return;
     };
     // The map's own meshes are read once, merged and let go: they need never
-    // reach the GPU.
-    let scene = server
+    // reach the GPU. Its nodes are read from the file, never spawned: a
+    // scene of fourteen thousand entities held for a frame or two left
+    // its tables and handle infos behind for good.
+    let file = server
         .load_builder()
         .with_settings(|s: &mut bevy::gltf::GltfLoaderSettings| {
+            crate::manifest::gpu_textures(s);
             s.load_meshes = bevy::asset::RenderAssetUsages::MAIN_WORLD;
         })
-        .load(bevy::gltf::GltfAssetLabel::Scene(0).from_asset(path.clone()));
-    commands
-        .spawn((MapRoot, WorldAssetRoot(scene), map_transform()))
-        .observe(|ready: On<WorldInstanceReady>, mut commands: Commands| {
-            info!("startup: map scene ready at {:.2} s", crate::since_start());
-            commands
-                .entity(ready.entity)
-                .insert(MapPending { frames: 2 });
-        });
+        .load(path.clone());
+    commands.insert_resource(MapFile(file));
+}
+
+/// The glTF assets the map is read from.
+#[derive(bevy::ecs::system::SystemParam)]
+struct MapFileAssets<'w> {
+    gltfs: Res<'w, Assets<Gltf>>,
+    nodes: Res<'w, Assets<GltfNode>>,
+    meshes: Res<'w, Assets<GltfMesh>>,
+}
+
+/// Every mesh of the map with its place, its material and its Valve shader
+/// parameters (the material's extras), read from the glTF file.
+fn map_parts(
+    file: &Handle<Gltf>,
+    path: &str,
+    assets: &MapFileAssets,
+    server: &AssetServer,
+) -> Option<
+    Vec<(
+        Handle<Mesh>,
+        GlobalTransform,
+        Handle<StandardMaterial>,
+        Option<String>,
+    )>,
+> {
+    let gltf = assets.gltfs.get(file)?;
+    // The scene entity's turn that the loader's coordinate conversion puts
+    // over the glTF's nodes, under the map's own placement.
+    let root = map_transform().compute_affine()
+        * Transform::from_rotation(Quat::from_xyzw(0.0, 1.0, 0.0, 0.0)).compute_affine();
+    let mut parts = Vec::new();
+    for handle in &gltf.nodes {
+        let Some(node) = assets.nodes.get(handle) else {
+            continue;
+        };
+        let Some(mesh) = node.mesh.as_ref().and_then(|m| assets.meshes.get(m)) else {
+            continue;
+        };
+        let global = GlobalTransform::from(root * node.transform.compute_affine());
+        for primitive in &mesh.primitives {
+            let index = primitive
+                .material
+                .as_ref()
+                .and_then(|m| gltf.materials.iter().position(|h| h == m));
+            let label = match index {
+                Some(index) => format!(
+                    "{}",
+                    GltfAssetLabel::Material {
+                        index,
+                        is_scale_inverted: false
+                    }
+                ),
+                None => format!("{}", GltfAssetLabel::DefaultMaterial),
+            };
+            let material = server.get_handle(format!("{path}#{label}/std"))?;
+            parts.push((
+                primitive.mesh.clone(),
+                global,
+                material,
+                primitive.material_extras.as_ref().map(|e| e.value.clone()),
+            ));
+        }
+    }
+    Some(parts)
 }
 
 /// Everything the map preparation reads and writes.
@@ -161,31 +213,35 @@ struct MapAssets<'w> {
     manifest: Res<'w, Manifest>,
 }
 
-/// Once the map's transforms have settled: bakes the terrain layers into
-/// vertex colours, takes the ground's height from the terrain, and merges
-/// the whole map into one mesh per material, its transforms baked in.
+/// Once the map's file has loaded: bakes the terrain layers into vertex
+/// colours, takes the ground's height from the terrain, and merges the
+/// whole map into one mesh per material, its transforms baked in.
 fn prepare_map(
     mut commands: Commands,
-    mut pending: Query<(Entity, &mut MapPending)>,
-    children: Query<&Children>,
-    parts: Query<(
-        &Mesh3d,
-        &GlobalTransform,
-        &MeshMaterial3d<StandardMaterial>,
-        Option<&GltfMaterialExtras>,
-    )>,
+    file: Option<Res<MapFile>>,
+    files: MapFileAssets,
     mut assets: MapAssets,
     mut ground: ResMut<Ground>,
     args: Res<crate::Args>,
+    settings: Res<crate::config::Settings>,
 ) {
-    let without = |what: &str| args.without.iter().any(|w| w == what);
-    let Ok((root, mut wait)) = pending.single_mut() else {
+    let without = |what: &str| {
+        args.without.iter().any(|w| w == what) || (what == "props" && !settings.quality.props)
+    };
+    let Some(file) = file else {
         return;
     };
-    if wait.frames > 0 {
-        wait.frames -= 1;
+    if !assets.server.is_loaded(&file.0) {
         return;
     }
+    let Some(path) = &assets.manifest.map else {
+        return;
+    };
+    let Some(parts) = map_parts(&file.0, path, &files, &assets.server) else {
+        return;
+    };
+    commands.remove_resource::<MapFile>();
+    info!("startup: map read at {:.2} s", crate::since_start());
     let skipped: Vec<String> = std::env::var("DBOTA_SKIP")
         .map(|v| v.split(',').map(str::to_string).collect())
         .unwrap_or_default();
@@ -218,11 +274,8 @@ fn prepare_map(
         }
     }
     let mut jobs: Vec<Job> = Vec::new();
-    for entity in children.iter_descendants(root) {
-        let Ok((mesh3d, global, material, extras)) = parts.get(entity) else {
-            continue;
-        };
-        let vmat = extras.map(|e| Vmat::parse(&e.value)).unwrap_or_default();
+    for (mesh, global, material, extras) in parts {
+        let vmat = extras.map(|e| Vmat::parse(&e)).unwrap_or_default();
         let (material, layers) = match vmat.shader.as_str() {
             "multiblend.vfx" => (terrain_material.clone(), Some(means.layers(&vmat))),
             "water_dota.vfx" => (water_material.clone(), None),
@@ -233,7 +286,7 @@ fn prepare_map(
             _ if skipped.iter().any(|s| vmat.name.contains(s.as_str())) => continue,
             _ if without("overlays") && vmat.translucent => continue,
             _ => {
-                let Some(mut m) = assets.materials.get_mut(&material.0) else {
+                let Some(mut m) = assets.materials.get_mut(&material) else {
                     continue;
                 };
                 // Path borders, ground edges and wagon tracks are tinted
@@ -250,12 +303,12 @@ fn prepare_map(
                     continue;
                 }
                 dress_prop(&mut m, &vmat);
-                (material.0.clone(), None)
+                (material, None)
             }
         };
         jobs.push(Job {
-            mesh: mesh3d.0.clone(),
-            global: *global,
+            mesh,
+            global,
             material,
             layers,
         });
@@ -314,15 +367,21 @@ fn prepare_map(
             );
         }
     }
-    commands.entity(root).despawn();
     let count = batches.len();
-    for batch in batches {
+    for mut batch in batches {
+        // Drawn only: its vertices leave the CPU once on the GPU, its bounds
+        // taken first.
+        let aabb = bevy::camera::primitives::MeshAabb::compute_aabb(&batch.mesh);
+        batch.mesh.asset_usage = RenderAssetUsages::RENDER_WORLD;
         let mut entity = commands.spawn((
             Mesh3d(assets.meshes.add(batch.mesh)),
             MeshMaterial3d(batch.material),
             Transform::IDENTITY,
             crate::fog::Fogged,
         ));
+        if let Some(aabb) = aabb {
+            entity.insert(aabb);
+        }
         if batch.terrain {
             entity.insert(bevy::light::NotShadowCaster);
         }

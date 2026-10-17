@@ -5,7 +5,10 @@
 use std::collections::HashMap;
 
 use bevy::{
-    gltf::Gltf, light::NotShadowCaster, prelude::*, world_serialization::WorldAsset,
+    gltf::{Gltf, GltfAssetLabel},
+    light::NotShadowCaster,
+    prelude::*,
+    world_serialization::WorldAsset,
     world_serialization::WorldInstanceReady,
 };
 use bota_client_core::bodies;
@@ -13,7 +16,7 @@ use bota_proto::{EntityId, Team, UnitKind, UnitView};
 
 use crate::coords::sim_facing_to_rotation;
 use crate::fog::FogGrid;
-use crate::manifest::{Manifest, Model};
+use crate::manifest::{Manifest, Model, load_unit_model};
 use crate::map::{Ground, UNITS_PER_METRE};
 use crate::session::Session;
 
@@ -195,12 +198,15 @@ fn load_models(mut bank: ResMut<ModelBank>, server: Res<AssetServer>, manifest: 
             .models
             .iter()
             .filter(|w| w.attach.as_deref() == Some(model.logical.as_str()))
-            .map(|w| server.load(bevy::gltf::GltfAssetLabel::Scene(0).from_asset(w.path.clone())))
+            .map(|w| load_unit_model(&server, GltfAssetLabel::Scene(0).from_asset(w.path.clone())))
             .collect();
         bank.0.push(BankModel {
             model: model.clone(),
-            gltf: server.load(model.path.clone()),
-            scene: server.load(bevy::gltf::GltfAssetLabel::Scene(0).from_asset(model.path.clone())),
+            gltf: load_unit_model(&server, model.path.clone()),
+            scene: load_unit_model(
+                &server,
+                GltfAssetLabel::Scene(0).from_asset(model.path.clone()),
+            ),
             wearables,
             clips: Vec::new(),
             graph: None,
@@ -493,7 +499,11 @@ fn sync_units(
                 unit.speed += (moved - unit.speed) * (dt * 10.0).min(1.0);
                 unit.at = at;
                 unit.facing = drawn_facing(u, body.facing, at, &p.yaws);
-                transform.translation = place;
+                // Moved only when it moves: a changed root sends its whole
+                // model, skeleton and all, through transform propagation.
+                if transform.translation != place {
+                    transform.translation = place;
+                }
             }
             None => {
                 // Not before its model has loaded whole, wearables and all.

@@ -28,7 +28,49 @@ struct Shots {
 }
 
 pub fn plugin(app: &mut App) {
-    app.init_resource::<Shots>().add_systems(Last, shoot);
+    app.init_resource::<Shots>()
+        .add_systems(Last, shoot)
+        .add_systems(PreUpdate, seek.after(crate::session::pump));
+}
+
+/// Reads a replay through towards `next`, as fast as the reader goes and
+/// nothing drawn between, for at most a quarter of a second a frame; stops
+/// [`SETTLE_TICKS`] short, so the last ticks play at their own pace and
+/// motion and effects have settled there. Whether it is still on its way.
+fn fast_forward(core: &mut bota_client_core::App, next: u32) -> bool {
+    if core.view().is_none_or(|v| v.tick + SETTLE_TICKS >= next) {
+        return false;
+    }
+    let began = std::time::Instant::now();
+    while core.view().is_some_and(|v| v.tick + SETTLE_TICKS < next)
+        && began.elapsed() < std::time::Duration::from_millis(250)
+    {
+        let before = core.view().map(|v| v.tick);
+        core.pump(1.0);
+        core.cues.clear();
+        core.floaters.clear();
+        if core.view().map(|v| v.tick) == before {
+            break;
+        }
+    }
+    true
+}
+
+/// Debug: takes a replay to `--seek`'s tick at the start.
+fn seek(args: Res<Args>, mut session: NonSendMut<Session>, mut done: Local<bool>) {
+    let Some(next) = args.seek.filter(|_| !*done) else {
+        return;
+    };
+    let core = &mut session.0;
+    if let Source::Replay(player) = &mut core.source
+        && (player.finished() || player.error().is_some())
+    {
+        *done = true;
+        return;
+    }
+    if core.view().is_some() && !fast_forward(core, next) {
+        *done = true;
+    }
 }
 
 /// Steers a replay towards the next wanted tick and saves the screen there;
@@ -73,23 +115,7 @@ fn shoot(
             }
             player.speed = 1.0;
         }
-        // Seek: far from the wanted tick the replay is read and played
-        // through in this frame, as fast as the reader goes, nothing drawn
-        // between; the last ticks before it play at their own pace, so
-        // motion and effects have settled when the shot is taken.
-        if tick + SETTLE_TICKS < next {
-            let began = std::time::Instant::now();
-            while core.view().is_some_and(|v| v.tick + SETTLE_TICKS < next)
-                && began.elapsed() < std::time::Duration::from_millis(250)
-            {
-                let before = core.view().map(|v| v.tick);
-                core.pump(1.0);
-                core.cues.clear();
-                core.floaters.clear();
-                if core.view().map(|v| v.tick) == before {
-                    break;
-                }
-            }
+        if fast_forward(core, next) {
             return;
         }
         if tick < next {

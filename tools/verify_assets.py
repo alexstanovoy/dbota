@@ -89,6 +89,10 @@ def check_model(path: Path, keys: dict[str, str], clips: list[list[str]], parent
     missing = [u for u in images if not (path.parent / u).is_file()]
     if missing:
         raise ValueError(f"missing textures {missing}")
+    buffers = [b["uri"] for b in doc.get("buffers", []) if "uri" in b]
+    missing = [u for u in buffers if not (path.parent / u).is_file()]
+    if missing:
+        raise ValueError(f"missing buffers {missing}")
     return (f"meshes={len(doc['meshes'])} skins={len(doc.get('skins', []))} "
             f"materials={len(doc.get('materials', []))} images={len(images)} anims={len(anims)}")
 
