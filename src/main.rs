@@ -26,6 +26,7 @@ mod hud;
 mod input;
 mod manifest;
 mod map;
+mod mapfile;
 mod menu;
 mod minimap;
 mod overlay;
