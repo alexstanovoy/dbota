@@ -330,8 +330,9 @@ pub struct BuildingYaws(pub Vec<(String, Vec2, f32)>);
 
 impl BuildingYaws {
     pub fn load(root: Option<&std::path::Path>) -> BuildingYaws {
-        let Some(text) =
-            root.and_then(|r| std::fs::read_to_string(r.join("map/mid/buildings.txt")).ok())
+        let Some(text) = root
+            .and_then(|r| crate::cachefs::read_small(r, "map/mid/buildings.txt"))
+            .and_then(|bytes| String::from_utf8(bytes).ok())
         else {
             return BuildingYaws::default();
         };

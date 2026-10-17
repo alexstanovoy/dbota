@@ -78,7 +78,9 @@ fn map_trees(manifest: &Manifest) -> Vec<MapTree> {
     let Some(root) = &manifest.root else {
         return Vec::new();
     };
-    let Ok(text) = std::fs::read_to_string(root.join("map/mid/trees.txt")) else {
+    let Some(text) = crate::cachefs::read_small(root, "map/mid/trees.txt")
+        .and_then(|bytes| String::from_utf8(bytes).ok())
+    else {
         return Vec::new();
     };
     text.lines()

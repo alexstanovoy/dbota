@@ -58,9 +58,12 @@ pub struct Manifest {
 impl Manifest {
     /// Reads the manifest against a cache folder.
     pub fn load(root: &Path) -> Manifest {
-        let present = |rel: &str| root.join(rel).is_file();
+        // A browser cannot ask its page's server cheaply: every listed
+        // file is taken to be there.
+        let browser = cfg!(target_arch = "wasm32");
+        let present = |rel: &str| browser || root.join(rel).is_file();
         let mut manifest = Manifest {
-            root: root.is_dir().then(|| root.to_path_buf()),
+            root: (browser || root.is_dir()).then(|| root.to_path_buf()),
             ..Manifest::default()
         };
         for line in MANIFEST.lines().map(str::trim) {

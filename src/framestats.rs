@@ -43,6 +43,8 @@ fn cpu_ticks() -> Option<u64> {
 
 pub fn plugin(app: &mut App) {
     app.add_systems(Last, bench);
+    #[cfg(target_arch = "wasm32")]
+    app.add_systems(Last, browser_memory);
     if std::env::var_os("DBOTA_FRAMES").is_some() {
         // GPU and CPU time of every render pass, logged with the rest of
         // the diagnostics every ten seconds.
@@ -157,7 +159,7 @@ fn bench(
     times.sort_by(f32::total_cmp);
     let at = |q: f32| times[((times.len() - 1) as f32 * q) as usize];
     let (rss, peak, anon) = memory_mb();
-    println!(
+    let line = format!(
         "bench: frames={} mean_ms={mean:.2} p50_ms={:.2} p95_ms={:.2} p99_ms={:.2} max_ms={:.2} cpu_pct={cpu:.0} rss_mb={rss} peak_rss_mb={peak} anon_mb={anon} first_frame_s={:.2} ready_s={ready:.2} units={} entities={} images_mb={} meshes_mb={}",
         times.len(),
         at(0.5),
@@ -181,6 +183,10 @@ fn bench(
             .sum::<usize>()
             >> 20,
     );
+    println!("{line}");
+    // A browser has no stdout: the page reads the console.
+    #[cfg(target_arch = "wasm32")]
+    info!("{line}");
     if let Some(device) = device {
         gpu_report(&device);
     }
@@ -215,6 +221,19 @@ fn gpu_report(device: &bevy::render::renderer::RenderDevice) {
             bytes as f64 / 1048576.0
         );
     }
+}
+
+/// In a browser: the client's memory every five seconds, on the console. A
+/// wasm memory only grows, so this is its high-water mark.
+#[cfg(target_arch = "wasm32")]
+fn browser_memory(time: Res<Real>, mut next: Local<f32>) {
+    let now = time.elapsed_secs();
+    if now < *next {
+        return;
+    }
+    *next = now + 5.0;
+    let bytes = core::arch::wasm32::memory_size(0) * 65536;
+    info!("memory: {} MiB at {now:.0} s", bytes >> 20);
 }
 
 /// The process's resident memory now and at its peak, and how much of it
