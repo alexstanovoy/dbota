@@ -83,8 +83,8 @@ pub fn plugin(app: &mut App) {
 }
 
 fn load(mut voices: ResMut<Voices>, manifest: Res<Manifest>, server: Res<AssetServer>) {
-    for hero in bota_client_core::HEROES {
-        let Some(name) = manifest.dota_name("hero", hero.id) else {
+    for id in 0..bota_core::HEROES.len() as u16 {
+        let Some(name) = manifest.dota_name("hero", id) else {
             continue;
         };
         let moves = Lines::load(&manifest, &server, &format!("sound.voice.{name}.move"));

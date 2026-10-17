@@ -4,7 +4,7 @@
 //! proves the wire end to end where nobody is at the keys.
 
 use bevy::prelude::*;
-use bota_client_core::{Intent, Slot};
+use bota_client_core::{ClientSession, Intent, Slot};
 
 use crate::session::Session;
 
@@ -41,10 +41,10 @@ fn drill(
         // Shadow Fiend, whose first slot is a raze, or the hero named by
         // DBOTA_DRILL_HERO.
         let name = std::env::var("DBOTA_DRILL_HERO").unwrap_or_else(|_| "Shadow Fiend".into());
-        let hero = bota_client_core::HEROES
+        let hero = bota_core::HEROES
             .iter()
-            .find(|h| h.name == name)
-            .map_or(0, |h| h.id);
+            .position(|h| h.name == name)
+            .map_or(0, |id| id as u16);
         core.act(Intent::PickHero(hero));
         core.act(Intent::ToggleReady);
         info!("drill: picked {name}, ready");
@@ -69,7 +69,7 @@ fn drill(
             "drill {at:5.1}s {what}: hero at ({x:.0}, {y:.0}) hp {} mana {} gold {gold:?} ping {:?} ms, refusal {:?}, {fps:.0} fps, abilities {:?}",
             hero.hp,
             hero.mana,
-            core.order_delay_ms(),
+            core.session().and_then(ClientSession::order_delay_ms),
             core.reject.as_ref().map(|r| r.0.clone()),
             hero.abilities
                 .iter()

@@ -3,7 +3,8 @@
 //! Mouse only. A spectator sees the seats and waits.
 
 use bevy::prelude::*;
-use bota_client_core::{HEROES, Intent, Phase};
+use bota_client_core::{Intent, Phase};
+use bota_core::HEROES;
 
 use crate::hud::Blocker;
 use crate::manifest::Manifest;
@@ -83,15 +84,15 @@ fn spawn(
             ChildOf(screen),
         ))
         .id();
-    for hero in HEROES {
-        let portrait = manifest.dota_name("hero", hero.id).and_then(|name| {
+    for (id, hero) in (0u16..).zip(HEROES) {
+        let portrait = manifest.dota_name("hero", id).and_then(|name| {
             manifest
                 .file(&format!("portrait.hero.{name}.tall"))
                 .or(manifest.file(&format!("portrait.hero.{name}")))
         });
         let card = commands
             .spawn((
-                Card(hero.id),
+                Card(id),
                 Button,
                 Node {
                     width: px(CARD.0),
@@ -249,7 +250,7 @@ fn looks(
         .map(|seat| {
             let hero = seat
                 .hero
-                .and_then(|h| bota_client_core::hero(h.0))
+                .and_then(bota_core::hero_def)
                 .map_or("picking...", |h| h.name);
             let name = if seat.name.is_empty() {
                 "open"

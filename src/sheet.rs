@@ -42,15 +42,13 @@ fn spawn(
                 (f.id, f.name, dota, manifest.ability_icon(f.id))
             })
             .collect(),
-        "effects" => EFFECTS
-            .iter()
-            .map(|f| {
-                let dota = manifest
-                    .dota_name("effect", f.id)
-                    .unwrap_or("-")
-                    .to_string();
+        "effects" => (0u16..)
+            .zip(EFFECTS.iter())
+            .filter(|(id, _)| bota_client_core::effect(*id).is_some())
+            .map(|(id, f)| {
+                let dota = manifest.dota_name("effect", id).unwrap_or("-").to_string();
                 let dota = dota.trim_start_matches("icon.").to_string();
-                (f.id, f.name, dota, manifest.effect_icon(f.id))
+                (id, f.name, dota, manifest.effect_icon(id))
             })
             .collect(),
         other => {
