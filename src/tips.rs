@@ -92,7 +92,7 @@ fn show(
         .map(|(_, c)| c.0);
     let body = if let Some(shown) = hovered_buff {
         bota_client_core::effect(shown.id).map(|face| {
-            let mut lines = vec![face.name.to_string(), face.blurb()];
+            let mut lines = vec![face.name().to_string(), face.blurb()];
             if let Some(n) = shown.stacks.filter(|n| *n > 0) {
                 lines.push(format!("{n} stacks"));
             }

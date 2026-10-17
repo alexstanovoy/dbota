@@ -3,7 +3,7 @@
 
 use bevy::prelude::*;
 use bota_client_core::{App as Core, Net, Pin, ReplayPlayer, Source, Transport};
-use bota_proto::{ClientMsg, Role, SlotId};
+use bota_proto::{ClientMsg, Role, SlotId, WIRE_FINGERPRINT};
 
 use crate::Args;
 
@@ -40,6 +40,7 @@ pub fn open(args: &Args) -> std::io::Result<Session> {
         role,
         name: args.name.clone(),
         key: None,
+        wire_fingerprint: WIRE_FINGERPRINT,
     })?;
     Ok(Session(Core::new(Source::Live(net))))
 }

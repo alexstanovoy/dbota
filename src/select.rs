@@ -194,6 +194,7 @@ fn clicks(
 fn my_pick(core: &bota_client_core::App) -> Option<u16> {
     let slot = core.my_slot?;
     core.lobby
+        .slots
         .iter()
         .find(|s| s.slot == slot)
         .and_then(|s| s.hero)
@@ -246,6 +247,7 @@ fn looks(
     }
     let seats: Vec<String> = core
         .lobby
+        .slots
         .iter()
         .map(|seat| {
             let hero = seat
@@ -274,7 +276,7 @@ fn looks(
         } else if heading.is_some() {
             if playing {
                 "CHOOSE YOUR HERO"
-            } else if core.me.is_some() {
+            } else if core.lobby.me.is_some() {
                 "SPECTATING - waiting for the match"
             } else {
                 "CONNECTING..."
