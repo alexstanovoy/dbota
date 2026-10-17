@@ -93,9 +93,9 @@ strip = true
 inherits = "release"
 debug = "line-tables-only"
 
-# For the browser: link-time optimisation makes the wasm three times larger (18.4 MB against 6.3).
+# For the browser: dist's thin LTO in one codegen unit, optimised for size. 12.9 MB of wasm in ~6.5
+# min (opt-level 3 without LTO: 26.2 MB; "z" with fat LTO: 11.0 MB in ~9 min; frames the same).
 # `cargo build --profile web --target wasm32-unknown-unknown`.
 [profile.web]
 inherits = "dist"
-lto = false
-codegen-units = 16
+opt-level = "z"
