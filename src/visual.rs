@@ -1,7 +1,7 @@
 //! Debug: `--visual-check` measures the picture a `--screenshot-at` shot
 //! takes against the picture's requirements, prints every measure and its
 //! bound, and exits non-zero when one fails. `tools/visual_check.sh` runs it
-//! on a fresh replay; the ignored test `tests/visual.rs` runs that script.
+//! from both seats.
 //!
 //! - The fog: ground the watched side does not see is darker and duller
 //!   than ground it sees, with a border neither hard nor smeared.
