@@ -40,6 +40,15 @@ struct TierLevel(u8);
 #[derive(Component)]
 struct Branch(u8);
 
+/// The Attribute Bonus button right of the abilities: its level, and a
+/// click spends a skill point on it.
+#[derive(Component)]
+pub struct AttributeButton;
+
+/// The level text of the Attribute Bonus button.
+#[derive(Component)]
+struct AttributeLevel;
+
 /// The talent button's size, and the tree's width.
 pub const BUTTON: f32 = 48.0;
 const PANEL_WIDTH: f32 = 560.0;
@@ -62,7 +71,7 @@ const SHUT: Color = Color::srgb(0.38, 0.4, 0.45);
 pub fn plugin(app: &mut App) {
     app.add_systems(
         Update,
-        (toggle, show).run_if(|k: Res<crate::session::MatchKnown>| k.0),
+        (toggle, show, show_attribute).run_if(|k: Res<crate::session::MatchKnown>| k.0),
     );
 }
 
@@ -264,6 +273,103 @@ pub fn spawn_button(commands: &mut Commands, fonts: &Fonts, row: Entity, column:
                 ChildOf(cell),
             ));
         }
+    }
+}
+
+/// The Attribute Bonus button, a small box with a plus and its level.
+pub fn spawn_attribute_button(commands: &mut Commands, fonts: &Fonts, row: Entity) {
+    let button = commands
+        .spawn((
+            AttributeButton,
+            Button,
+            Node {
+                width: px(30),
+                height: px(BUTTON),
+                align_self: AlignSelf::Center,
+                flex_direction: FlexDirection::Column,
+                justify_content: JustifyContent::Center,
+                align_items: AlignItems::Center,
+                border: UiRect::all(px(2)),
+                border_radius: BorderRadius::all(px(6)),
+                ..default()
+            },
+            BorderColor::all(Color::srgb(0.2, 0.22, 0.27)),
+            BackgroundColor(ui::PANEL_DEEP),
+            Visibility::Hidden,
+            ChildOf(row),
+        ))
+        .id();
+    commands.spawn((
+        ui::text("+", &fonts.bold, 20.0, SHUT),
+        Pickable::IGNORE,
+        ChildOf(button),
+    ));
+    commands.spawn((
+        AttributeLevel,
+        ui::text("0", &fonts.bold, 12.0, SHUT),
+        Pickable::IGNORE,
+        ChildOf(button),
+    ));
+}
+
+/// A click on the Attribute Bonus button learns a level of it; it shows its
+/// level, and glows while a skill point could go into it.
+fn show_attribute(
+    mut session: NonSendMut<Session>,
+    time: Res<Time>,
+    mut button: Query<
+        (&Interaction, &Children, &mut Visibility, &mut BorderColor),
+        With<AttributeButton>,
+    >,
+    mut texts: Query<(&mut Text, &mut TextColor)>,
+) {
+    let (seat, unit, _) = crate::hud::subject(&session.0);
+    let seat = seat.map(|p| p.slot);
+    let mine = seat.is_some() && seat == session.0.my_slot;
+    let shown = unit.is_some_and(|u| u.hero.is_some());
+    let state = seat.and_then(|s| session.0.talents_of(s));
+    let level = state.map_or(0, |t| t.attribute_bonus);
+    let learnable = mine && state.is_some_and(|t| t.attribute_bonus_learnable);
+    let glow = 0.55 + 0.45 * (time.elapsed_secs() * 4.0).sin().abs();
+    let mut learn = false;
+    for (interaction, children, mut v, mut rim) in &mut button {
+        learn |= learnable && *interaction == Interaction::Pressed;
+        let want = if shown {
+            Visibility::Inherited
+        } else {
+            Visibility::Hidden
+        };
+        if *v != want {
+            *v = want;
+        }
+        *rim = BorderColor::all(if learnable {
+            GOLD.with_alpha(glow)
+        } else {
+            Color::srgb(0.2, 0.22, 0.27)
+        });
+        for child in children {
+            if let Ok((mut text, mut color)) = texts.get_mut(*child) {
+                let c = if learnable {
+                    GOLD
+                } else if level > 0 {
+                    Color::WHITE
+                } else {
+                    SHUT
+                };
+                if color.0 != c {
+                    color.0 = c;
+                }
+                if text.0 != "+" {
+                    let s = level.to_string();
+                    if text.0 != s {
+                        text.0 = s;
+                    }
+                }
+            }
+        }
+    }
+    if learn {
+        session.0.learn_attribute_bonus();
     }
 }
 
