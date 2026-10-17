@@ -52,10 +52,6 @@ pub fn plugin(app: &mut App) {
     app.init_resource::<OverHud>()
         .init_resource::<Typing>()
         .init_resource::<Panels>()
-        .add_systems(
-            Startup,
-            |mut panels: ResMut<Panels>, args: Res<crate::Args>| panels.shop = args.open_shop,
-        )
         .add_systems(Update, (over_hud, typing, keys, mouse, boxes).chain());
 }
 

@@ -6,7 +6,6 @@ use bevy::{
     window::{PrimaryWindow, WindowResized},
 };
 
-use crate::coords::world_to_sim;
 use crate::map::{DOTA_ORIGIN, Ground};
 use crate::session::Session;
 use crate::units::{Unit, UnitIndex};
@@ -70,10 +69,7 @@ fn spawn_camera(
 ) {
     let msaa = crate::quality::msaa_of(&settings);
     let cam = RtsCamera {
-        focus: match args.look_at[..args.look_at.len().min(2)] {
-            [x, y] => Vec3::new(x, 128.0, -y),
-            _ => Vec3::new(DOTA_ORIGIN, 128.0, -DOTA_ORIGIN),
-        },
+        focus: Vec3::new(DOTA_ORIGIN, 128.0, -DOTA_ORIGIN),
         distance: args
             .distance
             .unwrap_or(DEFAULT_DISTANCE)
@@ -214,11 +210,7 @@ fn follow(
     settings: Res<crate::config::Settings>,
     panels: Res<crate::input::Panels>,
     mut cam: Single<&mut RtsCamera>,
-    args: Res<crate::Args>,
 ) {
-    if !args.look_at.is_empty() {
-        return;
-    }
     let core = &mut session.0;
     if !core.found_my_hero
         && core.my_hero().is_some()
@@ -255,8 +247,6 @@ fn follow(
 fn log_window_size(
     mut resized: MessageReader<WindowResized>,
     window: Single<&Window, With<PrimaryWindow>>,
-    cursor: Res<CursorGround>,
-    keys: Res<ButtonInput<KeyCode>>,
     mut logged: Local<bool>,
 ) {
     // The first WindowResized arrives once winit knows the real scale factor.
@@ -271,11 +261,6 @@ fn log_window_size(
             r.physical_width(),
             r.physical_height()
         );
-    }
-    if keys.just_pressed(KeyCode::KeyP)
-        && let Some(p) = cursor.0
-    {
-        info!("cursor ground: bevy={p} sim={}", world_to_sim(p));
     }
 }
 

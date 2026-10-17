@@ -157,7 +157,6 @@ The browser build is described in `web/README.md`.
 `tools/visual_check.sh REPLAY.brp` measures dbota's picture of a recorded Map 2 match:
 fogged ground at most 45% of seen ground's luminance and saturation with a 1–5 cell border (compared across the ground on screen, so the tick matters: 4000, by day, and 12000, by night, are the contract ticks; `VISUAL_TICK`, `VISUAL_RUNS` and `VISUAL_DIR` set the tick, the repeats of the hero-model check and the output folder), seen from both seats: every hero model loads whole and is drawn with detail, buildings stand as the map places them, enemy buildings are seen through the fog and the enemy base is fogged, no range rings without `Alt`, no gold or souls
 in the top-left block, round buff icons. It needs the asset cache and a display, and exits non-zero when a check fails.
-`DBOTA_FRAMES=1` logs frame times (median, 95th and 99th percentiles) every ten seconds.
 
 `tools/bench.sh REPLAY.brp` measures the binary's size, cold and warm start, and the frame times,
 CPU, RAM and VRAM of a busy stretch of the replay and of a live match against a local

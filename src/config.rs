@@ -288,9 +288,6 @@ impl Settings {
             "muted" => self.muted = flag()?,
             "damage_numbers" => self.aids.numbers = flag()?,
             "voice_responses" => self.voice = flag()?,
-            // Ranges show only while their key is held; the old switches
-            // are read and forgotten.
-            "attack_range" | "raze_marks" | "last_hit_marks" | "tower_ranges" => {}
             "edge_pan" => self.aids.edge_pan = flag()?,
             "quality" => {
                 self.quality = Quality::preset(value).ok_or_else(|| {

@@ -25,8 +25,6 @@ struct Shots {
     waiting: bool,
     /// Whether a visual check has failed.
     failed: bool,
-    /// Frames left to settle after the camera moved for a shot.
-    settle: u32,
     /// Seconds the replay has been held at the wanted tick, for the fog to
     /// ease in.
     held: f32,
@@ -87,7 +85,6 @@ fn shoot(
     mut session: NonSendMut<Session>,
     mut exit: MessageWriter<AppExit>,
     diagnostics: Res<bevy::diagnostic::DiagnosticsStore>,
-    mut cam: Single<&mut crate::camera::RtsCamera>,
     photo: Res<crate::minimap::PhotoTaken>,
     time: Res<Time<bevy::time::Real>>,
 ) {
@@ -103,7 +100,6 @@ fn shoot(
             &mut shots,
             core,
             &mut exit,
-            &mut cam,
             photo.0,
             time.delta_secs(),
         ) else {
@@ -134,14 +130,13 @@ fn shoot(
 }
 
 /// Steers a replay towards the shot at tick `next`: its path once the
-/// replay is held there, the scene whole and the camera settled.
+/// replay is held there and the scene whole.
 fn replay_shot(
     next: u32,
     args: &Args,
     shots: &mut Shots,
     core: &mut bota_client_core::App,
     exit: &mut MessageWriter<AppExit>,
-    cam: &mut Mut<crate::camera::RtsCamera>,
     photo_taken: bool,
     dt: f32,
 ) -> Option<std::path::PathBuf> {
@@ -187,23 +182,6 @@ fn replay_shot(
     if shots.held < HOLD_SECONDS {
         shots.held += dt;
         return None;
-    }
-    // Several places to look at: the camera goes to this shot's and the
-    // frame settles a few frames before it is taken.
-    let k = shots.taken * 2;
-    if args.look_at.len() > 2
-        && let (Some(&x), Some(&y)) = (args.look_at.get(k), args.look_at.get(k + 1))
-    {
-        if Vec2::new(cam.focus.x, cam.focus.z).distance(Vec2::new(x, -y)) > 1.0 {
-            cam.focus.x = x;
-            cam.focus.z = -y;
-            shots.settle = 20;
-            return None;
-        }
-        if shots.settle > 0 {
-            shots.settle -= 1;
-            return None;
-        }
     }
     Some(
         args.screenshot_dir

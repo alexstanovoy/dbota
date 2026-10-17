@@ -370,12 +370,10 @@ fn toggle(
     mut session: NonSendMut<Session>,
     button: Query<&Interaction, (Changed<Interaction>, With<TalentButton>)>,
     cells: Query<(&Interaction, &TalentCell), Changed<Interaction>>,
-    mut pinned: Local<Option<bool>>,
-    args: Res<crate::Args>,
+    mut pinned: Local<bool>,
     mut panel: Query<&mut Visibility, With<TalentPanel>>,
     hovered: Query<&Interaction, Or<(With<TalentButton>, With<TalentPanel>, With<TalentCell>)>>,
 ) {
-    let pinned = pinned.get_or_insert(args.open_talents);
     if button.iter().any(|i| *i == Interaction::Pressed) {
         *pinned = !*pinned;
     }
