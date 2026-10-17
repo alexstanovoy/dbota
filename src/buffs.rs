@@ -96,12 +96,7 @@ pub fn spawn_row(commands: &mut Commands, fonts: &Fonts, parent: Entity) {
             Pickable::IGNORE,
             ChildOf(chip),
         ));
-        commands.spawn((
-            full(),
-            BackgroundGradient::from(sweep(1.0)),
-            Pickable::IGNORE,
-            ChildOf(chip),
-        ));
+        commands.spawn((full(), sweep(1.0), Pickable::IGNORE, ChildOf(chip)));
         // The count in the middle of the circle: a centring box, the text
         // in it nudged down a pixel to sit on the digits' visual middle
         // (the font's ascent is taller than its descent).
@@ -161,18 +156,9 @@ pub fn round_cut(image: &Image) -> Option<Image> {
 }
 
 /// The dark part of a chip for the share of its time gone.
-fn sweep(left: f32) -> ConicGradient {
-    let a = (1.0 - left.clamp(0.0, 1.0)) * TAU;
+fn sweep(left: f32) -> BackgroundGradient {
     let dark = Color::srgba(0.0, 0.0, 0.0, 0.6);
-    ConicGradient::new(
-        UiPosition::CENTER,
-        vec![
-            AngularColorStop::new(dark, 0.0),
-            AngularColorStop::new(dark, a),
-            AngularColorStop::new(Color::NONE, a),
-            AngularColorStop::new(Color::NONE, TAU),
-        ],
-    )
+    ui::split_disc((1.0 - left.clamp(0.0, 1.0)) * TAU, dark, Color::NONE)
 }
 
 #[allow(clippy::type_complexity)]
@@ -263,7 +249,7 @@ fn update(
             None => 1.0,
         };
         if let Some(mut g) = children.get(1).and_then(|c| sweeps.get_mut(*c).ok()) {
-            g.set_if_neq(BackgroundGradient::from(sweep(left)));
+            g.set_if_neq(sweep(left));
         }
         let count = children
             .get(2)

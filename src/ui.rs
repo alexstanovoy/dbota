@@ -83,6 +83,20 @@ pub fn visible(on: bool) -> Visibility {
     }
 }
 
+/// A disc in two colours, `before` clockwise from twelve o'clock to the
+/// angle `a` (radians) and `after` the rest of the way round.
+pub fn split_disc(a: f32, before: Color, after: Color) -> BackgroundGradient {
+    BackgroundGradient::from(ConicGradient::new(
+        UiPosition::CENTER,
+        vec![
+            AngularColorStop::new(before, 0.0),
+            AngularColorStop::new(before, a),
+            AngularColorStop::new(after, a),
+            AngularColorStop::new(after, std::f32::consts::TAU),
+        ],
+    ))
+}
+
 /// A node over the whole of its parent.
 pub fn fill() -> Node {
     Node {

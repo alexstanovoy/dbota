@@ -118,19 +118,11 @@ fn xp_share(level: u8, xp: i32) -> f32 {
     }
 }
 
-fn xp_ring(share: f32) -> ConicGradient {
-    let a = share.clamp(0.0, 1.0) * TAU;
+/// The level ring, gold over the share of the way to the next level.
+fn xp_ring(share: f32) -> BackgroundGradient {
     let gold = Color::srgb(0.95, 0.75, 0.3);
     let empty = Color::srgba(0.1, 0.1, 0.12, 0.9);
-    ConicGradient::new(
-        UiPosition::CENTER,
-        vec![
-            AngularColorStop::new(gold, 0.0),
-            AngularColorStop::new(gold, a),
-            AngularColorStop::new(empty, a),
-            AngularColorStop::new(empty, TAU),
-        ],
-    )
+    ui::split_disc(share.clamp(0.0, 1.0) * TAU, gold, empty)
 }
 
 /// Fills the level ring with the panel hero's experience.
@@ -140,7 +132,7 @@ fn xp(session: NonSend<Session>, mut ring: Single<&mut BackgroundGradient, With<
         (Some(p), _, _) => xp_share(p.level, p.xp),
         _ => 0.0,
     };
-    ring.set_if_neq(BackgroundGradient::from(xp_ring(share)));
+    ring.set_if_neq(xp_ring(share));
 }
 
 /// The whole HUD, hidden in the lobby.
@@ -245,7 +237,7 @@ fn spawn_bottom(commands: &mut Commands, fonts: &Fonts, root: Entity) {
                 align_items: AlignItems::Center,
                 ..default()
             },
-            BackgroundGradient::from(xp_ring(0.0)),
+            xp_ring(0.0),
             ChildOf(portrait),
         ))
         .id();
@@ -583,7 +575,8 @@ fn spawn_slot_box(
         Part::Sweep,
         PartOf(slot),
         ui::fill(),
-        BackgroundGradient::from(sweep(0.0)),
+        // Nothing waits yet: clear all round (`dress` turns it).
+        ui::split_disc(TAU, Color::NONE, Color::srgba(0.0, 0.0, 0.0, 0.0)),
         Pickable::IGNORE,
         ChildOf(slot),
     ));
@@ -672,22 +665,6 @@ fn spawn_slot_box(
             ChildOf(slot),
         ));
     }
-}
-
-/// A conic gradient darkening the part of a box still waiting, clockwise
-/// from twelve o'clock: `left` is the share still to run.
-fn sweep(left: f32) -> ConicGradient {
-    let a = (1.0 - left.clamp(0.0, 1.0)) * TAU;
-    let dark = Color::srgba(0.0, 0.0, 0.0, if left > 0.0 { 0.68 } else { 0.0 });
-    ConicGradient::new(
-        UiPosition::CENTER,
-        vec![
-            AngularColorStop::new(Color::NONE, 0.0),
-            AngularColorStop::new(Color::NONE, a),
-            AngularColorStop::new(dark, a),
-            AngularColorStop::new(dark, TAU),
-        ],
-    )
 }
 
 /// The clock and the seats along the top.
