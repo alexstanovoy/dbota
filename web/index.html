@@ -1,0 +1,18 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>dbota</title>
+<style>html,body{margin:0;height:100%;background:#111}canvas{width:100%;height:100%;display:block}</style></head>
+<body><canvas id="dbota"></canvas>
+<script type="module">
+// With ?report, every console line (the client logs its memory every five
+// seconds) goes to the page's server as a request to /report, for its log.
+const report = new URLSearchParams(location.search).has("report");
+const send = (m) => { if (report) fetch("/report?" + encodeURIComponent(String(m).slice(0, 600))).catch(() => {}); };
+for (const k of ["log", "info", "warn", "error"]) {
+  const orig = console[k].bind(console);
+  console[k] = (...a) => { orig(...a); send(k + ": " + a.join(" ")); };
+}
+addEventListener("error", (e) => send("onerror: " + e.message));
+send("start: webgpu " + !!navigator.gpu);
+import init from "./dbota.js";
+init().catch((e) => send("init: " + e));
+</script></body></html>

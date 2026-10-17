@@ -22,9 +22,19 @@ pub fn plugin(app: &mut App) {
 
 /// Connects or opens the replay the arguments ask for.
 pub fn open(args: &Args) -> std::io::Result<Session> {
-    if let Some(path) = &args.replay {
-        let player = ReplayPlayer::load(path)?;
-        let mut core = Core::new(Source::Replay(Box::new(player)));
+    // A browser build with `web-replay` plays the replay named by
+    // DBOTA_WEB_REPLAY when it was built: a page has no file to open yet.
+    #[cfg(all(target_arch = "wasm32", feature = "web-replay"))]
+    let replay: Option<Box<ReplayPlayer>> = Some(Box::new(ReplayPlayer::from_reader(
+        std::io::Cursor::new(include_bytes!(env!("DBOTA_WEB_REPLAY")).as_slice()),
+    )));
+    #[cfg(not(all(target_arch = "wasm32", feature = "web-replay")))]
+    let replay = match &args.replay {
+        Some(path) => Some(Box::new(ReplayPlayer::load(path)?)),
+        None => None,
+    };
+    if let Some(player) = replay {
+        let mut core = Core::new(Source::Replay(player));
         core.pov = args.pov.map(SlotId);
         core.my_slot = core.pov;
         core.pinned = args.follow.map(|seat| Pin::Hero(SlotId(seat)));

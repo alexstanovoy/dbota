@@ -12,7 +12,6 @@ mod ability_art;
 mod anim;
 mod bars;
 mod buffs;
-#[cfg(not(target_arch = "wasm32"))]
 mod cachefs;
 mod camera;
 mod capture;
@@ -184,6 +183,10 @@ const ASSET_VERSION: &str = include_str!("../assets-manifest/version");
 
 /// `$DBOTA_ASSETS`, else `~/.cache/dbota/v<ASSET_VERSION>`.
 fn default_cache_dir() -> PathBuf {
+    // In a browser the cache is served next to the page.
+    if cfg!(target_arch = "wasm32") {
+        return PathBuf::from("cache");
+    }
     if let Some(dir) = std::env::var_os("DBOTA_ASSETS").filter(|d| !d.is_empty()) {
         return PathBuf::from(dir);
     }
@@ -194,18 +197,29 @@ fn default_cache_dir() -> PathBuf {
 }
 
 /// When the process started, for the startup timings in the log.
-pub static STARTED: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
+pub static STARTED: std::sync::OnceLock<bevy::platform::time::Instant> = std::sync::OnceLock::new();
 
 /// Seconds since the process started.
 pub fn since_start() -> f32 {
     STARTED
-        .get_or_init(std::time::Instant::now)
+        .get_or_init(bevy::platform::time::Instant::now)
         .elapsed()
         .as_secs_f32()
 }
 
 fn main() -> AppExit {
-    STARTED.get_or_init(std::time::Instant::now);
+    STARTED.get_or_init(bevy::platform::time::Instant::now);
+    // A browser build with `web-replay` takes its arguments from
+    // DBOTA_WEB_ARGS when it was built: a page has no command line.
+    #[cfg(all(target_arch = "wasm32", feature = "web-replay"))]
+    let args = Args::parse_from(
+        std::iter::once("dbota").chain(
+            option_env!("DBOTA_WEB_ARGS")
+                .unwrap_or("")
+                .split_whitespace(),
+        ),
+    );
+    #[cfg(not(all(target_arch = "wasm32", feature = "web-replay")))]
     let args = Args::parse();
     let session = match session::open(&args) {
         Ok(session) => session,
@@ -276,6 +290,18 @@ fn main() -> AppExit {
             quality::plugin,
             heap::plugin,
         ));
+    // GPU buffers of at most 128 MiB: a browser's WebGPU refuses ones over
+    // 256 MiB, and Bevy's mesh slabs grow to 512.
+    app.sub_app_mut(bevy::render::RenderApp).insert_resource(
+        bevy::render::mesh::allocator::MeshAllocatorSettings {
+            slab_allocator_settings: bevy::render::slab_allocator::SlabAllocatorSettings {
+                max_slab_size: 128 << 20,
+                large_threshold: 64 << 20,
+                ..default()
+            },
+            ..default()
+        },
+    );
     app.run()
 }
 
@@ -293,27 +319,16 @@ fn parse_size(text: &str) -> Result<(u32, u32), String> {
     Ok((side(w)?, side(h)?))
 }
 
-/// The asset source over the cache folder: read straight from disk where
-/// there is one, textures within a decode budget (see `cachefs`); else as
-/// Bevy reads files.
+/// The asset source over the cache folder: files read as `cachefs` reads
+/// them, textures within a decode budget.
 fn cache_source(app: &mut App, root: &std::path::Path) -> AssetSourceBuilder {
-    #[cfg(not(target_arch = "wasm32"))]
-    {
-        let budget = cachefs::DecodeBudget::default();
-        app.insert_resource(budget.clone())
-            .add_plugins(cachefs::plugin);
-        let root = root.to_path_buf();
-        AssetSourceBuilder::new(move || {
-            Box::new(cachefs::CacheReader::new(root.clone(), budget.clone()))
-        })
-    }
-    #[cfg(target_arch = "wasm32")]
-    {
-        let _ = app;
-        AssetSourceBuilder::new(bevy::asset::io::AssetSource::get_default_reader(
-            root.to_string_lossy().into_owned(),
-        ))
-    }
+    let budget = cachefs::DecodeBudget::default();
+    app.insert_resource(budget.clone())
+        .add_plugins(cachefs::plugin);
+    let root = root.to_path_buf();
+    AssetSourceBuilder::new(move || {
+        Box::new(cachefs::CacheReader::new(root.clone(), budget.clone()))
+    })
 }
 
 /// Bevy's plugins as dbota sets them up.
@@ -322,6 +337,9 @@ fn default_plugins(args: &Args, settings: &config::Settings) -> impl PluginGroup
         .set(WindowPlugin {
             primary_window: Some(Window {
                 title: "dbota".into(),
+                // In a browser: the page's canvas, sized to the page.
+                canvas: Some("#dbota".into()),
+                fit_canvas_to_parent: true,
                 resolution: WindowResolution::new(args.window.0, args.window.1),
                 // `DBOTA_NO_VSYNC` for runs started by a launcher, as the
                 // drill is: vsync stalls while the screen is locked.
@@ -354,7 +372,12 @@ fn default_plugins(args: &Args, settings: &config::Settings) -> impl PluginGroup
             ..default()
         })
         .set(AssetPlugin {
-            file_path: concat!(env!("CARGO_MANIFEST_DIR"), "/assets").into(),
+            // A browser fetches them over HTTP, next to the page.
+            file_path: if cfg!(target_arch = "wasm32") {
+                "assets".into()
+            } else {
+                concat!(env!("CARGO_MANIFEST_DIR"), "/assets").into()
+            },
             unapproved_path_mode: UnapprovedPathMode::Deny,
             ..default()
         })

@@ -245,7 +245,7 @@ fn prepare_map(
     let skipped: Vec<String> = std::env::var("DBOTA_SKIP")
         .map(|v| v.split(',').map(str::to_string).collect())
         .unwrap_or_default();
-    let began = std::time::Instant::now();
+    let began = bevy::platform::time::Instant::now();
     let mut means = LayerMeans::new(assets.manifest.root.clone());
     let detail_mean = means.detail(&assets.manifest);
     let terrain_material = assets
@@ -806,12 +806,12 @@ impl LayerMeans {
         if let Some(mean) = self.known.get(&name) {
             return *mean;
         }
-        let began = std::time::Instant::now();
+        let began = bevy::platform::time::Instant::now();
         let mean = self
             .root
             .as_ref()
             .and_then(|root| {
-                std::fs::read(root.join("textures/ground").join(format!("{name}.png"))).ok()
+                crate::cachefs::read_small(root, &format!("textures/ground/{name}.png"))
             })
             .and_then(|bytes| mean_color(&bytes))
             .unwrap_or([0.5; 3]);
@@ -837,8 +837,8 @@ impl LayerMeans {
             .find(|(name, _)| name == "ground.grass")
             .map(|(_, path)| path.clone());
         let mean = path
-            .and_then(|p| manifest.root.as_ref().map(|r| r.join(p)))
-            .and_then(|p| std::fs::read(p).ok())
+            .zip(manifest.root.as_ref())
+            .and_then(|(p, root)| crate::cachefs::read_small(root, &p))
             .and_then(|bytes| mean_color(&bytes))
             .unwrap_or([0.5; 3]);
         ((mean[0] + mean[1] + mean[2]) / 3.0).max(0.05)

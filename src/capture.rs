@@ -41,7 +41,7 @@ fn fast_forward(core: &mut bota_client_core::App, next: u32) -> bool {
     if core.view().is_none_or(|v| v.tick + SETTLE_TICKS >= next) {
         return false;
     }
-    let began = std::time::Instant::now();
+    let began = bevy::platform::time::Instant::now();
     while core.view().is_some_and(|v| v.tick + SETTLE_TICKS < next)
         && began.elapsed() < std::time::Duration::from_millis(250)
     {
