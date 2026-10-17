@@ -340,38 +340,7 @@ impl ColourField {
             .iter()
             .map(|g| (g[3] > 1e-3).then(|| [g[0] / g[3], g[1] / g[3], g[2] / g[3]]))
             .collect();
-        for _ in 0..n {
-            let snapshot = filled.clone();
-            let mut changed = false;
-            for y in 0..n {
-                for x in 0..n {
-                    if snapshot[y * n + x].is_some() {
-                        continue;
-                    }
-                    let mut acc = [0.0f32; 3];
-                    let mut k = 0.0;
-                    for (dx, dy) in [(1i32, 0i32), (-1, 0), (0, 1), (0, -1)] {
-                        let (sx, sy) = (x as i32 + dx, y as i32 + dy);
-                        if sx < 0 || sy < 0 || sx as usize >= n || sy as usize >= n {
-                            continue;
-                        }
-                        if let Some(c) = snapshot[sy as usize * n + sx as usize] {
-                            for ch in 0..3 {
-                                acc[ch] += c[ch];
-                            }
-                            k += 1.0;
-                        }
-                    }
-                    if k > 0.0 {
-                        filled[y * n + x] = Some(acc.map(|a| a / k));
-                        changed = true;
-                    }
-                }
-            }
-            if !changed {
-                break;
-            }
-        }
+        fill_holes(&mut filled, n, [(1, 0), (-1, 0), (0, 1), (0, -1)]);
         ColourField {
             n,
             cells: filled
@@ -778,42 +747,57 @@ impl Samples {
     /// height.
     pub(crate) fn finish(self) -> Ground {
         let n = self.n;
-        let mut heights: Vec<Option<f32>> = self
+        let mut heights: Vec<Option<[f32; 1]>> = self
             .sum
             .iter()
             .zip(&self.count)
-            .map(|(s, c)| (*c > 0).then(|| s / *c as f32))
+            .map(|(s, c)| (*c > 0).then(|| [s / *c as f32]))
             .collect();
-        for _ in 0..n {
-            let mut changed = false;
-            let snapshot = heights.clone();
-            for cy in 0..n {
-                for cx in 0..n {
-                    if snapshot[cy * n + cx].is_some() {
-                        continue;
-                    }
-                    let near: Vec<f32> = [(0i32, 1i32), (0, -1), (1, 0), (-1, 0)]
-                        .iter()
-                        .filter_map(|(dx, dy)| {
-                            let (x, y) = (cx as i32 + dx, cy as i32 + dy);
-                            (x >= 0 && y >= 0 && (x as usize) < n && (y as usize) < n)
-                                .then(|| snapshot[y as usize * n + x as usize])
-                                .flatten()
-                        })
-                        .collect();
-                    if !near.is_empty() {
-                        heights[cy * n + cx] = Some(near.iter().sum::<f32>() / near.len() as f32);
-                        changed = true;
-                    }
-                }
-            }
-            if !changed {
-                break;
-            }
-        }
+        fill_holes(&mut heights, n, [(0, 1), (0, -1), (1, 0), (-1, 0)]);
         Ground {
             n,
-            heights: heights.into_iter().map(|h| h.unwrap_or(128.0)).collect(),
+            heights: heights
+                .into_iter()
+                .map(|h| h.map_or(128.0, |[h]| h))
+                .collect(),
+        }
+    }
+}
+
+/// Fills every empty cell of an `n` by `n` grid with the mean of its filled
+/// neighbours, taken in `order`, a ring at a time until none is left that
+/// borders a filled one.
+fn fill_holes<const K: usize>(cells: &mut [Option<[f32; K]>], n: usize, order: [(i32, i32); 4]) {
+    for _ in 0..n {
+        let snapshot = cells.to_vec();
+        let mut changed = false;
+        for y in 0..n {
+            for x in 0..n {
+                if snapshot[y * n + x].is_some() {
+                    continue;
+                }
+                let mut acc = [0.0f32; K];
+                let mut k = 0.0;
+                for (dx, dy) in order {
+                    let (sx, sy) = (x as i32 + dx, y as i32 + dy);
+                    if sx < 0 || sy < 0 || sx as usize >= n || sy as usize >= n {
+                        continue;
+                    }
+                    if let Some(c) = snapshot[sy as usize * n + sx as usize] {
+                        for ch in 0..K {
+                            acc[ch] += c[ch];
+                        }
+                        k += 1.0;
+                    }
+                }
+                if k > 0.0 {
+                    cells[y * n + x] = Some(acc.map(|a| a / k));
+                    changed = true;
+                }
+            }
+        }
+        if !changed {
+            break;
         }
     }
 }
