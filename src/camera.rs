@@ -68,7 +68,7 @@ fn spawn_camera(
     args: Res<crate::Args>,
     settings: Res<crate::config::Settings>,
 ) {
-    let msaa = crate::quality::msaa_of(&settings, &args);
+    let msaa = crate::quality::msaa_of(&settings);
     let cam = RtsCamera {
         focus: match args.look_at[..args.look_at.len().min(2)] {
             [x, y] => Vec3::new(x, 128.0, -y),
@@ -89,11 +89,7 @@ fn spawn_camera(
         }),
         // As the quality settings ask; VRAM scales with it.
         msaa,
-        if crate::look("aces", 0.0) > 0.5 {
-            bevy::core_pipeline::tonemapping::Tonemapping::AcesFitted
-        } else {
-            bevy::core_pipeline::tonemapping::Tonemapping::TonyMcMapface
-        },
+        bevy::core_pipeline::tonemapping::Tonemapping::TonyMcMapface,
         // Layer 1 holds what the minimap's photograph leaves out.
         bevy::camera::visibility::RenderLayers::from_layers(&[0, 1]),
         Transform::from_translation(camera_translation(&cam)).with_rotation(camera_rotation()),

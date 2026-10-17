@@ -109,15 +109,10 @@ fn plant(
     ground: Res<Ground>,
     server: Res<AssetServer>,
     mut forest: ResMut<Forest>,
-    args: Res<crate::Args>,
     mut done: Local<bool>,
 ) {
     let core = &session.0;
-    if *done
-        || core.trees().is_empty()
-        || !ground.known()
-        || args.without.iter().any(|w| w == "trees")
-    {
+    if *done || core.trees().is_empty() || !ground.known() {
         return;
     }
     *done = true;
@@ -168,7 +163,6 @@ fn plant(
             yaw,
             scale,
         });
-        let _ = index;
     }
     forest.kinds = names
         .iter()

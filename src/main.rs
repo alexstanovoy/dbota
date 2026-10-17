@@ -133,10 +133,6 @@ pub struct Args {
     /// Debug: the camera's distance from the ground at the start.
     #[arg(long, value_name = "UNITS")]
     pub distance: Option<f32>,
-    /// Debug: leave things out to time the rest: any of `trees`, `shadows`,
-    /// `msaa`, `map`, `props` (the map's), `overlays` (the map's decals).
-    #[arg(long, value_delimiter = ',')]
-    pub without: Vec<String>,
     /// Debug: start a replay at this tick, read through as fast as the
     /// reader goes.
     #[arg(long, value_name = "TICK", requires = "replay")]
@@ -158,20 +154,6 @@ pub struct Args {
     /// Play no sound.
     #[arg(long)]
     pub mute: bool,
-}
-
-/// Debug: a look parameter from `DBOTA_LOOK` (`key=value,...`), else the
-/// default, to compare grades without rebuilding.
-pub fn look(key: &str, default: f32) -> f32 {
-    std::env::var("DBOTA_LOOK")
-        .ok()
-        .and_then(|all| {
-            all.split(',').find_map(|kv| {
-                let (k, v) = kv.split_once('=')?;
-                (k == key).then(|| v.parse().ok()).flatten()
-            })
-        })
-        .unwrap_or(default)
 }
 
 /// Where the settings are saved; absent when there is nowhere to.
@@ -384,16 +366,11 @@ fn default_plugins(args: &Args, settings: &config::Settings) -> impl PluginGroup
             unapproved_path_mode: UnapprovedPathMode::Deny,
             ..default()
         })
-        .set(
-            GltfPlugin {
-                convert_coordinates: GltfConvertCoordinates {
-                    rotate_scene_entity: true,
-                    ..default()
-                },
+        .set(GltfPlugin {
+            convert_coordinates: GltfConvertCoordinates {
+                rotate_scene_entity: true,
                 ..default()
-            }
-            .add_custom_vertex_attribute("TEXCOORD_1", map::ATTRIBUTE_BLEND_WEIGHTS)
-            .add_custom_vertex_attribute("TEXCOORD_2", map::ATTRIBUTE_BLEND_ALPHAS)
-            .add_custom_vertex_attribute("TEXCOORD_3", map::ATTRIBUTE_PAINTED_TINT),
-        )
+            },
+            ..default()
+        })
 }

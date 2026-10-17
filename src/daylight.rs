@@ -10,6 +10,11 @@ use crate::session::Session;
 
 /// Seconds the light takes to turn from day to night or back.
 const TURN_SECONDS: f32 = 3.0;
+/// How far the night's light turns towards moonlight blue, 0 to 1.
+const NIGHT_TINT: f32 = 0.6;
+/// The sun's and the ambient light's share of their daytime brightness by night.
+const NIGHT_SUN: f32 = 0.3;
+const NIGHT_AMBIENT: f32 = 0.55;
 
 /// How far the light has turned towards night: 0 day, 1 night.
 #[derive(Resource, Default)]
@@ -82,9 +87,9 @@ fn light(
     let night = daylight.night;
     let moonlight = Color::srgb(0.55, 0.66, 1.0).to_linear();
     let blue = Color::srgb(0.42, 0.52, 1.0).to_linear();
-    let tint = night * crate::look("night_tint", 0.6);
-    sun.illuminance = day.sun * (1.0 - night * (1.0 - crate::look("night_sun", 0.3)));
+    let tint = night * NIGHT_TINT;
+    sun.illuminance = day.sun * (1.0 - night * (1.0 - NIGHT_SUN));
     sun.color = day.sun_color.mix(&moonlight, tint).into();
-    ambient.brightness = day.ambient * (1.0 - night * (1.0 - crate::look("night_ambient", 0.55)));
+    ambient.brightness = day.ambient * (1.0 - night * (1.0 - NIGHT_AMBIENT));
     ambient.color = day.ambient_color.mix(&blue, tint).into();
 }

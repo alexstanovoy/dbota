@@ -70,10 +70,6 @@ pub struct Wearable {
     ready: bool,
 }
 
-/// Marks a wearable not yet bound to its wearer's skeleton, for the visual
-/// check.
-pub type WearableMarker = Wearable;
-
 /// One model the units may be drawn with.
 pub struct BankModel {
     /// What the manifest says of it.
@@ -107,6 +103,9 @@ struct StandIns {
     dire: Handle<StandardMaterial>,
     neutral: Handle<StandardMaterial>,
 }
+
+/// The glow of a hero's own colours, in emissive units.
+const HERO_LIFT: f32 = 1200.0;
 
 /// Seconds a dead unit is shown falling at most.
 const FALL_SECONDS: f32 = 1.6;
@@ -157,7 +156,6 @@ fn lift_heroes(
     units: Query<&Unit>,
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
-    let lift = crate::look("lift", 1200.0);
     for (entity, material) in &added {
         let hero = parents
             .iter_ancestors(entity)
@@ -174,7 +172,7 @@ fn lift_heroes(
         }
         if let Some(mut m) = materials.get_mut(&material.0) {
             m.emissive_texture = m.base_color_texture.clone();
-            m.emissive = LinearRgba::rgb(lift, lift, lift);
+            m.emissive = LinearRgba::rgb(HERO_LIFT, HERO_LIFT, HERO_LIFT);
         }
     }
 }

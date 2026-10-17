@@ -49,7 +49,7 @@ pub struct Checks<'w, 's> {
     yaws: Res<'w, crate::units::BuildingYaws>,
     tree: Query<'w, 's, &'static Children>,
     meshes: Query<'w, 's, (&'static Mesh3d, &'static ViewVisibility)>,
-    wearables: Query<'w, 's, (), With<crate::units::WearableMarker>>,
+    wearables: Query<'w, 's, (), With<crate::units::Wearable>>,
     texts: Query<'w, 's, &'static Text>,
     chips: Query<
         'w,

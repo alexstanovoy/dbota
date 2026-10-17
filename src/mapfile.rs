@@ -53,12 +53,6 @@ pub struct MapLoader {
     pub detail_file: Option<String>,
     /// Whether props are kept.
     pub props: bool,
-    /// Whether translucent decals are kept.
-    pub overlays: bool,
-    /// Material names left out (debug).
-    pub skipped: Vec<String>,
-    /// How bright the baked terrain is.
-    pub gain: f32,
     /// Where finished chunks go.
     pub stream: MapStream,
 }
@@ -193,8 +187,6 @@ impl MapLoader {
                 // but name: drawn as plain meshes they cover the ground.
                 _ if vmat.additive => Kind::Skip,
                 _ if !self.props => Kind::Skip,
-                _ if self.skipped.iter().any(|s| vmat.name.contains(s.as_str())) => Kind::Skip,
-                _ if !self.overlays && vmat.translucent => Kind::Skip,
                 _ => {
                     let mut m = standard_material(doc, material, &linear, cx);
                     // Path borders, ground edges and wagon tracks are tinted
@@ -240,7 +232,7 @@ impl MapLoader {
             let (chunk, next) = rest.split_at(end);
             rest = next;
             let mut batches = Vec::new();
-            for piece in pieces(chunk, bin, materials, self.gain) {
+            for piece in pieces(chunk, bin, materials) {
                 if piece.terrain {
                     terrain.push(piece);
                 } else {
@@ -324,7 +316,7 @@ fn jobs(doc: &Value, materials: &Materials) -> Vec<Job> {
 }
 
 /// The pieces of a run of jobs, read on every core.
-fn pieces(jobs: &[Job], bin: &[u8], materials: &Materials, gain: f32) -> Vec<Piece> {
+fn pieces(jobs: &[Job], bin: &[u8], materials: &Materials) -> Vec<Piece> {
     let detail = materials.detail_mean;
     let pool = bevy::tasks::ComputeTaskPool::get();
     let pieces: Vec<Option<Piece>> = pool.scope(|scope| {
@@ -333,7 +325,7 @@ fn pieces(jobs: &[Job], bin: &[u8], materials: &Materials, gain: f32) -> Vec<Pie
                 let mut mesh = read_primitive(job, bin)?;
                 let (material, terrain) = match &job.kind {
                     Kind::Terrain(layers) => {
-                        bake_terrain(&mut mesh, layers, detail, gain);
+                        bake_terrain(&mut mesh, layers, detail, crate::map::TERRAIN_GAIN);
                         (materials.terrain.clone(), true)
                     }
                     Kind::Water => (materials.water.clone(), false),

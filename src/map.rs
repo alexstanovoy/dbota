@@ -18,7 +18,7 @@ use crate::terrain::{self, CELL};
 
 /// How bright the baked terrain is against the lighting: Dota doubles its
 /// terrain's light, the rest of the scene does not.
-const TERRAIN_GAIN: f32 = 1.6;
+pub(crate) const TERRAIN_GAIN: f32 = 1.6;
 
 /// Source 2 inches to the metres the exporter writes, inverted.
 pub const UNITS_PER_METRE: f32 = 1.0 / 0.0254;
@@ -80,7 +80,7 @@ pub fn plugin(app: &mut App) {
         .init_resource::<Ground>()
         .insert_resource(GlobalAmbientLight {
             color: Color::srgb(0.72, 0.80, 1.0),
-            brightness: crate::look("ambient", 330.0),
+            brightness: 330.0,
             ..default()
         })
         .insert_resource(ClearColor(Color::srgb(0.02, 0.03, 0.04)))
@@ -91,9 +91,7 @@ pub fn plugin(app: &mut App) {
 /// The map's loader, as the manifest, the arguments and the settings set it.
 fn map_loader(world: &World, stream: crate::mapfile::MapStream) -> crate::mapfile::MapLoader {
     let manifest = world.resource::<Manifest>();
-    let args = world.resource::<crate::Args>();
     let settings = world.resource::<crate::config::Settings>();
-    let without = |what: &str| args.without.iter().any(|w| w == what);
     crate::mapfile::MapLoader {
         root: manifest.root.clone(),
         detail: manifest.file("ground.grass"),
@@ -102,30 +100,19 @@ fn map_loader(world: &World, stream: crate::mapfile::MapStream) -> crate::mapfil
             .iter()
             .find(|(name, _)| name == "ground.grass")
             .map(|(_, path)| path.clone()),
-        props: !without("props") && settings.quality.props,
-        overlays: !without("overlays"),
-        skipped: std::env::var("DBOTA_SKIP")
-            .map(|v| v.split(',').map(str::to_string).collect())
-            .unwrap_or_default(),
-        gain: crate::look("gain", TERRAIN_GAIN),
+        props: settings.quality.props,
         stream,
     }
 }
 
-fn spawn_sun(
-    mut commands: Commands,
-    args: Res<crate::Args>,
-    settings: Res<crate::config::Settings>,
-) {
+fn spawn_sun(mut commands: Commands, settings: Res<crate::config::Settings>) {
     let shadows = settings.quality.shadows;
     commands.spawn((
         DirectionalLight {
-            illuminance: crate::look("sun", 13_000.0),
-            color: {
-                let warm = crate::look("warm", 0.3);
-                Color::srgb(1.0, 0.97 - 0.09 * warm, 0.92 - 0.22 * warm)
-            },
-            shadow_maps_enabled: shadows > 0 && !args.without.iter().any(|w| w == "shadows"),
+            illuminance: 13_000.0,
+            // Slightly warm.
+            color: Color::srgb(1.0, 0.97 - 0.09 * 0.3, 0.92 - 0.22 * 0.3),
+            shadow_maps_enabled: shadows > 0,
             ..default()
         },
         Transform::from_rotation(Quat::from_euler(EulerRot::YXZ, -0.6, -0.95, 0.0)),
@@ -141,15 +128,7 @@ pub(crate) fn map_transform() -> Transform {
         .with_scale(Vec3::splat(UNITS_PER_METRE))
 }
 
-fn spawn_map(
-    mut commands: Commands,
-    server: Res<AssetServer>,
-    manifest: Res<Manifest>,
-    args: Res<crate::Args>,
-) {
-    if args.without.iter().any(|w| w == "map") {
-        return;
-    }
+fn spawn_map(mut commands: Commands, server: Res<AssetServer>, manifest: Res<Manifest>) {
     let Some(path) = &manifest.map else {
         return;
     };
@@ -947,15 +926,6 @@ fn build_fallback_ground(
         Mesh::ATTRIBUTE_NORMAL,
         built.normals.iter().map(to_bevy).collect::<Vec<_>>(),
     );
-    // Under a map from the cache it only shows where the map was cut off.
-    let sink = if manifest.map.is_some() { 40.0 } else { 0.0 };
-    if let Some(VertexAttributeValues::Float32x3(positions)) =
-        mesh.attribute_mut(Mesh::ATTRIBUTE_POSITION)
-    {
-        for p in positions.iter_mut() {
-            p[1] -= sink;
-        }
-    }
     mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, built.uvs);
     mesh.insert_attribute(Mesh::ATTRIBUTE_COLOR, built.colors);
     mesh.insert_indices(Indices::U32(built.indices));
@@ -966,9 +936,6 @@ fn build_fallback_ground(
             ..default()
         })),
     ));
-    if manifest.map.is_some() {
-        return;
-    }
     let heights = terrain::Heights::new(core.terrain(), n);
     let cells = (0..n * n)
         .map(|i| {
