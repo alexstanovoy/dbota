@@ -53,19 +53,14 @@ pub fn open(args: &Args) -> std::io::Result<Session> {
 #[cfg(not(target_arch = "wasm32"))]
 fn connect(args: &Args) -> std::io::Result<Session> {
     use bota_client_core::{Net, Transport};
-    use bota_proto::{ClientMsg, Role, WIRE_FINGERPRINT};
+    use bota_proto::{ClientMsg, Role};
     let mut net = Net::connect(&args.addr)?;
     let role = if args.spectate {
         Role::Spectator
     } else {
         Role::Player
     };
-    net.send(&ClientMsg::Hello {
-        role,
-        name: args.name.clone(),
-        key: None,
-        wire_fingerprint: WIRE_FINGERPRINT,
-    })?;
+    net.send(&ClientMsg::hello(role, args.name.as_str(), None))?;
     Ok(Session(Core::new(Source::Live(Box::new(net)))))
 }
 
