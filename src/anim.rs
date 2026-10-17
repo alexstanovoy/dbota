@@ -23,7 +23,7 @@ const RUNNING: f32 = 25.0;
 #[derive(Component, Debug, Default)]
 pub struct Pose {
     /// The clip playing, by logical name.
-    clip: String,
+    clip: &'static str,
     /// Seconds into the idle or run loop.
     loop_t: f32,
     /// Seconds since the last swing struck, while its follow-through plays.
@@ -91,7 +91,7 @@ fn animate(
         if pose.clip != wanted.clip || !player.is_playing_animation(*node) {
             player.stop_all();
             player.play(*node).pause();
-            pose.clip = wanted.clip.to_string();
+            pose.clip = wanted.clip;
         }
         if let Some(active) = player.animation_mut(*node) {
             active.set_seek_time(wanted.t.clamp(0.0, *duration - 1e-3));
