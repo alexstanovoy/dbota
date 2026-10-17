@@ -1,14 +1,11 @@
-//! Debug: with `DBOTA_FRAMES` set, frame times go to the log: every ten
-//! seconds their median, 95th and 99th percentiles and worst, and every
-//! frame over 50 ms on its own, to find what makes the frame rate swing.
-//! With `--bench`, one stretch of frames is timed once the scene is whole
+//! Debug: with `--bench`, one stretch of frames is timed once the scene is whole
 //! and printed with the startup timings and the memory taken, then the app
 //! exits: what `tools/bench.sh` reads.
 
 use bevy::prelude::*;
 
 /// Frames `--bench` keeps at most: a minute at well over 10 000 fps.
-const BENCH_FRAMES: usize = 1 << 20;
+const MAX_FRAMES: usize = 1 << 20;
 
 /// What `--bench` has seen so far.
 #[derive(Default)]
@@ -21,15 +18,6 @@ struct Bench {
     /// time then.
     began: Option<(f32, Option<u64>)>,
     times: Vec<f32>,
-}
-
-#[derive(Default)]
-struct Window {
-    times: Vec<f32>,
-    since: f32,
-    all: Vec<f32>,
-    /// The process's CPU time at the window's start, in clock ticks.
-    cpu: Option<u64>,
 }
 
 /// The CPU time all of this process's threads have used, in clock ticks
@@ -45,54 +33,6 @@ pub fn plugin(app: &mut App) {
     app.add_systems(Last, bench);
     #[cfg(target_arch = "wasm32")]
     app.add_systems(Last, browser_memory);
-    if std::env::var_os("DBOTA_FRAMES").is_some() {
-        // GPU and CPU time of every render pass, logged with the rest of
-        // the diagnostics every ten seconds.
-        app.add_plugins((
-            bevy::render::diagnostic::RenderDiagnosticsPlugin,
-            bevy::diagnostic::LogDiagnosticsPlugin {
-                wait_duration: std::time::Duration::from_secs(10),
-                ..default()
-            },
-        ))
-        .add_systems(Last, record);
-    }
-}
-
-fn record(time: Res<Real>, mut window: Local<Window>) {
-    let dt = time.delta_secs() * 1000.0;
-    if dt <= 0.0 {
-        return;
-    }
-    window.times.push(dt);
-    window.all.push(dt);
-    window.since += dt / 1000.0;
-    if dt > 50.0 {
-        info!(
-            "frames: slow frame {dt:.1} ms at {:.2} s",
-            crate::since_start()
-        );
-    }
-    if window.cpu.is_none() {
-        window.cpu = cpu_ticks();
-    }
-    if window.since >= 10.0 {
-        let frames = window.times.len();
-        let stats = stats(&mut window.times);
-        let cpu = match (window.cpu, cpu_ticks()) {
-            (Some(a), Some(b)) => format!(
-                ", CPU {:.1} ms a frame",
-                (b - a) as f32 * 10.0 / frames as f32
-            ),
-            _ => String::new(),
-        };
-        window.cpu = cpu_ticks();
-        info!("frames: last 10 s: {stats}{cpu}");
-        let all = stats_of(&window.all);
-        info!("frames: whole run: {all}");
-        window.times.clear();
-        window.since = 0.0;
-    }
 }
 
 /// The scene is whole: the minimap photographed (so the ground and the
@@ -143,7 +83,7 @@ fn bench(
         return;
     };
     let dt = time.delta_secs() * 1000.0;
-    if dt > 0.0 && state.times.len() < BENCH_FRAMES {
+    if dt > 0.0 && state.times.len() < MAX_FRAMES {
         state.times.push(dt);
     }
     let wall = now - began;
@@ -249,24 +189,6 @@ fn memory_mb() -> (u64, u64, u64) {
             .map_or(0, |kb| kb / 1024)
     };
     (field("VmRSS:"), field("VmHWM:"), field("RssAnon:"))
-}
-
-fn stats_of(times: &[f32]) -> String {
-    let mut sorted = times.to_vec();
-    stats(&mut sorted)
-}
-
-fn stats(times: &mut [f32]) -> String {
-    times.sort_by(f32::total_cmp);
-    let at = |q: f32| times[((times.len() - 1) as f32 * q) as usize];
-    format!(
-        "{} frames, p50 {:.1} ms, p95 {:.1} ms, p99 {:.1} ms, max {:.1} ms",
-        times.len(),
-        at(0.5),
-        at(0.95),
-        at(0.99),
-        at(1.0)
-    )
 }
 
 /// The real clock, whatever the virtual time's cap on a long frame.

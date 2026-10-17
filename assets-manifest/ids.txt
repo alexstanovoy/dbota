@@ -5,8 +5,6 @@
 #   ability <ability id> <dota ability>    icon.ability.<name> (panorama/images/spellicons/<name>_png)
 #   hero <hero id> <dota hero>             icon.hero.<name>, portrait.hero.<name>, minimap.hero.<name>
 #   effect <effect id> <logical icon>      the icon Dota shows on the buff bar: an item's or an ability's
-#   sound <effect> <regex>                 legacy regexes of the old client; manifest.txt resolves
-#                                          sounds through sound events instead (sound.<effect>)
 #
 # The files are Valve's: tools/import_assets.sh exports them into a local
 # cache for personal use; they are never committed.
@@ -82,16 +80,6 @@ ability 14 nevermore_dark_lord
 ability 15 nevermore_frenzy
 hero 0 pudge
 hero 1 nevermore
-sound attack ^sounds/weapons/hero/(shadow_fiend|nevermore)/.*attack.*\.vsnd_c$
-sound hit ^sounds/weapons/hero/(shadow_fiend|nevermore)/.*(impact|hit).*\.vsnd_c$
-sound last_hit ^sounds/ui/coins?\.vsnd_c$
-sound deny ^sounds/.*deny.*\.vsnd_c$
-sound raze ^sounds/weapons/hero/(shadow_fiend|nevermore)/.*shadowraze.*\.vsnd_c$
-sound requiem ^sounds/weapons/hero/(shadow_fiend|nevermore)/.*requiem.*\.vsnd_c$
-sound buy ^sounds/ui/.*(buy|purchase).*\.vsnd_c$
-sound level_up ^sounds/.*level_?up.*\.vsnd_c$
-sound tower_shot ^sounds/weapons/(building|buildings)/.*tower.*\.vsnd_c$
-sound click ^sounds/ui/.*click.*\.vsnd_c$
 effect 1 icon.item.flask
 effect 2 icon.item.clarity
 effect 3 icon.ability.fountain_heal

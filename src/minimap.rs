@@ -86,16 +86,10 @@ fn spawn(mut commands: Commands, mut images: ResMut<Assets<Image>>) {
             Blocker,
         ))
         .id();
-    let full = || Node {
-        position_type: PositionType::Absolute,
-        width: percent(100),
-        height: percent(100),
-        ..default()
-    };
     // Hidden until the photograph is taken: a target never rendered is black.
     commands.spawn((
         Photo,
-        full(),
+        crate::ui::fill(),
         ImageNode::new(photo.clone()),
         Visibility::Hidden,
         Pickable::IGNORE,
@@ -103,7 +97,7 @@ fn spawn(mut commands: Commands, mut images: ResMut<Assets<Image>>) {
     ));
     let fog = commands
         .spawn((
-            full(),
+            crate::ui::fill(),
             ImageNode::default(),
             Pickable::IGNORE,
             ChildOf(frame),
@@ -362,9 +356,7 @@ fn pings(
             continue;
         };
         let (Some(teleport), Some(view)) = (teleports.get(at), core.view()) else {
-            if *visibility != Visibility::Hidden {
-                *visibility = Visibility::Hidden;
-            }
+            visibility.set_if_neq(Visibility::Hidden);
             continue;
         };
         let size = ping_size(teleport.ticks_total.saturating_sub(teleport.ticks_left));
@@ -372,12 +364,18 @@ fn pings(
             teleport.destination.x.to_f32(),
             teleport.destination.y.to_f32(),
         );
-        node.left = px(centre.x - size / 2.0);
-        node.top = px(centre.y - size / 2.0);
-        node.width = px(size);
-        node.height = px(size);
-        *border = BorderColor::all(crate::teleport::player_color(view, teleport.slot));
-        *visibility = Visibility::Inherited;
+        node.set_if_neq(Node {
+            left: px(centre.x - size / 2.0),
+            top: px(centre.y - size / 2.0),
+            width: px(size),
+            height: px(size),
+            ..node.clone()
+        });
+        border.set_if_neq(BorderColor::all(crate::teleport::player_color(
+            view,
+            teleport.slot,
+        )));
+        visibility.set_if_neq(Visibility::Inherited);
     }
 }
 

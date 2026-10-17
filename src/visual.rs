@@ -1,7 +1,7 @@
 //! Debug: `--visual-check` measures the picture a `--screenshot-at` shot
 //! takes against the picture's requirements, prints every measure and its
 //! bound, and exits non-zero when one fails. `tools/visual_check.sh` runs it
-//! on a fresh replay; the ignored test `tests/visual.rs` runs that script.
+//! from both seats.
 //!
 //! - The fog: ground the watched side does not see is darker and duller
 //!   than ground it sees, with a border neither hard nor smeared.
@@ -49,7 +49,7 @@ pub struct Checks<'w, 's> {
     yaws: Res<'w, crate::units::BuildingYaws>,
     tree: Query<'w, 's, &'static Children>,
     meshes: Query<'w, 's, (&'static Mesh3d, &'static ViewVisibility)>,
-    wearables: Query<'w, 's, (), With<crate::units::WearableMarker>>,
+    wearables: Query<'w, 's, (), With<crate::units::Wearable>>,
     texts: Query<'w, 's, &'static Text>,
     chips: Query<
         'w,
@@ -135,8 +135,23 @@ pub fn run(image: &Image, c: &Checks) -> bool {
         );
         ok &= pass;
     };
-    // Every mesh of every hero's model and wearables is there and drawn:
-    // the counts, printed in one line, must match from run to run.
+    hero_parts(c, &mut report);
+    fog(&shot, c, &mut report);
+    heroes(&shot, c, &mut report);
+    buildings(c, &mut report);
+    report(
+        "no range rings without the key",
+        c.rings.0 == 0,
+        format!("{} range drawings this frame", c.rings.0),
+    );
+    corner(c, &mut report);
+    buff_icons(c, &mut report);
+    ok
+}
+
+/// Every mesh of every hero's model and wearables is there and drawn:
+/// the counts, printed in one line, must match from run to run.
+fn hero_parts(c: &Checks, report: &mut impl FnMut(&str, bool, String)) {
     let mut parts: Vec<String> = Vec::new();
     for entity in c.index.0.values() {
         let Ok(unit) = c.units.get(*entity) else {
@@ -164,15 +179,18 @@ pub fn run(image: &Image, c: &Checks) -> bool {
         !parts.is_empty() && parts.iter().all(|p| p.ends_with(" 0 wearables unbound")),
         parts.join("; "),
     );
-    fog(&shot, c, &mut report);
-    heroes(&shot, c, &mut report);
+}
+
+/// Buildings stand as the map places them; every enemy building, in the
+/// fog or not, is drawn with its bar; the enemy base is fogged.
+fn buildings(c: &Checks, report: &mut impl FnMut(&str, bool, String)) {
     let turned: Vec<String> = c
         .units
         .iter()
         .filter(|u| crate::units::is_building(u.kind) && u.team != bota_proto::Team::Neutral)
         .filter_map(|u| {
             let view = c.session.0.view()?;
-            let wire = view.units.iter().find(|w| w.id == u.id)?;
+            let wire = crate::session::unit_of(view, u.id)?;
             let want = c.yaws.facing(wire, u.at);
             match want {
                 Some(want)
@@ -261,11 +279,10 @@ pub fn run(image: &Image, c: &Checks) -> bool {
             );
         }
     }
-    report(
-        "no range rings without the key",
-        c.rings.0 == 0,
-        format!("{} range drawings this frame", c.rings.0),
-    );
+}
+
+/// The top-left block tells no gold and no souls.
+fn corner(c: &Checks, report: &mut impl FnMut(&str, bool, String)) {
     let told: Vec<&str> = c
         .texts
         .iter()
@@ -281,6 +298,10 @@ pub fn run(image: &Image, c: &Checks) -> bool {
             format!("{told:?}")
         },
     );
+}
+
+/// Every buff icon shown is cut round: its corner pixel is clear.
+fn buff_icons(c: &Checks, report: &mut impl FnMut(&str, bool, String)) {
     let mut shown = 0;
     let mut square = 0;
     for (_, children, visibility) in &c.chips {
@@ -309,7 +330,6 @@ pub fn run(image: &Image, c: &Checks) -> bool {
         square == 0,
         format!("{shown} icons shown, {square} with a square corner"),
     );
-    ok
 }
 
 /// Fogged against seen ground, sampled at the middle of every ground cell
@@ -324,7 +344,6 @@ fn fog(shot: &Shot, c: &Checks, report: &mut impl FnMut(&str, bool, String)) {
     let scale = c.window.scale_factor();
     let (lw, lh) = (c.window.width(), c.window.height());
     let n = grid.n;
-    let lit = |cx: usize, cy: usize| grid.cells[cy * n + cx];
     let units: Vec<Vec2> = c
         .session
         .0
@@ -336,25 +355,6 @@ fn fog(shot: &Shot, c: &Checks, report: &mut impl FnMut(&str, bool, String)) {
                 .collect()
         })
         .unwrap_or_default();
-    // Signed distance in cells to the nearest cell of the other state, up
-    // to four: negative inside the fog.
-    let border_distance = |cx: usize, cy: usize| -> i32 {
-        let me = lit(cx, cy);
-        for d in 1..=4i32 {
-            for dy in -d..=d {
-                for dx in -d..=d {
-                    let (x, y) = (cx as i32 + dx, cy as i32 + dy);
-                    if x < 0 || y < 0 || x as usize >= n || y as usize >= n {
-                        continue;
-                    }
-                    if lit(x as usize, y as usize) != me {
-                        return if me { d } else { -d };
-                    }
-                }
-            }
-        }
-        if me { 5 } else { -5 }
-    };
     let mut seen = Vec::new();
     let mut fogged = Vec::new();
     let mut by_distance: Vec<Vec<f32>> = vec![Vec::new(); 11];
@@ -374,7 +374,7 @@ fn fog(shot: &Shot, c: &Checks, report: &mut impl FnMut(&str, bool, String)) {
             let Some(color) = shot.mean(p.x * scale, p.y * scale, 2) else {
                 continue;
             };
-            let d = border_distance(cx, cy);
+            let d = border_distance(grid, cx, cy);
             by_distance[(d + 5) as usize].push(luminance(color));
             if d.abs() >= 4 {
                 if d > 0 {
@@ -424,7 +424,34 @@ fn fog(shot: &Shot, c: &Checks, report: &mut impl FnMut(&str, bool, String)) {
             FOG_SATURATION_MAX * 100.0
         ),
     );
-    // The luminance profile across the border, cell by cell.
+    fog_border(&by_distance, report);
+}
+
+/// Signed distance in cells from a cell to the nearest cell of the other
+/// state, up to four (five beyond): negative inside the fog.
+fn border_distance(grid: &FogGrid, cx: usize, cy: usize) -> i32 {
+    let n = grid.n;
+    let lit = |cx: usize, cy: usize| grid.cells[cy * n + cx];
+    let me = lit(cx, cy);
+    for d in 1..=4i32 {
+        for dy in -d..=d {
+            for dx in -d..=d {
+                let (x, y) = (cx as i32 + dx, cy as i32 + dy);
+                if x < 0 || y < 0 || x as usize >= n || y as usize >= n {
+                    continue;
+                }
+                if lit(x as usize, y as usize) != me {
+                    return if me { d } else { -d };
+                }
+            }
+        }
+    }
+    if me { 5 } else { -5 }
+}
+
+/// The width of the fog's border, from the luminance profile across it:
+/// the mean luminance of the ground cells at each signed distance.
+fn fog_border(by_distance: &[Vec<f32>], report: &mut impl FnMut(&str, bool, String)) {
     let profile: Vec<Option<f32>> = by_distance
         .iter()
         .map(|v| (v.len() >= 5).then(|| v.iter().sum::<f32>() / v.len() as f32))

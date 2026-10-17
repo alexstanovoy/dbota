@@ -118,19 +118,11 @@ fn xp_share(level: u8, xp: i32) -> f32 {
     }
 }
 
-fn xp_ring(share: f32) -> ConicGradient {
-    let a = share.clamp(0.0, 1.0) * TAU;
+/// The level ring, gold over the share of the way to the next level.
+fn xp_ring(share: f32) -> BackgroundGradient {
     let gold = Color::srgb(0.95, 0.75, 0.3);
     let empty = Color::srgba(0.1, 0.1, 0.12, 0.9);
-    ConicGradient::new(
-        UiPosition::CENTER,
-        vec![
-            AngularColorStop::new(gold, 0.0),
-            AngularColorStop::new(gold, a),
-            AngularColorStop::new(empty, a),
-            AngularColorStop::new(empty, TAU),
-        ],
-    )
+    ui::split_disc(share.clamp(0.0, 1.0) * TAU, gold, empty)
 }
 
 /// Fills the level ring with the panel hero's experience.
@@ -140,7 +132,7 @@ fn xp(session: NonSend<Session>, mut ring: Single<&mut BackgroundGradient, With<
         (Some(p), _, _) => xp_share(p.level, p.xp),
         _ => 0.0,
     };
-    **ring = BackgroundGradient::from(xp_ring(share));
+    ring.set_if_neq(xp_ring(share));
 }
 
 /// The whole HUD, hidden in the lobby.
@@ -169,18 +161,7 @@ pub fn plugin(app: &mut App) {
 }
 
 fn spawn_hud(mut commands: Commands, fonts: Res<Fonts>) {
-    let root = commands
-        .spawn((
-            HudRoot,
-            Node {
-                position_type: PositionType::Absolute,
-                width: percent(100),
-                height: percent(100),
-                ..default()
-            },
-            Pickable::IGNORE,
-        ))
-        .id();
+    let root = commands.spawn((HudRoot, ui::fill(), Pickable::IGNORE)).id();
     spawn_bottom(&mut commands, &fonts, root);
     spawn_top(&mut commands, &fonts, root);
     spawn_corner(&mut commands, &fonts, root);
@@ -256,7 +237,7 @@ fn spawn_bottom(commands: &mut Commands, fonts: &Fonts, root: Entity) {
                 align_items: AlignItems::Center,
                 ..default()
             },
-            BackgroundGradient::from(xp_ring(0.0)),
+            xp_ring(0.0),
             ChildOf(portrait),
         ))
         .id();
@@ -574,16 +555,10 @@ fn spawn_slot_box(
             ChildOf(parent),
         ))
         .id();
-    let full = || Node {
-        position_type: PositionType::Absolute,
-        width: percent(100),
-        height: percent(100),
-        ..default()
-    };
     commands.spawn((
         Part::Icon,
         PartOf(slot),
-        full(),
+        ui::fill(),
         ImageNode::default(),
         Pickable::IGNORE,
         ChildOf(slot),
@@ -591,7 +566,7 @@ fn spawn_slot_box(
     commands.spawn((
         Part::Shade,
         PartOf(slot),
-        full(),
+        ui::fill(),
         BackgroundColor(Color::NONE),
         Pickable::IGNORE,
         ChildOf(slot),
@@ -599,8 +574,9 @@ fn spawn_slot_box(
     commands.spawn((
         Part::Sweep,
         PartOf(slot),
-        full(),
-        BackgroundGradient::from(sweep(0.0)),
+        ui::fill(),
+        // Nothing waits yet: clear all round (`dress` turns it).
+        ui::split_disc(TAU, Color::NONE, Color::srgba(0.0, 0.0, 0.0, 0.0)),
         Pickable::IGNORE,
         ChildOf(slot),
     ));
@@ -626,12 +602,9 @@ fn spawn_slot_box(
     let centre = commands
         .spawn((
             Node {
-                position_type: PositionType::Absolute,
-                width: percent(100),
-                height: percent(100),
                 justify_content: JustifyContent::Center,
                 align_items: AlignItems::Center,
-                ..default()
+                ..ui::fill()
             },
             Pickable::IGNORE,
             ChildOf(slot),
@@ -692,22 +665,6 @@ fn spawn_slot_box(
             ChildOf(slot),
         ));
     }
-}
-
-/// A conic gradient darkening the part of a box still waiting, clockwise
-/// from twelve o'clock: `left` is the share still to run.
-fn sweep(left: f32) -> ConicGradient {
-    let a = (1.0 - left.clamp(0.0, 1.0)) * TAU;
-    let dark = Color::srgba(0.0, 0.0, 0.0, if left > 0.0 { 0.68 } else { 0.0 });
-    ConicGradient::new(
-        UiPosition::CENTER,
-        vec![
-            AngularColorStop::new(Color::NONE, 0.0),
-            AngularColorStop::new(Color::NONE, a),
-            AngularColorStop::new(dark, a),
-            AngularColorStop::new(dark, TAU),
-        ],
-    )
 }
 
 /// The clock and the seats along the top.
@@ -840,12 +797,9 @@ fn spawn_seat(commands: &mut Commands, fonts: &Fonts, parent: Entity, seat: u8) 
         ui::text("", &fonts.bold, 22.0, ui::INK),
         ui::shadow(),
         Node {
-            position_type: PositionType::Absolute,
-            width: percent(100),
-            height: percent(100),
             justify_content: JustifyContent::Center,
             align_items: AlignItems::Center,
-            ..default()
+            ..ui::fill()
         },
         BackgroundColor(Color::NONE),
         ChildOf(card),
@@ -963,13 +917,6 @@ fn spawn_corner(commands: &mut Commands, fonts: &Fonts, root: Entity) {
         TextLayout::justify(Justify::Center),
         ChildOf(middle),
     ));
-}
-
-/// Sets a text when it changed.
-fn put(text: &mut Text, s: String) {
-    if text.0 != s {
-        text.0 = s;
-    }
 }
 
 /// The seat, unit and kit the bottom panel is about.
@@ -1093,7 +1040,7 @@ fn readouts(
                 .map(|p| (p.respawn_left / rate + 1).to_string())
                 .unwrap_or_default(),
         };
-        put(&mut text, s);
+        text.set_if_neq(Text(s));
     }
 }
 
@@ -1209,7 +1156,7 @@ fn gauges(session: NonSend<Session>, mut gauges: Query<(&Gauge, &mut Node, &mut 
             Gauge::Mana => unit.map_or(0.0, |u| u.mana.max(0) as f32 / u.max_mana.max(1) as f32),
             Gauge::SeatHp(seat) => seat_of(view, seat)
                 .and_then(|p| p.unit)
-                .and_then(|id| view.units.iter().find(|u| u.id == id))
+                .and_then(|id| crate::session::unit_of(view, id))
                 .map_or(0.0, |u| u.hp.max(0) as f32 / u.max_hp.max(1) as f32),
         };
         let width = percent(share * 100.0);
@@ -1222,9 +1169,7 @@ fn gauges(session: NonSend<Session>, mut gauges: Query<(&Gauge, &mut Node, &mut 
             } else {
                 ui::HP_FRIEND
             };
-            if bg.0 != color {
-                bg.0 = color;
-            }
+            bg.set_if_neq(BackgroundColor(color));
         }
     }
 }
@@ -1414,14 +1359,7 @@ fn slots(
             _ => None,
         };
         let show = face.is_some() || item.is_some();
-        let want = if show {
-            Visibility::Inherited
-        } else {
-            Visibility::Hidden
-        };
-        if *visibility != want {
-            *visibility = want;
-        }
+        visibility.set_if_neq(ui::visible(show));
         let frame = face
             .as_ref()
             .map_or(Color::srgb(0.16, 0.18, 0.22), |f| f.frame);
@@ -1451,20 +1389,12 @@ fn dress(
     match (part, face) {
         (Part::Icon, f) => {
             if let Some(mut image) = image {
-                let want: Option<Handle<Image>> =
-                    f.and_then(|f| f.icon.clone()).map(|p| server.load(p));
-                let handle = want.unwrap_or_default();
-                if image.image != handle {
-                    image.image = handle;
-                }
                 let tint = match f {
                     Some(f) if !f.look.learned => Color::srgb(0.35, 0.35, 0.35),
                     Some(_) => Color::WHITE,
                     None => Color::NONE,
                 };
-                if image.color != tint {
-                    image.color = tint;
-                }
+                set_image(&mut image, server, f.and_then(|f| f.icon.clone()), tint);
             }
         }
         (Part::Shade, f) => {
@@ -1474,9 +1404,7 @@ fn dress(
                     Some(f) if f.no_mana && !f.look.passive => Color::srgba(0.05, 0.12, 0.5, 0.45),
                     _ => Color::NONE,
                 };
-                if bg.0 != c {
-                    bg.0 = c;
-                }
+                bg.set_if_neq(BackgroundColor(c));
             }
         }
         (Part::Sweep, f) => {
@@ -1510,9 +1438,7 @@ fn dress(
                     }
                     _ => Color::NONE,
                 };
-                if bg.0 != c {
-                    bg.0 = c;
-                }
+                bg.set_if_neq(BackgroundColor(c));
             }
         }
         (label, f) => {
@@ -1525,7 +1451,7 @@ fn dress(
                     Part::Plus if f.plus => "+".to_string(),
                     _ => String::new(),
                 });
-                put(&mut text, s);
+                text.set_if_neq(Text(s));
             }
         }
     }
@@ -1543,26 +1469,24 @@ fn portrait(
     let hero = p
         .map(|p| p.hero.0)
         .or(unit.and_then(|u| u.hero.map(|h| h.0)));
-    let path = hero
-        .and_then(|h| manifest.dota_name("hero", h))
-        .and_then(|name| {
-            manifest
-                .file(&format!("portrait.hero.{name}.tall"))
-                .or(manifest.file(&format!("portrait.hero.{name}")))
-        });
-    let path_missing = path.is_none();
-    let handle: Handle<Image> = path.map(|p| server.load(p)).unwrap_or_default();
-    if image.image != handle {
-        image.image = handle;
-    }
+    let path = hero.and_then(|h| manifest.portrait(h));
     // Nothing in place of a portrait the cache has not, rather than white.
-    let tint = if path_missing {
+    let tint = if path.is_none() {
         Color::NONE
     } else if p.is_some_and(|p| p.unit.is_none()) {
         Color::srgb(0.3, 0.3, 0.3)
     } else {
         Color::WHITE
     };
+    set_image(&mut image, &server, path, tint);
+}
+
+/// Shows the cache's image at `path` (none: the default image) in a tint.
+fn set_image(image: &mut Mut<ImageNode>, server: &AssetServer, path: Option<String>, tint: Color) {
+    let handle: Handle<Image> = path.map(|p| server.load(p)).unwrap_or_default();
+    if image.image != handle {
+        image.image = handle;
+    }
     if image.color != tint {
         image.color = tint;
     }
@@ -1590,13 +1514,7 @@ fn time_of_day(
     } else {
         Color::NONE
     };
-    let handle: Handle<Image> = path.map(|p| server.load(p)).unwrap_or_default();
-    if image.image != handle {
-        image.image = handle;
-    }
-    if image.color != tint {
-        image.color = tint;
-    }
+    set_image(&mut image, &server, path, tint);
 }
 
 /// What the panel calls a unit that is not a hero.
@@ -1636,18 +1554,12 @@ fn seats(
         let path = manifest
             .dota_name("hero", p.hero.0)
             .and_then(|name| manifest.file(&format!("portrait.hero.{name}")));
-        let handle: Handle<Image> = path.map(|p| server.load(p)).unwrap_or_default();
-        if image.image != handle {
-            image.image = handle;
-        }
         let tint = if p.unit.is_none() {
             Color::srgb(0.3, 0.3, 0.3)
         } else {
             Color::WHITE
         };
-        if image.color != tint {
-            image.color = tint;
-        }
+        set_image(&mut image, &server, path, tint);
         let picked = p.unit.is_some() && p.unit == core.selected;
         let edge = if picked {
             Color::WHITE
@@ -1666,14 +1578,7 @@ fn seats(
 fn stash(session: NonSend<Session>, mut strip: Single<&mut Visibility, With<StashStrip>>) {
     let core = &session.0;
     let show = core.at_home_shop() || core.held_item.is_some();
-    let want = if show {
-        Visibility::Inherited
-    } else {
-        Visibility::Hidden
-    };
-    if **strip != want {
-        **strip = want;
-    }
+    strip.set_if_neq(ui::visible(show));
 }
 
 /// A regeneration as a pool bar shows it: "+1.5" a second, nothing when none.

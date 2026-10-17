@@ -10,10 +10,6 @@ use std::f32::consts::FRAC_PI_2;
 
 use bevy::prelude::*;
 
-pub fn world_to_sim(world: Vec3) -> Vec2 {
-    Vec2::new(world.x, -world.z)
-}
-
 /// Rotation for a model whose front is Bevy forward (-Z) to face sim angle `facing`.
 pub fn sim_facing_to_rotation(facing: f32) -> Quat {
     Quat::from_rotation_y(facing - FRAC_PI_2)
@@ -24,9 +20,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn round_trip_and_facing() {
-        let p = Vec2::new(123.0, -456.0);
-        assert_eq!(world_to_sim(Vec3::new(p.x, 0.0, -p.y)), p);
+    fn facing() {
         // Sim east (facing 0) must point along Bevy +X.
         let east = sim_facing_to_rotation(0.0) * Vec3::NEG_Z;
         assert!((east - Vec3::X).length() < 1e-6);

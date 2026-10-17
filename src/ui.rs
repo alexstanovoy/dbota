@@ -74,6 +74,39 @@ pub fn shadow() -> TextShadow {
     }
 }
 
+/// Shown or hidden, as a part of the interface is.
+pub fn visible(on: bool) -> Visibility {
+    if on {
+        Visibility::Inherited
+    } else {
+        Visibility::Hidden
+    }
+}
+
+/// A disc in two colours, `before` clockwise from twelve o'clock to the
+/// angle `a` (radians) and `after` the rest of the way round.
+pub fn split_disc(a: f32, before: Color, after: Color) -> BackgroundGradient {
+    BackgroundGradient::from(ConicGradient::new(
+        UiPosition::CENTER,
+        vec![
+            AngularColorStop::new(before, 0.0),
+            AngularColorStop::new(before, a),
+            AngularColorStop::new(after, a),
+            AngularColorStop::new(after, std::f32::consts::TAU),
+        ],
+    ))
+}
+
+/// A node over the whole of its parent.
+pub fn fill() -> Node {
+    Node {
+        position_type: PositionType::Absolute,
+        width: percent(100),
+        height: percent(100),
+        ..default()
+    }
+}
+
 /// A node placed at a corner of its parent.
 pub fn absolute(left: f32, top: f32, width: f32, height: f32) -> Node {
     Node {

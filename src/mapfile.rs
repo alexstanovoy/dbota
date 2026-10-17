@@ -25,8 +25,8 @@ use serde_json::Value;
 
 use crate::map::{
     ATTRIBUTE_BLEND_ALPHAS, ATTRIBUTE_BLEND_WEIGHTS, ATTRIBUTE_PAINTED_TINT, Batch, ColourField,
-    Ground, LayerMeans, Samples, TerrainJob, Vmat, add_to_batches, bake_terrain, bake_transform,
-    chunk_of, detail_settings, dress_prop, map_transform, smooth_terrain, terrain_material_with,
+    Ground, LayerMeans, Samples, Vmat, add_to_batches, bake_terrain, bake_transform, chunk_of,
+    detail_settings, dress_prop, map_transform, smooth_terrain, terrain_material_with,
 };
 
 /// The map, merged: what [`MapLoader`] makes of the map's file.
@@ -47,18 +47,10 @@ pub struct MapGeometry {
 pub struct MapLoader {
     /// The cache folder, for the ground layers' colours.
     pub root: Option<PathBuf>,
-    /// The terrain's detail texture, as an asset path and as a file of the
-    /// cache.
+    /// The terrain's detail texture, a file of the cache.
     pub detail: Option<String>,
-    pub detail_file: Option<String>,
     /// Whether props are kept.
     pub props: bool,
-    /// Whether translucent decals are kept.
-    pub overlays: bool,
-    /// Material names left out (debug).
-    pub skipped: Vec<String>,
-    /// How bright the baked terrain is.
-    pub gain: f32,
     /// Where finished chunks go.
     pub stream: MapStream,
 }
@@ -163,12 +155,15 @@ impl MapLoader {
     /// Every material of the map as it draws: the terrain's layers, water,
     /// a prop's material (a labeled asset), or nothing.
     fn materials(&self, doc: &Value, cx: &mut LoadContext) -> Materials {
-        let mut means = LayerMeans::new(self.root.clone());
-        let detail_mean = means.detail(self.detail_file.as_deref());
+        let mut means = LayerMeans {
+            root: self.root.clone(),
+            known: Default::default(),
+        };
+        let detail_mean = means.detail(self.detail.as_deref());
         let detail = self.detail.as_ref().map(|path| {
             cx.load_builder()
                 .with_settings(detail_settings)
-                .load(path.clone())
+                .load(crate::manifest::cache_path(path))
         });
         let terrain = cx.add_labeled_asset("terrain".to_string(), terrain_material_with(detail));
         let water = cx.add_labeled_asset(
@@ -193,8 +188,6 @@ impl MapLoader {
                 // but name: drawn as plain meshes they cover the ground.
                 _ if vmat.additive => Kind::Skip,
                 _ if !self.props => Kind::Skip,
-                _ if self.skipped.iter().any(|s| vmat.name.contains(s.as_str())) => Kind::Skip,
-                _ if !self.overlays && vmat.translucent => Kind::Skip,
                 _ => {
                     let mut m = standard_material(doc, material, &linear, cx);
                     // Path borders, ground edges and wagon tracks are tinted
@@ -240,7 +233,7 @@ impl MapLoader {
             let (chunk, next) = rest.split_at(end);
             rest = next;
             let mut batches = Vec::new();
-            for piece in pieces(chunk, bin, materials, self.gain) {
+            for piece in pieces(chunk, bin, materials) {
                 if piece.terrain {
                     terrain.push(piece);
                 } else {
@@ -324,7 +317,7 @@ fn jobs(doc: &Value, materials: &Materials) -> Vec<Job> {
 }
 
 /// The pieces of a run of jobs, read on every core.
-fn pieces(jobs: &[Job], bin: &[u8], materials: &Materials, gain: f32) -> Vec<Piece> {
+fn pieces(jobs: &[Job], bin: &[u8], materials: &Materials) -> Vec<Piece> {
     let detail = materials.detail_mean;
     let pool = bevy::tasks::ComputeTaskPool::get();
     let pieces: Vec<Option<Piece>> = pool.scope(|scope| {
@@ -333,7 +326,7 @@ fn pieces(jobs: &[Job], bin: &[u8], materials: &Materials, gain: f32) -> Vec<Pie
                 let mut mesh = read_primitive(job, bin)?;
                 let (material, terrain) = match &job.kind {
                     Kind::Terrain(layers) => {
-                        bake_terrain(&mut mesh, layers, detail, gain);
+                        bake_terrain(&mut mesh, layers, detail, crate::map::TERRAIN_GAIN);
                         (materials.terrain.clone(), true)
                     }
                     Kind::Water => (materials.water.clone(), false),
@@ -364,30 +357,23 @@ fn pieces(jobs: &[Job], bin: &[u8], materials: &Materials, gain: f32) -> Vec<Pie
 
 /// The terrain: its heights taken for the ground, its colours made
 /// continuous, merged by chunk.
-fn finish(terrain: Vec<Piece>, material: Handle<StandardMaterial>) -> MapGeometry {
+fn finish(mut terrain: Vec<Piece>, material: Handle<StandardMaterial>) -> MapGeometry {
     let mut samples = Samples::new(crate::terrain::MAP_CELLS);
     for piece in &terrain {
-        samples.add(&piece.mesh, &GlobalTransform::IDENTITY);
+        samples.add(&piece.mesh);
     }
-    let mut placed: Vec<Option<(Mesh, Aabb)>> = Vec::with_capacity(terrain.len());
-    let mut marks = Vec::with_capacity(terrain.len());
-    for piece in terrain {
-        marks.push(piece.chunk);
-        placed.push(Some((piece.mesh, piece.aabb)));
-    }
-    struct Terrain;
-    impl TerrainJob for Terrain {
-        fn is_terrain(&self) -> bool {
-            true
-        }
-    }
-    let all: Vec<Terrain> = marks.iter().map(|_| Terrain).collect();
-    let field = smooth_terrain(&all, &mut placed);
+    let mut meshes: Vec<&mut Mesh> = terrain.iter_mut().map(|p| &mut p.mesh).collect();
+    let field = smooth_terrain(&mut meshes);
     let mut batches = Vec::new();
-    for (chunk, piece) in marks.into_iter().zip(placed) {
-        if let Some((mesh, aabb)) = piece {
-            add_to_batches(&mut batches, mesh, aabb, material.clone(), true, chunk);
-        }
+    for piece in terrain {
+        add_to_batches(
+            &mut batches,
+            piece.mesh,
+            piece.aabb,
+            material.clone(),
+            true,
+            piece.chunk,
+        );
     }
     MapGeometry {
         batches,

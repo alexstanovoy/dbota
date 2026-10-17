@@ -45,12 +45,11 @@ fn shadow_map_size(shadows: u8) -> usize {
 
 fn shadows(
     settings: Res<Settings>,
-    args: Res<crate::Args>,
     mut map: ResMut<DirectionalLightShadowMap>,
     mut suns: Query<(&mut DirectionalLight, &mut CascadeShadowConfig)>,
 ) {
     let level = settings.quality.shadows;
-    let on = level > 0 && !args.without.iter().any(|w| w == "shadows");
+    let on = level > 0;
     let size = shadow_map_size(level);
     if map.size != size {
         map.size = size;
@@ -65,22 +64,17 @@ fn shadows(
     }
 }
 
-/// The multisampling the settings ask for (`--without msaa` none).
-pub fn msaa_of(settings: &Settings, args: &crate::Args) -> Msaa {
+/// The multisampling the settings ask for.
+pub fn msaa_of(settings: &Settings) -> Msaa {
     match settings.quality.msaa {
-        _ if args.without.iter().any(|w| w == "msaa") => Msaa::Off,
         4.. => Msaa::Sample4,
         2..=3 => Msaa::Sample2,
         _ => Msaa::Off,
     }
 }
 
-fn msaa(
-    settings: Res<Settings>,
-    args: Res<crate::Args>,
-    mut camera: Single<&mut Msaa, With<RtsCamera>>,
-) {
-    camera.set_if_neq(msaa_of(&settings, &args));
+fn msaa(settings: Res<Settings>, mut camera: Single<&mut Msaa, With<RtsCamera>>) {
+    camera.set_if_neq(msaa_of(&settings));
 }
 
 /// The 3D scene drawn below the window's resolution: the image it is drawn
@@ -142,12 +136,7 @@ fn scale(
                 .id();
             let node = commands
                 .spawn((
-                    Node {
-                        position_type: PositionType::Absolute,
-                        width: percent(100),
-                        height: percent(100),
-                        ..default()
-                    },
+                    crate::ui::fill(),
                     ImageNode::new(image.clone()),
                     Pickable::IGNORE,
                     GlobalZIndex(i32::MIN),

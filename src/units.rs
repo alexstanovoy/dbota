@@ -17,7 +17,7 @@ use bota_proto::{EntityId, Team, UnitKind, UnitView};
 use crate::coords::sim_facing_to_rotation;
 use crate::fog::FogGrid;
 use crate::manifest::{Manifest, Model, load_unit_model};
-use crate::map::{Ground, UNITS_PER_METRE};
+use crate::map::{DOTA_ORIGIN, Ground, UNITS_PER_METRE};
 use crate::session::Session;
 
 /// A unit on the map.
@@ -70,10 +70,6 @@ pub struct Wearable {
     ready: bool,
 }
 
-/// Marks a wearable not yet bound to its wearer's skeleton, for the visual
-/// check.
-pub type WearableMarker = Wearable;
-
 /// One model the units may be drawn with.
 pub struct BankModel {
     /// What the manifest says of it.
@@ -107,6 +103,9 @@ struct StandIns {
     dire: Handle<StandardMaterial>,
     neutral: Handle<StandardMaterial>,
 }
+
+/// The glow of a hero's own colours, in emissive units.
+const HERO_LIFT: f32 = 1200.0;
 
 /// Seconds a dead unit is shown falling at most.
 const FALL_SECONDS: f32 = 1.6;
@@ -157,7 +156,6 @@ fn lift_heroes(
     units: Query<&Unit>,
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
-    let lift = crate::look("lift", 1200.0);
     for (entity, material) in &added {
         let hero = parents
             .iter_ancestors(entity)
@@ -174,7 +172,7 @@ fn lift_heroes(
         }
         if let Some(mut m) = materials.get_mut(&material.0) {
             m.emissive_texture = m.base_color_texture.clone();
-            m.emissive = LinearRgba::rgb(lift, lift, lift);
+            m.emissive = LinearRgba::rgb(HERO_LIFT, HERO_LIFT, HERO_LIFT);
         }
     }
 }
@@ -345,8 +343,8 @@ impl BuildingYaws {
                         return None;
                     };
                     let at = Vec2::new(
-                        x.parse::<f32>().ok()? + 9216.0,
-                        y.parse::<f32>().ok()? + 9216.0,
+                        x.parse::<f32>().ok()? + DOTA_ORIGIN,
+                        y.parse::<f32>().ok()? + DOTA_ORIGIN,
                     );
                     Some((model.to_string(), at, yaw.parse::<f32>().ok()?.to_radians()))
                 })
@@ -520,11 +518,12 @@ fn sync_units(
             }
         }
     }
+    seen.sort_unstable();
     let gone: Vec<EntityId> = p
         .index
         .0
         .keys()
-        .filter(|id| !seen.contains(id))
+        .filter(|id| seen.binary_search(id).is_err())
         .copied()
         .collect();
     for id in gone {
@@ -618,14 +617,7 @@ fn spawn_stand_in(p: &mut SyncParams, u: &UnitView, pivot: Entity) {
         return;
     };
     let (r, h) = stand_in_size(u.kind, u.bound.to_f32());
-    let building = matches!(
-        u.kind,
-        UnitKind::Tower
-            | UnitKind::Barracks
-            | UnitKind::Ancient
-            | UnitKind::Fountain
-            | UnitKind::Filler
-    );
+    let building = is_building(u.kind);
     let mesh = if building {
         art.building.clone()
     } else {
@@ -702,16 +694,7 @@ fn on_model_ready(
         }
     }
     // Buildings stand in the fog too, and are drawn dulled there.
-    if units.get(unit).is_ok_and(|u| {
-        matches!(
-            u.kind,
-            UnitKind::Tower
-                | UnitKind::Barracks
-                | UnitKind::Ancient
-                | UnitKind::Fountain
-                | UnitKind::Filler
-        )
-    }) {
+    if units.get(unit).is_ok_and(|u| is_building(u.kind)) {
         for part in children.iter_descendants(ready.entity) {
             commands.entity(part).insert(crate::fog::Fogged);
         }

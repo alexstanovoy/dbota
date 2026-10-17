@@ -55,14 +55,11 @@ fn spawn(
             Blocker,
             Interaction::default(),
             Node {
-                position_type: PositionType::Absolute,
-                width: percent(100),
-                height: percent(100),
                 flex_direction: FlexDirection::Column,
                 align_items: AlignItems::Center,
                 justify_content: JustifyContent::Center,
                 row_gap: px(18),
-                ..default()
+                ..ui::fill()
             },
             BackgroundColor(Color::srgba(0.02, 0.025, 0.035, 0.96)),
             GlobalZIndex(40),
@@ -85,11 +82,7 @@ fn spawn(
         ))
         .id();
     for (id, hero) in (0u16..).zip(HEROES) {
-        let portrait = manifest.dota_name("hero", id).and_then(|name| {
-            manifest
-                .file(&format!("portrait.hero.{name}.tall"))
-                .or(manifest.file(&format!("portrait.hero.{name}")))
-        });
+        let portrait = manifest.portrait(id);
         let card = commands
             .spawn((
                 Card(id),
@@ -158,14 +151,9 @@ fn spawn(
 
 /// The screen while the match has not begun.
 fn show(session: NonSend<Session>, mut screen: Single<&mut Visibility, With<Screen>>) {
-    let want = if session.0.phase == Phase::Lobby && session.0.view().is_none() {
-        Visibility::Inherited
-    } else {
-        Visibility::Hidden
-    };
-    if **screen != want {
-        **screen = want;
-    }
+    screen.set_if_neq(ui::visible(
+        session.0.phase == Phase::Lobby && session.0.view().is_none(),
+    ));
 }
 
 /// A click on a portrait picks that hero; on Ready, readies or unreadies.
@@ -228,22 +216,15 @@ fn looks(
         } else {
             ui::EDGE
         };
-        *rim = BorderColor::all(c);
+        rim.set_if_neq(BorderColor::all(c));
     }
     for (mut bg, mut v) in &mut button {
-        let want = if playing {
-            Visibility::Inherited
-        } else {
-            Visibility::Hidden
-        };
-        if *v != want {
-            *v = want;
-        }
-        bg.0 = match (core.ready, mine.is_some()) {
+        v.set_if_neq(ui::visible(playing));
+        bg.set_if_neq(BackgroundColor(match (core.ready, mine.is_some()) {
             (true, _) => Color::srgb(0.12, 0.42, 0.18),
             (false, true) => Color::srgb(0.12, 0.3, 0.14),
             (false, false) => Color::srgb(0.12, 0.13, 0.15),
-        };
+        }));
     }
     let seats: Vec<String> = core
         .lobby
@@ -285,8 +266,6 @@ fn looks(
         } else {
             continue;
         };
-        if text.0 != s {
-            text.0 = s;
-        }
+        text.set_if_neq(Text(s));
     }
 }

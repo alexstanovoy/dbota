@@ -117,7 +117,7 @@ pub fn origin(view: &WorldView, teleport: &TeleportView) -> Option<(f32, f32)> {
         .iter()
         .find(|p| p.slot == teleport.slot)?
         .unit?;
-    let unit = view.units.iter().find(|u| u.id == unit)?;
+    let unit = crate::session::unit_of(view, unit)?;
     Some((unit.pos.x.to_f32(), unit.pos.y.to_f32()))
 }
 

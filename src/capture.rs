@@ -25,8 +25,6 @@ struct Shots {
     waiting: bool,
     /// Whether a visual check has failed.
     failed: bool,
-    /// Frames left to settle after the camera moved for a shot.
-    settle: u32,
     /// Seconds the replay has been held at the wanted tick, for the fog to
     /// ease in.
     held: f32,
@@ -87,7 +85,6 @@ fn shoot(
     mut session: NonSendMut<Session>,
     mut exit: MessageWriter<AppExit>,
     diagnostics: Res<bevy::diagnostic::DiagnosticsStore>,
-    mut cam: Single<&mut crate::camera::RtsCamera>,
     photo: Res<crate::minimap::PhotoTaken>,
     time: Res<Time<bevy::time::Real>>,
 ) {
@@ -96,72 +93,19 @@ fn shoot(
     }
     shots.frames += 1;
     let core = &mut session.0;
-    let tick = core.view().map(|v| v.tick);
     let path = if let Some(&next) = args.screenshot_at.get(shots.taken) {
-        if let Source::Replay(player) = &core.source
-            && let Some(err) = player.error()
-        {
-            error!("the replay cannot be read: {err}");
-            exit.write(AppExit::error());
-            return;
-        }
-        let Some(tick) = tick else {
+        let Some(path) = replay_shot(
+            next,
+            &args,
+            &mut shots,
+            core,
+            &mut exit,
+            photo.0,
+            time.delta_secs(),
+        ) else {
             return;
         };
-        if let Source::Replay(player) = &mut core.source {
-            if player.finished() || player.error().is_some() {
-                // A visual check that never reached its tick checked nothing.
-                if args.visual_check {
-                    println!("visual check: FAIL the replay ended before tick {next}");
-                    exit.write(AppExit::error());
-                } else {
-                    exit.write(AppExit::Success);
-                }
-                return;
-            }
-            player.speed = 1.0;
-        }
-        if fast_forward(core, next) {
-            return;
-        }
-        if tick < next {
-            return;
-        }
-        // Not before the scene is whole: the minimap photographed and the
-        // fog eased in (a seek can reach an early tick in a second).
-        if !photo.0 {
-            return;
-        }
-        // The replay is held at the wanted tick while the fog eases in for a
-        // second, whatever the frame rate: a count of frames let a fast
-        // machine shoot a later tick through a fog still easing, and the
-        // border measured wider or narrower from run to run.
-        if let Source::Replay(player) = &mut core.source {
-            player.paused = true;
-        }
-        if shots.held < HOLD_SECONDS {
-            shots.held += time.delta_secs();
-            return;
-        }
-        // Several places to look at: the camera goes to this shot's and the
-        // frame settles a few frames before it is taken.
-        let k = shots.taken * 2;
-        if args.look_at.len() > 2
-            && let (Some(&x), Some(&y)) = (args.look_at.get(k), args.look_at.get(k + 1))
-        {
-            if Vec2::new(cam.focus.x, cam.focus.z).distance(Vec2::new(x, -y)) > 1.0 {
-                cam.focus.x = x;
-                cam.focus.z = -y;
-                shots.settle = 20;
-                return;
-            }
-            if shots.settle > 0 {
-                shots.settle -= 1;
-                return;
-            }
-        }
-        args.screenshot_dir
-            .join(format!("{}{next:06}.png", args.screenshot_prefix))
+        path
     } else if let (Some(frames), Some(path)) = (args.frames, &args.screenshot) {
         if shots.frames < frames || shots.taken > 0 {
             return;
@@ -182,7 +126,72 @@ fn shoot(
         .and_then(|d| d.average());
     info!("frame time over the last frames: {fps:.2?} ms");
     let last = shots.taken >= args.screenshot_at.len().max(1);
-    let checking = args.visual_check;
+    save_shot(&mut commands, path, last, args.visual_check);
+}
+
+/// Steers a replay towards the shot at tick `next`: its path once the
+/// replay is held there and the scene whole.
+fn replay_shot(
+    next: u32,
+    args: &Args,
+    shots: &mut Shots,
+    core: &mut bota_client_core::App,
+    exit: &mut MessageWriter<AppExit>,
+    photo_taken: bool,
+    dt: f32,
+) -> Option<std::path::PathBuf> {
+    if let Source::Replay(player) = &core.source
+        && let Some(err) = player.error()
+    {
+        error!("the replay cannot be read: {err}");
+        exit.write(AppExit::error());
+        return None;
+    }
+    let tick = core.view()?.tick;
+    if let Source::Replay(player) = &mut core.source {
+        if player.finished() || player.error().is_some() {
+            // A visual check that never reached its tick checked nothing.
+            if args.visual_check {
+                println!("visual check: FAIL the replay ended before tick {next}");
+                exit.write(AppExit::error());
+            } else {
+                exit.write(AppExit::Success);
+            }
+            return None;
+        }
+        player.speed = 1.0;
+    }
+    if fast_forward(core, next) {
+        return None;
+    }
+    if tick < next {
+        return None;
+    }
+    // Not before the scene is whole: the minimap photographed and the
+    // fog eased in (a seek can reach an early tick in a second).
+    if !photo_taken {
+        return None;
+    }
+    // The replay is held at the wanted tick while the fog eases in for a
+    // second, whatever the frame rate: a count of frames let a fast
+    // machine shoot a later tick through a fog still easing, and the
+    // border measured wider or narrower from run to run.
+    if let Source::Replay(player) = &mut core.source {
+        player.paused = true;
+    }
+    if shots.held < HOLD_SECONDS {
+        shots.held += dt;
+        return None;
+    }
+    Some(
+        args.screenshot_dir
+            .join(format!("{}{next:06}.png", args.screenshot_prefix)),
+    )
+}
+
+/// Saves the screen to `path` once drawn, measured against the visual
+/// checks when `checking`; exits after the `last`.
+fn save_shot(commands: &mut Commands, path: std::path::PathBuf, last: bool, checking: bool) {
     if let Some(dir) = path.parent()
         && let Err(err) = std::fs::create_dir_all(dir)
     {

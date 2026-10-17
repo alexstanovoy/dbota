@@ -34,7 +34,6 @@ mod overlay;
 mod quality;
 mod select;
 mod session;
-mod sheet;
 mod shop;
 mod sound;
 mod synth;
@@ -111,32 +110,14 @@ pub struct Args {
     /// Debug: frames to run before `--screenshot`.
     #[arg(long)]
     pub frames: Option<u32>,
-    /// Debug: open the shop at the start.
-    #[arg(long)]
-    pub open_shop: bool,
     /// Debug: measure each `--screenshot-at` shot against the picture's
     /// requirements (see `visual.rs`), print them, and exit non-zero when one
     /// fails.
     #[arg(long)]
     pub visual_check: bool,
-    /// Debug: pin the talent tree open at the start.
-    #[arg(long)]
-    pub open_talents: bool,
-    /// Debug: cover the window with every icon of a kind (`items`,
-    /// `abilities`, `effects`) and the Dota art it is drawn from.
-    #[arg(long, value_name = "KIND")]
-    pub sheet: Option<String>,
-    /// Debug: hold the camera over this bota world point, `x y`; given
-    /// again, each `--screenshot-at` shot in turn is taken over the next.
-    #[arg(long, value_name = "X Y", num_args = 2, action = clap::ArgAction::Append)]
-    pub look_at: Vec<f32>,
     /// Debug: the camera's distance from the ground at the start.
     #[arg(long, value_name = "UNITS")]
     pub distance: Option<f32>,
-    /// Debug: leave things out to time the rest: any of `trees`, `shadows`,
-    /// `msaa`, `map`, `props` (the map's), `overlays` (the map's decals).
-    #[arg(long, value_delimiter = ',')]
-    pub without: Vec<String>,
     /// Debug: start a replay at this tick, read through as fast as the
     /// reader goes.
     #[arg(long, value_name = "TICK", requires = "replay")]
@@ -158,20 +139,6 @@ pub struct Args {
     /// Play no sound.
     #[arg(long)]
     pub mute: bool,
-}
-
-/// Debug: a look parameter from `DBOTA_LOOK` (`key=value,...`), else the
-/// default, to compare grades without rebuilding.
-pub fn look(key: &str, default: f32) -> f32 {
-    std::env::var("DBOTA_LOOK")
-        .ok()
-        .and_then(|all| {
-            all.split(',').find_map(|kv| {
-                let (k, v) = kv.split_once('=')?;
-                (k == key).then(|| v.parse().ok()).flatten()
-            })
-        })
-        .unwrap_or(default)
 }
 
 /// Where the settings are saved; absent when there is nowhere to.
@@ -286,7 +253,6 @@ fn main() -> AppExit {
             drill::plugin,
             buffs::plugin,
             talents::plugin,
-            sheet::plugin,
             voice::plugin,
             select::plugin,
             framestats::plugin,
@@ -344,9 +310,7 @@ fn default_plugins(args: &Args, settings: &config::Settings) -> impl PluginGroup
                 canvas: Some("#dbota".into()),
                 fit_canvas_to_parent: true,
                 resolution: WindowResolution::new(args.window.0, args.window.1),
-                // `DBOTA_NO_VSYNC` for runs started by a launcher, as the
-                // drill is: vsync stalls while the screen is locked.
-                present_mode: if args.no_vsync || std::env::var_os("DBOTA_NO_VSYNC").is_some() {
+                present_mode: if args.no_vsync {
                     PresentMode::AutoNoVsync
                 } else {
                     PresentMode::AutoVsync
@@ -355,20 +319,6 @@ fn default_plugins(args: &Args, settings: &config::Settings) -> impl PluginGroup
                 ..default()
             }),
             ..default()
-        })
-        // DBOTA_THREADS caps the threads Bevy's pools take (all cores by
-        // default), to time a busy machine.
-        .set(TaskPoolPlugin {
-            task_pool_options: match std::env::var("DBOTA_THREADS")
-                .ok()
-                .and_then(|t| t.parse().ok())
-            {
-                Some(max) => TaskPoolOptions {
-                    max_total_threads: max,
-                    ..default()
-                },
-                None => TaskPoolOptions::default(),
-            },
         })
         .set(bevy::pbr::PbrPlugin {
             use_gpu_instance_buffer_builder: settings.quality.gpu_batching,
@@ -384,16 +334,11 @@ fn default_plugins(args: &Args, settings: &config::Settings) -> impl PluginGroup
             unapproved_path_mode: UnapprovedPathMode::Deny,
             ..default()
         })
-        .set(
-            GltfPlugin {
-                convert_coordinates: GltfConvertCoordinates {
-                    rotate_scene_entity: true,
-                    ..default()
-                },
+        .set(GltfPlugin {
+            convert_coordinates: GltfConvertCoordinates {
+                rotate_scene_entity: true,
                 ..default()
-            }
-            .add_custom_vertex_attribute("TEXCOORD_1", map::ATTRIBUTE_BLEND_WEIGHTS)
-            .add_custom_vertex_attribute("TEXCOORD_2", map::ATTRIBUTE_BLEND_ALPHAS)
-            .add_custom_vertex_attribute("TEXCOORD_3", map::ATTRIBUTE_PAINTED_TINT),
-        )
+            },
+            ..default()
+        })
 }

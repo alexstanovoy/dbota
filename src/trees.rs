@@ -109,15 +109,10 @@ fn plant(
     ground: Res<Ground>,
     server: Res<AssetServer>,
     mut forest: ResMut<Forest>,
-    args: Res<crate::Args>,
     mut done: Local<bool>,
 ) {
     let core = &session.0;
-    if *done
-        || core.trees().is_empty()
-        || !ground.known()
-        || args.without.iter().any(|w| w == "trees")
-    {
+    if *done || core.trees().is_empty() || !ground.known() {
         return;
     }
     *done = true;
@@ -168,7 +163,6 @@ fn plant(
             yaw,
             scale,
         });
-        let _ = index;
     }
     forest.kinds = names
         .iter()
@@ -305,7 +299,7 @@ fn rebuild(
             let Some((mesh, material)) = part else {
                 continue;
             };
-            let Some(source) = meshes.get(mesh).cloned() else {
+            let Some(source) = meshes.get(mesh) else {
                 continue;
             };
             let placed = forest.trees.iter().enumerate().filter(|(i, t)| {
@@ -313,7 +307,7 @@ fn rebuild(
                     && chunk_of(t.at) == (key.0, key.1)
                     && (felled.binary_search(&(*i as u32)).is_ok() == stumps)
             });
-            let Some(mut merged) = merge(&source, placed.map(|(_, t)| t)) else {
+            let Some(mut merged) = merge(source, placed.map(|(_, t)| t)) else {
                 continue;
             };
             // Drawn only: its vertices leave the CPU once on the GPU, its
@@ -340,34 +334,34 @@ fn rebuild(
     }
 }
 
-/// Copies of a model mesh at every tree given, merged into one mesh.
-/// A mesh's attributes and triangles alone: the Radiant trees carry wind
-/// morph targets, which a merged chunk with no morph weights cannot be drawn
-/// with.
+/// A mesh's attributes and triangles alone, its indices 32-bit: the Radiant
+/// trees carry wind morph targets, which a merged chunk with no morph
+/// weights cannot be drawn with.
 fn plain(source: &Mesh) -> Mesh {
     let mut mesh = Mesh::new(source.primitive_topology(), source.asset_usage);
     for (attribute, values) in source.attributes() {
         mesh.insert_attribute(*attribute, values.clone());
     }
-    if let Some(indices) = source.indices() {
-        mesh.insert_indices(indices.clone());
+    match source.indices() {
+        Some(Indices::U16(i)) => {
+            mesh.insert_indices(Indices::U32(i.iter().map(|v| u32::from(*v)).collect()));
+        }
+        Some(indices) => mesh.insert_indices(indices.clone()),
+        None => {}
     }
     mesh
 }
 
+/// Copies of a model mesh at every tree given, merged into one mesh.
 fn merge<'a>(source: &Mesh, trees: impl Iterator<Item = &'a Planted>) -> Option<Mesh> {
+    let source = plain(source);
     let mut out: Option<Mesh> = None;
     for t in trees {
         // The exported model is glTF: turned to face Bevy's forward, in metres.
         let transform = Transform::from_translation(t.at)
             .with_rotation(Quat::from_rotation_y(t.yaw + std::f32::consts::PI))
             .with_scale(Vec3::splat(UNITS_PER_METRE * t.scale));
-        let mut copy = plain(source);
-        if let Some(Indices::U16(i)) = copy.indices() {
-            let wide: Vec<u32> = i.iter().map(|v| u32::from(*v)).collect();
-            copy.insert_indices(Indices::U32(wide));
-        }
-        let copy = copy.transformed_by(transform);
+        let copy = source.clone().transformed_by(transform);
         match &mut out {
             Some(m) => {
                 if m.merge(&copy).is_err() {

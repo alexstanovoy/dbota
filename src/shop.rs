@@ -330,14 +330,7 @@ fn spawn_panel(commands: &mut Commands, fonts: &Fonts, manifest: &Manifest, serv
 
 /// Shows the panel while the shop is open.
 fn show(panels: Res<Panels>, mut panel: Single<&mut Visibility, With<ShopPanel>>) {
-    let want = if panels.shop {
-        Visibility::Inherited
-    } else {
-        Visibility::Hidden
-    };
-    if **panel != want {
-        **panel = want;
-    }
+    panel.set_if_neq(ui::visible(panels.shop));
 }
 
 /// What the side's shop has left of a cell's item, over its icon.
@@ -372,27 +365,19 @@ fn prices(
             ),
             None => (String::new(), ui::INK),
         };
-        if text.0 != s {
-            text.0 = s;
-        }
-        if color.0 != c {
-            color.0 = c;
-        }
+        text.set_if_neq(Text(s));
+        color.set_if_neq(TextColor(c));
     }
     for (price, mut text, mut color) in &mut texts {
         let (now, _) = core.price_of(price.0);
         let s = now.to_string();
-        if text.0 != s {
-            text.0 = s;
-        }
+        text.set_if_neq(Text(s));
         let c = if gold >= now {
             ui::GOLDEN
         } else {
             Color::srgb(0.55, 0.45, 0.3)
         };
-        if color.0 != c {
-            color.0 = c;
-        }
+        color.set_if_neq(TextColor(c));
     }
 }
 
@@ -559,22 +544,13 @@ fn texts(
                 key_name(settings.key(Action::CourierDeliver))
             ),
         };
-        if text.0 != s {
-            text.0 = s;
-        }
+        text.set_if_neq(Text(s));
     }
     for (button, mut vis) in &mut corner {
         let show = match button {
             CornerButton::Quick => quick.is_some(),
             CornerButton::Courier => stash_full && !core.at_home_shop(),
         };
-        let want = if show {
-            Visibility::Inherited
-        } else {
-            Visibility::Hidden
-        };
-        if *vis != want {
-            *vis = want;
-        }
+        vis.set_if_neq(ui::visible(show));
     }
 }

@@ -10,7 +10,7 @@ use bota_proto::{UnitKind, UnitView};
 
 use crate::config::Settings;
 use crate::map::Ground;
-use crate::session::Session;
+use crate::session::{Session, unit_of};
 use crate::ui::{self, Fonts};
 use crate::units::{Dying, Unit};
 
@@ -62,16 +62,7 @@ pub fn plugin(app: &mut App) {
 
 fn spawn_layer(mut commands: Commands, fonts: Res<Fonts>, mut pool: ResMut<Floaters>) {
     let layer = commands
-        .spawn((
-            Node {
-                position_type: PositionType::Absolute,
-                width: percent(100),
-                height: percent(100),
-                ..default()
-            },
-            Pickable::IGNORE,
-            GlobalZIndex(-10),
-        ))
+        .spawn((ui::fill(), Pickable::IGNORE, GlobalZIndex(-10)))
         .id();
     for _ in 0..FLOATERS {
         let text = commands
@@ -255,20 +246,13 @@ fn bars(
     let layer = layer.0;
     let (camera, cam_gt) = *p.camera;
     let scale = p.ui_scale.0.max(0.1);
-    let me = core
-        .ears()
-        .and_then(|id| view.units.iter().find(|u| u.id == id));
+    let me = core.ears().and_then(|id| unit_of(view, id));
     let mut alive = Vec::new();
     for (entity, unit, dying) in &units {
         let Some((w, h)) = bar_size(unit.kind) else {
             continue;
         };
-        let Some(live) = view
-            .units
-            .iter()
-            .find(|u| u.id == unit.id)
-            .filter(|_| !dying)
-        else {
+        let Some(live) = unit_of(view, unit.id).filter(|_| !dying) else {
             continue;
         };
         let head = Vec3::new(
@@ -288,84 +272,95 @@ fn bars(
                 continue;
             }
         };
-        let place = |node: &mut Node| {
-            node.left = px(screen.x / scale - w / 2.0);
-            node.top = px(screen.y / scale - h);
-        };
-        set(&mut nodes, bar.root, |n| place(n), Some(true), None);
-        let max = live.max_hp.max(1) as f32;
-        let share = live.hp.max(0) as f32 / max;
-        let ghost = core.derived.ghost(live.id, live.hp) / max;
-        let color = bar_color(core, live);
-        set(
-            &mut nodes,
-            bar.fill,
-            |n| n.width = px(w * share),
-            None,
-            Some(color),
+        let corner = Vec2::new(screen.x / scale - w / 2.0, screen.y / scale - h);
+        fill_bar(
+            core, view, me, live, &bar, corner, w, &mut nodes, &mut texts,
         );
-        set(
-            &mut nodes,
-            bar.ghost,
-            |n| n.width = px(w * ghost.min(1.0)),
-            None,
-            None,
-        );
-        if let Some(mana) = bar.mana {
-            let m = live.mana.max(0) as f32 / live.max_mana.max(1) as f32;
-            set(&mut nodes, mana, |n| n.width = px(w * m), None, None);
-        }
-        if let Some((well, fill)) = bar.channel {
-            let share = crate::teleport::channel_share(view, live.id);
-            set(&mut nodes, well, |_| {}, Some(share.is_some()), None);
-            set(
-                &mut nodes,
-                fill,
-                |n| n.width = px(w * share.unwrap_or(0.0)),
-                None,
-                None,
-            );
-        }
-        if let Some(level) = bar.level
-            && let Ok(mut t) = texts.get_mut(level)
-        {
-            let s = live.level.to_string();
-            if t.0 != s {
-                t.0 = s;
-            }
-        }
-        if let Some(name) = bar.name
-            && let Ok(mut t) = texts.get_mut(name)
-        {
-            // The player's name only: the hero is plain to see.
-            let s = live
-                .owner
-                .and_then(|o| core.player_name(o))
-                .unwrap_or_default()
-                .to_string();
-            if t.0 != s {
-                t.0 = s;
-            }
-        }
-        let threat = me.is_some_and(|me| {
-            live.kind != UnitKind::Hero
-                && live.team != me.team
-                && crate::overlay::targets(core, live.id, me.id)
-        });
-        set(&mut nodes, bar.threat, |_| {}, Some(threat), None);
     }
-    let gone: Vec<Entity> = p
-        .bars
-        .0
-        .keys()
-        .filter(|e| !alive.contains(e))
-        .copied()
-        .collect();
-    for entity in gone {
-        if let Some(bar) = p.bars.0.remove(&entity) {
+    alive.sort_unstable();
+    p.bars.0.retain(|entity, bar| {
+        let keep = alive.binary_search(entity).is_ok();
+        if !keep {
             p.commands.entity(bar.root).despawn();
         }
+        keep
+    });
+}
+
+/// Puts a bar's top-left corner at `corner`, in interface pixels, and fills
+/// it from its unit, `w` wide.
+fn fill_bar(
+    core: &bota_client_core::App,
+    view: &bota_proto::WorldView,
+    me: Option<&UnitView>,
+    live: &UnitView,
+    bar: &Bar,
+    corner: Vec2,
+    w: f32,
+    nodes: &mut Query<(&mut Node, &mut Visibility, Option<&mut BackgroundColor>)>,
+    texts: &mut Query<&mut Text>,
+) {
+    let place = |node: &mut Node| {
+        node.left = px(corner.x);
+        node.top = px(corner.y);
+    };
+    set(nodes, bar.root, |n| place(n), Some(true), None);
+    let max = live.max_hp.max(1) as f32;
+    let share = live.hp.max(0) as f32 / max;
+    let ghost = core.derived.ghost(live.id, live.hp) / max;
+    let color = bar_color(core, live);
+    set(
+        nodes,
+        bar.fill,
+        |n| n.width = px(w * share),
+        None,
+        Some(color),
+    );
+    set(
+        nodes,
+        bar.ghost,
+        |n| n.width = px(w * ghost.min(1.0)),
+        None,
+        None,
+    );
+    if let Some(mana) = bar.mana {
+        let m = live.mana.max(0) as f32 / live.max_mana.max(1) as f32;
+        set(nodes, mana, |n| n.width = px(w * m), None, None);
     }
+    if let Some((well, fill)) = bar.channel {
+        let share = crate::teleport::channel_share(view, live.id);
+        set(nodes, well, |_| {}, Some(share.is_some()), None);
+        set(
+            nodes,
+            fill,
+            |n| n.width = px(w * share.unwrap_or(0.0)),
+            None,
+            None,
+        );
+    }
+    if let Some(level) = bar.level
+        && let Ok(mut t) = texts.get_mut(level)
+    {
+        let s = live.level.to_string();
+        t.set_if_neq(Text(s));
+    }
+    if let Some(name) = bar.name
+        && let Ok(mut t) = texts.get_mut(name)
+    {
+        // The player's name only: the hero is plain to see.
+        let s = live
+            .owner
+            .and_then(|o| core.player_name(o))
+            .unwrap_or_default()
+            .to_string();
+        t.set_if_neq(Text(s));
+    }
+    let threat = me.is_some_and(|me| {
+        live.kind != UnitKind::Hero
+            && live.team != me.team
+            && crate::overlay::targets(core, live.id, me.id)
+    });
+    set(nodes, bar.threat, |_| {}, Some(threat), None);
 }
 
 /// Changes one node: its layout, whether it shows, its colour.
@@ -385,14 +380,7 @@ fn set(
     layout(&mut laid);
     node.set_if_neq(laid);
     if let Some(show) = show {
-        let want = if show {
-            Visibility::Inherited
-        } else {
-            Visibility::Hidden
-        };
-        if *visibility != want {
-            *visibility = want;
-        }
+        visibility.set_if_neq(ui::visible(show));
     }
     if let (Some(color), Some(mut bg)) = (color, background)
         && bg.0 != color
@@ -460,9 +448,7 @@ fn floaters(
             continue;
         };
         let Some(f) = shown.get(i) else {
-            if *visibility != Visibility::Hidden {
-                *visibility = Visibility::Hidden;
-            }
+            visibility.set_if_neq(Visibility::Hidden);
             continue;
         };
         // Floaters set off together from one place stack upwards.

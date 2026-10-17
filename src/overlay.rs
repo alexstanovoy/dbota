@@ -125,10 +125,7 @@ fn draw(
     let mut ranges = 0;
     if show_all {
         ranges += 1;
-        if let Some(me) = core
-            .ears()
-            .and_then(|id| view.units.iter().find(|u| u.id == id))
-        {
+        if let Some(me) = core.ears().and_then(|id| crate::session::unit_of(view, id)) {
             own_ranges(&mut gizmos, &ctx, me);
             tower_rings(&mut gizmos, &ctx, me);
         }
