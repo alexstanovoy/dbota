@@ -526,45 +526,28 @@ pub(crate) fn bake_transform(mut mesh: Mesh, global: &GlobalTransform) -> Mesh {
 /// The mean colour of the ground layer textures, read from the cache once
 /// each.
 pub(crate) struct LayerMeans {
-    root: Option<std::path::PathBuf>,
-    known: std::collections::HashMap<String, [f32; 3]>,
-    /// Time spent decoding, for the startup log.
-    spent: std::time::Duration,
+    pub(crate) root: Option<std::path::PathBuf>,
+    pub(crate) known: std::collections::HashMap<String, [f32; 3]>,
 }
 
 impl LayerMeans {
-    pub(crate) fn new(root: Option<std::path::PathBuf>) -> LayerMeans {
-        LayerMeans {
-            root,
-            known: std::collections::HashMap::new(),
-            spent: std::time::Duration::ZERO,
-        }
-    }
-
-    /// The mean linear colour of a Dota texture path's exported PNG; white
-    /// when it cannot be read.
+    /// The mean linear colour of a Dota texture path's exported PNG; a
+    /// middling grey when it cannot be read.
     fn of(&mut self, vtex: &str) -> [f32; 3] {
         let name = vtex
             .rsplit('/')
             .next()
             .unwrap_or(vtex)
-            .trim_end_matches(".vtex")
-            .to_string();
-        if let Some(mean) = self.known.get(&name) {
-            return *mean;
-        }
-        let began = bevy::platform::time::Instant::now();
-        let mean = self
-            .root
-            .as_ref()
-            .and_then(|root| {
-                crate::cachefs::read_small(root, &format!("textures/ground/{name}.png"))
-            })
-            .and_then(|bytes| mean_color(&bytes))
-            .unwrap_or([0.5; 3]);
-        self.known.insert(name, mean);
-        self.spent += began.elapsed();
-        mean
+            .trim_end_matches(".vtex");
+        let root = &self.root;
+        *self.known.entry(name.to_string()).or_insert_with(|| {
+            root.as_ref()
+                .and_then(|root| {
+                    crate::cachefs::read_small(root, &format!("textures/ground/{name}.png"))
+                })
+                .and_then(|bytes| mean_color(&bytes))
+                .unwrap_or([0.5; 3])
+        })
     }
 
     /// The four layers of a terrain material, each its tint times its

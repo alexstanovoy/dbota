@@ -155,7 +155,10 @@ impl MapLoader {
     /// Every material of the map as it draws: the terrain's layers, water,
     /// a prop's material (a labeled asset), or nothing.
     fn materials(&self, doc: &Value, cx: &mut LoadContext) -> Materials {
-        let mut means = LayerMeans::new(self.root.clone());
+        let mut means = LayerMeans {
+            root: self.root.clone(),
+            known: Default::default(),
+        };
         let detail_mean = means.detail(self.detail.as_deref());
         let detail = self.detail.as_ref().map(|path| {
             cx.load_builder()
