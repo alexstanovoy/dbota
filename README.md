@@ -1,18 +1,13 @@
 # dbota
 
-A Dota-looking client for [bota](https://github.com/alexstanovoy/bota), a simplified, deterministic
+A Dota-looking client for bota, a simplified, deterministic
 Dota 2 for bots and humans. With dbota a person can play a bota match, watch one live, or replay a
 recorded one. It draws with Dota 2's own models, textures, icons and sounds, taken from a local
 Dota 2 install. Bots don't need it.
 
 ## Setup
 
-1. Clone dbota and bota side by side (dbota builds against `../bota`):
-
-   ```sh
-   git clone https://github.com/alexstanovoy/bota
-   git clone https://github.com/alexstanovoy/dbota
-   ```
+1. Put the bota and dbota repositories side by side; dbota builds against `../bota`.
 
 2. Install Dota 2 through Steam (the regular or the Flatpak install is found automatically), then
    export the assets dbota uses into `~/.cache/dbota/v<N>` (`N` is `assets-manifest/version`; each
