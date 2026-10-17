@@ -28,6 +28,11 @@ struct Shots {
     /// Seconds the replay has been held at the wanted tick, for the fog to
     /// ease in.
     held: f32,
+    /// A visual check's picture as drawn, while the same frame is drawn
+    /// again without the fog veil: the picture, and whether it is the last.
+    fogged: Option<(Image, bool)>,
+    /// The replay may go on: its held tick has been drawn both ways.
+    resume: bool,
 }
 
 pub fn plugin(app: &mut App) {
@@ -87,9 +92,22 @@ fn shoot(
     diagnostics: Res<bevy::diagnostic::DiagnosticsStore>,
     photo: Res<crate::minimap::PhotoTaken>,
     time: Res<Time<bevy::time::Real>>,
+    mut grid: ResMut<crate::fog::FogGrid>,
 ) {
     if shots.waiting {
         return;
+    }
+    if shots.fogged.is_some() {
+        unveiled_shot(&mut commands, &mut shots, &mut grid, time.delta_secs());
+        return;
+    }
+    if grid.unveiled {
+        grid.unveiled = false;
+    }
+    if std::mem::take(&mut shots.resume)
+        && let Source::Replay(player) = &mut session.0.source
+    {
+        player.paused = false;
     }
     shots.frames += 1;
     let core = &mut session.0;
@@ -117,9 +135,10 @@ fn shoot(
     shots.taken += 1;
     shots.waiting = true;
     shots.held = 0.0;
-    // The frame being drawn is the one saved; the replay goes on after it.
+    // The frame being drawn is the one saved; the replay goes on after it,
+    // except that a visual check draws it once more without the veil.
     if let Source::Replay(player) = &mut session.0.source {
-        player.paused = false;
+        player.paused = args.visual_check;
     }
     let fps = diagnostics
         .get(&bevy::diagnostic::FrameTimeDiagnosticsPlugin::FRAME_TIME)
@@ -127,6 +146,44 @@ fn shoot(
     info!("frame time over the last frames: {fps:.2?} ms");
     let last = shots.taken >= args.screenshot_at.len().max(1);
     save_shot(&mut commands, path, last, args.visual_check);
+}
+
+/// A visual check's second picture: the held frame drawn without the fog
+/// veil once the veil has eased away, measured against the first.
+fn unveiled_shot(
+    commands: &mut Commands,
+    shots: &mut Shots,
+    grid: &mut crate::fog::FogGrid,
+    dt: f32,
+) {
+    grid.unveiled = true;
+    shots.held += dt;
+    if shots.held < HOLD_SECONDS {
+        return;
+    }
+    let Some((fogged, last)) = shots.fogged.take() else {
+        return;
+    };
+    shots.waiting = true;
+    commands.spawn(Screenshot::primary_window()).observe(
+        move |captured: On<ScreenshotCaptured>,
+              mut shots: ResMut<Shots>,
+              mut exit: MessageWriter<AppExit>,
+              checks: crate::visual::Checks| {
+            if !crate::visual::run(&fogged, &captured.image, &checks) {
+                shots.failed = true;
+            }
+            shots.resume = true;
+            shots.waiting = false;
+            if last {
+                exit.write(if shots.failed {
+                    AppExit::error()
+                } else {
+                    AppExit::Success
+                });
+            }
+        },
+    );
 }
 
 /// Steers a replay towards the shot at tick `next`: its path once the
@@ -189,8 +246,8 @@ fn replay_shot(
     )
 }
 
-/// Saves the screen to `path` once drawn, measured against the visual
-/// checks when `checking`; exits after the `last`.
+/// Saves the screen to `path` once drawn; when `checking`, the picture waits
+/// for [`unveiled_shot`] and its measures, else exits after the `last`.
 fn save_shot(commands: &mut Commands, path: std::path::PathBuf, last: bool, checking: bool) {
     if let Some(dir) = path.parent()
         && let Err(err) = std::fs::create_dir_all(dir)
@@ -201,19 +258,15 @@ fn save_shot(commands: &mut Commands, path: std::path::PathBuf, last: bool, chec
     commands.spawn(Screenshot::primary_window()).observe(
         move |captured: On<ScreenshotCaptured>,
               mut shots: ResMut<Shots>,
-              mut exit: MessageWriter<AppExit>,
-              checks: crate::visual::Checks,
-              mut failed: Local<bool>| {
-            if checking && !crate::visual::run(&captured.image, &checks) {
-                *failed = true;
-            }
+              mut exit: MessageWriter<AppExit>| {
+            let image = checking.then(|| captured.image.clone());
             save(captured);
             info!("saved {}", path.display());
             shots.waiting = false;
-            if *failed {
-                shots.failed = true;
-            }
-            if last {
+            if let Some(image) = image {
+                shots.held = 0.0;
+                shots.fogged = Some((image, last));
+            } else if last {
                 exit.write(if shots.failed {
                     AppExit::error()
                 } else {

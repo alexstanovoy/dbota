@@ -4,7 +4,9 @@
 //! from both seats.
 //!
 //! - The fog: ground the watched side does not see is darker and duller
-//!   than ground it sees, with a border neither hard nor smeared.
+//!   than the same ground drawn again without the veil (a second shot of the
+//!   held frame), ground it sees is left alone, and the border is neither
+//!   hard nor smeared.
 //! - Heroes are drawn with their models, not stand-ins.
 //! - Buildings never turn.
 //! - No range ring is drawn while the show-ranges key is up.
@@ -21,15 +23,19 @@ use crate::session::Session;
 use crate::terrain::CELL;
 use crate::units::{Unit, UnitIndex};
 
-/// Fogged ground's mean luminance against seen ground's, at most.
-pub const FOG_LUMINANCE_MAX: f32 = 0.45;
-/// Fogged ground's mean saturation against seen ground's, at most.
+/// Fogged ground's luminance against the same ground unfogged, at most, in
+/// sRGB: the fog's day cast measures 0.42 to 0.45 and its night grey 0.31 to
+/// 0.36, whatever ground is on screen.
+pub const FOG_LUMINANCE_MAX: f32 = 0.5;
+/// Fogged ground's saturation against the same ground unfogged, at most.
 pub const FOG_SATURATION_MAX: f32 = 0.45;
 /// The border, in cells (64 world units), over which luminance goes from
 /// a tenth to nine tenths of the way: readable, neither a hard edge (under a
 /// cell) nor a smear (over five, 320 units; Dota's soft edge spans about
 /// three to four).
 pub const BORDER_CELLS: (f32, f32) = (1.0, 5.0);
+/// How far seen ground's luminance may differ from its unfogged luminance.
+pub const SEEN_LUMINANCE_DRIFT: f32 = 0.05;
 /// The spread of luminance over a hero's body, at least: a model has
 /// shading and detail; a stand-in is one flat colour.
 pub const HERO_DETAIL_MIN: f32 = 12.0;
@@ -72,6 +78,21 @@ struct Shot<'a> {
     bgra: bool,
 }
 
+impl<'a> Shot<'a> {
+    fn of(image: &'a Image) -> Option<Shot<'a>> {
+        Some(Shot {
+            data: image.data.as_deref()?,
+            w: image.width() as usize,
+            h: image.height() as usize,
+            bgra: matches!(
+                image.texture_descriptor.format,
+                bevy::render::render_resource::TextureFormat::Bgra8UnormSrgb
+                    | bevy::render::render_resource::TextureFormat::Bgra8Unorm
+            ),
+        })
+    }
+}
+
 impl Shot<'_> {
     /// Mean sRGB colour, 0 to 255, of a square around a pixel.
     fn mean(&self, x: f32, y: f32, half: i32) -> Option<[f32; 3]> {
@@ -112,20 +133,13 @@ fn saturation(c: [f32; 3]) -> f32 {
 }
 
 /// Runs every check on a screenshot; prints each; true when all pass.
-pub fn run(image: &Image, c: &Checks) -> bool {
-    let Some(data) = image.data.as_deref() else {
-        error!("visual check: the screenshot has no data");
+pub fn run(image: &Image, unveiled: &Image, c: &Checks) -> bool {
+    let Some(bare) = Shot::of(unveiled) else {
+        error!("visual check: the unveiled screenshot has no data");
         return false;
     };
-    let shot = Shot {
-        data,
-        w: image.width() as usize,
-        h: image.height() as usize,
-        bgra: matches!(
-            image.texture_descriptor.format,
-            bevy::render::render_resource::TextureFormat::Bgra8UnormSrgb
-                | bevy::render::render_resource::TextureFormat::Bgra8Unorm
-        ),
+    let Some(shot) = Shot::of(image) else {
+        return false;
     };
     let mut ok = true;
     let mut report = |name: &str, pass: bool, detail: String| {
@@ -136,7 +150,7 @@ pub fn run(image: &Image, c: &Checks) -> bool {
         ok &= pass;
     };
     hero_parts(c, &mut report);
-    fog(&shot, c, &mut report);
+    fog(&shot, &bare, c, &mut report);
     heroes(&shot, c, &mut report);
     buildings(c, &mut report);
     report(
@@ -332,9 +346,11 @@ fn buff_icons(c: &Checks, report: &mut impl FnMut(&str, bool, String)) {
     );
 }
 
-/// Fogged against seen ground, sampled at the middle of every ground cell
-/// on screen away from the HUD, the units and the border.
-fn fog(shot: &Shot, c: &Checks, report: &mut impl FnMut(&str, bool, String)) {
+/// The fog's effect on the ground: every ground cell on screen away from the
+/// HUD, the units and the border is read in `fogged`, the picture as drawn,
+/// and in `clear`, the same frame drawn without the veil, so the ground on
+/// screen does not decide the verdict.
+fn fog(fogged: &Shot, clear: &Shot, c: &Checks, report: &mut impl FnMut(&str, bool, String)) {
     let grid = &*c.fog;
     if !grid.on || grid.n == 0 {
         report("fog", false, "no fog: run with --pov".into());
@@ -343,7 +359,6 @@ fn fog(shot: &Shot, c: &Checks, report: &mut impl FnMut(&str, bool, String)) {
     let (camera, transform) = *c.camera;
     let scale = c.window.scale_factor();
     let (lw, lh) = (c.window.width(), c.window.height());
-    let n = grid.n;
     let units: Vec<Vec2> = c
         .session
         .0
@@ -355,11 +370,10 @@ fn fog(shot: &Shot, c: &Checks, report: &mut impl FnMut(&str, bool, String)) {
                 .collect()
         })
         .unwrap_or_default();
-    let mut seen = Vec::new();
-    let mut fogged = Vec::new();
-    let mut by_distance: Vec<Vec<f32>> = vec![Vec::new(); 11];
-    for cy in 0..n {
-        for cx in 0..n {
+    // By signed distance to the border, from -5 to 5: sums over the cells.
+    let mut bins = [Bin::default(); 11];
+    for cy in 0..grid.n {
+        for cx in 0..grid.n {
             let (x, y) = ((cx as f32 + 0.5) * CELL, (cy as f32 + 0.5) * CELL);
             if units.iter().any(|u| u.distance(Vec2::new(x, y)) < 250.0) {
                 continue;
@@ -371,60 +385,98 @@ fn fog(shot: &Shot, c: &Checks, report: &mut impl FnMut(&str, bool, String)) {
             if p.x < lw * 0.05 || p.x > lw * 0.95 || p.y < lh * 0.1 || p.y > lh * 0.78 {
                 continue;
             }
-            let Some(color) = shot.mean(p.x * scale, p.y * scale, 2) else {
+            let (Some(drawn), Some(bare)) = (
+                fogged.mean(p.x * scale, p.y * scale, 2),
+                clear.mean(p.x * scale, p.y * scale, 2),
+            ) else {
                 continue;
             };
-            let d = border_distance(grid, cx, cy);
-            by_distance[(d + 5) as usize].push(luminance(color));
-            if d.abs() >= 4 {
-                if d > 0 {
-                    seen.push(color)
-                } else {
-                    fogged.push(color)
-                }
-            }
+            bins[(border_distance(grid, cx, cy) + 5) as usize].add(drawn, bare);
         }
     }
-    if seen.len() < 30 || fogged.len() < 30 {
+    let inside = Bin::sum(&bins[..2]);
+    let outside = Bin::sum(&bins[9..]);
+    if inside.n < 30 || outside.n < 30 {
         report(
             "fog",
             false,
             format!(
                 "too little ground on screen: {} seen and {} fogged samples",
-                seen.len(),
-                fogged.len()
+                outside.n, inside.n
             ),
         );
         return;
     }
-    let mean = |v: &[[f32; 3]], f: fn([f32; 3]) -> f32| {
-        v.iter().map(|c| f(*c)).sum::<f32>() / v.len() as f32
-    };
-    let lum = mean(&fogged, luminance) / mean(&seen, luminance).max(1.0);
-    let sat = mean(&fogged, saturation) / mean(&seen, saturation).max(1e-3);
+    let lum = inside.drawn_lum / inside.bare_lum.max(1.0);
+    let sat = inside.drawn_sat / inside.bare_sat.max(1e-3);
+    let untouched = outside.drawn_lum / outside.bare_lum.max(1.0);
     report(
         "fog darkens",
         lum <= FOG_LUMINANCE_MAX,
         format!(
-            "fogged ground at {:.0}% of seen ground's luminance (at most {:.0}%; {} and {} samples)",
+            "fogged ground at {:.0}% of its own unfogged luminance (at most {:.0}%; {} cells)",
             lum * 100.0,
             FOG_LUMINANCE_MAX * 100.0,
-            fogged.len(),
-            seen.len()
+            inside.n
         ),
     );
     report(
         "fog dulls",
         sat <= FOG_SATURATION_MAX,
         format!(
-            "fogged ground at {:.0}% of seen ground's saturation ({:.3} against {:.3}; at most {:.0}%)",
+            "fogged ground at {:.0}% of its own unfogged saturation (at most {:.0}%)",
             sat * 100.0,
-            mean(&fogged, saturation),
-            mean(&seen, saturation),
             FOG_SATURATION_MAX * 100.0
         ),
     );
-    fog_border(&by_distance, report);
+    report(
+        "fog leaves seen ground alone",
+        (untouched - 1.0).abs() <= SEEN_LUMINANCE_DRIFT,
+        format!(
+            "seen ground at {:.0}% of its unfogged luminance (within {:.0}%; {} cells)",
+            untouched * 100.0,
+            SEEN_LUMINANCE_DRIFT * 100.0,
+            outside.n
+        ),
+    );
+    fog_border(&bins, report);
+}
+
+/// Sums of what the cells at one distance from the fog's border look like
+/// drawn with the fog and without.
+#[derive(Clone, Copy, Default)]
+struct Bin {
+    n: usize,
+    drawn_lum: f32,
+    bare_lum: f32,
+    drawn_sat: f32,
+    bare_sat: f32,
+}
+
+impl Bin {
+    fn add(&mut self, drawn: [f32; 3], bare: [f32; 3]) {
+        self.n += 1;
+        self.drawn_lum += luminance(drawn);
+        self.bare_lum += luminance(bare);
+        self.drawn_sat += saturation(drawn);
+        self.bare_sat += saturation(bare);
+    }
+
+    fn sum(bins: &[Bin]) -> Bin {
+        bins.iter().fold(Bin::default(), |mut all, b| {
+            all.n += b.n;
+            all.drawn_lum += b.drawn_lum;
+            all.bare_lum += b.bare_lum;
+            all.drawn_sat += b.drawn_sat;
+            all.bare_sat += b.bare_sat;
+            all
+        })
+    }
+
+    /// How much of the unfogged luminance is left, in percent.
+    fn left(&self) -> Option<f32> {
+        (self.n >= 5).then(|| 100.0 * self.drawn_lum / self.bare_lum.max(1.0))
+    }
 }
 
 /// Signed distance in cells from a cell to the nearest cell of the other
@@ -449,13 +501,10 @@ fn border_distance(grid: &FogGrid, cx: usize, cy: usize) -> i32 {
     if me { 5 } else { -5 }
 }
 
-/// The width of the fog's border, from the luminance profile across it:
-/// the mean luminance of the ground cells at each signed distance.
-fn fog_border(by_distance: &[Vec<f32>], report: &mut impl FnMut(&str, bool, String)) {
-    let profile: Vec<Option<f32>> = by_distance
-        .iter()
-        .map(|v| (v.len() >= 5).then(|| v.iter().sum::<f32>() / v.len() as f32))
-        .collect();
+/// The width of the fog's border, from the profile across it: how much of
+/// the unfogged luminance the cells at each signed distance keep.
+fn fog_border(bins: &[Bin], report: &mut impl FnMut(&str, bool, String)) {
+    let profile: Vec<Option<f32>> = bins.iter().map(Bin::left).collect();
     // The levels either side, each the mean of the cells well off the
     // border, so the ground's own shading does not move them.
     let level = |range: std::ops::Range<usize>| -> Option<f32> {

@@ -39,6 +39,9 @@ pub struct FogGrid {
     /// Whether there is fog at all: one side's, or both sides' together
     /// (a spectator's and a replay's default, as in Dota).
     pub on: bool,
+    /// Debug: the ground is drawn without the veil, so a visual check can
+    /// set each fogged cell against the same cell unfogged.
+    pub unveiled: bool,
     /// Cells per axis.
     pub n: usize,
     /// One per cell, row-major from the south-west.
@@ -334,7 +337,7 @@ fn shade_veil(
     let step = (time.delta_secs() * 5.0).clamp(0.05, 1.0);
     let grid = &mut *grid;
     let mut changed = false;
-    let fogged = grid.on;
+    let fogged = grid.on && !grid.unveiled;
     for (shade, lit) in grid.shade.iter_mut().zip(&grid.cells) {
         let target = if *lit || !fogged { 0.0 } else { 1.0 };
         if (*shade - target).abs() > 0.003 {
