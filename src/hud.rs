@@ -1192,9 +1192,7 @@ fn gauges(session: NonSend<Session>, mut gauges: Query<(&Gauge, &mut Node, &mut 
             } else {
                 ui::HP_FRIEND
             };
-            if bg.0 != color {
-                bg.0 = color;
-            }
+            bg.set_if_neq(BackgroundColor(color));
         }
     }
 }
@@ -1437,9 +1435,7 @@ fn dress(
                     Some(f) if f.no_mana && !f.look.passive => Color::srgba(0.05, 0.12, 0.5, 0.45),
                     _ => Color::NONE,
                 };
-                if bg.0 != c {
-                    bg.0 = c;
-                }
+                bg.set_if_neq(BackgroundColor(c));
             }
         }
         (Part::Sweep, f) => {
@@ -1473,9 +1469,7 @@ fn dress(
                     }
                     _ => Color::NONE,
                 };
-                if bg.0 != c {
-                    bg.0 = c;
-                }
+                bg.set_if_neq(BackgroundColor(c));
             }
         }
         (label, f) => {

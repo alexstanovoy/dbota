@@ -356,9 +356,7 @@ fn pings(
             continue;
         };
         let (Some(teleport), Some(view)) = (teleports.get(at), core.view()) else {
-            if *visibility != Visibility::Hidden {
-                *visibility = Visibility::Hidden;
-            }
+            visibility.set_if_neq(Visibility::Hidden);
             continue;
         };
         let size = ping_size(teleport.ticks_total.saturating_sub(teleport.ticks_left));

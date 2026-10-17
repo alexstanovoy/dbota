@@ -366,9 +366,7 @@ fn prices(
             None => (String::new(), ui::INK),
         };
         text.set_if_neq(Text(s));
-        if color.0 != c {
-            color.0 = c;
-        }
+        color.set_if_neq(TextColor(c));
     }
     for (price, mut text, mut color) in &mut texts {
         let (now, _) = core.price_of(price.0);
@@ -379,9 +377,7 @@ fn prices(
         } else {
             Color::srgb(0.55, 0.45, 0.3)
         };
-        if color.0 != c {
-            color.0 = c;
-        }
+        color.set_if_neq(TextColor(c));
     }
 }
 

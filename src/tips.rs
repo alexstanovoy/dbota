@@ -100,9 +100,7 @@ fn show(
             **visibility = Visibility::Inherited;
         }
         _ => {
-            if **visibility != Visibility::Hidden {
-                **visibility = Visibility::Hidden;
-            }
+            visibility.set_if_neq(Visibility::Hidden);
         }
     }
 }

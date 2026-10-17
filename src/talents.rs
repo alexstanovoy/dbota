@@ -349,9 +349,7 @@ fn show_attribute(
                 } else {
                     SHUT
                 };
-                if color.0 != c {
-                    color.0 = c;
-                }
+                color.set_if_neq(TextColor(c));
                 if text.0 != "+" {
                     let s = level.to_string();
                     text.set_if_neq(Text(s));
@@ -456,9 +454,7 @@ fn show(
         } else {
             SHUT
         };
-        if bg.0 != c {
-            bg.0 = c;
-        }
+        bg.set_if_neq(BackgroundColor(c));
     }
     for (branch, mut bg) in &mut branches {
         bg.set_if_neq(BackgroundColor(if learned(branch.0) {
@@ -482,9 +478,7 @@ fn show(
             (ui::EDGE, ui::PANEL_DEEP)
         };
         rim.set_if_neq(BorderColor::all(r));
-        if bg.0 != b {
-            bg.0 = b;
-        }
+        bg.set_if_neq(BackgroundColor(b));
     }
     for (cell, mut text, mut color) in &mut texts {
         let name = &tree[usize::from(cell.0)].name;

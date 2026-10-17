@@ -448,9 +448,7 @@ fn floaters(
             continue;
         };
         let Some(f) = shown.get(i) else {
-            if *visibility != Visibility::Hidden {
-                *visibility = Visibility::Hidden;
-            }
+            visibility.set_if_neq(Visibility::Hidden);
             continue;
         };
         // Floaters set off together from one place stack upwards.
