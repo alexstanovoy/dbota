@@ -226,14 +226,7 @@ fn update(
             continue;
         };
         let now = shown.get(i).copied();
-        let want = if now.is_some() {
-            Visibility::Inherited
-        } else {
-            Visibility::Hidden
-        };
-        if *visibility != want {
-            *visibility = want;
-        }
+        visibility.set_if_neq(ui::visible(now.is_some()));
         if chip.shown != now {
             chip.shown = now;
         }
@@ -288,9 +281,7 @@ fn update(
                 .filter(|n| *n > 0)
                 .map(|n| n.to_string())
                 .unwrap_or_default();
-            if text.0 != s {
-                text.0 = s;
-            }
+            text.set_if_neq(Text(s));
         }
     }
 }

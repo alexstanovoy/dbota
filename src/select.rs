@@ -154,14 +154,9 @@ fn spawn(
 
 /// The screen while the match has not begun.
 fn show(session: NonSend<Session>, mut screen: Single<&mut Visibility, With<Screen>>) {
-    let want = if session.0.phase == Phase::Lobby && session.0.view().is_none() {
-        Visibility::Inherited
-    } else {
-        Visibility::Hidden
-    };
-    if **screen != want {
-        **screen = want;
-    }
+    screen.set_if_neq(ui::visible(
+        session.0.phase == Phase::Lobby && session.0.view().is_none(),
+    ));
 }
 
 /// A click on a portrait picks that hero; on Ready, readies or unreadies.
@@ -224,22 +219,15 @@ fn looks(
         } else {
             ui::EDGE
         };
-        *rim = BorderColor::all(c);
+        rim.set_if_neq(BorderColor::all(c));
     }
     for (mut bg, mut v) in &mut button {
-        let want = if playing {
-            Visibility::Inherited
-        } else {
-            Visibility::Hidden
-        };
-        if *v != want {
-            *v = want;
-        }
-        bg.0 = match (core.ready, mine.is_some()) {
+        v.set_if_neq(ui::visible(playing));
+        bg.set_if_neq(BackgroundColor(match (core.ready, mine.is_some()) {
             (true, _) => Color::srgb(0.12, 0.42, 0.18),
             (false, true) => Color::srgb(0.12, 0.3, 0.14),
             (false, false) => Color::srgb(0.12, 0.13, 0.15),
-        };
+        }));
     }
     let seats: Vec<String> = core
         .lobby
@@ -281,8 +269,6 @@ fn looks(
         } else {
             continue;
         };
-        if text.0 != s {
-            text.0 = s;
-        }
+        text.set_if_neq(Text(s));
     }
 }

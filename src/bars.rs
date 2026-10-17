@@ -323,9 +323,7 @@ fn bars(
             && let Ok(mut t) = texts.get_mut(level)
         {
             let s = live.level.to_string();
-            if t.0 != s {
-                t.0 = s;
-            }
+            t.set_if_neq(Text(s));
         }
         if let Some(name) = bar.name
             && let Ok(mut t) = texts.get_mut(name)
@@ -336,9 +334,7 @@ fn bars(
                 .and_then(|o| core.player_name(o))
                 .unwrap_or_default()
                 .to_string();
-            if t.0 != s {
-                t.0 = s;
-            }
+            t.set_if_neq(Text(s));
         }
         let threat = me.is_some_and(|me| {
             live.kind != UnitKind::Hero
@@ -374,14 +370,7 @@ fn set(
     layout(&mut laid);
     node.set_if_neq(laid);
     if let Some(show) = show {
-        let want = if show {
-            Visibility::Inherited
-        } else {
-            Visibility::Hidden
-        };
-        if *visibility != want {
-            *visibility = want;
-        }
+        visibility.set_if_neq(ui::visible(show));
     }
     if let (Some(color), Some(mut bg)) = (color, background)
         && bg.0 != color

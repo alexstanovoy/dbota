@@ -151,9 +151,7 @@ fn label(
             (false, _) => "VISION: ALL [Tab]".to_string(),
         }
     };
-    if text.0 != s {
-        text.0 = s;
-    }
+    text.set_if_neq(Text(s));
 }
 
 /// Works out the lit cells when a new tick or a new side comes.

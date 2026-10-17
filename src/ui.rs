@@ -74,6 +74,15 @@ pub fn shadow() -> TextShadow {
     }
 }
 
+/// Shown or hidden, as a part of the interface is.
+pub fn visible(on: bool) -> Visibility {
+    if on {
+        Visibility::Inherited
+    } else {
+        Visibility::Hidden
+    }
+}
+
 /// A node placed at a corner of its parent.
 pub fn absolute(left: f32, top: f32, width: f32, height: f32) -> Node {
     Node {

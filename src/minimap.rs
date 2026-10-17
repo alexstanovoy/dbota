@@ -372,12 +372,18 @@ fn pings(
             teleport.destination.x.to_f32(),
             teleport.destination.y.to_f32(),
         );
-        node.left = px(centre.x - size / 2.0);
-        node.top = px(centre.y - size / 2.0);
-        node.width = px(size);
-        node.height = px(size);
-        *border = BorderColor::all(crate::teleport::player_color(view, teleport.slot));
-        *visibility = Visibility::Inherited;
+        node.set_if_neq(Node {
+            left: px(centre.x - size / 2.0),
+            top: px(centre.y - size / 2.0),
+            width: px(size),
+            height: px(size),
+            ..node.clone()
+        });
+        border.set_if_neq(BorderColor::all(crate::teleport::player_color(
+            view,
+            teleport.slot,
+        )));
+        visibility.set_if_neq(Visibility::Inherited);
     }
 }
 

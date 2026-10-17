@@ -334,19 +334,12 @@ fn show_attribute(
     let mut learn = false;
     for (interaction, children, mut v, mut rim) in &mut button {
         learn |= learnable && *interaction == Interaction::Pressed;
-        let want = if shown {
-            Visibility::Inherited
-        } else {
-            Visibility::Hidden
-        };
-        if *v != want {
-            *v = want;
-        }
-        *rim = BorderColor::all(if learnable {
+        v.set_if_neq(ui::visible(shown));
+        rim.set_if_neq(BorderColor::all(if learnable {
             GOLD.with_alpha(glow)
         } else {
             Color::srgb(0.2, 0.22, 0.27)
-        });
+        }));
         for child in children {
             if let Ok((mut text, mut color)) = texts.get_mut(*child) {
                 let c = if learnable {
@@ -361,9 +354,7 @@ fn show_attribute(
                 }
                 if text.0 != "+" {
                     let s = level.to_string();
-                    if text.0 != s {
-                        text.0 = s;
-                    }
+                    text.set_if_neq(Text(s));
                 }
             }
         }
@@ -399,14 +390,7 @@ fn toggle(
         .is_some_and(|h| has_talents(h.0));
     let open = has_tree && (*pinned || hovered.iter().any(|i| *i != Interaction::None));
     for mut v in &mut panel {
-        let want = if open {
-            Visibility::Inherited
-        } else {
-            Visibility::Hidden
-        };
-        if *v != want {
-            *v = want;
-        }
+        v.set_if_neq(ui::visible(open));
     }
 }
 
@@ -453,19 +437,12 @@ fn show(
     let glow = 0.55 + 0.45 * (time.elapsed_secs() * 4.0).sin().abs();
     let any = (0..8).any(learnable);
     for (mut v, mut rim) in &mut button {
-        let want = if tree.is_some() {
-            Visibility::Inherited
-        } else {
-            Visibility::Hidden
-        };
-        if *v != want {
-            *v = want;
-        }
-        *rim = BorderColor::all(if any {
+        v.set_if_neq(ui::visible(tree.is_some()));
+        rim.set_if_neq(BorderColor::all(if any {
             GOLD.with_alpha(glow)
         } else {
             Color::srgb(0.2, 0.22, 0.27)
-        });
+        }));
     }
     let (Some(tree), Some(unit)) = (tree, unit) else {
         return;
@@ -486,17 +463,17 @@ fn show(
         }
     }
     for (branch, mut bg) in &mut branches {
-        bg.0 = if learned(branch.0) {
+        bg.set_if_neq(BackgroundColor(if learned(branch.0) {
             GOLD
         } else if learnable(branch.0) {
             GOLD.with_alpha(0.3 + 0.5 * glow)
         } else {
             Color::srgb(0.22, 0.24, 0.28)
-        };
+        }));
     }
     for (badge, mut rim) in &mut badges {
         let lit = learned(badge.0 * 2) || learned(badge.0 * 2 + 1);
-        *rim = BorderColor::all(if lit { GOLD } else { ui::EDGE });
+        rim.set_if_neq(BorderColor::all(if lit { GOLD } else { ui::EDGE }));
     }
     for (cell, mut rim, mut bg) in &mut cells {
         let (r, b) = if learned(cell.0) {
@@ -506,7 +483,7 @@ fn show(
         } else {
             (ui::EDGE, ui::PANEL_DEEP)
         };
-        *rim = BorderColor::all(r);
+        rim.set_if_neq(BorderColor::all(r));
         if bg.0 != b {
             bg.0 = b;
         }
@@ -516,12 +493,12 @@ fn show(
         if text.0 != *name {
             text.0.clone_from(name);
         }
-        color.0 = if learned(cell.0) {
+        color.set_if_neq(TextColor(if learned(cell.0) {
             Color::WHITE
         } else if learnable(cell.0) || open(cell.0) {
             OPEN
         } else {
             SHUT
-        };
+        }));
     }
 }

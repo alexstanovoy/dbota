@@ -154,14 +154,7 @@ fn spawn(
 }
 
 fn show(panels: Res<Panels>, mut overlay: Single<&mut Visibility, With<Overlay>>) {
-    let want = if panels.settings {
-        Visibility::Inherited
-    } else {
-        Visibility::Hidden
-    };
-    if **overlay != want {
-        **overlay = want;
-    }
+    overlay.set_if_neq(ui::visible(panels.settings));
 }
 
 /// Clicks on the overlay's buttons change the settings; closing it saves.

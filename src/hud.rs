@@ -140,7 +140,7 @@ fn xp(session: NonSend<Session>, mut ring: Single<&mut BackgroundGradient, With<
         (Some(p), _, _) => xp_share(p.level, p.xp),
         _ => 0.0,
     };
-    **ring = BackgroundGradient::from(xp_ring(share));
+    ring.set_if_neq(BackgroundGradient::from(xp_ring(share)));
 }
 
 /// The whole HUD, hidden in the lobby.
@@ -965,13 +965,6 @@ fn spawn_corner(commands: &mut Commands, fonts: &Fonts, root: Entity) {
     ));
 }
 
-/// Sets a text when it changed.
-fn put(text: &mut Text, s: String) {
-    if text.0 != s {
-        text.0 = s;
-    }
-}
-
 /// The seat, unit and kit the bottom panel is about.
 pub(crate) fn subject(core: &Core) -> (Option<&PlayerView>, Option<&UnitView>, Option<&Kit>) {
     let Some(view) = core.view() else {
@@ -1093,7 +1086,7 @@ fn readouts(
                 .map(|p| (p.respawn_left / rate + 1).to_string())
                 .unwrap_or_default(),
         };
-        put(&mut text, s);
+        text.set_if_neq(Text(s));
     }
 }
 
@@ -1414,14 +1407,7 @@ fn slots(
             _ => None,
         };
         let show = face.is_some() || item.is_some();
-        let want = if show {
-            Visibility::Inherited
-        } else {
-            Visibility::Hidden
-        };
-        if *visibility != want {
-            *visibility = want;
-        }
+        visibility.set_if_neq(ui::visible(show));
         let frame = face
             .as_ref()
             .map_or(Color::srgb(0.16, 0.18, 0.22), |f| f.frame);
@@ -1525,7 +1511,7 @@ fn dress(
                     Part::Plus if f.plus => "+".to_string(),
                     _ => String::new(),
                 });
-                put(&mut text, s);
+                text.set_if_neq(Text(s));
             }
         }
     }
@@ -1660,14 +1646,7 @@ fn seats(
 fn stash(session: NonSend<Session>, mut strip: Single<&mut Visibility, With<StashStrip>>) {
     let core = &session.0;
     let show = core.at_home_shop() || core.held_item.is_some();
-    let want = if show {
-        Visibility::Inherited
-    } else {
-        Visibility::Hidden
-    };
-    if **strip != want {
-        **strip = want;
-    }
+    strip.set_if_neq(ui::visible(show));
 }
 
 /// A regeneration as a pool bar shows it: "+1.5" a second, nothing when none.
