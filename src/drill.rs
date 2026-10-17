@@ -3,7 +3,10 @@
 //! attack-move, cast, stop), logs what each did to the hero, and exits. It
 //! proves the wire end to end where nobody is at the keys.
 
-use bevy::prelude::*;
+use bevy::{
+    prelude::*,
+    render::view::screenshot::{Screenshot, save_to_disk},
+};
 use bota_client_core::{ClientSession, Intent, Slot};
 
 use crate::session::Session;
@@ -28,6 +31,7 @@ fn drill(
     time: Res<Time>,
     mut state: Local<Drill>,
     mut exit: MessageWriter<AppExit>,
+    mut commands: Commands,
     diagnostics: Res<bevy::diagnostic::DiagnosticsStore>,
 ) {
     let fps = diagnostics
@@ -63,7 +67,9 @@ fn drill(
         .and_then(|p| p.gold);
     let report = |what: &str| {
         info!(
-            "drill {at:5.1}s {what}: hero at ({x:.0}, {y:.0}) hp {} mana {} gold {gold:?} ping {:?} ms, refusal {:?}, {fps:.0} fps, abilities {:?}",
+            "drill {at:5.1}s {what}: tick {:?} {:?} hero at ({x:.0}, {y:.0}) hp {} mana {} gold {gold:?} ping {:?} ms, refusal {:?}, {fps:.0} fps, abilities {:?}",
+            core.view().map(|v| v.tick),
+            hero.id,
             hero.hp,
             hero.mana,
             core.session().and_then(ClientSession::order_delay_ms),
@@ -101,6 +107,10 @@ fn drill(
             ctrl: false,
         },
         "stop" => Intent::Stop,
+        "shot" => {
+            shoot(&mut commands, at);
+            return;
+        }
         "exit" => {
             exit.write(AppExit::Success);
             return;
@@ -110,13 +120,39 @@ fn drill(
     core.act(intent);
 }
 
+/// Saves the screen, as `DBOTA_DRILL_SHOTS`'s folder, `link-` and the seconds
+/// into the drill name it.
+fn shoot(commands: &mut Commands, at: f32) {
+    let Some(dir) = std::env::var_os("DBOTA_DRILL_SHOTS") else {
+        return;
+    };
+    let path = std::path::Path::new(&dir).join(format!("link-{:05.1}.png", at));
+    if let Err(err) = std::fs::create_dir_all(&dir) {
+        error!("screenshot folder: {err}");
+    }
+    commands
+        .spawn(Screenshot::primary_window())
+        .observe(save_to_disk(path));
+}
+
 /// The steps of a drill, `DBOTA_DRILL`'s value: seconds after the hero is
 /// first seen, and what is done then.
-fn steps(kind: &str) -> &'static [(f32, &'static str)] {
+fn steps(kind: &str) -> Vec<(f32, &'static str)> {
     match kind {
+        // A long walk with a report and a screenshot every second and a
+        // half, to watch the link break and mend meanwhile.
+        "link" => {
+            let mut steps = vec![(1.0, "attack-move to mid")];
+            steps.extend((1..=80).flat_map(|n| {
+                let at = 1.0 + n as f32 * 1.5;
+                [(at, "report"), (at, "shot")]
+            }));
+            steps.push((125.0, "exit"));
+            steps
+        }
         // Two minutes in the lane, for frame times (`--bench` ends it sooner).
-        "bench" => &[(1.0, "attack-move to mid"), (120.0, "exit")],
-        _ => &[
+        "bench" => vec![(1.0, "attack-move to mid"), (120.0, "exit")],
+        _ => vec![
             (0.5, "learn Q"),
             (1.5, "buy Tango"),
             (3.0, "move"),
