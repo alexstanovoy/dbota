@@ -52,7 +52,7 @@ pub fn open(args: &Args) -> std::io::Result<Session> {
         key: None,
         wire_fingerprint: WIRE_FINGERPRINT,
     })?;
-    Ok(Session(Core::new(Source::Live(net))))
+    Ok(Session(Core::new(Source::Live(Box::new(net)))))
 }
 
 /// Holds a replay still until the scenery is in place, so nothing of its
