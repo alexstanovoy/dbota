@@ -7,8 +7,9 @@
 
 use bevy::prelude::*;
 
-/// Frames `--bench` keeps at most: a minute at well over 10 000 fps.
-const BENCH_FRAMES: usize = 1 << 20;
+/// Frame times kept at most, by `--bench` and by the whole-run statistics:
+/// a minute at well over 10 000 fps, hours at a usual rate.
+const MAX_FRAMES: usize = 1 << 20;
 
 /// What `--bench` has seen so far.
 #[derive(Default)]
@@ -65,7 +66,9 @@ fn record(time: Res<Real>, mut window: Local<Window>) {
         return;
     }
     window.times.push(dt);
-    window.all.push(dt);
+    if window.all.len() < MAX_FRAMES {
+        window.all.push(dt);
+    }
     window.since += dt / 1000.0;
     if dt > 50.0 {
         info!(
@@ -143,7 +146,7 @@ fn bench(
         return;
     };
     let dt = time.delta_secs() * 1000.0;
-    if dt > 0.0 && state.times.len() < BENCH_FRAMES {
+    if dt > 0.0 && state.times.len() < MAX_FRAMES {
         state.times.push(dt);
     }
     let wall = now - began;
@@ -157,7 +160,7 @@ fn bench(
     let times = &mut state.times;
     let mean = times.iter().sum::<f32>() / times.len() as f32;
     times.sort_by(f32::total_cmp);
-    let at = |q: f32| times[((times.len() - 1) as f32 * q) as usize];
+    let at = |q: f32| percentile(times, q);
     let (rss, peak, anon) = memory_mb();
     let line = format!(
         "bench: frames={} mean_ms={mean:.2} p50_ms={:.2} p95_ms={:.2} p99_ms={:.2} max_ms={:.2} cpu_pct={cpu:.0} rss_mb={rss} peak_rss_mb={peak} anon_mb={anon} first_frame_s={:.2} ready_s={ready:.2} units={} entities={} images_mb={} meshes_mb={}",
@@ -256,9 +259,14 @@ fn stats_of(times: &[f32]) -> String {
     stats(&mut sorted)
 }
 
+/// The frame time a share `q` of sorted, non-empty times are at or under.
+fn percentile(sorted: &[f32], q: f32) -> f32 {
+    sorted[((sorted.len() - 1) as f32 * q) as usize]
+}
+
 fn stats(times: &mut [f32]) -> String {
     times.sort_by(f32::total_cmp);
-    let at = |q: f32| times[((times.len() - 1) as f32 * q) as usize];
+    let at = |q: f32| percentile(times, q);
     format!(
         "{} frames, p50 {:.1} ms, p95 {:.1} ms, p99 {:.1} ms, max {:.1} ms",
         times.len(),
