@@ -417,8 +417,10 @@ fn fog(shot: &Shot, c: &Checks, report: &mut impl FnMut(&str, bool, String)) {
         "fog dulls",
         sat <= FOG_SATURATION_MAX,
         format!(
-            "fogged ground at {:.0}% of seen ground's saturation (at most {:.0}%)",
+            "fogged ground at {:.0}% of seen ground's saturation ({:.3} against {:.3}; at most {:.0}%)",
             sat * 100.0,
+            mean(&fogged, saturation),
+            mean(&seen, saturation),
             FOG_SATURATION_MAX * 100.0
         ),
     );

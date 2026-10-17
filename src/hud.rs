@@ -56,6 +56,11 @@ enum Part {
 #[derive(Component, Clone, Copy)]
 struct PartOf(Entity);
 
+/// The sun or the moon beside the clock, as Dota's top bar shows the time
+/// of day.
+#[derive(Component)]
+struct DayNight;
+
 /// A text the HUD keeps up to date, by what it says.
 #[derive(Component, Clone, Copy, PartialEq, Eq)]
 enum Readout {
@@ -149,7 +154,16 @@ pub struct Blocker;
 pub fn plugin(app: &mut App) {
     app.add_systems(Startup, spawn_hud).add_systems(
         Update,
-        (readouts, gauges, slots, portrait, seats, stash, xp)
+        (
+            readouts,
+            gauges,
+            slots,
+            portrait,
+            time_of_day,
+            seats,
+            stash,
+            xp,
+        )
             .run_if(|k: Res<crate::session::MatchKnown>| k.0),
     );
 }
@@ -717,7 +731,7 @@ fn spawn_top(commands: &mut Commands, fonts: &Fonts, root: Entity) {
     let clock = commands
         .spawn((
             panel(Node {
-                width: px(150),
+                width: px(178),
                 height: px(54),
                 flex_direction: FlexDirection::Row,
                 justify_content: JustifyContent::SpaceBetween,
@@ -740,10 +754,31 @@ fn spawn_top(commands: &mut Commands, fonts: &Fonts, root: Entity) {
         ),
         ChildOf(clock),
     ));
+    let time = commands
+        .spawn((
+            Node {
+                flex_direction: FlexDirection::Row,
+                align_items: AlignItems::Center,
+                column_gap: px(5),
+                ..default()
+            },
+            ChildOf(clock),
+        ))
+        .id();
+    commands.spawn((
+        DayNight,
+        Node {
+            width: px(24),
+            height: px(24),
+            ..default()
+        },
+        ImageNode::default(),
+        ChildOf(time),
+    ));
     commands.spawn((
         Readout::Clock,
         ui::text("0:00", &fonts.bold, 22.0, ui::INK),
-        ChildOf(clock),
+        ChildOf(time),
     ));
     commands.spawn((
         Readout::Score(Team::Dire),
@@ -1528,6 +1563,37 @@ fn portrait(
     } else {
         Color::WHITE
     };
+    if image.color != tint {
+        image.color = tint;
+    }
+}
+
+/// The sun by day and the moon by night beside the clock; nothing where the
+/// cache has neither.
+fn time_of_day(
+    session: NonSend<Session>,
+    manifest: Res<Manifest>,
+    server: Res<AssetServer>,
+    mut image: Single<&mut ImageNode, With<DayNight>>,
+) {
+    let Some(view) = session.0.view() else {
+        return;
+    };
+    let name = if bota_core::time_of_day(view.tick).night {
+        "hud.night"
+    } else {
+        "hud.day"
+    };
+    let path = manifest.file(name);
+    let tint = if path.is_some() {
+        Color::WHITE
+    } else {
+        Color::NONE
+    };
+    let handle: Handle<Image> = path.map(|p| server.load(p)).unwrap_or_default();
+    if image.image != handle {
+        image.image = handle;
+    }
     if image.color != tint {
         image.color = tint;
     }

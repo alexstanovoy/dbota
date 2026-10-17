@@ -25,6 +25,11 @@ use crate::terrain::CELL;
 /// photograph, and what the fog shader reads as full strength.
 const VEIL: f32 = 0.74;
 
+/// What the fog multiplies the dulled lit colour by, in linear light, by
+/// day: Dota-dense, about two fifths of the seen ground's brightness on
+/// screen (a tenth and a half in linear light), and cooled.
+const DAY_CAST: [f32; 3] = [0.135, 0.14, 0.16];
+
 /// The cells the watched side sees, worked out once a tick.
 #[derive(Resource, Default)]
 pub struct FogGrid {
@@ -64,6 +69,8 @@ pub struct VeilImage(pub Handle<Image>);
 #[derive(Resource)]
 struct Veil {
     image: Handle<Image>,
+    /// One texel: the fog's cast for the time of day ([`cast`]).
+    cast: Handle<Image>,
     /// World units the image spans.
     span: f32,
     made: HashMap<AssetId<StandardMaterial>, Handle<FoggedMaterial>>,
@@ -84,6 +91,8 @@ pub struct FogExt {
     veil: Handle<Image>,
     #[uniform(102)]
     extent: Vec4,
+    #[texture(103, sample_type = "float", filterable = false)]
+    cast: Handle<Image>,
 }
 
 impl MaterialExtension for FogExt {
@@ -96,7 +105,10 @@ pub fn plugin(app: &mut App) {
     embedded_asset!(app, "fog.wgsl");
     app.init_resource::<FogGrid>()
         .add_plugins(MaterialPlugin::<FoggedMaterial>::default())
-        .add_systems(Update, (work_out, spawn_veil, shade_veil).chain())
+        .add_systems(
+            Update,
+            (work_out, spawn_veil, shade_veil, cast_veil).chain(),
+        )
         .add_systems(PostUpdate, wrap)
         .add_systems(Startup, spawn_label)
         .add_systems(Update, label);
@@ -250,8 +262,16 @@ fn spawn_veil(
     image.sampler = ImageSampler::Descriptor(ImageSamplerDescriptor::linear());
     let image = images.add(image);
     commands.insert_resource(VeilImage(image.clone()));
+    let cast = images.add(Image::new_fill(
+        Extent3d::default(),
+        TextureDimension::D2,
+        &cast_texel(0.0),
+        TextureFormat::Rgba32Float,
+        RenderAssetUsages::default(),
+    ));
     commands.insert_resource(Veil {
         image,
+        cast,
         span: n as f32 * CELL,
         made: HashMap::new(),
     });
@@ -281,6 +301,7 @@ fn wrap(
                     extension: FogExt {
                         veil: veil.image.clone(),
                         extent: Vec4::new(veil.span, VEIL, 0.0, 0.0),
+                        cast: veil.cast.clone(),
                     },
                 });
                 veil.made.insert(material.id(), handle.clone());
@@ -367,4 +388,43 @@ fn shade_veil(
     // The image keeps its GPU texture when its data changes (Bevy writes
     // the new texels into it), so the materials bound to it need no
     // touching: touching them all rebuilt every one's bind group each frame.
+}
+
+/// The fog's cast, by how far the light has turned towards night: the day
+/// cast cools fogged ground against sunlit ground; by night the moonlight
+/// already cools everything, and cooling the fog again tints it blue (near
+/// black, where night's fog lies, a cast shows twice its daytime colour on
+/// screen), so it turns to the grey of the same brightness.
+fn cast(night: f32) -> [f32; 3] {
+    let grey = 0.2126 * DAY_CAST[0] + 0.7152 * DAY_CAST[1] + 0.0722 * DAY_CAST[2];
+    DAY_CAST.map(|c| c + (grey - c) * night.clamp(0.0, 1.0))
+}
+
+fn cast_texel(night: f32) -> Vec<u8> {
+    let [r, g, b] = cast(night);
+    [r, g, b, 1.0]
+        .iter()
+        .flat_map(|c| c.to_le_bytes())
+        .collect()
+}
+
+/// Rewrites the cast when the light turns; the materials share its image,
+/// whose texel Bevy writes into the texture they are bound to.
+fn cast_veil(
+    daylight: Res<crate::daylight::Daylight>,
+    veil: Option<Res<Veil>>,
+    mut images: ResMut<Assets<Image>>,
+) {
+    let Some(veil) = veil else {
+        return;
+    };
+    if !daylight.is_changed() && !veil.is_added() {
+        return;
+    }
+    let texel = cast_texel(daylight.night);
+    if let Some(mut image) = images.get_mut(&veil.cast)
+        && image.data.as_deref() != Some(&texel[..])
+    {
+        image.data = Some(texel);
+    }
 }

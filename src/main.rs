@@ -17,6 +17,7 @@ mod camera;
 mod capture;
 mod config;
 mod coords;
+mod daylight;
 mod drill;
 mod effects;
 mod fog;
@@ -259,6 +260,7 @@ fn main() -> AppExit {
         .add_plugins((
             session::plugin,
             map::plugin,
+            daylight::plugin,
             fog::plugin,
             units::plugin,
             anim::plugin,
