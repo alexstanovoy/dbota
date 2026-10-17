@@ -30,7 +30,7 @@ malformed output.
 | --- | --- |
 | `../assets-manifest/manifest.txt` | every exported asset: logical name, VPK source, cache path, clips; format in its header |
 | `../assets-manifest/version` | the export version: the cache folder `v<N>`, and the stamps that force a re-export |
-| `../assets-manifest/ids.txt` | bota item/ability/hero ids → Dota names (copied from bota-visual) |
+| `../assets-manifest/ids.txt` | bota item/ability/hero ids → Dota names |
 | `import_assets.sh` | the importer |
 | `crop_world.py` | crops the exported map to the mid-lane band, lists terrain layers and trees |
 | `verify_assets.py` | checks glTF meshes/skins/clips/textures, wearable joints, PNG sizes, WAV/MP3 format |

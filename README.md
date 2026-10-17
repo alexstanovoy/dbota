@@ -59,8 +59,12 @@ On the hero screen click a portrait, then click Ready. The game starts once both
 | `D` `F` | other ability slots |
 | `1` … `6` | use the item in that slot |
 | `T` | town portal scroll: take it up and click a building to teleport near it; `T` again goes to the fountain. Drag a scroll stack from the stash onto the small slot beside the inventory. Every teleport under way is ringed on the map and the minimap, for both sides |
-| `B` | shop (right click an item: buy; drag an item onto the shop: sell) |
-| `F5` | quick-buy |
+| `B` | shop: left click an item to buy it; right click sets (or clears) the quick-buy item; drop an item on the strip at the panel's foot to sell it; in the search line `Enter` buys the first answer |
+| `F5` | buy the quick-buy item |
+| `Ctrl` + ability key | learn that ability (spend a skill point) |
+| `Enter` | console line to the server (a live match on a server started with `--cheats`); `Enter` sends, `Esc` drops it |
+| `Tab` | in a replay or as a spectator: switch vision (both teams, Radiant, Dire) |
+| minimap | left click or drag moves the camera; right click orders your hero there |
 | `F2` / `F3` | select courier (its bag shows in the panel) / courier delivers |
 | `F1` | select your hero |
 | `Space` | centre the camera on your hero |
@@ -68,11 +72,11 @@ On the hero screen click a portrait, then click Ready. The game starts once both
 | Arrows, screen edges | pan the camera (all four edges, the HUD bars included); mouse wheel zooms |
 | hold `Alt` | show attack, tower and ability ranges (they are never drawn otherwise) |
 | `M` | mute |
-| `F10` | settings: volume, damage numbers, your hero's voice answers, edge pan, picture quality; keys can be rebound (saved to `~/.config/dbota/client.conf`) |
+| `F10` | settings: volume, damage numbers, your hero's voice answers, edge pan, picture quality; keys can be rebound by editing `~/.config/dbota/client.conf` |
 | `Esc` | cancel / close / leave |
 
 Talents: the small button left of the abilities opens the talent tree; when you have a point,
-click a talent to learn it. Buffs and debuffs of the selected unit sit above the abilities. The
+click a talent to learn it; the Attribute Bonus button right of the abilities spends a point on its next level. Buffs and debuffs of the selected unit sit above the abilities. The
 stash shows at the home shop.
 
 ## Picture quality
@@ -125,8 +129,8 @@ A replay opens only with the bota version that recorded it.
 ## Checking the picture
 
 `tools/visual_check.sh REPLAY.brp` measures dbota's picture of a recorded Map 2 match:
-fogged ground at most 45% of seen ground's luminance and saturation with a 1–5 cell border, heroes
-drawn with their models, buildings that never turn, no range rings without `Alt`, no gold or souls
+fogged ground at most 45% of seen ground's luminance and saturation with a 1–5 cell border (compared across the ground on screen, so the tick matters: ticks 4000, by day, and 12000, by night, are the contract; `VISUAL_TICK`, `VISUAL_RUNS` and `VISUAL_DIR` set the tick, the repeats and the output folder), both seats' views, heroes
+drawn with their models whole, enemy buildings seen through fog, buildings that never turn, no range rings without `Alt`, no gold or souls
 in the top-left block, round buff icons. It needs the asset cache and a display, and exits non-zero when a check fails
 (`VISUAL_REPLAY=REPLAY.brp cargo test --release -- --ignored` runs it too).
 `DBOTA_FRAMES=1` logs frame times (median, 95th and 99th percentiles) every ten seconds.
