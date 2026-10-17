@@ -679,7 +679,7 @@ impl Vmat {
                 .filter(|b| b.iter().any(|c| *c < 0.99))
                 .unwrap_or(a);
             for c in 0..3 {
-                *tint.get_mut(c).expect("three channels") = srgb_to_linear((a[c] + b[c]) * 0.5);
+                tint[c] = srgb_to_linear((a[c] + b[c]) * 0.5);
             }
         }
         let textures = [0, 1, 2, 3].map(|layer| {
@@ -898,6 +898,10 @@ fn build_fallback_ground(
     *done = true;
     let core = &session.0;
     let n = core.terrain_cells();
+    // The wire allows a map of one cell, which has no slopes to build.
+    if n < 2 {
+        return;
+    }
     let built = terrain::build(core.terrain(), n, 512.0);
     let mut mesh = Mesh::new(
         PrimitiveTopology::TriangleList,
