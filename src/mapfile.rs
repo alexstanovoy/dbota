@@ -47,10 +47,8 @@ pub struct MapGeometry {
 pub struct MapLoader {
     /// The cache folder, for the ground layers' colours.
     pub root: Option<PathBuf>,
-    /// The terrain's detail texture, as an asset path and as a file of the
-    /// cache.
+    /// The terrain's detail texture, a file of the cache.
     pub detail: Option<String>,
-    pub detail_file: Option<String>,
     /// Whether props are kept.
     pub props: bool,
     /// Where finished chunks go.
@@ -158,11 +156,11 @@ impl MapLoader {
     /// a prop's material (a labeled asset), or nothing.
     fn materials(&self, doc: &Value, cx: &mut LoadContext) -> Materials {
         let mut means = LayerMeans::new(self.root.clone());
-        let detail_mean = means.detail(self.detail_file.as_deref());
+        let detail_mean = means.detail(self.detail.as_deref());
         let detail = self.detail.as_ref().map(|path| {
             cx.load_builder()
                 .with_settings(detail_settings)
-                .load(path.clone())
+                .load(crate::manifest::cache_path(path))
         });
         let terrain = cx.add_labeled_asset("terrain".to_string(), terrain_material_with(detail));
         let water = cx.add_labeled_asset(

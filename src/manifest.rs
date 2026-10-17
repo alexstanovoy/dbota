@@ -120,10 +120,16 @@ impl Manifest {
     /// The asset path of a texture or sound of a logical name, if its file
     /// is there.
     pub fn file(&self, logical: &str) -> Option<String> {
+        self.path(logical).map(cache_path)
+    }
+
+    /// The file of a texture or sound of a logical name, relative to the
+    /// cache, if it is there.
+    pub fn path(&self, logical: &str) -> Option<&str> {
         self.files
             .iter()
             .find(|(name, _)| name == logical)
-            .map(|(_, path)| cache_path(path))
+            .map(|(_, path)| path.as_str())
     }
 
     /// Every sound whose logical name starts with a prefix, as asset paths.

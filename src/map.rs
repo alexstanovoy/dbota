@@ -95,12 +95,7 @@ fn map_loader(world: &World, stream: crate::mapfile::MapStream) -> crate::mapfil
     let settings = world.resource::<crate::config::Settings>();
     crate::mapfile::MapLoader {
         root: manifest.root.clone(),
-        detail: manifest.file("ground.grass"),
-        detail_file: manifest
-            .files
-            .iter()
-            .find(|(name, _)| name == "ground.grass")
-            .map(|(_, path)| path.clone()),
+        detail: manifest.path("ground.grass").map(str::to_string),
         props: settings.quality.props,
         stream,
     }
