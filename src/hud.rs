@@ -169,18 +169,7 @@ pub fn plugin(app: &mut App) {
 }
 
 fn spawn_hud(mut commands: Commands, fonts: Res<Fonts>) {
-    let root = commands
-        .spawn((
-            HudRoot,
-            Node {
-                position_type: PositionType::Absolute,
-                width: percent(100),
-                height: percent(100),
-                ..default()
-            },
-            Pickable::IGNORE,
-        ))
-        .id();
+    let root = commands.spawn((HudRoot, ui::fill(), Pickable::IGNORE)).id();
     spawn_bottom(&mut commands, &fonts, root);
     spawn_top(&mut commands, &fonts, root);
     spawn_corner(&mut commands, &fonts, root);
@@ -574,16 +563,10 @@ fn spawn_slot_box(
             ChildOf(parent),
         ))
         .id();
-    let full = || Node {
-        position_type: PositionType::Absolute,
-        width: percent(100),
-        height: percent(100),
-        ..default()
-    };
     commands.spawn((
         Part::Icon,
         PartOf(slot),
-        full(),
+        ui::fill(),
         ImageNode::default(),
         Pickable::IGNORE,
         ChildOf(slot),
@@ -591,7 +574,7 @@ fn spawn_slot_box(
     commands.spawn((
         Part::Shade,
         PartOf(slot),
-        full(),
+        ui::fill(),
         BackgroundColor(Color::NONE),
         Pickable::IGNORE,
         ChildOf(slot),
@@ -599,7 +582,7 @@ fn spawn_slot_box(
     commands.spawn((
         Part::Sweep,
         PartOf(slot),
-        full(),
+        ui::fill(),
         BackgroundGradient::from(sweep(0.0)),
         Pickable::IGNORE,
         ChildOf(slot),
@@ -626,12 +609,9 @@ fn spawn_slot_box(
     let centre = commands
         .spawn((
             Node {
-                position_type: PositionType::Absolute,
-                width: percent(100),
-                height: percent(100),
                 justify_content: JustifyContent::Center,
                 align_items: AlignItems::Center,
-                ..default()
+                ..ui::fill()
             },
             Pickable::IGNORE,
             ChildOf(slot),
@@ -840,12 +820,9 @@ fn spawn_seat(commands: &mut Commands, fonts: &Fonts, parent: Entity, seat: u8) 
         ui::text("", &fonts.bold, 22.0, ui::INK),
         ui::shadow(),
         Node {
-            position_type: PositionType::Absolute,
-            width: percent(100),
-            height: percent(100),
             justify_content: JustifyContent::Center,
             align_items: AlignItems::Center,
-            ..default()
+            ..ui::fill()
         },
         BackgroundColor(Color::NONE),
         ChildOf(card),

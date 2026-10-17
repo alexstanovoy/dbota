@@ -136,12 +136,7 @@ fn scale(
                 .id();
             let node = commands
                 .spawn((
-                    Node {
-                        position_type: PositionType::Absolute,
-                        width: percent(100),
-                        height: percent(100),
-                        ..default()
-                    },
+                    crate::ui::fill(),
                     ImageNode::new(image.clone()),
                     Pickable::IGNORE,
                     GlobalZIndex(i32::MIN),

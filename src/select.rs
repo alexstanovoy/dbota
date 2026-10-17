@@ -55,14 +55,11 @@ fn spawn(
             Blocker,
             Interaction::default(),
             Node {
-                position_type: PositionType::Absolute,
-                width: percent(100),
-                height: percent(100),
                 flex_direction: FlexDirection::Column,
                 align_items: AlignItems::Center,
                 justify_content: JustifyContent::Center,
                 row_gap: px(18),
-                ..default()
+                ..ui::fill()
             },
             BackgroundColor(Color::srgba(0.02, 0.025, 0.035, 0.96)),
             GlobalZIndex(40),

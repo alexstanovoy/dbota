@@ -87,11 +87,8 @@ pub fn spawn_row(commands: &mut Commands, fonts: &Fonts, parent: Entity) {
             ))
             .id();
         let full = || Node {
-            position_type: PositionType::Absolute,
-            width: percent(100),
-            height: percent(100),
             border_radius: BorderRadius::MAX,
-            ..default()
+            ..ui::fill()
         };
         commands.spawn((
             full(),
@@ -111,12 +108,9 @@ pub fn spawn_row(commands: &mut Commands, fonts: &Fonts, parent: Entity) {
         let middle = commands
             .spawn((
                 Node {
-                    position_type: PositionType::Absolute,
-                    width: percent(100),
-                    height: percent(100),
                     justify_content: JustifyContent::Center,
                     align_items: AlignItems::Center,
-                    ..default()
+                    ..ui::fill()
                 },
                 Pickable::IGNORE,
                 ChildOf(chip),

@@ -83,6 +83,16 @@ pub fn visible(on: bool) -> Visibility {
     }
 }
 
+/// A node over the whole of its parent.
+pub fn fill() -> Node {
+    Node {
+        position_type: PositionType::Absolute,
+        width: percent(100),
+        height: percent(100),
+        ..default()
+    }
+}
+
 /// A node placed at a corner of its parent.
 pub fn absolute(left: f32, top: f32, width: f32, height: f32) -> Node {
     Node {

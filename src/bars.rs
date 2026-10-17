@@ -62,16 +62,7 @@ pub fn plugin(app: &mut App) {
 
 fn spawn_layer(mut commands: Commands, fonts: Res<Fonts>, mut pool: ResMut<Floaters>) {
     let layer = commands
-        .spawn((
-            Node {
-                position_type: PositionType::Absolute,
-                width: percent(100),
-                height: percent(100),
-                ..default()
-            },
-            Pickable::IGNORE,
-            GlobalZIndex(-10),
-        ))
+        .spawn((ui::fill(), Pickable::IGNORE, GlobalZIndex(-10)))
         .id();
     for _ in 0..FLOATERS {
         let text = commands

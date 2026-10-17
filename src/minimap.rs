@@ -86,16 +86,10 @@ fn spawn(mut commands: Commands, mut images: ResMut<Assets<Image>>) {
             Blocker,
         ))
         .id();
-    let full = || Node {
-        position_type: PositionType::Absolute,
-        width: percent(100),
-        height: percent(100),
-        ..default()
-    };
     // Hidden until the photograph is taken: a target never rendered is black.
     commands.spawn((
         Photo,
-        full(),
+        crate::ui::fill(),
         ImageNode::new(photo.clone()),
         Visibility::Hidden,
         Pickable::IGNORE,
@@ -103,7 +97,7 @@ fn spawn(mut commands: Commands, mut images: ResMut<Assets<Image>>) {
     ));
     let fog = commands
         .spawn((
-            full(),
+            crate::ui::fill(),
             ImageNode::default(),
             Pickable::IGNORE,
             ChildOf(frame),
