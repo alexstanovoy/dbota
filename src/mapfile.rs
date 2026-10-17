@@ -440,14 +440,7 @@ fn span(doc: &Value, index: &Value) -> Option<Span> {
 /// A triangle list read from the geometry, cut down to the vertices its
 /// indices use, in the order they are first used.
 fn read_primitive(job: &Job, bin: &[u8]) -> Option<Mesh> {
-    // Every span is checked against the file before anything is sized by it.
-    let at = |span: &Span| {
-        let end = span
-            .count
-            .checked_mul(span.width)?
-            .checked_add(span.start)?;
-        bin.get(span.start..end)
-    };
+    let at = |span: &Span| bin.get(span.start..span.start + span.count * span.width);
     let raw = at(&job.indices)?;
     let index = |i: usize| -> u32 {
         match job.indices.component {
@@ -456,12 +449,12 @@ fn read_primitive(job: &Job, bin: &[u8]) -> Option<Mesh> {
             _ => u32::from_le_bytes([raw[4 * i], raw[4 * i + 1], raw[4 * i + 2], raw[4 * i + 3]]),
         }
     };
-    let (_, positions) = job
+    let vertices = job
         .attributes
         .iter()
-        .find(|(a, _)| a.id == Mesh::ATTRIBUTE_POSITION.id)?;
-    at(positions)?;
-    let vertices = positions.count;
+        .find(|(a, _)| a.id == Mesh::ATTRIBUTE_POSITION.id)?
+        .1
+        .count;
     let mut remap = vec![u32::MAX; vertices];
     let mut kept: Vec<u32> = Vec::new();
     let mut indices = Vec::with_capacity(job.indices.count);
