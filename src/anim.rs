@@ -7,6 +7,7 @@ use bevy::prelude::*;
 use bota_client_core::App as Core;
 use bota_proto::{AbilityId, UnitKind, UnitView};
 
+use crate::ability_art::art_of;
 use crate::coords::sim_facing_to_rotation;
 use crate::session::Session;
 use crate::units::{Dying, ModelBank, ModelOf, Rig, Unit};
@@ -192,13 +193,7 @@ fn cast_clip(core: &Core, u: &UnitView) -> (&'static str, f32) {
     let ability = crate::overlay::cast_ability(core, u);
     // A cast whose order is unknown shows the first raze.
     let id = ability.unwrap_or(AbilityId::RAZE_NEAR);
-    let name = match id {
-        AbilityId::RAZE_MID => "cast2",
-        AbilityId::RAZE_FAR => "cast3",
-        AbilityId::REQUIEM => "requiem",
-        AbilityId::DISMEMBER => "dismember",
-        _ => "cast1",
-    };
+    let name = art_of(id).clip;
     let point = core.cast_point_secs(u, id).unwrap_or(0.0);
     // A clip is stretched over the point; one of no length plays at its own pace.
     (name, point.max(MIN_CAST_POINT))

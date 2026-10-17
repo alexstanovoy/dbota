@@ -8,6 +8,7 @@
 // Bevy systems take their data as arguments and queries.
 #![allow(clippy::too_many_arguments, clippy::type_complexity)]
 
+mod ability_art;
 mod anim;
 mod bars;
 mod buffs;

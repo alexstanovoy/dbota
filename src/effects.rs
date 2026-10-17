@@ -8,8 +8,9 @@ use bevy::{
     prelude::*,
 };
 use bota_client_core::flights;
-use bota_proto::{AbilityId, EntityId, Team};
+use bota_proto::{EntityId, Team};
 
+use crate::ability_art::{Flight, art_of};
 use crate::manifest::Manifest;
 use crate::map::Ground;
 use crate::session::Session;
@@ -32,9 +33,12 @@ struct Burst {
     size: f32,
 }
 
+/// How wide a raze burns, in world units.
+const RAZE_RADIUS: f32 = bota_core::rules::RAZE_RADIUS as f32;
+/// How wide the ring of a raze's burst is.
+const RAZE_RING_WIDTH: f32 = 30.0;
 /// A grenade's burst against a raze's.
-const GRENADE_SIZE: f32 =
-    bota_core::rules::GRENADE_RADIUS as f32 / bota_core::rules::RAZE_RADIUS as f32;
+const GRENADE_SIZE: f32 = bota_core::rules::GRENADE_RADIUS as f32 / RAZE_RADIUS;
 
 /// The shared meshes and materials of the effects.
 #[derive(Resource)]
@@ -84,8 +88,8 @@ fn make_art(
     commands.insert_resource(Art {
         bolt: meshes.add(Sphere::new(14.0)),
         soul: meshes.add(Cuboid::new(16.0, 16.0, 120.0)),
-        ring: meshes.add(Annulus::new(220.0, 250.0)),
-        disc: meshes.add(Circle::new(250.0)),
+        ring: meshes.add(Annulus::new(RAZE_RADIUS - RAZE_RING_WIDTH, RAZE_RADIUS)),
+        disc: meshes.add(Circle::new(RAZE_RADIUS)),
         radiant: materials.add(glow(Color::srgb(0.6, 1.0, 0.5))),
         dire: materials.add(glow(Color::srgb(1.0, 0.45, 0.25))),
         soul_mat: materials.add(glow(Color::srgb(0.75, 0.3, 1.0))),
@@ -116,8 +120,9 @@ fn missiles(
     let mut alive = Vec::with_capacity(shown.len());
     for f in &shown {
         let ability = f.missile.ability;
-        let soul = ability == Some(AbilityId::REQUIEM);
-        let grenade = ability == Some(AbilityId::THROW_GRENADE);
+        let flight = ability.map_or(Flight::None, |id| art_of(id).flight);
+        let soul = flight == Flight::Soul;
+        let grenade = flight == Flight::Grenade;
         if ability.is_some() && !soul && !grenade {
             continue;
         }
@@ -215,11 +220,7 @@ fn bursts(
         let Some(id) = p.ability else {
             continue;
         };
-        if !matches!(
-            id,
-            AbilityId::RAZE_NEAR | AbilityId::RAZE_MID | AbilityId::RAZE_FAR
-        ) || flying.burst.contains(&p.id)
-        {
+        if !art_of(id).scorches || flying.burst.contains(&p.id) {
             continue;
         }
         flying.burst.push(p.id);

@@ -9,6 +9,7 @@ use bota_client_core::{App as Core, unit_under_cursor};
 use bota_core::{raze_landing, rules};
 use bota_proto::{AbilityId, Aim, Order, Target, Team, UnitKind, UnitView};
 
+use crate::ability_art::{Telegraph, art_of};
 use crate::camera::CursorGround;
 use crate::config::{Action, Settings};
 use crate::map::Ground;
@@ -20,7 +21,9 @@ const RAZE_RADIUS: f32 = rules::RAZE_RADIUS as f32;
 /// How far a requiem's lines fly, in world units.
 const REQUIEM_REACH: f32 = rules::REQUIEM_LINE_DISTANCE as f32;
 /// World units past its reach within which an enemy tower's ring shows.
-const TOWER_WARNING: f32 = 650.0;
+const TOWER_WARNING: f32 = rules::TOWER_ATTACK_RANGE as f32 - TOWER_WARNING_TRIM;
+/// World units a tower's warning begins inside its attack range.
+const TOWER_WARNING_TRIM: f32 = 50.0;
 /// World units the lines float over the ground.
 const LIFT: f32 = 8.0;
 /// Ticks an order marker lasts.
@@ -189,9 +192,12 @@ fn own_ranges(gizmos: &mut Gizmos, ctx: &Ctx<'_, '_, '_>, me: &UnitView) {
         false,
     );
     for ability in &me.abilities {
-        let Some(which) = raze_index(ability.id).filter(|_| ability.level > 0) else {
+        let Telegraph::Raze { reach: which } = art_of(ability.id).telegraph else {
             continue;
         };
+        if ability.level == 0 {
+            continue;
+        }
         let a = 0.7;
         let spot = raze_spot(me, which);
         ring(
@@ -202,16 +208,6 @@ fn own_ranges(gizmos: &mut Gizmos, ctx: &Ctx<'_, '_, '_>, me: &UnitView) {
             SOUL_RED.with_alpha(a),
             false,
         );
-    }
-}
-
-/// Which of the three razes an ability is, near to far.
-fn raze_index(id: AbilityId) -> Option<usize> {
-    match id {
-        AbilityId::RAZE_NEAR => Some(0),
-        AbilityId::RAZE_MID => Some(1),
-        AbilityId::RAZE_FAR => Some(2),
-        _ => None,
     }
 }
 
@@ -355,10 +351,10 @@ fn casts(gizmos: &mut Gizmos, ctx: &Ctx<'_, '_, '_>) {
             .and_then(|id| core.cast_point_secs(u, id))
             .unwrap_or(0.0)
             .max(0.001);
-        match ability {
-            Some(id) if raze_index(id).is_some() => {
+        match ability.map_or(Telegraph::None, |id| art_of(id).telegraph) {
+            Telegraph::Raze { reach } => {
                 let k = (elapsed / point).clamp(0.0, 1.0);
-                let spot = raze_spot(u, raze_index(id).unwrap_or(0));
+                let spot = raze_spot(u, reach);
                 ring(gizmos, ctx, spot, RAZE_RADIUS, SOUL_RED, false);
                 for f in [0.25, 0.5, 0.75, 1.0] {
                     if f <= k {
@@ -373,7 +369,7 @@ fn casts(gizmos: &mut Gizmos, ctx: &Ctx<'_, '_, '_>) {
                     }
                 }
             }
-            Some(AbilityId::REQUIEM) => {
+            Telegraph::Requiem => {
                 let k = (elapsed / point).clamp(0.0, 1.0);
                 let at = (body.at.x, body.at.y);
                 ring(gizmos, ctx, at, REQUIEM_REACH, SOUL_VIOLET, true);
@@ -386,7 +382,7 @@ fn casts(gizmos: &mut Gizmos, ctx: &Ctx<'_, '_, '_>) {
                     false,
                 );
             }
-            _ => {}
+            Telegraph::None => {}
         }
     }
 }

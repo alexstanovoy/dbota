@@ -368,7 +368,9 @@ impl BuildingYaws {
         let (_, _, yaw) = self
             .0
             .iter()
-            .filter(|(m, p, _)| m.starts_with(side) && m.contains(kind) && p.distance(at) < 600.0)
+            .filter(|(m, p, _)| {
+                m.starts_with(side) && m.contains(kind) && p.distance(at) < MODEL_MATCH_RADIUS
+            })
             .min_by(|a, b| a.1.distance(at).total_cmp(&b.1.distance(at)))?;
         // A building model's face is its +x, as a unit's is, for both sides:
         // the map's yaw is its facing.
@@ -419,14 +421,23 @@ fn required_models(manifest: &Manifest) -> Vec<String> {
     names
 }
 
+/// How near the map's own model of a building must stand to a unit to give it its facing,
+/// in world units.
+const MODEL_MATCH_RADIUS: f32 = 600.0;
+/// Heights of the stand-ins of buildings, in world units.
+const TOWER_HEIGHT: f32 = 420.0;
+const BARRACKS_HEIGHT: f32 = 220.0;
+const ANCIENT_HEIGHT: f32 = 480.0;
+const FOUNTAIN_HEIGHT: f32 = 120.0;
+
 /// The radius and height of a unit's stand-in, in world units.
 fn stand_in_size(kind: UnitKind, bound: f32) -> (f32, f32) {
     match kind {
         UnitKind::Hero => (40.0, 180.0),
-        UnitKind::Tower => (bound * 0.7, 420.0),
-        UnitKind::Barracks => (bound * 0.8, 220.0),
-        UnitKind::Ancient => (bound * 0.7, 480.0),
-        UnitKind::Fountain => (bound * 0.8, 120.0),
+        UnitKind::Tower => (bound * 0.7, TOWER_HEIGHT),
+        UnitKind::Barracks => (bound * 0.8, BARRACKS_HEIGHT),
+        UnitKind::Ancient => (bound * 0.7, ANCIENT_HEIGHT),
+        UnitKind::Fountain => (bound * 0.8, FOUNTAIN_HEIGHT),
         UnitKind::Courier => (20.0, 60.0),
         UnitKind::Ward => (14.0, 70.0),
         UnitKind::CreepSiege => (40.0, 90.0),
