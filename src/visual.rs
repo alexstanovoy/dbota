@@ -135,8 +135,23 @@ pub fn run(image: &Image, c: &Checks) -> bool {
         );
         ok &= pass;
     };
-    // Every mesh of every hero's model and wearables is there and drawn:
-    // the counts, printed in one line, must match from run to run.
+    hero_parts(c, &mut report);
+    fog(&shot, c, &mut report);
+    heroes(&shot, c, &mut report);
+    buildings(c, &mut report);
+    report(
+        "no range rings without the key",
+        c.rings.0 == 0,
+        format!("{} range drawings this frame", c.rings.0),
+    );
+    corner(c, &mut report);
+    buff_icons(c, &mut report);
+    ok
+}
+
+/// Every mesh of every hero's model and wearables is there and drawn:
+/// the counts, printed in one line, must match from run to run.
+fn hero_parts(c: &Checks, report: &mut impl FnMut(&str, bool, String)) {
     let mut parts: Vec<String> = Vec::new();
     for entity in c.index.0.values() {
         let Ok(unit) = c.units.get(*entity) else {
@@ -164,8 +179,11 @@ pub fn run(image: &Image, c: &Checks) -> bool {
         !parts.is_empty() && parts.iter().all(|p| p.ends_with(" 0 wearables unbound")),
         parts.join("; "),
     );
-    fog(&shot, c, &mut report);
-    heroes(&shot, c, &mut report);
+}
+
+/// Buildings stand as the map places them; every enemy building, in the
+/// fog or not, is drawn with its bar; the enemy base is fogged.
+fn buildings(c: &Checks, report: &mut impl FnMut(&str, bool, String)) {
     let turned: Vec<String> = c
         .units
         .iter()
@@ -261,11 +279,10 @@ pub fn run(image: &Image, c: &Checks) -> bool {
             );
         }
     }
-    report(
-        "no range rings without the key",
-        c.rings.0 == 0,
-        format!("{} range drawings this frame", c.rings.0),
-    );
+}
+
+/// The top-left block tells no gold and no souls.
+fn corner(c: &Checks, report: &mut impl FnMut(&str, bool, String)) {
     let told: Vec<&str> = c
         .texts
         .iter()
@@ -281,6 +298,10 @@ pub fn run(image: &Image, c: &Checks) -> bool {
             format!("{told:?}")
         },
     );
+}
+
+/// Every buff icon shown is cut round: its corner pixel is clear.
+fn buff_icons(c: &Checks, report: &mut impl FnMut(&str, bool, String)) {
     let mut shown = 0;
     let mut square = 0;
     for (_, children, visibility) in &c.chips {
@@ -309,7 +330,6 @@ pub fn run(image: &Image, c: &Checks) -> bool {
         square == 0,
         format!("{shown} icons shown, {square} with a square corner"),
     );
-    ok
 }
 
 /// Fogged against seen ground, sampled at the middle of every ground cell
