@@ -2,8 +2,8 @@
 //! once a frame, and read by every other system.
 
 use bevy::prelude::*;
-use bota_client_core::{App as Core, Net, Pin, ReplayPlayer, Source, Transport};
-use bota_proto::{ClientMsg, Role, SlotId, WIRE_FINGERPRINT};
+use bota_client_core::{App as Core, Pin, ReplayPlayer, Source};
+use bota_proto::SlotId;
 
 use crate::Args;
 
@@ -40,6 +40,14 @@ pub fn open(args: &Args) -> std::io::Result<Session> {
         core.pinned = args.follow.map(|seat| Pin::Hero(SlotId(seat)));
         return Ok(Session(core));
     }
+    connect(args)
+}
+
+/// Joins the server the arguments name, as a player or a spectator.
+#[cfg(not(target_arch = "wasm32"))]
+fn connect(args: &Args) -> std::io::Result<Session> {
+    use bota_client_core::{Net, Transport};
+    use bota_proto::{ClientMsg, Role, WIRE_FINGERPRINT};
     let mut net = Net::connect(&args.addr)?;
     let role = if args.spectate {
         Role::Spectator
@@ -53,6 +61,15 @@ pub fn open(args: &Args) -> std::io::Result<Session> {
         wire_fingerprint: WIRE_FINGERPRINT,
     })?;
     Ok(Session(Core::new(Source::Live(Box::new(net)))))
+}
+
+/// A browser has no sockets; live play there needs a link of its own.
+#[cfg(target_arch = "wasm32")]
+fn connect(_args: &Args) -> std::io::Result<Session> {
+    Err(std::io::Error::new(
+        std::io::ErrorKind::Unsupported,
+        "live play is not available in a browser yet; build with --features web-replay",
+    ))
 }
 
 /// Holds a replay still until the scenery is in place, so nothing of its
