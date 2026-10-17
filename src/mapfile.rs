@@ -140,14 +140,16 @@ impl AssetLoader for MapLoader {
             .path()
             .resolve_embed_str(uri)
             .map_err(std::io::Error::other)?;
+        let materials = self.materials(&doc, cx);
+        let jobs = jobs(&doc, &materials);
+        // The document's tree is let go before the geometry is read: the
+        // two together were the load's peak.
+        drop(doc);
         let bin = cx
             .read_asset_bytes(bin_path)
             .await
             .map_err(std::io::Error::other)?;
-        let materials = self.materials(&doc, cx);
-        let jobs = jobs(&doc, &materials);
-        drop(doc);
-        let terrain = self.stream(jobs, &bin, &materials);
+        let terrain = self.stream(jobs, &bin, &materials).await;
         drop(bin);
         Ok(finish(terrain, materials.terrain))
     }
@@ -226,7 +228,7 @@ impl MapLoader {
     /// into batches handed to the main thread as soon as the chunk is done.
     /// The terrain is kept back: its colours are made continuous over the
     /// whole map once all of it is read.
-    fn stream(&self, mut jobs: Vec<Job>, bin: &[u8], materials: &Materials) -> Vec<Piece> {
+    async fn stream(&self, mut jobs: Vec<Job>, bin: &[u8], materials: &Materials) -> Vec<Piece> {
         jobs.sort_by_key(|job| job.chunk);
         let mut terrain = Vec::new();
         let mut rest = &jobs[..];
@@ -255,6 +257,9 @@ impl MapLoader {
             if let Ok(mut stream) = self.stream.0.lock() {
                 stream.append(&mut batches);
             }
+            // In a browser this runs on the frame's own thread: the frame
+            // must come round to upload the chunk before the next is read.
+            crate::cachefs::next_frame().await;
         }
         terrain
     }

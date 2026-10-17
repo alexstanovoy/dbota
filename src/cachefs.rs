@@ -24,8 +24,13 @@ use bevy::{
     prelude::*,
 };
 
-/// Decoded texture bytes let through at once, besides the one under way.
-const DECODE_BUDGET: usize = 192 << 20;
+/// Decoded texture bytes let through at once, besides the one under way:
+/// less in a browser, whose memory never shrinks back.
+const DECODE_BUDGET: usize = if cfg!(target_arch = "wasm32") {
+    64 << 20
+} else {
+    192 << 20
+};
 /// Frames without a texture arriving after which the budget lets every
 /// texture through: a load that never reports back must not stall the rest.
 const STALL_FRAMES: u32 = 120;
@@ -174,7 +179,6 @@ fn settle(mut due: ResMut<DueTextures>, budget: Res<DecodeBudget>) {
 /// Reads the cache folder's files; directories and meta files as Bevy does.
 pub struct CacheReader {
     budget: DecodeBudget,
-    #[cfg(not(target_arch = "wasm32"))]
     root: PathBuf,
     #[cfg(not(target_arch = "wasm32"))]
     files: bevy::asset::io::file::FileAssetReader,
@@ -188,10 +192,9 @@ impl CacheReader {
             budget,
             #[cfg(not(target_arch = "wasm32"))]
             files: bevy::asset::io::file::FileAssetReader::new(&root),
-            #[cfg(not(target_arch = "wasm32"))]
-            root,
             #[cfg(target_arch = "wasm32")]
-            files: bevy::asset::io::wasm::HttpWasmAssetReader::new(root),
+            files: bevy::asset::io::wasm::HttpWasmAssetReader::new(&root),
+            root,
         }
     }
 }
@@ -219,13 +222,11 @@ impl AssetReader for CacheReader {
 
     #[cfg(target_arch = "wasm32")]
     async fn read<'a>(&'a self, path: &'a Path) -> Result<impl Reader + 'a, AssetReaderError> {
-        let mut reader = self.files.read(path).await?;
-        let mut bytes = Vec::new();
-        reader.read_to_end(&mut bytes).await?;
+        let bytes = browser::fetch(&self.root.join(path)).await?;
         if let Some(size) = decoded_size(&bytes) {
             self.budget.take(path, size).await;
         }
-        Ok(bevy::asset::io::VecReader::new(bytes))
+        Ok(browser::Bytes(bytes))
     }
 
     async fn read_meta<'a>(&'a self, path: &'a Path) -> Result<impl Reader + 'a, AssetReaderError> {
@@ -242,6 +243,13 @@ impl AssetReader for CacheReader {
     async fn is_directory<'a>(&'a self, path: &'a Path) -> Result<bool, AssetReaderError> {
         self.files.is_directory(path).await
     }
+}
+
+/// Lets a frame come round before going on: in a browser everything runs
+/// on the frame's own thread; on a desktop the frames run beside the loads.
+pub async fn next_frame() {
+    #[cfg(target_arch = "wasm32")]
+    browser::next_frame().await;
 }
 
 /// A small cache file read at once, where the client cannot wait for the
@@ -317,7 +325,95 @@ mod desktop {
 
 #[cfg(target_arch = "wasm32")]
 mod browser {
-    use std::path::Path;
+    use std::{
+        path::Path,
+        pin::Pin,
+        task::{Context, Poll},
+    };
+
+    use bevy::{
+        asset::io::{
+            AssetReaderError, Reader, ReaderNotSeekableError, STACK_FUTURE_SIZE, SeekableReader,
+            StackFuture,
+        },
+        tasks::futures_lite::io::AsyncRead,
+    };
+    use wasm_bindgen::JsCast;
+    use wasm_bindgen_futures::JsFuture;
+
+    /// A file next to the page, fetched whole into the client's memory once.
+    pub async fn fetch(path: &Path) -> Result<Vec<u8>, AssetReaderError> {
+        let failed = |e: wasm_bindgen::JsValue| {
+            AssetReaderError::Io(std::io::Error::other(format!("fetch: {e:?}")).into())
+        };
+        let window = web_sys::window().ok_or_else(|| failed("no window".into()))?;
+        let response: web_sys::Response =
+            JsFuture::from(window.fetch_with_str(&path.to_string_lossy()))
+                .await
+                .map_err(failed)?
+                .dyn_into()
+                .map_err(failed)?;
+        match response.status() {
+            200 => {
+                let body = JsFuture::from(response.array_buffer().map_err(failed)?)
+                    .await
+                    .map_err(failed)?;
+                Ok(js_sys::Uint8Array::new(&body).to_vec())
+            }
+            403 | 404 => Err(AssetReaderError::NotFound(path.to_path_buf())),
+            status => Err(AssetReaderError::HttpError(status)),
+        }
+    }
+
+    /// Resolves at the browser's next animation frame.
+    pub async fn next_frame() {
+        let promise = js_sys::Promise::new(&mut |resolve, _| {
+            if let Some(window) = web_sys::window() {
+                let _ = window.request_animation_frame(&resolve);
+            }
+        });
+        let _ = JsFuture::from(promise).await;
+    }
+
+    /// A fetched file, handed whole to a loader that reads it to the end:
+    /// moved, not copied, for the map's geometry is a fifth of a gigabyte
+    /// and a browser's memory never shrinks back.
+    pub struct Bytes(pub Vec<u8>);
+
+    impl AsyncRead for Bytes {
+        fn poll_read(
+            self: Pin<&mut Self>,
+            _cx: &mut Context<'_>,
+            buf: &mut [u8],
+        ) -> Poll<std::io::Result<usize>> {
+            let this = self.get_mut();
+            let n = buf.len().min(this.0.len());
+            buf[..n].copy_from_slice(&this.0[..n]);
+            this.0.drain(..n);
+            Poll::Ready(Ok(n))
+        }
+    }
+
+    impl Reader for Bytes {
+        fn read_to_end<'a>(
+            &'a mut self,
+            buf: &'a mut Vec<u8>,
+        ) -> StackFuture<'a, std::io::Result<usize>, STACK_FUTURE_SIZE> {
+            StackFuture::from(async move {
+                let n = self.0.len();
+                if buf.is_empty() {
+                    std::mem::swap(buf, &mut self.0);
+                } else {
+                    buf.append(&mut self.0);
+                }
+                Ok(n)
+            })
+        }
+
+        fn seekable(&mut self) -> Result<&mut dyn SeekableReader, ReaderNotSeekableError> {
+            Err(ReaderNotSeekableError)
+        }
+    }
 
     /// A file next to the page, fetched synchronously: its bytes come back
     /// one per character of a text read as `x-user-defined`.

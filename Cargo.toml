@@ -56,8 +56,12 @@ serde_json = "1"
 # In a browser, Bevy draws through WebGPU where the browser has it, else WebGL2.
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 bevy = { version = "=0.19.1", default-features = false, features = ["webgl2", "webgpu"] }
-# Small cache files the client reads at once (the map's trees and buildings).
-web-sys = { version = "0.3", features = ["XmlHttpRequest"] }
+# The cache fetched next to the page (whole files moved, not copied, into the
+# client), and the small files it reads at once (the map's trees and buildings).
+js-sys = "0.3"
+wasm-bindgen = "0.2"
+wasm-bindgen-futures = "0.4"
+web-sys = { version = "0.3", features = ["Response", "Window", "XmlHttpRequest"] }
 
 [features]
 # A browser build that plays the replay named by DBOTA_WEB_REPLAY at build
