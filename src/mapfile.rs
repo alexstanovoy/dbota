@@ -25,8 +25,8 @@ use serde_json::Value;
 
 use crate::map::{
     ATTRIBUTE_BLEND_ALPHAS, ATTRIBUTE_BLEND_WEIGHTS, ATTRIBUTE_PAINTED_TINT, Batch, ColourField,
-    Ground, LayerMeans, Samples, TerrainJob, Vmat, add_to_batches, bake_terrain, bake_transform,
-    chunk_of, detail_settings, dress_prop, map_transform, smooth_terrain, terrain_material_with,
+    Ground, LayerMeans, Samples, Vmat, add_to_batches, bake_terrain, bake_transform, chunk_of,
+    detail_settings, dress_prop, map_transform, smooth_terrain, terrain_material_with,
 };
 
 /// The map, merged: what [`MapLoader`] makes of the map's file.
@@ -356,30 +356,23 @@ fn pieces(jobs: &[Job], bin: &[u8], materials: &Materials) -> Vec<Piece> {
 
 /// The terrain: its heights taken for the ground, its colours made
 /// continuous, merged by chunk.
-fn finish(terrain: Vec<Piece>, material: Handle<StandardMaterial>) -> MapGeometry {
+fn finish(mut terrain: Vec<Piece>, material: Handle<StandardMaterial>) -> MapGeometry {
     let mut samples = Samples::new(crate::terrain::MAP_CELLS);
     for piece in &terrain {
-        samples.add(&piece.mesh, &GlobalTransform::IDENTITY);
+        samples.add(&piece.mesh);
     }
-    let mut placed: Vec<Option<(Mesh, Aabb)>> = Vec::with_capacity(terrain.len());
-    let mut marks = Vec::with_capacity(terrain.len());
-    for piece in terrain {
-        marks.push(piece.chunk);
-        placed.push(Some((piece.mesh, piece.aabb)));
-    }
-    struct Terrain;
-    impl TerrainJob for Terrain {
-        fn is_terrain(&self) -> bool {
-            true
-        }
-    }
-    let all: Vec<Terrain> = marks.iter().map(|_| Terrain).collect();
-    let field = smooth_terrain(&all, &mut placed);
+    let mut meshes: Vec<&mut Mesh> = terrain.iter_mut().map(|p| &mut p.mesh).collect();
+    let field = smooth_terrain(&mut meshes);
     let mut batches = Vec::new();
-    for (chunk, piece) in marks.into_iter().zip(placed) {
-        if let Some((mesh, aabb)) = piece {
-            add_to_batches(&mut batches, mesh, aabb, material.clone(), true, chunk);
-        }
+    for piece in terrain {
+        add_to_batches(
+            &mut batches,
+            piece.mesh,
+            piece.aabb,
+            material.clone(),
+            true,
+            piece.chunk,
+        );
     }
     MapGeometry {
         batches,
