@@ -85,11 +85,7 @@ fn spawn(
         ))
         .id();
     for (id, hero) in (0u16..).zip(HEROES) {
-        let portrait = manifest.dota_name("hero", id).and_then(|name| {
-            manifest
-                .file(&format!("portrait.hero.{name}.tall"))
-                .or(manifest.file(&format!("portrait.hero.{name}")))
-        });
+        let portrait = manifest.portrait(id);
         let card = commands
             .spawn((
                 Card(id),

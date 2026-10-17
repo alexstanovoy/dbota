@@ -17,7 +17,7 @@ use bota_proto::{EntityId, Team, UnitKind, UnitView};
 use crate::coords::sim_facing_to_rotation;
 use crate::fog::FogGrid;
 use crate::manifest::{Manifest, Model, load_unit_model};
-use crate::map::{Ground, UNITS_PER_METRE};
+use crate::map::{DOTA_ORIGIN, Ground, UNITS_PER_METRE};
 use crate::session::Session;
 
 /// A unit on the map.
@@ -343,8 +343,8 @@ impl BuildingYaws {
                         return None;
                     };
                     let at = Vec2::new(
-                        x.parse::<f32>().ok()? + 9216.0,
-                        y.parse::<f32>().ok()? + 9216.0,
+                        x.parse::<f32>().ok()? + DOTA_ORIGIN,
+                        y.parse::<f32>().ok()? + DOTA_ORIGIN,
                     );
                     Some((model.to_string(), at, yaw.parse::<f32>().ok()?.to_radians()))
                 })
@@ -518,11 +518,12 @@ fn sync_units(
             }
         }
     }
+    seen.sort_unstable();
     let gone: Vec<EntityId> = p
         .index
         .0
         .keys()
-        .filter(|id| !seen.contains(id))
+        .filter(|id| seen.binary_search(id).is_err())
         .copied()
         .collect();
     for id in gone {
@@ -616,14 +617,7 @@ fn spawn_stand_in(p: &mut SyncParams, u: &UnitView, pivot: Entity) {
         return;
     };
     let (r, h) = stand_in_size(u.kind, u.bound.to_f32());
-    let building = matches!(
-        u.kind,
-        UnitKind::Tower
-            | UnitKind::Barracks
-            | UnitKind::Ancient
-            | UnitKind::Fountain
-            | UnitKind::Filler
-    );
+    let building = is_building(u.kind);
     let mesh = if building {
         art.building.clone()
     } else {
@@ -700,16 +694,7 @@ fn on_model_ready(
         }
     }
     // Buildings stand in the fog too, and are drawn dulled there.
-    if units.get(unit).is_ok_and(|u| {
-        matches!(
-            u.kind,
-            UnitKind::Tower
-                | UnitKind::Barracks
-                | UnitKind::Ancient
-                | UnitKind::Fountain
-                | UnitKind::Filler
-        )
-    }) {
+    if units.get(unit).is_ok_and(|u| is_building(u.kind)) {
         for part in children.iter_descendants(ready.entity) {
             commands.entity(part).insert(crate::fog::Fogged);
         }

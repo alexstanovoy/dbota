@@ -7,7 +7,7 @@ use bevy::{
 };
 
 use crate::coords::world_to_sim;
-use crate::map::Ground;
+use crate::map::{DOTA_ORIGIN, Ground};
 use crate::session::Session;
 use crate::units::{Unit, UnitIndex};
 
@@ -72,7 +72,7 @@ fn spawn_camera(
     let cam = RtsCamera {
         focus: match args.look_at[..args.look_at.len().min(2)] {
             [x, y] => Vec3::new(x, 128.0, -y),
-            _ => Vec3::new(9216.0, 128.0, -9216.0),
+            _ => Vec3::new(DOTA_ORIGIN, 128.0, -DOTA_ORIGIN),
         },
         distance: args
             .distance

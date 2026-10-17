@@ -1209,7 +1209,7 @@ fn gauges(session: NonSend<Session>, mut gauges: Query<(&Gauge, &mut Node, &mut 
             Gauge::Mana => unit.map_or(0.0, |u| u.mana.max(0) as f32 / u.max_mana.max(1) as f32),
             Gauge::SeatHp(seat) => seat_of(view, seat)
                 .and_then(|p| p.unit)
-                .and_then(|id| view.units.iter().find(|u| u.id == id))
+                .and_then(|id| crate::session::unit_of(view, id))
                 .map_or(0.0, |u| u.hp.max(0) as f32 / u.max_hp.max(1) as f32),
         };
         let width = percent(share * 100.0);
@@ -1543,13 +1543,7 @@ fn portrait(
     let hero = p
         .map(|p| p.hero.0)
         .or(unit.and_then(|u| u.hero.map(|h| h.0)));
-    let path = hero
-        .and_then(|h| manifest.dota_name("hero", h))
-        .and_then(|name| {
-            manifest
-                .file(&format!("portrait.hero.{name}.tall"))
-                .or(manifest.file(&format!("portrait.hero.{name}")))
-        });
+    let path = hero.and_then(|h| manifest.portrait(h));
     let path_missing = path.is_none();
     let handle: Handle<Image> = path.map(|p| server.load(p)).unwrap_or_default();
     if image.image != handle {

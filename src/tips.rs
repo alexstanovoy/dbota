@@ -98,7 +98,9 @@ fn show(
             .and_then(|p| core.talents_of(p.slot))
             .map_or(0, |t| t.attribute_bonus);
         Some(format!(
-            "Attribute Bonus  (level {level}/7)\n+2 to all attributes per level.\nClick: spend a skill point on it"
+            "Attribute Bonus  (level {level}/{})\n+{} to all attributes per level.\nClick: spend a skill point on it",
+            bota_core::rules::ATTRIBUTE_BONUS_MAX_LEVEL,
+            bota_core::rules::ATTRIBUTE_BONUS_POINTS,
         ))
     } else if let Some(shown) = hovered_buff {
         bota_client_core::effect(shown.id).map(|face| {

@@ -219,7 +219,9 @@ fn drill(
             None => return,
         },
         "move" => Intent::MoveTo((x + 600.0, y + 600.0)),
-        "attack-move to mid" => Intent::AttackMoveTo((9216.0, 9216.0)),
+        "attack-move to mid" => {
+            Intent::AttackMoveTo((crate::map::DOTA_ORIGIN, crate::map::DOTA_ORIGIN))
+        }
         "cast Q" => Intent::Press {
             slot: Slot::Ability(0),
             ctrl: false,

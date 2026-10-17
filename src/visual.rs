@@ -172,7 +172,7 @@ pub fn run(image: &Image, c: &Checks) -> bool {
         .filter(|u| crate::units::is_building(u.kind) && u.team != bota_proto::Team::Neutral)
         .filter_map(|u| {
             let view = c.session.0.view()?;
-            let wire = view.units.iter().find(|w| w.id == u.id)?;
+            let wire = crate::session::unit_of(view, u.id)?;
             let want = c.yaws.facing(wire, u.at);
             match want {
                 Some(want)

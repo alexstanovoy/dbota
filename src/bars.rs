@@ -10,7 +10,7 @@ use bota_proto::{UnitKind, UnitView};
 
 use crate::config::Settings;
 use crate::map::Ground;
-use crate::session::Session;
+use crate::session::{Session, unit_of};
 use crate::ui::{self, Fonts};
 use crate::units::{Dying, Unit};
 
@@ -255,20 +255,13 @@ fn bars(
     let layer = layer.0;
     let (camera, cam_gt) = *p.camera;
     let scale = p.ui_scale.0.max(0.1);
-    let me = core
-        .ears()
-        .and_then(|id| view.units.iter().find(|u| u.id == id));
+    let me = core.ears().and_then(|id| unit_of(view, id));
     let mut alive = Vec::new();
     for (entity, unit, dying) in &units {
         let Some((w, h)) = bar_size(unit.kind) else {
             continue;
         };
-        let Some(live) = view
-            .units
-            .iter()
-            .find(|u| u.id == unit.id)
-            .filter(|_| !dying)
-        else {
+        let Some(live) = unit_of(view, unit.id).filter(|_| !dying) else {
             continue;
         };
         let head = Vec3::new(
@@ -354,18 +347,14 @@ fn bars(
         });
         set(&mut nodes, bar.threat, |_| {}, Some(threat), None);
     }
-    let gone: Vec<Entity> = p
-        .bars
-        .0
-        .keys()
-        .filter(|e| !alive.contains(e))
-        .copied()
-        .collect();
-    for entity in gone {
-        if let Some(bar) = p.bars.0.remove(&entity) {
+    alive.sort_unstable();
+    p.bars.0.retain(|entity, bar| {
+        let keep = alive.binary_search(entity).is_ok();
+        if !keep {
             p.commands.entity(bar.root).despawn();
         }
-    }
+        keep
+    });
 }
 
 /// Changes one node: its layout, whether it shows, its colour.
