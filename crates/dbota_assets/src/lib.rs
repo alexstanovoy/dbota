@@ -9,6 +9,7 @@ mod error;
 pub mod kv3;
 #[cfg(any(unix, windows))]
 mod locate;
+mod meshopt;
 mod ntro;
 mod resource;
 mod sound;
