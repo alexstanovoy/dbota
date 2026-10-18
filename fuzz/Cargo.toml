@@ -1,0 +1,61 @@
+# Coverage-guided fuzz targets for everything dbota reads from a file it did
+# not write: Valve's formats (VPK packages, resources, KV3, NTRO, textures,
+# sounds) and the cache's text files. A workspace of its own: the fuzzer's
+# flags and libFuzzer stay out of the main build. `fuzz.sh` builds and runs
+# them on stable Rust.
+[package]
+name = "dbota_fuzz"
+version = "0.0.0"
+edition = "2024"
+license = "MIT"
+publish = false
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+dbota_assets = { path = "../crates/dbota_assets" }
+libfuzzer-sys = "0.4"
+
+[workspace]
+members = ["."]
+
+[profile.release]
+debug = 1
+debug-assertions = true
+overflow-checks = true
+
+[[bin]]
+name = "vpk"
+path = "fuzz_targets/vpk.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "resource"
+path = "fuzz_targets/resource.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "kv3"
+path = "fuzz_targets/kv3.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "vtex"
+path = "fuzz_targets/vtex.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "vsnd"
+path = "fuzz_targets/vsnd.rs"
+test = false
+doc = false
+bench = false
