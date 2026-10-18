@@ -24,6 +24,8 @@ pub enum Action {
     TownPortal,
     /// Opens and closes the shop.
     Shop,
+    /// Activates the Glyph of Fortification.
+    Glyph,
     /// Picks one's own hero; twice pins the camera to it.
     SelectHero,
     /// Picks one's own courier; twice pins the camera to it.
@@ -45,7 +47,7 @@ pub enum Action {
 }
 
 /// Every action with its name in the file and its key out of the box.
-pub const BINDINGS: [(Action, &str, KeyCode); 26] = [
+pub const BINDINGS: [(Action, &str, KeyCode); 27] = [
     (Action::AttackMove, "attack_move", KeyCode::KeyA),
     (Action::Stop, "stop", KeyCode::KeyS),
     (Action::Hold, "hold", KeyCode::KeyH),
@@ -63,6 +65,7 @@ pub const BINDINGS: [(Action, &str, KeyCode); 26] = [
     (Action::Item(5), "item_6", KeyCode::Digit6),
     (Action::TownPortal, "town_portal", KeyCode::KeyT),
     (Action::Shop, "shop", KeyCode::KeyB),
+    (Action::Glyph, "glyph", KeyCode::KeyJ),
     (Action::SelectHero, "select_hero", KeyCode::F1),
     (Action::SelectCourier, "select_courier", KeyCode::F2),
     (Action::CourierDeliver, "courier_deliver", KeyCode::F3),

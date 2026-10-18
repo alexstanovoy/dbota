@@ -193,6 +193,9 @@ fn keys(
     if pressed(Action::CourierDeliver) {
         core.act(Intent::CourierDeliver);
     }
+    if pressed(Action::Glyph) && core.my_slot.is_some() {
+        core.activate_glyph();
+    }
     if pressed(Action::QuickBuy) {
         core.act(Intent::QuickBuy);
     }

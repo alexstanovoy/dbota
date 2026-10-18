@@ -23,6 +23,7 @@ mod drill;
 mod effects;
 mod fog;
 mod framestats;
+mod glyph;
 mod heap;
 mod hud;
 mod input;
@@ -269,6 +270,7 @@ fn main() -> AppExit {
             effects::plugin,
             teleport::plugin,
             shop::plugin,
+            glyph::plugin,
             menu::plugin,
             tips::plugin,
             drill::plugin,
