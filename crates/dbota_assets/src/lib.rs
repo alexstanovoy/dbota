@@ -9,6 +9,7 @@ mod bytes;
 mod error;
 mod export;
 mod gltf;
+pub mod import;
 pub mod kv3;
 #[cfg(any(unix, windows))]
 mod locate;
