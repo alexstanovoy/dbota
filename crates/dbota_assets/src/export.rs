@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 
+use crate::anim::read_clips;
 use crate::error::{Error, Result};
 use crate::gltf::{GltfOptions, image_uri, write_glb};
 use crate::material::{Material, Pack};
@@ -13,6 +14,18 @@ use crate::vpk::Vpk;
 pub struct ExportedModel {
     pub glb: Vec<u8>,
     pub textures: Vec<ExportedTexture>,
+    /// The animations written, in file order; a name asked for that the model lacks (or an
+    /// additive clip) is not among them.
+    pub clips: Vec<ExportedClip>,
+}
+
+/// An animation in the `.glb`.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ExportedClip {
+    pub name: String,
+    /// Seconds to its last keyframe: a clip that ends holding a pose stops where the pose
+    /// is reached.
+    pub duration: f32,
 }
 
 /// An image the `.glb` refers to.
@@ -36,17 +49,24 @@ pub fn read_from(src: &(impl Source + ?Sized), packages: &[&Vpk], path: &str) ->
 }
 
 /// Converts the model at `path` (`models/.../x.vmdl_c`), keeping only `meshes` when given,
-/// with its skeleton when `skeleton`.
+/// with its skeleton when `skeleton` and then the animations named `anims`.
 pub fn export_model(
     src: &(impl Source + ?Sized),
     packages: &[&Vpk],
     path: &str,
     meshes: Option<&[&str]>,
     skeleton: bool,
+    anims: &[&str],
     texture_uri: &dyn Fn(&str) -> String,
 ) -> Result<ExportedModel> {
     let bytes = read_from(src, packages, path)?;
-    let model = Model::read(&Resource::parse(&bytes)?)?;
+    let resource = Resource::parse(&bytes)?;
+    let model = Model::read(&resource)?;
+    let clips = if skeleton {
+        read_clips(&resource, anims)?
+    } else {
+        Vec::new()
+    };
     let mut materials = HashMap::new();
     let used = model
         .meshes
@@ -64,6 +84,33 @@ pub fn export_model(
             materials.insert(material.to_owned(), Material::from_vmat(material, &data?));
         }
     }
+    let textures = images(&materials, texture_uri);
+    let options = GltfOptions {
+        name: path,
+        meshes,
+        skeleton,
+        materials: &materials,
+        texture_uri,
+        clips: &clips,
+    };
+    Ok(ExportedModel {
+        glb: write_glb(&model, &options),
+        textures,
+        clips: clips
+            .iter()
+            .map(|c| ExportedClip {
+                name: c.name.clone(),
+                duration: c.duration(),
+            })
+            .collect(),
+    })
+}
+
+/// The images the materials use, each once.
+fn images(
+    materials: &HashMap<String, Material>,
+    texture_uri: &dyn Fn(&str) -> String,
+) -> Vec<ExportedTexture> {
     let mut textures: Vec<ExportedTexture> = Vec::new();
     for m in materials.values() {
         let wanted = [
@@ -85,15 +132,5 @@ pub fn export_model(
     }
     textures.sort();
     textures.dedup();
-    let options = GltfOptions {
-        name: path,
-        meshes,
-        skeleton,
-        materials: &materials,
-        texture_uri,
-    };
-    Ok(ExportedModel {
-        glb: write_glb(&model, &options),
-        textures,
-    })
+    textures
 }

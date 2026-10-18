@@ -5,7 +5,8 @@
 use std::path::{Path, PathBuf};
 
 use dbota_assets::{
-    DirSource, ExportedTexture, Texture, Vpk, export_model, find_game_dir, read_from,
+    DirSource, ExportedClip, ExportedModel, ExportedTexture, Texture, Vpk, export_model,
+    find_game_dir, read_from,
 };
 use serde_json::Value;
 
@@ -25,22 +26,70 @@ fn cache() -> PathBuf {
     )
 }
 
-/// `(source, output, meshes=, skeleton)` of every `model` line; models that animate
-/// (`anims=`) or wear onto one (`attach=`) keep their skeleton.
-fn models() -> Vec<(String, String, Option<String>, bool)> {
-    let text = std::fs::read_to_string(repo().join("assets-manifest/manifest.txt")).unwrap();
-    text.lines()
+/// A `model` line of the manifest.
+struct Line {
+    source: String,
+    out: String,
+    /// `meshes=`.
+    meshes: Option<Vec<String>>,
+    /// `anims=`.
+    anims: Vec<String>,
+    /// Models that animate (`anims=`) or wear onto one (`attach=`) keep their skeleton.
+    skeleton: bool,
+}
+
+impl Line {
+    fn export(&self, src: &DirSource, pak: &Vpk) -> ExportedModel {
+        let texture_uri = |vtex: &str| {
+            let name = vtex.rsplit('/').next().unwrap_or(vtex);
+            format!("{}.png", name.trim_end_matches(".vtex"))
+        };
+        let meshes: Option<Vec<&str>> = self
+            .meshes
+            .as_ref()
+            .map(|m| m.iter().map(String::as_str).collect());
+        let anims: Vec<&str> = self.anims.iter().map(String::as_str).collect();
+        export_model(
+            src,
+            &[pak],
+            &self.source,
+            meshes.as_deref(),
+            self.skeleton,
+            &anims,
+            &texture_uri,
+        )
+        .unwrap_or_else(|e| panic!("{}: {e}", self.source))
+    }
+}
+
+fn manifest() -> String {
+    std::fs::read_to_string(repo().join("assets-manifest/manifest.txt")).unwrap()
+}
+
+fn models() -> Vec<Line> {
+    manifest()
+        .lines()
         .filter_map(|line| {
             let words: Vec<&str> = line.split('#').next()?.split_whitespace().collect();
             if words.first() != Some(&"model") {
                 return None;
             }
-            let meshes = words[4..].iter().find_map(|w| w.strip_prefix("meshes="));
+            let list = |key: &str| {
+                words[4..]
+                    .iter()
+                    .find_map(|w| w.strip_prefix(key))
+                    .map(|l| l.split(',').map(str::to_owned).collect::<Vec<_>>())
+            };
             let skeleton = words[4..]
                 .iter()
                 .any(|w| w.starts_with("anims=") || w.starts_with("attach="));
-            let (src, out) = (words[2].to_owned(), words[3].to_owned());
-            Some((src, out, meshes.map(str::to_owned), skeleton))
+            Some(Line {
+                source: words[2].to_owned(),
+                out: words[3].to_owned(),
+                meshes: list("meshes="),
+                anims: list("anims=").unwrap_or_default(),
+                skeleton,
+            })
         })
         .collect()
 }
@@ -342,24 +391,11 @@ fn summary(doc: &Value) -> Vec<String> {
 fn models_match_the_exported_ones() {
     let src = DirSource::new(find_game_dir(None).expect("Dota 2 not found"));
     let pak = Vpk::open(&src, "pak01_dir.vpk").unwrap();
-    let texture_uri = |vtex: &str| {
-        let name = vtex.rsplit('/').next().unwrap_or(vtex);
-        format!("{}.png", name.trim_end_matches(".vtex"))
-    };
     let mut differ = Vec::new();
     let mut data = Vec::new();
-    for (source, out, meshes, skeleton) in models() {
-        let keep: Option<Vec<&str>> = meshes.as_deref().map(|m| m.split(',').collect());
-        let ours = export_model(
-            &src,
-            &[&pak],
-            &source,
-            keep.as_deref(),
-            skeleton,
-            &texture_uri,
-        )
-        .unwrap_or_else(|e| panic!("{source}: {e}"));
-        let theirs = Glb::parse(&std::fs::read(cache().join(&out)).unwrap());
+    for line in models() {
+        let (source, ours) = (&line.source, line.export(&src, &pak));
+        let theirs = Glb::parse(&std::fs::read(cache().join(&line.out)).unwrap());
         let ours = Glb::parse(&ours.glb);
         if let Some(diff) = compare_data(&ours, &theirs) {
             data.push(format!("{source}: {diff}"));
@@ -383,7 +419,7 @@ fn models_match_the_exported_ones() {
     assert!(data.is_empty(), "vertex data differs:\n{}", data.join("\n"));
 }
 
-/// Writes the models without clips (static ones and wearables) over a copy of the cache, to
+/// Writes every model of the manifest, clips included, over a copy of the cache, to
 /// look at them in the client:
 ///
 /// ```sh
@@ -394,7 +430,7 @@ fn models_match_the_exported_ones() {
 /// ```
 ///
 /// The images of whole textures are the cache's own; the packed ones (occlusion/roughness/
-/// metallic, emissive and specular masks) are made from the game's textures. Animated models wait for their clips.
+/// metallic, emissive and specular masks) are made from the game's textures.
 #[test]
 #[ignore = "needs a local Dota 2 install and its asset cache; writes only with DBOTA_MODEL_CACHE"]
 fn write_models_into_a_cache_copy() {
@@ -404,36 +440,14 @@ fn write_models_into_a_cache_copy() {
     };
     let src = DirSource::new(find_game_dir(None).expect("Dota 2 not found"));
     let pak = Vpk::open(&src, "pak01_dir.vpk").unwrap();
-    let texture_uri = |vtex: &str| {
-        let name = vtex.rsplit('/').next().unwrap_or(vtex);
-        format!("{}.png", name.trim_end_matches(".vtex"))
-    };
-    let manifest = std::fs::read_to_string(repo().join("assets-manifest/manifest.txt")).unwrap();
-    let animated: Vec<&str> = manifest
-        .lines()
-        .filter(|l| l.split('#').next().unwrap().contains(" anims="))
-        .filter_map(|l| l.split_whitespace().nth(3))
-        .collect();
     let mut written = 0;
-    for (source, out, meshes, skeleton) in models() {
-        if animated.contains(&out.as_str()) {
-            continue;
-        }
-        let keep: Option<Vec<&str>> = meshes.as_deref().map(|m| m.split(',').collect());
-        let model = export_model(
-            &src,
-            &[&pak],
-            &source,
-            keep.as_deref(),
-            skeleton,
-            &texture_uri,
-        )
-        .unwrap_or_else(|e| panic!("{source}: {e}"));
-        let dir = copy.join(&out).parent().unwrap().to_owned();
+    for line in models() {
+        let model = line.export(&src, &pak);
+        let target = copy.join(&line.out);
+        let dir = target.parent().unwrap().to_owned();
         for texture in &model.textures {
             write_packed_image(&src, &pak, &dir, texture);
         }
-        let target = copy.join(&out);
         let _ = std::fs::remove_file(&target); // a symlink into the original cache
         std::fs::write(&target, &model.glb).unwrap();
         written += 1;
@@ -456,4 +470,193 @@ fn write_packed_image(src: &DirSource, pak: &Vpk, dir: &Path, texture: &Exported
     let target = dir.join(&texture.uri);
     let _ = std::fs::remove_file(&target); // a link into the original cache
     std::fs::write(target, png).unwrap();
+}
+
+/// How far a sampled bone transform may be from the exported one, absolutely and relative to
+/// its size: float rounding, and Source2Viewer taking the root motion out of a matrix where we
+/// compose it directly (destruction debris flies hundreds of metres).
+const CLIP_TOLERANCE: f64 = 1e-4;
+const CLIP_RELATIVE: f64 = 1e-6;
+
+/// One channel of an animation: its node's name, path, key times and values.
+type Channel = (String, String, Vec<f64>, Vec<Vec<f64>>);
+
+/// The animations of a `.glb` by name, each with its channels.
+fn animations(glb: &Glb) -> Vec<(String, Vec<Channel>)> {
+    let nodes = &glb.json["nodes"];
+    let list = glb.json["animations"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    list.iter()
+        .map(|a| {
+            let channels = a["channels"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|c| {
+                    let sampler = &a["samplers"][c["sampler"].as_u64().unwrap() as usize];
+                    let target = &c["target"];
+                    let node = nodes[target["node"].as_u64().unwrap() as usize]["name"]
+                        .as_str()
+                        .unwrap()
+                        .to_owned();
+                    let times = glb.values(sampler["input"].as_u64().unwrap());
+                    let values = glb.values(sampler["output"].as_u64().unwrap());
+                    let width = values.len() / times.len().max(1);
+                    let values = values.chunks(width.max(1)).map(<[f64]>::to_vec).collect();
+                    let path = target["path"].as_str().unwrap().to_owned();
+                    (node, path, times, values)
+                })
+                .collect();
+            (a["name"].as_str().unwrap().to_owned(), channels)
+        })
+        .collect()
+}
+
+/// The channel's value at `t`, interpolated linearly (normalised for rotations).
+fn sample(times: &[f64], values: &[Vec<f64>], t: f64, rotation: bool) -> Vec<f64> {
+    let next = times.partition_point(|&k| k < t).min(times.len() - 1);
+    if next == 0 || times[next] == t {
+        return values[next].clone();
+    }
+    let (a, b) = (&values[next - 1], &values[next]);
+    let f = (t - times[next - 1]) / (times[next] - times[next - 1]);
+    let dot: f64 = a.iter().zip(b).map(|(x, y)| x * y).sum();
+    let sign = if rotation && dot < 0.0 { -1.0 } else { 1.0 };
+    let mixed: Vec<f64> = a
+        .iter()
+        .zip(b)
+        .map(|(x, y)| x + (sign * y - x) * f)
+        .collect();
+    if !rotation {
+        return mixed;
+    }
+    let length = mixed.iter().map(|c| c * c).sum::<f64>().sqrt();
+    mixed.iter().map(|c| c / length).collect()
+}
+
+/// The first channel whose sampled values differ, as a message.
+fn compare_channels(ours: &[Channel], theirs: &[Channel]) -> Option<String> {
+    for (node, path, times, values) in theirs {
+        let Some((_, _, our_times, ours)) = ours.iter().find(|c| (&c.0, &c.1) == (node, path))
+        else {
+            return Some(format!("no {path} channel of {node}"));
+        };
+        let rotation = path == "rotation";
+        for &t in times.iter().chain(our_times) {
+            let (a, b) = (
+                sample(our_times, ours, t, rotation),
+                sample(times, values, t, rotation),
+            );
+            let dot: f64 = a.iter().zip(&b).map(|(x, y)| x * y).sum();
+            let sign = if rotation && dot < 0.0 { -1.0 } else { 1.0 };
+            let far = |x: f64, y: f64| (x - y).abs() > CLIP_TOLERANCE + CLIP_RELATIVE * y.abs();
+            if a.iter().zip(&b).any(|(x, y)| far(*x, sign * y)) {
+                return Some(format!("{node} {path} at {t:.4}: {a:?} vs {b:?}"));
+            }
+        }
+    }
+    None
+}
+
+/// The manifest's clip durations by (model output, glTF animation name).
+fn manifest_durations() -> Vec<(String, String, f64)> {
+    let text = manifest();
+    let outputs: Vec<(String, String)> = text
+        .lines()
+        .filter_map(|l| {
+            let w: Vec<&str> = l.split('#').next()?.split_whitespace().collect();
+            (w.first() == Some(&"model")).then(|| (w[1].to_owned(), w[3].to_owned()))
+        })
+        .collect();
+    text.lines()
+        .filter_map(|l| {
+            let w: Vec<&str> = l.split('#').next()?.split_whitespace().collect();
+            if w.first() != Some(&"clip") {
+                return None;
+            }
+            let out = &outputs.iter().find(|(logical, _)| logical == w[1])?.1;
+            Some((out.clone(), w[3].to_owned(), w[4].parse().ok()?))
+        })
+        .collect()
+}
+
+/// How clip `ours` (its channels and what `export_model` said of it) differs from `theirs` and
+/// from the duration the manifest lists. The number of keys may differ: on a root bone under
+/// root motion Source2Viewer decomposed a matrix, whose rounding breaks runs of equal values.
+fn compare_clip(
+    ours: (&[Channel], Option<&ExportedClip>),
+    theirs: &[Channel],
+    listed: Option<f64>,
+) -> Vec<String> {
+    let end = |c: &[Channel]| c.iter().map(|c| *c.2.last().unwrap()).fold(0.0, f64::max);
+    let (channels, exported) = ours;
+    let mut wrong = Vec::new();
+    let said = exported.map_or(-1.0, |c| f64::from(c.duration));
+    if (end(channels) - end(theirs)).abs() > 1e-4 || (said - end(theirs)).abs() > 1e-4 {
+        wrong.push(format!(
+            "lasts {} ({said} said) vs {}",
+            end(channels),
+            end(theirs)
+        ));
+    }
+    if listed.is_some_and(|d| (d - end(channels)).abs() > 6e-4) {
+        wrong.push(format!("lasts {} vs {listed:?} listed", end(channels)));
+    }
+    wrong.extend(compare_channels(channels, theirs));
+    wrong
+}
+
+/// Every animated model's clips equal the exported ones: the same names in the same order,
+/// the same durations (to the manifest's too), and every bone's rotation, translation and
+/// scale sampled at every key time of either within `CLIP_TOLERANCE`.
+#[test]
+#[ignore = "needs a local Dota 2 install and its asset cache"]
+fn clips_match_the_exported_ones() {
+    let src = DirSource::new(find_game_dir(None).expect("Dota 2 not found"));
+    let pak = Vpk::open(&src, "pak01_dir.vpk").unwrap();
+    let durations = manifest_durations();
+    let mut wrong = Vec::new();
+    let mut clips = 0;
+    for line in models().into_iter().filter(|l| !l.anims.is_empty()) {
+        let exported = line.export(&src, &pak);
+        let ours = animations(&Glb::parse(&exported.glb));
+        let theirs = animations(&Glb::parse(
+            &std::fs::read(cache().join(&line.out)).unwrap(),
+        ));
+        let names = |list: &[(String, Vec<Channel>)]| -> Vec<String> {
+            list.iter().map(|a| a.0.clone()).collect()
+        };
+        if names(&ours) != names(&theirs) {
+            wrong.push(format!(
+                "{}: clips {:?} vs {:?}",
+                line.source,
+                names(&ours),
+                names(&theirs)
+            ));
+            continue;
+        }
+        for ((name, ours), (_, theirs)) in ours.iter().zip(&theirs) {
+            clips += 1;
+            let ours = (
+                ours.as_slice(),
+                exported.clips.iter().find(|c| &c.name == name),
+            );
+            let listed = durations
+                .iter()
+                .find(|(out, clip, _)| (out, clip) == (&line.out, name))
+                .map(|d| d.2);
+            for diff in compare_clip(ours, theirs, listed) {
+                wrong.push(format!("{} {name}: {diff}", line.source));
+            }
+        }
+    }
+    assert!(
+        wrong.is_empty(),
+        "{} clips differ:\n{}",
+        wrong.len(),
+        wrong.join("\n")
+    );
+    assert!(clips >= 104, "only {clips} clips compared");
 }

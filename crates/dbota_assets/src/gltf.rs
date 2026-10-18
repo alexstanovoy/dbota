@@ -6,6 +6,7 @@ use std::collections::HashMap;
 
 use serde_json::{Value as Json, json};
 
+use crate::anim::{Clip, Keys};
 use crate::material::{Alpha, Material, Pack, orm_uri};
 use crate::model::{Mesh, Model, Skin, Vertices, multiply, rotate};
 
@@ -29,6 +30,8 @@ pub struct GltfOptions<'a> {
     pub materials: &'a HashMap<String, Material>,
     /// The image file a texture (`.vtex` path) is written to, relative to the `.glb`.
     pub texture_uri: &'a dyn Fn(&str) -> String,
+    /// Animations of the skeleton (written only with it).
+    pub clips: &'a [Clip],
 }
 
 #[derive(Default)]
@@ -43,6 +46,8 @@ struct Builder {
     textures: Vec<Json>,
     images: Vec<Json>,
     texture_index: HashMap<(String, Option<Pack>), usize>,
+    /// Keyframe time accessors by their bits, shared by the samplers with the same times.
+    time_index: HashMap<Vec<u32>, usize>,
 }
 
 /// The model as a `.glb` file.
@@ -67,27 +72,10 @@ pub fn write_glb(model: &Model, options: &GltfOptions) -> Vec<u8> {
     let skin = (options.skeleton && any_skinned && !model.bones.is_empty())
         .then(|| b.inverse_binds(model));
     for mesh in meshes {
-        let name = format!("{}.{}", options.name, mesh.name);
-        let accessors: Vec<Json> = mesh.vertices.iter().map(|v| b.attributes(v)).collect();
-        let mut primitives = Vec::new();
-        for p in &mesh.primitives {
-            let indices = b.indices(&p.indices);
-            let material = b.material(&p.material, options);
-            primitives.push(json!({
-                "attributes": accessors[p.vertices],
-                "indices": indices,
-                "material": material,
-            }));
-        }
-        b.meshes
-            .push(json!({ "name": name, "primitives": primitives }));
-        let mut node = json!({ "name": name, "mesh": b.meshes.len() - 1 });
-        if skin.is_some() && skinned(mesh) {
-            node["skin"] = json!(0);
-        }
-        b.nodes.push(node);
-        scene.push(b.nodes.len() - 1);
+        let node = b.mesh_node(mesh, options, skin.is_some() && skinned(mesh));
+        scene.push(node);
     }
+    let animations = b.animations(options);
     let mut root = json!({
         "asset": { "version": "2.0", "generator": "dbota_assets" },
         "scene": 0,
@@ -99,6 +87,9 @@ pub fn write_glb(model: &Model, options: &GltfOptions) -> Vec<u8> {
         "bufferViews": b.views,
         "buffers": [{ "byteLength": b.bin.len() }],
     });
+    if !animations.is_empty() {
+        root["animations"] = json!(animations);
+    }
     if let Some(ibm) = skin {
         let joints: Vec<usize> = (1..=model.bones.len()).collect();
         root["skins"] = json!([{ "joints": joints, "inverseBindMatrices": ibm }]);
@@ -177,13 +168,23 @@ impl Builder {
         self.accessors.len() - 1
     }
 
+    /// `values` as an accessor of vertex attributes.
     fn floats<const N: usize>(&mut self, values: &[[f32; N]], kind: &str) -> usize {
+        self.floats_for(values, kind, Some(ARRAY_BUFFER))
+    }
+
+    fn floats_for<const N: usize>(
+        &mut self,
+        values: &[[f32; N]],
+        kind: &str,
+        target: Option<u32>,
+    ) -> usize {
         let bytes: Vec<u8> = values
             .iter()
             .flatten()
             .flat_map(|f| f.to_le_bytes())
             .collect();
-        let view = self.view(&bytes, Some(ARRAY_BUFFER));
+        let view = self.view(&bytes, target);
         self.accessor(view, FLOAT, values.len(), kind)
     }
 
@@ -214,6 +215,78 @@ impl Builder {
             attributes["WEIGHTS_0"] = json!(self.floats(weights, "VEC4"));
         }
         attributes
+    }
+
+    /// A node with the render mesh `mesh` (skinned with skin 0 when `skinned`); its index.
+    fn mesh_node(&mut self, mesh: &Mesh, options: &GltfOptions, skinned: bool) -> usize {
+        let name = format!("{}.{}", options.name, mesh.name);
+        let accessors: Vec<Json> = mesh.vertices.iter().map(|v| self.attributes(v)).collect();
+        let mut primitives = Vec::new();
+        for p in &mesh.primitives {
+            let indices = self.indices(&p.indices);
+            let material = self.material(&p.material, options);
+            primitives.push(json!({
+                "attributes": accessors[p.vertices],
+                "indices": indices,
+                "material": material,
+            }));
+        }
+        self.meshes
+            .push(json!({ "name": name, "primitives": primitives }));
+        let mut node = json!({ "name": name, "mesh": self.meshes.len() - 1 });
+        if skinned {
+            node["skin"] = json!(0);
+        }
+        self.nodes.push(node);
+        self.nodes.len() - 1
+    }
+
+    /// The clips, with the skeleton they animate.
+    fn animations(&mut self, options: &GltfOptions) -> Vec<Json> {
+        if !options.skeleton {
+            return Vec::new();
+        }
+        options.clips.iter().map(|c| self.animation(c)).collect()
+    }
+
+    /// A clip as a glTF animation: per bone (node `bone + 1`), its rotation, translation and
+    /// scale channels.
+    fn animation(&mut self, clip: &Clip) -> Json {
+        let mut channels = Vec::new();
+        let mut samplers = Vec::new();
+        for (bone, track) in clip.tracks.iter().enumerate() {
+            let paths = [
+                ("rotation", self.sampler(&track.rotation, "VEC4")),
+                ("translation", self.sampler(&track.translation, "VEC3")),
+                ("scale", self.sampler(&track.scale, "VEC3")),
+            ];
+            for (path, sampler) in paths {
+                channels.push(json!({
+                    "sampler": samplers.len(),
+                    "target": { "node": bone + 1, "path": path },
+                }));
+                samplers.push(sampler);
+            }
+        }
+        json!({ "name": clip.name, "channels": channels, "samplers": samplers })
+    }
+
+    fn sampler<const N: usize>(&mut self, keys: &Keys<N>, kind: &str) -> Json {
+        let bits: Vec<u32> = keys.times.iter().map(|t| t.to_bits()).collect();
+        let input = match self.time_index.get(&bits) {
+            Some(&i) => i,
+            None => {
+                let times: Vec<[f32; 1]> = keys.times.iter().map(|&t| [t]).collect();
+                let i = self.floats_for(&times, "SCALAR", None);
+                let first = keys.times.first().copied().unwrap_or(0.0);
+                self.accessors[i]["min"] = json!([first]);
+                self.accessors[i]["max"] = json!([keys.times.last().copied().unwrap_or(0.0)]);
+                self.time_index.insert(bits, i);
+                i
+            }
+        };
+        let output = self.floats_for(&keys.values, kind, None);
+        json!({ "input": input, "output": output, "interpolation": "LINEAR" })
     }
 
     fn indices(&mut self, indices: &[u32]) -> usize {

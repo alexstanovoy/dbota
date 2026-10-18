@@ -91,7 +91,7 @@ impl Model {
     }
 }
 
-fn array(value: Option<&Value>) -> &[Value] {
+pub(crate) fn array(value: Option<&Value>) -> &[Value] {
     value.and_then(Value::as_array).unwrap_or_default()
 }
 
@@ -136,7 +136,17 @@ impl Remap {
     }
 }
 
-fn skeleton(data: &Value) -> Result<Vec<Bone>> {
+/// A bone's rest pose relative to its parent as the model stores it (Source's frame, inches).
+pub(crate) struct SourceBone {
+    pub name: String,
+    pub parent: Option<usize>,
+    pub position: [f32; 3],
+    pub rotation: [f32; 4],
+}
+
+/// The model skeleton of DATA's `m_modelSkeleton`, in bone order. A parent index that does not
+/// come before its bone makes the bone a root.
+pub(crate) fn source_skeleton(data: &Value) -> Result<Vec<SourceBone>> {
     let skeleton = data.get("m_modelSkeleton");
     let get = |key| array(skeleton.and_then(|s| s.get(key)));
     let (names, parents) = (get("m_boneName"), get("m_nParent"));
@@ -148,24 +158,44 @@ fn skeleton(data: &Value) -> Result<Vec<Bone>> {
             .and_then(Value::as_i64)
             .and_then(|p| usize::try_from(p).ok())
             .filter(|&p| p < i);
-        let mut translation = floats::<3>(positions.get(i))?.map(|v| v * SCALE);
-        let mut rotation = floats::<4>(rotations.get(i))?;
-        // The frame change bakes into the roots, so the rest stays as Source has it.
-        if parent.is_none() {
-            translation = rotate(TO_GLTF, translation);
-            rotation = multiply(TO_GLTF, rotation);
-        }
-        bones.push(Bone {
+        bones.push(SourceBone {
             name: name.as_str().unwrap_or_default().to_owned(),
             parent,
-            translation,
-            rotation,
+            position: floats::<3>(positions.get(i))?,
+            rotation: floats::<4>(rotations.get(i))?,
         });
     }
     Ok(bones)
 }
 
-fn floats<const N: usize>(value: Option<&Value>) -> Result<[f32; N]> {
+/// A bone-local transform in glTF's frame: the translation scaled to metres and, on a root
+/// bone, the frame change baked in (children inherit it through the hierarchy).
+pub(crate) fn to_gltf(position: [f32; 3], rotation: [f32; 4], root: bool) -> ([f32; 3], [f32; 4]) {
+    let translation = position.map(|v| v * SCALE);
+    if root {
+        (rotate(TO_GLTF, translation), multiply(TO_GLTF, rotation))
+    } else {
+        (translation, rotation)
+    }
+}
+
+fn skeleton(data: &Value) -> Result<Vec<Bone>> {
+    Ok(source_skeleton(data)?
+        .into_iter()
+        .map(|bone| {
+            let (translation, rotation) =
+                to_gltf(bone.position, bone.rotation, bone.parent.is_none());
+            Bone {
+                name: bone.name,
+                parent: bone.parent,
+                translation,
+                rotation,
+            }
+        })
+        .collect())
+}
+
+pub(crate) fn floats<const N: usize>(value: Option<&Value>) -> Result<[f32; N]> {
     let items = array(value);
     let mut out = [0.0; N];
     if items.len() != N {

@@ -14,7 +14,7 @@ use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use dbota_assets::kv3::Value;
-use dbota_assets::{DirSource, Resource, SliceSource, Source, Vpk, find_game_dir, kv3};
+use dbota_assets::{DirSource, Resource, SliceSource, Source, Vpk, find_game_dir, kv3, read_clips};
 
 struct Install {
     src: DirSource,
@@ -550,8 +550,9 @@ impl XorShift {
     }
 }
 
-/// Runs every parser over `bytes`: an error is fine, a panic fails the test.
-fn parse_everything(bytes: &[u8]) {
+/// Runs every parser over `bytes` (the clips called `clips` too): an error is fine, a panic
+/// fails the test.
+fn parse_everything(bytes: &[u8], clips: &[&str]) {
     let Ok(resource) = Resource::parse(bytes) else {
         return;
     };
@@ -560,6 +561,7 @@ fn parse_everything(bytes: &[u8]) {
     }
     let _ = resource.data();
     let _ = resource.external_refs();
+    let _ = read_clips(&resource, clips);
 }
 
 /// The KV3 and NTRO blocks of `files`, one file per kind of block (type, KV3 version and
@@ -593,6 +595,11 @@ fn damaged_files_are_errors_not_panics() {
     let mut roots: Vec<String> = dota.lines("model").map(|l| l.src.clone()).collect();
     roots.extend(world_files(&dota, &dota.lines("world").next().unwrap().src));
     let samples = samples(&dota, &dota.closure(&roots));
+    let clips: Vec<&str> = dota
+        .lines("model")
+        .filter_map(|l| l.field("anims"))
+        .flat_map(|a| a.split(','))
+        .collect();
     let mut rng = XorShift(0x9E37_79B9_7F4A_7C15);
     for bytes in &samples {
         let resource = Resource::parse(bytes).unwrap();
@@ -607,9 +614,9 @@ fn damaged_files_are_errors_not_panics() {
             let start = starts[rng.below(starts.len())];
             let at = (start + rng.below(256)).min(damaged.len() - 1);
             damaged[at] ^= 1 << rng.below(8);
-            parse_everything(&damaged);
+            parse_everything(&damaged, &clips);
             let cut = rng.below(bytes.len());
-            parse_everything(&bytes[..cut]);
+            parse_everything(&bytes[..cut], &clips);
         }
     }
     let tree_len = {

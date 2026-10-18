@@ -3,6 +3,7 @@
 //! and the user's picked files in a browser. Every parser is bounded: the input is an untrusted
 //! local file, and a malformed one is an [`Error`], never a panic or an unbounded allocation.
 
+mod anim;
 mod budget;
 mod bytes;
 mod error;
@@ -22,8 +23,9 @@ mod texture;
 mod vbib;
 mod vpk;
 
+pub use anim::{Clip, Keys, Track, read_clips};
 pub use error::{Error, Result};
-pub use export::{ExportedModel, ExportedTexture, export_model, read_from};
+pub use export::{ExportedClip, ExportedModel, ExportedTexture, export_model, read_from};
 pub use gltf::{GltfOptions, write_glb};
 #[cfg(any(unix, windows))]
 pub use locate::find_game_dir;

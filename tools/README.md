@@ -74,7 +74,10 @@ and are kept as `.mp3` (the stdlib cannot transcode them); playing them needs Be
   `cast1_shadowraze_a/b/c` (`ACT_DOTA_RAZE_1/2/3`). Pudge: `cast1` Meat Hook throw, `hook_end` while
   the hook returns, `cast2` Rot, `dismember` then the looping `dismember_channel`. Siege creeps have
   only idle/run/attack; they die by swapping in `creep.<side>.siege.destruction` (play `death` once).
-  Tower "attack" clips are single-frame poses.
+  Tower "attack" clips are single-frame poses. A clip lasts until its last keyframe: a run of equal
+  values keeps only its ends, so a clip that ends holding a pose stops where the pose is reached
+  (Pudge's hook throw has 87 frames at 30 fps but lasts 0.9 s). Root motion is baked into the root
+  bones; the client holds roots in place across the ground.
 - **Wearables.** Shadow Fiend's default head, shoulders and arms (and Pudge's seven default items) are separate skinned meshes. Spawn
   them alongside the hero and point their skin joints at the hero's joint entities with the same
   name, **ignoring case** (`root0_jnt` vs `Root0_JNT`); `verify_assets.py` checks every wearable joint
