@@ -1,0 +1,47 @@
+# cargo deny check: known vulnerabilities, licenses and where crates come from.
+# Part of the gate: `cargo deny check`.
+
+[graph]
+all-features = true
+
+[advisories]
+version = 2
+yanked = "deny"
+ignore = [
+    # bevy_image 0.19.1 still pulls ruzstd 0.8.3; dbota_assets uses 0.9.1, and the cache
+    # reader refuses supercompressed KTX2 before Bevy sees a file, so Bevy's zstd decodes
+    # only its own embedded tables.
+    { id = "RUSTSEC-2026-0344", reason = "bevy_image's ruzstd 0.8 reaches only embedded LUTs; cache KTX2 must be unsupercompressed" },
+    # Through winit's client-side decorations (sctk-adwaita); no maintained
+    # replacement upstream yet, and it parses only the system's own fonts.
+    { id = "RUSTSEC-2026-0192", reason = "unmaintained, no fix; reached only through winit decorations" },
+]
+
+[licenses]
+version = 2
+allow = [
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "CDLA-Permissive-2.0",
+    "ISC",
+    "CC0-1.0",
+    "MIT",
+    "MIT-0",
+    "MPL-2.0",
+    "Unicode-3.0",
+    "Zlib",
+]
+confidence-threshold = 0.93
+unused-allowed-license = "allow"
+
+[bans]
+multiple-versions = "allow"
+# The workspace's own crates depend on each other by path.
+wildcards = "allow"
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
