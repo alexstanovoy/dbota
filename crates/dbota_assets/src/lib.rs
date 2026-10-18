@@ -11,6 +11,7 @@ pub mod kv3;
 mod locate;
 mod ntro;
 mod resource;
+mod sound;
 mod source;
 mod texture;
 mod vpk;
@@ -19,6 +20,7 @@ pub use error::{Error, Result};
 #[cfg(any(unix, windows))]
 pub use locate::find_game_dir;
 pub use resource::{Block, ExternalRef, Resource};
+pub use sound::{Sound, SoundFormat};
 #[cfg(any(unix, windows))]
 pub use source::DirSource;
 pub use source::{Slice, SliceSource, Source};
