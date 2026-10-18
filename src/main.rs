@@ -22,6 +22,7 @@ mod dota_text;
 mod drill;
 mod effects;
 mod fog;
+mod fortified;
 mod framestats;
 mod glyph;
 mod heap;
@@ -325,7 +326,8 @@ fn main() -> AppExit {
             framestats::plugin,
             quality::plugin,
             heap::plugin,
-        ));
+        ))
+        .add_plugins(fortified::plugin);
     // GPU buffers of at most 128 MiB: a browser's WebGPU refuses ones over
     // 256 MiB, and Bevy's mesh slabs grow to 512.
     app.sub_app_mut(bevy::render::RenderApp).insert_resource(

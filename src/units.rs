@@ -473,7 +473,7 @@ const ANCIENT_HEIGHT: f32 = 480.0;
 const FOUNTAIN_HEIGHT: f32 = 120.0;
 
 /// The radius and height of a unit's stand-in, in world units.
-fn stand_in_size(kind: UnitKind, bound: f32) -> (f32, f32) {
+pub fn stand_in_size(kind: UnitKind, bound: f32) -> (f32, f32) {
     match kind {
         UnitKind::Hero => (40.0, 180.0),
         UnitKind::Tower => (bound * 0.7, TOWER_HEIGHT),

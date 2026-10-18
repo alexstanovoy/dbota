@@ -275,6 +275,10 @@ texture particle.ground_cracks_projected materials/particle/projected_groundcrac
 texture particle.fire materials/particle/fire_particle_10/fire_particle_10_low.vtex_c textures/particle/fire_particle_10_low.png
 texture particle.swoop materials/particle/swoop_03.vtex_c textures/particle/swoop_03.png
 texture particle.arc materials/particle/electrical_arc2/electrical_arc_white_2_05.vtex_c textures/particle/electrical_arc_white_2_05.png
+# Glyph of Fortification (particles/items_fx/glyph*.vpcf): the rings of a building's tube, the ring a creep stands in, the ring of its tube
+texture particle.glyph.tube materials/particle/particle_ring_wave_crisp_3.vtex_c textures/particle/particle_ring_wave_crisp_3.png
+texture particle.glyph.base materials/particle/particle_ring_wave_15.vtex_c textures/particle/particle_ring_wave_15.png
+texture particle.glyph.creep_tube materials/particle/particle_ring_wave.vtex_c textures/particle/particle_ring_wave.png
 
 # --- Item icons (88x64, a few narrower), every Dota item name in ids.txt
 texture icon.item.boots panorama/images/items/boots_png.vtex_c icons/items/boots.png
