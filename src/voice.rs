@@ -6,7 +6,7 @@
 
 use bevy::{audio::Volume, prelude::*};
 use bota_client_core::Phase;
-use bota_proto::Order;
+use bota_proto::{Order, Team};
 
 use crate::config::Settings;
 use crate::manifest::Manifest;
@@ -58,6 +58,8 @@ struct Voices {
     click: Lines,
     choose: Lines,
     begins: Lines,
+    /// "Radiant's / Dire's structures are fortified."
+    fortified: [Lines; 2],
     /// The horn at each side's ancient: Radiant's, then Dire's.
     horns: [Lines; 2],
     /// Daybreak's birds and rooster, and nightfall's howl.
@@ -83,7 +85,7 @@ struct Heard {
 pub fn plugin(app: &mut App) {
     app.init_resource::<Voices>()
         .add_systems(Startup, load)
-        .add_systems(Update, (answer, announce, herald, click));
+        .add_systems(Update, (answer, announce, fortified, herald, click));
 }
 
 fn load(mut voices: ResMut<Voices>, manifest: Res<Manifest>, server: Res<AssetServer>) {
@@ -101,6 +103,11 @@ fn load(mut voices: ResMut<Voices>, manifest: Res<Manifest>, server: Res<AssetSe
     voices.day = Lines::load(&manifest, &server, "sound.day");
     voices.night = Lines::load(&manifest, &server, "sound.night");
     for (i, side) in ["radiant", "dire"].into_iter().enumerate() {
+        voices.fortified[i] = Lines::load(
+            &manifest,
+            &server,
+            &format!("sound.announcer.fortified.{side}"),
+        );
         voices.horns[i] = Lines {
             sources: manifest
                 .sounds("sound.horn")
@@ -221,6 +228,40 @@ fn announce(
         heard.announced = true;
         if !silent {
             let line = voices.begins.take();
+            say(&mut commands, line, 0.9);
+        }
+    }
+}
+
+/// The announcer's line when a side uses its Glyph, heard by every seat and
+/// spectator as Dota's announcer says it to both teams.
+fn fortified(
+    mut commands: Commands,
+    session: NonSend<Session>,
+    mut voices: ResMut<Voices>,
+    settings: Res<Settings>,
+    args: Res<crate::Args>,
+    mut was: Local<Option<[bool; 2]>>,
+) {
+    let Some(view) = session.0.view() else {
+        return;
+    };
+    let now = [Team::Radiant, Team::Dire].map(|team| {
+        view.glyphs
+            .iter()
+            .any(|g| g.team == team && g.active_for > 0)
+    });
+    // Never for the first view: opening a replay mid-glyph announces nothing.
+    let before = was.replace(now);
+    let Some(before) = before else {
+        return;
+    };
+    if settings.muted || args.mute {
+        return;
+    }
+    for side in 0..2 {
+        if now[side] && !before[side] {
+            let line = voices.fortified[side].take();
             say(&mut commands, line, 0.9);
         }
     }

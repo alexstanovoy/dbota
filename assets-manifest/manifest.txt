@@ -505,6 +505,9 @@ sound sound.portal.hero_disappear sounds/ui/portal_disappear.vsnd_c sounds/ui/po
 sound sound.ui.click sounds/ui/panorama/panorama_generic_button_click_01.vsnd_c sounds/ui/panorama/panorama_generic_button_click_01.wav event=ui_generic_button_click
 sound sound.announcer.choose_hero sounds/vo/announcer/announcer_choose_hero.vsnd_c sounds/vo/announcer/announcer_choose_hero.mp3 event=announcer_announcer_choose_hero
 sound sound.announcer.battle_begins sounds/vo/announcer/announcer_battle_begin_01.vsnd_c sounds/vo/announcer/announcer_battle_begin_01.mp3 event=announcer_announcer_battle_begin_01
+# The Glyph's only sound: the announcer tells both sides which side's structures are fortified (subtitles: "Radiant's structures are fortified.")
+sound sound.announcer.fortified.radiant sounds/vo/announcer/announcer_fort_rad.vsnd_c sounds/vo/announcer/announcer_fort_rad.mp3 event=announcer_announcer_fort_rad
+sound sound.announcer.fortified.dire sounds/vo/announcer/announcer_fort_dire.vsnd_c sounds/vo/announcer/announcer_fort_dire.mp3 event=announcer_announcer_fort_dire
 sound sound.horn sounds/ambient/horn_radiant.vsnd_c sounds/ambient/horn_radiant.wav event=GameStart.RadiantAncient
 sound sound.horn sounds/ambient/horn_dire.vsnd_c sounds/ambient/horn_dire.wav event=GameStart.DireAncient
 sound sound.day sounds/ambient/morning.vsnd_c sounds/ambient/morning.wav event=General.Morning
