@@ -97,6 +97,17 @@ pub(crate) fn zstd(input: &[u8], out: &mut [u8]) -> Result<()> {
     }
 }
 
+/// Decompresses zstd frames of unknown decoded size, at most `max` bytes.
+pub(crate) fn zstd_to_vec(input: &[u8], max: usize) -> Result<Vec<u8>> {
+    let mut out = buffer(max)?;
+    let mut decoder = ruzstd::decoding::FrameDecoder::new();
+    let len = decoder
+        .decode_all(input, &mut out)
+        .map_err(|e| malformed("zstd", e.to_string()))?;
+    out.truncate(len);
+    Ok(out)
+}
+
 /// A string-table entry, charged to `budget`; ids out of range (-1 is the empty string) read
 /// as empty.
 pub(crate) fn string(strings: &[String], id: i32, budget: &mut Budget) -> Result<String> {

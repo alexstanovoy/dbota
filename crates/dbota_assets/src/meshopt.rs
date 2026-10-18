@@ -2,14 +2,6 @@
 //! buffers of its models compressed with them. The input is an untrusted local file: every read
 //! is checked, a malformed buffer is an [`Error`](crate::Error), and the output is bounded.
 
-#![cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "the model reader that calls the decoders comes next"
-    )
-)]
-
 use crate::error::{Result, malformed};
 
 #[cfg(test)]

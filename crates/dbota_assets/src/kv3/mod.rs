@@ -5,5 +5,6 @@ mod decode;
 mod legacy;
 mod value;
 
+pub(crate) use decode::zstd_to_vec;
 pub use decode::{decode, is_kv3};
 pub use value::{Document, Object, Value};
