@@ -152,6 +152,20 @@ fn gltf_summary(path: &Path) -> Vec<String> {
     lines
 }
 
+/// Whether two summary lines are one clip, ours at most two frames shorter: the exporter keys
+/// a few frames more where its matrix rounding breaks a run of equal values (the values are
+/// compared in `models.rs`).
+fn same_clip(ours: &str, theirs: &str) -> bool {
+    let clip = |line: &str| {
+        let (name, end) = line.strip_prefix("animation ")?.rsplit_once(' ')?;
+        Some((name.to_owned(), end.parse::<f64>().ok()?))
+    };
+    match (clip(ours), clip(theirs)) {
+        (Some((a, x)), Some((b, y))) => a == b && x <= y + 1e-3 && y - x < 0.07,
+        _ => false,
+    }
+}
+
 /// A PNG's width and height.
 fn png_size(path: &Path) -> (u32, u32) {
     let bytes = std::fs::read(path).unwrap();
@@ -197,7 +211,7 @@ fn differs(rel: &str, ours: &Path, theirs: &Path) -> Option<String> {
             let diff: Vec<String> = a
                 .iter()
                 .zip(&b)
-                .filter(|(x, y)| x != y)
+                .filter(|(x, y)| x != y && !same_clip(x, y))
                 .map(|(x, y)| format!("{x} vs {y}"))
                 .take(3)
                 .collect();

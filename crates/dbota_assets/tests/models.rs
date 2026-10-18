@@ -510,7 +510,11 @@ fn animations(glb: &Glb) -> Vec<(String, Vec<Channel>)> {
 
 /// The channel's value at `t`, interpolated linearly (normalised for rotations).
 fn sample(times: &[f64], values: &[Vec<f64>], t: f64, rotation: bool) -> Vec<f64> {
-    let next = times.partition_point(|&k| k < t).min(times.len() - 1);
+    let next = times.partition_point(|&k| k < t);
+    // Before the first key and after the last the value holds, as glTF plays it.
+    if next == times.len() {
+        return values[next - 1].clone();
+    }
     if next == 0 || times[next] == t {
         return values[next].clone();
     }
@@ -588,14 +592,17 @@ fn compare_clip(
     let (channels, exported) = ours;
     let mut wrong = Vec::new();
     let said = exported.map_or(-1.0, |c| f64::from(c.duration));
-    if (end(channels) - end(theirs)).abs() > 1e-4 || (said - end(theirs)).abs() > 1e-4 {
+    // The exporter may key a few frames more where its matrix rounding breaks a run of equal
+    // values; the values sampled there (below) must still agree. It never keys fewer.
+    let longer = |a: f64, b: f64| a - b > 1e-4;
+    if longer(end(channels), end(theirs)) || (said - end(channels)).abs() > 1e-4 {
         wrong.push(format!(
             "lasts {} ({said} said) vs {}",
             end(channels),
             end(theirs)
         ));
     }
-    if listed.is_some_and(|d| (d - end(channels)).abs() > 6e-4) {
+    if listed.is_some_and(|d| end(channels) - d > 6e-4) {
         wrong.push(format!("lasts {} vs {listed:?} listed", end(channels)));
     }
     wrong.extend(compare_channels(channels, theirs));

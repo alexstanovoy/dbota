@@ -122,6 +122,7 @@ def main():
     ap.add_argument("--install")
     ap.add_argument("--no-game", action="store_true")
     ap.add_argument("--keep", action="store_true", help="leave the imported copy in place")
+    ap.add_argument("--settle", type=int, default=5, help="seconds the client draws before the screenshot")
     args = ap.parse_args()
     install = find_install(args.install)
     folder = farm(install, HERE.parent.parent / "temp/smoke-install")
@@ -211,8 +212,10 @@ def main():
             seen = page.evaluate("() => globalThis.dbota_cache.reads.seen.size")
             print("the client read", reads["count"], "times,", seen, "cache files, last:", reads["last"][-3:])
             assert any(p.endswith((".png", ".mp3", ".wav")) for p in reads["last"]), reads
-            page.wait_for_timeout(5000)
-            page.screenshot(path=str(HERE.parent.parent / "temp/smoke.png"))
+            # The map's chunks are merged and uploaded frame by frame after they are read.
+            page.wait_for_timeout(args.settle * 1000)
+            # A software GPU draws the whole map slowly: a frame may take minutes.
+            page.screenshot(path=str(HERE.parent.parent / "temp/smoke.png"), timeout=600000)
 
         bad = [(m, u) for m, u, d in requests if not u.startswith(base) and not u.startswith("blob:") and not u.startswith("data:")]
         posts = [(m, u) for m, u, d in requests if m != "GET" or d]

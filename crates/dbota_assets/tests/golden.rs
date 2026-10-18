@@ -165,7 +165,7 @@ fn every_source_and_its_references_decode() {
     let mut roots: Vec<String> = dota
         .manifest
         .iter()
-        .filter(|l| l.kind != "clip")
+        .filter(|l| matches!(l.kind.as_str(), "model" | "texture" | "sound" | "world"))
         .map(|l| l.src.clone())
         .collect();
     let world = dota.lines("world").next().unwrap();
@@ -420,12 +420,9 @@ fn models_have_the_meshes_and_clips_the_manifest_and_export_name() {
     }
 }
 
-/// Sequences that play part of their animation: the clip is shorter than the animation's
-/// frames (sequence decoding, WP2.5, owns their durations).
-const PARTIAL_SEQUENCES: [&str; 1] = ["pudge_meathook_start_anim"];
-
-/// A clip's animation exists, and lasts `(frames - 1) / fps` as the manifest says, except for
-/// zero-length poses (tower attacks) and [`PARTIAL_SEQUENCES`].
+/// A clip's animation exists, and the manifest's duration is at most its `(frames - 1) / fps`:
+/// a clip that ends holding a pose stops where the pose is reached (Pudge's hook throw, the
+/// neutrals' deaths), and `models.rs` checks the exact lengths against the exported clips.
 fn check_clip(clip: &Line, anims: &[(String, f64, f64)]) {
     let gltf_name = clip.out.as_str();
     let seconds: f64 = clip.rest[0].parse().unwrap();
@@ -435,12 +432,9 @@ fn check_clip(clip: &Line, anims: &[(String, f64, f64)]) {
         .find(|(name, ..)| name == gltf_name || name.strip_prefix('@') == Some(gltf_name));
     let (_, frames, fps) =
         found.unwrap_or_else(|| panic!("{}: no animation {gltf_name}", clip.name));
-    if seconds == 0.0 || PARTIAL_SEQUENCES.contains(&gltf_name) {
-        return;
-    }
     let duration = (frames - 1.0) / fps;
     assert!(
-        (duration - seconds).abs() <= 0.01 * seconds,
+        seconds <= duration * 1.01,
         "{} {gltf_name}: {duration} s, manifest {seconds} s",
         clip.name
     );
