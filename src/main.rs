@@ -69,9 +69,15 @@ pub const CACHE_SOURCE: &str = "cache";
 
 /// dbota: watch or play a bota match with Dota's look.
 #[derive(Parser, Debug, Clone, Resource)]
-#[command(version, about)]
+#[command(
+    version,
+    about,
+    after_help = "BOTA_SEAT_KEY, in the environment only (an argument shows in process lists): the \
+64-hex-digit key of the seat a server with reserved seats holds for this client; with --spectate \
+the client watches through that seat's eyes."
+)]
 pub struct Args {
-    /// Where the server listens.
+    /// Where the server listens: `host:port` (TCP), `ws://...` or `wss://...`.
     #[arg(long, default_value = "127.0.0.1:4455")]
     pub addr: String,
     /// What the lobby shows.
@@ -80,16 +86,6 @@ pub struct Args {
     /// Watch instead of playing.
     #[arg(long)]
     pub spectate: bool,
-    /// The 64-hex-digit key of the seat a server with reserved seats holds for this client
-    /// (`bota_server --seat`). With `--spectate` the client watches through that seat's eyes.
-    /// Prefer the environment: arguments show in process lists.
-    #[arg(
-        long,
-        env = "BOTA_SEAT_KEY",
-        hide_env_values = true,
-        value_name = "KEY_HEX"
-    )]
-    pub seat_key: Option<String>,
     /// Play this replay file instead of connecting anywhere.
     #[arg(long, value_name = "FILE", conflicts_with_all = ["spectate"])]
     pub replay: Option<PathBuf>,

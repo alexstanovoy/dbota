@@ -33,30 +33,33 @@ Dota 2 install. Bots don't need it.
 
 ## Play
 
-A bot is any program that speaks bota's protocol: it takes a seat as a player does.
-
-Two people: start a server and connect two dbota clients (from another machine use
-`--addr <host>:4455`):
-
 ```sh
-../bota/target/release/bota_server --map 2 --players 2
+../bota/target/release/bota_server --map 2      # listens on 127.0.0.1:4455
 target/release/dbota --name alice
 target/release/dbota --name bob
 ```
 
-The match has a day and a night: by night the light turns to moonlight, units see less far, and the
-clock shows the sun or the moon.
+On the hero screen click a portrait, then Ready; the match starts once both seats are ready.
+Alone: add `--dummy-seat` to the server. A bot is any program that speaks bota's protocol.
 
-A server with reserved seats (`bota_server --seat KEY_HEX:NAME,...`) seats only the holder of a seat's
-key. Give dbota its key in the environment, which keeps it out of process lists:
-`BOTA_SEAT_KEY=<64 hex digits> target/release/dbota --addr 127.0.0.1:4455` (`--seat-key` takes it as an
-argument). With `--spectate` the key makes dbota watch through that seat's eyes, in its fog. A wrong key
-is refused and dbota exits with the reason.
+| Flag | Default | What it controls | Change it when |
+|---|---|---|---|
+| `--addr ADDR` | `127.0.0.1:4455` | the server: `host:port` (TCP), `ws://...` or `wss://...` | the server is elsewhere |
+| `--name NAME` | `player` | the name the lobby shows | |
+| `--spectate` | off | watch instead of playing | |
+| `--replay FILE`, `--pov SEAT`, `--follow SEAT` | none | play a replay; as one seat sees it; camera on one seat's hero | |
+| `--cache-dir DIR` | `$DBOTA_ASSETS`, else `~/.cache/dbota/v<N>` | the exported asset cache | |
+| `--config FILE` | `~/.config/dbota/client.conf` | the settings file | |
+| `--set NAME=VALUE` | none | one setting for this run, over the file's | |
+| `--window WxH` | `1600x900` | the window's starting size | |
+| `--no-vsync`, `--mute` | off | present without vsync; no sound | |
 
-Alone, for practice: `bota_server --map 2 --players 2 --dummy-seat` gives the other seat to a hero
-that never leaves its fountain.
-
-On the hero screen click a portrait, then click Ready. The game starts once both seats are ready.
+A server with reserved seats seats only the holder of a seat's key. dbota takes it from the
+environment only, never from an argument: `BOTA_SEAT_KEY=<64 hex digits> target/release/dbota`.
+With `--spectate` the key watches through that seat's eyes, in its fog. A refused client exits
+with the reason. Plain TCP to another machine is fine on your LAN, not safe across the
+internet (dbota says so on stderr); `wss://` trusts the public web's certificate authorities. `dbota --help` lists
+the debug options too.
 
 ## Controls
 

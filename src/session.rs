@@ -43,19 +43,33 @@ pub fn open(args: &Args) -> std::io::Result<Session> {
     connect(args)
 }
 
+/// The environment variable that carries the seat key: an argument would show
+/// in every process listing.
+#[cfg(not(target_arch = "wasm32"))]
+const SEAT_KEY_VAR: &str = "BOTA_SEAT_KEY";
+
 /// Joins the server the arguments name, as a player or a spectator.
 #[cfg(not(target_arch = "wasm32"))]
 fn connect(args: &Args) -> std::io::Result<Session> {
     use bota_client_core::{Net, Transport};
     use bota_proto::{ClientMsg, Role, SeatKey};
-    let key = args
-        .seat_key
-        .as_deref()
+    use std::io::{Error, ErrorKind};
+    if !stays_private(&args.addr) {
+        // Plain TCP is first-class (LAN, local play); the player is told what it means.
+        eprintln!(
+            "dbota: plain connection to {}: fine on your LAN, not safe across the internet; use \
+wss:// where the host has a certificate",
+            args.addr
+        );
+    }
+    let key = std::env::var(SEAT_KEY_VAR)
+        .ok()
+        .filter(|hex| !hex.is_empty())
         .map(|hex| {
             SeatKey::from_hex(hex.trim()).ok_or_else(|| {
-                std::io::Error::new(
-                    std::io::ErrorKind::InvalidInput,
-                    "a seat key is 64 hex digits",
+                Error::new(
+                    ErrorKind::InvalidInput,
+                    format!("{SEAT_KEY_VAR}: a seat key is 64 hex digits"),
                 )
             })
         })
@@ -68,6 +82,27 @@ fn connect(args: &Args) -> std::io::Result<Session> {
     };
     net.send(&ClientMsg::hello(role, args.name.as_str(), key))?;
     Ok(Session(Core::new(Source::Live(Box::new(net)))))
+}
+
+/// Whether what is sent to `addr` stays out of other hands: TLS (`wss://`),
+/// or a loopback host.
+#[cfg(not(target_arch = "wasm32"))]
+fn stays_private(addr: &str) -> bool {
+    if addr.starts_with("wss://") {
+        return true;
+    }
+    let rest = addr.split_once("://").map_or(addr, |(_, rest)| rest);
+    let authority = rest.split('/').next().unwrap_or_default();
+    let host = match authority.strip_prefix('[') {
+        Some(v6) => v6.split(']').next().unwrap_or_default(),
+        None => authority
+            .rsplit_once(':')
+            .map_or(authority, |(host, _)| host),
+    };
+    host.eq_ignore_ascii_case("localhost")
+        || host
+            .parse::<std::net::IpAddr>()
+            .is_ok_and(|ip| ip.is_loopback())
 }
 
 /// A browser has no sockets; live play there needs a link of its own.
