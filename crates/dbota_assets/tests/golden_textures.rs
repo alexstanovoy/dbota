@@ -12,7 +12,7 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-use dbota_assets::{DirSource, Encoding, PixelFormat, Texture, Vpk, find_game_dir};
+use dbota_assets::{DirSource, Encoding, Pack, PixelFormat, Texture, Vpk, find_game_dir};
 
 struct Install {
     src: DirSource,
@@ -500,23 +500,21 @@ fn packed_model_images_match_the_exported_ones() {
             assert_eq!(exported.len(), 4, "{}: size", png.display());
             continue;
         }
+        let packed = |pack: Pack| {
+            let mut pixels = rgba.clone();
+            pack.apply(&mut pixels);
+            pixels
+        };
         let ours: Vec<u8> = if orm_image {
-            rgba.as_chunks::<4>()
-                .0
-                .iter()
-                .flat_map(|p| [255, 255, p[2], 255])
-                .collect()
+            packed(Pack::Orm)
         } else if is_grey && !["_color_", "_normal_"].iter().any(|k| stem.contains(k)) {
             // The channel that is the image.
             let (name, best) = (0..4)
                 .map(|c| {
-                    let grey: Vec<u8> = rgba
-                        .as_chunks::<4>()
-                        .0
-                        .iter()
-                        .flat_map(|p| [p[c], p[c], p[c], 255])
-                        .collect();
-                    ("RGBA".chars().nth(c).unwrap(), grey)
+                    (
+                        "RGBA".chars().nth(c).unwrap(),
+                        packed(Pack::Channel(c as u8)),
+                    )
                 })
                 .min_by(|(_, a), (_, b)| {
                     distance(a, &exported)

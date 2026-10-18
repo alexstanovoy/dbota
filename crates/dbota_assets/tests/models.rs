@@ -4,7 +4,9 @@
 
 use std::path::{Path, PathBuf};
 
-use dbota_assets::{DirSource, ExportedTexture, Vpk, export_model, find_game_dir};
+use dbota_assets::{
+    DirSource, ExportedTexture, Texture, Vpk, export_model, find_game_dir, read_from,
+};
 use serde_json::Value;
 
 fn repo() -> &'static Path {
@@ -391,8 +393,8 @@ fn models_match_the_exported_ones() {
 /// DBOTA_ASSETS=/path/to/copy tools/visual_check.sh replay.brp
 /// ```
 ///
-/// The images are the cache's own; the occlusion/roughness/metallic ones, which the cache has
-/// under a hashed name, are linked under ours. Animated models wait for their clips.
+/// The images of whole textures are the cache's own; the packed ones (occlusion/roughness/
+/// metallic, emissive and specular masks) are made from the game's textures. Animated models wait for their clips.
 #[test]
 #[ignore = "needs a local Dota 2 install and its asset cache; writes only with DBOTA_MODEL_CACHE"]
 fn write_models_into_a_cache_copy() {
@@ -429,7 +431,7 @@ fn write_models_into_a_cache_copy() {
         .unwrap_or_else(|e| panic!("{source}: {e}"));
         let dir = copy.join(&out).parent().unwrap().to_owned();
         for texture in &model.textures {
-            link_cached_image(&dir, texture);
+            write_packed_image(&src, &pak, &dir, texture);
         }
         let target = copy.join(&out);
         let _ = std::fs::remove_file(&target); // a symlink into the original cache
@@ -439,25 +441,19 @@ fn write_models_into_a_cache_copy() {
     println!("{written} models written");
 }
 
-/// Makes `texture`'s image exist in `dir` for a model written over the cache copy: images of
-/// whole textures and of single channels are there under their names, the occlusion/
-/// roughness/metallic ones under a hashed name.
-fn link_cached_image(dir: &Path, texture: &ExportedTexture) {
-    if dir.join(&texture.uri).exists() {
-        return;
-    }
-    let stem = texture.uri.trim_end_matches("_orm.png");
-    let hashed = std::fs::read_dir(dir)
+/// Writes the image `texture` asks for into `dir`, made from its source texture. Images of
+/// whole textures are the cache's own.
+fn write_packed_image(src: &DirSource, pak: &Vpk, dir: &Path, texture: &ExportedTexture) {
+    let Some(pack) = texture.pack else { return };
+    let bytes = read_from(src, &[pak], &format!("{}_c", texture.vtex)).unwrap();
+    let source = Texture::parse(&bytes).unwrap();
+    let mut pixels = source.to_rgba8().unwrap();
+    pack.apply(&mut pixels);
+    let png = Texture::from_rgba8(source.width(), source.height(), pixels)
         .unwrap()
-        .map(|e| e.unwrap().path())
-        .find(|p| {
-            let name = p.file_name().unwrap().to_string_lossy();
-            name.starts_with(&format!("{stem}_orm_")) && name.ends_with(".png")
-        })
-        .unwrap_or_else(|| panic!("no cached image for {}", texture.uri));
-    std::os::unix::fs::symlink(
-        std::fs::canonicalize(hashed).unwrap(),
-        dir.join(&texture.uri),
-    )
-    .unwrap();
+        .to_png()
+        .unwrap();
+    let target = dir.join(&texture.uri);
+    let _ = std::fs::remove_file(&target); // a link into the original cache
+    std::fs::write(target, png).unwrap();
 }
