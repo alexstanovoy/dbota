@@ -85,7 +85,7 @@ the debug options too.
 | `Space` | centre the camera on your hero |
 | `Y` | lock the camera to your hero |
 | Arrows, screen edges | pan the camera (all four edges, the HUD bars included); mouse wheel zooms |
-| hold `Alt` | show attack, tower and ability ranges (they are never drawn otherwise) |
+| hold `Alt` | show attack, tower and ability ranges and the neutral camps' spawn boxes (they are never drawn otherwise) |
 | `M` | mute |
 | `F10` | settings: volume, damage numbers, your hero's voice answers, edge pan, picture quality; keys can be rebound by editing `~/.config/dbota/client.conf` |
 | `Esc` | cancel / close / leave |

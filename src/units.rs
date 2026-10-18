@@ -529,7 +529,7 @@ fn sync_units(
     for body in &shown {
         let u = body.unit;
         // Buildings are seen through the fog, as in Dota.
-        if hidden && p.fog.hides(u, body.x, body.y) {
+        if hidden && p.fog.hides(u, body.x, body.y) && !p.fog.shows_fogged(u) {
             continue;
         }
         seen.push(u.id);
@@ -745,8 +745,12 @@ fn on_model_ready(
             commands.entity(part).insert(RootLock(t.translation));
         }
     }
-    // Buildings stand in the fog too, and are drawn dulled there.
-    if units.get(unit).is_ok_and(|u| kind_def(u.kind).structure) {
+    // Buildings stand in the fog too, and are drawn dulled there, as are the
+    // neutrals a one-sided view of a full stream shows through it.
+    if units
+        .get(unit)
+        .is_ok_and(|u| kind_def(u.kind).structure || u.kind == UnitKind::CreepNeutral)
+    {
         for part in children.iter_descendants(ready.entity) {
             commands.entity(part).insert(crate::fog::Fogged);
         }

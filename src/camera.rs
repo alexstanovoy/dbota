@@ -69,7 +69,10 @@ fn spawn_camera(
 ) {
     let msaa = crate::quality::msaa_of(&settings);
     let cam = RtsCamera {
-        focus: Vec3::new(DOTA_ORIGIN, 128.0, -DOTA_ORIGIN),
+        focus: match args.look[..] {
+            [x, y] => Vec3::new(x, 128.0, -y),
+            _ => Vec3::new(DOTA_ORIGIN, 128.0, -DOTA_ORIGIN),
+        },
         distance: args
             .distance
             .unwrap_or(DEFAULT_DISTANCE)

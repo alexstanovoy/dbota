@@ -17,7 +17,7 @@ use std::sync::Arc;
 use bevy::tasks::{AsyncComputeTaskPool, Task, block_on, futures_lite::future::poll_once};
 use bota_client_core::SightGround;
 use bota_core::kind_def;
-use bota_proto::{Team, UnitView};
+use bota_proto::{Team, UnitKind, UnitView};
 
 use crate::session::Session;
 use crate::terrain::CELL;
@@ -58,6 +58,14 @@ impl FogGrid {
     /// is of the other side, no building and out of the light.
     pub fn hides(&self, unit: &UnitView, x: f32, y: f32) -> bool {
         Some(unit.team) != self.team && !kind_def(unit.kind).always_seen && !self.lit(x, y)
+    }
+
+    /// Whether a unit the fog hides is drawn anyway, dulled: the neutral
+    /// creeps, while the fog is of one side. Only a full view, which the
+    /// client fogs itself, ever gets here; a seat's view and a spectator
+    /// through a seat's eyes come fogged by the server and hold no such unit.
+    pub fn shows_fogged(&self, unit: &UnitView) -> bool {
+        self.team.is_some() && unit.kind == UnitKind::CreepNeutral
     }
 
     /// Whether a bota world point is seen; everything is before the fog is

@@ -6,7 +6,7 @@ use std::f32::consts::TAU;
 
 use bevy::{gizmos::config::GizmoConfigStore, prelude::*};
 use bota_client_core::{App as Core, unit_under_cursor};
-use bota_core::{raze_landing, rules};
+use bota_core::{CAMPS, raze_landing, rules};
 use bota_proto::{AbilityId, Aim, Order, Target, Team, UnitKind, UnitView};
 
 use crate::ability_art::{Telegraph, art_of};
@@ -106,6 +106,7 @@ fn draw(
     settings: Res<Settings>,
     keys: Res<ButtonInput<KeyCode>>,
     cursor: Res<CursorGround>,
+    args: Res<crate::Args>,
     mut rings: ResMut<RangeRings>,
 ) {
     let core = &session.0;
@@ -118,7 +119,7 @@ fn draw(
         index: &index,
         units: &units,
     };
-    let show_all = keys.pressed(settings.key(Action::ShowRanges));
+    let show_all = args.show_ranges || keys.pressed(settings.key(Action::ShowRanges));
     picks(&mut gizmos, &ctx);
     // Ranges and radii only while the show-ranges key is held, as Dota
     // keeps the ground clean.
@@ -130,12 +131,40 @@ fn draw(
             tower_rings(&mut gizmos, &ctx, me);
         }
         casts(&mut gizmos, &ctx);
+        camp_boxes(&mut gizmos, &ctx);
     }
     rings.0 = ranges;
     tower_shots(&mut gizmos, &ctx);
     aggro(&mut gizmos, &ctx);
     orders(&mut gizmos, &ctx);
     aim(&mut gizmos, &ctx, cursor.0);
+}
+
+/// Every neutral camp's spawn box, outlined on the ground as Dota shows
+/// them while Alt is held.
+fn camp_boxes(gizmos: &mut Gizmos, ctx: &Ctx<'_, '_, '_>) {
+    for camp in CAMPS {
+        let (min, max) = (camp.spawn_box.min, camp.spawn_box.max);
+        let (x0, y0, x1, y1) = (
+            min.x.to_f32(),
+            min.y.to_f32(),
+            max.x.to_f32(),
+            max.y.to_f32(),
+        );
+        // Each side is walked in steps so the line follows the ground.
+        let corners = [(x0, y0), (x1, y0), (x1, y1), (x0, y1), (x0, y0)];
+        let mut line = Vec::new();
+        for pair in corners.windows(2) {
+            let ((ax, ay), (bx, by)) = (pair[0], pair[1]);
+            let steps = (((bx - ax).abs() + (by - ay).abs()) / 48.0).ceil().max(1.0) as usize;
+            for i in 0..steps {
+                let t = i as f32 / steps as f32;
+                line.push(ctx.point(ax + (bx - ax) * t, ay + (by - ay) * t));
+            }
+        }
+        line.push(ctx.point(x0, y0));
+        gizmos.linestrip(line, GOLDEN.with_alpha(0.8));
+    }
 }
 
 /// Rings at the feet of one's own hero, of what is picked, and of what the

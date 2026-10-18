@@ -228,6 +228,7 @@ struct BarParams<'w, 's> {
     layer: Option<Res<'w, Layer>>,
     fonts: Res<'w, Fonts>,
     ground: Res<'w, Ground>,
+    fog: Res<'w, crate::fog::FogGrid>,
     ui_scale: Res<'w, UiScale>,
     camera: Single<'w, 's, (&'static Camera, &'static GlobalTransform)>,
 }
@@ -255,6 +256,10 @@ fn bars(
         let Some(live) = view.unit(unit.id).filter(|_| !dying) else {
             continue;
         };
+        // A neutral the fog hides is drawn dulled, with no bar over it.
+        if view.viewer.is_none() && p.fog.hides(live, unit.at.x, unit.at.y) {
+            continue;
+        }
         let head = Vec3::new(
             unit.at.x,
             p.ground.at(unit.at.x, unit.at.y) + bar_height(unit.kind),

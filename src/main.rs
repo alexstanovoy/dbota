@@ -131,6 +131,12 @@ pub struct Args {
     /// `ability:ID:LEVEL`.
     #[arg(long, value_name = "KIND:ID")]
     pub tip: Option<String>,
+    /// Debug: draw the ranges and camp boxes as if Alt were held.
+    #[arg(long)]
+    pub show_ranges: bool,
+    /// Debug: the camera's focus at the start, in bota world units.
+    #[arg(long, value_name = "X,Y", value_delimiter = ',')]
+    pub look: Vec<f32>,
     /// Debug: the camera's distance from the ground at the start.
     #[arg(long, value_name = "UNITS")]
     pub distance: Option<f32>,
