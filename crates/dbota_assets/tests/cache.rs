@@ -329,3 +329,88 @@ fn the_imported_cache_matches_the_exported_one() {
     );
     assert!(failed.is_empty(), "{}", failed.join("\n"));
 }
+
+/// `lighting.txt` of an import against the map's own light entities: every blended colour lies
+/// between the default weather's lights, the night is bluer than the day, and the turn is a few
+/// seconds. (The values are Valve's, so the test reads them from the install instead of
+/// holding them.)
+#[test]
+#[ignore = "needs a local Dota 2 install"]
+fn the_lighting_is_the_maps_blend_of_its_default_lights() {
+    use dbota_assets::{DirSource, EntityLump, Resource, Vpk, read_from};
+    let text = read(&imported().join("map/mid/lighting.txt"));
+    let mut colors = BTreeMap::new();
+    let mut turn = 0.0;
+    for line in text.lines().filter(|l| !l.starts_with('#')) {
+        let w: Vec<&str> = line.split_whitespace().collect();
+        match w.as_slice() {
+            [light, time, v @ ..] if v.len() == 4 => {
+                let v: Vec<f64> = v.iter().map(|n| n.parse().unwrap()).collect();
+                colors.insert((light.to_string(), time.to_string()), v);
+            }
+            ["turn", t] => turn = t.parse().unwrap(),
+            other => panic!("unexpected line {other:?}"),
+        }
+    }
+    assert_eq!(colors.len(), 4, "{text}");
+    assert!((1.0..=30.0).contains(&turn), "turn {turn}");
+
+    let src = DirSource::new(find_game_dir(None).expect("Dota 2 not found"));
+    let map = Vpk::open(&src, "maps/dota.vpk").unwrap();
+    let world = read_from(&src, &[&map], "maps/dota/world.vwrld_c").unwrap();
+    let world = Resource::parse(&world).unwrap().data().unwrap().unwrap();
+    let lump = world.get("m_entityLumps").unwrap().as_array().unwrap()[0]
+        .as_str()
+        .unwrap();
+    let bytes = read_from(&src, &[&map], &format!("{lump}_c")).unwrap();
+    let lump = EntityLump::read(&Resource::parse(&bytes).unwrap()).unwrap();
+    let defaults: Vec<_> = lump
+        .entities
+        .iter()
+        .filter(|e| {
+            e.get("classname").and_then(|c| c.as_str()) == Some("ent_dota_lightinfo")
+                && e.get("targetname")
+                    .and_then(|n| n.as_str())
+                    .is_some_and(|n| n.starts_with("[PR#]default_"))
+        })
+        .collect();
+    assert_eq!(defaults.len(), 4);
+    for (light, key, scale) in [
+        ("sun", "color", "light_scale"),
+        ("ambient", "ambient_color", "ambient_scale"),
+    ] {
+        for time in ["day", "night"] {
+            let ours = &colors[&(light.to_owned(), time.to_owned())];
+            for (channel, value) in ours.iter().enumerate().take(3) {
+                let of = |e: &&dbota_assets::kv3::Value| {
+                    e.get(&format!("{key}_{time}")).unwrap().as_array().unwrap()[channel]
+                        .as_f64()
+                        .unwrap()
+                };
+                let lo = defaults.iter().map(of).fold(f64::MAX, f64::min);
+                let hi = defaults.iter().map(of).fold(f64::MIN, f64::max);
+                assert!(
+                    (lo - 0.05..=hi + 0.05).contains(value),
+                    "{light} {time} channel {channel}: {value} outside {lo}..{hi}"
+                );
+            }
+            let scales: Vec<f64> = defaults
+                .iter()
+                .map(|e| e.get(&format!("{scale}_{time}")).unwrap().as_f64().unwrap())
+                .collect();
+            let (lo, hi) = (
+                scales.iter().copied().fold(f64::MAX, f64::min),
+                scales.iter().copied().fold(f64::MIN, f64::max),
+            );
+            assert!(
+                (lo - 0.01..=hi + 0.01).contains(&ours[3]),
+                "{light} {time} scale"
+            );
+        }
+        let blue = |time: &str| {
+            let c = &colors[&(light.to_owned(), time.to_owned())];
+            c[2] / c[0]
+        };
+        assert!(blue("night") > blue("day"), "{light}: night is not bluer");
+    }
+}
