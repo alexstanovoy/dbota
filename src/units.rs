@@ -301,7 +301,14 @@ fn model_name(unit: &UnitView, manifest: &Manifest) -> Option<String> {
         UnitKind::CreepRanged => format!("creep.{side}.ranged.model"),
         UnitKind::Tower => format!("tower.{side}.model"),
         UnitKind::Ancient => format!("ancient.{side}.model"),
-        UnitKind::Barracks => format!("barracks.{side}.melee.model"),
+        UnitKind::Barracks => {
+            let reach = if bota_core::is_ranged_barracks(unit.kind, unit.max_hp) {
+                "ranged"
+            } else {
+                "melee"
+            };
+            format!("barracks.{side}.{reach}.model")
+        }
         UnitKind::Fountain => format!("fountain.{side}.model"),
         UnitKind::Filler => format!("filler.{side}.model"),
         UnitKind::Courier => format!("courier.{side}.model"),
@@ -405,6 +412,7 @@ fn required_models(manifest: &Manifest) -> Vec<String> {
             "tower.{}.model",
             "ancient.{}.model",
             "barracks.{}.melee.model",
+            "barracks.{}.ranged.model",
             "fountain.{}.model",
             "filler.{}.model",
             "courier.{}.model",
