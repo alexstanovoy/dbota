@@ -44,4 +44,15 @@ impl EntityLump {
             .collect();
         Ok(Self { entities, children })
     }
+
+    /// The models the entities place (`models/.../x.vmdl`, without `_c`), each once, in entity
+    /// order: with the world nodes', what the world's textures come from.
+    pub fn models(&self) -> Vec<&str> {
+        let mut seen = std::collections::HashSet::new();
+        self.entities
+            .iter()
+            .filter_map(|e| e.get("model")?.as_str())
+            .filter(|m| !m.is_empty() && seen.insert(*m))
+            .collect()
+    }
 }

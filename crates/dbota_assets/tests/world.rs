@@ -2,6 +2,7 @@
 //! `tools/import_assets.sh` exported. Ignored by default, like `golden.rs`:
 //! `cargo test --release -p dbota_assets --test world -- --ignored`.
 
+use std::collections::{BTreeSet, HashSet};
 use std::path::{Path, PathBuf};
 
 use dbota_assets::{
@@ -93,4 +94,78 @@ fn trees_and_buildings_match_the_exported_ones() {
         &read(dir.join("buildings.txt")),
     )
     .unwrap();
+}
+
+/// The texture stems (`x_psd_1234abcd`) reachable from `roots` through external references
+/// (model → material → texture), read from `packages`.
+fn texture_closure(src: &DirSource, packages: &[&Vpk], roots: &[String]) -> BTreeSet<String> {
+    let mut seen: HashSet<String> = HashSet::new();
+    let mut stack: Vec<String> = roots.to_vec();
+    let mut textures = BTreeSet::new();
+    while let Some(path) = stack.pop() {
+        if !seen.insert(path.clone()) {
+            continue;
+        }
+        if let Some(stem) = path.strip_suffix(".vtex") {
+            textures.insert(stem.rsplit('/').next().unwrap().to_owned());
+            continue;
+        }
+        let Ok(bytes) = read_from(src, packages, &format!("{path}_c")) else {
+            continue;
+        };
+        let refs = Resource::parse(&bytes).unwrap().external_refs().unwrap();
+        stack.extend(refs.into_iter().map(|r| r.name));
+    }
+    textures
+}
+
+/// Every image of the exported world comes from a texture the world reaches: through its nodes'
+/// references, or through the models its entities place (shops, outposts, banners, lanterns...).
+#[test]
+#[ignore = "needs a local Dota 2 install and its asset cache"]
+fn world_images_come_from_its_nodes_and_entities() {
+    let src = DirSource::new(find_game_dir(None).expect("Dota 2 not found"));
+    let pak = Vpk::open(&src, "pak01_dir.vpk").unwrap();
+    let map = Vpk::open(&src, "maps/dota.vpk").unwrap();
+    let (source, out, _) = world_line();
+    let world = read_from(&src, &[&map], &source).unwrap();
+    let world = Resource::parse(&world).unwrap().data().unwrap().unwrap();
+    let nodes = world.get("m_worldNodes").unwrap().as_array().unwrap();
+    let mut roots: Vec<String> = nodes
+        .iter()
+        .map(|n| {
+            let prefix = n.get("m_worldNodePrefix").unwrap().as_str().unwrap();
+            format!("{}.vwnod", prefix.replace('\\', "/"))
+        })
+        .collect();
+    let nodes_only = texture_closure(&src, &[&map, &pak], &roots);
+    let lump = entities(&src, &map);
+    roots.extend(lump.models().iter().map(|m| (*m).to_owned()));
+    let all = texture_closure(&src, &[&map, &pak], &roots);
+    let dir = cache().join(&out).parent().unwrap().to_owned();
+    let mut missing = Vec::new();
+    let mut from_entities = 0;
+    for entry in std::fs::read_dir(&dir).unwrap() {
+        let name = entry.unwrap().file_name().into_string().unwrap();
+        let Some(stem) = name.strip_suffix(".png") else {
+            continue;
+        };
+        // Images Source2Viewer made from one: `<texture>_orm_<hash>`.
+        let stem = stem.split("_orm_").next().unwrap();
+        if !all.contains(stem) {
+            missing.push(name);
+        } else if !nodes_only.contains(stem) {
+            from_entities += 1;
+        }
+    }
+    println!(
+        "{} textures reached, {from_entities} images only through entities",
+        all.len()
+    );
+    assert!(
+        missing.is_empty(),
+        "{} images from no texture: {missing:?}",
+        missing.len()
+    );
+    assert!(from_entities > 0);
 }
