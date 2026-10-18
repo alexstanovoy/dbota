@@ -39,6 +39,17 @@ pub struct Model {
     pub clips: Vec<Clip>,
 }
 
+/// How one kind of unit is drawn: which model, at what size.
+#[derive(Clone, Debug, PartialEq)]
+pub struct UnitArt {
+    /// The unit's name in Dota's `npc_units.txt`.
+    pub unit: String,
+    /// The logical name of its model; absent when it is drawn as nothing.
+    pub model: Option<String>,
+    /// The unit's own `ModelScale`, when it differs from its model's.
+    pub scale: Option<f32>,
+}
+
 /// Everything the cache was exported with, and which of it is there.
 #[derive(Resource, Clone, Debug, Default)]
 pub struct Manifest {
@@ -50,6 +61,9 @@ pub struct Manifest {
     pub files: Vec<(String, String)>,
     /// The map file, when present.
     pub map: Option<String>,
+    /// How the units named by Dota are drawn (every `unit` line, whether or
+    /// not its model is in the cache).
+    pub units: Vec<UnitArt>,
     /// Our ids to Dota names: kind (`item`, `ability`, `hero`, `effect`), id,
     /// name (for an effect, the logical name of its icon).
     pub ids: Vec<(String, u16, String)>,
@@ -78,6 +92,16 @@ impl Manifest {
             match words.as_slice() {
                 ["model", logical, _, path, rest @ ..] if present(path) => {
                     manifest.models.push(model(logical, path, rest));
+                }
+                ["unit", unit, model, rest @ ..] => {
+                    manifest.units.push(UnitArt {
+                        unit: (*unit).to_string(),
+                        model: (*model != "none").then(|| (*model).to_string()),
+                        scale: rest
+                            .iter()
+                            .find_map(|w| w.strip_prefix("model_scale="))
+                            .and_then(|s| s.parse().ok()),
+                    });
                 }
                 ["clip", model, logical, name, duration, rest @ ..] => {
                     let point = rest
@@ -127,6 +151,11 @@ impl Manifest {
             })
             .collect();
         manifest
+    }
+
+    /// How the unit of a Dota name is drawn, if the manifest says.
+    pub fn unit_art(&self, unit: &str) -> Option<&UnitArt> {
+        self.units.iter().find(|a| a.unit == unit)
     }
 
     /// The model of a logical name, if its file is there.

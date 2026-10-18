@@ -966,7 +966,7 @@ fn readouts(
             Readout::PanelName => p
                 .and_then(|p| bota_core::hero_def(p.hero))
                 .map(|hero| hero.name.to_string())
-                .or(unit.map(|u| bota_core::unit_name(u.kind, u.team, u.max_hp).to_string()))
+                .or(unit.map(|u| crate::units::unit_name(u).to_string()))
                 .unwrap_or_default(),
             Readout::PanelLevel => unit
                 .filter(|u| u.level > 0)
@@ -1406,6 +1406,8 @@ fn dress(
         (Part::Icon, f) => {
             if let Some(mut image) = image {
                 let tint = match f {
+                    // An ability Dota draws no icon for (a neutral's upgrade).
+                    Some(f) if f.icon.is_none() => Color::NONE,
                     Some(f) if !f.look.learned => Color::srgb(0.35, 0.35, 0.35),
                     Some(_) => Color::WHITE,
                     None => Color::NONE,

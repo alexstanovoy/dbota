@@ -14,6 +14,8 @@ use crate::units::{Dying, ModelBank, ModelOf, Rig, Unit};
 
 /// Seconds a cast clip is stretched over at the least.
 const MIN_CAST_POINT: f32 = 0.05;
+/// The clip of a cast with no art of its own.
+const PLAIN_CAST: &str = "cast1";
 /// World units a second at which a run clip plays at its own pace.
 const RUN_PACE: f32 = 300.0;
 /// World units a second above which a unit counts as running.
@@ -193,6 +195,9 @@ fn choose(
 /// in seconds, from the latest order its seat is known to have given. A
 /// cast whose order is not known shows the first raze.
 fn cast_clip(core: &Core, u: &UnitView) -> (&'static str, f32) {
+    if u.neutral.is_some() {
+        return neutral_cast(u);
+    }
     let ability = crate::overlay::cast_ability(core, u);
     // A cast whose order is unknown shows the first raze.
     let id = ability.unwrap_or(AbilityId::RAZE_NEAR);
@@ -200,4 +205,23 @@ fn cast_clip(core: &Core, u: &UnitView) -> (&'static str, f32) {
     let point = core.cast_point_secs(u, id).unwrap_or(0.0);
     // A clip is stretched over the point; one of no length plays at its own pace.
     (name, point.max(MIN_CAST_POINT))
+}
+
+/// The clip and cast point of a neutral creep's cast. No seat orders a
+/// neutral, so the ability is the active one that went on cooldown last: the
+/// longest cooldown left.
+fn neutral_cast(u: &UnitView) -> (&'static str, f32) {
+    let ability = u
+        .abilities
+        .iter()
+        .filter(|a| !a.passive)
+        .max_by_key(|a| a.cooldown_left)
+        .map(|a| a.id);
+    let point = ability
+        .and_then(bota_core::ability_def)
+        .map_or(0, |def| def.point);
+    (
+        ability.map_or(PLAIN_CAST, |id| art_of(id).clip),
+        (point as f32 / 1000.0).max(MIN_CAST_POINT),
+    )
 }

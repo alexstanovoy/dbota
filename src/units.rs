@@ -12,12 +12,12 @@ use bevy::{
     world_serialization::WorldInstanceReady,
 };
 use bota_client_core::bodies;
-use bota_core::kind_def;
+use bota_core::{NEUTRALS, NeutralKind, kind_def};
 use bota_proto::{EntityId, Team, UnitKind, UnitView};
 
 use crate::coords::sim_facing_to_rotation;
 use crate::fog::FogGrid;
-use crate::manifest::{Manifest, Model, load_unit_model};
+use crate::manifest::{Manifest, Model, UnitArt, load_unit_model};
 use crate::map::{DOTA_ORIGIN, Ground, UNITS_PER_METRE};
 use crate::session::Session;
 
@@ -189,28 +189,40 @@ fn load_models(mut bank: ResMut<ModelBank>, server: Res<AssetServer>, manifest: 
             }
         }
     }
-    for model in manifest.models.iter().filter(|m| m.attach.is_none()) {
-        if model.logical.starts_with("tree.") {
-            continue;
-        }
-        let wearables = manifest
-            .models
-            .iter()
-            .filter(|w| w.attach.as_deref() == Some(model.logical.as_str()))
-            .map(|w| load_unit_model(&server, GltfAssetLabel::Scene(0).from_asset(w.path.clone())))
-            .collect();
-        bank.0.push(BankModel {
-            model: model.clone(),
-            gltf: load_unit_model(&server, model.path.clone()),
-            scene: load_unit_model(
-                &server,
-                GltfAssetLabel::Scene(0).from_asset(model.path.clone()),
-            ),
-            wearables,
-            clips: Vec::new(),
-            graph: None,
-            loaded: false,
-        });
+    // Neutral models load when their first unit comes into view: a match
+    // shows a few of the forty-odd kinds at a time.
+    for model in manifest
+        .models
+        .iter()
+        .filter(|m| m.attach.is_none() && !LAZY_MODELS.iter().any(|p| m.logical.starts_with(p)))
+    {
+        bank.0.push(bank_entry(&server, &manifest, model));
+    }
+}
+
+/// Models loaded when a unit first needs them rather than at start, by
+/// logical-name prefix; trees are not units and load elsewhere.
+const LAZY_MODELS: [&str; 2] = ["tree.", "neutral."];
+
+/// A model of the manifest, its files asked of the asset server.
+fn bank_entry(server: &AssetServer, manifest: &Manifest, model: &Model) -> BankModel {
+    let wearables = manifest
+        .models
+        .iter()
+        .filter(|w| w.attach.as_deref() == Some(model.logical.as_str()))
+        .map(|w| load_unit_model(server, GltfAssetLabel::Scene(0).from_asset(w.path.clone())))
+        .collect();
+    BankModel {
+        model: model.clone(),
+        gltf: load_unit_model(server, model.path.clone()),
+        scene: load_unit_model(
+            server,
+            GltfAssetLabel::Scene(0).from_asset(model.path.clone()),
+        ),
+        wearables,
+        clips: Vec::new(),
+        graph: None,
+        loaded: false,
     }
 }
 
@@ -286,8 +298,26 @@ fn build_graphs(
     }
 }
 
+/// How the manifest says a neutral creep is drawn.
+fn neutral_art<'a>(unit: &UnitView, manifest: &'a Manifest) -> Option<&'a UnitArt> {
+    let kind = NeutralKind::of(unit.neutral?)?;
+    manifest.unit_art(kind.neutral().unit)
+}
+
+/// What a unit is called: a neutral creep by its own name, anything else by
+/// its kind's.
+pub fn unit_name(unit: &UnitView) -> &'static str {
+    match unit.neutral.and_then(NeutralKind::of) {
+        Some(kind) => kind.neutral().name,
+        None => bota_core::unit_name(unit.kind, unit.team, unit.max_hp),
+    }
+}
+
 /// The logical name of the model a unit is drawn with.
 fn model_name(unit: &UnitView, manifest: &Manifest) -> Option<String> {
+    if unit.kind == UnitKind::CreepNeutral {
+        return neutral_art(unit, manifest)?.model.clone();
+    }
     let side = match unit.team {
         Team::Radiant => "radiant",
         Team::Dire => "dire",
@@ -420,6 +450,12 @@ fn required_models(manifest: &Manifest) -> Vec<String> {
             names.push(kind.replace("{}", side));
         }
     }
+    for neutral in &NEUTRALS {
+        match manifest.unit_art(neutral.unit) {
+            Some(art) => names.extend(art.model.clone()),
+            None => names.push(format!("{} (no unit line)", neutral.unit)),
+        }
+    }
     names
 }
 
@@ -452,13 +488,27 @@ fn stand_in_size(kind: UnitKind, bound: f32) -> (f32, f32) {
 struct SyncParams<'w, 's> {
     commands: Commands<'w, 's>,
     index: ResMut<'w, UnitIndex>,
-    bank: Res<'w, ModelBank>,
+    bank: ResMut<'w, ModelBank>,
+    server: Res<'w, AssetServer>,
     manifest: Res<'w, Manifest>,
     yaws: Res<'w, BuildingYaws>,
     stand_ins: Option<Res<'w, StandIns>>,
     ground: Res<'w, Ground>,
     fog: Res<'w, FogGrid>,
     time: Res<'w, Time>,
+}
+
+impl SyncParams<'_, '_> {
+    /// Starts loading a model the bank holds only once it is wanted.
+    fn ensure_model(&mut self, name: &str) {
+        if self.bank.0.iter().any(|m| m.model.logical == name) {
+            return;
+        }
+        if let Some(model) = self.manifest.model(name) {
+            let entry = bank_entry(&self.server, &self.manifest, model);
+            self.bank.0.push(entry);
+        }
+    }
 }
 
 /// Spawns what came into view, moves what stays, and lets go of what left:
@@ -499,7 +549,11 @@ fn sync_units(
             }
             None => {
                 // Not before its model has loaded whole, wearables and all.
-                let waiting = model_name(u, &p.manifest)
+                let name = model_name(u, &p.manifest);
+                if let Some(name) = &name {
+                    p.ensure_model(name);
+                }
+                let waiting = name
                     .and_then(|name| p.bank.0.iter().find(|m| m.model.logical == name))
                     .is_some_and(|m| !m.loaded || m.graph.is_none());
                 if waiting {
@@ -573,7 +627,10 @@ fn spawn_unit(p: &mut SyncParams, u: &UnitView, at: Vec2, facing: f32, place: Ve
     match model {
         Some(index) => {
             let entry = &p.bank.0[index];
-            let scale = Transform::from_scale(Vec3::splat(UNITS_PER_METRE * entry.model.scale));
+            let size = neutral_art(u, &p.manifest)
+                .and_then(|art| art.scale)
+                .unwrap_or(entry.model.scale);
+            let scale = Transform::from_scale(Vec3::splat(UNITS_PER_METRE * size));
             let scene = p
                 .commands
                 .spawn((WorldAssetRoot(entry.scene.clone()), scale, ChildOf(pivot)))
@@ -599,6 +656,8 @@ fn spawn_unit(p: &mut SyncParams, u: &UnitView, at: Vec2, facing: f32, place: Ve
                     );
             }
         }
+        // A unit the manifest draws as nothing (a bare effect in Dota).
+        None if neutral_art(u, &p.manifest).is_some_and(|art| art.model.is_none()) => {}
         None => spawn_stand_in(p, u, pivot),
     }
     root

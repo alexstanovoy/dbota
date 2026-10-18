@@ -39,13 +39,14 @@ malformed output.
 | `verify_assets.py` | checks glTF meshes/skins/clips/textures, wearable joints, PNG sizes, WAV/MP3 format |
 | `inspect_gltf.py` | prints a model's meshes, skins and animations (`--json` for machines) |
 
-## What the cache holds (556 MB per `v<N>` folder, plus 124 MB of the CLI shared by all)
+## What the cache holds (686 MB per `v<N>` folder, plus 124 MB of the CLI shared by all)
 
 | path | content | size |
 | --- | --- | --- |
 | `models/hero/nevermore/` | Shadow Fiend, 17 clips, plus `nevermore_{head,shoulders,arms}/` default wearables | 16 MB |
 | `models/hero/pudge/` | Pudge, 18 clips, plus `pudge_{weapon,back,offhand,shoulder,arms,head,belt}/` default wearables | 4 MB |
 | `models/creep/` | Radiant/Dire melee, ranged, flagbearer (6 clips each); siege (3 clips) and its `*_destruction` break-apart model | 41 MB |
+| `models/neutral/` | the 44 models of the 47 neutral creep kinds (golems and some others share one), each with idle, run, attack, death and, where the model has them, a second attack, stun and a cast pose | 126 MB |
 | `models/tower/` | Radiant (`radiant_tower002` + base) and Dire (`dire_tower002`) tier-1 towers | 4 MB |
 | `models/tree/` | the 9 tree models the map uses around mid (standing mesh + stump) | 8 MB |
 | `models/building/` | ancients, melee/ranged barracks (static, plus `*_destruction` collapse models), fountains | 73 MB |
@@ -78,6 +79,10 @@ and are kept as `.mp3` (the stdlib cannot transcode them); playing them needs Be
   values keeps only its ends, so a clip that ends holding a pose stops where the pose is reached
   (Pudge's hook throw has 87 frames at 30 fps but lasts 0.9 s). Root motion is baked into the root
   bones; the client holds roots in place across the ground.
+- **Neutral creeps.** One `model` block per model (`neutral.<name>.model`) and one `unit <npc_units.txt name>
+  <model> model_scale=<ModelScale>` line per unit that wears it: the client finds a neutral's line by the
+  game's unit name. `point=` is the unit's `AttackAnimationPoint`. `unit <name> none` draws nothing (the
+  Wildwing's Tornado is an attachment model without a mesh). Models load when their first unit comes into view.
 - **Wearables.** Shadow Fiend's default head, shoulders and arms (and Pudge's seven default items) are separate skinned meshes. Spawn
   them alongside the hero and point their skin joints at the hero's joint entities with the same
   name, **ignoring case** (`root0_jnt` vs `Root0_JNT`); `verify_assets.py` checks every wearable joint

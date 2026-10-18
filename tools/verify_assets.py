@@ -113,10 +113,15 @@ def main() -> None:
     manifest, cache = Path(sys.argv[1]), Path(sys.argv[2])
     entries = parse_manifest(manifest)
     clips = [fields for kind, fields, _ in entries if kind == "clip"]
-    outputs = {fields[0]: cache / fields[2] for kind, fields, _ in entries if kind != "clip"}
+    outputs = {fields[0]: cache / fields[2] for kind, fields, _ in entries if kind not in ("clip", "unit")}
     failures = 0
     for kind, fields, keys in entries:
         if kind == "clip":
+            continue
+        if kind == "unit":
+            if fields[1] != "none" and fields[1] not in outputs:
+                failures += 1
+                print(f"FAIL {fields[0]:44} no model {fields[1]}")
             continue
         try:
             detail = check(kind, fields, keys, clips, outputs, cache)
