@@ -188,11 +188,20 @@ fn kv3_that_cannot_hold_what_it_claims_is_refused_before_allocating() {
         0x46, 0x1A, 0x79, 0x95, 0xBC, 0x95, 0x6C, 0x4F, 0xA7, 0x0B, 0x05, 0xBC, 0xA1, 0xB7, 0xDF,
         0xD2,
     ];
+    let mut docs = Vec::new();
     for encoding in [LZ4, BLOCK_COMPRESSED] {
         let mut doc = b"VKV\x03".to_vec();
         doc.extend_from_slice(&encoding);
         doc.extend_from_slice(&[0; 16]);
         doc.extend(words(&[200 << 20, 0, 0]));
+        docs.push(doc);
+    }
+    // Version 2, zstd: 200 MiB of buffer from 12 bytes of frame.
+    let mut zstd = b"\x023VK".to_vec();
+    zstd.extend_from_slice(&[0; 16]);
+    zstd.extend(words(&[2, 0, 0, 0, 0, 0, 0, 200 << 20, 12, 0, 0, 0, 0, 0]));
+    docs.push(zstd);
+    for doc in docs {
         let err = kv3::decode(&doc).unwrap_err().to_string();
         assert!(err.contains("cannot expand"), "{err}");
     }

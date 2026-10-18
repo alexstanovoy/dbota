@@ -43,6 +43,9 @@ pub(crate) mod node {
 const MAX_BUFFER: usize = 256 << 20;
 /// LZ4 expands a byte at most 255 times.
 pub(crate) const LZ4_RATIO: usize = 255;
+/// A zstd block regenerates 128 KiB at most and takes 4 bytes at least (its header and one byte
+/// repeated).
+const ZSTD_RATIO: usize = (128 << 10) / 4;
 
 /// Whether `bytes` start with a binary KV3 signature this crate reads.
 pub fn is_kv3(bytes: &[u8]) -> bool {
@@ -94,11 +97,19 @@ pub(crate) fn lz4(input: &[u8], len: usize) -> Result<Vec<u8>> {
     }
 }
 
-/// Decompresses zstd frames that must fill `out` exactly.
-pub(crate) fn zstd(input: &[u8], out: &mut [u8]) -> Result<()> {
+/// Zstd frames that decompress to exactly `len` bytes; a length the input cannot reach is
+/// refused before anything is allocated.
+pub(crate) fn zstd(input: &[u8], len: usize) -> Result<Vec<u8>> {
+    if len / ZSTD_RATIO > input.len() {
+        return Err(malformed(
+            "KV3 zstd",
+            format!("{} bytes cannot expand to {len}", input.len()),
+        ));
+    }
+    let mut out = buffer(len)?;
     let mut decoder = ruzstd::decoding::FrameDecoder::new();
-    match decoder.decode_all(input, out) {
-        Ok(n) if n == out.len() => Ok(()),
+    match decoder.decode_all(input, &mut out) {
+        Ok(n) if n == out.len() => Ok(out),
         Ok(n) => Err(malformed(
             "KV3 zstd",
             format!("{n} bytes, expected {}", out.len()),

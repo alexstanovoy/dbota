@@ -181,8 +181,7 @@ impl Header {
 fn inflate_buffer1(h: &Header, c: &mut Cursor) -> Result<(Vec<u8>, Option<Vec<u8>>)> {
     if h.version < 5 && h.compression == Compression::Zstd && h.blobs > 0 {
         let (len, compressed) = h.buffer1;
-        let mut out = buffer(len.saturating_add(h.blobs_len))?;
-        zstd(c.take(compressed)?, &mut out)?;
+        let mut out = zstd(c.take(compressed)?, len.saturating_add(h.blobs_len))?;
         let blobs = out.split_off(len);
         return Ok((out, Some(blobs)));
     }
@@ -194,11 +193,7 @@ fn inflate(h: &Header, c: &mut Cursor, (len, compressed): (usize, usize)) -> Res
     match h.compression {
         Compression::None => Ok(c.take(len)?.to_vec()),
         Compression::Lz4 => lz4(c.take(compressed)?, len),
-        Compression::Zstd => {
-            let mut out = buffer(len)?;
-            zstd(c.take(compressed)?, &mut out)?;
-            Ok(out)
-        }
+        Compression::Zstd => zstd(c.take(compressed)?, len),
     }
 }
 
@@ -211,9 +206,7 @@ fn inflate_blobs(h: &Header, c: &mut Cursor, layout: &mut Layout) -> Result<Vec<
                 .compressed_total
                 .checked_sub(h.buffer1.1 + h.buffer2.1)
                 .ok_or_else(|| malformed("KV3", "blob sizes exceed the total"))?;
-            let mut out = buffer(h.blobs_len)?;
-            zstd(c.take(compressed)?, &mut out)?;
-            Ok(out)
+            zstd(c.take(compressed)?, h.blobs_len)
         }
         Compression::Lz4 => {
             if h.blobs_len / LZ4_RATIO > c.remaining() {
