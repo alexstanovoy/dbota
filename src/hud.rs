@@ -966,7 +966,7 @@ fn readouts(
             Readout::PanelName => p
                 .and_then(|p| bota_core::hero_def(p.hero))
                 .map(|hero| hero.name.to_string())
-                .or(unit.map(|u| bota_core::kind_def(u.kind).name.to_string()))
+                .or(unit.map(|u| bota_core::unit_name(u.kind, u.team, u.max_hp).to_string()))
                 .unwrap_or_default(),
             Readout::PanelLevel => unit
                 .filter(|u| u.level > 0)
