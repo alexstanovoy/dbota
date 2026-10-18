@@ -86,6 +86,20 @@ struct Span {
     width: usize,
 }
 
+impl Span {
+    /// The span's bytes, if the geometry file holds them all.
+    fn bytes<'a>(&self, bin: &'a [u8]) -> Option<&'a [u8]> {
+        let len = self.count.checked_mul(self.width)?;
+        bin.get(self.start..self.start.checked_add(len)?)
+    }
+}
+
+/// Indices and vertices read from the geometry at most, over all its
+/// pieces: the map's are 19 and 6 million, and a piece may be placed by
+/// any number of nodes.
+const MAX_INDICES: usize = 1 << 26;
+const MAX_VERTICES: usize = 1 << 24;
+
 /// One triangle list to read: where its indices and attributes lie, where
 /// it stands, what it draws as, and the chunk it is merged in.
 struct Job {
@@ -266,16 +280,8 @@ fn jobs(doc: &Value, materials: &Materials) -> Vec<Job> {
     let root = map_transform().compute_affine()
         * Transform::from_rotation(Quat::from_xyzw(0.0, 1.0, 0.0, 0.0)).compute_affine();
     let empty = Vec::new();
-    let names: [(&str, MeshVertexAttribute); 7] = [
-        ("POSITION", Mesh::ATTRIBUTE_POSITION),
-        ("NORMAL", Mesh::ATTRIBUTE_NORMAL),
-        ("TANGENT", Mesh::ATTRIBUTE_TANGENT),
-        ("TEXCOORD_0", Mesh::ATTRIBUTE_UV_0),
-        ("_TEXCOORD_1", ATTRIBUTE_BLEND_WEIGHTS),
-        ("_TEXCOORD_2", ATTRIBUTE_BLEND_ALPHAS),
-        ("_TEXCOORD_3", ATTRIBUTE_PAINTED_TINT),
-    ];
     let mut jobs = Vec::new();
+    let (mut indices_read, mut vertices_read) = (0usize, 0usize);
     for node in doc["nodes"].as_array().unwrap_or(&empty) {
         let Some(mesh) = node["mesh"].as_u64().map(|m| &doc["meshes"][m as usize]) else {
             continue;
@@ -297,13 +303,17 @@ fn jobs(doc: &Value, materials: &Materials) -> Vec<Job> {
             let Some(indices) = span(doc, &primitive["indices"]) else {
                 continue;
             };
-            let attributes = names
+            let attributes = attributes(doc, primitive);
+            let vertices = attributes
                 .iter()
-                .filter_map(|(name, attribute)| {
-                    let span = span(doc, &primitive["attributes"][*name])?;
-                    (span.component == 5126).then_some((*attribute, span))
-                })
-                .collect();
+                .find(|(a, _)| a.id == Mesh::ATTRIBUTE_POSITION.id)
+                .map_or(0, |(_, span)| span.count);
+            indices_read = indices_read.saturating_add(indices.count);
+            vertices_read = vertices_read.saturating_add(vertices);
+            if indices_read > MAX_INDICES || vertices_read > MAX_VERTICES {
+                warn!("the map file places more geometry than a map has; the rest is left out");
+                return jobs;
+            }
             jobs.push(Job {
                 indices,
                 attributes,
@@ -314,6 +324,26 @@ fn jobs(doc: &Value, materials: &Materials) -> Vec<Job> {
         }
     }
     jobs
+}
+
+/// The vertex attributes of a primitive the map draws, as float vectors.
+fn attributes(doc: &Value, primitive: &Value) -> Vec<(MeshVertexAttribute, Span)> {
+    let names: [(&str, MeshVertexAttribute); 7] = [
+        ("POSITION", Mesh::ATTRIBUTE_POSITION),
+        ("NORMAL", Mesh::ATTRIBUTE_NORMAL),
+        ("TANGENT", Mesh::ATTRIBUTE_TANGENT),
+        ("TEXCOORD_0", Mesh::ATTRIBUTE_UV_0),
+        ("_TEXCOORD_1", ATTRIBUTE_BLEND_WEIGHTS),
+        ("_TEXCOORD_2", ATTRIBUTE_BLEND_ALPHAS),
+        ("_TEXCOORD_3", ATTRIBUTE_PAINTED_TINT),
+    ];
+    names
+        .iter()
+        .filter_map(|(name, attribute)| {
+            let span = span(doc, &primitive["attributes"][*name])?;
+            (span.component == 5126).then_some((*attribute, span))
+        })
+        .collect()
 }
 
 /// The pieces of a run of jobs, read on every core.
@@ -431,10 +461,13 @@ fn span(doc: &Value, index: &Value) -> Option<Span> {
     {
         return None;
     }
+    let start = view["byteOffset"]
+        .as_u64()
+        .unwrap_or(0)
+        .checked_add(acc["byteOffset"].as_u64().unwrap_or(0))?;
     Some(Span {
-        start: view["byteOffset"].as_u64().unwrap_or(0) as usize
-            + acc["byteOffset"].as_u64().unwrap_or(0) as usize,
-        count: acc["count"].as_u64()? as usize,
+        start: usize::try_from(start).ok()?,
+        count: usize::try_from(acc["count"].as_u64()?).ok()?,
         component,
         width,
     })
@@ -443,8 +476,7 @@ fn span(doc: &Value, index: &Value) -> Option<Span> {
 /// A triangle list read from the geometry, cut down to the vertices its
 /// indices use, in the order they are first used.
 fn read_primitive(job: &Job, bin: &[u8]) -> Option<Mesh> {
-    let at = |span: &Span| bin.get(span.start..span.start + span.count * span.width);
-    let raw = at(&job.indices)?;
+    let raw = job.indices.bytes(bin)?;
     let index = |i: usize| -> u32 {
         match job.indices.component {
             5121 => u32::from(raw[i]),
@@ -452,13 +484,14 @@ fn read_primitive(job: &Job, bin: &[u8]) -> Option<Mesh> {
             _ => u32::from_le_bytes([raw[4 * i], raw[4 * i + 1], raw[4 * i + 2], raw[4 * i + 3]]),
         }
     };
-    let vertices = job
+    let positions = job
         .attributes
         .iter()
         .find(|(a, _)| a.id == Mesh::ATTRIBUTE_POSITION.id)?
-        .1
-        .count;
-    let mut remap = vec![u32::MAX; vertices];
+        .1;
+    // The count is the file's word: it sizes nothing the file does not hold.
+    positions.bytes(bin)?;
+    let mut remap = vec![u32::MAX; positions.count];
     let mut kept: Vec<u32> = Vec::new();
     let mut indices = Vec::with_capacity(job.indices.count);
     for i in 0..job.indices.count {
@@ -474,7 +507,7 @@ fn read_primitive(job: &Job, bin: &[u8]) -> Option<Mesh> {
         RenderAssetUsages::default(),
     );
     for (attribute, span) in &job.attributes {
-        let bytes = at(span)?;
+        let bytes = span.bytes(bin)?;
         let values = match attribute.format {
             VertexFormat::Float32x2 => VertexAttributeValues::Float32x2(gather(bytes, &kept)?),
             VertexFormat::Float32x3 => VertexAttributeValues::Float32x3(gather(bytes, &kept)?),
@@ -615,5 +648,41 @@ fn standard_material(
         reflectance: specular["specularFactor"].as_f64().unwrap_or(1.0) as f32 * 0.5,
         specular_tint: tint.map_or(Color::WHITE, |t| Color::linear_rgb(t[0], t[1], t[2])),
         ..default()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn job(indices: Span, positions: Span) -> Job {
+        Job {
+            indices,
+            attributes: vec![(Mesh::ATTRIBUTE_POSITION, positions)],
+            global: GlobalTransform::IDENTITY,
+            kind: Kind::Skip,
+            chunk: (0, 0),
+        }
+    }
+
+    /// A map in the cache is a file like any other: counts it does not hold
+    /// once sized a vertex table of terabytes (an abort) or overflowed
+    /// working out where the indices end.
+    #[test]
+    fn a_piece_counting_more_than_the_geometry_holds_is_skipped() {
+        let bin = vec![0u8; 64];
+        let span = |start, count, component, width| Span {
+            start,
+            count,
+            component,
+            width,
+        };
+        let three = span(0, 3, 5125, 4);
+        let four_vertices = span(0, 4, 5126, 12);
+        assert!(read_primitive(&job(three, four_vertices), &bin).is_some());
+        let trillion_vertices = span(0, 1 << 40, 5126, 12);
+        assert!(read_primitive(&job(three, trillion_vertices), &bin).is_none());
+        let wrapping = span(8, usize::MAX / 2, 5125, 4);
+        assert!(read_primitive(&job(wrapping, four_vertices), &bin).is_none());
     }
 }

@@ -503,8 +503,10 @@ impl LayerMeans {
     /// The mean linear colour of a Dota texture path's exported PNG; a
     /// middling grey when it cannot be read.
     fn of(&mut self, vtex: &str) -> [f32; 3] {
+        // A name of the map file must not climb out of the folder, on
+        // Windows either.
         let name = vtex
-            .rsplit('/')
+            .rsplit(['/', '\\'])
             .next()
             .unwrap_or(vtex)
             .trim_end_matches(".vtex");

@@ -52,12 +52,14 @@ struct InFlight {
 pub struct DecodeBudget(Arc<Mutex<InFlight>>);
 
 impl DecodeBudget {
-    /// Resolves once a texture of `bytes` decoded fits, and counts it.
+    /// Resolves once a texture of `bytes` decoded fits, and counts it. One
+    /// larger than the whole budget goes alone, so it counts as the budget:
+    /// a file's own claim of its size must not overflow the sum.
     fn take<'a>(&'a self, path: &'a Path, bytes: usize) -> Take<'a> {
         Take {
             budget: self,
             path,
-            bytes,
+            bytes: bytes.min(DECODE_BUDGET),
         }
     }
 
@@ -151,7 +153,7 @@ fn png_size(head: &[u8]) -> Option<usize> {
         return None;
     }
     let side = |at: usize| u32::from_be_bytes([head[at], head[at + 1], head[at + 2], head[at + 3]]);
-    Some(side(16) as usize * side(20) as usize * 4)
+    Some((side(16) as usize).saturating_mul(side(20) as usize * 4))
 }
 
 /// The sum of the level index's uncompressed sizes. A file that claims more
@@ -298,13 +300,26 @@ pub async fn next_frame() {
     browser::next_frame().await;
 }
 
+/// Bytes a small cache file may hold; the largest, a ground texture, holds
+/// 2.5 MB.
+#[cfg(not(target_arch = "wasm32"))]
+const MAX_SMALL: u64 = 16 << 20;
+
 /// A small cache file read at once, where the client cannot wait for the
 /// asset server: from disk, or in a browser with a synchronous request to
 /// the page's server.
 pub fn read_small(root: &Path, rel: &str) -> Option<Vec<u8>> {
     #[cfg(not(target_arch = "wasm32"))]
     {
-        std::fs::read(root.join(rel)).ok()
+        use std::io::Read;
+        let mut bytes = Vec::new();
+        let file = std::fs::File::open(root.join(rel)).ok()?;
+        file.take(MAX_SMALL + 1).read_to_end(&mut bytes).ok()?;
+        if bytes.len() as u64 > MAX_SMALL {
+            warn!("{rel}: more than {MAX_SMALL} bytes; left unread");
+            return None;
+        }
+        Some(bytes)
     }
     #[cfg(target_arch = "wasm32")]
     {
@@ -338,6 +353,34 @@ mod tests {
     fn a_ktx2_file_counts_all_its_levels_uncompressed() {
         assert_eq!(decoded_size(&ktx2(3, &[64, 16, 4])), Some(84));
         assert_eq!(decoded_size(&ktx2(0, &[64])), Some(64));
+    }
+
+    /// A PNG's sides multiplied out overflowed (a panic in a debug build).
+    #[test]
+    fn a_png_of_absurd_sides_counts_as_the_whole_budget() {
+        let mut head = b"\x89PNG\r\n\x1a\n\0\0\0\x0dIHDR".to_vec();
+        head.extend_from_slice(&[0xFF; 8]);
+        assert_eq!(decoded_size(&head), Some(usize::MAX));
+        let budget = DecodeBudget::default();
+        assert_eq!(
+            budget.take(Path::new("a.png"), usize::MAX).bytes,
+            DECODE_BUDGET
+        );
+    }
+
+    /// The small files are read whole: a huge one planted in the cache
+    /// filled the memory.
+    #[test]
+    fn a_small_file_past_its_cap_is_left_unread() {
+        let root = std::env::temp_dir().join(format!("dbota-small-{}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        let file = std::fs::File::create(root.join("huge.json")).unwrap();
+        // Sparse: nothing is written.
+        file.set_len(MAX_SMALL + 1).unwrap();
+        std::fs::write(root.join("small.json"), b"{}").unwrap();
+        assert_eq!(read_small(&root, "huge.json"), None);
+        assert_eq!(read_small(&root, "small.json"), Some(b"{}".to_vec()));
+        std::fs::remove_dir_all(&root).unwrap();
     }
 
     #[test]

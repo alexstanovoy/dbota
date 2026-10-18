@@ -22,6 +22,10 @@ const MATCH_REACH: f32 = 48.0;
 const HASH_CELL: f32 = 64.0;
 /// World units of a side of a forest chunk.
 const CHUNK: f32 = 2304.0;
+/// Trees read from the cache at most (the map has 2300): each tree of the
+/// match is paired with the ones near it, and a file of a million in one
+/// spot made that a billion pairs.
+const MAX_MAP_TREES: usize = 16_384;
 
 /// Whether the scenery a photograph of the map should show is in place:
 /// the ground and the forest.
@@ -85,6 +89,7 @@ fn map_trees(manifest: &Manifest) -> Vec<MapTree> {
     };
     text.lines()
         .filter(|line| !line.starts_with('#'))
+        .take(MAX_MAP_TREES)
         .filter_map(|line| {
             let w: Vec<&str> = line.split_whitespace().collect();
             let [model, x, y, _, yaw, scale] = w.as_slice() else {
