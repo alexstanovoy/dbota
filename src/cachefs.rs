@@ -25,6 +25,8 @@ use bevy::{
     prelude::*,
 };
 
+use crate::texture_file::{HEAD_BYTES, decoded_size};
+
 /// Decoded texture bytes let through at once, besides the one under way:
 /// less in a browser, whose memory never shrinks back.
 const DECODE_BUDGET: usize = if cfg!(target_arch = "wasm32") {
@@ -53,8 +55,7 @@ pub struct DecodeBudget(Arc<Mutex<InFlight>>);
 
 impl DecodeBudget {
     /// Resolves once a texture of `bytes` decoded fits, and counts it. One
-    /// larger than the whole budget goes alone, so it counts as the budget:
-    /// a file's own claim of its size must not overflow the sum.
+    /// larger than the whole budget goes alone, so it counts as the budget.
     fn take<'a>(&'a self, path: &'a Path, bytes: usize) -> Take<'a> {
         Take {
             budget: self,
@@ -131,52 +132,6 @@ impl Future for Take<'_> {
     }
 }
 
-/// Bytes of a texture file's start that [`decoded_size`] needs: a KTX2
-/// header and the index of its most levels (a texture has at most 32).
-#[cfg(not(target_arch = "wasm32"))]
-const HEAD_BYTES: usize = KTX2_INDEX + 24 * 32;
-const KTX2_INDEX: usize = 80;
-const KTX2_MAGIC: [u8; 12] = [
-    0xAB, b'K', b'T', b'X', b' ', b'2', b'0', 0xBB, b'\r', b'\n', 0x1A, b'\n',
-];
-
-/// The bytes a texture file holds once loaded, from its first
-/// [`HEAD_BYTES`]: a PNG decodes to RGBA, a KTX2 file to all its mip levels
-/// as they sit in memory (compressed blocks stay compressed, a zstd
-/// supercompression is undone). None for anything else.
-fn decoded_size(head: &[u8]) -> Option<usize> {
-    png_size(head).or_else(|| ktx2_size(head))
-}
-
-fn png_size(head: &[u8]) -> Option<usize> {
-    if head.len() < 24 || head[..8] != *b"\x89PNG\r\n\x1a\n" || head[12..16] != *b"IHDR" {
-        return None;
-    }
-    let side = |at: usize| u32::from_be_bytes([head[at], head[at + 1], head[at + 2], head[at + 3]]);
-    Some((side(16) as usize).saturating_mul(side(20) as usize * 4))
-}
-
-/// The sum of the level index's uncompressed sizes. A file that claims more
-/// levels than a texture has, or whose index is cut off, is not counted.
-fn ktx2_size(head: &[u8]) -> Option<usize> {
-    if head.len() < KTX2_INDEX || head[..12] != KTX2_MAGIC {
-        return None;
-    }
-    let word = |at: usize| u32::from_le_bytes([head[at], head[at + 1], head[at + 2], head[at + 3]]);
-    // Zero levels ask the loader to make the chain: the one level is there.
-    let levels = (word(40) as usize).max(1);
-    if levels > 32 {
-        return None;
-    }
-    let index = head.get(KTX2_INDEX..KTX2_INDEX + 24 * levels)?;
-    let mut total = 0usize;
-    for level in index.as_chunks::<24>().0 {
-        let size = u64::from_le_bytes(level[16..24].try_into().ok()?);
-        total = total.checked_add(usize::try_from(size).ok()?)?;
-    }
-    Some(total)
-}
-
 /// Settles the decode budget: a texture added this frame reaches the GPU
 /// when the frame ends, and is let go at the start of the next.
 pub fn plugin(app: &mut App) {
@@ -238,6 +193,22 @@ impl CacheReader {
     }
 }
 
+impl CacheReader {
+    /// Waits until a texture file fits the decode budget, and refuses one
+    /// whose header no decoder may be trusted with.
+    async fn admit(&self, path: &Path, head: &[u8]) -> Result<(), AssetReaderError> {
+        match decoded_size(head) {
+            Some(Ok(bytes)) => self.budget.take(path, bytes).await,
+            Some(Err(why)) => {
+                let why = format!("{}: {why}", path.display());
+                return Err(AssetReaderError::Io(std::io::Error::other(why).into()));
+            }
+            None => {}
+        }
+        Ok(())
+    }
+}
+
 impl AssetReader for CacheReader {
     #[cfg(not(target_arch = "wasm32"))]
     async fn read<'a>(&'a self, path: &'a Path) -> Result<impl Reader + 'a, AssetReaderError> {
@@ -253,9 +224,7 @@ impl AssetReader for CacheReader {
         let mut head = [0u8; HEAD_BYTES];
         let read = file.read(&mut head)?;
         file.seek(SeekFrom::Start(0))?;
-        if let Some(bytes) = decoded_size(&head[..read]) {
-            self.budget.take(path, bytes).await;
-        }
+        self.admit(path, &head[..read]).await?;
         Ok(desktop::CacheFile(file))
     }
 
@@ -271,9 +240,8 @@ impl AssetReader for CacheReader {
         } else {
             browser::fetch(&self.root.join(path)).await?
         };
-        if let Some(size) = decoded_size(&bytes) {
-            self.budget.take(path, size).await;
-        }
+        self.admit(path, &bytes[..bytes.len().min(HEAD_BYTES)])
+            .await?;
         Ok(browser::Bytes(bytes))
     }
 
@@ -334,40 +302,6 @@ pub fn read_small(root: &Path, rel: &str) -> Option<Vec<u8>> {
 mod tests {
     use super::*;
 
-    /// A KTX2 start: the magic, `levels` in the header, and an index whose level `i` holds
-    /// `sizes[i]` bytes uncompressed (and half that on disk).
-    fn ktx2(levels: u32, sizes: &[u64]) -> Vec<u8> {
-        let mut head = KTX2_MAGIC.to_vec();
-        head.resize(40, 0);
-        head.extend_from_slice(&levels.to_le_bytes());
-        head.resize(KTX2_INDEX, 0);
-        for &size in sizes {
-            for field in [0, size / 2, size] {
-                head.extend_from_slice(&u64::to_le_bytes(field));
-            }
-        }
-        head
-    }
-
-    #[test]
-    fn a_ktx2_file_counts_all_its_levels_uncompressed() {
-        assert_eq!(decoded_size(&ktx2(3, &[64, 16, 4])), Some(84));
-        assert_eq!(decoded_size(&ktx2(0, &[64])), Some(64));
-    }
-
-    /// A PNG's sides multiplied out overflowed (a panic in a debug build).
-    #[test]
-    fn a_png_of_absurd_sides_counts_as_the_whole_budget() {
-        let mut head = b"\x89PNG\r\n\x1a\n\0\0\0\x0dIHDR".to_vec();
-        head.extend_from_slice(&[0xFF; 8]);
-        assert_eq!(decoded_size(&head), Some(usize::MAX));
-        let budget = DecodeBudget::default();
-        assert_eq!(
-            budget.take(Path::new("a.png"), usize::MAX).bytes,
-            DECODE_BUDGET
-        );
-    }
-
     /// The small files are read whole: a huge one planted in the cache
     /// filled the memory.
     #[test]
@@ -381,13 +315,6 @@ mod tests {
         assert_eq!(read_small(&root, "huge.json"), None);
         assert_eq!(read_small(&root, "small.json"), Some(b"{}".to_vec()));
         std::fs::remove_dir_all(&root).unwrap();
-    }
-
-    #[test]
-    fn a_ktx2_file_with_a_cut_off_or_absurd_index_is_not_counted() {
-        assert_eq!(decoded_size(&ktx2(3, &[64, 16])), None);
-        assert_eq!(decoded_size(&ktx2(33, &[64; 33])), None);
-        assert_eq!(decoded_size(&ktx2(2, &[u64::MAX, 1])), None);
     }
 }
 

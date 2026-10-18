@@ -45,6 +45,7 @@ mod synth;
 mod talents;
 mod teleport;
 mod terrain;
+mod texture_file;
 mod tip_content;
 mod tip_numbers;
 mod tips;
