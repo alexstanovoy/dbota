@@ -1,4 +1,4 @@
-//! The Glyph of Fortification button, right of the minimap as in Dota: it
+//! The Glyph of Fortification button, on the minimap's frame as in Dota: it
 //! shows whether one's side may activate the Glyph, the seconds until it
 //! may, or the seconds its protection still holds, and a click or the Glyph
 //! key activates it.
@@ -24,6 +24,9 @@ enum GlyphText {
     State,
 }
 
+/// Logical pixels the button is wide.
+const BUTTON_WIDTH: f32 = 74.0;
+
 pub fn plugin(app: &mut App) {
     app.add_systems(Startup, spawn)
         .add_systems(Update, (show, click).run_if(|k: Res<MatchKnown>| k.0));
@@ -37,9 +40,11 @@ fn spawn(mut commands: Commands, fonts: Res<Fonts>, settings: Res<Settings>) {
             Blocker,
             Node {
                 position_type: PositionType::Absolute,
-                left: px(SIDE + 16.0),
-                bottom: px(6),
-                width: px(74),
+                // On the minimap frame's top edge, at its right corner: the
+                // panel never reaches that high, at any width or scale.
+                left: px(6.0 + SIDE - BUTTON_WIDTH),
+                bottom: px(6.0 + SIDE),
+                width: px(BUTTON_WIDTH),
                 padding: UiRect::axes(px(6), px(5)),
                 flex_direction: FlexDirection::Column,
                 align_items: AlignItems::Center,
