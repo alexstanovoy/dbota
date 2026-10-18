@@ -5,7 +5,7 @@
 use std::f32::consts::TAU;
 
 use bevy::{gizmos::config::GizmoConfigStore, prelude::*};
-use bota_client_core::{App as Core, unit_under_cursor};
+use bota_client_core::App as Core;
 use bota_core::{CAMPS, raze_landing, rules};
 use bota_proto::{AbilityId, Aim, Order, Target, Team, UnitKind, UnitView};
 
@@ -106,6 +106,7 @@ fn draw(
     settings: Res<Settings>,
     keys: Res<ButtonInput<KeyCode>>,
     cursor: Res<CursorGround>,
+    hover: Res<crate::pick::Hover>,
     args: Res<crate::Args>,
     mut rings: ResMut<RangeRings>,
 ) {
@@ -137,7 +138,7 @@ fn draw(
     tower_shots(&mut gizmos, &ctx);
     aggro(&mut gizmos, &ctx);
     orders(&mut gizmos, &ctx);
-    aim(&mut gizmos, &ctx, cursor.0);
+    aim(&mut gizmos, &ctx, cursor.0, &hover);
 }
 
 /// Every neutral camp's spawn box, outlined on the ground as Dota shows
@@ -463,7 +464,12 @@ fn orders(gizmos: &mut Gizmos, ctx: &Ctx<'_, '_, '_>) {
 }
 
 /// The reach of a slot taken up for aiming and what the cursor is on.
-fn aim(gizmos: &mut Gizmos, ctx: &Ctx<'_, '_, '_>, cursor: Option<Vec3>) {
+fn aim(
+    gizmos: &mut Gizmos,
+    ctx: &Ctx<'_, '_, '_>,
+    cursor: Option<Vec3>,
+    hover: &crate::pick::Hover,
+) {
     let core = ctx.core;
     let Some(slot) = core.aiming else {
         return;
@@ -489,11 +495,19 @@ fn aim(gizmos: &mut Gizmos, ctx: &Ctx<'_, '_, '_>, cursor: Option<Vec3>) {
     let (wx, wy) = (cursor.x, -cursor.z);
     let within = reach <= 0.0 || caster.at.distance(Vec2::new(wx, wy)) <= reach;
     let color = if within { GOOD } else { BAD };
-    if aim == Some(Aim::Unit)
-        && let Some(view) = core.view()
-        && let Some(mark) = unit_under_cursor(view, (wx, wy), None, true).and_then(|id| ctx.at(id))
-    {
-        ring(gizmos, ctx, (mark.at.x, mark.at.y), 60.0, color, false);
+    if aim == Some(Aim::Unit) {
+        // The unit the click would take, or a red mark where none can be.
+        match hover.aim.and_then(|(id, _)| ctx.at(id)) {
+            Some(mark) => ring(
+                gizmos,
+                ctx,
+                (mark.at.x, mark.at.y),
+                crate::pick::RING,
+                GOOD,
+                false,
+            ),
+            None => ring(gizmos, ctx, (wx, wy), 24.0, BAD, false),
+        }
         return;
     }
     ring(gizmos, ctx, (wx, wy), 24.0, color, false);

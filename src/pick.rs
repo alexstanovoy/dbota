@@ -1,7 +1,7 @@
 //! What the cursor points at in the world, the way Dota forgives: every unit
-//! stands in a generous upright capsule (its body's bound, a margin, and a
+//! stands in a generous upright cylinder, flat bottom on the ground (its body's bound, a margin, never less than the rings dbota draws under a unit, and a
 //! screen-space minimum so a creep far away stays easy to hit), the cursor's
-//! ray is tested against those few capsules and no mesh, and among the
+//! ray is tested against those few cylinders and no mesh, and among the
 //! overlapping ones the action in hand decides: a click that attacks takes an
 //! enemy before a friend, an ability on enemies never takes a friend.
 //!
@@ -20,14 +20,27 @@ use crate::units::{Unit, UnitIndex, stand_in_size};
 
 /// How far past a body's bound a click still lands, in world units.
 const MARGIN: f32 = 15.0;
-/// The smallest reach of a capsule, in world units, before the margin.
+/// The smallest reach of a cylinder, in world units, before the margin.
 const MIN_BOUND: f32 = 20.0;
-/// The smallest radius a capsule shows on screen, as a fraction of the
+/// The smallest radius a cylinder shows on screen, as a fraction of the
 /// window's height: about 24 pixels at 1080p.
 pub const MIN_SCREEN_RADIUS: f32 = 0.022;
-/// Height of a capsule over the bound, at least, so a tall neutral is not
+/// Height of a cylinder over the bound, at least, so a tall neutral is not
 /// shorter than it looks.
 const HEIGHT_PER_BOUND: f32 = 2.2;
+/// The biggest ring dbota draws on the ground under a unit (the aim mark; the
+/// selection ring is 56 and a hero's 52), so a click anywhere in or on a
+/// ring picks the unit.
+pub const RING: f32 = 60.0;
+
+/// A world unit more than the radius still hits, so the very edge of a ring
+/// is inside whatever the rounding.
+const EDGE_SLACK: f32 = 1.0;
+
+/// The radius of a unit's cylinder.
+pub fn radius_of(bound: f32, collision: f32) -> f32 {
+    (bound.max(collision).max(MIN_BOUND) + MARGIN).max(RING)
+}
 
 /// Which side of the cursor's owner a target must be on.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -52,7 +65,7 @@ pub struct Want {
     pub orders: bool,
 }
 
-/// One unit as a volume: an upright capsule from `base` up by `height`.
+/// One unit as a volume: an upright cylinder from `base` up by `height`.
 #[derive(Clone, Copy, Debug)]
 pub struct Candidate {
     pub id: EntityId,
@@ -137,29 +150,38 @@ pub fn candidate(unit: &bota_proto::UnitView, base: Vec3, mine: Option<Team>) ->
         kind: unit.kind,
         enemy: Some(unit.team) != mine,
         base,
-        radius: bound + MARGIN,
+        radius: radius_of(unit.bound.to_f32(), unit.collision.to_f32()),
         height: height.max(bound * HEIGHT_PER_BOUND),
     }
 }
 
-/// The distance from a ray to an upright segment, and how far along the ray
-/// the nearest point is.
-fn ray_to_axis(ray: Ray3d, base: Vec3, height: f32) -> (f32, f32) {
+/// How near a ray comes to the axis of an upright cylinder while inside its
+/// height, measured across, and how far along the ray that is. Nothing when
+/// the ray never is between the cylinder's bottom and top.
+fn ray_to_cylinder(ray: Ray3d, base: Vec3, height: f32) -> Option<(f32, f32)> {
     let (o, v) = (ray.origin, *ray.direction);
-    let w = base - o;
-    let b = v.y;
-    let (d, e) = (w.y, v.dot(w));
-    let denom = 1.0 - b * b;
-    let mut s = if denom > 1e-6 {
-        ((b * e - d) / denom).clamp(0.0, height)
+    let (mut lo, mut hi) = (0.0, f32::INFINITY);
+    if v.y.abs() < 1e-6 {
+        if o.y < base.y || o.y > base.y + height {
+            return None;
+        }
     } else {
-        0.0
+        let (a, b) = ((base.y - o.y) / v.y, (base.y + height - o.y) / v.y);
+        lo = a.min(b).max(0.0);
+        hi = a.max(b);
+        if hi < lo {
+            return None;
+        }
+    }
+    let w = Vec2::new(o.x - base.x, o.z - base.z);
+    let u = Vec2::new(v.x, v.z);
+    let along = u.length_squared();
+    let t = if along > 1e-9 {
+        (-w.dot(u) / along).clamp(lo, hi)
+    } else {
+        lo
     };
-    let mut t = (e + s * b).max(0.0);
-    s = (t * b - d).clamp(0.0, height);
-    t = (e + s * b).max(0.0);
-    let near = base + Vec3::Y * s;
-    (near.distance(o + v * t), t)
+    Some(((w + u * t).length(), t))
 }
 
 /// Whether a candidate may be taken for this want, and whether it is the side
@@ -177,7 +199,7 @@ fn admits(c: &Candidate, want: &Want) -> Option<bool> {
     (liked || !want.strict).then_some(liked)
 }
 
-/// The unit the ray points at: among those whose capsule it passes through,
+/// The unit the ray points at: among those whose cylinder it passes through,
 /// one of the side asked for before any other, then the nearest to the ray's
 /// line, then the nearest to the camera.
 pub fn pick(
@@ -191,8 +213,10 @@ pub fn pick(
         let Some(liked) = admits(&c, want) else {
             continue;
         };
-        let (dist, depth) = ray_to_axis(ray, c.base, c.height);
-        if dist > c.radius.max(lens.min_per_depth * depth) {
+        let Some((dist, depth)) = ray_to_cylinder(ray, c.base, c.height) else {
+            continue;
+        };
+        if dist > c.radius.max(lens.min_per_depth * depth) + EDGE_SLACK {
             continue;
         }
         let key = (!liked, dist, depth);
@@ -414,7 +438,7 @@ mod tests {
             kind,
             enemy,
             base: Vec3::new(x, 0.0, z),
-            radius: 24.0 + MARGIN,
+            radius: radius_of(24.0, 0.0),
             height: 90.0,
         }
     }
@@ -484,8 +508,36 @@ mod tests {
                         "{size:?} at {distance}, offset {off:?}"
                     );
                 }
-                let far = body + Vec2::new(size.1 * 0.06, 0.0);
+                let far = pixel_of(
+                    &cam,
+                    size,
+                    creep[0].base + Vec3::X * RING * 2.5 + Vec3::Y * 45.0,
+                );
                 assert_eq!(pick_at(&cam, size, far, &creep, &ANY), None);
+            }
+        }
+    }
+
+    #[test]
+    fn a_click_on_or_in_the_ring_under_a_unit_picks_it_at_every_zoom() {
+        // Ring points all round, on the ground, at the biggest ring drawn and
+        // inside it: the flat bottom of the cylinder loses none.
+        let creep = [at(1, UnitKind::CreepMelee, true, -400.0, 250.0)];
+        for size in SIZES {
+            for distance in DISTANCES {
+                let cam = camera(distance);
+                for step in 0..24 {
+                    let a = step as f32 / 24.0 * std::f32::consts::TAU;
+                    for r in [RING, RING * 0.5, 0.0] {
+                        let spot = creep[0].base + Vec3::new(a.cos(), 0.0, a.sin()) * r;
+                        let click = pixel_of(&cam, size, spot);
+                        assert_eq!(
+                            pick_at(&cam, size, click, &creep, &ANY),
+                            Some(id(1)),
+                            "{size:?} at {distance}, angle {a}, radius {r}"
+                        );
+                    }
+                }
             }
         }
     }

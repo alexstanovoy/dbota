@@ -282,10 +282,9 @@ fn mouse(
     let Some(ground) = cursor.0.map(|p| (p.x, -p.z)) else {
         return;
     };
-    // A unit picked is named by where it stands, which the core resolves to
-    // that unit itself; open ground is the cursor's own point.
-    let named = |unit: crate::pick::Hit| unit.map_or(ground, |(_, p)| (p.x, p.y));
-    let at = named(hover.left());
+    // The picker alone says which unit a click is on; with none, the click is
+    // for the ground at the cursor.
+    let unit_of = |hit: crate::pick::Hit| hit.map(|(id, _)| id);
     let commands = core.my_hero().is_some() && core.controls_selection() && core.over.is_none();
     let live = matches!(core.source, Source::Live(_));
     if buttons.just_pressed(MouseButton::Left) {
@@ -293,20 +292,29 @@ fn mouse(
             return;
         }
         if commands && live && core.aiming.is_some() {
-            core.act(Intent::Aimed(at));
+            core.act(Intent::Aimed {
+                at: ground,
+                unit: unit_of(hover.aim),
+            });
             return;
         }
         if commands && live && core.attack_move_armed {
             core.attack_move_armed = false;
-            core.act(Intent::AttackAt(at));
+            core.act(Intent::AttackAt {
+                at: ground,
+                unit: unit_of(hover.attack),
+            });
             return;
         }
-        core.act(Intent::SelectAt(at));
+        core.act(Intent::SelectUnit(unit_of(hover.select)));
     }
     if buttons.just_pressed(MouseButton::Right) && commands && live {
         core.attack_move_armed = false;
         core.aiming = None;
-        core.act(Intent::Smart(named(hover.attack)));
+        core.act(Intent::Smart {
+            at: ground,
+            unit: unit_of(hover.attack),
+        });
     }
     if buttons.just_released(MouseButton::Left)
         && let Some(slot) = core.held_item.take()
@@ -314,7 +322,8 @@ fn mouse(
     {
         core.act(Intent::PutAt {
             slot,
-            at: named(hover.select),
+            at: ground,
+            unit: unit_of(hover.select),
         });
     }
 }
