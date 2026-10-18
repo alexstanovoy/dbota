@@ -1,8 +1,8 @@
 use std::collections::HashMap;
 
 use crate::error::{Error, Result};
-use crate::gltf::{GltfOptions, write_glb};
-use crate::material::{Material, orm_uri};
+use crate::gltf::{GltfOptions, image_uri, write_glb};
+use crate::material::{Material, Pack};
 use crate::model::Model;
 use crate::resource::Resource;
 use crate::source::Source;
@@ -22,9 +22,8 @@ pub struct ExportedTexture {
     pub vtex: String,
     /// Its file name relative to the `.glb`.
     pub uri: String,
-    /// Whether it is the texture's pixels run through [`pack_orm`](crate::pack_orm) rather
-    /// than the texture itself.
-    pub orm: bool,
+    /// How its pixels derive from the texture's: [`Pack::apply`]. `None` is the texture as it is.
+    pub pack: Option<Pack>,
 }
 
 /// A compiled file from the first package that has it.
@@ -67,14 +66,19 @@ pub fn export_model(
     }
     let mut textures: Vec<ExportedTexture> = Vec::new();
     for m in materials.values() {
-        for (vtex, orm) in [(&m.base_color, false), (&m.normal, false), (&m.masks, true)] {
+        let wanted = [
+            (&m.base_color, None),
+            (&m.normal, None),
+            (&m.masks1, Some(Pack::Orm)),
+            (&m.masks1, Some(Pack::Channel(3))),
+            (&m.masks2, Some(Pack::Channel(0))),
+        ];
+        for (vtex, pack) in wanted {
             if let Some(vtex) = vtex {
-                let uri = texture_uri(vtex);
-                let uri = if orm { orm_uri(&uri) } else { uri };
                 textures.push(ExportedTexture {
                     vtex: vtex.clone(),
-                    uri,
-                    orm,
+                    uri: image_uri(vtex, pack, texture_uri),
+                    pack,
                 });
             }
         }

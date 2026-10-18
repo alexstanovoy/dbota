@@ -4,7 +4,7 @@
 
 use std::path::{Path, PathBuf};
 
-use dbota_assets::{DirSource, Vpk, export_model, find_game_dir};
+use dbota_assets::{DirSource, ExportedTexture, Vpk, export_model, find_game_dir};
 use serde_json::Value;
 
 fn repo() -> &'static Path {
@@ -287,7 +287,7 @@ fn summary(doc: &Value) -> Vec<String> {
             };
             let material = &doc["materials"][p["material"].as_u64().unwrap() as usize];
             lines.push(format!(
-                "{} #{i}: {} vertices, {} indices, {attributes:?}, bounds {:?}..{:?}, material {} color {:?} normal {:?} orm {:?} occlusion {:?} metallic {} roughness {}",
+                "{} #{i}: {} vertices, {} indices, {attributes:?}, bounds {:?}..{:?}, material {} color {:?} normal {:?} orm {:?} occlusion {:?} metallic {} roughness {} emissive {:?} specular {:?}",
                 mesh["name"].as_str().unwrap(),
                 position["count"],
                 accessors[p["indices"].as_u64().unwrap() as usize]["count"],
@@ -309,6 +309,12 @@ fn summary(doc: &Value) -> Vec<String> {
                 material["pbrMetallicRoughness"]["roughnessFactor"]
                     .as_f64()
                     .unwrap_or(1.0),
+                image(doc, material, &["emissiveTexture"]),
+                image(
+                    doc,
+                    material,
+                    &["extensions", "KHR_materials_specular", "specularTexture"]
+                ),
             ));
         }
     }
@@ -373,4 +379,82 @@ fn models_match_the_exported_ones() {
         differ.join("\n")
     );
     assert!(data.is_empty(), "vertex data differs:\n{}", data.join("\n"));
+}
+
+/// Writes the models without clips (static ones and wearables) over a copy of the cache, to
+/// look at them in the client:
+///
+/// ```sh
+/// cp -rs ~/.cache/dbota/v6/. /path/to/copy   # a farm of symlinks, nothing is duplicated
+/// DBOTA_MODEL_CACHE=/path/to/copy cargo test --release -p dbota_assets --test models \
+///     -- --ignored write_models_into_a_cache_copy
+/// DBOTA_ASSETS=/path/to/copy tools/visual_check.sh replay.brp
+/// ```
+///
+/// The images are the cache's own; the occlusion/roughness/metallic ones, which the cache has
+/// under a hashed name, are linked under ours. Animated models wait for their clips.
+#[test]
+#[ignore = "needs a local Dota 2 install, its asset cache and DBOTA_MODEL_CACHE"]
+fn write_models_into_a_cache_copy() {
+    let copy = PathBuf::from(std::env::var_os("DBOTA_MODEL_CACHE").expect("DBOTA_MODEL_CACHE"));
+    let src = DirSource::new(find_game_dir(None).expect("Dota 2 not found"));
+    let pak = Vpk::open(&src, "pak01_dir.vpk").unwrap();
+    let texture_uri = |vtex: &str| {
+        let name = vtex.rsplit('/').next().unwrap_or(vtex);
+        format!("{}.png", name.trim_end_matches(".vtex"))
+    };
+    let manifest = std::fs::read_to_string(repo().join("assets-manifest/manifest.txt")).unwrap();
+    let animated: Vec<&str> = manifest
+        .lines()
+        .filter(|l| l.split('#').next().unwrap().contains(" anims="))
+        .filter_map(|l| l.split_whitespace().nth(3))
+        .collect();
+    let mut written = 0;
+    for (source, out, meshes, skeleton) in models() {
+        if animated.contains(&out.as_str()) {
+            continue;
+        }
+        let keep: Option<Vec<&str>> = meshes.as_deref().map(|m| m.split(',').collect());
+        let model = export_model(
+            &src,
+            &[&pak],
+            &source,
+            keep.as_deref(),
+            skeleton,
+            &texture_uri,
+        )
+        .unwrap_or_else(|e| panic!("{source}: {e}"));
+        let dir = copy.join(&out).parent().unwrap().to_owned();
+        for texture in &model.textures {
+            link_cached_image(&dir, texture);
+        }
+        let target = copy.join(&out);
+        let _ = std::fs::remove_file(&target); // a symlink into the original cache
+        std::fs::write(&target, &model.glb).unwrap();
+        written += 1;
+    }
+    println!("{written} models written");
+}
+
+/// Makes `texture`'s image exist in `dir` for a model written over the cache copy: images of
+/// whole textures and of single channels are there under their names, the occlusion/
+/// roughness/metallic ones under a hashed name.
+fn link_cached_image(dir: &Path, texture: &ExportedTexture) {
+    if dir.join(&texture.uri).exists() {
+        return;
+    }
+    let stem = texture.uri.trim_end_matches("_orm.png");
+    let hashed = std::fs::read_dir(dir)
+        .unwrap()
+        .map(|e| e.unwrap().path())
+        .find(|p| {
+            let name = p.file_name().unwrap().to_string_lossy();
+            name.starts_with(&format!("{stem}_orm_")) && name.ends_with(".png")
+        })
+        .unwrap_or_else(|| panic!("no cached image for {}", texture.uri));
+    std::os::unix::fs::symlink(
+        std::fs::canonicalize(hashed).unwrap(),
+        dir.join(&texture.uri),
+    )
+    .unwrap();
 }

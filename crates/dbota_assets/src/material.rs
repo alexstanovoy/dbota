@@ -10,9 +10,10 @@ pub struct Material {
     pub name: String,
     pub base_color: Option<String>,
     pub normal: Option<String>,
-    /// The hero shader's `g_tMasks1`, whose blue channel is the metalness: the material gets
-    /// an occlusion/roughness/metallic image made from it (see [`pack_orm`]).
-    pub masks: Option<String>,
+    /// The hero shader's `g_tMasks1`: blue is the metalness, alpha the self-illumination mask.
+    pub masks1: Option<String>,
+    /// The hero shader's `g_tMasks2`: red is the specular mask.
+    pub masks2: Option<String>,
     pub alpha: Alpha,
     pub double_sided: bool,
     pub specular_color: Option<[f32; 3]>,
@@ -70,7 +71,8 @@ impl Material {
             name: file.trim_end_matches(".vmat").to_owned(),
             base_color: texture(&["g_tColor", "g_tColor0", "g_tColorA"]),
             normal: texture(&["g_tNormal", "g_tNormal0", "g_tNormalA"]),
-            masks: texture(&["g_tMasks1"]),
+            masks1: texture(&["g_tMasks1"]),
+            masks2: texture(&["g_tMasks2"]),
             alpha,
             double_sided: int("F_RENDER_BACKFACES") > 0,
             specular_color,
@@ -79,21 +81,40 @@ impl Material {
     }
 }
 
-/// The image a material's metallic-roughness and occlusion slots share, written next to the
-/// texture it is made from (`x.png` becomes `x_orm.png`).
+/// An image made from a texture's pixels instead of the texture itself, as Source2Viewer 20
+/// wrote the hero materials' masks: it unpacked each channel the shader reads into the glTF
+/// slot that wants it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum Pack {
+    /// One channel (0 red .. 3 alpha) as a grey image.
+    Channel(u8),
+    /// Occlusion/roughness/metallic of a `g_tMasks1`: no occlusion (red 255), fully rough
+    /// (green 255), metallic as the blue channel, opaque. Written to [`orm_uri`] of the
+    /// masks' file name.
+    Orm,
+}
+
+impl Pack {
+    /// Rewrites RGBA8 pixels of the texture into the packed image.
+    pub fn apply(self, rgba8: &mut [u8]) {
+        for px in rgba8.as_chunks_mut::<4>().0 {
+            match self {
+                Self::Channel(c) => {
+                    let v = px[usize::from(c & 3)];
+                    *px = [v, v, v, 255];
+                }
+                Self::Orm => *px = [255, 255, px[2], 255],
+            }
+        }
+    }
+}
+
+/// The file name of the occlusion/roughness/metallic image made from the masks written as
+/// `masks_uri` (`x.png` becomes `x_orm.png`).
 pub fn orm_uri(masks_uri: &str) -> String {
     match masks_uri.rsplit_once('.') {
         Some((stem, ext)) => format!("{stem}_orm.{ext}"),
         None => format!("{masks_uri}_orm"),
-    }
-}
-
-/// Turns the RGBA8 pixels of a material's `g_tMasks1` into its occlusion/roughness/metallic
-/// image in place: no occlusion (red 255), fully rough (green 255), metallic as the mask's
-/// blue channel, opaque. The same image Source2Viewer 20 wrote for these materials.
-pub fn pack_orm(rgba8: &mut [u8]) {
-    for px in rgba8.chunks_exact_mut(4) {
-        px.copy_from_slice(&[255, 255, px[2], 255]);
     }
 }
 

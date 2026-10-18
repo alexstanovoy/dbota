@@ -6,7 +6,7 @@ use std::collections::HashMap;
 
 use serde_json::{Value as Json, json};
 
-use crate::material::{Alpha, Material, orm_uri};
+use crate::material::{Alpha, Material, Pack, orm_uri};
 use crate::model::{Mesh, Model, Skin, Vertices, multiply, rotate};
 
 const FLOAT: u32 = 5126;
@@ -42,7 +42,7 @@ struct Builder {
     material_index: HashMap<String, usize>,
     textures: Vec<Json>,
     images: Vec<Json>,
-    texture_index: HashMap<(String, bool), usize>,
+    texture_index: HashMap<(String, Option<Pack>), usize>,
 }
 
 /// The model as a `.glb` file.
@@ -266,20 +266,23 @@ impl Builder {
 
     fn material_json(&mut self, m: &Material, options: &GltfOptions) -> Json {
         // The image carries the metalness, so the factors stay 1.
-        let metal = if m.masks.is_some() { 1.0 } else { 0.0 };
+        let metal = if m.masks1.is_some() { 1.0 } else { 0.0 };
         let mut pbr = json!({ "metallicFactor": metal, "roughnessFactor": 1.0 });
         if let Some(color) = &m.base_color {
-            pbr["baseColorTexture"] = json!({ "index": self.texture(color, false, options) });
+            pbr["baseColorTexture"] = json!({ "index": self.texture(color, None, options) });
         }
         let mut out =
             json!({ "name": m.name, "pbrMetallicRoughness": pbr, "extras": { "vmat": m.extras } });
         if let Some(normal) = &m.normal {
-            out["normalTexture"] = json!({ "index": self.texture(normal, false, options) });
+            out["normalTexture"] = json!({ "index": self.texture(normal, None, options) });
         }
-        if let Some(masks) = &m.masks {
-            let orm = self.texture(masks, true, options);
+        if let Some(masks) = &m.masks1 {
+            let orm = self.texture(masks, Some(Pack::Orm), options);
             out["pbrMetallicRoughness"]["metallicRoughnessTexture"] = json!({ "index": orm });
             out["occlusionTexture"] = json!({ "index": orm });
+            // The factor stays black: the mask only shows where a shader raises it.
+            let glow = self.texture(masks, Some(Pack::Channel(3)), options);
+            out["emissiveTexture"] = json!({ "index": glow });
         }
         match m.alpha {
             Alpha::Opaque => {}
@@ -290,30 +293,46 @@ impl Builder {
             out["doubleSided"] = json!(true);
         }
         if let Some(color) = m.specular_color {
-            out["extensions"] =
-                json!({ "KHR_materials_specular": { "specularColorFactor": color } });
+            let mut specular = json!({ "specularColorFactor": color });
+            if let Some(masks) = &m.masks2 {
+                let mask = self.texture(masks, Some(Pack::Channel(0)), options);
+                specular["specularTexture"] = json!({ "index": mask });
+            }
+            out["extensions"] = json!({ "KHR_materials_specular": specular });
         }
         out
     }
 
-    /// The texture of `vtex`, or with `orm` the occlusion/roughness/metallic image made from it.
-    fn texture(&mut self, vtex: &str, orm: bool, options: &GltfOptions) -> usize {
-        let key = (vtex.to_owned(), orm);
+    /// The texture of `vtex`, or with `pack` the image made from its pixels.
+    fn texture(&mut self, vtex: &str, pack: Option<Pack>, options: &GltfOptions) -> usize {
+        let key = (vtex.to_owned(), pack);
         if let Some(&i) = self.texture_index.get(&key) {
             return i;
         }
         let name = vtex.rsplit('/').next().unwrap_or(vtex);
-        let uri = (options.texture_uri)(vtex);
-        let (name, uri) = if orm {
-            (format!("{name}_orm"), orm_uri(&uri))
-        } else {
-            (name.to_owned(), uri)
+        let uri = image_uri(vtex, pack, options.texture_uri);
+        let name = match pack {
+            Some(Pack::Orm) => format!("{name}_orm"),
+            _ => name.to_owned(),
         };
         self.images.push(json!({ "name": name, "uri": uri }));
         self.textures
             .push(json!({ "name": name, "sampler": 0, "source": self.images.len() - 1 }));
         self.texture_index.insert(key, self.textures.len() - 1);
         self.textures.len() - 1
+    }
+}
+
+/// The file name of the image of `vtex` made with `pack`, relative to the `.glb`.
+pub(crate) fn image_uri(
+    vtex: &str,
+    pack: Option<Pack>,
+    texture_uri: &dyn Fn(&str) -> String,
+) -> String {
+    let uri = texture_uri(vtex);
+    match pack {
+        Some(Pack::Orm) => orm_uri(&uri),
+        _ => uri,
     }
 }
 

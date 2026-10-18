@@ -27,7 +27,7 @@ pub use export::{ExportedModel, ExportedTexture, export_model, read_from};
 pub use gltf::{GltfOptions, write_glb};
 #[cfg(any(unix, windows))]
 pub use locate::find_game_dir;
-pub use material::{Alpha, Material, orm_uri, pack_orm};
+pub use material::{Alpha, Material, Pack, orm_uri};
 pub use model::{Bone, Mesh, Model, Primitive, Skin, Vertices};
 pub use resource::{Block, ExternalRef, Resource};
 pub use sound::{Sound, SoundFormat};
