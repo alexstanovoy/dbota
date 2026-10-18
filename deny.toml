@@ -15,6 +15,9 @@ ignore = [
     # Through winit's client-side decorations (sctk-adwaita); no maintained
     # replacement upstream yet, and it parses only the system's own fonts.
     { id = "RUSTSEC-2026-0192", reason = "unmaintained, no fix; reached only through winit decorations" },
+    # A proc macro of texture2ddecoder: it runs at build time on the crate's own source and
+    # never sees an input; no maintained release of texture2ddecoder drops it yet.
+    { id = "RUSTSEC-2024-0436", reason = "unmaintained build-time proc macro (paste) of texture2ddecoder; no input reaches it" },
 ]
 
 [licenses]
