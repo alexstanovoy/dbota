@@ -207,7 +207,7 @@ fn announce(
         .saturating_sub(BATTLE_BEGINS_TENTHS * rate / 10);
     let horn_tick = line_tick.saturating_sub(HORN_HONK_TENTHS * rate / 10);
     // Not for a match joined, or a replay opened, well after the start.
-    let fresh = |at: u32| view.tick >= at && view.tick < at + 2 * rate;
+    let fresh = |at: u32| view.tick >= at && view.tick < at.saturating_add(2 * rate);
     if fresh(horn_tick) && !heard.begun {
         heard.begun = true;
         if !silent {

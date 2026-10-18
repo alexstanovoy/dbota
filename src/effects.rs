@@ -1,7 +1,7 @@
 //! What flies and bursts: attack missiles, the souls of a requiem, and the
 //! ground a raze burns, drawn simply and bright so they read at a glance.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use bevy::{
     light::{NotShadowCaster, NotShadowReceiver},
@@ -58,7 +58,8 @@ struct Art {
 #[derive(Resource, Default)]
 struct Flying {
     missiles: HashMap<EntityId, Entity>,
-    burst: Vec<EntityId>,
+    /// The scorching projectiles already burst, while they are in view.
+    burst: HashSet<EntityId>,
     /// Where each grenade in flight was last drawn, to burst where it lands.
     grenades: HashMap<EntityId, (f32, f32)>,
 }
@@ -170,8 +171,12 @@ fn missiles(
             }
         }
     }
+    // Sorted for the lookups below: thousands of missiles each searched
+    // through all the others every frame.
+    alive.sort_unstable();
+    let is_alive = |id: &EntityId| alive.binary_search(id).is_ok();
     flying.missiles.retain(|id, e| {
-        let keep = alive.contains(id);
+        let keep = is_alive(id);
         if !keep {
             commands.entity(*e).despawn();
         }
@@ -181,10 +186,10 @@ fn missiles(
     let landed: Vec<(f32, f32)> = flying
         .grenades
         .iter()
-        .filter(|(id, _)| !alive.contains(id))
+        .filter(|(id, _)| !is_alive(id))
         .map(|(_, at)| *at)
         .collect();
-    flying.grenades.retain(|id, _| alive.contains(id));
+    flying.grenades.retain(|id, _| is_alive(id));
     for at in landed {
         burst(
             &mut commands,
@@ -216,16 +221,16 @@ fn bursts(
     let Some(view) = core.view() else {
         return;
     };
+    // A projectile out of view is forgotten; while in view it bursts once,
+    // however many there are.
+    let in_view: HashSet<EntityId> = view.projectiles.iter().map(|p| p.id).collect();
+    flying.burst.retain(|id| in_view.contains(id));
     for p in &view.projectiles {
         let Some(id) = p.ability else {
             continue;
         };
-        if !art_of(id).scorches || flying.burst.contains(&p.id) {
+        if !art_of(id).scorches || !flying.burst.insert(p.id) {
             continue;
-        }
-        flying.burst.push(p.id);
-        if flying.burst.len() > 64 {
-            flying.burst.remove(0);
         }
         let at = (p.pos.x.to_f32(), p.pos.y.to_f32());
         burst(
@@ -311,6 +316,7 @@ fn level_ups(
     let Some(view) = core.view() else {
         return;
     };
+    levels.retain(|id, _| view.unit(*id).is_some());
     for u in view
         .units
         .iter()

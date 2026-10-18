@@ -581,14 +581,14 @@ fn sync_units(
         let Some(entity) = p.index.0.remove(&id) else {
             continue;
         };
-        let died = core.prev_view().is_some_and(|prev| {
-            prev.units.iter().any(|u| {
-                u.id == id
-                    && u.kind != UnitKind::Courier
+        let died = core
+            .prev_view()
+            .and_then(|prev| prev.unit(id))
+            .is_some_and(|u| {
+                u.kind != UnitKind::Courier
                     && (!p.fog.on || p.fog.lit(u.pos.x.to_f32(), u.pos.y.to_f32()))
-                    && u.hp * 2 < u.max_hp.max(1)
-            })
-        });
+                    && i64::from(u.hp) * 2 < i64::from(u.max_hp.max(1))
+            });
         if died {
             p.commands.entity(entity).insert(Dying(0.0));
         } else {

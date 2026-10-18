@@ -153,6 +153,8 @@ pub fn pump(
             .feed
             .last()
             .map_or("connection to the server lost", |line| line.text.as_str());
+        // The line may hold the server's words: no control characters reach the terminal.
+        let why: String = why.chars().filter(|c| !c.is_control()).collect();
         eprintln!("dbota: {why}");
         exit.write(AppExit::error());
     }

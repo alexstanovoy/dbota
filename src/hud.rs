@@ -112,7 +112,7 @@ fn xp_share(level: u8, xp: i32) -> f32 {
         bota_core::rules::XP_THRESHOLDS.get(at + 1),
     ) {
         (Some(&from), Some(&to)) => {
-            ((xp - from) as f32 / (to - from).max(1) as f32).clamp(0.0, 1.0)
+            ((i64::from(xp) - i64::from(from)) as f32 / (to - from).max(1) as f32).clamp(0.0, 1.0)
         }
         _ => 1.0,
     }
@@ -1598,5 +1598,18 @@ fn regen_text(per_second: bota_proto::Fixed) -> String {
         format!("+{:.1}", per_second.to_f32())
     } else {
         String::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The wire's experience is any number: the lowest one overflowed the
+    /// share's arithmetic (a panic in a debug build).
+    #[test]
+    fn any_experience_gives_a_share_of_the_level() {
+        assert_eq!(xp_share(2, i32::MIN), 0.0);
+        assert_eq!(xp_share(2, i32::MAX), 1.0);
     }
 }

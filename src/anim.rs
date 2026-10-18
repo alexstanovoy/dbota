@@ -144,7 +144,7 @@ fn choose(
     };
     if let (Some(swing), Some((_, point))) = (swing, clip(attack)) {
         let tick = core.view().map_or(0, |v| v.tick);
-        let due = tick + swing.strike_in;
+        let due = tick.saturating_add(swing.strike_in);
         if pose.swing_due.is_some_and(|d| d.abs_diff(due) > 1) {
             pose.swings += 1;
         }

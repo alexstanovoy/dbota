@@ -46,11 +46,16 @@ pub fn plugin(app: &mut App) {
 /// [`SETTLE_TICKS`] short, so the last ticks play at their own pace and
 /// motion and effects have settled there. Whether it is still on its way.
 fn fast_forward(core: &mut bota_client_core::App, next: u32) -> bool {
-    if core.view().is_none_or(|v| v.tick + SETTLE_TICKS >= next) {
+    if core
+        .view()
+        .is_none_or(|v| v.tick.saturating_add(SETTLE_TICKS) >= next)
+    {
         return false;
     }
     let began = bevy::platform::time::Instant::now();
-    while core.view().is_some_and(|v| v.tick + SETTLE_TICKS < next)
+    while core
+        .view()
+        .is_some_and(|v| v.tick.saturating_add(SETTLE_TICKS) < next)
         && began.elapsed() < std::time::Duration::from_millis(250)
     {
         let before = core.view().map(|v| v.tick);
