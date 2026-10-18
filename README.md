@@ -45,8 +45,13 @@ target/release/dbota --name bob
 ```
 
 The match has a day and a night: by night the light turns to moonlight, units see less far, and the
-clock shows the sun or the moon. dbota always joins a live match without a seat key, so it cannot take a seat
-that a server has reserved for a key.
+clock shows the sun or the moon.
+
+A server with reserved seats (`bota_server --seat KEY_HEX:NAME,...`) seats only the holder of a seat's
+key. Give dbota its key in the environment, which keeps it out of process lists:
+`BOTA_SEAT_KEY=<64 hex digits> target/release/dbota --addr 127.0.0.1:4455` (`--seat-key` takes it as an
+argument). With `--spectate` the key makes dbota watch through that seat's eyes, in its fog. A wrong key
+is refused and dbota exits with the reason.
 
 Alone, for practice: `bota_server --map 2 --players 2 --dummy-seat` gives the other seat to a hero
 that never leaves its fountain.

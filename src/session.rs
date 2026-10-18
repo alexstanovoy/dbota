@@ -47,14 +47,26 @@ pub fn open(args: &Args) -> std::io::Result<Session> {
 #[cfg(not(target_arch = "wasm32"))]
 fn connect(args: &Args) -> std::io::Result<Session> {
     use bota_client_core::{Net, Transport};
-    use bota_proto::{ClientMsg, Role};
+    use bota_proto::{ClientMsg, Role, SeatKey};
+    let key = args
+        .seat_key
+        .as_deref()
+        .map(|hex| {
+            SeatKey::from_hex(hex.trim()).ok_or_else(|| {
+                std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    "a seat key is 64 hex digits",
+                )
+            })
+        })
+        .transpose()?;
     let mut net = Net::connect(&args.addr)?;
     let role = if args.spectate {
         Role::Spectator
     } else {
         Role::Player
     };
-    net.send(&ClientMsg::hello(role, args.name.as_str(), None))?;
+    net.send(&ClientMsg::hello(role, args.name.as_str(), key))?;
     Ok(Session(Core::new(Source::Live(Box::new(net)))))
 }
 
@@ -91,9 +103,24 @@ fn hold_replay(
 }
 
 /// Takes in whatever arrived and moves the client's clocks on.
-pub fn pump(mut session: NonSendMut<Session>, time: Res<Time>, mut known: ResMut<MatchKnown>) {
+pub fn pump(
+    mut session: NonSendMut<Session>,
+    time: Res<Time>,
+    mut known: ResMut<MatchKnown>,
+    mut exit: MessageWriter<AppExit>,
+) {
     let core = &mut session.0;
     core.pump(time.delta_secs());
+    // A server that cuts a live client off before any match view (a refused seat key, a wrong
+    // wire) leaves nothing to look at: say why and quit instead of showing an empty screen.
+    if core.lost && core.view().is_none() && matches!(core.source, Source::Live(_)) {
+        let why = core
+            .feed
+            .last()
+            .map_or("connection to the server lost", |line| line.text.as_str());
+        eprintln!("dbota: {why}");
+        exit.write(AppExit::error());
+    }
     let ready = core.terrain_cells() > 0 && core.view().is_some();
     if known.0 != ready {
         known.0 = ready;

@@ -74,6 +74,16 @@ pub struct Args {
     /// Watch instead of playing.
     #[arg(long)]
     pub spectate: bool,
+    /// The 64-hex-digit key of the seat a server with reserved seats holds for this client
+    /// (`bota_server --seat`). With `--spectate` the client watches through that seat's eyes.
+    /// Prefer the environment: arguments show in process lists.
+    #[arg(
+        long,
+        env = "BOTA_SEAT_KEY",
+        hide_env_values = true,
+        value_name = "KEY_HEX"
+    )]
+    pub seat_key: Option<String>,
     /// Play this replay file instead of connecting anywhere.
     #[arg(long, value_name = "FILE", conflicts_with_all = ["spectate"])]
     pub replay: Option<PathBuf>,
