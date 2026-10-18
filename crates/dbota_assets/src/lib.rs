@@ -22,6 +22,7 @@ mod source;
 mod texture;
 mod vbib;
 mod vpk;
+mod world;
 
 pub use anim::{Clip, Keys, Track, read_clips};
 pub use error::{Error, Result};
@@ -39,3 +40,4 @@ pub use source::{Slice, SliceSource, Source};
 pub use texture::{Encoding, PixelFormat, Texture};
 pub use vbib::{Buffer, Field};
 pub use vpk::{Entry, Vpk};
+pub use world::{EntityLump, buildings_txt, trees_txt};
