@@ -1187,6 +1187,40 @@ struct SlotFace {
     frame: Color,
 }
 
+/// The abilities of the subject the bottom panel is about: what its tooltips describe too.
+pub(crate) fn subject_abilities<'a>(
+    unit: Option<&'a UnitView>,
+    kit: Option<&'a Kit>,
+) -> &'a [AbilityView] {
+    kit.map(|k| k.abilities.as_slice())
+        .or(unit.map(|u| u.abilities.as_slice()))
+        .unwrap_or_default()
+}
+
+/// The item in a slot of the subject the bottom panel is about: what its tooltip describes too.
+pub(crate) fn subject_item(
+    core: &Core,
+    unit: Option<&UnitView>,
+    kit: Option<&Kit>,
+    slot: u8,
+) -> Option<ItemView> {
+    if slot == TOWN_PORTAL_SLOT {
+        match kit {
+            Some(kit) => kit.town_portal,
+            None => unit?.town_portal,
+        }
+    } else if slot >= BAG_SLOTS {
+        let view = core.view()?;
+        let p = view.player(core.my_slot?)?;
+        *p.stash.as_ref()?.get(usize::from(slot - BAG_SLOTS))?
+    } else {
+        let items = kit
+            .map(|k| k.items.as_slice())
+            .or(unit.map(|u| u.items.as_slice()))?;
+        *items.get(usize::from(slot))?
+    }
+}
+
 /// The face of an ability slot.
 fn ability_face(
     core: &Core,
@@ -1196,9 +1230,7 @@ fn ability_face(
     kit: Option<&Kit>,
     slot: u8,
 ) -> Option<SlotFace> {
-    let abilities: &[AbilityView] = kit
-        .map(|k| k.abilities.as_slice())
-        .or(unit.map(|u| u.abilities.as_slice()))?;
+    let abilities = subject_abilities(unit, kit);
     let a = abilities.get(usize::from(slot))?;
     let mana = if kit.is_some() {
         0
@@ -1252,21 +1284,7 @@ fn item_face(
     kit: Option<&Kit>,
     slot: u8,
 ) -> Option<SlotFace> {
-    let item: ItemView = if slot == TOWN_PORTAL_SLOT {
-        match kit {
-            Some(kit) => kit.town_portal?,
-            None => unit?.town_portal?,
-        }
-    } else if slot >= BAG_SLOTS {
-        let view = core.view()?;
-        let p = view.player(core.my_slot?)?;
-        (*p.stash.as_ref()?.get(usize::from(slot - BAG_SLOTS))?)?
-    } else {
-        let items = kit
-            .map(|k| k.items.as_slice())
-            .or(unit.map(|u| u.items.as_slice()))?;
-        (*items.get(usize::from(slot))?)?
-    };
+    let item = subject_item(core, unit, kit, slot)?;
     let mana = unit.map_or(0, |u| u.mana);
     let look = item_look(Some(&item), slot, mana);
     let held = core.held_item == Some(slot);

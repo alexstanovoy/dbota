@@ -153,12 +153,10 @@ fn talent_tip(core: &bota_client_core::App, slot: u8) -> Option<String> {
         })
 }
 
-/// An ability of the unit one commands, else of the unit one watches.
+/// An ability of the unit the bottom panel is about, the one it shows.
 fn ability_tip(core: &bota_client_core::App, slot: u8, rate: u32) -> Option<String> {
-    let unit = core
-        .slot_unit()
-        .or_else(|| core.ears().and_then(|id| core.known(id)).map(|(u, _)| u))?;
-    let a = unit.abilities.get(usize::from(slot))?;
+    let (_, unit, kit) = crate::hud::subject(core);
+    let a = crate::hud::subject_abilities(unit, kit).get(usize::from(slot))?;
     let face = ability(a.id.0)?;
     let mut lines = vec![
         format!("{}  (level {}/{})", face.name, a.level, a.max_level),
@@ -177,7 +175,8 @@ fn ability_tip(core: &bota_client_core::App, slot: u8, rate: u32) -> Option<Stri
 }
 
 fn item_tip(core: &bota_client_core::App, slot: u8, rate: u32) -> Option<String> {
-    let i = core.item_in(slot)?;
+    let (_, unit, kit) = crate::hud::subject(core);
+    let i = &crate::hud::subject_item(core, unit, kit, slot)?;
     let face = item(i.id.0)?;
     let mut lines = vec![face.name.to_string(), face.stats(), face.blurb()];
     if i.cooldown_left > 0 {
