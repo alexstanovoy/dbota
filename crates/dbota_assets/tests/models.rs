@@ -394,9 +394,12 @@ fn models_match_the_exported_ones() {
 /// The images are the cache's own; the occlusion/roughness/metallic ones, which the cache has
 /// under a hashed name, are linked under ours. Animated models wait for their clips.
 #[test]
-#[ignore = "needs a local Dota 2 install, its asset cache and DBOTA_MODEL_CACHE"]
+#[ignore = "needs a local Dota 2 install and its asset cache; writes only with DBOTA_MODEL_CACHE"]
 fn write_models_into_a_cache_copy() {
-    let copy = PathBuf::from(std::env::var_os("DBOTA_MODEL_CACHE").expect("DBOTA_MODEL_CACHE"));
+    let Some(copy) = std::env::var_os("DBOTA_MODEL_CACHE").map(PathBuf::from) else {
+        println!("DBOTA_MODEL_CACHE is not set: nothing to write");
+        return;
+    };
     let src = DirSource::new(find_game_dir(None).expect("Dota 2 not found"));
     let pak = Vpk::open(&src, "pak01_dir.vpk").unwrap();
     let texture_uri = |vtex: &str| {
