@@ -3,6 +3,7 @@ use std::io::Cursor as IoCursor;
 use super::convert::Content;
 use super::format::{PixelFormat, Stored};
 use super::ktx2::{self, Encoding};
+use super::rgba;
 use super::sheet;
 use crate::bytes::Cursor;
 use crate::error::{Result, malformed};
@@ -177,6 +178,44 @@ impl Texture {
             out.extend_from_slice(&level[start + from * bytes..start + to * bytes]);
         }
         out
+    }
+
+    /// A texture of RGBA8 `pixels` (rows from the top, 4 bytes each) and a single level, for
+    /// images made from others: it writes as KTX2 or PNG like a decoded one.
+    pub fn from_rgba8(width: u32, height: u32, pixels: Vec<u8>) -> Result<Self> {
+        let size = PixelFormat::Rgba8.level_size(width, height);
+        if width == 0
+            || height == 0
+            || width > MAX_SIDE
+            || height > MAX_SIDE
+            || size != Some(pixels.len())
+        {
+            return Err(malformed(
+                WHAT,
+                format!(
+                    "{} bytes are not {width} x {height} RGBA8 pixels",
+                    pixels.len()
+                ),
+            ));
+        }
+        Ok(Self {
+            width,
+            height,
+            format: PixelFormat::Rgba8,
+            mips: vec![pixels],
+            rect: None,
+        })
+    }
+
+    /// The largest level as RGBA8 pixels: plain RGBA8 as it is, BC1, BC3, BC4, BC5 and BC7
+    /// decoded; other formats are errors.
+    pub fn to_rgba8(&self) -> Result<Vec<u8>> {
+        rgba::decode(self.format, &self.mips[0], self.width, self.height)
+    }
+
+    /// A PNG file of the largest level (see [`to_rgba8`](Self::to_rgba8)).
+    pub fn to_png(&self) -> Result<Vec<u8>> {
+        rgba::png(self.width, self.height, &self.to_rgba8()?)
     }
 
     /// The KTX2 file of this texture. Block formats are written as they are; `encoding` says

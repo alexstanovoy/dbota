@@ -293,3 +293,45 @@ fn damaged_textures_are_errors_not_panics() {
         }
     }
 }
+
+#[test]
+fn rgba8_pixels_become_a_texture_that_writes_as_png_and_ktx2() {
+    let pixels = pattern(3 * 2 * 4, 9);
+    let texture = Texture::from_rgba8(3, 2, pixels.clone()).unwrap();
+    assert_eq!(texture.to_rgba8().unwrap(), pixels);
+
+    let mut decoder = png::Decoder::new(std::io::Cursor::new(texture.to_png().unwrap()));
+    decoder.set_transformations(png::Transformations::IDENTITY);
+    let mut reader = decoder.read_info().unwrap();
+    let mut back = vec![0; reader.output_buffer_size().unwrap()];
+    let frame = reader.next_frame(&mut back).unwrap();
+    assert_eq!(
+        (frame.width, frame.height, frame.color_type),
+        (3, 2, png::ColorType::Rgba)
+    );
+    assert_eq!(back, pixels);
+
+    let ktx2 = texture.to_ktx2(Encoding::Linear);
+    assert_eq!(bevy_format(&ktx2, false), ("Rgba8Unorm".into(), 1, pixels));
+    assert!(Texture::from_rgba8(3, 2, vec![0; 23]).is_err());
+    assert!(Texture::from_rgba8(0, 2, vec![]).is_err());
+}
+
+#[test]
+fn block_texels_decode_to_rgba8() {
+    // One DXT1 block of two equal colours, 0xF800 (red) twice, every index 0.
+    let block = [0x00, 0xF8, 0x00, 0xF8, 0, 0, 0, 0];
+    let file = Vtex::new(4, 4, 1, vec![block.to_vec()]).bytes();
+    let texture = Texture::parse(&file).unwrap();
+    let rgba = texture.to_rgba8().unwrap();
+    assert_eq!(rgba.len(), 64);
+    assert!(
+        rgba.as_chunks::<4>()
+            .0
+            .iter()
+            .all(|p| *p == [255, 0, 0, 255])
+    );
+    // Formats without a decoding are errors.
+    let float = Vtex::new(1, 1, 8, vec![vec![0, 0]]).bytes();
+    assert!(Texture::parse(&float).unwrap().to_rgba8().is_err());
+}

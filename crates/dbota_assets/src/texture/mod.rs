@@ -3,6 +3,7 @@
 mod convert;
 mod format;
 mod ktx2;
+mod rgba;
 mod sheet;
 mod vtex;
 

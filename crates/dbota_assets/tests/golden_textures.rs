@@ -457,3 +457,106 @@ fn model_textures_match_the_exported_images() {
         "only {compared} model textures were found in the install"
     );
 }
+
+/// The images the exporter made from a material's mask textures: a grey image holding one
+/// channel of the texture, and an "ORM" image with occlusion and roughness at full and metalness
+/// from blue. The model side builds both from `Texture::to_rgba8`.
+#[test]
+#[ignore = "needs a local Dota 2 install and its asset cache"]
+fn packed_model_images_match_the_exported_ones() {
+    let dota = install();
+    let mut by_stem: HashMap<String, Vec<String>> = HashMap::new();
+    for entry in dota.pak.entries().filter(|e| e.ext() == "vtex_c") {
+        by_stem
+            .entry(entry.name().to_owned())
+            .or_default()
+            .push(entry.path());
+    }
+    let mut files = Vec::new();
+    pngs(&dota.cache.join("models"), &mut files);
+    let (mut orm, mut grey, mut worst) = (0, 0, 0u8);
+    let mut channels: HashMap<char, usize> = HashMap::new();
+    for png in files {
+        let stem = png.file_stem().unwrap().to_str().unwrap();
+        let (source, orm_image) = match stem.split_once("_orm_") {
+            Some((base, _)) => (base, true),
+            None => (stem, false),
+        };
+        let [path] = by_stem.get(source).map(Vec::as_slice).unwrap_or_default() else {
+            continue;
+        };
+        let (_, _, exported) = read_png(&png);
+        let is_grey = exported
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .all(|p| p[0] == p[1] && p[1] == p[2] && p[3] == 255);
+        let rgba = Texture::parse(&dota.pak.read_file(&dota.src, path).unwrap())
+            .unwrap()
+            .to_rgba8()
+            .unwrap();
+        if rgba.len() != exported.len() {
+            // A material's constant mask, which the exporter wrote as a 1 x 1 image of its own.
+            assert_eq!(exported.len(), 4, "{}: size", png.display());
+            continue;
+        }
+        let ours: Vec<u8> = if orm_image {
+            rgba.as_chunks::<4>()
+                .0
+                .iter()
+                .flat_map(|p| [255, 255, p[2], 255])
+                .collect()
+        } else if is_grey && !["_color_", "_normal_"].iter().any(|k| stem.contains(k)) {
+            // The channel that is the image.
+            let (name, best) = (0..4)
+                .map(|c| {
+                    let grey: Vec<u8> = rgba
+                        .as_chunks::<4>()
+                        .0
+                        .iter()
+                        .flat_map(|p| [p[c], p[c], p[c], 255])
+                        .collect();
+                    ("RGBA".chars().nth(c).unwrap(), grey)
+                })
+                .min_by(|(_, a), (_, b)| {
+                    distance(a, &exported)
+                        .1
+                        .total_cmp(&distance(b, &exported).1)
+                })
+                .unwrap();
+            *channels.entry(name).or_default() += 1;
+            best
+        } else {
+            continue;
+        };
+        let d = distance(&ours, &exported);
+        worst = worst.max(d.0);
+        assert!(
+            d.0 <= 3 && d.1 <= 1.0,
+            "{}: differs by {d:?}",
+            png.display()
+        );
+        if orm_image { orm += 1 } else { grey += 1 }
+    }
+    println!(
+        "packed: {orm} ORM and {grey} grey images, largest difference {worst}, channels {channels:?}"
+    );
+    assert!(orm > 0 && grey > 0);
+}
+
+#[test]
+#[ignore = "needs a local Dota 2 install and its asset cache"]
+fn rgba8_textures_written_as_png_read_back_the_same() {
+    let dota = install();
+    for (vpk, _) in manifest_textures().into_iter().take(40) {
+        let texture = Texture::parse(&dota.pak.read_file(&dota.src, &vpk).unwrap()).unwrap();
+        let Ok(pixels) = texture.to_rgba8() else {
+            continue;
+        };
+        let made = Texture::from_rgba8(texture.width(), texture.height(), pixels.clone()).unwrap();
+        let dir = std::env::temp_dir().join("dbota_assets_png_roundtrip.png");
+        std::fs::write(&dir, made.to_png().unwrap()).unwrap();
+        assert_eq!(read_png(&dir).2, pixels, "{vpk}");
+        check_levels(&made, &vpk);
+    }
+}
