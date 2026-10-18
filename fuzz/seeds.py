@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
-"""Seeds the corpora of the fuzz targets from a local Dota 2 install.
+"""Seeds the corpora of the fuzz targets from a local Dota 2 install and,
+if given, the client's asset cache.
 
-    python3 -I fuzz/seeds.py <.../dota 2 beta/game/dota>
+    python3 -I fuzz/seeds.py <.../dota 2 beta/game/dota> [<asset cache>]
 
-Reads small files out of pak01_dir.vpk and copies a few small map packages.
-Writes corpus/<target>/seed-*, which stay out of the repository: they are
-Valve's files.
+Reads small files out of pak01_dir.vpk, copies a few small map packages and
+the cache's smallest images and sounds. Writes corpus/<target>/seed-*, which
+stay out of the repository: they are Valve's files.
 """
 import os
 import struct
@@ -154,5 +155,24 @@ def main(game):
             write("vpk", file, vpk.read())
 
 
+def cache_seeds(cache):
+    """The smallest images and sounds of the cache, a few of each kind."""
+    kinds = {".png": "cache_image", ".ktx2": "cache_image", ".wav": "cache_sound", ".mp3": "cache_sound"}
+    found = {}
+    for folder, _, files in os.walk(cache):
+        for file in files:
+            ext = os.path.splitext(file)[1]
+            if ext in kinds:
+                path = os.path.join(folder, file)
+                found.setdefault(ext, []).append((os.path.getsize(path), path))
+    for ext, group in found.items():
+        for size, path in sorted(group)[:: max(1, len(group) // 12)][:12]:
+            if size <= 256 << 10:
+                with open(path, "rb") as file:
+                    write(kinds[ext], os.path.basename(path), file.read())
+
+
 if __name__ == "__main__":
     main(sys.argv[1])
+    if len(sys.argv) > 2:
+        cache_seeds(sys.argv[2])

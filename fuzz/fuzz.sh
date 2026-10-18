@@ -30,7 +30,7 @@ build() {
 # The longest input worth mutating: a few real files of the format fit.
 max_len() {
     case "$1" in
-    resource | vtex) echo 262144 ;;
+    resource | vtex | cache_image) echo 262144 ;;
     kv3) echo 131072 ;;
     *) echo 65536 ;;
     esac
