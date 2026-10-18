@@ -15,6 +15,10 @@
 #   unit    <npc_units.txt unit name> <model logical>|none [model_scale=x]
 #           which model a unit is drawn with and the unit's own ModelScale (units may share a model at
 #           different sizes). `none` draws nothing. The importer skips these lines.
+#   portraits <logical> <vpk scripts/npc/portraits.txt> <out .txt>
+#           Dota's portrait framings (camera, field of view, light) of every model above, one line each
+#           (model-local inches and degrees; the HUD portrait's camera is placed by them). Written by the
+#           Rust importer only; a model Dota has no framing for is framed from its bounds.
 #   texture <logical> <vpk .vtex_c> <out .png>
 #   sound   <logical> <vpk .vsnd_c> <out .wav|.mp3> event=<Dota sound event that plays it>
 #           PCM WAV as Valve ships it (16-bit 44.1 kHz, a few 8-bit or 22.05 kHz); voice lines are MP3
@@ -406,6 +410,8 @@ texture icon.ability.frogmen_water_bubble_medium panorama/images/spellicons/frog
 texture icon.ability.frogmen_water_bubble_large panorama/images/spellicons/frogmen_water_bubble_large_png.vtex_c icons/abilities/frogmen_water_bubble_large.png
 texture icon.ability.hill_troll_rally panorama/images/spellicons/hill_troll_rally_png.vtex_c icons/abilities/hill_troll_rally.png
 texture icon.ability.tornado_tempest panorama/images/spellicons/tornado_tempest_png.vtex_c icons/abilities/tornado_tempest.png
+
+portraits portraits scripts/npc/portraits.txt models/portraits.txt
 
 # --- Hero art: landscape portrait, tall selection portrait, minimap icon
 texture portrait.hero.pudge panorama/images/heroes/npc_dota_hero_pudge_png.vtex_c icons/heroes/pudge.png

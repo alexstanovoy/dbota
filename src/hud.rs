@@ -1475,13 +1475,25 @@ fn dress(
     }
 }
 
-/// The bottom panel's portrait: the hero's Dota portrait.
+/// The bottom panel's portrait: the unit's live render, or the hero's Dota
+/// portrait where it has no unit on the map.
 fn portrait(
     session: NonSend<Session>,
     manifest: Res<Manifest>,
     server: Res<AssetServer>,
+    live: Res<crate::portrait::Portrait>,
     mut image: Single<&mut ImageNode, With<Portrait>>,
 ) {
+    // A unit on the map is drawn live by its own model.
+    if live.live {
+        if image.image != live.image {
+            image.image = live.image.clone();
+        }
+        if image.color != Color::WHITE {
+            image.color = Color::WHITE;
+        }
+        return;
+    }
     let core = &session.0;
     let (p, unit, _) = subject(core);
     let hero = p

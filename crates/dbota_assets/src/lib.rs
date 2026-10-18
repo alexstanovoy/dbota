@@ -19,6 +19,7 @@ mod material;
 mod meshopt;
 mod model;
 mod ntro;
+mod portraits;
 mod resource;
 mod sound;
 mod source;
@@ -37,6 +38,7 @@ pub use gltf::{GltfOptions, write_glb};
 pub use locate::find_game_dir;
 pub use material::{Alpha, Material, Pack, orm_uri};
 pub use model::{Bone, Mesh, Model, Primitive};
+pub use portraits::framings;
 pub use resource::{Block, ExternalRef, Resource};
 pub use sound::{Sound, SoundFormat};
 #[cfg(any(unix, windows))]

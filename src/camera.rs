@@ -176,7 +176,7 @@ fn apply_camera_transform(mut q: Query<(&RtsCamera, &mut Transform), Changed<Rts
 /// ground by stepping between the ground's height and the ray.
 fn pick_cursor_ground(
     window: Single<&Window, With<PrimaryWindow>>,
-    camera: Single<(&Camera, &GlobalTransform)>,
+    camera: Single<(&Camera, &GlobalTransform), With<crate::camera::RtsCamera>>,
     ground: Res<Ground>,
     mut out: ResMut<CursorGround>,
 ) {

@@ -230,7 +230,8 @@ struct BarParams<'w, 's> {
     ground: Res<'w, Ground>,
     fog: Res<'w, crate::fog::FogGrid>,
     ui_scale: Res<'w, UiScale>,
-    camera: Single<'w, 's, (&'static Camera, &'static GlobalTransform)>,
+    camera:
+        Single<'w, 's, (&'static Camera, &'static GlobalTransform), With<crate::camera::RtsCamera>>,
 }
 
 fn bars(
@@ -414,7 +415,7 @@ fn floaters(
     ground: Res<Ground>,
     settings: Res<Settings>,
     ui_scale: Res<UiScale>,
-    camera: Single<(&Camera, &GlobalTransform)>,
+    camera: Single<(&Camera, &GlobalTransform), With<crate::camera::RtsCamera>>,
     mut texts: Query<(
         &mut Text,
         &mut TextFont,

@@ -90,6 +90,14 @@ pub enum Item {
         src: String,
         out: String,
     },
+    /// Dota's portrait framings of the manifest's models, as `portraits.txt` (see
+    /// [`framings`](crate::framings)): `models` pairs each model's logical name with its `.vmdl`.
+    Portraits {
+        logical: String,
+        src: String,
+        out: String,
+        models: Vec<(String, String)>,
+    },
 }
 
 impl Item {
@@ -100,7 +108,8 @@ impl Item {
             | Self::World { logical, .. }
             | Self::Tooltips { logical, .. }
             | Self::Texture { logical, .. }
-            | Self::Sound { logical, .. } => logical,
+            | Self::Sound { logical, .. }
+            | Self::Portraits { logical, .. } => logical,
         }
     }
 }
@@ -116,6 +125,7 @@ impl Plan {
     /// texts the client shows (`assets-manifest/ids.txt`).
     pub fn parse(manifest: &str, ids: &str) -> Self {
         let mut plan = Self::default();
+        let mut portraits_line = None;
         for line in manifest.lines() {
             let words: Vec<&str> = line
                 .split('#')
@@ -185,6 +195,9 @@ impl Plan {
                         });
                     }
                 }
+                ["portraits", logical, src, out, ..] => {
+                    portraits_line = Some([logical, src, out].map(|w| (*w).to_owned()));
+                }
                 _ => {}
             }
         }
@@ -194,6 +207,26 @@ impl Plan {
                 logical: "text.tooltips".to_owned(),
                 wanted,
                 out: TOOLTIPS.to_owned(),
+            });
+        }
+        // Last, for it frames the models the manifest lists.
+        if let Some([logical, src, out]) = portraits_line {
+            let models = plan
+                .items
+                .iter()
+                .filter_map(|item| match item {
+                    Item::Model { logical, src, .. } => Some((
+                        logical.clone(),
+                        src.strip_suffix("_c").unwrap_or(src).to_owned(),
+                    )),
+                    _ => None,
+                })
+                .collect();
+            plan.items.push(Item::Portraits {
+                logical,
+                src,
+                out,
+                models,
             });
         }
         plan
@@ -560,6 +593,19 @@ fn make(
             let bytes = read_from(src, &[pak], path)?;
             let sound = Sound::parse(&bytes)?;
             out.put(dest, &sound.file())
+        }
+        Item::Portraits {
+            src: path,
+            out: dest,
+            models,
+            ..
+        } => {
+            let wanted: Vec<(&str, &str)> = models
+                .iter()
+                .map(|(logical, vmdl)| (logical.as_str(), vmdl.as_str()))
+                .collect();
+            let text = crate::framings(&read_from(src, &[pak], path)?, &wanted)?;
+            out.put(dest, text.as_bytes())
         }
     }
 }

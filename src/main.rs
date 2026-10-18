@@ -35,6 +35,7 @@ mod mapfile;
 mod menu;
 mod minimap;
 mod overlay;
+mod portrait;
 mod quality;
 mod select;
 mod session;
@@ -136,6 +137,10 @@ pub struct Args {
     /// `ability:ID:LEVEL`.
     #[arg(long, value_name = "KIND:ID")]
     pub tip: Option<String>,
+    /// Debug: select the first unit shown with this name (`Tower@dire`: of
+    /// that side), as a click would.
+    #[arg(long, value_name = "NAME")]
+    pub select: Option<String>,
     /// Debug: draw the ranges and camp boxes as if Alt were held.
     #[arg(long)]
     pub show_ranges: bool,
@@ -299,6 +304,7 @@ fn main() -> AppExit {
             hud::plugin,
             input::plugin,
             minimap::plugin,
+            portrait::plugin,
         ))
         .add_plugins((
             sound::plugin,
