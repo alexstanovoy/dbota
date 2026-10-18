@@ -381,7 +381,7 @@ dependencies = [
  "image",
  "ktx2",
  "rectangle-pack",
- "ruzstd",
+ "ruzstd 0.8.3",
  "serde",
  "thiserror 2.0.21",
  "tracing",
@@ -795,7 +795,7 @@ dependencies = [
  "hashbrown 0.16.1",
  "lz4_flex",
  "png",
- "ruzstd",
+ "ruzstd 0.9.1",
  "texture2ddecoder",
  "thiserror 2.0.21",
 ]
@@ -1723,6 +1723,12 @@ checksum = "a7c1c839d570d835527c9a5e4db7cb2198683a988cb9d7293fc8674e6bd58fc8"
 dependencies = [
  "twox-hash",
 ]
+
+[[package]]
+name = "ruzstd"
+version = "0.9.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "69e4ce4a039f42bf25920b95667e4d789e98749ab11bbb8d2c2936f788421bb5"
 
 [[package]]
 name = "same-file"
