@@ -48,17 +48,12 @@ pub fn plugin(app: &mut App) {
     );
 }
 
-/// Lays the row over the top of `parent`, the ability column.
+/// Lays the row in `parent`, the ability column, over the abilities and
+/// inside the panel: in the flow, so it never reaches the panel's edge.
 pub fn spawn_row(commands: &mut Commands, fonts: &Fonts, parent: Entity) {
     let row = commands
         .spawn((
             Node {
-                position_type: PositionType::Absolute,
-                bottom: percent(100),
-                // Right of the talent tree button, which sits over the
-                // middle of the abilities.
-                left: px(0),
-                margin: UiRect::bottom(px(8)),
                 column_gap: px(4),
                 ..default()
             },
