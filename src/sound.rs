@@ -24,6 +24,9 @@ const FADE: f32 = 3000.0;
 const LANDING_SLACK: u32 = 3;
 /// Seconds a kind of sound rests before it may sound again.
 const REST: f32 = 0.05;
+/// New missiles a tick looked into at most: each is matched against every
+/// unit, and a snapshot may hold thousands of them.
+const SHOTS_PER_TICK: usize = 32;
 
 /// One kind of sound and the sources it may be played from.
 struct Voice {
@@ -308,14 +311,14 @@ fn shots(core: &bota_client_core::App, sound: &mut impl FnMut(Kind, f32, Option<
     if view.tick == prev.tick || core.smooth.since > 0.0 {
         return;
     }
-    for p in view.projectiles.iter().filter(|p| p.ability.is_none()) {
-        if prev
-            .projectiles
-            .binary_search_by_key(&p.id, |q| q.id)
-            .is_ok()
-        {
-            continue;
-        }
+    let new = view.projectiles.iter().filter(|p| {
+        p.ability.is_none()
+            && prev
+                .projectiles
+                .binary_search_by_key(&p.id, |q| q.id)
+                .is_err()
+    });
+    for p in new.take(SHOTS_PER_TICK) {
         let (px, py) = (p.pos.x.to_f32(), p.pos.y.to_f32());
         let from = view
             .units
