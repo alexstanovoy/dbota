@@ -11,8 +11,13 @@ crc32fast = "1.5"
 foldhash = "0.2"
 hashbrown = { version = "0.16", default-features = false }
 lz4_flex = { version = "0.14", default-features = false, features = ["std", "safe-decode", "checked-decode"] }
+png = { version = "0.18", default-features = false }
 ruzstd = { version = "0.8", default-features = false, features = ["std"] }
+texture2ddecoder = "0.1.2"
 thiserror = "2"
 
 [dev-dependencies]
+bevy_image = { version = "=0.19.1", default-features = false, features = ["ktx2", "zstd_rust"] }
+lz4_flex = { version = "0.14", default-features = false, features = ["std", "safe-encode"] }
+ktx2 = "0.5"
 serde_json = "1"

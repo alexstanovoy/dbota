@@ -12,6 +12,7 @@ mod locate;
 mod ntro;
 mod resource;
 mod source;
+mod texture;
 mod vpk;
 
 pub use error::{Error, Result};
@@ -21,4 +22,5 @@ pub use resource::{Block, ExternalRef, Resource};
 #[cfg(any(unix, windows))]
 pub use source::DirSource;
 pub use source::{Slice, SliceSource, Source};
+pub use texture::{Encoding, PixelFormat, Texture};
 pub use vpk::{Entry, Vpk};

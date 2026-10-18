@@ -170,10 +170,11 @@ that many seconds of frames once the scene is whole and prints them on one `benc
 
 ## Reading Dota's files
 
-`crates/dbota_assets` reads Valve's formats (VPK packages, compiled Source 2 resources, KV3)
-straight from a Dota 2 install, on the desktop and in a browser, for the importer to come. Its
-golden tests decode the files behind the asset cache and compare them with it; they need the
-install and the cache, so they run only when asked:
+`crates/dbota_assets` reads Valve's formats (VPK packages, compiled Source 2 resources, KV3,
+textures as KTX2: block formats and mip levels kept, the first frame of a sprite sheet) straight
+from a Dota 2 install, on the desktop and in a browser, for the importer to come. Its golden tests
+decode the files behind the asset cache and compare them with it; they need the install and the
+cache, so they run only when asked:
 
 ```sh
 cargo test --release -p dbota_assets -- --ignored   # DBOTA_DOTA_PATH, DBOTA_ASSETS: where they are

@@ -5,10 +5,11 @@
 //! over half a gigabyte. In a browser the files come over HTTP, as Bevy
 //! fetches them.
 //!
-//! Either way textures are let through only while the ones decoded before
-//! them have reached the GPU, a budget of decoded bytes at a time: loads
-//! finish far faster than a frame takes them in while the map is prepared,
-//! and every texture of the cache sat decoded in memory at once.
+//! Either way textures (PNG and KTX2 files) are let through only while the
+//! ones decoded before them have reached the GPU, a budget of decoded bytes
+//! at a time: loads finish far faster than a frame takes them in while the
+//! map is prepared, and every texture of the cache sat decoded in memory at
+//! once.
 
 use std::{
     collections::HashMap,
@@ -128,14 +129,50 @@ impl Future for Take<'_> {
     }
 }
 
-/// The bytes a PNG decodes to as RGBA, from its first 24 bytes; none for
-/// anything else.
+/// Bytes of a texture file's start that [`decoded_size`] needs: a KTX2
+/// header and the index of its most levels (a texture has at most 32).
+#[cfg(not(target_arch = "wasm32"))]
+const HEAD_BYTES: usize = KTX2_INDEX + 24 * 32;
+const KTX2_INDEX: usize = 80;
+const KTX2_MAGIC: [u8; 12] = [
+    0xAB, b'K', b'T', b'X', b' ', b'2', b'0', 0xBB, b'\r', b'\n', 0x1A, b'\n',
+];
+
+/// The bytes a texture file holds once loaded, from its first
+/// [`HEAD_BYTES`]: a PNG decodes to RGBA, a KTX2 file to all its mip levels
+/// as they sit in memory (compressed blocks stay compressed, a zstd
+/// supercompression is undone). None for anything else.
 fn decoded_size(head: &[u8]) -> Option<usize> {
+    png_size(head).or_else(|| ktx2_size(head))
+}
+
+fn png_size(head: &[u8]) -> Option<usize> {
     if head.len() < 24 || head[..8] != *b"\x89PNG\r\n\x1a\n" || head[12..16] != *b"IHDR" {
         return None;
     }
     let side = |at: usize| u32::from_be_bytes([head[at], head[at + 1], head[at + 2], head[at + 3]]);
     Some(side(16) as usize * side(20) as usize * 4)
+}
+
+/// The sum of the level index's uncompressed sizes. A file that claims more
+/// levels than a texture has, or whose index is cut off, is not counted.
+fn ktx2_size(head: &[u8]) -> Option<usize> {
+    if head.len() < KTX2_INDEX || head[..12] != KTX2_MAGIC {
+        return None;
+    }
+    let word = |at: usize| u32::from_le_bytes([head[at], head[at + 1], head[at + 2], head[at + 3]]);
+    // Zero levels ask the loader to make the chain: the one level is there.
+    let levels = (word(40) as usize).max(1);
+    if levels > 32 {
+        return None;
+    }
+    let index = head.get(KTX2_INDEX..KTX2_INDEX + 24 * levels)?;
+    let mut total = 0usize;
+    for level in index.as_chunks::<24>().0 {
+        let size = u64::from_le_bytes(level[16..24].try_into().ok()?);
+        total = total.checked_add(usize::try_from(size).ok()?)?;
+    }
+    Some(total)
 }
 
 /// Settles the decode budget: a texture added this frame reaches the GPU
@@ -211,7 +248,7 @@ impl AssetReader for CacheReader {
             }
             Err(err) => return Err(err.into()),
         };
-        let mut head = [0u8; 24];
+        let mut head = [0u8; HEAD_BYTES];
         let read = file.read(&mut head)?;
         file.seek(SeekFrom::Start(0))?;
         if let Some(bytes) = decoded_size(&head[..read]) {
@@ -263,6 +300,39 @@ pub fn read_small(root: &Path, rel: &str) -> Option<Vec<u8>> {
     #[cfg(target_arch = "wasm32")]
     {
         browser::read(&root.join(rel))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A KTX2 start: the magic, `levels` in the header, and an index whose level `i` holds
+    /// `sizes[i]` bytes uncompressed (and half that on disk).
+    fn ktx2(levels: u32, sizes: &[u64]) -> Vec<u8> {
+        let mut head = KTX2_MAGIC.to_vec();
+        head.resize(40, 0);
+        head.extend_from_slice(&levels.to_le_bytes());
+        head.resize(KTX2_INDEX, 0);
+        for &size in sizes {
+            for field in [0, size / 2, size] {
+                head.extend_from_slice(&u64::to_le_bytes(field));
+            }
+        }
+        head
+    }
+
+    #[test]
+    fn a_ktx2_file_counts_all_its_levels_uncompressed() {
+        assert_eq!(decoded_size(&ktx2(3, &[64, 16, 4])), Some(84));
+        assert_eq!(decoded_size(&ktx2(0, &[64])), Some(64));
+    }
+
+    #[test]
+    fn a_ktx2_file_with_a_cut_off_or_absurd_index_is_not_counted() {
+        assert_eq!(decoded_size(&ktx2(3, &[64, 16])), None);
+        assert_eq!(decoded_size(&ktx2(33, &[64; 33])), None);
+        assert_eq!(decoded_size(&ktx2(2, &[u64::MAX, 1])), None);
     }
 }
 
