@@ -6,8 +6,9 @@
 //! the vertical trails of the original are left out and the rings only rise,
 //! fade and pulse. Without the textures the rings are plain tinted bands.
 //!
-//! The wire gives each side's `active_for` ticks of the structures' cover and
-//! no per-unit flag: the creeps' cover is the first three seconds of it.
+//! A unit under a Glyph carries `StatusFlags::FORTIFIED`, whichever side's it
+//! is, when the viewer is told of it at all: the enemy's Glyph shows on what
+//! one sees, as in Dota.
 
 use std::collections::HashMap;
 use std::f32::consts::FRAC_PI_2;
@@ -17,7 +18,7 @@ use bevy::{
     prelude::*,
 };
 use bota_core::{kind_def, rules};
-use bota_proto::EntityId;
+use bota_proto::{EntityId, StatusFlags};
 
 use crate::manifest::Manifest;
 use crate::session::Session;
@@ -83,27 +84,30 @@ fn make_art(mut commands: Commands, manifest: Res<Manifest>, server: Res<AssetSe
     });
 }
 
-/// The units under a Glyph and the seconds their cover has left.
+/// The units under a Glyph, whichever side's, and the seconds a structure's
+/// cover has left; a creep's own end is not told, so it keeps its rings while
+/// it is flagged.
 fn covered(view: &bota_proto::WorldView) -> Vec<(&bota_proto::UnitView, f32)> {
     let rate = rules::TICKS_PER_SECOND as f32;
-    let creep_offset = rules::GLYPH_STRUCTURE_TICKS - rules::GLYPH_CREEP_TICKS;
-    let mut shown = Vec::new();
-    for glyph in view.glyphs.iter().filter(|g| g.active_for > 0) {
-        for unit in view.units.iter().filter(|u| u.team == glyph.team) {
-            let def = kind_def(unit.kind);
-            let left = if def.structure {
-                glyph.active_for
-            } else if def.lane_creep {
-                glyph.active_for.saturating_sub(creep_offset)
-            } else {
-                0
-            };
-            if left > 0 {
-                shown.push((unit, left as f32 / rate));
-            }
-        }
-    }
-    shown
+    view.units
+        .iter()
+        .filter(|u| u.statuses.bits & StatusFlags::FORTIFIED != 0)
+        .map(|u| {
+            let left = view
+                .glyphs
+                .iter()
+                .find(|g| g.team == u.team)
+                .map_or(f32::MAX, |g| g.active_for as f32 / rate);
+            (
+                u,
+                if kind_def(u.kind).structure {
+                    left
+                } else {
+                    f32::MAX
+                },
+            )
+        })
+        .collect()
 }
 
 /// Puts rings on the units under a Glyph and takes them off the rest.

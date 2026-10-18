@@ -51,6 +51,46 @@ impl Lines {
     }
 }
 
+/// Seconds a queued announcer line may wait for the one before it; older
+/// ones are dropped, as a line about something long past would mislead.
+const ANNOUNCER_PATIENCE: f32 = 3.0;
+
+/// The announcer's lines in the order they were called: one speaks at a time,
+/// and the next starts when it ends, as in Dota.
+#[derive(Resource, Default)]
+struct Announcer {
+    waiting: std::collections::VecDeque<(Handle<AudioSource>, f32, f32)>,
+    /// The line being spoken.
+    speaking: Option<Entity>,
+    /// Seconds since startup at which it began.
+    began: f32,
+}
+
+impl Announcer {
+    fn push(&mut self, source: Option<Handle<AudioSource>>, gain: f32, now: f32) {
+        if let Some(source) = source {
+            self.waiting.push_back((source, gain, now));
+        }
+    }
+
+    /// The line to start now, if none is speaking: the oldest that is not
+    /// stale.
+    fn next(&mut self, now: f32, speaking: bool) -> Option<(Handle<AudioSource>, f32)> {
+        if speaking {
+            return None;
+        }
+        while let Some((source, gain, queued)) = self.waiting.pop_front() {
+            if now - queued <= ANNOUNCER_PATIENCE {
+                return Some((source, gain));
+            }
+        }
+        None
+    }
+}
+
+#[derive(Component)]
+struct AnnouncerLine;
+
 #[derive(Resource, Default)]
 struct Voices {
     /// By hero Dota name: its move and attack answers.
@@ -84,8 +124,9 @@ struct Heard {
 
 pub fn plugin(app: &mut App) {
     app.init_resource::<Voices>()
+        .init_resource::<Announcer>()
         .add_systems(Startup, load)
-        .add_systems(Update, (answer, announce, fortified, herald, click));
+        .add_systems(Update, (answer, announce, fortified, herald, click, speak));
 }
 
 fn load(mut voices: ResMut<Voices>, manifest: Res<Manifest>, server: Res<AssetServer>) {
@@ -187,6 +228,8 @@ fn announce(
     mut commands: Commands,
     session: NonSend<Session>,
     mut voices: ResMut<Voices>,
+    mut announcer: ResMut<Announcer>,
+    time: Res<Time>,
     settings: Res<Settings>,
     args: Res<crate::Args>,
     mut heard: Local<Heard>,
@@ -197,7 +240,7 @@ fn announce(
         heard.asked = true;
         if !silent {
             let source = voices.choose.take();
-            say(&mut commands, source, 0.9);
+            announcer.push(source, 0.9, time.elapsed_secs());
         }
     }
     // The horn, then the announcer's "the battle begins" once the horn has
@@ -228,7 +271,7 @@ fn announce(
         heard.announced = true;
         if !silent {
             let line = voices.begins.take();
-            say(&mut commands, line, 0.9);
+            announcer.push(line, 0.9, time.elapsed_secs());
         }
     }
 }
@@ -236,9 +279,10 @@ fn announce(
 /// The announcer's line when a side uses its Glyph, heard by every seat and
 /// spectator as Dota's announcer says it to both teams.
 fn fortified(
-    mut commands: Commands,
     session: NonSend<Session>,
     mut voices: ResMut<Voices>,
+    mut announcer: ResMut<Announcer>,
+    time: Res<Time>,
     settings: Res<Settings>,
     args: Res<crate::Args>,
     mut was: Local<Option<[bool; 2]>>,
@@ -262,8 +306,35 @@ fn fortified(
     for side in 0..2 {
         if now[side] && !before[side] {
             let line = voices.fortified[side].take();
-            say(&mut commands, line, 0.9);
+            announcer.push(line, 0.9, time.elapsed_secs());
         }
+    }
+}
+
+/// Starts the next announcer line once the one before it has ended.
+fn speak(
+    mut commands: Commands,
+    mut announcer: ResMut<Announcer>,
+    time: Res<Time>,
+    lines: Query<(), With<AnnouncerLine>>,
+) {
+    let now = time.elapsed_secs();
+    // A line spawned this frame is not in the query yet.
+    let speaking =
+        announcer.speaking.is_some() && (now - announcer.began < 0.2 || !lines.is_empty());
+    if !speaking {
+        announcer.speaking = None;
+    }
+    if let Some((source, gain)) = announcer.next(now, speaking) {
+        let line = commands
+            .spawn((
+                AnnouncerLine,
+                AudioPlayer::new(source),
+                PlaybackSettings::DESPAWN.with_volume(Volume::Linear(gain)),
+            ))
+            .id();
+        announcer.speaking = Some(line);
+        announcer.began = now;
     }
 }
 
@@ -310,5 +381,29 @@ fn click(
     if buttons.iter().any(|i| *i == Interaction::Pressed) {
         let source = voices.click.take();
         say(&mut commands, source, 0.5);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn two_glyphs_at_once_speak_one_after_the_other_and_a_stale_line_is_dropped() {
+        let mut announcer = Announcer::default();
+        announcer.push(Some(Handle::default()), 0.9, 10.0);
+        announcer.push(Some(Handle::default()), 0.9, 10.0);
+        assert!(announcer.next(10.0, false).is_some(), "the first at once");
+        assert!(announcer.next(10.5, true).is_none(), "the second waits");
+        assert!(
+            announcer.next(12.0, false).is_some(),
+            "and speaks when the first ends"
+        );
+        announcer.push(Some(Handle::default()), 0.9, 12.0);
+        assert!(
+            announcer
+                .next(12.0 + ANNOUNCER_PATIENCE + 0.1, false)
+                .is_none()
+        );
     }
 }
