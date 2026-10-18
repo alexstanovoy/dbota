@@ -23,6 +23,16 @@ use crate::world::{Band, EntityLump, buildings_txt, export_world, lighting_txt, 
 /// Bumped when the importer's output changes for the same install; part of a cache's stamp.
 pub const IMPORT_REV: u32 = 2;
 
+/// Names what an import of this manifest and these ids makes (FNV-1a 64 of both texts): part of
+/// a cache's stamp, so a cache made from other texts is stale even from the same install.
+pub fn plan_id(manifest: &str, ids: &str) -> String {
+    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+    for byte in manifest.bytes().chain([0]).chain(ids.bytes()) {
+        hash = (hash ^ u64::from(byte)).wrapping_mul(0x0100_0000_01b3);
+    }
+    format!("{hash:016x}")
+}
+
 /// Most bytes one import reads from the install: the manifest's sources are ~62 MB plus the
 /// package directories (23 MB); a hostile install must not make the page read the whole 71 GB.
 const READ_LIMIT: u64 = 1 << 30;

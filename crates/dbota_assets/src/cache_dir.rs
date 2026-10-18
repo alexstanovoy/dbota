@@ -41,9 +41,10 @@ impl Sink for DirSink {
 }
 
 /// What a cache made from the install at `game` (its `game/dota` folder) for manifest version
-/// `version` is stamped with: the version, the importer's revision, and the size and change
-/// time of the install's package directory.
-pub fn stamp(game: &Path, version: &str) -> Result<String> {
+/// `version` and plan `plan_id` ([`plan_id`](crate::import::plan_id)) is stamped with: the
+/// version, the importer's revision, the plan, and the size and change time of the install's
+/// package directory.
+pub fn stamp(game: &Path, version: &str, plan_id: &str) -> Result<String> {
     let path = game.join("pak01_dir.vpk");
     let meta = fs::metadata(&path).map_err(|source| Error::Io {
         path: path.display().to_string(),
@@ -55,10 +56,21 @@ pub fn stamp(game: &Path, version: &str) -> Result<String> {
         .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
         .map_or(0, |d| d.as_secs());
     Ok(format!(
-        "v{}/rev{IMPORT_REV}/{}/{modified}",
-        version.trim(),
+        "{}/{}/{modified}",
+        stamp_prefix(version, plan_id),
         meta.len()
     ))
+}
+
+/// The part of a stamp that says what the importer would make, not from which install.
+pub fn stamp_prefix(version: &str, plan_id: &str) -> String {
+    format!("v{}/rev{IMPORT_REV}/{plan_id}", version.trim())
+}
+
+/// Whether the cache at `cache` was made by an importer that writes `prefix`
+/// ([`stamp_prefix`]), whatever install it read.
+pub fn matches_plan(cache: &Path, prefix: &str) -> bool {
+    fs::read_to_string(cache.join(STAMP)).is_ok_and(|s| s.starts_with(&format!("{prefix}/")))
 }
 
 /// Whether the cache at `cache` was finished with `stamp`.
@@ -125,5 +137,38 @@ fn remove(dir: &Path) -> Result<()> {
             path: dir.display().to_string(),
             source,
         }),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::import::plan_id;
+
+    /// A cache stamped for one manifest is not current for an edited one, and says so before
+    /// any install is read; the same manifest stays current.
+    #[test]
+    fn a_manifest_change_makes_the_cache_stale() {
+        let dir = std::env::temp_dir().join(format!("dbota-stamp-{}", std::process::id()));
+        let (game, cache) = (dir.join("game"), dir.join("cache"));
+        fs::create_dir_all(&game).unwrap();
+        fs::create_dir_all(&cache).unwrap();
+        fs::write(game.join("pak01_dir.vpk"), b"x").unwrap();
+        let before = stamp(&game, "7", &plan_id("model a\n", "ids")).unwrap();
+        fs::write(cache.join(STAMP), &before).unwrap();
+        fs::write(cache.join(INDEX), b"").unwrap();
+        assert!(is_current(
+            &cache,
+            &stamp(&game, "7", &plan_id("model a\n", "ids")).unwrap()
+        ));
+        assert!(matches_plan(
+            &cache,
+            &stamp_prefix("7", &plan_id("model a\n", "ids"))
+        ));
+        let edited = plan_id("model a\nportraits p\n", "ids");
+        assert!(!is_current(&cache, &stamp(&game, "7", &edited).unwrap()));
+        assert!(!matches_plan(&cache, &stamp_prefix("7", &edited)));
+        assert_ne!(plan_id("a", "bc"), plan_id("ab", "c"));
+        fs::remove_dir_all(&dir).unwrap();
     }
 }

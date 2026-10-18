@@ -87,7 +87,7 @@ impl Install {
     /// with the manifest version and the importer's revision. Empty without the directory.
     pub fn stamp(&self, modified: f64) -> String {
         match Source::size(&self.files, "pak01_dir.vpk") {
-            Ok(size) => format!("v{}/rev{IMPORT_REV}/{size}/{modified}", VERSION.trim()),
+            Ok(size) => format!("{}/{size}/{modified}", cache_version()),
             Err(_) => String::new(),
         }
     }
@@ -204,5 +204,9 @@ impl Report {
 /// The stamp prefix of what this build writes, for a cache check before any install is picked.
 #[wasm_bindgen]
 pub fn cache_version() -> String {
-    format!("v{}/rev{IMPORT_REV}", VERSION.trim())
+    format!(
+        "v{}/rev{IMPORT_REV}/{}",
+        VERSION.trim(),
+        dbota_assets::import::plan_id(MANIFEST, IDS)
+    )
 }

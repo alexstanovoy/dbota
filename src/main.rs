@@ -257,6 +257,8 @@ fn main() -> AppExit {
             return AppExit::error();
         }
     };
+    #[cfg(not(target_arch = "wasm32"))]
+    import::warn_if_stale(&args.cache_dir);
     let manifest = manifest::Manifest::load(&args.cache_dir);
     let texts = dota_text::Texts::load(manifest.root.as_deref());
     let settings_path = args.config.clone().or_else(config::default_path);

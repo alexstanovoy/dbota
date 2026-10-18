@@ -3,12 +3,28 @@
 
 use std::path::{Path, PathBuf};
 
-use dbota_assets::cache_dir::{import_into, is_current, stamp};
+use dbota_assets::cache_dir::{import_into, is_current, matches_plan, stamp, stamp_prefix};
 use dbota_assets::find_game_dir;
-use dbota_assets::import::{Flow, Plan};
+use dbota_assets::import::{Flow, Plan, plan_id};
 
 const MANIFEST: &str = include_str!("../assets-manifest/manifest.txt");
 const IDS: &str = include_str!("../assets-manifest/ids.txt");
+
+/// Warns when the cache at `cache` was not made by an import of this build's manifest: its files
+/// may lack what the client now asks for.
+pub fn warn_if_stale(cache: &Path) {
+    if cache.is_dir()
+        && !matches_plan(
+            cache,
+            &stamp_prefix(crate::ASSET_VERSION, &plan_id(MANIFEST, IDS)),
+        )
+    {
+        eprintln!(
+            "dbota: the asset cache {} was not made from this build's manifest; run `dbota import`",
+            cache.display()
+        );
+    }
+}
 
 /// Imports into `cache` from the install at `dota` (a `dota 2 beta` folder, else the usual
 /// Steam places); does nothing when the cache was made from the same install already, unless
@@ -17,7 +33,8 @@ pub fn run(dota: Option<&Path>, cache: &Path, force: bool) -> Result<bool, Strin
     let game: PathBuf = find_game_dir(dota).ok_or_else(|| {
         "Dota 2 not found; pass --dota-path \"<...>/steamapps/common/dota 2 beta\"".to_string()
     })?;
-    let stamp = stamp(&game, crate::ASSET_VERSION).map_err(|e| e.to_string())?;
+    let stamp =
+        stamp(&game, crate::ASSET_VERSION, &plan_id(MANIFEST, IDS)).map_err(|e| e.to_string())?;
     if !force && is_current(cache, &stamp) {
         println!("dbota import: {} is up to date", cache.display());
         return Ok(true);
