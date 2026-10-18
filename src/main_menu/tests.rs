@@ -1,0 +1,522 @@
+//! The menu end to end: the real matchmaking service in-process, launching
+//! the real `bota_server`; players are [`MenuCore`]s driven by the acts a
+//! person's clicks and keys make, and they play their games through the same
+//! opening the client uses, as the client core plays them.
+
+use std::path::{Path, PathBuf};
+use std::process::{Child, Command};
+use std::sync::OnceLock;
+use std::sync::atomic::{AtomicU16, AtomicU32, Ordering};
+use std::time::{Duration, Instant};
+
+use bota_client_core::{App as Core, Phase, Source};
+use bota_core::fountain_pos;
+use bota_proto::{HeroId, Order, Target};
+use bota_radovid::proto::RulesetId;
+
+use super::core::{Act, Launch, MenuCore, Page};
+use super::launch::{Opening, Trust};
+use super::store::{Entry, SettingsStore};
+use super::view::PageView;
+
+const PASSWORD: &str = "correct horse battery";
+const RULESET: &str = "solo_mid";
+static NEXT: AtomicU32 = AtomicU32::new(0);
+static NEXT_PORTS: AtomicU16 = AtomicU16::new(0);
+/// Game ports per service, from the first.
+const PORTS: u16 = 4;
+const FIRST_PORT: u16 = 45000;
+
+/// A scratch folder under the target folder, emptied when dropped.
+struct Scratch(PathBuf);
+
+impl Scratch {
+    fn new(what: &str) -> Scratch {
+        let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(format!(
+            "target/menu-tests/{what}-{}-{}",
+            std::process::id(),
+            NEXT.fetch_add(1, Ordering::Relaxed)
+        ));
+        std::fs::create_dir_all(&dir).expect("scratch folder");
+        Scratch(dir)
+    }
+}
+
+impl Drop for Scratch {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
+/// The bota workspace dbota builds against, as Cargo resolved it.
+fn bota_root() -> PathBuf {
+    let cargo = std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into());
+    let out = Command::new(cargo)
+        .args(["metadata", "--format-version", "1"])
+        .current_dir(env!("CARGO_MANIFEST_DIR"))
+        .output()
+        .expect("cargo metadata runs");
+    let meta: serde_json::Value = serde_json::from_slice(&out.stdout).expect("cargo metadata");
+    let manifest = meta["packages"]
+        .as_array()
+        .and_then(|p| p.iter().find(|p| p["name"] == "bota_client_core"))
+        .and_then(|p| p["manifest_path"].as_str())
+        .expect("bota_client_core is a dependency");
+    // <root>/crates/bota_client_core/Cargo.toml
+    Path::new(manifest)
+        .ancestors()
+        .nth(3)
+        .expect("the bota workspace")
+        .to_owned()
+}
+
+/// The game server with its WebSocket listener, built once per run from the
+/// same bota (`BOTA_SERVER_BIN` names a ready one).
+fn server_binary() -> &'static Path {
+    static BINARY: OnceLock<PathBuf> = OnceLock::new();
+    BINARY.get_or_init(|| {
+        if let Some(path) = std::env::var_os("BOTA_SERVER_BIN") {
+            return PathBuf::from(path);
+        }
+        let target = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target/bota");
+        let cargo = std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into());
+        let status = Command::new(cargo)
+            .args([
+                "build",
+                "--quiet",
+                "--release",
+                "-p",
+                "bota_server",
+                "--features",
+                "websocket",
+            ])
+            .arg("--target-dir")
+            .arg(&target)
+            .current_dir(bota_root())
+            .status()
+            .expect("cargo runs");
+        assert!(status.success(), "bota_server builds");
+        target.join("release/bota_server")
+    })
+}
+
+/// The service, running until dropped.
+struct Service {
+    runtime: tokio::runtime::Runtime,
+    service: Option<radovid::service::Service>,
+    url: String,
+    pem: String,
+    _dir: Scratch,
+}
+
+impl Drop for Service {
+    fn drop(&mut self) {
+        if let Some(service) = self.service.take() {
+            self.runtime.block_on(service.shutdown());
+        }
+    }
+}
+
+fn config(dir: &Path, binary: &Path) -> String {
+    let first = FIRST_PORT + PORTS * NEXT_PORTS.fetch_add(1, Ordering::Relaxed);
+    format!(
+        r#"
+listen = "127.0.0.1:0"
+database = "{db}"
+tls_cert = "unused"
+tls_key = "unused"
+game_ports = "{first}-{last}"
+[password]
+memory_kib = 1024
+iterations = 1
+[limits]
+games_per_source = 200
+game_capacity = {PORTS}
+lobby_games_max = 1
+[[ruleset]]
+id = "{RULESET}"
+name = "1x1 Mid Only"
+game = "bota"
+game_fingerprint = "{fingerprint:016x}"
+teams = [1, 1]
+rated = true
+max_duration_secs = 600
+[ruleset.launcher]
+kind = "local"
+binary = "{binary}"
+public_url = "ws://127.0.0.1:{{port}}"
+version_probe = ["--wire-fingerprint"]
+start_timeout_secs = 30
+args = ["--map", "2", "--mode", "lockstep", "--ack-timeout-ticks", "900",
+        "--match-id", "{{match_id}}", "--bind", "127.0.0.1", "--port", "0",
+        "--ws-port", "{{port}}", "--start-after-secs", "60", "--abandon-unjoined",
+        "--empty-after-secs", "60"]
+env = {{ BOTA_SEATS = "{{seats}}" }}
+"#,
+        db = dir.join("radovid.db").display(),
+        last = first + PORTS - 1,
+        fingerprint = bota_radovid::fingerprint(),
+        binary = binary.display(),
+    )
+}
+
+fn service() -> Service {
+    let binary = server_binary().to_owned();
+    let dir = Scratch::new("service");
+    let path = dir.0.join("radovid.toml");
+    std::fs::write(&path, config(&dir.0, &binary)).expect("config");
+    let config = radovid::config::Config::load(&path).expect("a valid configuration");
+    let names = vec!["127.0.0.1".to_owned(), "localhost".to_owned()];
+    let identity = radovid::tls::self_signed(names).expect("certificate");
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .enable_all()
+        .build()
+        .expect("runtime");
+    let service = runtime
+        .block_on(radovid::service::Service::start(config, &identity))
+        .expect("the service starts");
+    Service {
+        url: format!("wss://127.0.0.1:{}", service.addr.port()),
+        pem: identity.cert_pem.clone(),
+        runtime,
+        service: Some(service),
+        _dir: dir,
+    }
+}
+
+/// A player: the menu, its store and what it trusts.
+struct Player {
+    menu: MenuCore,
+    trust: Trust,
+    store: SettingsStore,
+    _dir: Scratch,
+}
+
+impl Player {
+    fn new(service: Option<&Service>) -> Player {
+        let dir = Scratch::new("player");
+        let store = SettingsStore::new(Some(dir.0.join("client.conf")));
+        let trust = Trust::new(service.map(|s| s.pem.as_str())).expect("trust");
+        let menu = MenuCore::new(
+            store.clone(),
+            trust.radovid.clone(),
+            service.map(|s| s.url.clone()),
+        );
+        Player {
+            menu,
+            trust,
+            store,
+            _dir: dir,
+        }
+    }
+
+    /// Types into the page's fields, one after another.
+    fn fill(&mut self, values: &[&str]) {
+        self.menu.act(Act::Focus(0));
+        for (at, value) in values.iter().enumerate() {
+            self.menu.act(Act::Focus(at));
+            while !self.menu.form.value(at).is_empty() {
+                self.menu.act(Act::Erase);
+            }
+            self.menu.act(Act::Type((*value).to_owned()));
+        }
+    }
+
+    fn register(&mut self, login: &str) {
+        settle(&mut [self], 20, |p| p.menu.page() == Page::Login);
+        self.menu.act(Act::Go(Page::Register));
+        self.fill(&[login, PASSWORD, PASSWORD]);
+        self.menu.act(Act::Submit);
+        settle(&mut [self], 20, |p| p.menu.page() == Page::Home);
+    }
+}
+
+/// Pumps every menu until `done` holds for all, within `secs`.
+fn settle(players: &mut [&mut Player], secs: u64, done: impl Fn(&Player) -> bool) {
+    let deadline = Instant::now() + Duration::from_secs(secs);
+    while !players.iter().all(|p| done(p)) {
+        assert!(Instant::now() < deadline, "the menus did not settle");
+        for player in players.iter_mut() {
+            player.menu.update();
+        }
+        std::thread::sleep(Duration::from_millis(5));
+    }
+}
+
+/// Opens a launch as the client does and wraps it in a client core.
+fn open(launch: Launch, trust: &Trust) -> Core {
+    let mut opening = Opening::start(launch, trust);
+    let deadline = Instant::now() + Duration::from_secs(20);
+    loop {
+        if let Some(opened) = opening.poll() {
+            return Core::new(Source::Live(opened.expect("the game opens")));
+        }
+        assert!(Instant::now() < deadline, "the game did not open");
+        std::thread::sleep(Duration::from_millis(5));
+    }
+}
+
+/// Picks `hero`, readies, then attack-moves on the enemy's fountain.
+fn play_step(core: &mut Core, hero: HeroId) {
+    core.pump(1.0 / 30.0);
+    if core.phase == Phase::Lobby && core.my_slot.is_some() && !core.ready {
+        core.act(bota_client_core::Intent::PickHero(hero.0));
+        core.act(bota_client_core::Intent::ToggleReady);
+    }
+    let enemy = core.session().map(|s| fountain_pos(s.map(), s.enemy()));
+    if let Some(enemy) = enemy
+        && core.view().is_some_and(|v| v.tick % 30 == 0)
+        && core.over.is_none()
+    {
+        core.send_order(Order::Attack {
+            target: Target::Pos(enemy),
+        });
+    }
+}
+
+fn solo() -> RulesetId {
+    RulesetId(RULESET.to_owned())
+}
+
+fn launch_of(player: &mut Player) -> Launch {
+    let launch = player.menu.take_launch().expect("a game to open");
+    player.menu.game_started();
+    launch
+}
+
+#[test]
+fn two_players_register_find_accept_play_and_see_their_result() {
+    let service = service();
+    let (mut alice, mut bob) = (Player::new(Some(&service)), Player::new(Some(&service)));
+    alice.register("alice");
+    bob.register("bob");
+    let PageView::Home { rulesets, .. } = alice.menu.view().body else {
+        panic!("Play after registering");
+    };
+    assert_eq!(
+        rulesets.iter().map(|r| r.name.as_str()).collect::<Vec<_>>(),
+        ["1x1 Mid Only"]
+    );
+
+    alice.menu.act(Act::Find(solo()));
+    settle(&mut [&mut alice], 10, |p| p.menu.view().searches.len() == 1);
+    assert_eq!(alice.menu.view().searches[0].position, 1);
+    bob.menu.act(Act::Find(solo()));
+    settle(&mut [&mut alice, &mut bob], 20, |p| {
+        p.menu.view().offer.is_some()
+    });
+    for player in [&mut alice, &mut bob] {
+        let offer = player.menu.view().offer.expect("MATCH FOUND");
+        assert_eq!((offer.accepted, offer.of, offer.answered), (0, 2, false));
+        player.menu.act(Act::Accept(offer.proposal));
+    }
+    // Both accepted: the game server starts and each menu opens its seat.
+    settle(&mut [&mut alice, &mut bob], 60, |p| {
+        p.menu.page() == Page::Game
+    });
+    let mut games = [
+        (
+            open(launch_of(&mut alice), &alice.trust),
+            HeroId::SHADOW_FIEND,
+        ),
+        (open(launch_of(&mut bob), &bob.trust), HeroId::PUDGE),
+    ];
+    let deadline = Instant::now() + Duration::from_secs(400);
+    while games.iter().any(|(core, _)| core.over.is_none()) {
+        assert!(Instant::now() < deadline, "the match did not end");
+        for (core, hero) in &mut games {
+            play_step(core, *hero);
+            assert!(!core.lost || core.over.is_some(), "the game was lost");
+        }
+        alice.menu.update();
+        bob.menu.update();
+        // Lockstep runs as fast as both answer; a client acks every tick,
+        // and the server bounds the messages a second.
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    alice.menu.left_game(None);
+    bob.menu.left_game(None);
+    settle(&mut [&mut alice, &mut bob], 30, |p| {
+        p.menu.page() == Page::Result
+    });
+    let headlines: Vec<String> = [&alice, &bob]
+        .iter()
+        .map(|p| match p.menu.view().body {
+            PageView::Result(result) => {
+                assert_eq!(result.seats.len(), 2);
+                assert!(result.seats.iter().all(|s| !s.rating.is_empty()), "rated");
+                assert_eq!(result.seats[0].hero, "Shadow Fiend");
+                result.headline
+            }
+            other => panic!("{other:?}"),
+        })
+        .collect();
+    let mut sorted = headlines.clone();
+    sorted.sort();
+    assert_eq!(sorted, ["DEFEAT", "VICTORY"], "one won: {headlines:?}");
+    comes_back_logged_in(alice, &service);
+}
+
+/// A new run of the client logs in with the kept token, without a password;
+/// the token is readable by its owner only.
+fn comes_back_logged_in(player: Player, service: &Service) {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let path = player._dir.0.join("session");
+        let mode = std::fs::metadata(path)
+            .expect("the token is kept")
+            .permissions()
+            .mode();
+        assert_eq!(mode & 0o777, 0o600);
+    }
+    let Player {
+        store, trust, _dir, ..
+    } = player;
+    let menu = MenuCore::new(
+        store.clone(),
+        trust.radovid.clone(),
+        Some(service.url.clone()),
+    );
+    let mut again = Player {
+        menu,
+        trust,
+        store,
+        _dir,
+    };
+    settle(&mut [&mut again], 20, |p| p.menu.page() == Page::Home);
+    again.menu.act(Act::Logout);
+    assert!(
+        again.store.read(Entry::Session).is_none(),
+        "logging out forgets the token"
+    );
+}
+
+#[test]
+fn a_decline_puts_the_other_back_in_place_and_cools_the_decliner_down() {
+    let service = service();
+    let (mut alice, mut bob) = (Player::new(Some(&service)), Player::new(Some(&service)));
+    alice.register("alice");
+    bob.register("bob");
+    alice.menu.act(Act::Find(solo()));
+    settle(&mut [&mut alice], 10, |p| p.menu.view().searches.len() == 1);
+    bob.menu.act(Act::Find(solo()));
+    settle(&mut [&mut alice, &mut bob], 20, |p| {
+        p.menu.view().offer.is_some()
+    });
+    let offer = bob.menu.view().offer.expect("MATCH FOUND");
+    let alices = alice.menu.view().offer.expect("MATCH FOUND");
+    alice.menu.act(Act::Accept(alices.proposal));
+    settle(&mut [&mut alice, &mut bob], 10, |p| {
+        p.menu.view().offer.is_some_and(|o| o.accepted == 1)
+    });
+    bob.menu.act(Act::Decline(offer.proposal));
+    settle(&mut [&mut alice, &mut bob], 10, |p| {
+        p.menu.view().offer.is_none()
+    });
+    settle(&mut [&mut alice], 10, |p| p.menu.view().searches.len() == 1);
+    settle(&mut [&mut bob], 10, |p| p.menu.view().searches.is_empty());
+    assert_eq!(
+        alice.menu.view().searches[0].position,
+        1,
+        "back at its place"
+    );
+    let PageView::Home { cooldown, .. } = bob.menu.view().body else {
+        panic!("Play");
+    };
+    assert!(
+        cooldown.is_some_and(|c| c.starts_with("You can search again in ")),
+        "the cooldown shows"
+    );
+    bob.menu.act(Act::Find(solo()));
+    settle(&mut [&mut bob], 10, |p| {
+        p.menu.view().status.is_some_and(|s| s.error)
+    });
+}
+
+/// A free loopback port.
+fn free_port() -> u16 {
+    std::net::TcpListener::bind("127.0.0.1:0")
+        .and_then(|l| l.local_addr())
+        .expect("a free port")
+        .port()
+}
+
+struct Server(Child);
+
+impl Drop for Server {
+    fn drop(&mut self) {
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
+}
+
+#[test]
+fn direct_connect_over_tcp_and_websocket_without_the_service() {
+    let (tcp, ws) = (free_port(), free_port());
+    let _server = Server(
+        Command::new(server_binary())
+            .args([
+                "--map",
+                "2",
+                "--players",
+                "2",
+                "--mode",
+                "lockstep",
+                "--bind",
+                "127.0.0.1",
+            ])
+            .args(["--port", &tcp.to_string(), "--ws-port", &ws.to_string()])
+            .spawn()
+            .expect("bota_server starts"),
+    );
+    let mut cores = Vec::new();
+    for (address, hero) in [
+        (format!("127.0.0.1:{tcp}"), HeroId::SHADOW_FIEND),
+        (format!("ws://127.0.0.1:{ws}"), HeroId::PUDGE),
+    ] {
+        let mut player = Player::new(None);
+        assert_eq!(player.menu.page(), Page::Service, "no service known");
+        player.menu.act(Act::Go(Page::Direct));
+        player.fill(&[&address, "tester"]);
+        player.menu.act(Act::Direct(false));
+        let launch = player.menu.take_launch().expect("a game to open");
+        assert_eq!(
+            player.store.read(Entry::Menu).map(|m| m.contains(&address)),
+            Some(true)
+        );
+        // The server may still be starting.
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let opened = loop {
+            let mut opening = Opening::start(launch.clone(), &player.trust);
+            let opened = loop {
+                if let Some(opened) = opening.poll() {
+                    break opened;
+                }
+                std::thread::sleep(Duration::from_millis(5));
+            };
+            match opened {
+                Ok(link) => break Core::new(Source::Live(link)),
+                Err(_) if Instant::now() < deadline => {
+                    std::thread::sleep(Duration::from_millis(100))
+                }
+                Err(err) => panic!("{err}"),
+            }
+        };
+        cores.push((opened, hero));
+    }
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while cores.iter().any(|(c, _)| c.view().is_none()) {
+        assert!(Instant::now() < deadline, "the match did not start");
+        for (core, hero) in &mut cores {
+            play_step(core, *hero);
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    assert!(
+        cores
+            .iter()
+            .all(|(c, _)| c.phase == Phase::Playing && c.my_slot.is_some())
+    );
+}

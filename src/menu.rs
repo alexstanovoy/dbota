@@ -164,7 +164,7 @@ fn clicks(
     rows: Query<(&Interaction, &Row), Changed<Interaction>>,
     mut settings: ResMut<Settings>,
     panels: Res<Panels>,
-    path: Res<crate::SettingsPath>,
+    store: Res<crate::main_menu::SettingsStore>,
     mut was_open: Local<bool>,
     mut dirty: Local<bool>,
 ) {
@@ -210,10 +210,8 @@ fn clicks(
     }
     if *was_open && !panels.settings && *dirty {
         *dirty = false;
-        if let Some(path) = &path.0
-            && let Err(err) = crate::config::save(path, &settings)
-        {
-            warn!("settings not saved to {}: {err}", path.display());
+        if let Err(err) = store.save_settings(&settings) {
+            warn!("settings not saved: {err}");
         }
     }
     *was_open = panels.settings;

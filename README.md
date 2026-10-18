@@ -35,10 +35,30 @@ Dota 2 install. Bots don't need it.
 
 ## Play
 
+`target/release/dbota` with no game on its command line opens the main menu, laid out as Dota's:
+
+- **Sign in / create account** on a matchmaking service (`--service wss://host:port`, remembered; the
+  service and `wss://` games are trusted by the public web's roots, or `--trust-cert FILE.pem` for one's
+  own). The login is kept for the next run in `~/.config/dbota/session`, readable by its owner only; LOG OUT
+  forgets it. There is no password recovery.
+- **PLAY**: find a match per ruleset. The search box shows the time searching, the place in the queue and
+  when the game servers are full; MATCH FOUND asks to accept or decline within the time shown (declining
+  keeps the account out of the queues for a while); then the game opens by itself.
+- **MY GAMES**: rejoin or watch the account's running matches (an account may run several at once), cancel
+  searches. **LOBBIES**: create one, join one by name and password, or from the list. Then a result screen.
+- **DIRECT CONNECT**: a game server's address, `host:port` or `tcp://` (TCP), `ws://` or `wss://`, with no
+  service at all. Plain TCP to another machine is unprotected, and dbota says so once per host.
+
+In a game from the menu, `Esc` once the match is over (or on the hero screen) goes back to the menu.
+`--addr`, `--spectate`, a seat key or `--replay` skip the menu, as below.
+
+Two people without a service: start a server and connect two dbota clients (from another machine use
+`--addr <host>:4455`, or DIRECT CONNECT in the menu):
+
 ```sh
 ../bota/target/release/bota_server --map 2      # listens on 127.0.0.1:4455
-target/release/dbota --name alice
-target/release/dbota --name bob
+target/release/dbota --addr 127.0.0.1:4455 --name alice
+target/release/dbota --addr 127.0.0.1:4455 --name bob
 ```
 
 On the hero screen click a portrait, then Ready; the match starts once both seats are ready.
@@ -46,7 +66,8 @@ Alone: add `--dummy-seat` to the server. A bot is any program that speaks bota's
 
 | Flag | Default | What it controls | Change it when |
 |---|---|---|---|
-| `--addr ADDR` | `127.0.0.1:4455` | the server: `host:port` (TCP), `ws://...` or `wss://...` | the server is elsewhere |
+| `--addr ADDR` | none (the main menu opens) | the server to join directly: `host:port` (TCP), `ws://...` or `wss://...`; `127.0.0.1:4455` with `--spectate` or a seat key | the server is elsewhere |
+| `--service URL`, `--trust-cert FILE` | remembered | the matchmaking service the menu signs in to; a certificate of one's own to trust | |
 | `--name NAME` | `player` | the name the lobby shows | |
 | `--spectate` | off | watch instead of playing | |
 | `--replay FILE`, `--pov SEAT`, `--follow SEAT` | none | play a replay; as one seat sees it; camera on one seat's hero | |

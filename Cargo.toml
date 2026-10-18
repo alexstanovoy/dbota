@@ -58,11 +58,13 @@ bota_proto = { path = "../bota/crates/bota_proto" }
 clap = { version = "4", features = ["derive", "env"] }
 serde_json = "1"
 
-# wss:// on the desktop; a browser build has the browser's own WebSocket.
+# wss:// and the matchmaking menu (radovid and the way into a game it hands out) on the desktop: threads and
+# sockets; a browser build has the browser's own WebSocket.
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 bota_client_core = { path = "../bota/crates/bota_client_core", features = ["ui", "websocket"] }
 # `dbota import`: the asset cache made from the local Dota install.
 dbota_assets = { path = "crates/dbota_assets" }
+bota_radovid = { path = "../bota/crates/bota_radovid", features = ["native"] }
 
 # In a browser, Bevy draws through WebGPU where the browser has it, else WebGL2.
 [target.'cfg(target_arch = "wasm32")'.dependencies]
@@ -72,7 +74,14 @@ bevy = { version = "=0.19.1", default-features = false, features = ["webgl2", "w
 js-sys = "0.3"
 wasm-bindgen = "0.2"
 wasm-bindgen-futures = "0.4"
-web-sys = { version = "0.3", features = ["Response", "Window", "XmlHttpRequest"] }
+web-sys = { version = "0.3", features = ["Location", "Response", "Storage", "Window", "XmlHttpRequest"] }
+bota_radovid = { path = "../bota/crates/bota_radovid", default-features = false, features = ["web"] }
+
+[target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
+# The menu's end-to-end tests run the real matchmaking service in-process; its
+# launcher starts the real bota_server.
+radovid = { path = "../radovid/crates/radovid" }
+tokio = { version = "1", features = ["rt-multi-thread"] }
 
 [features]
 # A browser build that plays the replay named by DBOTA_WEB_REPLAY at build

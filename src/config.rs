@@ -1,7 +1,7 @@
 //! What the player may set: hotkeys, sound and which aids are drawn, read
 //! from and written to a plain `name = value` file.
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use bevy::input::keyboard::KeyCode;
 
@@ -368,8 +368,6 @@ impl Settings {
 
 /// Lines read from a settings file at most.
 const MAX_LINES: usize = 512;
-/// Bytes read from a settings file at most.
-const MAX_BYTES: u64 = 64 * 1024;
 
 /// Where the settings live when no path is given:
 /// `$XDG_CONFIG_HOME/dbota/client.conf`, else `~/.config/dbota/client.conf`.
@@ -379,38 +377,6 @@ pub fn default_path() -> Option<PathBuf> {
         .map(PathBuf::from)
         .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".config")))?;
     Some(base.join("dbota").join("client.conf"))
-}
-
-/// Reads the settings at `path`. A missing file gives the defaults; a file
-/// that cannot be read, or lines that cannot, are reported on stderr.
-pub fn load(path: &Path) -> Settings {
-    use std::io::Read;
-    let file = match std::fs::File::open(path) {
-        Ok(file) => file,
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Settings::default(),
-        Err(err) => {
-            eprintln!("dbota settings {}: {err}", path.display());
-            return Settings::default();
-        }
-    };
-    let mut text = String::new();
-    if let Err(err) = file.take(MAX_BYTES).read_to_string(&mut text) {
-        eprintln!("dbota settings {}: {err}", path.display());
-        return Settings::default();
-    }
-    let (settings, complaints) = Settings::parse(&text);
-    for complaint in complaints {
-        eprintln!("dbota settings {}: {complaint}", path.display());
-    }
-    settings
-}
-
-/// Writes the settings to `path`, making its folder if needed.
-pub fn save(path: &Path, settings: &Settings) -> std::io::Result<()> {
-    if let Some(dir) = path.parent() {
-        std::fs::create_dir_all(dir)?;
-    }
-    std::fs::write(path, settings.render())
 }
 
 /// A number within `lo..=hi`.

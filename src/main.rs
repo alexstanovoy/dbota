@@ -30,6 +30,7 @@ mod hud;
 #[cfg(not(target_arch = "wasm32"))]
 mod import;
 mod input;
+mod main_menu;
 mod manifest;
 mod map;
 mod mapfile;
@@ -86,9 +87,19 @@ pub struct Args {
     #[cfg(not(target_arch = "wasm32"))]
     #[command(subcommand)]
     pub command: Option<Command>,
-    /// Where the server listens: `host:port` (TCP), `ws://...` or `wss://...`.
-    #[arg(long, default_value = "127.0.0.1:4455")]
-    pub addr: String,
+    /// The game server to join directly: `host:port` (TCP), `ws://` or
+    /// `wss://`. Without it, `--spectate`, a seat key or a replay, the main
+    /// menu opens.
+    #[arg(long, value_name = "ADDRESS")]
+    pub addr: Option<String>,
+    /// The matchmaking service the menu signs in to, `wss://host:port`;
+    /// remembered for the next run.
+    #[arg(long, env = "DBOTA_SERVICE", value_name = "URL")]
+    pub service: Option<String>,
+    /// Trust exactly the certificates in this PEM file for the service and
+    /// `wss://` games, instead of the public web's (a service of one's own).
+    #[arg(long, value_name = "FILE")]
+    pub trust_cert: Option<PathBuf>,
     /// What the lobby shows.
     #[arg(long, default_value = "player")]
     pub name: String,
@@ -136,6 +147,10 @@ pub struct Args {
     /// fails.
     #[arg(long)]
     pub visual_check: bool,
+    /// Debug: draw a screen of the main menu with made-up contents, no
+    /// service needed (for screenshots: `--frames N --screenshot FILE`).
+    #[arg(long, value_name = "NAME", value_parser = clap::builder::PossibleValuesParser::new(main_menu::PREVIEWS))]
+    pub menu_preview: Option<String>,
     /// Debug: keep a tooltip open: `item:ID` (id of the item), `shop:ID` or
     /// `ability:ID:LEVEL`.
     #[arg(long, value_name = "KIND:ID")]
@@ -195,6 +210,17 @@ pub enum Command {
         #[arg(long)]
         force: bool,
     },
+}
+
+impl Args {
+    /// Whether the main menu opens: nothing on the command line names a game.
+    pub fn wants_menu(&self) -> bool {
+        !cfg!(feature = "web-replay")
+            && self.replay.is_none()
+            && self.addr.is_none()
+            && !self.spectate
+            && !crate::session::seat_key_given()
+    }
 }
 
 /// Where the settings are saved; absent when there is nowhere to.
@@ -257,11 +283,15 @@ fn main() -> AppExit {
             }
         };
     }
-    let session = match session::open(&args) {
-        Ok(session) => session,
-        Err(err) => {
-            eprintln!("dbota: {err}");
-            return AppExit::error();
+    let session = if args.wants_menu() {
+        main_menu::idle()
+    } else {
+        match session::open(&args) {
+            Ok(session) => session,
+            Err(err) => {
+                eprintln!("dbota: {err}");
+                return AppExit::error();
+            }
         }
     };
     #[cfg(not(target_arch = "wasm32"))]
@@ -269,10 +299,8 @@ fn main() -> AppExit {
     let manifest = manifest::Manifest::load(&args.cache_dir);
     let texts = dota_text::Texts::load(manifest.root.as_deref());
     let settings_path = args.config.clone().or_else(config::default_path);
-    let mut settings = settings_path
-        .as_deref()
-        .map(config::load)
-        .unwrap_or_default();
+    let store = main_menu::SettingsStore::new(settings_path.clone());
+    let mut settings = store.load_settings();
     for line in &args.set {
         let set = line
             .split_once('=')
@@ -290,6 +318,7 @@ fn main() -> AppExit {
         .insert_resource(texts)
         .insert_resource(settings.clone())
         .insert_resource(SettingsPath(settings_path))
+        .insert_resource(store.clone())
         .insert_non_send(session)
         // Must be registered before AssetPlugin (part of DefaultPlugins) builds the sources.
         .register_asset_source(CACHE_SOURCE, source)
@@ -333,7 +362,12 @@ fn main() -> AppExit {
             quality::plugin,
             heap::plugin,
         ))
-        .add_plugins(fortified::plugin);
+        .add_plugins(fortified::plugin)
+        .add_plugins(main_menu::plugin);
+    if let Err(err) = menu(&mut app, &args, store) {
+        eprintln!("dbota: {err}");
+        return AppExit::error();
+    }
     // GPU buffers of at most 128 MiB: a browser's WebGPU refuses ones over
     // 256 MiB, and Bevy's mesh slabs grow to 512.
     app.sub_app_mut(bevy::render::RenderApp).insert_resource(
@@ -350,6 +384,34 @@ fn main() -> AppExit {
         app.add_plugins(bevy::render::diagnostic::RenderDiagnosticsPlugin);
     }
     app.run()
+}
+
+/// The main menu, when the command line names no game: its core connected
+/// to the service, or a canned screen of it (`--menu-preview`).
+fn menu(app: &mut App, args: &Args, store: main_menu::SettingsStore) -> std::io::Result<()> {
+    if let Some(name) = &args.menu_preview {
+        let view =
+            main_menu::preview(name).ok_or_else(|| std::io::Error::other("no such screen"))?;
+        app.insert_resource(main_menu::Preview(view));
+        return Ok(());
+    }
+    if !args.wants_menu() {
+        return Ok(());
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    let pem = args
+        .trust_cert
+        .as_deref()
+        .map(std::fs::read_to_string)
+        .transpose()?;
+    #[cfg(target_arch = "wasm32")]
+    let pem: Option<String> = None;
+    let trust = main_menu::Trust::new(pem.as_deref())?;
+    let service = args.service.clone().or_else(main_menu::page_service);
+    let core = main_menu::MenuCore::new(store, trust.radovid.clone(), service);
+    app.insert_non_send(core)
+        .insert_non_send(main_menu::Trusted(trust));
+    Ok(())
 }
 
 /// A `WIDTHxHEIGHT` size, each side 64 to 16384.

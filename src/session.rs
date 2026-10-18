@@ -48,18 +48,31 @@ pub fn open(args: &Args) -> std::io::Result<Session> {
 #[cfg(not(target_arch = "wasm32"))]
 const SEAT_KEY_VAR: &str = "BOTA_SEAT_KEY";
 
+/// The server joined when only `--spectate` or a seat key is given.
+#[cfg(not(target_arch = "wasm32"))]
+const DEFAULT_ADDR: &str = "127.0.0.1:4455";
+
+/// Whether the environment holds a seat key (a browser has no environment).
+pub fn seat_key_given() -> bool {
+    #[cfg(not(target_arch = "wasm32"))]
+    return std::env::var(SEAT_KEY_VAR).is_ok_and(|hex| !hex.is_empty());
+    #[cfg(target_arch = "wasm32")]
+    false
+}
+
 /// Joins the server the arguments name, as a player or a spectator.
 #[cfg(not(target_arch = "wasm32"))]
 fn connect(args: &Args) -> std::io::Result<Session> {
     use bota_client_core::{Net, Transport};
     use bota_proto::{ClientMsg, Role, SeatKey};
     use std::io::{Error, ErrorKind};
-    if !stays_private(&args.addr) {
+    let addr = args.addr.as_deref().unwrap_or(DEFAULT_ADDR);
+    if !stays_private(addr) {
         // Plain TCP is first-class (LAN, local play); the player is told what it means.
         eprintln!(
             "dbota: plain connection to {}: fine on your LAN, not safe across the internet; use \
 wss:// where the host has a certificate",
-            args.addr
+            addr
         );
     }
     let key = std::env::var(SEAT_KEY_VAR)
@@ -74,7 +87,7 @@ wss:// where the host has a certificate",
             })
         })
         .transpose()?;
-    let mut net = Net::connect(&args.addr)?;
+    let mut net = Net::connect(addr)?;
     let role = if args.spectate {
         Role::Spectator
     } else {
