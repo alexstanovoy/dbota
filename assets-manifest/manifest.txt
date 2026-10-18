@@ -342,6 +342,7 @@ texture icon.item.monkey_king_bar panorama/images/items/monkey_king_bar_png.vtex
 texture icon.ability.pudge_meat_hook panorama/images/spellicons/pudge_meat_hook_png.vtex_c icons/abilities/pudge_meat_hook.png
 texture icon.ability.pudge_rot panorama/images/spellicons/pudge_rot_png.vtex_c icons/abilities/pudge_rot.png
 texture icon.ability.pudge_flesh_heap panorama/images/spellicons/pudge_flesh_heap_png.vtex_c icons/abilities/pudge_flesh_heap.png
+texture icon.ability.pudge_innate_graft_flesh panorama/images/spellicons/pudge_innate_graft_flesh_png.vtex_c icons/abilities/pudge_innate_graft_flesh.png
 texture icon.ability.pudge_dismember panorama/images/spellicons/pudge_dismember_png.vtex_c icons/abilities/pudge_dismember.png
 texture icon.ability.courier_burst panorama/images/spellicons/courier_burst_png.vtex_c icons/abilities/courier_burst.png
 texture icon.ability.courier_return_to_base panorama/images/spellicons/courier_return_to_base_png.vtex_c icons/abilities/courier_return_to_base.png

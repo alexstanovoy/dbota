@@ -176,14 +176,23 @@ fn ability_value(id: AbilityId, def: &'static AbilityDef, key: &str) -> Option<L
         },
         AbilityId::FLESH_HEAP => match key {
             "flesh_heap_strength_buff_amount" => {
-                Some(collapse(&rules::FLESH_HEAP_STRENGTH_PER_STACK.map(fixed)))
+                Some(collapse(&[fixed(rules::FLESH_HEAP_STRENGTH_PER_STACK)]))
             }
             "flesh_heap_range" => one(rules::FLESH_HEAP_RANGE),
             _ => None,
         },
         AbilityId::DISMEMBER => match key {
             "dismember_damage" => many(&rules::DISMEMBER_DAMAGE_PER_SECOND),
+            "strength_damage" => Some(collapse(&rules::DISMEMBER_STRENGTH_DAMAGE.map(fixed))),
+            "ticks" => one(rules::DISMEMBER_BITES),
+            "pull_units_per_second" => one(rules::DISMEMBER_PULL_SPEED),
+            "pull_distance_limit" => one(rules::DISMEMBER_PULL_LIMIT),
             "abilitychanneltime" => one(secs(rules::DISMEMBER_TICKS)),
+            _ => None,
+        },
+        AbilityId::MEAT_SHIELD => match key {
+            "damage_block" => many(&rules::MEAT_SHIELD_BLOCK),
+            "duration" => Some(collapse(&rules::MEAT_SHIELD_TICKS.map(secs))),
             _ => None,
         },
         AbilityId::BURST => match key {

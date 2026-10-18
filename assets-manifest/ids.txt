@@ -6,8 +6,7 @@
 #   hero <hero id> <dota hero>             icon.hero.<name>, portrait.hero.<name>, minimap.hero.<name>
 #   effect <effect id> <logical icon>      the icon Dota shows on the buff bar: an item's or an ability's
 #   text <item|ability> <id> <dota key>    the Dota entry whose text describes it where that is not the
-#                                          icon's name (an item is `item_<name>`; bota's Flesh Heap is
-#                                          Dota's innate, whose icon is the Meat Shield's)
+#                                          icon's name (an item is `item_<name>`)
 #
 # The files are Valve's: tools/import_assets.sh exports them into a local
 # cache for personal use; they are never committed.
@@ -67,8 +66,7 @@ item 52 wind_lace
 item 53 blood_grenade
 ability 0 pudge_meat_hook
 ability 1 pudge_rot
-ability 2 pudge_flesh_heap
-text ability 2 pudge_innate_graft_flesh
+ability 2 pudge_innate_graft_flesh
 text item 38 item_recipe_bracer
 text item 39 item_recipe_wraith_band
 text item 40 item_recipe_null_talisman
@@ -147,6 +145,7 @@ ability 73 frogmen_water_bubble_medium
 ability 74 frogmen_water_bubble_large
 ability 75 hill_troll_rally
 ability 76 tornado_tempest
+ability 77 pudge_flesh_heap
 hero 0 pudge
 hero 1 nevermore
 effect 1 icon.item.flask
@@ -158,7 +157,7 @@ effect 6 icon.ability.pudge_rot
 effect 7 icon.ability.courier_burst
 effect 8 icon.ability.courier_shield
 effect 9 icon.item.phase_boots
-effect 10 icon.ability.pudge_flesh_heap
+effect 10 icon.ability.pudge_innate_graft_flesh
 effect 11 icon.ability.nevermore_necromastery
 effect 12 icon.ability.nevermore_dark_lord
 effect 13 icon.ability.tower_armor_aura
@@ -205,3 +204,5 @@ effect 53 icon.ability.tornado_tempest
 effect 54 icon.ability.frogmen_water_bubble_small
 effect 55 icon.ability.satyr_trickster_purge
 effect 56 icon.glyph
+effect 57 icon.ability.pudge_flesh_heap
+effect 58 icon.ability.pudge_dismember
