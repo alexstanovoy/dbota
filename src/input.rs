@@ -52,7 +52,10 @@ pub fn plugin(app: &mut App) {
     app.init_resource::<OverHud>()
         .init_resource::<Typing>()
         .init_resource::<Panels>()
-        .add_systems(Update, (over_hud, typing, keys, mouse, boxes).chain());
+        .add_systems(
+            Update,
+            (over_hud, typing, keys, crate::pick::update, mouse, boxes).chain(),
+        );
 }
 
 /// Notes whether the cursor is over any part of the HUD that swallows clicks.
@@ -267,6 +270,7 @@ fn mouse(
     mut session: NonSendMut<Session>,
     buttons: Res<ButtonInput<MouseButton>>,
     cursor: Res<CursorGround>,
+    hover: Res<crate::pick::Hover>,
     over: Res<OverHud>,
     panels: Res<Panels>,
     window: Single<&Window, With<PrimaryWindow>>,
@@ -275,9 +279,13 @@ fn mouse(
         return;
     }
     let core = &mut session.0;
-    let Some(at) = cursor.0.map(|p| (p.x, -p.z)) else {
+    let Some(ground) = cursor.0.map(|p| (p.x, -p.z)) else {
         return;
     };
+    // A unit picked is named by where it stands, which the core resolves to
+    // that unit itself; open ground is the cursor's own point.
+    let named = |unit: crate::pick::Hit| unit.map_or(ground, |(_, p)| (p.x, p.y));
+    let at = named(hover.left());
     let commands = core.my_hero().is_some() && core.controls_selection() && core.over.is_none();
     let live = matches!(core.source, Source::Live(_));
     if buttons.just_pressed(MouseButton::Left) {
@@ -298,13 +306,16 @@ fn mouse(
     if buttons.just_pressed(MouseButton::Right) && commands && live {
         core.attack_move_armed = false;
         core.aiming = None;
-        core.act(Intent::Smart(at));
+        core.act(Intent::Smart(named(hover.attack)));
     }
     if buttons.just_released(MouseButton::Left)
         && let Some(slot) = core.held_item.take()
         && slot < BAG_SLOTS
     {
-        core.act(Intent::PutAt { slot, at });
+        core.act(Intent::PutAt {
+            slot,
+            at: named(hover.select),
+        });
     }
 }
 

@@ -36,6 +36,7 @@ mod mapfile;
 mod menu;
 mod minimap;
 mod overlay;
+mod pick;
 mod portrait;
 mod quality;
 mod select;
@@ -311,6 +312,7 @@ fn main() -> AppExit {
             overlay::plugin,
             hud::plugin,
             input::plugin,
+            pick::plugin,
             minimap::plugin,
             portrait::plugin,
         ))

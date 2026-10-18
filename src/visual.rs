@@ -49,6 +49,7 @@ pub struct Checks<'w, 's> {
     index: Res<'w, UnitIndex>,
     units: Query<'w, 's, &'static Unit>,
     camera: Single<'w, 's, (&'static Camera, &'static GlobalTransform), With<RtsCamera>>,
+    projection: Single<'w, 's, &'static Projection, With<RtsCamera>>,
     window: Single<'w, 's, &'static Window, With<PrimaryWindow>>,
     rings: Res<'w, crate::overlay::RangeRings>,
     bars: Res<'w, crate::bars::Bars>,
@@ -160,6 +161,7 @@ pub fn run(image: &Image, unveiled: &Image, c: &Checks) -> bool {
     );
     corner(c, &mut report);
     buff_icons(c, &mut report);
+    picks(c, &mut report);
     ok
 }
 
@@ -602,4 +604,68 @@ fn heroes(shot: &Shot, c: &Checks, report: &mut impl FnMut(&str, bool, String)) 
             "no hero on screen".into(),
         );
     }
+}
+
+/// A click near a unit, not on it, gets it: for every unit on screen with
+/// no other close by, clicks a little off the middle of its body in four
+/// directions (within the screen-space minimum reach) and asks the picker
+/// what it gets.
+fn picks(c: &Checks, report: &mut impl FnMut(&str, bool, String)) {
+    use crate::pick::{Candidate, Lens, MIN_SCREEN_RADIUS, Side, Want, pick, stands};
+    let (camera, transform) = *c.camera;
+    let Some(view) = c.session.0.view() else {
+        report("clicks near units pick them", false, "no view".into());
+        return;
+    };
+    let fov = match *c.projection {
+        Projection::Perspective(p) => p.fov,
+        _ => return,
+    };
+    let all: Vec<(Candidate, Vec2)> =
+        stands(view, &c.index, &c.units, &c.ground, c.session.0.my_team()).collect();
+    let slack = c.window.height() * MIN_SCREEN_RADIUS * 0.8;
+    let lit: Vec<(Candidate, Vec2)> = all
+        .iter()
+        .filter(|(u, _)| u.kind != UnitKind::Fountain)
+        .filter_map(|(u, _)| {
+            let mid = u.base + Vec3::Y * (u.height / 2.0).min(60.0);
+            camera
+                .world_to_viewport(transform, mid)
+                .ok()
+                .filter(|p| {
+                    p.x > 0.0 && p.y > 0.0 && p.x < c.window.width() && p.y < c.window.height()
+                })
+                .map(|p| (*u, p))
+        })
+        .collect();
+    let (mut tried, mut wrong) = (0, Vec::new());
+    for (unit, at) in &lit {
+        if lit
+            .iter()
+            .any(|(o, p)| o.id != unit.id && p.distance(*at) < slack * 6.0)
+        {
+            continue;
+        }
+        for dir in [Vec2::X, Vec2::NEG_X, Vec2::Y, Vec2::NEG_Y] {
+            let Ok(ray) = camera.viewport_to_world(transform, *at + dir * slack) else {
+                continue;
+            };
+            let want = Want {
+                side: Side::Any,
+                strict: false,
+                exclude: None,
+                orders: false,
+            };
+            tried += 1;
+            let got = pick(ray, Lens::new(fov), all.iter().map(|(u, _)| *u), &want);
+            if got != Some(unit.id) {
+                wrong.push(format!("{:?} {:?} missed at {dir}", unit.kind, unit.id));
+            }
+        }
+    }
+    report(
+        "clicks near units pick them",
+        tried > 0 && wrong.is_empty(),
+        format!("{tried} clicks off the middle of isolated units; wrong: {wrong:?}"),
+    );
 }
