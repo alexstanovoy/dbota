@@ -168,6 +168,17 @@ CPU, RAM and VRAM of a busy stretch of the replay and of a live match against a 
 `bota_server` (settings at the top of the script). It rests on `--bench SECONDS`, which times
 that many seconds of frames once the scene is whole and prints them on one `bench:` line.
 
+## Reading Dota's files
+
+`crates/dbota_assets` reads Valve's formats (VPK packages, compiled Source 2 resources, KV3)
+straight from a Dota 2 install, on the desktop and in a browser, for the importer to come. Its
+golden tests decode the files behind the asset cache and compare them with it; they need the
+install and the cache, so they run only when asked:
+
+```sh
+cargo test --release -p dbota_assets -- --ignored   # DBOTA_DOTA_PATH, DBOTA_ASSETS: where they are
+```
+
 ## License
 
 MIT, see [LICENSE](LICENSE).

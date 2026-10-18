@@ -1,3 +1,8 @@
+[workspace]
+members = [".", "crates/dbota_assets"]
+# `cargo test`, `cargo clippy` and `cargo build` at the root cover the asset crate too.
+default-members = [".", "crates/dbota_assets"]
+
 [package]
 name = "dbota"
 version = "0.1.0"
