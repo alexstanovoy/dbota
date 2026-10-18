@@ -168,7 +168,7 @@ fn ability_tip(core: &bota_client_core::App, slot: u8, rate: u32) -> Option<Stri
         lines.push(format!("Mana {}", a.mana_cost));
     }
     if a.cooldown_left > 0 {
-        lines.push(format!("Ready in {} s", a.cooldown_left / rate + 1));
+        lines.push(format!("Ready in {} s", a.cooldown_left.div_ceil(rate)));
     }
     if a.can_level {
         lines.push("Ctrl + its key: learn".to_string());
@@ -181,7 +181,7 @@ fn item_tip(core: &bota_client_core::App, slot: u8, rate: u32) -> Option<String>
     let face = item(i.id.0)?;
     let mut lines = vec![face.name.to_string(), face.stats(), face.blurb()];
     if i.cooldown_left > 0 {
-        lines.push(format!("Ready in {} s", i.cooldown_left / rate + 1));
+        lines.push(format!("Ready in {} s", i.cooldown_left.div_ceil(rate)));
     }
     if slot >= bota_client_core::INVENTORY_SLOTS && slot != bota_client_core::TOWN_PORTAL_SLOT {
         lines.push("Drag it into the inventory to use it.".to_string());

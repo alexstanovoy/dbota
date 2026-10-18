@@ -1032,7 +1032,7 @@ fn readouts(
                 .unwrap_or_default(),
             Readout::SeatDead(seat) => seat_of(view, seat)
                 .filter(|p| p.unit.is_none())
-                .map(|p| (p.respawn_left / rate + 1).to_string())
+                .map(|p| p.respawn_left.div_ceil(rate).to_string())
                 .unwrap_or_default(),
         };
         text.set_if_neq(Text(s));
@@ -1111,7 +1111,7 @@ fn notice(core: &Core, rate: u32) -> String {
         .and_then(|s| core.view()?.player(s))
         .filter(|p| p.unit.is_none());
     if let Some(p) = dead {
-        return format!("Respawn in {}", p.respawn_left / rate + 1);
+        return format!("Respawn in {}", p.respawn_left.div_ceil(rate));
     }
     if let Some((reason, _)) = &core.reject {
         return reason.clone();
@@ -1212,7 +1212,7 @@ fn ability_face(
     let rate = u32::from(core.tick_rate().max(1));
     Some(SlotFace {
         seconds: if a.cooldown_left > 0 {
-            (a.cooldown_left / rate + 1).to_string()
+            a.cooldown_left.div_ceil(rate).to_string()
         } else {
             String::new()
         },
@@ -1273,7 +1273,7 @@ fn item_face(
     let rate = u32::from(core.tick_rate().max(1));
     Some(SlotFace {
         seconds: if item.cooldown_left > 0 {
-            (item.cooldown_left / rate + 1).to_string()
+            item.cooldown_left.div_ceil(rate).to_string()
         } else {
             String::new()
         },
