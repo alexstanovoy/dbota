@@ -25,6 +25,8 @@ pub const IMPORT_REV: u32 = 1;
 const READ_LIMIT: u64 = 1 << 30;
 /// Most bytes one import writes.
 const WRITE_LIMIT: u64 = 1536 << 20;
+/// Most bytes one read may ask for.
+const READ_ONE_LIMIT: usize = 256 << 20;
 /// Longest cache path.
 const PATH_LIMIT: usize = 200;
 /// The package directory every path of the manifest lives in.
@@ -189,20 +191,20 @@ pub fn safe_path(path: &str) -> bool {
 }
 
 /// A source that stops answering once it has read `limit` bytes.
-struct Metered<'a, S: ?Sized> {
-    inner: &'a S,
+struct Metered<S> {
+    inner: S,
     read: Cell<u64>,
     limit: u64,
 }
 
-impl<S: Source + ?Sized> Source for Metered<'_, S> {
+impl<S: Source> Source for Metered<S> {
     fn size(&self, path: &str) -> Result<u64> {
         self.inner.size(path)
     }
 
     fn read_at(&self, path: &str, offset: u64, len: usize) -> Result<Vec<u8>> {
         let total = self.read.get().saturating_add(len as u64);
-        if total > self.limit {
+        if total > self.limit || len > READ_ONE_LIMIT {
             return Err(malformed(
                 "import",
                 format!("the install asks for more than {} bytes", self.limit),
@@ -213,53 +215,118 @@ impl<S: Source + ?Sized> Source for Metered<'_, S> {
     }
 }
 
+/// An import under way, one manifest item per [`step`](Self::step): a browser worker writes
+/// each step's files between steps (its file system calls cannot be waited for from inside),
+/// and can stop between them. Opening the package is the only thing that can fail outright; an
+/// item that fails is in the [`Report`].
+pub struct Importer<S> {
+    src: Metered<S>,
+    pak: Vpk,
+    plan: Plan,
+    next: usize,
+    written: u64,
+    report: Report,
+}
+
+impl<S: Source> Importer<S> {
+    pub fn new(src: S, plan: Plan) -> Result<Self> {
+        let src = Metered {
+            inner: src,
+            read: Cell::new(0),
+            limit: READ_LIMIT,
+        };
+        let pak = Vpk::open(&src, DIR_VPK)?;
+        let report = Report {
+            deferred: plan.deferred.clone(),
+            ..Report::default()
+        };
+        Ok(Self {
+            src,
+            pak,
+            plan,
+            next: 0,
+            written: 0,
+            report,
+        })
+    }
+
+    pub fn total(&self) -> usize {
+        self.plan.items.len()
+    }
+
+    /// Items made so far.
+    pub fn done(&self) -> usize {
+        self.next
+    }
+
+    /// The item the next step makes, by its logical name.
+    pub fn upcoming(&self) -> Option<&str> {
+        self.plan.items.get(self.next).map(Item::logical)
+    }
+
+    pub fn bytes_written(&self) -> u64 {
+        self.written
+    }
+
+    /// Makes the next item, handing its files to `sink`; false when there is none left.
+    pub fn step(&mut self, sink: &mut dyn Sink) -> bool {
+        let Some(item) = self.plan.items.get(self.next) else {
+            return false;
+        };
+        self.next += 1;
+        let mut out = Out {
+            sink,
+            report: &mut self.report,
+            written: &mut self.written,
+        };
+        if let Err(err) = make(&self.src, &self.pak, item, &mut out) {
+            self.report
+                .failed
+                .push((item.logical().to_owned(), err.to_string()));
+        }
+        true
+    }
+
+    /// Ends the import early.
+    pub fn stop(&mut self) {
+        self.report.stopped = true;
+        self.next = self.plan.items.len();
+    }
+
+    pub fn finish(self) -> Report {
+        self.report
+    }
+}
+
 /// Makes everything in `plan` out of `src` and hands it to `sink`; `progress` is told before
-/// each item and may stop the import. Opening the package is the only error that ends it: an
-/// item that fails is in the report.
-pub fn run(
-    src: &(impl Source + ?Sized),
+/// each item and may stop the import.
+pub fn run<S: Source>(
+    src: S,
     plan: &Plan,
     sink: &mut dyn Sink,
     progress: &mut dyn FnMut(&Progress<'_>) -> Flow,
 ) -> Result<Report> {
-    let src = Metered {
-        inner: src,
-        read: Cell::new(0),
-        limit: READ_LIMIT,
-    };
-    let pak = Vpk::open(&src, DIR_VPK)?;
-    let mut out = Out {
-        sink,
-        report: Report {
-            deferred: plan.deferred.clone(),
-            ..Report::default()
-        },
-        written: 0,
-    };
-    for (done, item) in plan.items.iter().enumerate() {
+    let mut importer = Importer::new(src, plan.clone())?;
+    while let Some(item) = importer.upcoming() {
         let report = Progress {
-            done,
-            total: plan.items.len(),
-            item: item.logical(),
-            bytes_written: out.written,
+            done: importer.done(),
+            total: importer.total(),
+            item,
+            bytes_written: importer.bytes_written(),
         };
         if progress(&report) == Flow::Stop {
-            out.report.stopped = true;
+            importer.stop();
             break;
         }
-        if let Err(err) = make(&src, &pak, item, &mut out) {
-            out.report
-                .failed
-                .push((item.logical().to_owned(), err.to_string()));
-        }
+        importer.step(sink);
     }
-    Ok(out.report)
+    Ok(importer.finish())
 }
 
 struct Out<'a> {
     sink: &'a mut dyn Sink,
-    report: Report,
-    written: u64,
+    report: &'a mut Report,
+    written: &'a mut u64,
 }
 
 impl Out<'_> {
@@ -271,7 +338,7 @@ impl Out<'_> {
             return Err(malformed("import", "the output would exceed its limit"));
         }
         self.sink.write(path, data)?;
-        self.written += data.len() as u64;
+        *self.written += data.len() as u64;
         self.report.files.insert(path.to_owned(), data.len() as u64);
         Ok(())
     }

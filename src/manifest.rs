@@ -61,12 +61,16 @@ pub struct Manifest {
 impl Manifest {
     /// Reads the manifest against a cache folder.
     pub fn load(root: &Path) -> Manifest {
-        // A browser cannot ask its page's server cheaply: every listed
-        // file is taken to be there.
-        let browser = cfg!(target_arch = "wasm32");
-        let present = |rel: &str| browser || root.join(rel).is_file();
+        // A browser's page publishes its cache and its index (webcache.rs); a
+        // page without one has no assets.
+        #[cfg(target_arch = "wasm32")]
+        let (present, has_root): (&dyn Fn(&str) -> bool, bool) =
+            (&crate::webcache::present, crate::webcache::available());
+        #[cfg(not(target_arch = "wasm32"))]
+        let (present, has_root): (&dyn Fn(&str) -> bool, bool) =
+            (&|rel: &str| root.join(rel).is_file(), root.is_dir());
         let mut manifest = Manifest {
-            root: (browser || root.is_dir()).then(|| root.to_path_buf()),
+            root: has_root.then(|| root.to_path_buf()),
             ..Manifest::default()
         };
         for line in MANIFEST.lines().map(str::trim) {

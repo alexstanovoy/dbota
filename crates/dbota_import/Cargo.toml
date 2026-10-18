@@ -1,0 +1,18 @@
+[package]
+name = "dbota_import"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+publish = false
+description = "The asset importer as a browser module: a Web Worker hands it the files the user picked and gets the converted cache back."
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+dbota_assets = { path = "../dbota_assets" }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+js-sys = "0.3"
+wasm-bindgen = "0.2"
+web-sys = { version = "0.3", features = ["Blob", "File", "FileReaderSync"] }

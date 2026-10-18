@@ -153,7 +153,8 @@ target/release/dbota --replay match.brp --follow 1   # camera stays on seat 1's 
 `Space` pause, `=` / `-` (or the numpad's `+` / `-`) faster / slower, `.` one step, `Tab` switch vision.
 A replay opens only with the bota version that recorded it.
 
-The browser build is described in `web/README.md`.
+The browser build is described in `web/README.md`: the page builds a private copy of the assets from
+the player's own Dota 2 folder inside the browser (nothing is uploaded) and has a Playwright smoke test.
 
 `dbota --help` lists everything else, including the debug options for screenshots.
 
@@ -172,7 +173,8 @@ that many seconds of frames once the scene is whole and prints them on one `benc
 
 `crates/dbota_assets` reads Valve's formats (VPK packages, compiled Source 2 resources, KV3,
 textures as KTX2: block formats and mip levels kept, the first frame of a sprite sheet) straight
-from a Dota 2 install, on the desktop and in a browser, for the importer to come. Its golden tests
+from a Dota 2 install, on the desktop and in a browser, and `import` makes the client's assets out of
+them (models, textures, sounds; the browser page runs it in a worker through `crates/dbota_import`). Its golden tests
 decode the files behind the asset cache and compare them with it; they need the install and the
 cache, so they run only when asked:
 

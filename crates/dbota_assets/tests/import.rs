@@ -130,6 +130,34 @@ fn a_package_that_is_not_one_ends_the_import_and_a_stop_is_honoured() {
     ));
 }
 
+/// A "file" of absurd size whose header promises a directory tree of nearly 4 GB.
+struct Huge;
+
+impl dbota_assets::Source for Huge {
+    fn size(&self, _: &str) -> dbota_assets::Result<u64> {
+        Ok(1 << 40)
+    }
+
+    fn read_at(&self, _: &str, offset: u64, len: usize) -> dbota_assets::Result<Vec<u8>> {
+        assert!(
+            offset == 0 && len <= 28,
+            "a read of {len} bytes at {offset} got through"
+        );
+        let mut head = Vec::new();
+        for word in [0x55AA_1234u32, 2, 0xFFFF_FFF0, 0, 0, 48, 0] {
+            head.extend_from_slice(&word.to_le_bytes());
+        }
+        Ok(head[..len].to_vec())
+    }
+}
+
+#[test]
+fn a_package_that_claims_a_huge_directory_is_refused_before_it_is_read() {
+    let plan = Plan::parse("sound s s.vsnd_c sounds/s.wav\n");
+    let mut sink = Memory::default();
+    assert!(run(Huge, &plan, &mut sink, &mut |_| Flow::Continue).is_err());
+}
+
 #[test]
 fn the_index_marks_the_files_read_at_start() {
     assert!(is_small("map/mid/trees.txt", 10));

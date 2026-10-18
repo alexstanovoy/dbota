@@ -49,6 +49,8 @@ mod ui;
 mod units;
 mod visual;
 mod voice;
+#[cfg(target_arch = "wasm32")]
+mod webcache;
 
 use std::path::PathBuf;
 

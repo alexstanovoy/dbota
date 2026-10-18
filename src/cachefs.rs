@@ -259,7 +259,16 @@ impl AssetReader for CacheReader {
 
     #[cfg(target_arch = "wasm32")]
     async fn read<'a>(&'a self, path: &'a Path) -> Result<impl Reader + 'a, AssetReaderError> {
-        let bytes = browser::fetch(&self.root.join(path)).await?;
+        let bytes = if crate::webcache::is_opfs() {
+            let rel = path.to_string_lossy();
+            match crate::webcache::read(&rel).await {
+                Ok(Some(bytes)) => bytes,
+                Ok(None) => return Err(AssetReaderError::NotFound(path.to_path_buf())),
+                Err(why) => return Err(AssetReaderError::Io(std::io::Error::other(why).into())),
+            }
+        } else {
+            browser::fetch(&self.root.join(path)).await?
+        };
         if let Some(size) = decoded_size(&bytes) {
             self.budget.take(path, size).await;
         }
@@ -299,6 +308,9 @@ pub fn read_small(root: &Path, rel: &str) -> Option<Vec<u8>> {
     }
     #[cfg(target_arch = "wasm32")]
     {
+        if crate::webcache::is_opfs() {
+            return crate::webcache::small(rel);
+        }
         browser::read(&root.join(rel))
     }
 }

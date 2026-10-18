@@ -1,18 +1,46 @@
 <!doctype html>
-<html><head><meta charset="utf-8"><title>dbota</title>
-<style>html,body{margin:0;height:100%;background:#111}canvas{width:100%;height:100%;display:block}</style></head>
-<body><canvas id="dbota"></canvas>
-<script type="module">
-// With ?report, every console line (the client logs its memory every five
-// seconds) goes to the page's server as a request to /report, for its log.
-const report = new URLSearchParams(location.search).has("report");
-const send = (m) => { if (report) fetch("/report?" + encodeURIComponent(String(m).slice(0, 600))).catch(() => {}); };
-for (const k of ["log", "info", "warn", "error"]) {
-  const orig = console[k].bind(console);
-  console[k] = (...a) => { orig(...a); send(k + ": " + a.join(" ")); };
-}
-addEventListener("error", (e) => send("onerror: " + e.message));
-send("start: webgpu " + !!navigator.gpu);
-import init from "./dbota.js";
-init().catch((e) => send("init: " + e));
-</script></body></html>
+<html lang="en"><head><meta charset="utf-8"><title>dbota</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; img-src 'self' blob: data:; media-src 'self' blob: data:; worker-src 'self' blob:; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'">
+<link rel="stylesheet" href="page.css">
+</head>
+<body>
+<canvas id="dbota"></canvas>
+<main id="gate" hidden>
+  <h1>dbota</h1>
+  <p id="lead">Dota 2's look for bota matches: heroes, buildings, trees, icons and sounds from your own Dota 2 install.</p>
+  <section id="grant" hidden>
+    <p><strong>Your Dota 2 files never leave your computer.</strong> This page reads the folder you pick inside
+    this browser tab, only the few packages it needs (about 100 MB of the install, in small ranges), and keeps a
+    converted private copy in this browser's own storage. Nothing is uploaded, and the page has no way to send
+    files anywhere. You can delete the copy below at any time.</p>
+    <p class="hint" id="where">Pick the <code>dota 2 beta</code> folder of your Steam library
+    (<code>steamapps/common/dota 2 beta</code>). Your browser may list every file in it before it asks;
+    none is read until it is needed.</p>
+    <div class="row">
+      <button id="pick" type="button">Choose the Dota 2 folder</button>
+      <button id="standins" type="button" class="quiet">Play with stand-ins</button>
+    </div>
+    <input id="folder" type="file" webkitdirectory multiple hidden>
+  </section>
+  <section id="ready" hidden>
+    <p id="readyText"></p>
+    <div class="row">
+      <button id="play" type="button">Play</button>
+      <button id="update" type="button" class="quiet" hidden>Update from the Dota 2 folder</button>
+      <button id="again" type="button" class="quiet">Choose the folder again</button>
+      <button id="remove" type="button" class="quiet">Delete the imported copy</button>
+    </div>
+  </section>
+  <section id="progress" hidden>
+    <p id="stage">Reading your Dota 2 files...</p>
+    <progress id="bar" max="1" value="0"></progress>
+    <p class="hint" id="detail"></p>
+    <div class="row"><button id="cancel" type="button" class="quiet">Cancel</button></div>
+  </section>
+  <p id="status" role="status"></p>
+  <ul id="failures" hidden></ul>
+</main>
+<script type="module" src="report.js"></script>
+<script type="module" src="main.js"></script>
+</body></html>
