@@ -31,6 +31,7 @@ malformed output.
 | `../assets-manifest/manifest.txt` | every exported asset: logical name, VPK source, cache path, clips; format in its header |
 | `../assets-manifest/version` | the export version: the cache folder `v<N>`, and the stamps that force a re-export |
 | `../assets-manifest/ids.txt` | bota item/ability/hero ids → Dota names |
+| `export_tooltips.py` | boils the install's localization and item/ability scripts down to `text/tooltips.json` |
 | `import_assets.sh` | the importer |
 | `visual_check.sh` | measures the picture of a recorded match (see the main README) |
 | `bench.sh` | measures the binary's size, start and frame times |
@@ -53,6 +54,7 @@ malformed output.
 | `textures/ground/` | terrain layer textures (also used by `map.mid`) | 37 MB |
 | `textures/particle/` | 13 effect textures (smoke, glow, sparks, ground cracks, fire, ...) | 1 MB |
 | `icons/`, `hud/`, `minimap/` | item and ability icons, hero portraits, minimap hero/creep/tower/building icons, HUD art, minimap | 2 MB |
+| `text/tooltips.json` | the names, descriptions, lore, notes and number labels of the items and abilities in `ids.txt`, read out of the install's own localization and scripts by `export_tooltips.py`; the client puts the simulator's numbers into them (without the file, tooltips show only the simulator's plain names and numbers) | 30 KB |
 | `sounds/` | 48 WAVs and 50 MP3s (announcer, hero move/attack voice lines, the horns, `ambient/morning.wav` and `night.wav`) resolved through sound events | 17 MB |
 
 Formats: glTF 2.0 binary (`.glb`) with PNG textures next to it (relative URIs), PNG, WAV, MP3. All WAVs

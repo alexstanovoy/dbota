@@ -53,6 +53,9 @@ pub struct Manifest {
     /// Our ids to Dota names: kind (`item`, `ability`, `hero`, `effect`), id,
     /// name (for an effect, the logical name of its icon).
     pub ids: Vec<(String, u16, String)>,
+    /// The Dota name whose text describes an item or an ability where that
+    /// is not the one its icon is named after: kind, id, name.
+    pub text_keys: Vec<(String, u16, String)>,
 }
 
 impl Manifest {
@@ -109,6 +112,16 @@ impl Manifest {
                 Some((kind.to_string(), id, words.next()?.to_string()))
             })
             .collect();
+        manifest.text_keys = IDS
+            .lines()
+            .filter_map(|line| {
+                let mut words = line.split('#').next()?.split_whitespace();
+                (words.next()? == "text").then_some(())?;
+                let kind = words.next()?.to_string();
+                let id = words.next()?.parse().ok()?;
+                Some((kind, id, words.next()?.to_string()))
+            })
+            .collect();
         manifest
     }
 
@@ -149,6 +162,24 @@ impl Manifest {
             .iter()
             .find(|(k, i, _)| k == kind && *i == id)
             .map(|(_, _, name)| name.as_str())
+    }
+
+    /// The key of the text that describes an item or an ability in the
+    /// cache's text file.
+    pub fn text_key(&self, kind: &str, id: u16) -> Option<String> {
+        if let Some((_, _, name)) = self
+            .text_keys
+            .iter()
+            .find(|(k, i, _)| k == kind && *i == id)
+        {
+            return Some(name.clone());
+        }
+        let name = self.dota_name(kind, id)?;
+        Some(if kind == "item" {
+            format!("item_{name}")
+        } else {
+            name.to_string()
+        })
     }
 
     /// The asset path of a hero's portrait, the tall one where the cache

@@ -90,10 +90,7 @@ fn drill(
             slot: Slot::Ability(0),
             ctrl: true,
         },
-        "buy Tango" => match bota_client_core::first_answer("Tango") {
-            Some(id) => Intent::Buy(id),
-            None => return,
-        },
+        "buy Tango" => Intent::Buy(bota_proto::ItemId::TANGO.0),
         "move" => Intent::MoveTo((x + 600.0, y + 600.0)),
         "attack-move to mid" => {
             Intent::AttackMoveTo((crate::map::DOTA_ORIGIN, crate::map::DOTA_ORIGIN))

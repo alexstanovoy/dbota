@@ -5,6 +5,9 @@
 #   ability <ability id> <dota ability>    icon.ability.<name> (panorama/images/spellicons/<name>_png)
 #   hero <hero id> <dota hero>             icon.hero.<name>, portrait.hero.<name>, minimap.hero.<name>
 #   effect <effect id> <logical icon>      the icon Dota shows on the buff bar: an item's or an ability's
+#   text <item|ability> <id> <dota key>    the Dota entry whose text describes it where that is not the
+#                                          icon's name (an item is `item_<name>`; bota's Flesh Heap is
+#                                          Dota's innate, whose icon is the Meat Shield's)
 #
 # The files are Valve's: tools/import_assets.sh exports them into a local
 # cache for personal use; they are never committed.
@@ -65,6 +68,12 @@ item 53 blood_grenade
 ability 0 pudge_meat_hook
 ability 1 pudge_rot
 ability 2 pudge_flesh_heap
+text ability 2 pudge_innate_graft_flesh
+text item 38 item_recipe_bracer
+text item 39 item_recipe_wraith_band
+text item 40 item_recipe_null_talisman
+text item 41 item_recipe_magic_wand
+text item 50 item_recipe_monkey_king_bar
 ability 3 pudge_dismember
 ability 4 courier_burst
 ability 5 courier_return_to_base

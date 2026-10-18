@@ -73,8 +73,14 @@ fn typing(
     mut events: MessageReader<KeyboardInput>,
     mut typing: ResMut<Typing>,
     mut panels: ResMut<Panels>,
+    texts: Res<crate::dota_text::Texts>,
+    manifest: Res<crate::manifest::Manifest>,
 ) {
     let core = &mut session.0;
+    let look = crate::tip_content::Lookup {
+        texts: &texts,
+        manifest: &manifest,
+    };
     for event in events.read() {
         if event.state != ButtonState::Pressed {
             continue;
@@ -109,7 +115,7 @@ fn typing(
             }
             Typing::Search => match &event.logical_key {
                 Key::Enter => {
-                    if let Some(id) = bota_client_core::first_answer(&panels.search) {
+                    if let Some(id) = look.first_answer(&panels.search) {
                         core.act(Intent::Buy(id));
                     }
                     *typing = Typing::No;

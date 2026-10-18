@@ -18,6 +18,7 @@ mod capture;
 mod config;
 mod coords;
 mod daylight;
+mod dota_text;
 mod drill;
 mod effects;
 mod fog;
@@ -40,6 +41,8 @@ mod synth;
 mod talents;
 mod teleport;
 mod terrain;
+mod tip_content;
+mod tip_numbers;
 mod tips;
 mod trees;
 mod ui;
@@ -125,6 +128,10 @@ pub struct Args {
     /// fails.
     #[arg(long)]
     pub visual_check: bool,
+    /// Debug: keep a tooltip open: `item:ID` (id of the item), `shop:ID` or
+    /// `ability:ID:LEVEL`.
+    #[arg(long, value_name = "KIND:ID")]
+    pub tip: Option<String>,
     /// Debug: the camera's distance from the ground at the start.
     #[arg(long, value_name = "UNITS")]
     pub distance: Option<f32>,
@@ -208,6 +215,7 @@ fn main() -> AppExit {
         }
     };
     let manifest = manifest::Manifest::load(&args.cache_dir);
+    let texts = dota_text::Texts::load(manifest.root.as_deref());
     let settings_path = args.config.clone().or_else(config::default_path);
     let mut settings = settings_path
         .as_deref()
@@ -227,6 +235,7 @@ fn main() -> AppExit {
     let source = cache_source(&mut app, &args.cache_dir);
     app.insert_resource(args.clone())
         .insert_resource(manifest)
+        .insert_resource(texts)
         .insert_resource(settings.clone())
         .insert_resource(SettingsPath(settings_path))
         .insert_non_send(session)

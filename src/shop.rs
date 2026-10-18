@@ -4,13 +4,15 @@
 //! item on the panel's foot.
 
 use bevy::{input::mouse::AccumulatedMouseScroll, prelude::*};
-use bota_client_core::{ITEMS, Intent, SHOP_GROUPS, answers, group_of, item};
+use bota_client_core::{ITEMS, Intent, SHOP_GROUPS, group_of};
 
 use crate::config::{Action, Settings, key_name};
+use crate::dota_text::Texts;
 use crate::hud::Blocker;
 use crate::input::{Panels, Typing};
 use crate::manifest::Manifest;
 use crate::session::Session;
+use crate::tip_content::Lookup;
 use crate::ui::{self, Fonts};
 
 /// The shop panel.
@@ -384,16 +386,21 @@ fn prices(
 /// Hides the cells and groups the search does not answer.
 fn filter(
     panels: Res<Panels>,
+    texts: Res<Texts>,
+    manifest: Res<Manifest>,
     mut cells: Query<(&ShopCell, &mut Node), Without<GroupBlock>>,
     mut blocks: Query<(&GroupBlock, &mut Node), Without<ShopCell>>,
 ) {
     if !panels.is_changed() {
         return;
     }
+    let look = Lookup {
+        texts: &texts,
+        manifest: &manifest,
+    };
     let mut groups = [false; SHOP_GROUPS.len()];
     for (cell, mut node) in &mut cells {
-        let face = item(cell.0);
-        let shown = face.is_some_and(|f| answers(f, &panels.search));
+        let shown = look.answers(cell.0, &panels.search);
         if shown {
             groups[group_of(cell.0)] = true;
         }
@@ -491,12 +498,18 @@ fn texts(
     panels: Res<Panels>,
     typing: Res<Typing>,
     settings: Res<Settings>,
+    names: Res<Texts>,
+    manifest: Res<Manifest>,
     mut texts: Query<(&ShopText, &mut Text)>,
     mut corner: Query<(&CornerButton, &mut Visibility)>,
 ) {
     let core = &session.0;
+    let look = Lookup {
+        texts: &names,
+        manifest: &manifest,
+    };
     let me = core.view().and_then(|v| v.player(core.my_slot?));
-    let quick = core.quick_buy.and_then(item);
+    let quick = core.quick_buy;
     let stash_full = me
         .and_then(|p| p.stash.as_ref())
         .is_some_and(|s| s.iter().any(Option::is_some));
@@ -522,15 +535,15 @@ fn texts(
                 (false, true) => "Search (click here)".to_string(),
                 (false, false) => panels.search.clone(),
             },
-            ShopText::Quick => quick.map_or(String::new(), |f| {
-                let missing: Vec<&str> = core
-                    .missing_for(f.id)
+            ShopText::Quick => quick.map_or(String::new(), |id| {
+                let missing: Vec<String> = core
+                    .missing_for(id)
                     .iter()
-                    .filter_map(|p| item(p.0).map(|i| i.name))
+                    .filter_map(|p| look.item_name(p.0))
                     .collect();
                 format!(
                     "Quick-buy {} [{}]: {}",
-                    f.name,
+                    look.item_name(id).unwrap_or_default(),
                     key_name(settings.key(Action::QuickBuy)),
                     missing.join(", ")
                 )

@@ -365,6 +365,14 @@ texture hud.ability_bg panorama/images/hud/reborn/ability_bg_psd.vtex_c hud/abil
 texture hud.ability_bevel panorama/images/hud/reborn/ability_bevel_psd.vtex_c hud/ability_bevel_psd.png
 texture hud.levelup panorama/images/hud/reborn/levelup_plus_fill_psd.vtex_c hud/levelup_plus_fill_psd.png
 texture hud.minimap_border panorama/images/hud/default/actionpanel/minimapborder_png.vtex_c hud/minimapborder_png.png
+# Tooltip art: the bars over an item's active, use and passive sections, and the cost icons.
+texture tip.active panorama/images/hud/item_tooltip_active_psd.vtex_c hud/item_tooltip_active_psd.png
+texture tip.use panorama/images/hud/item_tooltip_use_psd.vtex_c hud/item_tooltip_use_psd.png
+texture tip.passive panorama/images/hud/item_tooltip_passive_psd.vtex_c hud/item_tooltip_passive_psd.png
+texture tip.cooldown panorama/images/status_icons/ability_cooldown_icon_psd.vtex_c hud/ability_cooldown_icon_psd.png
+texture tip.mana panorama/images/status_icons/ability_manacost_icon_psd.vtex_c hud/ability_manacost_icon_psd.png
+texture tip.health panorama/images/status_icons/ability_healthcost_icon_psd.vtex_c hud/ability_healthcost_icon_psd.png
+texture tip.range panorama/images/status_icons/ability_castrange_icon_psd.vtex_c hud/ability_castrange_icon_psd.png
 texture minimap.map panorama/images/minimap/dotamap_psd.vtex_c minimap/dotamap_psd.png
 texture minimap.radiant_buildings panorama/images/minimap/dotamap_radiant_buildings_psd.vtex_c minimap/dotamap_radiant_buildings_psd.png
 texture minimap.dire_buildings panorama/images/minimap/dotamap_dire_buildings_psd.vtex_c minimap/dotamap_dire_buildings_psd.png

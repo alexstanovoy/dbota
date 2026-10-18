@@ -173,6 +173,24 @@ export_files() {
     done
 }
 
+# The tooltip texts of the items and abilities in ids.txt: Valve's own localization and scripts,
+# read out of the install and boiled down to text/tooltips.json by export_tooltips.py. Rebuilt
+# only when missing or older than the script or ids.txt (delete it after a Dota update).
+export_tooltips() {
+    local out="${CACHE}/text/tooltips.json" ids="${TOOLS_DIR}/../assets-manifest/ids.txt"
+    [[ -s "${out}" && "${out}" -nt "${TOOLS_DIR}/export_tooltips.py" && "${out}" -nt "${ids}" ]] && return 0
+    log "tooltip texts"
+    local raw="${STAGE}/tooltips" filter hero
+    filter="resource/localization/abilities_english.txt,scripts/npc/items.txt,scripts/npc/npc_abilities.txt"
+    for hero in $(awk '$1 == "hero" { print $3 }' "${ids}"); do
+        filter+=",scripts/npc/heroes/npc_dota_hero_${hero}.txt"
+    done
+    cli -i "${GAME}/pak01_dir.vpk" -d -f "${filter}" -o "${raw}/" --threads "$(nproc)"
+    python3 -I -B "${TOOLS_DIR}/export_tooltips.py" "${raw}" "${ids}" "${STAGE}/tooltips.json"
+    mkdir -p "${CACHE}/text"
+    mv "${STAGE}/tooltips.json" "${out}"
+}
+
 export_world() {
     local kind name src out rest
     while read -r kind name src out rest; do
@@ -217,6 +235,7 @@ main() {
     export_models
     manifest_lines texture | awk '{print $3, $4}' | export_files textures "${GAME}/pak01_dir.vpk"
     manifest_lines sound | awk '{print $3, $4}' | export_files sounds "${GAME}/pak01_dir.vpk"
+    export_tooltips
     export_world
     python3 -B "${TOOLS_DIR}/verify_assets.py" "${MANIFEST}" "${CACHE}" > "${STAGE}/verify.txt" \
         || { cat "${STAGE}/verify.txt" >&2; die "verification failed"; }
