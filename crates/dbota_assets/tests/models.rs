@@ -48,6 +48,119 @@ fn glb_json(bytes: &[u8]) -> Value {
     serde_json::from_slice(&bytes[20..20 + len]).unwrap()
 }
 
+/// A `.glb`'s JSON and binary chunk.
+struct Glb {
+    json: Value,
+    bin: Vec<u8>,
+}
+
+impl Glb {
+    fn parse(bytes: &[u8]) -> Self {
+        let len = u32::from_le_bytes(bytes[12..16].try_into().unwrap()) as usize;
+        let bin = bytes.get(20 + len + 8..).unwrap_or_default().to_vec();
+        Self {
+            json: glb_json(bytes),
+            bin,
+        }
+    }
+
+    /// Accessor `i` as numbers (floats, or integers as floats), tightly packed.
+    fn values(&self, i: u64) -> Vec<f64> {
+        let a = &self.json["accessors"][i as usize];
+        let view = &self.json["bufferViews"][a["bufferView"].as_u64().unwrap() as usize];
+        let start = (view["byteOffset"].as_u64().unwrap_or(0)
+            + a["byteOffset"].as_u64().unwrap_or(0)) as usize;
+        let width = match a["type"].as_str().unwrap() {
+            "SCALAR" => 1,
+            "VEC2" => 2,
+            "VEC3" => 3,
+            "VEC4" => 4,
+            _ => 16,
+        };
+        let (size, read): (usize, fn(&[u8]) -> f64) = match a["componentType"].as_u64().unwrap() {
+            5126 => (4, |b| f32::from_le_bytes(b.try_into().unwrap()).into()),
+            5125 => (4, |b| u32::from_le_bytes(b.try_into().unwrap()).into()),
+            5123 => (2, |b| u16::from_le_bytes(b.try_into().unwrap()).into()),
+            5121 => (1, |b| b[0].into()),
+            other => panic!("component type {other}"),
+        };
+        let stride = view["byteStride"]
+            .as_u64()
+            .map_or(size * width, |s| s as usize);
+        let count = a["count"].as_u64().unwrap() as usize;
+        let normalized = a["normalized"].as_bool().unwrap_or(false);
+        let scale = if normalized {
+            [1.0, 255.0, 65535.0][size.min(2)]
+        } else {
+            1.0
+        };
+        (0..count)
+            .flat_map(|v| (0..width).map(move |c| start + v * stride + c * size))
+            .map(|at| read(&self.bin[at..at + size]) / scale)
+            .collect()
+    }
+}
+
+/// Named value streams of one primitive.
+type Streams = Vec<(String, Vec<f64>)>;
+
+/// Per primitive (meshes sorted by name), each attribute's values and the indices.
+fn primitive_data(glb: &Glb) -> Vec<(String, Streams)> {
+    let mut meshes: Vec<&Value> = glb.json["meshes"].as_array().unwrap().iter().collect();
+    meshes.sort_by_key(|m| m["name"].as_str().unwrap().to_owned());
+    let mut out = Vec::new();
+    for mesh in meshes {
+        for p in mesh["primitives"].as_array().unwrap() {
+            let mut data: Vec<(String, Vec<f64>)> = p["attributes"]
+                .as_object()
+                .unwrap()
+                .iter()
+                .map(|(k, a)| (k.clone(), glb.values(a.as_u64().unwrap())))
+                .collect();
+            data.push((
+                "indices".to_owned(),
+                glb.values(p["indices"].as_u64().unwrap()),
+            ));
+            data.sort_by(|a, b| a.0.cmp(&b.0));
+            out.push((mesh["name"].as_str().unwrap().to_owned(), data));
+        }
+    }
+    out
+}
+
+/// How far two attribute streams may differ: positions and UVs to rounding, unit vectors to
+/// the precision of their packed forms, bone weights to 1/255.
+fn tolerance(attribute: &str) -> f64 {
+    match attribute {
+        "POSITION" => 1e-4,
+        "TEXCOORD_0" | "TEXCOORD_1" => 1e-3,
+        "NORMAL" | "TANGENT" => 2e-2,
+        "WEIGHTS_0" => 1.0 / 255.0 + 1e-4,
+        _ => 0.0,
+    }
+}
+
+/// The first value of the first stream that differs, as a message.
+fn compare_data(ours: &Glb, theirs: &Glb) -> Option<String> {
+    let (ours, theirs) = (primitive_data(ours), primitive_data(theirs));
+    for ((mesh, a), (_, b)) in ours.iter().zip(&theirs) {
+        for ((name, x), (other, y)) in a.iter().zip(b) {
+            if name != other || x.len() != y.len() {
+                return Some(format!(
+                    "{mesh} {name}/{other}: {} vs {} values",
+                    x.len(),
+                    y.len()
+                ));
+            }
+            let limit = tolerance(name);
+            if let Some(i) = (0..x.len()).find(|&i| (x[i] - y[i]).abs() > limit) {
+                return Some(format!("{mesh} {name}[{i}]: {} vs {}", x[i], y[i]));
+            }
+        }
+    }
+    None
+}
+
 /// The image file of texture slot `slot` (`["normalTexture"]`) of material `m`.
 fn image(doc: &Value, m: &Value, slot: &[&str]) -> Option<String> {
     let texture = slot.iter().fold(m, |v, k| &v[*k])["index"].as_u64()? as usize;
@@ -115,6 +228,7 @@ fn models_match_the_exported_ones() {
         format!("{}.png", name.trim_end_matches(".vtex"))
     };
     let mut differ = Vec::new();
+    let mut data = Vec::new();
     for (source, out, meshes, skeleton) in models() {
         let keep: Option<Vec<&str>> = meshes.as_deref().map(|m| m.split(',').collect());
         let ours = export_model(
@@ -126,8 +240,12 @@ fn models_match_the_exported_ones() {
             &texture_uri,
         )
         .unwrap_or_else(|e| panic!("{source}: {e}"));
-        let theirs = glb_json(&std::fs::read(cache().join(&out)).unwrap());
-        let (ours, theirs) = (summary(&glb_json(&ours.glb)), summary(&theirs));
+        let theirs = Glb::parse(&std::fs::read(cache().join(&out)).unwrap());
+        let ours = Glb::parse(&ours.glb);
+        if let Some(diff) = compare_data(&ours, &theirs) {
+            data.push(format!("{source}: {diff}"));
+        }
+        let (ours, theirs) = (summary(&ours.json), summary(&theirs.json));
         if ours != theirs {
             differ.push(format!(
                 "{source}\n  ours:   {ours:#?}\n  theirs: {theirs:#?}"
@@ -140,4 +258,5 @@ fn models_match_the_exported_ones() {
         differ.len(),
         differ.join("\n")
     );
+    assert!(data.is_empty(), "vertex data differs:\n{}", data.join("\n"));
 }
