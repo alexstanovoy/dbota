@@ -66,9 +66,17 @@ enum CornerButton {
 pub fn plugin(app: &mut App) {
     app.add_systems(Startup, spawn).add_systems(
         Update,
-        (show, prices, filter, clicks, scroll, texts)
-            .run_if(|k: Res<crate::session::MatchKnown>| k.0),
+        (show, prices, filter, clicks, scroll, texts).run_if(shop_runs),
     );
+}
+
+/// The shop works once the match is known, and in the tactical phase before
+/// it, where what is chosen is queued for the match's start.
+fn shop_runs(
+    known: Res<crate::session::MatchKnown>,
+    tactical: Res<crate::select::TacticalPhase>,
+) -> bool {
+    known.0 || tactical.0
 }
 
 fn spawn(
@@ -352,11 +360,14 @@ fn prices(
         return;
     }
     let core = &session.0;
-    let gold = core
-        .view()
-        .and_then(|v| v.player(core.my_slot?))
-        .and_then(|p| p.gold)
-        .unwrap_or(0);
+    let gold = if core.in_tactical_phase() {
+        core.gold_after_queue()
+    } else {
+        core.view()
+            .and_then(|v| v.player(core.my_slot?))
+            .and_then(|p| p.gold)
+            .unwrap_or(0)
+    };
     let rate = u32::from(core.tick_rate().max(1));
     for (stock, mut text, mut color) in &mut stocks {
         let (s, c) = match core.stock_of(stock.0) {
@@ -459,6 +470,8 @@ fn clicks(
     if let Some((_, cell)) = cells.iter().find(|(i, _)| **i != Interaction::None) {
         if left && live {
             core.act(Intent::Buy(cell.0));
+        } else if right && core.in_tactical_phase() {
+            core.act(Intent::Unqueue(cell.0));
         } else if right {
             core.quick_buy = if core.quick_buy == Some(cell.0) {
                 None
@@ -517,6 +530,7 @@ fn texts(
         let s = match which {
             // One's own gold when playing; in a replay or as a spectator,
             // that of the hero selected or watched (the stream tells all).
+            ShopText::Gold if core.in_tactical_phase() => core.gold_after_queue().to_string(),
             ShopText::Gold => {
                 let playing = matches!(core.source, bota_client_core::Source::Live(_))
                     && core.my_slot.is_some();
