@@ -107,10 +107,10 @@ its mesh set's vertices gets its own vertices: the exporter shares a set's whole
 its pieces, and a glTF loader copies them whole for every piece (2.6 GB of vertices loaded for 70 MB
 of geometry before this; 236 MB after, for a 213 MB file instead of 129 MB).
 
-- **Terrain** meshes use Valve's 4-layer `multiblend.vfx`; the glTF material only carries layer 0, the
-  blend weights are in the custom vertex attributes `_TEXCOORD_1.._3`, and `extras.vmat.TextureParams`
-  names every layer texture (`g_tColor0..3`, `g_tNormal0..3`, masks), exported to
-  `textures/ground/<basename>.png`. The client bakes the four layers, by those weights and each
+- **Terrain** meshes use Valve's 4-layer `multiblend.vfx`; the glTF material carries only layer 1
+  (`g_tColor1`, `g_tNormal1`), the blend weights are in the custom vertex attributes `_TEXCOORD_1.._3`,
+  and `extras.vmat.TextureParams` names every layer texture (`g_tColor0..3`, `g_tNormal0..3`, masks),
+  exported to `textures/ground/<basename>.png`. The client bakes the four layers, by those weights and each
   layer texture's mean colour, into the vertex colours as it loads the map.
 - **Water** (`water_dota.vfx`) has no colour texture; its normal/noise/flow maps are in `textures/ground/`.
 - **Trees.** `map/mid/trees.txt` lists every tree on the whole map:

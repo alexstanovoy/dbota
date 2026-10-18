@@ -234,14 +234,14 @@ fn tolerance(stored: u8, decoded: PixelFormat) -> Tolerance {
 }
 
 /// Compares `texture` with the exported image; for a sprite sheet that is its first frame, as
-/// Source2Viewer cuts it. Exported normal maps carry no alpha; their colour channels count.
+/// Source2Viewer cuts it.
 fn compare(
     texture: &Texture,
     stored: u8,
     exported: &Path,
     tally: &mut Tally,
 ) -> Result<(), String> {
-    let (w, h, mut png) = read_png(exported);
+    let (w, h, png) = read_png(exported);
     let what = exported.display().to_string();
     let whole = to_rgba(
         texture.format(),
@@ -249,7 +249,7 @@ fn compare(
         texture.height(),
         &texture.mips()[0],
     );
-    let (mut ours, size) = match texture.first_frame_rect() {
+    let (ours, size) = match texture.first_frame_rect() {
         Some(rect) => (
             crop(&whole, texture.width(), rect),
             (rect[2] - rect[0], rect[3] - rect[1]),
@@ -258,16 +258,6 @@ fn compare(
     };
     if size != (w, h) {
         return Err(format!("{what}: {size:?} against exported {:?}", (w, h)));
-    }
-    if what.contains("normal") {
-        for px in ours
-            .as_chunks_mut::<4>()
-            .0
-            .iter_mut()
-            .chain(png.as_chunks_mut::<4>().0.iter_mut())
-        {
-            px[3] = 255;
-        }
     }
     let d = distance(&ours, &png);
     let tol = tolerance(stored, texture.format());

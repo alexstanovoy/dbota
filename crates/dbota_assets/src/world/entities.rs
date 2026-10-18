@@ -19,6 +19,11 @@ impl EntityLump {
         let data = resource
             .data()
             .ok_or_else(|| malformed("entity lump", "no DATA"))??;
+        Self::from_data(&data)
+    }
+
+    /// The lump of a decoded `DATA` block.
+    pub(crate) fn from_data(data: &Value) -> Result<Self> {
         let list = |key| data.get(key).and_then(Value::as_array).unwrap_or_default();
         let mut entities = Vec::new();
         for entity in list("m_entityKeyValues") {

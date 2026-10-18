@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use crate::anim::read_clips;
 use crate::error::{Error, Result};
-use crate::gltf::{GltfOptions, image_uri, write_glb};
+use crate::gltf::{GltfOptions, write_glb};
 use crate::material::{Material, Pack};
 use crate::model::Model;
 use crate::resource::Resource;
@@ -84,7 +84,6 @@ pub fn export_model(
             materials.insert(material.to_owned(), Material::from_vmat(material, &data?));
         }
     }
-    let textures = images(&materials, texture_uri);
     let options = GltfOptions {
         name: path,
         meshes,
@@ -93,8 +92,10 @@ pub fn export_model(
         texture_uri,
         clips: &clips,
     };
+    let (glb, mut textures) = write_glb(&model, &options)?;
+    textures.sort();
     Ok(ExportedModel {
-        glb: write_glb(&model, &options),
+        glb,
         textures,
         clips: clips
             .iter()
@@ -104,33 +105,4 @@ pub fn export_model(
             })
             .collect(),
     })
-}
-
-/// The images the materials use, each once.
-fn images(
-    materials: &HashMap<String, Material>,
-    texture_uri: &dyn Fn(&str) -> String,
-) -> Vec<ExportedTexture> {
-    let mut textures: Vec<ExportedTexture> = Vec::new();
-    for m in materials.values() {
-        let wanted = [
-            (&m.base_color, None),
-            (&m.normal, None),
-            (&m.masks1, Some(Pack::Orm)),
-            (&m.masks1, Some(Pack::Channel(3))),
-            (&m.masks2, Some(Pack::Channel(0))),
-        ];
-        for (vtex, pack) in wanted {
-            if let Some(vtex) = vtex {
-                textures.push(ExportedTexture {
-                    vtex: vtex.clone(),
-                    uri: image_uri(vtex, pack, texture_uri),
-                    pack,
-                });
-            }
-        }
-    }
-    textures.sort();
-    textures.dedup();
-    textures
 }

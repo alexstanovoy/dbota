@@ -7,8 +7,11 @@ use std::collections::HashMap;
 use serde_json::{Value as Json, json};
 
 use crate::anim::{Clip, Keys};
-use crate::material::{Alpha, Material, Pack, orm_uri};
-use crate::model::{Mesh, Model, Skin, Vertices, multiply, rotate};
+use crate::error::Result;
+use crate::export::ExportedTexture;
+use crate::material::{Images, Material, convert, extensions_used};
+use crate::model::{Mesh, Model, multiply, rotate};
+use crate::vertices::{Attribute, Skin, Vertices};
 
 const FLOAT: u32 = 5126;
 const UNSIGNED_SHORT: u32 = 5123;
@@ -42,16 +45,15 @@ struct Builder {
     nodes: Vec<Json>,
     meshes: Vec<Json>,
     materials: Vec<Json>,
-    material_index: HashMap<String, usize>,
-    textures: Vec<Json>,
-    images: Vec<Json>,
-    texture_index: HashMap<(String, Option<Pack>), usize>,
+    /// Materials by path and tint (its bits).
+    material_index: HashMap<(String, [u32; 4]), usize>,
+    images: Images,
     /// Keyframe time accessors by their bits, shared by the samplers with the same times.
     time_index: HashMap<Vec<u32>, usize>,
 }
 
-/// The model as a `.glb` file.
-pub fn write_glb(model: &Model, options: &GltfOptions) -> Vec<u8> {
+/// The model as a `.glb` file, and the images its materials use (to be written next to it).
+pub fn write_glb(model: &Model, options: &GltfOptions) -> Result<(Vec<u8>, Vec<ExportedTexture>)> {
     let mut b = Builder::default();
     let mut scene = Vec::new();
     if options.skeleton {
@@ -72,7 +74,7 @@ pub fn write_glb(model: &Model, options: &GltfOptions) -> Vec<u8> {
     let skin = (options.skeleton && any_skinned && !model.bones.is_empty())
         .then(|| b.inverse_binds(model));
     for mesh in meshes {
-        let node = b.mesh_node(mesh, options, skin.is_some() && skinned(mesh));
+        let node = b.mesh_node(mesh, options, skin.is_some() && skinned(mesh))?;
         scene.push(node);
     }
     let animations = b.animations(options);
@@ -94,15 +96,35 @@ pub fn write_glb(model: &Model, options: &GltfOptions) -> Vec<u8> {
         let joints: Vec<usize> = (1..=model.bones.len()).collect();
         root["skins"] = json!([{ "joints": joints, "inverseBindMatrices": ibm }]);
     }
-    if !b.textures.is_empty() {
-        root["textures"] = json!(b.textures);
-        root["images"] = json!(b.images);
-        root["samplers"] = json!([{ "magFilter": 9729, "minFilter": 9987 }]);
+    if !b.images.list.is_empty() {
+        root["textures"] = json!(textures(&b.images.list));
+        root["images"] = json!(images(&b.images.list));
+        root["samplers"] = json!([sampler()]);
     }
-    if b.materials.iter().any(|m| m.get("extensions").is_some()) {
-        root["extensionsUsed"] = json!(["KHR_materials_specular"]);
+    let extensions = extensions_used(&b.materials);
+    if !extensions.is_empty() {
+        root["extensionsUsed"] = json!(extensions);
     }
-    container(&root, &b.bin)
+    Ok((container(&root, &b.bin), b.images.list))
+}
+
+/// The one sampler: linear, mipmapped, repeating.
+pub(crate) fn sampler() -> Json {
+    json!({ "magFilter": 9729, "minFilter": 9987 })
+}
+
+/// glTF textures, one per image, in the same order.
+pub(crate) fn textures(list: &[ExportedTexture]) -> Vec<Json> {
+    (0..list.len())
+        .map(|i| json!({ "sampler": 0, "source": i }))
+        .collect()
+}
+
+/// glTF images: each named after its file.
+pub(crate) fn images(list: &[ExportedTexture]) -> Vec<Json> {
+    list.iter()
+        .map(|t| json!({ "name": t.uri, "uri": t.uri }))
+        .collect()
 }
 
 fn push_child(node: &mut Json, child: usize) {
@@ -188,6 +210,20 @@ impl Builder {
         self.accessor(view, FLOAT, values.len(), kind)
     }
 
+    /// `attribute` as an accessor of as many components as it has.
+    fn attribute(&mut self, attribute: &Attribute) -> usize {
+        let width = attribute.width.clamp(1, 4);
+        let bytes: Vec<u8> = attribute
+            .values
+            .iter()
+            .flat_map(|v| &v[..width])
+            .flat_map(|f| f.to_le_bytes())
+            .collect();
+        let view = self.view(&bytes, Some(ARRAY_BUFFER));
+        let kind = ["SCALAR", "VEC2", "VEC3", "VEC4"][width - 1];
+        self.accessor(view, FLOAT, attribute.values.len(), kind)
+    }
+
     fn attributes(&mut self, v: &Vertices) -> Json {
         let position = self.floats(&v.positions, "VEC3");
         let (min, max) = bounds(&v.positions);
@@ -202,6 +238,9 @@ impl Builder {
         }
         for (i, uv) in v.uvs.iter().enumerate() {
             attributes[format!("TEXCOORD_{i}")] = json!(self.floats(uv, "VEC2"));
+        }
+        for extra in &v.extra {
+            attributes[&extra.name] = json!(self.attribute(extra));
         }
         if let Some(Skin { joints, weights }) = &v.skin {
             let bytes: Vec<u8> = joints
@@ -218,18 +257,17 @@ impl Builder {
     }
 
     /// A node with the render mesh `mesh` (skinned with skin 0 when `skinned`); its index.
-    fn mesh_node(&mut self, mesh: &Mesh, options: &GltfOptions, skinned: bool) -> usize {
+    fn mesh_node(&mut self, mesh: &Mesh, options: &GltfOptions, skinned: bool) -> Result<usize> {
         let name = format!("{}.{}", options.name, mesh.name);
         let accessors: Vec<Json> = mesh.vertices.iter().map(|v| self.attributes(v)).collect();
         let mut primitives = Vec::new();
         for p in &mesh.primitives {
             let indices = self.indices(&p.indices);
-            let material = self.material(&p.material, options);
-            primitives.push(json!({
-                "attributes": accessors[p.vertices],
-                "indices": indices,
-                "material": material,
-            }));
+            let mut primitive = json!({ "attributes": accessors[p.vertices], "indices": indices });
+            if let Some(material) = self.material(&p.material, p.tint, options)? {
+                primitive["material"] = json!(material);
+            }
+            primitives.push(primitive);
         }
         self.meshes
             .push(json!({ "name": name, "primitives": primitives }));
@@ -238,7 +276,7 @@ impl Builder {
             node["skin"] = json!(0);
         }
         self.nodes.push(node);
-        self.nodes.len() - 1
+        Ok(self.nodes.len() - 1)
     }
 
     /// The clips, with the skeleton they animate.
@@ -321,91 +359,26 @@ impl Builder {
         self.accessor(view, FLOAT, matrices.len(), "MAT4")
     }
 
-    fn material(&mut self, path: &str, options: &GltfOptions) -> usize {
-        if let Some(&i) = self.material_index.get(path) {
-            return i;
+    /// The material `path` drawn with the draw call's `tint`, made on first use; none when
+    /// the file is missing.
+    fn material(
+        &mut self,
+        path: &str,
+        tint: Option<[f32; 4]>,
+        options: &GltfOptions,
+    ) -> Result<Option<usize>> {
+        let tint = tint.unwrap_or([1.0; 4]);
+        let key = (path.to_owned(), tint.map(f32::to_bits));
+        if let Some(&i) = self.material_index.get(&key) {
+            return Ok(Some(i));
         }
-        let json = match options.materials.get(path) {
-            Some(m) => self.material_json(m, options),
-            None => {
-                json!({ "name": path.rsplit('/').next().unwrap_or(path).trim_end_matches(".vmat") })
-            }
+        let Some(material) = options.materials.get(path) else {
+            return Ok(None);
         };
-        self.materials.push(json);
-        self.material_index
-            .insert(path.to_owned(), self.materials.len() - 1);
-        self.materials.len() - 1
-    }
-
-    fn material_json(&mut self, m: &Material, options: &GltfOptions) -> Json {
-        // The image carries the metalness, so the factors stay 1.
-        let metal = if m.masks1.is_some() { 1.0 } else { 0.0 };
-        let mut pbr = json!({ "metallicFactor": metal, "roughnessFactor": 1.0 });
-        if let Some(color) = &m.base_color {
-            pbr["baseColorTexture"] = json!({ "index": self.texture(color, None, options) });
-        }
-        let mut out =
-            json!({ "name": m.name, "pbrMetallicRoughness": pbr, "extras": { "vmat": m.extras } });
-        if let Some(normal) = &m.normal {
-            out["normalTexture"] = json!({ "index": self.texture(normal, None, options) });
-        }
-        if let Some(masks) = &m.masks1 {
-            let orm = self.texture(masks, Some(Pack::Orm), options);
-            out["pbrMetallicRoughness"]["metallicRoughnessTexture"] = json!({ "index": orm });
-            out["occlusionTexture"] = json!({ "index": orm });
-            // The factor stays black: the mask only shows where a shader raises it.
-            let glow = self.texture(masks, Some(Pack::Channel(3)), options);
-            out["emissiveTexture"] = json!({ "index": glow });
-        }
-        match m.alpha {
-            Alpha::Opaque => {}
-            Alpha::Mask => out["alphaMode"] = json!("MASK"),
-            Alpha::Blend => out["alphaMode"] = json!("BLEND"),
-        }
-        if m.double_sided {
-            out["doubleSided"] = json!(true);
-        }
-        if let Some(color) = m.specular_color {
-            let mut specular = json!({ "specularColorFactor": color });
-            if let Some(masks) = &m.masks2 {
-                let mask = self.texture(masks, Some(Pack::Channel(0)), options);
-                specular["specularTexture"] = json!({ "index": mask });
-            }
-            out["extensions"] = json!({ "KHR_materials_specular": specular });
-        }
-        out
-    }
-
-    /// The texture of `vtex`, or with `pack` the image made from its pixels.
-    fn texture(&mut self, vtex: &str, pack: Option<Pack>, options: &GltfOptions) -> usize {
-        let key = (vtex.to_owned(), pack);
-        if let Some(&i) = self.texture_index.get(&key) {
-            return i;
-        }
-        let name = vtex.rsplit('/').next().unwrap_or(vtex);
-        let uri = image_uri(vtex, pack, options.texture_uri);
-        let name = match pack {
-            Some(Pack::Orm) => format!("{name}_orm"),
-            _ => name.to_owned(),
-        };
-        self.images.push(json!({ "name": name, "uri": uri }));
-        self.textures
-            .push(json!({ "name": name, "sampler": 0, "source": self.images.len() - 1 }));
-        self.texture_index.insert(key, self.textures.len() - 1);
-        self.textures.len() - 1
-    }
-}
-
-/// The file name of the image of `vtex` made with `pack`, relative to the `.glb`.
-pub(crate) fn image_uri(
-    vtex: &str,
-    pack: Option<Pack>,
-    texture_uri: &dyn Fn(&str) -> String,
-) -> String {
-    let uri = texture_uri(vtex);
-    match pack {
-        Some(Pack::Orm) => orm_uri(&uri),
-        _ => uri,
+        let converted = convert(material, tint, &mut self.images, options.texture_uri)?;
+        self.materials.push(converted.to_json(|image| image));
+        self.material_index.insert(key, self.materials.len() - 1);
+        Ok(Some(self.materials.len() - 1))
     }
 }
 

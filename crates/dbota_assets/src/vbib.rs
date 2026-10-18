@@ -29,6 +29,17 @@ pub(crate) const R16G16_SNORM: u32 = 37;
 pub(crate) const R16G16_SINT: u32 = 38;
 pub(crate) const R32_UINT: u32 = 42;
 
+/// Components per vertex of an attribute stored as `format`, for the formats
+/// [`Buffer::floats`] reads.
+pub(crate) fn components(format: u32) -> Option<usize> {
+    match format {
+        R32G32B32A32_FLOAT | R16G16B16A16_FLOAT | R8G8B8A8_UNORM => Some(4),
+        R32G32B32_FLOAT => Some(3),
+        R32G32_FLOAT | R16G16_FLOAT | R16G16_UNORM | R16G16_SNORM => Some(2),
+        _ => None,
+    }
+}
+
 /// One vertex or index buffer, decoded.
 #[derive(Clone, Debug)]
 pub struct Buffer {

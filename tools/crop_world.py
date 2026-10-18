@@ -306,7 +306,7 @@ def crop(doc: dict, blob: bytes, args) -> tuple[dict, Packer]:
 
 
 def layer_textures(materials: list[dict]) -> list[str]:
-    """Compiled texture paths behind blended terrain and water (the glTF only carries layer 0)."""
+    """Compiled texture paths behind blended terrain and water (the glTF carries only one)."""
     paths = set()
     for mat in materials:
         vmat = mat.get("extras", {}).get("vmat", {})

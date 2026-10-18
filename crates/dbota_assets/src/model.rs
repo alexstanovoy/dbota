@@ -5,15 +5,13 @@ use crate::error::{Result, malformed};
 use crate::kv3::{self, Value};
 use crate::resource::Resource;
 use crate::vbib::{self, Buffer};
-
-/// Inches to metres.
-const SCALE: f32 = 0.0254;
-/// Source's Z-up frame to glTF's Y-up one: a rotation taking (x, y, z) to (y, z, x).
-const TO_GLTF: [f32; 4] = [-0.5, -0.5, -0.5, 0.5];
+use crate::vertices::{SCALE, TO_GLTF, Vertices, convert};
 
 pub struct Model {
     pub bones: Vec<Bone>,
     pub meshes: Vec<Mesh>,
+    /// The skins: each a name and the materials it swaps in.
+    pub material_groups: Vec<(String, Vec<String>)>,
 }
 
 /// A bone's rest pose relative to its parent, in glTF's frame.
@@ -31,28 +29,14 @@ pub struct Mesh {
     pub primitives: Vec<Primitive>,
 }
 
-/// One vertex buffer, decoded and converted.
-#[derive(Default)]
-pub struct Vertices {
-    pub positions: Vec<[f32; 3]>,
-    pub normals: Option<Vec<[f32; 3]>>,
-    pub tangents: Option<Vec<[f32; 4]>>,
-    pub uvs: Vec<Vec<[f32; 2]>>,
-    pub skin: Option<Skin>,
-}
-
-/// Per vertex, four model skeleton bones and their weights (summing to 1).
-pub struct Skin {
-    pub joints: Vec<[u16; 4]>,
-    pub weights: Vec<[f32; 4]>,
-}
-
 /// One draw call: triangles over one of the mesh's vertex buffers with one material.
 pub struct Primitive {
     pub vertices: usize,
     pub indices: Vec<u32>,
     /// The material's path (`materials/.../x.vmat`, without `_c`).
     pub material: String,
+    /// The draw call's own tint and opacity, when it has them.
+    pub tint: Option<[f32; 4]>,
 }
 
 impl Model {
@@ -87,7 +71,23 @@ impl Model {
                 meshes.push(read_mesh(resource, embedded, joints.as_deref())?);
             }
         }
-        Ok(Self { bones, meshes })
+        let material_groups = array(data.get("m_materialGroups"))
+            .iter()
+            .map(|g| {
+                let name = g.get("m_name").and_then(Value::as_str).unwrap_or_default();
+                let materials = array(g.get("m_materials"))
+                    .iter()
+                    .filter_map(Value::as_str)
+                    .map(str::to_owned)
+                    .collect();
+                (name.to_owned(), materials)
+            })
+            .collect();
+        Ok(Self {
+            bones,
+            meshes,
+            material_groups,
+        })
     }
 }
 
@@ -269,10 +269,14 @@ fn read_mesh(resource: &Resource, embedded: &Value, joints: Option<&[u16]>) -> R
         .iter()
         .map(|b| convert(b, joints.filter(|_| weight_count > 0), weight_count))
         .collect::<Result<_>>()?;
+    let index_lists = index_buffers
+        .iter()
+        .map(Buffer::indices)
+        .collect::<Result<Vec<_>>>()?;
     let mut primitives = Vec::new();
     for object in array(data.get("m_sceneObjects")) {
         for call in array(object.get("m_drawCalls")) {
-            primitives.push(draw_call(call, &index_buffers, &vertex_buffers)?);
+            primitives.push(draw_call(call, &index_lists, &vertex_buffers)?);
         }
     }
     Ok(Mesh {
@@ -291,7 +295,7 @@ fn buffers(resource: &Resource, list: Option<&Value>, vertex: bool) -> Result<Ve
 
 fn draw_call(
     call: &Value,
-    index_buffers: &[Buffer],
+    index_lists: &[Vec<u32>],
     vertex_buffers: &[Buffer],
 ) -> Result<Primitive> {
     let int = |v: Option<&Value>| {
@@ -319,10 +323,9 @@ fn draw_call(
     );
     let vertices = handle("m_vertexBuffers");
     let vertex_count = vertex_buffers.get(vertices).map_or(0, |b| b.count);
-    let all = index_buffers
+    let all = index_lists
         .get(handle("m_indexBuffer"))
-        .ok_or_else(|| malformed("draw call", "no index buffer"))?
-        .indices()?;
+        .ok_or_else(|| malformed("draw call", "no index buffer"))?;
     let range = all
         .get(start..start.saturating_add(count))
         .ok_or_else(|| malformed("draw call", "indices past the buffer"))?;
@@ -337,131 +340,20 @@ fn draw_call(
         }
         indices.push(i as u32);
     }
-    let material = call
-        .get("m_material")
-        .and_then(Value::as_str)
+    let material = ["m_material", "m_pMaterial"]
+        .iter()
+        .find_map(|k| call.get(k).and_then(Value::as_str))
         .unwrap_or_default();
+    let tint = call.get("m_vTintColor").map(|t| {
+        let rgb = array(Some(t));
+        let c = |i: usize| rgb.get(i).and_then(Value::as_f64).unwrap_or(0.0) as f32;
+        let alpha = call.get("m_flAlpha").and_then(Value::as_f64).unwrap_or(1.0);
+        [c(0), c(1), c(2), alpha as f32]
+    });
     Ok(Primitive {
         vertices,
         indices,
         material: material.to_owned(),
+        tint,
     })
-}
-
-/// A vertex buffer's attributes in glTF's frame; bone indices mapped to model bones.
-fn convert(buffer: &Buffer, joints: Option<&[u16]>, weight_count: usize) -> Result<Vertices> {
-    let mut out = Vertices::default();
-    let position = buffer
-        .field("POSITION", 0)
-        .ok_or_else(|| malformed("mesh buffer", "no POSITION"))?;
-    out.positions = buffer
-        .floats(position)?
-        .into_iter()
-        .map(|v| rotate(TO_GLTF, [v[0], v[1], v[2]].map(|c| c * SCALE)))
-        .collect();
-    if let Some(normal) = buffer.field("NORMAL", 0) {
-        let (normals, tangents) = buffer.normals_tangents(normal)?;
-        out.normals = Some(
-            normals
-                .into_iter()
-                .map(|n| rotate(TO_GLTF, fix_zero(n)))
-                .collect(),
-        );
-        let tangents = match (tangents, buffer.field("TANGENT", 0)) {
-            (Some(t), _) => Some(t),
-            (None, Some(field)) => Some(buffer.floats(field)?),
-            (None, None) => None,
-        };
-        out.tangents = tangents.map(|ts| {
-            ts.into_iter()
-                .map(|t| {
-                    let [x, y, z] = rotate(TO_GLTF, fix_zero([t[0], t[1], t[2]]));
-                    [x, y, z, if t[3] < 0.0 { -1.0 } else { 1.0 }]
-                })
-                .collect()
-        });
-    }
-    for index in 0..8 {
-        if let Some(uv) = buffer
-            .field("TEXCOORD", index)
-            .filter(|f| is_two_component(f.format))
-        {
-            out.uvs.push(
-                buffer
-                    .floats(uv)?
-                    .into_iter()
-                    .map(|v| [v[0], v[1]])
-                    .collect(),
-            );
-        }
-    }
-    if let (Some(table), Some(indices)) = (joints, buffer.field("BLENDINDICES", 0)) {
-        let weights = match buffer
-            .field("BLENDWEIGHT", 0)
-            .or(buffer.field("BLENDWEIGHTS", 0))
-        {
-            Some(field) => buffer.floats(field)?,
-            None => vec![equal_weights(weight_count); buffer.count],
-        };
-        let (joints, weights) = buffer
-            .joints(indices)?
-            .into_iter()
-            .zip(weights)
-            .map(|(j, w)| {
-                merge_duplicates(
-                    j.map(|b| table.get(usize::from(b)).copied().unwrap_or(0)),
-                    w,
-                )
-            })
-            .unzip();
-        out.skin = Some(Skin { joints, weights });
-    }
-    Ok(out)
-}
-
-fn is_two_component(format: u32) -> bool {
-    matches!(
-        format,
-        vbib::R32G32_FLOAT | vbib::R16G16_FLOAT | vbib::R16G16_UNORM | vbib::R16G16_SNORM
-    )
-}
-
-fn equal_weights(count: usize) -> [f32; 4] {
-    let share = 1.0 / count.clamp(1, 4) as f32;
-    [0, 1, 2, 3].map(|i| if i < count { share } else { 0.0 })
-}
-
-/// A zero vector would make a degenerate frame; glTF wants unit vectors.
-fn fix_zero(v: [f32; 3]) -> [f32; 3] {
-    if v.iter().all(|c| c.abs() < 1e-6) {
-        [0.0, 0.0, 1.0]
-    } else {
-        vbib::normalize(v)
-    }
-}
-
-/// Folds repeated bones into their first slot and normalizes the weights to sum to 1, as glTF
-/// requires; unused slots get bone 0 and weight 0.
-fn merge_duplicates(mut joints: [u16; 4], mut weights: [f32; 4]) -> ([u16; 4], [f32; 4]) {
-    for i in 0..4 {
-        for j in 0..i {
-            if joints[j] == joints[i] && weights[j] > 0.0 && weights[i] > 0.0 {
-                weights[j] += weights[i];
-                weights[i] = 0.0;
-            }
-        }
-    }
-    for i in 0..4 {
-        if weights[i] <= 0.0 {
-            joints[i] = 0;
-            weights[i] = 0.0;
-        }
-    }
-    let sum: f32 = weights.iter().sum();
-    if sum > 0.0 {
-        weights = weights.map(|w| w / sum);
-    } else {
-        weights = [1.0, 0.0, 0.0, 0.0];
-    }
-    (joints, weights)
 }

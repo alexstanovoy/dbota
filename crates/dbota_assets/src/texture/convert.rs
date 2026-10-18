@@ -62,7 +62,7 @@ impl Content {
             out.extend_from_slice(&match self {
                 Self::Colour => [r, g, b, a],
                 Self::YCoCg => ycocg(r, g, b, a),
-                Self::Normal => normal(g, a),
+                Self::Normal => normal(r, g, a),
             });
         }
         Ok(out)
@@ -83,23 +83,14 @@ fn ycocg(r: u8, g: u8, b: u8, y: u8) -> [u8; 4] {
     [byte(y + co - cg), byte(y + cg), byte(y - co - cg), 255]
 }
 
-/// A DXT5nm normal: x in alpha, y in green, z from the unit length; a pair longer than one
-/// (the blocks round) is scaled back to length one.
-fn normal(g: u8, a: u8) -> [u8; 4] {
-    let (mut x, mut y) = (
-        f32::from(a) / 255.0 * 2.0 - 1.0,
-        f32::from(g) / 255.0 * 2.0 - 1.0,
-    );
-    let flat = x * x + y * y;
-    if flat > 1.0 {
-        let len = flat.sqrt();
-        (x, y) = (x / len, y / len);
-    }
-    let z = (1.0 - flat).max(0.0).sqrt();
-    [
-        byte((x * 0.5 + 0.5) * 255.0),
-        byte((y * 0.5 + 0.5) * 255.0),
-        byte((z * 0.5 + 0.5) * 255.0),
-        255,
-    ]
+/// A DXT5nm normal: x in alpha, y in green, z from the unit length (none when the pair is
+/// longer than one, as the blocks round), in whole numbers as Source2Viewer reconstructs it; the
+/// unused red is kept in alpha, where its swap of red and alpha leaves it.
+fn normal(r: u8, g: u8, a: u8) -> [u8; 4] {
+    let x = 2 * i32::from(a) - 255;
+    let y = 2 * i32::from(g) - 255;
+    // A negative square makes NaN, which becomes 0.
+    let z = ((255 * 255 - x * x - y * y) as f32).sqrt() as i32;
+    let unit = |v: i32| (v / 2 + 128).clamp(0, 255) as u8;
+    [unit(x), unit(y), unit(z), r]
 }

@@ -179,13 +179,13 @@ fn primitive_data(glb: &Glb) -> Vec<(String, Streams)> {
     out
 }
 
-/// How far two attribute streams may differ: positions and UVs to rounding, unit vectors to
-/// the precision of their packed forms, bone weights to 1/255.
+/// How far two attribute streams may differ: positions and unit vectors by the rounding of the
+/// exporter's frame change (its rotation is a float quaternion, a few 1e-8 off), UVs not at
+/// all, bone weights to 1/255.
 fn tolerance(attribute: &str) -> f64 {
     match attribute {
-        "POSITION" => 1e-4,
-        "TEXCOORD_0" | "TEXCOORD_1" => 1e-3,
-        "NORMAL" | "TANGENT" => 2e-2,
+        "POSITION" => 1e-5,
+        "NORMAL" | "TANGENT" => 1e-6,
         "WEIGHTS_0" => 1.0 / 255.0 + 1e-4,
         _ => 0.0,
     }
