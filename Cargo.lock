@@ -2401,6 +2401,7 @@ dependencies = [
  "ktx2",
  "lz4_flex",
  "meshopt",
+ "meshoptimizer-rs",
  "png",
  "ruzstd",
  "serde_json",
@@ -3529,6 +3530,15 @@ dependencies = [
  "cc",
  "float-cmp",
  "thiserror 2.0.21",
+]
+
+[[package]]
+name = "meshoptimizer-rs"
+version = "0.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5129e1eb5c99c73171287687c91461acc5036a1fff02c07090cabf2f09e14573"
+dependencies = [
+ "libm",
 ]
 
 [[package]]
