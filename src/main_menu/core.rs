@@ -214,8 +214,9 @@ impl MenuCore {
         self.conn == Conn::LoggedIn
     }
 
+    /// Whether the service has yet to answer the Hello.
     pub(super) fn connecting(&self) -> bool {
-        matches!(self.conn, Conn::Connecting | Conn::Welcomed)
+        self.conn == Conn::Connecting
     }
 
     /// The game the shell is to open next, once.
