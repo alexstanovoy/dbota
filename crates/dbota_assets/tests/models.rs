@@ -161,6 +161,95 @@ fn compare_data(ours: &Glb, theirs: &Glb) -> Option<String> {
     None
 }
 
+/// Bone translations and inverse bind matrices may differ by float rounding only.
+const POSE_TOLERANCE: f64 = 1e-4;
+
+/// Per skin joint, in order: its name, parent's name, local translation and rotation, and
+/// inverse bind matrix.
+type Pose = Vec<(String, String, [f64; 3], [f64; 4], Vec<f64>)>;
+
+/// The distinct skins (Source2Viewer writes one per mesh, all of the same skeleton).
+fn skin_poses(glb: &Glb) -> Vec<Pose> {
+    let nodes = glb.json["nodes"].as_array().unwrap();
+    let name = |i: usize| nodes[i]["name"].as_str().unwrap().to_owned();
+    let mut parent = vec![String::new(); nodes.len()];
+    for (i, node) in nodes.iter().enumerate() {
+        for child in node["children"].as_array().into_iter().flatten() {
+            parent[child.as_u64().unwrap() as usize] = name(i);
+        }
+    }
+    let numbers = |v: &Value, default: &[f64]| -> Vec<f64> {
+        v.as_array().map_or_else(
+            || default.to_vec(),
+            |a| a.iter().map(|c| c.as_f64().unwrap()).collect(),
+        )
+    };
+    glb.json["skins"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .map(|skin| {
+            let matrices = glb.values(skin["inverseBindMatrices"].as_u64().unwrap());
+            skin["joints"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .enumerate()
+                .map(|(k, j)| {
+                    let j = j.as_u64().unwrap() as usize;
+                    let t = numbers(&nodes[j]["translation"], &[0.0; 3]);
+                    let r = numbers(&nodes[j]["rotation"], &[0.0, 0.0, 0.0, 1.0]);
+                    (
+                        name(j),
+                        parent[j].clone(),
+                        t.try_into().unwrap(),
+                        r.try_into().unwrap(),
+                        matrices[k * 16..k * 16 + 16].to_vec(),
+                    )
+                })
+                .collect()
+        })
+        .fold(Vec::new(), |mut skins: Vec<Pose>, pose| {
+            if !skins.contains(&pose) {
+                skins.push(pose);
+            }
+            skins
+        })
+}
+
+/// The first bone whose parent, pose or inverse bind matrix differs, as a message.
+fn compare_poses(ours: &Glb, theirs: &Glb) -> Option<String> {
+    let (ours, theirs) = (skin_poses(ours), skin_poses(theirs));
+    if ours.len() != theirs.len() {
+        return Some(format!("{} skins vs {}", ours.len(), theirs.len()));
+    }
+    let far = |a: &[f64], b: &[f64]| a.iter().zip(b).any(|(x, y)| (x - y).abs() > POSE_TOLERANCE);
+    for (a, b) in ours.iter().zip(&theirs) {
+        for (x, y) in a.iter().zip(b) {
+            if x.0 != y.0 || x.1 != y.1 {
+                return Some(format!("bone {}/{} under {}/{}", x.0, y.0, x.1, y.1));
+            }
+            // q and -q are the same rotation.
+            let sign = if x.3.iter().zip(&y.3).map(|(p, q)| p * q).sum::<f64>() < 0.0 {
+                -1.0
+            } else {
+                1.0
+            };
+            let flipped = y.3.map(|c| c * sign);
+            if far(&x.2, &y.2) || far(&x.3, &flipped) {
+                return Some(format!(
+                    "bone {} local {:?} {:?} vs {:?} {:?}",
+                    x.0, x.2, x.3, y.2, y.3
+                ));
+            }
+            if far(&x.4, &y.4) {
+                return Some(format!("bone {} inverse bind {:?} vs {:?}", x.0, x.4, y.4));
+            }
+        }
+    }
+    None
+}
+
 /// The image file of texture slot `slot` (`["normalTexture"]`) of material `m`.
 fn image(doc: &Value, m: &Value, slot: &[&str]) -> Option<String> {
     let texture = slot.iter().fold(m, |v, k| &v[*k])["index"].as_u64()? as usize;
@@ -243,6 +332,9 @@ fn models_match_the_exported_ones() {
         let theirs = Glb::parse(&std::fs::read(cache().join(&out)).unwrap());
         let ours = Glb::parse(&ours.glb);
         if let Some(diff) = compare_data(&ours, &theirs) {
+            data.push(format!("{source}: {diff}"));
+        }
+        if let Some(diff) = compare_poses(&ours, &theirs) {
             data.push(format!("{source}: {diff}"));
         }
         let (ours, theirs) = (summary(&ours.json), summary(&theirs.json));
