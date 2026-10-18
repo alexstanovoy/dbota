@@ -18,7 +18,7 @@ use crate::source::Source;
 use crate::texture::Texture;
 use crate::tooltips::{Wanted, tooltips_json};
 use crate::vpk::Vpk;
-use crate::world::{Band, EntityLump, buildings_txt, export_world, trees_txt};
+use crate::world::{Band, EntityLump, buildings_txt, export_world, lighting_txt, trees_txt};
 
 /// Bumped when the importer's output changes for the same install; part of a cache's stamp.
 pub const IMPORT_REV: u32 = 2;
@@ -58,6 +58,8 @@ pub enum Item {
         vpk: String,
         trees_out: String,
         buildings_out: String,
+        /// The day and night lighting (`lighting.txt`), when the manifest asks for it.
+        lighting_out: Option<String>,
     },
     /// The world cut to `band`: its glTF (`out`), geometry and images beside it, and its terrain
     /// layer textures in `layers`.
@@ -160,6 +162,7 @@ impl Plan {
                             vpk: vpk.to_owned(),
                             trees_out: trees.to_owned(),
                             buildings_out: format!("{dir}/buildings.txt"),
+                            lighting_out: field("lighting=").map(str::to_owned),
                         });
                     }
                     let number =
@@ -501,10 +504,16 @@ fn make(
             vpk,
             trees_out,
             buildings_out,
+            lighting_out,
             ..
         } => {
             let at = open_map(src, maps, vpk)?;
-            placements(src, &maps[at].1, path, trees_out, buildings_out, out)
+            let outs = PlacementOuts {
+                trees: trees_out,
+                buildings: buildings_out,
+                lighting: lighting_out.as_deref(),
+            };
+            placements(src, &maps[at].1, path, &outs, out)
         }
         Item::World {
             logical,
@@ -640,13 +649,19 @@ fn join(dir: &str, file: &str) -> String {
     }
 }
 
-/// `trees.txt` and `buildings.txt` from the entities of the world's default lump.
+/// Where the files made from the world's entities go.
+struct PlacementOuts<'a> {
+    trees: &'a str,
+    buildings: &'a str,
+    lighting: Option<&'a str>,
+}
+
+/// `trees.txt`, `buildings.txt` and `lighting.txt` from the entities of the world's default lump.
 fn placements(
     src: &impl Source,
     map: &Vpk,
     world: &str,
-    trees_out: &str,
-    buildings_out: &str,
+    outs: &PlacementOuts<'_>,
     out: &mut Out<'_>,
 ) -> Result<()> {
     let bytes = read_from(src, &[map], world)?;
@@ -662,8 +677,12 @@ fn placements(
         .ok_or_else(|| malformed("world", "no entity lump"))?;
     let bytes = read_from(src, &[map], &format!("{lump}_c"))?;
     let lump = EntityLump::read(&Resource::parse(&bytes)?)?;
-    out.put(trees_out, trees_txt(&lump.entities).as_bytes())?;
-    out.put(buildings_out, buildings_txt(&lump.entities).as_bytes())
+    out.put(outs.trees, trees_txt(&lump.entities).as_bytes())?;
+    out.put(outs.buildings, buildings_txt(&lump.entities).as_bytes())?;
+    if let Some(path) = outs.lighting {
+        out.put(path, lighting_txt(&lump.entities)?.as_bytes())?;
+    }
+    Ok(())
 }
 
 /// What one model line asks for.

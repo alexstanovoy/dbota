@@ -47,4 +47,6 @@ pub use tooltips::{Wanted, tooltips_json};
 pub use vbib::{Buffer, Field};
 pub use vertices::{Attribute, Skin, Vertices};
 pub use vpk::{Entry, Vpk};
-pub use world::{Band, EntityLump, ExportedWorld, buildings_txt, export_world, trees_txt};
+pub use world::{
+    Band, EntityLump, ExportedWorld, buildings_txt, export_world, lighting_txt, trees_txt,
+};

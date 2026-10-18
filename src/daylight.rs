@@ -1,16 +1,18 @@
-//! Day and night, read off the view's tick by bota's rule: by night the sun
-//! dims to a cool moonlight and the ambient light turns blue, as Dota's map
-//! does, easing over a few seconds when the time of day turns. Sight itself
-//! needs nothing here: every unit's vision radius already shrinks in the
-//! view, and the fog is drawn from it.
+//! Day and night, read off the view's tick by bota's rule: the light's colour
+//! turns from the sun's to the moon's, easing when the time of day turns.
+//! Dota's own colours are in the cache (`map/mid/lighting.txt`, made from the
+//! map's light entities); without them stand-in numbers do. Sight itself needs
+//! nothing here: every unit's vision radius already shrinks in the view, and
+//! the fog is drawn from it.
 
 use bevy::prelude::*;
 
+use crate::manifest::Manifest;
 use crate::session::Session;
 
-/// Seconds the light takes to turn from day to night or back.
+/// Seconds the stand-in light takes to turn from day to night or back.
 const TURN_SECONDS: f32 = 3.0;
-/// How far the night's light turns towards moonlight blue, 0 to 1.
+/// How far the stand-in night's light turns towards moonlight blue, 0 to 1.
 const NIGHT_TINT: f32 = 0.6;
 /// The sun's and the ambient light's share of their daytime brightness by night.
 const NIGHT_SUN: f32 = 0.3;
@@ -20,6 +22,62 @@ const NIGHT_AMBIENT: f32 = 0.55;
 #[derive(Resource, Default)]
 pub struct Daylight {
     pub night: f32,
+}
+
+/// Dota's colours for one light, by day and by night, in linear light.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Pair {
+    day: LinearRgba,
+    night: LinearRgba,
+}
+
+/// The sun and the ambient light of Dota's map, from `lighting.txt`.
+#[derive(Resource, Clone, Copy, Debug, PartialEq)]
+struct Dota {
+    sun: Pair,
+    ambient: Pair,
+    /// Seconds the light takes to turn.
+    turn: f32,
+}
+
+impl Dota {
+    /// The cache's lighting file; `None` when it is missing or malformed.
+    fn parse(text: &str) -> Option<Self> {
+        let mut colors = std::collections::HashMap::new();
+        let mut turn = None;
+        for line in text.lines().filter(|l| !l.starts_with('#')) {
+            let w: Vec<&str> = line.split_whitespace().collect();
+            match w.as_slice() {
+                [
+                    light @ ("sun" | "ambient"),
+                    time @ ("day" | "night"),
+                    v @ ..,
+                ] if v.len() == 4 => {
+                    let v: Vec<f32> = v.iter().map(|n| n.parse().ok()).collect::<Option<_>>()?;
+                    let srgb = Color::srgb(v[0] / 255.0, v[1] / 255.0, v[2] / 255.0);
+                    colors.insert((*light, *time), srgb.to_linear() * v[3]);
+                }
+                ["turn", seconds] => turn = seconds.parse().ok().filter(|t: &f32| *t > 0.0),
+                _ => {}
+            }
+        }
+        // Dota's colours scale the daytime brightness this client sets for its own
+        // lights: the day's brightest channel is 1, the night keeps its ratio to it.
+        let pair = |light| {
+            let day = *colors.get(&(light, "day"))?;
+            let night = *colors.get(&(light, "night"))?;
+            let top = day.red.max(day.green).max(day.blue);
+            (top > 0.0).then(|| Pair {
+                day: (day * (1.0 / top)).with_alpha(1.0),
+                night: (night * (1.0 / top)).with_alpha(1.0),
+            })
+        };
+        Some(Self {
+            sun: pair("sun")?,
+            ambient: pair("ambient")?,
+            turn: turn?,
+        })
+    }
 }
 
 /// The light as the map lays it out by day, taken once it stands.
@@ -32,6 +90,17 @@ struct DayLook {
 }
 
 pub fn plugin(app: &mut App) {
+    let dota = app
+        .world()
+        .resource::<Manifest>()
+        .root
+        .as_deref()
+        .and_then(|root| crate::cachefs::read_small(root, "map/mid/lighting.txt"))
+        .and_then(|bytes| String::from_utf8(bytes).ok())
+        .and_then(|text| Dota::parse(&text));
+    if let Some(dota) = dota {
+        app.insert_resource(dota);
+    }
     app.init_resource::<Daylight>()
         .add_systems(Update, (turn, light).chain());
 }
@@ -40,6 +109,7 @@ pub fn plugin(app: &mut App) {
 /// view of a session is lit as it is, without a turn.
 fn turn(
     session: NonSend<Session>,
+    dota: Option<Res<Dota>>,
     time: Res<Time>,
     mut daylight: ResMut<Daylight>,
     mut seen: Local<bool>,
@@ -61,13 +131,15 @@ fn turn(
     if daylight.night == goal {
         return;
     }
-    let step = time.delta_secs() / TURN_SECONDS;
+    let turn = dota.map_or(TURN_SECONDS, |d| d.turn);
+    let step = time.delta_secs() / turn;
     daylight.night += (goal - daylight.night).clamp(-step, step);
 }
 
 /// Lays the light over the day look by how far it has turned.
 fn light(
     daylight: Res<Daylight>,
+    dota: Option<Res<Dota>>,
     mut ambient: ResMut<GlobalAmbientLight>,
     mut suns: Query<&mut DirectionalLight>,
     mut day: Local<Option<DayLook>>,
@@ -85,6 +157,11 @@ fn light(
         return;
     }
     let night = daylight.night;
+    if let Some(dota) = dota {
+        sun.color = dota.sun.day.mix(&dota.sun.night, night).into();
+        ambient.color = dota.ambient.day.mix(&dota.ambient.night, night).into();
+        return;
+    }
     let moonlight = Color::srgb(0.55, 0.66, 1.0).to_linear();
     let blue = Color::srgb(0.42, 0.52, 1.0).to_linear();
     let tint = night * NIGHT_TINT;
