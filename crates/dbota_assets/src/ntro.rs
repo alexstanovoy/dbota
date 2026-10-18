@@ -88,8 +88,11 @@ pub(crate) fn read(
     data_at: usize,
     refs: &HashMap<u64, String>,
 ) -> Result<Value> {
-    let structs = read_structs(file, ntro_at)?;
-    let enums = read_enums(file, ntro_at)?;
+    // One budget for the manifest and the tree: lists and strings may overlap, so a small file
+    // can describe far more than it holds.
+    let mut budget = Budget::new("NTRO");
+    let structs = read_structs(file, ntro_at, &mut budget)?;
+    let enums = read_enums(file, ntro_at, &mut budget)?;
     let root = structs
         .first()
         .ok_or_else(|| malformed("NTRO", "no structs"))?;
@@ -98,7 +101,7 @@ pub(crate) fn read(
         by_id: structs.iter().map(|s| (s.id, s)).collect(),
         enums,
         refs,
-        budget: Budget::new("NTRO"),
+        budget,
     };
     reader.structure(root, data_at, 0)
 }
@@ -110,8 +113,9 @@ fn at(file: &[u8], at: usize) -> Result<Cursor<'_>> {
     Ok(c)
 }
 
-/// A string written as an offset from the offset field itself; 0 is the empty string.
-fn offset_string(file: &[u8], c: &mut Cursor) -> Result<String> {
+/// A string written as an offset from the offset field itself, charged to `budget`; 0 is the
+/// empty string.
+fn offset_string(file: &[u8], c: &mut Cursor, budget: &mut Budget) -> Result<String> {
     let field = c.pos();
     let offset = c.i32()?;
     if offset == 0 {
@@ -120,38 +124,54 @@ fn offset_string(file: &[u8], c: &mut Cursor) -> Result<String> {
     let target = field
         .checked_add_signed(offset as isize)
         .ok_or_else(|| malformed("NTRO", "string before the file"))?;
-    Ok(String::from_utf8_lossy(at(file, target)?.cstr()?).into_owned())
+    let text = at(file, target)?.cstr()?;
+    budget.bytes(text.len())?;
+    Ok(String::from_utf8_lossy(text).into_owned())
 }
 
-/// A list written as (offset from the offset field, count): a cursor at its first item.
-fn list<'a>(file: &'a [u8], c: &mut Cursor, item_len: usize) -> Result<(Cursor<'a>, usize)> {
+/// A list written as (offset from the offset field, count): a cursor at its first item. Its
+/// items, `held` bytes each once read, are charged to `budget`.
+fn list<'a>(
+    file: &'a [u8],
+    c: &mut Cursor,
+    item_len: usize,
+    held: usize,
+    budget: &mut Budget,
+) -> Result<(Cursor<'a>, usize)> {
     let field = c.pos();
     let offset = c.i32()?;
     let count = c.u32()? as usize;
     if count.saturating_mul(item_len) > file.len() {
         return Err(malformed("NTRO", format!("a list of {count}")));
     }
+    budget.bytes(count.saturating_mul(held))?;
     let start = field
         .checked_add_signed(offset as isize)
         .ok_or_else(|| malformed("NTRO", "list before the file"))?;
     Ok((at(file, if count == 0 { 0 } else { start })?, count))
 }
 
-fn read_structs(file: &[u8], ntro_at: usize) -> Result<Vec<DiskStruct>> {
-    let (mut c, count) = list(file, &mut at(file, ntro_at + 4)?, 40)?;
+fn read_structs(file: &[u8], ntro_at: usize, budget: &mut Budget) -> Result<Vec<DiskStruct>> {
+    let held = size_of::<DiskStruct>();
+    let (mut c, count) = list(file, &mut at(file, ntro_at + 4)?, 40, held, budget)?;
     let mut structs = Vec::with_capacity(count);
     for _ in 0..count {
         c.u32()?;
         let id = c.u32()?;
-        let name = offset_string(file, &mut c)?;
+        let name = offset_string(file, &mut c, budget)?;
         c.take(8)?;
         let size = c.u16()?;
         c.u16()?;
         let base = c.u32()?;
-        let (mut f, field_count) = list(file, &mut c, 24)?;
+        let (mut f, field_count) = list(file, &mut c, 24, size_of::<Field>(), budget)?;
         let mut fields = Vec::with_capacity(field_count);
         for _ in 0..field_count {
-            fields.push(read_field(file, &mut f)?);
+            let field = read_field(file, &mut f, budget)?;
+            // A field at a negative offset is not in the struct's bytes; dropped here, every
+            // field read later yields a value the budget is charged for.
+            if field.offset >= 0 {
+                fields.push(field);
+            }
         }
         let flags = c.u8()?;
         c.take(3)?;
@@ -167,11 +187,11 @@ fn read_structs(file: &[u8], ntro_at: usize) -> Result<Vec<DiskStruct>> {
     Ok(structs)
 }
 
-fn read_field(file: &[u8], c: &mut Cursor) -> Result<Field> {
-    let name = offset_string(file, c)?;
+fn read_field(file: &[u8], c: &mut Cursor, budget: &mut Budget) -> Result<Field> {
+    let name = offset_string(file, c, budget)?;
     let count = c.u16()? as i16;
     let offset = c.u16()? as i16;
-    let (mut i, indirection_count) = list(file, c, 1)?;
+    let (mut i, indirection_count) = list(file, c, 1, 1, budget)?;
     let indirections = i.take(indirection_count)?.to_vec();
     let type_data = c.u32()?;
     let ty = c.u16()? as i16;
@@ -187,17 +207,22 @@ fn read_field(file: &[u8], c: &mut Cursor) -> Result<Field> {
 }
 
 /// Enumerator names by (enum id, value).
-fn read_enums(file: &[u8], ntro_at: usize) -> Result<HashMap<(u32, i32), String>> {
-    let (mut c, count) = list(file, &mut at(file, ntro_at + 12)?, 28)?;
+fn read_enums(
+    file: &[u8],
+    ntro_at: usize,
+    budget: &mut Budget,
+) -> Result<HashMap<(u32, i32), String>> {
+    let (mut c, count) = list(file, &mut at(file, ntro_at + 12)?, 28, 28, budget)?;
     let mut names = HashMap::new();
     for _ in 0..count {
         c.u32()?;
         let id = c.u32()?;
-        offset_string(file, &mut c)?;
+        offset_string(file, &mut c, budget)?;
         c.take(8)?;
-        let (mut v, value_count) = list(file, &mut c, 8)?;
+        let held = size_of::<((u32, i32), String)>();
+        let (mut v, value_count) = list(file, &mut c, 8, held, budget)?;
         for _ in 0..value_count {
-            let name = offset_string(file, &mut v)?;
+            let name = offset_string(file, &mut v, budget)?;
             names.entry((id, v.i32()?)).or_insert(name);
         }
     }
@@ -219,8 +244,7 @@ impl<'a> Reader<'a> {
 
     /// A string written as an offset at `at`, charged.
     fn string_at(&mut self, at: usize) -> Result<Value> {
-        let text = offset_string(self.file, &mut self::at(self.file, at)?)?;
-        self.budget.bytes(text.len())?;
+        let text = offset_string(self.file, &mut self::at(self.file, at)?, &mut self.budget)?;
         Ok(Value::String(text))
     }
 
@@ -235,7 +259,7 @@ impl<'a> Reader<'a> {
             object.push("_class".to_owned(), Value::String(class));
         }
         for _ in 0..MAX_BASES {
-            for field in current.fields.iter().filter(|f| f.offset >= 0) {
+            for field in &current.fields {
                 let value = self.field(field, at + field.offset as usize, depth)?;
                 object.push(self.budget.copy(&field.name)?, value);
             }
@@ -268,6 +292,8 @@ impl<'a> Reader<'a> {
         let Some(&kind) = field.indirections.get(level) else {
             return self.value(field, at, depth);
         };
+        // Each level nests one deeper: a chain of pointers must not outgrow the stack.
+        self.node(depth)?;
         let mut c = self::at(self.file, at)?;
         let offset = c.i32()?;
         let target = at.checked_add_signed(offset as isize);
@@ -302,7 +328,8 @@ impl<'a> Reader<'a> {
             self.budget.bytes(count)?;
             return Ok(Value::Blob(self::at(self.file, at)?.take(count)?.to_vec()));
         }
-        let mut items = Vec::with_capacity(count);
+        // Elements of an empty struct take no bytes, so the count bounds nothing.
+        let mut items = Vec::with_capacity(count.min(4096));
         for i in 0..count {
             items.push(self.indirection(field, level, at + i * size, depth + 1)?);
         }

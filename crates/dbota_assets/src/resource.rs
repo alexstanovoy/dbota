@@ -1,3 +1,4 @@
+use crate::budget::Budget;
 use crate::bytes::Cursor;
 use crate::error::{Result, malformed};
 use crate::kv3::{self, Value};
@@ -148,7 +149,9 @@ impl<'a> Resource<'a> {
         let Some(block) = self.blocks.iter().find(|b| &b.kind == b"RERL") else {
             return Ok(Vec::new());
         };
-        // Offsets count from their own field and may point anywhere in the file.
+        // Offsets count from their own field and may point anywhere in the file, so names may
+        // overlap: their copies are charged, or a small file would name gigabytes.
+        let mut budget = Budget::new("RERL");
         let mut c = Cursor::new(self.bytes, "RERL");
         c.take(block.offset as usize)?;
         let list_at = c.pos() + c.u32()? as usize;
@@ -165,7 +168,9 @@ impl<'a> Resource<'a> {
             c.take(4)?;
             let mut name = Cursor::new(self.bytes, "RERL name");
             name.take(name_at)?;
-            let name = String::from_utf8_lossy(name.cstr()?).into_owned();
+            let name = name.cstr()?;
+            budget.bytes(name.len())?;
+            let name = String::from_utf8_lossy(name).into_owned();
             refs.push(ExternalRef { id, name });
         }
         Ok(refs)

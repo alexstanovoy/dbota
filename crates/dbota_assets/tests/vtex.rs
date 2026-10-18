@@ -15,6 +15,8 @@ struct Vtex {
     extras: Vec<(u32, Vec<u8>)>,
     /// The levels as they sit after the resource, smallest first.
     levels: Vec<Vec<u8>>,
+    /// The `REDI` block's bytes (the old edit info), if any.
+    redi: Option<Vec<u8>>,
 }
 
 fn words(values: &[u32]) -> Vec<u8> {
@@ -31,6 +33,7 @@ impl Vtex {
             mips: levels.len() as u8,
             extras: Vec::new(),
             levels,
+            redi: None,
         }
     }
 
@@ -58,15 +61,26 @@ impl Vtex {
             payloads.extend_from_slice(payload);
         }
         data.extend_from_slice(&payloads);
-        // The resource: file size, header version 12, version, table offset, one block "DATA".
-        let file_size = 28 + data.len();
+        // The resource: file size, header version 12, version, table offset, block count, the
+        // table (each block's offset counts from its own field), the blocks.
+        let mut blocks = vec![(b"DATA", data)];
+        blocks.extend(self.redi.iter().map(|redi| (b"REDI", redi.clone())));
+        let table_end = 16 + 12 * blocks.len();
+        let file_size = table_end + blocks.iter().map(|(_, b)| b.len()).sum::<usize>();
         let mut out = words(&[file_size as u32]);
         out.extend_from_slice(&12u16.to_le_bytes());
         out.extend_from_slice(&0u16.to_le_bytes());
-        out.extend_from_slice(&words(&[8, 1]));
-        out.extend_from_slice(b"DATA");
-        out.extend_from_slice(&words(&[8, data.len() as u32]));
-        out.extend_from_slice(&data);
+        out.extend_from_slice(&words(&[8, blocks.len() as u32]));
+        let mut at = table_end;
+        for (kind, block) in &blocks {
+            let field = out.len() + 4;
+            out.extend_from_slice(*kind);
+            out.extend_from_slice(&words(&[(at - field) as u32, block.len() as u32]));
+            at += block.len();
+        }
+        for (_, block) in &blocks {
+            out.extend_from_slice(block);
+        }
         for level in &self.levels {
             out.extend_from_slice(level);
         }
@@ -160,6 +174,32 @@ fn lz4_compressed_levels_are_expanded_and_incompressible_ones_stay_raw() {
     file.extras.push((4, sizes));
     let texture = Texture::parse(&file.bytes()).unwrap();
     assert_eq!(texture.mips(), [l0, l1, l2]);
+}
+
+/// A texture whose largest level, LZ4-packed, is `side` texels square of zeros in `format`.
+fn packed_square(side: u16, format: u8, level_len: usize) -> Vtex {
+    let packed = lz4_flex::block::compress(&vec![0; level_len]);
+    let mut file = Vtex::new(side, side, format, vec![]);
+    file.mips = 1;
+    file.extras
+        .push((4, words(&[1, 8, 1, packed.len() as u32])));
+    file.levels = vec![packed];
+    file
+}
+
+#[test]
+fn textures_that_decode_past_the_memory_cap_are_errors() {
+    // A megabyte of file was a 16384 x 16384 DXT5 (256 MiB) that decoding to RGBA8 grew to
+    // two gigabytes.
+    let mut ycocg = packed_square(16384, 2, 256 << 20);
+    ycocg.redi = Some(b"Texture Compiler Version Image YCoCg Conversion".to_vec());
+    let over = |result: Result<_, dbota_assets::Error>| {
+        let err = result.expect_err("an error").to_string();
+        assert!(err.contains("over the cap"), "{err}");
+    };
+    over(Texture::parse(&ycocg.bytes()).map(drop));
+    let bc1 = Texture::parse(&packed_square(16384, 1, 128 << 20).bytes()).unwrap();
+    over(bc1.to_rgba8().map(drop));
 }
 
 #[test]

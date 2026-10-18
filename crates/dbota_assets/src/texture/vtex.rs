@@ -83,6 +83,18 @@ impl Texture {
         if content == Content::Colour {
             return Ok(());
         }
+        // DXT5 takes a byte a texel, RGBA8 four: a texture within the cap as stored may not be.
+        let mut total = 0usize;
+        for level in 0..self.mips.len() {
+            let (w, h) = ((self.width >> level).max(1), (self.height >> level).max(1));
+            total = total.saturating_add(rgba8_size(w, h)?);
+        }
+        if total > MAX_BYTES {
+            return Err(malformed(
+                WHAT,
+                format!("decodes to more than {MAX_BYTES} bytes"),
+            ));
+        }
         for (level, mip) in self.mips.iter_mut().enumerate() {
             let (w, h) = ((self.width >> level).max(1), (self.height >> level).max(1));
             *mip = content.decode_bc3(mip, w, h)?;
@@ -210,6 +222,7 @@ impl Texture {
     /// The largest level as RGBA8 pixels: plain RGBA8 as it is, BC1, BC3, BC4, BC5 and BC7
     /// decoded; other formats are errors.
     pub fn to_rgba8(&self) -> Result<Vec<u8>> {
+        rgba8_size(self.width, self.height)?;
         rgba::decode(self.format, &self.mips[0], self.width, self.height)
     }
 
@@ -403,6 +416,14 @@ impl Header {
         }
         Ok(levels)
     }
+}
+
+/// The bytes of a level `width` x `height` as RGBA8, refused past [`MAX_BYTES`].
+fn rgba8_size(width: u32, height: u32) -> Result<usize> {
+    PixelFormat::Rgba8
+        .level_size(width, height)
+        .filter(|&size| size <= MAX_BYTES)
+        .ok_or_else(|| malformed(WHAT, format!("{width} x {height} RGBA8 is over the cap")))
 }
 
 /// The RGBA8 pixels of a PNG-coded level, which must be the texture's size.

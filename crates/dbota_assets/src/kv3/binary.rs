@@ -1,7 +1,7 @@
 //! Binary KV3 versions 1 to 5 (`\x0n3VK`): values split into lanes by width, a string table,
 //! a type stream and binary blobs, optionally LZ4 or zstd compressed.
 
-use super::decode::{buffer, lz4, node, string, zstd};
+use super::decode::{LZ4_RATIO, buffer, lz4, node, string, zstd};
 use super::value::{Document, Object, Value};
 use crate::budget::Budget;
 use crate::bytes::Cursor;
@@ -191,30 +191,42 @@ fn inflate_buffer1(h: &Header, c: &mut Cursor) -> Result<(Vec<u8>, Option<Vec<u8
 
 /// One buffer of (uncompressed length, compressed length).
 fn inflate(h: &Header, c: &mut Cursor, (len, compressed): (usize, usize)) -> Result<Vec<u8>> {
-    let mut out = buffer(len)?;
     match h.compression {
-        Compression::None => out.copy_from_slice(c.take(len)?),
-        Compression::Lz4 => lz4(c.take(compressed)?, &mut out)?,
-        Compression::Zstd => zstd(c.take(compressed)?, &mut out)?,
+        Compression::None => Ok(c.take(len)?.to_vec()),
+        Compression::Lz4 => lz4(c.take(compressed)?, len),
+        Compression::Zstd => {
+            let mut out = buffer(len)?;
+            zstd(c.take(compressed)?, &mut out)?;
+            Ok(out)
+        }
     }
-    Ok(out)
 }
 
 /// The blobs, which follow the buffers in the block.
 fn inflate_blobs(h: &Header, c: &mut Cursor, layout: &mut Layout) -> Result<Vec<u8>> {
-    let mut out = buffer(h.blobs_len)?;
     match h.compression {
-        Compression::None => out.copy_from_slice(c.take(h.blobs_len)?),
+        Compression::None => Ok(c.take(h.blobs_len)?.to_vec()),
         Compression::Zstd => {
             let compressed = h
                 .compressed_total
                 .checked_sub(h.buffer1.1 + h.buffer2.1)
                 .ok_or_else(|| malformed("KV3", "blob sizes exceed the total"))?;
+            let mut out = buffer(h.blobs_len)?;
             zstd(c.take(compressed)?, &mut out)?;
+            Ok(out)
         }
-        Compression::Lz4 => lz4_chained(c, layout, &mut out)?,
+        Compression::Lz4 => {
+            if h.blobs_len / LZ4_RATIO > c.remaining() {
+                return Err(malformed(
+                    "KV3 LZ4 blob",
+                    "more blob bytes than the frames hold",
+                ));
+            }
+            let mut out = buffer(h.blobs_len)?;
+            lz4_chained(c, layout, &mut out)?;
+            Ok(out)
+        }
     }
-    Ok(out)
 }
 
 /// Blobs cut into LZ4 frames of at most 16 KiB, a frame never spanning two blobs; each frame

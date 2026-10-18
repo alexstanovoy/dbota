@@ -222,7 +222,22 @@ fn index_tree(tree: &[u8], hasher: &RandomState) -> Result<(Vec<Record>, Index)>
                     return Err(malformed("VPK entry", format!("no terminator at {info}")));
                 }
                 c.take(preload)?;
-                let hash = hasher.hash_one((dir, text(name)?, ext));
+                let name = text(name)?;
+                let hash = hasher.hash_one((dir, name, ext));
+                // Copies of one path share a hash and would make every insert walk all of them.
+                let listed = index.find(hash, |&(h, i)| {
+                    let r = files[i as usize];
+                    h == hash
+                        && string_at(tree, r.name) == name
+                        && string_at(tree, r.dir) == dir
+                        && string_at(tree, r.ext) == ext
+                });
+                if listed.is_some() {
+                    return Err(malformed(
+                        "VPK directory",
+                        format!("{dir}/{name}.{ext} is listed twice"),
+                    ));
+                }
                 index.insert_unique(hash, (hash, files.len() as u32), |&(h, _)| h);
                 files.push(Record {
                     ext: ext_at,
@@ -242,12 +257,16 @@ fn text(bytes: &[u8]) -> Result<&str> {
         .map(|s| if s == " " { "" } else { s })
 }
 
+/// The tree string at `offset`, which index_tree checked is UTF-8 and NUL-terminated.
+fn string_at(tree: &[u8], offset: u32) -> &str {
+    let rest = &tree[offset as usize..];
+    let len = rest.iter().position(|&b| b == 0).unwrap_or(rest.len());
+    text(&rest[..len]).unwrap_or_default()
+}
+
 impl<'a> Entry<'a> {
     fn string(&self, offset: u32) -> &'a str {
-        let rest = &self.vpk.tree[offset as usize..];
-        let len = rest.iter().position(|&b| b == 0).unwrap_or(rest.len());
-        // index_tree checked every string is UTF-8 and NUL-terminated.
-        text(&rest[..len]).unwrap_or_default()
+        string_at(&self.vpk.tree, offset)
     }
 
     fn field(&self, at: usize, len: usize) -> &'a [u8] {

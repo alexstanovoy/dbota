@@ -3,6 +3,7 @@
 
 use dbota_assets::{Error, SliceSource, Vpk};
 
+#[derive(Clone, Copy)]
 struct File {
     ext: &'static str,
     dir: &'static str,
@@ -142,6 +143,14 @@ fn damaged_packages_are_errors() {
         vpk.read_file(&src, pudge),
         Err(Error::OutOfRange { .. })
     ));
+
+    // A path listed twice made every insert of the index walk all its copies: quadratic time.
+    let mut src = SliceSource::default();
+    src.insert(
+        "pak01_dir.vpk",
+        directory(&[FILES[1], FILES[1]], b"..souls"),
+    );
+    assert!(Vpk::open(&src, "pak01_dir.vpk").is_err());
 
     let whole = directory(&FILES, b"..souls");
     for len in 0..whole.len() - 7 {

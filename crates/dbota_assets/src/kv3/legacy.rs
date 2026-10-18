@@ -38,9 +38,8 @@ pub(crate) fn decode(bytes: &[u8]) -> Result<Document> {
     let data = if encoding == ENCODING_BLOCK_COMPRESSED {
         block_decompress(&mut c)?
     } else if encoding == ENCODING_LZ4 {
-        let mut out = buffer(c.u32()? as usize)?;
-        lz4(c.rest(), &mut out)?;
-        out
+        let len = c.u32()? as usize;
+        lz4(c.rest(), len)?
     } else if ENCODINGS_STORED.contains(&encoding) {
         c.rest().to_vec()
     } else {
@@ -72,6 +71,13 @@ fn block_decompress(c: &mut Cursor) -> Result<Vec<u8>> {
     // The top bit marks data stored uncompressed.
     if size & 0x8000_0000 != 0 {
         return Ok(c.take((size & 0x7FFF_FFFF) as usize)?.to_vec());
+    }
+    // A 16-bit back reference makes 18 bytes at most, and every 16 of them take a 16-bit mask.
+    if size as usize / 9 > c.remaining() {
+        return Err(malformed(
+            "KV3 block compression",
+            format!("{} bytes cannot expand to {size}", c.remaining()),
+        ));
     }
     let mut out = buffer(size as usize)?;
     let (mut at, mut mask, mut bits) = (0usize, 0u16, 0);
