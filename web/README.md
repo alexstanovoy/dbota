@@ -39,10 +39,10 @@ stamp differs. A new importer revision or manifest version changes the stamp too
 
 ## What is imported
 
-Everything the manifest lists except animated models and the world (not converted yet): the 29 static
-models and wearables (glb with their images: base colour, normal, and the ORM / emissive / specular
-images of the hero shader), 120 textures (PNG), 98 sounds (WAV/MP3). The rest is drawn with
-stand-ins until those packages land. A full import is ~84 MB written, 373 files.
+Everything the manifest lists except the world's geometry: the 54 models (static ones, wearables and the 25
+animated ones with their clips; glb with their images: base colour, normal, and the ORM / emissive / specular
+images of the hero shader), 120 textures (PNG), 98 sounds (WAV/MP3), and the map's `trees.txt` and
+`buildings.txt`. The ground and the world's props are drawn with stand-ins until that package lands. A full import is ~190 MB written, 501 files.
 
 ## Build and run
 
@@ -72,9 +72,9 @@ made in OPFS. The native importer tests are in `crates/dbota_assets/tests/import
 1. Serve `web/out`, open it in Chrome: the gate shows the privacy text, "Choose the Dota 2 folder" and
    "Play with stand-ins" (which works at once).
 2. Choose the folder with the picker: `dota 2 beta`, then `game` and `dota` once each (all accepted), and a
-   wrong folder (a message, no import). Progress counts up to ~270 items; "Cancel" returns to the question
-   and leaves no copy. The ready screen says "Imported 373 files".
-3. Reload: "Play" is offered at once; devtools > Application > Storage shows about 84 MB in the origin-private
+   wrong folder (a message, no import). Progress counts up to ~295 items; "Cancel" returns to the question
+   and leaves no copy. The ready screen says "Imported 501 files".
+3. Reload: "Play" is offered at once; devtools > Application > Storage shows about 190 MB in the origin-private
    file system; Network shows no request except the page's own files.
 4. Chrome, later: the remembered folder is compared without a prompt while the permission lasts; after a
    Dota update "Update from the Dota 2 folder" appears. "Delete the imported copy" empties the storage.

@@ -182,7 +182,7 @@ def main():
                             head: await c.readCache('models/hero/nevermore_head/nevermore_head.glb').then(b => b && b.length)}; }"""
         )
         print("cache:", state)
-        assert state and state["files"] > 300 and state["head"] and state["head"] > 1000, state
+        assert state and state["files"] > 450 and state["head"] and state["head"] > 1000, state
 
         page.reload()
         page.wait_for_selector("#ready:not([hidden])", timeout=20000)

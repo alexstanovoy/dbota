@@ -12,10 +12,12 @@ use std::collections::{BTreeMap, HashSet};
 use crate::error::{Error, Result, malformed};
 use crate::export::{ExportedTexture, export_model, read_from};
 use crate::material::Pack;
+use crate::resource::Resource;
 use crate::sound::Sound;
 use crate::source::Source;
 use crate::texture::Texture;
 use crate::vpk::Vpk;
+use crate::world::{EntityLump, buildings_txt, trees_txt};
 
 /// Bumped when the importer's output changes for the same install; part of a cache's stamp.
 pub const IMPORT_REV: u32 = 1;
@@ -42,6 +44,17 @@ pub enum Item {
         out: String,
         meshes: Option<Vec<String>>,
         skeleton: bool,
+        /// The animations to write (the manifest's `anims=`); a model with any has its skeleton.
+        anims: Vec<String>,
+    },
+    /// The world's tree and building placements (`trees.txt`, `buildings.txt`), read from the
+    /// map package's entities. The world's geometry is not made yet.
+    Placements {
+        logical: String,
+        src: String,
+        vpk: String,
+        trees_out: String,
+        buildings_out: String,
     },
     /// A texture written as a PNG (the first frame of a sprite sheet).
     Texture {
@@ -61,6 +74,7 @@ impl Item {
     pub fn logical(&self) -> &str {
         match self {
             Self::Model { logical, .. }
+            | Self::Placements { logical, .. }
             | Self::Texture { logical, .. }
             | Self::Sound { logical, .. } => logical,
         }
@@ -71,7 +85,7 @@ impl Item {
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Plan {
     pub items: Vec<Item>,
-    /// Models with animations and the world: not converted yet, the client draws stand-ins.
+    /// What is not converted yet (the world's geometry): the client draws stand-ins.
     pub deferred: Vec<String>,
 }
 
@@ -89,16 +103,17 @@ impl Plan {
             match words.as_slice() {
                 ["model", logical, src, out, rest @ ..] => {
                     let field = |key: &str| rest.iter().find_map(|w| w.strip_prefix(key));
-                    if field("anims=").is_some() {
-                        plan.deferred.push((*logical).to_owned());
-                        continue;
-                    }
+                    let list = |key: &str| {
+                        field(key).map(|v| v.split(',').map(str::to_owned).collect::<Vec<_>>())
+                    };
+                    let anims = list("anims=").unwrap_or_default();
                     plan.items.push(Item::Model {
                         logical: (*logical).to_owned(),
                         src: (*src).to_owned(),
                         out: (*out).to_owned(),
-                        meshes: field("meshes=").map(|m| m.split(',').map(str::to_owned).collect()),
-                        skeleton: field("attach=").is_some(),
+                        meshes: list("meshes="),
+                        skeleton: field("attach=").is_some() || !anims.is_empty(),
+                        anims,
                     });
                 }
                 ["texture", logical, src, out, ..] => plan.items.push(Item::Texture {
@@ -111,7 +126,20 @@ impl Plan {
                     src: (*src).to_owned(),
                     out: (*out).to_owned(),
                 }),
-                ["world", logical, ..] => plan.deferred.push((*logical).to_owned()),
+                ["world", logical, src, out, rest @ ..] => {
+                    let field = |key: &str| rest.iter().find_map(|w| w.strip_prefix(key));
+                    let dir = out.rsplit_once('/').map_or("", |(dir, _)| dir);
+                    if let (Some(vpk), Some(trees)) = (field("vpk="), field("trees=")) {
+                        plan.items.push(Item::Placements {
+                            logical: (*logical).to_owned(),
+                            src: (*src).to_owned(),
+                            vpk: vpk.to_owned(),
+                            trees_out: trees.to_owned(),
+                            buildings_out: format!("{dir}/buildings.txt"),
+                        });
+                    }
+                    plan.deferred.push(format!("{logical} geometry"));
+                }
                 _ => {}
             }
         }
@@ -222,6 +250,8 @@ impl<S: Source> Source for Metered<S> {
 pub struct Importer<S> {
     src: Metered<S>,
     pak: Vpk,
+    /// Map packages opened so far, by path (opened when an item first needs one).
+    maps: Vec<(String, Vpk)>,
     plan: Plan,
     next: usize,
     written: u64,
@@ -243,6 +273,7 @@ impl<S: Source> Importer<S> {
         Ok(Self {
             src,
             pak,
+            maps: Vec::new(),
             plan,
             next: 0,
             written: 0,
@@ -279,7 +310,7 @@ impl<S: Source> Importer<S> {
             report: &mut self.report,
             written: &mut self.written,
         };
-        if let Err(err) = make(&self.src, &self.pak, item, &mut out) {
+        if let Err(err) = make(&self.src, &self.pak, &mut self.maps, item, &mut out) {
             self.report
                 .failed
                 .push((item.logical().to_owned(), err.to_string()));
@@ -344,15 +375,47 @@ impl Out<'_> {
     }
 }
 
-fn make(src: &impl Source, pak: &Vpk, item: &Item, out: &mut Out<'_>) -> Result<()> {
+fn make(
+    src: &impl Source,
+    pak: &Vpk,
+    maps: &mut Vec<(String, Vpk)>,
+    item: &Item,
+    out: &mut Out<'_>,
+) -> Result<()> {
     match item {
         Item::Model {
             src: path,
             out: dest,
             meshes,
             skeleton,
+            anims,
             ..
-        } => model(src, pak, path, dest, meshes.as_deref(), *skeleton, out),
+        } => {
+            let job = ModelJob {
+                path,
+                dest,
+                meshes: meshes.as_deref(),
+                skeleton: *skeleton,
+                anims,
+            };
+            model(src, pak, &job, out)
+        }
+        Item::Placements {
+            src: path,
+            vpk,
+            trees_out,
+            buildings_out,
+            ..
+        } => {
+            let at = match maps.iter().position(|(name, _)| name == vpk) {
+                Some(at) => at,
+                None => {
+                    maps.push((vpk.clone(), Vpk::open(src, vpk)?));
+                    maps.len() - 1
+                }
+            };
+            placements(src, &maps[at].1, path, trees_out, buildings_out, out)
+        }
         Item::Texture {
             src: path,
             out: dest,
@@ -373,21 +436,56 @@ fn make(src: &impl Source, pak: &Vpk, item: &Item, out: &mut Out<'_>) -> Result<
     }
 }
 
-fn model(
+/// `trees.txt` and `buildings.txt` from the entities of the world's default lump.
+fn placements(
     src: &impl Source,
-    pak: &Vpk,
-    path: &str,
-    dest: &str,
-    meshes: Option<&[String]>,
-    skeleton: bool,
+    map: &Vpk,
+    world: &str,
+    trees_out: &str,
+    buildings_out: &str,
     out: &mut Out<'_>,
 ) -> Result<()> {
+    let bytes = read_from(src, &[map], world)?;
+    let resource = Resource::parse(&bytes)?;
+    let data = resource
+        .data()
+        .ok_or_else(|| malformed("world", "no DATA"))??;
+    let lump = data
+        .get("m_entityLumps")
+        .and_then(|l| l.as_array())
+        .and_then(|l| l.first())
+        .and_then(|l| l.as_str())
+        .ok_or_else(|| malformed("world", "no entity lump"))?;
+    let bytes = read_from(src, &[map], &format!("{lump}_c"))?;
+    let lump = EntityLump::read(&Resource::parse(&bytes)?)?;
+    out.put(trees_out, trees_txt(&lump.entities).as_bytes())?;
+    out.put(buildings_out, buildings_txt(&lump.entities).as_bytes())
+}
+
+/// What one model line asks for.
+struct ModelJob<'a> {
+    path: &'a str,
+    dest: &'a str,
+    meshes: Option<&'a [String]>,
+    skeleton: bool,
+    anims: &'a [String],
+}
+
+fn model(src: &impl Source, pak: &Vpk, job: &ModelJob<'_>, out: &mut Out<'_>) -> Result<()> {
+    let ModelJob {
+        path,
+        dest,
+        meshes,
+        skeleton,
+        anims,
+    } = *job;
     let keep: Option<Vec<&str>> = meshes.map(|m| m.iter().map(String::as_str).collect());
     let uri = |vtex: &str| {
         let name = vtex.rsplit('/').next().unwrap_or(vtex);
         format!("{}.png", name.trim_end_matches(".vtex"))
     };
-    let exported = export_model(src, &[pak], path, keep.as_deref(), skeleton, &uri)?;
+    let anims: Vec<&str> = anims.iter().map(String::as_str).collect();
+    let exported = export_model(src, &[pak], path, keep.as_deref(), skeleton, &anims, &uri)?;
     let dir = dest.rsplit_once('/').map_or("", |(dir, _)| dir);
     let mut seen = HashSet::new();
     let mut decoded: Option<(String, Texture)> = None;

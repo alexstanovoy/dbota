@@ -8,7 +8,7 @@
 import init, { Install } from "./import/dbota_import.js";
 import { dir, readState, remove, room } from "./cache.js";
 
-// The least storage an import needs: the converted cache is about 400 MB.
+// The least storage an import needs: the converted cache is about 190 MB.
 const NEEDED = 700 * 2 ** 20;
 
 // Cache files are only ever written through here: a path that is not plain is refused before
@@ -42,7 +42,7 @@ async function install(files) {
 }
 
 async function run(made, stamp) {
-  if ((await room()) < NEEDED) throw new Error("the browser has too little storage left for the imported assets (about 400 MB)");
+  if ((await room()) < NEEDED) throw new Error("the browser has too little storage left for the imported assets (about 200 MB)");
   await remove();
   const job = made.start();
   let writeErrors = 0;

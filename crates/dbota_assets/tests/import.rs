@@ -75,20 +75,29 @@ fn output_paths_cannot_leave_the_cache() {
 }
 
 #[test]
-fn the_plan_takes_what_exists_and_defers_the_rest() {
+fn the_plan_takes_everything_but_the_worlds_geometry() {
     let plan = Plan::parse(
         "model a models/a.vmdl_c models/a/a.glb anims=idle\n\
          model b models/b.vmdl_c models/b/b.glb meshes=m,n attach=a # c\n\
          texture t t.vtex_c textures/t.png\n\
          sound s s.vsnd_c sounds/s.wav event=e\n\
-         world w w.vwrld_c map/w.gltf vpk=maps/dota.vpk\n\
+         world w w.vwrld_c map/w/w.gltf vpk=maps/dota.vpk trees=map/w/trees.txt\n\
          clip a idle idle 1.0\n",
     );
-    assert_eq!(plan.deferred, ["a", "w"]);
-    assert_eq!(plan.items.len(), 3);
+    assert_eq!(plan.deferred, ["w geometry"]);
+    assert_eq!(plan.items.len(), 5);
     assert!(matches!(
         &plan.items[0],
+        Item::Model { anims, skeleton: true, .. } if anims == &["idle"]
+    ));
+    assert!(matches!(
+        &plan.items[1],
         Item::Model { meshes: Some(m), skeleton: true, .. } if m == &["m", "n"]
+    ));
+    assert!(matches!(
+        &plan.items[4],
+        Item::Placements { trees_out, buildings_out, .. }
+            if trees_out == "map/w/trees.txt" && buildings_out == "map/w/buildings.txt"
     ));
 }
 
