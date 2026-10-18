@@ -1,7 +1,7 @@
 //! The names and descriptions of items and abilities, as Dota writes them.
 //!
 //! They come from the asset cache (`text/tooltips.json`, which
-//! `tools/import_assets.sh` builds out of the player's own Dota install) and
+//! `dbota import` builds out of the player's own Dota install) and
 //! are never part of this repository. Without the cache there is no text
 //! here at all, and the interface falls back to the simulator's own plain
 //! names and numbers.

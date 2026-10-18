@@ -1,13 +1,10 @@
-//! The importer: its guards against a hostile install run anywhere; the real import of the
-//! manifest (ignored: needs a Dota 2 install) writes into a folder and is compared with the
-//! asset cache `tools/import_assets.sh` made: `cargo test --release -p dbota_assets --test
-//! import -- --ignored`.
+//! The importer's guards against a hostile install, without an install. The real import is
+//! checked against the exported cache in `cache.rs`.
 
 use std::collections::BTreeMap;
-use std::path::{Path, PathBuf};
 
 use dbota_assets::import::{Flow, IMPORT_REV, Item, Plan, Sink, is_small, run, safe_path};
-use dbota_assets::{DirSource, Error, SliceSource, find_game_dir};
+use dbota_assets::{Error, SliceSource};
 
 #[derive(Default)]
 struct Memory(BTreeMap<String, Vec<u8>>);
@@ -75,17 +72,19 @@ fn output_paths_cannot_leave_the_cache() {
 }
 
 #[test]
-fn the_plan_takes_everything_but_the_worlds_geometry() {
+fn the_plan_takes_every_line_and_the_tooltips() {
     let plan = Plan::parse(
         "model a models/a.vmdl_c models/a/a.glb anims=idle\n\
          model b models/b.vmdl_c models/b/b.glb meshes=m,n attach=a # c\n\
          texture t t.vtex_c textures/t.png\n\
          sound s s.vsnd_c sounds/s.wav event=e\n\
-         world w w.vwrld_c map/w/w.gltf vpk=maps/dota.vpk trees=map/w/trees.txt\n\
+         world w w.vwrld_c map/w/w.gltf vpk=maps/dota.vpk half_width=1 v_min=-2 v_max=3 \
+         layers=textures/ground trees=map/w/trees.txt\n\
          clip a idle idle 1.0\n",
+        "item 0 boots\nitem 9 recipe\nability 2 nevermore_requiem\nhero 1 nevermore\n\
+         text ability 3 pudge_innate_graft_flesh\n",
     );
-    assert_eq!(plan.deferred, ["w geometry"]);
-    assert_eq!(plan.items.len(), 5);
+    assert_eq!(plan.items.len(), 7);
     assert!(matches!(
         &plan.items[0],
         Item::Model { anims, skeleton: true, .. } if anims == &["idle"]
@@ -99,6 +98,18 @@ fn the_plan_takes_everything_but_the_worlds_geometry() {
         Item::Placements { trees_out, buildings_out, .. }
             if trees_out == "map/w/trees.txt" && buildings_out == "map/w/buildings.txt"
     ));
+    assert!(matches!(
+        &plan.items[5],
+        Item::World { band, layers, .. }
+            if band.half_width == 1.0 && band.v_min == -2.0 && band.v_max == 3.0
+                && layers == "textures/ground"
+    ));
+    assert!(matches!(
+        &plan.items[6],
+        Item::Tooltips { wanted, out, .. }
+            if wanted.names == ["item_boots", "nevermore_requiem", "pudge_innate_graft_flesh"]
+                && wanted.heroes == ["nevermore"] && out == "text/tooltips.json"
+    ));
 }
 
 #[test]
@@ -111,6 +122,7 @@ fn a_hostile_asset_is_a_failure_in_the_report_not_a_panic() {
     let plan = Plan::parse(
         "texture bad textures/bad.vtex_c textures/bad.png\n\
          texture gone textures/gone.vtex_c textures/gone.png\n",
+        "",
     );
     let mut sink = Memory::default();
     let report = run(&src, &plan, &mut sink, &mut |_| Flow::Continue).unwrap();
@@ -125,7 +137,7 @@ fn a_hostile_asset_is_a_failure_in_the_report_not_a_panic() {
 
 #[test]
 fn a_package_that_is_not_one_ends_the_import_and_a_stop_is_honoured() {
-    let plan = Plan::parse("texture bad textures/bad.vtex_c textures/bad.png\n");
+    let plan = Plan::parse("texture bad textures/bad.vtex_c textures/bad.png\n", "");
     let mut sink = Memory::default();
     let src = install(&[("pak01_dir.vpk", vec![7; 100])]);
     assert!(run(&src, &plan, &mut sink, &mut |_| Flow::Continue).is_err());
@@ -162,7 +174,7 @@ impl dbota_assets::Source for Huge {
 
 #[test]
 fn a_package_that_claims_a_huge_directory_is_refused_before_it_is_read() {
-    let plan = Plan::parse("sound s s.vsnd_c sounds/s.wav\n");
+    let plan = Plan::parse("sound s s.vsnd_c sounds/s.wav\n", "");
     let mut sink = Memory::default();
     assert!(run(Huge, &plan, &mut sink, &mut |_| Flow::Continue).is_err());
 }
@@ -175,63 +187,35 @@ fn the_index_marks_the_files_read_at_start() {
     assert!(!is_small("models/x.glb", 10));
 }
 
-fn repo() -> &'static Path {
-    Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../.."))
-}
-
-fn cache() -> PathBuf {
-    let version = std::fs::read_to_string(repo().join("assets-manifest/version")).unwrap();
-    std::env::var_os("DBOTA_ASSETS").map_or_else(
-        || {
-            let home = PathBuf::from(std::env::var_os("HOME").unwrap());
-            home.join(".cache/dbota")
-                .join(format!("v{}", version.trim()))
-        },
-        PathBuf::from,
-    )
-}
-
+/// Tooltip texts out of damaged or hostile localization and script files: a text or an error,
+/// never a panic, however deep the blocks nest.
 #[test]
-#[ignore = "needs a local Dota 2 install and its asset cache"]
-fn the_manifest_imports_and_the_sounds_match_the_exported_files() {
-    let src = DirSource::new(find_game_dir(None).expect("Dota 2 not found"));
-    let plan =
-        Plan::parse(&std::fs::read_to_string(repo().join("assets-manifest/manifest.txt")).unwrap());
-    let mut sink = Memory::default();
-    let mut last = 0;
-    let report = run(&src, &plan, &mut sink, &mut |p| {
-        last = p.done;
-        Flow::Continue
-    })
-    .unwrap();
-    println!(
-        "{} files, {} bytes, {} failed, {} deferred, last item {last}",
-        report.files.len(),
-        sink.0.values().map(Vec::len).sum::<usize>(),
-        report.failed.len(),
-        report.deferred.len()
-    );
-    assert!(report.failed.is_empty(), "{:#?}", report.failed);
-    let mut checked = 0;
-    for item in &plan.items {
-        let Item::Sound { out, .. } = item else {
-            continue;
-        };
-        let theirs = std::fs::read(cache().join(out)).unwrap();
-        assert_eq!(sink.0[out], theirs, "{out}");
-        checked += 1;
+fn hostile_tooltip_texts_are_texts_or_errors() {
+    let wanted = dbota_assets::Wanted::parse("item 0 boots\nability 1 x\nhero 0 h\n");
+    let localization = "\u{feff}\"lang\" { \"Tokens\" {\n\
+        \"DOTA_Tooltip_ability_item_boots\" \"Boots\"\n\
+        \"DOTA_Tooltip_ability_item_boots_speed\" \"$move \\\"speed\\\"\"\n\
+        \"dota_ability_variable_move\" \"Move\"\n } }\n";
+    let script = "\"DOTAAbilities\" { // c\n \"item_boots\" { \"ItemCost\" \"500\" \
+        \"AbilityValues\" { \"speed\" { \"value\" \"45\" } } } /* x */ }";
+    let json = dbota_assets::tooltips_json(&wanted, localization.as_bytes(), &[script.as_bytes()])
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&json).unwrap();
+    assert_eq!(json["item_boots"]["cost"], "500");
+    assert_eq!(json["item_boots"]["labels"][0][1], "Move \"speed\"");
+    let deep = "\"a\" {".repeat(10_000);
+    assert!(dbota_assets::tooltips_json(&wanted, b"", &[deep.as_bytes()]).is_err());
+    let mut seed = 0x9E37_79B9_7F4A_7C15u64;
+    let alphabet = b"\"{}\\/*$ \n\tab_0";
+    for round in 0..2000 {
+        let text: Vec<u8> = (0..(round % 300))
+            .map(|_| {
+                seed ^= seed << 13;
+                seed ^= seed >> 7;
+                seed ^= seed << 17;
+                alphabet[(seed % alphabet.len() as u64) as usize]
+            })
+            .collect();
+        let _ = dbota_assets::tooltips_json(&wanted, &text, &[&text, script.as_bytes()]);
     }
-    assert!(checked > 90);
-    for item in &plan.items {
-        let (Item::Model { out, .. } | Item::Texture { out, .. }) = item else {
-            continue;
-        };
-        assert!(sink.0.contains_key(out), "{out}");
-        assert!(!sink.0[out].is_empty());
-    }
-    assert!(
-        report
-            .index()
-            .contains("models/hero/nevermore_head/nevermore_head.glb")
-    );
 }

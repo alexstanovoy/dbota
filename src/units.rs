@@ -184,7 +184,7 @@ fn load_models(mut bank: ResMut<ModelBank>, server: Res<AssetServer>, manifest: 
         for name in required_models(&manifest) {
             if manifest.model(&name).is_none() {
                 error!(
-                    "model {name} is not in the asset cache: drawn as a stand-in; run tools/import_assets.sh"
+                    "model {name} is not in the asset cache: drawn as a stand-in; run dbota import"
                 );
             }
         }

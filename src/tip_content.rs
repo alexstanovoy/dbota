@@ -587,7 +587,7 @@ mod tests {
     /// of the cache's text: prints where they differ and where the
     /// simulator has no number of its own (`cargo test -- --ignored
     /// --nocapture audit`). The text never lands in a repository, so this
-    /// needs the cache `tools/import_assets.sh` builds.
+    /// needs the cache `dbota import` builds.
     #[test]
     #[ignore = "needs the asset cache"]
     fn audit_dota_numbers_against_the_simulator() {

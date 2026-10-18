@@ -70,12 +70,14 @@ export async function publish(state) {
     const bytes = await readCache(path);
     if (bytes) small.set(path, bytes);
   }
-  // `reads` counts what the client asked for (the page's tests look at it), bounded.
-  const reads = { count: 0, last: [] };
+  // `reads` counts what the client asked for (the page's tests look at it), bounded: the last
+  // paths, and which of the cache's files were read at all.
+  const reads = { count: 0, last: [], seen: new Set() };
   const read = (path) => {
     reads.count++;
     reads.last.push(path);
     if (reads.last.length > 64) reads.last.shift();
+    if (state.files.has(path)) reads.seen.add(path);
     return readCache(path);
   };
   globalThis.dbota_cache = { mode: "opfs", files: state.files, small, read, reads };

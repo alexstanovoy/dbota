@@ -76,8 +76,7 @@ async function importFrom(files) {
   list.hidden = !result.failures.length;
   list.replaceChildren(...result.failures.slice(0, 30).map((f) => Object.assign(document.createElement("li"), { textContent: f })));
   await offerReady(
-    `Imported ${result.files} files. ${result.failures.length ? result.failures.length + " could not be converted and use stand-ins. " : ""}` +
-      (result.deferred ? "The map's ground and buildings use stand-ins for now." : "")
+    `Imported ${result.files} files. ${result.failures.length ? result.failures.length + " could not be converted and use stand-ins." : ""}`
   );
 }
 

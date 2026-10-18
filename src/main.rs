@@ -26,6 +26,8 @@ mod framestats;
 mod glyph;
 mod heap;
 mod hud;
+#[cfg(not(target_arch = "wasm32"))]
+mod import;
 mod input;
 mod manifest;
 mod map;
@@ -77,6 +79,9 @@ pub const CACHE_SOURCE: &str = "cache";
 the client watches through that seat's eyes."
 )]
 pub struct Args {
+    #[cfg(not(target_arch = "wasm32"))]
+    #[command(subcommand)]
+    pub command: Option<Command>,
     /// Where the server listens: `host:port` (TCP), `ws://...` or `wss://...`.
     #[arg(long, default_value = "127.0.0.1:4455")]
     pub addr: String,
@@ -95,8 +100,8 @@ pub struct Args {
     /// Keep the camera on this seat's hero in a replay.
     #[arg(long, value_name = "SEAT", requires = "replay")]
     pub follow: Option<u8>,
-    /// Root of the exported Dota asset cache.
-    #[arg(long, default_value_os_t = default_cache_dir())]
+    /// Root of the asset cache `dbota import` makes.
+    #[arg(long, global = true, default_value_os_t = default_cache_dir())]
     pub cache_dir: PathBuf,
     /// The settings file; `~/.config/dbota/client.conf` when absent.
     #[arg(long, value_name = "FILE")]
@@ -163,13 +168,30 @@ pub struct Args {
     pub mute: bool,
 }
 
+/// What else than playing dbota can do.
+#[cfg(not(target_arch = "wasm32"))]
+#[derive(clap::Subcommand, Debug, Clone)]
+pub enum Command {
+    /// Make the asset cache from your Dota 2 install: its models, map, textures, sounds and
+    /// texts, converted on this machine for your own use (one to two minutes; nothing is
+    /// downloaded). Run again after a Dota update.
+    Import {
+        /// The `dota 2 beta` folder; by default the usual Steam places are searched.
+        #[arg(long, value_name = "DIR")]
+        dota_path: Option<PathBuf>,
+        /// Import even when the cache was made from the same install already.
+        #[arg(long)]
+        force: bool,
+    },
+}
+
 /// Where the settings are saved; absent when there is nowhere to.
 #[derive(Resource, Clone, Debug)]
 pub struct SettingsPath(pub Option<PathBuf>);
 
-/// The export version of the asset cache this client reads, as
-/// `tools/import_assets.sh` writes it: each version has a folder of its own
-/// under `~/.cache/dbota`, so clients of different versions share a machine.
+/// The version of the asset cache this client reads, as `dbota import`
+/// writes it: each version has a folder of its own under `~/.cache/dbota`,
+/// so clients of different versions share a machine.
 const ASSET_VERSION: &str = include_str!("../assets-manifest/version");
 
 /// `$DBOTA_ASSETS`, else `~/.cache/dbota/v<ASSET_VERSION>`.
@@ -212,6 +234,17 @@ fn main() -> AppExit {
     );
     #[cfg(not(all(target_arch = "wasm32", feature = "web-replay")))]
     let args = Args::parse();
+    #[cfg(not(target_arch = "wasm32"))]
+    if let Some(Command::Import { dota_path, force }) = &args.command {
+        return match import::run(dota_path.as_deref(), &args.cache_dir, *force) {
+            Ok(true) => AppExit::Success,
+            Ok(false) => AppExit::from_code(3),
+            Err(why) => {
+                eprintln!("dbota import: {why}");
+                AppExit::error()
+            }
+        };
+    }
     let session = match session::open(&args) {
         Ok(session) => session,
         Err(err) => {

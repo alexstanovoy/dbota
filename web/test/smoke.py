@@ -182,7 +182,7 @@ def main():
                             head: await c.readCache('models/hero/nevermore_head/nevermore_head.glb').then(b => b && b.length)}; }"""
         )
         print("cache:", state)
-        assert state and state["files"] > 450 and state["head"] and state["head"] > 1000, state
+        assert state and state["files"] > 800 and state["head"] and state["head"] > 1000, state
 
         page.reload()
         page.wait_for_selector("#ready:not([hidden])", timeout=20000)
@@ -195,13 +195,21 @@ def main():
                     "() => globalThis.dbota_cache && globalThis.dbota_cache.reads && globalThis.dbota_cache.reads.count > 20",
                     timeout=180000,
                 )
+                # The map: its glTF, its geometry and its images.
+                page.wait_for_function(
+                    """() => { const s = globalThis.dbota_cache.reads.seen;
+                       return s.has('map/mid/mid.gltf') && s.has('map/mid/mid.bin')
+                         && [...s].some((p) => p.startsWith('map/mid/') && p.endsWith('.png')); }""",
+                    timeout=300000,
+                )
             except Exception:
                 print("status:", page.inner_text("#status"), file=sys.stderr)
                 report()
                 page.screenshot(path=str(HERE.parent.parent / "temp/smoke-fail.png"))
                 raise
             reads = page.evaluate("() => globalThis.dbota_cache.reads")
-            print("the client read", reads["count"], "cache files, last:", reads["last"][-3:])
+            seen = page.evaluate("() => globalThis.dbota_cache.reads.seen.size")
+            print("the client read", reads["count"], "times,", seen, "cache files, last:", reads["last"][-3:])
             assert any(p.endswith((".png", ".mp3", ".wav")) for p in reads["last"]), reads
             page.wait_for_timeout(5000)
             page.screenshot(path=str(HERE.parent.parent / "temp/smoke.png"))

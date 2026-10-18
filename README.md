@@ -9,18 +9,7 @@ Dota 2 install. Bots don't need it.
 
 1. Put the bota and dbota repositories side by side; dbota builds against `../bota`.
 
-2. Install Dota 2 through Steam (the regular or the Flatpak install is found automatically), then
-   export the assets dbota uses into `~/.cache/dbota/v<N>` (`N` is `assets-manifest/version`; each
-   export version keeps a folder of its own, so older and newer clients share a machine):
-
-   ```sh
-   cd dbota
-   tools/import_assets.sh            # or: tools/import_assets.sh --dota-path "<...>/dota 2 beta"
-   ```
-
-   Valve's files stay in that cache for personal use; they are never part of this repository.
-
-3. Build:
+2. Build:
 
    ```sh
    cargo build --release             # binary: target/release/dbota
@@ -30,6 +19,19 @@ Dota 2 install. Bots don't need it.
 
    A live match needs a client and a server built from the same bota: a server that sees another wire
    fingerprint refuses the client. A replay opens only with the bota that recorded it.
+
+3. Install Dota 2 through Steam (the regular or the Flatpak install is found automatically), then
+   make the asset cache from it, one command, about a minute:
+
+   ```sh
+   target/release/dbota import       # or: dbota import --dota-path "<...>/dota 2 beta"
+   ```
+
+   It converts the models, map, textures, sounds and texts dbota uses into `~/.cache/dbota/v<N>`
+   (`N` is `assets-manifest/version`; each version keeps a folder of its own, so older and newer
+   clients share a machine). Valve's files stay in that cache for personal use; they are never part
+   of this repository. Without it dbota draws stand-ins. See `tools/README.md`; a
+   `~/.cache/dbota/tools` folder left by the old export script can be deleted.
 
 ## Play
 
@@ -175,14 +177,14 @@ that many seconds of frames once the scene is whole and prints them on one `benc
 ## Reading Dota's files
 
 `crates/dbota_assets` reads Valve's formats (VPK packages, compiled Source 2 resources, KV3,
-textures as KTX2: block formats and mip levels kept, the first frame of a sprite sheet) straight
-from a Dota 2 install, on the desktop and in a browser, and `import` makes the client's assets out of
-them (models, textures, sounds; the browser page runs it in a worker through `crates/dbota_import`). Its golden tests
-decode the files behind the asset cache and compare them with it; they need the install and the
-cache, so they run only when asked:
+textures, models and animations, the world, sounds, KeyValues texts) straight from a Dota 2
+install, on the desktop and in a browser, and `import` makes the whole asset cache out of them
+(`dbota import`; the browser page runs the same code in a worker through `crates/dbota_import`).
+Its golden tests compare what it makes with a reference cache exported by Source2Viewer 20 (manifest
+version 6, `~/.cache/dbota/v6`); they need the install and that cache, so they run only when asked:
 
 ```sh
-cargo test --release -p dbota_assets -- --ignored   # DBOTA_DOTA_PATH, DBOTA_ASSETS: where they are
+cargo test --release -p dbota_assets -- --ignored   # DBOTA_DOTA_PATH, DBOTA_REFERENCE: where they are
 ```
 
 ## License

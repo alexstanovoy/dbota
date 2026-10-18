@@ -1,13 +1,15 @@
 //! Golden test for the sound decoder: every sound of the manifest, read from the local Dota 2
-//! install, against the file `tools/import_assets.sh` exported from it. It needs both, so it is
+//! install, against the file of the reference cache (see `common`). It needs both, so it is
 //! ignored by default:
 //!
 //! ```sh
 //! cargo test --release -p dbota_assets --test golden_sounds -- --ignored --nocapture
 //! ```
 //!
-//! `DBOTA_DOTA_PATH` (a `dota 2 beta` folder) and `DBOTA_ASSETS` (the cache folder) override
+//! `DBOTA_DOTA_PATH` (a `dota 2 beta` folder) and `DBOTA_REFERENCE` (the exported cache) override
 //! where they are looked for.
+
+mod common;
 
 use std::path::{Path, PathBuf};
 
@@ -74,15 +76,7 @@ fn mp3_stats(data: &[u8]) -> (u32, u16, f64) {
 fn manifest_sounds_match_the_exported_files() {
     let dota_path = std::env::var_os("DBOTA_DOTA_PATH").map(PathBuf::from);
     let game = find_game_dir(dota_path.as_deref()).expect("Dota 2 not found");
-    let version = std::fs::read_to_string(repo().join("assets-manifest/version")).unwrap();
-    let cache = std::env::var_os("DBOTA_ASSETS").map_or_else(
-        || {
-            PathBuf::from(std::env::var_os("HOME").unwrap())
-                .join(".cache/dbota")
-                .join(format!("v{}", version.trim()))
-        },
-        PathBuf::from,
-    );
+    let cache = common::reference();
     let src = DirSource::new(game);
     let pak = Vpk::open(&src, "pak01_dir.vpk").unwrap();
     let (mut wavs, mut mp3s) = (0, 0);

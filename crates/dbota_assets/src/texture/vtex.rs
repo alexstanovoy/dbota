@@ -218,6 +218,30 @@ impl Texture {
         rgba::png(self.width, self.height, &self.to_rgba8()?)
     }
 
+    /// A PNG file of the first frame of a sprite sheet cut exactly to its
+    /// [`first_frame_rect`](Self::first_frame_rect), as Source2Viewer exports it (the whole
+    /// texture when it is no sheet).
+    pub fn first_frame_png(&self) -> Result<Vec<u8>> {
+        let Some([fx0, fy0, x1, y1]) = self.first_frame_rect() else {
+            return self.to_png();
+        };
+        if x1 <= fx0 || y1 <= fy0 {
+            return self.to_png();
+        }
+        let frame = self.first_frame();
+        let pixels = frame.to_rgba8()?;
+        // The frame is cut on block borders: up to three texels more on the left and top.
+        let (bw, bh, _) = self.format.block();
+        let (dx, dy) = ((fx0 % bw) as usize, (fy0 % bh) as usize);
+        let (w, h) = ((x1 - fx0) as usize, (y1 - fy0) as usize);
+        let stride = frame.width as usize * 4;
+        let mut out = Vec::with_capacity(w * h * 4);
+        for row in pixels.chunks_exact(stride).skip(dy).take(h) {
+            out.extend_from_slice(&row[dx * 4..(dx + w) * 4]);
+        }
+        rgba::png(w as u32, h as u32, &out)
+    }
+
     /// The KTX2 file of this texture. Block formats are written as they are; `encoding` says
     /// whether the colours are sRGB (see [`Encoding`]).
     pub fn to_ktx2(&self, encoding: Encoding) -> Vec<u8> {

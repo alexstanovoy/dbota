@@ -1,13 +1,14 @@
-//! Golden tests for the texture decoder: decode the `vtex_c` files behind the current asset
-//! cache from the local Dota 2 install, and compare with the PNG files `tools/import_assets.sh`
-//! exported from them. They need both, so they are ignored by default:
+//! Golden tests for the texture decoder: decode the `vtex_c` files behind the reference cache
+//! (see `common`) from the local Dota 2 install, and compare with its PNG files. They need both, so they are ignored by default:
 //!
 //! ```sh
 //! cargo test --release -p dbota_assets --test golden_textures -- --ignored --nocapture
 //! ```
 //!
-//! `DBOTA_DOTA_PATH` (a `dota 2 beta` folder) and `DBOTA_ASSETS` (the cache folder) override
+//! `DBOTA_DOTA_PATH` (a `dota 2 beta` folder) and `DBOTA_REFERENCE` (the exported cache) override
 //! where they are looked for.
+
+mod common;
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -28,15 +29,7 @@ fn install() -> Install {
     let dota_path = std::env::var_os("DBOTA_DOTA_PATH").map(PathBuf::from);
     let game = find_game_dir(dota_path.as_deref())
         .expect("Dota 2 not found; set DBOTA_DOTA_PATH to its \"dota 2 beta\" folder");
-    let version = std::fs::read_to_string(repo().join("assets-manifest/version")).unwrap();
-    let cache = std::env::var_os("DBOTA_ASSETS").map_or_else(
-        || {
-            let home = PathBuf::from(std::env::var_os("HOME").unwrap());
-            home.join(".cache/dbota")
-                .join(format!("v{}", version.trim()))
-        },
-        PathBuf::from,
-    );
+    let cache = common::reference();
     assert!(cache.is_dir(), "no asset cache at {}", cache.display());
     let src = DirSource::new(game);
     let pak = Vpk::open(&src, "pak01_dir.vpk").unwrap();

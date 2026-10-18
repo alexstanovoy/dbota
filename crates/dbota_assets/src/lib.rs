@@ -6,6 +6,8 @@
 mod anim;
 mod budget;
 mod bytes;
+#[cfg(any(unix, windows))]
+pub mod cache_dir;
 mod error;
 mod export;
 mod gltf;
@@ -21,6 +23,7 @@ mod resource;
 mod sound;
 mod source;
 mod texture;
+mod tooltips;
 mod vbib;
 mod vertices;
 mod vpk;
@@ -40,6 +43,7 @@ pub use sound::{Sound, SoundFormat};
 pub use source::DirSource;
 pub use source::{Slice, SliceSource, Source};
 pub use texture::{Encoding, PixelFormat, Texture};
+pub use tooltips::{Wanted, tooltips_json};
 pub use vbib::{Buffer, Field};
 pub use vertices::{Attribute, Skin, Vertices};
 pub use vpk::{Entry, Vpk};

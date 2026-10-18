@@ -1,7 +1,7 @@
-//! The mid-lane band of a [`Scene`], as `tools/crop_world.py` cut the exported world: the nodes
-//! whose mesh bounds touch the band, less the ones the client spawns itself, flattened to world
-//! matrices, without skins; a triangle list that uses less than half of its vertex buffer gets
-//! its own vertices.
+//! The mid-lane band of a [`Scene`], cut as the old export pipeline cut the whole world: the
+//! nodes whose mesh bounds touch the band, less the ones the client spawns itself, flattened to
+//! world matrices, without skins; a triangle list that uses less than half of its vertex buffer
+//! gets its own vertices.
 
 use std::collections::HashMap;
 use std::f64::consts::SQRT_2;

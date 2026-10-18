@@ -1,6 +1,8 @@
-//! Golden comparison of the models this crate writes with the ones in the asset cache that
-//! `tools/import_assets.sh` exported from the same files. Ignored by default, like
+//! Golden comparison of the models this crate writes with the ones in the reference cache
+//! Source2Viewer exported from the same files (see `common`). Ignored by default, like
 //! `golden.rs`: `cargo test --release -p dbota_assets --test models -- --ignored`.
+
+mod common;
 
 use std::path::{Path, PathBuf};
 
@@ -15,15 +17,7 @@ fn repo() -> &'static Path {
 }
 
 fn cache() -> PathBuf {
-    let version = std::fs::read_to_string(repo().join("assets-manifest/version")).unwrap();
-    std::env::var_os("DBOTA_ASSETS").map_or_else(
-        || {
-            let home = PathBuf::from(std::env::var_os("HOME").unwrap());
-            home.join(".cache/dbota")
-                .join(format!("v{}", version.trim()))
-        },
-        PathBuf::from,
-    )
+    common::reference()
 }
 
 /// A `model` line of the manifest.

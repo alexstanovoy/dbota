@@ -12,6 +12,7 @@ use web_sys::{File, FileReaderSync};
 
 /// The manifest the client was built with.
 const MANIFEST: &str = include_str!("../../../assets-manifest/manifest.txt");
+const IDS: &str = include_str!("../../../assets-manifest/ids.txt");
 const VERSION: &str = include_str!("../../../assets-manifest/version");
 
 /// Most files an install may hold: Dota's has ~700 packages; a folder of more is not one.
@@ -122,7 +123,7 @@ impl Install {
     /// Starts importing the manifest's assets out of this install; fails when the package
     /// directory is missing or is not one.
     pub fn start(self) -> Result<Job, JsError> {
-        let importer = Importer::new(self.files, Plan::parse(MANIFEST))
+        let importer = Importer::new(self.files, Plan::parse(MANIFEST, IDS))
             .map_err(|e| JsError::new(&e.to_string()))?;
         Ok(Job(importer))
     }
@@ -197,11 +198,6 @@ impl Report {
 
     pub fn files(&self) -> usize {
         self.0.files.len()
-    }
-
-    /// How many assets are left to later versions (animated models, the world).
-    pub fn deferred(&self) -> usize {
-        self.0.deferred.len()
     }
 }
 
