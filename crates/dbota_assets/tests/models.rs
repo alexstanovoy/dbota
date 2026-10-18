@@ -257,6 +257,15 @@ fn image(doc: &Value, m: &Value, slot: &[&str]) -> Option<String> {
     doc["images"][source]["uri"].as_str().map(str::to_owned)
 }
 
+/// An image name without the hash Source2Viewer appended to the ones it made up
+/// (`x_orm_123.png` is `x_orm.png`).
+fn unhashed(name: String) -> String {
+    match name.split_once("_orm_") {
+        Some((stem, hash)) => format!("{stem}_orm.{}", hash.rsplit('.').next().unwrap()),
+        None => name,
+    }
+}
+
 /// What both files must agree on, as lines, so a mismatch reads as a diff.
 fn summary(doc: &Value) -> Vec<String> {
     let mut lines = Vec::new();
@@ -278,7 +287,7 @@ fn summary(doc: &Value) -> Vec<String> {
             };
             let material = &doc["materials"][p["material"].as_u64().unwrap() as usize];
             lines.push(format!(
-                "{} #{i}: {} vertices, {} indices, {attributes:?}, bounds {:?}..{:?}, material {} color {:?} normal {:?}",
+                "{} #{i}: {} vertices, {} indices, {attributes:?}, bounds {:?}..{:?}, material {} color {:?} normal {:?} orm {:?} occlusion {:?} metallic {} roughness {}",
                 mesh["name"].as_str().unwrap(),
                 position["count"],
                 accessors[p["indices"].as_u64().unwrap() as usize]["count"],
@@ -287,6 +296,19 @@ fn summary(doc: &Value) -> Vec<String> {
                 material["name"],
                 image(doc, material, &["pbrMetallicRoughness", "baseColorTexture"]),
                 image(doc, material, &["normalTexture"]),
+                image(
+                    doc,
+                    material,
+                    &["pbrMetallicRoughness", "metallicRoughnessTexture"]
+                )
+                .map(unhashed),
+                image(doc, material, &["occlusionTexture"]).map(unhashed),
+                material["pbrMetallicRoughness"]["metallicFactor"]
+                    .as_f64()
+                    .unwrap_or(1.0),
+                material["pbrMetallicRoughness"]["roughnessFactor"]
+                    .as_f64()
+                    .unwrap_or(1.0),
             ));
         }
     }

@@ -6,7 +6,7 @@ use std::collections::HashMap;
 
 use serde_json::{Value as Json, json};
 
-use crate::material::{Alpha, Material};
+use crate::material::{Alpha, Material, orm_uri};
 use crate::model::{Mesh, Model, Skin, Vertices, multiply, rotate};
 
 const FLOAT: u32 = 5126;
@@ -42,7 +42,7 @@ struct Builder {
     material_index: HashMap<String, usize>,
     textures: Vec<Json>,
     images: Vec<Json>,
-    texture_index: HashMap<String, usize>,
+    texture_index: HashMap<(String, bool), usize>,
 }
 
 /// The model as a `.glb` file.
@@ -265,14 +265,21 @@ impl Builder {
     }
 
     fn material_json(&mut self, m: &Material, options: &GltfOptions) -> Json {
-        let mut pbr = json!({ "metallicFactor": 0.0, "roughnessFactor": 1.0 });
+        // The image carries the metalness, so the factors stay 1.
+        let metal = if m.masks.is_some() { 1.0 } else { 0.0 };
+        let mut pbr = json!({ "metallicFactor": metal, "roughnessFactor": 1.0 });
         if let Some(color) = &m.base_color {
-            pbr["baseColorTexture"] = json!({ "index": self.texture(color, options) });
+            pbr["baseColorTexture"] = json!({ "index": self.texture(color, false, options) });
         }
         let mut out =
             json!({ "name": m.name, "pbrMetallicRoughness": pbr, "extras": { "vmat": m.extras } });
         if let Some(normal) = &m.normal {
-            out["normalTexture"] = json!({ "index": self.texture(normal, options) });
+            out["normalTexture"] = json!({ "index": self.texture(normal, false, options) });
+        }
+        if let Some(masks) = &m.masks {
+            let orm = self.texture(masks, true, options);
+            out["pbrMetallicRoughness"]["metallicRoughnessTexture"] = json!({ "index": orm });
+            out["occlusionTexture"] = json!({ "index": orm });
         }
         match m.alpha {
             Alpha::Opaque => {}
@@ -289,17 +296,23 @@ impl Builder {
         out
     }
 
-    fn texture(&mut self, vtex: &str, options: &GltfOptions) -> usize {
-        if let Some(&i) = self.texture_index.get(vtex) {
+    /// The texture of `vtex`, or with `orm` the occlusion/roughness/metallic image made from it.
+    fn texture(&mut self, vtex: &str, orm: bool, options: &GltfOptions) -> usize {
+        let key = (vtex.to_owned(), orm);
+        if let Some(&i) = self.texture_index.get(&key) {
             return i;
         }
         let name = vtex.rsplit('/').next().unwrap_or(vtex);
-        self.images
-            .push(json!({ "name": name, "uri": (options.texture_uri)(vtex) }));
+        let uri = (options.texture_uri)(vtex);
+        let (name, uri) = if orm {
+            (format!("{name}_orm"), orm_uri(&uri))
+        } else {
+            (name.to_owned(), uri)
+        };
+        self.images.push(json!({ "name": name, "uri": uri }));
         self.textures
             .push(json!({ "name": name, "sampler": 0, "source": self.images.len() - 1 }));
-        self.texture_index
-            .insert(vtex.to_owned(), self.textures.len() - 1);
+        self.texture_index.insert(key, self.textures.len() - 1);
         self.textures.len() - 1
     }
 }

@@ -2,17 +2,29 @@ use std::collections::HashMap;
 
 use crate::error::{Error, Result};
 use crate::gltf::{GltfOptions, write_glb};
-use crate::material::Material;
+use crate::material::{Material, orm_uri};
 use crate::model::Model;
 use crate::resource::Resource;
 use crate::source::Source;
 use crate::vpk::Vpk;
 
-/// A model converted to `.glb`, and the textures (`.vtex` paths) its materials use, which
-/// the caller converts next to it under the names `texture_uri` gave them.
+/// A model converted to `.glb`, and the images its materials use, which the caller writes
+/// next to it.
 pub struct ExportedModel {
     pub glb: Vec<u8>,
-    pub textures: Vec<String>,
+    pub textures: Vec<ExportedTexture>,
+}
+
+/// An image the `.glb` refers to.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub struct ExportedTexture {
+    /// The texture (`materials/.../x.vtex`) it is made from.
+    pub vtex: String,
+    /// Its file name relative to the `.glb`.
+    pub uri: String,
+    /// Whether it is the texture's pixels run through [`pack_orm`](crate::pack_orm) rather
+    /// than the texture itself.
+    pub orm: bool,
 }
 
 /// A compiled file from the first package that has it.
@@ -53,12 +65,20 @@ pub fn export_model(
             materials.insert(material.to_owned(), Material::from_vmat(material, &data?));
         }
     }
-    let mut textures: Vec<String> = materials
-        .values()
-        .flat_map(|m| [&m.base_color, &m.normal])
-        .flatten()
-        .cloned()
-        .collect();
+    let mut textures: Vec<ExportedTexture> = Vec::new();
+    for m in materials.values() {
+        for (vtex, orm) in [(&m.base_color, false), (&m.normal, false), (&m.masks, true)] {
+            if let Some(vtex) = vtex {
+                let uri = texture_uri(vtex);
+                let uri = if orm { orm_uri(&uri) } else { uri };
+                textures.push(ExportedTexture {
+                    vtex: vtex.clone(),
+                    uri,
+                    orm,
+                });
+            }
+        }
+    }
     textures.sort();
     textures.dedup();
     let options = GltfOptions {
