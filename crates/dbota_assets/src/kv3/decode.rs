@@ -118,9 +118,10 @@ pub(crate) fn zstd(input: &[u8], len: usize) -> Result<Vec<u8>> {
     }
 }
 
-/// Decompresses zstd frames of unknown decoded size, at most `max` bytes.
+/// Decompresses zstd frames of unknown decoded size, at most `max` bytes, and no more than the
+/// input can expand to: that much is allocated up front.
 pub(crate) fn zstd_to_vec(input: &[u8], max: usize) -> Result<Vec<u8>> {
-    let mut out = buffer(max)?;
+    let mut out = buffer(max.min(input.len().saturating_mul(ZSTD_RATIO)))?;
     let mut decoder = ruzstd::decoding::FrameDecoder::new();
     let len = decoder
         .decode_all(input, &mut out)
