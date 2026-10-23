@@ -58,6 +58,8 @@ bevy = { version = "=0.19.1", default-features = false, features = [
 bota_client_core = { path = "../bota/crates/bota_client_core", features = ["ui"] }
 bota_core = { path = "../bota/crates/bota_core" }
 bota_proto = { path = "../bota/crates/bota_proto" }
+# The sound device, opened by `audio_output`; the version Bevy's audio already builds.
+rodio = { version = "=0.22.2", default-features = false, features = ["playback"] }
 clap = { version = "4", features = ["derive", "env"] }
 serde_json = "1"
 

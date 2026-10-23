@@ -10,6 +10,7 @@
 
 mod ability_art;
 mod anim;
+mod audio_output;
 mod bars;
 mod buffs;
 mod cache_text;
@@ -368,6 +369,7 @@ fn main() -> AppExit {
             camera::plugin,
             capture::plugin,
             trees::plugin,
+            audio_output::plugin,
         ))
         .add_plugins((
             ui::plugin,
@@ -497,6 +499,9 @@ fn default_plugins(args: &Args, settings: &config::Settings) -> impl PluginGroup
     #[cfg(target_arch = "wasm32")]
     let log = bevy::log::LogPlugin::default();
     DefaultPlugins
+        .build()
+        // The sound device is dbota's own, see `audio_output`.
+        .disable::<bevy::audio::AudioPlugin>()
         .set(log)
         .set(WindowPlugin {
             primary_window: Some(Window {
