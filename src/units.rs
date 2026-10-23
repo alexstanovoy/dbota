@@ -599,13 +599,18 @@ fn sync_units(
         let Some(entity) = p.index.0.remove(&id) else {
             continue;
         };
+        // It falls when its side was told it died since it was last seen;
+        // one that only left the sight goes.
         let died = core
-            .prev_view()
-            .and_then(|prev| prev.unit(id))
-            .is_some_and(|u| {
+            .session()
+            .and_then(|session| session.entity(id))
+            .is_some_and(|track| {
+                let u = &track.unit;
                 u.kind != UnitKind::Courier
+                    && track
+                        .last_death
+                        .is_some_and(|death| death.tick >= track.last_seen_tick)
                     && (!p.fog.on || p.fog.lit(u.pos.x.to_f32(), u.pos.y.to_f32()))
-                    && i64::from(u.hp) * 2 < i64::from(u.max_hp.max(1))
             });
         if died {
             p.commands.entity(entity).insert(Dying(0.0));
