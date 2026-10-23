@@ -66,9 +66,34 @@ fn load_fonts(mut commands: Commands, server: Res<AssetServer>) {
     commands.insert_resource(FallbackFont(server.load("fonts/bota-sans-cjk.otf")));
 }
 
+/// The font collection, with the system's fonts where it has them. Fontique
+/// panics when fontconfig knows no font at all; the collection is then built
+/// again with fontconfig's own config made unreadable, which it takes to mean no
+/// system fonts, and only the shipped fonts are used. Call it before any
+/// thread starts: it may set an environment variable.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn font_cx() -> FontCx {
+    let hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(|_| {}));
+    let found = std::panic::catch_unwind(FontCx::default);
+    std::panic::set_hook(hook);
+    found.unwrap_or_else(|_| {
+        eprintln!(
+            "dbota: the system has no fonts fontconfig can list; using the shipped fonts only"
+        );
+        // SAFETY: no other thread exists yet, so nothing reads the environment meanwhile.
+        unsafe { std::env::set_var("FONTCONFIG_FILE", "/nonexistent/fonts.conf") };
+        FontCx::default()
+    })
+}
+
 /// Makes the CJK font the fallback of its scripts once Bevy has taken it into
 /// the font collection.
-fn register_fallback(mut cx: ResMut<FontCx>, mut done: Local<bool>) {
+fn register_fallback(
+    mut cx: ResMut<FontCx>,
+    mut texts: Query<&mut TextFont>,
+    mut done: Local<bool>,
+) {
     if *done {
         return;
     }
@@ -81,6 +106,11 @@ fn register_fallback(mut cx: ResMut<FontCx>, mut done: Local<bool>) {
                 .set_fallbacks(FallbackKey::new(script, None), std::iter::once(family));
         }
     }
+    // Text laid out before the font arrived (a replay's chat lines, read ahead) is shaped again.
+    for mut font in &mut texts {
+        font.set_changed();
+    }
+    info!("interface fonts: {CJK_FAMILY} stands behind the Latin ones for CJK scripts");
     *done = true;
 }
 

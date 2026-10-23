@@ -314,6 +314,9 @@ fn main() -> AppExit {
             }
         };
     }
+    // Before the first thread starts (see `ui::font_cx`).
+    #[cfg(not(target_arch = "wasm32"))]
+    let font_cx = ui::font_cx();
     let session = if args.wants_menu() {
         main_menu::idle()
     } else {
@@ -347,6 +350,8 @@ fn main() -> AppExit {
         settings.display = mode;
     }
     let mut app = App::new();
+    #[cfg(not(target_arch = "wasm32"))]
+    app.insert_resource(font_cx);
     let source = cache_source(&mut app, &args.cache_dir);
     app.insert_resource(args.clone())
         .insert_resource(manifest)

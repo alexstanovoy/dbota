@@ -64,3 +64,17 @@ for d,_,fs in os.walk(sys.argv[1]):
     fi
 done
 echo "visual check: PASS hero parts identical and on their skeletons over $runs runs: ${first#*hero parts: }"
+
+# A system whose fontconfig lists no font at all still starts, on the shipped fonts: the CJK
+# fallback is registered and the picture is taken.
+echo '<?xml version="1.0"?><fontconfig></fontconfig>' > "$out/no-fonts.conf"
+if FONTCONFIG_FILE="$out/no-fonts.conf" "$here/target/release/dbota" --replay "$replay" --pov 0 \
+    --screenshot-at "$tick" --screenshot-dir "$out" --screenshot-prefix nofonts- --mute --no-vsync \
+    > "$out/nofonts.out" 2> "$out/nofonts.log" \
+    && grep -q "stands behind the Latin ones" "$out/nofonts.log" \
+    && ! grep -q panicked "$out/nofonts.log"; then
+    echo "visual check: PASS starts without any system font, on the shipped ones"
+else
+    echo "visual check: FAIL no start without system fonts (see $out/nofonts.log)"
+    exit 1
+fi
