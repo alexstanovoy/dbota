@@ -1,8 +1,10 @@
 # Coverage-guided fuzz targets for everything dbota reads from a file it did
 # not write: Valve's formats (VPK packages, resources, KV3, NTRO, textures,
-# sounds), and the asset cache's images and sounds as Bevy decodes them. A
-# workspace of its own: the fuzzer's flags and libFuzzer stay out of the main
-# build. `fuzz.sh` builds and runs them on stable Rust.
+# sounds, models, meshes, animations, materials, worlds, entity lumps, the
+# tooltip and portrait scripts), the importer that converts them, and the
+# asset cache as the client reads it back. A workspace of its own: the
+# fuzzer's flags and libFuzzer stay out of the main build. `fuzz.sh` builds
+# and runs them on stable Rust.
 [package]
 name = "dbota_fuzz"
 version = "0.0.0"
@@ -17,9 +19,25 @@ cargo-fuzz = true
 # The versions and decoders the client loads its cache with.
 bevy_asset = { version = "=0.19.1", default-features = false }
 bevy_image = { version = "=0.19.1", default-features = false, features = ["png", "ktx2", "zstd_rust"] }
+crc32fast = "1.5"
 dbota_assets = { path = "../crates/dbota_assets" }
+# The client's glTF loader validates with it, with these extensions.
+gltf = { version = "1.4.0", default-features = false, features = [
+    "KHR_lights_punctual",
+    "KHR_materials_transmission",
+    "KHR_materials_ior",
+    "KHR_materials_volume",
+    "KHR_materials_unlit",
+    "KHR_materials_emissive_strength",
+    "KHR_texture_transform",
+    "extras",
+    "extensions",
+    "names",
+    "utils",
+] }
 libfuzzer-sys = "0.4"
 rodio = { version = "=0.22.2", default-features = false, features = ["hound", "mp3"] }
+serde_json = "1"
 
 [workspace]
 members = ["."]
@@ -74,6 +92,97 @@ bench = false
 [[bin]]
 name = "cache_sound"
 path = "fuzz_targets/cache_sound.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "model"
+path = "fuzz_targets/model.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "anim"
+path = "fuzz_targets/anim.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "meshopt"
+path = "fuzz_targets/meshopt.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "vbib"
+path = "fuzz_targets/vbib.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "material"
+path = "fuzz_targets/material.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "entities"
+path = "fuzz_targets/entities.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "world"
+path = "fuzz_targets/world.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "tooltips"
+path = "fuzz_targets/tooltips.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "portraits"
+path = "fuzz_targets/portraits.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "gltf"
+path = "fuzz_targets/gltf.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "import"
+path = "fuzz_targets/import.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "plan"
+path = "fuzz_targets/plan.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "cache_text"
+path = "fuzz_targets/cache_text.rs"
 test = false
 doc = false
 bench = false

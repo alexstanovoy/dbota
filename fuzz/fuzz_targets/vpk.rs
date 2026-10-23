@@ -11,7 +11,12 @@ const READS: usize = 64;
 
 fuzz_target!(|data: &[u8]| {
     let mut src = SliceSource::default();
-    for path in ["pak01_dir.vpk", "pak01_000.vpk", "pak01_001.vpk", "single.vpk"] {
+    for path in [
+        "pak01_dir.vpk",
+        "pak01_000.vpk",
+        "pak01_001.vpk",
+        "single.vpk",
+    ] {
         src.insert(path, data.to_vec());
     }
     for dir in ["pak01_dir.vpk", "single.vpk"] {

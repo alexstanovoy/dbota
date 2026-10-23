@@ -23,3 +23,7 @@ bevy_image = { version = "=0.19.1", default-features = false, features = ["ktx2"
 lz4_flex = { version = "0.14", default-features = false, features = ["std", "safe-encode"] }
 ktx2 = "0.5"
 meshopt = "0.7.0"
+
+[lints.rust]
+# The fuzz targets build with `--cfg fuzzing` (fuzz/fuzz.sh).
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(fuzzing)"] }

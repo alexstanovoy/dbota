@@ -10,6 +10,8 @@ mod bytes;
 pub mod cache_dir;
 mod error;
 mod export;
+#[cfg(fuzzing)]
+pub mod fuzzing;
 mod gltf;
 pub mod import;
 mod keyvalues;
