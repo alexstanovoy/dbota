@@ -66,6 +66,7 @@ fn fast_forward(core: &mut bota_client_core::App, next: u32) -> bool {
         let before = core.view().map(|v| v.tick);
         core.pump(1.0);
         core.cues.clear();
+        core.teleport_ends.clear();
         core.floaters.clear();
         if core.view().map(|v| v.tick) == before {
             break;

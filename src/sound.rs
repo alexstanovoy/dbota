@@ -6,8 +6,8 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use bevy::{audio::Volume, prelude::*};
-use bota_client_core::{Cue, CueKind};
-use bota_proto::{SlotId, UnitKind};
+use bota_client_core::{Cue, CueKind, TeleportEnd};
+use bota_proto::{SlotId, TeleportView, UnitKind};
 
 use crate::camera::RtsCamera;
 use crate::config::Settings;
@@ -19,9 +19,6 @@ use crate::synth::{RATE, Sfx, synth};
 const EARSHOT: f32 = 1200.0;
 /// World units over which a sound fades out past [`EARSHOT`].
 const FADE: f32 = 3000.0;
-/// Ticks before its end within which a vanished teleport counts as landed
-/// rather than broken off, since a view may skip a tick.
-const LANDING_SLACK: u32 = 3;
 /// Seconds a kind of sound rests before it may sound again.
 const REST: f32 = 0.05;
 /// New missiles a tick looked into at most: each is matched against every
@@ -60,7 +57,6 @@ struct Humming {
     loops: Vec<Entity>,
     landing: (f32, f32),
     origin: Option<(f32, f32)>,
-    ticks_left: u32,
 }
 
 pub fn plugin(app: &mut App) {
@@ -221,17 +217,19 @@ fn fall_off((x, y): (f32, f32), focus: Vec2) -> f32 {
 }
 
 /// Hums over every teleport under way, at the landing and, when the hero is
-/// in sight, where it stands; a teleport that runs out lands with a sound at
-/// both ends, one that vanishes sooner was broken off and only goes quiet.
+/// in sight, where it stands; a teleport the server tells landed has a sound
+/// at both ends, one it tells was broken off, or that vanishes untold, only
+/// goes quiet.
 fn portals(
     mut commands: Commands,
-    session: NonSend<Session>,
+    mut session: NonSendMut<Session>,
     voices: Res<Voices>,
     cam: Single<&RtsCamera>,
     settings: Res<Settings>,
     args: Res<crate::Args>,
     mut humming: Local<HashMap<SlotId, Humming>>,
 ) {
+    let ends = std::mem::take(&mut session.0.teleport_ends);
     let Some(view) = session.0.view() else {
         return;
     };
@@ -261,19 +259,14 @@ fn portals(
                 .id(),
         )
     };
-    let ended: Vec<SlotId> = humming
-        .keys()
-        .filter(|slot| !view.teleports.iter().any(|t| t.slot == **slot))
-        .copied()
-        .collect();
-    for slot in ended {
+    for (slot, landed) in ended_humming(humming.keys().copied(), &view.teleports, &ends) {
         let Some(hum) = humming.remove(&slot) else {
             continue;
         };
         for entity in hum.loops {
             commands.entity(entity).despawn();
         }
-        if hum.ticks_left <= LANDING_SLACK {
+        if landed {
             play(&mut commands, Kind::HeroArrived, hum.landing, false);
             if let Some(origin) = hum.origin {
                 play(&mut commands, Kind::HeroLeft, origin, false);
@@ -295,12 +288,28 @@ fn portals(
                 loops: loops.into_iter().flatten().collect(),
                 landing,
                 origin,
-                ticks_left: teleport.ticks_left,
             }
         });
-        hum.ticks_left = teleport.ticks_left;
         hum.origin = crate::teleport::origin(view, teleport).or(hum.origin);
     }
+}
+
+/// The seats whose teleport stops humming this frame, and whether the hero landed: first the
+/// ends the server told, so that a scroll read on the very tick another ended starts a hum
+/// of its own afterwards, then the humming that left the view with no end told, which only
+/// goes quiet.
+fn ended_humming(
+    humming: impl Iterator<Item = SlotId>,
+    teleports: &[TeleportView],
+    told: &[TeleportEnd],
+) -> Vec<(SlotId, bool)> {
+    let untold = humming.filter(|slot| {
+        told.iter().all(|end| end.slot != *slot) && !teleports.iter().any(|t| t.slot == *slot)
+    });
+    told.iter()
+        .map(|end| (end.slot, end.landed))
+        .chain(untold.map(|slot| (slot, false)))
+        .collect()
 }
 
 /// The shots of creeps and towers that let a missile go this tick.
@@ -348,4 +357,72 @@ fn wav(samples: &[f32]) -> Vec<u8> {
         out.extend_from_slice(&((s.clamp(-1.0, 1.0) * 32767.0) as i16).to_le_bytes());
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bota_proto::{EntityId, Team};
+
+    fn teleport(slot: u8) -> TeleportView {
+        TeleportView {
+            slot: SlotId(slot),
+            team: Team::Radiant,
+            building: EntityId {
+                idx: 1,
+                generation: 1,
+            },
+            destination: bota_proto::Vec2::ZERO,
+            ticks_left: 10,
+            ticks_total: 90,
+        }
+    }
+
+    fn end(slot: u8, landed: bool) -> TeleportEnd {
+        TeleportEnd {
+            slot: SlotId(slot),
+            landed,
+        }
+    }
+
+    #[test]
+    fn a_hum_ends_as_the_server_told_or_quietly_when_it_leaves_the_view_untold() {
+        let humming = [SlotId(0), SlotId(1), SlotId(2)];
+        let cases = [
+            (
+                "nothing ended",
+                vec![teleport(0), teleport(1), teleport(2)],
+                vec![],
+                vec![],
+            ),
+            (
+                "told landed and gone",
+                vec![teleport(1), teleport(2)],
+                vec![end(0, true)],
+                vec![(SlotId(0), true)],
+            ),
+            (
+                "told broken off and gone",
+                vec![teleport(1), teleport(2)],
+                vec![end(0, false)],
+                vec![(SlotId(0), false)],
+            ),
+            (
+                "gone with no end told",
+                vec![teleport(0), teleport(2)],
+                vec![],
+                vec![(SlotId(1), false)],
+            ),
+            (
+                "told landed, and a scroll read on the same tick is in the view",
+                vec![teleport(0), teleport(1), teleport(2)],
+                vec![end(2, true)],
+                vec![(SlotId(2), true)],
+            ),
+        ];
+        for (case, teleports, told, expected) in cases {
+            let ended = ended_humming(humming.into_iter(), &teleports, &told);
+            assert_eq!(ended, expected, "{case}");
+        }
+    }
 }
