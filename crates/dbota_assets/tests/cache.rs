@@ -199,7 +199,7 @@ fn png_size(path: &Path) -> (u32, u32) {
 
 /// Whether two text files say the same: JSON as values, placement lines number by number
 /// (the exporter writes `-0.0` where the importer writes `0.0`).
-fn same_text(ours: &Path, theirs: &Path) -> bool {
+fn text_differs(ours: &Path, theirs: &Path) -> Option<String> {
     let (a, b) = (read(ours), read(theirs));
     if ours.extension().is_some_and(|e| e == "json") {
         // The tooltip texts: every entry the ids ask for, as the exported file has it (the
@@ -209,10 +209,19 @@ fn same_text(ours: &Path, theirs: &Path) -> bool {
             serde_json::from_str(&b).unwrap(),
         );
         let wanted = Wanted::parse(&read(&repo().join("assets-manifest/ids.txt")));
-        return wanted.names.iter().all(|name| a.get(name) == b.get(name));
+        // Fields the importer has added since the export (`aliases`) are not in the exported one.
+        let kept = |name: &String| match (a.get(name), b.get(name)) {
+            (Some(Value::Object(ours)), Some(Value::Object(theirs))) => theirs
+                .iter()
+                .all(|(field, value)| ours.get(field) == Some(value)),
+            (ours, theirs) => ours == theirs,
+        };
+        let wrong: Vec<&String> = wanted.names.iter().filter(|n| !kept(n)).collect();
+        return (!wrong.is_empty()).then(|| format!("texts differ: {wrong:?}"));
     }
     let words = |t: &str| -> Vec<Vec<String>> {
         t.lines()
+            .filter(|l| !l.starts_with('#'))
             .map(|l| {
                 l.split_whitespace()
                     .map(|w| match w.parse::<f64>() {
@@ -223,7 +232,11 @@ fn same_text(ours: &Path, theirs: &Path) -> bool {
             })
             .collect()
     };
-    words(&a) == words(&b)
+    let (ours, theirs) = (words(&a), words(&b));
+    // Columns the importer has added since the export come after the exported ones.
+    let same =
+        ours.len() == theirs.len() && ours.iter().zip(&theirs).all(|(o, t)| o.starts_with(t));
+    (!same).then(|| "text differs".to_owned())
 }
 
 /// How file `rel` differs between the two caches, if it does.
@@ -248,7 +261,7 @@ fn differs(rel: &str, ours: &Path, theirs: &Path) -> Option<String> {
             let constant = b == (1, 1);
             (a != b && !constant).then(|| format!("{a:?} vs {b:?}"))
         }
-        "txt" | "json" => (!same_text(ours, theirs)).then(|| "text differs".to_owned()),
+        "txt" | "json" => text_differs(ours, theirs),
         "wav" | "mp3" => (std::fs::read(ours).unwrap() != std::fs::read(theirs).unwrap())
             .then(|| "bytes differ".to_owned()),
         _ => {
@@ -271,6 +284,20 @@ fn manifest_outputs() -> BTreeSet<String> {
                 .map(str::to_owned)
         })
         .collect()
+}
+
+/// Whether the importer alone makes `rel`, so the exported cache has nothing like it: a
+/// world's `lighting=` file, the interface labels (`label` lines), and the portrait
+/// backgrounds (`portraits` lines); the manifest's header says which kinds Source2Viewer never
+/// wrote. Their contents are checked by tests of their own.
+fn made_by_the_importer(rel: &str, manifest: &str) -> bool {
+    let lines = || manifest.lines().filter_map(|l| l.split('#').next());
+    let kind = |k: &str| lines().any(|l| l.split_whitespace().next() == Some(k));
+    (rel == "text/labels.json" && kind("label"))
+        || (rel.starts_with("models/portrait_backgrounds/") && kind("portraits"))
+        || lines()
+            .flat_map(str::split_whitespace)
+            .any(|w| w.strip_prefix("lighting=") == Some(rel))
 }
 
 /// The exported files this manifest asks for: its outputs, the images its glTF files name, and
@@ -316,10 +343,14 @@ fn the_imported_cache_matches_the_exported_one() {
     );
     let other_versions = theirs.keys().filter(|k| !ours.contains_key(*k)).count();
     // What the exported cache lacks may only be what the manifest lists (lines added after it
-    // was exported).
+    // was exported) or what only the importer makes.
     let listed = manifest_outputs();
+    let manifest = read(&repo().join("assets-manifest/manifest.txt"));
     let extra: Vec<&String> = ours.keys().filter(|k| !theirs.contains_key(*k)).collect();
-    let unlisted: Vec<&&String> = extra.iter().filter(|k| !listed.contains(**k)).collect();
+    let unlisted: Vec<&&String> = extra
+        .iter()
+        .filter(|k| !listed.contains(**k) && !made_by_the_importer(k, &manifest))
+        .collect();
     assert!(
         unlisted.is_empty(),
         "files the exported cache lacks: {unlisted:?}"
