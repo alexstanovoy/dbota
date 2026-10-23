@@ -98,7 +98,7 @@ the debug options too.
 | `D` `F` | other ability slots |
 | `1` … `6` | use the item in that slot |
 | `T` | town portal scroll: take it up and click a building to teleport near it; `T` again goes to the fountain. Drag a scroll stack from the stash onto the small slot beside the inventory. Every teleport under way is ringed on the map and the minimap, for both sides |
-| `B` | shop: left click an item to buy it; right click sets (or clears) the quick-buy item; drop an item on the strip at the panel's foot to sell it; in the search line `Enter` buys the first answer |
+| `B` | shop, laid out as Dota's: the BASICS, UPGRADES and NEUTRALS tabs with Dota's categories (from the asset cache; bota's own groups without it), a search by name or Dota's aliases (`tp`, `bfly`). Left click an item to buy it and see its build tree (its parts and recipe below it, what it builds into above; a click in the tree buys that piece); right click or shift-click sets (or clears) the quick-buy item, whose missing parts the quick-buy row in the corner offers; drop an item on the panel's foot to sell it; in the search line `Enter` buys the first answer. Items bota does not have are left out |
 | `F5` | buy the quick-buy item |
 | `Ctrl` + ability key | learn that ability (spend a skill point) |
 | `Enter` | console line to the server (a live match on a server started with `--cheats`); `Enter` sends, `Esc` drops it |
@@ -133,7 +133,8 @@ the box:
 
 Talents: the small button left of the abilities opens the talent tree; when you have a point,
 click a talent to learn it; the Attribute Bonus button right of the abilities spends a point on its next level. Buffs and debuffs of the selected unit sit above the abilities. The
-stash shows at the home shop.
+stash shows in the shop's corner while the shop is open or at the home shop; there GRAB ALL moves
+what it holds into the bag, a slot a tick.
 
 ## Window and cursor
 

@@ -80,11 +80,13 @@ fn the_plan_takes_every_line_and_the_tooltips() {
          sound s s.vsnd_c sounds/s.wav event=e\n\
          world w w.vwrld_c map/w/w.gltf vpk=maps/dota.vpk half_width=1 v_min=-2 v_max=3 \
          layers=textures/ground trees=map/w/trees.txt\n\
-         clip a idle idle 1.0\n",
+         clip a idle idle 1.0\n\
+         shop s scripts/shops.txt text/shop.json strings=loc.txt\n\
+         shop t scripts/shops.txt text/t.json\n",
         "item 0 boots\nitem 9 recipe\nability 2 nevermore_requiem\nhero 1 nevermore\n\
          text ability 3 pudge_innate_graft_flesh\n",
     );
-    assert_eq!(plan.items.len(), 7);
+    assert_eq!(plan.items.len(), 8);
     assert!(matches!(
         &plan.items[0],
         Item::Model { anims, skeleton: true, .. } if anims == &["idle"]
@@ -106,6 +108,11 @@ fn the_plan_takes_every_line_and_the_tooltips() {
     ));
     assert!(matches!(
         &plan.items[6],
+        Item::Shop { src, strings, out, .. }
+            if src == "scripts/shops.txt" && strings == "loc.txt" && out == "text/shop.json"
+    ));
+    assert!(matches!(
+        &plan.items[7],
         Item::Tooltips { wanted, out, .. }
             if wanted.names == ["item_boots", "nevermore_requiem", "pudge_innate_graft_flesh"]
                 && wanted.heroes == ["nevermore"] && out == "text/tooltips.json"
@@ -195,7 +202,8 @@ fn hostile_tooltip_texts_are_texts_or_errors() {
     let localization = "\u{feff}\"lang\" { \"Tokens\" {\n\
         \"DOTA_Tooltip_ability_item_boots\" \"Boots\"\n\
         \"DOTA_Tooltip_ability_item_boots_speed\" \"$move \\\"speed\\\"\"\n\
-        \"dota_ability_variable_move\" \"Move\"\n } }\n";
+        \"dota_ability_variable_move\" \"Move\"\n\
+        \"DOTA_SearchAlias_Ability_item_boots\" \"boots of speed; ;bos\"\n } }\n";
     let script = "\"DOTAAbilities\" { // c\n \"item_boots\" { \"ItemCost\" \"500\" \
         \"AbilityValues\" { \"speed\" { \"value\" \"45\" } } } /* x */ }";
     let json = dbota_assets::tooltips_json(&wanted, localization.as_bytes(), &[script.as_bytes()])
@@ -203,6 +211,10 @@ fn hostile_tooltip_texts_are_texts_or_errors() {
     let json: serde_json::Value = serde_json::from_slice(&json).unwrap();
     assert_eq!(json["item_boots"]["cost"], "500");
     assert_eq!(json["item_boots"]["labels"][0][1], "Move \"speed\"");
+    assert_eq!(
+        json["item_boots"]["aliases"],
+        serde_json::json!(["boots of speed", "bos"])
+    );
     let deep = "\"a\" {".repeat(10_000);
     assert!(dbota_assets::tooltips_json(&wanted, b"", &[deep.as_bytes()]).is_err());
     let mut seed = 0x9E37_79B9_7F4A_7C15u64;
@@ -217,5 +229,45 @@ fn hostile_tooltip_texts_are_texts_or_errors() {
             })
             .collect();
         let _ = dbota_assets::tooltips_json(&wanted, &text, &[&text, script.as_bytes()]);
+    }
+}
+
+/// The shop's categories keep Dota's order and repeated `item` keys, and its words come from the
+/// localization; damaged or hostile files are a text or an error, never a panic.
+#[test]
+fn shop_categories_keep_their_order_and_hostile_files_are_texts_or_errors() {
+    let shops = "\"dota_shops\" { \"consumables\" { \"item\" \"item_tpscroll\" // x\n \
+        \"item\" \"item_clarity\" \"other\" { \"item\" \"item_no\" } }\n \
+        \"misc\" { \"item\" \"item_boots\" } \"consumables\" { \"item\" \"item_again\" } }";
+    let localization = "\"lang\" { \"Tokens\" {\n \"DOTA_SUBSHOP_MISC\" \"Miscellaneous\"\n\
+        \"DOTA_Inventory_Grab_All\" \"GRAB ALL\"\n \"DOTA_Other\" \"x\"\n } }";
+    let json = dbota_assets::shop_json(shops.as_bytes(), localization.as_bytes()).unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&json).unwrap();
+    assert_eq!(
+        json["shops"],
+        serde_json::json!([
+            ["consumables", ["item_tpscroll", "item_clarity"]],
+            ["misc", ["item_boots"]]
+        ])
+    );
+    assert_eq!(json["strings"]["dota_subshop_misc"], "Miscellaneous");
+    assert_eq!(json["strings"]["dota_inventory_grab_all"], "GRAB ALL");
+    assert!(json["strings"].get("dota_other").is_none());
+    assert!(dbota_assets::shop_json(b"} {", b"").is_err());
+    assert!(dbota_assets::shop_json(&[0xff, 0xfe], b"").is_err());
+    let deep = "\"a\" {".repeat(100_000);
+    assert!(dbota_assets::shop_json(deep.as_bytes(), b"").is_ok());
+    let mut seed = 0x9E37_79B9_7F4A_7C15u64;
+    let alphabet = b"\"{}\\/*item_ \n\tab";
+    for round in 0..2000 {
+        let text: Vec<u8> = (0..(round % 300))
+            .map(|_| {
+                seed ^= seed << 13;
+                seed ^= seed >> 7;
+                seed ^= seed << 17;
+                alphabet[(seed % alphabet.len() as u64) as usize]
+            })
+            .collect();
+        let _ = dbota_assets::shop_json(&text, &text);
     }
 }

@@ -12,6 +12,7 @@ mod error;
 mod export;
 mod gltf;
 pub mod import;
+mod keyvalues;
 pub mod kv3;
 #[cfg(any(unix, windows))]
 mod locate;
@@ -21,6 +22,7 @@ mod model;
 mod ntro;
 mod portraits;
 mod resource;
+mod shops;
 mod sound;
 mod source;
 mod texture;
@@ -40,6 +42,7 @@ pub use material::{Alpha, Material, Pack, orm_uri};
 pub use model::{Bone, Mesh, Model, Primitive};
 pub use portraits::{background_png, framings, portraits_txt};
 pub use resource::{Block, ExternalRef, Resource};
+pub use shops::shop_json;
 pub use sound::{Sound, SoundFormat};
 #[cfg(any(unix, windows))]
 pub use source::DirSource;

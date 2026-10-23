@@ -159,6 +159,11 @@ pub struct Args {
     /// `ability:ID:LEVEL`.
     #[arg(long, value_name = "KIND:ID")]
     pub tip: Option<String>,
+    /// Debug: open the shop at the start: on a tab (`basics`, `upgrades` or
+    /// `neutrals`), with an item's build tree shown (`upgrades:51`) or a
+    /// search typed (`basics:/tango`).
+    #[arg(long, value_name = "TAB[:ITEM|:/SEARCH]")]
+    pub shop: Option<String>,
     /// Debug: select the first unit shown with this name (`Tower@dire`: of
     /// that side), as a click would.
     #[arg(long, value_name = "NAME")]
@@ -307,6 +312,7 @@ fn main() -> AppExit {
     import::warn_if_stale(&args.cache_dir);
     let manifest = manifest::Manifest::load(&args.cache_dir);
     let texts = dota_text::Texts::load(manifest.root.as_deref());
+    let catalog = shop::Catalog::load(&manifest);
     let settings_path = args.config.clone().or_else(config::default_path);
     let store = main_menu::SettingsStore::new(settings_path.clone());
     let mut settings = store.load_settings();
@@ -328,6 +334,7 @@ fn main() -> AppExit {
     app.insert_resource(args.clone())
         .insert_resource(manifest)
         .insert_resource(texts)
+        .insert_resource(catalog)
         .insert_resource(settings.clone())
         .insert_resource(SettingsPath(settings_path))
         .insert_resource(store.clone())

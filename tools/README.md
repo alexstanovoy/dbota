@@ -50,8 +50,9 @@ deleted. An asset that does not convert is reported and drawn as a stand-in.
 | `map/mid/` | `mid.gltf` with its geometry in `mid.bin`, the default map from fountain to fountain around mid, its textures, `trees.txt`, `buildings.txt` (the towers' places) | 354 MB |
 | `textures/ground/` | terrain layer textures (also used by `map.mid`) | 37 MB |
 | `textures/particle/` | 16 effect textures (smoke, glow, sparks, ground cracks, fire, the Glyph's rings, ...) | 1 MB |
-| `icons/`, `hud/`, `minimap/` | item and ability icons, hero portraits, minimap hero/creep/tower/building icons, HUD art, minimap | 2 MB |
-| `text/tooltips.json` | the names, descriptions, lore, notes and number labels of the items and abilities in `ids.txt`, read out of the install's own localization and scripts; the client puts the simulator's numbers into them (without the file, tooltips show only the simulator's plain names and numbers) | 30 KB |
+| `icons/`, `hud/`, `minimap/` | item and ability icons, hero portraits, minimap hero/creep/tower/building icons, HUD and shop art, minimap | 2 MB |
+| `text/tooltips.json` | the names, descriptions, lore, notes and number labels of the items and abilities in `ids.txt`, read out of the install's own localization and scripts; the client puts the simulator's numbers into them (without the file, tooltips show only the simulator's plain names and numbers), and the aliases the shop's search finds items by | 30 KB |
+| `text/shop.json` | the shop's categories and the items each lists, in Dota's order (`scripts/shops.txt`), and the shop's words (category, tab and button names) from the install's localization; without it the shop shows bota's own groups and plain words | 16 KB |
 | `sounds/` | 48 WAVs and 50 MP3s (announcer, hero move/attack voice lines, the horns, `ambient/morning.wav` and `night.wav`) resolved through sound events | 17 MB |
 
 Formats: glTF 2.0 binary (`.glb`) with PNG textures next to it (relative URIs), PNG, WAV, MP3. All WAVs

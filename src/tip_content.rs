@@ -3,7 +3,6 @@
 //! plain names and numbers.
 
 use bevy::prelude::Color;
-use bota_client_core::{ITEMS, SHOP_GROUPS, group_of};
 use bota_core::{AbilityDef, ItemDef, ability_def, item_def};
 use bota_proto::{AbilityId, ItemId};
 
@@ -121,6 +120,15 @@ pub struct Content {
     pub hints: Vec<String>,
 }
 
+/// How well a search finds an item; the better first.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Rank {
+    /// A name starts with the search.
+    Starts,
+    /// A name holds it further in.
+    Contains,
+}
+
 /// The sources a tooltip is made from.
 pub struct Lookup<'a> {
     pub texts: &'a Texts,
@@ -160,34 +168,29 @@ impl Lookup<'_> {
         Some(format!("Built from: {}", names.join(", ")))
     }
 
-    /// The first item a search answers, group by group, for buying with one
-    /// key.
-    pub fn first_answer(&self, query: &str) -> Option<u16> {
-        (0..SHOP_GROUPS.len()).find_map(|group| {
-            ITEMS
-                .iter()
-                .find(|face| group_of(face.id) == group && self.answers(face.id, query))
-                .map(|face| face.id)
-        })
-    }
-
-    /// Whether a shop search matches an item by the name or the text shown.
-    pub fn answers(&self, id: u16, query: &str) -> bool {
-        let query = query.trim().to_lowercase();
-        if query.is_empty() {
-            return true;
-        }
-        let Some(def) = item_def(ItemId(id)) else {
-            return false;
-        };
-        let mut hay = def.name.to_lowercase();
-        if let Some(e) = self.entry("item", id) {
-            hay.push(' ');
-            hay.push_str(&e.name.to_lowercase());
-            hay.push(' ');
-            hay.push_str(&e.description.to_lowercase());
-        }
-        hay.contains(&query)
+    /// How well a shop search, lower-cased and trimmed, finds an item, as
+    /// Dota's does: by its name or one of its aliases. A name that starts
+    /// with the search finds it best; nothing when none holds it.
+    pub fn search_rank(&self, id: u16, query: &str) -> Option<Rank> {
+        let def = item_def(ItemId(id))?;
+        let entry = self.entry("item", id);
+        let names = std::iter::once(def.name)
+            .chain(entry.map(|e| e.name.as_str()))
+            .chain(
+                entry
+                    .into_iter()
+                    .flat_map(|e| e.aliases.iter().map(String::as_str)),
+            );
+        names
+            .filter_map(|name| {
+                let name = name.to_lowercase();
+                if name.starts_with(query) {
+                    Some(Rank::Starts)
+                } else {
+                    name.contains(query).then_some(Rank::Contains)
+                }
+            })
+            .min()
     }
 
     fn entry(&self, kind: &str, id: u16) -> Option<&Entry> {

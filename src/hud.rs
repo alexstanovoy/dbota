@@ -168,16 +168,7 @@ pub fn plugin(app: &mut App) {
         .add_systems(Startup, spawn_hud)
         .add_systems(
             Update,
-            (
-                readouts,
-                gauges,
-                slots,
-                portrait,
-                time_of_day,
-                seats,
-                stash,
-                xp,
-            )
+            (readouts, gauges, slots, portrait, time_of_day, seats, xp)
                 .run_if(|k: Res<crate::session::MatchKnown>| k.0),
         );
 }
@@ -545,7 +536,7 @@ fn spawn_middle(commands: &mut Commands, fonts: &Fonts, bar: Entity) {
     }
 }
 
-/// The inventory, the backpack below it and the stash above it.
+/// The inventory and the backpack below it. The stash is the shop's.
 fn spawn_items(commands: &mut Commands, fonts: &Fonts, bar: Entity) {
     let grid = commands
         .spawn((
@@ -575,29 +566,6 @@ fn spawn_items(commands: &mut Commands, fonts: &Fonts, bar: Entity) {
         );
     }
     spawn_town_portal(commands, fonts, bar);
-    let stash = commands
-        .spawn((
-            Node {
-                position_type: PositionType::Absolute,
-                bottom: percent(100),
-                right: px(8),
-                display: Display::Grid,
-                grid_template_columns: RepeatedGridTrack::px(3, ITEM.0),
-                column_gap: px(5),
-                row_gap: px(5),
-                padding: UiRect::all(px(6)),
-                ..default()
-            },
-            BackgroundColor(ui::PANEL_DEEP),
-            Interaction::default(),
-            Blocker,
-            StashStrip,
-            ChildOf(bar),
-        ))
-        .id();
-    for slot in BAG_SLOTS..BAG_SLOTS + 6 {
-        spawn_slot_box(commands, fonts, stash, (ITEM.0, 30.0), ItemBox(slot), false);
-    }
 }
 
 /// Dota's own slot for scrolls, a small square at the right of the inventory
@@ -623,12 +591,8 @@ fn spawn_town_portal(commands: &mut Commands, fonts: &Fonts, bar: Entity) {
     );
 }
 
-/// The stash strip, shown while it holds anything or at home.
-#[derive(Component)]
-pub struct StashStrip;
-
 /// One clickable slot box with its icon, its wait and its labels.
-fn spawn_slot_box(
+pub(crate) fn spawn_slot_box(
     commands: &mut Commands,
     fonts: &Fonts,
     parent: Entity,
@@ -1700,15 +1664,6 @@ fn seats(
             *border = BorderColor::all(edge);
         }
     }
-}
-
-/// Shows the stash as Dota does: at the home shop, or while an item is held
-/// for moving. Away from home what waits there is the courier's to fetch;
-/// the courier's own bag shows in the panel when the courier is selected.
-fn stash(session: NonSend<Session>, mut strip: Single<&mut Visibility, With<StashStrip>>) {
-    let core = &session.0;
-    let show = core.at_home_shop() || core.held_item.is_some();
-    strip.set_if_neq(ui::visible(show));
 }
 
 /// A regeneration as a pool bar shows it: "+1.5" a second, nothing when none.

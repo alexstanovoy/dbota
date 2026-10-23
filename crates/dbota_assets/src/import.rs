@@ -21,7 +21,7 @@ use crate::vpk::Vpk;
 use crate::world::{Band, EntityLump, buildings_txt, export_world, lighting_txt, trees_txt};
 
 /// Bumped when the importer's output changes for the same install; part of a cache's stamp.
-pub const IMPORT_REV: u32 = 3;
+pub const IMPORT_REV: u32 = 4;
 
 /// Names what an import of this manifest and these ids makes (FNV-1a 64 of both texts): part of
 /// a cache's stamp, so a cache made from other texts is stale even from the same install.
@@ -88,6 +88,14 @@ pub enum Item {
         wanted: Wanted,
         out: String,
     },
+    /// The shop's categories and their items from the install's `shops.txt`, and the shop's
+    /// words from the localization `strings`.
+    Shop {
+        logical: String,
+        src: String,
+        strings: String,
+        out: String,
+    },
     /// A texture written as a PNG (the first frame of a sprite sheet).
     Texture {
         logical: String,
@@ -117,6 +125,7 @@ impl Item {
             | Self::Placements { logical, .. }
             | Self::World { logical, .. }
             | Self::Tooltips { logical, .. }
+            | Self::Shop { logical, .. }
             | Self::Texture { logical, .. }
             | Self::Sound { logical, .. }
             | Self::Portraits { logical, .. } => logical,
@@ -204,6 +213,17 @@ impl Plan {
                             layers: layers.to_owned(),
                         });
                     }
+                }
+                ["shop", logical, src, out, rest @ ..] => {
+                    let Some(strings) = rest.iter().find_map(|w| w.strip_prefix("strings=")) else {
+                        continue;
+                    };
+                    plan.items.push(Item::Shop {
+                        logical: (*logical).to_owned(),
+                        src: (*src).to_owned(),
+                        strings: strings.to_owned(),
+                        out: (*out).to_owned(),
+                    });
                 }
                 ["portraits", logical, src, out, ..] => {
                     portraits_line = Some([logical, src, out].map(|w| (*w).to_owned()));
@@ -586,6 +606,16 @@ fn make(
                 .collect::<Result<Vec<_>>>()?;
             let scripts: Vec<&[u8]> = files[1..].iter().map(Vec::as_slice).collect();
             out.put(dest, &tooltips_json(wanted, &files[0], &scripts)?)
+        }
+        Item::Shop {
+            src: path,
+            strings,
+            out: dest,
+            ..
+        } => {
+            let shops = read_from(src, &[pak], path)?;
+            let localization = read_from(src, &[pak], strings)?;
+            out.put(dest, &crate::shop_json(&shops, &localization)?)
         }
         Item::Texture {
             src: path,

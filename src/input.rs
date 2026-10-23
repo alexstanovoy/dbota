@@ -78,6 +78,7 @@ fn typing(
     mut panels: ResMut<Panels>,
     texts: Res<crate::dota_text::Texts>,
     manifest: Res<crate::manifest::Manifest>,
+    catalog: Res<crate::shop::Catalog>,
 ) {
     let core = &mut session.0;
     let look = crate::tip_content::Lookup {
@@ -118,7 +119,7 @@ fn typing(
             }
             Typing::Search => match &event.logical_key {
                 Key::Enter => {
-                    if let Some(id) = look.first_answer(&panels.search) {
+                    if let Some(&id) = catalog.search(&look, &panels.search).first() {
                         core.act(Intent::Buy(id));
                     }
                     *typing = Typing::No;

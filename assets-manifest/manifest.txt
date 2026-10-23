@@ -20,6 +20,9 @@
 #           line each (model-local inches and degrees; the HUD portrait's camera is placed by them), and
 #           each background's image under models/portrait_backgrounds/. Written by the Rust importer only;
 #           a model Dota has no framing for is framed from its bounds, on a plain dark backdrop.
+#   shop    <logical> <vpk scripts/shops.txt> <out .json> strings=<localization .txt>
+#           the shop's categories and the items each lists, in Dota's order, and the shop's words
+#           (category, tab and button names) out of the localization. Written by the Rust importer only.
 #   texture <logical> <vpk .vtex_c> <out .png>
 #   sound   <logical> <vpk .vsnd_c> <out .wav|.mp3> event=<Dota sound event that plays it>
 #           PCM WAV as Valve ships it (16-bit 44.1 kHz, a few 8-bit or 22.05 kHz); voice lines are MP3
@@ -452,9 +455,16 @@ texture tip.cooldown panorama/images/status_icons/ability_cooldown_icon_psd.vtex
 texture tip.mana panorama/images/status_icons/ability_manacost_icon_psd.vtex_c hud/ability_manacost_icon_psd.png
 texture tip.health panorama/images/status_icons/ability_healthcost_icon_psd.vtex_c hud/ability_healthcost_icon_psd.png
 texture tip.range panorama/images/status_icons/ability_castrange_icon_psd.vtex_c hud/ability_castrange_icon_psd.png
+# Shop art: the panel's backdrop, the GRAB ALL tab and the shop button.
+texture shop.panel panorama/images/hud/reborn/main_shop_bg_psd.vtex_c hud/main_shop_bg_psd.png
+texture shop.grab_all panorama/images/hud/reborn/stash_grab_all_button_psd.vtex_c hud/stash_grab_all_button_psd.png
+texture shop.button panorama/images/hud/reborn/shop_launcher_button_psd.vtex_c hud/shop_launcher_button_psd.png
 texture minimap.map panorama/images/minimap/dotamap_psd.vtex_c minimap/dotamap_psd.png
 texture minimap.radiant_buildings panorama/images/minimap/dotamap_radiant_buildings_psd.vtex_c minimap/dotamap_radiant_buildings_psd.png
 texture minimap.dire_buildings panorama/images/minimap/dotamap_dire_buildings_psd.vtex_c minimap/dotamap_dire_buildings_psd.png
+
+# --- The shop's categories and words
+shop text.shop scripts/shops.txt text/shop.json strings=resource/localization/dota_english.txt
 
 # --- Sounds, resolved through their sound events (soundevents/*.vsndevts_c)
 sound sound.nevermore.attack.1 sounds/weapons/hero/nevermore/attack01.vsnd_c sounds/weapons/hero/nevermore/attack01.wav event=Hero_Nevermore.Attack

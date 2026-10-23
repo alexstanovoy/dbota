@@ -15,6 +15,8 @@ use serde_json::Value;
 const FILE: &str = "text/tooltips.json";
 /// An upper bound on the file, so a broken cache cannot fill the memory.
 const MAX_ENTRIES: usize = 4096;
+/// Most aliases kept of one entry.
+const MAX_ALIASES: usize = 16;
 
 /// One item or ability, as Dota's files give it.
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -34,6 +36,8 @@ pub struct Entry {
     /// The labels of the numbers worth a line, in Dota's order: lower-cased
     /// key and label.
     pub labels: Vec<(String, String)>,
+    /// The other names the shop's search finds an item by.
+    pub aliases: Vec<String>,
 }
 
 /// Everything the text file of the cache holds, by Dota's name for each
@@ -120,6 +124,17 @@ fn entry(value: &Value) -> Option<Entry> {
             .map(|list| {
                 list.iter()
                     .filter_map(|n| n.as_str())
+                    .map(str::to_string)
+                    .collect()
+            })
+            .unwrap_or_default(),
+        aliases: value
+            .get("aliases")
+            .and_then(Value::as_array)
+            .map(|list| {
+                list.iter()
+                    .filter_map(Value::as_str)
+                    .take(MAX_ALIASES)
                     .map(str::to_string)
                     .collect()
             })
