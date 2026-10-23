@@ -284,12 +284,17 @@ pub fn load_model<A: Asset>(
     server.load_builder().with_settings(gpu_textures).load(path)
 }
 
-/// Loads (a part of) a unit model's glTF file, its meshes as well as its
-/// textures on the GPU alone: units draw them and nothing reads them back.
-pub fn load_unit_model<A: Asset>(
+/// Loads a unit model's glTF file, its meshes as well as its textures on
+/// the GPU alone: units draw them and nothing reads them back. The file as
+/// a whole, never a labelled part of it: Bevy loads a file again for each
+/// labelled part asked of it, and the second load replaces the scenes the
+/// first gave, under the units already drawn with them.
+pub fn load_unit_model(
     server: &AssetServer,
     path: impl Into<bevy::asset::AssetPath<'static>>,
-) -> Handle<A> {
+) -> Handle<bevy::gltf::Gltf> {
+    let path = path.into();
+    assert!(path.label().is_none(), "{path}: a labelled part");
     server
         .load_builder()
         .with_settings(|settings: &mut bevy::gltf::GltfLoaderSettings| {

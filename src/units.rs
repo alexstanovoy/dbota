@@ -5,10 +5,7 @@
 use std::collections::HashMap;
 
 use bevy::{
-    gltf::{Gltf, GltfAssetLabel},
-    light::NotShadowCaster,
-    prelude::*,
-    world_serialization::WorldAsset,
+    gltf::Gltf, light::NotShadowCaster, prelude::*, world_serialization::WorldAsset,
     world_serialization::WorldInstanceReady,
 };
 use bota_client_core::{ClientSession, bodies};
@@ -64,11 +61,15 @@ pub struct Posable;
 #[derive(Component)]
 pub struct Rig(pub Entity);
 
-/// A wearable scene waiting for its own instance and its wearer's.
+/// A wearable scene, drawn on its wearer's skeleton: its skins are bound to
+/// the wearer's joints once both instances are ready, and bound again
+/// whenever either instance is spawned anew (the scene spawner replaces an
+/// instance whose scene changes, and the joints bound before go with it).
 #[derive(Component)]
 pub struct Wearable {
     wearer: Entity,
     ready: bool,
+    bound: bool,
 }
 
 impl Wearable {
@@ -77,25 +78,74 @@ impl Wearable {
         Self {
             wearer,
             ready: false,
+            bound: false,
         }
     }
 
-    /// Its own instance is ready.
+    /// Its own instance is ready: its skins are on its own skeleton.
     pub fn mark_ready(&mut self) {
         self.ready = true;
+        self.bound = false;
     }
+
+    /// The model scene it is worn on.
+    pub fn wearer(&self) -> Entity {
+        self.wearer
+    }
+
+    /// Whether its skins are on its wearer's current skeleton.
+    pub fn bound(&self) -> bool {
+        self.bound
+    }
+
+    /// The instance of `wearer` is ready, anew or for the first time: what
+    /// it wears is bound to its joints again.
+    pub fn wearer_ready(wearer: Entity, wearables: &mut Query<&mut Wearable>) {
+        for mut wearable in wearables.iter_mut().filter(|w| w.wearer == wearer) {
+            wearable.bound = false;
+        }
+    }
+}
+
+/// Scenes replaced after they loaded, all told: each replacement spawns
+/// every unit drawn with the scene anew.
+#[derive(Resource, Default)]
+pub struct ReplacedScenes(pub u32);
+
+/// Counts, and tells, a scene replaced once loaded: its file was loaded
+/// twice.
+fn count_replaced_scenes(
+    mut events: MessageReader<AssetEvent<WorldAsset>>,
+    server: Res<AssetServer>,
+    mut replaced: ResMut<ReplacedScenes>,
+) {
+    for event in events.read() {
+        if let AssetEvent::Modified { id } = event {
+            warn!("scene {:?} replaced once loaded", server.get_path(*id));
+            replaced.0 += 1;
+        }
+    }
+}
+
+/// The scenes a model is drawn with: its own first scene and that of each
+/// thing it wears.
+pub struct Scenes {
+    pub body: Handle<WorldAsset>,
+    pub wearables: Vec<Handle<WorldAsset>>,
 }
 
 /// One model the units may be drawn with.
 pub struct BankModel {
     /// What the manifest says of it.
     pub model: Model,
-    /// The glTF file.
+    /// The glTF file, loaded once and whole: its scenes and clips are taken
+    /// from it. (A labelled part asked of the asset server loads its file
+    /// again, and that second load replaces the scenes already drawn.)
     pub gltf: Handle<Gltf>,
-    /// Its first scene.
-    pub scene: Handle<WorldAsset>,
-    /// The scenes of what it wears.
-    pub wearables: Vec<Handle<WorldAsset>>,
+    /// The glTF files of what it wears.
+    wearing: Vec<Handle<Gltf>>,
+    /// Its scenes, once every file has loaded; none when its own failed.
+    pub scenes: Option<Scenes>,
     /// Its clips once the file is loaded: logical name, graph node,
     /// duration and point in seconds.
     pub clips: Vec<(String, AnimationNodeIndex, f32, Option<f32>)>,
@@ -104,6 +154,14 @@ pub struct BankModel {
     /// Whether the model, its wearables and everything they need are all
     /// loaded: no unit is drawn with it before, so no part goes missing.
     pub loaded: bool,
+}
+
+impl BankModel {
+    /// Whether units may be drawn with it: every part loaded (or failed,
+    /// said so), and its clips' graph built when it is drawn as a model.
+    pub fn ready(&self) -> bool {
+        self.loaded && (self.scenes.is_none() || self.graph.is_some())
+    }
 }
 
 /// Every model the units may be drawn with.
@@ -128,6 +186,7 @@ const FALL_SECONDS: f32 = 1.6;
 
 pub fn plugin(app: &mut App) {
     app.init_resource::<UnitIndex>()
+        .init_resource::<ReplacedScenes>()
         .add_systems(
             PreStartup,
             |mut commands: Commands, manifest: Res<Manifest>| {
@@ -138,7 +197,14 @@ pub fn plugin(app: &mut App) {
         .add_systems(Startup, (load_models, make_stand_ins))
         .add_systems(
             Update,
-            (build_graphs, sync_units, fall, bind_wearables).chain(),
+            (
+                build_graphs,
+                count_replaced_scenes,
+                sync_units,
+                fall,
+                bind_wearables,
+            )
+                .chain(),
         )
         .add_systems(PostUpdate, lift_heroes)
         .add_systems(
@@ -219,22 +285,20 @@ fn load_models(mut bank: ResMut<ModelBank>, server: Res<AssetServer>, manifest: 
 /// logical-name prefix; trees are not units and load elsewhere.
 const LAZY_MODELS: [&str; 2] = ["tree.", "neutral."];
 
-/// A model of the manifest, its files asked of the asset server.
+/// A model of the manifest, its files asked of the asset server: each
+/// file once, as a whole.
 fn bank_entry(server: &AssetServer, manifest: &Manifest, model: &Model) -> BankModel {
-    let wearables = manifest
+    let wearing = manifest
         .models
         .iter()
         .filter(|w| w.attach.as_deref() == Some(model.logical.as_str()))
-        .map(|w| load_unit_model(server, GltfAssetLabel::Scene(0).from_asset(w.path.clone())))
+        .map(|w| load_unit_model(server, w.path.clone()))
         .collect();
     BankModel {
         model: model.clone(),
         gltf: load_unit_model(server, model.path.clone()),
-        scene: load_unit_model(
-            server,
-            GltfAssetLabel::Scene(0).from_asset(model.path.clone()),
-        ),
-        wearables,
+        wearing,
+        scenes: None,
         clips: Vec::new(),
         graph: None,
         loaded: false,
@@ -260,7 +324,8 @@ fn make_stand_ins(
     });
 }
 
-/// Builds each model's animation graph once its file has loaded.
+/// Takes each model's scenes from its files, waits for all they need, and
+/// builds its animation graph once its file has loaded.
 fn build_graphs(
     mut bank: ResMut<ModelBank>,
     server: Res<AssetServer>,
@@ -269,22 +334,25 @@ fn build_graphs(
 ) {
     use bevy::asset::RecursiveDependencyLoadState as State;
     for entry in bank.0.iter_mut().filter(|m| !m.loaded) {
+        if entry.scenes.is_none() && !take_scenes(entry, &server, &gltfs) {
+            continue;
+        }
+        // Its own file failed: its units are drawn as stand-ins.
+        let Some(scenes) = &entry.scenes else {
+            entry.loaded = true;
+            continue;
+        };
         // The scenes and all they need: meshes, skins, materials, images.
         // (The file's own handle never settles as loaded with everything:
         // it lists sub-assets no scene uses. Its clips are waited for by the
         // graph.)
-        let states: Vec<State> =
-            std::iter::once(server.recursive_dependency_load_state(&entry.scene))
-                .chain(
-                    entry
-                        .wearables
-                        .iter()
-                        .map(|w| server.recursive_dependency_load_state(w)),
-                )
-                .collect();
+        let states: Vec<State> = std::iter::once(&scenes.body)
+            .chain(&scenes.wearables)
+            .map(|scene| server.recursive_dependency_load_state(scene))
+            .collect();
         if states.iter().any(|s| matches!(s, State::Failed(_))) {
             error!(
-                "model {}: a part failed to load ({states:?}); its units are drawn as stand-ins",
+                "model {}: a part failed to load ({states:?}); its units are drawn without it",
                 entry.model.logical
             );
             entry.loaded = true;
@@ -311,6 +379,49 @@ fn build_graphs(
         }
         entry.graph = Some(graphs.add(graph));
     }
+}
+
+/// Takes a model's first scene and each wearable's from their files once
+/// every file has loaded or failed; whether it has. A wearable whose file
+/// failed is left off, loudly.
+fn take_scenes(entry: &mut BankModel, server: &AssetServer, gltfs: &Assets<Gltf>) -> bool {
+    use bevy::asset::LoadState;
+    let scene = |file: &Handle<Gltf>| match server.load_state(file) {
+        LoadState::Loaded => Some(
+            gltfs
+                .get(file)
+                .and_then(|gltf| gltf.scenes.first().cloned())
+                .ok_or_else(|| "it has no scene".to_owned()),
+        ),
+        LoadState::Failed(err) => Some(Err(err.to_string())),
+        LoadState::NotLoaded | LoadState::Loading => None,
+    };
+    let Some(body) = scene(&entry.gltf) else {
+        return false;
+    };
+    let Some(wearing) = entry.wearing.iter().map(scene).collect::<Option<Vec<_>>>() else {
+        return false;
+    };
+    let logical = &entry.model.logical;
+    let body = match body {
+        Ok(body) => body,
+        Err(why) => {
+            error!("model {logical}: {why}; its units are drawn as stand-ins");
+            return true;
+        }
+    };
+    let mut wearables = Vec::with_capacity(wearing.len());
+    for (file, scene) in entry.wearing.iter().zip(wearing) {
+        match scene {
+            Ok(scene) => wearables.push(scene),
+            Err(why) => error!(
+                "model {logical}: wearable {:?}: {why}; drawn without it",
+                file.path()
+            ),
+        }
+    }
+    entry.scenes = Some(Scenes { body, wearables });
+    true
 }
 
 /// How the manifest says a neutral creep is drawn.
@@ -577,7 +688,7 @@ fn sync_units(
                 }
                 let waiting = name
                     .and_then(|name| p.bank.0.iter().find(|m| m.model.logical == name))
-                    .is_some_and(|m| !m.loaded || m.graph.is_none());
+                    .is_some_and(|m| !m.ready());
                 if waiting {
                     continue;
                 }
@@ -629,8 +740,12 @@ fn spawn_unit(
     facing: f32,
     place: Vec3,
 ) -> Entity {
-    let model = model_name(u, map, &p.manifest)
-        .and_then(|name| p.bank.0.iter().position(|m| m.model.logical == name));
+    let model = model_name(u, map, &p.manifest).and_then(|name| {
+        p.bank
+            .0
+            .iter()
+            .position(|m| m.model.logical == name && m.scenes.is_some())
+    });
     let root = p
         .commands
         .spawn((
@@ -658,19 +773,18 @@ fn spawn_unit(
         ))
         .id();
     p.commands.entity(root).insert(ModelOf(pivot));
-    match model {
-        Some(index) => {
-            let entry = &p.bank.0[index];
+    match model.and_then(|index| Some((&p.bank.0[index], p.bank.0[index].scenes.as_ref()?))) {
+        Some((entry, scenes)) => {
             let size = neutral_art(u, &p.manifest)
                 .and_then(|art| art.scale)
                 .unwrap_or(entry.model.scale);
             let scale = Transform::from_scale(Vec3::splat(UNITS_PER_METRE * size));
             let scene = p
                 .commands
-                .spawn((WorldAssetRoot(entry.scene.clone()), scale, ChildOf(pivot)))
+                .spawn((WorldAssetRoot(scenes.body.clone()), scale, ChildOf(pivot)))
                 .observe(on_model_ready)
                 .id();
-            for wearable in &entry.wearables {
+            for wearable in &scenes.wearables {
                 p.commands
                     .spawn((
                         WorldAssetRoot(wearable.clone()),
@@ -742,7 +856,10 @@ fn on_model_ready(
     units: Query<&Unit>,
     bank: Res<ModelBank>,
     joints: Query<(&Name, &Transform)>,
+    mut wearables: Query<&mut Wearable>,
 ) {
+    // Its joints are new: what it wears follows them, not the ones before.
+    Wearable::wearer_ready(ready.entity, &mut wearables);
     let Some(unit) = parents
         .get(ready.entity)
         .ok()
@@ -788,18 +905,24 @@ fn on_model_ready(
     }
 }
 
-/// Points every ready wearable's skin at its wearer's joints of the same
-/// name, case aside.
+/// The names of a worn skin's joints on its own skeleton, in its order and
+/// lower case: what it is bound to its wearer's joints by, the first time and
+/// whenever the wearer's instance is spawned anew.
+#[derive(Component)]
+struct WornJoints(Vec<String>);
+
+/// Points the skins of every ready wearable not yet on its wearer's current
+/// skeleton at the wearer's joints of the same name, case aside.
 fn bind_wearables(
     mut commands: Commands,
-    wearables: Query<(Entity, &Wearable)>,
+    mut wearables: Query<(Entity, &mut Wearable)>,
     posable: Query<(), With<Posable>>,
     children: Query<&Children>,
     names: Query<&Name>,
-    mut skins: Query<&mut bevy::mesh::skinning::SkinnedMesh>,
+    mut skins: Query<(&mut bevy::mesh::skinning::SkinnedMesh, Option<&WornJoints>)>,
 ) {
-    for (entity, wearable) in &wearables {
-        if !wearable.ready || !posable.contains(wearable.wearer) {
+    for (entity, mut wearable) in &mut wearables {
+        if wearable.bound || !wearable.ready || !posable.contains(wearable.wearer) {
             continue;
         }
         let mut joints: HashMap<String, Entity> = HashMap::new();
@@ -810,20 +933,31 @@ fn bind_wearables(
         }
         let parts: Vec<Entity> = children.iter_descendants(entity).collect();
         for part in parts {
-            let Ok(mut skin) = skins.get_mut(part) else {
+            let Ok((mut skin, worn)) = skins.get_mut(part) else {
                 continue;
             };
-            let rebound: Vec<Entity> = skin
-                .joints
+            // Named on its own skeleton while it is still on it.
+            let own = match worn {
+                Some(worn) => worn.0.clone(),
+                None => {
+                    let own: Vec<String> = skin
+                        .joints
+                        .iter()
+                        .map(|joint| {
+                            names
+                                .get(*joint)
+                                .map_or_else(|_| String::new(), |n| n.as_str().to_ascii_lowercase())
+                        })
+                        .collect();
+                    commands.entity(part).insert(WornJoints(own.clone()));
+                    own
+                }
+            };
+            // A joint the wearer lacks stays on the wearable's own skeleton.
+            let rebound: Vec<Entity> = own
                 .iter()
-                .map(|joint| {
-                    names
-                        .get(*joint)
-                        .ok()
-                        .and_then(|n| joints.get(&n.as_str().to_ascii_lowercase()))
-                        .copied()
-                        .unwrap_or(*joint)
-                })
+                .zip(&skin.joints)
+                .map(|(name, joint)| joints.get(name).copied().unwrap_or(*joint))
                 .collect();
             skin.joints = rebound;
             // Its bounds were worked out on its own skeleton.
@@ -831,7 +965,7 @@ fn bind_wearables(
                 .entity(part)
                 .insert(bevy::camera::visibility::NoFrustumCulling);
         }
-        commands.entity(entity).remove::<Wearable>();
+        wearable.bound = true;
     }
 }
 

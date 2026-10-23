@@ -188,7 +188,7 @@ the player's own Dota 2 folder inside the browser (nothing is uploaded) and has 
 ## Checking the picture
 
 `tools/visual_check.sh REPLAY.brp` measures dbota's picture of a recorded Map 2 match:
-fogged ground at most 50% of its own unfogged luminance and 45% of its saturation, seen ground untouched, and a 1–5 cell border (each cell is measured drawn with the fog and without it, so any tick works; `VISUAL_TICK`, `VISUAL_RUNS` and `VISUAL_DIR` set the tick, the repeats of the hero-model check and the output folder), seen from both seats: every hero model loads whole and is drawn with detail, buildings stand as the map places them, enemy buildings are seen through the fog and the enemy base is fogged, no range rings without `Alt`, no gold or souls
+fogged ground at most 50% of its own unfogged luminance and 45% of its saturation, seen ground untouched, and a 1–5 cell border (each cell is measured drawn with the fog and without it, so any tick works; `VISUAL_TICK`, `VISUAL_RUNS` and `VISUAL_DIR` set the tick, the repeats of the hero-model check (cold and warm, the animated portrait on and off) and the output folder), seen from both seats: every hero model loads whole, each part on the hero's own skeleton and no scene replaced once drawn, and is drawn with detail, buildings stand as the map places them, enemy buildings are seen through the fog and the enemy base is fogged, no range rings without `Alt`, no gold or souls
 in the top-left block, round buff icons. It needs the asset cache and a display, and exits non-zero when a check fails.
 
 `tools/bench.sh REPLAY.brp` measures the binary's size, cold and warm start, and the frame times,

@@ -7,7 +7,8 @@
 //!   than the same ground drawn again without the veil (a second shot of the
 //!   held frame), ground it sees is left alone, and the border is neither
 //!   hard nor smeared.
-//! - Heroes are drawn with their models, not stand-ins.
+//! - Heroes are drawn with their models, not stand-ins, each part on the
+//!   hero's own live skeleton, and no model's scene is replaced once drawn.
 //! - Buildings never turn.
 //! - No range ring is drawn while the show-ranges key is up.
 //! - The top-left block tells no gold and no souls.
@@ -40,6 +41,11 @@ pub const SEEN_LUMINANCE_DRIFT: f32 = 0.05;
 /// shading and detail; a stand-in is one flat colour.
 pub const HERO_DETAIL_MIN: f32 = 12.0;
 
+/// How far from its unit's place a joint of a hero's skeleton may be, in
+/// world units: twice the tallest hero. A part farther off is drawn on some
+/// other skeleton than the one walking.
+pub const JOINT_REACH: f32 = 400.0;
+
 /// What the checks read.
 #[derive(SystemParam)]
 pub struct Checks<'w, 's> {
@@ -56,7 +62,10 @@ pub struct Checks<'w, 's> {
     yaws: Res<'w, crate::units::BuildingYaws>,
     tree: Query<'w, 's, &'static Children>,
     meshes: Query<'w, 's, (&'static Mesh3d, &'static ViewVisibility)>,
-    wearables: Query<'w, 's, (), With<crate::units::Wearable>>,
+    wearables: Query<'w, 's, &'static crate::units::Wearable>,
+    skins: Query<'w, 's, &'static bevy::mesh::skinning::SkinnedMesh>,
+    places: Query<'w, 's, &'static GlobalTransform>,
+    replaced: Res<'w, crate::units::ReplacedScenes>,
     texts: Query<'w, 's, &'static Text>,
     chips: Query<
         'w,
@@ -165,10 +174,13 @@ pub fn run(image: &Image, unveiled: &Image, c: &Checks) -> bool {
     ok
 }
 
-/// Every mesh of every hero's model and wearables is there and drawn:
-/// the counts, printed in one line, must match from run to run.
+/// Every mesh of every hero's model and wearables is there and drawn, and
+/// every wearable rides its hero's own live skeleton: the counts, printed
+/// in one line, must match from run to run. No model's scene was replaced
+/// under the units drawn with it (a file loaded twice).
 fn hero_parts(c: &Checks, report: &mut impl FnMut(&str, bool, String)) {
     let mut parts: Vec<String> = Vec::new();
+    let mut skeleton: Vec<String> = Vec::new();
     for entity in c.index.0.values() {
         let Ok(unit) = c.units.get(*entity) else {
             continue;
@@ -182,19 +194,77 @@ fn hero_parts(c: &Checks, report: &mut impl FnMut(&str, bool, String)) {
             .iter()
             .filter(|e| c.meshes.get(**e).is_ok_and(|(_, v)| v.get()))
             .count();
-        let pending = all.iter().filter(|e| c.wearables.contains(**e)).count();
+        let pending = all
+            .iter()
+            .filter(|e| c.wearables.get(**e).is_ok_and(|w| !w.bound()))
+            .count();
         parts.push(format!(
             "{:?}: {meshes} meshes, {drawn} drawn, {pending} wearables unbound",
             unit.team
         ));
+        skeleton.push(worn_skins(c, *entity, unit, &all));
     }
     parts.sort();
+    skeleton.sort();
     println!("visual check: hero parts: {}", parts.join("; "));
     report(
         "hero parts all loaded",
         !parts.is_empty() && parts.iter().all(|p| p.ends_with(" 0 wearables unbound")),
         parts.join("; "),
     );
+    report(
+        "hero parts ride the hero's skeleton",
+        !skeleton.is_empty() && skeleton.iter().all(|s| s.contains(" 0 joints off it")),
+        skeleton.join("; "),
+    );
+    report(
+        "no model scene replaced once drawn",
+        c.replaced.0 == 0,
+        format!("{} scenes replaced", c.replaced.0),
+    );
+}
+
+/// Where the skins a hero wears point: joints that are gone (left where
+/// the skeleton they were bound to was), not on the wearer's skeleton
+/// (nor the wearable's own, for a joint the wearer lacks), or out of the
+/// hero's reach.
+fn worn_skins(c: &Checks, root: Entity, unit: &Unit, all: &[Entity]) -> String {
+    let at = c.places.get(root).map_or(Vec3::ZERO, |p| p.translation());
+    let (mut joints, mut off, mut farthest) = (0, 0, 0.0f32);
+    for (worn, wearable) in all
+        .iter()
+        .filter_map(|e| Some((*e, c.wearables.get(*e).ok()?)))
+    {
+        let on: Vec<Entity> = c
+            .tree
+            .iter_descendants(wearable.wearer())
+            .chain(c.tree.iter_descendants(worn))
+            .collect();
+        for skin in c
+            .tree
+            .iter_descendants(worn)
+            .filter_map(|e| c.skins.get(e).ok())
+        {
+            for joint in &skin.joints {
+                joints += 1;
+                let reach = c
+                    .places
+                    .get(*joint)
+                    .ok()
+                    .filter(|_| on.contains(joint))
+                    .map(|place| place.translation().distance(at));
+                match reach {
+                    Some(d) if d <= JOINT_REACH => farthest = farthest.max(d),
+                    _ => off += 1,
+                }
+            }
+        }
+    }
+    format!(
+        "{:?}: {joints} worn joints, {off} joints off it, farthest {farthest:.0} \
+         from the hero (at most {JOINT_REACH})",
+        unit.team
+    )
 }
 
 /// Buildings stand as the map places them; every enemy building, in the

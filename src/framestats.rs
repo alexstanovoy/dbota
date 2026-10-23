@@ -200,7 +200,7 @@ fn whole(
 ) -> bool {
     let tick = session.0.view().map(|v| v.tick);
     photo.0
-        && bank.0.iter().all(|m| m.loaded && m.graph.is_some())
+        && bank.0.iter().all(|m| m.ready())
         && args.seek.is_none_or(|seek| tick.is_some_and(|t| t >= seek))
 }
 

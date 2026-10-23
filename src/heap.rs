@@ -16,7 +16,7 @@ fn trim_once(
     bank: Res<crate::units::ModelBank>,
     mut done: Local<bool>,
 ) {
-    if *done || !photo.0 || !bank.0.iter().all(|m| m.loaded && m.graph.is_some()) {
+    if *done || !photo.0 || !bank.0.iter().all(|m| m.ready()) {
         return;
     }
     *done = true;

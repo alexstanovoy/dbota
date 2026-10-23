@@ -35,7 +35,7 @@ use bota_proto::UnitView;
 use crate::config::Settings;
 use crate::manifest::Manifest;
 use crate::session::Session;
-use crate::units::{ModelBank, ModelOf, Posable, Unit, UnitIndex, Wearable};
+use crate::units::{ModelBank, ModelOf, Posable, Scenes, Unit, UnitIndex, Wearable};
 
 /// Pixels of the portrait's image: twice the panel's 124 by 140.
 const SIZE: (u32, u32) = (248, 280);
@@ -366,9 +366,12 @@ fn stage(
         if let Some(actor) = stage.actor.take() {
             commands.entity(actor.pivot).despawn();
         }
-        if let Some((model, size)) = want_actor {
+        // A unit is drawn with a model only once its scenes are taken.
+        if let Some((model, size)) = want_actor
+            && let Some(scenes) = &bank.0[model].scenes
+        {
             let still = (!animate).then(|| target_image(&mut images));
-            stage.actor = Some(spawn_actor(&mut commands, &bank, model, size, still));
+            stage.actor = Some(spawn_actor(&mut commands, scenes, model, size, still));
         }
     }
     let backdrop = stage
@@ -385,12 +388,11 @@ fn stage(
 /// is ready and on the stage's layer.
 fn spawn_actor(
     commands: &mut Commands,
-    bank: &ModelBank,
+    scenes: &Scenes,
     model: usize,
     size: f32,
     still: Option<Handle<Image>>,
 ) -> Actor {
-    let entry = &bank.0[model];
     let pivot = commands
         .spawn((
             Transform::from_translation(STAGE),
@@ -401,14 +403,14 @@ fn spawn_actor(
     let scale = Transform::from_scale(Vec3::splat(crate::map::UNITS_PER_METRE * size));
     let body = commands
         .spawn((
-            WorldAssetRoot(entry.scene.clone()),
+            WorldAssetRoot(scenes.body.clone()),
             scale,
             ChildOf(pivot),
             ActorPart { ready: false },
         ))
         .observe(on_part_ready)
         .id();
-    for wearable in &entry.wearables {
+    for wearable in &scenes.wearables {
         commands
             .spawn((
                 WorldAssetRoot(wearable.clone()),
@@ -449,6 +451,7 @@ fn on_part_ready(
         Ok(mut wearable) => wearable.mark_ready(),
         // The body: its wearables bind to its joints once it is posable.
         Err(_) => {
+            Wearable::wearer_ready(root, &mut wearables);
             commands.entity(root).insert(Posable);
         }
     }
@@ -461,7 +464,7 @@ fn pose(
     bank: Res<ModelBank>,
     children: Query<&Children>,
     parts: Query<&ActorPart>,
-    wearing: Query<(), With<Wearable>>,
+    wearing: Query<&Wearable>,
     mut players: Query<&mut AnimationPlayer>,
     mut commands: Commands,
 ) {
@@ -471,7 +474,9 @@ fn pose(
     // Each part ready, and each wearable bound to the body's joints.
     let (any, ready) = children
         .iter_descendants(actor.pivot)
-        .filter_map(|e| Some(parts.get(e).ok()?.ready && !wearing.contains(e)))
+        .filter_map(|e| {
+            Some(parts.get(e).ok()?.ready && wearing.get(e).ok().is_none_or(Wearable::bound))
+        })
         .fold((false, true), |(_, all), one| (true, all && one));
     if !any || !ready {
         return;

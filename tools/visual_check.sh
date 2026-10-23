@@ -31,9 +31,11 @@ dire=$("$here/target/release/dbota" --replay "$replay" --pov 1 --screenshot-at "
 echo "$dire" | sed 's/^visual check: /visual check (Dire): /'
 if echo "$dire" | grep -q "FAIL"; then exit 1; fi
 
-# Every hero model loads whole every time: the client is run again, cold
-# (the asset cache dropped from memory) and warm by turns, and each run's
-# count of hero meshes must match the first's.
+# Every hero model loads whole every time, on its hero's own skeleton: the
+# client is run again, cold (the asset cache dropped from memory) and warm
+# by turns, with the animated portrait (a second copy of the model) on and
+# off by turns, and each run's count of hero meshes must match the first's
+# and its hero-part checks pass.
 runs=${VISUAL_RUNS:-1}
 cache=${DBOTA_ASSETS:-$HOME/.cache/dbota/v$(tr -d '[:space:]' < "$here/assets-manifest/version")}
 first=$(grep -m1 "hero parts:" "$out/dbota.out" 2>/dev/null || true)
@@ -46,12 +48,19 @@ for d,_,fs in os.walk(sys.argv[1]):
             fd=os.open(os.path.join(d,f),os.O_RDONLY); os.posix_fadvise(fd,0,0,os.POSIX_FADV_DONTNEED); os.close(fd)
         except OSError: pass' "$cache"
     fi
-    line=$("$here/target/release/dbota" --replay "$replay" --pov 0 --screenshot-at "$tick" \
+    portrait=$([ $((run % 4)) -ge 2 ] && echo true || echo false)
+    checks=$("$here/target/release/dbota" --replay "$replay" --pov 0 --screenshot-at "$tick" \
         --screenshot-dir "$out" --screenshot-prefix repeat- --distance 6500 \
-        --visual-check --mute --no-vsync 2>/dev/null | grep -m1 "hero parts:" || true)
+        --set animate_portrait="$portrait" --visual-check --mute --no-vsync 2>/dev/null || true)
+    line=$(echo "$checks" | grep -m1 "hero parts:" || true)
     if [ "$line" != "$first" ]; then
         echo "visual check: FAIL hero parts differ on run $run: '$line' against '$first'"
         exit 1
     fi
+    failed=$(echo "$checks" | grep -E "FAIL (hero parts|no model scene)" || true)
+    if [ -n "$failed" ]; then
+        echo "visual check: FAIL on run $run (animated portrait $portrait): $failed"
+        exit 1
+    fi
 done
-echo "visual check: PASS hero parts identical over $runs runs: ${first#*hero parts: }"
+echo "visual check: PASS hero parts identical and on their skeletons over $runs runs: ${first#*hero parts: }"
