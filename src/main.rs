@@ -60,6 +60,7 @@ mod voice;
 mod water;
 #[cfg(target_arch = "wasm32")]
 mod webcache;
+mod window;
 
 use std::path::PathBuf;
 
@@ -188,6 +189,11 @@ pub struct Args {
     /// The window's size at the start, in logical pixels, `WIDTHxHEIGHT`.
     #[arg(long, value_name = "WxH", default_value = "1600x900", value_parser = parse_size)]
     pub window: (u32, u32),
+    /// How the window sits on the screen, over the settings file's
+    /// `display_mode`: `windowed`, `borderless` (windowed fullscreen, the
+    /// default on a desktop) or `fullscreen` (exclusive).
+    #[arg(long, value_name = "MODE", value_parser = parse_display_mode)]
+    pub display_mode: Option<config::DisplayMode>,
     /// Present without vsync.
     #[arg(long)]
     pub no_vsync: bool,
@@ -312,6 +318,9 @@ fn main() -> AppExit {
             return AppExit::error();
         }
     }
+    if let Some(mode) = args.display_mode {
+        settings.display = mode;
+    }
     let mut app = App::new();
     let source = cache_source(&mut app, &args.cache_dir);
     app.insert_resource(args.clone())
@@ -327,6 +336,7 @@ fn main() -> AppExit {
         .add_plugins(FrameTimeDiagnosticsPlugin::default())
         .add_plugins((
             session::plugin,
+            window::plugin,
             map::plugin,
             daylight::plugin,
             fog::plugin,
@@ -416,6 +426,14 @@ fn menu(app: &mut App, args: &Args, store: main_menu::SettingsStore) -> std::io:
     Ok(())
 }
 
+/// A display mode by the name the settings file gives it.
+fn parse_display_mode(text: &str) -> Result<config::DisplayMode, String> {
+    config::DisplayMode::named(text).ok_or_else(|| {
+        let names: Vec<_> = config::DISPLAY_MODES.iter().map(|(_, n)| *n).collect();
+        format!("'{text}' is not one of {}", names.join(", "))
+    })
+}
+
 /// A `WIDTHxHEIGHT` size, each side 64 to 16384.
 fn parse_size(text: &str) -> Result<(u32, u32), String> {
     let (w, h) = text
@@ -458,6 +476,7 @@ fn default_plugins(args: &Args, settings: &config::Settings) -> impl PluginGroup
                     PresentMode::AutoVsync
                 },
                 resizable: true,
+                mode: window::window_mode(settings.display, true),
                 ..default()
             }),
             ..default()

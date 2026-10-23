@@ -255,6 +255,63 @@ impl Default for Quality {
     }
 }
 
+/// How the game window sits on the screen.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DisplayMode {
+    /// A window with a frame, at the size it was given.
+    Windowed,
+    /// A frameless window over the whole monitor, which Dota calls
+    /// "windowed fullscreen": the desktop's mode is kept, Alt-Tab is quick.
+    Borderless,
+    /// The monitor's own mode, taken over by the game.
+    Exclusive,
+}
+
+/// Every display mode with its name in the file, in the order the overlay
+/// steps through them.
+pub const DISPLAY_MODES: [(DisplayMode, &str); 3] = [
+    (DisplayMode::Windowed, "windowed"),
+    (DisplayMode::Borderless, "borderless"),
+    (DisplayMode::Exclusive, "fullscreen"),
+];
+
+impl DisplayMode {
+    /// A mode by the name the file gives it.
+    pub fn named(name: &str) -> Option<DisplayMode> {
+        let name = name.to_ascii_lowercase();
+        DISPLAY_MODES
+            .iter()
+            .find(|(_, named)| *named == name)
+            .map(|(mode, _)| *mode)
+    }
+
+    /// The name the file gives this mode.
+    pub fn name(self) -> &'static str {
+        DISPLAY_MODES
+            .iter()
+            .find(|(mode, _)| *mode == self)
+            .map_or("windowed", |(_, name)| name)
+    }
+
+    /// The mode after this one.
+    pub fn next(self) -> DisplayMode {
+        let at = DISPLAY_MODES.iter().position(|(mode, _)| *mode == self);
+        DISPLAY_MODES[at.map_or(0, |at| (at + 1) % DISPLAY_MODES.len())].0
+    }
+}
+
+impl Default for DisplayMode {
+    /// Windowed fullscreen on a desktop; a browser's canvas is a window of
+    /// the page.
+    fn default() -> DisplayMode {
+        if cfg!(target_arch = "wasm32") {
+            DisplayMode::Windowed
+        } else {
+            DisplayMode::Borderless
+        }
+    }
+}
+
 /// Everything the settings file holds.
 #[derive(Clone, Debug, PartialEq, bevy::prelude::Resource)]
 pub struct Settings {
@@ -275,6 +332,8 @@ pub struct Settings {
     pub animate_portrait: bool,
     /// What the picture may cost.
     pub quality: Quality,
+    /// How the window sits on the screen.
+    pub display: DisplayMode,
 }
 
 impl Default for Settings {
@@ -291,6 +350,7 @@ impl Default for Settings {
             keys: BINDINGS.map(|(_, _, key)| key),
             animate_portrait: false,
             quality: Quality::default(),
+            display: DisplayMode::default(),
         }
     }
 }
@@ -355,6 +415,15 @@ impl Settings {
             "voice_responses" => self.voice = flag()?,
             "edge_pan" => self.aids.edge_pan = flag()?,
             "animate_portrait" => self.animate_portrait = flag()?,
+            "display_mode" => {
+                self.display = DisplayMode::named(value).ok_or_else(|| {
+                    let names: Vec<_> = DISPLAY_MODES.iter().map(|(_, n)| *n).collect();
+                    format!(
+                        "no display mode called '{value}'; one of {}",
+                        names.join(", ")
+                    )
+                })?
+            }
             "quality" => {
                 self.quality = Quality::preset(value).ok_or_else(|| {
                     format!("no quality called '{value}'; one of {}", PRESETS.join(", "))
@@ -415,6 +484,7 @@ impl Settings {
         ] {
             out.push_str(&format!("{name} = {}\n", flag(on)));
         }
+        out.push_str(&format!("display_mode = {}\n", self.display.name()));
         let q = &self.quality;
         out.push_str(&format!(
             "shadows = {}\n",
@@ -603,5 +673,22 @@ mod tests {
                 "{old}"
             );
         }
+    }
+
+    /// A display mode is written and read back by its name, and a wrong
+    /// name is refused with the names that exist.
+    #[test]
+    fn every_display_mode_survives_the_file() {
+        for (mode, _) in DISPLAY_MODES {
+            let settings = Settings {
+                display: mode,
+                ..Settings::default()
+            };
+            let (read, complaints) = Settings::parse(&settings.render());
+            assert!(complaints.is_empty(), "{mode:?}: {complaints:?}");
+            assert_eq!(read.display, mode);
+        }
+        let (_, complaints) = Settings::parse("display_mode = tiny");
+        assert!(complaints[0].contains("borderless"), "{complaints:?}");
     }
 }

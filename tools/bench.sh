@@ -111,10 +111,10 @@ wasm_size=$([ -f "$wasm" ] && stat -c %s "$wasm" || echo "-")
 
 scene=(--replay "$replay" --seek "$tick" --follow 0 --distance "$distance" --bench "$seconds")
 drop_caches
-cold=$(run cold "${scene[@]}" --no-vsync)
+cold=$(run cold "${scene[@]}" --no-vsync --display-mode windowed)
 lines=()
 for i in $(seq 1 "$runs"); do
-    lines+=("$(run "replay-$i" "${scene[@]}" --no-vsync)")
+    lines+=("$(run "replay-$i" "${scene[@]}" --no-vsync --display-mode windowed)")
 done
 replay_line=$(median "${lines[@]}")
 vsync="-"
@@ -127,7 +127,7 @@ if [ -n "$server" ] && [ -x "$server" ]; then
     "$server" --map 2 --players 2 --dummy-seat --port "$port" > "$out/server.log" 2>&1 &
     server_pid=$!
     sleep 1
-    live=$(DBOTA_DRILL=bench run live --addr "127.0.0.1:$port" --no-vsync \
+    live=$(DBOTA_DRILL=bench run live --addr "127.0.0.1:$port" --no-vsync --display-mode windowed \
         --distance "$distance" --bench "$seconds" --bench-warmup 40 || echo "-")
     kill "$server_pid" 2> /dev/null || true
     wait "$server_pid" 2> /dev/null || true

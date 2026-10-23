@@ -74,7 +74,8 @@ Alone: add `--dummy-seat` to the server. A bot is any program that speaks bota's
 | `--cache-dir DIR` | `$DBOTA_ASSETS`, else `~/.cache/dbota/v<N>` | the exported asset cache | |
 | `--config FILE` | `~/.config/dbota/client.conf` | the settings file | |
 | `--set NAME=VALUE` | none | one setting for this run, over the file's | |
-| `--window WxH` | `1600x900` | the window's starting size | |
+| `--window WxH` | `1600x900` | the window's size when windowed | |
+| `--display-mode MODE` | `borderless` | `windowed`, `borderless` (windowed fullscreen) or `fullscreen` (exclusive); over the setting `display_mode` | |
 | `--no-vsync`, `--mute` | off | present without vsync; no sound | |
 
 A server with reserved seats seats only the holder of a seat's key. dbota takes it from the
@@ -110,7 +111,7 @@ the debug options too.
 | Arrows, screen edges | pan the camera (all four edges, the HUD bars included); mouse wheel zooms |
 | hold `Alt` | show attack, tower and ability ranges and the neutral camps' spawn boxes (they are never drawn otherwise) |
 | `M` | mute |
-| `F10` | settings: volume, damage numbers, your hero's voice answers, edge pan, picture quality; keys can be rebound by editing `~/.config/dbota/client.conf` |
+| `F10` | settings: volume, damage numbers, your hero's voice answers, edge pan, display mode, picture quality; keys can be rebound by editing `~/.config/dbota/client.conf` |
 | `Esc` | cancel / close / leave |
 
 Keys are rebound by writing `key.<action> = <key>` lines in `~/.config/dbota/client.conf` (the
@@ -133,6 +134,22 @@ the box:
 Talents: the small button left of the abilities opens the talent tree; when you have a point,
 click a talent to learn it; the Attribute Bonus button right of the abilities spends a point on its next level. Buffs and debuffs of the selected unit sit above the abilities. The
 stash shows at the home shop.
+
+## Window and cursor
+
+On a desktop the game opens as windowed fullscreen, as Dota does. `display_mode` in
+`~/.config/dbota/client.conf` (or the F10 overlay, or `--display-mode` for one run) is `windowed`,
+`borderless` (windowed fullscreen, the default) or `fullscreen` (exclusive); it switches while
+the game runs. On Wayland there is no exclusive fullscreen (the compositor owns the video mode),
+so `fullscreen` shows as `borderless`. Captures (`--screenshot-at`, `--bench`) want
+`--display-mode windowed` for a window of the `--window` size.
+
+While a match is on screen and the window has focus the cursor is confined to the window, so the
+screen edges pan the camera on every side. It is let go in the menus, with the F10 overlay open
+and when the window loses focus (Alt-Tab), and is not confined during captures. Where the platform
+refuses to confine (a Wayland compositor without pointer constraints), a warning is logged and
+the cursor stays free; the cursor is never locked instead. A browser keeps its canvas in the page:
+none of this applies there.
 
 ## Picture quality
 

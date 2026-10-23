@@ -22,12 +22,12 @@ cargo build --release --quiet --manifest-path "$here/Cargo.toml"
 status=0
 "$here/target/release/dbota" --replay "$replay" --pov 0 --screenshot-at "$tick" \
     --screenshot-dir "$out" --screenshot-prefix check- --distance 6500 \
-    --visual-check --mute --no-vsync 2> "$out/dbota.log" | tee "$out/dbota.out" || status=$?
+    --visual-check --mute --no-vsync --display-mode windowed 2> "$out/dbota.log" | tee "$out/dbota.out" || status=$?
 [ "$status" -eq 0 ] || exit "$status"
 # The same seen by the other side, one window more.
 dire=$("$here/target/release/dbota" --replay "$replay" --pov 1 --screenshot-at "$tick" \
     --screenshot-dir "$out" --screenshot-prefix check-dire- --distance 6500 \
-    --visual-check --mute --no-vsync 2>> "$out/dbota.log" || true)
+    --visual-check --mute --no-vsync --display-mode windowed 2>> "$out/dbota.log" || true)
 echo "$dire" | sed 's/^visual check: /visual check (Dire): /'
 if echo "$dire" | grep -q "FAIL"; then exit 1; fi
 
@@ -51,7 +51,7 @@ for d,_,fs in os.walk(sys.argv[1]):
     portrait=$([ $((run % 4)) -ge 2 ] && echo true || echo false)
     checks=$("$here/target/release/dbota" --replay "$replay" --pov 0 --screenshot-at "$tick" \
         --screenshot-dir "$out" --screenshot-prefix repeat- --distance 6500 \
-        --set animate_portrait="$portrait" --visual-check --mute --no-vsync 2>/dev/null || true)
+        --set animate_portrait="$portrait" --visual-check --mute --no-vsync --display-mode windowed 2>/dev/null || true)
     line=$(echo "$checks" | grep -m1 "hero parts:" || true)
     if [ "$line" != "$first" ]; then
         echo "visual check: FAIL hero parts differ on run $run: '$line' against '$first'"
