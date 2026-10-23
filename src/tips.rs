@@ -281,6 +281,13 @@ fn innate_tip(look: &Lookup, core: &bota_client_core::App) -> Option<Content> {
 fn buff_tip(shown: crate::buffs::Shown, rate: u32) -> Option<String> {
     bota_client_core::effect(shown.id).map(|face| {
         let mut lines = vec![face.name().to_string(), face.blurb()];
+        let from = shown.inflictor.and_then(|by| match by {
+            bota_proto::Inflictor::Ability(id) => bota_client_core::ability(id.0).map(|a| a.name),
+            bota_proto::Inflictor::Item(id) => bota_client_core::item(id.0).map(|i| i.name),
+        });
+        if let Some(name) = from.filter(|name| *name != face.name()) {
+            lines.push(format!("From {name}"));
+        }
         if let Some(n) = shown.stacks.filter(|n| *n > 0) {
             lines.push(format!("{n} stacks"));
         }

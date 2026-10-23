@@ -1,14 +1,15 @@
 //! The buffs and debuffs of the unit the bottom panel is about, in a row
-//! over its abilities as Dota draws them: round icons, buffs first with a
-//! green rim, debuffs after with a red one, a dark sweep for the time gone
-//! and the stack count in the corner. The hover popup tells what each does.
+//! over its abilities as Dota draws them: round icons, the art of the
+//! ability or item each came from, buffs first with a green rim, debuffs
+//! after with a red one, a dark sweep for the time gone and the stack count
+//! in the corner. The hover popup tells what each does.
 
 use std::collections::HashMap;
 use std::f32::consts::TAU;
 
 use bevy::prelude::*;
 use bota_client_core::effect;
-use bota_proto::{EffectId, EntityId};
+use bota_proto::{EffectId, Inflictor};
 
 use crate::manifest::Manifest;
 use crate::session::Session;
@@ -33,7 +34,11 @@ pub struct BuffChip {
 pub struct Shown {
     pub id: u16,
     pub ticks_left: Option<u32>,
+    /// What `ticks_left` counts down from.
+    pub ticks_total: Option<u32>,
     pub stacks: Option<u32>,
+    /// The ability or item it came from, whose art it wears.
+    pub inflictor: Option<Inflictor>,
 }
 
 #[derive(Component)]
@@ -165,10 +170,7 @@ fn update(
     mut sweeps: Query<&mut BackgroundGradient>,
     mut texts: Query<&mut Text>,
     kids: Query<&Children, Without<BuffChip>>,
-    // The longest time left seen of each effect on each unit: its whole
-    // length, for the sweep.
-    mut lengths: Local<HashMap<(EntityId, u16), u32>>,
-    mut art: Local<HashMap<u16, Art>>,
+    mut art: Local<HashMap<(u16, Option<Inflictor>), Art>>,
     mut images: ResMut<Assets<Image>>,
 ) {
     let core = &session.0;
@@ -181,16 +183,15 @@ fn update(
                 .map(|e| Shown {
                     id: e.id.0,
                     ticks_left: e.ticks_left,
+                    ticks_total: e.ticks_total,
                     stacks: e.stacks,
+                    inflictor: e.inflictor,
                 })
                 .collect()
         })
         .unwrap_or_default();
     // Buffs first, debuffs after, as Dota lays them.
     shown.sort_by_key(|s| harmful(s.id));
-    if lengths.len() > 512 {
-        lengths.clear();
-    }
     let Ok(row) = rows.single() else {
         return;
     };
@@ -203,7 +204,7 @@ fn update(
         if chip.shown != now {
             chip.shown = now;
         }
-        let (Some(s), Some(u)) = (now, unit) else {
+        let Some(s) = now else {
             continue;
         };
         rim.set_if_neq(BorderColor::all(if harmful(s.id) {
@@ -212,9 +213,16 @@ fn update(
             BUFF_RIM
         }));
         if let Some(mut image) = children.first().and_then(|c| icons.get_mut(*c).ok()) {
-            let art = art.entry(s.id).or_insert_with(|| Art {
-                source: manifest
-                    .effect_icon(s.id)
+            // As Dota's status icons: the art of the ability or item the
+            // effect came from, the effect's own for one from neither.
+            let art = art.entry((s.id, s.inflictor)).or_insert_with(|| Art {
+                source: s
+                    .inflictor
+                    .and_then(|by| match by {
+                        Inflictor::Ability(id) => manifest.ability_icon(id.0),
+                        Inflictor::Item(id) => manifest.item_icon(id.0),
+                    })
+                    .or_else(|| manifest.effect_icon(s.id))
                     .map(|p| server.load(p))
                     .unwrap_or_default(),
                 round: None,
@@ -231,15 +239,9 @@ fn update(
                 image.image = handle;
             }
         }
-        let left = match s.ticks_left {
-            Some(t) => {
-                let whole = lengths.entry((u.id, s.id)).or_insert(t);
-                if t > *whole {
-                    *whole = t;
-                }
-                t as f32 / (*whole).max(1) as f32
-            }
-            None => 1.0,
+        let left = match (s.ticks_left, s.ticks_total) {
+            (Some(t), Some(whole)) => t as f32 / whole.max(1) as f32,
+            _ => 1.0,
         };
         if let Some(mut g) = children.get(1).and_then(|c| sweeps.get_mut(*c).ok()) {
             g.set_if_neq(sweep(left));
