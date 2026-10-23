@@ -29,6 +29,7 @@ use bevy::{
     },
     world_serialization::{WorldAssetRoot, WorldInstanceReady},
 };
+use bota_client_core::ClientSession;
 use bota_proto::UnitView;
 
 use crate::config::Settings;
@@ -742,13 +743,14 @@ fn select_named(args: Res<crate::Args>, mut session: NonSendMut<Session>, units:
     };
     let (name, side) = want.split_once('@').unwrap_or((want, ""));
     let core = &mut session.0;
-    let Some(view) = core.view() else {
+    let (Some(view), Some(map)) = (core.view(), core.session().map(ClientSession::map)) else {
         return;
     };
     let found = units.iter().find_map(|u| {
         let live = view.unit(u.id)?;
         let side_ok = side.is_empty() || format!("{:?}", u.team).eq_ignore_ascii_case(side);
-        (side_ok && crate::units::unit_name(live).eq_ignore_ascii_case(name)).then_some(u.id)
+        let named = crate::units::unit_name(map, live).eq_ignore_ascii_case(name);
+        (side_ok && named).then_some(u.id)
     });
     if found.is_some() && core.selected != found {
         core.selected = found;

@@ -11,8 +11,8 @@ use bevy::{
     world_serialization::WorldAsset,
     world_serialization::WorldInstanceReady,
 };
-use bota_client_core::bodies;
-use bota_core::{NEUTRALS, NeutralKind, kind_def};
+use bota_client_core::{ClientSession, bodies};
+use bota_core::{MapDef, NEUTRALS, NeutralKind, kind_def};
 use bota_proto::{EntityId, Team, UnitKind, UnitView};
 
 use crate::coords::sim_facing_to_rotation;
@@ -320,16 +320,16 @@ fn neutral_art<'a>(unit: &UnitView, manifest: &'a Manifest) -> Option<&'a UnitAr
 }
 
 /// What a unit is called: a neutral creep by its own name, anything else by
-/// its kind's.
-pub fn unit_name(unit: &UnitView) -> &'static str {
+/// its kind's, a barracks by the one the map puts where it stands.
+pub fn unit_name(map: &MapDef, unit: &UnitView) -> &'static str {
     match unit.neutral.and_then(NeutralKind::of) {
         Some(kind) => kind.neutral().name,
-        None => bota_core::unit_name(unit.kind, unit.team, unit.max_hp),
+        None => bota_core::unit_name(map, unit.kind, unit.team, unit.pos),
     }
 }
 
 /// The logical name of the model a unit is drawn with.
-fn model_name(unit: &UnitView, manifest: &Manifest) -> Option<String> {
+fn model_name(unit: &UnitView, map: &MapDef, manifest: &Manifest) -> Option<String> {
     if unit.kind == UnitKind::CreepNeutral {
         return neutral_art(unit, manifest)?.model.clone();
     }
@@ -347,7 +347,7 @@ fn model_name(unit: &UnitView, manifest: &Manifest) -> Option<String> {
         UnitKind::Tower => format!("tower.{side}.model"),
         UnitKind::Ancient => format!("ancient.{side}.model"),
         UnitKind::Barracks => {
-            let reach = if bota_core::is_ranged_barracks(unit.kind, unit.max_hp) {
+            let reach = if bota_core::barracks_ranged_at(map, unit.team, unit.pos) == Some(true) {
                 "ranged"
             } else {
                 "melee"
@@ -541,6 +541,9 @@ fn sync_units(
     let Some(view) = core.view() else {
         return;
     };
+    let Some(map) = core.session().map(ClientSession::map) else {
+        return;
+    };
     let shown = bodies(view, core.prev_view(), core.smooth.alpha());
     let hidden = view.viewer.is_none() && p.fog.on;
     let mut seen = Vec::with_capacity(shown.len());
@@ -568,7 +571,7 @@ fn sync_units(
             }
             None => {
                 // Not before its model has loaded whole, wearables and all.
-                let name = model_name(u, &p.manifest);
+                let name = model_name(u, map, &p.manifest);
                 if let Some(name) = &name {
                     p.ensure_model(name);
                 }
@@ -579,7 +582,7 @@ fn sync_units(
                     continue;
                 }
                 let facing = drawn_facing(u, body.facing, at, &p.yaws);
-                let entity = spawn_unit(&mut p, u, at, facing, place);
+                let entity = spawn_unit(&mut p, u, map, at, facing, place);
                 p.index.0.insert(u.id, entity);
             }
         }
@@ -613,8 +616,15 @@ fn sync_units(
 }
 
 /// Spawns one unit: a root at its place, and its model or stand-in.
-fn spawn_unit(p: &mut SyncParams, u: &UnitView, at: Vec2, facing: f32, place: Vec3) -> Entity {
-    let model = model_name(u, &p.manifest)
+fn spawn_unit(
+    p: &mut SyncParams,
+    u: &UnitView,
+    map: &MapDef,
+    at: Vec2,
+    facing: f32,
+    place: Vec3,
+) -> Entity {
+    let model = model_name(u, map, &p.manifest)
         .and_then(|name| p.bank.0.iter().position(|m| m.model.logical == name));
     let root = p
         .commands

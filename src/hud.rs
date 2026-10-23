@@ -1054,7 +1054,7 @@ fn readouts(
     mut texts: Query<(&Readout, &mut Text)>,
 ) {
     let core = &session.0;
-    let Some(view) = core.view() else {
+    let (Some(view), Some(map)) = (core.view(), core.session().map(ClientSession::map)) else {
         return;
     };
     let rate = u32::from(core.tick_rate().max(1));
@@ -1073,7 +1073,7 @@ fn readouts(
             Readout::PanelName => p
                 .and_then(|p| bota_core::hero_def(p.hero))
                 .map(|hero| hero.name.to_string())
-                .or(unit.map(|u| crate::units::unit_name(u).to_string()))
+                .or(unit.map(|u| crate::units::unit_name(map, u).to_string()))
                 .unwrap_or_default(),
             Readout::PanelLevel => unit
                 .filter(|u| u.level > 0)
