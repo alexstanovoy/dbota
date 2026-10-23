@@ -319,20 +319,10 @@ fn shots(core: &bota_client_core::App, sound: &mut impl FnMut(Kind, f32, Option<
                 .is_err()
     });
     for p in new.take(SHOTS_PER_TICK) {
-        let (px, py) = (p.pos.x.to_f32(), p.pos.y.to_f32());
-        let from = view
-            .units
-            .iter()
-            .filter(|u| u.team == p.team)
-            .map(|u| (u, (u.pos.x.to_f32() - px).hypot(u.pos.y.to_f32() - py)))
-            .min_by(|a, b| a.1.total_cmp(&b.1));
-        match from {
-            Some((u, d)) if u.kind == UnitKind::Tower && d < 300.0 => {
-                sound(Kind::TowerShot, 0.7, Some((px, py)))
-            }
-            Some((u, d)) if u.kind == UnitKind::CreepRanged && d < 150.0 => {
-                sound(Kind::CreepShot, 0.35, Some((px, py)))
-            }
+        let at = Some((p.pos.x.to_f32(), p.pos.y.to_f32()));
+        match p.source.and_then(|id| view.unit(id)).map(|u| u.kind) {
+            Some(UnitKind::Tower) => sound(Kind::TowerShot, 0.7, at),
+            Some(UnitKind::CreepRanged) => sound(Kind::CreepShot, 0.35, at),
             _ => {}
         }
     }
