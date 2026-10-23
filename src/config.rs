@@ -368,6 +368,15 @@ impl Settings {
                     _ => return Err(format!("'{value}' is not off, low or high")),
                 }
             }
+            // The key older versions wrote, read as the choice it was.
+            "msaa" => {
+                self.quality.anti_alias = match value {
+                    "1" | "off" => AntiAlias::Off,
+                    "2" => AntiAlias::Msaa2,
+                    "4" => AntiAlias::Msaa4,
+                    _ => return Err(format!("'{value}' is not 1, 2 or 4")),
+                }
+            }
             "anti_aliasing" => {
                 self.quality.anti_alias = AntiAlias::named(value).ok_or_else(|| {
                     let names: Vec<&str> = AntiAlias::ALL.iter().map(|a| a.name()).collect();
@@ -571,6 +580,28 @@ mod tests {
             assert!(complaints.is_empty(), "{name}: {complaints:?}");
             assert_eq!(read, settings, "{name}");
             assert_eq!(read.quality.preset_name(), Some(name));
+        }
+    }
+
+    /// A file an older version wrote keeps its multisampling choice, and is
+    /// written back under the new key.
+    #[test]
+    fn an_old_msaa_line_is_read_as_the_new_setting() {
+        for (old, new) in [
+            ("1", AntiAlias::Off),
+            ("off", AntiAlias::Off),
+            ("2", AntiAlias::Msaa2),
+            ("4", AntiAlias::Msaa4),
+        ] {
+            let (read, complaints) = Settings::parse(&format!("volume = 0.5\nmsaa = {old}\n"));
+            assert!(complaints.is_empty(), "{old}: {complaints:?}");
+            assert_eq!(read.quality.anti_alias, new, "{old}");
+            let written = read.render();
+            assert!(!written.contains("msaa ="), "{old}");
+            assert!(
+                written.contains(&format!("anti_aliasing = {}", new.name())),
+                "{old}"
+            );
         }
     }
 }
