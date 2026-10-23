@@ -1,7 +1,11 @@
-Bota Sans Regular and Bold are subsets (printable ASCII and a few symbols) of
-Liberation Sans 2.x Regular and Bold, renamed as the SIL Open Font License
-requires for modified versions. The subsets are distributed under the same
-license, reproduced below.
+Bota Sans Regular and Bold are subsets (Latin, Greek and Cyrillic letters, punctuation and a few
+symbols) of Liberation Sans 2.1.5 Regular and Bold, renamed as the SIL Open Font License requires
+for modified versions. The subsets are distributed under the same license, reproduced below.
+
+Bota Sans CJK (bota-sans-cjk.otf) is a subset (kana, Hangul and the Han characters of the GB 2312,
+Big5 level 1, JIS X 0208 and KS X 1001 standards) of Noto Sans CJK SC Regular 2.004, renamed the
+same way; its copyright and license are in OFL-NotoSansCJK.txt. tools/subset_fonts.py makes all
+three files.
 
 Copyright (c) 2010 Google Corporation with Reserved Font Arimo, Tinos and Cousine.
 Copyright (c) 2012 Red Hat, Inc. with Reserved Font Name Liberation.

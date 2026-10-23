@@ -1,7 +1,8 @@
 //! What every part of the interface shares: the fonts, the palette, the
 //! interface scale, and small builders for text and boxes.
 
-use bevy::{prelude::*, window::PrimaryWindow};
+use bevy::{prelude::*, text::FontCx, window::PrimaryWindow};
+use parley::fontique::{FallbackKey, Script};
 
 use crate::config::Settings;
 use crate::manifest::Manifest;
@@ -41,9 +42,19 @@ pub const HP_MINE: Color = Color::srgb(0.38, 0.95, 0.4);
 /// Health of a foe.
 pub const HP_FOE: Color = Color::srgb(0.86, 0.22, 0.18);
 
+/// The family of the shipped Han, kana and Hangul font, which the Latin fonts
+/// lack. It stands behind them for those scripts; native builds find the
+/// system's fonts for the rest, a browser has none.
+const CJK_FAMILY: &str = "Bota Sans CJK";
+const CJK_SCRIPTS: [&str; 5] = ["Hani", "Hira", "Kana", "Hang", "Bopo"];
+
+/// Keeps the fallback font loaded.
+#[derive(Resource)]
+struct FallbackFont(#[expect(dead_code, reason = "only keeps the font loaded")] Handle<Font>);
+
 pub fn plugin(app: &mut App) {
     app.add_systems(PreStartup, load_fonts)
-        .add_systems(Update, scale_ui)
+        .add_systems(Update, (scale_ui, register_fallback))
         .add_systems(PostUpdate, cover.after(bevy::ui::UiSystems::Layout));
 }
 
@@ -52,6 +63,25 @@ fn load_fonts(mut commands: Commands, server: Res<AssetServer>) {
         bold: server.load("fonts/bota-sans-bold.ttf"),
         regular: server.load("fonts/bota-sans-regular.ttf"),
     });
+    commands.insert_resource(FallbackFont(server.load("fonts/bota-sans-cjk.otf")));
+}
+
+/// Makes the CJK font the fallback of its scripts once Bevy has taken it into
+/// the font collection.
+fn register_fallback(mut cx: ResMut<FontCx>, mut done: Local<bool>) {
+    if *done {
+        return;
+    }
+    let Some(family) = cx.collection.family_id(CJK_FAMILY) else {
+        return;
+    };
+    for script in CJK_SCRIPTS {
+        if let Ok(script) = script.parse::<Script>() {
+            cx.collection
+                .set_fallbacks(FallbackKey::new(script, None), std::iter::once(family));
+        }
+    }
+    *done = true;
 }
 
 /// A text bundle in a font at a size.
