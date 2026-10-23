@@ -6,7 +6,7 @@
 //! own number by the caller.
 
 use bota_core::{
-    AbilityDef, Carried, ItemDef, Ratio, UseSpec,
+    AbilityDef, Carried, ItemDef, Odds, UseSpec,
     rules::{self, TICKS_PER_SECOND},
 };
 use bota_proto::{AbilityId, Fixed};
@@ -79,8 +79,8 @@ fn per_second(per_tick: Fixed) -> String {
     plain(f64::from(per_tick.to_f32()) * f64::from(TICKS_PER_SECOND))
 }
 
-fn percent(share: Ratio) -> String {
-    plain(f64::from(share.num()) * 100.0 / f64::from(share.den()))
+fn percent(chance: Odds) -> String {
+    plain(f64::from(chance.get()) * 100.0 / f64::from(Odds::WHOLE))
 }
 
 fn item_value(def: &ItemDef, key: &str) -> Option<Levels> {
@@ -263,10 +263,7 @@ fn requiem_value(def: &AbilityDef, key: &str) -> Option<Levels> {
         "requiem_radius" => one(def.range),
         "requiem_line_width_start" => one(rules::REQUIEM_LINE_WIDTH_START),
         "requiem_line_width_end" => one(rules::REQUIEM_LINE_WIDTH_END),
-        "soul_death_release" => one(plain(
-            f64::from(rules::REQUIEM_DEATH_LINES.num())
-                / f64::from(rules::REQUIEM_DEATH_LINES.den()),
-        )),
+        "soul_death_release" => one(plain(f64::from(rules::REQUIEM_DEATH_LINES_PCT) / 100.0)),
         _ => None,
     }
 }
