@@ -8,9 +8,9 @@ use bevy::{
     prelude::*,
 };
 use bota_client_core::flights;
-use bota_proto::{EntityId, Team};
+use bota_proto::{EntityId, EventKind, Team};
 
-use crate::ability_art::{Flight, art_of};
+use crate::ability_art::{Flight, art_by};
 use crate::manifest::Manifest;
 use crate::map::Ground;
 use crate::session::Session;
@@ -60,8 +60,6 @@ struct Flying {
     missiles: HashMap<EntityId, Entity>,
     /// The scorching projectiles already burst, while they are in view.
     burst: HashSet<EntityId>,
-    /// Where each grenade in flight was last drawn, to burst where it lands.
-    grenades: HashMap<EntityId, (f32, f32)>,
 }
 
 pub fn plugin(app: &mut App) {
@@ -120,15 +118,16 @@ fn missiles(
     let shown = flights(view, core.prev_view(), core.smooth.alpha());
     let mut alive = Vec::with_capacity(shown.len());
     for f in &shown {
-        let ability = f.missile.ability;
-        let flight = ability.map_or(Flight::None, |id| art_of(id).flight);
+        // An attack's missile is a plain bolt; an ability's or an item's
+        // flies as its art says, or not at all.
+        let flight = f
+            .missile
+            .inflictor
+            .map_or(Flight::Bolt, |by| art_by(by).flight);
         let soul = flight == Flight::Soul;
         let grenade = flight == Flight::Grenade;
-        if ability.is_some() && !soul && !grenade {
+        if flight == Flight::None {
             continue;
-        }
-        if grenade {
-            flying.grenades.insert(f.missile.id, (f.x, f.y));
         }
         alive.push(f.missile.id);
         let at = Vec3::new(f.x, ground.at(f.x, f.y) + FLIGHT, -f.y);
@@ -182,14 +181,14 @@ fn missiles(
         }
         keep
     });
-    // A grenade gone from the sky has landed: it bursts where it was.
-    let landed: Vec<(f32, f32)> = flying
-        .grenades
-        .iter()
-        .filter(|(id, _)| !is_alive(id))
-        .map(|(_, at)| *at)
-        .collect();
-    flying.grenades.retain(|id, _| is_alive(id));
+    // A grenade bursts where the server says it landed, which a side is
+    // told whenever it sees the spot, whether or not it saw the flight.
+    let landed = core.told.iter().filter_map(|event| match event {
+        EventKind::Landed { inflictor, at, .. } if art_by(*inflictor).flight == Flight::Grenade => {
+            Some((at.x.to_f32(), at.y.to_f32()))
+        }
+        _ => None,
+    });
     for at in landed {
         burst(
             &mut commands,
@@ -226,10 +225,10 @@ fn bursts(
     let in_view: HashSet<EntityId> = view.projectiles.iter().map(|p| p.id).collect();
     flying.burst.retain(|id| in_view.contains(id));
     for p in &view.projectiles {
-        let Some(id) = p.ability else {
+        let Some(by) = p.inflictor else {
             continue;
         };
-        if !art_of(id).scorches || !flying.burst.insert(p.id) {
+        if !art_by(by).scorches || !flying.burst.insert(p.id) {
             continue;
         }
         let at = (p.pos.x.to_f32(), p.pos.y.to_f32());

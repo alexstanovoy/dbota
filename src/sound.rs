@@ -6,7 +6,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use bevy::{audio::Volume, prelude::*};
-use bota_client_core::{Cue, CueKind, TeleportEnd};
+use bota_client_core::{Cue, CueKind};
 use bota_proto::{SlotId, TeleportView, UnitKind};
 
 use crate::camera::RtsCamera;
@@ -222,14 +222,22 @@ fn fall_off((x, y): (f32, f32), focus: Vec2) -> f32 {
 /// goes quiet.
 fn portals(
     mut commands: Commands,
-    mut session: NonSendMut<Session>,
+    session: NonSend<Session>,
     voices: Res<Voices>,
     cam: Single<&RtsCamera>,
     settings: Res<Settings>,
     args: Res<crate::Args>,
     mut humming: Local<HashMap<SlotId, Humming>>,
 ) {
-    let ends = std::mem::take(&mut session.0.teleport_ends);
+    let ends: Vec<(SlotId, bool)> = session
+        .0
+        .told
+        .iter()
+        .filter_map(|event| match *event {
+            bota_proto::EventKind::Teleported { slot, landed } => Some((slot, landed)),
+            _ => None,
+        })
+        .collect();
     let Some(view) = session.0.view() else {
         return;
     };
@@ -301,13 +309,13 @@ fn portals(
 fn ended_humming(
     humming: impl Iterator<Item = SlotId>,
     teleports: &[TeleportView],
-    told: &[TeleportEnd],
+    told: &[(SlotId, bool)],
 ) -> Vec<(SlotId, bool)> {
     let untold = humming.filter(|slot| {
-        told.iter().all(|end| end.slot != *slot) && !teleports.iter().any(|t| t.slot == *slot)
+        told.iter().all(|(ended, _)| ended != slot) && !teleports.iter().any(|t| t.slot == *slot)
     });
     told.iter()
-        .map(|end| (end.slot, end.landed))
+        .copied()
         .chain(untold.map(|slot| (slot, false)))
         .collect()
 }
@@ -321,7 +329,7 @@ fn shots(core: &bota_client_core::App, sound: &mut impl FnMut(Kind, f32, Option<
         return;
     }
     let new = view.projectiles.iter().filter(|p| {
-        p.ability.is_none()
+        p.inflictor.is_none()
             && prev
                 .projectiles
                 .binary_search_by_key(&p.id, |q| q.id)
@@ -378,11 +386,8 @@ mod tests {
         }
     }
 
-    fn end(slot: u8, landed: bool) -> TeleportEnd {
-        TeleportEnd {
-            slot: SlotId(slot),
-            landed,
-        }
+    fn end(slot: u8, landed: bool) -> (SlotId, bool) {
+        (SlotId(slot), landed)
     }
 
     #[test]

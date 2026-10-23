@@ -1,8 +1,9 @@
 //! How each ability looks: the clip its caster plays, what the ground shows
-//! while it is cast, and the missile it flies. The one place the renderer
-//! keys on ability ids.
+//! while it is cast, and the missile it flies; and how an item's throw flies.
+//! The one place the renderer keys on ability and item ids.
 
-use bota_proto::AbilityId;
+use bota_core::{Act, NeutralAbility, Spell};
+use bota_proto::{AbilityId, Inflictor, ItemId};
 
 /// What an ability draws on the ground while it is being cast.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -21,6 +22,8 @@ pub enum Telegraph {
 pub enum Flight {
     /// A flight with no body of its own: the ability's burst tells it.
     None,
+    /// A plain missile, as an attack's, in its side's colour.
+    Bolt,
     /// A line of the requiem.
     Soul,
     /// A blood grenade.
@@ -79,10 +82,35 @@ pub fn art_of(id: AbilityId) -> AbilityArt {
             clip: "dismember",
             ..PLAIN
         },
-        AbilityId::THROW_GRENADE => AbilityArt {
+        // A neutral's bolt flies as an attack's missile does.
+        id if NeutralAbility::of(id).is_some_and(|ability| {
+            matches!(
+                ability.spell(),
+                Spell::Cast {
+                    act: Act::Bolt { .. },
+                    ..
+                }
+            )
+        }) =>
+        {
+            AbilityArt {
+                flight: Flight::Bolt,
+                ..PLAIN
+            }
+        }
+        _ => PLAIN,
+    }
+}
+
+/// The look of what an ability or an item lets fly: an ability's own, a
+/// Blood Grenade's, and nothing of its own for any other item.
+pub fn art_by(inflictor: Inflictor) -> AbilityArt {
+    match inflictor {
+        Inflictor::Ability(id) => art_of(id),
+        Inflictor::Item(ItemId::BLOOD_GRENADE) => AbilityArt {
             flight: Flight::Grenade,
             ..PLAIN
         },
-        _ => PLAIN,
+        Inflictor::Item(_) => PLAIN,
     }
 }
