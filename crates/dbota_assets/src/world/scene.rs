@@ -4,10 +4,12 @@
 //! per path and tint; images once per texture. Vertex data is not kept: the meshes record
 //! where it comes from and its bounds.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+use std::rc::Rc;
 
 use super::entities::EntityLump;
 use super::place::{self, Affine, IDENTITY};
+use crate::budget::Budget;
 use crate::error::{Error, Result, malformed};
 use crate::export::read_from;
 use crate::kv3::Value;
@@ -23,6 +25,8 @@ use crate::vpk::Vpk;
 pub(super) const OVERLAY_LIFT: f32 = 0.01 / 0.0254;
 /// Most nodes, meshes and materials a world may have.
 const MAX_ITEMS: usize = 1 << 20;
+/// Most bytes the scene's names and materials may take; Dota's map takes ~2 MB.
+const MAX_SCENE_BYTES: usize = 256 << 20;
 
 /// Smallest and largest corner.
 pub(super) type Bounds = [[f32; 3]; 2];
@@ -114,7 +118,11 @@ pub(super) struct Builder<'a, S: Source + ?Sized> {
     model_index: HashMap<String, Option<usize>>,
     mesh_index: HashMap<String, usize>,
     material_index: HashMap<MaterialKey, Option<(usize, bool)>>,
+    /// Materials read so far by path, each read once whatever tints it is drawn with.
+    material_files: HashMap<String, Option<Rc<Material>>>,
     sets: usize,
+    /// What the names and materials take.
+    budget: Budget,
 }
 
 impl<'a, S: Source + ?Sized> Builder<'a, S> {
@@ -138,7 +146,9 @@ impl<'a, S: Source + ?Sized> Builder<'a, S> {
             model_index: HashMap::new(),
             mesh_index: HashMap::new(),
             material_index: HashMap::new(),
+            material_files: HashMap::new(),
             sets: 0,
+            budget: Budget::with_limit("world", MAX_SCENE_BYTES),
         }
     }
 
@@ -147,11 +157,16 @@ impl<'a, S: Source + ?Sized> Builder<'a, S> {
         let world = self
             .data(path)?
             .ok_or_else(|| Error::NotFound(path.to_owned()))?;
+        // A node or lump listed again would place the same things again: each is read once.
+        let mut read = HashSet::new();
         for node in array(world.get("m_worldNodes")) {
             let Some(prefix) = node.get("m_worldNodePrefix").and_then(Value::as_str) else {
                 continue;
             };
-            if let Some(node) = self.data(&format!("{prefix}.vwnod_c"))? {
+            let file = format!("{prefix}.vwnod_c");
+            if read.insert(file.clone())
+                && let Some(node) = self.data(&file)?
+            {
                 self.world_node(&node)?;
             }
         }
@@ -159,7 +174,10 @@ impl<'a, S: Source + ?Sized> Builder<'a, S> {
             let Some(lump) = lump.as_str() else {
                 continue;
             };
-            if let Some(lump) = self.data(&compiled(lump))? {
+            let file = compiled(lump);
+            if read.insert(file.clone())
+                && let Some(lump) = self.data(&file)?
+            {
                 self.entities(&lump)?;
             }
         }
@@ -400,6 +418,7 @@ impl<'a, S: Source + ?Sized> Builder<'a, S> {
             });
         }
         check_count(self.scene.meshes.len(), "meshes")?;
+        self.budget.bytes(name.len() + size_of::<SceneMesh>())?;
         self.scene.meshes.push(SceneMesh {
             name,
             model,
@@ -413,6 +432,7 @@ impl<'a, S: Source + ?Sized> Builder<'a, S> {
 
     fn push_node(&mut self, name: String, mesh: usize, affine: &Affine) -> Result<()> {
         check_count(self.scene.nodes.len(), "nodes")?;
+        self.budget.bytes(name.len() + size_of::<SceneNode>())?;
         self.scene.nodes.push(SceneNode {
             name,
             mesh,
@@ -433,11 +453,11 @@ impl<'a, S: Source + ?Sized> Builder<'a, S> {
         if let Some(&known) = self.material_index.get(&key) {
             return Ok(known);
         }
-        let made = match self.data(&compiled(path))? {
-            Some(data) => {
-                let material = Material::from_vmat(path, &data);
+        let made = match self.material_file(path)? {
+            Some(material) => {
                 let gltf = convert(&material, tint, &mut self.scene.images, self.texture_uri)?;
                 check_count(self.scene.materials.len(), "materials")?;
+                self.budget.bytes(material.json_size())?;
                 self.scene.materials.push(SceneMaterial {
                     gltf,
                     textures: material.textures.iter().map(|(_, t)| t.clone()).collect(),
@@ -449,6 +469,20 @@ impl<'a, S: Source + ?Sized> Builder<'a, S> {
         };
         self.material_index.insert(key, made);
         Ok(made)
+    }
+
+    /// The material file `path` (without `_c`), read once; `None` when no package has it.
+    fn material_file(&mut self, path: &str) -> Result<Option<Rc<Material>>> {
+        if let Some(known) = self.material_files.get(path) {
+            return Ok(known.clone());
+        }
+        let material = match self.data(&compiled(path))? {
+            Some(data) => Some(Rc::new(Material::from_vmat(path, &data)?)),
+            None => None,
+        };
+        self.material_files
+            .insert(path.to_owned(), material.clone());
+        Ok(material)
     }
 }
 

@@ -2,6 +2,7 @@
 //! older binary `VBIB`/`MBUF` block) gives, their data (raw, zstd and/or meshopt compressed), and
 //! the attribute formats Dota's meshes use.
 
+use crate::budget::Budget;
 use crate::bytes::Cursor;
 use crate::error::{Result, malformed};
 use crate::kv3::{self, Value};
@@ -69,17 +70,19 @@ struct Packing {
     zstd: bool,
 }
 
+/// `count` elements of `stride` bytes decoded from `stored`, charged to `budget` first.
 fn decode(
     stored: &[u8],
-    count: usize,
-    stride: usize,
+    (count, stride): (usize, usize),
     vertex: bool,
     packing: Packing,
+    budget: &mut Budget,
 ) -> Result<Vec<u8>> {
     let len = count
         .checked_mul(stride)
         .filter(|&len| len <= MAX_BUFFER)
         .ok_or_else(|| malformed("mesh buffer", format!("{count} × {stride} bytes")))?;
+    budget.bytes(len)?;
     let unzipped;
     let mut bytes = stored;
     if packing.zstd {
@@ -102,8 +105,14 @@ fn decode(
     }
 }
 
-/// The buffer a `CTRL` description (`m_vertexBuffers[i]` or `m_indexBuffers[i]`) names.
-pub(crate) fn from_ctrl(resource: &Resource, desc: &Value, vertex: bool) -> Result<Buffer> {
+/// The buffer a `CTRL` description (`m_vertexBuffers[i]` or `m_indexBuffers[i]`) names, its
+/// decoded bytes charged to `budget`.
+pub(crate) fn from_ctrl(
+    resource: &Resource,
+    desc: &Value,
+    vertex: bool,
+    budget: &mut Budget,
+) -> Result<Buffer> {
     let number = |key: &str| {
         desc.get(key)
             .and_then(Value::as_u64)
@@ -121,7 +130,13 @@ pub(crate) fn from_ctrl(resource: &Resource, desc: &Value, vertex: bool) -> Resu
         meshopt: flag("m_bMeshoptCompressed"),
         zstd: flag("m_bCompressedZSTD"),
     };
-    let data = decode(resource.bytes(block), count, stride, vertex, packing)?;
+    let data = decode(
+        resource.bytes(block),
+        (count, stride),
+        vertex,
+        packing,
+        budget,
+    )?;
     let fields = desc
         .get("m_inputLayoutFields")
         .and_then(Value::as_array)
@@ -154,25 +169,30 @@ fn field_from_kv3(field: &Value) -> Result<Field> {
     })
 }
 
-/// The vertex and index buffers of a binary `VBIB` (or `MBUF`) block.
-pub(crate) fn from_vbib(block: &[u8]) -> Result<(Vec<Buffer>, Vec<Buffer>)> {
+/// The vertex and index buffers of a binary `VBIB` (or `MBUF`) block, their decoded bytes
+/// charged to `budget`.
+pub(crate) fn from_vbib(block: &[u8], budget: &mut Budget) -> Result<(Vec<Buffer>, Vec<Buffer>)> {
     let mut c = Cursor::new(block, "VBIB");
     let vertex_at = c.u32()? as usize;
     let vertex_count = c.u32()? as usize;
-    let index_at = 8 + c.u32()? as usize;
+    let index_at = c.offset32()?;
     let index_count = c.u32()? as usize;
-    let list = |at: usize, count: usize, vertex: bool| -> Result<Vec<Buffer>> {
+    let mut list = |at: usize, count: usize, vertex: bool| -> Result<Vec<Buffer>> {
         if count > block.len() / 24 {
             return Err(malformed("VBIB", format!("{count} buffers")));
         }
         (0..count)
-            .map(|i| binary_buffer(block, at + i * 24, vertex))
+            .map(|i| binary_buffer(block, past(at, i * 24)?, vertex, budget))
             .collect()
     };
-    Ok((
-        list(vertex_at, vertex_count, true)?,
-        list(index_at, index_count, false)?,
-    ))
+    let vertices = list(vertex_at, vertex_count, true)?;
+    Ok((vertices, list(index_at, index_count, false)?))
+}
+
+/// The position `len` bytes past `at` (which a 32-bit target may not reach).
+fn past(at: usize, len: usize) -> Result<usize> {
+    at.checked_add(len)
+        .ok_or_else(|| malformed("VBIB", format!("{len} bytes past {at}")))
 }
 
 /// A cursor at `at` of `block`.
@@ -184,20 +204,20 @@ fn seek(block: &[u8], at: usize) -> Result<Cursor<'_>> {
 
 /// One 24-byte buffer header: count, stride and flags, then (offset, count) of its fields and
 /// (offset, size) of its data, each offset counted from its own field.
-fn binary_buffer(block: &[u8], at: usize, vertex: bool) -> Result<Buffer> {
+fn binary_buffer(block: &[u8], at: usize, vertex: bool, budget: &mut Budget) -> Result<Buffer> {
     let mut c = seek(block, at)?;
     let count = c.u32()? as usize;
     let size = c.u32()?;
-    let fields_at = c.pos() + c.u32()? as usize;
+    let fields_at = c.offset32()?;
     let field_count = c.u32()? as usize;
-    let data_at = c.pos() + c.u32()? as usize;
+    let data_at = c.offset32()?;
     let stored = c.u32()? as usize;
     let stride = (size & STRIDE_MASK) as usize;
     if field_count > block.len() / 56 {
         return Err(malformed("VBIB", format!("{field_count} fields")));
     }
     let fields = (0..field_count)
-        .map(|i| binary_field(block, fields_at + i * 56))
+        .map(|i| binary_field(block, past(fields_at, i * 56)?))
         .collect::<Result<_>>()?;
     let stored = seek(block, data_at)?.take(stored)?;
     let compressed = count.saturating_mul(stride) > stored.len();
@@ -205,7 +225,7 @@ fn binary_buffer(block: &[u8], at: usize, vertex: bool) -> Result<Buffer> {
         meshopt: compressed && size & FLAG_NOT_MESHOPT == 0,
         zstd: compressed && size & FLAG_ZSTD != 0,
     };
-    let data = decode(stored, count, stride, vertex, packing)?;
+    let data = decode(stored, (count, stride), vertex, packing, budget)?;
     Ok(Buffer {
         count,
         stride,
@@ -230,7 +250,8 @@ fn binary_field(block: &[u8], at: usize) -> Result<Field> {
 impl Buffer {
     /// The bytes of attribute `field` of every vertex, `width` bytes each.
     fn column<'a>(&'a self, field: &Field, width: usize) -> Result<impl Iterator<Item = &'a [u8]>> {
-        if field.offset + width > self.stride || self.data.len() < self.count * self.stride {
+        let end = field.offset.checked_add(width);
+        if end.is_none_or(|end| end > self.stride) || self.data.len() < self.count * self.stride {
             return Err(malformed(
                 "mesh buffer",
                 format!("{} runs past its vertex", field.semantic),

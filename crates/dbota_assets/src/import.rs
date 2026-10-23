@@ -719,7 +719,7 @@ fn background(src: &impl Source, pak: &Vpk, vmat: &str, out: &mut Out<'_>) -> Re
     let data = Resource::parse(&bytes)?
         .data()
         .ok_or_else(|| malformed("portraits", "a background material has no DATA"))??;
-    let material = crate::material::Material::from_vmat(vmat, &data);
+    let material = crate::material::Material::from_vmat(vmat, &data)?;
     let vtex = material
         .textures
         .iter()

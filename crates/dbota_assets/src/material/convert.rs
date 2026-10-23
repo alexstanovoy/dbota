@@ -72,6 +72,7 @@ pub(crate) fn convert(
         base_color: base_color(material, tint),
         metallic: material
             .float("g_flMetalness")
+            .filter(|m| m.is_finite())
             .map_or(0.0, |m| m.clamp(0.0, 1.0)),
         alpha: if translucent {
             Alpha::Blend
@@ -82,12 +83,13 @@ pub(crate) fn convert(
         },
         cutoff: material
             .float("g_flAlphaTestReference")
-            .filter(|_| alpha_test),
+            .filter(|c| alpha_test && c.is_finite()),
         double_sided: material.int("F_RENDER_BACKFACES") > 0,
         unlit: material.int("F_UNLIT") > 0,
         specular: specular.then(|| {
             material
                 .vector("g_vSpecularColor")
+                .filter(|v| v.iter().all(|c| c.is_finite()))
                 .map_or([1.0; 3], |v| [v[0], v[1], v[2]])
         }),
         base_color_texture: None,
@@ -113,7 +115,14 @@ fn base_color(material: &Material, tint: [f32; 4]) -> [f32; 4] {
         color[3] = 1.0;
     }
     let [r, g, b] = srgb_to_linear([color[0], color[1], color[2]]);
-    [r, g, b, color[3]].map(|c| c.clamp(0.0, 1.0))
+    // A number that is not finite (only a damaged file has one) leaves the colour white.
+    [r, g, b, color[3]].map(|c| {
+        if c.is_finite() {
+            c.clamp(0.0, 1.0)
+        } else {
+            1.0
+        }
+    })
 }
 
 /// sRGB-encoded colour to linear, with Source2Viewer's rounding.

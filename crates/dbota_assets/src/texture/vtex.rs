@@ -333,9 +333,9 @@ impl Header {
         for _ in 0..count {
             let (kind, pos) = (list.u32()?, start + list.pos());
             let (offset, size) = (list.u32()? as usize, list.u32()? as usize);
-            let payload = (pos + offset)
-                .checked_add(size)
-                .and_then(|end| data.get(pos + offset..end))
+            let payload = pos
+                .checked_add(offset)
+                .and_then(|from| data.get(from..from.checked_add(size)?))
                 .ok_or_else(|| malformed(WHAT, "extra data runs past the end"))?;
             match kind {
                 EXTRA_SHEET => self.rect = sheet::first_rect(payload)?,

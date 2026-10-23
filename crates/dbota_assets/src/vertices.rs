@@ -5,6 +5,7 @@
 
 use std::collections::HashMap;
 
+use crate::budget::Budget;
 use crate::error::{Result, malformed};
 use crate::model::rotate;
 use crate::vbib::{self, Buffer, Field};
@@ -57,17 +58,23 @@ impl Vertices {
 }
 
 /// A vertex buffer's attributes in glTF's frame; bone indices mapped to model bones through
-/// `joints` when the mesh has `weight_count` weights per vertex.
+/// `joints` when the mesh has `weight_count` weights per vertex. What each attribute takes
+/// while it is read is charged to `budget` first: a small file may list one attribute many
+/// times over a large buffer.
 pub(crate) fn convert(
     buffer: &Buffer,
     joints: Option<&[u16]>,
     weight_count: usize,
+    budget: &mut Budget,
 ) -> Result<Vertices> {
     let mut out = Vertices::default();
     let mut fields: Vec<&Field> = buffer.fields.iter().collect();
     fields.sort_by_key(|f| (f.index, f.offset));
     let mut counters: HashMap<String, u32> = HashMap::new();
+    // Read as four floats a vertex, kept as up to four.
+    let per_attribute = buffer.count.saturating_mul(2 * size_of::<[f32; 4]>());
     for field in fields {
+        budget.bytes(per_attribute)?;
         if matches!(
             field.semantic.as_str(),
             "BLENDINDICES" | "BLENDWEIGHT" | "BLENDWEIGHTS"
@@ -115,6 +122,7 @@ pub(crate) fn convert(
         }
     }
     if let (Some(table), Some(indices)) = (joints, buffer.field("BLENDINDICES", 0)) {
+        budget.bytes(per_attribute.saturating_mul(2))?;
         out.skin = Some(skin(buffer, table, indices, weight_count)?);
     }
     Ok(out)

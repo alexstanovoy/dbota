@@ -3,7 +3,7 @@
 //! is either the old one or the new one, never half of each.
 
 use std::fs;
-use std::io;
+use std::io::{self, Read};
 use std::path::{Path, PathBuf};
 
 use crate::error::{Error, Result};
@@ -14,6 +14,8 @@ use crate::source::DirSource;
 pub const STAMP: &str = "stamp.txt";
 /// The file of a finished cache that lists its files (written last but the stamp).
 pub const INDEX: &str = "index.txt";
+/// Longest stamp read; a stamp is a few dozen bytes.
+const MAX_STAMP: u64 = 4096;
 
 /// Writes each file under a folder (paths are [`safe_path`](crate::import::safe_path)s).
 pub struct DirSink {
@@ -70,13 +72,21 @@ pub fn stamp_prefix(version: &str, plan_id: &str) -> String {
 /// Whether the cache at `cache` was made by an importer that writes `prefix`
 /// ([`stamp_prefix`]), whatever install it read.
 pub fn matches_plan(cache: &Path, prefix: &str) -> bool {
-    fs::read_to_string(cache.join(STAMP)).is_ok_and(|s| s.starts_with(&format!("{prefix}/")))
+    read_stamp(cache).is_some_and(|s| s.starts_with(&format!("{prefix}/")))
 }
 
 /// Whether the cache at `cache` was finished with `stamp`.
 pub fn is_current(cache: &Path, stamp: &str) -> bool {
-    fs::read_to_string(cache.join(STAMP)).is_ok_and(|s| s.trim() == stamp)
-        && cache.join(INDEX).is_file()
+    read_stamp(cache).is_some_and(|s| s.trim() == stamp) && cache.join(INDEX).is_file()
+}
+
+/// The cache's stamp; none when it is missing or longer than any stamp is (the cache is
+/// anyone's to write, and the file is read whole).
+fn read_stamp(cache: &Path) -> Option<String> {
+    let file = fs::File::open(cache.join(STAMP)).ok()?;
+    let mut text = String::new();
+    file.take(MAX_STAMP + 1).read_to_string(&mut text).ok()?;
+    (text.len() as u64 <= MAX_STAMP).then_some(text)
 }
 
 /// Imports `plan` from the install at `game` into `cache`, stamped `stamp`. The new cache is
@@ -170,5 +180,26 @@ mod tests {
         assert!(!matches_plan(&cache, &stamp_prefix("7", &edited)));
         assert_ne!(plan_id("a", "bc"), plan_id("ab", "c"));
         fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// The stamp is read whole: a huge one planted in the cache filled the memory.
+    #[test]
+    fn a_stamp_longer_than_any_is_not_read() {
+        let cache = std::env::temp_dir().join(format!("dbota-big-stamp-{}", std::process::id()));
+        fs::create_dir_all(&cache).unwrap();
+        fs::write(cache.join(INDEX), b"").unwrap();
+        let stamp = "v7/rev3/0123456789abcdef/1/2";
+        fs::write(cache.join(STAMP), stamp).unwrap();
+        assert!(is_current(&cache, stamp));
+        // Sparse: nothing is written past the stamp.
+        fs::File::options()
+            .write(true)
+            .open(cache.join(STAMP))
+            .unwrap()
+            .set_len(64 << 30)
+            .unwrap();
+        assert!(!is_current(&cache, stamp));
+        assert!(!matches_plan(&cache, "v7/rev3/0123456789abcdef"));
+        fs::remove_dir_all(&cache).unwrap();
     }
 }

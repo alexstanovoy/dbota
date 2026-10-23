@@ -1,13 +1,18 @@
 //! Writes a [`Model`] as binary glTF (`.glb`), laid out as the asset cache's models are: one
 //! node per render mesh (`<model>.<mesh>`); with a skeleton, a root node named after the model
 //! holding the bones and one skin over all of them; textures as images next to the file.
+//!
+//! The model's types are public, so the writer checks what it is given before writing: a model
+//! glTF cannot say (an index past its vertices, a bone parented after itself, a number that is
+//! not finite, attributes of unequal lengths) or one past [`MAX_GLB`] is an error, never a
+//! panic or a file the client's loader refuses.
 
 use std::collections::HashMap;
 
 use serde_json::{Value as Json, json};
 
 use crate::anim::{Clip, Keys};
-use crate::error::Result;
+use crate::error::{Result, malformed};
 use crate::export::ExportedTexture;
 use crate::material::{Images, Material, convert, extensions_used};
 use crate::model::{Mesh, Model, multiply, rotate};
@@ -18,6 +23,10 @@ const UNSIGNED_SHORT: u32 = 5123;
 const UNSIGNED_INT: u32 = 5125;
 const ARRAY_BUFFER: u32 = 34962;
 const ELEMENT_ARRAY_BUFFER: u32 = 34963;
+/// Largest `.glb` written; the install's largest model makes ~10 MB.
+const MAX_GLB: usize = 1 << 30;
+/// JSON bytes counted per accessor, view, node or channel besides its names.
+const JSON_ITEM: usize = 256;
 
 /// What to write besides the model itself.
 pub struct GltfOptions<'a> {
@@ -54,6 +63,7 @@ struct Builder {
 
 /// The model as a `.glb` file, and the images its materials use (to be written next to it).
 pub fn write_glb(model: &Model, options: &GltfOptions) -> Result<(Vec<u8>, Vec<ExportedTexture>)> {
+    check(model, options)?;
     let mut b = Builder::default();
     let mut scene = Vec::new();
     if options.skeleton {
@@ -380,6 +390,158 @@ impl Builder {
         self.material_index.insert(key, self.materials.len() - 1);
         Ok(Some(self.materials.len() - 1))
     }
+}
+
+fn bad(detail: impl Into<String>) -> crate::Error {
+    malformed("glTF", detail)
+}
+
+fn finite<const N: usize>(values: &[[f32; N]]) -> bool {
+    values.iter().flatten().all(|v| v.is_finite())
+}
+
+/// Whether the model and options hold only what glTF can say, within [`MAX_GLB`].
+fn check(model: &Model, options: &GltfOptions) -> Result<()> {
+    let mut size = options.name.len() + JSON_ITEM;
+    for (i, bone) in model.bones.iter().enumerate() {
+        if bone.parent.is_some_and(|p| p >= i) {
+            return Err(bad(format!("bone {i} has parent {:?}", bone.parent)));
+        }
+        if !finite(&[bone.translation]) || !finite(&[bone.rotation]) {
+            return Err(bad(format!("bone {i} is not finite")));
+        }
+        size += bone.name.len() + 64 + JSON_ITEM;
+    }
+    let kept = model.meshes.iter().filter(|m| {
+        options
+            .meshes
+            .is_none_or(|keep| keep.contains(&m.name.as_str()))
+    });
+    let mut made = std::collections::HashSet::new();
+    for mesh in kept {
+        size += options.name.len() + mesh.name.len() + JSON_ITEM;
+        for v in &mesh.vertices {
+            size += check_vertices(v, options.skeleton.then_some(model.bones.len()))?;
+        }
+        for (i, p) in mesh.primitives.iter().enumerate() {
+            let count = mesh.vertices.get(p.vertices).map(Vertices::len);
+            let count = count.ok_or_else(|| bad(format!("{}: draw call {i}", mesh.name)))?;
+            if p.indices.iter().any(|&v| v as usize >= count) {
+                return Err(bad(format!(
+                    "{}: an index past {count} vertices",
+                    mesh.name
+                )));
+            }
+            if !p.tint.is_none_or(|t| finite(&[t])) {
+                return Err(bad(format!("{}: draw call {i}'s tint", mesh.name)));
+            }
+            size += p.indices.len() * 4 + p.material.len() + 2 * JSON_ITEM;
+            // A material is written once per tint it is drawn with.
+            let key = (
+                p.material.as_str(),
+                p.tint.unwrap_or([1.0; 4]).map(f32::to_bits),
+            );
+            if let Some(m) = options.materials.get(&p.material)
+                && made.insert(key)
+            {
+                size += m.json_size();
+            }
+        }
+    }
+    if options.skeleton {
+        for clip in options.clips {
+            size += check_clip(clip, model.bones.len())?;
+        }
+    }
+    if size > MAX_GLB {
+        return Err(bad(format!("more than {MAX_GLB} bytes")));
+    }
+    Ok(())
+}
+
+/// The bytes a vertex set takes, when its attributes are all as long as its positions and
+/// finite, and its joints (when the skeleton is written, of `bones` bones) are bones.
+fn check_vertices(v: &Vertices, bones: Option<usize>) -> Result<usize> {
+    let n = v.len();
+    let same = |len: usize| len == n;
+    let lengths = v.normals.as_ref().is_none_or(|a| same(a.len()))
+        && v.tangents.as_ref().is_none_or(|a| same(a.len()))
+        && v.uvs.iter().all(|a| same(a.len()))
+        && v.extra.iter().all(|a| same(a.values.len()))
+        && v.skin
+            .as_ref()
+            .is_none_or(|s| same(s.joints.len()) && same(s.weights.len()));
+    if !lengths {
+        return Err(bad("attributes of unequal lengths"));
+    }
+    let numbers = finite(&v.positions)
+        && v.normals.as_deref().is_none_or(finite)
+        && v.tangents.as_deref().is_none_or(finite)
+        && v.uvs.iter().all(|a| finite(a))
+        && v.extra.iter().all(|a| finite(&a.values))
+        && v.skin.as_ref().is_none_or(|s| finite(&s.weights));
+    if !numbers {
+        return Err(bad("an attribute that is not finite"));
+    }
+    let mut names = std::collections::HashSet::new();
+    for a in &v.extra {
+        if !(1..=4).contains(&a.width) || !extra_name(&a.name, a.width) || !names.insert(&a.name) {
+            return Err(bad(format!("attribute {:?} of width {}", a.name, a.width)));
+        }
+    }
+    if let (Some(bones), Some(skin)) = (bones, &v.skin)
+        && skin
+            .joints
+            .iter()
+            .flatten()
+            .any(|&j| usize::from(j) >= bones.max(1))
+    {
+        return Err(bad(format!("a joint past {bones} bones")));
+    }
+    let extra: usize = v.extra.iter().map(|a| a.name.len() + JSON_ITEM).sum();
+    Ok(n * (12 + 12 + 16 + 8 * v.uvs.len() + 16 * v.extra.len() + 24) + extra + 4 * JSON_ITEM)
+}
+
+/// Whether an attribute glTF does not define for the writer may be called `name`: one of an
+/// application's own (`_NAME`), or a vertex colour of three or four components.
+fn extra_name(name: &str, width: usize) -> bool {
+    let color = name
+        .strip_prefix("COLOR_")
+        .is_some_and(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()));
+    (name.len() > 1 && name.starts_with('_')) || (color && width >= 3)
+}
+
+/// The bytes a clip takes, when it animates at most `bones` bones with keyframes glTF can
+/// hold: at least one, as many values as times, increasing finite times.
+fn check_clip(clip: &crate::anim::Clip, bones: usize) -> Result<usize> {
+    if clip.tracks.len() > bones {
+        return Err(bad(format!(
+            "clip {} of {} bones",
+            clip.name,
+            clip.tracks.len()
+        )));
+    }
+    fn keys<const N: usize>(keys: &Keys<N>) -> Option<usize> {
+        let times = &keys.times;
+        let ok = !times.is_empty()
+            && times.len() == keys.values.len()
+            && times.iter().all(|t| t.is_finite() && *t >= 0.0)
+            && times.windows(2).all(|w| w[0] < w[1])
+            && finite(&keys.values);
+        ok.then(|| times.len() * 4 * (N + 1) + 4 * JSON_ITEM)
+    }
+    let mut size = clip.name.len() + JSON_ITEM;
+    for track in &clip.tracks {
+        let sizes = [
+            keys(&track.rotation),
+            keys(&track.translation),
+            keys(&track.scale),
+        ];
+        for s in sizes {
+            size += s.ok_or_else(|| bad(format!("clip {}: its keyframes", clip.name)))?;
+        }
+    }
+    Ok(size)
 }
 
 fn bounds(points: &[[f32; 3]]) -> ([f32; 3], [f32; 3]) {

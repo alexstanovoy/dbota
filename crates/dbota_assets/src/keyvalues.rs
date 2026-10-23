@@ -8,8 +8,14 @@ use crate::error::{Result, malformed};
 /// Deepest nesting of a script's blocks.
 const MAX_DEPTH: usize = 64;
 
-/// A file as text, without a byte-order mark.
+/// Largest file read; the largest, the localization, is ~1.8 MB.
+const MAX_FILE: usize = 16 << 20;
+
+/// A file as text, without a byte-order mark; one larger than any of them is an error.
 pub(crate) fn text(bytes: &[u8]) -> Result<&str> {
+    if bytes.len() > MAX_FILE {
+        return Err(malformed("keyvalues", format!("{} bytes", bytes.len())));
+    }
     let bytes = bytes.strip_prefix(b"\xEF\xBB\xBF").unwrap_or(bytes);
     std::str::from_utf8(bytes).map_err(|e| malformed("keyvalues", e.to_string()))
 }
@@ -19,17 +25,39 @@ pub(crate) fn text(bytes: &[u8]) -> Result<&str> {
 #[derive(Debug)]
 pub(crate) enum Kv {
     Text(String),
-    Block(Vec<(String, Kv)>),
+    Block(Block),
+}
+
+/// A block's items in file order, each key's first place found by hash: a script may hold
+/// any number of keys, and each is looked up as it is read.
+#[derive(Debug, Default)]
+pub(crate) struct Block {
+    items: Vec<(String, Kv)>,
+    first: HashMap<String, usize>,
+}
+
+impl Block {
+    fn position(&self, key: &str) -> Option<usize> {
+        self.first.get(key).copied()
+    }
+
+    fn push(&mut self, key: String, value: Kv) {
+        self.first.entry(key.clone()).or_insert(self.items.len());
+        self.items.push((key, value));
+    }
 }
 
 impl Kv {
     pub(crate) fn get(&self, key: &str) -> Option<&Kv> {
-        self.block()?.iter().find(|(k, _)| k == key).map(|(_, v)| v)
+        match self {
+            Self::Block(block) => block.position(key).map(|at| &block.items[at].1),
+            Self::Text(_) => None,
+        }
     }
 
     pub(crate) fn block(&self) -> Option<&[(String, Kv)]> {
         match self {
-            Self::Block(items) => Some(items),
+            Self::Block(block) => Some(&block.items),
             Self::Text(_) => None,
         }
     }
@@ -41,40 +69,58 @@ pub(crate) enum Token<'a> {
     Close,
 }
 
-/// The quoted strings and braces of KeyValues text; comments and anything else are skipped.
-pub(crate) fn tokens(text: &str) -> Vec<Token<'_>> {
-    let bytes = text.as_bytes();
-    let mut out = Vec::new();
-    let mut i = 0;
-    while i < bytes.len() {
-        match bytes[i] {
-            b'"' => {
-                if let Some(end) = quoted_end(bytes, i + 1) {
-                    out.push(Token::Text(&text[i + 1..end]));
-                    i = end + 1;
-                    continue;
+/// The quoted strings and braces of KeyValues text, one at a time; comments and anything else
+/// are skipped.
+pub(crate) struct Tokens<'a> {
+    text: &'a str,
+    at: usize,
+    /// Where a `*/` was last searched for and none found: none follows any later `/*` either.
+    no_comment_end: Option<usize>,
+}
+
+impl<'a> Iterator for Tokens<'a> {
+    type Item = Token<'a>;
+
+    fn next(&mut self) -> Option<Token<'a>> {
+        let bytes = self.text.as_bytes();
+        while self.at < bytes.len() {
+            let i = self.at;
+            self.at += 1;
+            match bytes[i] {
+                b'"' => {
+                    if let Some(end) = quoted_end(bytes, i + 1) {
+                        self.at = end + 1;
+                        return Some(Token::Text(&self.text[i + 1..end]));
+                    }
                 }
-            }
-            b'{' => out.push(Token::Open),
-            b'}' => out.push(Token::Close),
-            b'/' if bytes.get(i + 1) == Some(&b'/') => {
-                i = bytes[i..]
-                    .iter()
-                    .position(|&b| b == b'\n')
-                    .map_or(bytes.len(), |n| i + n);
-                continue;
-            }
-            b'/' if bytes.get(i + 1) == Some(&b'*') => {
-                if let Some(n) = text[i + 2..].find("*/") {
-                    i += n + 4;
-                    continue;
+                b'{' => return Some(Token::Open),
+                b'}' => return Some(Token::Close),
+                b'/' if bytes.get(i + 1) == Some(&b'/') => {
+                    self.at = bytes[i..]
+                        .iter()
+                        .position(|&b| b == b'\n')
+                        .map_or(bytes.len(), |n| i + n);
                 }
+                b'/' if bytes.get(i + 1) == Some(&b'*') && self.no_comment_end.is_none() => {
+                    match self.text[i + 2..].find("*/") {
+                        Some(n) => self.at = i + n + 4,
+                        None => self.no_comment_end = Some(i),
+                    }
+                }
+                _ => {}
             }
-            _ => {}
         }
-        i += 1;
+        None
     }
-    out
+}
+
+/// The tokens of `text`, read as they are asked for.
+pub(crate) fn tokens(text: &str) -> Tokens<'_> {
+    Tokens {
+        text,
+        at: 0,
+        no_comment_end: None,
+    }
 }
 
 /// Where the quoted string whose text starts at `from` closes (a backslash escapes the next
@@ -97,7 +143,7 @@ fn quoted_end(bytes: &[u8], from: usize) -> Option<usize> {
 /// first block of that key in its place.
 pub(crate) fn parse_kv(text: &str) -> Result<Kv> {
     // Each open block: its items, and its key and place in its parent (none for a dropped one).
-    let mut stack: Vec<Open> = vec![(Vec::new(), None)];
+    let mut stack: Vec<Open> = vec![(Block::default(), None)];
     let mut key: Option<String> = None;
     for token in tokens(text) {
         match token {
@@ -107,18 +153,18 @@ pub(crate) fn parse_kv(text: &str) -> Result<Kv> {
                 }
                 let top = &mut stack.last_mut().expect("the root stays").0;
                 let open = match key.take() {
-                    Some(k) => match top.iter().position(|(x, _)| *x == k) {
-                        None => Some((k, top.len(), Vec::new())),
-                        Some(at) => match &mut top[at].1 {
-                            Kv::Block(items) => Some((k, at, std::mem::take(items))),
+                    Some(k) => match top.position(&k) {
+                        None => Some((k, top.items.len(), Block::default())),
+                        Some(at) => match &mut top.items[at].1 {
+                            Kv::Block(block) => Some((k, at, std::mem::take(block))),
                             Kv::Text(_) => None,
                         },
                     },
                     None => None,
                 };
                 match open {
-                    Some((k, at, items)) => stack.push((items, Some((k, at)))),
-                    None => stack.push((Vec::new(), None)),
+                    Some((k, at, block)) => stack.push((block, Some((k, at)))),
+                    None => stack.push((Block::default(), None)),
                 }
             }
             Token::Close => close(&mut stack),
@@ -126,8 +172,8 @@ pub(crate) fn parse_kv(text: &str) -> Result<Kv> {
                 None => key = Some(s.to_owned()),
                 Some(k) => {
                     let top = &mut stack.last_mut().expect("the root stays").0;
-                    if !top.iter().any(|(x, _)| *x == k) {
-                        top.push((k, Kv::Text(s.to_owned())));
+                    if top.position(&k).is_none() {
+                        top.push(k, Kv::Text(s.to_owned()));
                     }
                 }
             },
@@ -137,26 +183,27 @@ pub(crate) fn parse_kv(text: &str) -> Result<Kv> {
         close(&mut stack);
     }
     Ok(Kv::Block(
-        stack.pop().map(|(items, _)| items).unwrap_or_default(),
+        stack.pop().map(|(block, _)| block).unwrap_or_default(),
     ))
 }
 
 /// An open block: its items so far, and its key and place in its parent.
-type Open = (Vec<(String, Kv)>, Option<(String, usize)>);
+type Open = (Block, Option<(String, usize)>);
 
-/// Closes the innermost open block, putting it back in its place (the root stays open).
+/// Closes the innermost open block, putting it back in its place (the root stays open): where
+/// it was taken from when reopened, else after its parent's items (none came while it was open).
 fn close(stack: &mut Vec<Open>) {
     if stack.len() < 2 {
         return;
     }
-    let (items, place) = stack.pop().expect("more than the root");
+    let (block, place) = stack.pop().expect("more than the root");
     let Some((key, at)) = place else {
         return;
     };
     let parent = &mut stack.last_mut().expect("the root stays").0;
-    match parent.get_mut(at) {
-        Some((k, slot)) if *k == key => *slot = Kv::Block(items),
-        _ => parent.insert(at.min(parent.len()), (key, Kv::Block(items))),
+    match parent.items.get_mut(at) {
+        Some((k, slot)) if *k == key => *slot = Kv::Block(block),
+        _ => parent.push(key, Kv::Block(block)),
     }
 }
 

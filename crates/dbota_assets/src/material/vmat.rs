@@ -2,7 +2,13 @@
 
 use serde_json::{Map, Value as Json, json};
 
+use crate::error::{Result, malformed};
 use crate::kv3::Value;
+
+/// Most parameters of one kind a material may have; Dota's have up to 26.
+const MAX_PARAMS: usize = 1024;
+/// Most bytes of names and texts a material may have; Dota's have a few kilobytes.
+const MAX_TEXT: usize = 256 << 10;
 
 /// A material's shader and parameters, each list in file order with a name's last value at its
 /// first place (as a dictionary filled in file order holds them).
@@ -30,10 +36,37 @@ pub enum Alpha {
 }
 
 impl Material {
-    /// Reads the material `path` (`materials/.../x.vmat`) from its decoded `DATA`.
-    pub fn from_vmat(path: &str, data: &Value) -> Self {
+    /// Reads the material `path` (`materials/.../x.vmat`) from its decoded `DATA`. One with
+    /// more parameters or text than any material has is an error: every glTF material made of
+    /// it (one per tint) carries all of them.
+    pub fn from_vmat(path: &str, data: &Value) -> Result<Self> {
         let file = path.rsplit('/').next().unwrap_or(path);
-        Self {
+        let mut text = path.len();
+        for (list, value) in LISTS {
+            let params = params(data, list, value);
+            if params.len() > MAX_PARAMS {
+                return Err(malformed(
+                    "material",
+                    format!("{path}: {} {list}", params.len()),
+                ));
+            }
+            text += params
+                .iter()
+                .map(|(k, v)| {
+                    let items = v.as_array().map_or(0, <[Value]>::len);
+                    k.len() + v.as_str().map_or(0, str::len) + 8 * items
+                })
+                .sum::<usize>();
+        }
+        let shader = data.get("m_shaderName").and_then(Value::as_str);
+        text += shader.map_or(0, str::len);
+        if text > MAX_TEXT {
+            return Err(malformed(
+                "material",
+                format!("{path}: {text} bytes of text"),
+            ));
+        }
+        Ok(Self {
             path: path.to_owned(),
             name: file.trim_end_matches(".vmat").to_owned(),
             shader: data
@@ -55,7 +88,21 @@ impl Material {
                 v.as_str().map(str::to_owned)
             }),
             extras: extras(path, data),
-        }
+        })
+    }
+
+    /// About the bytes the material's glTF form takes: its texts twice (its parameters and
+    /// their extras copy) and some for each parameter.
+    pub(crate) fn json_size(&self) -> usize {
+        let params = self.ints.len() + self.floats.len() + self.vectors.len();
+        let names: usize = (self.ints.iter().map(|(k, _)| k.len()))
+            .chain(self.floats.iter().map(|(k, _)| k.len()))
+            .chain(self.vectors.iter().map(|(k, _)| k.len()))
+            .chain(self.textures.iter().map(|(k, v)| k.len() + v.len()))
+            .sum();
+        2 * (self.path.len() + self.shader.len() + names)
+            + 64 * (params + self.textures.len())
+            + 1024
     }
 
     pub fn int(&self, key: &str) -> i64 {
@@ -70,6 +117,14 @@ impl Material {
         find(&self.vectors, key).copied()
     }
 }
+
+/// The parameter lists and the key of their values.
+const LISTS: [(&str, &str); 4] = [
+    ("m_intParams", "m_nValue"),
+    ("m_floatParams", "m_flValue"),
+    ("m_vectorParams", "m_value"),
+    ("m_textureParams", "m_pValue"),
+];
 
 fn find<'a, T>(list: &'a [(String, T)], key: &str) -> Option<&'a T> {
     list.iter().find(|(k, _)| k == key).map(|(_, v)| v)

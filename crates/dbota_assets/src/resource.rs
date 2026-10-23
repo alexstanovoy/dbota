@@ -45,7 +45,7 @@ impl<'a> Resource<'a> {
             ));
         }
         let version = c.u16()?;
-        let table_at = c.pos() + c.u32()? as usize;
+        let table_at = c.offset32()?;
         let count = c.u32()? as usize;
         if count > bytes.len() / BLOCK_ENTRY_LEN {
             return Err(malformed("resource header", format!("{count} blocks")));
@@ -154,7 +154,7 @@ impl<'a> Resource<'a> {
         let mut budget = Budget::new("RERL");
         let mut c = Cursor::new(self.bytes, "RERL");
         c.take(block.offset as usize)?;
-        let list_at = c.pos() + c.u32()? as usize;
+        let list_at = c.offset32()?;
         let count = c.u32()? as usize;
         if count > block.size as usize / 16 {
             return Err(malformed("RERL", format!("{count} references")));
@@ -164,7 +164,7 @@ impl<'a> Resource<'a> {
         let mut refs = Vec::with_capacity(count);
         for _ in 0..count {
             let id = c.u64()?;
-            let name_at = c.pos() + c.u32()? as usize;
+            let name_at = c.offset32()?;
             c.take(4)?;
             let mut name = Cursor::new(self.bytes, "RERL name");
             name.take(name_at)?;

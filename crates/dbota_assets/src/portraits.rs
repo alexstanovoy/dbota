@@ -5,6 +5,8 @@ use crate::error::{Result, malformed};
 
 /// Deepest nesting read; the file has four levels.
 const DEPTH_LIMIT: usize = 8;
+/// Largest file read; Dota's is ~1.4 MB.
+const MAX_FILE: usize = 16 << 20;
 /// Values of a framing line, in order: camera position, camera angles, field of view, far plane,
 /// light position, light angles, light field of view, light colour, ambient colour, light scale,
 /// ambient scale.
@@ -171,6 +173,9 @@ fn background(entry: &Kv) -> Option<(String, [[f32; 3]; 4])> {
 /// Dota's framings of the wanted models, in the order of `wanted` (pairs of a logical name and
 /// the model's `.vmdl` path). A model Dota has no framing for is left out.
 pub fn framings(portraits: &[u8], wanted: &[(&str, &str)]) -> Result<Vec<Framed>> {
+    if portraits.len() > MAX_FILE {
+        return Err(malformed("portraits", format!("{} bytes", portraits.len())));
+    }
     let text = std::str::from_utf8(portraits)
         .map_err(|_| malformed("portraits", "the file is not UTF-8"))?;
     let root = Kv::Block(block(&mut Tokens { rest: text }, 0)?);

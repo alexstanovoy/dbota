@@ -16,10 +16,12 @@ pub(crate) struct Budget {
 
 impl Budget {
     pub(crate) fn new(what: &'static str) -> Self {
-        Self {
-            what,
-            left: MAX_TREE_BYTES,
-        }
+        Self::with_limit(what, MAX_TREE_BYTES)
+    }
+
+    /// A budget of `limit` bytes.
+    pub(crate) fn with_limit(what: &'static str, limit: usize) -> Self {
+        Self { what, left: limit }
     }
 
     /// Charges one value at nesting `depth`.
@@ -35,12 +37,10 @@ impl Budget {
 
     /// Charges `len` copied bytes.
     pub(crate) fn bytes(&mut self, len: usize) -> Result<()> {
-        self.left = self.left.checked_sub(len).ok_or_else(|| {
-            malformed(
-                self.what,
-                format!("decodes to more than {MAX_TREE_BYTES} bytes"),
-            )
-        })?;
+        self.left = self
+            .left
+            .checked_sub(len)
+            .ok_or_else(|| malformed(self.what, format!("takes {len} bytes more than it may")))?;
         Ok(())
     }
 

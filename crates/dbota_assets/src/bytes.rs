@@ -71,6 +71,16 @@ impl<'a> Cursor<'a> {
         self.array().map(u64::from_le_bytes)
     }
 
+    /// A `u32` offset counted from its own field: the position it points at (which a 32-bit
+    /// target may not reach).
+    pub(crate) fn offset32(&mut self) -> Result<usize> {
+        let field = self.pos;
+        let delta = self.u32()?;
+        field
+            .checked_add(delta as usize)
+            .ok_or_else(|| malformed(self.what, format!("offset {delta} at {field} overflows")))
+    }
+
     /// A count or size field that must not be negative.
     pub(crate) fn len32(&mut self) -> Result<usize> {
         let value = self.i32()?;

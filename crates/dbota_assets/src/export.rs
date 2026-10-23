@@ -81,7 +81,7 @@ pub fn export_model(
         let bytes = read_from(src, packages, &format!("{material}_c"))?;
         let resource = Resource::parse(&bytes)?;
         if let Some(data) = resource.data() {
-            materials.insert(material.to_owned(), Material::from_vmat(material, &data?));
+            materials.insert(material.to_owned(), Material::from_vmat(material, &data?)?);
         }
     }
     let options = GltfOptions {

@@ -1,11 +1,16 @@
 //! A compiled model (`.vmdl_c`): its skeleton and the render meshes of its most detailed level
 //! of detail, in glTF's frame (Y up, metres; Source is Z up, inches).
 
+use crate::budget::Budget;
 use crate::error::{Result, malformed};
 use crate::kv3::{self, Value};
 use crate::resource::Resource;
 use crate::vbib::{self, Buffer};
 use crate::vertices::{SCALE, TO_GLTF, Vertices, convert};
+
+/// Most bytes a model's meshes may take as they are read: decoded buffers, converted vertices
+/// and draw calls' indices. The largest of the install's models takes ~20 MB.
+const MAX_MODEL_BYTES: usize = 128 << 20;
 
 pub struct Model {
     pub bones: Vec<Bone>,
@@ -60,6 +65,7 @@ impl Model {
             table: integers(data.get("m_remappingTable")),
         };
         let mut meshes = Vec::new();
+        let mut budget = Budget::with_limit("model", MAX_MODEL_BYTES);
         for (i, embedded) in array(ctrl.get("embedded_meshes")).iter().enumerate() {
             let index = number(embedded, &["m_nMeshIndex", "mesh_index"]).unwrap_or(i as i64);
             let in_lod = usize::try_from(index)
@@ -68,7 +74,12 @@ impl Model {
                 .is_none_or(|mask| mask >> lowest & 1 != 0);
             if in_lod {
                 let joints = remap.of(index, bones.len());
-                meshes.push(read_mesh(resource, embedded, joints.as_deref())?);
+                meshes.push(read_mesh(
+                    resource,
+                    embedded,
+                    joints.as_deref(),
+                    &mut budget,
+                )?);
             }
         }
         let material_groups = array(data.get("m_materialGroups"))
@@ -205,9 +216,14 @@ pub(crate) fn floats<const N: usize>(value: Option<&Value>) -> Result<[f32; N]> 
         ));
     }
     for (o, v) in out.iter_mut().zip(items) {
-        *o = v.as_f64().unwrap_or(0.0) as f32;
+        *o = finite(v.as_f64().unwrap_or(0.0) as f32);
     }
     Ok(out)
+}
+
+/// A number as glTF may hold it: NaN and infinities (only a damaged file has them) are 0.
+pub(crate) fn finite(v: f32) -> f32 {
+    if v.is_finite() { v } else { 0.0 }
 }
 
 /// Rotates `v` by the unit quaternion `q` (x, y, z, w).
@@ -238,8 +254,13 @@ pub(crate) fn multiply(a: [f32; 4], b: [f32; 4]) -> [f32; 4] {
 }
 
 /// One embedded mesh: its buffers (from `CTRL`, or an older binary `VBIB` block) and the draw
-/// calls of its `MDAT`/`DATA` block.
-fn read_mesh(resource: &Resource, embedded: &Value, joints: Option<&[u16]>) -> Result<Mesh> {
+/// calls of its `MDAT`/`DATA` block, what they take charged to `budget`.
+fn read_mesh(
+    resource: &Resource,
+    embedded: &Value,
+    joints: Option<&[u16]>,
+    budget: &mut Budget,
+) -> Result<Mesh> {
     let name = ["m_Name", "name"]
         .iter()
         .find_map(|k| embedded.get(k).and_then(Value::as_str))
@@ -251,10 +272,10 @@ fn read_mesh(resource: &Resource, embedded: &Value, joints: Option<&[u16]>) -> R
             .and_then(|i| resource.blocks().get(i))
     };
     let (vertex_buffers, index_buffers) = match block(&["m_nVBIBBlock", "vbib_block"]) {
-        Some(vbib) => vbib::from_vbib(resource.bytes(vbib))?,
+        Some(vbib) => vbib::from_vbib(resource.bytes(vbib), budget)?,
         None => (
-            buffers(resource, embedded.get("m_vertexBuffers"), true)?,
-            buffers(resource, embedded.get("m_indexBuffers"), false)?,
+            buffers(resource, embedded.get("m_vertexBuffers"), true, budget)?,
+            buffers(resource, embedded.get("m_indexBuffers"), false, budget)?,
         ),
     };
     let data = block(&["m_nDataBlock", "data_block"])
@@ -267,16 +288,19 @@ fn read_mesh(resource: &Resource, embedded: &Value, joints: Option<&[u16]>) -> R
         .unwrap_or(0) as usize;
     let vertices = vertex_buffers
         .iter()
-        .map(|b| convert(b, joints.filter(|_| weight_count > 0), weight_count))
+        .map(|b| convert(b, joints.filter(|_| weight_count > 0), weight_count, budget))
         .collect::<Result<_>>()?;
     let index_lists = index_buffers
         .iter()
-        .map(Buffer::indices)
+        .map(|b| {
+            budget.bytes(b.count.saturating_mul(4))?;
+            b.indices()
+        })
         .collect::<Result<Vec<_>>>()?;
     let mut primitives = Vec::new();
     for object in array(data.get("m_sceneObjects")) {
         for call in array(object.get("m_drawCalls")) {
-            primitives.push(draw_call(call, &index_lists, &vertex_buffers)?);
+            primitives.push(draw_call(call, &index_lists, &vertex_buffers, budget)?);
         }
     }
     Ok(Mesh {
@@ -286,17 +310,25 @@ fn read_mesh(resource: &Resource, embedded: &Value, joints: Option<&[u16]>) -> R
     })
 }
 
-fn buffers(resource: &Resource, list: Option<&Value>, vertex: bool) -> Result<Vec<Buffer>> {
+fn buffers(
+    resource: &Resource,
+    list: Option<&Value>,
+    vertex: bool,
+    budget: &mut Budget,
+) -> Result<Vec<Buffer>> {
     array(list)
         .iter()
-        .map(|desc| vbib::from_ctrl(resource, desc, vertex))
+        .map(|desc| vbib::from_ctrl(resource, desc, vertex, budget))
         .collect()
 }
 
+/// A draw call: its indices (a copy of its range of the index buffer, charged to `budget`),
+/// vertex buffer, material and tint.
 fn draw_call(
     call: &Value,
     index_lists: &[Vec<u32>],
     vertex_buffers: &[Buffer],
+    budget: &mut Budget,
 ) -> Result<Primitive> {
     let int = |v: Option<&Value>| {
         v.and_then(Value::as_i64)
@@ -322,23 +354,27 @@ fn draw_call(
         field("m_nBaseVertex")?,
     );
     let vertices = handle("m_vertexBuffers");
-    let vertex_count = vertex_buffers.get(vertices).map_or(0, |b| b.count);
+    let vertex_count = vertex_buffers
+        .get(vertices)
+        .ok_or_else(|| malformed("draw call", format!("no vertex buffer {vertices}")))?
+        .count;
     let all = index_lists
         .get(handle("m_indexBuffer"))
         .ok_or_else(|| malformed("draw call", "no index buffer"))?;
     let range = all
         .get(start..start.saturating_add(count))
         .ok_or_else(|| malformed("draw call", "indices past the buffer"))?;
+    budget.bytes(range.len() * 4)?;
     let mut indices = Vec::with_capacity(range.len());
     for &i in range {
-        let i = i as usize + base;
-        if i >= vertex_count {
-            return Err(malformed(
+        let vertex = base.checked_add(i as usize).filter(|&v| v < vertex_count);
+        let vertex = vertex.ok_or_else(|| {
+            malformed(
                 "draw call",
-                format!("vertex {i} of {vertex_count}"),
-            ));
-        }
-        indices.push(i as u32);
+                format!("vertex {i} + {base} of {vertex_count}"),
+            )
+        })?;
+        indices.push(vertex as u32);
     }
     let material = ["m_material", "m_pMaterial"]
         .iter()
@@ -346,9 +382,9 @@ fn draw_call(
         .unwrap_or_default();
     let tint = call.get("m_vTintColor").map(|t| {
         let rgb = array(Some(t));
-        let c = |i: usize| rgb.get(i).and_then(Value::as_f64).unwrap_or(0.0) as f32;
+        let c = |i: usize| finite(rgb.get(i).and_then(Value::as_f64).unwrap_or(0.0) as f32);
         let alpha = call.get("m_flAlpha").and_then(Value::as_f64).unwrap_or(1.0);
-        [c(0), c(1), c(2), alpha as f32]
+        [c(0), c(1), c(2), finite(alpha as f32)]
     });
     Ok(Primitive {
         vertices,
