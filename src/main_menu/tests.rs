@@ -6,7 +6,7 @@
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command};
 use std::sync::OnceLock;
-use std::sync::atomic::{AtomicU16, AtomicU32, Ordering};
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::{Duration, Instant};
 
 use bota_client_core::{App as Core, Phase, Source};
@@ -22,10 +22,10 @@ use super::view::PageView;
 const PASSWORD: &str = "correct horse battery";
 const RULESET: &str = "solo_mid";
 static NEXT: AtomicU32 = AtomicU32::new(0);
-static NEXT_PORTS: AtomicU16 = AtomicU16::new(0);
-/// Game ports per service, from the first.
-const PORTS: u16 = 4;
-const FIRST_PORT: u16 = 45000;
+/// How long any wait for an event lasts before the test calls it stuck. Waits
+/// end when their condition holds, so the figure only matters to a stuck run;
+/// it is long enough for a machine running many other jobs.
+const PATIENCE: u64 = 300;
 
 /// A scratch folder under the target folder, emptied when dropped.
 struct Scratch(PathBuf);
@@ -118,20 +118,21 @@ impl Drop for Service {
 }
 
 fn config(dir: &Path, binary: &Path) -> String {
-    let first = FIRST_PORT + PORTS * NEXT_PORTS.fetch_add(1, Ordering::Relaxed);
+    // One game at a time: the one port the system hands out now.
+    let port = free_port();
     format!(
         r#"
 listen = "127.0.0.1:0"
 database = "{db}"
 tls_cert = "unused"
 tls_key = "unused"
-game_ports = "{first}-{last}"
+game_ports = "{port}-{port}"
 [password]
 memory_kib = 1024
 iterations = 1
 [limits]
 games_per_source = 200
-game_capacity = {PORTS}
+game_capacity = 1
 lobby_games_max = 1
 [[ruleset]]
 id = "{RULESET}"
@@ -140,21 +141,20 @@ game = "bota"
 game_fingerprint = "{fingerprint:016x}"
 teams = [1, 1]
 rated = true
-max_duration_secs = 600
+max_duration_secs = {PATIENCE}
 [ruleset.launcher]
 kind = "local"
 binary = "{binary}"
 public_url = "ws://127.0.0.1:{{port}}"
 version_probe = ["--wire-fingerprint"]
-start_timeout_secs = 30
+start_timeout_secs = {PATIENCE}
 args = ["--map", "2", "--mode", "lockstep", "--ack-timeout-ticks", "900",
         "--match-id", "{{match_id}}", "--bind", "127.0.0.1", "--port", "0",
-        "--ws-port", "{{port}}", "--start-after-secs", "60", "--abandon-unjoined",
-        "--empty-after-secs", "60"]
+        "--ws-port", "{{port}}", "--start-after-secs", "{PATIENCE}", "--abandon-unjoined",
+        "--empty-after-secs", "{PATIENCE}", "--pick-secs", "1", "--tactical-secs", "0"]
 env = {{ BOTA_SEATS = "{{seats}}" }}
 "#,
         db = dir.join("radovid.db").display(),
-        last = first + PORTS - 1,
         fingerprint = bota_radovid::fingerprint(),
         binary = binary.display(),
     )
@@ -224,17 +224,17 @@ impl Player {
     }
 
     fn register(&mut self, login: &str) {
-        settle(&mut [self], 20, |p| p.menu.page() == Page::Login);
+        settle(&mut [self], |p| p.menu.page() == Page::Login);
         self.menu.act(Act::Go(Page::Register));
         self.fill(&[login, PASSWORD, PASSWORD]);
         self.menu.act(Act::Submit);
-        settle(&mut [self], 20, |p| p.menu.page() == Page::Home);
+        settle(&mut [self], |p| p.menu.page() == Page::Home);
     }
 }
 
-/// Pumps every menu until `done` holds for all, within `secs`.
-fn settle(players: &mut [&mut Player], secs: u64, done: impl Fn(&Player) -> bool) {
-    let deadline = Instant::now() + Duration::from_secs(secs);
+/// Pumps every menu until `done` holds for all, within [`PATIENCE`].
+fn settle(players: &mut [&mut Player], done: impl Fn(&Player) -> bool) {
+    let deadline = Instant::now() + Duration::from_secs(PATIENCE);
     while !players.iter().all(|p| done(p)) {
         assert!(Instant::now() < deadline, "the menus did not settle");
         for player in players.iter_mut() {
@@ -247,7 +247,7 @@ fn settle(players: &mut [&mut Player], secs: u64, done: impl Fn(&Player) -> bool
 /// Opens a launch as the client does and wraps it in a client core.
 fn open(launch: Launch, trust: &Trust) -> Core {
     let mut opening = Opening::start(launch, trust);
-    let deadline = Instant::now() + Duration::from_secs(20);
+    let deadline = Instant::now() + Duration::from_secs(PATIENCE);
     loop {
         if let Some(opened) = opening.poll() {
             return Core::new(Source::Live(opened.expect("the game opens")));
@@ -300,10 +300,10 @@ fn two_players_register_find_accept_play_and_see_their_result() {
     );
 
     alice.menu.act(Act::Find(solo()));
-    settle(&mut [&mut alice], 10, |p| p.menu.view().searches.len() == 1);
+    settle(&mut [&mut alice], |p| p.menu.view().searches.len() == 1);
     assert_eq!(alice.menu.view().searches[0].position, 1);
     bob.menu.act(Act::Find(solo()));
-    settle(&mut [&mut alice, &mut bob], 20, |p| {
+    settle(&mut [&mut alice, &mut bob], |p| {
         p.menu.view().offer.is_some()
     });
     for player in [&mut alice, &mut bob] {
@@ -312,9 +312,7 @@ fn two_players_register_find_accept_play_and_see_their_result() {
         player.menu.act(Act::Accept(offer.proposal));
     }
     // Both accepted: the game server starts and each menu opens its seat.
-    settle(&mut [&mut alice, &mut bob], 60, |p| {
-        p.menu.page() == Page::Game
-    });
+    settle(&mut [&mut alice, &mut bob], |p| p.menu.page() == Page::Game);
     let mut games = [
         (
             open(launch_of(&mut alice), &alice.trust),
@@ -322,7 +320,7 @@ fn two_players_register_find_accept_play_and_see_their_result() {
         ),
         (open(launch_of(&mut bob), &bob.trust), HeroId::PUDGE),
     ];
-    let deadline = Instant::now() + Duration::from_secs(400);
+    let deadline = Instant::now() + Duration::from_secs(PATIENCE + 60);
     while games.iter().any(|(core, _)| core.over.is_none()) {
         assert!(Instant::now() < deadline, "the match did not end");
         for (core, hero) in &mut games {
@@ -337,7 +335,7 @@ fn two_players_register_find_accept_play_and_see_their_result() {
     }
     alice.menu.left_game(None);
     bob.menu.left_game(None);
-    settle(&mut [&mut alice, &mut bob], 30, |p| {
+    settle(&mut [&mut alice, &mut bob], |p| {
         p.menu.page() == Page::Result
     });
     let headlines: Vec<String> = [&alice, &bob]
@@ -385,7 +383,7 @@ fn comes_back_logged_in(player: Player, service: &Service) {
         store,
         _dir,
     };
-    settle(&mut [&mut again], 20, |p| p.menu.page() == Page::Home);
+    settle(&mut [&mut again], |p| p.menu.page() == Page::Home);
     again.menu.act(Act::Logout);
     assert!(
         again.store.read(Entry::Session).is_none(),
@@ -400,23 +398,23 @@ fn a_decline_puts_the_other_back_in_place_and_cools_the_decliner_down() {
     alice.register("alice");
     bob.register("bob");
     alice.menu.act(Act::Find(solo()));
-    settle(&mut [&mut alice], 10, |p| p.menu.view().searches.len() == 1);
+    settle(&mut [&mut alice], |p| p.menu.view().searches.len() == 1);
     bob.menu.act(Act::Find(solo()));
-    settle(&mut [&mut alice, &mut bob], 20, |p| {
+    settle(&mut [&mut alice, &mut bob], |p| {
         p.menu.view().offer.is_some()
     });
     let offer = bob.menu.view().offer.expect("MATCH FOUND");
     let alices = alice.menu.view().offer.expect("MATCH FOUND");
     alice.menu.act(Act::Accept(alices.proposal));
-    settle(&mut [&mut alice, &mut bob], 10, |p| {
+    settle(&mut [&mut alice, &mut bob], |p| {
         p.menu.view().offer.is_some_and(|o| o.accepted == 1)
     });
     bob.menu.act(Act::Decline(offer.proposal));
-    settle(&mut [&mut alice, &mut bob], 10, |p| {
+    settle(&mut [&mut alice, &mut bob], |p| {
         p.menu.view().offer.is_none()
     });
-    settle(&mut [&mut alice], 10, |p| p.menu.view().searches.len() == 1);
-    settle(&mut [&mut bob], 10, |p| p.menu.view().searches.is_empty());
+    settle(&mut [&mut alice], |p| p.menu.view().searches.len() == 1);
+    settle(&mut [&mut bob], |p| p.menu.view().searches.is_empty());
     assert_eq!(
         alice.menu.view().searches[0].position,
         1,
@@ -430,7 +428,7 @@ fn a_decline_puts_the_other_back_in_place_and_cools_the_decliner_down() {
         "the cooldown shows"
     );
     bob.menu.act(Act::Find(solo()));
-    settle(&mut [&mut bob], 10, |p| {
+    settle(&mut [&mut bob], |p| {
         p.menu.view().status.is_some_and(|s| s.error)
     });
 }
@@ -469,6 +467,8 @@ fn direct_connect_over_tcp_and_websocket_without_the_service() {
                 // Two human seats would wait out Dota's strategy time before the game starts.
                 "--tactical-secs",
                 "0",
+                "--pick-secs",
+                "1",
             ])
             .args(["--port", &tcp.to_string(), "--ws-port", &ws.to_string()])
             .spawn()
@@ -490,7 +490,7 @@ fn direct_connect_over_tcp_and_websocket_without_the_service() {
             Some(true)
         );
         // The server may still be starting.
-        let deadline = Instant::now() + Duration::from_secs(10);
+        let deadline = Instant::now() + Duration::from_secs(PATIENCE);
         let opened = loop {
             let mut opening = Opening::start(launch.clone(), &player.trust);
             let opened = loop {
@@ -509,7 +509,7 @@ fn direct_connect_over_tcp_and_websocket_without_the_service() {
         };
         cores.push((opened, hero));
     }
-    let deadline = Instant::now() + Duration::from_secs(30);
+    let deadline = Instant::now() + Duration::from_secs(PATIENCE);
     while cores.iter().any(|(c, _)| c.view().is_none()) {
         assert!(Instant::now() < deadline, "the match did not start");
         for (core, hero) in &mut cores {
