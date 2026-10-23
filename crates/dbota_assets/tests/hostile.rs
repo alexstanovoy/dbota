@@ -285,6 +285,21 @@ fn the_glb_writer_refuses_what_gltf_cannot_say() {
     assert!(write(vec![bone(None, [f32::NAN; 3])], fine(), &[]).is_err());
     assert!(write(Vec::new(), triangle(vec![0, 1, 3], 3), &[]).is_err());
     assert!(write(Vec::new(), triangle(vec![0, 1, 2], 2), &[]).is_err());
+    let colored = |name: &str| {
+        let mut mesh = fine();
+        mesh.vertices[0].extra.push(dbota_assets::Attribute {
+            name: name.to_owned(),
+            width: 4,
+            values: vec![[1.0; 4]; 3],
+        });
+        write(Vec::new(), mesh, &[])
+    };
+    assert!(colored("COLOR_1").is_ok());
+    assert!(
+        colored("COLOR_99999999999").is_err(),
+        "glTF's set numbers are u32"
+    );
+    assert!(colored("NORMAL").is_err());
     let keys = || Keys {
         times: vec![0.0],
         values: vec![[0.0; 3]],

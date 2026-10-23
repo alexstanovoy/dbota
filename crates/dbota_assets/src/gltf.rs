@@ -505,9 +505,10 @@ fn check_vertices(v: &Vertices, bones: Option<usize>) -> Result<usize> {
 /// Whether an attribute glTF does not define for the writer may be called `name`: one of an
 /// application's own (`_NAME`), or a vertex colour of three or four components.
 fn extra_name(name: &str, width: usize) -> bool {
+    // A set number glTF's readers parse: a u32 (`COLOR_99999999999` is no name).
     let color = name
         .strip_prefix("COLOR_")
-        .is_some_and(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()));
+        .is_some_and(|n| n.parse::<u32>().is_ok());
     (name.len() > 1 && name.starts_with('_')) || (color && width >= 3)
 }
 
