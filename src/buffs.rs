@@ -18,8 +18,6 @@ use crate::ui::{self, Fonts};
 const CHIPS: usize = 12;
 /// A chip's side in interface pixels.
 const CHIP: f32 = 30.0;
-/// Effects never listed: the rot shows on its ability.
-const UNLISTED: [u16; 1] = [16];
 
 const BUFF_RIM: Color = Color::srgb(0.35, 0.8, 0.4);
 const DEBUFF_RIM: Color = Color::srgb(0.9, 0.25, 0.2);
@@ -179,7 +177,7 @@ fn update(
         .map(|u| {
             u.effects
                 .iter()
-                .filter(|e| !UNLISTED.contains(&e.id.0) && effect(e.id.0).is_some())
+                .filter(|e| effect(e.id.0).is_some())
                 .map(|e| Shown {
                     id: e.id.0,
                     ticks_left: e.ticks_left,
