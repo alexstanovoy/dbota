@@ -52,8 +52,14 @@ fn manifest_textures() -> Vec<(String, String)> {
 
 /// An exported PNG as RGBA8: width, height, pixels.
 fn read_png(path: &Path) -> (u32, u32, Vec<u8>) {
-    let mut decoder =
-        png::Decoder::new(std::io::BufReader::new(std::fs::File::open(path).unwrap()));
+    let file = std::fs::File::open(path).unwrap_or_else(|e| {
+        panic!(
+            "{}: {e}; a texture added after the reference was exported needs its image there, \
+             made by the same Source2Viewer-CLI 20 (`-i pak01_dir.vpk -d -f <vtex_c> -o <dir>/`)",
+            path.display()
+        )
+    });
+    let mut decoder = png::Decoder::new(std::io::BufReader::new(file));
     decoder.set_transformations(png::Transformations::normalize_to_color8());
     let mut reader = decoder.read_info().unwrap();
     let mut buf = vec![0; reader.output_buffer_size().unwrap()];
