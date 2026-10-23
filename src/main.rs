@@ -30,6 +30,8 @@ mod hud;
 #[cfg(not(target_arch = "wasm32"))]
 mod import;
 mod input;
+#[cfg(not(target_arch = "wasm32"))]
+mod logging;
 mod main_menu;
 mod manifest;
 mod map;
@@ -462,7 +464,15 @@ fn cache_source(app: &mut App, root: &std::path::Path) -> AssetSourceBuilder {
 
 /// Bevy's plugins as dbota sets them up.
 fn default_plugins(args: &Args, settings: &config::Settings) -> impl PluginGroup {
+    #[cfg(not(target_arch = "wasm32"))]
+    let log = bevy::log::LogPlugin {
+        fmt_layer: logging::throttled,
+        ..default()
+    };
+    #[cfg(target_arch = "wasm32")]
+    let log = bevy::log::LogPlugin::default();
     DefaultPlugins
+        .set(log)
         .set(WindowPlugin {
             primary_window: Some(Window {
                 title: "dbota".into(),
