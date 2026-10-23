@@ -82,6 +82,7 @@ fn ntro(structs: &[Struct], fields: &[Field], tail: &[u8]) -> Vec<u8> {
 
 const STRUCT: u16 = 1;
 const INT: u16 = 6;
+const VMATRIX: u16 = 26;
 const POINTER: u8 = 3;
 const ARRAY: u8 = 4;
 
@@ -116,6 +117,41 @@ fn an_ntro_array_of_four_billion_empty_structs_is_an_error() {
     };
     let block = ntro(&structs, &[array], &[ARRAY]);
     assert!(data_of(block, words(&[0, u32::MAX])));
+}
+
+/// A struct may declare a size of zero whatever its fields read: an array of a million of them
+/// read one matrix a million times, sixteen values each, and was charged for two.
+#[test]
+fn ntro_vector_components_are_charged_as_values() {
+    let structs = [
+        Struct {
+            id: 1,
+            size: 8,
+            fields: (0, 1),
+        },
+        Struct {
+            id: 2,
+            size: 0,
+            fields: (1, 1),
+        },
+    ];
+    let fields = [
+        Field {
+            name: None,
+            indirections: (0, 1),
+            type_data: 2,
+            ty: STRUCT,
+        },
+        Field {
+            name: None,
+            indirections: (0, 0),
+            type_data: 0,
+            ty: VMATRIX,
+        },
+    ];
+    let mut data = words(&[0, 1_000_000]);
+    data.resize(64, 0);
+    assert!(data_of(ntro(&structs, &fields, &[ARRAY]), data));
 }
 
 #[test]

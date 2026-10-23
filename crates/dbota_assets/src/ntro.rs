@@ -250,13 +250,28 @@ impl<'a> Reader<'a> {
 
     fn structure(&mut self, declared: &'a DiskStruct, at: usize, depth: usize) -> Result<Value> {
         self.node(depth)?;
-        let mut object = Object::default();
+        let polymorphic = declared.flags & POLYMORPHIC != 0;
         let mut current = declared;
-        if declared.flags & POLYMORPHIC != 0 {
+        if polymorphic {
             let id = self::at(self.file, at)?.u32()?;
             current = self.by_id.get(&id).copied().unwrap_or(declared);
+        }
+        // Its members' slots, taken at once: grown a push at a time, a struct of one field took
+        // four slots, and small structs most of the memory.
+        let mut members = usize::from(polymorphic);
+        let mut chain = Some(current);
+        for _ in 0..MAX_BASES {
+            let Some(s) = chain else { break };
+            members += s.fields.len();
+            chain = self.by_id.get(&s.base).copied().filter(|_| s.base != 0);
+        }
+        self.budget
+            .bytes(members.saturating_mul(size_of::<(String, Value)>()))?;
+        let mut object = Object::with_capacity(members);
+        if polymorphic {
+            let key = self.budget.copy("_class")?;
             let class = self.budget.copy(&current.name)?;
-            object.push("_class".to_owned(), Value::String(class));
+            object.push(key, Value::String(class));
         }
         for _ in 0..MAX_BASES {
             for field in &current.fields {
@@ -384,11 +399,15 @@ impl<'a> Reader<'a> {
         }
         let file = self.file;
         let mut c = self::at(file, at)?;
-        let floats = |c: &mut Cursor, n: usize| -> Result<Value> {
-            (0..n)
-                .map(|_| Ok(Value::Float(f64::from(f32::from_bits(c.u32()?)))))
-                .collect::<Result<_>>()
-                .map(Value::Array)
+        // A vector's components are values of their own: a matrix is sixteen.
+        let budget = &mut self.budget;
+        let mut floats = |c: &mut Cursor, n: usize| -> Result<Value> {
+            budget.bytes(n * size_of::<Value>())?;
+            let mut items = Vec::with_capacity(n);
+            for _ in 0..n {
+                items.push(Value::Float(f64::from(f32::from_bits(c.u32()?))));
+            }
+            Ok(Value::Array(items))
         };
         Ok(match field.ty {
             ENUM => {

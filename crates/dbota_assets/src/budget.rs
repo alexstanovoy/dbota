@@ -6,6 +6,8 @@ use crate::kv3::Value;
 const MAX_TREE_BYTES: usize = 256 << 20;
 /// Deepest nesting of arrays, objects and structs.
 const MAX_DEPTH: usize = 256;
+/// What a heap string takes besides its bytes: the allocator's header and rounding.
+const STRING_OVERHEAD: usize = 16;
 
 /// Bounds the tree a decoder builds, so no input (a string referenced a million times, a typed
 /// array of zero-width constants, a pointer cycle) grows it without limit.
@@ -24,7 +26,8 @@ impl Budget {
         Self { what, left: limit }
     }
 
-    /// Charges one value at nesting `depth`.
+    /// Charges one value at nesting `depth`, as the slot it takes in its object (a key and
+    /// the value) or array.
     pub(crate) fn node(&mut self, depth: usize) -> Result<()> {
         if depth > MAX_DEPTH {
             return Err(malformed(
@@ -32,7 +35,7 @@ impl Budget {
                 format!("nested deeper than {MAX_DEPTH}"),
             ));
         }
-        self.bytes(size_of::<Value>())
+        self.bytes(size_of::<(String, Value)>())
     }
 
     /// Charges `len` copied bytes.
@@ -44,9 +47,11 @@ impl Budget {
         Ok(())
     }
 
-    /// A copy of `text`, charged.
+    /// A copy of `text`, charged with what its allocation takes besides.
     pub(crate) fn copy(&mut self, text: &str) -> Result<String> {
-        self.bytes(text.len())?;
+        if !text.is_empty() {
+            self.bytes(text.len() + STRING_OVERHEAD)?;
+        }
         Ok(text.to_owned())
     }
 }
