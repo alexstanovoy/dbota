@@ -14,7 +14,7 @@ use bota_client_core::{App as Core, ChatLine, say_refusal};
 use bota_core::{TextFault, rules};
 use bota_proto::{Audience, Body, Heard, Speaker};
 
-use crate::input::{Panels, Typing};
+use crate::input::Typing;
 use crate::keys::{Action, Fired};
 use crate::session::Session;
 use crate::ui::{self, Fonts};
@@ -79,14 +79,14 @@ pub fn typing(
     mut events: MessageReader<KeyboardInput>,
     mut composing: MessageReader<Ime>,
     fired: Res<Fired>,
-    panels: Res<Panels>,
     mut typing: ResMut<Typing>,
     mut input: ResMut<ChatInput>,
 ) {
     let core = &mut session.0;
     // The press that opens the line is no keystroke of it.
     let was_open = *typing == Typing::Chat;
-    if *typing == Typing::No && !panels.settings {
+    // The bindings are quiet while the settings screen is up.
+    if *typing == Typing::No {
         let all = fired.pressed(Action::ChatAll);
         if (all || fired.pressed(Action::ChatTeam)) && open(core, &mut input, all) {
             *typing = Typing::Chat;
