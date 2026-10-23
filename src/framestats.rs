@@ -20,6 +20,61 @@ struct Bench {
     times: Vec<f32>,
 }
 
+/// MiB of image or mesh data still held on the CPU side.
+fn cpu_side_mb<A: CpuBytes>(assets: &Assets<A>) -> usize {
+    assets.iter().map(|(_, a)| a.cpu_bytes()).sum::<usize>() >> 20
+}
+
+/// The bytes of an asset kept in main memory.
+trait CpuBytes: Asset {
+    fn cpu_bytes(&self) -> usize;
+}
+
+impl CpuBytes for Image {
+    fn cpu_bytes(&self) -> usize {
+        self.data.as_ref().map_or(0, Vec::len)
+    }
+}
+
+impl CpuBytes for Mesh {
+    fn cpu_bytes(&self) -> usize {
+        self.try_attributes()
+            .map(|attributes| attributes.map(|(_, values)| values.get_bytes().len()).sum())
+            .unwrap_or(0)
+    }
+}
+
+impl Bench {
+    /// Notes a frame at `now`: the first, the one the scene is `whole` at,
+    /// the one the timing begins at after `warmup` seconds. True once the
+    /// timing has begun.
+    fn timing(
+        &mut self,
+        now: f32,
+        whole: impl FnOnce() -> bool,
+        warmup: f32,
+        threads: Option<&ThreadTimes>,
+    ) -> bool {
+        self.first_frame.get_or_insert(now);
+        let Some(ready) = self.ready else {
+            if whole() {
+                self.ready = Some(now);
+            }
+            return false;
+        };
+        if self.began.is_some() {
+            return true;
+        }
+        if now - ready >= warmup {
+            self.began = Some((now, cpu_ticks()));
+            if let Some(threads) = threads {
+                threads.restart();
+            }
+        }
+        false
+    }
+}
+
 /// The CPU time all of this process's threads have used, in clock ticks
 /// (hundredths of a second): what a frame costs whatever else runs.
 fn cpu_ticks() -> Option<u64> {
@@ -31,8 +86,108 @@ fn cpu_ticks() -> Option<u64> {
 
 pub fn plugin(app: &mut App) {
     app.add_systems(Last, bench);
+    if app.world().resource::<crate::Args>().bench.is_some() {
+        threads(app);
+    }
     #[cfg(target_arch = "wasm32")]
     app.add_systems(Last, browser_memory);
+}
+
+/// Milliseconds each frame's work took on the main thread (`First` to
+/// `Last`) and on the render thread (the `Render` schedule, the wait for the
+/// next swapchain image included), shared by both worlds.
+#[derive(Resource, Clone, Default)]
+struct ThreadTimes(std::sync::Arc<std::sync::Mutex<(Vec<f32>, Vec<f32>)>>);
+
+/// Times both threads' work per frame, for `--bench`.
+fn threads(app: &mut App) {
+    use bevy::render::{Render, RenderApp, RenderSystems};
+    let times = ThreadTimes::default();
+    app.insert_resource(times.clone())
+        .add_systems(First, mark.before(bench))
+        .add_systems(Last, main_done.before(bench));
+    if let Some(render) = app.get_sub_app_mut(RenderApp) {
+        render
+            .insert_resource(times)
+            .add_systems(Render, mark.before(RenderSystems::ExtractCommands))
+            .add_systems(Render, render_done.after(RenderSystems::PostCleanup));
+    }
+}
+
+impl ThreadTimes {
+    /// Forgets the frames timed so far.
+    fn restart(&self) {
+        if let Ok(mut all) = self.0.lock() {
+            all.0.clear();
+            all.1.clear();
+        }
+    }
+
+    /// Both threads' milliseconds a frame, as `bench:` fields.
+    fn summary(&self) -> String {
+        self.0.lock().map_or_else(
+            |_| String::new(),
+            |mut all| {
+                let all = &mut *all;
+                spread("main", &mut all.0) + &spread("render", &mut all.1)
+            },
+        )
+    }
+}
+
+/// When this world's frame began.
+#[derive(Resource)]
+struct Began(bevy::platform::time::Instant);
+
+fn mark(mut commands: Commands) {
+    commands.insert_resource(Began(bevy::platform::time::Instant::now()));
+}
+
+fn main_done(began: Option<Res<Began>>, times: Res<ThreadTimes>) {
+    record(began, &times, |t| &mut t.0);
+}
+
+fn render_done(began: Option<Res<Began>>, times: Res<ThreadTimes>) {
+    record(began, &times, |t| &mut t.1);
+}
+
+fn record(
+    began: Option<Res<Began>>,
+    times: &ThreadTimes,
+    which: impl FnOnce(&mut (Vec<f32>, Vec<f32>)) -> &mut Vec<f32>,
+) {
+    let (Some(began), Ok(mut all)) = (began, times.0.lock()) else {
+        return;
+    };
+    let list = which(&mut all);
+    if list.len() < MAX_FRAMES {
+        list.push(began.0.elapsed().as_secs_f32() * 1000.0);
+    }
+}
+
+/// `name_mean_ms=… name_p95_ms=…` of a list of milliseconds.
+fn spread(name: &str, list: &mut [f32]) -> String {
+    if list.is_empty() {
+        return String::new();
+    }
+    let mean = list.iter().sum::<f32>() / list.len() as f32;
+    list.sort_by(f32::total_cmp);
+    let p95 = list[((list.len() - 1) as f32 * 0.95) as usize];
+    format!(" {name}_mean_ms={mean:.2} {name}_p95_ms={p95:.2}")
+}
+
+/// Each render pass's CPU and GPU milliseconds, averaged over Bevy's recent
+/// frames, on stderr as `pass:` lines (with `--bench-gpu`).
+fn pass_report(store: &bevy::diagnostic::DiagnosticsStore) {
+    let mut rows: Vec<(String, f64)> = store
+        .iter()
+        .filter(|d| d.path().as_str().starts_with("render/"))
+        .filter_map(|d| Some((d.path().as_str().to_owned(), d.average()?)))
+        .collect();
+    rows.sort_by(|a, b| a.0.cmp(&b.0));
+    for (path, ms) in rows {
+        eprintln!("pass: {ms:8.3} {path}");
+    }
 }
 
 /// The scene is whole: the minimap photographed (so the ground and the
@@ -61,6 +216,10 @@ fn bench(
     entities: Query<()>,
     assets: (Res<Assets<Image>>, Res<Assets<Mesh>>),
     device: Option<Res<bevy::render::renderer::RenderDevice>>,
+    (threads, store): (
+        Option<Res<ThreadTimes>>,
+        Res<bevy::diagnostic::DiagnosticsStore>,
+    ),
     mut state: Local<Bench>,
     mut exit: MessageWriter<AppExit>,
 ) {
@@ -68,18 +227,11 @@ fn bench(
         return;
     };
     let now = crate::since_start();
-    state.first_frame.get_or_insert(now);
-    if state.ready.is_none() {
-        if whole(&args, &session, &photo, &bank) {
-            state.ready = Some(now);
-        }
+    let whole = || whole(&args, &session, &photo, &bank);
+    if !state.timing(now, whole, args.bench_warmup, threads.as_deref()) {
         return;
     }
-    let ready = state.ready.unwrap_or(now);
-    let Some((began, cpu)) = state.began else {
-        if now - ready >= args.bench_warmup {
-            state.began = Some((now, cpu_ticks()));
-        }
+    let (Some(ready), Some((began, cpu))) = (state.ready, state.began) else {
         return;
     };
     let dt = time.delta_secs() * 1000.0;
@@ -109,21 +261,11 @@ fn bench(
         state.first_frame.unwrap_or(f32::NAN),
         units.0.len(),
         entities.iter().count(),
-        assets
-            .0
-            .iter()
-            .map(|(_, i)| i.data.as_ref().map_or(0, Vec::len))
-            .sum::<usize>()
-            >> 20,
-        assets
-            .1
-            .iter()
-            .filter_map(|(_, m)| m.try_attributes().ok())
-            .flat_map(|attributes| attributes.map(|(_, values)| values.get_bytes().len()))
-            .sum::<usize>()
-            >> 20,
-    );
+        cpu_side_mb(&assets.0),
+        cpu_side_mb(&assets.1),
+    ) + &threads.map_or_else(String::new, |t| t.summary());
     println!("{line}");
+    pass_report(&store);
     // A browser has no stdout: the page reads the console.
     #[cfg(target_arch = "wasm32")]
     info!("{line}");

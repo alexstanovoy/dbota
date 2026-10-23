@@ -164,6 +164,10 @@ pub struct Args {
     /// Debug: seconds `--bench` lets pass before it starts timing.
     #[arg(long, value_name = "SECONDS", default_value_t = 2.0)]
     pub bench_warmup: f32,
+    /// Debug: with `--bench`, also time each render pass on the GPU (where
+    /// the adapter has timestamp queries) and print them as `pass:` lines.
+    #[arg(long, requires = "bench")]
+    pub bench_gpu: bool,
     /// The window's size at the start, in logical pixels, `WIDTHxHEIGHT`.
     #[arg(long, value_name = "WxH", default_value = "1600x900", value_parser = parse_size)]
     pub window: (u32, u32),
@@ -340,6 +344,9 @@ fn main() -> AppExit {
             ..default()
         },
     );
+    if args.bench_gpu {
+        app.add_plugins(bevy::render::diagnostic::RenderDiagnosticsPlugin);
+    }
     app.run()
 }
 
@@ -389,6 +396,10 @@ fn default_plugins(args: &Args, settings: &config::Settings) -> impl PluginGroup
             }),
             ..default()
         })
+        .set(bevy::render::RenderPlugin {
+            render_creation: render_creation(args),
+            ..default()
+        })
         .set(bevy::pbr::PbrPlugin {
             use_gpu_instance_buffer_builder: settings.quality.gpu_batching,
             ..default()
@@ -410,4 +421,17 @@ fn default_plugins(args: &Args, settings: &config::Settings) -> impl PluginGroup
             },
             ..default()
         })
+}
+
+/// The GPU as Bevy asks for it; `--bench-gpu` adds the timestamp queries its
+/// pass timings need.
+fn render_creation(args: &Args) -> bevy::render::settings::RenderCreation {
+    use bevy::render::settings::{WgpuFeatures, WgpuSettings};
+    let mut settings = WgpuSettings::default();
+    if args.bench_gpu {
+        settings.features |= WgpuFeatures::TIMESTAMP_QUERY
+            | WgpuFeatures::TIMESTAMP_QUERY_INSIDE_ENCODERS
+            | WgpuFeatures::TIMESTAMP_QUERY_INSIDE_PASSES;
+    }
+    settings.into()
 }
