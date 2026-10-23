@@ -47,6 +47,9 @@ pub enum Page {
     Result,
     /// A game is on screen, or being opened.
     Game,
+    /// The settings screen, Dota's dashboard's: hotkeys, options, video and
+    /// audio (drawn by [`crate::settings`]).
+    Settings,
 }
 
 /// What the player does in the menu.
@@ -167,6 +170,8 @@ pub struct MenuCore {
     pub(super) launching: bool,
     /// A host waiting for the player's word on plain TCP.
     pub(super) plain_host: Option<String>,
+    /// The page the settings were opened from.
+    settings_from: Page,
 }
 
 impl MenuCore {
@@ -188,6 +193,7 @@ impl MenuCore {
             client: None,
             conn: Conn::Offline,
             page: Page::Service,
+            settings_from: Page::Service,
             status: None,
             asked: Vec::new(),
             lobbies: Vec::new(),
@@ -208,6 +214,18 @@ impl MenuCore {
 
     pub fn page(&self) -> Page {
         self.page
+    }
+
+    /// Whether a game is on screen, the menu out of its way.
+    pub fn shows_game(&self) -> bool {
+        self.page == Page::Game && !self.launching
+    }
+
+    /// Leaves the settings screen for the page it was opened from.
+    pub fn leave_settings(&mut self) {
+        if self.page == Page::Settings {
+            self.page = self.settings_from;
+        }
     }
 
     pub fn logged_in(&self) -> bool {
@@ -581,6 +599,14 @@ impl MenuCore {
     }
 
     fn go(&mut self, page: Page) {
+        // The settings come back to where they were opened from.
+        if page == Page::Settings {
+            if self.page != Page::Settings && self.page != Page::Game {
+                self.settings_from = self.page;
+                self.page = Page::Settings;
+            }
+            return;
+        }
         // Signing in starts with reaching the service.
         let page = match page {
             Page::Login | Page::Register if self.conn == Conn::Offline => Page::Service,

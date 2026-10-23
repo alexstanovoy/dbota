@@ -1,7 +1,9 @@
 //! Keys and mouse into intents for the client core, Dota's way: right click
-//! to move and attack, A to attack-move, S to stop, H to hold, the ability
-//! and item keys, Ctrl with an ability key to learn it, Shift held to queue
-//! the orders given; clicks and drags on the HUD's boxes.
+//! to move and attack, and what the bindings ([`crate::keys`]) fire: attack
+//! and move for the next click, stop, hold, the ability and item keys (Ctrl
+//! with an ability key, or the learn mode before it, learns it), the
+//! control groups, Shift held to queue the orders given; clicks and drags
+//! on the HUD's boxes.
 
 use bevy::{
     input::{
@@ -14,8 +16,9 @@ use bevy::{
 use bota_client_core::{BAG_SLOTS, Intent, Slot, Source, TOWN_PORTAL_SLOT};
 
 use crate::camera::CursorGround;
-use crate::config::{Action, Settings};
+use crate::config::Settings;
 use crate::hud::{AbilityBox, Blocker, ItemBox, SeatBox};
+use crate::keys::{Action, Fired};
 use crate::session::Session;
 
 /// Whether the cursor is over the HUD this frame, so clicks stay out of the
@@ -35,27 +38,53 @@ pub enum Typing {
     Search,
 }
 
-/// Panels toggled by keys.
+/// Panels and modes the bindings toggle.
 #[derive(Resource, Default)]
 pub struct Panels {
     /// Whether the shop is open.
     pub shop: bool,
     /// What is typed into the shop's search box.
     pub search: String,
-    /// Whether the settings overlay is open.
-    pub settings: bool,
     /// Whether the camera stays on one's own hero.
     pub camera_lock: bool,
+    /// Whether the talent tree is pinned open.
+    pub talents: bool,
+    /// Whether the next left click moves, whatever is there (Dota's Move).
+    pub move_armed: bool,
+    /// Whether the next ability key learns a level (Dota's learn mode).
+    pub learn_mode: bool,
 }
+
+/// The units of Dota's control groups, one each: dbota selects one unit at
+/// a time.
+#[derive(Resource, Default)]
+pub struct ControlGroups(pub [Option<bota_proto::EntityId>; 10]);
 
 pub fn plugin(app: &mut App) {
     app.init_resource::<OverHud>()
         .init_resource::<Typing>()
         .init_resource::<Panels>()
+        .init_resource::<ControlGroups>()
+        .add_systems(PreUpdate, mute.before(crate::keys::fire))
         .add_systems(
             Update,
             (over_hud, typing, keys, crate::pick::update, mouse, boxes).chain(),
         );
+}
+
+/// Keeps the bindings quiet while a line or a box has the keyboard, or the
+/// settings screen or the main menu does.
+fn mute(
+    typing: Res<Typing>,
+    screen: Res<crate::settings::Screen>,
+    menu: Option<NonSend<crate::main_menu::MenuCore>>,
+    mut muted: ResMut<crate::keys::Muted>,
+) {
+    let menu_covers = menu.is_some_and(|m| !m.shows_game());
+    let now = *typing != Typing::No || screen.open || menu_covers;
+    if muted.0 != now {
+        muted.0 = now;
+    }
 }
 
 /// Notes whether the cursor is over any part of the HUD that swallows clicks.
@@ -90,13 +119,7 @@ fn typing(
             continue;
         }
         match *typing {
-            Typing::No => {
-                let live_player = matches!(core.source, Source::Live(_)) && core.my_slot.is_some();
-                if event.key_code == KeyCode::Enter && live_player && !panels.shop {
-                    *typing = Typing::Console;
-                    core.console = Some(String::new());
-                }
-            }
+            Typing::No => {}
             Typing::Console => {
                 let line = core.console.get_or_insert_with(String::new);
                 match &event.logical_key {
@@ -142,13 +165,16 @@ fn typing(
     }
 }
 
-/// The hotkeys.
+/// What the bindings fired, done.
+#[allow(clippy::too_many_arguments)]
 fn keys(
     mut session: NonSendMut<Session>,
+    fired: Res<Fired>,
     keys: Res<ButtonInput<KeyCode>>,
-    settings: Res<Settings>,
-    typing: Res<Typing>,
+    mut typing: ResMut<Typing>,
     mut panels: ResMut<Panels>,
+    mut screen: ResMut<crate::settings::Screen>,
+    mut groups: ResMut<ControlGroups>,
     mut exit: MessageWriter<AppExit>,
 ) {
     let core = &mut session.0;
@@ -156,88 +182,145 @@ fn keys(
     // does, as Dota's Shift-queue: by key, by click, and by an aimed click.
     core.queueing = *typing == Typing::No
         && (keys.pressed(KeyCode::ShiftLeft) || keys.pressed(KeyCode::ShiftRight));
-    if *typing != Typing::No {
+    if *typing != Typing::No || typing.is_changed() {
         return;
     }
-    let pressed = |action: Action| keys.just_pressed(settings.key(action));
-    let ctrl = keys.pressed(KeyCode::ControlLeft) || keys.pressed(KeyCode::ControlRight);
-    if keys.just_pressed(KeyCode::Escape) {
-        escape(core, &mut panels, &mut exit);
+    if fired.pressed(Action::Escape) {
+        escape(core, &mut panels, &mut screen, &mut exit);
     }
-    if pressed(Action::Settings) {
-        panels.settings = !panels.settings;
+    if fired.pressed(Action::Console) && matches!(core.source, Source::Live(_)) {
+        *typing = Typing::Console;
+        core.console = Some(String::new());
+        return;
     }
-    if pressed(Action::Shop) && core.my_slot.is_some() {
+    if fired.pressed(Action::Shop) && core.my_slot.is_some() {
         panels.shop = !panels.shop;
     }
-    if keys.just_pressed(KeyCode::Tab) {
-        core.act(Intent::NextEyes);
-    }
     if matches!(core.source, Source::Replay(_)) {
-        for (key, intent) in [
-            (KeyCode::Space, Intent::TogglePause),
-            (KeyCode::Equal, Intent::Faster),
-            (KeyCode::NumpadAdd, Intent::Faster),
-            (KeyCode::Minus, Intent::Slower),
-            (KeyCode::NumpadSubtract, Intent::Slower),
-            (KeyCode::Period, Intent::Step),
-        ] {
-            if keys.just_pressed(key) {
-                core.act(intent);
-            }
-        }
+        watch(core, &fired);
         return;
+    }
+    if fired.pressed(Action::NextEyes) && core.my_slot.is_none() {
+        core.act(Intent::NextEyes);
     }
     // Heroes are picked and readied with the mouse, on the selection screen.
     if core.phase == bota_client_core::Phase::Lobby {
         return;
     }
-    if pressed(Action::SelectHero) {
-        core.act(Intent::SelectHero);
-    }
-    if pressed(Action::SelectCourier) {
-        core.act(Intent::SelectCourier);
-    }
-    if pressed(Action::CourierDeliver) {
-        core.act(Intent::CourierDeliver);
-    }
-    if pressed(Action::Glyph) && core.my_slot.is_some() {
-        core.activate_glyph();
-    }
-    if pressed(Action::QuickBuy) {
-        core.act(Intent::QuickBuy);
-    }
-    if pressed(Action::CameraLock) {
-        panels.camera_lock = !panels.camera_lock;
-    }
+    let ctrl = keys.pressed(KeyCode::ControlLeft) || keys.pressed(KeyCode::ControlRight);
+    seat(core, &fired, &mut panels, &mut groups, ctrl);
     if core.my_hero().is_none() || !core.controls_selection() || core.over.is_some() {
         return;
     }
-    if pressed(Action::AttackMove) {
+    command(core, &fired, &mut panels, ctrl);
+}
+
+/// A replay's own bindings.
+fn watch(core: &mut bota_client_core::App, fired: &Fired) {
+    for (action, intent) in [
+        (Action::Pause, Intent::TogglePause),
+        (Action::Faster, Intent::Faster),
+        (Action::Slower, Intent::Slower),
+        (Action::Step, Intent::Step),
+        (Action::NextEyes, Intent::NextEyes),
+    ] {
+        if fired.pressed(action) {
+            core.act(intent);
+        }
+    }
+}
+
+/// What a seated player's bindings do whatever is selected: picking units
+/// and groups, the courier, the Glyph, the shop's buys, the camera lock and
+/// the talent tree.
+fn seat(
+    core: &mut bota_client_core::App,
+    fired: &Fired,
+    panels: &mut Panels,
+    groups: &mut ControlGroups,
+    ctrl: bool,
+) {
+    for (action, intent) in [
+        (Action::SelectHero, Intent::SelectHero),
+        (Action::SelectCourier, Intent::SelectCourier),
+        (Action::CourierDeliver, Intent::CourierDeliver),
+        (Action::QuickBuy, Intent::QuickBuy),
+        (Action::StickyBuy, Intent::Buy(crate::shop::STICKY.0)),
+    ] {
+        if fired.pressed(action) {
+            core.act(intent);
+        }
+    }
+    for (action, which) in [
+        (Action::CourierBurst, crate::courier::CourierCast::Burst),
+        (Action::CourierShield, crate::courier::CourierCast::Shield),
+    ] {
+        if fired.pressed(action) {
+            crate::courier::cast(core, which);
+        }
+    }
+    if fired.pressed(Action::Glyph) && core.my_slot.is_some() {
+        core.activate_glyph();
+    }
+    if fired.pressed(Action::CameraLock) {
+        panels.camera_lock = !panels.camera_lock;
+    }
+    if fired.pressed(Action::LearnStats) {
+        panels.talents = !panels.talents;
+    }
+    for group in 0..10u8 {
+        if !fired.pressed(Action::ControlGroup(group)) {
+            continue;
+        }
+        let kept = &mut groups.0[usize::from(group)];
+        if ctrl {
+            *kept = core.selected.filter(|id| core.drives(*id));
+        } else if let Some(unit) = *kept {
+            core.act(Intent::SelectUnit(Some(unit)));
+        }
+    }
+}
+
+/// The orders to the commanded unit: attack, move, stop, hold, its
+/// abilities (learned instead in learn mode, or with Ctrl) and its items.
+fn command(core: &mut bota_client_core::App, fired: &Fired, panels: &mut Panels, ctrl: bool) {
+    if fired.pressed(Action::Attack) {
         core.attack_move_armed = true;
+        panels.move_armed = false;
         core.aiming = None;
     }
-    if pressed(Action::Stop) {
+    if fired.pressed(Action::Move) {
+        panels.move_armed = true;
         core.attack_move_armed = false;
+        core.aiming = None;
+    }
+    if fired.pressed(Action::LearnAbilities) {
+        panels.learn_mode = !panels.learn_mode;
+    }
+    if fired.pressed(Action::Stop) {
+        core.attack_move_armed = false;
+        panels.move_armed = false;
         core.aiming = None;
         core.act(Intent::Stop);
     }
-    if pressed(Action::Hold) {
+    if fired.pressed(Action::Hold) {
         core.attack_move_armed = false;
+        panels.move_armed = false;
         core.act(Intent::Hold);
     }
     let count = core.slot_unit().map_or(0, |u| u.abilities.len());
     for slot in 0..count.min(6) as u8 {
-        if keys.just_pressed(settings.ability_key(slot, count)) {
-            press(core, Slot::Ability(slot), ctrl);
+        if fired.pressed(Settings::ability_action(slot, count)) {
+            let learn = ctrl || std::mem::take(&mut panels.learn_mode);
+            press(core, Slot::Ability(slot), learn);
         }
     }
     for slot in 0..bota_client_core::INVENTORY_SLOTS {
-        if pressed(Action::Item(slot)) {
+        if fired.pressed(Action::Item(slot)) {
             press(core, Slot::Item(slot), false);
         }
     }
-    if pressed(Action::TownPortal) {
+    if fired.pressed(Action::TownPortal) {
         press(core, Slot::Item(TOWN_PORTAL_SLOT), false);
     }
 }
@@ -250,23 +333,34 @@ pub fn press(core: &mut bota_client_core::App, slot: Slot, ctrl: bool) {
     }
 }
 
-/// Escape lets go of what is half done, closes what is open, and leaves when
-/// the match is over.
+/// Escape lets go of what is half done and closes what is open, as Dota's;
+/// with nothing of either it opens the settings, and it leaves a match that
+/// is over.
 fn escape(
     core: &mut bota_client_core::App,
     panels: &mut Panels,
+    screen: &mut crate::settings::Screen,
     exit: &mut MessageWriter<AppExit>,
 ) {
-    if core.attack_move_armed || core.aiming.is_some() || core.held_item.is_some() {
+    let half_done = core.attack_move_armed
+        || core.aiming.is_some()
+        || core.held_item.is_some()
+        || panels.move_armed
+        || panels.learn_mode;
+    if half_done {
         core.attack_move_armed = false;
         core.aiming = None;
         core.held_item = None;
-    } else if panels.settings {
-        panels.settings = false;
+        panels.move_armed = false;
+        panels.learn_mode = false;
     } else if panels.shop {
         panels.shop = false;
+    } else if panels.talents {
+        panels.talents = false;
     } else if core.over.is_some() || core.phase == bota_client_core::Phase::Lobby {
         exit.write(AppExit::Success);
+    } else {
+        screen.open = true;
     }
 }
 
@@ -277,10 +371,11 @@ fn mouse(
     cursor: Res<CursorGround>,
     hover: Res<crate::pick::Hover>,
     over: Res<OverHud>,
-    panels: Res<Panels>,
+    mut panels: ResMut<Panels>,
+    screen: Res<crate::settings::Screen>,
     window: Single<&Window, With<PrimaryWindow>>,
 ) {
-    if over.0 || panels.settings || window.cursor_position().is_none() {
+    if over.0 || screen.open || window.cursor_position().is_none() {
         return;
     }
     let core = &mut session.0;
@@ -303,6 +398,11 @@ fn mouse(
             });
             return;
         }
+        if commands && live && panels.move_armed {
+            panels.move_armed = false;
+            core.act(Intent::MoveTo(ground));
+            return;
+        }
         if commands && live && core.attack_move_armed {
             core.attack_move_armed = false;
             core.act(Intent::AttackAt {
@@ -315,6 +415,7 @@ fn mouse(
     }
     if buttons.just_pressed(MouseButton::Right) && commands && live {
         core.attack_move_armed = false;
+        panels.move_armed = false;
         core.aiming = None;
         core.act(Intent::Smart {
             at: ground,

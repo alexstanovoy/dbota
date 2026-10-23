@@ -3,79 +3,7 @@
 
 use std::path::PathBuf;
 
-use bevy::input::keyboard::KeyCode;
-
-/// Something a key does.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Action {
-    /// Arms an attack-move for the next left click.
-    AttackMove,
-    /// Stops whatever the commanded unit does.
-    Stop,
-    /// Stands still and fights only what comes into reach.
-    Hold,
-    /// Casts one of the first five ability slots, `0..5`.
-    Ability(u8),
-    /// Casts the last ability slot of a unit with four or more: the ultimate.
-    Ultimate,
-    /// Uses one of the six inventory slots, `0..6`.
-    Item(u8),
-    /// Uses the town portal slot beside the inventory.
-    TownPortal,
-    /// Opens and closes the shop.
-    Shop,
-    /// Activates the Glyph of Fortification.
-    Glyph,
-    /// Picks one's own hero; twice pins the camera to it.
-    SelectHero,
-    /// Picks one's own courier; twice pins the camera to it.
-    SelectCourier,
-    /// Sends the courier to bring what waits in the stash.
-    CourierDeliver,
-    /// Buys the next missing part of the quick-buy item.
-    QuickBuy,
-    /// Toggles the camera lock on one's own hero.
-    CameraLock,
-    /// Holds the camera over one's own hero while pressed.
-    CenterHero,
-    /// Opens and closes the settings overlay.
-    Settings,
-    /// Silences and restores all sound.
-    Mute,
-    /// While held, shows every range aid at full strength.
-    ShowRanges,
-}
-
-/// Every action with its name in the file and its key out of the box.
-pub const BINDINGS: [(Action, &str, KeyCode); 27] = [
-    (Action::AttackMove, "attack_move", KeyCode::KeyA),
-    (Action::Stop, "stop", KeyCode::KeyS),
-    (Action::Hold, "hold", KeyCode::KeyH),
-    (Action::Ability(0), "ability_1", KeyCode::KeyQ),
-    (Action::Ability(1), "ability_2", KeyCode::KeyW),
-    (Action::Ability(2), "ability_3", KeyCode::KeyE),
-    (Action::Ability(3), "ability_4", KeyCode::KeyD),
-    (Action::Ability(4), "ability_5", KeyCode::KeyF),
-    (Action::Ultimate, "ultimate", KeyCode::KeyR),
-    (Action::Item(0), "item_1", KeyCode::Digit1),
-    (Action::Item(1), "item_2", KeyCode::Digit2),
-    (Action::Item(2), "item_3", KeyCode::Digit3),
-    (Action::Item(3), "item_4", KeyCode::Digit4),
-    (Action::Item(4), "item_5", KeyCode::Digit5),
-    (Action::Item(5), "item_6", KeyCode::Digit6),
-    (Action::TownPortal, "town_portal", KeyCode::KeyT),
-    (Action::Shop, "shop", KeyCode::KeyB),
-    (Action::Glyph, "glyph", KeyCode::KeyJ),
-    (Action::SelectHero, "select_hero", KeyCode::F1),
-    (Action::SelectCourier, "select_courier", KeyCode::F2),
-    (Action::CourierDeliver, "courier_deliver", KeyCode::F3),
-    (Action::QuickBuy, "quick_buy", KeyCode::F5),
-    (Action::CameraLock, "camera_lock", KeyCode::KeyY),
-    (Action::CenterHero, "center_hero", KeyCode::Space),
-    (Action::Settings, "settings", KeyCode::F10),
-    (Action::Mute, "mute", KeyCode::KeyM),
-    (Action::ShowRanges, "show_ranges", KeyCode::AltLeft),
-];
+use crate::keys::{self, Action, Chord};
 
 /// The aids drawn over the world, each of which may be turned off.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -105,7 +33,7 @@ pub enum AntiAlias {
 }
 
 impl AntiAlias {
-    /// Cheapest to dearest, as the overlay steps through them.
+    /// Cheapest to dearest, as the settings list them.
     pub const ALL: [AntiAlias; 7] = [
         AntiAlias::Off,
         AntiAlias::Fxaa,
@@ -136,12 +64,6 @@ impl AntiAlias {
         let name = name.to_ascii_lowercase();
         AntiAlias::ALL.into_iter().find(|a| a.name() == name)
     }
-
-    /// The next one in [`AntiAlias::ALL`], the first after the last.
-    pub fn next(self) -> AntiAlias {
-        let at = AntiAlias::ALL.iter().position(|a| *a == self).unwrap_or(0);
-        AntiAlias::ALL[(at + 1) % AntiAlias::ALL.len()]
-    }
 }
 
 /// How strongly units and paths are set apart from the ground they stand
@@ -156,7 +78,7 @@ pub enum Clarity {
 }
 
 impl Clarity {
-    /// Weakest to strongest, as the overlay steps through them.
+    /// Weakest to strongest, as the settings list them.
     pub const ALL: [Clarity; 3] = [Clarity::Off, Clarity::Low, Clarity::High];
 
     /// The name settings files and `--set` use.
@@ -171,12 +93,6 @@ impl Clarity {
     pub fn named(name: &str) -> Option<Clarity> {
         let name = name.to_ascii_lowercase();
         Clarity::ALL.into_iter().find(|c| c.name() == name)
-    }
-
-    /// The next one in [`Clarity::ALL`], the first after the last.
-    pub fn next(self) -> Clarity {
-        let at = Clarity::ALL.iter().position(|c| *c == self).unwrap_or(0);
-        Clarity::ALL[(at + 1) % Clarity::ALL.len()]
     }
 
     /// How strongly the aid is drawn, 0 to 1.
@@ -312,8 +228,8 @@ pub enum DisplayMode {
     Exclusive,
 }
 
-/// Every display mode with its name in the file, in the order the overlay
-/// steps through them.
+/// Every display mode with its name in the file, in the order the settings
+/// list them.
 pub const DISPLAY_MODES: [(DisplayMode, &str); 3] = [
     (DisplayMode::Windowed, "windowed"),
     (DisplayMode::Borderless, "borderless"),
@@ -336,12 +252,6 @@ impl DisplayMode {
             .iter()
             .find(|(mode, _)| *mode == self)
             .map_or("windowed", |(_, name)| name)
-    }
-
-    /// The mode after this one.
-    pub fn next(self) -> DisplayMode {
-        let at = DISPLAY_MODES.iter().position(|(mode, _)| *mode == self);
-        DISPLAY_MODES[at.map_or(0, |at| (at + 1) % DISPLAY_MODES.len())].0
     }
 }
 
@@ -370,8 +280,9 @@ pub struct Settings {
     pub ui_scale: f32,
     /// Which aids are drawn.
     pub aids: Aids,
-    /// The key of every action, in [`BINDINGS`] order.
-    pub keys: [KeyCode; BINDINGS.len()],
+    /// The chord of every action, in [`keys::BINDINGS`] order; none for one
+    /// left unbound.
+    pub keys: [Option<Chord>; keys::COUNT],
     /// Whether the portrait plays the unit's idle animation (Dota's "Animate
     /// Portrait"); off, it shows a still picture.
     pub animate_portrait: bool,
@@ -394,7 +305,7 @@ impl Default for Settings {
                 numbers: true,
                 edge_pan: true,
             },
-            keys: BINDINGS.map(|(_, _, key)| key),
+            keys: keys::BINDINGS.map(|b| b.default),
             animate_portrait: false,
             quality: Quality::default(),
             display: DisplayMode::default(),
@@ -404,23 +315,26 @@ impl Default for Settings {
 }
 
 impl Settings {
-    /// The key bound to an action.
-    pub fn key(&self, action: Action) -> KeyCode {
-        BINDINGS
-            .iter()
-            .position(|(bound, _, _)| *bound == action)
-            .map_or(KeyCode::F35, |at| self.keys[at])
+    /// The chord bound to an action, if any.
+    pub fn key(&self, action: Action) -> Option<Chord> {
+        self.keys[keys::index_of(action)?]
     }
 
-    /// The key that casts ability slot `slot` of a unit holding `count`.
+    /// What a HUD slot shows of an action's binding: its chord's name, or
+    /// nothing for an unbound one.
+    pub fn label(&self, action: Action) -> String {
+        self.key(action).map_or_else(String::new, Chord::name)
+    }
+
+    /// The action that casts ability slot `slot` of a unit holding `count`.
     ///
     /// The last slot of a unit with four or more is its ultimate; the rest
-    /// take the ability keys in order.
-    pub fn ability_key(&self, slot: u8, count: usize) -> KeyCode {
+    /// take the ability actions in order.
+    pub fn ability_action(slot: u8, count: usize) -> Action {
         if count >= 4 && usize::from(slot) + 1 == count {
-            return self.key(Action::Ultimate);
+            return Action::Ultimate;
         }
-        self.key(Action::Ability(slot))
+        Action::Ability(slot)
     }
 
     /// Reads settings from text, keeping the defaults for anything absent.
@@ -447,11 +361,14 @@ impl Settings {
     /// Sets one named value, as a line `name = value` of the file does.
     pub fn set(&mut self, name: &str, value: &str) -> Result<(), String> {
         if let Some(action) = name.strip_prefix("key.") {
-            let at = BINDINGS
-                .iter()
-                .position(|(_, named, _)| *named == action)
-                .ok_or_else(|| format!("no action called '{action}'"))?;
-            self.keys[at] = key_named(value).ok_or_else(|| format!("no key called '{value}'"))?;
+            let (at, _) =
+                keys::named(action).ok_or_else(|| format!("no action called '{action}'"))?;
+            self.keys[at] = match value {
+                "none" => None,
+                chord => {
+                    Some(Chord::parse(chord).ok_or_else(|| format!("no key called '{chord}'"))?)
+                }
+            };
             return Ok(());
         }
         let flag = || parse_flag(value).ok_or_else(|| format!("'{value}' is not true or false"));
@@ -555,8 +472,9 @@ impl Settings {
         out.push_str(&format!("gpu_batching = {}\n", flag(q.gpu_batching)));
         out.push_str(&format!("auto_quality = {}\n", flag(q.auto)));
         out.push_str(&format!("visual_clarity = {}\n", self.clarity.name()));
-        for ((_, name, _), key) in BINDINGS.iter().zip(self.keys) {
-            out.push_str(&format!("key.{name} = {}\n", key_name(key)));
+        for (binding, chord) in keys::all().zip(self.keys) {
+            let chord = chord.map_or_else(|| "none".to_owned(), Chord::name);
+            out.push_str(&format!("key.{} = {chord}\n", binding.name));
         }
         out
     }
@@ -595,104 +513,30 @@ fn parse_flag(value: &str) -> Option<bool> {
     }
 }
 
-/// Every key a binding may name, by the name it is written with.
-const KEY_NAMES: [(&str, KeyCode); 68] = [
-    ("A", KeyCode::KeyA),
-    ("B", KeyCode::KeyB),
-    ("C", KeyCode::KeyC),
-    ("D", KeyCode::KeyD),
-    ("E", KeyCode::KeyE),
-    ("F", KeyCode::KeyF),
-    ("G", KeyCode::KeyG),
-    ("H", KeyCode::KeyH),
-    ("I", KeyCode::KeyI),
-    ("J", KeyCode::KeyJ),
-    ("K", KeyCode::KeyK),
-    ("L", KeyCode::KeyL),
-    ("M", KeyCode::KeyM),
-    ("N", KeyCode::KeyN),
-    ("O", KeyCode::KeyO),
-    ("P", KeyCode::KeyP),
-    ("Q", KeyCode::KeyQ),
-    ("R", KeyCode::KeyR),
-    ("S", KeyCode::KeyS),
-    ("T", KeyCode::KeyT),
-    ("U", KeyCode::KeyU),
-    ("V", KeyCode::KeyV),
-    ("W", KeyCode::KeyW),
-    ("X", KeyCode::KeyX),
-    ("Y", KeyCode::KeyY),
-    ("Z", KeyCode::KeyZ),
-    ("0", KeyCode::Digit0),
-    ("1", KeyCode::Digit1),
-    ("2", KeyCode::Digit2),
-    ("3", KeyCode::Digit3),
-    ("4", KeyCode::Digit4),
-    ("5", KeyCode::Digit5),
-    ("6", KeyCode::Digit6),
-    ("7", KeyCode::Digit7),
-    ("8", KeyCode::Digit8),
-    ("9", KeyCode::Digit9),
-    ("F1", KeyCode::F1),
-    ("F2", KeyCode::F2),
-    ("F3", KeyCode::F3),
-    ("F4", KeyCode::F4),
-    ("F5", KeyCode::F5),
-    ("F6", KeyCode::F6),
-    ("F7", KeyCode::F7),
-    ("F8", KeyCode::F8),
-    ("F9", KeyCode::F9),
-    ("F10", KeyCode::F10),
-    ("F11", KeyCode::F11),
-    ("F12", KeyCode::F12),
-    ("Space", KeyCode::Space),
-    ("Tab", KeyCode::Tab),
-    ("Backquote", KeyCode::Backquote),
-    ("Minus", KeyCode::Minus),
-    ("Equal", KeyCode::Equal),
-    ("LeftBracket", KeyCode::BracketLeft),
-    ("RightBracket", KeyCode::BracketRight),
-    ("Semicolon", KeyCode::Semicolon),
-    ("Apostrophe", KeyCode::Quote),
-    ("Comma", KeyCode::Comma),
-    ("Period", KeyCode::Period),
-    ("Slash", KeyCode::Slash),
-    ("Backslash", KeyCode::Backslash),
-    ("LeftShift", KeyCode::ShiftLeft),
-    ("RightShift", KeyCode::ShiftRight),
-    ("LeftAlt", KeyCode::AltLeft),
-    ("RightAlt", KeyCode::AltRight),
-    ("CapsLock", KeyCode::CapsLock),
-    ("Insert", KeyCode::Insert),
-    ("Delete", KeyCode::Delete),
-];
-
-/// The key of a name, case aside.
-pub fn key_named(name: &str) -> Option<KeyCode> {
-    KEY_NAMES
-        .iter()
-        .find(|(named, _)| named.eq_ignore_ascii_case(name))
-        .map(|(_, key)| *key)
-}
-
-/// The name a key is written and shown with.
-pub fn key_name(key: KeyCode) -> &'static str {
-    KEY_NAMES
-        .iter()
-        .find(|(_, named)| *named == key)
-        .map_or("?", |(name, _)| name)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    /// Dota's defaults hold no two actions on one chord where both work,
+    /// and every binding written to the file reads back, a rebound and an
+    /// unbound one too.
     #[test]
-    fn no_two_default_actions_share_a_key() {
-        for (at, (_, name, key)) in BINDINGS.iter().enumerate() {
-            let twin = BINDINGS[at + 1..].iter().find(|(_, _, other)| other == key);
-            assert!(twin.is_none(), "{name} and {:?} share {key:?}", twin);
+    fn the_defaults_clash_nowhere_and_every_binding_survives_the_file() {
+        let settings = Settings::default();
+        for at in 0..keys::COUNT {
+            assert_eq!(
+                keys::conflicts(&settings.keys, at),
+                [],
+                "{}",
+                keys::BINDINGS[at].name
+            );
         }
+        let mut changed = settings.clone();
+        changed.keys[0] = Chord::parse("Ctrl+Alt+K");
+        changed.keys[1] = None;
+        let (read, complaints) = Settings::parse(&changed.render());
+        assert!(complaints.is_empty(), "{complaints:?}");
+        assert_eq!(read, changed);
     }
 
     /// Settings written to the file read back the same, whatever quality

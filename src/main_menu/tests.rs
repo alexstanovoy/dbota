@@ -523,3 +523,27 @@ fn direct_connect_over_tcp_and_websocket_without_the_service() {
             .all(|(c, _)| c.phase == Phase::Playing && c.my_slot.is_some())
     );
 }
+
+/// SETTINGS in the menu's top bar opens the settings screen over the page it
+/// was on and DONE brings that page back; what was set there is in the
+/// settings file the next start reads, a rebound key among it.
+#[test]
+fn the_settings_open_from_the_menu_and_last_past_a_restart() {
+    let mut player = Player::new(None);
+    let before = player.menu.page();
+    player.menu.act(Act::Go(Page::Settings));
+    assert_eq!(player.menu.page(), Page::Settings);
+    assert_eq!(player.menu.view().body, PageView::Settings);
+    assert!(player.menu.view().covers());
+    player.menu.leave_settings();
+    assert_eq!(player.menu.page(), before, "back where it was opened");
+
+    let mut settings = crate::config::Settings::default();
+    let at = crate::keys::index_of(crate::keys::Action::Stop).expect("bound");
+    settings.keys[at] = crate::keys::Chord::parse("Ctrl+K");
+    settings.volume = 0.25;
+    settings.clarity = crate::config::Clarity::Off;
+    player.store.save_settings(&settings).expect("saved");
+    let restarted = SettingsStore::new(Some(player._dir.0.join("client.conf")));
+    assert_eq!(restarted.load_settings(), settings);
+}

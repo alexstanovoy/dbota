@@ -12,7 +12,7 @@ use bota_proto::{AbilityId, Aim, Order, Target, Team, UnitKind, UnitView};
 
 use crate::ability_art::{Telegraph, art_of};
 use crate::camera::CursorGround;
-use crate::config::{Action, Settings};
+use crate::keys::{Action, Fired};
 use crate::map::Ground;
 use crate::session::Session;
 use crate::units::{Unit, UnitIndex};
@@ -109,8 +109,7 @@ fn draw(
     ground: Res<Ground>,
     index: Res<UnitIndex>,
     units: Query<&'static Unit>,
-    settings: Res<Settings>,
-    keys: Res<ButtonInput<KeyCode>>,
+    fired: Res<Fired>,
     cursor: Res<CursorGround>,
     hover: Res<crate::pick::Hover>,
     args: Res<crate::Args>,
@@ -126,7 +125,7 @@ fn draw(
         index: &index,
         units: &units,
     };
-    let show_all = args.show_ranges || keys.pressed(settings.key(Action::ShowRanges));
+    let show_all = args.show_ranges || fired.held(Action::ShowRanges);
     picks(&mut gizmos, &ctx);
     // Ranges and radii only while the show-ranges key is held, as Dota
     // keeps the ground clean.

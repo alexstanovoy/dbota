@@ -13,7 +13,7 @@ use bota_client_core::{Slot, Source};
 use bota_proto::{Aim, EntityId, Team, UnitKind, WorldView};
 
 use crate::camera::RtsCamera;
-use crate::input::{OverHud, Panels};
+use crate::input::OverHud;
 use crate::map::Ground;
 use crate::session::Session;
 use crate::units::{Unit, UnitIndex, stand_in_size};
@@ -320,7 +320,7 @@ pub fn stands(
 pub fn update(
     session: NonSend<Session>,
     over: Res<OverHud>,
-    panels: Res<Panels>,
+    screen: Res<crate::settings::Screen>,
     ground: Res<Ground>,
     index: Res<UnitIndex>,
     units: Query<&Unit>,
@@ -333,7 +333,7 @@ pub fn update(
     let (Some(view), Some(cursor)) = (core.view(), window.cursor_position()) else {
         return;
     };
-    if over.0 || panels.settings {
+    if over.0 || screen.open {
         return;
     }
     let (camera, transform, projection) = *camera;

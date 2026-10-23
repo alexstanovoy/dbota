@@ -69,7 +69,7 @@ pub fn draw(kit: &mut Kit, root: Entity, view: &MenuView) {
         PageView::Joining => {
             kit.bold(body, "JOINING THE GAME…", 30.0, ui::INK);
         }
-        PageView::Hidden => {}
+        PageView::Settings | PageView::Hidden => {}
     }
 }
 
@@ -121,6 +121,7 @@ fn top_bar(kit: &mut Kit, root: Entity, view: &MenuView) {
             .id();
         kit.bold(tab, label, 17.0, tab_color(on));
     }
+    kit.button(bar, "SETTINGS", Act::Go(Page::Settings), PLAIN, 30.0);
     match &view.account {
         Some(account) => {
             kit.text(bar, account.clone(), 16.0, ui::INK);

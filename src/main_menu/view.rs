@@ -145,6 +145,8 @@ pub enum PageView {
     },
     Lobby(LobbyView),
     Result(ResultView),
+    /// The settings screen, which draws itself over the menu.
+    Settings,
     /// A game is being opened.
     Joining,
     /// A game is on screen: only the overlays show.
@@ -247,6 +249,7 @@ impl MenuCore {
                 .shown
                 .and_then(|id| self.results.iter().find(|r| r.match_id == id))
                 .map_or(PageView::Joining, |r| PageView::Result(self.result_view(r))),
+            Page::Settings => PageView::Settings,
             Page::Game if self.launching => PageView::Joining,
             Page::Game => PageView::Hidden,
         }

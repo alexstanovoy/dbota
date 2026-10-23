@@ -238,7 +238,7 @@ impl Manifest {
         self.file(self.dota_name("effect", id)?)
     }
 
-    /// How much of the cache is there, in words, for the settings overlay.
+    /// How much of the cache is there, in words, for the settings screen.
     pub fn census(&self) -> String {
         match &self.root {
             None => "no Dota asset cache: built-in stand-ins".to_string(),

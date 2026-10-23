@@ -61,7 +61,6 @@ mod native {
     };
 
     use crate::config::Settings;
-    use crate::input::Panels;
     use crate::session::Session;
 
     /// What `apply_mode` remembers between frames.
@@ -132,7 +131,7 @@ mod native {
     pub fn confine(
         window: Single<(&Window, &mut CursorOptions), With<PrimaryWindow>>,
         session: NonSend<Session>,
-        panels: Res<Panels>,
+        screen: Res<crate::settings::Screen>,
         args: Res<crate::Args>,
         mut grab: Local<Grab>,
     ) {
@@ -140,7 +139,7 @@ mod native {
         // Captures and benchmarks run unattended, often over the owner's work.
         let unattended =
             !args.screenshot_at.is_empty() || args.screenshot.is_some() || args.bench.is_some();
-        let want = window.focused && !panels.settings && !unattended && session.0.view().is_some();
+        let want = window.focused && !screen.open && !unattended && session.0.view().is_some();
         if !want {
             if options.grab_mode != CursorGrabMode::None {
                 options.grab_mode = CursorGrabMode::None;

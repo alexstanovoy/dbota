@@ -7,8 +7,8 @@ use bevy::prelude::*;
 use bota_client_core::Intent;
 use bota_proto::{AbilityId, AbilitySlot, Order, Target};
 
-use crate::config::{Action, Settings, key_name};
 use crate::hud::{Blocker, Docks};
+use crate::keys::{Action, KeyLabel};
 use crate::manifest::Manifest;
 use crate::session::{MatchKnown, Session};
 use crate::ui::{self, Fonts};
@@ -51,12 +51,13 @@ impl CourierButton {
         }
     }
 
-    /// The key that does the same, if any.
-    fn action(self) -> Option<Action> {
+    /// The binding that does the same.
+    fn action(self) -> Action {
         match self {
-            CourierButton::Select => Some(Action::SelectCourier),
-            CourierButton::Deliver => Some(Action::CourierDeliver),
-            _ => None,
+            CourierButton::Select => Action::SelectCourier,
+            CourierButton::Burst => Action::CourierBurst,
+            CourierButton::Shield => Action::CourierShield,
+            CourierButton::Deliver => Action::CourierDeliver,
         }
     }
 }
@@ -79,7 +80,6 @@ fn spawn(
     fonts: Res<Fonts>,
     manifest: Res<Manifest>,
     server: Res<AssetServer>,
-    settings: Res<Settings>,
     docks: Res<Docks>,
 ) {
     for which in CourierButton::ALL {
@@ -120,9 +120,10 @@ fn spawn(
             Pickable::IGNORE,
             ChildOf(button),
         ));
-        if let Some(action) = which.action() {
+        {
             commands.spawn((
-                ui::text(key_name(settings.key(action)), &fonts.bold, 10.0, ui::INK),
+                KeyLabel(which.action()),
+                ui::text("", &fonts.bold, 10.0, ui::INK),
                 ui::shadow(),
                 Node {
                     position_type: PositionType::Absolute,
@@ -208,17 +209,31 @@ fn click(
     match which {
         CourierButton::Select => core.act(Intent::SelectCourier),
         CourierButton::Deliver => core.act(Intent::CourierDeliver),
-        CourierButton::Burst | CourierButton::Shield => {
-            let ability = which.ability().map(|a| a.0);
-            if let Some(slot) = ability.and_then(|a| core.courier_slot(a)) {
-                core.send_order_to(
-                    core.my_courier(),
-                    Order::Cast {
-                        slot: AbilitySlot(slot),
-                        target: Target::None,
-                    },
-                );
-            }
-        }
+        CourierButton::Burst => cast(core, CourierCast::Burst),
+        CourierButton::Shield => cast(core, CourierCast::Shield),
+    }
+}
+
+/// The courier's own casts, by button or binding.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CourierCast {
+    Burst,
+    Shield,
+}
+
+/// Orders one's courier to cast its burst or its shield.
+pub fn cast(core: &mut bota_client_core::App, which: CourierCast) {
+    let ability = match which {
+        CourierCast::Burst => AbilityId::BURST,
+        CourierCast::Shield => AbilityId::SHIELD,
+    };
+    if let Some(slot) = core.courier_slot(ability.0) {
+        core.send_order_to(
+            core.my_courier(),
+            Order::Cast {
+                slot: AbilitySlot(slot),
+                target: Target::None,
+            },
+        );
     }
 }

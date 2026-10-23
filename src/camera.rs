@@ -1,11 +1,12 @@
 //! Dota-like RTS camera: fixed yaw (north up), fixed pitch, long lens, pan and zoom.
 
 use bevy::{
-    input::mouse::{AccumulatedMouseScroll, MouseScrollUnit},
+    input::mouse::{AccumulatedMouseMotion, AccumulatedMouseScroll, MouseScrollUnit},
     prelude::*,
     window::{PrimaryWindow, WindowResized},
 };
 
+use crate::keys::{Action, Fired};
 use crate::map::{DOTA_ORIGIN, Ground};
 use crate::session::Session;
 use crate::units::{Unit, UnitIndex};
@@ -112,28 +113,37 @@ fn edge_pan(cursor: Option<Vec2>, last: Option<Vec2>, size: Vec2) -> Vec2 {
     Vec2::new(x, y)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn pan_and_zoom(
     time: Res<Time>,
-    keys: Res<ButtonInput<KeyCode>>,
+    fired: Res<Fired>,
     scroll: Res<AccumulatedMouseScroll>,
+    motion: Res<AccumulatedMouseMotion>,
     window: Single<&Window, With<PrimaryWindow>>,
     mut cam: Single<&mut RtsCamera>,
     mut session: NonSendMut<Session>,
     args: Res<crate::Args>,
     panels: Res<crate::input::Panels>,
-    typing: Res<crate::input::Typing>,
     over: Res<crate::input::OverHud>,
     settings: Res<crate::config::Settings>,
     mut last_cursor: Local<Option<Vec2>>,
 ) {
+    grip(
+        &fired,
+        &motion,
+        &window,
+        &mut cam,
+        &mut session,
+        panels.camera_lock,
+    );
     let mut dir = Vec2::ZERO; // sim axes: x east, y north
-    for (key, d) in [
-        (KeyCode::ArrowLeft, Vec2::NEG_X),
-        (KeyCode::ArrowRight, Vec2::X),
-        (KeyCode::ArrowUp, Vec2::Y),
-        (KeyCode::ArrowDown, Vec2::NEG_Y),
+    for (action, d) in [
+        (Action::CameraLeft, Vec2::NEG_X),
+        (Action::CameraRight, Vec2::X),
+        (Action::CameraUp, Vec2::Y),
+        (Action::CameraDown, Vec2::NEG_Y),
     ] {
-        if keys.pressed(key) && *typing == crate::input::Typing::No {
+        if fired.held(action) {
             dir += d;
         }
     }
@@ -164,6 +174,26 @@ fn pan_and_zoom(
         cam.distance =
             (cam.distance * (1.0 - ZOOM_PER_LINE).powf(lines)).clamp(MIN_DISTANCE, MAX_DISTANCE);
     }
+}
+
+/// Dota's camera grip: while it is held the map follows the mouse, the
+/// ground under the cursor staying under it.
+fn grip(
+    fired: &Fired,
+    motion: &AccumulatedMouseMotion,
+    window: &Window,
+    cam: &mut RtsCamera,
+    session: &mut Session,
+    locked: bool,
+) {
+    if !fired.held(Action::CameraGrip) || motion.delta == Vec2::ZERO || locked {
+        return;
+    }
+    // World units a pixel spans at the focus.
+    let per_pixel =
+        2.0 * cam.distance * (FOV_Y_DEG.to_radians() / 2.0).tan() / window.height().max(1.0);
+    session.0.pinned = None;
+    cam.focus -= Vec3::new(motion.delta.x, 0.0, motion.delta.y) * per_pixel;
 }
 
 fn apply_camera_transform(mut q: Query<(&RtsCamera, &mut Transform), Changed<RtsCamera>>) {
@@ -209,8 +239,7 @@ fn follow(
     units: Query<&Unit>,
     ground: Res<Ground>,
     time: Res<Time>,
-    keys: Res<ButtonInput<KeyCode>>,
-    settings: Res<crate::config::Settings>,
+    fired: Res<Fired>,
     panels: Res<crate::input::Panels>,
     args: Res<crate::Args>,
     mut cam: Single<&mut RtsCamera>,
@@ -226,7 +255,8 @@ fn follow(
         core.pinned = Some(bota_client_core::Pin::Hero(slot));
     }
     let live = matches!(core.source, bota_client_core::Source::Live(_));
-    let centre = live && keys.pressed(settings.key(crate::config::Action::CenterHero));
+    // Dota's hero key held: the camera follows the hero.
+    let centre = live && fired.held(Action::SelectHero);
     let carrier = if centre || panels.camera_lock {
         core.my_hero()
     } else {

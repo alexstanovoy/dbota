@@ -13,5 +13,6 @@ mod tree;
 
 pub use catalog::Catalog;
 pub use cell::ShopCell;
+pub use corner::STICKY;
 pub use plugin::plugin;
 use plugin::shop_runs;

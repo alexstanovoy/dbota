@@ -37,13 +37,17 @@ pub fn plugin(app: &mut App) {
         .insert_non_send(Pending::default())
         .add_systems(
             PreUpdate,
-            guard.after(InputSystems).before(crate::session::pump),
+            guard
+                .after(InputSystems)
+                .after(crate::keys::fire)
+                .before(crate::session::pump),
         )
         .add_systems(Startup, super::screens::spawn_roots)
         .add_systems(
             Update,
             (
                 keyboard,
+                settings_screen,
                 super::screens::clicks,
                 drive,
                 super::screens::draw,
@@ -104,7 +108,9 @@ fn guard(
     core: Option<NonSendMut<MenuCore>>,
     mut session: NonSendMut<Session>,
     mut keys: ResMut<ButtonInput<KeyCode>>,
+    mut fired: ResMut<crate::keys::Fired>,
     panels: Res<crate::input::Panels>,
+    screen: Res<crate::settings::Screen>,
     mut epoch: ResMut<GameEpoch>,
     mut commands: Commands,
     mut index: ResMut<crate::units::UnitIndex>,
@@ -112,7 +118,7 @@ fn guard(
     let Some(mut core) = core else {
         return;
     };
-    if core.page() != Page::Game || core.launching {
+    if !core.shows_game() {
         keys.reset_all();
         return;
     }
@@ -125,14 +131,36 @@ fn guard(
         )
     });
     let done = lost || game.over.is_some() || (game.phase == Phase::Lobby && game.view().is_none());
-    let leave = keys.just_pressed(KeyCode::Escape) && done && !panels.settings && !panels.shop;
+    let escape = crate::keys::Action::Escape;
+    let leave = fired.pressed(escape) && done && !screen.open && !panels.shop;
     if leave || (lost && game.over.is_none()) {
-        keys.clear_just_pressed(KeyCode::Escape);
+        // Escape leaves the game here, not the client too.
+        fired.pressed.retain(|action| *action != escape);
         *session = idle();
         epoch.0 += 1;
         forget_units(&mut commands, &mut index);
         core.left_game(if leave { None } else { why.as_deref() });
     }
+}
+
+/// Opens the settings screen when the menu goes to its page, and goes back
+/// to the page it came from when the screen closes.
+fn settings_screen(
+    core: Option<NonSendMut<MenuCore>>,
+    mut screen: ResMut<crate::settings::Screen>,
+    mut was_open: Local<bool>,
+) {
+    let Some(mut core) = core else {
+        return;
+    };
+    if core.page() == Page::Settings {
+        if *was_open && !screen.open {
+            core.leave_settings();
+        } else if !screen.open {
+            screen.open = true;
+        }
+    }
+    *was_open = screen.open;
 }
 
 /// Types into the menu's fields while it covers the screen.
@@ -141,7 +169,7 @@ fn keyboard(core: Option<NonSendMut<MenuCore>>, mut events: MessageReader<Keyboa
         events.clear();
         return;
     };
-    if core.page() == Page::Game {
+    if matches!(core.page(), Page::Game | Page::Settings) {
         events.clear();
         return;
     }

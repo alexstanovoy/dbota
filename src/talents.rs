@@ -470,14 +470,15 @@ fn light(session: NonSend<Session>, mut art: Query<(&TalentArt, &mut ImageNode)>
     }
 }
 
-/// A click on the button pins the tree open or lets it go (`--tip talents`
-/// keeps it open, for screenshots); a click on a choice asks for it.
+/// A click on the button, or Dota's talent key, pins the tree open or lets
+/// it go (`--tip talents` keeps it open, for screenshots); a click on a
+/// choice asks for it.
 fn toggle(
     mut session: NonSendMut<Session>,
     args: Res<crate::Args>,
     button: Query<&Interaction, (Changed<Interaction>, With<TalentButton>)>,
     cells: Query<(&Interaction, &TalentCell), Changed<Interaction>>,
-    mut pinned: Local<bool>,
+    mut panels: ResMut<crate::input::Panels>,
     mut panel: Query<&mut Visibility, With<TalentPanel>>,
     hovered: Query<
         &Interaction,
@@ -490,7 +491,7 @@ fn toggle(
     >,
 ) {
     if button.iter().any(|i| *i == Interaction::Pressed) {
-        *pinned = !*pinned;
+        panels.talents = !panels.talents;
     }
     for (interaction, cell) in &cells {
         if *interaction == Interaction::Pressed {
@@ -503,7 +504,8 @@ fn toggle(
         .1
         .is_some_and(|u| u.hero.is_some());
     let forced = args.tip.as_deref() == Some("talents");
-    let open = hero && (forced || *pinned || hovered.iter().any(|i| *i != Interaction::None));
+    let open =
+        hero && (forced || panels.talents || hovered.iter().any(|i| *i != Interaction::None));
     for mut v in &mut panel {
         v.set_if_neq(ui::visible(open));
     }

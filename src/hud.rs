@@ -12,7 +12,8 @@ use bota_client_core::{
 };
 use bota_proto::{AbilityView, ItemView, Kit, PlayerView, Team, UnitKind, UnitView};
 
-use crate::config::{Action, Settings, key_name};
+use crate::config::Settings;
+use crate::keys::Action;
 use crate::manifest::Manifest;
 use crate::session::Session;
 use crate::ui::{self, Extent, Fonts};
@@ -1526,7 +1527,7 @@ fn ability_face(
         key: if look.passive {
             String::new()
         } else {
-            key_name(settings.ability_key(slot, abilities.len())).to_string()
+            settings.label(Settings::ability_action(slot, abilities.len()))
         },
         cost: if a.level > 0 && a.mana_cost > 0 {
             a.mana_cost.to_string()
@@ -1576,7 +1577,7 @@ fn item_face(
             )
         }),
         key: match item_action(slot) {
-            Some(action) if !look.passive => key_name(settings.key(action)).to_string(),
+            Some(action) if !look.passive => settings.label(action),
             _ => String::new(),
         },
         cost: String::new(),

@@ -33,6 +33,7 @@ mod hud;
 #[cfg(not(target_arch = "wasm32"))]
 mod import;
 mod input;
+mod keys;
 mod layers;
 #[cfg(not(target_arch = "wasm32"))]
 mod logging;
@@ -40,7 +41,6 @@ mod main_menu;
 mod manifest;
 mod map;
 mod mapfile;
-mod menu;
 mod minimap;
 mod overlay;
 mod pick;
@@ -48,6 +48,7 @@ mod portrait;
 mod quality;
 mod select;
 mod session;
+mod settings;
 mod shop;
 mod sound;
 mod stats;
@@ -165,6 +166,10 @@ pub struct Args {
     /// talent tree).
     #[arg(long, value_name = "KIND:ID")]
     pub tip: Option<String>,
+    /// Debug: open the settings screen at a tab (`hotkeys`, `options`,
+    /// `video`, `audio`) at the start, for screenshots.
+    #[arg(long, value_name = "TAB")]
+    pub settings: Option<String>,
     /// Debug: open the shop at the start: on a tab (`basics`, `upgrades` or
     /// `neutrals`), with an item's build tree shown (`upgrades:51`) or a
     /// search typed (`basics:/tango`).
@@ -381,7 +386,6 @@ fn main() -> AppExit {
             teleport::plugin,
             shop::plugin,
             glyph::plugin,
-            menu::plugin,
             tips::plugin,
             drill::plugin,
             buffs::plugin,
@@ -392,7 +396,12 @@ fn main() -> AppExit {
             quality::plugin,
             heap::plugin,
         ))
-        .add_plugins((fortified::plugin, courier::plugin))
+        .add_plugins((
+            fortified::plugin,
+            courier::plugin,
+            settings::plugin,
+            keys::plugin,
+        ))
         .add_plugins(main_menu::plugin);
     if let Err(err) = menu(&mut app, &args, store) {
         eprintln!("dbota: {err}");

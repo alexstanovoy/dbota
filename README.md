@@ -87,49 +87,41 @@ the debug options too.
 
 ## Controls
 
+The keys are Dota 2's defaults (its "Default" hotkeys, copied from Dota's own key table), and
+every one can be bound anew on the settings screen's HOTKEYS tab, which shows the bindings that
+clash and resets them to the defaults; they are kept as `key.<action> = <chord>` lines in
+`~/.config/dbota/client.conf` (a chord such as `F4`, `Shift+Enter`, `Mouse3`, or `none`).
+
 | Key or mouse | Action |
 |---|---|
 | Right click | move, or attack what is under the cursor |
 | Left click | select; confirms a targeted ability or item |
-| `A` then left click | attack-move |
+| `A` / `M` then left click | attack-move / move there, whatever is under the cursor |
 | `S` / `H` | stop / hold position |
-| `Q` `W` `E` | Shadowraze near / mid / far |
-| `R` | Requiem of Souls |
-| `D` `F` | other ability slots |
-| `1` … `6` | use the item in that slot |
-| `T` | town portal scroll: take it up and click a building to teleport near it; `T` again goes to the fountain. Drag a scroll stack from the stash onto the small slot beside the inventory. Every teleport under way is ringed on the map and the minimap, for both sides |
-| `B` | shop, laid out as Dota's: the BASICS, UPGRADES and NEUTRALS tabs with Dota's categories (from the asset cache; bota's own groups without it), a search by name or Dota's aliases (`tp`, `bfly`). Left click an item to buy it and see its build tree (its parts and recipe below it, what it builds into above; a click in the tree buys that piece); right click or shift-click sets (or clears) the quick-buy item, whose missing parts the quick-buy row in the corner offers; drop an item on the panel's foot to sell it; in the search line `Enter` buys the first answer. Items bota does not have are left out |
-| `F5` | buy the quick-buy item |
-| `Ctrl` + ability key | learn that ability (spend a skill point) |
-| `Enter` | console line to the server (a live match on a server started with `--cheats`); `Enter` sends, `Esc` drops it |
-| `Tab` | in a replay or as a spectator: switch vision (both teams, Radiant, Dire) |
+| `Q` `W` `E` `D` `F`, `R` | the ability slots (Shadowraze near, mid, far, Feast of Souls), the ultimate |
+| `O`, then an ability key; or `Ctrl` + an ability key | learn that ability (spend a skill point) |
+| `U` | open the talent tree (the Attribute Bonus is learned there too) |
+| `Z` `X` `C` `V` `B` `N` | use the item in that inventory slot |
+| `T` | town portal scroll: take it up and click a building to teleport near it; `T` again goes to the fountain. Drag a scroll stack from the stash onto the round slot beside the inventory. Every teleport under way is ringed on the map and the minimap, for both sides |
+| `F4` | shop, laid out as Dota's: the BASICS, UPGRADES and NEUTRALS tabs with Dota's categories (from the asset cache; bota's own groups without it), a search by name or Dota's aliases (`tp`, `bfly`). Left click an item to buy it and see its build tree (its parts and recipe below it, what it builds into above; a click in the tree buys that piece); right click or shift-click sets (or clears) the quick-buy item, whose missing parts the quick-buy row in the corner offers; drop an item on the panel's foot to sell it; in the search line `Enter` buys the first answer. Items bota does not have are left out |
+| `F5` / `F8` | buy the quick-buy item / the town portal scroll kept beside it |
+| `F1` | select your hero; held, the camera follows it |
+| `F2` / `F3` | select courier (its bag shows in the panel) / courier delivers; its speed burst and shield have buttons and unbound keys |
+| `1` … `0`, `Ctrl` + `1` … `0` | select a control group / put the selected unit in it |
+| `J` | Glyph of Fortification |
+| `\` | console line to the server (a live match on a server started with `--cheats`); `Enter` sends, `Esc` drops it |
+| `Enter` / `Shift+Enter` | chat to the allies / to everyone |
 | minimap | left click or drag moves the camera; right click orders your hero there |
-| `F2` / `F3` | select courier (its bag shows in the panel) / courier delivers |
-| `F1` | select your hero |
-| `Space` | centre the camera on your hero |
-| `Y` | lock the camera to your hero |
-| Arrows, screen edges | pan the camera (all four edges, the HUD bars included); mouse wheel zooms |
+| Arrows, screen edges, middle button held | pan the camera (all four edges, the HUD bars included; the middle button drags the map); mouse wheel zooms |
 | hold `Alt` | show attack, tower and ability ranges and the neutral camps' spawn boxes (they are never drawn otherwise) |
-| `M` | mute |
-| `F10` | settings: volume, damage numbers, your hero's voice answers, edge pan, display mode, picture quality, visual clarity; keys can be rebound by editing `~/.config/dbota/client.conf` |
-| `Esc` | cancel / close / leave |
+| `Esc` | cancel / close; with nothing open, the settings; leaves a match that is over |
+| `F9`, `=` / `-`, `.`, `Tab` | in a replay: pause, faster / slower, one tick, switch vision (both teams, Radiant, Dire; `Tab` as a spectator too) |
 
-Keys are rebound by writing `key.<action> = <key>` lines in `~/.config/dbota/client.conf` (the
-settings overlay changes volume and the toggles, not keys); a key is a letter, a digit, `F1`..`F12`,
-`Space`, `Tab` or one of the punctuation names the file accepts. The actions and their keys out of
-the box:
-
-| action | key | action | key |
-|---|---|---|---|
-| `attack_move` | `A` | `town_portal` | `T` |
-| `stop` | `S` | `shop` | `B` |
-| `hold` | `H` | `select_hero` | `F1` |
-| `ability_1` .. `ability_3` | `Q` `W` `E` | `select_courier` | `F2` |
-| `ability_4`, `ability_5` | `D`, `F` | `courier_deliver` | `F3` |
-| `ultimate` | `R` | `quick_buy` | `F5` |
-| `item_1` .. `item_6` | `1` .. `6` | `camera_lock` | `Y` |
-| `center_hero` | `Space` | `settings` | `F10` |
-| `mute` | `M` | `show_ranges` | left `Alt` |
+The settings screen (SETTINGS in the main menu, `Esc` in a game) has Dota's tabs: HOTKEYS,
+OPTIONS (interface size, damage numbers, animated portrait, edge pan), VIDEO (display mode, frame
+cap, resolution, quality preset, shadows, anti-aliasing, visual clarity, auto quality, and what
+takes effect on the next start) and AUDIO (volume, mute, your hero's voice answers). What it
+changes is saved when it closes.
 
 The hero panel is laid out as Dota's: the portrait with the unit's numbers over it (hover them for
 the stats tooltip), the level ring, the abilities with a gold plate over each one a point could go
@@ -144,14 +136,14 @@ home shop; there GRAB ALL moves what it holds into the bag, a slot a tick.
 ## Window and cursor
 
 On a desktop the game opens as windowed fullscreen, as Dota does. `display_mode` in
-`~/.config/dbota/client.conf` (or the F10 overlay, or `--display-mode` for one run) is `windowed`,
+`~/.config/dbota/client.conf` (or the settings' VIDEO tab, or `--display-mode` for one run) is `windowed`,
 `borderless` (windowed fullscreen, the default) or `fullscreen` (exclusive); it switches while
 the game runs. On Wayland there is no exclusive fullscreen (the compositor owns the video mode),
 so `fullscreen` shows as `borderless`. Captures (`--screenshot-at`, `--bench`) want
 `--display-mode windowed` for a window of the `--window` size.
 
 While a match is on screen and the window has focus the cursor is confined to the window, so the
-screen edges pan the camera on every side. It is let go in the menus, with the F10 overlay open
+screen edges pan the camera on every side. It is let go in the menus, with the settings open
 and when the window loses focus (Alt-Tab), and is not confined during captures. Where the platform
 refuses to confine (a Wayland compositor without pointer constraints), a warning is logged and
 the cursor stays free; the cursor is never locked instead. A browser keeps its canvas in the page:
@@ -173,7 +165,7 @@ times as needed) sets what the picture may cost:
 | `fps_cap` | frames a second at most, `0` for none | `0` |
 | `gpu_batching` | cull and batch draws on the GPU with compute shaders; off for a software renderer, which runs them several times slower | `true` |
 | `auto_quality` | lower anti-aliasing, shadows, then resolution while frames run slower than the cap (or 30 fps) | `false` |
-| `visual_clarity` | sets units apart from the ground: the scenery a little duller and darker, shade around the forest, a soft dark disc under every unit and a faint light round its rim; `off`, `low` or `high` (F10 steps through them) | `high` |
+| `visual_clarity` | sets units apart from the ground: the scenery a little duller and darker, shade around the forest, a soft dark disc under every unit and a faint light round its rim; `off`, `low` or `high` | `high` |
 | `animate_portrait` | Dota's "Animate Portrait": the bottom panel's portrait plays the unit's idle animation, drawn up to 30 times a second; off, it shows Dota's picture of a hero, or a render of another unit's model made once | `false` |
 
 `medium` is shadows `low`, `anti_aliasing` `fxaa` and 2048 textures; `low` adds no shadows, no anti-aliasing,

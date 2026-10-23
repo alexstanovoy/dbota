@@ -28,7 +28,7 @@ const GRAB_SPACING: u32 = 2;
 /// GRAB ALL's pale blue.
 const GRAB_TINT: Color = Color::srgb(0.62, 0.71, 0.86);
 /// The item kept beside the quick-buy row, as Dota keeps it by default.
-const STICKY: ItemId = ItemId::TOWN_PORTAL_SCROLL;
+pub const STICKY: ItemId = ItemId::TOWN_PORTAL_SCROLL;
 
 /// The gold, a click on which opens the shop.
 #[derive(Component)]
