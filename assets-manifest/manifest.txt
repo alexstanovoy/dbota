@@ -28,6 +28,10 @@
 #           PCM WAV as Valve ships it (16-bit 44.1 kHz, a few 8-bit or 22.05 kHz); voice lines are MP3
 #           in the game and stay MP3 (out .mp3). Events with several variants list one line per variant;
 #           variants of one random pick (a hero's move acknowledgements) share the logical name.
+#   label   <vpk localization .txt> <key>
+#           one of Dota's interface texts (a stat's name, a line of the stats tooltip), written with
+#           every other label to text/labels.json under its key lower-cased; the client fills its
+#           {d:name} and {s:name} variables with the simulator's numbers.
 #   world   <logical> <vpk .vwrld_c> <out .gltf> vpk=<map vpk under game/dota> half_width= v_min= v_max=
 #           layers=<dir> trees=<file>: the default map cropped to a band around the mid-lane diagonal
 #           (see tools/README.md for the coordinate convention, terrain layers and trees).
@@ -432,7 +436,7 @@ texture portrait.hero.nevermore.tall panorama/images/heroes/selection/npc_dota_h
 texture minimap.hero.nevermore panorama/images/heroes/icons/npc_dota_hero_nevermore_png.vtex_c icons/minimap/nevermore.png
 
 # --- HUD art and the minimap background
-# The Glyph of Fortification buff's icon (modifier_fountain_glyph) is the Glyph button's
+# The Glyph of Fortification buff's icon (modifier_fountain_glyph): Dota's small Glyph.
 texture icon.glyph panorama/images/hud/icon_glyph_small_psd.vtex_c icons/glyph_small_psd.png
 texture hud.gold panorama/images/hud/icon_gold_psd.vtex_c hud/icon_gold_psd.png
 texture hud.gold_large panorama/images/hud/reborn/gold_large_png.vtex_c hud/gold_large_png.png
@@ -447,6 +451,24 @@ texture hud.ability_bg panorama/images/hud/reborn/ability_bg_psd.vtex_c hud/abil
 texture hud.ability_bevel panorama/images/hud/reborn/ability_bevel_psd.vtex_c hud/ability_bevel_psd.png
 texture hud.levelup panorama/images/hud/reborn/levelup_plus_fill_psd.vtex_c hud/levelup_plus_fill_psd.png
 texture hud.minimap_border panorama/images/hud/default/actionpanel/minimapborder_png.vtex_c hud/minimapborder_png.png
+# The hero panel: the stat icons over the portrait, the attribute icons, the talent tree button
+# (lit while a point could go into it), the innate's mark, the level-up plate and its plus, the town
+# portal and neutral slots' empty art, the courier button; the Glyph button against the minimap.
+texture hud.attack_speed panorama/images/hud/reborn/icon_attack_speed_psd.vtex_c hud/icon_attack_speed_psd.png
+texture hud.magic_resist panorama/images/hud/reborn/icon_magic_resist_psd.vtex_c hud/icon_magic_resist_psd.png
+texture hud.strength panorama/images/primary_attribute_icons/primary_attribute_icon_strength_psd.vtex_c hud/primary_attribute_icon_strength_psd.png
+texture hud.agility panorama/images/primary_attribute_icons/primary_attribute_icon_agility_psd.vtex_c hud/primary_attribute_icon_agility_psd.png
+texture hud.intelligence panorama/images/primary_attribute_icons/primary_attribute_icon_intelligence_psd.vtex_c hud/primary_attribute_icon_intelligence_psd.png
+texture hud.talents panorama/images/hud/reborn/stat_branch_large_png.vtex_c hud/stat_branch_large_png.png
+texture hud.talents_learnable panorama/images/hud/reborn/statbranch_button_lvlup_psd.vtex_c hud/statbranch_button_lvlup_psd.png
+texture hud.innate panorama/images/hud/facets/innate_icon_png.vtex_c hud/innate_icon_png.png
+texture hud.levelup_button panorama/images/hud/reborn/levelup_button_1_psd.vtex_c hud/levelup_button_1_psd.png
+texture hud.levelup_well panorama/images/hud/reborn/levelup_plus_well_psd.vtex_c hud/levelup_plus_well_psd.png
+texture hud.tp_slot panorama/images/hud/reborn/bg_tp_slot_png.vtex_c hud/bg_tp_slot_png.png
+texture hud.neutral_slot panorama/images/hud/reborn/bg_neutral_slot_png.vtex_c hud/bg_neutral_slot_png.png
+texture hud.courier panorama/images/hud/reborn/courier_icon_psd.vtex_c hud/courier_icon_psd.png
+texture hud.glyph_on panorama/images/hud/reborn/icon_glyph_on_psd.vtex_c hud/icon_glyph_on_psd.png
+texture hud.glyph_off panorama/images/hud/reborn/icon_glyph_off_psd.vtex_c hud/icon_glyph_off_psd.png
 # Tooltip art: the bars over an item's active, use and passive sections, and the cost icons.
 texture tip.active panorama/images/hud/item_tooltip_active_psd.vtex_c hud/item_tooltip_active_psd.png
 texture tip.use panorama/images/hud/item_tooltip_use_psd.vtex_c hud/item_tooltip_use_psd.png
@@ -459,6 +481,32 @@ texture tip.range panorama/images/status_icons/ability_castrange_icon_psd.vtex_c
 texture shop.panel panorama/images/hud/reborn/main_shop_bg_psd.vtex_c hud/main_shop_bg_psd.png
 texture shop.grab_all panorama/images/hud/reborn/stash_grab_all_button_psd.vtex_c hud/stash_grab_all_button_psd.png
 texture shop.button panorama/images/hud/reborn/shop_launcher_button_psd.vtex_c hud/shop_launcher_button_psd.png
+# The stats tooltip over the portrait (Dota's tooltip_unit_damage_armor: its rows the simulator
+# reports) and the talent tree's title and Attribute Bonus row.
+label resource/localization/dota_english.txt DOTA_HUD_Attack
+label resource/localization/dota_english.txt DOTA_HUD_AttackSpeed
+label resource/localization/dota_english.txt DOTA_HUD_Damage
+label resource/localization/dota_english.txt DOTA_HUD_AttackRange
+label resource/localization/dota_english.txt DOTA_HUD_MoveSpeed
+label resource/localization/dota_english.txt DOTA_HUD_ManaRegenDetail
+label resource/localization/dota_english.txt DOTA_HUD_HealthRegenDetail
+label resource/localization/dota_english.txt DOTA_HUD_Defense
+label resource/localization/dota_english.txt DOTA_HUD_Armor
+label resource/localization/dota_english.txt DOTA_HUD_PhysicalResist
+label resource/localization/dota_english.txt DOTA_HUD_MagicResist
+label resource/localization/dota_english.txt DOTA_HUD_StrengthGain
+label resource/localization/dota_english.txt DOTA_HUD_AgilityGain
+label resource/localization/dota_english.txt DOTA_HUD_IntelligenceGain
+label resource/localization/dota_english.txt DOTA_HUD_PrimaryAttributeStrength
+label resource/localization/dota_english.txt DOTA_HUD_PrimaryAttributeAgility
+label resource/localization/dota_english.txt DOTA_HUD_PrimaryAttributeIntelligence
+label resource/localization/dota_english.txt DOTA_HUD_StrengthDetails
+label resource/localization/dota_english.txt DOTA_HUD_AgilityDetails
+label resource/localization/dota_english.txt DOTA_HUD_IntelligenceDetails
+label resource/localization/dota_english.txt DOTA_StatBranch_TooltipTitle
+label resource/localization/dota_english.txt DOTA_LevelUpAttributes
+label resource/localization/abilities_english.txt DOTA_Tooltip_ability_attribute_bonus
+label resource/localization/abilities_english.txt DOTA_Tooltip_ability_attribute_bonus_Description
 texture minimap.map panorama/images/minimap/dotamap_psd.vtex_c minimap/dotamap_psd.png
 texture minimap.radiant_buildings panorama/images/minimap/dotamap_radiant_buildings_psd.vtex_c minimap/dotamap_radiant_buildings_psd.png
 texture minimap.dire_buildings panorama/images/minimap/dotamap_dire_buildings_psd.vtex_c minimap/dotamap_dire_buildings_psd.png

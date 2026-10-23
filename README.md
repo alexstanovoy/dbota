@@ -131,10 +131,15 @@ the box:
 | `center_hero` | `Space` | `settings` | `F10` |
 | `mute` | `M` | `show_ranges` | left `Alt` |
 
-Talents: the small button left of the abilities opens the talent tree; when you have a point,
-click a talent to learn it; the Attribute Bonus button right of the abilities spends a point on its next level. Buffs and debuffs of the selected unit sit above the abilities. The
-stash shows in the shop's corner while the shop is open or at the home shop; there GRAB ALL moves
-what it holds into the bag, a slot a tick.
+The hero panel is laid out as Dota's: the portrait with the unit's numbers over it (hover them for
+the stats tooltip), the level ring, the abilities with a gold plate over each one a point could go
+into (click it, or Ctrl + the ability's key, to learn a level), the inventory with its round
+neutral and town portal slots, and the gold (click it to open the shop) beside the courier's
+buttons. Talents: the round button left of the abilities opens the talent tree, lit while you
+have a point for it; click a talent, or the Attribute Bonus under the tiers, to learn it. The Glyph
+of Fortification is the round button against the minimap. Buffs and debuffs of the selected unit
+sit above the abilities. The stash shows in the shop's corner while the shop is open or at the
+home shop; there GRAB ALL moves what it holds into the bag, a slot a tick.
 
 ## Window and cursor
 

@@ -4,6 +4,7 @@
 use bevy::{prelude::*, window::PrimaryWindow};
 
 use crate::config::Settings;
+use crate::manifest::Manifest;
 
 /// Logical window height at which the interface scale is one.
 const REFERENCE_HEIGHT: f32 = 900.0;
@@ -42,7 +43,8 @@ pub const HP_FOE: Color = Color::srgb(0.86, 0.22, 0.18);
 
 pub fn plugin(app: &mut App) {
     app.add_systems(PreStartup, load_fonts)
-        .add_systems(Update, scale_ui);
+        .add_systems(Update, scale_ui)
+        .add_systems(PostUpdate, cover.after(bevy::ui::UiSystems::Layout));
 }
 
 fn load_fonts(mut commands: Commands, server: Res<AssetServer>) {
@@ -94,6 +96,62 @@ pub fn split_disc(a: f32, before: Color, after: Color) -> BackgroundGradient {
             AngularColorStop::new(after, std::f32::consts::TAU),
         ],
     ))
+}
+
+/// Dota's art at `logical` in the cache, or a plain disc or box of
+/// `stand_in` where the cache has none.
+pub fn art(
+    manifest: &Manifest,
+    server: &AssetServer,
+    logical: &str,
+    stand_in: Color,
+) -> impl Bundle {
+    match manifest.file(logical) {
+        Some(path) => (
+            ImageNode::new(server.load(path)),
+            BackgroundColor(Color::NONE),
+        ),
+        None => (
+            ImageNode::default().with_color(Color::NONE),
+            BackgroundColor(stand_in),
+        ),
+    }
+}
+
+/// A picture that fills its node as Dota fills a portrait's frame: scaled
+/// until it covers the frame and cut to the frame's shape about its middle,
+/// never shrunk to fit with bars beside it. Its image node stretches.
+#[derive(Component, Clone, Copy, Default)]
+#[require(ImageNode)]
+pub struct Cover;
+
+/// The part of a `source` sized picture that covers a `frame`: the middle of
+/// it, of the frame's shape. None while either has no size.
+pub fn cover_rect(source: Vec2, frame: Vec2) -> Option<Rect> {
+    if source.cmple(Vec2::ZERO).any() || frame.cmple(Vec2::ZERO).any() {
+        return None;
+    }
+    let seen = frame / (frame / source).max_element();
+    let corner = (source - seen) / 2.0;
+    Some(Rect::from_corners(corner, corner + seen))
+}
+
+/// Cuts each [`Cover`] picture to its frame, once both have a size.
+fn cover(
+    images: Res<Assets<Image>>,
+    mut pictures: Query<(&mut ImageNode, &ComputedNode), With<Cover>>,
+) {
+    for (mut picture, node) in &mut pictures {
+        let rect = images
+            .get(&picture.image)
+            .and_then(|image| cover_rect(image.size_f32(), node.content_box().size()));
+        if picture.image_mode != NodeImageMode::Stretch {
+            picture.image_mode = NodeImageMode::Stretch;
+        }
+        if picture.rect != rect {
+            picture.rect = rect;
+        }
+    }
 }
 
 /// A node over the whole of its parent.
@@ -179,5 +237,24 @@ fn scale_ui(
         .max(MIN_SCALE);
     if (ui_scale.0 - scale).abs() > 1e-3 {
         ui_scale.0 = scale;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A tall picture in a wide frame keeps its whole width and the middle
+    /// of its height; a wide one in a tall frame the middle of its width:
+    /// either way the frame's shape, so nothing is letterboxed.
+    #[test]
+    fn a_cover_is_the_middle_of_the_picture_in_the_frames_shape() {
+        let tall = cover_rect(Vec2::new(150.0, 200.0), Vec2::new(300.0, 150.0)).unwrap();
+        assert_eq!(tall, Rect::new(0.0, 62.5, 150.0, 137.5));
+        let wide = cover_rect(Vec2::new(256.0, 144.0), Vec2::new(176.0, 156.0)).unwrap();
+        assert!((wide.width() / wide.height() - 176.0 / 156.0).abs() < 1e-4);
+        assert!((wide.min.x + wide.max.x - 256.0).abs() < 1e-3, "centred");
+        assert_eq!(wide.height(), 144.0);
+        assert!(cover_rect(Vec2::ZERO, Vec2::ONE).is_none());
     }
 }

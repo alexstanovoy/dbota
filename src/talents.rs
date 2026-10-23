@@ -1,16 +1,21 @@
-//! The talent tree, as Dota draws it: a button left of the abilities with
-//! four rows of two pips, gold where a talent is learned and glowing while a
-//! skill point could go into one; over it, while it is hovered or pinned by a
-//! click, the tree itself, the level-25 tier on top, the two choices of each
-//! tier either side of its level; a click on a choice learns it. It shows
-//! the tree of whichever hero the bottom panel is about, an enemy's too.
+//! The talent tree, as Dota draws it: a round button left of the abilities,
+//! Dota's tree icon (four rows of two pips where the cache has none), lit
+//! while a skill point could go into the tree; over it, while it is hovered
+//! or pinned by a click, the tree itself, the level-25 tier on top, the two
+//! choices of each tier either side of its level, and under them the
+//! Attribute Bonus with a pip for each of its levels, as Dota levels it since
+//! the bonus left the ability row; a click on a choice or on the Attribute
+//! Bonus learns it. It shows the tree of whichever hero the bottom panel is
+//! about, an enemy's too.
 
 use bevy::prelude::*;
-use bota_client_core::{has_talents, talent_levels, talents};
+use bota_client_core::{talent_levels, talents};
 use bota_proto::TalentSlot;
 
+use crate::dota_text::Texts;
+use crate::hud::Spawner;
 use crate::session::Session;
-use crate::ui::{self, Fonts};
+use crate::ui;
 
 /// The button left of the abilities.
 #[derive(Component)]
@@ -40,17 +45,29 @@ struct TierLevel(u8);
 #[derive(Component)]
 struct Branch(u8);
 
-/// The Attribute Bonus button right of the abilities: its level, and a
-/// click spends a skill point on it.
+/// Dota's tree icon on the button, where the cache has it.
 #[derive(Component)]
-pub struct AttributeButton;
+struct TalentArt {
+    /// The icon as it is, and lit while a point could go into the tree.
+    plain: Handle<Image>,
+    lit: Handle<Image>,
+}
 
-/// The level text of the Attribute Bonus button.
+/// The tiers of the tree, hidden for a hero without one.
 #[derive(Component)]
-struct AttributeLevel;
+struct TreeBody;
+
+/// The Attribute Bonus row under the tiers: a click spends a skill point on
+/// it.
+#[derive(Component)]
+pub struct AttributeRow;
+
+/// One level pip of the Attribute Bonus row.
+#[derive(Component)]
+struct AttributePip(u8);
 
 /// The talent button's size, and the tree's width.
-pub const BUTTON: f32 = 48.0;
+const BUTTON: f32 = 60.0;
 const PANEL_WIDTH: f32 = 560.0;
 
 fn branch() -> impl Bundle {
@@ -71,15 +88,15 @@ const SHUT: Color = Color::srgb(0.38, 0.4, 0.45);
 pub fn plugin(app: &mut App) {
     app.add_systems(
         Update,
-        (toggle, show, show_attribute).run_if(|k: Res<crate::session::MatchKnown>| k.0),
+        (toggle, show, show_attribute, light).run_if(|k: Res<crate::session::MatchKnown>| k.0),
     );
 }
 
-/// The button, of the ability slots' height, as the first of their row.
-pub fn spawn_button(commands: &mut Commands, fonts: &Fonts, row: Entity, column: Entity) {
-    // Left of the abilities, round, a small tree drawn in it: a trunk and
-    // a pip for each talent, lit as they are learned, as Dota's.
-    let button = commands
+/// The button, round, as the first of the ability row, and the tree over
+/// the row's `column`.
+pub fn spawn_button(kit: &mut Spawner, row: Entity, column: Entity) {
+    let button = kit
+        .commands
         .spawn((
             TalentButton,
             Button,
@@ -87,6 +104,7 @@ pub fn spawn_button(commands: &mut Commands, fonts: &Fonts, row: Entity, column:
                 width: px(BUTTON),
                 height: px(BUTTON),
                 align_self: AlignSelf::Center,
+                margin: UiRect::bottom(px(10)),
                 border: UiRect::all(px(2)),
                 border_radius: BorderRadius::MAX,
                 flex_direction: FlexDirection::Column,
@@ -100,6 +118,31 @@ pub fn spawn_button(commands: &mut Commands, fonts: &Fonts, row: Entity, column:
             ChildOf(row),
         ))
         .id();
+    let art = (kit.manifest.file("hud.talents")).zip(kit.manifest.file("hud.talents_learnable"));
+    if let Some((plain, lit)) = art {
+        let plain = kit.server.load(plain);
+        kit.commands.spawn((
+            TalentArt {
+                plain: plain.clone(),
+                lit: kit.server.load(lit),
+            },
+            ImageNode::new(plain),
+            Node {
+                border_radius: BorderRadius::MAX,
+                ..ui::fill()
+            },
+            Pickable::IGNORE,
+            ChildOf(button),
+        ));
+    } else {
+        spawn_drawn_tree(kit.commands, button);
+    }
+    spawn_panel(kit, column);
+}
+
+/// A small tree drawn in the button where the cache has no icon: a trunk
+/// and a pip for each talent, lit as they are learned.
+fn spawn_drawn_tree(commands: &mut Commands, button: Entity) {
     commands.spawn((
         Node {
             position_type: PositionType::Absolute,
@@ -139,6 +182,12 @@ pub fn spawn_button(commands: &mut Commands, fonts: &Fonts, row: Entity, column:
             ));
         }
     }
+}
+
+/// The tree over the ability row: the tiers, then the Attribute Bonus.
+fn spawn_panel(kit: &mut Spawner, column: Entity) {
+    let commands = &mut *kit.commands;
+    let fonts = kit.fonts;
     let panel = commands
         .spawn((
             TalentPanel,
@@ -168,8 +217,12 @@ pub fn spawn_button(commands: &mut Commands, fonts: &Fonts, row: Entity, column:
             ChildOf(column),
         ))
         .id();
+    let title = kit
+        .texts
+        .label("DOTA_StatBranch_TooltipTitle", &[])
+        .unwrap_or_else(|| "Talent Tree".to_string());
     commands.spawn((
-        ui::text("TALENT TREE", &fonts.bold, 12.0, ui::INK_DIM),
+        ui::text(title.to_uppercase(), &fonts.bold, 12.0, ui::INK_DIM),
         Node {
             align_self: AlignSelf::Center,
             ..default()
@@ -177,200 +230,264 @@ pub fn spawn_button(commands: &mut Commands, fonts: &Fonts, row: Entity, column:
         Pickable::IGNORE,
         ChildOf(panel),
     ));
-    // The trunk the level badges sit on.
+    spawn_tree_body(commands, fonts, panel);
+    spawn_attribute_row(commands, fonts, kit.texts, panel);
+}
+
+/// The tiers, of a hero that has a tree, on the trunk their level badges
+/// sit on.
+fn spawn_tree_body(commands: &mut Commands, fonts: &crate::ui::Fonts, panel: Entity) {
+    let body = commands
+        .spawn((
+            TreeBody,
+            Node {
+                flex_direction: FlexDirection::Column,
+                row_gap: px(4),
+                ..default()
+            },
+            ChildOf(panel),
+        ))
+        .id();
     commands.spawn((
         Node {
             position_type: PositionType::Absolute,
             left: percent(50),
-            top: px(30),
-            bottom: px(14),
+            top: px(8),
+            bottom: px(8),
             width: px(4),
             margin: UiRect::left(px(-2)),
             ..default()
         },
         BackgroundColor(Color::srgb(0.22, 0.24, 0.28)),
         Pickable::IGNORE,
-        ChildOf(panel),
+        ChildOf(body),
     ));
     for tier in (0..4u8).rev() {
-        let line = commands
-            .spawn((
-                Node {
-                    align_items: AlignItems::Center,
-                    justify_content: JustifyContent::Center,
-                    ..default()
-                },
-                ChildOf(panel),
-            ))
-            .id();
-        for side in 0..2u8 {
-            let slot = tier * 2 + side;
-            if side == 1 {
-                commands.spawn((Branch(tier * 2), branch(), Pickable::IGNORE, ChildOf(line)));
-                commands.spawn((
-                    TierLevel(tier),
-                    Node {
-                        width: px(34),
-                        height: px(34),
-                        justify_content: JustifyContent::Center,
-                        align_items: AlignItems::Center,
-                        border: UiRect::all(px(1)),
-                        border_radius: BorderRadius::all(px(17)),
-                        ..default()
-                    },
-                    BorderColor::all(ui::EDGE),
-                    BackgroundColor(ui::PANEL_DEEP),
-                    children![(
-                        ui::text(
-                            talent_levels(TalentSlot(2 * tier)).0.to_string(),
-                            &fonts.bold,
-                            14.0,
-                            OPEN
-                        ),
-                        Pickable::IGNORE,
-                    )],
-                    ChildOf(line),
-                ));
-                commands.spawn((
-                    Branch(tier * 2 + 1),
-                    branch(),
-                    Pickable::IGNORE,
-                    ChildOf(line),
-                ));
-            }
-            let cell = commands
-                .spawn((
-                    TalentCell(slot),
-                    Button,
-                    Node {
-                        width: px(220),
-                        min_height: px(34),
-                        padding: UiRect::axes(px(8), px(4)),
-                        justify_content: if side == 0 {
-                            JustifyContent::FlexEnd
-                        } else {
-                            JustifyContent::FlexStart
-                        },
-                        align_items: AlignItems::Center,
-                        border: UiRect::all(px(1)),
-                        border_radius: BorderRadius::all(px(4)),
-                        ..default()
-                    },
-                    BorderColor::all(ui::EDGE),
-                    BackgroundColor(ui::PANEL_DEEP),
-                    ChildOf(line),
-                ))
-                .id();
-            commands.spawn((
-                CellText(slot),
-                ui::text("", &fonts.regular, 13.0, OPEN),
-                TextLayout::justify(if side == 0 {
-                    Justify::Right
-                } else {
-                    Justify::Left
-                }),
-                Pickable::IGNORE,
-                ChildOf(cell),
-            ));
-        }
+        spawn_tier(commands, fonts, body, tier);
     }
 }
 
-/// The Attribute Bonus button, a small box with a plus and its level.
-pub fn spawn_attribute_button(commands: &mut Commands, fonts: &Fonts, row: Entity) {
-    let button = commands
+/// One tier of the tree: its two choices either side of its level.
+fn spawn_tier(commands: &mut Commands, fonts: &crate::ui::Fonts, panel: Entity, tier: u8) {
+    let line = commands
         .spawn((
-            AttributeButton,
-            Button,
             Node {
-                width: px(30),
-                height: px(BUTTON),
-                align_self: AlignSelf::Center,
-                flex_direction: FlexDirection::Column,
-                justify_content: JustifyContent::Center,
                 align_items: AlignItems::Center,
-                border: UiRect::all(px(2)),
-                border_radius: BorderRadius::all(px(6)),
+                justify_content: JustifyContent::Center,
                 ..default()
             },
-            BorderColor::all(Color::srgb(0.2, 0.22, 0.27)),
+            ChildOf(panel),
+        ))
+        .id();
+    for side in 0..2u8 {
+        let slot = tier * 2 + side;
+        if side == 1 {
+            commands.spawn((Branch(tier * 2), branch(), Pickable::IGNORE, ChildOf(line)));
+            commands.spawn((
+                TierLevel(tier),
+                Node {
+                    width: px(34),
+                    height: px(34),
+                    justify_content: JustifyContent::Center,
+                    align_items: AlignItems::Center,
+                    border: UiRect::all(px(1)),
+                    border_radius: BorderRadius::all(px(17)),
+                    ..default()
+                },
+                BorderColor::all(ui::EDGE),
+                BackgroundColor(ui::PANEL_DEEP),
+                children![(
+                    ui::text(
+                        talent_levels(TalentSlot(2 * tier)).0.to_string(),
+                        &fonts.bold,
+                        14.0,
+                        OPEN
+                    ),
+                    Pickable::IGNORE,
+                )],
+                ChildOf(line),
+            ));
+            commands.spawn((
+                Branch(tier * 2 + 1),
+                branch(),
+                Pickable::IGNORE,
+                ChildOf(line),
+            ));
+        }
+        let cell = commands
+            .spawn((
+                TalentCell(slot),
+                Button,
+                Node {
+                    width: px(220),
+                    min_height: px(34),
+                    padding: UiRect::axes(px(8), px(4)),
+                    justify_content: if side == 0 {
+                        JustifyContent::FlexEnd
+                    } else {
+                        JustifyContent::FlexStart
+                    },
+                    align_items: AlignItems::Center,
+                    border: UiRect::all(px(1)),
+                    border_radius: BorderRadius::all(px(4)),
+                    ..default()
+                },
+                BorderColor::all(ui::EDGE),
+                BackgroundColor(ui::PANEL_DEEP),
+                ChildOf(line),
+            ))
+            .id();
+        commands.spawn((
+            CellText(slot),
+            ui::text("", &fonts.regular, 13.0, OPEN),
+            TextLayout::justify(if side == 0 {
+                Justify::Right
+            } else {
+                Justify::Left
+            }),
+            Pickable::IGNORE,
+            ChildOf(cell),
+        ));
+    }
+}
+
+/// The Attribute Bonus under the tiers, as Dota's tree has it: its name and
+/// a pip for each level it may take.
+fn spawn_attribute_row(
+    commands: &mut Commands,
+    fonts: &crate::ui::Fonts,
+    texts: &Texts,
+    panel: Entity,
+) {
+    let name = texts
+        .label("DOTA_LevelUpAttributes", &[])
+        .unwrap_or_else(|| {
+            format!(
+                "+{} to all attributes",
+                bota_core::rules::ATTRIBUTE_BONUS_POINTS
+            )
+        });
+    let row = commands
+        .spawn((
+            AttributeRow,
+            Button,
+            Node {
+                margin: UiRect::top(px(6)),
+                padding: UiRect::axes(px(12), px(6)),
+                justify_content: JustifyContent::SpaceBetween,
+                align_items: AlignItems::Center,
+                border: UiRect::all(px(1)),
+                border_radius: BorderRadius::all(px(4)),
+                ..default()
+            },
+            BorderColor::all(ui::EDGE),
             BackgroundColor(ui::PANEL_DEEP),
-            Visibility::Hidden,
-            ChildOf(row),
+            ChildOf(panel),
         ))
         .id();
     commands.spawn((
-        ui::text("+", &fonts.bold, 20.0, SHUT),
+        ui::text(name, &fonts.regular, 13.0, OPEN),
         Pickable::IGNORE,
-        ChildOf(button),
+        ChildOf(row),
     ));
-    commands.spawn((
-        AttributeLevel,
-        ui::text("0", &fonts.bold, 12.0, SHUT),
-        Pickable::IGNORE,
-        ChildOf(button),
-    ));
+    let pips = commands
+        .spawn((
+            Node {
+                column_gap: px(4),
+                ..default()
+            },
+            Pickable::IGNORE,
+            ChildOf(row),
+        ))
+        .id();
+    for level in 0..bota_core::rules::ATTRIBUTE_BONUS_MAX_LEVEL {
+        commands.spawn((
+            AttributePip(level),
+            Node {
+                width: px(14),
+                height: px(6),
+                border_radius: BorderRadius::all(px(2)),
+                ..default()
+            },
+            BackgroundColor(SHUT),
+            Pickable::IGNORE,
+            ChildOf(pips),
+        ));
+    }
 }
 
-/// A click on the Attribute Bonus button learns a level of it; it shows its
-/// level, and glows while a skill point could go into it.
+/// The Attribute Bonus row's pips lit to its level, its rim glowing while a
+/// skill point could go into it; a click on it learns a level.
 fn show_attribute(
     mut session: NonSendMut<Session>,
     time: Res<Time>,
-    mut button: Query<
-        (&Interaction, &Children, &mut Visibility, &mut BorderColor),
-        With<AttributeButton>,
-    >,
-    mut texts: Query<(&mut Text, &mut TextColor)>,
+    mut row: Query<(&Interaction, &mut BorderColor), With<AttributeRow>>,
+    clicked: Query<&Interaction, (Changed<Interaction>, With<AttributeRow>)>,
+    mut pips: Query<(&AttributePip, &mut BackgroundColor)>,
 ) {
-    let (seat, unit, _) = crate::hud::subject(&session.0);
+    let (seat, _, _) = crate::hud::subject(&session.0);
     let seat = seat.map(|p| p.slot);
     let mine = seat.is_some() && seat == session.0.my_slot;
-    let shown = unit.is_some_and(|u| u.hero.is_some());
     let state = seat.and_then(|s| session.0.talents_of(s));
     let level = state.map_or(0, |t| t.attribute_bonus);
     let learnable = mine && state.is_some_and(|t| t.attribute_bonus_learnable);
     let glow = 0.55 + 0.45 * (time.elapsed_secs() * 4.0).sin().abs();
-    let mut learn = false;
-    for (interaction, children, mut v, mut rim) in &mut button {
-        learn |= learnable && *interaction == Interaction::Pressed;
-        v.set_if_neq(ui::visible(shown));
+    for (_, mut rim) in &mut row {
         rim.set_if_neq(BorderColor::all(if learnable {
             GOLD.with_alpha(glow)
         } else {
-            Color::srgb(0.2, 0.22, 0.27)
+            ui::EDGE
         }));
-        for child in children {
-            if let Ok((mut text, mut color)) = texts.get_mut(*child) {
-                let c = if learnable {
-                    GOLD
-                } else if level > 0 {
-                    Color::WHITE
-                } else {
-                    SHUT
-                };
-                color.set_if_neq(TextColor(c));
-                if text.0 != "+" {
-                    let s = level.to_string();
-                    text.set_if_neq(Text(s));
-                }
-            }
-        }
     }
-    if learn {
+    for (pip, mut bg) in &mut pips {
+        bg.set_if_neq(BackgroundColor(if pip.0 < level {
+            GOLD
+        } else if pip.0 == level && learnable {
+            GOLD.with_alpha(0.35 + 0.4 * glow)
+        } else {
+            SHUT
+        }));
+    }
+    if learnable && clicked.iter().any(|i| *i == Interaction::Pressed) {
         session.0.learn_attribute_bonus();
     }
 }
 
-/// A click on the button pins the tree open or lets it go; a click on a
-/// choice asks for it.
+/// Dota's tree icon, lit while a skill point could go into a talent or the
+/// Attribute Bonus.
+fn light(session: NonSend<Session>, mut art: Query<(&TalentArt, &mut ImageNode)>) {
+    let core = &session.0;
+    let seat = crate::hud::subject(core).0.map(|p| p.slot);
+    let mine = seat.is_some() && seat == core.my_slot;
+    let lit = seat.and_then(|s| core.talents_of(s)).is_some_and(|t| {
+        t.attribute_bonus_learnable || (0..8).any(|k| t.learnable.has(TalentSlot(k)))
+    });
+    for (art, mut image) in &mut art {
+        let want = if lit && mine { &art.lit } else { &art.plain };
+        if image.image != *want {
+            image.image = want.clone();
+        }
+    }
+}
+
+/// A click on the button pins the tree open or lets it go (`--tip talents`
+/// keeps it open, for screenshots); a click on a choice asks for it.
 fn toggle(
     mut session: NonSendMut<Session>,
+    args: Res<crate::Args>,
     button: Query<&Interaction, (Changed<Interaction>, With<TalentButton>)>,
     cells: Query<(&Interaction, &TalentCell), Changed<Interaction>>,
     mut pinned: Local<bool>,
     mut panel: Query<&mut Visibility, With<TalentPanel>>,
-    hovered: Query<&Interaction, Or<(With<TalentButton>, With<TalentPanel>, With<TalentCell>)>>,
+    hovered: Query<
+        &Interaction,
+        Or<(
+            With<TalentButton>,
+            With<TalentPanel>,
+            With<TalentCell>,
+            With<AttributeRow>,
+        )>,
+    >,
 ) {
     if button.iter().any(|i| *i == Interaction::Pressed) {
         *pinned = !*pinned;
@@ -380,11 +497,13 @@ fn toggle(
             learn(&mut session.0, cell.0);
         }
     }
-    let has_tree = crate::hud::subject(&session.0)
+    // Every hero has the Attribute Bonus to learn, whether or not it has
+    // talents.
+    let hero = crate::hud::subject(&session.0)
         .1
-        .and_then(|u| u.hero)
-        .is_some_and(|h| has_talents(h.0));
-    let open = has_tree && (*pinned || hovered.iter().any(|i| *i != Interaction::None));
+        .is_some_and(|u| u.hero.is_some());
+    let forced = args.tip.as_deref() == Some("talents");
+    let open = hero && (forced || *pinned || hovered.iter().any(|i| *i != Interaction::None));
     for mut v in &mut panel {
         v.set_if_neq(ui::visible(open));
     }
@@ -420,8 +539,10 @@ fn show(
             With<TalentButton>,
             Without<TalentPanel>,
             Without<TalentCell>,
+            Without<TreeBody>,
         ),
     >,
+    mut body: Query<&mut Visibility, (With<TreeBody>, Without<TalentButton>)>,
 ) {
     let core = &session.0;
     let (seat, unit, _) = crate::hud::subject(core);
@@ -431,9 +552,12 @@ fn show(
     let learnable = |slot: u8| state.is_some_and(|t| t.learnable.has(TalentSlot(slot)));
     // The glow of what a point could go into, breathing as Dota's does.
     let glow = 0.55 + 0.45 * (time.elapsed_secs() * 4.0).sin().abs();
-    let any = (0..8).any(learnable);
-    for (mut v, mut rim) in &mut button {
+    let any = (0..8).any(learnable) || state.is_some_and(|t| t.attribute_bonus_learnable);
+    for mut v in &mut body {
         v.set_if_neq(ui::visible(tree.is_some()));
+    }
+    for (mut v, mut rim) in &mut button {
+        v.set_if_neq(ui::visible(unit.is_some_and(|u| u.hero.is_some())));
         rim.set_if_neq(BorderColor::all(if any {
             GOLD.with_alpha(glow)
         } else {

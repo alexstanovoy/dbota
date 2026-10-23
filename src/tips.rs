@@ -161,7 +161,8 @@ fn pick(
     cells: Query<(&Interaction, &ShopCell)>,
     buffs: Query<(&Interaction, &crate::buffs::BuffChip)>,
     talent_cells: Query<(&Interaction, &crate::talents::TalentCell)>,
-    attribute: Query<&Interaction, With<crate::talents::AttributeButton>>,
+    attribute: Query<&Interaction, With<crate::talents::AttributeRow>>,
+    innate: Query<&Interaction, With<crate::hud::InnateButton>>,
     mut shown: ResMut<Shown>,
 ) {
     let core = &session.0;
@@ -177,7 +178,9 @@ fn pick(
     let content = if let Some(spec) = args.tip.as_deref() {
         forced_tip(&look, spec)
     } else if attribute.iter().any(|i| *i != Interaction::None) {
-        Some(note_tip(attribute_tip(core)))
+        Some(note_tip(attribute_tip(&texts, core)))
+    } else if innate.iter().any(|i| *i != Interaction::None) {
+        innate_tip(&look, core)
     } else if let Some(shown) = buff {
         buff_tip(shown, rate).map(note_tip)
     } else if let Some(cell) = hovered(&talent_cells) {
@@ -245,16 +248,34 @@ fn note_tip(text: String) -> Content {
     }
 }
 
-fn attribute_tip(core: &bota_client_core::App) -> String {
+/// The Attribute Bonus of the talent tree: Dota's name and description,
+/// the simulator's level and points.
+fn attribute_tip(texts: &Texts, core: &bota_client_core::App) -> String {
     let level = crate::hud::subject(core)
         .0
         .and_then(|p| core.talents_of(p.slot))
         .map_or(0, |t| t.attribute_bonus);
+    let name = texts
+        .label("DOTA_Tooltip_ability_attribute_bonus", &[])
+        .unwrap_or_else(|| "Attribute Bonus".to_string());
+    let about = texts
+        .label("DOTA_Tooltip_ability_attribute_bonus_Description", &[])
+        .unwrap_or_else(|| "Improves every attribute with each level.".to_string());
     format!(
-        "Attribute Bonus  (level {level}/{})\n+{} to all attributes per level.\nClick: spend a skill point on it",
+        "{name}  ({level}/{})\n{about}\n+{} to all attributes per level.",
         bota_core::rules::ATTRIBUTE_BONUS_MAX_LEVEL,
         bota_core::rules::ATTRIBUTE_BONUS_POINTS,
     )
+}
+
+/// The innate ability of the panel's hero, Dota's tooltip of it.
+fn innate_tip(look: &Lookup, core: &bota_client_core::App) -> Option<Content> {
+    let id = crate::hud::subject(core)
+        .1?
+        .hero
+        .and_then(bota_core::hero_def)?
+        .innate?;
+    look.ability(id.0, 1, 1)
 }
 
 fn buff_tip(shown: crate::buffs::Shown, rate: u32) -> Option<String> {

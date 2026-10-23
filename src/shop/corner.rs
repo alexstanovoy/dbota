@@ -1,6 +1,6 @@
 //! The shop's corner at the bottom right, as Dota's: the stash with GRAB
 //! ALL, the quick-buy row with the item kept beside it, and the gold, which
-//! opens the shop, beside the courier's delivery button.
+//! opens the shop, with the courier's buttons right of it.
 
 use std::collections::VecDeque;
 
@@ -10,7 +10,6 @@ use bota_proto::{ItemId, ItemSlot, Order};
 
 use super::catalog::Catalog;
 use super::cell::{self, CELL, GAP, Place};
-use crate::config::{Action, Settings, key_name};
 use crate::hud::{Blocker, Docks, ItemBox};
 use crate::input::Panels;
 use crate::manifest::Manifest;
@@ -39,12 +38,6 @@ pub struct ShopButton;
 #[derive(Component)]
 struct Gold;
 
-/// The courier's delivery button, and its label.
-#[derive(Component)]
-pub struct CourierButton;
-#[derive(Component)]
-struct CourierLabel;
-
 /// The stash's block, its GRAB ALL tab.
 #[derive(Component)]
 struct StashBlock;
@@ -68,7 +61,7 @@ pub fn plugin(app: &mut App) {
         .add_systems(Startup, spawn)
         .add_systems(
             Update,
-            (gold, stash, quick_row, courier, grab_step).run_if(super::shop_runs),
+            (gold, stash, quick_row, grab_step).run_if(super::shop_runs),
         );
 }
 
@@ -78,7 +71,6 @@ fn spawn(
     manifest: Res<Manifest>,
     server: Res<AssetServer>,
     catalog: Res<Catalog>,
-    settings: Res<Settings>,
     docks: Res<Docks>,
 ) {
     let corner = commands
@@ -129,7 +121,7 @@ fn spawn(
         ChildOf(quick),
     ));
     cell::spawn(&mut commands, art, quick, STICKY.0, Place::Grid);
-    spawn_gold_row(&mut commands, &fonts, &manifest, &server, &settings, corner);
+    spawn_gold_row(&mut commands, &fonts, &manifest, &server, &docks, corner);
 }
 
 /// The stash: GRAB ALL, its title and its six slots.
@@ -212,7 +204,7 @@ fn spawn_stash(
         ))
         .id();
     for slot in BAG_SLOTS..BAG_SLOTS + STASH_SLOTS {
-        crate::hud::spawn_slot_box(commands, fonts, row, STASH_BOX, ItemBox(slot), false);
+        crate::hud::spawn_slot_box(commands, fonts, row, STASH_BOX, ItemBox(slot), false, false);
     }
     grab
 }
@@ -223,55 +215,20 @@ fn spawn_gold_row(
     fonts: &Fonts,
     manifest: &Manifest,
     server: &AssetServer,
-    settings: &Settings,
+    docks: &Docks,
     corner: Entity,
 ) {
     let row = commands
         .spawn((
             Node {
-                column_gap: px(6),
+                column_gap: px(8),
                 justify_content: JustifyContent::End,
+                align_items: AlignItems::Center,
                 ..default()
             },
             ChildOf(corner),
         ))
         .id();
-    let courier = commands
-        .spawn((
-            CourierButton,
-            Button,
-            Blocker,
-            Node {
-                width: px(64),
-                height: px(44),
-                flex_direction: FlexDirection::Column,
-                justify_content: JustifyContent::Center,
-                align_items: AlignItems::Center,
-                border: UiRect::all(px(2)),
-                border_radius: BorderRadius::all(px(22)),
-                ..default()
-            },
-            BackgroundColor(ui::PANEL),
-            BorderColor::all(Color::srgb(0.32, 0.42, 0.55)),
-            ChildOf(row),
-        ))
-        .id();
-    commands.spawn((
-        ui::text(
-            key_name(settings.key(Action::CourierDeliver)),
-            &fonts.bold,
-            11.0,
-            ui::INK_DIM,
-        ),
-        Pickable::IGNORE,
-        ChildOf(courier),
-    ));
-    commands.spawn((
-        CourierLabel,
-        ui::text("DELIVER", &fonts.bold, 11.0, ui::INK),
-        Pickable::IGNORE,
-        ChildOf(courier),
-    ));
     let button = commands
         .spawn((
             ShopButton,
@@ -321,6 +278,7 @@ fn spawn_gold_row(
             ChildOf(button),
         ));
     }
+    commands.entity(row).add_child(docks.courier);
 }
 
 /// One's own gold when playing; in a replay or as a spectator, that of the
@@ -412,19 +370,6 @@ fn quick_row(
         );
     }
     *last = Some(items);
-}
-
-/// The courier's button lights while something waits in the stash away
-/// from home.
-fn courier(session: NonSend<Session>, mut label: Single<&mut TextColor, With<CourierLabel>>) {
-    let core = &session.0;
-    let waiting = core
-        .view()
-        .and_then(|v| v.player(core.my_slot?))
-        .and_then(|p| p.stash.as_ref())
-        .is_some_and(|s| s.iter().any(Option::is_some));
-    let lit = waiting && !core.at_home_shop();
-    label.set_if_neq(TextColor(if lit { ui::INK } else { ui::INK_DIM }));
 }
 
 /// The moves that take what the stash holds into the hero's bag at home:

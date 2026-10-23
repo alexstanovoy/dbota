@@ -16,12 +16,12 @@ use crate::resource::Resource;
 use crate::sound::Sound;
 use crate::source::Source;
 use crate::texture::Texture;
-use crate::tooltips::{Wanted, tooltips_json};
+use crate::tooltips::{Wanted, labels_json, tooltips_json};
 use crate::vpk::Vpk;
 use crate::world::{Band, EntityLump, buildings_txt, export_world, lighting_txt, trees_txt};
 
 /// Bumped when the importer's output changes for the same install; part of a cache's stamp.
-pub const IMPORT_REV: u32 = 4;
+pub const IMPORT_REV: u32 = 5;
 
 /// Names what an import of this manifest and these ids makes (FNV-1a 64 of both texts): part of
 /// a cache's stamp, so a cache made from other texts is stale even from the same install.
@@ -46,6 +46,8 @@ const PATH_LIMIT: usize = 200;
 const DIR_VPK: &str = "pak01_dir.vpk";
 /// Where the tooltip texts go (the client reads them there).
 const TOOLTIPS: &str = "text/tooltips.json";
+/// Where the interface's labels go (the client reads them there).
+const LABELS: &str = "text/labels.json";
 
 /// One thing the manifest has the importer make.
 #[derive(Clone, Debug, PartialEq)]
@@ -96,6 +98,14 @@ pub enum Item {
         strings: String,
         out: String,
     },
+    /// The interface's labels of the manifest's `label` lines: each key's text out of its
+    /// localization file.
+    Labels {
+        logical: String,
+        /// The localization file and the key of each label, in manifest order.
+        keys: Vec<(String, String)>,
+        out: String,
+    },
     /// A texture written as a PNG (the first frame of a sprite sheet).
     Texture {
         logical: String,
@@ -126,6 +136,7 @@ impl Item {
             | Self::World { logical, .. }
             | Self::Tooltips { logical, .. }
             | Self::Shop { logical, .. }
+            | Self::Labels { logical, .. }
             | Self::Texture { logical, .. }
             | Self::Sound { logical, .. }
             | Self::Portraits { logical, .. } => logical,
@@ -145,6 +156,7 @@ impl Plan {
     pub fn parse(manifest: &str, ids: &str) -> Self {
         let mut plan = Self::default();
         let mut portraits_line = None;
+        let mut labels = Vec::new();
         for line in manifest.lines() {
             let words: Vec<&str> = line
                 .split('#')
@@ -225,6 +237,7 @@ impl Plan {
                         out: (*out).to_owned(),
                     });
                 }
+                ["label", src, key, ..] => labels.push(((*src).to_owned(), (*key).to_owned())),
                 ["portraits", logical, src, out, ..] => {
                     portraits_line = Some([logical, src, out].map(|w| (*w).to_owned()));
                 }
@@ -237,6 +250,13 @@ impl Plan {
                 logical: "text.tooltips".to_owned(),
                 wanted,
                 out: TOOLTIPS.to_owned(),
+            });
+        }
+        if !labels.is_empty() {
+            plan.items.push(Item::Labels {
+                logical: "text.labels".to_owned(),
+                keys: labels,
+                out: LABELS.to_owned(),
             });
         }
         // Last, for it frames the models the manifest lists.
@@ -616,6 +636,18 @@ fn make(
             let shops = read_from(src, &[pak], path)?;
             let localization = read_from(src, &[pak], strings)?;
             out.put(dest, &crate::shop_json(&shops, &localization)?)
+        }
+        Item::Labels {
+            keys, out: dest, ..
+        } => {
+            let mut files: Vec<(&str, Vec<u8>)> = Vec::new();
+            for (path, _) in keys {
+                if !files.iter().any(|(read, _)| read == path) {
+                    files.push((path, read_from(src, &[pak], path)?));
+                }
+            }
+            let files: Vec<(&str, &[u8])> = files.iter().map(|(p, b)| (*p, b.as_slice())).collect();
+            out.put(dest, &labels_json(keys, &files)?)
         }
         Item::Texture {
             src: path,

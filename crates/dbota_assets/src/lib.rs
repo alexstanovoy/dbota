@@ -48,7 +48,7 @@ pub use sound::{Sound, SoundFormat};
 pub use source::DirSource;
 pub use source::{Slice, SliceSource, Source};
 pub use texture::{Encoding, PixelFormat, Texture};
-pub use tooltips::{Wanted, tooltips_json};
+pub use tooltips::{Wanted, labels_json, tooltips_json};
 pub use vbib::{Buffer, Field};
 pub use vertices::{Attribute, Skin, Vertices};
 pub use vpk::{Entry, Vpk};

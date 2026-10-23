@@ -37,8 +37,12 @@ use crate::manifest::Manifest;
 use crate::session::Session;
 use crate::units::{ModelBank, ModelOf, Posable, Scenes, Unit, UnitIndex, Wearable};
 
-/// Pixels of the portrait's image: twice the panel's 124 by 140.
-const SIZE: (u32, u32) = (248, 280);
+/// Pixels of the portrait's image: twice the panel's frame, of its shape,
+/// so a render fills the frame whole.
+const SIZE: (u32, u32) = (
+    (crate::hud::PORTRAIT.0 * 2.0) as u32,
+    (crate::hud::PORTRAIT.1 * 2.0) as u32,
+);
 /// The layer only the portrait camera, its light and the model on its stage
 /// are on.
 const LAYER: usize = 2;

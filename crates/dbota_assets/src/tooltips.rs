@@ -1,7 +1,8 @@
 //! The tooltip texts of the items and abilities the client names: their names, the shop search's
 //! aliases, descriptions, lore, notes, number labels and Dota's own numbers, read out of the
 //! install's localization and item/ability scripts (plain KeyValues text in the package) into the
-//! cache's `text/tooltips.json`.
+//! cache's `text/tooltips.json`; and the interface's labels (a stat's name, a line of the stats
+//! tooltip) into `text/labels.json`.
 
 use std::collections::{BTreeMap, HashMap};
 
@@ -96,6 +97,32 @@ pub fn tooltips_json(wanted: &Wanted, localization: &[u8], scripts: &[&[u8]]) ->
         out.insert(name.clone(), entry(name, title, block, &loc, &variables));
     }
     serde_json::to_vec(&out).map_err(|e| malformed("tooltips", e.to_string()))
+}
+
+/// Longest label text kept: an interface line, not a document.
+const LABEL_LIMIT: usize = 1024;
+
+/// `text/labels.json`: the text of each `(file, key)` of `keys` out of its localization file
+/// among `files` (install path and bytes), by the key lower-cased. A key a file lacks, or whose
+/// text is longer than [`LABEL_LIMIT`], is left out: the client says it in its own words.
+pub fn labels_json(keys: &[(String, String)], files: &[(&str, &[u8])]) -> Result<Vec<u8>> {
+    let tables = files
+        .iter()
+        .map(|(path, bytes)| Ok((*path, localization_table(text(bytes)?))))
+        .collect::<Result<Vec<_>>>()?;
+    let mut out = BTreeMap::new();
+    for (file, key) in keys {
+        let key = key.to_lowercase();
+        let found = tables
+            .iter()
+            .find(|(path, _)| path == file)
+            .and_then(|(_, table)| table.get(&key))
+            .filter(|text| text.len() <= LABEL_LIMIT);
+        if let Some(text) = found {
+            out.insert(key, text.clone());
+        }
+    }
+    serde_json::to_vec(&out).map_err(|e| malformed("labels", e.to_string()))
 }
 
 /// One name's entry.

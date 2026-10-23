@@ -82,11 +82,12 @@ fn the_plan_takes_every_line_and_the_tooltips() {
          layers=textures/ground trees=map/w/trees.txt\n\
          clip a idle idle 1.0\n\
          shop s scripts/shops.txt text/shop.json strings=loc.txt\n\
-         shop t scripts/shops.txt text/t.json\n",
+         shop t scripts/shops.txt text/t.json\n\
+         label loc/dota_english.txt DOTA_HUD_Armor\n",
         "item 0 boots\nitem 9 recipe\nability 2 nevermore_requiem\nhero 1 nevermore\n\
          text ability 3 pudge_innate_graft_flesh\n",
     );
-    assert_eq!(plan.items.len(), 8);
+    assert_eq!(plan.items.len(), 9);
     assert!(matches!(
         &plan.items[0],
         Item::Model { anims, skeleton: true, .. } if anims == &["idle"]
@@ -116,6 +117,12 @@ fn the_plan_takes_every_line_and_the_tooltips() {
         Item::Tooltips { wanted, out, .. }
             if wanted.names == ["item_boots", "nevermore_requiem", "pudge_innate_graft_flesh"]
                 && wanted.heroes == ["nevermore"] && out == "text/tooltips.json"
+    ));
+    assert!(matches!(
+        &plan.items[8],
+        Item::Labels { keys, out, .. }
+            if keys == &[("loc/dota_english.txt".to_owned(), "DOTA_HUD_Armor".to_owned())]
+                && out == "text/labels.json"
     ));
 }
 
@@ -215,6 +222,19 @@ fn hostile_tooltip_texts_are_texts_or_errors() {
         json["item_boots"]["aliases"],
         serde_json::json!(["boots of speed", "bos"])
     );
+    // A label is its key's text, a key no file has is left out, and so is
+    // a text past any interface line's length.
+    let keys = [
+        ("loc", "DOTA_HUD_Armor"),
+        ("loc", "missing"),
+        ("loc", "long"),
+    ]
+    .map(|(f, k)| (f.to_owned(), k.to_owned()));
+    let long = "x".repeat(5000);
+    let loc = format!("\"DOTA_HUD_Armor\" \"Armor:\"\n\"long\" \"{long}\"\n");
+    let labels = dbota_assets::labels_json(&keys, &[("loc", loc.as_bytes())]).unwrap();
+    let labels: serde_json::Value = serde_json::from_slice(&labels).unwrap();
+    assert_eq!(labels, serde_json::json!({ "dota_hud_armor": "Armor:" }));
     let deep = "\"a\" {".repeat(10_000);
     assert!(dbota_assets::tooltips_json(&wanted, b"", &[deep.as_bytes()]).is_err());
     let mut seed = 0x9E37_79B9_7F4A_7C15u64;
@@ -229,6 +249,7 @@ fn hostile_tooltip_texts_are_texts_or_errors() {
             })
             .collect();
         let _ = dbota_assets::tooltips_json(&wanted, &text, &[&text, script.as_bytes()]);
+        let _ = dbota_assets::labels_json(&keys, &[("loc", &text)]);
     }
 }
 

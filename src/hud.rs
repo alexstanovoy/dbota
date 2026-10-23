@@ -10,20 +10,44 @@ use bota_client_core::{
     App as Core, BAG_SLOTS, ClientSession, INVENTORY_SLOTS, Look, TOWN_PORTAL_SLOT, ability_look,
     item_look,
 };
-use bota_proto::{AbilityView, Attribute, ItemView, Kit, PlayerView, Team, UnitKind, UnitView};
+use bota_proto::{AbilityView, ItemView, Kit, PlayerView, Team, UnitKind, UnitView};
 
 use crate::config::{Action, Settings, key_name};
 use crate::manifest::Manifest;
 use crate::session::Session;
 use crate::ui::{self, Extent, Fonts};
 
+// The hero panel's measures, in interface pixels: Dota's at 720 lines
+// times 5/3, so that an ability box is ours.
+
 /// The size of an ability box.
 const ABILITY: f32 = 58.0;
 /// The size of an item box.
-const ITEM: (f32, f32) = (60.0, 44.0);
-/// The height of a backpack box, and of the gap under the inventory rows that
-/// the town portal slot keeps clear of.
-const BACKPACK_ROW: f32 = 26.0;
+const ITEM: (f32, f32) = (66.0, 48.0);
+/// The height of a backpack box.
+const BACKPACK_ROW: f32 = 30.0;
+/// The portrait's frame, of Dota's shape.
+pub const PORTRAIT: (f32, f32) = (176.0, 156.0);
+/// The ring round the level.
+const LEVEL_RING: f32 = 42.0;
+/// The innate's round mark.
+const INNATE: f32 = 34.0;
+/// The level-up plate over an ability.
+const LEVEL_UP: (f32, f32) = (ABILITY, 30.0);
+/// The height of the row of level pips under an ability, with its gap.
+const PIPS: f32 = 10.0;
+/// Pips an ability box has room for.
+const MAX_PIPS: u8 = 4;
+/// The height of the health and the mana bar.
+const POOL: f32 = 24.0;
+/// The round neutral and town portal slots.
+const ROUND_SLOT: f32 = 46.0;
+/// The panel's padding and the gaps of the ability row.
+const GAP: f32 = 6.0;
+/// A slot box's edge.
+const SLOT_EDGE: Color = Color::srgb(0.2, 0.22, 0.27);
+/// The gold of the name over the portrait.
+const NAME_GOLD: Color = Color::srgb(0.93, 0.74, 0.4);
 
 /// An ability box of the bottom panel, by slot.
 #[derive(Component, Clone, Copy)]
@@ -38,6 +62,19 @@ pub struct ItemBox(pub u8);
 #[derive(Component, Clone, Copy)]
 pub struct SeatBox(pub u8);
 
+/// Dota's level-up plate over an ability box, by slot.
+#[derive(Component, Clone, Copy)]
+struct LevelUp(u8);
+
+/// The innate ability's round mark beside the abilities.
+#[derive(Component)]
+pub struct InnateButton;
+
+/// The neutral item's round slot, empty as the simulator has no neutral
+/// items.
+#[derive(Component)]
+struct NeutralSlot;
+
 /// What a part of a slot box shows.
 #[derive(Component, Clone, Copy, PartialEq, Eq)]
 enum Part {
@@ -48,7 +85,6 @@ enum Part {
     Cost,
     Pip(u8),
     Shade,
-    Plus,
     Charges,
 }
 
@@ -68,11 +104,6 @@ enum Readout {
     Score(Team),
     PanelName,
     PanelLevel,
-    Damage,
-    DamageBonus,
-    Stats,
-    Attribute(u8),
-    AttributeBonus(u8),
     Hp,
     Mana,
     HpRegen,
@@ -81,7 +112,6 @@ enum Readout {
     Kda,
     Feed,
     Notice,
-    Hint,
     Fps,
     SeatLevel(u8),
     SeatDead(u8),
@@ -96,7 +126,8 @@ enum Gauge {
 }
 
 /// The portrait image of the bottom panel: Dota's picture of the hero, or
-/// the background of a render of the unit's model.
+/// the background of a render of the unit's model, either cut to the frame
+/// as Dota cuts it ([`ui::Cover`]).
 #[derive(Component)]
 struct Portrait;
 
@@ -131,14 +162,18 @@ fn xp_ring(share: f32) -> BackgroundGradient {
     ui::split_disc(share.clamp(0.0, 1.0) * TAU, gold, empty)
 }
 
-/// Fills the level ring with the panel hero's experience.
-fn xp(session: NonSend<Session>, mut ring: Single<&mut BackgroundGradient, With<XpRing>>) {
+/// Fills the level ring with the panel hero's experience; no ring for what
+/// has no level.
+fn xp(
+    session: NonSend<Session>,
+    mut ring: Single<(&mut BackgroundGradient, &mut Visibility), With<XpRing>>,
+) {
     let core = &session.0;
-    let share = match subject(core) {
-        (Some(p), _, _) => xp_share(p.level, p.xp),
-        _ => 0.0,
-    };
-    ring.set_if_neq(xp_ring(share));
+    let (seat, unit, _) = subject(core);
+    let share = seat.map_or(0.0, |p| xp_share(p.level, p.xp));
+    ring.0.set_if_neq(xp_ring(share));
+    ring.1
+        .set_if_neq(ui::visible(unit.is_some_and(|u| u.level > 0)));
 }
 
 /// The whole HUD, hidden in the lobby.
@@ -159,6 +194,9 @@ pub struct Docks {
     pub minimap_buttons: Entity,
     /// The shop's corner.
     pub right: Entity,
+    /// The courier's buttons, which the shop's corner places right of the
+    /// gold, as Dota's corner has them.
+    pub courier: Entity,
     root: Entity,
     row: Entity,
 }
@@ -168,7 +206,17 @@ pub fn plugin(app: &mut App) {
         .add_systems(Startup, spawn_hud)
         .add_systems(
             Update,
-            (readouts, gauges, slots, portrait, time_of_day, seats, xp)
+            (
+                readouts,
+                gauges,
+                slots,
+                portrait,
+                time_of_day,
+                seats,
+                xp,
+                level_ups,
+                innate,
+            )
                 .run_if(|k: Res<crate::session::MatchKnown>| k.0),
         );
 }
@@ -235,6 +283,7 @@ fn spawn_docks(mut commands: Commands) {
         .spawn((
             Node {
                 flex_direction: FlexDirection::Column,
+                justify_content: JustifyContent::FlexEnd,
                 margin: UiRect::bottom(px(6)),
                 ..default()
             },
@@ -242,19 +291,53 @@ fn spawn_docks(mut commands: Commands) {
             ChildOf(left),
         ))
         .id();
+    let courier = commands
+        .spawn((
+            Node {
+                align_items: AlignItems::Center,
+                column_gap: px(6),
+                ..default()
+            },
+            Pickable::IGNORE,
+        ))
+        .id();
     commands.insert_resource(Docks {
         minimap,
         minimap_buttons,
         right,
+        courier,
         root,
         row,
     });
 }
 
-fn spawn_hud(mut commands: Commands, fonts: Res<Fonts>, docks: Res<Docks>) {
-    spawn_bottom(&mut commands, &fonts, docks.row);
-    spawn_top(&mut commands, &fonts, docks.root);
-    spawn_corner(&mut commands, &fonts, docks.root);
+fn spawn_hud(
+    mut commands: Commands,
+    fonts: Res<Fonts>,
+    docks: Res<Docks>,
+    manifest: Res<Manifest>,
+    server: Res<AssetServer>,
+    texts: Res<crate::dota_text::Texts>,
+) {
+    let mut kit = Spawner {
+        commands: &mut commands,
+        fonts: &fonts,
+        manifest: &manifest,
+        server: &server,
+        texts: &texts,
+    };
+    spawn_bottom(&mut kit, docks.row);
+    spawn_top(kit.commands, &fonts, docks.root);
+    spawn_corner(kit.commands, &fonts, docks.root);
+}
+
+/// What spawning the hero panel needs.
+pub(crate) struct Spawner<'a, 'w, 's> {
+    pub commands: &'a mut Commands<'w, 's>,
+    pub fonts: &'a Fonts,
+    pub manifest: &'a Manifest,
+    pub server: &'a AssetServer,
+    pub texts: &'a crate::dota_text::Texts,
 }
 
 /// A dark panel that blocks world clicks.
@@ -268,9 +351,13 @@ fn panel(node: Node) -> impl Bundle {
     )
 }
 
-/// The hero panel, in the middle column of the bottom row.
-fn spawn_bottom(commands: &mut Commands, fonts: &Fonts, row: Entity) {
-    let bar = commands
+/// The hero panel, in the middle column of the bottom row, laid out as
+/// Dota's: the level and the portrait with the numbers over it, the
+/// abilities over the health and mana bars, the inventory with its round
+/// slots.
+fn spawn_bottom(kit: &mut Spawner, row: Entity) {
+    let bar = kit
+        .commands
         .spawn((
             Extent::Bar,
             panel(Node {
@@ -278,7 +365,7 @@ fn spawn_bottom(commands: &mut Commands, fonts: &Fonts, row: Entity) {
                 grid_row: GridPlacement::start(1),
                 flex_direction: FlexDirection::Row,
                 align_items: AlignItems::FlexEnd,
-                padding: UiRect::all(px(8)),
+                padding: UiRect::all(px(GAP)),
                 column_gap: px(10),
                 border: UiRect::top(px(2)).with_left(px(2)).with_right(px(2)),
                 border_radius: BorderRadius::top(px(10)),
@@ -287,52 +374,38 @@ fn spawn_bottom(commands: &mut Commands, fonts: &Fonts, row: Entity) {
             ChildOf(row),
         ))
         .id();
-    let portrait = commands
-        .spawn((
-            Portrait,
-            Node {
-                width: px(124),
-                height: px(140),
-                border: UiRect::all(px(2)),
-                ..default()
-            },
-            BorderColor::all(ui::EDGE),
-            BackgroundColor(ui::PANEL_DEEP),
-            ImageNode::default(),
-            ChildOf(bar),
-        ))
-        .id();
-    commands.spawn((
-        PortraitRender,
-        ui::fill(),
-        ImageNode::default(),
-        Visibility::Hidden,
-        ChildOf(portrait),
-    ));
-    // The level in a ring that fills with the experience to the next.
-    let ring = commands
+    spawn_level(kit, bar);
+    spawn_portrait(kit, bar);
+    spawn_abilities(kit, bar);
+    spawn_items(kit, bar);
+}
+
+/// The level in a ring that fills with the experience to the next, left of
+/// the portrait's foot.
+fn spawn_level(kit: &mut Spawner, bar: Entity) {
+    let ring = kit
+        .commands
         .spawn((
             XpRing,
             Node {
-                position_type: PositionType::Absolute,
-                right: px(4),
-                bottom: px(4),
-                width: px(34),
-                height: px(34),
+                width: px(LEVEL_RING),
+                height: px(LEVEL_RING),
+                margin: UiRect::right(px(-4)),
                 border_radius: BorderRadius::MAX,
                 justify_content: JustifyContent::Center,
                 align_items: AlignItems::Center,
                 ..default()
             },
             xp_ring(0.0),
-            ChildOf(portrait),
+            ChildOf(bar),
         ))
         .id();
-    let disc = commands
+    let disc = kit
+        .commands
         .spawn((
             Node {
-                width: px(26),
-                height: px(26),
+                width: px(LEVEL_RING - 8.0),
+                height: px(LEVEL_RING - 8.0),
                 border_radius: BorderRadius::MAX,
                 justify_content: JustifyContent::Center,
                 align_items: AlignItems::Center,
@@ -342,168 +415,299 @@ fn spawn_bottom(commands: &mut Commands, fonts: &Fonts, row: Entity) {
             ChildOf(ring),
         ))
         .id();
-    commands.spawn((
+    kit.commands.spawn((
         Readout::PanelLevel,
-        ui::text("", &fonts.bold, 15.0, ui::GOLDEN),
+        ui::text("", &kit.fonts.bold, 17.0, ui::GOLDEN),
         ChildOf(disc),
     ));
-    spawn_numbers(commands, fonts, bar);
-    spawn_middle(commands, fonts, bar);
-    spawn_items(commands, fonts, bar);
 }
 
-/// The name and the stat lines.
-fn spawn_numbers(commands: &mut Commands, fonts: &Fonts, bar: Entity) {
-    let column = commands
+/// The portrait, filled with its picture as Dota fills it, the unit's name
+/// on a banner over its top, and the numbers over its right side and foot.
+fn spawn_portrait(kit: &mut Spawner, bar: Entity) {
+    let portrait = kit
+        .commands
         .spawn((
+            Portrait,
             Node {
-                flex_direction: FlexDirection::Column,
-                width: px(118),
-                row_gap: px(4),
+                width: px(PORTRAIT.0),
+                height: px(PORTRAIT.1),
+                border: UiRect::all(px(2)),
                 ..default()
             },
+            BorderColor::all(ui::EDGE),
+            BackgroundColor(ui::PANEL_DEEP),
+            ui::Cover,
             ChildOf(bar),
         ))
         .id();
-    commands.spawn((
+    kit.commands.spawn((
+        PortraitRender,
+        ui::fill(),
+        ui::Cover,
+        Visibility::Hidden,
+        ChildOf(portrait),
+    ));
+    let banner = kit
+        .commands
+        .spawn((
+            Node {
+                position_type: PositionType::Absolute,
+                bottom: percent(100),
+                left: px(-2),
+                margin: UiRect::bottom(px(2)),
+                padding: UiRect::axes(px(8), px(2)),
+                border_radius: BorderRadius::top(px(4)),
+                ..default()
+            },
+            BackgroundColor(ui::PANEL),
+            Pickable::IGNORE,
+            ChildOf(portrait),
+        ))
+        .id();
+    kit.commands.spawn((
         Readout::PanelName,
-        ui::text("", &fonts.bold, 15.0, ui::INK),
+        ui::text("", &kit.fonts.bold, 15.0, NAME_GOLD),
+        ui::shadow(),
         TextLayout::no_wrap(),
-        ChildOf(column),
+        ChildOf(banner),
     ));
-    // Damage as Dota shows it: the range a swing draws from, the bonus
-    // on top in green.
-    let damage = commands
-        .spawn((
-            Node {
-                column_gap: px(4),
-                ..default()
-            },
-            ChildOf(column),
-        ))
-        .id();
-    commands.spawn((
-        Readout::Damage,
-        ui::text("", &fonts.regular, 13.0, ui::INK_DIM),
-        TextLayout::no_wrap(),
-        ChildOf(damage),
-    ));
-    commands.spawn((
-        Readout::DamageBonus,
-        ui::text("", &fonts.bold, 13.0, ui::HP_MINE),
-        TextLayout::no_wrap(),
-        ChildOf(damage),
-    ));
-    commands.spawn((
-        Readout::Stats,
-        ui::text("", &fonts.regular, 13.0, ui::INK_DIM),
-        ChildOf(column),
-    ));
-    // Strength, agility, intelligence: the level's own white, what items,
-    // souls and buffs add green, as Dota shows them.
-    let attributes = commands
-        .spawn((
-            Node {
-                column_gap: px(3),
-                ..default()
-            },
-            ChildOf(column),
-        ))
-        .id();
-    for k in 0..3u8 {
-        commands.spawn((
-            Readout::Attribute(k),
-            ui::text("", &fonts.bold, 13.0, ui::INK),
-            TextLayout::no_wrap(),
-            ChildOf(attributes),
-        ));
-        commands.spawn((
-            Readout::AttributeBonus(k),
-            ui::text("", &fonts.bold, 13.0, ui::HP_MINE),
-            TextLayout::no_wrap(),
-            Node {
-                margin: UiRect::right(px(6)),
-                ..default()
-            },
-            ChildOf(attributes),
-        ));
-    }
+    crate::stats::spawn(kit.commands, kit.fonts, kit.manifest, kit.server, portrait);
 }
 
-/// The ability row with the health and mana bars under it.
-fn spawn_middle(commands: &mut Commands, fonts: &Fonts, bar: Entity) {
-    let column = commands
+/// The abilities with the talent tree and the innate before them, the
+/// level-up plates over them and the buffs over those, and the health and
+/// mana bars under them.
+fn spawn_abilities(kit: &mut Spawner, bar: Entity) {
+    let column = kit
+        .commands
         .spawn((
             Node {
                 flex_direction: FlexDirection::Column,
-                row_gap: px(6),
+                justify_content: JustifyContent::SpaceBetween,
+                height: px(PORTRAIT.1),
                 ..default()
             },
             ChildOf(bar),
         ))
         .id();
-    commands.spawn((
-        Readout::Hint,
-        ui::text("", &fonts.bold, 13.0, ui::GOLDEN),
-        ChildOf(column),
-    ));
-    crate::buffs::spawn_row(commands, fonts, column);
-    let row = commands
+    let float = kit
+        .commands
+        .spawn((
+            Node {
+                position_type: PositionType::Absolute,
+                bottom: percent(100),
+                left: px(0),
+                margin: UiRect::bottom(px(LEVEL_UP.1 + 2.0 * GAP)),
+                ..default()
+            },
+            Pickable::IGNORE,
+            ChildOf(column),
+        ))
+        .id();
+    crate::buffs::spawn_row(kit.commands, kit.fonts, float);
+    let row = kit
+        .commands
         .spawn((
             Node {
                 flex_direction: FlexDirection::Row,
-                column_gap: px(6),
+                align_items: AlignItems::FlexStart,
+                column_gap: px(GAP),
                 ..default()
             },
             ChildOf(column),
         ))
         .id();
-
-    crate::talents::spawn_button(commands, fonts, row, column);
+    crate::talents::spawn_button(kit, row, column);
+    spawn_innate(kit, row);
     for slot in 0..6u8 {
-        spawn_slot_box(
-            commands,
-            fonts,
-            row,
-            (ABILITY, ABILITY),
-            AbilityBox(slot),
-            true,
-        );
+        spawn_ability_cell(kit, row, slot);
     }
-    crate::talents::spawn_attribute_button(commands, fonts, row);
-    for (gauge, readout, regen, height, color) in [
-        (
-            Gauge::Hp,
-            Readout::Hp,
-            Readout::HpRegen,
-            20.0,
-            ui::HP_FRIEND,
+    spawn_pools(kit, column);
+}
+
+/// The innate ability's round mark between the talent tree and the
+/// abilities, as Dota shows it; hovered, its tooltip.
+fn spawn_innate(kit: &mut Spawner, row: Entity) {
+    let button = kit
+        .commands
+        .spawn((
+            InnateButton,
+            Button,
+            Node {
+                width: px(INNATE),
+                height: px(INNATE),
+                align_self: AlignSelf::Center,
+                margin: UiRect::bottom(px(PIPS)),
+                border: UiRect::all(px(2)),
+                border_radius: BorderRadius::MAX,
+                justify_content: JustifyContent::Center,
+                align_items: AlignItems::Center,
+                ..default()
+            },
+            BorderColor::all(Color::srgb(0.32, 0.33, 0.36)),
+            BackgroundColor(ui::PANEL_DEEP),
+            Visibility::Hidden,
+            ChildOf(row),
+        ))
+        .id();
+    kit.commands.spawn((
+        Node {
+            width: percent(70),
+            height: percent(70),
+            border_radius: BorderRadius::MAX,
+            ..default()
+        },
+        ui::art(
+            kit.manifest,
+            kit.server,
+            "hud.innate",
+            Color::srgb(0.75, 0.6, 0.3),
         ),
-        (
-            Gauge::Mana,
-            Readout::Mana,
-            Readout::ManaRegen,
-            15.0,
-            ui::MANA,
-        ),
+        Pickable::IGNORE,
+        ChildOf(button),
+    ));
+}
+
+/// One ability: its box, its level pips under it, and Dota's level-up plate
+/// over it while a point could go into it.
+fn spawn_ability_cell(kit: &mut Spawner, row: Entity, slot: u8) {
+    let cell = kit
+        .commands
+        .spawn((
+            Node {
+                flex_direction: FlexDirection::Column,
+                align_items: AlignItems::Center,
+                row_gap: px(3),
+                ..default()
+            },
+            ChildOf(row),
+        ))
+        .id();
+    let ability = spawn_slot_box(
+        kit.commands,
+        kit.fonts,
+        cell,
+        (ABILITY, ABILITY),
+        AbilityBox(slot),
+        true,
+        false,
+    );
+    let pips = kit
+        .commands
+        .spawn((
+            Node {
+                height: px(PIPS - 3.0),
+                column_gap: px(3),
+                ..default()
+            },
+            Pickable::IGNORE,
+            ChildOf(cell),
+        ))
+        .id();
+    for pip in 0..MAX_PIPS {
+        kit.commands.spawn((
+            Part::Pip(pip),
+            PartOf(ability),
+            Node {
+                width: px(9),
+                height: px(PIPS - 3.0),
+                border_radius: BorderRadius::all(px(1)),
+                ..default()
+            },
+            BackgroundColor(Color::NONE),
+            Pickable::IGNORE,
+            ChildOf(pips),
+        ));
+    }
+    spawn_level_up(kit, cell, slot);
+}
+
+/// Dota's gold plate with a plus over an ability a point could go into.
+fn spawn_level_up(kit: &mut Spawner, cell: Entity, slot: u8) {
+    let plate = kit
+        .commands
+        .spawn((
+            LevelUp(slot),
+            Button,
+            Blocker,
+            Node {
+                position_type: PositionType::Absolute,
+                bottom: percent(100),
+                width: px(LEVEL_UP.0),
+                height: px(LEVEL_UP.1),
+                margin: UiRect::bottom(px(GAP)),
+                justify_content: JustifyContent::Center,
+                align_items: AlignItems::Center,
+                border_radius: BorderRadius::all(px(2)),
+                ..default()
+            },
+            ui::art(
+                kit.manifest,
+                kit.server,
+                "hud.levelup_button",
+                Color::srgb(0.85, 0.7, 0.35),
+            ),
+            Visibility::Hidden,
+            ChildOf(cell),
+        ))
+        .id();
+    match kit.manifest.file("hud.levelup_well") {
+        Some(path) => {
+            kit.commands.spawn((
+                Node {
+                    width: px(LEVEL_UP.1 - 6.0),
+                    height: px(LEVEL_UP.1 - 6.0),
+                    ..default()
+                },
+                ImageNode::new(kit.server.load(path)),
+                Pickable::IGNORE,
+                ChildOf(plate),
+            ));
+        }
+        None => {
+            kit.commands.spawn((
+                ui::text("+", &kit.fonts.bold, 24.0, Color::srgb(0.3, 0.2, 0.05)),
+                Pickable::IGNORE,
+                ChildOf(plate),
+            ));
+        }
+    }
+}
+
+/// The health and mana bars under the abilities, from the talent tree to
+/// the last ability, the pool in the middle and the regeneration at the
+/// right.
+fn spawn_pools(kit: &mut Spawner, column: Entity) {
+    let pools = kit
+        .commands
+        .spawn((
+            Node {
+                flex_direction: FlexDirection::Column,
+                row_gap: px(3),
+                ..default()
+            },
+            ChildOf(column),
+        ))
+        .id();
+    for (gauge, readout, regen, color) in [
+        (Gauge::Hp, Readout::Hp, Readout::HpRegen, ui::HP_FRIEND),
+        (Gauge::Mana, Readout::Mana, Readout::ManaRegen, ui::MANA),
     ] {
-        let well = commands
+        let well = kit
+            .commands
             .spawn((
                 Node {
-                    // Under the abilities, from the first to the ultimate,
-                    // past the talent button left of them.
-                    width: px(6.0 * ABILITY + 5.0 * 6.0),
-                    margin: UiRect::left(px(crate::talents::BUTTON + 6.0)),
-                    height: px(height),
+                    height: px(POOL),
                     justify_content: JustifyContent::Center,
                     align_items: AlignItems::Center,
                     ..default()
                 },
                 BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.8)),
-                ChildOf(column),
+                ChildOf(pools),
             ))
             .id();
-        commands.spawn((
+        kit.commands.spawn((
             gauge,
             Node {
                 position_type: PositionType::Absolute,
@@ -516,29 +720,31 @@ fn spawn_middle(commands: &mut Commands, fonts: &Fonts, bar: Entity) {
             BackgroundColor(color),
             ChildOf(well),
         ));
-        commands.spawn((
+        kit.commands.spawn((
             readout,
-            ui::text("", &fonts.bold, height - 5.0, ui::INK),
+            ui::text("", &kit.fonts.bold, POOL - 6.0, ui::INK),
             ui::shadow(),
             ChildOf(well),
         ));
-        commands.spawn((
+        kit.commands.spawn((
             regen,
             Node {
                 position_type: PositionType::Absolute,
                 right: px(6),
                 ..default()
             },
-            ui::text("", &fonts.bold, height - 7.0, ui::INK),
+            ui::text("", &kit.fonts.bold, POOL - 9.0, ui::INK),
             ui::shadow(),
             ChildOf(well),
         ));
     }
 }
 
-/// The inventory and the backpack below it. The stash is the shop's.
-fn spawn_items(commands: &mut Commands, fonts: &Fonts, bar: Entity) {
-    let grid = commands
+/// The inventory's two rows of three, the backpack row under them, and the
+/// round neutral and town portal slots beside them. The stash is the shop's.
+fn spawn_items(kit: &mut Spawner, bar: Entity) {
+    let grid = kit
+        .commands
         .spawn((
             Node {
                 display: Display::Grid,
@@ -557,41 +763,87 @@ fn spawn_items(commands: &mut Commands, fonts: &Fonts, bar: Entity) {
             ITEM
         };
         spawn_slot_box(
-            commands,
-            fonts,
+            kit.commands,
+            kit.fonts,
             grid,
             size,
             ItemBox(slot),
             slot < INVENTORY_SLOTS,
+            false,
         );
     }
-    spawn_town_portal(commands, fonts, bar);
+    spawn_round_slots(kit, bar);
 }
 
-/// Dota's own slot for scrolls, a small square at the right of the inventory
-/// rows.
-fn spawn_town_portal(commands: &mut Commands, fonts: &Fonts, bar: Entity) {
-    let column = commands
+/// Dota's round slots right of the inventory: the neutral item's on top
+/// (the simulator has no neutral items: it stays empty) and the town
+/// portal's level with the backpack.
+fn spawn_round_slots(kit: &mut Spawner, bar: Entity) {
+    let column = kit
+        .commands
         .spawn((
             Node {
-                height: px(2.0 * ITEM.1 + 5.0),
-                margin: UiRect::bottom(px(BACKPACK_ROW + 5.0)),
+                flex_direction: FlexDirection::Column,
+                justify_content: JustifyContent::SpaceBetween,
+                height: px(2.0 * ITEM.1 + BACKPACK_ROW + 10.0),
                 ..default()
             },
             ChildOf(bar),
         ))
         .id();
-    spawn_slot_box(
-        commands,
-        fonts,
+    let neutral = kit
+        .commands
+        .spawn((
+            NeutralSlot,
+            Interaction::default(),
+            Blocker,
+            Node {
+                width: px(ROUND_SLOT),
+                height: px(ROUND_SLOT),
+                border: UiRect::all(px(1)),
+                border_radius: BorderRadius::MAX,
+                ..default()
+            },
+            BorderColor::all(SLOT_EDGE),
+            BackgroundColor(ui::PANEL_DEEP),
+            ChildOf(column),
+        ))
+        .id();
+    kit.commands.spawn((
+        Node {
+            border_radius: BorderRadius::MAX,
+            ..ui::fill()
+        },
+        ui::art(kit.manifest, kit.server, "hud.neutral_slot", Color::NONE),
+        Pickable::IGNORE,
+        ChildOf(neutral),
+    ));
+    let portal = spawn_slot_box(
+        kit.commands,
+        kit.fonts,
         column,
-        (ITEM.1, ITEM.1),
+        (ROUND_SLOT, ROUND_SLOT),
         ItemBox(TOWN_PORTAL_SLOT),
         true,
+        true,
     );
+    if let Some(path) = kit.manifest.file("hud.tp_slot") {
+        // The empty slot's own art, under the scroll's icon.
+        kit.commands.spawn((
+            Node {
+                border_radius: BorderRadius::MAX,
+                ..ui::fill()
+            },
+            ImageNode::new(kit.server.load(path)),
+            ZIndex(-1),
+            Pickable::IGNORE,
+            ChildOf(portal),
+        ));
+    }
 }
 
-/// One clickable slot box with its icon, its wait and its labels.
+/// One clickable slot box with its icon, its wait and its labels; `round`
+/// for Dota's round slots.
 pub(crate) fn spawn_slot_box(
     commands: &mut Commands,
     fonts: &Fonts,
@@ -599,7 +851,13 @@ pub(crate) fn spawn_slot_box(
     (w, h): (f32, f32),
     tag: impl Component,
     keyed: bool,
-) {
+    round: bool,
+) -> Entity {
+    let radius = if round {
+        BorderRadius::MAX
+    } else {
+        BorderRadius::ZERO
+    };
     let slot = commands
         .spawn((
             tag,
@@ -608,39 +866,47 @@ pub(crate) fn spawn_slot_box(
                 width: px(w),
                 height: px(h),
                 border: UiRect::all(px(1)),
+                border_radius: radius,
                 ..default()
             },
-            BorderColor::all(Color::srgb(0.2, 0.22, 0.27)),
+            BorderColor::all(SLOT_EDGE),
             BackgroundColor(ui::PANEL_DEEP),
             ChildOf(parent),
         ))
         .id();
+    let face = |part: Part| (part, PartOf(slot), Pickable::IGNORE, ChildOf(slot));
+    let rounded = Node {
+        border_radius: radius,
+        ..ui::fill()
+    };
+    commands.spawn((face(Part::Icon), rounded.clone(), ImageNode::default()));
     commands.spawn((
-        Part::Icon,
-        PartOf(slot),
-        ui::fill(),
-        ImageNode::default(),
-        Pickable::IGNORE,
-        ChildOf(slot),
-    ));
-    commands.spawn((
-        Part::Shade,
-        PartOf(slot),
-        ui::fill(),
+        face(Part::Shade),
+        rounded.clone(),
         BackgroundColor(Color::NONE),
-        Pickable::IGNORE,
-        ChildOf(slot),
     ));
     commands.spawn((
-        Part::Sweep,
-        PartOf(slot),
-        ui::fill(),
+        face(Part::Sweep),
+        rounded,
         // Nothing waits yet: clear all round (`dress` turns it).
         ui::split_disc(TAU, Color::NONE, Color::srgba(0.0, 0.0, 0.0, 0.0)),
-        Pickable::IGNORE,
-        ChildOf(slot),
     ));
-    let label = |commands: &mut Commands, part: Part, node: Node, size: f32, color: Color| {
+    spawn_slot_labels(commands, fonts, slot, keyed);
+    slot
+}
+
+/// The seconds in the middle of a slot box, its key, its cost and its
+/// charges.
+fn spawn_slot_labels(commands: &mut Commands, fonts: &Fonts, slot: Entity, keyed: bool) {
+    let at = |left: Option<f32>, top: Option<f32>, right: Option<f32>, bottom: Option<f32>| Node {
+        position_type: PositionType::Absolute,
+        left: left.map_or(Val::Auto, px),
+        top: top.map_or(Val::Auto, px),
+        right: right.map_or(Val::Auto, px),
+        bottom: bottom.map_or(Val::Auto, px),
+        ..default()
+    };
+    let mut label = |part: Part, node: Node, size: f32, color: Color| {
         commands.spawn((
             part,
             PartOf(slot),
@@ -651,14 +917,26 @@ pub(crate) fn spawn_slot_box(
             ChildOf(slot),
         ));
     };
-    let at = |left: Option<f32>, top: Option<f32>, right: Option<f32>, bottom: Option<f32>| Node {
-        position_type: PositionType::Absolute,
-        left: left.map_or(Val::Auto, px),
-        top: top.map_or(Val::Auto, px),
-        right: right.map_or(Val::Auto, px),
-        bottom: bottom.map_or(Val::Auto, px),
-        ..default()
-    };
+    if keyed {
+        label(
+            Part::Key,
+            at(Some(3.0), Some(1.0), None, None),
+            12.0,
+            ui::INK,
+        );
+    }
+    label(
+        Part::Cost,
+        at(None, None, Some(3.0), Some(2.0)),
+        12.0,
+        Color::srgb(0.55, 0.75, 1.0),
+    );
+    label(
+        Part::Charges,
+        at(None, None, Some(3.0), Some(1.0)),
+        13.0,
+        ui::INK,
+    );
     let centre = commands
         .spawn((
             Node {
@@ -678,53 +956,6 @@ pub(crate) fn spawn_slot_box(
         Pickable::IGNORE,
         ChildOf(centre),
     ));
-    if keyed {
-        label(
-            commands,
-            Part::Key,
-            at(Some(3.0), Some(1.0), None, None),
-            12.0,
-            ui::INK,
-        );
-    }
-    label(
-        commands,
-        Part::Cost,
-        at(None, None, Some(3.0), Some(2.0)),
-        12.0,
-        Color::srgb(0.55, 0.75, 1.0),
-    );
-    label(
-        commands,
-        Part::Charges,
-        at(None, None, Some(3.0), Some(1.0)),
-        13.0,
-        ui::INK,
-    );
-    label(
-        commands,
-        Part::Plus,
-        at(None, Some(1.0), Some(3.0), None),
-        18.0,
-        ui::GOLDEN,
-    );
-    for pip in 0..4u8 {
-        commands.spawn((
-            Part::Pip(pip),
-            PartOf(slot),
-            Node {
-                position_type: PositionType::Absolute,
-                left: px(4.0 + f32::from(pip) * 10.0),
-                bottom: px(2),
-                width: px(8),
-                height: px(4),
-                ..default()
-            },
-            BackgroundColor(Color::NONE),
-            Pickable::IGNORE,
-            ChildOf(slot),
-        ));
-    }
 }
 
 /// The clock and the seats along the top.
@@ -1013,7 +1244,6 @@ pub(crate) fn subject(core: &Core) -> (Option<&PlayerView>, Option<&UnitView>, O
 /// Every text of the HUD.
 fn readouts(
     session: NonSend<Session>,
-    settings: Res<Settings>,
     diagnostics: Res<bevy::diagnostic::DiagnosticsStore>,
     mut texts: Query<(&Readout, &mut Text)>,
 ) {
@@ -1034,33 +1264,17 @@ fn readouts(
                 .map(|p| u32::from(p.kills))
                 .sum::<u32>()
                 .to_string(),
+            // In capitals, as Dota's banner writes it.
             Readout::PanelName => p
                 .and_then(|p| bota_core::hero_def(p.hero))
                 .map(|hero| hero.name.to_string())
                 .or(unit.map(|u| crate::units::unit_name(map, u).to_string()))
-                .unwrap_or_default(),
+                .unwrap_or_default()
+                .to_uppercase(),
             Readout::PanelLevel => unit
                 .filter(|u| u.level > 0)
                 .map(|u| u.level.to_string())
                 .unwrap_or_default(),
-            Readout::Damage => unit
-                .map(|u| {
-                    let d = bota_client_core::damage_range(u);
-                    if d.min == d.max {
-                        format!("DMG {}", d.min)
-                    } else {
-                        format!("DMG {}\u{2013}{}", d.min, d.max)
-                    }
-                })
-                .unwrap_or_default(),
-            Readout::DamageBonus => unit
-                .map(|u| bota_client_core::damage_range(u).bonus)
-                .filter(|bonus| *bonus > 0)
-                .map(|bonus| format!("+{bonus}"))
-                .unwrap_or_default(),
-            Readout::Stats => unit.map(stat_lines).unwrap_or_default(),
-            Readout::Attribute(k) => unit.map(|u| attribute_text(u, k).0).unwrap_or_default(),
-            Readout::AttributeBonus(k) => unit.map(|u| attribute_text(u, k).1).unwrap_or_default(),
             Readout::Hp => unit
                 .map(|u| format!("{} / {}", u.hp.max(0), u.max_hp))
                 .unwrap_or_default(),
@@ -1086,7 +1300,6 @@ fn readouts(
                 .collect::<Vec<_>>()
                 .join("\n"),
             Readout::Notice => notice(core, rate),
-            Readout::Hint => hint(core, unit, &settings),
             Readout::Fps => {
                 let fps = diagnostics
                     .get(&bevy::diagnostic::FrameTimeDiagnosticsPlugin::FPS)
@@ -1119,47 +1332,6 @@ fn clock(ticks: i64, rate: u32) -> String {
 
 fn seat_of(view: &bota_proto::WorldView, seat: u8) -> Option<&PlayerView> {
     view.players.get(usize::from(seat))
-}
-
-fn stat_lines(u: &UnitView) -> String {
-    format!(
-        "ARM {:.1}\nMS {:.0}\nATK {:.2}/s\nRNG {:.0}",
-        u.armor.to_f32(),
-        u.move_speed.to_f32(),
-        1000.0 / u.attack_time.max(1) as f32,
-        u.attack_range.to_f32()
-    )
-}
-
-/// One attribute of the panel: its letter and the level's own points, and
-/// the green bonus on top, if any.
-fn attribute_text(u: &UnitView, k: u8) -> (String, String) {
-    let a = &u.attributes;
-    if a.strength.to_f32() == 0.0 && a.agility.to_f32() == 0.0 {
-        return (String::new(), String::new());
-    }
-    let (letter, which, total) = match k {
-        0 => ("S", Attribute::Strength, a.strength),
-        1 => ("A", Attribute::Agility, a.agility),
-        _ => ("I", Attribute::Intelligence, a.intelligence),
-    };
-    let total = total.to_f32().floor() as i32;
-    let mark = if u.primary == Some(which) { "*" } else { "" };
-    match bota_client_core::base_attributes(u) {
-        Some(base) => {
-            let base = base[usize::from(k)].min(total);
-            let bonus = total - base;
-            (
-                format!("{letter}{mark} {base}"),
-                if bonus > 0 {
-                    format!("+{bonus}")
-                } else {
-                    String::new()
-                },
-            )
-        }
-        None => (format!("{letter}{mark} {total}"), String::new()),
-    }
 }
 
 /// The word of the moment in the middle of the screen.
@@ -1197,19 +1369,6 @@ fn notice(core: &Core, rate: u32) -> String {
         return "Left-click to aim, right-click or Esc to cancel".to_string();
     }
     String::new()
-}
-
-/// The line over the ability row: unspent points and how to spend them.
-fn hint(core: &Core, unit: Option<&UnitView>, settings: &Settings) -> String {
-    let Some(u) = unit.filter(|u| Some(u.id) == core.my_hero()) else {
-        return String::new();
-    };
-    if u.abilities.iter().any(|a| a.can_level) {
-        let key = key_name(settings.key(Action::Ability(0)));
-        format!("+ ability point  (Ctrl+{key}...)")
-    } else {
-        String::new()
-    }
 }
 
 /// The health and mana bars of the panel and the seats.
@@ -1252,7 +1411,6 @@ struct SlotFace {
     key: String,
     cost: String,
     pips: (u8, u8),
-    plus: bool,
     charges: String,
     no_mana: bool,
     frame: Color,
@@ -1292,6 +1450,50 @@ pub(crate) fn subject_item(
     }
 }
 
+/// Whether the panel's subject is one's own to command.
+fn owns_panel(core: &Core, unit: Option<&UnitView>, kit: Option<&Kit>) -> bool {
+    unit.is_some_and(|u| core.drives(u.id)) || (kit.is_some() && core.panel_slot() == core.my_slot)
+}
+
+/// Shows Dota's level-up plate over each ability one's own hero could put a
+/// point into; a click on it learns a level.
+fn level_ups(
+    mut session: NonSendMut<Session>,
+    mut plates: Query<(&LevelUp, &mut Visibility)>,
+    clicks: Query<(&LevelUp, &Interaction), Changed<Interaction>>,
+) {
+    let core = &mut session.0;
+    let (_, unit, kit) = subject(core);
+    let own = owns_panel(core, unit, kit);
+    let live = matches!(core.source, bota_client_core::Source::Live(_));
+    let abilities = subject_abilities(unit, kit);
+    let can = |slot: u8| {
+        own && abilities
+            .get(usize::from(slot))
+            .is_some_and(|a| a.can_level)
+    };
+    for (plate, mut visibility) in &mut plates {
+        visibility.set_if_neq(ui::visible(can(plate.0)));
+    }
+    let learn = clicks
+        .iter()
+        .find(|(plate, i)| live && **i == Interaction::Pressed && can(plate.0))
+        .map(|(plate, _)| plate.0);
+    if let Some(slot) = learn {
+        crate::input::press(core, bota_client_core::Slot::Ability(slot), true);
+    }
+}
+
+/// Shows the innate's mark for a hero that has an innate ability.
+fn innate(session: NonSend<Session>, mut mark: Single<&mut Visibility, With<InnateButton>>) {
+    let has = subject(&session.0)
+        .1
+        .and_then(|u| u.hero)
+        .and_then(bota_core::hero_def)
+        .is_some_and(|h| h.innate.is_some());
+    mark.set_if_neq(ui::visible(has));
+}
+
 /// The face of an ability slot.
 fn ability_face(
     core: &Core,
@@ -1309,8 +1511,7 @@ fn ability_face(
         unit.map_or(0, |u| u.mana)
     };
     let look = ability_look(Some(a), mana);
-    let own = unit.is_some_and(|u| core.drives(u.id))
-        || (kit.is_some() && core.panel_slot() == core.my_slot);
+    let own = owns_panel(core, unit, kit);
     let aiming = own && core.aiming == Some(bota_client_core::Slot::Ability(slot));
     let rate = u32::from(core.tick_rate().max(1));
     Some(SlotFace {
@@ -1333,7 +1534,6 @@ fn ability_face(
             String::new()
         },
         pips: (a.level, a.max_level),
-        plus: own && a.can_level,
         charges: String::new(),
         no_mana: a.level > 0 && mana < a.mana_cost,
         frame: if aiming {
@@ -1381,7 +1581,6 @@ fn item_face(
         },
         cost: String::new(),
         pips: (0, 0),
-        plus: false,
         charges: item
             .charges
             .filter(|c| *c > 0)
@@ -1537,7 +1736,6 @@ fn dress(
                     Part::Key => f.key.clone(),
                     Part::Cost => f.cost.clone(),
                     Part::Charges => f.charges.clone(),
-                    Part::Plus if f.plus => "+".to_string(),
                     _ => String::new(),
                 });
                 text.set_if_neq(Text(s));

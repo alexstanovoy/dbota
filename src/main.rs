@@ -18,6 +18,7 @@ mod capture;
 mod clarity;
 mod config;
 mod coords;
+mod courier;
 mod daylight;
 mod dota_text;
 mod drill;
@@ -48,6 +49,7 @@ mod select;
 mod session;
 mod shop;
 mod sound;
+mod stats;
 mod synth;
 mod talents;
 mod teleport;
@@ -157,8 +159,9 @@ pub struct Args {
     /// service needed (for screenshots: `--frames N --screenshot FILE`).
     #[arg(long, value_name = "NAME", value_parser = clap::builder::PossibleValuesParser::new(main_menu::PREVIEWS))]
     pub menu_preview: Option<String>,
-    /// Debug: keep a tooltip open: `item:ID` (id of the item), `shop:ID` or
-    /// `ability:ID:LEVEL`.
+    /// Debug: keep a tooltip open: `item:ID` (id of the item), `shop:ID`,
+    /// `ability:ID:LEVEL`, `stats` (the stats tooltip) or `talents` (the
+    /// talent tree).
     #[arg(long, value_name = "KIND:ID")]
     pub tip: Option<String>,
     /// Debug: open the shop at the start: on a tab (`basics`, `upgrades` or
@@ -369,6 +372,7 @@ fn main() -> AppExit {
             pick::plugin,
             minimap::plugin,
             portrait::plugin,
+            stats::plugin,
         ))
         .add_plugins((
             sound::plugin,
@@ -387,7 +391,7 @@ fn main() -> AppExit {
             quality::plugin,
             heap::plugin,
         ))
-        .add_plugins(fortified::plugin)
+        .add_plugins((fortified::plugin, courier::plugin))
         .add_plugins(main_menu::plugin);
     if let Err(err) = menu(&mut app, &args, store) {
         eprintln!("dbota: {err}");

@@ -13,10 +13,14 @@ use serde_json::Value;
 
 /// Where the text file lies in the cache.
 const FILE: &str = "text/tooltips.json";
+/// Where the interface's labels lie in the cache.
+const LABELS: &str = "text/labels.json";
 /// An upper bound on the file, so a broken cache cannot fill the memory.
 const MAX_ENTRIES: usize = 4096;
 /// Most aliases kept of one entry.
 const MAX_ALIASES: usize = 16;
+/// An upper bound on the labels, on the same grounds.
+const MAX_LABELS: usize = 512;
 
 /// One item or ability, as Dota's files give it.
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -45,30 +49,24 @@ pub struct Entry {
 #[derive(Resource, Clone, Debug, Default)]
 pub struct Texts {
     entries: HashMap<String, Entry>,
+    /// The interface's labels (`text/labels.json`) by their key lower-cased.
+    labels: HashMap<String, String>,
 }
 
 impl Texts {
     /// Reads the cache's text file; empty when there is none.
     pub fn load(root: Option<&Path>) -> Texts {
-        let Some(bytes) = root.and_then(|root| crate::cachefs::read_small(root, FILE)) else {
-            return Texts::default();
-        };
-        match serde_json::from_slice::<Value>(&bytes) {
-            Ok(Value::Object(map)) => Texts {
-                entries: map
-                    .iter()
-                    .take(MAX_ENTRIES)
-                    .filter_map(|(key, value)| Some((key.clone(), entry(value)?)))
-                    .collect(),
-            },
-            Ok(_) => {
-                warn!("{FILE}: not an object of entries");
-                Texts::default()
-            }
-            Err(err) => {
-                warn!("{FILE}: {err}");
-                Texts::default()
-            }
+        Texts {
+            entries: read_object(root, FILE)
+                .iter()
+                .take(MAX_ENTRIES)
+                .filter_map(|(key, value)| Some((key.clone(), entry(value)?)))
+                .collect(),
+            labels: read_object(root, LABELS)
+                .iter()
+                .take(MAX_LABELS)
+                .filter_map(|(key, value)| Some((key.to_lowercase(), value.as_str()?.to_string())))
+                .collect(),
         }
     }
 
@@ -76,10 +74,59 @@ impl Texts {
         self.entries.get(key)
     }
 
+    /// One of Dota's interface labels, its markup dropped and its `{d:name}`
+    /// and `{s:name}` variables filled from `values`; none when the cache has
+    /// not the label or the label names a value not given.
+    pub fn label(&self, key: &str, values: &[(&str, String)]) -> Option<String> {
+        fill(self.labels.get(&key.to_lowercase())?, values)
+    }
+
     #[cfg(test)]
     pub fn is_empty(&self) -> bool {
         self.entries.is_empty()
     }
+}
+
+/// The JSON object of a cache file; empty when there is none or it is not one.
+fn read_object(root: Option<&Path>, file: &str) -> serde_json::Map<String, Value> {
+    let Some(bytes) = root.and_then(|root| crate::cachefs::read_small(root, file)) else {
+        return serde_json::Map::new();
+    };
+    match serde_json::from_slice::<Value>(&bytes) {
+        Ok(Value::Object(map)) => map,
+        Ok(_) => {
+            warn!("{file}: not an object");
+            serde_json::Map::new()
+        }
+        Err(err) => {
+            warn!("{file}: {err}");
+            serde_json::Map::new()
+        }
+    }
+}
+
+/// A Panorama label with its tags dropped and its variables (`{d:name}`,
+/// `{s:name}`, `{d:r:name}`) replaced by `values`; none when one is not given.
+fn fill(label: &str, values: &[(&str, String)]) -> Option<String> {
+    let mut out = String::new();
+    let mut rest = label;
+    while let Some(at) = rest.find(['{', '<']) {
+        out.push_str(&rest[..at]);
+        let close = if rest[at..].starts_with('{') {
+            '}'
+        } else {
+            '>'
+        };
+        let end = at + rest[at..].find(close)?;
+        if close == '}' {
+            let name = rest[at + 1..end].rsplit(':').next()?;
+            let (_, value) = values.iter().find(|(key, _)| *key == name)?;
+            out.push_str(value);
+        }
+        rest = &rest[end + 1..];
+    }
+    out.push_str(rest);
+    Some(out)
 }
 
 fn entry(value: &Value) -> Option<Entry> {
@@ -273,6 +320,27 @@ mod tests {
                 Token::Text("line"),
             ]
         );
+    }
+
+    /// Dota's labels as the stats tooltip fills them: every variable form,
+    /// tags dropped, and nothing for a label naming a value not given.
+    #[test]
+    fn labels_take_the_values_given() {
+        let detail = "= {d:strength_hp} HP and {s:strength_hp_regen} <b>HP Regen</b>";
+        let values = [
+            ("strength_hp", "462".into()),
+            ("strength_hp_regen", "2.1".into()),
+        ];
+        assert_eq!(
+            fill(detail, &values).as_deref(),
+            Some("= 462 HP and 2.1 HP Regen")
+        );
+        assert_eq!(
+            fill("{d:r:level} / 7", &[("level", "3".into())]).as_deref(),
+            Some("3 / 7")
+        );
+        assert_eq!(fill(detail, &values[..1]), None);
+        assert_eq!(fill("cut {d:strength_hp", &values), None);
     }
 
     #[test]

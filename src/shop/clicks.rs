@@ -8,7 +8,7 @@ use bevy::prelude::*;
 use bota_client_core::{Intent, Source};
 
 use super::cell::{Chosen, Place, ShopCell};
-use super::corner::{CourierButton, Grab, GrabAll, ShopButton};
+use super::corner::{Grab, GrabAll, ShopButton};
 use super::panel::{SearchBox, SellStrip, Shown, TabButton};
 use crate::input::{Panels, Typing};
 use crate::session::Session;
@@ -30,10 +30,7 @@ fn buttons(
     shop: Single<&Interaction, With<ShopButton>>,
     search: Single<&Interaction, With<SearchBox>>,
     tabs: Query<(&Interaction, &TabButton)>,
-    others: Query<
-        (&Interaction, Has<GrabAll>, Has<CourierButton>),
-        Or<(With<GrabAll>, With<CourierButton>)>,
-    >,
+    grab_all: Query<&Interaction, With<GrabAll>>,
 ) {
     if !mouse.just_pressed(MouseButton::Left) {
         return;
@@ -54,16 +51,8 @@ fn buttons(
         panels.search.clear();
     }
     let live = matches!(core.source, Source::Live(_));
-    for (interaction, is_grab, is_courier) in &others {
-        if *interaction == Interaction::None || !live {
-            continue;
-        }
-        if is_grab {
-            grab.start(core);
-        }
-        if is_courier {
-            core.act(Intent::CourierDeliver);
-        }
+    if live && grab_all.iter().any(|i| *i != Interaction::None) {
+        grab.start(core);
     }
 }
 
