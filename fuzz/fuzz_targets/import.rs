@@ -18,10 +18,11 @@ texture icon.t materials/t.vtex_c icons/t.png
 sound sound.s sounds/s.vsnd_c sounds/s.wav event=s
 world map.mid maps/w/world.vwrld_c map/mid/mid.gltf vpk=maps/w.vpk half_width=1e9 v_min=-1e9 v_max=1e9 layers=textures/ground trees=map/mid/trees.txt lighting=map/mid/lighting.txt
 portraits models.portraits scripts/npc/portraits.txt models/portraits.txt
+shop text.shop scripts/shops.txt text/shop.json strings=resource/localization/dota_english.txt
 ";
 const IDS: &str = "item 1 blink\nability 2 nevermore_shadowraze1\nhero 3 nevermore\n";
 /// The sources, the input's first files.
-const ROOTS: [&str; 10] = [
+const ROOTS: [&str; 12] = [
     "models/m.vmdl_c",
     "models/n.vmdl_c",
     "materials/t.vtex_c",
@@ -32,6 +33,8 @@ const ROOTS: [&str; 10] = [
     "scripts/npc/items.txt",
     "scripts/npc/npc_abilities.txt",
     "scripts/npc/heroes/npc_dota_hero_nevermore.txt",
+    "scripts/shops.txt",
+    "resource/localization/dota_english.txt",
 ];
 /// Most bytes an import writes (the importer's own limit).
 const WRITE_LIMIT: u64 = 1536 << 20;

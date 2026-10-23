@@ -27,6 +27,7 @@ fn outputs(item: &Item) -> Vec<&str> {
         | Item::Texture { out, .. }
         | Item::Sound { out, .. }
         | Item::Tooltips { out, .. }
+        | Item::Shop { out, .. }
         | Item::Portraits { out, .. } => vec![out],
         Item::World { out, layers, .. } => vec![out, layers],
         Item::Placements {

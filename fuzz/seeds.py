@@ -340,10 +340,16 @@ def texts(pak):
     write("tooltips", "abilities", bundle(files))
     portraits = read("scripts/npc/portraits.txt")
     write("portraits", "excerpt", portraits[: 200 << 10].encode())
-    return loc, scripts, portraits
+    shops = read("scripts/shops.txt")
+    words = "".join(
+        l for l in read("resource/localization/dota_english.txt").splitlines(keepends=True)
+        if "DOTA_SubShop_" in l or "DOTA_Shop_" in l or "DOTA_Inventory" in l
+    )
+    write("shop", "shops", bundle([("", shops.encode()), ("", words.encode())]))
+    return loc, scripts, portraits, (shops, words)
 
 
-def imports(pak, game, loc, scripts, portraits):
+def imports(pak, game, loc, scripts, portraits, shop):
     """Whole imports: one file of every manifest kind, then the files they name."""
     models_ = sorted((p for p in pak.files if p.endswith(".vmdl_c")), key=pak.size)
     models_ = [p for p in models_ if 16 << 10 <= pak.size(p) <= 96 << 10]
@@ -367,6 +373,7 @@ def imports(pak, game, loc, scripts, portraits):
             ),
             ("resource/localization/abilities_english.txt", loc[: 16 << 10].encode()),
         ] + [(f"script{i}", s[: 16 << 10].encode()) for i, s in enumerate(scripts[:3])]
+        roots += [("scripts/shops.txt", shop[0].encode()), ("strings", shop[1].encode())]
         if any(d is None for _, d in roots):
             continue
         extra = []
@@ -420,8 +427,8 @@ def main(game):
     formats(pak)
     models(pak)
     worlds(game, pak)
-    loc, scripts, portraits = texts(pak)
-    imports(pak, game, loc, scripts, portraits)
+    loc, scripts, portraits, shop = texts(pak)
+    imports(pak, game, loc, scripts, portraits, shop)
     own_texts()
 
 

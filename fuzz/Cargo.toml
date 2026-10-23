@@ -1,7 +1,7 @@
 # Coverage-guided fuzz targets for everything dbota reads from a file it did
 # not write: Valve's formats (VPK packages, resources, KV3, NTRO, textures,
 # sounds, models, meshes, animations, materials, worlds, entity lumps, the
-# tooltip and portrait scripts), the importer that converts them, and the
+# tooltip, shop and portrait scripts), the importer that converts them, and the
 # asset cache as the client reads it back. A workspace of its own: the
 # fuzzer's flags and libFuzzer stay out of the main build. `fuzz.sh` builds
 # and runs them on stable Rust.
@@ -183,6 +183,13 @@ bench = false
 [[bin]]
 name = "cache_text"
 path = "fuzz_targets/cache_text.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "shop"
+path = "fuzz_targets/shop.rs"
 test = false
 doc = false
 bench = false
