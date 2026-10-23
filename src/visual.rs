@@ -624,25 +624,28 @@ fn picks(c: &Checks, report: &mut impl FnMut(&str, bool, String)) {
     let all: Vec<(Candidate, Vec2)> =
         stands(view, &c.index, &c.units, &c.ground, c.session.0.my_team()).collect();
     let slack = c.window.height() * MIN_SCREEN_RADIUS * 0.8;
-    let lit: Vec<(Candidate, Vec2)> = all
+    let on_screen =
+        |p: &Vec2| p.x > 0.0 && p.y > 0.0 && p.x < c.window.width() && p.y < c.window.height();
+    // Every unit, off screen and fountains too: a click nearer another unit's
+    // body than its own rightly gets that one, so a unit counts as isolated
+    // only when nothing at all stands close to it on screen.
+    let shown: Vec<(Candidate, Vec2)> = all
         .iter()
-        .filter(|(u, _)| u.kind != UnitKind::Fountain)
         .filter_map(|(u, _)| {
             let mid = u.base + Vec3::Y * (u.height / 2.0).min(60.0);
             camera
                 .world_to_viewport(transform, mid)
                 .ok()
-                .filter(|p| {
-                    p.x > 0.0 && p.y > 0.0 && p.x < c.window.width() && p.y < c.window.height()
-                })
                 .map(|p| (*u, p))
         })
         .collect();
     let (mut tried, mut wrong) = (0, Vec::new());
-    for (unit, at) in &lit {
-        if lit
-            .iter()
-            .any(|(o, p)| o.id != unit.id && p.distance(*at) < slack * 6.0)
+    for (unit, at) in &shown {
+        if unit.kind == UnitKind::Fountain
+            || !on_screen(at)
+            || shown
+                .iter()
+                .any(|(o, p)| o.id != unit.id && p.distance(*at) < slack * 6.0)
         {
             continue;
         }
