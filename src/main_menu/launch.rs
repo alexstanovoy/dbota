@@ -4,7 +4,7 @@
 //! the frame loop never waits on it; a browser's WebSocket never blocks.
 
 use bota_client_core::LiveLink;
-use bota_proto::{ClientMsg, Role};
+use bota_proto::{ClientMsg, Codec, Role};
 
 use super::core::Launch;
 
@@ -55,7 +55,12 @@ fn hello(launch: &Launch) -> std::io::Result<ClientMsg> {
             } else {
                 Role::Player
             };
-            Ok(ClientMsg::hello(role, name.as_str(), None))
+            Ok(ClientMsg::hello(
+                role,
+                name.as_str(),
+                None,
+                bota_core::WIRE_FINGERPRINT,
+            ))
         }
     }
 }
@@ -89,6 +94,7 @@ impl Opening {
                         )?,
                     };
                     Transport::send(&mut net, &greeting)?;
+                    Transport::send(&mut net, &ClientMsg::Compress(Codec::Deflate))?;
                     Ok(net)
                 })();
                 let _ = tell.send(opened);
@@ -126,6 +132,7 @@ impl Opening {
                 }
             };
             link.send(&greeting)?;
+            link.send(&ClientMsg::Compress(Codec::Deflate))?;
             Ok(Box::new(link) as Box<dyn LiveLink>)
         })();
         Opening { done: Some(opened) }

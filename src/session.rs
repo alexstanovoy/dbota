@@ -64,7 +64,7 @@ pub fn seat_key_given() -> bool {
 #[cfg(not(target_arch = "wasm32"))]
 fn connect(args: &Args) -> std::io::Result<Session> {
     use bota_client_core::{Net, Transport};
-    use bota_proto::{ClientMsg, Role, SeatKey};
+    use bota_proto::{ClientMsg, Codec, Role, SeatKey};
     use std::io::{Error, ErrorKind};
     let addr = args.addr.as_deref().unwrap_or(DEFAULT_ADDR);
     if !stays_private(addr) {
@@ -93,7 +93,13 @@ wss:// where the host has a certificate",
     } else {
         Role::Player
     };
-    net.send(&ClientMsg::hello(role, args.name.as_str(), key))?;
+    net.send(&ClientMsg::hello(
+        role,
+        args.name.as_str(),
+        key,
+        bota_core::WIRE_FINGERPRINT,
+    ))?;
+    net.send(&ClientMsg::Compress(Codec::Deflate))?;
     Ok(Session(Core::new(Source::Live(Box::new(net)))))
 }
 

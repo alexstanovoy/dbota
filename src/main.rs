@@ -17,6 +17,7 @@ mod cache_text;
 mod cachefs;
 mod camera;
 mod capture;
+mod chat;
 mod clarity;
 mod config;
 mod coords;
@@ -380,6 +381,7 @@ fn main() -> AppExit {
             bars::plugin,
             overlay::plugin,
             hud::plugin,
+            chat::plugin,
             input::plugin,
             pick::plugin,
             minimap::plugin,

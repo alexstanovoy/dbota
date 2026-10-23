@@ -111,7 +111,7 @@ clash and resets them to the defaults; they are kept as `key.<action> = <chord>`
 | `J` | Glyph of Fortification |
 | hold `` ` `` | the scoreboard (the menu's button at the top left pins it open, `Esc` lets it go) |
 | `\` | console line to the server (a live match on a server started with `--cheats`); `Enter` sends, `Esc` drops it |
-| `Enter` / `Shift+Enter` | chat to the allies / to everyone |
+| `Enter` / `Shift+Enter` | chat to your allies / to everyone (a spectator: to the spectators); `Enter` sends, `Esc` drops the line. Text of any script goes in, with an input method too. The log shows over the minimap and fades after ten seconds; it shows in replays as the watched side heard it |
 | minimap | left click or drag moves the camera; right click orders your hero there |
 | Arrows, screen edges, middle button held | pan the camera (all four edges, the HUD bars included; the middle button drags the map); mouse wheel zooms |
 | hold `Alt` | show attack, tower and ability ranges and the neutral camps' spawn boxes (they are never drawn otherwise) |
@@ -236,4 +236,7 @@ cargo test --release -p dbota_assets -- --ignored   # DBOTA_DOTA_PATH, DBOTA_REF
 
 ## License
 
-MIT, see [LICENSE](LICENSE).
+MIT, see [LICENSE](LICENSE). The interface fonts in `assets/fonts` are subsets of Liberation Sans
+(Latin, Greek, Cyrillic) and Noto Sans CJK (Han, kana, Hangul), under the SIL Open Font License
+(`OFL.txt`, `OFL-NotoSansCJK.txt`); `tools/subset_fonts.py` makes them. Other scripts come from the
+system's fonts on the desktop; a browser has the shipped ones only.

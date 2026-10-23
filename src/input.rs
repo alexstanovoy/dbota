@@ -34,6 +34,8 @@ pub enum Typing {
     No,
     /// The console line.
     Console,
+    /// The chat line.
+    Chat,
     /// The shop's search box.
     Search,
 }
@@ -70,7 +72,16 @@ pub fn plugin(app: &mut App) {
         .add_systems(PreUpdate, mute.before(crate::keys::fire))
         .add_systems(
             Update,
-            (over_hud, typing, keys, crate::pick::update, mouse, boxes).chain(),
+            (
+                over_hud,
+                typing,
+                crate::chat::typing,
+                keys,
+                crate::pick::update,
+                mouse,
+                boxes,
+            )
+                .chain(),
         );
 }
 
@@ -100,8 +111,8 @@ fn over_hud(
     }
 }
 
-/// Types into the console line or the shop's search box while one has the
-/// keyboard.
+/// Opens the console line on its key and types into it or the shop's search
+/// box while one has the keyboard.
 fn typing(
     mut session: NonSendMut<Session>,
     mut events: MessageReader<KeyboardInput>,
@@ -121,7 +132,8 @@ fn typing(
             continue;
         }
         match *typing {
-            Typing::No => {}
+            // The chat line is crate::chat's.
+            Typing::No | Typing::Chat => {}
             Typing::Console => {
                 let line = core.console.get_or_insert_with(String::new);
                 match &event.logical_key {
