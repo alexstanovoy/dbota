@@ -66,8 +66,33 @@ enum CornerButton {
 pub fn plugin(app: &mut App) {
     app.add_systems(Startup, spawn).add_systems(
         Update,
-        (show, prices, filter, clicks, scroll, texts).run_if(shop_runs),
+        (
+            show,
+            above_bottom_row,
+            prices,
+            filter,
+            clicks,
+            scroll,
+            texts,
+        )
+            .run_if(shop_runs),
     );
+}
+
+/// Keeps the shop panel clear of the bottom row, whatever its height.
+fn above_bottom_row(
+    row: Query<(&crate::ui::Extent, &ComputedNode)>,
+    mut panel: Single<&mut Node, With<ShopPanel>>,
+) {
+    let height = row
+        .iter()
+        .filter(|(e, _)| **e == crate::ui::Extent::Bar)
+        .map(|(_, node)| node.size().y * node.inverse_scale_factor())
+        .fold(0.0, f32::max);
+    let bottom = px(height + 8.0);
+    if panel.bottom != bottom {
+        panel.bottom = bottom;
+    }
 }
 
 /// The shop works once the match is known, and in the tactical phase before
@@ -85,19 +110,19 @@ fn spawn(
     manifest: Res<Manifest>,
     server: Res<AssetServer>,
     settings: Res<Settings>,
+    docks: Res<crate::hud::Docks>,
 ) {
     let corner = commands
         .spawn((
             Node {
-                position_type: PositionType::Absolute,
-                right: px(8),
-                bottom: px(8),
+                margin: UiRect::new(px(0), px(8), px(0), px(8)),
                 flex_direction: FlexDirection::Column,
                 align_items: AlignItems::FlexEnd,
                 row_gap: px(6),
                 ..default()
             },
             Pickable::IGNORE,
+            ChildOf(docks.right),
         ))
         .id();
     for (button, text) in [
@@ -180,7 +205,7 @@ fn spawn_panel(commands: &mut Commands, fonts: &Fonts, manifest: &Manifest, serv
                 position_type: PositionType::Absolute,
                 right: px(8),
                 top: px(70),
-                bottom: px(150),
+                bottom: px(0),
                 width: px(392),
                 flex_direction: FlexDirection::Column,
                 padding: UiRect::all(px(10)),

@@ -15,7 +15,7 @@ use bota_proto::{AbilityView, Attribute, ItemView, Kit, PlayerView, Team, UnitKi
 use crate::config::{Action, Settings, key_name};
 use crate::manifest::Manifest;
 use crate::session::Session;
-use crate::ui::{self, Fonts};
+use crate::ui::{self, Extent, Fonts};
 
 /// The size of an ability box.
 const ABILITY: f32 = 58.0;
@@ -149,28 +149,121 @@ pub struct HudRoot;
 #[derive(Component)]
 pub struct Blocker;
 
-pub fn plugin(app: &mut App) {
-    app.add_systems(Startup, spawn_hud).add_systems(
-        Update,
-        (
-            readouts,
-            gauges,
-            slots,
-            portrait,
-            time_of_day,
-            seats,
-            stash,
-            xp,
-        )
-            .run_if(|k: Res<crate::session::MatchKnown>| k.0),
-    );
+/// The two docks of the bottom row, which other parts of the interface fill:
+/// the minimap's at the left and the shop's at the right.
+#[derive(Resource, Clone, Copy)]
+pub struct Docks {
+    /// Where the minimap goes.
+    pub minimap: Entity,
+    /// The column of buttons attached to the minimap's right side.
+    pub minimap_buttons: Entity,
+    /// The shop's corner.
+    pub right: Entity,
+    root: Entity,
+    row: Entity,
 }
 
-fn spawn_hud(mut commands: Commands, fonts: Res<Fonts>) {
+pub fn plugin(app: &mut App) {
+    app.add_systems(PreStartup, spawn_docks)
+        .add_systems(Startup, spawn_hud)
+        .add_systems(
+            Update,
+            (
+                readouts,
+                gauges,
+                slots,
+                portrait,
+                time_of_day,
+                seats,
+                stash,
+                xp,
+            )
+                .run_if(|k: Res<crate::session::MatchKnown>| k.0),
+        );
+}
+
+/// The bottom row is a grid of three columns: the docks take their own
+/// width and share the rest equally, so the hero panel between them is
+/// centred while the window has room and shifts, never overlaps, when not.
+fn spawn_docks(mut commands: Commands) {
     let root = commands.spawn((HudRoot, ui::fill(), Pickable::IGNORE)).id();
-    spawn_bottom(&mut commands, &fonts, root);
-    spawn_top(&mut commands, &fonts, root);
-    spawn_corner(&mut commands, &fonts, root);
+    let row = commands
+        .spawn((
+            Node {
+                position_type: PositionType::Absolute,
+                bottom: px(0),
+                width: percent(100),
+                display: Display::Grid,
+                grid_template_columns: vec![
+                    GridTrack::minmax(
+                        MinTrackSizingFunction::MinContent,
+                        MaxTrackSizingFunction::Fraction(1.0),
+                    ),
+                    GridTrack::max_content(),
+                    GridTrack::minmax(
+                        MinTrackSizingFunction::MinContent,
+                        MaxTrackSizingFunction::Fraction(1.0),
+                    ),
+                ],
+                align_items: AlignItems::End,
+                ..default()
+            },
+            Pickable::IGNORE,
+            ChildOf(root),
+        ))
+        .id();
+    let dock = |commands: &mut Commands, column: i16, justify: JustifySelf, extent: Extent| {
+        commands
+            .spawn((
+                extent,
+                Node {
+                    grid_column: GridPlacement::start(column),
+                    grid_row: GridPlacement::start(1),
+                    justify_self: justify,
+                    flex_direction: FlexDirection::Row,
+                    ..default()
+                },
+                Pickable::IGNORE,
+                ChildOf(row),
+            ))
+            .id()
+    };
+    let left = dock(&mut commands, 1, JustifySelf::Start, Extent::Left);
+    let right = dock(&mut commands, 3, JustifySelf::End, Extent::Right);
+    let minimap = commands
+        .spawn((
+            Node {
+                margin: UiRect::new(px(6), px(0), px(0), px(6)),
+                ..default()
+            },
+            Pickable::IGNORE,
+            ChildOf(left),
+        ))
+        .id();
+    let minimap_buttons = commands
+        .spawn((
+            Node {
+                flex_direction: FlexDirection::Column,
+                margin: UiRect::bottom(px(6)),
+                ..default()
+            },
+            Pickable::IGNORE,
+            ChildOf(left),
+        ))
+        .id();
+    commands.insert_resource(Docks {
+        minimap,
+        minimap_buttons,
+        right,
+        root,
+        row,
+    });
+}
+
+fn spawn_hud(mut commands: Commands, fonts: Res<Fonts>, docks: Res<Docks>) {
+    spawn_bottom(&mut commands, &fonts, docks.row);
+    spawn_top(&mut commands, &fonts, docks.root);
+    spawn_corner(&mut commands, &fonts, docks.root);
 }
 
 /// A dark panel that blocks world clicks.
@@ -184,24 +277,14 @@ fn panel(node: Node) -> impl Bundle {
     )
 }
 
-/// The bottom panel, centred along the window's foot.
-fn spawn_bottom(commands: &mut Commands, fonts: &Fonts, root: Entity) {
-    let bottom = commands
-        .spawn((
-            Node {
-                position_type: PositionType::Absolute,
-                bottom: px(0),
-                width: percent(100),
-                justify_content: JustifyContent::Center,
-                ..default()
-            },
-            Pickable::IGNORE,
-            ChildOf(root),
-        ))
-        .id();
+/// The hero panel, in the middle column of the bottom row.
+fn spawn_bottom(commands: &mut Commands, fonts: &Fonts, row: Entity) {
     let bar = commands
         .spawn((
+            Extent::Bar,
             panel(Node {
+                grid_column: GridPlacement::start(2),
+                grid_row: GridPlacement::start(1),
                 flex_direction: FlexDirection::Row,
                 align_items: AlignItems::FlexEnd,
                 padding: UiRect::all(px(8)),
@@ -210,7 +293,7 @@ fn spawn_bottom(commands: &mut Commands, fonts: &Fonts, root: Entity) {
                 border_radius: BorderRadius::top(px(10)),
                 ..default()
             }),
-            ChildOf(bottom),
+            ChildOf(row),
         ))
         .id();
     let portrait = commands
@@ -689,12 +772,22 @@ fn spawn_top(commands: &mut Commands, fonts: &Fonts, root: Entity) {
                 top: px(0),
                 width: percent(100),
                 justify_content: JustifyContent::Center,
+                ..default()
+            },
+            Pickable::IGNORE,
+            ChildOf(root),
+        ))
+        .id();
+    let top = commands
+        .spawn((
+            Extent::TopCentre,
+            Node {
                 align_items: AlignItems::FlexStart,
                 column_gap: px(6),
                 ..default()
             },
             Pickable::IGNORE,
-            ChildOf(root),
+            ChildOf(top),
         ))
         .id();
     spawn_seat(commands, fonts, top, 0);
@@ -849,10 +942,11 @@ fn spawn_seat(commands: &mut Commands, fonts: &Fonts, parent: Entity, seat: u8) 
 fn spawn_corner(commands: &mut Commands, fonts: &Fonts, root: Entity) {
     let plate = commands
         .spawn((
+            Extent::Corner,
             panel(Node {
                 position_type: PositionType::Absolute,
-                left: px(8),
-                top: px(8),
+                left: px(ui::CORNER_MARGIN),
+                top: px(ui::CORNER_MARGIN),
                 flex_direction: FlexDirection::Row,
                 column_gap: px(16),
                 padding: UiRect::axes(px(12), px(6)),

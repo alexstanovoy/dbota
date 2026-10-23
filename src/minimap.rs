@@ -13,7 +13,7 @@ use bota_proto::{Team, UnitKind};
 
 use crate::camera::RtsCamera;
 use crate::fog::FogGrid;
-use crate::hud::Blocker;
+use crate::hud::{Blocker, Docks};
 use crate::map::Ground;
 use crate::session::Session;
 
@@ -62,7 +62,7 @@ pub fn plugin(app: &mut App) {
         .add_systems(Update, (photograph, marks, pings, clicks));
 }
 
-fn spawn(mut commands: Commands, mut images: ResMut<Assets<Image>>) {
+fn spawn(mut commands: Commands, mut images: ResMut<Assets<Image>>, docks: Res<Docks>) {
     let photo = images.add(Image::new_target_texture(
         PHOTO,
         PHOTO,
@@ -72,9 +72,6 @@ fn spawn(mut commands: Commands, mut images: ResMut<Assets<Image>>) {
     let frame = commands
         .spawn((
             Node {
-                position_type: PositionType::Absolute,
-                left: px(6),
-                bottom: px(6),
                 width: px(SIDE),
                 height: px(SIDE),
                 border: UiRect::all(px(3)),
@@ -84,6 +81,7 @@ fn spawn(mut commands: Commands, mut images: ResMut<Assets<Image>>) {
             BorderColor::all(Color::srgb(0.18, 0.2, 0.24)),
             Interaction::default(),
             Blocker,
+            ChildOf(docks.minimap),
         ))
         .id();
     // Hidden until the photograph is taken: a target never rendered is black.

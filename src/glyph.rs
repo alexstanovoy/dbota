@@ -1,4 +1,5 @@
-//! The Glyph of Fortification button, on the minimap's frame as in Dota: it
+//! The Glyph of Fortification button, in the column against the minimap's right
+//! side as in Dota (where Scan goes below it, which bota has not): it
 //! shows whether one's side may activate the Glyph, the seconds until it
 //! may, or the seconds its protection still holds, and a click or the Glyph
 //! key activates it.
@@ -6,8 +7,7 @@
 use bevy::prelude::*;
 
 use crate::config::{Action, Settings, key_name};
-use crate::hud::Blocker;
-use crate::minimap::SIDE;
+use crate::hud::{Blocker, Docks};
 use crate::session::{MatchKnown, Session};
 use crate::ui::{self, Fonts};
 
@@ -32,29 +32,25 @@ pub fn plugin(app: &mut App) {
         .add_systems(Update, (show, click).run_if(|k: Res<MatchKnown>| k.0));
 }
 
-fn spawn(mut commands: Commands, fonts: Res<Fonts>, settings: Res<Settings>) {
+fn spawn(mut commands: Commands, fonts: Res<Fonts>, settings: Res<Settings>, docks: Res<Docks>) {
     let button = commands
         .spawn((
             GlyphButton,
             Button,
             Blocker,
             Node {
-                position_type: PositionType::Absolute,
-                // On the minimap frame's top edge, at its right corner: the
-                // panel never reaches that high, at any width or scale.
-                left: px(6.0 + SIDE - BUTTON_WIDTH),
-                bottom: px(6.0 + SIDE),
                 width: px(BUTTON_WIDTH),
                 padding: UiRect::axes(px(6), px(5)),
                 flex_direction: FlexDirection::Column,
                 align_items: AlignItems::Center,
                 border: UiRect::all(px(2)),
-                border_radius: BorderRadius::all(px(4)),
+                border_radius: BorderRadius::right(px(4)),
                 ..default()
             },
             BackgroundColor(ui::PANEL),
             BorderColor::all(ui::EDGE),
             Visibility::Hidden,
+            ChildOf(docks.minimap_buttons),
         ))
         .id();
     commands.spawn((

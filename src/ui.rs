@@ -1,15 +1,14 @@
 //! What every part of the interface shares: the fonts, the palette, the
 //! interface scale, and small builders for text and boxes.
 
-use bevy::{
-    prelude::*,
-    window::{PrimaryWindow, WindowResized},
-};
+use bevy::{prelude::*, window::PrimaryWindow};
 
 use crate::config::Settings;
 
 /// Logical window height at which the interface scale is one.
 const REFERENCE_HEIGHT: f32 = 900.0;
+/// The smallest scale a window may force.
+const MIN_SCALE: f32 = 0.25;
 
 /// The interface fonts.
 #[derive(Resource, Clone)]
@@ -119,21 +118,66 @@ pub fn absolute(left: f32, top: f32, width: f32, height: f32) -> Node {
     }
 }
 
+/// A part of the interface the scale must leave room for. Nodes carrying it
+/// are measured in interface pixels; the scale never grows past the point
+/// where they would meet or leave the window, as Dota's HUD keeps every panel
+/// on the screen.
+#[derive(Component, Clone, Copy, PartialEq, Eq)]
+pub enum Extent {
+    /// What is docked at the bottom left (the minimap and its buttons).
+    Left,
+    /// The hero panel, centred at the foot.
+    Bar,
+    /// What is docked at the bottom right (the shop button).
+    Right,
+    /// The clock and the seats at the top centre.
+    TopCentre,
+    /// One's own numbers, in the top-left corner.
+    Corner,
+}
+
+/// Interface pixels between a corner's panel and the window's edge.
+pub const CORNER_MARGIN: f32 = 8.0;
+
+/// The largest scale at which every [`Extent`] fits the window, given the
+/// size of each in interface pixels.
+fn fitting_scale(window: Vec2, size: impl Fn(Extent) -> Vec2) -> f32 {
+    let (left, bar, right) = (size(Extent::Left), size(Extent::Bar), size(Extent::Right));
+    let (top, corner) = (size(Extent::TopCentre), size(Extent::Corner));
+    // The top centre stays clear of the corner on both sides.
+    let width = (left.x + bar.x + right.x).max(top.x + 2.0 * (corner.x + CORNER_MARGIN));
+    // The top centre sits above the panel; the corner above the minimap.
+    let height = (bar.y + top.y).max(left.y + corner.y + CORNER_MARGIN);
+    let fit = |have: f32, need: f32| {
+        if need > 0.0 {
+            have / need
+        } else {
+            f32::INFINITY
+        }
+    };
+    fit(window.x, width).min(fit(window.y, height))
+}
+
 /// Scales the whole interface with the window's logical height and the
-/// player's own factor.
+/// player's own factor, down to what fits the window.
 fn scale_ui(
-    mut resized: MessageReader<WindowResized>,
     window: Single<&Window, With<PrimaryWindow>>,
     settings: Res<Settings>,
+    parts: Query<(&Extent, &ComputedNode)>,
     mut ui_scale: ResMut<UiScale>,
-    mut first: Local<bool>,
 ) {
-    if resized.read().last().is_none() && !settings.is_changed() && *first {
-        return;
-    }
-    *first = true;
-    let scale = (window.height() / REFERENCE_HEIGHT).clamp(0.6, 2.5) * settings.ui_scale;
-    if ui_scale.0 != scale {
+    let wanted = (window.height() / REFERENCE_HEIGHT).clamp(0.6, 2.5) * settings.ui_scale;
+    let size = |which: Extent| {
+        parts
+            .iter()
+            .filter(|(e, _)| **e == which)
+            .map(|(_, node)| node.size() * node.inverse_scale_factor())
+            .fold(Vec2::ZERO, Vec2::max)
+    };
+    let scale = wanted
+        .min(fitting_scale(window.size(), size))
+        .max(MIN_SCALE);
+    if (ui_scale.0 - scale).abs() > 1e-3 {
         ui_scale.0 = scale;
     }
 }
