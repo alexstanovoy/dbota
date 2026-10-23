@@ -162,6 +162,7 @@ pub fn pump(
     time: Res<Time>,
     mut known: ResMut<MatchKnown>,
     mut exit: MessageWriter<AppExit>,
+    mut failed: Local<bool>,
 ) {
     let core = &mut session.0;
     core.pump(time.delta_secs());
@@ -177,8 +178,19 @@ pub fn pump(
         eprintln!("dbota: {why}");
         exit.write(AppExit::error());
     }
+    // A replay that fails to read says so at once, whatever shows on screen.
+    if let Source::Replay(player) = &core.source
+        && let Some(err) = player.error()
+        && !*failed
+    {
+        error!("the replay cannot be read: {err}");
+        *failed = true;
+    }
     let ready = core.terrain_cells() > 0 && core.view().is_some();
     if known.0 != ready {
         known.0 = ready;
+        if ready {
+            info!("match known: tick {}", core.view().map_or(0, |v| v.tick));
+        }
     }
 }

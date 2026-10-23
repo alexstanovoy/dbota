@@ -10,13 +10,34 @@ the cache is kept, and deletes it. Also checks nothing but the page's own files 
 The folder given to the page is a farm of symlinks to the install's package files, so the test
 shows the "pick a folder, read only what is needed" path without copying anything. Needs the
 Dota 2 install (DBOTA_DOTA_PATH or the usual Steam places); the game run needs WebGL2/WebGPU
-(SwiftShader does).
+(SwiftShader does). Without an install that part is skipped, with a message.
+
+Two more checks need no install and run on pages built with stand-ins (`?assets=none`):
+
+    DBOTA_WEB_REPLAY=$PWD/chat.brp DBOTA_WEB_ARGS="--replay built-in --pov 0 --seek 4100" \
+        PROFILE=release OUT=temp/web-replay web/build.sh
+    PROFILE=release OUT=temp/web-live web/build.sh
+    CARGO_TARGET_DIR=temp/bota-target cargo build --release --manifest-path ../bota/Cargo.toml \
+        -p bota_server --features websocket
+    PYTHONPATH=temp/pwlib python3 web/test/smoke.py --replay-page temp/web-replay \
+        --live-page temp/web-live --server temp/bota-target/release/bota_server
+
+* `--replay-page`: the page plays a Zstandard-packed replay built into it (read through to the
+  seek tick, as the packed file is decoded record by record) and the client says it knows the
+  match and heard the chat lines, with no read error.
+* `--live-page` and `--server`: the page joins a bota_server over a WebSocket through the main
+  menu's direct connection, asks for compression, takes the compressed snapshots in (the match
+  goes on past its start), and chats a line of several scripts that comes back through the
+  server. The page's Content-Security-Policy gets that one socket for this run only.
 """
 import argparse
 import functools
 import http.server
+import json
 import os
 import pathlib
+import re
+import subprocess
 import sys
 import threading
 import time
@@ -36,7 +57,7 @@ def find_install(given):
     for c in [given, os.environ.get("DBOTA_DOTA_PATH"), *STEAM]:
         if c and (pathlib.Path(c).expanduser() / "game/dota/pak01_dir.vpk").is_file():
             return pathlib.Path(c).expanduser()
-    sys.exit("Dota 2 not found: pass --install")
+    return None
 
 
 def farm(install, root):
@@ -62,8 +83,8 @@ class Quiet(http.server.SimpleHTTPRequestHandler):
         pass
 
 
-def serve():
-    handler = functools.partial(Quiet, directory=str(OUT))
+def serve(directory=OUT):
+    handler = functools.partial(Quiet, directory=str(directory))
     server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)
     threading.Thread(target=server.serve_forever, daemon=True).start()
     return server
@@ -117,14 +138,7 @@ def check_grant_logic(page):
     print("folder grant logic ok")
 
 
-def main():
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--install")
-    ap.add_argument("--no-game", action="store_true")
-    ap.add_argument("--keep", action="store_true", help="leave the imported copy in place")
-    ap.add_argument("--settle", type=int, default=5, help="seconds the client draws before the screenshot")
-    args = ap.parse_args()
-    install = find_install(args.install)
+def import_smoke(args, install):
     folder = farm(install, HERE.parent.parent / "temp/smoke-install")
     server = serve()
     base = f"http://127.0.0.1:{server.server_address[1]}/"
@@ -237,6 +251,155 @@ def main():
     if failures:
         sys.exit("\n".join(failures))
     print("smoke test passed:", len(requests), "requests, all to", base)
+
+
+BROWSER_ARGS = [
+    # a software WebGPU adapter (SwiftShader's Vulkan) for the client
+    "--enable-unsafe-webgpu", "--use-angle=swiftshader", "--enable-unsafe-swiftshader", "--enable-features=Vulkan",
+    # The test server and the page are both on this machine, which a recent Chromium treats as a
+    # local-network request needing a permission nobody is there to give.
+    "--disable-features=LocalNetworkAccessChecks,BlockInsecurePrivateNetworkRequests",
+]
+# postcard's tag of `ServerMsg::Compressed` (the registry is append-only): every frame of a
+# compressed link that is not chat carries it, after the frame's four bytes of length.
+COMPRESSED_TAG = 14
+# Where the main menu's "DIRECT CONNECT" link is in a 1280x720 page, as the client draws it.
+DIRECT_LINK = (195, 21)
+
+
+def wait_console(page, console, pattern, timeout, what):
+    """Waits for a console line matching `pattern`; returns its match."""
+    seen = re.compile(pattern)
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        for line in list(console):
+            if m := seen.search(line):
+                return m
+        page.wait_for_timeout(500)
+    print("console:", *[c[:300] for c in console[-25:]], sep="\n  ", file=sys.stderr)
+    sys.exit(f"timed out waiting for {what}")
+
+
+def opened(p, directory):
+    """A page of the build in `directory` in a fresh browser: (server, base, browser, page, console, problems)."""
+    server = serve(directory)
+    base = f"http://127.0.0.1:{server.server_address[1]}/"
+    browser = p.chromium.launch(args=BROWSER_ARGS)
+    page = browser.new_context(viewport={"width": 1280, "height": 720}).new_page()
+    console, problems = [], []
+    page.on("console", lambda m: console.append(m.text))
+    page.on("pageerror", lambda e: problems.append(f"page error: {e}"))
+    return server, base, browser, page, console, problems
+
+
+def check_replay_page(directory):
+    """A packed (Zstandard) replay built into the page is read through and played."""
+    with sync_playwright() as p:
+        server, base, browser, page, console, problems = opened(p, directory)
+        page.goto(base + "?assets=none")
+        wait_console(page, console, r"match known: tick \d+", 600, "the client to know the match")
+        heard = wait_console(page, console, r"chat: (\d+) lines heard", 120, "the chat lines of the replay")
+        page.wait_for_timeout(3000)
+        page.screenshot(path=str(HERE.parent.parent / "temp/smoke-replay.png"), timeout=600000)
+        assert any("stands behind the Latin ones" in c for c in console), "the CJK fallback is registered"
+        bad = [c for c in console if "cannot be read" in c or "panicked" in c or "RuntimeError" in c]
+        assert not bad, bad
+        assert not problems, problems
+        lines = max(int(m.group(1)) for c in console if (m := re.search(r"chat: (\d+) lines heard", c)))
+        assert lines >= 5, f"the packed replay's chat lines: {heard.group(0)}"
+        print(f"packed replay: match known, {lines} chat lines heard, no read error")
+        browser.close()
+    server.shutdown()
+
+
+def free_port():
+    import socket
+
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        return s.getsockname()[1]
+
+
+def check_live_page(directory, server_bin):
+    """The page joins a bota_server over a WebSocket and asks for compression; the snapshots it is
+    sent are compressed and the match plays on in it."""
+    tcp, ws = free_port(), free_port()
+    game = subprocess.Popen(
+        [server_bin, "--port", str(tcp), "--ws-port", str(ws), "--mode", "realtime", "--map", "2",
+         "--players", "2", "--dummy-seat", "--pick-secs", "1", "--tactical-secs", "0", "--seed", "7"],
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+    )
+    try:
+        with sync_playwright() as p:
+            server, base, browser, page, console, problems = opened(p, directory)
+            sent, received = [], []
+
+            def on_socket(sock):
+                sock.on("framesent", lambda f: sent.append(f if isinstance(f, bytes) else f.encode()))
+                sock.on("framereceived", lambda f: received.append(f if isinstance(f, bytes) else f.encode()))
+
+            page.on("websocket", on_socket)
+            # The one socket of this run goes into the page's policy, as a page with networking has.
+            def with_socket(route):
+                response = route.fetch()
+                body = response.text().replace("connect-src 'self'", f"connect-src 'self' ws://127.0.0.1:{ws}")
+                route.fulfill(response=response, body=body)
+
+            page.route(re.compile(r".*/(index\.html)?(\?.*)?$"), with_socket)
+            menu = f"direct = ws://127.0.0.1:{ws}\nname = smoke\nplain_ok = 127.0.0.1\n"
+            page.add_init_script("localStorage.setItem('dbota.menu', " + json.dumps(menu) + ")")
+            page.goto(base + "?assets=none")
+            page.wait_for_timeout(15000)
+            page.mouse.click(*DIRECT_LINK)
+            page.wait_for_timeout(5000)
+            page.keyboard.press("Enter")
+            wait_console(page, console, r"match known: tick \d+", 240, "the live match")
+            page.wait_for_timeout(8000)
+            # A software GPU draws a frame in seconds: each step gets one to itself.
+            page.keyboard.press("Enter")
+            page.wait_for_timeout(3000)
+            page.keyboard.type("hello from the browser")
+            page.wait_for_timeout(3000)
+            page.keyboard.press("Enter")
+            wait_console(page, console, r"chat: [1-9]\d* lines heard", 60, "the chat line to come back")
+            page.screenshot(path=str(HERE.parent.parent / "temp/smoke-live.png"), timeout=600000)
+            assert sent and received, "the page talked to the server"
+            packed = [f for f in received if f[4:5] == bytes([COMPRESSED_TAG])]
+            assert len(packed) >= 20, f"compressed parts received: {len(packed)} of {len(received)} frames"
+            assert any(f[4:5] != bytes([COMPRESSED_TAG]) for f in received), "the hello's answers came plain"
+            bad = [c for c in console if "panicked" in c or "RuntimeError" in c]
+            assert not bad and not problems, (bad, problems)
+            print(f"live: match known, {len(packed)} of {len(received)} server frames were compressed parts, "
+                  f"chat line heard, {len(sent)} frames sent")
+            browser.close()
+        server.shutdown()
+    finally:
+        game.terminate()
+        game.wait(timeout=10)
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--install")
+    ap.add_argument("--no-game", action="store_true")
+    ap.add_argument("--keep", action="store_true", help="leave the imported copy in place")
+    ap.add_argument("--settle", type=int, default=5, help="seconds the client draws before the screenshot")
+    ap.add_argument("--replay-page", type=pathlib.Path, help="a build with a packed replay built in")
+    ap.add_argument("--live-page", type=pathlib.Path, help="a build without a replay (the main menu)")
+    ap.add_argument("--server", help="a bota_server built with the websocket feature, for --live-page")
+    ap.add_argument("--only-wire", action="store_true", help="skip the import test even where an install is found")
+    args = ap.parse_args()
+    install = None if args.only_wire else find_install(args.install)
+    if install:
+        import_smoke(args, install)
+    else:
+        print("skipped: the import test needs a Dota 2 install (DBOTA_DOTA_PATH or --install)")
+    if args.replay_page:
+        check_replay_page(args.replay_page)
+    if args.live_page:
+        if not args.server:
+            sys.exit("--live-page needs --server")
+        check_live_page(args.live_page, args.server)
 
 
 if __name__ == "__main__":

@@ -3,12 +3,13 @@
 # scripts. Needs wasm32-unknown-unknown and wasm-bindgen-cli at the version of Cargo.lock.
 #   DBOTA_WEB_REPLAY=match.brp web/build.sh     # a page that plays the replay built into it
 #   PROFILE=release web/build.sh                # a quicker, bigger build for tests (default: web)
+#   OUT=temp/page web/build.sh                  # somewhere else than web/out
 set -euo pipefail
 export PATH="$PATH:$HOME/.cargo/bin"
 here=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)
 cd "$here"
 profile=${PROFILE:-web}
-out=web/out
+out=${OUT:-web/out}
 features=()
 [ -n "${DBOTA_WEB_REPLAY:-}" ] && features=(--features web-replay)
 export DBOTA_WEB_ARGS=${DBOTA_WEB_ARGS:---replay built-in --follow 0}

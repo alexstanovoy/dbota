@@ -68,7 +68,7 @@ struct Complaint;
 pub fn plugin(app: &mut App) {
     app.init_resource::<ChatInput>()
         .add_systems(Startup, spawn)
-        .add_systems(Update, (show_log, show_input, ime));
+        .add_systems(Update, (note_heard, show_log, show_input, ime));
 }
 
 /// Opens the chat line when its binding fires ("Chat to allies", "Chat to
@@ -302,6 +302,16 @@ fn name_color(core: &Core, line: &ChatLine) -> Color {
 /// How much of a line is left: whole for a while, then fading out.
 fn opacity(age: f32) -> f32 {
     (1.0 - (age - FADE_AFTER) / FADE_SECS).clamp(0.0, 1.0)
+}
+
+/// Says how many lines the client has heard, as they come: the one trace of
+/// the chat's journey (decoded, unpacked, filtered) that a headless run can read.
+fn note_heard(session: NonSend<Session>, mut seen: Local<usize>) {
+    let heard = session.0.chat.lines().count();
+    if heard != *seen {
+        *seen = heard;
+        info!("chat: {heard} lines heard");
+    }
 }
 
 /// The log's lines, newest at the foot. While a line is being typed nothing
