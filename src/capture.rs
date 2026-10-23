@@ -33,11 +33,16 @@ struct Shots {
     fogged: Option<(Image, bool)>,
     /// The replay may go on: its held tick has been drawn both ways.
     resume: bool,
+    /// A visual check's click check still to be made on a later frame: the
+    /// last tick it may be made at, and whether its shot was the last.
+    clicks: Option<(u32, bool)>,
+    /// The replay ended (or broke) while the click check waited.
+    clicks_ended: bool,
 }
 
 pub fn plugin(app: &mut App) {
     app.init_resource::<Shots>()
-        .add_systems(Last, shoot)
+        .add_systems(Last, (shoot, play_for_clicks, look_for_clicks).chain())
         .add_systems(PreUpdate, seek.after(crate::session::pump));
 }
 
@@ -175,20 +180,87 @@ fn unveiled_shot(
               mut shots: ResMut<Shots>,
               mut exit: MessageWriter<AppExit>,
               checks: crate::visual::Checks| {
-            if !crate::visual::run(&fogged, &captured.image, &checks) {
-                shots.failed = true;
-            }
+            let verdict = crate::visual::run(&fogged, &captured.image, &checks);
+            shots.failed |= !verdict.pass;
             shots.resume = true;
+            if verdict.clicks_pending {
+                // Still waiting: the click check looks on as the replay plays.
+                let tick = checks.tick();
+                shots.clicks = Some((tick + crate::visual::CLICK_WINDOW_TICKS, last));
+                return;
+            }
             shots.waiting = false;
             if last {
-                exit.write(if shots.failed {
-                    AppExit::error()
-                } else {
-                    AppExit::Success
-                });
+                exit.write(finished(&shots));
             }
         },
     );
+}
+
+/// How the app exits once every shot is checked.
+fn finished(shots: &Shots) -> AppExit {
+    if shots.failed {
+        AppExit::error()
+    } else {
+        AppExit::Success
+    }
+}
+
+/// Plays a visual check's replay on past its shot while the click check
+/// waits for a frame to make it on, and notes when the replay ends.
+fn play_for_clicks(mut shots: ResMut<Shots>, mut session: NonSendMut<Session>) {
+    if shots.clicks.is_none() {
+        return;
+    }
+    let ended = match &mut session.0.source {
+        Source::Replay(player) => {
+            player.paused = false;
+            player.finished() || player.error().is_some()
+        }
+        _ => true,
+    };
+    shots.clicks_ended = ended;
+}
+
+/// Checks clicks near units on the first frame past a shot that has a unit
+/// alone on screen; fails when none does within the window or before the
+/// replay ends.
+fn look_for_clicks(
+    mut shots: ResMut<Shots>,
+    mut exit: MessageWriter<AppExit>,
+    checks: crate::visual::Checks,
+) {
+    let Some((until, last)) = shots.clicks else {
+        return;
+    };
+    let tick = checks.tick();
+    let say = |name: &str, pass: bool, detail: String| {
+        println!(
+            "visual check: {} {name}: {detail}",
+            if pass { "PASS" } else { "FAIL" }
+        );
+        pass
+    };
+    let mut passed = true;
+    let checked = crate::visual::report_clicks(&checks, &mut |name, pass, detail| {
+        passed = say(name, pass, detail);
+    });
+    if !checked && tick <= until && !shots.clicks_ended {
+        return;
+    }
+    if !checked {
+        passed = say(
+            "clicks near units pick them",
+            false,
+            format!("no unit alone on screen from the shot to tick {until} (tick {tick})"),
+        );
+    }
+    shots.failed |= !passed;
+    shots.clicks = None;
+    shots.waiting = false;
+    if last {
+        exit.write(finished(&shots));
+    }
 }
 
 /// Steers a replay towards the shot at tick `next`: its path once the
@@ -272,11 +344,7 @@ fn save_shot(commands: &mut Commands, path: std::path::PathBuf, last: bool, chec
                 shots.held = 0.0;
                 shots.fogged = Some((image, last));
             } else if last {
-                exit.write(if shots.failed {
-                    AppExit::error()
-                } else {
-                    AppExit::Success
-                });
+                exit.write(finished(&shots));
             }
         },
     );

@@ -13,6 +13,10 @@
 //! - No range ring is drawn while the show-ranges key is up.
 //! - The top-left block tells no gold and no souls.
 //! - Buff icons are cut round.
+//! - A click near a unit with no other near it picks it. A frame with no such
+//!   unit for the seat checks nothing: the replay plays on and the check is
+//!   made on the first frame within [`CLICK_WINDOW_TICKS`] that has one; a
+//!   window without any fails.
 
 use bevy::{ecs::system::SystemParam, prelude::*, window::PrimaryWindow};
 use bota_proto::UnitKind;
@@ -46,6 +50,18 @@ pub const HERO_DETAIL_MIN: f32 = 12.0;
 /// other skeleton than the one walking.
 pub const JOINT_REACH: f32 = 400.0;
 
+/// Ticks after a shot within which a frame with a unit to click near is
+/// looked for, when the shot has none.
+pub const CLICK_WINDOW_TICKS: u32 = 900;
+
+/// The verdict on a shot: whether every check made passed, and whether the
+/// click check is still to be made on a later frame.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Verdict {
+    pub pass: bool,
+    pub clicks_pending: bool,
+}
+
 /// What the checks read.
 #[derive(SystemParam)]
 pub struct Checks<'w, 's> {
@@ -78,6 +94,13 @@ pub struct Checks<'w, 's> {
     >,
     icons: Query<'w, 's, &'static ImageNode>,
     images: Res<'w, Assets<Image>>,
+}
+
+impl Checks<'_, '_> {
+    /// The tick the view stands at.
+    pub fn tick(&self) -> u32 {
+        self.session.0.view().map_or(0, |v| v.tick)
+    }
 }
 
 /// The screenshot as sRGB bytes, by physical pixel.
@@ -142,14 +165,18 @@ fn saturation(c: [f32; 3]) -> f32 {
     if max <= 0.0 { 0.0 } else { (max - min) / max }
 }
 
-/// Runs every check on a screenshot; prints each; true when all pass.
-pub fn run(image: &Image, unveiled: &Image, c: &Checks) -> bool {
+/// Runs every check on a screenshot; prints each.
+pub fn run(image: &Image, unveiled: &Image, c: &Checks) -> Verdict {
+    let failed = Verdict {
+        pass: false,
+        clicks_pending: false,
+    };
     let Some(bare) = Shot::of(unveiled) else {
         error!("visual check: the unveiled screenshot has no data");
-        return false;
+        return failed;
     };
     let Some(shot) = Shot::of(image) else {
-        return false;
+        return failed;
     };
     let mut ok = true;
     let mut report = |name: &str, pass: bool, detail: String| {
@@ -170,8 +197,32 @@ pub fn run(image: &Image, unveiled: &Image, c: &Checks) -> bool {
     );
     corner(c, &mut report);
     buff_icons(c, &mut report);
-    picks(c, &mut report);
-    ok
+    let clicks_pending = !report_clicks(c, &mut report);
+    if clicks_pending {
+        let tick = c.tick();
+        println!(
+            "visual check: no unit alone on screen at tick {tick}; clicks near units are \
+             checked on the next frame within {CLICK_WINDOW_TICKS} ticks that has one"
+        );
+    }
+    Verdict {
+        pass: ok,
+        clicks_pending,
+    }
+}
+
+/// The click check on the frame drawn now, reported, if the frame has a unit
+/// alone on screen to click near; false when it has none.
+pub fn report_clicks(c: &Checks, report: &mut impl FnMut(&str, bool, String)) -> bool {
+    let Some((tried, wrong)) = clicks(c) else {
+        return false;
+    };
+    report(
+        "clicks near units pick them",
+        wrong.is_empty(),
+        format!("{tried} clicks off the middle of isolated units; wrong: {wrong:?}"),
+    );
+    true
 }
 
 /// Every mesh of every hero's model and wearables is there and drawn, and
@@ -679,17 +730,15 @@ fn heroes(shot: &Shot, c: &Checks, report: &mut impl FnMut(&str, bool, String)) 
 /// A click near a unit, not on it, gets it: for every unit on screen with
 /// no other close by, clicks a little off the middle of its body in four
 /// directions (within the screen-space minimum reach) and asks the picker
-/// what it gets.
-fn picks(c: &Checks, report: &mut impl FnMut(&str, bool, String)) {
+/// what it gets. The clicks made and the misses; none when no unit on
+/// screen stands alone (nothing to check: no fault of the picker).
+fn clicks(c: &Checks) -> Option<(u32, Vec<String>)> {
     use crate::pick::{Candidate, Lens, MIN_SCREEN_RADIUS, Side, Want, pick, stands};
     let (camera, transform) = *c.camera;
-    let Some(view) = c.session.0.view() else {
-        report("clicks near units pick them", false, "no view".into());
-        return;
-    };
+    let view = c.session.0.view()?;
     let fov = match *c.projection {
         Projection::Perspective(p) => p.fov,
-        _ => return,
+        _ => return None,
     };
     let all: Vec<(Candidate, Vec2)> =
         stands(view, &c.index, &c.units, &c.ground, c.session.0.my_team()).collect();
@@ -736,9 +785,5 @@ fn picks(c: &Checks, report: &mut impl FnMut(&str, bool, String)) {
             }
         }
     }
-    report(
-        "clicks near units pick them",
-        tried > 0 && wrong.is_empty(),
-        format!("{tried} clicks off the middle of isolated units; wrong: {wrong:?}"),
-    );
+    (tried > 0).then_some((tried, wrong))
 }
