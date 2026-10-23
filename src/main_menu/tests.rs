@@ -466,6 +466,9 @@ fn direct_connect_over_tcp_and_websocket_without_the_service() {
                 "lockstep",
                 "--bind",
                 "127.0.0.1",
+                // Two human seats would wait out Dota's strategy time before the game starts.
+                "--tactical-secs",
+                "0",
             ])
             .args(["--port", &tcp.to_string(), "--ws-port", &ws.to_string()])
             .spawn()
