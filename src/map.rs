@@ -193,8 +193,11 @@ fn spawn_batch(commands: &mut Commands, meshes: &mut Assets<Mesh>, mut batch: Ba
         batch.aabb,
         crate::fog::Fogged,
     ));
-    if batch.terrain {
+    if batch.surface != Surface::Prop {
         entity.insert(bevy::light::NotShadowCaster);
+    }
+    if batch.surface == Surface::Water {
+        entity.insert(crate::water::Water);
     }
 }
 
@@ -387,13 +390,22 @@ pub(crate) fn dress_prop(m: &mut StandardMaterial, vmat: &Vmat) {
     }
 }
 
+/// What a map mesh is, which decides how it is drawn.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Surface {
+    Prop,
+    Terrain,
+    /// The river: casts no shadow and flows (see `water.rs`).
+    Water,
+}
+
 /// Map meshes sharing a material and a vertex layout, merged in world space.
 pub(crate) struct Batch {
     pub material: Handle<StandardMaterial>,
     /// The map chunk the batch's meshes are centred in.
     chunk: (i32, i32),
     layout: Vec<bevy::mesh::MeshVertexAttributeId>,
-    pub terrain: bool,
+    pub surface: Surface,
     pub mesh: Mesh,
     /// The bounds of all its meshes.
     pub aabb: bevy::camera::primitives::Aabb,
@@ -418,7 +430,7 @@ pub(crate) fn add_to_batches(
     mesh: Mesh,
     aabb: bevy::camera::primitives::Aabb,
     material: Handle<StandardMaterial>,
-    terrain: bool,
+    surface: Surface,
     chunk: (i32, i32),
 ) {
     let mut layout: Vec<_> = mesh.attributes().map(|(a, _)| a.id).collect();
@@ -444,7 +456,7 @@ pub(crate) fn add_to_batches(
             material,
             chunk,
             layout,
-            terrain,
+            surface,
             mesh,
             aabb,
         }),
@@ -608,6 +620,30 @@ pub(crate) struct Vmat {
     pub tints: [[f32; 3]; 4],
     /// Each layer's colour texture, as Dota names it.
     pub textures: [String; 4],
+    /// What a water material's file says of how it looks.
+    pub water: WaterLook,
+}
+
+/// The water shader's parameters that make its colour: Dota's cheap
+/// ("low end") look, its surface colour and opacity, and the tint of what
+/// is seen through it.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct WaterLook {
+    /// sRGB.
+    pub surface: [f32; 3],
+    pub opacity: f32,
+    /// sRGB.
+    pub refraction_tint: [f32; 3],
+}
+
+impl Default for WaterLook {
+    fn default() -> WaterLook {
+        WaterLook {
+            surface: [0.18, 0.27, 0.24],
+            opacity: 0.875,
+            refraction_tint: [0.35, 0.66, 0.78],
+        }
+    }
 }
 
 impl Vmat {
@@ -643,6 +679,11 @@ impl Vmat {
                 .to_string()
         });
         let flag = |key: &str| vmat["IntParams"][key].as_i64().unwrap_or(0) != 0;
+        let colour = |key: &str, default: [f32; 3]| -> [f32; 3] {
+            let v = &vmat["VectorParams"][key];
+            std::array::from_fn(|i| v[i].as_f64().map_or(default[i], |c| c as f32))
+        };
+        let look = WaterLook::default();
         Vmat {
             name: vmat["Name"].as_str().unwrap_or_default().to_string(),
             shader,
@@ -651,6 +692,13 @@ impl Vmat {
             overlay: flag("F_OVERLAY"),
             tints,
             textures,
+            water: WaterLook {
+                surface: colour("g_vLowEndSurfaceColor", look.surface),
+                opacity: vmat["FloatParams"]["g_flLowEndSurfaceOpacity"]
+                    .as_f64()
+                    .map_or(look.opacity, |o| o as f32),
+                refraction_tint: colour("g_vRefractionTint", look.refraction_tint),
+            },
         }
     }
 }

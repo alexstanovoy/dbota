@@ -61,11 +61,12 @@ impl FogGrid {
     }
 
     /// Whether a unit the fog hides is drawn anyway, dulled: the neutral
-    /// creeps, while the fog is of one side. Only a full view, which the
-    /// client fogs itself, ever gets here; a seat's view and a spectator
-    /// through a seat's eyes come fogged by the server and hold no such unit.
+    /// creeps, under one side's fog and under both sides' together. Only a
+    /// full view, which the client fogs itself, ever gets here; a seat's view
+    /// and a spectator through a seat's eyes come fogged by the server and
+    /// hold no such unit.
     pub fn shows_fogged(&self, unit: &UnitView) -> bool {
-        self.team.is_some() && unit.kind == UnitKind::CreepNeutral
+        self.on && unit.kind == UnitKind::CreepNeutral
     }
 
     /// Whether a bota world point is seen; everything is before the fog is

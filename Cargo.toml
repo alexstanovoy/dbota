@@ -13,7 +13,7 @@ publish = false
 [dependencies]
 # Bevy's parts dbota draws and plays with, nothing more: no gamepads, no
 # clipboard, no system-info polling, no mesh or sprite picking, no post
-# processing or anti-aliasing passes besides MSAA, no built-in font.
+# processing besides anti-aliasing, no built-in font.
 bevy = { version = "=0.19.1", default-features = false, features = [
     # The app, its window and its threads.
     "std",
@@ -36,6 +36,9 @@ bevy = { version = "=0.19.1", default-features = false, features = [
     "bevy_mikktspace",
     "bevy_gizmos",
     "bevy_gizmos_render",
+    # FXAA and SMAA (its lookup tables are embedded), on WebGPU and WebGL2 alike.
+    "bevy_anti_alias",
+    "smaa_luts",
     "png",
     # Tony McMapface tonemapping reads its table from a zstd KTX2 file.
     "tonemapping_luts",

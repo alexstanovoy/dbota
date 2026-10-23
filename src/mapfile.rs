@@ -25,8 +25,8 @@ use serde_json::Value;
 
 use crate::map::{
     ATTRIBUTE_BLEND_ALPHAS, ATTRIBUTE_BLEND_WEIGHTS, ATTRIBUTE_PAINTED_TINT, Batch, ColourField,
-    Ground, LayerMeans, Samples, Vmat, add_to_batches, bake_terrain, bake_transform, chunk_of,
-    detail_settings, dress_prop, map_transform, smooth_terrain, terrain_material_with,
+    Ground, LayerMeans, Samples, Surface, Vmat, add_to_batches, bake_terrain, bake_transform,
+    chunk_of, detail_settings, dress_prop, map_transform, smooth_terrain, terrain_material_with,
 };
 
 /// The map, merged: what [`MapLoader`] makes of the map's file.
@@ -115,7 +115,7 @@ struct Piece {
     mesh: Mesh,
     aabb: Aabb,
     material: Handle<StandardMaterial>,
-    terrain: bool,
+    surface: Surface,
     chunk: (i32, i32),
 }
 
@@ -180,24 +180,24 @@ impl MapLoader {
                 .load(crate::manifest::cache_path(path))
         });
         let terrain = cx.add_labeled_asset("terrain".to_string(), terrain_material_with(detail));
-        let water = cx.add_labeled_asset(
-            "water".to_string(),
-            StandardMaterial {
-                base_color: Color::srgba(0.10, 0.22, 0.26, 0.82),
-                perceptual_roughness: 0.15,
-                alpha_mode: AlphaMode::Blend,
-                ..default()
-            },
-        );
         let linear = linear_textures(doc);
         let empty = Vec::new();
         let list = doc["materials"].as_array().unwrap_or(&empty);
         let mut kinds = Vec::with_capacity(list.len());
+        let mut water = None;
         for (index, material) in list.iter().enumerate() {
             let vmat = Vmat::parse(&material["extras"].to_string());
             kinds.push(match vmat.shader.as_str() {
                 "multiblend.vfx" => Kind::Terrain(means.layers(&vmat)),
-                "water_dota.vfx" => Kind::Water,
+                "water_dota.vfx" => {
+                    // One river material for all of the map's water ones.
+                    water.get_or_insert_with(|| {
+                        let m =
+                            water_material(standard_material(doc, material, &linear, cx), &vmat);
+                        cx.add_labeled_asset("water".to_string(), m)
+                    });
+                    Kind::Water
+                }
                 // Glows, light shafts and fountain sprays are particles in all
                 // but name: drawn as plain meshes they cover the ground.
                 _ if vmat.additive => Kind::Skip,
@@ -223,6 +223,8 @@ impl MapLoader {
                 }
             });
         }
+        // A map with no water material has no water to draw.
+        let water = water.unwrap_or_default();
         Materials {
             kinds,
             terrain,
@@ -248,7 +250,7 @@ impl MapLoader {
             rest = next;
             let mut batches = Vec::new();
             for piece in pieces(chunk, bin, materials) {
-                if piece.terrain {
+                if piece.surface == Surface::Terrain {
                     terrain.push(piece);
                 } else {
                     add_to_batches(
@@ -256,7 +258,7 @@ impl MapLoader {
                         piece.mesh,
                         piece.aabb,
                         piece.material,
-                        false,
+                        piece.surface,
                         piece.chunk,
                     );
                 }
@@ -354,13 +356,13 @@ fn pieces(jobs: &[Job], bin: &[u8], materials: &Materials) -> Vec<Piece> {
         for job in jobs {
             scope.spawn(async move {
                 let mut mesh = read_primitive(job, bin)?;
-                let (material, terrain) = match &job.kind {
+                let (material, surface) = match &job.kind {
                     Kind::Terrain(layers) => {
                         bake_terrain(&mut mesh, layers, detail, crate::map::TERRAIN_GAIN);
-                        (materials.terrain.clone(), true)
+                        (materials.terrain.clone(), Surface::Terrain)
                     }
-                    Kind::Water => (materials.water.clone(), false),
-                    Kind::Prop(material) => (material.clone(), false),
+                    Kind::Water => (materials.water.clone(), Surface::Water),
+                    Kind::Prop(material) => (material.clone(), Surface::Prop),
                     Kind::Skip => return None,
                 };
                 for attr in [
@@ -376,7 +378,7 @@ fn pieces(jobs: &[Job], bin: &[u8], materials: &Materials) -> Vec<Piece> {
                     mesh,
                     aabb,
                     material,
-                    terrain,
+                    surface,
                     chunk: job.chunk,
                 })
             });
@@ -401,7 +403,7 @@ fn finish(mut terrain: Vec<Piece>, material: Handle<StandardMaterial>) -> MapGeo
             piece.mesh,
             piece.aabb,
             material.clone(),
-            true,
+            Surface::Terrain,
             piece.chunk,
         );
     }
@@ -649,6 +651,20 @@ fn standard_material(
         specular_tint: tint.map_or(Color::WHITE, |t| Color::linear_rgb(t[0], t[1], t[2])),
         ..default()
     }
+}
+
+/// Dota's cheap water: its surface colour seen through the refraction tint,
+/// its opacity, and its normal map for the glint (`water.rs` makes it flow).
+fn water_material(mut m: StandardMaterial, vmat: &Vmat) -> StandardMaterial {
+    let look = vmat.water;
+    let [r, g, b] = std::array::from_fn(|i| look.surface[i] * look.refraction_tint[i]);
+    m.base_color = Color::srgba(r, g, b, look.opacity);
+    m.perceptual_roughness = 0.12;
+    m.metallic = 0.0;
+    m.alpha_mode = AlphaMode::Blend;
+    m.double_sided = false;
+    m.cull_mode = Some(Face::Back);
+    m
 }
 
 #[cfg(test)]

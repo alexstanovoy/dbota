@@ -1,10 +1,14 @@
 //! What the picture costs, as the settings ask (see [`Quality`]): the
-//! sun's shadows, multisampling, the 3D scene drawn at a share of the
+//! sun's shadows, anti-aliasing, the 3D scene drawn at a share of the
 //! window's resolution, a cap on texture size, and a frame cap. With
 //! `auto_quality`, the settings are lowered a step at a time while frames
 //! run slower than the frame cap (or 30 fps) allows.
 
 use bevy::{
+    anti_alias::{
+        fxaa::Fxaa,
+        smaa::{Smaa, SmaaPreset},
+    },
     camera::{ImageRenderTarget, RenderTarget},
     light::{CascadeShadowConfig, CascadeShadowConfigBuilder, DirectionalLightShadowMap},
     prelude::*,
@@ -14,15 +18,18 @@ use bevy::{
 };
 
 use crate::camera::RtsCamera;
-use crate::config::Settings;
+use crate::config::{AntiAlias, Settings};
 
 pub fn plugin(app: &mut App) {
-    app.add_systems(Update, (shadows, msaa).run_if(resource_changed::<Settings>))
-        .add_systems(Update, (auto, scale))
-        .add_systems(
-            PostUpdate,
-            shrink_textures.after(bevy::asset::AssetEventSystems),
-        );
+    app.add_systems(
+        Update,
+        (shadows, anti_alias).run_if(resource_changed::<Settings>),
+    )
+    .add_systems(Update, (auto, scale))
+    .add_systems(
+        PostUpdate,
+        shrink_textures.after(bevy::asset::AssetEventSystems),
+    );
     #[cfg(not(target_arch = "wasm32"))]
     app.add_systems(Last, cap_frames);
 }
@@ -64,17 +71,44 @@ fn shadows(
     }
 }
 
-/// The multisampling the settings ask for.
+/// The multisampling the settings ask for; the screen-space filters need
+/// none.
 pub fn msaa_of(settings: &Settings) -> Msaa {
-    match settings.quality.msaa {
-        4.. => Msaa::Sample4,
-        2..=3 => Msaa::Sample2,
+    match settings.quality.anti_alias {
+        AntiAlias::Msaa4 => Msaa::Sample4,
+        AntiAlias::Msaa2 => Msaa::Sample2,
         _ => Msaa::Off,
     }
 }
 
-fn msaa(settings: Res<Settings>, mut camera: Single<&mut Msaa, With<RtsCamera>>) {
-    camera.set_if_neq(msaa_of(&settings));
+/// Sets the scene camera's multisampling and its one screen-space filter, or
+/// none, as the settings ask.
+fn anti_alias(
+    settings: Res<Settings>,
+    mut commands: Commands,
+    mut camera: Single<(Entity, &mut Msaa), With<RtsCamera>>,
+) {
+    let (entity, msaa) = &mut *camera;
+    msaa.set_if_neq(msaa_of(&settings));
+    let mut camera = commands.entity(*entity);
+    let smaa = |preset| Smaa { preset };
+    match settings.quality.anti_alias {
+        AntiAlias::Fxaa => {
+            camera.insert(Fxaa::default()).remove::<Smaa>();
+        }
+        AntiAlias::SmaaLow => {
+            camera.insert(smaa(SmaaPreset::Low)).remove::<Fxaa>();
+        }
+        AntiAlias::SmaaMedium => {
+            camera.insert(smaa(SmaaPreset::Medium)).remove::<Fxaa>();
+        }
+        AntiAlias::SmaaHigh => {
+            camera.insert(smaa(SmaaPreset::High)).remove::<Fxaa>();
+        }
+        AntiAlias::Off | AntiAlias::Msaa2 | AntiAlias::Msaa4 => {
+            camera.remove::<(Fxaa, Smaa)>();
+        }
+    }
 }
 
 /// The 3D scene drawn below the window's resolution: the image it is drawn

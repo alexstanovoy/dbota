@@ -202,7 +202,7 @@ pub fn ray_to_ground(ray: Ray3d, ground: &Ground) -> Option<Vec3> {
 
 /// Carries the camera with the unit it is pinned to, with one's own hero
 /// while the camera is locked or the centre key is held, and puts it on
-/// one's own hero the first time that hero stands.
+/// one's own hero the first time that hero stands (unless `--look` placed it).
 fn follow(
     mut session: NonSendMut<Session>,
     index: Res<UnitIndex>,
@@ -212,10 +212,13 @@ fn follow(
     keys: Res<ButtonInput<KeyCode>>,
     settings: Res<crate::config::Settings>,
     panels: Res<crate::input::Panels>,
+    args: Res<crate::Args>,
     mut cam: Single<&mut RtsCamera>,
 ) {
     let core = &mut session.0;
+    // A camera placed by `--look` stays where it was put.
     if !core.found_my_hero
+        && args.look.is_empty()
         && core.my_hero().is_some()
         && let Some(slot) = core.my_slot
     {

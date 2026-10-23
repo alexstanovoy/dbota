@@ -23,6 +23,7 @@ enum Row {
     AnimatePortrait,
     Quality,
     Shadows,
+    AntiAliasing,
     ResolutionDown,
     ResolutionUp,
     FpsCap,
@@ -106,6 +107,7 @@ fn spawn(
         (Row::AnimatePortrait, "Animate portrait"),
         (Row::Quality, "Quality"),
         (Row::Shadows, "Shadows"),
+        (Row::AntiAliasing, "Anti-aliasing"),
         (Row::ResolutionDown, "Resolution -"),
         (Row::ResolutionUp, "Resolution +"),
         (Row::FpsCap, "Frame cap"),
@@ -195,6 +197,7 @@ fn clicks(
                 s.quality.auto = auto;
             }
             Row::Shadows => s.quality.shadows = (s.quality.shadows + 1) % 3,
+            Row::AntiAliasing => s.quality.anti_alias = s.quality.anti_alias.next(),
             Row::ResolutionDown => {
                 s.quality.render_scale = (s.quality.render_scale - 0.125).max(0.25);
             }
@@ -228,7 +231,7 @@ fn values(settings: Res<Settings>, mut text: Single<&mut Text, With<Values>>) {
     text.0 = format!(
         "Volume {:.0}%  {}   Interface {:.0}%\nDamage numbers {}   Voice responses {}   Edge pan {}\n\
          Animate portrait {}\n\
-         Quality {}   Shadows {}   Multisampling {}x   Resolution {:.0}%\n\
+         Quality {}   Shadows {}   Anti-aliasing {}   Resolution {:.0}%\n\
          Frame cap {}   Auto quality {}\n\
          On restart: textures up to {}, map props {}, GPU batching {}",
         settings.volume * 100.0,
@@ -240,7 +243,7 @@ fn values(settings: Res<Settings>, mut text: Single<&mut Text, With<Values>>) {
         on(settings.animate_portrait),
         q.preset_name().unwrap_or("custom"),
         ["off", "low", "high"][usize::from(q.shadows.min(2))],
-        q.msaa,
+        q.anti_alias.name(),
         q.render_scale * 100.0,
         if q.fps_cap == 0 {
             "none".to_string()

@@ -57,6 +57,7 @@ mod ui;
 mod units;
 mod visual;
 mod voice;
+mod water;
 #[cfg(target_arch = "wasm32")]
 mod webcache;
 
@@ -329,6 +330,7 @@ fn main() -> AppExit {
             map::plugin,
             daylight::plugin,
             fog::plugin,
+            water::plugin,
             units::plugin,
             anim::plugin,
             camera::plugin,

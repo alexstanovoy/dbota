@@ -143,16 +143,16 @@ times as needed) sets what the picture may cost:
 |---|---|---|
 | `quality` | `high`, `medium`, `low`, `potato`: sets all of the below at once | `high` |
 | `shadows` | `off`, `low` (one cascade, 1024 texels), `high` (two, 2048) | `high` |
-| `msaa` | `1`, `2`, `4` samples a pixel | `4` |
+| `anti_aliasing` | `off`, `fxaa`, `smaa_low`, `smaa_medium`, `smaa_high` (all three over the finished picture), `msaa_2x`, `msaa_4x` (geometry edges only); every one runs in a browser too | `fxaa` |
 | `render_scale` | the 3D scene's resolution against the window's, `0.25` to `1`; the interface stays sharp | `1` |
 | `texture_size` | largest texture side of models and the map; bigger ones are halved as they load | `16384` |
 | `props` | the map's walls, statues, rocks and decals | `true` |
 | `fps_cap` | frames a second at most, `0` for none | `0` |
 | `gpu_batching` | cull and batch draws on the GPU with compute shaders; off for a software renderer, which runs them several times slower | `true` |
-| `auto_quality` | lower multisampling, shadows, then resolution while frames run slower than the cap (or 30 fps) | `false` |
+| `auto_quality` | lower anti-aliasing, shadows, then resolution while frames run slower than the cap (or 30 fps) | `false` |
 | `animate_portrait` | Dota's "Animate Portrait": the bottom panel's portrait plays the unit's idle animation, drawn up to 30 times a second; off, it shows Dota's picture of a hero, or a render of another unit's model made once | `false` |
 
-`medium` is shadows `low`, `msaa` 2 and 2048 textures; `low` adds no shadows, no multisampling,
+`medium` is shadows `low`, `anti_aliasing` `fxaa` and 2048 textures; `low` adds no shadows, no anti-aliasing,
 `render_scale` 0.75 and 1024 textures; `potato` is `render_scale` 0.5, 512 textures, no props,
 no GPU batching and a 30 fps cap. Later lines override earlier ones (`quality = low` then
 `shadows = low`). `texture_size`, `props` and `gpu_batching` take effect on the next start; the
@@ -165,7 +165,7 @@ Vulkan driver (lavapipe, `VK_ICD_FILENAMES=.../lvp_icd.json`) draws it at `--set
 target/release/dbota --spectate --addr 127.0.0.1:4455
 ```
 
-A replay or a spectator sees both teams' vision together (fog where neither side sees), as in Dota; `Tab` cycles both teams → Radiant → Dire, and the mode shows under the clock.
+A replay or a spectator sees both teams' vision together (fog where neither side sees), as in Dota; `Tab` cycles both teams → Radiant → Dire, and the mode shows under the clock. Neutral creeps stand dulled in that fog too (and show on the minimap only where the vision sees them); a spectator watching through a seat's eyes never gets them there.
 
 ## Replays
 

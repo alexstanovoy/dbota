@@ -86,14 +86,72 @@ pub struct Aids {
     pub edge_pan: bool,
 }
 
+/// How the picture's edges are smoothed. Every choice runs on WebGPU and
+/// WebGL2 alike.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AntiAlias {
+    /// Hard edges.
+    Off,
+    /// FXAA: one cheap pass over the finished picture.
+    Fxaa,
+    /// SMAA: edge search and blending over the finished picture, with four,
+    /// eight or sixteen search steps (the last also finds corners).
+    SmaaLow,
+    SmaaMedium,
+    SmaaHigh,
+    /// Multisampling with 2 or 4 samples a pixel: geometry edges only.
+    Msaa2,
+    Msaa4,
+}
+
+impl AntiAlias {
+    /// Cheapest to dearest, as the overlay steps through them.
+    pub const ALL: [AntiAlias; 7] = [
+        AntiAlias::Off,
+        AntiAlias::Fxaa,
+        AntiAlias::SmaaLow,
+        AntiAlias::SmaaMedium,
+        AntiAlias::SmaaHigh,
+        AntiAlias::Msaa2,
+        AntiAlias::Msaa4,
+    ];
+
+    /// What a fresh install smooths with: a mild, cheap pass.
+    pub const DEFAULT: AntiAlias = AntiAlias::Fxaa;
+
+    /// The name settings files and `--set` use.
+    pub fn name(self) -> &'static str {
+        match self {
+            AntiAlias::Off => "off",
+            AntiAlias::Fxaa => "fxaa",
+            AntiAlias::SmaaLow => "smaa_low",
+            AntiAlias::SmaaMedium => "smaa_medium",
+            AntiAlias::SmaaHigh => "smaa_high",
+            AntiAlias::Msaa2 => "msaa_2x",
+            AntiAlias::Msaa4 => "msaa_4x",
+        }
+    }
+
+    pub fn named(name: &str) -> Option<AntiAlias> {
+        let name = name.to_ascii_lowercase();
+        AntiAlias::ALL.into_iter().find(|a| a.name() == name)
+    }
+
+    /// The next one in [`AntiAlias::ALL`], the first after the last.
+    pub fn next(self) -> AntiAlias {
+        let at = AntiAlias::ALL.iter().position(|a| *a == self).unwrap_or(0);
+        AntiAlias::ALL[(at + 1) % AntiAlias::ALL.len()]
+    }
+}
+
 /// What the picture may cost; see `quality.rs`. The defaults draw it whole.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Quality {
     /// The sun's shadows: 0 none, 1 one cascade of 1024 texels, 2 two
     /// cascades of 2048.
     pub shadows: u8,
-    /// Multisampling: 1 (none), 2 or 4 samples a pixel.
-    pub msaa: u8,
+    /// How edges and shimmer are smoothed; see [`AntiAlias`].
+    pub anti_alias: AntiAlias,
     /// The 3D scene's resolution against the window's, 0.25 to 1; the
     /// interface is always drawn whole.
     pub render_scale: f32,
@@ -125,20 +183,20 @@ impl Quality {
             "high" => high,
             "medium" => Quality {
                 shadows: 1,
-                msaa: 2,
+                anti_alias: AntiAlias::Fxaa,
                 texture_size: 2048,
                 ..high
             },
             "low" => Quality {
                 shadows: 0,
-                msaa: 1,
+                anti_alias: AntiAlias::Off,
                 render_scale: 0.75,
                 texture_size: 1024,
                 ..high
             },
             "potato" => Quality {
                 shadows: 0,
-                msaa: 1,
+                anti_alias: AntiAlias::Off,
                 render_scale: 0.5,
                 texture_size: 512,
                 props: false,
@@ -169,8 +227,8 @@ impl Quality {
     /// multisampling, then shadows, then the scene's resolution.
     pub fn lowered(&self) -> Option<Quality> {
         let mut q = *self;
-        if q.msaa > 1 {
-            q.msaa = 1;
+        if q.anti_alias != AntiAlias::Off {
+            q.anti_alias = AntiAlias::Off;
         } else if q.shadows > 0 {
             q.shadows -= 1;
         } else if q.render_scale > 0.5 {
@@ -186,7 +244,7 @@ impl Default for Quality {
     fn default() -> Quality {
         Quality {
             shadows: 2,
-            msaa: 4,
+            anti_alias: AntiAlias::DEFAULT,
             render_scale: 1.0,
             texture_size: 16_384,
             props: true,
@@ -310,13 +368,14 @@ impl Settings {
                     _ => return Err(format!("'{value}' is not off, low or high")),
                 }
             }
-            "msaa" => {
-                self.quality.msaa = match value {
-                    "1" | "off" => 1,
-                    "2" => 2,
-                    "4" => 4,
-                    _ => return Err(format!("'{value}' is not 1, 2 or 4")),
-                }
+            "anti_aliasing" => {
+                self.quality.anti_alias = AntiAlias::named(value).ok_or_else(|| {
+                    let names: Vec<&str> = AntiAlias::ALL.iter().map(|a| a.name()).collect();
+                    format!(
+                        "no anti-aliasing called '{value}'; one of {}",
+                        names.join(", ")
+                    )
+                })?
             }
             "render_scale" => self.quality.render_scale = parse_unit(value, 0.25, 1.0)?,
             "texture_size" => {
@@ -352,7 +411,7 @@ impl Settings {
             "shadows = {}\n",
             ["off", "low", "high"][usize::from(q.shadows.min(2))]
         ));
-        out.push_str(&format!("msaa = {}\n", q.msaa));
+        out.push_str(&format!("anti_aliasing = {}\n", q.anti_alias.name()));
         out.push_str(&format!("render_scale = {:.3}\n", q.render_scale));
         out.push_str(&format!("texture_size = {}\n", q.texture_size));
         out.push_str(&format!("props = {}\n", flag(q.props)));
