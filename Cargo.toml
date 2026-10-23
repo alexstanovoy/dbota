@@ -81,6 +81,8 @@ wasm-bindgen = "0.2"
 wasm-bindgen-futures = "0.4"
 web-sys = { version = "0.3", features = ["Location", "Response", "Storage", "Window", "XmlHttpRequest"] }
 bota_radovid = { path = "../bota/crates/bota_radovid", default-features = false, features = ["web"] }
+# The Web Audio output of the sound device (see `audio_output`).
+rodio = { version = "=0.22.2", default-features = false, features = ["playback", "wasm-bindgen"] }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
 # The menu's end-to-end tests run the real matchmaking service in-process; its
