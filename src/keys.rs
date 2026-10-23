@@ -190,6 +190,8 @@ pub enum Action {
     Glyph,
     /// Held, every range aid shows at full strength.
     ShowRanges,
+    /// Held, the scoreboard shows.
+    Scoreboard,
     /// Opens the chat line to one's allies.
     ChatTeam,
     /// Opens the chat line to everyone.
@@ -251,7 +253,7 @@ use Group::{Abilities, Camera, Interface, Items, Shop as ShopGroup, Units, Watch
 /// Every action, Dota's default of each (the `dotakeys.lst` command in the
 /// comment; `-` for dbota's own), in the settings screen's order.
 #[rustfmt::skip]
-pub const BINDINGS: [Binding; 54] = [
+pub const BINDINGS: [Binding; 55] = [
     row(Action::Ability(0), "ability_1", "Ability 1", Abilities, Play, key(KeyCode::KeyQ)), // AbilityPrimary1
     row(Action::Ability(1), "ability_2", "Ability 2", Abilities, Play, key(KeyCode::KeyW)), // AbilityPrimary2
     row(Action::Ability(2), "ability_3", "Ability 3", Abilities, Play, key(KeyCode::KeyE)), // AbilityPrimary3
@@ -300,6 +302,7 @@ pub const BINDINGS: [Binding; 54] = [
     row(Action::Glyph, "glyph", "Glyph of Fortification", Interface, Play, key(KeyCode::KeyJ)), // ActivateGlyph
     // Dota's Alt (the DotaAlt pseudo-modifier) shows what it hides.
     row(Action::ShowRanges, "show_ranges", "Show ranges (held)", Interface, Both, key(KeyCode::AltLeft)), // DotaAlt
+    row(Action::Scoreboard, "scoreboard", "Scoreboard (held)", Interface, Both, key(KeyCode::Backquote)), // ScoreboardToggle (SpectatorScoreboard the same)
     row(Action::ChatTeam, "chat_team", "Chat to allies", Interface, Play, key(KeyCode::Enter)), // ChatTeam
     row(Action::ChatAll, "chat_all", "Chat to all", Interface, Play, Some(Chord::key(KeyCode::Enter).shift())), // ChatGlobal (ChatTeam with Shift)
     row(Action::Console, "console", "Console", Interface, Both, key(KeyCode::Backslash)), // Console
@@ -682,6 +685,7 @@ mod tests {
             (Action::Console, "\\"),
             (Action::ChatAll, "Shift+Enter"),
             (Action::CameraGrip, "Mouse3"),
+            (Action::Scoreboard, "`"),
         ] {
             assert_eq!(settings.label(action), chord, "{action:?}");
         }

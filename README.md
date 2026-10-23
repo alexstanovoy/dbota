@@ -109,16 +109,17 @@ clash and resets them to the defaults; they are kept as `key.<action> = <chord>`
 | `F2` / `F3` | select courier (its bag shows in the panel) / courier delivers; its speed burst and shield have buttons and unbound keys |
 | `1` … `0`, `Ctrl` + `1` … `0` | select a control group / put the selected unit in it |
 | `J` | Glyph of Fortification |
+| hold `` ` `` | the scoreboard (the menu's button at the top left pins it open, `Esc` lets it go) |
 | `\` | console line to the server (a live match on a server started with `--cheats`); `Enter` sends, `Esc` drops it |
 | `Enter` / `Shift+Enter` | chat to the allies / to everyone |
 | minimap | left click or drag moves the camera; right click orders your hero there |
 | Arrows, screen edges, middle button held | pan the camera (all four edges, the HUD bars included; the middle button drags the map); mouse wheel zooms |
 | hold `Alt` | show attack, tower and ability ranges and the neutral camps' spawn boxes (they are never drawn otherwise) |
-| `Esc` | cancel / close; with nothing open, the settings; leaves a match that is over |
+| `Esc` | cancel / close; with nothing open, the settings (also the gear at the top left); leaves a match that is over |
 | `F9`, `=` / `-`, `.`, `Tab` | in a replay: pause, faster / slower, one tick, switch vision (both teams, Radiant, Dire; `Tab` as a spectator too) |
 
 The settings screen (SETTINGS in the main menu, `Esc` in a game) has Dota's tabs: HOTKEYS,
-OPTIONS (interface size, damage numbers, animated portrait, edge pan), VIDEO (display mode, frame
+OPTIONS (interface size, damage numbers, animated portrait, the scoreboard's items, edge pan), VIDEO (display mode, frame
 cap, resolution, quality preset, shadows, anti-aliasing, visual clarity, auto quality, and what
 takes effect on the next start) and AUDIO (volume, mute, your hero's voice answers). What it
 changes is saved when it closes.
@@ -132,6 +133,14 @@ have a point for it; click a talent, or the Attribute Bonus under the tiers, to 
 of Fortification is the round button against the minimap. Buffs and debuffs of the selected unit
 sit above the abilities. The stash shows in the shop's corner while the shop is open or at the
 home shop; there GRAB ALL moves what it holds into the bag, a slot a tick.
+
+The scoreboard is Dota's, at its sizes: each side's kills and name, and a row for each seat with
+its colour, hero, player's and hero's names, talents, level, gold, net worth (gold and the items
+it owns), kills, deaths, assists, last hits, denies and ultimate; beside the rows, while its
+Show Items button is on, every seat's inventory, backpack and neutral slot. In a match it tells
+of the other side what Dota tells: the score, the level and the last hits and denies, and its
+hero's items as they were when last seen (dimmed while out of sight); never its gold, net worth or
+ultimate. A replay (as a seat too) shows both sides in full, a spectator all its view tells.
 
 ## Window and cursor
 

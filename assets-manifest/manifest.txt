@@ -509,6 +509,28 @@ label resource/localization/dota_english.txt DOTA_StatBranch_TooltipTitle
 label resource/localization/dota_english.txt DOTA_LevelUpAttributes
 label resource/localization/abilities_english.txt DOTA_Tooltip_ability_attribute_bonus
 label resource/localization/abilities_english.txt DOTA_Tooltip_ability_attribute_bonus_Description
+# The scoreboard (held on its key, pinned by the top-left menu's button): its backdrop, the player
+# colour's vignette, the ultimate's three states, the Show Items button; the menu's settings and
+# scoreboard buttons; the headings and the menu's names (Dota's dota_hud_scoreboard layout).
+texture hud.scoreboard_bg panorama/images/hud/reborn/bg_scoreboard_psd.vtex_c hud/bg_scoreboard_psd.png
+texture hud.scoreboard_slot panorama/images/hud/reborn/scoreboard_playerslot_vignette_psd.vtex_c hud/scoreboard_playerslot_vignette_psd.png
+texture hud.ult_ready panorama/images/hud/reborn/ult_ready_psd.vtex_c hud/ult_ready_psd.png
+texture hud.ult_cooldown panorama/images/hud/reborn/ult_cooldown_psd.vtex_c hud/ult_cooldown_psd.png
+texture hud.ult_no_mana panorama/images/hud/reborn/ult_no_mana_psd.vtex_c hud/ult_no_mana_psd.png
+texture hud.show_items panorama/images/control_icons/brackets_png.vtex_c hud/brackets_png.png
+texture hud.menu_settings panorama/images/control_icons/gear_png.vtex_c hud/gear_png.png
+texture hud.menu_scoreboard panorama/images/control_icons/hamburger_png.vtex_c hud/hamburger_png.png
+label resource/localization/dota_english.txt DOTA_GoodGuysCaps
+label resource/localization/dota_english.txt DOTA_BadGuysCaps
+label resource/localization/dota_english.txt DOTA_Scoreboard_Header_TalentTree
+label resource/localization/dota_english.txt DOTA_Scoreboard_Header_Lvl
+label resource/localization/dota_english.txt DOTA_Scoreboard_Header_Gold
+label resource/localization/dota_english.txt DOTA_Scoreboard_K
+label resource/localization/dota_english.txt DOTA_Scoreboard_D
+label resource/localization/dota_english.txt DOTA_Scoreboard_A
+label resource/localization/dota_english.txt DOTA_Scoreboard_Ult
+label resource/localization/dota_english.txt DOTA_HUD_Scoreboard_inventory
+label resource/localization/dota_english.txt dota_stat_dropdown_networth
 texture minimap.map panorama/images/minimap/dotamap_psd.vtex_c minimap/dotamap_psd.png
 texture minimap.radiant_buildings panorama/images/minimap/dotamap_radiant_buildings_psd.vtex_c minimap/dotamap_radiant_buildings_psd.png
 texture minimap.dire_buildings panorama/images/minimap/dotamap_dire_buildings_psd.vtex_c minimap/dotamap_dire_buildings_psd.png

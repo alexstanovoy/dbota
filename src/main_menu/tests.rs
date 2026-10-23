@@ -450,10 +450,12 @@ impl Drop for Server {
     }
 }
 
-#[test]
-fn direct_connect_over_tcp_and_websocket_without_the_service() {
+/// A server for two seats, and a player joined to each over its own
+/// transport (TCP, WebSocket) through the menu's Direct page, the match
+/// begun.
+fn direct_match() -> (Server, Vec<(Core, HeroId)>) {
     let (tcp, ws) = (free_port(), free_port());
-    let _server = Server(
+    let server = Server(
         Command::new(server_binary())
             .args([
                 "--map",
@@ -489,25 +491,7 @@ fn direct_connect_over_tcp_and_websocket_without_the_service() {
             player.store.read(Entry::Menu).map(|m| m.contains(&address)),
             Some(true)
         );
-        // The server may still be starting.
-        let deadline = Instant::now() + Duration::from_secs(PATIENCE);
-        let opened = loop {
-            let mut opening = Opening::start(launch.clone(), &player.trust);
-            let opened = loop {
-                if let Some(opened) = opening.poll() {
-                    break opened;
-                }
-                std::thread::sleep(Duration::from_millis(5));
-            };
-            match opened {
-                Ok(link) => break Core::new(Source::Live(link)),
-                Err(_) if Instant::now() < deadline => {
-                    std::thread::sleep(Duration::from_millis(100))
-                }
-                Err(err) => panic!("{err}"),
-            }
-        };
-        cores.push((opened, hero));
+        cores.push((join(launch, &player.trust), hero));
     }
     let deadline = Instant::now() + Duration::from_secs(PATIENCE);
     while cores.iter().any(|(c, _)| c.view().is_none()) {
@@ -517,11 +501,73 @@ fn direct_connect_over_tcp_and_websocket_without_the_service() {
         }
         std::thread::sleep(Duration::from_millis(2));
     }
+    (server, cores)
+}
+
+/// Opens a launch, again while the server may still be starting.
+fn join(launch: Launch, trust: &Trust) -> Core {
+    let deadline = Instant::now() + Duration::from_secs(PATIENCE);
+    loop {
+        let mut opening = Opening::start(launch.clone(), trust);
+        let opened = loop {
+            if let Some(opened) = opening.poll() {
+                break opened;
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        };
+        match opened {
+            Ok(link) => return Core::new(Source::Live(link)),
+            Err(_) if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(100)),
+            Err(err) => panic!("{err}"),
+        }
+    }
+}
+
+#[test]
+fn direct_connect_over_tcp_and_websocket_without_the_service() {
+    let (_server, cores) = direct_match();
     assert!(
         cores
             .iter()
             .all(|(c, _)| c.phase == Phase::Playing && c.my_slot.is_some())
     );
+}
+
+/// Each player's scoreboard tells its own row's gold, net worth (the gold
+/// and the town portal scroll at least) and ultimate (not learned at level
+/// one), and of the other side the score and the level but not its gold,
+/// net worth or ultimate, nor the items of a hero it has never seen.
+#[test]
+fn the_scoreboard_tells_a_player_only_what_its_side_may_know() {
+    let (_server, mut cores) = direct_match();
+    let deadline = Instant::now() + Duration::from_secs(PATIENCE);
+    let standing = |c: &Core| {
+        c.view()
+            .is_some_and(|v| v.players.iter().all(|p| p.level > 0))
+    };
+    while !cores
+        .iter()
+        .all(|(c, _)| standing(c) && c.my_hero().is_some())
+    {
+        assert!(Instant::now() < deadline, "the heroes did not come");
+        for (core, _) in &mut cores {
+            core.pump(1.0 / 30.0);
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    for (core, _) in &cores {
+        let lines = crate::scoreboard::lines(core);
+        assert_eq!(lines.len(), 2, "a row a seat");
+        let (own, foe): (Vec<_>, Vec<_>) = lines.iter().partition(|l| l.local);
+        let (own, foe) = (own[0], foe[0]);
+        assert!(!own.foe && foe.foe);
+        let gold = own.gold.expect("one's own gold");
+        assert!(own.net_worth.is_some_and(|worth| worth > gold), "{own:?}");
+        assert_eq!(own.ult, Some(crate::scoreboard::Ult::NotLearned));
+        assert_eq!((foe.gold, foe.net_worth, foe.ult), (None, None, None));
+        assert!(foe.level > 0 && foe.team != own.team);
+        assert_eq!(foe.items, [None; 9], "never seen: {foe:?}");
+    }
 }
 
 /// SETTINGS in the menu's top bar opens the settings screen over the page it

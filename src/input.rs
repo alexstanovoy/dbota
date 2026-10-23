@@ -53,6 +53,8 @@ pub struct Panels {
     pub move_armed: bool,
     /// Whether the next ability key learns a level (Dota's learn mode).
     pub learn_mode: bool,
+    /// Whether the scoreboard is pinned open by the top-left menu's button.
+    pub scoreboard: bool,
 }
 
 /// The units of Dota's control groups, one each: dbota selects one unit at
@@ -357,6 +359,8 @@ fn escape(
         panels.shop = false;
     } else if panels.talents {
         panels.talents = false;
+    } else if panels.scoreboard {
+        panels.scoreboard = false;
     } else if core.over.is_some() || core.phase == bota_client_core::Phase::Lobby {
         exit.write(AppExit::Success);
     } else {

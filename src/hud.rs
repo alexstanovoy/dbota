@@ -143,7 +143,7 @@ struct PortraitRender;
 struct XpRing;
 
 /// The share of the way from a level to the next a hero's experience is.
-fn xp_share(level: u8, xp: i32) -> f32 {
+pub(crate) fn xp_share(level: u8, xp: i32) -> f32 {
     let at = usize::from(level.max(1)) - 1;
     match (
         bota_core::rules::XP_THRESHOLDS.get(at),
@@ -157,7 +157,7 @@ fn xp_share(level: u8, xp: i32) -> f32 {
 }
 
 /// The level ring, gold over the share of the way to the next level.
-fn xp_ring(share: f32) -> BackgroundGradient {
+pub(crate) fn xp_ring(share: f32) -> BackgroundGradient {
     let gold = Color::srgb(0.95, 0.75, 0.3);
     let empty = Color::srgba(0.1, 0.1, 0.12, 0.9);
     ui::split_disc(share.clamp(0.0, 1.0) * TAU, gold, empty)
@@ -175,6 +175,35 @@ fn xp(
     ring.0.set_if_neq(xp_ring(share));
     ring.1
         .set_if_neq(ui::visible(unit.is_some_and(|u| u.level > 0)));
+}
+
+/// A button of the menu in the top-left corner (Dota's `ButtonBar`).
+#[derive(Component, Clone, Copy, PartialEq, Eq)]
+enum MenuButton {
+    Settings,
+    Scoreboard,
+}
+
+/// The menu's buttons: the settings open the settings screen, the
+/// scoreboard's pins the scoreboard open or lets it go. Faint and bluish
+/// until hovered, as Dota's.
+fn menu_buttons(
+    mut panels: ResMut<crate::input::Panels>,
+    mut screen: ResMut<crate::settings::Screen>,
+    mut buttons: Query<(&MenuButton, &Interaction, &mut ImageNode), Changed<Interaction>>,
+) {
+    for (button, interaction, mut image) in &mut buttons {
+        if *interaction == Interaction::Pressed {
+            match button {
+                MenuButton::Settings => screen.open = true,
+                MenuButton::Scoreboard => panels.scoreboard = !panels.scoreboard,
+            }
+        }
+        image.color = match interaction {
+            Interaction::None => Color::srgba(0.8, 0.87, 1.0, 0.5),
+            _ => Color::WHITE,
+        };
+    }
 }
 
 /// The whole HUD, hidden in the lobby.
@@ -217,6 +246,7 @@ pub fn plugin(app: &mut App) {
                 xp,
                 level_ups,
                 innate,
+                menu_buttons,
             )
                 .run_if(|k: Res<crate::session::MatchKnown>| k.0),
         );
@@ -329,7 +359,7 @@ fn spawn_hud(
     };
     spawn_bottom(&mut kit, docks.row);
     spawn_top(kit.commands, &fonts, docks.root);
-    spawn_corner(kit.commands, &fonts, docks.root);
+    spawn_corner(&mut kit, docks.root);
 }
 
 /// What spawning the hero panel needs.
@@ -1133,16 +1163,11 @@ fn spawn_seat(commands: &mut Commands, fonts: &Fonts, parent: Entity, seat: u8) 
     ));
 }
 
-/// One's own numbers in the top-left corner, the feed and the frame rate in
-/// the top-right, and the notices in the middle.
-fn spawn_corner(commands: &mut Commands, fonts: &Fonts, root: Entity) {
+/// One's last hits and denies, kills, deaths and assists, under the menu.
+fn spawn_numbers(commands: &mut Commands, fonts: &Fonts, corner: Entity) {
     let plate = commands
         .spawn((
-            Extent::Corner,
             panel(Node {
-                position_type: PositionType::Absolute,
-                left: px(ui::CORNER_MARGIN),
-                top: px(ui::CORNER_MARGIN),
                 flex_direction: FlexDirection::Row,
                 column_gap: px(16),
                 padding: UiRect::axes(px(12), px(6)),
@@ -1150,7 +1175,7 @@ fn spawn_corner(commands: &mut Commands, fonts: &Fonts, root: Entity) {
                 border_radius: BorderRadius::all(px(6)),
                 ..default()
             }),
-            ChildOf(root),
+            ChildOf(corner),
         ))
         .id();
     for (label, readout, color) in [
@@ -1176,6 +1201,57 @@ fn spawn_corner(commands: &mut Commands, fonts: &Fonts, root: Entity) {
             ChildOf(cell),
         ));
     }
+}
+
+/// The menu over one's numbers (Dota's `DOTAHudMenuButtons`): the settings
+/// and the scoreboard, 30 of Dota's pixels with 8 either side.
+fn spawn_menu(commands: &mut Commands, manifest: &Manifest, server: &AssetServer, corner: Entity) {
+    let bar = commands
+        .spawn((Node::default(), Pickable::IGNORE, ChildOf(corner)))
+        .id();
+    for (button, art) in [
+        (MenuButton::Settings, "hud.menu_settings"),
+        (MenuButton::Scoreboard, "hud.menu_scoreboard"),
+    ] {
+        commands.spawn((
+            button,
+            Button,
+            Blocker,
+            Node {
+                width: px(25),
+                height: px(25),
+                margin: UiRect::horizontal(px(6.5)),
+                ..default()
+            },
+            ui::art(manifest, server, art, ui::INK_DIM),
+            ChildOf(bar),
+        ));
+    }
+}
+
+/// One's own numbers in the top-left corner, the feed and the frame rate in
+/// the top-right, and the notices in the middle.
+fn spawn_corner(kit: &mut Spawner, root: Entity) {
+    let commands = &mut *kit.commands;
+    let fonts = kit.fonts;
+    let corner = commands
+        .spawn((
+            Extent::Corner,
+            Node {
+                position_type: PositionType::Absolute,
+                left: px(ui::CORNER_MARGIN),
+                top: px(0),
+                flex_direction: FlexDirection::Column,
+                align_items: AlignItems::FlexStart,
+                row_gap: px(2),
+                ..default()
+            },
+            Pickable::IGNORE,
+            ChildOf(root),
+        ))
+        .id();
+    spawn_menu(commands, kit.manifest, kit.server, corner);
+    spawn_numbers(commands, fonts, corner);
     commands.spawn((
         Readout::Fps,
         ui::text("", &fonts.regular, 11.0, ui::INK_DIM),

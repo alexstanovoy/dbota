@@ -286,6 +286,9 @@ pub struct Settings {
     /// Whether the portrait plays the unit's idle animation (Dota's "Animate
     /// Portrait"); off, it shows a still picture.
     pub animate_portrait: bool,
+    /// Whether the scoreboard shows every player's items beside the rows
+    /// (Dota's Show Items).
+    pub scoreboard_items: bool,
     /// What the picture may cost.
     pub quality: Quality,
     /// How the window sits on the screen.
@@ -307,6 +310,7 @@ impl Default for Settings {
             },
             keys: keys::BINDINGS.map(|b| b.default),
             animate_portrait: false,
+            scoreboard_items: true,
             quality: Quality::default(),
             display: DisplayMode::default(),
             clarity: Clarity::High,
@@ -380,6 +384,7 @@ impl Settings {
             "voice_responses" => self.voice = flag()?,
             "edge_pan" => self.aids.edge_pan = flag()?,
             "animate_portrait" => self.animate_portrait = flag()?,
+            "scoreboard_items" => self.scoreboard_items = flag()?,
             "display_mode" => {
                 self.display = DisplayMode::named(value).ok_or_else(|| {
                     let names: Vec<_> = DISPLAY_MODES.iter().map(|(_, n)| *n).collect();
@@ -455,6 +460,7 @@ impl Settings {
             ("damage_numbers", self.aids.numbers),
             ("edge_pan", self.aids.edge_pan),
             ("animate_portrait", self.animate_portrait),
+            ("scoreboard_items", self.scoreboard_items),
         ] {
             out.push_str(&format!("{name} = {}\n", flag(on)));
         }

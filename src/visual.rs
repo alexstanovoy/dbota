@@ -83,6 +83,7 @@ pub struct Checks<'w, 's> {
     places: Query<'w, 's, &'static GlobalTransform>,
     replaced: Res<'w, crate::units::ReplacedScenes>,
     texts: Query<'w, 's, &'static Text>,
+    extents: Query<'w, 's, (Entity, &'static crate::ui::Extent)>,
     chips: Query<
         'w,
         's,
@@ -420,9 +421,14 @@ fn buildings(c: &Checks, report: &mut impl FnMut(&str, bool, String)) {
 
 /// The top-left block tells no gold and no souls.
 fn corner(c: &Checks, report: &mut impl FnMut(&str, bool, String)) {
-    let told: Vec<&str> = c
-        .texts
+    let blocks = c
+        .extents
         .iter()
+        .filter(|(_, extent)| **extent == crate::ui::Extent::Corner)
+        .map(|(block, _)| block);
+    let told: Vec<&str> = blocks
+        .flat_map(|block| c.tree.iter_descendants(block))
+        .filter_map(|part| c.texts.get(part).ok())
         .map(|t| t.0.as_str())
         .filter(|t| t.contains("GOLD") || t.contains("SOULS"))
         .collect();

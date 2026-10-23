@@ -47,6 +47,7 @@ mod overlay;
 mod pick;
 mod portrait;
 mod quality;
+mod scoreboard;
 mod select;
 mod session;
 mod settings;
@@ -171,6 +172,9 @@ pub struct Args {
     /// `video`, `audio`) at the start, for screenshots.
     #[arg(long, value_name = "TAB")]
     pub settings: Option<String>,
+    /// Debug: keep the scoreboard open from the start, for screenshots.
+    #[arg(long)]
+    pub scoreboard: bool,
     /// Debug: open the shop at the start: on a tab (`basics`, `upgrades` or
     /// `neutrals`), with an item's build tree shown (`upgrades:51`) or a
     /// search typed (`basics:/tango`).
@@ -403,6 +407,7 @@ fn main() -> AppExit {
             courier::plugin,
             settings::plugin,
             keys::plugin,
+            scoreboard::plugin,
         ))
         .add_plugins(main_menu::plugin);
     if let Err(err) = menu(&mut app, &args, store) {
