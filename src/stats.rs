@@ -3,9 +3,9 @@
 //! each by its icon, the bonus on top in green; strength, agility and
 //! intelligence along its foot. Hovering them opens Dota's stats tooltip
 //! (`tooltip_unit_damage_armor`): the attack and defense columns with the
-//! base and the bonus of each, the armor's physical resistance, and what each
-//! attribute gives. The labels are Dota's own where the cache has them; every
-//! number is the simulator's.
+//! base and the bonus of each, the armor's physical resistance, the status
+//! resistance and evasion, and what each attribute gives. The labels are
+//! Dota's own where the cache has them; every number is the simulator's.
 
 use bevy::prelude::*;
 use bota_core::rules;
@@ -76,6 +76,8 @@ enum Row {
     Armor,
     PhysicalResist,
     MagicResist,
+    StatusResist,
+    Evasion,
     HealthRegen,
 }
 
@@ -86,10 +88,12 @@ const ATTACK_ROWS: [Row; 5] = [
     Row::MoveSpeed,
     Row::ManaRegen,
 ];
-const DEFENSE_ROWS: [Row; 4] = [
+const DEFENSE_ROWS: [Row; 6] = [
     Row::Armor,
     Row::PhysicalResist,
     Row::MagicResist,
+    Row::StatusResist,
+    Row::Evasion,
     Row::HealthRegen,
 ];
 
@@ -490,7 +494,10 @@ struct Breakdown {
     attack_range: (i32, i32),
     move_speed: (i32, i32),
     armor: (f32, f32),
-    magic_resist: (i32, i32),
+    /// Percent, as the next two.
+    magic_resist: (f32, f32),
+    status_resist: f32,
+    evasion: f32,
     hp_regen: (f32, f32),
     mana_regen: (f32, f32),
     attributes: Option<[Attr; 3]>,
@@ -507,7 +514,9 @@ impl Breakdown {
                 attack_range: (whole(u.attack_range), 0),
                 move_speed: (whole(u.move_speed), 0),
                 armor: (u.armor.to_f32(), 0.0),
-                magic_resist: ((u.magic_resist.to_f32() * 100.0).round() as i32, 0),
+                magic_resist: (u.magic_resist.to_f32() * 100.0, 0.0),
+                status_resist: u.status_resist.to_f32() * 100.0,
+                evasion: u.evasion.to_f32() * 100.0,
                 hp_regen: (u.hp_regen.to_f32(), 0.0),
                 mana_regen: (u.mana_regen.to_f32(), 0.0),
                 attributes: None,
@@ -521,7 +530,9 @@ impl Breakdown {
             attack_range: ints(split.attack_range),
             move_speed: ints(split.move_speed),
             armor: parts(split.armor),
-            magic_resist: ints(split.magic_resist),
+            magic_resist: parts(split.magic_resist),
+            status_resist: split.status_resist.base.to_f32() + split.status_resist.bonus.to_f32(),
+            evasion: split.evasion.base.to_f32() + split.evasion.bonus.to_f32(),
             hp_regen: parts(split.hp_regen),
             mana_regen: parts(split.mana_regen),
             attributes: attributes(u, &split),
@@ -621,7 +632,10 @@ fn region_text(r: Region, bonus: bool, b: &Breakdown) -> (String, bool) {
             format!("{:.0}", b.armor.0),
             (b.armor.0 + b.armor.1).round() as i32 - b.armor.0.round() as i32,
         ),
-        Region::MagicResist => (format!("{}%", b.magic_resist.0), b.magic_resist.1),
+        Region::MagicResist => (
+            format!("{:.0}%", b.magic_resist.0),
+            (b.magic_resist.0 + b.magic_resist.1).round() as i32 - b.magic_resist.0.round() as i32,
+        ),
         Region::MoveSpeed => (b.move_speed.0.to_string(), b.move_speed.1),
     };
     if bonus {
@@ -703,6 +717,8 @@ fn row_name(row: Row) -> (&'static str, &'static str) {
         Row::Armor => ("DOTA_HUD_Armor", "Armor:"),
         Row::PhysicalResist => ("DOTA_HUD_PhysicalResist", "Physical resistance:"),
         Row::MagicResist => ("DOTA_HUD_MagicResist", "Magic resistance:"),
+        Row::StatusResist => ("DOTA_HUD_StatusResist", "Status resistance:"),
+        Row::Evasion => ("DOTA_HUD_Evasion", "Evasion:"),
         Row::HealthRegen => ("DOTA_HUD_HealthRegenDetail", "Health regen:"),
     }
 }
@@ -729,12 +745,16 @@ fn row_values(row: Row, u: &UnitView, b: &Breakdown) -> (String, String) {
         Row::Armor => tenths(b.armor),
         Row::PhysicalResist => (format!("{:.0}%", physical_resist(u.armor)), String::new()),
         Row::MagicResist => (
-            format!("{}%", b.magic_resist.0),
-            match b.magic_resist.1 {
+            format!("{:.0}%", b.magic_resist.0),
+            match (b.magic_resist.0 + b.magic_resist.1).round() as i32
+                - b.magic_resist.0.round() as i32
+            {
                 0 => String::new(),
                 n => format!("{}%", signed(n)),
             },
         ),
+        Row::StatusResist => (format!("{:.0}%", b.status_resist), String::new()),
+        Row::Evasion => (format!("{:.0}%", b.evasion), String::new()),
         Row::HealthRegen => tenths(b.hp_regen),
     }
 }
@@ -819,8 +839,10 @@ fn gives(k: u8, total: f32) -> Vec<(&'static str, String)> {
                 "intelligence_mana_regen",
                 tenth(total * per_second(rules::MANA_REGEN_PER_INTELLIGENCE)),
             ),
-            // The simulator's intelligence gives no magic resistance.
-            ("intelligence_magic_resist", "0".to_string()),
+            (
+                "intelligence_magic_resist",
+                tenth(total * rules::MAGIC_RESIST_BP_PER_INTELLIGENCE as f32 / 100.0),
+            ),
         ],
     }
 }
@@ -831,6 +853,11 @@ fn own_gives(k: u8, values: &[(&str, String)]) -> String {
     match k {
         0 => format!("= {} health and {} health regen", v(0), v(1)),
         1 => format!("= {} armor and {} attack speed", v(0), v(1)),
-        _ => format!("= {} mana and {} mana regen", v(0), v(1)),
+        _ => format!(
+            "= {} mana, {} mana regen and {}% base magic resistance",
+            v(0),
+            v(1),
+            v(2)
+        ),
     }
 }

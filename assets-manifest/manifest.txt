@@ -494,6 +494,8 @@ label resource/localization/dota_english.txt DOTA_HUD_Defense
 label resource/localization/dota_english.txt DOTA_HUD_Armor
 label resource/localization/dota_english.txt DOTA_HUD_PhysicalResist
 label resource/localization/dota_english.txt DOTA_HUD_MagicResist
+label resource/localization/dota_english.txt DOTA_HUD_StatusResist
+label resource/localization/dota_english.txt DOTA_HUD_Evasion
 label resource/localization/dota_english.txt DOTA_HUD_StrengthGain
 label resource/localization/dota_english.txt DOTA_HUD_AgilityGain
 label resource/localization/dota_english.txt DOTA_HUD_IntelligenceGain
