@@ -204,3 +204,4 @@ effect 52 icon.ability.hill_troll_rally
 effect 53 icon.ability.tornado_tempest
 effect 54 icon.ability.frogmen_water_bubble_small
 effect 55 icon.ability.satyr_trickster_purge
+effect 56 icon.glyph

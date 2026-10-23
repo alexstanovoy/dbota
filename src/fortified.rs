@@ -6,8 +6,8 @@
 //! the vertical trails of the original are left out and the rings only rise,
 //! fade and pulse. Without the textures the rings are plain tinted bands.
 //!
-//! A unit under a Glyph carries `StatusFlags::FORTIFIED`, whichever side's it
-//! is, when the viewer is told of it at all: the enemy's Glyph shows on what
+//! A unit under a Glyph wears the `EffectId::FORTIFIED` buff with its ticks
+//! left, whichever side's it is, when the viewer is told of it at all: the enemy's Glyph shows on what
 //! one sees, as in Dota.
 
 use std::collections::HashMap;
@@ -18,7 +18,7 @@ use bevy::{
     prelude::*,
 };
 use bota_core::{kind_def, rules};
-use bota_proto::{EntityId, StatusFlags};
+use bota_proto::{EffectId, EntityId};
 
 use crate::manifest::Manifest;
 use crate::session::Session;
@@ -84,28 +84,15 @@ fn make_art(mut commands: Commands, manifest: Res<Manifest>, server: Res<AssetSe
     });
 }
 
-/// The units under a Glyph, whichever side's, and the seconds a structure's
-/// cover has left; a creep's own end is not told, so it keeps its rings while
-/// it is flagged.
+/// The units wearing the Glyph's buff, whichever side's, and the seconds it
+/// has left.
 fn covered(view: &bota_proto::WorldView) -> Vec<(&bota_proto::UnitView, f32)> {
     let rate = rules::TICKS_PER_SECOND as f32;
     view.units
         .iter()
-        .filter(|u| u.statuses.bits & StatusFlags::FORTIFIED != 0)
-        .map(|u| {
-            let left = view
-                .glyphs
-                .iter()
-                .find(|g| g.team == u.team)
-                .map_or(f32::MAX, |g| g.active_for as f32 / rate);
-            (
-                u,
-                if kind_def(u.kind).structure {
-                    left
-                } else {
-                    f32::MAX
-                },
-            )
+        .filter_map(|u| {
+            let buff = u.effects.iter().find(|e| e.id == EffectId::FORTIFIED)?;
+            Some((u, buff.ticks_left? as f32 / rate))
         })
         .collect()
 }
