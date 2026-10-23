@@ -535,6 +535,12 @@ fn default_plugins(args: &Args, settings: &config::Settings) -> impl PluginGroup
         })
         .set(bevy::render::RenderPlugin {
             render_creation: render_creation(args),
+            // Pipelines compile on the render thread, which the app waits for when it ends,
+            // never on a pool thread: a process that ends while a pool thread is inside the
+            // driver creating one (an unreadable replay quits in the first frames) has the
+            // driver's exit handlers free what that thread uses, a crash. A browser and macOS
+            // compile this way always.
+            synchronous_pipeline_compilation: true,
             ..default()
         })
         .set(bevy::pbr::PbrPlugin {

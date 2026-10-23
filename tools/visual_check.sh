@@ -78,3 +78,12 @@ else
     echo "visual check: FAIL no start without system fonts (see $out/nofonts.log)"
     exit 1
 fi
+
+# A replay the client refuses ends it cleanly, never a crash, however early it is refused.
+if cargo test --release --quiet --manifest-path "$here/Cargo.toml" --test refused_replays \
+    -- --ignored > "$out/refused.log" 2>&1; then
+    echo "visual check: PASS refused replays end the client cleanly"
+else
+    echo "visual check: FAIL a refused replay did not end the client cleanly (see $out/refused.log)"
+    exit 1
+fi
