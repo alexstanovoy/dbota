@@ -1,6 +1,7 @@
 //! Lines laid on the ground: selection, attack range, the three raze spots,
 //! enemy tower reach and aim, who fights whom, cast telegraphs, order
-//! markers, and the aim of a slot taken up.
+//! markers, the selected unit's queued orders, and the aim of a slot taken
+//! up.
 
 use std::f32::consts::TAU;
 
@@ -32,6 +33,11 @@ const ORDER_TICKS: u32 = 15;
 const GOOD: Color = Color::srgb(0.42, 0.95, 0.52);
 const BAD: Color = Color::srgb(1.0, 0.27, 0.22);
 const GOLDEN: Color = Color::srgb(1.0, 0.8, 0.3);
+const ARCANE: Color = Color::srgb(0.45, 0.85, 1.0);
+/// How tall a queued order's flag stands, in world units.
+const FLAG_HEIGHT: f32 = 90.0;
+/// How far a queued order's pennant reaches out from its pole.
+const FLAG_WIDTH: f32 = 40.0;
 const SOUL_RED: Color = Color::srgb(1.0, 0.25, 0.2);
 const SOUL_VIOLET: Color = Color::srgb(0.72, 0.42, 1.0);
 
@@ -138,6 +144,7 @@ fn draw(
     tower_shots(&mut gizmos, &ctx);
     aggro(&mut gizmos, &ctx);
     orders(&mut gizmos, &ctx);
+    queue(&mut gizmos, &ctx);
     aim(&mut gizmos, &ctx, cursor.0, &hover);
 }
 
@@ -463,6 +470,54 @@ fn orders(gizmos: &mut Gizmos, ctx: &Ctx<'_, '_, '_>) {
     }
 }
 
+/// What the selected unit has queued, as Dota's flags: a line from the unit
+/// through every queued spot in turn and a flag on each, coloured by what
+/// waits there. An order at nothing, or at a unit out of sight, has no spot
+/// of its own and gets no flag.
+fn queue(gizmos: &mut Gizmos, ctx: &Ctx<'_, '_, '_>) {
+    let core = ctx.core;
+    let Some(unit) = core.commanded().and_then(|id| core.view()?.unit(id)) else {
+        return;
+    };
+    let Some(mut from) = ctx.at(unit.id).map(|drawn| (drawn.at.x, drawn.at.y)) else {
+        return;
+    };
+    for order in &unit.queue {
+        let (target, color) = match *order {
+            Order::Move { target } => (target, GOOD),
+            Order::Attack { target } => (target, BAD),
+            Order::Cast { target, .. } | Order::Use { target, .. } => (target, ARCANE),
+            Order::Put { target, .. } | Order::Take { target } => (target, GOLDEN),
+            _ => continue,
+        };
+        let spot = match target {
+            Target::Pos(p) => Some((p.x.to_f32(), p.y.to_f32())),
+            Target::Unit(id) => ctx.at(id).map(|drawn| (drawn.at.x, drawn.at.y)),
+            Target::None => None,
+        };
+        let Some((x, y)) = spot else {
+            continue;
+        };
+        gizmos.line(
+            ctx.point(from.0, from.1),
+            ctx.point(x, y),
+            color.with_alpha(0.55),
+        );
+        let foot = ctx.point(x, y);
+        let top = foot + Vec3::Y * FLAG_HEIGHT;
+        gizmos.line(foot, top, color);
+        gizmos.linestrip(
+            [
+                top,
+                top + Vec3::new(FLAG_WIDTH, -FLAG_HEIGHT / 5.0, 0.0),
+                top + Vec3::new(0.0, -FLAG_HEIGHT * 2.0 / 5.0, 0.0),
+            ],
+            color,
+        );
+        from = (x, y);
+    }
+}
+
 /// The reach of a slot taken up for aiming and what the cursor is on.
 fn aim(
     gizmos: &mut Gizmos,
@@ -485,7 +540,7 @@ fn aim(
             ctx,
             (caster.at.x, caster.at.y),
             reach,
-            Color::srgb(0.45, 0.85, 1.0),
+            ARCANE,
             false,
         );
     }

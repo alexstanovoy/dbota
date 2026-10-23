@@ -1,7 +1,8 @@
 //! Debug: with `DBOTA_DRILL` set, a live session plays a fixed drill through
 //! the same intents the mouse and keys give (pick, ready, learn, buy, move,
-//! attack-move, cast, stop), logs what each did to the hero, and exits. It
-//! proves the wire end to end where nobody is at the keys.
+//! attack-move, cast, stop, walks queued with Shift), logs what each did to
+//! the hero, and exits. It proves the wire end to end where nobody is at the
+//! keys.
 
 use bevy::{
     prelude::*,
@@ -63,11 +64,12 @@ fn drill(
         .and_then(|p| p.gold);
     let report = |what: &str| {
         info!(
-            "drill {at:5.1}s {what}: tick {:?} {:?} hero at ({x:.0}, {y:.0}) hp {} mana {} gold {gold:?} ping {:?} ms, refusal {:?}, {fps:.0} fps, abilities {:?}",
+            "drill {at:5.1}s {what}: tick {:?} {:?} hero at ({x:.0}, {y:.0}) hp {} mana {} queued {} gold {gold:?} ping {:?} ms, refusal {:?}, {fps:.0} fps, abilities {:?}",
             core.view().map(|v| v.tick),
             hero.id,
             hero.hp,
             hero.mana,
+            hero.queue.len(),
             core.session().and_then(ClientSession::order_delay_ms),
             core.reject.as_ref().map(|r| r.0.clone()),
             hero.abilities
@@ -92,6 +94,18 @@ fn drill(
         },
         "buy Tango" => Intent::Buy(bota_proto::ItemId::TANGO.0),
         "move" => Intent::MoveTo((x + 600.0, y + 600.0)),
+        // Shift held: each walk waits for the one before it.
+        "queue a walk" | "queue another walk" => {
+            let to = if what == "queue a walk" {
+                (x + 600.0, y + 1200.0)
+            } else {
+                (x, y + 1200.0)
+            };
+            core.queueing = true;
+            core.act(Intent::MoveTo(to));
+            core.queueing = false;
+            return;
+        }
         "attack-move to mid" => {
             Intent::AttackMoveTo((crate::map::DOTA_ORIGIN, crate::map::DOTA_ORIGIN))
         }
@@ -143,6 +157,18 @@ fn steps(kind: &str) -> Vec<(f32, &'static str)> {
             steps.push((125.0, "exit"));
             steps
         }
+        // A walk with two more queued behind it (Shift), shot while the flags
+        // stand and once the queue is walked.
+        "queue" => vec![
+            (0.5, "move"),
+            (0.6, "queue a walk"),
+            (0.7, "queue another walk"),
+            (1.5, "report"),
+            (1.5, "shot"),
+            (12.0, "report"),
+            (12.0, "shot"),
+            (13.0, "exit"),
+        ],
         // Two minutes in the lane, for frame times (`--bench` ends it sooner).
         "bench" => vec![(1.0, "attack-move to mid"), (120.0, "exit")],
         _ => vec![

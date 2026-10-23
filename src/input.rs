@@ -1,7 +1,7 @@
 //! Keys and mouse into intents for the client core, Dota's way: right click
 //! to move and attack, A to attack-move, S to stop, H to hold, the ability
-//! and item keys, Ctrl with an ability key to learn it; clicks and drags on
-//! the HUD's boxes.
+//! and item keys, Ctrl with an ability key to learn it, Shift held to queue
+//! the orders given; clicks and drags on the HUD's boxes.
 
 use bevy::{
     input::{
@@ -151,10 +151,14 @@ fn keys(
     mut panels: ResMut<Panels>,
     mut exit: MessageWriter<AppExit>,
 ) {
+    let core = &mut session.0;
+    // Orders given while Shift is held wait their turn behind what the unit
+    // does, as Dota's Shift-queue: by key, by click, and by an aimed click.
+    core.queueing = *typing == Typing::No
+        && (keys.pressed(KeyCode::ShiftLeft) || keys.pressed(KeyCode::ShiftRight));
     if *typing != Typing::No {
         return;
     }
-    let core = &mut session.0;
     let pressed = |action: Action| keys.just_pressed(settings.key(action));
     let ctrl = keys.pressed(KeyCode::ControlLeft) || keys.pressed(KeyCode::ControlRight);
     if keys.just_pressed(KeyCode::Escape) {
