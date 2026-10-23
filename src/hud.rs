@@ -95,9 +95,15 @@ enum Gauge {
     SeatHp(u8),
 }
 
-/// The portrait image of the bottom panel.
+/// The portrait image of the bottom panel: Dota's picture of the hero, or
+/// the background of a render of the unit's model.
 #[derive(Component)]
 struct Portrait;
+
+/// The render of the unit's model in the bottom panel's portrait, over its
+/// background.
+#[derive(Component)]
+struct PortraitRender;
 
 /// The ring round the panel's level, filled with the experience gathered
 /// towards the next.
@@ -222,6 +228,13 @@ fn spawn_bottom(commands: &mut Commands, fonts: &Fonts, root: Entity) {
             ChildOf(bar),
         ))
         .id();
+    commands.spawn((
+        PortraitRender,
+        ui::fill(),
+        ImageNode::default(),
+        Visibility::Hidden,
+        ChildOf(portrait),
+    ));
     // The level in a ring that fills with the experience to the next.
     let ring = commands
         .spawn((
@@ -1475,25 +1488,37 @@ fn dress(
     }
 }
 
-/// The bottom panel's portrait: the unit's live render, or the hero's Dota
-/// portrait where it has no unit on the map.
+/// The bottom panel's portrait: a render of the unit's model over its
+/// background, or Dota's picture of the hero.
 fn portrait(
     session: NonSend<Session>,
     manifest: Res<Manifest>,
     server: Res<AssetServer>,
-    live: Res<crate::portrait::Portrait>,
-    mut image: Single<&mut ImageNode, With<Portrait>>,
+    drawn: Res<crate::portrait::Portrait>,
+    mut image: Single<&mut ImageNode, (With<Portrait>, Without<PortraitRender>)>,
+    mut render: Single<(&mut ImageNode, &mut Visibility), With<PortraitRender>>,
 ) {
-    // A unit on the map is drawn live by its own model.
-    if live.live {
-        if image.image != live.image {
-            image.image = live.image.clone();
+    if let Some((model, backdrop)) = &drawn.shown {
+        if render.0.image != *model {
+            render.0.image = model.clone();
         }
-        if image.color != Color::WHITE {
-            image.color = Color::WHITE;
+        render.1.set_if_neq(Visibility::Inherited);
+        // No background from Dota: the panel's own dark one.
+        let tint = if backdrop.is_some() {
+            Color::WHITE
+        } else {
+            Color::NONE
+        };
+        let handle = backdrop.clone().unwrap_or_default();
+        if image.image != handle {
+            image.image = handle;
+        }
+        if image.color != tint {
+            image.color = tint;
         }
         return;
     }
+    render.1.set_if_neq(Visibility::Hidden);
     let core = &session.0;
     let (p, unit, _) = subject(core);
     let hero = p

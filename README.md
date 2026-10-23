@@ -129,6 +129,7 @@ times as needed) sets what the picture may cost:
 | `fps_cap` | frames a second at most, `0` for none | `0` |
 | `gpu_batching` | cull and batch draws on the GPU with compute shaders; off for a software renderer, which runs them several times slower | `true` |
 | `auto_quality` | lower multisampling, shadows, then resolution while frames run slower than the cap (or 30 fps) | `false` |
+| `animate_portrait` | Dota's "Animate Portrait": the bottom panel's portrait plays the unit's idle animation, drawn up to 30 times a second; off, it shows Dota's picture of a hero, or a render of another unit's model made once | `false` |
 
 `medium` is shadows `low`, `msaa` 2 and 2048 textures; `low` adds no shadows, no multisampling,
 `render_scale` 0.75 and 1024 textures; `potato` is `render_scale` 0.5, 512 textures, no props,

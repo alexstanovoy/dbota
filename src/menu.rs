@@ -20,6 +20,7 @@ enum Row {
     Numbers,
     Voice,
     EdgePan,
+    AnimatePortrait,
     Quality,
     Shadows,
     ResolutionDown,
@@ -102,6 +103,7 @@ fn spawn(
         (Row::Numbers, "Damage numbers"),
         (Row::Voice, "Voice responses"),
         (Row::EdgePan, "Edge pan"),
+        (Row::AnimatePortrait, "Animate portrait"),
         (Row::Quality, "Quality"),
         (Row::Shadows, "Shadows"),
         (Row::ResolutionDown, "Resolution -"),
@@ -181,6 +183,7 @@ fn clicks(
             Row::Numbers => s.aids.numbers = !s.aids.numbers,
             Row::Voice => s.voice = !s.voice,
             Row::EdgePan => s.aids.edge_pan = !s.aids.edge_pan,
+            Row::AnimatePortrait => s.animate_portrait = !s.animate_portrait,
             Row::Quality => {
                 let at = s
                     .quality
@@ -226,6 +229,7 @@ fn values(settings: Res<Settings>, mut text: Single<&mut Text, With<Values>>) {
     let q = &settings.quality;
     text.0 = format!(
         "Volume {:.0}%  {}   Interface {:.0}%\nDamage numbers {}   Voice responses {}   Edge pan {}\n\
+         Animate portrait {}\n\
          Quality {}   Shadows {}   Multisampling {}x   Resolution {:.0}%\n\
          Frame cap {}   Auto quality {}\n\
          On restart: textures up to {}, map props {}, GPU batching {}",
@@ -235,6 +239,7 @@ fn values(settings: Res<Settings>, mut text: Single<&mut Text, With<Values>>) {
         on(a.numbers),
         on(settings.voice),
         on(a.edge_pan),
+        on(settings.animate_portrait),
         q.preset_name().unwrap_or("custom"),
         ["off", "low", "high"][usize::from(q.shadows.min(2))],
         q.msaa,

@@ -71,6 +71,21 @@ pub struct Wearable {
     ready: bool,
 }
 
+impl Wearable {
+    /// A wearable of the model scene `wearer`, its own instance not ready yet.
+    pub fn on(wearer: Entity) -> Self {
+        Self {
+            wearer,
+            ready: false,
+        }
+    }
+
+    /// Its own instance is ready.
+    pub fn mark_ready(&mut self) {
+        self.ready = true;
+    }
+}
+
 /// One model the units may be drawn with.
 pub struct BankModel {
     /// What the manifest says of it.
@@ -646,15 +661,12 @@ fn spawn_unit(p: &mut SyncParams, u: &UnitView, at: Vec2, facing: f32, place: Ve
                         WorldAssetRoot(wearable.clone()),
                         scale,
                         ChildOf(pivot),
-                        Wearable {
-                            wearer: scene,
-                            ready: false,
-                        },
+                        Wearable::on(scene),
                     ))
                     .observe(
                         |ready: On<WorldInstanceReady>, mut wearables: Query<&mut Wearable>| {
                             if let Ok(mut w) = wearables.get_mut(ready.entity) {
-                                w.ready = true;
+                                w.mark_ready();
                             }
                         },
                     );

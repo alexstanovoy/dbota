@@ -212,6 +212,9 @@ pub struct Settings {
     pub aids: Aids,
     /// The key of every action, in [`BINDINGS`] order.
     pub keys: [KeyCode; BINDINGS.len()],
+    /// Whether the portrait plays the unit's idle animation (Dota's "Animate
+    /// Portrait"); off, it shows a still picture.
+    pub animate_portrait: bool,
     /// What the picture may cost.
     pub quality: Quality,
 }
@@ -228,6 +231,7 @@ impl Default for Settings {
                 edge_pan: true,
             },
             keys: BINDINGS.map(|(_, _, key)| key),
+            animate_portrait: false,
             quality: Quality::default(),
         }
     }
@@ -292,6 +296,7 @@ impl Settings {
             "damage_numbers" => self.aids.numbers = flag()?,
             "voice_responses" => self.voice = flag()?,
             "edge_pan" => self.aids.edge_pan = flag()?,
+            "animate_portrait" => self.animate_portrait = flag()?,
             "quality" => {
                 self.quality = Quality::preset(value).ok_or_else(|| {
                     format!("no quality called '{value}'; one of {}", PRESETS.join(", "))
@@ -338,6 +343,7 @@ impl Settings {
         for (name, on) in [
             ("damage_numbers", self.aids.numbers),
             ("edge_pan", self.aids.edge_pan),
+            ("animate_portrait", self.animate_portrait),
         ] {
             out.push_str(&format!("{name} = {}\n", flag(on)));
         }
