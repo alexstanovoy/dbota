@@ -541,7 +541,7 @@ fn rgba8_textures_written_as_png_read_back_the_same() {
             continue;
         };
         let made = Texture::from_rgba8(texture.width(), texture.height(), pixels.clone()).unwrap();
-        let dir = std::env::temp_dir().join("dbota_assets_png_roundtrip.png");
+        let dir = std::env::temp_dir().join(format!("dbota_assets_png_{}.png", std::process::id()));
         std::fs::write(&dir, made.to_png().unwrap()).unwrap();
         assert_eq!(read_png(&dir).2, pixels, "{vpk}");
         check_levels(&made, &vpk);

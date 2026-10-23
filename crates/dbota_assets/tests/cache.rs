@@ -31,12 +31,18 @@ fn exported() -> PathBuf {
     common::reference()
 }
 
-/// The cache to check: `DBOTA_IMPORTED`, or one imported now into the test's scratch folder.
-fn imported() -> PathBuf {
+/// The cache to check: `DBOTA_IMPORTED`, or one imported now into a scratch folder of the test
+/// `test`'s own (the tests run at once, and an import replaces its folder), removed when the
+/// test is done with it.
+fn imported(test: &str) -> Imported {
     if let Some(dir) = std::env::var_os("DBOTA_IMPORTED") {
-        return PathBuf::from(dir);
+        return Imported {
+            dir: PathBuf::from(dir),
+            scratch: false,
+        };
     }
-    let cache = Path::new(env!("CARGO_TARGET_TMPDIR")).join("cache");
+    let dir = format!("cache-{test}-{}", std::process::id());
+    let cache = Path::new(env!("CARGO_TARGET_TMPDIR")).join(dir);
     let game = find_game_dir(None).expect("Dota 2 not found");
     let plan = Plan::parse(
         &read(&repo().join("assets-manifest/manifest.txt")),
@@ -51,8 +57,26 @@ fn imported() -> PathBuf {
         bytes >> 20,
         started.elapsed().as_secs_f64()
     );
+    let cache = Imported {
+        dir: cache,
+        scratch: true,
+    };
     assert!(report.failed.is_empty(), "{:#?}", report.failed);
     cache
+}
+
+/// An imported cache; a scratch one is removed with it.
+struct Imported {
+    dir: PathBuf,
+    scratch: bool,
+}
+
+impl Drop for Imported {
+    fn drop(&mut self) {
+        if self.scratch {
+            let _ = std::fs::remove_dir_all(&self.dir);
+        }
+    }
 }
 
 /// Every file under `root` by its path relative to it (`/`-separated), less hidden ones and
@@ -275,7 +299,8 @@ fn required(theirs: &BTreeMap<String, PathBuf>) -> BTreeSet<String> {
 #[test]
 #[ignore = "needs a local Dota 2 install and its asset cache"]
 fn the_imported_cache_matches_the_exported_one() {
-    let (ours, theirs) = (files(&imported()), files(&exported()));
+    let cache = imported("matches");
+    let (ours, theirs) = (files(&cache.dir), files(&exported()));
     let theirs: BTreeMap<String, PathBuf> = theirs
         .into_iter()
         .map(|(rel, p)| (unhashed(&rel), p))
@@ -338,7 +363,7 @@ fn the_imported_cache_matches_the_exported_one() {
 #[ignore = "needs a local Dota 2 install"]
 fn the_lighting_is_the_maps_blend_of_its_default_lights() {
     use dbota_assets::{DirSource, EntityLump, Resource, Vpk, read_from};
-    let text = read(&imported().join("map/mid/lighting.txt"));
+    let text = read(&imported("lighting").dir.join("map/mid/lighting.txt"));
     let mut colors = BTreeMap::new();
     let mut turn = 0.0;
     for line in text.lines().filter(|l| !l.starts_with('#')) {
