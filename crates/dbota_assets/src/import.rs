@@ -21,7 +21,7 @@ use crate::vpk::Vpk;
 use crate::world::{Band, EntityLump, buildings_txt, export_world, lighting_txt, trees_txt};
 
 /// Bumped when the importer's output changes for the same install; part of a cache's stamp.
-pub const IMPORT_REV: u32 = 2;
+pub const IMPORT_REV: u32 = 3;
 
 /// Names what an import of this manifest and these ids makes (FNV-1a 64 of both texts): part of
 /// a cache's stamp, so a cache made from other texts is stale even from the same install.
@@ -609,15 +609,62 @@ fn make(
             out: dest,
             models,
             ..
-        } => {
-            let wanted: Vec<(&str, &str)> = models
-                .iter()
-                .map(|(logical, vmdl)| (logical.as_str(), vmdl.as_str()))
-                .collect();
-            let text = crate::framings(&read_from(src, &[pak], path)?, &wanted)?;
-            out.put(dest, text.as_bytes())
+        } => portraits(src, pak, path, dest, models, out),
+    }
+}
+
+/// `portraits.txt` from Dota's `portraits.txt`, after the background images it names.
+fn portraits(
+    src: &impl Source,
+    pak: &Vpk,
+    path: &str,
+    dest: &str,
+    models: &[(String, String)],
+    out: &mut Out<'_>,
+) -> Result<()> {
+    let wanted: Vec<(&str, &str)> = models
+        .iter()
+        .map(|(logical, vmdl)| (logical.as_str(), vmdl.as_str()))
+        .collect();
+    let framed = crate::framings(&read_from(src, &[pak], path)?, &wanted)?;
+    let mut written = HashSet::new();
+    for vmat in framed
+        .iter()
+        .filter_map(|f| Some(&f.background.as_ref()?.0))
+    {
+        if written.contains(vmat) {
+            continue;
+        }
+        // A background that does not convert is reported, and leaves its portraits on a plain
+        // backdrop.
+        match background(src, pak, vmat, out) {
+            Ok(()) => {
+                written.insert(vmat.clone());
+            }
+            Err(err) => out.report.failed.push((vmat.clone(), err.to_string())),
         }
     }
+    let text = crate::portraits_txt(&framed, |vmat| {
+        written.contains(vmat).then(|| crate::background_png(vmat))
+    });
+    out.put(dest, text.as_bytes())
+}
+
+/// The image of portrait background material `vmat` (its `g_tColor`), as a PNG where
+/// [`background_png`](crate::background_png) puts it.
+fn background(src: &impl Source, pak: &Vpk, vmat: &str, out: &mut Out<'_>) -> Result<()> {
+    let bytes = read_from(src, &[pak], &format!("{vmat}_c"))?;
+    let data = Resource::parse(&bytes)?
+        .data()
+        .ok_or_else(|| malformed("portraits", "a background material has no DATA"))??;
+    let material = crate::material::Material::from_vmat(vmat, &data);
+    let vtex = material
+        .textures
+        .iter()
+        .find_map(|(name, vtex)| (name == "g_tColor").then_some(vtex))
+        .ok_or_else(|| malformed("portraits", "a background material has no image"))?;
+    let texture = Texture::parse(&read_from(src, &[pak], &format!("{vtex}_c"))?)?;
+    out.put(&crate::background_png(vmat), &texture.first_frame_png()?)
 }
 
 /// The index of map package `vpk` among `maps`, opened on first use.

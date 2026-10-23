@@ -6,8 +6,9 @@ use crate::error::{Result, malformed};
 /// Deepest nesting read; the file has four levels.
 const DEPTH_LIMIT: usize = 8;
 /// Values of a framing line, in order: camera position, camera angles, field of view, far plane,
-/// light position, light angles, light field of view, light colour, ambient colour.
-const VALUES: usize = 3 + 3 + 1 + 1 + 3 + 3 + 1 + 3 + 3;
+/// light position, light angles, light field of view, light colour, ambient colour, light scale,
+/// ambient scale.
+const VALUES: usize = 3 + 3 + 1 + 1 + 3 + 3 + 1 + 3 + 3 + 1 + 1;
 
 /// A Valve KV1 value: a string, or a block of keyed values.
 enum Kv {
@@ -118,6 +119,9 @@ fn values(entry: &Kv) -> Option<[f32; VALUES]> {
         &[single(entry, "PortraitLightFOV")?],
         parts[4].as_slice(),
         parts[5].as_slice(),
+        // Dota's brightness of the light and of the ambient colour; plain where unset.
+        &[single(entry, "PortraitLightScale").unwrap_or(1.0)],
+        &[single(entry, "PortraitAmbientScale").unwrap_or(1.0)],
     ];
     for (slot, n) in out.iter_mut().zip(numbers.concat()) {
         if !n.is_finite() {
@@ -128,37 +132,102 @@ fn values(entry: &Kv) -> Option<[f32; VALUES]> {
     Some(out)
 }
 
-/// `models/portraits.txt`: a line per wanted model, `<logical> <numbers...>` (camera position
-/// and angles in the model's own inches and degrees, horizontal field of view, far plane, the
-/// light's position, angles and field of view, light colour and ambient colour as 0-255), in the order of `wanted`. A model Dota
-/// has no framing for gets no line. `wanted` pairs a logical name with the model's `.vmdl` path.
-pub fn framings(portraits: &[u8], wanted: &[(&str, &str)]) -> Result<String> {
+/// The colours Dota tints a portrait's background with, one per corner (top left, top right,
+/// bottom right, bottom left), each channel 0 to 1 (white leaves the image as it is).
+const WHITE: [[f32; 3]; 4] = [[1.0; 3]; 4];
+
+/// A wanted model's framing as Dota defines it.
+pub struct Framed {
+    pub logical: String,
+    values: [f32; VALUES],
+    /// The background's material (`.vmat`), when the entry names one, and its corner tints.
+    pub background: Option<(String, [[f32; 3]; 4])>,
+}
+
+/// The background of an entry: its material and the four corner colours, white where unset.
+fn background(entry: &Kv) -> Option<(String, [[f32; 3]; 4])> {
+    let vmat = entry.text("PortraitBackgroundTexture")?.trim();
+    if !vmat.ends_with(".vmat") {
+        return None;
+    }
+    let mut colors = WHITE;
+    for (i, slot) in colors.iter_mut().enumerate() {
+        let Some(text) = entry.text(&format!("PortraitBackgroundColor{}", i + 1)) else {
+            continue;
+        };
+        let n: Vec<f32> = text
+            .split_whitespace()
+            .filter_map(|w| w.parse::<f32>().ok())
+            .collect();
+        if let [r, g, b] = n[..]
+            && [r, g, b].iter().all(|c| c.is_finite())
+        {
+            *slot = [r, g, b].map(|c| c.clamp(0.0, 1.0));
+        }
+    }
+    Some((vmat.to_owned(), colors))
+}
+
+/// Dota's framings of the wanted models, in the order of `wanted` (pairs of a logical name and
+/// the model's `.vmdl` path). A model Dota has no framing for is left out.
+pub fn framings(portraits: &[u8], wanted: &[(&str, &str)]) -> Result<Vec<Framed>> {
     let text = std::str::from_utf8(portraits)
         .map_err(|_| malformed("portraits", "the file is not UTF-8"))?;
-    let root = block(&mut Tokens { rest: text }, 0)?;
-    let root = Kv::Block(root);
+    let root = Kv::Block(block(&mut Tokens { rest: text }, 0)?);
     let all = root
         .get("Portraits")
         .ok_or_else(|| malformed("portraits", "no Portraits block"))?;
+    Ok(wanted
+        .iter()
+        .filter_map(|(logical, vmdl)| {
+            let entry = all.get(vmdl)?;
+            Some(Framed {
+                logical: (*logical).to_owned(),
+                values: values(entry)?,
+                background: background(entry),
+            })
+        })
+        .collect())
+}
+
+/// `models/portraits.txt`: a line per framing, `<logical> <numbers...> <background>`: camera
+/// position and angles in the model's own inches and degrees, horizontal field of view, far
+/// plane, the light's position, angles and field of view, light colour and ambient colour as
+/// 0-255, the light's and the ambient colour's scales, the background's four corner tints as 0-1 (top left, top right, bottom right, bottom
+/// left), and the background image's cache path, `-` where there is none. `image` names the
+/// cache path a background material's image was written to, if it was.
+pub fn portraits_txt(framed: &[Framed], image: impl Fn(&str) -> Option<String>) -> String {
     let mut out = String::from(
-        "# logical, camera position (3), camera angles (3), fov, far, light position (3), light angles (3), light fov, light colour (3), ambient colour (3)\n",
+        "# logical, camera position (3), camera angles (3), fov, far, light position (3), light angles (3), light fov, light colour (3), ambient colour (3), light scale, ambient scale, background tints (4x3), background image\n",
     );
-    for (logical, vmdl) in wanted {
-        let Some(numbers) = all.get(vmdl).and_then(values) else {
-            continue;
+    for f in framed {
+        out.push_str(&f.logical);
+        let (colors, path) = match &f.background {
+            Some((vmat, colors)) => (*colors, image(vmat)),
+            None => (WHITE, None),
         };
-        out.push_str(logical);
-        for n in numbers {
+        for n in f.values.iter().chain(colors.as_flattened()) {
             out.push_str(&format!(" {n}"));
         }
+        out.push(' ');
+        out.push_str(path.as_deref().unwrap_or("-"));
         out.push('\n');
     }
-    Ok(out)
+    out
+}
+
+/// Where the image of portrait background material `vmat` goes in the cache.
+pub fn background_png(vmat: &str) -> String {
+    let file = vmat.rsplit('/').next().unwrap_or(vmat);
+    format!(
+        "models/portrait_backgrounds/{}.png",
+        file.trim_end_matches(".vmat")
+    )
 }
 
 #[cfg(test)]
 mod tests {
-    use super::framings;
+    use super::{background_png, framings, portraits_txt};
 
     const FILE: &str = r#"
 "Portraits" // comment
@@ -171,27 +240,31 @@ mod tests {
         "PortraitLightFOV" "90"
         "PortraitLightColor" "231 254 187"
         "PortraitAmbientColor" "97 114 0"
+        "PortraitLightScale" "2.8"
+        "PortraitAmbientScale" "5"
+        "PortraitBackgroundTexture" "materials/vgui/hud/heroportraits/portraitbackground_desert.vmat"
+        "PortraitBackgroundColor3" ".8 .2 .1"
         "cameras" { "default" { "PortraitPosition" "162.31 63.73 144.54" "PortraitAngles" "2.75 199.94 0" "PortraitFOV" "25" } }
     }
 }"#;
 
     #[test]
-    fn a_model_gets_its_default_camera_and_light() {
-        let out = framings(
+    fn a_model_gets_its_default_camera_light_and_background() {
+        let framed = framings(
             FILE.as_bytes(),
             &[("a", "models/a.vmdl"), ("b", "models/b.vmdl")],
         )
         .unwrap();
+        assert_eq!(framed.len(), 1, "the model without a framing has no line");
+        let out = portraits_txt(&framed, |vmat| Some(background_png(vmat)));
         let line = out.lines().find(|l| !l.starts_with('#')).unwrap();
         assert_eq!(
             line,
-            "a 162.31 63.73 144.54 2.75 199.94 0 25 10000 1 2 3 49.61 263.39 0 90 231 254 187 97 114 0"
+            "a 162.31 63.73 144.54 2.75 199.94 0 25 10000 1 2 3 49.61 263.39 0 90 231 254 187 97 114 0 \
+             2.8 5 1 1 1 1 1 1 0.8 0.2 0.1 1 1 1 models/portrait_backgrounds/portraitbackground_desert.png"
         );
-        assert_eq!(
-            out.lines().count(),
-            2,
-            "the model without a framing has no line"
-        );
+        let out = portraits_txt(&framed, |_| None);
+        assert!(out.trim_end().ends_with(" -"), "no image, no path: {out}");
     }
 
     #[test]

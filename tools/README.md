@@ -46,6 +46,7 @@ deleted. An asset that does not convert is reported and drawn as a stand-in.
 | `models/tree/` | the 9 tree models the map uses around mid (standing mesh + stump) | 8 MB |
 | `models/building/` | ancients, melee/ranged barracks (static, plus `*_destruction` collapse models), fountains | 73 MB |
 | `models/courier/` | default donkey courier, Radiant and Dire, walking and flying | 4 MB |
+| `models/portraits.txt`, `models/portrait_backgrounds/` | Dota's portrait framing of each model above (camera, light, ambient, the background's corner tints) and the background images it names | 1 MB |
 | `map/mid/` | `mid.gltf` with its geometry in `mid.bin`, the default map from fountain to fountain around mid, its textures, `trees.txt`, `buildings.txt` (the towers' places) | 354 MB |
 | `textures/ground/` | terrain layer textures (also used by `map.mid`) | 37 MB |
 | `textures/particle/` | 16 effect textures (smoke, glow, sparks, ground cracks, fire, the Glyph's rings, ...) | 1 MB |
