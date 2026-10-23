@@ -25,8 +25,9 @@ use serde_json::Value;
 
 use crate::map::{
     ATTRIBUTE_BLEND_ALPHAS, ATTRIBUTE_BLEND_WEIGHTS, ATTRIBUTE_PAINTED_TINT, Batch, ColourField,
-    Ground, LayerMeans, Samples, Surface, Vmat, add_to_batches, bake_terrain, bake_transform,
-    chunk_of, detail_settings, dress_prop, map_transform, smooth_terrain, terrain_material_with,
+    Ground, LayerMeans, Samples, Surface, TerrainLayers, Vmat, add_to_batches, bake_terrain,
+    bake_transform, chunk_of, detail_settings, dress_prop, map_transform, smooth_terrain,
+    terrain_material_with,
 };
 
 /// The map, merged: what [`MapLoader`] makes of the map's file.
@@ -40,6 +41,8 @@ pub struct MapGeometry {
     pub field: ColourField,
     /// The terrain's material, for the floor.
     pub terrain: Handle<StandardMaterial>,
+    /// The terrain's path layers, when the cache has their textures.
+    pub layers: Option<crate::layers::GroundLayers>,
 }
 
 /// Reads the map's `.gltf` and `.bin` into a [`MapGeometry`].
@@ -58,8 +61,8 @@ pub struct MapLoader {
 /// What a material of the map draws as.
 #[derive(Clone)]
 enum Kind {
-    /// Terrain, its four layers' colours baked into the vertices.
-    Terrain([[f32; 3]; 4]),
+    /// Terrain, its four layers baked into the vertices.
+    Terrain(TerrainLayers),
     /// The water's own material.
     Water,
     /// A prop with its material.
@@ -75,6 +78,8 @@ struct Materials {
     water: Handle<StandardMaterial>,
     /// The detail texture's mean brightness, taken back out of the terrain.
     detail_mean: f32,
+    /// The dirt and stone textures the paths are drawn with, packed.
+    paths: Option<Handle<Image>>,
 }
 
 /// Where an accessor's elements lie in the geometry file.
@@ -157,7 +162,12 @@ impl AssetLoader for MapLoader {
             .map_err(std::io::Error::other)?;
         let terrain = self.stream(jobs, &bin, &materials).await;
         drop(bin);
-        Ok(finish(terrain, materials.terrain))
+        let (mut map, field) = finish(terrain, materials.terrain);
+        map.layers = materials.paths.map(|detail| crate::layers::GroundLayers {
+            detail,
+            field: cx.add_labeled_asset("ground_field".to_string(), field),
+        });
+        Ok(map)
     }
 
     fn extensions(&self) -> &[&str] {
@@ -185,10 +195,16 @@ impl MapLoader {
         let list = doc["materials"].as_array().unwrap_or(&empty);
         let mut kinds = Vec::with_capacity(list.len());
         let mut water = None;
+        let uses = material_uses(doc, list.len());
+        let mut paths = PathTextures::default();
         for (index, material) in list.iter().enumerate() {
             let vmat = Vmat::parse(&material["extras"].to_string());
             kinds.push(match vmat.shader.as_str() {
-                "multiblend.vfx" => Kind::Terrain(means.layers(&vmat)),
+                "multiblend.vfx" => {
+                    let layers = means.layers(&vmat);
+                    paths.count(index, &vmat, &layers, uses[index]);
+                    Kind::Terrain(layers)
+                }
                 "water_dota.vfx" => {
                     // One river material for all of the map's water ones.
                     water.get_or_insert_with(|| {
@@ -202,37 +218,124 @@ impl MapLoader {
                 // but name: drawn as plain meshes they cover the ground.
                 _ if vmat.additive => Kind::Skip,
                 _ if !self.props => Kind::Skip,
-                _ => {
-                    let mut m = standard_material(doc, material, &linear, cx);
-                    // Path borders, ground edges and wagon tracks are tinted
-                    // by what the export leaves out (per-vertex tints, or all
-                    // but black): drawn as they come they lay dark brown bands
-                    // along the lanes.
-                    let black = m
-                        .base_color
-                        .to_linear()
-                        .to_f32_array_no_alpha()
-                        .iter()
-                        .all(|c| *c < 0.05);
-                    if vmat.overlay && (black || vmat.name.contains("tint")) {
-                        Kind::Skip
-                    } else {
-                        dress_prop(&mut m, &vmat);
-                        Kind::Prop(cx.add_labeled_asset(format!("material{index}"), m))
-                    }
-                }
+                _ => prop(doc, (index, material), &vmat, &linear, cx),
             });
         }
         // A map with no water material has no water to draw.
         let water = water.unwrap_or_default();
+        let paths = paths
+            .choose(&mut kinds)
+            .zip(self.root.as_deref())
+            .and_then(|((dirt, stones), root)| crate::layers::pack_detail(root, &dirt, &stones))
+            .map(|image| cx.add_labeled_asset("ground_paths".to_string(), image));
         Materials {
             kinds,
             terrain,
             water,
             detail_mean,
+            paths,
+        }
+    }
+}
+
+/// A prop's material, the `index`th of the map: drawn, or skipped.
+fn prop(
+    doc: &Value,
+    (index, material): (usize, &Value),
+    vmat: &Vmat,
+    linear: &[u64],
+    cx: &mut LoadContext,
+) -> Kind {
+    let mut m = standard_material(doc, material, linear, cx);
+    // Path borders, ground edges and wagon tracks are tinted by what the
+    // export leaves out (per-vertex tints, or all but black): drawn as they
+    // come they lay dark brown bands along the lanes.
+    let black = m
+        .base_color
+        .to_linear()
+        .to_f32_array_no_alpha()
+        .iter()
+        .all(|c| *c < 0.05);
+    if vmat.overlay && (black || vmat.name.contains("tint")) {
+        Kind::Skip
+    } else {
+        dress_prop(&mut m, vmat);
+        Kind::Prop(cx.add_labeled_asset(format!("material{index}"), m))
+    }
+}
+
+/// How many primitives draw with each of the map's materials.
+fn material_uses(doc: &Value, materials: usize) -> Vec<usize> {
+    let mut uses = vec![0usize; materials];
+    let empty = Vec::new();
+    for mesh in doc["meshes"].as_array().unwrap_or(&empty) {
+        for primitive in mesh["primitives"].as_array().unwrap_or(&empty) {
+            if let Some(n) = primitive["material"]
+                .as_u64()
+                .and_then(|m| uses.get_mut(m as usize))
+            {
+                *n += 1;
+            }
+        }
+    }
+    uses
+}
+
+/// The dirt and stone textures of the terrain's layers, each with how many
+/// of the map's terrain pieces paint with it, and each terrain material's
+/// stone: the paths are drawn with the most used dirt and the two most used
+/// stones (the Radiant's and the Dire's paving differ).
+#[derive(Default)]
+struct PathTextures {
+    dirt: std::collections::HashMap<String, usize>,
+    stone: std::collections::HashMap<String, usize>,
+    /// A terrain material's index and its first stone layer's texture.
+    stone_of: Vec<(usize, String)>,
+}
+
+impl PathTextures {
+    fn count(&mut self, index: usize, vmat: &Vmat, layers: &TerrainLayers, uses: usize) {
+        for (texture, family) in vmat.textures.iter().zip(layers.families) {
+            let tally = match family {
+                crate::layers::Family::Dirt => &mut self.dirt,
+                crate::layers::Family::Stone => &mut self.stone,
+                crate::layers::Family::Ground => continue,
+            };
+            *tally.entry(texture.clone()).or_default() += uses;
+            if family == crate::layers::Family::Stone
+                && self.stone_of.last().is_none_or(|(i, _)| *i != index)
+            {
+                self.stone_of.push((index, texture.clone()));
+            }
         }
     }
 
+    /// The most used dirt texture and the two most used stones, ties broken
+    /// by name; each terrain material is told which of the two its stone is
+    /// (the first, when it is neither).
+    fn choose(self, kinds: &mut [Kind]) -> Option<(String, [String; 2])> {
+        let ranked = |tally: &std::collections::HashMap<String, usize>| {
+            let mut all: Vec<(&String, &usize)> = tally.iter().collect();
+            all.sort_by(|a, b| b.1.cmp(a.1).then(a.0.cmp(b.0)));
+            all.into_iter()
+                .map(|(name, _)| name.clone())
+                .collect::<Vec<_>>()
+        };
+        let dirt = ranked(&self.dirt).into_iter().next()?;
+        let stones = ranked(&self.stone);
+        let first = stones.first()?.clone();
+        let stones = [first.clone(), stones.get(1).cloned().unwrap_or(first)];
+        for (index, texture) in &self.stone_of {
+            if let Some(Kind::Terrain(layers)) = kinds.get_mut(*index) {
+                layers.stone_slot =
+                    f32::from(u8::from(*texture == stones[1] && stones[0] != stones[1]));
+            }
+        }
+        Some((dirt, stones))
+    }
+}
+
+impl MapLoader {
     /// Reads the pieces chunk by chunk, on every core, merging each chunk's
     /// into batches handed to the main thread as soon as the chunk is done.
     /// The terrain is kept back: its colours are made continuous over the
@@ -388,14 +491,15 @@ fn pieces(jobs: &[Job], bin: &[u8], materials: &Materials) -> Vec<Piece> {
 }
 
 /// The terrain: its heights taken for the ground, its colours made
-/// continuous, merged by chunk.
-fn finish(mut terrain: Vec<Piece>, material: Handle<StandardMaterial>) -> MapGeometry {
+/// continuous, merged by chunk; and the field of its paths' colours.
+fn finish(mut terrain: Vec<Piece>, material: Handle<StandardMaterial>) -> (MapGeometry, Image) {
     let mut samples = Samples::new(crate::terrain::MAP_CELLS);
     for piece in &terrain {
         samples.add(&piece.mesh);
     }
     let mut meshes: Vec<&mut Mesh> = terrain.iter_mut().map(|p| &mut p.mesh).collect();
     let field = smooth_terrain(&mut meshes);
+    let paths = crate::layers::path_field(&mut meshes);
     let mut batches = Vec::new();
     for piece in terrain {
         add_to_batches(
@@ -407,12 +511,14 @@ fn finish(mut terrain: Vec<Piece>, material: Handle<StandardMaterial>) -> MapGeo
             piece.chunk,
         );
     }
-    MapGeometry {
+    let map = MapGeometry {
         batches,
         ground: samples.finish(),
         field,
         terrain: material,
-    }
+        layers: None,
+    };
+    (map, paths)
 }
 
 /// A node's matrix: its `matrix`, or its translation, rotation and scale.

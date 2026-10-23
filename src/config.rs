@@ -144,6 +144,51 @@ impl AntiAlias {
     }
 }
 
+/// How strongly units and paths are set apart from the ground they stand
+/// on: the scenery a little duller and darker, shade around the forest, a
+/// dark disc under every unit's feet, and a faint light round units' rims;
+/// see `clarity.rs` and `fog.wgsl`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Clarity {
+    Off,
+    Low,
+    High,
+}
+
+impl Clarity {
+    /// Weakest to strongest, as the overlay steps through them.
+    pub const ALL: [Clarity; 3] = [Clarity::Off, Clarity::Low, Clarity::High];
+
+    /// The name settings files and `--set` use.
+    pub fn name(self) -> &'static str {
+        match self {
+            Clarity::Off => "off",
+            Clarity::Low => "low",
+            Clarity::High => "high",
+        }
+    }
+
+    pub fn named(name: &str) -> Option<Clarity> {
+        let name = name.to_ascii_lowercase();
+        Clarity::ALL.into_iter().find(|c| c.name() == name)
+    }
+
+    /// The next one in [`Clarity::ALL`], the first after the last.
+    pub fn next(self) -> Clarity {
+        let at = Clarity::ALL.iter().position(|c| *c == self).unwrap_or(0);
+        Clarity::ALL[(at + 1) % Clarity::ALL.len()]
+    }
+
+    /// How strongly the aid is drawn, 0 to 1.
+    pub fn strength(self) -> f32 {
+        match self {
+            Clarity::Off => 0.0,
+            Clarity::Low => 0.5,
+            Clarity::High => 1.0,
+        }
+    }
+}
+
 /// What the picture may cost; see `quality.rs`. The defaults draw it whole.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Quality {
@@ -334,6 +379,8 @@ pub struct Settings {
     pub quality: Quality,
     /// How the window sits on the screen.
     pub display: DisplayMode,
+    /// How strongly units and paths are set apart from the ground.
+    pub clarity: Clarity,
 }
 
 impl Default for Settings {
@@ -351,6 +398,7 @@ impl Default for Settings {
             animate_portrait: false,
             quality: Quality::default(),
             display: DisplayMode::default(),
+            clarity: Clarity::High,
         }
     }
 }
@@ -463,6 +511,15 @@ impl Settings {
             "fps_cap" => self.quality.fps_cap = parse_unit(value, 0.0, 1000.0)? as u32,
             "gpu_batching" => self.quality.gpu_batching = flag()?,
             "auto_quality" => self.quality.auto = flag()?,
+            "visual_clarity" => {
+                self.clarity = Clarity::named(value).ok_or_else(|| {
+                    let names: Vec<&str> = Clarity::ALL.iter().map(|c| c.name()).collect();
+                    format!(
+                        "no visual clarity called '{value}'; one of {}",
+                        names.join(", ")
+                    )
+                })?
+            }
             other => return Err(format!("no setting called '{other}'")),
         }
         Ok(())
@@ -497,6 +554,7 @@ impl Settings {
         out.push_str(&format!("fps_cap = {}\n", q.fps_cap));
         out.push_str(&format!("gpu_batching = {}\n", flag(q.gpu_batching)));
         out.push_str(&format!("auto_quality = {}\n", flag(q.auto)));
+        out.push_str(&format!("visual_clarity = {}\n", self.clarity.name()));
         for ((_, name, _), key) in BINDINGS.iter().zip(self.keys) {
             out.push_str(&format!("key.{name} = {}\n", key_name(key)));
         }

@@ -15,6 +15,7 @@ mod buffs;
 mod cachefs;
 mod camera;
 mod capture;
+mod clarity;
 mod config;
 mod coords;
 mod daylight;
@@ -30,6 +31,7 @@ mod hud;
 #[cfg(not(target_arch = "wasm32"))]
 mod import;
 mod input;
+mod layers;
 #[cfg(not(target_arch = "wasm32"))]
 mod logging;
 mod main_menu;
@@ -347,6 +349,8 @@ fn main() -> AppExit {
             session::plugin,
             window::plugin,
             map::plugin,
+            layers::plugin,
+            clarity::plugin,
             daylight::plugin,
             fog::plugin,
             water::plugin,

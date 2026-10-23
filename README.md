@@ -111,7 +111,7 @@ the debug options too.
 | Arrows, screen edges | pan the camera (all four edges, the HUD bars included); mouse wheel zooms |
 | hold `Alt` | show attack, tower and ability ranges and the neutral camps' spawn boxes (they are never drawn otherwise) |
 | `M` | mute |
-| `F10` | settings: volume, damage numbers, your hero's voice answers, edge pan, display mode, picture quality; keys can be rebound by editing `~/.config/dbota/client.conf` |
+| `F10` | settings: volume, damage numbers, your hero's voice answers, edge pan, display mode, picture quality, visual clarity; keys can be rebound by editing `~/.config/dbota/client.conf` |
 | `Esc` | cancel / close / leave |
 
 Keys are rebound by writing `key.<action> = <key>` lines in `~/.config/dbota/client.conf` (the
@@ -168,6 +168,7 @@ times as needed) sets what the picture may cost:
 | `fps_cap` | frames a second at most, `0` for none | `0` |
 | `gpu_batching` | cull and batch draws on the GPU with compute shaders; off for a software renderer, which runs them several times slower | `true` |
 | `auto_quality` | lower anti-aliasing, shadows, then resolution while frames run slower than the cap (or 30 fps) | `false` |
+| `visual_clarity` | sets units apart from the ground: the scenery a little duller and darker, shade around the forest, a soft dark disc under every unit and a faint light round its rim; `off`, `low` or `high` (F10 steps through them) | `high` |
 | `animate_portrait` | Dota's "Animate Portrait": the bottom panel's portrait plays the unit's idle animation, drawn up to 30 times a second; off, it shows Dota's picture of a hero, or a render of another unit's model made once | `false` |
 
 `medium` is shadows `low`, `anti_aliasing` `fxaa` and 2048 textures; `low` adds no shadows, no anti-aliasing,

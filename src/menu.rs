@@ -29,6 +29,7 @@ enum Row {
     ResolutionUp,
     FpsCap,
     AutoQuality,
+    VisualClarity,
 }
 
 /// The frame caps the overlay steps through; 0 for none.
@@ -114,6 +115,7 @@ fn spawn(
         (Row::ResolutionUp, "Resolution +"),
         (Row::FpsCap, "Frame cap"),
         (Row::AutoQuality, "Auto quality"),
+        (Row::VisualClarity, "Visual clarity"),
     ] {
         if row == Row::Display && cfg!(target_arch = "wasm32") {
             continue;
@@ -215,6 +217,7 @@ fn clicks(
                 s.quality.fps_cap = FPS_CAPS[at.map_or(0, |at| (at + 1) % FPS_CAPS.len())];
             }
             Row::AutoQuality => s.quality.auto = !s.quality.auto,
+            Row::VisualClarity => s.clarity = s.clarity.next(),
         }
     }
     if *was_open && !panels.settings && *dirty {
@@ -238,7 +241,7 @@ fn values(settings: Res<Settings>, mut text: Single<&mut Text, With<Values>>) {
         "Volume {:.0}%  {}   Interface {:.0}%\nDamage numbers {}   Voice responses {}   Edge pan {}\n\
          Animate portrait {}{}\n\
          Quality {}   Shadows {}   Anti-aliasing {}   Resolution {:.0}%\n\
-         Frame cap {}   Auto quality {}\n\
+         Frame cap {}   Auto quality {}   Visual clarity {}\n\
          On restart: textures up to {}, map props {}, GPU batching {}",
         settings.volume * 100.0,
         if settings.muted { "(muted)" } else { "" },
@@ -269,6 +272,7 @@ fn values(settings: Res<Settings>, mut text: Single<&mut Text, With<Values>>) {
             q.fps_cap.to_string()
         },
         on(q.auto),
+        settings.clarity.name(),
         q.texture_size,
         on(q.props),
         on(q.gpu_batching),

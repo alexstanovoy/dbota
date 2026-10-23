@@ -206,7 +206,7 @@ pub fn plugin(app: &mut App) {
             )
                 .chain(),
         )
-        .add_systems(PostUpdate, lift_heroes)
+        .add_systems(PostUpdate, mark_figures)
         .add_systems(
             PostUpdate,
             hold_roots
@@ -227,28 +227,40 @@ fn hold_roots(mut roots: Query<(&RootLock, &mut Transform)>) {
     }
 }
 
-/// Lets every hero's own colours glow faintly, so a dark model on dark
-/// ground still reads, as Dota's hero rim light does.
-fn lift_heroes(
+/// Marks every mesh of a unit's model but a building's a
+/// [`crate::fog::Figure`] (not what else hangs on the unit), for
+/// the visual clarity aid; first lets every hero's own colours glow
+/// faintly, so a dark model on dark ground still reads, as Dota's hero rim
+/// light does (the mark has the material copied, glow and all).
+pub(crate) fn mark_figures(
+    mut commands: Commands,
     added: Query<
         (Entity, &MeshMaterial3d<StandardMaterial>),
         Added<MeshMaterial3d<StandardMaterial>>,
     >,
     parents: Query<&ChildOf>,
+    pivots: Query<&Pivot>,
     units: Query<&Unit>,
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
     for (entity, material) in &added {
-        let hero = parents
+        let Some(kind) = parents
             .iter_ancestors(entity)
-            .any(|a| units.get(a).is_ok_and(|u| u.kind == UnitKind::Hero));
-        if !hero {
+            .find_map(|a| pivots.get(a).ok())
+            .and_then(|pivot| units.get(pivot.0).ok())
+            .map(|u| u.kind)
+        else {
+            continue;
+        };
+        if kind_def(kind).structure {
             continue;
         }
+        commands.entity(entity).insert(crate::fog::Figure);
         // Materials are shared by every instance of a model: lift once.
-        if materials
-            .get(&material.0)
-            .is_none_or(|m| m.emissive_texture.is_some())
+        if kind != UnitKind::Hero
+            || materials
+                .get(&material.0)
+                .is_none_or(|m| m.emissive_texture.is_some())
         {
             continue;
         }

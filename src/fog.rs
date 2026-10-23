@@ -92,13 +92,20 @@ struct Veil {
     cast: Handle<Image>,
     /// World units the image spans.
     span: f32,
-    made: HashMap<AssetId<StandardMaterial>, Handle<FoggedMaterial>>,
+    /// By the material and the surface drawn with it.
+    made: HashMap<(AssetId<StandardMaterial>, u8), Handle<FoggedMaterial>>,
 }
 
 /// Marks a mesh whose material the fog darkens: the ground, the trees and
 /// the buildings. Units need none: those in the fog are not drawn.
 #[derive(Component)]
 pub struct Fogged;
+
+/// Marks a mesh of a unit other than a building, which the visual clarity
+/// aid lights round its rim (and does not dull); fogged too when it is also
+/// [`Fogged`] (a neutral creep).
+#[derive(Component)]
+pub struct Figure;
 
 /// The standard material with the fog laid over its lit colour.
 pub type FoggedMaterial = ExtendedMaterial<StandardMaterial, FogExt>;
@@ -108,11 +115,30 @@ pub struct FogExt {
     #[texture(100)]
     #[sampler(101)]
     veil: Handle<Image>,
+    /// x: world units the veil spans; y: its alpha of a fully fogged cell;
+    /// z: what the surface is ([`SURFACE_PROP`] and on); w: how strongly the
+    /// visual clarity aid is drawn, 0 to 1.
     #[uniform(102)]
-    extent: Vec4,
+    params: Vec4,
     #[texture(103, sample_type = "float", filterable = false)]
     cast: Handle<Image>,
+    /// The terrain's path textures and path field (`layers.rs`); white
+    /// stand-ins on every other surface.
+    #[texture(104)]
+    #[sampler(105)]
+    paths: Handle<Image>,
+    #[texture(106)]
+    field: Handle<Image>,
 }
+
+/// What a surface is, as the shader reads it: a tree, a building or a
+/// prop; the terrain without its path layers; the terrain with them; a
+/// unit the fog dulls; a unit it never touches.
+const SURFACE_PROP: u8 = 0;
+const SURFACE_GROUND: u8 = 1;
+const SURFACE_PATHS: u8 = 2;
+const SURFACE_FOGGED_FIGURE: u8 = 3;
+const SURFACE_FIGURE: u8 = 4;
 
 impl MaterialExtension for FogExt {
     fn fragment_shader() -> ShaderRef {
@@ -128,7 +154,11 @@ pub fn plugin(app: &mut App) {
             Update,
             (work_out, spawn_veil, shade_veil, cast_veil).chain(),
         )
-        .add_systems(PostUpdate, wrap)
+        .add_systems(PostUpdate, wrap.after(crate::units::mark_figures))
+        .add_systems(
+            Update,
+            clarity.run_if(resource_changed::<crate::config::Settings>),
+        )
         .add_systems(Startup, spawn_label)
         .add_systems(Update, label);
 }
@@ -187,16 +217,17 @@ fn work_out(session: NonSend<Session>, mut grid: ResMut<FogGrid>, mut lighting: 
     let union = team.is_none() && core.my_slot.is_none() && view.viewer.is_none();
     grid.team = team;
     grid.on = team.is_some() || union;
-    if !grid.on {
-        return;
-    }
     if n == 0 {
         return;
     }
+    // Laid with no fog too: its materials also draw the paths and clarity.
     if grid.n != n {
         grid.n = n;
         grid.cells = vec![true; n * n];
         grid.shade = vec![0.0; n * n];
+    }
+    if !grid.on {
+        return;
     }
     // The last lighting worked out, once its task is done.
     if let Some(task) = &mut lighting.task
@@ -294,20 +325,44 @@ fn spawn_veil(
     });
 }
 
-/// Gives every mesh marked [`Fogged`] the fogged copy of its material.
+/// Gives every mesh marked [`Fogged`] or [`Figure`] the copy of its material
+/// the fog and the visual clarity aid draw; the terrain's also draws its
+/// path layers.
+#[allow(clippy::type_complexity)]
 fn wrap(
     mut commands: Commands,
     veil: Option<ResMut<Veil>>,
-    parts: Query<(Entity, &MeshMaterial3d<StandardMaterial>), With<Fogged>>,
+    parts: Query<
+        (
+            Entity,
+            &MeshMaterial3d<StandardMaterial>,
+            Has<Fogged>,
+            Has<Figure>,
+        ),
+        Or<(With<Fogged>, With<Figure>)>,
+    >,
     standard: Res<Assets<StandardMaterial>>,
     mut fogged: ResMut<Assets<FoggedMaterial>>,
+    layers: Option<Res<crate::layers::GroundLayers>>,
+    terrain: Option<Res<crate::map::TerrainMaterial>>,
+    settings: Res<crate::config::Settings>,
 ) {
     let Some(mut veil) = veil else {
         return;
     };
     let veil = &mut *veil;
-    for (entity, material) in &parts {
-        let handle = match veil.made.get(&material.id()) {
+    for (entity, material, fogged_part, figure) in &parts {
+        let ground = terrain.as_ref().is_some_and(|t| t.0 == material.id());
+        let paths = layers.as_ref().filter(|_| ground);
+        let surface = match (figure, fogged_part, ground, paths.is_some()) {
+            (true, true, ..) => SURFACE_FOGGED_FIGURE,
+            (true, false, ..) => SURFACE_FIGURE,
+            (false, _, _, true) => SURFACE_PATHS,
+            (false, _, true, false) => SURFACE_GROUND,
+            (false, _, false, false) => SURFACE_PROP,
+        };
+        let key = (material.id(), surface);
+        let handle = match veil.made.get(&key) {
             Some(handle) => handle.clone(),
             None => {
                 let Some(base) = standard.get(&material.0) else {
@@ -317,11 +372,18 @@ fn wrap(
                     base: base.clone(),
                     extension: FogExt {
                         veil: veil.image.clone(),
-                        extent: Vec4::new(veil.span, VEIL, 0.0, 0.0),
+                        params: Vec4::new(
+                            veil.span,
+                            VEIL,
+                            f32::from(surface),
+                            settings.clarity.strength(),
+                        ),
                         cast: veil.cast.clone(),
+                        paths: paths.map(|l| l.detail.clone()).unwrap_or_default(),
+                        field: paths.map(|l| l.field.clone()).unwrap_or_default(),
                     },
                 });
-                veil.made.insert(material.id(), handle.clone());
+                veil.made.insert(key, handle.clone());
                 handle
             }
         };
@@ -443,5 +505,27 @@ fn cast_veil(
         && image.data.as_deref() != Some(&texel[..])
     {
         image.data = Some(texel);
+    }
+}
+
+/// Sets the visual clarity aid's strength on every fogged material when the
+/// settings change it.
+fn clarity(
+    settings: Res<crate::config::Settings>,
+    veil: Option<Res<Veil>>,
+    mut fogged: ResMut<Assets<FoggedMaterial>>,
+) {
+    let Some(veil) = veil else {
+        return;
+    };
+    let strength = settings.clarity.strength();
+    for handle in veil.made.values() {
+        if fogged
+            .get(handle)
+            .is_some_and(|m| m.extension.params.w != strength)
+            && let Some(mut m) = fogged.get_mut(handle)
+        {
+            m.extension.params.w = strength;
+        }
     }
 }

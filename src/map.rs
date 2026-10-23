@@ -12,6 +12,7 @@ use bevy::{
     prelude::*,
 };
 
+use crate::layers::Family;
 use crate::manifest::Manifest;
 use crate::session::{MatchKnown, Session};
 use crate::terrain::{self, CELL};
@@ -67,6 +68,10 @@ impl Ground {
         self.n > 0
     }
 }
+
+/// The material the terrain and the floor under it are drawn with.
+#[derive(Resource)]
+pub struct TerrainMaterial(pub AssetId<StandardMaterial>);
 
 /// The map while it loads, read and merged by `mapfile`; let go once spawned.
 #[derive(Resource)]
@@ -167,6 +172,10 @@ fn prepare_map(
         spawn_batch(&mut commands, &mut meshes, batch);
     }
     *ground = map.ground;
+    commands.insert_resource(TerrainMaterial(map.terrain.id()));
+    if let Some(layers) = map.layers {
+        commands.insert_resource(layers);
+    }
     // A floor under the map wherever the map has a hole.
     commands.spawn((
         Mesh3d(meshes.add(floor(&ground, 30.0, Some(&map.field)))),
@@ -343,7 +352,7 @@ impl ColourField {
             .iter()
             .map(|g| (g[3] > 1e-3).then(|| [g[0] / g[3], g[1] / g[3], g[2] / g[3]]))
             .collect();
-        fill_holes(&mut filled, n, [(1, 0), (-1, 0), (0, 1), (0, -1)]);
+        fill_holes(&mut filled, n, [(1, 0), (-1, 0), (0, 1), (0, -1)], n);
         ColourField {
             n,
             cells: filled
@@ -534,12 +543,16 @@ impl LayerMeans {
     }
 
     /// The four layers of a terrain material, each its tint times its
-    /// texture's mean colour.
-    pub(crate) fn layers(&mut self, vmat: &Vmat) -> [[f32; 3]; 4] {
-        [0, 1, 2, 3].map(|i| {
-            let mean = self.of(&vmat.textures[i]);
-            [0, 1, 2].map(|c| vmat.tints[i][c] * mean[c])
-        })
+    /// texture's mean colour, and its family.
+    pub(crate) fn layers(&mut self, vmat: &Vmat) -> TerrainLayers {
+        TerrainLayers {
+            colours: [0, 1, 2, 3].map(|i| {
+                let mean = self.of(&vmat.textures[i]);
+                [0, 1, 2].map(|c| vmat.tints[i][c] * mean[c])
+            }),
+            families: [0, 1, 2, 3].map(|i| Family::of(&vmat.textures[i])),
+            stone_slot: 0.0,
+        }
     }
 
     /// The mean of the detail texture the terrain material tiles, by its
@@ -720,9 +733,22 @@ fn modulate(weight: f32, softness: f32) -> f32 {
     t * t * (3.0 - 2.0 * t)
 }
 
-/// Writes one terrain mesh's vertex colours: its four layers blended by the
-/// vertex's weights, each in its layer's tint, under the painted tint.
-pub(crate) fn bake_terrain(mesh: &mut Mesh, layers: &[[f32; 3]; 4], detail: f32, gain: f32) {
+/// A terrain material's four layers: each one's colour (its tint times its
+/// texture's mean) and family.
+#[derive(Clone, Debug)]
+pub(crate) struct TerrainLayers {
+    pub colours: [[f32; 3]; 4],
+    pub families: [Family; 4],
+    /// Which of the two stone textures its stone layers are drawn with.
+    pub stone_slot: f32,
+}
+
+/// Writes one terrain mesh's vertex colours: its ground layers blended by
+/// the vertex's weights, each in its layer's tint, under the painted tint
+/// (all four layers where it shows no ground). Its path layers go into
+/// their own colours, taken into the path field ([`crate::layers`]), and
+/// their weights into the second texture coordinates, dirt then stone.
+pub(crate) fn bake_terrain(mesh: &mut Mesh, layers: &TerrainLayers, detail: f32, gain: f32) {
     let read = |mesh: &Mesh, attr: &MeshVertexAttribute| -> Option<Vec<[f32; 4]>> {
         match mesh.attribute(attr.id)? {
             VertexAttributeValues::Float32x4(v) => Some(v.clone()),
@@ -736,27 +762,54 @@ pub(crate) fn bake_terrain(mesh: &mut Mesh, layers: &[[f32; 3]; 4], detail: f32,
     ) else {
         return;
     };
-    let colors: Vec<[f32; 4]> = weights
-        .iter()
-        .zip(&alphas)
-        .zip(&painted)
-        .map(|((w, a), p)| {
-            let w1 = modulate(w[0], a[0]);
-            let w2 = modulate(w[1], a[1]).min(1.0 - w1);
-            let w3 = modulate(w[2], a[2]).min(1.0 - w1 - w2);
-            let w0 = (1.0 - w1 - w2 - w3).max(0.0);
-            let mut c = [0.0, 0.0, 0.0, 1.0];
-            for ch in 0..3 {
-                let t = layers;
-                let layered = w0 * t[0][ch] + w1 * t[1][ch] + w2 * t[2][ch] + w3 * t[3][ch];
-                // Dota doubles its terrain's light; the detail texture's
-                // own brightness is taken back out.
-                c[ch] = (layered * srgb_to_linear(p[ch]) * gain / detail).min(1.5);
+    let count = weights.len();
+    let mut colors = Vec::with_capacity(count);
+    let mut paths = Vec::with_capacity(count);
+    let mut tints = [Vec::with_capacity(count), Vec::with_capacity(count)];
+    for ((w, a), p) in weights.iter().zip(&alphas).zip(&painted) {
+        let w1 = modulate(w[0], a[0]);
+        let w2 = modulate(w[1], a[1]).min(1.0 - w1);
+        let w3 = modulate(w[2], a[2]).min(1.0 - w1 - w2);
+        let w0 = (1.0 - w1 - w2 - w3).max(0.0);
+        // Per family: the weighted sum of its layers' colours, and its weight.
+        let mut sums = [[0.0f32; 4]; 3];
+        for (layer, weight) in [w0, w1, w2, w3].into_iter().enumerate() {
+            let sum = &mut sums[layers.families[layer] as usize];
+            for (total, colour) in sum.iter_mut().zip(layers.colours[layer]) {
+                *total += weight * colour;
             }
-            c
-        })
-        .collect();
+            sum[3] += weight;
+        }
+        let all: [f32; 4] = std::array::from_fn(|ch| sums.iter().map(|s| s[ch]).sum());
+        let lit = |sum: &[f32; 4], scale: f32| -> [f32; 4] {
+            let w = sum[3].max(1e-4);
+            // Dota doubles its terrain's light.
+            std::array::from_fn(|ch| {
+                if ch == 3 {
+                    sum[3]
+                } else {
+                    (sum[ch] / w * srgb_to_linear(p[ch]) * gain * scale).min(1.5)
+                }
+            })
+        };
+        let ground = if sums[0][3] > 1e-3 { &sums[0] } else { &all };
+        // The grass texture's own brightness is taken back out.
+        let mut c = lit(ground, 1.0 / detail);
+        c[3] = 1.0;
+        colors.push(c);
+        paths.push([sums[1][3], sums[2][3]]);
+        tints[0].push(lit(&sums[1], 1.0));
+        tints[1].push(lit(&sums[2], 1.0));
+    }
     mesh.insert_attribute(Mesh::ATTRIBUTE_COLOR, colors);
+    mesh.insert_attribute(Mesh::ATTRIBUTE_UV_1, paths);
+    let [dirt, stone] = tints;
+    mesh.insert_attribute(crate::layers::ATTRIBUTE_DIRT, dirt);
+    mesh.insert_attribute(crate::layers::ATTRIBUTE_STONE, stone);
+    mesh.insert_attribute(
+        crate::layers::ATTRIBUTE_STONE_SLOT,
+        vec![layers.stone_slot; count],
+    );
 }
 
 /// Heights gathered from terrain vertices, cell by cell.
@@ -803,7 +856,7 @@ impl Samples {
             .zip(&self.count)
             .map(|(s, c)| (*c > 0).then(|| [s / *c as f32]))
             .collect();
-        fill_holes(&mut heights, n, [(0, 1), (0, -1), (1, 0), (-1, 0)]);
+        fill_holes(&mut heights, n, [(0, 1), (0, -1), (1, 0), (-1, 0)], n);
         Ground {
             n,
             heights: heights
@@ -816,9 +869,14 @@ impl Samples {
 
 /// Fills every empty cell of an `n` by `n` grid with the mean of its filled
 /// neighbours, taken in `order`, a ring at a time until none is left that
-/// borders a filled one.
-fn fill_holes<const K: usize>(cells: &mut [Option<[f32; K]>], n: usize, order: [(i32, i32); 4]) {
-    for _ in 0..n {
+/// borders a filled one, or `rings` rings are laid.
+pub(crate) fn fill_holes<const K: usize>(
+    cells: &mut [Option<[f32; K]>],
+    n: usize,
+    order: [(i32, i32); 4],
+    rings: usize,
+) {
+    for _ in 0..rings.min(n) {
         let snapshot = cells.to_vec();
         let mut changed = false;
         for y in 0..n {
