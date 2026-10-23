@@ -5,16 +5,14 @@
 
 use bevy::prelude::*;
 use bota_client_core::App as Core;
-use bota_proto::{AbilityId, UnitKind, UnitView};
+use bota_proto::{UnitKind, UnitView};
 
 use crate::ability_art::art_of;
 use crate::coords::sim_facing_to_rotation;
 use crate::session::Session;
 use crate::units::{Dying, ModelBank, ModelOf, Rig, Unit};
 
-/// Seconds a cast clip is stretched over at the least.
-const MIN_CAST_POINT: f32 = 0.05;
-/// The clip of a cast with no art of its own.
+/// The clip of a cast with no art of its own, and of an item's use.
 const PLAIN_CAST: &str = "cast1";
 /// World units a second at which a run clip plays at its own pace.
 const RUN_PACE: f32 = 300.0;
@@ -113,16 +111,18 @@ fn choose(
 ) -> Wanted {
     let rate = f32::from(core.tick_rate().max(1));
     let sub = core.smooth.alpha();
-    if let Some(began) = core.cast_began(u.id) {
-        let (name, cast_point) = cast_clip(core, u);
+    if let (Some(cast), Some(began)) = (u.cast, core.cast_began(u.id)) {
+        let name = cast.ability.map_or(PLAIN_CAST, |id| art_of(id).clip);
         if let Some((duration, point)) = clip(name) {
-            let elapsed =
-                (core.view().map_or(began, |v| v.tick) - began) as f32 / rate + sub / rate;
+            // The clip's point lands on the tick the view says the cast goes
+            // off, counted from when its cast point was first seen.
+            let ran = core.view().map_or(began, |v| v.tick).saturating_sub(began);
+            let whole = (ran + cast.goes_off_in) as f32;
             let point = point.unwrap_or(duration * 0.5);
             pose.since_strike = None;
             return Wanted {
                 clip: name,
-                t: elapsed / cast_point * point,
+                t: ((ran as f32 + sub) / whole).min(1.0) * point,
             };
         }
     }
@@ -189,39 +189,4 @@ fn choose(
         clip: name,
         t: pose.loop_t,
     }
-}
-
-/// The clip of the cast a unit is in, and the simulator's cast point of it
-/// in seconds, from the latest order its seat is known to have given. A
-/// cast whose order is not known shows the first raze.
-fn cast_clip(core: &Core, u: &UnitView) -> (&'static str, f32) {
-    if u.neutral.is_some() {
-        return neutral_cast(u);
-    }
-    let ability = crate::overlay::cast_ability(core, u);
-    // A cast whose order is unknown shows the first raze.
-    let id = ability.unwrap_or(AbilityId::RAZE_NEAR);
-    let name = art_of(id).clip;
-    let point = core.cast_point_secs(u, id).unwrap_or(0.0);
-    // A clip is stretched over the point; one of no length plays at its own pace.
-    (name, point.max(MIN_CAST_POINT))
-}
-
-/// The clip and cast point of a neutral creep's cast. No seat orders a
-/// neutral, so the ability is the active one that went on cooldown last: the
-/// longest cooldown left.
-fn neutral_cast(u: &UnitView) -> (&'static str, f32) {
-    let ability = u
-        .abilities
-        .iter()
-        .filter(|a| !a.passive)
-        .max_by_key(|a| a.cooldown_left)
-        .map(|a| a.id);
-    let point = ability
-        .and_then(bota_core::ability_def)
-        .map_or(0, |def| def.point);
-    (
-        ability.map_or(PLAIN_CAST, |id| art_of(id).clip),
-        (point as f32 / 1000.0).max(MIN_CAST_POINT),
-    )
 }
