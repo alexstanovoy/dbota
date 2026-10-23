@@ -1677,7 +1677,7 @@ fn dress(
         (Part::Icon, f) => {
             if let Some(mut image) = image {
                 let tint = match f {
-                    // An ability Dota draws no icon for (a neutral's upgrade).
+                    // An ability the cache has no icon for.
                     Some(f) if f.icon.is_none() => Color::NONE,
                     Some(f) if !f.look.learned => Color::srgb(0.35, 0.35, 0.35),
                     Some(_) => Color::WHITE,

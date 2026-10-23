@@ -177,7 +177,7 @@ fn update(
         .map(|u| {
             u.effects
                 .iter()
-                .filter(|e| effect(e.id.0).is_some())
+                .filter(|e| effect(e.id.0).is_some_and(|face| face.listed))
                 .map(|e| Shown {
                     id: e.id.0,
                     ticks_left: e.ticks_left,
