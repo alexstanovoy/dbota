@@ -87,21 +87,14 @@ fn map_trees(manifest: &Manifest) -> Vec<MapTree> {
     else {
         return Vec::new();
     };
-    text.lines()
-        .filter(|line| !line.starts_with('#'))
-        .take(MAX_MAP_TREES)
-        .filter_map(|line| {
-            let w: Vec<&str> = line.split_whitespace().collect();
-            let [model, x, y, _, yaw, scale] = w.as_slice() else {
-                return None;
-            };
-            Some(MapTree {
-                model: (*model).to_string(),
-                x: x.parse::<f32>().ok()? + DOTA_ORIGIN,
-                y: y.parse::<f32>().ok()? + DOTA_ORIGIN,
-                yaw: yaw.parse::<f32>().ok()?.to_radians(),
-                scale: scale.parse().ok()?,
-            })
+    crate::cache_text::trees(&text, MAX_MAP_TREES)
+        .into_iter()
+        .map(|t| MapTree {
+            model: t.model,
+            x: t.x + DOTA_ORIGIN,
+            y: t.y + DOTA_ORIGIN,
+            yaw: t.yaw.to_radians(),
+            scale: t.scale,
         })
         .collect()
 }

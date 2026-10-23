@@ -499,19 +499,11 @@ impl BuildingYaws {
             return BuildingYaws::default();
         };
         BuildingYaws(
-            text.lines()
-                .filter(|l| !l.starts_with('#'))
-                .take(MAX_MAP_BUILDINGS)
-                .filter_map(|l| {
-                    let w: Vec<&str> = l.split_whitespace().collect();
-                    let [model, x, y, yaw] = w.as_slice() else {
-                        return None;
-                    };
-                    let at = Vec2::new(
-                        x.parse::<f32>().ok()? + DOTA_ORIGIN,
-                        y.parse::<f32>().ok()? + DOTA_ORIGIN,
-                    );
-                    Some((model.to_string(), at, yaw.parse::<f32>().ok()?.to_radians()))
+            crate::cache_text::buildings(&text, MAX_MAP_BUILDINGS)
+                .into_iter()
+                .map(|b| {
+                    let at = Vec2::new(b.x + DOTA_ORIGIN, b.y + DOTA_ORIGIN);
+                    (b.model, at, b.yaw.to_radians())
                 })
                 .collect(),
         )

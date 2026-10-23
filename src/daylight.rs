@@ -43,39 +43,26 @@ struct Dota {
 impl Dota {
     /// The cache's lighting file; `None` when it is missing or malformed.
     fn parse(text: &str) -> Option<Self> {
-        let mut colors = std::collections::HashMap::new();
-        let mut turn = None;
-        for line in text.lines().filter(|l| !l.starts_with('#')) {
-            let w: Vec<&str> = line.split_whitespace().collect();
-            match w.as_slice() {
-                [
-                    light @ ("sun" | "ambient"),
-                    time @ ("day" | "night"),
-                    v @ ..,
-                ] if v.len() == 4 => {
-                    let v: Vec<f32> = v.iter().map(|n| n.parse().ok()).collect::<Option<_>>()?;
-                    let srgb = Color::srgb(v[0] / 255.0, v[1] / 255.0, v[2] / 255.0);
-                    colors.insert((*light, *time), srgb.to_linear() * v[3]);
-                }
-                ["turn", seconds] => turn = seconds.parse().ok().filter(|t: &f32| *t > 0.0),
-                _ => {}
-            }
-        }
+        let lighting = crate::cache_text::lighting(text)?;
         // Dota's colours scale the daytime brightness this client sets for its own
         // lights: the day's brightest channel is 1, the night keeps its ratio to it.
-        let pair = |light| {
-            let day = *colors.get(&(light, "day"))?;
-            let night = *colors.get(&(light, "night"))?;
+        let linear = |[r, g, b, scale]: [f32; 4]| {
+            Color::srgb(r / 255.0, g / 255.0, b / 255.0).to_linear() * scale
+        };
+        let pair = |[day, night]: [[f32; 4]; 2]| {
+            let (day, night) = (linear(day), linear(night));
             let top = day.red.max(day.green).max(day.blue);
-            (top > 0.0).then(|| Pair {
+            let pair = Pair {
                 day: (day * (1.0 / top)).with_alpha(1.0),
                 night: (night * (1.0 / top)).with_alpha(1.0),
-            })
+            };
+            let finite = |c: LinearRgba| c.to_f32_array().iter().all(|v| v.is_finite());
+            (top > 0.0 && finite(pair.day) && finite(pair.night)).then_some(pair)
         };
         Some(Self {
-            sun: pair("sun")?,
-            ambient: pair("ambient")?,
-            turn: turn?,
+            sun: pair(lighting.sun)?,
+            ambient: pair(lighting.ambient)?,
+            turn: lighting.turn,
         })
     }
 }

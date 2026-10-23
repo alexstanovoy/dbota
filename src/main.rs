@@ -12,6 +12,7 @@ mod ability_art;
 mod anim;
 mod bars;
 mod buffs;
+mod cache_text;
 mod cachefs;
 mod camera;
 mod capture;

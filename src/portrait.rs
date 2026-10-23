@@ -105,41 +105,19 @@ impl Framings {
     }
 }
 
-/// Numbers of a framing line before its background: camera position and
-/// angles, field of view, far plane, light position, angles and field of
-/// view, light colour, ambient colour, light scale and ambient scale.
-const FRAMING_NUMBERS: usize = 23;
-
 fn parse_line(line: &str) -> Option<(String, Framing)> {
-    if line.starts_with('#') {
-        return None;
-    }
-    let mut words = line.split_whitespace();
-    let logical = words.next()?.to_owned();
-    let words: Vec<&str> = words.collect();
-    let numbers = words.get(..FRAMING_NUMBERS)?;
-    let n: Vec<f32> = numbers
-        .iter()
-        .map(|w| w.parse().ok())
-        .collect::<Option<_>>()?;
+    let line = crate::cache_text::framing(line)?;
+    let n = line.numbers;
     let v = |at: usize| Vec3::new(n[at], n[at + 1], n[at + 2]);
-    // A cache of an older import has no background.
-    let background = match &words[FRAMING_NUMBERS..] {
-        [tints @ .., path] if tints.len() == 12 && *path != "-" => {
-            let t: Vec<f32> = tints
-                .iter()
-                .map(|w| w.parse().ok())
-                .collect::<Option<_>>()?;
-            let corner = |c: usize| Vec3::new(t[3 * c], t[3 * c + 1], t[3 * c + 2]);
-            Some(((*path).to_owned(), [0, 1, 2, 3].map(corner)))
-        }
-        _ => None,
-    };
+    let background = line.background.map(|(path, t)| {
+        let corner = |c: usize| Vec3::new(t[3 * c], t[3 * c + 1], t[3 * c + 2]);
+        (path, [0, 1, 2, 3].map(corner))
+    });
     // The angles' roll is always zero in Dota's file and goes unread, as do
     // the light's place and cone: a light from its direction stands for
     // Dota's spot on the model.
     Some((
-        logical,
+        line.logical,
         Framing {
             camera: v(0),
             angles: Vec3::new(n[3], n[4], 0.0),
