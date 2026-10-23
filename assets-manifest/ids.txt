@@ -206,3 +206,4 @@ effect 55 icon.ability.satyr_trickster_purge
 effect 56 icon.glyph
 effect 57 icon.ability.pudge_flesh_heap
 effect 58 icon.ability.pudge_dismember
+effect 59 icon.ability.backdoor_protection
