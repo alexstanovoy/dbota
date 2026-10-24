@@ -1,83 +1,26 @@
-//! Town portal scrolls on the map: the ring where a hero will land, shown to
-//! both sides through the fog as Dota does, and the ring at the feet of the
-//! hero that channels it while it is in sight.
+//! Town portal scrolls on the map as Dota draws them, its own particle effects: the landing
+//! (`teleport_end`), shown to both sides through the fog, and the start at the feet of the
+//! hero that channels it while it is in sight (`teleport_start`), each in the seat's colour;
+//! when the channel ends, each plays its end.
 
 use std::collections::HashMap;
-use std::f32::consts::FRAC_PI_2;
 
-use bevy::{
-    light::{NotShadowCaster, NotShadowReceiver},
-    prelude::*,
-};
+use bevy::prelude::*;
 use bota_proto::{EntityId, SlotId, TeleportView, WorldView};
 
-use crate::manifest::Manifest;
 use crate::map::Ground;
+use crate::particles::{Handle, Library, Playing};
 use crate::session::Session;
-use crate::warmup::Warmup;
 
-/// World units from the centre to the outer edge of the ring.
-const RADIUS: f32 = 175.0;
-/// World units the ring starts out wider than it ends, and closes in by.
-const CLOSING: f32 = 0.6;
-/// World units the light column over a landing rises.
-const COLUMN: f32 = 520.0;
-/// The meshes and the texture the rings share.
-#[derive(Resource)]
-struct Art {
-    ring: Handle<Mesh>,
-    disc: Handle<Mesh>,
-    column: Handle<Mesh>,
-    swirl: Option<Handle<Image>>,
-}
-
-/// One end of a teleport: where the hero lands, or where it stands.
-#[derive(Component)]
-struct Portal {
-    materials: [Handle<StandardMaterial>; 3],
-}
-
-/// The portal entities by seat and end.
+/// The effects of a teleport's start and landing, by their manifest names.
+const START: &str = "item.teleport_start";
+const LANDING: &str = "item.teleport_end";
+/// The effects playing, by seat and end (true: the landing).
 #[derive(Resource, Default)]
-struct Portals(HashMap<(SlotId, bool), Entity>);
+struct Portals(HashMap<(SlotId, bool), Handle>);
 
 pub fn plugin(app: &mut App) {
-    app.init_resource::<Portals>()
-        .add_systems(Startup, make_art)
-        .add_systems(Update, portals);
-}
-
-fn make_art(
-    mut commands: Commands,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
-    manifest: Res<Manifest>,
-    server: Res<AssetServer>,
-) {
-    let art = Art {
-        ring: meshes.add(Annulus::new(RADIUS - 22.0, RADIUS)),
-        disc: meshes.add(Circle::new(RADIUS)),
-        column: meshes.add(Cylinder::new(26.0, COLUMN)),
-        swirl: manifest
-            .file("particle.ring_wavy")
-            .map(|path| server.load(path)),
-    };
-    // A landing's parts, drawn while loading.
-    let parts = [
-        (&art.ring, None),
-        (&art.disc, art.swirl.clone()),
-        (&art.column, None),
-    ];
-    for (mesh, texture) in parts {
-        commands.spawn((
-            Warmup,
-            Mesh3d(mesh.clone()),
-            MeshMaterial3d(materials.add(light(Color::WHITE, texture))),
-            NotShadowCaster,
-            NotShadowReceiver,
-        ));
-    }
-    commands.insert_resource(art);
+    app.init_resource::<Portals>().add_systems(Update, portals);
 }
 
 /// How much of a hero's channel has run, 0 to 1, when it channels a teleport.
@@ -99,23 +42,17 @@ pub fn origin(view: &WorldView, teleport: &TeleportView) -> Option<(f32, f32)> {
     Some((unit.pos.x.to_f32(), unit.pos.y.to_f32()))
 }
 
-/// Keeps a ring at the landing of every teleport and at the feet of every
-/// hero in sight that channels one.
+/// Keeps Dota's effect at the landing of every teleport and at the feet of every hero in sight
+/// that channels one; one whose channel ended plays its end.
 fn portals(
-    mut commands: Commands,
     session: NonSend<Session>,
-    art: Option<Res<Art>>,
     ground: Res<Ground>,
-    time: Res<Time>,
+    library: Option<Res<Library>>,
     colours: Res<crate::player_colour::PlayerColours>,
+    mut playing: ResMut<Playing>,
     mut known: ResMut<Portals>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
-    mut rings: Query<(&Portal, &mut Transform)>,
 ) {
-    let (core, Some(art)) = (&session.0, art) else {
-        return;
-    };
-    let Some(view) = core.view() else {
+    let Some(view) = session.0.view() else {
         return;
     };
     let mut wanted = Vec::with_capacity(2 * view.teleports.len());
@@ -129,113 +66,52 @@ fn portals(
             wanted.push((teleport, false, at));
         }
     }
-    let gone: Vec<(SlotId, bool)> = known
-        .0
-        .keys()
-        .filter(|key| {
-            !wanted
-                .iter()
-                .any(|(t, landing, _)| (t.slot, *landing) == **key)
-        })
-        .copied()
-        .collect();
-    for key in gone {
-        let Some(entity) = known.0.remove(&key) else {
-            continue;
-        };
-        if let Ok((portal, _)) = rings.get(entity) {
-            for handle in &portal.materials {
-                materials.remove(handle);
-            }
+    known.0.retain(|key, handle| {
+        let keep = wanted
+            .iter()
+            .any(|(t, landing, _)| (t.slot, *landing) == *key);
+        if !keep && let Some(instance) = playing.get_mut(*handle) {
+            instance.end();
         }
-        commands.entity(entity).despawn();
-    }
+        keep
+    });
     for (teleport, landing, (x, y)) in wanted {
+        let at = Vec3::new(x, y, ground.at(x, y));
         let key = (teleport.slot, landing);
-        let at = Vec3::new(x, ground.at(x, y) + 6.0, -y);
-        let share = progress(teleport);
-        let entity = *known.0.entry(key).or_insert_with(|| {
-            let color = colours.of(view, teleport.slot);
-            spawn(&mut commands, &art, &mut materials, landing, color)
-        });
-        let Ok((portal, mut transform)) = rings.get_mut(entity) else {
-            continue;
+        let handle = match known.0.get(&key) {
+            Some(handle) => *handle,
+            None => {
+                let name = if landing { LANDING } else { START };
+                let Some(effect) = library.as_deref().and_then(|l| l.effect(name)) else {
+                    continue;
+                };
+                let seed = u32::from(teleport.slot.0) << 1 | u32::from(landing);
+                let Some(handle) = playing.start(effect, seed) else {
+                    continue;
+                };
+                let color = colours.of(view, teleport.slot).to_srgba();
+                if let Some(instance) = playing.get_mut(handle) {
+                    let color = Vec3::new(color.red, color.green, color.blue);
+                    instance.set_control_point(COLOR, color, Vec3::ZERO, true);
+                    instance.set_control_point(HERO, at, Vec3::ZERO, true);
+                    instance.set_control_point(DESTINATION, at, Vec3::ZERO, true);
+                }
+                known.0.insert(key, handle);
+                handle
+            }
         };
-        let pulse = 1.0 + 0.06 * (time.elapsed_secs() * 7.0).sin();
-        let closing = 1.0 + CLOSING * (1.0 - share);
-        transform.translation = at;
-        transform.scale = Vec3::new(pulse * closing, 1.0, pulse * closing);
-        transform.rotation = Quat::from_rotation_y(time.elapsed_secs() * 1.4);
-        let [ring, disc, column] = &portal.materials;
-        for (handle, alpha) in [
-            (ring, 0.4 + 0.6 * share),
-            (disc, 0.12 + 0.3 * share),
-            (column, 0.05 + 0.5 * share * share),
-        ] {
-            if let Some(mut material) = materials.get_mut(handle) {
-                material.base_color.set_alpha(alpha);
+        if let Some(instance) = playing.get_mut(handle) {
+            // The start's place is the hero's; the landing's, Dota's CP1, is where it lands.
+            instance.set_control_point(HERO, at, Vec3::ZERO, false);
+            if landing {
+                instance.set_control_point(DESTINATION, at, Vec3::ZERO, false);
             }
         }
     }
 }
 
-/// A glowing, additive material of a colour.
-fn light(color: Color, texture: Option<Handle<Image>>) -> StandardMaterial {
-    StandardMaterial {
-        base_color: color,
-        base_color_texture: texture,
-        alpha_mode: AlphaMode::Add,
-        unlit: true,
-        ..default()
-    }
-}
-
-/// Spawns one end of a teleport: the ring, the swirl inside it, and over a
-/// landing the column of light.
-fn spawn(
-    commands: &mut Commands,
-    art: &Art,
-    materials: &mut Assets<StandardMaterial>,
-    landing: bool,
-    color: Color,
-) -> Entity {
-    let flat = Quat::from_rotation_x(-FRAC_PI_2);
-    let handles = [
-        materials.add(light(color, None)),
-        materials.add(light(color, art.swirl.clone())),
-        materials.add(light(color, None)),
-    ];
-    let parent = commands
-        .spawn((
-            Portal {
-                materials: handles.clone(),
-            },
-            Transform::default(),
-            Visibility::default(),
-        ))
-        .id();
-    let part = |mesh: &Handle<Mesh>, material: &Handle<StandardMaterial>, at: Transform| {
-        (
-            Mesh3d(mesh.clone()),
-            MeshMaterial3d(material.clone()),
-            at,
-            NotShadowCaster,
-            NotShadowReceiver,
-            ChildOf(parent),
-        )
-    };
-    commands.spawn(part(&art.ring, &handles[0], Transform::from_rotation(flat)));
-    commands.spawn(part(
-        &art.disc,
-        &handles[1],
-        Transform::from_xyz(0.0, 2.0, 0.0).with_rotation(flat),
-    ));
-    if landing {
-        commands.spawn(part(
-            &art.column,
-            &handles[2],
-            Transform::from_xyz(0.0, COLUMN / 2.0, 0.0),
-        ));
-    }
-    parent
-}
+/// The control points Dota gives a teleport's effects: the hero, where it lands, and the
+/// seat's colour (red, green and blue, 0 to 1).
+const HERO: usize = 0;
+const DESTINATION: usize = 1;
+const COLOR: usize = 2;

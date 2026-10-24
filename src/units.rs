@@ -596,6 +596,13 @@ pub fn missile_effect(model: ProjectileModel, team: Team, manifest: &Manifest) -
     Some(format!("{}.attack", model.strip_suffix(".model")?))
 }
 
+/// The logical name of hero `hero`'s effect `what` (`hero.<name>.<what>`, as Dota names its
+/// files after the hero's).
+pub fn hero_effect(hero: bota_proto::HeroId, what: &str, manifest: &Manifest) -> Option<String> {
+    let model = hero_model(hero.0, manifest)?;
+    Some(format!("{}.{what}", model.strip_suffix(".model")?))
+}
+
 /// Every model a match can need: each hero's and each lane unit's of both
 /// sides. One missing from the cache is drawn as a stand-in, and said so.
 fn required_models(manifest: &Manifest) -> Vec<String> {

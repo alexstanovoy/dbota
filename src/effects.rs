@@ -1,5 +1,6 @@
-//! What flies and bursts: attack missiles as Dota's particle effects (each unit's
-//! `ProjectileModel`), the souls of a requiem, and the ground a raze burns.
+//! What flies and bursts, as Dota's particle effects: attack missiles (each unit's
+//! `ProjectileModel`), a Blood Grenade's flight and burst, Shadow Fiend's abilities, a hero's
+//! level up and Shadow Fiend's death.
 
 use std::collections::{HashMap, HashSet};
 
@@ -21,8 +22,6 @@ use crate::warmup::Warmup;
 
 /// How high missiles fly over the ground, in world units.
 const FLIGHT: f32 = 110.0;
-/// Seconds a raze's burst lasts.
-const BURST: f32 = 0.9;
 
 /// A missile on the map, by its wire handle.
 #[derive(Component)]
@@ -34,6 +33,8 @@ enum Body {
     Effect(crate::particles::Handle),
     /// A line of a requiem: its effect flies on its own, along the velocity it started with.
     Line(crate::particles::Handle),
+    /// A Blood Grenade: its effect flies where the grenade does and bursts as its end.
+    Grenade(crate::particles::Handle),
     Bolt(Entity),
 }
 
@@ -42,6 +43,9 @@ const RAZE: &str = "hero.nevermore.raze";
 const REQUIEM: &str = "hero.nevermore.requiem";
 const REQUIEM_LINE: &str = "hero.nevermore.requiem_line";
 const NECRO_SOUL: &str = "hero.nevermore.necro_soul";
+/// A Blood Grenade's flight and burst, and a hero's level up.
+const GRENADE: &str = "item.blood_grenade";
+const LEVEL_UP: &str = "hero.levelup";
 /// Seconds a requiem line's effect may fly: past what a line flies; the line's end ends it.
 const LINE_SECONDS: f32 = 4.0;
 
@@ -51,34 +55,15 @@ const LAUNCH: usize = 0;
 const TARGET: usize = 1;
 const SPEED: usize = 2;
 
-/// A burst on the ground, aging to its end.
-#[derive(Component)]
-struct Burst {
-    age: f32,
-    material: Handle<StandardMaterial>,
-    /// Its full size against a raze's.
-    size: f32,
-}
-
-/// How wide a raze burns, in world units.
-const RAZE_RADIUS: f32 = bota_core::rules::RAZE_RADIUS as f32;
-/// How wide the ring of a raze's burst is.
-const RAZE_RING_WIDTH: f32 = 30.0;
-/// A grenade's burst against a raze's.
-const GRENADE_SIZE: f32 = bota_core::rules::GRENADE_RADIUS as f32 / RAZE_RADIUS;
-
 /// The shared meshes and materials of the effects.
 #[derive(Resource)]
 struct Art {
     bolt: Handle<Mesh>,
     soul: Handle<Mesh>,
-    ring: Handle<Mesh>,
-    disc: Handle<Mesh>,
     radiant: Handle<StandardMaterial>,
     dire: Handle<StandardMaterial>,
     soul_mat: Handle<StandardMaterial>,
     grenade: Handle<StandardMaterial>,
-    cracks: Option<Handle<Image>>,
 }
 
 /// The missiles drawn, by wire handle, and the raze marks already burst.
@@ -89,15 +74,16 @@ struct Flying {
     burst: HashSet<EntityId>,
     /// The souls flying to the heroes that took them, by the hero.
     souls: Vec<(crate::particles::Handle, EntityId)>,
+    /// The effects that follow a unit for their life (a level up), by the unit.
+    following: Vec<(crate::particles::Handle, EntityId)>,
+    /// How many grenades whose flight was drawn burst this frame, as their effects' ends.
+    burst_grenades: usize,
 }
 
 pub fn plugin(app: &mut App) {
     app.init_resource::<Flying>()
         .add_systems(Startup, make_art)
-        .add_systems(
-            Update,
-            (missiles, bursts, casts, souls, age_bursts, level_ups),
-        );
+        .add_systems(Update, (missiles, bursts, casts, souls, level_ups, deaths));
 }
 
 fn glow(color: Color) -> StandardMaterial {
@@ -113,37 +99,27 @@ fn make_art(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
-    manifest: Res<Manifest>,
-    server: Res<AssetServer>,
 ) {
     let art = Art {
         bolt: meshes.add(Sphere::new(14.0)),
         soul: meshes.add(Cuboid::new(16.0, 16.0, 120.0)),
-        ring: meshes.add(Annulus::new(RAZE_RADIUS - RAZE_RING_WIDTH, RAZE_RADIUS)),
-        disc: meshes.add(Circle::new(RAZE_RADIUS)),
         radiant: materials.add(glow(Color::srgb(0.6, 1.0, 0.5))),
         dire: materials.add(glow(Color::srgb(1.0, 0.45, 0.25))),
         soul_mat: materials.add(glow(Color::srgb(0.75, 0.3, 1.0))),
         grenade: materials.add(glow(Color::srgb(0.75, 0.04, 0.06))),
-        cracks: manifest
-            .file("particle.ground_cracks")
-            .map(|p| server.load(p)),
     };
-    // Every kind of missile and burst, drawn while loading.
-    let (color, glow) = (Color::WHITE, LinearRgba::WHITE);
+    // Every kind of plain body, drawn while loading.
     let pieces = [
-        (&art.bolt, art.radiant.clone()),
-        (&art.bolt, art.dire.clone()),
-        (&art.bolt, art.grenade.clone()),
-        (&art.soul, art.soul_mat.clone()),
-        (&art.disc, materials.add(scorch(&art, color, glow))),
-        (&art.ring, materials.add(flash(color))),
+        (&art.bolt, &art.radiant),
+        (&art.bolt, &art.dire),
+        (&art.bolt, &art.grenade),
+        (&art.soul, &art.soul_mat),
     ];
     for (mesh, material) in pieces {
         commands.spawn((
             Warmup,
             Mesh3d(mesh.clone()),
-            MeshMaterial3d(material),
+            MeshMaterial3d(material.clone()),
             NotShadowCaster,
             NotShadowReceiver,
         ));
@@ -216,14 +192,28 @@ impl Shooters<'_, '_> {
         playing: &mut Playing,
         handle: crate::particles::Handle,
     ) {
-        let Some(instance) = playing.get_mut(handle) else {
-            return;
-        };
-        instance.set_control_point(TARGET, from_world(self.aim(f, at)), Vec3::ZERO, false);
-        let speed = dir.length() * bota_core::rules::TICKS_PER_SECOND as f32;
-        if speed > 0.0 {
-            instance.set_control_point(SPEED, Vec3::new(speed, 0.0, 0.0), Vec3::ZERO, false);
-        }
+        steer(self.aim(f, at), dir, playing, handle);
+    }
+
+    /// Starts a Blood Grenade's effect from its thrower's hand (where it is, `at`, when the
+    /// thrower is not seen) towards where it is.
+    fn start_grenade(
+        &self,
+        f: &bota_client_core::Flight,
+        at: Vec3,
+        library: Option<&Library>,
+        playing: &mut Playing,
+    ) -> Option<crate::particles::Handle> {
+        let effect = library?.effect(GRENADE)?;
+        let handle = playing.start(
+            effect,
+            f.missile.id.idx ^ f.missile.id.generation.rotate_left(16),
+        )?;
+        let instance = playing.get_mut(handle)?;
+        let launch = f.missile.source.and_then(|s| self.launch(s)).unwrap_or(at);
+        instance.set_control_point(LAUNCH, from_world(launch), Vec3::ZERO, true);
+        instance.set_control_point(TARGET, from_world(at), Vec3::ZERO, true);
+        Some(handle)
     }
 
     /// Where missile `f` hits: its target's hit location, else where it is now.
@@ -257,7 +247,6 @@ fn missiles(
     ground: Res<Ground>,
     mut flying: ResMut<Flying>,
     mut transforms: Query<&mut Transform, With<Missile>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
     shooters: Shooters,
     library: Option<Res<Library>>,
     mut playing: ResMut<Playing>,
@@ -295,8 +284,13 @@ fn missiles(
             None => {
                 let line = (flight == Flight::Soul)
                     .then(|| start_line(f, at, dir, &ground, library.as_deref(), &mut playing))
-                    .flatten();
-                let body = match line.map(Body::Line).or_else(|| {
+                    .flatten()
+                    .map(Body::Line);
+                let grenade = (flight == Flight::Grenade)
+                    .then(|| shooters.start_grenade(f, at, library.as_deref(), &mut playing))
+                    .flatten()
+                    .map(Body::Grenade);
+                let body = match line.or(grenade).or_else(|| {
                     shooters
                         .start(f, at, library.as_deref(), &mut playing)
                         .map(Body::Effect)
@@ -310,6 +304,8 @@ fn missiles(
         };
         match body {
             Body::Effect(handle) => shooters.steer(f, at, dir, &mut playing, handle),
+            // Its effect is pulled to where it will be a tick on.
+            Body::Grenade(handle) => steer(at + dir, dir, &mut playing, handle),
             Body::Line(_) => {}
             Body::Bolt(e) => {
                 if let Ok(mut t) = transforms.get_mut(e) {
@@ -320,7 +316,13 @@ fn missiles(
         }
     }
     land(&mut flying, &mut alive, &mut commands, &mut playing);
-    grenades(&mut commands, &art, &mut materials, &ground, &core.told);
+    grenades(
+        &mut flying,
+        &ground,
+        library.as_deref(),
+        &mut playing,
+        &core.told,
+    );
 }
 
 /// Ends what draws the missiles that are gone: a body goes, an effect plays its end cap.
@@ -334,12 +336,14 @@ fn land(
     // through all the others every frame.
     alive.sort_unstable();
     let is_alive = |id: &EntityId| alive.binary_search(id).is_ok();
+    let mut burst = 0;
     flying.missiles.retain(|id, body| {
         let keep = is_alive(id);
         if !keep {
             match *body {
                 Body::Bolt(e) => commands.entity(e).despawn(),
-                Body::Effect(handle) | Body::Line(handle) => {
+                Body::Effect(handle) | Body::Line(handle) | Body::Grenade(handle) => {
+                    burst += usize::from(matches!(body, Body::Grenade(_)));
                     if let Some(instance) = playing.get_mut(handle) {
                         instance.end();
                     }
@@ -348,38 +352,48 @@ fn land(
         }
         keep
     });
+    flying.burst_grenades = burst;
 }
 
 /// Bursts each grenade where the server says it landed, which a side is told whenever it sees
-/// the spot, whether or not it saw the flight.
+/// the spot, whether or not it saw the flight: one whose flight was drawn burst as its effect's
+/// end; the others play the effect there, ended at once, its burst alone.
 fn grenades(
-    commands: &mut Commands,
-    art: &Art,
-    materials: &mut Assets<StandardMaterial>,
+    flying: &mut Flying,
     ground: &Ground,
+    library: Option<&Library>,
+    playing: &mut Playing,
     told: &[EventKind],
 ) {
-    // A grenade bursts where the server says it landed, which a side is
-    // told whenever it sees the spot, whether or not it saw the flight.
     let landed = told.iter().filter_map(|event| match event {
         EventKind::Landed { inflictor, at, .. } if art_by(*inflictor).flight == Flight::Grenade => {
             Some((at.x.to_f32(), at.y.to_f32()))
         }
         _ => None,
     });
-    for at in landed {
-        burst(
-            commands,
-            art,
-            materials,
-            ground,
-            at,
-            GRENADE_SIZE,
-            (
-                Color::srgba(0.55, 0.02, 0.04, 0.9),
-                LinearRgba::rgb(1.2, 0.05, 0.08),
-            ),
-        );
+    for (n, (x, y)) in landed.enumerate() {
+        if n < flying.burst_grenades {
+            continue;
+        }
+        let at = Vec3::new(x, ground.at(x, y), -y);
+        if let Some(handle) = play_once(library, playing, GRENADE, at, n as u32)
+            && let Some(instance) = playing.get_mut(handle)
+        {
+            instance.set_control_point(TARGET, from_world(at), Vec3::ZERO, true);
+            instance.end();
+        }
+    }
+}
+
+/// Pulls a flying effect to `to` at the speed of a tick's move `dir`.
+fn steer(to: Vec3, dir: Vec3, playing: &mut Playing, handle: crate::particles::Handle) {
+    let Some(instance) = playing.get_mut(handle) else {
+        return;
+    };
+    instance.set_control_point(TARGET, from_world(to), Vec3::ZERO, false);
+    let speed = dir.length() * bota_core::rules::TICKS_PER_SECOND as f32;
+    if speed > 0.0 {
+        instance.set_control_point(SPEED, Vec3::new(speed, 0.0, 0.0), Vec3::ZERO, false);
     }
 }
 
@@ -580,127 +594,81 @@ fn bursts(
     }
 }
 
-/// Scorches the ground at a spot and rings it with a flash, `size` times a
-/// raze's, in a colour.
-fn burst(
-    commands: &mut Commands,
-    art: &Art,
-    materials: &mut Assets<StandardMaterial>,
-    ground: &Ground,
-    (x, y): (f32, f32),
-    size: f32,
-    (color, glow): (Color, LinearRgba),
-) {
-    let flat = Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2);
-    let base = Vec3::new(x, ground.at(x, y) + 6.0, -y);
-    let scorch = materials.add(scorch(art, color, glow));
-    let flash = materials.add(flash(color));
-    commands.spawn((
-        Burst {
-            age: 0.0,
-            material: scorch.clone(),
-            size,
-        },
-        Mesh3d(art.disc.clone()),
-        MeshMaterial3d(scorch),
-        Transform::from_translation(base).with_rotation(flat),
-        NotShadowCaster,
-        NotShadowReceiver,
-    ));
-    commands.spawn((
-        Burst {
-            age: 0.0,
-            material: flash.clone(),
-            size,
-        },
-        Mesh3d(art.ring.clone()),
-        MeshMaterial3d(flash),
-        Transform::from_translation(base + Vec3::Y * 4.0).with_rotation(flat),
-        NotShadowCaster,
-        NotShadowReceiver,
-    ));
-}
-
-/// The scorched ground of a burst: the cracks in a colour, glowing.
-fn scorch(art: &Art, color: Color, glow: LinearRgba) -> StandardMaterial {
-    StandardMaterial {
-        base_color: color,
-        base_color_texture: art.cracks.clone(),
-        emissive: glow,
-        alpha_mode: AlphaMode::Blend,
-        unlit: true,
-        ..default()
-    }
-}
-
-/// The flash that rings a burst.
-fn flash(color: Color) -> StandardMaterial {
-    StandardMaterial {
-        base_color: color.with_alpha(0.55),
-        alpha_mode: AlphaMode::Add,
-        unlit: true,
-        ..default()
-    }
-}
-
-/// A golden ring at a hero's feet when it gains a level.
+/// Dota's level up about a hero whenever it gains a level, following it while it plays.
 fn level_ups(
-    mut commands: Commands,
     session: NonSend<Session>,
-    art: Option<Res<Art>>,
     ground: Res<Ground>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
-    mut levels: Local<HashMap<EntityId, u8>>,
+    library: Option<Res<Library>>,
+    mut playing: ResMut<Playing>,
+    mut flying: ResMut<Flying>,
 ) {
-    let (core, Some(art)) = (&session.0, art) else {
-        return;
-    };
+    let core = &session.0;
     let Some(view) = core.view() else {
         return;
     };
-    levels.retain(|id, _| view.unit(*id).is_some());
-    for u in view
-        .units
-        .iter()
-        .filter(|u| u.kind == bota_proto::UnitKind::Hero)
-    {
-        let before = levels.insert(u.id, u.level);
-        if before.is_some_and(|b| u.level > b) {
-            burst(
-                &mut commands,
-                &art,
-                &mut materials,
-                &ground,
-                (u.pos.x.to_f32(), u.pos.y.to_f32()),
-                0.5,
-                (
-                    Color::srgba(1.0, 0.8, 0.3, 0.9),
-                    LinearRgba::rgb(2.0, 1.5, 0.4),
-                ),
-            );
+    let on_ground = |unit: &bota_proto::UnitView| {
+        let (x, y) = (unit.pos.x.to_f32(), unit.pos.y.to_f32());
+        Vec3::new(x, ground.at(x, y), -y)
+    };
+    for event in &core.told {
+        let EventKind::LevelUp { unit, level } = event else {
+            continue;
+        };
+        let Some(hero) = view.unit(*unit) else {
+            continue;
+        };
+        let at = on_ground(hero);
+        let seed = unit.idx ^ u32::from(*level) << 24;
+        if let Some(handle) = play_once(library.as_deref(), &mut playing, LEVEL_UP, at, seed) {
+            flying.following.push((handle, *unit));
         }
     }
+    // Each follows its hero while it plays and the hero is seen.
+    flying.following.retain(|(handle, unit)| {
+        let Some(instance) = playing.get_mut(*handle) else {
+            return false;
+        };
+        if let Some(hero) = view.unit(*unit) {
+            instance.set_control_point(0, from_world(on_ground(hero)), Vec3::ZERO, false);
+        }
+        true
+    });
 }
 
-/// Ages every burst: the ring grows and every part fades away.
-fn age_bursts(
-    mut commands: Commands,
-    time: Res<Time>,
-    mut bursts: Query<(Entity, &mut Burst, &mut Transform)>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
+/// A hero's death effect where it falls, when Dota's hero has one (`<hero>.death`, Shadow
+/// Fiend's `nevermore_death`).
+fn deaths(
+    session: NonSend<Session>,
+    manifest: Res<Manifest>,
+    ground: Res<Ground>,
+    library: Option<Res<Library>>,
+    mut playing: ResMut<Playing>,
 ) {
-    for (e, mut b, mut t) in &mut bursts {
-        b.age += time.delta_secs();
-        let k = (b.age / BURST).min(1.0);
-        if k >= 1.0 {
-            materials.remove(&b.material);
-            commands.entity(e).despawn();
+    let core = &session.0;
+    for event in &core.told {
+        let EventKind::Died { unit, .. } = event else {
             continue;
-        }
-        t.scale = Vec3::splat(b.size * (0.6 + 0.4 * (1.0 - (1.0 - k) * (1.0 - k))));
-        if let Some(mut m) = materials.get_mut(&b.material) {
-            let a = (1.0 - k) * (1.0 - k);
-            m.base_color.set_alpha(a);
+        };
+        let fallen = core
+            .view()
+            .and_then(|v| v.unit(*unit))
+            .or_else(|| core.prev_view().and_then(|v| v.unit(*unit)));
+        let Some(hero) = fallen.filter(|u| u.kind == bota_proto::UnitKind::Hero) else {
+            continue;
+        };
+        let Some(name) = hero
+            .hero
+            .and_then(|h| crate::units::hero_effect(h, "death", &manifest))
+        else {
+            continue;
+        };
+        let (x, y) = (hero.pos.x.to_f32(), hero.pos.y.to_f32());
+        let at = Vec3::new(x, ground.at(x, y), -y);
+        if let Some(handle) = play_once(library.as_deref(), &mut playing, &name, at, unit.idx)
+            && let Some(instance) = playing.get_mut(handle)
+        {
+            // Dota's places its parts about control point 1, the hero.
+            instance.set_control_point(1, from_world(at), Vec3::ZERO, true);
         }
     }
 }
