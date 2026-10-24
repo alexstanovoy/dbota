@@ -78,9 +78,9 @@ and are kept as `.mp3` (the stdlib cannot transcode them); playing them needs Be
   `cast1_shadowraze_a/b/c` (`ACT_DOTA_RAZE_1/2/3`). Pudge: `cast1` Meat Hook throw, `hook_end` while
   the hook returns, `cast2` Rot, `dismember` then the looping `dismember_channel`. Siege creeps have
   only idle/run/attack; they die by swapping in `creep.<side>.siege.destruction` (play `death` once).
-  Tower "attack" clips are single-frame poses. A clip lasts until its last keyframe: a run of equal
-  values keeps only its ends, so a clip that ends holding a pose stops where the pose is reached
-  (Pudge's hook throw has 87 frames at 30 fps but lasts 0.9 s). Root motion is baked into the root
+  A clip lasts to its last frame, `(frames - 1) / fps`, as Dota plays it: a run of equal values
+  keeps only its ends, the last frame's among them, so a clip that ends holding a pose (Pudge's
+  hook throw, 87 frames at 30 fps, 2.867 s; a neutral's death) holds it to the end. Root motion is baked into the root
   bones; the client holds roots in place across the ground.
 - **Neutral creeps.** One `model` block per model (`neutral.<name>.model`) and one `unit <npc_units.txt name>
   <model> model_scale=<ModelScale>` line per unit that wears it: the client finds a neutral's line by the

@@ -190,16 +190,17 @@ fn gltf_summary(path: &Path) -> Vec<String> {
     lines
 }
 
-/// Whether two summary lines are one clip, ours at most two frames shorter: the exporter keys
-/// a few frames more where its matrix rounding breaks a run of equal values (the values are
-/// compared in `models.rs`).
+/// Whether two summary lines are one clip, ours never the shorter: ours lasts to the clip's
+/// last frame as Dota plays it, where the exporter stops at its last key, so a pose held to the
+/// end makes ours the longer (`golden.rs` checks every length against the install's frames,
+/// `models.rs` the values).
 fn same_clip(ours: &str, theirs: &str) -> bool {
     let clip = |line: &str| {
         let (name, end) = line.strip_prefix("animation ")?.rsplit_once(' ')?;
         Some((name.to_owned(), end.parse::<f64>().ok()?))
     };
     match (clip(ours), clip(theirs)) {
-        (Some((a, x)), Some((b, y))) => a == b && x <= y + 1e-3 && y - x < 0.07,
+        (Some((a, x)), Some((b, y))) => a == b && x + 1e-3 >= y,
         _ => false,
     }
 }

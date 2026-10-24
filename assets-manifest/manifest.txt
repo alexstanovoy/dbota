@@ -75,7 +75,7 @@ clip hero.pudge.model idle pudge_idle_anim 2.000
 clip hero.pudge.model run pudge_walkN_anim 1.000
 clip hero.pudge.model attack pudge_attack1_anim 1.333 point=0.5
 clip hero.pudge.model attack2 pudge_attack2_anim 1.333 point=0.5
-clip hero.pudge.model cast1 pudge_meathook_start_anim 0.900 point=0.3
+clip hero.pudge.model cast1 pudge_meathook_start_anim 2.867 point=0.3
 clip hero.pudge.model hook_end pudge_meathook_end 0.600
 clip hero.pudge.model cast2 pudge_rot 1.000 point=0
 clip hero.pudge.model dismember pudge_dismember_start 0.300 point=0.3
@@ -165,10 +165,10 @@ clip creep.dire.siege.destruction death deathsim1 6.633
 # Attack rate 0.9, attack point 0.6 s. Their attack poses are single frames (duration 0).
 model tower.radiant.model models/props_structures/radiant_tower002.vmdl_c models/tower/radiant/radiant_tower.glb anims=radiant_tower001_idle,radiant_tower002_attack
 clip tower.radiant.model idle radiant_tower001_idle 3.000
-clip tower.radiant.model attack radiant_tower002_attack 0.000 point=0.6
+clip tower.radiant.model attack radiant_tower002_attack 0.967 point=0.6
 model tower.dire.model models/props_structures/dire_tower002.vmdl_c models/tower/dire/dire_tower.glb anims=dire_tower002_idle_showcase,dire_tower002_attack
-clip tower.dire.model idle dire_tower002_idle_showcase 0.000
-clip tower.dire.model attack dire_tower002_attack 0.000 point=0.6
+clip tower.dire.model idle dire_tower002_idle_showcase 0.500
+clip tower.dire.model attack dire_tower002_attack 0.967 point=0.6
 
 # --- Trees the default map uses around mid (static; per-tree placement in map/mid/trees.txt).
 # Two meshes each: <tree>_model (standing tree) and the stump (show it once the tree is cut).
@@ -706,7 +706,7 @@ clip neutral.n_creep_beast.model idle idle 1.267
 clip neutral.n_creep_beast.model run run 0.800
 clip neutral.n_creep_beast.model attack attack 0.667 point=0.3
 clip neutral.n_creep_beast.model attack2 attack_alt 0.667 point=0.3
-clip neutral.n_creep_beast.model death die 1.133
+clip neutral.n_creep_beast.model death die 1.167
 clip neutral.n_creep_beast.model stun stun 1.600
 unit npc_dota_neutral_polar_furbolg_champion neutral.n_creep_beast.model model_scale=.80
 model neutral.n_creep_black_dragon.model models/creeps/neutral_creeps/n_creep_black_dragon/n_creep_black_dragon.vmdl_c models/neutral/n_creep_black_dragon/n_creep_black_dragon.glb anims=idle,run,attack,death,stun,cast1_fireball
@@ -751,7 +751,7 @@ model neutral.n_creep_forest_troll_high_priest.model models/creeps/neutral_creep
 clip neutral.n_creep_forest_troll_high_priest.model idle idle 2.000
 clip neutral.n_creep_forest_troll_high_priest.model run run 0.667
 clip neutral.n_creep_forest_troll_high_priest.model attack attack 0.700 point=0.3
-clip neutral.n_creep_forest_troll_high_priest.model death death 1.833
+clip neutral.n_creep_forest_troll_high_priest.model death death 1.967
 clip neutral.n_creep_forest_troll_high_priest.model stun stun 2.000
 clip neutral.n_creep_forest_troll_high_priest.model cast1 cast_heal 1.200 point=0.3
 unit npc_dota_neutral_forest_troll_high_priest neutral.n_creep_forest_troll_high_priest.model model_scale=.90
@@ -768,7 +768,7 @@ model neutral.n_creep_froglet_mage.model models/creeps/neutral_creeps/n_creep_fr
 clip neutral.n_creep_froglet_mage.model idle froglet_idle 1.750
 clip neutral.n_creep_froglet_mage.model run froglet_run_alt 0.633
 clip neutral.n_creep_froglet_mage.model attack froglet_attack 1.083 point=0.3
-clip neutral.n_creep_froglet_mage.model death froglet_death 1.042
+clip neutral.n_creep_froglet_mage.model death froglet_death 1.125
 clip neutral.n_creep_froglet_mage.model stun froglet_stun 2.100
 clip neutral.n_creep_froglet_mage.model cast1 froglet_cast 1.125 point=0.3
 unit npc_dota_neutral_grown_frog_mage neutral.n_creep_froglet_mage.model model_scale=1.0
@@ -776,8 +776,8 @@ model neutral.n_creep_frostbitten_swollen01.model models/creeps/ice_biome/frostb
 clip neutral.n_creep_frostbitten_swollen01.model idle idle 1.667
 clip neutral.n_creep_frostbitten_swollen01.model run run 1.000
 clip neutral.n_creep_frostbitten_swollen01.model attack attack 0.733 point=0.3
-clip neutral.n_creep_frostbitten_swollen01.model attack2 attack3 0.733 point=0.3
-clip neutral.n_creep_frostbitten_swollen01.model death death 1.800
+clip neutral.n_creep_frostbitten_swollen01.model attack2 attack3 0.900 point=0.3
+clip neutral.n_creep_frostbitten_swollen01.model death death 2.467
 clip neutral.n_creep_frostbitten_swollen01.model stun stun 1.667
 clip neutral.n_creep_frostbitten_swollen01.model cast1 siltbreaker_icicle_cast 1.333 point=0.3
 unit npc_dota_neutral_frostbitten_golem neutral.n_creep_frostbitten_swollen01.model model_scale=1
@@ -785,7 +785,7 @@ model neutral.n_creep_furbolg_disrupter.model models/creeps/neutral_creeps/n_cre
 clip neutral.n_creep_furbolg_disrupter.model idle n_creep_furbolg_disrupter_idle 2.667
 clip neutral.n_creep_furbolg_disrupter.model run n_creep_furbolg_disrupter_run 0.800
 clip neutral.n_creep_furbolg_disrupter.model attack n_creep_furbolg_disrupter_attack 0.667 point=0.3
-clip neutral.n_creep_furbolg_disrupter.model death n_creep_furbolg_disrupter_die 1.300
+clip neutral.n_creep_furbolg_disrupter.model death n_creep_furbolg_disrupter_die 1.333
 clip neutral.n_creep_furbolg_disrupter.model stun disrupter_stun 1.033
 clip neutral.n_creep_furbolg_disrupter.model cast1 n_creep_furbolg_disrupter_clap 0.933 point=0.3
 unit npc_dota_neutral_polar_furbolg_ursa_warrior neutral.n_creep_furbolg_disrupter.model model_scale=.95
@@ -815,7 +815,7 @@ clip neutral.n_creep_golem_b.model idle idle 2.500
 clip neutral.n_creep_golem_b.model run run 0.733
 clip neutral.n_creep_golem_b.model attack attack 0.667 point=0.3
 clip neutral.n_creep_golem_b.model attack2 attackAlt 0.667 point=0.3
-clip neutral.n_creep_golem_b.model death die 1.433
+clip neutral.n_creep_golem_b.model death die 1.500
 clip neutral.n_creep_golem_b.model stun stun 1.667
 clip neutral.n_creep_golem_b.model cast1 cast1_hurl_boulder 0.800 point=0.3
 unit npc_dota_neutral_mud_golem neutral.n_creep_golem_b.model model_scale=1.1
@@ -861,7 +861,7 @@ model neutral.n_creep_ogre_lrg.model models/creeps/neutral_creeps/n_creep_ogre_l
 clip neutral.n_creep_ogre_lrg.model idle idle 2.167
 clip neutral.n_creep_ogre_lrg.model run run 1.000
 clip neutral.n_creep_ogre_lrg.model attack attack 0.667 point=0.3
-clip neutral.n_creep_ogre_lrg.model death death 2.300
+clip neutral.n_creep_ogre_lrg.model death death 2.333
 clip neutral.n_creep_ogre_lrg.model stun stun 1.667
 clip neutral.n_creep_ogre_lrg.model cast1 cast 1.067 point=0.3
 unit npc_dota_neutral_ogre_magi neutral.n_creep_ogre_lrg.model model_scale=.90
@@ -877,7 +877,7 @@ model neutral.n_creep_satyr_a.model models/creeps/neutral_creeps/n_creep_satyr_a
 clip neutral.n_creep_satyr_a.model idle satyr_a_idle 1.300
 clip neutral.n_creep_satyr_a.model run satyr_a_run 0.733
 clip neutral.n_creep_satyr_a.model attack satyr_a_attack 0.667 point=0.3
-clip neutral.n_creep_satyr_a.model death satyr_a_death 0.933
+clip neutral.n_creep_satyr_a.model death satyr_a_death 0.967
 clip neutral.n_creep_satyr_a.model stun satyr_a_stun 1.350
 clip neutral.n_creep_satyr_a.model cast1 cast 1.300 point=0.3
 unit npc_dota_neutral_satyr_hellcaller neutral.n_creep_satyr_a.model model_scale=.95
@@ -898,7 +898,7 @@ clip neutral.n_creep_satyr_c.model stun satyr_c_stun 1.300
 clip neutral.n_creep_satyr_c.model cast1 cast 1.133 point=0.3
 unit npc_dota_neutral_satyr_soulstealer neutral.n_creep_satyr_c.model model_scale=.8
 model neutral.n_creep_satyr_spawn_a.model models/creeps/neutral_creeps/n_creep_satyr_spawn_a/n_creep_satyr_spawn_a.vmdl_c models/neutral/n_creep_satyr_spawn_a/n_creep_satyr_spawn_a.glb anims=idle,run,attack,attack2,death,stun,cast_root
-clip neutral.n_creep_satyr_spawn_a.model idle idle 1.967
+clip neutral.n_creep_satyr_spawn_a.model idle idle 2.000
 clip neutral.n_creep_satyr_spawn_a.model run run 1.000
 clip neutral.n_creep_satyr_spawn_a.model attack attack 1.500 point=0.3
 clip neutral.n_creep_satyr_spawn_a.model attack2 attack2 1.733 point=0.3
@@ -907,7 +907,7 @@ clip neutral.n_creep_satyr_spawn_a.model stun stun 1.500
 clip neutral.n_creep_satyr_spawn_a.model cast1 cast_root 1.667 point=0.3
 unit npc_dota_neutral_prowler_shaman neutral.n_creep_satyr_spawn_a.model model_scale=1.15
 model neutral.n_creep_satyr_spawn_b.model models/creeps/neutral_creeps/n_creep_satyr_spawn_a/n_creep_satyr_spawn_b.vmdl_c models/neutral/n_creep_satyr_spawn_b/n_creep_satyr_spawn_b.glb anims=idle,run,attack,attack_2,death,stun
-clip neutral.n_creep_satyr_spawn_b.model idle idle 1.967
+clip neutral.n_creep_satyr_spawn_b.model idle idle 2.000
 clip neutral.n_creep_satyr_spawn_b.model run run 1.000
 clip neutral.n_creep_satyr_spawn_b.model attack attack 1.000 point=0.3
 clip neutral.n_creep_satyr_spawn_b.model attack2 attack_2 1.000 point=0.3
@@ -972,7 +972,7 @@ model neutral.n_creep_troll_dark_b.model models/creeps/neutral_creeps/n_creep_tr
 clip neutral.n_creep_troll_dark_b.model idle idle 1.467
 clip neutral.n_creep_troll_dark_b.model run run 0.733
 clip neutral.n_creep_troll_dark_b.model attack attack 0.667 point=0.3
-clip neutral.n_creep_troll_dark_b.model death death 1.433
+clip neutral.n_creep_troll_dark_b.model death death 1.467
 clip neutral.n_creep_troll_dark_b.model stun stun 1.467
 clip neutral.n_creep_troll_dark_b.model cast1 raise_dead 1.000 point=0.3
 unit npc_dota_neutral_dark_troll_warlord neutral.n_creep_troll_dark_b.model model_scale=.90

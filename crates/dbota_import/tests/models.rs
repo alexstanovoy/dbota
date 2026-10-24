@@ -592,17 +592,18 @@ fn compare_clip(
     let (channels, exported) = ours;
     let mut wrong = Vec::new();
     let said = exported.map_or(-1.0, |c| f64::from(c.duration));
-    // The exporter may key a few frames more where its matrix rounding breaks a run of equal
-    // values; the values sampled there (below) must still agree. It never keys fewer.
+    // Ours lasts to the clip's last frame, as Dota plays it; the exporter's stops at its last
+    // key, so a pose held to the end makes ours the longer, never the shorter. The values
+    // sampled (below) must still agree, the exporter's held past its end.
     let longer = |a: f64, b: f64| a - b > 1e-4;
-    if longer(end(channels), end(theirs)) || (said - end(channels)).abs() > 1e-4 {
+    if longer(end(theirs), end(channels)) || (said - end(channels)).abs() > 1e-4 {
         wrong.push(format!(
             "lasts {} ({said} said) vs {}",
             end(channels),
             end(theirs)
         ));
     }
-    if listed.is_some_and(|d| end(channels) - d > 6e-4) {
+    if listed.is_some_and(|d| (end(channels) - d).abs() > 6e-4) {
         wrong.push(format!("lasts {} vs {listed:?} listed", end(channels)));
     }
     wrong.extend(compare_channels(channels, theirs));

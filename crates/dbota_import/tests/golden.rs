@@ -421,9 +421,8 @@ fn models_have_the_meshes_and_clips_the_manifest_and_export_name() {
     }
 }
 
-/// A clip's animation exists, and the manifest's duration is at most its `(frames - 1) / fps`:
-/// a clip that ends holding a pose stops where the pose is reached (Pudge's hook throw, the
-/// neutrals' deaths), and `models.rs` checks the exact lengths against the exported clips.
+/// A clip's animation exists, and the manifest's duration is its `(frames - 1) / fps`, held
+/// last frames and all, as Dota plays it; `models.rs` checks the exported clips against it.
 fn check_clip(clip: &Line, anims: &[(String, f64, f64)]) {
     let gltf_name = clip.out.as_str();
     let seconds: f64 = clip.rest[0].parse().unwrap();
@@ -435,8 +434,8 @@ fn check_clip(clip: &Line, anims: &[(String, f64, f64)]) {
         found.unwrap_or_else(|| panic!("{}: no animation {gltf_name}", clip.name));
     let duration = (frames - 1.0) / fps;
     assert!(
-        seconds <= duration * 1.01,
-        "{} {gltf_name}: {duration} s, manifest {seconds} s",
+        (seconds - duration).abs() < 0.0015,
+        "{} {gltf_name}: {duration:.3} s, manifest {seconds} s",
         clip.name
     );
 }
