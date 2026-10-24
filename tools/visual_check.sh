@@ -5,13 +5,16 @@
 # in their side's colour, round buff icons, the river one surface without
 # seams. Takes a bota replay (.brp, first
 # argument or VISUAL_REPLAY) of a Map 2 match whose heroes are on the map at
-# VISUAL_TICK, the asset cache, and a display (DISPLAY or WAYLAND_DISPLAY).
-# Exits non-zero when a check fails.
+# VISUAL_TICK and the asset cache. Every window it opens is in a private
+# headless compositor on the GPU (tools/headless.sh): none shows on the
+# desktop; DBOTA_SHOW=1 shows them. Exits non-zero when a check fails.
 # The fog checks compare each ground cell on screen drawn with the fog and
 # without it (a second shot of the same held frame), so they hold at any
 # VISUAL_TICK (4000, day, is the default; 12000 is night).
 set -euo pipefail
 here=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)
+# The whole check in one headless compositor: the clients it starts and the tests' share it.
+[ -n "${DBOTA_HEADLESS:-}" ] || [ "${DBOTA_SHOW:-0}" = 1 ] || exec "$here/tools/headless.sh" "$0" "$@"
 replay=${1:-${VISUAL_REPLAY:-}}
 out=${VISUAL_DIR:-$here/temp/visual}
 tick=${VISUAL_TICK:-4000}
@@ -102,7 +105,8 @@ fi
 # The way out: Escape on the menu asks to quit and OK ends the client with exit code 0; Escape in
 # a live game opens the dashboard, DISCONNECT leaves for the menu and RECONNECT takes the seat
 # again; a seat that LEAVES GAME ends the match as its loss and the other seat wins; a replay is left for the
-# menu; Demo Hero plays a hero with every cheat. One test at a time: each opens a window of its own.
+# menu; Demo Hero plays a hero with every cheat. One test at a time: each opens a window of its own
+# (in this check's compositor).
 if VISUAL_REPLAY="$(realpath "$replay")" DBOTA_QUIT_SHOTS="$out/quit" cargo test --release --quiet \
     --manifest-path "$here/Cargo.toml" --test menu_quit -- --ignored --test-threads 1 \
     > "$out/quit.log" 2>&1; then

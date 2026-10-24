@@ -285,12 +285,34 @@ the player's own Dota 2 folder inside the browser (nothing is uploaded) and has 
 
 `tools/visual_check.sh REPLAY.brp` measures dbota's picture of a recorded Map 2 match:
 fogged ground at most 50% of its own unfogged luminance and 45% of its saturation, seen ground untouched, and a 1–5 cell border (each cell is measured drawn with the fog and without it, so any tick works; `VISUAL_TICK`, `VISUAL_RUNS` and `VISUAL_DIR` set the tick, the repeats of the hero-model check (cold and warm, the animated portrait on and off) and the output folder), seen from both seats: every hero model loads whole, each part on the hero's own skeleton and no scene replaced once drawn, and is drawn with detail, buildings stand as the map places them, enemy buildings are seen through the fog and the enemy base is fogged, no range rings without `Alt`, only the menu's
-buttons in the top-left block, every hero's health bar in its side's colour, round buff icons. It needs the asset cache and a display, and exits non-zero when a check fails.
+buttons in the top-left block, every hero's health bar in its side's colour, round buff icons. It needs the asset cache, and exits non-zero when a check fails.
 
 `tools/bench.sh REPLAY.brp` measures the binary's size, cold and warm start, and the frame times,
 CPU, RAM and VRAM of a busy stretch of the replay and of a live match against a local
 `bota_server` (settings at the top of the script). It rests on `--bench SECONDS`, which times
 that many seconds of frames once the scene is whole and prints them on one `bench:` line.
+
+### Without windows on the desktop
+
+`tools/headless.sh COMMAND...` runs a command in a private headless Wayland compositor (Weston's
+headless backend with its GL renderer; the `weston` package) started for it and gone with it: the
+client draws on the GPU as on a desktop and its screenshots are read back from its own frames, but no
+window shows. `tools/visual_check.sh`, `tools/bench.sh` and the tests that draw (`menu_quit`,
+`refused_replays`) run in one by default; for a capture of your own, put it in front:
+
+```sh
+tools/headless.sh target/release/dbota --replay match.brp --screenshot-at 4000 --display-mode windowed
+```
+
+`DBOTA_SHOW=1` shows the windows on the desktop instead (debugging a script by eye);
+`DBOTA_HEADLESS_SIZE=WxH` and `DBOTA_HEADLESS_SCALE=N` set the virtual output (default 1920x1080 at
+scale 1), so a borderless or fullscreen capture is that size, and a windowed one is the `--window`
+size at that scale. Measured checks judge the same scene equally on a desktop and headless (the
+numbers move a little with the size and scale of the picture). Frame times are the client's own
+and steadier headless, where no desktop competes for the GPU (a busy replay stretch at 2400x1350:
+3.5 to 3.9 ms a frame headless over runs, 2.9 to 7.8 ms in a window on a desktop in use): compare
+benches made the same way. Running the game normally is untouched: only commands put behind the
+script draw headless.
 
 ## Reading Dota's files
 

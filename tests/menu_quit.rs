@@ -6,9 +6,11 @@
 //! takes the seat again, and quitting from there warns the game is under
 //! way; a replay is left after Dota's question, back to the menu.
 //!
-//! They open a window and draw, so they are left out of a plain `cargo
-//! test`; `tools/visual_check.sh` runs them on a display. `DBOTA_QUIT_SHOTS`
-//! names a folder to keep their screenshots in.
+//! They draw on the GPU (in a headless compositor, tools/headless.sh), so they
+//! are left out of a plain `cargo test`; `tools/visual_check.sh` runs them.
+//! `DBOTA_QUIT_SHOTS` names a folder to keep their screenshots in.
+
+mod common;
 
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
@@ -58,7 +60,7 @@ fn run_with(
     script: &str,
     env: &[(&str, &std::ffi::OsStr)],
 ) -> (Option<i32>, String) {
-    let mut child = Command::new(env!("CARGO_BIN_EXE_dbota"))
+    let mut child = common::client()
         .envs(env.iter().copied())
         .args(args)
         .arg("--config")
@@ -109,7 +111,7 @@ fn played(what: &str, (code, said): (Option<i32>, String), script: &str) {
 }
 
 #[test]
-#[ignore = "opens a window: tools/visual_check.sh runs it on a display"]
+#[ignore = "draws on the GPU in a headless compositor: tools/visual_check.sh runs it"]
 fn escape_on_the_menu_asks_to_quit_and_ok_quits() {
     let scratch = Scratch::new("menu");
     let script = "await:menu;key:Escape;await:popup;shot:quit-confirm.png;key:Escape;\
@@ -119,7 +121,7 @@ fn escape_on_the_menu_asks_to_quit_and_ok_quits() {
 }
 
 #[test]
-#[ignore = "opens a window: tools/visual_check.sh runs it on a display"]
+#[ignore = "draws on the GPU in a headless compositor: tools/visual_check.sh runs it"]
 fn a_replay_is_left_for_the_menu() {
     let scratch = Scratch::new("replay");
     let replay = replay();
@@ -135,7 +137,7 @@ fn a_replay_is_left_for_the_menu() {
 }
 
 #[test]
-#[ignore = "opens a window: tools/visual_check.sh runs it on a display"]
+#[ignore = "draws on the GPU in a headless compositor: tools/visual_check.sh runs it"]
 fn a_game_is_disconnected_from_and_rejoined() {
     let scratch = Scratch::new("game");
     let (mut server, address) = serve();
@@ -152,7 +154,7 @@ fn a_game_is_disconnected_from_and_rejoined() {
 /// With no service configured the menu opens on the local pages, and a game's address typed
 /// with `text:` (as an input method commits it) joins that game.
 #[test]
-#[ignore = "opens a window: tools/visual_check.sh runs it on a display"]
+#[ignore = "draws on the GPU in a headless compositor: tools/visual_check.sh runs it"]
 fn without_a_service_the_menu_is_local_and_takes_typed_text() {
     let scratch = Scratch::new("local");
     let (mut server, address) = serve();
@@ -170,7 +172,7 @@ fn without_a_service_the_menu_is_local_and_takes_typed_text() {
 /// Dota's LEAVE GAME: from a seat in a match under way it asks, then leaves the match: the
 /// other seat is told it won, and the client is back at its menu.
 #[test]
-#[ignore = "opens a window: tools/visual_check.sh runs it on a display"]
+#[ignore = "draws on the GPU in a headless compositor: tools/visual_check.sh runs it"]
 fn leaving_a_game_loses_it_and_the_other_side_wins() {
     use bota_client_core::{Link, play};
     use bota_proto::HeroId;
@@ -288,7 +290,7 @@ fn server_binary() -> PathBuf {
 /// what they say (the hero at level 30, the gold given), and Quit goes
 /// back to the menu. `DBOTA_QUIT_SHOTS` keeps the screenshots.
 #[test]
-#[ignore = "opens a window: tools/visual_check.sh runs it on a display"]
+#[ignore = "draws on the GPU in a headless compositor: tools/visual_check.sh runs it"]
 fn demo_hero_plays_a_hero_with_every_cheat() {
     let scratch = Scratch::new("demo");
     let server = server_binary();

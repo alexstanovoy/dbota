@@ -3,11 +3,12 @@
 //! was to be captured or timed: an error said once and exit code 1, never a
 //! crash or a hang, run after run.
 //!
-//! It opens a window and draws, so it is left out of a plain `cargo test`;
-//! `tools/visual_check.sh` runs it on a display.
+//! It draws on the GPU (in a headless compositor, tools/headless.sh), so it is
+//! left out of a plain `cargo test`; `tools/visual_check.sh` runs it.
+
+mod common;
 
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 use bota_proto::{ReplayHeader, ReplayRecord, encode_frame_to_vec};
 
@@ -78,7 +79,7 @@ const PATIENCE: std::time::Duration = std::time::Duration::from_secs(90);
 /// Runs the client with `args`, killed past [`PATIENCE`]: its exit code (none when killed)
 /// and what it said on stderr.
 fn run(args: &[&std::ffi::OsStr]) -> (Option<i32>, String) {
-    let mut child = Command::new(env!("CARGO_BIN_EXE_dbota"))
+    let mut child = common::client()
         .args(args)
         .args(["--mute", "--no-vsync"])
         .stdout(std::process::Stdio::null())
@@ -107,7 +108,7 @@ fn run(args: &[&std::ffi::OsStr]) -> (Option<i32>, String) {
 }
 
 #[test]
-#[ignore = "opens a window: tools/visual_check.sh runs it on a display"]
+#[ignore = "draws on the GPU in a headless compositor: tools/visual_check.sh runs it"]
 fn a_refused_replay_ends_the_client_cleanly_every_time() {
     let dir = std::env::temp_dir().join(format!("dbota-refused-{}", std::process::id()));
     std::fs::create_dir_all(&dir).expect("a test directory");

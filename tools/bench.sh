@@ -23,9 +23,11 @@
 #   BENCH_WASM=0            1: also build the browser clients (wasm32, profile `web`, WebGPU and
 #                           WebGL2) and report their sizes
 #   DBOTA_ASSETS            the asset cache (default ~/.cache/dbota/v<assets-manifest/version>)
-# A display is needed (DISPLAY or WAYLAND_DISPLAY).
+# The runs draw in a private headless compositor on the GPU (tools/headless.sh, its output 1920x1080
+# unless DBOTA_HEADLESS_SIZE says otherwise); DBOTA_SHOW=1 runs them in windows on the desktop.
 set -euo pipefail
 here=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)
+[ -n "${DBOTA_HEADLESS:-}" ] || [ "${DBOTA_SHOW:-0}" = 1 ] || exec "$here/tools/headless.sh" "$0" "$@"
 replay=${1:-}
 if [ -z "$replay" ] || [ ! -f "$replay" ]; then
     echo "usage: tools/bench.sh REPLAY.brp" >&2
