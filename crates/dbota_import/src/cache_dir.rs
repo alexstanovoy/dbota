@@ -6,9 +6,10 @@ use std::fs;
 use std::io::{self, Read};
 use std::path::{Path, PathBuf};
 
-use heatel::{DirSource, Error, Result};
+use heatel::{Error, Result};
 
 use crate::import::{Flow, IMPORT_REV, Plan, Progress, Report, Sink, run};
+use crate::source::InstallSource;
 
 /// The file of a finished cache that says what made it.
 pub const STAMP: &str = "stamp.txt";
@@ -101,7 +102,7 @@ pub fn import_into(
     let staging = sibling(cache, "importing")?;
     remove(&staging)?;
     let report = run(
-        DirSource::new(game),
+        InstallSource::new(game),
         plan,
         &mut DirSink::new(&staging),
         progress,

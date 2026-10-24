@@ -105,7 +105,7 @@ fn turn(
         *seen = false;
         return;
     };
-    let goal = if bota_core::time_of_day(view.tick).night {
+    let goal = if bota_core::time_of_day(view.day_tick()).night {
         1.0
     } else {
         0.0

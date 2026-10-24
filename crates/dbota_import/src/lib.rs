@@ -5,6 +5,9 @@
 #[cfg(any(unix, windows))]
 pub mod cache_dir;
 pub mod import;
+pub mod source;
 pub mod text;
+
+pub use source::ADDONS;
 #[cfg(target_arch = "wasm32")]
 pub mod web;

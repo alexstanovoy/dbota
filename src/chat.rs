@@ -72,6 +72,35 @@ pub fn plugin(app: &mut App) {
     if app.world().resource::<crate::Args>().chat.is_some() {
         app.add_systems(Update, say_given.before(show_log));
     }
+    app.init_resource::<Queued>()
+        .add_systems(Update, say_queued.before(show_log));
+}
+
+/// Debug: lines `--script` types into the chat line and sends, one a frame.
+#[derive(Resource, Default)]
+pub struct Queued(pub std::collections::VecDeque<String>);
+
+/// Sends a queued line as a person would: the line opened to everyone, the
+/// text typed, Enter.
+fn say_queued(
+    mut session: NonSendMut<Session>,
+    mut queued: ResMut<Queued>,
+    mut input: ResMut<ChatInput>,
+    manifest: Res<crate::manifest::Manifest>,
+    cursor: Res<crate::camera::CursorGround>,
+) {
+    let core = &mut session.0;
+    let Some(line) = queued.0.pop_front() else {
+        return;
+    };
+    let names = crate::cheats::Names {
+        manifest: &manifest,
+        cursor: cursor.0.map(|p| (p.x, -p.z)),
+    };
+    if open(core, &mut input, true) {
+        append(&mut input, &line);
+        send(core, &mut input, &names);
+    }
 }
 
 /// Debug `--chat`: says its lines but the last once the client may speak,
@@ -82,8 +111,14 @@ fn say_given(
     mut typing: ResMut<Typing>,
     mut input: ResMut<ChatInput>,
     mut done: Local<bool>,
+    manifest: Res<crate::manifest::Manifest>,
+    cursor: Res<crate::camera::CursorGround>,
 ) {
     let core = &mut session.0;
+    let names = crate::cheats::Names {
+        manifest: &manifest,
+        cursor: cursor.0.map(|p| (p.x, -p.z)),
+    };
     let Some(given) = args.chat.as_deref().filter(|_| !*done && core.can_say()) else {
         return;
     };
@@ -93,7 +128,7 @@ fn say_given(
     for line in lines {
         if open(core, &mut input, true) {
             append(&mut input, line);
-            send(core, &mut input);
+            send(core, &mut input, &names);
         }
     }
     if open(core, &mut input, true) {
@@ -112,8 +147,14 @@ pub fn typing(
     fired: Res<Fired>,
     mut typing: ResMut<Typing>,
     mut input: ResMut<ChatInput>,
+    manifest: Res<crate::manifest::Manifest>,
+    cursor: Res<crate::camera::CursorGround>,
 ) {
     let core = &mut session.0;
+    let names = crate::cheats::Names {
+        manifest: &manifest,
+        cursor: cursor.0.map(|p| (p.x, -p.z)),
+    };
     // The press that opens the line is no keystroke of it.
     let was_open = *typing == Typing::Chat;
     // The bindings are quiet while the settings screen is up.
@@ -124,7 +165,8 @@ pub fn typing(
         }
     }
     for event in events.read() {
-        if was_open && event.state == ButtonState::Pressed && edit(core, &mut input, event) {
+        if was_open && event.state == ButtonState::Pressed && edit(core, &mut input, event, &names)
+        {
             *typing = Typing::No;
         }
     }
@@ -162,7 +204,12 @@ fn open(core: &Core, input: &mut ChatInput, all: bool) -> bool {
 }
 
 /// Edits the open line with a key press. Returns whether the line is closed.
-fn edit(core: &mut Core, input: &mut ChatInput, event: &KeyboardInput) -> bool {
+fn edit(
+    core: &mut Core,
+    input: &mut ChatInput,
+    event: &KeyboardInput,
+    names: &crate::cheats::Names,
+) -> bool {
     match &event.logical_key {
         Key::Escape => {
             *input = ChatInput {
@@ -172,7 +219,7 @@ fn edit(core: &mut Core, input: &mut ChatInput, event: &KeyboardInput) -> bool {
             return true;
         }
         Key::Enter => {
-            send(core, input);
+            send(core, input, names);
             return true;
         }
         Key::Backspace => {
@@ -197,13 +244,21 @@ fn append(input: &mut ChatInput, text: &str) {
     }
 }
 
-fn send(core: &mut Core, input: &mut ChatInput) {
+/// Sends the line: said to its audience, or, as Dota's chat takes a dash
+/// and a cheat's name, run as that cheat and said to nobody.
+fn send(core: &mut Core, input: &mut ChatInput, names: &crate::cheats::Names) {
     let Some(to) = input.to.take() else {
         return;
     };
     let line = std::mem::take(&mut input.line);
     input.preedit.clear();
     if line.trim().is_empty() {
+        return;
+    }
+    if bota_client_core::is_chat_command(&line) {
+        if let Err(why) = crate::cheats::run(core, &line, names) {
+            input.fault = Some((why, FAULT_SECS));
+        }
         return;
     }
     if let Err(fault) = core.say(to, &line) {

@@ -580,6 +580,22 @@ impl<S: Source> Importer<S> {
 }
 
 /// The map packages opened so far, then the manifest's package (as the world reads them).
+/// A file of the install: an addon's loose file (under [`crate::ADDONS`]),
+/// else one of the main package.
+fn read_any(src: &impl Source, pak: &Vpk, path: &str) -> Result<Vec<u8>> {
+    if path.starts_with(crate::ADDONS) {
+        let size = usize::try_from(src.size(path)?).unwrap_or(usize::MAX);
+        if size > ADDON_FILE_LIMIT {
+            return Err(heatel::Error::NotFound(path.to_owned()));
+        }
+        return src.read_at(path, 0, size);
+    }
+    read_from(src, &[pak], path)
+}
+
+/// The largest loose addon file read: a panel's text or picture.
+const ADDON_FILE_LIMIT: usize = 16 << 20;
+
 fn packages<'a>(pak: &'a Vpk, maps: &'a [(String, Vpk)]) -> Vec<&'a Vpk> {
     maps.iter()
         .map(|(_, v)| v)
@@ -717,21 +733,33 @@ fn make(
         Item::Labels {
             keys, out: dest, ..
         } => {
+            // An addon's file may be missing (an install without it, a browser's): its
+            // labels are left out, the rest kept.
             let mut files: Vec<(&str, Vec<u8>)> = Vec::new();
             for (path, _) in keys {
-                if !files.iter().any(|(read, _)| read == path) {
-                    files.push((path, read_from(src, &[pak], path)?));
+                if files.iter().any(|(read, _)| read == path) {
+                    continue;
+                }
+                match read_any(src, pak, path) {
+                    Ok(bytes) => files.push((path, bytes)),
+                    Err(_) if path.starts_with(crate::ADDONS) => {}
+                    Err(err) => return Err(err),
                 }
             }
+            let keys: Vec<(String, String)> = keys
+                .iter()
+                .filter(|(path, _)| files.iter().any(|(read, _)| read == path))
+                .cloned()
+                .collect();
             let files: Vec<(&str, &[u8])> = files.iter().map(|(p, b)| (*p, b.as_slice())).collect();
-            out.put(dest, &labels_json(keys, &files)?)
+            out.put(dest, &labels_json(&keys, &files)?)
         }
         Item::Texture {
             src: path,
             out: dest,
             ..
         } => {
-            let texture = Texture::parse(&read_from(src, &[pak], path)?)?;
+            let texture = Texture::parse(&read_any(src, pak, path)?)?;
             out.put(dest, &texture.first_frame_png()?)
         }
         Item::Particle {

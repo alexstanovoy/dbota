@@ -186,6 +186,10 @@ pub enum PageView {
     },
     Lobby(LobbyView),
     Result(ResultView),
+    /// Dota's Demo Hero: every hero to try, by id and name.
+    DemoHero {
+        heroes: Vec<(u16, String)>,
+    },
     /// The replays on this machine, and a field for any replay file.
     Replays {
         list: Vec<ReplayRow>,
@@ -241,6 +245,8 @@ pub struct MenuView {
     pub confirm: Option<ConfirmView>,
     /// Whether there is a client to quit: a browser's page has none.
     pub can_quit: bool,
+    /// Whether the local lobby's host enables cheats.
+    pub host_cheats: bool,
 }
 
 impl MenuView {
@@ -291,6 +297,7 @@ impl MenuCore {
                 },
             }),
             can_quit: !cfg!(target_arch = "wasm32"),
+            host_cheats: self.prefs.host_cheats,
         }
     }
 
@@ -366,6 +373,13 @@ impl MenuCore {
                     })
                     .collect(),
                 fields: self.fields(),
+            },
+            Page::DemoHero => PageView::DemoHero {
+                heroes: bota_core::HEROES
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(id, hero)| Some((u16::try_from(id).ok()?, hero.name.to_owned())))
+                    .collect(),
             },
             Page::Settings => PageView::Settings,
             Page::Game if self.launching => PageView::Joining,

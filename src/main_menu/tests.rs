@@ -952,3 +952,95 @@ fn a_local_lobby_fills_its_empty_seats() {
         "the bot outlived its lobby"
     );
 }
+
+/// The gold of a client's own seat, as its view tells.
+fn own_gold(core: &Core) -> i32 {
+    core.view()
+        .zip(core.my_slot)
+        .and_then(|(view, slot)| view.player(slot))
+        .and_then(|player| player.gold)
+        .unwrap_or(0)
+}
+
+/// Demo Hero from the menu with no account: a server of its own with
+/// cheats on, the hero chosen the one picked, and a cheat honoured.
+#[test]
+fn demo_hero_starts_a_cheat_match_with_the_hero_chosen() {
+    let dir = Scratch::new("demo");
+    let (mut menu, trust) = offline("alice", &dir);
+    menu.act(Act::Go(Page::DemoHero));
+    assert_eq!(menu.page(), Page::DemoHero);
+    menu.act(Act::Demo(HeroId::PUDGE.0));
+    let launch = menu.take_launch().expect("a demo to start");
+    assert!(
+        matches!(&launch, Launch::Demo { hero, name, .. } if *hero == HeroId::PUDGE && name == "alice")
+    );
+    let (mut core, server) = open_hosted(launch, &trust);
+    assert!(server.is_some(), "the demo's server is this client's");
+    menu.game_started();
+    assert_eq!(menu.demo_hero(), Some(HeroId::PUDGE));
+    pump_until("seated", &mut [&mut core], |c| c.my_slot.is_some());
+    core.act(bota_client_core::Intent::PickHero(HeroId::PUDGE.0));
+    core.act(bota_client_core::Intent::ToggleReady);
+    pump_until("the hero stands", &mut [&mut core], |c| {
+        c.my_hero().is_some()
+    });
+    assert!(
+        core.statics().is_some_and(|s| s.metadata().cheats),
+        "a match that cheats"
+    );
+    let before = own_gold(&core);
+    core.act(bota_client_core::Intent::Cheat(bota_proto::Cheat::Gold {
+        amount: 5000,
+    }));
+    pump_until("the gold comes", &mut [&mut core], |c| {
+        own_gold(c) >= before + 5000
+    });
+    // Leaving a demo leaves no seat to take again: its server ends with it.
+    menu.act(Act::Dashboard);
+    menu.act(Act::Disconnect);
+    assert!(menu.take_leave());
+    menu.left_game(None, false);
+    assert_eq!(menu.page(), Page::DemoHero);
+    assert!(!menu.view().reconnect);
+}
+
+/// The local lobby's host turns cheats on, as Dota's "Enable cheats": the
+/// match it starts honours them and says so.
+#[test]
+fn a_local_lobby_with_cheats_enabled_is_a_cheat_match() {
+    let dir = Scratch::new("lobby-cheats");
+    let (mut menu, trust) = offline("alice", &dir);
+    menu.act(Act::Go(Page::LocalLobby));
+    assert!(!menu.view().host_cheats, "off unless asked for");
+    menu.act(Act::ToggleCheats);
+    assert!(menu.view().host_cheats);
+    for (at, value) in [free_port().to_string(), "1".to_owned()]
+        .into_iter()
+        .enumerate()
+    {
+        menu.act(Act::Focus(at));
+        while !menu.form.value(at).is_empty() {
+            menu.act(Act::Erase);
+        }
+        menu.act(Act::Type(value));
+    }
+    menu.act(Act::Host(false));
+    let launch = menu.take_launch().expect("the lobby to open");
+    assert!(matches!(
+        &launch,
+        Launch::Host {
+            cheats: true,
+            players: 1,
+            ..
+        }
+    ));
+    let (mut core, _server) = open_hosted(launch, &trust);
+    pump_until("seated", &mut [&mut core], |c| c.my_slot.is_some());
+    core.act(bota_client_core::Intent::PickHero(HeroId::SHADOW_FIEND.0));
+    core.act(bota_client_core::Intent::ToggleReady);
+    pump_until("the match starts", &mut [&mut core], |c| {
+        c.statics().is_some()
+    });
+    assert!(core.statics().is_some_and(|s| s.metadata().cheats));
+}

@@ -48,7 +48,18 @@ fn shots(scratch: &Scratch) -> PathBuf {
 /// `scratch` (no service known, nothing of the user's touched): its exit
 /// code (none when killed past [`PATIENCE`]) and the steps it printed.
 fn run(scratch: &Scratch, args: &[&str], script: &str) -> (Option<i32>, String) {
+    run_with(scratch, args, script, &[])
+}
+
+/// [`run`] with more of the environment.
+fn run_with(
+    scratch: &Scratch,
+    args: &[&str],
+    script: &str,
+    env: &[(&str, &std::ffi::OsStr)],
+) -> (Option<i32>, String) {
     let mut child = Command::new(env!("CARGO_BIN_EXE_dbota"))
+        .envs(env.iter().copied())
         .args(args)
         .arg("--config")
         .arg(scratch.0.join("client.conf"))
@@ -259,4 +270,33 @@ fn server_binary() -> PathBuf {
         .expect("cargo runs");
     assert!(status.success(), "bota_server builds");
     target.join("release/bota_server")
+}
+
+/// Dota's Demo Hero from the menu, with no account: the hero chosen on our
+/// map with the demo panel at the side and the match marked as one that
+/// cheats; the panel's buttons and a `-command` typed into the chat do
+/// what they say (the hero at level 30, the gold given), and Quit goes
+/// back to the menu. `DBOTA_QUIT_SHOTS` keeps the screenshots.
+#[test]
+#[ignore = "opens a window: tools/visual_check.sh runs it on a display"]
+fn demo_hero_plays_a_hero_with_every_cheat() {
+    let scratch = Scratch::new("demo");
+    let server = server_binary();
+    let script = "await:menu;click:demo hero;await:button:demo shadow fiend;wait:1;\
+                  shot:demo-menu.png;click:demo shadow fiend;await:game;await:horn;\
+                  await:button:demo levelmax;wait:3;shot:demo-panel.png;click:demo levelmax;\
+                  await:level:30;say:-gold 20000;await:gold:20000;click:demo freespells;\
+                  click:demo spawnenemy;click:demo creepwave;wait:3;shot:demo-cheats.png;\
+                  click:demo night;wait:2;shot:demo-night.png;click:demo quit;await:menu;\
+                  wait:1;shot:demo-left.png;key:Escape;key:Escape;await:popup;click:ok";
+    played(
+        "Demo Hero",
+        run_with(
+            &scratch,
+            &[],
+            script,
+            &[("BOTA_SERVER", server.as_os_str())],
+        ),
+        script,
+    );
 }

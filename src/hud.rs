@@ -1362,7 +1362,10 @@ fn readouts(session: NonSend<Session>, mut texts: Query<(&Readout, &mut Text)>) 
     let (p, unit, _) = subject(core);
     for (readout, mut text) in &mut texts {
         let s = match *readout {
-            Readout::Clock => clock(i64::from(view.tick) - i64::from(core.pregame_ticks()), rate),
+            Readout::Clock => clock(
+                i64::from(view.game_tick()) - i64::from(core.pregame_ticks()),
+                rate,
+            ),
             Readout::Score(team) => view
                 .players
                 .iter()
@@ -1935,7 +1938,7 @@ fn time_of_day(
     let Some(view) = session.0.view() else {
         return;
     };
-    let name = if bota_core::time_of_day(view.tick).night {
+    let name = if bota_core::time_of_day(view.day_tick()).night {
         "hud.night"
     } else {
         "hud.day"

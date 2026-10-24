@@ -16,6 +16,10 @@
 //! - `await:WHAT`: until `menu` covers the screen, a `game` is on it, a
 //!   `popup` (a question or the match-found offer) is up or `nopopup` is not, or a button named `button:NAME`
 //!   shows;
+//! - `await:horn`: the game clock past the horn;
+//! - `await:level:N`, `await:gold:N`: one's hero at that level, that gold;
+//! - `say:LINE`: the line typed into the chat and sent (a `-command` runs);
+//! - `pick:ID`: the hero of that id picked, and the seat readied;
 //! - `shot:FILE`: the screen saved under `--screenshot-dir`;
 //! - `wait:SECONDS`;
 //! - `mouse:X,Y`: the pointer moved to that point of the window, in shares
@@ -59,6 +63,10 @@ enum Step {
     Down(KeyCode),
     Up(KeyCode),
     Text(String),
+    /// A line typed into the chat and sent.
+    Say(String),
+    /// A hero picked, by id, and the seat readied.
+    Pick(u16),
 }
 
 /// A key or a mouse button pressed last frame, to let go of now.
@@ -75,6 +83,12 @@ enum Awaited {
     Popup,
     NoPopup,
     Button(String),
+    /// The game clock past the horn.
+    Horn,
+    /// One's hero at this level or above.
+    Level(u8),
+    /// One's gold at this or above.
+    Gold(i32),
 }
 
 /// Where the script is.
@@ -108,10 +122,22 @@ fn parse(text: &str) -> Result<Vec<(String, Step)>, String> {
                     "game" => Awaited::Game,
                     "popup" => Awaited::Popup,
                     "nopopup" => Awaited::NoPopup,
-                    other => match other.strip_prefix("button:") {
-                        Some(name) => Awaited::Button(name.to_owned()),
-                        None => return Err(format!("cannot await '{other}'")),
-                    },
+                    "horn" => Awaited::Horn,
+                    other => {
+                        let (what, value) = other.split_once(':').unwrap_or((other, ""));
+                        match what {
+                            "button" => Awaited::Button(value.to_owned()),
+                            "level" => Awaited::Level(
+                                value
+                                    .parse()
+                                    .map_err(|_| format!("'{value}' is no level"))?,
+                            ),
+                            "gold" => Awaited::Gold(
+                                value.parse().map_err(|_| format!("'{value}' is no gold"))?,
+                            ),
+                            _ => return Err(format!("cannot await '{other}'")),
+                        }
+                    }
                 }),
                 "shot" => Step::Shot(arg.to_owned()),
                 "mouse" => Step::Mouse(
@@ -132,6 +158,8 @@ fn parse(text: &str) -> Result<Vec<(String, Step)>, String> {
                     }
                 }
                 "text" => Step::Text(arg.to_owned()),
+                "say" => Step::Say(arg.to_owned()),
+                "pick" => Step::Pick(arg.parse().map_err(|_| format!("'{arg}' is no hero id"))?),
                 "wait" => Step::Wait(
                     arg.parse()
                         .map_err(|_| format!("'{arg}' is not a number of seconds"))?,
@@ -179,7 +207,20 @@ fn holds(
             .is_some_and(|v| v.confirm.is_some() || v.offer.is_some()),
         Awaited::NoPopup => view.as_ref().is_some_and(|v| v.confirm.is_none()),
         Awaited::Button(name) => buttons.iter().any(|n| n.as_str() == name),
+        Awaited::Horn => {
+            let core = &session.0;
+            core.view()
+                .is_some_and(|view| view.game_tick() >= core.pregame_ticks())
+        }
+        Awaited::Level(level) => own(session).is_some_and(|me| me.level >= *level),
+        Awaited::Gold(gold) => own(session).is_some_and(|me| me.gold.is_some_and(|g| g >= *gold)),
     }
+}
+
+/// One's own row of the scoreboard.
+fn own(session: &Session) -> Option<&bota_proto::PlayerView> {
+    let core = &session.0;
+    core.view()?.player(core.my_slot?)
 }
 
 /// Plays the step due: keys before Bevy reads the keyboard this frame.
@@ -188,7 +229,7 @@ fn play(
     mut script: ResMut<Script>,
     time: Res<Time>,
     menu: Option<NonSend<MenuCore>>,
-    session: NonSend<Session>,
+    mut session: NonSendMut<Session>,
     buttons: Query<&Name, With<Button>>,
     disabled: Query<&Name, With<crate::main_menu::Disabled>>,
     mut window: Query<(Entity, &mut Window), With<PrimaryWindow>>,
@@ -199,6 +240,7 @@ fn play(
     mut commands: Commands,
     args: Res<crate::Args>,
     mut exit: MessageWriter<AppExit>,
+    mut said: ResMut<crate::chat::Queued>,
 ) {
     let Ok((window, mut win)) = window.single_mut() else {
         return;
@@ -305,6 +347,17 @@ fn play(
             }
         },
         Step::Wait(secs) => now - began >= *secs,
+        Step::Pick(hero) => {
+            session.0.act(bota_client_core::Intent::PickHero(*hero));
+            if !session.0.ready {
+                session.0.act(bota_client_core::Intent::ToggleReady);
+            }
+            true
+        }
+        Step::Say(line) => {
+            said.0.push_back(line.clone());
+            true
+        }
     };
     if done {
         println!("script: {line}");

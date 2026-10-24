@@ -20,12 +20,14 @@ mod cachefs;
 mod camera;
 mod capture;
 mod chat;
+mod cheats;
 mod clarity;
 mod config;
 mod coords;
 mod courier;
 mod daylight;
 mod death;
+mod demo;
 mod dota_text;
 mod drill;
 mod effects;
@@ -450,6 +452,7 @@ fn main() -> AppExit {
             wash::plugin,
             death::plugin,
             replay_controls::plugin,
+            demo::plugin,
         ))
         .add_plugins(main_menu::plugin);
     #[cfg(not(target_arch = "wasm32"))]

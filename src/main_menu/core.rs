@@ -51,6 +51,8 @@ pub enum Page {
     Replays,
     /// The account's rating per ruleset and the ladder.
     Profile,
+    /// Dota's Demo Hero: a hero to try out alone, with every cheat.
+    DemoHero,
     /// How a finished match went.
     Result,
     /// A game is on screen, or being opened.
@@ -92,6 +94,10 @@ pub enum Act {
     /// Opens a lobby on this machine, for this machine alone or (`true`)
     /// for the local network too, and takes a seat in it.
     Host(bool),
+    /// Turns the local lobby's cheats on or off (Dota's "Enable cheats").
+    ToggleCheats,
+    /// Starts Dota's Demo Hero with a hero.
+    Demo(u16),
     /// Watches a listed replay.
     OpenReplay(usize),
     /// Watches the replay of a finished match of the account's: fetched from the service once.
@@ -207,6 +213,8 @@ pub enum Launch {
         lan: bool,
         name: String,
         key: Option<Claim>,
+        /// Whether its host enabled cheats.
+        cheats: bool,
         /// Where the server writes the replay.
         replay: Option<std::path::PathBuf>,
         /// The server binary, when not looked for (`$BOTA_SERVER`, beside
@@ -214,6 +222,15 @@ pub enum Launch {
         server: Option<std::path::PathBuf>,
         /// What the seats other than one's own take.
         fill: Fill,
+    },
+    /// Dota's Demo Hero: a game server started on this machine alone with
+    /// cheats on, seating this player alone with the hero chosen.
+    Demo {
+        hero: bota_proto::HeroId,
+        name: String,
+        key: Option<Claim>,
+        /// The server binary, when not looked for.
+        server: Option<std::path::PathBuf>,
     },
     /// Watch a replay file.
     Replay(std::path::PathBuf),
@@ -258,7 +275,9 @@ impl Launch {
     /// How the game it opens is had.
     pub fn kind(&self) -> GameKind {
         match self {
-            Launch::Seat(_) | Launch::Given | Launch::Host { .. } => GameKind::Play,
+            Launch::Seat(_) | Launch::Given | Launch::Host { .. } | Launch::Demo { .. } => {
+                GameKind::Play
+            }
             Launch::Watch(_) => GameKind::Watch,
             Launch::Replay(_) => GameKind::Replay,
             Launch::Direct { spectate, .. } => {
@@ -337,6 +356,8 @@ enum OnScreen {
     Direct,
     /// A game of a lobby on this machine.
     Local,
+    /// Dota's Demo Hero.
+    Demo,
     Replay,
     /// The game the command line named.
     Given,
@@ -424,6 +445,8 @@ pub struct MenuCore {
     bot_command: String,
     /// The address others type to join the local lobby this client hosts.
     hosted_at: Option<String>,
+    /// The hero of the last Demo Hero started.
+    demo: Option<bota_proto::HeroId>,
     /// Whether the service has been tried: a menu under a game named on the
     /// command line tries it once that game is left.
     tried_service: bool,
@@ -490,6 +513,7 @@ impl MenuCore {
             server_binary: None,
             bot_command: String::new(),
             hosted_at: None,
+            demo: None,
             tried_service: false,
         };
         // No service to reach: the menu opens on what needs none, and the sign-in shows when
@@ -590,6 +614,11 @@ impl MenuCore {
         self.on_screen.is_some() && !self.launching
     }
 
+    /// The hero of the Demo Hero on screen, if one is.
+    pub fn demo_hero(&self) -> Option<bota_proto::HeroId> {
+        self.demo.filter(|_| self.on_screen == Some(OnScreen::Demo))
+    }
+
     /// Whether the game on screen is a replay opened from the menu.
     pub fn replay_from_menu(&self) -> bool {
         self.on_screen == Some(OnScreen::Replay)
@@ -688,6 +717,7 @@ impl MenuCore {
         match (left, self.conn) {
             (Some(OnScreen::Direct), _) => Page::Direct,
             (Some(OnScreen::Local), _) => Page::LocalLobby,
+            (Some(OnScreen::Demo), _) => Page::DemoHero,
             (Some(OnScreen::Replay), _) => Page::Replays,
             (_, Conn::LoggedIn) => Page::Home,
             (_, Conn::Offline) if self.prefs.service.is_empty() => Page::LocalLobby,
@@ -780,7 +810,7 @@ impl MenuCore {
         // The pages of what needs no service stay.
         if !matches!(
             self.page,
-            Page::Game | Page::Direct | Page::LocalLobby | Page::Replays
+            Page::Game | Page::Direct | Page::LocalLobby | Page::Replays | Page::DemoHero
         ) {
             self.page = Page::Service;
             self.form = Form::new(FormKind::Service, &self.prefs);
@@ -1135,6 +1165,7 @@ impl MenuCore {
             Launch::Seat(h) | Launch::Watch(h) => OnScreen::Match(h.match_id),
             Launch::Direct { .. } => OnScreen::Direct,
             Launch::Host { .. } => OnScreen::Local,
+            Launch::Demo { .. } => OnScreen::Demo,
             Launch::Replay(_) => OnScreen::Replay,
             Launch::Given => OnScreen::Given,
         });
@@ -1160,7 +1191,13 @@ impl MenuCore {
                 spectate: false,
                 key: *key,
             }),
+            // Demo Hero's server ends with it: there is no seat to take again.
+            Launch::Demo { .. } => None,
             launch => (self.kind == GameKind::Play).then(|| launch.clone()),
+        };
+        self.demo = match &launch {
+            Launch::Demo { hero, .. } => Some(*hero),
+            _ => None,
         };
         self.reconnect = None;
         self.confirm = None;
@@ -1252,6 +1289,21 @@ impl MenuCore {
             Act::Fill(fill) => {
                 self.prefs.host_fill = fill;
                 self.save_prefs();
+            }
+            Act::ToggleCheats => {
+                self.prefs.host_cheats = !self.prefs.host_cheats;
+                self.save_prefs();
+            }
+            Act::Demo(hero) => {
+                let hero = bota_proto::HeroId(hero);
+                if bota_core::hero_def(hero).is_some() {
+                    self.start(Launch::Demo {
+                        hero,
+                        name: self.name(),
+                        key: Claim::draw(),
+                        server: self.server_binary.clone(),
+                    });
+                }
             }
             Act::OpenReplay(at) => {
                 if let Some(file) = self.replays.get(at) {
@@ -1558,6 +1610,7 @@ impl MenuCore {
             lan,
             name: self.name(),
             key: Claim::draw(),
+            cheats: self.prefs.host_cheats,
             replay,
             server: self.server_binary.clone(),
             fill,

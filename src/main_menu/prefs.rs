@@ -22,6 +22,8 @@ pub struct Prefs {
     pub host_players: String,
     /// What the last local lobby's empty seats took.
     pub host_fill: super::core::SeatFill,
+    /// Whether the local lobby's host enables cheats.
+    pub host_cheats: bool,
     /// Hosts the player was told plain TCP is unprotected for, and went on.
     pub plain_ok: Vec<String>,
 }
@@ -48,6 +50,7 @@ impl Prefs {
                 "host_fill" => {
                     prefs.host_fill = super::core::SeatFill::named(&value).unwrap_or_default()
                 }
+                "host_cheats" => prefs.host_cheats = value == "true",
                 "plain_ok" if prefs.plain_ok.len() < MAX_PLAIN_HOSTS => prefs.plain_ok.push(value),
                 _ => {}
             }
@@ -70,6 +73,9 @@ impl Prefs {
         }
         if self.host_fill != super::core::SeatFill::Open {
             out.push_str(&format!("host_fill = {}\n", self.host_fill.name()));
+        }
+        if self.host_cheats {
+            out.push_str("host_cheats = true\n");
         }
         for host in &self.plain_ok {
             out.push_str(&format!("plain_ok = {host}\n"));

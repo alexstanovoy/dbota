@@ -1043,3 +1043,27 @@ clip neutral.pine_cone.model stun disabled 1.600
 clip neutral.pine_cone.model cast1 shield_bash 0.867 point=0.3
 unit npc_dota_neutral_warpine_raider neutral.pine_cone.model model_scale=1.1
 unit npc_dota_enraged_wildkin_tornado none
+
+# Cheats: the lobby setting and its mark (dota_english), and Dota's Demo Hero panel's words
+# (the hero_demo addon's own file, read from the install's game/dota_addons).
+label resource/localization/dota_english.txt DOTA_Lobby_Enable_Cheats
+label resource/localization/dota_english.txt DOTA_Lobby_Prefs_Cheats
+label addons/hero_demo/resource/addon_english.txt addon_game_name
+label addons/hero_demo/resource/addon_english.txt SpawnUnits_ButtonCategory
+label addons/hero_demo/resource/addon_english.txt SpawnAllyHero_Button
+label addons/hero_demo/resource/addon_english.txt SpawnEnemyHero_Button
+label addons/hero_demo/resource/addon_english.txt SpawnCreepWave_Button
+label addons/hero_demo/resource/addon_english.txt Neutrals_ButtonCategory
+label addons/hero_demo/resource/addon_english.txt EditUnits_ButtonCategory
+label addons/hero_demo/resource/addon_english.txt LevelUpSelectedHeroes_Button
+label addons/hero_demo/resource/addon_english.txt MaxLevelUpSelectedHeroes_Button
+label addons/hero_demo/resource/addon_english.txt Invuln_Button
+label addons/hero_demo/resource/addon_english.txt Reset_Button
+label addons/hero_demo/resource/addon_english.txt LevelUpEnemy_Button
+label addons/hero_demo/resource/addon_english.txt Global_ButtonCategory
+label addons/hero_demo/resource/addon_english.txt FreeSpells_Button
+label addons/hero_demo/resource/addon_english.txt SpawnCreeps_Button
+label addons/hero_demo/resource/addon_english.txt NightEnable_Button
+label addons/hero_demo/resource/addon_english.txt AllVision_Button
+label addons/hero_demo/resource/addon_english.txt Refresh_Button
+label addons/hero_demo/resource/addon_english.txt QuitDemo_Button

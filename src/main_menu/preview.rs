@@ -61,6 +61,7 @@ fn form(page: Page, kind: FormKind, fields: Vec<FieldView>) -> MenuView {
         can_abandon: false,
         confirm: None,
         can_quit: true,
+        host_cheats: false,
     }
 }
 
@@ -78,6 +79,7 @@ fn logged_in(page: Page, body: PageView) -> MenuView {
         can_abandon: false,
         confirm: None,
         can_quit: true,
+        host_cheats: false,
     }
 }
 

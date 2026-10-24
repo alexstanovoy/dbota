@@ -11,7 +11,7 @@ use bevy::{
     prelude::*,
     window::Ime,
 };
-use bota_client_core::{App as Core, Source};
+use bota_client_core::{App as Core, Phase, Source};
 
 use super::core::{Act, Launch, MenuCore, Page};
 use super::launch::{Hosted, Idle, Opening, Trust};
@@ -60,6 +60,7 @@ pub fn plugin(app: &mut App) {
                 settings_screen,
                 super::screens::clicks,
                 drive,
+                demo_start,
                 super::screens::draw,
                 super::screens::hover,
                 scroll,
@@ -172,7 +173,7 @@ fn drive(
         Some(Launch::Given) => opened_here(&mut core, crate::session::open(&args)),
         Some(Launch::Replay(path)) => opened_here(&mut core, open_replay(&path)),
         Some(launch) => {
-            if matches!(launch, Launch::Host { .. }) {
+            if matches!(launch, Launch::Host { .. } | Launch::Demo { .. }) {
                 // One lobby hosted at a time: the last one's server ends.
                 host.0 = None;
             }
@@ -223,6 +224,7 @@ fn guard(
     mut epoch: ResMut<GameEpoch>,
     mut commands: Commands,
     mut index: ResMut<crate::units::UnitIndex>,
+    mut host: NonSendMut<Host>,
 ) {
     let Some(mut core) = core else {
         return;
@@ -264,6 +266,10 @@ fn guard(
     if leave || (lost && !over) {
         // Escape leaves the game here, not the client too.
         fired.pressed.retain(|action| *action != escape);
+        // Demo Hero's server ends with it.
+        if core.demo_hero().is_some() {
+            host.0 = None;
+        }
         *session = idle();
         epoch.0 += 1;
         forget_units(&mut commands, &mut index);
@@ -351,6 +357,51 @@ fn keyboard(
         *pasting = None;
         if let Ok(text) = result {
             core.act(Act::Type(text.chars().take(MAX_PASTE).collect()));
+        }
+    }
+}
+
+/// Where Demo Hero's opening stands, for the game on screen.
+#[derive(Default)]
+struct DemoStart {
+    epoch: u32,
+    picked: bool,
+    begun: bool,
+}
+
+/// Dota's Demo Hero starts at once: the hero chosen is picked and readied,
+/// and once the match stands the game clock goes to the horn and the lane
+/// creeps wait for the panel's Creeps (as Dota's demo has them off).
+fn demo_start(
+    core: Option<NonSend<MenuCore>>,
+    mut session: NonSendMut<Session>,
+    epoch: Res<GameEpoch>,
+    mut state: Local<DemoStart>,
+) {
+    let Some(hero) = core.and_then(|core| core.demo_hero()) else {
+        return;
+    };
+    if state.epoch != epoch.0 {
+        *state = DemoStart {
+            epoch: epoch.0,
+            ..default()
+        };
+    }
+    let game = &mut session.0;
+    if !state.picked && game.phase == Phase::Lobby && game.my_slot.is_some() {
+        state.picked = true;
+        game.act(bota_client_core::Intent::PickHero(hero.0));
+        if !game.ready {
+            game.act(bota_client_core::Intent::ToggleReady);
+        }
+    }
+    if !state.begun && game.my_hero().is_some() {
+        state.begun = true;
+        for cheat in [
+            bota_proto::Cheat::StartGame,
+            bota_proto::Cheat::CreepSpawning { on: false },
+        ] {
+            game.act(bota_client_core::Intent::Cheat(cheat));
         }
     }
 }

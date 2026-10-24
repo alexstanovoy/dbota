@@ -65,10 +65,24 @@ signed out and with no service reachable. There, you play under the profile name
   game's address (`127.0.0.1:port`), and the seat's key comes in the environment as `BOTA_SEAT_KEY` (64 hex
   digits; never an argument, which other users see in the process list). Any program that speaks bota's
   protocol can be the bot, for example `bot_command = /path/to/mybot --server {address}`.
+- **DEMO HERO**: Dota's Demo Hero: the hero chosen alone on our map, with every cheat and Dota's demo
+  panel at the side (spawn an allied or enemy hero, creep waves, neutrals, levels, gold, items, free
+  spells, invulnerability, respawn, teleport, reset, the enemies' level, creep spawning, night, all
+  vision, refresh). Its words come from the install's Demo Hero (`dota_addons/hero_demo`). Quit ends
+  its server.
 - **REPLAYS**: the replays in `~/.local/share/dbota/replays` (`$XDG_DATA_HOME/dbota/replays`), where a local
   lobby keeps its games', the newest first, each with its date, its heroes and how it ended (read from the
   file on a thread of its own); a file that cannot be watched says why (damaged, or recorded by another
   version), and an empty one (a game that never started) is not listed. Any replay file opens by its path.
+
+Cheats are Dota's, typed into the chat (`Enter`, then `-gold 5000`) or the console (`\`, also in
+their console forms: `dota_create_item item_blink`): `-gold N`, `-lvlup N`, `-levelbots N`,
+`-wtf`/`-unwtf`, `-refresh`, `-respawn`, `-item NAME`, `-createhero NAME [enemy]` (at the cursor),
+`-spawncreeps`, `-disablecreepspawn`/`-enablecreepspawn`, `-spawnneutrals`, `-killcreeps [side]`,
+`-startgame`, `-allvision`/`-normalvision`, `-teleport` (to the cursor). Only a match its host
+started with cheats honours them: LOCAL LOBBY's "Enable cheats", DEMO HERO, or
+`bota_server --cheats`; such a match shows CHEATS under the clock, in its replay too. Matchmaking's
+matches never cheat.
 
 The power button at the top right quits, after Dota's question ("Confirm Quit"); `Esc` on the menu
 backs out of a page to the top one, and there asks the same. `Esc` in a game (with nothing to cancel or

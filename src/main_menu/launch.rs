@@ -70,7 +70,7 @@ fn hello(launch: &Launch) -> std::io::Result<ClientMsg> {
                 bota_core::WIRE_FINGERPRINT,
             ))
         }
-        Launch::Host { name, key, .. } => Ok(ClientMsg::hello(
+        Launch::Host { name, key, .. } | Launch::Demo { name, key, .. } => Ok(ClientMsg::hello(
             Role::Player,
             name.as_str(),
             key.map(|k| k.0),
@@ -251,42 +251,81 @@ fn server_binary(given: Option<&std::path::Path>) -> std::io::Result<std::path::
         })
 }
 
-/// Starts a local lobby's game server and waits until it listens: on
-/// loopback, or on every address with plain text allowed (the local network
-/// is trusted, as Dota's LAN lobby trusts it); mid-only for two players, the
-/// whole map for more. It writes its replay, ends when nobody came, and when
-/// every seat stayed empty five minutes.
+/// What a local lobby's game server is started with: on loopback, or on
+/// every address with plain text allowed (the local network is trusted, as
+/// Dota's LAN lobby trusts it); mid-only for two players, the whole map for
+/// more; the empty seats as its host fills them; cheats when its host
+/// enables them. It ends when nobody came, and when every seat stayed empty
+/// five minutes.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn host_args(port: u16, players: u8, lan: bool, fill: &Fill, cheats: bool) -> Vec<String> {
+    let mut args: Vec<String> = [
+        "--port",
+        &port.to_string(),
+        "--players",
+        &players.to_string(),
+        "--map",
+        if players <= 2 { "2" } else { "0" },
+        "--abandon-unjoined",
+        "--empty-after-secs",
+        "300",
+    ]
+    .map(str::to_owned)
+    .into();
+    if *fill == Fill::Dummy {
+        args.push("--dummy-seat".to_owned());
+    }
+    if lan {
+        args.extend(["--bind", "0.0.0.0", "--insecure-plaintext"].map(str::to_owned));
+    } else {
+        args.extend(["--bind", "127.0.0.1"].map(str::to_owned));
+    }
+    if cheats {
+        args.push("--cheats".to_owned());
+    }
+    args
+}
+
+/// What Dota's Demo Hero is started with: one seat on our map, on this
+/// machine alone and a port of its own, cheats on, the hero chosen the only
+/// one to pick, and no planning before the game.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn demo_args(hero: u16) -> Vec<String> {
+    [
+        "--port",
+        "0",
+        "--bind",
+        "127.0.0.1",
+        "--players",
+        "1",
+        "--map",
+        "0",
+        "--cheats",
+        "--tactical-secs",
+        "0",
+        "--heroes",
+        &hero.to_string(),
+        "--abandon-unjoined",
+        "--empty-after-secs",
+        "60",
+    ]
+    .map(str::to_owned)
+    .into()
+}
+
+/// Starts a game server with `args` and waits until it listens: the server,
+/// and the plain address it said it listens on.
 #[cfg(not(target_arch = "wasm32"))]
 fn start_server(
-    port: u16,
-    players: u8,
-    lan: bool,
+    args: &[String],
     replay: Option<&std::path::Path>,
     server: Option<&std::path::Path>,
-    fill: &Fill,
-) -> std::io::Result<Hosted> {
+) -> std::io::Result<(Hosted, String)> {
     use std::io::BufRead;
     use std::process::{Command, Stdio};
     let mut command = Command::new(server_binary(server)?);
     command
-        .args([
-            "--port",
-            &port.to_string(),
-            "--players",
-            &players.to_string(),
-        ])
-        .args(["--map", if players <= 2 { "2" } else { "0" }])
-        .args(["--abandon-unjoined", "--empty-after-secs", "300"])
-        .args(if *fill == Fill::Dummy {
-            ["--dummy-seat"].as_slice()
-        } else {
-            [].as_slice()
-        })
-        .args(if lan {
-            ["--bind", "0.0.0.0", "--insecure-plaintext"].as_slice()
-        } else {
-            ["--bind", "127.0.0.1"].as_slice()
-        })
+        .args(args)
         .env_remove("BOTA_SEATS")
         .env_remove("BOTA_REFEREE_KEY")
         .stdin(Stdio::null())
@@ -332,12 +371,25 @@ fn start_server(
     };
     let deadline = std::time::Instant::now() + SERVER_PATIENCE;
     let mut complaint = String::new();
+    let mut listening = None;
     loop {
         let left = deadline.saturating_duration_since(std::time::Instant::now());
         match heard.recv_timeout(left) {
-            Ok((true, line)) if line.trim() == "READY" => return Ok(hosted),
+            Ok((true, line)) if line.trim() == "READY" => {
+                let address = listening
+                    .ok_or_else(|| std::io::Error::other("the game server named no address"))?;
+                return Ok((hosted, address));
+            }
+            Ok((true, line)) => {
+                // The plain address; a WebSocket one is told with its scheme.
+                if let Some(address) = line.trim().strip_prefix("bota_server listening on ")
+                    && !address.contains("://")
+                    && listening.is_none()
+                {
+                    listening = Some(address.to_owned());
+                }
+            }
             Ok((false, line)) => complaint = line,
-            Ok(_) => {}
             Err(_) => {
                 let why = complaint
                     .strip_prefix("bota_server: ")
@@ -364,7 +416,7 @@ impl Opening {
             .spawn(move || {
                 let opened = (|| -> std::io::Result<(Net, Option<Hosted>)> {
                     let greeting = hello(&launch)?;
-                    let server = match &launch {
+                    let started = match &launch {
                         Launch::Host {
                             port,
                             players,
@@ -372,16 +424,21 @@ impl Opening {
                             replay,
                             server,
                             fill,
+                            cheats,
                             ..
                         } => Some(start_server(
-                            *port,
-                            *players,
-                            *lan,
+                            &host_args(*port, *players, *lan, fill, *cheats),
                             replay.as_deref(),
                             server.as_deref(),
-                            fill,
                         )?),
+                        Launch::Demo { hero, server, .. } => {
+                            Some(start_server(&demo_args(hero.0), None, server.as_deref())?)
+                        }
                         _ => None,
+                    };
+                    let (server, listening) = match started {
+                        Some((server, listening)) => (Some(server), Some(listening)),
+                        None => (None, None),
                     };
                     let mut net = match &launch {
                         Launch::Seat(h) | Launch::Watch(h) => {
@@ -391,8 +448,8 @@ impl Opening {
                             Endpoint::parse(address)?.with_tls(trust.direct.clone()),
                             Redial::DEFAULT,
                         )?,
-                        Launch::Host { port, .. } => Net::open(
-                            Endpoint::parse(&format!("127.0.0.1:{port}"))?,
+                        Launch::Host { .. } | Launch::Demo { .. } => Net::open(
+                            Endpoint::parse(&listening.unwrap_or_default())?,
                             Redial::DEFAULT,
                         )?,
                         Launch::Replay(_) | Launch::Given => return Err(not_here()),
@@ -456,7 +513,7 @@ impl Opening {
                 Launch::Direct { address, .. } => {
                     bota_client_core::WebSocketLink::connect(address)?
                 }
-                Launch::Host { .. } => {
+                Launch::Host { .. } | Launch::Demo { .. } => {
                     return Err(std::io::Error::other(
                         "a local lobby needs the desktop client: a browser cannot start a server",
                     ));

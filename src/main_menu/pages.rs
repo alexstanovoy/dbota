@@ -11,12 +11,13 @@ use crate::ui;
 
 /// The tabs of the top bar: the service's once logged in, and what is played
 /// without it always.
-const TABS: [(Page, &str); 7] = [
+const TABS: [(Page, &str); 8] = [
     (Page::Home, "PLAY"),
     (Page::MyGames, "MY GAMES"),
     (Page::Lobbies, "LOBBIES"),
     (Page::Profile, "PROFILE"),
     (Page::LocalLobby, "LOCAL LOBBY"),
+    (Page::DemoHero, "DEMO HERO"),
     (Page::Direct, "DIRECT CONNECT"),
     (Page::Replays, "REPLAYS"),
 ];
@@ -112,7 +113,7 @@ pub fn draw(kit: &mut Kit, root: Entity, view: &MenuView) {
             fill,
             hosted_at,
         } => {
-            form_page(
+            let card = form_page(
                 kit,
                 body,
                 *kind,
@@ -122,6 +123,9 @@ pub fn draw(kit: &mut Kit, root: Entity, view: &MenuView) {
                 *fill,
                 hosted_at.as_deref(),
             );
+            if *kind == FormKind::Host {
+                cheats_toggle(kit, card, view.host_cheats);
+            }
         }
         PageView::Home {
             rulesets,
@@ -144,6 +148,7 @@ pub fn draw(kit: &mut Kit, root: Entity, view: &MenuView) {
         PageView::Lobby(lobby) => lobby_page(kit, body, lobby),
         PageView::Result(result) => result_page(kit, body, result),
         PageView::Replays { list, fields } => replays_page(kit, body, list, fields),
+        PageView::DemoHero { heroes } => demo_page(kit, body, heroes),
         PageView::Joining => {
             kit.bold(body, "JOINING THE GAME…", 30.0, ui::INK);
         }
@@ -286,7 +291,7 @@ fn form_page(
     plain: Option<&str>,
     fill: Option<(SeatFill, bool)>,
     hosted_at: Option<&str>,
-) {
+) -> Entity {
     let card = kit.panel(
         body,
         Node {
@@ -408,6 +413,7 @@ fn form_page(
         }
         kit.button(links, "DIRECT CONNECT", Act::Go(Page::Direct), PLAIN, 28.0);
     }
+    card
 }
 
 /// A labelled text field; a click puts the keyboard in it.
@@ -805,4 +811,90 @@ fn seat_fill(kit: &mut Kit, card: Entity, chosen: SeatFill, bot_set: bool) {
         ui::INK_DIM
     };
     kit.text(card, note, 13.0, colour);
+}
+
+/// Dota's lobby setting "Enable cheats", for the local lobby's host: a box
+/// that turns on and off.
+fn cheats_toggle(kit: &mut Kit, card: Entity, on: bool) {
+    let row = kit
+        .commands
+        .spawn((
+            super::screens::MenuButton(Act::ToggleCheats),
+            Button,
+            Name::new("enable cheats"),
+            Node {
+                column_gap: px(10),
+                align_items: AlignItems::Center,
+                margin: UiRect::top(px(4)),
+                ..default()
+            },
+            ChildOf(card),
+        ))
+        .id();
+    kit.commands.spawn((
+        Node {
+            width: px(18),
+            height: px(18),
+            border: UiRect::all(px(2)),
+            border_radius: BorderRadius::all(px(3)),
+            ..default()
+        },
+        BorderColor::all(if on { ui::GOLDEN } else { ui::INK_DIM }),
+        BackgroundColor(if on { ui::GOLDEN } else { Color::NONE }),
+        Pickable::IGNORE,
+        ChildOf(row),
+    ));
+    kit.text(row, "Enable cheats", 16.0, ui::INK);
+}
+
+/// DEMO HERO: every hero, its portrait and its name; a click starts Dota's
+/// Demo Hero with it, alone on our map with every cheat.
+fn demo_page(kit: &mut Kit, body: Entity, heroes: &[(u16, String)]) {
+    let column = kit.node(
+        body,
+        Node {
+            flex_direction: FlexDirection::Column,
+            align_items: AlignItems::Center,
+            row_gap: px(14),
+            ..default()
+        },
+    );
+    kit.bold(column, "DEMO HERO", 30.0, ui::INK);
+    kit.text(
+        column,
+        "Try a hero alone with every cheat: levels, gold, items, free spells, enemies to fight.",
+        16.0,
+        ui::INK_DIM,
+    );
+    let grid = kit.node(
+        column,
+        Node {
+            column_gap: px(16),
+            ..default()
+        },
+    );
+    for (id, name) in heroes {
+        let card = kit
+            .commands
+            .spawn((
+                super::screens::MenuButton(Act::Demo(*id)),
+                Button,
+                Name::new(format!("demo {}", name.to_lowercase())),
+                Node {
+                    flex_direction: FlexDirection::Column,
+                    align_items: AlignItems::Center,
+                    row_gap: px(6),
+                    padding: UiRect::all(px(8)),
+                    border: UiRect::all(px(1)),
+                    border_radius: BorderRadius::all(px(4)),
+                    ..default()
+                },
+                BackgroundColor(ui::PANEL),
+                BorderColor::all(ui::EDGE),
+                ChildOf(grid),
+            ))
+            .id();
+        kit.portrait(card, *id, 240.0);
+        kit.bold(card, name.to_uppercase(), 18.0, ui::INK);
+    }
 }

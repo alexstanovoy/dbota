@@ -260,7 +260,9 @@ fn announce(
         .saturating_sub(BATTLE_BEGINS_TENTHS * rate / 10);
     let horn_tick = line_tick.saturating_sub(HORN_HONK_TENTHS * rate / 10);
     // Not for a match joined, or a replay opened, well after the start.
-    let fresh = |at: u32| view.tick >= at && view.tick < at.saturating_add(2 * rate);
+    // On the game clock: `-startgame` brings the horn on early.
+    let now = view.game_tick();
+    let fresh = |at: u32| now >= at && now < at.saturating_add(2 * rate);
     if fresh(horn_tick) && !heard.begun {
         heard.begun = true;
         if !silent {
@@ -356,7 +358,7 @@ fn herald(
     let night = session
         .0
         .view()
-        .map(|view| bota_core::time_of_day(view.tick).night);
+        .map(|view| bota_core::time_of_day(view.day_tick()).night);
     let turned = matches!((*was_night, night), (Some(was), Some(now)) if was != now);
     *was_night = night;
     if !turned || settings.muted || args.mute {

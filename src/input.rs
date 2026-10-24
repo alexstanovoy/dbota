@@ -38,6 +38,8 @@ pub enum Typing {
     Chat,
     /// The shop's search box.
     Search,
+    /// Demo Hero's item search.
+    DemoSearch,
 }
 
 /// Panels and modes the bindings toggle.
@@ -153,6 +155,8 @@ fn typing(
     texts: Res<crate::dota_text::Texts>,
     manifest: Res<crate::manifest::Manifest>,
     catalog: Res<crate::shop::Catalog>,
+    cursor: Res<crate::camera::CursorGround>,
+    mut demo: ResMut<crate::demo::DemoPanel>,
 ) {
     let core = &mut session.0;
     let look = crate::tip_content::Lookup {
@@ -172,7 +176,13 @@ fn typing(
                     Key::Enter => {
                         let line = core.console.take().unwrap_or_default();
                         *typing = Typing::No;
-                        core.act(Intent::Console(line));
+                        let names = crate::cheats::Names {
+                            manifest: &manifest,
+                            cursor: cursor.0.map(|p| (p.x, -p.z)),
+                        };
+                        if let Err(why) = crate::cheats::run(core, &line, &names) {
+                            core.reject = Some((why, 2.5));
+                        }
                     }
                     Key::Escape => {
                         core.console = None;
@@ -184,6 +194,15 @@ fn typing(
                     Key::Character(s) if line.len() < 64 => line.push_str(s),
                     Key::Space => line.push(' '),
                     _ => {}
+                }
+            }
+            Typing::DemoSearch => {
+                let first = catalog
+                    .search(&look, &demo.search)
+                    .into_iter()
+                    .find(|id| bota_core::item_def(bota_proto::ItemId(*id)).is_some());
+                if crate::demo::search_key(core, &mut demo, &event.logical_key, first) {
+                    *typing = Typing::No;
                 }
             }
             Typing::Search => match &event.logical_key {
