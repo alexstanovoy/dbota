@@ -69,6 +69,8 @@ const LAYOUT: [(Tab, &str, &str); 11] = [
 #[derive(Clone, Debug, PartialEq)]
 pub struct Section {
     pub tab: Tab,
+    /// Its name in `shops.txt`; none for the client core's own groups.
+    pub key: Option<&'static str>,
     pub title: String,
     pub items: Vec<u16>,
 }
@@ -123,6 +125,7 @@ impl Catalog {
                 let title = catalog.word(title, key).to_string();
                 catalog.sections.push(Section {
                     tab,
+                    key: Some(key),
                     title,
                     items: ids,
                 });
@@ -145,6 +148,7 @@ impl Catalog {
         if !rest.is_empty() {
             self.sections.push(Section {
                 tab: Tab::Basics,
+                key: None,
                 title: SHOP_GROUPS[SHOP_GROUPS.len() - 1].to_string(),
                 items: rest,
             });
@@ -218,6 +222,7 @@ fn fallback() -> Vec<Section> {
             } else {
                 Tab::Basics
             },
+            key: None,
             title: SHOP_GROUPS[group].to_string(),
             items,
         })

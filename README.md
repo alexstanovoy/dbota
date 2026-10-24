@@ -206,6 +206,12 @@ bars are the side's colour whoever watches: Radiant green, Dire red. Each seat h
 dark green, brown): the strip over its portrait in the top bar, its row of the scoreboard, its pings and
 teleports, and its hero's mark on the minimap, ringed in its side's colour.
 
+Between the picks and the horn comes Dota's strategy screen: every seat's hero under its player's colour
+and the clock over STRATEGY TIME; at the left the hero you enter battle as, its name and abilities; at
+the right STARTING ITEMS: the gold that remains, the inventory as your choices fill it (what stacks in
+Dota stacks), and the shop's basic items, bought with a right click (or a double click) when the match
+begins; a right click on an inventory item takes it back. Its words are the install's.
+
 The scoreboard is Dota's, at its sizes: each side's kills and name, and a row for each seat with
 its colour, hero, player's and hero's names, talents, level, gold, kills, deaths, assists and
 ultimate (Dota's columns: last hits and denies are one's own, at the top left); beside the rows,

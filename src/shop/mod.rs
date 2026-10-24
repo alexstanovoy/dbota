@@ -12,7 +12,7 @@ mod plugin;
 mod tree;
 
 use crate::select::match_or_tactical;
-pub use catalog::Catalog;
-pub use cell::ShopCell;
+pub use catalog::{Catalog, Tab};
+pub use cell::{Place, ShopCell, spawn as spawn_cell};
 pub use corner::STICKY;
 pub use plugin::plugin;

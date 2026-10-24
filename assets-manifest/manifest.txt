@@ -1117,3 +1117,12 @@ style panorama/styles/dotastyles.vcss_c HeroSlot6Color
 style panorama/styles/dotastyles.vcss_c HeroSlot7Color
 style panorama/styles/dotastyles.vcss_c HeroSlot8Color
 style panorama/styles/dotastyles.vcss_c HeroSlot9Color
+
+# Dota's strategy screen (the tactical phase): its words and its backdrop (dota_hud_pregame).
+label resource/localization/dota_english.txt DOTA_Hero_Selection_StrategyTime
+label resource/localization/dota_english.txt DOTA_Hero_Selection_EnteringBattleAs
+label resource/localization/dota_english.txt DOTA_Item_Build_Starting_Items
+label resource/localization/dota_english.txt DOTA_Hero_Selection_RemainingGold
+label resource/localization/dota_english.txt DOTA_Hero_Selection_Inventory
+label resource/localization/dota_english.txt dota_item_build_common_starting_items
+texture strategy.background panorama/images/backgrounds/pregame_bg_lowquality_psd.vtex_c hud/pregame_bg_lowquality_psd.png

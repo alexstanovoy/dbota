@@ -1,8 +1,8 @@
 //! Hero selection, as Dota opens a match: every hero's portrait in a grid,
 //! picked with a click, a Ready button, and each seat's pick and readiness,
 //! with the time left to pick. Once every pick is final the tactical phase
-//! opens the shop to choose what to buy when the match begins. Mouse only. A
-//! spectator sees the seats and waits.
+//! shows Dota's strategy screen ([`crate::strategy`]) to choose what to buy
+//! when the match begins. Mouse only. A spectator sees the seats and waits.
 
 use bevy::prelude::*;
 use bota_client_core::{Intent, Phase};
@@ -13,10 +13,6 @@ use crate::hud::Blocker;
 use crate::manifest::Manifest;
 use crate::session::Session;
 use crate::ui::{self, Fonts};
-
-/// How far down the tactical phase's line starts: below the top bar's
-/// portraits and clock.
-const BANNER_TOP: f32 = 60.0;
 
 /// The whole screen.
 #[derive(Component)]
@@ -57,24 +53,16 @@ pub fn match_or_tactical(
     known.0 || tactical.0
 }
 
-/// The line over the shop in the tactical phase.
-#[derive(Component)]
-struct Banner;
-
-/// The banner's smaller lines: the gold and what is queued.
-#[derive(Component)]
-struct BannerHint;
-
 /// The selection clock as last told, and when it was told.
 #[derive(Resource, Default)]
-struct ClockSeen {
+pub struct ClockSeen {
     phase: PickPhase,
     at: f32,
 }
 
 impl ClockSeen {
     /// The seconds left of the phase running, if it counts down.
-    fn left(&self, now: f32) -> Option<f32> {
+    pub fn left(&self, now: f32) -> Option<f32> {
         let told = match self.phase {
             PickPhase::Selecting { left_ms } | PickPhase::Late { left_ms } => left_ms,
             PickPhase::Tactical { left_ms } => left_ms,
@@ -85,7 +73,7 @@ impl ClockSeen {
 }
 
 /// `m:ss`, rounded up as clocks show a countdown.
-fn clock(secs: f32) -> String {
+pub fn clock(secs: f32) -> String {
     let whole = secs.ceil() as u32;
     format!("{}:{:02}", whole / 60, whole % 60)
 }
@@ -201,37 +189,6 @@ fn spawn(
         Pickable::IGNORE,
         ChildOf(ready),
     ));
-    // Under the top bar, as Dota's strategy time line sits under its clock;
-    // its smaller lines keep clear of the shop open at the right.
-    let banner = commands
-        .spawn((
-            Banner,
-            ui::text("", &fonts.bold, 22.0, ui::INK),
-            ui::shadow(),
-            TextLayout::justify(Justify::Center),
-            Node {
-                position_type: PositionType::Absolute,
-                top: px(BANNER_TOP),
-                left: px(0),
-                right: px(0),
-                justify_content: JustifyContent::Center,
-                ..default()
-            },
-            Pickable::IGNORE,
-            Visibility::Hidden,
-        ))
-        .id();
-    commands.spawn((
-        BannerHint,
-        TextSpan::default(),
-        TextFont {
-            font: fonts.regular.clone().into(),
-            font_size: FontSize::Px(16.0),
-            ..default()
-        },
-        TextColor(ui::INK),
-        ChildOf(banner),
-    ));
     commands.spawn((
         Seats,
         ui::text("", &fonts.regular, 16.0, ui::INK_DIM),
@@ -258,53 +215,10 @@ fn show(session: NonSend<Session>, mut screen: Single<&mut Visibility, With<Scre
     ));
 }
 
-/// The tactical phase: the shop open, the time left, and what is queued
-/// against the starting gold.
-fn tactical(
-    session: NonSend<Session>,
-    seen: Res<ClockSeen>,
-    time: Res<Time>,
-    mut panels: ResMut<crate::input::Panels>,
-    mut phase: ResMut<TacticalPhase>,
-    mut opened: Local<bool>,
-    mut banner: Single<(&mut Text, &mut Visibility), With<Banner>>,
-    mut hint: Single<&mut TextSpan, With<BannerHint>>,
-) {
-    let core = &session.0;
-    let on = core.in_tactical_phase();
-    phase.set_if_neq(TacticalPhase(on));
-    banner.1.set_if_neq(ui::visible(on));
-    if !on {
-        *opened = false;
-        return;
-    }
-    if !*opened {
-        panels.shop = true;
-        *opened = true;
-    }
-    let left = seen.left(time.elapsed_secs()).map_or(String::new(), clock);
-    let names: Vec<&str> = core
-        .queued_buys
-        .iter()
-        .filter_map(|id| bota_client_core::ITEMS.get(usize::from(*id)))
-        .map(|face| face.name)
-        .collect();
-    let queue = if names.is_empty() {
-        "click items to buy them when the match begins; right-click takes one back".to_string()
-    } else {
-        format!("on the list: {}", names.join(", "))
-    };
-    banner
-        .0
-        .set_if_neq(Text(format!("TACTICAL PHASE - the match begins in {left}")));
-    let lines = format!(
-        "\nGold {} of {}\n{queue}",
-        core.gold_after_queue(),
-        bota_core::rules::STARTING_GOLD
-    );
-    if hint.0 != lines {
-        hint.0 = lines;
-    }
+/// Whether the tactical phase is on, for the systems that cannot read the
+/// session.
+fn tactical(session: NonSend<Session>, mut phase: ResMut<TacticalPhase>) {
+    phase.set_if_neq(TacticalPhase(session.0.in_tactical_phase()));
 }
 
 /// A click on a portrait picks that hero; on Ready, readies or unreadies.

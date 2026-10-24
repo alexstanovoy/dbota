@@ -66,6 +66,7 @@ mod settings;
 mod shop;
 mod sound;
 mod stats;
+mod strategy;
 mod synth;
 mod talents;
 mod teleport;
@@ -457,6 +458,7 @@ fn main() -> AppExit {
             talents::plugin,
             voice::plugin,
             select::plugin,
+            strategy::plugin,
             framestats::plugin,
             quality::plugin,
             heap::plugin,

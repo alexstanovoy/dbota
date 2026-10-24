@@ -274,14 +274,12 @@ pub fn plugin(app: &mut App) {
         .add_systems(Update, behind_the_pick);
 }
 
-/// The whole HUD stays away while the hero pick has the screen, as Dota's
-/// pick screen takes the place of the game's interface.
+/// The whole HUD stays away while the hero pick or the strategy screen has
+/// the screen, as Dota's take the place of the game's interface.
 fn behind_the_pick(session: NonSend<Session>, mut root: Single<&mut Visibility, With<HudRoot>>) {
     let core = &session.0;
-    let picking = core.phase == bota_client_core::Phase::Lobby
-        && core.view().is_none()
-        && !core.in_tactical_phase();
-    root.set_if_neq(ui::visible(!picking));
+    let before = core.phase == bota_client_core::Phase::Lobby && core.view().is_none();
+    root.set_if_neq(ui::visible(!before));
 }
 
 /// Whether the hero the panel is about lies dead: its last body still has
