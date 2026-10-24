@@ -90,6 +90,14 @@ impl DecodeBudget {
         }
     }
 
+    /// The textures read and not yet settled.
+    fn in_flight(&self) -> Vec<PathBuf> {
+        self.0
+            .lock()
+            .map(|flight| flight.textures.keys().cloned().collect())
+            .unwrap_or_default()
+    }
+
     /// Counts a frame; after [`STALL_FRAMES`] of nothing arriving, forgets
     /// what is in flight.
     fn tick(&self) {
@@ -203,6 +211,15 @@ fn arrived(
     }
     for event in failed.read() {
         budget.settle(event.path.path());
+    }
+    // A texture whose every handle was let go while it loaded never arrives:
+    // a glTF's loader reads every image the file lists and drops those no
+    // material of its uses (a mask for a slot the renderer has not).
+    for path in budget.in_flight() {
+        let asset = bevy::asset::AssetPath::from(path.clone()).with_source(crate::CACHE_SOURCE);
+        if server.get_path_ids(asset).is_empty() {
+            budget.settle(&path);
+        }
     }
 }
 

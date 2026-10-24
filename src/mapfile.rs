@@ -246,22 +246,24 @@ fn prop(
     linear: &[u64],
     cx: &mut LoadContext,
 ) -> Kind {
-    let mut m = standard_material(doc, material, linear, cx);
     // Path borders, ground edges and wagon tracks are tinted by what the
     // export leaves out (per-vertex tints, or all but black): drawn as they
-    // come they lay dark brown bands along the lanes.
-    let black = m
-        .base_color
-        .to_linear()
-        .to_f32_array_no_alpha()
-        .iter()
-        .all(|c| *c < 0.05);
+    // come they lay dark brown bands along the lanes. Told from the material's
+    // factors, before its textures are asked for.
+    let black = material["pbrMetallicRoughness"]["baseColorFactor"]
+        .as_array()
+        .filter(|c| c.len() == 4)
+        .is_some_and(|c| {
+            c.iter()
+                .take(3)
+                .all(|v| v.as_f64().is_some_and(|v| v < 0.05))
+        });
     if vmat.overlay && (black || vmat.name.contains("tint")) {
-        Kind::Skip
-    } else {
-        dress_prop(&mut m, vmat);
-        Kind::Prop(cx.add_labeled_asset(format!("material{index}"), m))
+        return Kind::Skip;
     }
+    let mut m = standard_material(doc, material, linear, cx);
+    dress_prop(&mut m, vmat);
+    Kind::Prop(cx.add_labeled_asset(format!("material{index}"), m))
 }
 
 /// How many primitives draw with each of the map's materials.
