@@ -15,10 +15,11 @@ pub struct Prefs {
     pub service: String,
     /// The last login typed (never the password).
     pub login: String,
-    /// The name a direct game announces.
-    pub name: String,
     /// The last direct address.
     pub direct: String,
+    /// The port and the seats of the last local lobby.
+    pub host_port: String,
+    pub host_players: String,
     /// Hosts the player was told plain TCP is unprotected for, and went on.
     pub plain_ok: Vec<String>,
 }
@@ -39,8 +40,9 @@ impl Prefs {
             match name.trim() {
                 "service" => prefs.service = value,
                 "login" => prefs.login = value,
-                "name" => prefs.name = value,
                 "direct" => prefs.direct = value,
+                "host_port" => prefs.host_port = value,
+                "host_players" => prefs.host_players = value,
                 "plain_ok" if prefs.plain_ok.len() < MAX_PLAIN_HOSTS => prefs.plain_ok.push(value),
                 _ => {}
             }
@@ -53,8 +55,9 @@ impl Prefs {
         for (name, value) in [
             ("service", &self.service),
             ("login", &self.login),
-            ("name", &self.name),
             ("direct", &self.direct),
+            ("host_port", &self.host_port),
+            ("host_players", &self.host_players),
         ] {
             if !value.is_empty() {
                 out.push_str(&format!("{name} = {value}\n"));

@@ -57,6 +57,12 @@ pub struct KeyField(pub usize);
 #[derive(Component)]
 pub struct KeyText(pub usize);
 
+/// The profile name's field, and its text.
+#[derive(Component)]
+pub struct NameField;
+#[derive(Component)]
+pub struct NameText;
+
 /// The line telling which bindings clash.
 #[derive(Component)]
 pub struct Clashes;
@@ -185,6 +191,7 @@ impl Kit<'_, '_, '_> {
                 },
                 BackgroundColor(Color::srgb(0.13, 0.15, 0.19)),
                 BorderColor::all(Color::srgba(1.0, 1.0, 1.0, 0.12)),
+                Name::new(label.to_lowercase()),
                 ChildOf(parent),
             ))
             .id();
@@ -233,6 +240,7 @@ fn header(kit: &mut Kit, root: Entity, on: Tab) {
                     ..default()
                 },
                 BorderColor::all(if lit { ui::GOLDEN } else { Color::NONE }),
+                Name::new(tab.title().to_lowercase()),
                 ChildOf(tabs),
             ))
             .id();
@@ -262,6 +270,7 @@ fn heading(kit: &mut Kit, body: Entity, title: &str) {
 fn control_row(kit: &mut Kit, body: Entity, control: Control, open: Option<Choice>) {
     match control {
         Control::Heading(title) => heading(kit, body, title),
+        Control::Name => name_row(kit, body),
         Control::Toggle(toggle) => toggle_row(kit, body, toggle),
         Control::Slider(slider) => slider_row(kit, body, slider),
         Control::Choice(choice) => choice_row(kit, body, choice, open == Some(choice)),
@@ -283,6 +292,37 @@ fn labelled(kit: &mut Kit, body: Entity, label: &str) -> Entity {
     );
     kit.text(row, label, 15.0, ui::INK);
     row
+}
+
+/// The profile name: a field a click types into, Enter or Escape done.
+fn name_row(kit: &mut Kit, body: Entity) {
+    let row = labelled(kit, body, "Name in local and direct games");
+    let field = kit
+        .commands
+        .spawn((
+            NameField,
+            Button,
+            Name::new("profile name"),
+            Node {
+                width: px(240),
+                height: px(30),
+                padding: UiRect::horizontal(px(10)),
+                align_items: AlignItems::Center,
+                border: UiRect::all(px(1)),
+                border_radius: BorderRadius::all(px(3)),
+                ..default()
+            },
+            BackgroundColor(FIELD),
+            BorderColor::all(ui::EDGE),
+            ChildOf(row),
+        ))
+        .id();
+    kit.commands.spawn((
+        NameText,
+        ui::text("", &kit.fonts.regular, 15.0, ui::INK),
+        Pickable::IGNORE,
+        ChildOf(field),
+    ));
 }
 
 /// A checkbox and its label: a click anywhere on the row turns it.
@@ -548,6 +588,7 @@ pub fn refresh(
         Option<&ChoiceValue>,
         Option<&KeyText>,
         Option<&Clashes>,
+        Has<NameText>,
     )>,
 ) {
     if !screen.open || !(settings.is_changed() || screen.is_changed()) {
@@ -564,8 +605,10 @@ pub fn refresh(
             node.width = width;
         }
     }
-    for (mut text, mut color, slider, choice, key, clashes) in &mut texts {
-        let (s, c) = if let Some(slider) = slider {
+    for (mut text, mut color, slider, choice, key, clashes, name) in &mut texts {
+        let (s, c) = if name {
+            name_text(&screen, &settings)
+        } else if let Some(slider) = slider {
             (slider.0.shown(&settings), ui::INK)
         } else if let Some(choice) = choice {
             (choice.0.shown(&settings), ui::INK)
@@ -578,6 +621,16 @@ pub fn refresh(
         };
         text.set_if_neq(Text(s));
         color.set_if_neq(TextColor(c));
+    }
+}
+
+/// What the name field says: the name, a caret while typed into, the
+/// name games use while it is empty.
+fn name_text(screen: &Screen, settings: &Settings) -> (String, Color) {
+    match (screen.naming, settings.name.is_empty()) {
+        (true, _) => (format!("{}|", settings.name), ON),
+        (false, true) => (crate::main_menu::DEFAULT_NAME.to_owned(), ui::INK_DIM),
+        (false, false) => (settings.name.clone(), ui::INK),
     }
 }
 

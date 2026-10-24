@@ -31,6 +31,22 @@ pub struct Look {
     hover: Color,
 }
 
+/// An icon button's tint at rest and under the cursor, as Dota washes its
+/// control icons.
+#[derive(Component, Clone, Copy)]
+pub struct Wash {
+    icon: Entity,
+    rest: Color,
+    hover: Color,
+}
+
+/// A button's gradient at rest and under the cursor, top to bottom.
+#[derive(Component, Clone, Copy)]
+pub struct Shade {
+    rest: (Color, Color),
+    hover: (Color, Color),
+}
+
 /// Dota's green, for Play and Accept.
 pub const GREEN: (Color, Color) = (Color::srgb(0.16, 0.42, 0.18), Color::srgb(0.22, 0.55, 0.24));
 /// For Decline and Leave.
@@ -154,10 +170,101 @@ impl Kit<'_, '_, '_> {
                 },
                 BackgroundColor(look.0),
                 BorderColor::all(Color::srgba(1.0, 1.0, 1.0, 0.12)),
+                Name::new(label.to_lowercase()),
                 ChildOf(parent),
             ))
             .id();
         self.bold(button, label, (height * 0.38).clamp(12.0, 22.0), ui::INK);
+        button
+    }
+
+    /// A button drawn as one of Dota's control icons (`art`): a `size` box
+    /// with the icon `icon` across in its middle, washed in `wash`'s
+    /// colours; `label` in plain colours without the art.
+    pub fn icon_button(
+        &mut self,
+        parent: Entity,
+        art: &str,
+        label: &str,
+        act: Act,
+        size: (f32, f32),
+        icon: f32,
+        wash: (Color, Color),
+    ) -> Entity {
+        let Some(path) = self.manifest.file(art) else {
+            return self.button(parent, label, act, PLAIN, 30.0);
+        };
+        let button = self
+            .commands
+            .spawn((
+                MenuButton(act),
+                Button,
+                Node {
+                    width: px(size.0),
+                    height: px(size.1),
+                    justify_content: JustifyContent::Center,
+                    align_items: AlignItems::Center,
+                    flex_shrink: 0.0,
+                    ..default()
+                },
+                ChildOf(parent),
+            ))
+            .id();
+        let picture = self
+            .commands
+            .spawn((
+                Node {
+                    width: px(icon),
+                    height: px(icon),
+                    ..default()
+                },
+                ImageNode::new(self.server.load(path)).with_color(wash.0),
+                Pickable::IGNORE,
+                ChildOf(button),
+            ))
+            .id();
+        self.commands.entity(button).insert(Wash {
+            icon: picture,
+            rest: wash.0,
+            hover: wash.1,
+        });
+        button
+    }
+
+    /// Dota's popup button (`PopupButton`): a dark gradient, a faint edge,
+    /// its label in capitals.
+    pub fn popup_button(&mut self, parent: Entity, label: &str, act: Act) -> Entity {
+        let rest = (
+            Color::srgb_u8(0x22, 0x22, 0x22),
+            Color::srgb_u8(0x4b, 0x55, 0x5d),
+        );
+        let hover = (
+            Color::srgb_u8(0x58, 0x63, 0x6e),
+            Color::srgb_u8(0x53, 0x62, 0x6e),
+        );
+        let button = self
+            .commands
+            .spawn((
+                MenuButton(act),
+                Button,
+                Shade { rest, hover },
+                Node {
+                    min_width: px(192),
+                    margin: UiRect::all(px(8)),
+                    padding: UiRect::axes(px(30), px(10)),
+                    justify_content: JustifyContent::Center,
+                    border: UiRect::all(px(1)),
+                    ..default()
+                },
+                BackgroundGradient::from(LinearGradient::to_bottom(vec![
+                    rest.0.into(),
+                    rest.1.into(),
+                ])),
+                BorderColor::all(Color::srgba_u8(0x83, 0x83, 0x83, 0x90)),
+                ChildOf(parent),
+            ))
+            .id();
+        self.bold(button, label.to_uppercase(), 20.0, Color::WHITE);
         button
     }
 
@@ -241,12 +348,31 @@ pub fn clicks(
 
 pub fn hover(
     mut buttons: Query<(&Interaction, &Look, &mut BackgroundColor), Changed<Interaction>>,
+    washed: Query<(&Interaction, &Wash), Changed<Interaction>>,
+    mut shaded: Query<(&Interaction, &Shade, &mut BackgroundGradient), Changed<Interaction>>,
+    mut images: Query<&mut ImageNode>,
 ) {
     for (interaction, look, mut color) in &mut buttons {
         color.0 = match interaction {
             Interaction::None => look.rest,
             _ => look.hover,
         };
+    }
+    for (interaction, wash) in &washed {
+        if let Ok(mut image) = images.get_mut(wash.icon) {
+            image.color = match interaction {
+                Interaction::None => wash.rest,
+                _ => wash.hover,
+            };
+        }
+    }
+    for (interaction, shade, mut gradient) in &mut shaded {
+        let (top, bottom) = match interaction {
+            Interaction::None => shade.rest,
+            _ => shade.hover,
+        };
+        *gradient =
+            BackgroundGradient::from(LinearGradient::to_bottom(vec![top.into(), bottom.into()]));
     }
 }
 

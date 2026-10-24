@@ -7,7 +7,7 @@ use bota_radovid::proto::{
     EndReason, LobbyId, MatchId, MatchResult, Outcome, ProposalId, QueueEntryId, RulesetId,
 };
 
-use super::core::{MenuCore, Page, Status, clock};
+use super::core::{Confirm, GameKind, MenuCore, Page, Status, clock};
 use super::form::FormKind;
 use super::text;
 
@@ -117,6 +117,13 @@ pub struct ResultView {
     pub seats: Vec<SeatRow>,
 }
 
+/// A replay on this machine.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ReplayRow {
+    pub name: String,
+    pub size: String,
+}
+
 /// The page under the top bar.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum PageView {
@@ -145,6 +152,11 @@ pub enum PageView {
     },
     Lobby(LobbyView),
     Result(ResultView),
+    /// The replays on this machine, and a field for any replay file.
+    Replays {
+        list: Vec<ReplayRow>,
+        fields: Vec<FieldView>,
+    },
     /// The settings screen, which draws itself over the menu.
     Settings,
     /// A game is being opened.
@@ -152,6 +164,24 @@ pub enum PageView {
     /// A game is on screen: only the overlays show.
     Hidden,
 }
+
+/// A question over the page, as Dota's popups ask it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ConfirmView {
+    pub title: &'static str,
+    pub text: &'static str,
+}
+
+/// Dota's quit popup (`DOTA_ConfirmQuit`), with this client's name.
+const QUIT_TITLE: &str = "Confirm Quit";
+const QUIT_TEXT: &str = "Do you really wish to quit dbota?";
+/// The same when a seat is left in a game under way (`DOTA_ConfirmQuitDescUnsafe`).
+const QUIT_TEXT_UNSAFE: &str = "Leaving a game before it has finished may ruin the game for \
+other players.  Do you really wish to quit dbota?";
+/// Dota's popup for leaving a game watched or a replay
+/// (`popup_confirm_close_replay`).
+const LEAVE_TITLE: &str = "Confirm Disconnect";
+const LEAVE_TEXT: &str = "Are you sure you'd like to leave the game?";
 
 /// Everything the menu draws.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -164,6 +194,13 @@ pub struct MenuView {
     pub searches: Vec<SearchRow>,
     pub waits: Vec<WaitRow>,
     pub offer: Option<OfferBox>,
+    /// The game under the dashboard, and how it is had.
+    pub game: Option<GameKind>,
+    /// A seat left that can be taken again (Dota's RECONNECT).
+    pub reconnect: bool,
+    pub confirm: Option<ConfirmView>,
+    /// Whether there is a client to quit: a browser's page has none.
+    pub can_quit: bool,
 }
 
 impl MenuView {
@@ -192,6 +229,23 @@ impl MenuCore {
             searches,
             waits,
             offer,
+            game: self.in_game().then_some(self.kind),
+            reconnect: self.reconnect.is_some() && !self.in_game() && !self.launching,
+            confirm: self.confirm.map(|c| match c {
+                Confirm::Quit => ConfirmView {
+                    title: QUIT_TITLE,
+                    text: if self.game_unsafe {
+                        QUIT_TEXT_UNSAFE
+                    } else {
+                        QUIT_TEXT
+                    },
+                },
+                Confirm::Leave => ConfirmView {
+                    title: LEAVE_TITLE,
+                    text: LEAVE_TEXT,
+                },
+            }),
+            can_quit: !cfg!(target_arch = "wasm32"),
         }
     }
 
@@ -215,12 +269,14 @@ impl MenuCore {
 
     fn body(&self) -> PageView {
         match self.page {
-            Page::Service | Page::Login | Page::Register | Page::Direct => PageView::Form {
-                kind: self.form.kind,
-                fields: self.fields(),
-                busy: self.connecting() && self.page != Page::Direct,
-                plain_host: self.plain_host.as_ref().map(|h| text::line(h, text::NAME)),
-            },
+            Page::Service | Page::Login | Page::Register | Page::Direct | Page::LocalLobby => {
+                PageView::Form {
+                    kind: self.form.kind,
+                    fields: self.fields(),
+                    busy: self.connecting() && self.page != Page::Direct,
+                    plain_host: self.plain_host.as_ref().map(|h| text::line(h, text::NAME)),
+                }
+            }
             Page::Home => self.home(),
             Page::MyGames => PageView::MyGames {
                 games: self
@@ -249,6 +305,17 @@ impl MenuCore {
                 .shown
                 .and_then(|id| self.results.iter().find(|r| r.match_id == id))
                 .map_or(PageView::Joining, |r| PageView::Result(self.result_view(r))),
+            Page::Replays => PageView::Replays {
+                list: self
+                    .replays
+                    .iter()
+                    .map(|r| ReplayRow {
+                        name: r.name.clone(),
+                        size: r.size.clone(),
+                    })
+                    .collect(),
+                fields: self.fields(),
+            },
             Page::Settings => PageView::Settings,
             Page::Game if self.launching => PageView::Joining,
             Page::Game => PageView::Hidden,

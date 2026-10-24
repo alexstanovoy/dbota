@@ -79,6 +79,8 @@ bota_client_core = { path = "../bota/crates/bota_client_core", features = ["ui",
 bevy = { version = "=0.19.1", default-features = false, features = ["system_font_discovery"] }
 fontique = { version = "=0.9.0", default-features = false, features = ["fontconfig-dlopen"] }
 bota_radovid = { path = "../bota/crates/bota_radovid", features = ["native"] }
+# A seat claimed in a direct or local game is claimed with a key of the system's randomness.
+getrandom = "0.4"
 
 # In a browser, Bevy draws through WebGPU where the browser has it, else WebGL2.
 [target.'cfg(target_arch = "wasm32")'.dependencies]

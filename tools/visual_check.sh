@@ -96,3 +96,15 @@ else
     echo "visual check: FAIL a refused replay did not end the client cleanly (see $out/refused.log)"
     exit 1
 fi
+
+# The way out: Escape on the menu asks to quit and OK ends the client with exit code 0; Escape in
+# a live game opens the dashboard, DISCONNECT leaves for the menu and RECONNECT takes the seat
+# again; a replay is left for the menu. One test at a time: each opens a window of its own.
+if VISUAL_REPLAY="$(realpath "$replay")" DBOTA_QUIT_SHOTS="$out/quit" cargo test --release --quiet \
+    --manifest-path "$here/Cargo.toml" --test menu_quit -- --ignored --test-threads 1 \
+    > "$out/quit.log" 2>&1; then
+    echo "visual check: PASS the menu, a game and a replay are quit and left as Dota's are"
+else
+    echo "visual check: FAIL the way out (see $out/quit.log)"
+    exit 1
+fi

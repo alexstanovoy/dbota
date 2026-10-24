@@ -295,7 +295,14 @@ pub struct Settings {
     pub display: DisplayMode,
     /// How strongly units and paths are set apart from the ground.
     pub clarity: Clarity,
+    /// The profile name, which games without an account (local lobbies,
+    /// direct connects) show this player under, as Dota's local games show
+    /// the Steam name. Empty: [`crate::main_menu::DEFAULT_NAME`].
+    pub name: String,
 }
+
+/// Characters a profile name has at most.
+pub const MAX_NAME: usize = 24;
 
 impl Default for Settings {
     fn default() -> Settings {
@@ -314,6 +321,7 @@ impl Default for Settings {
             quality: Quality::default(),
             display: DisplayMode::default(),
             clarity: Clarity::High,
+            name: String::new(),
         }
     }
 }
@@ -442,6 +450,12 @@ impl Settings {
                     )
                 })?
             }
+            "name" => {
+                if value.chars().count() > MAX_NAME || value.chars().any(char::is_control) {
+                    return Err(format!("a name is at most {MAX_NAME} printable characters"));
+                }
+                value.clone_into(&mut self.name);
+            }
             other => return Err(format!("no setting called '{other}'")),
         }
         Ok(())
@@ -452,6 +466,9 @@ impl Settings {
         let flag = |on: bool| if on { "true" } else { "false" };
         let mut out =
             String::from("# dbota settings. Keys use the names listed in the client README.\n");
+        if !self.name.is_empty() {
+            out.push_str(&format!("name = {}\n", self.name));
+        }
         out.push_str(&format!("volume = {:.2}\n", self.volume));
         out.push_str(&format!("muted = {}\n", flag(self.muted)));
         out.push_str(&format!("voice_responses = {}\n", flag(self.voice)));

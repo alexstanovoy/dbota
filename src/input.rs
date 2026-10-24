@@ -95,9 +95,15 @@ fn mute(
     mut muted: ResMut<crate::keys::Muted>,
 ) {
     let menu_covers = menu.is_some_and(|m| !m.shows_game());
-    let now = *typing != Typing::No || screen.open || menu_covers;
-    if muted.0 != now {
-        muted.0 = now;
+    let now = if *typing != Typing::No || screen.capturing.is_some() || screen.naming {
+        crate::keys::Muted::All
+    } else if screen.open || menu_covers {
+        crate::keys::Muted::Game
+    } else {
+        crate::keys::Muted::No
+    };
+    if *muted != now {
+        *muted = now;
     }
 }
 
@@ -191,17 +197,20 @@ fn keys(
     mut screen: ResMut<crate::settings::Screen>,
     mut groups: ResMut<ControlGroups>,
     mut exit: MessageWriter<AppExit>,
+    muted: Res<crate::keys::Muted>,
+    menu: Option<NonSendMut<crate::main_menu::MenuCore>>,
 ) {
     let core = &mut session.0;
     // Orders given while Shift is held wait their turn behind what the unit
     // does, as Dota's Shift-queue: by key, by click, and by an aimed click.
     core.queueing = *typing == Typing::No
         && (keys.pressed(KeyCode::ShiftLeft) || keys.pressed(KeyCode::ShiftRight));
-    if *typing != Typing::No || typing.is_changed() {
+    // Over the menu or the settings the interface takes Escape, not the game.
+    if *typing != Typing::No || typing.is_changed() || *muted != crate::keys::Muted::No {
         return;
     }
     if fired.pressed(Action::Escape) {
-        escape(core, &mut panels, &mut screen, &mut exit);
+        escape(core, &mut panels, &mut screen, menu, &mut exit);
     }
     if fired.pressed(Action::Console) && matches!(core.source, Source::Live(_)) {
         *typing = Typing::Console;
@@ -349,12 +358,14 @@ pub fn press(core: &mut bota_client_core::App, slot: Slot, ctrl: bool) {
 }
 
 /// Escape lets go of what is half done and closes what is open, as Dota's;
-/// with nothing of either it opens the settings, and it leaves a match that
-/// is over.
+/// with nothing of either it opens the dashboard over the game (where the
+/// game is left and the client quit), and without a menu (a browser's
+/// replay) the settings, or ends a match that is over.
 fn escape(
     core: &mut bota_client_core::App,
     panels: &mut Panels,
     screen: &mut crate::settings::Screen,
+    menu: Option<NonSendMut<crate::main_menu::MenuCore>>,
     exit: &mut MessageWriter<AppExit>,
 ) {
     let half_done = core.attack_move_armed
@@ -374,6 +385,8 @@ fn escape(
         panels.talents = false;
     } else if panels.scoreboard {
         panels.scoreboard = false;
+    } else if let Some(mut menu) = menu {
+        menu.act(crate::main_menu::Act::Dashboard);
     } else if core.over.is_some() || core.phase == bota_client_core::Phase::Lobby {
         exit.write(AppExit::Success);
     } else {

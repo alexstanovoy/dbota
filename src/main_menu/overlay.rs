@@ -6,7 +6,7 @@ use bevy::prelude::*;
 
 use super::core::Act;
 use super::screens::{ERROR, GREEN, Kit, PLAIN, RED};
-use super::view::{GameRow, MenuView, OfferBox, SearchRow, WaitRow};
+use super::view::{ConfirmView, GameRow, MenuView, OfferBox, SearchRow, WaitRow};
 use crate::ui;
 
 /// The overlay layer.
@@ -15,9 +15,11 @@ pub fn draw(kit: &mut Kit, root: Entity, view: &MenuView) {
         // Bottom right over the menu, as Dota's; top right over a game,
         // clear of its panels.
         let corner = if view.covers() {
+            // Above the play area when it shows.
+            let play_area = view.game.is_some() || view.reconnect;
             Node {
                 right: px(24),
-                bottom: px(24),
+                bottom: px(if play_area { 24.0 + 128.0 } else { 24.0 }),
                 ..default()
             }
         } else {
@@ -50,6 +52,72 @@ pub fn draw(kit: &mut Kit, root: Entity, view: &MenuView) {
     if let Some(offer) = &view.offer {
         match_found(kit, root, offer);
     }
+    if let Some(confirm) = view.confirm.as_ref().filter(|_| view.covers()) {
+        popup(kit, root, confirm);
+    }
+}
+
+/// Dota's generic popup (`PopupPanel` of popups_shared): the screen dimmed,
+/// a dark card with a thin edge, its title, the question, OK and Cancel.
+fn popup(kit: &mut Kit, root: Entity, confirm: &ConfirmView) {
+    let dim = kit
+        .commands
+        .spawn((
+            Node {
+                justify_content: JustifyContent::Center,
+                align_items: AlignItems::Center,
+                ..ui::fill()
+            },
+            BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.6)),
+            crate::hud::Blocker,
+            Interaction::default(),
+            GlobalZIndex(90),
+            ChildOf(root),
+        ))
+        .id();
+    let card = kit
+        .commands
+        .spawn((
+            Node {
+                min_width: px(450),
+                max_width: px(720),
+                flex_direction: FlexDirection::Column,
+                align_items: AlignItems::Center,
+                padding: UiRect::axes(px(64), px(32)),
+                border: UiRect::all(px(1)),
+                ..default()
+            },
+            BackgroundGradient::from(LinearGradient::to_bottom(vec![
+                Color::srgba_u8(0x27, 0x2d, 0x2e, 0xee).into(),
+                Color::srgba_u8(0x13, 0x16, 0x17, 0xee).into(),
+            ])),
+            BorderColor::all(Color::srgb_u8(0x5e, 0x68, 0x69)),
+            BoxShadow::new(Color::BLACK, px(0), px(0), px(0), px(8)),
+            Name::new("popup"),
+            ChildOf(dim),
+        ))
+        .id();
+    let ink = Color::srgb_u8(0xaf, 0xb4, 0xb4);
+    let title = kit.text(card, confirm.title, 30.0, ink);
+    kit.commands.entity(title).insert(Node {
+        margin: UiRect::bottom(px(15)),
+        ..default()
+    });
+    let text = kit.text(card, confirm.text, 20.0, ink);
+    kit.commands
+        .entity(text)
+        .insert(TextLayout::justify(Justify::Center));
+    let row = kit.node(
+        card,
+        Node {
+            margin: UiRect::new(px(0), px(0), px(25), px(20)),
+            ..default()
+        },
+    );
+    let ok = kit.popup_button(row, "OK", Act::Answer(true));
+    kit.commands.entity(ok).insert(Name::new("ok"));
+    let cancel = kit.popup_button(row, "Cancel", Act::Answer(false));
+    kit.commands.entity(cancel).insert(Name::new("cancel"));
 }
 
 fn search_row(kit: &mut Kit, parent: Entity, search: &SearchRow, which: Option<usize>) {

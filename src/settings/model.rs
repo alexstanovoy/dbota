@@ -279,6 +279,8 @@ fn anti_alias_name(a: AntiAlias) -> String {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Control {
     Heading(&'static str),
+    /// The profile name, typed in.
+    Name,
     Toggle(Toggle),
     Slider(Slider),
     Choice(Choice),
@@ -291,6 +293,8 @@ pub fn controls(tab: Tab) -> Vec<Control> {
     match tab {
         Tab::Hotkeys => Vec::new(),
         Tab::Options => vec![
+            H("PROFILE"),
+            Control::Name,
             H("INTERFACE"),
             S(Slider::InterfaceScale),
             T(Toggle::DamageNumbers),

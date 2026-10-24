@@ -9,10 +9,10 @@ use bevy::{
     },
     prelude::*,
 };
-use bota_client_core::{App as Core, Phase, Source};
+use bota_client_core::{App as Core, Source};
 
-use super::core::{Act, MenuCore, Page};
-use super::launch::{Idle, Opening, Trust};
+use super::core::{Act, Launch, MenuCore, Page};
+use super::launch::{Hosted, Idle, Opening, Trust};
 use super::view::MenuView;
 use crate::session::Session;
 
@@ -25,6 +25,11 @@ pub struct GameEpoch(pub u32);
 #[derive(Default)]
 struct Pending(Option<Opening>);
 
+/// The game server of the local lobby this client started, ended with it
+/// (or when another is started).
+#[derive(Default)]
+struct Host(Option<Hosted>);
+
 /// A canned view drawn instead of the live one (`--menu-preview`).
 #[derive(Resource)]
 pub struct Preview(pub MenuView);
@@ -35,11 +40,14 @@ pub struct Trusted(pub Trust);
 pub fn plugin(app: &mut App) {
     app.init_resource::<GameEpoch>()
         .insert_non_send(Pending::default())
+        .insert_non_send(Host::default())
         .add_systems(
             PreUpdate,
-            guard
+            (escape, guard)
+                .chain()
                 .after(InputSystems)
                 .after(crate::keys::fire)
+                .after(crate::settings::escape)
                 .before(crate::session::pump),
         )
         .add_systems(Startup, super::screens::spawn_roots)
@@ -70,40 +78,103 @@ pub fn idle() -> Session {
     Session(Core::new(Source::Live(Box::new(Idle))))
 }
 
-/// Takes in the service's news and opens the games the menu asks for.
+/// Escape over the menu backs out of it, through its binding; the menu
+/// takes every Escape while it covers the game, so none reaches the game.
+fn escape(core: Option<NonSendMut<MenuCore>>, mut fired: ResMut<crate::keys::Fired>) {
+    let Some(mut core) = core else {
+        return;
+    };
+    let escape = crate::keys::Action::Escape;
+    if core.shows_game() || !fired.pressed(escape) {
+        return;
+    }
+    fired.pressed.retain(|action| *action != escape);
+    core.act(Act::Back);
+}
+
+/// Takes in the service's news, opens the games the menu asks for, and ends
+/// the client when the player said to quit: through `AppExit`, the way a
+/// refused replay ends it, so the app winds down its render thread first.
+#[allow(clippy::too_many_arguments)]
 fn drive(
     core: Option<NonSendMut<MenuCore>>,
     trust: Option<NonSend<Trusted>>,
     mut pending: NonSendMut<Pending>,
+    mut host: NonSendMut<Host>,
     mut session: NonSendMut<Session>,
     mut epoch: ResMut<GameEpoch>,
     mut commands: Commands,
     mut index: ResMut<crate::units::UnitIndex>,
+    args: Res<crate::Args>,
+    settings: Res<crate::config::Settings>,
+    mut exit: MessageWriter<AppExit>,
 ) {
     let (Some(mut core), Some(trust)) = (core, trust) else {
         return;
     };
+    if core.take_quit() {
+        // The lobby this client hosts ends with it.
+        host.0 = None;
+        exit.write(AppExit::Success);
+        return;
+    }
+    core.set_profile_name(&settings.name);
     core.update();
-    if let Some(launch) = core.take_launch() {
-        pending.0 = Some(Opening::start(launch, &trust.0));
+    let mut opened_here = |core: &mut MenuCore, opened: std::io::Result<Session>| match opened {
+        Ok(opened) => {
+            *session = opened;
+            epoch.0 += 1;
+            forget_units(&mut commands, &mut index);
+            core.game_started();
+        }
+        Err(err) => core.launch_failed(&err.to_string()),
+    };
+    match core.take_launch() {
+        // The command line's game again: as it was opened at the start.
+        Some(Launch::Given) => opened_here(&mut core, crate::session::open(&args)),
+        Some(Launch::Replay(path)) => opened_here(&mut core, open_replay(&path)),
+        Some(launch) => {
+            if matches!(launch, Launch::Host { .. }) {
+                // One lobby hosted at a time: the last one's server ends.
+                host.0 = None;
+            }
+            pending.0 = Some(Opening::start(launch, &trust.0));
+        }
+        None => {}
     }
     let Some(opened) = pending.0.as_mut().and_then(Opening::poll) else {
         return;
     };
     pending.0 = None;
     match opened {
-        Ok(link) => {
-            *session = Session(Core::new(Source::Live(link)));
-            epoch.0 += 1;
-            forget_units(&mut commands, &mut index);
-            core.game_started();
+        Ok(opened) => {
+            if opened.server.is_some() {
+                host.0 = opened.server;
+            }
+            opened_here(&mut core, Ok(Session(Core::new(Source::Live(opened.link)))));
         }
         Err(err) => core.launch_failed(&err.to_string()),
     }
 }
 
+/// A replay file opened from the menu, watched through every eyes.
+fn open_replay(path: &std::path::Path) -> std::io::Result<Session> {
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let player = bota_client_core::ReplayPlayer::load(path)?;
+        Ok(Session(Core::new(Source::Replay(Box::new(player)))))
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        let _ = path;
+        Err(std::io::Error::other("a browser opens no files"))
+    }
+}
+
 /// Keeps the game's keys quiet while the menu covers the screen, and brings
-/// the menu back when the game on screen is lost or the player leaves it.
+/// the menu back when the game on screen is lost or the player leaves it
+/// (Escape in a game that is over, DISCONNECT on the dashboard).
+#[allow(clippy::too_many_arguments)]
 fn guard(
     core: Option<NonSendMut<MenuCore>>,
     mut session: NonSendMut<Session>,
@@ -118,28 +189,44 @@ fn guard(
     let Some(mut core) = core else {
         return;
     };
-    if !core.shows_game() {
+    let game = &session.0;
+    let seated = game.my_slot.is_some() && matches!(game.source, Source::Live(_));
+    core.set_game_unsafe(seated && game.over.is_none() && !game.lost);
+    let disconnect = core.take_leave();
+    let shown = core.shows_game();
+    if !shown {
         keys.reset_all();
+    }
+    // A game under the dashboard is let go when lost too.
+    if !core.in_game() {
         return;
     }
-    let game = &session.0;
-    let lost = game.lost && !game.source.is_redialing();
-    let why = lost.then(|| {
-        game.feed.last().filter(|_| game.view().is_none()).map_or(
+    // A replay opened from the menu that cannot be read is left, saying why
+    // (one named on the command line says so and stays, as it always has).
+    let unreadable = match &game.source {
+        Source::Replay(player) if core.replay_from_menu() => player.error().map(|e| e.to_string()),
+        _ => None,
+    };
+    let lost = (game.lost && !game.source.is_redialing()) || unreadable.is_some();
+    let why = lost.then(|| match &unreadable {
+        Some(err) => format!("The replay cannot be read: {err}"),
+        None => game.feed.last().filter(|_| game.view().is_none()).map_or(
             "the connection to the game server was lost".to_owned(),
             |l| l.text.clone(),
-        )
+        ),
     });
-    let done = lost || game.over.is_some() || (game.phase == Phase::Lobby && game.view().is_none());
+    let over = game.over.is_some();
+    let done = lost || over;
     let escape = crate::keys::Action::Escape;
-    let leave = fired.pressed(escape) && done && !screen.open && !panels.shop;
-    if leave || (lost && game.over.is_none()) {
+    let leave =
+        disconnect || (shown && fired.pressed(escape) && done && !screen.open && !panels.shop);
+    if leave || (lost && !over) {
         // Escape leaves the game here, not the client too.
         fired.pressed.retain(|action| *action != escape);
         *session = idle();
         epoch.0 += 1;
         forget_units(&mut commands, &mut index);
-        core.left_game(if leave { None } else { why.as_deref() });
+        core.left_game(if leave { None } else { why.as_deref() }, over);
     }
 }
 
@@ -181,7 +268,6 @@ fn keyboard(core: Option<NonSendMut<MenuCore>>, mut events: MessageReader<Keyboa
             Key::Enter => Act::Submit,
             Key::Tab => Act::NextField,
             Key::Backspace => Act::Erase,
-            Key::Escape => Act::Dismiss,
             Key::Space => Act::Type(" ".to_owned()),
             Key::Character(typed) => Act::Type(typed.to_string()),
             _ => continue,

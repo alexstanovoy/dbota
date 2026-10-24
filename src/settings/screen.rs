@@ -13,8 +13,8 @@ use bevy::{
 };
 
 use super::draw::{
-    Body, ChoiceButton, ChoiceOption, CloseButton, KeyField, ResetButton, Root, SliderTrack,
-    TabButton, ToggleRow,
+    Body, ChoiceButton, ChoiceOption, CloseButton, KeyField, NameField, ResetButton, Root,
+    SliderTrack, TabButton, ToggleRow,
 };
 use super::model::{Choice, Tab};
 use crate::config::Settings;
@@ -30,6 +30,8 @@ pub struct Screen {
     /// taken.
     pub capturing: Option<usize>,
     pub dropdown: Option<Choice>,
+    /// The profile name is being typed.
+    pub naming: bool,
     /// A modifier key pressed while capturing and nothing else yet: bound
     /// alone when it is let go first.
     held_modifier: Option<KeyCode>,
@@ -42,6 +44,7 @@ impl Default for Screen {
             tab: Tab::Hotkeys,
             capturing: None,
             dropdown: None,
+            naming: false,
             held_modifier: None,
         }
     }
@@ -50,6 +53,12 @@ impl Default for Screen {
 pub fn plugin(app: &mut App) {
     app.init_resource::<Screen>()
         .add_systems(Startup, (super::draw::spawn_root, open_at_start))
+        .add_systems(
+            PreUpdate,
+            escape
+                .after(crate::keys::fire)
+                .after(bevy::input::InputSystems),
+        )
         .add_systems(
             Update,
             (
@@ -95,11 +104,17 @@ fn clicks(
     choices: Query<(&Interaction, &ChoiceButton), Changed<Interaction>>,
     options: Query<(&Interaction, &ChoiceOption), Changed<Interaction>>,
     fields: Query<(&Interaction, &KeyField), Changed<Interaction>>,
+    name: Query<&Interaction, (Changed<Interaction>, With<NameField>)>,
 ) {
     if !screen.open {
+        screen.bypass_change_detection().naming = false;
         return;
     }
     let pressed = |i: &Interaction| *i == Interaction::Pressed;
+    if name.iter().any(pressed) {
+        screen.naming = true;
+        screen.capturing = None;
+    }
     if let Some((_, tab)) = tabs.iter().find(|(i, _)| pressed(i)) {
         screen.tab = tab.0;
         screen.dropdown = None;
@@ -154,10 +169,24 @@ fn drag(
     }
 }
 
+/// Escape, through its binding, closes the open list, else the screen, and
+/// goes no further: the menu or the game under the screen never sees it.
+pub fn escape(mut screen: ResMut<Screen>, mut fired: ResMut<crate::keys::Fired>) {
+    let escape = crate::keys::Action::Escape;
+    if !screen.open || !fired.pressed(escape) {
+        return;
+    }
+    fired.pressed.retain(|action| *action != escape);
+    if screen.dropdown.is_some() {
+        screen.dropdown = None;
+    } else {
+        screen.open = false;
+    }
+}
+
 /// The key, button or chord pressed while a key field waits for one binds
 /// its action: Escape lets it go unchanged, Backspace unbinds it, a
-/// modifier pressed and let go alone binds that key. Without a field
-/// waiting, Escape closes the open list, else the screen.
+/// modifier pressed and let go alone binds that key.
 fn capture(
     mut screen: ResMut<Screen>,
     mut settings: ResMut<Settings>,
@@ -174,17 +203,13 @@ fn capture(
         mouse.clear();
         return;
     }
+    if screen.naming {
+        mouse.clear();
+        name(&mut screen, &mut settings, keyboard.read());
+        return;
+    }
     let Some(at) = screen.capturing else {
-        if keyboard
-            .read()
-            .any(|e| e.state == ButtonState::Pressed && e.key_code == KeyCode::Escape)
-        {
-            if screen.dropdown.is_some() {
-                screen.dropdown = None;
-            } else {
-                screen.open = false;
-            }
-        }
+        keyboard.clear();
         mouse.clear();
         return;
     };
@@ -234,6 +259,36 @@ fn capture(
         settings.keys[at] = chord;
         screen.capturing = None;
         screen.held_modifier = None;
+    }
+}
+
+/// Types into the profile name; Enter or Escape is done with it.
+fn name<'a>(
+    screen: &mut Screen,
+    settings: &mut Settings,
+    keyboard: impl Iterator<Item = &'a KeyboardInput>,
+) {
+    use bevy::input::keyboard::Key;
+    for event in keyboard.filter(|e| e.state == ButtonState::Pressed) {
+        match &event.logical_key {
+            Key::Enter | Key::Escape => screen.naming = false,
+            Key::Backspace => {
+                settings.name.pop();
+            }
+            Key::Character(typed) => push_name(&mut settings.name, typed),
+            Key::Space => push_name(&mut settings.name, " "),
+            _ => {}
+        }
+    }
+}
+
+/// Printable characters, up to the name's length.
+fn push_name(name: &mut String, typed: &str) {
+    for c in typed.chars().filter(|c| !c.is_control()) {
+        if name.chars().count() >= crate::config::MAX_NAME {
+            break;
+        }
+        name.push(c);
     }
 }
 

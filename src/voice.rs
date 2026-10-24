@@ -96,6 +96,8 @@ struct Voices {
     /// By hero Dota name: its move and attack answers.
     heroes: Vec<(String, Lines, Lines)>,
     click: Lines,
+    /// The power button's own click (Dota's `ui.menu_quit`).
+    quit: Lines,
     choose: Lines,
     begins: Lines,
     /// "Radiant's / Dire's structures are fortified."
@@ -139,6 +141,7 @@ fn load(mut voices: ResMut<Voices>, manifest: Res<Manifest>, server: Res<AssetSe
         voices.heroes.push((name.to_string(), moves, attacks));
     }
     voices.click = Lines::load(&manifest, &server, "sound.ui.click");
+    voices.quit = Lines::load(&manifest, &server, "sound.ui.quit");
     voices.choose = Lines::load(&manifest, &server, "sound.announcer.choose_hero");
     voices.begins = Lines::load(&manifest, &server, "sound.announcer.battle_begins");
     voices.day = Lines::load(&manifest, &server, "sound.day");
@@ -367,21 +370,30 @@ fn herald(
     say(&mut commands, source, 0.5);
 }
 
+/// A button that sounds as Dota's quit button does.
+#[derive(Component)]
+pub struct QuitClick;
+
 /// The click of any button of the interface.
 fn click(
     mut commands: Commands,
     mut voices: ResMut<Voices>,
-    buttons: Query<&Interaction, (Changed<Interaction>, With<Button>)>,
+    buttons: Query<(&Interaction, Has<QuitClick>), (Changed<Interaction>, With<Button>)>,
     settings: Res<Settings>,
     args: Res<crate::Args>,
 ) {
     if settings.muted || args.mute {
         return;
     }
-    if buttons.iter().any(|i| *i == Interaction::Pressed) {
-        let source = voices.click.take();
-        say(&mut commands, source, 0.5);
-    }
+    let Some((_, quit)) = buttons.iter().find(|(i, _)| **i == Interaction::Pressed) else {
+        return;
+    };
+    let source = if quit {
+        voices.quit.take()
+    } else {
+        voices.click.take()
+    };
+    say(&mut commands, source, 0.5);
 }
 
 #[cfg(test)]

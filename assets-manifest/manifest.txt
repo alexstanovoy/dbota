@@ -520,6 +520,10 @@ texture hud.ult_no_mana panorama/images/hud/reborn/ult_no_mana_psd.vtex_c hud/ul
 texture hud.show_items panorama/images/control_icons/brackets_png.vtex_c hud/brackets_png.png
 texture hud.menu_settings panorama/images/control_icons/gear_png.vtex_c hud/gear_png.png
 texture hud.menu_scoreboard panorama/images/control_icons/hamburger_png.vtex_c hud/hamburger_png.png
+# The dashboard's top bar: the power button (#DOTAQuitButton) and the way back to a game
+# (#DOTAReturnToGameButton).
+texture menu.quit panorama/images/control_icons/quit_psd.vtex_c hud/quit_psd.png
+texture menu.return_to_game panorama/images/control_icons/return_to_game_png.vtex_c hud/return_to_game_png.png
 label resource/localization/dota_english.txt DOTA_GoodGuysCaps
 label resource/localization/dota_english.txt DOTA_BadGuysCaps
 label resource/localization/dota_english.txt DOTA_Scoreboard_Header_TalentTree
@@ -590,6 +594,8 @@ sound sound.portal.hero_disappear sounds/ui/portal_disappear.vsnd_c sounds/ui/po
 # sound.ui.click the Panorama button click. The horn is two positional sounds in Dota (one at each ancient,
 # both at 0:00); here they are the two variants of sound.horn.
 sound sound.ui.click sounds/ui/panorama/panorama_generic_button_click_01.vsnd_c sounds/ui/panorama/panorama_generic_button_click_01.wav event=ui_generic_button_click
+# The dashboard's power button (ui.menu_quit plays ui_quit_button_click, volume 0.5).
+sound sound.ui.quit sounds/ui/panorama/panorama_quit_doto_click_01.vsnd_c sounds/ui/panorama/panorama_quit_doto_click_01.wav event=ui_quit_button_click
 # Pings (game_sounds_ui): Alt+click plays General.Ping, Ctrl+Alt+click General.PingWarning, which layers
 # PingWarning.Layer over it.
 sound sound.ping.regular sounds/ui/ping.vsnd_c sounds/ui/ping.wav event=General.Ping

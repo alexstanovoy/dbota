@@ -3,15 +3,15 @@
 
 use bota_radovid::proto::{LobbyId, MatchId, ProposalId, QueueEntryId, RulesetId};
 
-use super::core::{Page, Status};
+use super::core::{GameKind, Page, Status};
 use super::form::FormKind;
 use super::view::{
-    FieldView, GameRow, LobbyRow, LobbyView, MenuView, OfferBox, PageView, ResultView, RulesetRow,
-    SearchRow, SeatRow, WaitRow,
+    ConfirmView, FieldView, GameRow, LobbyRow, LobbyView, MenuView, OfferBox, PageView, ResultView,
+    RulesetRow, SearchRow, SeatRow, WaitRow,
 };
 
 /// The names `--menu-preview` takes.
-pub const NAMES: [&str; 14] = [
+pub const NAMES: [&str; 18] = [
     "service",
     "login",
     "register",
@@ -26,6 +26,10 @@ pub const NAMES: [&str; 14] = [
     "lobby",
     "result",
     "direct",
+    "quit",
+    "dashboard",
+    "dashboard-replay",
+    "reconnect",
 ];
 
 fn field(label: &'static str, shown: &str, focused: bool) -> FieldView {
@@ -50,6 +54,10 @@ fn form(page: Page, kind: FormKind, fields: Vec<FieldView>) -> MenuView {
         searches: Vec::new(),
         waits: Vec::new(),
         offer: None,
+        game: None,
+        reconnect: false,
+        confirm: None,
+        can_quit: true,
     }
 }
 
@@ -62,6 +70,10 @@ fn logged_in(page: Page, body: PageView) -> MenuView {
         searches: Vec::new(),
         waits: Vec::new(),
         offer: None,
+        game: None,
+        reconnect: false,
+        confirm: None,
+        can_quit: true,
     }
 }
 
@@ -255,6 +267,28 @@ pub fn view(name: &str) -> Option<MenuView> {
             if let PageView::Form { plain_host, .. } = &mut view.body {
                 *plain_host = Some("192.168.1.20".to_owned());
             }
+            view
+        }
+        "quit" => {
+            let mut view = logged_in(Page::Home, home());
+            view.confirm = Some(ConfirmView {
+                title: "Confirm Quit",
+                text: "Do you really wish to quit dbota?",
+            });
+            view
+        }
+        "dashboard" | "dashboard-replay" => {
+            let mut view = logged_in(Page::Home, home());
+            view.game = Some(if name == "dashboard" {
+                GameKind::Play
+            } else {
+                GameKind::Replay
+            });
+            view
+        }
+        "reconnect" => {
+            let mut view = logged_in(Page::Home, home());
+            view.reconnect = true;
             view
         }
         _ => return None,

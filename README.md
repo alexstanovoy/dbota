@@ -49,8 +49,24 @@ Dota 2 install. Bots don't need it.
 - **DIRECT CONNECT**: a game server's address, `host:port` or `tcp://` (TCP), `ws://` or `wss://`, with no
   service at all. Plain TCP to another machine is unprotected, and dbota says so once per host.
 
-In a game from the menu, `Esc` once the match is over (or on the hero screen) goes back to the menu.
-`--addr`, `--spectate`, a seat key or `--replay` skip the menu, as below.
+What needs no service needs no account either: LOCAL LOBBY, DIRECT CONNECT, REPLAYS and SETTINGS work
+signed out and with no service reachable. There, you play under the profile name of the settings
+(OPTIONS, PROFILE), as Dota's local games show your Steam name.
+
+- **LOCAL LOBBY**: a game hosted on this machine, as Dota's local lobby: dbota starts `bota_server`
+  (`$BOTA_SERVER`, else beside `dbota`, else on the `PATH`) for so many players on a port, for this machine
+  alone or (CREATE FOR THE LAN) for the local network too, in plain text, and seats you. The others join by
+  this machine's address under DIRECT CONNECT. The server ends when you quit dbota.
+- **REPLAYS**: the replays in `~/.local/share/dbota/replays` (`$XDG_DATA_HOME/dbota/replays`), where a local
+  lobby keeps its games', the newest first; or any replay file by its path.
+
+The power button at the top right quits, after Dota's question ("Confirm Quit"); `Esc` on the menu
+backs out of a page to the top one, and there asks the same. `Esc` in a game (with nothing to cancel or
+close) opens the dashboard over it, as Dota's: RETURN TO GAME (also the arrow at the top left, or `Esc`
+again), DISCONNECT, and the power button. DISCONNECT leaves a seat at once and keeps it: RECONNECT takes
+the same seat again (a direct or local game claims its seat with a key of its own); a game watched or a
+replay is left after asking. `Esc` in a match that is over goes back to the menu. `--addr`, `--spectate`,
+a seat key or `--replay` open that game first, with the menu under it.
 
 Two people without a service: start a server and connect two dbota clients (from another machine use
 `--addr <host>:4455`, or DIRECT CONNECT in the menu):
@@ -116,11 +132,11 @@ clash and resets them to the defaults; they are kept as `key.<action> = <chord>`
 | minimap | left click or drag moves the camera; right click orders your hero there |
 | Arrows, screen edges, middle button held | pan the camera (all four edges, the HUD bars included; the middle button drags the map); mouse wheel zooms |
 | hold `Alt` | show attack, tower and ability ranges and the neutral camps' spawn boxes (they are never drawn otherwise) |
-| `Esc` | cancel / close; with nothing open, the settings (also the gear at the top left); leaves a match that is over |
+| `Esc` | cancel / close; with nothing open, the dashboard (DISCONNECT, quit, SETTINGS; the settings also from the gear at the top left); leaves a match that is over; on the menu, back, and on its top page quit |
 | `F9`, `=` / `-`, `.`, `Tab` | in a replay: pause, faster / slower, one tick, switch vision (both teams, Radiant, Dire; `Tab` as a spectator too) |
 
-The settings screen (SETTINGS in the main menu, `Esc` in a game) has Dota's tabs: HOTKEYS,
-OPTIONS (interface size, damage numbers, animated portrait, the scoreboard's items, edge pan), VIDEO (display mode, frame
+The settings screen (SETTINGS in the main menu and the dashboard, the gear in a game) has Dota's tabs: HOTKEYS,
+OPTIONS (profile name, interface size, damage numbers, animated portrait, the scoreboard's items, edge pan), VIDEO (display mode, frame
 cap, resolution, quality preset, shadows, anti-aliasing, visual clarity, auto quality, and what
 takes effect on the next start) and AUDIO (volume, mute, your hero's voice answers). What it
 changes is saved when it closes.

@@ -26,6 +26,8 @@ const MAX_ASKED: usize = 64;
 const MAX_GAMES: usize = 32;
 /// Finished matches kept for their result screens.
 const MAX_RESULTS: usize = 8;
+/// The name announced while the profile has none.
+pub const DEFAULT_NAME: &str = "Player";
 
 /// A page of the menu.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -43,6 +45,10 @@ pub enum Page {
     Lobby,
     /// A game by address, without the service.
     Direct,
+    /// A lobby on this machine, others joining by its address.
+    LocalLobby,
+    /// The replays on this machine.
+    Replays,
     /// How a finished match went.
     Result,
     /// A game is on screen, or being opened.
@@ -81,10 +87,51 @@ pub enum Act {
     LeaveLobby,
     /// Plays (or with `true` watches) the game at the address in the form.
     Direct(bool),
+    /// Opens a lobby on this machine, for this machine alone or (`true`)
+    /// for the local network too, and takes a seat in it.
+    Host(bool),
+    /// Watches a listed replay.
+    OpenReplay(usize),
     /// Goes on with plain TCP to a host after the notice.
     PlainAnyway,
     /// Closes the notice line.
     Dismiss,
+    /// The power button: asks whether to quit the client.
+    Quit,
+    /// OK (`true`) or Cancel on the question asked.
+    Answer(bool),
+    /// Escape over the menu: closes the question, else backs out to the top
+    /// page, else (over a game) goes back to it, else asks to quit.
+    Back,
+    /// Escape in a game with nothing to close: the dashboard over it.
+    Dashboard,
+    /// Back to the game under the dashboard.
+    ReturnToGame,
+    /// Leaves the game under the dashboard: a seat at once (it can be taken
+    /// again), watching after asking.
+    Disconnect,
+    /// Takes the seat of the game left again.
+    Reconnect,
+}
+
+/// What the menu asks before it goes on, as Dota's popups.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Confirm {
+    /// Quit the client.
+    Quit,
+    /// Stop watching the game or replay under the dashboard.
+    Leave,
+}
+
+/// How the game on screen is had.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum GameKind {
+    /// In a seat.
+    Play,
+    /// Watching a live game.
+    Watch,
+    /// A replay.
+    Replay,
 }
 
 /// A game the shell is to open.
@@ -94,12 +141,83 @@ pub enum Launch {
     Seat(Handoff),
     /// Watch one's own seat with the ticket.
     Watch(Handoff),
-    /// Connect to an address and say Hello as `name`.
+    /// Connect to an address and say Hello as `name`, a seat claimed with
+    /// `key` so the same seat can be taken again.
     Direct {
         address: String,
         name: String,
         spectate: bool,
+        key: Option<Claim>,
     },
+    /// Start a game server on this machine (on the local network too when
+    /// `lan`), and take a seat in it as a direct game.
+    Host {
+        port: u16,
+        players: u8,
+        lan: bool,
+        name: String,
+        key: Option<Claim>,
+        /// Where the server writes the replay.
+        replay: Option<std::path::PathBuf>,
+        /// The server binary, when not looked for (`$BOTA_SERVER`, beside
+        /// this client, the `PATH`).
+        server: Option<std::path::PathBuf>,
+    },
+    /// Watch a replay file.
+    Replay(std::path::PathBuf),
+    /// The game the command line named, again.
+    Given,
+}
+
+/// The key a seat without a reservation is claimed with, which takes it
+/// back after the player left (bota_server keeps an unreserved seat for the
+/// key its holder came with). Never printed.
+#[derive(Clone, Copy)]
+pub struct Claim(pub bota_proto::SeatKey);
+
+impl Claim {
+    /// A key of the system's randomness; none where there is none to draw.
+    pub fn draw() -> Option<Claim> {
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let mut key = [0u8; 32];
+            getrandom::fill(&mut key)
+                .ok()
+                .map(|()| Claim(bota_proto::SeatKey(key)))
+        }
+        #[cfg(target_arch = "wasm32")]
+        None
+    }
+}
+
+impl std::fmt::Debug for Claim {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("Claim(..)")
+    }
+}
+
+impl PartialEq for Claim {
+    fn eq(&self, other: &Claim) -> bool {
+        self.0.0 == other.0.0
+    }
+}
+
+impl Launch {
+    /// How the game it opens is had.
+    pub fn kind(&self) -> GameKind {
+        match self {
+            Launch::Seat(_) | Launch::Given | Launch::Host { .. } => GameKind::Play,
+            Launch::Watch(_) => GameKind::Watch,
+            Launch::Replay(_) => GameKind::Replay,
+            Launch::Direct { spectate, .. } => {
+                if *spectate {
+                    GameKind::Watch
+                } else {
+                    GameKind::Play
+                }
+            }
+        }
+    }
 }
 
 /// The line under the top bar: news or a refusal.
@@ -145,7 +263,25 @@ pub struct Game {
 enum OnScreen {
     Match(MatchId),
     Direct,
+    /// A game of a lobby on this machine.
+    Local,
+    Replay,
+    /// The game the command line named.
+    Given,
 }
+
+/// A replay file on this machine, as listed.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ReplayFile {
+    pub path: std::path::PathBuf,
+    /// Its file name, safe to draw.
+    pub name: String,
+    /// Its size, `12.3 MB`.
+    pub size: String,
+}
+
+/// Replays listed at most, the newest first.
+const MAX_REPLAYS: usize = 50;
 
 /// The menu.
 pub struct MenuCore {
@@ -172,6 +308,33 @@ pub struct MenuCore {
     pub(super) plain_host: Option<String>,
     /// The page the settings were opened from.
     settings_from: Page,
+    /// How the game on screen (or under the dashboard) is had.
+    pub(super) kind: GameKind,
+    /// The question asked over the page.
+    pub(super) confirm: Option<Confirm>,
+    /// Whether leaving the game now may ruin it for the others: a seat in a
+    /// game under way (the shell tells).
+    pub(super) game_unsafe: bool,
+    /// The seat left, to take again.
+    pub(super) reconnect: Option<Launch>,
+    /// The seat of the game on screen, for [`Self::reconnect`] once left.
+    last_seat: Option<Launch>,
+    /// The player asked to quit: the shell ends the client.
+    quit: bool,
+    /// The player left the game: the shell lets it go.
+    leave: bool,
+    /// The name this player goes by where there is no account: the
+    /// settings' profile name.
+    profile: String,
+    /// The replays on this machine, as last listed.
+    pub(super) replays: Vec<ReplayFile>,
+    /// Where they are kept ([`replays_dir`]).
+    pub(super) replays_dir: Option<std::path::PathBuf>,
+    /// The game server a local lobby starts, when not looked for.
+    pub(super) server_binary: Option<std::path::PathBuf>,
+    /// Whether the service has been tried: a menu under a game named on the
+    /// command line tries it once that game is left.
+    tried_service: bool,
 }
 
 impl MenuCore {
@@ -179,13 +342,22 @@ impl MenuCore {
     /// `service` from the command line (or the page's own host), else the
     /// one remembered.
     pub fn new(store: SettingsStore, tls: Tls, service: Option<String>) -> MenuCore {
+        let mut core = MenuCore::unconnected(store, tls, service);
+        if !core.prefs.service.is_empty() {
+            core.connect();
+        }
+        core
+    }
+
+    /// A menu over `store` that has not tried the service yet.
+    fn unconnected(store: SettingsStore, tls: Tls, service: Option<String>) -> MenuCore {
         let mut prefs = store
             .read(Entry::Menu)
             .map_or_else(Prefs::default, |t| Prefs::parse(&t));
         if let Some(service) = service {
             prefs.service = service;
         }
-        let mut core = MenuCore {
+        MenuCore {
             store,
             form: Form::new(FormKind::Service, &prefs),
             prefs,
@@ -205,11 +377,77 @@ impl MenuCore {
             launch: None,
             launching: false,
             plain_host: None,
-        };
-        if !core.prefs.service.is_empty() {
-            core.connect();
+            kind: GameKind::Play,
+            confirm: None,
+            game_unsafe: false,
+            reconnect: None,
+            last_seat: None,
+            quit: false,
+            leave: false,
+            profile: String::new(),
+            replays: Vec::new(),
+            replays_dir: replays_dir(),
+            server_binary: None,
+            tried_service: false,
+        }
+    }
+
+    /// The settings' profile name, which local and direct games announce.
+    pub fn set_profile_name(&mut self, name: &str) {
+        if self.profile != name {
+            name.clone_into(&mut self.profile);
+        }
+    }
+
+    /// The name announced where there is no account.
+    fn name(&self) -> String {
+        match self.profile.trim() {
+            "" => DEFAULT_NAME.to_owned(),
+            name => name.to_owned(),
+        }
+    }
+
+    /// A menu under the game the command line named: it shows once the game
+    /// is left or on Escape, and reaches the service only then.
+    pub fn over_given(
+        store: SettingsStore,
+        tls: Tls,
+        service: Option<String>,
+        kind: GameKind,
+    ) -> MenuCore {
+        let mut core = MenuCore::unconnected(store, tls, service);
+        core.page = Page::Game;
+        core.on_screen = Some(OnScreen::Given);
+        core.kind = kind;
+        if kind == GameKind::Play {
+            core.last_seat = Some(Launch::Given);
         }
         core
+    }
+
+    /// The player confirmed quitting, once.
+    pub fn take_quit(&mut self) -> bool {
+        std::mem::take(&mut self.quit)
+    }
+
+    /// The player left the game on screen or under the dashboard, once.
+    pub fn take_leave(&mut self) -> bool {
+        std::mem::take(&mut self.leave)
+    }
+
+    /// Whether a game is on screen or under the dashboard.
+    pub fn in_game(&self) -> bool {
+        self.on_screen.is_some() && !self.launching
+    }
+
+    /// Whether the game on screen is a replay opened from the menu.
+    pub fn replay_from_menu(&self) -> bool {
+        self.on_screen == Some(OnScreen::Replay)
+    }
+
+    /// Whether leaving the game on screen now may ruin it for the others.
+    pub fn set_game_unsafe(&mut self, game_unsafe: bool) {
+        self.game_unsafe = game_unsafe;
     }
 
     pub fn page(&self) -> Page {
@@ -250,8 +488,9 @@ impl MenuCore {
     /// The shell could not open the game.
     pub fn launch_failed(&mut self, why: &str) {
         self.launching = false;
-        let direct = self.on_screen.take() == Some(OnScreen::Direct);
-        self.page = self.rest_page(direct);
+        self.reconnect = self.last_seat.take();
+        let left = self.on_screen.take();
+        self.page = self.rest_page(left);
         self.form = Form::new(self.form_kind(), &self.prefs);
         self.tell(
             format!(
@@ -263,11 +502,19 @@ impl MenuCore {
     }
 
     /// The player left the game on screen, or it ended (`why` says how when
-    /// it was not the player's doing).
-    pub fn left_game(&mut self, why: Option<&str>) {
+    /// it was not the player's doing); `over` when the match is over, so
+    /// there is no seat to take again.
+    pub fn left_game(&mut self, why: Option<&str>, over: bool) {
         let left = self.on_screen.take();
         self.launching = false;
         self.status = None;
+        self.confirm = None;
+        self.game_unsafe = false;
+        self.reconnect = self.last_seat.take().filter(|_| !over);
+        // A menu that came up under a game reaches the service now.
+        if !self.tried_service && !self.prefs.service.is_empty() {
+            self.connect();
+        }
         if let Some(why) = why {
             self.tell(text::line(why, text::MESSAGE), true);
         }
@@ -279,18 +526,21 @@ impl MenuCore {
             Some(OnScreen::Match(id)) if self.games.iter().any(|g| g.match_id == id) => {
                 self.go(Page::MyGames);
             }
-            left => self.page = self.rest_page(left == Some(OnScreen::Direct)),
+            left => self.page = self.rest_page(left),
         }
         self.form = Form::new(self.form_kind(), &self.prefs);
     }
 
-    /// The page to fall back to: Direct after a direct game, Play once
-    /// logged in, else the way in.
-    fn rest_page(&self, direct: bool) -> Page {
-        match self.conn {
-            _ if direct => Page::Direct,
-            Conn::LoggedIn => Page::Home,
-            Conn::Offline => Page::Service,
+    /// The page to fall back to: the page a game left was opened from
+    /// (Direct, the local lobby, the replays), else Play once logged in,
+    /// else the way in.
+    fn rest_page(&self, left: Option<OnScreen>) -> Page {
+        match (left, self.conn) {
+            (Some(OnScreen::Direct), _) => Page::Direct,
+            (Some(OnScreen::Local), _) => Page::LocalLobby,
+            (Some(OnScreen::Replay), _) => Page::Replays,
+            (_, Conn::LoggedIn) => Page::Home,
+            (_, Conn::Offline) => Page::Service,
             _ => Page::Login,
         }
     }
@@ -302,6 +552,8 @@ impl MenuCore {
             Page::Register => FormKind::Register,
             Page::Lobbies => FormKind::Lobby,
             Page::Direct => FormKind::Direct,
+            Page::LocalLobby => FormKind::Host,
+            Page::Replays => FormKind::Replay,
             _ => FormKind::None,
         }
     }
@@ -318,6 +570,7 @@ impl MenuCore {
 
     /// Opens the control connection to the service in the prefs.
     fn connect(&mut self) {
+        self.tried_service = true;
         self.client = None;
         self.asked.clear();
         match Client::open(&self.prefs.service, &self.tls) {
@@ -372,7 +625,11 @@ impl MenuCore {
         self.conn = Conn::Offline;
         self.asked.clear();
         self.lobby = None;
-        if !matches!(self.page, Page::Game | Page::Direct) {
+        // The pages of what needs no service stay.
+        if !matches!(
+            self.page,
+            Page::Game | Page::Direct | Page::LocalLobby | Page::Replays
+        ) {
             self.page = Page::Service;
             self.form = Form::new(FormKind::Service, &self.prefs);
         }
@@ -538,6 +795,9 @@ impl MenuCore {
 
     fn finished(&mut self, result: MatchResult) {
         let id = result.match_id;
+        if matches!(&self.reconnect, Some(Launch::Seat(h)) if h.match_id == id) {
+            self.reconnect = None;
+        }
         self.games.retain(|g| g.match_id != id);
         if self.results.len() >= MAX_RESULTS {
             self.results.pop_front();
@@ -582,10 +842,33 @@ impl MenuCore {
     }
 
     fn start(&mut self, launch: Launch) {
+        if self.on_screen.is_some() {
+            self.tell("Disconnect from the game you are in first".to_owned(), true);
+            return;
+        }
         self.on_screen = Some(match &launch {
             Launch::Seat(h) | Launch::Watch(h) => OnScreen::Match(h.match_id),
             Launch::Direct { .. } => OnScreen::Direct,
+            Launch::Host { .. } => OnScreen::Local,
+            Launch::Replay(_) => OnScreen::Replay,
+            Launch::Given => OnScreen::Given,
         });
+        self.kind = launch.kind();
+        // A seat is taken again on the same server: a local lobby's by its
+        // address, the server already up.
+        self.last_seat = match &launch {
+            Launch::Host {
+                port, name, key, ..
+            } => Some(Launch::Direct {
+                address: format!("127.0.0.1:{port}"),
+                name: name.clone(),
+                spectate: false,
+                key: *key,
+            }),
+            launch => (self.kind == GameKind::Play).then(|| launch.clone()),
+        };
+        self.reconnect = None;
+        self.confirm = None;
         self.launch = Some(launch);
         self.launching = true;
         self.page = Page::Game;
@@ -617,7 +900,7 @@ impl MenuCore {
             Page::Home | Page::MyGames | Page::Lobbies | Page::Lobby
         );
         if needs_login && !self.logged_in() {
-            let rest = self.rest_page(false);
+            let rest = self.rest_page(None);
             self.go_form(rest);
             return;
         }
@@ -629,6 +912,7 @@ impl MenuCore {
         match page {
             Page::MyGames => self.ask(ClientMsg::MyMatches, Asked::Other),
             Page::Lobbies => self.ask(ClientMsg::LobbyList, Asked::Other),
+            Page::Replays => self.replays = list_replays(self.replays_dir.as_deref()),
             _ => {}
         }
     }
@@ -660,8 +944,71 @@ impl MenuCore {
             }
             Act::LeaveLobby => self.lobby_ask(|lobby| ClientMsg::LobbyLeave { lobby }),
             Act::Direct(spectate) => self.direct(spectate, false),
+            Act::Host(lan) => self.host(lan),
+            Act::OpenReplay(at) => {
+                if let Some(file) = self.replays.get(at) {
+                    let path = file.path.clone();
+                    self.start(Launch::Replay(path));
+                }
+            }
             Act::PlainAnyway => self.direct(false, true),
             Act::Dismiss => self.status = None,
+            Act::Quit if !cfg!(target_arch = "wasm32") => self.confirm = Some(Confirm::Quit),
+            Act::Quit => {}
+            Act::Answer(yes) => match self.confirm.take() {
+                Some(Confirm::Quit) if yes => self.quit = true,
+                Some(Confirm::Leave) if yes => self.leave = true,
+                _ => {}
+            },
+            Act::Back => self.back(),
+            Act::Dashboard => {
+                if self.page == Page::Game && self.in_game() {
+                    let top = self.rest_page(None);
+                    self.go_form(top);
+                }
+            }
+            Act::ReturnToGame => {
+                if self.in_game() {
+                    self.confirm = None;
+                    self.plain_host = None;
+                    self.page = Page::Game;
+                }
+            }
+            Act::Disconnect => {
+                if self.in_game() {
+                    match self.kind {
+                        GameKind::Play => self.leave = true,
+                        GameKind::Watch | GameKind::Replay => self.confirm = Some(Confirm::Leave),
+                    }
+                }
+            }
+            Act::Reconnect => {
+                if let Some(launch) = self.reconnect.clone() {
+                    self.start(launch);
+                }
+            }
+        }
+    }
+
+    /// Escape over the menu, as Dota's: the question first, then the page
+    /// back to the top one, then the game under the dashboard, and on the
+    /// top page with nothing under it, whether to quit.
+    fn back(&mut self) {
+        if self.confirm.take().is_some() || self.plain_host.take().is_some() {
+            return;
+        }
+        let top = self.rest_page(None);
+        match self.page {
+            // The game and the settings take their own Escape; a game being
+            // opened is waited for.
+            Page::Game | Page::Settings => {}
+            Page::Register => self.go_form(Page::Login),
+            Page::Lobby => self.go(Page::Lobbies),
+            page if page != top => self.go(top),
+            _ if self.in_game() => self.act(Act::ReturnToGame),
+            // A browser's page is closed by the browser.
+            _ if cfg!(target_arch = "wasm32") => {}
+            _ => self.confirm = Some(Confirm::Quit),
         }
     }
 
@@ -675,6 +1022,15 @@ impl MenuCore {
             Page::Login => self.login(),
             Page::Register => self.register(),
             Page::Direct => self.direct(false, false),
+            Page::LocalLobby => self.host(false),
+            Page::Replays => {
+                let path = self.form.value(0).trim().to_owned();
+                if path.is_empty() {
+                    self.tell("Type the path of a replay file".to_owned(), true);
+                } else {
+                    self.start(Launch::Replay(path.into()));
+                }
+            }
             Page::Lobbies => self.join_lobby(self.form.value(0).trim().to_owned()),
             _ => {}
         }
@@ -797,10 +1153,7 @@ impl MenuCore {
     /// player is told once per host before it goes.
     fn direct(&mut self, spectate: bool, anyway: bool) {
         let address = self.form.value(0).trim().to_owned();
-        let name = match self.form.value(1).trim() {
-            "" => "player".to_owned(),
-            name => name.to_owned(),
-        };
+        let name = self.name();
         let host = match super::address::check(&address) {
             Ok(host) => host,
             Err(why) => {
@@ -818,12 +1171,58 @@ impl MenuCore {
         }
         self.plain_host = None;
         self.prefs.direct = address.clone();
-        self.prefs.name = name.clone();
         self.save_prefs();
         self.start(Launch::Direct {
             address,
             name,
             spectate,
+            key: if spectate { None } else { Claim::draw() },
+        });
+    }
+
+    /// A lobby on this machine, as Dota's local lobby: a game server started
+    /// here for so many players, this player seated first and the others
+    /// joining by this machine's address (DIRECT CONNECT). Named by the
+    /// profile; no account.
+    fn host(&mut self, lan: bool) {
+        let port = self
+            .form
+            .value(0)
+            .trim()
+            .parse::<u16>()
+            .ok()
+            .filter(|p| *p >= 1024);
+        let players = self
+            .form
+            .value(1)
+            .trim()
+            .parse::<u8>()
+            .ok()
+            .filter(|n| (1..=MAX_LOCAL_PLAYERS).contains(n));
+        let (Some(port), Some(players)) = (port, players) else {
+            self.tell(
+                format!("A port is 1024 to 65535, and players 1 to {MAX_LOCAL_PLAYERS}"),
+                true,
+            );
+            return;
+        };
+        self.prefs.host_port = port.to_string();
+        self.prefs.host_players = players.to_string();
+        self.save_prefs();
+        let replay = self.replays_dir.as_ref().map(|dir| {
+            let secs = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0, |d| d.as_secs());
+            dir.join(format!("local-{secs}.brp"))
+        });
+        self.start(Launch::Host {
+            port,
+            players,
+            lan,
+            name: self.name(),
+            key: Claim::draw(),
+            replay,
+            server: self.server_binary.clone(),
         });
     }
 }
@@ -881,4 +1280,54 @@ pub fn error_text(error: &Error) -> String {
 /// Seconds as `m:ss`.
 pub fn clock(secs: u32) -> String {
     format!("{}:{:02}", secs / 60, secs % 60)
+}
+
+/// Seats a local lobby has at most: the map's ten.
+pub const MAX_LOCAL_PLAYERS: u8 = 10;
+
+/// Where replays are kept on this machine: `$XDG_DATA_HOME/dbota/replays`,
+/// else `~/.local/share/dbota/replays`; none in a browser.
+pub fn replays_dir() -> Option<std::path::PathBuf> {
+    if cfg!(target_arch = "wasm32") {
+        return None;
+    }
+    let base = std::env::var_os("XDG_DATA_HOME")
+        .filter(|dir| !dir.is_empty())
+        .map(std::path::PathBuf::from)
+        .or_else(|| {
+            std::env::var_os("HOME").map(|home| std::path::PathBuf::from(home).join(".local/share"))
+        })?;
+    Some(base.join("dbota").join("replays"))
+}
+
+/// The replays in `dir`, the newest first.
+fn list_replays(dir: Option<&std::path::Path>) -> Vec<ReplayFile> {
+    let Some(entries) = dir.and_then(|dir| std::fs::read_dir(dir).ok()) else {
+        return Vec::new();
+    };
+    let mut found: Vec<(std::time::SystemTime, ReplayFile)> = entries
+        .filter_map(Result::ok)
+        .take(10_000)
+        .filter(|e| e.path().extension().is_some_and(|x| x == "brp"))
+        .filter_map(|e| {
+            let meta = e.metadata().ok().filter(std::fs::Metadata::is_file)?;
+            let name = text::line(&e.file_name().to_string_lossy(), text::NAME);
+            let size = format!("{:.1} MB", meta.len() as f64 / 1e6);
+            let when = meta.modified().unwrap_or(std::time::UNIX_EPOCH);
+            Some((
+                when,
+                ReplayFile {
+                    path: e.path(),
+                    name,
+                    size,
+                },
+            ))
+        })
+        .collect();
+    found.sort_by_key(|f| std::cmp::Reverse(f.0));
+    found
+        .into_iter()
+        .take(MAX_REPLAYS)
+        .map(|(_, f)| f)
+        .collect()
 }

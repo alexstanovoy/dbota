@@ -15,8 +15,8 @@ use bota_core::fountain_pos;
 use bota_proto::{HeroId, Order, Target};
 use bota_radovid::proto::RulesetId;
 
-use super::core::{Act, Launch, MenuCore, Page};
-use super::launch::{Opening, Trust};
+use super::core::{Act, Confirm, GameKind, Launch, MenuCore, Page};
+use super::launch::{Hosted, Opening, Trust};
 use super::store::{Entry, SettingsStore};
 use super::view::PageView;
 
@@ -251,7 +251,7 @@ fn open(launch: Launch, trust: &Trust) -> Core {
     let deadline = Instant::now() + Duration::from_secs(PATIENCE);
     loop {
         if let Some(opened) = opening.poll() {
-            return Core::new(Source::Live(opened.expect("the game opens")));
+            return Core::new(Source::Live(opened.expect("the game opens").link));
         }
         assert!(Instant::now() < deadline, "the game did not open");
         std::thread::sleep(Duration::from_millis(5));
@@ -334,8 +334,8 @@ fn two_players_register_find_accept_play_and_see_their_result() {
         // and the server bounds the messages a second.
         std::thread::sleep(Duration::from_millis(2));
     }
-    alice.menu.left_game(None);
-    bob.menu.left_game(None);
+    alice.menu.left_game(None, false);
+    bob.menu.left_game(None, false);
     settle(&mut [&mut alice, &mut bob], |p| {
         p.menu.page() == Page::Result
     });
@@ -460,7 +460,13 @@ impl Drop for Server {
 /// and the WebSocket address it announced. A port picked beforehand could be taken by another
 /// test's server by the time this one binds it.
 fn start_server() -> (Server, String, String) {
+    start_server_with(&[])
+}
+
+/// [`start_server`] with more of the server's options.
+fn start_server_with(extra: &[&str]) -> (Server, String, String) {
     let mut child = Command::new(server_binary())
+        .args(extra)
         .args([
             "--map",
             "2",
@@ -514,7 +520,7 @@ fn direct_match() -> (Server, Vec<(Core, HeroId)>) {
         let mut player = Player::new(None);
         assert_eq!(player.menu.page(), Page::Service, "no service known");
         player.menu.act(Act::Go(Page::Direct));
-        player.fill(&[&address, "tester"]);
+        player.fill(&[&address]);
         player.menu.act(Act::Direct(false));
         let launch = player.menu.take_launch().expect("a game to open");
         assert_eq!(
@@ -544,7 +550,7 @@ fn join(launch: Launch, trust: &Trust) -> Core {
         std::thread::sleep(Duration::from_millis(5));
     };
     match opened {
-        Ok(link) => Core::new(Source::Live(link)),
+        Ok(opened) => Core::new(Source::Live(opened.link)),
         Err(err) => panic!("{err}"),
     }
 }
@@ -618,4 +624,217 @@ fn the_settings_open_from_the_menu_and_last_past_a_restart() {
     player.store.save_settings(&settings).expect("saved");
     let restarted = SettingsStore::new(Some(player._dir.0.join("client.conf")));
     assert_eq!(restarted.load_settings(), settings);
+}
+
+/// Opens a launch as the client does, keeping the game server it started.
+fn open_hosted(launch: Launch, trust: &Trust) -> (Core, Option<Hosted>) {
+    let mut opening = Opening::start(launch, trust);
+    let deadline = Instant::now() + Duration::from_secs(PATIENCE);
+    loop {
+        if let Some(opened) = opening.poll() {
+            let opened = opened.expect("the game opens");
+            return (Core::new(Source::Live(opened.link)), opened.server);
+        }
+        assert!(Instant::now() < deadline, "the game did not open");
+        std::thread::sleep(Duration::from_millis(5));
+    }
+}
+
+/// Pumps the cores until `done` holds for all, within [`PATIENCE`].
+fn pump_until(what: &str, cores: &mut [&mut Core], done: impl Fn(&Core) -> bool) {
+    let deadline = Instant::now() + Duration::from_secs(PATIENCE);
+    while !cores.iter().all(|c| done(c)) {
+        assert!(
+            Instant::now() < deadline,
+            "{what}: {:?}",
+            cores
+                .iter()
+                .map(|c| (c.my_slot, c.lost, c.feed.last().map(|l| l.text.clone())))
+                .collect::<Vec<_>>()
+        );
+        for core in cores.iter_mut() {
+            core.pump(1.0 / 30.0);
+        }
+        std::thread::sleep(Duration::from_millis(5));
+    }
+}
+
+/// A menu with no account whose service nobody answers at, named `name`
+/// in its settings, keeping its replays in its own folder.
+fn offline(name: &str, dir: &Scratch) -> (MenuCore, Trust) {
+    let store = SettingsStore::new(Some(dir.0.join(name).join("client.conf")));
+    let trust = Trust::new(None).expect("trust");
+    let nowhere = format!("wss://127.0.0.1:{}", free_port());
+    let mut menu = MenuCore::new(store, trust.radovid.clone(), Some(nowhere));
+    menu.replays_dir = Some(dir.0.join("replays"));
+    menu.server_binary = Some(server_binary().to_owned());
+    menu.set_profile_name(name);
+    let deadline = Instant::now() + Duration::from_secs(PATIENCE);
+    while menu.connecting() {
+        assert!(Instant::now() < deadline, "the service never failed");
+        menu.update();
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert!(!menu.logged_in());
+    (menu, trust)
+}
+
+/// Everything that needs no service works with no account and no service
+/// to be reached, as Dota's local games need no Steam login past the
+/// client's own: the settings, a local lobby hosted under the profile's
+/// name, a player joining it by address, its seat left and taken again
+/// with the key it was claimed with, watching a game by address, the
+/// local lobby's replay listed and opened, and quitting.
+#[test]
+fn every_local_path_works_with_no_account_and_no_service() {
+    let dir = Scratch::new("local");
+    let (mut alice, trust) = offline("alice", &dir);
+    let top = alice.page();
+    assert_eq!(top, Page::Service, "the service's way in, nothing more");
+
+    alice.act(Act::Go(Page::Settings));
+    assert_eq!(alice.page(), Page::Settings);
+    alice.leave_settings();
+
+    // A local lobby, hosted here.
+    alice.act(Act::Go(Page::LocalLobby));
+    assert_eq!(alice.page(), Page::LocalLobby);
+    let port = free_port();
+    let lobby_fields = [port.to_string()];
+    alice.act(Act::Focus(0));
+    while !alice.form.value(0).is_empty() {
+        alice.act(Act::Erase);
+    }
+    alice.act(Act::Type(lobby_fields[0].clone()));
+    alice.act(Act::Host(false));
+    let launch = alice.take_launch().expect("the lobby to open");
+    assert!(
+        matches!(&launch, Launch::Host { name, players: 2, .. } if name == "alice"),
+        "{launch:?}"
+    );
+    let (mut hosted, server) = open_hosted(launch, &trust);
+    assert!(server.is_some(), "the lobby's server is this client's");
+    alice.game_started();
+
+    // Another player joins it by its address, with no account either.
+    let (mut bob, bob_trust) = offline("bob", &dir);
+    bob.act(Act::Go(Page::Direct));
+    bob.act(Act::Focus(0));
+    bob.act(Act::Type(format!("127.0.0.1:{port}")));
+    bob.act(Act::Direct(false));
+    let launch = bob.take_launch().expect("a game to join");
+    assert!(matches!(&launch, Launch::Direct { name, key: Some(_), .. } if name == "bob"));
+    let mut guest = open(launch, &bob_trust);
+    bob.game_started();
+    pump_until("both seated", &mut [&mut hosted, &mut guest], |c| {
+        c.my_slot.is_some()
+    });
+    let seat = hosted.my_slot;
+    assert_ne!(seat, guest.my_slot);
+
+    // Escape in the game brings the dashboard over it; Escape on its top
+    // page goes back to the game; DISCONNECT leaves a seat at once.
+    alice.act(Act::Dashboard);
+    assert_eq!(alice.page(), top);
+    assert_eq!(alice.view().game, Some(GameKind::Play));
+    alice.act(Act::Back);
+    assert!(alice.shows_game());
+    alice.act(Act::Dashboard);
+    alice.act(Act::Disconnect);
+    assert!(alice.take_leave(), "a seat is left without asking");
+    drop(hosted);
+    let left = seat.expect("seated");
+    pump_until("the seat let go", &mut [&mut guest], |c| {
+        c.lobby
+            .slots
+            .iter()
+            .any(|s| s.slot == left && s.role.is_none())
+    });
+    alice.left_game(None, false);
+    assert_eq!(
+        alice.page(),
+        Page::LocalLobby,
+        "back where the lobby was made"
+    );
+    assert!(alice.view().reconnect);
+
+    // RECONNECT takes the same seat, by the key it was claimed with.
+    alice.act(Act::Reconnect);
+    let launch = alice.take_launch().expect("the seat to take again");
+    assert!(matches!(
+        &launch,
+        Launch::Direct {
+            spectate: false,
+            ..
+        }
+    ));
+    let mut back = open(launch, &trust);
+    alice.game_started();
+    pump_until("seated again", &mut [&mut back, &mut guest], |c| {
+        c.my_slot.is_some()
+    });
+    assert_eq!(back.my_slot, seat, "the same seat");
+
+    // Watching a game by address, with no account.
+    let (_watched, tcp, _) = start_server_with(&["--spectators", "open"]);
+    let (mut carol, carol_trust) = offline("carol", &dir);
+    carol.act(Act::Go(Page::Direct));
+    carol.act(Act::Focus(0));
+    carol.act(Act::Type(tcp));
+    carol.act(Act::Direct(true));
+    let launch = carol
+        .take_launch()
+        .unwrap_or_else(|| panic!("a game to watch: {:?}", carol.view().status));
+    assert!(matches!(
+        &launch,
+        Launch::Direct {
+            spectate: true,
+            key: None,
+            ..
+        }
+    ));
+    let mut watcher = open(launch, &carol_trust);
+    carol.game_started();
+    assert_eq!(carol.view().game, Some(GameKind::Watch));
+    pump_until("watching", &mut [&mut watcher], |c| {
+        c.lobby.me.is_some() || c.lost
+    });
+    assert!(!watcher.lost, "a spectator is let in");
+    // Leaving a game watched asks first, as Dota's popup does.
+    carol.act(Act::Dashboard);
+    carol.act(Act::Disconnect);
+    assert_eq!(carol.confirm, Some(Confirm::Leave));
+    carol.act(Act::Answer(true));
+    assert!(carol.take_leave());
+
+    // The local lobby's replay is listed and opens.
+    drop(server);
+    alice.left_game(None, false);
+    alice.act(Act::Go(Page::Replays));
+    assert_eq!(alice.replays.len(), 1, "the lobby's replay");
+    alice.act(Act::OpenReplay(0));
+    let Some(Launch::Replay(path)) = alice.take_launch() else {
+        panic!("a replay to open");
+    };
+    bota_client_core::ReplayPlayer::load(&path).expect("the replay reads");
+    alice.game_started();
+    assert_eq!(alice.view().game, Some(GameKind::Replay));
+    alice.left_game(None, false);
+    assert_eq!(alice.page(), Page::Replays);
+
+    // Escape backs out to the top page, then asks to quit; Escape again or
+    // Cancel closes the question, OK quits.
+    alice.act(Act::Back);
+    assert_eq!(alice.page(), top);
+    alice.act(Act::Back);
+    assert_eq!(alice.confirm, Some(Confirm::Quit));
+    alice.act(Act::Back);
+    assert_eq!(alice.confirm, None);
+    alice.act(Act::Quit);
+    alice.act(Act::Answer(false));
+    assert_eq!(alice.confirm, None);
+    assert!(!alice.take_quit());
+    alice.act(Act::Quit);
+    alice.act(Act::Answer(true));
+    assert!(alice.take_quit());
 }

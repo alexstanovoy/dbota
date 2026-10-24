@@ -2532,6 +2532,7 @@ dependencies = [
  "clap",
  "dbota_assets",
  "fontique",
+ "getrandom 0.4.3",
  "half",
  "js-sys",
  "parley",

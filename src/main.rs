@@ -50,6 +50,7 @@ mod pings;
 mod portrait;
 mod quality;
 mod scoreboard;
+mod script;
 mod select;
 mod session;
 mod settings;
@@ -241,6 +242,11 @@ pub struct Args {
     /// Play no sound.
     #[arg(long)]
     pub mute: bool,
+    /// Debug: play these `;`-separated steps as a person at the keys and
+    /// the mouse would (see `script.rs`): `key:Escape`, `click:quit`,
+    /// `await:menu`, `shot:FILE`, `wait:SECONDS`.
+    #[arg(long, value_name = "STEPS")]
+    pub script: Option<String>,
 }
 
 /// What else than playing dbota can do.
@@ -433,6 +439,7 @@ fn main() -> AppExit {
             keys::plugin,
             scoreboard::plugin,
             warmup::plugin,
+            script::plugin,
         ))
         .add_plugins(main_menu::plugin);
     if let Err(err) = menu(&mut app, &args, store) {
@@ -457,8 +464,9 @@ fn main() -> AppExit {
     app.run()
 }
 
-/// The main menu, when the command line names no game: its core connected
-/// to the service, or a canned screen of it (`--menu-preview`).
+/// The main menu: its core connected to the service when the command line
+/// names no game, under the game when it names one, or a canned screen of
+/// it (`--menu-preview`).
 fn menu(app: &mut App, args: &Args, store: main_menu::SettingsStore) -> std::io::Result<()> {
     if let Some(name) = &args.menu_preview {
         let view =
@@ -466,7 +474,8 @@ fn menu(app: &mut App, args: &Args, store: main_menu::SettingsStore) -> std::io:
         app.insert_resource(main_menu::Preview(view));
         return Ok(());
     }
-    if !args.wants_menu() {
+    // A browser's replay page has no menu to go back to.
+    if cfg!(feature = "web-replay") {
         return Ok(());
     }
     #[cfg(not(target_arch = "wasm32"))]
@@ -479,7 +488,19 @@ fn menu(app: &mut App, args: &Args, store: main_menu::SettingsStore) -> std::io:
     let pem: Option<String> = None;
     let trust = main_menu::Trust::new(pem.as_deref())?;
     let service = args.service.clone().or_else(main_menu::page_service);
-    let core = main_menu::MenuCore::new(store, trust.radovid.clone(), service);
+    // A game named on the command line is on screen first, the menu under it.
+    let core = if args.wants_menu() {
+        main_menu::MenuCore::new(store, trust.radovid.clone(), service)
+    } else {
+        let kind = if args.replay.is_some() {
+            main_menu::GameKind::Replay
+        } else if args.spectate {
+            main_menu::GameKind::Watch
+        } else {
+            main_menu::GameKind::Play
+        };
+        main_menu::MenuCore::over_given(store, trust.radovid.clone(), service, kind)
+    };
     app.insert_non_send(core)
         .insert_non_send(main_menu::Trusted(trust));
     Ok(())

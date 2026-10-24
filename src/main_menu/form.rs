@@ -3,6 +3,9 @@
 
 use super::prefs::Prefs;
 
+/// The port a local lobby listens on unless told otherwise: bota_server's.
+pub const DEFAULT_PORT: &str = "4455";
+
 /// Which page's fields.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FormKind {
@@ -13,6 +16,10 @@ pub enum FormKind {
     /// A lobby's name and password, to create or join one.
     Lobby,
     Direct,
+    /// A lobby on this machine: its port and seats.
+    Host,
+    /// A replay file to open.
+    Replay,
 }
 
 /// One field.
@@ -75,10 +82,17 @@ impl Form {
                 Field::new("Lobby name", "", false, MAX_LOBBY_NAME_LEN),
                 Field::new("Password (optional)", "", true, MAX_LOBBY_PASSWORD_LEN),
             ],
-            FormKind::Direct => vec![
-                Field::new("Address", &prefs.direct, false, 200),
-                Field::new("Name", &prefs.name, false, 20),
-            ],
+            FormKind::Direct => vec![Field::new("Address", &prefs.direct, false, 200)],
+            FormKind::Host => {
+                let or = |value: &str, default: &str| {
+                    if value.is_empty() { default } else { value }.to_owned()
+                };
+                vec![
+                    Field::new("Port", &or(&prefs.host_port, DEFAULT_PORT), false, 5),
+                    Field::new("Players", &or(&prefs.host_players, "2"), false, 2),
+                ]
+            }
+            FormKind::Replay => vec![Field::new("Replay file", "", false, 1024)],
         };
         // The keyboard starts in the first empty field.
         let focus = fields.iter().position(|f| f.value.is_empty()).unwrap_or(0);

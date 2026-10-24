@@ -86,7 +86,10 @@ wss:// where the host has a certificate",
                 )
             })
         })
-        .transpose()?;
+        .transpose()?
+        // Without one, the seat is claimed with a key of this run's own, so
+        // RECONNECT after a disconnect takes the same seat again.
+        .or_else(|| (!args.spectate).then(claim).flatten());
     let mut net = Net::connect(addr)?;
     let role = if args.spectate {
         Role::Spectator
@@ -101,6 +104,14 @@ wss:// where the host has a certificate",
     ))?;
     net.send(&ClientMsg::Compress(Codec::Deflate))?;
     Ok(Session(Core::new(Source::Live(Box::new(net)))))
+}
+
+/// The key this run claims an unreserved seat with: drawn once, so every
+/// connection of the run asks for the same seat.
+#[cfg(not(target_arch = "wasm32"))]
+fn claim() -> Option<bota_proto::SeatKey> {
+    static CLAIM: std::sync::OnceLock<Option<bota_proto::SeatKey>> = std::sync::OnceLock::new();
+    *CLAIM.get_or_init(|| crate::main_menu::Claim::draw().map(|c| c.0))
 }
 
 /// Whether what is sent to `addr` stays out of other hands: TLS (`wss://`),

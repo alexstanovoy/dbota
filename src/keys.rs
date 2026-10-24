@@ -202,8 +202,9 @@ pub enum Action {
     PingDanger,
     /// Opens the console line.
     Console,
-    /// Lets go of what is half done, closes what is open, else opens the
-    /// settings.
+    /// Lets go of what is half done and closes what is open; in a game with
+    /// nothing of either it opens the dashboard, over the menu it backs out
+    /// to the top page and there asks to quit.
     Escape,
     /// Pauses and resumes a replay.
     Pause,
@@ -312,7 +313,7 @@ pub const BINDINGS: [Binding; 57] = [
     row(Action::Ping, "ping", "Ping", Interface, Play, Some(Chord { input: Input::Mouse(MouseButton::Left), shift: false, ctrl: false, alt: true })), // - (Dota pings on Alt+click)
     row(Action::PingDanger, "ping_danger", "Ping: danger", Interface, Play, Some(Chord { input: Input::Mouse(MouseButton::Left), shift: false, ctrl: true, alt: true })), // - (Dota warns on Ctrl+Alt+click)
     row(Action::Console, "console", "Console", Interface, Both, key(KeyCode::Backslash)), // Console
-    row(Action::Escape, "escape", "Close / settings", Interface, Both, key(KeyCode::Escape)), // Escape
+    row(Action::Escape, "escape", "Close / menu", Interface, Both, key(KeyCode::Escape)), // Escape
     row(Action::Pause, "pause", "Pause", Watching, Watch, key(KeyCode::F9)), // Pause
     // Step and the next eyes are dbota's own: Dota's spectators pick the fog
     // with F1 to F3.
@@ -373,10 +374,24 @@ impl Fired {
     }
 }
 
-/// Whether the keyboard is the bindings' this frame: not while a line or a
-/// box takes what is typed, nor while a key is being bound.
+/// How much of the keyboard is the bindings' this frame.
 #[derive(Resource, Default, Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Muted(pub bool);
+pub enum Muted {
+    /// Every binding fires.
+    #[default]
+    No,
+    /// The menu or the settings screen covers the game: only the
+    /// interface's own keys fire (see [`over_menus`]).
+    Game,
+    /// A line or a box takes what is typed, or a key is being bound: none.
+    All,
+}
+
+/// Whether an action works over the menu and the settings screen too, as
+/// Dota's Escape backs out of them.
+pub fn over_menus(action: Action) -> bool {
+    action == Action::Escape
+}
 
 /// A text that shows an action's binding, kept up to date as it is bound
 /// anew.
@@ -424,7 +439,7 @@ pub fn fire(
 ) {
     fired.pressed.clear();
     fired.held.clear();
-    if muted.0 {
+    if *muted == Muted::All {
         return;
     }
     let mods = held_modifiers(&keys);
@@ -440,6 +455,7 @@ pub fn fire(
         all()
             .zip(settings.keys)
             .filter_map(|(b, chord)| Some((b.action, chord?)))
+            .filter(|(action, _)| *muted == Muted::No || over_menus(*action))
             .filter(|(_, chord)| modifiers_held(*chord, mods))
     };
     for (action, chord) in bound() {
@@ -580,6 +596,14 @@ fn mouse_name(button: MouseButton) -> &'static str {
         .map_or("?", |(name, _)| name)
 }
 
+/// The key of a name, case aside.
+pub fn key_named(name: &str) -> Option<KeyCode> {
+    match input_named(name)? {
+        Input::Key(key) => Some(key),
+        Input::Mouse(_) => None,
+    }
+}
+
 /// The key or button of a name, case aside.
 fn input_named(name: &str) -> Option<Input> {
     let key = KEY_NAMES
@@ -679,9 +703,34 @@ mod tests {
         key(&mut app, KeyCode::ControlLeft, ButtonState::Pressed);
         key(&mut app, KeyCode::KeyQ, ButtonState::Pressed);
         assert!(fired(&app).pressed(Action::Ability(0)));
-        app.world_mut().resource_mut::<Muted>().0 = true;
+        *app.world_mut().resource_mut::<Muted>() = Muted::All;
         key(&mut app, KeyCode::KeyW, ButtonState::Pressed);
         assert!(fired(&app).pressed.is_empty(), "a line has the keyboard");
+    }
+
+    /// Over the menu only Escape fires, through its binding: bound anew, the
+    /// new key backs out and Escape no longer does; with a line typed into,
+    /// not even that.
+    #[test]
+    fn over_the_menu_only_escape_fires() {
+        let mut settings = Settings::default();
+        let escape = index_of(Action::Escape).expect("Escape is bound");
+        settings.keys[escape] = Chord::parse("F10");
+        let mut app = app(settings);
+        *app.world_mut().resource_mut::<Muted>() = Muted::Game;
+        key(&mut app, KeyCode::F4, ButtonState::Pressed);
+        assert!(
+            fired(&app).pressed.is_empty(),
+            "the shop's key is the game's"
+        );
+        key(&mut app, KeyCode::Escape, ButtonState::Pressed);
+        assert!(fired(&app).pressed.is_empty(), "Escape is bound elsewhere");
+        key(&mut app, KeyCode::F10, ButtonState::Pressed);
+        assert_eq!(fired(&app).pressed, [Action::Escape]);
+        key(&mut app, KeyCode::F10, ButtonState::Released);
+        *app.world_mut().resource_mut::<Muted>() = Muted::All;
+        key(&mut app, KeyCode::F10, ButtonState::Pressed);
+        assert!(fired(&app).pressed.is_empty(), "a field has the keyboard");
     }
 
     /// Alt+click pings, Ctrl+Alt+click warns, and neither fires the other.

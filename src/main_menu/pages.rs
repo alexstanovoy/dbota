@@ -6,20 +6,54 @@ use bota_core::HEROES;
 use super::core::{Act, Page};
 use super::form::FormKind;
 use super::screens::{ERROR, GREEN, Kit, PLAIN, RED, tab_color, tab_of};
-use super::view::{FieldView, LobbyView, MenuView, PageView, ResultView, RulesetRow};
+use super::view::{FieldView, LobbyView, MenuView, PageView, ReplayRow, ResultView, RulesetRow};
 use crate::ui;
 
-/// The tabs of the top bar, once logged in.
-const TABS: [(Page, &str); 4] = [
+/// The tabs of the top bar: the service's once logged in, and what is played
+/// without it always.
+const TABS: [(Page, &str); 6] = [
     (Page::Home, "PLAY"),
     (Page::MyGames, "MY GAMES"),
     (Page::Lobbies, "LOBBIES"),
+    (Page::LocalLobby, "LOCAL LOBBY"),
     (Page::Direct, "DIRECT CONNECT"),
+    (Page::Replays, "REPLAYS"),
 ];
+
+/// Whether a tab's page is the service's, shown only with an account.
+fn online(page: Page) -> bool {
+    matches!(page, Page::Home | Page::MyGames | Page::Lobbies)
+}
+
+/// Dota's quit button (`#DOTAQuitButton`, a `TopBarSmallButton`): 62 by 61
+/// with its 30-pixel icon washed orange, brighter under the cursor.
+const QUIT_WASH: (Color, Color) = (
+    Color::srgb(
+        0xbd as f32 / 255.0,
+        0x5e as f32 / 255.0,
+        0x2d as f32 / 255.0,
+    ),
+    Color::srgb(1.0, 0x6e as f32 / 255.0, 0x41 as f32 / 255.0),
+);
+/// Dota's return-to-game button (`#DOTAReturnToGameButton`): 62 by 57, its
+/// 30-pixel icon washed grey-blue.
+const RETURN_WASH: (Color, Color) = (
+    Color::srgb(
+        0x44 as f32 / 255.0,
+        0x4a as f32 / 255.0,
+        0x55 as f32 / 255.0,
+    ),
+    Color::srgb(
+        0x99 as f32 / 255.0,
+        0x99 as f32 / 255.0,
+        0xaa as f32 / 255.0,
+    ),
+);
 
 /// The whole page layer.
 pub fn draw(kit: &mut Kit, root: Entity, view: &MenuView) {
     top_bar(kit, root, view);
+    play_area(kit, root, view);
     if let Some(status) = &view.status {
         let line = kit.node(
             root,
@@ -66,6 +100,7 @@ pub fn draw(kit: &mut Kit, root: Entity, view: &MenuView) {
         PageView::Lobbies { list, fields } => super::lobbies::list(kit, body, list, fields),
         PageView::Lobby(lobby) => lobby_page(kit, body, lobby),
         PageView::Result(result) => result_page(kit, body, result),
+        PageView::Replays { list, fields } => replays_page(kit, body, list, fields),
         PageView::Joining => {
             kit.bold(body, "JOINING THE GAME…", 30.0, ui::INK);
         }
@@ -90,6 +125,18 @@ fn top_bar(kit: &mut Kit, root: Entity, view: &MenuView) {
             ChildOf(root),
         ))
         .id();
+    // In a game, Dota's top bar starts with the way back to it.
+    if view.game.is_some() {
+        kit.icon_button(
+            bar,
+            "menu.return_to_game",
+            "RETURN TO GAME",
+            Act::ReturnToGame,
+            (62.0, 57.0),
+            30.0,
+            RETURN_WASH,
+        );
+    }
     kit.bold(bar, "DBOTA", 28.0, Color::srgb(0.85, 0.2, 0.15));
     let tabs = kit.node(
         bar,
@@ -101,7 +148,7 @@ fn top_bar(kit: &mut Kit, root: Entity, view: &MenuView) {
     );
     let lit = tab_of(view.page);
     for (page, label) in TABS {
-        if page != Page::Direct && view.account.is_none() {
+        if online(page) && view.account.is_none() {
             continue;
         }
         let on = lit == page;
@@ -116,6 +163,7 @@ fn top_bar(kit: &mut Kit, root: Entity, view: &MenuView) {
                     ..default()
                 },
                 BorderColor::all(if on { ui::GOLDEN } else { Color::NONE }),
+                Name::new(label.to_lowercase()),
                 ChildOf(tabs),
             ))
             .id();
@@ -131,6 +179,52 @@ fn top_bar(kit: &mut Kit, root: Entity, view: &MenuView) {
             kit.button(bar, "SIGN IN", Act::Go(Page::Login), PLAIN, 30.0);
         }
         None => {}
+    }
+    // Dota's power button ends the top bar.
+    if view.can_quit {
+        let quit = kit.icon_button(
+            bar,
+            "menu.quit",
+            "QUIT",
+            Act::Quit,
+            (62.0, 61.0),
+            30.0,
+            QUIT_WASH,
+        );
+        kit.commands
+            .entity(quit)
+            .insert((crate::voice::QuitClick, Name::new("quit")));
+    }
+}
+
+/// The corner where Dota's play button stands: over a game, RETURN TO GAME
+/// and the way out of it (DISCONNECT); after leaving one's seat, RECONNECT.
+fn play_area(kit: &mut Kit, root: Entity, view: &MenuView) {
+    if view.game.is_none() && !view.reconnect {
+        return;
+    }
+    let corner = kit.node(
+        root,
+        Node {
+            position_type: PositionType::Absolute,
+            right: px(24),
+            bottom: px(24),
+            flex_direction: FlexDirection::Column,
+            align_items: AlignItems::Stretch,
+            row_gap: px(8),
+            width: px(340),
+            ..default()
+        },
+    );
+    if view.game.is_some() {
+        let back = kit.button(corner, "RETURN TO GAME", Act::ReturnToGame, GREEN, 64.0);
+        kit.commands.entity(back).insert(Name::new("return"));
+        // A replay is left as a game watched is (Dota's popup_confirm_close_replay).
+        let leave = kit.button(corner, "DISCONNECT", Act::Disconnect, RED, 40.0);
+        kit.commands.entity(leave).insert(Name::new("disconnect"));
+    } else {
+        let again = kit.button(corner, "RECONNECT", Act::Reconnect, GREEN, 64.0);
+        kit.commands.entity(again).insert(Name::new("reconnect"));
     }
 }
 
@@ -165,9 +259,15 @@ fn form_page(
         ),
         FormKind::Direct => (
             "DIRECT CONNECT",
-            "A game server's address: host:port, tcp://, ws:// or wss://",
+            "A game server's address: host:port, tcp://, ws:// or wss://. You play under your \
+             profile name (SETTINGS, Options).",
         ),
-        FormKind::Lobby | FormKind::None => ("", ""),
+        FormKind::Host => (
+            "LOCAL LOBBY",
+            "A game hosted on this machine, no account needed: the others join by its address \
+             under DIRECT CONNECT. You play under your profile name (SETTINGS, Options).",
+        ),
+        FormKind::Lobby | FormKind::Replay | FormKind::None => ("", ""),
     };
     kit.bold(card, title, 26.0, ui::INK);
     if !hint.is_empty() {
@@ -203,7 +303,11 @@ fn form_page(
             kit.button(row, "PLAY", Act::Direct(false), GREEN, 44.0);
             kit.button(row, "WATCH", Act::Direct(true), PLAIN, 44.0);
         }
-        FormKind::Lobby | FormKind::None => {}
+        FormKind::Host => {
+            kit.button(row, "CREATE", Act::Host(false), GREEN, 44.0);
+            kit.button(row, "CREATE FOR THE LAN", Act::Host(true), PLAIN, 44.0);
+        }
+        FormKind::Lobby | FormKind::Replay | FormKind::None => {}
     }
     if let Some(host) = plain {
         let note = kit.node(
@@ -489,4 +593,66 @@ fn result_page(kit: &mut Kit, body: Entity, result: &ResultView) {
         kit.text(row, seat.rating.clone(), 16.0, ui::INK);
     }
     kit.button(column, "CONTINUE", Act::Go(Page::Home), GREEN, 46.0);
+}
+
+/// REPLAYS: the replays on this machine, the newest first, each to watch;
+/// and any replay file by its path.
+fn replays_page(kit: &mut Kit, body: Entity, list: &[ReplayRow], fields: &[FieldView]) {
+    let column = kit.node(
+        body,
+        Node {
+            flex_direction: FlexDirection::Column,
+            row_gap: px(10),
+            width: px(640),
+            ..default()
+        },
+    );
+    kit.bold(column, "REPLAYS", 30.0, ui::INK);
+    if list.is_empty() {
+        kit.text(
+            column,
+            "No replays yet: a local lobby keeps its games' here.",
+            16.0,
+            ui::INK_DIM,
+        );
+    }
+    for (at, replay) in list.iter().enumerate() {
+        let row = kit.panel(
+            column,
+            Node {
+                padding: UiRect::all(px(10)),
+                column_gap: px(12),
+                align_items: AlignItems::Center,
+                ..default()
+            },
+        );
+        let label = kit.node(
+            row,
+            Node {
+                flex_grow: 1.0,
+                flex_direction: FlexDirection::Column,
+                ..default()
+            },
+        );
+        kit.bold(label, replay.name.clone(), 16.0, ui::INK);
+        kit.text(label, replay.size.clone(), 13.0, ui::INK_DIM);
+        let watch = kit.button(row, "WATCH", Act::OpenReplay(at), PLAIN, 34.0);
+        kit.commands
+            .entity(watch)
+            .insert(Name::new(format!("watch {at}")));
+    }
+    let card = kit.panel(
+        column,
+        Node {
+            flex_direction: FlexDirection::Column,
+            padding: UiRect::all(px(16)),
+            row_gap: px(10),
+            margin: UiRect::top(px(10)),
+            ..default()
+        },
+    );
+    for (at, field) in fields.iter().enumerate() {
+        field_box(kit, card, at, field);
+    }
+    kit.button(card, "OPEN", Act::Submit, GREEN, 40.0);
 }
