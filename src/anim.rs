@@ -3,7 +3,10 @@
 //! simulator's strike, a cast's on the simulator's cast point, and only
 //! idling, running and the follow-through keep the clip's own pace.
 
-use bevy::prelude::*;
+use bevy::{
+    camera::primitives::{Frustum, Sphere},
+    prelude::*,
+};
 use bota_client_core::App as Core;
 use bota_proto::{UnitKind, UnitView};
 
@@ -18,6 +21,10 @@ const PLAIN_CAST: &str = "cast1";
 const RUN_PACE: f32 = 300.0;
 /// World units a second above which a unit counts as running.
 const RUNNING: f32 = 25.0;
+/// World units out of the camera's view within which a unit's skeleton is
+/// still posed: past the tallest model and the shadow it casts into view,
+/// and a frame of panning.
+const POSED_REACH: f32 = 1500.0;
 
 /// Where a unit's model is in its clips.
 #[derive(Component, Debug, Default)]
@@ -50,16 +57,24 @@ fn animate(
     session: NonSend<Session>,
     bank: Res<ModelBank>,
     time: Res<Time>,
-    mut units: Query<(&Unit, &mut Pose, &ModelOf, Option<&Rig>, Option<&Dying>)>,
+    mut units: Query<(
+        &Unit,
+        &mut Pose,
+        &ModelOf,
+        &GlobalTransform,
+        Option<&Rig>,
+        Option<&Dying>,
+    )>,
     mut pivots: Query<&mut Transform>,
     mut players: Query<&mut AnimationPlayer>,
+    camera: Single<&Frustum, With<crate::camera::RtsCamera>>,
 ) {
     let core = &session.0;
     let Some(view) = core.view() else {
         return;
     };
     let dt = time.delta_secs();
-    for (unit, mut pose, model_of, rig, dying) in &mut units {
+    for (unit, mut pose, model_of, at, rig, dying) in &mut units {
         if let Ok(mut pivot) = pivots.get_mut(model_of.0) {
             let rotation = sim_facing_to_rotation(unit.facing);
             if pivot.rotation != rotation {
@@ -93,8 +108,20 @@ fn animate(
             player.play(*node).pause();
             pose.clip = wanted.clip;
         }
+        // A unit no view sees nor will in a frame is not posed: its clip
+        // weighs nothing, so its joints are neither evaluated nor moved
+        // (nor propagated). Its clip and time still follow the simulation,
+        // so it is posed right the frame it comes near.
+        let near = camera.intersects_sphere(
+            &Sphere {
+                center: at.translation_vec3a(),
+                radius: POSED_REACH,
+            },
+            true,
+        );
         if let Some(active) = player.animation_mut(*node) {
             active.set_seek_time(wanted.t.clamp(0.0, *duration - 1e-3));
+            active.set_weight(if near { 1.0 } else { 0.0 });
         }
     }
 }
