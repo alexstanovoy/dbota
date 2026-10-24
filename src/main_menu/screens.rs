@@ -380,6 +380,29 @@ pub fn clicks(
     }
 }
 
+/// The ring round the button that has the keyboard (Tab visits the form's buttons).
+pub fn focus_ring(
+    core: Option<NonSend<MenuCore>>,
+    mut buttons: Query<(&MenuButton, &mut BorderColor)>,
+) {
+    let focus = core.as_ref().and_then(|core| core.button_focus());
+    let rest = BorderColor::all(Color::srgba(1.0, 1.0, 1.0, 0.12));
+    let ring = BorderColor::all(ui::GOLDEN);
+    for (button, mut border) in &mut buttons {
+        if matches!(button.0, Act::Focus(_)) {
+            continue;
+        }
+        let want = if focus == Some(&button.0) {
+            &ring
+        } else {
+            &rest
+        };
+        if *border != *want {
+            *border = *want;
+        }
+    }
+}
+
 pub fn hover(
     mut buttons: Query<(&Interaction, &Look, &mut BackgroundColor), Changed<Interaction>>,
     washed: Query<(&Interaction, &Wash), Changed<Interaction>>,

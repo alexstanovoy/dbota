@@ -274,7 +274,7 @@ fn name<'a>(
     for event in keyboard.filter(|e| e.state == ButtonState::Pressed) {
         let line = field.get_mut(settings);
         match &event.logical_key {
-            Key::Enter | Key::Escape => screen.naming = None,
+            Key::Enter | Key::Escape | Key::Tab => screen.naming = None,
             Key::Backspace => {
                 line.pop();
             }

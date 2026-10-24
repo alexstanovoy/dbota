@@ -1,6 +1,7 @@
 //! The text fields of a menu page: typed into with the keyboard, the
 //! password ones drawn as dots and emptied once sent.
 
+use super::core::{Act, Page};
 use super::prefs::Prefs;
 
 /// The port a local lobby listens on unless told otherwise: bota_server's.
@@ -53,12 +54,35 @@ impl Field {
     }
 }
 
-/// A page's fields and the one with the keyboard. Not `Debug`: it holds
-/// passwords.
+/// The buttons of a page's form in the order they are drawn, which Tab visits after the fields.
+fn buttons(kind: FormKind) -> Vec<Act> {
+    let links = [Act::Go(Page::Service), Act::Go(Page::Direct)];
+    match kind {
+        FormKind::None => Vec::new(),
+        FormKind::Service => vec![Act::Submit, Act::Go(Page::Direct)],
+        FormKind::Login => [Act::Submit, Act::Go(Page::Register)]
+            .into_iter()
+            .chain(links)
+            .collect(),
+        FormKind::Register => [Act::Submit, Act::Go(Page::Login)]
+            .into_iter()
+            .chain(links)
+            .collect(),
+        FormKind::Lobby => vec![Act::CreateLobby, Act::Submit],
+        FormKind::Direct => vec![Act::Direct(false), Act::Direct(true)],
+        FormKind::Host => vec![Act::Host(false), Act::Host(true)],
+        FormKind::Replay => vec![Act::Submit],
+    }
+}
+
+/// A page's fields and buttons, and the one of them with the keyboard: Tab goes through the
+/// fields, then the buttons. Not `Debug`: it holds passwords.
 #[derive(Clone)]
 pub struct Form {
     pub kind: FormKind,
     fields: Vec<Field>,
+    buttons: Vec<Act>,
+    /// An index into the fields, then the buttons.
     focus: usize,
 }
 
@@ -99,6 +123,7 @@ impl Form {
         Form {
             kind,
             fields,
+            buttons: buttons(kind),
             focus,
         }
     }
@@ -129,10 +154,25 @@ impl Form {
         }
     }
 
+    /// Tab: the next field or button, round again after the last.
     pub fn next(&mut self) {
-        if !self.fields.is_empty() {
-            self.focus = (self.focus + 1) % self.fields.len();
+        let count = self.fields.len() + self.buttons.len();
+        if count > 0 {
+            self.focus = (self.focus + 1) % count;
         }
+    }
+
+    /// Shift+Tab.
+    pub fn previous(&mut self) {
+        let count = self.fields.len() + self.buttons.len();
+        if count > 0 {
+            self.focus = (self.focus + count - 1) % count;
+        }
+    }
+
+    /// The button with the keyboard, if a button has it.
+    pub fn focused_button(&self) -> Option<&Act> {
+        self.buttons.get(self.focus.checked_sub(self.fields.len())?)
     }
 
     /// Types into the focused field: printable characters only, up to its

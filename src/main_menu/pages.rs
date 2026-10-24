@@ -357,7 +357,7 @@ fn form_page(
     );
     match kind {
         FormKind::Service => {
-            kit.button(row, "CONNECT", Act::Submit, GREEN, 44.0);
+            kit.button(row, "CONTINUE", Act::Submit, GREEN, 44.0);
         }
         FormKind::Login => {
             kit.button(row, "SIGN IN", Act::Submit, GREEN, 44.0);

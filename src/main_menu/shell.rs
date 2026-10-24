@@ -62,6 +62,7 @@ pub fn plugin(app: &mut App) {
                 drive,
                 demo_start,
                 super::screens::draw,
+                super::screens::focus_ring,
                 super::screens::hover,
                 scroll,
             )
@@ -337,6 +338,7 @@ fn keyboard(
         }
         let act = match &event.logical_key {
             Key::Enter => Act::Submit,
+            Key::Tab if shift => Act::PreviousField,
             Key::Tab => Act::NextField,
             Key::Backspace => Act::Erase,
             Key::Space => Act::Type(" ".to_owned()),

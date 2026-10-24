@@ -671,13 +671,10 @@ fn offline(name: &str, dir: &Scratch) -> (MenuCore, Trust) {
     menu.replays_dir = Some(dir.0.join("replays"));
     menu.server_binary = Some(server_binary().to_owned());
     menu.set_profile_name(name);
-    let deadline = Instant::now() + Duration::from_secs(PATIENCE);
-    while menu.connecting() {
-        assert!(Instant::now() < deadline, "the service never failed");
-        menu.update();
-        std::thread::sleep(Duration::from_millis(5));
-    }
-    assert!(!menu.logged_in());
+    assert!(
+        !menu.logged_in() && !menu.link_open(),
+        "nothing is opened for the way in"
+    );
     (menu, trust)
 }
 
@@ -692,7 +689,7 @@ fn every_local_path_works_with_no_account_and_no_service() {
     let dir = Scratch::new("local");
     let (mut alice, trust) = offline("alice", &dir);
     let top = alice.page();
-    assert_eq!(top, Page::Service, "the service's way in, nothing more");
+    assert_eq!(top, Page::Login, "the way in, nothing more");
 
     alice.act(Act::Go(Page::Settings));
     assert_eq!(alice.page(), Page::Settings);
@@ -1043,4 +1040,177 @@ fn a_local_lobby_with_cheats_enabled_is_a_cheat_match() {
         c.statics().is_some()
     });
     assert!(core.statics().is_some_and(|s| s.metadata().cheats));
+}
+
+/// Types the login page's fields.
+fn type_login(player: &mut Player, login: &str, password: &str) {
+    player.fill(&[login, password]);
+}
+
+/// Pumps the menu for `secs`.
+fn sit(player: &mut Player, secs: u64) {
+    let until = Instant::now() + Duration::from_secs(secs);
+    while Instant::now() < until {
+        player.menu.update();
+        std::thread::sleep(Duration::from_millis(5));
+    }
+}
+
+/// A person types for minutes on the sign-in form, the service's own deadlines for a silent
+/// connection long past: nothing is open meanwhile, nothing typed is lost, and sending it works.
+#[test]
+fn a_slow_form_holds_no_connection_and_signs_in_when_sent() {
+    let service = service();
+    let mut alice = Player::new(Some(&service));
+    // The longest of the service's deadlines for a link that says nothing is a minute.
+    alice.menu.act(Act::Go(Page::Register));
+    alice.fill(&["slow_alice"]);
+    sit(&mut alice, 70);
+    assert!(!alice.menu.link_open(), "a form opens no link");
+    assert!(alice.menu.view().status.is_none(), "and nothing went wrong");
+    alice.fill(&["slow_alice", PASSWORD, PASSWORD]);
+    alice.menu.act(Act::Submit);
+    settle(&mut [&mut alice], |p| p.menu.page() == Page::Home);
+}
+
+/// A refusal shows on the form with what was typed still there, and no link is left open for it.
+#[test]
+fn a_wrong_password_leaves_the_form_as_typed_and_the_link_closed() {
+    let service = service();
+    let mut alice = Player::new(Some(&service));
+    alice.register("alice");
+    alice.menu.act(Act::Logout);
+    assert_eq!(alice.menu.page(), Page::Login);
+    type_login(&mut alice, "alice", "not the password");
+    alice.menu.act(Act::Submit);
+    settle(&mut [&mut alice], |p| {
+        p.menu.view().status.is_some_and(|s| s.error) && !p.menu.connecting()
+    });
+    let status = alice.menu.view().status.expect("a message");
+    assert_eq!(status.text, "Wrong login or password");
+    assert_eq!(alice.menu.page(), Page::Login);
+    assert_eq!(alice.menu.form.value(0), "alice");
+    assert_eq!(alice.menu.form.value(1), "not the password");
+    sit(&mut alice, 12);
+    assert!(!alice.menu.link_open());
+    assert!(
+        alice
+            .menu
+            .view()
+            .status
+            .is_some_and(|s| s.text == status.text),
+        "no later drop"
+    );
+    type_login(&mut alice, "alice", PASSWORD);
+    alice.menu.act(Act::Submit);
+    settle(&mut [&mut alice], |p| p.menu.page() == Page::Home);
+}
+
+/// A service that is not there is said on the form, the typed values kept, and a later try
+/// works as soon as it is.
+#[test]
+fn a_service_that_is_down_at_submit_is_said_on_the_form() {
+    let dir = Scratch::new("down");
+    let (mut alice, _trust) = offline("alice", &dir);
+    let mut player = Player {
+        store: alice_store(&alice),
+        trust: Trust::new(None).expect("trust"),
+        menu: {
+            alice.act(Act::Go(Page::Register));
+            alice
+        },
+        _dir: dir,
+    };
+    player.fill(&["alice", PASSWORD, PASSWORD]);
+    player.menu.act(Act::Submit);
+    settle(&mut [&mut player], |p| {
+        p.menu.view().status.is_some_and(|s| s.error) && !p.menu.connecting()
+    });
+    let status = player.menu.view().status.expect("a message");
+    assert!(
+        status.text.starts_with("Cannot reach the service"),
+        "{}",
+        status.text
+    );
+    assert_eq!(player.menu.page(), Page::Register);
+    assert_eq!(player.menu.form.value(0), "alice");
+    assert_eq!(player.menu.form.value(1), PASSWORD);
+    assert!(!player.menu.link_open());
+}
+
+fn alice_store(menu: &MenuCore) -> SettingsStore {
+    menu.store.clone()
+}
+
+/// Sign in, search, cancel, sit idle until the link is let go, search again: the account stays
+/// signed in across the closed link, which the next request opens again.
+#[test]
+fn a_link_let_go_when_idle_opens_again_for_the_next_search() {
+    let service = service();
+    let mut alice = Player::new(Some(&service));
+    alice.register("alice");
+    alice.menu.act(Act::Find(solo()));
+    settle(&mut [&mut alice], |p| p.menu.view().searches.len() == 1);
+    assert!(alice.menu.link_open(), "a search holds the link");
+    sit(&mut alice, 12);
+    assert!(alice.menu.link_open(), "and keeps it while it lasts");
+    let entry = alice.menu.view().searches[0].entry;
+    alice.menu.act(Act::Cancel(entry));
+    settle(&mut [&mut alice], |p| p.menu.view().searches.is_empty());
+    settle(&mut [&mut alice], |p| !p.menu.link_open());
+    assert!(alice.menu.logged_in(), "the account stays signed in");
+    assert_eq!(alice.menu.page(), Page::Home);
+    alice.menu.act(Act::Find(solo()));
+    settle(&mut [&mut alice], |p| p.menu.view().searches.len() == 1);
+    assert_eq!(alice.menu.view().searches[0].position, 1);
+    assert_eq!(alice.menu.page(), Page::Home, "no page jumped meanwhile");
+}
+
+/// Tab goes through the fields and then the buttons of a form, Shift+Tab back, and Enter
+/// presses the button that has the keyboard.
+#[test]
+fn tab_walks_the_form_and_enter_presses_the_focused_button() {
+    let service = service();
+    let mut alice = Player::new(Some(&service));
+    assert_eq!(alice.menu.page(), Page::Login);
+    let at = |p: &Player| (p.menu.form.focused(), p.menu.form.focused_button().cloned());
+    assert_eq!(at(&alice), (0, None), "the first empty field");
+    for expected in [
+        (1, None),
+        (2, Some(Act::Submit)),
+        (3, Some(Act::Go(Page::Register))),
+        (4, Some(Act::Go(Page::Service))),
+        (5, Some(Act::Go(Page::Direct))),
+        (0, None),
+    ] {
+        alice.menu.act(Act::NextField);
+        assert_eq!(at(&alice), expected);
+    }
+    alice.menu.act(Act::PreviousField);
+    assert_eq!(at(&alice), (5, Some(Act::Go(Page::Direct))));
+    alice.menu.act(Act::PreviousField);
+    alice.menu.act(Act::PreviousField);
+    alice.menu.act(Act::PreviousField);
+    assert_eq!(at(&alice), (2, Some(Act::Submit)));
+    alice.menu.act(Act::NextField);
+    alice.menu.act(Act::Submit);
+    assert_eq!(alice.menu.page(), Page::Register, "Enter on CREATE ACCOUNT");
+    assert_eq!(
+        alice.menu.button_focus(),
+        None,
+        "a new form starts in its fields"
+    );
+    // Typing goes to a field only.
+    alice.menu.act(Act::NextField);
+    alice.menu.act(Act::NextField);
+    alice.menu.act(Act::NextField);
+    alice.menu.act(Act::Type("x".to_owned()));
+    assert!(
+        alice
+            .menu
+            .form
+            .fields()
+            .iter()
+            .all(|f| f.shown().is_empty())
+    );
 }

@@ -40,7 +40,12 @@ Dota 2 install. Bots don't need it.
 - **Sign in / create account** on a matchmaking service (`--service wss://host:port`, remembered; the
   service and `wss://` games are trusted by the public web's roots, or `--trust-cert FILE.pem` for one's
   own). The login is kept for the next run in `~/.config/dbota/session`, readable by its owner only; LOG OUT
-  forgets it. There is no password recovery.
+  forgets it. There is no password recovery. The forms work offline: nothing connects while one is
+  typed, SIGN IN and CREATE ACCOUNT open the connection when pressed (a refusal or an unreachable
+  service is said on the form, with what was typed kept), and the connection is held only while
+  something live is on it (a search, a proposal, a lobby, a match under way) and let go after ten
+  seconds without; the next request opens it again with the kept login. Tab and Shift+Tab walk a form's
+  fields and buttons, and Enter presses the focused button.
 - **PLAY**: find a match per ruleset. The search box shows the time searching, the place in the queue and
   when the game servers are full; MATCH FOUND asks to accept or decline within the time shown (declining
   keeps the account out of the queues for a while); then the game opens by itself.

@@ -22,6 +22,13 @@ use super::text;
 const MAX_PER_FRAME: usize = 64;
 /// Requests whose answers the menu waits for, at most.
 const MAX_ASKED: usize = 64;
+/// Requests kept for a link being opened.
+const MAX_OUTBOX: usize = 16;
+/// How long the control link may sit with nothing live on it before it is closed; the next
+/// request opens it again.
+const IDLE_HANG_UP: std::time::Duration = std::time::Duration::from_secs(10);
+/// How long after a link was lost with something live on it the menu reconnects, silently.
+const RECONNECT_AFTER: std::time::Duration = std::time::Duration::from_secs(1);
 /// Unfinished matches of the account the menu lists, at most.
 const MAX_GAMES: usize = 32;
 /// Finished matches kept for their result screens.
@@ -70,7 +77,10 @@ pub enum Act {
     Focus(usize),
     Type(String),
     Erase,
+    /// Tab: the next field or button of the form.
     NextField,
+    /// Shift+Tab.
+    PreviousField,
     /// Enter: what the page's form is for.
     Submit,
     Logout,
@@ -313,6 +323,7 @@ enum Asked {
     Login,
     Register,
     Resume,
+    Logout,
     Queue,
     Accept,
     Rejoin(MatchId),
@@ -387,6 +398,19 @@ pub struct MenuCore {
     tls: Tls,
     pub(super) client: Option<Client>,
     conn: Conn,
+    /// Whether an account is signed in: its session is kept, the link to the service is not
+    /// (it is open only while something live is on it, and a request opens it again).
+    account: bool,
+    /// The login or registration to send as soon as the link is open. Held only until then.
+    credentials: Option<(ClientMsg, Asked)>,
+    /// Requests that wait for the link to open and the session to resume.
+    outbox: Vec<(ClientMsg, Asked)>,
+    /// Since when nothing live has been on the link.
+    idle_since: Option<Instant>,
+    /// When to reconnect after a lost link that had something live on it.
+    retry_at: Option<Instant>,
+    /// Whether a lost link is reconnected once, silently.
+    retry: bool,
     pub(super) page: Page,
     pub(super) form: Form,
     pub(super) status: Option<Status>,
@@ -458,10 +482,24 @@ impl MenuCore {
     /// one remembered.
     pub fn new(store: SettingsStore, tls: Tls, service: Option<String>) -> MenuCore {
         let mut core = MenuCore::unconnected(store, tls, service);
-        if !core.prefs.service.is_empty() {
-            core.connect();
-        }
+        core.reach_service();
         core
+    }
+
+    /// Reaches the service for the session kept for it, if there is one; the way in otherwise
+    /// opens no connection, since sign-in is typed offline and connects when it is sent.
+    fn reach_service(&mut self) {
+        self.tried_service = true;
+        if self.saved_session().is_some() {
+            self.connect();
+        }
+    }
+
+    fn saved_session(&self) -> Option<Saved> {
+        self.store
+            .read(Entry::Session)
+            .and_then(|t| Saved::parse(&t))
+            .filter(|s| s.service == self.prefs.service)
     }
 
     /// A menu over `store` that has not tried the service yet.
@@ -480,6 +518,12 @@ impl MenuCore {
             tls,
             client: None,
             conn: Conn::Offline,
+            account: false,
+            credentials: None,
+            outbox: Vec::new(),
+            idle_since: None,
+            retry_at: None,
+            retry: true,
             page: Page::Service,
             settings_from: Page::Service,
             status: None,
@@ -521,6 +565,9 @@ impl MenuCore {
         if local_first {
             core.settings_from = Page::LocalLobby;
             core.go_form(Page::LocalLobby);
+        } else {
+            core.settings_from = Page::Login;
+            core.go_form(Page::Login);
         }
         core
     }
@@ -577,6 +624,17 @@ impl MenuCore {
             core.last_seat = Some(Launch::Given);
         }
         core
+    }
+
+    /// Whether the control link to the service is open.
+    #[cfg(test)]
+    pub(super) fn link_open(&self) -> bool {
+        self.client.as_ref().is_some_and(|c| !c.hung_up())
+    }
+
+    /// The button of the page's form that has the keyboard, if one has.
+    pub fn button_focus(&self) -> Option<&Act> {
+        self.form.focused_button()
     }
 
     /// Whether the page has a text field the player may type into (an input method is then
@@ -646,12 +704,12 @@ impl MenuCore {
     }
 
     pub fn logged_in(&self) -> bool {
-        self.conn == Conn::LoggedIn
+        self.account
     }
 
-    /// Whether the service has yet to answer the Hello.
+    /// Whether a link is being opened: the Hello or the sign-in is not yet answered.
     pub(super) fn connecting(&self) -> bool {
-        self.conn == Conn::Connecting
+        matches!(self.conn, Conn::Connecting | Conn::Welcomed)
     }
 
     /// The game the shell is to open next, once.
@@ -691,8 +749,8 @@ impl MenuCore {
         self.game_unsafe = false;
         self.reconnect = self.last_seat.take().filter(|_| !over);
         // A menu that came up under a game reaches the service now.
-        if !self.tried_service && !self.prefs.service.is_empty() {
-            self.connect();
+        if !self.tried_service {
+            self.reach_service();
         }
         if let Some(why) = why {
             self.tell(text::line(why, text::MESSAGE), true);
@@ -714,14 +772,13 @@ impl MenuCore {
     /// (Direct, the local lobby, the replays), else Play once logged in,
     /// else the way in.
     fn rest_page(&self, left: Option<OnScreen>) -> Page {
-        match (left, self.conn) {
-            (Some(OnScreen::Direct), _) => Page::Direct,
-            (Some(OnScreen::Local), _) => Page::LocalLobby,
-            (Some(OnScreen::Demo), _) => Page::DemoHero,
-            (Some(OnScreen::Replay), _) => Page::Replays,
-            (_, Conn::LoggedIn) => Page::Home,
-            (_, Conn::Offline) if self.prefs.service.is_empty() => Page::LocalLobby,
-            (_, Conn::Offline) => Page::Service,
+        match left {
+            Some(OnScreen::Direct) => Page::Direct,
+            Some(OnScreen::Local) => Page::LocalLobby,
+            Some(OnScreen::Demo) => Page::DemoHero,
+            Some(OnScreen::Replay) => Page::Replays,
+            _ if self.account => Page::Home,
+            _ if self.prefs.service.is_empty() => Page::LocalLobby,
             _ => Page::Login,
         }
     }
@@ -752,8 +809,8 @@ impl MenuCore {
     /// Opens the control connection to the service in the prefs.
     fn connect(&mut self) {
         self.tried_service = true;
-        self.client = None;
         self.asked.clear();
+        self.retry_at = None;
         match Client::open(&self.prefs.service, &self.tls) {
             Ok(client) => {
                 self.client = Some(client);
@@ -762,13 +819,46 @@ impl MenuCore {
             }
             Err(err) => {
                 self.conn = Conn::Offline;
+                self.credentials = None;
+                self.outbox.clear();
                 self.tell(format!("Cannot reach the service: {err}"), true);
             }
         }
     }
 
-    /// Sends a request, noting what it was for its answer.
+    /// Whether the link is open and signed in.
+    fn link_ready(&self) -> bool {
+        self.conn == Conn::LoggedIn && self.client.as_ref().is_some_and(|c| !c.hung_up())
+    }
+
+    /// Sends a request, noting what it was for its answer. With no link open it waits for one
+    /// that is opened now and signed in again with the kept session.
     fn ask(&mut self, msg: ClientMsg, asked: Asked) {
+        if self.link_ready() {
+            self.send(msg, asked);
+        } else if !self.account {
+            self.tell("Sign in first".to_owned(), true);
+        } else {
+            if self.outbox.len() < MAX_OUTBOX {
+                self.outbox.push((msg, asked));
+            }
+            if self.conn == Conn::Offline {
+                self.connect();
+            }
+        }
+    }
+
+    /// Sends a login or registration: the link opens for it now, the typed values stay in the
+    /// form, and nothing is held open before.
+    fn sign_in(&mut self, msg: ClientMsg, asked: Asked) {
+        self.status = None;
+        self.credentials = Some((msg, asked));
+        if self.conn == Conn::Offline {
+            self.connect();
+        }
+    }
+
+    fn send(&mut self, msg: ClientMsg, asked: Asked) {
         let Some(client) = &mut self.client else {
             self.tell("Not connected to the service".to_owned(), true);
             return;
@@ -784,9 +874,54 @@ impl MenuCore {
         }
     }
 
+    /// Closes the link, keeping what the view shows of a signed-in account.
+    fn drop_link(&mut self) {
+        match (&mut self.client, self.account) {
+            (Some(client), true) => client.hang_up(),
+            _ => self.client = None,
+        }
+        self.conn = Conn::Offline;
+        self.asked.clear();
+        self.idle_since = None;
+    }
+
+    /// Whether nothing live is on the link: no search or proposal, no lobby, no request or
+    /// download in flight, no match of the account on screen or waited for.
+    fn idle(&self) -> bool {
+        let quiet = self.client.as_ref().is_some_and(|c| {
+            c.searches().entries().is_empty() && c.searches().slot_waits().is_empty()
+        });
+        quiet
+            && self.asked.is_empty()
+            && self.outbox.is_empty()
+            && self.credentials.is_none()
+            && self.lobby.is_none()
+            && self.download.is_none()
+            && !self.launching
+            && !matches!(self.on_screen, Some(OnScreen::Match(_)))
+            && !(self.page == Page::MyGames && !self.games.is_empty())
+    }
+
+    /// Closes a link that has had nothing live on it for a while, and reopens one that was lost
+    /// with something live on it.
+    fn keep_link(&mut self) {
+        if self.retry_at.is_some_and(|at| Instant::now() >= at) && self.account {
+            self.connect();
+        }
+        if !self.link_ready() || !self.idle() {
+            self.idle_since = None;
+            return;
+        }
+        let since = *self.idle_since.get_or_insert_with(Instant::now);
+        if since.elapsed() >= IDLE_HANG_UP {
+            self.drop_link();
+        }
+    }
+
     /// Takes in what the service said since the last frame.
     pub fn update(&mut self) {
         self.shelf.take();
+        self.keep_link();
         for _ in 0..MAX_PER_FRAME {
             let Some(client) = &mut self.client else {
                 return;
@@ -803,23 +938,39 @@ impl MenuCore {
     }
 
     fn lost(&mut self, err: ClientError) {
-        self.client = None;
-        self.conn = Conn::Offline;
-        self.asked.clear();
+        let was_signed_in = self.conn == Conn::LoggedIn;
+        let live = was_signed_in && !self.idle();
+        self.credentials = None;
+        self.outbox.clear();
         self.lobby = None;
-        // The pages of what needs no service stay.
-        if !matches!(
-            self.page,
-            Page::Game | Page::Direct | Page::LocalLobby | Page::Replays | Page::DemoHero
-        ) {
-            self.page = Page::Service;
-            self.form = Form::new(FormKind::Service, &self.prefs);
+        self.drop_link();
+        if !self.account && !matches!(self.page, Page::Game | Page::Direct | Page::LocalLobby) {
+            // Not signed in: the pages of the account have nothing to show.
+            if matches!(
+                self.page,
+                Page::Home | Page::MyGames | Page::Lobbies | Page::Lobby | Page::Profile
+            ) {
+                let rest = self.rest_page(None);
+                self.go_form(rest);
+            }
+        }
+        // Something live on the link is picked up again at once, once; the rest waits for the
+        // next request.
+        if live && self.retry {
+            self.retry = false;
+            self.retry_at = Some(Instant::now() + RECONNECT_AFTER);
+            return;
         }
         let why = match err {
             ClientError::Refused(error) => error_text(&error),
             other => text::line(&other.to_string(), text::MESSAGE),
         };
-        self.tell(format!("Disconnected from the service: {why}"), true);
+        let what = if was_signed_in {
+            "Disconnected from the service"
+        } else {
+            "Cannot reach the service"
+        };
+        self.tell(format!("{what}: {why}"), true);
     }
 
     fn take(&mut self, incoming: Incoming) {
@@ -831,6 +982,13 @@ impl MenuCore {
                     .position(|(s, _)| *s == seq)
                     .map(|at| self.asked.swap_remove(at).1);
                 match (result, asked) {
+                    (_, Some(Asked::Logout)) => {
+                        self.drop_link();
+                        // A sign-in typed while the old session was being ended goes now.
+                        if self.credentials.is_some() {
+                            self.connect();
+                        }
+                    }
                     (Ok(Reply::Welcome { .. }), _) => self.welcomed(),
                     (Ok(reply), asked) => self.replied(reply, asked.unwrap_or(Asked::Other)),
                     (Err(error), asked) => self.refused(&error, asked.unwrap_or(Asked::Other)),
@@ -842,20 +1000,19 @@ impl MenuCore {
 
     fn welcomed(&mut self) {
         self.conn = Conn::Welcomed;
-        let saved = self
-            .store
-            .read(Entry::Session)
-            .and_then(|t| Saved::parse(&t));
-        match saved.filter(|s| s.service == self.prefs.service) {
-            Some(saved) => self.ask(
+        if let Some((msg, asked)) = self.credentials.take() {
+            self.send(msg, asked);
+        } else if let Some(saved) = self.saved_session() {
+            self.send(
                 ClientMsg::Resume {
                     session: saved.token,
                     client: Default::default(),
                 },
                 Asked::Resume,
-            ),
-            None if self.page == Page::Service => self.go_form(Page::Login),
-            None => {}
+            );
+        } else {
+            // Nothing to say to the service: no link is kept for nothing.
+            self.drop_link();
         }
     }
 
@@ -867,6 +1024,9 @@ impl MenuCore {
                 ..
             } => {
                 self.conn = Conn::LoggedIn;
+                let first = !self.account;
+                self.account = true;
+                self.retry = true;
                 let saved = Saved {
                     service: self.prefs.service.clone(),
                     token: session,
@@ -883,10 +1043,15 @@ impl MenuCore {
                         handoff: None,
                     })
                     .collect();
-                self.ask(ClientMsg::MyMatches, Asked::Other);
-                self.status = None;
-                if !matches!(self.page, Page::Game) {
-                    self.go(Page::Home);
+                self.send(ClientMsg::MyMatches, Asked::Other);
+                for (msg, asked) in std::mem::take(&mut self.outbox) {
+                    self.send(msg, asked);
+                }
+                if first {
+                    self.status = None;
+                    if !matches!(self.page, Page::Game) {
+                        self.go(Page::Home);
+                    }
                 }
             }
             Reply::Handoffs { list } => {
@@ -926,10 +1091,18 @@ impl MenuCore {
         match (asked, error) {
             (Asked::Resume, _) => {
                 self.store.remove(Entry::Session);
+                self.account = false;
+                self.outbox.clear();
+                self.drop_link();
                 self.go_form(Page::Login);
                 if *error != Error::BadSession {
                     self.tell(error_text(error), true);
                 }
+            }
+            (Asked::Login | Asked::Register, _) => {
+                // The form stays as typed for another try; no link is held for it.
+                self.drop_link();
+                self.tell(error_text(error), true);
             }
             (Asked::Rejoin(id) | Asked::Watch(id), Error::UnknownMatch) => {
                 self.games.retain(|g| g.match_id != id);
@@ -1222,9 +1395,9 @@ impl MenuCore {
             }
             return;
         }
-        // Signing in starts with reaching the service.
+        // Signing in starts with the service's address, until there is one.
         let page = match page {
-            Page::Login | Page::Register if self.conn == Conn::Offline => Page::Service,
+            Page::Login | Page::Register if self.prefs.service.is_empty() => Page::Service,
             page => page,
         };
         let needs_login = matches!(
@@ -1266,7 +1439,8 @@ impl MenuCore {
             Act::Type(typed) => self.form.type_in(&typed),
             Act::Erase => self.form.erase(),
             Act::NextField => self.form.next(),
-            Act::Submit => self.submit(),
+            Act::PreviousField => self.form.previous(),
+            Act::Submit => self.press(),
             Act::Logout => self.logout(),
             Act::Find(ruleset) => self.ask(ClientMsg::QueueJoin { ruleset }, Asked::Queue),
             Act::Cancel(entry) => self.ask(ClientMsg::QueueLeave { entry }, Asked::Other),
@@ -1384,6 +1558,15 @@ impl MenuCore {
         }
     }
 
+    /// Enter: presses the button that has the keyboard, else submits the form.
+    fn press(&mut self) {
+        match self.form.focused_button().cloned() {
+            Some(Act::Host(_)) if self.hosted_at.is_some() => {}
+            Some(Act::Submit) | None => self.submit(),
+            Some(button) => self.act(button),
+        }
+    }
+
     fn submit(&mut self) {
         match self.page {
             Page::Service => {
@@ -1394,7 +1577,8 @@ impl MenuCore {
                 }
                 self.prefs.service = service;
                 self.save_prefs();
-                self.connect();
+                self.status = None;
+                self.go_form(Page::Login);
             }
             Page::Login => self.login(),
             Page::Register => self.register(),
@@ -1415,7 +1599,7 @@ impl MenuCore {
 
     fn login(&mut self) {
         let login = self.form.value(0).trim().to_owned();
-        let password = Secret(self.form.take_secret(1));
+        let password = Secret(self.form.value(1).to_owned());
         if login.is_empty() || password.0.is_empty() {
             self.tell("Type your login and password".to_owned(), true);
             return;
@@ -1423,7 +1607,7 @@ impl MenuCore {
         self.prefs.login = login.clone();
         self.save_prefs();
         let client = Default::default();
-        self.ask(
+        self.sign_in(
             ClientMsg::Login {
                 login,
                 password,
@@ -1435,7 +1619,7 @@ impl MenuCore {
 
     fn register(&mut self) {
         let login = self.form.value(0).trim().to_owned();
-        let (password, again) = (self.form.take_secret(1), self.form.take_secret(2));
+        let (password, again) = (self.form.value(1).to_owned(), self.form.value(2).to_owned());
         let complaint = if !valid_login(&login) {
             Some("A login is 3 to 20 characters: a-z, 0-9 and _")
         } else if !valid_password(&password) {
@@ -1457,21 +1641,26 @@ impl MenuCore {
             kind: AccountKind::Human,
             client: Default::default(),
         };
-        self.ask(msg, Asked::Register);
+        self.sign_in(msg, Asked::Register);
     }
 
     fn logout(&mut self) {
-        if self.client.is_some() {
-            self.ask(ClientMsg::Logout, Asked::Other);
-        }
+        // The session is forgotten here at once; the service is told when a link is open (one
+        // is not opened for it: a session left there expires by itself).
+        let live = self.link_ready();
         self.store.remove(Entry::Session);
+        self.account = false;
         self.games.clear();
         self.lobby = None;
-        self.conn = Conn::Offline;
-        self.page = Page::Login;
-        // A fresh connection: the old one stays logged in until it closes.
-        self.connect();
-        self.form = Form::new(FormKind::Login, &self.prefs);
+        self.outbox.clear();
+        self.credentials = None;
+        self.retry_at = None;
+        if live {
+            self.send(ClientMsg::Logout, Asked::Logout);
+        } else {
+            self.drop_link();
+        }
+        self.go_form(Page::Login);
     }
 
     fn enter(&mut self, id: MatchId, watch: bool) {
