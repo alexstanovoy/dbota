@@ -7,6 +7,10 @@ use bevy::prelude::*;
 /// Frames `--bench` keeps at most: a minute at well over 10 000 fps.
 const MAX_FRAMES: usize = 1 << 20;
 
+/// Milliseconds of a frame `--bench` calls a hitch: a frame missed at 30 fps.
+/// Each is also said on stderr with its tick, to find what caused it.
+const HITCH_MS: f32 = 1000.0 / 30.0;
+
 /// What `--bench` has seen so far.
 #[derive(Default)]
 struct Bench {
@@ -238,6 +242,13 @@ fn bench(
     if dt > 0.0 && state.times.len() < MAX_FRAMES {
         state.times.push(dt);
     }
+    if dt > HITCH_MS {
+        let tick = session.0.view().map(|v| v.tick);
+        eprintln!(
+            "hitch: {dt:.1} ms at tick {tick:?}, {:.2} s into the timing",
+            now - began
+        );
+    }
     let wall = now - began;
     if wall < seconds || state.times.is_empty() {
         return;
@@ -250,14 +261,17 @@ fn bench(
     let mean = times.iter().sum::<f32>() / times.len() as f32;
     times.sort_by(f32::total_cmp);
     let at = |q: f32| times[((times.len() - 1) as f32 * q) as usize];
+    let over = |ms: f32| times.iter().filter(|&&t| t > ms).count();
     let (rss, peak, anon) = memory_mb();
     let line = format!(
-        "bench: frames={} mean_ms={mean:.2} p50_ms={:.2} p95_ms={:.2} p99_ms={:.2} max_ms={:.2} cpu_pct={cpu:.0} rss_mb={rss} peak_rss_mb={peak} anon_mb={anon} first_frame_s={:.2} ready_s={ready:.2} units={} entities={} images_mb={} meshes_mb={}",
+        "bench: frames={} mean_ms={mean:.2} p50_ms={:.2} p95_ms={:.2} p99_ms={:.2} max_ms={:.2} over_16ms={} over_33ms={} cpu_pct={cpu:.0} rss_mb={rss} peak_rss_mb={peak} anon_mb={anon} first_frame_s={:.2} ready_s={ready:.2} units={} entities={} images_mb={} meshes_mb={}",
         times.len(),
         at(0.5),
         at(0.95),
         at(0.99),
         at(1.0),
+        over(1000.0 / 60.0),
+        over(HITCH_MS),
         state.first_frame.unwrap_or(f32::NAN),
         units.0.len(),
         entities.iter().count(),
