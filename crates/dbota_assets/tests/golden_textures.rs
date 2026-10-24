@@ -289,7 +289,16 @@ fn manifest_textures_match_the_exported_images() {
     let dota = install();
     let mut tally = Tally::default();
     let mut sheets = 0;
-    for (vpk, out) in manifest_textures() {
+    let (held, added) = in_reference(manifest_textures(), &dota.cache, "textures");
+    for (vpk, _) in &added {
+        let bytes = dota.pak.read_file(&dota.src, vpk).unwrap();
+        let texture = Texture::parse(&bytes).unwrap_or_else(|e| panic!("{vpk}: {e}"));
+        check_levels(&texture, vpk);
+        texture
+            .first_frame_png()
+            .unwrap_or_else(|e| panic!("{vpk}: {e}"));
+    }
+    for (vpk, out) in held {
         let bytes = dota.pak.read_file(&dota.src, &vpk).unwrap();
         let texture = Texture::parse(&bytes).unwrap_or_else(|e| panic!("{vpk}: {e}"));
         check_levels(&texture, &vpk);
@@ -306,6 +315,29 @@ fn manifest_textures_match_the_exported_images() {
     }
     tally.report("manifest");
     println!("manifest: {sheets} sprite sheets");
+}
+
+/// Manifest lines as `(vpk path, cache path)`.
+type Lines = Vec<(String, String)>;
+
+/// The lines whose file the reference holds, and the rest. A line added to the manifest after the
+/// reference was exported has nothing to be compared with: it is listed, and only read (exporting
+/// it with the same Source2Viewer-CLI 20 into the reference has it compared too). The reference
+/// must hold some.
+fn in_reference(lines: Lines, reference: &Path, what: &str) -> (Lines, Lines) {
+    let (held, added): (Vec<_>, Vec<_>) = lines
+        .into_iter()
+        .partition(|(_, out)| reference.join(out).is_file());
+    assert!(
+        !held.is_empty(),
+        "the reference at {} holds none of the manifest's {what}",
+        reference.display()
+    );
+    if !added.is_empty() {
+        let outs: Vec<&str> = added.iter().map(|(_, out)| out.as_str()).collect();
+        println!("{what} added to the manifest since the reference, only read: {outs:?}");
+    }
+    (held, added)
 }
 
 /// Every `.png` below `dir`, by path.

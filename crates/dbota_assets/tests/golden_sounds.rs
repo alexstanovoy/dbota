@@ -33,6 +33,29 @@ fn manifest_sounds() -> Vec<(String, String)> {
         .collect()
 }
 
+/// Manifest lines as `(vpk path, cache path)`.
+type Lines = Vec<(String, String)>;
+
+/// The lines whose file the reference holds, and the rest. A line added to the manifest after the
+/// reference was exported has nothing to be compared with: it is listed, and only read (exporting
+/// it with the same Source2Viewer-CLI 20 into the reference has it compared too). The reference
+/// must hold some.
+fn in_reference(lines: Lines, reference: &Path, what: &str) -> (Lines, Lines) {
+    let (held, added): (Vec<_>, Vec<_>) = lines
+        .into_iter()
+        .partition(|(_, out)| reference.join(out).is_file());
+    assert!(
+        !held.is_empty(),
+        "the reference at {} holds none of the manifest's {what}",
+        reference.display()
+    );
+    if !added.is_empty() {
+        let outs: Vec<&str> = added.iter().map(|(_, out)| out.as_str()).collect();
+        println!("{what} added to the manifest since the reference, only read: {outs:?}");
+    }
+    (held, added)
+}
+
 /// Rate, channels and playing time of an MP3 stream, counted frame by frame.
 fn mp3_stats(data: &[u8]) -> (u32, u16, f64) {
     const V1: [u32; 15] = [
@@ -80,7 +103,17 @@ fn manifest_sounds_match_the_exported_files() {
     let src = DirSource::new(game);
     let pak = Vpk::open(&src, "pak01_dir.vpk").unwrap();
     let (mut wavs, mut mp3s) = (0, 0);
-    for (vpk, out) in manifest_sounds() {
+    let (held, added) = in_reference(manifest_sounds(), &cache, "sounds");
+    for (vpk, out) in &added {
+        let bytes = pak.read_file(&src, vpk).unwrap();
+        let sound = Sound::parse(&bytes).unwrap_or_else(|e| panic!("{vpk}: {e}"));
+        assert_eq!(
+            Some(sound.extension()),
+            out.rsplit('.').next(),
+            "{vpk}: kind"
+        );
+    }
+    for (vpk, out) in held {
         let bytes = pak.read_file(&src, &vpk).unwrap();
         let sound = Sound::parse(&bytes).unwrap_or_else(|e| panic!("{vpk}: {e}"));
         let old = std::fs::read(cache.join(&out)).unwrap_or_else(|e| panic!("{out}: {e}"));
