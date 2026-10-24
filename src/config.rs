@@ -351,6 +351,10 @@ pub struct Settings {
     /// The program a local lobby starts for each seat left to a bot, as a
     /// command line (see `main_menu::launch`). Empty: none set.
     pub bot_command: String,
+    /// A right click on an allied unit bota lets one deny attacks it once its
+    /// health is at most this percent of its most, so no `A` is needed; above
+    /// it the click follows, as Dota's. Zero: never.
+    pub deny_on_right_click_pct: u8,
 }
 
 /// Characters a profile name has at most.
@@ -378,6 +382,7 @@ impl Default for Settings {
             camera: CameraSettings::default(),
             name: String::new(),
             bot_command: String::new(),
+            deny_on_right_click_pct: 30,
         }
     }
 }
@@ -516,6 +521,9 @@ impl Settings {
                 self.camera.distance_max = parse_unit(value, 100.0, 20_000.0)?;
             }
             "camera_pan_speed" => self.camera.pan_speed = parse_unit(value, 100.0, 20_000.0)?,
+            "deny_on_right_click_pct" => {
+                self.deny_on_right_click_pct = parse_unit(value, 0.0, 100.0)?.round() as u8;
+            }
             "name" => {
                 if value.chars().count() > MAX_NAME || value.chars().any(char::is_control) {
                     return Err(format!("a name is at most {MAX_NAME} printable characters"));
@@ -558,6 +566,10 @@ impl Settings {
         ] {
             out.push_str(&format!("{name} = {}\n", flag(on)));
         }
+        out.push_str(&format!(
+            "deny_on_right_click_pct = {}\n",
+            self.deny_on_right_click_pct
+        ));
         out.push_str(&format!("display_mode = {}\n", self.display.name()));
         let q = &self.quality;
         out.push_str(&format!(

@@ -160,7 +160,7 @@ clash and resets them to the defaults; they are kept as `key.<action> = <chord>`
 
 | Key or mouse | Action |
 |---|---|
-| Right click | move, or attack what is under the cursor |
+| Right click | move, or attack what is under the cursor; on an ally, follow it, or deny it once it is in its last 30% of health and the game lets it be denied (`deny_on_right_click_pct`, OPTIONS, CONTROLS; 0: never, then `A` denies) |
 | Left click | select; confirms a targeted ability or item |
 | `A` / `M` then left click | attack-move / move there, whatever is under the cursor |
 | `S` / `H` | stop / hold position |
@@ -186,7 +186,7 @@ clash and resets them to the defaults; they are kept as `key.<action> = <chord>`
 | `F9`, `=` / `-`, `.`, `Tab` | in a replay: pause, faster / slower, one tick, switch vision (both teams, Radiant, Dire; `Tab` as a spectator too) |
 
 The settings screen (SETTINGS in the main menu and the dashboard, the gear in a game) has Dota's tabs: HOTKEYS,
-OPTIONS (profile name, interface size, damage numbers, animated portrait, the scoreboard's items, edge pan), VIDEO (display mode, frame
+OPTIONS (profile name, interface size, damage numbers, animated portrait, the scoreboard's items, the right click's deny, edge pan), VIDEO (display mode, frame
 cap, resolution, quality preset, shadows, anti-aliasing, visual clarity, auto quality, and what
 takes effect on the next start) and AUDIO (volume, mute, your hero's voice answers). What it
 changes is saved when it closes.

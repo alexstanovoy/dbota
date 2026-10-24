@@ -91,6 +91,7 @@ pub enum Slider {
     Volume,
     InterfaceScale,
     RenderScale,
+    DenyOnRightClick,
 }
 
 impl Slider {
@@ -99,6 +100,7 @@ impl Slider {
             Slider::Volume => "Master volume",
             Slider::InterfaceScale => "Interface size",
             Slider::RenderScale => "Render resolution",
+            Slider::DenyOnRightClick => "Right click denies an ally below",
         }
     }
 
@@ -108,6 +110,7 @@ impl Slider {
             Slider::Volume => (0.0, 1.0, 0.01),
             Slider::InterfaceScale => (0.5, 2.0, 0.05),
             Slider::RenderScale => (0.25, 1.0, 0.05),
+            Slider::DenyOnRightClick => (0.0, 100.0, 5.0),
         }
     }
 
@@ -116,6 +119,7 @@ impl Slider {
             Slider::Volume => s.volume,
             Slider::InterfaceScale => s.ui_scale,
             Slider::RenderScale => s.quality.render_scale,
+            Slider::DenyOnRightClick => f32::from(s.deny_on_right_click_pct),
         }
     }
 
@@ -128,6 +132,7 @@ impl Slider {
             Slider::Volume => s.volume = value,
             Slider::InterfaceScale => s.ui_scale = value,
             Slider::RenderScale => s.quality.render_scale = value,
+            Slider::DenyOnRightClick => s.deny_on_right_click_pct = value.round() as u8,
         }
     }
 
@@ -139,7 +144,11 @@ impl Slider {
 
     /// The value as the screen shows it.
     pub fn shown(self, s: &Settings) -> String {
-        format!("{:.0}%", self.get(s) * 100.0)
+        match self {
+            Slider::DenyOnRightClick if s.deny_on_right_click_pct == 0 => "Off".to_owned(),
+            Slider::DenyOnRightClick => format!("{}%", s.deny_on_right_click_pct),
+            _ => format!("{:.0}%", self.get(s) * 100.0),
+        }
     }
 }
 
@@ -348,6 +357,8 @@ pub fn controls(tab: Tab) -> Vec<Control> {
             T(Toggle::DamageNumbers),
             T(Toggle::AnimatePortrait),
             T(Toggle::ScoreboardItems),
+            H("CONTROLS"),
+            S(Slider::DenyOnRightClick),
             H("CAMERA"),
             T(Toggle::EdgePan),
             H("LOCAL LOBBY"),

@@ -447,6 +447,7 @@ fn mouse(
     over: Res<OverHud>,
     mut panels: ResMut<Panels>,
     screen: Res<crate::settings::Screen>,
+    settings: Res<Settings>,
     window: Single<&Window, With<PrimaryWindow>>,
 ) {
     if over.0 || screen.open || window.cursor_position().is_none() {
@@ -491,10 +492,13 @@ fn mouse(
         core.attack_move_armed = false;
         panels.move_armed = false;
         core.aiming = None;
-        core.act(Intent::Smart {
-            at: ground,
-            unit: unit_of(hover.attack),
-        });
+        let unit = unit_of(hover.attack);
+        let pct = settings.deny_on_right_click_pct;
+        if unit.is_some_and(|id| denies_on_right_click(core, id, pct)) {
+            core.act(Intent::AttackAt { at: ground, unit });
+        } else {
+            core.act(Intent::Smart { at: ground, unit });
+        }
     }
     if buttons.just_released(MouseButton::Left)
         && let Some(slot) = core.held_item.take()
@@ -506,6 +510,40 @@ fn mouse(
             unit: unit_of(hover.select),
         });
     }
+}
+
+/// Whether a right click on `unit` attacks it as a deny instead of following
+/// it: one's hero is commanded, the unit is its own side's, its health is at
+/// most `pct` percent of its most, and bota lets it be denied now. Zero
+/// `pct` never denies.
+fn denies_on_right_click(
+    core: &bota_client_core::App,
+    unit: bota_proto::EntityId,
+    pct: u8,
+) -> bool {
+    let hero = core.my_hero();
+    let (Some(view), Some(team)) = (core.view(), core.my_team()) else {
+        return false;
+    };
+    view.unit(unit).is_some_and(|u| {
+        hero.is_some()
+            && core.commanded() == hero
+            && u.team == team
+            && Some(u.id) != hero
+            && deny_click(u.kind, u.hp, u.max_hp, pct)
+    })
+}
+
+/// The health side of [`denies_on_right_click`]: worn to at most `pct`
+/// percent, and deniable by bota's own rule. The view's health is whole
+/// points rounded down, so the rule is asked of the point above it, the
+/// most the server may hold: the client never sends a deny bota refuses.
+pub fn deny_click(kind: bota_proto::UnitKind, hp: i32, max_hp: i32, pct: u8) -> bool {
+    use bota_proto::Fixed;
+    pct > 0
+        && hp > 0
+        && i64::from(hp) * 100 <= i64::from(max_hp) * i64::from(pct)
+        && bota_core::deniable(kind, Fixed::from_int(hp + 1), Fixed::from_int(max_hp))
 }
 
 /// Clicks and drags on the HUD's boxes: an ability box presses its slot, an
@@ -567,5 +605,72 @@ fn boxes(
         } else if over_hud {
             core.held_item = None;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use bota_proto::{Fixed, UnitKind};
+
+    use super::deny_click;
+
+    /// A right click turns into a deny only where bota allows one, whatever
+    /// fraction of a point the whole numbers of the view hide, and does so
+    /// in the last share of health the setting names.
+    #[test]
+    fn a_right_click_denies_only_what_bota_lets_be_denied() {
+        let kinds = [
+            UnitKind::Hero,
+            UnitKind::CreepMelee,
+            UnitKind::CreepRanged,
+            UnitKind::CreepSiege,
+            UnitKind::CreepFlagbearer,
+            UnitKind::CreepNeutral,
+            UnitKind::Tower,
+            UnitKind::Barracks,
+            UnitKind::Ward,
+            UnitKind::Courier,
+        ];
+        let point = 1 << Fixed::FRAC_BITS;
+        for kind in kinds {
+            for max_hp in [8, 200, 550, 1800] {
+                for pct in [0, 20, 30, 100] {
+                    for hp in 1..=max_hp {
+                        if !deny_click(kind, hp, max_hp, pct) {
+                            continue;
+                        }
+                        assert!(i64::from(hp) * 100 <= i64::from(max_hp) * i64::from(pct));
+                        for (hp_frac, max_frac) in [(0, point - 1), (point - 1, 0), (point / 2, 0)]
+                        {
+                            let held = Fixed {
+                                raw: hp * point + hp_frac,
+                            };
+                            let most = Fixed {
+                                raw: max_hp * point + max_frac,
+                            };
+                            assert!(
+                                bota_core::deniable(kind, held, most),
+                                "{kind:?} {hp}/{max_hp} at {pct}%: bota would refuse the deny"
+                            );
+                        }
+                    }
+                }
+            }
+        }
+        assert!(deny_click(UnitKind::CreepMelee, 150, 550, 30));
+        assert!(
+            !deny_click(UnitKind::CreepMelee, 200, 550, 30),
+            "above 30%: a follow"
+        );
+        assert!(
+            !deny_click(UnitKind::CreepMelee, 150, 550, 0),
+            "0 turns it off"
+        );
+        assert!(deny_click(UnitKind::Tower, 100, 1800, 30));
+        assert!(
+            !deny_click(UnitKind::Tower, 300, 1800, 30),
+            "a tower only below 10%"
+        );
+        assert!(!deny_click(UnitKind::Hero, 10, 550, 30));
     }
 }
