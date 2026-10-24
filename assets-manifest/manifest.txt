@@ -325,6 +325,15 @@ particle hero.nevermore.requiem particles/units/heroes/hero_nevermore/nevermore_
 particle hero.nevermore.requiem_line particles/units/heroes/hero_nevermore/nevermore_requiemofsouls_line.vpcf_c particles/nevermore_requiemofsouls_line.json
 particle hero.nevermore.necro_soul particles/units/heroes/hero_nevermore/nevermore_necro_souls.vpcf_c particles/nevermore_necro_souls.json
 
+# --- Town portal, Glyph of Fortification, level up, Blood Grenade, a hero's death
+particle item.teleport_start particles/items2_fx/teleport_start.vpcf_c particles/teleport_start.json
+particle item.teleport_end particles/items2_fx/teleport_end.vpcf_c particles/teleport_end.json
+particle glyph.structure particles/items_fx/glyph.vpcf_c particles/glyph.json
+particle glyph.creep particles/items_fx/glyph_creeps.vpcf_c particles/glyph_creeps.json
+particle hero.levelup particles/generic_hero_status/hero_levelup.vpcf_c particles/hero_levelup.json
+particle item.blood_grenade particles/items2_fx/blood_grenade_projectile.vpcf_c particles/blood_grenade_projectile.json
+particle hero.nevermore.death particles/units/heroes/hero_nevermore/nevermore_death.vpcf_c particles/nevermore_death.json
+
 # --- Item icons (88x64, a few narrower), every Dota item name in ids.txt
 texture icon.item.boots panorama/images/items/boots_png.vtex_c icons/items/boots.png
 texture icon.item.clarity panorama/images/items/clarity_png.vtex_c icons/items/clarity.png
