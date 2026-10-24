@@ -270,7 +270,24 @@ pub fn plugin(app: &mut App) {
                 frame_rate,
             )
                 .run_if(|k: Res<crate::session::MatchKnown>| k.0),
-        );
+        )
+        .add_systems(Update, behind_the_pick);
+}
+
+/// The whole HUD stays away while the hero pick has the screen, as Dota's
+/// pick screen takes the place of the game's interface.
+fn behind_the_pick(session: NonSend<Session>, mut root: Single<&mut Visibility, With<HudRoot>>) {
+    let core = &session.0;
+    let picking = core.phase == bota_client_core::Phase::Lobby
+        && core.view().is_none()
+        && !core.in_tactical_phase();
+    root.set_if_neq(ui::visible(!picking));
+}
+
+/// Whether the hero the panel is about lies dead: its last body still has
+/// the health it fell with, and Dota's panel shows none.
+fn fallen(p: Option<&PlayerView>) -> bool {
+    p.is_some_and(|p| p.respawn_left > 0)
 }
 
 /// The bottom row is a grid of three columns: the docks take their own
@@ -1365,7 +1382,10 @@ fn readouts(session: NonSend<Session>, mut texts: Query<(&Readout, &mut Text)>) 
                 .map(|u| u.level.to_string())
                 .unwrap_or_default(),
             Readout::Hp => unit
-                .map(|u| format!("{} / {}", u.hp.max(0), u.max_hp))
+                .map(|u| {
+                    let hp = if fallen(p) { 0 } else { u.hp.max(0) };
+                    format!("{hp} / {}", u.max_hp)
+                })
                 .unwrap_or_default(),
             Readout::Mana => unit
                 .filter(|u| u.max_mana > 0)
@@ -1475,10 +1495,11 @@ fn notice(core: &Core) -> String {
 /// The health and mana bars of the panel and the seats.
 fn gauges(session: NonSend<Session>, mut gauges: Query<(&Gauge, &mut Node, &mut BackgroundColor)>) {
     let core = &session.0;
-    let (_, unit, _) = subject(core);
+    let (p, unit, _) = subject(core);
     let Some(view) = core.view() else {
         return;
     };
+    let dead = fallen(p);
     for (gauge, mut node, mut bg) in &mut gauges {
         let of = match *gauge {
             Gauge::Hp | Gauge::Mana => unit,
@@ -1488,6 +1509,7 @@ fn gauges(session: NonSend<Session>, mut gauges: Query<(&Gauge, &mut Node, &mut 
         };
         let share = of.map_or(0.0, |u| match *gauge {
             Gauge::Mana => u.mana.max(0) as f32 / u.max_mana.max(1) as f32,
+            Gauge::Hp if dead => 0.0,
             _ => u.hp.max(0) as f32 / u.max_hp.max(1) as f32,
         });
         let width = percent(share * 100.0);
