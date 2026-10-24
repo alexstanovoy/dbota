@@ -618,6 +618,8 @@ sound sound.tower.dire.destroyed sounds/physics/damage/building/dire_tower_destr
 sound sound.click sounds/ui/buttonclick.vsnd_c sounds/ui/buttonclick.wav event=General.ButtonClick
 sound sound.buy sounds/ui/buy.vsnd_c sounds/ui/buy.wav event=General.Buy
 sound sound.no_gold sounds/ui/ui_general_deny.vsnd_c sounds/ui/ui_general_deny.wav event=General.NoGold
+sound sound.deny.cooldown sounds/ui/deny_cooldown.vsnd_c sounds/ui/deny_cooldown.wav event=General.CastFail_AbilityInCooldown
+sound sound.deny.mana sounds/ui/deny_mana.vsnd_c sounds/ui/deny_mana.wav event=General.CastFail_NoMana
 sound sound.level_up sounds/ui/power_up_06.vsnd_c sounds/ui/power_up_06.wav event=General.LevelUp
 sound sound.item.tango sounds/items/tango.vsnd_c sounds/items/tango.wav event=DOTA_Item.Tango.Activate
 sound sound.item.flask sounds/items/healing_salve.vsnd_c sounds/items/healing_salve.wav event=DOTA_Item.HealingSalve.Activate
@@ -1084,3 +1086,19 @@ label addons/hero_demo/resource/addon_english.txt NightEnable_Button
 label addons/hero_demo/resource/addon_english.txt AllVision_Button
 label addons/hero_demo/resource/addon_english.txt Refresh_Button
 label addons/hero_demo/resource/addon_english.txt QuitDemo_Button
+
+# Dota's error line (DOTAErrorMsg): the refusals the client tells, in Dota's words.
+label resource/localization/dota_english.txt dota_hud_error_cant_cast_on_other
+label resource/localization/dota_english.txt dota_hud_error_ability_in_cooldown
+label resource/localization/dota_english.txt dota_hud_error_item_in_cooldown
+label resource/localization/dota_english.txt dota_hud_error_not_enough_mana
+label resource/localization/dota_english.txt dota_hud_error_not_enough_gold
+label resource/localization/dota_english.txt dota_hud_error_ability_not_learned
+label resource/localization/dota_english.txt dota_hud_error_no_charges
+label resource/localization/dota_english.txt dota_hud_error_tutorial_shop_not_in_range
+label resource/localization/dota_english.txt dota_hud_error_cant_pick_up_item
+label resource/localization/dota_english.txt dota_hud_error_unit_command_restricted
+label resource/localization/dota_english.txt dota_hud_error_cant_sell_item
+label resource/localization/dota_english.txt dota_hud_error_cant_cast_here
+label resource/localization/dota_english.txt dota_hud_error_item_out_of_stock
+label resource/localization/dota_english.txt dota_hud_error_queue_full

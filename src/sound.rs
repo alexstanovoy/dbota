@@ -40,6 +40,8 @@ struct Voices(Vec<(Kind, Voice)>);
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Kind {
     Cue(CueKind),
+    /// One of Dota's refusals.
+    Denied(crate::error_msg::Deny),
     CreepShot,
     TowerShot,
     /// The hum over a teleport's landing.
@@ -101,8 +103,10 @@ fn sources_of(kind: Kind) -> (&'static [&'static str], Option<Sfx>) {
             CueKind::TowerShot => (&["sound.tower.hero_impact"], Some(Sfx::TowerShot)),
             CueKind::HeroDeath => (&["sound.nevermore.death"], Some(Sfx::HeroDeath)),
             CueKind::HeroKill => (&[], Some(Sfx::HeroKill)),
-            CueKind::Refused => (&["sound.no_gold"], Some(Sfx::Refused)),
+            // Each reason has its own sound (Kind::Denied).
+            CueKind::Refused(_) => (&[], None),
         },
+        Kind::Denied(deny) => (deny.logical(), Some(Sfx::Refused)),
         Kind::CreepShot => (
             &[
                 "sound.creep.radiant.ranged.attack.",
@@ -143,11 +147,13 @@ fn load(
         CueKind::TowerShot,
         CueKind::HeroDeath,
         CueKind::HeroKill,
-        CueKind::Refused,
     ]
     .map(Kind::Cue)
     .into_iter()
     .chain([
+        Kind::Denied(crate::error_msg::Deny::General),
+        Kind::Denied(crate::error_msg::Deny::Cooldown),
+        Kind::Denied(crate::error_msg::Deny::Mana),
         Kind::CreepShot,
         Kind::TowerShot,
         Kind::PortalArriving,
@@ -235,7 +241,15 @@ fn play(
         ));
     };
     for cue in cues {
-        sound(Kind::Cue(cue.kind), cue.gain, cue.at);
+        match cue.kind {
+            // Dota sounds a refusal it tells, and only that.
+            CueKind::Refused(reason) => {
+                if let Some(told) = crate::error_msg::told(reason) {
+                    sound(Kind::Denied(told.sound), cue.gain, None);
+                }
+            }
+            kind => sound(Kind::Cue(kind), cue.gain, cue.at),
+        }
     }
     shots(core, &fog, &mut sound);
     // A ping is heard by its side wherever the camera is, as Dota's are.

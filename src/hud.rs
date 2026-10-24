@@ -1557,17 +1557,8 @@ fn notice(core: &Core) -> String {
         // that is over).
         return format!("{result}\nEscape: back to the menu");
     }
-    if let Some((reason, _)) = &core.reject {
-        return reason.clone();
-    }
     if let Some(line) = &core.console {
         return format!("> {line}_");
-    }
-    if core.attack_move_armed {
-        return "ATTACK: click a target or a point".to_string();
-    }
-    if core.aiming.is_some() {
-        return "Left-click to aim, right-click or Esc to cancel".to_string();
     }
     String::new()
 }

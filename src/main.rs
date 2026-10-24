@@ -31,6 +31,7 @@ mod demo;
 mod dota_text;
 mod drill;
 mod effects;
+mod error_msg;
 mod fog;
 mod fortified;
 mod framestats;
@@ -470,6 +471,7 @@ fn main() -> AppExit {
             death::plugin,
             replay_controls::plugin,
             demo::plugin,
+            error_msg::plugin,
         ))
         .add_plugins(main_menu::plugin);
     #[cfg(not(target_arch = "wasm32"))]

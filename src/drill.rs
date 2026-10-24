@@ -71,7 +71,7 @@ fn drill(
             hero.mana,
             hero.queue.len(),
             core.session().and_then(ClientSession::order_delay_ms),
-            core.reject.as_ref().map(|r| r.0.clone()),
+            core.reject.as_ref().map(|r| r.0.text().to_owned()),
             hero.abilities
                 .iter()
                 .map(|a| (a.id.0, a.level, a.cooldown_left))

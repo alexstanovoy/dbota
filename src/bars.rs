@@ -487,13 +487,10 @@ fn floaters(
     let shown: Vec<_> = core
         .floaters
         .iter()
-        .filter(|f| {
-            numbers
-                || matches!(
-                    f.kind,
-                    FloaterKind::Gold | FloaterKind::Deny | FloaterKind::Level
-                )
-        })
+        // A level gained floats no words: Dota marks it with its glow and
+        // sound, and the panel's level.
+        .filter(|f| f.kind != FloaterKind::Level)
+        .filter(|f| numbers || matches!(f.kind, FloaterKind::Gold | FloaterKind::Deny))
         // Nothing over what the watched side does not see.
         .filter(|f| !fog.on || fog.lit(f.world.0, f.world.1))
         .rev()

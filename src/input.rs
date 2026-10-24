@@ -181,7 +181,7 @@ fn typing(
                             cursor: cursor.0.map(|p| (p.x, -p.z)),
                         };
                         if let Err(why) = crate::cheats::run(core, &line, &names) {
-                            core.reject = Some((why, 2.5));
+                            core.reject = Some((bota_client_core::Refused::Said(why), 2.5));
                         }
                     }
                     Key::Escape => {
