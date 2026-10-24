@@ -15,11 +15,9 @@ use heatel::particle::System;
 use heatel::{DirSource, Resource, Vpk, find_game_dir};
 
 /// The classes of the manifest's effects the client leaves out, each with what it draws or does.
-const LEFT_OUT: [&str; 5] = [
+const LEFT_OUT: [&str; 4] = [
     // Noise forces on the Dire tower missile's sparks.
     "C_OP_CurlNoiseForce",
-    // Dynamic lights of the missiles, their impacts, Shadowraze and Requiem of Souls.
-    "C_OP_RenderDeferredLight",
     // The Dire tower missile's rock model.
     "C_OP_RenderModels",
     // Requiem of Souls shaking the camera.

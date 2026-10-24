@@ -7,6 +7,7 @@ mod eval;
 mod ground;
 mod init;
 mod library;
+mod lights;
 mod ops;
 mod parent;
 mod plugin;
@@ -23,5 +24,5 @@ pub use plugin::{Handle, Playing};
 use bevy::prelude::App;
 
 pub fn plugin(app: &mut App) {
-    app.add_plugins((plugin::plugin, render::plugin));
+    app.add_plugins((plugin::plugin, render::plugin, lights::plugin));
 }

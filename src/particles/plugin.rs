@@ -10,6 +10,7 @@ use bevy::transform::TransformSystems;
 use super::draw::{Eye, Quad, draw, from_world};
 use super::eval::HeightAt;
 use super::library::{Effect, Library};
+use super::lights::{Light, gather};
 use super::render::{Batch, ParticleFrame};
 use super::sim::Instance;
 use crate::camera::RtsCamera;
@@ -35,6 +36,8 @@ pub struct Playing {
     spare: Vec<Instance>,
     /// Each look's cards this frame, kept for their capacity.
     lists: Vec<Vec<Quad>>,
+    /// The lights the effects ask for this frame, kept for their capacity.
+    pub(super) lights: Vec<Light>,
 }
 
 impl Playing {
@@ -130,9 +133,9 @@ fn load(mut commands: Commands, manifest: Res<Manifest>, server: Res<AssetServer
     commands.insert_resource(library);
 }
 
-/// Steps every effect and gathers the frame's cards.
+/// Steps every effect and gathers the frame's cards and lights.
 #[allow(clippy::too_many_arguments)]
-fn tick(
+pub(super) fn tick(
     time: Res<Time>,
     session: NonSend<crate::session::Session>,
     mut playing: ResMut<Playing>,
@@ -150,6 +153,7 @@ fn tick(
         _ => 1.0,
     };
     playing.advance(time.delta_secs() * pace, height);
+    playing.lights.clear();
     let frame = &mut *frame;
     frame.quads.clear();
     frame.batches.clear();
@@ -168,6 +172,7 @@ fn tick(
     }
     for instance in playing.slots.iter().filter_map(|(_, i)| i.as_ref()) {
         draw(instance, &eye, height, &mut playing.lists);
+        gather(instance, &mut playing.lights);
     }
     for (look, list) in playing.lists.iter().enumerate() {
         if list.is_empty() {
