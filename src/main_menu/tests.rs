@@ -566,9 +566,10 @@ fn direct_connect_over_tcp_and_websocket_without_the_service() {
 }
 
 /// Each player's scoreboard tells its own row's gold, net worth (the gold
-/// and the town portal scroll at least) and ultimate (not learned at level
-/// one), and of the other side the score and the level but not its gold,
-/// net worth or ultimate, nor the items of a hero it has never seen.
+/// and the town portal scroll at least), creep score and ultimate (not
+/// learned at level one), and of the other side the score and the level but
+/// not its gold, net worth, creep score (the view's 0 is not a score) or
+/// ultimate, nor the items of a hero it has never seen.
 #[test]
 fn the_scoreboard_tells_a_player_only_what_its_side_may_know() {
     let (_server, mut cores) = direct_match();
@@ -597,6 +598,8 @@ fn the_scoreboard_tells_a_player_only_what_its_side_may_know() {
         assert!(own.net_worth.is_some_and(|worth| worth > gold), "{own:?}");
         assert_eq!(own.ult, Some(crate::scoreboard::Ult::NotLearned));
         assert_eq!((foe.gold, foe.net_worth, foe.ult), (None, None, None));
+        assert!(own.last_hits.is_some() && own.denies.is_some(), "{own:?}");
+        assert_eq!((foe.last_hits, foe.denies), (None, None));
         assert!(foe.level > 0 && foe.team != own.team);
         assert_eq!(foe.items, [None; 9], "never seen: {foe:?}");
     }

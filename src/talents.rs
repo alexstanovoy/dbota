@@ -430,7 +430,7 @@ fn show_attribute(
     let mine = seat.is_some() && seat == session.0.my_slot;
     let state = seat.and_then(|s| session.0.talents_of(s));
     let level = state.map_or(0, |t| t.attribute_bonus);
-    let learnable = mine && state.is_some_and(|t| t.attribute_bonus_learnable);
+    let learnable = mine && state.is_some_and(|t| t.may_learn_attribute_bonus == Some(true));
     let glow = 0.55 + 0.45 * (time.elapsed_secs() * 4.0).sin().abs();
     for (_, mut rim) in &mut row {
         rim.set_if_neq(BorderColor::all(if learnable {
@@ -460,7 +460,8 @@ fn light(session: NonSend<Session>, mut art: Query<(&TalentArt, &mut ImageNode)>
     let seat = crate::hud::subject(core).0.map(|p| p.slot);
     let mine = seat.is_some() && seat == core.my_slot;
     let lit = seat.and_then(|s| core.talents_of(s)).is_some_and(|t| {
-        t.attribute_bonus_learnable || (0..8).any(|k| t.learnable.has(TalentSlot(k)))
+        t.may_learn_attribute_bonus == Some(true)
+            || (0..8).any(|k| t.may_learn.is_some_and(|m| m.has(TalentSlot(k))))
     });
     for (art, mut image) in &mut art {
         let want = if lit && mine { &art.lit } else { &art.plain };
@@ -551,10 +552,12 @@ fn show(
     let tree = unit.and_then(|u| u.hero).and_then(|h| talents(h.0));
     let state = seat.and_then(|p| core.talents_of(p.slot));
     let learned = |slot: u8| state.is_some_and(|t| t.learned.has(TalentSlot(slot)));
-    let learnable = |slot: u8| state.is_some_and(|t| t.learnable.has(TalentSlot(slot)));
+    let learnable =
+        |slot: u8| state.is_some_and(|t| t.may_learn.is_some_and(|m| m.has(TalentSlot(slot))));
     // The glow of what a point could go into, breathing as Dota's does.
     let glow = 0.55 + 0.45 * (time.elapsed_secs() * 4.0).sin().abs();
-    let any = (0..8).any(learnable) || state.is_some_and(|t| t.attribute_bonus_learnable);
+    let any =
+        (0..8).any(learnable) || state.is_some_and(|t| t.may_learn_attribute_bonus == Some(true));
     for mut v in &mut body {
         v.set_if_neq(ui::visible(tree.is_some()));
     }

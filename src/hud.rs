@@ -1566,7 +1566,7 @@ fn level_ups(
     let can = |slot: u8| {
         own && abilities
             .get(usize::from(slot))
-            .is_some_and(|a| a.can_level)
+            .is_some_and(|a| a.learnable == Some(true))
     };
     for (plate, mut visibility) in &mut plates {
         visibility.set_if_neq(ui::visible(can(plate.0)));

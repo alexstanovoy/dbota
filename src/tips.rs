@@ -328,7 +328,7 @@ fn ability_tip(
             .hints
             .push(format!("Ready in {} s", a.cooldown_left.div_ceil(rate)));
     }
-    if a.can_level {
+    if a.learnable == Some(true) {
         content.hints.push("Ctrl + its key: learn".to_string());
     }
     Some(content)

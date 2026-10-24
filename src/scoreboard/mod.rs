@@ -242,8 +242,8 @@ fn text_of(l: &Line, field: Field) -> String {
         Field::Kills => l.kills.to_string(),
         Field::Deaths => l.deaths.to_string(),
         Field::Assists => l.assists.to_string(),
-        Field::LastHits => l.last_hits.to_string(),
-        Field::Denies => l.denies.to_string(),
+        Field::LastHits => number(l.last_hits.map(i32::from)),
+        Field::Denies => number(l.denies.map(i32::from)),
         Field::UltSeconds => match l.ult {
             Some(Ult::Cooldown(s)) => s.to_string(),
             _ => String::new(),

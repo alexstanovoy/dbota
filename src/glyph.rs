@@ -133,12 +133,17 @@ fn show(
 ) {
     let core = &session.0;
     let rate = u32::from(core.tick_rate()).max(1);
-    let Some(glyph) = core.my_slot.and_then(|_| core.glyph()) else {
+    // One's own side's Glyph, whose wait the view tells.
+    let Some(ready_in) = core
+        .my_slot
+        .and_then(|_| core.glyph())
+        .and_then(|glyph| glyph.ready_after)
+    else {
         frame.set_if_neq(Visibility::Hidden);
         return;
     };
     frame.set_if_neq(Visibility::Inherited);
-    let waiting = glyph.ready_in > 0;
+    let waiting = ready_in > 0;
     let (art, art_color, stand_in) = match (&icon.0.ready, &icon.0.waiting, waiting) {
         (Some(ready), _, false) => (ready.clone(), Color::WHITE, Color::NONE),
         (_, Some(dim), true) => (dim.clone(), Color::WHITE, Color::NONE),
@@ -157,14 +162,14 @@ fn show(
     }
     background.set_if_neq(BackgroundColor(stand_in));
     // Dark over what is still to wait, clear over what has passed.
-    let left = (glyph.ready_in as f32 / GLYPH_COOLDOWN_TICKS as f32).clamp(0.0, 1.0);
+    let left = (ready_in as f32 / GLYPH_COOLDOWN_TICKS as f32).clamp(0.0, 1.0);
     let dark = Color::srgba(0.0, 0.0, 0.0, if waiting { 0.68 } else { 0.0 });
     let wanted = ui::split_disc((1.0 - left) * TAU, Color::NONE, dark);
     if **sweep != wanted {
         **sweep = wanted;
     }
     let text = if waiting {
-        glyph.ready_in.div_ceil(rate).to_string()
+        ready_in.div_ceil(rate).to_string()
     } else {
         String::new()
     };

@@ -2,9 +2,9 @@
 //! from the view alone, and only what the watching side may know.
 //!
 //! A player is told of the other side what Dota's scoreboard tells: the
-//! score, the level, the last hits and denies the view gives every seat, and
-//! the items as they were when its hero was last seen (Dota's "last seen
-//! inventory state"); never its gold, its net worth (gold and items), or its
+//! score, the level as it stood when its hero was last seen, and the items
+//! as they were then (Dota's "last seen inventory state"); never its gold,
+//! its net worth (gold and items), its last hits and denies, or its
 //! ultimate. A replay and a spectator are told both sides in full, as far as
 //! the view goes.
 
@@ -47,8 +47,10 @@ pub struct Line {
     pub kills: u16,
     pub deaths: u16,
     pub assists: u16,
-    pub last_hits: u16,
-    pub denies: u16,
+    /// Last hits and denies, where the view tells them (not the other
+    /// side's, to a seat).
+    pub last_hits: Option<u16>,
+    pub denies: Option<u16>,
     /// Seconds until the hero comes back, while it is down.
     pub respawn: Option<u32>,
     /// Unspent gold, where it may be known.
@@ -67,14 +69,16 @@ pub struct Line {
     pub stale: bool,
 }
 
-/// The side whose secrets are kept from the other: the playing seat's; none
-/// for a replay (watched as a seat or not) and a spectator.
+/// The side whose view this is, whose secrets the other side's keep: the
+/// playing seat's, or the one a spectator watches through; none for a replay
+/// (the whole match, watched as a seat or not) and a spectator watching it
+/// all.
 pub fn side(core: &Core) -> Option<Team> {
-    if core.my_slot.is_some() && core.pov.is_none() {
-        core.my_team()
-    } else {
-        None
+    if core.pov.is_some() {
+        return None;
     }
+    let seat = core.my_slot.or(core.eyes)?;
+    Some(core.view()?.player(seat)?.team)
 }
 
 /// Every seat's row, in seat order.
@@ -93,7 +97,7 @@ pub fn lines(core: &Core) -> Vec<Line> {
 fn line(core: &Core, view: &WorldView, p: &PlayerView, side: Option<Team>, rate: u32) -> Line {
     let foe = side.is_some_and(|team| team != p.team);
     let (bag, stale) = bag(core, p);
-    let gold = p.gold.filter(|_| !foe);
+    let gold = p.gold;
     Line {
         slot: p.slot,
         team: p.team,
@@ -106,8 +110,8 @@ fn line(core: &Core, view: &WorldView, p: &PlayerView, side: Option<Team>, rate:
         kills: p.kills,
         deaths: p.deaths,
         assists: p.assists,
-        last_hits: p.last_hits,
-        denies: p.denies,
+        last_hits: p.creep_score.map(|s| s.last_hits),
+        denies: p.creep_score.map(|s| s.denies),
         respawn: (p.respawn_left > 0).then(|| p.respawn_left.div_ceil(rate)),
         gold,
         net_worth: gold.map(|gold| gold.saturating_add(owned_worth(view, p, bag.as_ref()))),
