@@ -133,7 +133,11 @@ fn spawn(
         .id();
     let art = (&*fonts, &*manifest, &*server);
     spawn_stash(&mut commands, art, &catalog, corner);
-    spawn_quick(&mut commands, art, corner);
+    let hint = catalog.word(
+        "dota_quick_buy_hint",
+        "Shift-click items to add to Quickbuy.",
+    );
+    spawn_quick(&mut commands, art, hint, corner);
     spawn_launcher(&mut commands, art, &docks, corner);
 }
 
@@ -244,6 +248,7 @@ fn spawn_grab_all(
 fn spawn_quick(
     commands: &mut Commands,
     (fonts, manifest, server): (&Fonts, &Manifest, &AssetServer),
+    hint: &str,
     corner: Entity,
 ) {
     let rows = commands
@@ -284,12 +289,7 @@ fn spawn_quick(
             ..default()
         },
         children![(
-            ui::text(
-                "Right-click or shift-click items to add to Quickbuy.",
-                &fonts.regular,
-                13.0 * DOTA,
-                HINT_INK,
-            ),
+            ui::text(hint, &fonts.regular, 13.0 * DOTA, HINT_INK),
             ui::shadow(),
         )],
         Pickable::IGNORE,

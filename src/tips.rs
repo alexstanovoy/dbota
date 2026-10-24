@@ -358,9 +358,6 @@ fn shop_tip(look: &Lookup, core: &bota_client_core::App, id: u16) -> Option<Cont
     if let Some(parts) = look.parts_line(id) {
         content.hints.push(parts);
     }
-    content
-        .hints
-        .push("Click: buy   Right-click: quick-buy".to_string());
     Some(content)
 }
 

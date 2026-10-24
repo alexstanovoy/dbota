@@ -20,18 +20,18 @@ const EDGE: Color = Color::srgb(0.42, 0.34, 0.16);
 const EDGE_HOVER: Color = Color::srgb(0.86, 0.72, 0.36);
 const EDGE_CHOSEN: Color = Color::srgb(0.92, 0.93, 0.95);
 
-/// An item's icon in the shop, by item id: a click on it buys it.
+/// An item's icon in the shop, by item id: a right click on it buys it.
 #[derive(Component, Clone, Copy)]
 pub struct ShopCell(pub u16);
 
-/// Where an icon sits, for what a click on it does besides buying.
+/// Where an icon sits.
 #[derive(Component, Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Place {
     /// A tab's grid or the search results.
     Grid,
-    /// The build tree: a click shows its own tree.
+    /// The build tree.
     Tree,
-    /// The quick-buy row: a right click empties it.
+    /// The quick-buy row.
     Quick,
 }
 

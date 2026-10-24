@@ -1,13 +1,14 @@
-//! What clicks in the shop do, as dbota has always had them: a left click on
-//! an item, or Enter in the search box, buys it (and shows its build tree);
-//! a right click makes it the quick-buy item, as a shift-click does in Dota;
-//! an item dropped on the panel's foot is sold. In the tactical phase a right
-//! click takes a choice off the queue.
+//! What clicks in the shop do, as Dota's: a left click on an item chooses it
+//! (its build tree shows at the panel's foot), a second one on it soon after
+//! buys it, and a right click buys it, as does Enter in the search box; a
+//! shift-click makes it the quick-buy item (again: no quick-buy item); an
+//! item dropped on the panel's foot is sold. In the tactical phase what is
+//! bought is chosen for the match's start.
 
 use bevy::prelude::*;
 use bota_client_core::{Intent, Source};
 
-use super::cell::{Chosen, Place, ShopCell};
+use super::cell::{Chosen, ShopCell};
 use super::corner::{Grab, GrabAll, ShopButton};
 use super::panel::{SearchBox, SellStrip, Shown, TabButton};
 use crate::input::{Panels, Typing};
@@ -59,46 +60,53 @@ fn buttons(
     }
 }
 
+/// Seconds within which a second left click on an item buys it (Dota's
+/// double click).
+const DOUBLE_CLICK: f32 = 0.4;
+
 /// Clicks on items, wherever the shop shows them.
 fn cells(
     mut session: NonSendMut<Session>,
     mouse: Res<ButtonInput<MouseButton>>,
     keys: Res<ButtonInput<KeyCode>>,
+    time: Res<Time<Real>>,
     panels: Res<Panels>,
     mut chosen: ResMut<Chosen>,
-    cells: Query<(&Interaction, &ShopCell, &Place, &InheritedVisibility)>,
+    mut last_left: Local<Option<(u16, f32)>>,
+    cells: Query<(&Interaction, &ShopCell, &InheritedVisibility)>,
 ) {
     let left = mouse.just_pressed(MouseButton::Left);
     let right = mouse.just_pressed(MouseButton::Right);
     if !left && !right {
         return;
     }
-    let Some((_, cell, place, _)) = cells
+    let Some((_, cell, _)) = cells
         .iter()
-        .find(|(i, _, _, seen)| **i != Interaction::None && seen.get())
+        .find(|(i, _, seen)| **i != Interaction::None && seen.get())
     else {
         return;
     };
     let core = &mut session.0;
     let id = cell.0;
     let shift = keys.any_pressed([KeyCode::ShiftLeft, KeyCode::ShiftRight]);
-    if left && shift || right && *place != Place::Quick && !core.in_tactical_phase() {
+    let now = time.elapsed_secs();
+    let again = last_left.is_some_and(|(was, at)| was == id && now - at <= DOUBLE_CLICK);
+    if left && shift {
         core.quick_buy = if core.quick_buy == Some(id) {
             None
         } else {
             Some(id)
         };
-    } else if right && *place == Place::Quick {
-        core.quick_buy = None;
-    } else if right {
-        core.act(Intent::Unqueue(id));
-    } else {
-        if matches!(core.source, Source::Live(_)) {
-            core.act(Intent::Buy(id));
-        }
+        return;
+    }
+    if left {
+        *last_left = (!again).then_some((id, now));
         if panels.shop {
             chosen.0 = Some(id);
         }
+    }
+    if (right || again) && matches!(core.source, Source::Live(_)) {
+        core.act(Intent::Buy(id));
     }
 }
 
