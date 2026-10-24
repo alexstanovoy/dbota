@@ -2532,6 +2532,7 @@ dependencies = [
  "clap",
  "dbota_assets",
  "fontique",
+ "half",
  "js-sys",
  "parley",
  "radovid",

@@ -9,7 +9,7 @@ use bevy::{
     image::{ImageSampler, ImageSamplerDescriptor},
     pbr::{ExtendedMaterial, MaterialExtension},
     prelude::*,
-    render::render_resource::{AsBindGroup, Extent3d, TextureDimension, TextureFormat},
+    render::render_resource::{AsBindGroup, Extent3d, ShaderType, TextureDimension, TextureFormat},
     shader::ShaderRef,
 };
 use std::sync::Arc;
@@ -116,17 +116,22 @@ pub struct Figure;
 /// The standard material with the fog laid over its lit colour.
 pub type FoggedMaterial = ExtendedMaterial<StandardMaterial, FogExt>;
 
+/// Bindless where the GPU can (the base material is too): every fogged
+/// material then shares one bind group, and the map's thousands of meshes of
+/// hundreds of materials are drawn in a few multi-draws instead of a batch,
+/// with its own buffers and bind groups, per material and view.
 #[derive(Asset, AsBindGroup, Reflect, Clone)]
+#[data(100, FogUniform, binding_array(110))]
+#[bindless(index_table(range(100..107), binding(111)))]
 pub struct FogExt {
-    #[texture(100)]
-    #[sampler(101)]
-    veil: Handle<Image>,
     /// x: world units the veil spans; y: its alpha of a fully fogged cell;
     /// z: what the surface is ([`SURFACE_PROP`] and on); w: how strongly the
     /// visual clarity aid is drawn, 0 to 1.
-    #[uniform(102)]
     params: Vec4,
-    #[texture(103, sample_type = "float", filterable = false)]
+    #[texture(101)]
+    #[sampler(102)]
+    veil: Handle<Image>,
+    #[texture(103)]
     cast: Handle<Image>,
     /// The terrain's path textures and path field (`layers.rs`); white
     /// stand-ins on every other surface.
@@ -135,6 +140,18 @@ pub struct FogExt {
     paths: Handle<Image>,
     #[texture(106)]
     field: Handle<Image>,
+}
+
+/// [`FogExt::params`] as the shader reads it.
+#[derive(Clone, Default, ShaderType)]
+pub struct FogUniform {
+    params: Vec4,
+}
+
+impl From<&FogExt> for FogUniform {
+    fn from(fog: &FogExt) -> FogUniform {
+        FogUniform { params: fog.params }
+    }
 }
 
 /// What a surface is, as the shader reads it: a tree, a building or a
@@ -320,7 +337,8 @@ fn spawn_veil(
         Extent3d::default(),
         TextureDimension::D2,
         &cast_texel(0.0),
-        TextureFormat::Rgba32Float,
+        // Half floats: a bindless material's textures must filter.
+        TextureFormat::Rgba16Float,
         RenderAssetUsages::default(),
     ));
     commands.insert_resource(Veil {
@@ -489,7 +507,7 @@ fn cast_texel(night: f32) -> Vec<u8> {
     let [r, g, b] = cast(night);
     [r, g, b, 1.0]
         .iter()
-        .flat_map(|c| c.to_le_bytes())
+        .flat_map(|&c| half::f16::from_f32(c).to_le_bytes())
         .collect()
 }
 
