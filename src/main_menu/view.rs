@@ -76,6 +76,21 @@ pub struct GameRow {
     pub ready: bool,
 }
 
+/// A finished match of the account in MY GAMES.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FinishedRow {
+    pub match_id: MatchId,
+    /// VICTORY, DEFEAT, DRAW or NO RESULT.
+    pub headline: String,
+    pub won: Option<bool>,
+    /// `Match 7 · 4:36 · rated`.
+    pub detail: String,
+    /// `1662 (+162)` for a rated match with a result.
+    pub rating: String,
+    /// The game ran, so a replay may be kept.
+    pub replay: bool,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LobbyRow {
     pub id: LobbyId,
@@ -155,7 +170,15 @@ pub enum PageView {
     },
     MyGames {
         games: Vec<GameRow>,
+        /// The account's latest finished matches, newest first.
+        finished: Vec<FinishedRow>,
         cooldown: Option<String>,
+    },
+    /// Ratings per ruleset and the ladder's head.
+    Profile {
+        name: String,
+        ratings: Vec<String>,
+        ladder: Vec<String>,
     },
     Lobbies {
         list: Vec<LobbyRow>,
@@ -297,8 +320,10 @@ impl MenuCore {
                     .iter()
                     .map(|g| game_row(g.match_id, g.handoff.is_some()))
                     .collect(),
+                finished: self.history.iter().map(|r| self.finished_row(r)).collect(),
                 cooldown: self.cooldown(),
             },
+            Page::Profile => self.profile_view(),
             Page::Lobbies => PageView::Lobbies {
                 list: self
                     .lobbies
@@ -366,6 +391,69 @@ impl MenuCore {
         }
     }
 
+    fn finished_row(&self, result: &MatchResult) -> FinishedRow {
+        let view = self.result_view(result);
+        FinishedRow {
+            match_id: result.match_id,
+            rating: view
+                .seats
+                .iter()
+                .find(|s| s.mine)
+                .map(|s| s.rating.clone())
+                .unwrap_or_default(),
+            headline: view.headline,
+            won: view.won,
+            detail: view.detail,
+            replay: matches!(
+                result.reason,
+                EndReason::Decided | EndReason::Draw | EndReason::Abandon
+            ),
+        }
+    }
+
+    fn profile_view(&self) -> PageView {
+        let name = self
+            .account_profile
+            .as_ref()
+            .map_or_else(String::new, |p| text::who(&p.nickname, p.id.0));
+        let ratings = self.client.as_ref().map_or_else(Vec::new, |client| {
+            self.account_profile
+                .iter()
+                .flat_map(|p| &p.ratings)
+                .map(|(id, r)| {
+                    format!(
+                        "{}: {} ± {} · {} games, {} won, {} drawn, {} lost",
+                        ruleset_name(client, id),
+                        r.rating.rating.round() as i64,
+                        r.rating.deviation.round() as i64,
+                        r.games,
+                        r.wins,
+                        r.draws,
+                        r.losses
+                    )
+                })
+                .collect()
+        });
+        let ladder = self
+            .ladder
+            .iter()
+            .map(|row| {
+                format!(
+                    "{:>3}  {}  {}  ({} games)",
+                    row.rank,
+                    text::who(&row.nickname, row.account.0),
+                    row.rating.rating.round() as i64,
+                    row.games
+                )
+            })
+            .collect();
+        PageView::Profile {
+            name,
+            ratings,
+            ladder,
+        }
+    }
+
     fn result_view(&self, result: &MatchResult) -> ResultView {
         let me = self.client.as_ref().and_then(|c| c.me()).map(|me| me.id);
         let mine = result.seats.iter().find(|s| Some(s.account) == me);
@@ -385,6 +473,7 @@ impl MenuCore {
             EndReason::Abandoned => " · abandoned: nobody stayed",
             EndReason::Crashed => " · the game server failed",
             EndReason::Stopped => " · stopped by the service",
+            EndReason::Abandon => " · a player left",
         };
         let report = bota_radovid::decode_report(result);
         let hero = |slot: u8| {

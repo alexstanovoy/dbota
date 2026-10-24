@@ -6,7 +6,7 @@ use bevy::prelude::*;
 
 use super::core::Act;
 use super::screens::{ERROR, GREEN, Kit, PLAIN, RED};
-use super::view::{ConfirmView, GameRow, MenuView, OfferBox, SearchRow, WaitRow};
+use super::view::{ConfirmView, FinishedRow, GameRow, MenuView, OfferBox, SearchRow, WaitRow};
 use crate::ui;
 
 /// The overlay layer.
@@ -311,6 +311,7 @@ pub fn my_games(
     body: Entity,
     view: &MenuView,
     games: &[GameRow],
+    finished: &[FinishedRow],
     cooldown: Option<&str>,
 ) {
     let column = kit.node(
@@ -395,6 +396,49 @@ pub fn my_games(
             ui::INK_DIM,
         );
         kit.button(row, "CANCEL", Act::Cancel(search.entry), RED, 38.0);
+    }
+    if !finished.is_empty() {
+        kit.bold(column, "FINISHED", 20.0, ui::INK);
+    }
+    for game in finished {
+        let row = kit.panel(
+            column,
+            Node {
+                padding: UiRect::all(px(12)),
+                column_gap: px(12),
+                align_items: AlignItems::Center,
+                ..default()
+            },
+        );
+        let label = kit.node(
+            row,
+            Node {
+                flex_grow: 1.0,
+                flex_direction: FlexDirection::Column,
+                ..default()
+            },
+        );
+        let color = match game.won {
+            Some(true) => ui::HP_MINE,
+            Some(false) => ERROR,
+            None => ui::INK,
+        };
+        let title = if game.rating.is_empty() {
+            game.headline.clone()
+        } else {
+            format!("{}  {}", game.headline, game.rating)
+        };
+        kit.bold(label, title, 18.0, color);
+        kit.text(label, game.detail.clone(), 14.0, ui::INK_DIM);
+        if game.replay {
+            kit.button(
+                row,
+                "WATCH REPLAY",
+                Act::WatchReplay(game.match_id),
+                PLAIN,
+                38.0,
+            );
+        }
     }
     if let Some(cooldown) = cooldown {
         kit.text(column, cooldown, 15.0, ERROR);

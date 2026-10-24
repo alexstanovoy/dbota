@@ -6,8 +6,8 @@ use bota_radovid::proto::{LobbyId, MatchId, ProposalId, QueueEntryId, RulesetId}
 use super::core::{GameKind, Page, SeatFill, Status};
 use super::form::FormKind;
 use super::view::{
-    ConfirmView, FieldView, GameRow, LobbyRow, LobbyView, MenuView, OfferBox, PageView, ResultView,
-    RulesetRow, SearchRow, SeatRow, WaitRow,
+    ConfirmView, FieldView, FinishedRow, GameRow, LobbyRow, LobbyView, MenuView, OfferBox,
+    PageView, ResultView, RulesetRow, SearchRow, SeatRow, WaitRow,
 };
 
 /// The names `--menu-preview` takes.
@@ -185,6 +185,14 @@ pub fn view(name: &str) -> Option<MenuView> {
                         match_id: MatchId(40),
                         label: "Match 40".to_owned(),
                         ready: true,
+                    }],
+                    finished: vec![FinishedRow {
+                        match_id: MatchId(39),
+                        headline: "VICTORY".to_owned(),
+                        won: Some(true),
+                        detail: "Match 39 · 14:21 · rated".to_owned(),
+                        rating: "1662 (+162)".to_owned(),
+                        replay: true,
                     }],
                     cooldown: Some("You can search again in 1:42".to_owned()),
                 },

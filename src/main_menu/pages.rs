@@ -11,10 +11,11 @@ use crate::ui;
 
 /// The tabs of the top bar: the service's once logged in, and what is played
 /// without it always.
-const TABS: [(Page, &str); 6] = [
+const TABS: [(Page, &str); 7] = [
     (Page::Home, "PLAY"),
     (Page::MyGames, "MY GAMES"),
     (Page::Lobbies, "LOBBIES"),
+    (Page::Profile, "PROFILE"),
     (Page::LocalLobby, "LOCAL LOBBY"),
     (Page::Direct, "DIRECT CONNECT"),
     (Page::Replays, "REPLAYS"),
@@ -22,7 +23,10 @@ const TABS: [(Page, &str); 6] = [
 
 /// Whether a tab's page is the service's, shown only with an account.
 fn online(page: Page) -> bool {
-    matches!(page, Page::Home | Page::MyGames | Page::Lobbies)
+    matches!(
+        page,
+        Page::Home | Page::MyGames | Page::Lobbies | Page::Profile
+    )
 }
 
 /// Dota's quit button (`#DOTAQuitButton`, a `TopBarSmallButton`): 62 by 61
@@ -126,9 +130,16 @@ pub fn draw(kit: &mut Kit, root: Entity, view: &MenuView) {
         } => {
             home(kit, body, rulesets, *in_flight, cooldown.as_deref());
         }
-        PageView::MyGames { games, cooldown } => {
-            super::overlay::my_games(kit, body, view, games, cooldown.as_deref())
-        }
+        PageView::MyGames {
+            games,
+            finished,
+            cooldown,
+        } => super::overlay::my_games(kit, body, view, games, finished, cooldown.as_deref()),
+        PageView::Profile {
+            name,
+            ratings,
+            ladder,
+        } => profile_page(kit, body, name, ratings, ladder),
         PageView::Lobbies { list, fields } => super::lobbies::list(kit, body, list, fields),
         PageView::Lobby(lobby) => lobby_page(kit, body, lobby),
         PageView::Result(result) => result_page(kit, body, result),
@@ -514,6 +525,32 @@ fn home(
     }
     if let Some(cooldown) = cooldown {
         kit.text(column, cooldown, 15.0, ERROR);
+    }
+}
+
+fn profile_page(kit: &mut Kit, body: Entity, name: &str, ratings: &[String], ladder: &[String]) {
+    let column = kit.node(
+        body,
+        Node {
+            flex_direction: FlexDirection::Column,
+            row_gap: px(10),
+            width: px(700),
+            ..default()
+        },
+    );
+    kit.bold(column, "PROFILE", 30.0, ui::INK);
+    kit.bold(column, name.to_owned(), 22.0, ui::INK);
+    if ratings.is_empty() {
+        kit.text(column, "No rated games yet.", 16.0, ui::INK_DIM);
+    }
+    for line in ratings {
+        kit.text(column, line.clone(), 16.0, ui::INK);
+    }
+    if !ladder.is_empty() {
+        kit.bold(column, "LADDER", 20.0, ui::INK);
+    }
+    for line in ladder {
+        kit.text(column, line.clone(), 15.0, ui::INK_DIM);
     }
 }
 

@@ -7,9 +7,9 @@ use std::collections::VecDeque;
 
 use bevy::platform::time::Instant;
 use bota_radovid::proto::{
-    AccountKind, Audience, ClientMsg, Error, Event, Handoff, LobbyId, LobbyState, LobbySummary,
-    MatchId, MatchResult, ProposalId, QueueEntryId, QueueLeftReason, Reply, RulesetId, Secret,
-    valid_login, valid_password,
+    AccountId, AccountKind, Audience, ClientMsg, Error, Event, Handoff, LadderRow, LobbyId,
+    LobbyState, LobbySummary, MatchId, MatchResult, ProposalId, PublicAccount, QueueEntryId,
+    QueueLeftReason, Reply, RulesetId, Secret, valid_login, valid_password,
 };
 use bota_radovid::{Client, ClientError, Incoming, Tls};
 
@@ -49,6 +49,8 @@ pub enum Page {
     LocalLobby,
     /// The replays on this machine.
     Replays,
+    /// The account's rating per ruleset and the ladder.
+    Profile,
     /// How a finished match went.
     Result,
     /// A game is on screen, or being opened.
@@ -92,6 +94,8 @@ pub enum Act {
     Host(bool),
     /// Watches a listed replay.
     OpenReplay(usize),
+    /// Watches the replay of a finished match of the account's: fetched from the service once.
+    WatchReplay(MatchId),
     /// Goes on with plain TCP to a host after the notice.
     PlainAnyway,
     /// Closes the notice line.
@@ -291,8 +295,26 @@ enum Asked {
     Rejoin(MatchId),
     Watch(MatchId),
     Lobby,
+    History,
+    Profile,
+    Ladder,
+    Artifact(MatchId),
     Other,
 }
+
+/// A replay on its way from the service: appended to `part` chunk by chunk.
+struct Download {
+    match_id: MatchId,
+    part: std::path::PathBuf,
+    done: std::path::PathBuf,
+}
+
+/// The longest replay taken from the service, bytes.
+const MAX_REPLAY_BYTES: u64 = 64 << 20;
+/// Finished matches listed under MY GAMES.
+const HISTORY_LEN: u8 = 20;
+/// Ladder rows shown on the profile.
+const LADDER_LEN: u8 = 10;
 
 /// An unfinished match of the account.
 #[derive(Clone, Debug, PartialEq)]
@@ -380,6 +402,12 @@ pub struct MenuCore {
     pub(super) shelf: super::replay_info::Shelf,
     /// Where they are kept ([`replays_dir`]).
     pub(super) replays_dir: Option<std::path::PathBuf>,
+    /// The account's latest finished matches, from the service.
+    pub(super) history: Vec<MatchResult>,
+    pub(super) account_profile: Option<PublicAccount>,
+    pub(super) ladder: Vec<LadderRow>,
+    /// A replay being fetched.
+    download: Option<Download>,
     /// The game server a local lobby starts, when not looked for.
     pub(super) server_binary: Option<std::path::PathBuf>,
     /// The settings' bot command, which a local lobby's bot seats run.
@@ -442,6 +470,10 @@ impl MenuCore {
             replays: Vec::new(),
             shelf: Default::default(),
             replays_dir: replays_dir(),
+            history: Vec::new(),
+            account_profile: None,
+            ladder: Vec::new(),
+            download: None,
             server_binary: None,
             bot_command: String::new(),
             hosted_at: None,
@@ -799,6 +831,19 @@ impl MenuCore {
                     _ => {}
                 }
             }
+            Reply::Matches { list } => {
+                self.history = list.into_iter().take(usize::from(HISTORY_LEN)).collect();
+            }
+            Reply::Account { account } => self.account_profile = Some(account),
+            Reply::LadderPage { rows, .. } => {
+                self.ladder = rows.into_iter().take(usize::from(LADDER_LEN)).collect();
+            }
+            Reply::Artifact {
+                match_id,
+                offset,
+                total,
+                data,
+            } => self.replay_chunk(match_id, offset, total, &data),
             Reply::Lobbies { list } => self.lobbies = list,
             Reply::Lobby { state } => self.sit(state),
             Reply::Queued { .. } => self.status = None,
@@ -818,6 +863,10 @@ impl MenuCore {
             (Asked::Rejoin(id) | Asked::Watch(id), Error::UnknownMatch) => {
                 self.games.retain(|g| g.match_id != id);
                 self.tell("That match is over".to_owned(), true);
+            }
+            (Asked::Artifact(_), Error::NoArtifact) => {
+                self.download = None;
+                self.tell("The service keeps no replay of that match".to_owned(), true);
             }
             (Asked::Lobby, Error::NotInLobby { .. }) => {
                 self.lobby = None;
@@ -874,6 +923,9 @@ impl MenuCore {
 
     fn finished(&mut self, result: MatchResult) {
         let id = result.match_id;
+        if self.page == Page::MyGames {
+            self.ask_history();
+        }
         if matches!(&self.reconnect, Some(Launch::Seat(h)) if h.match_id == id) {
             self.reconnect = None;
         }
@@ -885,6 +937,119 @@ impl MenuCore {
         if self.on_screen.is_none() && !self.launching {
             self.shown = Some(id);
             self.page = Page::Result;
+        }
+    }
+
+    fn my_id(&self) -> Option<AccountId> {
+        self.client.as_ref().and_then(|c| c.me()).map(|me| me.id)
+    }
+
+    fn ask_history(&mut self) {
+        if let Some(account) = self.my_id() {
+            let msg = ClientMsg::RecentMatches {
+                account,
+                limit: HISTORY_LEN,
+            };
+            self.ask(msg, Asked::History);
+        }
+    }
+
+    /// The account's ratings, and the ladder of the first ruleset.
+    fn ask_profile(&mut self) {
+        let Some(account) = self.my_id() else {
+            return;
+        };
+        self.ask(ClientMsg::Account { account }, Asked::Profile);
+        let ruleset = self
+            .client
+            .as_ref()
+            .and_then(|c| c.rulesets().find(|r| r.rated).map(|r| r.id.clone()));
+        if let Some(ruleset) = ruleset {
+            let msg = ClientMsg::Ladder {
+                ruleset,
+                offset: 0,
+                limit: LADDER_LEN,
+            };
+            self.ask(msg, Asked::Ladder);
+        }
+    }
+
+    /// Opens the replay of a finished match, fetching it first unless it is kept.
+    fn watch_replay(&mut self, match_id: MatchId) {
+        let Some(dir) = self.replays_dir.clone() else {
+            self.tell("This client keeps no replays".to_owned(), true);
+            return;
+        };
+        let done = dir.join(format!("match-{}.brp", match_id.0));
+        if done.is_file() {
+            self.start(Launch::Replay(done));
+            return;
+        }
+        if self.download.is_some() {
+            self.tell("A replay is being fetched already".to_owned(), false);
+            return;
+        }
+        if let Err(err) = std::fs::create_dir_all(&dir) {
+            self.tell(format!("Cannot keep replays: {err}"), true);
+            return;
+        }
+        let part = done.with_extension("brp.part");
+        if let Err(err) = std::fs::File::create(&part) {
+            self.tell(format!("Cannot keep replays: {err}"), true);
+            return;
+        }
+        self.download = Some(Download {
+            match_id,
+            part,
+            done,
+        });
+        self.ask(
+            ClientMsg::MatchArtifact {
+                match_id,
+                offset: 0,
+            },
+            Asked::Artifact(match_id),
+        );
+    }
+
+    /// One piece of the replay arrived: keep it and ask for the next, or open the whole.
+    fn replay_chunk(&mut self, match_id: MatchId, offset: u64, total: u64, data: &[u8]) {
+        let Some(download) = self.download.take_if(|d| d.match_id == match_id) else {
+            return;
+        };
+        let end = offset + data.len() as u64;
+        let appended = total <= MAX_REPLAY_BYTES
+            && !data.is_empty()
+            && end <= total
+            && std::fs::OpenOptions::new()
+                .append(true)
+                .open(&download.part)
+                .and_then(|mut file| std::io::Write::write_all(&mut file, data))
+                .is_ok();
+        if !appended {
+            let _ = std::fs::remove_file(&download.part);
+            self.tell("The replay could not be fetched".to_owned(), true);
+            return;
+        }
+        if end < total {
+            self.tell(
+                format!("Fetching the replay: {}%", end * 100 / total),
+                false,
+            );
+            self.download = Some(download);
+            self.ask(
+                ClientMsg::MatchArtifact {
+                    match_id,
+                    offset: end,
+                },
+                Asked::Artifact(match_id),
+            );
+        } else if std::fs::rename(&download.part, &download.done).is_ok() {
+            self.status = None;
+            self.start(Launch::Replay(download.done));
+        } else {
+            let _ = std::fs::remove_file(&download.part);
+            self.tell("The replay could not be kept".to_owned(), true);
         }
     }
 
@@ -986,7 +1151,7 @@ impl MenuCore {
         };
         let needs_login = matches!(
             page,
-            Page::Home | Page::MyGames | Page::Lobbies | Page::Lobby
+            Page::Home | Page::MyGames | Page::Lobbies | Page::Lobby | Page::Profile
         );
         if needs_login && !self.logged_in() {
             let rest = self.rest_page(None);
@@ -999,7 +1164,11 @@ impl MenuCore {
         self.go_form(page);
         self.plain_host = None;
         match page {
-            Page::MyGames => self.ask(ClientMsg::MyMatches, Asked::Other),
+            Page::MyGames => {
+                self.ask(ClientMsg::MyMatches, Asked::Other);
+                self.ask_history();
+            }
+            Page::Profile => self.ask_profile(),
             Page::Lobbies => self.ask(ClientMsg::LobbyList, Asked::Other),
             Page::Replays => {
                 self.replays = list_replays(self.replays_dir.as_deref());
@@ -1054,6 +1223,7 @@ impl MenuCore {
                     }
                 }
             }
+            Act::WatchReplay(match_id) => self.watch_replay(match_id),
             Act::PlainAnyway => self.direct(false, true),
             Act::Dismiss => self.status = None,
             Act::Quit if !cfg!(target_arch = "wasm32") => self.confirm = Some(Confirm::Quit),
