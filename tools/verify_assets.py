@@ -1,8 +1,11 @@
 #!/usr/bin/env python3
 """Check every manifest output in the cache: glTF structure and clips, PNG size, WAV/MP3 format.
 
+Labels are checked in text/labels.json.
+
 Usage: verify_assets.py <manifest.txt> <cache dir>. Exits non-zero when anything is missing or wrong.
 """
+import json
 import struct
 import sys
 from pathlib import Path
@@ -106,6 +109,8 @@ def check(kind: str, fields: list[str], keys: dict[str, str], clips, outputs: di
         return check_model(path, keys, [c for c in clips if c[0] == fields[0]], parent)
     if kind == "texture":
         return "%dx%d" % png_size(path)
+    if kind in ("portraits", "shop"):  # text the client parses itself
+        return f"{path.stat().st_size} bytes"
     return mp3_info(path) if path.suffix == ".mp3" else wav_info(path)
 
 
@@ -113,10 +118,17 @@ def main() -> None:
     manifest, cache = Path(sys.argv[1]), Path(sys.argv[2])
     entries = parse_manifest(manifest)
     clips = [fields for kind, fields, _ in entries if kind == "clip"]
-    outputs = {fields[0]: cache / fields[2] for kind, fields, _ in entries if kind not in ("clip", "unit")}
+    outputs = {fields[0]: cache / fields[2] for kind, fields, _ in entries if kind not in ("clip", "unit", "label")}
+    labels_path = cache / "text/labels.json"
+    labels = json.loads(labels_path.read_text()) if labels_path.is_file() else {}
     failures = 0
     for kind, fields, keys in entries:
         if kind == "clip":
+            continue
+        if kind == "label":  # all labels go to one file, under their key lower-cased
+            if fields[1].lower() not in labels:
+                failures += 1
+                print(f"FAIL {fields[1]:44} not in text/labels.json")
             continue
         if kind == "unit":
             if fields[1] != "none" and fields[1] not in outputs:
