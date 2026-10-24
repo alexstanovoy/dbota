@@ -60,9 +60,44 @@ pub fn plugin(app: &mut App) {
                 drive,
                 super::screens::draw,
                 super::screens::hover,
+                scroll,
             )
                 .chain(),
         );
+}
+
+/// The wheel scrolls a long page; the place is kept while the page is
+/// drawn anew (a page is respawned whenever what it shows changes), and
+/// another page starts at its top.
+fn scroll(
+    core: Option<NonSend<MenuCore>>,
+    wheel: Res<bevy::input::mouse::AccumulatedMouseScroll>,
+    mut bodies: Query<(&mut ScrollPosition, &ComputedNode), With<super::pages::MenuBody>>,
+    mut at: Local<(f32, Option<Page>)>,
+) {
+    use bevy::input::mouse::MouseScrollUnit;
+    let Some(core) = core else {
+        return;
+    };
+    let page = core.page();
+    if at.1 != Some(page) {
+        *at = (0.0, Some(page));
+    }
+    let step = match wheel.unit {
+        MouseScrollUnit::Line => wheel.delta.y * 40.0,
+        MouseScrollUnit::Pixel => wheel.delta.y,
+    };
+    at.0 = (at.0 - step).max(0.0);
+    for (mut scrolled, node) in &mut bodies {
+        // As far as the page reaches past the screen, once laid out.
+        let reach = (node.content_size().y - node.size().y) * node.inverse_scale_factor();
+        if node.size().y > 0.0 {
+            at.0 = at.0.min(reach.max(0.0));
+        }
+        if scrolled.y != at.0 {
+            scrolled.y = at.0;
+        }
+    }
 }
 
 /// Lets go of every unit drawn of the last game: the next numbers its units
@@ -119,6 +154,7 @@ fn drive(
         return;
     }
     core.set_profile_name(&settings.name);
+    core.set_bot_command(&settings.bot_command);
     core.update();
     let mut opened_here = |core: &mut MenuCore, opened: std::io::Result<Session>| match opened {
         Ok(opened) => {

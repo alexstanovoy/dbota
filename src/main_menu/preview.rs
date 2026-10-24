@@ -3,7 +3,7 @@
 
 use bota_radovid::proto::{LobbyId, MatchId, ProposalId, QueueEntryId, RulesetId};
 
-use super::core::{GameKind, Page, Status};
+use super::core::{GameKind, Page, SeatFill, Status};
 use super::form::FormKind;
 use super::view::{
     ConfirmView, FieldView, GameRow, LobbyRow, LobbyView, MenuView, OfferBox, PageView, ResultView,
@@ -48,6 +48,8 @@ fn form(page: Page, kind: FormKind, fields: Vec<FieldView>) -> MenuView {
             fields,
             busy: false,
             plain_host: None,
+            fill: (page == Page::LocalLobby).then_some((SeatFill::Open, false)),
+            hosted_at: None,
         },
         account: None,
         status: None,

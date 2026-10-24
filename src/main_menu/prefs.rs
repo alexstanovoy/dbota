@@ -20,6 +20,8 @@ pub struct Prefs {
     /// The port and the seats of the last local lobby.
     pub host_port: String,
     pub host_players: String,
+    /// What the last local lobby's empty seats took.
+    pub host_fill: super::core::SeatFill,
     /// Hosts the player was told plain TCP is unprotected for, and went on.
     pub plain_ok: Vec<String>,
 }
@@ -43,6 +45,9 @@ impl Prefs {
                 "direct" => prefs.direct = value,
                 "host_port" => prefs.host_port = value,
                 "host_players" => prefs.host_players = value,
+                "host_fill" => {
+                    prefs.host_fill = super::core::SeatFill::named(&value).unwrap_or_default()
+                }
                 "plain_ok" if prefs.plain_ok.len() < MAX_PLAIN_HOSTS => prefs.plain_ok.push(value),
                 _ => {}
             }
@@ -62,6 +67,9 @@ impl Prefs {
             if !value.is_empty() {
                 out.push_str(&format!("{name} = {value}\n"));
             }
+        }
+        if self.host_fill != super::core::SeatFill::Open {
+            out.push_str(&format!("host_fill = {}\n", self.host_fill.name()));
         }
         for host in &self.plain_ok {
             out.push_str(&format!("plain_ok = {host}\n"));

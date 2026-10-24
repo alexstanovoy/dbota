@@ -15,7 +15,7 @@ use bota_core::fountain_pos;
 use bota_proto::{HeroId, Order, Target};
 use bota_radovid::proto::RulesetId;
 
-use super::core::{Act, Confirm, GameKind, Launch, MenuCore, Page};
+use super::core::{Act, Confirm, GameKind, Launch, MenuCore, Page, SeatFill};
 use super::launch::{Hosted, Opening, Trust};
 use super::store::{Entry, SettingsStore};
 use super::view::PageView;
@@ -810,19 +810,27 @@ fn every_local_path_works_with_no_account_and_no_service() {
     carol.act(Act::Answer(true));
     assert!(carol.take_leave());
 
-    // The local lobby's replay is listed and opens.
+    // The local lobby's replay is listed; its match never started, so the
+    // list says so and does not open it.
     drop(server);
     alice.left_game(None, false);
     alice.act(Act::Go(Page::Replays));
     assert_eq!(alice.replays.len(), 1, "the lobby's replay");
-    alice.act(Act::OpenReplay(0));
-    let Some(Launch::Replay(path)) = alice.take_launch() else {
-        panic!("a replay to open");
+    let PageView::Replays { list, .. } = alice.view().body else {
+        panic!("the replays page");
     };
-    bota_client_core::ReplayPlayer::load(&path).expect("the replay reads");
-    alice.game_started();
-    assert_eq!(alice.view().game, Some(GameKind::Replay));
-    alice.left_game(None, false);
+    assert_eq!(
+        list[0].summary,
+        super::replay_info::Summary::Broken("its match never started".to_owned())
+    );
+    alice.act(Act::OpenReplay(0));
+    assert!(alice.take_launch().is_none(), "nothing to watch");
+    assert!(
+        alice
+            .view()
+            .status
+            .is_some_and(|s| s.error && s.text.contains("never started"))
+    );
     assert_eq!(alice.page(), Page::Replays);
 
     // Escape backs out to the top page, then asks to quit; Escape again or
@@ -840,4 +848,108 @@ fn every_local_path_works_with_no_account_and_no_service() {
     alice.act(Act::Quit);
     alice.act(Act::Answer(true));
     assert!(alice.take_quit());
+}
+
+/// Hosts a local lobby on a free port with `fill` chosen for its empty
+/// seats, and opens it.
+fn host_with(menu: &mut MenuCore, trust: &Trust, fill: SeatFill) -> (Core, Option<Hosted>, u16) {
+    menu.act(Act::Go(Page::LocalLobby));
+    menu.act(Act::Fill(fill));
+    let port = free_port();
+    menu.act(Act::Focus(0));
+    while !menu.form.value(0).is_empty() {
+        menu.act(Act::Erase);
+    }
+    menu.act(Act::Type(port.to_string()));
+    menu.act(Act::Host(false));
+    let launch = menu.take_launch().expect("the lobby to open");
+    let (core, server) = open_hosted(launch, trust);
+    menu.game_started();
+    (core, server, port)
+}
+
+/// A local lobby's empty seat takes what the lobby page chose, as Dota's
+/// lobby fills a slot with a bot: the server's idle dummy; or the bot
+/// command of the settings, run without a shell, given the game's address
+/// in its words and a seat key of its own in `BOTA_SEAT_KEY`, and ended with
+/// the lobby. Without a bot command the lobby is not opened and the page
+/// says why. The host keeps the first seat, and the lobby page and the hero
+/// screen tell the address others join at while a seat is open.
+#[cfg(unix)]
+#[test]
+fn a_local_lobby_fills_its_empty_seats() {
+    let dir = Scratch::new("fill");
+    let (mut alice, trust) = offline("alice", &dir);
+
+    // The idle dummy: the other seat is the server's, before anyone joins.
+    let (mut hosted, server, _) = host_with(&mut alice, &trust, SeatFill::Dummy);
+    pump_until("the dummy seated", &mut [&mut hosted], |c| {
+        c.my_slot.is_some() && c.lobby.slots.iter().all(|s| s.role.is_some())
+    });
+    alice.act(Act::Dashboard);
+    alice.act(Act::Disconnect);
+    assert!(alice.take_leave());
+    drop((hosted, server));
+    alice.left_game(None, false);
+
+    // A bot asked for with no bot command set: nothing opens, and the page
+    // says where to set it.
+    alice.act(Act::Fill(SeatFill::Bot));
+    alice.act(Act::Host(false));
+    assert!(
+        alice.take_launch().is_none(),
+        "no lobby without a bot to fill it"
+    );
+    assert!(
+        alice
+            .view()
+            .status
+            .is_some_and(|s| s.error && s.text.contains("bot command")),
+        "{:?}",
+        alice.view().status
+    );
+
+    // The bot command: a program that writes what it was given and waits.
+    let said = dir.0.join("bot-said");
+    alice.set_bot_command(&format!(
+        "/bin/sh -c 'echo \"$$ $BOTA_SEAT_KEY {{address}}\" > \"$0\"; exec sleep 60' '{}'",
+        said.display()
+    ));
+    let (mut hosted, server, port) = host_with(&mut alice, &trust, SeatFill::Bot);
+    pump_until("the host seated", &mut [&mut hosted], |c| {
+        c.my_slot.is_some()
+    });
+    let first = hosted.lobby.slots.first().map(|s| s.slot);
+    assert_eq!(hosted.my_slot, first, "the host keeps the first seat");
+    assert_eq!(
+        alice.hosted_at(),
+        Some(format!("127.0.0.1:{port} (this machine only)").as_str()),
+        "the address others type"
+    );
+    let deadline = Instant::now() + Duration::from_secs(PATIENCE);
+    let told = loop {
+        if let Ok(text) = std::fs::read_to_string(&said)
+            && text.ends_with('\n')
+        {
+            break text;
+        }
+        assert!(Instant::now() < deadline, "the bot command never ran");
+        std::thread::sleep(Duration::from_millis(20));
+    };
+    let mut words = told.split_whitespace();
+    let (Some(pid), Some(key), Some(address)) = (words.next(), words.next(), words.next()) else {
+        panic!("a pid, a key and an address: {told:?}");
+    };
+    assert_eq!(address, format!("127.0.0.1:{port}"));
+    assert!(
+        key.len() == 64 && key.chars().all(|c| c.is_ascii_hexdigit()),
+        "a seat key in BOTA_SEAT_KEY: {key:?}"
+    );
+    // The lobby's end ends its bot (and waits for it).
+    assert!(Path::new(&format!("/proc/{pid}")).exists(), "the bot runs");
+    drop((hosted, server));
+    assert!(
+        !Path::new(&format!("/proc/{pid}")).exists(),
+        "the bot outlived its lobby"
+    );
 }

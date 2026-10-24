@@ -7,7 +7,7 @@ use bota_radovid::proto::{
     EndReason, LobbyId, MatchId, MatchResult, Outcome, ProposalId, QueueEntryId, RulesetId,
 };
 
-use super::core::{Confirm, GameKind, MenuCore, Page, Status, clock};
+use super::core::{Confirm, GameKind, MenuCore, Page, SeatFill, Status, clock};
 use super::form::FormKind;
 use super::text;
 
@@ -122,6 +122,10 @@ pub struct ResultView {
 pub struct ReplayRow {
     pub name: String,
     pub size: String,
+    /// When it was played.
+    pub when: String,
+    /// Who played what and how it ended, as far as read.
+    pub summary: super::replay_info::Summary,
 }
 
 /// The page under the top bar.
@@ -135,6 +139,11 @@ pub enum PageView {
         busy: bool,
         /// Plain TCP to this host: the notice, and a button to go on.
         plain_host: Option<String>,
+        /// A local lobby's: what its empty seats take, and whether a bot
+        /// command is set.
+        fill: Option<(SeatFill, bool)>,
+        /// The address of the local lobby this client hosts now.
+        hosted_at: Option<String>,
     },
     Home {
         rulesets: Vec<RulesetRow>,
@@ -275,6 +284,8 @@ impl MenuCore {
                     fields: self.fields(),
                     busy: self.connecting() && self.page != Page::Direct,
                     plain_host: self.plain_host.as_ref().map(|h| text::line(h, text::NAME)),
+                    fill: (self.page == Page::LocalLobby).then(|| self.fill_choice()),
+                    hosted_at: self.hosted_at().map(str::to_owned),
                 }
             }
             Page::Home => self.home(),
@@ -312,6 +323,8 @@ impl MenuCore {
                     .map(|r| ReplayRow {
                         name: r.name.clone(),
                         size: r.size.clone(),
+                        when: r.when.clone(),
+                        summary: self.shelf.peek(&r.path, r.stamp),
                     })
                     .collect(),
                 fields: self.fields(),

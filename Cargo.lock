@@ -2536,6 +2536,7 @@ dependencies = [
  "half",
  "heatel",
  "js-sys",
+ "libc",
  "parley",
  "radovid",
  "rodio",

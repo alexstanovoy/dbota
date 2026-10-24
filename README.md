@@ -56,9 +56,19 @@ signed out and with no service reachable. There, you play under the profile name
 - **LOCAL LOBBY**: a game hosted on this machine, as Dota's local lobby: dbota starts `bota_server`
   (`$BOTA_SERVER`, else beside `dbota`, else on the `PATH`) for so many players on a port, for this machine
   alone or (CREATE FOR THE LAN) for the local network too, in plain text, and seats you. The others join by
-  this machine's address under DIRECT CONNECT. The server ends when you quit dbota.
+  this machine's address under DIRECT CONNECT, which the hero screen and the LOCAL LOBBY page show while a
+  seat is open. The server ends when you quit dbota. The seats nobody else takes (**Empty seats**) stay
+  OPEN, or take the server's IDLE DUMMY (a hero that stands at its fountain and never acts, to practise or
+  test alone), or a BOT: the program set as the bot command (SETTINGS, Options, LOCAL LOBBY; `bot_command`
+  in the settings file), run once for each such seat when the lobby opens and ended with it. It is run
+  without a shell: its words split at blanks, `'…'` and `"…"` keep blanks inside, `{address}` becomes the
+  game's address (`127.0.0.1:port`), and the seat's key comes in the environment as `BOTA_SEAT_KEY` (64 hex
+  digits; never an argument, which other users see in the process list). Any program that speaks bota's
+  protocol can be the bot, for example `bot_command = /path/to/mybot --server {address}`.
 - **REPLAYS**: the replays in `~/.local/share/dbota/replays` (`$XDG_DATA_HOME/dbota/replays`), where a local
-  lobby keeps its games', the newest first; or any replay file by its path.
+  lobby keeps its games', the newest first, each with its date, its heroes and how it ended (read from the
+  file on a thread of its own); a file that cannot be watched says why (damaged, or recorded by another
+  version), and an empty one (a game that never started) is not listed. Any replay file opens by its path.
 
 The power button at the top right quits, after Dota's question ("Confirm Quit"); `Esc` on the menu
 backs out of a page to the top one, and there asks the same. `Esc` in a game (with nothing to cancel or

@@ -3,7 +3,7 @@
 use bevy::prelude::*;
 use bota_core::HEROES;
 
-use super::core::{Act, Page};
+use super::core::{Act, Page, SeatFill};
 use super::form::FormKind;
 use super::screens::{ERROR, GREEN, Kit, PLAIN, RED, tab_color, tab_of};
 use super::view::{FieldView, LobbyView, MenuView, PageView, ReplayRow, ResultView, RulesetRow};
@@ -50,6 +50,15 @@ const RETURN_WASH: (Color, Color) = (
     ),
 );
 
+/// The pages' column: the forms and the replay list, one width.
+const PAGE_WIDTH: f32 = 600.0;
+/// Where every page starts under the top bar.
+const PAGE_TOP: f32 = 64.0;
+
+/// The scrolled part of a page, under the top bar.
+#[derive(Component)]
+pub struct MenuBody;
+
 /// The whole page layer.
 pub fn draw(kit: &mut Kit, root: Entity, view: &MenuView) {
     top_bar(kit, root, view);
@@ -68,24 +77,47 @@ pub fn draw(kit: &mut Kit, root: Entity, view: &MenuView) {
         kit.text(line, status.text.clone(), 15.0, color);
         kit.button(line, "×", Act::Dismiss, PLAIN, 22.0);
     }
+    // Every page starts at the same height under the top bar and centres
+    // on one column, as Dota's dashboard pages do; a long page scrolls.
     let body = kit.node(
         root,
         Node {
             flex_grow: 1.0,
+            flex_basis: px(0),
             justify_content: JustifyContent::Center,
-            align_items: AlignItems::Center,
-            padding: UiRect::all(px(24)),
+            align_items: AlignItems::FlexStart,
+            padding: UiRect {
+                left: px(24),
+                right: px(24),
+                top: px(PAGE_TOP),
+                bottom: px(24),
+            },
+            overflow: Overflow::scroll_y(),
             ..default()
         },
     );
+    kit.commands
+        .entity(body)
+        .insert((MenuBody, ScrollPosition::default()));
     match &view.body {
         PageView::Form {
             kind,
             fields,
             busy,
             plain_host,
+            fill,
+            hosted_at,
         } => {
-            form_page(kit, body, *kind, fields, *busy, plain_host.as_deref());
+            form_page(
+                kit,
+                body,
+                *kind,
+                fields,
+                *busy,
+                plain_host.as_deref(),
+                *fill,
+                hosted_at.as_deref(),
+            );
         }
         PageView::Home {
             rulesets,
@@ -229,6 +261,7 @@ fn play_area(kit: &mut Kit, root: Entity, view: &MenuView) {
 }
 
 /// A form: a card of fields in the middle of the page.
+#[allow(clippy::too_many_arguments)]
 fn form_page(
     kit: &mut Kit,
     body: Entity,
@@ -236,11 +269,13 @@ fn form_page(
     fields: &[FieldView],
     busy: bool,
     plain: Option<&str>,
+    fill: Option<(SeatFill, bool)>,
+    hosted_at: Option<&str>,
 ) {
     let card = kit.panel(
         body,
         Node {
-            width: px(460),
+            width: px(PAGE_WIDTH),
             flex_direction: FlexDirection::Column,
             padding: UiRect::all(px(28)),
             row_gap: px(14),
@@ -279,6 +314,17 @@ fn form_page(
     if busy {
         kit.text(card, "Connecting to the service…", 15.0, ui::GOLDEN);
     }
+    if let Some((chosen, bot_set)) = fill {
+        seat_fill(kit, card, chosen, bot_set);
+    }
+    if let Some(at) = hosted_at {
+        kit.text(
+            card,
+            format!("Your lobby is open: others join under DIRECT CONNECT at {at}"),
+            15.0,
+            ui::GOLDEN,
+        );
+    }
     let row = kit.node(
         card,
         Node {
@@ -303,6 +349,8 @@ fn form_page(
             kit.button(row, "PLAY", Act::Direct(false), GREEN, 44.0);
             kit.button(row, "WATCH", Act::Direct(true), PLAIN, 44.0);
         }
+        // One lobby at a time: while it is up, the card says where it is.
+        FormKind::Host if hosted_at.is_some() => {}
         FormKind::Host => {
             kit.button(row, "CREATE", Act::Host(false), GREEN, 44.0);
             kit.button(row, "CREATE FOR THE LAN", Act::Host(true), PLAIN, 44.0);
@@ -603,7 +651,7 @@ fn replays_page(kit: &mut Kit, body: Entity, list: &[ReplayRow], fields: &[Field
         Node {
             flex_direction: FlexDirection::Column,
             row_gap: px(10),
-            width: px(640),
+            width: px(PAGE_WIDTH),
             ..default()
         },
     );
@@ -634,12 +682,34 @@ fn replays_page(kit: &mut Kit, body: Entity, list: &[ReplayRow], fields: &[Field
                 ..default()
             },
         );
-        kit.bold(label, replay.name.clone(), 16.0, ui::INK);
-        kit.text(label, replay.size.clone(), 13.0, ui::INK_DIM);
-        let watch = kit.button(row, "WATCH", Act::OpenReplay(at), PLAIN, 34.0);
-        kit.commands
-            .entity(watch)
-            .insert(Name::new(format!("watch {at}")));
+        use super::replay_info::Summary;
+        let (headline, line, colour) = match &replay.summary {
+            Summary::Read { sides, outcome } => (
+                sides.clone(),
+                format!("{}  ·  {outcome}", replay.when),
+                ui::INK_DIM,
+            ),
+            Summary::Reading => (replay.when.clone(), "reading…".to_owned(), ui::INK_DIM),
+            Summary::Broken(why) => (
+                replay.when.clone(),
+                format!("cannot be watched: {why}"),
+                ERROR,
+            ),
+        };
+        kit.bold(label, headline, 16.0, ui::INK);
+        kit.text(label, line, 13.0, colour);
+        kit.text(
+            label,
+            format!("{}  ·  {}", replay.name, replay.size),
+            12.0,
+            ui::INK_DIM,
+        );
+        if !matches!(replay.summary, Summary::Broken(_)) {
+            let watch = kit.button(row, "WATCH", Act::OpenReplay(at), PLAIN, 34.0);
+            kit.commands
+                .entity(watch)
+                .insert(Name::new(format!("watch {at}")));
+        }
     }
     let card = kit.panel(
         column,
@@ -655,4 +725,40 @@ fn replays_page(kit: &mut Kit, body: Entity, list: &[ReplayRow], fields: &[Field
         field_box(kit, card, at, field);
     }
     kit.button(card, "OPEN", Act::Submit, GREEN, 40.0);
+}
+
+/// What a local lobby's empty seats take: left open, the server's idle
+/// dummy, or the bot command of the settings, as Dota's lobby leaves a slot
+/// open or adds a bot to it.
+fn seat_fill(kit: &mut Kit, card: Entity, chosen: SeatFill, bot_set: bool) {
+    kit.text(card, "Empty seats", 13.0, ui::INK_DIM);
+    let row = kit.node(
+        card,
+        Node {
+            column_gap: px(8),
+            ..default()
+        },
+    );
+    for (fill, label) in [
+        (SeatFill::Open, "OPEN"),
+        (SeatFill::Dummy, "IDLE DUMMY"),
+        (SeatFill::Bot, "BOT"),
+    ] {
+        let look = if fill == chosen { GREEN } else { PLAIN };
+        kit.button(row, label, Act::Fill(fill), look, 34.0);
+    }
+    let note = match chosen {
+        SeatFill::Open => "Others join by this machine's address under DIRECT CONNECT.",
+        SeatFill::Dummy => {
+            "A hero that stands at its fountain and never acts: to practise or test alone."
+        }
+        SeatFill::Bot if bot_set => "Each empty seat runs the bot command of the settings.",
+        SeatFill::Bot => "No bot command is set yet: SETTINGS, Options, LOCAL LOBBY.",
+    };
+    let colour = if chosen == SeatFill::Bot && !bot_set {
+        ui::GOLDEN
+    } else {
+        ui::INK_DIM
+    };
+    kit.text(card, note, 13.0, colour);
 }

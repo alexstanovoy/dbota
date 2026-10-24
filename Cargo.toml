@@ -85,6 +85,10 @@ getrandom = "0.4"
 dbota_import = { path = "crates/dbota_import" }
 
 # In a browser, Bevy draws through WebGPU where the browser has it, else WebGL2.
+# The replay list's dates in this machine's time (`localtime_r`).
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 bevy = { version = "=0.19.1", default-features = false, features = ["webgl2", "webgpu"] }
 # The cache fetched next to the page (whole files moved, not copied, into the

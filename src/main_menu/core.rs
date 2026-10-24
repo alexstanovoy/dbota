@@ -112,6 +112,48 @@ pub enum Act {
     Disconnect,
     /// Takes the seat of the game left again.
     Reconnect,
+    /// What a local lobby's empty seats take.
+    Fill(SeatFill),
+}
+
+/// What a local lobby's seats other than one's own take, as Dota's lobby
+/// leaves a slot open or puts a bot in it.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum SeatFill {
+    /// Left to whoever joins by the address.
+    #[default]
+    Open,
+    /// The game server's idle dummy (its last seat): a hero that never acts,
+    /// to practise or test alone.
+    Dummy,
+    /// The bot command of the settings, once for each seat.
+    Bot,
+}
+
+impl SeatFill {
+    pub const ALL: [SeatFill; 3] = [SeatFill::Open, SeatFill::Dummy, SeatFill::Bot];
+
+    /// Its name in the menu's remembered choices.
+    pub fn name(self) -> &'static str {
+        match self {
+            SeatFill::Open => "open",
+            SeatFill::Dummy => "dummy",
+            SeatFill::Bot => "bot",
+        }
+    }
+
+    pub fn named(name: &str) -> Option<SeatFill> {
+        SeatFill::ALL.into_iter().find(|f| f.name() == name)
+    }
+}
+
+/// How a local lobby's game server fills the seats left: as [`SeatFill`],
+/// with the bot's command line.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Fill {
+    Open,
+    Dummy,
+    Bot(String),
 }
 
 /// What the menu asks before it goes on, as Dota's popups.
@@ -162,6 +204,8 @@ pub enum Launch {
         /// The server binary, when not looked for (`$BOTA_SERVER`, beside
         /// this client, the `PATH`).
         server: Option<std::path::PathBuf>,
+        /// What the seats other than one's own take.
+        fill: Fill,
     },
     /// Watch a replay file.
     Replay(std::path::PathBuf),
@@ -278,6 +322,10 @@ pub struct ReplayFile {
     pub name: String,
     /// Its size, `12.3 MB`.
     pub size: String,
+    /// When it was written, in this machine's time.
+    pub when: String,
+    /// Its size and time, which a change of either reads anew.
+    pub stamp: super::replay_info::Stamp,
 }
 
 /// Replays listed at most, the newest first.
@@ -328,10 +376,16 @@ pub struct MenuCore {
     profile: String,
     /// The replays on this machine, as last listed.
     pub(super) replays: Vec<ReplayFile>,
+    /// What each replay holds, as read.
+    pub(super) shelf: super::replay_info::Shelf,
     /// Where they are kept ([`replays_dir`]).
     pub(super) replays_dir: Option<std::path::PathBuf>,
     /// The game server a local lobby starts, when not looked for.
     pub(super) server_binary: Option<std::path::PathBuf>,
+    /// The settings' bot command, which a local lobby's bot seats run.
+    bot_command: String,
+    /// The address others type to join the local lobby this client hosts.
+    hosted_at: Option<String>,
     /// Whether the service has been tried: a menu under a game named on the
     /// command line tries it once that game is left.
     tried_service: bool,
@@ -386,10 +440,34 @@ impl MenuCore {
             leave: false,
             profile: String::new(),
             replays: Vec::new(),
+            shelf: Default::default(),
             replays_dir: replays_dir(),
             server_binary: None,
+            bot_command: String::new(),
+            hosted_at: None,
             tried_service: false,
         }
+    }
+
+    /// The settings' bot command, which a local lobby runs for its bot seats.
+    pub fn set_bot_command(&mut self, command: &str) {
+        if self.bot_command != command {
+            command.clone_into(&mut self.bot_command);
+        }
+    }
+
+    /// The address others type under DIRECT CONNECT to join the local
+    /// lobby this client hosts, while it is the game on screen.
+    pub fn hosted_at(&self) -> Option<&str> {
+        self.hosted_at
+            .as_deref()
+            .filter(|_| self.on_screen == Some(OnScreen::Local))
+    }
+
+    /// What a local lobby's empty seats take, and whether a bot command is
+    /// set for them to take a bot.
+    pub(super) fn fill_choice(&self) -> (SeatFill, bool) {
+        (self.prefs.host_fill, !self.bot_command.trim().is_empty())
     }
 
     /// The settings' profile name, which local and direct games announce.
@@ -605,6 +683,7 @@ impl MenuCore {
 
     /// Takes in what the service said since the last frame.
     pub fn update(&mut self) {
+        self.shelf.take();
         for _ in 0..MAX_PER_FRAME {
             let Some(client) = &mut self.client else {
                 return;
@@ -853,6 +932,16 @@ impl MenuCore {
             Launch::Replay(_) => OnScreen::Replay,
             Launch::Given => OnScreen::Given,
         });
+        self.hosted_at = match &launch {
+            Launch::Host {
+                port, lan: true, ..
+            } => Some(match super::launch::lan_address() {
+                Some(ip) => std::net::SocketAddr::new(ip, *port).to_string(),
+                None => format!("this machine's address, port {port}"),
+            }),
+            Launch::Host { port, .. } => Some(format!("127.0.0.1:{port} (this machine only)")),
+            _ => None,
+        };
         self.kind = launch.kind();
         // A seat is taken again on the same server: a local lobby's by its
         // address, the server already up.
@@ -912,7 +1001,12 @@ impl MenuCore {
         match page {
             Page::MyGames => self.ask(ClientMsg::MyMatches, Asked::Other),
             Page::Lobbies => self.ask(ClientMsg::LobbyList, Asked::Other),
-            Page::Replays => self.replays = list_replays(self.replays_dir.as_deref()),
+            Page::Replays => {
+                self.replays = list_replays(self.replays_dir.as_deref());
+                for replay in &self.replays {
+                    self.shelf.summary(&replay.path, replay.stamp);
+                }
+            }
             _ => {}
         }
     }
@@ -945,10 +1039,19 @@ impl MenuCore {
             Act::LeaveLobby => self.lobby_ask(|lobby| ClientMsg::LobbyLeave { lobby }),
             Act::Direct(spectate) => self.direct(spectate, false),
             Act::Host(lan) => self.host(lan),
+            Act::Fill(fill) => {
+                self.prefs.host_fill = fill;
+                self.save_prefs();
+            }
             Act::OpenReplay(at) => {
                 if let Some(file) = self.replays.get(at) {
                     let path = file.path.clone();
-                    self.start(Launch::Replay(path));
+                    match self.shelf.peek(&path, file.stamp) {
+                        super::replay_info::Summary::Broken(why) => {
+                            self.tell(format!("That replay cannot be watched: {why}"), true);
+                        }
+                        _ => self.start(Launch::Replay(path)),
+                    }
                 }
             }
             Act::PlainAnyway => self.direct(false, true),
@@ -1211,6 +1314,18 @@ impl MenuCore {
             );
             return;
         };
+        let fill = match self.prefs.host_fill {
+            SeatFill::Open => Fill::Open,
+            SeatFill::Dummy => Fill::Dummy,
+            SeatFill::Bot if self.bot_command.trim().is_empty() => {
+                self.tell(
+                    "No bot command is set: SETTINGS, Options, LOCAL LOBBY".to_owned(),
+                    true,
+                );
+                return;
+            }
+            SeatFill::Bot => Fill::Bot(self.bot_command.trim().to_owned()),
+        };
         self.prefs.host_port = port.to_string();
         self.prefs.host_players = players.to_string();
         self.save_prefs();
@@ -1228,6 +1343,7 @@ impl MenuCore {
             key: Claim::draw(),
             replay,
             server: self.server_binary.clone(),
+            fill,
         });
     }
 }
@@ -1325,6 +1441,11 @@ fn list_replays(dir: Option<&std::path::Path>) -> Vec<ReplayFile> {
                     path: e.path(),
                     name,
                     size,
+                    when: super::replay_info::when(when),
+                    stamp: super::replay_info::Stamp {
+                        len: meta.len(),
+                        modified: when,
+                    },
                 },
             ))
         })

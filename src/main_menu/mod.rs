@@ -16,6 +16,7 @@ mod overlay;
 mod pages;
 mod prefs;
 mod preview;
+mod replay_info;
 mod screens;
 mod shell;
 mod store;
@@ -27,7 +28,9 @@ mod tests;
 
 #[cfg(not(target_arch = "wasm32"))]
 pub use core::Claim;
-pub use core::{Act, DEFAULT_NAME, GameKind, MenuCore, Page};
+#[cfg(not(target_arch = "wasm32"))]
+pub use core::Page;
+pub use core::{Act, DEFAULT_NAME, GameKind, MenuCore};
 pub use launch::Trust;
 pub use prefs::page_service;
 pub use preview::{NAMES as PREVIEWS, view as preview};

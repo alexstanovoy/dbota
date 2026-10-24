@@ -354,6 +354,7 @@ fn heading_text(phase: PickPhase, left: Option<f32>) -> String {
 #[allow(clippy::type_complexity)]
 fn looks(
     session: NonSend<Session>,
+    menu: Option<NonSend<crate::main_menu::MenuCore>>,
     seen: Res<ClockSeen>,
     time: Res<Time>,
     mut cards: Query<(&Card, &Interaction, &mut BorderColor), Without<ReadyButton>>,
@@ -391,7 +392,7 @@ fn looks(
             (false, false) => Color::srgb(0.12, 0.13, 0.15),
         }));
     }
-    let seats: Vec<String> = core
+    let mut seats: Vec<String> = core
         .lobby
         .slots
         .iter()
@@ -414,6 +415,14 @@ fn looks(
             format!("{:?}: {name}{kind}, {hero}{ready}", seat.team)
         })
         .collect();
+    // A local lobby this client hosts: where the others join while a seat
+    // is open.
+    let open = core.lobby.slots.iter().any(|seat| seat.name.is_empty());
+    if let Some(at) = menu.as_deref().and_then(|m| m.hosted_at())
+        && open
+    {
+        seats.push(format!("\nOthers join under DIRECT CONNECT at {at}"));
+    }
     for (mut text, ready, list, heading) in &mut texts {
         let s = if ready.is_some() {
             if core.ready {
