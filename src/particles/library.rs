@@ -12,7 +12,7 @@ use serde_json::Value;
 use super::store::{self, Defaults};
 
 /// The layout of the particle files this client reads (dbota_import's `PARTICLE_VERSION`).
-const VERSION: u64 = 1;
+const VERSION: u64 = 2;
 /// Most systems in one effect, as the importer bounds them.
 const MAX_SYSTEMS: usize = 256;
 /// Most looks (texture and blend) of all effects together.

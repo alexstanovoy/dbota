@@ -203,7 +203,7 @@ pub fn shop_json(shops: &[u8], localization: &[u8]) -> Result<Vec<u8>> {
 }
 
 /// The version of a particle file's layout; the client refuses others.
-pub const PARTICLE_VERSION: u32 = 1;
+pub const PARTICLE_VERSION: u32 = 2;
 
 /// A texture a particle file's systems draw with.
 pub struct ParticleTexture {
@@ -227,16 +227,25 @@ pub struct ParticleMaterial {
     pub sheets: bool,
 }
 
+/// A model a particle file's model renderers draw.
+pub struct ParticleModel {
+    /// The model (`models/.../x.vmdl`) the renderers name.
+    pub vmdl: String,
+    /// Its glTF file in the cache.
+    pub file: String,
+}
+
 /// A particle file: `{"version", "root", "systems": [{"path", "system"}], "textures":
-/// [{"vtex", "file", "sheet"}], "materials": [{"vmat", "vtex", "blend", "sheets"}]}`, the root
-/// system first, each system as heatel's serde form of [`System`] (children by path), a sheet
-/// as its sequences of `{"clamp", "frames": [[display time, cropped u0 v0 u1 v1, uncropped u0
-/// v0 u1 v1]]}` or `null`.
+/// [{"vtex", "file", "sheet"}], "materials": [{"vmat", "vtex", "blend", "sheets"}], "models":
+/// [{"vmdl", "file"}]}`, the root system first, each system as heatel's serde form of
+/// [`System`] (children by path), a sheet as its sequences of `{"clamp", "frames": [[display
+/// time, cropped u0 v0 u1 v1, uncropped u0 v0 u1 v1]]}` or `null`.
 pub fn particle_json(
     root: &str,
     systems: &[(String, System)],
     textures: &[ParticleTexture],
     materials: &[ParticleMaterial],
+    models: &[ParticleModel],
 ) -> Result<Vec<u8>> {
     let systems: Vec<Json> = systems
         .iter()
@@ -256,6 +265,10 @@ pub fn particle_json(
         .iter()
         .map(|m| json!({ "vmat": m.vmat, "vtex": m.vtex, "blend": m.blend, "sheets": m.sheets }))
         .collect();
+    let models: Vec<Json> = models
+        .iter()
+        .map(|m| json!({ "vmdl": m.vmdl, "file": m.file }))
+        .collect();
     to_vec(
         "particle",
         &json!({
@@ -264,6 +277,7 @@ pub fn particle_json(
             "systems": systems,
             "textures": textures,
             "materials": materials,
+            "models": models,
         }),
     )
 }

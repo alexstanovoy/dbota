@@ -11,7 +11,7 @@ use std::collections::{BTreeMap, HashSet, VecDeque};
 
 use heatel::export::{ExportedTexture, ModelOptions, export_model, read_from};
 use heatel::material::Material;
-use heatel::particle::{Blend, System};
+use heatel::particle::{Blend, Renderer, System};
 use heatel::portraits::framings;
 use heatel::texture::Role;
 use heatel::tooltips::Wanted;
@@ -19,12 +19,13 @@ use heatel::world::{Band, EntityLump, ExportedWorld, WorldOptions, export_world,
 use heatel::{Error, Resource, Result, Sound, Source, Texture, Vpk};
 
 use crate::text::{
-    ParticleMaterial, ParticleTexture, background_png, buildings_txt, labels_json, lighting_txt,
-    particle_json, portraits_txt, shop_json, styles_json, tooltips_json, trees_txt, wanted,
+    ParticleMaterial, ParticleModel, ParticleTexture, background_png, buildings_txt, labels_json,
+    lighting_txt, particle_json, portraits_txt, shop_json, styles_json, tooltips_json, trees_txt,
+    wanted,
 };
 
 /// Bumped when the importer's output changes for the same install; part of a cache's stamp.
-pub const IMPORT_REV: u32 = 7;
+pub const IMPORT_REV: u32 = 8;
 
 /// Names what an import of this manifest and these ids makes (FNV-1a 64 of both texts): part of
 /// a cache's stamp, so a cache made from other texts is stale even from the same install.
@@ -866,7 +867,61 @@ fn particle(src: &impl Source, pak: &Vpk, path: &str, dest: &str, out: &mut Out<
             Err(err) => out.report.failed.push((vtex.to_owned(), err.to_string())),
         }
     }
-    out.put(dest, &particle_json(root, &systems, &textures, &materials)?)
+    let models = particle_models(src, pak, &systems, dir, out);
+    out.put(
+        dest,
+        &particle_json(root, &systems, &textures, &materials, &models)?,
+    )
+}
+
+/// The models the systems' model renderers draw from their lists, each exported once as a
+/// glTF file under `dir/models/` (with its images beside it); one that does not export is
+/// reported, and its particles draw nothing. A renderer whose model a control point carries
+/// draws that model instead, which the client does not bind: its list is left out.
+fn particle_models(
+    src: &impl Source,
+    pak: &Vpk,
+    systems: &[(String, System)],
+    dir: &str,
+    out: &mut Out<'_>,
+) -> Vec<ParticleModel> {
+    let listed = systems
+        .iter()
+        .flat_map(|(_, s)| &s.renderers)
+        .filter_map(|r| match &r.class {
+            Renderer::Models(m) if m.model_input.is_none() => Some(m.paths()),
+            _ => None,
+        })
+        .flatten();
+    let mut models: Vec<ParticleModel> = Vec::new();
+    for vmdl in listed {
+        if models.iter().any(|m| m.vmdl == vmdl) {
+            continue;
+        }
+        let name = vmdl.rsplit('/').next().unwrap_or(vmdl);
+        let file = join(
+            dir,
+            &format!("models/{}.glb", name.trim_end_matches(".vmdl")),
+        );
+        if !out.report.files.contains_key(&file) {
+            let job = ModelJob {
+                path: &format!("{vmdl}_c"),
+                dest: &file,
+                meshes: None,
+                skeleton: false,
+                anims: &[],
+            };
+            if let Err(err) = model(src, pak, &job, out) {
+                out.report.failed.push((vmdl.to_owned(), err.to_string()));
+                continue;
+            }
+        }
+        models.push(ParticleModel {
+            vmdl: vmdl.to_owned(),
+            file,
+        });
+    }
+    models
 }
 
 /// The materials the systems' projected renderers draw with, each with its colour texture and
