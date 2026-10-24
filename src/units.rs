@@ -632,8 +632,8 @@ struct SyncParams<'w, 's> {
     time: Res<'w, Time>,
 }
 
-/// Units spawned a frame at most.
-const SPAWNS_PER_FRAME: usize = 4;
+/// New units spawned a frame at most, and planted trees stood.
+pub(crate) const SPAWNS_PER_FRAME: usize = 4;
 
 /// Spawns what came into view, moves what stays, and lets go of what left:
 /// a unit that left where its side could still see it has died, and falls.

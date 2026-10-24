@@ -1,9 +1,14 @@
 //! The forest: one Dota tree at every tree of the match, the model, turn
 //! and size taken from where the real map puts its tree there, and a stump
 //! where one has been cut down. Trees are merged into one mesh per model and
-//! map chunk, rebuilt when a tree in the chunk falls or grows back.
+//! map chunk, rebuilt when a tree in the chunk falls or grows back. Planted
+//! trees (an Iron Branch's) stand as Dota's temporary tree, one entity each.
+//! Both are the watching side's forest: what it saw fall, grow and be
+//! planted, as the view tells it.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+
+use bota_proto::Vec2;
 
 use bevy::{
     gltf::{Gltf, GltfMesh},
@@ -22,6 +27,9 @@ const MATCH_REACH: f32 = 48.0;
 const HASH_CELL: f32 = 64.0;
 /// World units of a side of a forest chunk.
 const CHUNK: f32 = 2304.0;
+/// Dota's temporary tree, which a planting raises (the engine's model for
+/// every tree an ability or item plants).
+const PLANTED_MODEL: &str = "tree.planted";
 /// Trees read from the cache at most (the map has 2300): each tree of the
 /// match is paired with the ones near it, and a file of a million in one
 /// spot made that a billion pairs.
@@ -69,12 +77,27 @@ struct Forest {
     felled: Vec<u32>,
     /// Whether every model has loaded and the chunks are built.
     built: bool,
+    /// The planted tree's model, among `kinds`.
+    planted_kind: Option<usize>,
+    /// The planted tree's mesh, without the morph targets an entity with no
+    /// weights cannot be drawn with, its material, and its bounds (the mesh
+    /// leaves the CPU once on the GPU).
+    planted_mesh: Option<(
+        Handle<Mesh>,
+        Handle<StandardMaterial>,
+        Option<bevy::camera::primitives::Aabb>,
+    )>,
+    /// The planted trees drawn, by where they stand.
+    planted: HashMap<Vec2, Entity>,
 }
 
 pub fn plugin(app: &mut App) {
     app.init_resource::<Forest>()
         .init_resource::<SceneryReady>()
-        .add_systems(Update, (plant, read_kinds, rebuild).chain());
+        .add_systems(
+            Update,
+            (plant, read_kinds, rebuild, ready_planted, plant_planted).chain(),
+        );
 }
 
 /// Reads the real map's trees, if the cache has them.
@@ -162,9 +185,14 @@ fn plant(
             scale,
         });
     }
-    forest.kinds = names
+    let models: Vec<_> = names
         .iter()
         .filter_map(|name| manifest.model(&format!("tree.{name}")))
+        .collect();
+    forest.planted_kind = manifest.model(PLANTED_MODEL).map(|_| models.len());
+    forest.kinds = models
+        .into_iter()
+        .chain(manifest.model(PLANTED_MODEL))
         .map(|m| Kind {
             gltf: crate::manifest::load_model(&server, m.path.clone()),
             tree: None,
@@ -329,6 +357,87 @@ fn rebuild(
     if !ready.0 {
         ready.0 = true;
         info!("startup: forest built at {:.2} s", crate::since_start());
+    }
+}
+
+/// Makes the planted tree's mesh once its model has loaded, and one tree of
+/// it as a warm-up piece: the model's pipelines compile while the game
+/// loads, not in the frame the first tree is planted.
+fn ready_planted(
+    mut commands: Commands,
+    mut forest: ResMut<Forest>,
+    mut meshes: ResMut<Assets<Mesh>>,
+) {
+    if forest.planted_mesh.is_some() {
+        return;
+    }
+    let Some((source, material)) = forest
+        .planted_kind
+        .and_then(|k| forest.kinds.get(k))
+        .and_then(|k| k.tree.clone())
+    else {
+        return;
+    };
+    let Some(source) = meshes.get(&source) else {
+        return;
+    };
+    let mut mesh = plain(source);
+    let aabb = bevy::camera::primitives::MeshAabb::compute_aabb(&mesh);
+    mesh.asset_usage = bevy::asset::RenderAssetUsages::RENDER_WORLD;
+    let mesh = meshes.add(mesh);
+    commands.spawn((
+        crate::warmup::Warmup,
+        Mesh3d(mesh.clone()),
+        MeshMaterial3d(material.clone()),
+        crate::fog::Fogged,
+    ));
+    forest.planted_mesh = Some((mesh, material, aabb));
+}
+
+/// Stands the planted trees the view tells of and takes down the ones it no
+/// longer does: those the side saw planted and has not seen gone. A few new
+/// ones a frame, as new units: a seek may bring them all at once.
+fn plant_planted(
+    mut commands: Commands,
+    session: NonSend<Session>,
+    mut forest: ResMut<Forest>,
+    ground: Res<Ground>,
+) {
+    let (Some(view), Some((mesh, material, aabb))) =
+        (session.0.view(), forest.planted_mesh.clone())
+    else {
+        return;
+    };
+    let told: HashSet<Vec2> = view.planted_trees.iter().copied().collect();
+    forest.planted.retain(|at, entity| {
+        let standing = told.contains(at);
+        if !standing {
+            commands.entity(*entity).despawn();
+        }
+        standing
+    });
+    let new: Vec<Vec2> = told
+        .into_iter()
+        .filter(|at| !forest.planted.contains_key(at))
+        .take(crate::units::SPAWNS_PER_FRAME)
+        .collect();
+    for at in new {
+        let (x, y) = (at.x.to_f32(), at.y.to_f32());
+        // As a map tree's copy: glTF turned to face Bevy's forward, in metres.
+        let transform = Transform::from_xyz(x, ground.at(x, y), -y)
+            .with_rotation(Quat::from_rotation_y(std::f32::consts::PI))
+            .with_scale(Vec3::splat(UNITS_PER_METRE));
+        let mut tree = commands.spawn((
+            Mesh3d(mesh.clone()),
+            MeshMaterial3d(material.clone()),
+            transform,
+            crate::fog::Fogged,
+        ));
+        if let Some(aabb) = aabb {
+            tree.insert(aabb);
+        }
+        let tree = tree.id();
+        forest.planted.insert(at, tree);
     }
 }
 

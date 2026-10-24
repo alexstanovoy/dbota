@@ -181,6 +181,9 @@ model tree.dire_tree004 models/props_tree/dire_tree004.vmdl_c models/tree/dire_t
 model tree.dire_tree004b models/props_tree/dire_tree004b.vmdl_c models/tree/dire_tree004b/dire_tree004b.glb meshes=dire_tree004b_model,tree_dire_04b_stump_model
 model tree.dire_tree007 models/props_tree/dire_tree007.vmdl_c models/tree/dire_tree007/dire_tree007.glb meshes=dire_tree007_model,tree_dire_07_stump_model
 model tree.dire_tree008 models/props_tree/dire_tree008.vmdl_c models/tree/dire_tree008/dire_tree008.glb meshes=dire_tree008_model,tree_dire_08_stump_model
+# Dota's temporary tree, smaller than the map's and with no stump: the engine raises every planted tree
+# (an Iron Branch's, as Sprout's) with this model.
+model tree.planted models/props_tree/tree_oak_00.vmdl_c models/tree/tree_oak_00/tree_oak_00.glb meshes=tree_oak_00_model
 
 # --- Default map, fountain-to-fountain band around mid with both bases (towers, trees, barracks,
 # ancients and fountains removed: the client spawns those itself; shops, statues, walls stay)
