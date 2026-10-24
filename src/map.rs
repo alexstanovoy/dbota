@@ -647,6 +647,10 @@ pub(crate) struct WaterLook {
     pub opacity: f32,
     /// sRGB.
     pub refraction_tint: [f32; 3],
+    /// World units one repeat of the normal map spans: Dota's water reads
+    /// its normals by world position, not by the pieces' own texture
+    /// coordinates, so the river is one surface across them.
+    pub normal_uv_scale: f32,
 }
 
 impl Default for WaterLook {
@@ -655,6 +659,7 @@ impl Default for WaterLook {
             surface: [0.18, 0.27, 0.24],
             opacity: 0.875,
             refraction_tint: [0.35, 0.66, 0.78],
+            normal_uv_scale: 500.0,
         }
     }
 }
@@ -711,6 +716,11 @@ impl Vmat {
                     .as_f64()
                     .map_or(look.opacity, |o| o as f32),
                 refraction_tint: colour("g_vRefractionTint", look.refraction_tint),
+                normal_uv_scale: vmat["FloatParams"]["g_flNormalUvScale"]
+                    .as_f64()
+                    .map(|s| s as f32)
+                    .filter(|s| s.is_finite() && *s > 1.0)
+                    .unwrap_or(look.normal_uv_scale),
             },
         }
     }

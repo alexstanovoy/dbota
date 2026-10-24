@@ -762,7 +762,9 @@ fn standard_material(
 }
 
 /// Dota's cheap water: its surface colour seen through the refraction tint,
-/// its opacity, and its normal map for the glint (`water.rs` makes it flow).
+/// its opacity, and its normal map for the glint, one repeat every
+/// `g_flNormalUvScale` world units (the fog shader reads it by world
+/// position and makes it flow, see `water.rs`).
 fn water_material(mut m: StandardMaterial, vmat: &Vmat) -> StandardMaterial {
     let look = vmat.water;
     let [r, g, b] = std::array::from_fn(|i| look.surface[i] * look.refraction_tint[i]);
@@ -772,6 +774,7 @@ fn water_material(mut m: StandardMaterial, vmat: &Vmat) -> StandardMaterial {
     m.alpha_mode = AlphaMode::Blend;
     m.double_sided = false;
     m.cull_mode = Some(Face::Back);
+    m.uv_transform = bevy::math::Affine2::from_scale(Vec2::splat(1.0 / look.normal_uv_scale));
     m
 }
 

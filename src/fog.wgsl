@@ -9,6 +9,7 @@
     pbr_functions::{alpha_discard, apply_pbr_lighting, main_pass_post_lighting_processing},
     forward_io::{VertexOutput, FragmentOutput},
     mesh_view_bindings::globals,
+    pbr_bindings,
     pbr_types::STANDARD_MATERIAL_FLAGS_UNLIT_BIT,
 }
 
@@ -43,9 +44,14 @@ struct FogUniform {
 
 // The drawn mesh's material, set by the fragment from its instance.
 var<private> fog_material: FogIndices;
+var<private> material_slot: u32;
 
 fn fog_params() -> vec4<f32> {
     return fog_uniforms[fog_material.params].params;
+}
+// World units to repeats of the base material's textures, its uv_transform's.
+fn water_uv_scale() -> f32 {
+    return pbr_bindings::material_array[pbr_bindings::material_indices[material_slot].material].uv_transform[0][0];
 }
 fn veil_at(uv: vec2<f32>) -> vec4<f32> {
     return textureSampleLevel(bindless_textures_2d[fog_material.veil_texture], bindless_samplers_filtering[fog_material.veil_sampler], uv, 0.0);
@@ -76,6 +82,9 @@ struct FogUniform {
 
 fn fog_params() -> vec4<f32> {
     return fog_uniform.params;
+}
+fn water_uv_scale() -> f32 {
+    return pbr_bindings::material.uv_transform[0][0];
 }
 fn veil_at(uv: vec2<f32>) -> vec4<f32> {
     return textureSampleLevel(veil_texture, veil_sampler, uv, 0.0);
@@ -144,11 +153,9 @@ const SURFACE_PATHS: f32 = 2.0;
 const SURFACE_FOGGED_FIGURE: f32 = 3.0;
 const SURFACE_FIGURE: f32 = 4.0;
 const SURFACE_WATER: f32 = 5.0;
-// The river's normal-map repeats per unit of its texture coordinates (the
-// glint's size), the texture coordinates the current slides a second, and how
+// The repeats of the river's normal map the current slides a second, and how
 // far and how fast the glint sways across the current, so the flow does not
 // read as a belt.
-const WATER_TILING: f32 = 6.0;
 const WATER_FLOW: vec2<f32> = vec2(0.02, 0.03);
 const WATER_SWAY: f32 = 0.005;
 const WATER_SWAY_RATE: f32 = 0.5;
@@ -164,15 +171,23 @@ fn set_back(color: vec3<f32>, shade: f32) -> vec3<f32> {
     return dull * (1.0 - 0.16 * strength) * (1.0 - 0.3 * strength * shade);
 }
 
-// The river's texture coordinates, tiled and slid along the current by the
-// time (water.rs). The time wraps after an hour: the flow then steps by whole
-// repeats, the sway by a few thousandths.
+// The river read by world position, as Dota's water is: its texture
+// coordinates are the point's own on the map (the material's uv_transform
+// scales them to repeats of the normal map), slid along the current by the
+// time, and its tangent frame is the map's, the same on every piece. The time
+// wraps after an hour: the flow then steps by whole repeats, the sway by a few
+// thousandths.
 fn flowing(in: VertexOutput) -> VertexOutput {
     var out = in;
 #ifdef VERTEX_UVS_A
     let t = globals.time;
     let sway = vec2(sin(t * WATER_SWAY_RATE), cos(t * WATER_SWAY_RATE * 0.7 + 1.3)) * WATER_SWAY;
-    out.uv = in.uv * WATER_TILING + fract(WATER_FLOW * t + sway);
+    let scale = water_uv_scale();
+    out.uv = vec2(in.world_position.x, -in.world_position.z) + fract(WATER_FLOW * t + sway) / scale;
+#endif
+#ifdef VERTEX_TANGENTS
+    // u along the map's x, v along its north (-z).
+    out.world_tangent = vec4(1.0, 0.0, 0.0, 1.0);
 #endif
     return out;
 }
@@ -180,7 +195,8 @@ fn flowing(in: VertexOutput) -> VertexOutput {
 @fragment
 fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> FragmentOutput {
 #ifdef BINDLESS
-    fog_material = fog_indices[mesh[in.instance_index].material_and_lightmap_bind_group_slot & 0xffffu];
+    material_slot = mesh[in.instance_index].material_and_lightmap_bind_group_slot & 0xffffu;
+    fog_material = fog_indices[material_slot];
 #endif
     let params = fog_params();
     var surface = in;
