@@ -503,6 +503,7 @@ fn casts(
 /// the soul he gains.
 fn souls(
     session: NonSend<Session>,
+    ground: Res<Ground>,
     library: Option<Res<Library>>,
     mut playing: ResMut<Playing>,
     shooters: Shooters,
@@ -526,10 +527,15 @@ fn souls(
         {
             continue;
         }
-        let (Some(from), Some(to)) = (
-            shooters.hit(*unit).or_else(|| shooters.at_flight(*unit)),
-            shooters.hit(*killer),
-        ) else {
+        // The fallen unit may be gone from the scene already: its last place in the view.
+        let last = view
+            .and_then(|v| v.unit(*unit))
+            .or_else(|| session.0.prev_view().and_then(|v| v.unit(*unit)));
+        let fallen = last.map(|u| {
+            let (x, y) = (u.pos.x.to_f32(), u.pos.y.to_f32());
+            Vec3::new(x, ground.at(x, y) + FLIGHT, -y)
+        });
+        let (Some(from), Some(to)) = (shooters.hit(*unit).or(fallen), shooters.hit(*killer)) else {
             continue;
         };
         if let Some(handle) =
