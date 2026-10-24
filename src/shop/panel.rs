@@ -330,7 +330,7 @@ fn spawn_page(commands: &mut Commands, art: Art, catalog: &Catalog, page: Entity
         title(commands, fonts, block, &section.title);
         let cells = commands.spawn((grid(COLUMNS), ChildOf(block))).id();
         for id in &section.items {
-            cell::spawn(commands, art, cells, *id, Place::Grid);
+            cell::spawn(commands, art, cells, *id, Place::Grid, CELL);
         }
     }
 }
@@ -548,6 +548,7 @@ fn results(
             *grid,
             *id,
             Place::Grid,
+            CELL,
         );
     }
     let words = if found.is_empty() {

@@ -469,6 +469,9 @@ texture hud.neutral_slot panorama/images/hud/reborn/bg_neutral_slot_png.vtex_c h
 texture hud.courier panorama/images/hud/reborn/courier_icon_psd.vtex_c hud/courier_icon_psd.png
 texture hud.glyph_on panorama/images/hud/reborn/icon_glyph_on_psd.vtex_c hud/icon_glyph_on_psd.png
 texture hud.glyph_off panorama/images/hud/reborn/icon_glyph_off_psd.vtex_c hud/icon_glyph_off_psd.png
+# The top bar's mark over a dead hero's portrait; the buff and debuff ring.
+texture hud.top_bar_dead panorama/images/hud/reborn/top_bar_dead_overlay_png.vtex_c hud/top_bar_dead_overlay_png.png
+texture hud.buff_outline panorama/images/hud/reborn/buff_outline_psd.vtex_c hud/buff_outline_psd.png
 # Tooltip art: the bars over an item's active, use and passive sections, and the cost icons.
 texture tip.active panorama/images/hud/item_tooltip_active_psd.vtex_c hud/item_tooltip_active_psd.png
 texture tip.use panorama/images/hud/item_tooltip_use_psd.vtex_c hud/item_tooltip_use_psd.png
@@ -477,10 +480,17 @@ texture tip.cooldown panorama/images/status_icons/ability_cooldown_icon_psd.vtex
 texture tip.mana panorama/images/status_icons/ability_manacost_icon_psd.vtex_c hud/ability_manacost_icon_psd.png
 texture tip.health panorama/images/status_icons/ability_healthcost_icon_psd.vtex_c hud/ability_healthcost_icon_psd.png
 texture tip.range panorama/images/status_icons/ability_castrange_icon_psd.vtex_c hud/ability_castrange_icon_psd.png
-# Shop art: the panel's backdrop, the GRAB ALL tab and the shop button.
+# Shop art: the panel's backdrop, the GRAB ALL tab, the shop button (as it stands, hovered, within
+# reach of a shop, both), the courier and gold block's backdrop, the quick-buy rows' and the stash's.
 texture shop.panel panorama/images/hud/reborn/main_shop_bg_psd.vtex_c hud/main_shop_bg_psd.png
 texture shop.grab_all panorama/images/hud/reborn/stash_grab_all_button_psd.vtex_c hud/stash_grab_all_button_psd.png
 texture shop.button panorama/images/hud/reborn/shop_launcher_button_psd.vtex_c hud/shop_launcher_button_psd.png
+texture shop.button_hover panorama/images/hud/reborn/shop_launcher_button_hover_psd.vtex_c hud/shop_launcher_button_hover_psd.png
+texture shop.button_inrange panorama/images/hud/reborn/shop_launcher_button_inrange_psd.vtex_c hud/shop_launcher_button_inrange_psd.png
+texture shop.button_inrange_hover panorama/images/hud/reborn/shop_launcher_button_inrange_hover_psd.vtex_c hud/shop_launcher_button_inrange_hover_psd.png
+texture shop.launcher panorama/images/hud/reborn/courier_gold_bg_262_psd.vtex_c hud/courier_gold_bg_262_psd.png
+texture shop.quickbuy panorama/images/hud/reborn/quickbuy_bg_psd.vtex_c hud/quickbuy_bg_psd.png
+texture shop.stash panorama/images/hud/reborn/bg_item_build_psd.vtex_c hud/bg_item_build_psd.png
 # The stats tooltip over the portrait (Dota's tooltip_unit_damage_armor: its rows the simulator
 # reports) and the talent tree's title and Attribute Bonus row.
 label resource/localization/dota_english.txt DOTA_HUD_Attack

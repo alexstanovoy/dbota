@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # Measures dbota's picture of a recorded match (src/visual.rs): the fog's
 # density and border, heroes drawn with their models, buildings that never
-# turn, no range rings without Alt, no gold or souls in the corner, round buff
-# icons, the river one surface without seams. Takes a bota replay (.brp, first
+# turn, no range rings without Alt, only the menu in the corner, health bars
+# in their side's colour, round buff icons, the river one surface without
+# seams. Takes a bota replay (.brp, first
 # argument or VISUAL_REPLAY) of a Map 2 match whose heroes are on the map at
 # VISUAL_TICK, the asset cache, and a display (DISPLAY or WAYLAND_DISPLAY).
 # Exits non-zero when a check fails.

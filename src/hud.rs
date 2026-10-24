@@ -1,7 +1,7 @@
 //! Dota's HUD: the bottom panel with the portrait, the numbers, the health
 //! and mana bars, the abilities and the items; the top bar with the clock and
-//! both heroes; one's own numbers in the corner; the kill feed and the
-//! passing notices.
+//! both heroes; the menu in the corner; the kill feed and the passing
+//! notices.
 
 use std::f32::consts::TAU;
 
@@ -17,6 +17,7 @@ use crate::keys::Action;
 use crate::manifest::Manifest;
 use crate::session::Session;
 use crate::ui::{self, Extent, Fonts};
+use crate::wash::Washed;
 
 // The hero panel's measures, in interface pixels: Dota's at 720 lines
 // times 5/3, so that an ability box is ours.
@@ -41,10 +42,16 @@ const PIPS: f32 = 10.0;
 const MAX_PIPS: u8 = 4;
 /// The height of the health and the mana bar.
 const POOL: f32 = 24.0;
+/// The room between the level pips and the health bar: Dota's ten
+/// (`#AbilityLevelContainer` 20 over `#AbilitiesAndStatBranch`'s 50, the
+/// bars' top at 60).
+const POOLS_GAP: f32 = 11.0;
 /// The round neutral and town portal slots.
 const ROUND_SLOT: f32 = 46.0;
 /// The panel's padding and the gaps of the ability row.
 const GAP: f32 = 6.0;
+/// A seat's portrait in the top bar.
+const SEAT: (f32, f32) = (86.0, 48.0);
 /// A slot box's edge.
 const SLOT_EDGE: Color = Color::srgb(0.2, 0.22, 0.27);
 /// The gold of the name over the portrait.
@@ -62,6 +69,13 @@ pub struct ItemBox(pub u8);
 /// A seat's portrait in the top bar, by seat.
 #[derive(Component, Clone, Copy)]
 pub struct SeatBox(pub u8);
+
+/// What a seat shows while its hero is alive (its health), and while it is
+/// dead (its portrait washed, the dead mark, the respawn tab), by seat.
+#[derive(Component, Clone, Copy)]
+struct SeatAlive(u8);
+#[derive(Component, Clone, Copy)]
+struct SeatDeath(u8);
 
 /// Dota's level-up plate over an ability box, by slot.
 #[derive(Component, Clone, Copy)]
@@ -93,6 +107,14 @@ enum Part {
 #[derive(Component, Clone, Copy)]
 struct PartOf(Entity);
 
+/// The frame rate at the top right, and the ping on a live link.
+#[derive(Component)]
+struct FrameRate;
+
+/// How often the frame rate is told: the frames over each such span, not
+/// the last frame's, so the figure can be read.
+const FRAME_RATE_SPAN: f32 = 0.5;
+
 /// The sun or the moon beside the clock, as Dota's top bar shows the time
 /// of day.
 #[derive(Component)]
@@ -109,11 +131,8 @@ enum Readout {
     Mana,
     HpRegen,
     ManaRegen,
-    LastHits,
-    Kda,
     Feed,
     Notice,
-    Fps,
     SeatLevel(u8),
     SeatDead(u8),
 }
@@ -130,7 +149,7 @@ enum Gauge {
 /// the background of a render of the unit's model, either cut to the frame
 /// as Dota cuts it ([`ui::Cover`]).
 #[derive(Component)]
-struct Portrait;
+pub(crate) struct Portrait;
 
 /// The render of the unit's model in the bottom panel's portrait, over its
 /// background.
@@ -224,8 +243,8 @@ pub struct Docks {
     pub minimap_buttons: Entity,
     /// The shop's corner.
     pub right: Entity,
-    /// The courier's buttons, which the shop's corner places right of the
-    /// gold, as Dota's corner has them.
+    /// The courier's buttons, which the shop's corner places in its gold
+    /// and courier block, as Dota's corner has them.
     pub courier: Entity,
     root: Entity,
     row: Entity,
@@ -243,10 +262,12 @@ pub fn plugin(app: &mut App) {
                 portrait,
                 time_of_day,
                 seats,
+                seat_deaths,
                 xp,
                 level_ups,
                 innate,
                 menu_buttons,
+                frame_rate,
             )
                 .run_if(|k: Res<crate::session::MatchKnown>| k.0),
         );
@@ -322,16 +343,7 @@ fn spawn_docks(mut commands: Commands) {
             ChildOf(left),
         ))
         .id();
-    let courier = commands
-        .spawn((
-            Node {
-                align_items: AlignItems::Center,
-                column_gap: px(6),
-                ..default()
-            },
-            Pickable::IGNORE,
-        ))
-        .id();
+    let courier = commands.spawn((Node::default(), Pickable::IGNORE)).id();
     commands.insert_resource(Docks {
         minimap,
         minimap_buttons,
@@ -349,6 +361,7 @@ fn spawn_hud(
     manifest: Res<Manifest>,
     server: Res<AssetServer>,
     texts: Res<crate::dota_text::Texts>,
+    mut washes: ResMut<Assets<Washed>>,
 ) {
     let mut kit = Spawner {
         commands: &mut commands,
@@ -356,9 +369,10 @@ fn spawn_hud(
         manifest: &manifest,
         server: &server,
         texts: &texts,
+        washes: &mut washes,
     };
     spawn_bottom(&mut kit, docks.row);
-    spawn_top(kit.commands, &fonts, docks.root);
+    spawn_top(&mut kit, docks.root);
     spawn_corner(&mut kit, docks.root);
 }
 
@@ -369,6 +383,7 @@ pub(crate) struct Spawner<'a, 'w, 's> {
     pub manifest: &'a Manifest,
     pub server: &'a AssetServer,
     pub texts: &'a crate::dota_text::Texts,
+    pub washes: &'a mut Assets<Washed>,
 }
 
 /// A dark panel that blocks world clicks.
@@ -479,6 +494,7 @@ fn spawn_portrait(kit: &mut Spawner, bar: Entity) {
         Visibility::Hidden,
         ChildOf(portrait),
     ));
+    crate::death::spawn(kit.commands, kit.fonts, kit.washes, portrait);
     let banner = kit
         .commands
         .spawn((
@@ -515,8 +531,7 @@ fn spawn_abilities(kit: &mut Spawner, bar: Entity) {
         .spawn((
             Node {
                 flex_direction: FlexDirection::Column,
-                justify_content: JustifyContent::SpaceBetween,
-                height: px(PORTRAIT.1),
+                row_gap: px(POOLS_GAP),
                 ..default()
             },
             ChildOf(bar),
@@ -536,7 +551,7 @@ fn spawn_abilities(kit: &mut Spawner, bar: Entity) {
             ChildOf(column),
         ))
         .id();
-    crate::buffs::spawn_row(kit.commands, kit.fonts, float);
+    crate::buffs::spawn_row(kit.commands, kit.fonts, (kit.manifest, kit.server), float);
     let row = kit
         .commands
         .spawn((
@@ -990,7 +1005,8 @@ fn spawn_slot_labels(commands: &mut Commands, fonts: &Fonts, slot: Entity, keyed
 }
 
 /// The clock and the seats along the top.
-fn spawn_top(commands: &mut Commands, fonts: &Fonts, root: Entity) {
+fn spawn_top(kit: &mut Spawner, root: Entity) {
+    let commands = &mut *kit.commands;
     let top = commands
         .spawn((
             Node {
@@ -1016,7 +1032,14 @@ fn spawn_top(commands: &mut Commands, fonts: &Fonts, root: Entity) {
             ChildOf(top),
         ))
         .id();
-    spawn_seat(commands, fonts, top, 0);
+    spawn_seat(kit, top, 0);
+    spawn_clock(kit.commands, kit.fonts, top);
+    spawn_seat(kit, top, 1);
+}
+
+/// The clock between the seats: each side's kills either side of the time
+/// and the sun or the moon.
+fn spawn_clock(commands: &mut Commands, fonts: &Fonts, top: Entity) {
     let clock = commands
         .spawn((
             panel(Node {
@@ -1079,11 +1102,14 @@ fn spawn_top(commands: &mut Commands, fonts: &Fonts, root: Entity) {
         ),
         ChildOf(clock),
     ));
-    spawn_seat(commands, fonts, top, 1);
 }
 
-/// One seat's box in the top bar: portrait, level, health, score.
-fn spawn_seat(commands: &mut Commands, fonts: &Fonts, parent: Entity, seat: u8) {
+/// One seat's box in the top bar: portrait, level and health; while its
+/// hero is dead, as Dota's `.Dead` seat (`dota_hud_top_bar`): the portrait
+/// without colour under the dead mark and the respawn seconds, the health
+/// gone.
+fn spawn_seat(kit: &mut Spawner, parent: Entity, seat: u8) {
+    let commands = &mut *kit.commands;
     let column = commands
         .spawn((
             Node {
@@ -1101,8 +1127,8 @@ fn spawn_seat(commands: &mut Commands, fonts: &Fonts, parent: Entity, seat: u8) 
             SeatBox(seat),
             Button,
             Node {
-                width: px(86),
-                height: px(48),
+                width: px(SEAT.0),
+                height: px(SEAT.1),
                 border: UiRect::all(px(2)),
                 ..default()
             },
@@ -1112,9 +1138,11 @@ fn spawn_seat(commands: &mut Commands, fonts: &Fonts, parent: Entity, seat: u8) 
             ChildOf(column),
         ))
         .id();
+    spawn_seat_death(kit, card, seat);
+    let commands = &mut *kit.commands;
     commands.spawn((
         Readout::SeatLevel(seat),
-        ui::text("", &fonts.bold, 15.0, ui::GOLDEN),
+        ui::text("", &kit.fonts.bold, 15.0, ui::GOLDEN),
         ui::shadow(),
         Node {
             position_type: PositionType::Absolute,
@@ -1124,22 +1152,52 @@ fn spawn_seat(commands: &mut Commands, fonts: &Fonts, parent: Entity, seat: u8) 
         },
         ChildOf(card),
     ));
-    commands.spawn((
-        Readout::SeatDead(seat),
-        ui::text("", &fonts.bold, 22.0, ui::INK),
-        ui::shadow(),
-        Node {
-            justify_content: JustifyContent::Center,
-            align_items: AlignItems::Center,
-            ..ui::fill()
-        },
-        BackgroundColor(Color::NONE),
+    spawn_seat_health(commands, column, seat);
+}
+
+/// What covers a seat's portrait while its hero is dead: the portrait
+/// washed of its colour, the dead mark and the respawn seconds.
+fn spawn_seat_death(kit: &mut Spawner, card: Entity, seat: u8) {
+    let hidden = Node {
+        display: Display::None,
+        ..ui::fill()
+    };
+    kit.commands.spawn((
+        SeatDeath(seat),
+        hidden.clone(),
+        MaterialNode(kit.washes.add(Washed::dead(Handle::default()))),
+        Pickable::IGNORE,
         ChildOf(card),
     ));
+    let mark = kit
+        .commands
+        .spawn((
+            SeatDeath(seat),
+            Node {
+                justify_content: JustifyContent::Center,
+                align_items: AlignItems::Center,
+                ..hidden
+            },
+            ui::art(kit.manifest, kit.server, "hud.top_bar_dead", Color::NONE),
+            Pickable::IGNORE,
+            ChildOf(card),
+        ))
+        .id();
+    kit.commands.spawn((
+        Readout::SeatDead(seat),
+        ui::text("", &kit.fonts.bold, 22.0, Color::WHITE),
+        ui::shadow(),
+        ChildOf(mark),
+    ));
+}
+
+/// The seat's health under its portrait.
+fn spawn_seat_health(commands: &mut Commands, column: Entity, seat: u8) {
     let well = commands
         .spawn((
+            SeatAlive(seat),
             Node {
-                width: px(86),
+                width: px(SEAT.0),
                 height: px(6),
                 ..default()
             },
@@ -1163,47 +1221,7 @@ fn spawn_seat(commands: &mut Commands, fonts: &Fonts, parent: Entity, seat: u8) 
     ));
 }
 
-/// One's last hits and denies, kills, deaths and assists, under the menu.
-fn spawn_numbers(commands: &mut Commands, fonts: &Fonts, corner: Entity) {
-    let plate = commands
-        .spawn((
-            panel(Node {
-                flex_direction: FlexDirection::Row,
-                column_gap: px(16),
-                padding: UiRect::axes(px(12), px(6)),
-                border: UiRect::all(px(1)),
-                border_radius: BorderRadius::all(px(6)),
-                ..default()
-            }),
-            ChildOf(corner),
-        ))
-        .id();
-    for (label, readout, color) in [
-        ("LH / DN", Readout::LastHits, ui::INK),
-        ("K / D / A", Readout::Kda, ui::INK),
-    ] {
-        let cell = commands
-            .spawn((
-                Node {
-                    flex_direction: FlexDirection::Column,
-                    ..default()
-                },
-                ChildOf(plate),
-            ))
-            .id();
-        commands.spawn((
-            ui::text(label, &fonts.bold, 10.0, ui::INK_DIM),
-            ChildOf(cell),
-        ));
-        commands.spawn((
-            readout,
-            ui::text("-", &fonts.bold, 20.0, color),
-            ChildOf(cell),
-        ));
-    }
-}
-
-/// The menu over one's numbers (Dota's `DOTAHudMenuButtons`): the settings
+/// The menu in the top-left corner (Dota's `DOTAHudMenuButtons`): the settings
 /// and the scoreboard, 30 of Dota's pixels with 8 either side.
 fn spawn_menu(commands: &mut Commands, manifest: &Manifest, server: &AssetServer, corner: Entity) {
     let bar = commands
@@ -1229,8 +1247,8 @@ fn spawn_menu(commands: &mut Commands, manifest: &Manifest, server: &AssetServer
     }
 }
 
-/// One's own numbers in the top-left corner, the feed and the frame rate in
-/// the top-right, and the notices in the middle.
+/// The menu in the top-left corner, the feed and the frame rate in the
+/// top-right, and the notices in the middle.
 fn spawn_corner(kit: &mut Spawner, root: Entity) {
     let commands = &mut *kit.commands;
     let fonts = kit.fonts;
@@ -1251,9 +1269,8 @@ fn spawn_corner(kit: &mut Spawner, root: Entity) {
         ))
         .id();
     spawn_menu(commands, kit.manifest, kit.server, corner);
-    spawn_numbers(commands, fonts, corner);
     commands.spawn((
-        Readout::Fps,
+        FrameRate,
         ui::text("", &fonts.regular, 11.0, ui::INK_DIM),
         Node {
             position_type: PositionType::Absolute,
@@ -1319,18 +1336,13 @@ pub(crate) fn subject(core: &Core) -> (Option<&PlayerView>, Option<&UnitView>, O
 }
 
 /// Every text of the HUD.
-fn readouts(
-    session: NonSend<Session>,
-    diagnostics: Res<bevy::diagnostic::DiagnosticsStore>,
-    mut texts: Query<(&Readout, &mut Text)>,
-) {
+fn readouts(session: NonSend<Session>, mut texts: Query<(&Readout, &mut Text)>) {
     let core = &session.0;
     let (Some(view), Some(map)) = (core.view(), core.session().map(ClientSession::map)) else {
         return;
     };
     let rate = u32::from(core.tick_rate().max(1));
     let (p, unit, _) = subject(core);
-    let mine = core.panel_slot().and_then(|s| view.player(s));
     for (readout, mut text) in &mut texts {
         let s = match *readout {
             Readout::Clock => clock(i64::from(view.tick) - i64::from(core.pregame_ticks()), rate),
@@ -1364,40 +1376,50 @@ fn readouts(
                 .filter(|u| u.max_mana > 0)
                 .map(|u| regen_text(u.mana_regen))
                 .unwrap_or_default(),
-            Readout::LastHits => mine
-                .map(|p| format!("{} / {}", p.last_hits, p.denies))
-                .unwrap_or_default(),
-            Readout::Kda => mine
-                .map(|p| format!("{} / {} / {}", p.kills, p.deaths, p.assists))
-                .unwrap_or_default(),
             Readout::Feed => core
                 .feed
                 .iter()
                 .map(|f| f.text.as_str())
                 .collect::<Vec<_>>()
                 .join("\n"),
-            Readout::Notice => notice(core, rate),
-            Readout::Fps => {
-                let fps = diagnostics
-                    .get(&bevy::diagnostic::FrameTimeDiagnosticsPlugin::FPS)
-                    .and_then(|d| d.smoothed())
-                    .unwrap_or(0.0);
-                let ping = core
-                    .session()
-                    .and_then(ClientSession::order_delay_ms)
-                    .map_or("-".to_string(), |ms| format!("{ms} ms"));
-                format!("ping {ping}   {fps:.0} fps")
-            }
+            Readout::Notice => notice(core),
             Readout::SeatLevel(seat) => seat_of(view, seat)
                 .map(|p| p.level.to_string())
                 .unwrap_or_default(),
             Readout::SeatDead(seat) => seat_of(view, seat)
-                .filter(|p| p.unit.is_none())
+                .filter(|p| lies_dead(p))
                 .map(|p| p.respawn_left.div_ceil(rate).to_string())
                 .unwrap_or_default(),
         };
         text.set_if_neq(Text(s));
     }
+}
+
+/// The frames a second over the last [`FRAME_RATE_SPAN`], told once a span;
+/// before them the measured ping on a live link that has one.
+fn frame_rate(
+    session: NonSend<Session>,
+    time: Res<Time<Real>>,
+    mut text: Single<&mut Text, With<FrameRate>>,
+    mut span: Local<(u32, f32)>,
+) {
+    span.0 += 1;
+    span.1 += time.delta_secs();
+    if span.1 < FRAME_RATE_SPAN {
+        return;
+    }
+    let fps = span.0 as f32 / span.1;
+    *span = (0, 0.0);
+    let core = &session.0;
+    let ping = core
+        .session()
+        .filter(|_| matches!(core.source, bota_client_core::Source::Live(_)))
+        .and_then(ClientSession::order_delay_ms);
+    let told = match ping {
+        Some(ms) => format!("ping {ms} ms   {fps:.0} fps"),
+        None => format!("{fps:.0} fps"),
+    };
+    text.set_if_neq(Text(told));
 }
 
 /// The game clock, negative before the horn.
@@ -1407,12 +1429,18 @@ fn clock(ticks: i64, rate: u32) -> String {
     format!("{sign}{}:{:02}", seconds.abs() / 60, seconds.abs() % 60)
 }
 
+/// Whether a seat's hero lies dead, waiting to respawn (not yet spawned is
+/// not dead).
+pub(crate) fn lies_dead(p: &PlayerView) -> bool {
+    p.unit.is_none() && p.respawn_left > 0
+}
+
 fn seat_of(view: &bota_proto::WorldView, seat: u8) -> Option<&PlayerView> {
     view.players.get(usize::from(seat))
 }
 
 /// The word of the moment in the middle of the screen.
-fn notice(core: &Core, rate: u32) -> String {
+fn notice(core: &Core) -> String {
     if core.lost {
         return "CONNECTION LOST".to_string();
     }
@@ -1425,13 +1453,6 @@ fn notice(core: &Core, rate: u32) -> String {
             Team::Dire => "DIRE VICTORY".to_string(),
             Team::Neutral => "DRAW".to_string(),
         };
-    }
-    let dead = core
-        .my_slot
-        .and_then(|s| core.view()?.player(s))
-        .filter(|p| p.unit.is_none());
-    if let Some(p) = dead {
-        return format!("Respawn in {}", p.respawn_left.div_ceil(rate));
     }
     if let Some((reason, _)) = &core.reject {
         return reason.clone();
@@ -1456,25 +1477,23 @@ fn gauges(session: NonSend<Session>, mut gauges: Query<(&Gauge, &mut Node, &mut 
         return;
     };
     for (gauge, mut node, mut bg) in &mut gauges {
-        let share = match *gauge {
-            Gauge::Hp => unit.map_or(0.0, |u| u.hp.max(0) as f32 / u.max_hp.max(1) as f32),
-            Gauge::Mana => unit.map_or(0.0, |u| u.mana.max(0) as f32 / u.max_mana.max(1) as f32),
+        let of = match *gauge {
+            Gauge::Hp | Gauge::Mana => unit,
             Gauge::SeatHp(seat) => seat_of(view, seat)
                 .and_then(|p| p.unit)
-                .and_then(|id| view.unit(id))
-                .map_or(0.0, |u| u.hp.max(0) as f32 / u.max_hp.max(1) as f32),
+                .and_then(|id| view.unit(id)),
         };
+        let share = of.map_or(0.0, |u| match *gauge {
+            Gauge::Mana => u.mana.max(0) as f32 / u.max_mana.max(1) as f32,
+            _ => u.hp.max(0) as f32 / u.max_hp.max(1) as f32,
+        });
         let width = percent(share * 100.0);
         if node.width != width {
             node.width = width;
         }
-        if *gauge == Gauge::Hp {
-            let color = if share < 0.25 {
-                ui::HP_FOE
-            } else {
-                ui::HP_FRIEND
-            };
-            bg.set_if_neq(BackgroundColor(color));
+        // Health is its side's colour, the same whoever watches.
+        if let Some(u) = of.filter(|_| *gauge != Gauge::Mana) {
+            bg.set_if_neq(BackgroundColor(crate::bars::bar_color(core, u)));
         }
     }
 }
@@ -1905,7 +1924,8 @@ fn time_of_day(
     set_image(&mut image, &server, path, tint);
 }
 
-/// The seat portraits of the top bar.
+/// The seat portraits of the top bar, each in its side's colour, white
+/// while selected.
 fn seats(
     session: NonSend<Session>,
     manifest: Res<Manifest>,
@@ -1920,15 +1940,12 @@ fn seats(
         let Some(p) = seat_of(view, seat.0) else {
             continue;
         };
-        let path = manifest
-            .dota_name("hero", p.hero.0)
-            .and_then(|name| manifest.file(&format!("portrait.hero.{name}")));
-        let tint = if p.unit.is_none() {
-            Color::srgb(0.3, 0.3, 0.3)
-        } else {
-            Color::WHITE
-        };
-        set_image(&mut image, &server, path, tint);
+        set_image(
+            &mut image,
+            &server,
+            seat_portrait(&manifest, p),
+            Color::WHITE,
+        );
         let picked = p.unit.is_some() && p.unit == core.selected;
         let edge = if picked {
             Color::WHITE
@@ -1937,6 +1954,53 @@ fn seats(
         };
         if border.top != edge {
             *border = BorderColor::all(edge);
+        }
+    }
+}
+
+/// The cache's portrait of a seat's hero for the top bar.
+fn seat_portrait(manifest: &Manifest, p: &PlayerView) -> Option<String> {
+    manifest
+        .dota_name("hero", p.hero.0)
+        .and_then(|name| manifest.file(&format!("portrait.hero.{name}")))
+}
+
+/// Each seat dead or alive, as Dota's top bar shows every hero, either
+/// side's: dead, the portrait washed of its colour under the dead mark and
+/// the respawn seconds, and no health.
+fn seat_deaths(
+    session: NonSend<Session>,
+    manifest: Res<Manifest>,
+    server: Res<AssetServer>,
+    mut washes: ResMut<Assets<Washed>>,
+    mut deaths: Query<(&SeatDeath, &mut Node, Option<&MaterialNode<Washed>>)>,
+    mut wells: Query<(&SeatAlive, &mut Node), Without<SeatDeath>>,
+) {
+    let Some(view) = session.0.view() else {
+        return;
+    };
+    let dead = |seat: u8| seat_of(view, seat).is_some_and(lies_dead);
+    let shown = |on: bool| if on { Display::Flex } else { Display::None };
+    for (SeatDeath(seat), mut node, wash) in &mut deaths {
+        let display = shown(dead(*seat));
+        if node.display != display {
+            node.display = display;
+        }
+        let picture: Handle<Image> = seat_of(view, *seat)
+            .and_then(|p| seat_portrait(&manifest, p))
+            .map(|path| server.load(path))
+            .unwrap_or_default();
+        if let Some(wash) = wash
+            && washes.get(&wash.0).is_some_and(|w| w.picture != picture)
+            && let Some(mut w) = washes.get_mut(&wash.0)
+        {
+            w.picture = picture;
+        }
+    }
+    for (SeatAlive(seat), mut node) in &mut wells {
+        let display = shown(!dead(*seat));
+        if node.display != display {
+            node.display = display;
         }
     }
 }

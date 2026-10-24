@@ -113,6 +113,7 @@ fn draw(
     cursor: Res<CursorGround>,
     hover: Res<crate::pick::Hover>,
     args: Res<crate::Args>,
+    settings: Res<crate::config::Settings>,
     mut rings: ResMut<RangeRings>,
 ) {
     let core = &session.0;
@@ -126,7 +127,7 @@ fn draw(
         units: &units,
     };
     let show_all = args.show_ranges || fired.held(Action::ShowRanges);
-    picks(&mut gizmos, &ctx);
+    picks(&mut gizmos, &ctx, settings.clarity.strength() > 0.0);
     // Ranges and radii only while the show-ranges key is held, as Dota
     // keeps the ground clean.
     let mut ranges = 0;
@@ -174,38 +175,33 @@ fn camp_boxes(gizmos: &mut Gizmos, ctx: &Ctx<'_, '_, '_>) {
     }
 }
 
-/// Rings at the feet of one's own hero, of what is picked, and of what the
-/// camera follows.
-fn picks(gizmos: &mut Gizmos, ctx: &Ctx<'_, '_, '_>) {
+/// The selection circle at the feet of what is picked (one's own hero when
+/// nothing else is), in its side's colour; with the visual clarity aid on,
+/// a fainter ring at every other hero's feet too, so a dark model on dark
+/// ground still reads.
+fn picks(gizmos: &mut Gizmos, ctx: &Ctx<'_, '_, '_>, aid: bool) {
     let core = ctx.core;
-    // A ring at every hero's feet in its side's colour, as Dota marks them,
-    // so a dark model on dark ground still reads; one's own is brightest.
-    let side = core.fog_team().or_else(|| core.my_team());
-    if let Some(view) = core.view() {
-        for hero in view.units.iter().filter(|u| u.kind == UnitKind::Hero) {
-            let Some(body) = ctx.at(hero.id) else {
-                continue;
-            };
-            let friend = side.map_or(hero.team == Team::Radiant, |t| t == hero.team);
-            let mine = Some(hero.id) == core.my_hero();
-            let color = if friend { GOOD } else { BAD };
-            let alpha = if mine { 0.9 } else { 0.6 };
-            ring(
-                gizmos,
-                ctx,
-                (body.at.x, body.at.y),
-                52.0,
-                color.with_alpha(alpha),
-                false,
-            );
+    let Some(view) = core.view() else {
+        return;
+    };
+    let picked = core.commanded();
+    for unit in &view.units {
+        let selected = Some(unit.id) == picked;
+        if !selected && !(aid && unit.kind == UnitKind::Hero) {
+            continue;
         }
-    }
-    if let Some(picked) = core
-        .selected
-        .filter(|id| Some(*id) != core.my_hero())
-        .and_then(|id| ctx.at(id))
-    {
-        ring(gizmos, ctx, (picked.at.x, picked.at.y), 56.0, GOLDEN, false);
+        let Some(body) = ctx.at(unit.id) else {
+            continue;
+        };
+        let alpha = if selected { 0.9 } else { 0.5 };
+        ring(
+            gizmos,
+            ctx,
+            (body.at.x, body.at.y),
+            crate::pick::ring_radius(unit),
+            team_color(unit.team).with_alpha(alpha),
+            false,
+        );
     }
 }
 

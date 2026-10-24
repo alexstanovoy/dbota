@@ -76,13 +76,15 @@ pub fn plugin(app: &mut App) {
         .add_systems(Update, (stock, edges));
 }
 
-/// Spawns an item's icon under `parent`, with its corner count and shade.
+/// Spawns an item's icon of `size` under `parent`, with its corner count
+/// and shade.
 pub fn spawn(
     commands: &mut Commands,
     art: (&Fonts, &Manifest, &AssetServer),
     parent: Entity,
     id: u16,
     place: Place,
+    (width, height): (f32, f32),
 ) -> Entity {
     let (fonts, manifest, server) = art;
     let cell = commands
@@ -91,8 +93,8 @@ pub fn spawn(
             place,
             Button,
             Node {
-                width: px(CELL.0),
-                height: px(CELL.1),
+                width: px(width),
+                height: px(height),
                 border: UiRect::all(px(1)),
                 justify_content: JustifyContent::Center,
                 align_items: AlignItems::Center,

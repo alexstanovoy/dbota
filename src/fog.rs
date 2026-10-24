@@ -108,7 +108,7 @@ struct Veil {
 pub struct Fogged;
 
 /// Marks a mesh of a unit other than a building, which the visual clarity
-/// aid lights round its rim (and does not dull); fogged too when it is also
+/// aid makes a little more vivid (and does not dull); fogged too when it is also
 /// [`Fogged`] (a neutral creep).
 #[derive(Component)]
 pub struct Figure;

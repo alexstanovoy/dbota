@@ -23,6 +23,7 @@ mod config;
 mod coords;
 mod courier;
 mod daylight;
+mod death;
 mod dota_text;
 mod drill;
 mod effects;
@@ -71,6 +72,7 @@ mod units;
 mod visual;
 mod voice;
 mod warmup;
+mod wash;
 mod water;
 #[cfg(target_arch = "wasm32")]
 mod webcache;
@@ -440,6 +442,8 @@ fn main() -> AppExit {
             scoreboard::plugin,
             warmup::plugin,
             script::plugin,
+            wash::plugin,
+            death::plugin,
         ))
         .add_plugins(main_menu::plugin);
     if let Err(err) = menu(&mut app, &args, store) {

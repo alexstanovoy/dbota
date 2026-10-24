@@ -44,11 +44,19 @@ enum Region {
 enum Line {
     /// A region row's white base (`false`) or green bonus (`true`).
     Region(Region, bool),
-    /// An attribute's white base (`false`) or green bonus (`true`) at the
-    /// region's foot.
-    Attribute(u8, bool),
+    /// A text of an attribute at the region's foot.
+    Attribute(u8, Shown),
     /// A text of the tooltip.
     Tip(Tip),
+}
+
+/// What of an attribute the foot shows: its whole, as Dota shows it, or,
+/// while Alt is held, its base and its bonus (`.AltPressed #StrengthLabel`).
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Shown {
+    Sum,
+    Base,
+    Bonus,
 }
 
 /// The texts of the tooltip.
@@ -133,6 +141,14 @@ const LABEL: Color = Color::srgb(0.55, 0.6, 0.66);
 const HEADER: Color = Color::srgb(0.8, 0.82, 0.85);
 /// Width of the tooltip in interface pixels.
 const TIP_WIDTH: f32 = 540.0;
+/// The hero panel's pixels to one of Dota's (`hud.rs`: its portrait is
+/// Dota's 159 wide).
+const PANEL_PER_DOTA: f32 = crate::hud::PORTRAIT.0 / 159.0;
+/// The attributes' strip's height, their icons' size and their grey
+/// (`#stragiint`, `.Reborn #StrengthIcon`, `.Reborn .StatLabel`).
+const FOOT_HEIGHT: f32 = 20.0 * PANEL_PER_DOTA;
+const ATTRIBUTE_ICON: f32 = 13.0 * PANEL_PER_DOTA;
+const ATTRIBUTE_INK: Color = Color::srgb(0.8, 0.8, 0.8);
 
 pub fn plugin(app: &mut App) {
     app.add_systems(Update, (region, tooltip).run_if(|k: Res<MatchKnown>| k.0));
@@ -244,7 +260,9 @@ fn spawn_column(
     }
 }
 
-/// Strength, agility and intelligence along the foot: value, bonus, icon.
+/// Strength, agility and intelligence along the foot, as Dota's
+/// `DOTAHUDStrAgiInt` lays them out: right-aligned on a dark strip, each its
+/// whole and its icon; while Alt is held, its base and its bonus instead.
 fn spawn_foot(
     commands: &mut Commands,
     fonts: &Fonts,
@@ -256,10 +274,13 @@ fn spawn_foot(
         .spawn((
             Foot,
             Node {
-                justify_content: JustifyContent::SpaceBetween,
+                align_self: AlignSelf::FlexEnd,
+                height: px(FOOT_HEIGHT),
                 align_items: AlignItems::Center,
                 ..default()
             },
+            BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.67)),
+            ui::Shrink::default(),
             Pickable::IGNORE,
             ChildOf(zone),
         ))
@@ -269,27 +290,40 @@ fn spawn_foot(
             .spawn((
                 Node {
                     align_items: AlignItems::Center,
-                    column_gap: px(2),
+                    flex_shrink: 0.0,
+                    margin: UiRect::right(px(1)),
                     ..default()
                 },
                 Pickable::IGNORE,
                 ChildOf(foot),
             ))
             .id();
-        for bonus in [false, true] {
+        for (shown, margin, ink) in [
+            (Shown::Sum, 5.5, ATTRIBUTE_INK),
+            (Shown::Base, 0.0, ATTRIBUTE_INK),
+            (Shown::Bonus, 1.0, BONUS),
+        ] {
             commands.spawn((
-                Line::Attribute(k, bonus),
-                ui::text("", &fonts.bold, 15.0, if bonus { BONUS } else { ui::INK }),
+                Line::Attribute(k, shown),
+                ui::text("", &fonts.bold, attribute_size(shown), ink),
+                ui::OwnSize(attribute_size(shown)),
                 ui::shadow(),
                 TextLayout::no_wrap(),
+                Node {
+                    margin: UiRect::left(px(margin)),
+                    flex_shrink: 0.0,
+                    ..default()
+                },
                 Pickable::IGNORE,
                 ChildOf(cell),
             ));
         }
         commands.spawn((
             Node {
-                width: px(17),
-                height: px(17),
+                width: px(ATTRIBUTE_ICON),
+                height: px(ATTRIBUTE_ICON),
+                margin: UiRect::left(px(3)),
+                flex_shrink: 0.0,
                 border_radius: BorderRadius::MAX,
                 ..default()
             },
@@ -298,6 +332,13 @@ fn spawn_foot(
             ChildOf(cell),
         ));
     }
+}
+
+/// An attribute text's size: Dota's 18 for the whole and 12 for the split,
+/// in the panel's measures.
+fn attribute_size(shown: Shown) -> f32 {
+    let dota = if shown == Shown::Sum { 18.0 } else { 12.0 };
+    dota * PANEL_PER_DOTA
 }
 
 /// The tooltip above the portrait: the attack and defense columns, then a
@@ -593,32 +634,47 @@ fn physical_resist(armor: Fixed) -> f32 {
 /// The region's texts, the tooltip's shown while the region is hovered.
 fn region(
     session: NonSend<Session>,
-    mut lines: Query<(&Line, &mut Text, &mut TextColor)>,
+    fired: Res<crate::keys::Fired>,
+    mut lines: Query<(&Line, &mut Text, &mut TextColor, &mut Node)>,
     mut foot: Single<&mut Visibility, With<Foot>>,
 ) {
     let unit = crate::hud::subject(&session.0).1;
     let b = unit.map(Breakdown::of);
+    let split = fired.held(crate::keys::Action::ShowRanges);
     foot.set_if_neq(ui::visible(b.is_some_and(|b| b.attributes.is_some())));
-    for (line, mut text, mut color) in &mut lines {
+    for (line, mut text, mut color, mut node) in &mut lines {
         let (s, loss) = match (*line, unit, b) {
             (Line::Region(r, bonus), Some(_), Some(b)) => region_text(r, bonus, &b),
-            (Line::Attribute(k, bonus), _, Some(b)) => {
+            (Line::Attribute(k, shown), _, Some(b)) => {
+                let display = if (shown == Shown::Sum) != split {
+                    Display::Flex
+                } else {
+                    Display::None
+                };
+                if node.display != display {
+                    node.display = display;
+                }
                 b.attributes.map_or((String::new(), false), |a| {
-                    let a = a[usize::from(k)];
-                    if bonus {
-                        (signed(a.bonus), a.bonus < 0)
-                    } else {
-                        (a.base.to_string(), false)
-                    }
+                    attribute_text(a[usize::from(k)], shown)
                 })
             }
             (Line::Tip(_), ..) => continue,
             _ => (String::new(), false),
         };
-        if let Line::Region(_, true) | Line::Attribute(_, true) = line {
+        if let Line::Region(_, true) | Line::Attribute(_, Shown::Bonus) = line {
             color.set_if_neq(TextColor(if loss { LOSS } else { BONUS }));
         }
         text.set_if_neq(Text(s));
+    }
+}
+
+/// An attribute's text: its whole, its base, or its bonus and whether it
+/// is a loss.
+fn attribute_text(a: Attr, shown: Shown) -> (String, bool) {
+    match shown {
+        Shown::Sum => ((a.base + a.bonus).to_string(), false),
+        Shown::Base => (a.base.to_string(), false),
+        Shown::Bonus => (signed(a.bonus), a.bonus < 0),
     }
 }
 

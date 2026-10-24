@@ -29,9 +29,14 @@ pub const MIN_SCREEN_RADIUS: f32 = 0.022;
 /// shorter than it looks.
 const HEIGHT_PER_BOUND: f32 = 2.2;
 /// The biggest ring dbota draws on the ground under a unit (the aim mark; the
-/// selection ring is 56 and a hero's 52), so a click anywhere in or on a
-/// ring picks the unit.
+/// selection ring is the body's bound and a little more), so a click
+/// anywhere in or on a ring picks the unit.
 pub const RING: f32 = 60.0;
+
+/// The hover highlight's life, and its ring's size at its start against
+/// its size at the end (`unit_highlight.vpcf`).
+const HIGHLIGHT_SECS: f32 = 0.25;
+const HIGHLIGHT_START: f32 = 3.0;
 
 /// A world unit more than the radius still hits, so the very edge of a ring
 /// is inside whatever the rounding.
@@ -390,31 +395,55 @@ fn show_cursor(
     }
 }
 
-/// A ring at the feet of what a click would get.
+/// Dota's highlight of what a click would get (`unit_highlight.vpcf`): when
+/// the cursor comes onto a unit, a ring in its side's colour closes in on
+/// its feet from three times its size and is gone.
 fn draw_hover(
     hover: Res<Hover>,
     session: NonSend<Session>,
     ground: Res<Ground>,
+    time: Res<Time>,
+    mut since: Local<Option<(EntityId, f32)>>,
     mut gizmos: Gizmos,
 ) {
     let Some((id, at)) = hover.left() else {
+        *since = None;
         return;
     };
-    let Some(unit) = session.0.view().and_then(|v| v.unit(id)) else {
+    let now = time.elapsed_secs();
+    let start = match *since {
+        Some((was, start)) if was == id => start,
+        _ => {
+            *since = Some((id, now));
+            now
+        }
+    };
+    let age = (now - start) / HIGHLIGHT_SECS;
+    let Some(unit) = session
+        .0
+        .view()
+        .and_then(|v| v.unit(id))
+        .filter(|_| age < 1.0)
+    else {
         return;
     };
-    let radius = unit
-        .bound
-        .to_f32()
-        .max(unit.collision.to_f32())
-        .max(MIN_BOUND)
-        + 8.0;
+    // Fast at first and settling, as the particle's biased interpolation.
+    let scale = 1.0 + (HIGHLIGHT_START - 1.0) * (1.0 - age).powi(3);
     let centre = Vec3::new(at.x, ground.at(at.x, at.y) + 3.0, -at.y);
     gizmos.circle(
         Isometry3d::new(centre, Quat::from_rotation_arc(Vec3::Z, Vec3::Y)),
-        radius,
-        Color::srgba(1.0, 1.0, 1.0, 0.7),
+        ring_radius(unit) * scale,
+        crate::overlay::team_color(unit.team).with_alpha(0.7),
     );
+}
+
+/// The radius of the rings at a unit's feet: its body's, a little out.
+pub fn ring_radius(unit: &bota_proto::UnitView) -> f32 {
+    unit.bound
+        .to_f32()
+        .max(unit.collision.to_f32())
+        .max(MIN_BOUND)
+        + 8.0
 }
 
 #[cfg(test)]

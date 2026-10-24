@@ -2,7 +2,7 @@
 // side's vision the lit colour is dulled, darkened and cooled. The terrain's
 // also draws its path layers (layers.rs). The visual clarity aid sets the
 // units apart from the scenery: the scenery a little duller and darker (the
-// ground more so in the forest's shade), the units lit round their rims.
+// ground more so in the forest's shade), the units a little more vivid.
 
 #import bevy_pbr::{
     pbr_fragment::pbr_input_from_standard_material,
@@ -159,8 +159,6 @@ const SURFACE_WATER: f32 = 5.0;
 const WATER_FLOW: vec2<f32> = vec2(0.02, 0.03);
 const WATER_SWAY: f32 = 0.005;
 const WATER_SWAY_RATE: f32 = 0.5;
-// The rim light's colour at full strength, at a grazing view.
-const RIM: vec3<f32> = vec3(0.16, 0.155, 0.14);
 
 // The lit scenery set back behind what stands on it: a little duller and
 // darker, darker still by the forest's shade, 0 to 1.
@@ -230,11 +228,9 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
     }
     if params.w > 0.0 {
         if figure {
-            let facing = saturate(dot(normalize(pbr_input.N), pbr_input.V));
-            let rim = pow(1.0 - facing, 4.0) * params.w;
             let grey = dot(out.color.rgb, vec3(0.2126, 0.7152, 0.0722));
             let vivid = max(mix(vec3(grey), out.color.rgb, 1.0 + 0.2 * params.w), vec3(0.0));
-            out.color = vec4(vivid + RIM * rim, out.color.a);
+            out.color = vec4(vivid, out.color.a);
         } else {
             out.color = vec4(set_back(out.color.rgb, shade), out.color.a);
         }

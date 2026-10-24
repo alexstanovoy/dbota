@@ -55,7 +55,10 @@ struct FallbackFont(#[expect(dead_code, reason = "only keeps the font loaded")] 
 pub fn plugin(app: &mut App) {
     app.add_systems(PreStartup, load_fonts)
         .add_systems(Update, (scale_ui, register_fallback))
-        .add_systems(PostUpdate, cover.after(bevy::ui::UiSystems::Layout));
+        .add_systems(
+            PostUpdate,
+            (cover, shrink).after(bevy::ui::UiSystems::Layout),
+        );
 }
 
 fn load_fonts(mut commands: Commands, server: Res<AssetServer>) {
@@ -214,6 +217,55 @@ fn cover(
     }
 }
 
+/// A block whose texts shrink together, each from its [`OwnSize`], while
+/// the block would be wider than its parent's content, as Dota's labels do
+/// (`text-overflow: shrink`), and grow back when there is room. Holds the
+/// share of their own size they are drawn at.
+#[derive(Component)]
+pub struct Shrink(f32);
+
+impl Default for Shrink {
+    fn default() -> Shrink {
+        Shrink(1.0)
+    }
+}
+
+/// A text's own size in a [`Shrink`] block (the block itself, or in it).
+#[derive(Component, Clone, Copy)]
+pub struct OwnSize(pub f32);
+
+/// Fits each [`Shrink`] block to its parent: one layout later its texts are
+/// at the share that fits, as text widths go with their size.
+fn shrink(
+    mut blocks: Query<(Entity, &mut Shrink, &ComputedNode, &ChildOf)>,
+    parents: Query<&ComputedNode>,
+    tree: Query<&Children>,
+    mut texts: Query<(&OwnSize, &mut TextFont)>,
+) {
+    for (block, mut shrink, node, parent) in &mut blocks {
+        let Ok(room) = parents
+            .get(parent.parent())
+            .map(|p| p.content_box().width())
+        else {
+            continue;
+        };
+        let need = node.size().x;
+        if room <= 0.0 || need <= 0.0 {
+            continue;
+        }
+        let share = (shrink.0 * room / need).min(1.0);
+        if (share - shrink.0).abs() < 0.01 {
+            continue;
+        }
+        shrink.0 = share;
+        for part in std::iter::once(block).chain(tree.iter_descendants(block)) {
+            if let Ok((own, mut font)) = texts.get_mut(part) {
+                font.font_size = FontSize::Px(own.0 * share);
+            }
+        }
+    }
+}
+
 /// A node over the whole of its parent.
 pub fn fill() -> Node {
     Node {
@@ -250,8 +302,17 @@ pub enum Extent {
     Right,
     /// The clock and the seats at the top centre.
     TopCentre,
-    /// One's own numbers, in the top-left corner.
+    /// The menu, in the top-left corner.
     Corner,
+}
+
+/// Interface pixels to one of Dota's: Dota lays its HUD out for a 1080-line
+/// screen, dbota for a [`REFERENCE_HEIGHT`] one.
+pub const DOTA: f32 = REFERENCE_HEIGHT / 1080.0;
+
+/// Dota's pixels as interface pixels.
+pub fn dota(v: f32) -> Val {
+    px(v * DOTA)
 }
 
 /// Interface pixels between a corner's panel and the window's edge.

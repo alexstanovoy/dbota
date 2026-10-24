@@ -92,7 +92,7 @@ fn draw(
         line(&mut commands, *tree, middle + half, *at + half);
     }
     let place = |commands: &mut Commands, item: u16, at: Vec2| {
-        let cell = cell::spawn(commands, art, *tree, item, Place::Tree);
+        let cell = cell::spawn(commands, art, *tree, item, Place::Tree, cell::CELL);
         commands.entity(cell).insert(Node {
             position_type: PositionType::Absolute,
             left: px(at.x),

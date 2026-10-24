@@ -95,6 +95,8 @@ pub struct Checks<'w, 's> {
     places: Query<'w, 's, &'static GlobalTransform>,
     replaced: Res<'w, crate::units::ReplacedScenes>,
     texts: Query<'w, 's, &'static Text>,
+    buttons: Query<'w, 's, (), With<Button>>,
+    fills: Query<'w, 's, &'static BackgroundColor>,
     extents: Query<'w, 's, (Entity, &'static crate::ui::Extent)>,
     chips: Query<
         'w,
@@ -216,6 +218,7 @@ pub fn run(image: &Image, unveiled: &Image, c: &Checks) -> Verdict {
         format!("{} range drawings this frame", c.rings.0),
     );
     corner(c, &mut report);
+    bar_sides(c, &mut report);
     buff_icons(c, &mut report);
     let clicks_pending = !report_clicks(c, &mut report);
     if clicks_pending {
@@ -438,27 +441,58 @@ fn buildings(c: &Checks, report: &mut impl FnMut(&str, bool, String)) {
     }
 }
 
-/// The top-left block tells no gold and no souls.
+/// The top-left block holds the menu's buttons and tells nothing: no gold,
+/// no souls, no last hits or denies, whose ever they are.
 fn corner(c: &Checks, report: &mut impl FnMut(&str, bool, String)) {
-    let blocks = c
+    let parts: Vec<Entity> = c
         .extents
         .iter()
         .filter(|(_, extent)| **extent == crate::ui::Extent::Corner)
-        .map(|(block, _)| block);
-    let told: Vec<&str> = blocks
-        .flat_map(|block| c.tree.iter_descendants(block))
-        .filter_map(|part| c.texts.get(part).ok())
+        .flat_map(|(block, _)| c.tree.iter_descendants(block))
+        .collect();
+    let buttons = parts.iter().filter(|e| c.buttons.contains(**e)).count();
+    let told: Vec<&str> = parts
+        .iter()
+        .filter_map(|part| c.texts.get(*part).ok())
         .map(|t| t.0.as_str())
-        .filter(|t| t.contains("GOLD") || t.contains("SOULS"))
+        .filter(|t| !t.is_empty())
         .collect();
     report(
-        "no gold or souls in the corner",
-        told.is_empty(),
-        if told.is_empty() {
-            "none told".into()
-        } else {
-            format!("{told:?}")
-        },
+        "the corner holds the menu and no numbers",
+        buttons == 2 && told.is_empty(),
+        format!("{buttons} buttons, texts {told:?}"),
+    );
+}
+
+/// Every hero's health bar is its side's colour, whichever side watches:
+/// Radiant green, Dire red, the watching side's own hero's too.
+fn bar_sides(c: &Checks, report: &mut impl FnMut(&str, bool, String)) {
+    let mut told = Vec::new();
+    for (unit, e) in c
+        .index
+        .0
+        .values()
+        .filter_map(|e| Some((c.units.get(*e).ok()?, *e)))
+    {
+        if unit.kind != UnitKind::Hero {
+            continue;
+        }
+        let Some(fill) = c.bars.fill(e).and_then(|f| c.fills.get(f).ok()) else {
+            continue;
+        };
+        let rgb = fill.0.to_srgba();
+        let green = rgb.green > rgb.red;
+        let right = match unit.team {
+            bota_proto::Team::Radiant => green,
+            _ => !green,
+        };
+        told.push((unit.team, right));
+    }
+    report(
+        "health bars in their side's colour",
+        told.iter().any(|(side, _)| Some(*side) == c.fog.team)
+            && told.iter().all(|(_, right)| *right),
+        format!("heroes' bars (side, right colour): {told:?}"),
     );
 }
 

@@ -145,11 +145,13 @@ The hero panel is laid out as Dota's: the portrait with the unit's numbers over 
 the stats tooltip), the level ring, the abilities with a gold plate over each one a point could go
 into (click it, or Ctrl + the ability's key, to learn a level), the inventory with its round
 neutral and town portal slots, and the gold (click it to open the shop) beside the courier's
-buttons. Talents: the round button left of the abilities opens the talent tree, lit while you
-have a point for it; click a talent, or the Attribute Bonus under the tiers, to learn it. The Glyph
-of Fortification is the round button against the minimap. Buffs and debuffs of the selected unit
-sit above the abilities. The stash shows in the shop's corner while the shop is open or at the
-home shop; there GRAB ALL moves what it holds into the bag, a slot a tick.
+buttons. Talents: the round button left of the abilities opens the talent tree, lit while you have
+a point for it; click a talent, or the Attribute Bonus under the tiers, to learn it. The Glyph of
+Fortification is the round button against the minimap. Buffs and debuffs of the selected unit sit
+above the abilities. The stash shows in the shop's corner while the shop is open or at the home
+shop; there GRAB ALL moves what it holds into the bag, a slot a tick. A dead hero's portrait, in
+the panel and in the top bar (either side's), turns grey with its respawn seconds over it. Health
+bars are the side's colour whoever watches: Radiant green, Dire red.
 
 The scoreboard is Dota's, at its sizes: each side's kills and name, and a row for each seat with
 its colour, hero, player's and hero's names, talents, level, gold, net worth (gold and the items
@@ -191,7 +193,7 @@ times as needed) sets what the picture may cost:
 | `fps_cap` | frames a second at most, `0` for none | `0` |
 | `gpu_batching` | cull and batch draws on the GPU with compute shaders; off for a software renderer, which runs them several times slower | `true` |
 | `auto_quality` | lower anti-aliasing, shadows, then resolution while frames run slower than the cap (or 30 fps) | `false` |
-| `visual_clarity` | sets units apart from the ground: the scenery a little duller and darker, shade around the forest, a soft dark disc under every unit and a faint light round its rim; `off`, `low` or `high` | `high` |
+| `visual_clarity` | sets units apart from the ground: the scenery a little duller and darker, shade around the forest, the units a little more vivid, a soft dark disc under every unit and a ring at every hero's feet; `off` (as Dota: no outline, the side's ring under what is selected, a closing ring on what the cursor comes onto), `low` or `high` | `off` |
 | `animate_portrait` | Dota's "Animate Portrait": the bottom panel's portrait plays the unit's idle animation, drawn up to 30 times a second; off, it shows Dota's picture of a hero, or a render of another unit's model made once | `false` |
 
 `medium` is shadows `low`, `anti_aliasing` `fxaa` and 2048 textures; `low` adds no shadows, no anti-aliasing,
@@ -230,8 +232,8 @@ the player's own Dota 2 folder inside the browser (nothing is uploaded) and has 
 ## Checking the picture
 
 `tools/visual_check.sh REPLAY.brp` measures dbota's picture of a recorded Map 2 match:
-fogged ground at most 50% of its own unfogged luminance and 45% of its saturation, seen ground untouched, and a 1–5 cell border (each cell is measured drawn with the fog and without it, so any tick works; `VISUAL_TICK`, `VISUAL_RUNS` and `VISUAL_DIR` set the tick, the repeats of the hero-model check (cold and warm, the animated portrait on and off) and the output folder), seen from both seats: every hero model loads whole, each part on the hero's own skeleton and no scene replaced once drawn, and is drawn with detail, buildings stand as the map places them, enemy buildings are seen through the fog and the enemy base is fogged, no range rings without `Alt`, no gold or souls
-in the top-left block, round buff icons. It needs the asset cache and a display, and exits non-zero when a check fails.
+fogged ground at most 50% of its own unfogged luminance and 45% of its saturation, seen ground untouched, and a 1–5 cell border (each cell is measured drawn with the fog and without it, so any tick works; `VISUAL_TICK`, `VISUAL_RUNS` and `VISUAL_DIR` set the tick, the repeats of the hero-model check (cold and warm, the animated portrait on and off) and the output folder), seen from both seats: every hero model loads whole, each part on the hero's own skeleton and no scene replaced once drawn, and is drawn with detail, buildings stand as the map places them, enemy buildings are seen through the fog and the enemy base is fogged, no range rings without `Alt`, only the menu's
+buttons in the top-left block, every hero's health bar in its side's colour, round buff icons. It needs the asset cache and a display, and exits non-zero when a check fails.
 
 `tools/bench.sh REPLAY.brp` measures the binary's size, cold and warm start, and the frame times,
 CPU, RAM and VRAM of a busy stretch of the replay and of a live match against a local

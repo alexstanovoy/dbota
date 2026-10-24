@@ -67,9 +67,11 @@ impl AntiAlias {
 }
 
 /// How strongly units and paths are set apart from the ground they stand
-/// on: the scenery a little duller and darker, shade around the forest, a
-/// dark disc under every unit's feet, and a faint light round units' rims;
-/// see `clarity.rs` and `fog.wgsl`.
+/// on: the scenery a little duller and darker, shade around the forest, the
+/// units a little more vivid, a dark disc under every unit's feet and a ring
+/// at every hero's; see `clarity.rs`, `fog.wgsl` and `overlay.rs`. Off by
+/// default, as Dota draws units: no outline, the side's ring under what is
+/// selected and a closing ring on what the cursor comes onto (`pick.rs`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Clarity {
     Off,
@@ -320,7 +322,7 @@ impl Default for Settings {
             scoreboard_items: true,
             quality: Quality::default(),
             display: DisplayMode::default(),
-            clarity: Clarity::High,
+            clarity: Clarity::Off,
             name: String::new(),
         }
     }

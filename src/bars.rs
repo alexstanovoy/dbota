@@ -6,7 +6,7 @@ use std::collections::HashMap;
 
 use bevy::prelude::*;
 use bota_client_core::{FLOATER_LIFE, FloaterKind};
-use bota_proto::{UnitKind, UnitView};
+use bota_proto::{Team, UnitKind, UnitView};
 
 use crate::config::Settings;
 use crate::map::Ground;
@@ -16,6 +16,8 @@ use crate::units::{Dying, Unit};
 
 /// Floating texts shown at once at most.
 const FLOATERS: usize = 48;
+/// The health of one's own hero on the Dire side.
+const HP_DIRE_OWN: Color = Color::srgb(1.0, 0.3, 0.24);
 
 /// One unit's bar and its parts.
 #[derive(Clone, Copy)]
@@ -40,6 +42,11 @@ impl Bars {
     pub fn has(&self, unit: Entity) -> bool {
         self.0.contains_key(&unit)
     }
+
+    /// The health fill of a unit root's bar.
+    pub fn fill(&self, unit: Entity) -> Option<Entity> {
+        self.0.get(&unit).map(|bar| bar.fill)
+    }
 }
 
 /// The pool of floating texts.
@@ -62,7 +69,39 @@ pub fn plugin(app: &mut App) {
             (bars, floaters)
                 .after(bevy::camera::CameraUpdateSystems)
                 .before(bevy::ui::UiSystems::Layout),
-        );
+        )
+        .add_systems(Update, hover_outline.after(crate::pick::update));
+}
+
+/// The outline of a bar: dark, and light while its unit is under the
+/// cursor, as Dota lights a hovered unit's bar
+/// (`dota_hud_healthbar_hoveroutline_alpha`).
+const OUTLINE: Color = Color::srgba(0.0, 0.0, 0.0, 0.9);
+const OUTLINE_HOVERED: Color = Color::srgba(1.0, 1.0, 1.0, 0.9);
+
+/// Lights the bar of the unit a click would get, and dims the one lit
+/// before.
+fn hover_outline(
+    hover: Res<crate::pick::Hover>,
+    index: Res<crate::units::UnitIndex>,
+    bars: Res<Bars>,
+    mut outlines: Query<&mut Outline>,
+    mut lit: Local<Option<Entity>>,
+) {
+    let now = hover
+        .left()
+        .and_then(|(id, _)| index.0.get(&id))
+        .and_then(|unit| bars.0.get(unit))
+        .map(|bar| bar.root);
+    if now == *lit {
+        return;
+    }
+    for (root, color) in [(*lit, OUTLINE), (now, OUTLINE_HOVERED)] {
+        if let Some(mut outline) = root.and_then(|r| outlines.get_mut(r).ok()) {
+            outline.color = color;
+        }
+    }
+    *lit = now;
 }
 
 fn spawn_layer(mut commands: Commands, fonts: Res<Fonts>, mut pool: ResMut<Floaters>) {
@@ -117,7 +156,7 @@ fn spawn_bar(commands: &mut Commands, layer: Entity, fonts: &Fonts, kind: UnitKi
         .spawn((
             ui::absolute(0.0, 0.0, w, h),
             BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.85)),
-            Outline::new(px(1.0), px(0.0), Color::srgba(0.0, 0.0, 0.0, 0.9)),
+            Outline::new(px(1.0), px(0.0), OUTLINE),
             Visibility::Hidden,
             ChildOf(layer),
         ))
@@ -404,16 +443,15 @@ fn set(
     }
 }
 
-/// The colour of a unit's health: one's own hero brightest, friends green,
-/// foes red; a spectator sees Radiant green and Dire red.
-fn bar_color(core: &bota_client_core::App, u: &UnitView) -> Color {
-    if Some(u.id) == core.my_hero() {
-        return ui::HP_MINE;
-    }
-    match core.fog_team().or(core.my_team()) {
-        Some(side) if side == u.team => ui::HP_FRIEND,
-        Some(_) => ui::HP_FOE,
-        None => crate::overlay::team_color(u.team),
+/// The colour of a unit's health by its side, the same whoever watches:
+/// Radiant green, Dire and the neutrals red; one's own hero's brighter.
+pub fn bar_color(core: &bota_client_core::App, u: &UnitView) -> Color {
+    let own = Some(u.id) == core.my_hero();
+    match (u.team, own) {
+        (Team::Radiant, true) => ui::HP_MINE,
+        (Team::Radiant, false) => ui::HP_FRIEND,
+        (_, true) => HP_DIRE_OWN,
+        (_, false) => ui::HP_FOE,
     }
 }
 
