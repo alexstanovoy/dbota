@@ -167,11 +167,11 @@ fn without_a_service_the_menu_is_local_and_takes_typed_text() {
     played("a local menu", result, &script);
 }
 
-/// Dota's LEAVE GAME: from a seat in a match under way it asks, then abandons the match: the
+/// Dota's LEAVE GAME: from a seat in a match under way it asks, then leaves the match: the
 /// other seat is told it won, and the client is back at its menu.
 #[test]
 #[ignore = "opens a window: tools/visual_check.sh runs it on a display"]
-fn leaving_a_game_abandons_it_and_the_other_side_wins() {
+fn leaving_a_game_loses_it_and_the_other_side_wins() {
     use bota_client_core::{Link, play};
     use bota_proto::HeroId;
     let scratch = Scratch::new("leave");
@@ -179,14 +179,24 @@ fn leaving_a_game_abandons_it_and_the_other_side_wins() {
     // The first to join holds the first seat; dbota takes the second.
     let (mut link, seated) =
         Link::join(&address, "stays", HeroId::SHADOW_FIEND, None).expect("a seat");
-    let stays = std::thread::spawn(move || play(&mut link, seated, &mut (), |_| Vec::new()));
+    let (done, outcome) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = done.send(play(&mut link, seated, &mut (), |_| Vec::new()));
+    });
     let script = "await:game;click:pick shadow fiend;click:pick ready;wait:8;key:Escape;await:menu;\
                   wait:1;shot:leave-dashboard.png;click:leave game;await:popup;shot:leave-confirm.png;\
                   click:ok;await:button:quit;shot:leave-menu.png;click:quit;await:popup;click:ok";
     let result = run(&scratch, &["--addr", &address], script);
-    let outcome = stays
-        .join()
-        .expect("the other seat")
+    // A seat that did not leave keeps the other one playing for good: end the server then, so a
+    // failure fails at once instead of holding the run.
+    if result.0 != Some(0) || result.1.contains("timed out") {
+        let _ = server.kill();
+        let _ = server.wait();
+        played("a seat that leaves", result.clone(), script);
+    }
+    let outcome = outcome
+        .recv_timeout(PATIENCE)
+        .expect("the other seat saw the end in time")
         .expect("it saw the end");
     let _ = server.kill();
     let _ = server.wait();

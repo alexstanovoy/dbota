@@ -120,7 +120,7 @@ pub enum Act {
     /// Leaves the game under the dashboard: a seat at once (it can be taken
     /// again), watching after asking.
     Disconnect,
-    /// The dashboard's LEAVE GAME: asks, then abandons the match under way.
+    /// The dashboard's LEAVE GAME: asks, then leaves the match under way.
     LeaveGame,
     /// Takes the seat of the game left again.
     Reconnect,
@@ -175,8 +175,8 @@ pub enum Confirm {
     Quit,
     /// Stop watching the game or replay under the dashboard.
     Leave,
-    /// Leave the match under way for good (Dota's LEAVE GAME): an abandon, which loses it.
-    Abandon,
+    /// Leave the match under way for good (Dota's LEAVE GAME): the leaver's team loses it.
+    LeaveGame,
 }
 
 /// How the game on screen is had.
@@ -332,8 +332,8 @@ struct Download {
     done: std::path::PathBuf,
 }
 
-/// How long the connection stays open after a seat abandoned, for the message to go out.
-const ABANDON_FLUSH: std::time::Duration = std::time::Duration::from_millis(500);
+/// How long the connection stays open after a seat left the game, for the message to go out.
+const LEAVE_GAME_FLUSH: std::time::Duration = std::time::Duration::from_millis(500);
 /// The longest replay taken from the service, bytes.
 const MAX_REPLAY_BYTES: u64 = 64 << 20;
 /// Finished matches listed under MY GAMES.
@@ -420,9 +420,9 @@ pub struct MenuCore {
     quit: bool,
     /// The player left the game: the shell lets it go.
     leave: bool,
-    /// The player confirmed abandoning the match: the shell tells the server, then leaves.
-    abandon: bool,
-    /// When the connection may be closed after the abandon went out.
+    /// The player confirmed leaving the match: the shell tells the server, then leaves.
+    leave_game: bool,
+    /// When the connection may be closed after the leave went out.
     leave_at: Option<Instant>,
     /// The name this player goes by where there is no account: the
     /// settings' profile name.
@@ -500,7 +500,7 @@ impl MenuCore {
             last_seat: None,
             quit: false,
             leave: false,
-            abandon: false,
+            leave_game: false,
             leave_at: None,
             profile: String::new(),
             replays: Vec::new(),
@@ -599,14 +599,14 @@ impl MenuCore {
         std::mem::take(&mut self.leave)
     }
 
-    /// The player confirmed abandoning the match, once; the connection closes
-    /// [`ABANDON_FLUSH`] later.
-    pub fn take_abandon(&mut self) -> bool {
-        let abandon = std::mem::take(&mut self.abandon);
-        if abandon {
-            self.leave_at = Some(Instant::now() + ABANDON_FLUSH);
+    /// The player confirmed leaving the match, once; the connection closes
+    /// [`LEAVE_GAME_FLUSH`] later.
+    pub fn take_leave_game(&mut self) -> bool {
+        let left = std::mem::take(&mut self.leave_game);
+        if left {
+            self.leave_at = Some(Instant::now() + LEAVE_GAME_FLUSH);
         }
-        abandon
+        left
     }
 
     /// Whether a game is on screen or under the dashboard.
@@ -1324,7 +1324,7 @@ impl MenuCore {
             Act::Answer(yes) => match self.confirm.take() {
                 Some(Confirm::Quit) if yes => self.quit = true,
                 Some(Confirm::Leave) if yes => self.leave = true,
-                Some(Confirm::Abandon) if yes => self.abandon = true,
+                Some(Confirm::LeaveGame) if yes => self.leave_game = true,
                 _ => {}
             },
             Act::Back => self.back(),
@@ -1351,7 +1351,7 @@ impl MenuCore {
             }
             Act::LeaveGame => {
                 if self.in_game() && self.kind == GameKind::Play && self.game_unsafe {
-                    self.confirm = Some(Confirm::Abandon);
+                    self.confirm = Some(Confirm::LeaveGame);
                 }
             }
             Act::Reconnect => {

@@ -218,8 +218,9 @@ const QUIT_TEXT_UNSAFE: &str = "Leaving a game before it has finished may ruin t
 other players.  Do you really wish to quit dbota?";
 /// Leaving a match under way for good (worded after `DOTA_ConfirmQuitDescUnsafe`; Dota's own
 /// text for LEAVE GAME was not available, so this is an approximation).
-const ABANDON_TITLE: &str = "Confirm Leave Game";
-const ABANDON_TEXT: &str = "Leaving the game now abandons it, and you will lose it.  Do you really wish to leave the game?";
+const LEAVE_GAME_TITLE: &str = "Confirm Leave Game";
+const LEAVE_GAME_TEXT: &str =
+    "Leaving the game now ends it, and you will lose it.  Do you really wish to leave the game?";
 /// Dota's popup for leaving a game watched or a replay
 /// (`popup_confirm_close_replay`).
 const LEAVE_TITLE: &str = "Confirm Disconnect";
@@ -240,8 +241,8 @@ pub struct MenuView {
     pub game: Option<GameKind>,
     /// A seat left that can be taken again (Dota's RECONNECT).
     pub reconnect: bool,
-    /// A match under way is played from this seat: LEAVE GAME abandons it.
-    pub can_abandon: bool,
+    /// A match under way is played from this seat: LEAVE GAME leaves it for good.
+    pub can_leave_game: bool,
     pub confirm: Option<ConfirmView>,
     /// Whether there is a client to quit: a browser's page has none.
     pub can_quit: bool,
@@ -276,7 +277,7 @@ impl MenuCore {
             waits,
             offer,
             game: self.in_game().then_some(self.kind),
-            can_abandon: self.in_game() && self.kind == GameKind::Play && self.game_unsafe,
+            can_leave_game: self.in_game() && self.kind == GameKind::Play && self.game_unsafe,
             reconnect: self.reconnect.is_some() && !self.in_game() && !self.launching,
             confirm: self.confirm.map(|c| match c {
                 Confirm::Quit => ConfirmView {
@@ -287,9 +288,9 @@ impl MenuCore {
                         QUIT_TEXT
                     },
                 },
-                Confirm::Abandon => ConfirmView {
-                    title: ABANDON_TITLE,
-                    text: ABANDON_TEXT,
+                Confirm::LeaveGame => ConfirmView {
+                    title: LEAVE_GAME_TITLE,
+                    text: LEAVE_GAME_TEXT,
                 },
                 Confirm::Leave => ConfirmView {
                     title: LEAVE_TITLE,
@@ -431,7 +432,7 @@ impl MenuCore {
             detail: view.detail,
             replay: matches!(
                 result.reason,
-                EndReason::Decided | EndReason::Draw | EndReason::Abandon
+                EndReason::Decided | EndReason::Draw | EndReason::Left
             ),
         }
     }
@@ -495,10 +496,10 @@ impl MenuCore {
         };
         let reason = match result.reason {
             EndReason::Decided | EndReason::Draw => "",
-            EndReason::Abandoned => " · abandoned: nobody stayed",
+            EndReason::Abandoned => " · nobody played",
             EndReason::Crashed => " · the game server failed",
             EndReason::Stopped => " · stopped by the service",
-            EndReason::Abandon => " · a player left",
+            EndReason::Left => " · a player left",
         };
         let report = bota_radovid::decode_report(result);
         let hero = |slot: u8| {

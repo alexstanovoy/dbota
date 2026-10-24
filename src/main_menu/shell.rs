@@ -229,7 +229,7 @@ fn guard(
     let Some(mut core) = core else {
         return;
     };
-    if core.take_abandon() {
+    if core.take_leave_game() {
         session.0.leave_game();
     }
     let game = &session.0;
