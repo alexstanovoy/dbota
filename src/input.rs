@@ -78,6 +78,7 @@ pub fn plugin(app: &mut App) {
                 crate::chat::typing,
                 keys,
                 crate::pick::update,
+                crate::pings::send,
                 mouse,
                 boxes,
             )

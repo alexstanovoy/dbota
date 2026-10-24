@@ -50,6 +50,9 @@ enum Kind {
     HeroArrived,
     /// A hero gone by a teleport.
     HeroLeft,
+    /// A ping heard, and a warning.
+    Ping,
+    PingDanger,
 }
 
 /// The loops of one teleport under way, and what its landing needs.
@@ -98,6 +101,9 @@ fn sources_of(kind: Kind) -> (&'static [&'static str], Option<Sfx>) {
         Kind::PortalLeaving => (&["sound.portal.loop_disappear"], None),
         Kind::HeroArrived => (&["sound.portal.hero_appear"], None),
         Kind::HeroLeft => (&["sound.portal.hero_disappear"], None),
+        // Not in every cache: a ping is silent where Dota's sound is absent.
+        Kind::Ping => (&["sound.ping.regular"], None),
+        Kind::PingDanger => (&["sound.ping.danger"], None),
     }
 }
 
@@ -131,6 +137,8 @@ fn load(
         Kind::PortalLeaving,
         Kind::HeroArrived,
         Kind::HeroLeft,
+        Kind::Ping,
+        Kind::PingDanger,
     ]);
     for kind in kinds {
         let (names, stand_in) = sources_of(kind);
@@ -181,6 +189,7 @@ fn play(
     settings: Res<Settings>,
     args: Res<crate::Args>,
     fog: Res<crate::fog::FogGrid>,
+    mut last_ping: Local<Option<bota_proto::Heard>>,
 ) {
     for (_, voice) in &mut voices.0 {
         voice.rest = (voice.rest - time.delta_secs()).max(0.0);
@@ -209,6 +218,16 @@ fn play(
         sound(Kind::Cue(cue.kind), cue.gain, cue.at);
     }
     shots(core, &fog, &mut sound);
+    for kind in crate::pings::fresh(core, &mut last_ping) {
+        sound(
+            match kind {
+                bota_proto::PingKind::Regular => Kind::Ping,
+                bota_proto::PingKind::Danger => Kind::PingDanger,
+            },
+            1.0,
+            None,
+        );
+    }
 }
 
 /// How much of its volume a sound at a place keeps for a listener at `focus`.

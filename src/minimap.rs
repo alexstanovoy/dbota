@@ -25,8 +25,9 @@ pub const SIDE: f32 = 250.0;
 const PHOTO: u32 = 512;
 /// Unit marks shown at most.
 const MARKS: usize = 160;
-/// Teleport pings shown at most.
-const PINGS: usize = 10;
+/// Rings shown at most: teleports first, then what the side's players have
+/// pinged.
+const PINGS: usize = 10 + crate::pings::MARKS;
 /// Interface pixels across a ping at its smallest and at its widest.
 const PING_SIZES: (f32, f32) = (10.0, 30.0);
 /// Ticks one swell of a ping takes.
@@ -256,9 +257,10 @@ fn marks(
         image.image = veil.0.clone();
     }
     let me = core.my_hero();
-    let shown = view.units.iter().filter(|u| {
-        !matches!(u.kind, UnitKind::Ward) && !grid.hides(u.seen_by)
-    });
+    let shown = view
+        .units
+        .iter()
+        .filter(|u| !matches!(u.kind, UnitKind::Ward) && !grid.hides(u.seen_by));
     let mut used = 0;
     for u in shown.take(MARKS) {
         let Ok((mut node, mut bg, mut vis)) = nodes.get_mut(minimap.marks[used]) else {
@@ -336,27 +338,39 @@ fn ping_size(elapsed: u32) -> f32 {
 }
 
 /// Rings the landing of every teleport under way, in its player's colour,
-/// whichever side it brings: Dota marks both, through the fog.
+/// whichever side it brings (Dota marks both, through the fog), and then
+/// every spot the side's players pinged, swelling the same way.
 fn pings(
     session: NonSend<Session>,
     minimap: Res<Minimap>,
     mut nodes: Query<(&mut Node, &mut BorderColor, &mut Visibility)>,
 ) {
     let core = &session.0;
-    let teleports = core.view().map_or(&[][..], |v| &v.teleports[..]);
-    for (at, ping) in minimap.pings.iter().enumerate() {
-        let Ok((mut node, mut border, mut visibility)) = nodes.get_mut(*ping) else {
-            continue;
-        };
-        let (Some(teleport), Some(view)) = (teleports.get(at), core.view()) else {
-            visibility.set_if_neq(Visibility::Hidden);
-            continue;
-        };
+    let Some(view) = core.view() else {
+        return;
+    };
+    let teleports = view.teleports.iter().map(|teleport| {
         let size = ping_size(teleport.ticks_total.saturating_sub(teleport.ticks_left));
-        let centre = on_map(
+        let at = Vec2::new(
             teleport.destination.x.to_f32(),
             teleport.destination.y.to_f32(),
         );
+        (at, size, crate::teleport::player_color(view, teleport.slot))
+    });
+    let marks = crate::pings::marks(core, |_| None).into_iter().map(|mark| {
+        let ticks = (mark.age * crate::pings::TICKS_PER_SECOND) as u32;
+        (mark.at, ping_size(ticks), mark.color())
+    });
+    let mut rings = teleports.chain(marks);
+    for ping in &minimap.pings {
+        let Ok((mut node, mut border, mut visibility)) = nodes.get_mut(*ping) else {
+            continue;
+        };
+        let Some((at, size, color)) = rings.next() else {
+            visibility.set_if_neq(Visibility::Hidden);
+            continue;
+        };
+        let centre = on_map(at.x, at.y);
         node.set_if_neq(Node {
             left: px(centre.x - size / 2.0),
             top: px(centre.y - size / 2.0),
@@ -364,10 +378,7 @@ fn pings(
             height: px(size),
             ..node.clone()
         });
-        border.set_if_neq(BorderColor::all(crate::teleport::player_color(
-            view,
-            teleport.slot,
-        )));
+        border.set_if_neq(BorderColor::all(color));
         visibility.set_if_neq(Visibility::Inherited);
     }
 }
@@ -381,7 +392,13 @@ fn clicks(
     window: Single<&Window, With<PrimaryWindow>>,
     mut cam: Single<&mut RtsCamera>,
     ground: Res<Ground>,
+    fired: Res<crate::keys::Fired>,
+    mut pinged: Local<bool>,
 ) {
+    // A ping's click, held on, drags nothing.
+    if !buttons.pressed(MouseButton::Left) {
+        *pinged = false;
+    }
     let Ok((interaction, computed, transform)) = frames.get(minimap.frame) else {
         return;
     };
@@ -398,7 +415,18 @@ fn clicks(
     let k = ((cursor - (center - half)) / (half * 2.0)).clamp(Vec2::ZERO, Vec2::ONE);
     let (x, y) = (k.x * MAP_SIZE, (1.0 - k.y) * MAP_SIZE);
     let core = &mut session.0;
-    if buttons.pressed(MouseButton::Left) && core.held_item.is_none() {
+    if let Some(kind) = crate::pings::pressed(&fired) {
+        *pinged = true;
+        if crate::pings::may(core) {
+            let at = bota_client_core::world_vec((x, y));
+            core.ping(bota_proto::Ping {
+                kind,
+                at: bota_proto::PingAt::Spot(at),
+            });
+        }
+        return;
+    }
+    if buttons.pressed(MouseButton::Left) && core.held_item.is_none() && !*pinged {
         core.pinned = None;
         cam.focus = Vec3::new(x, ground.at(x, y), -y);
     }

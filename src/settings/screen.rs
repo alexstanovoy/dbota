@@ -213,7 +213,15 @@ fn capture(
         }
     }
     for event in mouse.read() {
-        if event.state == ButtonState::Pressed && keys::bindable_mouse(event.button) {
+        let modified = held.any_pressed([
+            KeyCode::ShiftLeft,
+            KeyCode::ShiftRight,
+            KeyCode::ControlLeft,
+            KeyCode::ControlRight,
+            KeyCode::AltLeft,
+            KeyCode::AltRight,
+        ]);
+        if event.state == ButtonState::Pressed && keys::bindable_mouse(event.button, modified) {
             bound = Some(Some(mods(Chord {
                 input: Input::Mouse(event.button),
                 shift: false,

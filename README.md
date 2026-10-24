@@ -112,6 +112,7 @@ clash and resets them to the defaults; they are kept as `key.<action> = <chord>`
 | hold `` ` `` | the scoreboard (the menu's button at the top left pins it open, `Esc` lets it go) |
 | `\` | console line to the server (a live match on a server started with `--cheats`); `Enter` sends, `Esc` drops it |
 | `Enter` / `Shift+Enter` | chat to your allies / to everyone (a spectator: to the spectators); `Enter` sends, `Esc` drops the line. Text of any script goes in, with an input method too. The log shows over the minimap and fades after ten seconds; it shows in replays as the watched side heard it |
+| `Alt` + left click / `Ctrl`+`Alt` + left click | ping the spot or the unit under the cursor (on the minimap, the spot) for your side, or warn of danger there (red). Your side's pings show for three seconds on the ground and the minimap, in the pinger's colour, and in a replay seen through a seat's eyes |
 | minimap | left click or drag moves the camera; right click orders your hero there |
 | Arrows, screen edges, middle button held | pan the camera (all four edges, the HUD bars included; the middle button drags the map); mouse wheel zooms |
 | hold `Alt` | show attack, tower and ability ranges and the neutral camps' spawn boxes (they are never drawn otherwise) |

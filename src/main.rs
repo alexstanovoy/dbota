@@ -46,6 +46,7 @@ mod mapfile;
 mod minimap;
 mod overlay;
 mod pick;
+mod pings;
 mod portrait;
 mod quality;
 mod scoreboard;
@@ -389,6 +390,7 @@ fn main() -> AppExit {
             chat::plugin,
             input::plugin,
             pick::plugin,
+            pings::plugin,
             minimap::plugin,
             portrait::plugin,
             stats::plugin,

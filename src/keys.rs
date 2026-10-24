@@ -196,6 +196,10 @@ pub enum Action {
     ChatTeam,
     /// Opens the chat line to everyone.
     ChatAll,
+    /// Pings the cursor's spot or unit for one's side.
+    Ping,
+    /// The same, as a warning.
+    PingDanger,
     /// Opens the console line.
     Console,
     /// Lets go of what is half done, closes what is open, else opens the
@@ -253,7 +257,7 @@ use Group::{Abilities, Camera, Interface, Items, Shop as ShopGroup, Units, Watch
 /// Every action, Dota's default of each (the `dotakeys.lst` command in the
 /// comment; `-` for dbota's own), in the settings screen's order.
 #[rustfmt::skip]
-pub const BINDINGS: [Binding; 55] = [
+pub const BINDINGS: [Binding; 57] = [
     row(Action::Ability(0), "ability_1", "Ability 1", Abilities, Play, key(KeyCode::KeyQ)), // AbilityPrimary1
     row(Action::Ability(1), "ability_2", "Ability 2", Abilities, Play, key(KeyCode::KeyW)), // AbilityPrimary2
     row(Action::Ability(2), "ability_3", "Ability 3", Abilities, Play, key(KeyCode::KeyE)), // AbilityPrimary3
@@ -305,6 +309,8 @@ pub const BINDINGS: [Binding; 55] = [
     row(Action::Scoreboard, "scoreboard", "Scoreboard (held)", Interface, Both, key(KeyCode::Backquote)), // ScoreboardToggle (SpectatorScoreboard the same)
     row(Action::ChatTeam, "chat_team", "Chat to allies", Interface, Play, key(KeyCode::Enter)), // ChatTeam
     row(Action::ChatAll, "chat_all", "Chat to all", Interface, Play, Some(Chord::key(KeyCode::Enter).shift())), // ChatGlobal (ChatTeam with Shift)
+    row(Action::Ping, "ping", "Ping", Interface, Play, Some(Chord { input: Input::Mouse(MouseButton::Left), shift: false, ctrl: false, alt: true })), // - (Dota pings on Alt+click)
+    row(Action::PingDanger, "ping_danger", "Ping: danger", Interface, Play, Some(Chord { input: Input::Mouse(MouseButton::Left), shift: false, ctrl: true, alt: true })), // - (Dota warns on Ctrl+Alt+click)
     row(Action::Console, "console", "Console", Interface, Both, key(KeyCode::Backslash)), // Console
     row(Action::Escape, "escape", "Close / settings", Interface, Both, key(KeyCode::Escape)), // Escape
     row(Action::Pause, "pause", "Pause", Watching, Watch, key(KeyCode::F9)), // Pause
@@ -546,7 +552,9 @@ const KEY_NAMES: [(&str, KeyCode); 88] = [
 ];
 
 /// The mouse buttons a binding may name: Dota's MOUSE3 is the middle one.
-const MOUSE_NAMES: [(&str, MouseButton); 3] = [
+const MOUSE_NAMES: [(&str, MouseButton); 5] = [
+    ("Mouse1", MouseButton::Left),
+    ("Mouse2", MouseButton::Right),
     ("Mouse3", MouseButton::Middle),
     ("Mouse4", MouseButton::Back),
     ("Mouse5", MouseButton::Forward),
@@ -586,9 +594,12 @@ fn input_named(name: &str) -> Option<Input> {
     })
 }
 
-/// Whether a mouse button may be bound.
-pub fn bindable_mouse(button: MouseButton) -> bool {
-    MOUSE_NAMES.iter().any(|(_, b)| *b == button)
+/// Whether a mouse button may be bound: the left and right ones only with a
+/// modifier, since a click alone is the game's own and is also what starts
+/// binding.
+pub fn bindable_mouse(button: MouseButton, modified: bool) -> bool {
+    let plain = matches!(button, MouseButton::Left | MouseButton::Right);
+    MOUSE_NAMES.iter().any(|(_, b)| *b == button) && (modified || !plain)
 }
 
 #[cfg(test)]
@@ -622,6 +633,18 @@ mod tests {
             repeat: false,
             window,
         });
+        app.update();
+    }
+
+    /// Presses `button` as the window would report it, and runs a frame.
+    fn click(app: &mut App, button: MouseButton) {
+        let window = app.world_mut().spawn_empty().id();
+        app.world_mut()
+            .write_message(bevy::input::mouse::MouseButtonInput {
+                button,
+                state: ButtonState::Pressed,
+                window,
+            });
         app.update();
     }
 
@@ -661,6 +684,23 @@ mod tests {
         assert!(fired(&app).pressed.is_empty(), "a line has the keyboard");
     }
 
+    /// Alt+click pings, Ctrl+Alt+click warns, and neither fires the other.
+    #[test]
+    fn a_ping_click_is_told_from_a_danger_click() {
+        let mut app = app(Settings::default());
+        key(&mut app, KeyCode::AltLeft, ButtonState::Pressed);
+        click(&mut app, MouseButton::Left);
+        assert!(fired(&app).pressed(Action::Ping));
+        assert!(!fired(&app).pressed(Action::PingDanger));
+        app.world_mut()
+            .resource_mut::<ButtonInput<MouseButton>>()
+            .release(MouseButton::Left);
+        key(&mut app, KeyCode::ControlLeft, ButtonState::Pressed);
+        click(&mut app, MouseButton::Left);
+        assert!(fired(&app).pressed(Action::PingDanger));
+        assert!(!fired(&app).pressed(Action::Ping));
+    }
+
     /// The defaults are the table's, Dota's hotkeys: the ability keys, the
     /// inventory on Z to N, the control groups on the digits, the shop on
     /// F4, the console on the backslash.
@@ -686,6 +726,8 @@ mod tests {
             (Action::ChatAll, "Shift+Enter"),
             (Action::CameraGrip, "Mouse3"),
             (Action::Scoreboard, "`"),
+            (Action::Ping, "Alt+Mouse1"),
+            (Action::PingDanger, "Ctrl+Alt+Mouse1"),
         ] {
             assert_eq!(settings.label(action), chord, "{action:?}");
         }
