@@ -859,7 +859,10 @@ fn particle(src: &impl Source, pak: &Vpk, path: &str, dest: &str, out: &mut Out<
         }
         match particle_texture(src, pak, vtex, dir, out) {
             Ok(texture) => textures.push(texture),
-            // A renderer without its texture draws nothing; the rest of the system plays.
+            // A renderer without its texture draws nothing; the rest of the system plays. A
+            // texture the install does not ship at all (Dota's own Blood Grenade names one)
+            // is no failure of the import: there is nothing of it to convert.
+            Err(heatel::Error::NotFound(_)) => {}
             Err(err) => out.report.failed.push((vtex.to_owned(), err.to_string())),
         }
     }
