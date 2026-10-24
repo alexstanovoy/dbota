@@ -230,6 +230,14 @@ fn bench(
     let Some(seconds) = args.bench else {
         return;
     };
+    // A replay that cannot be read never makes the scene whole: the timing
+    // ends at once, with the error `session` said.
+    if let bota_client_core::Source::Replay(player) = &session.0.source
+        && player.error().is_some()
+    {
+        exit.write(AppExit::error());
+        return;
+    }
     let now = crate::since_start();
     let whole = || whole(&args, &session, &photo, &bank);
     if !state.timing(now, whole, args.bench_warmup, threads.as_deref()) {
