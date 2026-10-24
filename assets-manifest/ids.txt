@@ -207,3 +207,5 @@ effect 56 icon.glyph
 effect 57 icon.ability.pudge_flesh_heap
 effect 58 icon.ability.pudge_dismember
 effect 59 icon.ability.backdoor_protection
+# modifier_fountain_invulnerability, a risen hero's: the Rejuvenation Aura that provides it.
+effect 64 icon.ability.fountain_heal
