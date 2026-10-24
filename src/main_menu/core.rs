@@ -1015,7 +1015,12 @@ impl MenuCore {
     fn submit(&mut self) {
         match self.page {
             Page::Service => {
-                self.prefs.service = self.form.value(0).trim().to_owned();
+                let service = self.form.value(0).trim().to_owned();
+                if let Err(why) = service_address(&service) {
+                    self.tell(why, true);
+                    return;
+                }
+                self.prefs.service = service;
                 self.save_prefs();
                 self.connect();
             }
@@ -1330,4 +1335,23 @@ fn list_replays(dir: Option<&std::path::Path>) -> Vec<ReplayFile> {
         .take(MAX_REPLAYS)
         .map(|(_, f)| f)
         .collect()
+}
+
+/// Whether a typed service address can be tried at all, or what to type
+/// instead: an empty line or a game server's `host:port` would only fail
+/// later with the connection's own words.
+fn service_address(service: &str) -> Result<(), String> {
+    let host = service
+        .strip_prefix("wss://")
+        .or_else(|| service.strip_prefix("ws://"));
+    match host {
+        _ if service.is_empty() => {
+            Err("Type the service's address first: wss://host:port".to_owned())
+        }
+        Some(host) if !host.trim_end_matches('/').is_empty() => Ok(()),
+        Some(_) => Err(format!("'{service}' names no host: wss://host:port")),
+        None => Err(format!(
+            "'{service}' is not a service address: it starts with wss:// (ws:// on your own network). A game server's address goes under DIRECT CONNECT"
+        )),
+    }
 }
