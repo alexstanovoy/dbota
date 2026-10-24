@@ -81,6 +81,10 @@ pub fn spawn_roots(mut commands: Commands) {
     commands.spawn((OverlayRoot, ui::fill(), Pickable::IGNORE, GlobalZIndex(70)));
 }
 
+/// A button is this many times as wide as it is tall: wide enough for the longest label of its
+/// height (CREATE FOR THE LAN, WAITING…), so every button of a height is as wide as the next.
+const BUTTON_WIDTH_PER_HEIGHT: f32 = 5.0;
+
 /// What the builders need.
 pub struct Kit<'w, 's, 'a> {
     pub commands: Commands<'w, 's>,
@@ -164,8 +168,16 @@ impl Kit<'_, '_, '_> {
                     hover: look.1,
                 },
                 Node {
+                    // One width for the buttons of a height, whatever they say, so none of them
+                    // wraps or differs from its neighbour; a lone glyph (the close cross) is
+                    // square.
+                    width: px(if label.chars().count() <= 2 {
+                        height * 1.3
+                    } else {
+                        height * BUTTON_WIDTH_PER_HEIGHT
+                    }),
                     height: px(height),
-                    padding: UiRect::axes(px(height * 0.45), px(0)),
+                    padding: UiRect::axes(px(height * 0.2), px(0)),
                     justify_content: JustifyContent::Center,
                     align_items: AlignItems::Center,
                     border: UiRect::all(px(1)),
@@ -178,7 +190,11 @@ impl Kit<'_, '_, '_> {
                 ChildOf(parent),
             ))
             .id();
-        self.bold(button, label, (height * 0.38).clamp(12.0, 22.0), ui::INK);
+        let text = self.bold(button, label, (height * 0.38).clamp(12.0, 22.0), ui::INK);
+        self.commands.entity(text).insert(TextLayout {
+            linebreak: LineBreak::NoWrap,
+            ..default()
+        });
         button
     }
 

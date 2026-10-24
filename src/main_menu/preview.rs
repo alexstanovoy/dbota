@@ -90,6 +90,7 @@ fn home() -> PageView {
             name: "1x1 Mid Only".to_owned(),
             teams: "1v1".to_owned(),
             rated: true,
+            audience: "Humans and Bots",
         }],
         in_flight: (1, 2),
         cooldown: None,
@@ -272,11 +273,12 @@ pub fn view(name: &str) -> Option<MenuView> {
         ),
         "direct" => {
             let mut view = form(
-                Page::Direct,
-                FormKind::Direct,
+                Page::LocalLobby,
+                FormKind::Host,
                 vec![
-                    field("Address", "192.168.1.20:4455", false),
-                    field("Name", "alice", true),
+                    field("Port", "4455", false),
+                    field("Players", "2", false),
+                    field("Address", "192.168.1.20:4455", true),
                 ],
             );
             if let PageView::Form { plain_host, .. } = &mut view.body {

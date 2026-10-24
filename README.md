@@ -51,17 +51,16 @@ Dota 2 install. Bots don't need it.
   keeps the account out of the queues for a while); then the game opens by itself.
 - **MY GAMES**: rejoin or watch the account's running matches (an account may run several at once), cancel
   searches. **LOBBIES**: create one, join one by name and password, or from the list. Then a result screen.
-- **DIRECT CONNECT**: a game server's address, `host:port` or `tcp://` (TCP), `ws://` or `wss://`, with no
-  service at all. Plain TCP to another machine is unprotected, and dbota says so once per host.
-
-What needs no service needs no account either: LOCAL LOBBY, DIRECT CONNECT, REPLAYS and SETTINGS work
+What needs no service needs no account either: LOCAL LOBBY, REPLAYS and SETTINGS work
 signed out and with no service reachable. There, you play under the profile name of the settings
 (OPTIONS, PROFILE), as Dota's local games show your Steam name.
 
-- **LOCAL LOBBY**: a game hosted on this machine, as Dota's local lobby: dbota starts `bota_server`
+- **LOCAL LOBBY**: below its own lobby, a game server's address to join, `host:port` or `tcp://` (TCP),
+  `ws://` or `wss://`, with no service at all (PLAY, or WATCH). Plain TCP to another machine is
+  unprotected, and dbota says so once per host. Above it, a game hosted on this machine, as Dota's local lobby: dbota starts `bota_server`
   (`$BOTA_SERVER`, else beside `dbota`, else on the `PATH`) for so many players on a port, for this machine
   alone or (CREATE FOR THE LAN) for the local network too, in plain text, and seats you. The others join by
-  this machine's address under DIRECT CONNECT, which the hero screen and the LOCAL LOBBY page show while a
+  this machine's address under LOCAL LOBBY, which the hero screen and the LOCAL LOBBY page show while a
   seat is open. The server ends when you quit dbota. The seats nobody else takes (**Empty seats**) stay
   OPEN, or take the server's IDLE DUMMY (a hero that stands at its fountain and never acts, to practise or
   test alone), or a BOT: the program set as the bot command (SETTINGS, Options, LOCAL LOBBY; `bot_command`
@@ -119,7 +118,7 @@ match-found offer), `shot:FILE`, `wait:SECONDS`. A step that waits more than two
 with exit code 2.
 
 Two people without a service: start a server and connect two dbota clients (from another machine use
-`--addr <host>:4455`, or DIRECT CONNECT in the menu):
+`--addr <host>:4455`, or LOCAL LOBBY's address in the menu):
 
 ```sh
 ../bota/target/release/bota_server --map 2      # listens on 127.0.0.1:4455

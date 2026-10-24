@@ -159,7 +159,7 @@ fn without_a_service_the_menu_is_local_and_takes_typed_text() {
     let scratch = Scratch::new("local");
     let (mut server, address) = serve();
     let script = format!(
-        "await:menu;await:button:create;shot:local-first.png;click:direct connect;\
+        "await:menu;await:button:create;shot:local-first.png;key:Tab;key:Tab;key:Tab;key:Tab;\
          text:{address};click:play;await:game;wait:2;key:Escape;await:menu;click:disconnect;\
          await:button:reconnect;click:quit;await:popup;click:ok"
     );

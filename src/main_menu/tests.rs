@@ -154,6 +154,23 @@ args = ["--map", "2", "--mode", "lockstep", "--ack-timeout-ticks", "900",
         "--ws-port", "{{port}}", "--start-after-secs", "{PATIENCE}", "--abandon-unjoined",
         "--empty-after-secs", "{PATIENCE}", "--pick-secs", "1", "--tactical-secs", "0"]
 env = {{ BOTA_SEATS = "{{seats}}" }}
+
+[[ruleset]]
+id = "arena"
+name = "Bots Arena"
+game = "bota"
+game_fingerprint = "{fingerprint:016x}"
+teams = [1, 1]
+rated = true
+audience = "bots_only"
+[ruleset.launcher]
+kind = "local"
+binary = "{binary}"
+public_url = "ws://127.0.0.1:{{port}}"
+version_probe = ["--wire-fingerprint"]
+args = ["--map", "2", "--match-id", "{{match_id}}", "--bind", "127.0.0.1", "--port", "0",
+        "--ws-port", "{{port}}"]
+env = {{ BOTA_SEATS = "{{seats}}" }}
 "#,
         db = dir.join("radovid.db").display(),
         fingerprint = bota_radovid::fingerprint(),
@@ -312,8 +329,17 @@ fn two_players_register_find_accept_play_and_see_their_result() {
         assert_eq!((offer.accepted, offer.of, offer.answered), (0, 2, false));
         player.menu.act(Act::Accept(offer.proposal));
     }
-    // Both accepted: the game server starts and each menu opens its seat.
-    settle(&mut [&mut alice, &mut bob], |p| p.menu.page() == Page::Game);
+    // Both accepted: the game server starts and each menu opens its seat. What shows of the
+    // search never lapses on the way: the search, then the wait for a server, then the game.
+    settle(&mut [&mut alice, &mut bob], |p| {
+        let view = p.menu.view();
+        let game = p.menu.page() == Page::Game;
+        assert!(
+            game || !view.searches.is_empty() || !view.waits.is_empty(),
+            "neither a search, a wait nor the game shows"
+        );
+        game
+    });
     let mut games = [
         (
             open(launch_of(&mut alice), &alice.trust),
@@ -321,9 +347,22 @@ fn two_players_register_find_accept_play_and_see_their_result() {
         ),
         (open(launch_of(&mut bob), &bob.trust), HeroId::PUDGE),
     ];
-    let deadline = Instant::now() + Duration::from_secs(PATIENCE + 60);
+    // The match ends when it ends, however slowly a loaded machine plays it: only a match that
+    // stops moving is stuck.
+    let (mut furthest, mut stuck_at) = (0, Instant::now() + Duration::from_secs(PATIENCE));
     while games.iter().any(|(core, _)| core.over.is_none()) {
-        assert!(Instant::now() < deadline, "the match did not end");
+        let tick = games
+            .iter()
+            .filter_map(|(core, _)| core.view().map(|v| v.tick))
+            .max()
+            .unwrap_or(0);
+        if tick > furthest {
+            (furthest, stuck_at) = (tick, Instant::now() + Duration::from_secs(PATIENCE));
+        }
+        assert!(
+            Instant::now() < stuck_at,
+            "the match stopped at tick {furthest}"
+        );
         for (core, hero) in &mut games {
             play_step(core, *hero);
             assert!(!core.lost || core.over.is_some(), "the game was lost");
@@ -434,6 +473,15 @@ fn a_decline_puts_the_other_back_in_place_and_cools_the_decliner_down() {
     });
 }
 
+/// Types the local lobby page's address to join.
+fn type_address(menu: &mut MenuCore, address: &str) {
+    menu.act(Act::Focus(2));
+    while !menu.form.value(2).is_empty() {
+        menu.act(Act::Erase);
+    }
+    menu.act(Act::Type(address.to_owned()));
+}
+
 /// A free loopback port.
 fn free_port() -> u16 {
     std::net::TcpListener::bind("127.0.0.1:0")
@@ -523,8 +571,8 @@ fn direct_match() -> (Server, Vec<(Core, HeroId)>) {
             Page::LocalLobby,
             "no service known: the local pages"
         );
-        player.menu.act(Act::Go(Page::Direct));
-        player.fill(&[&address]);
+        player.menu.act(Act::Go(Page::LocalLobby));
+        type_address(&mut player.menu, &address);
         player.menu.act(Act::Direct(false));
         let launch = player.menu.take_launch().expect("a game to open");
         assert_eq!(
@@ -717,9 +765,8 @@ fn every_local_path_works_with_no_account_and_no_service() {
 
     // Another player joins it by its address, with no account either.
     let (mut bob, bob_trust) = offline("bob", &dir);
-    bob.act(Act::Go(Page::Direct));
-    bob.act(Act::Focus(0));
-    bob.act(Act::Type(format!("127.0.0.1:{port}")));
+    bob.act(Act::Go(Page::LocalLobby));
+    type_address(&mut bob, &format!("127.0.0.1:{port}"));
     bob.act(Act::Direct(false));
     let launch = bob.take_launch().expect("a game to join");
     assert!(matches!(&launch, Launch::Direct { name, key: Some(_), .. } if name == "bob"));
@@ -777,9 +824,8 @@ fn every_local_path_works_with_no_account_and_no_service() {
     // Watching a game by address, with no account.
     let (_watched, tcp, _) = start_server_with(&["--spectators", "open"]);
     let (mut carol, carol_trust) = offline("carol", &dir);
-    carol.act(Act::Go(Page::Direct));
-    carol.act(Act::Focus(0));
-    carol.act(Act::Type(tcp));
+    carol.act(Act::Go(Page::LocalLobby));
+    type_address(&mut carol, &tcp);
     carol.act(Act::Direct(true));
     let launch = carol
         .take_launch()
@@ -1173,25 +1219,30 @@ fn tab_walks_the_form_and_enter_presses_the_focused_button() {
     let service = service();
     let mut alice = Player::new(Some(&service));
     assert_eq!(alice.menu.page(), Page::Login);
-    let at = |p: &Player| (p.menu.form.focused(), p.menu.form.focused_button().cloned());
-    assert_eq!(at(&alice), (0, None), "the first empty field");
+    let at = |p: &Player| {
+        (
+            p.menu.form.focused_field(),
+            p.menu.form.focused_button().cloned(),
+        )
+    };
+    assert_eq!(at(&alice), (Some(0), None), "the first empty field");
     for expected in [
-        (1, None),
-        (2, Some(Act::Submit)),
-        (3, Some(Act::Go(Page::Register))),
-        (4, Some(Act::Go(Page::Service))),
-        (5, Some(Act::Go(Page::Direct))),
-        (0, None),
+        (Some(1), None),
+        (None, Some(Act::Submit)),
+        (None, Some(Act::Go(Page::Register))),
+        (None, Some(Act::Go(Page::Service))),
+        (None, Some(Act::Go(Page::LocalLobby))),
+        (Some(0), None),
     ] {
         alice.menu.act(Act::NextField);
         assert_eq!(at(&alice), expected);
     }
     alice.menu.act(Act::PreviousField);
-    assert_eq!(at(&alice), (5, Some(Act::Go(Page::Direct))));
+    assert_eq!(at(&alice), (None, Some(Act::Go(Page::LocalLobby))));
     alice.menu.act(Act::PreviousField);
     alice.menu.act(Act::PreviousField);
     alice.menu.act(Act::PreviousField);
-    assert_eq!(at(&alice), (2, Some(Act::Submit)));
+    assert_eq!(at(&alice), (None, Some(Act::Submit)));
     alice.menu.act(Act::NextField);
     alice.menu.act(Act::Submit);
     assert_eq!(alice.menu.page(), Page::Register, "Enter on CREATE ACCOUNT");
@@ -1212,5 +1263,47 @@ fn tab_walks_the_form_and_enter_presses_the_focused_button() {
             .fields()
             .iter()
             .all(|f| f.shown().is_empty())
+    );
+}
+
+/// The local lobby page walks as it is drawn: its port and players, CREATE, then the address
+/// to join with PLAY and WATCH below.
+#[test]
+fn tab_walks_the_local_lobby_page_in_the_order_it_is_drawn() {
+    let dir = Scratch::new("tab_local");
+    let (mut alice, _trust) = offline("alice", &dir);
+    alice.act(Act::Go(Page::LocalLobby));
+    let at = |m: &MenuCore| (m.form.focused_field(), m.form.focused_button().cloned());
+    assert_eq!(at(&alice), (Some(0), None));
+    for expected in [
+        (Some(1), None),
+        (None, Some(Act::Host(false))),
+        (None, Some(Act::Host(true))),
+        (Some(2), None),
+        (None, Some(Act::Direct(false))),
+        (None, Some(Act::Direct(true))),
+        (Some(0), None),
+    ] {
+        alice.act(Act::NextField);
+        assert_eq!(at(&alice), expected);
+    }
+}
+
+/// A ruleset for bots only is not listed to a human, and the one for everyone says who may play
+/// it under its name.
+#[test]
+fn a_ruleset_for_bots_is_not_listed_to_humans() {
+    let service = service();
+    let mut alice = Player::new(Some(&service));
+    alice.register("alice");
+    let PageView::Home { rulesets, .. } = alice.menu.view().body else {
+        panic!("Play after registering");
+    };
+    assert_eq!(
+        rulesets
+            .iter()
+            .map(|r| (r.name.as_str(), r.audience))
+            .collect::<Vec<_>>(),
+        [("1x1 Mid Only", "Humans and Bots")]
     );
 }

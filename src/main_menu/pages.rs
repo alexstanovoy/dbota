@@ -11,14 +11,13 @@ use crate::ui;
 
 /// The tabs of the top bar: the service's once logged in, and what is played
 /// without it always.
-const TABS: [(Page, &str); 8] = [
+const TABS: [(Page, &str); 7] = [
     (Page::Home, "PLAY"),
     (Page::MyGames, "MY GAMES"),
     (Page::Lobbies, "LOBBIES"),
     (Page::Profile, "PROFILE"),
     (Page::LocalLobby, "LOCAL LOBBY"),
     (Page::DemoHero, "DEMO HERO"),
-    (Page::Direct, "DIRECT CONNECT"),
     (Page::Replays, "REPLAYS"),
 ];
 
@@ -113,7 +112,7 @@ pub fn draw(kit: &mut Kit, root: Entity, view: &MenuView) {
             fill,
             hosted_at,
         } => {
-            let card = form_page(
+            form_page(
                 kit,
                 body,
                 *kind,
@@ -122,10 +121,8 @@ pub fn draw(kit: &mut Kit, root: Entity, view: &MenuView) {
                 plain_host.as_deref(),
                 *fill,
                 hosted_at.as_deref(),
+                (*kind == FormKind::Host).then_some(view.host_cheats),
             );
-            if *kind == FormKind::Host {
-                cheats_toggle(kit, card, view.host_cheats);
-            }
         }
         PageView::Home {
             rulesets,
@@ -217,13 +214,16 @@ fn top_bar(kit: &mut Kit, root: Entity, view: &MenuView) {
             .id();
         kit.bold(tab, label, 17.0, tab_color(on));
     }
+    // The name first, as Dota's, then the buttons.
+    if let Some(account) = &view.account {
+        kit.text(bar, account.clone(), 16.0, ui::INK);
+    }
     kit.button(bar, "SETTINGS", Act::Go(Page::Settings), PLAIN, 30.0);
     match &view.account {
-        Some(account) => {
-            kit.text(bar, account.clone(), 16.0, ui::INK);
+        Some(_) => {
             kit.button(bar, "LOG OUT", Act::Logout, PLAIN, 30.0);
         }
-        None if view.page == Page::Direct => {
+        None if view.page == Page::LocalLobby => {
             kit.button(bar, "SIGN IN", Act::Go(Page::Login), PLAIN, 30.0);
         }
         None => {}
@@ -293,6 +293,7 @@ fn form_page(
     plain: Option<&str>,
     fill: Option<(SeatFill, bool)>,
     hosted_at: Option<&str>,
+    cheats: Option<bool>,
 ) -> Entity {
     let card = kit.panel(
         body,
@@ -314,15 +315,10 @@ fn form_page(
             "CREATE ACCOUNT",
             "Logins are 3 to 20 characters of a-z, 0-9 and _. There is no password recovery: keep it safe.",
         ),
-        FormKind::Direct => (
-            "DIRECT CONNECT",
-            "A game server's address: host:port, tcp://, ws:// or wss://. You play under your \
-             profile name (SETTINGS, Options).",
-        ),
         FormKind::Host => (
             "LOCAL LOBBY",
-            "A game hosted on this machine, no account needed: the others join by its address \
-             under DIRECT CONNECT. You play under your profile name (SETTINGS, Options).",
+            "A game hosted on this machine, no account needed, or a game server joined by its \
+             address. You play under your profile name (SETTINGS, Options).",
         ),
         FormKind::Lobby | FormKind::Replay | FormKind::None => ("", ""),
     };
@@ -330,7 +326,13 @@ fn form_page(
     if !hint.is_empty() {
         kit.text(card, hint, 14.0, ui::INK_DIM);
     }
-    for (at, field) in fields.iter().enumerate() {
+    // The local lobby's address is below the lobby it hosts.
+    let shown = if kind == FormKind::Host {
+        2
+    } else {
+        fields.len()
+    };
+    for (at, field) in fields.iter().enumerate().take(shown) {
         field_box(kit, card, at, field);
     }
     if busy {
@@ -342,10 +344,13 @@ fn form_page(
     if let Some(at) = hosted_at {
         kit.text(
             card,
-            format!("Your lobby is open: others join under DIRECT CONNECT at {at}"),
+            format!("Your lobby is open: others join by address at {at}"),
             15.0,
             ui::GOLDEN,
         );
+    }
+    if let Some(on) = cheats {
+        cheats_toggle(kit, card, on);
     }
     let row = kit.node(
         card,
@@ -367,10 +372,6 @@ fn form_page(
             kit.button(row, "CREATE ACCOUNT", Act::Submit, GREEN, 44.0);
             kit.button(row, "BACK", Act::Go(Page::Login), PLAIN, 44.0);
         }
-        FormKind::Direct => {
-            kit.button(row, "PLAY", Act::Direct(false), GREEN, 44.0);
-            kit.button(row, "WATCH", Act::Direct(true), PLAIN, 44.0);
-        }
         // One lobby at a time: while it is up, the card says where it is.
         FormKind::Host if hosted_at.is_some() => {}
         FormKind::Host => {
@@ -378,6 +379,25 @@ fn form_page(
             kit.button(row, "CREATE FOR THE LAN", Act::Host(true), PLAIN, 44.0);
         }
         FormKind::Lobby | FormKind::Replay | FormKind::None => {}
+    }
+    if let Some(address) = fields.get(2).filter(|_| kind == FormKind::Host) {
+        kit.bold(card, "JOIN BY ADDRESS", 20.0, ui::INK);
+        kit.text(
+            card,
+            "A game server's address: host:port, tcp://, ws:// or wss://.",
+            14.0,
+            ui::INK_DIM,
+        );
+        field_box(kit, card, 2, address);
+        let join = kit.node(
+            card,
+            Node {
+                column_gap: px(10),
+                ..default()
+            },
+        );
+        kit.button(join, "PLAY", Act::Direct(false), GREEN, 44.0);
+        kit.button(join, "WATCH", Act::Direct(true), PLAIN, 44.0);
     }
     if let Some(host) = plain {
         let note = kit.node(
@@ -413,7 +433,7 @@ fn form_page(
         if kind != FormKind::Service {
             kit.button(links, "CHANGE SERVICE", Act::Go(Page::Service), PLAIN, 28.0);
         }
-        kit.button(links, "DIRECT CONNECT", Act::Go(Page::Direct), PLAIN, 28.0);
+        kit.button(links, "LOCAL LOBBY", Act::Go(Page::LocalLobby), PLAIN, 28.0);
     }
     card
 }
@@ -512,7 +532,7 @@ fn home(
         let rated = if ruleset.rated { "ranked" } else { "unranked" };
         kit.text(
             about,
-            format!("{} · {rated}", ruleset.teams),
+            format!("{} · {rated} · {}", ruleset.teams, ruleset.audience),
             15.0,
             ui::INK_DIM,
         );
@@ -709,12 +729,7 @@ fn replays_page(kit: &mut Kit, body: Entity, list: &[ReplayRow], fields: &[Field
     );
     kit.bold(column, "REPLAYS", 30.0, ui::INK);
     if list.is_empty() {
-        kit.text(
-            column,
-            "No replays yet: a local lobby keeps its games' here.",
-            16.0,
-            ui::INK_DIM,
-        );
+        kit.text(column, "No replays yet", 16.0, ui::INK_DIM);
     }
     for (at, replay) in list.iter().enumerate() {
         let row = kit.panel(
@@ -800,7 +815,7 @@ fn seat_fill(kit: &mut Kit, card: Entity, chosen: SeatFill, bot_set: bool) {
         kit.button(row, label, Act::Fill(fill), look, 34.0);
     }
     let note = match chosen {
-        SeatFill::Open => "Others join by this machine's address under DIRECT CONNECT.",
+        SeatFill::Open => "Others join by this machine's address, typed under JOIN BY ADDRESS.",
         SeatFill::Dummy => {
             "A hero that stands at its fountain and never acts: to practise or test alone."
         }

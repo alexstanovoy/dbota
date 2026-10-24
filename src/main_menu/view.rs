@@ -28,6 +28,8 @@ pub struct RulesetRow {
     /// Team sizes, `1v1`.
     pub teams: String,
     pub rated: bool,
+    /// Who may play it: `Humans and Bots`, `Humans` or `Bots`.
+    pub audience: &'static str,
 }
 
 /// A queue entry and where it stands.
@@ -263,7 +265,7 @@ impl MenuCore {
         let client = self.client.as_ref().filter(|_| self.logged_in());
         let account = client
             .and_then(|c| c.me())
-            .map(|me| text::who(&me.nickname, me.id.0));
+            .map(|me| text::line(&me.nickname, text::NAME));
         let (searches, waits, offer) = client.map_or_else(Default::default, |c| {
             let names = |id: &RulesetId| ruleset_name(c, id);
             (search_rows(c, &names), wait_rows(c), offer_box(c, &names))
@@ -310,7 +312,7 @@ impl MenuCore {
             .map(|(at, f)| FieldView {
                 label: f.label,
                 shown: f.shown(),
-                focused: at == self.form.focused(),
+                focused: Some(at) == self.form.focused_field(),
             })
             .collect()
     }
@@ -322,16 +324,14 @@ impl MenuCore {
 
     fn body(&self) -> PageView {
         match self.page {
-            Page::Service | Page::Login | Page::Register | Page::Direct | Page::LocalLobby => {
-                PageView::Form {
-                    kind: self.form.kind,
-                    fields: self.fields(),
-                    busy: self.connecting() && self.page != Page::Direct,
-                    plain_host: self.plain_host.as_ref().map(|h| text::line(h, text::NAME)),
-                    fill: (self.page == Page::LocalLobby).then(|| self.fill_choice()),
-                    hosted_at: self.hosted_at().map(str::to_owned),
-                }
-            }
+            Page::Service | Page::Login | Page::Register | Page::LocalLobby => PageView::Form {
+                kind: self.form.kind,
+                fields: self.fields(),
+                busy: self.connecting() && self.page != Page::LocalLobby,
+                plain_host: self.plain_host.as_ref().map(|h| text::line(h, text::NAME)),
+                fill: (self.page == Page::LocalLobby).then(|| self.fill_choice()),
+                hosted_at: self.hosted_at().map(str::to_owned),
+            },
             Page::Home => self.home(),
             Page::MyGames => PageView::MyGames {
                 games: self
@@ -407,6 +407,7 @@ impl MenuCore {
                         .collect::<Vec<_>>()
                         .join("v"),
                     rated: r.rated,
+                    audience: audience_name(r.audience),
                 })
                 .collect(),
             in_flight: (
@@ -535,6 +536,16 @@ impl MenuCore {
     }
 }
 
+/// Who a ruleset is for, as a subtitle says.
+fn audience_name(audience: bota_radovid::proto::Audience) -> &'static str {
+    use bota_radovid::proto::Audience;
+    match audience {
+        Audience::Everyone => "Humans and Bots",
+        Audience::HumansOnly => "Humans",
+        Audience::BotsOnly => "Bots",
+    }
+}
+
 fn ruleset_name(client: &bota_radovid::Client, id: &RulesetId) -> String {
     client.rulesets().find(|r| &r.id == id).map_or_else(
         || text::line(&id.0, text::NAME),
@@ -617,7 +628,7 @@ fn lobby_row(l: &bota_radovid::proto::LobbySummary) -> LobbyRow {
     LobbyRow {
         id: l.id,
         name: text::line(&l.name, text::NAME),
-        owner: text::who(&l.owner_nickname, l.owner.0),
+        owner: text::line(&l.owner_nickname, text::NAME),
         locked: l.locked,
         members: l.members,
         seats: l.seats,
@@ -654,7 +665,7 @@ fn lobby_view(
             .members
             .iter()
             .take(bota_radovid::proto::MAX_SEATS)
-            .map(|m| (text::who(&m.nickname, m.account.0), m.team, m.ready))
+            .map(|m| (text::line(&m.nickname, text::NAME), m.team, m.ready))
             .collect(),
         waiting_approval: state.pending.len(),
         me_ready: state

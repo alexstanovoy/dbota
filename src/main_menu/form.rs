@@ -16,8 +16,8 @@ pub enum FormKind {
     Register,
     /// A lobby's name and password, to create or join one.
     Lobby,
-    Direct,
-    /// A lobby on this machine: its port and seats.
+    /// The local lobby page: a lobby hosted on this machine (port, players) and a game joined by
+    /// address.
     Host,
     /// A replay file to open.
     Replay,
@@ -54,35 +54,59 @@ impl Field {
     }
 }
 
-/// The buttons of a page's form in the order they are drawn, which Tab visits after the fields.
-fn buttons(kind: FormKind) -> Vec<Act> {
-    let links = [Act::Go(Page::Service), Act::Go(Page::Direct)];
+/// What Tab visits on a page's form, in the order it is drawn.
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum Item {
+    /// A field, by its index.
+    Field(usize),
+    Button(Act),
+}
+
+fn items(kind: FormKind, fields: usize) -> Vec<Item> {
+    let links = [Act::Go(Page::Service), Act::Go(Page::LocalLobby)];
+    let buttons = |acts: Vec<Act>| {
+        (0..fields)
+            .map(Item::Field)
+            .chain(acts.into_iter().map(Item::Button))
+            .collect()
+    };
     match kind {
         FormKind::None => Vec::new(),
-        FormKind::Service => vec![Act::Submit, Act::Go(Page::Direct)],
-        FormKind::Login => [Act::Submit, Act::Go(Page::Register)]
-            .into_iter()
-            .chain(links)
-            .collect(),
-        FormKind::Register => [Act::Submit, Act::Go(Page::Login)]
-            .into_iter()
-            .chain(links)
-            .collect(),
-        FormKind::Lobby => vec![Act::CreateLobby, Act::Submit],
-        FormKind::Direct => vec![Act::Direct(false), Act::Direct(true)],
-        FormKind::Host => vec![Act::Host(false), Act::Host(true)],
-        FormKind::Replay => vec![Act::Submit],
+        FormKind::Service => buttons(vec![Act::Submit, Act::Go(Page::LocalLobby)]),
+        FormKind::Login => buttons(
+            [Act::Submit, Act::Go(Page::Register)]
+                .into_iter()
+                .chain(links)
+                .collect(),
+        ),
+        FormKind::Register => buttons(
+            [Act::Submit, Act::Go(Page::Login)]
+                .into_iter()
+                .chain(links)
+                .collect(),
+        ),
+        FormKind::Lobby => buttons(vec![Act::CreateLobby, Act::Submit]),
+        FormKind::Host => vec![
+            Item::Field(0),
+            Item::Field(1),
+            Item::Button(Act::Host(false)),
+            Item::Button(Act::Host(true)),
+            Item::Field(2),
+            Item::Button(Act::Direct(false)),
+            Item::Button(Act::Direct(true)),
+        ],
+        FormKind::Replay => buttons(vec![Act::Submit]),
     }
 }
 
-/// A page's fields and buttons, and the one of them with the keyboard: Tab goes through the
-/// fields, then the buttons. Not `Debug`: it holds passwords.
+/// A page's fields and buttons, and the one of them with the keyboard: Tab goes through them in
+/// the order they are drawn. Not `Debug`: it holds passwords.
 #[derive(Clone)]
 pub struct Form {
     pub kind: FormKind,
     fields: Vec<Field>,
-    buttons: Vec<Act>,
-    /// An index into the fields, then the buttons.
+    items: Vec<Item>,
+    /// An index into the items.
     focus: usize,
 }
 
@@ -106,7 +130,6 @@ impl Form {
                 Field::new("Lobby name", "", false, MAX_LOBBY_NAME_LEN),
                 Field::new("Password (optional)", "", true, MAX_LOBBY_PASSWORD_LEN),
             ],
-            FormKind::Direct => vec![Field::new("Address", &prefs.direct, false, 200)],
             FormKind::Host => {
                 let or = |value: &str, default: &str| {
                     if value.is_empty() { default } else { value }.to_owned()
@@ -114,16 +137,25 @@ impl Form {
                 vec![
                     Field::new("Port", &or(&prefs.host_port, DEFAULT_PORT), false, 5),
                     Field::new("Players", &or(&prefs.host_players, "2"), false, 2),
+                    Field::new("Address", &prefs.direct, false, 200),
                 ]
             }
             FormKind::Replay => vec![Field::new("Replay file", "", false, 1024)],
         };
-        // The keyboard starts in the first empty field.
-        let focus = fields.iter().position(|f| f.value.is_empty()).unwrap_or(0);
+        // The keyboard starts in the first empty field, the local lobby's in its first.
+        let first = match kind {
+            FormKind::Host => 0,
+            _ => fields.iter().position(|f| f.value.is_empty()).unwrap_or(0),
+        };
+        let items = items(kind, fields.len());
+        let focus = items
+            .iter()
+            .position(|i| *i == Item::Field(first))
+            .unwrap_or(0);
         Form {
             kind,
             fields,
-            buttons: buttons(kind),
+            items,
             focus,
         }
     }
@@ -132,8 +164,12 @@ impl Form {
         &self.fields
     }
 
-    pub fn focused(&self) -> usize {
-        self.focus
+    /// The field with the keyboard, if a field has it.
+    pub fn focused_field(&self) -> Option<usize> {
+        match self.items.get(self.focus)? {
+            Item::Field(at) => Some(*at),
+            Item::Button(_) => None,
+        }
     }
 
     pub fn value(&self, at: usize) -> &str {
@@ -148,37 +184,39 @@ impl Form {
             .unwrap_or_default()
     }
 
+    /// Puts the keyboard in field `at`.
     pub fn focus(&mut self, at: usize) {
-        if at < self.fields.len() {
-            self.focus = at;
+        if let Some(item) = self.items.iter().position(|i| *i == Item::Field(at)) {
+            self.focus = item;
         }
     }
 
     /// Tab: the next field or button, round again after the last.
     pub fn next(&mut self) {
-        let count = self.fields.len() + self.buttons.len();
-        if count > 0 {
-            self.focus = (self.focus + 1) % count;
+        if !self.items.is_empty() {
+            self.focus = (self.focus + 1) % self.items.len();
         }
     }
 
     /// Shift+Tab.
     pub fn previous(&mut self) {
-        let count = self.fields.len() + self.buttons.len();
-        if count > 0 {
-            self.focus = (self.focus + count - 1) % count;
+        if !self.items.is_empty() {
+            self.focus = (self.focus + self.items.len() - 1) % self.items.len();
         }
     }
 
     /// The button with the keyboard, if a button has it.
     pub fn focused_button(&self) -> Option<&Act> {
-        self.buttons.get(self.focus.checked_sub(self.fields.len())?)
+        match self.items.get(self.focus)? {
+            Item::Button(act) => Some(act),
+            Item::Field(_) => None,
+        }
     }
 
     /// Types into the focused field: printable characters only, up to its
     /// length.
     pub fn type_in(&mut self, typed: &str) {
-        let Some(field) = self.fields.get_mut(self.focus) else {
+        let Some(field) = self.focused_field().and_then(|at| self.fields.get_mut(at)) else {
             return;
         };
         for c in typed.chars().filter(|c| !c.is_control()) {
@@ -190,7 +228,7 @@ impl Form {
     }
 
     pub fn erase(&mut self) {
-        if let Some(field) = self.fields.get_mut(self.focus) {
+        if let Some(field) = self.focused_field().and_then(|at| self.fields.get_mut(at)) {
             field.value.pop();
         }
     }

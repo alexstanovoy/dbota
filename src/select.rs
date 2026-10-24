@@ -347,7 +347,7 @@ fn looks(
     if let Some(at) = menu.as_deref().and_then(|m| m.hosted_at())
         && open
     {
-        seats.push(format!("\nOthers join under DIRECT CONNECT at {at}"));
+        seats.push(format!("\nOthers join by address at {at}"));
     }
     for (mut text, ready, list, heading) in &mut texts {
         let s = if ready.is_some() {

@@ -50,8 +50,6 @@ pub enum Page {
     Lobbies,
     /// The lobby the player sits in.
     Lobby,
-    /// A game by address, without the service.
-    Direct,
     /// A lobby on this machine, others joining by its address.
     LocalLobby,
     /// The replays on this machine.
@@ -579,7 +577,7 @@ impl MenuCore {
         }
     }
 
-    /// The address others type under DIRECT CONNECT to join the local
+    /// The address others type under LOCAL LOBBY to join the local
     /// lobby this client hosts, while it is the game on screen.
     pub fn hosted_at(&self) -> Option<&str> {
         self.hosted_at
@@ -773,8 +771,7 @@ impl MenuCore {
     /// else the way in.
     fn rest_page(&self, left: Option<OnScreen>) -> Page {
         match left {
-            Some(OnScreen::Direct) => Page::Direct,
-            Some(OnScreen::Local) => Page::LocalLobby,
+            Some(OnScreen::Direct | OnScreen::Local) => Page::LocalLobby,
             Some(OnScreen::Demo) => Page::DemoHero,
             Some(OnScreen::Replay) => Page::Replays,
             _ if self.account => Page::Home,
@@ -789,7 +786,6 @@ impl MenuCore {
             Page::Login => FormKind::Login,
             Page::Register => FormKind::Register,
             Page::Lobbies => FormKind::Lobby,
-            Page::Direct => FormKind::Direct,
             Page::LocalLobby => FormKind::Host,
             Page::Replays => FormKind::Replay,
             _ => FormKind::None,
@@ -944,7 +940,7 @@ impl MenuCore {
         self.outbox.clear();
         self.lobby = None;
         self.drop_link();
-        if !self.account && !matches!(self.page, Page::Game | Page::Direct | Page::LocalLobby) {
+        if !self.account && !matches!(self.page, Page::Game | Page::LocalLobby) {
             // Not signed in: the pages of the account have nothing to show.
             if matches!(
                 self.page,
@@ -1582,7 +1578,7 @@ impl MenuCore {
             }
             Page::Login => self.login(),
             Page::Register => self.register(),
-            Page::Direct => self.direct(false, false),
+            Page::LocalLobby if self.form.focused_field() == Some(2) => self.direct(false, false),
             Page::LocalLobby => self.host(false),
             Page::Replays => {
                 let path = self.form.value(0).trim().to_owned();
@@ -1718,7 +1714,7 @@ impl MenuCore {
     /// Plain TCP to another machine carries everything in clear, so the
     /// player is told once per host before it goes.
     fn direct(&mut self, spectate: bool, anyway: bool) {
-        let address = self.form.value(0).trim().to_owned();
+        let address = self.form.value(2).trim().to_owned();
         let name = self.name();
         let host = match super::address::check(&address) {
             Ok(host) => host,
@@ -1748,7 +1744,7 @@ impl MenuCore {
 
     /// A lobby on this machine, as Dota's local lobby: a game server started
     /// here for so many players, this player seated first and the others
-    /// joining by this machine's address (DIRECT CONNECT). Named by the
+    /// joining by this machine's address (the same page). Named by the
     /// profile; no account.
     fn host(&mut self, lan: bool) {
         let port = self
@@ -1933,7 +1929,7 @@ fn service_address(service: &str) -> Result<(), String> {
         Some(host) if !host.trim_end_matches('/').is_empty() => Ok(()),
         Some(_) => Err(format!("'{service}' names no host: wss://host:port")),
         None => Err(format!(
-            "'{service}' is not a service address: it starts with wss:// (ws:// on your own network). A game server's address goes under DIRECT CONNECT"
+            "'{service}' is not a service address: it starts with wss:// (ws:// on your own network). A game server's address goes under LOCAL LOBBY"
         )),
     }
 }
