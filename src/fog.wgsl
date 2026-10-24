@@ -8,6 +8,7 @@
     pbr_fragment::pbr_input_from_standard_material,
     pbr_functions::{alpha_discard, apply_pbr_lighting, main_pass_post_lighting_processing},
     forward_io::{VertexOutput, FragmentOutput},
+    mesh_view_bindings::globals,
     pbr_types::STANDARD_MATERIAL_FLAGS_UNLIT_BIT,
 }
 
@@ -142,6 +143,15 @@ fn with_paths(base: vec3<f32>, in: VertexOutput, dirt_field: vec4<f32>) -> vec3<
 const SURFACE_PATHS: f32 = 2.0;
 const SURFACE_FOGGED_FIGURE: f32 = 3.0;
 const SURFACE_FIGURE: f32 = 4.0;
+const SURFACE_WATER: f32 = 5.0;
+// The river's normal-map repeats per unit of its texture coordinates (the
+// glint's size), the texture coordinates the current slides a second, and how
+// far and how fast the glint sways across the current, so the flow does not
+// read as a belt.
+const WATER_TILING: f32 = 6.0;
+const WATER_FLOW: vec2<f32> = vec2(0.02, 0.03);
+const WATER_SWAY: f32 = 0.005;
+const WATER_SWAY_RATE: f32 = 0.5;
 // The rim light's colour at full strength, at a grazing view.
 const RIM: vec3<f32> = vec3(0.16, 0.155, 0.14);
 
@@ -154,15 +164,32 @@ fn set_back(color: vec3<f32>, shade: f32) -> vec3<f32> {
     return dull * (1.0 - 0.16 * strength) * (1.0 - 0.3 * strength * shade);
 }
 
+// The river's texture coordinates, tiled and slid along the current by the
+// time (water.rs). The time wraps after an hour: the flow then steps by whole
+// repeats, the sway by a few thousandths.
+fn flowing(in: VertexOutput) -> VertexOutput {
+    var out = in;
+#ifdef VERTEX_UVS_A
+    let t = globals.time;
+    let sway = vec2(sin(t * WATER_SWAY_RATE), cos(t * WATER_SWAY_RATE * 0.7 + 1.3)) * WATER_SWAY;
+    out.uv = in.uv * WATER_TILING + fract(WATER_FLOW * t + sway);
+#endif
+    return out;
+}
+
 @fragment
 fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> FragmentOutput {
 #ifdef BINDLESS
     fog_material = fog_indices[mesh[in.instance_index].material_and_lightmap_bind_group_slot & 0xffffu];
 #endif
     let params = fog_params();
-    var pbr_input = pbr_input_from_standard_material(in, is_front);
+    var surface = in;
+    if params.z == SURFACE_WATER {
+        surface = flowing(in);
+    }
+    var pbr_input = pbr_input_from_standard_material(surface, is_front);
     pbr_input.material.base_color = alpha_discard(pbr_input.material, pbr_input.material.base_color);
-    let figure = params.z >= SURFACE_FOGGED_FIGURE;
+    let figure = params.z == SURFACE_FOGGED_FIGURE || params.z == SURFACE_FIGURE;
     // The forest's shade, on the ground that has the field.
     var shade = 0.0;
     if params.z == SURFACE_PATHS {

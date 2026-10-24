@@ -374,7 +374,6 @@ fn main() -> AppExit {
             clarity::plugin,
             daylight::plugin,
             fog::plugin,
-            water::plugin,
             units::plugin,
             anim::plugin,
             camera::plugin,

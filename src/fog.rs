@@ -156,12 +156,14 @@ impl From<&FogExt> for FogUniform {
 
 /// What a surface is, as the shader reads it: a tree, a building or a
 /// prop; the terrain without its path layers; the terrain with them; a
-/// unit the fog dulls; a unit it never touches.
+/// unit the fog dulls; a unit it never touches; the river.
 const SURFACE_PROP: u8 = 0;
 const SURFACE_GROUND: u8 = 1;
 const SURFACE_PATHS: u8 = 2;
 const SURFACE_FOGGED_FIGURE: u8 = 3;
 const SURFACE_FIGURE: u8 = 4;
+/// The river: a prop whose normal map the shader slides along the current.
+const SURFACE_WATER: u8 = 5;
 
 impl MaterialExtension for FogExt {
     fn fragment_shader() -> ShaderRef {
@@ -362,6 +364,7 @@ fn wrap(
             &MeshMaterial3d<StandardMaterial>,
             Has<Fogged>,
             Has<Figure>,
+            Has<crate::water::Water>,
         ),
         Or<(With<Fogged>, With<Figure>)>,
     >,
@@ -375,10 +378,11 @@ fn wrap(
         return;
     };
     let veil = &mut *veil;
-    for (entity, material, fogged_part, figure) in &parts {
+    for (entity, material, fogged_part, figure, water) in &parts {
         let ground = terrain.as_ref().is_some_and(|t| t.0 == material.id());
         let paths = layers.as_ref().filter(|_| ground);
         let surface = match (figure, fogged_part, ground, paths.is_some()) {
+            _ if water => SURFACE_WATER,
             (true, true, ..) => SURFACE_FOGGED_FIGURE,
             (true, false, ..) => SURFACE_FIGURE,
             (false, _, _, true) => SURFACE_PATHS,
