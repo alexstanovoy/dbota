@@ -263,6 +263,10 @@ fn play_area(kit: &mut Kit, root: Entity, view: &MenuView) {
         let back = kit.button(corner, "RETURN TO GAME", Act::ReturnToGame, GREEN, 64.0);
         kit.commands.entity(back).insert(Name::new("return"));
         // A replay is left as a game watched is (Dota's popup_confirm_close_replay).
+        if view.can_abandon {
+            let abandon = kit.button(corner, "LEAVE GAME", Act::LeaveGame, RED, 40.0);
+            kit.commands.entity(abandon).insert(Name::new("leave game"));
+        }
         let leave = kit.button(corner, "DISCONNECT", Act::Disconnect, RED, 40.0);
         kit.commands.entity(leave).insert(Name::new("disconnect"));
     } else {

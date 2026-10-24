@@ -58,6 +58,7 @@ fn form(page: Page, kind: FormKind, fields: Vec<FieldView>) -> MenuView {
         offer: None,
         game: None,
         reconnect: false,
+        can_abandon: false,
         confirm: None,
         can_quit: true,
     }
@@ -74,6 +75,7 @@ fn logged_in(page: Page, body: PageView) -> MenuView {
         offer: None,
         game: None,
         reconnect: false,
+        can_abandon: false,
         confirm: None,
         can_quit: true,
     }

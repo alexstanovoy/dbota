@@ -225,6 +225,9 @@ fn guard(
     let Some(mut core) = core else {
         return;
     };
+    if core.take_abandon() {
+        session.0.leave_game();
+    }
     let game = &session.0;
     let seated = game.my_slot.is_some() && matches!(game.source, Source::Live(_));
     core.set_game_unsafe(seated && game.over.is_none() && !game.lost);
