@@ -25,7 +25,7 @@ use crate::text::{
 };
 
 /// Bumped when the importer's output changes for the same install; part of a cache's stamp.
-pub const IMPORT_REV: u32 = 8;
+pub const IMPORT_REV: u32 = 9;
 
 /// Names what an import of this manifest and these ids makes (FNV-1a 64 of both texts): part of
 /// a cache's stamp, so a cache made from other texts is stale even from the same install.

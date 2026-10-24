@@ -203,7 +203,7 @@ pub fn shop_json(shops: &[u8], localization: &[u8]) -> Result<Vec<u8>> {
 }
 
 /// The version of a particle file's layout; the client refuses others.
-pub const PARTICLE_VERSION: u32 = 2;
+pub const PARTICLE_VERSION: u32 = 3;
 
 /// A texture a particle file's systems draw with.
 pub struct ParticleTexture {

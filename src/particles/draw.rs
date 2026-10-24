@@ -4,7 +4,8 @@
 use bevy::math::Vec3;
 use bytemuck::{Pod, Zeroable};
 use heatel::particle::{
-    Blend, FloatInput, Look, Orientation, Projected, Renderer, Ropes, Sprites, Trails,
+    Blend, FloatInput, LayerBlend, Look, Orientation, Projected, Renderer, Ropes, Sprites,
+    TextureChannels, Trails,
 };
 
 use super::eval::{HeightAt, Scene, float, vector};
@@ -28,6 +29,10 @@ pub struct Quad {
     pub uv: [f32; 4],
     pub uv_next: [f32; 4],
     pub extra: [f32; 4],
+    /// The second texture layer's rectangles, and how the layers mix (see `layer_mix`).
+    pub uv2: [f32; 4],
+    pub uv2_next: [f32; 4],
+    pub layers: [u32; 4],
 }
 
 /// The camera in the simulation's frame (Source's: Z up).
@@ -226,6 +231,9 @@ fn sheet_frame(look: &Look, sequence: &Sequence, age: f32) -> (usize, usize, f32
 struct Frames {
     uv: [f32; 4],
     uv_next: [f32; 4],
+    /// The second texture layer's, with its own transform.
+    uv2: [f32; 4],
+    uv2_next: [f32; 4],
     window: [f32; 4],
     blend: f32,
 }
@@ -234,6 +242,8 @@ fn frames(look: &Look, d: &Draw, parts: &Particles, i: usize, age: f32) -> Frame
     let whole = Frames {
         uv: [0.0, 0.0, 1.0, 1.0],
         uv_next: [0.0, 0.0, 1.0, 1.0],
+        uv2: [0.0, 0.0, 1.0, 1.0],
+        uv2_next: [0.0, 0.0, 1.0, 1.0],
         window: [0.0, 0.0, 1.0, 1.0],
         blend: 0.0,
     };
@@ -280,20 +290,22 @@ fn frames(look: &Look, d: &Draw, parts: &Particles, i: usize, age: f32) -> Frame
         Frames {
             uv: rect(a),
             uv_next: rect(b),
+            uv2: rect(a),
+            uv2_next: rect(b),
             window,
             blend,
         },
     )
 }
 
-/// The rectangles under the texture's scale and offset, as the card's corners place them.
+/// The rectangles under each texture layer's scale and offset, as the card's corners place
+/// them.
 fn transformed(look: &Look, mut f: Frames) -> Frames {
-    let [scale_v, offset_v, scale_u, offset_u] = look.texture_transform;
     let place = |c: f32, scale: f32, offset: f32| {
         let origin = offset + 0.5;
         (c - 0.5) / if scale == 0.0 { 1.0 } else { scale } + (origin - origin.floor())
     };
-    let apply = |r: [f32; 4]| {
+    let apply = |[scale_v, offset_v, scale_u, offset_u]: [f32; 4], r: [f32; 4]| {
         let (w, h) = (r[2] - r[0], r[3] - r[1]);
         [
             r[0] + place(0.0, scale_u, offset_u) * w,
@@ -302,9 +314,68 @@ fn transformed(look: &Look, mut f: Frames) -> Frames {
             r[1] + place(1.0, scale_v, offset_v) * h,
         ]
     };
-    f.uv = apply(f.uv);
-    f.uv_next = apply(f.uv_next);
+    let second = second_transform(look);
+    (f.uv2, f.uv2_next) = (apply(second, f.uv2), apply(second, f.uv2_next));
+    (f.uv, f.uv_next) = (
+        apply(look.texture_transform, f.uv),
+        apply(look.texture_transform, f.uv_next),
+    );
     f
+}
+
+/// The second texture layer's scale and offset; the first's when there is none.
+fn second_transform(look: &Look) -> [f32; 4] {
+    look.layers
+        .first()
+        .map_or(look.texture_transform, |l| l.transform)
+}
+
+/// How the texture layers mix, as the shader reads it: the first layer's channels, the
+/// second's, how the second combines with the first, and how many layers there are (1 or 2).
+fn layer_mix(look: &Look) -> [u32; 4] {
+    let second = look.layers.first();
+    [
+        channels(look.channels),
+        second.map_or(1, |l| channels(l.channels)),
+        second.map_or(0, |l| layer_blend(l.blend)),
+        1 + u32::from(second.is_some()),
+    ]
+}
+
+/// A channel mix's number in the shader (Source's order).
+fn channels(c: TextureChannels) -> u32 {
+    use TextureChannels as C;
+    match c {
+        C::Rgb => 0,
+        C::A => 2,
+        C::RgbA => 3,
+        C::RgbAlphaMask => 4,
+        C::RgbRgbMask => 5,
+        C::RgbaRgbAlpha => 6,
+        C::ARgbAlpha => 7,
+        C::RgbARgbAlpha => 8,
+        C::R => 9,
+        C::G => 10,
+        C::B => 11,
+        C::RAlpha => 12,
+        C::GAlpha => 13,
+        C::BAlpha => 14,
+        _ => 1,
+    }
+}
+
+/// A layer blend's number in the shader (Source's order).
+fn layer_blend(b: LayerBlend) -> u32 {
+    use LayerBlend as B;
+    match b {
+        B::Mod2x => 1,
+        B::Replace => 2,
+        B::Add => 3,
+        B::Subtract => 4,
+        B::Average => 5,
+        B::Luminance => 6,
+        _ => 0,
+    }
 }
 
 fn quad(
@@ -326,6 +397,9 @@ fn quad(
         tail_color: colors.1,
         uv: f.uv,
         uv_next: f.uv_next,
+        uv2: f.uv2,
+        uv2_next: f.uv2_next,
+        layers: layer_mix(look),
         extra: [
             f.blend,
             f32::from(u8::from(look.saturate)),
@@ -422,6 +496,8 @@ fn draw_projected(
         if projected.flip_horizontal {
             f.uv = [f.uv[2], f.uv[1], f.uv[0], f.uv[3]];
             f.uv_next = [f.uv_next[2], f.uv_next[1], f.uv_next[0], f.uv_next[3]];
+            f.uv2 = [f.uv2[2], f.uv2[1], f.uv2[0], f.uv2[3]];
+            f.uv2_next = [f.uv2_next[2], f.uv2_next[1], f.uv2_next[0], f.uv2_next[3]];
             (x0, x1) = (1.0 - x1, 1.0 - x0);
         }
         // A point of the card (0..1 left to right, top to bottom) on the ground.
@@ -559,6 +635,8 @@ fn draw_rope(ropes: &Ropes, d: &Draw, node: &Node, eye: &Eye, out: &mut Vec<Quad
                 let f = Frames {
                     uv: [0.0, last_v, 1.0, v],
                     uv_next: [0.0, last_v, 1.0, v],
+                    uv2: [0.0, last_v, 1.0, v],
+                    uv2_next: [0.0, last_v, 1.0, v],
                     window: [0.0, 0.0, 1.0, 1.0],
                     blend: 0.0,
                 };
@@ -623,8 +701,7 @@ fn rope_point(
 /// A rope's texture runs along it unbounded: only the scale and offset apply, without the
 /// card's wrap.
 fn rope_transform(look: &Look, mut f: Frames) -> Frames {
-    let [scale_v, offset_v, scale_u, offset_u] = look.texture_transform;
-    let map = |r: [f32; 4]| {
+    let map = |[scale_v, offset_v, scale_u, offset_u]: [f32; 4], r: [f32; 4]| {
         [
             r[0] * scale_u + offset_u,
             r[1] * scale_v + offset_v,
@@ -632,8 +709,12 @@ fn rope_transform(look: &Look, mut f: Frames) -> Frames {
             r[3] * scale_v + offset_v,
         ]
     };
-    f.uv = map(f.uv);
-    f.uv_next = map(f.uv_next);
+    let second = second_transform(look);
+    (f.uv2, f.uv2_next) = (map(second, f.uv2), map(second, f.uv2_next));
+    (f.uv, f.uv_next) = (
+        map(look.texture_transform, f.uv),
+        map(look.texture_transform, f.uv_next),
+    );
     f
 }
 

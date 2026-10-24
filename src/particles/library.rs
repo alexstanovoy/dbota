@@ -12,7 +12,7 @@ use serde_json::Value;
 use super::store::{self, Defaults};
 
 /// The layout of the particle files this client reads (dbota_import's `PARTICLE_VERSION`).
-const VERSION: u64 = 2;
+const VERSION: u64 = 3;
 /// Most systems in one effect, as the importer bounds them.
 const MAX_SYSTEMS: usize = 256;
 /// Most looks (texture and blend) of all effects together.
@@ -29,6 +29,8 @@ const MAX_FRAMES: usize = 4096;
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Look {
     pub image: Handle<Image>,
+    /// The second texture layer's image, when the renderer has one.
+    pub second: Option<Handle<Image>>,
     /// Multiplies what is behind (`MOD2X`) rather than blending over it.
     pub modulate: bool,
     pub depth_test: bool,
@@ -236,7 +238,8 @@ impl Library {
                         continue;
                     };
                     let sheet = m.sheets.then(|| texture.sheet.clone()).flatten();
-                    out.extend(self.draw(index, look, texture, sheet, m.blend, material));
+                    let draw = self.draw(index, look, (texture, None), sheet, m.blend, material);
+                    out.extend(draw);
                 }
                 continue;
             }
@@ -244,7 +247,9 @@ impl Library {
                 continue;
             };
             let sheet = texture.sheet.clone();
-            out.extend(self.draw(index, look, texture, sheet, look.blend, 0));
+            // A second layer whose texture the cache lacks draws as the first alone.
+            let second = look.layers.first().and_then(|l| textures.get(&l.texture));
+            out.extend(self.draw(index, look, (texture, second), sheet, look.blend, 0));
         }
         out
     }
@@ -254,13 +259,14 @@ impl Library {
         &mut self,
         renderer: usize,
         look: &heatel::particle::Look,
-        texture: &Texture,
+        (texture, second): (&Texture, Option<&Texture>),
         sheet: Option<Arc<Vec<Sequence>>>,
         blend: Blend,
         material: usize,
     ) -> Option<Draw> {
         let key = Look {
             image: texture.image.clone(),
+            second: second.map(|t| t.image.clone()),
             modulate: modulates(blend),
             depth_test: !look.no_depth_test,
         };

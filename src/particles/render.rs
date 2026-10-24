@@ -51,10 +51,11 @@ pub struct Batch {
 /// The looks in the render world: each texture's image and blend.
 #[derive(Resource, Default)]
 struct Looks {
-    list: Vec<(AssetId<Image>, bool, bool)>,
-    /// A look's bind group, with the texture view it was made of (made again when the image
+    /// Each look's first and second layer's images, whether it modulates and depth tests.
+    list: Vec<(AssetId<Image>, AssetId<Image>, bool, bool)>,
+    /// A look's bind group, with the texture views it was made of (made again when an image
     /// changes).
-    bind_groups: Vec<Option<(TextureViewId, BindGroup)>>,
+    bind_groups: Vec<Option<([TextureViewId; 2], BindGroup)>>,
 }
 
 /// The render world's copy of the frame and the buffer it is written to.
@@ -125,6 +126,8 @@ fn init(
             (
                 binding_types::texture_2d(TextureSampleType::Float { filterable: true }),
                 binding_types::sampler(SamplerBindingType::Filtering),
+                // The second texture layer's (the first's again for a look of one).
+                binding_types::texture_2d(TextureSampleType::Float { filterable: true }),
             ),
         ),
     );
@@ -188,6 +191,9 @@ fn instance_layout() -> VertexBufferLayout {
         VertexFormat::Float32x4,
         VertexFormat::Float32x4,
         VertexFormat::Float32x4,
+        VertexFormat::Float32x4,
+        VertexFormat::Float32x4,
+        VertexFormat::Uint32x4,
     ];
     let mut offset = 0;
     let attributes = formats
@@ -276,7 +282,10 @@ fn extract(
         looks.list = library
             .looks
             .iter()
-            .map(|l| (l.image.id(), l.modulate, l.depth_test))
+            .map(|l| {
+                let second = l.second.as_ref().unwrap_or(&l.image).id();
+                (l.image.id(), second, l.modulate, l.depth_test)
+            })
             .collect();
         let len = looks.list.len();
         looks.bind_groups.resize(len, None);
@@ -308,22 +317,27 @@ fn prepare_bind_groups(
     device: Res<RenderDevice>,
 ) {
     let looks = &mut *looks;
-    for (index, (image, _, _)) in looks.list.iter().enumerate() {
-        let Some(gpu) = images.get(*image) else {
+    for (index, (image, second, _, _)) in looks.list.iter().enumerate() {
+        let (Some(gpu), Some(layer)) = (images.get(*image), images.get(*second)) else {
             continue;
         };
+        let views = [gpu.texture_view.id(), layer.texture_view.id()];
         if looks.bind_groups[index]
             .as_ref()
-            .is_some_and(|(view, _)| *view == gpu.texture_view.id())
+            .is_some_and(|(made, _)| *made == views)
         {
             continue;
         }
         let bind_group = device.create_bind_group(
             "particle look",
             &cache.get_bind_group_layout(&pipeline.texture_layout),
-            &BindGroupEntries::sequential((&gpu.texture_view, &pipeline.sampler)),
+            &BindGroupEntries::sequential((
+                &gpu.texture_view,
+                &pipeline.sampler,
+                &layer.texture_view,
+            )),
         );
-        looks.bind_groups[index] = Some((gpu.texture_view.id(), bind_group));
+        looks.bind_groups[index] = Some((views, bind_group));
     }
 }
 
@@ -361,7 +375,7 @@ fn queue(
         }
         for (slot, batch) in buffers.batches.iter().enumerate() {
             let look = usize::from(batch.look);
-            let Some(&(_, modulate, depth_test)) = looks.list.get(look) else {
+            let Some(&(_, _, modulate, depth_test)) = looks.list.get(look) else {
                 continue;
             };
             if looks.bind_groups.get(look).is_none_or(Option::is_none) || slot >= slots.0.len() {
