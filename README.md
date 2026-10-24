@@ -78,6 +78,27 @@ the same seat again (a direct or local game claims its seat with a key of its ow
 replay is left after asking. `Esc` in a match that is over goes back to the menu. `--addr`, `--spectate`,
 a seat key or `--replay` open that game first, with the menu under it.
 
+### Trying the matchmaking menu on one machine
+
+Bring up a service of your own as described in radovid's README ("A development setup on one machine":
+`radovid dev-cert`, a `local` launcher for `bota_server`), then:
+
+```sh
+target/release/dbota --service wss://localhost:4460 --trust-cert dev/cert.pem
+```
+
+CREATE ACCOUNT, then PLAY / FIND MATCH needs a second account in the same ruleset (a bot client of
+the service, or a second dbota with `--config` and `XDG_DATA_HOME` of its own so the two keep
+separate logins). In a LOBBY the owner's READY stays dimmed ("Waiting for more players") until
+the lobby is full.
+
+`--script "STEP;STEP;..."` drives the window like a person, for end-to-end tests (see
+`tests/menu_quit.rs`): `key:NAME`, `type:TEXT` (into the focused field; `key:Tab` for the next),
+`click:BUTTON` (the label in lower case; in a game `pick ready`, `pick <hero>`; a dimmed button
+ends the run with exit code 2), `await:menu|game|popup|nopopup|button:NAME` (`popup` covers the
+match-found offer), `shot:FILE`, `wait:SECONDS`. A step that waits more than two minutes ends the run
+with exit code 2.
+
 Two people without a service: start a server and connect two dbota clients (from another machine use
 `--addr <host>:4455`, or DIRECT CONNECT in the menu):
 

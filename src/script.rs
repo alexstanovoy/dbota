@@ -10,9 +10,12 @@
 //!   settings file's names);
 //! - `click:NAME`: the button of that name once it shows (the label in
 //!   lower case, or the name the menu gives it: `quit`, `ok`, `cancel`,
-//!   `return`, `disconnect`, `reconnect`);
+//!   `return`, `disconnect`, `reconnect`; in a game `pick ready` and
+//!   `pick <hero>`); a button shown dimmed (`READY` alone in a lobby)
+//!   ends the client with exit code 2 at once;
+//! - `type:TEXT`: the text typed into the focused field (`Tab` moves on);
 //! - `await:WHAT`: until `menu` covers the screen, a `game` is on it, a
-//!   `popup` is up or `nopopup` is not, or a button named `button:NAME`
+//!   `popup` (a question or the match-found offer) is up or `nopopup` is not, or a button named `button:NAME`
 //!   shows;
 //! - `shot:FILE`: the screen saved under `--screenshot-dir`;
 //! - `wait:SECONDS`.
@@ -38,6 +41,7 @@ const PATIENCE: f32 = 120.0;
 enum Step {
     Key(KeyCode),
     Click(String),
+    Type(String),
     Await(Awaited),
     Shot(String),
     Wait(f32),
@@ -79,6 +83,7 @@ fn parse(text: &str) -> Result<Vec<(String, Step)>, String> {
                     crate::keys::key_named(arg).ok_or_else(|| format!("no key named '{arg}'"))?,
                 ),
                 "click" => Step::Click(arg.to_owned()),
+                "type" => Step::Type(arg.to_owned()),
                 "await" => Step::Await(match arg {
                     "menu" => Awaited::Menu,
                     "game" => Awaited::Game,
@@ -132,7 +137,9 @@ fn holds(
             menu.is_none_or(MenuCore::shows_game)
                 && (core.view().is_some() || core.my_slot.is_some())
         }
-        Awaited::Popup => view.as_ref().is_some_and(|v| v.confirm.is_some()),
+        Awaited::Popup => view
+            .as_ref()
+            .is_some_and(|v| v.confirm.is_some() || v.offer.is_some()),
         Awaited::NoPopup => view.as_ref().is_some_and(|v| v.confirm.is_none()),
         Awaited::Button(name) => buttons.iter().any(|n| n.as_str() == name),
     }
@@ -146,6 +153,7 @@ fn play(
     menu: Option<NonSend<MenuCore>>,
     session: NonSend<Session>,
     buttons: Query<&Name, With<Button>>,
+    disabled: Query<&Name, With<crate::main_menu::Disabled>>,
     window: Query<Entity, With<PrimaryWindow>>,
     mut keys: MessageWriter<KeyboardInput>,
     mut commands: Commands,
@@ -187,6 +195,26 @@ fn play(
         // Once the button shows.
         Step::Click(name) if buttons.iter().any(|n| n.as_str() == name) => {
             script.click = Some(name.clone());
+            true
+        }
+        Step::Type(text) => {
+            for c in text.chars() {
+                keys.write(KeyboardInput {
+                    key_code: KeyCode::Unidentified(
+                        bevy::input::keyboard::NativeKeyCode::Unidentified,
+                    ),
+                    logical_key: Key::Character(c.to_string().into()),
+                    state: ButtonState::Pressed,
+                    text: None,
+                    repeat: false,
+                    window,
+                });
+            }
+            true
+        }
+        Step::Click(name) if disabled.iter().any(|n| n.as_str() == name) => {
+            println!("script: {line} is disabled");
+            exit.write(AppExit::from_code(2));
             true
         }
         Step::Click(_) => false,

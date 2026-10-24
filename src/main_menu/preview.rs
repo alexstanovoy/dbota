@@ -230,6 +230,7 @@ pub fn view(name: &str) -> Option<MenuView> {
                 ],
                 waiting_approval: 0,
                 me_ready: true,
+                waiting: None,
                 starting_in_secs: Some(3),
             }),
         ),

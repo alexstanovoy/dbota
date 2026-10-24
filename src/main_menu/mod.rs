@@ -34,5 +34,6 @@ pub use core::{Act, DEFAULT_NAME, GameKind, MenuCore};
 pub use launch::Trust;
 pub use prefs::page_service;
 pub use preview::{NAMES as PREVIEWS, view as preview};
+pub use screens::Disabled;
 pub use shell::{Preview, Trusted, idle, plugin};
 pub use store::SettingsStore;

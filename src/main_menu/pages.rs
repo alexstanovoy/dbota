@@ -571,6 +571,9 @@ fn lobby_page(kit: &mut Kit, body: Entity, lobby: &LobbyView) {
     );
     if lobby.me_ready {
         kit.button(row, "NOT READY", Act::ReadyLobby(false), PLAIN, 42.0);
+    } else if let Some(why) = lobby.waiting {
+        kit.disabled_button(row, "READY", 42.0);
+        kit.text(card, why, 14.0, ui::INK_DIM);
     } else {
         kit.button(row, "READY", Act::ReadyLobby(true), GREEN, 42.0);
     }

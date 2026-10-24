@@ -94,6 +94,8 @@ pub struct LobbyView {
     pub members: Vec<(String, u8, bool)>,
     pub waiting_approval: usize,
     pub me_ready: bool,
+    /// Why the owner cannot start yet, as Dota's lobby says it.
+    pub waiting: Option<&'static str>,
     pub starting_in_secs: Option<u32>,
 }
 
@@ -514,6 +516,22 @@ fn lobby_view(
 ) -> LobbyView {
     let me = client.and_then(|c| c.me()).map(|me| me.id);
     let elapsed = u32::try_from(at.elapsed().as_millis()).unwrap_or(u32::MAX);
+    let seats = client
+        .and_then(|c| c.rulesets().find(|r| r.id == state.ruleset))
+        .map_or(0, |r| r.teams.iter().map(|t| usize::from(*t)).sum());
+    let others_unready = state
+        .members
+        .iter()
+        .any(|m| Some(m.account) != me && !m.ready);
+    let waiting = if Some(state.owner) != me {
+        None
+    } else if state.members.len() < seats {
+        Some("Waiting for more players")
+    } else if others_unready {
+        Some("Waiting for the other players to be ready")
+    } else {
+        None
+    };
     LobbyView {
         name: text::line(&state.name, text::NAME),
         locked: state.locked,
@@ -528,6 +546,7 @@ fn lobby_view(
             .members
             .iter()
             .any(|m| Some(m.account) == me && m.ready),
+        waiting,
         starting_in_secs: state
             .starting_in_ms
             .map(|ms| ms.saturating_sub(elapsed).div_ceil(1000)),

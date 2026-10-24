@@ -135,6 +135,7 @@ fn spawn(
             .spawn((
                 Card(id),
                 Button,
+                Name::new(format!("pick {}", hero.name.to_lowercase())),
                 Node {
                     width: px(CARD.0),
                     height: px(CARD.1 + 30.0),
@@ -169,6 +170,7 @@ fn spawn(
         .spawn((
             ReadyButton,
             Button,
+            Name::new("pick ready"),
             Node {
                 width: px(220),
                 height: px(48),

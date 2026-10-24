@@ -20,6 +20,10 @@ pub struct PageRoot;
 #[derive(Component)]
 pub struct OverlayRoot;
 
+/// A button that cannot be pressed now.
+#[derive(Component)]
+pub struct Disabled;
+
 /// A button and what it does.
 #[derive(Component, Clone)]
 pub struct MenuButton(pub Act);
@@ -175,6 +179,36 @@ impl Kit<'_, '_, '_> {
             ))
             .id();
         self.bold(button, label, (height * 0.38).clamp(12.0, 22.0), ui::INK);
+        button
+    }
+
+    /// A button that does nothing yet, dimmed: the script names it `Disabled`.
+    pub fn disabled_button(&mut self, parent: Entity, label: &str, height: f32) -> Entity {
+        let button = self
+            .commands
+            .spawn((
+                Disabled,
+                Node {
+                    height: px(height),
+                    padding: UiRect::axes(px(height * 0.45), px(0)),
+                    justify_content: JustifyContent::Center,
+                    align_items: AlignItems::Center,
+                    border: UiRect::all(px(1)),
+                    border_radius: BorderRadius::all(px(3)),
+                    ..default()
+                },
+                BackgroundColor(Color::srgba(0.2, 0.22, 0.24, 0.5)),
+                BorderColor::all(Color::srgba(1.0, 1.0, 1.0, 0.06)),
+                Name::new(label.to_lowercase()),
+                ChildOf(parent),
+            ))
+            .id();
+        self.bold(
+            button,
+            label,
+            (height * 0.38).clamp(12.0, 22.0),
+            ui::INK_DIM,
+        );
         button
     }
 

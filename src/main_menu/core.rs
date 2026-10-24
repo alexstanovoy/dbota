@@ -1393,6 +1393,8 @@ pub fn error_text(error: &Error) -> String {
         Error::BadLobbyName => "A lobby name is 1 to 32 characters".to_owned(),
         Error::UnknownLobby => "No open lobby has that name".to_owned(),
         Error::LobbyFull => "The lobby is full".to_owned(),
+        Error::LobbyNotFull => "Waiting for more players".to_owned(),
+        Error::NotAllReady => "Waiting for the other players to be ready".to_owned(),
         Error::ServerStopping => "The service is shutting down".to_owned(),
         other => text::line(&format!("Refused: {other:?}"), text::MESSAGE),
     }
