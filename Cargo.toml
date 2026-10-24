@@ -72,6 +72,8 @@ heatel = { path = "../heatel" }
 # wss:// and the matchmaking menu (radovid and the way into a game it hands out) on the desktop: threads and
 # sockets; a browser build has the browser's own WebSocket.
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+# The replay list's dates in this machine's time zone (the system's tz database).
+jiff = "0.2"
 bota_client_core = { path = "../bota/crates/bota_client_core", features = ["ui", "websocket"] }
 # The system's fonts stand behind the shipped ones for scripts they lack; fontconfig is opened at
 # run time, so building needs no development package and a machine without it just has no system fonts.
@@ -85,10 +87,6 @@ getrandom = "0.4"
 dbota_import = { path = "crates/dbota_import" }
 
 # In a browser, Bevy draws through WebGPU where the browser has it, else WebGL2.
-# The replay list's dates in this machine's time (`localtime_r`).
-[target.'cfg(unix)'.dependencies]
-libc = "0.2"
-
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 bevy = { version = "=0.19.1", default-features = false, features = ["webgl2", "webgpu"] }
 # The cache fetched next to the page (whole files moved, not copied, into the

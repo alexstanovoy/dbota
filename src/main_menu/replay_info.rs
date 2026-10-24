@@ -247,66 +247,22 @@ impl Shelf {
     fn ask(&mut self, _path: &Path, _stamp: Stamp) {}
 }
 
-/// When a replay was played, in this machine's time: `2026-10-24 15:06`.
+/// When a replay was played, in this machine's time zone (the system's
+/// time zone database, read by `jiff`): `2026-10-24 15:06`; in UTC, and
+/// said so, where the machine names none.
+#[cfg(not(target_arch = "wasm32"))]
 pub fn when(time: std::time::SystemTime) -> String {
-    let secs = time
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |d| d.as_secs());
-    let (secs, zone) = local(secs);
-    let days = secs.div_euclid(86_400);
-    let of_day = secs.rem_euclid(86_400);
-    let (y, m, d) = civil(days);
-    format!(
-        "{y:04}-{m:02}-{d:02} {:02}:{:02}{zone}",
-        of_day / 3600,
-        of_day % 3600 / 60
-    )
-}
-
-/// Seconds since the epoch as this machine's clock reads them, and a mark
-/// when that is UTC for want of the local zone.
-#[cfg(unix)]
-fn local(secs: u64) -> (i64, &'static str) {
-    let t = secs as libc::time_t;
-    // SAFETY: `localtime_r` writes only into the `tm` given it, and reads
-    // `t`, both alive for the call; it is the thread-safe form.
-    let mut tm: libc::tm = unsafe { std::mem::zeroed() };
-    let done = unsafe { libc::localtime_r(&t, &mut tm) };
-    if done.is_null() {
-        return (secs as i64, " UTC");
+    let Ok(at) = jiff::Timestamp::try_from(time) else {
+        return "unknown date".to_owned();
+    };
+    match jiff::tz::TimeZone::try_system() {
+        Ok(zone) => at.to_zoned(zone).strftime("%Y-%m-%d %H:%M").to_string(),
+        Err(_) => format!("{} UTC", at.strftime("%Y-%m-%d %H:%M")),
     }
-    (secs as i64 + tm.tm_gmtoff, "")
 }
 
-#[cfg(not(unix))]
-fn local(secs: u64) -> (i64, &'static str) {
-    (secs as i64, " UTC")
-}
-
-/// The year, month and day of a day count from 1970-01-01 (Howard
-/// Hinnant's `civil_from_days`).
-fn civil(days: i64) -> (i64, u32, u32) {
-    let z = days + 719_468;
-    let era = z.div_euclid(146_097);
-    let doe = z.rem_euclid(146_097);
-    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let d = (doy - (153 * mp + 2) / 5 + 1) as u32;
-    let m = if mp < 10 { mp + 3 } else { mp - 9 } as u32;
-    let y = yoe + era * 400 + i64::from(m <= 2);
-    (y, m, d)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::civil;
-
-    #[test]
-    fn days_become_dates() {
-        assert_eq!(civil(0), (1970, 1, 1));
-        assert_eq!(civil(11_016), (2000, 2, 29));
-        assert_eq!(civil(20_750), (2026, 10, 24));
-        assert_eq!(civil(-1), (1969, 12, 31));
-    }
+/// A browser lists no replay files to date.
+#[cfg(target_arch = "wasm32")]
+pub fn when(_time: std::time::SystemTime) -> String {
+    String::new()
 }
