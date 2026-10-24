@@ -11,3 +11,11 @@ pub fn reference() -> PathBuf {
         PathBuf::from,
     )
 }
+
+/// The reference's file of manifest output `out`: none for a line added after the reference
+/// was exported, which it has nothing to compare with.
+#[allow(dead_code, reason = "not every test file compares single outputs")]
+pub fn exported(out: &str) -> Option<PathBuf> {
+    let path = reference().join(out);
+    path.is_file().then_some(path)
+}

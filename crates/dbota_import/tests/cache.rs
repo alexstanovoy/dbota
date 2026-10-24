@@ -143,14 +143,16 @@ fn gltf_json(path: &Path) -> Value {
     }
 }
 
-/// What a glTF document must agree on: nodes, each mesh's primitives (vertices, indices), the
-/// skins' joint counts, each animation's name and length.
+/// What a glTF document must agree on: nodes (but the attachments only the importer writes),
+/// each mesh's primitives (vertices, indices), the skins' joint counts, each animation's name
+/// and length.
 fn gltf_summary(path: &Path) -> Vec<String> {
     let json = gltf_json(path);
     let list = |key: &str| json[key].as_array().cloned().unwrap_or_default();
     let accessors = list("accessors");
     let count = |i: &Value| accessors[i.as_u64().unwrap() as usize]["count"].clone();
-    let mut lines = vec![format!("{} nodes", list("nodes").len())];
+    let nodes = list("nodes").len() - attachments(&json);
+    let mut lines = vec![format!("{nodes} nodes")];
     let mut meshes: Vec<String> = list("meshes")
         .iter()
         .map(|m| {
@@ -188,6 +190,25 @@ fn gltf_summary(path: &Path) -> Vec<String> {
         lines.push(format!("animation {} {:.3}", a["name"], end));
     }
     lines
+}
+
+/// The attachment nodes of a glTF document, which the importer writes and Source2Viewer does
+/// not: a leaf that is no joint and carries no mesh.
+fn attachments(json: &Value) -> usize {
+    let joints: BTreeSet<u64> = json["skins"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .flat_map(|skin| skin["joints"].as_array().cloned().unwrap_or_default())
+        .filter_map(|joint| joint.as_u64())
+        .collect();
+    let nodes = json["nodes"].as_array().cloned().unwrap_or_default();
+    (0..nodes.len() as u64)
+        .filter(|i| {
+            let node = &nodes[*i as usize];
+            !joints.contains(i) && node.get("mesh").is_none() && node.get("children").is_none()
+        })
+        .count()
 }
 
 /// Whether two summary lines are one clip, ours never the shorter: ours lasts to the clip's
@@ -352,6 +373,21 @@ fn manifest_outputs() -> BTreeSet<String> {
         .collect()
 }
 
+/// The folders of the manifest's lines the reference lacks (lines added after it was exported):
+/// a model's folder, which holds its `.glb` and the images beside it, when the reference has
+/// nothing in it. What lies there comes with its line.
+fn folders_of_newer_lines(
+    listed: &BTreeSet<String>,
+    theirs: &BTreeMap<String, PathBuf>,
+) -> BTreeSet<String> {
+    listed
+        .iter()
+        .filter(|rel| !theirs.contains_key(*rel))
+        .filter_map(|rel| Some(format!("{}/", rel.rsplit_once('/')?.0)))
+        .filter(|dir| !theirs.keys().any(|k| k.starts_with(dir.as_str())))
+        .collect()
+}
+
 /// Whether the importer alone makes `rel`, so the exported cache has nothing like it: a
 /// world's `lighting=` file, the interface labels (`label` lines), and the portrait
 /// backgrounds (`portraits` lines); the manifest's header says which kinds Source2Viewer never
@@ -419,10 +455,15 @@ fn the_imported_cache_matches_the_exported_one() {
     // was exported) or what only the importer makes.
     let listed = manifest_outputs();
     let manifest = read(&repo().join("assets-manifest/manifest.txt"));
+    let newer = folders_of_newer_lines(&listed, &theirs);
     let extra: Vec<&String> = ours.keys().filter(|k| !theirs.contains_key(*k)).collect();
     let unlisted: Vec<&&String> = extra
         .iter()
-        .filter(|k| !listed.contains(**k) && !made_by_the_importer(k, &manifest))
+        .filter(|k| {
+            !listed.contains(**k)
+                && !newer.iter().any(|dir| k.starts_with(dir.as_str()))
+                && !made_by_the_importer(k, &manifest)
+        })
         .collect();
     assert!(
         unlisted.is_empty(),

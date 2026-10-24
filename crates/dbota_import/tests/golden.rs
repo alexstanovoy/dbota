@@ -23,7 +23,6 @@ struct Install {
     src: DirSource,
     pak: Vpk,
     map: Vpk,
-    cache: PathBuf,
     manifest: Vec<Line>,
 }
 
@@ -61,7 +60,6 @@ fn install() -> Install {
         src,
         pak,
         map,
-        cache,
         manifest: manifest(),
     }
 }
@@ -309,7 +307,9 @@ fn materials_match_the_exported_ones() {
         .iter()
         .filter(|l| matches!(l.kind.as_str(), "model" | "world"));
     for line in outputs {
-        let path = dota.cache.join(&line.out);
+        let Some(path) = common::exported(&line.out) else {
+            continue;
+        };
         let json = gltf_json(&path);
         for material in json["materials"].as_array().unwrap() {
             compare_material(&dota, &material["extras"]["vmat"], &path);
@@ -385,7 +385,10 @@ fn mesh_names(dota: &Install, model: &str) -> BTreeSet<String> {
 fn models_have_the_meshes_and_clips_the_manifest_and_export_name() {
     let dota = install();
     for line in dota.lines("model") {
-        let json = gltf_json(&dota.cache.join(&line.out));
+        let Some(path) = common::exported(&line.out) else {
+            continue;
+        };
+        let json = gltf_json(&path);
         let meshes = mesh_names(&dota, &line.src);
         let prefix = format!("{}.", line.src);
         for mesh in json["meshes"].as_array().unwrap() {
@@ -457,8 +460,10 @@ fn textures_exported_with_models_come_from_files_they_reference() {
                 file.trim_end_matches(".vtex_c").to_owned()
             })
             .collect();
-        let dir = dota.cache.join(&line.out);
-        let dir = dir.parent().unwrap();
+        let Some(path) = common::exported(&line.out) else {
+            continue;
+        };
+        let dir = path.parent().unwrap();
         for png in std::fs::read_dir(dir).unwrap() {
             let png = png.unwrap().file_name().into_string().unwrap();
             let Some(stem) = png.strip_suffix(".png") else {

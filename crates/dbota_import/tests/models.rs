@@ -17,10 +17,6 @@ fn repo() -> &'static Path {
     Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../.."))
 }
 
-fn cache() -> PathBuf {
-    common::reference()
-}
-
 /// A `model` line of the manifest.
 struct Line {
     source: String,
@@ -388,8 +384,11 @@ fn models_match_the_exported_ones() {
     let mut differ = Vec::new();
     let mut data = Vec::new();
     for line in models() {
+        let Some(reference) = common::exported(&line.out) else {
+            continue;
+        };
         let (source, ours) = (&line.source, line.export(&src, &pak));
-        let theirs = Glb::parse(&std::fs::read(cache().join(&line.out)).unwrap());
+        let theirs = Glb::parse(&std::fs::read(reference).unwrap());
         let ours = Glb::parse(&ours.glb);
         if let Some(diff) = compare_data(&ours, &theirs) {
             data.push(format!("{source}: {diff}"));
@@ -622,11 +621,12 @@ fn clips_match_the_exported_ones() {
     let mut wrong = Vec::new();
     let mut clips = 0;
     for line in models().into_iter().filter(|l| !l.anims.is_empty()) {
+        let Some(reference) = common::exported(&line.out) else {
+            continue;
+        };
         let exported = line.export(&src, &pak);
         let ours = animations(&Glb::parse(&exported.glb));
-        let theirs = animations(&Glb::parse(
-            &std::fs::read(cache().join(&line.out)).unwrap(),
-        ));
+        let theirs = animations(&Glb::parse(&std::fs::read(reference).unwrap()));
         let names = |list: &[(String, Vec<Channel>)]| -> Vec<String> {
             list.iter().map(|a| a.0.clone()).collect()
         };
