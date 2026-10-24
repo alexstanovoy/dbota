@@ -1,15 +1,18 @@
 //! The asset cache's text files, made from what heatel reads out of the install: the tooltip
 //! texts (`text/tooltips.json`), the interface's labels (`text/labels.json`), the shop's layout
 //! and words (`text/shop.json`), the portrait framings (`models/portraits.txt`), and the map's
-//! trees, buildings and lighting (`trees.txt`, `buildings.txt`, `lighting.txt`). The client
-//! reads each (`src/cache_text.rs`, `src/tooltip.rs`, ...).
+//! trees, buildings and lighting (`trees.txt`, `buildings.txt`, `lighting.txt`), and the
+//! particle systems (`particles/*.json`). The client reads each (`src/cache_text.rs`,
+//! `src/tooltip.rs`, `src/particles/`, ...).
 
 use std::collections::{BTreeMap, HashSet};
 
 use heatel::Result;
 use heatel::keyvalues::{localization_table, text};
 use heatel::kv3::Value;
+use heatel::particle::System;
 use heatel::portraits::{Framing, WHITE};
+use heatel::texture::Sheet;
 use heatel::tooltips::{Tooltip, Wanted, tooltips};
 use heatel::world::{Lighting, placements};
 use serde_json::{Map, Value as Json, json};
@@ -153,6 +156,69 @@ pub fn shop_json(shops: &[u8], localization: &[u8]) -> Result<Vec<u8>> {
         strings.insert(key.clone(), json!(value));
     }
     to_vec("shops", &json!({ "shops": categories, "strings": strings }))
+}
+
+/// The version of a particle file's layout; the client refuses others.
+pub const PARTICLE_VERSION: u32 = 1;
+
+/// A texture a particle file's systems draw with.
+pub struct ParticleTexture {
+    /// The texture (`materials/.../x.vtex`) the renderers name.
+    pub vtex: String,
+    /// Its KTX2 file in the cache.
+    pub file: String,
+    /// Its sprite sheet, if it is one.
+    pub sheet: Option<Sheet>,
+}
+
+/// A particle file: `{"version", "root", "systems": [{"path", "system"}], "textures":
+/// [{"vtex", "file", "sheet"}]}`, the root system first, each system as heatel's serde form of
+/// [`System`] (children by path), a sheet as its sequences of `{"clamp", "frames": [[display
+/// time, cropped u0 v0 u1 v1, uncropped u0 v0 u1 v1]]}` or `null`.
+pub fn particle_json(
+    root: &str,
+    systems: &[(String, System)],
+    textures: &[ParticleTexture],
+) -> Result<Vec<u8>> {
+    let systems: Vec<Json> = systems
+        .iter()
+        .map(|(path, system)| {
+            let system = serde_json::to_value(system).map_err(|e| heatel::Error::Malformed {
+                what: "particle",
+                detail: e.to_string(),
+            })?;
+            Ok(json!({ "path": path, "system": system }))
+        })
+        .collect::<Result<_>>()?;
+    let textures: Vec<Json> = textures
+        .iter()
+        .map(|t| json!({ "vtex": t.vtex, "file": t.file, "sheet": t.sheet.as_ref().map(sheet_json) }))
+        .collect();
+    to_vec(
+        "particle",
+        &json!({ "version": PARTICLE_VERSION, "root": root, "systems": systems, "textures": textures }),
+    )
+}
+
+fn sheet_json(sheet: &Sheet) -> Json {
+    let sequences: Vec<Json> = sheet
+        .sequences
+        .iter()
+        .map(|sequence| {
+            let frames: Vec<Vec<f32>> = sequence
+                .frames
+                .iter()
+                .map(|f| {
+                    std::iter::once(f.display_time)
+                        .chain(f.cropped)
+                        .chain(f.uncropped)
+                        .collect()
+                })
+                .collect();
+            json!({ "clamp": sequence.clamp, "frames": frames })
+        })
+        .collect();
+    json!(sequences)
 }
 
 /// `value` as JSON text; the readers' error, named `what`, if it cannot be.

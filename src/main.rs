@@ -48,6 +48,7 @@ mod map;
 mod mapfile;
 mod minimap;
 mod overlay;
+mod particles;
 mod pick;
 mod pings;
 mod portrait;
@@ -402,6 +403,7 @@ fn main() -> AppExit {
             daylight::plugin,
             fog::plugin,
             units::plugin,
+            particles::plugin,
             anim::plugin,
             camera::plugin,
             capture::plugin,

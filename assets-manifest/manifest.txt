@@ -24,6 +24,10 @@
 #           the shop's categories and the items each lists, in Dota's order, and the shop's words
 #           (category, tab and button names) out of the localization. Written by the Rust importer only.
 #   texture <logical> <vpk .vtex_c> <out .png>
+#   particle <logical> <vpk .vpcf_c> <out .json>
+#           a particle system and every child under it, read into typed definitions, as one JSON file
+#           (dbota_import's particle_json); their textures as KTX2 under textures/ beside it, with their
+#           sprite sheets in the JSON. The client simulates and draws them (src/particles/).
 #   sound   <logical> <vpk .vsnd_c> <out .wav|.mp3> event=<Dota sound event that plays it>
 #           PCM WAV as Valve ships it (16-bit 44.1 kHz, a few 8-bit or 22.05 kHz); voice lines are MP3
 #           in the game and stay MP3 (out .mp3). Events with several variants list one line per variant;
@@ -290,6 +294,16 @@ texture particle.arc materials/particle/electrical_arc2/electrical_arc_white_2_0
 texture particle.glyph.tube materials/particle/particle_ring_wave_crisp_3.vtex_c textures/particle/particle_ring_wave_crisp_3.png
 texture particle.glyph.base materials/particle/particle_ring_wave_15.vtex_c textures/particle/particle_ring_wave_15.png
 texture particle.glyph.creep_tube materials/particle/particle_ring_wave.vtex_c textures/particle/particle_ring_wave.png
+
+# --- Attack missiles: each unit's ProjectileModel (scripts/npc/npc_units.txt, heroes/npc_dota_hero_*.txt),
+# by the logical name of the unit's model with .attack for .model
+particle hero.nevermore.attack particles/units/heroes/hero_nevermore/nevermore_base_attack.vpcf_c particles/nevermore_base_attack.json
+particle creep.radiant.ranged.attack particles/base_attacks/ranged_goodguy.vpcf_c particles/ranged_goodguy.json
+particle creep.dire.ranged.attack particles/base_attacks/ranged_badguy.vpcf_c particles/ranged_badguy.json
+particle creep.radiant.siege.attack particles/base_attacks/ranged_siege_good.vpcf_c particles/ranged_siege_good.json
+particle creep.dire.siege.attack particles/base_attacks/ranged_siege_bad.vpcf_c particles/ranged_siege_bad.json
+particle tower.radiant.attack particles/base_attacks/ranged_tower_good.vpcf_c particles/ranged_tower_good.json
+particle tower.dire.attack particles/base_attacks/ranged_tower_bad.vpcf_c particles/ranged_tower_bad.json
 
 # --- Item icons (88x64, a few narrower), every Dota item name in ids.txt
 texture icon.item.boots panorama/images/items/boots_png.vtex_c icons/items/boots.png

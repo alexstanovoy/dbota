@@ -59,6 +59,8 @@ pub struct Manifest {
     pub models: Vec<Model>,
     /// Textures and sounds whose files are present: logical name and path.
     pub files: Vec<(String, String)>,
+    /// The particle effects whose files are present: logical name and path.
+    pub particles: Vec<(String, String)>,
     /// The map file, when present.
     pub map: Option<String>,
     /// How the units named by Dota are drawn (every `unit` line, whether or
@@ -122,6 +124,11 @@ impl Manifest {
                         .files
                         .push(((*logical).to_string(), (*path).to_string()));
                 }
+                ["particle", logical, _, path, ..] if present(path) => {
+                    manifest
+                        .particles
+                        .push(((*logical).to_string(), (*path).to_string()));
+                }
                 ["world", _, _, path, ..] if present(path) => {
                     manifest.map = Some(cache_path(path));
                 }
@@ -161,6 +168,11 @@ impl Manifest {
     /// The model of a logical name, if its file is there.
     pub fn model(&self, logical: &str) -> Option<&Model> {
         self.models.iter().find(|m| m.logical == logical)
+    }
+
+    /// The particle effects present: logical name and file, relative to the cache.
+    pub fn particles(&self) -> impl Iterator<Item = (&str, &str)> {
+        self.particles.iter().map(|(l, p)| (l.as_str(), p.as_str()))
     }
 
     /// The asset path of a texture or sound of a logical name, if its file

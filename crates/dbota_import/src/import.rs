@@ -11,18 +11,20 @@ use std::collections::{BTreeMap, HashSet, VecDeque};
 
 use heatel::export::{ExportedTexture, ModelOptions, export_model, read_from};
 use heatel::material::Material;
+use heatel::particle::System;
 use heatel::portraits::framings;
+use heatel::texture::Role;
 use heatel::tooltips::Wanted;
 use heatel::world::{Band, EntityLump, ExportedWorld, WorldOptions, export_world, lighting};
 use heatel::{Error, Resource, Result, Sound, Source, Texture, Vpk};
 
 use crate::text::{
-    background_png, buildings_txt, labels_json, lighting_txt, portraits_txt, shop_json,
-    tooltips_json, trees_txt, wanted,
+    ParticleTexture, background_png, buildings_txt, labels_json, lighting_txt, particle_json,
+    portraits_txt, shop_json, tooltips_json, trees_txt, wanted,
 };
 
 /// Bumped when the importer's output changes for the same install; part of a cache's stamp.
-pub const IMPORT_REV: u32 = 6;
+pub const IMPORT_REV: u32 = 7;
 
 /// Names what an import of this manifest and these ids makes (FNV-1a 64 of both texts): part of
 /// a cache's stamp, so a cache made from other texts is stale even from the same install.
@@ -49,6 +51,9 @@ const DIR_VPK: &str = "pak01_dir.vpk";
 const TOOLTIPS: &str = "text/tooltips.json";
 /// Where the interface's labels go (the client reads them there).
 const LABELS: &str = "text/labels.json";
+/// Most systems one particle line makes, its root and every child under it; Dota's missiles
+/// have up to ~30.
+const MAX_SYSTEMS: usize = 256;
 /// What the cache's glTF files say wrote them.
 pub const GENERATOR: &str = "dbota_assets";
 /// Layer textures the client has no use for.
@@ -171,6 +176,13 @@ pub enum Item {
         src: String,
         out: String,
     },
+    /// A particle system and every child under it, as one JSON file (see [`particle_json`]),
+    /// their textures as KTX2 under `textures/` beside it.
+    Particle {
+        logical: String,
+        src: String,
+        out: String,
+    },
     /// A sound written as WAV or MP3.
     Sound {
         logical: String,
@@ -197,6 +209,7 @@ impl Item {
             | Self::Shop { logical, .. }
             | Self::Labels { logical, .. }
             | Self::Texture { logical, .. }
+            | Self::Particle { logical, .. }
             | Self::Sound { logical, .. }
             | Self::Portraits { logical, .. } => logical,
         }
@@ -240,6 +253,11 @@ impl Plan {
                     });
                 }
                 ["texture", logical, src, out, ..] => plan.items.push(Item::Texture {
+                    logical: (*logical).to_owned(),
+                    src: (*src).to_owned(),
+                    out: (*out).to_owned(),
+                }),
+                ["particle", logical, src, out, ..] => plan.items.push(Item::Particle {
                     logical: (*logical).to_owned(),
                     src: (*src).to_owned(),
                     out: (*out).to_owned(),
@@ -716,6 +734,11 @@ fn make(
             let texture = Texture::parse(&read_from(src, &[pak], path)?)?;
             out.put(dest, &texture.first_frame_png()?)
         }
+        Item::Particle {
+            src: path,
+            out: dest,
+            ..
+        } => particle(src, pak, path, dest, out),
         Item::Sound {
             src: path,
             out: dest,
@@ -732,6 +755,78 @@ fn make(
             ..
         } => portraits(src, pak, path, dest, models, out),
     }
+}
+
+/// The particle system `path` (`x.vpcf_c`) with its children, after the textures they draw
+/// with. A child that does not read is reported and left out: its parent plays without it.
+fn particle(src: &impl Source, pak: &Vpk, path: &str, dest: &str, out: &mut Out<'_>) -> Result<()> {
+    let root = path.strip_suffix("_c").unwrap_or(path);
+    let mut systems: Vec<(String, System)> = Vec::new();
+    let mut queue = VecDeque::from([root.to_owned()]);
+    while let Some(next) = queue.pop_front() {
+        if systems.iter().any(|(seen, _)| *seen == next) {
+            continue;
+        }
+        if systems.len() == MAX_SYSTEMS {
+            return Err(malformed(
+                "particle",
+                format!("{root}: more than {MAX_SYSTEMS} systems"),
+            ));
+        }
+        let read = read_from(src, &[pak], &format!("{next}_c"))
+            .and_then(|bytes| System::read(&Resource::parse(&bytes)?));
+        let system = match read {
+            Ok(system) => system,
+            Err(err) if next != root => {
+                out.report.failed.push((next, err.to_string()));
+                continue;
+            }
+            Err(err) => return Err(err),
+        };
+        queue.extend(system.children.iter().map(|c| c.path.clone()));
+        systems.push((next, system));
+    }
+    let dir = dest.rsplit_once('/').map_or("", |(dir, _)| dir);
+    let mut textures: Vec<ParticleTexture> = Vec::new();
+    let vtexes: Vec<&str> = systems.iter().flat_map(|(_, s)| s.textures()).collect();
+    for vtex in vtexes {
+        if textures.iter().any(|t| t.vtex == vtex) {
+            continue;
+        }
+        match particle_texture(src, pak, vtex, dir, out) {
+            Ok(texture) => textures.push(texture),
+            // A renderer without its texture draws nothing; the rest of the system plays.
+            Err(err) => out.report.failed.push((vtex.to_owned(), err.to_string())),
+        }
+    }
+    out.put(dest, &particle_json(root, &systems, &textures)?)
+}
+
+/// The KTX2 file of particle texture `vtex` under `dir/textures/` (written once however many
+/// systems draw with it), and its sprite sheet.
+fn particle_texture(
+    src: &impl Source,
+    pak: &Vpk,
+    vtex: &str,
+    dir: &str,
+    out: &mut Out<'_>,
+) -> Result<ParticleTexture> {
+    let texture = Texture::parse(&read_from(src, &[pak], &format!("{vtex}_c"))?)?;
+    let file = join(dir, &format!("textures/{}", ktx2_name(vtex)));
+    if !out.report.files.contains_key(&file) {
+        let exported = ExportedTexture {
+            vtex: vtex.to_owned(),
+            uri: file.clone(),
+            pack: None,
+            role: Role::Colour,
+        };
+        out.put(&file, &exported.to_ktx2(&texture)?)?;
+    }
+    Ok(ParticleTexture {
+        vtex: vtex.to_owned(),
+        file,
+        sheet: texture.sheet().cloned(),
+    })
 }
 
 /// `portraits.txt` from Dota's `portraits.txt`, after the background images it names.

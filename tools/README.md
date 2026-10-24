@@ -50,6 +50,7 @@ deleted. An asset that does not convert is reported and drawn as a stand-in.
 | `map/mid/` | `mid.gltf` with its geometry in `mid.bin`, the default map from fountain to fountain around mid, its textures, `trees.txt`, `buildings.txt` (the towers' places) | 354 MB |
 | `textures/ground/` | terrain layer textures (also used by `map.mid`) | 37 MB |
 | `textures/particle/` | 16 effect textures (smoke, glow, sparks, ground cracks, fire, the Glyph's rings, ...) | 1 MB |
+| `particles/` | the attack missiles of Shadow Fiend, the lane creeps and the towers (each unit's `ProjectileModel`): one JSON file per effect, its systems as heatel reads them (emitters, initializers, operators, forces, renderers, children), and their 40 textures as KTX2 under `particles/textures/` with their sprite sheets in the JSON; the client simulates and draws them | 10 MB |
 | `icons/`, `hud/`, `minimap/` | item and ability icons, hero portraits, minimap hero/creep/tower/building icons, HUD and shop art, minimap | 2 MB |
 | `text/tooltips.json` | the names, descriptions, lore, notes and number labels of the items and abilities in `ids.txt`, read out of the install's own localization and scripts; the client puts the simulator's numbers into them (without the file, tooltips show only the simulator's plain names and numbers), and the aliases the shop's search finds items by | 30 KB |
 | `text/shop.json` | the shop's categories and the items each lists, in Dota's order (`scripts/shops.txt`), and the shop's words (category, tab and button names) from the install's localization; without it the shop shows bota's own groups and plain words | 16 KB |
@@ -128,7 +129,10 @@ Source2Viewer 20's export of the world, cropped this way, was (the golden tests 
 
 ## Not imported
 
-- Particle systems (only a few of their textures, first frame of sprite sheets).
+- Particle systems other than the attack missiles: razes, requiem, teleport, Glyph and deaths
+  still draw their own simple stand-ins. Of the missiles' classes, dynamic lights, models,
+  curl-noise forces, ground collision, a spline ramp and a distance remap are left out (see
+  `crates/dbota_import/tests/particles.rs`).
 - Tower destruction models and non-default (event/crystal/mega) creep variants.
 - The full map outside the mid band (import it by raising `half_width` / `v_min` / `v_max` on the
   `world` line (they are 13100 and −11800 / 11700 now); the whole map with materials is ~330 MB).

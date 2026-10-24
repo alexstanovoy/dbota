@@ -1,0 +1,23 @@
+//! Dota's particle systems, as the install defines them (read by the importer into the cache):
+//! simulated on the CPU as Source 2 simulates them, drawn as instanced cards.
+
+mod draw;
+mod eval;
+mod init;
+mod library;
+mod ops;
+mod plugin;
+mod render;
+mod sim;
+mod store;
+#[cfg(test)]
+mod tests;
+
+pub use library::{Effect, Library};
+pub use plugin::{Handle, Playing};
+
+use bevy::prelude::App;
+
+pub fn plugin(app: &mut App) {
+    app.add_plugins((plugin::plugin, render::plugin));
+}

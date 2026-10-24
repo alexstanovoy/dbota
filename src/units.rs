@@ -57,6 +57,15 @@ pub struct Pivot(pub Entity);
 #[derive(Component)]
 pub struct Posable;
 
+/// Where a unit's model carries what its attacks need, as its model names them: the hands an
+/// attack's missile leaves from (`attach_attack1`, `attach_attack2`) and the place one hits
+/// (`attach_hitloc`).
+#[derive(Component, Debug, Default)]
+pub struct Attachments {
+    pub attack: [Option<Entity>; 2],
+    pub hitloc: Option<Entity>,
+}
+
 /// The animation player of a unit's model, on the unit's root.
 #[derive(Component)]
 pub struct Rig(pub Entity);
@@ -851,6 +860,7 @@ fn on_model_ready(
     units: Query<&Unit>,
     bank: Res<ModelBank>,
     joints: Query<(&Name, &Transform)>,
+    names: Query<&Name>,
     mut wearables: Query<&mut Wearable>,
 ) {
     // Its joints are new: what it wears follows them, not the ones before.
@@ -878,6 +888,17 @@ fn on_model_ready(
         commands.entity(unit).insert(Rig(player));
     }
     commands.entity(ready.entity).insert(Posable);
+    let mut attachments = Attachments::default();
+    for part in children.iter_descendants(ready.entity) {
+        let slot = match names.get(part).map(Name::as_str) {
+            Ok("attach_attack1") => &mut attachments.attack[0],
+            Ok("attach_attack2") => &mut attachments.attack[1],
+            Ok("attach_hitloc") => &mut attachments.hitloc,
+            _ => continue,
+        };
+        *slot = Some(part);
+    }
+    commands.entity(unit).insert(attachments);
     // Pudge's run carries him forward eight metres a cycle on his root
     // joint (Dota moves the unit, not the bone): the root is held where
     // its bind pose puts it, up and down aside.

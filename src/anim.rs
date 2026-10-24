@@ -43,6 +43,13 @@ pub struct Pose {
     swing_tempo: f32,
 }
 
+impl Pose {
+    /// The clip playing, by logical name (`attack2` while the second attack swings).
+    pub fn clip(&self) -> &'static str {
+        self.clip
+    }
+}
+
 pub fn plugin(app: &mut App) {
     app.add_systems(PostUpdate, animate.before(TransformSystems::Propagate));
 }
