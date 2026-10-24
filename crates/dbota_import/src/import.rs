@@ -20,7 +20,7 @@ use heatel::{Error, Resource, Result, Sound, Source, Texture, Vpk};
 
 use crate::text::{
     ParticleMaterial, ParticleTexture, background_png, buildings_txt, labels_json, lighting_txt,
-    particle_json, portraits_txt, shop_json, tooltips_json, trees_txt, wanted,
+    particle_json, portraits_txt, shop_json, styles_json, tooltips_json, trees_txt, wanted,
 };
 
 /// Bumped when the importer's output changes for the same install; part of a cache's stamp.
@@ -51,6 +51,7 @@ const DIR_VPK: &str = "pak01_dir.vpk";
 const TOOLTIPS: &str = "text/tooltips.json";
 /// Where the interface's labels go (the client reads them there).
 const LABELS: &str = "text/labels.json";
+const STYLES: &str = "text/styles.json";
 /// Most systems one particle line makes, its root and every child under it; Dota's missiles
 /// have up to ~30.
 const MAX_SYSTEMS: usize = 256;
@@ -170,6 +171,14 @@ pub enum Item {
         keys: Vec<(String, String)>,
         out: String,
     },
+    /// The colours of the manifest's `style` lines: each `@define` named out of its compiled
+    /// stylesheet.
+    Styles {
+        logical: String,
+        /// The stylesheet and the define of each colour, in manifest order.
+        keys: Vec<(String, String)>,
+        out: String,
+    },
     /// A texture written as a PNG (the first frame of a sprite sheet).
     Texture {
         logical: String,
@@ -208,6 +217,7 @@ impl Item {
             | Self::Tooltips { logical, .. }
             | Self::Shop { logical, .. }
             | Self::Labels { logical, .. }
+            | Self::Styles { logical, .. }
             | Self::Texture { logical, .. }
             | Self::Particle { logical, .. }
             | Self::Sound { logical, .. }
@@ -229,6 +239,7 @@ impl Plan {
         let mut plan = Self::default();
         let mut portraits_line = None;
         let mut labels = Vec::new();
+        let mut styles = Vec::new();
         for line in manifest.lines() {
             let words: Vec<&str> = line
                 .split('#')
@@ -315,6 +326,7 @@ impl Plan {
                     });
                 }
                 ["label", src, key, ..] => labels.push(((*src).to_owned(), (*key).to_owned())),
+                ["style", src, name, ..] => styles.push(((*src).to_owned(), (*name).to_owned())),
                 ["portraits", logical, src, out, ..] => {
                     portraits_line = Some([logical, src, out].map(|w| (*w).to_owned()));
                 }
@@ -334,6 +346,13 @@ impl Plan {
                 logical: "text.labels".to_owned(),
                 keys: labels,
                 out: LABELS.to_owned(),
+            });
+        }
+        if !styles.is_empty() {
+            plan.items.push(Item::Styles {
+                logical: "text.styles".to_owned(),
+                keys: styles,
+                out: STYLES.to_owned(),
             });
         }
         // Last, for it frames the models the manifest lists.
@@ -753,6 +772,19 @@ fn make(
                 .collect();
             let files: Vec<(&str, &[u8])> = files.iter().map(|(p, b)| (*p, b.as_slice())).collect();
             out.put(dest, &labels_json(&keys, &files)?)
+        }
+        Item::Styles {
+            keys, out: dest, ..
+        } => {
+            let mut sheets: Vec<(&str, Vec<u8>)> = Vec::new();
+            for (path, _) in keys {
+                if !sheets.iter().any(|(read, _)| read == path) {
+                    sheets.push((path, read_from(src, &[pak], path)?));
+                }
+            }
+            let sheets: Vec<(&str, &[u8])> =
+                sheets.iter().map(|(p, b)| (*p, b.as_slice())).collect();
+            out.put(dest, &styles_json(keys, &sheets)?)
         }
         Item::Texture {
             src: path,

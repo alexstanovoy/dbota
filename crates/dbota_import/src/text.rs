@@ -118,6 +118,50 @@ pub fn labels_json(keys: &[(String, String)], files: &[(&str, &[u8])]) -> Result
     to_vec("labels", &Json::Object(out))
 }
 
+/// `text/styles.json`: the colour each `(sheet, name)` of `keys` defines (`@define name: #…;`)
+/// in its compiled stylesheet among `sheets` (install path and the `.vcss_c` bytes), by the name
+/// lower-cased, as `#rrggbbaa`. A define a sheet lacks, or one that is no plain colour, is left
+/// out: the client draws its own.
+pub fn styles_json(keys: &[(String, String)], sheets: &[(&str, &[u8])]) -> Result<Vec<u8>> {
+    let mut sources = Vec::new();
+    for (path, bytes) in sheets {
+        let resource = heatel::Resource::parse(bytes)?;
+        let data = resource.block(b"DATA").unwrap_or_default();
+        sources.push((*path, data));
+    }
+    let mut out = Map::new();
+    for (sheet, name) in keys {
+        let found = sources
+            .iter()
+            .find(|(path, _)| path == sheet)
+            .and_then(|(_, data)| style_define(data, name));
+        if let Some(colour) = found {
+            out.insert(name.to_lowercase(), json!(colour));
+        }
+    }
+    to_vec("styles", &Json::Object(out))
+}
+
+/// The colour `@define name: #rgb[a];` gives in a stylesheet's source, as `#rrggbbaa`.
+fn style_define(source: &[u8], name: &str) -> Option<String> {
+    let head = format!("@define {name}:");
+    let at = source
+        .windows(head.len())
+        .position(|w| w == head.as_bytes())?;
+    let rest = &source[at + head.len()..];
+    let end = rest.iter().take(64).position(|b| *b == b';')?;
+    let value = std::str::from_utf8(&rest[..end]).ok()?.trim();
+    let hex = value.strip_prefix('#')?;
+    if !hex.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return None;
+    }
+    match hex.len() {
+        6 => Some(format!("#{}ff", hex.to_lowercase())),
+        8 => Some(format!("#{}", hex.to_lowercase())),
+        _ => None,
+    }
+}
+
 /// Most localization strings kept for the shop.
 const MAX_STRINGS: usize = 512;
 /// Longest localization string kept, in bytes.

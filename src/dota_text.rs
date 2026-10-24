@@ -21,6 +21,10 @@ const MAX_ENTRIES: usize = 4096;
 const MAX_ALIASES: usize = 16;
 /// An upper bound on the labels, on the same grounds.
 const MAX_LABELS: usize = 512;
+/// Where Dota's style colours lie in the cache.
+const STYLES: &str = "text/styles.json";
+/// An upper bound on the colours.
+const MAX_STYLES: usize = 64;
 
 /// One item or ability, as Dota's files give it.
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -51,6 +55,8 @@ pub struct Texts {
     entries: HashMap<String, Entry>,
     /// The interface's labels (`text/labels.json`) by their key lower-cased.
     labels: HashMap<String, String>,
+    /// Dota's style colours (`text/styles.json`) by their name lower-cased.
+    styles: HashMap<String, Color>,
 }
 
 impl Texts {
@@ -67,7 +73,18 @@ impl Texts {
                 .take(MAX_LABELS)
                 .filter_map(|(key, value)| Some((key.to_lowercase(), value.as_str()?.to_string())))
                 .collect(),
+            styles: read_object(root, STYLES)
+                .iter()
+                .take(MAX_STYLES)
+                .filter_map(|(key, value)| Some((key.to_lowercase(), colour(value.as_str()?)?)))
+                .collect(),
         }
+    }
+
+    /// A colour of Dota's stylesheets by its name (`HeroSlot5Color`); none
+    /// when the cache has not it.
+    pub fn style(&self, name: &str) -> Option<Color> {
+        self.styles.get(&name.to_lowercase()).copied()
     }
 
     pub fn get(&self, key: &str) -> Option<&Entry> {
@@ -85,6 +102,16 @@ impl Texts {
     pub fn is_empty(&self) -> bool {
         self.entries.is_empty()
     }
+}
+
+/// `#rrggbbaa` as a colour.
+fn colour(hex: &str) -> Option<Color> {
+    let hex = hex.strip_prefix('#')?;
+    if hex.len() != 8 {
+        return None;
+    }
+    let byte = |at: usize| u8::from_str_radix(hex.get(at..at + 2)?, 16).ok();
+    Some(Color::srgba_u8(byte(0)?, byte(2)?, byte(4)?, byte(6)?))
 }
 
 /// The JSON object of a cache file; empty when there is none or it is not one.

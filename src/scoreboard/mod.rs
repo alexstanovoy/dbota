@@ -258,6 +258,7 @@ fn pictures(
     lines: Res<Rows>,
     manifest: Res<crate::manifest::Manifest>,
     server: Res<AssetServer>,
+    colours: Res<crate::player_colour::PlayerColours>,
     mut pictures: Query<(&At, &Field, &mut ImageNode)>,
 ) {
     let view = session.0.view();
@@ -266,7 +267,7 @@ fn pictures(
         let (path, tint) = match (*field, line) {
             (_, None) => (None, Color::NONE),
             (Field::Color, Some(l)) => {
-                let color = view.map_or(Color::WHITE, |v| crate::teleport::player_color(v, l.slot));
+                let color = view.map_or(Color::WHITE, |v| colours.of(v, l.slot));
                 (manifest.file("hud.scoreboard_slot"), color)
             }
             (Field::Hero, Some(l)) => {

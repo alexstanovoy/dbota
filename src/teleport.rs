@@ -9,11 +9,10 @@ use bevy::{
     light::{NotShadowCaster, NotShadowReceiver},
     prelude::*,
 };
-use bota_proto::{EntityId, SlotId, Team, TeleportView, WorldView};
+use bota_proto::{EntityId, SlotId, TeleportView, WorldView};
 
 use crate::manifest::Manifest;
 use crate::map::Ground;
-use crate::overlay::team_color;
 use crate::session::Session;
 use crate::warmup::Warmup;
 
@@ -23,23 +22,6 @@ const RADIUS: f32 = 175.0;
 const CLOSING: f32 = 0.6;
 /// World units the light column over a landing rises.
 const COLUMN: f32 = 520.0;
-/// Dota's player colours of the first side's five seats, in seat order.
-const RADIANT_COLORS: [Color; 5] = [
-    Color::srgb(0.2, 0.45, 1.0),
-    Color::srgb(0.4, 1.0, 0.75),
-    Color::srgb(0.75, 0.0, 0.75),
-    Color::srgb(0.95, 0.94, 0.04),
-    Color::srgb(1.0, 0.42, 0.0),
-];
-/// The same for the second side's five seats.
-const DIRE_COLORS: [Color; 5] = [
-    Color::srgb(1.0, 0.52, 0.74),
-    Color::srgb(0.6, 0.62, 0.62),
-    Color::srgb(0.4, 0.75, 0.95),
-    Color::srgb(0.0, 0.5, 0.15),
-    Color::srgb(0.65, 0.4, 0.0),
-];
-
 /// The meshes and the texture the rings share.
 #[derive(Resource)]
 struct Art {
@@ -98,24 +80,6 @@ fn make_art(
     commands.insert_resource(art);
 }
 
-/// Dota's colour of a seat: the order of its side's seats picks it.
-pub fn player_color(view: &WorldView, slot: SlotId) -> Color {
-    let Some(player) = view.player(slot) else {
-        return Color::WHITE;
-    };
-    let rank = view
-        .players
-        .iter()
-        .filter(|p| p.team == player.team && p.slot < slot)
-        .count();
-    let palette = match player.team {
-        Team::Radiant => &RADIANT_COLORS,
-        Team::Dire => &DIRE_COLORS,
-        Team::Neutral => return team_color(Team::Neutral),
-    };
-    palette[rank % palette.len()]
-}
-
 /// How much of a hero's channel has run, 0 to 1, when it channels a teleport.
 pub fn channel_share(view: &WorldView, unit: EntityId) -> Option<f32> {
     let player = view.players.iter().find(|p| p.unit == Some(unit))?;
@@ -143,6 +107,7 @@ fn portals(
     art: Option<Res<Art>>,
     ground: Res<Ground>,
     time: Res<Time>,
+    colours: Res<crate::player_colour::PlayerColours>,
     mut known: ResMut<Portals>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut rings: Query<(&Portal, &mut Transform)>,
@@ -190,7 +155,7 @@ fn portals(
         let at = Vec3::new(x, ground.at(x, y) + 6.0, -y);
         let share = progress(teleport);
         let entity = *known.0.entry(key).or_insert_with(|| {
-            let color = player_color(view, teleport.slot);
+            let color = colours.of(view, teleport.slot);
             spawn(&mut commands, &art, &mut materials, landing, color)
         });
         let Ok((portal, mut transform)) = rings.get_mut(entity) else {

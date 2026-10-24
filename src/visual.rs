@@ -13,6 +13,9 @@
 //! - No range ring is drawn while the show-ranges key is up.
 //! - The top-left block tells no gold and no souls.
 //! - Buff icons are cut round.
+//! - Every hero's minimap mark is its player's colour (Dota's, from the
+//!   cache) ringed in its side's, and the top bar's strip over each seat its
+//!   player's colour: a Dire hero is never marked in green.
 //! - With `--water-check` (the camera on the river) only the river is
 //!   measured: one surface, no straight sharp step in its shading where one
 //!   of the map's water pieces meets the next.
@@ -128,6 +131,18 @@ pub struct Checks<'w, 's> {
     >,
     icons: Query<'w, 's, &'static ImageNode>,
     images: Res<'w, Assets<Image>>,
+    colours: Res<'w, crate::player_colour::PlayerColours>,
+    hero_marks: Query<
+        'w,
+        's,
+        (
+            &'static crate::minimap::HeroMark,
+            &'static BackgroundColor,
+            &'static Outline,
+            &'static Visibility,
+        ),
+    >,
+    strips: Query<'w, 's, (&'static crate::hud::SeatColour, &'static BackgroundColor)>,
 }
 
 impl Checks<'_, '_> {
@@ -254,6 +269,7 @@ pub fn run(image: &Image, unveiled: &Image, c: &Checks, may_wait: bool) -> Verdi
     );
     corner(c, &mut report);
     bar_sides(c, &mut report);
+    player_colours(c, &mut report);
     buff_icons(c, &mut report);
     let clicks_pending = !report_clicks(c, &mut report);
     if clicks_pending {
@@ -529,6 +545,44 @@ fn bar_sides(c: &Checks, report: &mut impl FnMut(&str, bool, String)) {
         told.iter().any(|(side, _)| Some(*side) == c.fog.team)
             && told.iter().all(|(_, right)| *right),
         format!("heroes' bars (side, right colour): {told:?}"),
+    );
+}
+
+/// Every hero's mark on the minimap is its player's colour ringed in its
+/// side's, and every seat's strip in the top bar its player's colour; a Dire
+/// hero's ring is red, whichever side watches.
+fn player_colours(c: &Checks, report: &mut impl FnMut(&str, bool, String)) {
+    let Some(view) = c.session.0.view() else {
+        report(
+            "hero marks in their player's colour",
+            false,
+            "no view".into(),
+        );
+        return;
+    };
+    let mut told = Vec::new();
+    for (mark, fill, ring, shown) in &c.hero_marks {
+        let (Some((team, seat)), false) = (mark.0, *shown == Visibility::Hidden) else {
+            continue;
+        };
+        let red = |colour: Color| {
+            let rgb = colour.to_srgba();
+            rgb.red > rgb.green && rgb.red > rgb.blue
+        };
+        let right = fill.0 == c.colours.of(view, seat)
+            && ring.color == crate::overlay::team_color(team)
+            && (team != bota_proto::Team::Dire || red(ring.color));
+        told.push(("minimap", seat.0, right));
+    }
+    for (strip, fill) in &c.strips {
+        if let Some(p) = view.players.get(usize::from(strip.0)) {
+            told.push(("top bar", p.slot.0, fill.0 == c.colours.of(view, p.slot)));
+        }
+    }
+    report(
+        "hero marks in their player's colour",
+        told.iter().any(|(on, ..)| *on == "minimap") && told.iter().all(|(.., right)| *right),
+        format!("marks (where, seat, right colour): {told:?}"),
     );
 }
 

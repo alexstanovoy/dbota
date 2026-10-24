@@ -54,7 +54,11 @@ impl Mark {
 /// replay watched through a seat are that side's own. `drawn` says where a
 /// unit is drawn this frame, which a ping at it follows; the view's place
 /// stands in.
-pub fn marks(core: &Core, drawn: impl Fn(EntityId) -> Option<Vec2>) -> Vec<Mark> {
+pub fn marks(
+    core: &Core,
+    colours: &crate::player_colour::PlayerColours,
+    drawn: impl Fn(EntityId) -> Option<Vec2>,
+) -> Vec<Mark> {
     let Some(view) = core.view() else {
         return Vec::new();
     };
@@ -79,7 +83,7 @@ pub fn marks(core: &Core, drawn: impl Fn(EntityId) -> Option<Vec2>) -> Vec<Mark>
                 at,
                 age: line.age,
                 danger: ping.kind == PingKind::Danger,
-                speaker: crate::teleport::player_color(view, slot),
+                speaker: colours.of(view, slot),
             })
         })
         .take(MARKS)
@@ -172,13 +176,14 @@ fn draw(
     session: NonSend<Session>,
     ground: Res<Ground>,
     index: Res<UnitIndex>,
+    colours: Res<crate::player_colour::PlayerColours>,
     units: Query<&Unit>,
 ) {
     let drawn = |id: EntityId| {
         let unit = units.get(*index.0.get(&id)?).ok()?;
         Some(unit.at)
     };
-    for mark in marks(&session.0, drawn) {
+    for mark in marks(&session.0, &colours, drawn) {
         let color = mark.color();
         let base = Vec3::new(
             mark.at.x,

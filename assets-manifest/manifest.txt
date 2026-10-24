@@ -33,6 +33,9 @@
 #           PCM WAV as Valve ships it (16-bit 44.1 kHz, a few 8-bit or 22.05 kHz); voice lines are MP3
 #           in the game and stay MP3 (out .mp3). Events with several variants list one line per variant;
 #           variants of one random pick (a hero's move acknowledgements) share the logical name.
+#   style   <vpk .vcss_c> <define>
+#           a colour one of Dota's stylesheets defines (`@define name: #rrggbb[aa];`), written with
+#           every other to text/styles.json under its name lower-cased, as #rrggbbaa.
 #   label   <vpk localization .txt> <key>
 #           one of Dota's interface texts (a stat's name, a line of the stats tooltip), written with
 #           every other label to text/labels.json under its key lower-cased; the client fills its
@@ -1102,3 +1105,15 @@ label resource/localization/dota_english.txt dota_hud_error_cant_sell_item
 label resource/localization/dota_english.txt dota_hud_error_cant_cast_here
 label resource/localization/dota_english.txt dota_hud_error_item_out_of_stock
 label resource/localization/dota_english.txt dota_hud_error_queue_full
+
+# Dota's player colours (HeroSlot0Color..HeroSlot9Color: Radiant's five seats, then Dire's).
+style panorama/styles/dotastyles.vcss_c HeroSlot0Color
+style panorama/styles/dotastyles.vcss_c HeroSlot1Color
+style panorama/styles/dotastyles.vcss_c HeroSlot2Color
+style panorama/styles/dotastyles.vcss_c HeroSlot3Color
+style panorama/styles/dotastyles.vcss_c HeroSlot4Color
+style panorama/styles/dotastyles.vcss_c HeroSlot5Color
+style panorama/styles/dotastyles.vcss_c HeroSlot6Color
+style panorama/styles/dotastyles.vcss_c HeroSlot7Color
+style panorama/styles/dotastyles.vcss_c HeroSlot8Color
+style panorama/styles/dotastyles.vcss_c HeroSlot9Color

@@ -54,6 +54,7 @@ mod overlay;
 mod particles;
 mod pick;
 mod pings;
+mod player_colour;
 mod portrait;
 mod quality;
 mod replay_controls;
@@ -404,6 +405,7 @@ fn main() -> AppExit {
     let source = cache_source(&mut app, &args.cache_dir);
     app.insert_resource(args.clone())
         .insert_resource(manifest)
+        .insert_resource(player_colour::PlayerColours::load(&texts))
         .insert_resource(texts)
         .insert_resource(catalog)
         .insert_resource(settings.clone())

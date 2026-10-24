@@ -181,7 +181,7 @@ clash and resets them to the defaults; they are kept as `key.<action> = <chord>`
 | `Alt` + left click / `Ctrl`+`Alt` + left click | ping the spot or the unit under the cursor (on the minimap, the spot) for your side, or warn of danger there (red). Your side's pings show for three seconds on the ground and the minimap, in the pinger's colour, and in a replay seen through a seat's eyes |
 | minimap | left click or drag moves the camera; right click orders your hero there |
 | Arrows, screen edges, middle button held | pan the camera (all four edges, the HUD bars included; the middle button drags the map); mouse wheel zooms (the camera's settings below) |
-| hold `Alt` | show attack, tower and ability ranges and the neutral camps' spawn boxes (they are never drawn otherwise) |
+| hold `Alt` | show attack, tower and ability ranges and the neutral camps' spawn boxes (they are never drawn otherwise), and the heroes' own icons on the minimap |
 | `Esc` | cancel / close; with nothing open, the dashboard (DISCONNECT, quit, SETTINGS; the settings also from the gear at the top left); leaves a match that is over; on the menu, back, and on its top page quit |
 | `F9`, `=` / `-`, `.`, `Tab` | in a replay: pause, faster / slower, one tick, switch vision (both teams, Radiant, Dire; `Tab` as a spectator too) |
 
@@ -201,7 +201,10 @@ Fortification is the round button against the minimap. Buffs and debuffs of the 
 above the abilities. The stash shows in the shop's corner while the shop is open or at the home
 shop; there GRAB ALL moves what it holds into the bag, a slot a tick. A dead hero's portrait, in
 the panel and in the top bar (either side's), turns grey with its respawn seconds over it. Health
-bars are the side's colour whoever watches: Radiant green, Dire red.
+bars are the side's colour whoever watches: Radiant green, Dire red. Each seat has Dota's player colour
+(read from the install: Radiant's blue, teal, purple, yellow, orange; Dire's pink, olive, light blue,
+dark green, brown): the strip over its portrait in the top bar, its row of the scoreboard, its pings and
+teleports, and its hero's mark on the minimap, ringed in its side's colour.
 
 The scoreboard is Dota's, at its sizes: each side's kills and name, and a row for each seat with
 its colour, hero, player's and hero's names, talents, level, gold, kills, deaths, assists and

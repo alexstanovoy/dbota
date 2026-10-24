@@ -1,5 +1,7 @@
 //! The minimap: the map photographed once from straight above, the fog over
-//! it, a mark for every unit shown and the camera's frame. A left click or a
+//! it, a mark for every unit shown and the camera's frame. A hero's mark is
+//! its player's colour in a ring of its side's (Dota's simple icons); with
+//! Alt held (Dota's DotaAlt) it shows the hero's own minimap icon instead. A left click or a
 //! drag moves the camera; a right click walks there.
 
 use bevy::{
@@ -25,6 +27,11 @@ pub const SIDE: f32 = 250.0;
 const PHOTO: u32 = 512;
 /// Unit marks shown at most.
 const MARKS: usize = 160;
+/// Hero marks shown at most: Dota's ten seats.
+const HERO_MARKS: usize = 10;
+/// Interface pixels across a hero's mark, and across it with its icon.
+const HERO_MARK: f32 = 11.0;
+const HERO_ICON: f32 = 24.0;
 /// Rings shown at most: teleports first, then what the side's players have
 /// pinged.
 const PINGS: usize = 10 + crate::pings::MARKS;
@@ -40,9 +47,16 @@ struct Minimap {
     photo: Handle<Image>,
     fog: Entity,
     marks: Vec<Entity>,
+    /// A hero's mark and the icon in it, one a seat.
+    heroes: Vec<(Entity, Entity)>,
     pings: Vec<Entity>,
     view: Entity,
 }
+
+/// A hero's mark on the minimap: the side and seat of the hero it marks
+/// now, none while it marks none.
+#[derive(Component, Default)]
+pub struct HeroMark(pub Option<(Team, bota_proto::SlotId)>);
 
 /// The photograph on the minimap.
 #[derive(Component)]
@@ -60,7 +74,7 @@ pub struct PhotoTaken(pub bool);
 pub fn plugin(app: &mut App) {
     app.init_resource::<PhotoTaken>()
         .add_systems(Startup, spawn)
-        .add_systems(Update, (photograph, marks, pings, clicks));
+        .add_systems(Update, (photograph, marks, hero_marks, pings, clicks));
 }
 
 fn spawn(mut commands: Commands, mut images: ResMut<Assets<Image>>, docks: Res<Docks>) {
@@ -123,6 +137,37 @@ fn spawn(mut commands: Commands, mut images: ResMut<Assets<Image>>, docks: Res<D
                 .id()
         })
         .collect();
+    let heroes = (0..HERO_MARKS)
+        .map(|_| {
+            let mark = commands
+                .spawn((
+                    Node {
+                        position_type: PositionType::Absolute,
+                        border_radius: BorderRadius::MAX,
+                        justify_content: JustifyContent::Center,
+                        align_items: AlignItems::Center,
+                        ..default()
+                    },
+                    HeroMark::default(),
+                    BackgroundColor(Color::WHITE),
+                    Outline::new(px(2), px(0), Color::BLACK),
+                    Visibility::Hidden,
+                    Pickable::IGNORE,
+                    ChildOf(frame),
+                ))
+                .id();
+            let icon = commands
+                .spawn((
+                    crate::ui::fill(),
+                    ImageNode::default(),
+                    Visibility::Hidden,
+                    Pickable::IGNORE,
+                    ChildOf(mark),
+                ))
+                .id();
+            (mark, icon)
+        })
+        .collect();
     let pings = (0..PINGS)
         .map(|_| {
             commands
@@ -158,6 +203,7 @@ fn spawn(mut commands: Commands, mut images: ResMut<Assets<Image>>, docks: Res<D
         photo,
         fog,
         marks,
+        heroes,
         pings,
         view,
     });
@@ -257,11 +303,10 @@ fn marks(
     {
         image.image = veil.0.clone();
     }
-    let me = core.my_hero();
     let shown = view
         .units
         .iter()
-        .filter(|u| !matches!(u.kind, UnitKind::Ward) && !grid.hides(u.seen_by));
+        .filter(|u| !matches!(u.kind, UnitKind::Ward | UnitKind::Hero) && !grid.hides(u.seen_by));
     let mut used = 0;
     for u in shown.take(MARKS) {
         let Ok((mut node, mut bg, mut vis)) = nodes.get_mut(minimap.marks[used]) else {
@@ -269,7 +314,6 @@ fn marks(
         };
         used += 1;
         let size = match u.kind {
-            UnitKind::Hero => 11.0,
             UnitKind::Tower | UnitKind::Barracks | UnitKind::Ancient => 9.0,
             _ => 5.0,
         };
@@ -282,14 +326,10 @@ fn marks(
             height: px(size),
             ..node.clone()
         });
-        bg.set_if_neq(BackgroundColor(if Some(u.id) == me {
-            Color::srgb(0.5, 1.0, 0.55)
-        } else {
-            match u.team {
-                Team::Radiant => Color::srgb(0.2, 0.75, 0.25),
-                Team::Dire => Color::srgb(0.85, 0.2, 0.15),
-                Team::Neutral => Color::srgb(0.8, 0.7, 0.4),
-            }
+        bg.set_if_neq(BackgroundColor(match u.team {
+            Team::Radiant => Color::srgb(0.2, 0.75, 0.25),
+            Team::Dire => Color::srgb(0.85, 0.2, 0.15),
+            Team::Neutral => Color::srgb(0.8, 0.7, 0.4),
         }));
         vis.set_if_neq(Visibility::Inherited);
     }
@@ -331,6 +371,83 @@ fn marks(
     }
 }
 
+/// Marks every hero shown in its player's colour, ringed in its side's; with
+/// Alt held, as its own icon.
+#[allow(clippy::type_complexity)]
+fn hero_marks(
+    session: NonSend<Session>,
+    minimap: Res<Minimap>,
+    grid: Res<FogGrid>,
+    colours: Res<crate::player_colour::PlayerColours>,
+    fired: Res<crate::keys::Fired>,
+    manifest: Res<crate::manifest::Manifest>,
+    server: Res<AssetServer>,
+    mut marks: Query<(
+        &mut Node,
+        &mut BackgroundColor,
+        &mut Outline,
+        &mut Visibility,
+        &mut HeroMark,
+    )>,
+    mut icons: Query<(&mut ImageNode, &mut Visibility), Without<Outline>>,
+) {
+    let core = &session.0;
+    let Some(view) = core.view() else {
+        return;
+    };
+    let icons_on = fired.held(crate::keys::Action::ShowRanges);
+    let heroes = view
+        .units
+        .iter()
+        .filter(|u| u.kind == UnitKind::Hero && u.owner.is_some() && !grid.hides(u.seen_by));
+    let mut used = 0;
+    for u in heroes.take(HERO_MARKS) {
+        let (mark, icon) = minimap.heroes[used];
+        used += 1;
+        let (Ok((mut node, mut bg, mut ring, mut vis, mut marked)), Some(seat)) =
+            (marks.get_mut(mark), u.owner)
+        else {
+            continue;
+        };
+        marked.0 = Some((u.team, seat));
+        let path = u
+            .hero
+            .and_then(|hero| manifest.dota_name("hero", hero.0))
+            .and_then(|name| manifest.file(&format!("minimap.hero.{name}")))
+            .filter(|_| icons_on);
+        let size = if path.is_some() { HERO_ICON } else { HERO_MARK };
+        let at = on_map(u.pos.x.to_f32(), u.pos.y.to_f32());
+        node.set_if_neq(Node {
+            left: px(at.x - size / 2.0),
+            top: px(at.y - size / 2.0),
+            width: px(size),
+            height: px(size),
+            ..node.clone()
+        });
+        bg.set_if_neq(BackgroundColor(colours.of(view, seat)));
+        let side = crate::overlay::team_color(u.team);
+        if ring.color != side {
+            ring.color = side;
+        }
+        vis.set_if_neq(Visibility::Inherited);
+        if let Ok((mut image, mut shown)) = icons.get_mut(icon) {
+            shown.set_if_neq(crate::ui::visible(path.is_some()));
+            if let Some(path) = path {
+                let handle: Handle<Image> = server.load(path);
+                if image.image != handle {
+                    image.image = handle;
+                }
+            }
+        }
+    }
+    for (mark, _) in &minimap.heroes[used..] {
+        if let Ok((_, _, _, mut vis, mut marked)) = marks.get_mut(*mark) {
+            vis.set_if_neq(Visibility::Hidden);
+            marked.0 = None;
+        }
+    }
+}
+
 /// How wide a ping is after `elapsed` ticks of a channel: it swells and
 /// starts over, so it draws the eye for as long as the channel runs.
 fn ping_size(elapsed: u32) -> f32 {
@@ -344,6 +461,7 @@ fn ping_size(elapsed: u32) -> f32 {
 fn pings(
     session: NonSend<Session>,
     minimap: Res<Minimap>,
+    colours: Res<crate::player_colour::PlayerColours>,
     mut nodes: Query<(&mut Node, &mut BorderColor, &mut Visibility)>,
 ) {
     let core = &session.0;
@@ -356,12 +474,14 @@ fn pings(
             teleport.destination.x.to_f32(),
             teleport.destination.y.to_f32(),
         );
-        (at, size, crate::teleport::player_color(view, teleport.slot))
+        (at, size, colours.of(view, teleport.slot))
     });
-    let marks = crate::pings::marks(core, |_| None).into_iter().map(|mark| {
-        let ticks = (mark.age * crate::pings::TICKS_PER_SECOND) as u32;
-        (mark.at, ping_size(ticks), mark.color())
-    });
+    let marks = crate::pings::marks(core, &colours, |_| None)
+        .into_iter()
+        .map(|mark| {
+            let ticks = (mark.age * crate::pings::TICKS_PER_SECOND) as u32;
+            (mark.at, ping_size(ticks), mark.color())
+        });
     let mut rings = teleports.chain(marks);
     for ping in &minimap.pings {
         let Ok((mut node, mut border, mut visibility)) = nodes.get_mut(*ping) else {

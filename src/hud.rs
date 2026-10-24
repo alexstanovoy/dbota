@@ -73,6 +73,11 @@ pub struct ItemBox(pub u8);
 #[derive(Component, Clone, Copy)]
 pub struct SeatBox(pub u8);
 
+/// Dota's player-colour strip along the top of a seat's portrait
+/// (`#PlayerColor`, 4 pixels), by seat.
+#[derive(Component, Clone, Copy)]
+pub struct SeatColour(pub u8);
+
 /// What a seat shows while its hero is alive (its health), and while it is
 /// dead (its portrait washed, the dead mark, the respawn tab), by seat.
 #[derive(Component, Clone, Copy)]
@@ -1153,6 +1158,20 @@ fn spawn_seat(kit: &mut Spawner, parent: Entity, seat: u8) {
     spawn_seat_death(kit, card, seat);
     let commands = &mut *kit.commands;
     commands.spawn((
+        SeatColour(seat),
+        Node {
+            position_type: PositionType::Absolute,
+            top: px(0),
+            left: px(0),
+            right: px(0),
+            height: px(4),
+            ..default()
+        },
+        BackgroundColor(Color::NONE),
+        Pickable::IGNORE,
+        ChildOf(card),
+    ));
+    commands.spawn((
         Readout::SeatLevel(seat),
         ui::text("", &kit.fonts.bold, 15.0, ui::GOLDEN),
         ui::shadow(),
@@ -2015,18 +2034,24 @@ fn time_of_day(
     set_image(&mut image, &server, path, tint);
 }
 
-/// The seat portraits of the top bar, each in its side's colour, white
-/// while selected.
+/// The seat portraits of the top bar, each framed in its side's colour
+/// (white while selected) under its player's colour strip.
 fn seats(
     session: NonSend<Session>,
     manifest: Res<Manifest>,
     server: Res<AssetServer>,
+    colours: Res<crate::player_colour::PlayerColours>,
     mut cards: Query<(&SeatBox, &mut ImageNode, &mut BorderColor)>,
+    mut strips: Query<(&SeatColour, &mut BackgroundColor)>,
 ) {
     let core = &session.0;
     let Some(view) = core.view() else {
         return;
     };
+    for (seat, mut strip) in &mut strips {
+        let colour = seat_of(view, seat.0).map_or(Color::NONE, |p| colours.of(view, p.slot));
+        strip.set_if_neq(BackgroundColor(colour));
+    }
     for (seat, mut image, mut border) in &mut cards {
         let Some(p) = seat_of(view, seat.0) else {
             continue;
