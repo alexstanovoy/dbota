@@ -2,8 +2,9 @@
 //! the backquote by default) or pinned open by the button in the top-left
 //! menu, under the top bar at the left. Each side's heading has its kills
 //! and its name; each seat's row its colour, hero, player and hero names,
-//! talents, level, gold, net worth, kills, deaths, assists, last hits,
-//! denies and ultimate; beside the rows, while Show Items is on, every
+//! talents, level, gold, kills, deaths and assists, and ultimate, the
+//! columns of Dota's `dota_hud_scoreboard` (last hits and denies are one's
+//! own quick stats', at the top left, as in Dota); beside the rows, while Show Items is on, every
 //! seat's inventory, backpack and neutral slot. What a row says of the other
 //! side is only what the watching side may know (see [`model`]).
 
@@ -220,10 +221,7 @@ fn texts(lines: Res<Rows>, mut texts: Query<(&At, &Field, &mut Text, &mut TextCo
         let line = line_at(&lines.0, at);
         let s = line.map(|l| text_of(l, *field)).unwrap_or_default();
         text.set_if_neq(Text(s));
-        if matches!(
-            field,
-            Field::Kills | Field::Deaths | Field::Assists | Field::LastHits | Field::Denies
-        ) {
+        if matches!(field, Field::Kills | Field::Deaths | Field::Assists) {
             let own = line.is_some_and(|l| l.local);
             let want = draw::color(if own { 0xffffffff } else { draw::SCORE });
             color.set_if_neq(TextColor(want));
@@ -242,12 +240,9 @@ fn text_of(l: &Line, field: Field) -> String {
         Field::RingLevel => l.level.to_string(),
         Field::Level if l.foe => l.level.to_string(),
         Field::Gold => number(l.gold),
-        Field::NetWorth => number(l.net_worth),
         Field::Kills => l.kills.to_string(),
         Field::Deaths => l.deaths.to_string(),
         Field::Assists => l.assists.to_string(),
-        Field::LastHits => number(l.last_hits.map(i32::from)),
-        Field::Denies => number(l.denies.map(i32::from)),
         Field::UltSeconds => match l.ult {
             Some(Ult::Cooldown(s)) => s.to_string(),
             _ => String::new(),

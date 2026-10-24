@@ -3,15 +3,13 @@
 //!
 //! A player is told of the other side what Dota's scoreboard tells: the
 //! score, the level as it stood when its hero was last seen, and the items
-//! as they were then (Dota's "last seen inventory state"); never its gold,
-//! its net worth (gold and items), its last hits and denies, or its
-//! ultimate. A replay and a spectator are told both sides in full, as far as
-//! the view goes.
+//! as they were then (Dota's "last seen inventory state"); never its gold or
+//! its ultimate. A replay and a spectator are told both sides in full, as far
+//! as the view goes.
 
 use bota_client_core::App as Core;
 use bota_proto::{
-    AbilityView, HeroId, ItemId, ItemView, PlayerView, SlotId, Talents, Team, UnitKind, UnitView,
-    WorldView,
+    AbilityView, HeroId, ItemId, ItemView, PlayerView, SlotId, Talents, Team, UnitView, WorldView,
 };
 
 /// Inventory and backpack slots a row shows, as the hero panel has them.
@@ -47,17 +45,10 @@ pub struct Line {
     pub kills: u16,
     pub deaths: u16,
     pub assists: u16,
-    /// Last hits and denies, where the view tells them (not the other
-    /// side's, to a seat).
-    pub last_hits: Option<u16>,
-    pub denies: Option<u16>,
     /// Seconds until the hero comes back, while it is down.
     pub respawn: Option<u32>,
     /// Unspent gold, where it may be known.
     pub gold: Option<i32>,
-    /// Gold and the worth of every item the seat owns, where both may be
-    /// known.
-    pub net_worth: Option<i32>,
     /// The ultimate, where it may be known.
     pub ult: Option<Ult>,
     /// The talents learned, as last told.
@@ -110,80 +101,29 @@ fn line(core: &Core, view: &WorldView, p: &PlayerView, side: Option<Team>, rate:
         kills: p.kills,
         deaths: p.deaths,
         assists: p.assists,
-        last_hits: p.creep_score.map(|s| s.last_hits),
-        denies: p.creep_score.map(|s| s.denies),
         respawn: (p.respawn_left > 0).then(|| p.respawn_left.div_ceil(rate)),
         gold,
-        net_worth: gold.map(|gold| gold.saturating_add(owned_worth(view, p, bag.as_ref()))),
         ult: if foe { None } else { ult(view, p, rate) },
         talents: talents(core, p),
-        items: bag.as_ref().map_or([None; BAG], |b| {
-            std::array::from_fn(|at| b.items.get(at).copied().flatten().map(|i| i.id))
-        }),
+        items: bag.unwrap_or([None; BAG]),
         stale,
     }
 }
 
-/// What a hero carries: its inventory and backpack, and its town portal
-/// slot.
-struct Bag {
-    items: Vec<Option<ItemView>>,
-    town_portal: Option<ItemView>,
-}
-
-/// The hero's bag as the view tells it now (a fallen ally's kit, a hero in
-/// sight), else as it was when last seen; and whether it is the latter.
-fn bag(core: &Core, p: &PlayerView) -> (Option<Bag>, bool) {
+/// The hero's inventory and backpack as the view tells them now (a fallen
+/// ally's kit, a hero in sight), else as they were when last seen; and
+/// whether it is the latter.
+fn bag(core: &Core, p: &PlayerView) -> (Option<[Option<ItemId>; BAG]>, bool) {
+    let ids = |items: &[Option<ItemView>]| {
+        std::array::from_fn(|at| items.get(at).copied().flatten().map(|i| i.id))
+    };
     if let Some(kit) = &p.kit {
-        let bag = Bag {
-            items: kit.items.clone(),
-            town_portal: kit.town_portal,
-        };
-        return (Some(bag), false);
+        return (Some(ids(&kit.items)), false);
     }
     let Some((unit, age)) = core.body_of(p.slot).and_then(|id| core.known(id)) else {
         return (None, false);
     };
-    let bag = Bag {
-        items: unit.items.clone(),
-        town_portal: unit.town_portal,
-    };
-    (Some(bag), age > 0)
-}
-
-/// The worth of every item the seat owns that the view carries: in its
-/// hero's bag, in its stash and on its side's couriers.
-fn owned_worth(view: &WorldView, p: &PlayerView, bag: Option<&Bag>) -> i32 {
-    let carried = bag
-        .into_iter()
-        .flat_map(|b| b.items.iter().flatten().chain(&b.town_portal));
-    let stashed = p.stash.iter().flatten().flatten();
-    let couriered = view
-        .units
-        .iter()
-        .filter(|u| u.kind == UnitKind::Courier && u.team == p.team)
-        .flat_map(|u| u.items.iter().flatten());
-    carried
-        .chain(stashed)
-        .chain(couriered)
-        .filter(|item| item.owner == p.slot)
-        .map(worth)
-        .fold(0i32, i32::saturating_add)
-}
-
-/// What an item counts for in net worth: its price, or the price of the
-/// charges left of one bought with several.
-fn worth(item: &ItemView) -> i32 {
-    let Some(def) = bota_core::item_def(item.id) else {
-        return 0;
-    };
-    match item.charges {
-        Some(left) if def.charges > 0 => {
-            let value = i64::from(def.cost) * i64::from(left) / i64::from(def.charges);
-            i32::try_from(value).unwrap_or(i32::MAX)
-        }
-        _ => def.cost,
-    }
+    (Some(ids(&unit.items)), age > 0)
 }
 
 /// The ultimate of a hero the view tells of: standing, its slots and mana;

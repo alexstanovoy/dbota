@@ -1,7 +1,6 @@
 //! One seat's row (Dota's `DOTAScoreboardPlayer`): the player's colour and
 //! avatar, the hero with the player's and the hero's names, the talents,
-//! the level, the gold and the net worth, kills, deaths and assists, last
-//! hits and denies, and the ultimate.
+//! the level, the gold, kills, deaths and assists, and the ultimate.
 
 use bevy::prelude::*;
 
@@ -31,20 +30,16 @@ impl Column {
     }
 }
 
-/// The talents, the level, the gold, the net worth, K, D, A, LH, DN and the
-/// ultimate: Dota's `TalentColumn`, `LevelColumn`, `GoldColumn`, the net
-/// worth wide enough for its name, `KillsColumn` and the other `KDAColumn`s,
-/// last hits and denies a little wider for three digits, `UltColumn`.
-pub const COLUMNS: [Column; 10] = [
+/// The talents, the level, the gold, K, D, A and the ultimate: Dota's
+/// `TalentColumn`, `LevelColumn`, `GoldColumn`, `KillsColumn` and the other
+/// `KDAColumn`s, `UltColumn`.
+pub const COLUMNS: [Column; 7] = [
     Column::new(65.0, -10.0, -10.0),
     Column::new(48.0, 2.0, 0.0),
     Column::new(90.0, 13.0, 0.0),
-    Column::new(104.0, 13.0, 0.0),
     Column::new(35.0, 13.0, 0.0),
     Column::new(35.0, 0.0, 0.0),
     Column::new(35.0, 0.0, 0.0),
-    Column::new(44.0, 0.0, 0.0),
-    Column::new(44.0, 0.0, 0.0),
     Column::new(40.0, 0.0, 0.0),
 ];
 
@@ -95,26 +90,23 @@ pub fn spawn(kit: &mut Kit, parent: Entity, at: At) {
     level(kit, cells[1], at);
     let numbers = [
         (Field::Gold, super::draw::GOLD),
-        (Field::NetWorth, 0xffffffff),
         (Field::Kills, SCORE),
         (Field::Deaths, SCORE),
         (Field::Assists, SCORE),
-        (Field::LastHits, SCORE),
-        (Field::Denies, SCORE),
     ];
-    for ((field, rgba), cell) in numbers.into_iter().zip(&cells[2..9]) {
+    for ((field, rgba), cell) in numbers.into_iter().zip(&cells[2..6]) {
         number(kit, *cell, at, field, rgba);
     }
     // Dota shades the kills' column across.
     kit.commands
-        .entity(cells[4])
+        .entity(cells[3])
         .insert(BackgroundGradient::from(LinearGradient::to_right(vec![
             ColorStop::new(Color::NONE, percent(0)),
             ColorStop::new(Color::srgba(0.0, 0.0, 0.0, 0.2), percent(10)),
             ColorStop::new(Color::srgba(0.0, 0.0, 0.0, 0.2), percent(90)),
             ColorStop::new(Color::NONE, percent(100)),
         ])));
-    ult(kit, cells[9], at);
+    ult(kit, cells[6], at);
 }
 
 /// The player's colour down the edge and the avatar box (Dota's

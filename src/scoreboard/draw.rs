@@ -104,12 +104,9 @@ pub enum Field {
     /// The plain level of a foe.
     Level,
     Gold,
-    NetWorth,
     Kills,
     Deaths,
     Assists,
-    LastHits,
-    Denies,
     Ult,
     UltSeconds,
     /// An inventory (`0..6`) or backpack (`6..9`) slot.
@@ -278,12 +275,9 @@ fn columns(kit: &mut Kit, row: Entity) {
         kit.label("DOTA_Scoreboard_Header_TalentTree", "TT"),
         kit.label("DOTA_Scoreboard_Header_Lvl", "Lvl"),
         kit.label("DOTA_Scoreboard_Header_Gold", "Gold"),
-        kit.label("dota_stat_dropdown_networth", "Net Worth"),
         kit.label("DOTA_Scoreboard_K", "K"),
         kit.label("DOTA_Scoreboard_D", "D"),
         kit.label("DOTA_Scoreboard_A", "A"),
-        "LH".to_owned(),
-        "DN".to_owned(),
         kit.label("DOTA_Scoreboard_Ult", "Ult"),
     ];
     for (name, column) in names.into_iter().zip(super::row::COLUMNS) {

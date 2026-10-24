@@ -164,12 +164,11 @@ the panel and in the top bar (either side's), turns grey with its respawn second
 bars are the side's colour whoever watches: Radiant green, Dire red.
 
 The scoreboard is Dota's, at its sizes: each side's kills and name, and a row for each seat with
-its colour, hero, player's and hero's names, talents, level, gold, net worth (gold and the items
-it owns), kills, deaths, assists, last hits, denies and ultimate; beside the rows, while its
-Show Items button is on, every seat's inventory, backpack and neutral slot. In a match it tells
-of the other side what Dota tells: the score, the level and the last hits and denies, and its
-hero's items as they were when last seen (dimmed while out of sight); never its gold, net worth or
-ultimate. A replay (as a seat too) shows both sides in full, a spectator all its view tells.
+its colour, hero, player's and hero's names, talents, level, gold, kills, deaths, assists and
+ultimate (Dota's columns: last hits and denies are one's own, at the top left); beside the rows,
+while its Show Items button is on, every seat's inventory, backpack and neutral slot. In a match
+it tells of the other side what Dota tells: the score, the level, and its hero's items as they
+were when last seen (dimmed while out of sight); never its gold or ultimate. A replay (as a seat too) shows both sides in full, a spectator all its view tells.
 
 ## Window and cursor
 

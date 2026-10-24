@@ -561,7 +561,6 @@ label resource/localization/dota_english.txt DOTA_Scoreboard_D
 label resource/localization/dota_english.txt DOTA_Scoreboard_A
 label resource/localization/dota_english.txt DOTA_Scoreboard_Ult
 label resource/localization/dota_english.txt DOTA_HUD_Scoreboard_inventory
-label resource/localization/dota_english.txt dota_stat_dropdown_networth
 texture minimap.map panorama/images/minimap/dotamap_psd.vtex_c minimap/dotamap_psd.png
 texture minimap.radiant_buildings panorama/images/minimap/dotamap_radiant_buildings_psd.vtex_c minimap/dotamap_radiant_buildings_psd.png
 texture minimap.dire_buildings panorama/images/minimap/dotamap_dire_buildings_psd.vtex_c minimap/dotamap_dire_buildings_psd.png
