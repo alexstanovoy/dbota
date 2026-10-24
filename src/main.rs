@@ -10,6 +10,8 @@
 
 mod ability_art;
 mod anim;
+#[cfg(not(target_arch = "wasm32"))]
+mod assets_notice;
 mod audio_output;
 mod bars;
 mod buffs;
@@ -446,6 +448,8 @@ fn main() -> AppExit {
             death::plugin,
         ))
         .add_plugins(main_menu::plugin);
+    #[cfg(not(target_arch = "wasm32"))]
+    app.add_plugins(assets_notice::plugin);
     if let Err(err) = menu(&mut app, &args, store) {
         eprintln!("dbota: {err}");
         return AppExit::error();

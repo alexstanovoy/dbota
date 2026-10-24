@@ -10,26 +10,68 @@ use heatel::find_game_dir;
 const MANIFEST: &str = include_str!("../assets-manifest/manifest.txt");
 const IDS: &str = include_str!("../assets-manifest/ids.txt");
 
-/// Warns when the cache at `cache` was not made by an import of this build's manifest: its files
-/// may lack what the client now asks for.
+/// What the cache at a path lacks for this build.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Need {
+    /// No finished import is there.
+    Import,
+    /// An import of another build's manifest is: its files may lack what the client now asks
+    /// for.
+    Reimport,
+}
+
+/// Whether the cache at `cache` needs an import before dbota draws Dota's art and sound.
+pub fn need(cache: &Path) -> Option<Need> {
+    if !cache.join(dbota_import::cache_dir::INDEX).is_file() {
+        return Some(Need::Import);
+    }
+    let made_here = matches_plan(
+        cache,
+        &stamp_prefix(crate::ASSET_VERSION, &plan_id(MANIFEST, IDS)),
+    );
+    (!made_here).then_some(Need::Reimport)
+}
+
+/// Warns when the cache at `cache` was not made by an import of this build's manifest.
 pub fn warn_if_stale(cache: &Path) {
-    if cache.is_dir()
-        && !matches_plan(
-            cache,
-            &stamp_prefix(crate::ASSET_VERSION, &plan_id(MANIFEST, IDS)),
-        )
-    {
-        eprintln!(
+    match need(cache) {
+        Some(Need::Import) => eprintln!(
+            "dbota: no asset cache at {}: Dota's art and sound are drawn as stand-ins; run `dbota import`",
+            cache.display()
+        ),
+        Some(Need::Reimport) => eprintln!(
             "dbota: the asset cache {} was not made from this build's manifest; run `dbota import`",
             cache.display()
-        );
+        ),
+        None => {}
     }
 }
+
+/// How far an import is: the share done (0 to 1) and the asset at hand.
+pub type Progress<'a> = &'a mut dyn FnMut(f32, &str);
 
 /// Imports into `cache` from the install at `dota` (a `dota 2 beta` folder, else the usual
 /// Steam places); does nothing when the cache was made from the same install already, unless
 /// `force`. Returns whether every asset converted.
 pub fn run(dota: Option<&Path>, cache: &Path, force: bool) -> Result<bool, String> {
+    let mut shown = 0;
+    run_with(dota, cache, force, &mut |done, item| {
+        // A line per tenth of the way: a terminal, not a progress bar.
+        let tenth = (done * 10.0) as u32;
+        if tenth > shown {
+            shown = tenth;
+            println!("  {tenth}0% ({item})");
+        }
+    })
+}
+
+/// [`run`], telling `progress` how far it is.
+pub fn run_with(
+    dota: Option<&Path>,
+    cache: &Path,
+    force: bool,
+    progress: Progress,
+) -> Result<bool, String> {
     let game: PathBuf = find_game_dir(dota).ok_or_else(|| {
         "Dota 2 not found; pass --dota-path \"<...>/steamapps/common/dota 2 beta\"".to_string()
     })?;
@@ -42,14 +84,8 @@ pub fn run(dota: Option<&Path>, cache: &Path, force: bool) -> Result<bool, Strin
     println!("dbota import: {} -> {}", game.display(), cache.display());
     let plan = Plan::parse(MANIFEST, IDS);
     let started = std::time::Instant::now();
-    let mut shown = 0;
     let report = import_into(&game, cache, &plan, &stamp, &mut |p| {
-        // A line per tenth of the way: a terminal, not a progress bar.
-        let tenth = p.done * 10 / p.total.max(1);
-        if tenth > shown {
-            shown = tenth;
-            println!("  {}0% ({}, {} MB)", tenth, p.item, p.bytes_written >> 20);
-        }
+        progress(p.done as f32 / p.total.max(1) as f32, p.item);
         Flow::Continue
     })
     .map_err(|e| e.to_string())?;

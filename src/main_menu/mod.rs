@@ -27,7 +27,7 @@ mod tests;
 
 #[cfg(not(target_arch = "wasm32"))]
 pub use core::Claim;
-pub use core::{Act, DEFAULT_NAME, GameKind, MenuCore};
+pub use core::{Act, DEFAULT_NAME, GameKind, MenuCore, Page};
 pub use launch::Trust;
 pub use prefs::page_service;
 pub use preview::{NAMES as PREVIEWS, view as preview};
