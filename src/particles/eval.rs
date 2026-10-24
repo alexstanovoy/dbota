@@ -6,9 +6,14 @@ use heatel::particle::{Bias, Curve, FloatInput, Mapping, Transform, VectorInput}
 
 use super::store::{Particles, slot};
 
-/// What an input may read besides the particle: the system's clock and control points.
+/// The ground's height at a point of the ground plane (Source's x and y).
+pub type HeightAt<'a> = &'a dyn Fn(f32, f32) -> f32;
+
+/// What an input may read besides the particle: the system's clock and control points, the
+/// ground and the parent system's particles.
 pub struct Scene<'a> {
     pub age: f32,
+    pub in_end_cap: bool,
     /// How long the end cap has run; 0 before it.
     pub end_cap_age: f32,
     pub control_points: &'a [ControlPoint; 64],
@@ -20,6 +25,10 @@ pub struct Scene<'a> {
     /// from its previous place to its place over it.
     pub frame_start: f32,
     pub frame_len: f32,
+    /// None while the game does not know the ground: what is placed on it stays where it is.
+    pub ground: Option<HeightAt<'a>>,
+    /// None for a root system.
+    pub parent: Option<&'a Particles>,
 }
 
 impl Scene<'_> {
@@ -78,6 +87,11 @@ impl ControlPoint {
     /// A direction in its frame turned into the world's.
     pub fn rotate(&self, v: Vec3) -> Vec3 {
         self.forward * v.x + self.left * v.y + self.up * v.z
+    }
+
+    /// A direction in the world's frame turned into its own.
+    pub fn unrotate(&self, v: Vec3) -> Vec3 {
+        Vec3::new(v.dot(self.forward), v.dot(self.left), v.dot(self.up))
     }
 
     /// Faces `direction` (unchanged when it has no length).
@@ -193,6 +207,14 @@ fn biased(x: f32, b: &Bias) -> f32 {
     }
     // A gain or a standard bias: the parameter -1..1 as Schlick's 0..1.
     bias(x, (b.parameter * 0.5 + 0.5).clamp(0.0, 1.0))
+}
+
+/// `x` of `a..b` mapped onto `c..d`, clamped to it (a range of no length: `d` from `b` on).
+pub fn remap_clamped(x: f32, a: f32, b: f32, c: f32, d: f32) -> f32 {
+    if a == b {
+        return if x >= b { d } else { c };
+    }
+    c + (d - c) * ((x - a) / (b - a)).clamp(0.0, 1.0)
 }
 
 pub fn smoothstep(edge0: f32, edge1: f32, x: f32) -> f32 {
@@ -400,11 +422,23 @@ pub fn vector(
     let seed = i.map_or(0x5EED, |i| parts.seed[i]);
     match input {
         VectorInput::Literal(v) => Vec3::from(*v),
-        VectorInput::Random { min, max } => Vec3::new(
-            between(seed, salt, min[0], max[0]),
-            between(seed, salt + 1, min[1], max[1]),
-            between(seed, salt + 2, min[2], max[2]),
-        ),
+        VectorInput::Random { min, max } => between3(seed, salt, min, max),
+        VectorInput::RandomOffset {
+            min,
+            max,
+            field,
+            scale,
+        } => {
+            let attribute = i.map_or(Vec3::ZERO, |i| parts.vector(slot(*field), i));
+            attribute * Vec3::from(*scale) + between3(seed, salt, min, max)
+        }
+        VectorInput::ControlPointDelta {
+            control_point,
+            delta,
+        } => {
+            scene.control_points[control_point.index()].position
+                - scene.control_points[delta.index()].position
+        }
         VectorInput::ParticleVector {
             field,
             initial,
@@ -431,6 +465,37 @@ pub fn vector(
             control_point,
             scale,
         } => scene.control_points[control_point.index()].position * Vec3::from(*scale),
+        VectorInput::FloatInterp { .. } | VectorInput::Gradient { .. } => {
+            interpolated(input, scene, parts, i, salt)
+        }
+        VectorInput::Components(c) => Vec3::new(
+            float(&c[0], scene, parts, i, salt),
+            float(&c[1], scene, parts, i, salt + 1),
+            float(&c[2], scene, parts, i, salt + 2),
+        ),
+        VectorInput::Unsupported { literal, .. } => Vec3::from(*literal),
+        _ => Vec3::ZERO,
+    }
+}
+
+/// A draw per component between `min` and `max`.
+fn between3(seed: u32, salt: u32, min: &[f32; 3], max: &[f32; 3]) -> Vec3 {
+    Vec3::new(
+        between(seed, salt, min[0], max[0]),
+        between(seed, salt + 1, min[1], max[1]),
+        between(seed, salt + 2, min[2], max[2]),
+    )
+}
+
+/// A float input's interpolation between two vectors or through a gradient.
+fn interpolated(
+    input: &VectorInput,
+    scene: &Scene<'_>,
+    parts: &Particles,
+    i: Option<usize>,
+    salt: u32,
+) -> Vec3 {
+    match input {
         VectorInput::FloatInterp {
             input,
             range,
@@ -449,12 +514,6 @@ pub fn vector(
             stops,
             interp_fraction(float(input, scene, parts, i, salt), *range),
         ),
-        VectorInput::Components(c) => Vec3::new(
-            float(&c[0], scene, parts, i, salt),
-            float(&c[1], scene, parts, i, salt + 1),
-            float(&c[2], scene, parts, i, salt + 2),
-        ),
-        VectorInput::Unsupported { literal, .. } => Vec3::from(*literal),
         _ => Vec3::ZERO,
     }
 }

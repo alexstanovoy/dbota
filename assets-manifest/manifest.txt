@@ -305,6 +305,12 @@ particle creep.dire.siege.attack particles/base_attacks/ranged_siege_bad.vpcf_c 
 particle tower.radiant.attack particles/base_attacks/ranged_tower_good.vpcf_c particles/ranged_tower_good.json
 particle tower.dire.attack particles/base_attacks/ranged_tower_bad.vpcf_c particles/ranged_tower_bad.json
 
+# --- Shadow Fiend's abilities (Shadowraze, Requiem of Souls and its lines, a Necromastery soul)
+particle hero.nevermore.raze particles/units/heroes/hero_nevermore/nevermore_shadowraze.vpcf_c particles/nevermore_shadowraze.json
+particle hero.nevermore.requiem particles/units/heroes/hero_nevermore/nevermore_requiemofsouls.vpcf_c particles/nevermore_requiemofsouls.json
+particle hero.nevermore.requiem_line particles/units/heroes/hero_nevermore/nevermore_requiemofsouls_line.vpcf_c particles/nevermore_requiemofsouls_line.json
+particle hero.nevermore.necro_soul particles/units/heroes/hero_nevermore/nevermore_necro_souls.vpcf_c particles/nevermore_necro_souls.json
+
 # --- Item icons (88x64, a few narrower), every Dota item name in ids.txt
 texture icon.item.boots panorama/images/items/boots_png.vtex_c icons/items/boots.png
 texture icon.item.clarity panorama/images/items/clarity_png.vtex_c icons/items/clarity.png

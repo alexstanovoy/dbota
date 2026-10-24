@@ -11,7 +11,7 @@ use std::collections::{BTreeMap, HashSet, VecDeque};
 
 use heatel::export::{ExportedTexture, ModelOptions, export_model, read_from};
 use heatel::material::Material;
-use heatel::particle::System;
+use heatel::particle::{Blend, System};
 use heatel::portraits::framings;
 use heatel::texture::Role;
 use heatel::tooltips::Wanted;
@@ -19,8 +19,8 @@ use heatel::world::{Band, EntityLump, ExportedWorld, WorldOptions, export_world,
 use heatel::{Error, Resource, Result, Sound, Source, Texture, Vpk};
 
 use crate::text::{
-    ParticleTexture, background_png, buildings_txt, labels_json, lighting_txt, particle_json,
-    portraits_txt, shop_json, tooltips_json, trees_txt, wanted,
+    ParticleMaterial, ParticleTexture, background_png, buildings_txt, labels_json, lighting_txt,
+    particle_json, portraits_txt, shop_json, tooltips_json, trees_txt, wanted,
 };
 
 /// Bumped when the importer's output changes for the same install; part of a cache's stamp.
@@ -815,8 +815,12 @@ fn particle(src: &impl Source, pak: &Vpk, path: &str, dest: &str, out: &mut Out<
         systems.push((next, system));
     }
     let dir = dest.rsplit_once('/').map_or("", |(dir, _)| dir);
+    let materials = particle_materials(src, pak, &systems, out);
     let mut textures: Vec<ParticleTexture> = Vec::new();
-    let vtexes: Vec<&str> = systems.iter().flat_map(|(_, s)| s.textures()).collect();
+    let vtexes = systems.iter().flat_map(|(_, s)| s.textures());
+    let vtexes: Vec<&str> = vtexes
+        .chain(materials.iter().map(|m| m.vtex.as_str()))
+        .collect();
     for vtex in vtexes {
         if textures.iter().any(|t| t.vtex == vtex) {
             continue;
@@ -827,7 +831,56 @@ fn particle(src: &impl Source, pak: &Vpk, path: &str, dest: &str, out: &mut Out<
             Err(err) => out.report.failed.push((vtex.to_owned(), err.to_string())),
         }
     }
-    out.put(dest, &particle_json(root, &systems, &textures)?)
+    out.put(dest, &particle_json(root, &systems, &textures, &materials)?)
+}
+
+/// The materials the systems' projected renderers draw with, each with its colour texture and
+/// blend; one that does not read is reported, and its decals are not drawn.
+fn particle_materials(
+    src: &impl Source,
+    pak: &Vpk,
+    systems: &[(String, System)],
+    out: &mut Out<'_>,
+) -> Vec<ParticleMaterial> {
+    let mut materials: Vec<ParticleMaterial> = Vec::new();
+    for vmat in systems.iter().flat_map(|(_, s)| s.materials()) {
+        if materials.iter().any(|m| m.vmat == vmat) {
+            continue;
+        }
+        match particle_material(src, pak, vmat) {
+            Ok(material) => materials.push(material),
+            Err(err) => out.report.failed.push((vmat.to_owned(), err.to_string())),
+        }
+    }
+    materials
+}
+
+/// Projected material `vmat`: its `g_tColor`, and its blend as Dota's projected shader's
+/// combos give it.
+fn particle_material(src: &impl Source, pak: &Vpk, vmat: &str) -> Result<ParticleMaterial> {
+    let bytes = read_from(src, &[pak], &format!("{vmat}_c"))?;
+    let data = Resource::parse(&bytes)?
+        .data()
+        .ok_or_else(|| malformed("particle", format!("{vmat} has no DATA")))??;
+    let material = Material::from_vmat(vmat, &data)?;
+    let vtex = material
+        .textures
+        .iter()
+        .find_map(|(name, vtex)| (name == "g_tColor").then_some(vtex))
+        .ok_or_else(|| malformed("particle", format!("{vmat} has no colour texture")))?;
+    let blend = if material.int("F_MOD_2X") != 0 {
+        Blend::Mod2x
+    } else if material.int("F_ADDITIVE_BLENDING") != 0 {
+        Blend::Add
+    } else {
+        Blend::Alpha
+    };
+    Ok(ParticleMaterial {
+        vmat: vmat.to_owned(),
+        vtex: vtex.clone(),
+        blend,
+        sheets: material.int("F_USE_SHEETS") != 0,
+    })
 }
 
 /// The KTX2 file of particle texture `vtex` under `dir/textures/` (written once however many

@@ -3,10 +3,13 @@
 use std::f32::consts::{PI, TAU};
 
 use bevy::math::{Quat, Vec3};
-use heatel::particle::{Field, Initializer, Ring, Sphere, Transform};
+use heatel::particle::{DistanceToCp, Field, Initializer, Ring, Sphere, Transform, Warp};
 
-use super::eval::{Scene, between, between_exp, draw, float, in_ball, noise, noise3, vector};
+use super::eval::{
+    Scene, between, between_exp, draw, float, in_ball, noise, noise3, remap_clamped, vector,
+};
 use super::store::{self, Particles, Slot, slot};
+use super::{body, ground, parent};
 
 /// A bit per attribute an initializer declares it writes: under behaviour version 6 the first
 /// writer of an attribute wins.
@@ -33,18 +36,61 @@ pub fn writes(init: &Initializer) -> u64 {
         | Initializer::VelocityRandom { .. }
         | Initializer::InheritVelocity { .. } => bit(Field::POSITION_PREVIOUS),
         Initializer::AgeNoise { .. } => bit(Field::CREATION_TIME),
+        _ => more_writes(init),
+    }
+}
+
+/// What the initializers of shadows, souls and the ground write.
+fn more_writes(init: &Initializer) -> u64 {
+    let bit = |field: Field| 1u64 << field.id();
+    let position = bit(Field::POSITION) | bit(Field::POSITION_PREVIOUS);
+    match init {
+        Initializer::InitVec {
+            field,
+            write_previous,
+            ..
+        } => {
+            if *write_previous && *field == Field::POSITION {
+                position
+            } else {
+                bit(*field)
+            }
+        }
+        Initializer::PositionPlaceOnGround(p) => {
+            let moved = if p.field == Field::POSITION {
+                position
+            } else {
+                bit(p.field)
+            };
+            moved | bit(Field::LIFE_DURATION) | if p.set_normal { bit(p.normal) } else { 0 }
+        }
+        Initializer::PositionWarp(_) => position | bit(Field::RADIUS),
+        Initializer::VelocityFromCp { .. } => bit(Field::POSITION_PREVIOUS),
+        Initializer::DistanceToCp(d) => bit(d.field),
+        Initializer::Orient2dRelToCp { field, .. } => bit(*field),
+        Initializer::CreateFromParentParticles { .. } => {
+            position
+                | bit(Field::LIFE_DURATION)
+                | bit(Field::PARENT_PARTICLE_INDEX)
+                | bit(Field::PARENT_PARTICLE_ID)
+        }
+        Initializer::SetHitboxToModel(_) => {
+            bit(Field::HITBOX_INDEX) | bit(Field::HITBOX_OFFSET_POSITION)
+        }
         _ => 0,
     }
 }
 
 /// What one initializer call has: the particles made this step from `first` on, the
-/// attributes written before it, its keys for draws and its counter.
+/// attributes written before it, its keys for draws, its counter and where it has walked to
+/// (both kept from call to call).
 pub struct Batch<'a> {
     pub parts: &'a mut Particles,
     pub first: usize,
     pub written: u64,
     pub salt: u32,
     pub counter: &'a mut u32,
+    pub walk: &'a mut f32,
 }
 
 /// Runs `init` on the batch.
@@ -113,7 +159,176 @@ pub fn initialize(init: &Initializer, scene: &Scene<'_>, batch: &mut Batch<'_>) 
                 }
             }
         }
+        _ => initialize_more(init, scene, batch),
+    }
+}
+
+/// Runs one of the initializers of shadows, souls and the ground.
+fn initialize_more(init: &Initializer, scene: &Scene<'_>, batch: &mut Batch<'_>) {
+    match init {
+        Initializer::InitVec { .. } => init_vec(init, scene, batch),
+        Initializer::PositionPlaceOnGround(_) => ground::place_on_ground(init, scene, batch),
+        Initializer::PositionWarp(warp) => position_warp(warp, scene, batch),
+        Initializer::VelocityFromCp { .. } => velocity_from_cp(init, scene, batch),
+        Initializer::DistanceToCp(d) => distance_to_cp(d, scene, batch),
+        Initializer::Orient2dRelToCp {
+            control_point,
+            field,
+            offset_degrees,
+        } => {
+            let center = scene.control_points[control_point.index()].position;
+            let slot = slot(*field);
+            for i in batch.first..batch.parts.len() {
+                let position = batch.parts.vectors[store::POSITION][i];
+                if let Some(angle) = angle_from(position, center) {
+                    batch
+                        .parts
+                        .set_scalar(slot, i, angle + offset_degrees.to_radians());
+                }
+            }
+        }
+        Initializer::CreateFromParentParticles { .. } => {
+            parent::create_from_parent(init, scene, batch)
+        }
+        Initializer::SetHitboxToModel(_) => body::set_hitbox(init, scene, batch),
         _ => {}
+    }
+}
+
+/// The angle on the ground plane of `position` seen from `center`, turned half around; none
+/// when it is right above or below.
+pub fn angle_from(position: Vec3, center: Vec3) -> Option<f32> {
+    let (dx, dy) = (position.x - center.x, position.y - center.y);
+    (dx != 0.0 || dy != 0.0).then(|| dy.atan2(dx) + PI)
+}
+
+fn init_vec(init: &Initializer, scene: &Scene<'_>, batch: &mut Batch<'_>) {
+    let Initializer::InitVec {
+        field,
+        value,
+        set_method,
+        normalized,
+        write_previous,
+    } = init
+    else {
+        return;
+    };
+    let slot = slot(*field);
+    for i in batch.first..batch.parts.len() {
+        let v = vector(value, scene, batch.parts, Some(i), batch.salt);
+        let current = batch.parts.vector(slot, i);
+        let apply = |v: f32, c: f32| set_method.apply(v, c, c, scene.dt);
+        let mut out = Vec3::new(
+            apply(v.x, current.x),
+            apply(v.y, current.y),
+            apply(v.z, current.z),
+        );
+        if *normalized {
+            out = out.normalize_or_zero();
+        }
+        batch.parts.set_vector(slot, i, out);
+        if *write_previous && *field == Field::POSITION {
+            batch.parts.vectors[store::PREVIOUS][i] = out;
+        }
+    }
+}
+
+fn position_warp(warp: &Warp, scene: &Scene<'_>, batch: &mut Batch<'_>) {
+    for i in batch.first..batch.parts.len() {
+        let parts = &*batch.parts;
+        let mut low = vector(&warp.min, scene, parts, None, batch.salt);
+        let mut high = vector(&warp.max, scene, parts, None, batch.salt + 3);
+        if warp.invert {
+            (low, high) = (high, low);
+        }
+        if let Some(cp) = warp.scale_control_point {
+            let scale = scene.control_points[cp.index()].position;
+            (low, high) = (low * scale, high * scale);
+        }
+        let seed = parts.seed[i];
+        let creation = parts.scalars[store::CREATION][i];
+        let factor = if warp.time == 0.0 {
+            Vec3::new(
+                between(seed, batch.salt + 6, low.x, high.x),
+                between(seed, batch.salt + 7, low.y, high.y),
+                between(seed, batch.salt + 8, low.z, high.z),
+            )
+        } else {
+            let input = if warp.use_count {
+                let count = *batch.counter as f32;
+                *batch.counter = batch.counter.wrapping_add(1);
+                count
+            } else {
+                creation
+            };
+            let start = warp.start_time;
+            low.lerp(
+                high,
+                remap_clamped(input, start, start + warp.time, 0.0, 1.0),
+            )
+        };
+        let frame = scene.control_point_at(warp.control_point.index(), creation);
+        let parts = &mut *batch.parts;
+        let local = frame.unrotate(parts.vectors[store::POSITION][i] - frame.position);
+        parts.vectors[store::POSITION][i] = frame.position + frame.rotate(local * factor);
+        let local = frame.unrotate(parts.vectors[store::PREVIOUS][i] - frame.position);
+        parts.vectors[store::PREVIOUS][i] =
+            frame.position + frame.rotate(warp.previous_scale * factor * local);
+        if let Some(component) = warp.radius_component {
+            parts.scalars[store::RADIUS][i] *= factor[usize::from(component)];
+        }
+    }
+}
+
+fn velocity_from_cp(init: &Initializer, scene: &Scene<'_>, batch: &mut Batch<'_>) {
+    let Initializer::VelocityFromCp {
+        velocity,
+        transform,
+        scale,
+        direction_only,
+    } = init
+    else {
+        return;
+    };
+    let mut v = vector(velocity, scene, batch.parts, None, batch.salt);
+    if !matches!(transform, Transform::Identity) {
+        v = scene.transform_at(transform, scene.age).rotate(v);
+    }
+    if *direction_only {
+        v = v.normalize_or_zero();
+    }
+    let displacement = v * scene.dt * *scale;
+    for i in batch.first..batch.parts.len() {
+        batch.parts.vectors[store::PREVIOUS][i] -= displacement;
+    }
+}
+
+fn distance_to_cp(d: &DistanceToCp, scene: &Scene<'_>, batch: &mut Batch<'_>) {
+    let slot = slot(d.field);
+    let center = scene.control_points[d.control_point.index()].position;
+    let alpha = matches!(d.field, Field::ALPHA | Field::ALPHA_ALTERNATE);
+    for i in batch.first..batch.parts.len() {
+        let parts = &*batch.parts;
+        let value = |k: usize, input: &heatel::particle::FloatInput| {
+            float(input, scene, parts, Some(i), batch.salt + k as u32)
+        };
+        let (in_min, in_max) = (value(0, &d.input[0]), value(1, &d.input[1]));
+        let (mut out_min, mut out_max) = (value(2, &d.output[0]), value(3, &d.output[1]));
+        if alpha {
+            (out_min, out_max) = (out_min.clamp(0.0, 1.0), out_max.clamp(0.0, 1.0));
+        }
+        let position = parts.vectors[store::POSITION][i];
+        let distance = ((center - position) * Vec3::from(d.distance_scale)).length();
+        if d.active_range && (distance < in_min || distance > in_max) {
+            continue;
+        }
+        let mut v = remap_clamped(distance, in_min, in_max, out_min, out_max);
+        if d.bias != 0.5 {
+            v = super::eval::bias(v.clamp(0.0, 1.0), d.bias);
+        }
+        let current = parts.scalar(slot, i);
+        let v = d.set_method.apply(v, current, current, scene.dt);
+        batch.parts.set_scalar(slot, i, v);
     }
 }
 

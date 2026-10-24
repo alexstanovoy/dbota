@@ -10,7 +10,7 @@ use std::collections::{BTreeMap, HashSet};
 use heatel::Result;
 use heatel::keyvalues::{localization_table, text};
 use heatel::kv3::Value;
-use heatel::particle::System;
+use heatel::particle::{Blend, System};
 use heatel::portraits::{Framing, WHITE};
 use heatel::texture::Sheet;
 use heatel::tooltips::{Tooltip, Wanted, tooltips};
@@ -171,14 +171,28 @@ pub struct ParticleTexture {
     pub sheet: Option<Sheet>,
 }
 
+/// A material a particle file's projected renderers draw with.
+pub struct ParticleMaterial {
+    /// The material (`materials/.../x.vmat`) the renderers name.
+    pub vmat: String,
+    /// Its colour texture, one of the file's textures.
+    pub vtex: String,
+    /// How it blends: heatel's serde form of [`Blend`].
+    pub blend: Blend,
+    /// Whether it draws its texture's sprite sheet.
+    pub sheets: bool,
+}
+
 /// A particle file: `{"version", "root", "systems": [{"path", "system"}], "textures":
-/// [{"vtex", "file", "sheet"}]}`, the root system first, each system as heatel's serde form of
-/// [`System`] (children by path), a sheet as its sequences of `{"clamp", "frames": [[display
-/// time, cropped u0 v0 u1 v1, uncropped u0 v0 u1 v1]]}` or `null`.
+/// [{"vtex", "file", "sheet"}], "materials": [{"vmat", "vtex", "blend", "sheets"}]}`, the root
+/// system first, each system as heatel's serde form of [`System`] (children by path), a sheet
+/// as its sequences of `{"clamp", "frames": [[display time, cropped u0 v0 u1 v1, uncropped u0
+/// v0 u1 v1]]}` or `null`.
 pub fn particle_json(
     root: &str,
     systems: &[(String, System)],
     textures: &[ParticleTexture],
+    materials: &[ParticleMaterial],
 ) -> Result<Vec<u8>> {
     let systems: Vec<Json> = systems
         .iter()
@@ -194,9 +208,19 @@ pub fn particle_json(
         .iter()
         .map(|t| json!({ "vtex": t.vtex, "file": t.file, "sheet": t.sheet.as_ref().map(sheet_json) }))
         .collect();
+    let materials: Vec<Json> = materials
+        .iter()
+        .map(|m| json!({ "vmat": m.vmat, "vtex": m.vtex, "blend": m.blend, "sheets": m.sheets }))
+        .collect();
     to_vec(
         "particle",
-        &json!({ "version": PARTICLE_VERSION, "root": root, "systems": systems, "textures": textures }),
+        &json!({
+            "version": PARTICLE_VERSION,
+            "root": root,
+            "systems": systems,
+            "textures": textures,
+            "materials": materials,
+        }),
     )
 }
 

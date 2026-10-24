@@ -15,17 +15,15 @@ use heatel::particle::System;
 use heatel::{DirSource, Resource, Vpk, find_game_dir};
 
 /// The classes of the manifest's effects the client leaves out, each with what it draws or does.
-const LEFT_OUT: [&str; 6] = [
+const LEFT_OUT: [&str; 5] = [
     // Noise forces on the Dire tower missile's sparks.
     "C_OP_CurlNoiseForce",
-    // A remap of a trail's radius (Radiant tower) and a disabled one (Shadow Fiend).
-    "C_OP_DistanceToCP",
-    // A random spline ramp of one impact system's radius (Shadow Fiend).
-    "C_OP_RampScalarSpline",
-    // Dynamic lights of the missiles and their impacts.
+    // Dynamic lights of the missiles, their impacts, Shadowraze and Requiem of Souls.
     "C_OP_RenderDeferredLight",
     // The Dire tower missile's rock model.
     "C_OP_RenderModels",
+    // Requiem of Souls shaking the camera.
+    "C_OP_RenderScreenShake",
     // Collision of the Dire tower missile's core with the ground.
     "C_OP_WorldTraceConstraint",
 ];
@@ -50,8 +48,8 @@ fn the_manifests_effects_leave_out_only_the_listed_classes() {
         .collect();
     assert_eq!(
         roots.len(),
-        7,
-        "the missiles of Shadow Fiend, the creeps and the towers"
+        11,
+        "the missiles of Shadow Fiend, the creeps and the towers, and Shadow Fiend's abilities"
     );
     let mut left_out: BTreeMap<String, BTreeSet<&str>> = BTreeMap::new();
     for root in roots {

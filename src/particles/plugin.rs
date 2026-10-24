@@ -8,6 +8,7 @@ use bevy::prelude::*;
 use bevy::transform::TransformSystems;
 
 use super::draw::{Eye, Quad, draw, from_world};
+use super::eval::HeightAt;
 use super::library::{Effect, Library};
 use super::render::{Batch, ParticleFrame};
 use super::sim::Instance;
@@ -75,13 +76,13 @@ impl Playing {
         instance.as_mut()
     }
 
-    fn advance(&mut self, dt: f32) {
+    fn advance(&mut self, dt: f32, ground: Option<HeightAt<'_>>) {
         for slot in 0..self.slots.len() {
             let (generation, entry) = &mut self.slots[slot];
             let Some(instance) = entry else {
                 continue;
             };
-            instance.advance(dt);
+            instance.advance(dt, ground);
             if instance.finished() {
                 let instance = entry.take();
                 *generation = generation.wrapping_add(1);
@@ -137,15 +138,18 @@ fn tick(
     mut playing: ResMut<Playing>,
     library: Option<Res<Library>>,
     camera: Query<&GlobalTransform, With<RtsCamera>>,
+    ground: Res<crate::map::Ground>,
     mut frame: ResMut<ParticleFrame>,
 ) {
+    let height = |x: f32, y: f32| ground.at(x, y);
+    let height: Option<HeightAt<'_>> = ground.known().then_some(&height);
     // Effects keep the game's pace: a replay held or sped up holds or speeds them.
     let pace = match &session.0.source {
         bota_client_core::Source::Replay(player) if player.paused => 0.0,
         bota_client_core::Source::Replay(player) => player.speed,
         _ => 1.0,
     };
-    playing.advance(time.delta_secs() * pace);
+    playing.advance(time.delta_secs() * pace, height);
     let frame = &mut *frame;
     frame.quads.clear();
     frame.batches.clear();
@@ -163,7 +167,7 @@ fn tick(
         list.clear();
     }
     for instance in playing.slots.iter().filter_map(|(_, i)| i.as_ref()) {
-        draw(instance, &eye, &mut playing.lists);
+        draw(instance, &eye, height, &mut playing.lists);
     }
     for (look, list) in playing.lists.iter().enumerate() {
         if list.is_empty() {

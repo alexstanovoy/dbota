@@ -1,12 +1,16 @@
 //! Dota's particle systems, as the install defines them (read by the importer into the cache):
 //! simulated on the CPU as Source 2 simulates them, drawn as instanced cards.
 
+mod body;
 mod draw;
 mod eval;
+mod ground;
 mod init;
 mod library;
 mod ops;
+mod parent;
 mod plugin;
+mod pre;
 mod render;
 mod sim;
 mod store;

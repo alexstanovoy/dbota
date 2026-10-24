@@ -5,9 +5,9 @@ use bevy::math::Vec3;
 use heatel::particle::Field;
 
 /// The float attributes a particle has, by column.
-const SCALARS: usize = 16;
+pub const SCALARS: usize = 16;
 /// The vector attributes, by column.
-const VECTORS: usize = 6;
+pub const VECTORS: usize = 7;
 
 /// Where an attribute lives.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -35,6 +35,7 @@ pub const POSITION: usize = 0;
 pub const PREVIOUS: usize = 1;
 pub const COLOR: usize = 2;
 pub const NORMAL: usize = 4;
+pub const HITBOX_OFFSET: usize = 6;
 
 /// The column of attribute `field`.
 pub fn slot(field: Field) -> Slot {
@@ -58,6 +59,7 @@ pub fn slot(field: Field) -> Slot {
         0 => Slot::Vector(POSITION),
         2 => Slot::Vector(PREVIOUS),
         6 => Slot::Vector(COLOR),
+        15 => Slot::Vector(HITBOX_OFFSET),
         17 => Slot::Vector(3),
         21 => Slot::Vector(NORMAL),
         30 => Slot::Vector(5),
@@ -196,6 +198,24 @@ impl Particles {
     pub fn set_vector(&mut self, slot: Slot, i: usize, value: Vec3) {
         if let Slot::Vector(v) = slot {
             self.vectors[v][i] = value;
+        }
+    }
+
+    /// Sets what particle `i` counts as its value at spawn; one not yet recorded has none.
+    pub fn set_initial_scalar(&mut self, slot: Slot, i: usize, value: f32) {
+        if let Slot::Scalar(s) = slot
+            && let Some(initial) = self.initial_scalars[s].get_mut(i)
+        {
+            *initial = value;
+        }
+    }
+
+    /// Sets what particle `i` counts as its vector at spawn, as [`Self::set_initial_scalar`].
+    pub fn set_initial_vector(&mut self, slot: Slot, i: usize, value: Vec3) {
+        if let Slot::Vector(v) = slot
+            && let Some(initial) = self.initial_vectors[v].get_mut(i)
+        {
+            *initial = value;
         }
     }
 

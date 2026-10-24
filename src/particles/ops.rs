@@ -11,7 +11,9 @@ use super::eval::{
     ControlPoint, Scene, between, between_exp, bias, float, noise3, normalized_age, smoothstep,
     vector,
 };
+use super::init::angle_from;
 use super::store::{self, Particles, slot};
+use super::{body, ground, parent};
 
 /// A control point an operator sets: on the system's children of a group (`None` every
 /// child), on the system itself, or on its `n`-th child of a group.
@@ -22,12 +24,27 @@ pub enum Target {
     Child(i32, usize),
 }
 
-/// What one operator call has: its strength, keys for draws, its state, and where it puts
+/// What an operator keeps from one step to the next, from the effect's start.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Memory {
+    /// Where the followed transform was (`C_OP_PositionLock`).
+    pub lock: Option<ControlPoint>,
+    /// The parent's particle copied next (`C_OP_InheritFromParentParticles`).
+    pub parent_index: i32,
+    /// The system's age when the end cap began for it (`C_OP_LerpEndCapScalar`).
+    pub end_cap_start: Option<f32>,
+    /// Where the reference control points and the lerp's were when last seen, and when the
+    /// ground was last traced again (`C_OP_MovementPlaceOnGround`).
+    pub references: [Option<Vec3>; 3],
+    pub retrace_time: f32,
+}
+
+/// What one operator call has: its strength, keys for draws, its memory, and where it puts
 /// the control points it sets.
 pub struct Call<'a> {
     pub strength: f32,
     pub salt: u32,
-    pub lock: &'a mut Option<ControlPoint>,
+    pub memory: &'a mut Memory,
     pub writes: &'a mut Vec<(Target, usize, ControlPoint)>,
     pub forces: &'a [heatel::particle::Function<Force>],
     /// The strengths of the forces now.
@@ -83,6 +100,43 @@ pub fn operate(op: &Operator, scene: &Scene<'_>, parts: &mut Particles, call: &m
         Operator::SetPerChildControlPoint { .. } => {
             set_per_child_control_point(op, scene, parts, call)
         }
+        _ => operate_more(op, scene, parts, call),
+    }
+}
+
+/// Runs one of the operators of shadows, souls and the ground.
+fn operate_more(op: &Operator, scene: &Scene<'_>, parts: &mut Particles, call: &mut Call<'_>) {
+    match op {
+        Operator::DampenToCp {
+            control_point,
+            range,
+            scale,
+        } => dampen_to_cp(scene, parts, call, (*control_point, *range, *scale)),
+        Operator::Orient2dRelToCp {
+            control_point,
+            field,
+            offset_degrees,
+            spin_strength,
+        } => {
+            let center = scene.control_points[control_point.index()].position;
+            let slot = slot(*field);
+            for i in 0..parts.len() {
+                let position = parts.vectors[store::POSITION][i];
+                if let Some(angle) = angle_from(position, center) {
+                    let current = parts.scalar(slot, i);
+                    let target = angle + offset_degrees.to_radians();
+                    parts.set_scalar(slot, i, current + (target - current) * spin_strength);
+                }
+            }
+        }
+        Operator::DistanceToTransform(d) => distance_to_transform(d, scene, parts, call),
+        Operator::MovementPlaceOnGround(m) => {
+            ground::movement_place_on_ground(m, scene, parts, call)
+        }
+        Operator::InheritFromParentParticles { .. } => {
+            parent::inherit_from_parent(op, scene, parts, call)
+        }
+        Operator::MoveToHitbox { .. } => body::move_to_hitbox(op, scene, parts, call),
         _ => {}
     }
 }
@@ -117,9 +171,192 @@ fn life(op: &Operator, scene: &Scene<'_>, parts: &mut Particles, call: &mut Call
             ramp_scalar_linear_simple(op, scene, parts, call)
         }
         Operator::RampScalarLinear { .. } => ramp_scalar_linear(op, scene, parts, call),
+        Operator::RampScalarSpline { .. } => ramp_scalar_spline(op, scene, parts, call),
+        Operator::AlphaDecay { min_alpha } => {
+            let threshold = min_alpha + f32::EPSILON;
+            for i in 0..parts.len() {
+                let alternate = parts.scalar(slot(Field::ALPHA_ALTERNATE), i);
+                if parts.scalars[store::ALPHA][i] * alternate <= threshold {
+                    parts.killed[i] = true;
+                }
+            }
+        }
+        Operator::LerpEndCapScalar { .. } => lerp_end_cap_scalar(op, scene, parts, call),
+        Operator::ClampScalar { field, min, max } => {
+            let slot = slot(*field);
+            for i in 0..parts.len() {
+                let low = float(min, scene, parts, Some(i), call.salt);
+                let high = float(max, scene, parts, Some(i), call.salt + 1);
+                let current = parts.scalar(slot, i);
+                // An inverted range is kept: the bounds apply in order, the maximum last.
+                let clamped = current.max(low).min(high);
+                parts.set_scalar(slot, i, blend(current, clamped, call.strength));
+            }
+        }
+        Operator::EndCapTimedDecay { decay_time } => {
+            if scene.in_end_cap
+                && scene.end_cap_age > float(decay_time, scene, parts, None, call.salt)
+            {
+                parts.killed.iter_mut().for_each(|k| *k = true);
+            }
+        }
         _ => return false,
     }
     true
+}
+
+fn lerp_end_cap_scalar(
+    op: &Operator,
+    scene: &Scene<'_>,
+    parts: &mut Particles,
+    call: &mut Call<'_>,
+) {
+    let Operator::LerpEndCapScalar {
+        field,
+        output,
+        lerp_time,
+    } = op
+    else {
+        return;
+    };
+    if !scene.in_end_cap {
+        return;
+    }
+    let slot = slot(*field);
+    let start = *call.memory.end_cap_start.get_or_insert_with(|| {
+        // What it lerps from is the value at the end cap's start.
+        for i in 0..parts.len() {
+            let current = parts.scalar(slot, i);
+            parts.set_initial_scalar(slot, i, current);
+        }
+        scene.age
+    });
+    let t = ((scene.age - start) / (lerp_time + f32::EPSILON)).clamp(0.0, 1.0);
+    for i in 0..parts.len() {
+        let target = lerp(parts.initial_scalar(slot, i), *output, t);
+        let current = parts.scalar(slot, i);
+        parts.set_scalar(slot, i, lerp(current, target, call.strength));
+    }
+}
+
+fn lerp(a: f32, b: f32, t: f32) -> f32 {
+    a + (b - a) * t
+}
+
+fn ramp_scalar_spline(
+    op: &Operator,
+    scene: &Scene<'_>,
+    parts: &mut Particles,
+    call: &mut Call<'_>,
+) {
+    let Operator::RampScalarSpline {
+        rate,
+        start,
+        end,
+        bias: b,
+        proportional,
+        ease_out,
+        field,
+    } = op
+    else {
+        return;
+    };
+    if *b <= 0.0 {
+        return;
+    }
+    let slot = slot(*field);
+    let (min, max) = field.range();
+    let step = call.strength * scene.dt;
+    for i in 0..parts.len() {
+        let lifetime = parts.scalars[store::LIFETIME][i];
+        if lifetime <= 0.0 {
+            continue;
+        }
+        let seed = parts.seed[i];
+        let age = scene.age - parts.scalars[store::CREATION][i];
+        let time = if *proportional { age / lifetime } else { age };
+        let from = between(seed, call.salt + 11, start[0], start[1]);
+        let to = between(seed, call.salt + 12, end[0], end[1]);
+        if time < from || time >= to {
+            continue;
+        }
+        let mut fraction = ((time - from) / (to - from + f32::EPSILON)).clamp(0.0, 1.0);
+        if *ease_out {
+            fraction = if fraction > 0.5 {
+                1.0 - fraction
+            } else {
+                fraction
+            } * 2.0;
+        }
+        let r = between(seed, call.salt, rate[0], rate[1]);
+        let v = parts.scalar(slot, i) + bias(fraction, *b) * step * r;
+        parts.set_scalar(slot, i, v.clamp(min, max));
+    }
+}
+
+/// `C_OP_DampenToCP`: within the range of the control point a particle's step shortens, the
+/// more the nearer.
+fn dampen_to_cp(
+    scene: &Scene<'_>,
+    parts: &mut Particles,
+    call: &Call<'_>,
+    (control_point, range, scale): (heatel::particle::ControlPoint, f32, f32),
+) {
+    if range <= 0.0 {
+        return;
+    }
+    let center = scene.control_points[control_point.index()].position;
+    for i in 0..parts.len() {
+        let position = parts.vectors[store::POSITION][i];
+        let distance = position.distance(center);
+        if distance > range {
+            continue;
+        }
+        let previous = parts.vectors[store::PREVIOUS][i];
+        let dampened = previous + (position - previous) * (distance / range).powf(scale);
+        parts.vectors[store::POSITION][i] = position.lerp(dampened, call.strength);
+    }
+}
+
+/// `C_OP_DistanceToTransform`: an attribute from the distance to a transform, remapped by its
+/// square as Source remaps it.
+fn distance_to_transform(
+    d: &heatel::particle::DistanceToTransform,
+    scene: &Scene<'_>,
+    parts: &mut Particles,
+    call: &Call<'_>,
+) {
+    let origin = scene.transform_at(&d.transform, scene.age).position;
+    let slot = slot(d.field);
+    let alpha = matches!(d.field, Field::ALPHA | Field::ALPHA_ALTERNATE);
+    for i in 0..parts.len() {
+        let value = |k: u32, input: &heatel::particle::FloatInput| {
+            float(input, scene, parts, Some(i), call.salt + k)
+        };
+        let (in_min, in_max) = (value(0, &d.input[0]), value(1, &d.input[1]));
+        let (mut out_min, mut out_max) = (value(2, &d.output[0]), value(3, &d.output[1]));
+        let scale = vector(&d.component_scale, scene, parts, Some(i), call.salt + 4);
+        let delta = (parts.vectors[store::POSITION][i] - origin) * scale;
+        let distance = delta.length_squared();
+        let (low, high) = (in_min * in_min, in_max * in_max);
+        if d.active_range && !(low <= distance && distance <= high) {
+            continue;
+        }
+        if alpha {
+            (out_min, out_max) = (out_min.clamp(0.0, 1.0), out_max.clamp(0.0, 1.0));
+        }
+        let divisor = if high == low { 1.0 } else { high - low };
+        let v = lerp(
+            out_min,
+            out_max,
+            ((distance - low) / divisor).clamp(0.0, 1.0),
+        );
+        let current = parts.scalar(slot, i);
+        let initial = parts.initial_scalar(slot, i);
+        let target = d.set_method.apply(v, initial, current, scene.dt);
+        let moved = current + (target - current) * call.strength;
+        parts.set_scalar(slot, i, if d.additive { current + moved } else { moved });
+    }
 }
 
 fn blend(current: f32, value: f32, strength: f32) -> f32 {
@@ -246,6 +483,30 @@ fn apply_force(force: &Force, scene: &Scene<'_>, parts: &mut Particles, strength
                 parts.force[i] -= diff * magnitude * scale;
             }
         }
+        Force::TwistAroundAxis {
+            amount,
+            axis,
+            local,
+            control_point,
+            axis_control_point,
+        } => {
+            let mut axis = Vec3::from(*axis);
+            if *local {
+                axis = scene.control_points[axis_control_point.index()].rotate(axis);
+            }
+            let axis = axis.try_normalize().unwrap_or(Vec3::Z);
+            let center = scene.control_points[control_point.index()].position;
+            for i in 0..parts.len() {
+                let Some(direction) = (parts.vectors[store::POSITION][i] - center).try_normalize()
+                else {
+                    continue;
+                };
+                let alignment = 1.0 - direction.dot(axis);
+                if alignment * alignment > f32::EPSILON {
+                    parts.force[i] += direction.cross(axis) * (amount * strength);
+                }
+            }
+        }
         Force::RandomForce { min, max } => {
             for i in 0..parts.len() {
                 let seed = parts.seed[i] ^ scene.step_seed.wrapping_mul(0x2545_F491);
@@ -303,10 +564,11 @@ fn position_lock(
 ) {
     let now = scene.transform_at(&lock.transform, scene.age);
     let before = call
+        .memory
         .lock
         .get_or_insert_with(|| scene.transform_at(&lock.transform, scene.frame_start));
     let delta = now.position - before.position;
-    *call.lock = Some(now);
+    call.memory.lock = Some(now);
     let jump = lock.jump_threshold != 0.0
         && delta.length_squared() > lock.jump_threshold * lock.jump_threshold;
     let scale = vector(&lock.scale, scene, parts, None, call.salt);

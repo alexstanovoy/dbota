@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use bevy::math::Vec3;
 use bevy::prelude::*;
-use heatel::particle::{Blend, System};
+use heatel::particle::{Blend, Renderer, System};
 use serde_json::Value;
 
 use super::store::{self, Defaults};
@@ -17,6 +17,8 @@ const VERSION: u64 = 1;
 const MAX_SYSTEMS: usize = 256;
 /// Most looks (texture and blend) of all effects together.
 pub const MAX_LOOKS: usize = 256;
+/// Most projected materials of one file.
+const MAX_MATERIALS: usize = 256;
 /// Most sequences of a sprite sheet the client keeps, and frames of one.
 const MAX_SEQUENCES: usize = 1024;
 const MAX_FRAMES: usize = 4096;
@@ -47,11 +49,15 @@ pub struct Sequence {
     pub frames: Vec<Frame>,
 }
 
-/// A renderer of a system: its definition's index, its look and its texture's sheet.
+/// A renderer of a system: its definition's index, its look, its texture's sheet and its
+/// blend (a projected renderer's material's); for a projected renderer, which of its materials
+/// this is (it draws the particles that pick it).
 pub struct Draw {
     pub renderer: usize,
     pub look: u16,
     pub sheet: Option<Arc<Vec<Sequence>>>,
+    pub blend: Blend,
+    pub material: usize,
 }
 
 /// A system as the simulation runs it.
@@ -116,6 +122,7 @@ impl Library {
             return Err(format!("{} systems", systems.len()));
         }
         let textures = self.textures(&root, server)?;
+        let materials = materials(&root)?;
         let mut parsed = Vec::with_capacity(systems.len());
         for entry in systems {
             let path = entry
@@ -137,7 +144,7 @@ impl Library {
                     .into_iter()
                     .map(str::to_owned),
             );
-            def.draws = self.draws(&def.system, &textures);
+            def.draws = self.draws(&def.system, &textures, &materials);
         }
         self.effects.insert(name.to_owned(), Arc::new(effect));
         Ok(unsupported)
@@ -185,30 +192,62 @@ impl Library {
     }
 
     /// The renderers of `system` the client draws, each with its look; one whose texture the
-    /// cache lacks draws nothing.
-    fn draws(&mut self, system: &System, textures: &HashMap<String, Texture>) -> Vec<Draw> {
+    /// cache lacks draws nothing, as does a projected material the cache lacks.
+    fn draws(
+        &mut self,
+        system: &System,
+        textures: &HashMap<String, Texture>,
+        materials: &HashMap<String, Material>,
+    ) -> Vec<Draw> {
         let mut out = Vec::new();
         for (index, renderer) in system.renderers.iter().enumerate() {
             let Some(look) = renderer.class.look() else {
                 continue;
             };
+            if let Renderer::Projected(projected) = &renderer.class {
+                for (material, vmat) in projected.materials.iter().enumerate() {
+                    let Some(m) = materials.get(vmat) else {
+                        continue;
+                    };
+                    let Some(texture) = textures.get(&m.vtex) else {
+                        continue;
+                    };
+                    let sheet = m.sheets.then(|| texture.sheet.clone()).flatten();
+                    out.extend(self.draw(index, look, texture, sheet, m.blend, material));
+                }
+                continue;
+            }
             let Some(texture) = look.texture.as_ref().and_then(|t| textures.get(t)) else {
                 continue;
             };
-            let key = Look {
-                image: texture.image.clone(),
-                modulate: modulates(look.blend),
-                depth_test: !look.no_depth_test,
-            };
-            if let Some(look) = self.look(key) {
-                out.push(Draw {
-                    renderer: index,
-                    look,
-                    sheet: texture.sheet.clone(),
-                });
-            }
+            let sheet = texture.sheet.clone();
+            out.extend(self.draw(index, look, texture, sheet, look.blend, 0));
         }
         out
+    }
+
+    /// Renderer `renderer` drawn with `texture` and `blend`, its look added when new.
+    fn draw(
+        &mut self,
+        renderer: usize,
+        look: &heatel::particle::Look,
+        texture: &Texture,
+        sheet: Option<Arc<Vec<Sequence>>>,
+        blend: Blend,
+        material: usize,
+    ) -> Option<Draw> {
+        let key = Look {
+            image: texture.image.clone(),
+            modulate: modulates(blend),
+            depth_test: !look.no_depth_test,
+        };
+        Some(Draw {
+            renderer,
+            look: self.look(key)?,
+            sheet,
+            blend,
+            material,
+        })
     }
 
     /// The index of a look, added when new.
@@ -227,6 +266,45 @@ impl Library {
 struct Texture {
     image: Handle<Image>,
     sheet: Option<Arc<Vec<Sequence>>>,
+}
+
+/// A projected material: its texture (by `.vtex` path), its blend and whether it draws its
+/// texture's sheet.
+struct Material {
+    vtex: String,
+    blend: Blend,
+    sheets: bool,
+}
+
+/// The file's projected materials, by `.vmat` path.
+fn materials(root: &Value) -> Result<HashMap<String, Material>, String> {
+    let list = root
+        .get("materials")
+        .and_then(Value::as_array)
+        .map_or(&[][..], Vec::as_slice);
+    if list.len() > MAX_MATERIALS {
+        return Err(format!("{} materials", list.len()));
+    }
+    let mut out = HashMap::new();
+    for material in list {
+        let text = |key: &str| {
+            material
+                .get(key)
+                .and_then(Value::as_str)
+                .ok_or_else(|| format!("a material without {key}"))
+        };
+        let blend = serde_json::from_value(material.get("blend").cloned().unwrap_or_default())
+            .map_err(|e| format!("a material's blend: {e}"))?;
+        out.insert(
+            text("vmat")?.to_owned(),
+            Material {
+                vtex: text("vtex")?.to_owned(),
+                blend,
+                sheets: material.get("sheets").and_then(Value::as_bool) == Some(true),
+            },
+        );
+    }
+    Ok(out)
 }
 
 /// A cache path: relative, plain, no `..`.
@@ -309,8 +387,8 @@ fn children(system: &System, parsed: &[(String, System)]) -> Vec<(usize, bool, f
 fn defaults(system: &System) -> Defaults {
     let c = &system.constants;
     let mut defaults = Defaults {
-        scalars: [0.0; 16],
-        vectors: [Vec3::ZERO; 6],
+        scalars: [0.0; store::SCALARS],
+        vectors: [Vec3::ZERO; store::VECTORS],
     };
     defaults.scalars[store::LIFETIME] = c.lifetime;
     defaults.scalars[store::RADIUS] = c.radius;

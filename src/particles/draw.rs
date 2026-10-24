@@ -3,9 +3,11 @@
 
 use bevy::math::Vec3;
 use bytemuck::{Pod, Zeroable};
-use heatel::particle::{Blend, FloatInput, Look, Orientation, Renderer, Ropes, Sprites, Trails};
+use heatel::particle::{
+    Blend, FloatInput, Look, Orientation, Projected, Renderer, Ropes, Sprites, Trails,
+};
 
-use super::eval::{Scene, float, vector};
+use super::eval::{HeightAt, Scene, float, vector};
 use super::library::{Draw, Sequence};
 use super::sim::{Instance, Node};
 use super::store::{self, Particles};
@@ -45,8 +47,12 @@ pub fn from_world(v: Vec3) -> Vec3 {
     Vec3::new(v.x, -v.z, v.y)
 }
 
-/// Appends the cards of every drawn renderer of `instance`, each to its look's list.
-pub fn draw(instance: &Instance, eye: &Eye, out: &mut [Vec<Quad>]) {
+/// How far above the ground a projected decal's card lies, so the ground does not hide it.
+const DECAL_LIFT: f32 = 2.0;
+
+/// Appends the cards of every drawn renderer of `instance`, each to its look's list; projected
+/// decals lie on the ground `ground` gives (none: at their particles' height).
+pub fn draw(instance: &Instance, eye: &Eye, ground: Option<HeightAt<'_>>, out: &mut [Vec<Quad>]) {
     for node in &instance.nodes {
         if node.parts.is_empty() {
             continue;
@@ -64,14 +70,13 @@ pub fn draw(instance: &Instance, eye: &Eye, out: &mut [Vec<Quad>]) {
             match &renderer.class {
                 Renderer::Sprites(sprites) => draw_sprites(sprites, d, node, eye, list),
                 Renderer::Trails(trails) => draw_trails(trails, d, node, eye, list),
-                Renderer::Ropes(ropes) => draw_rope(ropes, node, eye, list),
+                Renderer::Ropes(ropes) => draw_rope(ropes, d, node, eye, list),
+                Renderer::Projected(projected) => {
+                    draw_projected(projected, d, node, ground, list);
+                }
                 _ => {}
             }
-            if renderer
-                .class
-                .look()
-                .is_some_and(|l| l.blend == Blend::Alpha)
-            {
+            if d.blend == Blend::Alpha {
                 sort_back_to_front(&mut list[first..], eye);
             }
         }
@@ -98,14 +103,14 @@ struct Scales {
     cover: f32,
 }
 
-fn scales(look: &Look, scene: &Scene<'_>, parts: &Particles) -> Scales {
+fn scales(look: &Look, blend: Blend, scene: &Scene<'_>, parts: &Particles) -> Scales {
     let value = |input: &FloatInput, salt: u32| float(input, scene, parts, None, salt);
     Scales {
         radius: value(&look.radius_scale, 1),
         alpha: value(&look.alpha_scale, 2),
         color: vector(&look.color_scale, scene, parts, None, 3),
         gain: value(&look.overbright, 4) * (1.0 + value(&look.add_self, 5)),
-        cover: match look.blend {
+        cover: match blend {
             Blend::Add | Blend::Mod2x | Blend::Lighten => 0.0,
             Blend::BlendAdd => -1.0,
             Blend::HalfBlendAdd => 0.5,
@@ -292,7 +297,7 @@ fn quad(
 
 fn draw_sprites(sprites: &Sprites, d: &Draw, node: &Node, eye: &Eye, out: &mut Vec<Quad>) {
     let (scene, parts) = (node.scene_now(), &node.parts);
-    let s = scales(&sprites.look, &scene, parts);
+    let s = scales(&sprites.look, d.blend, &scene, parts);
     if s.radius == 0.0 || s.alpha == 0.0 {
         return;
     }
@@ -339,6 +344,63 @@ fn draw_sprites(sprites: &Sprites, d: &Draw, node: &Node, eye: &Eye, out: &mut V
     }
 }
 
+/// The decals of the particles that pick material `d.material`: each a flat card of the
+/// particle's diameter under it, turned by its roll, its corners on the ground.
+fn draw_projected(
+    projected: &Projected,
+    d: &Draw,
+    node: &Node,
+    ground: Option<HeightAt<'_>>,
+    out: &mut Vec<Quad>,
+) {
+    let (scene, parts) = (node.scene_now(), &node.parts);
+    let s = scales(&projected.look, d.blend, &scene, parts);
+    let last = projected.materials.len().saturating_sub(1);
+    for i in 0..parts.len() {
+        let pick = float(&projected.material_selection, &scene, parts, Some(i), 16);
+        if (pick.max(0.0) as usize).min(last) != d.material {
+            continue;
+        }
+        let half = parts.scalars[store::RADIUS][i] * s.radius;
+        let c = color(&projected.look, &s, parts, i);
+        if half <= 0.0 || c[3] < 1.0 / 255.0 {
+            continue;
+        }
+        // The texture's top is towards -X, turned by the roll; its left to right runs along X
+        // of that frame, mirrored when flipped.
+        let (sin, cos) = parts.scalars[store::ROLL][i].sin_cos();
+        let up = Vec3::new(-cos, sin, 0.0) * half;
+        let right = Vec3::new(sin, cos, 0.0) * half;
+        let center = parts.vectors[store::POSITION][i];
+        let on_ground = |p: Vec3| {
+            let z = ground.map_or(center.z, |height| height(p.x, p.y) + DECAL_LIFT);
+            Vec3::new(p.x, p.y, z)
+        };
+        let age = scene.age - parts.scalars[store::CREATION][i];
+        let mut f = frames(&projected.look, d, parts, i, age);
+        let [mut x0, y0, mut x1, y1] = f.window;
+        if projected.flip_horizontal {
+            f.uv = [f.uv[2], f.uv[1], f.uv[0], f.uv[3]];
+            f.uv_next = [f.uv_next[2], f.uv_next[1], f.uv_next[0], f.uv_next[3]];
+            (x0, x1) = (1.0 - x1, 1.0 - x0);
+        }
+        // A point of the card (0..1 left to right, top to bottom) on the ground.
+        let at =
+            |x: f32, y: f32| on_ground(center + (2.0 * x - 1.0) * right + (1.0 - 2.0 * y) * up);
+        let corners = [at(x0, y0), at(x1, y0), at(x0, y1), at(x1, y1)];
+        out.push(quad(
+            (corners[0] + corners[1]) * 0.5,
+            (corners[1] - corners[0]) * 0.5,
+            (corners[2] + corners[3]) * 0.5,
+            (corners[3] - corners[2]) * 0.5,
+            (c, c),
+            &f,
+            &projected.look,
+            &s,
+        ));
+    }
+}
+
 /// A card's right and up axes by its orientation, the particle's roll turning them.
 fn card_axes(orientation: Orientation, eye: &Eye, parts: &Particles, i: usize) -> (Vec3, Vec3) {
     let (base_right, base_up) = match orientation {
@@ -366,7 +428,7 @@ fn card_axes(orientation: Orientation, eye: &Eye, parts: &Particles, i: usize) -
 
 fn draw_trails(trails: &Trails, d: &Draw, node: &Node, eye: &Eye, out: &mut Vec<Quad>) {
     let (scene, parts) = (node.scene_now(), &node.parts);
-    let s = scales(&trails.look, &scene, parts);
+    let s = scales(&trails.look, d.blend, &scene, parts);
     let per_second = if trails.ignore_dt || node.last_step() <= 0.0 {
         1.0
     } else {
@@ -417,12 +479,12 @@ fn draw_trails(trails: &Trails, d: &Draw, node: &Node, eye: &Eye, out: &mut Vec<
     }
 }
 
-fn draw_rope(ropes: &Ropes, node: &Node, eye: &Eye, out: &mut Vec<Quad>) {
+fn draw_rope(ropes: &Ropes, d: &Draw, node: &Node, eye: &Eye, out: &mut Vec<Quad>) {
     let (scene, parts) = (node.scene_now(), &node.parts);
     if parts.len() < 2 {
         return;
     }
-    let s = scales(&ropes.look, &scene, parts);
+    let s = scales(&ropes.look, d.blend, &scene, parts);
     let world_size = float(&ropes.texture_v_world_size, &scene, parts, None, 13);
     let world_size = if world_size.abs() < 1e-3 {
         1.0
