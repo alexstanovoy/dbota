@@ -182,10 +182,10 @@ clash and resets them to the defaults; they are kept as `key.<action> = <chord>`
 | minimap | left click or drag moves the camera; right click orders your hero there |
 | Arrows, screen edges, middle button held | pan the camera (all four edges, the HUD bars included; the middle button drags the map); mouse wheel zooms (the camera's settings below) |
 | hold `Alt` | show attack, tower and ability ranges and the neutral camps' spawn boxes (they are never drawn otherwise), and the heroes' own icons on the minimap |
-| `Esc` | cancel / close; with nothing open, the dashboard (DISCONNECT, quit, SETTINGS; the settings also from the gear at the top left); leaves a match that is over; on the menu, back, and on its top page quit |
+| `Esc` | cancel / close; with nothing open, the dashboard (DISCONNECT, quit, SETTINGS; also the up arrow at the top left, Dota's dashboard button); leaves a match that is over; on the menu, back, and on its top page quit |
 | `F9`, `=` / `-`, `.`, `Tab` | in a replay: pause, faster / slower, one tick, switch vision (both teams, Radiant, Dire; `Tab` as a spectator too) |
 
-The settings screen (SETTINGS in the main menu and the dashboard, the gear in a game) has Dota's tabs: HOTKEYS,
+The settings screen (SETTINGS in the main menu and on the dashboard over a game) has Dota's tabs: HOTKEYS,
 OPTIONS (profile name, interface size, damage numbers, animated portrait, the scoreboard's items, the right click's deny, edge pan), VIDEO (display mode, frame
 cap, resolution, quality preset, shadows, anti-aliasing, visual clarity, auto quality, and what
 takes effect on the next start) and AUDIO (volume, mute, your hero's voice answers). What it

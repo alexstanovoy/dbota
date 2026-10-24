@@ -207,23 +207,28 @@ fn xp(
 /// A button of the menu in the top-left corner (Dota's `ButtonBar`).
 #[derive(Component, Clone, Copy, PartialEq, Eq)]
 enum MenuButton {
-    Settings,
+    /// Dota's `DashboardButton`: back to the dashboard, over the game.
+    Dashboard,
     Scoreboard,
 }
 
-/// The menu's buttons: the settings open the settings screen, the
-/// scoreboard's pins the scoreboard open or lets it go. Faint and bluish
-/// until hovered, as Dota's.
+/// The menu's buttons: the dashboard's opens the dashboard over the game
+/// (without a menu, a browser's replay, the settings: what Escape opens
+/// there), the scoreboard's pins the scoreboard open or lets it go. Faint
+/// and bluish until hovered, as Dota's.
 fn menu_buttons(
     mut panels: ResMut<crate::input::Panels>,
     mut screen: ResMut<crate::settings::Screen>,
+    menu: Option<NonSendMut<crate::main_menu::MenuCore>>,
     mut buttons: Query<(&MenuButton, &Interaction, &mut ImageNode), Changed<Interaction>>,
 ) {
+    let mut menu = menu;
     for (button, interaction, mut image) in &mut buttons {
         if *interaction == Interaction::Pressed {
-            match button {
-                MenuButton::Settings => screen.open = true,
-                MenuButton::Scoreboard => panels.scoreboard = !panels.scoreboard,
+            match (button, menu.as_mut()) {
+                (MenuButton::Dashboard, Some(menu)) => menu.act(crate::main_menu::Act::Dashboard),
+                (MenuButton::Dashboard, None) => screen.open = true,
+                (MenuButton::Scoreboard, _) => panels.scoreboard = !panels.scoreboard,
             }
         }
         image.color = match interaction {
@@ -1250,17 +1255,19 @@ fn spawn_seat_health(commands: &mut Commands, column: Entity, seat: u8) {
     ));
 }
 
-/// The menu in the top-left corner (Dota's `DOTAHudMenuButtons`): the settings
-/// and the scoreboard, 30 of Dota's pixels with 8 either side.
+/// The menu in the top-left corner (Dota's `DOTAHudMenuButtons`): the
+/// dashboard (Dota's return-to-game arrow turned up) and the scoreboard, 30
+/// of Dota's pixels with 8 either side. No settings button: the settings are
+/// the dashboard's, and Escape's.
 fn spawn_menu(commands: &mut Commands, manifest: &Manifest, server: &AssetServer, corner: Entity) {
     let bar = commands
         .spawn((Node::default(), Pickable::IGNORE, ChildOf(corner)))
         .id();
     for (button, art) in [
-        (MenuButton::Settings, "hud.menu_settings"),
+        (MenuButton::Dashboard, "menu.return_to_game"),
         (MenuButton::Scoreboard, "hud.menu_scoreboard"),
     ] {
-        commands.spawn((
+        let spawned = commands.spawn((
             button,
             Button,
             Blocker,
@@ -1273,6 +1280,14 @@ fn spawn_menu(commands: &mut Commands, manifest: &Manifest, server: &AssetServer
             ui::art(manifest, server, art, ui::INK_DIM),
             ChildOf(bar),
         ));
+        // Dota's #DashboardButton: the arrow's art with transform: scaleY(-1).
+        if button == MenuButton::Dashboard {
+            let id = spawned.id();
+            commands
+                .entity(id)
+                .entry::<ImageNode>()
+                .and_modify(|mut image| image.flip_y = true);
+        }
     }
 }
 

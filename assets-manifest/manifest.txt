@@ -565,7 +565,6 @@ texture hud.ult_ready panorama/images/hud/reborn/ult_ready_psd.vtex_c hud/ult_re
 texture hud.ult_cooldown panorama/images/hud/reborn/ult_cooldown_psd.vtex_c hud/ult_cooldown_psd.png
 texture hud.ult_no_mana panorama/images/hud/reborn/ult_no_mana_psd.vtex_c hud/ult_no_mana_psd.png
 texture hud.show_items panorama/images/control_icons/brackets_png.vtex_c hud/brackets_png.png
-texture hud.menu_settings panorama/images/control_icons/gear_png.vtex_c hud/gear_png.png
 texture hud.menu_scoreboard panorama/images/control_icons/hamburger_png.vtex_c hud/hamburger_png.png
 # The dashboard's top bar: the power button (#DOTAQuitButton) and the way back to a game
 # (#DOTAReturnToGameButton).
