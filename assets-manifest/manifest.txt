@@ -372,6 +372,7 @@ texture icon.ability.fountain_heal panorama/images/spellicons/fountain_heal_png.
 texture icon.ability.flagbearer_creep_aura_effect panorama/images/spellicons/flagbearer_creep_aura_effect_png.vtex_c icons/abilities/flagbearer_creep_aura_effect.png
 texture icon.ability.tower_armor_aura panorama/images/spellicons/tower_armor_aura_png.vtex_c icons/abilities/tower_armor_aura.png
 texture icon.ability.backdoor_protection panorama/images/spellicons/backdoor_protection_png.vtex_c icons/abilities/backdoor_protection.png
+texture icon.ability.ursa_fury_swipes panorama/images/spellicons/ursa_fury_swipes_png.vtex_c icons/abilities/ursa_fury_swipes.png
 texture icon.item.bottle panorama/images/items/bottle_png.vtex_c icons/items/bottle.png
 texture icon.item.headdress panorama/images/items/headdress_png.vtex_c icons/items/headdress.png
 texture icon.item.eagle panorama/images/items/eagle_png.vtex_c icons/items/eagle.png

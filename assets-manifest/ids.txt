@@ -209,3 +209,6 @@ effect 58 icon.ability.pudge_dismember
 effect 59 icon.ability.backdoor_protection
 # modifier_fountain_invulnerability, a risen hero's: the Rejuvenation Aura that provides it.
 effect 64 icon.ability.fountain_heal
+# modifier_fountain_fury_swipes_damage_increase, the fountain's stacks: its icon is not documented;
+# the modifier is Fury Swipes' kin, so it wears Ursa's Fury Swipes.
+effect 66 icon.ability.ursa_fury_swipes
