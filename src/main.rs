@@ -52,6 +52,7 @@ mod pick;
 mod pings;
 mod portrait;
 mod quality;
+mod replay_controls;
 mod scoreboard;
 mod script;
 mod select;
@@ -446,6 +447,7 @@ fn main() -> AppExit {
             script::plugin,
             wash::plugin,
             death::plugin,
+            replay_controls::plugin,
         ))
         .add_plugins(main_menu::plugin);
     #[cfg(not(target_arch = "wasm32"))]
