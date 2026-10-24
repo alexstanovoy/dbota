@@ -14,6 +14,51 @@ pub struct Aids {
     pub edge_pan: bool,
 }
 
+/// The game camera: a fixed yaw (north up), looking down at its pitch through
+/// its lens from its distance, which the wheel moves within its range.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct CameraSettings {
+    /// Degrees below the horizon.
+    pub pitch: f32,
+    /// The lens: the vertical field of view in degrees.
+    pub fov: f32,
+    /// Distance from the focus point along the view at the start, in world
+    /// units.
+    pub distance: f32,
+    /// How near the wheel brings the camera.
+    pub distance_min: f32,
+    /// How far the wheel takes it.
+    pub distance_max: f32,
+    /// Pan speed in world units a second at the starting distance; nearer, it
+    /// pans slower, farther, faster.
+    pub pan_speed: f32,
+}
+
+impl CameraSettings {
+    /// The wheel's range, nearest first, however the two are set.
+    pub fn range(&self) -> (f32, f32) {
+        (
+            self.distance_min.min(self.distance_max),
+            self.distance_min.max(self.distance_max),
+        )
+    }
+}
+
+impl Default for CameraSettings {
+    /// A long lens from far out, which shows a lane fight whole; panning at
+    /// Dota's `dota_camera_speed`.
+    fn default() -> CameraSettings {
+        CameraSettings {
+            pitch: 58.0,
+            fov: 25.0,
+            distance: 4400.0,
+            distance_min: 1600.0,
+            distance_max: 6500.0,
+            pan_speed: 3031.0,
+        }
+    }
+}
+
 /// How the picture's edges are smoothed. Every choice runs on WebGPU and
 /// WebGL2 alike.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -297,6 +342,8 @@ pub struct Settings {
     pub display: DisplayMode,
     /// How strongly units and paths are set apart from the ground.
     pub clarity: Clarity,
+    /// The game camera.
+    pub camera: CameraSettings,
     /// The profile name, which games without an account (local lobbies,
     /// direct connects) show this player under, as Dota's local games show
     /// the Steam name. Empty: [`crate::main_menu::DEFAULT_NAME`].
@@ -328,6 +375,7 @@ impl Default for Settings {
             quality: Quality::default(),
             display: DisplayMode::default(),
             clarity: Clarity::Off,
+            camera: CameraSettings::default(),
             name: String::new(),
             bot_command: String::new(),
         }
@@ -458,6 +506,16 @@ impl Settings {
                     )
                 })?
             }
+            "camera_pitch" => self.camera.pitch = parse_unit(value, 10.0, 89.0)?,
+            "camera_fov" => self.camera.fov = parse_unit(value, 5.0, 120.0)?,
+            "camera_distance" => self.camera.distance = parse_unit(value, 100.0, 20_000.0)?,
+            "camera_distance_min" => {
+                self.camera.distance_min = parse_unit(value, 100.0, 20_000.0)?;
+            }
+            "camera_distance_max" => {
+                self.camera.distance_max = parse_unit(value, 100.0, 20_000.0)?;
+            }
+            "camera_pan_speed" => self.camera.pan_speed = parse_unit(value, 100.0, 20_000.0)?,
             "name" => {
                 if value.chars().count() > MAX_NAME || value.chars().any(char::is_control) {
                     return Err(format!("a name is at most {MAX_NAME} printable characters"));
@@ -514,6 +572,17 @@ impl Settings {
         out.push_str(&format!("gpu_batching = {}\n", flag(q.gpu_batching)));
         out.push_str(&format!("auto_quality = {}\n", flag(q.auto)));
         out.push_str(&format!("visual_clarity = {}\n", self.clarity.name()));
+        let c = &self.camera;
+        for (name, value) in [
+            ("camera_pitch", c.pitch),
+            ("camera_fov", c.fov),
+            ("camera_distance", c.distance),
+            ("camera_distance_min", c.distance_min),
+            ("camera_distance_max", c.distance_max),
+            ("camera_pan_speed", c.pan_speed),
+        ] {
+            out.push_str(&format!("{name} = {value}\n"));
+        }
         for (binding, chord) in keys::all().zip(self.keys) {
             let chord = chord.map_or_else(|| "none".to_owned(), Chord::name);
             out.push_str(&format!("key.{} = {chord}\n", binding.name));

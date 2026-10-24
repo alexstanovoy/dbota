@@ -11,23 +11,6 @@ use crate::map::{DOTA_ORIGIN, Ground};
 use crate::session::Session;
 use crate::units::{Unit, UnitIndex};
 
-// Dota's own camera, as its client registers the defaults of
-// `dota_camera_pitch_max` (60), `dota_camera_fov_max` (70) and
-// `dota_camera_distance` (1200), and `dota_camera_speed` (3031).
-/// Camera pitch below the horizon.
-const PITCH_DEG: f32 = 60.0;
-/// Source's field of view: horizontal, on a 4:3 screen; a wider screen sees
-/// more at the sides, never less at the top and bottom.
-const FOV_DEG: f32 = 70.0;
-/// Distance from the focus point along the view.
-const DEFAULT_DISTANCE: f32 = 1200.0;
-/// How near the wheel brings the camera (`dota_camera_distance_min`).
-const MIN_DISTANCE: f32 = 1134.0;
-/// How far the wheel takes it: a player stays at Dota's distance; one
-/// watching (a replay, a spectator) may draw back to see a fight whole.
-const MAX_DISTANCE: f32 = 6500.0;
-/// Pan speed in world units per second at the default distance.
-const PAN_SPEED: f32 = 3031.0;
 /// Cursor within this many logical pixels of a window edge pans the camera.
 const EDGE_PAN_MARGIN: f32 = 6.0;
 /// Fraction of the distance removed per scroll line.
@@ -59,20 +42,14 @@ pub fn plugin(app: &mut App) {
         .add_systems(Update, log_window_size);
 }
 
-/// Camera rotation: yaw 0 (looking north = -Z), pitched down. Constant, so billboards can
-/// copy it once at spawn.
-/// The vertical field of view that Source's horizontal 4:3 one comes to.
-pub fn fov_y() -> f32 {
-    2.0 * ((FOV_DEG.to_radians() / 2.0).tan() * 3.0 / 4.0).atan()
+/// Camera rotation: yaw 0 (looking north = -Z), pitched `pitch` degrees down.
+pub fn camera_rotation(pitch: f32) -> Quat {
+    Quat::from_rotation_x(-pitch.to_radians())
 }
 
-pub fn camera_rotation() -> Quat {
-    Quat::from_rotation_x(-PITCH_DEG.to_radians())
-}
-
-fn camera_translation(cam: &RtsCamera) -> Vec3 {
+fn camera_translation(cam: &RtsCamera, rotation: Quat) -> Vec3 {
     // Camera looks along rotation * -Z; step back along the opposite direction.
-    cam.focus - camera_rotation() * Vec3::NEG_Z * cam.distance
+    cam.focus - rotation * Vec3::NEG_Z * cam.distance
 }
 
 fn spawn_camera(
@@ -81,6 +58,8 @@ fn spawn_camera(
     settings: Res<crate::config::Settings>,
 ) {
     let msaa = crate::quality::msaa_of(&settings);
+    let lens = settings.camera;
+    let (near, far) = lens.range();
     let cam = RtsCamera {
         focus: match args.look[..] {
             [x, y] => Vec3::new(x, 128.0, -y),
@@ -88,13 +67,13 @@ fn spawn_camera(
         },
         distance: args
             .distance
-            .unwrap_or(DEFAULT_DISTANCE)
-            .clamp(MIN_DISTANCE, MAX_DISTANCE),
+            .unwrap_or(lens.distance)
+            .clamp(near / 2.0, far),
     };
     commands.spawn((
         Camera3d::default(),
         Projection::Perspective(PerspectiveProjection {
-            fov: fov_y(),
+            fov: lens.fov.to_radians(),
             near: 50.0,
             far: 20_000.0,
             ..default()
@@ -104,7 +83,8 @@ fn spawn_camera(
         bevy::core_pipeline::tonemapping::Tonemapping::TonyMcMapface,
         // Layer 1 holds what the minimap's photograph leaves out.
         bevy::camera::visibility::RenderLayers::from_layers(&[0, 1]),
-        Transform::from_translation(camera_translation(&cam)).with_rotation(camera_rotation()),
+        Transform::from_translation(camera_translation(&cam, camera_rotation(lens.pitch)))
+            .with_rotation(camera_rotation(lens.pitch)),
         cam,
     ));
 }
@@ -140,6 +120,7 @@ fn pan_and_zoom(
     settings: Res<crate::config::Settings>,
     mut last_cursor: Local<Option<Vec2>>,
 ) {
+    let lens = settings.camera;
     grip(
         &fired,
         &motion,
@@ -147,6 +128,7 @@ fn pan_and_zoom(
         &mut cam,
         &mut session,
         panels.camera_lock,
+        lens.fov,
     );
     let mut dir = Vec2::ZERO; // sim axes: x east, y north
     for (action, d) in [
@@ -166,7 +148,7 @@ fn pan_and_zoom(
     if cursor.is_some() || !window.focused {
         *last_cursor = cursor;
     }
-    let speed = PAN_SPEED * cam.distance / DEFAULT_DISTANCE * time.delta_secs();
+    let speed = lens.pan_speed * cam.distance / lens.distance.max(1.0) * time.delta_secs();
     let step = dir.normalize_or_zero() * speed;
     if step != Vec2::ZERO && !panels.camera_lock {
         // Driving the camera by hand lets go of whatever carried it.
@@ -183,14 +165,8 @@ fn pan_and_zoom(
         }
     };
     if lines != 0.0 {
-        let core = &session.0;
-        let playing = core.my_slot.is_some() && core.pov.is_none();
-        let far = if playing {
-            DEFAULT_DISTANCE
-        } else {
-            MAX_DISTANCE
-        };
-        cam.distance = (cam.distance * (1.0 - ZOOM_PER_LINE).powf(lines)).clamp(MIN_DISTANCE, far);
+        let (near, far) = lens.range();
+        cam.distance = (cam.distance * (1.0 - ZOOM_PER_LINE).powf(lines)).clamp(near, far);
     }
 }
 
@@ -203,19 +179,37 @@ fn grip(
     cam: &mut RtsCamera,
     session: &mut Session,
     locked: bool,
+    fov: f32,
 ) {
     if !fired.held(Action::CameraGrip) || motion.delta == Vec2::ZERO || locked {
         return;
     }
     // World units a pixel spans at the focus.
-    let per_pixel = 2.0 * cam.distance * (fov_y() / 2.0).tan() / window.height().max(1.0);
+    let per_pixel = 2.0 * cam.distance * (fov.to_radians() / 2.0).tan() / window.height().max(1.0);
     session.0.pinned = None;
     cam.focus -= Vec3::new(motion.delta.x, 0.0, motion.delta.y) * per_pixel;
 }
 
-fn apply_camera_transform(mut q: Query<(&RtsCamera, &mut Transform), Changed<RtsCamera>>) {
-    for (cam, mut transform) in &mut q {
-        transform.translation = camera_translation(cam);
+/// Places the camera as its focus, distance and the settings' pitch and lens
+/// ask.
+fn apply_camera_transform(
+    mut q: Query<(&RtsCamera, &mut Transform, &mut Projection)>,
+    settings: Res<crate::config::Settings>,
+) {
+    let lens = settings.camera;
+    let rotation = camera_rotation(lens.pitch);
+    for (cam, mut transform, mut projection) in &mut q {
+        let translation = camera_translation(cam, rotation);
+        if transform.translation != translation || transform.rotation != rotation {
+            transform.translation = translation;
+            transform.rotation = rotation;
+        }
+        if let Projection::Perspective(p) = projection.as_ref()
+            && p.fov != lens.fov.to_radians()
+            && let Projection::Perspective(p) = projection.as_mut()
+        {
+            p.fov = lens.fov.to_radians();
+        }
     }
 }
 

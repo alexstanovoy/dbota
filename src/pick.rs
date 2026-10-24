@@ -474,7 +474,7 @@ mod tests {
 
     /// The camera the game uses, looking at the origin from a distance.
     fn camera(distance: f32) -> Transform {
-        let rotation = crate::camera::camera_rotation();
+        let rotation = crate::camera::camera_rotation(58.0);
         Transform::from_translation(-(rotation * Vec3::NEG_Z) * distance).with_rotation(rotation)
     }
 

@@ -175,7 +175,7 @@ clash and resets them to the defaults; they are kept as `key.<action> = <chord>`
 | `Enter` / `Shift+Enter` | chat to your allies / to everyone (a spectator: to the spectators); `Enter` sends, `Esc` drops the line. Text of any script goes in, with an input method too. The log shows over the minimap and fades after ten seconds; it shows in replays as the watched side heard it |
 | `Alt` + left click / `Ctrl`+`Alt` + left click | ping the spot or the unit under the cursor (on the minimap, the spot) for your side, or warn of danger there (red). Your side's pings show for three seconds on the ground and the minimap, in the pinger's colour, and in a replay seen through a seat's eyes |
 | minimap | left click or drag moves the camera; right click orders your hero there |
-| Arrows, screen edges, middle button held | pan the camera (all four edges, the HUD bars included; the middle button drags the map). The camera is Dota's (1200 units out, 60° down, a 70° lens); the mouse wheel brings it in to 1134, and a replay or a spectator may draw it back to 6500 |
+| Arrows, screen edges, middle button held | pan the camera (all four edges, the HUD bars included; the middle button drags the map); mouse wheel zooms (the camera's settings below) |
 | hold `Alt` | show attack, tower and ability ranges and the neutral camps' spawn boxes (they are never drawn otherwise) |
 | `Esc` | cancel / close; with nothing open, the dashboard (DISCONNECT, quit, SETTINGS; the settings also from the gear at the top left); leaves a match that is over; on the menu, back, and on its top page quit |
 | `F9`, `=` / `-`, `.`, `Tab` | in a replay: pause, faster / slower, one tick, switch vision (both teams, Radiant, Dire; `Tab` as a spectator too) |
@@ -239,6 +239,9 @@ times as needed) sets what the picture may cost:
 | `auto_quality` | lower anti-aliasing, shadows, then resolution while frames run slower than the cap (or 30 fps) | `false` |
 | `visual_clarity` | sets units apart from the ground: the scenery a little duller and darker, shade around the forest, the units a little more vivid, a soft dark disc under every unit and a ring at every hero's feet; `off` (as Dota: no outline, the side's ring under what is selected, a closing ring on what the cursor comes onto), `low` or `high` | `off` |
 | `animate_portrait` | Dota's "Animate Portrait": the bottom panel's portrait plays the unit's idle animation, drawn up to 30 times a second; off, it shows Dota's picture of a hero, or a render of another unit's model made once | `false` |
+| `camera_pitch`, `camera_fov` | the camera's angle below the horizon and its lens (vertical field of view), in degrees | `58`, `25` |
+| `camera_distance`, `camera_distance_min`, `camera_distance_max` | how far out the camera starts, and how near and far the mouse wheel takes it, in world units | `4400`, `1600`, `6500` |
+| `camera_pan_speed` | world units a second the camera pans at its starting distance (Dota's `dota_camera_speed`); nearer it pans slower, farther faster | `3031` |
 
 `medium` is shadows `low`, `anti_aliasing` `fxaa` and 2048 textures; `low` adds no shadows, no anti-aliasing,
 `render_scale` 0.75 and 1024 textures; `potato` is `render_scale` 0.5, 512 textures, no props,
