@@ -162,6 +162,11 @@ pub struct Args {
     /// fails.
     #[arg(long)]
     pub visual_check: bool,
+    /// Debug: with `--visual-check`, measure only the river: the camera put
+    /// on it (`--look`), its water must be one surface, no piece of it drawn
+    /// apart from the next (see `visual.rs`).
+    #[arg(long, requires = "visual_check")]
+    pub water_check: bool,
     /// Debug: draw a screen of the main menu with made-up contents, no
     /// service needed (for screenshots: `--frames N --screenshot FILE`).
     #[arg(long, value_name = "NAME", value_parser = clap::builder::PossibleValuesParser::new(main_menu::PREVIEWS))]

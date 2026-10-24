@@ -13,6 +13,9 @@
 //! - No range ring is drawn while the show-ranges key is up.
 //! - The top-left block tells no gold and no souls.
 //! - Buff icons are cut round.
+//! - With `--water-check` (the camera on the river) only the river is
+//!   measured: one surface, no straight sharp step in its shading where one
+//!   of the map's water pieces meets the next.
 //! - A click near a unit with no other near it picks it. A frame with no such
 //!   unit for the seat checks nothing: the replay plays on and the check is
 //!   made on the first frame within [`CLICK_WINDOW_TICKS`] that has one; a
@@ -50,6 +53,14 @@ pub const HERO_DETAIL_MIN: f32 = 12.0;
 /// other skeleton than the one walking.
 pub const JOINT_REACH: f32 = 400.0;
 
+/// The sharpest straight step the river's shading may take, in sRGB
+/// luminance (0 to 255) above the steps beside it. Water pieces each reading
+/// the normal map their own way stepped 3.3 to 7.0 (windowed and at 4K, by
+/// day and by night); one surface steps 1.5 to 1.8.
+pub const WATER_STEP_MAX: f32 = 2.5;
+/// The share of the measured middle of the screen that must be water.
+pub const WATER_SHARE_MIN: f32 = 0.6;
+
 /// Ticks after a shot within which a frame with a unit to click near is
 /// looked for, when the shot has none.
 pub const CLICK_WINDOW_TICKS: u32 = 900;
@@ -65,6 +76,7 @@ pub struct Verdict {
 /// What the checks read.
 #[derive(SystemParam)]
 pub struct Checks<'w, 's> {
+    args: Res<'w, crate::Args>,
     session: NonSend<'w, Session>,
     fog: Res<'w, FogGrid>,
     ground: Res<'w, Ground>,
@@ -187,6 +199,13 @@ pub fn run(image: &Image, unveiled: &Image, c: &Checks) -> Verdict {
         );
         ok &= pass;
     };
+    if c.args.water_check {
+        water(&bare, &mut report);
+        return Verdict {
+            pass: ok,
+            clicks_pending: false,
+        };
+    }
     hero_parts(c, &mut report);
     fog(&shot, &bare, c, &mut report);
     heroes(&shot, c, &mut report);
@@ -792,4 +811,122 @@ fn clicks(c: &Checks) -> Option<(u32, Vec<String>)> {
         }
     }
     (tried > 0).then_some((tried, wrong))
+}
+
+/// The river, unfogged, in the middle of the screen: no straight sharp step
+/// in its shading. Water is told by its colour, near the middle's median
+/// colour; in bands across the screen each column's (and each row's) mean
+/// over the water, and how far one step of that profile rises above the
+/// steps beside it: a seam between two pieces drawn apart steps the same way
+/// all along, ripples and the light's gradients are smooth.
+fn water(shot: &Shot, report: &mut impl FnMut(&str, bool, String)) {
+    let (x0, y0) = (shot.w * 3 / 10, shot.h * 2 / 9);
+    let (w, h) = (shot.w * 2 / 5, shot.h * 5 / 9);
+    let at = |x: usize, y: usize| -> [f32; 3] {
+        let i = ((y0 + y) * shot.w + x0 + x) * 4;
+        let p = &shot.data[i..i + 3];
+        let rgb = if shot.bgra {
+            [p[2], p[1], p[0]]
+        } else {
+            [p[0], p[1], p[2]]
+        };
+        rgb.map(f32::from)
+    };
+    let median = |c: usize| {
+        let mut hist = [0usize; 256];
+        for y in (0..h).step_by(2) {
+            for x in (0..w).step_by(2) {
+                hist[at(x, y)[c] as usize] += 1;
+            }
+        }
+        let half = hist.iter().sum::<usize>() / 2;
+        let mut seen = 0;
+        hist.iter()
+            .position(|n| {
+                seen += n;
+                seen > half
+            })
+            .unwrap_or(0) as f32
+    };
+    let mid = [median(0), median(1), median(2)];
+    let lum: Vec<Option<f32>> = (0..h)
+        .flat_map(|y| (0..w).map(move |x| (x, y)))
+        .map(|(x, y)| {
+            let c = at(x, y);
+            let water = (0..3).all(|i| (c[i] - mid[i]).abs() < WATER_COLOUR_REACH);
+            water.then(|| luminance(c))
+        })
+        .collect();
+    let share = lum.iter().filter(|l| l.is_some()).count() as f32 / lum.len().max(1) as f32;
+    if share < WATER_SHARE_MIN {
+        report(
+            "the river is one surface",
+            false,
+            format!(
+                "{:.0} % of the middle is water (at least {:.0} %): the river is not on screen",
+                share * 100.0,
+                WATER_SHARE_MIN * 100.0
+            ),
+        );
+        return;
+    }
+    let band = (h / 18).max(8);
+    let mut sharpest = (0.0f32, String::new());
+    for (across, along, name) in [(w, h, "vertical"), (h, w, "horizontal")] {
+        for start in (0..=along.saturating_sub(band)).step_by(band / 2) {
+            let profile: Vec<Option<f32>> = (0..across)
+                .map(|i| {
+                    let (mut sum, mut n) = (0.0, 0);
+                    for j in start..start + band {
+                        let (x, y) = if name == "vertical" { (i, j) } else { (j, i) };
+                        if let Some(l) = lum[y * w + x] {
+                            sum += l;
+                            n += 1;
+                        }
+                    }
+                    (n * 10 > band * 9).then(|| sum / n as f32)
+                })
+                .collect();
+            if let Some((rise, i)) = sharpest_step(&profile)
+                && rise > sharpest.0
+            {
+                sharpest = (
+                    rise,
+                    format!(
+                        "{name} at {} px",
+                        i + if name == "vertical" { x0 } else { y0 }
+                    ),
+                );
+            }
+        }
+    }
+    report(
+        "the river is one surface",
+        sharpest.0 <= WATER_STEP_MAX,
+        format!(
+            "sharpest straight step {:.2} (at most {WATER_STEP_MAX}), {}; {:.0} % of the middle is water",
+            sharpest.0,
+            sharpest.1,
+            share * 100.0
+        ),
+    );
+}
+
+/// Colour distance (each channel, 0 to 255) from the middle's median within
+/// which a pixel counts as water: lily pads, reeds, rocks and shadows are
+/// left out.
+const WATER_COLOUR_REACH: f32 = 14.0;
+
+/// The step of a profile that rises most above the two steps beside it, and
+/// where; steps next to a gap (not water) are not measured.
+fn sharpest_step(profile: &[Option<f32>]) -> Option<(f32, usize)> {
+    let steps: Vec<Option<f32>> = profile
+        .windows(2)
+        .map(|p| Some((p[1]? - p[0]?).abs()))
+        .collect();
+    steps
+        .windows(3)
+        .enumerate()
+        .filter_map(|(i, s)| Some((s[1]? - (s[0]? + s[2]?) / 2.0, i + 1)))
+        .max_by(|a, b| a.0.total_cmp(&b.0))
 }

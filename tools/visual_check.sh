@@ -2,9 +2,10 @@
 # Measures dbota's picture of a recorded match (src/visual.rs): the fog's
 # density and border, heroes drawn with their models, buildings that never
 # turn, no range rings without Alt, no gold or souls in the corner, round buff
-# icons. Takes a bota replay (.brp, first argument or VISUAL_REPLAY) of a Map 2
-# match whose heroes are on the map at VISUAL_TICK, the asset cache, and a
-# display (DISPLAY or WAYLAND_DISPLAY). Exits non-zero when a check fails.
+# icons, the river one surface without seams. Takes a bota replay (.brp, first
+# argument or VISUAL_REPLAY) of a Map 2 match whose heroes are on the map at
+# VISUAL_TICK, the asset cache, and a display (DISPLAY or WAYLAND_DISPLAY).
+# Exits non-zero when a check fails.
 # The fog checks compare each ground cell on screen drawn with the fog and
 # without it (a second shot of the same held frame), so they hold at any
 # VISUAL_TICK (4000, day, is the default; 12000 is night).
@@ -30,6 +31,14 @@ dire=$("$here/target/release/dbota" --replay "$replay" --pov 1 --screenshot-at "
     --visual-check --mute --no-vsync --display-mode windowed 2>> "$out/dbota.log" || true)
 echo "$dire" | sed 's/^visual check: /visual check (Dire): /'
 if echo "$dire" | grep -q "FAIL"; then exit 1; fi
+
+# The river is one surface: the camera on it where the mid lane crosses it
+# (VISUAL_RIVER, bota world units), at the same tick, its seams measured.
+river=$("$here/target/release/dbota" --replay "$replay" --look "${VISUAL_RIVER:-8000,9600}" --distance 2500 \
+    --screenshot-at "$tick" --screenshot-dir "$out" --screenshot-prefix check-river- \
+    --visual-check --water-check --mute --no-vsync --display-mode windowed 2>> "$out/dbota.log" || true)
+echo "$river"
+if ! echo "$river" | grep -q "PASS the river"; then exit 1; fi
 
 # Every hero model loads whole every time, on its hero's own skeleton: the
 # client is run again, cold (the asset cache dropped from memory) and warm
