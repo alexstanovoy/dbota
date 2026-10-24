@@ -5,7 +5,7 @@
 
 use bevy::{prelude::*, ui::RelativeCursorPosition};
 
-use super::model::{Choice, Control, Slider, Tab, Toggle, controls};
+use super::model::{Choice, Control, Slider, Tab, TextSetting, Toggle, controls};
 use super::screen::Screen;
 use crate::config::Settings;
 use crate::hud::Blocker;
@@ -57,11 +57,11 @@ pub struct KeyField(pub usize);
 #[derive(Component)]
 pub struct KeyText(pub usize);
 
-/// The profile name's field, and its text.
+/// A typed line's field, and its text.
 #[derive(Component)]
-pub struct NameField;
+pub struct NameField(pub TextSetting);
 #[derive(Component)]
-pub struct NameText;
+pub struct NameText(pub TextSetting);
 
 /// The line telling which bindings clash.
 #[derive(Component)]
@@ -270,7 +270,7 @@ fn heading(kit: &mut Kit, body: Entity, title: &str) {
 fn control_row(kit: &mut Kit, body: Entity, control: Control, open: Option<Choice>) {
     match control {
         Control::Heading(title) => heading(kit, body, title),
-        Control::Name => name_row(kit, body),
+        Control::Text(field) => name_row(kit, body, field),
         Control::Toggle(toggle) => toggle_row(kit, body, toggle),
         Control::Slider(slider) => slider_row(kit, body, slider),
         Control::Choice(choice) => choice_row(kit, body, choice, open == Some(choice)),
@@ -294,20 +294,27 @@ fn labelled(kit: &mut Kit, body: Entity, label: &str) -> Entity {
     row
 }
 
-/// The profile name: a field a click types into, Enter or Escape done.
-fn name_row(kit: &mut Kit, body: Entity) {
-    let row = labelled(kit, body, "Name in local and direct games");
+/// A typed line (the profile name, the bot command): a field a click types
+/// into, Enter or Escape done. The bot command, long, takes a row of its own
+/// with what it is given under it.
+fn name_row(kit: &mut Kit, body: Entity, setting: TextSetting) {
+    let row = labelled(kit, body, setting.label());
+    let width = match setting {
+        TextSetting::Name => px(240),
+        TextSetting::BotCommand => px(420),
+    };
     let field = kit
         .commands
         .spawn((
-            NameField,
+            NameField(setting),
             Button,
-            Name::new("profile name"),
+            Name::new(setting.label().to_lowercase()),
             Node {
-                width: px(240),
+                width,
                 height: px(30),
                 padding: UiRect::horizontal(px(10)),
                 align_items: AlignItems::Center,
+                overflow: Overflow::clip(),
                 border: UiRect::all(px(1)),
                 border_radius: BorderRadius::all(px(3)),
                 ..default()
@@ -318,11 +325,29 @@ fn name_row(kit: &mut Kit, body: Entity) {
         ))
         .id();
     kit.commands.spawn((
-        NameText,
+        NameText(setting),
         ui::text("", &kit.fonts.regular, 15.0, ui::INK),
+        TextLayout::no_wrap(),
         Pickable::IGNORE,
         ChildOf(field),
     ));
+    if setting == TextSetting::BotCommand {
+        let note = kit.node(
+            body,
+            Node {
+                width: px(ROW_WIDTH),
+                ..default()
+            },
+        );
+        kit.text(
+            note,
+            "A local lobby runs it once for each seat left to a bot, without a shell: \
+             {address} becomes the game's address (127.0.0.1:port), and the seat's key is in \
+             the environment as BOTA_SEAT_KEY.",
+            13.0,
+            ui::INK_DIM,
+        );
+    }
 }
 
 /// A checkbox and its label: a click anywhere on the row turns it.
@@ -588,10 +613,25 @@ pub fn refresh(
         Option<&ChoiceValue>,
         Option<&KeyText>,
         Option<&Clashes>,
-        Has<NameText>,
+        Option<&NameText>,
     )>,
+    respawned: Query<
+        (),
+        Or<(
+            Added<KeyText>,
+            Added<NameText>,
+            Added<SliderValue>,
+            Added<ChoiceValue>,
+            Added<ToggleBox>,
+        )>,
+    >,
 ) {
-    if !screen.open || !(settings.is_changed() || screen.is_changed()) {
+    // The screen drawn anew is filled in too, whatever changed when: the
+    // menu may open the screen after this frame's layout ran and before
+    // this, which saw the change on no fields yet and would not again (the
+    // key fields stayed blank).
+    let fresh = !respawned.is_empty();
+    if !screen.open || !(settings.is_changed() || screen.is_changed() || fresh) {
         return;
     }
     for (toggle, mut fill, mut edge) in &mut boxes {
@@ -606,8 +646,8 @@ pub fn refresh(
         }
     }
     for (mut text, mut color, slider, choice, key, clashes, name) in &mut texts {
-        let (s, c) = if name {
-            name_text(&screen, &settings)
+        let (s, c) = if let Some(name) = name {
+            name_text(&screen, &settings, name.0)
         } else if let Some(slider) = slider {
             (slider.0.shown(&settings), ui::INK)
         } else if let Some(choice) = choice {
@@ -624,13 +664,14 @@ pub fn refresh(
     }
 }
 
-/// What the name field says: the name, a caret while typed into, the
-/// name games use while it is empty.
-fn name_text(screen: &Screen, settings: &Settings) -> (String, Color) {
-    match (screen.naming, settings.name.is_empty()) {
-        (true, _) => (format!("{}|", settings.name), ON),
-        (false, true) => (crate::main_menu::DEFAULT_NAME.to_owned(), ui::INK_DIM),
-        (false, false) => (settings.name.clone(), ui::INK),
+/// What a typed line's field says: the line, a caret while typed into,
+/// what holds while it is empty (the name games use, no bot).
+fn name_text(screen: &Screen, settings: &Settings, setting: TextSetting) -> (String, Color) {
+    let line = setting.get(settings);
+    match (screen.naming == Some(setting), line.is_empty()) {
+        (true, _) => (format!("{line}|"), ON),
+        (false, true) => (setting.placeholder().to_owned(), ui::INK_DIM),
+        (false, false) => (line.clone(), ui::INK),
     }
 }
 

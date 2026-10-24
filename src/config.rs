@@ -301,10 +301,15 @@ pub struct Settings {
     /// direct connects) show this player under, as Dota's local games show
     /// the Steam name. Empty: [`crate::main_menu::DEFAULT_NAME`].
     pub name: String,
+    /// The program a local lobby starts for each seat left to a bot, as a
+    /// command line (see `main_menu::launch`). Empty: none set.
+    pub bot_command: String,
 }
 
 /// Characters a profile name has at most.
 pub const MAX_NAME: usize = 24;
+/// Characters a bot command has at most.
+pub const MAX_BOT_COMMAND: usize = 1024;
 
 impl Default for Settings {
     fn default() -> Settings {
@@ -324,6 +329,7 @@ impl Default for Settings {
             display: DisplayMode::default(),
             clarity: Clarity::Off,
             name: String::new(),
+            bot_command: String::new(),
         }
     }
 }
@@ -458,6 +464,14 @@ impl Settings {
                 }
                 value.clone_into(&mut self.name);
             }
+            "bot_command" => {
+                if value.chars().count() > MAX_BOT_COMMAND || value.chars().any(char::is_control) {
+                    return Err(format!(
+                        "a bot command is at most {MAX_BOT_COMMAND} printable characters"
+                    ));
+                }
+                value.clone_into(&mut self.bot_command);
+            }
             other => return Err(format!("no setting called '{other}'")),
         }
         Ok(())
@@ -470,6 +484,9 @@ impl Settings {
             String::from("# dbota settings. Keys use the names listed in the client README.\n");
         if !self.name.is_empty() {
             out.push_str(&format!("name = {}\n", self.name));
+        }
+        if !self.bot_command.is_empty() {
+            out.push_str(&format!("bot_command = {}\n", self.bot_command));
         }
         out.push_str(&format!("volume = {:.2}\n", self.volume));
         out.push_str(&format!("muted = {}\n", flag(self.muted)));

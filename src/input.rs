@@ -120,7 +120,7 @@ fn mute(
     mut muted: ResMut<crate::keys::Muted>,
 ) {
     let menu_covers = menu.is_some_and(|m| !m.shows_game());
-    let now = if *typing != Typing::No || screen.capturing.is_some() || screen.naming {
+    let now = if *typing != Typing::No || screen.capturing.is_some() || screen.naming.is_some() {
         crate::keys::Muted::All
     } else if screen.open || menu_covers {
         crate::keys::Muted::Game

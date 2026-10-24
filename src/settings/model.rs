@@ -275,12 +275,60 @@ fn anti_alias_name(a: AntiAlias) -> String {
     .into()
 }
 
+/// A setting typed in as a line.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TextSetting {
+    /// The profile name.
+    Name,
+    /// The program a local lobby runs for a seat left to a bot.
+    BotCommand,
+}
+
+impl TextSetting {
+    pub fn label(self) -> &'static str {
+        match self {
+            TextSetting::Name => "Name in local and direct games",
+            TextSetting::BotCommand => "Bot command",
+        }
+    }
+
+    /// What the field says while it is empty.
+    pub fn placeholder(self) -> &'static str {
+        match self {
+            TextSetting::Name => crate::main_menu::DEFAULT_NAME,
+            TextSetting::BotCommand => "none: empty seats stay open or take a dummy",
+        }
+    }
+
+    pub fn get(self, settings: &Settings) -> &String {
+        match self {
+            TextSetting::Name => &settings.name,
+            TextSetting::BotCommand => &settings.bot_command,
+        }
+    }
+
+    pub fn get_mut(self, settings: &mut Settings) -> &mut String {
+        match self {
+            TextSetting::Name => &mut settings.name,
+            TextSetting::BotCommand => &mut settings.bot_command,
+        }
+    }
+
+    /// Characters it holds at most.
+    pub fn max(self) -> usize {
+        match self {
+            TextSetting::Name => crate::config::MAX_NAME,
+            TextSetting::BotCommand => crate::config::MAX_BOT_COMMAND,
+        }
+    }
+}
+
 /// One row of a tab other than the hotkeys.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Control {
     Heading(&'static str),
-    /// The profile name, typed in.
-    Name,
+    /// A line typed in.
+    Text(TextSetting),
     Toggle(Toggle),
     Slider(Slider),
     Choice(Choice),
@@ -294,7 +342,7 @@ pub fn controls(tab: Tab) -> Vec<Control> {
         Tab::Hotkeys => Vec::new(),
         Tab::Options => vec![
             H("PROFILE"),
-            Control::Name,
+            Control::Text(TextSetting::Name),
             H("INTERFACE"),
             S(Slider::InterfaceScale),
             T(Toggle::DamageNumbers),
@@ -302,6 +350,8 @@ pub fn controls(tab: Tab) -> Vec<Control> {
             T(Toggle::ScoreboardItems),
             H("CAMERA"),
             T(Toggle::EdgePan),
+            H("LOCAL LOBBY"),
+            Control::Text(TextSetting::BotCommand),
         ],
         Tab::Video => {
             let mut rows = vec![H("DISPLAY")];

@@ -16,7 +16,7 @@ use super::draw::{
     Body, ChoiceButton, ChoiceOption, CloseButton, KeyField, NameField, ResetButton, Root,
     SliderTrack, TabButton, ToggleRow,
 };
-use super::model::{Choice, Tab};
+use super::model::{Choice, Tab, TextSetting};
 use crate::config::Settings;
 use crate::keys::{self, Chord, Input};
 
@@ -30,8 +30,8 @@ pub struct Screen {
     /// taken.
     pub capturing: Option<usize>,
     pub dropdown: Option<Choice>,
-    /// The profile name is being typed.
-    pub naming: bool,
+    /// The line being typed into (the profile name, the bot command).
+    pub naming: Option<TextSetting>,
     /// A modifier key pressed while capturing and nothing else yet: bound
     /// alone when it is let go first.
     held_modifier: Option<KeyCode>,
@@ -44,7 +44,7 @@ impl Default for Screen {
             tab: Tab::Hotkeys,
             capturing: None,
             dropdown: None,
-            naming: false,
+            naming: None,
             held_modifier: None,
         }
     }
@@ -104,15 +104,15 @@ fn clicks(
     choices: Query<(&Interaction, &ChoiceButton), Changed<Interaction>>,
     options: Query<(&Interaction, &ChoiceOption), Changed<Interaction>>,
     fields: Query<(&Interaction, &KeyField), Changed<Interaction>>,
-    name: Query<&Interaction, (Changed<Interaction>, With<NameField>)>,
+    name: Query<(&Interaction, &NameField), Changed<Interaction>>,
 ) {
     if !screen.open {
-        screen.bypass_change_detection().naming = false;
+        screen.bypass_change_detection().naming = None;
         return;
     }
     let pressed = |i: &Interaction| *i == Interaction::Pressed;
-    if name.iter().any(pressed) {
-        screen.naming = true;
+    if let Some((_, field)) = name.iter().find(|(i, _)| pressed(i)) {
+        screen.naming = Some(field.0);
         screen.capturing = None;
     }
     if let Some((_, tab)) = tabs.iter().find(|(i, _)| pressed(i)) {
@@ -203,9 +203,9 @@ fn capture(
         mouse.clear();
         return;
     }
-    if screen.naming {
+    if let Some(field) = screen.naming {
         mouse.clear();
-        name(&mut screen, &mut settings, keyboard.read());
+        name(&mut screen, &mut settings, field, keyboard.read());
         return;
     }
     let Some(at) = screen.capturing else {
@@ -262,33 +262,36 @@ fn capture(
     }
 }
 
-/// Types into the profile name; Enter or Escape is done with it.
+/// Types into a line (the profile name, the bot command); Enter or Escape
+/// is done with it.
 fn name<'a>(
     screen: &mut Screen,
     settings: &mut Settings,
+    field: TextSetting,
     keyboard: impl Iterator<Item = &'a KeyboardInput>,
 ) {
     use bevy::input::keyboard::Key;
     for event in keyboard.filter(|e| e.state == ButtonState::Pressed) {
+        let line = field.get_mut(settings);
         match &event.logical_key {
-            Key::Enter | Key::Escape => screen.naming = false,
+            Key::Enter | Key::Escape => screen.naming = None,
             Key::Backspace => {
-                settings.name.pop();
+                line.pop();
             }
-            Key::Character(typed) => push_name(&mut settings.name, typed),
-            Key::Space => push_name(&mut settings.name, " "),
+            Key::Character(typed) => push_name(line, typed, field.max()),
+            Key::Space => push_name(line, " ", field.max()),
             _ => {}
         }
     }
 }
 
-/// Printable characters, up to the name's length.
-fn push_name(name: &mut String, typed: &str) {
+/// Printable characters, up to the line's length.
+fn push_name(line: &mut String, typed: &str, max: usize) {
     for c in typed.chars().filter(|c| !c.is_control()) {
-        if name.chars().count() >= crate::config::MAX_NAME {
+        if line.chars().count() >= max {
             break;
         }
-        name.push(c);
+        line.push(c);
     }
 }
 
