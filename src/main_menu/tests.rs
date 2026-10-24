@@ -3,8 +3,9 @@
 //! person's clicks and keys make, and they play their games through the same
 //! opening the client uses, as the client core plays them.
 
+use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command};
+use std::process::{Child, ChildStdout, Command, Stdio};
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::{Duration, Instant};
@@ -441,46 +442,75 @@ fn free_port() -> u16 {
         .port()
 }
 
-struct Server(Child);
+/// A running game server. Its output stays open: a server whose pipe is closed fails on its next
+/// line.
+struct Server {
+    child: Child,
+    _output: BufReader<ChildStdout>,
+}
 
 impl Drop for Server {
     fn drop(&mut self) {
-        let _ = self.0.kill();
-        let _ = self.0.wait();
+        let _ = self.child.kill();
+        let _ = self.child.wait();
     }
+}
+
+/// Starts the server on ports of its own choosing and returns it once it listens, with the TCP
+/// and the WebSocket address it announced. A port picked beforehand could be taken by another
+/// test's server by the time this one binds it.
+fn start_server() -> (Server, String, String) {
+    let mut child = Command::new(server_binary())
+        .args([
+            "--map",
+            "2",
+            "--players",
+            "2",
+            "--mode",
+            "lockstep",
+            "--bind",
+            "127.0.0.1",
+        ])
+        // Two human seats would wait out Dota's strategy time before the game starts.
+        .args([
+            "--tactical-secs",
+            "0",
+            "--pick-secs",
+            "1",
+            "--port",
+            "0",
+            "--ws-port",
+            "0",
+        ])
+        .stdout(Stdio::piped())
+        .spawn()
+        .expect("bota_server starts");
+    let mut output = BufReader::new(child.stdout.take().expect("piped"));
+    let (mut tcp, mut ws) = (None, None);
+    while tcp.is_none() || ws.is_none() {
+        let mut line = String::new();
+        let read = output.read_line(&mut line).expect("the server's output");
+        assert!(read > 0, "the server ended before it listened");
+        match line.trim().strip_prefix("bota_server listening on ") {
+            Some(address) if address.starts_with("ws://") => ws = Some(address.to_owned()),
+            Some(address) => tcp = Some(address.to_owned()),
+            None => {}
+        }
+    }
+    let server = Server {
+        child,
+        _output: output,
+    };
+    (server, tcp.expect("announced"), ws.expect("announced"))
 }
 
 /// A server for two seats, and a player joined to each over its own
 /// transport (TCP, WebSocket) through the menu's Direct page, the match
 /// begun.
 fn direct_match() -> (Server, Vec<(Core, HeroId)>) {
-    let (tcp, ws) = (free_port(), free_port());
-    let server = Server(
-        Command::new(server_binary())
-            .args([
-                "--map",
-                "2",
-                "--players",
-                "2",
-                "--mode",
-                "lockstep",
-                "--bind",
-                "127.0.0.1",
-                // Two human seats would wait out Dota's strategy time before the game starts.
-                "--tactical-secs",
-                "0",
-                "--pick-secs",
-                "1",
-            ])
-            .args(["--port", &tcp.to_string(), "--ws-port", &ws.to_string()])
-            .spawn()
-            .expect("bota_server starts"),
-    );
+    let (server, tcp, ws) = start_server();
     let mut cores = Vec::new();
-    for (address, hero) in [
-        (format!("127.0.0.1:{tcp}"), HeroId::SHADOW_FIEND),
-        (format!("ws://127.0.0.1:{ws}"), HeroId::PUDGE),
-    ] {
+    for (address, hero) in [(tcp, HeroId::SHADOW_FIEND), (ws, HeroId::PUDGE)] {
         let mut player = Player::new(None);
         assert_eq!(player.menu.page(), Page::Service, "no service known");
         player.menu.act(Act::Go(Page::Direct));
@@ -504,22 +534,18 @@ fn direct_match() -> (Server, Vec<(Core, HeroId)>) {
     (server, cores)
 }
 
-/// Opens a launch, again while the server may still be starting.
+/// Opens a launch: the server is listening already, so the connection is made or it is an error.
 fn join(launch: Launch, trust: &Trust) -> Core {
-    let deadline = Instant::now() + Duration::from_secs(PATIENCE);
-    loop {
-        let mut opening = Opening::start(launch.clone(), trust);
-        let opened = loop {
-            if let Some(opened) = opening.poll() {
-                break opened;
-            }
-            std::thread::sleep(Duration::from_millis(5));
-        };
-        match opened {
-            Ok(link) => return Core::new(Source::Live(link)),
-            Err(_) if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(100)),
-            Err(err) => panic!("{err}"),
+    let mut opening = Opening::start(launch, trust);
+    let opened = loop {
+        if let Some(opened) = opening.poll() {
+            break opened;
         }
+        std::thread::sleep(Duration::from_millis(5));
+    };
+    match opened {
+        Ok(link) => Core::new(Source::Live(link)),
+        Err(err) => panic!("{err}"),
     }
 }
 
