@@ -660,13 +660,12 @@ fn sync_units(
         return;
     };
     let shown = bodies(view, core.prev_view(), core.smooth.alpha());
-    let hidden = view.viewer.is_none() && p.fog.on;
     let mut seen = Vec::with_capacity(shown.len());
     let dt = p.time.delta_secs().max(1e-4);
     for body in &shown {
         let u = body.unit;
         // Buildings are seen through the fog, as in Dota.
-        if hidden && p.fog.hides(u, body.x, body.y) && !p.fog.shows_fogged(u) {
+        if p.fog.hides(u.seen_by) && !p.fog.shows_fogged(u) {
             continue;
         }
         seen.push(u.id);

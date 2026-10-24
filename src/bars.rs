@@ -258,7 +258,7 @@ fn bars(
             continue;
         };
         // A neutral the fog hides is drawn dulled, with no bar over it.
-        if view.viewer.is_none() && p.fog.hides(live, unit.at.x, unit.at.y) {
+        if p.fog.hides(live.seen_by) {
             continue;
         }
         let head = Vec3::new(

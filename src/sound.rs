@@ -180,6 +180,7 @@ fn play(
     cam: Single<&RtsCamera>,
     settings: Res<Settings>,
     args: Res<crate::Args>,
+    fog: Res<crate::fog::FogGrid>,
 ) {
     for (_, voice) in &mut voices.0 {
         voice.rest = (voice.rest - time.delta_secs()).max(0.0);
@@ -207,7 +208,7 @@ fn play(
     for cue in cues {
         sound(Kind::Cue(cue.kind), cue.gain, cue.at);
     }
-    shots(core, &mut sound);
+    shots(core, &fog, &mut sound);
 }
 
 /// How much of its volume a sound at a place keeps for a listener at `focus`.
@@ -321,7 +322,11 @@ fn ended_humming(
 }
 
 /// The shots of creeps and towers that let a missile go this tick.
-fn shots(core: &bota_client_core::App, sound: &mut impl FnMut(Kind, f32, Option<(f32, f32)>)) {
+fn shots(
+    core: &bota_client_core::App,
+    fog: &crate::fog::FogGrid,
+    sound: &mut impl FnMut(Kind, f32, Option<(f32, f32)>),
+) {
     let (Some(view), Some(prev)) = (core.view(), core.prev_view()) else {
         return;
     };
@@ -330,6 +335,7 @@ fn shots(core: &bota_client_core::App, sound: &mut impl FnMut(Kind, f32, Option<
     }
     let new = view.projectiles.iter().filter(|p| {
         p.inflictor.is_none()
+            && !fog.hides(p.seen_by)
             && prev
                 .projectiles
                 .binary_search_by_key(&p.id, |q| q.id)

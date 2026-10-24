@@ -255,11 +255,9 @@ fn marks(
     {
         image.image = veil.0.clone();
     }
-    let hidden = view.viewer.is_none() && grid.on;
     let me = core.my_hero();
     let shown = view.units.iter().filter(|u| {
-        !matches!(u.kind, UnitKind::Ward)
-            && !(hidden && grid.hides(u, u.pos.x.to_f32(), u.pos.y.to_f32()))
+        !matches!(u.kind, UnitKind::Ward) && !grid.hides(u.seen_by)
     });
     let mut used = 0;
     for u in shown.take(MARKS) {

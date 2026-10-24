@@ -213,6 +213,7 @@ fn bursts(
     ground: Res<Ground>,
     mut flying: ResMut<Flying>,
     mut materials: ResMut<Assets<StandardMaterial>>,
+    fog: Res<crate::fog::FogGrid>,
 ) {
     let (core, Some(art)) = (&session.0, art) else {
         return;
@@ -228,7 +229,8 @@ fn bursts(
         let Some(by) = p.inflictor else {
             continue;
         };
-        if !art_by(by).scorches || !flying.burst.insert(p.id) {
+        // What the watched side's fog hides is not drawn bursting.
+        if fog.hides(p.seen_by) || !art_by(by).scorches || !flying.burst.insert(p.id) {
             continue;
         }
         let at = (p.pos.x.to_f32(), p.pos.y.to_f32());

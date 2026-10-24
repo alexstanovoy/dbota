@@ -16,8 +16,7 @@ use std::sync::Arc;
 
 use bevy::tasks::{AsyncComputeTaskPool, Task, block_on, futures_lite::future::poll_once};
 use bota_client_core::SightGround;
-use bota_core::kind_def;
-use bota_proto::{Team, UnitKind, UnitView};
+use bota_proto::{SeenBy, Team, UnitKind, UnitView};
 
 use crate::session::Session;
 use crate::terrain::CELL;
@@ -54,10 +53,17 @@ pub struct FogGrid {
 }
 
 impl FogGrid {
-    /// Whether a spectator's fog hides a unit drawn at a bota world point: it
-    /// is of the other side, no building and out of the light.
-    pub fn hides(&self, unit: &UnitView, x: f32, y: f32) -> bool {
-        Some(unit.team) != self.team && !kind_def(unit.kind).always_seen && !self.lit(x, y)
+    /// Whether the fog of the watched side hides a unit, missile or ground
+    /// item of a whole-map view, which says which sides see it (`seen_by`):
+    /// one side's fog hides what that side does not see, both sides' together
+    /// what neither does. A view of a side comes fogged by the server and
+    /// says nothing, so nothing in it is hidden here.
+    pub fn hides(&self, seen_by: Option<SeenBy>) -> bool {
+        self.on
+            && seen_by.is_some_and(|seen| match self.team {
+                Some(team) => !seen.by(team),
+                None => !(seen.radiant || seen.dire),
+            })
     }
 
     /// Whether a unit the fog hides is drawn anyway, dulled: the neutral

@@ -12,7 +12,7 @@ use bevy::{
 };
 use bota_client_core::{App as Core, ChatLine, say_refusal};
 use bota_core::{TextFault, rules};
-use bota_proto::{Audience, Body, Heard, Speaker};
+use bota_proto::{Audience, Body, Speaker};
 
 use crate::input::Typing;
 use crate::keys::{Action, Fired};
@@ -324,12 +324,21 @@ fn show_log(
 ) {
     let core = &session.0;
     let reading = *typing == Typing::Chat;
-    let mut shown: Vec<&ChatLine> = core.chat_lines().rev().take(ROWS).collect();
+    // A ping marks the map and says nothing in the log.
+    let mut shown: Vec<(&ChatLine, &str)> = core
+        .chat_lines()
+        .filter_map(|line| match &line.heard.line.body {
+            Body::Text(words) => Some((line, words.as_str())),
+            Body::Ping(_) => None,
+        })
+        .rev()
+        .take(ROWS)
+        .collect();
     shown.reverse();
     let first = ROWS - shown.len();
     for (Row(row), mut text, mut color, mut node, children) in &mut rows {
         let line = row.checked_sub(first).and_then(|i| shown.get(i));
-        let alpha = line.map_or(0.0, |l| if reading { 1.0 } else { opacity(l.age) });
+        let alpha = line.map_or(0.0, |(l, _)| if reading { 1.0 } else { opacity(l.age) });
         let display = if alpha > 0.0 {
             Display::Flex
         } else {
@@ -338,23 +347,19 @@ fn show_log(
         if node.display != display {
             node.display = display;
         }
-        let Some(line) = line.filter(|_| alpha > 0.0) else {
+        let Some(&(line, words)) = line.filter(|_| alpha > 0.0) else {
             continue;
         };
         text.set_if_neq(Text(tag(line)));
         color.set_if_neq(TextColor(ui::INK_DIM.with_alpha(alpha)));
-        let Heard {
-            from, line: said, ..
-        } = &line.heard;
-        let Body::Text(words) = &said.body;
-        let name = format!("{}: ", core.speaker_name(from));
+        let name = format!("{}: ", core.speaker_name(&line.heard.from));
         for child in children {
             let Ok((piece, mut span, mut tint)) = pieces.get_mut(*child) else {
                 continue;
             };
             let (s, c) = match piece {
                 Piece::Name => (name.clone(), name_color(core, line)),
-                Piece::Body => (words.clone(), ui::INK),
+                Piece::Body => (words.to_owned(), ui::INK),
             };
             if span.0 != s {
                 span.0 = s;
