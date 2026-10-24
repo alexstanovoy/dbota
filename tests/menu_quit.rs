@@ -138,6 +138,33 @@ fn a_game_is_disconnected_from_and_rejoined() {
     played("a live game", result, script);
 }
 
+/// Dota's LEAVE GAME: from a seat in a match under way it asks, then abandons the match: the
+/// other seat is told it won, and the client is back at its menu.
+#[test]
+#[ignore = "opens a window: tools/visual_check.sh runs it on a display"]
+fn leaving_a_game_abandons_it_and_the_other_side_wins() {
+    use bota_client_core::{Link, play};
+    use bota_proto::HeroId;
+    let scratch = Scratch::new("leave");
+    let (mut server, address) = serve_seats(2);
+    // The first to join holds the first seat; dbota takes the second.
+    let (mut link, seated) =
+        Link::join(&address, "stays", HeroId::SHADOW_FIEND, None).expect("a seat");
+    let stays = std::thread::spawn(move || play(&mut link, seated, &mut (), |_| Vec::new()));
+    let script = "await:game;click:pick shadow fiend;click:pick ready;wait:8;key:Escape;await:menu;\
+                  wait:1;shot:leave-dashboard.png;click:leave game;await:popup;shot:leave-confirm.png;\
+                  click:ok;await:button:quit;shot:leave-menu.png;click:quit;await:popup;click:ok";
+    let result = run(&scratch, &["--addr", &address], script);
+    let outcome = stays
+        .join()
+        .expect("the other seat")
+        .expect("it saw the end");
+    let _ = server.kill();
+    let _ = server.wait();
+    played("a seat that leaves", result, script);
+    assert_eq!(outcome.winner, outcome.team, "the seat that stayed won");
+}
+
 /// The replay the visual check plays (`VISUAL_REPLAY`): a match of the wire
 /// this client speaks.
 fn replay() -> PathBuf {
@@ -149,16 +176,20 @@ fn replay() -> PathBuf {
 
 /// A game server of one seat on a port of its own choosing, and its address.
 fn serve() -> (Child, String) {
+    serve_seats(1)
+}
+
+/// A game server of `seats` seats, quick to start, on a port of its own choosing.
+fn serve_seats(seats: u8) -> (Child, String) {
     let mut child = Command::new(server_binary())
+        .args(["--map", "2", "--port", "0", "--bind", "127.0.0.1"])
         .args([
-            "--map",
-            "2",
             "--players",
-            "1",
-            "--port",
+            &seats.to_string(),
+            "--pick-secs",
+            "5",
+            "--tactical-secs",
             "0",
-            "--bind",
-            "127.0.0.1",
         ])
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
