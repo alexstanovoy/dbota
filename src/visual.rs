@@ -115,6 +115,8 @@ pub struct Checks<'w, 's> {
     buttons: Query<'w, 's, (), With<Button>>,
     fills: Query<'w, 's, &'static BackgroundColor>,
     extents: Query<'w, 's, (Entity, &'static crate::ui::Extent)>,
+    hud:
+        Query<'w, 's, (&'static ComputedNode, &'static UiGlobalTransform), With<crate::ui::Extent>>,
     chips: Query<
         'w,
         's,
@@ -773,41 +775,33 @@ fn fog_border(bins: &[Bin], report: &mut impl FnMut(&str, bool, String)) {
     );
 }
 
-/// Every hero on screen shows detail where its body is drawn.
+/// Logical pixels around a hero's body point its detail is sampled over.
+const HERO_SAMPLE: f32 = 12.0;
+
+/// Every hero the watched side sees, on screen and not under the
+/// interface, shows detail where its body is drawn; a hero the side does not
+/// see (the whole map's view says so) is not drawn at all.
 fn heroes(shot: &Shot, c: &Checks, report: &mut impl FnMut(&str, bool, String)) {
-    let (camera, transform) = *c.camera;
-    let scale = c.window.scale_factor();
+    let Some(view) = c.session.0.view() else {
+        return;
+    };
     let mut checked = 0;
-    for entity in c.index.0.values() {
-        let Ok(unit) = c.units.get(*entity) else {
+    for hero in view.units.iter().filter(|u| u.kind == UnitKind::Hero) {
+        let drawn = c.index.0.get(&hero.id).and_then(|e| c.units.get(*e).ok());
+        if c.fog.hides(hero.seen_by) {
+            report(
+                "a hero the side does not see is not drawn",
+                drawn.is_none(),
+                format!("{:?} hero, unseen by {:?}", hero.team, c.fog.team),
+            );
+            continue;
+        }
+        let Some(unit) = drawn else {
             continue;
         };
-        if unit.kind != UnitKind::Hero {
-            continue;
-        }
-        let world = Vec3::new(
-            unit.at.x,
-            c.ground.at(unit.at.x, unit.at.y) + 110.0,
-            -unit.at.y,
-        );
-        let Ok(p) = camera.world_to_viewport(transform, world) else {
+        let Some(lums) = hero_samples(shot, c, unit) else {
             continue;
         };
-        let mut lums = Vec::new();
-        for dy in -6..=6 {
-            for dx in -6..=6 {
-                if let Some(col) = shot.mean(
-                    (p.x + dx as f32 * 2.0) * scale,
-                    (p.y + dy as f32 * 2.0) * scale,
-                    0,
-                ) {
-                    lums.push(luminance(col));
-                }
-            }
-        }
-        if lums.len() < 50 {
-            continue;
-        }
         checked += 1;
         let mean = lums.iter().sum::<f32>() / lums.len() as f32;
         let spread =
@@ -833,6 +827,42 @@ fn heroes(shot: &Shot, c: &Checks, report: &mut impl FnMut(&str, bool, String)) 
             "no hero on screen".into(),
         );
     }
+}
+
+/// The luminance of the screen around a hero's body, none when the body is
+/// off screen or under the interface (the minimap, the hero panel, ...),
+/// whose pixels say nothing of the hero.
+fn hero_samples(shot: &Shot, c: &Checks, unit: &Unit) -> Option<Vec<f32>> {
+    let (camera, transform) = *c.camera;
+    let scale = c.window.scale_factor();
+    let world = Vec3::new(
+        unit.at.x,
+        c.ground.at(unit.at.x, unit.at.y) + 110.0,
+        -unit.at.y,
+    );
+    let p = camera.world_to_viewport(transform, world).ok()?;
+    // Interface nodes' centres and sizes are in physical pixels.
+    let around = Rect::from_center_half_size(p * scale, Vec2::splat(HERO_SAMPLE * scale));
+    let covered = c.hud.iter().any(|(node, at)| {
+        let rect = Rect::from_center_size(at.translation, node.size());
+        !rect.intersect(around).is_empty()
+    });
+    if covered {
+        return None;
+    }
+    let mut lums = Vec::new();
+    for dy in -6..=6 {
+        for dx in -6..=6 {
+            if let Some(col) = shot.mean(
+                (p.x + dx as f32 * 2.0) * scale,
+                (p.y + dy as f32 * 2.0) * scale,
+                0,
+            ) {
+                lums.push(luminance(col));
+            }
+        }
+    }
+    (lums.len() >= 50).then_some(lums)
 }
 
 /// A click near a unit, not on it, gets it: for every unit on screen with
