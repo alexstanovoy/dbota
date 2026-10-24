@@ -15,6 +15,7 @@ use crate::manifest::Manifest;
 use crate::map::Ground;
 use crate::overlay::team_color;
 use crate::session::Session;
+use crate::warmup::Warmup;
 
 /// World units from the centre to the outer edge of the ring.
 const RADIUS: f32 = 175.0;
@@ -67,17 +68,34 @@ pub fn plugin(app: &mut App) {
 fn make_art(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
     manifest: Res<Manifest>,
     server: Res<AssetServer>,
 ) {
-    commands.insert_resource(Art {
+    let art = Art {
         ring: meshes.add(Annulus::new(RADIUS - 22.0, RADIUS)),
         disc: meshes.add(Circle::new(RADIUS)),
         column: meshes.add(Cylinder::new(26.0, COLUMN)),
         swirl: manifest
             .file("particle.ring_wavy")
             .map(|path| server.load(path)),
-    });
+    };
+    // A landing's parts, drawn while loading.
+    let parts = [
+        (&art.ring, None),
+        (&art.disc, art.swirl.clone()),
+        (&art.column, None),
+    ];
+    for (mesh, texture) in parts {
+        commands.spawn((
+            Warmup,
+            Mesh3d(mesh.clone()),
+            MeshMaterial3d(materials.add(light(Color::WHITE, texture))),
+            NotShadowCaster,
+            NotShadowReceiver,
+        ));
+    }
+    commands.insert_resource(art);
 }
 
 /// Dota's colour of a seat: the order of its side's seats picks it.

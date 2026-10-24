@@ -13,20 +13,13 @@
 //! background, tinted at its corners as Dota tints it, or a plain dark one.
 
 use std::collections::HashMap;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
 
 use bevy::{
     asset::RenderAssetUsages,
     camera::{ImageRenderTarget, RenderTarget, primitives::Aabb, visibility::RenderLayers},
     light::{AmbientLight, DirectionalLight},
     prelude::*,
-    render::{
-        Render, RenderApp, RenderSystems,
-        render_resource::{
-            Extent3d, PipelineCache, TextureDimension, TextureFormat, TextureUsages,
-        },
-    },
+    render::render_resource::{Extent3d, TextureDimension, TextureFormat, TextureUsages},
     world_serialization::{WorldAssetRoot, WorldInstanceReady},
 };
 use bota_client_core::ClientSession;
@@ -195,14 +188,8 @@ struct Stage {
     next_render: f32,
 }
 
-/// Whether the render world had no pipeline still compiling last frame.
-#[derive(Resource, Clone, Default)]
-struct PipelinesReady(Arc<AtomicBool>);
-
 pub fn plugin(app: &mut App) {
-    let ready = PipelinesReady::default();
-    app.insert_resource(ready.clone())
-        .init_resource::<Portrait>()
+    app.init_resource::<Portrait>()
         .add_systems(
             PreStartup,
             |mut commands: Commands, manifest: Res<Manifest>| {
@@ -216,18 +203,6 @@ pub fn plugin(app: &mut App) {
             aim.after(bevy::transform::TransformSystems::Propagate)
                 .before(bevy::camera::CameraUpdateSystems),
         );
-    if let Some(render) = app.get_sub_app_mut(RenderApp) {
-        render
-            .insert_resource(ready)
-            .add_systems(Render, pipelines_ready.in_set(RenderSystems::Cleanup));
-    }
-}
-
-fn pipelines_ready(cache: Res<PipelineCache>, ready: Res<PipelinesReady>) {
-    ready.0.store(
-        cache.waiting_pipelines().next().is_none(),
-        Ordering::Relaxed,
-    );
 }
 
 /// An image a portrait camera can draw into.
@@ -553,7 +528,7 @@ fn tint(image: &Image, corners: &[Vec3; 4]) -> Option<Image> {
 fn aim(
     framings: Res<Framings>,
     bank: Res<ModelBank>,
-    ready: Res<PipelinesReady>,
+    ready: Res<crate::warmup::PipelinesReady>,
     time: Res<Time<bevy::time::Real>>,
     mut stage: ResMut<Stage>,
     mut commands: Commands,
@@ -607,7 +582,7 @@ fn aim(
             scale_factor: 1.0,
         });
     }
-    let ready = ready.0.load(Ordering::Relaxed);
+    let ready = ready.get();
     draw(
         &mut stage,
         &mut camera.0,

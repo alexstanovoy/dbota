@@ -23,6 +23,7 @@ use bota_proto::{EffectId, EntityId};
 use crate::manifest::Manifest;
 use crate::session::Session;
 use crate::units::{UnitIndex, stand_in_size};
+use crate::warmup::Warmup;
 
 /// Rings rising in a structure's tube, and in a creep's.
 const BUILDING_RINGS: usize = 4;
@@ -75,13 +76,51 @@ pub fn plugin(app: &mut App) {
         .add_systems(Update, (wear, animate).chain());
 }
 
-fn make_art(mut commands: Commands, manifest: Res<Manifest>, server: Res<AssetServer>) {
+fn make_art(
+    mut commands: Commands,
+    manifest: Res<Manifest>,
+    server: Res<AssetServer>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+) {
     let load = |name: &str| manifest.file(name).map(|path| server.load(path));
-    commands.insert_resource(Art {
+    let art = Art {
         tube: load("particle.glyph.tube"),
         creep_tube: load("particle.glyph.creep_tube"),
         base: load("particle.glyph.base"),
-    });
+    };
+    // A ring of each kind, drawn while loading.
+    for texture in [&art.tube, &None] {
+        commands.spawn((
+            Warmup,
+            Mesh3d(meshes.add(ring_mesh(texture))),
+            MeshMaterial3d(materials.add(ring_material(BUILDING_TINT, texture))),
+            NotShadowCaster,
+            NotShadowReceiver,
+        ));
+    }
+    commands.insert_resource(art);
+}
+
+/// A ring's mesh: a square its texture is drawn on, or a plain band that
+/// stands in for a texture the cache lacks.
+fn ring_mesh(texture: &Option<Handle<Image>>) -> Mesh {
+    match texture {
+        Some(_) => Rectangle::new(2.0, 2.0).into(),
+        None => Annulus::new(0.8, 1.0).into(),
+    }
+}
+
+/// A ring's material: its texture or band in the tint, faded out until it
+/// rises.
+fn ring_material(tint: Color, texture: &Option<Handle<Image>>) -> StandardMaterial {
+    StandardMaterial {
+        base_color: tint.with_alpha(0.0),
+        base_color_texture: texture.clone(),
+        alpha_mode: AlphaMode::Add,
+        unlit: true,
+        ..default()
+    }
 }
 
 /// The units wearing the Glyph's buff, whichever side's, and the seconds it
@@ -191,18 +230,8 @@ fn put_on(
         .id();
     let flat = Quat::from_rotation_x(-FRAC_PI_2);
     let mut ring = |texture: &Option<Handle<Image>>, phase: Option<f32>| {
-        // The plain band stands in for a texture the cache lacks.
-        let mesh = match texture {
-            Some(_) => meshes.add(Rectangle::new(2.0, 2.0)),
-            None => meshes.add(Annulus::new(0.8, 1.0)),
-        };
-        let material = materials.add(StandardMaterial {
-            base_color: tint.with_alpha(0.0),
-            base_color_texture: texture.clone(),
-            alpha_mode: AlphaMode::Add,
-            unlit: true,
-            ..default()
-        });
+        let mesh = meshes.add(ring_mesh(texture));
+        let material = materials.add(ring_material(tint, texture));
         commands.spawn((
             Ring {
                 wear,

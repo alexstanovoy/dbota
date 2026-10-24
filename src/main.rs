@@ -69,6 +69,7 @@ mod ui;
 mod units;
 mod visual;
 mod voice;
+mod warmup;
 mod water;
 #[cfg(target_arch = "wasm32")]
 mod webcache;
@@ -421,6 +422,7 @@ fn main() -> AppExit {
             settings::plugin,
             keys::plugin,
             scoreboard::plugin,
+            warmup::plugin,
         ))
         .add_plugins(main_menu::plugin);
     if let Err(err) = menu(&mut app, &args, store) {

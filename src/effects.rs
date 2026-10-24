@@ -14,6 +14,7 @@ use crate::ability_art::{Flight, art_by};
 use crate::manifest::Manifest;
 use crate::map::Ground;
 use crate::session::Session;
+use crate::warmup::Warmup;
 
 /// How high missiles fly over the ground, in world units.
 const FLIGHT: f32 = 110.0;
@@ -84,7 +85,7 @@ fn make_art(
     manifest: Res<Manifest>,
     server: Res<AssetServer>,
 ) {
-    commands.insert_resource(Art {
+    let art = Art {
         bolt: meshes.add(Sphere::new(14.0)),
         soul: meshes.add(Cuboid::new(16.0, 16.0, 120.0)),
         ring: meshes.add(Annulus::new(RAZE_RADIUS - RAZE_RING_WIDTH, RAZE_RADIUS)),
@@ -96,7 +97,27 @@ fn make_art(
         cracks: manifest
             .file("particle.ground_cracks")
             .map(|p| server.load(p)),
-    });
+    };
+    // Every kind of missile and burst, drawn while loading.
+    let (color, glow) = (Color::WHITE, LinearRgba::WHITE);
+    let pieces = [
+        (&art.bolt, art.radiant.clone()),
+        (&art.bolt, art.dire.clone()),
+        (&art.bolt, art.grenade.clone()),
+        (&art.soul, art.soul_mat.clone()),
+        (&art.disc, materials.add(scorch(&art, color, glow))),
+        (&art.ring, materials.add(flash(color))),
+    ];
+    for (mesh, material) in pieces {
+        commands.spawn((
+            Warmup,
+            Mesh3d(mesh.clone()),
+            MeshMaterial3d(material),
+            NotShadowCaster,
+            NotShadowReceiver,
+        ));
+    }
+    commands.insert_resource(art);
 }
 
 /// Keeps one entity at every missile in flight, where the frame puts it.
@@ -262,20 +283,8 @@ fn burst(
 ) {
     let flat = Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2);
     let base = Vec3::new(x, ground.at(x, y) + 6.0, -y);
-    let scorch = materials.add(StandardMaterial {
-        base_color: color,
-        base_color_texture: art.cracks.clone(),
-        emissive: glow,
-        alpha_mode: AlphaMode::Blend,
-        unlit: true,
-        ..default()
-    });
-    let flash = materials.add(StandardMaterial {
-        base_color: color.with_alpha(0.55),
-        alpha_mode: AlphaMode::Add,
-        unlit: true,
-        ..default()
-    });
+    let scorch = materials.add(scorch(art, color, glow));
+    let flash = materials.add(flash(color));
     commands.spawn((
         Burst {
             age: 0.0,
@@ -300,6 +309,28 @@ fn burst(
         NotShadowCaster,
         NotShadowReceiver,
     ));
+}
+
+/// The scorched ground of a burst: the cracks in a colour, glowing.
+fn scorch(art: &Art, color: Color, glow: LinearRgba) -> StandardMaterial {
+    StandardMaterial {
+        base_color: color,
+        base_color_texture: art.cracks.clone(),
+        emissive: glow,
+        alpha_mode: AlphaMode::Blend,
+        unlit: true,
+        ..default()
+    }
+}
+
+/// The flash that rings a burst.
+fn flash(color: Color) -> StandardMaterial {
+    StandardMaterial {
+        base_color: color.with_alpha(0.55),
+        alpha_mode: AlphaMode::Add,
+        unlit: true,
+        ..default()
+    }
 }
 
 /// A golden ring at a hero's feet when it gains a level.
