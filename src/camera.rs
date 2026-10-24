@@ -11,16 +11,23 @@ use crate::map::{DOTA_ORIGIN, Ground};
 use crate::session::Session;
 use crate::units::{Unit, UnitIndex};
 
+// Dota's own camera, as its client registers the defaults of
+// `dota_camera_pitch_max` (60), `dota_camera_fov_max` (70) and
+// `dota_camera_distance` (1200), and `dota_camera_speed` (3031).
 /// Camera pitch below the horizon.
-const PITCH_DEG: f32 = 58.0;
-/// Vertical field of view: narrow, like Dota's long lens.
-const FOV_Y_DEG: f32 = 25.0;
-/// Distance from the focus point; 2500 shows ~2000x1300 world units at 16:9.
-const DEFAULT_DISTANCE: f32 = 4400.0;
-const MIN_DISTANCE: f32 = 1600.0;
+const PITCH_DEG: f32 = 60.0;
+/// Source's field of view: horizontal, on a 4:3 screen; a wider screen sees
+/// more at the sides, never less at the top and bottom.
+const FOV_DEG: f32 = 70.0;
+/// Distance from the focus point along the view.
+const DEFAULT_DISTANCE: f32 = 1200.0;
+/// How near the wheel brings the camera (`dota_camera_distance_min`).
+const MIN_DISTANCE: f32 = 1134.0;
+/// How far the wheel takes it: a player stays at Dota's distance; one
+/// watching (a replay, a spectator) may draw back to see a fight whole.
 const MAX_DISTANCE: f32 = 6500.0;
 /// Pan speed in world units per second at the default distance.
-const PAN_SPEED: f32 = 2000.0;
+const PAN_SPEED: f32 = 3031.0;
 /// Cursor within this many logical pixels of a window edge pans the camera.
 const EDGE_PAN_MARGIN: f32 = 6.0;
 /// Fraction of the distance removed per scroll line.
@@ -54,6 +61,11 @@ pub fn plugin(app: &mut App) {
 
 /// Camera rotation: yaw 0 (looking north = -Z), pitched down. Constant, so billboards can
 /// copy it once at spawn.
+/// The vertical field of view that Source's horizontal 4:3 one comes to.
+pub fn fov_y() -> f32 {
+    2.0 * ((FOV_DEG.to_radians() / 2.0).tan() * 3.0 / 4.0).atan()
+}
+
 pub fn camera_rotation() -> Quat {
     Quat::from_rotation_x(-PITCH_DEG.to_radians())
 }
@@ -77,12 +89,12 @@ fn spawn_camera(
         distance: args
             .distance
             .unwrap_or(DEFAULT_DISTANCE)
-            .clamp(MIN_DISTANCE / 2.0, MAX_DISTANCE),
+            .clamp(MIN_DISTANCE, MAX_DISTANCE),
     };
     commands.spawn((
         Camera3d::default(),
         Projection::Perspective(PerspectiveProjection {
-            fov: FOV_Y_DEG.to_radians(),
+            fov: fov_y(),
             near: 50.0,
             far: 20_000.0,
             ..default()
@@ -171,8 +183,14 @@ fn pan_and_zoom(
         }
     };
     if lines != 0.0 {
-        cam.distance =
-            (cam.distance * (1.0 - ZOOM_PER_LINE).powf(lines)).clamp(MIN_DISTANCE, MAX_DISTANCE);
+        let core = &session.0;
+        let playing = core.my_slot.is_some() && core.pov.is_none();
+        let far = if playing {
+            DEFAULT_DISTANCE
+        } else {
+            MAX_DISTANCE
+        };
+        cam.distance = (cam.distance * (1.0 - ZOOM_PER_LINE).powf(lines)).clamp(MIN_DISTANCE, far);
     }
 }
 
@@ -190,8 +208,7 @@ fn grip(
         return;
     }
     // World units a pixel spans at the focus.
-    let per_pixel =
-        2.0 * cam.distance * (FOV_Y_DEG.to_radians() / 2.0).tan() / window.height().max(1.0);
+    let per_pixel = 2.0 * cam.distance * (fov_y() / 2.0).tan() / window.height().max(1.0);
     session.0.pinned = None;
     cam.focus -= Vec3::new(motion.delta.x, 0.0, motion.delta.y) * per_pixel;
 }

@@ -130,7 +130,7 @@ clash and resets them to the defaults; they are kept as `key.<action> = <chord>`
 | `Enter` / `Shift+Enter` | chat to your allies / to everyone (a spectator: to the spectators); `Enter` sends, `Esc` drops the line. Text of any script goes in, with an input method too. The log shows over the minimap and fades after ten seconds; it shows in replays as the watched side heard it |
 | `Alt` + left click / `Ctrl`+`Alt` + left click | ping the spot or the unit under the cursor (on the minimap, the spot) for your side, or warn of danger there (red). Your side's pings show for three seconds on the ground and the minimap, in the pinger's colour, and in a replay seen through a seat's eyes |
 | minimap | left click or drag moves the camera; right click orders your hero there |
-| Arrows, screen edges, middle button held | pan the camera (all four edges, the HUD bars included; the middle button drags the map); mouse wheel zooms |
+| Arrows, screen edges, middle button held | pan the camera (all four edges, the HUD bars included; the middle button drags the map). The camera is Dota's (1200 units out, 60° down, a 70° lens); the mouse wheel brings it in to 1134, and a replay or a spectator may draw it back to 6500 |
 | hold `Alt` | show attack, tower and ability ranges and the neutral camps' spawn boxes (they are never drawn otherwise) |
 | `Esc` | cancel / close; with nothing open, the dashboard (DISCONNECT, quit, SETTINGS; the settings also from the gear at the top left); leaves a match that is over; on the menu, back, and on its top page quit |
 | `F9`, `=` / `-`, `.`, `Tab` | in a replay: pause, faster / slower, one tick, switch vision (both teams, Radiant, Dire; `Tab` as a spectator too) |
