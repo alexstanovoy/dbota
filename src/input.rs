@@ -73,6 +73,7 @@ pub fn plugin(app: &mut App) {
         .add_systems(
             Update,
             (
+                follow_respawn,
                 over_hud,
                 typing,
                 crate::chat::typing,
@@ -84,6 +85,30 @@ pub fn plugin(app: &mut App) {
             )
                 .chain(),
         );
+}
+
+/// Keeps one's hero selected, and in its control groups, through its death:
+/// bota makes a respawned hero a new unit, while in Dota the hero picked (or
+/// grouped) before it fell is the one that walks out of the fountain.
+fn follow_respawn(
+    mut session: NonSendMut<Session>,
+    mut groups: ResMut<ControlGroups>,
+    mut last: Local<Option<bota_proto::EntityId>>,
+) {
+    let core = &mut session.0;
+    let Some(now) = core.my_hero() else {
+        return;
+    };
+    if let Some(was) = last.replace(now)
+        && was != now
+    {
+        if core.selected == Some(was) {
+            core.selected = Some(now);
+        }
+        for kept in groups.0.iter_mut().filter(|kept| **kept == Some(was)) {
+            *kept = Some(now);
+        }
+    }
 }
 
 /// Keeps the bindings quiet while a line or a box has the keyboard, or the
