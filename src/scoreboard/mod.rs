@@ -124,15 +124,19 @@ fn open_at_start(args: Res<crate::Args>, mut panels: ResMut<crate::input::Panels
 }
 
 /// Shows the scoreboard while its key is held or it is pinned, in a match
-/// and with the settings screen shut.
+/// and with the settings screen shut; and once the match is over, as Dota's
+/// end of a game shows every hero's score.
 fn show(
     fired: Res<Fired>,
     panels: Res<crate::input::Panels>,
     known: Res<MatchKnown>,
     screen: Res<crate::settings::Screen>,
+    session: NonSend<crate::session::Session>,
     mut board: Single<&mut Visibility, With<Board>>,
 ) {
-    let wanted = known.0 && !screen.open && (fired.held(Action::Scoreboard) || panels.scoreboard);
+    let over = session.0.over.is_some();
+    let wanted =
+        known.0 && !screen.open && (fired.held(Action::Scoreboard) || panels.scoreboard || over);
     board.set_if_neq(crate::ui::visible(wanted));
 }
 

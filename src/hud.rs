@@ -1448,11 +1448,14 @@ fn notice(core: &Core) -> String {
         return "RECONNECTING...".to_string();
     }
     if let Some((winner, _)) = &core.over {
-        return match winner {
-            Team::Radiant => "RADIANT VICTORY".to_string(),
-            Team::Dire => "DIRE VICTORY".to_string(),
-            Team::Neutral => "DRAW".to_string(),
+        let result = match winner {
+            Team::Radiant => "RADIANT VICTORY",
+            Team::Dire => "DIRE VICTORY",
+            Team::Neutral => "DRAW",
         };
+        // The way out once it is over (`main_menu`: Escape leaves a match
+        // that is over).
+        return format!("{result}\nEscape: back to the menu");
     }
     if let Some((reason, _)) = &core.reject {
         return reason.clone();
