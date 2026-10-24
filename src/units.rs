@@ -888,17 +888,13 @@ fn on_model_ready(
         commands.entity(unit).insert(Rig(player));
     }
     commands.entity(ready.entity).insert(Posable);
-    let mut attachments = Attachments::default();
-    for part in children.iter_descendants(ready.entity) {
-        let slot = match names.get(part).map(Name::as_str) {
-            Ok("attach_attack1") => &mut attachments.attack[0],
-            Ok("attach_attack2") => &mut attachments.attack[1],
-            Ok("attach_hitloc") => &mut attachments.hitloc,
-            _ => continue,
-        };
-        *slot = Some(part);
+    // The body's own attachments, which its clips move: a wearable carries copies on joints of
+    // its own that stay at rest.
+    if player.is_some() {
+        commands
+            .entity(unit)
+            .insert(attachments(ready.entity, &children, &names));
     }
-    commands.entity(unit).insert(attachments);
     // Pudge's run carries him forward eight metres a cycle on his root
     // joint (Dota moves the unit, not the bone): the root is held where
     // its bind pose puts it, up and down aside.
@@ -919,6 +915,21 @@ fn on_model_ready(
             commands.entity(part).insert(crate::fog::Fogged);
         }
     }
+}
+
+/// The attachments the model scene `scene` carries.
+fn attachments(scene: Entity, children: &Query<&Children>, names: &Query<&Name>) -> Attachments {
+    let mut found = Attachments::default();
+    for part in children.iter_descendants(scene) {
+        let slot = match names.get(part).map(Name::as_str) {
+            Ok("attach_attack1") => &mut found.attack[0],
+            Ok("attach_attack2") => &mut found.attack[1],
+            Ok("attach_hitloc") => &mut found.hitloc,
+            _ => continue,
+        };
+        *slot = Some(part);
+    }
+    found
 }
 
 /// The names of a worn skin's joints on its own skeleton, in its order and

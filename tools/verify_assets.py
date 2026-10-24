@@ -100,6 +100,17 @@ def check_model(path: Path, keys: dict[str, str], clips: list[list[str]], parent
             f"materials={len(doc.get('materials', []))} images={len(images)} anims={len(anims)}")
 
 
+def check_particle(path: Path, cache: Path) -> str:
+    doc = json.loads(path.read_text())
+    if doc.get("version") != 1 or not doc.get("systems"):
+        raise ValueError("not a version 1 particle file with systems")
+    textures = doc.get("textures", [])
+    missing = [t["file"] for t in textures if not (cache / t["file"]).is_file()]
+    if missing:
+        raise ValueError(f"textures missing: {missing}")
+    return f"systems={len(doc['systems'])} textures={len(textures)}"
+
+
 def check(kind: str, fields: list[str], keys: dict[str, str], clips, outputs: dict[str, Path], cache: Path) -> str:
     path = cache / fields[2]  # its own output: sound variants share one logical name
     if not path.is_file():
@@ -111,6 +122,8 @@ def check(kind: str, fields: list[str], keys: dict[str, str], clips, outputs: di
         return "%dx%d" % png_size(path)
     if kind in ("portraits", "shop"):  # text the client parses itself
         return f"{path.stat().st_size} bytes"
+    if kind == "particle":
+        return check_particle(path, cache)
     return mp3_info(path) if path.suffix == ".mp3" else wav_info(path)
 
 

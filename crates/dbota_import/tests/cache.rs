@@ -361,6 +361,13 @@ fn made_by_the_importer(rel: &str, manifest: &str) -> bool {
     let kind = |k: &str| lines().any(|l| l.split_whitespace().next() == Some(k));
     (rel == "text/labels.json" && kind("label"))
         || (rel.starts_with("models/portrait_backgrounds/") && kind("portraits"))
+        || lines().any(|l| match l.split_whitespace().collect::<Vec<_>>()[..] {
+            // A particle effect's textures go beside its file.
+            ["particle", _, _, out, ..] => out
+                .rsplit_once('/')
+                .is_some_and(|(dir, _)| rel.starts_with(&format!("{dir}/textures/"))),
+            _ => false,
+        })
         || lines()
             .flat_map(str::split_whitespace)
             .any(|w| w.strip_prefix("lighting=") == Some(rel))
