@@ -645,6 +645,9 @@ impl SyncParams<'_, '_> {
     }
 }
 
+/// Units spawned a frame at most.
+const SPAWNS_PER_FRAME: usize = 4;
+
 /// Spawns what came into view, moves what stays, and lets go of what left:
 /// a unit that left where its side could still see it has died, and falls.
 fn sync_units(
@@ -660,6 +663,7 @@ fn sync_units(
         return;
     };
     let shown = bodies(view, core.prev_view(), core.smooth.alpha());
+    let mut spawned = 0;
     let mut seen = Vec::with_capacity(shown.len());
     let dt = p.time.delta_secs().max(1e-4);
     for body in &shown {
@@ -683,6 +687,10 @@ fn sync_units(
                     transform.translation = place;
                 }
             }
+            // A few new units a frame: a wave, a camp or a seek brings
+            // dozens, and each model's instance is a world of its own
+            // cloned in (some 0.3 ms); the rest come the next frames.
+            None if spawned >= SPAWNS_PER_FRAME => continue,
             None => {
                 // Not before its model has loaded whole, wearables and all.
                 let name = model_name(u, map, &p.manifest);
@@ -697,6 +705,7 @@ fn sync_units(
                 }
                 let facing = drawn_facing(u, body.facing, at, &p.yaws);
                 let entity = spawn_unit(&mut p, u, map, at, facing, place);
+                spawned += 1;
                 p.index.0.insert(u.id, entity);
             }
         }
