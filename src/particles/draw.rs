@@ -86,6 +86,33 @@ pub fn draw(instance: &Instance, eye: &Eye, ground: Option<HeightAt<'_>>, out: &
     }
 }
 
+/// Runs the renderers of `instance` that draw nothing but turn their particles to the camera
+/// (`C_OP_RenderScreenVelocityRotate`): each particle's roll becomes the way it moved on the
+/// screen over its last step, plus the forward angle, for the renderers after it and the
+/// operators of the next step.
+pub fn turn_to_screen(instance: &mut Instance, eye: &Eye) {
+    let effect = std::sync::Arc::clone(&instance.effect);
+    for node in &mut instance.nodes {
+        let renderers = &effect.defs[node.def].system.renderers;
+        for renderer in renderers {
+            let Renderer::ScreenVelocityRotate { forward_degrees } = renderer.class else {
+                continue;
+            };
+            if node.parts.is_empty() || node.strength_now(&renderer.timing) <= 0.0 {
+                continue;
+            }
+            let parts = &mut node.parts;
+            for i in 0..parts.len() {
+                let step = parts.vectors[store::POSITION][i] - parts.vectors[store::PREVIOUS][i];
+                let (x, y) = (step.dot(eye.right), step.dot(eye.up));
+                if x.is_finite() && y.is_finite() {
+                    parts.scalars[store::ROLL][i] = y.atan2(x) + forward_degrees.to_radians();
+                }
+            }
+        }
+    }
+}
+
 fn sort_back_to_front(quads: &mut [Quad], eye: &Eye) {
     let eye = to_world(eye.position);
     let distance = |q: &Quad| {

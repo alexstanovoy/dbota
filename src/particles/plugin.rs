@@ -7,10 +7,11 @@ use std::sync::Arc;
 use bevy::prelude::*;
 use bevy::transform::TransformSystems;
 
-use super::draw::{Eye, Quad, draw, from_world};
+use super::draw::{Eye, Quad, draw, from_world, turn_to_screen};
 use super::eval::HeightAt;
 use super::library::{Effect, Library};
 use super::lights::{Light, gather};
+use super::models::{self, Placed};
 use super::render::{Batch, ParticleFrame};
 use super::sim::Instance;
 use crate::camera::RtsCamera;
@@ -38,12 +39,16 @@ pub struct Playing {
     lists: Vec<Vec<Quad>>,
     /// The lights the effects ask for this frame, kept for their capacity.
     pub(super) lights: Vec<Light>,
+    /// The particles drawn as models this frame, kept for their capacity.
+    pub(super) placed: Vec<Placed>,
+    /// The world's clock, in seconds of the game's pace: what noise over the world's time reads.
+    clock: f32,
 }
 
 impl Playing {
     /// Starts `effect`, its draws keyed by `seed`.
     pub fn start(&mut self, effect: &Arc<Effect>, seed: u32) -> Option<Handle> {
-        let instance = match self
+        let mut instance = match self
             .spare
             .iter()
             .position(|i| Arc::ptr_eq(&i.effect, effect))
@@ -55,6 +60,7 @@ impl Playing {
             }
             None => Instance::new(Arc::clone(effect), seed),
         };
+        instance.world_time = self.clock;
         let slot = match self.free.pop() {
             Some(slot) => slot,
             None if self.slots.len() < MAX_PLAYING => {
@@ -80,6 +86,7 @@ impl Playing {
     }
 
     fn advance(&mut self, dt: f32, ground: Option<HeightAt<'_>>) {
+        self.clock += dt;
         for slot in 0..self.slots.len() {
             let (generation, entry) = &mut self.slots[slot];
             let Some(instance) = entry else {
@@ -154,6 +161,7 @@ pub(super) fn tick(
     };
     playing.advance(time.delta_secs() * pace, height);
     playing.lights.clear();
+    playing.placed.clear();
     let frame = &mut *frame;
     frame.quads.clear();
     frame.batches.clear();
@@ -170,9 +178,13 @@ pub(super) fn tick(
     for list in &mut playing.lists {
         list.clear();
     }
+    for instance in playing.slots.iter_mut().filter_map(|(_, i)| i.as_mut()) {
+        turn_to_screen(instance, &eye);
+    }
     for instance in playing.slots.iter().filter_map(|(_, i)| i.as_ref()) {
         draw(instance, &eye, height, &mut playing.lists);
         gather(instance, &mut playing.lights);
+        models::gather(instance, &mut playing.placed);
     }
     for (look, list) in playing.lists.iter().enumerate() {
         if list.is_empty() {

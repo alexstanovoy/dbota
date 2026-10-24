@@ -1,9 +1,11 @@
 //! The pre-emission operators a system runs each step before it emits, as Source 2 runs them.
 
-use bevy::math::Vec3;
-use heatel::particle::{ControlPointPositions, PreEmission};
+use bevy::math::{Mat3, Quat, Vec3};
+use heatel::particle::{
+    ControlPointPositions, DistanceBetweenCps, FloatInput, PreEmission, ScalarExpressionToCp,
+};
 
-use super::eval::{ControlPoint, Scene, float};
+use super::eval::{ControlPoint, Scene, basis, float, map, remap_clamped, vector};
 use super::ops::Target;
 use super::store::Particles;
 
@@ -61,8 +63,149 @@ pub fn pre_emit(op: &PreEmission, scene: &Scene<'_>, call: &mut PreCall<'_>) -> 
             call.writes.push((Target::Own, output.index(), out));
             None
         }
-        _ => None,
+        _ => {
+            pre_emit_more(op, scene, call);
+            None
+        }
     }
+}
+
+/// Runs one of the pre-emission operators of the town portal, the Glyph and the trails.
+fn pre_emit_more(op: &PreEmission, scene: &Scene<'_>, call: &mut PreCall<'_>) {
+    match op {
+        PreEmission::SetSingleControlPointPosition {
+            control_point,
+            position,
+            transform,
+            set_once,
+        } => {
+            let place = vector(position, scene, call.parts, None, 0x0F00);
+            if *set_once && std::mem::replace(call.done, true) {
+                return;
+            }
+            let frame = scene.transform_at(transform, scene.age);
+            let mut point = scene.control_points[control_point.index()];
+            point.position = frame.position + frame.rotate(place);
+            call.writes
+                .push((Target::Own, control_point.index(), point));
+        }
+        PreEmission::SetControlPointFieldToScalarExpression(e) => expression(e, scene, call),
+        PreEmission::DistanceBetweenCpsToCp(d) => distance_between(d, scene, call),
+        PreEmission::SetParentControlPointsToChildCp {
+            group,
+            child_control_point,
+            count,
+            first_source,
+            orientation,
+        } => {
+            for k in 0..usize::from(*count) {
+                let source = scene.control_points[first_source.index() + k];
+                let mut point = ControlPoint {
+                    position: source.position,
+                    previous: source.position,
+                    ..ControlPoint::default()
+                };
+                if *orientation {
+                    (point.forward, point.left, point.up) =
+                        (source.forward, source.left, source.up);
+                }
+                let target = Target::ChildPosition(*group, k, *orientation);
+                call.writes
+                    .push((target, child_control_point.index(), point));
+            }
+        }
+        PreEmission::SetCpOrientationToPointAtCp { .. } => point_at(op, scene, call),
+        _ => {}
+    }
+}
+
+/// `C_OP_SetControlPointFieldToScalarExpression`: the expression of the two inputs, remapped,
+/// moved into the control point's component by the interpolation.
+fn expression(e: &ScalarExpressionToCp, scene: &Scene<'_>, call: &mut PreCall<'_>) {
+    let value = |input: &FloatInput, salt| float(input, scene, call.parts, None, salt);
+    let mut out = e
+        .expression
+        .evaluate(value(&e.input1, 0x0F10), value(&e.input2, 0x0F11));
+    if let Some(remap) = &e.output_remap {
+        out = map(remap, out);
+    }
+    let Some(component) = e.component else {
+        return;
+    };
+    let mut point = scene.control_points[e.control_point.index()];
+    let amount = value(&e.interpolation, 0x0F12);
+    let current = point.position[usize::from(component)];
+    if amount != 1.0 {
+        out = current + (out - current) * amount.clamp(0.0, 1.0);
+    }
+    point.position[usize::from(component)] = out;
+    call.writes
+        .push((Target::Own, e.control_point.index(), point));
+}
+
+/// `C_OP_DistanceBetweenCPsToCP`: the distance between two control points, remapped (clamped)
+/// into a component of a third.
+fn distance_between(d: &DistanceBetweenCps, scene: &Scene<'_>, call: &mut PreCall<'_>) {
+    if d.set_once && std::mem::replace(call.done, true) {
+        return;
+    }
+    let points = scene.control_points;
+    let distance = points[d.start.index()]
+        .position
+        .distance(points[d.end.index()].position);
+    let [a, b] = d.input;
+    let [c, e] = d.output_range;
+    let mut point = points[d.output.index()];
+    point.position[usize::from(d.component)] = remap_clamped(distance, a, b, c, e);
+    call.writes.push((Target::Own, d.output.index(), point));
+}
+
+/// `C_OP_SetCPOrientationToPointAtCP`: the output control point turns (by the interpolation's
+/// share each step) to face the input one, or away from it, on the ground plane when flat.
+fn point_at(op: &PreEmission, scene: &Scene<'_>, call: &mut PreCall<'_>) {
+    let PreEmission::SetCpOrientationToPointAtCp {
+        input,
+        output,
+        interpolation,
+        flat,
+        avoid_singularity,
+        point_away,
+    } = op
+    else {
+        return;
+    };
+    if input == output {
+        return;
+    }
+    let amount = float(interpolation, scene, call.parts, None, 0x0F20);
+    let mut point = scene.control_points[output.index()];
+    let mut target = scene.control_points[input.index()].position;
+    if *flat {
+        target.z = point.position.z;
+    }
+    let direction = if *point_away {
+        point.position - target
+    } else {
+        target - point.position
+    };
+    let forward = direction.try_normalize().unwrap_or(Vec3::Z);
+    let (left, up) = if *avoid_singularity {
+        let side = Vec3::new(
+            (1.0 - forward.z) * forward.y * forward.y + forward.z,
+            0.0,
+            -forward.x,
+        )
+        .normalize_or_zero();
+        let left = (side - forward * side.dot(forward)).normalize_or_zero();
+        (left, forward.cross(left))
+    } else {
+        basis(forward)
+    };
+    let from = Quat::from_mat3(&Mat3::from_cols(point.forward, point.left, point.up));
+    let to = Quat::from_mat3(&Mat3::from_cols(forward, left, up));
+    let turn = from.normalize().slerp(to.normalize(), amount);
+    (point.forward, point.left, point.up) = (turn * Vec3::X, turn * Vec3::Y, turn * Vec3::Z);
+    call.writes.push((Target::Own, output.index(), point));
 }
 
 fn set_positions(p: &ControlPointPositions, scene: &Scene<'_>, call: &mut PreCall<'_>) {

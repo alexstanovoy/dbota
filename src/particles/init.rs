@@ -8,8 +8,9 @@ use heatel::particle::{DistanceToCp, Field, Initializer, Ring, Sphere, Transform
 use super::eval::{
     Scene, between, between_exp, draw, float, in_ball, noise, noise3, remap_clamped, vector,
 };
+use super::path::Walk;
 use super::store::{self, Particles, Slot, slot};
-use super::{body, ground, parent};
+use super::{body, ground, parent, path, shape};
 
 /// A bit per attribute an initializer declares it writes: under behaviour version 6 the first
 /// writer of an attribute wins.
@@ -77,20 +78,61 @@ fn more_writes(init: &Initializer) -> u64 {
         Initializer::SetHitboxToModel(_) => {
             bit(Field::HITBOX_INDEX) | bit(Field::HITBOX_OFFSET_POSITION)
         }
+        _ => shape_writes(init),
+    }
+}
+
+/// What the initializers of paths, boxes, curves, remaps and models write.
+fn shape_writes(init: &Initializer) -> u64 {
+    let bit = |field: Field| 1u64 << field.id();
+    let position = bit(Field::POSITION) | bit(Field::POSITION_PREVIOUS);
+    match init {
+        Initializer::CreateSequentialPath(_) => position | bit(Field::HITBOX_OFFSET_POSITION),
+        Initializer::CreateWithinBox(_) | Initializer::CreateInEpitrochoid(_) => position,
+        Initializer::CreationNoise(n) => bit(n.field),
+        Initializer::RandomSecondSequence { .. } => bit(Field::SECOND_SEQUENCE_NUMBER),
+        Initializer::RemapTransformToVector(r) => bit(r.field) | bit(Field::POSITION_PREVIOUS),
+        Initializer::NormalAlignToCp { .. } => bit(Field::NORMAL),
+        Initializer::InheritFromParentParticles { field, .. } => {
+            bit(*field) | bit(Field::PARENT_PARTICLE_INDEX) | bit(Field::PARENT_PARTICLE_ID)
+        }
+        Initializer::RemapInitialDirectionToTransformToVector { field, .. } => bit(*field),
+        Initializer::CreateOnModel(_) => {
+            position
+                | bit(Field::CREATION_TIME)
+                | bit(Field::HITBOX_INDEX)
+                | bit(Field::HITBOX_OFFSET_POSITION)
+        }
         _ => 0,
     }
 }
 
+/// What an initializer keeps from one call to the next: a count, where it has walked to, and a
+/// sequential path's walk.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct InitMemory {
+    pub counter: u32,
+    pub walk: f32,
+    pub path: Option<Walk>,
+}
+
+/// Whether what initializer `init` keeps lives on when its system restarts (Source's that do
+/// not start over).
+pub fn keeps_on_restart(init: &Initializer) -> bool {
+    matches!(
+        init,
+        Initializer::CreateInEpitrochoid(_) | Initializer::InheritFromParentParticles { .. }
+    )
+}
+
 /// What one initializer call has: the particles made this step from `first` on, the
-/// attributes written before it, its keys for draws, its counter and where it has walked to
-/// (both kept from call to call).
+/// attributes written before it, its keys for draws and what it keeps from call to call.
 pub struct Batch<'a> {
     pub parts: &'a mut Particles,
     pub first: usize,
     pub written: u64,
     pub salt: u32,
-    pub counter: &'a mut u32,
-    pub walk: &'a mut f32,
+    pub memory: &'a mut InitMemory,
 }
 
 /// Runs `init` on the batch.
@@ -191,7 +233,12 @@ fn initialize_more(init: &Initializer, scene: &Scene<'_>, batch: &mut Batch<'_>)
             parent::create_from_parent(init, scene, batch)
         }
         Initializer::SetHitboxToModel(_) => body::set_hitbox(init, scene, batch),
-        _ => {}
+        Initializer::CreateSequentialPath(_) => path::create_sequential_path(init, scene, batch),
+        Initializer::InheritFromParentParticles { .. } => {
+            parent::inherit_at_creation(init, scene, batch)
+        }
+        Initializer::CreateOnModel(_) => body::create_on_model(init, scene, batch),
+        _ => shape::initialize(init, scene, batch),
     }
 }
 
@@ -255,8 +302,8 @@ fn position_warp(warp: &Warp, scene: &Scene<'_>, batch: &mut Batch<'_>) {
             )
         } else {
             let input = if warp.use_count {
-                let count = *batch.counter as f32;
-                *batch.counter = batch.counter.wrapping_add(1);
+                let count = batch.memory.counter as f32;
+                batch.memory.counter = batch.memory.counter.wrapping_add(1);
                 count
             } else {
                 creation
@@ -500,8 +547,8 @@ fn sequence(batch: &mut Batch<'_>, min: i32, max: i32, ordered: bool) {
     for i in batch.first..batch.parts.len() {
         let value = if ordered {
             let span = (max - min + 1).max(1) as u32;
-            let v = min + (*batch.counter % span) as i32;
-            *batch.counter = batch.counter.wrapping_add(1);
+            let v = min + (batch.memory.counter % span) as i32;
+            batch.memory.counter = batch.memory.counter.wrapping_add(1);
             v
         } else {
             let span = (max - min + 1).max(1);
@@ -637,8 +684,8 @@ fn ring_wave(ring: &Ring, scene: &Scene<'_>, batch: &mut Batch<'_>) {
         let radius = float(&ring.radius, scene, parts, Some(i), batch.salt + 2);
         let creation = parts.scalars[store::CREATION][i];
         let frame = scene.transform_at(&ring.transform, creation);
-        *batch.counter = batch.counter.wrapping_add(1);
-        let orbit = *batch.counter as f32;
+        batch.memory.counter = batch.memory.counter.wrapping_add(1);
+        let orbit = batch.memory.counter as f32;
         let angle = if ring.even {
             let per = if per_orbit == -1.0 {
                 count as f32
@@ -704,7 +751,7 @@ fn count_to_scalar(init: &Initializer, scene: &Scene<'_>, batch: &mut Batch<'_>)
         } else {
             (input[0], input[1])
         };
-        let n = i64::from(*batch.counter);
+        let n = i64::from(batch.memory.counter);
         if *active_range && n > max {
             continue;
         }
@@ -723,9 +770,9 @@ fn count_to_scalar(init: &Initializer, scene: &Scene<'_>, batch: &mut Batch<'_>)
                 .parts
                 .set_scalar(slot, i, set_method.apply(v, current, current, scene.dt));
         }
-        *batch.counter = batch.counter.wrapping_add(1);
-        if *wrap && i64::from(*batch.counter) > max {
-            *batch.counter = 0;
+        batch.memory.counter = batch.memory.counter.wrapping_add(1);
+        if *wrap && i64::from(batch.memory.counter) > max {
+            batch.memory.counter = 0;
         }
     }
 }

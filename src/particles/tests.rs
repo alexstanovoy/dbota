@@ -133,6 +133,7 @@ fn missile() -> Arc<Effect> {
             always(Operator::BasicMovement {
                 gravity: VectorInput::Literal([0.0; 3]),
                 drag: FloatInput::Literal(0.0),
+                max_constraint_passes: 3,
             }),
             always(Operator::MaxVelocity {
                 max: FloatInput::ControlPointComponent {
@@ -238,6 +239,7 @@ fn a_child_made_from_its_parents_particles_follows_them() {
         vec![always(Operator::BasicMovement {
             gravity: VectorInput::Literal([0.0; 3]),
             drag: FloatInput::Literal(0.0),
+            max_constraint_passes: 3,
         })],
         Vec::new(),
         vec![Child {

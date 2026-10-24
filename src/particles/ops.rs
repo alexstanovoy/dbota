@@ -5,27 +5,31 @@ use std::f32::consts::TAU;
 use bevy::math::Vec3;
 use heatel::particle::{
     ControlPointsFromParticles, CpOffset, Field, Force, Operator, Oscillate, PositionLock,
+    VectorInput,
 };
 
 use super::eval::{
-    ControlPoint, Scene, between, between_exp, bias, float, noise3, normalized_age, smoothstep,
-    vector,
+    ControlPoint, Scene, between, between_exp, bias, curl3, float, noise3, normalized_age,
+    smoothstep, vector, worley_offset,
 };
 use super::init::angle_from;
+use super::path::{Bezier, Order};
 use super::store::{self, Particles, slot};
-use super::{body, ground, parent};
+use super::{body, constraint, ground, parent, path, remap};
 
-/// A control point an operator sets: on the system's children of a group (`None` every
-/// child), on the system itself, or on its `n`-th child of a group.
+/// A control point an operator sets: on the system's children of a group, on the system
+/// itself, on its `n`-th child of a group, or only the position (and the orientation when
+/// asked) of the `n`-th child's.
 #[derive(Clone, Copy, Debug)]
 pub enum Target {
     Children(i32),
     Own,
     Child(i32, usize),
+    ChildPosition(i32, usize, bool),
 }
 
 /// What an operator keeps from one step to the next, from the effect's start.
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Debug, Default)]
 pub struct Memory {
     /// Where the followed transform was (`C_OP_PositionLock`).
     pub lock: Option<ControlPoint>,
@@ -37,18 +41,50 @@ pub struct Memory {
     /// ground was last traced again (`C_OP_MovementPlaceOnGround`).
     pub references: [Option<Vec3>; 3],
     pub retrace_time: f32,
+    /// The path's segments as they were last step (`C_OP_LockToSavedSequentialPath`).
+    pub paths: Vec<Bezier>,
+    /// The points handed out (`C_OP_MaintainSequentialPath`).
+    pub order: Order,
+    /// It has run (`C_OP_RemapParticleCountOnScalarEndCap`).
+    pub done: bool,
+    /// When the system last restarted, how long until the next, and how many restarts
+    /// (`C_OP_RestartAfterDuration`).
+    pub restarted_at: f32,
+    pub duration: Option<f32>,
+    pub restarts: u32,
 }
 
-/// What one operator call has: its strength, keys for draws, its memory, and where it puts
-/// the control points it sets.
+/// A restart an operator asks for: of its system and everything under it, or of its children
+/// of a group.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Restart {
+    System,
+    Children(i32),
+}
+
+/// Whether what operator `op` keeps lives on when its system restarts (Source's that do not
+/// start over).
+pub fn keeps_on_restart(op: &Operator) -> bool {
+    matches!(
+        op,
+        Operator::LockToSavedSequentialPath { .. }
+            | Operator::RemapParticleCountOnScalarEndCap { .. }
+            | Operator::RestartAfterDuration { .. }
+    )
+}
+
+/// What one operator call has: its strength, keys for draws, its memory, where it puts the
+/// control points it sets, the system's forces and constraints, and the restart it asks for.
 pub struct Call<'a> {
     pub strength: f32,
     pub salt: u32,
     pub memory: &'a mut Memory,
     pub writes: &'a mut Vec<(Target, usize, ControlPoint)>,
     pub forces: &'a [heatel::particle::Function<Force>],
-    /// The strengths of the forces now.
-    pub force_strengths: &'a [f32],
+    pub constraints: &'a [heatel::particle::Function<heatel::particle::Constraint>],
+    /// The strengths of the forces now, then of the constraints.
+    pub strengths: &'a [f32],
+    pub restart: Option<Restart>,
 }
 
 /// Runs `op` on every particle.
@@ -60,7 +96,21 @@ pub fn operate(op: &Operator, scene: &Scene<'_>, parts: &mut Particles, call: &m
         return;
     }
     match op {
-        Operator::BasicMovement { gravity, drag } => movement(scene, parts, call, gravity, drag),
+        Operator::BasicMovement {
+            gravity,
+            drag,
+            max_constraint_passes,
+        } => {
+            movement(scene, parts, call, gravity, drag);
+            let strengths = &call.strengths[call.forces.len()..];
+            constraint::constrain(
+                call.constraints,
+                strengths,
+                scene,
+                parts,
+                *max_constraint_passes,
+            );
+        }
         Operator::PositionLock(lock) => position_lock(lock, scene, parts, call),
         Operator::SpinUpdate => {
             for i in 0..parts.len() {
@@ -78,7 +128,7 @@ pub fn operate(op: &Operator, scene: &Scene<'_>, parts: &mut Particles, call: &m
             spin(
                 scene,
                 parts,
-                call.strength,
+                (call.strength, store::ROLL),
                 *rate_degrees,
                 *min_rate_degrees,
                 *stop_time,
@@ -137,7 +187,24 @@ fn operate_more(op: &Operator, scene: &Scene<'_>, parts: &mut Particles, call: &
             parent::inherit_from_parent(op, scene, parts, call)
         }
         Operator::MoveToHitbox { .. } => body::move_to_hitbox(op, scene, parts, call),
-        _ => {}
+        Operator::LockToBone(_) => body::lock_to_bone(op, scene, parts, call),
+        Operator::LockToSavedSequentialPath { .. } => {
+            path::lock_to_saved_path(op, scene, parts, call)
+        }
+        Operator::MaintainSequentialPath(_) => path::maintain_path(op, scene, parts, call),
+        Operator::SpinYaw {
+            rate_degrees,
+            min_rate_degrees,
+            stop_time,
+        } => spin(
+            scene,
+            parts,
+            (call.strength, store::YAW),
+            *rate_degrees,
+            *min_rate_degrees,
+            *stop_time,
+        ),
+        _ => remap::operate(op, scene, parts, call),
     }
 }
 
@@ -438,7 +505,7 @@ fn movement(
     drag: &heatel::particle::FloatInput,
 ) {
     let gravity = vector(gravity, scene, parts, None, call.salt);
-    for (force, strength) in call.forces.iter().zip(call.force_strengths) {
+    for (force, strength) in call.forces.iter().zip(call.strengths) {
         if *strength > 0.0 {
             apply_force(&force.class, scene, parts, *strength, call.salt);
         }
@@ -507,6 +574,7 @@ fn apply_force(force: &Force, scene: &Scene<'_>, parts: &mut Particles, strength
                 }
             }
         }
+        Force::CurlNoise(curl) => curl_noise(curl, scene, parts, strength, salt),
         Force::RandomForce { min, max } => {
             for i in 0..parts.len() {
                 let seed = parts.seed[i] ^ scene.step_seed.wrapping_mul(0x2545_F491);
@@ -519,6 +587,34 @@ fn apply_force(force: &Force, scene: &Scene<'_>, parts: &mut Particles, strength
             }
         }
         _ => {}
+    }
+}
+
+/// `C_OP_CurlNoiseForce`: a push from noise (value, curl or cell noise) at the particle's place
+/// moved by the offset and its rate, scaled per axis.
+fn curl_noise(
+    curl: &heatel::particle::CurlNoise,
+    scene: &Scene<'_>,
+    parts: &mut Particles,
+    strength: f32,
+    salt: u32,
+) {
+    for i in 0..parts.len() {
+        let value = |input: &VectorInput| vector(input, scene, parts, Some(i), salt + 110);
+        let sample = value(&curl.offset)
+            + scene.age * value(&curl.offset_rate)
+            + parts.vectors[store::POSITION][i] * value(&curl.frequency);
+        let noise = match curl.kind {
+            heatel::particle::DirectionNoise::Curl => curl3(sample),
+            heatel::particle::DirectionNoise::Worley => {
+                let jitter = float(&curl.worley_jitter, scene, parts, Some(i), salt + 120);
+                let seed = float(&curl.worley_seed, scene, parts, Some(i), salt + 121);
+                worley_offset(sample, jitter, seed.to_bits())
+            }
+            _ => noise3(sample),
+        };
+        let push = noise * value(&curl.scale) * strength;
+        parts.force[i] += push;
     }
 }
 
@@ -615,10 +711,12 @@ fn position_lock(
     }
 }
 
+/// `C_OP_Spin` and `C_OP_SpinYaw`: angle column `column` turns at the rate, slowing to a stop
+/// over the share of the lifetime.
 fn spin(
     scene: &Scene<'_>,
     parts: &mut Particles,
-    strength: f32,
+    (strength, column): (f32, usize),
     rate: i32,
     min_rate: i32,
     stop: f32,
@@ -651,14 +749,14 @@ fn spin(
         } else {
             delta.min(least)
         };
-        let mut angle = parts.scalars[store::ROLL][i] + delta;
+        let mut angle = parts.scalars[column][i] + delta;
         if angle >= TAU {
             angle -= TAU;
         }
         if angle <= -TAU {
             angle += TAU;
         }
-        parts.scalars[store::ROLL][i] = angle;
+        parts.scalars[column][i] = angle;
     }
 }
 

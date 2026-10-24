@@ -42,19 +42,19 @@ pub fn create_from_parent(init: &Initializer, scene: &Scene<'_>, batch: &mut Bat
             } else {
                 batch.parts.seed[i]
             };
-            let sample = draw(key, batch.salt.wrapping_add(*batch.counter));
-            *batch.counter = batch.counter.wrapping_add(1);
+            let sample = draw(key, batch.salt.wrapping_add(batch.memory.counter));
+            batch.memory.counter = batch.memory.counter.wrapping_add(1);
             if fractional {
                 sample * last as f32
             } else {
                 (sample * (last + 1) as f32).floor()
             }
         } else {
-            if *batch.walk > last as f32 {
-                *batch.walk = 0.0;
+            if batch.memory.walk > last as f32 {
+                batch.memory.walk = 0.0;
             }
-            let walk = *batch.walk;
-            *batch.walk += increment;
+            let walk = batch.memory.walk;
+            batch.memory.walk += increment;
             walk
         };
         let at = |k: f32| (k as usize).min(last);
@@ -73,6 +73,53 @@ pub fn create_from_parent(init: &Initializer, scene: &Scene<'_>, batch: &mut Bat
         let born = previous.lerp(position, birth);
         batch.parts.vectors[store::POSITION][i] = born;
         batch.parts.vectors[store::PREVIOUS][i] = born.lerp(previous, *velocity_scale);
+    }
+}
+
+/// `C_INIT_InheritFromParentParticles`: each new particle's attribute copied from one of the
+/// parent's particles, one after another or at random (the walk kept from call to call).
+pub fn inherit_at_creation(init: &Initializer, scene: &Scene<'_>, batch: &mut Batch<'_>) {
+    let Initializer::InheritFromParentParticles {
+        scale,
+        field,
+        increment,
+        random,
+        random_seed,
+        ..
+    } = init
+    else {
+        return;
+    };
+    let Some(parent) = scene.parent.filter(|p| !p.is_empty()) else {
+        return;
+    };
+    let target = slot(*field);
+    let count = parent.len() as i32;
+    for i in batch.first..batch.parts.len() {
+        let memory = &mut *batch.memory;
+        let mut index = memory.walk as i32;
+        if *random {
+            let key = if *random_seed != 0 {
+                *random_seed as u32
+            } else {
+                batch.parts.seed[i]
+            };
+            let sample = draw(key, batch.salt.wrapping_add(memory.counter));
+            memory.counter = memory.counter.wrapping_add(1);
+            index = ((sample * count as f32) as i32).min(count - 1);
+        } else if index > count - 1 || index < 0 {
+            index = 0;
+        }
+        copy(
+            parent,
+            index as usize,
+            batch.parts,
+            i,
+            target,
+            *field,
+            *scale,
+        );
+        memory.walk = index.wrapping_add(*increment) as f32;
     }
 }
 

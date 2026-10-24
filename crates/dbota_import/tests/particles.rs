@@ -14,49 +14,15 @@ use std::path::PathBuf;
 use heatel::particle::System;
 use heatel::{DirSource, Resource, Vpk, find_game_dir};
 
-/// The classes of the manifest's effects the client leaves out, each with what it draws or does.
-const LEFT_OUT: [&str; 38] = [
-    // Not simulated yet: what the missiles of the fountains and the neutrals, the town portal,
-    // the Glyph, a level up, a Blood Grenade and Shadow Fiend's death use besides the classes
-    // the client simulates.
-    "C_INIT_CreateInEpitrochoid",
-    "C_INIT_CreateOnModel",
-    "C_INIT_CreateSequentialPath",
-    "C_INIT_CreateWithinBox",
-    "C_INIT_CreationNoise",
-    "C_INIT_InheritFromParentParticles",
-    "C_INIT_NormalAlignToCP",
+/// The classes of the manifest's effects the client leaves out, each with why. (A model
+/// renderer whose model a control point carries, the town portal's image of the hero at its end,
+/// is read but draws nothing: the client binds no model to a control point.)
+const LEFT_OUT: [&str; 2] = [
+    // The radius from the scale of the model a control point carries (the town portal's image
+    // of the hero): the client binds no model to a control point.
     "C_INIT_RadiusFromCPObject",
-    "C_INIT_RandomSecondSequence",
-    "C_INIT_RemapInitialDirectionToCPToVector",
-    "C_INIT_RemapTransformToVector",
-    "C_OP_ConstrainDistanceToPath",
-    "C_OP_CurlNoiseForce",
-    "C_OP_DistanceBetweenCPsToCP",
-    "C_OP_LockToBone",
-    "C_OP_LockToSavedSequentialPath",
-    "C_OP_MaintainSequentialPath",
-    "C_OP_MovementRotateParticleAroundAxis",
-    "C_OP_Noise",
-    "C_OP_NoiseEmitter",
-    "C_OP_OscillateScalarSimple",
-    "C_OP_PercentageBetweenTransforms",
-    "C_OP_PlanarConstraint",
-    "C_OP_RadiusDecay",
-    "C_OP_RampScalarSplineSimple",
-    "C_OP_RemapCPVelocityToVector",
-    "C_OP_RemapParticleCountOnScalarEndCap",
-    "C_OP_RemapVelocityToVector",
-    "C_OP_RenderModels",
+    // Shakes the camera (Requiem of Souls): an effect does not move the player's camera.
     "C_OP_RenderScreenShake",
-    "C_OP_RenderScreenVelocityRotate",
-    "C_OP_RestartAfterDuration",
-    "C_OP_SetCPOrientationToPointAtCP",
-    "C_OP_SetControlPointFieldToScalarExpression",
-    "C_OP_SetParentControlPointsToChildCP",
-    "C_OP_SetSingleControlPointPosition",
-    "C_OP_SpinYaw",
-    "C_OP_WorldTraceConstraint",
 ];
 
 #[test]

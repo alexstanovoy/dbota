@@ -9,9 +9,9 @@ use bevy::math::Vec3;
 use heatel::particle::{Emitter, EndCap, FloatInput, Function, Timing};
 
 use super::eval::{ControlPoint, HeightAt, Scene, float};
-use super::init::{Batch, initialize, writes};
+use super::init::{Batch, InitMemory, initialize, writes};
 use super::library::Effect;
-use super::ops::{Call, Memory, Target, operate};
+use super::ops::{Call, Memory, Restart, Target, operate};
 use super::pre::{PreCall, Stop, pre_emit};
 use super::store::Particles;
 
@@ -24,12 +24,14 @@ const CREATION_WRITTEN: u64 = 1 << 8;
 /// Most particles one emitter makes in one step.
 const MAX_EMITTED: usize = 5000;
 
-/// How one emitter stands.
+/// How one emitter stands: what it has made, and the system's age its timings count from (its
+/// last restart).
 #[derive(Clone, Copy, Default)]
 struct EmitterState {
     burst_done: bool,
     accumulated: f64,
     emitted: u64,
+    time_base: f32,
 }
 
 /// One system of a playing effect.
@@ -58,9 +60,12 @@ pub struct Node {
     emitters: Vec<EmitterState>,
     /// What each pre-emission operator, initializer and operator keeps from step to step.
     pre_done: Vec<bool>,
-    counters: Vec<u32>,
-    walks: Vec<f32>,
+    inits: Vec<InitMemory>,
     memories: Vec<Memory>,
+    /// The age the functions' fades count from: the system's last restart.
+    time_base: f32,
+    /// The world's clock.
+    world_time: f32,
     /// The strengths of the forces, and creation times, of a step.
     strengths: Vec<f32>,
     times: Vec<f32>,
@@ -90,6 +95,8 @@ pub struct Instance {
     pub effect: Arc<Effect>,
     pub nodes: Vec<Node>,
     life: f32,
+    /// The world's clock, in seconds.
+    pub world_time: f32,
     /// Control points the operators set in a step, applied after it.
     writes: Vec<(Target, usize, ControlPoint)>,
 }
@@ -146,6 +153,7 @@ impl Instance {
             effect,
             nodes,
             life: 0.0,
+            world_time: 0.0,
             writes: Vec::new(),
         }
     }
@@ -190,6 +198,10 @@ impl Instance {
     /// Plays `dt` seconds on the ground `ground` gives (none while the game does not know it).
     pub fn advance(&mut self, dt: f32, ground: Option<HeightAt<'_>>) {
         self.life += dt;
+        self.world_time += dt;
+        for node in &mut self.nodes {
+            node.world_time = self.world_time;
+        }
         for index in 0..self.nodes.len() {
             let parent_stepped = self.nodes[index]
                 .parent
@@ -254,7 +266,9 @@ impl Instance {
             }
             let node = &mut subtree[0];
             node.emit(effect, world, step, step_start, frame);
-            node.operate(effect, world, step, frame, writes);
+            if let Some(asked) = node.operate(effect, world, step, frame, writes) {
+                restart(effect, subtree, index, asked);
+            }
             for (target, cp, point) in writes.drain(..) {
                 write_control_point(effect, subtree, index, target, cp, point);
             }
@@ -303,9 +317,10 @@ impl Node {
             placed: 0,
             emitters: vec![EmitterState::default(); system.emitters.len()],
             pre_done: vec![false; system.pre_emission.len()],
-            counters: vec![0; system.initializers.len()],
-            walks: vec![0.0; system.initializers.len()],
+            inits: vec![InitMemory::default(); system.initializers.len()],
             memories: vec![Memory::default(); system.operators.len()],
+            time_base: 0.0,
+            world_time: 0.0,
             strengths: Vec::with_capacity(system.forces.len().max(system.initializers.len())),
             times: Vec::new(),
             parts,
@@ -330,11 +345,13 @@ impl Node {
             .iter_mut()
             .for_each(|e| *e = EmitterState::default());
         self.pre_done.iter_mut().for_each(|d| *d = false);
-        self.counters.iter_mut().for_each(|c| *c = 0);
-        self.walks.iter_mut().for_each(|w| *w = 0.0);
+        self.inits
+            .iter_mut()
+            .for_each(|m| *m = InitMemory::default());
         self.memories
             .iter_mut()
             .for_each(|m| *m = Memory::default());
+        self.time_base = 0.0;
         self.parts.clear();
         (self.emitted, self.seed, self.steps) = (0, seed, 0);
     }
@@ -405,7 +422,13 @@ impl Node {
         if strength <= 0.0 {
             return strength;
         }
-        strength * timing.fade(timing.time(self.age))
+        // The fades count from the last restart; an oscillation runs on the system's age.
+        let age = if timing.oscillate > 0.0 {
+            self.age
+        } else {
+            self.age - self.time_base
+        };
+        strength * timing.fade(timing.time(age))
     }
 
     /// The system's first frame: every pre-emission operator once, those that run only then
@@ -495,9 +518,14 @@ impl Node {
                     rate,
                 } => {
                     let duration = duration.literal().unwrap_or(0.0);
-                    let start = start_time.literal().unwrap_or(0.0);
+                    let start = state.time_base + start_time.literal().unwrap_or(0.0);
                     rate.literal().is_none_or(|r| r > 0.0)
                         && (duration == 0.0 || self.age <= start + duration)
+                }
+                Emitter::Noise(noise) => {
+                    let duration = noise.duration.literal().unwrap_or(0.0);
+                    let start = state.time_base + noise.start_time.literal().unwrap_or(0.0);
+                    duration == 0.0 || self.age - self.last_step <= start + duration
                 }
                 _ => false,
             })
@@ -544,21 +572,15 @@ impl Node {
         step_start: f32,
         times: &mut Vec<f32>,
     ) {
+        let (frame, salt) = (
+            Frame {
+                start: step_start,
+                len: step,
+            },
+            0x0E00 + index as u32,
+        );
         let value = |input: &FloatInput, node: &Node| {
-            float(
-                input,
-                &scene(
-                    node,
-                    step,
-                    Frame {
-                        start: step_start,
-                        len: step,
-                    },
-                ),
-                &node.parts,
-                None,
-                0x0E00 + index as u32,
-            )
+            float(input, &scene(node, step, frame), &node.parts, None, salt)
         };
         match &emitter.class {
             Emitter::Instantaneous {
@@ -566,7 +588,7 @@ impl Node {
                 start_time,
                 max_per_frame,
             } => {
-                let at = value(start_time, self);
+                let at = self.emitters[index].time_base + value(start_time, self);
                 if self.emitters[index].burst_done || at > self.age {
                     return;
                 }
@@ -585,7 +607,7 @@ impl Node {
                 start_time,
                 duration,
             } => {
-                let start = value(start_time, self);
+                let start = self.emitters[index].time_base + value(start_time, self);
                 let duration = value(duration, self);
                 let rate = f64::from((strength * value(rate, self)).max(0.0));
                 if start > self.age
@@ -602,8 +624,103 @@ impl Node {
                 });
                 self.emitters[index].release(rate, (from, to), step, times);
             }
+            Emitter::Noise(noise) => {
+                self.noise_emission(noise, index, strength, (step, step_start), times);
+            }
             _ => {}
         }
+    }
+
+    /// When the particles noise emitter `index` makes this step are created, into `times`: at
+    /// its noise's rate, within its window.
+    fn noise_emission(
+        &mut self,
+        noise: &heatel::particle::NoiseEmitter,
+        index: usize,
+        strength: f32,
+        (step, step_start): (f32, f32),
+        times: &mut Vec<f32>,
+    ) {
+        let rate = self.noise_rate(noise, strength, step, step_start);
+        let scene = scene(
+            self,
+            step,
+            Frame {
+                start: step_start,
+                len: step,
+            },
+        );
+        let value = |input: &FloatInput| float(input, &scene, &self.parts, None, 0x0E40);
+        let start = self.emitters[index].time_base + value(&noise.start_time);
+        let duration = value(&noise.duration);
+        if rate <= 0.0 || start > self.age || (duration != 0.0 && step_start > start + duration) {
+            return;
+        }
+        let (from, to) = if duration != 0.0 {
+            (step_start.max(start), self.age.min(start + duration))
+        } else {
+            (step_start, self.age)
+        };
+        self.emitters[index].release(
+            f64::from(rate),
+            (f64::from(from), f64::from(to)),
+            step,
+            times,
+        );
+    }
+
+    /// The particles a second a noise emitter makes this step: noise over the system's age
+    /// (and the world's time, and a control point's place) mapped onto its output, as Source
+    /// maps it, times a control point's component and, below behaviour version 2, the
+    /// highest control point.
+    fn noise_rate(
+        &self,
+        noise: &heatel::particle::NoiseEmitter,
+        strength: f32,
+        step: f32,
+        step_start: f32,
+    ) -> f32 {
+        let scene = scene(
+            self,
+            step,
+            Frame {
+                start: step_start,
+                len: step,
+            },
+        );
+        let value = |input: &FloatInput| float(input, &scene, &self.parts, None, 0x0E40);
+        let (position, scale) = match noise.world_noise_point {
+            Some(cp) => (
+                self.control_points[cp.index()].position + Vec3::from(noise.offset_location),
+                noise.world_noise_scale,
+            ),
+            None => (Vec3::ZERO, 1.0),
+        };
+        let time = (noise.offset + self.age) * value(&noise.scale);
+        let world = (self.world_time * 1000.0).trunc() * noise.world_time_scale;
+        let mut n = super::eval::noise(position * scale + Vec3::splat(time + world));
+        if noise.absolute {
+            n = n.abs();
+        }
+        if noise.absolute_inverted {
+            n = 1.0 - n;
+        }
+        let amplitude = if noise.absolute { 1.0 } else { 0.5 };
+        let low = value(&noise.output_min);
+        let range = value(&noise.output_max) - low;
+        let mut rate = (range * amplitude * n + (1.0 - amplitude) * range + low)
+            .clamp(0.0, 2_147_483_600.0)
+            * strength;
+        if let Some((cp, component)) = noise.scale_control_point {
+            rate *= self.control_points[cp.index()].position[usize::from(component)].max(0.0);
+        }
+        // The highest control point placed on it.
+        let highest = 63u32.saturating_sub(self.placed.leading_zeros());
+        let index_scale = highest as f32 * noise.index_scale;
+        if index_scale != 0.0 {
+            rate *= index_scale;
+        }
+        rate
     }
 
     /// Runs the initializers on particles `first..`, then records them as they start. Below
@@ -632,7 +749,7 @@ impl Node {
             system.max_time_step.min(0.05)
         };
         let scene = scene_of(&self.control_points, self.clock(), world, dt, frame);
-        let (parts, counters, walks) = (&mut self.parts, &mut self.counters, &mut self.walks);
+        let (parts, inits) = (&mut self.parts, &mut self.inits);
         let mut written = CREATION_WRITTEN;
         for (index, init) in system.initializers.iter().enumerate() {
             let fields = writes(&init.class);
@@ -649,8 +766,7 @@ impl Node {
                 first,
                 written,
                 salt: 0x1000 + (index as u32) * 64,
-                counter: &mut counters[index],
-                walk: &mut walks[index],
+                memory: &mut inits[index],
             };
             initialize(&init.class, &scene, &mut batch);
             written |= fields;
@@ -666,11 +782,13 @@ impl Node {
         step: f32,
         frame: Frame,
         writes: &mut Vec<(Target, usize, ControlPoint)>,
-    ) {
+    ) -> Option<Restart> {
         let system = &effect.defs[self.def].system;
         let mut strengths = std::mem::take(&mut self.strengths);
         strengths.clear();
         strengths.extend(system.forces.iter().map(|f| self.strength(&f.timing)));
+        strengths.extend(system.constraints.iter().map(|c| self.strength(&c.timing)));
+        let mut asked = None;
         for (index, op) in system.operators.iter().enumerate() {
             if self.parts.is_empty() {
                 break;
@@ -688,9 +806,12 @@ impl Node {
                 memory: &mut memories[index],
                 writes,
                 forces: &system.forces,
-                force_strengths: &strengths,
+                constraints: &system.constraints,
+                strengths: &strengths,
+                restart: None,
             };
             operate(&op.class, &scene, parts, &mut call);
+            asked = asked.or(call.restart);
             parts.remove_killed();
             // What it sets on its own system the operators after it read at once.
             for &(target, cp, point) in &writes[before..] {
@@ -700,6 +821,72 @@ impl Node {
             }
         }
         self.strengths = strengths;
+        asked
+    }
+
+    /// Starts its functions over without rewinding its clock or losing its particles, as
+    /// Source restarts a system: the emitters, the fades and what the functions keep count
+    /// from now (or wait again, for an end cap child), the end cap ends; a system that stopped
+    /// emitting stays stopped.
+    fn restart(&mut self, effect: &Effect) {
+        let system = &effect.defs[self.def].system;
+        if self.end_cap_child {
+            (self.running, self.age, self.time_base) = (false, -self.delay, 0.0);
+        } else {
+            self.time_base = self.age.max(0.0);
+        }
+        self.in_end_cap = false;
+        let base = if self.end_cap_child {
+            0.0
+        } else {
+            self.time_base
+        };
+        for (state, emitter) in self.emitters.iter_mut().zip(&system.emitters) {
+            let fresh = EmitterState {
+                time_base: base,
+                ..EmitterState::default()
+            };
+            // An emitter that runs for ever goes on as it was.
+            match &emitter.class {
+                Emitter::Instantaneous { .. } => *state = fresh,
+                Emitter::Continuous { duration, .. } if duration.literal() != Some(0.0) => {
+                    *state = fresh;
+                }
+                Emitter::Noise(noise) if noise.duration.literal() != Some(0.0) => {
+                    state.time_base = base;
+                }
+                _ => {}
+            }
+        }
+        self.pre_done.iter_mut().for_each(|d| *d = false);
+        for (memory, init) in self.inits.iter_mut().zip(&system.initializers) {
+            if !super::init::keeps_on_restart(&init.class) {
+                *memory = InitMemory::default();
+            }
+        }
+        for (memory, op) in self.memories.iter_mut().zip(&system.operators) {
+            if !super::ops::keeps_on_restart(&op.class) {
+                *memory = Memory::default();
+            }
+        }
+    }
+}
+
+/// Restarts what an operator of system `nodes[0]` (number `base` in the effect) asks for: it
+/// and everything under it, or its children of a group and everything under them.
+fn restart(effect: &Effect, nodes: &mut [Node], base: usize, asked: Restart) {
+    let group = |node: &Node| effect.defs[node.def].system.group;
+    match asked {
+        Restart::System => nodes.iter_mut().for_each(|n| n.restart(effect)),
+        Restart::Children(g) => {
+            for k in 0..nodes[0].children.len() {
+                let child = nodes[0].children[k] - base;
+                if group(&nodes[child]) == g {
+                    let end = nodes[child].end - base;
+                    nodes[child..end].iter_mut().for_each(|n| n.restart(effect));
+                }
+            }
+        }
     }
 }
 
@@ -710,11 +897,17 @@ struct Clock {
     in_end_cap: bool,
     end_cap_age: f32,
     step_seed: u32,
+    seed: u32,
+    world_time: f32,
+    emitting: bool,
 }
 
 impl Node {
     fn clock(&self) -> Clock {
         Clock {
+            seed: self.seed,
+            world_time: self.world_time,
+            emitting: self.emitting,
             age: self.age,
             in_end_cap: self.in_end_cap,
             end_cap_age: if self.in_end_cap {
@@ -756,6 +949,9 @@ fn scene_of<'a>(
         frame_len: frame.len,
         ground: world.ground,
         parent: world.parent,
+        seed: clock.seed,
+        world_time: clock.world_time,
+        emitting: clock.emitting,
     }
 }
 
@@ -778,7 +974,7 @@ fn write_control_point(
         let hit = match target {
             Target::Own => false,
             Target::Children(g) => in_group(g),
-            Target::Child(g, n) => {
+            Target::Child(g, n) | Target::ChildPosition(g, n, _) => {
                 let hit = in_group(g) && matched == n;
                 matched += usize::from(in_group(g));
                 hit
@@ -786,9 +982,16 @@ fn write_control_point(
         };
         if hit {
             let end = nodes[child].end - base;
-            nodes[child..end]
-                .iter_mut()
-                .for_each(|n| n.place(cp, point));
+            for node in &mut nodes[child..end] {
+                let mut placed = point;
+                if let Target::ChildPosition(_, _, orientation) = target {
+                    let own = node.control_points[cp];
+                    if !orientation {
+                        (placed.forward, placed.left, placed.up) = (own.forward, own.left, own.up);
+                    }
+                }
+                node.place(cp, placed);
+            }
         }
     }
     if let Target::Own = target {

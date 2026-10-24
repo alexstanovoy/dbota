@@ -29,6 +29,12 @@ pub struct Scene<'a> {
     pub ground: Option<HeightAt<'a>>,
     /// None for a root system.
     pub parent: Option<&'a Particles>,
+    /// What the system's own fixed draws are keyed by.
+    pub seed: u32,
+    /// The world's clock, in seconds: what noise over the world's time reads.
+    pub world_time: f32,
+    /// Whether the system still emits.
+    pub emitting: bool,
 }
 
 impl Scene<'_> {
@@ -180,6 +186,52 @@ pub fn noise3(p: Vec3) -> Vec3 {
     let second = p + Vec3::new(100_000.5, 300_000.25, 9_000_001.0);
     let third = second + Vec3::new(110_000.25, 310_000.75, 9_100_000.0);
     Vec3::new(noise(p), noise(second), noise(third))
+}
+
+/// The curl of vector noise at `p`: a flow without sources or sinks, from three samples
+/// offset as Source offsets them.
+pub fn curl3(p: Vec3) -> Vec3 {
+    let first = noise3(p);
+    let at = p + Vec3::new(43.256, -67.89, 1338.2);
+    let second = noise3(at);
+    let third = noise3(at + Vec3::new(-129.856, -967.23, 2338.98));
+    Vec3::new(third.y - second.z, first.z - third.x, second.x - first.y)
+}
+
+/// The offset from `p` to the nearest point of a jittered unit cell grid (each cell's point up
+/// to `jitter` from its corner, the grid keyed by `seed`), searched in the 27 cells about it.
+pub fn worley_offset(p: Vec3, jitter: f32, seed: u32) -> Vec3 {
+    let cell = p.floor();
+    let f = p - cell;
+    let mut best = (f32::MAX, Vec3::ZERO);
+    for i in -1..=1 {
+        for j in -1..=1 {
+            for k in -1..=1 {
+                let c = cell + Vec3::new(i as f32, j as f32, k as f32);
+                let key = (c.x as i32 as u32).wrapping_mul(73_856_093)
+                    ^ (c.y as i32 as u32).wrapping_mul(19_349_663)
+                    ^ (c.z as i32 as u32).wrapping_mul(83_492_791);
+                let point = Vec3::new(draw(key, seed), draw(key, seed ^ 1), draw(key, seed ^ 2));
+                let offset = point * jitter + Vec3::new(i as f32, j as f32, k as f32) - f;
+                let distance = offset.length_squared();
+                if distance < best.0 {
+                    best = (distance, offset);
+                }
+            }
+        }
+    }
+    best.1
+}
+
+/// The radical inverse of `index` in `base`: the `index`-th point of a Halton sequence, 0..1.
+pub fn radical_inverse(mut index: u32, base: u32) -> f32 {
+    let (mut result, mut fraction) = (0.0f64, 1.0 / f64::from(base));
+    while index > 0 {
+        result += f64::from(index % base) * fraction;
+        index /= base;
+        fraction /= f64::from(base);
+    }
+    result as f32
 }
 
 /// Schlick's bias of `x` (0.5 linear).

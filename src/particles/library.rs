@@ -17,6 +17,8 @@ const VERSION: u64 = 2;
 const MAX_SYSTEMS: usize = 256;
 /// Most looks (texture and blend) of all effects together.
 pub const MAX_LOOKS: usize = 256;
+/// Most models the effects together draw particles as.
+pub const MAX_MODELS: usize = 64;
 /// Most projected materials of one file.
 const MAX_MATERIALS: usize = 256;
 /// Most sequences of a sprite sheet the client keeps, and frames of one.
@@ -60,6 +62,19 @@ pub struct Draw {
     pub material: usize,
 }
 
+/// A model renderer of a system: its definition's index, and each model of its list as the
+/// library's model (none: the cache lacks it) with its chance.
+pub struct ModelDraw {
+    pub renderer: usize,
+    pub models: Vec<(Option<u16>, f32)>,
+}
+
+/// A model particles are drawn as: its glTF file, loaded once.
+pub struct ParticleModel {
+    pub file: String,
+    pub gltf: Handle<bevy::gltf::Gltf>,
+}
+
 /// A system as the simulation runs it.
 pub struct Def {
     pub system: System,
@@ -67,6 +82,7 @@ pub struct Def {
     /// is left out).
     pub children: Vec<(usize, bool, f32)>,
     pub draws: Vec<Draw>,
+    pub model_draws: Vec<ModelDraw>,
     pub defaults: Defaults,
 }
 
@@ -83,6 +99,7 @@ impl Effect {
             .map(|(_, system)| Def {
                 children: children(system, systems),
                 draws: Vec::new(),
+                model_draws: Vec::new(),
                 defaults: defaults(system),
                 system: system.clone(),
             })
@@ -91,11 +108,12 @@ impl Effect {
     }
 }
 
-/// Every effect of the cache, by logical name, and the looks they draw with.
+/// Every effect of the cache, by logical name, and the looks and models they draw with.
 #[derive(Resource, Default)]
 pub struct Library {
     pub effects: HashMap<String, Arc<Effect>>,
     pub looks: Vec<Look>,
+    pub models: Vec<ParticleModel>,
 }
 
 impl Library {
@@ -123,6 +141,7 @@ impl Library {
         }
         let textures = self.textures(&root, server)?;
         let materials = materials(&root)?;
+        let models = self.models(&root, server)?;
         let mut parsed = Vec::with_capacity(systems.len());
         for entry in systems {
             let path = entry
@@ -145,6 +164,7 @@ impl Library {
                     .map(str::to_owned),
             );
             def.draws = self.draws(&def.system, &textures, &materials);
+            def.model_draws = model_draws(&def.system, &models);
         }
         self.effects.insert(name.to_owned(), Arc::new(effect));
         Ok(unsupported)
@@ -264,6 +284,72 @@ impl Library {
         self.looks.push(look);
         Some((self.looks.len() - 1) as u16)
     }
+}
+
+impl Library {
+    /// The models of the file (by `.vmdl` path) as the library's, each file loaded once; past
+    /// the most models the library keeps, a model draws nothing.
+    fn models(
+        &mut self,
+        root: &Value,
+        server: &AssetServer,
+    ) -> Result<HashMap<String, u16>, String> {
+        let mut out = HashMap::new();
+        for model in root
+            .get("models")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+        {
+            let text = |key: &str| {
+                model
+                    .get(key)
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| format!("a model without {key}"))
+            };
+            let (vmdl, file) = (text("vmdl")?, text("file")?);
+            if !dbota_safe_path(file) {
+                return Err(format!("model file {file:?}"));
+            }
+            let index = match self.models.iter().position(|m| m.file == file) {
+                Some(at) => at,
+                None if self.models.len() < MAX_MODELS => {
+                    self.models.push(ParticleModel {
+                        file: file.to_owned(),
+                        gltf: crate::manifest::load_unit_model(
+                            server,
+                            crate::manifest::cache_path(file),
+                        ),
+                    });
+                    self.models.len() - 1
+                }
+                None => continue,
+            };
+            out.insert(vmdl.to_owned(), index as u16);
+        }
+        Ok(out)
+    }
+}
+
+/// The model renderers of `system` the client draws: those whose models come from their list
+/// (one whose model a control point carries draws that model, and the client binds none).
+fn model_draws(system: &System, models: &HashMap<String, u16>) -> Vec<ModelDraw> {
+    system
+        .renderers
+        .iter()
+        .enumerate()
+        .filter_map(|(renderer, r)| match &r.class {
+            Renderer::Models(m) if m.model_input.is_none() => Some(ModelDraw {
+                renderer,
+                models: m
+                    .models
+                    .iter()
+                    .map(|(path, weight)| (models.get(path).copied(), *weight))
+                    .collect(),
+            }),
+            _ => None,
+        })
+        .collect()
 }
 
 struct Texture {
