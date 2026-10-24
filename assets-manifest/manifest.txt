@@ -1056,6 +1056,218 @@ clip neutral.pine_cone.model cast1 shield_bash 0.867 point=0.3
 unit npc_dota_neutral_warpine_raider neutral.pine_cone.model model_scale=1.1
 unit npc_dota_enraged_wildkin_tornado none
 
+# --- Map objectives (npc_units.txt `Model`, `ModelScale`; the map's entities for placement and skins). Roshan and
+# the Tormentor are neutral units like the camps; Watchers, Outposts, Shrines of Wisdom and the planted Banner are
+# objective units; the chasm under the Tormentor is the map's prop_dynamic sentinel_base_* (scale 0.7). These
+# are the models' default skins: an owned Outpost (skin 1 Radiant, 2 Dire), a lit Watcher (1, 2), the Dire
+# Tormentor and the Dire chasm (1) wear another material group, which the importer does not export yet.
+# Roshan (npc_dota_roshan: BAT 2.0, attack point 0.6 s). Clips by activity: attack/attack2 the plain swings
+# (attack3 left out), bash the swing Bash procs on (modifier roshan_bash), run_haste his On The Move run, cast1
+# Roar of Retribution (ACT_DOTA_CAST_ABILITY_1, windup 0.5 s), cast2 Throw (ABILITY_2, cast point 0.25 s),
+# cast3 Slam (ABILITY_3, cast point 0.47 s).
+model neutral.roshan.model models/creeps/roshan/roshan.vmdl_c models/neutral/roshan/roshan.glb anims=roshan_idle,roshan_run,run_haste,roshan_attack,roshan_attack2,roshan_bash,roshan_die,roshan_stun,roshan_flail,roar,grab,roshan_slam
+clip neutral.roshan.model idle roshan_idle 2.667
+clip neutral.roshan.model run roshan_run 1.333
+clip neutral.roshan.model run_haste run_haste 0.800
+clip neutral.roshan.model attack roshan_attack 2.000 point=0.6
+clip neutral.roshan.model attack2 roshan_attack2 2.000 point=0.6
+clip neutral.roshan.model bash roshan_bash 2.000 point=0.6
+clip neutral.roshan.model death roshan_die 0.767
+clip neutral.roshan.model stun roshan_stun 2.500
+clip neutral.roshan.model flail roshan_flail 1.667
+clip neutral.roshan.model cast1 roar 1.833 point=0.5
+clip neutral.roshan.model cast2 grab 2.000 point=0.25
+clip neutral.roshan.model cast3 roshan_slam 1.000 point=0.47
+unit npc_dota_roshan neutral.roshan.model model_scale=1
+# The Tormentor (npc_dota_miniboss): no attack; spawn rises out of the chasm, flinch1..4 are its hit reactions.
+model neutral.divine_sentinel_cube.model models/props_gameplay/divine_sentinel/divine_sentinel_cube.vmdl_c models/neutral/divine_sentinel_cube/divine_sentinel_cube.glb anims=divine_sentinel_cube_idle_loop,divine_sentinel_cube_spawn,divine_sentinel_cube_die,divine_sentinel_cube_flinch_a,divine_sentinel_cube_flinch_b,divine_sentinel_cube_flinch_c,divine_sentinel_cube_flinch_d
+clip neutral.divine_sentinel_cube.model idle divine_sentinel_cube_idle_loop 5.250
+clip neutral.divine_sentinel_cube.model spawn divine_sentinel_cube_spawn 6.633
+clip neutral.divine_sentinel_cube.model death divine_sentinel_cube_die 1.333
+clip neutral.divine_sentinel_cube.model flinch1 divine_sentinel_cube_flinch_a 0.800
+clip neutral.divine_sentinel_cube.model flinch2 divine_sentinel_cube_flinch_b 0.800
+clip neutral.divine_sentinel_cube.model flinch3 divine_sentinel_cube_flinch_c 0.800
+clip neutral.divine_sentinel_cube.model flinch4 divine_sentinel_cube_flinch_d 0.800
+unit npc_dota_miniboss neutral.divine_sentinel_cube.model model_scale=0.7
+# The chasm's shutter: closed and open are held poses, open/close the moves between them.
+model objective.divine_sentinel.model models/props_gameplay/divine_sentinel/divine_sentinel.vmdl_c models/objective/divine_sentinel/divine_sentinel.glb anims=divine_sentinel_closed_idle,divine_sentinel_spawn_open,divine_sentinel_open_idle,divine_sentinel_spawn_close model_scale=0.7
+clip objective.divine_sentinel.model idle divine_sentinel_closed_idle 0.000
+clip objective.divine_sentinel.model open divine_sentinel_spawn_open 1.267
+clip objective.divine_sentinel.model open_idle divine_sentinel_open_idle 0.000
+clip objective.divine_sentinel.model close divine_sentinel_spawn_close 1.300
+# Watchers (npc_dota_lantern). idle: ready to be captured (ACT_DOTA_RUN); off: before the horn and while
+# deactivated (ACT_DOTA_IDLE, a held pose); cooldown (FLAIL); channel while a hero channels it; capture the
+# capture itself; lit and lit_night while on (CHANNEL_ABILITY_2/3).
+model objective.lantern_of_sight.model models/props_gameplay/lantern/lantern_of_sight.vmdl_c models/objective/lantern_of_sight/lantern_of_sight.glb anims=lantern_idle_ready_to_be_captured,lantern_idle_dead_not_ready,lantern_idle_cooldown,lantern_channel,lantern_idle_capture,lantern_idle_open,lantern_idle_open_night
+clip objective.lantern_of_sight.model idle lantern_idle_ready_to_be_captured 11.975
+clip objective.lantern_of_sight.model off lantern_idle_dead_not_ready 0.000
+clip objective.lantern_of_sight.model cooldown lantern_idle_cooldown 0.967
+clip objective.lantern_of_sight.model channel lantern_channel 1.967
+clip objective.lantern_of_sight.model capture lantern_idle_capture 7.967
+clip objective.lantern_of_sight.model lit lantern_idle_open 7.967
+clip objective.lantern_of_sight.model lit_night lantern_idle_open_night 7.967
+unit npc_dota_lantern objective.lantern_of_sight.model model_scale=1
+# Outposts (npc_dota_watch_tower): idle unowned, captured while a side owns it, transition while captured.
+model objective.outpost.model models/props_structures/outpost.vmdl_c models/objective/outpost/outpost.glb anims=outpost_neutral_idle,outpost_captured_idle,outpost_transition
+clip objective.outpost.model idle outpost_neutral_idle 2.950
+clip objective.outpost.model captured outpost_captured_idle 19.917
+clip objective.outpost.model transition outpost_transition 2.900
+unit npc_dota_watch_tower objective.outpost.model model_scale=1
+# Shrines of Wisdom (npc_dota_xp_fountain): idle dormant, spawn as it activates, active while active, channel
+# while a hero gathers, death as it goes dormant. Its floating stones are a mesh of this model;
+# xp_shrine_stones.vmdl is used by neither the unit nor the map.
+model objective.xp_shrine.model models/props_structures/xp_shrine/xp_shrine.vmdl_c models/objective/xp_shrine/xp_shrine.glb anims=xp_shrine_idle_dead,xp_shrine_spawn_active,xp_shrine_idle_active_loop,xp_shrine_idle_active_Channeling,xp_shrine_die
+clip objective.xp_shrine.model idle xp_shrine_idle_dead 1.033
+clip objective.xp_shrine.model spawn xp_shrine_spawn_active 2.225
+clip objective.xp_shrine.model active xp_shrine_idle_active_loop 11.900
+clip objective.xp_shrine.model channel xp_shrine_idle_active_Channeling 7.933
+clip objective.xp_shrine.model death xp_shrine_die 2.900
+unit npc_dota_xp_fountain objective.xp_shrine.model model_scale=1
+# Roshan's Banner planted (npc_dota_unit_roshans_banner); spawn, death (one of Dota's three each).
+model objective.roshans_banner.model models/props_gameplay/roshans_banner.vmdl_c models/objective/roshans_banner/roshans_banner.glb anims=roshan_banner_idle,roshan_banner_spawn,roshan_banner_death
+clip objective.roshans_banner.model idle roshan_banner_idle 25.000
+clip objective.roshans_banner.model spawn roshan_banner_spawn 1.500
+clip objective.roshans_banner.model death roshan_banner_death 4.515
+unit npc_dota_unit_roshans_banner objective.roshans_banner.model model_scale=0.7
+
+# --- Items on the ground (items.txt `Model`): Roshan's drops and the Bottle (bottle_blue full, bottle_empty with
+# no charges). A dropped Banner is Dota's generic item box (neutral_box), as is any item without its own model.
+model item.aegis.model models/props_gameplay/aegis.vmdl_c models/item/aegis/aegis.glb anims=aegis_idle
+clip item.aegis.model idle aegis_idle 7.867
+model item.cheese.model models/props_gameplay/cheese.vmdl_c models/item/cheese/cheese.glb
+model item.refresher_shard.model models/props_gameplay/refresher_shard.vmdl_c models/item/refresher_shard/refresher_shard.glb anims=refresher_shard_idle
+clip item.refresher_shard.model idle refresher_shard_idle 8.000
+model item.neutral_box.model models/props_gameplay/neutral_box.vmdl_c models/item/neutral_box/neutral_box.glb
+model item.bottle.model models/props_gameplay/bottle_blue.vmdl_c models/item/bottle/bottle.glb anims=bottle_blue_idle
+clip item.bottle.model idle bottle_blue_idle 4.000
+model item.bottle_empty.model models/props_gameplay/bottle_empty.vmdl_c models/item/bottle_empty/bottle_empty.glb anims=bottle_empty_idle
+clip item.bottle_empty.model idle bottle_empty_idle 4.000
+
+# --- Runes (models/props_gameplay; items Dota lays at the rune spots). Each loops one idle clip that turns and
+# bobs it; the water rune reuses the arcane rune's clip, the shield rune the invisibility rune's. goldxp is the
+# bounty rune, doubledamage Amplify Damage. Their glow is Dota's particles, not these models.
+model rune.water.model models/props_gameplay/rune_water.vmdl_c models/rune/water/rune_water.glb anims=rune_arcane_idle
+clip rune.water.model idle rune_arcane_idle 5.000
+model rune.bounty.model models/props_gameplay/rune_goldxp.vmdl_c models/rune/bounty/rune_bounty.glb anims=rune_goldxp_anim
+clip rune.bounty.model idle rune_goldxp_anim 8.000
+model rune.haste.model models/props_gameplay/rune_haste01.vmdl_c models/rune/haste/rune_haste.glb anims=rune_haste_idle
+clip rune.haste.model idle rune_haste_idle 5.000
+model rune.doubledamage.model models/props_gameplay/rune_doubledamage01.vmdl_c models/rune/doubledamage/rune_doubledamage.glb anims=rune_doubledamage_anim
+clip rune.doubledamage.model idle rune_doubledamage_anim 4.000
+model rune.arcane.model models/props_gameplay/rune_arcane.vmdl_c models/rune/arcane/rune_arcane.glb anims=rune_arcane_idle
+clip rune.arcane.model idle rune_arcane_idle 5.000
+model rune.regeneration.model models/props_gameplay/rune_regeneration01.vmdl_c models/rune/regeneration/rune_regeneration.glb anims=rune_regeneration_anim
+clip rune.regeneration.model idle rune_regeneration_anim 4.000
+model rune.illusion.model models/props_gameplay/rune_illusion01.vmdl_c models/rune/illusion/rune_illusion.glb anims=rune_illusion_idle
+clip rune.illusion.model idle rune_illusion_idle 4.000
+model rune.invisibility.model models/props_gameplay/rune_invisibility01.vmdl_c models/rune/invisibility/rune_invisibility.glb anims=rune_invisibility_idle
+clip rune.invisibility.model idle rune_invisibility_idle 4.000
+model rune.shield.model models/props_gameplay/rune_shield01.vmdl_c models/rune/shield/rune_shield.glb anims=rune_invisibility_idle
+clip rune.shield.model idle rune_invisibility_idle 4.000
+
+# --- Objective icons. Items 88x64 and abilities 128x128 by their Dota names (ids.txt gives them bota ids with the
+# simulator's): Roshan's drops; the Bottle by its charges (bottle 3, medium 2, small 1, empty 0) and holding a rune
+# (goldxp art is the bounty's); Roshan's and the Tormentor's abilities (their hidden passives roshan_devotion,
+# roshan_inherent_buffs and miniboss_inherent_buffs have no icon); the hero's hidden channels on a Watcher
+# (ability_lamp_use wears watcher_channel) and an Outpost (ability_capture); the Shrine's ability_xp_fountain has none.
+texture icon.item.aegis panorama/images/items/aegis_png.vtex_c icons/items/aegis.png
+texture icon.item.cheese panorama/images/items/cheese_png.vtex_c icons/items/cheese.png
+texture icon.item.refresher_shard panorama/images/items/refresher_shard_png.vtex_c icons/items/refresher_shard.png
+texture icon.item.roshans_banner panorama/images/items/roshans_banner_png.vtex_c icons/items/roshans_banner.png
+texture icon.item.bottle_medium panorama/images/items/bottle_medium_png.vtex_c icons/items/bottle_medium.png
+texture icon.item.bottle_small panorama/images/items/bottle_small_png.vtex_c icons/items/bottle_small.png
+texture icon.item.bottle_empty panorama/images/items/bottle_empty_png.vtex_c icons/items/bottle_empty.png
+texture icon.item.bottle_water panorama/images/items/bottle_water_png.vtex_c icons/items/bottle_water.png
+texture icon.item.bottle_bounty panorama/images/items/bottle_bounty_png.vtex_c icons/items/bottle_bounty.png
+texture icon.item.bottle_haste panorama/images/items/bottle_haste_png.vtex_c icons/items/bottle_haste.png
+texture icon.item.bottle_doubledamage panorama/images/items/bottle_doubledamage_png.vtex_c icons/items/bottle_doubledamage.png
+texture icon.item.bottle_arcane panorama/images/items/bottle_arcane_png.vtex_c icons/items/bottle_arcane.png
+texture icon.item.bottle_regeneration panorama/images/items/bottle_regeneration_png.vtex_c icons/items/bottle_regeneration.png
+texture icon.item.bottle_illusion panorama/images/items/bottle_illusion_png.vtex_c icons/items/bottle_illusion.png
+texture icon.item.bottle_invisibility panorama/images/items/bottle_invisibility_png.vtex_c icons/items/bottle_invisibility.png
+texture icon.item.bottle_shield panorama/images/items/bottle_shield_png.vtex_c icons/items/bottle_shield.png
+texture icon.ability.roshan_bash panorama/images/spellicons/roshan_bash_png.vtex_c icons/abilities/roshan_bash.png
+texture icon.ability.roshan_slam panorama/images/spellicons/roshan_slam_png.vtex_c icons/abilities/roshan_slam.png
+texture icon.ability.roshan_spell_block panorama/images/spellicons/roshan_spell_block_png.vtex_c icons/abilities/roshan_spell_block.png
+texture icon.ability.roshan_revengeroar panorama/images/spellicons/roshan_revengeroar_png.vtex_c icons/abilities/roshan_revengeroar.png
+texture icon.ability.roshan_grab_and_throw panorama/images/spellicons/roshan_grab_and_throw_png.vtex_c icons/abilities/roshan_grab_and_throw.png
+texture icon.ability.miniboss_unyielding_shield panorama/images/spellicons/miniboss_unyielding_shield_png.vtex_c icons/abilities/miniboss_unyielding_shield.png
+texture icon.ability.miniboss_reflect panorama/images/spellicons/miniboss_reflect_png.vtex_c icons/abilities/miniboss_reflect.png
+texture icon.ability.miniboss_radiance panorama/images/spellicons/miniboss_radiance_png.vtex_c icons/abilities/miniboss_radiance.png
+texture icon.ability.miniboss_alleviation panorama/images/spellicons/miniboss_alleviation_png.vtex_c icons/abilities/miniboss_alleviation.png
+texture icon.ability.watcher_channel panorama/images/spellicons/watcher_channel_png.vtex_c icons/abilities/watcher_channel.png
+texture icon.ability.ability_capture panorama/images/spellicons/ability_capture_png.vtex_c icons/abilities/ability_capture.png
+# Rune buff icons (panorama/images/spellicons/rune_*): Haste, Amplify Damage (the old Double Damage art), Arcane,
+# Regeneration, Invisibility, Shield.
+texture icon.rune.haste panorama/images/spellicons/rune_haste_png.vtex_c icons/runes/haste.png
+texture icon.rune.doubledamage panorama/images/spellicons/rune_doubledamage_png.vtex_c icons/runes/doubledamage.png
+texture icon.rune.arcane panorama/images/spellicons/rune_arcane_png.vtex_c icons/runes/arcane.png
+texture icon.rune.regeneration panorama/images/spellicons/rune_regen_png.vtex_c icons/runes/regeneration.png
+texture icon.rune.invisibility panorama/images/spellicons/rune_invis_png.vtex_c icons/runes/invisibility.png
+texture icon.rune.shield panorama/images/spellicons/rune_shield_png.vtex_c icons/runes/shield.png
+# Minimap: Roshan's pit and a Cheese have icons of their own; the Watcher (128,0 64x64), the Tormentor (512,480
+# 32x32) and the runes are cells of the 704x704 sheet (scripts/mod_textures.txt minimap_rune_*, 32x32: invis 448,256
+# haste 480,256 illusion 448,288 dd 480,288 regen 448,320 bounty 480,320 arcane 448,352 water 480,448 xp 544,448;
+# shield says 502,448 but its cell starts at 512,448). The Outpost is icon.minimap.building (minimap_miscbuilding).
+# The Shrine's MinimapIcon minimap_wisdom has no texture in the install.
+texture icon.minimap.roshan materials/vgui/hud/minimap_roshancamp_psd_a910ba97.vtex_c icons/minimap/roshan.png
+texture icon.minimap.cheese materials/vgui/hud/minimap_cheese_psd_3db4dbdc.vtex_c icons/minimap/cheese.png
+texture icon.minimap.sheet materials/vgui/hud/minimap_sheet_psd_b65d6dd9.vtex_c icons/minimap/minimap_sheet.png
+# The kill feed's and timers' art: Roshan's mark ({s:roshan_icon}), the Aegis' ({s:aegis_icon}) and the Aegis and
+# Cheese marks over a hero's top bar portrait, the Outpost marks ({s:outpost_icon}, captured, lost), the Roshan and
+# Tormentor timers beside the minimap, the rune timers (Dota's file says "widsom").
+texture hud.roshan panorama/images/hud/icon_roshan_psd.vtex_c hud/icon_roshan_psd.png
+texture hud.aegis panorama/images/control_icons/24px/aegis_23_png.vtex_c hud/aegis_23_png.png
+texture hud.topbar.aegis panorama/images/items/topbar/aegis_psd.vtex_c hud/topbar_aegis_psd.png
+texture hud.topbar.cheese panorama/images/items/topbar/cheese_psd.vtex_c hud/topbar_cheese_psd.png
+texture hud.outpost panorama/images/hud/icon_outpost_psd.vtex_c hud/icon_outpost_psd.png
+texture hud.outpost_captured panorama/images/hud/icon_outpost_captured_psd.vtex_c hud/icon_outpost_captured_psd.png
+texture hud.outpost_lost panorama/images/hud/icon_outpost_lost_psd.vtex_c hud/icon_outpost_lost_psd.png
+texture hud.roshan_timer panorama/images/hud/reborn/roshan_timer_roshan_psd.vtex_c hud/roshan_timer_roshan_psd.png
+texture hud.roshan_timer_bg panorama/images/hud/reborn/roshan_timer_bg_v2_png.vtex_c hud/roshan_timer_bg_v2_png.png
+texture hud.tormentor panorama/images/control_icons/24px/tormentor_png.vtex_c hud/tormentor_png.png
+texture hud.tormentor_timer_bg panorama/images/hud/reborn/tormentor_timer_bg_v2_png.vtex_c hud/tormentor_timer_bg_v2_png.png
+texture hud.tormentor_timer.radiant panorama/images/hud/tormentor_timer_icon_radiant_png.vtex_c hud/tormentor_timer_icon_radiant_png.png
+texture hud.tormentor_timer.dire panorama/images/hud/tormentor_timer_icon_dire_png.vtex_c hud/tormentor_timer_icon_dire_png.png
+texture hud.rune_timer.bounty panorama/images/hud/timer/bounty_rune_png.vtex_c hud/bounty_rune_png.png
+texture hud.rune_timer.power panorama/images/hud/timer/power_rune_png.vtex_c hud/power_rune_png.png
+texture hud.rune_timer.wisdom panorama/images/hud/timer/widsom_rune_png.vtex_c hud/widsom_rune_png.png
+
+# Objective announcements in Dota's words: the kill feed (DOTA_HUD_*) and chat (DOTA_Chat_*) lines of Roshan, the
+# Aegis, the Tormentor, Outposts, Shrines of Wisdom and the Banner, and the Outposts' names.
+label resource/localization/dota_english.txt DOTA_Chat_KilledRoshanGood
+label resource/localization/dota_english.txt DOTA_Chat_KilledRoshanBad
+label resource/localization/dota_english.txt DOTA_HUD_KilledRoshanGood
+label resource/localization/dota_english.txt DOTA_HUD_KilledRoshanBad
+label resource/localization/dota_english.txt DOTA_Chat_PlayerKilledRoshan
+label resource/localization/dota_english.txt DOTA_Chat_RoshanRoar
+label resource/localization/dota_english.txt DOTA_HUD_RadiantRoshanRoar
+label resource/localization/dota_english.txt DOTA_HUD_DireRoshanRoar
+label resource/localization/dota_english.txt DOTA_Chat_PickedUpAegis
+label resource/localization/dota_english.txt DOTA_Chat_DeniedAegis
+label resource/localization/dota_english.txt DOTA_Chat_AegisStolen
+label resource/localization/dota_english.txt DOTA_HUD_PickedUpAegis
+label resource/localization/dota_english.txt DOTA_HUD_DeniedAegis
+label resource/localization/dota_english.txt DOTA_HUD_AegisStolen
+label resource/localization/dota_english.txt DOTA_Chat_MinibossKilledGood
+label resource/localization/dota_english.txt DOTA_Chat_MinibossKilledBad
+label resource/localization/dota_english.txt DOTA_HUD_KilledMinibossGood
+label resource/localization/dota_english.txt DOTA_HUD_KilledMinibossBad
+label resource/localization/dota_english.txt DOTA_HUD_KilledMinibossNoShardGood
+label resource/localization/dota_english.txt DOTA_HUD_KilledMinibossNoShardBad
+label resource/localization/dota_english.txt DOTA_HUD_OutpostCaptured
+label resource/localization/dota_english.txt DOTA_HUD_OutpostLost
+label resource/localization/dota_english.txt DOTA_HUD_OutpostCaptured_Spectator
+label resource/localization/dota_english.txt DOTA_OutpostName_Default
+label resource/localization/dota_english.txt DOTA_OutpostName_South
+label resource/localization/dota_english.txt DOTA_OutpostName_North
+label resource/localization/dota_english.txt DOTA_Chat_Rune_XP
+label resource/localization/dota_english.txt DOTA_Chat_Rune_XP_Spotted
+label resource/localization/dota_english.txt DOTA_HUD_Rune_XP
+label resource/localization/dota_english.txt DOTA_HUD_ActivatedRune
+label resource/localization/dota_english.txt DOTA_HUD_RadiantBannerPlanted
+label resource/localization/dota_english.txt DOTA_HUD_DireBannerPlanted
+
 # Cheats: the lobby setting and its mark (dota_english), and Dota's Demo Hero panel's words
 # (the hero_demo addon's own file, read from the install's game/dota_addons).
 label resource/localization/dota_english.txt DOTA_Lobby_Enable_Cheats

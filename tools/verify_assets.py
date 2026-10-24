@@ -102,13 +102,14 @@ def check_model(path: Path, keys: dict[str, str], clips: list[list[str]], parent
 
 def check_particle(path: Path, cache: Path) -> str:
     doc = json.loads(path.read_text())
-    if doc.get("version") != 1 or not doc.get("systems"):
-        raise ValueError("not a version 1 particle file with systems")
+    if doc.get("version") != 2 or not doc.get("systems"):
+        raise ValueError("not a layout 2 particle file with systems")
     textures = doc.get("textures", [])
-    missing = [t["file"] for t in textures if not (cache / t["file"]).is_file()]
+    models = doc.get("models", [])
+    missing = [f["file"] for f in textures + models if not (cache / f["file"]).is_file()]
     if missing:
-        raise ValueError(f"textures missing: {missing}")
-    return f"systems={len(doc['systems'])} textures={len(textures)}"
+        raise ValueError(f"textures or models missing: {missing}")
+    return f"systems={len(doc['systems'])} textures={len(textures)} models={len(models)}"
 
 
 def check(kind: str, fields: list[str], keys: dict[str, str], clips, outputs: dict[str, Path], cache: Path) -> str:
@@ -131,17 +132,20 @@ def main() -> None:
     manifest, cache = Path(sys.argv[1]), Path(sys.argv[2])
     entries = parse_manifest(manifest)
     clips = [fields for kind, fields, _ in entries if kind == "clip"]
-    outputs = {fields[0]: cache / fields[2] for kind, fields, _ in entries if kind not in ("clip", "unit", "label")}
-    labels_path = cache / "text/labels.json"
-    labels = json.loads(labels_path.read_text()) if labels_path.is_file() else {}
+    outputs = {fields[0]: cache / fields[2] for kind, fields, _ in entries if kind not in ("clip", "unit", "label", "style")}
+    texts = {}
+    for kind, name in (("label", "labels"), ("style", "styles")):
+        path = cache / f"text/{name}.json"
+        texts[kind] = (name, json.loads(path.read_text()) if path.is_file() else {})
     failures = 0
     for kind, fields, keys in entries:
         if kind == "clip":
             continue
-        if kind == "label":  # all labels go to one file, under their key lower-cased
-            if fields[1].lower() not in labels:
+        if kind in texts:  # all labels (styles) go to one file, under their key lower-cased
+            name, table = texts[kind]
+            if fields[1].lower() not in table:
                 failures += 1
-                print(f"FAIL {fields[1]:44} not in text/labels.json")
+                print(f"FAIL {fields[1]:44} not in text/{name}.json")
             continue
         if kind == "unit":
             if fields[1] != "none" and fields[1] not in outputs:

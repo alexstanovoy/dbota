@@ -12,7 +12,7 @@ target/release/dbota import --dota-path "/path/to/steamapps/common/dota 2 beta"
 DBOTA_ASSETS=/elsewhere target/release/dbota import   # cache location (default ~/.cache/dbota/v<N>)
 ```
 
-An import reads ~1 GB of the install at most, writes ~550 MB (830 files) and takes about a minute.
+An import reads ~1 GB of the install at most, writes ~810 MB (1520 files) and takes about a minute.
 It is made in a folder beside the cache and replaces it only once whole; `index.txt` lists the files
 and `stamp.txt` says what made it (the manifest version, the importer's revision, the size and
 change time of `pak01_dir.vpk`). Running it again does nothing while the stamp matches (`--force`
@@ -34,7 +34,7 @@ deleted. An asset that does not convert is reported and drawn as a stand-in.
 | `verify_assets.py` | checks a cache: glTF meshes/skins/clips/textures, wearable joints, PNG sizes, WAV/MP3 format (`verify_assets.py ../assets-manifest/manifest.txt <cache>`) |
 | `inspect_gltf.py` | prints a model's meshes, skins and animations (`--json` for machines) |
 
-## What the cache holds (~680 MB per `v<N>` folder)
+## What the cache holds (~810 MB per `v<N>` folder)
 
 | path | content | size |
 | --- | --- | --- |
@@ -46,12 +46,15 @@ deleted. An asset that does not convert is reported and drawn as a stand-in.
 | `models/tree/` | the 9 tree models the map uses around mid (standing mesh + stump) | 8 MB |
 | `models/building/` | ancients, melee/ranged barracks (static, plus `*_destruction` collapse models), fountains | 73 MB |
 | `models/courier/` | default donkey courier, Radiant and Dire, walking and flying | 4 MB |
+| `models/neutral/roshan/`, `models/neutral/divine_sentinel_cube/` | Roshan (idle, run, his On The Move run, two swings and Bash's, death, stun, flail, Roar, Throw, Slam) and the Tormentor (idle, spawn, death, four flinches) | 11 MB |
+| `models/objective/` | a Watcher, an Outpost, a Shrine of Wisdom, a planted Roshan's Banner and the Tormentor's chasm, each with the clips of its states | 25 MB |
+| `models/item/`, `models/rune/` | items on the ground (Aegis, Cheese, Refresher Shard, the Bottle full and empty, Dota's generic item box) and the nine runes, each looping its idle clip | 3 MB |
 | `models/portraits.txt`, `models/portrait_backgrounds/` | Dota's portrait framing of each model above (camera, light, ambient, the background's corner tints) and the background images it names | 1 MB |
 | `map/mid/` | `mid.gltf` with its geometry in `mid.bin`, the default map from fountain to fountain around mid, its textures, `trees.txt`, `buildings.txt` (the towers' places) | 354 MB |
 | `textures/ground/` | terrain layer textures (also used by `map.mid`) | 37 MB |
 | `textures/particle/` | 16 effect textures (smoke, glow, sparks, ground cracks, fire, the Glyph's rings, ...) | 1 MB |
 | `particles/` | the attack missiles of Shadow Fiend, the lane creeps and the towers (each unit's `ProjectileModel`): one JSON file per effect, its systems as heatel reads them (emitters, initializers, operators, forces, renderers, children), and their 40 textures as KTX2 under `particles/textures/` with their sprite sheets in the JSON; the client simulates and draws them | 10 MB |
-| `icons/`, `hud/`, `minimap/` | item and ability icons, hero portraits, minimap hero/creep/tower/building icons, HUD and shop art, minimap | 2 MB |
+| `icons/`, `hud/`, `minimap/` | item and ability icons (Roshan's drops, the Bottle by charges and stored rune, Roshan's, the Tormentor's and the objective channels' abilities, rune buffs), hero portraits, minimap hero/creep/tower/building/Roshan/Cheese icons and the sheet the Watcher, Tormentor and rune icons are cells of, HUD, kill feed, timer and shop art, minimap | 3 MB |
 | `text/tooltips.json` | the names, descriptions, lore, notes and number labels of the items and abilities in `ids.txt`, read out of the install's own localization and scripts; the client puts the simulator's numbers into them (without the file, tooltips show only the simulator's plain names and numbers), and the aliases the shop's search finds items by | 30 KB |
 | `text/shop.json` | the shop's categories and the items each lists, in Dota's order (`scripts/shops.txt`), and the shop's words (category, tab and button names) from the install's localization; without it the shop shows bota's own groups and plain words | 16 KB |
 | `text/labels.json` | the interface's labels the manifest's `label` lines name (the stats tooltip's rows and lines, the talent tree's title and Attribute Bonus), out of the install's localization; the client fills in the simulator's numbers (without the file, its own words) | 2 KB |
@@ -103,6 +106,14 @@ and are kept as `.mp3` (the stdlib cannot transcode them); playing them needs Be
   `courier.<side>.flying.model` the winged one (idle/run/death).
 - **Flagbearers** use the melee meshes with their own animations; Dota attaches the banner at runtime
   on attachment `attach_banner`, which is not part of the exported model.
+- **Map objectives**: Roshan and the Tormentor are `neutral.*` models with `unit` lines like the
+  camps'; Watchers, Outposts, Shrines of Wisdom and a planted Banner are `objective.*` with their
+  unit lines, and the chasm under the Tormentor is `objective.divine_sentinel.model`. They are
+  exported in their default skin: the team colours of an owned Outpost or a lit Watcher and the Dire
+  Tormentor and chasm are material groups the importer does not write yet. Items lying on the
+  ground are `item.<name>.model`, runes `rune.<kind>.model` (`doubledamage` is Amplify Damage); a
+  rune's glow is Dota's particles, not its model. The minimap's Watcher, Tormentor and rune icons
+  are cells of `icon.minimap.sheet` (cells in the manifest's comment, from `scripts/mod_textures.txt`).
 
 ## The mid-lane map (`map.mid`)
 
