@@ -590,6 +590,11 @@ sound sound.portal.hero_disappear sounds/ui/portal_disappear.vsnd_c sounds/ui/po
 # sound.ui.click the Panorama button click. The horn is two positional sounds in Dota (one at each ancient,
 # both at 0:00); here they are the two variants of sound.horn.
 sound sound.ui.click sounds/ui/panorama/panorama_generic_button_click_01.vsnd_c sounds/ui/panorama/panorama_generic_button_click_01.wav event=ui_generic_button_click
+# Pings (game_sounds_ui): Alt+click plays General.Ping, Ctrl+Alt+click General.PingWarning, which layers
+# PingWarning.Layer over it.
+sound sound.ping.regular sounds/ui/ping.vsnd_c sounds/ui/ping.wav event=General.Ping
+sound sound.ping.danger sounds/ui/ping_warning.vsnd_c sounds/ui/ping_warning.wav event=General.PingWarning
+sound sound.ping.warning_layer sounds/ui/ping_warning_layer.vsnd_c sounds/ui/ping_warning_layer.wav event=PingWarning.Layer
 sound sound.announcer.choose_hero sounds/vo/announcer/announcer_choose_hero.vsnd_c sounds/vo/announcer/announcer_choose_hero.mp3 event=announcer_announcer_choose_hero
 sound sound.announcer.battle_begins sounds/vo/announcer/announcer_battle_begin_01.vsnd_c sounds/vo/announcer/announcer_battle_begin_01.mp3 event=announcer_announcer_battle_begin_01
 # The Glyph's only sound: the announcer tells both sides which side's structures are fortified (subtitles: "Radiant's structures are fortified.")

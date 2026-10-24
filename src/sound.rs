@@ -50,9 +50,26 @@ enum Kind {
     HeroArrived,
     /// A hero gone by a teleport.
     HeroLeft,
-    /// A ping heard, and a warning.
+    /// A ping heard, and a warning with the layer Dota plays over it.
     Ping,
     PingDanger,
+    PingDangerLayer,
+}
+
+/// Dota's volumes of its ping events (`General.Ping`, `General.PingWarning`
+/// and its second layer `PingWarning.Layer`, in game_sounds_ui), and the
+/// layer's pitch, played as speed.
+const PING_GAIN: f32 = 0.6;
+const PING_DANGER_GAIN: f32 = 0.5;
+const PING_LAYER_GAIN: f32 = 0.5;
+const PING_LAYER_SPEED: f32 = 1.25;
+
+/// How fast a kind is played: Dota's pitch where its event raises it.
+fn speed_of(kind: Kind) -> f32 {
+    match kind {
+        Kind::PingDangerLayer => PING_LAYER_SPEED,
+        _ => 1.0,
+    }
 }
 
 /// The loops of one teleport under way, and what its landing needs.
@@ -101,9 +118,9 @@ fn sources_of(kind: Kind) -> (&'static [&'static str], Option<Sfx>) {
         Kind::PortalLeaving => (&["sound.portal.loop_disappear"], None),
         Kind::HeroArrived => (&["sound.portal.hero_appear"], None),
         Kind::HeroLeft => (&["sound.portal.hero_disappear"], None),
-        // Not in every cache: a ping is silent where Dota's sound is absent.
         Kind::Ping => (&["sound.ping.regular"], None),
         Kind::PingDanger => (&["sound.ping.danger"], None),
+        Kind::PingDangerLayer => (&["sound.ping.warning_layer"], None),
     }
 }
 
@@ -139,6 +156,7 @@ fn load(
         Kind::HeroLeft,
         Kind::Ping,
         Kind::PingDanger,
+        Kind::PingDangerLayer,
     ]);
     for kind in kinds {
         let (names, stand_in) = sources_of(kind);
@@ -211,22 +229,24 @@ fn play(
         voice.next += 1;
         commands.spawn((
             AudioPlayer::new(source),
-            PlaybackSettings::DESPAWN.with_volume(Volume::Linear(gain * fall)),
+            PlaybackSettings::DESPAWN
+                .with_volume(Volume::Linear(gain * fall))
+                .with_speed(speed_of(kind)),
         ));
     };
     for cue in cues {
         sound(Kind::Cue(cue.kind), cue.gain, cue.at);
     }
     shots(core, &fog, &mut sound);
+    // A ping is heard by its side wherever the camera is, as Dota's are.
     for kind in crate::pings::fresh(core, &mut last_ping) {
-        sound(
-            match kind {
-                bota_proto::PingKind::Regular => Kind::Ping,
-                bota_proto::PingKind::Danger => Kind::PingDanger,
-            },
-            1.0,
-            None,
-        );
+        match kind {
+            bota_proto::PingKind::Regular => sound(Kind::Ping, PING_GAIN, None),
+            bota_proto::PingKind::Danger => {
+                sound(Kind::PingDanger, PING_DANGER_GAIN, None);
+                sound(Kind::PingDangerLayer, PING_LAYER_GAIN, None);
+            }
+        }
     }
 }
 
