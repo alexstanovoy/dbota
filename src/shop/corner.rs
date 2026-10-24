@@ -303,8 +303,10 @@ fn gold(session: NonSend<Session>, mut text: Single<&mut Text, With<Gold>>) {
     text.set_if_neq(Text(shown));
 }
 
-/// The stash while the shop is open, at home, or while an item is held for
-/// moving; GRAB ALL while what is in it can be taken.
+/// The stash while the shop is open, at home, while an item is held for
+/// moving, or while one's own hero lies dead, as Dota shows it then (its
+/// HUD's `StashVisible` without `StashActive`: what was bought is seen, and
+/// nothing is taken out); GRAB ALL while what is in it can be taken.
 fn stash(
     session: NonSend<Session>,
     panels: Res<Panels>,
@@ -312,7 +314,8 @@ fn stash(
     mut grab: Single<&mut Visibility, With<GrabAll>>,
 ) {
     let core = &session.0;
-    let shown = panels.shop || core.at_home_shop() || core.held_item.is_some();
+    let dead = core.my_slot.is_some() && core.view().is_some() && core.my_hero().is_none();
+    let shown = panels.shop || core.at_home_shop() || core.held_item.is_some() || dead;
     let display = if shown { Display::Flex } else { Display::None };
     if block.display != display {
         block.display = display;
