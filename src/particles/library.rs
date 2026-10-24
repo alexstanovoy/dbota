@@ -201,7 +201,10 @@ impl Library {
     ) -> Vec<Draw> {
         let mut out = Vec::new();
         for (index, renderer) in system.renderers.iter().enumerate() {
-            let Some(look) = renderer.class.look() else {
+            // A refracting renderer bends the view of what is behind it by its normal map; the
+            // client keeps no copy of the frame to bend, and drawn as a colour the map would
+            // cover the ground with a pale disc.
+            let Some(look) = renderer.class.look().filter(|l| !l.refract) else {
                 continue;
             };
             if let Renderer::Projected(projected) = &renderer.class {

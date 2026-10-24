@@ -14,8 +14,8 @@ use super::store::{self, Particles};
 
 /// One card: its head edge (centre and half width), its tail edge, the colours there, the
 /// sheet frame's and the next frame's texture rectangles (head row first), and the frame
-/// blend, whether the colour saturates and the share of what is behind it covers (1 over, 0
-/// added).
+/// blend, whether the colour saturates, the share of what is behind it covers (1 over, 0
+/// added) and, modulating, its texture's overbright (negative: a decal's tint multiplies).
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, Pod, Zeroable)]
 pub struct Quad {
@@ -49,6 +49,9 @@ pub fn from_world(v: Vec3) -> Vec3 {
 
 /// How far above the ground a projected decal's card lies, so the ground does not hide it.
 const DECAL_LIFT: f32 = 2.0;
+/// What a decal's card carries where a modulating card carries its overbright: its tint
+/// multiplies its texture instead (see `particles.wgsl`).
+const DECAL_TINT: f32 = -1.0;
 
 /// Appends the cards of every drawn renderer of `instance`, each to its look's list; projected
 /// decals lie on the ground `ground` gives (none: at their particles' height).
@@ -101,6 +104,9 @@ struct Scales {
     gain: f32,
     /// The share of what is behind a card covers.
     cover: f32,
+    /// For a modulating (`MOD2X`) look, the overbright its texture takes: its colour then weighs
+    /// the texture away from grey rather than scaling it, and the added self does not apply.
+    modulate: Option<f32>,
 }
 
 fn scales(look: &Look, blend: Blend, scene: &Scene<'_>, parts: &Particles) -> Scales {
@@ -110,6 +116,7 @@ fn scales(look: &Look, blend: Blend, scene: &Scene<'_>, parts: &Particles) -> Sc
         alpha: value(&look.alpha_scale, 2),
         color: vector(&look.color_scale, scene, parts, None, 3),
         gain: value(&look.overbright, 4) * (1.0 + value(&look.add_self, 5)),
+        modulate: (blend == Blend::Mod2x).then(|| value(&look.overbright, 4).max(0.0)),
         cover: match blend {
             Blend::Add | Blend::Mod2x | Blend::Lighten => 0.0,
             Blend::BlendAdd => -1.0,
@@ -126,7 +133,8 @@ fn color(look: &Look, s: &Scales, parts: &Particles, i: usize) -> [f32; 4] {
     if look.gamma_vertex_colors {
         rgb = Vec3::new(to_linear(rgb.x), to_linear(rgb.y), to_linear(rgb.z));
     }
-    let rgb = rgb * s.color * s.gain;
+    let gain = if s.modulate.is_some() { 1.0 } else { s.gain };
+    let rgb = rgb * s.color * gain;
     [
         rgb.x,
         rgb.y,
@@ -291,7 +299,12 @@ fn quad(
         tail_color: colors.1,
         uv: f.uv,
         uv_next: f.uv_next,
-        extra: [f.blend, f32::from(u8::from(look.saturate)), s.cover, 0.0],
+        extra: [
+            f.blend,
+            f32::from(u8::from(look.saturate)),
+            s.cover,
+            s.modulate.unwrap_or(0.0),
+        ],
     }
 }
 
@@ -388,7 +401,7 @@ fn draw_projected(
         let at =
             |x: f32, y: f32| on_ground(center + (2.0 * x - 1.0) * right + (1.0 - 2.0 * y) * up);
         let corners = [at(x0, y0), at(x1, y0), at(x0, y1), at(x1, y1)];
-        out.push(quad(
+        let mut card = quad(
             (corners[0] + corners[1]) * 0.5,
             (corners[1] - corners[0]) * 0.5,
             (corners[2] + corners[3]) * 0.5,
@@ -397,7 +410,10 @@ fn draw_projected(
             &f,
             &projected.look,
             &s,
-        ));
+        );
+        // A modulating decal's tint multiplies its texture (Source's projected decals).
+        card.extra[3] = DECAL_TINT;
+        out.push(card);
     }
 }
 
