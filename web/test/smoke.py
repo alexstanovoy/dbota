@@ -273,8 +273,19 @@ BROWSER_ARGS = [
 # postcard's tag of `ServerMsg::Compressed` (the registry is append-only): every frame of a
 # compressed link that is not chat carries it, after the frame's four bytes of length.
 COMPRESSED_TAG = 14
-# Where the main menu's "DIRECT CONNECT" link is in a 1280x720 page, as the client draws it.
-DIRECT_LINK = (195, 21)
+# Where the main menu's "DIRECT CONNECT" link and that page's PLAY button are in a 1280x720 page,
+# as the client draws them.
+DIRECT_LINK = (432, 21)
+DIRECT_PLAY = (457, 276)
+
+
+def press(page, at):
+    """A click the client sees: a software GPU's frame takes a while, and a press and release
+    inside one frame is no click to it."""
+    page.mouse.move(*at)
+    page.mouse.down()
+    page.wait_for_timeout(300)
+    page.mouse.up()
 
 
 def wait_console(page, console, pattern, timeout, what):
@@ -360,9 +371,9 @@ def check_live_page(directory, server_bin):
             page.add_init_script("localStorage.setItem('dbota.menu', " + json.dumps(menu) + ")")
             page.goto(base + "?assets=none")
             page.wait_for_timeout(15000)
-            page.mouse.click(*DIRECT_LINK)
+            press(page, DIRECT_LINK)
             page.wait_for_timeout(5000)
-            page.keyboard.press("Enter")
+            press(page, DIRECT_PLAY)
             wait_console(page, console, r"match known: tick \d+", 240, "the live match")
             page.wait_for_timeout(8000)
             # A software GPU draws a frame in seconds: each step gets one to itself.
