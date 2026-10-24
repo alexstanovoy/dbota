@@ -40,9 +40,11 @@ stamp differs. A new importer revision or manifest version changes the stamp too
 ## What is imported
 
 Everything the manifest lists: the 54 models (static ones, wearables and the 25 animated ones with their
-clips; glb with their images), the map's band around the mid lane (`map/mid/mid.gltf`, its geometry, its
-~300 images, `trees.txt`, `buildings.txt`) with the terrain's layer textures, 120 textures (PNG), 98
-sounds (WAV/MP3) and the tooltip texts (`text/tooltips.json`). A full import writes ~550 MB, 836 files.
+clips; glb with their textures), the map's band around the mid lane (`map/mid/mid.gltf`, its geometry, its
+~300 textures, `trees.txt`, `buildings.txt`) with the terrain's layer textures, 120 interface textures
+(PNG), 98 sounds (WAV/MP3) and the tooltip texts (`text/tooltips.json`). The models' and the map's textures
+are KTX2 files block-compressed with their mip levels (see `tools/README.md`); a WebGPU without
+`texture-compression-bc` gets them decoded as they load. A full import writes ~730 MB, 1226 files.
 
 ## Build and run
 

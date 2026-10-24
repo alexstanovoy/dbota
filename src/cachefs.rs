@@ -5,6 +5,11 @@
 //! over half a gigabyte. In a browser the files come over HTTP, as Bevy
 //! fetches them.
 //!
+//! The cache's model and map textures are KTX2 files block-compressed as Dota
+//! stores them; on a GPU that samples no block format (a browser's WebGPU may
+//! lack `texture-compression-bc`) the reader hands them on decoded to plain
+//! channels.
+//!
 //! Either way textures (PNG and KTX2 files) are let through only while the
 //! ones decoded before them have reached the GPU, a budget of decoded bytes
 //! at a time: loads finish far faster than a frame takes them in while the
@@ -16,7 +21,10 @@ use std::{
     future::Future,
     path::{Path, PathBuf},
     pin::Pin,
-    sync::{Arc, Mutex},
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicBool, Ordering},
+    },
     task::{Context, Poll, Waker},
 };
 
@@ -132,10 +140,45 @@ impl Future for Take<'_> {
     }
 }
 
+/// Whether the GPU samples block-compressed textures (BC1 to BC7): taken to,
+/// until the renderer says.
+#[derive(Resource, Clone)]
+pub struct BlockTextures(Arc<AtomicBool>);
+
+impl Default for BlockTextures {
+    fn default() -> Self {
+        BlockTextures(Arc::new(AtomicBool::new(true)))
+    }
+}
+
+impl BlockTextures {
+    fn sampled(&self) -> bool {
+        self.0.load(Ordering::Relaxed)
+    }
+}
+
+/// Notes before anything loads whether the GPU samples block formats.
+fn note_block_textures(
+    device: Option<Res<bevy::render::renderer::RenderDevice>>,
+    block: Res<BlockTextures>,
+) {
+    let Some(device) = device else {
+        return;
+    };
+    let sampled = device
+        .features()
+        .contains(bevy::render::settings::WgpuFeatures::TEXTURE_COMPRESSION_BC);
+    if !sampled {
+        info!("the GPU samples no BC textures: the cache's are decoded as they load");
+    }
+    block.0.store(sampled, Ordering::Relaxed);
+}
+
 /// Settles the decode budget: a texture added this frame reaches the GPU
 /// when the frame ends, and is let go at the start of the next.
 pub fn plugin(app: &mut App) {
     app.init_resource::<DueTextures>()
+        .add_systems(PreStartup, note_block_textures)
         .add_systems(PostUpdate, arrived.after(bevy::asset::AssetEventSystems))
         .add_systems(First, settle);
 }
@@ -173,6 +216,7 @@ fn settle(mut due: ResMut<DueTextures>, budget: Res<DecodeBudget>) {
 /// Reads the cache folder's files; directories and meta files as Bevy does.
 pub struct CacheReader {
     budget: DecodeBudget,
+    block: BlockTextures,
     root: PathBuf,
     #[cfg(not(target_arch = "wasm32"))]
     files: bevy::asset::io::file::FileAssetReader,
@@ -181,9 +225,10 @@ pub struct CacheReader {
 }
 
 impl CacheReader {
-    pub fn new(root: PathBuf, budget: DecodeBudget) -> CacheReader {
+    pub fn new(root: PathBuf, budget: DecodeBudget, block: BlockTextures) -> CacheReader {
         CacheReader {
             budget,
+            block,
             #[cfg(not(target_arch = "wasm32"))]
             files: bevy::asset::io::file::FileAssetReader::new(&root),
             #[cfg(target_arch = "wasm32")]
@@ -194,6 +239,23 @@ impl CacheReader {
 }
 
 impl CacheReader {
+    /// Whether the file at `path` is handed on decoded: a KTX2 texture when
+    /// the GPU samples no block format.
+    fn decodes(&self, path: &Path) -> bool {
+        !self.block.sampled() && path.extension().is_some_and(|e| e == "ktx2")
+    }
+
+    /// A KTX2 texture's bytes decoded to plain channels, within the decode
+    /// budget like any texture; one no decoder takes is refused.
+    async fn decoded(&self, path: &Path, bytes: &[u8]) -> Result<Vec<u8>, AssetReaderError> {
+        self.admit(path, &bytes[..bytes.len().min(HEAD_BYTES)])
+            .await?;
+        dbota_assets::ktx2_to_plain(bytes).map_err(|why| {
+            let why = format!("{}: {why}", path.display());
+            AssetReaderError::Io(std::io::Error::other(why).into())
+        })
+    }
+
     /// Waits until a texture file fits the decode budget, and refuses one
     /// whose header no decoder may be trusted with.
     async fn admit(&self, path: &Path, head: &[u8]) -> Result<(), AssetReaderError> {
@@ -221,11 +283,19 @@ impl AssetReader for CacheReader {
             }
             Err(err) => return Err(err.into()),
         };
+        if self.decodes(path) {
+            let mut bytes = Vec::new();
+            file.read_to_end(&mut bytes)?;
+            let decoded = self.decoded(path, &bytes).await?;
+            return Ok(desktop::Served::Memory(bevy::asset::io::VecReader::new(
+                decoded,
+            )));
+        }
         let mut head = [0u8; HEAD_BYTES];
         let read = file.read(&mut head)?;
         file.seek(SeekFrom::Start(0))?;
         self.admit(path, &head[..read]).await?;
-        Ok(desktop::CacheFile(file))
+        Ok(desktop::Served::File(desktop::CacheFile(file)))
     }
 
     #[cfg(target_arch = "wasm32")]
@@ -240,6 +310,9 @@ impl AssetReader for CacheReader {
         } else {
             browser::fetch(&self.root.join(path)).await?
         };
+        if self.decodes(path) {
+            return Ok(browser::Bytes(self.decoded(path, &bytes).await?));
+        }
         self.admit(path, &bytes[..bytes.len().min(HEAD_BYTES)])
             .await?;
         Ok(browser::Bytes(bytes))
@@ -333,6 +406,45 @@ mod desktop {
         },
         tasks::futures_lite::io::{AsyncRead, AsyncSeek},
     };
+
+    /// A cache file as the reader serves it: open on the disk, or decoded
+    /// in memory.
+    pub enum Served {
+        File(CacheFile),
+        Memory(bevy::asset::io::VecReader),
+    }
+
+    impl AsyncRead for Served {
+        fn poll_read(
+            self: Pin<&mut Self>,
+            cx: &mut Context<'_>,
+            buf: &mut [u8],
+        ) -> Poll<std::io::Result<usize>> {
+            match self.get_mut() {
+                Served::File(file) => Pin::new(file).poll_read(cx, buf),
+                Served::Memory(bytes) => Pin::new(bytes).poll_read(cx, buf),
+            }
+        }
+    }
+
+    impl Reader for Served {
+        fn read_to_end<'a>(
+            &'a mut self,
+            buf: &'a mut Vec<u8>,
+        ) -> StackFuture<'a, std::io::Result<usize>, STACK_FUTURE_SIZE> {
+            match self {
+                Served::File(file) => file.read_to_end(buf),
+                Served::Memory(bytes) => bytes.read_to_end(buf),
+            }
+        }
+
+        fn seekable(&mut self) -> Result<&mut dyn SeekableReader, ReaderNotSeekableError> {
+            match self {
+                Served::File(file) => file.seekable(),
+                Served::Memory(bytes) => bytes.seekable(),
+            }
+        }
+    }
 
     /// An open cache file, read synchronously: the IO pool's threads are
     /// there to wait on the disk.

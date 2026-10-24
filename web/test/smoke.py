@@ -210,11 +210,11 @@ def import_smoke(args, install):
                     "() => globalThis.dbota_cache && globalThis.dbota_cache.reads && globalThis.dbota_cache.reads.count > 20",
                     timeout=180000,
                 )
-                # The map: its glTF, its geometry and its images.
+                # The map: its glTF, its geometry and its textures.
                 page.wait_for_function(
                     """() => { const s = globalThis.dbota_cache.reads.seen;
                        return s.has('map/mid/mid.gltf') && s.has('map/mid/mid.bin')
-                         && [...s].some((p) => p.startsWith('map/mid/') && p.endsWith('.png')); }""",
+                         && [...s].some((p) => p.startsWith('map/mid/') && p.endsWith('.ktx2')); }""",
                     timeout=300000,
                 )
             except Exception:
@@ -225,7 +225,7 @@ def import_smoke(args, install):
             reads = page.evaluate("() => globalThis.dbota_cache.reads")
             seen = page.evaluate("() => globalThis.dbota_cache.reads.seen.size")
             print("the client read", reads["count"], "times,", seen, "cache files, last:", reads["last"][-3:])
-            assert any(p.endswith((".png", ".mp3", ".wav")) for p in reads["last"]), reads
+            assert any(p.endswith((".png", ".ktx2", ".mp3", ".wav")) for p in reads["last"]), reads
             # The map's chunks are merged and uploaded frame by frame after they are read.
             page.wait_for_timeout(args.settle * 1000)
             # A software GPU draws the whole map slowly: a frame may take minutes.
@@ -237,6 +237,12 @@ def import_smoke(args, install):
         assert not posts, f"the page sent data: {posts}"
         errs = [c for c in console if "panicked" in c or "RuntimeError" in c]
         assert not errs, errs
+        # The models' and the map's textures are block-compressed KTX2 files: drawn as they are
+        # where the GPU samples BC, else decoded as they load; either way none fails.
+        decoded = any("samples no BC textures" in c for c in console)
+        print("textures:", "decoded on load (no BC on this GPU)" if decoded else "block-compressed on the GPU")
+        ktx2 = [c for c in console if ".ktx2" in c and ("rror" in c or "ailed" in c)]
+        assert not ktx2, ktx2[:5]
 
         if not args.keep:
             page.goto(base)

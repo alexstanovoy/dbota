@@ -219,6 +219,143 @@ impl Texture {
         })
     }
 
+    /// A texture of RGBA8 mip `levels` (largest first, `max(1, size >> i)` texels a side), for
+    /// images made level by level from others.
+    pub fn from_rgba8_levels(width: u32, height: u32, levels: Vec<Vec<u8>>) -> Result<Self> {
+        let mut texture =
+            Self::from_rgba8(width, height, levels.first().cloned().unwrap_or_default())?;
+        for (level, pixels) in levels.into_iter().enumerate().skip(1) {
+            let (w, h) = ((width >> level).max(1), (height >> level).max(1));
+            if PixelFormat::Rgba8.level_size(w, h) != Some(pixels.len()) {
+                return Err(malformed(
+                    WHAT,
+                    format!("level {level} is not {w} x {h} RGBA8"),
+                ));
+            }
+            texture.mips.push(pixels);
+        }
+        Ok(texture)
+    }
+
+    /// Every level as RGBA8 pixels (see [`to_rgba8`](Self::to_rgba8)), largest first.
+    pub fn levels_rgba8(&self) -> Result<Vec<Vec<u8>>> {
+        rgba8_size(self.width, self.height)?;
+        self.mips
+            .iter()
+            .enumerate()
+            .map(|(level, mip)| {
+                let (w, h) = ((self.width >> level).max(1), (self.height >> level).max(1));
+                rgba::decode(self.format, mip, w, h)
+            })
+            .collect()
+    }
+
+    /// Whether a GPU samples the texture as it is stored: a block format of the desktop's (BC1
+    /// to BC7) whose largest level is whole blocks, or plain channels.
+    pub fn gpu_ready(&self) -> bool {
+        let (bw, bh, _) = self.format.block();
+        let blocks_whole = self.width.is_multiple_of(bw) && self.height.is_multiple_of(bh);
+        match self.format {
+            PixelFormat::Etc2Rgb
+            | PixelFormat::Etc2Rgba
+            | PixelFormat::EacR11
+            | PixelFormat::EacRg11 => false,
+            _ => blocks_whole,
+        }
+    }
+
+    /// The texture with every mip level down to 1 x 1: an RGBA8 texture of a single level (a PNG
+    /// the game stores, or an image made from others) gets the rest by halving it with a 2 x 2
+    /// box, sRGB colours averaged as light. Others come back as they are.
+    pub fn with_mips(mut self, encoding: Encoding) -> Self {
+        if self.format != PixelFormat::Rgba8 || self.mips.len() != 1 {
+            return self;
+        }
+        let (mut w, mut h) = (self.width, self.height);
+        while w > 1 || h > 1 {
+            let half = rgba::halve(
+                &self.mips[self.mips.len() - 1],
+                w,
+                h,
+                encoding == Encoding::Srgb,
+            );
+            (w, h) = ((w / 2).max(1), (h / 2).max(1));
+            self.mips.push(half);
+        }
+        self
+    }
+
+    /// An RGBA8 texture's levels block-compressed to `format` (BC1, BC3, BC4 or BC5): images made
+    /// from Dota's textures (packed channels, decoded normals) reach the GPU compressed as the
+    /// textures Dota stores do. Colours are fitted by their perceived brightness with
+    /// `Encoding::Srgb`, every channel alike otherwise. Other textures and formats are errors.
+    pub fn compressed(&self, format: PixelFormat, encoding: Encoding) -> Result<Self> {
+        let target = match format {
+            PixelFormat::Bc1 => texpresso::Format::Bc1,
+            PixelFormat::Bc3 => texpresso::Format::Bc3,
+            PixelFormat::Bc4 => texpresso::Format::Bc4,
+            PixelFormat::Bc5 => texpresso::Format::Bc5,
+            other => return Err(malformed(WHAT, format!("no compression to {other:?}"))),
+        };
+        if self.format != PixelFormat::Rgba8 {
+            return Err(malformed(
+                WHAT,
+                format!("compressing {:?} texels", self.format),
+            ));
+        }
+        let params = texpresso::Params {
+            weights: match encoding {
+                Encoding::Srgb => texpresso::COLOUR_WEIGHTS_PERCEPTUAL,
+                Encoding::Linear => texpresso::COLOUR_WEIGHTS_UNIFORM,
+            },
+            ..texpresso::Params::default()
+        };
+        let mips = self
+            .mips
+            .iter()
+            .enumerate()
+            .map(|(level, pixels)| {
+                let (w, h) = ((self.width >> level).max(1), (self.height >> level).max(1));
+                let mut out = vec![0; target.compressed_size(w as usize, h as usize)];
+                target.compress(pixels, w as usize, h as usize, params, &mut out);
+                out
+            })
+            .collect();
+        Ok(Self {
+            format,
+            mips,
+            ..self.clone()
+        })
+    }
+
+    /// A DXT5 texture's colour as BC1, its alpha dropped, block for block and exactly: a DXT5
+    /// colour block always holds four colours, which BC1 reads only with its first endpoint the
+    /// greater, so a block in the other order has its endpoints and indices swapped, and one of
+    /// a single colour points every texel at it.
+    pub fn bc3_colour_as_bc1(&self) -> Result<Self> {
+        if self.format != PixelFormat::Bc3 {
+            return Err(malformed(WHAT, format!("{:?} is not DXT5", self.format)));
+        }
+        let mips = self
+            .mips
+            .iter()
+            .map(|level| {
+                level
+                    .as_chunks::<16>()
+                    .0
+                    .iter()
+                    .map(dxt5_colour_as_bc1)
+                    .collect::<Vec<_>>()
+                    .concat()
+            })
+            .collect();
+        Ok(Self {
+            format: PixelFormat::Bc1,
+            mips,
+            ..self.clone()
+        })
+    }
+
     /// The largest level as RGBA8 pixels: plain RGBA8 as it is, BC1, BC3, BC4, BC5 and BC7
     /// decoded; other formats are errors.
     pub fn to_rgba8(&self) -> Result<Vec<u8>> {
@@ -472,4 +609,27 @@ fn decode_png(png: &[u8], width: u32, height: u32) -> Result<Vec<u8>> {
         return Err(malformed(WHAT, "png pixels do not fill the texture"));
     }
     Ok(rgba)
+}
+
+/// The colour half of a DXT5 block as a BC1 block of the same four colours (see
+/// [`Texture::bc3_colour_as_bc1`]).
+fn dxt5_colour_as_bc1(block: &[u8; 16]) -> [u8; 8] {
+    let colour = &block[8..];
+    let (c0, c1) = (
+        u16::from_le_bytes([colour[0], colour[1]]),
+        u16::from_le_bytes([colour[2], colour[3]]),
+    );
+    let indices = u32::from_le_bytes([colour[4], colour[5], colour[6], colour[7]]);
+    let (c0, c1, indices) = match c0.cmp(&c1) {
+        std::cmp::Ordering::Greater => (c0, c1, indices),
+        // Endpoints swapped: 0 and 1 trade places, so do the thirds (2 and 3).
+        std::cmp::Ordering::Less => (c1, c0, indices ^ 0x5555_5555),
+        // One colour: BC1 would read its fourth index as transparent black.
+        std::cmp::Ordering::Equal => (c0, c1, 0),
+    };
+    let mut out = [0u8; 8];
+    out[..2].copy_from_slice(&c0.to_le_bytes());
+    out[2..4].copy_from_slice(&c1.to_le_bytes());
+    out[4..].copy_from_slice(&indices.to_le_bytes());
+    out
 }

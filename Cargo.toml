@@ -66,6 +66,9 @@ clap = { version = "4", features = ["derive", "env"] }
 serde_json = "1"
 # The fog's cast is a half-float texel (see `fog.rs`).
 half = { version = "2.7.1", default-features = false }
+# `dbota import` (the asset cache made from the local Dota install), and decoding the cache's
+# block-compressed textures for a GPU that samples none.
+dbota_assets = { path = "crates/dbota_assets" }
 
 # wss:// and the matchmaking menu (radovid and the way into a game it hands out) on the desktop: threads and
 # sockets; a browser build has the browser's own WebSocket.
@@ -75,8 +78,6 @@ bota_client_core = { path = "../bota/crates/bota_client_core", features = ["ui",
 # run time, so building needs no development package and a machine without it just has no system fonts.
 bevy = { version = "=0.19.1", default-features = false, features = ["system_font_discovery"] }
 fontique = { version = "=0.9.0", default-features = false, features = ["fontconfig-dlopen"] }
-# `dbota import`: the asset cache made from the local Dota install.
-dbota_assets = { path = "crates/dbota_assets" }
 bota_radovid = { path = "../bota/crates/bota_radovid", features = ["native"] }
 
 # In a browser, Bevy draws through WebGPU where the browser has it, else WebGL2.

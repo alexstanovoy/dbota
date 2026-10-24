@@ -49,7 +49,7 @@ pub use sound::{Sound, SoundFormat};
 #[cfg(any(unix, windows))]
 pub use source::DirSource;
 pub use source::{Slice, SliceSource, Source};
-pub use texture::{Encoding, PixelFormat, Texture};
+pub use texture::{Encoding, PixelFormat, Role, Texture, ktx2_to_plain};
 pub use tooltips::{Wanted, labels_json, tooltips_json};
 pub use vbib::{Buffer, Field};
 pub use vertices::{Attribute, Skin, Vertices};

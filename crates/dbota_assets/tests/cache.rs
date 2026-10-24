@@ -9,6 +9,7 @@
 //! ```
 
 mod common;
+mod images;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -112,9 +113,21 @@ fn files(root: &Path) -> BTreeMap<String, PathBuf> {
 /// An exported file's name as the importer writes it: Source2Viewer's made-up images carry a
 /// hash (`x_orm_123.png` is `x_orm.png`).
 fn unhashed(rel: &str) -> String {
-    match rel.split_once("_orm_") {
+    let rel = match rel.split_once("_orm_") {
         Some((stem, _)) => format!("{stem}_orm.png"),
         None => rel.to_owned(),
+    };
+    as_imported(&rel)
+}
+
+/// Where the importer puts what the exporter wrote at `rel`: a model's or the map's image is a
+/// KTX2 file of the same name (block-compressed, with its mip levels), not a PNG.
+fn as_imported(rel: &str) -> String {
+    let scene = (rel.starts_with("models/") && !rel.starts_with("models/portrait_backgrounds/"))
+        || rel.starts_with("map/");
+    match rel.strip_suffix(".png") {
+        Some(stem) if scene => format!("{stem}.ktx2"),
+        _ => rel.to_owned(),
     }
 }
 
@@ -191,10 +204,56 @@ fn same_clip(ours: &str, theirs: &str) -> bool {
 }
 
 /// A PNG's width and height.
-fn png_size(path: &Path) -> (u32, u32) {
+/// Mean difference of any channel (that the format holds) a KTX2 file's largest level may be
+/// from the exported PNG: block-compressing an image made from Dota's textures (packed
+/// channels, decoded normals) costs about this; Dota's own blocks pass through unchanged.
+const KTX2_MEAN: f64 = 3.0;
+
+/// How a KTX2 file's largest level, decoded, differs from the exported PNG, if more than
+/// [`KTX2_MEAN`] on average: the colours (and alpha where the format has it), the red and green
+/// of a two-channel normal (the exporter wrote its blue worked out).
+fn ktx2_differs(ours: &Path, theirs: &Path) -> Option<String> {
+    use dbota_assets::PixelFormat as P;
+    let bytes = std::fs::read(ours).unwrap();
+    let reader = ktx2::Reader::new(&bytes[..]).unwrap();
+    let header = reader.header();
+    let format = match header.format.map(|f| f.value()) {
+        Some(131..=134) => P::Bc1,
+        Some(137 | 138) => P::Bc3,
+        Some(139) => P::Bc4,
+        Some(141) => P::Bc5,
+        Some(145 | 146) => P::Bc7,
+        Some(37 | 43) => P::Rgba8,
+        other => return Some(format!("a KTX2 of format {other:?}")),
+    };
+    let level = reader.levels().next().unwrap().data;
+    let ours = images::to_rgba(format, header.pixel_width, header.pixel_height, level);
+    let (_, _, theirs) = images::read_png(theirs);
+    let channels: &[usize] = match format {
+        P::Bc5 => &[0, 1],
+        P::Bc1 | P::Bc4 => &[0, 1, 2],
+        _ => &[0, 1, 2, 3],
+    };
+    let pick = |px: &[u8]| -> Vec<u8> {
+        px.chunks(4)
+            .flat_map(|p| channels.iter().map(|&c| p[c]))
+            .collect()
+    };
+    let (max, mean) = images::distance(&pick(&ours), &pick(&theirs));
+    (mean > KTX2_MEAN)
+        .then(|| format!("{format:?} differs by {mean:.2} on average (at most {max})"))
+}
+
+/// The width and height of a PNG or a KTX2 file, from its header.
+fn image_size(path: &Path) -> (u32, u32) {
     let bytes = std::fs::read(path).unwrap();
     let be = |at: usize| u32::from_be_bytes(bytes[at..at + 4].try_into().unwrap());
-    (be(16), be(20))
+    let le = |at: usize| u32::from_le_bytes(bytes[at..at + 4].try_into().unwrap());
+    if bytes.starts_with(b"\x89PNG") {
+        (be(16), be(20))
+    } else {
+        (le(20), le(24))
+    }
 }
 
 /// Whether two text files say the same: JSON as values, placement lines number by number
@@ -255,11 +314,16 @@ fn differs(rel: &str, ours: &Path, theirs: &Path) -> Option<String> {
             (a.len() != b.len() || !diff.is_empty())
                 .then(|| format!("{} vs {} lines; {diff:?}", a.len(), b.len()))
         }
-        "png" => {
-            let (a, b) = (png_size(ours), png_size(theirs));
+        "png" | "ktx2" => {
+            let (a, b) = (image_size(ours), image_size(theirs));
             // The exporter wrote a material's constant mask as one pixel.
             let constant = b == (1, 1);
-            (a != b && !constant).then(|| format!("{a:?} vs {b:?}"))
+            if a != b {
+                return (!constant).then(|| format!("{a:?} vs {b:?}"));
+            }
+            (ext == "ktx2")
+                .then(|| ktx2_differs(ours, theirs))
+                .flatten()
         }
         "txt" | "json" => text_differs(ours, theirs),
         "wav" | "mp3" => (std::fs::read(ours).unwrap() != std::fs::read(theirs).unwrap())

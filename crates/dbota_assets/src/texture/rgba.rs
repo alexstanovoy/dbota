@@ -47,3 +47,44 @@ pub(super) fn png(width: u32, height: u32, pixels: &[u8]) -> Result<Vec<u8>> {
     writer.finish().map_err(err)?;
     Ok(out)
 }
+
+/// RGBA8 `pixels` of `width` x `height` halved with a 2 x 2 box (a side of 1 stays 1); with
+/// `srgb` the colour channels are averaged as light, alpha as it is.
+pub(super) fn halve(pixels: &[u8], width: u32, height: u32, srgb: bool) -> Vec<u8> {
+    let (w, h) = (width as usize, height as usize);
+    let (hw, hh) = ((w / 2).max(1), (h / 2).max(1));
+    let to_light = |v: u8| {
+        let c = f32::from(v) / 255.0;
+        if c <= 0.04045 {
+            c / 12.92
+        } else {
+            ((c + 0.055) / 1.055).powf(2.4)
+        }
+    };
+    let from_light = |l: f32| {
+        let c = if l <= 0.003_130_8 {
+            l * 12.92
+        } else {
+            1.055 * l.powf(1.0 / 2.4) - 0.055
+        };
+        (c * 255.0).round().clamp(0.0, 255.0) as u8
+    };
+    let mut out = vec![0u8; hw * hh * 4];
+    for y in 0..hh {
+        for x in 0..hw {
+            let rows = [(2 * y).min(h - 1), (2 * y + 1).min(h - 1)];
+            let cols = [(2 * x).min(w - 1), (2 * x + 1).min(w - 1)];
+            for c in 0..4 {
+                let texels = rows
+                    .iter()
+                    .flat_map(|r| cols.iter().map(move |col| pixels[(r * w + col) * 4 + c]));
+                out[(y * hw + x) * 4 + c] = if srgb && c < 3 {
+                    from_light(texels.map(to_light).sum::<f32>() / 4.0)
+                } else {
+                    (texels.map(u32::from).sum::<u32>() as f32 / 4.0).round() as u8
+                };
+            }
+        }
+    }
+    out
+}

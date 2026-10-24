@@ -11,6 +11,7 @@ use super::pack::{Pack, orm_uri};
 use super::vmat::{Alpha, Material};
 use crate::error::{Result, malformed};
 use crate::export::ExportedTexture;
+use crate::texture::Role;
 
 /// A glTF material; its textures are indices into the [`Images`] it was made with.
 #[derive(Clone, Debug, PartialEq)]
@@ -171,10 +172,16 @@ fn tie_textures(
         };
         let file = path.rsplit('/').next().unwrap_or(path);
         let pack = pack_of(main, path)?;
+        let role = match main.slot {
+            Slot::BaseColor | Slot::Emissive => Role::Colour,
+            Slot::Normal => Role::Normal,
+            _ => Role::Data,
+        };
         let image = images.get(file.to_owned(), || ExportedTexture {
             vtex: (*path).to_owned(),
             uri: texture_uri(path),
             pack,
+            role,
         });
         tie(out, main.slot, image, orm_occlusion);
     }
@@ -234,6 +241,7 @@ fn orm_image(
                 vtex: (*path).to_owned(),
                 uri: orm_uri(&texture_uri(path)),
                 pack: Some(Pack::Orm),
+                role: Role::Data,
             }))
         }
         _ => {

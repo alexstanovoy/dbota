@@ -16,12 +16,13 @@ use crate::resource::Resource;
 use crate::sound::Sound;
 use crate::source::Source;
 use crate::texture::Texture;
+use crate::texture::{PixelFormat, Role};
 use crate::tooltips::{Wanted, labels_json, tooltips_json};
 use crate::vpk::Vpk;
 use crate::world::{Band, EntityLump, buildings_txt, export_world, lighting_txt, trees_txt};
 
 /// Bumped when the importer's output changes for the same install; part of a cache's stamp.
-pub const IMPORT_REV: u32 = 5;
+pub const IMPORT_REV: u32 = 6;
 
 /// Names what an import of this manifest and these ids makes (FNV-1a 64 of both texts): part of
 /// a cache's stamp, so a cache made from other texts is stale even from the same install.
@@ -758,7 +759,7 @@ fn world(
     let (dir, file) = job.dest.rsplit_once('/').unwrap_or(("", job.dest));
     let stem = file.rsplit_once('.').map_or(file, |(stem, _)| stem);
     let bin = format!("{stem}.bin");
-    let exported = export_world(src, packages, job.path, job.band, &bin, &png_name)?;
+    let exported = export_world(src, packages, job.path, job.band, &bin, &ktx2_name)?;
     out.put(&join(dir, &bin), &exported.bin)?;
     let mut queue = |path: String, what: Later| {
         out.pending.push_back(Pending {
@@ -785,11 +786,7 @@ fn later(src: &impl Source, packages: &[&Vpk], job: &Pending, out: &mut Out<'_>)
     let data = match &job.what {
         Later::Image(texture) => {
             let bytes = read_from(src, packages, &format!("{}_c", texture.vtex))?;
-            let source = Texture::parse(&bytes)?;
-            match texture.pack {
-                None => source.to_png()?,
-                Some(pack) => packed(&source, pack)?,
-            }
+            scene_texture(&Texture::parse(&bytes)?, texture)?
         }
         Later::Layer(vtex) => {
             let bytes = read_from(src, packages, &format!("{vtex}_c"))?;
@@ -804,6 +801,13 @@ fn later(src: &impl Source, packages: &[&Vpk], job: &Pending, out: &mut Out<'_>)
 fn png_name(vtex: &str) -> String {
     let name = vtex.rsplit('/').next().unwrap_or(vtex);
     format!("{}.png", name.trim_end_matches(".vtex"))
+}
+
+/// The texture file of a model's or the map's texture `vtex` (`materials/x_color_psd_1.vtex` is
+/// `x_color_psd_1.ktx2`).
+fn ktx2_name(vtex: &str) -> String {
+    let name = vtex.rsplit('/').next().unwrap_or(vtex);
+    format!("{}.ktx2", name.trim_end_matches(".vtex"))
 }
 
 fn join(dir: &str, file: &str) -> String {
@@ -876,7 +880,7 @@ fn model(src: &impl Source, pak: &Vpk, job: &ModelJob<'_>, out: &mut Out<'_>) ->
         keep.as_deref(),
         skeleton,
         &anims,
-        &png_name,
+        &ktx2_name,
     )?;
     let dir = dest.rsplit_once('/').map_or("", |(dir, _)| dir);
     let mut seen = HashSet::new();
@@ -892,7 +896,7 @@ fn model(src: &impl Source, pak: &Vpk, job: &ModelJob<'_>, out: &mut Out<'_>) ->
     out.put(dest, &exported.glb)
 }
 
-/// The PNG of one image of a model: the texture itself, or its pixels packed.
+/// The KTX2 file of one image of a model: the texture itself, or its pixels packed.
 fn image(
     src: &impl Source,
     pak: &Vpk,
@@ -909,14 +913,35 @@ fn image(
     let Some((_, source)) = decoded.as_ref() else {
         return Err(Error::NotFound(texture.vtex.clone()));
     };
-    match texture.pack {
-        None => source.to_png(),
-        Some(pack) => packed(source, pack),
-    }
+    scene_texture(source, texture)
 }
 
-fn packed(source: &Texture, pack: Pack) -> Result<Vec<u8>> {
-    let mut pixels = source.to_rgba8()?;
-    pack.apply(&mut pixels);
-    Texture::from_rgba8(source.width(), source.height(), pixels)?.to_png()
+/// The KTX2 file of an image of a model or the map, with every mip level, block-compressed: the
+/// texture as Dota stores it where a GPU samples it so (its block format, its levels); a DXT5
+/// colour without its alpha as BC1, exactly; an image made from the texture (packed channels,
+/// a normal Dota keeps in DXT5's alpha and green, a PNG it stores) compressed from its decoded
+/// levels to BC5 for a normal, BC3 for an image with alpha, BC1 otherwise.
+fn scene_texture(source: &Texture, texture: &ExportedTexture) -> Result<Vec<u8>> {
+    let encoding = texture.role.encoding();
+    let image = match texture.pack {
+        None if source.gpu_ready() && source.format() != PixelFormat::Rgba8 => source.clone(),
+        Some(Pack::Rgb) if source.format() == PixelFormat::Bc3 => source.bc3_colour_as_bc1()?,
+        pack => {
+            let mut levels = source.levels_rgba8()?;
+            if let Some(pack) = pack {
+                levels.iter_mut().for_each(|level| pack.apply(level));
+            }
+            let translucent = levels[0].as_chunks::<4>().0.iter().any(|px| px[3] < 255);
+            let format = match (texture.role, pack) {
+                // Its blue is worked out from red and green when drawn.
+                (Role::Normal, None | Some(Pack::Rgb)) => PixelFormat::Bc5,
+                (_, None) if translucent => PixelFormat::Bc3,
+                _ => PixelFormat::Bc1,
+            };
+            Texture::from_rgba8_levels(source.width(), source.height(), levels)?
+                .with_mips(encoding)
+                .compressed(format, encoding)?
+        }
+    };
+    Ok(image.to_ktx2(encoding))
 }

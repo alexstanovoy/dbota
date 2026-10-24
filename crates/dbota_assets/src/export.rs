@@ -7,6 +7,7 @@ use crate::material::{Material, Pack};
 use crate::model::Model;
 use crate::resource::Resource;
 use crate::source::Source;
+use crate::texture::Role;
 use crate::vpk::Vpk;
 
 /// A model converted to `.glb`, and the images its materials use, which the caller writes
@@ -37,6 +38,8 @@ pub struct ExportedTexture {
     pub uri: String,
     /// How its pixels derive from the texture's: [`Pack::apply`]. `None` is the texture as it is.
     pub pack: Option<Pack>,
+    /// What the material reads it as.
+    pub role: Role,
 }
 
 /// A compiled file from the first package that has it.

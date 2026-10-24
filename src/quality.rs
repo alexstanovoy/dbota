@@ -234,9 +234,14 @@ fn shrink_textures(
     }
 }
 
-/// Halves an image with a 2×2 box until no side is over `cap`; leaves one it
-/// cannot read (compressed, mipmapped, or not of 8-bit channels) as it is.
+/// Brings an image within `cap` texels a side: a mipmapped one (the cache's
+/// textures, block-compressed or not) loses its largest levels, a single
+/// level of 8-bit channels is halved with a 2×2 box; any other is left as it is.
 fn shrink(image: &mut Image, cap: u32) {
+    if image.texture_descriptor.mip_level_count > 1 {
+        drop_levels(image, cap);
+        return;
+    }
     let channels = match image.texture_descriptor.format {
         TextureFormat::R8Unorm => 1,
         TextureFormat::Rg8Unorm => 2,
@@ -276,6 +281,43 @@ fn shrink(image: &mut Image, cap: u32) {
     image.texture_descriptor.size.width = w as u32;
     image.texture_descriptor.size.height = h as u32;
     image.data = Some(data);
+}
+
+/// Drops a mipmapped image's largest levels until no side is over `cap` (its
+/// smallest level stays); its levels lie one after another, largest first.
+fn drop_levels(image: &mut Image, cap: u32) {
+    let d = &image.texture_descriptor;
+    if d.size.depth_or_array_layers != 1 || d.dimension != TextureDimension::D2 {
+        return;
+    }
+    let Some(block_bytes) = d.format.block_copy_size(None) else {
+        return;
+    };
+    let (bw, bh) = d.format.block_dimensions();
+    let (width, height, levels) = (d.size.width, d.size.height, d.mip_level_count);
+    let side = |level: u32| ((width >> level).max(1), (height >> level).max(1));
+    let level_bytes = |level: u32| {
+        let (w, h) = side(level);
+        w.div_ceil(bw) as usize * h.div_ceil(bh) as usize * block_bytes as usize
+    };
+    let mut dropped = 0;
+    while dropped + 1 < levels && side(dropped).0.max(side(dropped).1) > cap {
+        dropped += 1;
+    }
+    let skip: usize = (0..dropped).map(level_bytes).sum();
+    let Some(data) = image
+        .data
+        .as_mut()
+        .filter(|data| dropped > 0 && data.len() > skip)
+    else {
+        return;
+    };
+    data.drain(..skip);
+    let (w, h) = side(dropped);
+    let d = &mut image.texture_descriptor;
+    d.size.width = w;
+    d.size.height = h;
+    d.mip_level_count = levels - dropped;
 }
 
 /// Seconds of frames each judgement of `auto_quality` reads.

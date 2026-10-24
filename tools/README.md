@@ -56,7 +56,12 @@ deleted. An asset that does not convert is reported and drawn as a stand-in.
 | `text/labels.json` | the interface's labels the manifest's `label` lines name (the stats tooltip's rows and lines, the talent tree's title and Attribute Bonus), out of the install's localization; the client fills in the simulator's numbers (without the file, its own words) | 2 KB |
 | `sounds/` | 48 WAVs and 50 MP3s (announcer, hero move/attack voice lines, the horns, `ambient/morning.wav` and `night.wav`) resolved through sound events | 17 MB |
 
-Formats: glTF 2.0 binary (`.glb`) with PNG textures next to it (relative URIs), PNG, WAV, MP3. All WAVs
+Formats: glTF 2.0 binary (`.glb`) with KTX2 textures next to it (relative URIs), PNG, WAV, MP3. A model's or
+the map's texture is a KTX2 file as Dota stores it, block-compressed (BC1, BC3) with every mip level; an image
+the importer makes from Dota's (a normal kept in DXT5's alpha and green, packed occlusion/roughness/metallic,
+a channel as grey) is compressed from its decoded levels, to BC5 for a normal (its blue is worked out when
+drawn) and BC1 or BC3 otherwise, and a DXT5 colour without its alpha becomes BC1 block for block. Interface
+textures and the terrain's layers stay PNG. All WAVs
 are PCM 44.1/22.05 kHz, 16-bit except `sounds/ui/ui_general_deny.wav` (8-bit, as Valve ships it);
 Bevy's `wav` feature plays both. Voice lines (`sounds/vo/`) ship as MPEG-1 layer III, 44.1 kHz mono,
 and are kept as `.mp3` (the stdlib cannot transcode them); playing them needs Bevy's `mp3` feature.

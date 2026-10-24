@@ -2,6 +2,13 @@
 //! uncompressed in the container (no supercompression).
 
 use super::format::PixelFormat;
+use crate::error::{Result, malformed};
+
+const WHAT: &str = "ktx2";
+/// Largest side of a texture the importer writes.
+const MAX_SIDE: u32 = 16384;
+/// Most memory the decoded levels of one texture may take.
+const MAX_DECODED: usize = 256 << 20;
 
 /// How the colours of a texture are meant to be read: the sRGB curve of colour textures, or
 /// the plain numbers of normals, masks and data. A `vtex_c` does not say, the material using
@@ -258,4 +265,94 @@ pub(super) fn write(
     }
     out.resize(at, 0);
     out
+}
+
+/// The KTX2 file of plain channels the importer's KTX2 file `bytes` decodes to, for a GPU that
+/// samples no block format: every level decoded (BC1, BC3, BC7 and RGBA8 to RGBA8; BC4 to its
+/// one channel, BC5 to its two, which a normal map is read as), sRGB where the file is. Any
+/// other file is an error.
+pub fn to_plain(bytes: &[u8]) -> Result<Vec<u8>> {
+    let word = |at: usize| {
+        bytes
+            .get(at..at + 4)
+            .map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]]))
+            .ok_or_else(|| malformed(WHAT, "cut short"))
+    };
+    let long = |at: usize| {
+        bytes
+            .get(at..at + 8)
+            .map(|b| u64::from_le_bytes(b.try_into().unwrap_or_default()))
+            .and_then(|v| usize::try_from(v).ok())
+            .ok_or_else(|| malformed(WHAT, "cut short"))
+    };
+    if !bytes.starts_with(&IDENTIFIER) {
+        return Err(malformed(WHAT, "not a KTX2 file"));
+    }
+    let (vk, width, height, levels) = (word(12)?, word(20)?, word(24)?, word(40)? as usize);
+    let (format, srgb) = format_of(vk).ok_or_else(|| malformed(WHAT, format!("format {vk}")))?;
+    let plain = match format {
+        PixelFormat::Bc4 => PixelFormat::R8,
+        PixelFormat::Bc5 => PixelFormat::Rg8,
+        _ => PixelFormat::Rgba8,
+    };
+    if width == 0 || height == 0 || width > MAX_SIDE || height > MAX_SIDE || levels > 32 {
+        return Err(malformed(
+            WHAT,
+            format!("{width} x {height}, {levels} levels"),
+        ));
+    }
+    let decoded: usize = (0..levels.max(1))
+        .filter_map(|l| PixelFormat::Rgba8.level_size((width >> l).max(1), (height >> l).max(1)))
+        .sum();
+    if decoded > MAX_DECODED {
+        return Err(malformed(WHAT, format!("decodes to {decoded} bytes")));
+    }
+    let mut mips = Vec::with_capacity(levels.max(1));
+    for level in 0..levels.max(1) {
+        let at = HEADER + 24 * level;
+        let (offset, length) = (long(at)?, long(at + 8)?);
+        let data = offset
+            .checked_add(length)
+            .and_then(|end| bytes.get(offset..end))
+            .ok_or_else(|| malformed(WHAT, format!("level {level} out of the file")))?;
+        let (w, h) = ((width >> level).max(1), (height >> level).max(1));
+        if format.level_size(w, h) != Some(length) {
+            return Err(malformed(WHAT, format!("level {level} is not {w} x {h}")));
+        }
+        let rgba = super::rgba::decode(format, data, w, h)?;
+        mips.push(match plain {
+            PixelFormat::R8 => rgba.as_chunks::<4>().0.iter().map(|p| p[0]).collect(),
+            PixelFormat::Rg8 => rgba
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .flat_map(|p| [p[0], p[1]])
+                .collect(),
+            _ => rgba,
+        });
+    }
+    let encoding = if srgb {
+        Encoding::Srgb
+    } else {
+        Encoding::Linear
+    };
+    Ok(write(width, height, plain, encoding, &mips))
+}
+
+/// The pixel format, and whether sRGB, of a `vkFormat` the importer writes.
+fn format_of(vk: u32) -> Option<(PixelFormat, bool)> {
+    use PixelFormat as P;
+    Some(match vk {
+        133 => (P::Bc1, false),
+        134 => (P::Bc1, true),
+        137 => (P::Bc3, false),
+        138 => (P::Bc3, true),
+        139 => (P::Bc4, false),
+        141 => (P::Bc5, false),
+        145 => (P::Bc7, false),
+        146 => (P::Bc7, true),
+        37 => (P::Rgba8, false),
+        43 => (P::Rgba8, true),
+        _ => return None,
+    })
 }
