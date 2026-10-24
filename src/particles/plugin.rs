@@ -141,7 +141,7 @@ fn tick(
     ground: Res<crate::map::Ground>,
     mut frame: ResMut<ParticleFrame>,
 ) {
-    let height = |x: f32, y: f32| ground.at(x, y);
+    let height = |x: f32, y: f32| ground.surface_at(x, y);
     let height: Option<HeightAt<'_>> = ground.known().then_some(&height);
     // Effects keep the game's pace: a replay held or sped up holds or speeds them.
     let pace = match &session.0.source {

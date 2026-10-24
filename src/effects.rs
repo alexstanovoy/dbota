@@ -32,8 +32,18 @@ struct Missile;
 #[derive(Clone, Copy)]
 enum Body {
     Effect(crate::particles::Handle),
+    /// A line of a requiem: its effect flies on its own, along the velocity it started with.
+    Line(crate::particles::Handle),
     Bolt(Entity),
 }
+
+/// The effects of Shadow Fiend's abilities, by their manifest names.
+const RAZE: &str = "hero.nevermore.raze";
+const REQUIEM: &str = "hero.nevermore.requiem";
+const REQUIEM_LINE: &str = "hero.nevermore.requiem_line";
+const NECRO_SOUL: &str = "hero.nevermore.necro_soul";
+/// Seconds a requiem line's effect may fly: past what a line flies; the line's end ends it.
+const LINE_SECONDS: f32 = 4.0;
 
 /// The control points a missile's effect is given, as Dota gives a projectile's: where it
 /// left from, where it flies to, and its speed.
@@ -77,12 +87,17 @@ struct Flying {
     missiles: HashMap<EntityId, Body>,
     /// The scorching projectiles already burst, while they are in view.
     burst: HashSet<EntityId>,
+    /// The souls flying to the heroes that took them, by the hero.
+    souls: Vec<(crate::particles::Handle, EntityId)>,
 }
 
 pub fn plugin(app: &mut App) {
     app.init_resource::<Flying>()
         .add_systems(Startup, make_art)
-        .add_systems(Update, (missiles, bursts, age_bursts, level_ups));
+        .add_systems(
+            Update,
+            (missiles, bursts, casts, souls, age_bursts, level_ups),
+        );
 }
 
 fn glow(color: Color) -> StandardMaterial {
@@ -229,6 +244,11 @@ impl Shooters<'_, '_> {
             .unwrap_or(at)
     }
 
+    /// Unit `id`'s root in the world.
+    fn place(&self, id: EntityId) -> Option<Vec3> {
+        Some(self.places.get(*self.index.0.get(&id)?).ok()?.translation())
+    }
+
     /// Unit `id`'s place at missile height, when it has no attachment for it.
     fn at_flight(&self, id: EntityId) -> Option<Vec3> {
         let root = *self.index.0.get(&id)?;
@@ -273,9 +293,25 @@ fn missiles(
         let dir = Vec3::new(f.x - f.tail_x, 0.0, -(f.y - f.tail_y));
         let body = match flying.missiles.get(&f.missile.id).copied() {
             Some(body) => body,
+            // A line's effect starts with its velocity, known once it has moved a tick.
+            None if flight == Flight::Soul
+                && dir == Vec3::ZERO
+                && library
+                    .as_deref()
+                    .is_some_and(|l| l.effect(REQUIEM_LINE).is_some()) =>
+            {
+                continue;
+            }
             None => {
-                let body = match shooters.start(f, at, library.as_deref(), &mut playing) {
-                    Some(handle) => Body::Effect(handle),
+                let line = (flight == Flight::Soul)
+                    .then(|| start_line(f, at, dir, &ground, library.as_deref(), &mut playing))
+                    .flatten();
+                let body = match line.map(Body::Line).or_else(|| {
+                    shooters
+                        .start(f, at, library.as_deref(), &mut playing)
+                        .map(Body::Effect)
+                }) {
+                    Some(body) => body,
                     None => Body::Bolt(spawn_body(&mut commands, &art, f, flight, at, facing(dir))),
                 };
                 flying.missiles.insert(f.missile.id, body);
@@ -284,6 +320,7 @@ fn missiles(
         };
         match body {
             Body::Effect(handle) => shooters.steer(f, at, dir, &mut playing, handle),
+            Body::Line(_) => {}
             Body::Bolt(e) => {
                 if let Ok(mut t) = transforms.get_mut(e) {
                     t.translation = at;
@@ -312,7 +349,7 @@ fn land(
         if !keep {
             match *body {
                 Body::Bolt(e) => commands.entity(e).despawn(),
-                Body::Effect(handle) => {
+                Body::Effect(handle) | Body::Line(handle) => {
                     if let Some(instance) = playing.get_mut(handle) {
                         instance.end();
                     }
@@ -400,19 +437,132 @@ fn from_world(v: Vec3) -> Vec3 {
     Vec3::new(v.x, -v.z, v.y)
 }
 
-/// Sets off a burst where each new raze mark appears.
-fn bursts(
-    mut commands: Commands,
+/// Starts the effect of a requiem's line where missile `f` left (a tick back along `dir`, on the
+/// ground) with the velocity it flies at.
+fn start_line(
+    f: &bota_client_core::Flight,
+    at: Vec3,
+    dir: Vec3,
+    ground: &Ground,
+    library: Option<&Library>,
+    playing: &mut Playing,
+) -> Option<crate::particles::Handle> {
+    let effect = library?.effect(REQUIEM_LINE)?;
+    let handle = playing.start(
+        effect,
+        f.missile.id.idx ^ f.missile.id.generation.rotate_left(16),
+    )?;
+    let instance = playing.get_mut(handle)?;
+    let from = at - dir;
+    let start = Vec3::new(from.x, ground.at(from.x, -from.z), from.z);
+    let velocity = from_world(dir) * bota_core::rules::TICKS_PER_SECOND as f32;
+    instance.set_control_point(0, from_world(start), velocity, true);
+    instance.set_control_point(1, velocity, Vec3::ZERO, true);
+    instance.set_control_point(2, Vec3::splat(LINE_SECONDS), Vec3::ZERO, true);
+    Some(handle)
+}
+
+/// Starts effect `name` at `at` (a point of the world on the ground), to play out on its own.
+fn play_once(
+    library: Option<&Library>,
+    playing: &mut Playing,
+    name: &str,
+    at: Vec3,
+    seed: u32,
+) -> Option<crate::particles::Handle> {
+    let handle = playing.start(library?.effect(name)?, seed)?;
+    playing
+        .get_mut(handle)?
+        .set_control_point(0, from_world(at), Vec3::ZERO, true);
+    Some(handle)
+}
+
+/// A requiem's cast: Dota's burst of souls about its caster as it goes off.
+fn casts(
     session: NonSend<Session>,
-    art: Option<Res<Art>>,
+    library: Option<Res<Library>>,
+    mut playing: ResMut<Playing>,
+    shooters: Shooters,
+    ground: Res<Ground>,
+) {
+    for event in &session.0.told {
+        let EventKind::AbilityCast { caster, ability } = event else {
+            continue;
+        };
+        if *ability != bota_proto::AbilityId::REQUIEM {
+            continue;
+        }
+        if let Some(at) = shooters.place(*caster) {
+            let at = Vec3::new(at.x, ground.at(at.x, -at.z), at.z);
+            play_once(library.as_deref(), &mut playing, REQUIEM, at, caster.idx);
+        }
+    }
+}
+
+/// Necromastery: a soul flies from each unit Shadow Fiend brings down to him, as Dota shows
+/// the soul he gains.
+fn souls(
+    session: NonSend<Session>,
+    library: Option<Res<Library>>,
+    mut playing: ResMut<Playing>,
+    shooters: Shooters,
+    mut flying: ResMut<Flying>,
+) {
+    for event in &session.0.told {
+        let EventKind::Died {
+            unit,
+            killer: Some(killer),
+            denied: false,
+            ..
+        } = event
+        else {
+            continue;
+        };
+        // Necromastery is Shadow Fiend's own.
+        let view = session.0.view();
+        if !view
+            .and_then(|v| v.unit(*killer))
+            .is_some_and(|u| u.hero == Some(bota_proto::HeroId::SHADOW_FIEND))
+        {
+            continue;
+        }
+        let (Some(from), Some(to)) = (
+            shooters.hit(*unit).or_else(|| shooters.at_flight(*unit)),
+            shooters.hit(*killer),
+        ) else {
+            continue;
+        };
+        if let Some(handle) =
+            play_once(library.as_deref(), &mut playing, NECRO_SOUL, from, unit.idx)
+        {
+            if let Some(instance) = playing.get_mut(handle) {
+                instance.set_control_point(1, from_world(to), Vec3::ZERO, true);
+            }
+            flying.souls.push((handle, *killer));
+        }
+    }
+    // The soul follows its hero while it flies.
+    flying.souls.retain(|(handle, hero)| {
+        let Some(instance) = playing.get_mut(*handle) else {
+            return false;
+        };
+        if let Some(to) = shooters.hit(*hero) {
+            instance.set_control_point(1, from_world(to), Vec3::ZERO, false);
+        }
+        true
+    });
+}
+
+/// Sets off Dota's raze, its burst and the scorch it leaves, where each new raze mark appears.
+fn bursts(
+    session: NonSend<Session>,
     ground: Res<Ground>,
     mut flying: ResMut<Flying>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
     fog: Res<crate::fog::FogGrid>,
+    library: Option<Res<Library>>,
+    mut playing: ResMut<Playing>,
 ) {
-    let (core, Some(art)) = (&session.0, art) else {
-        return;
-    };
+    let core = &session.0;
     let Some(view) = core.view() else {
         return;
     };
@@ -428,19 +578,9 @@ fn bursts(
         if fog.hides(p.seen_by) || !art_by(by).scorches || !flying.burst.insert(p.id) {
             continue;
         }
-        let at = (p.pos.x.to_f32(), p.pos.y.to_f32());
-        burst(
-            &mut commands,
-            &art,
-            &mut materials,
-            &ground,
-            at,
-            1.0,
-            (
-                Color::srgba(1.0, 0.35, 0.15, 0.9),
-                LinearRgba::rgb(2.0, 0.5, 0.2),
-            ),
-        );
+        let (x, y) = (p.pos.x.to_f32(), p.pos.y.to_f32());
+        let at = Vec3::new(x, ground.at(x, y), -y);
+        play_once(library.as_deref(), &mut playing, RAZE, at, p.id.idx);
     }
 }
 

@@ -44,6 +44,19 @@ pub struct Ground {
     n: usize,
     /// Height of every cell, row-major from the south-west.
     heights: Vec<f32>,
+    /// The terrain's own triangles, for what must lie on the drawn ground exactly.
+    surface: Option<std::sync::Arc<TerrainSurface>>,
+}
+
+/// The terrain's triangles by the cells they cover: a height read from them is the drawn
+/// ground's, where the cell means of [`Ground::at`] may sit under it on a bump.
+#[derive(Debug, Default)]
+struct TerrainSurface {
+    /// Vertices, bota x and y and height.
+    points: Vec<[f32; 3]>,
+    triangles: Vec<[u32; 3]>,
+    /// Per cell (as [`Ground`]'s), the triangles over it.
+    cells: Vec<Vec<u32>>,
 }
 
 impl Ground {
@@ -63,10 +76,41 @@ impl Ground {
         south + (north - south) * ky
     }
 
+    /// The height of the drawn terrain at a bota world point (its highest triangle there):
+    /// where Source's traces would find it, for what is laid on the ground; [`Self::at`]
+    /// where the terrain's triangles are not known.
+    pub fn surface_at(&self, x: f32, y: f32) -> f32 {
+        let found = self.surface.as_ref().and_then(|surface| {
+            let (cx, cy) = ((x / CELL).floor(), (y / CELL).floor());
+            if cx < 0.0 || cy < 0.0 || cx >= self.n as f32 || cy >= self.n as f32 {
+                return None;
+            }
+            let cell = &surface.cells[cy as usize * self.n + cx as usize];
+            cell.iter()
+                .filter_map(|&t| height_in(&surface.points, surface.triangles[t as usize], x, y))
+                .reduce(f32::max)
+        });
+        found.unwrap_or_else(|| self.at(x, y))
+    }
+
     /// Whether the ground is known.
     pub fn known(&self) -> bool {
         self.n > 0
     }
+}
+
+/// The height of triangle `t` at `(x, y)`, if the point is over it.
+fn height_in(points: &[[f32; 3]], t: [u32; 3], x: f32, y: f32) -> Option<f32> {
+    let [a, b, c] = t.map(|i| points[i as usize]);
+    let det = (b[1] - c[1]) * (a[0] - c[0]) + (c[0] - b[0]) * (a[1] - c[1]);
+    if det.abs() < 1e-6 {
+        return None;
+    }
+    let u = ((b[1] - c[1]) * (x - c[0]) + (c[0] - b[0]) * (y - c[1])) / det;
+    let v = ((c[1] - a[1]) * (x - c[0]) + (a[0] - c[0]) * (y - c[1])) / det;
+    let w = 1.0 - u - v;
+    const EDGE: f32 = -1e-4;
+    (u >= EDGE && v >= EDGE && w >= EDGE).then(|| u * a[2] + v * b[2] + w * c[2])
 }
 
 /// The material the terrain and the floor under it are drawn with.
@@ -827,6 +871,7 @@ pub(crate) struct Samples {
     n: usize,
     sum: Vec<f32>,
     count: Vec<u32>,
+    surface: TerrainSurface,
 }
 
 impl Samples {
@@ -835,6 +880,10 @@ impl Samples {
             n,
             sum: vec![0.0; n * n],
             count: vec![0; n * n],
+            surface: TerrainSurface {
+                cells: vec![Vec::new(); n * n],
+                ..TerrainSurface::default()
+            },
         }
     }
 
@@ -854,6 +903,40 @@ impl Samples {
             self.sum[at] += y;
             self.count[at] += 1;
         }
+        self.add_triangles(mesh, positions);
+    }
+
+    /// Keeps the mesh's triangles, each listed in the cells its bounds cover.
+    fn add_triangles(&mut self, mesh: &Mesh, positions: &[[f32; 3]]) {
+        let Some(indices) = mesh.indices() else {
+            return;
+        };
+        let base = self.surface.points.len() as u32;
+        let surface = &mut self.surface;
+        surface
+            .points
+            .extend(positions.iter().map(|&[x, y, z]| [x, -z, y]));
+        let indices: Vec<u32> = indices.iter().map(|i| i as u32).collect();
+        for t in indices.as_chunks::<3>().0 {
+            let t = [t[0] + base, t[1] + base, t[2] + base];
+            let corners = t.map(|i| surface.points[i as usize]);
+            let (x0, x1) = (
+                corners.iter().map(|p| p[0]).fold(f32::MAX, f32::min),
+                corners.iter().map(|p| p[0]).fold(f32::MIN, f32::max),
+            );
+            let (y0, y1) = (
+                corners.iter().map(|p| p[1]).fold(f32::MAX, f32::min),
+                corners.iter().map(|p| p[1]).fold(f32::MIN, f32::max),
+            );
+            let cell = |v: f32| ((v / CELL).floor().max(0.0) as usize).min(self.n - 1);
+            let index = surface.triangles.len() as u32;
+            surface.triangles.push(t);
+            for cy in cell(y0)..=cell(y1) {
+                for cx in cell(x0)..=cell(x1) {
+                    surface.cells[cy * self.n + cx].push(index);
+                }
+            }
+        }
     }
 
     /// The ground, every cell without a vertex taking its neighbours'
@@ -867,8 +950,11 @@ impl Samples {
             .map(|(s, c)| (*c > 0).then(|| [s / *c as f32]))
             .collect();
         fill_holes(&mut heights, n, [(0, 1), (0, -1), (1, 0), (-1, 0)], n);
+        let surface =
+            (!self.surface.triangles.is_empty()).then(|| std::sync::Arc::new(self.surface));
         Ground {
             n,
+            surface,
             heights: heights
                 .into_iter()
                 .map(|h| h.map_or(128.0, |[h]| h))
@@ -1018,5 +1104,9 @@ fn build_fallback_ground(
             heights.at((cx as f32 + 0.5) * CELL, (cy as f32 + 0.5) * CELL)
         })
         .collect();
-    *ground = Ground { n, heights: cells };
+    *ground = Ground {
+        n,
+        heights: cells,
+        surface: None,
+    };
 }
