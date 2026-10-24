@@ -282,20 +282,21 @@ fn load_models(mut bank: ResMut<ModelBank>, server: Res<AssetServer>, manifest: 
             }
         }
     }
-    // Neutral models load when their first unit comes into view: a match
-    // shows a few of the forty-odd kinds at a time.
+    // Every unit model loads while the game does, the neutrals' too: with
+    // their textures block-compressed they take some 60 MiB of video memory,
+    // and loaded at a camp's first sight their uploads held that frame.
     for model in manifest
         .models
         .iter()
-        .filter(|m| m.attach.is_none() && !LAZY_MODELS.iter().any(|p| m.logical.starts_with(p)))
+        .filter(|m| m.attach.is_none() && !m.logical.starts_with(TREE_MODELS))
     {
         bank.0.push(bank_entry(&server, &manifest, model));
     }
 }
 
-/// Models loaded when a unit first needs them rather than at start, by
-/// logical-name prefix; trees are not units and load elsewhere.
-const LAZY_MODELS: [&str; 2] = ["tree.", "neutral."];
+/// The logical-name prefix of tree models: trees are not units and load
+/// elsewhere (`trees.rs`).
+const TREE_MODELS: &str = "tree.";
 
 /// A model of the manifest, its files asked of the asset server: each
 /// file once, as a whole.
@@ -623,26 +624,12 @@ struct SyncParams<'w, 's> {
     commands: Commands<'w, 's>,
     index: ResMut<'w, UnitIndex>,
     bank: ResMut<'w, ModelBank>,
-    server: Res<'w, AssetServer>,
     manifest: Res<'w, Manifest>,
     yaws: Res<'w, BuildingYaws>,
     stand_ins: Option<Res<'w, StandIns>>,
     ground: Res<'w, Ground>,
     fog: Res<'w, FogGrid>,
     time: Res<'w, Time>,
-}
-
-impl SyncParams<'_, '_> {
-    /// Starts loading a model the bank holds only once it is wanted.
-    fn ensure_model(&mut self, name: &str) {
-        if self.bank.0.iter().any(|m| m.model.logical == name) {
-            return;
-        }
-        if let Some(model) = self.manifest.model(name) {
-            let entry = bank_entry(&self.server, &self.manifest, model);
-            self.bank.0.push(entry);
-        }
-    }
 }
 
 /// Units spawned a frame at most.
@@ -693,11 +680,7 @@ fn sync_units(
             None if spawned >= SPAWNS_PER_FRAME => continue,
             None => {
                 // Not before its model has loaded whole, wearables and all.
-                let name = model_name(u, map, &p.manifest);
-                if let Some(name) = &name {
-                    p.ensure_model(name);
-                }
-                let waiting = name
+                let waiting = model_name(u, map, &p.manifest)
                     .and_then(|name| p.bank.0.iter().find(|m| m.model.logical == name))
                     .is_some_and(|m| !m.ready());
                 if waiting {
