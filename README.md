@@ -93,8 +93,8 @@ separate logins). In a LOBBY the owner's READY stays dimmed ("Waiting for more p
 the lobby is full.
 
 `--script "STEP;STEP;..."` drives the window like a person, for end-to-end tests (see
-`tests/menu_quit.rs`): `key:NAME`, `type:TEXT` (into the focused field; `key:Tab` for the next),
-`click:BUTTON` (the label in lower case; in a game `pick ready`, `pick <hero>`; a dimmed button
+`tests/menu_quit.rs`): `key:NAME`, `text:TEXT` (into the focused field; `key:Tab` for the next),
+`mouse:X,Y` (shares of the window), `lclick`, `rclick`, `down:KEY` / `up:KEY`, `click:BUTTON` (the label in lower case; in a game `pick ready`, `pick <hero>`; a dimmed button
 ends the run with exit code 2), `await:menu|game|popup|nopopup|button:NAME` (`popup` covers the
 match-found offer), `shot:FILE`, `wait:SECONDS`. A step that waits more than two minutes ends the run
 with exit code 2.

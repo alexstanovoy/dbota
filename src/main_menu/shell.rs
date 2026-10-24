@@ -3,11 +3,13 @@
 //! keyboard routed to its fields, and the way back when a game ends.
 
 use bevy::{
+    clipboard::{Clipboard, ClipboardRead},
     input::{
         ButtonState, InputSystems,
         keyboard::{Key, KeyboardInput},
     },
     prelude::*,
+    window::Ime,
 };
 use bota_client_core::{App as Core, Source};
 
@@ -289,18 +291,42 @@ fn settings_screen(
     *was_open = screen.open;
 }
 
-/// Types into the menu's fields while it covers the screen.
-fn keyboard(core: Option<NonSendMut<MenuCore>>, mut events: MessageReader<KeyboardInput>) {
+/// The most of a paste taken into a field, in characters; the field cuts it to its own length.
+const MAX_PASTE: usize = 4096;
+
+/// Types into the menu's fields while it covers the screen: keys, text an input method or a
+/// script commits, and a paste (Ctrl+V, or Shift+Insert).
+#[allow(clippy::too_many_arguments)]
+fn keyboard(
+    core: Option<NonSendMut<MenuCore>>,
+    mut events: MessageReader<KeyboardInput>,
+    mut composing: MessageReader<Ime>,
+    held: Res<ButtonInput<KeyCode>>,
+    mut clipboard: ResMut<Clipboard>,
+    mut pasting: Local<Option<ClipboardRead>>,
+) {
     let Some(mut core) = core else {
         events.clear();
+        composing.clear();
+        *pasting = None;
         return;
     };
     if matches!(core.page(), Page::Game | Page::Settings) {
         events.clear();
+        composing.clear();
+        *pasting = None;
         return;
     }
+    let control = held.any_pressed([KeyCode::ControlLeft, KeyCode::ControlRight]);
+    let shift = held.any_pressed([KeyCode::ShiftLeft, KeyCode::ShiftRight]);
     for event in events.read() {
         if event.state != ButtonState::Pressed {
+            continue;
+        }
+        let paste = (control && event.key_code == KeyCode::KeyV)
+            || (shift && event.key_code == KeyCode::Insert);
+        if paste {
+            *pasting = Some(clipboard.fetch_text());
             continue;
         }
         let act = match &event.logical_key {
@@ -308,9 +334,23 @@ fn keyboard(core: Option<NonSendMut<MenuCore>>, mut events: MessageReader<Keyboa
             Key::Tab => Act::NextField,
             Key::Backspace => Act::Erase,
             Key::Space => Act::Type(" ".to_owned()),
+            Key::Character(_) if control => continue,
             Key::Character(typed) => Act::Type(typed.to_string()),
             _ => continue,
         };
         core.act(act);
+    }
+    for event in composing.read() {
+        if let Ime::Commit { value, .. } = event {
+            core.act(Act::Type(value.chars().take(MAX_PASTE).collect()));
+        }
+    }
+    if let Some(read) = pasting.as_mut()
+        && let Some(result) = read.poll_result()
+    {
+        *pasting = None;
+        if let Ok(text) = result {
+            core.act(Act::Type(text.chars().take(MAX_PASTE).collect()));
+        }
     }
 }

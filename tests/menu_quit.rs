@@ -138,6 +138,24 @@ fn a_game_is_disconnected_from_and_rejoined() {
     played("a live game", result, script);
 }
 
+/// With no service configured the menu opens on the local pages, and a game's address typed
+/// with `text:` (as an input method commits it) joins that game.
+#[test]
+#[ignore = "opens a window: tools/visual_check.sh runs it on a display"]
+fn without_a_service_the_menu_is_local_and_takes_typed_text() {
+    let scratch = Scratch::new("local");
+    let (mut server, address) = serve();
+    let script = format!(
+        "await:menu;await:button:create;shot:local-first.png;click:direct connect;\
+         text:{address};click:play;await:game;wait:2;key:Escape;await:menu;click:disconnect;\
+         await:button:reconnect;click:quit;await:popup;click:ok"
+    );
+    let result = run(&scratch, &[], &script);
+    let _ = server.kill();
+    let _ = server.wait();
+    played("a local menu", result, &script);
+}
+
 /// Dota's LEAVE GAME: from a seat in a match under way it asks, then abandons the match: the
 /// other seat is told it won, and the client is back at its menu.
 #[test]

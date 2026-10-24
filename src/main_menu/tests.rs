@@ -518,7 +518,11 @@ fn direct_match() -> (Server, Vec<(Core, HeroId)>) {
     let mut cores = Vec::new();
     for (address, hero) in [(tcp, HeroId::SHADOW_FIEND), (ws, HeroId::PUDGE)] {
         let mut player = Player::new(None);
-        assert_eq!(player.menu.page(), Page::Service, "no service known");
+        assert_eq!(
+            player.menu.page(),
+            Page::LocalLobby,
+            "no service known: the local pages"
+        );
         player.menu.act(Act::Go(Page::Direct));
         player.fill(&[&address]);
         player.menu.act(Act::Direct(false));

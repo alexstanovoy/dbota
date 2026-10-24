@@ -458,8 +458,13 @@ fn show_input(
 }
 
 /// Lets an input method compose into the line while one is open.
-fn ime(typing: Res<Typing>, mut window: Single<&mut Window, With<PrimaryWindow>>) {
-    let want = *typing == Typing::Chat;
+fn ime(
+    typing: Res<Typing>,
+    menu: Option<NonSend<crate::main_menu::MenuCore>>,
+    mut window: Single<&mut Window, With<PrimaryWindow>>,
+) {
+    // The menu's own fields want an input method too while it covers the game.
+    let want = *typing == Typing::Chat || menu.is_some_and(|menu| menu.wants_text());
     if window.ime_enabled != want {
         window.ime_enabled = want;
     }

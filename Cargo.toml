@@ -12,7 +12,7 @@ publish = false
 
 [dependencies]
 # Bevy's parts dbota draws and plays with, nothing more: no gamepads, no
-# clipboard, no system-info polling, no mesh or sprite picking, no post
+# system-info polling, no mesh or sprite picking, no post
 # processing besides anti-aliasing, no built-in font.
 bevy = { version = "=0.19.1", default-features = false, features = [
     # The app, its window and its threads.
@@ -23,6 +23,8 @@ bevy = { version = "=0.19.1", default-features = false, features = [
     "bevy_log",
     "reflect_auto_register",
     "bevy_winit",
+    # A paste (Ctrl+V) into the menu's fields.
+    "system_clipboard",
     "x11",
     "wayland",
     # The 3D scene: glTF models and their clips, the sun, PBR, gizmos.

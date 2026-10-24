@@ -449,7 +449,8 @@ impl MenuCore {
         if let Some(service) = service {
             prefs.service = service;
         }
-        MenuCore {
+        let local_first = prefs.service.is_empty();
+        let mut core = MenuCore {
             store,
             form: Form::new(FormKind::Service, &prefs),
             prefs,
@@ -490,7 +491,14 @@ impl MenuCore {
             bot_command: String::new(),
             hosted_at: None,
             tried_service: false,
+        };
+        // No service to reach: the menu opens on what needs none, and the sign-in shows when
+        // the player goes to the online pages.
+        if local_first {
+            core.settings_from = Page::LocalLobby;
+            core.go_form(Page::LocalLobby);
         }
+        core
     }
 
     /// The settings' bot command, which a local lobby runs for its bot seats.
@@ -545,6 +553,12 @@ impl MenuCore {
             core.last_seat = Some(Launch::Given);
         }
         core
+    }
+
+    /// Whether the page has a text field the player may type into (an input method is then
+    /// wanted).
+    pub fn wants_text(&self) -> bool {
+        !matches!(self.page, Page::Game | Page::Settings) && !self.form.fields().is_empty()
     }
 
     /// The player confirmed quitting, once.
@@ -676,6 +690,7 @@ impl MenuCore {
             (Some(OnScreen::Local), _) => Page::LocalLobby,
             (Some(OnScreen::Replay), _) => Page::Replays,
             (_, Conn::LoggedIn) => Page::Home,
+            (_, Conn::Offline) if self.prefs.service.is_empty() => Page::LocalLobby,
             (_, Conn::Offline) => Page::Service,
             _ => Page::Login,
         }

@@ -13,21 +13,31 @@
 //!   `return`, `disconnect`, `reconnect`; in a game `pick ready` and
 //!   `pick <hero>`); a button shown dimmed (`READY` alone in a lobby)
 //!   ends the client with exit code 2 at once;
-//! - `type:TEXT`: the text typed into the focused field (`Tab` moves on);
 //! - `await:WHAT`: until `menu` covers the screen, a `game` is on it, a
 //!   `popup` (a question or the match-found offer) is up or `nopopup` is not, or a button named `button:NAME`
 //!   shows;
 //! - `shot:FILE`: the screen saved under `--screenshot-dir`;
-//! - `wait:SECONDS`.
+//! - `wait:SECONDS`;
+//! - `mouse:X,Y`: the pointer moved to that point of the window, in shares
+//!   of its width and height (`0.5,0.5` is the middle), so a script plays
+//!   the same at any size;
+//! - `lclick`, `rclick`: the left or right button pressed and let go where
+//!   the pointer is;
+//! - `down:NAME`, `up:NAME`: a key held (a modifier for the clicks that
+//!   follow) and let go;
+//! - `text:TEXT`: text typed (through the input method's commit, as any
+//!   script's text comes in), into the focused field of the menu or the chat
+//!   line (`key:Tab` moves between fields).
 
 use bevy::{
     input::{
         ButtonState, InputSystems,
         keyboard::{Key, KeyboardInput},
+        mouse::MouseButtonInput,
     },
     prelude::*,
     render::view::screenshot::{Screenshot, save_to_disk},
-    window::PrimaryWindow,
+    window::{CursorMoved, Ime, PrimaryWindow},
 };
 
 use crate::main_menu::MenuCore;
@@ -41,10 +51,21 @@ const PATIENCE: f32 = 120.0;
 enum Step {
     Key(KeyCode),
     Click(String),
-    Type(String),
     Await(Awaited),
     Shot(String),
     Wait(f32),
+    Mouse(Vec2),
+    Button(MouseButton),
+    Down(KeyCode),
+    Up(KeyCode),
+    Text(String),
+}
+
+/// A key or a mouse button pressed last frame, to let go of now.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Held {
+    Key(KeyCode),
+    Mouse(MouseButton),
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -63,8 +84,7 @@ struct Script {
     at: usize,
     /// When the step under way began.
     began: Option<f32>,
-    /// A key pressed last frame, to let go of now.
-    held: Option<KeyCode>,
+    held: Option<Held>,
     /// The button to press after the pointer's own pass this frame.
     click: Option<String>,
     /// A screenshot asked for, until its file is there.
@@ -83,7 +103,6 @@ fn parse(text: &str) -> Result<Vec<(String, Step)>, String> {
                     crate::keys::key_named(arg).ok_or_else(|| format!("no key named '{arg}'"))?,
                 ),
                 "click" => Step::Click(arg.to_owned()),
-                "type" => Step::Type(arg.to_owned()),
                 "await" => Step::Await(match arg {
                     "menu" => Awaited::Menu,
                     "game" => Awaited::Game,
@@ -95,6 +114,24 @@ fn parse(text: &str) -> Result<Vec<(String, Step)>, String> {
                     },
                 }),
                 "shot" => Step::Shot(arg.to_owned()),
+                "mouse" => Step::Mouse(
+                    arg.split_once(',')
+                        .and_then(|(x, y)| Some(Vec2::new(x.parse().ok()?, y.parse().ok()?)))
+                        .filter(|at| at.cmpge(Vec2::ZERO).all() && at.cmple(Vec2::ONE).all())
+                        .ok_or_else(|| format!("'{arg}' is not X,Y within 0 to 1"))?,
+                ),
+                "lclick" => Step::Button(MouseButton::Left),
+                "rclick" => Step::Button(MouseButton::Right),
+                "down" | "up" => {
+                    let key = crate::keys::key_named(arg)
+                        .ok_or_else(|| format!("no key named '{arg}'"))?;
+                    if what == "down" {
+                        Step::Down(key)
+                    } else {
+                        Step::Up(key)
+                    }
+                }
+                "text" => Step::Text(arg.to_owned()),
                 "wait" => Step::Wait(
                     arg.parse()
                         .map_err(|_| format!("'{arg}' is not a number of seconds"))?,
@@ -154,13 +191,16 @@ fn play(
     session: NonSend<Session>,
     buttons: Query<&Name, With<Button>>,
     disabled: Query<&Name, With<crate::main_menu::Disabled>>,
-    window: Query<Entity, With<PrimaryWindow>>,
+    mut window: Query<(Entity, &mut Window), With<PrimaryWindow>>,
     mut keys: MessageWriter<KeyboardInput>,
+    mut mouse: MessageWriter<MouseButtonInput>,
+    mut moved: MessageWriter<CursorMoved>,
+    mut ime: MessageWriter<Ime>,
     mut commands: Commands,
     args: Res<crate::Args>,
     mut exit: MessageWriter<AppExit>,
 ) {
-    let Ok(window) = window.single() else {
+    let Ok((window, mut win)) = window.single_mut() else {
         return;
     };
     let typed = |key_code: KeyCode, state: ButtonState| KeyboardInput {
@@ -177,9 +217,20 @@ fn play(
         repeat: false,
         window,
     };
-    if let Some(key) = script.held.take() {
-        keys.write(typed(key, ButtonState::Released));
-        return;
+    match script.held.take() {
+        Some(Held::Key(key)) => {
+            keys.write(typed(key, ButtonState::Released));
+            return;
+        }
+        Some(Held::Mouse(button)) => {
+            mouse.write(MouseButtonInput {
+                button,
+                state: ButtonState::Released,
+                window,
+            });
+            return;
+        }
+        None => {}
     }
     let now = time.elapsed_secs();
     let Some((line, step)) = script.steps.get(script.at).cloned() else {
@@ -189,27 +240,46 @@ fn play(
     let done = match &step {
         Step::Key(key) => {
             keys.write(typed(*key, ButtonState::Pressed));
-            script.held = Some(*key);
+            script.held = Some(Held::Key(*key));
+            true
+        }
+        Step::Down(key) => {
+            keys.write(typed(*key, ButtonState::Pressed));
+            true
+        }
+        Step::Up(key) => {
+            keys.write(typed(*key, ButtonState::Released));
+            true
+        }
+        Step::Mouse(share) => {
+            let position = *share * win.size();
+            win.set_cursor_position(Some(position));
+            moved.write(CursorMoved {
+                window,
+                position,
+                delta: None,
+            });
+            true
+        }
+        Step::Button(button) => {
+            mouse.write(MouseButtonInput {
+                button: *button,
+                state: ButtonState::Pressed,
+                window,
+            });
+            script.held = Some(Held::Mouse(*button));
+            true
+        }
+        Step::Text(text) => {
+            ime.write(Ime::Commit {
+                window,
+                value: text.clone(),
+            });
             true
         }
         // Once the button shows.
         Step::Click(name) if buttons.iter().any(|n| n.as_str() == name) => {
             script.click = Some(name.clone());
-            true
-        }
-        Step::Type(text) => {
-            for c in text.chars() {
-                keys.write(KeyboardInput {
-                    key_code: KeyCode::Unidentified(
-                        bevy::input::keyboard::NativeKeyCode::Unidentified,
-                    ),
-                    logical_key: Key::Character(c.to_string().into()),
-                    state: ButtonState::Pressed,
-                    text: None,
-                    repeat: false,
-                    window,
-                });
-            }
             true
         }
         Step::Click(name) if disabled.iter().any(|n| n.as_str() == name) => {
