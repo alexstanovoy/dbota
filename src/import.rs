@@ -3,9 +3,9 @@
 
 use std::path::{Path, PathBuf};
 
-use dbota_assets::cache_dir::{import_into, is_current, matches_plan, stamp, stamp_prefix};
-use dbota_assets::find_game_dir;
-use dbota_assets::import::{Flow, Plan, plan_id};
+use dbota_import::cache_dir::{import_into, is_current, matches_plan, stamp, stamp_prefix};
+use dbota_import::import::{Flow, Plan, plan_id};
+use heatel::find_game_dir;
 
 const MANIFEST: &str = include_str!("../assets-manifest/manifest.txt");
 const IDS: &str = include_str!("../assets-manifest/ids.txt");

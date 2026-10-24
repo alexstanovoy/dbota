@@ -21,9 +21,9 @@ Content-Security-Policy only allows connections to its own origin (game sockets 
 | `test/smoke.py` | the Playwright smoke test (below) |
 | `build.sh` | builds `web/out` |
 
-The Rust side: `crates/dbota_assets` (`import.rs`: the manifest's plan, the step-wise importer with
-read/write budgets and checked output paths), `crates/dbota_import` (the wasm module: the picked
-`File`s as a `Source` read with `File.slice` + `FileReaderSync`), and in the client `src/webcache.rs`
+The Rust side: `crates/dbota_import` (`import.rs`: the manifest's plan, the step-wise importer with
+read/write budgets and checked output paths, over heatel's readers; `web.rs`: the wasm module, the
+picked `File`s as a `Source` read with `File.slice` + `FileReaderSync`), and in the client `src/webcache.rs`
 + `src/cachefs.rs` (the OPFS reader: `CacheReader`'s browser backend; the few files the client reads
 synchronously at start are loaded into memory by the page first) + `src/manifest.rs` (what is there
 comes from the cache's index).
@@ -67,7 +67,7 @@ of hard links to the install's packages: privacy text and stand-ins offered, fol
 worker imports, the copy persists over a reload, the client starts and reads it, nothing but the page's
 own origin is requested and nothing is sent, the copy is deleted. It also unit-tests the
 folder logic (`webkitdirectory` lists, `showDirectoryPicker` folder levels) against a folder tree
-made in OPFS. The native importer tests are in `crates/dbota_assets/tests/import.rs`.
+made in OPFS. The native importer tests are in `crates/dbota_import/tests/import.rs`.
 
 Two more checks need no Dota install (the page runs on stand-ins, `?assets=none`); the docstring of
 `smoke.py` has the build commands. `--replay-page` opens a build with a Zstandard-packed replay built in

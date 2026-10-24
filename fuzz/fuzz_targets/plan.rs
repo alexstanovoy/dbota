@@ -6,8 +6,8 @@
 use std::path::PathBuf;
 use std::sync::OnceLock;
 
-use dbota_assets::cache_dir::{INDEX, STAMP, is_current, matches_plan, stamp_prefix};
-use dbota_assets::import::{Item, Plan, is_small, plan_id, safe_path};
+use dbota_import::cache_dir::{INDEX, STAMP, is_current, matches_plan, stamp_prefix};
+use dbota_import::import::{Item, Plan, is_small, plan_id, safe_path};
 use libfuzzer_sys::fuzz_target;
 
 /// A cache folder of this process, in the temporary folder.
@@ -28,6 +28,7 @@ fn outputs(item: &Item) -> Vec<&str> {
         | Item::Sound { out, .. }
         | Item::Tooltips { out, .. }
         | Item::Shop { out, .. }
+        | Item::Labels { out, .. }
         | Item::Portraits { out, .. } => vec![out],
         Item::World { out, layers, .. } => vec![out, layers],
         Item::Placements {

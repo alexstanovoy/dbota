@@ -3,7 +3,7 @@
 `dbota import` converts the Dota 2 models, map, textures, sounds and texts that dbota draws into a
 local cache, from your own Dota 2 install. **Valve's files are for personal use only**: they live in
 the cache, outside any repository, and are never committed or published. Only our own code and the
-manifest are in git. Nothing is downloaded: the converter (`crates/dbota_assets`) is part of dbota,
+manifest are in git. Nothing is downloaded: the converter (`crates/dbota_import`, over the heatel library) is part of dbota,
 and the browser build runs the same code on the folder the player picks.
 
 ```sh
@@ -108,7 +108,7 @@ and are kept as `.mp3` (the stdlib cannot transcode them); playing them needs Be
 `maps/dota.vpk`'s world is read whole and cut to the nodes touching the band
 `|dota.x − dota.y| / √2 ≤ 13100`, `−11800 ≤ (dota.x + dota.y) / √2 ≤ 11700`: the mid lane from
 fountain to fountain with both base plateaus and the ground the band touches either side of it. Towers, trees, barracks, ancients and fountain
-buildings are removed (the client spawns them as units; see `EXCLUDED` in `crates/dbota_assets/src/world/crop.rs`); shops,
+buildings are removed (the client spawns them as units; see `NOT_IN_WORLD` in `crates/dbota_import/src/import.rs`); shops,
 statues, walls, decorations and the fountains' water/glow meshes stay. Nodes are flattened to world
 matrices; skins, animations and morph targets are dropped. Each triangle list using less than half of
 its mesh set's vertices gets its own vertices: a mesh set shares its whole vertex buffers among

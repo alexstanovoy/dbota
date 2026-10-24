@@ -240,15 +240,16 @@ that many seconds of frames once the scene is whole and prints them on one `benc
 
 ## Reading Dota's files
 
-`crates/dbota_assets` reads Valve's formats (VPK packages, compiled Source 2 resources, KV3,
-textures, models and animations, the world, sounds, KeyValues texts) straight from a Dota 2
-install, on the desktop and in a browser, and `import` makes the whole asset cache out of them
-(`dbota import`; the browser page runs the same code in a worker through `crates/dbota_import`).
-Its golden tests compare what it makes with a reference cache exported by Source2Viewer 20 (manifest
-version 6, `~/.cache/dbota/v6`); they need the install and that cache, so they run only when asked:
+heatel (a crate of its own, checked out beside dbota) reads Valve's formats (VPK packages, compiled
+Source 2 resources, KV3, textures, models and animations, the world, sounds, KeyValues texts)
+straight from a Dota 2 install, on the desktop and in a browser. `crates/dbota_import` makes the
+whole asset cache out of them from the manifest (`dbota import`; the browser page runs the same
+code in a worker as the crate's wasm module). Its golden tests compare what it makes with a
+reference cache exported by Source2Viewer 20 (manifest version 6, `~/.cache/dbota/v6`); they need
+the install and that cache, so they run only when asked:
 
 ```sh
-cargo test --release -p dbota_assets -- --ignored   # DBOTA_DOTA_PATH, DBOTA_REFERENCE: where they are
+cargo test --release -p dbota_import -- --ignored   # DBOTA_DOTA_PATH, DBOTA_REFERENCE: where they are
 ```
 
 ## License

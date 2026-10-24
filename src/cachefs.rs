@@ -267,7 +267,7 @@ impl CacheReader {
     async fn decoded(&self, path: &Path, bytes: &[u8]) -> Result<Vec<u8>, AssetReaderError> {
         self.admit(path, &bytes[..bytes.len().min(HEAD_BYTES)])
             .await?;
-        dbota_assets::ktx2_to_plain(bytes).map_err(|why| {
+        heatel::texture::ktx2_to_plain(bytes).map_err(|why| {
             let why = format!("{}: {why}", path.display());
             AssetReaderError::Io(std::io::Error::other(why).into())
         })

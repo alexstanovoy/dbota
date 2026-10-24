@@ -5,10 +5,8 @@
 //! input panics.
 #![no_main]
 
-#[path = "common/files.rs"]
-mod files;
-
-use dbota_assets::import::{Flow, Plan, Sink, run, safe_path};
+use dbota_import::import::{Flow, Plan, Sink, run, safe_path};
+use heatel::fuzzing::files;
 use libfuzzer_sys::fuzz_target;
 
 const MANIFEST: &str = "\
@@ -46,7 +44,7 @@ struct Checked {
 }
 
 impl Sink for Checked {
-    fn write(&mut self, path: &str, data: &[u8]) -> dbota_assets::Result<()> {
+    fn write(&mut self, path: &str, data: &[u8]) -> heatel::Result<()> {
         assert!(safe_path(path), "the importer wrote to {path:?}");
         self.written += data.len() as u64;
         assert!(

@@ -8,7 +8,7 @@ all-features = true
 version = 2
 yanked = "deny"
 ignore = [
-    # bevy_image 0.19.1 still pulls ruzstd 0.8.3; dbota_assets uses 0.9.1, and the cache
+    # bevy_image 0.19.1 still pulls ruzstd 0.8.3; heatel uses 0.9.1, and the cache
     # reader refuses supercompressed KTX2 before Bevy sees a file, so Bevy's zstd decodes
     # only its own embedded tables.
     { id = "RUSTSEC-2026-0344", reason = "bevy_image's ruzstd 0.8 reaches only embedded LUTs; cache KTX2 must be unsupercompressed" },
