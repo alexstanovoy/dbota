@@ -64,10 +64,11 @@ pub fn plugin(app: &mut App) {
 }
 
 fn spawn(mut commands: Commands, mut images: ResMut<Assets<Image>>, docks: Res<Docks>) {
+    // RGBA: WebGL2 takes no BGRA pixels, and a target starts as uploaded zeros.
     let photo = images.add(Image::new_target_texture(
         PHOTO,
         PHOTO,
-        TextureFormat::Bgra8UnormSrgb,
+        TextureFormat::Rgba8UnormSrgb,
         None,
     ));
     let frame = commands

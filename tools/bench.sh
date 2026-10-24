@@ -20,7 +20,8 @@
 #   BENCH_PROFILE=release   the cargo profile built and timed (`dist` is what ships)
 #   BENCH_BUILD=1           0: use the binary already built
 #   DBOTA_BIN               the binary to time (default target/release/dbota; implies BENCH_BUILD=0)
-#   BENCH_WASM=0            1: also build for wasm32 (profile `web`) and report its size
+#   BENCH_WASM=0            1: also build the browser clients (wasm32, profile `web`, WebGPU and
+#                           WebGL2) and report their sizes
 #   DBOTA_ASSETS            the asset cache (default ~/.cache/dbota/v<assets-manifest/version>)
 # A display is needed (DISPLAY or WAYLAND_DISPLAY).
 set -euo pipefail
@@ -48,7 +49,11 @@ if [ "${BENCH_BUILD:-1}" = 1 ] && [ -z "${DBOTA_BIN:-}" ]; then
     cargo build --profile "$profile" --quiet --manifest-path "$here/Cargo.toml"
 fi
 if [ "${BENCH_WASM:-0}" = 1 ]; then
-    cargo build --profile web --quiet --target wasm32-unknown-unknown --manifest-path "$here/Cargo.toml"
+    for api in webgpu webgl2; do
+        cargo build --profile web --quiet --target wasm32-unknown-unknown --features "$api" \
+            --manifest-path "$here/Cargo.toml"
+        cp "$here/target/wasm32-unknown-unknown/web/dbota.wasm" "$out/dbota_$api.wasm"
+    done
 fi
 
 # Drops the asset cache and the binary from the page cache: a cold start.
@@ -106,8 +111,7 @@ median() {
 size=$(stat -c %s "$bin")
 strip -o "$out/dbota.stripped" "$bin"
 stripped=$(stat -c %s "$out/dbota.stripped")
-wasm=$here/target/wasm32-unknown-unknown/web/dbota.wasm
-wasm_size=$([ -f "$wasm" ] && stat -c %s "$wasm" || echo "-")
+wasm_size() { [ -f "$out/dbota_$1.wasm" ] && stat -c %s "$out/dbota_$1.wasm" || echo "-"; }
 
 scene=(--replay "$replay" --seek "$tick" --follow 0 --distance "$distance" --bench "$seconds")
 drop_caches
@@ -137,7 +141,7 @@ mb() { awk -v b="$1" 'BEGIN { if (b == "-") print "-"; else printf "%.1f", b / 1
 echo "| metric | value |"
 echo "| --- | --- |"
 echo "| binary (MiB, stripped) | $(mb "$size") ($(mb "$stripped")) |"
-echo "| wasm (MiB) | $(mb "$wasm_size") |"
+echo "| wasm, WebGPU / WebGL2 (MiB) | $(mb "$(wasm_size webgpu)") / $(mb "$(wasm_size webgl2)") |"
 echo "| cold start: first frame / scene whole (s) | $(field "$cold" first_frame_s) / $(field "$cold" ready_s) |"
 echo "| warm start: first frame / scene whole (s) | $(field "$replay_line" first_frame_s) / $(field "$replay_line" ready_s) |"
 for row in "replay|$replay_line" "replay, vsync|$vsync" "live|$live"; do

@@ -12,7 +12,7 @@ shows the "pick a folder, read only what is needed" path without copying anythin
 Dota 2 install (DBOTA_DOTA_PATH or the usual Steam places); the game run needs WebGL2/WebGPU
 (SwiftShader does). Without an install that part is skipped, with a message.
 
-Two more checks need no install and run on pages built with stand-ins (`?assets=none`):
+Three more checks need no install and run on pages built with stand-ins (`?assets=none`):
 
     DBOTA_WEB_REPLAY=$PWD/chat.brp DBOTA_WEB_ARGS="--replay built-in --pov 0 --seek 4100" \
         PROFILE=release OUT=temp/web-replay web/build.sh
@@ -20,8 +20,12 @@ Two more checks need no install and run on pages built with stand-ins (`?assets=
     CARGO_TARGET_DIR=temp/bota-target cargo build --release --manifest-path ../bota/Cargo.toml \
         -p bota_server --features websocket
     PYTHONPATH=temp/pwlib python3 web/test/smoke.py --replay-page temp/web-replay \
-        --live-page temp/web-live --server temp/bota-target/release/bota_server
+        --live-page temp/web-live --server temp/bota-target/release/bota_server --startup-page temp/web-live
 
+* `--startup-page` (any build): the page loads the WebGPU client, or the WebGL2 one with
+  `?gpu=webgl2`, and each draws; a browser without graphics, a renderer that cannot be made (the
+  page then offers the WebGL2 client, which runs) and a client out of memory each end with a
+  message on the page.
 * `--replay-page`: the page plays a Zstandard-packed replay built into it (read through to the
   seek tick, as the packed file is decoded record by record) and the client says it knows the
   match and heard the chat lines, with no read error.
@@ -286,11 +290,11 @@ def wait_console(page, console, pattern, timeout, what):
     sys.exit(f"timed out waiting for {what}")
 
 
-def opened(p, directory):
+def opened(p, directory, args=()):
     """A page of the build in `directory` in a fresh browser: (server, base, browser, page, console, problems)."""
     server = serve(directory)
     base = f"http://127.0.0.1:{server.server_address[1]}/"
-    browser = p.chromium.launch(args=BROWSER_ARGS)
+    browser = p.chromium.launch(args=[*BROWSER_ARGS, *args])
     page = browser.new_context(viewport={"width": 1280, "height": 720}).new_page()
     console, problems = [], []
     page.on("console", lambda m: console.append(m.text))
@@ -384,6 +388,62 @@ def check_live_page(directory, server_bin):
         game.wait(timeout=10)
 
 
+NO_GRAPHICS = """
+  delete Navigator.prototype.gpu;
+  const get = HTMLCanvasElement.prototype.getContext;
+  HTMLCanvasElement.prototype.getContext = function (type, options) {
+    return type === "webgl2" ? null : get.call(this, type, options);
+  };"""
+# A WebGPU adapter but no WebGPU canvas: the client's renderer cannot be made.
+NO_WEBGPU_CANVAS = """
+  const get = HTMLCanvasElement.prototype.getContext;
+  HTMLCanvasElement.prototype.getContext = function (type, options) {
+    return type === "webgpu" ? null : get.call(this, type, options);
+  };"""
+
+
+def check_startup_page(directory):
+    """The page picks the client the browser can draw with, and a start that fails says so on the
+    page: no graphics, a renderer that cannot be made (offering the WebGL2 client), no memory."""
+    def run(query, init=None, args=()):
+        with sync_playwright() as p:
+            server, base, browser, page, console, problems = opened(p, directory, args)
+            if init:
+                page.add_init_script(init)
+            page.goto(base + query)
+            yield page, console, problems
+            browser.close()
+        server.shutdown()
+
+    def failed(page, title):
+        page.wait_for_selector("#failed:not([hidden])", timeout=600000)
+        got = page.inner_text("#failTitle")
+        assert title in got, got
+
+    for query, api in (("?assets=none", "webgpu"), ("?assets=none&gpu=webgl2", "webgl2")):
+        for page, console, problems in run(query):
+            wait_console(page, console, "dbota: drawing with " + api, 60, f"the {api} client")
+            wait_console(page, console, "dbota: running", 600, f"the {api} client's first frame")
+            assert page.is_hidden("#gate") and not problems, problems
+            print(f"{api}: the client runs")
+    for page, console, problems in run("?assets=none", NO_GRAPHICS):
+        failed(page, "does not let the page use the graphics card")
+        assert not any("drawing with" in c for c in console), "no client is loaded without graphics"
+        print("no graphics: said on the page")
+    for page, console, problems in run("?assets=none", NO_WEBGPU_CANVAS):
+        failed(page, "could not start its graphics")
+        assert "wgpu surface" in page.text_content("#failDetail"), "the panic is in the details"
+        page.click("#otherApi")
+        wait_console(page, console, "dbota: drawing with webgl2", 60, "the WebGL2 client offered instead")
+        wait_console(page, console, "dbota: running", 600, "the WebGL2 client's first frame")
+        assert "gpu=webgl2" in page.url, page.url
+        print("renderer not made: said on the page, the WebGL2 client runs instead")
+    # The client's memory capped at 96 MiB: the stand-ins' menu needs more.
+    for page, console, problems in run("?assets=none", args=["--js-flags=--wasm-max-mem-pages=1536"]):
+        failed(page, "ran out of memory")
+        print("out of memory: said on the page")
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--install")
@@ -393,6 +453,7 @@ def main():
     ap.add_argument("--replay-page", type=pathlib.Path, help="a build with a packed replay built in")
     ap.add_argument("--live-page", type=pathlib.Path, help="a build without a replay (the main menu)")
     ap.add_argument("--server", help="a bota_server built with the websocket feature, for --live-page")
+    ap.add_argument("--startup-page", type=pathlib.Path, help="any build: the client picked, failures shown")
     ap.add_argument("--only-wire", action="store_true", help="skip the import test even where an install is found")
     args = ap.parse_args()
     install = None if args.only_wire else find_install(args.install)
@@ -400,6 +461,8 @@ def main():
         import_smoke(args, install)
     else:
         print("skipped: the import test needs a Dota 2 install (DBOTA_DOTA_PATH or --install)")
+    if args.startup_page:
+        check_startup_page(args.startup_page)
     if args.replay_page:
         check_replay_page(args.replay_page)
     if args.live_page:

@@ -91,9 +91,8 @@ getrandom = "0.4"
 # module of its own (web/import_worker.js).
 dbota_import = { path = "crates/dbota_import" }
 
-# In a browser, Bevy draws through WebGPU where the browser has it, else WebGL2.
+# A browser build draws through WebGPU or WebGL2, one of the features below.
 [target.'cfg(target_arch = "wasm32")'.dependencies]
-bevy = { version = "=0.19.1", default-features = false, features = ["webgl2", "webgpu"] }
 # The cache fetched next to the page (whole files moved, not copied, into the
 # client), and the small files it reads at once (the map's trees and buildings).
 js-sys = "0.3"
@@ -114,6 +113,11 @@ tokio = { version = "1", features = ["rt-multi-thread"] }
 # A browser build that plays the replay named by DBOTA_WEB_REPLAY at build
 # time (see web/README.md).
 web-replay = []
+# The graphics API of a browser build, exactly one of the two (no effect on the desktop). Bevy
+# fixes its render paths when it is compiled (storage buffers, compute, limits, shader defs), not
+# when it runs, so the page carries a client of each and loads the one the browser can draw with.
+webgpu = ["bevy/webgpu"]
+webgl2 = ["bevy/webgl2"]
 
 [profile.dev]
 opt-level = 1

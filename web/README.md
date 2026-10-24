@@ -2,7 +2,7 @@
 
 The page asks for the player's own Dota 2 folder, builds a private copy of the assets the client
 uses (models, the map, textures, sounds, texts) inside the browser, then starts the client (the game compiled to
-wasm, drawn through WebGPU or WebGL2). **Valve's files never leave the player's machine**: the
+wasm, drawn through WebGPU or WebGL2: see "Graphics" below). **Valve's files never leave the player's machine**: the
 folder is read inside the tab with ranged reads, the converted copy lives in the browser's own
 storage (the Origin Private File System), the page has no code that sends it anywhere, and its
 Content-Security-Policy only allows connections to its own origin (game sockets are added when the page gets networking).
@@ -13,13 +13,13 @@ Content-Security-Policy only allows connections to its own origin (game sockets 
 | File | What it does |
 | --- | --- |
 | `index.html`, `page.css` | the gate (folder question, progress, ready) over the client's canvas; the CSP |
-| `main.js` | the flow: stored copy? folder grant, import progress, update check, delete, start the client |
+| `main.js` | the flow: stored copy? folder grant, import progress, update check, delete, start the client that suits the browser; a start that fails ends in a message saying what to do |
 | `grant.js` | the folder grant: `showDirectoryPicker` (Chromium, the handle is remembered in IndexedDB so the copy can be checked for staleness without asking again), else `<input webkitdirectory>`; only `*.vpk` of `game/dota` and `maps/` are kept, whatever folder level was picked |
 | `import_worker.js` | a module Web Worker: runs `dbota_import` (wasm), writes each item's files with synchronous OPFS handles, stops on request |
 | `cache.js` | the OPFS cache: layout, reads, index and stamp, what is published to the client (`globalThis.dbota_cache`) |
 | `report.js` | `?report`: console lines to the page's server, for local debugging |
 | `test/smoke.py` | the Playwright smoke test (below) |
-| `build.sh` | builds `web/out` |
+| `build.sh` | builds `web/out`: both clients, the importer, the page |
 
 The Rust side: `crates/dbota_import` (`import.rs`: the manifest's plan, the step-wise importer with
 read/write budgets and checked output paths, over heatel's readers; `web.rs`: the wasm module, the
@@ -27,6 +27,28 @@ picked `File`s as a `Source` read with `File.slice` + `FileReaderSync`), and in 
 + `src/cachefs.rs` (the OPFS reader: `CacheReader`'s browser backend; the few files the client reads
 synchronously at start are loaded into memory by the page first) + `src/manifest.rs` (what is there
 comes from the cache's index).
+
+## Graphics
+
+Bevy fixes its render paths when it is compiled (storage buffers, compute, limits, shader
+definitions), so one build cannot switch between WebGPU and WebGL2 at run time. The page carries two
+clients, built with `--features webgpu` (`dbota.js`) and `--features webgl2` (`dbota_webgl2.js`), and
+loads one: WebGPU where the browser gives an adapter, else WebGL2 (`?gpu=webgl2` asks for it). Firefox
+on Linux has no WebGPU unless `dom.webgpu.enabled` is set, and some browsers (LibreWolf on some
+machines) turn WebGL off as well; a browser with neither gets a message saying how to turn one on.
+
+What WebGL2 lacks, the client does without: one shadow cascade, reaching as far as the two of WebGPU
+(Bevy's limit there); GPU batching and clustering on the CPU (Bevy falls back by itself); the fog
+material without bindless textures. Block-compressed textures are drawn as they are where the browser
+has `WEBGL_compressed_texture_s3tc` (and `_srgb`), `EXT_texture_compression_rgtc` and `_bptc`, else decoded as they
+load, as on a WebGPU without `texture-compression-bc`. Offscreen targets (minimap, portraits, render
+scale) are RGBA, the one 8-bit order WebGL2 uploads.
+
+A start that fails never leaves a still canvas: the client hands its panics (src/webpage.rs) and the
+allocations the browser refused to the page, which says what happened and what to do (no graphics: how
+to turn it on; a renderer that cannot be made with WebGPU: the WebGL2 client instead; out of memory;
+a bug), with the details in the page and in the console. "Starting the game..." stays until the
+first frame.
 
 ## Stamps
 

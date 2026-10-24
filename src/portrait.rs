@@ -215,7 +215,8 @@ fn target_image(images: &mut Assets<Image>) -> Handle<Image> {
         },
         TextureDimension::D2,
         &[0; 4],
-        TextureFormat::Bgra8UnormSrgb,
+        // RGBA: WebGL2 takes no BGRA pixels for the zeros it starts with.
+        TextureFormat::Rgba8UnormSrgb,
         RenderAssetUsages::RENDER_WORLD,
     );
     image.texture_descriptor.usage =

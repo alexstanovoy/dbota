@@ -82,6 +82,8 @@ mod wash;
 mod water;
 #[cfg(target_arch = "wasm32")]
 mod webcache;
+#[cfg(target_arch = "wasm32")]
+mod webpage;
 mod window;
 
 use std::path::PathBuf;
@@ -94,6 +96,15 @@ use bevy::{
     window::{PresentMode, WindowResolution},
 };
 use clap::Parser;
+
+// Bevy picks its render paths when it is compiled, so a browser build is for one graphics API.
+#[cfg(all(
+    target_arch = "wasm32",
+    not(any(feature = "webgpu", feature = "webgl2"))
+))]
+compile_error!("a browser build needs `--features webgpu` or `--features webgl2`");
+#[cfg(all(target_arch = "wasm32", feature = "webgpu", feature = "webgl2"))]
+compile_error!("`webgpu` and `webgl2` are two builds: Bevy would draw through WebGPU only");
 
 /// Name of the asset source rooted at the exported-asset cache (`cache://...`).
 pub const CACHE_SOURCE: &str = "cache";
@@ -481,6 +492,12 @@ fn main() -> AppExit {
     );
     if args.bench_gpu {
         app.add_plugins(bevy::render::diagnostic::RenderDiagnosticsPlugin);
+    }
+    // After DefaultPlugins, whose panic hook (the console's) this one calls first.
+    #[cfg(target_arch = "wasm32")]
+    {
+        webpage::report_panics();
+        app.add_plugins(webpage::plugin);
     }
     app.run()
 }

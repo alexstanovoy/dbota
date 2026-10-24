@@ -35,9 +35,12 @@ pub fn plugin(app: &mut App) {
 }
 
 /// The sun's cascades at a shadow level: one close to the camera when low.
+/// WebGL2 draws one cascade only (Bevy's limit there), so it gets the one
+/// that reaches as far as two would; Bevy would draw just the near one.
 pub fn cascades(shadows: u8) -> CascadeShadowConfig {
+    let wanted = if shadows >= 2 { 2 } else { 1 };
     CascadeShadowConfigBuilder {
-        num_cascades: if shadows >= 2 { 2 } else { 1 },
+        num_cascades: wanted.min(bevy::pbr::MAX_CASCADES_PER_LIGHT),
         first_cascade_far_bound: 3_000.0,
         maximum_distance: 8_000.0,
         ..default()
@@ -151,10 +154,11 @@ fn scale(
     let image = match &scaled {
         Some(scaled) => scaled.image.clone(),
         None => {
+            // RGBA: WebGL2 takes no BGRA pixels, and a target starts as uploaded zeros.
             let image = images.add(Image::new_target_texture(
                 size.x,
                 size.y,
-                TextureFormat::Bgra8UnormSrgb,
+                TextureFormat::Rgba8UnormSrgb,
                 None,
             ));
             let ui = commands
