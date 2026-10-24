@@ -401,8 +401,27 @@ pub struct KeyLabel(pub Action);
 pub fn plugin(app: &mut App) {
     app.init_resource::<Fired>()
         .init_resource::<Muted>()
+        .add_systems(PreUpdate, deafen.before(bevy::input::InputSystems))
         .add_systems(PreUpdate, fire.after(bevy::input::InputSystems))
         .add_systems(Update, labels);
+}
+
+/// An unattended run (a capture, a visual check, a benchmark) takes no keys, buttons, wheel or
+/// motion from the desktop it runs on: a key held there (an Alt that shows the ranges) changes
+/// nothing it draws or checks.
+fn deafen(
+    args: Res<crate::Args>,
+    mut keys: ResMut<Messages<bevy::input::keyboard::KeyboardInput>>,
+    mut buttons: ResMut<Messages<bevy::input::mouse::MouseButtonInput>>,
+    mut wheel: ResMut<Messages<bevy::input::mouse::MouseWheel>>,
+    mut motion: ResMut<Messages<bevy::input::mouse::MouseMotion>>,
+) {
+    if args.unattended() {
+        keys.clear();
+        buttons.clear();
+        wheel.clear();
+        motion.clear();
+    }
 }
 
 /// Every [`KeyLabel`]'s text, from the settings.
@@ -635,12 +654,36 @@ mod tests {
 
     /// An app with Bevy's input and the bindings, as the client runs them.
     fn app(settings: Settings) -> App {
+        app_run_as(settings, &["dbota"])
+    }
+
+    /// The same, run with command line `args`.
+    fn app_run_as(settings: Settings, args: &[&str]) -> App {
+        use clap::Parser;
         let mut app = App::new();
         app.add_plugins((MinimalPlugins, InputPlugin))
             .insert_resource(settings)
+            .insert_resource(crate::Args::parse_from(args))
             .add_plugins(plugin);
         app.update();
         app
+    }
+
+    /// A capture or a visual check takes no key from the desktop it runs on: the owner's Alt
+    /// held there shows no ranges in its frames.
+    #[test]
+    fn an_unattended_run_takes_no_key_from_the_desktop() {
+        for (args, shown) in [
+            (&["dbota"][..], true),
+            (
+                &["dbota", "--replay", "x.brp", "--screenshot-at", "10"][..],
+                false,
+            ),
+        ] {
+            let mut app = app_run_as(Settings::default(), args);
+            key(&mut app, KeyCode::AltLeft, ButtonState::Pressed);
+            assert_eq!(fired(&app).held(Action::ShowRanges), shown, "{args:?}");
+        }
     }
 
     /// Presses (or lets go of) `key` as the window would report it, and

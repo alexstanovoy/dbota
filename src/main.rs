@@ -275,6 +275,12 @@ pub enum Command {
 }
 
 impl Args {
+    /// Whether the run is unattended (a capture, a visual check, a benchmark), often over the
+    /// owner's work: it takes no input from the desktop it runs on.
+    pub fn unattended(&self) -> bool {
+        !self.screenshot_at.is_empty() || self.screenshot.is_some() || self.bench.is_some()
+    }
+
     /// Whether the main menu opens: nothing on the command line names a game.
     pub fn wants_menu(&self) -> bool {
         !cfg!(feature = "web-replay")

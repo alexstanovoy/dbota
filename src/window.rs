@@ -137,9 +137,8 @@ mod native {
     ) {
         let (window, mut options) = window.into_inner();
         // Captures and benchmarks run unattended, often over the owner's work.
-        let unattended =
-            !args.screenshot_at.is_empty() || args.screenshot.is_some() || args.bench.is_some();
-        let want = window.focused && !screen.open && !unattended && session.0.view().is_some();
+        let want =
+            window.focused && !screen.open && !args.unattended() && session.0.view().is_some();
         if !want {
             if options.grab_mode != CursorGrabMode::None {
                 options.grab_mode = CursorGrabMode::None;

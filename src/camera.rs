@@ -142,7 +142,7 @@ fn pan_and_zoom(
         }
     }
     let cursor = window.cursor_position();
-    if window.focused && settings.aids.edge_pan && args.screenshot_at.is_empty() {
+    if window.focused && settings.aids.edge_pan && !args.unattended() {
         dir += edge_pan(cursor, *last_cursor, window.size());
     }
     if cursor.is_some() || !window.focused {
