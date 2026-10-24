@@ -52,6 +52,9 @@ pub struct Node {
     emitting: bool,
     first_frame: bool,
     pub control_points: [ControlPoint; 64],
+    /// Which control points have been placed (bit `cp`): one placed the first time has no
+    /// previous place to move from.
+    placed: u64,
     emitters: Vec<EmitterState>,
     /// What each pre-emission operator, initializer and operator keeps from step to step.
     pre_done: Vec<bool>,
@@ -160,9 +163,11 @@ impl Instance {
     /// placed rather than moved (`jump`) has no previous place to move from.
     pub fn set_control_point(&mut self, cp: usize, position: Vec3, forward: Vec3, jump: bool) {
         for node in &mut self.nodes {
+            let first = node.placed & 1 << cp == 0;
+            node.placed |= 1 << cp;
             let point = &mut node.control_points[cp];
             point.position = position;
-            if jump {
+            if jump || first {
                 point.previous = position;
             }
             point.face(forward);
@@ -295,6 +300,7 @@ impl Node {
             emitting: true,
             first_frame: true,
             control_points: [ControlPoint::default(); 64],
+            placed: 0,
             emitters: vec![EmitterState::default(); system.emitters.len()],
             pre_done: vec![false; system.pre_emission.len()],
             counters: vec![0; system.initializers.len()],
@@ -319,6 +325,7 @@ impl Node {
             self.first_frame,
         ) = (false, 0.0, true, true);
         self.control_points = [ControlPoint::default(); 64];
+        self.placed = 0;
         self.emitters
             .iter_mut()
             .for_each(|e| *e = EmitterState::default());
@@ -332,9 +339,15 @@ impl Node {
         (self.emitted, self.seed, self.steps) = (0, seed, 0);
     }
 
-    /// Takes a control point an operator set, keeping where the old one was.
+    /// Takes a control point an operator set, keeping where the old one was; one placed the
+    /// first time jumps there (a missile's head locked to it does not fly in from the origin).
     fn place(&mut self, cp: usize, point: ControlPoint) {
-        let previous = self.control_points[cp].previous;
+        let previous = if self.placed & 1 << cp == 0 {
+            point.position
+        } else {
+            self.control_points[cp].previous
+        };
+        self.placed |= 1 << cp;
         self.control_points[cp] = ControlPoint { previous, ..point };
     }
 
