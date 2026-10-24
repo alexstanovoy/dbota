@@ -88,7 +88,7 @@ pub fn plugin(app: &mut App) {
                 search_text,
                 scroll,
             )
-                .run_if(super::shop_runs),
+                .run_if(super::match_or_tactical),
         );
 }
 

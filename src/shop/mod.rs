@@ -11,8 +11,8 @@ mod panel;
 mod plugin;
 mod tree;
 
+use crate::select::match_or_tactical;
 pub use catalog::Catalog;
 pub use cell::ShopCell;
 pub use corner::STICKY;
 pub use plugin::plugin;
-use plugin::shop_runs;

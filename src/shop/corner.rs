@@ -107,7 +107,7 @@ pub fn plugin(app: &mut App) {
         .add_systems(Startup, spawn)
         .add_systems(
             Update,
-            (gold, shop_button, stash, quick_row, grab_step).run_if(super::shop_runs),
+            (gold, shop_button, stash, quick_row, grab_step).run_if(super::match_or_tactical),
         );
 }
 

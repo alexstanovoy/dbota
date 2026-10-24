@@ -112,7 +112,7 @@ pub fn plugin(app: &mut App) {
         .add_systems(
             Update,
             (
-                pick.run_if(|k: Res<crate::session::MatchKnown>| k.0),
+                pick.run_if(crate::select::match_or_tactical),
                 rebuild,
                 place,
             )
@@ -270,9 +270,7 @@ fn attribute_tip(texts: &Texts, core: &bota_client_core::App) -> String {
 
 /// The innate ability of the panel's hero, Dota's tooltip of it.
 fn innate_tip(look: &Lookup, core: &bota_client_core::App) -> Option<Content> {
-    let id = crate::hud::subject(core)
-        .1?
-        .hero
+    let id = crate::hud::subject_hero(core)
         .and_then(bota_core::hero_def)?
         .innate?;
     look.ability(id.0, 1, 1)
@@ -299,9 +297,7 @@ fn buff_tip(shown: crate::buffs::Shown, rate: u32) -> Option<String> {
 }
 
 fn talent_tip(core: &bota_client_core::App, slot: u8) -> Option<String> {
-    crate::hud::subject(core)
-        .1
-        .and_then(|u| u.hero)
+    crate::hud::subject_hero(core)
         .and_then(|h| bota_client_core::talents(h.0))
         .map(|tree| {
             let face = &tree[usize::from(slot)];

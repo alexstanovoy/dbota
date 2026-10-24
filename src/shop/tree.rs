@@ -34,7 +34,10 @@ struct Owned {
 }
 
 pub fn plugin(app: &mut App) {
-    app.add_systems(Update, (draw, owned).chain().run_if(super::shop_runs));
+    app.add_systems(
+        Update,
+        (draw, owned).chain().run_if(super::match_or_tactical),
+    );
 }
 
 /// The tree's band, empty until an item is chosen.

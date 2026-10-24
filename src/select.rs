@@ -47,6 +47,16 @@ struct Seats;
 #[derive(Resource, Default, PartialEq)]
 pub struct TacticalPhase(pub bool);
 
+/// Whether one's hero is known: the match is, or the tactical phase before
+/// it holds the pick. The shop works then, what is chosen in the tactical
+/// phase queued for the match's start, and the hero panel shows the hero.
+pub fn match_or_tactical(
+    known: Res<crate::session::MatchKnown>,
+    tactical: Res<TacticalPhase>,
+) -> bool {
+    known.0 || tactical.0
+}
+
 /// The line over the shop in the tactical phase.
 #[derive(Component)]
 struct Banner;

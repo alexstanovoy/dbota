@@ -14,7 +14,10 @@ use crate::input::{Panels, Typing};
 use crate::session::Session;
 
 pub fn plugin(app: &mut App) {
-    app.add_systems(Update, (buttons, cells, sell).run_if(super::shop_runs));
+    app.add_systems(
+        Update,
+        (buttons, cells, sell).run_if(super::match_or_tactical),
+    );
 }
 
 /// The shop's buttons: the gold opens and closes the shop, the search box

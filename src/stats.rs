@@ -14,7 +14,7 @@ use bota_proto::{Attribute, Fixed, UnitView};
 use crate::dota_text::{Texts, plain};
 use crate::hud::Blocker;
 use crate::manifest::Manifest;
-use crate::session::{MatchKnown, Session};
+use crate::session::Session;
 use crate::ui::{self, Fonts};
 
 /// The region over the portrait the tooltip opens for.
@@ -151,7 +151,10 @@ const ATTRIBUTE_ICON: f32 = 13.0 * PANEL_PER_DOTA;
 const ATTRIBUTE_INK: Color = Color::srgb(0.8, 0.8, 0.8);
 
 pub fn plugin(app: &mut App) {
-    app.add_systems(Update, (region, tooltip).run_if(|k: Res<MatchKnown>| k.0));
+    app.add_systems(
+        Update,
+        (region, tooltip).run_if(crate::select::match_or_tactical),
+    );
 }
 
 /// The region over the right side and the foot of `portrait`, and the

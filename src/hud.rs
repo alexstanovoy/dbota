@@ -4,13 +4,16 @@
 //! notices.
 
 use std::f32::consts::TAU;
+use std::sync::LazyLock;
 
 use bevy::prelude::*;
 use bota_client_core::{
     App as Core, BAG_SLOTS, ClientSession, INVENTORY_SLOTS, Look, TOWN_PORTAL_SLOT, ability_look,
     item_look,
 };
-use bota_proto::{AbilityView, ItemView, Kit, PlayerView, Team, UnitKind, UnitView};
+use bota_proto::{
+    AbilityId, AbilityView, HeroId, ItemView, Kit, PlayerView, Team, UnitKind, UnitView,
+};
 
 use crate::config::Settings;
 use crate::keys::Action;
@@ -255,20 +258,12 @@ pub fn plugin(app: &mut App) {
         .add_systems(Startup, spawn_hud)
         .add_systems(
             Update,
-            (
-                readouts,
-                gauges,
-                slots,
-                portrait,
-                time_of_day,
-                seats,
-                seat_deaths,
-                xp,
-                level_ups,
-                innate,
-                menu_buttons,
-                frame_rate,
-            )
+            (readouts, gauges, slots, portrait, xp, level_ups, innate)
+                .run_if(crate::select::match_or_tactical),
+        )
+        .add_systems(
+            Update,
+            (time_of_day, seats, seat_deaths, menu_buttons, frame_rate)
                 .run_if(|k: Res<crate::session::MatchKnown>| k.0),
         )
         .add_systems(Update, behind_the_pick);
@@ -1332,10 +1327,12 @@ fn spawn_corner(kit: &mut Spawner, root: Entity) {
     ));
 }
 
-/// The seat, unit and kit the bottom panel is about.
+/// The seat, unit and kit the bottom panel is about. Before the match has a
+/// view, in the tactical phase, it is the hero one's seat picked, with no
+/// body yet and the kit it starts with.
 pub(crate) fn subject(core: &Core) -> (Option<&PlayerView>, Option<&UnitView>, Option<&Kit>) {
     let Some(view) = core.view() else {
-        return (None, None, None);
+        return (None, None, picked(core).and_then(starting_kit));
     };
     if let Some((unit, _)) = core.selected.and_then(|id| core.known(id))
         && unit.kind != UnitKind::Hero
@@ -1352,69 +1349,149 @@ pub(crate) fn subject(core: &Core) -> (Option<&PlayerView>, Option<&UnitView>, O
     (Some(p), unit, p.kit.as_ref())
 }
 
-/// Every text of the HUD.
+/// The hero the bottom panel is about: the seat's, the unit's, or the one
+/// picked for the match to come.
+pub(crate) fn subject_hero(core: &Core) -> Option<HeroId> {
+    let (p, unit, _) = subject(core);
+    p.map(|p| p.hero)
+        .or(unit.and_then(|u| u.hero))
+        .or_else(|| picked(core))
+}
+
+/// The hero one's seat has picked, while the tactical phase waits for the
+/// match.
+fn picked(core: &Core) -> Option<HeroId> {
+    if core.view().is_some() || !core.in_tactical_phase() {
+        return None;
+    }
+    let seat = core.my_slot?;
+    core.lobby.slots.iter().find(|s| s.slot == seat)?.hero
+}
+
+/// The kit a hero comes into the match with, as a seat whose hero has no
+/// body is told it: every ability unlearned, with no point to spend, and
+/// nothing held.
+fn starting_kit(hero: HeroId) -> Option<&'static Kit> {
+    static KITS: LazyLock<Vec<Kit>> = LazyLock::new(|| {
+        bota_core::HEROES
+            .iter()
+            .map(|hero| Kit {
+                abilities: hero.abilities.iter().map(|id| unlearned(*id)).collect(),
+                items: vec![None; usize::from(BAG_SLOTS)],
+                town_portal: None,
+            })
+            .collect()
+    });
+    KITS.get(usize::from(hero.0))
+}
+
+/// An ability slot not learned yet.
+fn unlearned(id: AbilityId) -> AbilityView {
+    let def = bota_core::ability_def(id);
+    AbilityView {
+        id,
+        level: 0,
+        max_level: def.map_or(0, |def| def.max_level),
+        cooldown_left: 0,
+        mana_cost: bota_core::ability_mana_cost(id, 0),
+        range: def.map_or(0, |def| def.range),
+        aim: def.map_or(bota_proto::Aim::Own, |def| def.aim),
+        passive: def.is_some_and(|def| def.passive),
+        on: false,
+        can_level: false,
+        learnable: Some(false),
+    }
+}
+
+/// Every text of the HUD: the panel's whatever it is about, the rest once
+/// the match has a view.
 fn readouts(session: NonSend<Session>, mut texts: Query<(&Readout, &mut Text)>) {
     let core = &session.0;
-    let (Some(view), Some(map)) = (core.view(), core.session().map(ClientSession::map)) else {
-        return;
-    };
-    let rate = u32::from(core.tick_rate().max(1));
     let (p, unit, _) = subject(core);
+    let hero = subject_hero(core);
     for (readout, mut text) in &mut texts {
-        let s = match *readout {
-            Readout::Clock => clock(
-                i64::from(view.game_tick()) - i64::from(core.pregame_ticks()),
-                rate,
-            ),
-            Readout::Score(team) => view
-                .players
-                .iter()
-                .filter(|p| p.team == team)
-                .map(|p| u32::from(p.kills))
-                .sum::<u32>()
-                .to_string(),
-            // In capitals, as Dota's banner writes it.
-            Readout::PanelName => p
-                .and_then(|p| bota_core::hero_def(p.hero))
-                .map(|hero| hero.name.to_string())
-                .or(unit.map(|u| crate::units::unit_name(map, u).to_string()))
-                .unwrap_or_default()
-                .to_uppercase(),
-            Readout::PanelLevel => unit
-                .filter(|u| u.level > 0)
-                .map(|u| u.level.to_string())
-                .unwrap_or_default(),
-            Readout::Hp => unit
-                .map(|u| {
-                    let hp = if fallen(p) { 0 } else { u.hp.max(0) };
-                    format!("{hp} / {}", u.max_hp)
-                })
-                .unwrap_or_default(),
-            Readout::Mana => unit
-                .filter(|u| u.max_mana > 0)
-                .map(|u| format!("{} / {}", u.mana.max(0), u.max_mana))
-                .unwrap_or_default(),
-            Readout::HpRegen => unit.map(|u| regen_text(u.hp_regen)).unwrap_or_default(),
-            Readout::ManaRegen => unit
-                .filter(|u| u.max_mana > 0)
-                .map(|u| regen_text(u.mana_regen))
-                .unwrap_or_default(),
-            Readout::Feed => core
-                .feed
-                .iter()
-                .map(|f| f.text.as_str())
-                .collect::<Vec<_>>()
-                .join("\n"),
-            Readout::Notice => notice(core),
-            Readout::SeatLevel(seat) => seat_of(view, seat)
-                .map(|p| p.level.to_string())
-                .unwrap_or_default(),
-            Readout::SeatDead(seat) => seat_of(view, seat)
-                .filter(|p| lies_dead(p))
-                .map(|p| p.respawn_left.div_ceil(rate).to_string())
-                .unwrap_or_default(),
+        let s = match (panel_text(core, p, unit, hero, *readout), core.view()) {
+            (Some(s), _) => s,
+            (None, Some(view)) => match_text(core, view, *readout),
+            (None, None) => continue,
         };
         text.set_if_neq(Text(s));
+    }
+}
+
+/// A text of the bottom panel, or none for a readout that is not the
+/// panel's.
+fn panel_text(
+    core: &Core,
+    p: Option<&PlayerView>,
+    unit: Option<&UnitView>,
+    hero: Option<HeroId>,
+    readout: Readout,
+) -> Option<String> {
+    Some(match readout {
+        // In capitals, as Dota's banner writes it.
+        Readout::PanelName => hero
+            .and_then(bota_core::hero_def)
+            .map(|hero| hero.name.to_string())
+            .or(unit
+                .zip(core.session().map(ClientSession::map))
+                .map(|(u, map)| crate::units::unit_name(map, u).to_string()))
+            .unwrap_or_default()
+            .to_uppercase(),
+        Readout::PanelLevel => unit
+            .filter(|u| u.level > 0)
+            .map(|u| u.level.to_string())
+            .unwrap_or_default(),
+        Readout::Hp => unit
+            .map(|u| {
+                let hp = if fallen(p) { 0 } else { u.hp.max(0) };
+                format!("{hp} / {}", u.max_hp)
+            })
+            .unwrap_or_default(),
+        Readout::Mana => unit
+            .filter(|u| u.max_mana > 0)
+            .map(|u| format!("{} / {}", u.mana.max(0), u.max_mana))
+            .unwrap_or_default(),
+        Readout::HpRegen => unit.map(|u| regen_text(u.hp_regen)).unwrap_or_default(),
+        Readout::ManaRegen => unit
+            .filter(|u| u.max_mana > 0)
+            .map(|u| regen_text(u.mana_regen))
+            .unwrap_or_default(),
+        _ => return None,
+    })
+}
+
+/// A text of the match: the clock, the score, the feed, the notice and the
+/// seats.
+fn match_text(core: &Core, view: &bota_proto::WorldView, readout: Readout) -> String {
+    let rate = u32::from(core.tick_rate().max(1));
+    match readout {
+        Readout::Clock => clock(
+            i64::from(view.game_tick()) - i64::from(core.pregame_ticks()),
+            rate,
+        ),
+        Readout::Score(team) => view
+            .players
+            .iter()
+            .filter(|p| p.team == team)
+            .map(|p| u32::from(p.kills))
+            .sum::<u32>()
+            .to_string(),
+        Readout::Feed => core
+            .feed
+            .iter()
+            .map(|f| f.text.as_str())
+            .collect::<Vec<_>>()
+            .join("\n"),
+        Readout::Notice => notice(core),
+        Readout::SeatLevel(seat) => seat_of(view, seat)
+            .map(|p| p.level.to_string())
+            .unwrap_or_default(),
+        Readout::SeatDead(seat) => seat_of(view, seat)
+            .filter(|p| lies_dead(p))
+            .map(|p| p.respawn_left.div_ceil(rate).to_string())
+            .unwrap_or_default(),
+        _ => String::new(),
     }
 }
 
@@ -1495,20 +1572,20 @@ fn notice(core: &Core) -> String {
     String::new()
 }
 
-/// The health and mana bars of the panel and the seats.
+/// The health and mana bars of the panel and the seats: empty for what has
+/// no body.
 fn gauges(session: NonSend<Session>, mut gauges: Query<(&Gauge, &mut Node, &mut BackgroundColor)>) {
     let core = &session.0;
     let (p, unit, _) = subject(core);
-    let Some(view) = core.view() else {
-        return;
-    };
+    let view = core.view();
     let dead = fallen(p);
     for (gauge, mut node, mut bg) in &mut gauges {
         let of = match *gauge {
             Gauge::Hp | Gauge::Mana => unit,
-            Gauge::SeatHp(seat) => seat_of(view, seat)
-                .and_then(|p| p.unit)
-                .and_then(|id| view.unit(id)),
+            Gauge::SeatHp(seat) => view.and_then(|view| {
+                let id = seat_of(view, seat)?.unit?;
+                view.unit(id)
+            }),
         };
         let share = of.map_or(0.0, |u| match *gauge {
             Gauge::Mana => u.mana.max(0) as f32 / u.max_mana.max(1) as f32,
@@ -1610,9 +1687,7 @@ fn level_ups(
 
 /// Shows the innate's mark for a hero that has an innate ability.
 fn innate(session: NonSend<Session>, mut mark: Single<&mut Visibility, With<InnateButton>>) {
-    let has = subject(&session.0)
-        .1
-        .and_then(|u| u.hero)
+    let has = subject_hero(&session.0)
         .and_then(bota_core::hero_def)
         .is_some_and(|h| h.innate.is_some());
     mark.set_if_neq(ui::visible(has));
@@ -1900,11 +1975,8 @@ fn portrait(
     }
     render.1.set_if_neq(Visibility::Hidden);
     let core = &session.0;
-    let (p, unit, _) = subject(core);
-    let hero = p
-        .map(|p| p.hero.0)
-        .or(unit.and_then(|u| u.hero.map(|h| h.0)));
-    let path = hero.and_then(|h| manifest.portrait(h));
+    let p = subject(core).0;
+    let path = subject_hero(core).and_then(|h| manifest.portrait(h.0));
     // Nothing in place of a portrait the cache has not, rather than white.
     let tint = if path.is_none() {
         Color::NONE

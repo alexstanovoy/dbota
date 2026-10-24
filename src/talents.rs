@@ -88,7 +88,7 @@ const SHUT: Color = Color::srgb(0.38, 0.4, 0.45);
 pub fn plugin(app: &mut App) {
     app.add_systems(
         Update,
-        (toggle, show, show_attribute, light).run_if(|k: Res<crate::session::MatchKnown>| k.0),
+        (toggle, show_button, show, show_attribute, light).run_if(crate::select::match_or_tactical),
     );
 }
 
@@ -501,9 +501,7 @@ fn toggle(
     }
     // Every hero has the Attribute Bonus to learn, whether or not it has
     // talents.
-    let hero = crate::hud::subject(&session.0)
-        .1
-        .is_some_and(|u| u.hero.is_some());
+    let hero = crate::hud::subject_hero(&session.0).is_some();
     let forced = args.tip.as_deref() == Some("talents");
     let open =
         hero && (forced || panels.talents || hovered.iter().any(|i| *i != Interaction::None));
@@ -522,6 +520,59 @@ fn learn(core: &mut bota_client_core::App, slot: u8) {
     }
 }
 
+/// A pip of the tree icon: gold once learned, breathing while a point could
+/// go into it, dim once its tier is open, shut before.
+fn pip_color(learned: bool, learnable: bool, open: bool, glow: f32) -> Color {
+    if learned {
+        GOLD
+    } else if learnable {
+        GOLD.with_alpha(0.35 + 0.4 * glow)
+    } else if open {
+        OPEN.with_alpha(0.5)
+    } else {
+        SHUT
+    }
+}
+
+/// The talents of the seat the panel is about, as the view tells them.
+fn seat_talents(core: &bota_client_core::App) -> Option<bota_proto::TalentView> {
+    crate::hud::subject(core)
+        .0
+        .and_then(|p| core.talents_of(p.slot))
+}
+
+/// The breathing glow of what a point could go into, as Dota's.
+fn glow(time: &Time) -> f32 {
+    0.55 + 0.45 * (time.elapsed_secs() * 4.0).sin().abs()
+}
+
+/// The button, for any hero the panel is about, its rim aglow while a
+/// point could go into the tree; the tree's body for a hero that has one.
+fn show_button(
+    session: NonSend<Session>,
+    time: Res<Time>,
+    mut button: Query<(&mut Visibility, &mut BorderColor), With<TalentButton>>,
+    mut body: Query<&mut Visibility, (With<TreeBody>, Without<TalentButton>)>,
+) {
+    let core = &session.0;
+    let hero = crate::hud::subject_hero(core);
+    let any = seat_talents(core).is_some_and(|t| {
+        t.may_learn_attribute_bonus == Some(true)
+            || (0..8).any(|k| t.may_learn.is_some_and(|m| m.has(TalentSlot(k))))
+    });
+    for mut v in &mut body {
+        v.set_if_neq(ui::visible(hero.and_then(|h| talents(h.0)).is_some()));
+    }
+    for (mut v, mut rim) in &mut button {
+        v.set_if_neq(ui::visible(hero.is_some()));
+        rim.set_if_neq(BorderColor::all(if any {
+            GOLD.with_alpha(glow(&time))
+        } else {
+            Color::srgb(0.2, 0.22, 0.27)
+        }));
+    }
+}
+
 /// What the tree of the panel's hero shows: its names, which are learned,
 /// which a skill point could go into, which tiers its level has opened.
 #[allow(clippy::type_complexity)]
@@ -536,54 +587,25 @@ fn show(
     mut branches: Query<(&Branch, &mut BackgroundColor), (Without<Pip>, Without<TalentCell>)>,
     mut badges: Query<(&TierLevel, &mut BorderColor), (Without<TalentCell>, Without<TalentButton>)>,
     mut texts: Query<(&CellText, &mut Text, &mut TextColor)>,
-    mut button: Query<
-        (&mut Visibility, &mut BorderColor),
-        (
-            With<TalentButton>,
-            Without<TalentPanel>,
-            Without<TalentCell>,
-            Without<TreeBody>,
-        ),
-    >,
-    mut body: Query<&mut Visibility, (With<TreeBody>, Without<TalentButton>)>,
 ) {
     let core = &session.0;
     let (seat, unit, _) = crate::hud::subject(core);
-    let tree = unit.and_then(|u| u.hero).and_then(|h| talents(h.0));
-    let state = seat.and_then(|p| core.talents_of(p.slot));
+    let tree = crate::hud::subject_hero(core).and_then(|h| talents(h.0));
+    let state = seat_talents(core);
     let learned = |slot: u8| state.is_some_and(|t| t.learned.has(TalentSlot(slot)));
     let learnable =
         |slot: u8| state.is_some_and(|t| t.may_learn.is_some_and(|m| m.has(TalentSlot(slot))));
-    // The glow of what a point could go into, breathing as Dota's does.
-    let glow = 0.55 + 0.45 * (time.elapsed_secs() * 4.0).sin().abs();
-    let any =
-        (0..8).any(learnable) || state.is_some_and(|t| t.may_learn_attribute_bonus == Some(true));
-    for mut v in &mut body {
-        v.set_if_neq(ui::visible(tree.is_some()));
-    }
-    for (mut v, mut rim) in &mut button {
-        v.set_if_neq(ui::visible(unit.is_some_and(|u| u.hero.is_some())));
-        rim.set_if_neq(BorderColor::all(if any {
-            GOLD.with_alpha(glow)
-        } else {
-            Color::srgb(0.2, 0.22, 0.27)
-        }));
-    }
-    let (Some(tree), Some(unit)) = (tree, unit) else {
+    let glow = glow(&time);
+    let Some(tree) = tree else {
         return;
     };
-    let open = |slot: u8| unit.level >= talent_levels(TalentSlot(slot)).0;
+    // The body's level, the seat's while it has none, and none before the
+    // match.
+    let level = unit.map(|u| u.level).or(seat.map(|p| p.level)).unwrap_or(0);
+    let open = |slot: u8| level >= talent_levels(TalentSlot(slot)).0;
     for (pip, mut bg) in &mut pips {
-        let c = if learned(pip.0) {
-            GOLD
-        } else if learnable(pip.0) {
-            GOLD.with_alpha(0.35 + 0.4 * glow)
-        } else if open(pip.0) {
-            OPEN.with_alpha(0.5)
-        } else {
-            SHUT
-        };
-        bg.set_if_neq(BackgroundColor(c));
+        let (got, may, opened) = (learned(pip.0), learnable(pip.0), open(pip.0));
+        bg.set_if_neq(BackgroundColor(pip_color(got, may, opened, glow)));
     }
     for (branch, mut bg) in &mut branches {
         bg.set_if_neq(BackgroundColor(if learned(branch.0) {
