@@ -69,6 +69,37 @@ pub fn plugin(app: &mut App) {
     app.init_resource::<ChatInput>()
         .add_systems(Startup, spawn)
         .add_systems(Update, (note_heard, show_log, show_input, ime));
+    if app.world().resource::<crate::Args>().chat.is_some() {
+        app.add_systems(Update, say_given.before(show_log));
+    }
+}
+
+/// Debug `--chat`: says its lines but the last once the client may speak,
+/// and opens the line with the last typed into it.
+fn say_given(
+    args: Res<crate::Args>,
+    mut session: NonSendMut<Session>,
+    mut typing: ResMut<Typing>,
+    mut input: ResMut<ChatInput>,
+    mut done: Local<bool>,
+) {
+    let core = &mut session.0;
+    let Some(given) = args.chat.as_deref().filter(|_| !*done && core.can_say()) else {
+        return;
+    };
+    *done = true;
+    let mut lines: Vec<&str> = given.split(';').collect();
+    let last = lines.pop().unwrap_or_default();
+    for line in lines {
+        if open(core, &mut input, true) {
+            append(&mut input, line);
+            send(core, &mut input);
+        }
+    }
+    if open(core, &mut input, true) {
+        append(&mut input, last);
+        *typing = Typing::Chat;
+    }
 }
 
 /// Opens the chat line when its binding fires ("Chat to allies", "Chat to

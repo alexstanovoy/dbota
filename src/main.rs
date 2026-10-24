@@ -177,6 +177,11 @@ pub struct Args {
     /// Debug: keep the scoreboard open from the start, for screenshots.
     #[arg(long)]
     pub scoreboard: bool,
+    /// Debug: once the client may speak in a game, say each `;`-separated
+    /// line to everyone but the last, and leave the last typed into the open
+    /// chat line (for screenshots and frame timings).
+    #[arg(long, value_name = "LINES")]
+    pub chat: Option<String>,
     /// Debug: open the shop at the start: on a tab (`basics`, `upgrades` or
     /// `neutrals`), with an item's build tree shown (`upgrades:51`) or a
     /// search typed (`basics:/tango`).
