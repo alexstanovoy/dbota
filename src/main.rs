@@ -638,6 +638,9 @@ fn default_plugins(args: &Args, settings: &config::Settings) -> impl PluginGroup
                 concat!(env!("CARGO_MANIFEST_DIR"), "/assets").into()
             },
             unapproved_path_mode: UnapprovedPathMode::Deny,
+            // No asset has a .meta file: looking for one costs a failed read per asset, in a
+            // browser a request to the page's server.
+            meta_check: bevy::asset::AssetMetaCheck::Never,
             ..default()
         })
         .set(GltfPlugin {
