@@ -228,6 +228,11 @@ pub struct Args {
     /// Present without vsync.
     #[arg(long)]
     pub no_vsync: bool,
+    /// Debug: draw without the GPU's block-compressed texture formats, as a
+    /// GPU (a browser's WebGPU) without them does: the cache's textures are
+    /// decoded as they load.
+    #[arg(long)]
+    pub no_block_textures: bool,
     /// Play no sound.
     #[arg(long)]
     pub mute: bool,
@@ -589,6 +594,9 @@ fn render_creation(args: &Args) -> bevy::render::settings::RenderCreation {
         settings.features |= WgpuFeatures::TIMESTAMP_QUERY
             | WgpuFeatures::TIMESTAMP_QUERY_INSIDE_ENCODERS
             | WgpuFeatures::TIMESTAMP_QUERY_INSIDE_PASSES;
+    }
+    if args.no_block_textures {
+        settings.disabled_features = Some(WgpuFeatures::TEXTURE_COMPRESSION_BC);
     }
     settings.into()
 }
