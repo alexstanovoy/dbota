@@ -54,9 +54,14 @@ pub fn plugin(app: &mut App) {
     app.init_resource::<Bars>()
         .init_resource::<Floaters>()
         .add_systems(Startup, spawn_layer)
+        // Placed from the camera's own transform, not its propagated one,
+        // so the bars and the interface's layout run beside the transform
+        // propagation of every animated skeleton, not after it.
         .add_systems(
             PostUpdate,
-            (bars, floaters).after(TransformSystems::Propagate),
+            (bars, floaters)
+                .after(bevy::camera::CameraUpdateSystems)
+                .before(bevy::ui::UiSystems::Layout),
         );
 }
 
@@ -230,8 +235,8 @@ struct BarParams<'w, 's> {
     ground: Res<'w, Ground>,
     fog: Res<'w, crate::fog::FogGrid>,
     ui_scale: Res<'w, UiScale>,
-    camera:
-        Single<'w, 's, (&'static Camera, &'static GlobalTransform), With<crate::camera::RtsCamera>>,
+    camera: Single<'w, 's, (Entity, &'static Camera), With<crate::camera::RtsCamera>>,
+    transforms: TransformHelper<'w, 's>,
 }
 
 fn bars(
@@ -246,7 +251,11 @@ fn bars(
         return;
     };
     let layer = layer.0;
-    let (camera, cam_gt) = *p.camera;
+    let (camera_entity, camera) = *p.camera;
+    let Ok(cam_gt) = p.transforms.compute_global_transform(camera_entity) else {
+        return;
+    };
+    let cam_gt = &cam_gt;
     let scale = p.ui_scale.0.max(0.1);
     let me = core.ears().and_then(|id| view.unit(id));
     let mut alive = Vec::new();
@@ -415,7 +424,8 @@ fn floaters(
     ground: Res<Ground>,
     settings: Res<Settings>,
     ui_scale: Res<UiScale>,
-    camera: Single<(&Camera, &GlobalTransform), With<crate::camera::RtsCamera>>,
+    camera: Single<(Entity, &Camera), With<crate::camera::RtsCamera>>,
+    transforms: TransformHelper,
     mut texts: Query<(
         &mut Text,
         &mut TextFont,
@@ -429,7 +439,11 @@ fn floaters(
     fog: Res<crate::fog::FogGrid>,
 ) {
     let core = &session.0;
-    let (camera, cam_gt) = *camera;
+    let (camera_entity, camera) = *camera;
+    let Ok(cam_gt) = transforms.compute_global_transform(camera_entity) else {
+        return;
+    };
+    let cam_gt = &cam_gt;
     let scale = ui_scale.0.max(0.1);
     let numbers = settings.aids.numbers;
     let shown: Vec<_> = core
