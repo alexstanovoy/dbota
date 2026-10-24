@@ -179,6 +179,17 @@ impl Instance {
                 point.previous = position;
             }
             point.face(forward);
+            // A control point the game or an operator never placed stands where the effect
+            // does, at control point 0: Dota's town portal parks its parts on one it leaves
+            // unplaced while the channel's clock (control point 7) is not given.
+            if cp == 0 {
+                let origin = node.control_points[0];
+                for k in 1..node.control_points.len() {
+                    if node.placed & 1 << k == 0 {
+                        node.control_points[k] = origin;
+                    }
+                }
+            }
         }
     }
 
