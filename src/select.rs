@@ -14,6 +14,10 @@ use crate::manifest::Manifest;
 use crate::session::Session;
 use crate::ui::{self, Fonts};
 
+/// How far down the tactical phase's line starts: below the top bar's
+/// portraits and clock.
+const BANNER_TOP: f32 = 60.0;
+
 /// The whole screen.
 #[derive(Component)]
 struct Screen;
@@ -46,6 +50,10 @@ pub struct TacticalPhase(pub bool);
 /// The line over the shop in the tactical phase.
 #[derive(Component)]
 struct Banner;
+
+/// The banner's smaller lines: the gold and what is queued.
+#[derive(Component)]
+struct BannerHint;
 
 /// The selection clock as last told, and when it was told.
 #[derive(Resource, Default)]
@@ -181,21 +189,36 @@ fn spawn(
         Pickable::IGNORE,
         ChildOf(ready),
     ));
+    // Under the top bar, as Dota's strategy time line sits under its clock;
+    // its smaller lines keep clear of the shop open at the right.
+    let banner = commands
+        .spawn((
+            Banner,
+            ui::text("", &fonts.bold, 22.0, ui::INK),
+            ui::shadow(),
+            TextLayout::justify(Justify::Center),
+            Node {
+                position_type: PositionType::Absolute,
+                top: px(BANNER_TOP),
+                left: px(0),
+                right: px(0),
+                justify_content: JustifyContent::Center,
+                ..default()
+            },
+            Pickable::IGNORE,
+            Visibility::Hidden,
+        ))
+        .id();
     commands.spawn((
-        Banner,
-        ui::text("", &fonts.bold, 22.0, ui::INK),
-        ui::shadow(),
-        TextLayout::justify(Justify::Center),
-        Node {
-            position_type: PositionType::Absolute,
-            top: px(12),
-            left: px(0),
-            right: px(0),
-            justify_content: JustifyContent::Center,
+        BannerHint,
+        TextSpan::default(),
+        TextFont {
+            font: fonts.regular.clone().into(),
+            font_size: FontSize::Px(16.0),
             ..default()
         },
-        Pickable::IGNORE,
-        Visibility::Hidden,
+        TextColor(ui::INK),
+        ChildOf(banner),
     ));
     commands.spawn((
         Seats,
@@ -233,6 +256,7 @@ fn tactical(
     mut phase: ResMut<TacticalPhase>,
     mut opened: Local<bool>,
     mut banner: Single<(&mut Text, &mut Visibility), With<Banner>>,
+    mut hint: Single<&mut TextSpan, With<BannerHint>>,
 ) {
     let core = &session.0;
     let on = core.in_tactical_phase();
@@ -258,11 +282,17 @@ fn tactical(
     } else {
         format!("on the list: {}", names.join(", "))
     };
-    banner.0.set_if_neq(Text(format!(
-        "TACTICAL PHASE - the match begins in {left}\nGold {} of {}  |  {queue}",
+    banner
+        .0
+        .set_if_neq(Text(format!("TACTICAL PHASE - the match begins in {left}")));
+    let lines = format!(
+        "\nGold {} of {}\n{queue}",
         core.gold_after_queue(),
         bota_core::rules::STARTING_GOLD
-    )));
+    );
+    if hint.0 != lines {
+        hint.0 = lines;
+    }
 }
 
 /// A click on a portrait picks that hero; on Ready, readies or unreadies.
