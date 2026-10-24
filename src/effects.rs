@@ -16,7 +16,7 @@ use crate::manifest::Manifest;
 use crate::map::Ground;
 use crate::particles::{Library, Playing};
 use crate::session::Session;
-use crate::units::{Attachments, ModelBank, Unit, UnitIndex};
+use crate::units::{Attachments, Unit, UnitIndex};
 use crate::warmup::Warmup;
 
 /// How high missiles fly over the ground, in world units.
@@ -155,7 +155,7 @@ fn make_art(
 #[derive(bevy::ecs::system::SystemParam)]
 struct Shooters<'w, 's> {
     index: Res<'w, UnitIndex>,
-    bank: Res<'w, ModelBank>,
+    manifest: Res<'w, Manifest>,
     units: Query<
         'w,
         's,
@@ -169,17 +169,6 @@ struct Shooters<'w, 's> {
 }
 
 impl Shooters<'_, '_> {
-    /// The attack effect of unit `id`: its model's, `<model>.attack` for `<model>.model`.
-    fn effect<'a>(
-        &self,
-        id: EntityId,
-        library: &'a Library,
-    ) -> Option<&'a std::sync::Arc<crate::particles::Effect>> {
-        let (unit, _, _) = self.units.get(*self.index.0.get(&id)?).ok()?;
-        let logical = &self.bank.0.get(unit.model?)?.model.logical;
-        library.effect(&format!("{}.attack", logical.strip_suffix(".model")?))
-    }
-
     /// Where unit `id`'s missile leaves: the hand of the attack it swings.
     fn launch(&self, id: EntityId) -> Option<Vec3> {
         let (_, pose, attachments) = self.units.get(*self.index.0.get(&id)?).ok()?;
@@ -195,8 +184,8 @@ impl Shooters<'_, '_> {
         Some(self.places.get(attachments?.hitloc?).ok()?.translation())
     }
 
-    /// Starts the attack effect of missile `f` (one with no ability or item, from a unit whose
-    /// model has an effect), from its source's hand to its target; `at` where it is now.
+    /// Starts the attack effect of missile `f` (an attack's, its look's particle), from its
+    /// source's hand, or where it is (`at`) when the source is not seen, to its target.
     fn start(
         &self,
         f: &bota_client_core::Flight,
@@ -204,14 +193,15 @@ impl Shooters<'_, '_> {
         library: Option<&Library>,
         playing: &mut Playing,
     ) -> Option<crate::particles::Handle> {
-        let source = f.missile.source.filter(|_| f.missile.inflictor.is_none())?;
-        let effect = self.effect(source, library?)?;
+        let model = f.missile.model.filter(|_| f.missile.inflictor.is_none())?;
+        let name = crate::units::missile_effect(model, f.missile.team, &self.manifest)?;
+        let effect = library?.effect(&name)?;
         let handle = playing.start(
             effect,
             f.missile.id.idx ^ f.missile.id.generation.rotate_left(16),
         )?;
         let instance = playing.get_mut(handle)?;
-        let launch = self.launch(source).unwrap_or(at);
+        let launch = f.missile.source.and_then(|s| self.launch(s)).unwrap_or(at);
         instance.set_control_point(LAUNCH, from_world(launch), Vec3::ZERO, true);
         instance.set_control_point(TARGET, from_world(self.aim(f, at)), Vec3::ZERO, true);
         Some(handle)

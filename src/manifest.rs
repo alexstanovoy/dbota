@@ -48,6 +48,9 @@ pub struct UnitArt {
     pub model: Option<String>,
     /// The unit's own `ModelScale`, when it differs from its model's.
     pub scale: Option<f32>,
+    /// The particle its attack's missile wears (its `ProjectileModel`), by
+    /// logical name; absent for a unit that throws none.
+    pub attack: Option<String>,
 }
 
 /// Everything the cache was exported with, and which of it is there.
@@ -103,6 +106,10 @@ impl Manifest {
                             .iter()
                             .find_map(|w| w.strip_prefix("model_scale="))
                             .and_then(|s| s.parse().ok()),
+                        attack: rest
+                            .iter()
+                            .find_map(|w| w.strip_prefix("attack="))
+                            .map(str::to_owned),
                     });
                 }
                 ["clip", model, logical, name, duration, rest @ ..] => {

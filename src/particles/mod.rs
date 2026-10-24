@@ -18,7 +18,7 @@ mod store;
 #[cfg(test)]
 mod tests;
 
-pub use library::{Effect, Library};
+pub use library::Library;
 pub use plugin::{Handle, Playing};
 
 use bevy::prelude::App;

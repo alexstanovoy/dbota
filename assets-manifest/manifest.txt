@@ -12,9 +12,10 @@
 #           (Dota "bonemerge"; e.g. the arms say root0_jnt where Shadow Fiend says Root0_JNT).
 #   clip    <model> <logical clip> <glTF animation name> <duration s> [point=<s>]
 #           point = the Dota attack/cast point in seconds at base speed (npc scripts), not a frame.
-#   unit    <npc_units.txt unit name> <model logical>|none [model_scale=x]
+#   unit    <npc_units.txt unit name> <model logical>|none [model_scale=x] [attack=<particle logical>]
 #           which model a unit is drawn with and the unit's own ModelScale (units may share a model at
-#           different sizes). `none` draws nothing. The importer skips these lines.
+#           different sizes). `none` draws nothing. attack= names the particle its attack's missile wears
+#           (the unit's ProjectileModel). The importer skips these lines.
 #   portraits <logical> <vpk scripts/npc/portraits.txt> <out .txt>
 #           Dota's portrait framings (camera, field of view, light, background) of every model above, one
 #           line each (model-local inches and degrees; the HUD portrait's camera is placed by them), and
@@ -296,7 +297,7 @@ texture particle.glyph.base materials/particle/particle_ring_wave_15.vtex_c text
 texture particle.glyph.creep_tube materials/particle/particle_ring_wave.vtex_c textures/particle/particle_ring_wave.png
 
 # --- Attack missiles: each unit's ProjectileModel (scripts/npc/npc_units.txt, heroes/npc_dota_hero_*.txt),
-# by the logical name of the unit's model with .attack for .model
+# by the logical name of the unit's model with .attack for .model; a neutral's by its unit line's attack=
 particle hero.nevermore.attack particles/units/heroes/hero_nevermore/nevermore_base_attack.vpcf_c particles/nevermore_base_attack.json
 particle creep.radiant.ranged.attack particles/base_attacks/ranged_goodguy.vpcf_c particles/ranged_goodguy.json
 particle creep.dire.ranged.attack particles/base_attacks/ranged_badguy.vpcf_c particles/ranged_badguy.json
@@ -304,6 +305,16 @@ particle creep.radiant.siege.attack particles/base_attacks/ranged_siege_good.vpc
 particle creep.dire.siege.attack particles/base_attacks/ranged_siege_bad.vpcf_c particles/ranged_siege_bad.json
 particle tower.radiant.attack particles/base_attacks/ranged_tower_good.vpcf_c particles/ranged_tower_good.json
 particle tower.dire.attack particles/base_attacks/ranged_tower_bad.vpcf_c particles/ranged_tower_bad.json
+# dota_fountain throws one missile for both sides
+particle fountain.radiant.attack particles/base_attacks/fountain_attack.vpcf_c particles/fountain_attack.json
+particle fountain.dire.attack particles/base_attacks/fountain_attack.vpcf_c particles/fountain_attack.json
+particle neutral.attack.witchdoctor particles/units/heroes/hero_witchdoctor/witchdoctor_base_attack.vpcf_c particles/witchdoctor_base_attack.json
+particle neutral.attack.black_dragon particles/neutral_fx/black_dragon_attack.vpcf_c particles/black_dragon_attack.json
+particle neutral.attack.black_drake particles/neutral_fx/black_drake_attack.vpcf_c particles/black_drake_attack.json
+particle neutral.attack.ghost particles/neutral_fx/ghost_base_attack.vpcf_c particles/ghost_base_attack.json
+particle neutral.attack.gnoll particles/neutral_fx/gnoll_base_attack.vpcf_c particles/gnoll_base_attack.json
+particle neutral.attack.satyr_trickster particles/neutral_fx/satyr_trickster_projectile.vpcf_c particles/satyr_trickster_projectile.json
+particle neutral.attack.thunderlizard particles/neutral_fx/thunderlizard_base_attack.vpcf_c particles/thunderlizard_base_attack.json
 
 # --- Shadow Fiend's abilities (Shadowraze, Requiem of Souls and its lines, a Necromastery soul)
 particle hero.nevermore.raze particles/units/heroes/hero_nevermore/nevermore_shadowraze.vpcf_c particles/nevermore_shadowraze.json
@@ -705,7 +716,7 @@ clip neutral.ice_giant01.model attack ice_giant_attack_ranged 1.467 point=0.7
 clip neutral.ice_giant01.model death witchdoctor_death 1.967
 clip neutral.ice_giant01.model stun stun_anim 1.567
 clip neutral.ice_giant01.model cast1 maledict_anim 0.967 point=0.7
-unit npc_dota_neutral_ice_shaman neutral.ice_giant01.model model_scale=1.3
+unit npc_dota_neutral_ice_shaman neutral.ice_giant01.model model_scale=1.3 attack=neutral.attack.witchdoctor
 model neutral.n_creep_ancient_frog.model models/creeps/neutral_creeps/n_creep_ancient_frog/n_creep_ancient_frog.vmdl_c models/neutral/n_creep_ancient_frog/n_creep_ancient_frog.glb anims=ancient_frog_idle,ancient_frog_run,ancient_frog_attack,ancient_frog_attack_01,ancient_frog_death,ancient_frog_stun,ancient_frog_cast
 clip neutral.n_creep_ancient_frog.model idle ancient_frog_idle 2.438
 clip neutral.n_creep_ancient_frog.model run ancient_frog_run 1.222
@@ -722,7 +733,7 @@ clip neutral.n_creep_ancient_frog_mage.model attack ancient_frog_mage_attack 1.6
 clip neutral.n_creep_ancient_frog_mage.model death ancient_frog_mage_death_a 1.250
 clip neutral.n_creep_ancient_frog_mage.model stun ancient_frog_mage_stun 4.208
 clip neutral.n_creep_ancient_frog_mage.model cast1 ancient_frog_mage_cast 1.083 point=0.7
-unit npc_dota_neutral_ancient_frog_mage neutral.n_creep_ancient_frog_mage.model model_scale=1.10
+unit npc_dota_neutral_ancient_frog_mage neutral.n_creep_ancient_frog_mage.model model_scale=1.10 attack=neutral.attack.witchdoctor
 model neutral.n_creep_beast.model models/creeps/neutral_creeps/n_creep_beast/n_creep_beast.vmdl_c models/neutral/n_creep_beast/n_creep_beast.glb anims=idle,run,attack,attack_alt,die,stun
 clip neutral.n_creep_beast.model idle idle 1.267
 clip neutral.n_creep_beast.model run run 0.800
@@ -738,14 +749,14 @@ clip neutral.n_creep_black_dragon.model attack attack 0.933 point=0.5
 clip neutral.n_creep_black_dragon.model death death 0.967
 clip neutral.n_creep_black_dragon.model stun stun 0.967
 clip neutral.n_creep_black_dragon.model cast1 cast1_fireball 0.933 point=0.5
-unit npc_dota_neutral_black_dragon neutral.n_creep_black_dragon.model model_scale=1
+unit npc_dota_neutral_black_dragon neutral.n_creep_black_dragon.model model_scale=1 attack=neutral.attack.black_dragon
 model neutral.n_creep_black_drake.model models/creeps/neutral_creeps/n_creep_black_drake/n_creep_black_drake.vmdl_c models/neutral/n_creep_black_drake/n_creep_black_drake.glb anims=idle,run,attack,death,stun
 clip neutral.n_creep_black_drake.model idle idle 0.967
 clip neutral.n_creep_black_drake.model run run 0.967
 clip neutral.n_creep_black_drake.model attack attack 0.933 point=0.5
 clip neutral.n_creep_black_drake.model death death 0.967
 clip neutral.n_creep_black_drake.model stun stun 0.967
-unit npc_dota_neutral_black_drake neutral.n_creep_black_drake.model model_scale=.6
+unit npc_dota_neutral_black_drake neutral.n_creep_black_drake.model model_scale=.6 attack=neutral.attack.black_drake
 model neutral.n_creep_centaur_lrg.model models/creeps/neutral_creeps/n_creep_centaur_lrg/n_creep_centaur_lrg.vmdl_c models/neutral/n_creep_centaur_lrg/n_creep_centaur_lrg.glb anims=idle,runN,attack,death,disabled,stomp
 clip neutral.n_creep_centaur_lrg.model idle idle 2.633
 clip neutral.n_creep_centaur_lrg.model run runN 0.433
@@ -768,7 +779,7 @@ clip neutral.n_creep_forest_troll_berserker.model attack n_creep_forest_troll_be
 clip neutral.n_creep_forest_troll_berserker.model attack2 n_creep_forest_troll_berserker_attack_B 0.800 point=0.3
 clip neutral.n_creep_forest_troll_berserker.model death n_creep_forest_troll_berserker_death 1.333
 clip neutral.n_creep_forest_troll_berserker.model stun n_creep_forest_troll_berserker_stun 2.133
-unit npc_dota_neutral_forest_troll_berserker neutral.n_creep_forest_troll_berserker.model model_scale=.90
+unit npc_dota_neutral_forest_troll_berserker neutral.n_creep_forest_troll_berserker.model model_scale=.90 attack=creep.dire.ranged.attack
 model neutral.n_creep_forest_troll_high_priest.model models/creeps/neutral_creeps/n_creep_forest_trolls/n_creep_forest_troll_high_priest.vmdl_c models/neutral/n_creep_forest_troll_high_priest/n_creep_forest_troll_high_priest.glb anims=idle,run,attack,death,stun,cast_heal
 clip neutral.n_creep_forest_troll_high_priest.model idle idle 2.000
 clip neutral.n_creep_forest_troll_high_priest.model run run 0.667
@@ -776,7 +787,7 @@ clip neutral.n_creep_forest_troll_high_priest.model attack attack 0.700 point=0.
 clip neutral.n_creep_forest_troll_high_priest.model death death 1.967
 clip neutral.n_creep_forest_troll_high_priest.model stun stun 2.000
 clip neutral.n_creep_forest_troll_high_priest.model cast1 cast_heal 1.200 point=0.3
-unit npc_dota_neutral_forest_troll_high_priest neutral.n_creep_forest_troll_high_priest.model model_scale=.90
+unit npc_dota_neutral_forest_troll_high_priest neutral.n_creep_forest_troll_high_priest.model model_scale=.90 attack=creep.dire.ranged.attack
 model neutral.n_creep_froglet.model models/creeps/neutral_creeps/n_creep_froglet/n_creep_froglet.vmdl_c models/neutral/n_creep_froglet/n_creep_froglet.glb anims=froglet_idle,froglet_run,froglet_attack_01,froglet_attack_02,froglet_death,froglet_stun,froglet_cast
 clip neutral.n_creep_froglet.model idle froglet_idle 1.500
 clip neutral.n_creep_froglet.model run froglet_run 0.800
@@ -793,7 +804,7 @@ clip neutral.n_creep_froglet_mage.model attack froglet_attack 1.083 point=0.3
 clip neutral.n_creep_froglet_mage.model death froglet_death 1.125
 clip neutral.n_creep_froglet_mage.model stun froglet_stun 2.100
 clip neutral.n_creep_froglet_mage.model cast1 froglet_cast 1.125 point=0.3
-unit npc_dota_neutral_grown_frog_mage neutral.n_creep_froglet_mage.model model_scale=1.0
+unit npc_dota_neutral_grown_frog_mage neutral.n_creep_froglet_mage.model model_scale=1.0 attack=creep.dire.ranged.attack
 model neutral.n_creep_frostbitten_swollen01.model models/creeps/ice_biome/frostbitten/n_creep_frostbitten_swollen01.vmdl_c models/neutral/n_creep_frostbitten_swollen01/n_creep_frostbitten_swollen01.glb anims=idle,run,attack,attack3,death,stun,siltbreaker_icicle_cast
 clip neutral.n_creep_frostbitten_swollen01.model idle idle 1.667
 clip neutral.n_creep_frostbitten_swollen01.model run run 1.000
@@ -818,7 +829,7 @@ clip neutral.n_creep_ghost_a.model attack ghost_a_hit 0.700 point=0.3
 clip neutral.n_creep_ghost_a.model death ghost_a_death 0.967
 clip neutral.n_creep_ghost_a.model stun ghost_a_stun 1.167
 clip neutral.n_creep_ghost_a.model cast1 ghost_a_sb_cast 1.967 point=0.3
-unit npc_dota_neutral_ghost neutral.n_creep_ghost_a.model model_scale=.90
+unit npc_dota_neutral_ghost neutral.n_creep_ghost_a.model model_scale=.90 attack=neutral.attack.ghost
 model neutral.n_creep_ghost_b.model models/creeps/neutral_creeps/n_creep_ghost_b/n_creep_ghost_b.vmdl_c models/neutral/n_creep_ghost_b/n_creep_ghost_b.glb anims=idle,run,hit,death,stun
 clip neutral.n_creep_ghost_b.model idle idle 3.200
 clip neutral.n_creep_ghost_b.model run run 2.133
@@ -831,7 +842,7 @@ clip neutral.n_creep_gnoll.model idle n_creep_gnoll_idle 4.467
 clip neutral.n_creep_gnoll.model run n_creep_gnoll_run 0.800
 clip neutral.n_creep_gnoll.model attack n_creep_gnoll_attack 0.800 point=0.4
 clip neutral.n_creep_gnoll.model death n_creep_gnoll_death 2.500
-unit npc_dota_neutral_gnoll_assassin neutral.n_creep_gnoll.model model_scale=.90
+unit npc_dota_neutral_gnoll_assassin neutral.n_creep_gnoll.model model_scale=.90 attack=neutral.attack.gnoll
 model neutral.n_creep_golem_b.model models/creeps/neutral_creeps/n_creep_golem_b/n_creep_golem_b.vmdl_c models/neutral/n_creep_golem_b/n_creep_golem_b.glb anims=idle,run,attack,attackAlt,die,stun,cast1_hurl_boulder
 clip neutral.n_creep_golem_b.model idle idle 2.500
 clip neutral.n_creep_golem_b.model run run 0.733
@@ -848,7 +859,7 @@ clip neutral.n_creep_harpy_a.model run run 0.967
 clip neutral.n_creep_harpy_a.model attack attack 0.667 point=0.3
 clip neutral.n_creep_harpy_a.model death death 1.467
 clip neutral.n_creep_harpy_a.model stun stun 1.233
-unit npc_dota_neutral_harpy_scout neutral.n_creep_harpy_a.model model_scale=0.85
+unit npc_dota_neutral_harpy_scout neutral.n_creep_harpy_a.model model_scale=0.85 attack=creep.dire.ranged.attack
 model neutral.n_creep_harpy_b.model models/creeps/neutral_creeps/n_creep_harpy_b/n_creep_harpy_b.vmdl_c models/neutral/n_creep_harpy_b/n_creep_harpy_b.glb anims=idle,run,attack,death,stun,chainlightning
 clip neutral.n_creep_harpy_b.model idle idle 0.967
 clip neutral.n_creep_harpy_b.model run run 0.967
@@ -856,7 +867,7 @@ clip neutral.n_creep_harpy_b.model attack attack 0.667 point=0.3
 clip neutral.n_creep_harpy_b.model death death 0.967
 clip neutral.n_creep_harpy_b.model stun stun 1.233
 clip neutral.n_creep_harpy_b.model cast1 chainlightning 0.933 point=0.3
-unit npc_dota_neutral_harpy_storm neutral.n_creep_harpy_b.model model_scale=0.925
+unit npc_dota_neutral_harpy_storm neutral.n_creep_harpy_b.model model_scale=0.925 attack=creep.dire.ranged.attack
 model neutral.n_creep_kobold_a.model models/creeps/neutral_creeps/n_creep_kobold/kobold_a/n_creep_kobold_a.vmdl_c models/neutral/n_creep_kobold_a/n_creep_kobold_a.glb anims=idle,run,attack,attackAlt,death,stun
 clip neutral.n_creep_kobold_a.model idle idle 2.667
 clip neutral.n_creep_kobold_a.model run run 0.700
@@ -910,7 +921,7 @@ clip neutral.n_creep_satyr_b.model attack satyr_b_attack 0.667 point=0.3
 clip neutral.n_creep_satyr_b.model death satyr_b_death 0.967
 clip neutral.n_creep_satyr_b.model stun satyr_b_stun 1.300
 clip neutral.n_creep_satyr_b.model cast1 satyr_b_cast 1.133 point=0.3
-unit npc_dota_neutral_satyr_trickster neutral.n_creep_satyr_b.model model_scale=.7
+unit npc_dota_neutral_satyr_trickster neutral.n_creep_satyr_b.model model_scale=.7 attack=neutral.attack.satyr_trickster
 model neutral.n_creep_satyr_c.model models/creeps/neutral_creeps/n_creep_satyr_c/n_creep_satyr_c.vmdl_c models/neutral/n_creep_satyr_c/n_creep_satyr_c.glb anims=satyr_c_idle,satyr_c_run,satyr_c_attack,satyr_c_death,satyr_c_stun,cast
 clip neutral.n_creep_satyr_c.model idle satyr_c_idle 1.300
 clip neutral.n_creep_satyr_c.model run satyr_c_run 0.800
@@ -950,7 +961,7 @@ clip neutral.n_creep_tadpole_c.model run tadpole_c_retarget_run_2 4.000
 clip neutral.n_creep_tadpole_c.model attack tadpole_c_attack_var_1 0.967 point=0.4
 clip neutral.n_creep_tadpole_c.model death tadpole_c_death_b 2.500
 clip neutral.n_creep_tadpole_c.model stun tadpole_c_stun 1.467
-unit npc_dota_neutral_tadpole neutral.n_creep_tadpole_c.model model_scale=.45
+unit npc_dota_neutral_tadpole neutral.n_creep_tadpole_c.model model_scale=.45 attack=neutral.attack.gnoll
 model neutral.n_creep_tadpole_ranged_v2.model models/creeps/neutral_creeps/n_creep_tadpole/n_creep_tadpole_ranged_v2.vmdl_c models/neutral/n_creep_tadpole_ranged_v2/n_creep_tadpole_ranged_v2.glb anims=tadpole_ranged_idle,tadpole_run_2,tadpole_ranged_attack,tadpole_death_alt_6,tadpole_stun,tadpole_ranged_cast
 clip neutral.n_creep_tadpole_ranged_v2.model idle tadpole_ranged_idle 3.000
 clip neutral.n_creep_tadpole_ranged_v2.model run tadpole_run_2 3.200
@@ -958,7 +969,7 @@ clip neutral.n_creep_tadpole_ranged_v2.model attack tadpole_ranged_attack 2.000 
 clip neutral.n_creep_tadpole_ranged_v2.model death tadpole_death_alt_6 2.133
 clip neutral.n_creep_tadpole_ranged_v2.model stun tadpole_stun 1.400
 clip neutral.n_creep_tadpole_ranged_v2.model cast1 tadpole_ranged_cast 0.833 point=0.3
-unit npc_dota_neutral_froglet_mage neutral.n_creep_tadpole_ranged_v2.model model_scale=.75
+unit npc_dota_neutral_froglet_mage neutral.n_creep_tadpole_ranged_v2.model model_scale=.75 attack=creep.dire.ranged.attack
 model neutral.n_creep_tadpole_v2.model models/creeps/neutral_creeps/n_creep_tadpole/n_creep_tadpole_v2.vmdl_c models/neutral/n_creep_tadpole_v2/n_creep_tadpole_v2.glb anims=tadpole_idle_var1,tadpole_run_2,tadpole_attack_var_5,tadpole_death_alt_6,tadpole_stun,cast
 clip neutral.n_creep_tadpole_v2.model idle tadpole_idle_var1 3.000
 clip neutral.n_creep_tadpole_v2.model run tadpole_run_2 3.200
@@ -974,14 +985,14 @@ clip neutral.n_creep_thunder_lizard_big.model attack n_creep_thunder_lizard_big_
 clip neutral.n_creep_thunder_lizard_big.model death n_creep_thunder_lizard_big_death 1.667
 clip neutral.n_creep_thunder_lizard_big.model stun n_creep_thunder_lizard_big_stun 1.667
 clip neutral.n_creep_thunder_lizard_big.model cast1 n_creep_thunder_lizard_big_cast1_slam 0.733 point=0.3
-unit npc_dota_neutral_big_thunder_lizard neutral.n_creep_thunder_lizard_big.model model_scale=.80
+unit npc_dota_neutral_big_thunder_lizard neutral.n_creep_thunder_lizard_big.model model_scale=.80 attack=neutral.attack.thunderlizard
 model neutral.n_creep_thunder_lizard_small.model models/creeps/neutral_creeps/n_creep_thunder_lizard/n_creep_thunder_lizard_small.vmdl_c models/neutral/n_creep_thunder_lizard_small/n_creep_thunder_lizard_small.glb anims=n_creep_thunder_lizard_small_idle,n_creep_thunder_lizard_small_run,n_creep_thunder_lizard_small_attack,n_creep_thunder_lizard_small_death,n_creep_thunder_lizard_small_stun
 clip neutral.n_creep_thunder_lizard_small.model idle n_creep_thunder_lizard_small_idle 2.333
 clip neutral.n_creep_thunder_lizard_small.model run n_creep_thunder_lizard_small_run 1.067
 clip neutral.n_creep_thunder_lizard_small.model attack n_creep_thunder_lizard_small_attack 0.667 point=0.5
 clip neutral.n_creep_thunder_lizard_small.model death n_creep_thunder_lizard_small_death 1.667
 clip neutral.n_creep_thunder_lizard_small.model stun n_creep_thunder_lizard_small_stun 1.667
-unit npc_dota_neutral_small_thunder_lizard neutral.n_creep_thunder_lizard_small.model model_scale=.65
+unit npc_dota_neutral_small_thunder_lizard neutral.n_creep_thunder_lizard_small.model model_scale=.65 attack=neutral.attack.thunderlizard
 model neutral.n_creep_troll_dark_a.model models/creeps/neutral_creeps/n_creep_troll_dark_a/n_creep_troll_dark_a.vmdl_c models/neutral/n_creep_troll_dark_a/n_creep_troll_dark_a.glb anims=idle,run,attack,death,stun,raisedead
 clip neutral.n_creep_troll_dark_a.model idle idle 1.467
 clip neutral.n_creep_troll_dark_a.model run run 0.733
@@ -989,7 +1000,7 @@ clip neutral.n_creep_troll_dark_a.model attack attack 0.667 point=0.3
 clip neutral.n_creep_troll_dark_a.model death death 0.967
 clip neutral.n_creep_troll_dark_a.model stun stun 1.467
 clip neutral.n_creep_troll_dark_a.model cast1 raisedead 1.133 point=0.3
-unit npc_dota_neutral_dark_troll neutral.n_creep_troll_dark_a.model model_scale=.70
+unit npc_dota_neutral_dark_troll neutral.n_creep_troll_dark_a.model model_scale=.70 attack=creep.dire.ranged.attack
 model neutral.n_creep_troll_dark_b.model models/creeps/neutral_creeps/n_creep_troll_dark_b/n_creep_troll_dark_b.vmdl_c models/neutral/n_creep_troll_dark_b/n_creep_troll_dark_b.glb anims=idle,run,attack,death,stun,raise_dead
 clip neutral.n_creep_troll_dark_b.model idle idle 1.467
 clip neutral.n_creep_troll_dark_b.model run run 0.733
@@ -997,7 +1008,7 @@ clip neutral.n_creep_troll_dark_b.model attack attack 0.667 point=0.3
 clip neutral.n_creep_troll_dark_b.model death death 1.467
 clip neutral.n_creep_troll_dark_b.model stun stun 1.467
 clip neutral.n_creep_troll_dark_b.model cast1 raise_dead 1.000 point=0.3
-unit npc_dota_neutral_dark_troll_warlord neutral.n_creep_troll_dark_b.model model_scale=.90
+unit npc_dota_neutral_dark_troll_warlord neutral.n_creep_troll_dark_b.model model_scale=.90 attack=creep.dire.ranged.attack
 model neutral.n_creep_vulture_a.model models/creeps/neutral_creeps/n_creep_vulture_a/n_creep_vulture_a.vmdl_c models/neutral/n_creep_vulture_a/n_creep_vulture_a.glb anims=n_creep_vulture_a_idle_01,n_creep_vulture_a_run,n_creep_vulture_a_attack_peck,n_creep_vulture_a_death,cast_hurricane
 clip neutral.n_creep_vulture_a.model idle n_creep_vulture_a_idle_01 3.833
 clip neutral.n_creep_vulture_a.model run n_creep_vulture_a_run 0.800

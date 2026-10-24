@@ -10,7 +10,7 @@ use bevy::{
 };
 use bota_client_core::{ClientSession, bodies};
 use bota_core::{MapDef, NEUTRALS, NeutralKind, kind_def};
-use bota_proto::{EntityId, Team, UnitKind, UnitView};
+use bota_proto::{EntityId, ProjectileModel, Team, UnitKind, UnitView};
 
 use crate::coords::sim_facing_to_rotation;
 use crate::fog::FogGrid;
@@ -563,6 +563,30 @@ fn drawn_facing(unit: &UnitView, facing: f32, at: Vec2, yaws: &BuildingYaws) -> 
 /// The model of a hero, by the Dota name ids.txt gives its id.
 fn hero_model(hero: u16, manifest: &Manifest) -> Option<String> {
     Some(format!("hero.{}.model", manifest.dota_name("hero", hero)?))
+}
+
+/// The logical name of the particle an attack's missile of look `model`
+/// wears, thrown by side `team`: its thrower's kind's `<model>.attack`, a
+/// neutral's as its unit line names it.
+pub fn missile_effect(model: ProjectileModel, team: Team, manifest: &Manifest) -> Option<String> {
+    let side = match team {
+        Team::Radiant => "radiant",
+        Team::Dire => "dire",
+        Team::Neutral => "",
+    };
+    let lane = |kind: &str| (!side.is_empty()).then(|| format!("{kind}.{side}"));
+    let model = match model {
+        ProjectileModel::RangedCreep => lane("creep")? + ".ranged.model",
+        ProjectileModel::SiegeCreep => lane("creep")? + ".siege.model",
+        ProjectileModel::Tower => lane("tower")? + ".model",
+        ProjectileModel::Fountain => lane("fountain")? + ".model",
+        ProjectileModel::Hero(hero) => hero_model(hero.0, manifest)?,
+        ProjectileModel::Neutral(id) => {
+            let kind = NeutralKind::of(id)?;
+            return manifest.unit_art(kind.neutral().unit)?.attack.clone();
+        }
+    };
+    Some(format!("{}.attack", model.strip_suffix(".model")?))
 }
 
 /// Every model a match can need: each hero's and each lane unit's of both
