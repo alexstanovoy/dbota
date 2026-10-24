@@ -16,6 +16,11 @@
 //! - With `--water-check` (the camera on the river) only the river is
 //!   measured: one surface, no straight sharp step in its shading where one
 //!   of the map's water pieces meets the next.
+//! - A frame with too little ground on screen, seen and fogged, for the fog
+//!   to be measured (the hero dead in its fountain, the camera on a dark
+//!   corner) checks nothing: the replay plays on and the whole check is made
+//!   [`FOG_RETAKE_TICKS`] later, again, until a frame within
+//!   [`FOG_WINDOW_TICKS`] of the shot has enough; a window without one fails.
 //! - A click near a unit with no other near it picks it. A frame with no such
 //!   unit for the seat checks nothing: the replay plays on and the check is
 //!   made on the first frame within [`CLICK_WINDOW_TICKS`] that has one; a
@@ -65,12 +70,24 @@ pub const WATER_SHARE_MIN: f32 = 0.6;
 /// looked for, when the shot has none.
 pub const CLICK_WINDOW_TICKS: u32 = 900;
 
-/// The verdict on a shot: whether every check made passed, and whether the
-/// click check is still to be made on a later frame.
+/// Ticks after a shot within which a frame with enough ground for the fog is
+/// looked for, when the shot has too little.
+pub const FOG_WINDOW_TICKS: u32 = 900;
+/// Ticks between the frames tried for it.
+pub const FOG_RETAKE_TICKS: u32 = 150;
+/// Samples each side of the fog's border a frame needs for the fog to be
+/// measured.
+const FOG_SAMPLES_MIN: usize = 30;
+
+/// The verdict on a shot: whether every check made passed, whether the
+/// click check is still to be made on a later frame, and whether the frame
+/// had too little ground for the fog and the whole check is to be made on a
+/// later one.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Verdict {
     pub pass: bool,
     pub clicks_pending: bool,
+    pub retake: bool,
 }
 
 /// What the checks read.
@@ -181,10 +198,11 @@ fn saturation(c: [f32; 3]) -> f32 {
 }
 
 /// Runs every check on a screenshot; prints each.
-pub fn run(image: &Image, unveiled: &Image, c: &Checks) -> Verdict {
+pub fn run(image: &Image, unveiled: &Image, c: &Checks, may_wait: bool) -> Verdict {
     let failed = Verdict {
         pass: false,
         clicks_pending: false,
+        retake: false,
     };
     let Some(bare) = Shot::of(unveiled) else {
         error!("visual check: the unveiled screenshot has no data");
@@ -206,10 +224,25 @@ pub fn run(image: &Image, unveiled: &Image, c: &Checks) -> Verdict {
         return Verdict {
             pass: ok,
             clicks_pending: false,
+            retake: false,
+        };
+    }
+    let bins = fog_bins(&shot, &bare, c);
+    if may_wait && bins.as_ref().is_some_and(|b| !enough_ground(b)) {
+        println!(
+            "visual check: too little ground for the fog at tick {}; the check is made {} \
+             ticks on",
+            c.tick(),
+            FOG_RETAKE_TICKS
+        );
+        return Verdict {
+            pass: true,
+            clicks_pending: false,
+            retake: true,
         };
     }
     hero_parts(c, &mut report);
-    fog(&shot, &bare, c, &mut report);
+    fog(bins, &mut report);
     heroes(&shot, c, &mut report);
     buildings(c, &mut report);
     report(
@@ -231,6 +264,7 @@ pub fn run(image: &Image, unveiled: &Image, c: &Checks) -> Verdict {
     Verdict {
         pass: ok,
         clicks_pending,
+        retake: false,
     }
 }
 
@@ -532,11 +566,18 @@ fn buff_icons(c: &Checks, report: &mut impl FnMut(&str, bool, String)) {
 /// HUD, the units and the border is read in `fogged`, the picture as drawn,
 /// and in `clear`, the same frame drawn without the veil, so the ground on
 /// screen does not decide the verdict.
-fn fog(fogged: &Shot, clear: &Shot, c: &Checks, report: &mut impl FnMut(&str, bool, String)) {
+/// Whether the frame has ground enough, seen and fogged, for the fog to be
+/// measured.
+fn enough_ground(bins: &[Bin; 11]) -> bool {
+    Bin::sum(&bins[..2]).n >= FOG_SAMPLES_MIN && Bin::sum(&bins[9..]).n >= FOG_SAMPLES_MIN
+}
+
+/// The ground on screen drawn with the fog and without it, summed by signed
+/// distance to the fog's border; none without a fog.
+fn fog_bins(fogged: &Shot, clear: &Shot, c: &Checks) -> Option<[Bin; 11]> {
     let grid = &*c.fog;
     if !grid.on || grid.n == 0 {
-        report("fog", false, "no fog: run with --pov".into());
-        return;
+        return None;
     }
     let (camera, transform) = *c.camera;
     let scale = c.window.scale_factor();
@@ -576,9 +617,17 @@ fn fog(fogged: &Shot, clear: &Shot, c: &Checks, report: &mut impl FnMut(&str, bo
             bins[(border_distance(grid, cx, cy) + 5) as usize].add(drawn, bare);
         }
     }
+    Some(bins)
+}
+
+fn fog(bins: Option<[Bin; 11]>, report: &mut impl FnMut(&str, bool, String)) {
+    let Some(bins) = bins else {
+        report("fog", false, "no fog: run with --pov".into());
+        return;
+    };
     let inside = Bin::sum(&bins[..2]);
     let outside = Bin::sum(&bins[9..]);
-    if inside.n < 30 || outside.n < 30 {
+    if !enough_ground(&bins) {
         report(
             "fog",
             false,

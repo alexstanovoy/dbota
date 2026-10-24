@@ -38,6 +38,10 @@ struct Shots {
     clicks: Option<(u32, bool)>,
     /// The replay ended (or broke) while the click check waited.
     clicks_ended: bool,
+    /// A visual check to make again on a later frame, its shot's frame having
+    /// too little ground for the fog: the tick to shoot, the last tick it may
+    /// be made at, and whether its shot was the last.
+    retake: Option<(u32, u32, bool)>,
 }
 
 pub fn plugin(app: &mut App) {
@@ -121,7 +125,11 @@ fn shoot(
     }
     shots.frames += 1;
     let core = &mut session.0;
-    let path = if let Some(&next) = args.screenshot_at.get(shots.taken) {
+    let wanted = shots
+        .retake
+        .map(|(at, ..)| at)
+        .or_else(|| args.screenshot_at.get(shots.taken).copied());
+    let path = if let Some(next) = wanted {
         let Some(path) = replay_shot(
             next,
             &args,
@@ -142,7 +150,9 @@ fn shoot(
     } else {
         return;
     };
-    shots.taken += 1;
+    if shots.retake.is_none() {
+        shots.taken += 1;
+    }
     shots.waiting = true;
     shots.held = 0.0;
     // The frame being drawn is the one saved; the replay goes on after it,
@@ -180,9 +190,24 @@ fn unveiled_shot(
               mut shots: ResMut<Shots>,
               mut exit: MessageWriter<AppExit>,
               checks: crate::visual::Checks| {
-            let verdict = crate::visual::run(&fogged, &captured.image, &checks);
+            let tick = checks.tick();
+            let until = shots
+                .retake
+                .map_or(tick + crate::visual::FOG_WINDOW_TICKS, |(_, until, _)| {
+                    until
+                });
+            let may_wait = tick + crate::visual::FOG_RETAKE_TICKS <= until;
+            let verdict = crate::visual::run(&fogged, &captured.image, &checks, may_wait);
             shots.failed |= !verdict.pass;
             shots.resume = true;
+            shots.retake =
+                verdict
+                    .retake
+                    .then_some((tick + crate::visual::FOG_RETAKE_TICKS, until, last));
+            if verdict.retake {
+                shots.waiting = false;
+                return;
+            }
             if verdict.clicks_pending {
                 // Still waiting: the click check looks on as the replay plays.
                 let tick = checks.tick();

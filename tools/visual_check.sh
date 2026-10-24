@@ -34,8 +34,9 @@ echo "$dire" | sed 's/^visual check: /visual check (Dire): /'
 if echo "$dire" | grep -q "FAIL"; then exit 1; fi
 
 # The river is one surface: the camera on it where the mid lane crosses it
-# (VISUAL_RIVER, bota world units), at the same tick, its seams measured.
-river=$("$here/target/release/dbota" --replay "$replay" --look "${VISUAL_RIVER:-8000,9600}" --distance 2500 \
+# (VISUAL_RIVER, bota world units) from as near as the camera comes, at the
+# same tick, its seams measured.
+river=$("$here/target/release/dbota" --replay "$replay" --look "${VISUAL_RIVER:-8000,9600}" --distance 1134 \
     --screenshot-at "$tick" --screenshot-dir "$out" --screenshot-prefix check-river- \
     --visual-check --water-check --mute --no-vsync --display-mode windowed 2>> "$out/dbota.log" || true)
 echo "$river"
