@@ -98,9 +98,24 @@ struct Veil {
     cast: Handle<Image>,
     /// World units the image spans.
     span: f32,
-    /// By the material and the surface drawn with it.
-    made: HashMap<(AssetId<StandardMaterial>, u8), Handle<FoggedMaterial>>,
+    /// By the material, the surface drawn with it, and whether it is
+    /// tinted black ([`untouchable`]).
+    made: HashMap<(AssetId<StandardMaterial>, u8, bool), Handle<FoggedMaterial>>,
 }
+
+/// A mesh given its fogged copy: the material it was given it from, and the
+/// surface it is drawn as.
+#[derive(Component)]
+struct Wrapped(Handle<StandardMaterial>, u8);
+
+/// A mesh of a hero's model, by the unit it draws: what Dota tints black
+/// while the hero is untouchable at its fountain.
+#[derive(Component)]
+pub struct HeroPart(pub Entity);
+
+/// What a fountain-untouchable hero's colours are multiplied by: Dota's
+/// model "tinted black" (`modifier_fountain_invulnerability`).
+const UNTOUCHABLE_TINT: f32 = 0.08;
 
 /// Marks a mesh whose material the fog darkens: the ground, the trees and
 /// the buildings. Units need none: those in the fog are not drawn.
@@ -179,7 +194,12 @@ pub fn plugin(app: &mut App) {
             Update,
             (work_out, spawn_veil, shade_veil, cast_veil).chain(),
         )
-        .add_systems(PostUpdate, wrap.after(crate::units::mark_figures))
+        .add_systems(
+            PostUpdate,
+            (wrap, untouchable)
+                .chain()
+                .after(crate::units::mark_figures),
+        )
         .add_systems(
             Update,
             clarity.run_if(resource_changed::<crate::config::Settings>),
@@ -389,36 +409,109 @@ fn wrap(
             (false, _, true, false) => SURFACE_GROUND,
             (false, _, false, false) => SURFACE_PROP,
         };
-        let key = (material.id(), surface);
-        let handle = match veil.made.get(&key) {
-            Some(handle) => handle.clone(),
-            None => {
-                let Some(base) = standard.get(&material.0) else {
-                    continue;
-                };
-                let handle = fogged.add(FoggedMaterial {
-                    base: base.clone(),
-                    extension: FogExt {
-                        veil: veil.image.clone(),
-                        params: Vec4::new(
-                            veil.span,
-                            VEIL,
-                            f32::from(surface),
-                            settings.clarity.strength(),
-                        ),
-                        cast: veil.cast.clone(),
-                        paths: paths.map(|l| l.detail.clone()).unwrap_or_default(),
-                        field: paths.map(|l| l.field.clone()).unwrap_or_default(),
-                    },
-                });
-                veil.made.insert(key, handle.clone());
-                handle
-            }
+        let made = Made {
+            standard: &standard,
+            fogged: &mut fogged,
+            clarity: settings.clarity.strength(),
+        };
+        let Some(handle) = veil.copy(made, &material.0, surface, false, paths.map(|l| &**l)) else {
+            continue;
         };
         commands
             .entity(entity)
             .remove::<MeshMaterial3d<StandardMaterial>>()
-            .insert(MeshMaterial3d(handle));
+            .insert((MeshMaterial3d(handle), Wrapped(material.0.clone(), surface)));
+    }
+}
+
+/// What a fogged copy is made with.
+struct Made<'a> {
+    standard: &'a Assets<StandardMaterial>,
+    fogged: &'a mut Assets<FoggedMaterial>,
+    clarity: f32,
+}
+
+impl Veil {
+    /// The fogged copy of a material drawn as `surface`, tinted black or
+    /// not, made the first time it is asked for; none while the material
+    /// is not loaded.
+    fn copy(
+        &mut self,
+        made: Made,
+        material: &Handle<StandardMaterial>,
+        surface: u8,
+        tinted: bool,
+        paths: Option<&crate::layers::GroundLayers>,
+    ) -> Option<Handle<FoggedMaterial>> {
+        let key = (material.id(), surface, tinted);
+        if let Some(handle) = self.made.get(&key) {
+            return Some(handle.clone());
+        }
+        let mut base = made.standard.get(material)?.clone();
+        if tinted {
+            let l = base.base_color.to_linear();
+            base.base_color = Color::linear_rgba(
+                l.red * UNTOUCHABLE_TINT,
+                l.green * UNTOUCHABLE_TINT,
+                l.blue * UNTOUCHABLE_TINT,
+                l.alpha,
+            );
+            // Its sheen too: Dota's tint leaves no colour on the model.
+            base.emissive = LinearRgba::BLACK;
+            base.specular_tint = Color::BLACK;
+        }
+        let handle = made.fogged.add(FoggedMaterial {
+            base,
+            extension: FogExt {
+                veil: self.image.clone(),
+                params: Vec4::new(self.span, VEIL, f32::from(surface), made.clarity),
+                cast: self.cast.clone(),
+                paths: paths.map(|l| l.detail.clone()).unwrap_or_default(),
+                field: paths.map(|l| l.field.clone()).unwrap_or_default(),
+            },
+        });
+        self.made.insert(key, handle.clone());
+        Some(handle)
+    }
+}
+
+/// Tints every hero black while it is untouchable at its fountain, as
+/// Dota's `modifier_fountain_invulnerability` does, and gives its colours
+/// back when that ends.
+#[allow(clippy::type_complexity)]
+fn untouchable(
+    mut commands: Commands,
+    session: NonSend<crate::session::Session>,
+    veil: Option<ResMut<Veil>>,
+    parts: Query<(Entity, &HeroPart, &Wrapped, &MeshMaterial3d<FoggedMaterial>)>,
+    units: Query<&crate::units::Unit>,
+    standard: Res<Assets<StandardMaterial>>,
+    mut fogged: ResMut<Assets<FoggedMaterial>>,
+    settings: Res<crate::config::Settings>,
+) {
+    let (Some(mut veil), Some(view)) = (veil, session.0.view()) else {
+        return;
+    };
+    for (entity, part, Wrapped(material, surface), now) in &parts {
+        let tinted = units
+            .get(part.0)
+            .ok()
+            .and_then(|unit| view.unit(unit.id))
+            .is_some_and(|unit| {
+                unit.effects
+                    .iter()
+                    .any(|e| e.id == bota_proto::EffectId::FOUNTAIN_INVULNERABLE)
+            });
+        let made = Made {
+            standard: &standard,
+            fogged: &mut fogged,
+            clarity: settings.clarity.strength(),
+        };
+        if let Some(handle) = veil.copy(made, material, *surface, tinted, None)
+            && now.0 != handle
+        {
+            commands.entity(entity).insert(MeshMaterial3d(handle));
+        }
     }
 }
 

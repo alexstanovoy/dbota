@@ -265,6 +265,13 @@ pub(crate) fn mark_figures(
             continue;
         }
         commands.entity(entity).insert(crate::fog::Figure);
+        if kind == UnitKind::Hero
+            && let Some(unit) = parents
+                .iter_ancestors(entity)
+                .find_map(|a| pivots.get(a).ok())
+        {
+            commands.entity(entity).insert(crate::fog::HeroPart(unit.0));
+        }
         // Materials are shared by every instance of a model: lift once.
         if kind != UnitKind::Hero
             || materials
