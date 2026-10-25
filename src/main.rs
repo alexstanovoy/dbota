@@ -13,6 +13,7 @@ mod anim;
 #[cfg(not(target_arch = "wasm32"))]
 mod assets_notice;
 mod audio_output;
+mod bag;
 mod bars;
 mod buff_words;
 mod buffs;
@@ -31,6 +32,7 @@ mod daylight;
 mod death;
 mod demo;
 mod dota_text;
+mod drag;
 mod drill;
 mod effects;
 mod error_msg;
@@ -45,6 +47,7 @@ mod hud;
 #[cfg(not(target_arch = "wasm32"))]
 mod import;
 mod input;
+mod item_menu;
 mod keys;
 mod layers;
 #[cfg(not(target_arch = "wasm32"))]
@@ -476,7 +479,6 @@ fn main() -> AppExit {
             feed::plugin,
             chat::plugin,
             input::plugin,
-            cursor::plugin,
             pick::plugin,
             pings::plugin,
             minimap::plugin,
@@ -500,6 +502,7 @@ fn main() -> AppExit {
             quality::plugin,
             heap::plugin,
         ))
+        .add_plugins((bag::plugin, cursor::plugin, drag::plugin, item_menu::plugin))
         .add_plugins((
             fortified::plugin,
             courier::plugin,

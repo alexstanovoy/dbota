@@ -4,16 +4,15 @@
 //! TIME; at the left the hero one enters battle as, its name and abilities;
 //! at the right STARTING ITEMS, the gold that remains, the inventory as the
 //! choices fill it, and the shop's basic items to buy. What is bought here is
-//! bought when the match begins; a right click on an inventory item takes it
-//! back, as selling it does in Dota.
+//! bought when the match begins, in the slots they are put in. The inventory
+//! is the bottom panel's own: drag moves an item, and the item menu's Sell
+//! takes it back, as selling it does in Dota.
 
 use bevy::prelude::*;
-use bota_client_core::Intent;
 use bota_core::item_def;
 use bota_proto::{ItemId, Team};
 
 use crate::dota_text::Texts;
-use crate::faces::ITEMS;
 use crate::manifest::Manifest;
 use crate::player_colour::PlayerColours;
 use crate::select::{ClockSeen, TacticalPhase, clock};
@@ -65,24 +64,13 @@ struct Clock;
 #[derive(Component)]
 struct Gold;
 
-/// One slot of the inventory, by place: the item in it and its charges.
-#[derive(Component, Clone, Copy)]
-struct Slot(usize);
-
-/// The count of charges in a slot.
-#[derive(Component, Clone, Copy)]
-struct Charges(usize);
-
 /// What the screen was built for: the seats' heroes and names, and one's own
 /// seat.
 #[derive(Default, PartialEq)]
 struct Built(Vec<(u8, Option<u16>, String)>, Option<u8>);
 
 pub fn plugin(app: &mut App) {
-    app.add_systems(
-        Update,
-        (build, show, clock_text, inventory, take_back).chain(),
-    );
+    app.add_systems(Update, (build, show, clock_text).chain());
 }
 
 /// Builds the screen anew when the tactical phase opens on other seats than
@@ -513,36 +501,24 @@ fn left_column(commands: &mut Commands, kit: &Kit, contents: Entity) {
     }
 }
 
-/// One slot of the inventory: dark until a choice fills it.
+/// One slot of the inventory: the bottom panel's own item box, dark until a
+/// choice fills it.
 fn inventory_slot(commands: &mut Commands, kit: &Kit, row: Entity, at: usize, size: (f32, f32)) {
-    let slot = commands
-        .spawn((
-            Slot(at),
-            Button,
-            Node {
-                width: dota(size.0),
-                height: dota(size.1),
-                margin: UiRect::new(px(0), dota(6.0), px(0), dota(6.0)),
-                justify_content: JustifyContent::FlexEnd,
-                align_items: AlignItems::FlexEnd,
-                ..default()
-            },
-            BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.5)),
-            ImageNode::default().with_color(Color::NONE),
-            ChildOf(row),
-        ))
-        .id();
-    commands.spawn((
-        Charges(at),
-        ui::text("", &kit.fonts.bold, 14.0 * ui::DOTA, Color::WHITE),
-        ui::shadow(),
-        Node {
-            margin: UiRect::right(dota(5.0)),
-            ..default()
-        },
-        Pickable::IGNORE,
-        ChildOf(slot),
-    ));
+    let slot = crate::hud::spawn_slot_box(
+        commands,
+        kit.fonts,
+        row,
+        (size.0 * ui::DOTA, size.1 * ui::DOTA),
+        crate::hud::ItemBox(at as u8),
+        false,
+        false,
+    );
+    commands
+        .entity(slot)
+        .entry::<Node>()
+        .and_modify(|mut node| {
+            node.margin = UiRect::new(px(0), dota(6.0), px(0), dota(6.0));
+        });
 }
 
 /// The shop's basic items, under each category's title.
@@ -661,60 +637,4 @@ pub fn slots_of(queued: &[u16]) -> Vec<(u16, u16)> {
         }
     }
     slots
-}
-
-/// Draws the inventory.
-fn inventory(
-    session: NonSend<Session>,
-    phase: Res<TacticalPhase>,
-    manifest: Res<Manifest>,
-    server: Res<AssetServer>,
-    mut slots: Query<(&Slot, &mut ImageNode)>,
-    mut charges: Query<(&Charges, &mut Text)>,
-) {
-    if !phase.0 {
-        return;
-    }
-    let held = slots_of(&session.0.queued_buys);
-    for (slot, mut image) in &mut slots {
-        let icon = held.get(slot.0).and_then(|(id, _)| manifest.item_icon(*id));
-        let (handle, tint) = match icon {
-            Some(path) => (server.load(path), Color::WHITE),
-            None => (Handle::default(), Color::NONE),
-        };
-        if image.image != handle {
-            image.image = handle;
-        }
-        if image.color != tint {
-            image.color = tint;
-        }
-    }
-    for (at, mut text) in &mut charges {
-        let shown = held
-            .get(at.0)
-            .filter(|(_, count)| *count > 1)
-            .map_or(String::new(), |(_, count)| count.to_string());
-        text.set_if_neq(Text(shown));
-    }
-}
-
-/// A right click on an inventory item takes one of it back.
-fn take_back(
-    mut session: NonSendMut<Session>,
-    mouse: Res<ButtonInput<MouseButton>>,
-    slots: Query<(&Slot, &Interaction)>,
-) {
-    if !mouse.just_pressed(MouseButton::Right) || !session.0.in_tactical_phase() {
-        return;
-    }
-    let held = slots_of(&session.0.queued_buys);
-    let hovered = slots
-        .iter()
-        .find(|(_, i)| **i != Interaction::None)
-        .and_then(|(slot, _)| held.get(slot.0).copied());
-    if let Some((id, _)) = hovered
-        && ITEMS.get(usize::from(id)).is_some()
-    {
-        session.0.act(Intent::Unqueue(id));
-    }
 }

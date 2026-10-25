@@ -27,6 +27,7 @@
 //!   the same at any size;
 //! - `lclick`, `rclick`: the left or right button pressed and let go where
 //!   the pointer is;
+//! - `ldown`, `lup`: the left button held down and let go, to drag;
 //! - `down:NAME`, `up:NAME`: a key held (a modifier for the clicks that
 //!   follow) and let go;
 //! - `text:TEXT`: text typed (through the input method's commit, as any
@@ -60,6 +61,8 @@ enum Step {
     Wait(f32),
     Mouse(Vec2),
     Button(MouseButton),
+    /// The left button held down, or let go: a drag.
+    Drag(ButtonState),
     Down(KeyCode),
     Up(KeyCode),
     Text(String),
@@ -148,6 +151,8 @@ fn parse(text: &str) -> Result<Vec<(String, Step)>, String> {
                 ),
                 "lclick" => Step::Button(MouseButton::Left),
                 "rclick" => Step::Button(MouseButton::Right),
+                "ldown" => Step::Drag(ButtonState::Pressed),
+                "lup" => Step::Drag(ButtonState::Released),
                 "down" | "up" => {
                     let key = crate::keys::key_named(arg)
                         .ok_or_else(|| format!("no key named '{arg}'"))?;
@@ -310,6 +315,14 @@ fn play(
                 window,
             });
             script.held = Some(Held::Mouse(*button));
+            true
+        }
+        Step::Drag(state) => {
+            mouse.write(MouseButtonInput {
+                button: MouseButton::Left,
+                state: *state,
+                window,
+            });
             true
         }
         Step::Text(text) => {

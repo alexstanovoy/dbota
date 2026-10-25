@@ -1354,3 +1354,9 @@ texture cursor.move resource/cursor/source/cursor_move.png cursors/move.png
 texture cursor.buy resource/cursor/source/cursor_buy.png cursors/buy.png
 texture cursor.cannot_buy resource/cursor/source/cursor_cannot_buy.png cursors/cannot_buy.png
 texture cursor.learnability resource/cursor/source/cursor_learnability.png cursors/learnability.png
+
+# --- The inventory's context menu (context_menu_inventory_item)
+label resource/localization/dota_english.txt DOTA_InventoryMenu_Sell
+label resource/localization/dota_english.txt DOTA_InventoryMenu_MoveToStash
+label resource/localization/dota_english.txt DOTA_InventoryMenu_MarkForSell
+label resource/localization/dota_english.txt DOTA_InventoryMenu_UnmarkForSell

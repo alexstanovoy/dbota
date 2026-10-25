@@ -548,6 +548,9 @@ pub fn deny_click(kind: bota_proto::UnitKind, hp: i32, max_hp: i32, pct: u8) -> 
 
 /// Clicks and drags on the HUD's boxes: an ability box presses its slot, an
 /// item box is picked up and dropped on another box, a seat, or the world.
+/// In the strategy phase the boxes are the bag the choices fill, and a drop
+/// on another box only moves what is chosen there.
+#[allow(clippy::too_many_arguments)]
 fn boxes(
     mut session: NonSendMut<Session>,
     buttons: Res<ButtonInput<MouseButton>>,
@@ -556,13 +559,18 @@ fn boxes(
     items: Query<(&Interaction, &ItemBox)>,
     seats: Query<(&Interaction, &SeatBox)>,
     over: Res<OverHud>,
+    mut bag: ResMut<crate::bag::TacticalBag>,
+    mut settling: ResMut<crate::drag::Settling>,
+    time: Res<Time>,
 ) {
     let over_hud = over.0;
     let core = &mut session.0;
     let ctrl = keys.pressed(KeyCode::ControlLeft) || keys.pressed(KeyCode::ControlRight);
-    let controls = core.controls_selection() && matches!(core.source, Source::Live(_));
+    let tactical = core.in_tactical_phase();
+    let controls =
+        tactical || (core.controls_selection() && matches!(core.source, Source::Live(_)));
     for (interaction, AbilityBox(slot)) in &abilities {
-        if *interaction == Interaction::Pressed && controls {
+        if *interaction == Interaction::Pressed && controls && !tactical {
             press(core, Slot::Ability(*slot), ctrl);
         }
     }
@@ -575,9 +583,16 @@ fn boxes(
         .find(|(i, _)| **i != Interaction::None)
         .map(|(_, b)| b.0);
     if buttons.just_pressed(MouseButton::Left) {
+        let filled = |slot: u8| {
+            if tactical {
+                bag.id_at(slot).is_some()
+            } else {
+                core.item_in(slot).is_some()
+            }
+        };
         if let Some(slot) = hovered_item
             && controls
-            && core.item_in(slot).is_some()
+            && filled(slot)
         {
             core.held_item = Some(slot);
         } else if let Some(seat) = hovered_seat {
@@ -587,11 +602,19 @@ fn boxes(
     if buttons.just_released(MouseButton::Left)
         && let Some(from) = core.held_item
     {
-        if let Some(to) = hovered_item {
+        if tactical {
+            core.held_item = None;
+            if let Some(to) = hovered_item.filter(|to| *to != from) {
+                bag.swap(from, to);
+            }
+        } else if let Some(to) = hovered_item {
             core.held_item = None;
             if to == from {
                 press(core, Slot::Item(from), false);
             } else if from != TOWN_PORTAL_SLOT {
+                if let Some(moved) = core.item_in(from) {
+                    settling.start((from, to), moved, core.item_in(to), time.elapsed_secs());
+                }
                 core.act(Intent::Swap { from, to });
             }
         } else if let Some(seat) = hovered_seat

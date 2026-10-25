@@ -1615,6 +1615,8 @@ fn gauges(session: NonSend<Session>, mut gauges: Query<(&Gauge, &mut Node, &mut 
 
 /// Everything a slot box shows of what is in it.
 struct SlotFace {
+    /// The item is taken up by a drag: its icon is a ghost in the slot.
+    lifted: bool,
     icon: Option<String>,
     seconds: String,
     look: Look,
@@ -1640,10 +1642,15 @@ pub(crate) fn subject_abilities<'a>(
 /// The item in a slot of the subject the bottom panel is about: what its tooltip describes too.
 pub(crate) fn subject_item(
     core: &Core,
+    bag: &crate::bag::TacticalBag,
     unit: Option<&UnitView>,
     kit: Option<&Kit>,
     slot: u8,
 ) -> Option<ItemView> {
+    // The strategy phase's inventory is the bag its choices fill.
+    if core.in_tactical_phase() {
+        return bag.item(slot, core.my_slot?);
+    }
     if slot == TOWN_PORTAL_SLOT {
         match kit {
             Some(kit) => kit.town_portal,
@@ -1724,6 +1731,7 @@ fn ability_face(
     let aiming = own && core.aiming == Some(bota_client_core::Slot::Ability(slot));
     let rate = u32::from(core.tick_rate().max(1));
     Some(SlotFace {
+        lifted: false,
         seconds: if a.cooldown_left > 0 {
             a.cooldown_left.div_ceil(rate).to_string()
         } else {
@@ -1758,18 +1766,23 @@ fn ability_face(
 /// The face of an item slot.
 fn item_face(
     core: &Core,
+    (bag, settling, now): (&crate::bag::TacticalBag, &crate::drag::Settling, f32),
     manifest: &Manifest,
     settings: &Settings,
     unit: Option<&UnitView>,
     kit: Option<&Kit>,
     slot: u8,
 ) -> Option<SlotFace> {
-    let item = subject_item(core, unit, kit, slot)?;
+    let item = match settling.over(slot, now) {
+        Some(shown) => shown,
+        None => subject_item(core, bag, unit, kit, slot),
+    }?;
     let mana = unit.map_or(0, |u| u.mana);
     let look = item_look(Some(&item), slot, mana);
     let held = core.held_item == Some(slot);
     let rate = u32::from(core.tick_rate().max(1));
     Some(SlotFace {
+        lifted: held,
         seconds: if item.cooldown_left > 0 {
             item.cooldown_left.div_ceil(rate).to_string()
         } else {
@@ -1819,6 +1832,9 @@ fn slots(
     manifest: Res<Manifest>,
     settings: Res<Settings>,
     server: Res<AssetServer>,
+    bag: Res<crate::bag::TacticalBag>,
+    settling: Res<crate::drag::Settling>,
+    time: Res<Time>,
     mut boxes: Query<
         (
             Entity,
@@ -1850,7 +1866,15 @@ fn slots(
             (Some(AbilityBox(slot)), _) => {
                 ability_face(core, &manifest, &settings, unit, kit, *slot)
             }
-            (_, Some(ItemBox(slot))) => item_face(core, &manifest, &settings, unit, kit, *slot),
+            (_, Some(ItemBox(slot))) => item_face(
+                core,
+                (&bag, &settling, time.elapsed_secs()),
+                &manifest,
+                &settings,
+                unit,
+                kit,
+                *slot,
+            ),
             _ => None,
         };
         let show = face.is_some() || item.is_some();
@@ -1887,6 +1911,8 @@ fn dress(
                 let tint = match f {
                     // An ability the cache has no icon for.
                     Some(f) if f.icon.is_none() => Color::NONE,
+                    // Taken up by a drag: what shows in the slot is its shadow.
+                    Some(f) if f.lifted => Color::srgba(1.0, 1.0, 1.0, 0.25),
                     Some(f) if !f.look.learned => Color::srgb(0.35, 0.35, 0.35),
                     Some(_) => Color::WHITE,
                     None => Color::NONE,

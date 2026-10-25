@@ -158,6 +158,7 @@ fn pick(
     args: Res<crate::Args>,
     abilities: Query<(&Interaction, &AbilityBox)>,
     items: Query<(&Interaction, &ItemBox)>,
+    bag: Res<crate::bag::TacticalBag>,
     entering: Query<(&Interaction, &crate::strategy::StrategyAbility)>,
     cells: Query<(&Interaction, &ShopCell)>,
     buffs: Query<(&Interaction, &crate::buffs::BuffChip)>,
@@ -191,7 +192,7 @@ fn pick(
     } else if let Some(ability) = hovered(&entering) {
         entering_tip(&look, ability.0)
     } else if let Some(slot) = hovered(&items) {
-        item_tip(&look, core, slot.0, rate)
+        item_tip(&look, core, &bag, slot.0, rate)
     } else if let Some(cell) = hovered(&cells) {
         shop_tip(&look, core, cell.0)
     } else {
@@ -338,9 +339,15 @@ fn ability_tip(
     Some(content)
 }
 
-fn item_tip(look: &Lookup, core: &bota_client_core::App, slot: u8, rate: u32) -> Option<Content> {
+fn item_tip(
+    look: &Lookup,
+    core: &bota_client_core::App,
+    bag: &crate::bag::TacticalBag,
+    slot: u8,
+    rate: u32,
+) -> Option<Content> {
     let (_, unit, kit) = crate::hud::subject(core);
-    let i = &crate::hud::subject_item(core, unit, kit, slot)?;
+    let i = &crate::hud::subject_item(core, bag, unit, kit, slot)?;
     let mut content = look.item(i.id.0, None)?;
     if i.cooldown_left > 0 {
         content
