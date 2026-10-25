@@ -263,7 +263,9 @@ texture icon.minimap.ancient materials/vgui/hud/minimap_ancient_psd_1bfdd08d.vte
 texture icon.minimap.courier materials/vgui/hud/minimap_courier_psd_7de56262.vtex_c icons/minimap/courier.png
 texture icon.minimap.shop materials/vgui/hud/minimap_shop_psd_3f08fa0e.vtex_c icons/minimap/shop.png
 texture icon.minimap.building materials/vgui/hud/minimap_miscbuilding_psd_b56d0d26.vtex_c icons/minimap/building.png
-texture icon.minimap.hero_circle materials/vgui/hud/minimap_herocircle_psd_9c6f9996.vtex_c icons/minimap/hero_circle.png
+# The hero's arrow: the filled one (minimap_herocircle_self) for a hero seen, the hollow one (minimap_heroinvis) for a hero invisible.
+texture icon.minimap.hero_arrow materials/vgui/hud/minimap_herocircle_self_psd_8198829e.vtex_c icons/minimap/hero_arrow.png
+texture icon.minimap.hero_invisible materials/vgui/hud/minimap_heroinvis_psd_59d5ce33.vtex_c icons/minimap/hero_invisible.png
 texture icon.minimap.circle materials/vgui/hud/minimap_circle_psd_da399ad7.vtex_c icons/minimap/circle.png
 texture icon.minimap.death materials/vgui/hud/minimap_death_psd_6987e15d.vtex_c icons/minimap/death.png
 texture icon.minimap.ward_observer materials/vgui/hud/minimap_ward_obs_psd_adc970aa.vtex_c icons/minimap/ward_observer.png

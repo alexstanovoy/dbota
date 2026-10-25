@@ -624,16 +624,9 @@ fn hero_marks(
         };
         turn.set_if_neq(UiTransform::from_rotation(rotation));
         let tint = colours.of(view, seat);
+        let invisible = u.statuses.bits & bota_proto::StatusFlags::INVISIBLE != 0;
         let handle = handles
-            .get(
-                if face.is_some() {
-                    "icon.minimap.circle"
-                } else {
-                    "icon.minimap.hero_circle"
-                },
-                &manifest,
-                &server,
-            )
+            .get(hero_backing(face.is_some(), invisible), &manifest, &server)
             .unwrap_or_default();
         if image.image != handle || image.color != tint {
             image.image = handle;
@@ -654,6 +647,17 @@ fn hero_marks(
             vis.set_if_neq(Visibility::Hidden);
             marked.0 = None;
         }
+    }
+}
+
+/// What a hero's mark is drawn on: a disc round its icon (Alt held), else
+/// Dota's arrow, filled; the hollow one only for a hero who is invisible (an
+/// ally's, or an enemy's under true sight: the view tells no other).
+fn hero_backing(icon: bool, invisible: bool) -> &'static str {
+    match (icon, invisible) {
+        (true, _) => "icon.minimap.circle",
+        (false, true) => "icon.minimap.hero_invisible",
+        (false, false) => "icon.minimap.hero_arrow",
     }
 }
 
@@ -765,5 +769,19 @@ fn clicks(
         && core.controls_selection()
     {
         core.act(Intent::MoveTo((x, y)));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::hero_backing;
+
+    /// A hero seen is the filled arrow, whichever side it is on; the hollow
+    /// arrow is the invisible one's alone, and the icon's disc is the same for both.
+    #[test]
+    fn the_hollow_arrow_is_only_for_an_invisible_hero() {
+        assert_eq!(hero_backing(false, false), "icon.minimap.hero_arrow");
+        assert_eq!(hero_backing(false, true), "icon.minimap.hero_invisible");
+        assert_eq!(hero_backing(true, false), hero_backing(true, true));
     }
 }
