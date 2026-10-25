@@ -1,7 +1,9 @@
 //! The minimap: the map photographed once from straight above, the fog over
 //! it, a mark for every unit shown and the camera's frame. A hero's mark is
-//! its player's colour in a ring of its side's (Dota's simple icons); with
-//! Alt held (Dota's DotaAlt) it shows the hero's own minimap icon instead. A left click or a
+//! Dota's arrow in its player's colour, turned the way the hero faces; with
+//! Alt held (Dota's DotaAlt) it shows the hero's own minimap icon in a disc
+//! of that colour instead. Creeps are Dota's dots, buildings its building
+//! icons, tinted by side. A left click or a
 //! drag moves the camera; a right click walks there.
 
 use bevy::{
@@ -30,8 +32,10 @@ const MARKS: usize = 160;
 /// Hero marks shown at most: Dota's ten seats.
 const HERO_MARKS: usize = 10;
 /// Interface pixels across a hero's mark, and across it with its icon.
-const HERO_MARK: f32 = 11.0;
-const HERO_ICON: f32 = 24.0;
+const HERO_MARK: f32 = 15.0;
+const HERO_ICON: f32 = 28.0;
+/// Interface pixels across the face in a hero's icon.
+const HERO_FACE: f32 = 20.0;
 /// Rings shown at most: teleports first, then what the side's players have
 /// pinged.
 const PINGS: usize = 10 + crate::pings::MARKS;
@@ -151,19 +155,17 @@ fn spawn(mut commands: Commands, mut images: ResMut<Assets<Image>>, docks: Res<D
                 .id()
         })
         .collect();
+    // A mark is Dota's icon tinted by the side; without the icon, a plain disc.
     let marks = (0..MARKS)
         .map(|_| {
             commands
                 .spawn((
                     Node {
                         position_type: PositionType::Absolute,
-                        width: px(6),
-                        height: px(6),
                         border_radius: BorderRadius::MAX,
                         ..default()
                     },
-                    BackgroundColor(Color::WHITE),
-                    Outline::new(px(1), px(0), Color::BLACK),
+                    ImageNode::default(),
                     Visibility::Hidden,
                     Pickable::IGNORE,
                     ChildOf(frame),
@@ -177,14 +179,13 @@ fn spawn(mut commands: Commands, mut images: ResMut<Assets<Image>>, docks: Res<D
                 .spawn((
                     Node {
                         position_type: PositionType::Absolute,
-                        border_radius: BorderRadius::MAX,
                         justify_content: JustifyContent::Center,
                         align_items: AlignItems::Center,
                         ..default()
                     },
                     HeroMark::default(),
-                    BackgroundColor(Color::WHITE),
-                    Outline::new(px(2), px(0), Color::BLACK),
+                    ImageNode::default(),
+                    UiTransform::default(),
                     Visibility::Hidden,
                     Pickable::IGNORE,
                     ChildOf(frame),
@@ -192,7 +193,11 @@ fn spawn(mut commands: Commands, mut images: ResMut<Assets<Image>>, docks: Res<D
                 .id();
             let icon = commands
                 .spawn((
-                    crate::ui::fill(),
+                    Node {
+                        width: px(HERO_FACE),
+                        height: px(HERO_FACE),
+                        ..default()
+                    },
                     ImageNode::default(),
                     Visibility::Hidden,
                     Pickable::IGNORE,
@@ -326,6 +331,8 @@ fn marks(
     camera: Single<(&Camera, &GlobalTransform), With<RtsCamera>>,
     window: Single<&Window, With<PrimaryWindow>>,
     ground: Res<Ground>,
+    manifest: Res<crate::manifest::Manifest>,
+    server: Res<AssetServer>,
     mut nodes: Query<(&mut Node, &mut BackgroundColor, &mut Visibility)>,
     mut images: Query<&mut ImageNode>,
 ) {
@@ -345,14 +352,15 @@ fn marks(
     });
     let mut used = 0;
     for u in shown.take(MARKS) {
-        let Ok((mut node, mut bg, mut vis)) = nodes.get_mut(minimap.marks[used]) else {
+        let mark = minimap.marks[used];
+        let (Ok((mut node, _, mut vis)), Ok(mut image)) =
+            (nodes.get_mut(mark), images.get_mut(mark))
+        else {
             break;
         };
         used += 1;
-        let size = match u.kind {
-            UnitKind::Tower | UnitKind::Barracks | UnitKind::Ancient => 9.0,
-            _ => 5.0,
-        };
+        let (icon, size) = unit_icon(u);
+        let path = icon.and_then(|logical| manifest.file(logical));
         let at = on_map(u.pos.x.to_f32(), u.pos.y.to_f32());
         // Written only when changed: a changed node is laid out again.
         node.set_if_neq(Node {
@@ -360,13 +368,19 @@ fn marks(
             top: px(at.y - size / 2.0),
             width: px(size),
             height: px(size),
+            border_radius: if path.is_some() {
+                BorderRadius::ZERO
+            } else {
+                BorderRadius::MAX
+            },
             ..node.clone()
         });
-        bg.set_if_neq(BackgroundColor(match u.team {
-            Team::Radiant => Color::srgb(0.2, 0.75, 0.25),
-            Team::Dire => Color::srgb(0.85, 0.2, 0.15),
-            Team::Neutral => Color::srgb(0.8, 0.7, 0.4),
-        }));
+        let handle = path.map_or_else(Handle::default, |p| server.load::<Image>(p));
+        let tint = crate::overlay::team_color(u.team);
+        if image.image != handle || image.color != tint {
+            image.image = handle;
+            image.color = tint;
+        }
         vis.set_if_neq(Visibility::Inherited);
     }
     for mark in &minimap.marks[used..] {
@@ -406,6 +420,27 @@ fn marks(
         });
     }
 }
+
+/// How the minimap marks a unit that is not a hero or an objective: Dota's icon
+/// (a white mask, tinted by the side) and its size in interface pixels. Towers
+/// and barracks of the mid lane's diagonal wear the icon turned 45 degrees, the
+/// others the one at 90.
+fn unit_icon(u: &UnitView) -> (Option<&'static str>, f32) {
+    let diagonal = (u.pos.x.to_f32() - u.pos.y.to_f32()).abs() < MID_DIAGONAL;
+    match u.kind {
+        UnitKind::Tower if diagonal => (Some("icon.minimap.tower45"), 11.0),
+        UnitKind::Tower => (Some("icon.minimap.tower90"), 11.0),
+        UnitKind::Barracks if diagonal => (Some("icon.minimap.barracks45"), 11.0),
+        UnitKind::Barracks => (Some("icon.minimap.barracks90"), 11.0),
+        UnitKind::Ancient => (Some("icon.minimap.ancient"), 15.0),
+        UnitKind::CreepSiege => (Some("icon.minimap.siege"), 8.0),
+        UnitKind::Courier => (Some("icon.minimap.courier"), 9.0),
+        _ => (Some("icon.minimap.creep"), 7.0),
+    }
+}
+
+/// How far off the map's diagonal, in world units, a building still lies on the mid lane.
+const MID_DIAGONAL: f32 = 2500.0;
 
 /// How the minimap marks one of the map's objectives: Dota's icon (a cell of
 /// the minimap sheet where it is one, in pixels of the sheet), its tint and
@@ -497,8 +532,8 @@ fn objective_marks(
     }
 }
 
-/// Marks every hero shown in its player's colour, ringed in its side's; with
-/// Alt held, as its own icon.
+/// Marks every hero shown by Dota's arrow in its player's colour, turned the
+/// way it faces; with Alt held, as its own icon in a disc of that colour.
 #[allow(clippy::type_complexity)]
 fn hero_marks(
     session: NonSend<Session>,
@@ -510,12 +545,12 @@ fn hero_marks(
     server: Res<AssetServer>,
     mut marks: Query<(
         &mut Node,
-        &mut BackgroundColor,
-        &mut Outline,
+        &mut ImageNode,
+        &mut UiTransform,
         &mut Visibility,
         &mut HeroMark,
     )>,
-    mut icons: Query<(&mut ImageNode, &mut Visibility), Without<Outline>>,
+    mut icons: Query<(&mut ImageNode, &mut Visibility), Without<HeroMark>>,
 ) {
     let core = &session.0;
     let Some(view) = core.view() else {
@@ -530,35 +565,52 @@ fn hero_marks(
     for u in heroes.take(HERO_MARKS) {
         let (mark, icon) = minimap.heroes[used];
         used += 1;
-        let (Ok((mut node, mut bg, mut ring, mut vis, mut marked)), Some(seat)) =
+        let (Ok((mut node, mut image, mut turn, mut vis, mut marked)), Some(seat)) =
             (marks.get_mut(mark), u.owner)
         else {
             continue;
         };
         marked.0 = Some((u.team, seat));
-        let path = u
+        let face = u
             .hero
             .and_then(|hero| manifest.dota_name("hero", hero.0))
             .and_then(|name| manifest.file(&format!("minimap.hero.{name}")))
             .filter(|_| icons_on);
-        let size = if path.is_some() { HERO_ICON } else { HERO_MARK };
+        let size = if face.is_some() { HERO_ICON } else { HERO_MARK };
         let at = on_map(u.pos.x.to_f32(), u.pos.y.to_f32());
         node.set_if_neq(Node {
             left: px(at.x - size / 2.0),
             top: px(at.y - size / 2.0),
             width: px(size),
             height: px(size),
+            border_radius: BorderRadius::MAX,
             ..node.clone()
         });
-        bg.set_if_neq(BackgroundColor(colours.of(view, seat)));
-        let side = crate::overlay::team_color(u.team);
-        if ring.color != side {
-            ring.color = side;
+        // The arrow points east in its art and the map's north is up: a
+        // facing counter-clockwise on the map is the opposite way on screen.
+        let rotation = if face.is_some() {
+            Rot2::IDENTITY
+        } else {
+            Rot2::radians(-f32::from(u.facing.brads) / 65536.0 * std::f32::consts::TAU)
+        };
+        turn.set_if_neq(UiTransform::from_rotation(rotation));
+        let (backing, tint) = (
+            manifest.file(if face.is_some() {
+                "icon.minimap.circle"
+            } else {
+                "icon.minimap.hero_circle"
+            }),
+            colours.of(view, seat),
+        );
+        let handle = backing.map_or_else(Handle::default, |p| server.load::<Image>(p));
+        if image.image != handle || image.color != tint {
+            image.image = handle;
+            image.color = tint;
         }
         vis.set_if_neq(Visibility::Inherited);
         if let Ok((mut image, mut shown)) = icons.get_mut(icon) {
-            shown.set_if_neq(crate::ui::visible(path.is_some()));
-            if let Some(path) = path {
+            shown.set_if_neq(crate::ui::visible(face.is_some()));
+            if let Some(path) = face {
                 let handle: Handle<Image> = server.load(path);
                 if image.image != handle {
                     image.image = handle;

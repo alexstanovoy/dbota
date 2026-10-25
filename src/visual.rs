@@ -142,8 +142,7 @@ pub struct Checks<'w, 's> {
         's,
         (
             &'static crate::minimap::HeroMark,
-            &'static BackgroundColor,
-            &'static Outline,
+            &'static ImageNode,
             &'static Visibility,
         ),
     >,
@@ -567,9 +566,8 @@ fn bar_sides(c: &Checks, report: &mut impl FnMut(&str, bool, String)) {
     );
 }
 
-/// Every hero's mark on the minimap is its player's colour ringed in its
-/// side's, and every seat's strip in the top bar its player's colour; a Dire
-/// hero's ring is red, whichever side watches.
+/// Every hero's mark on the minimap is its player's colour, and every seat's
+/// strip in the top bar its player's colour.
 fn player_colours(c: &Checks, report: &mut impl FnMut(&str, bool, String)) {
     let Some(view) = c.session.0.view() else {
         report(
@@ -580,17 +578,11 @@ fn player_colours(c: &Checks, report: &mut impl FnMut(&str, bool, String)) {
         return;
     };
     let mut told = Vec::new();
-    for (mark, fill, ring, shown) in &c.hero_marks {
-        let (Some((team, seat)), false) = (mark.0, *shown == Visibility::Hidden) else {
+    for (mark, image, shown) in &c.hero_marks {
+        let (Some((_, seat)), false) = (mark.0, *shown == Visibility::Hidden) else {
             continue;
         };
-        let red = |colour: Color| {
-            let rgb = colour.to_srgba();
-            rgb.red > rgb.green && rgb.red > rgb.blue
-        };
-        let right = fill.0 == c.colours.of(view, seat)
-            && ring.color == crate::overlay::team_color(team)
-            && (team != bota_proto::Team::Dire || red(ring.color));
+        let right = image.color == c.colours.of(view, seat);
         told.push(("minimap", seat.0, right));
     }
     for (strip, fill) in &c.strips {
