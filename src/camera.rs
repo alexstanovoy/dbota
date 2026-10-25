@@ -81,6 +81,10 @@ fn spawn_camera(
         }),
         // As the quality settings ask; VRAM scales with it.
         msaa,
+        // The scene and its particles add up in a floating-point target and are tonemapped
+        // together after, as Source's renderer does (Dota tonemaps): an overbright additive
+        // card keeps its hue instead of each channel clipping to white at 1.
+        bevy::camera::Hdr,
         bevy::core_pipeline::tonemapping::Tonemapping::TonyMcMapface,
         // Layer 1 holds what the minimap's photograph leaves out.
         bevy::camera::visibility::RenderLayers::from_layers(&[0, 1]),
