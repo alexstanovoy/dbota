@@ -817,9 +817,8 @@ fn replays_page(kit: &mut Kit, body: Entity, list: &[ReplayRow], fields: &[Field
     kit.button(card, "OPEN", Act::Submit, GREEN, 40.0);
 }
 
-/// What a local lobby's empty seats take: left open, the server's idle
-/// dummy, or the bot command of the settings, as Dota's lobby leaves a slot
-/// open or adds a bot to it.
+/// What a local lobby's empty seats take: left open, or the bot command of the settings, as
+/// Dota's lobby leaves a slot open or adds a bot to it.
 fn seat_fill(kit: &mut Kit, card: Entity, chosen: SeatFill, bot_set: bool) {
     kit.text(card, "Empty seats", 13.0, ui::INK_DIM);
     let row = kit.node(
@@ -829,19 +828,12 @@ fn seat_fill(kit: &mut Kit, card: Entity, chosen: SeatFill, bot_set: bool) {
             ..default()
         },
     );
-    for (fill, label) in [
-        (SeatFill::Open, "OPEN"),
-        (SeatFill::Dummy, "IDLE DUMMY"),
-        (SeatFill::Bot, "BOT"),
-    ] {
+    for (fill, label) in [(SeatFill::Open, "OPEN"), (SeatFill::Bot, "BOT")] {
         let look = if fill == chosen { GREEN } else { PLAIN };
         kit.button(row, label, Act::Fill(fill), look, 34.0);
     }
     let note = match chosen {
         SeatFill::Open => "Others join by this machine's address, typed under JOIN BY ADDRESS.",
-        SeatFill::Dummy => {
-            "A hero that stands at its fountain and never acts: to practise or test alone."
-        }
         SeatFill::Bot if bot_set => "Each empty seat runs the bot command of the settings.",
         SeatFill::Bot => "No bot command is set yet: SETTINGS, Options, LOCAL LOBBY.",
     };

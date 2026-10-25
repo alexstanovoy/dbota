@@ -145,21 +145,17 @@ pub enum SeatFill {
     /// Left to whoever joins by the address.
     #[default]
     Open,
-    /// The game server's idle dummy (its last seat): a hero that never acts,
-    /// to practise or test alone.
-    Dummy,
     /// The bot command of the settings, once for each seat.
     Bot,
 }
 
 impl SeatFill {
-    pub const ALL: [SeatFill; 3] = [SeatFill::Open, SeatFill::Dummy, SeatFill::Bot];
+    pub const ALL: [SeatFill; 2] = [SeatFill::Open, SeatFill::Bot];
 
     /// Its name in the menu's remembered choices.
     pub fn name(self) -> &'static str {
         match self {
             SeatFill::Open => "open",
-            SeatFill::Dummy => "dummy",
             SeatFill::Bot => "bot",
         }
     }
@@ -174,7 +170,6 @@ impl SeatFill {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Fill {
     Open,
-    Dummy,
     Bot(String),
 }
 
@@ -1782,7 +1777,6 @@ impl MenuCore {
         };
         let fill = match self.prefs.host_fill {
             SeatFill::Open => Fill::Open,
-            SeatFill::Dummy => Fill::Dummy,
             SeatFill::Bot if self.bot_command.trim().is_empty() => {
                 self.tell(
                     "No bot command is set: SETTINGS, Options, LOCAL LOBBY".to_owned(),

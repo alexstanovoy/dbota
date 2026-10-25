@@ -305,7 +305,7 @@ impl TextSetting {
     pub fn placeholder(self) -> &'static str {
         match self {
             TextSetting::Name => crate::main_menu::DEFAULT_NAME,
-            TextSetting::BotCommand => "none: empty seats stay open or take a dummy",
+            TextSetting::BotCommand => "none: empty seats stay open",
         }
     }
 

@@ -293,7 +293,7 @@ fn wire_of(server: &std::path::Path) -> Option<u64> {
 /// enables them. It ends when nobody came, and when every seat stayed empty
 /// five minutes.
 #[cfg(not(target_arch = "wasm32"))]
-pub fn host_args(port: u16, players: u8, lan: bool, fill: &Fill, cheats: bool) -> Vec<String> {
+pub fn host_args(port: u16, players: u8, lan: bool, cheats: bool) -> Vec<String> {
     let mut args: Vec<String> = [
         "--port",
         &port.to_string(),
@@ -307,9 +307,6 @@ pub fn host_args(port: u16, players: u8, lan: bool, fill: &Fill, cheats: bool) -
     ]
     .map(str::to_owned)
     .into();
-    if *fill == Fill::Dummy {
-        args.push("--dummy-seat".to_owned());
-    }
     if lan {
         args.extend(["--bind", "0.0.0.0", "--insecure-plaintext"].map(str::to_owned));
     } else {
@@ -458,11 +455,10 @@ impl Opening {
                             lan,
                             replay,
                             server,
-                            fill,
                             cheats,
                             ..
                         } => Some(start_server(
-                            &host_args(*port, *players, *lan, fill, *cheats),
+                            &host_args(*port, *players, *lan, *cheats),
                             replay.as_deref(),
                             server.as_deref(),
                         )?),

@@ -947,7 +947,7 @@ fn host_with(menu: &mut MenuCore, trust: &Trust, fill: SeatFill) -> (Core, Optio
 }
 
 /// A local lobby's empty seat takes what the lobby page chose, as Dota's
-/// lobby fills a slot with a bot: the server's idle dummy; or the bot
+/// lobby fills a slot with a bot: the bot
 /// command of the settings, run without a shell, given the game's address
 /// in its words and a seat key of its own in `BOTA_SEAT_KEY`, and ended with
 /// the lobby. Without a bot command the lobby is not opened and the page
@@ -959,19 +959,9 @@ fn a_local_lobby_fills_its_empty_seats() {
     let dir = Scratch::new("fill");
     let (mut alice, trust) = offline("alice", &dir);
 
-    // The idle dummy: the other seat is the server's, before anyone joins.
-    let (mut hosted, server, _) = host_with(&mut alice, &trust, SeatFill::Dummy);
-    pump_until("the dummy seated", &mut [&mut hosted], |c| {
-        c.my_slot.is_some() && c.lobby.slots.iter().all(|s| s.role.is_some())
-    });
-    alice.act(Act::Dashboard);
-    alice.act(Act::Disconnect);
-    assert!(alice.take_leave());
-    drop((hosted, server));
-    alice.left_game(None, false);
-
     // A bot asked for with no bot command set: nothing opens, and the page
     // says where to set it.
+    alice.act(Act::Go(Page::LocalLobby));
     alice.act(Act::Fill(SeatFill::Bot));
     alice.act(Act::Host(false));
     assert!(
