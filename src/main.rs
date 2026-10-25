@@ -45,6 +45,7 @@ mod glyph;
 mod heap;
 mod hud;
 #[cfg(not(target_arch = "wasm32"))]
+mod icon_mips;
 mod import;
 mod input;
 mod item_menu;
@@ -502,7 +503,13 @@ fn main() -> AppExit {
             quality::plugin,
             heap::plugin,
         ))
-        .add_plugins((bag::plugin, cursor::plugin, drag::plugin, item_menu::plugin))
+        .add_plugins((
+            bag::plugin,
+            cursor::plugin,
+            drag::plugin,
+            item_menu::plugin,
+            icon_mips::plugin,
+        ))
         .add_plugins((
             fortified::plugin,
             courier::plugin,
