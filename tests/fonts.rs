@@ -1,7 +1,7 @@
 //! The client starts on a machine whose fontconfig lists no font at all: it
 //! says so once and goes on with the shipped fonts instead of panicking.
 
-use std::process::Command;
+mod common;
 
 #[test]
 fn a_system_without_fonts_is_not_a_panic() {
@@ -12,7 +12,7 @@ fn a_system_without_fonts_is_not_a_panic() {
     )
     .expect("config");
     // The connection to port 1 of 0.0.0.0 fails at once, after the fonts are read.
-    let output = Command::new(env!("CARGO_BIN_EXE_dbota"))
+    let output = common::client()
         .args(["--addr", "0.0.0.0:1"])
         .env("FONTCONFIG_FILE", &config)
         .env_remove("BOTA_SEAT_KEY")

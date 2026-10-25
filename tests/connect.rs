@@ -1,10 +1,14 @@
-//! What the client says and refuses before it opens a window: a notice for
+//! What the client says and refuses as it starts: a notice for
 //! plain text to another machine, and no seat key but the environment's.
+//!
+//! The client is started in the headless compositor (tools/headless.sh): it opens a window on the way.
 
-use std::process::{Command, Output};
+mod common;
+
+use std::process::Output;
 
 fn dbota(args: &[&str], key: Option<&str>) -> Output {
-    let mut command = Command::new(env!("CARGO_BIN_EXE_dbota"));
+    let mut command = common::client();
     command.args(args).env_remove("BOTA_SEAT_KEY");
     if let Some(key) = key {
         command.env("BOTA_SEAT_KEY", key);
