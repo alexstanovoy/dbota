@@ -1254,6 +1254,12 @@ fn spawn_seat_health(commands: &mut Commands, column: Entity, seat: u8) {
     ));
 }
 
+/// Space either side of a menu button, and how far the first button sits from
+/// the screen's left and top edges: half of the 14.5 it sat from the left
+/// before, the same from the top.
+const MENU_BUTTON_MARGIN: f32 = 6.5;
+const MENU_INSET: f32 = 7.25;
+
 /// The menu in the top-left corner (Dota's `DOTAHudMenuButtons`): the
 /// dashboard (Dota's return-to-game arrow turned up) and the scoreboard, 30
 /// of Dota's pixels with 8 either side. No settings button: the settings are
@@ -1273,7 +1279,7 @@ fn spawn_menu(commands: &mut Commands, manifest: &Manifest, server: &AssetServer
             Node {
                 width: px(25),
                 height: px(25),
-                margin: UiRect::horizontal(px(6.5)),
+                margin: UiRect::horizontal(px(MENU_BUTTON_MARGIN)),
                 ..default()
             },
             ui::art(manifest, server, art, ui::INK_DIM),
@@ -1300,8 +1306,8 @@ fn spawn_corner(kit: &mut Spawner, root: Entity) {
             Extent::Corner,
             Node {
                 position_type: PositionType::Absolute,
-                left: px(ui::CORNER_MARGIN),
-                top: px(0),
+                left: px(MENU_INSET - MENU_BUTTON_MARGIN),
+                top: px(MENU_INSET),
                 flex_direction: FlexDirection::Column,
                 align_items: AlignItems::FlexStart,
                 row_gap: px(2),
