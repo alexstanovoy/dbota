@@ -111,51 +111,9 @@ struct PanelRoot;
 
 pub fn plugin(app: &mut App) {
     app.init_resource::<DemoPanel>()
-        .add_systems(Startup, (spawn_root, spawn_mark))
+        .add_systems(Startup, spawn_root)
         .add_systems(PreUpdate, place.after(bevy::input::InputSystems))
-        .add_systems(Update, (presses, draw, mark).chain());
-}
-
-/// The mark of a match that honours cheats, under the clock, live and in
-/// its replay, as Dota marks a cheat lobby ("CHEATS").
-#[derive(Component)]
-struct CheatsMark;
-
-fn spawn_mark(mut commands: Commands, fonts: Res<Fonts>) {
-    commands.spawn((
-        CheatsMark,
-        ui::text("", &fonts.bold, 13.0, Color::srgb(1.0, 0.45, 0.38)),
-        ui::shadow(),
-        Node {
-            position_type: PositionType::Absolute,
-            // Under the clock, and under a replay's vision line.
-            top: px(96),
-            left: percent(50),
-            margin: UiRect::left(px(-30)),
-            ..default()
-        },
-        Visibility::Hidden,
-        Pickable::IGNORE,
-        GlobalZIndex(41),
-    ));
-}
-
-fn mark(
-    session: NonSend<Session>,
-    texts: Res<Texts>,
-    mut shown: Single<(&mut Text, &mut Visibility), With<CheatsMark>>,
-) {
-    let cheats = session
-        .0
-        .statics()
-        .is_some_and(|statics| statics.metadata().cheats);
-    let (text, visibility) = &mut *shown;
-    if cheats && text.0.is_empty() {
-        text.0 = texts
-            .label("DOTA_Lobby_Prefs_Cheats", &[])
-            .unwrap_or_else(|| "CHEATS".to_owned());
-    }
-    visibility.set_if_neq(ui::visible(cheats));
+        .add_systems(Update, (presses, draw).chain());
 }
 
 fn spawn_root(mut commands: Commands) {

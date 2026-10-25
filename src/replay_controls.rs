@@ -123,6 +123,7 @@ fn show(
     session: NonSend<Session>,
     menu: Option<NonSend<crate::main_menu::MenuCore>>,
     settings: Res<crate::config::Settings>,
+    grid: Res<crate::fog::FogGrid>,
     mut strip: Single<&mut Visibility, With<Strip>>,
     mut texts: Query<(&mut Text, Option<&Label>), Or<(With<Label>, With<Speed>)>>,
 ) {
@@ -147,13 +148,22 @@ fn show(
             Some(Action::Pause) => format!("PAUSE{}", key(Action::Pause)),
             Some(Action::Slower) => format!("SLOWER{}", key(Action::Slower)),
             Some(Action::Faster) => format!("FASTER{}", key(Action::Faster)),
-            Some(_) => format!("VISION{}", key(Action::NextEyes)),
+            Some(_) => format!("VISION: {}{}", vision(&grid), key(Action::NextEyes)),
             None if player.paused => "PAUSED".to_owned(),
             None => speed(player.speed),
         };
         if text.0 != said {
             text.0 = said;
         }
+    }
+}
+
+/// Whose eyes the replay is seen with.
+fn vision(grid: &crate::fog::FogGrid) -> String {
+    match (grid.on, grid.team) {
+        (true, None) => "BOTH TEAMS".to_owned(),
+        (true, Some(team)) => format!("{team:?}").to_uppercase(),
+        (false, _) => "ALL".to_owned(),
     }
 }
 

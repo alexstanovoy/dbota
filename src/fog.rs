@@ -203,49 +203,7 @@ pub fn plugin(app: &mut App) {
         .add_systems(
             Update,
             clarity.run_if(resource_changed::<crate::config::Settings>),
-        )
-        .add_systems(Startup, spawn_label)
-        .add_systems(Update, label);
-}
-
-/// The vision a spectator or a replay is shown with, under the clock.
-#[derive(Component)]
-struct VisionLabel;
-
-fn spawn_label(mut commands: Commands, fonts: Res<crate::ui::Fonts>) {
-    commands.spawn((
-        VisionLabel,
-        crate::ui::text("", &fonts.bold, 13.0, crate::ui::INK),
-        crate::ui::shadow(),
-        Node {
-            position_type: PositionType::Absolute,
-            top: px(76),
-            left: percent(50),
-            margin: UiRect::left(px(-90)),
-            width: px(180),
-            justify_content: JustifyContent::Center,
-            ..default()
-        },
-        TextLayout::justify(Justify::Center),
-    ));
-}
-
-fn label(
-    session: NonSend<Session>,
-    grid: Res<FogGrid>,
-    mut text: Single<&mut Text, With<VisionLabel>>,
-) {
-    let core = &session.0;
-    let s = if core.my_slot.is_some() && core.pov.is_none() {
-        String::new()
-    } else {
-        match (grid.on, grid.team) {
-            (true, None) => "VISION: BOTH TEAMS [Tab]".to_string(),
-            (true, Some(team)) => format!("VISION: {} [Tab]", format!("{team:?}").to_uppercase()),
-            (false, _) => "VISION: ALL [Tab]".to_string(),
-        }
-    };
-    text.set_if_neq(Text(s));
+        );
 }
 
 /// Works out the lit cells when a new tick or a new side comes.
