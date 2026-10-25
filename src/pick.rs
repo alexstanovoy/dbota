@@ -33,10 +33,8 @@ const HEIGHT_PER_BOUND: f32 = 2.2;
 /// anywhere in or on a ring picks the unit.
 pub const RING: f32 = 60.0;
 
-/// The hover highlight's life, and its ring's size at its start against
-/// its size at the end (`unit_highlight.vpcf`).
-const HIGHLIGHT_SECS: f32 = 0.25;
-const HIGHLIGHT_START: f32 = 3.0;
+/// The hover ring's colour: Dota's yellow ring under the unit a click would get.
+const HOVER_RING: Color = Color::srgba(1.0, 0.85, 0.2, 0.9);
 
 /// A world unit more than the radius still hits, so the very edge of a ring
 /// is inside whatever the rounding.
@@ -395,45 +393,25 @@ fn show_cursor(
     }
 }
 
-/// Dota's highlight of what a click would get (`unit_highlight.vpcf`): when
-/// the cursor comes onto a unit, a ring in its side's colour closes in on
-/// its feet from three times its size and is gone.
+/// Dota's ring under what a click would get: yellow, round the unit's feet
+/// for as long as the cursor is on it.
 fn draw_hover(
     hover: Res<Hover>,
     session: NonSend<Session>,
     ground: Res<Ground>,
-    time: Res<Time>,
-    mut since: Local<Option<(EntityId, f32)>>,
     mut gizmos: Gizmos,
 ) {
     let Some((id, at)) = hover.left() else {
-        *since = None;
         return;
     };
-    let now = time.elapsed_secs();
-    let start = match *since {
-        Some((was, start)) if was == id => start,
-        _ => {
-            *since = Some((id, now));
-            now
-        }
-    };
-    let age = (now - start) / HIGHLIGHT_SECS;
-    let Some(unit) = session
-        .0
-        .view()
-        .and_then(|v| v.unit(id))
-        .filter(|_| age < 1.0)
-    else {
+    let Some(unit) = session.0.view().and_then(|v| v.unit(id)) else {
         return;
     };
-    // Fast at first and settling, as the particle's biased interpolation.
-    let scale = 1.0 + (HIGHLIGHT_START - 1.0) * (1.0 - age).powi(3);
     let centre = Vec3::new(at.x, ground.at(at.x, at.y) + 3.0, -at.y);
     gizmos.circle(
         Isometry3d::new(centre, Quat::from_rotation_arc(Vec3::Z, Vec3::Y)),
-        ring_radius(unit) * scale,
-        crate::overlay::team_color(unit.team).with_alpha(0.7),
+        ring_radius(unit),
+        HOVER_RING,
     );
 }
 
