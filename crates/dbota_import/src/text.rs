@@ -362,8 +362,8 @@ pub fn background_png(vmat: &str) -> String {
 
 /// The models the client spawns as trees.
 const TREES: [&str; 2] = ["tree_", "dire_tree"];
-/// The models the client spawns as buildings.
-const BUILDINGS: [&str; 12] = [
+/// The models the client spawns as buildings, and as the map's objectives.
+const BUILDINGS: [&str; 15] = [
     "radiant_tower",
     "dire_tower",
     "radiant_ancient001",
@@ -376,6 +376,9 @@ const BUILDINGS: [&str; 12] = [
     "dire_fountain002",
     "radiant_statue001",
     "dire_column001",
+    "lantern_of_sight",
+    "outpost",
+    "xp_shrine",
 ];
 
 /// Every tree `entities` place, once per model and whole Dota unit:

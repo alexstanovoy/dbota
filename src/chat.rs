@@ -12,7 +12,9 @@ use bevy::{
 };
 use bota_client_core::{App as Core, ChatLine, say_refusal};
 use bota_core::{TextFault, rules};
-use bota_proto::{Audience, Body, Speaker};
+use bota_proto::{Audience, Body, EventKind, Speaker, Team};
+
+use crate::dota_text::Texts;
 
 use crate::input::Typing;
 use crate::keys::{Action, Fired};
@@ -42,6 +44,18 @@ pub struct ChatInput {
     fault: Option<(String, f32)>,
 }
 
+/// The game's own lines in the log, as Dota writes them there (a Shrine of
+/// Wisdom gathered), newest last, at most [`ROWS`].
+#[derive(Resource, Default)]
+struct Notices(std::collections::VecDeque<Notice>);
+
+/// One of the game's own lines.
+struct Notice {
+    text: String,
+    /// Seconds since it came.
+    age: f32,
+}
+
 /// The whole log, from the foot of the screen up.
 #[derive(Component)]
 struct Log;
@@ -67,8 +81,18 @@ struct Complaint;
 
 pub fn plugin(app: &mut App) {
     app.init_resource::<ChatInput>()
+        .init_resource::<Notices>()
         .add_systems(Startup, spawn)
-        .add_systems(Update, (note_heard, show_log, show_input, ime));
+        .add_systems(
+            Update,
+            (
+                note_heard,
+                notices.before(show_log),
+                show_log,
+                show_input,
+                ime,
+            ),
+        );
     if app.world().resource::<crate::Args>().chat.is_some() {
         app.add_systems(Update, say_given.before(show_log));
     }
@@ -400,31 +424,91 @@ fn note_heard(session: NonSend<Session>, mut seen: Local<usize>) {
     }
 }
 
+/// The game's lines the last pump told, in Dota's words when the cache has
+/// them: `DOTA_Chat_Rune_XP` ("%s1 activated a Shrine of Wisdom.") for a
+/// Shrine gathered, naming the gatherer (its side to the other side, which
+/// is not told who).
+fn notices(
+    session: NonSend<Session>,
+    texts: Option<Res<Texts>>,
+    time: Res<Time>,
+    mut notices: ResMut<Notices>,
+) {
+    let core = &session.0;
+    for notice in &mut notices.0 {
+        notice.age += time.delta_secs();
+    }
+    for event in &core.told {
+        let EventKind::ShrineActivated { team, by, .. } = event else {
+            continue;
+        };
+        let who = by
+            .and_then(|hero| core.view()?.unit(hero)?.owner)
+            .map_or_else(|| side_name(*team).to_owned(), |slot| core.seat_name(slot));
+        let text = texts
+            .as_deref()
+            .and_then(|t| t.label("DOTA_Chat_Rune_XP", &[]))
+            .map_or_else(
+                || format!("{who} activated a Shrine of Wisdom."),
+                |line| line.replace("%s1", &who),
+            );
+        if notices.0.len() == ROWS {
+            notices.0.pop_front();
+        }
+        notices.0.push_back(Notice { text, age: 0.0 });
+    }
+}
+
+fn side_name(team: Team) -> &'static str {
+    match team {
+        Team::Radiant => "The Radiant",
+        Team::Dire => "The Dire",
+        Team::Neutral => "The neutrals",
+    }
+}
+
+/// One line of the log: a player's, or the game's own.
+enum Shown<'a> {
+    Heard(&'a ChatLine, &'a str),
+    Notice(&'a Notice),
+}
+
+impl Shown<'_> {
+    fn age(&self) -> f32 {
+        match self {
+            Shown::Heard(line, _) => line.age,
+            Shown::Notice(notice) => notice.age,
+        }
+    }
+}
+
 /// The log's lines, newest at the foot. While a line is being typed nothing
 /// fades.
 fn show_log(
     session: NonSend<Session>,
     typing: Res<Typing>,
+    notices: Res<Notices>,
     mut rows: Query<(&Row, &mut Text, &mut TextColor, &mut Node, &Children)>,
     mut pieces: Query<(&Piece, &mut TextSpan, &mut TextColor), Without<Row>>,
 ) {
     let core = &session.0;
     let reading = *typing == Typing::Chat;
     // A ping marks the map and says nothing in the log.
-    let mut shown: Vec<(&ChatLine, &str)> = core
+    let mut shown: Vec<Shown> = core
         .chat_lines()
         .filter_map(|line| match &line.heard.line.body {
-            Body::Text(words) => Some((line, words.as_str())),
+            Body::Text(words) => Some(Shown::Heard(line, words.as_str())),
             Body::Ping(_) => None,
         })
-        .rev()
-        .take(ROWS)
+        .chain(notices.0.iter().map(Shown::Notice))
         .collect();
-    shown.reverse();
+    // Oldest first, the newest ROWS kept.
+    shown.sort_by(|a, b| b.age().total_cmp(&a.age()));
+    let shown = &shown[shown.len().saturating_sub(ROWS)..];
     let first = ROWS - shown.len();
     for (Row(row), mut text, mut color, mut node, children) in &mut rows {
         let line = row.checked_sub(first).and_then(|i| shown.get(i));
-        let alpha = line.map_or(0.0, |(l, _)| if reading { 1.0 } else { opacity(l.age) });
+        let alpha = line.map_or(0.0, |l| if reading { 1.0 } else { opacity(l.age()) });
         let display = if alpha > 0.0 {
             Display::Flex
         } else {
@@ -433,18 +517,26 @@ fn show_log(
         if node.display != display {
             node.display = display;
         }
-        let Some(&(line, words)) = line.filter(|_| alpha > 0.0) else {
+        let Some(line) = line.filter(|_| alpha > 0.0) else {
             continue;
         };
-        text.set_if_neq(Text(tag(line)));
+        let (tag, name, name_tint, words) = match line {
+            Shown::Heard(line, words) => (
+                tag(line),
+                format!("{}: ", core.speaker_name(&line.heard.from)),
+                name_color(core, line),
+                *words,
+            ),
+            Shown::Notice(notice) => (String::new(), String::new(), ui::INK, notice.text.as_str()),
+        };
+        text.set_if_neq(Text(tag));
         color.set_if_neq(TextColor(ui::INK_DIM.with_alpha(alpha)));
-        let name = format!("{}: ", core.speaker_name(&line.heard.from));
         for child in children {
             let Ok((piece, mut span, mut tint)) = pieces.get_mut(*child) else {
                 continue;
             };
             let (s, c) = match piece {
-                Piece::Name => (name.clone(), name_color(core, line)),
+                Piece::Name => (name.clone(), name_tint),
                 Piece::Body => (words.to_owned(), ui::INK),
             };
             if span.0 != s {

@@ -462,11 +462,14 @@ fn buildings(c: &Checks, report: &mut impl FnMut(&str, bool, String)) {
         .map(|(e, u)| (e, c.fog.lit(u.at.x, u.at.y)))
         .collect();
     let fogged = enemy.iter().filter(|(_, lit)| !lit).count();
-    // The fountain has no bar, in Dota as here.
+    // The fountain and the map's objectives have no bar, in Dota as here.
     let barless = enemy
         .iter()
         .filter(|(e, _)| {
-            c.units.get(*e).is_ok_and(|u| u.kind != UnitKind::Fountain) && !c.bars.has(*e)
+            c.units
+                .get(*e)
+                .is_ok_and(|u| crate::bars::shows_bar(u.kind))
+                && !c.bars.has(*e)
         })
         .count();
     let expected = c.session.0.view().map_or(0, |v| {

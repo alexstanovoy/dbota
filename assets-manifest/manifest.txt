@@ -50,7 +50,7 @@
 
 
 # --- Shadow Fiend (npc_dota_hero_nevermore: BAT 1.6, attack point 0.5 s, raze cast point 0.55 s, requiem 1.67 s)
-model hero.nevermore.model models/heroes/shadow_fiend/shadow_fiend.vmdl_c models/hero/nevermore/nevermore.glb anims=idle,run,attack01,attack02,cast1_shadowraze_a,cast1_shadowraze_b,cast1_shadowraze_c,cast6_requiem,death,idle_rare,idle_injured,run_haste,run_injured,stun,flail,teleport,spawn model_scale=0.98
+model hero.nevermore.model models/heroes/shadow_fiend/shadow_fiend.vmdl_c models/hero/nevermore/nevermore.glb anims=idle,run,attack01,attack02,cast1_shadowraze_a,cast1_shadowraze_b,cast1_shadowraze_c,cast6_requiem,death,idle_rare,idle_injured,run_haste,run_injured,stun,flail,teleport,spawn,generic_channel model_scale=0.98
 clip hero.nevermore.model idle idle 1.600
 clip hero.nevermore.model run run 1.100
 clip hero.nevermore.model attack attack01 1.100 point=0.5
@@ -68,6 +68,8 @@ clip hero.nevermore.model stun stun 2.067
 clip hero.nevermore.model flail flail 0.686
 clip hero.nevermore.model teleport teleport 2.233
 clip hero.nevermore.model spawn spawn 1.000
+# ACT_DOTA_GENERIC_CHANNEL_1: a hero channelling at a Watcher (ability_lamp_use) or an Outpost (ability_capture).
+clip hero.nevermore.model channel generic_channel 2.233
 # Default wearables (items_game.txt default_item for npc_dota_hero_nevermore: 387 head, 486 shoulders, 488 arms)
 model hero.nevermore.head models/heroes/shadow_fiend/shadow_fiend_head.vmdl_c models/hero/nevermore_head/nevermore_head.glb attach=hero.nevermore.model
 model hero.nevermore.shoulders models/heroes/shadow_fiend/shadow_fiend_shoulders.vmdl_c models/hero/nevermore_shoulders/nevermore_shoulders.glb attach=hero.nevermore.model
@@ -78,7 +80,7 @@ model hero.nevermore.arms models/heroes/shadow_fiend/shadow_fiend_arms.vmdl_c mo
 # ACT_DOTA_CAST_ABILITY_ROT), the ultimate by name (Dismember ACT_DOTA_CAST_ABILITY_4, then its channel loop
 # ACT_DOTA_CHANNEL_ABILITY_4); hook_end is ACT_DOTA_CHANNEL_ABILITY_1, played while the hook comes back.
 # meshes= drops hitbox_fix, a 2-triangle helper quad.
-model hero.pudge.model models/heroes/pudge/pudge.vmdl_c models/hero/pudge/pudge.glb anims=pudge_idle_anim,pudge_walkN_anim,pudge_attack1_anim,pudge_attack2_anim,pudge_meathook_start_anim,pudge_meathook_end,pudge_rot,pudge_dismember_start,pudge_dismember_mid_anim,pudge_death,pudge_idle_alt_anim,pudge_idle_injured,pudge_run_haste_anim,pudge_walkN_injured,pudge_stun_anim,pudge_flail_anim,teleport_anim,pudge_spawn_anim meshes=head,upper_body,lower_body model_scale=0.98
+model hero.pudge.model models/heroes/pudge/pudge.vmdl_c models/hero/pudge/pudge.glb anims=pudge_idle_anim,pudge_walkN_anim,pudge_attack1_anim,pudge_attack2_anim,pudge_meathook_start_anim,pudge_meathook_end,pudge_rot,pudge_dismember_start,pudge_dismember_mid_anim,pudge_death,pudge_idle_alt_anim,pudge_idle_injured,pudge_run_haste_anim,pudge_walkN_injured,pudge_stun_anim,pudge_flail_anim,teleport_anim,pudge_spawn_anim,generic_channel meshes=head,upper_body,lower_body model_scale=0.98
 clip hero.pudge.model idle pudge_idle_anim 2.000
 clip hero.pudge.model run pudge_walkN_anim 1.000
 clip hero.pudge.model attack pudge_attack1_anim 1.333 point=0.5
@@ -97,6 +99,8 @@ clip hero.pudge.model stun pudge_stun_anim 2.000
 clip hero.pudge.model flail pudge_flail_anim 1.600
 clip hero.pudge.model teleport teleport_anim 2.933
 clip hero.pudge.model spawn pudge_spawn_anim 1.333
+# ACT_DOTA_GENERIC_CHANNEL_1: a hero channelling at a Watcher (ability_lamp_use) or an Outpost (ability_capture).
+clip hero.pudge.model channel generic_channel 4.000
 # Default wearables (items_game.txt default_item for npc_dota_hero_pudge, named by item slot: 47 weapon
 # (Rusty Meathook), 258 back (rings and apron), 259 offhand_weapon (cleaver), 260 shoulder (left arm),
 # 261 arms (bracer), 262 head (toupee), 470 belt)
@@ -194,7 +198,8 @@ model tree.dire_tree008 models/props_tree/dire_tree008.vmdl_c models/tree/dire_t
 model tree.planted models/props_tree/tree_oak_00.vmdl_c models/tree/tree_oak_00/tree_oak_00.glb meshes=tree_oak_00_model
 
 # --- Default map, fountain-to-fountain band around mid with both bases (towers, trees, barracks,
-# ancients and fountains removed: the client spawns those itself; shops, statues, walls stay)
+# ancients, fountains, Watchers, Outposts and Shrines of Wisdom removed: the client spawns those itself
+# as the match has them; shops, statues, walls and the Tormentor's chasms stay)
 world map.mid maps/dota/world.vwrld_c map/mid/mid.gltf vpk=maps/dota.vpk half_width=13100 v_min=-11800 v_max=11700 layers=textures/ground trees=map/mid/trees.txt lighting=map/mid/lighting.txt
 
 # --- Base buildings (npc_units.txt models; static, no animations). The *.destruction models are
@@ -1058,7 +1063,9 @@ unit npc_dota_enraged_wildkin_tornado none
 
 # --- Map objectives (npc_units.txt `Model`, `ModelScale`; the map's entities for placement and skins). Roshan and
 # the Tormentor are neutral units like the camps; Watchers, Outposts, Shrines of Wisdom and the planted Banner are
-# objective units; the chasm under the Tormentor is the map's prop_dynamic sentinel_base_* (scale 0.7). These
+# objective units drawn where the match stands them (the map's own copies are left out of map.mid, their
+# yaws kept in map/mid/buildings.txt); the chasm under the Tormentor is the map's prop_dynamic
+# sentinel_base_* (scale 0.7), still part of map.mid. These
 # are the models' default skins: an owned Outpost (skin 1 Radiant, 2 Dire), a lit Watcher (1, 2), the Dire
 # Tormentor and the Dire chasm (1) wear another material group, which the importer does not export yet.
 # Roshan (npc_dota_roshan: BAT 2.0, attack point 0.6 s). Clips by activity: attack/attack2 the plain swings

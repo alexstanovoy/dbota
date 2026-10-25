@@ -3,12 +3,14 @@
 //! simulator's strike, a cast's on the simulator's cast point, and only
 //! idling, running and the follow-through keep the clip's own pace.
 
+use std::collections::HashMap;
+
 use bevy::{
     camera::primitives::{Frustum, Sphere},
     prelude::*,
 };
 use bota_client_core::App as Core;
-use bota_proto::{UnitKind, UnitView};
+use bota_proto::{AbilityId, EffectId, EntityId, EventKind, StatusFlags, Team, UnitKind, UnitView};
 
 use crate::ability_art::art_of;
 use crate::coords::sim_facing_to_rotation;
@@ -50,8 +52,38 @@ impl Pose {
     }
 }
 
+/// The ability each unit in view is channelling, by the cast that began it:
+/// which loop its model plays meanwhile.
+#[derive(Resource, Default)]
+struct Channels(HashMap<EntityId, AbilityId>);
+
 pub fn plugin(app: &mut App) {
-    app.add_systems(PostUpdate, animate.before(TransformSystems::Propagate));
+    app.init_resource::<Channels>().add_systems(
+        PostUpdate,
+        (note_channels, animate)
+            .chain()
+            .before(TransformSystems::Propagate),
+    );
+}
+
+/// Takes in the casts the last pump told, and lets go of every unit that
+/// no longer channels: the view says a unit channels, the cast before says
+/// what.
+fn note_channels(session: NonSend<Session>, mut channels: ResMut<Channels>) {
+    let core = &session.0;
+    for event in &core.told {
+        if let EventKind::AbilityCast { caster, ability } = event {
+            channels.0.insert(*caster, *ability);
+        }
+    }
+    let Some(view) = core.view() else {
+        channels.0.clear();
+        return;
+    };
+    channels.0.retain(|id, _| {
+        view.unit(*id)
+            .is_some_and(|u| u.statuses.bits & StatusFlags::CHANNELLING != 0)
+    });
 }
 
 /// What a unit should be showing: a logical clip and the time into it.
@@ -63,6 +95,7 @@ struct Wanted {
 fn animate(
     session: NonSend<Session>,
     bank: Res<ModelBank>,
+    channels: Res<Channels>,
     time: Res<Time>,
     mut units: Query<(
         &Unit,
@@ -92,16 +125,22 @@ fn animate(
             continue;
         };
         let clips = &bank.0[model].clips;
-        let clip = |name: &str| clips.iter().find(|c| c.0 == name && c.2 > 0.0);
+        // A clip of no length is a held pose (a Watcher put out).
+        let clip = |name: &str| clips.iter().find(|c| c.0 == name);
         let live = view.unit(unit.id);
+        let channel = channels.0.get(&unit.id).and_then(|id| art_of(*id).channel);
         let wanted = match (dying, live) {
             (Some(d), _) => Wanted {
                 clip: "death",
                 t: d.0,
             },
-            (None, Some(u)) => choose(core, u, unit, &mut pose, dt, |name| {
-                clip(name).map(|c| (c.2, c.3))
-            }),
+            (None, Some(u)) => {
+                let clip = |name: &str| clip(name).map(|c| (c.2, c.3));
+                match channel.and_then(|name| Some((name, clip(name)?.0))) {
+                    Some((name, duration)) => looping(&mut pose, name, duration, dt, 1.0),
+                    None => choose(core, u, unit, &mut pose, dt, clip),
+                }
+            }
             (None, None) => continue,
         };
         let Some((_, node, duration, _)) = clip(wanted.clip).or_else(|| clip("idle")) else {
@@ -127,7 +166,7 @@ fn animate(
             true,
         );
         if let Some(active) = player.animation_mut(*node) {
-            active.set_seek_time(wanted.t.clamp(0.0, *duration - 1e-3));
+            active.set_seek_time(wanted.t.clamp(0.0, (*duration - 1e-3).max(0.0)));
             active.set_weight(if near { 1.0 } else { 0.0 });
         }
     }
@@ -215,12 +254,42 @@ fn choose(
     let (name, pace) = if unit.speed > RUNNING && unit.kind != UnitKind::Tower {
         ("run", unit.speed / RUN_PACE)
     } else {
-        ("idle", 1.0)
+        (standing(core, u), 1.0)
     };
+    let name = if clip(name).is_some() { name } else { "idle" };
     let duration = clip(name).map_or(1.0, |c| c.0);
+    looping(pose, name, duration, dt, pace)
+}
+
+/// A loop moved on by `dt` at `pace`.
+fn looping(pose: &mut Pose, clip: &'static str, duration: f32, dt: f32, pace: f32) -> Wanted {
     pose.loop_t = (pose.loop_t + dt * pace) % duration.max(0.01);
     Wanted {
-        clip: name,
+        clip,
         t: pose.loop_t,
+    }
+}
+
+/// The loop a unit plays standing: a map objective's shows its state, as
+/// Dota's models do: a Watcher out until the horn and while put out, lit by
+/// day or by night; an Outpost a side holds; a Shrine ready to be gathered.
+fn standing(core: &Core, u: &UnitView) -> &'static str {
+    let has = |id: EffectId| u.effects.iter().any(|e| e.id == id);
+    let Some(view) = core.view() else {
+        return "idle";
+    };
+    match u.kind {
+        UnitKind::Watcher if has(EffectId::LAMP_OFF) => "off",
+        UnitKind::Watcher if view.game_tick() < core.pregame_ticks() => "off",
+        UnitKind::Watcher if has(EffectId::VISION_GRANT) => {
+            if bota_core::time_of_day(view.day_tick()).night {
+                "lit_night"
+            } else {
+                "lit"
+            }
+        }
+        UnitKind::Outpost if u.team != Team::Neutral => "captured",
+        UnitKind::Shrine if has(EffectId::SHRINE_READY) => "active",
+        _ => "idle",
     }
 }

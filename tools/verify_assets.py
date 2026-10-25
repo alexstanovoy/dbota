@@ -102,8 +102,8 @@ def check_model(path: Path, keys: dict[str, str], clips: list[list[str]], parent
 
 def check_particle(path: Path, cache: Path) -> str:
     doc = json.loads(path.read_text())
-    if doc.get("version") != 2 or not doc.get("systems"):
-        raise ValueError("not a layout 2 particle file with systems")
+    if doc.get("version") != 3 or not doc.get("systems"):
+        raise ValueError("not a layout 3 particle file with systems")
     textures = doc.get("textures", [])
     models = doc.get("models", [])
     missing = [f["file"] for f in textures + models if not (cache / f["file"]).is_file()]

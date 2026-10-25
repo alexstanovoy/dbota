@@ -453,10 +453,25 @@ fn take_scenes(entry: &mut BankModel, server: &AssetServer, gltfs: &Assets<Gltf>
     true
 }
 
-/// How the manifest says a neutral creep is drawn.
-fn neutral_art<'a>(unit: &UnitView, manifest: &'a Manifest) -> Option<&'a UnitArt> {
-    let kind = NeutralKind::of(unit.neutral?)?;
-    manifest.unit_art(kind.neutral().unit)
+/// How the manifest says a neutral creep or a map objective is drawn: by
+/// the Dota unit it is.
+fn unit_art<'a>(unit: &UnitView, manifest: &'a Manifest) -> Option<&'a UnitArt> {
+    let npc = match objective_unit(unit.kind) {
+        Some(npc) => npc,
+        None => NeutralKind::of(unit.neutral?)?.neutral().unit,
+    };
+    manifest.unit_art(npc)
+}
+
+/// The Dota unit a kind of the map's objectives is (npc_units.txt), whose
+/// `unit` line in the manifest draws it.
+fn objective_unit(kind: UnitKind) -> Option<&'static str> {
+    match kind {
+        UnitKind::Outpost => Some("npc_dota_watch_tower"),
+        UnitKind::Watcher => Some("npc_dota_lantern"),
+        UnitKind::Shrine => Some("npc_dota_xp_fountain"),
+        _ => None,
+    }
 }
 
 /// What a unit is called: a neutral creep by its own name, anything else by
@@ -470,8 +485,8 @@ pub fn unit_name(map: &MapDef, unit: &UnitView) -> &'static str {
 
 /// The logical name of the model a unit is drawn with.
 fn model_name(unit: &UnitView, map: &MapDef, manifest: &Manifest) -> Option<String> {
-    if unit.kind == UnitKind::CreepNeutral {
-        return neutral_art(unit, manifest)?.model.clone();
+    if unit.kind == UnitKind::CreepNeutral || objective_unit(unit.kind).is_some() {
+        return unit_art(unit, manifest)?.model.clone();
     }
     let side = match unit.team {
         Team::Radiant => "radiant",
@@ -527,12 +542,15 @@ impl BuildingYaws {
     }
 
     /// The facing a building at a place is drawn with: the map's yaw of the
-    /// same side's building of the same kind nearest it, within 600 units.
+    /// same side's building of the same kind nearest it, within 600 units; a
+    /// map objective's, whichever side holds it, of the objective standing
+    /// there.
     pub fn facing(&self, unit: &UnitView, at: Vec2) -> Option<f32> {
-        let side = match unit.team {
-            Team::Radiant => "radiant",
-            Team::Dire => "dire",
-            Team::Neutral => return None,
+        let side = match (unit.kind, unit.team) {
+            (UnitKind::Outpost | UnitKind::Watcher | UnitKind::Shrine, _) => "",
+            (_, Team::Radiant) => "radiant",
+            (_, Team::Dire) => "dire",
+            (_, Team::Neutral) => return None,
         };
         let kind = match unit.kind {
             UnitKind::Tower => "tower",
@@ -542,6 +560,9 @@ impl BuildingYaws {
             // Radiant's fillers are statues, Dire's columns.
             UnitKind::Filler if unit.team == Team::Dire => "column",
             UnitKind::Filler => "statue",
+            UnitKind::Outpost => "outpost",
+            UnitKind::Watcher => "lantern_of_sight",
+            UnitKind::Shrine => "xp_shrine",
             _ => return None,
         };
         let (_, _, yaw) = self
@@ -629,10 +650,13 @@ fn required_models(manifest: &Manifest) -> Vec<String> {
             names.push(kind.replace("{}", side));
         }
     }
-    for neutral in &NEUTRALS {
-        match manifest.unit_art(neutral.unit) {
+    let objectives = [UnitKind::Outpost, UnitKind::Watcher, UnitKind::Shrine]
+        .into_iter()
+        .filter_map(objective_unit);
+    for unit in NEUTRALS.iter().map(|n| n.unit).chain(objectives) {
+        match manifest.unit_art(unit) {
             Some(art) => names.extend(art.model.clone()),
-            None => names.push(format!("{} (no unit line)", neutral.unit)),
+            None => names.push(format!("{unit} (no unit line)")),
         }
     }
     names
@@ -817,7 +841,7 @@ fn spawn_unit(
     p.commands.entity(root).insert(ModelOf(pivot));
     match model.and_then(|index| Some((&p.bank.0[index], p.bank.0[index].scenes.as_ref()?))) {
         Some((entry, scenes)) => {
-            let size = neutral_art(u, &p.manifest)
+            let size = unit_art(u, &p.manifest)
                 .and_then(|art| art.scale)
                 .unwrap_or(entry.model.scale);
             let scale = Transform::from_scale(Vec3::splat(UNITS_PER_METRE * size));
@@ -844,7 +868,7 @@ fn spawn_unit(
             }
         }
         // A unit the manifest draws as nothing (a bare effect in Dota).
-        None if neutral_art(u, &p.manifest).is_some_and(|art| art.model.is_none()) => {}
+        None if unit_art(u, &p.manifest).is_some_and(|art| art.model.is_none()) => {}
         None => spawn_stand_in(p, u, pivot),
     }
     root

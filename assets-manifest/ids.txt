@@ -146,6 +146,11 @@ ability 74 frogmen_water_bubble_large
 ability 75 hill_troll_rally
 ability 76 tornado_tempest
 ability 77 pudge_flesh_heap
+# Every hero's hidden channels at a map objective: ability_capture at an Outpost, ability_lamp_use (which
+# wears watcher_channel's icon) at a Watcher.
+ability 78 ability_capture
+ability 79 watcher_channel
+text ability 79 ability_lamp_use
 hero 0 pudge
 hero 1 nevermore
 effect 1 icon.item.flask
@@ -212,3 +217,10 @@ effect 64 icon.ability.fountain_heal
 # modifier_fountain_fury_swipes_damage_increase, the fountain's stacks: its icon is not documented;
 # the modifier is Fury Swipes' kin, so it wears Ursa's Fury Swipes.
 effect 66 icon.ability.ursa_fury_swipes
+# A lit Watcher's modifier_lamp_on and a put-out one's modifier_lamp_off: the Watcher's channel's icon.
+effect 67 icon.ability.watcher_channel
+effect 68 icon.ability.watcher_channel
+# modifier_watch_tower_invulnerable, an Outpost no tier two of its holder has fallen for: the capture's icon.
+effect 69 icon.ability.ability_capture
+# A Shrine of Wisdom ready to be gathered: Dota's timer icon of the wisdom rune ("widsom" in its file name).
+effect 70 hud.rune_timer.wisdom

@@ -25,7 +25,7 @@ use crate::text::{
 };
 
 /// Bumped when the importer's output changes for the same install; part of a cache's stamp.
-pub const IMPORT_REV: u32 = 9;
+pub const IMPORT_REV: u32 = 10;
 
 /// Names what an import of this manifest and these ids makes (FNV-1a 64 of both texts): part of
 /// a cache's stamp, so a cache made from other texts is stale even from the same install.
@@ -60,9 +60,9 @@ const MAX_SYSTEMS: usize = 256;
 pub const GENERATOR: &str = "dbota_assets";
 /// Layer textures the client has no use for.
 const NOT_LAYERS: [&str; 3] = ["refl", "specular", "height"];
-/// The world's nodes the client leaves out of `mid.gltf`: the trees and buildings it spawns
-/// itself, and the end-game cameras.
-const NOT_IN_WORLD: [&str; 16] = [
+/// The world's nodes the client leaves out of `mid.gltf`: the trees, buildings and map objectives
+/// (Watchers, Outposts, Shrines of Wisdom) it spawns itself as units, and the end-game cameras.
+const NOT_IN_WORLD: [&str; 19] = [
     "tree_",
     "dire_tree",
     "radiant_tower",
@@ -77,6 +77,9 @@ const NOT_IN_WORLD: [&str; 16] = [
     "dire_fountain002",
     "radiant_statue001",
     "dire_column001",
+    "lantern_of_sight",
+    "outpost",
+    "xp_shrine",
     "bad_ancient_destruction_camera",
     "radiant_endcam",
 ];

@@ -41,6 +41,8 @@ pub struct AbilityArt {
     pub flight: Flight,
     /// Whether the ground is scorched where its missile lands.
     pub scorches: bool,
+    /// The clip its caster loops while it channels it, when it has one.
+    pub channel: Option<&'static str>,
 }
 
 const PLAIN: AbilityArt = AbilityArt {
@@ -48,6 +50,7 @@ const PLAIN: AbilityArt = AbilityArt {
     telegraph: Telegraph::None,
     flight: Flight::None,
     scorches: false,
+    channel: None,
 };
 
 const RAZE: AbilityArt = AbilityArt {
@@ -76,6 +79,12 @@ pub fn art_of(id: AbilityId) -> AbilityArt {
             clip: "requiem",
             telegraph: Telegraph::Requiem,
             flight: Flight::Soul,
+            ..PLAIN
+        },
+        // Dota's ACT_DOTA_GENERIC_CHANNEL_1, the channel at an Outpost or a
+        // Watcher.
+        AbilityId::CAPTURE | AbilityId::LAMP_USE => AbilityArt {
+            channel: Some("channel"),
             ..PLAIN
         },
         AbilityId::DISMEMBER => AbilityArt {

@@ -11,7 +11,7 @@ use bevy::{
     window::PrimaryWindow,
 };
 use bota_client_core::Intent;
-use bota_proto::{Team, UnitKind};
+use bota_proto::{EffectId, Team, UnitKind, UnitView};
 
 use crate::camera::RtsCamera;
 use crate::fog::FogGrid;
@@ -39,6 +39,12 @@ const PINGS: usize = 10 + crate::pings::MARKS;
 const PING_SIZES: (f32, f32) = (10.0, 30.0);
 /// Ticks one swell of a ping takes.
 const PING_PERIOD: u32 = 30;
+/// The map's objectives marked at most: Dota's two Outposts, ten Watchers
+/// and two Shrines of Wisdom, with room to spare.
+const OBJECTIVE_MARKS: usize = 24;
+/// The tint of a Watcher not lit and of a Shrine not ready, so the lit and
+/// the ready ones stand out.
+const DORMANT: Color = Color::srgb(0.55, 0.55, 0.55);
 
 /// The minimap's frame, the photo, the marks and the camera frame.
 #[derive(Resource)]
@@ -47,6 +53,8 @@ struct Minimap {
     photo: Handle<Image>,
     fog: Entity,
     marks: Vec<Entity>,
+    /// The icons of the map's objectives, under the units' marks.
+    objectives: Vec<Entity>,
     /// A hero's mark and the icon in it, one a seat.
     heroes: Vec<(Entity, Entity)>,
     pings: Vec<Entity>,
@@ -74,7 +82,17 @@ pub struct PhotoTaken(pub bool);
 pub fn plugin(app: &mut App) {
     app.init_resource::<PhotoTaken>()
         .add_systems(Startup, spawn)
-        .add_systems(Update, (photograph, marks, hero_marks, pings, clicks));
+        .add_systems(
+            Update,
+            (
+                photograph,
+                marks,
+                objective_marks,
+                hero_marks,
+                pings,
+                clicks,
+            ),
+        );
 }
 
 fn spawn(mut commands: Commands, mut images: ResMut<Assets<Image>>, docks: Res<Docks>) {
@@ -117,6 +135,22 @@ fn spawn(mut commands: Commands, mut images: ResMut<Assets<Image>>, docks: Res<D
             ChildOf(frame),
         ))
         .id();
+    let objectives = (0..OBJECTIVE_MARKS)
+        .map(|_| {
+            commands
+                .spawn((
+                    Node {
+                        position_type: PositionType::Absolute,
+                        ..default()
+                    },
+                    ImageNode::default(),
+                    Visibility::Hidden,
+                    Pickable::IGNORE,
+                    ChildOf(frame),
+                ))
+                .id()
+        })
+        .collect();
     let marks = (0..MARKS)
         .map(|_| {
             commands
@@ -203,6 +237,7 @@ fn spawn(mut commands: Commands, mut images: ResMut<Assets<Image>>, docks: Res<D
         photo,
         fog,
         marks,
+        objectives,
         heroes,
         pings,
         view,
@@ -303,10 +338,11 @@ fn marks(
     {
         image.image = veil.0.clone();
     }
-    let shown = view
-        .units
-        .iter()
-        .filter(|u| !matches!(u.kind, UnitKind::Ward | UnitKind::Hero) && !grid.hides(u.seen_by));
+    let shown = view.units.iter().filter(|u| {
+        !matches!(u.kind, UnitKind::Ward | UnitKind::Hero)
+            && objective_icon(u).is_none()
+            && !grid.hides(u.seen_by)
+    });
     let mut used = 0;
     for u in shown.take(MARKS) {
         let Ok((mut node, mut bg, mut vis)) = nodes.get_mut(minimap.marks[used]) else {
@@ -368,6 +404,96 @@ fn marks(
             height: px((max.y - min.y).max(2.0)),
             ..node.clone()
         });
+    }
+}
+
+/// How the minimap marks one of the map's objectives: Dota's icon (a cell of
+/// the minimap sheet where it is one, in pixels of the sheet), its tint and
+/// its size in interface pixels. None for any other unit.
+fn objective_icon(u: &UnitView) -> Option<(&'static str, Option<Rect>, Color, f32)> {
+    let has = |id: EffectId| u.effects.iter().any(|e| e.id == id);
+    let cell = |x: f32, y: f32, side: f32| Some(Rect::new(x, y, x + side, y + side));
+    match u.kind {
+        // minimap_miscbuilding, a white mask tinted by the side holding it.
+        UnitKind::Outpost => Some((
+            "icon.minimap.building",
+            None,
+            crate::overlay::team_color(u.team),
+            14.0,
+        )),
+        // minimap_watcher (128,0 64x64).
+        UnitKind::Watcher => Some((
+            "icon.minimap.sheet",
+            cell(128.0, 0.0, 64.0),
+            if has(EffectId::VISION_GRANT) {
+                Color::WHITE
+            } else {
+                DORMANT
+            },
+            12.0,
+        )),
+        // The unit's minimap_wisdom has no texture in the install: the wisdom
+        // rune's cell, minimap_rune_xp (544,448 32x32).
+        UnitKind::Shrine => Some((
+            "icon.minimap.sheet",
+            cell(544.0, 448.0, 32.0),
+            if has(EffectId::SHRINE_READY) {
+                Color::WHITE
+            } else {
+                DORMANT
+            },
+            12.0,
+        )),
+        _ => None,
+    }
+}
+
+/// Marks each of the map's objectives shown by its own icon.
+fn objective_marks(
+    session: NonSend<Session>,
+    minimap: Res<Minimap>,
+    grid: Res<FogGrid>,
+    manifest: Res<crate::manifest::Manifest>,
+    server: Res<AssetServer>,
+    mut marks: Query<(&mut Node, &mut ImageNode, &mut Visibility)>,
+) {
+    let Some(view) = session.0.view() else {
+        return;
+    };
+    let shown = view
+        .units
+        .iter()
+        .filter(|u| !grid.hides(u.seen_by))
+        .filter_map(|u| Some((u, objective_icon(u)?)))
+        .filter_map(|(u, (icon, rect, tint, size))| {
+            Some((u, manifest.file(icon)?, rect, tint, size))
+        });
+    let mut used = 0;
+    for (u, path, rect, tint, size) in shown.take(OBJECTIVE_MARKS) {
+        let Ok((mut node, mut image, mut vis)) = marks.get_mut(minimap.objectives[used]) else {
+            break;
+        };
+        used += 1;
+        let at = on_map(u.pos.x.to_f32(), u.pos.y.to_f32());
+        node.set_if_neq(Node {
+            left: px(at.x - size / 2.0),
+            top: px(at.y - size / 2.0),
+            width: px(size),
+            height: px(size),
+            ..node.clone()
+        });
+        let handle: Handle<Image> = server.load(path);
+        if image.image != handle || image.rect != rect || image.color != tint {
+            image.image = handle;
+            image.rect = rect;
+            image.color = tint;
+        }
+        vis.set_if_neq(Visibility::Inherited);
+    }
+    for mark in &minimap.objectives[used..] {
+        if let Ok((_, _, mut vis)) = marks.get_mut(*mark) {
+            vis.set_if_neq(Visibility::Hidden);
+        }
     }
 }
 

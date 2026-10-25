@@ -206,6 +206,11 @@ fn spawn_layer(mut commands: Commands, fonts: Res<Fonts>, mut pool: ResMut<Float
     commands.insert_resource(Layer(layer));
 }
 
+/// Whether a unit of a kind is drawn with a bar.
+pub fn shows_bar(kind: UnitKind) -> bool {
+    bar_size(kind).is_some()
+}
+
 /// Width and height of a unit's bar in interface pixels: Dota's broad bars,
 /// read at 1080 lines and at 4K alike.
 fn bar_size(kind: UnitKind) -> Option<(f32, f32)> {
@@ -213,7 +218,8 @@ fn bar_size(kind: UnitKind) -> Option<(f32, f32)> {
         UnitKind::Hero => Some((124.0, 12.0)),
         UnitKind::Tower | UnitKind::Barracks | UnitKind::Ancient => Some((156.0, 11.0)),
         UnitKind::Filler => Some((110.0, 9.0)),
-        UnitKind::Fountain => None,
+        // The map's objectives never take damage: Dota shows them no health.
+        UnitKind::Fountain | UnitKind::Outpost | UnitKind::Watcher | UnitKind::Shrine => None,
         UnitKind::Courier => Some((64.0, 8.0)),
         UnitKind::Ward => Some((48.0, 7.0)),
         _ => Some((72.0, 8.0)),

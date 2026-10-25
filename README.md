@@ -207,6 +207,14 @@ ward's health, counted in hits, stands as one block a hit. Each seat has Dota's 
 dark green, brown): the strip over its portrait in the top bar, its row of the scoreboard, its pings and
 teleports, and its hero's mark on the minimap, ringed in its side's colour.
 
+The map's objectives stand where the match's rules stand them (the Dota map's default: Watchers,
+Outposts and Shrines of Wisdom; the mid-only map none), as Dota's models showing their state: a
+Watcher ready, lit (by day or by night) or put out, an Outpost a side holds, a Shrine of Wisdom
+ready to be gathered. They have no health bar, and the minimap shows each by Dota's icon (an Outpost
+in its holder's colour, a Watcher or a Shrine dimmed while it cannot be used). A hero channelling at
+a Watcher or an Outpost plays Dota's generic channel, and a Shrine gathered is told in the chat log
+in Dota's words.
+
 Between the picks and the horn comes Dota's strategy screen: every seat's hero under its player's colour
 and the clock over STRATEGY TIME; at the left the hero you enter battle as, its name and abilities; at
 the right STARTING ITEMS: the gold that remains, the inventory as your choices fill it (what stacks in
