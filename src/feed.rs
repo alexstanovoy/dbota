@@ -36,9 +36,17 @@ pub fn plugin(app: &mut App) {
     app.add_systems(Update, show);
 }
 
-/// The feed's column under the frame rate, lines right-aligned.
-pub fn spawn(commands: &mut Commands, fonts: &Fonts, root: Entity) {
-    let column = commands
+/// The feed's column and the lines made in it so far.
+#[derive(Resource)]
+struct Column {
+    entity: Entity,
+    rows: usize,
+}
+
+/// The feed's column under the frame rate, lines right-aligned. Its lines
+/// are made as the feed fills, so a match with none carries none.
+pub fn spawn(commands: &mut Commands, root: Entity) {
+    let entity = commands
         .spawn((
             Node {
                 position_type: PositionType::Absolute,
@@ -52,40 +60,43 @@ pub fn spawn(commands: &mut Commands, fonts: &Fonts, root: Entity) {
             ChildOf(root),
         ))
         .id();
-    for row in 0..ROWS {
-        let line = commands
-            .spawn((
-                Row(row),
-                Node {
-                    display: Display::None,
-                    align_items: AlignItems::Center,
-                    ..default()
-                },
-                Pickable::IGNORE,
-                ChildOf(column),
-            ))
-            .id();
-        for n in 0..SLOTS {
-            commands.spawn((
-                Slot::Icon(n),
-                Node {
-                    width: px(ICON),
-                    height: px(ICON),
-                    display: Display::None,
-                    ..default()
-                },
-                ImageNode::default(),
-                Pickable::IGNORE,
-                ChildOf(line),
-            ));
-            commands.spawn((
-                Slot::Text(n),
-                ui::text("", &fonts.regular, SIZE, ui::INK),
-                ui::shadow(),
-                Pickable::IGNORE,
-                ChildOf(line),
-            ));
-        }
+    commands.insert_resource(Column { entity, rows: 0 });
+}
+
+/// The next line of the column: [`SLOTS`] pairs of an icon and a text.
+fn spawn_row(commands: &mut Commands, fonts: &Fonts, column: Entity, row: usize) {
+    let line = commands
+        .spawn((
+            Row(row),
+            Node {
+                display: Display::None,
+                align_items: AlignItems::Center,
+                ..default()
+            },
+            Pickable::IGNORE,
+            ChildOf(column),
+        ))
+        .id();
+    for n in 0..SLOTS {
+        commands.spawn((
+            Slot::Icon(n),
+            Node {
+                width: px(ICON),
+                height: px(ICON),
+                display: Display::None,
+                ..default()
+            },
+            ImageNode::default(),
+            Pickable::IGNORE,
+            ChildOf(line),
+        ));
+        commands.spawn((
+            Slot::Text(n),
+            ui::text("", &fonts.regular, SIZE, ui::INK),
+            ui::shadow(),
+            Pickable::IGNORE,
+            ChildOf(line),
+        ));
     }
 }
 
@@ -94,6 +105,9 @@ pub fn spawn(commands: &mut Commands, fonts: &Fonts, root: Entity) {
 type Laid = [(Option<String>, String); SLOTS];
 
 fn show(
+    mut commands: Commands,
+    column: Option<ResMut<Column>>,
+    fonts: Res<Fonts>,
     session: NonSend<Session>,
     texts: Option<Res<Texts>>,
     manifest: Res<Manifest>,
@@ -103,6 +117,13 @@ fn show(
 ) {
     let core = &session.0;
     let lines: Vec<&FeedLine> = core.feed.iter().rev().take(ROWS).rev().collect();
+    let Some(mut column) = column else {
+        return;
+    };
+    while column.rows < lines.len() {
+        spawn_row(&mut commands, &fonts, column.entity, column.rows);
+        column.rows += 1;
+    }
     for (Row(row), children, mut node) in rows {
         let line = lines.get(*row);
         let display = if line.is_some() {

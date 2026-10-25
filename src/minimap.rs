@@ -57,8 +57,9 @@ struct Minimap {
     photo: Handle<Image>,
     fog: Entity,
     marks: Vec<Entity>,
-    /// The icons of the map's objectives, under the units' marks.
-    objectives: Vec<Entity>,
+    /// The layer of the map's objectives' icons, under the units' marks, and
+    /// the icons made so far: a match without objectives has none.
+    objectives: (Entity, Vec<Entity>),
     /// A hero's mark and the icon in it, one a seat.
     heroes: Vec<(Entity, Entity)>,
     pings: Vec<Entity>,
@@ -139,22 +140,9 @@ fn spawn(mut commands: Commands, mut images: ResMut<Assets<Image>>, docks: Res<D
             ChildOf(frame),
         ))
         .id();
-    let objectives = (0..OBJECTIVE_MARKS)
-        .map(|_| {
-            commands
-                .spawn((
-                    Node {
-                        position_type: PositionType::Absolute,
-                        ..default()
-                    },
-                    ImageNode::default(),
-                    Visibility::Hidden,
-                    Pickable::IGNORE,
-                    ChildOf(frame),
-                ))
-                .id()
-        })
-        .collect();
+    let objectives = commands
+        .spawn((crate::ui::fill(), Pickable::IGNORE, ChildOf(frame)))
+        .id();
     // A mark is Dota's icon tinted by the side; without the icon, a plain disc.
     let marks = (0..MARKS)
         .map(|_| {
@@ -242,7 +230,7 @@ fn spawn(mut commands: Commands, mut images: ResMut<Assets<Image>>, docks: Res<D
         photo,
         fog,
         marks,
-        objectives,
+        objectives: (objectives, Vec::new()),
         heroes,
         pings,
         view,
@@ -483,10 +471,12 @@ fn objective_icon(u: &UnitView) -> Option<(&'static str, Option<Rect>, Color, f3
     }
 }
 
-/// Marks each of the map's objectives shown by its own icon.
+/// Marks each of the map's objectives shown by its own icon. The icons are
+/// made as objectives come into view, so a match with none carries none.
 fn objective_marks(
+    mut commands: Commands,
     session: NonSend<Session>,
-    minimap: Res<Minimap>,
+    mut minimap: ResMut<Minimap>,
     grid: Res<FogGrid>,
     manifest: Res<crate::manifest::Manifest>,
     server: Res<AssetServer>,
@@ -495,40 +485,56 @@ fn objective_marks(
     let Some(view) = session.0.view() else {
         return;
     };
-    let shown = view
+    let shown: Vec<_> = view
         .units
         .iter()
         .filter(|u| !grid.hides(u.seen_by))
         .filter_map(|u| Some((u, objective_icon(u)?)))
         .filter_map(|(u, (icon, rect, tint, size))| {
             Some((u, manifest.file(icon)?, rect, tint, size))
-        });
-    let mut used = 0;
-    for (u, path, rect, tint, size) in shown.take(OBJECTIVE_MARKS) {
-        let Ok((mut node, mut image, mut vis)) = marks.get_mut(minimap.objectives[used]) else {
-            break;
+        })
+        .take(OBJECTIVE_MARKS)
+        .collect();
+    let (layer, icons) = &mut minimap.objectives;
+    while icons.len() < shown.len() {
+        icons.push(
+            commands
+                .spawn((
+                    Node {
+                        position_type: PositionType::Absolute,
+                        ..default()
+                    },
+                    ImageNode::default(),
+                    Visibility::Hidden,
+                    Pickable::IGNORE,
+                    ChildOf(*layer),
+                ))
+                .id(),
+        );
+    }
+    for (i, icon) in icons.iter().enumerate() {
+        let Ok((mut node, mut image, mut vis)) = marks.get_mut(*icon) else {
+            continue;
         };
-        used += 1;
+        let Some((u, path, rect, tint, size)) = shown.get(i) else {
+            vis.set_if_neq(Visibility::Hidden);
+            continue;
+        };
         let at = on_map(u.pos.x.to_f32(), u.pos.y.to_f32());
         node.set_if_neq(Node {
             left: px(at.x - size / 2.0),
             top: px(at.y - size / 2.0),
-            width: px(size),
-            height: px(size),
+            width: px(*size),
+            height: px(*size),
             ..node.clone()
         });
-        let handle: Handle<Image> = server.load(path);
-        if image.image != handle || image.rect != rect || image.color != tint {
+        let handle: Handle<Image> = server.load(path.clone());
+        if image.image != handle || image.rect != *rect || image.color != *tint {
             image.image = handle;
-            image.rect = rect;
-            image.color = tint;
+            image.rect = *rect;
+            image.color = *tint;
         }
         vis.set_if_neq(Visibility::Inherited);
-    }
-    for mark in &minimap.objectives[used..] {
-        if let Ok((_, _, mut vis)) = marks.get_mut(*mark) {
-            vis.set_if_neq(Visibility::Hidden);
-        }
     }
 }
 

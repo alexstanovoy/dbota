@@ -1329,7 +1329,7 @@ fn spawn_corner(kit: &mut Spawner, root: Entity) {
         },
         ChildOf(root),
     ));
-    crate::feed::spawn(commands, fonts, root);
+    crate::feed::spawn(commands, root);
     let middle = commands
         .spawn((
             Node {
