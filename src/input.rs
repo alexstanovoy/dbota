@@ -444,6 +444,7 @@ fn mouse(
     buttons: Res<ButtonInput<MouseButton>>,
     cursor: Res<CursorGround>,
     hover: Res<crate::pick::Hover>,
+    tree: Res<crate::trees::TreeTarget>,
     over: Res<OverHud>,
     mut panels: ResMut<Panels>,
     screen: Res<crate::settings::Screen>,
@@ -467,8 +468,12 @@ fn mouse(
             return;
         }
         if commands && live && core.aiming.is_some() {
+            // At a tree, the click names the very tree the cursor rings.
+            let at = tree
+                .0
+                .map_or(ground, |(_, at)| (at.x.to_f32(), at.y.to_f32()));
             core.act(Intent::Aimed {
-                at: ground,
+                at,
                 unit: unit_of(hover.aim),
             });
             return;

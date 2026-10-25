@@ -34,7 +34,7 @@ const HEIGHT_PER_BOUND: f32 = 2.2;
 pub const RING: f32 = 60.0;
 
 /// The hover ring's colour: Dota's yellow ring under the unit a click would get.
-const HOVER_RING: Color = Color::srgba(1.0, 0.85, 0.2, 0.9);
+pub const HOVER_RING: Color = Color::srgba(1.0, 0.85, 0.2, 0.9);
 
 /// A world unit more than the radius still hits, so the very edge of a ring
 /// is inside whatever the rounding.

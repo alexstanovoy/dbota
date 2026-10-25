@@ -112,6 +112,7 @@ fn draw(
     fired: Res<Fired>,
     cursor: Res<CursorGround>,
     hover: Res<crate::pick::Hover>,
+    tree: Res<crate::trees::TreeTarget>,
     args: Res<crate::Args>,
     settings: Res<crate::config::Settings>,
     mut rings: ResMut<RangeRings>,
@@ -145,7 +146,14 @@ fn draw(
     aggro(&mut gizmos, &ctx);
     orders(&mut gizmos, &ctx);
     queue(&mut gizmos, &ctx);
-    aim(&mut gizmos, &ctx, cursor.0, &hover);
+    aim(
+        &mut gizmos,
+        &ctx,
+        cursor.0,
+        &hover,
+        tree.0
+            .map(|(_, at)| Vec2::new(at.x.to_f32(), at.y.to_f32())),
+    );
 }
 
 /// Every neutral camp's spawn box, outlined on the ground as Dota shows
@@ -519,6 +527,7 @@ fn aim(
     ctx: &Ctx<'_, '_, '_>,
     cursor: Option<Vec3>,
     hover: &crate::pick::Hover,
+    tree: Option<Vec2>,
 ) {
     let core = ctx.core;
     let Some(slot) = core.aiming else {
@@ -554,6 +563,21 @@ fn aim(
                 (mark.at.x, mark.at.y),
                 crate::pick::RING,
                 GOOD,
+                false,
+            ),
+            None => ring(gizmos, ctx, (wx, wy), 24.0, BAD, false),
+        }
+        return;
+    }
+    if aim == Some(Aim::Tree) {
+        // The tree the click would take, ringed as a unit is, or a red mark where none is.
+        match tree {
+            Some(at) => ring(
+                gizmos,
+                ctx,
+                (at.x, at.y),
+                crate::trees::TREE_RADIUS,
+                crate::pick::HOVER_RING,
                 false,
             ),
             None => ring(gizmos, ctx, (wx, wy), 24.0, BAD, false),

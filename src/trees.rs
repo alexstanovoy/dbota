@@ -35,6 +35,16 @@ const PLANTED_MODEL: &str = "tree.planted";
 /// spot made that a billion pairs.
 const MAX_MAP_TREES: usize = 16_384;
 
+/// Seconds a felled tree takes to go down, and a regrown one to grow up.
+const FALL_SECS: f32 = 1.0;
+const GROW_SECS: f32 = 1.6;
+/// Trees that fall or grow in one frame at most to be animated: a seek in a
+/// replay may change thousands, which simply change.
+const MAX_FX: usize = 24;
+/// How far a tree's trunk reaches up for a cursor to point at it, and how
+/// wide it is, in world units.
+const TREE_HEIGHT: f32 = 520.0;
+pub const TREE_RADIUS: f32 = 64.0;
 /// Whether the scenery a photograph of the map should show is in place:
 /// the ground and the forest.
 #[derive(Resource, Default)]
@@ -52,6 +62,8 @@ struct MapTree {
 /// One tree of the match: where it stands, how it is turned and sized, and
 /// which model it is.
 struct Planted {
+    /// Which of the match's trees it is, as the view counts them.
+    index: u32,
     model: usize,
     at: Vec3,
     yaw: f32,
@@ -60,6 +72,8 @@ struct Planted {
 
 /// The parts of one tree model once its file has loaded.
 struct Kind {
+    /// The standing tree's mesh without morph targets, for one drawn alone.
+    plain: Option<(Handle<Mesh>, Option<bevy::camera::primitives::Aabb>)>,
     gltf: Handle<Gltf>,
     tree: Option<(Handle<Mesh>, Handle<StandardMaterial>)>,
     stump: Option<(Handle<Mesh>, Handle<StandardMaterial>)>,
@@ -75,6 +89,11 @@ struct Forest {
     chunks: HashMap<(i32, i32, usize), Vec<Entity>>,
     /// The felled trees the chunks were built for.
     felled: Vec<u32>,
+    /// The felled trees the view told last frame, to see which fell and grew.
+    told: Vec<u32>,
+    /// Trees grown back in the view that are still growing on screen: their
+    /// chunks show the stump until they have grown.
+    growing: Vec<(u32, f32)>,
     /// Whether every model has loaded and the chunks are built.
     built: bool,
     /// The planted tree's model, among `kinds`.
@@ -91,12 +110,30 @@ struct Forest {
     planted: HashMap<Vec2, Entity>,
 }
 
+impl Forest {
+    /// The tree of the match with this index in the view's counting, if it is drawn.
+    fn planted(&self, index: u32) -> Option<&Planted> {
+        let at = self.trees.binary_search_by_key(&index, |t| t.index).ok()?;
+        self.trees.get(at)
+    }
+}
+
 pub fn plugin(app: &mut App) {
     app.init_resource::<Forest>()
         .init_resource::<SceneryReady>()
+        .init_resource::<TreeTarget>()
+        .add_systems(Update, target_tree.after(crate::pick::update))
         .add_systems(
             Update,
-            (plant, read_kinds, rebuild, ready_planted, plant_planted).chain(),
+            (
+                plant,
+                read_kinds,
+                rebuild,
+                animate,
+                ready_planted,
+                plant_planted,
+            )
+                .chain(),
         );
 }
 
@@ -179,6 +216,7 @@ fn plant(
             }
         };
         forest.trees.push(Planted {
+            index: index as u32,
             model,
             at: Vec3::new(x, ground.at(x, y), -y),
             yaw,
@@ -194,6 +232,7 @@ fn plant(
         .into_iter()
         .chain(manifest.model(PLANTED_MODEL))
         .map(|m| Kind {
+            plain: None,
             gltf: crate::manifest::load_model(&server, m.path.clone()),
             tree: None,
             stump: None,
@@ -266,6 +305,7 @@ fn rebuild(
     mut meshes: ResMut<Assets<Mesh>>,
     mut ready: ResMut<SceneryReady>,
     ground: Res<Ground>,
+    time: Res<Time>,
 ) {
     if forest.kinds.is_empty()
         && ground.known()
@@ -282,8 +322,31 @@ fn rebuild(
     if forest.trees.is_empty() || forest.kinds.iter().any(|k| k.tree.is_none()) {
         return;
     }
-    let mut felled = view.felled_trees.clone();
+    let now = time.elapsed_secs();
+    let mut told = view.felled_trees.clone();
+    told.sort_unstable();
+    if forest.built {
+        let fell = difference(&told, &forest.told);
+        let grew = difference(&forest.told, &told);
+        if fell.len() + grew.len() <= MAX_FX {
+            for tree in fell {
+                animate_tree(&mut commands, &mut forest, &mut meshes, tree, Fx::Fall, now);
+            }
+            for tree in grew {
+                forest.growing.push((tree, now + GROW_SECS));
+                animate_tree(&mut commands, &mut forest, &mut meshes, tree, Fx::Grow, now);
+            }
+        }
+    }
+    forest.told = told.clone();
+    forest
+        .growing
+        .retain(|(t, end)| *end > now && told.binary_search(t).is_err());
+    // A tree still growing is drawn by its animation over a stump.
+    let mut felled = told;
+    felled.extend(forest.growing.iter().map(|(t, _)| *t));
     felled.sort_unstable();
+    felled.dedup();
     let changed: Vec<u32> = if forest.built {
         felled
             .iter()
@@ -297,7 +360,7 @@ fn rebuild(
             .copied()
             .collect()
     } else {
-        (0..forest.trees.len() as u32).collect()
+        forest.trees.iter().map(|t| t.index).collect()
     };
     if changed.is_empty() {
         return;
@@ -305,7 +368,7 @@ fn rebuild(
     let chunk_of = |at: Vec3| ((at.x / CHUNK) as i32, (-at.z / CHUNK) as i32);
     let mut dirty: Vec<(i32, i32, usize)> = changed
         .iter()
-        .filter_map(|t| forest.trees.get(*t as usize))
+        .filter_map(|t| forest.planted(*t))
         .map(|t| {
             let (cx, cy) = chunk_of(t.at);
             (cx, cy, t.model)
@@ -328,12 +391,12 @@ fn rebuild(
             let Some(source) = meshes.get(mesh) else {
                 continue;
             };
-            let placed = forest.trees.iter().enumerate().filter(|(i, t)| {
+            let placed = forest.trees.iter().filter(|t| {
                 t.model == key.2
                     && chunk_of(t.at) == (key.0, key.1)
-                    && (felled.binary_search(&(*i as u32)).is_ok() == stumps)
+                    && (felled.binary_search(&t.index).is_ok() == stumps)
             });
-            let Some(mut merged) = merge(source, placed.map(|(_, t)| t)) else {
+            let Some(mut merged) = merge(source, placed) else {
                 continue;
             };
             // Drawn only: its vertices leave the CPU once on the GPU, its
@@ -358,6 +421,195 @@ fn rebuild(
         ready.0 = true;
         info!("startup: forest built at {:.2} s", crate::since_start());
     }
+}
+
+/// The trees of `a` that `b` lacks, both sorted.
+fn difference(a: &[u32], b: &[u32]) -> Vec<u32> {
+    a.iter()
+        .filter(|t| b.binary_search(t).is_err())
+        .copied()
+        .collect()
+}
+
+/// What an animated tree does.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Fx {
+    Fall,
+    Grow,
+}
+
+/// A tree drawn alone while it falls or grows: where it stands, how it is
+/// turned and sized, and when its animation began.
+#[derive(Component)]
+struct TreeFx {
+    kind: Fx,
+    born: f32,
+    at: Vec3,
+    turn: Quat,
+    scale: f32,
+    /// The axis a falling tree tips about.
+    axis: Vec3,
+}
+
+/// Starts the falling or growing of a tree, drawn alone over its chunk's stump.
+fn animate_tree(
+    commands: &mut Commands,
+    forest: &mut Forest,
+    meshes: &mut Assets<Mesh>,
+    tree: u32,
+    kind: Fx,
+    now: f32,
+) {
+    let Some(planted) = forest.planted(tree) else {
+        return;
+    };
+    let (model, at, yaw, scale) = (planted.model, planted.at, planted.yaw, planted.scale);
+    let Some(entry) = forest.kinds.get_mut(model) else {
+        return;
+    };
+    let Some((mesh, material)) = entry.tree.clone() else {
+        return;
+    };
+    if entry.plain.is_none() {
+        let Some(source) = meshes.get(&mesh) else {
+            return;
+        };
+        let mut plain = plain(source);
+        let aabb = bevy::camera::primitives::MeshAabb::compute_aabb(&plain);
+        plain.asset_usage = bevy::asset::RenderAssetUsages::RENDER_WORLD;
+        entry.plain = Some((meshes.add(plain), aabb));
+    }
+    let Some((plain, aabb)) = entry.plain.clone() else {
+        return;
+    };
+    // Each tree falls its own way, as no one fells it from one side.
+    let way = (tree as f32 * 2.399_963).rem_euclid(std::f32::consts::TAU);
+    let direction = Vec3::new(way.cos(), 0.0, way.sin());
+    let turn = Quat::from_rotation_y(yaw + std::f32::consts::PI);
+    let mut drawn = commands.spawn((
+        Mesh3d(plain),
+        MeshMaterial3d(material),
+        Transform::from_translation(at)
+            .with_rotation(turn)
+            .with_scale(if kind == Fx::Grow {
+                Vec3::ZERO
+            } else {
+                Vec3::splat(UNITS_PER_METRE * scale)
+            }),
+        TreeFx {
+            kind,
+            born: now,
+            at,
+            turn,
+            scale: UNITS_PER_METRE * scale,
+            axis: Vec3::Y.cross(direction),
+        },
+        crate::fog::Fogged,
+    ));
+    if let Some(aabb) = aabb {
+        drawn.insert(aabb);
+    }
+}
+
+/// Tips the falling trees over, grows the growing ones up, and takes each
+/// away when it is done.
+fn animate(
+    mut commands: Commands,
+    time: Res<Time>,
+    mut trees: Query<(Entity, &mut Transform, &TreeFx)>,
+) {
+    for (entity, mut transform, fx) in &mut trees {
+        let life = if fx.kind == Fx::Fall {
+            FALL_SECS
+        } else {
+            GROW_SECS
+        };
+        let p = ((time.elapsed_secs() - fx.born) / life).clamp(0.0, 1.0);
+        match fx.kind {
+            Fx::Fall => {
+                // Gathers speed as it goes over, and shrinks away on the ground.
+                let angle = std::f32::consts::FRAC_PI_2 * p * p;
+                let gone = ((p - 0.8) / 0.2).clamp(0.0, 1.0);
+                transform.rotation = Quat::from_axis_angle(fx.axis, angle) * fx.turn;
+                transform.scale = Vec3::splat(fx.scale * (1.0 - gone * gone));
+            }
+            Fx::Grow => {
+                transform.rotation = fx.turn;
+                transform.scale = Vec3::splat(fx.scale * (1.0 - (1.0 - p).powi(3)));
+            }
+        }
+        transform.translation = fx.at;
+        if p >= 1.0 {
+            commands.entity(entity).despawn();
+        }
+    }
+}
+
+/// The tree the cursor points at while a Tango (or any slot that aims at a
+/// tree) is taken up: its index among the match's trees and where it stands
+/// in bota's coordinates, for the click to name.
+#[derive(Resource, Default)]
+pub struct TreeTarget(pub Option<(u32, Vec2)>);
+
+/// Finds the standing tree under the cursor (the overlay rings it).
+fn target_tree(
+    session: NonSend<Session>,
+    forest: Res<Forest>,
+    over: Res<crate::input::OverHud>,
+    window: Single<&Window, With<bevy::window::PrimaryWindow>>,
+    camera: Single<(&Camera, &GlobalTransform), With<crate::camera::RtsCamera>>,
+    mut target: ResMut<TreeTarget>,
+) {
+    let core = &session.0;
+    let aiming_at_a_tree = core
+        .aiming
+        .and_then(|slot| core.aim_in(slot))
+        .is_some_and(|aim| aim == bota_proto::Aim::Tree);
+    let ray = window
+        .cursor_position()
+        .filter(|_| aiming_at_a_tree && !over.0)
+        .and_then(|cursor| camera.0.viewport_to_world(camera.1, cursor).ok());
+    let Some(ray) = ray else {
+        if target.0.is_some() {
+            target.0 = None;
+        }
+        return;
+    };
+    let mut best: Option<(f32, u32)> = None;
+    for tree in &forest.trees {
+        if forest.felled.binary_search(&tree.index).is_ok() {
+            continue;
+        }
+        if let Some(along) = reach(ray, tree.at, TREE_HEIGHT, TREE_RADIUS)
+            && best.is_none_or(|(b, _)| along < b)
+        {
+            best = Some((along, tree.index));
+        }
+    }
+    let hit = best.and_then(|(_, i)| Some((i, *core.trees().get(i as usize)?)));
+    if target.0 != hit {
+        target.0 = hit;
+    }
+}
+
+/// How far along the ray it comes within `radius` of the upright trunk
+/// from `base` up `height`; none if it never does.
+fn reach(ray: Ray3d, base: Vec3, height: f32, radius: f32) -> Option<f32> {
+    // The ray's closest approach to the trunk's line, then the trunk's part
+    // within height.
+    let d = ray.direction.as_vec3();
+    let w = ray.origin - base;
+    let (a, b, c) = (d.dot(d), d.dot(Vec3::Y), 1.0);
+    let (e, f) = (d.dot(w), Vec3::Y.dot(w));
+    let denom = a * c - b * b;
+    if denom.abs() < 1e-6 {
+        return None;
+    }
+    let along = (b * f - c * e) / denom;
+    let up = ((a * f - b * e) / denom).clamp(0.0, height);
+    let on_ray = ray.origin + d * along.max(0.0);
+    let on_trunk = base + Vec3::Y * up;
+    (on_ray.distance(on_trunk) <= radius).then_some(along.max(0.0))
 }
 
 /// Makes the planted tree's mesh once its model has loaded, and one tree of
