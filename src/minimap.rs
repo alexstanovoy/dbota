@@ -50,6 +50,27 @@ const OBJECTIVE_MARKS: usize = 24;
 /// the ready ones stand out.
 const DORMANT: Color = Color::srgb(0.55, 0.55, 0.55);
 
+/// The handles of the minimap's icons by their manifest name, looked up once:
+/// a mark is set every frame, and the asset server is not asked each time.
+#[derive(Default)]
+struct IconHandles(std::collections::HashMap<String, Option<Handle<Image>>>);
+
+impl IconHandles {
+    fn get(
+        &mut self,
+        logical: &str,
+        manifest: &crate::manifest::Manifest,
+        server: &AssetServer,
+    ) -> Option<Handle<Image>> {
+        if let Some(found) = self.0.get(logical) {
+            return found.clone();
+        }
+        let handle = manifest.file(logical).map(|p| server.load::<Image>(p));
+        self.0.insert(logical.to_owned(), handle.clone());
+        handle
+    }
+}
+
 /// The minimap's frame, the photo, the marks and the camera frame.
 #[derive(Resource)]
 struct Minimap {
@@ -323,6 +344,7 @@ fn marks(
     server: Res<AssetServer>,
     mut nodes: Query<(&mut Node, &mut BackgroundColor, &mut Visibility)>,
     mut images: Query<&mut ImageNode>,
+    mut handles: Local<IconHandles>,
 ) {
     let core = &session.0;
     let Some(view) = core.view() else {
@@ -348,7 +370,7 @@ fn marks(
         };
         used += 1;
         let (icon, size) = unit_icon(u);
-        let path = icon.and_then(|logical| manifest.file(logical));
+        let icon = icon.and_then(|logical| handles.get(logical, &manifest, &server));
         let at = on_map(u.pos.x.to_f32(), u.pos.y.to_f32());
         // Written only when changed: a changed node is laid out again.
         node.set_if_neq(Node {
@@ -356,14 +378,14 @@ fn marks(
             top: px(at.y - size / 2.0),
             width: px(size),
             height: px(size),
-            border_radius: if path.is_some() {
+            border_radius: if icon.is_some() {
                 BorderRadius::ZERO
             } else {
                 BorderRadius::MAX
             },
             ..node.clone()
         });
-        let handle = path.map_or_else(Handle::default, |p| server.load::<Image>(p));
+        let handle = icon.unwrap_or_default();
         let tint = crate::overlay::team_color(u.team);
         if image.image != handle || image.color != tint {
             image.image = handle;
@@ -557,6 +579,7 @@ fn hero_marks(
         &mut HeroMark,
     )>,
     mut icons: Query<(&mut ImageNode, &mut Visibility), Without<HeroMark>>,
+    mut handles: Local<IconHandles>,
 ) {
     let core = &session.0;
     let Some(view) = core.view() else {
@@ -579,9 +602,9 @@ fn hero_marks(
         marked.0 = Some((u.team, seat));
         let face = u
             .hero
+            .filter(|_| icons_on)
             .and_then(|hero| manifest.dota_name("hero", hero.0))
-            .and_then(|name| manifest.file(&format!("minimap.hero.{name}")))
-            .filter(|_| icons_on);
+            .and_then(|name| handles.get(&format!("minimap.hero.{name}"), &manifest, &server));
         let size = if face.is_some() { HERO_ICON } else { HERO_MARK };
         let at = on_map(u.pos.x.to_f32(), u.pos.y.to_f32());
         node.set_if_neq(Node {
@@ -600,15 +623,18 @@ fn hero_marks(
             Rot2::radians(-f32::from(u.facing.brads) / 65536.0 * std::f32::consts::TAU)
         };
         turn.set_if_neq(UiTransform::from_rotation(rotation));
-        let (backing, tint) = (
-            manifest.file(if face.is_some() {
-                "icon.minimap.circle"
-            } else {
-                "icon.minimap.hero_circle"
-            }),
-            colours.of(view, seat),
-        );
-        let handle = backing.map_or_else(Handle::default, |p| server.load::<Image>(p));
+        let tint = colours.of(view, seat);
+        let handle = handles
+            .get(
+                if face.is_some() {
+                    "icon.minimap.circle"
+                } else {
+                    "icon.minimap.hero_circle"
+                },
+                &manifest,
+                &server,
+            )
+            .unwrap_or_default();
         if image.image != handle || image.color != tint {
             image.image = handle;
             image.color = tint;
@@ -616,11 +642,10 @@ fn hero_marks(
         vis.set_if_neq(Visibility::Inherited);
         if let Ok((mut image, mut shown)) = icons.get_mut(icon) {
             shown.set_if_neq(crate::ui::visible(face.is_some()));
-            if let Some(path) = face {
-                let handle: Handle<Image> = server.load(path);
-                if image.image != handle {
-                    image.image = handle;
-                }
+            if let Some(handle) = face
+                && image.image != handle
+            {
+                image.image = handle;
             }
         }
     }

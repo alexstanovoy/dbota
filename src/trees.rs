@@ -323,6 +323,11 @@ fn rebuild(
         return;
     }
     let now = time.elapsed_secs();
+    // Nothing fell, grew or is growing: the chunks stand as they are. (The
+    // view tells the felled trees ascending.)
+    if forest.built && forest.growing.is_empty() && forest.told == view.felled_trees {
+        return;
+    }
     let mut told = view.felled_trees.clone();
     told.sort_unstable();
     if forest.built {
