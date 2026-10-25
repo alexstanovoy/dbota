@@ -138,6 +138,24 @@ pub fn layout(
             }
         }
     }
+    version_line(&mut kit, *root);
+}
+
+/// Which client runs and which assets it reads, small in the corner: the build's commit and the
+/// asset fingerprint a cache must carry for it.
+fn version_line(kit: &mut Kit, root: Entity) {
+    let text = format!(
+        "{}  ·  assets {}",
+        crate::version(),
+        dbota_import::import::fingerprint()
+    );
+    let line = kit.text(root, text, 11.0, ui::INK_DIM);
+    kit.commands.entity(line).insert(Node {
+        position_type: PositionType::Absolute,
+        right: px(12),
+        bottom: px(8),
+        ..default()
+    });
 }
 
 /// What spawning the screen needs.

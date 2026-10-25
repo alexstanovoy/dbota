@@ -33,6 +33,13 @@ Dota 2 install. Bots don't need it.
    of this repository. Without it dbota draws stand-ins. See `tools/README.md`; a
    `~/.cache/dbota/tools` folder left by the old export script can be deleted.
 
+   The cache is stamped with the asset fingerprint of the dbota that made it (the cache version,
+   the importer's revision and the manifest's hash). A dbota of another fingerprint does not play on
+   it: it opens at a screen saying the assets are out of date for this version, with a button that
+   imports them again (a game named on the command line waits for that; captures and checks are
+   only warned). The settings show, small in a corner, the client's version (its commit) and the
+   asset fingerprint it needs.
+
 ## Play
 
 `target/release/dbota` with no game on its command line opens the main menu, laid out as Dota's:

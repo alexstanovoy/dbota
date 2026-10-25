@@ -9,5 +9,7 @@ pub mod source;
 pub mod text;
 
 pub use source::ADDONS;
-#[cfg(target_arch = "wasm32")]
+// The browser module's bindings, only in the importer's own module (web/build.sh): the client,
+// which links this crate for the fingerprint, exports none of them.
+#[cfg(all(target_arch = "wasm32", feature = "web"))]
 pub mod web;

@@ -8,12 +8,7 @@ use js_sys::{Array, Uint8Array};
 use wasm_bindgen::prelude::*;
 use web_sys::{File, FileReaderSync};
 
-use crate::import::{self, IMPORT_REV, Importer, Plan, Sink};
-
-/// The manifest the client was built with.
-const MANIFEST: &str = include_str!("../../../assets-manifest/manifest.txt");
-const IDS: &str = include_str!("../../../assets-manifest/ids.txt");
-const VERSION: &str = include_str!("../../../assets-manifest/version");
+use crate::import::{self, IDS, Importer, MANIFEST, Plan, Sink};
 
 /// Most files an install may hold: Dota's has ~700 packages; a folder of more is not one.
 const MAX_FILES: usize = 4096;
@@ -201,12 +196,9 @@ impl Report {
     }
 }
 
-/// The stamp prefix of what this build writes, for a cache check before any install is picked.
+/// The asset fingerprint of this build ([`import::fingerprint`]): what a cache it may use starts
+/// its stamp with, checked before any install is picked.
 #[wasm_bindgen]
 pub fn cache_version() -> String {
-    format!(
-        "v{}/rev{IMPORT_REV}/{}",
-        VERSION.trim(),
-        import::plan_id(MANIFEST, IDS)
-    )
+    import::fingerprint()
 }

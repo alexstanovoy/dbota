@@ -5,7 +5,7 @@ import * as grant from "./grant.js";
 
 const $ = (id) => document.getElementById(id);
 const show = (...ids) => {
-  for (const id of ["grant", "ready", "progress", "failed"]) $(id).hidden = !ids.includes(id);
+  for (const id of ["grant", "ready", "progress", "failed", "stale"]) $(id).hidden = !ids.includes(id);
   $("gate").hidden = false;
 };
 const say = (text) => ($("status").textContent = text);
@@ -233,6 +233,28 @@ async function pick() {
   show("grant");
 }
 
+// This build's asset fingerprint (the cache version, the importer's revision and the manifest's
+// hash): a copy's stamp starts with the fingerprint of the dbota that made it, as on the desktop.
+async function importerVersion() {
+  const { default: init, cache_version } = await import("./import/dbota_import.js");
+  await init();
+  return cache_version();
+}
+
+// A copy another dbota made is not played: the page holds at the question until it is made
+// again, in one click where the browser still holds the folder (asked again if need be, which
+// the click allows), else from the folder the player picks.
+function holdStale(stamp, version) {
+  console.info(`dbota: the imported copy is stamped ${stamp}, this build needs assets ${version}: import again`);
+  $("staleWhy").textContent = `They were imported by another dbota and may lack what this one draws (it needs assets ${version}).`;
+  $("reimport").onclick = async () => {
+    const handle = await grant.remembered({ ask: true }).catch(() => null);
+    const files = handle ? await grant.filesOf(handle).catch(() => new Map()) : new Map();
+    return files.has("pak01_dir.vpk") ? importFrom(files) : pick();
+  };
+  show("stale");
+}
+
 // A remembered folder the browser still lets us read: is the copy as new as the install?
 async function checkFresh() {
   const handle = await grant.remembered().catch(() => null);
@@ -249,6 +271,7 @@ async function checkFresh() {
 
 async function main() {
   $("standins").onclick = startGame;
+  $("standinsStale").onclick = startGame;
   $("play").onclick = startGame;
   $("reload").onclick = () => location.reload();
   $("otherApi").onclick = () => {
@@ -275,6 +298,9 @@ async function main() {
     return show("grant");
   }
   const state = await cache.readState().catch(() => null);
+  const version = await importerVersion();
+  $("version").textContent = `assets ${version}`;
+  if (state && !state.stamp.startsWith(version + "/")) return holdStale(state.stamp, version);
   if (state) {
     await offerReady();
     checkFresh();

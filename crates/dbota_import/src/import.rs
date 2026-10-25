@@ -27,6 +27,33 @@ use crate::text::{
 /// Bumped when the importer's output changes for the same install; part of a cache's stamp.
 pub const IMPORT_REV: u32 = 10;
 
+/// The manifest this build imports and draws, its ids and its cache version.
+pub const MANIFEST: &str = include_str!("../../../assets-manifest/manifest.txt");
+pub const IDS: &str = include_str!("../../../assets-manifest/ids.txt");
+pub const VERSION: &str = include_str!("../../../assets-manifest/version");
+
+/// The asset fingerprint of this build: the cache version, the importer's revision and the
+/// manifest's hash ([`plan_id`]). A cache's stamp starts with the fingerprint of the build that
+/// made it (then `/` and what it was made from); a cache of another fingerprint may lack what
+/// this build draws, and is made again before the client reads it, on the desktop and in a
+/// browser alike.
+pub fn fingerprint() -> String {
+    fingerprint_of(VERSION, &plan_id(MANIFEST, IDS))
+}
+
+/// The fingerprint of cache version `version` and plan `plan_id`, made by this importer revision.
+pub fn fingerprint_of(version: &str, plan_id: &str) -> String {
+    format!("v{}/rev{IMPORT_REV}/{plan_id}", version.trim())
+}
+
+/// Whether a cache stamped `stamp` was made by an importer of this build's [`fingerprint`].
+pub fn stamped_here(stamp: &str) -> bool {
+    stamp
+        .trim()
+        .strip_prefix(&fingerprint())
+        .is_some_and(|rest| rest.starts_with('/'))
+}
+
 /// Names what an import of this manifest and these ids makes (FNV-1a 64 of both texts): part of
 /// a cache's stamp, so a cache made from other texts is stale even from the same install.
 pub fn plan_id(manifest: &str, ids: &str) -> String {

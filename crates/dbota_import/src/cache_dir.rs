@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 
 use heatel::{Error, Result};
 
-use crate::import::{Flow, IMPORT_REV, Plan, Progress, Report, Sink, run};
+use crate::import::{Flow, Plan, Progress, Report, Sink, run};
 use crate::source::InstallSource;
 
 /// The file of a finished cache that says what made it.
@@ -67,7 +67,7 @@ pub fn stamp(game: &Path, version: &str, plan_id: &str) -> Result<String> {
 
 /// The part of a stamp that says what the importer would make, not from which install.
 pub fn stamp_prefix(version: &str, plan_id: &str) -> String {
-    format!("v{}/rev{IMPORT_REV}/{plan_id}", version.trim())
+    crate::import::fingerprint_of(version, plan_id)
 }
 
 /// Whether the cache at `cache` was made by an importer that writes `prefix`
@@ -83,7 +83,7 @@ pub fn is_current(cache: &Path, stamp: &str) -> bool {
 
 /// The cache's stamp; none when it is missing or longer than any stamp is (the cache is
 /// anyone's to write, and the file is read whole).
-fn read_stamp(cache: &Path) -> Option<String> {
+pub fn read_stamp(cache: &Path) -> Option<String> {
     let file = fs::File::open(cache.join(STAMP)).ok()?;
     let mut text = String::new();
     file.take(MAX_STAMP + 1).read_to_string(&mut text).ok()?;

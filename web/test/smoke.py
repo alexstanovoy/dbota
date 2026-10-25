@@ -207,6 +207,23 @@ def import_smoke(args, install):
         page.wait_for_selector("#ready:not([hidden])", timeout=20000)
         print("after reload: ready without picking again")
 
+        # A copy another dbota made (its stamp of another asset fingerprint) is not played: the
+        # page holds at the question, publishes nothing to the client, and makes it again.
+        page.evaluate(
+            """async () => { const c = await import('./cache.js');
+               const h = await (await c.dir([], false)).getFileHandle('stamp.txt');
+               const w = await h.createWritable(); await w.write('v1/rev1/0000000000000000/1/2'); await w.close(); }"""
+        )
+        page.reload()
+        page.wait_for_selector("#stale:not([hidden])", timeout=20000)
+        assert page.is_hidden("#ready") and page.is_hidden("#play"), "no Play on a stale copy"
+        assert page.evaluate("() => globalThis.dbota_cache === undefined"), "a stale copy is not published"
+        with page.expect_file_chooser() as chooser:
+            page.click("#reimport")
+        chooser.value.set_files(str(folder))
+        page.wait_for_selector("#ready:not([hidden])", timeout=300000)
+        print("a stale copy holds the page and is imported again:", page.inner_text("#readyText"))
+
         if not args.no_game:
             page.click("#play")
             try:

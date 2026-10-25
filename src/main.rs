@@ -336,6 +336,15 @@ fn default_cache_dir() -> PathBuf {
         .join(format!("v{}", ASSET_VERSION.trim()))
 }
 
+/// The client's version: its package version and the commit it was built from (build.rs).
+pub fn version() -> String {
+    format!(
+        "dbota {} ({})",
+        env!("CARGO_PKG_VERSION"),
+        env!("DBOTA_BUILD")
+    )
+}
+
 /// When the process started, for the startup timings in the log.
 pub static STARTED: std::sync::OnceLock<bevy::platform::time::Instant> = std::sync::OnceLock::new();
 
@@ -375,7 +384,14 @@ fn main() -> AppExit {
     // Before the first thread starts (see `ui::font_cx`).
     #[cfg(not(target_arch = "wasm32"))]
     let font_cx = ui::font_cx();
-    let session = if args.wants_menu() {
+    // Assets out of date for this build hold the run at a screen asking for a re-import: no game
+    // starts, not even one the command line names (see `assets_notice`).
+    #[cfg(not(target_arch = "wasm32"))]
+    let held = assets_notice::holds(import::need(&args.cache_dir), &args);
+    #[cfg(target_arch = "wasm32")]
+    let held = false;
+    let menu_first = args.wants_menu() || held;
+    let session = if menu_first {
         main_menu::idle()
     } else {
         match session::open(&args) {
@@ -408,6 +424,14 @@ fn main() -> AppExit {
         settings.display = mode;
     }
     let mut app = App::new();
+    // Which client runs on which assets, first in the log.
+    app.add_systems(Startup, || {
+        info!(
+            "{}, assets {}",
+            version(),
+            dbota_import::import::fingerprint()
+        );
+    });
     #[cfg(not(target_arch = "wasm32"))]
     app.insert_resource(font_cx);
     let source = cache_source(&mut app, &args.cache_dir);
@@ -488,7 +512,7 @@ fn main() -> AppExit {
         .add_plugins(main_menu::plugin);
     #[cfg(not(target_arch = "wasm32"))]
     app.add_plugins(assets_notice::plugin);
-    if let Err(err) = menu(&mut app, &args, store) {
+    if let Err(err) = menu(&mut app, &args, store, menu_first) {
         eprintln!("dbota: {err}");
         return AppExit::error();
     }
@@ -519,7 +543,12 @@ fn main() -> AppExit {
 /// The main menu: its core connected to the service when the command line
 /// names no game, under the game when it names one, or a canned screen of
 /// it (`--menu-preview`).
-fn menu(app: &mut App, args: &Args, store: main_menu::SettingsStore) -> std::io::Result<()> {
+fn menu(
+    app: &mut App,
+    args: &Args,
+    store: main_menu::SettingsStore,
+    menu_first: bool,
+) -> std::io::Result<()> {
     if let Some(name) = &args.menu_preview {
         let view =
             main_menu::preview(name).ok_or_else(|| std::io::Error::other("no such screen"))?;
@@ -541,7 +570,7 @@ fn menu(app: &mut App, args: &Args, store: main_menu::SettingsStore) -> std::io:
     let trust = main_menu::Trust::new(pem.as_deref())?;
     let service = args.service.clone().or_else(main_menu::page_service);
     // A game named on the command line is on screen first, the menu under it.
-    let core = if args.wants_menu() {
+    let core = if menu_first {
         main_menu::MenuCore::new(store, trust.radovid.clone(), service)
     } else {
         let kind = if args.replay.is_some() {

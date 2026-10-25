@@ -39,8 +39,18 @@ pub struct Preview(pub MenuView);
 /// The certificates the menu's connections trust.
 pub struct Trusted(pub Trust);
 
+/// Whether something over the menu holds it (assets out of date for this build): its clicks and
+/// keys do nothing, so no game starts on what this client cannot draw.
+#[derive(Resource, Default)]
+pub struct Held(pub bool);
+
+fn free(held: Res<Held>) -> bool {
+    !held.0
+}
+
 pub fn plugin(app: &mut App) {
     app.init_resource::<GameEpoch>()
+        .init_resource::<Held>()
         .insert_non_send(Pending::default())
         .insert_non_send(Host::default())
         .add_systems(
@@ -56,9 +66,9 @@ pub fn plugin(app: &mut App) {
         .add_systems(
             Update,
             (
-                keyboard,
+                keyboard.run_if(free),
                 settings_screen,
-                super::screens::clicks,
+                super::screens::clicks.run_if(free),
                 drive,
                 demo_start,
                 super::screens::draw,

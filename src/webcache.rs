@@ -1,6 +1,6 @@
 //! The asset cache of a browser page, as the page's script publishes it in
 //! `globalThis.dbota_cache` (web/cache.js). Two kinds:
-//! - `{mode: "opfs", files: Map(path -> size), small: Map(path -> bytes), read(path)}`: the
+//! - `{mode: "opfs", stamp, files: Map(path -> size), small: Map(path -> bytes), read(path)}`: the
 //!   cache the page's worker built from the player's own Dota install, in the Origin Private
 //!   File System. `files` is its index, `small` the files read synchronously at start, `read`
 //!   an async function giving a file's bytes (or null).
@@ -13,9 +13,38 @@ use wasm_bindgen::{JsCast, JsValue};
 use wasm_bindgen_futures::JsFuture;
 
 fn published() -> Option<JsValue> {
-    Reflect::get(&js_sys::global(), &"dbota_cache".into())
+    let cache = Reflect::get(&js_sys::global(), &"dbota_cache".into())
         .ok()
-        .filter(|v| v.is_object())
+        .filter(|v| v.is_object())?;
+    current(&cache).then_some(cache)
+}
+
+/// Whether a published cache may be read: a served one always (a developer's own export); one
+/// in private storage only when its stamp carries this build's asset fingerprint. The page
+/// publishes no other (it asks for a re-import first); were one published anyway, the client
+/// draws stand-ins rather than what another dbota made.
+fn current(cache: &JsValue) -> bool {
+    let mode = Reflect::get(cache, &"mode".into())
+        .ok()
+        .and_then(|m| m.as_string());
+    if mode.as_deref() != Some("opfs") {
+        return true;
+    }
+    let stamp = Reflect::get(cache, &"stamp".into())
+        .ok()
+        .and_then(|s| s.as_string())
+        .unwrap_or_default();
+    let here = dbota_import::import::stamped_here(&stamp);
+    static SAID: std::sync::Once = std::sync::Once::new();
+    if !here {
+        SAID.call_once(|| {
+            bevy::log::error!(
+                "the imported assets are stamped {stamp:?}, not this build's {}: drawn as stand-ins",
+                dbota_import::import::fingerprint()
+            );
+        });
+    }
+    here
 }
 
 fn field(name: &str) -> Option<JsValue> {

@@ -80,7 +80,7 @@ export async function publish(state) {
     if (state.files.has(path)) reads.seen.add(path);
     return readCache(path);
   };
-  globalThis.dbota_cache = { mode: "opfs", files: state.files, small, read, reads };
+  globalThis.dbota_cache = { mode: "opfs", stamp: state.stamp, files: state.files, small, read, reads };
 }
 
 export async function remove() {

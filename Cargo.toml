@@ -60,6 +60,9 @@ bevy = { version = "=0.19.1", default-features = false, features = [
 bota_client_core = { path = "../bota/crates/bota_client_core", features = ["ui"] }
 bota_core = { path = "../bota/crates/bota_core" }
 bota_proto = { path = "../bota/crates/bota_proto" }
+# The asset importer: `dbota import` on the desktop, and on every target the asset fingerprint a
+# cache must carry (the browser runs the importer as a module of its own, web/import_worker.js).
+dbota_import = { path = "crates/dbota_import" }
 # The sound device, opened by `audio_output`; the version Bevy's audio already builds.
 rodio = { version = "=0.22.2", default-features = false, features = ["playback"] }
 # Fallback fonts for the scripts the interface font lacks (bevy_text's font engine).
@@ -87,9 +90,6 @@ fontique = { version = "=0.9.0", default-features = false, features = ["fontconf
 bota_radovid = { path = "../bota/crates/bota_radovid", features = ["native"] }
 # A seat claimed in a direct or local game is claimed with a key of the system's randomness.
 getrandom = "0.4"
-# `dbota import` (the asset cache made from the local Dota install); the browser runs it as a
-# module of its own (web/import_worker.js).
-dbota_import = { path = "crates/dbota_import" }
 
 # A browser build draws through WebGPU or WebGL2, one of the features below.
 [target.'cfg(target_arch = "wasm32")'.dependencies]

@@ -35,5 +35,8 @@ pub use launch::Trust;
 pub use prefs::page_service;
 pub use preview::{NAMES as PREVIEWS, view as preview};
 pub use screens::Disabled;
+// What holds the menu: assets out of date, on the desktop (a browser page holds before the client).
+#[cfg(not(target_arch = "wasm32"))]
+pub use shell::Held;
 pub use shell::{Preview, Trusted, idle, plugin};
 pub use store::SettingsStore;

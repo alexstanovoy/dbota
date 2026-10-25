@@ -28,7 +28,7 @@ for api in webgpu webgl2; do
     wasm-bindgen --target web --no-typescript --out-dir "$out" --out-name "$name" \
         "target/wasm32-unknown-unknown/$profile/dbota.wasm"
 done
-cargo build --profile "$profile" --target wasm32-unknown-unknown -p dbota_import
+cargo build --profile "$profile" --target wasm32-unknown-unknown -p dbota_import --features web
 wasm-bindgen --target web --no-typescript --out-dir "$out/import" "target/wasm32-unknown-unknown/$profile/dbota_import.wasm"
 cp web/index.html web/page.css web/main.js web/grant.js web/cache.js web/import_worker.js web/report.js "$out/"
 ln -sfn "$here/assets" "$out/assets"

@@ -33,6 +33,14 @@
       <button id="remove" type="button" class="quiet">Delete the imported copy</button>
     </div>
   </section>
+  <section id="stale" hidden>
+    <h2>The assets are out of date for this version: re-import them from your Dota 2 folder</h2>
+    <p id="staleWhy"></p>
+    <div class="row">
+      <button id="reimport" type="button">Re-import from the Dota 2 folder</button>
+      <button id="standinsStale" type="button" class="quiet">Play with stand-ins</button>
+    </div>
+  </section>
   <section id="progress" hidden>
     <p id="stage">Reading your Dota 2 files...</p>
     <progress id="bar" max="1" value="0"></progress>
@@ -50,6 +58,7 @@
   </section>
   <p id="status" role="status"></p>
   <ul id="failures" hidden></ul>
+  <p class="hint" id="version"></p>
 </main>
 <script type="module" src="report.js"></script>
 <script type="module" src="main.js"></script>

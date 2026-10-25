@@ -72,7 +72,7 @@ fn run_with(
         .env("XDG_DATA_HOME", scratch.0.join("data"))
         .env_remove("BOTA_SEAT_KEY")
         .stdout(Stdio::piped())
-        .stderr(Stdio::null())
+        .stderr(std::fs::File::create(scratch.0.join("stderr.log")).expect("a log file"))
         .spawn()
         .expect("dbota runs");
     let stdout = child.stdout.take().expect("its stdout");
@@ -133,6 +133,74 @@ fn a_replay_is_left_for_the_menu() {
         "a replay",
         run(&scratch, &["--replay", replay, "--pov", "0"], script),
         script,
+    );
+}
+
+/// An asset cache in `scratch` stamped `stamp`: finished (its index is there) and empty, so a
+/// client reading it draws stand-ins.
+fn asset_cache(scratch: &Scratch, stamp: &str) -> PathBuf {
+    let cache = scratch.0.join("assets");
+    std::fs::create_dir_all(&cache).expect("a cache folder");
+    std::fs::write(cache.join("index.txt"), "dbota-cache 1\n").expect("an index");
+    std::fs::write(cache.join("stamp.txt"), stamp).expect("a stamp");
+    cache
+}
+
+/// What the client said on stderr in `scratch`.
+fn logged(scratch: &Scratch) -> String {
+    std::fs::read_to_string(scratch.0.join("stderr.log")).unwrap_or_default()
+}
+
+/// Assets imported by another dbota (their stamp not of this build's asset fingerprint) hold the
+/// client at a screen asking for a re-import, its button right there: the replay the command
+/// line names never starts; QUIT ends the client.
+#[test]
+#[ignore = "draws on the GPU in a headless compositor: tools/visual_check.sh runs it"]
+fn assets_of_another_version_hold_the_client_until_imported_again() {
+    let scratch = Scratch::new("stale");
+    let cache = asset_cache(&scratch, "v1/rev1/0000000000000000/1/2");
+    let replay = replay();
+    let script = "await:button:re-import from dota 2;wait:3;shot:stale-assets.png;click:quit dbota";
+    let args = [
+        "--cache-dir",
+        cache.to_str().expect("a UTF-8 path"),
+        "--replay",
+        replay.to_str().expect("a UTF-8 path"),
+        "--pov",
+        "0",
+    ];
+    played("stale assets", run(&scratch, &args, script), script);
+    let log = logged(&scratch);
+    assert!(log.contains("out of date for this version"), "{log}");
+    assert!(
+        !log.contains("match known"),
+        "the replay started on stale assets:\n{log}"
+    );
+}
+
+/// The same with assets of this build's fingerprint: no question, the replay plays.
+#[test]
+#[ignore = "draws on the GPU in a headless compositor: tools/visual_check.sh runs it"]
+fn assets_of_this_version_play() {
+    let scratch = Scratch::new("current");
+    let stamp = format!("{}/1/2", dbota_import::import::fingerprint());
+    let cache = asset_cache(&scratch, &stamp);
+    let replay = replay();
+    let script = "await:game;wait:2;key:Escape;await:menu;click:disconnect;await:popup;click:ok;\
+                  await:nopopup;await:button:quit;key:Escape;await:popup;click:ok";
+    let args = [
+        "--cache-dir",
+        cache.to_str().expect("a UTF-8 path"),
+        "--replay",
+        replay.to_str().expect("a UTF-8 path"),
+        "--pov",
+        "0",
+    ];
+    played("current assets", run(&scratch, &args, script), script);
+    assert!(
+        !logged(&scratch).contains("out of date"),
+        "{}",
+        logged(&scratch)
     );
 }
 

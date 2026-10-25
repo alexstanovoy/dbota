@@ -53,11 +53,17 @@ first frame.
 ## Stamps
 
 The cache lives in `dbota/` in OPFS next to `index.txt` (`file <size> <path> [small]` per file, written
-last: a cache without it is unfinished) and `stamp.txt`: `v<manifest version>/rev<importer revision>/<size
-of pak01_dir.vpk>/<its modification time>`. Dota's updater rewrites `pak01_dir.vpk` with every content
-change. A page with a stored copy goes straight to "Play"; when the remembered folder is readable
-without a prompt it is compared in the background and "Update from the Dota 2 folder" appears if the
-stamp differs. A new importer revision or manifest version changes the stamp too.
+last: a cache without it is unfinished) and `stamp.txt`: the asset fingerprint of the
+build that made it (`v<manifest version>/rev<importer revision>/<manifest hash>`, as on the desktop),
+then `/<size of pak01_dir.vpk>/<its modification time>`. Dota's updater rewrites `pak01_dir.vpk` with
+every content change. At every start the page compares the copy's fingerprint with its own (the
+importer module's `cache_version()`): a copy another dbota made is never played. The page holds at
+"The assets are out of date for this version" with the re-import right there (one click where the
+browser still holds the folder, else from the folder picked again) or stand-ins; the client, given a
+copy of another fingerprint anyway, draws stand-ins. A copy of this fingerprint goes straight to
+"Play"; when the remembered folder is readable without a prompt it is compared in the background and
+"Update from the Dota 2 folder" appears if the install changed. The gate shows the build's asset
+fingerprint at its foot, the settings the client's commit too.
 
 ## What is imported
 

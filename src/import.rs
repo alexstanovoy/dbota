@@ -3,12 +3,9 @@
 
 use std::path::{Path, PathBuf};
 
-use dbota_import::cache_dir::{import_into, is_current, matches_plan, stamp, stamp_prefix};
-use dbota_import::import::{Flow, Plan, plan_id};
+use dbota_import::cache_dir::{import_into, is_current, read_stamp, stamp};
+use dbota_import::import::{Flow, IDS, MANIFEST, Plan, plan_id, stamped_here};
 use heatel::find_game_dir;
-
-const MANIFEST: &str = include_str!("../assets-manifest/manifest.txt");
-const IDS: &str = include_str!("../assets-manifest/ids.txt");
 
 /// What the cache at a path lacks for this build.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -25,10 +22,7 @@ pub fn need(cache: &Path) -> Option<Need> {
     if !cache.join(dbota_import::cache_dir::INDEX).is_file() {
         return Some(Need::Import);
     }
-    let made_here = matches_plan(
-        cache,
-        &stamp_prefix(crate::ASSET_VERSION, &plan_id(MANIFEST, IDS)),
-    );
+    let made_here = read_stamp(cache).is_some_and(|stamp| stamped_here(&stamp));
     (!made_here).then_some(Need::Reimport)
 }
 
@@ -40,8 +34,10 @@ pub fn warn_if_stale(cache: &Path) {
             cache.display()
         ),
         Some(Need::Reimport) => eprintln!(
-            "dbota: the asset cache {} was not made from this build's manifest; run `dbota import`",
-            cache.display()
+            "dbota: the asset cache {} is out of date for this version (it needs assets {}): \
+             re-import it (the client asks before it plays, or `dbota import`)",
+            cache.display(),
+            dbota_import::import::fingerprint()
         ),
         None => {}
     }
@@ -75,8 +71,12 @@ pub fn run_with(
     let game: PathBuf = find_game_dir(dota).ok_or_else(|| {
         "Dota 2 not found; pass --dota-path \"<...>/steamapps/common/dota 2 beta\"".to_string()
     })?;
-    let stamp =
-        stamp(&game, crate::ASSET_VERSION, &plan_id(MANIFEST, IDS)).map_err(|e| e.to_string())?;
+    let stamp = stamp(
+        &game,
+        dbota_import::import::VERSION,
+        &plan_id(MANIFEST, IDS),
+    )
+    .map_err(|e| e.to_string())?;
     if !force && is_current(cache, &stamp) {
         println!("dbota import: {} is up to date", cache.display());
         return Ok(true);
