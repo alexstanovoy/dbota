@@ -82,7 +82,7 @@ DBOTA_WEB_REPLAY=$PWD/match.brp web/build.sh        # PROFILE=release for a quic
 python3 -m http.server --bind 127.0.0.1 --directory web/out 8080   # the page alone, to look at it
 ```
 For play, a matchmaking service serves the page itself, on the origin of its control socket, so the page
-needs the CSP's `'self'` and nothing else and a player opens one URL: give the service the built folder
+needs the CSP's `'self'` for it (and `wss:`, for the game servers it names: a game is played over a secure WebSocket of its own host) and a player opens one URL: give the service the built folder
 as its static directory (radovid: `[web] static_dir`, read-only files over its TLS; copy `assets/` into
 the folder rather than linking it, a link out of the folder is not followed). A page served over HTTPS
 takes its own origin for the service; one served by another server falls back to its host on port 4460.
