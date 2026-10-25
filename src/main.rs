@@ -26,6 +26,7 @@ mod clarity;
 mod config;
 mod coords;
 mod courier;
+mod cursor;
 mod daylight;
 mod death;
 mod demo;
@@ -475,6 +476,7 @@ fn main() -> AppExit {
             feed::plugin,
             chat::plugin,
             input::plugin,
+            cursor::plugin,
             pick::plugin,
             pings::plugin,
             minimap::plugin,

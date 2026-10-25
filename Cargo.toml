@@ -23,6 +23,8 @@ bevy = { version = "=0.19.1", default-features = false, features = [
     "bevy_log",
     "reflect_auto_register",
     "bevy_winit",
+    # Dota's mouse cursors, drawn as the install ships them.
+    "custom_cursor",
     # A paste (Ctrl+V) into the menu's fields.
     "system_clipboard",
     "x11",

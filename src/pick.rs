@@ -8,7 +8,7 @@
 //! The click, the highlight and the cursor shape all read [`Hover`], so what
 //! is lit is what a click gets.
 
-use bevy::{prelude::*, window::PrimaryWindow, window::SystemCursorIcon};
+use bevy::{prelude::*, window::PrimaryWindow};
 use bota_client_core::{Slot, Source};
 use bota_proto::{Aim, EntityId, Team, UnitKind, WorldView};
 
@@ -137,7 +137,7 @@ impl Hover {
 
 pub fn plugin(app: &mut App) {
     app.init_resource::<Hover>()
-        .add_systems(Update, (show_cursor, draw_hover).chain().after(update));
+        .add_systems(Update, draw_hover.after(update));
 }
 
 /// The volume of one unit standing at a Bevy point.
@@ -362,35 +362,6 @@ pub fn update(
         aim: find(&aim),
         left,
     };
-}
-
-/// The cursor shape: a crosshair over an enemy a click would hit, a hand
-/// over any other unit, the arrow elsewhere.
-fn show_cursor(
-    hover: Res<Hover>,
-    session: NonSend<Session>,
-    window: Single<Entity, With<PrimaryWindow>>,
-    mut commands: Commands,
-    mut last: Local<Option<SystemCursorIcon>>,
-) {
-    let core = &session.0;
-    let icon = match hover.left() {
-        Some((id, _))
-            if core.view().and_then(|v| v.unit(id)).is_some_and(|u| {
-                Some(u.team) != core.my_team() && u.kind != UnitKind::Fountain
-            }) && core.my_slot.is_some() =>
-        {
-            SystemCursorIcon::Crosshair
-        }
-        Some(_) => SystemCursorIcon::Pointer,
-        None => SystemCursorIcon::Default,
-    };
-    if *last != Some(icon) {
-        *last = Some(icon);
-        commands
-            .entity(*window)
-            .insert(bevy::window::CursorIcon::System(icon));
-    }
 }
 
 /// Dota's ring under what a click would get: yellow, round the unit's feet

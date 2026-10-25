@@ -210,7 +210,7 @@ pub enum Item {
         keys: Vec<(String, String)>,
         out: String,
     },
-    /// A texture written as a PNG (the first frame of a sprite sheet).
+    /// A texture written as a PNG (the first frame of a sprite sheet, or a PNG copied whole).
     Texture {
         logical: String,
         src: String,
@@ -851,6 +851,17 @@ fn make(
             out: dest,
             ..
         } => {
+            // A PNG the install ships as it is (the cursors) is copied whole.
+            if path.ends_with(".png") {
+                let bytes = read_from(src, &[pak], path)?;
+                if !bytes.starts_with(b"\x89PNG\r\n\x1a\n") {
+                    return Err(Error::Malformed {
+                        what: "png",
+                        detail: format!("{path} is not a PNG"),
+                    });
+                }
+                return out.put(dest, &bytes);
+            }
             let texture = Texture::parse(&read_any(src, pak, path)?)?;
             out.put(dest, &texture.first_frame_png()?)
         }

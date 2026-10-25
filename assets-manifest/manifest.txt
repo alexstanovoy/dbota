@@ -1335,3 +1335,21 @@ label resource/localization/dota_english.txt DOTA_Hero_Selection_RemainingGold
 label resource/localization/dota_english.txt DOTA_Hero_Selection_Inventory
 label resource/localization/dota_english.txt dota_item_build_common_starting_items
 texture strategy.background panorama/images/backgrounds/pregame_bg_lowquality_psd.vtex_c hud/pregame_bg_lowquality_psd.png
+
+# --- Mouse cursors (resource/cursor/source: 32 by 32 PNGs, copied as they are; their hotspots are in src/cursor.rs)
+texture cursor.default resource/cursor/source/cursor_default.png cursors/default.png
+texture cursor.default_enemy resource/cursor/source/cursor_default_enemy.png cursors/default_enemy.png
+texture cursor.default_team resource/cursor/source/cursor_default_team.png cursors/default_team.png
+texture cursor.attack_default resource/cursor/source/cursor_attack_default.png cursors/attack_default.png
+texture cursor.attack_enemy resource/cursor/source/cursor_attack_enemy.png cursors/attack_enemy.png
+texture cursor.attack_team resource/cursor/source/cursor_attack_team.png cursors/attack_team.png
+texture cursor.attack_illegal resource/cursor/source/cursor_attack_illegal.png cursors/attack_illegal.png
+texture cursor.spell_default resource/cursor/source/cursor_spell_default.png cursors/spell_default.png
+texture cursor.spell_enemy resource/cursor/source/cursor_spell_enemy.png cursors/spell_enemy.png
+texture cursor.spell_team resource/cursor/source/cursor_spell_team.png cursors/spell_team.png
+texture cursor.spell_illegal resource/cursor/source/cursor_spell_illegal.png cursors/spell_illegal.png
+texture cursor.item_drop resource/cursor/source/cursor_item_drop.png cursors/item_drop.png
+texture cursor.move resource/cursor/source/cursor_move.png cursors/move.png
+texture cursor.buy resource/cursor/source/cursor_buy.png cursors/buy.png
+texture cursor.cannot_buy resource/cursor/source/cursor_cannot_buy.png cursors/cannot_buy.png
+texture cursor.learnability resource/cursor/source/cursor_learnability.png cursors/learnability.png
