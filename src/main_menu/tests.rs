@@ -710,7 +710,11 @@ fn pump_until(what: &str, cores: &mut [&mut Core], done: impl Fn(&Core) -> bool)
             "{what}: {:?}",
             cores
                 .iter()
-                .map(|c| (c.my_slot, c.lost, c.feed.last().map(|l| l.text.clone())))
+                .map(|c| (
+                    c.my_slot,
+                    c.lost,
+                    c.feed.last().map(|l| crate::feed::text(c, &l.kind))
+                ))
                 .collect::<Vec<_>>()
         );
         for core in cores.iter_mut() {

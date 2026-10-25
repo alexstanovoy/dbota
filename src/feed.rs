@@ -4,11 +4,12 @@
 //! client's own text.
 
 use bevy::prelude::*;
-use bota_client_core::{App as Core, FeedLine};
-use bota_proto::{EventKind, Team, UnitKind};
+use bota_client_core::{App as Core, FeedKind, FeedLine, Killer, Victim};
+use bota_proto::{Team, UnitKind, Vec2};
 
 use crate::dota_text::{Part, Texts};
 use crate::manifest::Manifest;
+use crate::seat_name::seat_name;
 use crate::session::Session;
 use crate::ui::{self, Fonts};
 
@@ -150,11 +151,9 @@ fn show(
 /// A line as Dota words it, or the client's text.
 fn lay(core: &Core, texts: Option<&Texts>, manifest: &Manifest, line: &FeedLine) -> Laid {
     let mut laid: Laid = Default::default();
-    let dota = texts
-        .zip(line.told.as_ref())
-        .and_then(|(texts, told)| dota_parts(core, texts, told));
+    let dota = texts.and_then(|texts| dota_parts(core, texts, &line.kind));
     let Some(parts) = dota else {
-        laid[0].1 = line.text.clone();
+        laid[0].1 = text(core, &line.kind);
         return laid;
     };
     // Icons and texts alternate, an icon first; a text with no icon before
@@ -184,17 +183,12 @@ fn lay(core: &Core, texts: Option<&Texts>, manifest: &Manifest, line: &FeedLine)
 
 /// The parts of Dota's feed line for an event the client words with the
 /// install's labels; none for any other, or without the labels.
-fn dota_parts(core: &Core, texts: &Texts, told: &EventKind) -> Option<Vec<Part>> {
-    match *told {
-        EventKind::Captured { unit, team, .. } => {
-            let seen = core.view()?.unit(unit);
-            let name = seen
-                .zip(core.session())
-                .map(|(u, s)| bota_core::unit_name(s.map(), UnitKind::Outpost, u.team, u.pos))
-                .unwrap_or("Outpost")
-                .to_owned();
+fn dota_parts(core: &Core, texts: &Texts, kind: &FeedKind) -> Option<Vec<Part>> {
+    match *kind {
+        FeedKind::Captured { building, by } => {
+            let name = outpost_name(core, Some(texts), building);
             let (key, values) = match core.my_team() {
-                Some(mine) if mine == team => {
+                Some(mine) if mine == by => {
                     ("DOTA_HUD_OutpostCaptured", vec![("outpost_name", name)])
                 }
                 Some(_) => ("DOTA_HUD_OutpostLost", vec![("outpost_name", name)]),
@@ -202,17 +196,15 @@ fn dota_parts(core: &Core, texts: &Texts, told: &EventKind) -> Option<Vec<Part>>
                     "DOTA_HUD_OutpostCaptured_Spectator",
                     vec![
                         ("outpost_name", name),
-                        ("team_name", side_name(team).to_owned()),
+                        ("team_name", side_name(by).to_owned()),
                     ],
                 ),
             };
             texts.label_parts(key, &values)
         }
-        EventKind::ShrineActivated { team, xp, by, .. } => {
+        FeedKind::ShrineActivated { by, team, xp } => {
             let rune = texts.label("DOTA_HUD_Rune_XP", &[("xp", xp.to_string())])?;
-            let who = by
-                .and_then(|hero| core.view()?.unit(hero)?.owner)
-                .map_or_else(|| side_name(team).to_owned(), |slot| core.seat_name(slot));
+            let who = activator(core, by, team);
             texts.label_parts(
                 "DOTA_HUD_ActivatedRune",
                 &[
@@ -222,6 +214,92 @@ fn dota_parts(core: &Core, texts: &Texts, told: &EventKind) -> Option<Vec<Part>>
             )
         }
         _ => None,
+    }
+}
+
+/// The seat that gathered a Shrine, else its side.
+fn activator(core: &Core, by: Option<bota_proto::SlotId>, team: Team) -> String {
+    by.map_or_else(|| side_name(team).to_owned(), |slot| seat_name(core, slot))
+}
+
+/// What an Outpost is called: Dota's name for the one on the Radiant or the
+/// Dire half where the install has it, else dbota's own; the home side is
+/// found by the place the map puts an Outpost at.
+fn outpost_name(
+    core: &Core,
+    texts: Option<&Texts>,
+    building: Option<(UnitKind, Team, Vec2)>,
+) -> String {
+    let home = building.and_then(|(_, _, pos)| {
+        core.session()?
+            .map()
+            .outposts
+            .iter()
+            .find(|outpost| outpost.at == pos)
+            .map(|outpost| outpost.home)
+    });
+    let (key, own) = match home {
+        Some(Team::Radiant) => ("DOTA_OutpostName_South", "Southwest Outpost"),
+        Some(Team::Dire) => ("DOTA_OutpostName_North", "Northeast Outpost"),
+        _ => ("DOTA_OutpostName_Default", "Outpost"),
+    };
+    texts
+        .and_then(|texts| texts.label(key, &[]))
+        .unwrap_or_else(|| own.to_owned())
+}
+
+/// The line of a feed entry in the client's own words, for a game without
+/// the install's labels.
+pub fn text(core: &Core, kind: &FeedKind) -> String {
+    match *kind {
+        FeedKind::HeroDied {
+            victim,
+            killer,
+            gold,
+        } => death(core, victim, killer, gold),
+        FeedKind::StructureFell { team } => format!("a {team:?} structure has fallen"),
+        FeedKind::Disconnected { seat } => format!("{} disconnected", seat_name(core, seat)),
+        FeedKind::ProtocolBroken { ref why } => format!("the server broke the protocol: {why}"),
+        FeedKind::ConnectionLost => "connection to the server lost".to_string(),
+        FeedKind::Captured { building, by } => {
+            let name = outpost_name(core, None, building);
+            match core.my_team() {
+                Some(mine) if mine == by => format!("Your team captured {name}"),
+                Some(_) => format!("The enemy team captured {name}"),
+                None => format!("{name} captured by {}", side_name(by)),
+            }
+        }
+        FeedKind::ShrineActivated { by, team, xp } => {
+            format!(
+                "{} activated Shrine of Wisdom ({xp} XP)",
+                activator(core, by, team)
+            )
+        }
+    }
+}
+
+/// A hero's death, with its killer and the gold it paid when they are known.
+fn death(core: &Core, victim: Victim, killer: Option<Killer>, gold: i32) -> String {
+    let victim = match victim {
+        Victim::Seat(slot) => seat_name(core, slot),
+        Victim::Hero(team) => format!("a {team:?} hero"),
+    };
+    let by = killer.map(|killer| match killer {
+        Killer::Seat(slot) => seat_name(core, slot),
+        Killer::Unit {
+            kind: UnitKind::Tower,
+            team,
+        } => format!("the {team:?} tower"),
+        Killer::Unit {
+            kind: UnitKind::Fountain,
+            team,
+        } => format!("the {team:?} fountain"),
+        Killer::Unit { kind, team } => format!("a {team:?} {}", bota_core::kind_def(kind).name),
+    });
+    match by {
+        Some(by) if gold > 0 => format!("{victim} was slain by {by} for {gold} gold"),
+        Some(by) => format!("{victim} was slain by {by}"),
+        None => format!("{victim} died"),
     }
 }
 

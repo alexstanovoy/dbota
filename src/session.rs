@@ -180,10 +180,10 @@ pub fn pump(
     // A server that cuts a live client off before any match view (a refused seat key, a wrong
     // wire) leaves nothing to look at: say why and quit instead of showing an empty screen.
     if core.lost && core.view().is_none() && matches!(core.source, Source::Live(_)) {
-        let why = core
-            .feed
-            .last()
-            .map_or("connection to the server lost", |line| line.text.as_str());
+        let why = core.feed.last().map_or_else(
+            || "connection to the server lost".to_string(),
+            |line| crate::feed::text(core, &line.kind),
+        );
         // The line may hold the server's words: no control characters reach the terminal.
         let why: String = why.chars().filter(|c| !c.is_control()).collect();
         eprintln!("dbota: {why}");

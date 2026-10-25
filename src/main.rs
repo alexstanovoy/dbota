@@ -63,6 +63,7 @@ mod quality;
 mod replay_controls;
 mod scoreboard;
 mod script;
+mod seat_name;
 mod select;
 mod session;
 mod settings;

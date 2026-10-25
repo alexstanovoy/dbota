@@ -7,7 +7,7 @@
 use std::collections::HashMap;
 
 use bevy::prelude::*;
-use bota_client_core::{FLOATER_LIFE, FloaterKind};
+use bota_client_core::{FLOATER_LIFE, Floater, FloaterKind};
 use bota_proto::{Team, UnitKind, UnitView};
 
 use crate::config::Settings;
@@ -695,8 +695,9 @@ fn floaters(
             continue;
         };
         let fade = (1.0 - (k - 0.6).max(0.0) / 0.4).clamp(0.0, 1.0);
-        if text.0 != f.text {
-            text.0.clone_from(&f.text);
+        let words = floater_words(f);
+        if text.0 != words {
+            text.0.clone_from(&words);
         }
         // The pop scales the laid-out text: a font size that changed every
         // frame had every glyph drawn again at each new size, into new atlases.
@@ -706,10 +707,22 @@ fn floaters(
         });
         transform.scale = Vec2::splat(pop);
         color.0 = tint.with_alpha(fade);
-        let width = size * 0.56 * f.text.chars().count() as f32;
+        let width = size * 0.56 * words.chars().count() as f32;
         node.left = px(screen.x / scale - width / 2.0);
         node.top = px(screen.y / scale - size - stacked as f32 * (size + 2.0));
         *visibility = Visibility::Inherited;
+    }
+}
+
+/// What a floater says: the number, with a plus for what is gained, or a word.
+fn floater_words(floater: &Floater) -> String {
+    let amount = floater.amount;
+    match floater.kind {
+        FloaterKind::Damage | FloaterKind::Magic => amount.to_string(),
+        FloaterKind::Miss => "miss".to_string(),
+        FloaterKind::Heal | FloaterKind::Gold => format!("+{amount}"),
+        FloaterKind::Level => format!("level {amount}"),
+        FloaterKind::Deny => "!".to_string(),
     }
 }
 

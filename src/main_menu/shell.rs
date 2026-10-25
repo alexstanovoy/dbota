@@ -266,7 +266,7 @@ fn guard(
         Some(err) => format!("The replay cannot be read: {err}"),
         None => game.feed.last().filter(|_| game.view().is_none()).map_or(
             "the connection to the game server was lost".to_owned(),
-            |l| l.text.clone(),
+            |l| crate::feed::text(game, &l.kind),
         ),
     });
     let over = game.over.is_some();

@@ -446,7 +446,7 @@ fn notices(
             .and_then(|hero| core.view()?.unit(hero)?.owner)
             .map_or_else(
                 || crate::feed::side_name(*team).to_owned(),
-                |slot| core.seat_name(slot),
+                |slot| crate::seat_name::seat_name(core, slot),
             );
         let text = texts
             .as_deref()
