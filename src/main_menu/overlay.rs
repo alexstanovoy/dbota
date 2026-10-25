@@ -292,8 +292,8 @@ fn match_found(kit: &mut Kit, root: Entity, offer: &OfferBox) {
             ui::HP_MINE,
         );
     } else {
-        kit.button(row, "ACCEPT", Act::Accept(offer.proposal), GREEN, 56.0);
-        kit.button(row, "DECLINE", Act::Decline(offer.proposal), RED, 56.0);
+        kit.button(row, "ACCEPT", Act::Accept(offer.proposal), GREEN, 40.0);
+        kit.button(row, "DECLINE", Act::Decline(offer.proposal), RED, 40.0);
     }
     if !offer.answered {
         kit.text(
