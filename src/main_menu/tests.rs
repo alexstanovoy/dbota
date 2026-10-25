@@ -149,7 +149,7 @@ binary = "{binary}"
 public_url = "ws://127.0.0.1:{{port}}"
 version_probe = ["--wire-fingerprint"]
 start_timeout_secs = {PATIENCE}
-args = ["--map", "2", "--mode", "lockstep", "--ack-timeout-ticks", "900",
+args = ["--map", "2", "--heroes", "1", "--mode", "lockstep", "--ack-timeout-ticks", "900",
         "--match-id", "{{match_id}}", "--bind", "127.0.0.1", "--port", "0",
         "--ws-port", "{{port}}", "--start-after-secs", "{PATIENCE}", "--abandon-unjoined",
         "--empty-after-secs", "{PATIENCE}", "--pick-secs", "1", "--tactical-secs", "0"]
@@ -397,6 +397,23 @@ fn two_players_register_find_accept_play_and_see_their_result() {
         ),
         (open(launch_of(&mut bob), &bob.trust), HeroId::PUDGE),
     ];
+    // Solo mid is a Shadow Fiend mirror: the lobby tells a pool of one, and each seat holds it
+    // before anyone picks (bob's try at Pudge below changes nothing).
+    let deadline = Instant::now() + Duration::from_secs(PATIENCE);
+    while games.iter().any(|(core, _)| core.lobby.heroes.is_empty()) {
+        assert!(Instant::now() < deadline, "no lobby state came");
+        for (core, _) in &mut games {
+            core.pump(1.0 / 30.0);
+        }
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    for (core, _) in &games {
+        assert_eq!(
+            core.lobby.heroes,
+            [HeroId::SHADOW_FIEND],
+            "the pool is one hero"
+        );
+    }
     // The match ends when it ends, however slowly a loaded machine plays it: only a match that
     // stops moving is stuck.
     let (mut furthest, mut stuck_at) = (0, Instant::now() + Duration::from_secs(PATIENCE));

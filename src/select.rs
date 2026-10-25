@@ -233,7 +233,11 @@ fn clicks(
         return;
     }
     for (interaction, card) in &cards {
-        if *interaction == Interaction::Pressed && !core.ready && !taken(core, card.0) {
+        if *interaction == Interaction::Pressed
+            && !core.ready
+            && offered(core, card.0)
+            && !taken(core, card.0)
+        {
             core.act(Intent::PickHero(card.0));
         }
     }
@@ -241,6 +245,11 @@ fn clicks(
     if ready.iter().any(|i| *i == Interaction::Pressed) && (picked || core.ready) {
         core.act(Intent::ToggleReady);
     }
+}
+
+/// Whether the server's pool has this hero (every hero when it names none).
+fn offered(core: &bota_client_core::App, hero: u16) -> bool {
+    core.lobby.heroes.is_empty() || core.lobby.heroes.iter().any(|h| h.0 == hero)
 }
 
 /// Whether another seat holds this hero while the rules forbid two of one.
@@ -283,7 +292,7 @@ fn looks(
     menu: Option<NonSend<crate::main_menu::MenuCore>>,
     seen: Res<ClockSeen>,
     time: Res<Time>,
-    mut cards: Query<(&Card, &Interaction, &mut BorderColor), Without<ReadyButton>>,
+    mut cards: Query<(&Card, &Interaction, &mut BorderColor, &mut Node), Without<ReadyButton>>,
     mut button: Query<(&mut BackgroundColor, &mut Visibility), With<ReadyButton>>,
     mut texts: Query<(
         &mut Text,
@@ -298,10 +307,23 @@ fn looks(
     }
     let playing = core.my_slot.is_some();
     let mine = my_pick(core);
-    for (card, interaction, mut rim) in &mut cards {
+    // The server's pool is what there is to pick; a pool of one is picked for the seat already.
+    let forced = core.lobby.heroes.len() == 1;
+    for (card, interaction, mut rim, mut node) in &mut cards {
+        let pickable = offered(core, card.0);
+        // A pool of one is picked for the seat: only that hero is there. A larger pool greys
+        // the heroes outside it, which cannot be picked.
+        let display = if pickable || !forced {
+            Display::Flex
+        } else {
+            Display::None
+        };
+        if node.display != display {
+            node.display = display;
+        }
         let c = if mine == Some(card.0) {
             PICKED
-        } else if taken(core, card.0) {
+        } else if !pickable || taken(core, card.0) {
             DEAD
         } else if *interaction == Interaction::Hovered && playing && !core.ready {
             ui::INK
@@ -311,7 +333,7 @@ fn looks(
         rim.set_if_neq(BorderColor::all(c));
     }
     for (mut bg, mut v) in &mut button {
-        v.set_if_neq(ui::visible(playing));
+        v.set_if_neq(ui::visible(playing && !forced));
         bg.set_if_neq(BackgroundColor(match (core.ready, mine.is_some()) {
             (true, _) => Color::srgb(0.12, 0.42, 0.18),
             (false, true) => Color::srgb(0.12, 0.3, 0.14),
@@ -360,7 +382,9 @@ fn looks(
         } else if list.is_some() {
             seats.join("\n")
         } else if heading.is_some() {
-            if playing {
+            if playing && forced {
+                "YOUR HERO".to_string()
+            } else if playing {
                 heading_text(seen.phase, seen.left(time.elapsed_secs()))
             } else if core.lobby.me.is_some() {
                 "SPECTATING - waiting for the match".to_string()
