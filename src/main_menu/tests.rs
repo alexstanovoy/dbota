@@ -172,6 +172,23 @@ args = ["--map", "2", "--match-id", "{{match_id}}", "--bind", "127.0.0.1", "--po
         "--ws-port", "{{port}}"]
 env = {{ BOTA_SEATS = "{{seats}}" }}
 
+# Two against two, for the lobby page: its slots and its sides.
+[[ruleset]]
+id = "squad"
+name = "Squad"
+game = "bota"
+game_fingerprint = "{fingerprint:016x}"
+teams = [2, 2]
+rated = false
+[ruleset.launcher]
+kind = "local"
+binary = "{binary}"
+public_url = "ws://127.0.0.1:{{port}}"
+version_probe = ["--wire-fingerprint"]
+args = ["--map", "0", "--match-id", "{{match_id}}", "--bind", "127.0.0.1", "--port", "0",
+        "--ws-port", "{{port}}"]
+env = {{ BOTA_SEATS = "{{seats}}" }}
+
 # Lobbies of it start alone: the match has the host's seat and nobody against it.
 [[ruleset]]
 id = "practice"
@@ -335,7 +352,7 @@ fn two_players_register_find_accept_play_and_see_their_result() {
     };
     assert_eq!(
         rulesets.iter().map(|r| r.name.as_str()).collect::<Vec<_>>(),
-        ["1x1 Mid Only", "Practice"]
+        ["1x1 Mid Only", "Squad", "Practice"]
     );
 
     alice.menu.act(Act::Find(solo()));
@@ -1332,6 +1349,7 @@ fn a_ruleset_for_bots_is_not_listed_to_humans() {
             .collect::<Vec<_>>(),
         [
             ("1x1 Mid Only", "Humans and Bots"),
+            ("Squad", "Humans and Bots"),
             ("Practice", "Humans and Bots")
         ]
     );
@@ -1371,7 +1389,11 @@ fn a_lobby_is_made_for_the_game_mode_chosen() {
             .iter()
             .map(|m| (m.name.as_str(), m.chosen))
             .collect::<Vec<_>>(),
-        [("1x1 Mid Only", true), ("Practice", false)],
+        [
+            ("1x1 Mid Only", true),
+            ("Squad", false),
+            ("Practice", false)
+        ],
         "the first until one is chosen, none bots-only"
     );
     create_lobby(&mut alice, "Practice", "my practice");
@@ -1426,4 +1448,144 @@ fn a_server_of_another_wire_is_refused_and_the_matching_one_found() {
         super::launch::server_binary(Some(server_binary())).expect("the matching server"),
         server_binary()
     );
+}
+
+/// The lobby view of a player sitting in one.
+fn lobby_of(player: &Player) -> super::view::LobbyView {
+    let PageView::Lobby(lobby) = player.menu.view().body else {
+        panic!("the lobby page: {:?}", player.menu.page());
+    };
+    lobby
+}
+
+/// Where `name` sits in the lobby: its slot and team, or none for one looking on.
+fn seat_of(lobby: &super::view::LobbyView, name: &str) -> Option<(u8, String)> {
+    lobby
+        .teams
+        .iter()
+        .flat_map(|team| team.slots.iter().map(move |slot| (&team.name, slot)))
+        .find(|(_, slot)| slot.who.as_ref().is_some_and(|who| who.name == name))
+        .map(|(team, slot)| (slot.slot, team.clone()))
+}
+
+/// Alice makes a password lobby of the Squad mode and bob sits in it by name and password.
+fn squad_lobby() -> (Service, Player, Player) {
+    let service = service();
+    let (mut alice, mut bob) = (Player::new(Some(&service)), Player::new(Some(&service)));
+    alice.register("alice");
+    bob.register("bob");
+    alice.menu.act(Act::Go(Page::Lobbies));
+    let PageView::Lobbies { modes, .. } = alice.menu.view().body else {
+        panic!("the lobbies page");
+    };
+    let squad = modes.iter().find(|m| m.name == "Squad").expect("offered");
+    alice.menu.act(Act::LobbyMode(squad.id.clone()));
+    alice.fill(&["slots", PASSWORD]);
+    alice.menu.act(Act::CreateLobby);
+    settle(&mut [&mut alice], |p| p.menu.page() == Page::Lobby);
+    bob.menu.act(Act::Go(Page::Lobbies));
+    bob.fill(&["slots", PASSWORD]);
+    bob.menu.act(Act::Submit);
+    settle(&mut [&mut alice, &mut bob], |p| {
+        p.menu.page() == Page::Lobby
+    });
+    (service, alice, bob)
+}
+
+/// The slot grid, as the ruleset numbers it team by team: a member sits in a free slot at once,
+/// the owner moves another member and removes one, a member may look on instead.
+#[test]
+fn members_sit_in_slots_the_owner_moves_and_kicks_and_anyone_may_look_on() {
+    let (_service, mut alice, mut bob) = squad_lobby();
+    let grid = lobby_of(&alice);
+    assert_eq!(
+        grid.teams
+            .iter()
+            .map(|t| (t.name.as_str(), t.slots.len()))
+            .collect::<Vec<_>>(),
+        [("RADIANT", 2), ("DIRE", 2)]
+    );
+    assert_eq!(seat_of(&grid, "alice"), Some((0, "RADIANT".to_owned())));
+    assert_eq!(seat_of(&grid, "bob"), Some((1, "RADIANT".to_owned())));
+
+    // A free slot of the other side, at once; both menus see it.
+    bob.menu.act(Act::LobbySlot(3));
+    settle(&mut [&mut alice, &mut bob], |p| {
+        seat_of(&lobby_of(p), "bob") == Some((3, "DIRE".to_owned()))
+    });
+    // The owner picks bob to move and clicks another slot.
+    alice.menu.act(Act::MoveMember(
+        lobby_of(&alice).teams[1].slots[1]
+            .who
+            .as_ref()
+            .expect("bob")
+            .account,
+    ));
+    assert!(lobby_of(&alice).moving.is_some());
+    alice.menu.act(Act::LobbySlot(2));
+    settle(&mut [&mut alice, &mut bob], |p| {
+        seat_of(&lobby_of(p), "bob") == Some((2, "DIRE".to_owned()))
+    });
+    assert!(lobby_of(&alice).moving.is_none(), "the move was done");
+    // A member who looks on holds no slot.
+    bob.menu
+        .act(Act::LobbySlot(bota_radovid::proto::LOBBY_NO_SLOT));
+    settle(&mut [&mut alice, &mut bob], |p| {
+        lobby_of(p).spectators.iter().any(|m| m.name == "bob")
+    });
+    assert_eq!(seat_of(&lobby_of(&alice), "bob"), None);
+    // The owner removes him.
+    let bobs = lobby_of(&alice).spectators[0].account;
+    alice.menu.act(Act::KickMember(bobs));
+    settle(&mut [&mut alice, &mut bob], |p| {
+        p.menu.page() != Page::Lobby || lobby_of(p).spectators.is_empty()
+    });
+    settle(&mut [&mut bob], |p| p.menu.page() != Page::Lobby);
+}
+
+/// The settings are the owner's: the game mode and the password change for everyone, the others
+/// read them and are refused when they try.
+#[test]
+fn the_owner_changes_the_lobbys_settings_and_the_others_only_read_them() {
+    let (_service, mut alice, mut bob) = squad_lobby();
+    let settings = lobby_of(&alice).settings;
+    assert!(settings.editable && settings.locked && settings.mode == "Squad");
+    assert!(!lobby_of(&bob).settings.editable, "read-only for a member");
+    assert!(lobby_of(&bob).settings.modes.is_empty());
+
+    // The owner changes the mode and takes the password off; bob sees both.
+    let practice = settings
+        .modes
+        .iter()
+        .find(|m| m.name == "Practice")
+        .expect("offered")
+        .id
+        .clone();
+    alice.menu.act(Act::ConfigureMode(practice));
+    settle(&mut [&mut alice, &mut bob], |p| {
+        lobby_of(p).settings.mode == "Practice"
+    });
+    alice.menu.act(Act::ConfigurePassword);
+    settle(&mut [&mut alice, &mut bob], |p| {
+        !lobby_of(p).settings.locked
+    });
+    // Practice is a 1v1: the member past its slots now looks on.
+    settle(&mut [&mut bob], |p| {
+        lobby_of(p).spectators.iter().any(|m| m.name == "bob")
+            || seat_of(&lobby_of(p), "bob").is_some()
+    });
+    // The audience the owner sits in cannot shut him out; a member cannot change anything.
+    alice.menu.act(Act::ConfigureAudience(
+        bota_radovid::proto::Audience::BotsOnly,
+    ));
+    settle(&mut [&mut alice], |p| {
+        p.menu.view().status.is_some_and(|s| s.error)
+    });
+    bob.menu.act(Act::ConfigureAudience(
+        bota_radovid::proto::Audience::HumansOnly,
+    ));
+    settle(&mut [&mut bob], |p| {
+        p.menu.view().status.is_some_and(|s| s.error)
+    });
+    assert_eq!(lobby_of(&bob).settings.audience, "Humans and Bots");
 }

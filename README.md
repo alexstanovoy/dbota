@@ -59,7 +59,7 @@ Dota 2 install. Bots don't need it.
   when the game servers are full; MATCH FOUND asks to accept or decline within the time shown (declining
   keeps the account out of the queues for a while); then the game opens by itself.
 - **MY GAMES**: rejoin or watch the account's running matches (an account may run several at once), cancel
-  searches. **LOBBIES**: create one, join one by name and password, or from the list. Then a result screen.
+  searches. **LOBBIES**: create one, join one by name and password, or from the list. A lobby is made for a game mode chosen among the ones the service offers. In it, the slots are laid out by team: click a free slot to sit there (or LOOK ON), and the owner moves (MOVE, then a slot) or removes (KICK) the others and changes the game mode, who may sit and the password, which the rest read as plain text. Then a result screen.
 What needs no service needs no account either: LOCAL LOBBY, REPLAYS and SETTINGS work
 signed out and with no service reachable. There, you play under the profile name of the settings
 (OPTIONS, PROFILE), as Dota's local games show your Steam name.

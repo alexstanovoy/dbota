@@ -1,17 +1,18 @@
 //! Debug: every screen of the menu with made-up contents, drawn without a
 //! service (`--menu-preview NAME`), for screenshots of how it looks.
 
-use bota_radovid::proto::{LobbyId, MatchId, ProposalId, QueueEntryId, RulesetId};
+use bota_radovid::proto::{AccountId, LobbyId, MatchId, ProposalId, QueueEntryId, RulesetId};
 
 use super::core::{GameKind, Page, SeatFill, Status};
 use super::form::FormKind;
 use super::view::{
-    ConfirmView, FieldView, FinishedRow, GameRow, LobbyRow, LobbyView, MenuView, ModeRow, OfferBox,
-    PageView, ResultView, RulesetRow, SearchRow, SeatRow, WaitRow,
+    AudienceRow, ConfirmView, FieldView, FinishedRow, GameRow, LobbyRow, LobbyView, MemberRow,
+    MenuView, ModeRow, OfferBox, PageView, ResultView, RulesetRow, SearchRow, SeatRow,
+    SettingsView, SlotRow, TeamRow, WaitRow,
 };
 
 /// The names `--menu-preview` takes.
-pub const NAMES: [&str; 18] = [
+pub const NAMES: [&str; 19] = [
     "service",
     "login",
     "register",
@@ -24,6 +25,7 @@ pub const NAMES: [&str; 18] = [
     "my-games",
     "lobbies",
     "lobby",
+    "lobby-owner",
     "result",
     "direct",
     "quit",
@@ -246,12 +248,130 @@ pub fn view(name: &str) -> Option<MenuView> {
             PageView::Lobby(LobbyView {
                 name: "friends only".to_owned(),
                 locked: true,
-                members: vec![
-                    ("carol#9".to_owned(), 0, true),
-                    ("alice#12".to_owned(), 1, true),
+                teams: vec![
+                    TeamRow {
+                        name: "RADIANT".to_owned(),
+                        slots: vec![
+                            SlotRow {
+                                slot: 0,
+                                who: Some(MemberRow {
+                                    account: AccountId(9),
+                                    name: "carol".to_owned(),
+                                    ready: true,
+                                    me: false,
+                                }),
+                            },
+                            SlotRow { slot: 1, who: None },
+                        ],
+                    },
+                    TeamRow {
+                        name: "DIRE".to_owned(),
+                        slots: vec![
+                            SlotRow {
+                                slot: 2,
+                                who: Some(MemberRow {
+                                    account: AccountId(12),
+                                    name: "alice".to_owned(),
+                                    ready: false,
+                                    me: true,
+                                }),
+                            },
+                            SlotRow { slot: 3, who: None },
+                        ],
+                    },
                 ],
+                spectators: Vec::new(),
+                owner: false,
+                moving: None,
+                settings: SettingsView {
+                    mode: "Practice".to_owned(),
+                    audience: "Humans and Bots",
+                    locked: true,
+                    modes: Vec::new(),
+                    audiences: Vec::new(),
+                    editable: false,
+                },
+                fields: Vec::new(),
                 waiting_approval: 0,
-                me_ready: true,
+                me_ready: false,
+                waiting: None,
+                starts_short: false,
+                starting_in_secs: Some(3),
+            }),
+        ),
+        "lobby-owner" => logged_in(
+            Page::Lobby,
+            PageView::Lobby(LobbyView {
+                name: "friends only".to_owned(),
+                locked: true,
+                teams: vec![
+                    TeamRow {
+                        name: "RADIANT".to_owned(),
+                        slots: vec![
+                            SlotRow {
+                                slot: 0,
+                                who: Some(MemberRow {
+                                    account: AccountId(9),
+                                    name: "carol".to_owned(),
+                                    ready: true,
+                                    me: true,
+                                }),
+                            },
+                            SlotRow { slot: 1, who: None },
+                        ],
+                    },
+                    TeamRow {
+                        name: "DIRE".to_owned(),
+                        slots: vec![
+                            SlotRow {
+                                slot: 2,
+                                who: Some(MemberRow {
+                                    account: AccountId(12),
+                                    name: "alice".to_owned(),
+                                    ready: false,
+                                    me: false,
+                                }),
+                            },
+                            SlotRow { slot: 3, who: None },
+                        ],
+                    },
+                ],
+                spectators: Vec::new(),
+                owner: true,
+                moving: Some("alice".to_owned()),
+                settings: SettingsView {
+                    mode: "Practice".to_owned(),
+                    audience: "Humans and Bots",
+                    locked: true,
+                    modes: vec![
+                        ModeRow {
+                            id: RulesetId("squad".to_owned()),
+                            name: "Squad".to_owned(),
+                            chosen: false,
+                        },
+                        ModeRow {
+                            id: RulesetId("practice".to_owned()),
+                            name: "Practice".to_owned(),
+                            chosen: true,
+                        },
+                    ],
+                    audiences: vec![
+                        AudienceRow {
+                            audience: bota_radovid::proto::Audience::Everyone,
+                            name: "Humans and Bots",
+                            chosen: true,
+                        },
+                        AudienceRow {
+                            audience: bota_radovid::proto::Audience::HumansOnly,
+                            name: "Humans",
+                            chosen: false,
+                        },
+                    ],
+                    editable: true,
+                },
+                fields: vec![field("Password (empty removes it)", "", false)],
+                waiting_approval: 0,
+                me_ready: false,
                 waiting: None,
                 starts_short: false,
                 starting_in_secs: Some(3),

@@ -4,7 +4,8 @@
 
 use bevy::platform::time::Instant;
 use bota_radovid::proto::{
-    EndReason, LobbyId, MatchId, MatchResult, Outcome, ProposalId, QueueEntryId, RulesetId,
+    AccountId, EndReason, LobbyId, MatchId, MatchResult, Outcome, ProposalId, QueueEntryId,
+    RulesetId,
 };
 
 use super::core::{Confirm, GameKind, MenuCore, Page, SeatFill, Status, clock};
@@ -113,17 +114,69 @@ pub struct ModeRow {
     pub chosen: bool,
 }
 
+/// One member of a lobby, in a slot or looking on.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MemberRow {
+    pub account: AccountId,
+    pub name: String,
+    pub ready: bool,
+    pub me: bool,
+}
+
+/// A slot of a team: free, or held by a member.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SlotRow {
+    pub slot: u8,
+    pub who: Option<MemberRow>,
+}
+
+/// A side's slots, as the ruleset numbers them team by team.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TeamRow {
+    pub name: String,
+    pub slots: Vec<SlotRow>,
+}
+
+/// Who may sit in a lobby, as its settings say.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AudienceRow {
+    pub audience: bota_radovid::proto::Audience,
+    pub name: &'static str,
+    pub chosen: bool,
+}
+
+/// The settings of a lobby: read by everyone, changed by its owner.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SettingsView {
+    /// The game mode's name.
+    pub mode: String,
+    pub audience: &'static str,
+    pub locked: bool,
+    /// The owner's choices; empty for the others.
+    pub modes: Vec<ModeRow>,
+    pub audiences: Vec<AudienceRow>,
+    /// The owner changes them (the page has a password field then).
+    pub editable: bool,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LobbyView {
     pub name: String,
     pub locked: bool,
-    /// Name, team, ready.
-    pub members: Vec<(String, u8, bool)>,
+    pub teams: Vec<TeamRow>,
+    /// Members without a slot: they look on and are not part of the match.
+    pub spectators: Vec<MemberRow>,
+    pub owner: bool,
+    /// The member the owner is moving: their next click on a slot puts them there.
+    pub moving: Option<String>,
+    pub settings: SettingsView,
+    /// The owner's password field.
+    pub fields: Vec<FieldView>,
     pub waiting_approval: usize,
     pub me_ready: bool,
     /// Why the owner cannot start yet, as Dota's lobby says it.
     pub waiting: Option<&'static str>,
-    /// The owner may start with the lobby below its seats: the game fills the empty ones.
+    /// The owner may start with the lobby below its seats: the empty ones stay empty.
     pub starts_short: bool,
     pub starting_in_secs: Option<u32>,
 }
@@ -401,7 +454,9 @@ impl MenuCore {
                 .lobby
                 .as_ref()
                 .map_or(PageView::Joining, |(state, at)| {
-                    PageView::Lobby(lobby_view(state, *at, self.client.as_ref()))
+                    let mut view = lobby_view(state, *at, self.client.as_ref(), self.moving);
+                    view.fields = self.fields();
+                    PageView::Lobby(view)
                 }),
             Page::Result => self
                 .shown
@@ -681,45 +736,127 @@ fn lobby_row(l: &bota_radovid::proto::LobbySummary) -> LobbyRow {
     }
 }
 
+/// What a lobby page shows: the slot grid by team, those looking on, and the settings.
 fn lobby_view(
     state: &bota_radovid::proto::LobbyState,
     at: Instant,
     client: Option<&bota_radovid::Client>,
+    moving: Option<AccountId>,
 ) -> LobbyView {
+    use bota_radovid::proto::{Audience, LOBBY_NO_SLOT};
     let me = client.and_then(|c| c.me()).map(|me| me.id);
     let elapsed = u32::try_from(at.elapsed().as_millis()).unwrap_or(u32::MAX);
     let rules = client.and_then(|c| c.rulesets().find(|r| r.id == state.ruleset));
-    let seats: usize = rules.map_or(0, |r| r.teams.iter().map(|t| usize::from(*t)).sum());
-    let needed = rules.map_or(seats, |r| usize::from(r.lobby_min_players));
+    let sizes: Vec<u8> = rules.map(|r| r.teams.clone()).unwrap_or_default();
+    let needed = rules.map_or(usize::MAX, |r| usize::from(r.lobby_min_players));
+    let owner = Some(state.owner) == me;
+    let row = |m: &bota_radovid::proto::LobbyMember| MemberRow {
+        account: m.account,
+        name: text::line(&m.nickname, text::NAME),
+        ready: m.ready,
+        me: Some(m.account) == me,
+    };
+    let mut first = 0u8;
+    let teams: Vec<TeamRow> = sizes
+        .iter()
+        .enumerate()
+        .map(|(team, size)| {
+            let slots = (first..first.saturating_add(*size))
+                .map(|slot| SlotRow {
+                    slot,
+                    who: state.members.iter().find(|m| m.slot == slot).map(row),
+                })
+                .collect();
+            first = first.saturating_add(*size);
+            TeamRow {
+                name: match team {
+                    0 => "RADIANT".to_owned(),
+                    1 => "DIRE".to_owned(),
+                    n => format!("TEAM {}", n + 1),
+                },
+                slots,
+            }
+        })
+        .collect();
+    let spectators: Vec<MemberRow> = state
+        .members
+        .iter()
+        .filter(|m| m.slot == LOBBY_NO_SLOT)
+        .map(row)
+        .collect();
+    let seated = state.members.len() - spectators.len();
+    let seats: usize = sizes.iter().map(|s| usize::from(*s)).sum();
     let others_unready = state
         .members
         .iter()
-        .any(|m| Some(m.account) != me && !m.ready);
-    let waiting = if Some(state.owner) != me {
+        .any(|m| Some(m.account) != me && m.slot != LOBBY_NO_SLOT && !m.ready);
+    let i_am_looking = spectators.iter().any(|m| m.me);
+    let waiting = if !owner {
         None
-    } else if state.members.len() < needed {
+    } else if i_am_looking || seated < needed {
         Some("Waiting for more players")
     } else if others_unready {
         Some("Waiting for the other players to be ready")
     } else {
         None
     };
+    let audience_name = |audience: Audience| match audience {
+        Audience::Everyone => "Humans and Bots",
+        Audience::HumansOnly => "Humans",
+        Audience::BotsOnly => "Bots",
+    };
+    let settings = SettingsView {
+        mode: rules.map_or_else(
+            || text::line(&state.ruleset.0, text::NAME),
+            |r| text::line(&r.name, text::NAME),
+        ),
+        audience: audience_name(state.audience),
+        locked: state.locked,
+        modes: if owner {
+            client.map_or_else(Vec::new, |c| {
+                c.rulesets()
+                    .map(|r| ModeRow {
+                        id: r.id.clone(),
+                        name: text::line(&r.name, text::NAME),
+                        chosen: r.id == state.ruleset,
+                    })
+                    .collect()
+            })
+        } else {
+            Vec::new()
+        },
+        audiences: if owner {
+            [Audience::Everyone, Audience::HumansOnly, Audience::BotsOnly]
+                .into_iter()
+                .map(|audience| AudienceRow {
+                    audience,
+                    name: audience_name(audience),
+                    chosen: audience == state.audience,
+                })
+                .collect()
+        } else {
+            Vec::new()
+        },
+        editable: owner,
+    };
     LobbyView {
         name: text::line(&state.name, text::NAME),
         locked: state.locked,
-        members: state
-            .members
-            .iter()
-            .take(bota_radovid::proto::MAX_SEATS)
-            .map(|m| (text::line(&m.nickname, text::NAME), m.team, m.ready))
-            .collect(),
+        teams,
+        owner,
+        moving: moving
+            .and_then(|id| state.members.iter().find(|m| m.account == id))
+            .map(|m| text::line(&m.nickname, text::NAME)),
+        spectators,
+        settings,
+        fields: Vec::new(),
         waiting_approval: state.pending.len(),
         me_ready: state
             .members
             .iter()
             .any(|m| Some(m.account) == me && m.ready),
         waiting,
-        starts_short: Some(state.owner) == me && waiting.is_none() && state.members.len() < seats,
+        starts_short: owner && waiting.is_none() && seated < seats,
         starting_in_secs: state
             .starting_in_ms
             .map(|ms| ms.saturating_sub(elapsed).div_ceil(1000)),

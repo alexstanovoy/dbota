@@ -136,6 +136,16 @@ pub enum Act {
     Fill(SeatFill),
     /// The game mode a new lobby is of.
     LobbyMode(RulesetId),
+    /// In a lobby: sits in a slot (or none, looking on); the member being moved is put there.
+    LobbySlot(u8),
+    /// The owner picks a member to move with the next slot clicked.
+    MoveMember(AccountId),
+    KickMember(AccountId),
+    /// The owner's settings of the lobby one sits in.
+    ConfigureMode(RulesetId),
+    ConfigureAudience(Audience),
+    /// Sets the password typed (empty removes it).
+    ConfigurePassword,
 }
 
 /// What a local lobby's seats other than one's own take, as Dota's lobby
@@ -413,6 +423,11 @@ pub struct MenuCore {
     pub(super) lobbies: Vec<LobbySummary>,
     /// The ruleset a new lobby is made for; the service's first until one is chosen.
     lobby_mode: Option<RulesetId>,
+    /// The member the owner is about to move.
+    pub(super) moving: Option<AccountId>,
+    /// The password the owner set, sent again with each change of the settings (the service never
+    /// tells it back).
+    lobby_secret: Option<String>,
     /// The lobby sat in, and when it was last told.
     pub(super) lobby: Option<(LobbyState, Instant)>,
     pub(super) games: Vec<Game>,
@@ -527,6 +542,8 @@ impl MenuCore {
             asked: Vec::new(),
             lobbies: Vec::new(),
             lobby_mode: None,
+            moving: None,
+            lobby_secret: None,
             lobby: None,
             games: Vec::new(),
             results: VecDeque::new(),
@@ -786,6 +803,7 @@ impl MenuCore {
             Page::Login => FormKind::Login,
             Page::Register => FormKind::Register,
             Page::Lobbies => FormKind::Lobby,
+            Page::Lobby => FormKind::Room,
             Page::LocalLobby => FormKind::Host,
             Page::Replays => FormKind::Replay,
             _ => FormKind::None,
@@ -1296,7 +1314,7 @@ impl MenuCore {
     fn sit(&mut self, state: LobbyState) {
         self.lobby = Some((state, Instant::now()));
         if self.page == Page::Lobbies {
-            self.page = Page::Lobby;
+            self.go_form(Page::Lobby);
         }
     }
 
@@ -1457,6 +1475,24 @@ impl MenuCore {
             Act::Direct(spectate) => self.direct(spectate, false),
             Act::Host(lan) => self.host(lan),
             Act::LobbyMode(id) => self.lobby_mode = Some(id),
+            Act::LobbySlot(slot) => {
+                let account = self.moving.take();
+                self.lobby_ask(|lobby| ClientMsg::LobbySlot {
+                    lobby,
+                    account,
+                    slot,
+                });
+            }
+            Act::MoveMember(id) => self.moving = (self.moving != Some(id)).then_some(id),
+            Act::KickMember(account) => {
+                self.lobby_ask(|lobby| ClientMsg::LobbyKick { lobby, account })
+            }
+            Act::ConfigureMode(ruleset) => self.configure(Some(ruleset), None, None),
+            Act::ConfigureAudience(audience) => self.configure(None, Some(audience), None),
+            Act::ConfigurePassword => {
+                let typed = self.form.take_secret(0);
+                self.configure(None, None, Some((!typed.is_empty()).then_some(typed)));
+            }
             Act::Fill(fill) => {
                 self.prefs.host_fill = fill;
                 self.save_prefs();
@@ -1684,6 +1720,7 @@ impl MenuCore {
             );
             return;
         };
+        self.lobby_secret = (!password.is_empty()).then(|| password.clone());
         let msg = ClientMsg::LobbyCreate {
             ruleset,
             name,
@@ -1702,6 +1739,33 @@ impl MenuCore {
             .find(|id| Some(*id) == self.lobby_mode.as_ref())
             .or_else(|| client.rulesets().next().map(|r| &r.id))
             .cloned()
+    }
+
+    /// The owner's change of the lobby's settings: what is not named stays as it is, the password
+    /// being the one the owner set (the service never tells it back).
+    fn configure(
+        &mut self,
+        ruleset: Option<RulesetId>,
+        audience: Option<Audience>,
+        password: Option<Option<String>>,
+    ) {
+        let Some((state, _)) = &self.lobby else {
+            return;
+        };
+        let (ruleset, audience) = (
+            ruleset.unwrap_or_else(|| state.ruleset.clone()),
+            audience.unwrap_or(state.audience),
+        );
+        if let Some(password) = password {
+            self.lobby_secret = password;
+        }
+        let password = self.lobby_secret.clone().map(Secret);
+        self.lobby_ask(|lobby| ClientMsg::LobbyConfigure {
+            lobby,
+            ruleset,
+            audience,
+            password,
+        });
     }
 
     fn join_lobby(&mut self, name: String) {

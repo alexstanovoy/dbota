@@ -6,8 +6,11 @@ use bota_core::HEROES;
 use super::core::{Act, Page, SeatFill};
 use super::form::FormKind;
 use super::screens::{ERROR, GREEN, Kit, PLAIN, RED, tab_color, tab_of};
-use super::view::{FieldView, LobbyView, MenuView, PageView, ReplayRow, ResultView, RulesetRow};
+use super::view::{
+    FieldView, LobbyView, MemberRow, MenuView, PageView, ReplayRow, ResultView, RulesetRow, SlotRow,
+};
 use crate::ui;
+use bota_radovid::proto::LOBBY_NO_SLOT;
 
 /// The tabs of the top bar: the service's once logged in, and what is played
 /// without it always.
@@ -324,7 +327,7 @@ fn form_page(
             "A game hosted on this machine, no account needed, or a game server joined by its \
              address. You play under your profile name (SETTINGS, Options).",
         ),
-        FormKind::Lobby | FormKind::Replay | FormKind::None => ("", ""),
+        FormKind::Lobby | FormKind::Room | FormKind::Replay | FormKind::None => ("", ""),
     };
     kit.bold(card, title, 26.0, ui::INK);
     if !hint.is_empty() {
@@ -387,7 +390,7 @@ fn form_page(
             kit.button(row, "CREATE", Act::Host(false), GREEN, 44.0);
             kit.button(row, "CREATE FOR THE LAN", Act::Host(true), PLAIN, 44.0);
         }
-        FormKind::Lobby | FormKind::Replay | FormKind::None => {}
+        FormKind::Lobby | FormKind::Room | FormKind::Replay | FormKind::None => {}
     }
     if let Some(address) = fields.get(2).filter(|_| kind == FormKind::Host) {
         kit.bold(card, "JOIN BY ADDRESS", 20.0, ui::INK);
@@ -600,11 +603,21 @@ fn profile_page(kit: &mut Kit, body: Entity, name: &str, ratings: &[String], lad
     }
 }
 
+/// The lobby one sits in: the slot grid by team (a free slot is a click away, the owner moves
+/// and removes the others), those looking on, and the settings at the side, the owner's to change.
 fn lobby_page(kit: &mut Kit, body: Entity, lobby: &LobbyView) {
-    let card = kit.panel(
+    let page = kit.node(
         body,
         Node {
-            width: px(560),
+            column_gap: px(24),
+            align_items: AlignItems::FlexStart,
+            ..default()
+        },
+    );
+    let card = kit.panel(
+        page,
+        Node {
+            width: px(700),
             flex_direction: FlexDirection::Column,
             padding: UiRect::all(px(24)),
             row_gap: px(10),
@@ -613,24 +626,25 @@ fn lobby_page(kit: &mut Kit, body: Entity, lobby: &LobbyView) {
     );
     let lock = if lobby.locked { " · password" } else { "" };
     kit.bold(card, format!("LOBBY: {}{lock}", lobby.name), 24.0, ui::INK);
-    for (name, team, ready) in &lobby.members {
-        let row = kit.node(
-            card,
-            Node {
-                column_gap: px(16),
-                ..default()
-            },
-        );
-        let side = if *team == 0 { "Radiant" } else { "Dire" };
-        kit.text(row, format!("{side:8}"), 15.0, ui::INK_DIM);
-        kit.text(row, name.clone(), 16.0, ui::INK);
+    if let Some(name) = &lobby.moving {
         kit.text(
-            row,
-            if *ready { "READY" } else { "not ready" },
-            15.0,
-            if *ready { ui::HP_MINE } else { ui::INK_DIM },
+            card,
+            format!("Moving {name}: click a free slot, or LOOK ON"),
+            14.0,
+            ui::GOLDEN,
         );
     }
+    for team in &lobby.teams {
+        kit.bold(card, team.name.clone(), 16.0, ui::INK_DIM);
+        for slot in &team.slots {
+            slot_row(kit, card, slot, lobby);
+        }
+    }
+    kit.bold(card, "LOOKING ON", 16.0, ui::INK_DIM);
+    for member in &lobby.spectators {
+        member_row(kit, card, member, lobby);
+    }
+    kit.button(card, "LOOK ON", Act::LobbySlot(LOBBY_NO_SLOT), PLAIN, 28.0);
     if lobby.waiting_approval > 0 {
         kit.text(
             card,
@@ -670,6 +684,115 @@ fn lobby_page(kit: &mut Kit, body: Entity, lobby: &LobbyView) {
         kit.button(row, "READY", Act::ReadyLobby(true), GREEN, 42.0);
     }
     kit.button(row, "LEAVE", Act::LeaveLobby, RED, 42.0);
+    settings_card(kit, page, lobby);
+}
+
+/// One slot of the grid: its holder, or a click to sit there.
+fn slot_row(kit: &mut Kit, card: Entity, slot: &SlotRow, lobby: &LobbyView) {
+    let row = kit.node(
+        card,
+        Node {
+            column_gap: px(10),
+            align_items: AlignItems::Center,
+            ..default()
+        },
+    );
+    match &slot.who {
+        None => {
+            kit.button(row, "OPEN", Act::LobbySlot(slot.slot), PLAIN, 28.0);
+        }
+        Some(member) => member_row(kit, row, member, lobby),
+    }
+}
+
+/// A member's name and state, with the owner's MOVE and KICK for the others.
+fn member_row(kit: &mut Kit, parent: Entity, member: &MemberRow, lobby: &LobbyView) {
+    let row = kit.node(
+        parent,
+        Node {
+            column_gap: px(10),
+            align_items: AlignItems::Center,
+            ..default()
+        },
+    );
+    let name = if member.me {
+        format!("{} (you)", member.name)
+    } else {
+        member.name.clone()
+    };
+    kit.text(row, format!("{name:24}"), 16.0, ui::INK);
+    if member.ready {
+        kit.text(row, "READY", 15.0, ui::HP_MINE);
+    }
+    if lobby.owner && !member.me {
+        kit.button(row, "MOVE", Act::MoveMember(member.account), PLAIN, 24.0);
+        kit.button(row, "KICK", Act::KickMember(member.account), RED, 24.0);
+    }
+}
+
+/// The lobby's settings: read by everyone, changed by the owner.
+fn settings_card(kit: &mut Kit, page: Entity, lobby: &LobbyView) {
+    let card = kit.panel(
+        page,
+        Node {
+            width: px(360),
+            flex_direction: FlexDirection::Column,
+            padding: UiRect::all(px(20)),
+            row_gap: px(10),
+            ..default()
+        },
+    );
+    let settings = &lobby.settings;
+    kit.bold(card, "SETTINGS", 20.0, ui::INK);
+    kit.text(card, format!("Game mode: {}", settings.mode), 15.0, ui::INK);
+    kit.text(
+        card,
+        format!("Open to: {}", settings.audience),
+        15.0,
+        ui::INK,
+    );
+    kit.text(
+        card,
+        if settings.locked {
+            "Password: set"
+        } else {
+            "Password: none"
+        },
+        15.0,
+        ui::INK,
+    );
+    if !settings.editable {
+        kit.text(card, "Only the owner changes these.", 13.0, ui::INK_DIM);
+        return;
+    }
+    if settings.modes.len() > 1 {
+        kit.text(card, "Game mode", 13.0, ui::INK_DIM);
+        for mode in &settings.modes {
+            let look = if mode.chosen { GREEN } else { PLAIN };
+            kit.button(
+                card,
+                &mode.name,
+                Act::ConfigureMode(mode.id.clone()),
+                look,
+                30.0,
+            );
+        }
+    }
+    kit.text(card, "Open to", 13.0, ui::INK_DIM);
+    for audience in &settings.audiences {
+        let look = if audience.chosen { GREEN } else { PLAIN };
+        kit.button(
+            card,
+            audience.name,
+            Act::ConfigureAudience(audience.audience),
+            look,
+            30.0,
+        );
+    }
+    for (at, field) in lobby.fields.iter().enumerate() {
+        field_box(kit, card, at, field);
+    }
+    kit.button(card, "SET PASSWORD", Act::ConfigurePassword, PLAIN, 30.0);
 }
 
 fn result_page(kit: &mut Kit, body: Entity, result: &ResultView) {

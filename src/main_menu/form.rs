@@ -16,6 +16,8 @@ pub enum FormKind {
     Register,
     /// A lobby's name and password, to create or join one.
     Lobby,
+    /// The owner's password field in the lobby one sits in.
+    Room,
     /// The local lobby page: a lobby hosted on this machine (port, players) and a game joined by
     /// address.
     Host,
@@ -86,6 +88,7 @@ fn items(kind: FormKind, fields: usize) -> Vec<Item> {
                 .collect(),
         ),
         FormKind::Lobby => buttons(vec![Act::CreateLobby, Act::Submit]),
+        FormKind::Room => buttons(vec![Act::ConfigurePassword]),
         // A browser cannot host: only the join by address is there to visit.
         FormKind::Host if cfg!(target_arch = "wasm32") => vec![
             Item::Field(2),
@@ -132,6 +135,12 @@ impl Form {
                 Field::new("Password", "", true, PASSWORD),
                 Field::new("Password again", "", true, PASSWORD),
             ],
+            FormKind::Room => vec![Field::new(
+                "Password (empty removes it)",
+                "",
+                true,
+                MAX_LOBBY_PASSWORD_LEN,
+            )],
             FormKind::Lobby => vec![
                 Field::new("Lobby name", "", false, MAX_LOBBY_NAME_LEN),
                 Field::new("Password (optional)", "", true, MAX_LOBBY_PASSWORD_LEN),
