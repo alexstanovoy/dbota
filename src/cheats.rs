@@ -4,7 +4,9 @@
 //! file), and the ground under the cursor for what Dota puts there. Only a
 //! match started with cheats honours them; any other refuses them.
 
-use bota_client_core::{App as Core, CommandContext, Intent, Plain, parse_command, world_vec};
+use bota_client_core::{
+    App as Core, CommandContext, CommandError, Intent, Plain, parse_command, world_vec,
+};
 use bota_proto::{HeroId, ItemId, Vec2};
 
 use crate::manifest::Manifest;
@@ -55,7 +57,7 @@ impl CommandContext for Names<'_> {
 
 /// Runs one typed command: the cheat goes to the server, or the client says
 /// why it is no command.
-pub fn run(core: &mut Core, line: &str, names: &Names) -> Result<(), String> {
+pub fn run(core: &mut Core, line: &str, names: &Names) -> Result<(), CommandError> {
     let cheat = parse_command(line, names)?;
     core.act(Intent::Cheat(cheat));
     Ok(())

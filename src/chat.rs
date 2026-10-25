@@ -10,12 +10,11 @@ use bevy::{
     prelude::*,
     window::{Ime, PrimaryWindow},
 };
-use bota_client_core::{App as Core, ChatLine, say_refusal};
+use bota_client_core::{App as Core, ChatLine};
 use bota_core::{TextFault, rules};
-use bota_proto::{Audience, Body, EventKind, Speaker};
+use bota_proto::{Audience, Body, EventKind, SayRefusal, Speaker};
 
 use crate::dota_text::Texts;
-
 use crate::input::Typing;
 use crate::keys::{Action, Fired};
 use crate::session::Session;
@@ -281,7 +280,7 @@ fn send(core: &mut Core, input: &mut ChatInput, names: &crate::cheats::Names) {
     }
     if bota_client_core::is_chat_command(&line) {
         if let Err(why) = crate::cheats::run(core, &line, names) {
-            input.fault = Some((why, FAULT_SECS));
+            input.fault = Some((crate::error_msg::console_words(&why), FAULT_SECS));
         }
         return;
     }
@@ -409,6 +408,20 @@ fn name_color(core: &Core, line: &ChatLine) -> Color {
     }
 }
 
+/// How a refusal of one's own line reads.
+fn say_refusal(reason: SayRefusal) -> String {
+    match reason {
+        SayRefusal::TooFast { retry_in_ms } => {
+            format!(
+                "You are sending messages too fast; wait {:.1} s",
+                retry_in_ms as f32 / 1000.0
+            )
+        }
+        SayRefusal::NotAllowed => "Nobody here may hear that".to_owned(),
+        SayRefusal::Unfit => "That message cannot be sent".to_owned(),
+    }
+}
+
 /// How much of a line is left: whole for a while, then fading out.
 fn opacity(age: f32) -> f32 {
     (1.0 - (age - FADE_AFTER) / FADE_SECS).clamp(0.0, 1.0)
@@ -518,7 +531,10 @@ fn show_log(
         let (tag, name, name_tint, words) = match line {
             Shown::Heard(line, words) => (
                 tag(line),
-                format!("{}: ", core.speaker_name(&line.heard.from)),
+                format!(
+                    "{}: ",
+                    crate::seat_name::speaker_name(core, &line.heard.from)
+                ),
                 name_color(core, line),
                 *words,
             ),

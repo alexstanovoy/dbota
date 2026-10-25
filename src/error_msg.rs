@@ -6,7 +6,7 @@
 //! Dota.
 
 use bevy::prelude::*;
-use bota_client_core::Refused;
+use bota_client_core::{CommandError, CursorUse, Refused};
 use bota_proto::RejectReason;
 
 use crate::dota_text::Texts;
@@ -91,8 +91,8 @@ pub fn told(reason: RejectReason) -> Option<Told> {
     }
 }
 
-/// The line a refusal shows, if any: Dota's from the cache, else the
-/// simulator's plain words.
+/// The line a refusal shows, if any: Dota's from the cache, else the plain
+/// words.
 pub fn line(refused: &Refused, texts: &Texts) -> Option<String> {
     match refused {
         Refused::Rule(reason) => {
@@ -100,10 +100,76 @@ pub fn line(refused: &Refused, texts: &Texts) -> Option<String> {
             Some(
                 told.key
                     .and_then(|key| texts.label(key, &[]))
-                    .unwrap_or_else(|| capitalised(refused.text())),
+                    .unwrap_or_else(|| capitalised(plain_words(*reason))),
             )
         }
-        Refused::Said(line) => Some(line.clone()),
+        Refused::Command(error) => Some(console_words(error)),
+    }
+}
+
+/// A refusal in plain words, for the log.
+pub fn plain(refused: &Refused) -> String {
+    match refused {
+        Refused::Rule(reason) => plain_words(*reason).to_string(),
+        Refused::Command(error) => console_words(error),
+    }
+}
+
+/// What a rule's refusal is called in plain words.
+fn plain_words(reason: RejectReason) -> &'static str {
+    use RejectReason as Why;
+    match reason {
+        Why::HeroDead => "your hero is not standing",
+        Why::UnknownTarget => "no such target",
+        Why::WrongTargetKind => "not aimed at what it takes",
+        Why::OnCooldown => "still on cooldown",
+        Why::NotEnoughMana => "not enough mana",
+        Why::NotEnoughGold => "not enough gold",
+        Why::EmptySlot => "that slot is empty",
+        Why::NotCastable => "it works on its own",
+        Why::NotLearned => "no points in it yet",
+        Why::NoCharges => "no charges left",
+        Why::NotReady => "it is not working yet",
+        Why::NotYourUnit => "you do not drive that unit",
+        Why::UnknownItem => "the shop does not sell that",
+        Why::NotAtShop => "only at the shop",
+        Why::InventoryFull => "no room for it",
+        Why::Disabled => "you cannot act right now",
+        Why::NotYourItem => "not yours to sell",
+        Why::ClosedGround => "nothing can lie there",
+        Why::NotInBag => "not carried in the bag",
+        Why::NoCheats => "cheats are off in this match",
+        Why::BadCheat => "the cheat is out of bounds",
+        Why::OutOfStock => "the shop has none left",
+        Why::CannotLearn => "that talent cannot be learned now",
+        Why::Unsellable => "a free scroll sells for nothing",
+        Why::NotAdmitted => "no seat for this client: a wrong key, or none open",
+        Why::SeatHeld => "another live connection holds the seat",
+        Why::QueueFull => "too many orders queued",
+    }
+}
+
+/// Why a console line is no command, in the console's words.
+pub fn console_words(error: &CommandError) -> String {
+    match error {
+        CommandError::Empty => "nothing typed".to_string(),
+        CommandError::NotOnOff(word) => format!("'{word}' is not 1 or 0"),
+        CommandError::NoItemNamed => "which item?".to_string(),
+        CommandError::UnknownItem(name) => format!("no item called '{name}'"),
+        CommandError::NoHeroNamed => "which hero?".to_string(),
+        CommandError::UnknownHero(name) => format!("no hero called '{name}'"),
+        CommandError::NotAllyOrEnemy(word) => format!("'{word}' is not enemy or ally"),
+        CommandError::NeedsCursor(CursorUse::CreateHero) => {
+            "point at the ground to create a hero".to_string()
+        }
+        CommandError::NeedsCursor(CursorUse::Teleport) => {
+            "point at the ground to teleport to".to_string()
+        }
+        CommandError::NotCreepSide(word) => {
+            format!("'{word}' is not radiant, dire, neutral or all")
+        }
+        CommandError::UnknownCommand(word) => format!("unknown command '{word}'"),
+        CommandError::NotANumber(word) => format!("'{word}' is not a number"),
     }
 }
 
