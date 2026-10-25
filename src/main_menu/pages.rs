@@ -653,11 +653,11 @@ fn lobby_page(kit: &mut Kit, body: Entity, lobby: &LobbyView) {
         },
     );
     if lobby.starts_short {
-        // Below its seats: the game fills the empty ones, as a local lobby's dummy does.
+        // Below its seats: the empty ones stay empty.
         kit.button(row, "START NOW", Act::ReadyLobby(true), GREEN, 42.0);
         kit.text(
             card,
-            "The empty seats are filled by the game.",
+            "The empty seats stay empty: nobody plays against you.",
             14.0,
             ui::INK_DIM,
         );

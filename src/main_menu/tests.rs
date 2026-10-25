@@ -172,7 +172,7 @@ args = ["--map", "2", "--match-id", "{{match_id}}", "--bind", "127.0.0.1", "--po
         "--ws-port", "{{port}}"]
 env = {{ BOTA_SEATS = "{{seats}}" }}
 
-# Lobbies of it start alone: the game seats a dummy after the host.
+# Lobbies of it start alone: the match has the host's seat and nobody against it.
 [[ruleset]]
 id = "practice"
 name = "Practice"
@@ -187,7 +187,7 @@ binary = "{binary}"
 public_url = "ws://127.0.0.1:{{port}}"
 version_probe = ["--wire-fingerprint"]
 start_timeout_secs = {PATIENCE}
-args = ["--map", "2", "--mode", "lockstep", "--ack-timeout-ticks", "900", "--dummy-seat",
+args = ["--map", "2", "--mode", "lockstep", "--ack-timeout-ticks", "900",
         "--match-id", "{{match_id}}", "--bind", "127.0.0.1", "--port", "0",
         "--ws-port", "{{port}}", "--start-after-secs", "{PATIENCE}", "--abandon-unjoined",
         "--empty-after-secs", "{PATIENCE}", "--pick-secs", "1", "--tactical-secs", "0"]
@@ -1389,8 +1389,8 @@ fn a_lobby_is_made_for_the_game_mode_chosen() {
     assert_eq!(state.ruleset.0, "practice");
 }
 
-/// A host starts a lobby of a ruleset that allows it with nobody else: the game seats a dummy
-/// after the host, and the match is played with two players.
+/// A host starts a lobby of a ruleset that allows it with nobody else: the empty seat stays empty
+/// and the match is played by the host alone.
 #[test]
 fn a_host_starts_a_practice_lobby_alone_and_plays() {
     let service = service();
@@ -1411,7 +1411,7 @@ fn a_host_starts_a_practice_lobby_alone_and_plays() {
         std::thread::sleep(Duration::from_millis(5));
     }
     let view = game.view().expect("the match runs");
-    assert_eq!(view.players.len(), 2, "the host and the dummy");
+    assert_eq!(view.players.len(), 1, "the host alone, no dummy");
 }
 
 /// A game server of another wire than the client's is not used, and the menu says which it
