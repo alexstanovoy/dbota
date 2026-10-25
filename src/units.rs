@@ -9,7 +9,7 @@ use bevy::{
     world_serialization::WorldInstanceReady,
 };
 use bota_client_core::{ClientSession, bodies};
-use bota_core::{MapDef, NEUTRALS, NeutralKind, kind_def};
+use bota_core::{MapDef, NEUTRALS, NeutralKind, barracks_ranged_at, kind_def};
 use bota_proto::{EntityId, ProjectileModel, Team, UnitKind, UnitView};
 
 use crate::coords::sim_facing_to_rotation;
@@ -479,7 +479,22 @@ fn objective_unit(kind: UnitKind) -> Option<&'static str> {
 pub fn unit_name(map: &MapDef, unit: &UnitView) -> &'static str {
     match unit.neutral.and_then(NeutralKind::of) {
         Some(kind) => kind.neutral().name,
-        None => bota_core::unit_name(map, unit.kind, unit.team, unit.pos),
+        None => kind_name(map, unit.kind, unit.team, unit.pos),
+    }
+}
+
+/// What the game calls one unit on a map, from its kind, its side and where
+/// it stands: the barracks that feeds the ranged creeps is the one the map
+/// puts there, and each Ancient is its side's own.
+fn kind_name(map: &MapDef, kind: UnitKind, team: Team, pos: bota_proto::Vec2) -> &'static str {
+    match (kind, team) {
+        (UnitKind::Ancient, Team::Radiant) => "Radiant's Ancient",
+        (UnitKind::Ancient, Team::Dire) => "Dire's Ancient",
+        (UnitKind::Barracks, _) if barracks_ranged_at(map, team, pos) == Some(true) => {
+            "Ranged Barracks"
+        }
+        (UnitKind::Barracks, _) => "Melee Barracks",
+        _ => kind_def(kind).name,
     }
 }
 

@@ -84,7 +84,16 @@ pub fn read(path: &Path) -> Summary {
         && last_tick.is_none()
     {
         // A replay plays only in the build of bota that recorded it.
-        let why = if err.to_string().contains("wire fingerprint") {
+        let other_version = err
+            .get_ref()
+            .and_then(|inner| inner.downcast_ref::<bota_client_core::ReplayRefusal>())
+            .is_some_and(|refusal| {
+                matches!(
+                    refusal,
+                    bota_client_core::ReplayRefusal::OtherVersion { .. }
+                )
+            });
+        let why = if other_version {
             "recorded by another version of the game; only that version plays it"
         } else {
             "damaged, or not a bota replay"
