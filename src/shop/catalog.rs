@@ -7,7 +7,7 @@
 use std::{collections::HashMap, path::Path};
 
 use bevy::prelude::*;
-use bota_client_core::{SHOP_GROUPS, shop_groups};
+use bota_client_core::{ShopGroup, shop_groups};
 use bota_core::item_def;
 use bota_proto::ItemId;
 use serde_json::Value;
@@ -139,7 +139,7 @@ impl Catalog {
     /// build tree shows those), under the client core's last group.
     fn add_leftovers(&mut self, manifest: &Manifest) {
         let placed = |id: u16, sections: &[Section]| sections.iter().any(|s| s.items.contains(&id));
-        let rest: Vec<u16> = bota_client_core::ITEMS
+        let rest: Vec<u16> = crate::faces::ITEMS
             .iter()
             .map(|face| face.id)
             .filter(|id| sold(*id) && manifest.dota_name("item", *id) != Some("recipe"))
@@ -149,7 +149,7 @@ impl Catalog {
             self.sections.push(Section {
                 tab: Tab::Basics,
                 key: None,
-                title: SHOP_GROUPS[SHOP_GROUPS.len() - 1].to_string(),
+                title: group_name(ShopGroup::Other).to_string(),
                 items: rest,
             });
         }
@@ -197,7 +197,7 @@ pub fn parts_of(id: u16) -> &'static [ItemId] {
 
 /// The items one is a part of, in id order, at most [`MAX_INTO`].
 pub fn builds_into(id: u16) -> Vec<u16> {
-    bota_client_core::ITEMS
+    crate::faces::ITEMS
         .iter()
         .filter(|face| {
             item_def(ItemId(face.id)).is_some_and(|def| {
@@ -210,20 +210,34 @@ pub fn builds_into(id: u16) -> Vec<u16> {
         .collect()
 }
 
+/// What a group of the client core's is called, for a shop without the
+/// cache.
+fn group_name(group: ShopGroup) -> &'static str {
+    match group {
+        ShopGroup::Consumables => "Consumables",
+        ShopGroup::Attributes => "Attributes",
+        ShopGroup::Equipment => "Equipment",
+        ShopGroup::Supports => "Supports",
+        ShopGroup::Upgrades => "Upgrades",
+        ShopGroup::Recipes => "Recipes",
+        ShopGroup::Other => "Other",
+    }
+}
+
 /// The client core's own groups, recipes aside, for a client without the
 /// cache: its upgrades on the second tab, the rest on the first.
 fn fallback() -> Vec<Section> {
-    shop_groups("")
+    shop_groups()
         .into_iter()
-        .filter(|(group, _)| SHOP_GROUPS[*group] != "Recipes")
+        .filter(|(group, _)| *group != ShopGroup::Recipes)
         .map(|(group, items)| Section {
-            tab: if SHOP_GROUPS[group] == "Upgrades" {
+            tab: if group == ShopGroup::Upgrades {
                 Tab::Upgrades
             } else {
                 Tab::Basics
             },
             key: None,
-            title: SHOP_GROUPS[group].to_string(),
+            title: group_name(group).to_string(),
             items,
         })
         .collect()
@@ -316,7 +330,7 @@ mod tests {
                 .iter()
                 .flat_map(|s| s.items.clone())
                 .collect();
-            for face in bota_client_core::ITEMS.iter().filter(|f| sold(f.id)) {
+            for face in crate::faces::ITEMS.iter().filter(|f| sold(f.id)) {
                 let recipe = manifest.dota_name("item", face.id) == Some("recipe");
                 let times = listed.iter().filter(|id| **id == face.id).count();
                 assert_eq!(times, usize::from(!recipe), "{}", face.name);
