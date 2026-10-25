@@ -320,25 +320,36 @@ fn two_players_register_find_accept_play_and_see_their_result() {
     alice.menu.act(Act::Find(solo()));
     settle(&mut [&mut alice], |p| p.menu.view().searches.len() == 1);
     assert_eq!(alice.menu.view().searches[0].position, 1);
+    assert_eq!(
+        alice.menu.view().finding().0.len(),
+        1,
+        "the box shows a search nobody was found for"
+    );
     bob.menu.act(Act::Find(solo()));
     settle(&mut [&mut alice, &mut bob], |p| {
         p.menu.view().offer.is_some()
     });
     for player in [&mut alice, &mut bob] {
+        let view = player.menu.view();
+        assert!(
+            view.finding().0.is_empty(),
+            "the prompt replaces the search box"
+        );
         let offer = player.menu.view().offer.expect("MATCH FOUND");
         assert_eq!((offer.accepted, offer.of, offer.answered), (0, 2, false));
         player.menu.act(Act::Accept(offer.proposal));
     }
-    // Both accepted: the game server starts and each menu opens its seat. What shows of the
-    // search never lapses on the way: the search, then the wait for a server, then the game.
+    // Both accepted: the game server starts and each menu opens its seat. The FINDING MATCH
+    // box is gone from the moment a match was found: the prompt, the wait for a server that is
+    // started at once and the game show no search.
     settle(&mut [&mut alice, &mut bob], |p| {
         let view = p.menu.view();
-        let game = p.menu.page() == Page::Game;
+        let (searching, waiting) = view.finding();
         assert!(
-            game || !view.searches.is_empty() || !view.waits.is_empty(),
-            "neither a search, a wait nor the game shows"
+            searching.is_empty() && waiting.is_empty(),
+            "the search box stays: {searching:?} {waiting:?}"
         );
-        game
+        p.menu.page() == Page::Game
     });
     let mut games = [
         (

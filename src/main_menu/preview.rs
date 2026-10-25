@@ -106,6 +106,7 @@ fn search(overloaded: bool) -> SearchRow {
         waiting: 5,
         overloaded,
         games_waiting: if overloaded { 3 } else { 0 },
+        offered: false,
     }
 }
 
@@ -163,7 +164,10 @@ pub fn view(name: &str) -> Option<MenuView> {
         "match-found" | "accepted" => {
             let mut view = logged_in(Page::Home, home());
             view.searches = vec![
-                search(false),
+                SearchRow {
+                    offered: true,
+                    ..search(false)
+                },
                 SearchRow {
                     entry: QueueEntryId(4),
                     waited: "0:12".to_owned(),

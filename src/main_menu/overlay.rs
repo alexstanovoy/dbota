@@ -11,7 +11,8 @@ use crate::ui;
 
 /// The overlay layer.
 pub fn draw(kit: &mut Kit, root: Entity, view: &MenuView) {
-    if !view.searches.is_empty() || !view.waits.is_empty() {
+    let (searching, waiting) = view.finding();
+    if !searching.is_empty() || !waiting.is_empty() {
         // Bottom right over the menu, as Dota's; top right over a game,
         // clear of its panels.
         let corner = if view.covers() {
@@ -41,11 +42,11 @@ pub fn draw(kit: &mut Kit, root: Entity, view: &MenuView) {
             },
         );
         kit.commands.entity(panel).insert(crate::hud::Blocker);
-        for (at, search) in view.searches.iter().enumerate() {
-            let which = (view.searches.len() > 1).then(|| at + 1);
+        for (at, search) in searching.iter().enumerate() {
+            let which = (searching.len() > 1).then(|| at + 1);
             search_row(kit, panel, search, which);
         }
-        for wait in &view.waits {
+        for wait in waiting {
             wait_row(kit, panel, wait);
         }
     }

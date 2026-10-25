@@ -43,6 +43,8 @@ pub struct SearchRow {
     /// Every game server busy: nobody is paired until one frees.
     pub overloaded: bool,
     pub games_waiting: u32,
+    /// A match was found for it: the MATCH FOUND prompt has it, not the search box.
+    pub offered: bool,
 }
 
 /// The MATCH FOUND prompt.
@@ -253,6 +255,19 @@ pub struct MenuView {
 }
 
 impl MenuView {
+    /// What the FINDING MATCH box shows: the searches no match was found for yet, and the
+    /// matches kept waiting for a game server behind others. Dota swaps the box for the accept
+    /// prompt as soon as a match is found, and for the game once it starts.
+    pub fn finding(&self) -> (Vec<&SearchRow>, Vec<&WaitRow>) {
+        (
+            self.searches.iter().filter(|s| !s.offered).collect(),
+            self.waits
+                .iter()
+                .filter(|w| w.ahead > 0 || w.overloaded)
+                .collect(),
+        )
+    }
+
     /// Whether the menu covers the screen.
     pub fn covers(&self) -> bool {
         self.body != PageView::Hidden
@@ -569,6 +584,7 @@ fn search_rows(
             waiting: s.waiting,
             overloaded: s.overloaded,
             games_waiting: s.games_waiting,
+            offered: s.offer.is_some(),
         })
         .collect()
 }
