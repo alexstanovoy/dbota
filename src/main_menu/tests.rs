@@ -171,6 +171,27 @@ version_probe = ["--wire-fingerprint"]
 args = ["--map", "2", "--match-id", "{{match_id}}", "--bind", "127.0.0.1", "--port", "0",
         "--ws-port", "{{port}}"]
 env = {{ BOTA_SEATS = "{{seats}}" }}
+
+# Lobbies of it start alone: the game seats a dummy after the host.
+[[ruleset]]
+id = "practice"
+name = "Practice"
+game = "bota"
+game_fingerprint = "{fingerprint:016x}"
+teams = [1, 1]
+rated = false
+lobby_min_players = 1
+[ruleset.launcher]
+kind = "local"
+binary = "{binary}"
+public_url = "ws://127.0.0.1:{{port}}"
+version_probe = ["--wire-fingerprint"]
+start_timeout_secs = {PATIENCE}
+args = ["--map", "2", "--mode", "lockstep", "--ack-timeout-ticks", "900", "--dummy-seat",
+        "--match-id", "{{match_id}}", "--bind", "127.0.0.1", "--port", "0",
+        "--ws-port", "{{port}}", "--start-after-secs", "{PATIENCE}", "--abandon-unjoined",
+        "--empty-after-secs", "{PATIENCE}", "--pick-secs", "1", "--tactical-secs", "0"]
+env = {{ BOTA_SEATS = "{{seats}}" }}
 "#,
         db = dir.join("radovid.db").display(),
         fingerprint = bota_radovid::fingerprint(),
@@ -1319,6 +1340,100 @@ fn a_ruleset_for_bots_is_not_listed_to_humans() {
             .iter()
             .map(|r| (r.name.as_str(), r.audience))
             .collect::<Vec<_>>(),
-        [("1x1 Mid Only", "Humans and Bots")]
+        [
+            ("1x1 Mid Only", "Humans and Bots"),
+            ("Practice", "Humans and Bots")
+        ]
+    );
+}
+
+/// Makes a lobby of the game mode `mode` by name from the LOBBIES page.
+fn create_lobby(player: &mut Player, mode: &str, name: &str) {
+    player.menu.act(Act::Go(Page::Lobbies));
+    let PageView::Lobbies { modes, .. } = player.menu.view().body else {
+        panic!("the lobbies page");
+    };
+    let id = modes
+        .iter()
+        .find(|m| m.name == mode)
+        .unwrap_or_else(|| panic!("the mode {mode} is offered: {modes:?}"))
+        .id
+        .clone();
+    player.menu.act(Act::LobbyMode(id));
+    player.fill(&[name]);
+    player.menu.act(Act::CreateLobby);
+    settle(&mut [player], |p| p.menu.page() == Page::Lobby);
+}
+
+/// A lobby is made for the game mode chosen among those the service offers this account (not
+/// the bots-only one), and it is that ruleset's.
+#[test]
+fn a_lobby_is_made_for_the_game_mode_chosen() {
+    let service = service();
+    let mut alice = Player::new(Some(&service));
+    alice.register("alice");
+    alice.menu.act(Act::Go(Page::Lobbies));
+    let PageView::Lobbies { modes, .. } = alice.menu.view().body else {
+        panic!("the lobbies page");
+    };
+    assert_eq!(
+        modes
+            .iter()
+            .map(|m| (m.name.as_str(), m.chosen))
+            .collect::<Vec<_>>(),
+        [("1x1 Mid Only", true), ("Practice", false)],
+        "the first until one is chosen, none bots-only"
+    );
+    create_lobby(&mut alice, "Practice", "my practice");
+    let (state, _) = alice.menu.lobby.as_ref().expect("sat in the lobby");
+    assert_eq!(state.ruleset.0, "practice");
+}
+
+/// A host starts a lobby of a ruleset that allows it with nobody else: the game seats a dummy
+/// after the host, and the match is played with two players.
+#[test]
+fn a_host_starts_a_practice_lobby_alone_and_plays() {
+    let service = service();
+    let mut alice = Player::new(Some(&service));
+    alice.register("alice");
+    create_lobby(&mut alice, "Practice", "alone");
+    let PageView::Lobby(lobby) = alice.menu.view().body else {
+        panic!("the lobby page");
+    };
+    assert!(lobby.starts_short && lobby.waiting.is_none(), "{lobby:?}");
+    alice.menu.act(Act::ReadyLobby(true));
+    settle(&mut [&mut alice], |p| p.menu.page() == Page::Game);
+    let mut game = open(launch_of(&mut alice), &alice.trust);
+    let deadline = Instant::now() + Duration::from_secs(PATIENCE);
+    while game.view().is_none_or(|v| v.tick <= 5) {
+        assert!(Instant::now() < deadline, "the match never began");
+        play_step(&mut game, HeroId::SHADOW_FIEND);
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    let view = game.view().expect("the match runs");
+    assert_eq!(view.players.len(), 2, "the host and the dummy");
+}
+
+/// A game server of another wire than the client's is not used, and the menu says which it
+/// looked at; the real one, named, is found.
+#[cfg(unix)]
+#[test]
+fn a_server_of_another_wire_is_refused_and_the_matching_one_found() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = Scratch::new("server_wire");
+    let stale = dir.0.join("bota_server");
+    std::fs::write(&stale, "#!/bin/sh\necho 0000000000000001\n").expect("a script");
+    std::fs::set_permissions(&stale, std::fs::Permissions::from_mode(0o755)).expect("mode");
+    let error = super::launch::server_binary(Some(&stale)).expect_err("another wire");
+    let said = error.to_string();
+    assert!(
+        said.contains("no bota_server of this client's wire")
+            && said.contains(&stale.display().to_string())
+            && said.contains("0000000000000001"),
+        "{said}"
+    );
+    assert_eq!(
+        super::launch::server_binary(Some(server_binary())).expect("the matching server"),
+        server_binary()
     );
 }

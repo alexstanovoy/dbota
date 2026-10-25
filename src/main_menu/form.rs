@@ -86,6 +86,12 @@ fn items(kind: FormKind, fields: usize) -> Vec<Item> {
                 .collect(),
         ),
         FormKind::Lobby => buttons(vec![Act::CreateLobby, Act::Submit]),
+        // A browser cannot host: only the join by address is there to visit.
+        FormKind::Host if cfg!(target_arch = "wasm32") => vec![
+            Item::Field(2),
+            Item::Button(Act::Direct(false)),
+            Item::Button(Act::Direct(true)),
+        ],
         FormKind::Host => vec![
             Item::Field(0),
             Item::Field(1),

@@ -6,7 +6,7 @@ use bota_radovid::proto::{LobbyId, MatchId, ProposalId, QueueEntryId, RulesetId}
 use super::core::{GameKind, Page, SeatFill, Status};
 use super::form::FormKind;
 use super::view::{
-    ConfirmView, FieldView, FinishedRow, GameRow, LobbyRow, LobbyView, MenuView, OfferBox,
+    ConfirmView, FieldView, FinishedRow, GameRow, LobbyRow, LobbyView, MenuView, ModeRow, OfferBox,
     PageView, ResultView, RulesetRow, SearchRow, SeatRow, WaitRow,
 };
 
@@ -212,6 +212,11 @@ pub fn view(name: &str) -> Option<MenuView> {
         "lobbies" => logged_in(
             Page::Lobbies,
             PageView::Lobbies {
+                modes: vec![ModeRow {
+                    id: RulesetId("solo_mid".to_owned()),
+                    name: "1x1 Mid Only".to_owned(),
+                    chosen: true,
+                }],
                 list: vec![
                     LobbyRow {
                         id: LobbyId(1),
@@ -248,6 +253,7 @@ pub fn view(name: &str) -> Option<MenuView> {
                 waiting_approval: 0,
                 me_ready: true,
                 waiting: None,
+                starts_short: false,
                 starting_in_secs: Some(3),
             }),
         ),

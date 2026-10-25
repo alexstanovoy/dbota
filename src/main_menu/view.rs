@@ -105,6 +105,14 @@ pub struct LobbyRow {
     pub seats: u8,
 }
 
+/// A ruleset a lobby may be made for.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ModeRow {
+    pub id: RulesetId,
+    pub name: String,
+    pub chosen: bool,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LobbyView {
     pub name: String,
@@ -115,6 +123,8 @@ pub struct LobbyView {
     pub me_ready: bool,
     /// Why the owner cannot start yet, as Dota's lobby says it.
     pub waiting: Option<&'static str>,
+    /// The owner may start with the lobby below its seats: the game fills the empty ones.
+    pub starts_short: bool,
     pub starting_in_secs: Option<u32>,
 }
 
@@ -187,6 +197,8 @@ pub enum PageView {
     Lobbies {
         list: Vec<LobbyRow>,
         fields: Vec<FieldView>,
+        /// The game modes the service offers this account, and the one a new lobby is of.
+        modes: Vec<ModeRow>,
     },
     Lobby(LobbyView),
     Result(ResultView),
@@ -332,6 +344,23 @@ impl MenuCore {
             .collect()
     }
 
+    /// The game modes a new lobby may be of: what the service offers the account, the chosen one
+    /// marked (the first until one is).
+    fn modes(&self) -> Vec<ModeRow> {
+        let Some(client) = &self.client else {
+            return Vec::new();
+        };
+        let chosen = self.lobby_mode(client);
+        client
+            .rulesets()
+            .map(|r| ModeRow {
+                id: r.id.clone(),
+                name: text::line(&r.name, text::NAME),
+                chosen: Some(&r.id) == chosen.as_ref(),
+            })
+            .collect()
+    }
+
     fn cooldown(&self) -> Option<String> {
         let left = self.client.as_ref()?.searches().cooldown_left_ms();
         (left > 0).then(|| format!("You can search again in {}", clock(left.div_ceil(1000))))
@@ -366,6 +395,7 @@ impl MenuCore {
                     .map(lobby_row)
                     .collect(),
                 fields: self.fields(),
+                modes: self.modes(),
             },
             Page::Lobby => self
                 .lobby
@@ -658,16 +688,16 @@ fn lobby_view(
 ) -> LobbyView {
     let me = client.and_then(|c| c.me()).map(|me| me.id);
     let elapsed = u32::try_from(at.elapsed().as_millis()).unwrap_or(u32::MAX);
-    let seats = client
-        .and_then(|c| c.rulesets().find(|r| r.id == state.ruleset))
-        .map_or(0, |r| r.teams.iter().map(|t| usize::from(*t)).sum());
+    let rules = client.and_then(|c| c.rulesets().find(|r| r.id == state.ruleset));
+    let seats: usize = rules.map_or(0, |r| r.teams.iter().map(|t| usize::from(*t)).sum());
+    let needed = rules.map_or(seats, |r| usize::from(r.lobby_min_players));
     let others_unready = state
         .members
         .iter()
         .any(|m| Some(m.account) != me && !m.ready);
     let waiting = if Some(state.owner) != me {
         None
-    } else if state.members.len() < seats {
+    } else if state.members.len() < needed {
         Some("Waiting for more players")
     } else if others_unready {
         Some("Waiting for the other players to be ready")
@@ -689,6 +719,7 @@ fn lobby_view(
             .iter()
             .any(|m| Some(m.account) == me && m.ready),
         waiting,
+        starts_short: Some(state.owner) == me && waiting.is_none() && state.members.len() < seats,
         starting_in_secs: state
             .starting_in_ms
             .map(|ms| ms.saturating_sub(elapsed).div_ceil(1000)),

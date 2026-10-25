@@ -134,6 +134,8 @@ pub enum Act {
     Reconnect,
     /// What a local lobby's empty seats take.
     Fill(SeatFill),
+    /// The game mode a new lobby is of.
+    LobbyMode(RulesetId),
 }
 
 /// What a local lobby's seats other than one's own take, as Dota's lobby
@@ -414,6 +416,8 @@ pub struct MenuCore {
     pub(super) status: Option<Status>,
     asked: Vec<(u32, Asked)>,
     pub(super) lobbies: Vec<LobbySummary>,
+    /// The ruleset a new lobby is made for; the service's first until one is chosen.
+    lobby_mode: Option<RulesetId>,
     /// The lobby sat in, and when it was last told.
     pub(super) lobby: Option<(LobbyState, Instant)>,
     pub(super) games: Vec<Game>,
@@ -527,6 +531,7 @@ impl MenuCore {
             status: None,
             asked: Vec::new(),
             lobbies: Vec::new(),
+            lobby_mode: None,
             lobby: None,
             games: Vec::new(),
             results: VecDeque::new(),
@@ -1456,6 +1461,7 @@ impl MenuCore {
             Act::LeaveLobby => self.lobby_ask(|lobby| ClientMsg::LobbyLeave { lobby }),
             Act::Direct(spectate) => self.direct(spectate, false),
             Act::Host(lan) => self.host(lan),
+            Act::LobbyMode(id) => self.lobby_mode = Some(id),
             Act::Fill(fill) => {
                 self.prefs.host_fill = fill;
                 self.save_prefs();
@@ -1676,12 +1682,7 @@ impl MenuCore {
     fn create_lobby(&mut self) {
         let name = self.form.value(0).trim().to_owned();
         let password = self.form.take_secret(1);
-        let Some(ruleset) = self
-            .client
-            .as_ref()
-            .and_then(|c| c.rulesets().next())
-            .map(|r| r.id.clone())
-        else {
+        let Some(ruleset) = self.client.as_ref().and_then(|c| self.lobby_mode(c)) else {
             self.tell(
                 "The service offers no game this client can play".to_owned(),
                 true,
@@ -1695,6 +1696,17 @@ impl MenuCore {
             password: (!password.is_empty()).then_some(Secret(password)),
         };
         self.ask(msg, Asked::Lobby);
+    }
+
+    /// The ruleset a new lobby is made for: the one chosen if the service still offers it, else
+    /// the first it offers.
+    pub(super) fn lobby_mode(&self, client: &Client) -> Option<RulesetId> {
+        client
+            .rulesets()
+            .map(|r| &r.id)
+            .find(|id| Some(*id) == self.lobby_mode.as_ref())
+            .or_else(|| client.rulesets().next().map(|r| &r.id))
+            .cloned()
     }
 
     fn join_lobby(&mut self, name: String) {

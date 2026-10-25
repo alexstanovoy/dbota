@@ -6,10 +6,16 @@ use bevy::prelude::*;
 use super::core::{Act, Page};
 use super::pages::field_box;
 use super::screens::{GREEN, Kit, PLAIN};
-use super::view::{FieldView, LobbyRow};
+use super::view::{FieldView, LobbyRow, ModeRow};
 use crate::ui;
 
-pub fn list(kit: &mut Kit, body: Entity, lobbies: &[LobbyRow], fields: &[FieldView]) {
+pub fn list(
+    kit: &mut Kit,
+    body: Entity,
+    lobbies: &[LobbyRow],
+    fields: &[FieldView],
+    modes: &[ModeRow],
+) {
     let page = kit.node(
         body,
         Node {
@@ -37,6 +43,19 @@ pub fn list(kit: &mut Kit, body: Entity, lobbies: &[LobbyRow], fields: &[FieldVi
     );
     for (at, field) in fields.iter().enumerate() {
         field_box(kit, card, at, field);
+    }
+    if modes.len() > 1 {
+        kit.text(card, "Game mode", 13.0, ui::INK_DIM);
+        for mode in modes {
+            let look = if mode.chosen { GREEN } else { PLAIN };
+            kit.button(
+                card,
+                &mode.name,
+                Act::LobbyMode(mode.id.clone()),
+                look,
+                34.0,
+            );
+        }
     }
     let row = kit.node(
         card,

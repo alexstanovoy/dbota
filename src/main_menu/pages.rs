@@ -141,7 +141,11 @@ pub fn draw(kit: &mut Kit, root: Entity, view: &MenuView) {
             ratings,
             ladder,
         } => profile_page(kit, body, name, ratings, ladder),
-        PageView::Lobbies { list, fields } => super::lobbies::list(kit, body, list, fields),
+        PageView::Lobbies {
+            list,
+            fields,
+            modes,
+        } => super::lobbies::list(kit, body, list, fields, modes),
         PageView::Lobby(lobby) => lobby_page(kit, body, lobby),
         PageView::Result(result) => result_page(kit, body, result),
         PageView::Replays { list, fields } => replays_page(kit, body, list, fields),
@@ -326,11 +330,16 @@ fn form_page(
     if !hint.is_empty() {
         kit.text(card, hint, 14.0, ui::INK_DIM);
     }
+    // Hosting is the desktop's: a browser's page offers only the join by address below.
+    let hosting = kind == FormKind::Host && !BROWSER;
+    if kind == FormKind::Host && BROWSER {
+        kit.text(card, NEEDS_DESKTOP, 14.0, ui::GOLDEN);
+    }
     // The local lobby's address is below the lobby it hosts.
-    let shown = if kind == FormKind::Host {
-        2
-    } else {
-        fields.len()
+    let shown = match kind {
+        FormKind::Host if hosting => 2,
+        FormKind::Host => 0,
+        _ => fields.len(),
     };
     for (at, field) in fields.iter().enumerate().take(shown) {
         field_box(kit, card, at, field);
@@ -338,10 +347,10 @@ fn form_page(
     if busy {
         kit.text(card, "Connecting to the service…", 15.0, ui::GOLDEN);
     }
-    if let Some((chosen, bot_set)) = fill {
+    if let Some((chosen, bot_set)) = fill.filter(|_| hosting) {
         seat_fill(kit, card, chosen, bot_set);
     }
-    if let Some(at) = hosted_at {
+    if let Some(at) = hosted_at.filter(|_| hosting) {
         kit.text(
             card,
             format!("Your lobby is open: others join by address at {at}"),
@@ -349,7 +358,7 @@ fn form_page(
             ui::GOLDEN,
         );
     }
-    if let Some(on) = cheats {
+    if let Some(on) = cheats.filter(|_| hosting) {
         cheats_toggle(kit, card, on);
     }
     let row = kit.node(
@@ -373,7 +382,7 @@ fn form_page(
             kit.button(row, "BACK", Act::Go(Page::Login), PLAIN, 44.0);
         }
         // One lobby at a time: while it is up, the card says where it is.
-        FormKind::Host if hosted_at.is_some() => {}
+        FormKind::Host if hosted_at.is_some() || !hosting => {}
         FormKind::Host => {
             kit.button(row, "CREATE", Act::Host(false), GREEN, 44.0);
             kit.button(row, "CREATE FOR THE LAN", Act::Host(true), PLAIN, 44.0);
@@ -638,7 +647,16 @@ fn lobby_page(kit: &mut Kit, body: Entity, lobby: &LobbyView) {
             ..default()
         },
     );
-    if lobby.me_ready {
+    if lobby.starts_short {
+        // Below its seats: the game fills the empty ones, as a local lobby's dummy does.
+        kit.button(row, "START NOW", Act::ReadyLobby(true), GREEN, 42.0);
+        kit.text(
+            card,
+            "The empty seats are filled by the game.",
+            14.0,
+            ui::INK_DIM,
+        );
+    } else if lobby.me_ready {
         kit.button(row, "NOT READY", Act::ReadyLobby(false), PLAIN, 42.0);
     } else if let Some(why) = lobby.waiting {
         kit.disabled_button(row, "READY", 42.0);
@@ -866,6 +884,14 @@ fn cheats_toggle(kit: &mut Kit, card: Entity, on: bool) {
 
 /// DEMO HERO: every hero, its portrait and its name; a click starts Dota's
 /// Demo Hero with it, alone on our map with every cheat.
+/// The page runs in a browser, which cannot start a game server.
+const BROWSER: bool = cfg!(target_arch = "wasm32");
+
+/// What a page that starts a game server says in a browser.
+const NEEDS_DESKTOP: &str = "This needs the desktop client: a browser cannot start a game server. \
+     Run dbota (it comes with its bota_server), or a bota_server of your own and join it by address \
+     under LOCAL LOBBY.";
+
 fn demo_page(kit: &mut Kit, body: Entity, heroes: &[(u16, String)]) {
     let column = kit.node(
         body,
@@ -883,6 +909,10 @@ fn demo_page(kit: &mut Kit, body: Entity, heroes: &[(u16, String)]) {
         16.0,
         ui::INK_DIM,
     );
+    if BROWSER {
+        kit.text(column, NEEDS_DESKTOP, 16.0, ui::GOLDEN);
+        return;
+    }
     let grid = kit.node(
         column,
         Node {
