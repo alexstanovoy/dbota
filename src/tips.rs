@@ -158,6 +158,7 @@ fn pick(
     args: Res<crate::Args>,
     abilities: Query<(&Interaction, &AbilityBox)>,
     items: Query<(&Interaction, &ItemBox)>,
+    entering: Query<(&Interaction, &crate::strategy::StrategyAbility)>,
     cells: Query<(&Interaction, &ShopCell)>,
     buffs: Query<(&Interaction, &crate::buffs::BuffChip)>,
     talent_cells: Query<(&Interaction, &crate::talents::TalentCell)>,
@@ -187,6 +188,8 @@ fn pick(
         talent_tip(core, cell.0).map(note_tip)
     } else if let Some(slot) = hovered(&abilities) {
         ability_tip(&look, core, slot.0, rate)
+    } else if let Some(ability) = hovered(&entering) {
+        entering_tip(&look, ability.0)
     } else if let Some(slot) = hovered(&items) {
         item_tip(&look, core, slot.0, rate)
     } else if let Some(cell) = hovered(&cells) {
@@ -197,6 +200,13 @@ fn pick(
     if shown.0 != content {
         shown.0 = content;
     }
+}
+
+/// An ability of the hero one enters battle as, in the strategy phase: Dota's
+/// tooltip of it at its first level.
+fn entering_tip(look: &Lookup, id: u16) -> Option<Content> {
+    let max = bota_core::ability_def(bota_proto::AbilityId(id))?.max_level;
+    look.ability(id, 1, max)
 }
 
 /// `--tip item:ID`, `--tip shop:ID` or `--tip ability:ID:LEVEL`: a popup that

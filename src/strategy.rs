@@ -52,6 +52,11 @@ const SECTIONS: [&str; 5] = [
 #[derive(Component)]
 struct Screen;
 
+/// The ability of the hero one enters battle as, by id: hovered, it opens
+/// the ability's tooltip as in the game.
+#[derive(Component)]
+pub struct StrategyAbility(pub u16);
+
 /// The clock.
 #[derive(Component)]
 struct Clock;
@@ -356,7 +361,13 @@ fn details(commands: &mut Commands, kit: &Kit, hero: u16, root: Entity) {
             ..default()
         };
         let art = kit.image(kit.manifest.ability_icon(id.0));
-        commands.spawn((icon, art, ChildOf(abilities)));
+        commands.spawn((
+            StrategyAbility(id.0),
+            Interaction::default(),
+            icon,
+            art,
+            ChildOf(abilities),
+        ));
     }
     commands.spawn((
         Node {
