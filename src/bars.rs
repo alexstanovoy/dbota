@@ -34,7 +34,7 @@ const TICK_SPACING_MIN: f32 = 4.0;
 /// Blocks of health counted in hits a bar holds at most.
 const MAX_SEGMENTS: usize = 24;
 /// Interface pixels between two blocks.
-const SEGMENT_GAP: f32 = 2.0;
+const SEGMENT_GAP: f32 = 1.5;
 /// The marks' colours: Dota's dark lines over the health, the big ones
 /// darker (`dota_health_marker_minor_alpha`, `..._major_alpha`).
 const TICK: Color = Color::srgba(0.0, 0.0, 0.0, 0.7);
@@ -211,23 +211,25 @@ pub fn shows_bar(kind: UnitKind) -> bool {
     bar_size(kind).is_some()
 }
 
-/// Width and height of a unit's bar in interface pixels: Dota's broad bars,
-/// read at 1080 lines and at 4K alike.
+/// Width and height of a unit's bar in interface pixels: Dota's own sizes at a
+/// 1080-line screen (a hero's 110 by 10, a creep's 55 by 5), turned into
+/// interface pixels, so they hold at 1080 and 4K alike.
 fn bar_size(kind: UnitKind) -> Option<(f32, f32)> {
+    let dota = |w: f32, h: f32| Some((w * ui::DOTA, h * ui::DOTA));
     match kind {
-        UnitKind::Hero => Some((124.0, 12.0)),
-        UnitKind::Tower | UnitKind::Barracks | UnitKind::Ancient => Some((156.0, 11.0)),
-        UnitKind::Filler => Some((110.0, 9.0)),
+        UnitKind::Hero => dota(110.0, 10.0),
+        UnitKind::Tower | UnitKind::Barracks | UnitKind::Ancient => dota(120.0, 8.0),
+        UnitKind::Filler => dota(90.0, 7.0),
         // The map's objectives never take damage: Dota shows them no health.
         UnitKind::Fountain | UnitKind::Outpost | UnitKind::Watcher | UnitKind::Shrine => None,
-        UnitKind::Courier => Some((64.0, 8.0)),
-        UnitKind::Ward => Some((48.0, 7.0)),
-        _ => Some((72.0, 8.0)),
+        UnitKind::Courier => dota(50.0, 6.0),
+        UnitKind::Ward => dota(40.0, 5.0),
+        _ => dota(55.0, 5.0),
     }
 }
 
 /// The height of a hero's mana bar under its health.
-const MANA_HEIGHT: f32 = 5.0;
+const MANA_HEIGHT: f32 = 4.0 * ui::DOTA;
 
 /// How high over its feet a unit's bar floats, in world units.
 fn bar_height(kind: UnitKind) -> f32 {
@@ -314,10 +316,10 @@ fn spawn_bar(commands: &mut Commands, layer: Entity, fonts: &Fonts, live: &UnitV
                 BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.85)),
                 Node {
                     position_type: PositionType::Absolute,
-                    left: px(-22.0),
+                    left: px(-17.0),
                     top: px(-3.0),
-                    width: px(20.0),
-                    height: px(h + MANA_HEIGHT + 4.0),
+                    width: px(16.0),
+                    height: px(h + MANA_HEIGHT + 3.0),
                     justify_content: JustifyContent::Center,
                     align_items: AlignItems::Center,
                     ..default()
@@ -326,13 +328,13 @@ fn spawn_bar(commands: &mut Commands, layer: Entity, fonts: &Fonts, live: &UnitV
             ))
             .id();
         commands
-            .spawn((ui::text("1", &fonts.bold, 13.0, ui::GOLDEN), ChildOf(plate)))
+            .spawn((ui::text("1", &fonts.bold, 11.0, ui::GOLDEN), ChildOf(plate)))
             .id()
     });
     let name = hero.then(|| {
         commands
             .spawn((
-                ui::text("", &fonts.bold, 12.0, ui::INK),
+                ui::text("", &fonts.bold, 10.0, ui::INK),
                 ui::shadow(),
                 TextLayout::no_wrap(),
                 Node {
