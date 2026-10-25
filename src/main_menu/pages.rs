@@ -545,6 +545,11 @@ fn home(
             15.0,
             ui::INK_DIM,
         );
+        // An unranked ruleset has no queue: it is for lobbies.
+        if !ruleset.rated {
+            kit.text(card, "Lobbies only", 15.0, ui::INK_DIM);
+            continue;
+        }
         let can =
             cooldown.is_none() && (in_flight.1 == 0 || in_flight.0 < usize::from(in_flight.1));
         let look = if can { GREEN } else { PLAIN };
