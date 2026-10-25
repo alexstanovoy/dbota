@@ -105,6 +105,15 @@ const DEFENSE_ROWS: [Row; 6] = [
     Row::HealthRegen,
 ];
 
+/// The region's sizes as `dota_hud_stats_region` has them, in Dota's pixels of
+/// a 1080-line screen turned into interface pixels: the labels' 14 pixel
+/// font, the icons' 14, a row of the label with its 3 above and 2 below, and a
+/// hair between a number and its icon.
+const REGION_FONT: f32 = 14.0 * ui::DOTA;
+const REGION_ICON: f32 = 14.0 * ui::DOTA;
+const REGION_ROW: f32 = 19.0 * ui::DOTA;
+const REGION_GAP: f32 = 2.0 * ui::DOTA;
+
 /// The region's rows, top down, with their icons and stand-in colours.
 const REGION: [(Region, &str, Color); 5] = [
     (Region::Damage, "hud.damage", Color::srgb(0.75, 0.75, 0.75)),
@@ -141,13 +150,10 @@ const LABEL: Color = Color::srgb(0.55, 0.6, 0.66);
 const HEADER: Color = Color::srgb(0.8, 0.82, 0.85);
 /// Width of the tooltip in interface pixels.
 const TIP_WIDTH: f32 = 540.0;
-/// The hero panel's pixels to one of Dota's (`hud.rs`: its portrait is
-/// Dota's 159 wide).
-const PANEL_PER_DOTA: f32 = crate::hud::PORTRAIT.0 / 159.0;
 /// The attributes' strip's height, their icons' size and their grey
 /// (`#stragiint`, `.Reborn #StrengthIcon`, `.Reborn .StatLabel`).
-const FOOT_HEIGHT: f32 = 20.0 * PANEL_PER_DOTA;
-const ATTRIBUTE_ICON: f32 = 13.0 * PANEL_PER_DOTA;
+const FOOT_HEIGHT: f32 = 20.0 * ui::DOTA;
+const ATTRIBUTE_ICON: f32 = 13.0 * ui::DOTA;
 const ATTRIBUTE_INK: Color = Color::srgb(0.8, 0.8, 0.8);
 
 pub fn plugin(app: &mut App) {
@@ -219,7 +225,7 @@ fn spawn_column(
                 flex_direction: FlexDirection::Column,
                 align_items: AlignItems::FlexEnd,
                 align_self: AlignSelf::FlexEnd,
-                row_gap: px(2),
+                row_gap: px(2.0 * ui::DOTA),
                 ..default()
             },
             Pickable::IGNORE,
@@ -231,8 +237,8 @@ fn spawn_column(
             .spawn((
                 Node {
                     align_items: AlignItems::Center,
-                    column_gap: px(3),
-                    height: px(21),
+                    column_gap: px(REGION_GAP),
+                    height: px(REGION_ROW),
                     ..default()
                 },
                 Pickable::IGNORE,
@@ -242,7 +248,7 @@ fn spawn_column(
         for bonus in [false, true] {
             commands.spawn((
                 Line::Region(region, bonus),
-                ui::text("", &fonts.bold, 15.0, if bonus { BONUS } else { ui::INK }),
+                ui::text("", &fonts.bold, REGION_FONT, if bonus { BONUS } else { ui::INK }),
                 ui::shadow(),
                 TextLayout::no_wrap(),
                 Pickable::IGNORE,
@@ -251,9 +257,9 @@ fn spawn_column(
         }
         commands.spawn((
             Node {
-                width: px(17),
-                height: px(17),
-                border_radius: BorderRadius::all(px(3)),
+                width: px(REGION_ICON),
+                height: px(REGION_ICON),
+                border_radius: BorderRadius::all(px(2)),
                 ..default()
             },
             ui::art(manifest, server, icon, stand_in),
@@ -341,7 +347,7 @@ fn spawn_foot(
 /// in the panel's measures.
 fn attribute_size(shown: Shown) -> f32 {
     let dota = if shown == Shown::Sum { 18.0 } else { 12.0 };
-    dota * PANEL_PER_DOTA
+    dota * ui::DOTA
 }
 
 /// The tooltip above the portrait: the attack and defense columns, then a
@@ -664,6 +670,17 @@ fn region(
             (Line::Tip(_), ..) => continue,
             _ => (String::new(), false),
         };
+        // An empty bonus takes no place in the row, so no gap opens before the icon.
+        if let Line::Region(..) = line {
+            let display = if s.is_empty() {
+                Display::None
+            } else {
+                Display::Flex
+            };
+            if node.display != display {
+                node.display = display;
+            }
+        }
         if let Line::Region(_, true) | Line::Attribute(_, Shown::Bonus) = line {
             color.set_if_neq(TextColor(if loss { LOSS } else { BONUS }));
         }
