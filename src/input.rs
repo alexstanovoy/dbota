@@ -677,7 +677,8 @@ fn boxes(
     let hovered_seat = seats
         .iter()
         .find(|(i, _)| **i != Interaction::None)
-        .map(|(_, b)| b.0);
+        .and_then(|(_, b)| crate::hud::seat_of(core.view()?, b.0))
+        .map(|p| p.slot);
     if buttons.just_pressed(MouseButton::Left) {
         let filled = |slot: u8| {
             if tactical {
@@ -692,7 +693,7 @@ fn boxes(
         {
             core.held_item = Some(slot);
         } else if let Some(seat) = hovered_seat {
-            core.act(Intent::SelectSeat(bota_proto::SlotId(seat)));
+            core.act(Intent::SelectSeat(seat));
         }
     }
     if buttons.just_released(MouseButton::Left)
@@ -717,10 +718,7 @@ fn boxes(
             && from != TOWN_PORTAL_SLOT
         {
             core.held_item = None;
-            core.act(Intent::HandTo {
-                slot: from,
-                seat: bota_proto::SlotId(seat),
-            });
+            core.act(Intent::HandTo { slot: from, seat });
         } else if over_hud {
             core.held_item = None;
         }

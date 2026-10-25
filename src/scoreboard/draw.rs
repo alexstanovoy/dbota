@@ -148,6 +148,9 @@ impl Kit<'_, '_, '_> {
     }
 }
 
+/// The scoreboard's layer: what must read over it (the result of the match) sits above.
+pub const BOARD_Z: i32 = 15;
+
 /// The scoreboard under the top bar at the left, hidden: Dota's backdrop
 /// with both sides' headings, the items beside it; the rows come with the
 /// match's seats (see [`seat`]), and the backdrop fits them, as Dota's lists
@@ -164,7 +167,7 @@ pub fn spawn(kit: &mut Kit, root: Entity) {
                 align_items: AlignItems::FlexStart,
                 ..default()
             },
-            GlobalZIndex(15),
+            GlobalZIndex(BOARD_Z),
             Visibility::Hidden,
             Interaction::default(),
             crate::hud::Blocker,

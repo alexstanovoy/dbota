@@ -69,21 +69,37 @@ pub struct AbilityBox(pub u8);
 #[derive(Component, Clone, Copy)]
 pub struct ItemBox(pub u8);
 
-/// A seat's portrait in the top bar, by seat.
+/// Dota's team size: the places each side's half of the top bar holds.
+const TEAM_PLACES: u8 = 5;
+
+/// A place in the top bar: a side and the place within it, in the order of
+/// that side's players. The player in it is told every frame ([`seat_of`]),
+/// so a lineup of any size and any slot order fills the same bar.
+#[derive(Component, Clone, Copy, PartialEq, Eq)]
+pub struct Place {
+    team: Team,
+    n: u8,
+}
+
+/// A place's column in the top bar, hidden while no player holds the place.
 #[derive(Component, Clone, Copy)]
-pub struct SeatBox(pub u8);
+struct SeatColumn(Place);
+
+/// A seat's portrait in the top bar, by place.
+#[derive(Component, Clone, Copy)]
+pub struct SeatBox(pub Place);
 
 /// Dota's player-colour strip along the top of a seat's portrait
-/// (`#PlayerColor`, 4 pixels), by seat.
+/// (`#PlayerColor`, 4 pixels), by place.
 #[derive(Component, Clone, Copy)]
-pub struct SeatColour(pub u8);
+pub struct SeatColour(pub Place);
 
 /// What a seat shows while its hero is alive (its health), and while it is
-/// dead (its portrait washed, the dead mark, the respawn tab), by seat.
+/// dead (its portrait washed, the dead mark, the respawn tab), by place.
 #[derive(Component, Clone, Copy)]
-struct SeatAlive(u8);
+struct SeatAlive(Place);
 #[derive(Component, Clone, Copy)]
-struct SeatDeath(u8);
+struct SeatDeath(Place);
 
 /// Dota's level-up plate over an ability box, by slot.
 #[derive(Component, Clone, Copy)]
@@ -142,8 +158,8 @@ enum Readout {
     HpRegen,
     ManaRegen,
     Notice,
-    SeatLevel(u8),
-    SeatDead(u8),
+    SeatLevel(Place),
+    SeatDead(Place),
 }
 
 /// A bar the HUD keeps filled.
@@ -151,7 +167,7 @@ enum Readout {
 enum Gauge {
     Hp,
     Mana,
-    SeatHp(u8),
+    SeatHp(Place),
 }
 
 /// The portrait image of the bottom panel: Dota's picture of the hero, or
@@ -1059,9 +1075,27 @@ fn spawn_top(kit: &mut Spawner, root: Entity) {
             ChildOf(top),
         ))
         .id();
-    spawn_seat(kit, top, 0);
+    for n in 0..TEAM_PLACES {
+        spawn_seat(
+            kit,
+            top,
+            Place {
+                team: Team::Radiant,
+                n,
+            },
+        );
+    }
     spawn_clock(kit.commands, kit.fonts, top);
-    spawn_seat(kit, top, 1);
+    for n in 0..TEAM_PLACES {
+        spawn_seat(
+            kit,
+            top,
+            Place {
+                team: Team::Dire,
+                n,
+            },
+        );
+    }
 }
 
 /// The clock between the seats: each side's kills either side of the time
@@ -1135,10 +1169,11 @@ fn spawn_clock(commands: &mut Commands, fonts: &Fonts, top: Entity) {
 /// hero is dead, as Dota's `.Dead` seat (`dota_hud_top_bar`): the portrait
 /// without colour under the dead mark and the respawn seconds, the health
 /// gone.
-fn spawn_seat(kit: &mut Spawner, parent: Entity, seat: u8) {
+fn spawn_seat(kit: &mut Spawner, parent: Entity, seat: Place) {
     let commands = &mut *kit.commands;
     let column = commands
         .spawn((
+            SeatColumn(seat),
             Node {
                 flex_direction: FlexDirection::Column,
                 align_items: AlignItems::Center,
@@ -1198,7 +1233,7 @@ fn spawn_seat(kit: &mut Spawner, parent: Entity, seat: u8) {
 
 /// What covers a seat's portrait while its hero is dead: the portrait
 /// washed of its colour, the dead mark and the respawn seconds.
-fn spawn_seat_death(kit: &mut Spawner, card: Entity, seat: u8) {
+fn spawn_seat_death(kit: &mut Spawner, card: Entity, seat: Place) {
     let hidden = Node {
         display: Display::None,
         ..ui::fill()
@@ -1233,7 +1268,7 @@ fn spawn_seat_death(kit: &mut Spawner, card: Entity, seat: u8) {
 }
 
 /// The seat's health under its portrait.
-fn spawn_seat_health(commands: &mut Commands, column: Entity, seat: u8) {
+fn spawn_seat_health(commands: &mut Commands, column: Entity, seat: Place) {
     let well = commands
         .spawn((
             SeatAlive(seat),
@@ -1253,11 +1288,7 @@ fn spawn_seat_health(commands: &mut Commands, column: Entity, seat: u8) {
             width: percent(100),
             ..default()
         },
-        BackgroundColor(crate::overlay::team_color(if seat == 0 {
-            Team::Radiant
-        } else {
-            Team::Dire
-        })),
+        BackgroundColor(crate::overlay::team_color(seat.team)),
         ChildOf(well),
     ));
 }
@@ -1347,6 +1378,8 @@ fn spawn_corner(kit: &mut Spawner, root: Entity) {
                 justify_content: JustifyContent::Center,
                 ..default()
             },
+            // Over the scoreboard, which opens by itself when the match is over.
+            GlobalZIndex(crate::scoreboard::BOARD_Z + 1),
             Pickable::IGNORE,
             ChildOf(root),
         ))
@@ -1562,8 +1595,13 @@ pub(crate) fn lies_dead(p: &PlayerView) -> bool {
     p.unit.is_none() && p.respawn_left > 0
 }
 
-fn seat_of(view: &bota_proto::WorldView, seat: u8) -> Option<&PlayerView> {
-    view.players.get(usize::from(seat))
+/// The player in a place of the top bar: its side's n-th, in the order the
+/// view lists them.
+pub(crate) fn seat_of(view: &bota_proto::WorldView, place: Place) -> Option<&PlayerView> {
+    view.players
+        .iter()
+        .filter(|p| p.team == place.team)
+        .nth(usize::from(place.n))
 }
 
 /// The word of the moment in the middle of the screen.
@@ -2085,7 +2123,8 @@ fn time_of_day(
 }
 
 /// The seat portraits of the top bar, each framed in its side's colour
-/// (white while selected) under its player's colour strip.
+/// (white while selected) under its player's colour strip; a place no
+/// player holds is hidden.
 fn seats(
     session: NonSend<Session>,
     manifest: Res<Manifest>,
@@ -2093,11 +2132,22 @@ fn seats(
     colours: Res<crate::player_colour::PlayerColours>,
     mut cards: Query<(&SeatBox, &mut ImageNode, &mut BorderColor)>,
     mut strips: Query<(&SeatColour, &mut BackgroundColor)>,
+    mut columns: Query<(&SeatColumn, &mut Node)>,
 ) {
     let core = &session.0;
     let Some(view) = core.view() else {
         return;
     };
+    for (SeatColumn(place), mut node) in &mut columns {
+        let display = if seat_of(view, *place).is_some() {
+            Display::Flex
+        } else {
+            Display::None
+        };
+        if node.display != display {
+            node.display = display;
+        }
+    }
     for (seat, mut strip) in &mut strips {
         let colour = seat_of(view, seat.0).map_or(Color::NONE, |p| colours.of(view, p.slot));
         strip.set_if_neq(BackgroundColor(colour));
@@ -2145,7 +2195,7 @@ fn seat_deaths(
     let Some(view) = session.0.view() else {
         return;
     };
-    let dead = |seat: u8| seat_of(view, seat).is_some_and(lies_dead);
+    let dead = |seat: Place| seat_of(view, seat).is_some_and(lies_dead);
     let shown = |on: bool| if on { Display::Flex } else { Display::None };
     for (SeatDeath(seat), mut node, wash) in &mut deaths {
         let display = shown(dead(*seat));

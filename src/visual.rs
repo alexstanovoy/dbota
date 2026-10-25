@@ -586,7 +586,7 @@ fn player_colours(c: &Checks, report: &mut impl FnMut(&str, bool, String)) {
         told.push(("minimap", seat.0, right));
     }
     for (strip, fill) in &c.strips {
-        if let Some(p) = view.players.get(usize::from(strip.0)) {
+        if let Some(p) = crate::hud::seat_of(view, strip.0) {
             told.push(("top bar", p.slot.0, fill.0 == c.colours.of(view, p.slot)));
         }
     }
