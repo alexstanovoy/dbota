@@ -248,7 +248,12 @@ fn spawn_column(
         for bonus in [false, true] {
             commands.spawn((
                 Line::Region(region, bonus),
-                ui::text("", &fonts.bold, REGION_FONT, if bonus { BONUS } else { ui::INK }),
+                ui::text(
+                    "",
+                    &fonts.bold,
+                    REGION_FONT,
+                    if bonus { BONUS } else { ui::INK },
+                ),
                 ui::shadow(),
                 TextLayout::no_wrap(),
                 Pickable::IGNORE,
