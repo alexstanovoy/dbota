@@ -127,12 +127,18 @@ impl Saved {
     }
 }
 
-/// The service of the page a browser build runs in: the page's own host, on
-/// the service's control port. Nothing on the desktop.
+/// The service of the page a browser build runs in: the page's own origin when it is served over
+/// HTTPS (a service that serves its page), else the page's host on the service's usual control
+/// port. Nothing on the desktop.
 pub fn page_service() -> Option<String> {
     #[cfg(target_arch = "wasm32")]
     {
-        let host = web_sys::window()?.location().hostname().ok()?;
+        let location = web_sys::window()?.location();
+        if location.protocol().ok()? == "https:" {
+            let origin = location.host().ok()?;
+            return (!origin.is_empty()).then(|| format!("wss://{origin}"));
+        }
+        let host = location.hostname().ok()?;
         (!host.is_empty()).then(|| format!("wss://{host}:{SERVICE_PORT}"))
     }
     #[cfg(not(target_arch = "wasm32"))]
