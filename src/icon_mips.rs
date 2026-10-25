@@ -107,7 +107,7 @@ fn halve(level: &[u8], (w, h): (usize, usize), (nw, nh): (usize, usize)) -> Vec<
                 }
             }
             for c in sum {
-                out.push(if alpha == 0 { 0 } else { (c / alpha) as u8 });
+                out.push(c.checked_div(alpha).unwrap_or(0) as u8);
             }
             out.push(((alpha + 2) / 4) as u8);
         }

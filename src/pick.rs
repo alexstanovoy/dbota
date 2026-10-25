@@ -136,8 +136,7 @@ impl Hover {
 }
 
 pub fn plugin(app: &mut App) {
-    app.init_resource::<Hover>()
-        .add_systems(Update, draw_hover.after(update));
+    app.init_resource::<Hover>();
 }
 
 /// The volume of one unit standing at a Bevy point.
@@ -362,28 +361,6 @@ pub fn update(
         aim: find(&aim),
         left,
     };
-}
-
-/// Dota's ring under what a click would get: yellow, round the unit's feet
-/// for as long as the cursor is on it.
-fn draw_hover(
-    hover: Res<Hover>,
-    session: NonSend<Session>,
-    ground: Res<Ground>,
-    mut gizmos: Gizmos,
-) {
-    let Some((id, at)) = hover.left() else {
-        return;
-    };
-    let Some(unit) = session.0.view().and_then(|v| v.unit(id)) else {
-        return;
-    };
-    let centre = Vec3::new(at.x, ground.at(at.x, at.y) + 3.0, -at.y);
-    gizmos.circle(
-        Isometry3d::new(centre, Quat::from_rotation_arc(Vec3::Z, Vec3::Y)),
-        ring_radius(unit),
-        HOVER_RING,
-    );
 }
 
 /// The radius of the rings at a unit's feet: its body's, a little out.

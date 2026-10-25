@@ -49,12 +49,32 @@ pub struct RangeRings(pub u32);
 pub fn plugin(app: &mut App) {
     app.init_resource::<RangeRings>()
         .add_systems(Startup, configure)
-        .add_systems(Update, draw);
+        .add_systems(Update, (line_width, draw));
 }
+
+/// Scales the lines with the window's height.
+fn line_width(
+    window: Single<&Window, With<bevy::window::PrimaryWindow>>,
+    mut store: ResMut<GizmoConfigStore>,
+) {
+    let width = LINE_WIDTH * window.physical_height() as f32 / 900.0;
+    let (config, _) = store.config_mut::<DefaultGizmoConfigGroup>();
+    if config.line.width != width {
+        config.line.width = width;
+    }
+}
+
+/// The width of every line drawn on the map (rings, ranges, order marks,
+/// previews, pings: all share Bevy's one gizmo setting, so no indicator has a
+/// weight of its own), in pixels of a window 900 lines high; it grows with the
+/// window, so it weighs the same at 1080 and at 4K.
+const LINE_WIDTH: f32 = 4.0;
+/// How much wider than the selection ring the hover ring is, in world units.
+const HOVER_MARGIN: f32 = 9.0;
 
 fn configure(mut store: ResMut<GizmoConfigStore>) {
     let (config, _) = store.config_mut::<DefaultGizmoConfigGroup>();
-    config.line.width = 2.5;
+    config.line.width = LINE_WIDTH;
     // Rings follow the coarse ground height; a stronger bias keeps rocks
     // and roots from cutting them into dashes.
     config.depth_bias = -0.2;
@@ -129,6 +149,7 @@ fn draw(
     };
     let show_all = args.show_ranges || fired.held(Action::ShowRanges);
     picks(&mut gizmos, &ctx, settings.clarity.strength() > 0.0);
+    hovered(&mut gizmos, &ctx, &hover);
     // Ranges and radii only while the show-ranges key is held, as Dota
     // keeps the ground clean.
     let mut ranges = 0;
@@ -211,6 +232,25 @@ fn picks(gizmos: &mut Gizmos, ctx: &Ctx<'_, '_, '_>, aid: bool) {
             false,
         );
     }
+}
+
+/// The ring under the unit a click would get: Dota's yellow, round the same
+/// drawn spot as its selection ring, from the same source, a little wider.
+fn hovered(gizmos: &mut Gizmos, ctx: &Ctx<'_, '_, '_>, hover: &crate::pick::Hover) {
+    let Some((id, _)) = hover.left() else {
+        return;
+    };
+    let (Some(unit), Some(body)) = (ctx.core.view().and_then(|v| v.unit(id)), ctx.at(id)) else {
+        return;
+    };
+    ring(
+        gizmos,
+        ctx,
+        (body.at.x, body.at.y),
+        crate::pick::ring_radius(unit) + HOVER_MARGIN,
+        crate::pick::HOVER_RING,
+        false,
+    );
 }
 
 /// The attack range ring and the three raze spots of the watched hero.
