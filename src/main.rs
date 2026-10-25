@@ -44,8 +44,8 @@ mod framestats;
 mod glyph;
 mod heap;
 mod hud;
-#[cfg(not(target_arch = "wasm32"))]
 mod icon_mips;
+#[cfg(not(target_arch = "wasm32"))]
 mod import;
 mod input;
 mod item_menu;
