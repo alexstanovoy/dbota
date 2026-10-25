@@ -103,7 +103,7 @@ fn open(
     bag: Res<TacticalBag>,
     mouse: Res<ButtonInput<MouseButton>>,
     items: Query<(&Interaction, &ItemBox)>,
-    roots: Query<&Interaction, With<Root>>,
+    roots: Query<&Interaction, Or<(With<Root>, With<Choice>)>>,
     window: Single<&Window, With<PrimaryWindow>>,
     ui_scale: Res<UiScale>,
     mut menu: ResMut<Menu>,

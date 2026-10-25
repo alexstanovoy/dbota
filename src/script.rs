@@ -17,11 +17,13 @@
 //!   `popup` (a question or the match-found offer) is up or `nopopup` is not, or a button named `button:NAME`
 //!   shows;
 //! - `await:horn`: the game clock past the horn;
+//! - `await:items:N`: exactly N items in the hero's bag;
 //! - `await:level:N`, `await:gold:N`: one's hero at that level, that gold;
 //! - `say:LINE`: the line typed into the chat and sent (a `-command` runs);
 //! - `pick:ID`: the hero of that id picked, and the seat readied;
 //! - `shot:FILE`: the screen saved under `--screenshot-dir`;
 //! - `wait:SECONDS`;
+//! - `exit`: the client ends, with exit code 0;
 //! - `mouse:X,Y`: the pointer moved to that point of the window, in shares
 //!   of its width and height (`0.5,0.5` is the middle), so a script plays
 //!   the same at any size;
@@ -63,6 +65,8 @@ enum Step {
     Button(MouseButton),
     /// The left button held down, or let go: a drag.
     Drag(ButtonState),
+    /// The client ends, with exit code 0.
+    Exit,
     Down(KeyCode),
     Up(KeyCode),
     Text(String),
@@ -92,6 +96,8 @@ enum Awaited {
     Level(u8),
     /// One's gold at this or above.
     Gold(i32),
+    /// Exactly this many items in the hero's bag.
+    Items(usize),
 }
 
 /// Where the script is.
@@ -138,11 +144,17 @@ fn parse(text: &str) -> Result<Vec<(String, Step)>, String> {
                             "gold" => Awaited::Gold(
                                 value.parse().map_err(|_| format!("'{value}' is no gold"))?,
                             ),
+                            "items" => Awaited::Items(
+                                value
+                                    .parse()
+                                    .map_err(|_| format!("'{value}' is no count"))?,
+                            ),
                             _ => return Err(format!("cannot await '{other}'")),
                         }
                     }
                 }),
                 "shot" => Step::Shot(arg.to_owned()),
+                "exit" => Step::Exit,
                 "mouse" => Step::Mouse(
                     arg.split_once(',')
                         .and_then(|(x, y)| Some(Vec2::new(x.parse().ok()?, y.parse().ok()?)))
@@ -218,6 +230,14 @@ fn holds(
                 .is_some_and(|view| view.game_tick() >= core.pregame_ticks())
         }
         Awaited::Level(level) => own(session).is_some_and(|me| me.level >= *level),
+        Awaited::Items(count) => {
+            let core = &session.0;
+            core.view().is_some()
+                && (0..bota_client_core::BAG_SLOTS)
+                    .filter(|slot| core.item_in(*slot).is_some())
+                    .count()
+                    == *count
+        }
         Awaited::Gold(gold) => own(session).is_some_and(|me| me.gold.is_some_and(|g| g >= *gold)),
     }
 }
@@ -315,6 +335,10 @@ fn play(
                 window,
             });
             script.held = Some(Held::Mouse(*button));
+            true
+        }
+        Step::Exit => {
+            exit.write(AppExit::Success);
             true
         }
         Step::Drag(state) => {

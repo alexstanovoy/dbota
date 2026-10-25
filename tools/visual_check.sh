@@ -123,3 +123,13 @@ else
     echo "visual check: FAIL the way out (see $out/quit.log)"
     exit 1
 fi
+
+# Selling in the strategy phase: the item menu's Sell takes a chosen item back, so the match begins
+# with the one item left.
+if cargo test --release --quiet --manifest-path "$here/Cargo.toml" --test item_sell \
+    -- --ignored > "$out/sell.log" 2>&1; then
+    echo "visual check: PASS an item sold in the strategy phase is not bought"
+else
+    echo "visual check: FAIL selling in the strategy phase (see $out/sell.log)"
+    exit 1
+fi
