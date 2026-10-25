@@ -74,6 +74,40 @@ fn speed_of(kind: Kind) -> f32 {
     }
 }
 
+/// The gain of a purchase sound, as the client core cues it.
+const BUY_GAIN: f32 = 0.9;
+/// Seconds the buy cues of the strategy phase's choices may still come after they are sent.
+const QUEUED_BUYS_PATIENCE: f32 = 5.0;
+
+/// The items the strategy phase chose, followed from frame to frame: a choice
+/// sounds as it is made, and the buy cues of the orders that spend the choices
+/// when the match begins are skipped.
+#[derive(Default)]
+struct QueuedBuys {
+    len: usize,
+    /// Buy cues still to be skipped, and when the last order was sent.
+    spoken: usize,
+    sent_at: f32,
+}
+
+impl QueuedBuys {
+    /// Looks at the queue; whether a choice was just made, and how many buy
+    /// cues are to be skipped.
+    fn watch(&mut self, core: &bota_client_core::App, now: f32) -> (bool, usize) {
+        let len = core.queued_buys.len();
+        let chosen = core.in_tactical_phase() && len > self.len;
+        if !core.in_tactical_phase() && len < self.len {
+            self.spoken += self.len - len;
+            self.sent_at = now;
+        }
+        if self.spoken > 0 && now - self.sent_at > QUEUED_BUYS_PATIENCE {
+            self.spoken = 0;
+        }
+        self.len = len;
+        (chosen, self.spoken)
+    }
+}
+
 /// The loops of one teleport under way, and what its landing needs.
 struct Humming {
     loops: Vec<Entity>,
@@ -214,6 +248,7 @@ fn play(
     args: Res<crate::Args>,
     fog: Res<crate::fog::FogGrid>,
     mut last_ping: Local<Option<bota_proto::Heard>>,
+    mut queued: Local<QueuedBuys>,
 ) {
     for (_, voice) in &mut voices.0 {
         voice.rest = (voice.rest - time.delta_secs()).max(0.0);
@@ -240,7 +275,18 @@ fn play(
                 .with_speed(speed_of(kind)),
         ));
     };
+    // Dota sounds a purchase when it is made: once for each choice in the
+    // strategy phase, and none for those the match then buys on its own.
+    let (chosen, spoken) = queued.watch(core, time.elapsed_secs());
+    if chosen {
+        sound(Kind::Cue(CueKind::Buy), BUY_GAIN, None);
+    }
+    let mut quiet = spoken;
     for cue in cues {
+        if cue.kind == CueKind::Buy && quiet > 0 {
+            quiet -= 1;
+            continue;
+        }
         match cue.kind {
             // Dota sounds a refusal it tells, and only that.
             CueKind::Refused(reason) => {
@@ -251,6 +297,7 @@ fn play(
             kind => sound(Kind::Cue(kind), cue.gain, cue.at),
         }
     }
+    queued.spoken = quiet;
     shots(core, &fog, &mut sound);
     // A ping is heard by its side wherever the camera is, as Dota's are.
     for kind in crate::pings::fresh(core, &mut last_ping) {
