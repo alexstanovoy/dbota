@@ -523,7 +523,10 @@ fn draw_projected(
 /// A card's right and up axes by its orientation, the particle's roll turning them.
 fn card_axes(orientation: Orientation, eye: &Eye, parts: &Particles, i: usize) -> (Vec3, Vec3) {
     let (base_right, base_up) = match orientation {
-        Orientation::WorldZ => (Vec3::X, Vec3::Y),
+        // Lying flat, right along -Y and up along +X before its roll, as Source's spritecard
+        // (and ValveResourceFormat's port of it) lays it: a requiem head's spear rolled to its
+        // flight (C_OP_OrientTo2dDirection) points along it, not across.
+        Orientation::WorldZ => (Vec3::NEG_Y, Vec3::X),
         Orientation::ParticleNormal => {
             let normal = parts.vectors[store::NORMAL][i].normalize_or(Vec3::Z);
             let reference = if normal.z.abs() > 0.999 {

@@ -140,7 +140,7 @@ fn percentage_between(p: &PercentageBetween, scene: &Scene<'_>, parts: &mut Part
 }
 
 /// `C_OP_RampScalarSplineSimple`: an attribute changes at the rate eased in and out over the
-/// window (seconds of the particle's age, as `C_OP_RampScalarLinearSimple`'s), or eased up to
+/// window (shares of the particle's life, as `C_OP_RampScalarLinearSimple`'s), or eased up to
 /// the window's middle and back.
 fn ramp_spline_simple(op: &Operator, scene: &Scene<'_>, parts: &mut Particles, call: &Call<'_>) {
     let Operator::RampScalarSplineSimple {
@@ -160,7 +160,7 @@ fn ramp_spline_simple(op: &Operator, scene: &Scene<'_>, parts: &mut Particles, c
         if parts.scalars[store::LIFETIME][i] <= 0.0 {
             continue;
         }
-        let age = scene.age - parts.scalars[store::CREATION][i];
+        let age = super::eval::normalized_age(scene, parts, i);
         if age < *start || age >= *end {
             continue;
         }

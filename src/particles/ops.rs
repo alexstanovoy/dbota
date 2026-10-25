@@ -1203,9 +1203,10 @@ fn ramp_scalar_linear_simple(
         if parts.scalars[store::LIFETIME][i] <= 0.0 {
             continue;
         }
-        // Its window is in seconds of the particle's age, not shares of its life: Dota's
-        // files keep a ramp going "for ever" with an end time of 99999 or 1e9.
-        let t = scene.age - parts.scalars[store::CREATION][i];
+        // Its window is in shares of the particle's life, as Source's (a "for ever" end of
+        // 99999 is the whole life): the requiem's black curtains (line_heads_trail_e, whose
+        // trails ignore the frame time) stand as short as Dota's only so.
+        let t = normalized_age(scene, parts, i);
         if time[0] <= t && t < time[1] {
             let v = parts.scalar(slot, i) + step;
             parts.set_scalar(slot, i, v.clamp(min, max));
