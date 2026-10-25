@@ -47,7 +47,15 @@ struct Shots {
 pub fn plugin(app: &mut App) {
     app.init_resource::<Shots>()
         .add_systems(Last, (shoot, play_for_clicks, look_for_clicks).chain())
+        .add_systems(Last, hold_clock.run_if(|args: Res<Args>| args.visual_check))
         .add_systems(PreUpdate, seek.after(crate::session::pump));
+}
+
+/// A visual check measures the same picture on every run, however long the client has been up: the
+/// time the renderer is given (the river's flow and sway read it) is held at zero. Only the render
+/// side sees this; the next frame's clock is made afresh from the virtual one.
+fn hold_clock(mut time: ResMut<Time>) {
+    *time = Time::default();
 }
 
 /// Reads a replay through towards `next`, as fast as the reader goes and
