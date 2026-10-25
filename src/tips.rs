@@ -182,7 +182,7 @@ fn pick(
     } else if innate.iter().any(|i| *i != Interaction::None) {
         innate_tip(&look, core)
     } else if let Some(shown) = buff {
-        buff_tip(shown, rate).map(note_tip)
+        Some(buff_tip(&look, shown.id, shown.ticks_left, rate))
     } else if let Some(cell) = hovered(&talent_cells) {
         talent_tip(core, cell.0).map(note_tip)
     } else if let Some(slot) = hovered(&abilities) {
@@ -208,6 +208,8 @@ fn forced_tip(look: &Lookup, spec: &str) -> Option<Content> {
     match kind {
         "item" => look.item(id, None),
         "shop" => look.item(id, item_def(bota_proto::ItemId(id)).map(|d| d.cost)),
+        // A buff with ten seconds left, at Dota's 30 ticks a second.
+        "buff" => Some(buff_tip(look, id, Some(300), 30)),
         _ => {
             let level = parts.next().and_then(|l| l.parse().ok()).unwrap_or(1);
             look.ability(id, level, 4)
@@ -276,24 +278,20 @@ fn innate_tip(look: &Lookup, core: &bota_client_core::App) -> Option<Content> {
     look.ability(id.0, 1, 1)
 }
 
-fn buff_tip(shown: crate::buffs::Shown, rate: u32) -> Option<String> {
-    bota_client_core::effect(shown.id).map(|face| {
-        let mut lines = vec![face.name().to_string(), face.blurb()];
-        let from = shown.inflictor.and_then(|by| match by {
-            bota_proto::Inflictor::Ability(id) => bota_client_core::ability(id.0).map(|a| a.name),
-            bota_proto::Inflictor::Item(id) => bota_client_core::item(id.0).map(|i| i.name),
-        });
-        if let Some(name) = from.filter(|name| *name != face.name()) {
-            lines.push(format!("From {name}"));
-        }
-        if let Some(n) = shown.stacks.filter(|n| *n > 0) {
-            lines.push(format!("{n} stacks"));
-        }
-        if let Some(t) = shown.ticks_left {
-            lines.push(format!("{:.1} s left", t as f32 / rate as f32));
-        }
-        lines.join("\n")
-    })
+/// A buff's or a debuff's tooltip, as Dota's: its name as written, what it
+/// does, and after one blank line the time it has left.
+fn buff_tip(look: &Lookup, id: u16, ticks_left: Option<u32>, rate: u32) -> Content {
+    let mut body = crate::buff_words::description(look, id);
+    if let Some(t) = ticks_left {
+        body.push_str(&format!("\n\n{:.1} s left", t as f32 / rate as f32));
+    }
+    let mut content = note_tip(format!(
+        "{}\n{}",
+        crate::buff_words::name(look.texts, look.manifest, id),
+        body.trim_start_matches('\n')
+    ));
+    content.as_written = true;
+    content
 }
 
 fn talent_tip(core: &bota_client_core::App, slot: u8) -> Option<String> {
@@ -553,7 +551,16 @@ impl Draw<'_, '_, '_> {
             ))
             .id();
         self.commands.spawn((
-            ui::text(c.title.to_uppercase(), &self.fonts.bold, 17.0, NAME),
+            ui::text(
+                if c.as_written {
+                    c.title.clone()
+                } else {
+                    c.title.to_uppercase()
+                },
+                &self.fonts.bold,
+                17.0,
+                NAME,
+            ),
             Pickable::IGNORE,
             ChildOf(top),
         ));

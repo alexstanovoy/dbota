@@ -69,7 +69,8 @@ pub struct Manifest {
     /// How the units named by Dota are drawn (every `unit` line, whether or
     /// not its model is in the cache).
     pub units: Vec<UnitArt>,
-    /// Our ids to Dota names: kind (`item`, `ability`, `hero`, `effect`), id,
+    /// Our ids to Dota names: kind (`item`, `ability`, `hero`, `effect`,
+    /// `modifier`: the Dota modifier an effect is), id,
     /// name (for an effect, the logical name of its icon).
     pub ids: Vec<(String, u16, String)>,
     /// The Dota name whose text describes an item or an ability where that
@@ -147,7 +148,7 @@ impl Manifest {
             .filter_map(|line| {
                 let mut words = line.split_whitespace();
                 let kind = words.next()?;
-                if !matches!(kind, "item" | "ability" | "hero" | "effect") {
+                if !matches!(kind, "item" | "ability" | "hero" | "effect" | "modifier") {
                     return None;
                 }
                 let id = words.next()?.parse().ok()?;

@@ -7,6 +7,8 @@
 #   effect <effect id> <logical icon>      the icon Dota shows on the buff bar: an item's or an ability's
 #   text <item|ability> <id> <dota key>    the Dota entry whose text describes it where that is not the
 #                                          icon's name (an item is `item_<name>`)
+#   modifier <effect id> <dota modifier>   the Dota modifier the effect is: its tooltip name and description
+#                                          (`DOTA_Tooltip_<modifier>`) name the buff
 #
 # The files are Valve's: tools/import_assets.sh exports them into a local
 # cache for personal use; they are never committed.
@@ -224,3 +226,66 @@ effect 68 icon.ability.watcher_channel
 effect 69 icon.ability.ability_capture
 # A Shrine of Wisdom ready to be gathered: Dota's timer icon of the wisdom rune ("widsom" in its file name).
 effect 70 hud.rune_timer.wisdom
+
+# The Dota modifiers bota's effects are, for their tooltips (DOTA_Tooltip_<modifier>).
+modifier 1 modifier_flask_healing
+modifier 2 modifier_clarity_potion
+modifier 3 modifier_fountain_aura_buff
+modifier 4 modifier_stunned
+modifier 7 modifier_courier_burst
+modifier 8 modifier_courier_shield
+modifier 9 modifier_item_phase_boots_active
+modifier 10 modifier_pudge_innate_graft_flesh
+modifier 11 modifier_nevermore_necromastery
+modifier 12 modifier_nevermore_presence
+modifier 13 modifier_tower_armor_bonus
+modifier 14 modifier_flagbearer_creep_aura_effect
+modifier 15 modifier_nevermore_shadowraze_debuff
+modifier 16 modifier_pudge_rot
+modifier 17 modifier_nevermore_requiem_fear
+modifier 18 modifier_nevermore_requiem_slow
+modifier 19 modifier_nevermore_frenzy
+modifier 20 modifier_nevermore_frenzy
+modifier 21 modifier_item_blood_grenade_debuff
+modifier 22 modifier_rooted
+modifier 23 modifier_disarmed
+modifier 24 modifier_break
+modifier 26 modifier_kobold_taskmaster_speed_aura_bonus
+modifier 27 modifier_gnoll_assassin_envenomed_weapon_poison
+modifier 28 modifier_ghost_frost_attack_slow
+modifier 29 modifier_mudgolem_cloak_aura_bonus
+modifier 30 modifier_giant_wolf_intimidate
+modifier 31 modifier_alpha_wolf_command_aura_bonus
+modifier 32 modifier_forest_troll_high_priest_mana_aura_bonus
+modifier 33 modifier_satyr_hellcaller_unholy_aura_bonus
+modifier 34 modifier_mud_golem_rock_destroy
+modifier 35 modifier_centaur_khan_endurance_aura_bonus
+modifier 36 modifier_furbolg_enrage_attack_speed
+modifier 37 modifier_polar_furbolg_ursa_warrior_thunder_clap
+modifier 38 modifier_furbolg_enrage_damage
+modifier 39 modifier_enraged_wildkin_toughness_aura_bonus
+modifier 40 modifier_black_drake_magic_amplification
+modifier 41 modifier_black_dragon_dragonhide_aura_bonus
+modifier 42 modifier_ancient_rock_golem_weakening
+modifier 43 modifier_granite_golem_hp_aura_bonus
+modifier 44 modifier_big_thunder_lizard_wardrums_aura
+modifier 45 modifier_big_thunder_lizard_slam
+modifier 46 modifier_big_thunder_lizard_frenzy
+modifier 47 modifier_frostbitten_golem_time_warp_aura_bonus
+modifier 48 modifier_spawnlord_aura_bonus
+modifier 49 modifier_spawnlord_master_stomp
+modifier 50 modifier_spawnlord_master_freeze_root
+modifier 51 modifier_frogmen_riverborn_aura_bonus
+modifier 52 modifier_hill_troll_rally
+modifier 53 modifier_tornado_tempest_debuff
+modifier 54 modifier_frogmen_water_bubble
+modifier 55 modifier_satyr_trickster_purge
+modifier 56 modifier_fountain_glyph
+modifier 57 modifier_pudge_flesh_heap_block
+modifier 58 modifier_pudge_dismember
+modifier 59 modifier_backdoor_protection_active
+modifier 60 modifier_illusion
+modifier 64 modifier_fountain_invulnerability
+modifier 65 modifier_fountain_aura
+modifier 66 modifier_fountain_fury_swipes_damage_increase
+modifier 68 modifier_lamp_off

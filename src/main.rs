@@ -14,6 +14,7 @@ mod anim;
 mod assets_notice;
 mod audio_output;
 mod bars;
+mod buff_words;
 mod buffs;
 mod cache_text;
 mod cachefs;
@@ -201,7 +202,7 @@ pub struct Args {
     /// service needed (for screenshots: `--frames N --screenshot FILE`).
     #[arg(long, value_name = "NAME", value_parser = clap::builder::PossibleValuesParser::new(main_menu::PREVIEWS))]
     pub menu_preview: Option<String>,
-    /// Debug: keep a tooltip open: `item:ID` (id of the item), `shop:ID`,
+    /// Debug: keep a tooltip open: `item:ID` (id of the item), `shop:ID`, `buff:ID` (an effect with ten seconds left),
     /// `ability:ID:LEVEL`, `stats` (the stats tooltip) or `talents` (the
     /// talent tree).
     #[arg(long, value_name = "KIND:ID")]

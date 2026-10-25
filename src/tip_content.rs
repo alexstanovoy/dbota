@@ -118,6 +118,9 @@ pub struct Content {
     pub lore: String,
     /// What the client adds about what to do with it, and what it holds now.
     pub hints: Vec<String>,
+    /// Whether the title shows as written (a buff's, as Dota's buff tooltip
+    /// has it) rather than in capitals (an ability's or an item's).
+    pub as_written: bool,
 }
 
 /// How well a search finds an item; the better first.

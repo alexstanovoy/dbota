@@ -257,6 +257,34 @@ impl Item {
     }
 }
 
+/// The localization of the modifiers `ids.txt` names (`modifier <effect id> <dota modifier>`): their
+/// tooltip names and descriptions (`DOTA_Tooltip_<modifier>`, `..._Description`), as labels.
+fn modifier_labels(ids: &str) -> Vec<(String, String)> {
+    let mut keys = Vec::new();
+    for line in ids.lines() {
+        let words: Vec<&str> = line
+            .split('#')
+            .next()
+            .unwrap_or_default()
+            .split_whitespace()
+            .collect();
+        if let ["modifier", _, name, ..] = words.as_slice() {
+            for suffix in ["", "_Description"] {
+                keys.push((
+                    MODIFIER_TEXTS.to_owned(),
+                    format!("DOTA_Tooltip_{name}{suffix}"),
+                ));
+            }
+        }
+    }
+    keys.sort();
+    keys.dedup();
+    keys
+}
+
+/// Where Dota's modifier tooltips are.
+const MODIFIER_TEXTS: &str = "resource/localization/abilities_english.txt";
+
 /// What the importer does for a manifest.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Plan {
@@ -364,6 +392,7 @@ impl Plan {
                 _ => {}
             }
         }
+        labels.extend(modifier_labels(ids));
         let wanted = wanted(ids);
         if !wanted.names.is_empty() {
             plan.items.push(Item::Tooltips {
