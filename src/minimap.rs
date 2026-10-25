@@ -38,7 +38,7 @@ const HERO_ICON: f32 = 28.0;
 const HERO_FACE: f32 = 20.0;
 /// Rings shown at most: teleports first, then what the side's players have
 /// pinged.
-const PINGS: usize = 10 + crate::pings::MARKS;
+const PINGS: usize = 2 * 10 + crate::pings::MARKS;
 /// Interface pixels across a ping at its smallest and at its widest.
 const PING_SIZES: (f32, f32) = (10.0, 30.0);
 /// Ticks one swell of a ping takes.
@@ -661,6 +661,25 @@ fn hero_backing(icon: bool, invisible: bool) -> &'static str {
     }
 }
 
+/// The rings a teleport shows on the minimap, in its side's colour: where it
+/// lands, which the sim tells both sides, and where it leaves from, when the
+/// channelling hero is in sight (the rule of the world's own effects).
+fn teleport_rings(
+    teleport: &bota_proto::TeleportView,
+    origin: Option<(f32, f32)>,
+) -> impl Iterator<Item = (Vec2, f32, Color)> {
+    let size = ping_size(teleport.ticks_total.saturating_sub(teleport.ticks_left));
+    let colour = crate::overlay::team_color(teleport.team);
+    let landing = Vec2::new(
+        teleport.destination.x.to_f32(),
+        teleport.destination.y.to_f32(),
+    );
+    [Some(landing), origin.map(|(x, y)| Vec2::new(x, y))]
+        .into_iter()
+        .flatten()
+        .map(move |at| (at, size, colour))
+}
+
 /// How wide a ping is after `elapsed` ticks of a channel: it swells and
 /// starts over, so it draws the eye for as long as the channel runs.
 fn ping_size(elapsed: u32) -> f32 {
@@ -681,14 +700,10 @@ fn pings(
     let Some(view) = core.view() else {
         return;
     };
-    let teleports = view.teleports.iter().map(|teleport| {
-        let size = ping_size(teleport.ticks_total.saturating_sub(teleport.ticks_left));
-        let at = Vec2::new(
-            teleport.destination.x.to_f32(),
-            teleport.destination.y.to_f32(),
-        );
-        (at, size, colours.of(view, teleport.slot))
-    });
+    let teleports = view
+        .teleports
+        .iter()
+        .flat_map(|teleport| teleport_rings(teleport, crate::teleport::origin(view, teleport)));
     let marks = crate::pings::marks(core, &colours, |_| None)
         .into_iter()
         .map(|mark| {
@@ -774,7 +789,8 @@ fn clicks(
 
 #[cfg(test)]
 mod tests {
-    use super::hero_backing;
+    use super::{hero_backing, teleport_rings};
+    use bota_proto::{EntityId, SlotId, Team, TeleportView, Vec2};
 
     /// A hero seen is the filled arrow, whichever side it is on; the hollow
     /// arrow is the invisible one's alone, and the icon's disc is the same for both.
@@ -783,5 +799,34 @@ mod tests {
         assert_eq!(hero_backing(false, false), "icon.minimap.hero_arrow");
         assert_eq!(hero_backing(false, true), "icon.minimap.hero_invisible");
         assert_eq!(hero_backing(true, false), hero_backing(true, true));
+    }
+
+    fn teleport() -> TeleportView {
+        TeleportView {
+            slot: SlotId(0),
+            team: Team::Dire,
+            building: EntityId {
+                idx: 1,
+                generation: 0,
+            },
+            destination: Vec2::from_ints(4000, 9000),
+            ticks_left: 60,
+            ticks_total: 90,
+        }
+    }
+
+    /// A teleport shows where it lands and, with the hero in sight, where it
+    /// leaves from, both in its side's colour; out of sight, only the landing.
+    #[test]
+    fn a_teleport_shows_both_ends_as_far_as_the_hero_is_in_sight() {
+        let side = crate::overlay::team_color(Team::Dire);
+        let both: Vec<_> = teleport_rings(&teleport(), Some((1000.0, 2000.0))).collect();
+        assert_eq!(both.len(), 2);
+        assert_eq!(both[0].0, bevy::math::Vec2::new(4000.0, 9000.0));
+        assert_eq!(both[1].0, bevy::math::Vec2::new(1000.0, 2000.0));
+        assert!(both.iter().all(|ring| ring.2 == side));
+        let landing: Vec<_> = teleport_rings(&teleport(), None).collect();
+        assert_eq!(landing.len(), 1);
+        assert_eq!(landing[0].0, bevy::math::Vec2::new(4000.0, 9000.0));
     }
 }
