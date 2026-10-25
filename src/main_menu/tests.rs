@@ -189,7 +189,7 @@ args = ["--map", "0", "--match-id", "{{match_id}}", "--bind", "127.0.0.1", "--po
         "--ws-port", "{{port}}"]
 env = {{ BOTA_SEATS = "{{seats}}" }}
 
-# Lobbies of it start alone: the match has the host's seat and nobody against it.
+# Practice: the full Dota map, free pick. Lobbies of it start alone: the match has the host's seat and nobody against it.
 [[ruleset]]
 id = "practice"
 name = "Practice"
@@ -204,7 +204,7 @@ binary = "{binary}"
 public_url = "ws://127.0.0.1:{{port}}"
 version_probe = ["--wire-fingerprint"]
 start_timeout_secs = {PATIENCE}
-args = ["--map", "2", "--mode", "lockstep", "--ack-timeout-ticks", "900",
+args = ["--map", "0", "--mode", "lockstep", "--ack-timeout-ticks", "900",
         "--match-id", "{{match_id}}", "--bind", "127.0.0.1", "--port", "0",
         "--ws-port", "{{port}}", "--start-after-secs", "{PATIENCE}", "--abandon-unjoined",
         "--empty-after-secs", "{PATIENCE}", "--pick-secs", "1", "--tactical-secs", "0"]
