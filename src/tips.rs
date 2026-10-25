@@ -26,8 +26,8 @@ struct TipBody;
 #[derive(Resource, Default)]
 struct Shown(Option<Content>);
 
-/// Width of the popup in interface pixels.
-const WIDTH: f32 = 360.0;
+/// Width of the popup in interface pixels: Dota's 330 of text blocks (`#AbilityDescriptionContainer`) and a 2 pixel border either side, so its blocks and bars span it whole.
+const WIDTH: f32 = 334.0;
 /// Space between the cursor and the popup.
 const GAP: f32 = 16.0;
 
@@ -635,14 +635,10 @@ impl Draw<'_, '_, '_> {
             Pickable::IGNORE,
             ChildOf(self.parent),
         ));
-        let art = is_item.then(|| self.manifest.file(logical)).flatten();
-        match art {
-            Some(path) => {
-                bar.insert(ImageNode::new(self.server.load(path)));
-            }
-            None => {
-                bar.insert(BackgroundColor(palette.ground.unwrap_or(Color::NONE)));
-            }
+        // Dota's header label wears the section's ground like its body, the bar's art over it.
+        bar.insert(BackgroundColor(palette.ground.unwrap_or(Color::NONE)));
+        if let Some(path) = is_item.then(|| self.manifest.file(logical)).flatten() {
+            bar.insert(ImageNode::new(self.server.load(path)));
         }
         let bar = bar.id();
         self.commands.spawn((
