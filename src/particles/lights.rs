@@ -28,7 +28,7 @@ const LUX_PER_UNIT: f32 = 3350.0;
 const PARKED: Vec3 = Vec3::new(0.0, -1.0e6, 0.0);
 
 /// A light one particle asks for: where (the simulation's frame), its colour, its intensity in
-/// lumens and its reach.
+/// lumens (negative: a dark light) and its reach.
 #[derive(Clone, Copy, Debug)]
 pub struct Light {
     pub position: Vec3,
@@ -82,9 +82,10 @@ pub fn gather(instance: &Instance, out: &mut Vec<Light>) {
 
 /// The lights of one renderer's particles. As Source makes them: the colour is the particle's
 /// (whole bytes) blended with the colour scale, read as sRGB; the reach is the radius times
-/// the radius scale; the intensity is the alpha times the alpha scale, a light of none or less
-/// casting nothing; the light reaches its intensity at half its reach and falls off with the
-/// square of the distance.
+/// the radius scale; the intensity is the alpha times the alpha scale, a negative one taking
+/// light away (the shadow raze's dark light, alpha scale -4, darkens the ground about it; what
+/// it lights stops at black, as the tonemapper clamps); the light reaches its intensity at half
+/// its reach and falls off with the square of the distance.
 fn lights_of(light: &DeferredLight, node: &Node, out: &mut Vec<Light>) {
     let (scene, parts) = (node.scene_now(), &node.parts);
     let radius_scale = float(&light.radius_scale, &scene, parts, None, 1);
@@ -99,7 +100,7 @@ fn lights_of(light: &DeferredLight, node: &Node, out: &mut Vec<Light>) {
         }
         let range = parts.scalars[store::RADIUS][i] * radius_scale;
         let intensity = parts.scalars[store::ALPHA][i] * alpha_scale;
-        if range <= 0.0 || intensity <= 0.0 {
+        if range <= 0.0 || intensity == 0.0 {
             continue;
         }
         let bytes = (parts.vectors[store::COLOR][i].clamp(Vec3::ZERO, Vec3::ONE) * 255.0).trunc();
@@ -150,7 +151,8 @@ fn blend(kind: ColorBlend, color: Vec3, scale: Vec3) -> Vec3 {
     rgb.clamp(Vec3::ZERO, white)
 }
 
-/// Gives the pool the lights gathered this frame, the strongest at the camera first; the rest
+/// Gives the pool the lights gathered this frame, the strongest at the camera first (a dark
+/// light by how much it takes away); the rest
 /// of the pool goes dark and parks. The particles were stepped after the transforms were
 /// propagated, so each light's global transform is set with its transform: it shines where its
 /// particle is this frame, not the next.
@@ -164,7 +166,7 @@ fn shine(
         && lights.len() > POOL
     {
         let eye = from_world(camera.translation());
-        let strength = |l: &Light| l.lumens / l.position.distance_squared(eye).max(1.0);
+        let strength = |l: &Light| l.lumens.abs() / l.position.distance_squared(eye).max(1.0);
         lights.select_nth_unstable_by(POOL, |a, b| strength(b).total_cmp(&strength(a)));
     }
     for (k, (mut point, mut transform, mut global)) in pool.iter_mut().enumerate() {
