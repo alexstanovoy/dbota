@@ -53,6 +53,9 @@ pub struct Node {
     end_cap_start: f32,
     emitting: bool,
     first_frame: bool,
+    /// Its control points. One the game or an operator never placed stands at the world's
+    /// origin, unturned, as Source's: Shadow Raze's embers and fleks take control point 3,
+    /// which Dota leaves unplaced, as a velocity (`C_INIT_VelocityFromCP`), and rise in place.
     pub control_points: [ControlPoint; 64],
     /// Which control points have been placed (bit `cp`): one placed the first time has no
     /// previous place to move from.
@@ -179,17 +182,6 @@ impl Instance {
                 point.previous = position;
             }
             point.face(forward);
-            // A control point the game or an operator never placed stands where the effect
-            // does, at control point 0: Dota's town portal parks its parts on one it leaves
-            // unplaced while the channel's clock (control point 7) is not given.
-            if cp == 0 {
-                let origin = node.control_points[0];
-                for k in 1..node.control_points.len() {
-                    if node.placed & 1 << k == 0 {
-                        node.control_points[k] = origin;
-                    }
-                }
-            }
         }
     }
 

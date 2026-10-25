@@ -6,6 +6,7 @@
 use std::collections::HashMap;
 
 use bevy::prelude::*;
+use bota_core::rules;
 use bota_proto::{EntityId, SlotId, TeleportView, WorldView};
 
 use crate::map::Ground;
@@ -95,6 +96,10 @@ fn portals(
                     instance.set_control_point(COLOR, color, Vec3::ZERO, true);
                     instance.set_control_point(HERO, at, Vec3::ZERO, true);
                     instance.set_control_point(DESTINATION, at, Vec3::ZERO, true);
+                    // The channel's clock, the seconds left in it: the start keeps its
+                    // parts at the hero (its control point 31) until 0.1 s are left.
+                    let left = teleport.ticks_left as f32 / rules::TICKS_PER_SECOND as f32;
+                    instance.set_control_point(CLOCK, Vec3::new(left, 0.0, 0.0), Vec3::ZERO, true);
                 }
                 known.0.insert(key, handle);
                 handle
@@ -110,8 +115,10 @@ fn portals(
     }
 }
 
-/// The control points Dota gives a teleport's effects: the hero, where it lands, and the
-/// seat's colour (red, green and blue, 0 to 1).
+/// The control points Dota gives a teleport's effects: the hero, where it lands, the seat's
+/// colour (red, green and blue, 0 to 1) and the channel's clock.
 const HERO: usize = 0;
 const DESTINATION: usize = 1;
 const COLOR: usize = 2;
+/// The channel's clock Dota gives them: the seconds of the channel, in x.
+const CLOCK: usize = 7;
