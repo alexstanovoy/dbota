@@ -221,34 +221,69 @@ pub struct Opening {
 #[cfg(not(target_arch = "wasm32"))]
 const SERVER_PATIENCE: std::time::Duration = std::time::Duration::from_secs(30);
 
-/// The game server binary: `$BOTA_SERVER`, else `bota_server` beside this
-/// client, else on the `PATH`.
+/// The game server binary, as this client's own wire: the first of these that is a file and
+/// speaks the wire this client speaks, in this order: `bota_server` beside this client (what
+/// `tools/build.sh` makes), the one named in the settings or `$BOTA_SERVER`, and one on the
+/// `PATH`. A server of another wire is skipped, and said so if no other is found.
 #[cfg(not(target_arch = "wasm32"))]
-fn server_binary(given: Option<&std::path::Path>) -> std::io::Result<std::path::PathBuf> {
+pub(super) fn server_binary(
+    given: Option<&std::path::Path>,
+) -> std::io::Result<std::path::PathBuf> {
     let name = format!("bota_server{}", std::env::consts::EXE_SUFFIX);
+    let beside = std::env::current_exe()
+        .ok()
+        .and_then(|exe| Some(exe.parent()?.join(&name)));
     let named = given.map(std::path::Path::to_path_buf).or_else(|| {
         std::env::var_os("BOTA_SERVER")
             .filter(|p| !p.is_empty())
             .map(Into::into)
     });
-    let beside = std::env::current_exe()
-        .ok()
-        .and_then(|exe| Some(exe.parent()?.join(&name)));
     let on_path = std::env::var_os("PATH")
         .into_iter()
         .flat_map(|paths| std::env::split_paths(&paths).collect::<Vec<_>>())
         .map(|dir| dir.join(&name));
-    named
-        .into_iter()
-        .chain(beside)
-        .chain(on_path)
-        .find(|p: &std::path::PathBuf| p.is_file())
-        .ok_or_else(|| {
-            std::io::Error::new(
-                std::io::ErrorKind::NotFound,
-                "no bota_server: put it beside dbota or on the PATH, or name it in BOTA_SERVER",
-            )
+    let ours = bota_radovid::fingerprint();
+    let mut other_wires = Vec::new();
+    for candidate in beside.into_iter().chain(named).chain(on_path) {
+        if !candidate.is_file() {
+            continue;
+        }
+        match wire_of(&candidate) {
+            Some(theirs) if theirs == ours => return Ok(candidate),
+            theirs => other_wires.push((candidate, theirs)),
+        }
+    }
+    let found = other_wires
+        .iter()
+        .map(|(path, wire)| match wire {
+            Some(wire) => format!("{} speaks wire {wire:016x}", path.display()),
+            None => format!("{} did not say its wire", path.display()),
         })
+        .collect::<Vec<_>>();
+    let found = if found.is_empty() {
+        String::new()
+    } else {
+        format!(" (found, and not usable: {})", found.join("; "))
+    };
+    Err(std::io::Error::new(
+        std::io::ErrorKind::NotFound,
+        format!(
+            "no bota_server of this client's wire {ours:016x}{found}: build it beside dbota with \
+             tools/build.sh, or name it in BOTA_SERVER"
+        ),
+    ))
+}
+
+/// The wire a game server binary speaks, from its own `--wire-fingerprint`.
+#[cfg(not(target_arch = "wasm32"))]
+fn wire_of(server: &std::path::Path) -> Option<u64> {
+    let output = std::process::Command::new(server)
+        .arg("--wire-fingerprint")
+        .stdin(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .output()
+        .ok()?;
+    u64::from_str_radix(String::from_utf8_lossy(&output.stdout).trim(), 16).ok()
 }
 
 /// What a local lobby's game server is started with: on loopback, or on

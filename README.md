@@ -12,13 +12,15 @@ Dota 2 install. Bots don't need it.
 2. Build:
 
    ```sh
-   cargo build --release             # binary: target/release/dbota
-   cargo build --profile dist        # smaller, link-time optimised: target/dist/dbota (~6 min)
-   (cd ../bota && cargo build --release -p bota_server)
+   tools/build.sh                    # target/release/dbota and, beside it, target/release/bota_server
+   PROFILE=dist tools/build.sh       # smaller, link-time optimised, in target/dist (~6 min)
    ```
 
    A live match needs a client and a server built from the same bota: a server that sees another wire
-   fingerprint refuses the client. A replay opens only with the bota that recorded it.
+   fingerprint refuses the client. `tools/build.sh` builds the server of `../bota` beside the client, which
+   is where LOCAL LOBBY and DEMO HERO look for it first (next the settings' or `$BOTA_SERVER`'s path, then
+   the `PATH`); a server of another wire than the client's is skipped, and with none usable the menu says
+   which it looked for. A replay opens only with the bota that recorded it. Ship the two files together.
 
 3. Install Dota 2 through Steam (the regular or the Flatpak install is found automatically), then
    make the asset cache from it, one command, about a minute:
@@ -65,7 +67,7 @@ signed out and with no service reachable. There, you play under the profile name
 - **LOCAL LOBBY**: below its own lobby, a game server's address to join, `host:port` or `tcp://` (TCP),
   `ws://` or `wss://`, with no service at all (PLAY, or WATCH). Plain TCP to another machine is
   unprotected, and dbota says so once per host. Above it, a game hosted on this machine, as Dota's local lobby: dbota starts `bota_server`
-  (`$BOTA_SERVER`, else beside `dbota`, else on the `PATH`) for so many players on a port, for this machine
+  (beside `dbota`, else `$BOTA_SERVER`, else on the `PATH`) for so many players on a port, for this machine
   alone or (CREATE FOR THE LAN) for the local network too, in plain text, and seats you. The others join by
   this machine's address under LOCAL LOBBY, which the hero screen and the LOCAL LOBBY page show while a
   seat is open. The server ends when you quit dbota. The seats nobody else takes (**Empty seats**) stay
@@ -92,7 +94,7 @@ their console forms: `dota_create_item item_blink`): `-gold N`, `-lvlup N`, `-le
 `-spawncreeps`, `-disablecreepspawn`/`-enablecreepspawn`, `-spawnneutrals`, `-killcreeps [side]`,
 `-startgame`, `-allvision`/`-normalvision`, `-teleport` (to the cursor). Only a match its host
 started with cheats honours them: LOCAL LOBBY's "Enable cheats", DEMO HERO, or
-`bota_server --cheats`; such a match shows CHEATS under the clock, in its replay too. Matchmaking's
+`bota_server --cheats`. Matchmaking's
 matches never cheat.
 
 The power button at the top right quits, after Dota's question ("Confirm Quit"); `Esc` on the menu
@@ -128,7 +130,7 @@ Two people without a service: start a server and connect two dbota clients (from
 `--addr <host>:4455`, or LOCAL LOBBY's address in the menu):
 
 ```sh
-../bota/target/release/bota_server --map 2      # listens on 127.0.0.1:4455
+target/release/bota_server --map 2      # listens on 127.0.0.1:4455
 target/release/dbota --addr 127.0.0.1:4455 --name alice
 target/release/dbota --addr 127.0.0.1:4455 --name bob
 ```
