@@ -212,8 +212,8 @@ Outposts and Shrines of Wisdom; the mid-only map none), as Dota's models showing
 Watcher ready, lit (by day or by night) or put out, an Outpost a side holds, a Shrine of Wisdom
 ready to be gathered. They have no health bar, and the minimap shows each by Dota's icon (an Outpost
 in its holder's colour, a Watcher or a Shrine dimmed while it cannot be used). A hero channelling at
-a Watcher or an Outpost plays Dota's generic channel, and a Shrine gathered is told in the chat log
-in Dota's words.
+a Watcher or an Outpost plays Dota's generic channel. An Outpost captured and a Shrine gathered
+are told in the kill feed in Dota's words with its icons, and a Shrine gathered in the chat log too.
 
 Between the picks and the horn comes Dota's strategy screen: every seat's hero under its player's colour
 and the clock over STRATEGY TIME; at the left the hero you enter battle as, its name and abilities; at

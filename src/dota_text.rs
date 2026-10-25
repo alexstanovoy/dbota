@@ -98,6 +98,13 @@ impl Texts {
         fill(self.labels.get(&key.to_lowercase())?, values)
     }
 
+    /// One of Dota's interface labels as text and icons: each `{s:..._icon}`
+    /// variable an icon by its name, every other filled from `values`, its
+    /// markup dropped; none as [`Self::label`].
+    pub fn label_parts(&self, key: &str, values: &[(&str, String)]) -> Option<Vec<Part>> {
+        parts(self.labels.get(&key.to_lowercase())?, values)
+    }
+
     #[cfg(test)]
     pub fn is_empty(&self) -> bool {
         self.entries.is_empty()
@@ -134,6 +141,45 @@ fn read_object(root: Option<&Path>, file: &str) -> serde_json::Map<String, Value
 
 /// A Panorama label with its tags dropped and its variables (`{d:name}`,
 /// `{s:name}`, `{d:r:name}`) replaced by `values`; none when one is not given.
+/// A piece of a label: text, or the icon a variable stands for.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Part {
+    Text(String),
+    /// The variable's name (`outpost_icon`).
+    Icon(String),
+}
+
+fn parts(label: &str, values: &[(&str, String)]) -> Option<Vec<Part>> {
+    let mut out: Vec<Part> = Vec::new();
+    let mut push = |part: Part| match (out.last_mut(), part) {
+        (Some(Part::Text(last)), Part::Text(text)) => last.push_str(&text),
+        (_, part) => out.push(part),
+    };
+    let mut rest = label;
+    while let Some(at) = rest.find(['{', '<']) {
+        push(Part::Text(rest[..at].to_owned()));
+        let close = if rest[at..].starts_with('{') {
+            '}'
+        } else {
+            '>'
+        };
+        let end = at + rest[at..].find(close)?;
+        if close == '}' {
+            let name = rest[at + 1..end].rsplit(':').next()?;
+            if name.ends_with("_icon") {
+                push(Part::Icon(name.to_owned()));
+            } else {
+                let (_, value) = values.iter().find(|(key, _)| *key == name)?;
+                push(Part::Text(value.clone()));
+            }
+        }
+        rest = &rest[end + 1..];
+    }
+    push(Part::Text(rest.to_owned()));
+    out.retain(|part| !matches!(part, Part::Text(text) if text.is_empty()));
+    Some(out)
+}
+
 fn fill(label: &str, values: &[(&str, String)]) -> Option<String> {
     let mut out = String::new();
     let mut rest = label;

@@ -32,6 +32,7 @@ mod dota_text;
 mod drill;
 mod effects;
 mod error_msg;
+mod feed;
 mod fog;
 mod fortified;
 mod framestats;
@@ -444,6 +445,7 @@ fn main() -> AppExit {
             bars::plugin,
             overlay::plugin,
             hud::plugin,
+            feed::plugin,
             chat::plugin,
             input::plugin,
             pick::plugin,

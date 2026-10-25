@@ -139,7 +139,6 @@ enum Readout {
     Mana,
     HpRegen,
     ManaRegen,
-    Feed,
     Notice,
     SeatLevel(u8),
     SeatDead(u8),
@@ -1324,19 +1323,7 @@ fn spawn_corner(kit: &mut Spawner, root: Entity) {
         },
         ChildOf(root),
     ));
-    commands.spawn((
-        Readout::Feed,
-        ui::text("", &fonts.regular, 14.0, ui::INK),
-        ui::shadow(),
-        TextLayout::justify(Justify::Right),
-        Node {
-            position_type: PositionType::Absolute,
-            right: px(10),
-            top: px(30),
-            ..default()
-        },
-        ChildOf(root),
-    ));
+    crate::feed::spawn(commands, fonts, root);
     let middle = commands
         .spawn((
             Node {
@@ -1509,12 +1496,6 @@ fn match_text(core: &Core, view: &bota_proto::WorldView, readout: Readout) -> St
             .map(|p| u32::from(p.kills))
             .sum::<u32>()
             .to_string(),
-        Readout::Feed => core
-            .feed
-            .iter()
-            .map(|f| f.text.as_str())
-            .collect::<Vec<_>>()
-            .join("\n"),
         Readout::Notice => notice(core),
         Readout::SeatLevel(seat) => seat_of(view, seat)
             .map(|p| p.level.to_string())

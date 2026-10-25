@@ -12,7 +12,7 @@ use bevy::{
 };
 use bota_client_core::{App as Core, ChatLine, say_refusal};
 use bota_core::{TextFault, rules};
-use bota_proto::{Audience, Body, EventKind, Speaker, Team};
+use bota_proto::{Audience, Body, EventKind, Speaker};
 
 use crate::dota_text::Texts;
 
@@ -444,7 +444,10 @@ fn notices(
         };
         let who = by
             .and_then(|hero| core.view()?.unit(hero)?.owner)
-            .map_or_else(|| side_name(*team).to_owned(), |slot| core.seat_name(slot));
+            .map_or_else(
+                || crate::feed::side_name(*team).to_owned(),
+                |slot| core.seat_name(slot),
+            );
         let text = texts
             .as_deref()
             .and_then(|t| t.label("DOTA_Chat_Rune_XP", &[]))
@@ -456,14 +459,6 @@ fn notices(
             notices.0.pop_front();
         }
         notices.0.push_back(Notice { text, age: 0.0 });
-    }
-}
-
-fn side_name(team: Team) -> &'static str {
-    match team {
-        Team::Radiant => "The Radiant",
-        Team::Dire => "The Dire",
-        Team::Neutral => "The neutrals",
     }
 }
 
