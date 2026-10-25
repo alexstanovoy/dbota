@@ -190,6 +190,12 @@ pub struct Args {
     /// apart from the next (see `visual.rs`).
     #[arg(long, requires = "visual_check")]
     pub water_check: bool,
+    /// Debug: with `--visual-check`, measure only the health bars: the
+    /// camera kept on the `--pov` seat's courier, every bar's health marks
+    /// and every bar of health counted in hits must be as Dota draws them
+    /// (see `visual.rs`).
+    #[arg(long, requires = "visual_check", requires = "pov")]
+    pub bars_check: bool,
     /// Debug: draw a screen of the main menu with made-up contents, no
     /// service needed (for screenshots: `--frames N --screenshot FILE`).
     #[arg(long, value_name = "NAME", value_parser = clap::builder::PossibleValuesParser::new(main_menu::PREVIEWS))]

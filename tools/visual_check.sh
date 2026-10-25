@@ -2,7 +2,7 @@
 # Measures dbota's picture of a recorded match (src/visual.rs): the fog's
 # density and border, heroes drawn with their models, buildings that never
 # turn, no range rings without Alt, only the menu in the corner, health bars
-# in their side's colour, round buff icons, the river one surface without
+# in their side's colour with their health marks and blocks, round buff icons, the river one surface without
 # seams. Takes a bota replay (.brp, first
 # argument or VISUAL_REPLAY) of a Map 2 match whose heroes are on the map at
 # VISUAL_TICK and the asset cache. Every window it opens is in a private
@@ -44,6 +44,14 @@ river=$("$here/target/release/dbota" --replay "$replay" --look "${VISUAL_RIVER:-
     --visual-check --water-check --mute --no-vsync --display-mode windowed 2>> "$out/dbota.log" || true)
 echo "$river"
 if ! echo "$river" | grep -q "PASS the river"; then exit 1; fi
+
+# The health bars near: the camera on the first seat's courier, whose health is counted in hits,
+# every bar's marks and every bar of blocks measured.
+bars=$("$here/target/release/dbota" --replay "$replay" --pov 0 --bars-check --distance 2500 \
+    --screenshot-at "$tick" --screenshot-dir "$out" --screenshot-prefix check-bars- \
+    --visual-check --mute --no-vsync --display-mode windowed 2>> "$out/dbota.log" || true)
+echo "$bars"
+if ! echo "$bars" | grep -q "PASS health counted in hits"; then exit 1; fi
 
 # Every hero model loads whole every time, on its hero's own skeleton: the
 # client is run again, cold (the asset cache dropped from memory) and warm

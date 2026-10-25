@@ -10,6 +10,7 @@ use crate::keys::{Action, Fired};
 use crate::map::{DOTA_ORIGIN, Ground};
 use crate::session::Session;
 use crate::units::{Unit, UnitIndex};
+use bota_proto::{SlotId, UnitKind};
 
 /// Cursor within this many logical pixels of a window edge pans the camera.
 const EDGE_PAN_MARGIN: f32 = 6.0;
@@ -264,6 +265,19 @@ fn follow(
     {
         core.found_my_hero = true;
         core.pinned = Some(bota_client_core::Pin::Hero(slot));
+    }
+    // The bars' check watches the seat's courier, whose health is counted
+    // in hits.
+    if args.bars_check
+        && let Some(seat) = args.pov
+        && let Some(courier) = core.view().and_then(|view| {
+            view.units
+                .iter()
+                .find(|u| u.kind == UnitKind::Courier && u.owner == Some(SlotId(seat)))
+                .map(|u| u.id)
+        })
+    {
+        core.pinned = Some(bota_client_core::Pin::Unit(courier));
     }
     let live = matches!(core.source, bota_client_core::Source::Live(_));
     // Dota's hero key held: the camera follows the hero.

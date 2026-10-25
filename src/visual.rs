@@ -16,6 +16,11 @@
 //! - Every hero's minimap mark is its player's colour (Dota's, from the
 //!   cache) ringed in its side's, and the top bar's strip over each seat its
 //!   player's colour: a Dire hero is never marked in green.
+//! - Every health bar shown marks its health every 250 and every 1000 where
+//!   [`crate::bars::tick_marks`] puts the marks; with `--bars-check` (the
+//!   camera on the watched seat's courier) only the bars are measured, and a
+//!   bar of health counted in hits must stand as one block a hit, apart,
+//!   as many standing as the health has hits left.
 //! - With `--water-check` (the camera on the river) only the river is
 //!   measured: one surface, no straight sharp step in its shading where one
 //!   of the map's water pieces meets the next.
@@ -143,6 +148,7 @@ pub struct Checks<'w, 's> {
         ),
     >,
     strips: Query<'w, 's, (&'static crate::hud::SeatColour, &'static BackgroundColor)>,
+    laid: Query<'w, 's, (&'static Node, &'static Visibility)>,
 }
 
 impl Checks<'_, '_> {
@@ -236,6 +242,15 @@ pub fn run(image: &Image, unveiled: &Image, c: &Checks, may_wait: bool) -> Verdi
         );
         ok &= pass;
     };
+    if c.args.bars_check {
+        bar_ticks(c, &mut report);
+        bar_blocks(c, &mut report);
+        return Verdict {
+            pass: ok,
+            clicks_pending: false,
+            retake: false,
+        };
+    }
     if c.args.water_check {
         water(&bare, &mut report);
         return Verdict {
@@ -269,6 +284,7 @@ pub fn run(image: &Image, unveiled: &Image, c: &Checks, may_wait: bool) -> Verdi
     );
     corner(c, &mut report);
     bar_sides(c, &mut report);
+    bar_ticks(c, &mut report);
     player_colours(c, &mut report);
     buff_icons(c, &mut report);
     let clicks_pending = !report_clicks(c, &mut report);
@@ -583,6 +599,110 @@ fn player_colours(c: &Checks, report: &mut impl FnMut(&str, bool, String)) {
         "hero marks in their player's colour",
         told.iter().any(|(on, ..)| *on == "minimap") && told.iter().all(|(.., right)| *right),
         format!("marks (where, seat, right colour): {told:?}"),
+    );
+}
+
+/// The shown bars of units, with their unit's view: entity, width and the
+/// view.
+fn shown_bars<'a>(c: &'a Checks) -> Vec<(Entity, f32, &'a bota_proto::UnitView)> {
+    let Some(view) = c.session.0.view() else {
+        return Vec::new();
+    };
+    c.index
+        .0
+        .values()
+        .filter(|e| c.bars.has(**e))
+        .filter_map(|e| {
+            let unit = c.units.get(*e).ok()?;
+            let root = c.bars.root(*e)?;
+            let (node, shown) = c.laid.get(root).ok()?;
+            let Val::Px(w) = node.width else { return None };
+            (*shown != Visibility::Hidden).then_some((*e, w, view.unit(unit.id)?))
+        })
+        .collect()
+}
+
+/// The left edge's middle of a node, in its parent's pixels: where a mark
+/// stands.
+fn mark_at(node: &Node) -> Option<(f32, f32)> {
+    match (node.left, node.width) {
+        (Val::Px(left), Val::Px(width)) => Some((left + width / 2.0, width)),
+        _ => None,
+    }
+}
+
+/// Every shown bar marks its health where Dota does: a small mark every 250,
+/// a big one every 1000, none past its maximum; a hero's bar has some.
+fn bar_ticks(c: &Checks, report: &mut impl FnMut(&str, bool, String)) {
+    let mut told = Vec::new();
+    for (e, w, live) in shown_bars(c) {
+        if !c.bars.segments(e).is_empty() {
+            continue;
+        }
+        let drawn: Vec<(f32, bool)> = c
+            .bars
+            .ticks(e)
+            .iter()
+            .filter_map(|t| c.laid.get(*t).ok())
+            .filter(|(_, shown)| **shown != Visibility::Hidden)
+            .filter_map(|(node, _)| {
+                mark_at(node).map(|(x, width)| (x, width >= crate::bars::BIG_TICK_WIDTH))
+            })
+            .collect();
+        let wanted = crate::bars::tick_marks(live.max_hp, w);
+        let right = drawn.len() == wanted.len()
+            && drawn
+                .iter()
+                .zip(&wanted)
+                .all(|(d, want)| (d.0 - want.0).abs() < 0.5 && d.1 == want.1);
+        told.push((live.kind, live.max_hp, drawn.len(), right));
+    }
+    // A hero's bar is on screen in the full check; the bars' check watches a
+    // courier and needs a marked bar of any kind.
+    let hero_marked = told.iter().any(|(kind, max, n, _)| {
+        (*kind == UnitKind::Hero || c.args.bars_check) && (*max <= 250 || *n > 0)
+    });
+    report(
+        "health marks every 250 and 1000",
+        hero_marked && told.iter().all(|(.., right)| *right),
+        format!("bars (kind, max health, marks, right): {told:?}"),
+    );
+}
+
+/// Every shown bar of health counted in hits is one block a hit, the blocks
+/// apart, as many standing as the health has hits left.
+fn bar_blocks(c: &Checks, report: &mut impl FnMut(&str, bool, String)) {
+    let mut told = Vec::new();
+    for (e, _, live) in shown_bars(c) {
+        let Some((block, blocks)) = crate::bars::hit_blocks(live.kind, live.max_hp) else {
+            continue;
+        };
+        let parts: Vec<(&Node, &Visibility)> = c
+            .bars
+            .segments(e)
+            .iter()
+            .filter_map(|s| c.laid.get(*s).ok())
+            .collect();
+        let standing = parts
+            .iter()
+            .filter(|(_, v)| **v != Visibility::Hidden)
+            .count();
+        let edges: Vec<(f32, f32)> = parts
+            .iter()
+            .filter_map(|(n, _)| match (n.left, n.width) {
+                (Val::Px(l), Val::Px(w)) => Some((l, l + w)),
+                _ => None,
+            })
+            .collect();
+        let apart = edges.windows(2).all(|p| p[1].0 - p[0].1 >= 1.0);
+        let left = (live.hp.max(0) as u32).div_ceil(block as u32) as usize;
+        let right = parts.len() == blocks && standing == left && apart;
+        told.push((live.kind, live.hp, blocks, standing, right));
+    }
+    report(
+        "health counted in hits as one block a hit",
+        !told.is_empty() && told.iter().all(|(.., right)| *right),
+        format!("bars (kind, health, blocks, standing, right): {told:?}"),
     );
 }
 

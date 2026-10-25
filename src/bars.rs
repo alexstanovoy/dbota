@@ -1,6 +1,8 @@
 //! Health bars over units, Dota's way: screen-space bars that keep their
-//! size, the health just lost trailing off, notches every 250 on heroes,
-//! level and name. Also the numbers and words that rise off units.
+//! size, the health just lost trailing off, a small mark every 250 health
+//! and a big one every 1000 (`dota_health_per_vertical_marker`), level and
+//! name; health counted in hits (a courier's, a ward's) as one block a hit.
+//! Also the numbers and words that rise off units.
 
 use std::collections::HashMap;
 
@@ -19,12 +21,40 @@ const FLOATERS: usize = 48;
 /// The health of one's own hero on the Dire side.
 const HP_DIRE_OWN: Color = Color::srgb(1.0, 0.3, 0.24);
 
+/// Dota's health markers: a small one every this much health
+/// (`dota_health_per_vertical_marker`)...
+pub const TICK_HP: i32 = 250;
+/// ...and a big one every this much.
+pub const BIG_TICK_HP: i32 = 1000;
+/// Marks a bar holds at most.
+const MAX_TICKS: usize = 48;
+/// Interface pixels the small marks keep apart at least: closer (a
+/// building's thousands), only the big ones are drawn.
+const TICK_SPACING_MIN: f32 = 4.0;
+/// Blocks of health counted in hits a bar holds at most.
+const MAX_SEGMENTS: usize = 24;
+/// Interface pixels between two blocks.
+const SEGMENT_GAP: f32 = 2.0;
+/// The marks' colours: Dota's dark lines over the health, the big ones
+/// darker (`dota_health_marker_minor_alpha`, `..._major_alpha`).
+const TICK: Color = Color::srgba(0.0, 0.0, 0.0, 0.7);
+const BIG_TICK: Color = Color::srgba(0.0, 0.0, 0.0, 0.95);
+/// The marks' widths in interface pixels, small and big: a hair at 1080
+/// lines, still a line at 4K.
+pub const TICK_WIDTH: f32 = 1.5;
+pub const BIG_TICK_WIDTH: f32 = 2.5;
+
 /// One unit's bar and its parts.
-#[derive(Clone, Copy)]
 pub struct Bar {
     root: Entity,
     ghost: Entity,
     fill: Entity,
+    /// The marks over the health, and the maximum and width they were laid
+    /// out for.
+    ticks: Vec<Entity>,
+    laid_for: (i32, u32),
+    /// One block a hit, for health counted in hits; empty otherwise.
+    segments: Vec<Entity>,
     mana: Option<Entity>,
     level: Option<Entity>,
     name: Option<Entity>,
@@ -47,6 +77,56 @@ impl Bars {
     pub fn fill(&self, unit: Entity) -> Option<Entity> {
         self.0.get(&unit).map(|bar| bar.fill)
     }
+
+    /// The root of a unit root's bar.
+    pub fn root(&self, unit: Entity) -> Option<Entity> {
+        self.0.get(&unit).map(|bar| bar.root)
+    }
+
+    /// The marks of a unit root's bar, the hidden ones too.
+    pub fn ticks(&self, unit: Entity) -> &[Entity] {
+        self.0.get(&unit).map_or(&[], |bar| &bar.ticks)
+    }
+
+    /// The blocks of a unit root's bar of health counted in hits.
+    pub fn segments(&self, unit: Entity) -> &[Entity] {
+        self.0.get(&unit).map_or(&[], |bar| &bar.segments)
+    }
+}
+
+/// Where a bar `w` wide marks a maximum of `max_hp`: every [`TICK_HP`] short
+/// of it, and whether that one is a big mark ([`BIG_TICK_HP`]). Small marks
+/// that would crowd closer than [`TICK_SPACING_MIN`] are left out.
+pub fn tick_marks(max_hp: i32, w: f32) -> Vec<(f32, bool)> {
+    if max_hp <= TICK_HP {
+        return Vec::new();
+    }
+    let step = w * TICK_HP as f32 / max_hp as f32;
+    (1..)
+        .map(|k| k * TICK_HP)
+        .take_while(|hp| *hp < max_hp)
+        .take(MAX_TICKS)
+        .map(|hp| (w * hp as f32 / max_hp as f32, hp % BIG_TICK_HP == 0))
+        .filter(|(_, big)| *big || step >= TICK_SPACING_MIN)
+        .collect()
+}
+
+/// A unit's health counted in hits, as Dota draws it: the health one block
+/// stands for (the smallest blow's share) and how many blocks there are.
+/// None for health that damage takes.
+pub fn hit_blocks(kind: UnitKind, max_hp: i32) -> Option<(i32, usize)> {
+    let count = match kind {
+        UnitKind::Courier => bota_core::COURIER.hit_count,
+        UnitKind::Ward => bota_core::OBSERVER_WARD.hit_count,
+        _ => None,
+    }?;
+    let block = count
+        .melee_hero
+        .min(count.ranged_hero)
+        .min(count.other)
+        .max(1);
+    let blocks = usize::try_from((max_hp.max(1) as u32).div_ceil(block as u32)).ok()?;
+    Some((block, blocks.min(MAX_SEGMENTS)))
 }
 
 /// The pool of floating texts.
@@ -126,17 +206,22 @@ fn spawn_layer(mut commands: Commands, fonts: Res<Fonts>, mut pool: ResMut<Float
     commands.insert_resource(Layer(layer));
 }
 
-/// Width and height of a unit's bar in interface pixels.
+/// Width and height of a unit's bar in interface pixels: Dota's broad bars,
+/// read at 1080 lines and at 4K alike.
 fn bar_size(kind: UnitKind) -> Option<(f32, f32)> {
     match kind {
-        UnitKind::Hero => Some((92.0, 9.0)),
-        UnitKind::Tower | UnitKind::Barracks | UnitKind::Ancient => Some((120.0, 8.0)),
-        UnitKind::Filler => Some((90.0, 7.0)),
-        UnitKind::Fountain | UnitKind::Ward => None,
-        UnitKind::Courier => Some((40.0, 5.0)),
-        _ => Some((54.0, 6.0)),
+        UnitKind::Hero => Some((124.0, 12.0)),
+        UnitKind::Tower | UnitKind::Barracks | UnitKind::Ancient => Some((156.0, 11.0)),
+        UnitKind::Filler => Some((110.0, 9.0)),
+        UnitKind::Fountain => None,
+        UnitKind::Courier => Some((64.0, 8.0)),
+        UnitKind::Ward => Some((48.0, 7.0)),
+        _ => Some((72.0, 8.0)),
     }
 }
+
+/// The height of a hero's mana bar under its health.
+const MANA_HEIGHT: f32 = 5.0;
 
 /// How high over its feet a unit's bar floats, in world units.
 fn bar_height(kind: UnitKind) -> f32 {
@@ -150,7 +235,8 @@ fn bar_height(kind: UnitKind) -> f32 {
     }
 }
 
-fn spawn_bar(commands: &mut Commands, layer: Entity, fonts: &Fonts, kind: UnitKind) -> Bar {
+fn spawn_bar(commands: &mut Commands, layer: Entity, fonts: &Fonts, live: &UnitView) -> Bar {
+    let kind = live.kind;
     let (w, h) = bar_size(kind).unwrap_or((40.0, 5.0));
     let root = commands
         .spawn((
@@ -172,6 +258,7 @@ fn spawn_bar(commands: &mut Commands, layer: Entity, fonts: &Fonts, kind: UnitKi
     };
     let ghost = part(commands, Color::srgba(1.0, 0.9, 0.7, 0.85));
     let fill = part(commands, ui::HP_FOE);
+    let segments = spawn_segments(commands, root, live, (w, h));
     let threat = commands
         .spawn((
             ui::absolute(w / 2.0 - 5.0, -12.0, 10.0, 8.0),
@@ -184,14 +271,14 @@ fn spawn_bar(commands: &mut Commands, layer: Entity, fonts: &Fonts, kind: UnitKi
     let mana = hero.then(|| {
         let well = commands
             .spawn((
-                ui::absolute(0.0, h + 1.0, w, 4.0),
+                ui::absolute(0.0, h + 1.0, w, MANA_HEIGHT),
                 BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.85)),
                 ChildOf(root),
             ))
             .id();
         commands
             .spawn((
-                ui::absolute(0.0, 0.0, w, 4.0),
+                ui::absolute(0.0, 0.0, w, MANA_HEIGHT),
                 BackgroundColor(ui::MANA),
                 ChildOf(well),
             ))
@@ -200,7 +287,7 @@ fn spawn_bar(commands: &mut Commands, layer: Entity, fonts: &Fonts, kind: UnitKi
     let channel = hero.then(|| {
         let well = commands
             .spawn((
-                ui::absolute(0.0, h + 6.0, w, 4.0),
+                ui::absolute(0.0, h + MANA_HEIGHT + 2.0, w, 4.0),
                 BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.85)),
                 Visibility::Hidden,
                 ChildOf(root),
@@ -221,10 +308,10 @@ fn spawn_bar(commands: &mut Commands, layer: Entity, fonts: &Fonts, kind: UnitKi
                 BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.85)),
                 Node {
                     position_type: PositionType::Absolute,
-                    left: px(-20.0),
+                    left: px(-22.0),
                     top: px(-3.0),
-                    width: px(18.0),
-                    height: px(h + 9.0),
+                    width: px(20.0),
+                    height: px(h + MANA_HEIGHT + 4.0),
                     justify_content: JustifyContent::Center,
                     align_items: AlignItems::Center,
                     ..default()
@@ -233,7 +320,7 @@ fn spawn_bar(commands: &mut Commands, layer: Entity, fonts: &Fonts, kind: UnitKi
             ))
             .id();
         commands
-            .spawn((ui::text("1", &fonts.bold, 12.0, ui::GOLDEN), ChildOf(plate)))
+            .spawn((ui::text("1", &fonts.bold, 13.0, ui::GOLDEN), ChildOf(plate)))
             .id()
     });
     let name = hero.then(|| {
@@ -256,11 +343,76 @@ fn spawn_bar(commands: &mut Commands, layer: Entity, fonts: &Fonts, kind: UnitKi
         root,
         ghost,
         fill,
+        ticks: Vec::new(),
+        laid_for: (0, 0),
+        segments,
         mana,
         level,
         name,
         channel,
         threat,
+    }
+}
+
+/// One block a hit for health counted in hits, `SEGMENT_GAP` apart; none
+/// for health that damage takes.
+fn spawn_segments(
+    commands: &mut Commands,
+    root: Entity,
+    live: &UnitView,
+    (w, h): (f32, f32),
+) -> Vec<Entity> {
+    let Some((_, blocks)) = hit_blocks(live.kind, live.max_hp) else {
+        return Vec::new();
+    };
+    let gaps = SEGMENT_GAP * (blocks as f32 - 1.0);
+    let each = ((w - gaps) / blocks as f32).max(1.0);
+    (0..blocks)
+        .map(|at| {
+            let left = at as f32 * (each + SEGMENT_GAP);
+            commands
+                .spawn((
+                    ui::absolute(left, 0.0, each, h),
+                    BackgroundColor(ui::HP_FOE),
+                    ChildOf(root),
+                ))
+                .id()
+        })
+        .collect()
+}
+
+/// Lays the marks of a bar `w` wide out for its unit's maximum, spawning
+/// what it lacks; only when the maximum or the width changed.
+fn lay_ticks(commands: &mut Commands, bar: &mut Bar, max_hp: i32, (w, h): (f32, f32)) {
+    let key = (max_hp, w.to_bits());
+    if bar.laid_for == key || !bar.segments.is_empty() {
+        return;
+    }
+    bar.laid_for = key;
+    let marks = tick_marks(max_hp, w);
+    while bar.ticks.len() < marks.len() {
+        let tick = commands
+            .spawn((
+                ui::absolute(0.0, 0.0, 1.0, h),
+                BackgroundColor(TICK),
+                ChildOf(bar.root),
+            ))
+            .id();
+        bar.ticks.push(tick);
+    }
+    for (at, tick) in bar.ticks.iter().enumerate() {
+        let mark = marks.get(at).copied();
+        let (x, big) = mark.unwrap_or((0.0, false));
+        let (width, height, colour) = if big {
+            (BIG_TICK_WIDTH, h, BIG_TICK)
+        } else {
+            (TICK_WIDTH, h * 0.6, TICK)
+        };
+        commands.entity(*tick).insert((
+            ui::absolute(x - width / 2.0, 0.0, width, height),
+            BackgroundColor(colour),
+            ui::visible(mark.is_some()),
+        ));
     }
 }
 
@@ -318,18 +470,14 @@ fn bars(
             continue;
         };
         alive.push(entity);
-        let bar = match p.bars.0.get(&entity) {
-            Some(bar) => *bar,
-            None => {
-                let bar = spawn_bar(&mut p.commands, layer, &p.fonts, unit.kind);
-                p.bars.0.insert(entity, bar);
-                continue;
-            }
+        let Some(bar) = p.bars.0.get_mut(&entity) else {
+            let bar = spawn_bar(&mut p.commands, layer, &p.fonts, live);
+            p.bars.0.insert(entity, bar);
+            continue;
         };
+        lay_ticks(&mut p.commands, bar, live.max_hp, (w, h));
         let corner = Vec2::new(screen.x / scale - w / 2.0, screen.y / scale - h);
-        fill_bar(
-            core, view, me, live, &bar, corner, w, &mut nodes, &mut texts,
-        );
+        fill_bar(core, view, me, live, bar, corner, w, &mut nodes, &mut texts);
     }
     alive.sort_unstable();
     p.bars.0.retain(|entity, bar| {
@@ -363,20 +511,28 @@ fn fill_bar(
     let share = live.hp.max(0) as f32 / max;
     let ghost = core.derived.ghost(live.id, live.hp) / max;
     let color = bar_color(core, live);
+    let blocks = !bar.segments.is_empty();
     set(
         nodes,
         bar.fill,
         |n| n.width = px(w * share),
-        None,
+        Some(!blocks),
         Some(color),
     );
     set(
         nodes,
         bar.ghost,
         |n| n.width = px(w * ghost.min(1.0)),
-        None,
+        Some(!blocks),
         None,
     );
+    if let Some((block, _)) = hit_blocks(live.kind, live.max_hp) {
+        // A block stands while any of its health is left.
+        let standing = usize::try_from((live.hp.max(0) as u32).div_ceil(block as u32)).unwrap_or(0);
+        for (at, segment) in bar.segments.iter().enumerate() {
+            set(nodes, *segment, |_| {}, Some(at < standing), Some(color));
+        }
+    }
     if let Some(mana) = bar.mana {
         let m = live.mana.max(0) as f32 / live.max_mana.max(1) as f32;
         set(nodes, mana, |n| n.width = px(w * m), None, None);
