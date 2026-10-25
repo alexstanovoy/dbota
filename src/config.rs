@@ -304,7 +304,8 @@ impl DisplayMode {
 
 impl Default for DisplayMode {
     /// Windowed fullscreen on a desktop; a browser's canvas is a window of
-    /// the page.
+    /// the page until the player picks fullscreen (a browser grants it only
+    /// on a gesture).
     fn default() -> DisplayMode {
         if cfg!(target_arch = "wasm32") {
             DisplayMode::Windowed

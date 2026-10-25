@@ -256,6 +256,7 @@ pub enum PageView {
     Lobby(LobbyView),
     Result(ResultView),
     /// Dota's Demo Hero: every hero to try, by id and name.
+    #[cfg(not(target_arch = "wasm32"))]
     DemoHero {
         heroes: Vec<(u16, String)>,
     },
@@ -475,6 +476,7 @@ impl MenuCore {
                     .collect(),
                 fields: self.fields(),
             },
+            #[cfg(not(target_arch = "wasm32"))]
             Page::DemoHero => PageView::DemoHero {
                 heroes: bota_core::HEROES
                     .iter()
@@ -497,6 +499,9 @@ impl MenuCore {
         PageView::Home {
             rulesets: client
                 .rulesets()
+                // Play lists what Find Match queues (radovid: a ruleset with a queue is rated);
+                // the others are for lobbies, picked where one is made.
+                .filter(|r| r.rated)
                 .map(|r| RulesetRow {
                     id: r.id.clone(),
                     name: text::line(&r.name, text::NAME),

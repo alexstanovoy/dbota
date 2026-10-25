@@ -185,11 +185,11 @@ impl Choice {
     /// What may be picked, as shown.
     pub fn options(self) -> Vec<String> {
         match self {
-            Choice::DisplayMode => vec![
-                "Windowed".into(),
-                "Windowed fullscreen".into(),
-                "Fullscreen".into(),
-            ],
+            Choice::DisplayMode => ["Windowed", "Windowed fullscreen", "Fullscreen"]
+                .iter()
+                .take(crate::window::pickable_modes())
+                .map(|name| name.to_string())
+                .collect(),
             Choice::Quality => PRESETS.iter().map(|p| title(p)).collect(),
             Choice::Shadows => vec!["Off".into(), "Low".into(), "High".into()],
             Choice::AntiAliasing => AntiAlias::ALL.iter().map(|a| anti_alias_name(*a)).collect(),
@@ -344,7 +344,7 @@ pub enum Control {
 }
 
 /// The rows of a tab other than the hotkeys, as Dota's tabs group them. A
-/// browser's page owns the canvas' size: no display mode there.
+/// browser has no exclusive mode (see `window::pickable_modes`).
 pub fn controls(tab: Tab) -> Vec<Control> {
     use Control::{Choice as C, Heading as H, Slider as S, Toggle as T};
     match tab {
@@ -365,10 +365,7 @@ pub fn controls(tab: Tab) -> Vec<Control> {
             Control::Text(TextSetting::BotCommand),
         ],
         Tab::Video => {
-            let mut rows = vec![H("DISPLAY")];
-            if !cfg!(target_arch = "wasm32") {
-                rows.push(C(Choice::DisplayMode));
-            }
+            let mut rows = vec![H("DISPLAY"), C(Choice::DisplayMode)];
             rows.extend([
                 C(Choice::FrameCap),
                 S(Slider::RenderScale),

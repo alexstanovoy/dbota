@@ -57,6 +57,7 @@ pub enum Page {
     /// The account's rating per ruleset and the ladder.
     Profile,
     /// Dota's Demo Hero: a hero to try out alone, with every cheat.
+    #[cfg(not(target_arch = "wasm32"))]
     DemoHero,
     /// How a finished match went.
     Result,
@@ -105,6 +106,7 @@ pub enum Act {
     /// Turns the local lobby's cheats on or off (Dota's "Enable cheats").
     ToggleCheats,
     /// Starts Dota's Demo Hero with a hero.
+    #[cfg(not(target_arch = "wasm32"))]
     Demo(u16),
     /// Watches a listed replay.
     OpenReplay(usize),
@@ -240,6 +242,7 @@ pub enum Launch {
     },
     /// Dota's Demo Hero: a game server started on this machine alone with
     /// cheats on, seating this player alone with the hero chosen.
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))] // only the desktop starts one
     Demo {
         hero: bota_proto::HeroId,
         name: String,
@@ -522,7 +525,7 @@ impl MenuCore {
         if let Some(service) = service {
             prefs.service = service;
         }
-        let local_first = prefs.service.is_empty();
+        let local_first = !cfg!(target_arch = "wasm32") && prefs.service.is_empty();
         let mut core = MenuCore {
             store,
             form: Form::new(FormKind::Service, &prefs),
@@ -788,10 +791,13 @@ impl MenuCore {
     /// else the way in.
     fn rest_page(&self, left: Option<OnScreen>) -> Page {
         match left {
+            #[cfg(not(target_arch = "wasm32"))]
             Some(OnScreen::Direct | OnScreen::Local) => Page::LocalLobby,
+            #[cfg(not(target_arch = "wasm32"))]
             Some(OnScreen::Demo) => Page::DemoHero,
             Some(OnScreen::Replay) => Page::Replays,
             _ if self.account => Page::Home,
+            #[cfg(not(target_arch = "wasm32"))]
             _ if self.prefs.service.is_empty() => Page::LocalLobby,
             _ => Page::Login,
         }
@@ -1501,6 +1507,7 @@ impl MenuCore {
                 self.prefs.host_cheats = !self.prefs.host_cheats;
                 self.save_prefs();
             }
+            #[cfg(not(target_arch = "wasm32"))]
             Act::Demo(hero) => {
                 let hero = bota_proto::HeroId(hero);
                 if bota_core::hero_def(hero).is_some() {

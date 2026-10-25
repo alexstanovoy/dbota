@@ -6,7 +6,8 @@
 //! the window loses focus (Alt-Tab).
 //!
 //! A browser's canvas is the page's, never borderless by itself, and the
-//! page owns its pointer: none of this runs there.
+//! page owns its pointer. There "windowed fullscreen" is the Fullscreen API
+//! on the canvas (`web`), and there is no exclusive mode.
 
 use bevy::{
     prelude::*,
@@ -19,7 +20,10 @@ pub fn plugin(app: &mut App) {
     #[cfg(not(target_arch = "wasm32"))]
     app.add_systems(Update, (native::apply_mode, native::confine));
     #[cfg(target_arch = "wasm32")]
-    let _ = app;
+    {
+        app.init_non_send::<web::State>();
+        app.add_systems(Update, web::sync_fullscreen);
+    }
 }
 
 /// The window mode that shows a display mode.
@@ -51,6 +55,122 @@ pub fn exclusive_unavailable() -> bool {
     cfg!(target_os = "linux")
         && set("WAYLAND_DISPLAY")
         && std::env::var("WINIT_UNIX_BACKEND").map_or(true, |b| b != "x11")
+}
+
+/// The display modes a player may pick: a browser cannot take the monitor's
+/// video mode, so it has no exclusive one.
+pub fn pickable_modes() -> usize {
+    if cfg!(target_arch = "wasm32") { 2 } else { 3 }
+}
+
+/// What the display mode of the settings must become, given whether the
+/// canvas is fullscreen. A browser grants fullscreen only on a gesture and
+/// takes it back on Esc, so the page's state is the truth and the setting
+/// follows it, except in the frame the setting itself changed.
+#[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+#[derive(Debug, PartialEq, Eq)]
+pub enum Fullscreen {
+    Enter,
+    Leave,
+    /// The setting is set to what the page shows.
+    Follow(DisplayMode),
+    Keep,
+}
+
+/// `changed`: the setting was just picked; `asked`: an `Enter` is still
+/// awaiting the browser's answer.
+#[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+pub fn fullscreen_step(
+    display: DisplayMode,
+    fullscreen: bool,
+    changed: bool,
+    asked: bool,
+) -> Fullscreen {
+    let want = display != DisplayMode::Windowed;
+    match (want, fullscreen) {
+        (true, false) if changed => Fullscreen::Enter,
+        (true, false) if asked => Fullscreen::Keep,
+        (true, false) => Fullscreen::Follow(DisplayMode::Windowed),
+        (false, true) if changed => Fullscreen::Leave,
+        (false, true) => Fullscreen::Follow(DisplayMode::Borderless),
+        _ => Fullscreen::Keep,
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+mod web {
+    use std::{cell::Cell, rc::Rc};
+
+    use bevy::prelude::*;
+    use wasm_bindgen::{JsCast, closure::Closure};
+
+    use super::{Fullscreen, fullscreen_step};
+    use crate::config::Settings;
+
+    #[derive(Default)]
+    pub struct State {
+        shown: Option<crate::config::DisplayMode>,
+        asked: bool,
+        /// Set by the document's `fullscreenerror`.
+        refused: Option<Rc<Cell<bool>>>,
+    }
+
+    /// Puts the canvas fullscreen when the settings ask for windowed
+    /// fullscreen and out of it when they ask for a window. The request is
+    /// made in the frame after the click that picked it, which the browser
+    /// still counts as that click's gesture (transient user activation); if
+    /// it refuses anyway, or the player leaves with Esc, the setting goes
+    /// back to windowed. The canvas follows the screen by itself (the window
+    /// observes it), and so does the HUD scale (from the window's height).
+    pub fn sync_fullscreen(mut settings: ResMut<Settings>, mut state: NonSendMut<State>) {
+        let Some(document) = web_sys::window().and_then(|w| w.document()) else {
+            return;
+        };
+        let refused = state
+            .refused
+            .get_or_insert_with(|| {
+                let flag = Rc::new(Cell::new(false));
+                let seen = flag.clone();
+                let on_error = Closure::<dyn FnMut()>::new(move || seen.set(true));
+                let _ = document.add_event_listener_with_callback(
+                    "fullscreenerror",
+                    on_error.as_ref().unchecked_ref(),
+                );
+                on_error.forget();
+                flag
+            })
+            .clone();
+        let fullscreen = document.fullscreen_element().is_some();
+        if refused.replace(false) {
+            state.asked = false;
+            settings.display = crate::config::DisplayMode::Windowed;
+            state.shown = Some(settings.display);
+            return;
+        }
+        if fullscreen {
+            state.asked = false;
+        }
+        let changed = state.shown.is_some_and(|shown| shown != settings.display);
+        let display = settings.display;
+        let step = fullscreen_step(display, fullscreen, changed, state.asked);
+        match step {
+            Fullscreen::Enter => {
+                state.asked = true;
+                let canvas = document.get_element_by_id("dbota");
+                match canvas.map(|c| c.request_fullscreen()) {
+                    Some(Ok(())) => {}
+                    _ => {
+                        state.asked = false;
+                        settings.display = crate::config::DisplayMode::Windowed;
+                    }
+                }
+            }
+            Fullscreen::Leave => document.exit_fullscreen(),
+            Fullscreen::Follow(mode) => settings.display = mode,
+            Fullscreen::Keep => {}
+        }
+        state.shown = Some(settings.display);
+    }
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -163,5 +283,42 @@ mod native {
             options.grab_mode = CursorGrabMode::Confined;
             grab.asked = true;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use DisplayMode::{Borderless, Windowed};
+
+    /// The browser's state is the truth: Esc turns the setting back, a
+    /// refused request does too, and a setting picked this frame is asked
+    /// for, not undone.
+    #[test]
+    fn fullscreen_setting_follows_the_page() {
+        assert_eq!(
+            fullscreen_step(Borderless, false, true, false),
+            Fullscreen::Enter
+        );
+        assert_eq!(
+            fullscreen_step(Borderless, false, false, true),
+            Fullscreen::Keep
+        );
+        assert_eq!(
+            fullscreen_step(Borderless, false, false, false),
+            Fullscreen::Follow(Windowed)
+        );
+        assert_eq!(
+            fullscreen_step(Windowed, true, true, false),
+            Fullscreen::Leave
+        );
+        assert_eq!(
+            fullscreen_step(Windowed, true, false, false),
+            Fullscreen::Follow(Borderless)
+        );
+        assert_eq!(
+            fullscreen_step(Borderless, true, false, false),
+            Fullscreen::Keep
+        );
     }
 }

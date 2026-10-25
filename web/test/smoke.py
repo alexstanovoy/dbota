@@ -12,7 +12,7 @@ shows the "pick a folder, read only what is needed" path without copying anythin
 Dota 2 install (DBOTA_DOTA_PATH or the usual Steam places); the game run needs WebGL2/WebGPU
 (SwiftShader does). Without an install that part is skipped, with a message.
 
-Three more checks need no install and run on pages built with stand-ins (`?assets=none`):
+Four more checks need no install and run on pages built with stand-ins (`?assets=none`):
 
     DBOTA_WEB_REPLAY=$PWD/chat.brp DBOTA_WEB_ARGS="--replay built-in --pov 0 --seek 4100" \
         PROFILE=release OUT=temp/web-replay web/build.sh
@@ -29,6 +29,8 @@ Three more checks need no install and run on pages built with stand-ins (`?asset
 * `--replay-page`: the page plays a Zstandard-packed replay built into it (read through to the
   seek tick, as the packed file is decoded record by record) and the client says it knows the
   match and heard the chat lines, with no read error.
+* `--fullscreen-page`: a replay build made with `DBOTA_WEB_ARGS="--replay built-in --pov 0 --settings video"`;
+  the display mode and F11 put the canvas fullscreen and leaving it turns the setting back.
 * `--live-page` and `--server`: the page joins a bota_server over a WebSocket through the main
   menu's direct connection, asks for compression, takes the compressed snapshots in (the match
   goes on past its start), and chats a line of several scripts that comes back through the
@@ -341,6 +343,40 @@ def check_replay_page(directory):
     server.shutdown()
 
 
+def check_fullscreen_page(directory):
+    """Windowed fullscreen in Settings puts the canvas fullscreen (inside the click's gesture), the
+    page leaving it (Esc) turns the setting back, and F11 is the same fullscreen. Headless Chromium
+    keeps its viewport, so the canvas filling a bigger screen is not seen here."""
+    with sync_playwright() as p:
+        server, base, browser, page, console, problems = opened(p, directory)
+        page.goto(base + "?assets=none")
+        wait_console(page, console, r"match known: tick \d+", 600, "the client to know the match")
+        page.wait_for_timeout(4000)
+        fullscreen = lambda: page.evaluate("!!document.fullscreenElement")
+        shot = lambda name: page.screenshot(path=str(HERE.parent.parent / f"temp/smoke-{name}.png"), timeout=600000)
+        # The Video tab is open (--settings video): the display mode's list, its second option.
+        page.mouse.click(775, 115)
+        page.wait_for_timeout(1500)
+        page.mouse.click(775, 164)
+        page.wait_for_timeout(2500)
+        assert fullscreen(), "picking windowed fullscreen puts the canvas fullscreen"
+        shot("fullscreen-picked")
+        page.evaluate("document.exitFullscreen()")
+        page.wait_for_timeout(2500)
+        assert not fullscreen()
+        shot("fullscreen-left")  # the setting shows Windowed again
+        page.keyboard.press("F11")
+        page.wait_for_timeout(2500)
+        assert fullscreen(), "F11 is the canvas's fullscreen"
+        page.keyboard.press("F11")
+        page.wait_for_timeout(2500)
+        assert not fullscreen()
+        assert not problems, problems
+        print("fullscreen: the setting and F11 enter it, leaving it works")
+        browser.close()
+    server.shutdown()
+
+
 def free_port():
     import socket
 
@@ -471,6 +507,7 @@ def main():
     ap.add_argument("--keep", action="store_true", help="leave the imported copy in place")
     ap.add_argument("--settle", type=int, default=5, help="seconds the client draws before the screenshot")
     ap.add_argument("--replay-page", type=pathlib.Path, help="a build with a packed replay built in")
+    ap.add_argument("--fullscreen-page", type=pathlib.Path, help="a replay build opened on the Video settings")
     ap.add_argument("--live-page", type=pathlib.Path, help="a build without a replay (the main menu)")
     ap.add_argument("--server", help="a bota_server built with the websocket feature, for --live-page")
     ap.add_argument("--startup-page", type=pathlib.Path, help="any build: the client picked, failures shown")
@@ -485,6 +522,8 @@ def main():
         check_startup_page(args.startup_page)
     if args.replay_page:
         check_replay_page(args.replay_page)
+    if args.fullscreen_page:
+        check_fullscreen_page(args.fullscreen_page)
     if args.live_page:
         if not args.server:
             sys.exit("--live-page needs --server")

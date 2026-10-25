@@ -352,7 +352,8 @@ fn two_players_register_find_accept_play_and_see_their_result() {
     };
     assert_eq!(
         rulesets.iter().map(|r| r.name.as_str()).collect::<Vec<_>>(),
-        ["1x1 Mid Only", "Squad", "Practice"]
+        ["1x1 Mid Only"],
+        "Play lists what Find Match queues for; Squad and Practice are for lobbies"
     );
 
     alice.menu.act(Act::Find(solo()));
@@ -1347,11 +1348,7 @@ fn a_ruleset_for_bots_is_not_listed_to_humans() {
             .iter()
             .map(|r| (r.name.as_str(), r.audience))
             .collect::<Vec<_>>(),
-        [
-            ("1x1 Mid Only", "Humans and Bots"),
-            ("Squad", "Humans and Bots"),
-            ("Practice", "Humans and Bots")
-        ]
+        [("1x1 Mid Only", "Humans and Bots")]
     );
 }
 

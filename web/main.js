@@ -2,6 +2,7 @@
 // asset cache from it, then starts the client (dbota.js, the game compiled to wasm).
 import * as cache from "./cache.js";
 import * as grant from "./grant.js";
+import "./keys.js";
 
 const $ = (id) => document.getElementById(id);
 const show = (...ids) => {

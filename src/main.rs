@@ -662,6 +662,8 @@ fn default_plugins(args: &Args, settings: &config::Settings) -> impl PluginGroup
                 // In a browser: the page's canvas, sized to the page.
                 canvas: Some("#dbota".into()),
                 fit_canvas_to_parent: true,
+                // The page decides which keys are the browser's (web/keys.js).
+                prevent_default_event_handling: false,
                 resolution: WindowResolution::new(args.window.0, args.window.1),
                 present_mode: if args.no_vsync {
                     PresentMode::AutoNoVsync

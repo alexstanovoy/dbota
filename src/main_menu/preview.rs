@@ -87,13 +87,22 @@ fn logged_in(page: Page, body: PageView) -> MenuView {
 
 fn home() -> PageView {
     PageView::Home {
-        rulesets: vec![RulesetRow {
-            id: RulesetId("solo_mid".to_owned()),
-            name: "1x1 Mid Only".to_owned(),
-            teams: "1v1".to_owned(),
-            rated: true,
-            audience: "Humans and Bots",
-        }],
+        rulesets: vec![
+            RulesetRow {
+                id: RulesetId("solo_mid".to_owned()),
+                name: "1x1 Mid Only".to_owned(),
+                teams: "1v1".to_owned(),
+                rated: true,
+                audience: "Humans and Bots",
+            },
+            RulesetRow {
+                id: RulesetId("solo_mid_bots".to_owned()),
+                name: "1v1 Mid Only, Humans and Bots".to_owned(),
+                teams: "1v1".to_owned(),
+                rated: true,
+                audience: "Humans and Bots",
+            },
+        ],
         in_flight: (1, 2),
         cooldown: None,
     }

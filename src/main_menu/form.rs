@@ -65,7 +65,9 @@ enum Item {
 }
 
 fn items(kind: FormKind, fields: usize) -> Vec<Item> {
-    let links = [Act::Go(Page::Service), Act::Go(Page::LocalLobby)];
+    let links = [Act::Go(Page::Service)];
+    #[cfg(not(target_arch = "wasm32"))]
+    let links = links.into_iter().chain([Act::Go(Page::LocalLobby)]);
     let buttons = |acts: Vec<Act>| {
         (0..fields)
             .map(Item::Field)
@@ -74,6 +76,7 @@ fn items(kind: FormKind, fields: usize) -> Vec<Item> {
     };
     match kind {
         FormKind::None => Vec::new(),
+        FormKind::Service if cfg!(target_arch = "wasm32") => buttons(vec![Act::Submit]),
         FormKind::Service => buttons(vec![Act::Submit, Act::Go(Page::LocalLobby)]),
         FormKind::Login => buttons(
             [Act::Submit, Act::Go(Page::Register)]
@@ -89,12 +92,6 @@ fn items(kind: FormKind, fields: usize) -> Vec<Item> {
         ),
         FormKind::Lobby => buttons(vec![Act::CreateLobby, Act::Submit]),
         FormKind::Room => buttons(vec![Act::ConfigurePassword]),
-        // A browser cannot host: only the join by address is there to visit.
-        FormKind::Host if cfg!(target_arch = "wasm32") => vec![
-            Item::Field(2),
-            Item::Button(Act::Direct(false)),
-            Item::Button(Act::Direct(true)),
-        ],
         FormKind::Host => vec![
             Item::Field(0),
             Item::Field(1),

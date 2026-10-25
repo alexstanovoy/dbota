@@ -14,6 +14,9 @@ use bota_radovid::proto::LOBBY_NO_SLOT;
 
 /// The tabs of the top bar: the service's once logged in, and what is played
 /// without it always.
+///
+/// A browser cannot start a game server, so the local lobby and Demo Hero are not in its bar.
+#[cfg(not(target_arch = "wasm32"))]
 const TABS: [(Page, &str); 7] = [
     (Page::Home, "PLAY"),
     (Page::MyGames, "MY GAMES"),
@@ -21,6 +24,14 @@ const TABS: [(Page, &str); 7] = [
     (Page::Profile, "PROFILE"),
     (Page::LocalLobby, "LOCAL LOBBY"),
     (Page::DemoHero, "DEMO HERO"),
+    (Page::Replays, "REPLAYS"),
+];
+#[cfg(target_arch = "wasm32")]
+const TABS: [(Page, &str); 5] = [
+    (Page::Home, "PLAY"),
+    (Page::MyGames, "MY GAMES"),
+    (Page::Lobbies, "LOBBIES"),
+    (Page::Profile, "PROFILE"),
     (Page::Replays, "REPLAYS"),
 ];
 
@@ -58,7 +69,7 @@ const RETURN_WASH: (Color, Color) = (
 );
 
 /// The pages' column: the forms and the replay list, one width.
-const PAGE_WIDTH: f32 = 600.0;
+const PAGE_WIDTH: f32 = 760.0;
 /// Where every page starts under the top bar.
 const PAGE_TOP: f32 = 64.0;
 
@@ -152,6 +163,7 @@ pub fn draw(kit: &mut Kit, root: Entity, view: &MenuView) {
         PageView::Lobby(lobby) => lobby_page(kit, body, lobby),
         PageView::Result(result) => result_page(kit, body, result),
         PageView::Replays { list, fields } => replays_page(kit, body, list, fields),
+        #[cfg(not(target_arch = "wasm32"))]
         PageView::DemoHero { heroes } => demo_page(kit, body, heroes),
         PageView::Joining => {
             kit.bold(body, "JOINING THE GAME…", 30.0, ui::INK);
@@ -333,11 +345,7 @@ fn form_page(
     if !hint.is_empty() {
         kit.text(card, hint, 14.0, ui::INK_DIM);
     }
-    // Hosting is the desktop's: a browser's page offers only the join by address below.
-    let hosting = kind == FormKind::Host && !BROWSER;
-    if kind == FormKind::Host && BROWSER {
-        kit.text(card, NEEDS_DESKTOP, 14.0, ui::GOLDEN);
-    }
+    let hosting = kind == FormKind::Host;
     // The local lobby's address is below the lobby it hosts.
     let shown = match kind {
         FormKind::Host if hosting => 2,
@@ -445,6 +453,7 @@ fn form_page(
         if kind != FormKind::Service {
             kit.button(links, "CHANGE SERVICE", Act::Go(Page::Service), PLAIN, 28.0);
         }
+        #[cfg(not(target_arch = "wasm32"))]
         kit.button(links, "LOCAL LOBBY", Act::Go(Page::LocalLobby), PLAIN, 28.0);
     }
     card
@@ -514,7 +523,7 @@ fn home(
         let card = kit.panel(
             column,
             Node {
-                width: px(620),
+                width: px(900),
                 padding: UiRect::all(px(18)),
                 column_gap: px(18),
                 align_items: AlignItems::Center,
@@ -548,11 +557,6 @@ fn home(
             15.0,
             ui::INK_DIM,
         );
-        // An unranked ruleset has no queue: it is for lobbies.
-        if !ruleset.rated {
-            kit.text(card, "Lobbies only", 15.0, ui::INK_DIM);
-            continue;
-        }
         let can =
             cooldown.is_none() && (in_flight.1 == 0 || in_flight.0 < usize::from(in_flight.1));
         let look = if can { GREEN } else { PLAIN };
@@ -1004,14 +1008,7 @@ fn cheats_toggle(kit: &mut Kit, card: Entity, on: bool) {
 
 /// DEMO HERO: every hero, its portrait and its name; a click starts Dota's
 /// Demo Hero with it, alone on our map with every cheat.
-/// The page runs in a browser, which cannot start a game server.
-const BROWSER: bool = cfg!(target_arch = "wasm32");
-
-/// What a page that starts a game server says in a browser.
-const NEEDS_DESKTOP: &str = "This needs the desktop client: a browser cannot start a game server. \
-     Run dbota (it comes with its bota_server), or a bota_server of your own and join it by address \
-     under LOCAL LOBBY.";
-
+#[cfg(not(target_arch = "wasm32"))]
 fn demo_page(kit: &mut Kit, body: Entity, heroes: &[(u16, String)]) {
     let column = kit.node(
         body,
@@ -1029,10 +1026,6 @@ fn demo_page(kit: &mut Kit, body: Entity, heroes: &[(u16, String)]) {
         16.0,
         ui::INK_DIM,
     );
-    if BROWSER {
-        kit.text(column, NEEDS_DESKTOP, 16.0, ui::GOLDEN);
-        return;
-    }
     let grid = kit.node(
         column,
         Node {
