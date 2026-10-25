@@ -335,7 +335,7 @@ fn two_players_register_find_accept_play_and_see_their_result() {
     };
     assert_eq!(
         rulesets.iter().map(|r| r.name.as_str()).collect::<Vec<_>>(),
-        ["1x1 Mid Only"]
+        ["1x1 Mid Only", "Practice"]
     );
 
     alice.menu.act(Act::Find(solo()));
