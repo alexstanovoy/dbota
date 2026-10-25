@@ -126,7 +126,7 @@ pub fn description(look: &Lookup, id: u16) -> String {
     modifier_text(look.texts, look.manifest, id, "_Description")
         .or_else(|| source_description(look, id))
         .filter(|text| !text.trim().is_empty())
-        .unwrap_or_else(|| bota_client_core::effect(id).map_or_else(String::new, |f| f.blurb()))
+        .unwrap_or_else(|| crate::faces::effect(id).map_or_else(String::new, |f| f.blurb()))
 }
 
 /// The description of the ability or item whose icon an effect wears, as

@@ -9,7 +9,7 @@ use std::collections::HashMap;
 use std::f32::consts::TAU;
 
 use bevy::prelude::*;
-use bota_client_core::effect;
+use bota_client_core::effect_listed;
 use bota_proto::{EffectId, Inflictor};
 
 use crate::manifest::Manifest;
@@ -277,7 +277,7 @@ fn update(
         .map(|u| {
             u.effects
                 .iter()
-                .filter(|e| effect(e.id.0).is_some_and(|face| face.listed))
+                .filter(|e| effect_listed(e.id.0))
                 .map(|e| Shown {
                     id: e.id.0,
                     ticks_left: e.ticks_left,

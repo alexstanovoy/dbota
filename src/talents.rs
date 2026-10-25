@@ -9,10 +9,11 @@
 //! about, an enemy's too.
 
 use bevy::prelude::*;
-use bota_client_core::{talent_levels, talents};
+use bota_client_core::talent_levels;
 use bota_proto::TalentSlot;
 
 use crate::dota_text::Texts;
+use crate::faces::talents;
 use crate::hud::Spawner;
 use crate::session::Session;
 use crate::ui;

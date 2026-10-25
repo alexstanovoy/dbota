@@ -33,6 +33,7 @@ mod dota_text;
 mod drill;
 mod effects;
 mod error_msg;
+mod faces;
 mod feed;
 mod fog;
 mod fortified;

@@ -8,11 +8,12 @@
 //! back, as selling it does in Dota.
 
 use bevy::prelude::*;
-use bota_client_core::{ITEMS, Intent};
+use bota_client_core::Intent;
 use bota_core::item_def;
 use bota_proto::{ItemId, Team};
 
 use crate::dota_text::Texts;
+use crate::faces::ITEMS;
 use crate::manifest::Manifest;
 use crate::player_colour::PlayerColours;
 use crate::select::{ClockSeen, TacticalPhase, clock};

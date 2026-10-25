@@ -296,7 +296,7 @@ fn buff_tip(look: &Lookup, id: u16, ticks_left: Option<u32>, rate: u32) -> Conte
 
 fn talent_tip(core: &bota_client_core::App, slot: u8) -> Option<String> {
     crate::hud::subject_hero(core)
-        .and_then(|h| bota_client_core::talents(h.0))
+        .and_then(|h| crate::faces::talents(h.0))
         .map(|tree| {
             let face = &tree[usize::from(slot)];
             let (level, second) = bota_client_core::talent_levels(TalentSlot(slot));

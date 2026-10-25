@@ -116,7 +116,7 @@ pub fn spawn(
         }
         // Without the cache: the simulator's short name on the dark ground.
         None => {
-            let name = bota_client_core::ITEMS
+            let name = crate::faces::ITEMS
                 .iter()
                 .find(|face| face.id == id)
                 .map_or("?", |face| face.name);
