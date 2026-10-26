@@ -66,6 +66,7 @@ item 50 recipe
 item 51 monkey_king_bar
 item 52 wind_lace
 item 53 blood_grenade
+item 54 ward_dispenser
 ability 0 pudge_meat_hook
 ability 1 pudge_rot
 ability 2 pudge_innate_graft_flesh

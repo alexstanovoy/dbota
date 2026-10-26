@@ -109,6 +109,8 @@ enum Part {
     Pip(u8),
     Shade,
     Charges,
+    /// What a Ward Dispenser holds of the kind that is not active.
+    OtherCharges,
 }
 
 /// The parent box of a part, to find a part's slot.
@@ -1002,6 +1004,12 @@ fn spawn_slot_labels(commands: &mut Commands, fonts: &Fonts, slot: Entity, keyed
         13.0,
         ui::INK,
     );
+    label(
+        Part::OtherCharges,
+        at(Some(3.0), None, None, Some(1.0)),
+        13.0,
+        Color::srgb(0.75, 0.78, 0.85),
+    );
     let centre = commands
         .spawn((
             Node {
@@ -1625,6 +1633,7 @@ struct SlotFace {
     cost: String,
     pips: (u8, u8),
     charges: String,
+    other_charges: String,
     no_mana: bool,
     frame: Color,
 }
@@ -1752,6 +1761,7 @@ fn ability_face(
         },
         pips: (a.level, a.max_level),
         charges: String::new(),
+        other_charges: String::new(),
         no_mana: a.level > 0 && mana < a.mana_cost,
         frame: if aiming {
             ui::GOLDEN
@@ -1806,6 +1816,19 @@ fn item_face(
         charges: item
             .charges
             .filter(|c| *c > 0)
+            .map(|c| c.to_string())
+            .unwrap_or_default(),
+        // A Ward Dispenser keeps two counts: the active kind's on the right
+        // and the other's on the left.
+        other_charges: item
+            .dispenser
+            .map(|d| {
+                if d.sentry_active {
+                    d.observers
+                } else {
+                    d.sentries
+                }
+            })
             .map(|c| c.to_string())
             .unwrap_or_default(),
         no_mana: mana < item.mana_cost,
@@ -1971,6 +1994,7 @@ fn dress(
                     Part::Key => f.key.clone(),
                     Part::Cost => f.cost.clone(),
                     Part::Charges => f.charges.clone(),
+                    Part::OtherCharges => f.other_charges.clone(),
                     _ => String::new(),
                 });
                 text.set_if_neq(Text(s));

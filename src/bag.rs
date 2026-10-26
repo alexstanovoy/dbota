@@ -73,6 +73,7 @@ impl TacticalBag {
             for_sale: false,
             owner,
             selling: None,
+            dispenser: None,
         })
     }
 
