@@ -14,6 +14,7 @@ use bevy::{
     window::PrimaryWindow,
 };
 use bota_client_core::{BAG_SLOTS, Intent, Slot, Source, TOWN_PORTAL_SLOT};
+use bota_proto::Order;
 
 use crate::camera::CursorGround;
 use crate::config::Settings;
@@ -83,6 +84,7 @@ pub fn plugin(app: &mut App) {
                 crate::pick::update,
                 crate::pings::send,
                 mouse,
+                directional_move,
                 boxes,
             )
                 .chain(),
@@ -514,6 +516,57 @@ fn mouse(
             at: ground,
             unit: unit_of(hover.select),
         });
+    }
+}
+
+/// The shortest time between two directional orders: one server tick.
+const DIRECTION_EVERY: f32 = 1.0 / 30.0;
+/// How far the cursor moves over the ground before the direction is given again.
+const DIRECTION_MOVE: f32 = 1.0;
+
+/// Dota's Directional Move: while its key is held the hero walks the straight
+/// line towards the cursor, with no pathfinding, the direction following the
+/// cursor; letting go stops the hero, unless an order since took the body
+/// (the standing order is no longer the directional move).
+fn directional_move(
+    mut session: NonSendMut<Session>,
+    fired: Res<Fired>,
+    cursor: Res<CursorGround>,
+    over: Res<OverHud>,
+    screen: Res<crate::settings::Screen>,
+    time: Res<Time>,
+    mut walking: Local<Option<((f32, f32), f32)>>,
+) {
+    let core = &mut session.0;
+    let commands = core.my_hero().is_some()
+        && core.controls_selection()
+        && core.over.is_none()
+        && matches!(core.source, Source::Live(_))
+        && !screen.open;
+    let ground = cursor.0.map(|p| (p.x, -p.z));
+    let aim = ground.filter(|_| commands && !over.0 && fired.held(Action::MoveDirection));
+    match (aim, *walking) {
+        (Some(aim), last) => {
+            let now = time.elapsed_secs();
+            let due = last.is_none_or(|(was, sent)| {
+                now - sent >= DIRECTION_EVERY
+                    && (was.0 - aim.0).abs() + (was.1 - aim.1).abs() >= DIRECTION_MOVE
+            });
+            if due {
+                // A directional move is never queued: it has no end to wait for.
+                let queueing = std::mem::take(&mut core.queueing);
+                core.act(Intent::MoveDirection(aim));
+                core.queueing = queueing;
+                *walking = Some((aim, now));
+            }
+        }
+        (None, Some(_)) if !fired.held(Action::MoveDirection) || !commands => {
+            *walking = None;
+            if matches!(core.standing_order(), Some(Order::MoveDirection { .. })) {
+                core.act(Intent::Stop);
+            }
+        }
+        (None, _) => {}
     }
 }
 

@@ -161,6 +161,9 @@ pub enum Action {
     Attack,
     /// Arms a move for the next left click, whatever is there.
     Move,
+    /// Held, the hero walks the straight line towards the cursor, round
+    /// nothing (Dota's Directional Move); letting go stops it.
+    MoveDirection,
     Stop,
     Hold,
     /// Picks one's own hero; twice centres the camera on it, held the camera
@@ -258,7 +261,7 @@ use Group::{Abilities, Camera, Interface, Items, Shop as ShopGroup, Units, Watch
 /// Every action, Dota's default of each (the `dotakeys.lst` command in the
 /// comment; `-` for dbota's own), in the settings screen's order.
 #[rustfmt::skip]
-pub const BINDINGS: [Binding; 57] = [
+pub const BINDINGS: [Binding; 58] = [
     row(Action::Ability(0), "ability_1", "Ability 1", Abilities, Play, key(KeyCode::KeyQ)), // AbilityPrimary1
     row(Action::Ability(1), "ability_2", "Ability 2", Abilities, Play, key(KeyCode::KeyW)), // AbilityPrimary2
     row(Action::Ability(2), "ability_3", "Ability 3", Abilities, Play, key(KeyCode::KeyE)), // AbilityPrimary3
@@ -276,6 +279,7 @@ pub const BINDINGS: [Binding; 57] = [
     row(Action::TownPortal, "town_portal", "Town portal scroll", Items, Play, key(KeyCode::KeyT)), // InventoryTP
     row(Action::Attack, "attack", "Attack", Units, Play, key(KeyCode::KeyA)), // HeroAttack
     row(Action::Move, "move", "Move", Units, Play, key(KeyCode::KeyM)), // HeroMove
+    row(Action::MoveDirection, "move_direction", "Directional move (held)", Units, Play, None), // HeroMoveDirection (bound in none of the install's templates)
     row(Action::Stop, "stop", "Stop", Units, Play, key(KeyCode::KeyS)), // HeroStop
     row(Action::Hold, "hold", "Hold position", Units, Play, key(KeyCode::KeyH)), // HeroHold
     row(Action::SelectHero, "select_hero", "Select hero", Units, Play, key(KeyCode::F1)), // HeroSelect
@@ -823,5 +827,10 @@ mod tests {
         ] {
             assert_eq!(settings.label(action), chord, "{action:?}");
         }
+        // The install's templates bind no key to the Directional Move.
+        assert_eq!(
+            settings.keys[index_of(Action::MoveDirection).unwrap()],
+            None
+        );
     }
 }
