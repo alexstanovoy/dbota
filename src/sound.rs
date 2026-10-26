@@ -138,7 +138,7 @@ fn sources_of(kind: Kind) -> (&'static [&'static str], Option<Sfx>) {
             CueKind::HeroDeath => (&["sound.nevermore.death"], Some(Sfx::HeroDeath)),
             CueKind::HeroKill => (&[], Some(Sfx::HeroKill)),
             // Each reason has its own sound (Kind::Denied).
-            CueKind::Refused(_) => (&[], None),
+            CueKind::Refused(_) | CueKind::Undeniable(_) => (&[], None),
         },
         Kind::Denied(deny) => (deny.logical(), Some(Sfx::Refused)),
         Kind::CreepShot => (
@@ -294,6 +294,11 @@ fn play(
                     sound(Kind::Denied(told.sound), cue.gain, None);
                 }
             }
+            CueKind::Undeniable(_) => sound(
+                Kind::Denied(crate::error_msg::Deny::General),
+                cue.gain,
+                None,
+            ),
             kind => sound(Kind::Cue(kind), cue.gain, cue.at),
         }
     }

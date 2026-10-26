@@ -152,6 +152,42 @@ impl Clarity {
     }
 }
 
+/// What a right click on an allied unit does (Dota's "Right-Click Allies",
+/// `dota_force_right_click_attack`; "To Follow" by default).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RightClickAllies {
+    /// Follow the unit.
+    Follow,
+    /// Attack the unit, as the attack key does: sent only when the game lets
+    /// it be denied, else nothing happens but a line saying why.
+    Attack,
+    /// Deny the unit if it can be denied, else follow it.
+    Deny,
+}
+
+impl RightClickAllies {
+    /// In the order of Dota's list.
+    pub const ALL: [RightClickAllies; 3] = [
+        RightClickAllies::Follow,
+        RightClickAllies::Attack,
+        RightClickAllies::Deny,
+    ];
+
+    /// The name settings files and `--set` use.
+    pub fn name(self) -> &'static str {
+        match self {
+            RightClickAllies::Follow => "follow",
+            RightClickAllies::Attack => "attack",
+            RightClickAllies::Deny => "deny",
+        }
+    }
+
+    pub fn named(name: &str) -> Option<RightClickAllies> {
+        let name = name.to_ascii_lowercase();
+        RightClickAllies::ALL.into_iter().find(|c| c.name() == name)
+    }
+}
+
 /// What the picture may cost; see `quality.rs`. The defaults draw it whole.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Quality {
@@ -360,10 +396,8 @@ pub struct Settings {
     /// "Abilities Require Hold/Cancel to Stop",
     /// `dota_player_channels_require_stop`; off in Dota).
     pub channels_require_stop: bool,
-    /// A right click on an allied unit bota lets one deny attacks it once its
-    /// health is at most this percent of its most, so no `A` is needed; above
-    /// it the click follows, as Dota's. Zero: never.
-    pub deny_on_right_click_pct: u8,
+    /// What a right click on an allied unit does.
+    pub right_click_allies: RightClickAllies,
 }
 
 /// Characters a profile name has at most.
@@ -393,7 +427,7 @@ impl Default for Settings {
             bot_command: String::new(),
             teleport_requires_halt: false,
             channels_require_stop: false,
-            deny_on_right_click_pct: 30,
+            right_click_allies: RightClickAllies::Follow,
         }
     }
 }
@@ -534,8 +568,14 @@ impl Settings {
             "camera_pan_speed" => self.camera.pan_speed = parse_unit(value, 100.0, 20_000.0)?,
             "teleport_requires_halt" => self.teleport_requires_halt = flag()?,
             "channels_require_stop" => self.channels_require_stop = flag()?,
-            "deny_on_right_click_pct" => {
-                self.deny_on_right_click_pct = parse_unit(value, 0.0, 100.0)?.round() as u8;
+            "right_click_allies" => {
+                self.right_click_allies = RightClickAllies::named(value).ok_or_else(|| {
+                    let names: Vec<&str> = RightClickAllies::ALL.iter().map(|c| c.name()).collect();
+                    format!(
+                        "no right click on allies called '{value}'; one of {}",
+                        names.join(", ")
+                    )
+                })?
             }
             "name" => {
                 if value.chars().count() > MAX_NAME || value.chars().any(char::is_control) {
@@ -582,8 +622,8 @@ impl Settings {
             out.push_str(&format!("{name} = {}\n", flag(on)));
         }
         out.push_str(&format!(
-            "deny_on_right_click_pct = {}\n",
-            self.deny_on_right_click_pct
+            "right_click_allies = {}\n",
+            self.right_click_allies.name()
         ));
         out.push_str(&format!("display_mode = {}\n", self.display.name()));
         let q = &self.quality;
@@ -730,5 +770,25 @@ mod tests {
         }
         let (_, complaints) = Settings::parse("display_mode = tiny");
         assert!(complaints[0].contains("borderless"), "{complaints:?}");
+    }
+
+    /// Dota's defaults: right clicks follow allies, and no channel waits for a stop.
+    #[test]
+    fn the_right_click_and_channel_options_start_as_dotas_and_survive_the_file() {
+        let fresh = Settings::default();
+        assert_eq!(fresh.right_click_allies, RightClickAllies::Follow);
+        assert!(!fresh.teleport_requires_halt && !fresh.channels_require_stop);
+        for mode in RightClickAllies::ALL {
+            let settings = Settings {
+                right_click_allies: mode,
+                teleport_requires_halt: true,
+                channels_require_stop: true,
+                ..Settings::default()
+            };
+            let (read, complaints) = Settings::parse(&settings.render());
+            assert!(complaints.is_empty(), "{mode:?}: {complaints:?}");
+            assert_eq!(read.right_click_allies, mode);
+            assert!(read.teleport_requires_halt && read.channels_require_stop);
+        }
     }
 }

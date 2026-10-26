@@ -1318,6 +1318,9 @@ label resource/localization/dota_english.txt dota_hud_error_cant_sell_item
 label resource/localization/dota_english.txt dota_hud_error_cant_cast_here
 label resource/localization/dota_english.txt dota_hud_error_item_out_of_stock
 label resource/localization/dota_english.txt dota_hud_error_queue_full
+label resource/localization/dota_english.txt dota_hud_error_cant_deny_health_too_high
+label resource/localization/dota_english.txt dota_hud_error_hero_cant_be_denied
+label resource/localization/dota_english.txt dota_hud_error_target_cant_be_denied
 
 # Dota's player colours (HeroSlot0Color..HeroSlot9Color: Radiant's five seats, then Dire's).
 style panorama/styles/dotastyles.vcss_c HeroSlot0Color

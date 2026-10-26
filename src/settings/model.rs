@@ -2,7 +2,9 @@
 //! every option on them as a toggle, a slider or a choice from a list,
 //! each reading and writing one field of [`Settings`].
 
-use crate::config::{AntiAlias, Clarity, DISPLAY_MODES, PRESETS, Quality, Settings};
+use crate::config::{
+    AntiAlias, Clarity, DISPLAY_MODES, PRESETS, Quality, RightClickAllies, Settings,
+};
 
 /// The screen's tabs, as Dota's settings have them.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -99,7 +101,6 @@ pub enum Slider {
     Volume,
     InterfaceScale,
     RenderScale,
-    DenyOnRightClick,
 }
 
 impl Slider {
@@ -108,7 +109,6 @@ impl Slider {
             Slider::Volume => "Master volume",
             Slider::InterfaceScale => "Interface size",
             Slider::RenderScale => "Render resolution",
-            Slider::DenyOnRightClick => "Right click denies an ally below",
         }
     }
 
@@ -118,7 +118,6 @@ impl Slider {
             Slider::Volume => (0.0, 1.0, 0.01),
             Slider::InterfaceScale => (0.5, 2.0, 0.05),
             Slider::RenderScale => (0.25, 1.0, 0.05),
-            Slider::DenyOnRightClick => (0.0, 100.0, 5.0),
         }
     }
 
@@ -127,7 +126,6 @@ impl Slider {
             Slider::Volume => s.volume,
             Slider::InterfaceScale => s.ui_scale,
             Slider::RenderScale => s.quality.render_scale,
-            Slider::DenyOnRightClick => f32::from(s.deny_on_right_click_pct),
         }
     }
 
@@ -140,7 +138,6 @@ impl Slider {
             Slider::Volume => s.volume = value,
             Slider::InterfaceScale => s.ui_scale = value,
             Slider::RenderScale => s.quality.render_scale = value,
-            Slider::DenyOnRightClick => s.deny_on_right_click_pct = value.round() as u8,
         }
     }
 
@@ -152,11 +149,7 @@ impl Slider {
 
     /// The value as the screen shows it.
     pub fn shown(self, s: &Settings) -> String {
-        match self {
-            Slider::DenyOnRightClick if s.deny_on_right_click_pct == 0 => "Off".to_owned(),
-            Slider::DenyOnRightClick => format!("{}%", s.deny_on_right_click_pct),
-            _ => format!("{:.0}%", self.get(s) * 100.0),
-        }
+        format!("{:.0}%", self.get(s) * 100.0)
     }
 }
 
@@ -170,6 +163,7 @@ pub enum Choice {
     VisualClarity,
     FrameCap,
     TextureSize,
+    RightClickAllies,
 }
 
 /// The frame caps offered; 0 for none.
@@ -187,6 +181,7 @@ impl Choice {
             Choice::VisualClarity => "Visual clarity",
             Choice::FrameCap => "Frame rate cap",
             Choice::TextureSize => "Largest texture size",
+            Choice::RightClickAllies => "Right-Click Allies",
         }
     }
 
@@ -213,6 +208,9 @@ impl Choice {
                 })
                 .collect(),
             Choice::TextureSize => TEXTURE_SIZES.iter().map(u32::to_string).collect(),
+            Choice::RightClickAllies => ["To Follow", "To Attack", "To Deny"]
+                .map(String::from)
+                .to_vec(),
         }
     }
 
@@ -230,6 +228,9 @@ impl Choice {
             Choice::VisualClarity => Clarity::ALL.iter().position(|c| *c == s.clarity),
             Choice::FrameCap => FRAME_CAPS.iter().position(|c| *c == q.fps_cap),
             Choice::TextureSize => TEXTURE_SIZES.iter().position(|t| *t == q.texture_size),
+            Choice::RightClickAllies => RightClickAllies::ALL
+                .iter()
+                .position(|c| *c == s.right_click_allies),
         }
     }
 
@@ -259,6 +260,12 @@ impl Choice {
             Choice::FrameCap => q.fps_cap = FRAME_CAPS.get(at).copied().unwrap_or(q.fps_cap),
             Choice::TextureSize => {
                 q.texture_size = TEXTURE_SIZES.get(at).copied().unwrap_or(q.texture_size);
+            }
+            Choice::RightClickAllies => {
+                s.right_click_allies = RightClickAllies::ALL
+                    .get(at)
+                    .copied()
+                    .unwrap_or(s.right_click_allies);
             }
         }
     }
@@ -366,9 +373,9 @@ pub fn controls(tab: Tab) -> Vec<Control> {
             T(Toggle::AnimatePortrait),
             T(Toggle::ScoreboardItems),
             H("CONTROLS"),
+            C(Choice::RightClickAllies),
             T(Toggle::TeleportRequiresHalt),
             T(Toggle::ChannelsRequireStop),
-            S(Slider::DenyOnRightClick),
             H("CAMERA"),
             T(Toggle::EdgePan),
             H("LOCAL LOBBY"),

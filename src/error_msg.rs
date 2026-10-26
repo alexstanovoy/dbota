@@ -6,7 +6,7 @@
 //! Dota.
 
 use bevy::prelude::*;
-use bota_client_core::{CommandError, CursorUse, Refused};
+use bota_client_core::{CommandError, CursorUse, Refused, Undeniable};
 use bota_proto::RejectReason;
 
 use crate::dota_text::Texts;
@@ -103,7 +103,30 @@ pub fn line(refused: &Refused, texts: &Texts) -> Option<String> {
                     .unwrap_or_else(|| capitalised(plain_words(*reason))),
             )
         }
+        Refused::Undeniable(why) => Some(
+            texts
+                .label(undeniable_key(*why), &[])
+                .unwrap_or_else(|| capitalised(undeniable_words(*why))),
+        ),
         Refused::Command(error) => Some(console_words(error)),
+    }
+}
+
+/// Dota's line for an ally a click would attack and nothing lets be denied.
+fn undeniable_key(why: Undeniable) -> &'static str {
+    match why {
+        Undeniable::HealthTooHigh => "dota_hud_error_cant_deny_health_too_high",
+        Undeniable::Hero => "dota_hud_error_hero_cant_be_denied",
+        Undeniable::Other => "dota_hud_error_target_cant_be_denied",
+    }
+}
+
+/// The same in plain words.
+fn undeniable_words(why: Undeniable) -> &'static str {
+    match why {
+        Undeniable::HealthTooHigh => "can't deny, target health too high",
+        Undeniable::Hero => "hero not deniable",
+        Undeniable::Other => "target can't be denied",
     }
 }
 
@@ -111,6 +134,7 @@ pub fn line(refused: &Refused, texts: &Texts) -> Option<String> {
 pub fn plain(refused: &Refused) -> String {
     match refused {
         Refused::Rule(reason) => plain_words(*reason).to_string(),
+        Refused::Undeniable(why) => undeniable_words(*why).to_string(),
         Refused::Command(error) => console_words(error),
     }
 }
