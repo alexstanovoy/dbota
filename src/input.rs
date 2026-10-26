@@ -81,6 +81,7 @@ pub fn plugin(app: &mut App) {
                 typing,
                 crate::chat::typing,
                 keys,
+                channel_stops,
                 crate::pick::update,
                 crate::pings::send,
                 mouse,
@@ -517,6 +518,14 @@ fn mouse(
             unit: unit_of(hover.select),
         });
     }
+}
+
+/// Hands the core the options that keep orders back while the hero channels.
+fn channel_stops(mut session: NonSendMut<Session>, settings: Res<Settings>) {
+    session.0.channel_stops = bota_client_core::ChannelStops {
+        teleport: settings.teleport_requires_halt,
+        channels: settings.channels_require_stop,
+    };
 }
 
 /// The shortest time between two directional orders: one server tick.

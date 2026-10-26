@@ -352,6 +352,14 @@ pub struct Settings {
     /// The program a local lobby starts for each seat left to a bot, as a
     /// command line (see `main_menu::launch`). Empty: none set.
     pub bot_command: String,
+    /// Whether an order given while a teleport channels waits for it to land
+    /// instead of breaking it (Dota's "Teleport Requires Hold/Cancel to
+    /// Stop", `dota_player_teleport_requires_halt`; off in Dota).
+    pub teleport_requires_halt: bool,
+    /// The same for every other channelled ability and item (Dota's
+    /// "Abilities Require Hold/Cancel to Stop",
+    /// `dota_player_channels_require_stop`; off in Dota).
+    pub channels_require_stop: bool,
     /// A right click on an allied unit bota lets one deny attacks it once its
     /// health is at most this percent of its most, so no `A` is needed; above
     /// it the click follows, as Dota's. Zero: never.
@@ -383,6 +391,8 @@ impl Default for Settings {
             camera: CameraSettings::default(),
             name: String::new(),
             bot_command: String::new(),
+            teleport_requires_halt: false,
+            channels_require_stop: false,
             deny_on_right_click_pct: 30,
         }
     }
@@ -522,6 +532,8 @@ impl Settings {
                 self.camera.distance_max = parse_unit(value, 100.0, 20_000.0)?;
             }
             "camera_pan_speed" => self.camera.pan_speed = parse_unit(value, 100.0, 20_000.0)?,
+            "teleport_requires_halt" => self.teleport_requires_halt = flag()?,
+            "channels_require_stop" => self.channels_require_stop = flag()?,
             "deny_on_right_click_pct" => {
                 self.deny_on_right_click_pct = parse_unit(value, 0.0, 100.0)?.round() as u8;
             }
@@ -564,6 +576,8 @@ impl Settings {
             ("edge_pan", self.aids.edge_pan),
             ("animate_portrait", self.animate_portrait),
             ("scoreboard_items", self.scoreboard_items),
+            ("teleport_requires_halt", self.teleport_requires_halt),
+            ("channels_require_stop", self.channels_require_stop),
         ] {
             out.push_str(&format!("{name} = {}\n", flag(on)));
         }

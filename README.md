@@ -172,6 +172,7 @@ clash and resets them to the defaults; they are kept as `key.<action> = <chord>`
 | Left click | select; confirms a targeted ability or item |
 | `A` / `M` then left click | attack-move / move there, whatever is under the cursor |
 | `S` / `H` | stop / hold position |
+| Directional Move (unbound, as in Dota) | held, the hero walks the straight line towards the cursor with no pathfinding (the ground and the trees stop it where they are), the direction following the cursor; letting go stops it |
 | `Q` `W` `E` `D` `F`, `R` | the ability slots (Shadowraze near, mid, far, Feast of Souls), the ultimate |
 | `O`, then an ability key; or `Ctrl` + an ability key | learn that ability (spend a skill point) |
 | `U` | open the talent tree (the Attribute Bonus is learned there too) |
@@ -194,7 +195,7 @@ clash and resets them to the defaults; they are kept as `key.<action> = <chord>`
 | `F9`, `=` / `-`, `.`, `Tab` | in a replay: pause, faster / slower, one tick, switch vision (both teams, Radiant, Dire; `Tab` as a spectator too) |
 
 The settings screen (SETTINGS in the main menu and on the dashboard over a game) has Dota's tabs: HOTKEYS,
-OPTIONS (profile name, interface size, damage numbers, animated portrait, the scoreboard's items, the right click's deny, edge pan), VIDEO (display mode, frame
+OPTIONS (profile name, interface size, damage numbers, animated portrait, the scoreboard's items, Dota's "Require Hold/Cancel to Stop" options for teleports and for channelled abilities (off, as in Dota: an order given meanwhile waits for the channel to end, and only a stop or a hold breaks it; the last order given is the one carried out), the right click's deny, edge pan), VIDEO (display mode, frame
 cap, resolution, quality preset, shadows, anti-aliasing, visual clarity, auto quality, and what
 takes effect on the next start) and AUDIO (volume, mute, your hero's voice answers). What it
 changes is saved when it closes.
