@@ -44,6 +44,15 @@ has `WEBGL_compressed_texture_s3tc` (and `_srgb`), `EXT_texture_compression_rgtc
 load, as on a WebGPU without `texture-compression-bc`. Offscreen targets (minimap, portraits, render
 scale) are RGBA, the one 8-bit order WebGL2 uploads.
 
+The canvas is drawn at the screen's own pixels: its drawing buffer and the client's surface are
+the canvas's device-pixel size (`devicePixelContentBoxSize`, fractional scales too), so the picture
+is as sharp as the desktop client's wherever the browser shows its window 1:1. Chromium on Linux
+draws through X11 (Xwayland) unless told otherwise, and on a Wayland desktop scaled by anything but
+1 (a fractional scale above all) the compositor then resamples the whole browser window, the game
+with it: the picture is softer than the desktop client's, which draws at the screen's pixels. On
+Wayland Chromium draws 1:1: set `chrome://flags/#ozone-platform-hint` to Wayland (or start it with
+`--ozone-platform=wayland`).
+
 A start that fails never leaves a still canvas: the client hands its panics (src/webpage.rs) and the
 allocations the browser refused to the page, which says what happened and what to do (no graphics: how
 to turn it on; a renderer that cannot be made with WebGPU: the WebGL2 client instead; out of memory;
