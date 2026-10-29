@@ -72,7 +72,11 @@ impl Playing {
             None => Instance::new(Arc::clone(effect), seed),
         };
         instance.world_time = self.clock;
-        match self.started.iter_mut().find(|(e, _)| Arc::ptr_eq(e, effect)) {
+        match self
+            .started
+            .iter_mut()
+            .find(|(e, _)| Arc::ptr_eq(e, effect))
+        {
             Some((_, n)) => *n = n.saturating_add(1),
             None => self.started.push((Arc::clone(effect), 1)),
         }

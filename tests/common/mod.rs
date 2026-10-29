@@ -21,7 +21,15 @@ const PATIENCE: Duration = Duration::from_secs(240);
 /// as short as the script allows, on a port of its own choosing; and its address.
 fn serve() -> (Child, String) {
     let mut child = Command::new(server_binary())
-        .args(["--map", "2", "--port", "0", "--bind", "127.0.0.1", "--cheats"])
+        .args([
+            "--map",
+            "2",
+            "--port",
+            "0",
+            "--bind",
+            "127.0.0.1",
+            "--cheats",
+        ])
         .args(["--players", "1", "--pick-secs", "5", "--tactical-secs", "5"])
         .stdout(Stdio::piped())
         .stderr(Stdio::null())

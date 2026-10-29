@@ -118,9 +118,7 @@ fn told(
         };
         let subject = format!("item.{key}");
         let stood = |v: Option<&bota_proto::WorldView>| {
-            v.zip(caster)
-                .and_then(|(v, id)| v.unit(id))
-                .map(|u| u.pos)
+            v.zip(caster).and_then(|(v, id)| v.unit(id)).map(|u| u.pos)
         };
         let places = [
             (At::Caster, stood(Some(view))),
@@ -152,9 +150,9 @@ fn wears(fx: &Fx, unit: &UnitView, manifest: &Manifest) -> bool {
     let Some(modifier) = fx.subject.strip_prefix("modifier.") else {
         return false;
     };
-    unit.effects.iter().any(|effect| {
-        manifest.dota_name("modifier", effect.id.0) == Some(modifier)
-    })
+    unit.effects
+        .iter()
+        .any(|effect| manifest.dota_name("modifier", effect.id.0) == Some(modifier))
 }
 
 /// Starts what each unit that has come to wear a worn line's subject wears, keeps its particle at
@@ -195,9 +193,7 @@ fn worn(
                 .unit(*id)
                 .zip(rules.iter().find(|(i, _)| i == rule))
                 .is_some_and(|(unit, (_, fx))| wears(fx, unit, &stage.manifest));
-        if !keep
-            && let Some(instance) = handle.and_then(|h| playing.get_mut(h))
-        {
+        if !keep && let Some(instance) = handle.and_then(|h| playing.get_mut(h)) {
             instance.end();
         }
         keep
