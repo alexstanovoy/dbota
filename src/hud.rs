@@ -144,13 +144,15 @@ enum Part {
 #[derive(Component, Clone, Copy)]
 struct PartOf(Entity);
 
-/// The frame rate at the top right, and the ping on a live link.
+/// The frame rate at the top right, and on a live link the ping and the time orders take to be
+/// received.
 #[derive(Component)]
 pub(crate) struct FrameRate;
 
-/// The milliseconds of the ping a frame-rate text tells.
-pub(crate) fn ping_told(text: &str) -> Option<u32> {
-    text.strip_prefix("ping ")?.split(' ').next()?.parse().ok()
+/// The milliseconds a frame-rate text tells after `label` (`ping`, `orders`).
+pub(crate) fn told_ms(text: &str, label: &str) -> Option<u32> {
+    let rest = text.split(&format!("{label} ")).nth(1)?;
+    rest.split(' ').next()?.parse().ok()
 }
 
 /// How often the frame rate is told: the frames over each such span, not
@@ -1599,10 +1601,16 @@ fn frame_rate(
     }
     let fps = span.0 as f32 / span.1;
     *span = (0, 0.0);
-    let told = match session.0.source.ping() {
-        Some(ping) => format!("ping {} ms   {fps:.0} fps", ping.as_millis()),
-        None => format!("{fps:.0} fps"),
-    };
+    let source = &session.0.source;
+    let mut told = String::new();
+    if let Some(ping) = source.ping() {
+        told += &format!("ping {} ms   ", ping.as_millis());
+    }
+    // Dota's `dota_report_order_latency`: how long a click takes to be received.
+    if let Some(latency) = source.order_latency() {
+        told += &format!("orders {} ms   ", latency.as_millis());
+    }
+    told += &format!("{fps:.0} fps");
     text.set_if_neq(Text(told));
 }
 

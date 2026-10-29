@@ -88,16 +88,73 @@ impl Shape {
 
 /// The loaded images of the shapes, and the shape the window wears.
 #[derive(Resource, Default)]
-struct Cursors {
+pub struct Cursors {
     images: Vec<(Shape, Handle<Image>)>,
-    /// The shape worn, and whether it is the install's image.
-    shown: Option<(Shape, bool)>,
+    /// The same images lightened, worn while an order sent has not been received (Dota's
+    /// `dota_debug_change_cursor_during_pending_order`: the cursor is brighter until the server
+    /// confirms the command).
+    bright: Vec<(Shape, Handle<Image>)>,
+    /// The shape worn, whether it is the install's image, and whether it is the lightened one.
+    shown: Option<(Shape, bool, bool)>,
+}
+
+impl Cursors {
+    /// Whether the cursor worn is the one of an order still on its way.
+    pub fn is_bright(&self) -> bool {
+        self.shown.is_some_and(|(_, _, bright)| bright)
+    }
+}
+
+/// An image with each colour moved halfway to white, its transparency kept; none for a format
+/// that is not four bytes a pixel.
+fn lightened(image: &Image) -> Option<Image> {
+    use bevy::render::render_resource::TextureFormat;
+    if !matches!(
+        image.texture_descriptor.format,
+        TextureFormat::Rgba8Unorm | TextureFormat::Rgba8UnormSrgb
+    ) {
+        return None;
+    }
+    let mut copy = image.clone();
+    let (pixels, _) = copy.data.as_mut()?.as_chunks_mut::<4>();
+    for pixel in pixels {
+        for channel in &mut pixel[..3] {
+            *channel += (255 - *channel) / 2;
+        }
+    }
+    Some(copy)
+}
+
+/// Makes the lightened copy of each cursor image once it has loaded.
+fn lighten(mut cursors: ResMut<Cursors>, mut images: ResMut<Assets<Image>>) {
+    if cursors.bright.len() == cursors.images.len() {
+        return;
+    }
+    let loaded: Vec<(Shape, Image)> = cursors
+        .images
+        .iter()
+        .filter(|(shape, _)| !cursors.bright.iter().any(|(done, _)| done == shape))
+        .filter_map(|(shape, handle)| Some((*shape, images.get(handle)?.clone())))
+        .collect();
+    for (shape, image) in loaded {
+        // A format that cannot be lightened wears the plain image.
+        let handle = match lightened(&image) {
+            Some(copy) => images.add(copy),
+            None => cursors
+                .images
+                .iter()
+                .find(|(s, _)| *s == shape)
+                .map(|(_, h)| h.clone())
+                .unwrap_or_default(),
+        };
+        cursors.bright.push((shape, handle));
+    }
 }
 
 pub fn plugin(app: &mut App) {
     app.init_resource::<Cursors>()
         .add_systems(Startup, load)
-        .add_systems(Update, show.after(crate::pick::update));
+        .add_systems(Update, (lighten, show.after(crate::pick::update)));
 }
 
 fn load(mut cursors: ResMut<Cursors>, manifest: Res<Manifest>, server: Res<AssetServer>) {
@@ -149,17 +206,21 @@ fn show(
     mut commands: Commands,
 ) {
     let wanted = shape(&session.0, &hover, over.0);
-    let image = cursors
-        .images
-        .iter()
-        .find(|(s, _)| *s == wanted)
-        .map(|(_, handle)| handle.clone());
+    let bright = session.0.source.pending_orders() > 0;
+    let image = if bright {
+        &cursors.bright
+    } else {
+        &cursors.images
+    }
+    .iter()
+    .find(|(s, _)| *s == wanted)
+    .map(|(_, handle)| handle.clone());
     // Until the image has loaded the stand-in is worn, and the cursor is set again then.
     let ready = image.as_ref().is_some_and(|h| images.contains(h));
-    if cursors.shown == Some((wanted, ready)) {
+    if cursors.shown == Some((wanted, ready, bright)) {
         return;
     }
-    cursors.shown = Some((wanted, ready));
+    cursors.shown = Some((wanted, ready, bright));
     let icon = match image.filter(|_| ready) {
         Some(handle) => CursorIcon::Custom(CustomCursor::Image(CustomCursorImage {
             handle,

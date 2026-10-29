@@ -25,7 +25,10 @@
 //! - `await:items:N`: exactly N items in the hero's bag;
 //! - `expect:WHAT`: what `await` names, held at once, else the client ends with exit code 2;
 //! - `await:towershots:N`: exactly N lines drawn from a tower to a hero it is set on;
-//! - `await:ping:LOW,HIGH`: the ping the top right corner tells, in milliseconds, between the two;
+//! - `await:ping:LOW,HIGH`, `await:orders:LOW,HIGH`: the ping, or the time an order takes to be
+//!   received, that the top right corner tells, in milliseconds, between the two;
+//! - `await:pending`: an order of one's own sent and not yet received, its marker shown and the
+//!   cursor lightened; `await:settled`: every order received and the cursor plain again;
 //! - `await:level:N`, `await:gold:N`: one's hero at that level, that gold;
 //! - `say:LINE`: the line typed into the chat and sent (a `-command` runs);
 //! - `pick:ID`: the hero of that id picked, and the seat readied;
@@ -132,6 +135,12 @@ enum Awaited {
     TowerShots(u32),
     /// The ping the corner tells, in milliseconds, within this range.
     Ping(u32, u32),
+    /// The time orders take to be received, as the corner tells it, in milliseconds.
+    OrderLatency(u32, u32),
+    /// An order sent and not yet received, with its marker shown and the cursor lightened.
+    Pending,
+    /// Every order received, and the cursor plain.
+    Settled,
 }
 
 /// What the game has drawn, for the awaited steps that look at it.
@@ -144,7 +153,9 @@ struct Drawn<'w, 's> {
     playing: Res<'w, crate::particles::Playing>,
     heard: Res<'w, crate::fx::Heard>,
     shots: Res<'w, crate::overlay::TowerShots>,
+    /// The corner's text: the frame rate, the ping and the time orders take.
     corner: Query<'w, 's, &'static Text, With<crate::hud::FrameRate>>,
+    cursors: Res<'w, crate::cursor::Cursors>,
 }
 
 /// Where the script is.
@@ -169,6 +180,8 @@ fn awaited(arg: &str) -> Result<Awaited, String> {
         "popup" => Awaited::Popup,
         "nopopup" => Awaited::NoPopup,
         "horn" => Awaited::Horn,
+        "pending" => Awaited::Pending,
+        "settled" => Awaited::Settled,
         other => {
             let (what, value) = other.split_once(':').unwrap_or((other, ""));
             match what {
@@ -196,12 +209,17 @@ fn awaited(arg: &str) -> Result<Awaited, String> {
                     "day" => false,
                     _ => return Err(format!("'{value}' is neither day nor night")),
                 }),
-                "ping" => value
-                    .split_once(',')
-                    .and_then(|(low, high)| {
-                        Some(Awaited::Ping(low.parse().ok()?, high.parse().ok()?))
-                    })
-                    .ok_or_else(|| format!("'{value}' is not LOW,HIGH"))?,
+                "ping" | "orders" => {
+                    let range = value
+                        .split_once(',')
+                        .and_then(|(low, high)| Some((low.parse().ok()?, high.parse().ok()?)));
+                    let (low, high) = range.ok_or_else(|| format!("'{value}' is not LOW,HIGH"))?;
+                    if what == "ping" {
+                        Awaited::Ping(low, high)
+                    } else {
+                        Awaited::OrderLatency(low, high)
+                    }
+                }
                 "towershots" => Awaited::TowerShots(
                     value
                         .parse()
@@ -334,11 +352,18 @@ fn holds(
                     .count()
                     == *count
         }
-        Awaited::Ping(low, high) => drawn
-            .corner
-            .iter()
-            .filter_map(|text| crate::hud::ping_told(&text.0))
-            .any(|ping| (*low..=*high).contains(&ping)),
+        Awaited::Ping(low, high) => told_within(&drawn.corner, "ping", *low, *high),
+        Awaited::OrderLatency(low, high) => told_within(&drawn.corner, "orders", *low, *high),
+        Awaited::Pending => {
+            let core = &session.0;
+            core.source.pending_orders() > 0
+                && core
+                    .shown_orders
+                    .iter()
+                    .any(|o| Some(o.slot) == core.my_slot)
+                && drawn.cursors.is_bright()
+        }
+        Awaited::Settled => session.0.source.pending_orders() == 0 && !drawn.cursors.is_bright(),
         Awaited::TowerShots(count) => session.0.view().is_some() && drawn.shots.0 == *count,
         Awaited::Daylight(night) => daylight.night == f32::from(u8::from(*night)),
         Awaited::Gold(gold) => own(session).is_some_and(|me| me.gold.is_some_and(|g| g >= *gold)),
@@ -358,6 +383,19 @@ fn holds(
             .and_then(|library| library.effect(name))
             .is_some_and(|effect| drawn.playing.started(effect) > 0),
     }
+}
+
+/// Whether the corner tells the milliseconds after `label` within `low` to `high`.
+fn told_within(
+    corner: &Query<&Text, With<crate::hud::FrameRate>>,
+    label: &str,
+    low: u32,
+    high: u32,
+) -> bool {
+    corner
+        .iter()
+        .filter_map(|text| crate::hud::told_ms(&text.0, label))
+        .any(|ms| (low..=high).contains(&ms))
 }
 
 /// One's own row of the scoreboard.
