@@ -28,7 +28,7 @@ const VEIL: f32 = 0.74;
 /// What the fog multiplies the dulled lit colour by, in linear light, by
 /// day: Dota-dense, about two fifths of the seen ground's brightness on
 /// screen (a tenth and a half in linear light), and cooled.
-const DAY_CAST: [f32; 3] = [0.135, 0.14, 0.16];
+const DAY_CAST: [f32; 3] = [0.14, 0.14, 0.15];
 
 /// The cells the watched side sees, worked out once a tick.
 #[derive(Resource, Default)]
