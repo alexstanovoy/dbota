@@ -23,6 +23,8 @@
 //! - `await:heard:PREFIX`: a bound effect sounded a sound of that logical prefix at least once;
 //! - `await:started:NAME`: the particle effect of that logical name started at least once;
 //! - `await:items:N`: exactly N items in the hero's bag;
+//! - `expect:WHAT`: what `await` names, held at once, else the client ends with exit code 2;
+//! - `await:towershots:N`: exactly N lines drawn from a tower to a hero it is set on;
 //! - `await:level:N`, `await:gold:N`: one's hero at that level, that gold;
 //! - `say:LINE`: the line typed into the chat and sent (a `-command` runs);
 //! - `pick:ID`: the hero of that id picked, and the seat readied;
@@ -68,6 +70,8 @@ enum Step {
     Key(KeyCode),
     Click(String),
     Await(Awaited),
+    /// What `Await` waits for, held at once or the client ends with exit code 2.
+    Expect(Awaited),
     Shot(String),
     /// The scene's lights printed.
     Light,
@@ -123,6 +127,8 @@ enum Awaited {
     Heard(String),
     /// The particle effect of this logical name started at least once.
     Started(String),
+    /// Exactly this many tower-to-hero lines drawn.
+    TowerShots(u32),
 }
 
 /// What the game has drawn, for the awaited steps that look at it.
@@ -134,6 +140,7 @@ struct Drawn<'w, 's> {
     library: Option<Res<'w, crate::particles::Library>>,
     playing: Res<'w, crate::particles::Playing>,
     heard: Res<'w, crate::fx::Heard>,
+    shots: Res<'w, crate::overlay::TowerShots>,
 }
 
 /// Where the script is.
@@ -150,6 +157,57 @@ struct Script {
     shot: Option<std::path::PathBuf>,
 }
 
+/// What an `await:` or `expect:` step names, or what is wrong with it.
+fn awaited(arg: &str) -> Result<Awaited, String> {
+    Ok(match arg {
+        "menu" => Awaited::Menu,
+        "game" => Awaited::Game,
+        "popup" => Awaited::Popup,
+        "nopopup" => Awaited::NoPopup,
+        "horn" => Awaited::Horn,
+        other => {
+            let (what, value) = other.split_once(':').unwrap_or((other, ""));
+            match what {
+                "button" => Awaited::Button(value.to_owned()),
+                "seats" => {
+                    let bad = || format!("'{value}' is no pair of seat counts");
+                    let (r, d) = value.split_once(',').ok_or_else(bad)?;
+                    Awaited::Seats(r.parse().map_err(|_| bad())?, d.parse().map_err(|_| bad())?)
+                }
+                "nobutton" => Awaited::NoButton(value.to_owned()),
+                "model" => Awaited::Model(value.to_owned()),
+                "loot" => Awaited::Loot(value.to_owned()),
+                "heard" => Awaited::Heard(value.to_owned()),
+                "started" => Awaited::Started(value.to_owned()),
+                "level" => Awaited::Level(
+                    value
+                        .parse()
+                        .map_err(|_| format!("'{value}' is no level"))?,
+                ),
+                "gold" => {
+                    Awaited::Gold(value.parse().map_err(|_| format!("'{value}' is no gold"))?)
+                }
+                "daylight" => Awaited::Daylight(match value {
+                    "night" => true,
+                    "day" => false,
+                    _ => return Err(format!("'{value}' is neither day nor night")),
+                }),
+                "towershots" => Awaited::TowerShots(
+                    value
+                        .parse()
+                        .map_err(|_| format!("'{value}' is no count"))?,
+                ),
+                "items" => Awaited::Items(
+                    value
+                        .parse()
+                        .map_err(|_| format!("'{value}' is no count"))?,
+                ),
+                _ => return Err(format!("cannot await '{other}'")),
+            }
+        }
+    })
+}
+
 /// The steps of `text`, or what is wrong with it.
 fn parse(text: &str) -> Result<Vec<(String, Step)>, String> {
     text.split(';')
@@ -162,51 +220,8 @@ fn parse(text: &str) -> Result<Vec<(String, Step)>, String> {
                     crate::keys::key_named(arg).ok_or_else(|| format!("no key named '{arg}'"))?,
                 ),
                 "click" => Step::Click(arg.to_owned()),
-                "await" => Step::Await(match arg {
-                    "menu" => Awaited::Menu,
-                    "game" => Awaited::Game,
-                    "popup" => Awaited::Popup,
-                    "nopopup" => Awaited::NoPopup,
-                    "horn" => Awaited::Horn,
-                    other => {
-                        let (what, value) = other.split_once(':').unwrap_or((other, ""));
-                        match what {
-                            "button" => Awaited::Button(value.to_owned()),
-                            "seats" => {
-                                let bad = || format!("'{value}' is no pair of seat counts");
-                                let (r, d) = value.split_once(',').ok_or_else(bad)?;
-                                Awaited::Seats(
-                                    r.parse().map_err(|_| bad())?,
-                                    d.parse().map_err(|_| bad())?,
-                                )
-                            }
-                            "nobutton" => Awaited::NoButton(value.to_owned()),
-                            "model" => Awaited::Model(value.to_owned()),
-                            "loot" => Awaited::Loot(value.to_owned()),
-                            "heard" => Awaited::Heard(value.to_owned()),
-                            "started" => Awaited::Started(value.to_owned()),
-                            "level" => Awaited::Level(
-                                value
-                                    .parse()
-                                    .map_err(|_| format!("'{value}' is no level"))?,
-                            ),
-                            "gold" => Awaited::Gold(
-                                value.parse().map_err(|_| format!("'{value}' is no gold"))?,
-                            ),
-                            "daylight" => Awaited::Daylight(match value {
-                                "night" => true,
-                                "day" => false,
-                                _ => return Err(format!("'{value}' is neither day nor night")),
-                            }),
-                            "items" => Awaited::Items(
-                                value
-                                    .parse()
-                                    .map_err(|_| format!("'{value}' is no count"))?,
-                            ),
-                            _ => return Err(format!("cannot await '{other}'")),
-                        }
-                    }
-                }),
+                "await" => Step::Await(awaited(arg)?),
+                "expect" => Step::Expect(awaited(arg)?),
                 "shot" => Step::Shot(arg.to_owned()),
                 "light" => Step::Light,
                 "exit" => Step::Exit,
@@ -309,6 +324,7 @@ fn holds(
                     .count()
                     == *count
         }
+        Awaited::TowerShots(count) => session.0.view().is_some() && drawn.shots.0 == *count,
         Awaited::Daylight(night) => daylight.night == f32::from(u8::from(*night)),
         Awaited::Gold(gold) => own(session).is_some_and(|me| me.gold.is_some_and(|g| g >= *gold)),
         Awaited::Model(name) => drawn
@@ -478,6 +494,20 @@ fn play(
             &scene.light.daylight,
             &scene.drawn,
         ),
+        Step::Expect(awaited) => {
+            if !holds(
+                awaited,
+                menu.as_deref(),
+                &session,
+                &screen,
+                &scene.light.daylight,
+                &scene.drawn,
+            ) {
+                println!("script: {line} does not hold");
+                exit.write(AppExit::from_code(2));
+            }
+            true
+        }
         Step::Shot(file) => match &script.shot {
             Some(path) => path.is_file(),
             None => {

@@ -46,8 +46,14 @@ const SOUL_VIOLET: Color = Color::srgb(0.72, 0.42, 1.0);
 #[derive(Resource, Default)]
 pub struct RangeRings(pub u32);
 
+/// Tower-to-hero lines drawn this frame, for the end-to-end tests: one for
+/// every tower the view says is set on a hero it carries.
+#[derive(Resource, Default)]
+pub struct TowerShots(pub u32);
+
 pub fn plugin(app: &mut App) {
     app.init_resource::<RangeRings>()
+        .init_resource::<TowerShots>()
         .add_systems(Startup, configure)
         .add_systems(Update, (line_width, draw));
 }
@@ -136,6 +142,7 @@ fn draw(
     args: Res<crate::Args>,
     settings: Res<crate::config::Settings>,
     mut rings: ResMut<RangeRings>,
+    mut shots: ResMut<TowerShots>,
 ) {
     let core = &session.0;
     let Some(view) = core.view() else {
@@ -163,7 +170,7 @@ fn draw(
         camp_boxes(&mut gizmos, &ctx);
     }
     rings.0 = ranges;
-    tower_shots(&mut gizmos, &ctx);
+    shots.0 = tower_shots(&mut gizmos, &ctx);
     aggro(&mut gizmos, &ctx);
     orders(&mut gizmos, &ctx);
     queue(&mut gizmos, &ctx);
@@ -343,10 +350,11 @@ pub fn targets(core: &Core, unit: bota_proto::EntityId, on: bota_proto::EntityId
 
 /// A line from every tower to what it is set on, red when that is the
 /// watched hero.
-fn tower_shots(gizmos: &mut Gizmos, ctx: &Ctx<'_, '_, '_>) {
+fn tower_shots(gizmos: &mut Gizmos, ctx: &Ctx<'_, '_, '_>) -> u32 {
     let Some(view) = ctx.core.view() else {
-        return;
+        return 0;
     };
+    let mut drawn = 0;
     let me = ctx.core.ears();
     for entry in &view.aggro {
         let Some(target) = entry.target else {
@@ -366,7 +374,9 @@ fn tower_shots(gizmos: &mut Gizmos, ctx: &Ctx<'_, '_, '_>) {
             team_color(from.team).with_alpha(0.6)
         };
         gizmos.line(top, end, color);
+        drawn += u32::from(to.kind == UnitKind::Hero);
     }
+    drawn
 }
 
 /// Lines from whatever fights the picked unit or the watched hero, red when
