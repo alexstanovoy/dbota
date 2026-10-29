@@ -260,6 +260,22 @@ fn spawn(mut commands: Commands, fonts: Res<Fonts>) {
     ));
 }
 
+/// The line the error plate shows, if it shows: for the tests.
+#[cfg(test)]
+pub(crate) fn shown(world: &mut World) -> Option<String> {
+    let shown = world
+        .query_filtered::<&Visibility, With<Plate>>()
+        .single(world)
+        .ok()
+        .is_some_and(|v| *v != Visibility::Hidden);
+    let line = world
+        .query_filtered::<&Text, With<Line>>()
+        .single(world)
+        .ok()
+        .map(|t| t.0.clone());
+    line.filter(|_| shown)
+}
+
 /// Shows the latest refusal's line while the client keeps it.
 fn show(
     session: NonSend<Session>,

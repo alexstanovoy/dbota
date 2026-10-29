@@ -100,6 +100,9 @@ mod webcache;
 mod webpage;
 mod window;
 
+#[cfg(test)]
+mod e2e;
+
 use std::path::PathBuf;
 
 use bevy::{
@@ -414,9 +417,6 @@ fn main() -> AppExit {
     };
     #[cfg(not(target_arch = "wasm32"))]
     import::warn_if_stale(&args.cache_dir);
-    let manifest = manifest::Manifest::load(&args.cache_dir);
-    let texts = dota_text::Texts::load(manifest.root.as_deref());
-    let catalog = shop::Catalog::load(&manifest);
     let settings_path = args.config.clone().or_else(config::default_path);
     let store = main_menu::SettingsStore::new(settings_path.clone());
     let mut settings = store.load_settings();
@@ -444,7 +444,51 @@ fn main() -> AppExit {
     });
     #[cfg(not(target_arch = "wasm32"))]
     app.insert_resource(font_cx);
-    let source = cache_source(&mut app, &args.cache_dir);
+    client_resources(&mut app, &args, &settings, settings_path, &store, session);
+    app.add_plugins(default_plugins(&args, &settings));
+    client_plugins(&mut app);
+    if let Err(err) = menu(&mut app, &args, store, menu_first) {
+        eprintln!("dbota: {err}");
+        return AppExit::error();
+    }
+    // GPU buffers of at most 128 MiB: a browser's WebGPU refuses ones over
+    // 256 MiB, and Bevy's mesh slabs grow to 512.
+    app.sub_app_mut(bevy::render::RenderApp).insert_resource(
+        bevy::render::mesh::allocator::MeshAllocatorSettings {
+            slab_allocator_settings: bevy::render::slab_allocator::SlabAllocatorSettings {
+                max_slab_size: 128 << 20,
+                large_threshold: 64 << 20,
+                ..default()
+            },
+            ..default()
+        },
+    );
+    if args.bench_gpu {
+        app.add_plugins(bevy::render::diagnostic::RenderDiagnosticsPlugin);
+    }
+    // After DefaultPlugins, whose panic hook (the console's) this one calls first.
+    #[cfg(target_arch = "wasm32")]
+    {
+        webpage::report_panics();
+        app.add_plugins(webpage::plugin);
+    }
+    app.run()
+}
+
+/// What the client's plugins read, inserted before Bevy's: the run's arguments and settings, the
+/// cache's manifest, words and shop, and the session.
+fn client_resources(
+    app: &mut App,
+    args: &Args,
+    settings: &config::Settings,
+    settings_path: Option<PathBuf>,
+    store: &main_menu::SettingsStore,
+    session: session::Session,
+) {
+    let manifest = manifest::Manifest::load(&args.cache_dir);
+    let texts = dota_text::Texts::load(manifest.root.as_deref());
+    let catalog = shop::Catalog::load(&manifest);
+    let source = cache_source(app, &args.cache_dir);
     app.insert_resource(args.clone())
         .insert_resource(manifest)
         .insert_resource(player_colour::PlayerColours::load(&texts))
@@ -455,9 +499,12 @@ fn main() -> AppExit {
         .insert_resource(store.clone())
         .insert_non_send(session)
         // Must be registered before AssetPlugin (part of DefaultPlugins) builds the sources.
-        .register_asset_source(CACHE_SOURCE, source)
-        .add_plugins(default_plugins(&args, &settings))
-        .add_plugins(FrameTimeDiagnosticsPlugin::default())
+        .register_asset_source(CACHE_SOURCE, source);
+}
+
+/// dbota's own plugins, after Bevy's: everything the menu, a match and a replay draw and play with.
+fn client_plugins(app: &mut App) {
+    app.add_plugins(FrameTimeDiagnosticsPlugin::default())
         .add_plugins((
             session::plugin,
             window::plugin,
@@ -530,32 +577,6 @@ fn main() -> AppExit {
         .add_plugins(main_menu::plugin);
     #[cfg(not(target_arch = "wasm32"))]
     app.add_plugins(assets_notice::plugin);
-    if let Err(err) = menu(&mut app, &args, store, menu_first) {
-        eprintln!("dbota: {err}");
-        return AppExit::error();
-    }
-    // GPU buffers of at most 128 MiB: a browser's WebGPU refuses ones over
-    // 256 MiB, and Bevy's mesh slabs grow to 512.
-    app.sub_app_mut(bevy::render::RenderApp).insert_resource(
-        bevy::render::mesh::allocator::MeshAllocatorSettings {
-            slab_allocator_settings: bevy::render::slab_allocator::SlabAllocatorSettings {
-                max_slab_size: 128 << 20,
-                large_threshold: 64 << 20,
-                ..default()
-            },
-            ..default()
-        },
-    );
-    if args.bench_gpu {
-        app.add_plugins(bevy::render::diagnostic::RenderDiagnosticsPlugin);
-    }
-    // After DefaultPlugins, whose panic hook (the console's) this one calls first.
-    #[cfg(target_arch = "wasm32")]
-    {
-        webpage::report_panics();
-        app.add_plugins(webpage::plugin);
-    }
-    app.run()
 }
 
 /// The main menu: its core connected to the service when the command line

@@ -1278,6 +1278,19 @@ fn spawn_seat_death(kit: &mut Spawner, card: Entity, seat: Place) {
     ));
 }
 
+/// The covers of a seat's portrait in the top bar, which show while its hero is dead: for the
+/// tests, which tell them from the bottom panel's own washed portrait.
+#[cfg(test)]
+pub(crate) fn seat_death_covers(world: &mut World, team: Team, n: u8) -> Vec<Entity> {
+    let place = Place { team, n };
+    world
+        .query::<(Entity, &SeatDeath)>()
+        .iter(world)
+        .filter(|(_, cover)| cover.0 == place)
+        .map(|(entity, _)| entity)
+        .collect()
+}
+
 /// The seat's health under its portrait.
 fn spawn_seat_health(commands: &mut Commands, column: Entity, seat: Place) {
     let well = commands

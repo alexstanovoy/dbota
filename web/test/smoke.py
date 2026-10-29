@@ -12,7 +12,7 @@ shows the "pick a folder, read only what is needed" path without copying anythin
 Dota 2 install (DBOTA_DOTA_PATH or the usual Steam places); the game run needs WebGL2/WebGPU
 (SwiftShader does). Without an install that part is skipped, with a message.
 
-Four more checks need no install and run on pages built with stand-ins (`?assets=none`):
+Five more checks need no install and run on pages built with stand-ins (`?assets=none`):
 
     DBOTA_WEB_REPLAY=$PWD/chat.brp DBOTA_WEB_ARGS="--replay built-in --pov 0 --seek 4100" \
         PROFILE=release OUT=temp/web-replay web/build.sh
@@ -29,6 +29,8 @@ Four more checks need no install and run on pages built with stand-ins (`?assets
 * `--replay-page`: the page plays a Zstandard-packed replay built into it (read through to the
   seek tick, as the packed file is decoded record by record) and the client says it knows the
   match and heard the chat lines, with no read error.
+* `--keys-page` (any page, even `web/` unbuilt): over the canvas the browser keeps its Ctrl and
+  Cmd chords and F12, the game its keys (F5, Tab, Space, letters, right click, wheel).
 * `--fullscreen-page`: a replay build made with `DBOTA_WEB_ARGS="--replay built-in --pov 0 --settings video"`;
   the display mode and F11 put the canvas fullscreen and leaving it turns the setting back.
 * `--live-page` and `--server`: the page joins a bota_server over a WebSocket through the main
@@ -377,6 +379,60 @@ def check_fullscreen_page(directory):
     server.shutdown()
 
 
+KEYS_LOGIC = """() => {
+  const canvas = document.getElementById('dbota');
+  const kept = (type, init) => {
+    const e = type === 'wheel'
+      ? new WheelEvent(type, { ...init, cancelable: true, bubbles: true })
+      : type === 'contextmenu'
+        ? new MouseEvent(type, { ...init, cancelable: true, bubbles: true })
+        : new KeyboardEvent(type, { ...init, cancelable: true, bubbles: true });
+    canvas.dispatchEvent(e);
+    return !e.defaultPrevented;
+  };
+  return {
+    browser: [
+      ['Ctrl+R', kept('keydown', { key: 'r', code: 'KeyR', ctrlKey: true })],
+      ['Ctrl+T', kept('keydown', { key: 't', code: 'KeyT', ctrlKey: true })],
+      ['Ctrl+W', kept('keydown', { key: 'w', code: 'KeyW', ctrlKey: true })],
+      ['Ctrl+Tab', kept('keydown', { key: 'Tab', code: 'Tab', ctrlKey: true })],
+      ['Cmd+F', kept('keydown', { key: 'f', code: 'KeyF', metaKey: true })],
+      ['F12', kept('keydown', { key: 'F12', code: 'F12' })],
+    ],
+    game: [
+      ['F5', kept('keydown', { key: 'F5', code: 'F5' })],
+      ['Tab', kept('keydown', { key: 'Tab', code: 'Tab' })],
+      ['Space', kept('keydown', { key: ' ', code: 'Space' })],
+      ['Q', kept('keydown', { key: 'q', code: 'KeyQ' })],
+      ['Q up', kept('keyup', { key: 'q', code: 'KeyQ' })],
+      ['right click', kept('contextmenu', { button: 2 })],
+      ['wheel', kept('wheel', { deltaY: 100 })],
+    ],
+  };
+}"""
+
+
+def check_browser_keys(directory):
+    """The page's keys (web/keys.js): over the canvas the browser keeps every Ctrl or Cmd chord
+    and F12 (reload, tabs, find, tools), and the game keeps its own (F5 is Dota's quick buy, Tab
+    and Space are bound, a right click moves, the wheel zooms). Events are made on the canvas
+    and whether the page let them through to the browser is read; needs no client, so any page
+    (even web/ as it is in the repository) serves."""
+    with sync_playwright() as p:
+        server, base, browser, page, console, problems = opened(p, directory)
+        page.goto(base + "?assets=none")
+        page.wait_for_function("document.getElementById('dbota') !== null")
+        page.wait_for_timeout(1000)
+        got = page.evaluate(KEYS_LOGIC)
+        taken = [name for name, kept in got["browser"] if not kept]
+        assert not taken, f"the browser's keys taken by the page: {taken}"
+        let_through = [name for name, kept in got["game"] if kept]
+        assert not let_through, f"the game's keys let through to the browser: {let_through}"
+        print("browser keys: the browser keeps its chords and F12, the game its keys")
+        browser.close()
+    server.shutdown()
+
+
 def free_port():
     import socket
 
@@ -511,6 +567,7 @@ def main():
     ap.add_argument("--live-page", type=pathlib.Path, help="a build without a replay (the main menu)")
     ap.add_argument("--server", help="a bota_server built with the websocket feature, for --live-page")
     ap.add_argument("--startup-page", type=pathlib.Path, help="any build: the client picked, failures shown")
+    ap.add_argument("--keys-page", type=pathlib.Path, help="any page, even web/ unbuilt: whose keys are whose")
     ap.add_argument("--only-wire", action="store_true", help="skip the import test even where an install is found")
     args = ap.parse_args()
     install = None if args.only_wire else find_install(args.install)
@@ -520,6 +577,8 @@ def main():
         print("skipped: the import test needs a Dota 2 install (DBOTA_DOTA_PATH or --install)")
     if args.startup_page:
         check_startup_page(args.startup_page)
+    if args.keys_page:
+        check_browser_keys(args.keys_page)
     if args.replay_page:
         check_replay_page(args.replay_page)
     if args.fullscreen_page:

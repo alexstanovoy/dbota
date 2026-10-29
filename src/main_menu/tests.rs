@@ -20,7 +20,7 @@ use super::launch::{Hosted, Opening, Trust};
 use super::store::{Entry, SettingsStore};
 use super::view::PageView;
 
-const PASSWORD: &str = "correct horse battery";
+pub(crate) const PASSWORD: &str = "correct horse battery";
 const RULESET: &str = "solo_mid";
 static NEXT: AtomicU32 = AtomicU32::new(0);
 /// How long any wait for an event lasts before the test calls it stuck. Waits
@@ -73,7 +73,7 @@ fn bota_root() -> PathBuf {
 
 /// The game server with its WebSocket listener, built once per run from the
 /// same bota (`BOTA_SERVER_BIN` names a ready one).
-fn server_binary() -> &'static Path {
+pub(crate) fn server_binary() -> &'static Path {
     static BINARY: OnceLock<PathBuf> = OnceLock::new();
     BINARY.get_or_init(|| {
         if let Some(path) = std::env::var_os("BOTA_SERVER_BIN") {
@@ -102,11 +102,11 @@ fn server_binary() -> &'static Path {
 }
 
 /// The service, running until dropped.
-struct Service {
+pub(crate) struct Service {
     runtime: tokio::runtime::Runtime,
     service: Option<radovid::service::Service>,
-    url: String,
-    pem: String,
+    pub(crate) url: String,
+    pub(crate) pem: String,
     _dir: Scratch,
 }
 
@@ -216,7 +216,7 @@ env = {{ BOTA_SEATS = "{{seats}}" }}
     )
 }
 
-fn service() -> Service {
+pub(crate) fn service() -> Service {
     let binary = server_binary().to_owned();
     let dir = Scratch::new("service");
     let path = dir.0.join("radovid.toml");

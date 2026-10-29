@@ -111,10 +111,16 @@ struct Remove;
 struct Output(Device<MixerDeviceSink>);
 
 pub fn plugin(app: &mut App) {
+    // A test plays no sound on the machine it runs on: its client opens no device, and what it
+    // would play is told by the players it spawns.
+    #[cfg(test)]
+    let device = Device::new(|_| None);
+    #[cfg(not(test))]
+    let device = Device::new(open);
     app.init_resource::<GlobalVolume>()
         .init_asset::<AudioSource>()
         .init_asset_loader::<AudioLoader>()
-        .insert_resource(Output(Device::new(open)))
+        .insert_resource(Output(device))
         .add_systems(
             PostUpdate,
             (supervise, play_queued, cleanup_finished).chain(),

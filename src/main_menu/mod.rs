@@ -24,7 +24,7 @@ mod text;
 mod view;
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;
 
 #[cfg(not(target_arch = "wasm32"))]
 pub use core::Claim;
