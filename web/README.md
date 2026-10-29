@@ -67,12 +67,12 @@ fingerprint at its foot, the settings the client's commit too.
 
 ## What is imported
 
-Everything the manifest lists: the 54 models (static ones, wearables and the 25 animated ones with their
+Everything the manifest lists: the models (static ones, wearables and the animated ones with their
 clips; glb with their textures), the map's band around the mid lane (`map/mid/mid.gltf`, its geometry, its
-~300 textures, `trees.txt`, `buildings.txt`) with the terrain's layer textures, 120 interface textures
-(PNG), 98 sounds (WAV/MP3) and the tooltip texts (`text/tooltips.json`). The models' and the map's textures
+textures, `trees.txt`, `buildings.txt`) with the terrain's layer textures, the interface textures
+(PNG), the sounds (WAV/MP3) and the tooltip texts (`text/tooltips.json`). The models' and the map's textures
 are KTX2 files block-compressed with their mip levels (see `tools/README.md`); a WebGPU without
-`texture-compression-bc` gets them decoded as they load. A full import writes ~730 MB, 1226 files.
+`texture-compression-bc` gets them decoded as they load. The import's summary line gives the size and the file count of a full import.
 
 ## Build and run
 
@@ -117,9 +117,9 @@ install the import test is skipped with a message. `OUT=dir web/build.sh` builds
 1. Serve `web/out`, open it in Chrome: the gate shows the privacy text, "Choose the Dota 2 folder" and
    "Play with stand-ins" (which works at once).
 2. Choose the folder with the picker: `dota 2 beta`, then `game` and `dota` once each (all accepted), and a
-   wrong folder (a message, no import). Progress counts up to ~645 steps; "Cancel" returns to the question
-   and leaves no copy. The ready screen says "Imported 834 files" (~80 s).
-3. Reload: "Play" is offered at once; devtools > Application > Storage shows about 550 MB in the origin-private
+   wrong folder (a message, no import). Progress counts up to its last step; "Cancel" returns to the question
+   and leaves no copy. The ready screen says how many files were imported (about a minute and a half).
+3. Reload: "Play" is offered at once; devtools > Application > Storage shows the copy (hundreds of MB) in the origin-private
    file system; Network shows no request except the page's own files.
 4. Chrome, later: the remembered folder is compared without a prompt while the permission lasts; after a
    Dota update "Update from the Dota 2 folder" appears. "Delete the imported copy" empties the storage.

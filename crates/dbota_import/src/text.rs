@@ -3,7 +3,7 @@
 //! and words (`text/shop.json`), the portrait framings (`models/portraits.txt`), and the map's
 //! trees, buildings and lighting (`trees.txt`, `buildings.txt`, `lighting.txt`), and the
 //! particle systems (`particles/*.json`). The client reads each (`src/cache_text.rs`,
-//! `src/tooltip.rs`, `src/particles/`, ...).
+//! `src/tips.rs`, `src/particles/`, ...).
 
 use std::collections::{BTreeMap, HashSet};
 
