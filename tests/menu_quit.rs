@@ -274,6 +274,49 @@ fn leaving_a_game_loses_it_and_the_other_side_wins() {
     assert_eq!(outcome.winner, outcome.team, "the seat that stayed won");
 }
 
+/// A solo-mid style pool of one hero: the pick screen shows that hero alone, with no Ready
+/// button to press, and the seat is given the hero as it sits.
+#[test]
+#[ignore = "draws on the GPU in a headless compositor: tools/visual_check.sh runs it"]
+fn a_pool_of_one_shows_only_its_hero_and_nothing_to_choose() {
+    let scratch = Scratch::new("forced");
+    // A second seat nobody takes keeps the pick screen up.
+    let (mut server, address) = serve_with(2, &["--heroes", "1"]);
+    let script = "await:game;await:button:pick shadow fiend;await:nobutton:pick pudge;\
+                  await:nobutton:pick ready;wait:1;shot:forced-pick.png;key:Escape;await:menu;\
+                  click:disconnect;await:button:reconnect;click:quit;await:popup;click:ok";
+    let result = run(&scratch, &["--addr", &address], script);
+    let _ = server.kill();
+    let _ = server.wait();
+    played("a forced pick", result, script);
+}
+
+/// Five a side, as Dota's lobby holds: the top bar of a ten-seat match shows five places of
+/// each side.
+#[test]
+#[ignore = "draws on the GPU in a headless compositor: tools/visual_check.sh runs it"]
+fn the_top_bar_of_a_ten_seat_match_holds_five_a_side() {
+    use bota_client_core::Link;
+    use bota_proto::HeroId;
+    let scratch = Scratch::new("topbar");
+    let (mut server, address) = serve_seats(10);
+    for n in 0..9 {
+        let address = address.clone();
+        std::thread::spawn(move || {
+            let _ = Link::play(&address, &format!("idle {n}"), HeroId::SHADOW_FIEND, |_| {
+                Vec::new()
+            });
+        });
+    }
+    let script = "await:game;click:pick shadow fiend;click:pick ready;await:horn;\
+                  await:seats:5,5;wait:1;shot:topbar-5v5.png;key:Escape;await:menu;\
+                  click:disconnect;await:button:reconnect;click:quit;await:popup;click:ok";
+    let result = run(&scratch, &["--addr", &address], script);
+    let _ = server.kill();
+    let _ = server.wait();
+    played("a ten-seat match", result, script);
+}
+
 /// The replay the visual check plays (`VISUAL_REPLAY`): a match of the wire
 /// this client speaks.
 fn replay() -> PathBuf {
@@ -290,8 +333,15 @@ fn serve() -> (Child, String) {
 
 /// A game server of `seats` seats, quick to start, on a port of its own choosing.
 fn serve_seats(seats: u8) -> (Child, String) {
+    serve_with(seats, &[])
+}
+
+/// [`serve_seats`] with more of the server's arguments.
+fn serve_with(seats: u8, more: &[&str]) -> (Child, String) {
     let mut child = Command::new(server_binary())
-        .args(["--map", "2", "--port", "0", "--bind", "127.0.0.1"])
+        .args(more)
+        .args(["--map", if seats > 2 { "0" } else { "2" }])
+        .args(["--port", "0", "--bind", "127.0.0.1"])
         .args([
             "--players",
             &seats.to_string(),

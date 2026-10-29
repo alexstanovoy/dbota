@@ -83,7 +83,18 @@ pub struct Place {
 
 /// A place's column in the top bar, hidden while no player holds the place.
 #[derive(Component, Clone, Copy)]
-struct SeatColumn(Place);
+pub(crate) struct SeatColumn(Place);
+
+/// How many places each side's half of the top bar shows now, Radiant's and Dire's.
+pub(crate) fn seats_shown(columns: &Query<(&SeatColumn, &Node)>) -> (u8, u8) {
+    let count = |team| {
+        let shown = columns.iter().filter(|(SeatColumn(place), node)| {
+            place.team == team && node.display != Display::None
+        });
+        u8::try_from(shown.count()).unwrap_or(u8::MAX)
+    };
+    (count(Team::Radiant), count(Team::Dire))
+}
 
 /// A seat's portrait in the top bar, by place.
 #[derive(Component, Clone, Copy)]

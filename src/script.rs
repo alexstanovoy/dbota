@@ -15,7 +15,8 @@
 //!   ends the client with exit code 2 at once;
 //! - `await:WHAT`: until `menu` covers the screen, a `game` is on it, a
 //!   `popup` (a question or the match-found offer) is up or `nopopup` is not, or a button named `button:NAME`
-//!   shows;
+//!   shows, or `nobutton:NAME` when none of that name does (hidden or not there);
+//! - `await:seats:R,D`: the top bar holds R places of Radiant and D of Dire;
 //! - `await:horn`: the game clock past the horn;
 //! - `await:items:N`: exactly N items in the hero's bag;
 //! - `await:level:N`, `await:gold:N`: one's hero at that level, that gold;
@@ -96,6 +97,10 @@ enum Awaited {
     Popup,
     NoPopup,
     Button(String),
+    /// No button of that name on the screen: none made, or one hidden.
+    NoButton(String),
+    /// The top bar holds this many places of Radiant and of Dire.
+    Seats(u8, u8),
     /// The game clock past the horn.
     Horn,
     /// One's hero at this level or above.
@@ -144,6 +149,15 @@ fn parse(text: &str) -> Result<Vec<(String, Step)>, String> {
                         let (what, value) = other.split_once(':').unwrap_or((other, ""));
                         match what {
                             "button" => Awaited::Button(value.to_owned()),
+                            "seats" => {
+                                let bad = || format!("'{value}' is no pair of seat counts");
+                                let (r, d) = value.split_once(',').ok_or_else(bad)?;
+                                Awaited::Seats(
+                                    r.parse().map_err(|_| bad())?,
+                                    d.parse().map_err(|_| bad())?,
+                                )
+                            }
+                            "nobutton" => Awaited::NoButton(value.to_owned()),
                             "level" => Awaited::Level(
                                 value
                                     .parse()
@@ -218,12 +232,20 @@ pub fn plugin(app: &mut App) {
         .add_systems(PreUpdate, press.after(bevy::ui::UiSystems::Focus));
 }
 
+/// What the awaited steps look at on the screen: the buttons that are there and the top bar's places.
+#[derive(bevy::ecs::system::SystemParam)]
+struct Screen<'w, 's> {
+    buttons:
+        Query<'w, 's, (&'static Name, &'static Node, &'static InheritedVisibility), With<Button>>,
+    columns: Query<'w, 's, (&'static crate::hud::SeatColumn, &'static Node)>,
+}
+
 /// What the screen shows now, for the awaited steps.
 fn holds(
     awaited: &Awaited,
     menu: Option<&MenuCore>,
     session: &Session,
-    buttons: &Query<&Name, With<Button>>,
+    screen: &Screen,
     daylight: &crate::daylight::Daylight,
 ) -> bool {
     let view = menu.map(MenuCore::view);
@@ -238,7 +260,13 @@ fn holds(
             .as_ref()
             .is_some_and(|v| v.confirm.is_some() || v.offer.is_some()),
         Awaited::NoPopup => view.as_ref().is_some_and(|v| v.confirm.is_none()),
-        Awaited::Button(name) => buttons.iter().any(|n| n.as_str() == name),
+        Awaited::Button(name) => screen.buttons.iter().any(|(n, ..)| n.as_str() == name),
+        Awaited::NoButton(name) => !screen.buttons.iter().any(|(n, node, seen)| {
+            n.as_str() == name && node.display != Display::None && seen.get()
+        }),
+        Awaited::Seats(radiant, dire) => {
+            crate::hud::seats_shown(&screen.columns) == (*radiant, *dire)
+        }
         Awaited::Horn => {
             let core = &session.0;
             core.view()
@@ -279,7 +307,7 @@ fn play(
     time: Res<Time>,
     menu: Option<NonSend<MenuCore>>,
     mut session: NonSendMut<Session>,
-    buttons: Query<&Name, With<Button>>,
+    screen: Screen,
     disabled: Query<&Name, With<crate::main_menu::Disabled>>,
     mut window: Query<(Entity, &mut Window), With<PrimaryWindow>>,
     mut keys: MessageWriter<KeyboardInput>,
@@ -382,7 +410,7 @@ fn play(
             true
         }
         // Once the button shows.
-        Step::Click(name) if buttons.iter().any(|n| n.as_str() == name) => {
+        Step::Click(name) if screen.buttons.iter().any(|(n, ..)| n.as_str() == name) => {
             script.click = Some(name.clone());
             true
         }
@@ -392,13 +420,7 @@ fn play(
             true
         }
         Step::Click(_) => false,
-        Step::Await(awaited) => holds(
-            awaited,
-            menu.as_deref(),
-            &session,
-            &buttons,
-            &light.daylight,
-        ),
+        Step::Await(awaited) => holds(awaited, menu.as_deref(), &session, &screen, &light.daylight),
         Step::Shot(file) => match &script.shot {
             Some(path) => path.is_file(),
             None => {
