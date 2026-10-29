@@ -1174,18 +1174,48 @@ clip ward.sentry.model death default_ward_die 0.767
 clip ward.sentry.model spawn default_ward_spawn 0.867
 unit npc_dota_sentry_wards ward.sentry.model model_scale=1
 
-# --- Items on the ground (items.txt `Model`): Roshan's drops and the Bottle (bottle_blue full, bottle_empty with
-# no charges). A dropped Banner is Dota's generic item box (neutral_box), as is any item without its own model.
+# --- Items on the ground (items.txt `Model`): an item with a model of its own lies as `item.<Dota name>.model`
+# (ids.txt's name), a recipe as `item.recipe.model`, any other as Dota's default dropped-item box,
+# `item.default.model` (the client library's own default, models/props_gameplay/red_box). Roshan's drops and
+# the Bottle (bottle_blue full, bottle_empty with no charges) are named after what they are.
 model item.aegis.model models/props_gameplay/aegis.vmdl_c models/item/aegis/aegis.glb anims=aegis_idle
 clip item.aegis.model idle aegis_idle 7.867
 model item.cheese.model models/props_gameplay/cheese.vmdl_c models/item/cheese/cheese.glb
 model item.refresher_shard.model models/props_gameplay/refresher_shard.vmdl_c models/item/refresher_shard/refresher_shard.glb anims=refresher_shard_idle
 clip item.refresher_shard.model idle refresher_shard_idle 8.000
-model item.neutral_box.model models/props_gameplay/neutral_box.vmdl_c models/item/neutral_box/neutral_box.glb
+model item.blood_grenade.model models/props_gameplay/neutral_box.vmdl_c models/item/neutral_box/neutral_box.glb
+model item.default.model models/props_gameplay/red_box.vmdl_c models/item/default/red_box.glb
 model item.bottle.model models/props_gameplay/bottle_blue.vmdl_c models/item/bottle/bottle.glb anims=bottle_blue_idle
 clip item.bottle.model idle bottle_blue_idle 4.000
 model item.bottle_empty.model models/props_gameplay/bottle_empty.vmdl_c models/item/bottle_empty/bottle_empty.glb anims=bottle_empty_idle
 clip item.bottle_empty.model idle bottle_empty_idle 4.000
+# Items with a model of their own in items.txt (the Magic Stick has the Magic Wand's).
+model item.magic_stick.model models/props_gameplay/magic_wand.vmdl_c models/item/magic_stick/magic_wand.glb anims=tpscroll01_idle
+clip item.magic_stick.model idle tpscroll01_idle 4.000
+model item.boots.model models/props_gameplay/boots_of_speed.vmdl_c models/item/boots/boots_of_speed.glb anims=boots_of_speed_idle
+clip item.boots.model idle boots_of_speed_idle 4.000
+model item.clarity.model models/props_gameplay/clarity.vmdl_c models/item/clarity/clarity.glb anims=tpscroll01_idle
+clip item.clarity.model idle tpscroll01_idle 4.000
+model item.flask.model models/props_gameplay/salve.vmdl_c models/item/flask/salve.glb anims=tpscroll01_idle
+clip item.flask.model idle tpscroll01_idle 4.000
+model item.branches.model models/props_gameplay/branch.vmdl_c models/item/branches/branch.glb anims=tpscroll01_idle
+clip item.branches.model idle tpscroll01_idle 4.000
+model item.ward_observer.model models/props_gameplay/observer_ward_bundle.vmdl_c models/item/ward_observer/observer_ward_bundle.glb anims=tpscroll01_idle
+clip item.ward_observer.model idle tpscroll01_idle 4.000
+model item.ward_sentry.model models/props_gameplay/sentry_ward_bundle.vmdl_c models/item/ward_sentry/sentry_ward_bundle.glb anims=tpscroll01_idle
+clip item.ward_sentry.model idle tpscroll01_idle 4.000
+model item.quelling_blade.model models/props_gameplay/quelling_blade.vmdl_c models/item/quelling_blade/quelling_blade.glb anims=tpscroll01_idle
+clip item.quelling_blade.model idle tpscroll01_idle 4.000
+model item.tango.model models/props_gameplay/tango.vmdl_c models/item/tango/tango.glb anims=tango_idle
+clip item.tango.model idle tango_idle 4.000
+model item.tpscroll.model models/props_gameplay/tpscroll01.vmdl_c models/item/tpscroll/tpscroll01.glb anims=tpscroll01_idle
+clip item.tpscroll.model idle tpscroll01_idle 4.000
+model item.magic_wand.model models/props_gameplay/magic_wand.vmdl_c models/item/magic_wand/magic_wand.glb anims=tpscroll01_idle
+clip item.magic_wand.model idle tpscroll01_idle 4.000
+model item.enchanted_mango.model models/props_gameplay/mango.vmdl_c models/item/enchanted_mango/mango.glb anims=mango_idle
+clip item.enchanted_mango.model idle mango_idle 4.000
+model item.recipe.model models/props_gameplay/recipe.vmdl_c models/item/recipe/recipe.glb anims=tpscroll01_idle
+clip item.recipe.model idle tpscroll01_idle 4.000
 
 # --- Runes (models/props_gameplay; items Dota lays at the rune spots). Each loops one idle clip that turns and
 # bobs it; the water rune reuses the arcane rune's clip, the shield rune the invisibility rune's. goldxp is the

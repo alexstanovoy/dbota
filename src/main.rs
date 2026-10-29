@@ -56,6 +56,7 @@ mod layers;
 mod logging;
 mod main_menu;
 mod manifest;
+mod loot;
 mod map;
 mod mapfile;
 mod minimap;
@@ -487,7 +488,7 @@ fn main() -> AppExit {
             portrait::plugin,
             stats::plugin,
         ))
-        .add_plugins(fx::plugin)
+        .add_plugins((loot::plugin, fx::plugin))
         .add_plugins((
             sound::plugin,
             effects::plugin,
