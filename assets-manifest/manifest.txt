@@ -346,6 +346,11 @@ fx item.ward_observer.use at=point sound=sound.ward.activate
 fx item.ward_sentry.use at=point sound=sound.ward.activate
 fx unit.npc_dota_observer_wards.worn at=unit particle=ward.observer.ambient
 fx unit.npc_dota_sentry_wards.worn at=unit particle=ward.sentry.ambient cp1=sight
+# Blood Grenade: the throw's sound, the landing's and the splatter on each unit it debuffs
+# (the flight and the burst are its particle, src/effects.rs)
+fx item.blood_grenade.use at=caster sound=sound.blood_grenade.cast
+fx item.blood_grenade.land at=point sound=sound.blood_grenade.location
+fx modifier.modifier_item_blood_grenade_debuff.worn at=unit sound=sound.blood_grenade.target
 
 # --- Item icons (88x64, a few narrower), every Dota item name in ids.txt
 texture icon.item.boots panorama/images/items/boots_png.vtex_c icons/items/boots.png
@@ -639,6 +644,12 @@ sound sound.tower.radiant.attack sounds/weapons/towers/attack_radiant.vsnd_c sou
 sound sound.tower.dire.attack sounds/weapons/towers/attack_dire.vsnd_c sounds/weapons/towers/attack_dire.wav event=Tower.Fire.Attack
 sound sound.ward.activate sounds/items/ward_activate.vsnd_c sounds/items/ward_activate.wav event=DOTA_Item.ObserverWard.Activate
 sound sound.blink.activate sounds/weapons/hero/antimage/blink_out.vsnd_c sounds/weapons/hero/antimage/blink_out.wav event=DOTA_Item.BlinkDagger.Activate
+sound sound.blood_grenade.cast sounds/weapons/hero/shared/small_blade/whoosh01.vsnd_c sounds/weapons/hero/shared/small_blade/whoosh01.wav event=Item.BloodGrenade.Cast
+sound sound.blood_grenade.location sounds/items/blood_grenade.vsnd_c sounds/items/blood_grenade.wav event=Item.BloodGrenade.Location
+sound sound.blood_grenade.target.1 sounds/physics/damage/npc/spatter01.vsnd_c sounds/physics/damage/npc/spatter01.wav event=Item.BloodGrenade.Target
+sound sound.blood_grenade.target.2 sounds/physics/damage/npc/spatter02.vsnd_c sounds/physics/damage/npc/spatter02.wav event=Item.BloodGrenade.Target
+sound sound.blood_grenade.target.3 sounds/physics/damage/npc/spatter03.vsnd_c sounds/physics/damage/npc/spatter03.wav event=Item.BloodGrenade.Target
+sound sound.blood_grenade.target.4 sounds/physics/damage/npc/spatter04.vsnd_c sounds/physics/damage/npc/spatter04.wav event=Item.BloodGrenade.Target
 sound sound.tower.impact sounds/physics/damage/npc/tower_projectile.vsnd_c sounds/physics/damage/npc/tower_projectile.wav event=Tower.Water.ProjectileImpact
 sound sound.tower.hero_impact sounds/physics/damage/player/tower_projectile01.vsnd_c sounds/physics/damage/player/tower_projectile01.wav event=Tower.HeroImpact
 sound sound.tower.radiant.destroyed sounds/physics/damage/building/radiant_tower_destruction_01.vsnd_c sounds/physics/damage/building/radiant_tower_destruction_01.wav event=Building_RadiantTower.Destruction
