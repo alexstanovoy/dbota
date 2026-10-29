@@ -324,7 +324,7 @@ particle hero.nevermore.requiem particles/units/heroes/hero_nevermore/nevermore_
 particle hero.nevermore.requiem_line particles/units/heroes/hero_nevermore/nevermore_requiemofsouls_line.vpcf_c particles/nevermore_requiemofsouls_line.json
 particle hero.nevermore.necro_soul particles/units/heroes/hero_nevermore/nevermore_necro_souls.vpcf_c particles/nevermore_necro_souls.json
 
-# --- Town portal, Glyph of Fortification, level up, Blood Grenade, a hero's death, wards' ambient effects
+# --- Town portal, Glyph of Fortification, level up, Blood Grenade, a hero's death, wards' ambient effects, Blink Dagger
 particle item.teleport_start particles/items2_fx/teleport_start.vpcf_c particles/teleport_start.json
 particle item.teleport_end particles/items2_fx/teleport_end.vpcf_c particles/teleport_end.json
 particle glyph.structure particles/items_fx/glyph.vpcf_c particles/glyph.json
@@ -334,8 +334,13 @@ particle item.blood_grenade particles/items2_fx/blood_grenade_projectile.vpcf_c 
 particle hero.nevermore.death particles/units/heroes/hero_nevermore/nevermore_death.vpcf_c particles/nevermore_death.json
 particle ward.observer.ambient particles/items2_fx/ward.vpcf_c particles/ward.json
 particle ward.sentry.ambient particles/items2_fx/ward_true_sight.vpcf_c particles/ward_true_sight.json
+particle item.blink_start particles/items_fx/blink_dagger_start.vpcf_c particles/blink_dagger_start.json
+particle item.blink_end particles/items_fx/blink_dagger_end.vpcf_c particles/blink_dagger_end.json
 
 # --- Effects bound to the game's facts (src/fx.rs)
+# Blink Dagger: the start where the hero stood, the end where it lands (items_fx/blink_dagger_*)
+fx item.blink.use at=caster_before particle=item.blink_start sound=sound.blink.activate
+fx item.blink.use at=caster particle=item.blink_end
 # Wards: the sound of planting one, and the ambient effect each wears (items_game.txt 7555 and 7556)
 fx item.ward_observer.use at=point sound=sound.ward.activate
 fx item.ward_sentry.use at=point sound=sound.ward.activate
@@ -633,6 +638,7 @@ sound sound.creep.dire.ranged.impact.2 sounds/weapons/creep/bad/range_projectile
 sound sound.tower.radiant.attack sounds/weapons/towers/attack_radiant.vsnd_c sounds/weapons/towers/attack_radiant.wav event=Tower.Water.Attack
 sound sound.tower.dire.attack sounds/weapons/towers/attack_dire.vsnd_c sounds/weapons/towers/attack_dire.wav event=Tower.Fire.Attack
 sound sound.ward.activate sounds/items/ward_activate.vsnd_c sounds/items/ward_activate.wav event=DOTA_Item.ObserverWard.Activate
+sound sound.blink.activate sounds/weapons/hero/antimage/blink_out.vsnd_c sounds/weapons/hero/antimage/blink_out.wav event=DOTA_Item.BlinkDagger.Activate
 sound sound.tower.impact sounds/physics/damage/npc/tower_projectile.vsnd_c sounds/physics/damage/npc/tower_projectile.wav event=Tower.Water.ProjectileImpact
 sound sound.tower.hero_impact sounds/physics/damage/player/tower_projectile01.vsnd_c sounds/physics/damage/player/tower_projectile01.wav event=Tower.HeroImpact
 sound sound.tower.radiant.destroyed sounds/physics/damage/building/radiant_tower_destruction_01.vsnd_c sounds/physics/damage/building/radiant_tower_destruction_01.wav event=Building_RadiantTower.Destruction
