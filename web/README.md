@@ -18,6 +18,8 @@ Content-Security-Policy only allows connections to its own origin (game sockets 
 | `import_worker.js` | a module Web Worker: runs `dbota_import` (wasm), writes each item's files with synchronous OPFS handles, stops on request |
 | `cache.js` | the OPFS cache: layout, reads, index and stamp, what is published to the client (`globalThis.dbota_cache`) |
 | `report.js` | `?report`: console lines to the page's server, for local debugging |
+| `keys.js` | which keys are the game's and which the browser's; F11 is the canvas's fullscreen |
+| `pointer.js` | the pointer while the game keeps the cursor: locked in a gesture, the game's cursor moved by its motion inside the canvas and handed to the client as the pointer's own |
 | `test/smoke.py` | the Playwright smoke test (below) |
 | `build.sh` | builds `web/out`: both clients, the importer, the page |
 

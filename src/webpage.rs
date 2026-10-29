@@ -1,7 +1,7 @@
 //! What a browser build tells the page around it (`globalThis.dbota_page`, web/main.js): a
-//! panic, an allocation the browser refused and the first frame. A failure then shows on the
-//! page as a message saying what to do, not as a canvas that stays black; the console has the
-//! details as well.
+//! panic, an allocation the browser refused, the first frame, and whether the game keeps the
+//! cursor. A failure then shows on the page as a message saying what to do, not as a canvas that
+//! stays black; the console has the details as well.
 
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -19,6 +19,8 @@ extern "C" {
     fn page_refused(requested: f64, heap: f64) -> Result<(), JsValue>;
     #[wasm_bindgen(js_namespace = dbota_page, js_name = running, catch)]
     fn page_running() -> Result<(), JsValue>;
+    #[wasm_bindgen(js_namespace = dbota_page, js_name = keepCursor, catch)]
+    fn page_keep_cursor(keep: bool) -> Result<(), JsValue>;
 }
 
 pub fn plugin(app: &mut App) {
@@ -39,6 +41,11 @@ pub fn report_panics() {
 /// it), so the page can take its "starting" notice away.
 fn first_frame() {
     let _ = page_running();
+}
+
+/// Tells the page whether the game keeps the cursor (`web_cursor`).
+pub fn keep_cursor(keep: bool) {
+    let _ = page_keep_cursor(keep);
 }
 
 /// The system allocator, telling the page when the browser gives the heap no more memory.

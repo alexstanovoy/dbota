@@ -95,6 +95,8 @@ mod warmup;
 mod wash;
 mod water;
 #[cfg(target_arch = "wasm32")]
+mod web_cursor;
+#[cfg(target_arch = "wasm32")]
 mod webcache;
 #[cfg(target_arch = "wasm32")]
 mod webpage;

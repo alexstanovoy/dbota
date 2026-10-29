@@ -3,6 +3,7 @@
 import * as cache from "./cache.js";
 import * as grant from "./grant.js";
 import "./keys.js";
+import * as pointer from "./pointer.js";
 
 const $ = (id) => document.getElementById(id);
 const show = (...ids) => {
@@ -113,6 +114,9 @@ globalThis.dbota_page = {
     running = true;
     $("starting").hidden = true;
     console.info("dbota: running");
+  },
+  keepCursor(keep) {
+    pointer.keep(keep);
   },
 };
 

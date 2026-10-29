@@ -33,6 +33,10 @@ Five more checks need no install and run on pages built with stand-ins (`?assets
   Cmd chords and F12, the game its keys (F5, Tab, Space, letters, right click, wheel).
 * `--pixels-page` (a replay build): at a device scale of 1.5, and after the page is resized, the
   canvas's drawing buffer and the client's surface are the canvas's device-pixel size.
+* `--cursor-page` (a replay build, e.g. the `--replay-page` one): in a match a press on the canvas
+  locks the pointer, the game's cursor moves by the mouse's motion and stays inside the canvas, a
+  press there is the game's at that place (the dashboard button opens the settings, which let the
+  pointer go), and closing them or F11 after an Esc takes it again.
 * `--fullscreen-page`: a replay build made with `DBOTA_WEB_ARGS="--replay built-in --pov 0 --settings video"`;
   the display mode and F11 put the canvas fullscreen and leaving it turns the setting back.
 * `--live-page` and `--server`: the page joins a bota_server over a WebSocket through the main
@@ -296,6 +300,8 @@ BROWSER_ARGS = [
 # postcard's tag of `ServerMsg::Compressed` (the registry is append-only): every frame of a
 # compressed link that is not chat carries it, after the frame's four bytes of length.
 COMPRESSED_TAG = 14
+# The dashboard button's middle in a replay page of 1280x720 (logical pixels).
+DASHBOARD = (15, 15)
 # The local lobby page, where a game is joined by address, is the first page without a service;
 # its address field is the fourth stop of Tab (port, players, CREATE, CREATE FOR THE LAN), and Enter
 # there joins.
@@ -466,6 +472,73 @@ def check_canvas_pixels(directory):
     server.shutdown()
 
 
+# Marks the test's own pointer events, which stand for the mouse's (a locked pointer's motion cannot
+# be injected): the page's re-dispatched events are the ones without it.
+OWN_EVENT = 7
+HANDED = """window.handed = [];
+addEventListener('pointermove', (e) => { if (!e.isTrusted && e.detail !== %d) handed.push([e.clientX, e.clientY]); }, true);""" % OWN_EVENT
+
+
+def check_cursor_page(directory):
+    """The game keeps the cursor in a match as the desktop confines it: a press on the canvas locks
+    the pointer, the page moves the game's cursor by the mouse's motion held inside the canvas, a
+    press there is the game's at that place (the dashboard button opens the settings, which let the
+    pointer go), closing them takes it again, and so does F11 after an Esc."""
+    with sync_playwright() as p:
+        server, base, browser, page, console, problems = opened(p, directory)
+        page.add_init_script(HANDED)
+        page.goto(base + "?assets=none")
+        wait_console(page, console, r"match known: tick \d+", 600, "the client to know the match")
+        page.wait_for_timeout(4000)
+        locked = lambda: page.evaluate("document.pointerLockElement === document.getElementById('dbota')")
+        size = page.evaluate("[innerWidth, innerHeight, devicePixelRatio]")
+
+        def mouse(kind, dx=0, dy=0, button=-1, buttons=0):
+            page.evaluate(
+                f"""document.getElementById('dbota').dispatchEvent(new PointerEvent('{kind}', {{bubbles: true,
+                detail: {OWN_EVENT}, movementX: {dx}, movementY: {dy}, button: {button}, buttons: {buttons},
+                pointerId: 1, pointerType: 'mouse', isPrimary: true}}))"""
+            )
+            page.wait_for_timeout(100)
+
+        def wait_lock(want, what):
+            deadline = time.time() + 60
+            while locked() != want and time.time() < deadline:
+                page.wait_for_timeout(500)
+            assert locked() == want, what
+
+        page.mouse.click(size[0] // 2, size[1] // 2)
+        wait_lock(True, "a press on the canvas in a match locks the pointer")
+        wait_console(page, console, "cursor locked to the canvas", 60, "the client to see the lock")
+        far = 10 * max(size[0], size[1]) * size[2]
+        mouse("pointermove", far, far)
+        last = [size[0] - 1 / size[2], size[1] - 1 / size[2]]
+        got = page.evaluate("handed[handed.length - 1]")
+        assert got == last, f"the cursor stays inside the canvas: {got}, not {last}"
+        mouse("pointermove", -far, -far)
+        assert page.evaluate("handed[handed.length - 1]") == [0, 0], "the cursor stops at the top-left corner"
+        print("cursor: locked by a press, held inside the canvas")
+        # The dashboard button, the top-left corner's first: in a replay page it opens the settings.
+        mouse("pointermove", DASHBOARD[0] * size[2], DASHBOARD[1] * size[2])
+        mouse("pointerdown", button=0, buttons=1)
+        mouse("pointerup", button=0)
+        released = wait_console(page, console, r"cursor released at (\d+),(\d+)", 120, "the settings to let the pointer go")
+        assert [int(released.group(1)), int(released.group(2))] == list(DASHBOARD), released.group(0)
+        wait_lock(False, "the settings let the pointer go")
+        print("cursor: a press at the game's cursor opens the settings, which let it go")
+        page.keyboard.press("Escape")
+        wait_lock(True, "closing the settings takes the pointer again")
+        page.evaluate("document.exitPointerLock()")  # what the player's Esc does
+        wait_lock(False, "the browser lets go")
+        page.keyboard.press("F11")
+        wait_lock(True, "F11 takes the pointer again")
+        page.wait_for_function("() => !!document.fullscreenElement", timeout=60000)
+        assert not problems, problems
+        print("cursor: the settings closed and F11 take the pointer again")
+        browser.close()
+    server.shutdown()
+
+
 def free_port():
     import socket
 
@@ -601,6 +674,7 @@ def main():
     ap.add_argument("--server", help="a bota_server built with the websocket feature, for --live-page")
     ap.add_argument("--startup-page", type=pathlib.Path, help="any build: the client picked, failures shown")
     ap.add_argument("--keys-page", type=pathlib.Path, help="any page, even web/ unbuilt: whose keys are whose")
+    ap.add_argument("--cursor-page", type=pathlib.Path, help="a replay build: the cursor kept in a match")
     ap.add_argument("--pixels-page", type=pathlib.Path, help="a replay build: the canvas drawn at its device pixels")
     ap.add_argument("--only-wire", action="store_true", help="skip the import test even where an install is found")
     args = ap.parse_args()
@@ -617,6 +691,8 @@ def main():
         check_replay_page(args.replay_page)
     if args.fullscreen_page:
         check_fullscreen_page(args.fullscreen_page)
+    if args.cursor_page:
+        check_cursor_page(args.cursor_page)
     if args.pixels_page:
         check_canvas_pixels(args.pixels_page)
     if args.live_page:

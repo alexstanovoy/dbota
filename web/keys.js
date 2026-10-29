@@ -6,7 +6,10 @@
 //
 // F11 is the game's fullscreen: the canvas goes fullscreen (the Fullscreen API, called inside the
 // key's gesture), the way the display setting does it, so the setting and the key agree and the
-// canvas, not a page-sized window, fills the screen.
+// canvas, not a page-sized window, fills the screen. The pointer is locked first where the game
+// keeps the cursor (pointer.js): the fullscreen uses the gesture up.
+import { take } from "./pointer.js";
+
 const canvas = document.getElementById("dbota");
 
 export function ownedByBrowser(e) {
@@ -19,8 +22,12 @@ window.addEventListener(
     if (e.key !== "F11" || e.ctrlKey || e.metaKey || e.altKey) return;
     e.preventDefault();
     if (e.repeat) return;
-    if (document.fullscreenElement) document.exitFullscreen();
-    else canvas.requestFullscreen().catch(() => {});
+    if (document.fullscreenElement) {
+      document.exitFullscreen();
+      return;
+    }
+    take();
+    canvas.requestFullscreen().catch(() => {});
   },
   true
 );

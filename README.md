@@ -251,8 +251,15 @@ While a match is on screen and the window has focus the cursor is confined to th
 screen edges pan the camera on every side. It is let go in the menus, with the settings open
 and when the window loses focus (Alt-Tab), and is not confined during captures. Where the platform
 refuses to confine (a Wayland compositor without pointer constraints), a warning is logged and
-the cursor stays free; the cursor is never locked instead. A browser keeps its canvas in the page:
-none of this applies there.
+the cursor stays free; the cursor is never locked instead.
+
+In a browser the canvas goes fullscreen instead (VIDEO's windowed fullscreen, or F11), and the
+cursor is kept in the game at the same times by locking the pointer (a page cannot confine it):
+the game then draws its own cursor, moved by the mouse and held inside the canvas, and every
+click, drag, hover and the edge pan go where it is. A browser locks only on a gesture: the
+pointer is taken by the click or key that brings a match on screen or closes the settings, by a
+press on the canvas, and by F11; Esc lets it go (the browser's own key), and the next press on
+the canvas takes it again.
 
 ## Picture quality
 

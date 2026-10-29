@@ -5,9 +5,10 @@
 //! cursor is let go in the menus, with the settings overlay open and when
 //! the window loses focus (Alt-Tab).
 //!
-//! A browser's canvas is the page's, never borderless by itself, and the
-//! page owns its pointer. There "windowed fullscreen" is the Fullscreen API
-//! on the canvas (`web`), and there is no exclusive mode.
+//! A browser's canvas is the page's, never borderless by itself. There
+//! "windowed fullscreen" is the Fullscreen API on the canvas (`web`), there
+//! is no exclusive mode, and the cursor is kept in the game by locking the
+//! pointer (`web_cursor`) when and where the desktop confines it.
 
 use bevy::{
     prelude::*,
@@ -21,9 +22,23 @@ pub fn plugin(app: &mut App) {
     app.add_systems(Update, (native::apply_mode, native::confine));
     #[cfg(target_arch = "wasm32")]
     {
-        app.init_non_send::<web::State>();
+        app.init_non_send::<web::State>()
+            .add_plugins(crate::web_cursor::plugin);
         app.add_systems(Update, web::sync_fullscreen);
     }
+}
+
+/// Whether the game keeps the cursor (confined to the window, or a page's
+/// pointer locked): while a match shows, the window has focus and the
+/// settings overlay is closed. Captures and benchmarks run unattended, often
+/// over the owner's work, and never keep it.
+pub fn keeps_cursor(
+    window: &Window,
+    screen: &crate::settings::Screen,
+    args: &crate::Args,
+    session: &crate::session::Session,
+) -> bool {
+    window.focused && !screen.open && !args.unattended() && session.0.view().is_some()
 }
 
 /// The window mode that shows a display mode.
@@ -240,8 +255,8 @@ mod native {
         refused: bool,
     }
 
-    /// Confines the cursor to the window while a match shows and the window
-    /// has focus; lets it go otherwise.
+    /// Confines the cursor to the window while the game keeps it
+    /// ([`super::keeps_cursor`]); lets it go otherwise.
     ///
     /// Where the platform cannot confine (a Wayland compositor without the
     /// pointer-constraints protocol), the cursor stays free, a warning says
@@ -256,9 +271,7 @@ mod native {
         mut grab: Local<Grab>,
     ) {
         let (window, mut options) = window.into_inner();
-        // Captures and benchmarks run unattended, often over the owner's work.
-        let want =
-            window.focused && !screen.open && !args.unattended() && session.0.view().is_some();
+        let want = super::keeps_cursor(window, &screen, &args, &session);
         if !want {
             if options.grab_mode != CursorGrabMode::None {
                 options.grab_mode = CursorGrabMode::None;
