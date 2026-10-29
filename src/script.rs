@@ -18,6 +18,8 @@
 //!   shows, or `nobutton:NAME` when none of that name does (hidden or not there);
 //! - `await:seats:R,D`: the top bar holds R places of Radiant and D of Dire;
 //! - `await:horn`: the game clock past the horn;
+//! - `await:model:NAME`: a unit drawn with the cache model of that logical name;
+//! - `await:started:NAME`: the particle effect of that logical name started at least once;
 //! - `await:items:N`: exactly N items in the hero's bag;
 //! - `await:level:N`, `await:gold:N`: one's hero at that level, that gold;
 //! - `say:LINE`: the line typed into the chat and sent (a `-command` runs);
@@ -111,6 +113,19 @@ enum Awaited {
     Items(usize),
     /// The light fully turned to night (`true`) or to day.
     Daylight(bool),
+    /// A unit drawn with the model of this logical name.
+    Model(String),
+    /// The particle effect of this logical name started at least once.
+    Started(String),
+}
+
+/// What the game has drawn, for the awaited steps that look at it.
+#[derive(bevy::ecs::system::SystemParam)]
+struct Drawn<'w, 's> {
+    units: Query<'w, 's, &'static crate::units::Unit>,
+    bank: Res<'w, crate::units::ModelBank>,
+    library: Option<Res<'w, crate::particles::Library>>,
+    playing: Res<'w, crate::particles::Playing>,
 }
 
 /// Where the script is.
@@ -158,6 +173,8 @@ fn parse(text: &str) -> Result<Vec<(String, Step)>, String> {
                                 )
                             }
                             "nobutton" => Awaited::NoButton(value.to_owned()),
+                            "model" => Awaited::Model(value.to_owned()),
+                            "started" => Awaited::Started(value.to_owned()),
                             "level" => Awaited::Level(
                                 value
                                     .parse()
@@ -247,6 +264,7 @@ fn holds(
     session: &Session,
     screen: &Screen,
     daylight: &crate::daylight::Daylight,
+    drawn: &Drawn,
 ) -> bool {
     let view = menu.map(MenuCore::view);
     match awaited {
@@ -283,6 +301,16 @@ fn holds(
         }
         Awaited::Daylight(night) => daylight.night == f32::from(u8::from(*night)),
         Awaited::Gold(gold) => own(session).is_some_and(|me| me.gold.is_some_and(|g| g >= *gold)),
+        Awaited::Model(name) => drawn
+            .units
+            .iter()
+            .filter_map(|unit| drawn.bank.0.get(unit.model?))
+            .any(|entry| entry.model.logical == *name),
+        Awaited::Started(name) => drawn
+            .library
+            .as_deref()
+            .and_then(|library| library.effect(name))
+            .is_some_and(|effect| drawn.playing.started(effect) > 0),
     }
 }
 
@@ -298,6 +326,13 @@ struct Light<'w, 's> {
     daylight: Res<'w, crate::daylight::Daylight>,
     sun: Query<'w, 's, &'static DirectionalLight, With<crate::map::MainSun>>,
     ambient: Res<'w, GlobalAmbientLight>,
+}
+
+/// What the scene shows, for the steps that wait for it or print it.
+#[derive(bevy::ecs::system::SystemParam)]
+struct Scene<'w, 's> {
+    light: Light<'w, 's>,
+    drawn: Drawn<'w, 's>,
 }
 
 /// Plays the step due: keys before Bevy reads the keyboard this frame.
@@ -318,7 +353,7 @@ fn play(
     args: Res<crate::Args>,
     mut exit: MessageWriter<AppExit>,
     mut said: ResMut<crate::chat::Queued>,
-    light: Light,
+    scene: Scene,
 ) {
     let Ok((window, mut win)) = window.single_mut() else {
         return;
@@ -420,7 +455,14 @@ fn play(
             true
         }
         Step::Click(_) => false,
-        Step::Await(awaited) => holds(awaited, menu.as_deref(), &session, &screen, &light.daylight),
+        Step::Await(awaited) => holds(
+            awaited,
+            menu.as_deref(),
+            &session,
+            &screen,
+            &scene.light.daylight,
+            &scene.drawn,
+        ),
         Step::Shot(file) => match &script.shot {
             Some(path) => path.is_file(),
             None => {
@@ -437,13 +479,13 @@ fn play(
             }
         },
         Step::Light => {
-            let sun = light.sun.single().ok();
+            let sun = scene.light.sun.single().ok();
             let [sr, sg, sb, _] = sun.map_or([0.0; 4], |s| s.color.to_linear().to_f32_array());
             let lux = sun.map_or(0.0, |s| s.illuminance);
-            let [ar, ag, ab, _] = light.ambient.color.to_linear().to_f32_array();
+            let [ar, ag, ab, _] = scene.light.ambient.color.to_linear().to_f32_array();
             println!(
                 "light: sun={sr:.4},{sg:.4},{sb:.4},{lux:.1} ambient={ar:.4},{ag:.4},{ab:.4},{:.1}",
-                light.ambient.brightness
+                scene.light.ambient.brightness
             );
             true
         }

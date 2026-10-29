@@ -43,9 +43,20 @@ pub struct Playing {
     pub(super) placed: Vec<Placed>,
     /// The world's clock, in seconds of the game's pace: what noise over the world's time reads.
     clock: f32,
+    /// How many times each effect was started, for the end-to-end tests to ask what the game
+    /// drew.
+    started: Vec<(Arc<Effect>, u32)>,
 }
 
 impl Playing {
+    /// How many times `effect` was started.
+    pub fn started(&self, effect: &Arc<Effect>) -> u32 {
+        self.started
+            .iter()
+            .find(|(e, _)| Arc::ptr_eq(e, effect))
+            .map_or(0, |(_, n)| *n)
+    }
+
     /// Starts `effect`, its draws keyed by `seed`.
     pub fn start(&mut self, effect: &Arc<Effect>, seed: u32) -> Option<Handle> {
         let mut instance = match self
@@ -61,6 +72,10 @@ impl Playing {
             None => Instance::new(Arc::clone(effect), seed),
         };
         instance.world_time = self.clock;
+        match self.started.iter_mut().find(|(e, _)| Arc::ptr_eq(e, effect)) {
+            Some((_, n)) => *n = n.saturating_add(1),
+            None => self.started.push((Arc::clone(effect), 1)),
+        }
         let slot = match self.free.pop() {
             Some(slot) => slot,
             None if self.slots.len() < MAX_PLAYING => {
