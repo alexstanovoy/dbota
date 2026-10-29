@@ -54,9 +54,9 @@ pub fn serve(args: &[&str]) -> Server {
     Server { child, address }
 }
 
-/// The game server: `BOTA_SERVER_BIN`, else built from the bota workspace
-/// dbota builds against.
-fn server_binary() -> PathBuf {
+/// The game server: `BOTA_SERVER_BIN`, else built from the bota workspace dbota builds against.
+#[allow(dead_code)] // each test file uses the helpers it needs
+pub fn server_binary() -> PathBuf {
     if let Some(path) = std::env::var_os("BOTA_SERVER_BIN") {
         return PathBuf::from(path);
     }

@@ -1,7 +1,9 @@
 //! Which clip each unit's model plays and where in it, set every frame from
 //! the simulation: a swing's windup puts the clip's attack point on the
 //! simulator's strike, a cast's on the simulator's cast point, and only
-//! idling, running and the follow-through keep the clip's own pace.
+//! idling, running and the follow-through of a blow that landed keep the
+//! clip's own pace. A clip fades in over the one before, as Dota's sequences
+//! do.
 
 use std::collections::HashMap;
 
@@ -19,6 +21,13 @@ use crate::units::{Dying, ModelBank, ModelOf, Rig, Unit};
 
 /// The clip of a cast with no art of its own, and of an item's use.
 const PLAIN_CAST: &str = "cast1";
+/// Seconds a clip takes to fade in over the one before, which fades out
+/// meanwhile: the fade of Dota's unit sequences (their models'
+/// `m_flFadeInTime` and `m_flFadeOutTime`).
+const FADE_SECONDS: f32 = 0.2;
+/// Clips that may fade out under the one playing at once; a quicker change
+/// lets the faintest go.
+const MAX_FADING: usize = 2;
 /// World units a second at which a run clip plays at its own pace.
 const RUN_PACE: f32 = 300.0;
 /// World units a second above which a unit counts as running.
@@ -43,6 +52,22 @@ pub struct Pose {
     swings: u32,
     /// The pace of the last swing: clip seconds per simulated second.
     swing_tempo: f32,
+    /// Seconds into the clip playing shown this frame.
+    shown: f32,
+    /// The weight of the clip playing, rising to one as it fades in.
+    share: f32,
+    /// The clips fading out under it.
+    fading: Vec<Fading>,
+}
+
+/// A clip fading out under the one playing.
+#[derive(Debug)]
+struct Fading {
+    node: AnimationNodeIndex,
+    /// Seconds into it where it was left, where it is held.
+    t: f32,
+    /// Its weight, falling to nothing.
+    weight: f32,
 }
 
 impl Pose {
@@ -108,6 +133,7 @@ fn animate(
     mut pivots: Query<&mut Transform>,
     mut players: Query<&mut AnimationPlayer>,
     camera: Single<&Frustum, With<crate::camera::RtsCamera>>,
+    args: Res<crate::Args>,
 ) {
     let core = &session.0;
     let Some(view) = core.view() else {
@@ -149,13 +175,9 @@ fn animate(
         let Ok(mut player) = players.get_mut(rig.0) else {
             continue;
         };
-        if pose.clip != wanted.clip || !player.is_playing_animation(*node) {
-            player.stop_all();
-            player.play(*node).pause();
-            pose.clip = wanted.clip;
-        }
-        // A unit no view sees nor will in a frame is not posed: its clip
-        // weighs nothing, so its joints are neither evaluated nor moved
+        let from = clip(pose.clip).map(|c| c.1);
+        // A unit no view sees nor will in a frame is not posed: its clips
+        // weigh nothing, so its joints are neither evaluated nor moved
         // (nor propagated). Its clip and time still follow the simulation,
         // so it is posed right the frame it comes near.
         let near = camera.intersects_sphere(
@@ -165,9 +187,126 @@ fn animate(
             },
             true,
         );
-        if let Some(active) = player.animation_mut(*node) {
-            active.set_seek_time(wanted.t.clamp(0.0, (*duration - 1e-3).max(0.0)));
-            active.set_weight(if near { 1.0 } else { 0.0 });
+        if pose.clip != wanted.clip || !player.is_playing_animation(*node) {
+            cross_fade(&mut pose, &mut player, from, *node);
+            pose.clip = wanted.clip;
+        }
+        pose.shown = wanted.t.clamp(0.0, (*duration - 1e-3).max(0.0));
+        weigh(&mut pose, &mut player, *node, dt, near);
+        if args.trace_feel
+            && let Some(u) = live
+        {
+            trace(time.elapsed_secs(), view.tick, u, &pose, clips);
+        }
+    }
+}
+
+/// One `--trace-feel` line: what the unit's model shows this frame.
+fn trace(
+    at: f32,
+    tick: u32,
+    u: &UnitView,
+    pose: &Pose,
+    clips: &[(String, AnimationNodeIndex, f32, Option<f32>)],
+) {
+    let name = |node| {
+        clips
+            .iter()
+            .find(|c| c.1 == node)
+            .map_or("?", |c| c.0.as_str())
+    };
+    let fading: Vec<String> = pose
+        .fading
+        .iter()
+        .map(|f| format!("{}:{:.2}", name(f.node), f.weight))
+        .collect();
+    let point = clips
+        .iter()
+        .find(|c| c.0 == pose.clip)
+        .and_then(|c| c.3)
+        .map_or("none".to_owned(), |p| format!("{p:.3}"));
+    println!(
+        "anim at={at:.3} tick={tick} unit={} kind={:?} neutral={:?} pos={:.0},{:.0} clip={} t={:.3} point={point} share={:.2} fading={}",
+        u.id.idx,
+        u.kind,
+        u.neutral.and_then(bota_core::NeutralKind::of),
+        u.pos.x.to_f32(),
+        u.pos.y.to_f32(),
+        pose.clip,
+        pose.shown,
+        pose.share,
+        fading.join(",")
+    );
+}
+
+/// Starts clip `to` over the one playing (`from`), which fades out as `to`
+/// fades in, as Dota cross-fades a unit's sequences; a clip coming back
+/// before it faded out picks up from the weight it had left.
+fn cross_fade(
+    pose: &mut Pose,
+    player: &mut AnimationPlayer,
+    from: Option<AnimationNodeIndex>,
+    to: AnimationNodeIndex,
+) {
+    let Some(from) = from.filter(|from| *from != to && player.is_playing_animation(*from)) else {
+        player.stop_all();
+        player.play(to).pause();
+        pose.fading.clear();
+        pose.share = 1.0;
+        return;
+    };
+    let back = pose
+        .fading
+        .iter()
+        .position(|f| f.node == to)
+        .map(|at| pose.fading.swap_remove(at).weight);
+    pose.fading.push(Fading {
+        node: from,
+        t: pose.shown,
+        weight: pose.share,
+    });
+    if pose.fading.len() > MAX_FADING {
+        let (at, _) = pose
+            .fading
+            .iter()
+            .enumerate()
+            .min_by(|a, b| a.1.weight.total_cmp(&b.1.weight))
+            .expect("more than none");
+        player.stop(pose.fading.swap_remove(at).node);
+    }
+    pose.share = back.unwrap_or(0.0);
+    if !player.is_playing_animation(to) {
+        player.play(to).pause();
+    }
+}
+
+/// Moves a fade on by `dt` and weighs the clip playing, at `pose.shown`,
+/// and each fading out, held where it was left; a faded clip is let go.
+fn weigh(
+    pose: &mut Pose,
+    player: &mut AnimationPlayer,
+    node: AnimationNodeIndex,
+    dt: f32,
+    near: bool,
+) {
+    let step = dt / FADE_SECONDS;
+    pose.share = (pose.share + step).min(1.0);
+    for fading in &mut pose.fading {
+        fading.weight -= step;
+        if fading.weight <= 0.0 {
+            player.stop(fading.node);
+        }
+    }
+    pose.fading.retain(|f| f.weight > 0.0);
+    let shown = |weight: f32| if near { weight } else { 0.0 };
+    if let Some(active) = player.animation_mut(node) {
+        active.set_seek_time(pose.shown);
+        active.set_weight(shown(pose.share));
+    }
+    for fading in &pose.fading {
+        if let Some(active) = player.animation_mut(fading.node) {
+            active.set_seek_time(fading.t);
+            active.set_weight(shown(fading.weight));
         }
     }
 }
@@ -185,6 +324,8 @@ fn choose(
     let rate = f32::from(core.tick_rate().max(1));
     let sub = core.smooth.alpha();
     if let (Some(cast), Some(began)) = (u.cast, core.cast_began(u.id)) {
+        // A model without the cast's clip (Dota has none either) goes on
+        // with what it was doing.
         let name = cast.ability.map_or(PLAIN_CAST, |id| art_of(id).clip);
         if let Some((duration, point)) = clip(name) {
             // The clip's point lands on the tick the view says the cast goes
@@ -232,8 +373,14 @@ fn choose(
             t: (1.0 - left / windup).clamp(0.0, 1.0) * point,
         };
     }
-    if pose.swing_due.take().is_some() {
+    if let Some(due) = pose.swing_due.take() {
         pose.swings += 1;
+        // A windup gone before its strike tick was broken off (an order, its
+        // target falling or getting away): nothing was struck, and Dota cuts
+        // the clip there rather than playing the blow's follow-through.
+        if core.view().is_some_and(|v| v.tick < due) {
+            pose.since_strike = None;
+        }
     }
     if let Some(since) = pose.since_strike.as_mut() {
         *since += dt;

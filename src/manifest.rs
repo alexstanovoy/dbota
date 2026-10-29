@@ -315,19 +315,35 @@ impl Manifest {
             .map(|(_, path)| path.as_str())
     }
 
-    /// Every sound whose logical name starts with a prefix, as asset paths.
-    pub fn sounds(&self, prefix: &str) -> Vec<String> {
-        self.sound_files(prefix).map(cache_path).collect()
+    /// Every sound of a logical name, as asset paths: the variants share the name.
+    pub fn sounds(&self, name: &str) -> Vec<String> {
+        self.sound_files_named(|logical| logical == name)
+            .map(cache_path)
+            .collect()
     }
 
     /// Every sound whose logical name starts with a prefix, relative to the cache.
     pub fn sound_files<'a>(&'a self, prefix: &'a str) -> impl Iterator<Item = &'a str> {
+        self.sound_files_named(move |logical| logical.starts_with(prefix))
+    }
+
+    fn sound_files_named<'a>(
+        &'a self,
+        wanted: impl Fn(&str) -> bool + 'a,
+    ) -> impl Iterator<Item = &'a str> {
         self.files
             .iter()
-            .filter(move |(name, path)| {
-                name.starts_with(prefix) && (path.ends_with(".wav") || path.ends_with(".mp3"))
+            .filter(move |(logical, path)| {
+                wanted(logical) && (path.ends_with(".wav") || path.ends_with(".mp3"))
             })
             .map(|(_, path)| path.as_str())
+    }
+
+    /// Whether the cache holds any sound at all.
+    pub fn has_sounds(&self) -> bool {
+        self.files
+            .iter()
+            .any(|(logical, _)| logical.starts_with("sound."))
     }
 
     /// The Dota name of one of our ids of a kind.

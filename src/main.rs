@@ -215,6 +215,12 @@ pub struct Args {
     /// (see `visual.rs`).
     #[arg(long, requires = "visual_check", requires = "pov")]
     pub bars_check: bool,
+    /// Debug: print what a unit's animation shows each frame (`anim tick=…
+    /// unit=… clip=… t=… share=… fading=…`) and each creep sound decided
+    /// (`sound tick=… kind=… sources=…`), for the end-to-end tests of how an
+    /// attack looks and sounds.
+    #[arg(long)]
+    pub trace_feel: bool,
     /// Debug: draw a screen of the main menu with made-up contents, no
     /// service needed (for screenshots: `--frames N --screenshot FILE`).
     #[arg(long, value_name = "NAME", value_parser = clap::builder::PossibleValuesParser::new(main_menu::PREVIEWS))]

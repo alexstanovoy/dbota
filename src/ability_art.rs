@@ -59,6 +59,7 @@ const RAZE: AbilityArt = AbilityArt {
 };
 
 /// The look of an ability; a plain cast for one with none of its own.
+/// A neutral's abilities map to the clip of their Dota activity.
 pub fn art_of(id: AbilityId) -> AbilityArt {
     match id {
         AbilityId::RAZE_NEAR => AbilityArt {
@@ -91,23 +92,94 @@ pub fn art_of(id: AbilityId) -> AbilityArt {
             clip: "dismember",
             ..PLAIN
         },
-        // A neutral's bolt flies as an attack's missile does.
-        id if NeutralAbility::of(id).is_some_and(|ability| {
-            matches!(
-                ability.spell(),
-                Spell::Cast {
-                    act: Act::Bolt { .. },
-                    ..
-                }
-            )
-        }) =>
-        {
-            AbilityArt {
-                flight: Flight::Bolt,
-                ..PLAIN
-            }
+        id => NeutralAbility::of(id).map_or(PLAIN, neutral_art),
+    }
+}
+
+/// The look of a neutral's ability: the clip of the activity Dota plays for
+/// it, and a bolt's flight as an attack's missile.
+fn neutral_art(ability: NeutralAbility) -> AbilityArt {
+    let bolt = matches!(
+        ability.spell(),
+        Spell::Cast {
+            act: Act::Bolt { .. },
+            ..
         }
-        _ => PLAIN,
+    );
+    AbilityArt {
+        clip: neutral_cast_clip(ability),
+        flight: if bolt { Flight::Bolt } else { Flight::None },
+        ..PLAIN
+    }
+}
+
+/// The clip a neutral plays for an ability: `cast1` to `cast6` are Dota's
+/// ACT_DOTA_CAST_ABILITY_1 to 6, the activity the ability's
+/// `AbilityCastAnimation` names (1 where it names none). A model without
+/// the activity (the Fell Spirit has none for Vex) has no such clip and
+/// keeps its pose through the cast, as in Dota.
+const fn neutral_cast_clip(ability: NeutralAbility) -> &'static str {
+    use NeutralAbility as N;
+    match ability {
+        N::Heal
+        | N::TakeOff
+        | N::ChainLightning
+        | N::WarStomp
+        | N::Purge
+        | N::ManaBurn
+        | N::Shockwave
+        | N::IceArmor
+        | N::HurlBoulder
+        | N::ThunderClap
+        | N::Tornado
+        | N::Hurricane
+        | N::Ensnare
+        | N::SeedShot
+        | N::Fireball
+        | N::Frenzy
+        | N::IcefireBomb
+        | N::Desecrate => "cast1",
+        N::Vex
+        | N::Intimidate
+        | N::OgreSmash
+        | N::RaiseDead
+        | N::WaterBubbleSmall
+        | N::WaterBubbleMedium
+        | N::WaterBubbleLarge => "cast2",
+        N::Slam => "cast3",
+        N::ArmOfTheDeep | N::TendrilsOfTheDeep | N::CongregationsOfTheDeep => "cast5",
+        // Never cast, so never shown: Dota's default animation.
+        N::ProspectingAura
+        | N::NeutralUpgrade
+        | N::StealWeapon
+        | N::SpeedAura
+        | N::Break
+        | N::Piercing
+        | N::HealAmplificationAura
+        | N::EnvenomedWeapon
+        | N::FrostAttack
+        | N::CloakAura
+        | N::CriticalStrike
+        | N::PackleadersAura
+        | N::ManaAura
+        | N::UnholyAura
+        | N::ShardSplit
+        | N::SwiftnessAura
+        | N::DeathThroeRush
+        | N::DeathThroePower
+        | N::ToughnessAura
+        | N::MagicAmplificationAura
+        | N::SplashAttack
+        | N::DragonhideAura
+        | N::WeakeningAura
+        | N::GraniteAura
+        | N::WarDrumsAura
+        | N::TimeWarpAura
+        | N::ProwlerAura
+        | N::Petrify
+        | N::RiverbornAura
+        | N::Rally
+        | N::Tempest => "cast1",
     }
 }
 
@@ -121,5 +193,93 @@ pub fn art_by(inflictor: Inflictor) -> AbilityArt {
             ..PLAIN
         },
         Inflictor::Item(_) => PLAIN,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use bota_core::NEUTRALS;
+
+    use super::*;
+    use crate::manifest::MANIFEST;
+
+    /// Every neutral's cast has a clip of its activity on its model, but
+    /// the Fell Spirit's Vex: its model has no animation for it in Dota.
+    #[test]
+    fn every_neutral_cast_has_its_clip() {
+        let words = || {
+            MANIFEST
+                .lines()
+                .map(|l| l.split_whitespace().collect::<Vec<_>>())
+        };
+        let mut missing = Vec::new();
+        for neutral in &NEUTRALS {
+            let model = words()
+                .find_map(|w| match w.as_slice() {
+                    ["unit", unit, model, ..] if *unit == neutral.unit => Some(model.to_string()),
+                    _ => None,
+                })
+                .unwrap_or_else(|| panic!("no unit line for {}", neutral.unit));
+            for ability in neutral.abilities {
+                if !matches!(ability.spell(), Spell::Cast { .. } | Spell::Uncast) {
+                    continue;
+                }
+                let clip = art_of(ability.id()).clip;
+                let has = words().any(|w| {
+                    matches!(w.as_slice(),
+                    ["clip", m, c, ..] if *m == model && *c == clip)
+                });
+                if !has {
+                    missing.push((neutral.unit, ability.entry().def.name, clip));
+                }
+            }
+        }
+        assert_eq!(missing, [("npc_dota_neutral_fel_beast", "Vex", "cast2")]);
+    }
+
+    /// A neutral's cast clip reaches its pose at the ability's own cast
+    /// point, in Dota's numbers (the Frostmage's Ice Armor 0.56 s, the
+    /// Bruiser's Ogre Smash 2.8 s), so what is drawn and what the simulation
+    /// does go off together.
+    #[test]
+    fn every_neutral_cast_clip_lands_on_the_abilitys_cast_point() {
+        let words = || {
+            MANIFEST
+                .lines()
+                .map(|l| l.split_whitespace().collect::<Vec<_>>())
+        };
+        let mut checked = Vec::new();
+        for neutral in &NEUTRALS {
+            let model = words()
+                .find_map(|w| match w.as_slice() {
+                    ["unit", unit, model, ..] if *unit == neutral.unit => Some(model.to_string()),
+                    _ => None,
+                })
+                .unwrap_or_else(|| panic!("no unit line for {}", neutral.unit));
+            for ability in neutral.abilities {
+                if !matches!(ability.spell(), Spell::Cast { .. } | Spell::Uncast) {
+                    continue;
+                }
+                let clip = art_of(ability.id()).clip;
+                let point = words().find_map(|w| match w.as_slice() {
+                    ["clip", m, c, _, _, rest @ ..] if *m == model && *c == clip => rest
+                        .iter()
+                        .find_map(|r| r.strip_prefix("point=")?.parse::<f32>().ok()),
+                    _ => None,
+                });
+                let Some(point) = point else { continue };
+                let def = ability.entry().def;
+                assert!(
+                    (point * 1000.0 - def.point as f32).abs() < 1.0,
+                    "{} on {}: clip point {point} s, cast point {} ms",
+                    def.name,
+                    neutral.unit,
+                    def.point
+                );
+                checked.push(def.name);
+            }
+        }
+        assert!(checked.contains(&"Ice Armor"), "{checked:?}");
+        assert!(checked.contains(&"Ogre Smash!"), "{checked:?}");
     }
 }

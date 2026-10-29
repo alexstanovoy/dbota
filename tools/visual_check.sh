@@ -134,6 +134,17 @@ else
     exit 1
 fi
 
+# How an attack looks and sounds: a swing broken off is a cancel, clips cross-fade over 0.2 s, melee
+# creeps whoosh and hit, the Ogre Bruiser plays its Smash through its cast point. Each test records a
+# match on a real bota_server and plays its replay with the client's trace.
+if cargo test --release --quiet --manifest-path "$here/Cargo.toml" --test attack_feel \
+    -- --ignored --test-threads 1 > "$out/attack_feel.log" 2>&1; then
+    echo "visual check: PASS a broken-off swing is a cancel, clips fade, creeps sound, the Smash plays through"
+else
+    echo "visual check: FAIL how an attack looks and sounds (see $out/attack_feel.log)"
+    exit 1
+fi
+
 # Selling in the strategy phase: the item menu's Sell takes a chosen item back, so the match begins
 # with the one item left.
 if cargo test --release --quiet --manifest-path "$here/Cargo.toml" --test item_sell \

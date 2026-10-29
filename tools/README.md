@@ -89,7 +89,10 @@ and are kept as `.mp3` (the stdlib cannot transcode them); playing them needs Be
   bones; the client holds roots in place across the ground.
 - **Neutral creeps.** One `model` block per model (`neutral.<name>.model`) and one `unit <npc_units.txt name>
   <model> model_scale=<ModelScale>` line per unit that wears it: the client finds a neutral's line by the
-  game's unit name. `point=` is the unit's `AttackAnimationPoint`. `unit <name> none` draws nothing (the
+  game's unit name. An attack clip's `point=` is the unit's `AttackAnimationPoint`. `cast1..6` are Dota's
+  `ACT_DOTA_CAST_ABILITY_1..6`, the activity an ability's `AbilityCastAnimation` names (`src/ability_art.rs` keys each
+  neutral ability to its clip), with the ability's `AbilityCastPoint` as `point=`; a model with no such animation (the
+  Fell Spirit's Vex) has no clip. `unit <name> none` draws nothing (the
   Wildwing's Tornado is an attachment model without a mesh). Models load when their first unit comes into view.
 - **Wearables.** Shadow Fiend's default head, shoulders and arms (and Pudge's seven default items) are separate skinned meshes. Spawn
   them alongside the hero and point their skin joints at the hero's joint entities with the same
