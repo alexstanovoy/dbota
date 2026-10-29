@@ -155,6 +155,34 @@ fn wears(fx: &Fx, unit: &UnitView, manifest: &Manifest) -> bool {
         .any(|effect| manifest.dota_name("modifier", effect.id.0) == Some(modifier))
 }
 
+/// Starts what a unit that has come to wear a worn line's subject wears: its particle, fed what the
+/// line says, and its sound; the particle, if any started.
+fn begin(
+    fx: &Fx,
+    unit: &UnitView,
+    at: Vec3,
+    library: Option<&Library>,
+    playing: &mut Playing,
+    stage: &mut Stage,
+) -> Option<Handle> {
+    let seed = unit.id.idx ^ unit.id.generation.rotate_left(16);
+    let handle = fx
+        .particle
+        .as_deref()
+        .and_then(|name| library?.effect(name))
+        .and_then(|effect| playing.start(effect, seed));
+    if let Some(instance) = handle.and_then(|h| playing.get_mut(h))
+        && let Some(Feed::Sight) = fx.cp1
+    {
+        let sight = Vec3::new(unit.true_sight_radius.to_f32(), 0.0, 0.0);
+        instance.set_control_point(FEED, sight, Vec3::ZERO, true);
+    }
+    if let Some(prefix) = &fx.sound {
+        stage.sound(prefix, at, seed);
+    }
+    handle
+}
+
 /// Starts what each unit that has come to wear a worn line's subject wears, keeps its particle at
 /// the unit, and ends it when the unit stops wearing it, falls or leaves the view.
 fn worn(
@@ -205,25 +233,10 @@ fn worn(
                 continue;
             }
             let key = (unit.id, *rule);
-            if !worn.0.contains_key(&key) {
-                let seed = unit.id.idx ^ unit.id.generation.rotate_left(16);
-                let handle = fx
-                    .particle
-                    .as_deref()
-                    .and_then(|name| library.as_deref()?.effect(name))
-                    .and_then(|effect| playing.start(effect, seed));
-                if let Some(instance) = handle.and_then(|h| playing.get_mut(h))
-                    && let Some(Feed::Sight) = fx.cp1
-                {
-                    let sight = Vec3::new(unit.true_sight_radius.to_f32(), 0.0, 0.0);
-                    instance.set_control_point(FEED, sight, Vec3::ZERO, true);
-                }
-                if let Some(prefix) = &fx.sound {
-                    stage.sound(prefix, at, seed);
-                }
-                worn.0.insert(key, handle);
-            }
-            if let Some(instance) = worn.0[&key].and_then(|h| playing.get_mut(h)) {
+            let handle = *worn.0.entry(key).or_insert_with(|| {
+                begin(fx, unit, at, library.as_deref(), &mut playing, &mut stage)
+            });
+            if let Some(instance) = handle.and_then(|h| playing.get_mut(h)) {
                 let place = Vec3::new(at.x, -at.z, at.y);
                 instance.set_control_point(PLACE, place, Vec3::ZERO, false);
             }
