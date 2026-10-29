@@ -467,7 +467,7 @@ fn start_line(
 }
 
 /// Starts effect `name` at `at` (a point of the world on the ground), to play out on its own.
-fn play_once(
+pub(crate) fn play_once(
     library: Option<&Library>,
     playing: &mut Playing,
     name: &str,

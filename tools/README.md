@@ -49,6 +49,7 @@ deleted. An asset that does not convert is reported and drawn as a stand-in.
 | `models/neutral/roshan/`, `models/neutral/divine_sentinel_cube/` | Roshan (idle, run, his On The Move run, two swings and Bash's, death, stun, flail, Roar, Throw, Slam) and the Tormentor (idle, spawn, death, four flinches) | 11 MB |
 | `models/objective/` | a Watcher, an Outpost, a Shrine of Wisdom, a planted Roshan's Banner and the Tormentor's chasm, each with the clips of its states | 25 MB |
 | `models/item/`, `models/rune/` | items on the ground (Aegis, Cheese, Refresher Shard, the Bottle full and empty, Dota's generic item box) and the nine runes, each looping its idle clip | 3 MB |
+| `models/ward/` | the Observer Ward and the Sentry Ward (`default_ward`, the Sentry in its skin 1), each with idle, spawn and die clips | 0.2 MB |
 | `models/portraits.txt`, `models/portrait_backgrounds/` | Dota's portrait framing of each model above (camera, light, ambient, the background's corner tints) and the background images it names | 1 MB |
 | `map/mid/` | `mid.gltf` with its geometry in `mid.bin`, the default map from fountain to fountain around mid, its textures, `trees.txt`, `buildings.txt` (the places and yaws of the buildings and objectives the client spawns) | 354 MB |
 | `textures/ground/` | terrain layer textures (also used by `map.mid`) | 37 MB |

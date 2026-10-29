@@ -3,8 +3,9 @@
 # version in assets-manifest/version). Outputs are relative to the cache root.
 #
 # Line kinds (whitespace-separated, '#' starts a comment):
-#   model   <logical> <vpk .vmdl_c> <out .glb> [anims=a,b,c] [meshes=m,n] [attach=<model>] [model_scale=x]
+#   model   <logical> <vpk .vmdl_c> <out .glb> [anims=a,b,c] [meshes=m,n] [attach=<model>] [skin=<material group>] [model_scale=x]
 #           glTF 2.0 binary; textures are PNG files next to the .glb (referenced by relative uri).
+#           skin= draws it with that one of the model's skins (material groups: the sentry ward's "1").
 #           anims= lists the exported animations (none without it); meshes= keeps only those
 #           render meshes (drops event/alternate variants that would overlap the default one).
 #           attach= marks a wearable: a skinned mesh whose joints share names with the parent's
@@ -33,6 +34,15 @@
 #           PCM WAV as Valve ships it (16-bit 44.1 kHz, a few 8-bit or 22.05 kHz); voice lines are MP3
 #           in the game and stay MP3 (out .mp3). Events with several variants list one line per variant;
 #           variants of one random pick (a hero's move acknowledgements) share the logical name.
+#   fx      <subject>.<trigger> at=<where> [particle=<particle logical>] [sound=<sound logical prefix>] [cp1=<feed>]
+#           an effect bound to a fact of the game by Dota's name for it (src/fx.rs). The importer skips these lines.
+#           subject: item.<ids.txt item name> | modifier.<Dota modifier name> | unit.<npc_units.txt name>
+#           trigger: use (the item was used) | land (the item thrown came down) | worn (the modifier is on a unit, or
+#                    a unit of that name stands: from its start until it goes; the particle follows the unit)
+#           at: caster (where the user stands after) | caster_before (where it stood before) | point (the spot the
+#               use was aimed at, or the throw came down) | unit (the wearer; for worn only, and only for worn)
+#           sound: one of the sounds whose logical name starts with it plays at that spot
+#           cp1: what the particle's second control point is given: sight (how far the wearer gives true sight)
 #   style   <vpk .vcss_c> <define>
 #           a colour one of Dota's stylesheets defines (`@define name: #rrggbb[aa];`), written with
 #           every other to text/styles.json under its name lower-cased, as #rrggbbaa.
@@ -314,7 +324,7 @@ particle hero.nevermore.requiem particles/units/heroes/hero_nevermore/nevermore_
 particle hero.nevermore.requiem_line particles/units/heroes/hero_nevermore/nevermore_requiemofsouls_line.vpcf_c particles/nevermore_requiemofsouls_line.json
 particle hero.nevermore.necro_soul particles/units/heroes/hero_nevermore/nevermore_necro_souls.vpcf_c particles/nevermore_necro_souls.json
 
-# --- Town portal, Glyph of Fortification, level up, Blood Grenade, a hero's death
+# --- Town portal, Glyph of Fortification, level up, Blood Grenade, a hero's death, wards' ambient effects
 particle item.teleport_start particles/items2_fx/teleport_start.vpcf_c particles/teleport_start.json
 particle item.teleport_end particles/items2_fx/teleport_end.vpcf_c particles/teleport_end.json
 particle glyph.structure particles/items_fx/glyph.vpcf_c particles/glyph.json
@@ -322,6 +332,15 @@ particle glyph.creep particles/items_fx/glyph_creeps.vpcf_c particles/glyph_cree
 particle hero.levelup particles/generic_hero_status/hero_levelup.vpcf_c particles/hero_levelup.json
 particle item.blood_grenade particles/items2_fx/blood_grenade_projectile.vpcf_c particles/blood_grenade_projectile.json
 particle hero.nevermore.death particles/units/heroes/hero_nevermore/nevermore_death.vpcf_c particles/nevermore_death.json
+particle ward.observer.ambient particles/items2_fx/ward.vpcf_c particles/ward.json
+particle ward.sentry.ambient particles/items2_fx/ward_true_sight.vpcf_c particles/ward_true_sight.json
+
+# --- Effects bound to the game's facts (src/fx.rs)
+# Wards: the sound of planting one, and the ambient effect each wears (items_game.txt 7555 and 7556)
+fx item.ward_observer.use at=point sound=sound.ward.activate
+fx item.ward_sentry.use at=point sound=sound.ward.activate
+fx unit.npc_dota_observer_wards.worn at=unit particle=ward.observer.ambient
+fx unit.npc_dota_sentry_wards.worn at=unit particle=ward.sentry.ambient cp1=sight
 
 # --- Item icons (88x64, a few narrower), every Dota item name in ids.txt
 texture icon.item.boots panorama/images/items/boots_png.vtex_c icons/items/boots.png
@@ -613,6 +632,7 @@ sound sound.creep.dire.ranged.impact.1 sounds/weapons/creep/bad/range_projectile
 sound sound.creep.dire.ranged.impact.2 sounds/weapons/creep/bad/range_projectile_impact2.vsnd_c sounds/weapons/creep/bad/range_projectile_impact2.wav event=Creep_Bad_Range.ProjectileImpact
 sound sound.tower.radiant.attack sounds/weapons/towers/attack_radiant.vsnd_c sounds/weapons/towers/attack_radiant.wav event=Tower.Water.Attack
 sound sound.tower.dire.attack sounds/weapons/towers/attack_dire.vsnd_c sounds/weapons/towers/attack_dire.wav event=Tower.Fire.Attack
+sound sound.ward.activate sounds/items/ward_activate.vsnd_c sounds/items/ward_activate.wav event=DOTA_Item.ObserverWard.Activate
 sound sound.tower.impact sounds/physics/damage/npc/tower_projectile.vsnd_c sounds/physics/damage/npc/tower_projectile.wav event=Tower.Water.ProjectileImpact
 sound sound.tower.hero_impact sounds/physics/damage/player/tower_projectile01.vsnd_c sounds/physics/damage/player/tower_projectile01.wav event=Tower.HeroImpact
 sound sound.tower.radiant.destroyed sounds/physics/damage/building/radiant_tower_destruction_01.vsnd_c sounds/physics/damage/building/radiant_tower_destruction_01.wav event=Building_RadiantTower.Destruction
@@ -1140,6 +1160,19 @@ clip objective.roshans_banner.model idle roshan_banner_idle 25.000
 clip objective.roshans_banner.model spawn roshan_banner_spawn 1.500
 clip objective.roshans_banner.model death roshan_banner_death 4.515
 unit npc_dota_unit_roshans_banner objective.roshans_banner.model model_scale=0.7
+
+# --- Wards (npc_dota_observer_wards, npc_dota_sentry_wards: both models/props_gameplay/default_ward, the sentry's skin 1;
+# their ambient effect is the wearable of items_game.txt 7555 / 7556, which follows the ward)
+model ward.observer.model models/props_gameplay/default_ward.vmdl_c models/ward/observer/default_ward.glb anims=default_ward_idle,default_ward_die,default_ward_spawn
+clip ward.observer.model idle default_ward_idle 3.333
+clip ward.observer.model death default_ward_die 0.767
+clip ward.observer.model spawn default_ward_spawn 0.867
+unit npc_dota_observer_wards ward.observer.model model_scale=1
+model ward.sentry.model models/props_gameplay/default_ward.vmdl_c models/ward/sentry/default_ward.glb anims=default_ward_idle,default_ward_die,default_ward_spawn skin=1
+clip ward.sentry.model idle default_ward_idle 3.333
+clip ward.sentry.model death default_ward_die 0.767
+clip ward.sentry.model spawn default_ward_spawn 0.867
+unit npc_dota_sentry_wards ward.sentry.model model_scale=1
 
 # --- Items on the ground (items.txt `Model`): Roshan's drops and the Bottle (bottle_blue full, bottle_empty with
 # no charges). A dropped Banner is Dota's generic item box (neutral_box), as is any item without its own model.

@@ -458,6 +458,7 @@ fn take_scenes(entry: &mut BankModel, server: &AssetServer, gltfs: &Assets<Gltf>
 fn unit_art<'a>(unit: &UnitView, manifest: &'a Manifest) -> Option<&'a UnitArt> {
     let npc = match objective_unit(unit.kind) {
         Some(npc) => npc,
+        None if unit.kind == UnitKind::Ward => ward_unit(unit),
         None => NeutralKind::of(unit.neutral?)?.neutral().unit,
     };
     manifest.unit_art(npc)
@@ -471,6 +472,24 @@ fn objective_unit(kind: UnitKind) -> Option<&'static str> {
         UnitKind::Watcher => Some("npc_dota_lantern"),
         UnitKind::Shrine => Some("npc_dota_xp_fountain"),
         _ => None,
+    }
+}
+
+/// The Dota unit (`npc_units.txt`) a ward, a map objective or a neutral creep is.
+pub fn npc_unit(unit: &UnitView) -> Option<&'static str> {
+    match objective_unit(unit.kind) {
+        Some(npc) => Some(npc),
+        None if unit.kind == UnitKind::Ward => Some(ward_unit(unit)),
+        None => Some(NeutralKind::of(unit.neutral?)?.neutral().unit),
+    }
+}
+
+/// The Dota unit a ward is: the one that gives true sight is a Sentry Ward.
+fn ward_unit(ward: &UnitView) -> &'static str {
+    if ward.true_sight_radius.to_f32() > 0.0 {
+        "npc_dota_sentry_wards"
+    } else {
+        "npc_dota_observer_wards"
     }
 }
 
@@ -500,7 +519,10 @@ fn kind_name(map: &MapDef, kind: UnitKind, team: Team, pos: bota_proto::Vec2) ->
 
 /// The logical name of the model a unit is drawn with.
 fn model_name(unit: &UnitView, map: &MapDef, manifest: &Manifest) -> Option<String> {
-    if unit.kind == UnitKind::CreepNeutral || objective_unit(unit.kind).is_some() {
+    if unit.kind == UnitKind::CreepNeutral
+        || unit.kind == UnitKind::Ward
+        || objective_unit(unit.kind).is_some()
+    {
         return unit_art(unit, manifest)?.model.clone();
     }
     let side = match unit.team {
@@ -667,7 +689,8 @@ fn required_models(manifest: &Manifest) -> Vec<String> {
     }
     let objectives = [UnitKind::Outpost, UnitKind::Watcher, UnitKind::Shrine]
         .into_iter()
-        .filter_map(objective_unit);
+        .filter_map(objective_unit)
+        .chain(["npc_dota_observer_wards", "npc_dota_sentry_wards"]);
     for unit in NEUTRALS.iter().map(|n| n.unit).chain(objectives) {
         match manifest.unit_art(unit) {
             Some(art) => names.extend(art.model.clone()),

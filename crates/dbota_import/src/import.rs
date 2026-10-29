@@ -9,7 +9,7 @@
 use std::cell::Cell;
 use std::collections::{BTreeMap, HashSet, VecDeque};
 
-use heatel::export::{ExportedTexture, ModelOptions, export_model, read_from};
+use heatel::export::{ExportedTexture, ModelOptions, export_model_in_group, read_from};
 use heatel::material::Material;
 use heatel::particle::{Blend, Renderer, System};
 use heatel::portraits::framings;
@@ -157,6 +157,8 @@ pub enum Item {
         skeleton: bool,
         /// The animations to write (the manifest's `anims=`); a model with any has its skeleton.
         anims: Vec<String>,
+        /// The skin (material group) to draw it with (the manifest's `skin=`); the default one without.
+        skin: Option<String>,
     },
     /// The world's tree and building placements (`trees.txt`, `buildings.txt`), read from the
     /// map package's entities.
@@ -320,6 +322,7 @@ impl Plan {
                         meshes: list("meshes="),
                         skeleton: field("attach=").is_some() || !anims.is_empty(),
                         anims,
+                        skin: field("skin=").map(str::to_owned),
                     });
                 }
                 ["texture", logical, src, out, ..] => plan.items.push(Item::Texture {
@@ -743,6 +746,7 @@ fn make(
             meshes,
             skeleton,
             anims,
+            skin,
             ..
         } => {
             let job = ModelJob {
@@ -751,6 +755,7 @@ fn make(
                 meshes: meshes.as_deref(),
                 skeleton: *skeleton,
                 anims,
+                skin: skin.as_deref(),
             };
             model(src, pak, &job, out)
         }
@@ -980,6 +985,7 @@ fn particle_models(
                 meshes: None,
                 skeleton: false,
                 anims: &[],
+                skin: None,
             };
             if let Err(err) = model(src, pak, &job, out) {
                 out.report.failed.push((vmdl.to_owned(), err.to_string()));
@@ -1255,6 +1261,7 @@ struct ModelJob<'a> {
     meshes: Option<&'a [String]>,
     skeleton: bool,
     anims: &'a [String],
+    skin: Option<&'a str>,
 }
 
 fn model(src: &impl Source, pak: &Vpk, job: &ModelJob<'_>, out: &mut Out<'_>) -> Result<()> {
@@ -1264,6 +1271,7 @@ fn model(src: &impl Source, pak: &Vpk, job: &ModelJob<'_>, out: &mut Out<'_>) ->
         meshes,
         skeleton,
         anims,
+        skin,
     } = *job;
     let keep: Option<Vec<&str>> = meshes.map(|m| m.iter().map(String::as_str).collect());
     let anims: Vec<&str> = anims.iter().map(String::as_str).collect();
@@ -1274,7 +1282,7 @@ fn model(src: &impl Source, pak: &Vpk, job: &ModelJob<'_>, out: &mut Out<'_>) ->
         texture_uri: &ktx2_name,
         generator: GENERATOR,
     };
-    let exported = export_model(src, &[pak], path, &options)?;
+    let exported = export_model_in_group(src, &[pak], path, &options, skin)?;
     let dir = dest.rsplit_once('/').map_or("", |(dir, _)| dir);
     let mut seen = HashSet::new();
     let mut decoded: Option<(String, Texture)> = None;

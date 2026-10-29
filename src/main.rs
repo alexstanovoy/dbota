@@ -37,6 +37,7 @@ mod drill;
 mod effects;
 mod error_msg;
 mod faces;
+mod fx;
 mod feed;
 mod fog;
 mod fortified;
@@ -486,6 +487,7 @@ fn main() -> AppExit {
             portrait::plugin,
             stats::plugin,
         ))
+        .add_plugins(fx::plugin)
         .add_plugins((
             sound::plugin,
             effects::plugin,

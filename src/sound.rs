@@ -317,7 +317,7 @@ fn play(
 }
 
 /// How much of its volume a sound at a place keeps for a listener at `focus`.
-fn fall_off((x, y): (f32, f32), focus: Vec2) -> f32 {
+pub(crate) fn fall_off((x, y): (f32, f32), focus: Vec2) -> f32 {
     let far = Vec2::new(x, y).distance(focus);
     (1.0 - (far - EARSHOT).max(0.0) / FADE).clamp(0.0, 1.0)
 }

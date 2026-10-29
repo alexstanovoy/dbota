@@ -19,6 +19,7 @@
 //! - `await:seats:R,D`: the top bar holds R places of Radiant and D of Dire;
 //! - `await:horn`: the game clock past the horn;
 //! - `await:model:NAME`: a unit drawn with the cache model of that logical name;
+//! - `await:heard:PREFIX`: a bound effect sounded a sound of that logical prefix at least once;
 //! - `await:started:NAME`: the particle effect of that logical name started at least once;
 //! - `await:items:N`: exactly N items in the hero's bag;
 //! - `await:level:N`, `await:gold:N`: one's hero at that level, that gold;
@@ -115,6 +116,8 @@ enum Awaited {
     Daylight(bool),
     /// A unit drawn with the model of this logical name.
     Model(String),
+    /// A bound effect sounded a sound of this logical prefix.
+    Heard(String),
     /// The particle effect of this logical name started at least once.
     Started(String),
 }
@@ -126,6 +129,7 @@ struct Drawn<'w, 's> {
     bank: Res<'w, crate::units::ModelBank>,
     library: Option<Res<'w, crate::particles::Library>>,
     playing: Res<'w, crate::particles::Playing>,
+    heard: Res<'w, crate::fx::Heard>,
 }
 
 /// Where the script is.
@@ -174,6 +178,7 @@ fn parse(text: &str) -> Result<Vec<(String, Step)>, String> {
                             }
                             "nobutton" => Awaited::NoButton(value.to_owned()),
                             "model" => Awaited::Model(value.to_owned()),
+                            "heard" => Awaited::Heard(value.to_owned()),
                             "started" => Awaited::Started(value.to_owned()),
                             "level" => Awaited::Level(
                                 value
@@ -306,6 +311,7 @@ fn holds(
             .iter()
             .filter_map(|unit| drawn.bank.0.get(unit.model?))
             .any(|entry| entry.model.logical == *name),
+        Awaited::Heard(prefix) => drawn.heard.0.get(prefix).is_some_and(|n| *n > 0),
         Awaited::Started(name) => drawn
             .library
             .as_deref()

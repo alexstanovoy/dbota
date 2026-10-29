@@ -53,6 +53,96 @@ pub struct UnitArt {
     pub attack: Option<String>,
 }
 
+/// When a bound effect plays.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Trigger {
+    /// An item was used (`EventKind::ItemUsed`).
+    Use,
+    /// Something thrown came down (`EventKind::Landed`).
+    Land,
+    /// While the subject holds: a modifier on a unit, or a unit of a Dota name standing.
+    Worn,
+}
+
+/// Where a bound effect plays.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum At {
+    /// The user, where it stands after the event.
+    Caster,
+    /// The user, where it stood in the view before.
+    CasterBefore,
+    /// The spot the event names: what a use was aimed at, where a throw came down.
+    Point,
+    /// The unit that wears it.
+    Unit,
+}
+
+/// What feeds the second control point of a bound particle.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Feed {
+    /// How far the wearer gives true sight, in x.
+    Sight,
+}
+
+/// One `fx` line: the particle and sound Dota shows with a fact of the game, keyed by Dota's
+/// name for it (`item.<key>`, `modifier.<name>`, `unit.<npc name>`); the grammar is in the
+/// manifest's header.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Fx {
+    /// `item.blink`, `modifier.modifier_item_blood_grenade_debuff`, `unit.npc_dota_observer_wards`.
+    pub subject: String,
+    pub trigger: Trigger,
+    pub at: At,
+    /// The logical name of the particle, when the line has one.
+    pub particle: Option<String>,
+    /// The logical prefix of the sounds, one of them played, when the line has one.
+    pub sound: Option<String>,
+    pub cp1: Option<Feed>,
+}
+
+impl Fx {
+    /// Reads the words after `fx`: `<subject>.<trigger> at=… [particle=…] [sound=…] [cp1=…]`.
+    pub fn parse(words: &[&str]) -> Result<Fx, String> {
+        let [name, rest @ ..] = words else {
+            return Err("no name".to_owned());
+        };
+        let (subject, trigger) = name.rsplit_once('.').ok_or("no trigger")?;
+        let trigger = match trigger {
+            "use" => Trigger::Use,
+            "land" => Trigger::Land,
+            "worn" => Trigger::Worn,
+            other => return Err(format!("no trigger '{other}'")),
+        };
+        let mut fx = Fx {
+            subject: subject.to_owned(),
+            trigger,
+            at: At::Caster,
+            particle: None,
+            sound: None,
+            cp1: None,
+        };
+        for word in rest {
+            match word.split_once('=') {
+                Some(("at", "caster")) => fx.at = At::Caster,
+                Some(("at", "caster_before")) => fx.at = At::CasterBefore,
+                Some(("at", "point")) => fx.at = At::Point,
+                Some(("at", "unit")) => fx.at = At::Unit,
+                Some(("particle", logical)) => fx.particle = Some(logical.to_owned()),
+                Some(("sound", logical)) => fx.sound = Some(logical.to_owned()),
+                Some(("cp1", "sight")) => fx.cp1 = Some(Feed::Sight),
+                _ => return Err(format!("cannot read '{word}'")),
+            }
+        }
+        if fx.particle.is_none() && fx.sound.is_none() {
+            return Err("neither a particle nor a sound".to_owned());
+        }
+        if (trigger == Trigger::Worn) != (fx.at == At::Unit) {
+            return Err("only a worn effect is at the unit, and it is".to_owned());
+        }
+        Ok(fx)
+    }
+}
+
 /// Everything the cache was exported with, and which of it is there.
 #[derive(Resource, Clone, Debug, Default)]
 pub struct Manifest {
@@ -69,6 +159,8 @@ pub struct Manifest {
     /// How the units named by Dota are drawn (every `unit` line, whether or
     /// not its model is in the cache).
     pub units: Vec<UnitArt>,
+    /// The effects bound to the game's facts (every `fx` line).
+    pub fx: Vec<Fx>,
     /// Our ids to Dota names: kind (`item`, `ability`, `hero`, `effect`,
     /// `modifier`: the Dota modifier an effect is), id,
     /// name (for an effect, the logical name of its icon).
@@ -113,6 +205,10 @@ impl Manifest {
                             .map(str::to_owned),
                     });
                 }
+                ["fx", rest @ ..] => match Fx::parse(rest) {
+                    Ok(fx) => manifest.fx.push(fx),
+                    Err(why) => error!("manifest line '{line}': {why}"),
+                },
                 ["clip", model, logical, name, duration, rest @ ..] => {
                     let point = rest
                         .iter()
