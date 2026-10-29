@@ -128,7 +128,7 @@ fn light(
     daylight: Res<Daylight>,
     dota: Option<Res<Dota>>,
     mut ambient: ResMut<GlobalAmbientLight>,
-    mut suns: Query<&mut DirectionalLight>,
+    mut suns: Query<&mut DirectionalLight, With<crate::map::MainSun>>,
     mut day: Local<Option<DayLook>>,
 ) {
     let Ok(mut sun) = suns.single_mut() else {

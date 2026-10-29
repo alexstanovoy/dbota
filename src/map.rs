@@ -150,9 +150,15 @@ fn map_loader(world: &World, stream: crate::mapfile::MapStream) -> crate::mapfil
     }
 }
 
+/// The scene's sun: the light the map and everything on it is lit by, among the
+/// directional lights the portraits have of their own.
+#[derive(Component)]
+pub struct MainSun;
+
 fn spawn_sun(mut commands: Commands, settings: Res<crate::config::Settings>) {
     let shadows = settings.quality.shadows;
     commands.spawn((
+        MainSun,
         DirectionalLight {
             illuminance: 13_000.0,
             // Slightly warm.

@@ -22,6 +22,10 @@
 //! - `say:LINE`: the line typed into the chat and sent (a `-command` runs);
 //! - `pick:ID`: the hero of that id picked, and the seat readied;
 //! - `shot:FILE`: the screen saved under `--screenshot-dir`;
+//! - `await:daylight:day` or `await:daylight:night`: the light fully turned
+//!   to that time of day;
+//! - `light`: prints `light: sun=R,G,B,LUX ambient=R,G,B,BRIGHTNESS`, the
+//!   scene's sun and ambient light in linear colour, for the tests to compare;
 //! - `wait:SECONDS`;
 //! - `exit`: the client ends, with exit code 0;
 //! - `mouse:X,Y`: the pointer moved to that point of the window, in shares
@@ -60,6 +64,8 @@ enum Step {
     Click(String),
     Await(Awaited),
     Shot(String),
+    /// The scene's lights printed.
+    Light,
     Wait(f32),
     Mouse(Vec2),
     Button(MouseButton),
@@ -98,6 +104,8 @@ enum Awaited {
     Gold(i32),
     /// Exactly this many items in the hero's bag.
     Items(usize),
+    /// The light fully turned to night (`true`) or to day.
+    Daylight(bool),
 }
 
 /// Where the script is.
@@ -144,6 +152,11 @@ fn parse(text: &str) -> Result<Vec<(String, Step)>, String> {
                             "gold" => Awaited::Gold(
                                 value.parse().map_err(|_| format!("'{value}' is no gold"))?,
                             ),
+                            "daylight" => Awaited::Daylight(match value {
+                                "night" => true,
+                                "day" => false,
+                                _ => return Err(format!("'{value}' is neither day nor night")),
+                            }),
                             "items" => Awaited::Items(
                                 value
                                     .parse()
@@ -154,6 +167,7 @@ fn parse(text: &str) -> Result<Vec<(String, Step)>, String> {
                     }
                 }),
                 "shot" => Step::Shot(arg.to_owned()),
+                "light" => Step::Light,
                 "exit" => Step::Exit,
                 "mouse" => Step::Mouse(
                     arg.split_once(',')
@@ -210,6 +224,7 @@ fn holds(
     menu: Option<&MenuCore>,
     session: &Session,
     buttons: &Query<&Name, With<Button>>,
+    daylight: &crate::daylight::Daylight,
 ) -> bool {
     let view = menu.map(MenuCore::view);
     match awaited {
@@ -238,6 +253,7 @@ fn holds(
                     .count()
                     == *count
         }
+        Awaited::Daylight(night) => daylight.night == f32::from(u8::from(*night)),
         Awaited::Gold(gold) => own(session).is_some_and(|me| me.gold.is_some_and(|g| g >= *gold)),
     }
 }
@@ -246,6 +262,14 @@ fn holds(
 fn own(session: &Session) -> Option<&bota_proto::PlayerView> {
     let core = &session.0;
     core.view()?.player(core.my_slot?)
+}
+
+/// The scene's light, for the steps that wait for it or print it.
+#[derive(bevy::ecs::system::SystemParam)]
+struct Light<'w, 's> {
+    daylight: Res<'w, crate::daylight::Daylight>,
+    sun: Query<'w, 's, &'static DirectionalLight, With<crate::map::MainSun>>,
+    ambient: Res<'w, GlobalAmbientLight>,
 }
 
 /// Plays the step due: keys before Bevy reads the keyboard this frame.
@@ -266,6 +290,7 @@ fn play(
     args: Res<crate::Args>,
     mut exit: MessageWriter<AppExit>,
     mut said: ResMut<crate::chat::Queued>,
+    light: Light,
 ) {
     let Ok((window, mut win)) = window.single_mut() else {
         return;
@@ -367,7 +392,13 @@ fn play(
             true
         }
         Step::Click(_) => false,
-        Step::Await(awaited) => holds(awaited, menu.as_deref(), &session, &buttons),
+        Step::Await(awaited) => holds(
+            awaited,
+            menu.as_deref(),
+            &session,
+            &buttons,
+            &light.daylight,
+        ),
         Step::Shot(file) => match &script.shot {
             Some(path) => path.is_file(),
             None => {
@@ -383,6 +414,17 @@ fn play(
                 false
             }
         },
+        Step::Light => {
+            let sun = light.sun.single().ok();
+            let [sr, sg, sb, _] = sun.map_or([0.0; 4], |s| s.color.to_linear().to_f32_array());
+            let lux = sun.map_or(0.0, |s| s.illuminance);
+            let [ar, ag, ab, _] = light.ambient.color.to_linear().to_f32_array();
+            println!(
+                "light: sun={sr:.4},{sg:.4},{sb:.4},{lux:.1} ambient={ar:.4},{ag:.4},{ab:.4},{:.1}",
+                light.ambient.brightness
+            );
+            true
+        }
         Step::Wait(secs) => now - began >= *secs,
         Step::Pick(hero) => {
             session.0.act(bota_client_core::Intent::PickHero(*hero));

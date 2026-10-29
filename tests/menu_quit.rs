@@ -380,3 +380,154 @@ fn demo_hero_plays_a_hero_with_every_cheat() {
         script,
     );
 }
+
+/// The scene's lights as a `light` step printed them: sun colour and lux, ambient colour and
+/// brightness, in linear light.
+#[derive(Debug, Clone, Copy)]
+struct Lights {
+    sun: [f32; 3],
+    lux: f32,
+    ambient: [f32; 3],
+    brightness: f32,
+}
+
+impl Lights {
+    fn parse(said: &str) -> Vec<Lights> {
+        let numbers = |text: &str| -> Vec<f32> {
+            text.split(',')
+                .map(|n| n.parse().expect("a number"))
+                .collect()
+        };
+        said.lines()
+            .filter_map(|l| l.strip_prefix("light: sun="))
+            .map(|l| {
+                let (sun, ambient) = l.split_once(" ambient=").expect("both lights");
+                let (sun, ambient) = (numbers(sun), numbers(ambient));
+                Lights {
+                    sun: [sun[0], sun[1], sun[2]],
+                    lux: sun[3],
+                    ambient: [ambient[0], ambient[1], ambient[2]],
+                    brightness: ambient[3],
+                }
+            })
+            .collect()
+    }
+}
+
+/// The owner's report: at night the light does not differ in colour from the day's. Demo Hero
+/// by day (after the horn), then its Night button: the sun's and the ambient light's colour and
+/// strength the client lights the scene with are read from the scene, and must differ by what
+/// Dota's map has them differ by (its `lighting.txt` in the cache). `DBOTA_QUIT_SHOTS` keeps the
+/// two frames.
+#[test]
+#[ignore = "draws on the GPU in a headless compositor: tools/visual_check.sh runs it"]
+fn night_light_differs_from_day_light() {
+    let scratch = Scratch::new("night-light");
+    let server = server_binary();
+    let script = "await:menu;click:demo hero;await:button:demo shadow fiend;\
+                  click:demo shadow fiend;await:game;await:horn;await:daylight:day;wait:1;\
+                  light;shot:light-day.png;click:demo night;await:daylight:night;wait:1;\
+                  light;shot:light-night.png;click:demo quit;await:menu;key:Escape;key:Escape;\
+                  await:popup;click:ok";
+    let (code, said) = run_with(
+        &scratch,
+        &[],
+        script,
+        &[("BOTA_SERVER", server.as_os_str())],
+    );
+    played("night light", (code, said.clone()), script);
+    let lights = Lights::parse(&said);
+    assert_eq!(lights.len(), 2, "{said}");
+    let (day, night) = (lights[0], lights[1]);
+    let map = Dota::read();
+    let close = |got: f32, want: f32| (got - want).abs() <= 0.01 * want.abs().max(1e-3);
+    for (what, day_rgb, night_rgb, pair) in [
+        ("sun", day.sun, night.sun, map.sun),
+        ("ambient", day.ambient, night.ambient, map.ambient),
+    ] {
+        for c in 0..3 {
+            let want = day_rgb[c] * pair[1][c] / pair[0][c];
+            assert!(
+                close(night_rgb[c], want),
+                "{what} channel {c}: night {} but Dota's colours make it {want} (day {}):\n{said}",
+                night_rgb[c],
+                day_rgb[c]
+            );
+        }
+        // Night's light is Dota's moonlight blue: blue gains on red by Dota's measure.
+        let blue_over_red = |rgb: [f32; 3]| rgb[2] / rgb[0];
+        assert!(
+            blue_over_red(night_rgb) > 1.25 * blue_over_red(day_rgb),
+            "{what} does not turn blue by night:\n{said}"
+        );
+    }
+    // Dota's strengths by night against day are its scales' ratios.
+    assert!(close(night.lux, day.lux * map.sun_scale), "{said}");
+    assert!(
+        close(night.brightness, day.brightness * map.ambient_scale),
+        "{said}"
+    );
+    // And by Dota's luminance the night sun is dimmer than the day's.
+    let luminance = |c: [f32; 3]| 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2];
+    assert!(luminance(night.sun) < 0.9 * luminance(day.sun), "{said}");
+    assert!(
+        luminance(night.ambient) < 0.9 * luminance(day.ambient)
+            || night.ambient[2] > 1.05 * day.ambient[2],
+        "{said}"
+    );
+}
+
+/// Dota's lighting of the map as the cache has it (`map/mid/lighting.txt`), per light the linear
+/// colours by day and by night, and the night's scale against the day's.
+struct Dota {
+    sun: [[f32; 3]; 2],
+    ambient: [[f32; 3]; 2],
+    sun_scale: f32,
+    ambient_scale: f32,
+}
+
+impl Dota {
+    fn read() -> Dota {
+        let cache = std::env::var_os("DBOTA_ASSETS").map_or_else(
+            || {
+                let version = std::fs::read_to_string(
+                    Path::new(env!("CARGO_MANIFEST_DIR")).join("assets-manifest/version"),
+                )
+                .expect("the asset version");
+                PathBuf::from(std::env::var_os("HOME").expect("a home"))
+                    .join(".cache/dbota")
+                    .join(format!("v{}", version.trim()))
+            },
+            PathBuf::from,
+        );
+        let text = std::fs::read_to_string(cache.join("map/mid/lighting.txt"))
+            .expect("the cache's lighting.txt");
+        let line = |light: &str, time: &str| -> [f32; 4] {
+            let line = text
+                .lines()
+                .find(|l| l.starts_with(&format!("{light} {time} ")))
+                .expect("a lighting line");
+            let n: Vec<f32> = line
+                .split_whitespace()
+                .skip(2)
+                .map(|n| n.parse().expect("a number"))
+                .collect();
+            [n[0], n[1], n[2], n[3]]
+        };
+        let linear = |c: f32| {
+            let c = c / 255.0;
+            if c <= 0.04045 {
+                c / 12.92
+            } else {
+                ((c + 0.055) / 1.055).powf(2.4)
+            }
+        };
+        let rgb = |l: [f32; 4]| [linear(l[0]), linear(l[1]), linear(l[2])];
+        Dota {
+            sun: [rgb(line("sun", "day")), rgb(line("sun", "night"))],
+            ambient: [rgb(line("ambient", "day")), rgb(line("ambient", "night"))],
+            sun_scale: line("sun", "night")[3] / line("sun", "day")[3],
+            ambient_scale: line("ambient", "night")[3] / line("ambient", "day")[3],
+        }
+    }
+}
