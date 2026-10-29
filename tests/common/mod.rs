@@ -1,8 +1,12 @@
 //! What the tests that draw share.
 
-use std::io::{BufRead, BufReader};
+#![allow(dead_code)] // each test binary uses a part of this shared module
+
+use std::io::{BufRead, BufReader, Read, Write};
+use std::net::{TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
+use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
 /// The client, to be given its arguments, drawing in a headless compositor of its own on the GPU
@@ -14,23 +18,25 @@ pub fn client() -> Command {
     command
 }
 
-/// Seconds a scripted run may take.
-const PATIENCE: Duration = Duration::from_secs(240);
+/// A running game server, ended when it is dropped.
+pub struct Server {
+    child: Child,
+    pub address: String,
+}
 
-/// A game server of one seat that honours Dota's cheats, with a pick phase and a strategy phase
-/// as short as the script allows, on a port of its own choosing; and its address.
-fn serve() -> (Child, String) {
+impl Drop for Server {
+    fn drop(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
+}
+
+/// A game server on a port of its own choosing, started with `args` beside the map and the
+/// port, and its address.
+pub fn serve(args: &[&str]) -> Server {
     let mut child = Command::new(server_binary())
-        .args([
-            "--map",
-            "2",
-            "--port",
-            "0",
-            "--bind",
-            "127.0.0.1",
-            "--cheats",
-        ])
-        .args(["--players", "1", "--pick-secs", "5", "--tactical-secs", "5"])
+        .args(["--map", "2", "--port", "0", "--bind", "127.0.0.1"])
+        .args(args)
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
         .spawn()
@@ -45,10 +51,11 @@ fn serve() -> (Child, String) {
         }
     };
     std::thread::spawn(move || for _ in output.lines() {});
-    (child, address)
+    Server { child, address }
 }
 
-/// The game server: `BOTA_SERVER_BIN`, else built from the bota workspace dbota builds against.
+/// The game server: `BOTA_SERVER_BIN`, else built from the bota workspace
+/// dbota builds against.
 fn server_binary() -> PathBuf {
     if let Some(path) = std::env::var_os("BOTA_SERVER_BIN") {
         return PathBuf::from(path);
@@ -65,7 +72,7 @@ fn server_binary() -> PathBuf {
         .and_then(|p| p.iter().find(|p| p["name"] == "bota_client_core"))
         .and_then(|p| p["manifest_path"].as_str())
         .expect("bota_client_core is a dependency");
-    let root = Path::new(manifest)
+    let root = std::path::Path::new(manifest)
         .ancestors()
         .nth(3)
         .expect("the bota workspace");
@@ -81,22 +88,48 @@ fn server_binary() -> PathBuf {
     target.join("release/bota_server")
 }
 
+/// Seconds a scripted run may take.
+const PATIENCE: Duration = Duration::from_secs(240);
+
+/// Plays `script` in the real client against the server at `address`, drawing in a headless
+/// compositor, and asserts it ran to its end: exit code 0 and every step done.
+pub fn play_script(address: &str, script: &str, tag: &str) {
+    run_script(address, script, tag, None);
+}
+
 /// Plays `script` (the client's `--script`) in a match on a cheats-honouring server of one seat
 /// and asserts that every step was done and the client left with exit code 0. `shots` is the
 /// folder the script's `shot:` steps save to; it is kept for a person to look at.
-#[allow(dead_code)] // each test file uses the helpers it needs
 pub fn play(name: &str, script: &str, shots: Option<&Path>) {
+    let server = serve(&[
+        "--cheats",
+        "--players",
+        "1",
+        "--pick-secs",
+        "5",
+        "--tactical-secs",
+        "5",
+    ]);
+    run_script(&server.address, script, name, shots);
+}
+
+fn run_script(address: &str, script: &str, tag: &str, shots: Option<&Path>) {
     let scratch =
-        PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join(format!("{name}-{}", std::process::id()));
+        PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join(format!("{tag}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&scratch);
     std::fs::create_dir_all(&scratch).expect("a scratch folder");
-    let (mut server, address) = serve();
     let mut command = client();
     command
-        .args(["--addr", &address, "--config"])
+        .args(["--addr", address, "--config"])
         .arg(scratch.join("client.conf"))
-        .args(["--script", script, "--mute", "--no-vsync"])
-        .args(["--display-mode", "windowed"]);
+        .args([
+            "--script",
+            script,
+            "--mute",
+            "--no-vsync",
+            "--display-mode",
+            "windowed",
+        ]);
     if let Some(shots) = shots {
         std::fs::create_dir_all(shots).expect("the screenshot folder");
         command.arg("--screenshot-dir").arg(shots);
@@ -111,7 +144,7 @@ pub fn play(name: &str, script: &str, shots: Option<&Path>) {
     let stdout = child.stdout.take().expect("its stdout");
     let said = std::thread::spawn(move || {
         let mut text = String::new();
-        std::io::Read::read_to_string(&mut BufReader::new(stdout), &mut text).ok();
+        BufReader::new(stdout).read_to_string(&mut text).ok();
         text
     });
     let started = Instant::now();
@@ -126,8 +159,6 @@ pub fn play(name: &str, script: &str, shots: Option<&Path>) {
         }
         std::thread::sleep(Duration::from_millis(100));
     };
-    let _ = server.kill();
-    let _ = server.wait();
     let said = said.join().unwrap_or_default();
     let steps = script.split(';').filter(|s| !s.trim().is_empty()).count();
     let done = said.lines().filter(|l| l.starts_with("script: ")).count();
@@ -136,4 +167,57 @@ pub fn play(name: &str, script: &str, shots: Option<&Path>) {
         code == Some(0) && done == steps,
         "exit {code:?}, {done} of {steps} steps:\n{said}"
     );
+}
+
+/// A line to `server` that holds every byte back by `one_way` each way, as a long road does:
+/// connect to its address. Each direction keeps its bytes in order.
+pub fn delayed(server: &str, one_way: Duration) -> String {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("a port");
+    let address = listener.local_addr().expect("bound").to_string();
+    let server = server.to_owned();
+    std::thread::spawn(move || {
+        for client in listener.incoming().flatten() {
+            let Ok(upstream) = TcpStream::connect(&server) else {
+                continue;
+            };
+            for stream in [&client, &upstream] {
+                let _ = stream.set_nodelay(true);
+            }
+            if let (Ok(a), Ok(b), Ok(c), Ok(d)) = (
+                client.try_clone(),
+                upstream.try_clone(),
+                upstream.try_clone(),
+                client.try_clone(),
+            ) {
+                carry(a, b, one_way);
+                carry(c, d, one_way);
+            }
+        }
+    });
+    address
+}
+
+/// Carries what `from` sends on to `to`, each chunk `delay` after it arrived.
+fn carry(mut from: TcpStream, mut to: TcpStream, delay: Duration) {
+    let (held, due) = mpsc::channel::<(Instant, Vec<u8>)>();
+    std::thread::spawn(move || {
+        let mut buf = [0u8; 16 * 1024];
+        while let Ok(n @ 1..) = from.read(&mut buf) {
+            if held
+                .send((Instant::now() + delay, buf[..n].to_vec()))
+                .is_err()
+            {
+                return;
+            }
+        }
+    });
+    std::thread::spawn(move || {
+        for (at, bytes) in due {
+            std::thread::sleep(at.saturating_duration_since(Instant::now()));
+            if to.write_all(&bytes).is_err() {
+                return;
+            }
+        }
+        let _ = to.shutdown(std::net::Shutdown::Write);
+    });
 }

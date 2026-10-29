@@ -145,3 +145,12 @@ else
     echo "visual check: FAIL wards, ground items, a blink or a grenade (see $out/effects.log)"
     exit 1
 fi
+
+# The ping in the corner is the line's: a server behind a delayed line, read off the drawn text.
+if cargo test --release --quiet --manifest-path "$here/Cargo.toml" --test ping \
+    -- --ignored > "$out/ping.log" 2>&1; then
+    echo "visual check: PASS the corner tells the line's ping, not a multiple of the tick"
+else
+    echo "visual check: FAIL the ping in the corner (see $out/ping.log)"
+    exit 1
+fi

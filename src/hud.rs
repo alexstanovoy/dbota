@@ -146,7 +146,12 @@ struct PartOf(Entity);
 
 /// The frame rate at the top right, and the ping on a live link.
 #[derive(Component)]
-struct FrameRate;
+pub(crate) struct FrameRate;
+
+/// The milliseconds of the ping a frame-rate text tells.
+pub(crate) fn ping_told(text: &str) -> Option<u32> {
+    text.strip_prefix("ping ")?.split(' ').next()?.parse().ok()
+}
 
 /// How often the frame rate is told: the frames over each such span, not
 /// the last frame's, so the figure can be read.
@@ -1580,7 +1585,7 @@ fn match_text(core: &Core, view: &bota_proto::WorldView, readout: Readout) -> St
 }
 
 /// The frames a second over the last [`FRAME_RATE_SPAN`], told once a span;
-/// before them the measured ping on a live link that has one.
+/// before them the ping the socket measured on a live link that has one.
 fn frame_rate(
     session: NonSend<Session>,
     time: Res<Time<Real>>,
@@ -1594,13 +1599,8 @@ fn frame_rate(
     }
     let fps = span.0 as f32 / span.1;
     *span = (0, 0.0);
-    let core = &session.0;
-    let ping = core
-        .session()
-        .filter(|_| matches!(core.source, bota_client_core::Source::Live(_)))
-        .and_then(ClientSession::order_delay_ms);
-    let told = match ping {
-        Some(ms) => format!("ping {ms} ms   {fps:.0} fps"),
+    let told = match session.0.source.ping() {
+        Some(ping) => format!("ping {} ms   {fps:.0} fps", ping.as_millis()),
         None => format!("{fps:.0} fps"),
     };
     text.set_if_neq(Text(told));

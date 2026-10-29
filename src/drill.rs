@@ -8,7 +8,7 @@ use bevy::{
     prelude::*,
     render::view::screenshot::{Screenshot, save_to_disk},
 };
-use bota_client_core::{ClientSession, Intent, Slot};
+use bota_client_core::{Intent, Slot};
 
 use crate::session::Session;
 
@@ -70,7 +70,7 @@ fn drill(
             hero.hp,
             hero.mana,
             hero.queue.len(),
-            core.session().and_then(ClientSession::order_delay_ms),
+            core.source.ping().map(|ping| ping.as_millis()),
             core.reject.as_ref().map(|r| crate::error_msg::plain(&r.0)),
             hero.abilities
                 .iter()
