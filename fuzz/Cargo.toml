@@ -22,6 +22,8 @@ dbota_import = { path = "../crates/dbota_import" }
 heatel = { path = "../../heatel" }
 libfuzzer-sys = "0.4"
 rodio = { version = "=0.22.2", default-features = false, features = ["hound", "mp3"] }
+# The flex rigs the face module reads out of a mesh's extras.
+serde_json = "1"
 
 [workspace]
 members = ["."]
@@ -55,6 +57,13 @@ bench = false
 [[bin]]
 name = "plan"
 path = "fuzz_targets/plan.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "cache_face"
+path = "fuzz_targets/cache_face.rs"
 test = false
 doc = false
 bench = false

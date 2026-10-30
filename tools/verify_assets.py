@@ -121,7 +121,7 @@ def check(kind: str, fields: list[str], keys: dict[str, str], clips, outputs: di
         return check_model(path, keys, [c for c in clips if c[0] == fields[0]], parent)
     if kind == "texture":
         return "%dx%d" % png_size(path)
-    if kind in ("portraits", "shop"):  # text the client parses itself
+    if kind in ("portraits", "shop", "expression", "phonemes"):  # text the client parses itself
         return f"{path.stat().st_size} bytes"
     if kind == "particle":
         return check_particle(path, cache)

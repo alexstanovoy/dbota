@@ -417,7 +417,7 @@ impl Default for Settings {
                 edge_pan: true,
             },
             keys: keys::BINDINGS.map(|b| b.default),
-            animate_portrait: false,
+            animate_portrait: true,
             scoreboard_items: true,
             quality: Quality::default(),
             display: DisplayMode::default(),

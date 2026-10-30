@@ -10,22 +10,25 @@ use std::cell::Cell;
 use std::collections::{BTreeMap, HashSet, VecDeque};
 
 use heatel::export::{ExportedTexture, ModelOptions, export_model_in_group, read_from};
+use heatel::face::{PhonemeTable, Scene};
 use heatel::material::Material;
 use heatel::particle::{Blend, Renderer, System};
 use heatel::portraits::framings;
+use heatel::sound::Lipsync;
 use heatel::texture::Role;
 use heatel::tooltips::Wanted;
 use heatel::world::{Band, EntityLump, ExportedWorld, WorldOptions, export_world, lighting};
 use heatel::{Error, Model, Resource, Result, Sound, Source, Texture, Vpk};
 
 use crate::text::{
-    ParticleMaterial, ParticleModel, ParticleTexture, background_png, buildings_txt, labels_json,
-    lighting_txt, particle_json, portraits_txt, shop_json, styles_json, tooltips_json,
-    tree_model_path, tree_models, trees_txt, wanted,
+    ParticleMaterial, ParticleModel, ParticleTexture, background_png, buildings_txt,
+    expression_txt, labels_json, lighting_txt, lipsync_txt, particle_json, phonemes_txt,
+    portraits_txt, shop_json, styles_json, tooltips_json, tree_model_path, tree_models, trees_txt,
+    wanted,
 };
 
 /// Bumped when the importer's output changes for the same install; part of a cache's stamp.
-pub const IMPORT_REV: u32 = 11;
+pub const IMPORT_REV: u32 = 12;
 
 /// The manifest this build imports and draws, its ids and its cache version.
 pub const MANIFEST: &str = include_str!("../../../assets-manifest/manifest.txt");
@@ -225,8 +228,21 @@ pub enum Item {
         src: String,
         out: String,
     },
-    /// A sound written as WAV or MP3.
+    /// A sound written as WAV or MP3, and the lip sync of a voice line beside it
+    /// ([`lipsync_path`]).
     Sound {
+        logical: String,
+        src: String,
+        out: String,
+    },
+    /// A facial scene (a hero's idle expression), as [`expression_txt`] writes it.
+    Expression {
+        logical: String,
+        src: String,
+        out: String,
+    },
+    /// Valve's phoneme table, as [`phonemes_txt`] writes it.
+    Phonemes {
         logical: String,
         src: String,
         out: String,
@@ -242,6 +258,17 @@ pub enum Item {
 }
 
 impl Item {
+    /// The item of a line that converts one file of the install into one of the cache.
+    fn file(kind: &str, logical: &str, src: &str, out: &str) -> Self {
+        let (logical, src, out) = (logical.to_owned(), src.to_owned(), out.to_owned());
+        match kind {
+            "texture" => Self::Texture { logical, src, out },
+            "sound" => Self::Sound { logical, src, out },
+            "expression" => Self::Expression { logical, src, out },
+            _ => Self::Phonemes { logical, src, out },
+        }
+    }
+
     pub fn logical(&self) -> &str {
         match self {
             Self::Model { logical, .. }
@@ -254,6 +281,8 @@ impl Item {
             | Self::Texture { logical, .. }
             | Self::Particle { logical, .. }
             | Self::Sound { logical, .. }
+            | Self::Expression { logical, .. }
+            | Self::Phonemes { logical, .. }
             | Self::Portraits { logical, .. } => logical,
         }
     }
@@ -325,17 +354,14 @@ impl Plan {
                         skin: field("skin=").map(str::to_owned),
                     });
                 }
-                ["texture", logical, src, out, ..] => plan.items.push(Item::Texture {
-                    logical: (*logical).to_owned(),
-                    src: (*src).to_owned(),
-                    out: (*out).to_owned(),
-                }),
+                [
+                    kind @ ("texture" | "sound" | "expression" | "phonemes"),
+                    logical,
+                    src,
+                    out,
+                    ..,
+                ] => plan.items.push(Item::file(kind, logical, src, out)),
                 ["particle", logical, src, out, ..] => plan.items.push(Item::Particle {
-                    logical: (*logical).to_owned(),
-                    src: (*src).to_owned(),
-                    out: (*out).to_owned(),
-                }),
-                ["sound", logical, src, out, ..] => plan.items.push(Item::Sound {
                     logical: (*logical).to_owned(),
                     src: (*src).to_owned(),
                     out: (*out).to_owned(),
@@ -881,11 +907,20 @@ fn make(
             src: path,
             out: dest,
             ..
-        } => {
-            let bytes = read_from(src, &[pak], path)?;
-            let sound = Sound::parse(&bytes)?;
-            out.put(dest, &sound.file())
+        } => sound(&read_from(src, &[pak], path)?, dest, out),
+        Item::Expression {
+            src: path,
+            out: dest,
+            ..
         }
+        | Item::Phonemes {
+            src: path,
+            out: dest,
+            ..
+        } => out.put(
+            dest,
+            face_text(item, &read_from(src, &[pak], path)?)?.as_bytes(),
+        ),
         Item::Portraits {
             src: path,
             out: dest,
@@ -1076,6 +1111,42 @@ fn particle_texture(
         file,
         sheet: texture.sheet().cloned(),
     })
+}
+
+/// The text of a facial scene or of the phoneme table.
+fn face_text(item: &Item, bytes: &[u8]) -> Result<String> {
+    Ok(match item {
+        Item::Expression { .. } => {
+            let data = Resource::parse(bytes)?
+                .data()
+                .ok_or_else(|| malformed("vcd", "no DATA"))??;
+            expression_txt(&Scene::read(&data)?)
+        }
+        _ => phonemes_txt(&PhonemeTable::parse(bytes)?),
+    })
+}
+
+/// A sound's audio file at `dest`, and a voice line's lip sync beside it. A line whose lip sync
+/// does not read is still heard (its face stays still); the failure is reported.
+fn sound(bytes: &[u8], dest: &str, out: &mut Out<'_>) -> Result<()> {
+    let sound = Sound::parse(bytes)?;
+    match Lipsync::parse(bytes) {
+        Ok(lipsync) if !lipsync.is_empty() => {
+            out.put(&lipsync_path(dest), lipsync_txt(&lipsync).as_bytes())?;
+        }
+        Ok(_) => {}
+        Err(err) => out
+            .report
+            .failed
+            .push((lipsync_path(dest), err.to_string())),
+    }
+    out.put(dest, &sound.file())
+}
+
+/// Where the lip sync of the sound written at `sound` goes: beside it, `<stem>.lipsync.txt`.
+pub fn lipsync_path(sound: &str) -> String {
+    let stem = sound.rsplit_once('.').map_or(sound, |(stem, _)| stem);
+    format!("{stem}.lipsync.txt")
 }
 
 /// `portraits.txt` from Dota's `portraits.txt`, after the background images it names.

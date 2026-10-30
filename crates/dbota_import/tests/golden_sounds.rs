@@ -13,7 +13,8 @@ mod common;
 
 use std::path::{Path, PathBuf};
 
-use heatel::sound::{Sound, SoundFormat};
+use heatel::face::PhonemeTable;
+use heatel::sound::{Lipsync, Sound, SoundFormat};
 use heatel::{DirSource, Vpk, find_game_dir};
 
 fn repo() -> &'static Path {
@@ -170,4 +171,47 @@ fn manifest_sounds_match_the_exported_files() {
     }
     println!("sounds: {wavs} WAV and {mp3s} MP3 files equal to the exported ones");
     assert!(wavs > 0 && mp3s > 0);
+}
+
+/// Every hero voice line of the manifest carries its lip sync, in either layout of the vsnd
+/// (the old binary sentence, the newer KV3 one with its morph curves): phonemes within the
+/// line, each one the phoneme table knows.
+#[test]
+#[ignore = "needs a local Dota 2 install"]
+fn hero_voice_lines_carry_their_lip_sync() {
+    let dota_path = std::env::var_os("DBOTA_DOTA_PATH").map(PathBuf::from);
+    let game = find_game_dir(dota_path.as_deref()).expect("Dota 2 not found");
+    let src = DirSource::new(game);
+    let pak = Vpk::open(&src, "pak01_dir.vpk").unwrap();
+    let table = PhonemeTable::parse(
+        &pak.read_file(&src, "expressions/heroes/phonemes.txt")
+            .unwrap(),
+    )
+    .unwrap();
+    let known: Vec<u32> = table.phonemes.iter().map(|p| p.code).collect();
+    let (mut lines, mut curves) = (0, 0);
+    for (vpk, _) in manifest_sounds()
+        .iter()
+        .filter(|(v, _)| v.starts_with("sounds/vo/") && !v.starts_with("sounds/vo/announcer"))
+    {
+        let bytes = pak.read_file(&src, vpk).unwrap();
+        let duration = Sound::parse(&bytes).unwrap().duration();
+        let lipsync = Lipsync::parse(&bytes).unwrap_or_else(|e| panic!("{vpk}: {e}"));
+        assert!(!lipsync.phonemes.is_empty(), "{vpk}: no phonemes");
+        for p in &lipsync.phonemes {
+            assert!(
+                p.start >= 0.0 && p.end <= duration + 0.05,
+                "{vpk}: {p:?} past {duration}"
+            );
+            assert!(
+                known.contains(&p.code),
+                "{vpk}: phoneme {} not in the table",
+                p.code
+            );
+        }
+        lines += 1;
+        curves += usize::from(lipsync.morph.is_some());
+    }
+    println!("voice lines: {lines} with phonemes, {curves} with morph curves");
+    assert!(lines >= 48 && curves > 0);
 }

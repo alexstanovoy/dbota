@@ -34,6 +34,15 @@
 #           PCM WAV as Valve ships it (16-bit 44.1 kHz, a few 8-bit or 22.05 kHz); voice lines are MP3
 #           in the game and stay MP3 (out .mp3). Events with several variants list one line per variant;
 #           variants of one random pick (a hero's move acknowledgements) share the logical name.
+#           A voice line's lip sync (the phonemes and the morph curves the vsnd carries) goes beside it as
+#           <out stem>.lipsync.txt. Written by the Rust importer only.
+#   expression <logical> <vpk .vcd_c> <out .txt>
+#           a facial choreography scene: its loop and flex animation events (stretch, ramp, controller
+#           tracks). <model logical>.idle_expression is a hero's IdleExpression (scripts/npc/heroes/
+#           npc_dota_hero_<name>.txt), played by the portrait over its idle loop. Written by the Rust importer only.
+#   phonemes <logical> <vpk .txt> <out .txt>
+#           Valve's phoneme table (expressions/heroes/phonemes.txt, the "heroes/phonemes" expression file
+#           Dota's client loads): each phoneme's flex controller settings, added up by a speaking face.
 #   fx      <subject>.<trigger> at=<where> [particle=<particle logical>] [sound=<sound logical prefix>] [cp1=<feed>]
 #           an effect bound to a fact of the game by Dota's name for it (src/fx.rs). The importer skips these lines.
 #           subject: item.<ids.txt item name> | modifier.<Dota modifier name> | unit.<npc_units.txt name>
@@ -80,6 +89,7 @@ clip hero.nevermore.model teleport teleport 2.233
 clip hero.nevermore.model spawn spawn 1.000
 # ACT_DOTA_GENERIC_CHANNEL_1: a hero channelling at a Watcher (ability_lamp_use) or an Outpost (ability_capture).
 clip hero.nevermore.model channel generic_channel 2.233
+expression hero.nevermore.model.idle_expression scenes/nevermore/nevermore_exp_idle_01.vcd_c models/hero/nevermore/nevermore_exp_idle_01.txt
 # Default wearables (items_game.txt default_item for npc_dota_hero_nevermore: 387 head, 486 shoulders, 488 arms)
 model hero.nevermore.head models/heroes/shadow_fiend/shadow_fiend_head.vmdl_c models/hero/nevermore_head/nevermore_head.glb attach=hero.nevermore.model
 model hero.nevermore.shoulders models/heroes/shadow_fiend/shadow_fiend_shoulders.vmdl_c models/hero/nevermore_shoulders/nevermore_shoulders.glb attach=hero.nevermore.model
@@ -111,6 +121,7 @@ clip hero.pudge.model teleport teleport_anim 2.933
 clip hero.pudge.model spawn pudge_spawn_anim 1.333
 # ACT_DOTA_GENERIC_CHANNEL_1: a hero channelling at a Watcher (ability_lamp_use) or an Outpost (ability_capture).
 clip hero.pudge.model channel generic_channel 4.000
+expression hero.pudge.model.idle_expression scenes/pudge/pudge_exp_idle_01.vcd_c models/hero/pudge/pudge_exp_idle_01.txt
 # Default wearables (items_game.txt default_item for npc_dota_hero_pudge, named by item slot: 47 weapon
 # (Rusty Meathook), 258 back (rings and apron), 259 offhand_weapon (cleaver), 260 shoulder (left arm),
 # 261 arms (bracer), 262 head (toupee), 470 belt)
@@ -678,6 +689,8 @@ sound sound.ui.quit sounds/ui/panorama/panorama_quit_doto_click_01.vsnd_c sounds
 sound sound.ping.regular sounds/ui/ping.vsnd_c sounds/ui/ping.wav event=General.Ping
 sound sound.ping.danger sounds/ui/ping_warning.vsnd_c sounds/ui/ping_warning.wav event=General.PingWarning
 sound sound.ping.warning_layer sounds/ui/ping_warning_layer.vsnd_c sounds/ui/ping_warning_layer.wav event=PingWarning.Layer
+# The phoneme table every hero's face speaks with.
+phonemes face.phonemes expressions/heroes/phonemes.txt expressions/heroes/phonemes.txt
 sound sound.announcer.choose_hero sounds/vo/announcer/announcer_choose_hero.vsnd_c sounds/vo/announcer/announcer_choose_hero.mp3 event=announcer_announcer_choose_hero
 sound sound.announcer.battle_begins sounds/vo/announcer/announcer_battle_begin_01.vsnd_c sounds/vo/announcer/announcer_battle_begin_01.mp3 event=announcer_announcer_battle_begin_01
 # The Glyph's only sound: the announcer tells both sides which side's structures are fortified (subtitles: "Radiant's structures are fortified.")

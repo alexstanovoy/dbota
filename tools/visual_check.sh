@@ -87,6 +87,16 @@ for d,_,fs in os.walk(sys.argv[1]):
 done
 echo "visual check: PASS hero parts identical and on their skeletons over $runs runs: ${first#*hero parts: }"
 
+# Each hero's portrait says a line with its face (src/talk_check.rs); its frames idle,
+# talking and checked are saved in the output folder.
+for hero in pudge nevermore; do
+    talk=$("$here/target/release/dbota" --replay "$replay" --pov 0 --talk-check "$hero" \
+        --screenshot-dir "$out" --screenshot-prefix portrait- --mute --no-vsync \
+        --display-mode windowed 2>> "$out/dbota.log" || true)
+    echo "$talk" | grep "talking portrait" || echo "visual check: FAIL talking portrait $hero: no verdict"
+    if ! echo "$talk" | grep -q "PASS talking portrait"; then exit 1; fi
+done
+
 # A system whose fontconfig lists no font at all still starts, on the shipped fonts: the CJK
 # fallback is registered and the picture is taken.
 echo '<?xml version="1.0"?><fontconfig></fontconfig>' > "$out/no-fonts.conf"
@@ -152,5 +162,15 @@ if cargo test --release --quiet --manifest-path "$here/Cargo.toml" --test ping \
     echo "visual check: PASS the corner tells the line's ping, not a multiple of the tick"
 else
     echo "visual check: FAIL the ping in the corner (see $out/ping.log)"
+    exit 1
+fi
+
+# The talking portrait in a game: one's hero answers a move and an attack order with a voice line,
+# and the portrait's jaw moves with the line's phonemes and rests once it has ended, for each hero.
+if cargo test --release --quiet --manifest-path "$here/Cargo.toml" --test portrait_talk \
+    -- --ignored --test-threads 1 --nocapture > "$out/talk.log" 2>&1; then
+    echo "visual check: PASS each hero says its move and attack lines with its face"
+else
+    echo "visual check: FAIL the talking portrait in a game (see $out/talk.log)"
     exit 1
 fi

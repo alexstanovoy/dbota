@@ -71,7 +71,7 @@ fn shadow_map_size(shadows: u8) -> usize {
 fn shadows(
     settings: Res<Settings>,
     mut map: ResMut<DirectionalLightShadowMap>,
-    mut suns: Query<(&mut DirectionalLight, &mut CascadeShadowConfig)>,
+    mut suns: Query<(&mut DirectionalLight, &mut CascadeShadowConfig), With<crate::map::MainSun>>,
 ) {
     let level = settings.quality.shadows;
     let on = level > 0;

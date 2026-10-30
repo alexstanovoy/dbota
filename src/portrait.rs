@@ -1,33 +1,49 @@
-//! The bottom panel's portrait, as Dota draws it. By default (Dota's
-//! "Animate Portrait" off) a hero shows Dota's still picture of it, and a
-//! unit Dota has no picture of shows a render of its model made once, in its
-//! idle pose, and kept. With `animate_portrait`, the unit's model plays its
-//! idle loop in the portrait, drawn at most [`RATE`] times a second.
+//! The bottom panel's portrait, as Dota draws it. With `animate_portrait`
+//! (Dota's "Animate Portrait", on by default) the unit's model plays its idle
+//! loop in the portrait, drawn at most [`RATE`] times a second; a hero's face
+//! plays its idle expression over it and, while the hero says a line, the
+//! line's lip sync (see `talk`). Off, a hero shows Dota's still picture of
+//! it, and a unit Dota has no picture of shows a render of its model made
+//! once, in its idle pose, and kept.
 //!
 //! Either render is of a copy of the model alone on a stage of its own: a
 //! render layer only the portrait camera and its light see, so the camera
 //! draws neither the world nor its shadows or fog, and the copy is never in
-//! the main camera's view, its queries or its bars. The camera is aimed by
-//! the framing the cache holds for the model (or by the model's bounds where
-//! Dota has none), and the panel lays the render over the model's
+//! the main camera's view, its queries or its bars. The camera stays off
+//! while the main world works out visibility and the sun's cascades, and is
+//! switched on afterwards (on the frames it draws) with the stage's meshes
+//! as all it sees: no pass over the world's entities is made for it, and no
+//! shadow cascade (its light casts none). The camera is aimed
+//! by the framing the cache holds for the model (or by the model's bounds
+//! where Dota has none), and the panel lays the render over the model's
 //! background, tinted at its corners as Dota tints it, or a plain dark one.
 
 use std::collections::HashMap;
 
 use bevy::{
     asset::RenderAssetUsages,
-    camera::{ImageRenderTarget, RenderTarget, primitives::Aabb, visibility::RenderLayers},
-    light::{AmbientLight, DirectionalLight},
+    camera::{
+        ImageRenderTarget, RenderTarget,
+        primitives::Aabb,
+        visibility::{
+            RenderLayers, SetViewVisibility, VisibilityClass, VisibilitySystems, VisibleEntities,
+            check_visibility_cpu_culling,
+        },
+    },
+    gltf::{GltfMeshExtras, GltfMeshName},
+    light::{AmbientLight, DirectionalLight, SimulationLightSystems, cluster::ClusterConfig},
+    mesh::morph::{MeshMorphWeights, MorphWeights},
     prelude::*,
     render::render_resource::{Extent3d, TextureDimension, TextureFormat, TextureUsages},
     world_serialization::{WorldAssetRoot, WorldInstanceReady},
 };
 use bota_client_core::ClientSession;
-use bota_proto::UnitView;
+use bota_proto::{EntityId, UnitView};
 
 use crate::config::Settings;
 use crate::manifest::Manifest;
 use crate::session::Session;
+use crate::talk::{Face, Faces, Speech};
 use crate::units::{ModelBank, ModelOf, Posable, Scenes, Unit, UnitIndex, Wearable};
 
 /// Pixels of the portrait's image: twice the panel's frame, of its shape,
@@ -156,11 +172,11 @@ struct ActorPart {
 }
 
 /// The model on the stage.
-struct Actor {
+pub struct Actor {
     /// Its place in the model bank.
     model: usize,
     /// The pivot its scenes hang under.
-    pivot: Entity,
+    pub pivot: Entity,
     /// Its scale as the units draw it.
     size: f32,
     /// Whether its idle clip is playing (or posed, for a still).
@@ -169,14 +185,18 @@ struct Actor {
     still: Option<Handle<Image>>,
     /// Renders of a still left once the pipelines are ready.
     settle: u8,
+    /// Its face, when it has one and is animated.
+    pub face: Option<Face>,
 }
 
 /// The stage: the model on it, the stills made so far and the backgrounds.
 #[derive(Resource)]
-struct Stage {
+pub struct Stage {
     /// The model of the panel's unit, when the portrait draws it.
     subject: Option<usize>,
-    actor: Option<Actor>,
+    /// The panel's unit.
+    unit: Option<EntityId>,
+    pub actor: Option<Actor>,
     /// Still renders by model, oldest first.
     stills: Vec<(usize, Handle<Image>)>,
     /// Tinted backgrounds by their image's cache path: absent until the
@@ -186,6 +206,30 @@ struct Stage {
     live: Handle<Image>,
     /// Seconds since the start when an animated portrait is drawn next.
     next_render: f32,
+    /// Whether the camera draws this frame, and whether it drew the last.
+    render: bool,
+    rendered: bool,
+    /// Debug: the model shown whatever the panel's unit, at its own scale,
+    /// and drawn every frame.
+    pub forced: Option<usize>,
+    pub every: bool,
+}
+
+impl Stage {
+    /// Whether the camera draws the stage this frame.
+    pub fn drawing(&self) -> bool {
+        self.render
+    }
+
+    /// The unit the portrait shows.
+    pub fn unit(&self) -> Option<EntityId> {
+        self.unit
+    }
+
+    /// The image an animated portrait is drawn into.
+    pub fn live(&self) -> &Handle<Image> {
+        &self.live
+    }
 }
 
 pub fn plugin(app: &mut App) {
@@ -200,8 +244,26 @@ pub fn plugin(app: &mut App) {
         .add_systems(Update, (select_named, stage, pose, tint_backdrops).chain())
         .add_systems(
             PostUpdate,
-            aim.after(bevy::transform::TransformSystems::Propagate)
-                .before(bevy::camera::CameraUpdateSystems),
+            (
+                (
+                    aim,
+                    speak,
+                    crate::talk::trace.run_if(|args: Res<crate::Args>| args.face_trace),
+                )
+                    .chain()
+                    .after(bevy::transform::TransformSystems::Propagate)
+                    .before(bevy::camera::CameraUpdateSystems),
+                on_stage
+                    .in_set(VisibilitySystems::CheckVisibility)
+                    .after(check_visibility_cpu_culling),
+                // After the world's visibility and the sun's cascades, before the
+                // camera's (one) cluster is worked out.
+                activate
+                    .after(VisibilitySystems::CheckVisibility)
+                    .after(SimulationLightSystems::UpdateDirectionalLightCascades)
+                    .before(SimulationLightSystems::AssignLightsToClusters)
+                    .before(SimulationLightSystems::UpdateLightFrusta),
+            ),
         );
 }
 
@@ -219,8 +281,9 @@ fn target_image(images: &mut Assets<Image>) -> Handle<Image> {
         TextureFormat::Rgba8UnormSrgb,
         RenderAssetUsages::RENDER_WORLD,
     );
+    // Copied out by the talking-portrait check.
     image.texture_descriptor.usage =
-        TextureUsages::TEXTURE_BINDING | TextureUsages::RENDER_ATTACHMENT;
+        TextureUsages::TEXTURE_BINDING | TextureUsages::RENDER_ATTACHMENT | TextureUsages::COPY_SRC;
     images.add(image)
 }
 
@@ -228,11 +291,16 @@ fn spawn(mut commands: Commands, mut images: ResMut<Assets<Image>>) {
     let live = target_image(&mut images);
     commands.insert_resource(Stage {
         subject: None,
+        unit: None,
         actor: None,
         stills: Vec::new(),
         backdrops: HashMap::new(),
         live: live.clone(),
         next_render: 0.0,
+        render: false,
+        rendered: false,
+        forced: None,
+        every: false,
     });
     commands.spawn((
         PortraitCamera,
@@ -253,6 +321,8 @@ fn spawn(mut commands: Commands, mut images: ResMut<Assets<Image>>) {
         AmbientLight::default(),
         Msaa::Sample4,
         RenderLayers::layer(LAYER),
+        // Its light is directional: nothing to cluster.
+        ClusterConfig::Single,
     ));
     commands.spawn((
         PortraitLight,
@@ -267,14 +337,14 @@ fn spawn(mut commands: Commands, mut images: ResMut<Assets<Image>>) {
     ));
 }
 
-/// The model the panel's unit is drawn with, its scale, and its hero.
+/// The model the panel's unit is drawn with, its scale, its hero and the unit.
 fn subject(
     session: &Session,
     index: &UnitIndex,
     units: &Query<(&Unit, &ModelOf)>,
     children: &Query<&Children>,
     scenes: &Query<&Transform, With<WorldAssetRoot>>,
-) -> Option<(usize, f32, Option<u16>)> {
+) -> Option<(usize, f32, Option<u16>, EntityId)> {
     let unit: &UnitView = crate::hud::subject(&session.0).1?;
     let (drawn, ModelOf(pivot)) = units.get(*index.0.get(&unit.id)?).ok()?;
     let size = children
@@ -285,7 +355,7 @@ fn subject(
         .scale
         .x
         / crate::map::UNITS_PER_METRE;
-    Some((drawn.model?, size, unit.hero.map(|h| h.0)))
+    Some((drawn.model?, size, unit.hero.map(|h| h.0), unit.id))
 }
 
 /// Puts the panel's unit on the stage, or shows what is kept of it: Dota's
@@ -304,18 +374,24 @@ fn stage(
     children: Query<&Children>,
     scenes: Query<&Transform, With<WorldAssetRoot>>,
 ) {
-    let animate = settings.animate_portrait;
-    let wanted = subject(&session, &index, &units, &children, &scenes)
+    let animate = settings.animate_portrait || stage.forced.is_some();
+    let shown = match stage.forced {
+        Some(model) => Some((model, bank.0[model].model.scale, None, None)),
+        None => subject(&session, &index, &units, &children, &scenes)
+            .map(|(model, size, hero, unit)| (model, size, hero, Some(unit))),
+    };
+    let wanted = shown
         // Dota's picture of a hero stands for a still of its model.
-        .filter(|(_, _, hero)| animate || hero.and_then(|h| manifest.portrait(h)).is_none());
+        .filter(|(_, _, hero, _)| animate || hero.and_then(|h| manifest.portrait(h)).is_none());
     stage.subject = wanted.map(|(model, ..)| model);
+    stage.unit = wanted.and_then(|(.., unit)| unit);
     let kept = wanted
         .filter(|_| !animate)
         .and_then(|(model, ..)| stage.stills.iter().find(|(m, _)| *m == model))
         .map(|(_, still)| still.clone());
     let want_actor = wanted
         .filter(|_| kept.is_none())
-        .map(|(model, size, _)| (model, size));
+        .map(|(model, size, ..)| (model, size));
     let on_stage = stage
         .actor
         .as_ref()
@@ -386,6 +462,7 @@ fn spawn_actor(
         posed: false,
         still,
         settle: SETTLE,
+        face: None,
     }
 }
 
@@ -416,13 +493,18 @@ fn on_part_ready(
 }
 
 /// Starts the idle clip of the model on the stage once all of it is ready,
-/// and shows it: frozen at its start for a still.
+/// and shows it: frozen at its start for a still; an animated one with its
+/// face, which plays the model's idle expression.
 fn pose(
     mut stage: ResMut<Stage>,
     bank: Res<ModelBank>,
+    args: Res<crate::Args>,
+    mut faces: ResMut<Faces>,
+    time: Res<Time<bevy::time::Real>>,
     children: Query<&Children>,
     parts: Query<&ActorPart>,
     wearing: Query<&Wearable>,
+    meshes: Query<(&MeshMorphWeights, &GltfMeshName, &GltfMeshExtras)>,
     mut players: Query<&mut AnimationPlayer>,
     mut commands: Commands,
 ) {
@@ -453,6 +535,21 @@ fn pose(
             if actor.still.is_some() {
                 active.pause();
             }
+        }
+    }
+    if actor.still.is_none() {
+        let expression = faces.expression(&entry.model.logical);
+        actor.face = Face::of(
+            actor.pivot,
+            expression,
+            time.elapsed_secs(),
+            &mut faces,
+            &children,
+            &meshes,
+        );
+        // Traced, the face holds its idle expression: what moves it is the line.
+        if let Some(face) = actor.face.as_mut().filter(|_| args.face_trace) {
+            face.frozen = Some(0.0);
         }
     }
     commands.entity(actor.pivot).insert(Visibility::Inherited);
@@ -555,11 +652,13 @@ fn aim(
         })
     });
     let live = stage.live.clone();
+    // Off while the main world works out what views see (see `activate`).
+    if camera.0.is_active {
+        camera.0.is_active = false;
+    }
     let (Some(placed), Some(actor)) = (placed, stage.actor.as_mut()) else {
-        // Untouched when idle: a changed camera is looked at again.
-        if camera.0.is_active {
-            camera.0.is_active = false;
-        }
+        stage.render = false;
+        stage.rendered = false;
         return;
     };
     let at = |local: &Transform| Transform::from_translation(STAGE) * *local;
@@ -584,34 +683,30 @@ fn aim(
         });
     }
     let ready = ready.get();
-    draw(
-        &mut stage,
-        &mut camera.0,
-        ready,
-        time.elapsed_secs(),
-        &mut commands,
-    );
+    stage.rendered = stage.render;
+    stage.render = draw(&mut stage, ready, time.elapsed_secs(), &mut commands);
 }
 
 /// Whether the camera draws this frame: a still until its render is whole
 /// (then it is kept and its model leaves the stage), an animated portrait
 /// at most [`RATE`] times a second.
-fn draw(stage: &mut Stage, camera: &mut Camera, ready: bool, now: f32, commands: &mut Commands) {
+fn draw(stage: &mut Stage, ready: bool, now: f32, commands: &mut Commands) -> bool {
+    let rendered = stage.rendered;
     let Some(actor) = stage.actor.as_mut() else {
-        return;
+        return false;
     };
     let Some(still) = actor.still.clone() else {
-        camera.is_active = now >= stage.next_render;
-        if camera.is_active {
+        let render = stage.every || now >= stage.next_render;
+        if render {
             stage.next_render = (stage.next_render + 1.0 / RATE).max(now);
         }
-        return;
+        return render;
     };
     // The render drawn last frame counts once nothing was compiling.
-    if camera.is_active && ready {
+    if rendered && ready {
         actor.settle = actor.settle.saturating_sub(1);
     }
-    camera.is_active = actor.settle > 0;
+    let render = actor.settle > 0;
     if actor.settle == 0 {
         let (model, pivot) = (actor.model, actor.pivot);
         commands.entity(pivot).despawn();
@@ -620,6 +715,76 @@ fn draw(stage: &mut Stage, camera: &mut Camera, ready: bool, now: f32, commands:
             stage.stills.remove(0);
         }
         stage.stills.push((model, still));
+    }
+    render
+}
+
+/// Moves the face on the stage, on the frames the camera draws: its idle
+/// expression, and the line its hero is saying.
+fn speak(
+    stage: Res<Stage>,
+    faces: Res<Faces>,
+    speech: Res<Speech>,
+    time: Res<Time<bevy::time::Real>>,
+    mut weights: Query<&mut MorphWeights>,
+) {
+    let Some(face) = stage.actor.as_ref().and_then(|a| a.face.as_ref()) else {
+        return;
+    };
+    if stage.render {
+        let now = time.elapsed_secs();
+        face.pose(now, speech.of(stage.unit, now), &faces, &mut weights);
+    }
+}
+
+/// Marks the model on the stage and its light visible on the frames the
+/// camera draws: no view the main world works out visibility for sees them,
+/// the portrait's camera being off by then.
+fn on_stage(
+    stage: Res<Stage>,
+    tree: Query<&Children>,
+    mut seen: Query<(&InheritedVisibility, &mut ViewVisibility)>,
+    light: Single<Entity, With<PortraitLight>>,
+) {
+    let Some(actor) = stage.actor.as_ref().filter(|a| a.posed && stage.render) else {
+        return;
+    };
+    let parts = tree.iter_descendants(actor.pivot).chain([*light]);
+    for e in parts {
+        if let Ok((inherited, mut view)) = seen.get_mut(e)
+            && inherited.get()
+        {
+            view.set_visible();
+        }
+    }
+}
+
+/// Switches the camera on for the frames it draws, after the main world's
+/// visibility and the sun's cascades: what it sees is the stage alone.
+fn activate(
+    stage: Res<Stage>,
+    tree: Query<&Children>,
+    classes: Query<(&VisibilityClass, &InheritedVisibility)>,
+    light: Single<Entity, With<PortraitLight>>,
+    mut camera: Single<(&mut Camera, &mut VisibleEntities), With<PortraitCamera>>,
+) {
+    let actor = stage.actor.as_ref().filter(|_| stage.render);
+    if camera.0.is_active != actor.is_some() {
+        camera.0.is_active = actor.is_some();
+    }
+    let Some(actor) = actor else {
+        return;
+    };
+    let seen = &mut camera.1;
+    seen.clear_all();
+    for e in tree.iter_descendants(actor.pivot).chain([*light]) {
+        if let Ok((class, inherited)) = classes.get(e)
+            && inherited.get()
+        {
+            for kind in class.iter() {
+                seen.get_mut(*kind).push(e);
+            }
+        }
     }
 }
 

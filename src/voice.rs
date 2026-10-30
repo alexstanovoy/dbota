@@ -4,13 +4,16 @@
 //! wolf at nightfall, and the click of the interface.
 //! Silent where the cache has no such sound.
 
+use std::sync::Arc;
+
 use bevy::{audio::Volume, prelude::*};
 use bota_client_core::Phase;
 use bota_proto::{Order, Team};
 
 use crate::config::Settings;
-use crate::manifest::Manifest;
+use crate::manifest::{Manifest, cache_path};
 use crate::session::Session;
+use crate::talk::{LineFace, Speech};
 
 /// Tenths of a second the start horn honks before it fades (Dota's
 /// horn_radiant.wav is loud for its first 6.5 s).
@@ -25,29 +28,47 @@ const VOICE_REST: f32 = 6.0;
 #[derive(Default)]
 struct Lines {
     sources: Vec<Handle<AudioSource>>,
+    /// Per sound, the face it is said with (a voice line's lip sync).
+    faces: Vec<Option<Arc<LineFace>>>,
     next: usize,
 }
 
 impl Lines {
     fn load(manifest: &Manifest, server: &AssetServer, name: &str) -> Lines {
+        Lines::of(manifest, server, manifest.sound_files(name))
+    }
+
+    fn of<'a>(
+        manifest: &Manifest,
+        server: &AssetServer,
+        files: impl Iterator<Item = &'a str>,
+    ) -> Lines {
+        let (sources, faces) = files
+            .map(|rel| {
+                (
+                    server.load(cache_path(rel)),
+                    crate::talk::lipsync(manifest, rel),
+                )
+            })
+            .unzip();
         Lines {
-            sources: manifest
-                .sounds(name)
-                .into_iter()
-                .map(|p| server.load(p))
-                .collect(),
+            sources,
+            faces,
             next: 0,
         }
     }
 
     /// The next of the sounds, if there are any.
     fn take(&mut self) -> Option<Handle<AudioSource>> {
-        let source = self
-            .sources
-            .get(self.next % self.sources.len().max(1))?
-            .clone();
+        self.take_line().map(|(source, _)| source)
+    }
+
+    /// The next of the sounds and its face.
+    fn take_line(&mut self) -> Option<(Handle<AudioSource>, Option<Arc<LineFace>>)> {
+        let at = self.next % self.sources.len().max(1);
+        let source = self.sources.get(at)?.clone();
         self.next += 1;
-        Some(source)
+        Some((source, self.faces.get(at).cloned().flatten()))
     }
 }
 
@@ -152,36 +173,41 @@ fn load(mut voices: ResMut<Voices>, manifest: Res<Manifest>, server: Res<AssetSe
             &server,
             &format!("sound.announcer.fortified.{side}"),
         );
-        voices.horns[i] = Lines {
-            sources: manifest
-                .sounds("sound.horn")
-                .into_iter()
-                .filter(|p| p.contains(side))
-                .map(|p| server.load(p))
-                .collect(),
-            next: 0,
-        };
+        voices.horns[i] = Lines::of(
+            &manifest,
+            &server,
+            manifest
+                .sound_files("sound.horn")
+                .filter(|p| p.contains(side)),
+        );
     }
 }
 
-fn say(commands: &mut Commands, source: Option<Handle<AudioSource>>, gain: f32) {
-    if let Some(source) = source {
-        commands.spawn((
-            AudioPlayer::new(source),
-            PlaybackSettings::DESPAWN.with_volume(Volume::Linear(gain)),
-        ));
-    }
+/// Plays a sound once; the entity playing it.
+fn say(commands: &mut Commands, source: Option<Handle<AudioSource>>, gain: f32) -> Option<Entity> {
+    source.map(|source| {
+        commands
+            .spawn((
+                AudioPlayer::new(source),
+                PlaybackSettings::DESPAWN.with_volume(Volume::Linear(gain)),
+            ))
+            .id()
+    })
 }
 
-/// One's hero answers a move or an attack order, then keeps quiet a while.
+/// One's hero answers a move or an attack order, then keeps quiet a while. Muted, the hero
+/// still says it, unheard: its portrait's mouth moves (Dota's responses do not hang on the
+/// volume).
 fn answer(
     mut commands: Commands,
     session: NonSend<Session>,
     manifest: Res<Manifest>,
     mut voices: ResMut<Voices>,
+    mut speech: ResMut<Speech>,
     settings: Res<Settings>,
     args: Res<crate::Args>,
     time: Res<Time>,
+    real: Res<Time<bevy::time::Real>>,
     mut heard: Local<Heard>,
 ) {
     let core = &session.0;
@@ -190,7 +216,7 @@ fn answer(
         return;
     }
     heard.seq = core.seq();
-    if !settings.voice || settings.muted || args.mute || heard.rest > 0.0 {
+    if !settings.voice || heard.rest > 0.0 {
         return;
     }
     let (Some(slot), Some(view)) = (core.my_slot, core.view()) else {
@@ -218,11 +244,20 @@ fn answer(
     let Some((_, moves, attacks)) = voices.heroes.iter_mut().find(|(n, _, _)| n == name) else {
         return;
     };
-    let source = if attack { attacks.take() } else { moves.take() };
-    if source.is_some() {
-        heard.rest = VOICE_REST;
+    let Some((source, face)) = (if attack {
+        attacks.take_line()
+    } else {
+        moves.take_line()
+    }) else {
+        return;
+    };
+    heard.rest = VOICE_REST;
+    let player = (!settings.muted && !args.mute)
+        .then(|| say(&mut commands, Some(source), 0.8))
+        .flatten();
+    if let Some(face) = face {
+        speech.say(core.my_hero(), face, player, real.elapsed_secs());
     }
-    say(&mut commands, source, 0.8);
 }
 
 /// The announcer asks for a hero once the selection opens, and the horn

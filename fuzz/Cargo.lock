@@ -796,6 +796,7 @@ dependencies = [
  "heatel",
  "libfuzzer-sys",
  "rodio",
+ "serde_json",
 ]
 
 [[package]]
@@ -1162,6 +1163,7 @@ dependencies = [
  "meshoptimizer-rs",
  "png",
  "ruzstd 0.9.1",
+ "serde",
  "serde_json",
  "texpresso",
  "texture2ddecoder",

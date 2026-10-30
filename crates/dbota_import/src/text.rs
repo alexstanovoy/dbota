@@ -1,7 +1,8 @@
 //! The asset cache's text files, made from what heatel reads out of the install: the tooltip
 //! texts (`text/tooltips.json`), the interface's labels (`text/labels.json`), the shop's layout
 //! and words (`text/shop.json`), the portrait framings (`models/portraits.txt`), and the map's
-//! trees, buildings and lighting (`trees.txt`, `buildings.txt`, `lighting.txt`), and the
+//! trees, buildings and lighting (`trees.txt`, `buildings.txt`, `lighting.txt`), the faces'
+//! texts (a voice line's lip sync, the phoneme table, the idle expressions), and the
 //! particle systems (`particles/*.json`). The client reads each (`src/cache_text.rs`,
 //! `src/tips.rs`, `src/particles/`, ...).
 
@@ -466,6 +467,74 @@ pub fn lighting_txt(lighting: &Lighting) -> String {
     }
     out += &format!("turn {:.1}\n", lighting.turn);
     out
+}
+
+/// A voice line's lip sync as the client reads it (`src/face.rs`): a header, then `phoneme
+/// <start> <end> <code>`, `emphasis <time> <value>`, `morph <ease in> <ease out> <name
+/// hash>...` and its `key <time> <value>...` lines.
+pub fn lipsync_txt(lipsync: &heatel::sound::Lipsync) -> String {
+    let mut text = String::from("dbota-lipsync 1\n");
+    for p in &lipsync.phonemes {
+        text.push_str(&format!("phoneme {} {} {}\n", p.start, p.end, p.code));
+    }
+    for (t, v) in &lipsync.emphasis {
+        text.push_str(&format!("emphasis {t} {v}\n"));
+    }
+    if let Some(m) = &lipsync.morph {
+        text.push_str(&format!("morph {} {}", m.ease_in, m.ease_out));
+        m.names.iter().for_each(|n| text.push_str(&format!(" {n}")));
+        text.push('\n');
+        for (t, row) in m.times.iter().zip(&m.values) {
+            text.push_str(&format!("key {t}"));
+            row.iter().for_each(|v| text.push_str(&format!(" {v}")));
+            text.push('\n');
+        }
+    }
+    text
+}
+
+/// The phoneme table as the client reads it: a header, `keys <controller>...`, then `phoneme
+/// <code> <setting>...` per phoneme.
+pub fn phonemes_txt(table: &heatel::face::PhonemeTable) -> String {
+    let mut text = format!("dbota-phonemes 1\nkeys {}\n", table.keys.join(" "));
+    for p in &table.phonemes {
+        text.push_str(&format!("phoneme {}", p.code));
+        p.settings
+            .iter()
+            .for_each(|s| text.push_str(&format!(" {s}")));
+        text.push('\n');
+    }
+    text
+}
+
+/// A facial scene as the client reads it: a header, `loop <from> <to>` when it loops, and per
+/// flex animation event `event <start> <end>`, its `ramp <x> <y> <slope in> <slope out>...`
+/// when it has one, and its `track <controller> <min> <max> <time> <value>...` lines. A track
+/// whose controller name is not one word is left out.
+pub fn expression_txt(scene: &heatel::face::Scene) -> String {
+    let mut text = String::from("dbota-expression 1\n");
+    if let Some((from, to)) = scene.looping {
+        text.push_str(&format!("loop {from} {to}\n"));
+    }
+    for event in &scene.events {
+        text.push_str(&format!("event {} {}\n", event.start, event.end));
+        if !event.ramp.is_empty() {
+            text.push_str("ramp");
+            for k in &event.ramp {
+                text.push_str(&format!(" {} {} {} {}", k.x, k.y, k.slope_in, k.slope_out));
+            }
+            text.push('\n');
+        }
+        let plain = |c: char| c.is_ascii_alphanumeric() || c == '_';
+        for track in event.tracks.iter().filter(|t| t.name.chars().all(plain)) {
+            text.push_str(&format!("track {} {} {}", track.name, track.min, track.max));
+            for (t, v) in &track.samples {
+                text.push_str(&format!(" {t} {v}"));
+            }
+            text.push('\n');
+        }
+    }
+    text
 }
 
 #[cfg(test)]

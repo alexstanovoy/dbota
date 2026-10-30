@@ -156,6 +156,11 @@ pub struct Manifest {
     pub particles: Vec<(String, String)>,
     /// The map file, when present.
     pub map: Option<String>,
+    /// Valve's phoneme table, relative to the cache, when present.
+    pub phonemes: Option<String>,
+    /// The idle expressions present: the logical name of the model each is played on, and its
+    /// file relative to the cache.
+    pub expressions: Vec<(String, String)>,
     /// How the units named by Dota are drawn (every `unit` line, whether or
     /// not its model is in the cache).
     pub units: Vec<UnitArt>,
@@ -235,6 +240,16 @@ impl Manifest {
                 ["world", _, _, path, ..] if present(path) => {
                     manifest.map = Some(cache_path(path));
                 }
+                ["phonemes", _, _, path, ..] if present(path) => {
+                    manifest.phonemes = Some((*path).to_string());
+                }
+                ["expression", logical, _, path, ..] if present(path) => {
+                    if let Some(model) = logical.strip_suffix(".idle_expression") {
+                        manifest
+                            .expressions
+                            .push((model.to_string(), (*path).to_string()));
+                    }
+                }
                 _ => {}
             }
         }
@@ -302,13 +317,17 @@ impl Manifest {
 
     /// Every sound whose logical name starts with a prefix, as asset paths.
     pub fn sounds(&self, prefix: &str) -> Vec<String> {
+        self.sound_files(prefix).map(cache_path).collect()
+    }
+
+    /// Every sound whose logical name starts with a prefix, relative to the cache.
+    pub fn sound_files<'a>(&'a self, prefix: &'a str) -> impl Iterator<Item = &'a str> {
         self.files
             .iter()
-            .filter(|(name, path)| {
+            .filter(move |(name, path)| {
                 name.starts_with(prefix) && (path.ends_with(".wav") || path.ends_with(".mp3"))
             })
-            .map(|(_, path)| cache_path(path))
-            .collect()
+            .map(|(_, path)| path.as_str())
     }
 
     /// The Dota name of one of our ids of a kind.

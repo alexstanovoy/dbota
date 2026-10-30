@@ -36,6 +36,7 @@ mod drag;
 mod drill;
 mod effects;
 mod error_msg;
+mod face;
 mod faces;
 mod feed;
 mod fog;
@@ -80,6 +81,8 @@ mod stats;
 mod strategy;
 mod synth;
 mod talents;
+mod talk;
+mod talk_check;
 mod teleport;
 mod terrain;
 mod texture_file;
@@ -242,6 +245,17 @@ pub struct Args {
     /// that side), as a click would.
     #[arg(long, value_name = "NAME")]
     pub select: Option<String>,
+    /// Debug: show this hero (its Dota name, `pudge`) in the portrait, save
+    /// its frames idle and saying a line into `--screenshot-dir`, check that
+    /// its face moves with the line (see `talk_check.rs`), and exit non-zero
+    /// when it does not.
+    #[arg(long, value_name = "HERO", requires = "replay")]
+    pub talk_check: Option<String>,
+    /// Debug: print the portrait's face on the frames it is drawn (see
+    /// `talk::trace`), its idle expression held: the morph weights and the
+    /// line its hero says. For the talking-portrait test.
+    #[arg(long)]
+    pub face_trace: bool,
     /// Debug: draw the ranges and camp boxes as if Alt were held.
     #[arg(long)]
     pub show_ranges: bool,
@@ -535,6 +549,8 @@ fn client_plugins(app: &mut App) {
             pings::plugin,
             minimap::plugin,
             portrait::plugin,
+            talk::plugin,
+            talk_check::plugin,
             stats::plugin,
         ))
         .add_plugins((loot::plugin, fx::plugin))
