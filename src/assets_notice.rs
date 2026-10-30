@@ -615,6 +615,9 @@ fn draw(
             Node {
                 flex_direction: FlexDirection::Column,
                 row_gap: px(8),
+                // Wide enough for the longest label on one line, whatever the text beside it.
+                flex_shrink: 0.0,
+                min_width: px(250),
                 ..default()
             },
             ChildOf(line),
