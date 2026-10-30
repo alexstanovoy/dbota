@@ -405,6 +405,63 @@ pub fn quiet_seat(server: &Server, hero: bota_proto::HeroId) {
     });
 }
 
+/// A second seat held by a client with no front end that hunts wards: its hero stands at `at`,
+/// plants a Sentry Ward there to see the other side's wards, and attacks the first one it
+/// sees. Joined first, it takes the first seat.
+pub fn ward_hunter_seat(server: &Server, hero: bota_proto::HeroId, at: bota_proto::Vec2) {
+    use bota_proto::{Cheat, ItemId, ItemSlot, Order, Target, UnitKind};
+    let (mut link, seated) =
+        bota_client_core::Link::join(&server.address, "hunter", hero, None).expect("a seat");
+    let mut stage = 0;
+    std::thread::spawn(move || {
+        let _ = bota_client_core::play(&mut link, seated, &mut (), |session| {
+            let issue = bota_client_core::IssuedOrder::hero;
+            let Some(me) = session.own_hero() else {
+                return Vec::new();
+            };
+            let sentry = me
+                .items
+                .iter()
+                .position(|item| item.is_some_and(|item| item.id == ItemId::SENTRY_WARD));
+            let ward = session.current().and_then(|view| {
+                view.units
+                    .iter()
+                    .find(|unit| unit.kind == UnitKind::Ward && unit.team != me.team)
+                    .map(|unit| unit.id)
+            });
+            match (stage, sentry, ward) {
+                (0, _, _) => {
+                    stage = 1;
+                    vec![
+                        issue(Order::Cheat {
+                            cheat: Cheat::Teleport { at },
+                        }),
+                        issue(Order::Cheat {
+                            cheat: Cheat::Item {
+                                item: ItemId::SENTRY_WARD,
+                            },
+                        }),
+                    ]
+                }
+                (1, Some(slot), _) => {
+                    stage = 2;
+                    vec![issue(Order::Use {
+                        slot: ItemSlot(slot as u8),
+                        target: Target::Pos(at),
+                    })]
+                }
+                (2, _, Some(ward)) => {
+                    stage = 3;
+                    vec![issue(Order::Attack {
+                        target: Target::Unit(ward),
+                    })]
+                }
+                _ => Vec::new(),
+            }
+        });
+    });
+}
+
 /// A ring's middle on the ground and its radius, in bota's units (x, y).
 pub fn ring_of(points: &[Vec3]) -> (Vec2, f32) {
     let flat: Vec<Vec2> = points.iter().map(|p| Vec2::new(p.x, -p.z)).collect();

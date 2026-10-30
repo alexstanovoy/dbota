@@ -239,3 +239,58 @@ fn a_creeps_attack_on_a_courier_leaves_its_second_block_partly_full() {
     );
     assert!(bitten < full, "the second block is partly full: {widths:?}");
 }
+
+/// Owner report: "the ward has many health cells, not 2". A planted Observer Ward's bar is
+/// two blocks, one a hero's attack: an enemy hero's first attack leaves one block standing,
+/// its second brings the ward down (Dota 7.41: a ward is two hits of a hero, ten of anything
+/// else). The enemy hero sees the ward by a Sentry Ward of its own. Before the fix the bar was
+/// ten blocks.
+#[test]
+fn an_enemy_heros_two_attacks_take_a_wards_two_blocks_one_each() {
+    let server = Server::start(2, &[]);
+    let near = At::from_ints(MID.0 + 450, MID.1 + 150);
+    super::harness::ward_hunter_seat(&server, HeroId::SHADOW_FIEND, near);
+    let mut client = Client::join(&server, HeroId::SHADOW_FIEND, &[]);
+    assert_eq!(
+        client.me().team,
+        Team::Dire,
+        "the hunter takes the first seat"
+    );
+    client.stand_at(MID);
+    client.cheat(Cheat::Item {
+        item: bota_proto::ItemId::OBSERVER_WARD,
+    });
+    client.until("the ward in the bag", |c| {
+        c.slot_of(bota_proto::ItemId::OBSERVER_WARD).is_some()
+    });
+    let slot = client
+        .slot_of(bota_proto::ItemId::OBSERVER_WARD)
+        .expect("in the bag");
+    client.core_mut().act(bota_client_core::Intent::Press {
+        slot: bota_client_core::Slot::Item(slot),
+        ctrl: false,
+    });
+    let spot = (MID.0 as f32 + 150.0, MID.1 as f32 + 150.0);
+    client.core_mut().act(bota_client_core::Intent::Aimed {
+        at: spot,
+        unit: None,
+    });
+    let ward = |c: &Client| {
+        c.view()
+            .units
+            .iter()
+            .find(|u| u.kind == UnitKind::Ward && u.team == Team::Dire)
+            .map(|u| u.id)
+    };
+    client.until("the ward planted and barred", |c| {
+        ward(c).is_some_and(|id| bar(c, id).is_some())
+    });
+    let ours = ward(&client).expect("planted");
+    assert_eq!(blocks(&client, ours), Some((2, 2)), "two full blocks");
+    client.until("one block left after the first attack", |c| {
+        blocks(c, ours) == Some((2, 1))
+    });
+    client.until("the ward down after the second", |c| {
+        c.view().unit(ours).is_none()
+    });
+}
