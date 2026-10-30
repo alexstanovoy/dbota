@@ -164,3 +164,52 @@ fn an_item_moved_in_the_strategy_inventory_is_bought_into_that_slot() {
     });
     assert_eq!(client.slot_of(ItemId::IRON_BRANCH), Some(1));
 }
+
+/// The strategy screen's backdrop covers the whole screen (reported: a lighter band down the
+/// middle with darker sides): the square art was left to its own proportions and covered only
+/// a square of the screen, its edges showing as hard lines.
+#[test]
+fn the_strategy_screens_backdrop_covers_the_whole_screen() {
+    let (_server, mut client) = strategy();
+    let backdrop = client
+        .world()
+        .resource::<crate::manifest::Manifest>()
+        .file("strategy.background")
+        .expect("the install's backdrop in the cache");
+    let drawn = |c: &mut Client| {
+        let world = c.world_mut();
+        let server = world.resource::<AssetServer>().clone();
+        let mut nodes =
+            world.query::<(&ImageNode, &bevy::ui::ComputedNode, &InheritedVisibility)>();
+        nodes
+            .iter(world)
+            .find(|(node, _, seen)| {
+                seen.get()
+                    && server
+                        .get_path(node.image.id())
+                        .is_some_and(|p| p.to_string() == backdrop)
+            })
+            .map(|(node, size, _)| (node.image_mode.clone(), size.size()))
+    };
+    let patience = Duration::from_secs(20);
+    client.within(patience, "the backdrop laid out", |c| {
+        drawn(c).is_some_and(|(_, size)| size.x > 0.0)
+    });
+    let (mode, size) = drawn(&mut client).expect("drawn");
+    let window = {
+        let world = client.world_mut();
+        world
+            .query_filtered::<&Window, With<bevy::window::PrimaryWindow>>()
+            .single(world)
+            .expect("the window")
+            .physical_size()
+    };
+    assert_eq!(
+        (size.x as u32, size.y as u32),
+        (window.x, window.y),
+        "the whole screen"
+    );
+    // The default mode keeps the art's own proportions inside that box (the layout box is the
+    // screen's either way): the square art then covers a square of it.
+    assert_eq!(mode, NodeImageMode::Stretch, "drawn over all of the box");
+}

@@ -21,9 +21,16 @@ use crate::shop::{Place, spawn_cell};
 use crate::ui::{self, Fonts, dota};
 
 /// Dota's strategy screen sizes (dota_hud_pregame.vcss), in its pixels.
-const DETAILS: (f32, f32, f32) = (180.0, 130.0, 630.0);
-const RIGHT: (f32, f32, f32) = (200.0, 132.0, 883.0);
-const LEFT_COLUMN: f32 = 272.0;
+/// Both columns start at one top and stand at one margin from the screen's sides.
+const MARGIN: f32 = 180.0;
+const TOP: f32 = 130.0;
+const DETAILS_WIDTH: f32 = 630.0;
+const RIGHT_WIDTH: f32 = 883.0;
+/// The gap between inventory slots, and the box's padding round them.
+const SLOT_GAP: f32 = 6.0;
+const BOX_PADDING: f32 = 12.0;
+/// The portrait's width; its height follows the picture's proportions.
+const PORTRAIT_WIDTH: f32 = 330.0;
 const INVENTORY: (f32, f32) = (62.0, 46.0);
 const BACKPACK: (f32, f32) = (40.0, 30.0);
 const LIST_ITEM: (f32, f32) = (41.0, 30.0);
@@ -127,7 +134,11 @@ fn build(
     if let Some(path) = manifest.file("strategy.background") {
         commands.spawn((
             ui::fill(),
-            ImageNode::new(server.load(path)).with_color(Color::srgba(1.0, 1.0, 1.0, 0.35)),
+            // Stretched over the whole screen: left to its own proportions the square art covers
+            // only a square of it, and its edges show as a lighter band between darker sides.
+            ImageNode::new(server.load(path))
+                .with_color(Color::srgba(1.0, 1.0, 1.0, 0.35))
+                .with_mode(NodeImageMode::Stretch),
             Pickable::IGNORE,
             ChildOf(root),
         ));
@@ -295,14 +306,13 @@ fn details(commands: &mut Commands, kit: &Kit, hero: u16, root: Entity) {
     let Some(def) = bota_core::hero_def(bota_proto::HeroId(hero)) else {
         return;
     };
-    let (left, top, width) = DETAILS;
     let column = commands
         .spawn((
             Node {
                 position_type: PositionType::Absolute,
-                left: dota(left),
-                top: dota(top),
-                width: dota(width),
+                left: dota(MARGIN),
+                top: dota(TOP),
+                width: dota(DETAILS_WIDTH),
                 flex_direction: FlexDirection::Column,
                 row_gap: dota(8.0),
                 ..default()
@@ -359,8 +369,7 @@ fn details(commands: &mut Commands, kit: &Kit, hero: u16, root: Entity) {
     }
     commands.spawn((
         Node {
-            width: dota(330.0),
-            height: dota(471.0),
+            width: dota(PORTRAIT_WIDTH),
             margin: UiRect::top(dota(16.0)),
             ..default()
         },
@@ -372,14 +381,13 @@ fn details(commands: &mut Commands, kit: &Kit, hero: u16, root: Entity) {
 /// At the right: STARTING ITEMS (Dota's `#StartingItems`), the gold that
 /// remains, the inventory, and the shop's basic items.
 fn starting_items(commands: &mut Commands, kit: &Kit, catalog: &Catalog, root: Entity) {
-    let (right, top, width) = RIGHT;
     let panel = commands
         .spawn((
             Node {
                 position_type: PositionType::Absolute,
-                right: dota(right),
-                top: dota(top),
-                width: dota(width),
+                right: dota(MARGIN),
+                top: dota(TOP),
+                width: dota(RIGHT_WIDTH),
                 min_height: dota(340.0),
                 flex_direction: FlexDirection::Column,
                 ..default()
@@ -422,7 +430,7 @@ fn left_column(commands: &mut Commands, kit: &Kit, contents: Entity) {
     let column = commands
         .spawn((
             Node {
-                width: dota(LEFT_COLUMN),
+                width: dota(inventory_width()),
                 flex_direction: FlexDirection::Column,
                 row_gap: dota(4.0),
                 ..default()
@@ -472,8 +480,9 @@ fn left_column(commands: &mut Commands, kit: &Kit, contents: Entity) {
     let inventory = commands
         .spawn((
             Node {
-                width: dota(276.0),
-                padding: UiRect::top(dota(9.0)),
+                width: percent(100),
+                padding: UiRect::all(dota(BOX_PADDING)),
+                row_gap: dota(SLOT_GAP),
                 flex_direction: FlexDirection::Column,
                 align_items: AlignItems::Center,
                 border: UiRect::vertical(px(1)),
@@ -494,17 +503,30 @@ fn left_column(commands: &mut Commands, kit: &Kit, contents: Entity) {
         (BAG..BAG + BACKPACK_SLOTS, BACKPACK),
     ];
     for (slots, size) in rows {
-        let row = commands.spawn((Node::default(), ChildOf(inventory))).id();
+        let row = commands
+            .spawn((
+                Node {
+                    column_gap: dota(SLOT_GAP),
+                    ..default()
+                },
+                ChildOf(inventory),
+            ))
+            .id();
         for at in slots {
             inventory_slot(commands, kit, row, at, size);
         }
     }
 }
 
+/// The inventory box's width: its widest row of slots and the padding round it.
+fn inventory_width() -> f32 {
+    3.0 * INVENTORY.0 + 2.0 * SLOT_GAP + 2.0 * BOX_PADDING
+}
+
 /// One slot of the inventory: the bottom panel's own item box, dark until a
 /// choice fills it.
 fn inventory_slot(commands: &mut Commands, kit: &Kit, row: Entity, at: usize, size: (f32, f32)) {
-    let slot = crate::hud::spawn_slot_box(
+    crate::hud::spawn_slot_box(
         commands,
         kit.fonts,
         row,
@@ -513,12 +535,6 @@ fn inventory_slot(commands: &mut Commands, kit: &Kit, row: Entity, at: usize, si
         false,
         false,
     );
-    commands
-        .entity(slot)
-        .entry::<Node>()
-        .and_modify(|mut node| {
-            node.margin = UiRect::new(px(0), dota(6.0), px(0), dota(6.0));
-        });
 }
 
 /// The shop's basic items, under each category's title.
