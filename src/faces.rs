@@ -108,6 +108,7 @@ pub const ITEMS: [ItemFace; ITEM_DEFS.len()] = [
     ItemFace::new(ItemId::WIND_LACE.0, "Lace"),
     ItemFace::new(ItemId::BLOOD_GRENADE.0, "Grenade"),
     ItemFace::new(ItemId::WARD_DISPENSER.0, "Wards"),
+    ItemFace::new(ItemId::TANGO_SHARED.0, "Tango"),
 ];
 
 /// Every timed effect, indexed by [`EffectId`]; the slot of a retired one

@@ -67,6 +67,7 @@ item 51 monkey_king_bar
 item 52 wind_lace
 item 53 blood_grenade
 item 54 ward_dispenser
+item 55 tango
 ability 0 pudge_meat_hook
 ability 1 pudge_rot
 ability 2 pudge_innate_graft_flesh
@@ -75,6 +76,7 @@ text item 39 item_recipe_wraith_band
 text item 40 item_recipe_null_talisman
 text item 41 item_recipe_magic_wand
 text item 50 item_recipe_monkey_king_bar
+text item 55 item_tango_single
 ability 3 pudge_dismember
 ability 4 courier_burst
 ability 5 courier_return_to_base
