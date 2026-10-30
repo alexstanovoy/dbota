@@ -231,3 +231,69 @@ fn teleport_requires_hold_keeps_the_channel_through_a_move() {
     let on = ["--set", "teleport_requires_halt=true"];
     assert!(teleport_then_click(&on), "on: the channel runs on");
 }
+
+/// Whether one's hero channels.
+fn channelling(client: &Client) -> bool {
+    client.me().statuses.bits & bota_proto::StatusFlags::CHANNELLING != 0
+}
+
+/// Pudge channelling Dismember on an enemy hero beside him, then a right click on the ground,
+/// run with `extra`: whether the channel still runs a moment after the click.
+fn dismember_then_click(extra: &[&str]) -> bool {
+    let server = Server::start(1, &[]);
+    let mut client = Client::join(&server, HeroId::PUDGE, extra);
+    client.stand_at(MID);
+    client.cheat(Cheat::Levels { count: 5 });
+    let slot = client
+        .me()
+        .abilities
+        .iter()
+        .position(|a| a.id == bota_proto::AbilityId::DISMEMBER)
+        .expect("Dismember") as u8;
+    let press = |ctrl| bota_client_core::Intent::Press {
+        slot: bota_client_core::Slot::Ability(slot),
+        ctrl,
+    };
+    client.core_mut().act(press(true));
+    client.frames(3);
+    client.cheat(Cheat::CreateHero {
+        hero: HeroId::SHADOW_FIEND,
+        enemy: true,
+        at: At::from_ints(MID.0 + 120, MID.1),
+    });
+    let mine = client.me().team;
+    let enemy = client
+        .view()
+        .units
+        .iter()
+        .find(|u| u.kind == UnitKind::Hero && u.team != mine)
+        .map(|u| (u.id, u.pos))
+        .expect("the enemy hero");
+    client.core_mut().act(press(false));
+    client.core_mut().act(bota_client_core::Intent::Aimed {
+        at: (enemy.1.x.to_f32(), enemy.1.y.to_f32()),
+        unit: Some(enemy.0),
+    });
+    client.within(Duration::from_secs(10), "Dismember channelling", |c| {
+        channelling(c)
+    });
+    let at = client.me().pos;
+    let ground = (at.x.to_f32() - 300.0, at.y.to_f32() + 300.0);
+    let pixel = client.screen_of(ground).expect("on screen");
+    client.mouse(pixel);
+    client.click(MouseButton::Right);
+    client.frames(10);
+    channelling(&client)
+}
+
+/// Dota's Abilities Require Hold/Cancel to Stop: off (Dota's default) a move given while an
+/// ability channels breaks it off; on, the move waits for the channel's end and it runs on.
+#[test]
+fn abilities_require_hold_keeps_a_channel_through_a_move() {
+    assert!(
+        !dismember_then_click(&[]),
+        "off: the move breaks the channel"
+    );
+    let on = ["--set", "channels_require_stop=true"];
+    assert!(dismember_then_click(&on), "on: the channel runs on");
+}
