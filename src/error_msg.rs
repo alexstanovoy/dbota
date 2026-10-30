@@ -75,7 +75,11 @@ pub fn told(reason: RejectReason) -> Option<Told> {
         Why::QueueFull => dota("dota_hud_error_queue_full", DENY),
         // What Dota has no line of, and the player must still hear to act:
         // a cheat this match does not honour, a seat the server will not give.
-        Why::NoCheats | Why::BadCheat | Why::NotAdmitted | Why::SeatHeld => own,
+        Why::NoCheats
+        | Why::BadCheat
+        | Why::NotAdmitted
+        | Why::SeatHeld
+        | Why::CatalogueMismatch => own,
         // What the player needs no word for: the hero is dead (its panel
         // says so), the target was gone when the order came, or what the
         // interface never offers (an empty slot, a passive, another's unit,
@@ -170,6 +174,9 @@ fn plain_words(reason: RejectReason) -> &'static str {
         Why::NotAdmitted => "no seat for this client: a wrong key, or none open",
         Why::SeatHeld => "another live connection holds the seat",
         Why::QueueFull => "too many orders queued",
+        Why::CatalogueMismatch => {
+            "the server's items differ from this client's: build both from matching commits"
+        }
     }
 }
 

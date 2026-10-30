@@ -102,6 +102,7 @@ wss:// where the host has a certificate",
         key,
         bota_core::WIRE_FINGERPRINT,
     ))?;
+    net.send(&bota_client_core::catalogue())?;
     net.send(&ClientMsg::Compress(Codec::Deflate))?;
     Ok(Session(Core::new(Source::Live(Box::new(net)))))
 }

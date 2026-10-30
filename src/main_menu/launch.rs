@@ -495,6 +495,7 @@ impl Opening {
                         }
                     };
                     Transport::send(&mut net, &greeting)?;
+                    Transport::send(&mut net, &bota_client_core::catalogue())?;
                     Transport::send(&mut net, &ClientMsg::Compress(Codec::Deflate))?;
                     // The bots come once the host has asked for its seat, so
                     // the host keeps the first one.
@@ -561,6 +562,7 @@ impl Opening {
                 Launch::Replay(_) | Launch::Blob(_) | Launch::Given => return Err(not_here()),
             };
             link.send(&greeting)?;
+            link.send(&bota_client_core::catalogue())?;
             link.send(&ClientMsg::Compress(Codec::Deflate))?;
             Ok(Box::new(link) as Box<dyn LiveLink>)
         })();
