@@ -3,12 +3,15 @@
 #
 #   tools/gate.sh [REPLAY.brp]
 #
-# Steps: fmt, clippy, web-webgpu and web-webgl2 (the browser clients compile), assets (the asset cache of this build, imported
+# Steps: clippy, web-webgpu and web-webgl2 (the browser clients compile), assets (the asset cache of this build, imported
 # once per stamp from a Dota 2 install), test, build (release), deny, then, with the cache: install-tests (the ignored importer
-# tests) and visual (tools/visual_check.sh on a replay), and, when asked, fps.
+# tests) and visual (tools/visual_check.sh on a replay), and, when asked, fps, then fmt (last: it changes no code).
 # The replay for `visual` is the argument, or GATE_REPLAY, or one the bota checkout beside this one records
 # (../bota, the example local_match), so the gate needs nothing but this checkout and bota.
 # Environment:
+#   GATE_STEP_LOG=FILE       append the seconds each step took to FILE (tab separated)
+#   GATE_PRECHECKED=1        start although tools/precheck.sh has not passed this tree
+#   GATE_AGAIN=1             run although this tree already passed
 #   DBOTA_ASSETS=DIR         the asset cache the tests and the visual check use (default: <DBOTA_GATE_ASSETS, else
 #                            ~/.cache/dbota-gate>/<stamp of this build's manifest, ids and importer>, imported once and
 #                            reused; never the shared ~/.cache/dbota, whose stamp another build may have changed)
@@ -27,6 +30,27 @@ here=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)
 cd "$here" || exit 2
 logs=${GATE_LOGS:-$here/temp/gate}
 mkdir -p "$logs"
+# shellcheck source=tools/stamp.sh
+. "$here/tools/stamp.sh"
+# The gate confirms; the precheck finds. It starts only on a tree tools/precheck.sh has passed, and not again on a tree that
+# already passed (formatting is left out of both). GATE_PRECHECKED=1 and GATE_AGAIN=1 skip the two checks, for a head that is
+# gated on behalf of something else (a merge, a consumer check) and was checked elsewhere.
+mode=gate
+[ "${GATE_LEAN:-0}" = 1 ] && mode=gate-lean
+tree=$(tree_key)
+if [ "${GATE_PRECHECKED:-0}" != 1 ] && [ -z "$(stamp_has "$tree" precheck)" ]; then
+    echo "gate: no passing precheck for this tree. Run tools/precheck.sh first (it checks what the change touches, in minutes; this gate is the confirmation, not the place to find errors)." >&2
+    exit 3
+fi
+if [ "${GATE_AGAIN:-0}" != 1 ] && [ -n "$(stamp_has "$tree" "$mode")" ]; then
+    echo "gate: this tree already passed the gate ($(stamp_has "$tree" "$mode")). GATE_AGAIN=1 runs it again." >&2
+    exit 3
+fi
+if only_docs_changed "${GATE_BASE:-main}"; then
+    echo "GATE-OK (documents only: nothing to confirm)"
+    stamp_put "$tree" "$mode"
+    exit 0
+fi
 skip=" ${GATE_SKIP:-} "
 skipped=0
 # The tests that start the client (tests/e2e) and the visual check need an imported asset cache of this build. It is made once
@@ -44,7 +68,12 @@ step() { # name command...
     shift
     case "$skip" in *" $name "*) echo "== $name: skipped"; skipped=1; return 0 ;; esac
     echo "== $name"
-    if ! "$@" > "$logs/$name.log" 2>&1; then
+    local began=$SECONDS
+    "$@" > "$logs/$name.log" 2>&1
+    local rc=$?
+    # GATE_STEP_LOG=FILE: one line per step (time, repository directory, step, seconds, exit code), to see where a gate spends its minutes
+    [ -z "${GATE_STEP_LOG:-}" ] || printf '%s\t%s\t%s\t%s\t%s\n' "$(date +%FT%T)" "$(basename -- "$here")" "$name" "$((SECONDS - began))" "$rc" >> "$GATE_STEP_LOG"
+    if [ $rc -ne 0 ]; then
         tail -n 40 "$logs/$name.log"
         echo "GATE-FAIL $name (full output: $logs/$name.log)"
         exit 1
@@ -55,7 +84,6 @@ step() { # name command...
 # The browser clients, one per graphics API; the build embeds a replay, any file does for a check.
 web() { DBOTA_WEB_REPLAY="$here/Cargo.toml" cargo check --target wasm32-unknown-unknown --profile web -p dbota --features "web-replay,$1"; }
 
-step fmt cargo fmt --check
 step clippy cargo clippy --all-targets -- -D warnings
 step web-webgpu web webgpu
 [ "${GATE_LEAN:-0}" = 1 ] || step web-webgl2 web webgl2
@@ -75,9 +103,11 @@ else
     echo "   no usable Dota 2 install: the tests that need the cache fail, install-tests and visual are skipped"
     skipped=1
 fi
-step test cargo test
+step test cargo test --profile test-release
+# Formatting changes no code, so it is the last step: a gate that fails only here needs `cargo fmt` and an amend, not a rerun.
 if [ "${GATE_LEAN:-0}" = 1 ]; then
-    [ "$skipped" = 1 ] && echo "GATE-OK (lean, with skipped steps: not a pass)" || echo "GATE-OK (lean)"
+    step fmt cargo fmt --check
+    [ "$skipped" = 1 ] && echo "GATE-OK (lean, with skipped steps: not a pass)" || { echo "GATE-OK (lean)"; stamp_put "$tree" "$mode"; }
     exit 0
 fi
 step build cargo build --release
@@ -113,8 +143,11 @@ if [ -n "${GATE_FPS_CMD:-}" ]; then
     step fps $GATE_FPS_CMD "${GATE_FPS_BASE:?GATE_FPS_BASE: the git revision to compare with}" HEAD
 fi
 
+step fmt cargo fmt --check
+
 if [ "$skipped" = 1 ]; then
     echo "GATE-OK (with skipped steps: not a pass)"
 else
     echo "GATE-OK"
+    stamp_put "$tree" "$mode"
 fi

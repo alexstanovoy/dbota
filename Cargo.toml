@@ -152,3 +152,20 @@ debug = "line-tables-only"
 [profile.web]
 inherits = "dist"
 opt-level = "z"
+
+# What the tests are built with: release's optimisation (a debug build is too slow to test with) and the checks a debug build
+# has, overflow checks and debug assertions, in this repository's crates. The dependencies stay as release builds them, so the two
+# profiles share their artifacts. The product (`cargo build --release`, `--profile dist`) has no checks.
+[profile.test-release]
+inherits = "release"
+debug-assertions = true
+overflow-checks = true
+# The client's own code is a big crate: the tests need it quick to rebuild, not fast to run (the dependencies, the heavy part to
+# run, stay as release builds them).
+opt-level = 1
+codegen-units = 256
+incremental = true
+
+[profile.test-release.package."*"]
+debug-assertions = false
+overflow-checks = false
