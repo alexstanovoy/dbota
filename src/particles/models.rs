@@ -6,9 +6,6 @@
 use bevy::camera::visibility::VisibilitySystems;
 use bevy::gltf::Gltf;
 use bevy::prelude::*;
-use bevy::transform::systems::{
-    mark_dirty_trees, propagate_parent_transforms, sync_simple_transforms,
-};
 use bevy::world_serialization::WorldAssetRoot;
 use heatel::particle::{Models, Renderer};
 
@@ -33,6 +30,10 @@ pub struct Placed {
     pub transform: Transform,
 }
 
+/// A piece of a model's pool: the root of one copy of its scene, with no parent.
+#[derive(Component)]
+struct Piece;
+
 /// Each model's pool, once its file has loaded.
 #[derive(Resource, Default)]
 struct Pool(Vec<Option<Vec<Entity>>>);
@@ -42,18 +43,10 @@ pub fn plugin(app: &mut App) {
         .add_systems(Update, spawn)
         .add_systems(
             PostUpdate,
-            (
-                place,
-                // The pools' scenes moved after the frame's transforms were propagated: their
-                // trees are propagated again, so they stand where their particles are this
-                // frame, not the next.
-                (
-                    mark_dirty_trees,
-                    propagate_parent_transforms,
-                    sync_simple_transforms,
-                )
-                    .chain(),
-            )
+            // The pools' scenes moved after the frame's transforms were propagated: the trees
+            // of the pieces placed are propagated again, so they stand where their particles are
+            // this frame, not the next.
+            (place, propagate_placed)
                 .chain()
                 .after(tick)
                 .before(VisibilitySystems::VisibilityPropagate)
@@ -85,6 +78,7 @@ fn spawn(
             .map(|_| {
                 commands
                     .spawn((
+                        Piece,
                         WorldAssetRoot(scene.clone()),
                         Transform::default(),
                         Visibility::Hidden,
@@ -100,7 +94,7 @@ fn spawn(
 fn place(
     playing: Res<Playing>,
     pool: Res<Pool>,
-    mut roots: Query<(&mut Transform, &mut Visibility), With<WorldAssetRoot>>,
+    mut roots: Query<(&mut Transform, &mut Visibility), With<Piece>>,
 ) {
     for (model, entities) in pool.0.iter().enumerate() {
         let Some(entities) = entities else {
@@ -122,6 +116,33 @@ fn place(
                 None => {
                     visibility.set_if_neq(Visibility::Hidden);
                 }
+            }
+        }
+    }
+}
+
+/// The global transforms of the pieces `place` moved and of everything in their scenes, as
+/// Bevy's propagation makes them. Only these trees: Bevy's own pass run again here would
+/// propagate every transform the frame changed (every posed joint) a second time.
+fn propagate_placed(
+    moved: Query<Entity, (With<Piece>, Changed<Transform>)>,
+    children: Query<&Children>,
+    mut transforms: Query<(&Transform, &mut GlobalTransform)>,
+    mut stack: Local<Vec<(Entity, Option<GlobalTransform>)>>,
+) {
+    for root in &moved {
+        stack.push((root, None));
+        while let Some((entity, parent)) = stack.pop() {
+            let Ok((local, mut global)) = transforms.get_mut(entity) else {
+                continue;
+            };
+            let now = parent.map_or_else(
+                || GlobalTransform::from(*local),
+                |p| p.mul_transform(*local),
+            );
+            global.set_if_neq(now);
+            for &child in children.get(entity).into_iter().flatten() {
+                stack.push((child, Some(now)));
             }
         }
     }
