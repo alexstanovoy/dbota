@@ -24,6 +24,11 @@ pub struct RtsCamera {
     pub distance: f32,
 }
 
+/// The frame's finding of the ground point under the cursor, from the camera as this frame
+/// places it: what is drawn at the cursor reads it after, so it stays under the pointer.
+#[derive(SystemSet, Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct CursorPicked;
+
 /// Ground point under the cursor, updated every frame (None if off-window or sky).
 #[derive(Resource, Default, Debug)]
 pub struct CursorGround(pub Option<Vec3>);
@@ -38,7 +43,9 @@ pub fn plugin(app: &mut App) {
         // Picking needs the camera's GlobalTransform of this frame.
         .add_systems(
             PostUpdate,
-            pick_cursor_ground.after(TransformSystems::Propagate),
+            pick_cursor_ground
+                .after(TransformSystems::Propagate)
+                .in_set(CursorPicked),
         )
         .add_systems(Update, log_window_size);
 }

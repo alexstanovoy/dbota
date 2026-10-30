@@ -30,7 +30,7 @@ const LIFT: f32 = 8.0;
 /// Ticks an order marker lasts.
 const ORDER_TICKS: u32 = 15;
 
-const GOOD: Color = Color::srgb(0.42, 0.95, 0.52);
+pub(crate) const GOOD: Color = Color::srgb(0.42, 0.95, 0.52);
 const BAD: Color = Color::srgb(1.0, 0.27, 0.22);
 const GOLDEN: Color = Color::srgb(1.0, 0.8, 0.3);
 const ARCANE: Color = Color::srgb(0.45, 0.85, 1.0);
@@ -55,7 +55,10 @@ pub fn plugin(app: &mut App) {
     app.init_resource::<RangeRings>()
         .init_resource::<TowerShots>()
         .add_systems(Startup, configure)
-        .add_systems(Update, (line_width, draw));
+        .add_systems(Update, line_width)
+        // After the camera has found the ground under the pointer this frame: what is drawn
+        // at the cursor stays under it while the camera moves.
+        .add_systems(PostUpdate, draw.after(crate::camera::CursorPicked));
 }
 
 /// Scales the lines with the window's height.
@@ -604,6 +607,12 @@ fn aim(
     let (wx, wy) = (cursor.x, -cursor.z);
     let within = reach <= 0.0 || caster.at.distance(Vec2::new(wx, wy)) <= reach;
     let color = if within { GOOD } else { BAD };
+    // The area a use at the point takes in, as Dota draws it under the cursor.
+    let area = core.area_of(slot) as f32;
+    if area > 0.0 && aim == Some(Aim::Point) {
+        ring(gizmos, ctx, (wx, wy), area, color, false);
+        return;
+    }
     if aim == Some(Aim::Unit) {
         // The unit the click would take, or a red mark where none can be.
         match hover.aim.and_then(|(id, _)| ctx.at(id)) {
