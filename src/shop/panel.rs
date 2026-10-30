@@ -11,6 +11,7 @@ use crate::dota_text::Texts;
 use crate::hud::Blocker;
 use crate::input::{Panels, Typing};
 use crate::manifest::Manifest;
+use crate::session::Session;
 use crate::tip_content::Lookup;
 use crate::ui::{self, Extent, Fonts};
 
@@ -83,6 +84,7 @@ pub fn plugin(app: &mut App) {
                 debug_open,
                 show,
                 above_bottom_row,
+                (follow_catalogue, restock).chain(),
                 tabs,
                 results,
                 search_text,
@@ -94,6 +96,37 @@ pub fn plugin(app: &mut App) {
 
 /// The art the panel draws with.
 type Art<'a> = (&'a Fonts, &'a Manifest, &'a AssetServer);
+
+/// Cuts the shop to the items the match plays with whenever they change: the lobby tells them
+/// before the start, the match after, and a match shared with an older build has fewer.
+fn follow_catalogue(session: NonSend<Session>, mut catalog: ResMut<Catalog>) {
+    let catalogue = session.0.catalogue();
+    if catalog.bypass_change_detection().offered != catalogue {
+        catalog.offer(catalogue);
+    }
+}
+
+/// Lays the tab pages out anew once the shop was cut to other items.
+fn restock(
+    mut commands: Commands,
+    catalog: Res<Catalog>,
+    art: (Res<Fonts>, Res<Manifest>, Res<AssetServer>),
+    page: Single<Entity, With<Page>>,
+    pages: Query<(Entity, &TabPage)>,
+) {
+    if !catalog.is_changed() {
+        return;
+    }
+    for (entity, TabPage(tab)) in &pages {
+        if *tab != Tab::Neutrals {
+            commands.entity(entity).despawn();
+        }
+    }
+    let art = (&*art.0, &*art.1, &*art.2);
+    for tab in [Tab::Basics, Tab::Upgrades] {
+        spawn_page(&mut commands, art, &catalog, *page, tab);
+    }
+}
 
 fn spawn(
     mut commands: Commands,
@@ -531,7 +564,7 @@ fn results(
     grid: Single<Entity, With<ResultGrid>>,
     mut heading: Single<&mut Text, With<ResultTitle>>,
 ) {
-    if last.as_deref() == Some(panels.search.as_str()) {
+    if last.as_deref() == Some(panels.search.as_str()) && !catalog.is_changed() {
         return;
     }
     *last = Some(panels.search.clone());

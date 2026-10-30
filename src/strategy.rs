@@ -67,14 +67,14 @@ struct Gold;
 /// What the screen was built for: the seats' heroes and names, and one's own
 /// seat.
 #[derive(Default, PartialEq)]
-struct Built(Vec<(u8, Option<u16>, String)>, Option<u8>);
+struct Built(Vec<(u8, Option<u16>, String)>, Option<u8>, u16);
 
 pub fn plugin(app: &mut App) {
     app.add_systems(Update, (build, show, clock_text).chain());
 }
 
 /// Builds the screen anew when the tactical phase opens on other seats than
-/// it was built for.
+/// it was built for, or the items the match plays with change.
 #[allow(clippy::too_many_arguments)]
 fn build(
     mut commands: Commands,
@@ -98,6 +98,7 @@ fn build(
             .map(|s| (s.slot.0, s.hero.map(|h| h.0), s.name.clone()))
             .collect(),
         core.my_slot.map(|s| s.0),
+        catalog.offered.items(),
     );
     if *built == now && !screens.is_empty() {
         return;

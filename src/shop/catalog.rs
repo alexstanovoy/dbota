@@ -7,7 +7,7 @@
 use std::{collections::HashMap, path::Path};
 
 use bevy::prelude::*;
-use bota_core::{item_def, sold as sold_item};
+use bota_core::{Catalogue, item_def, sold as sold_item};
 use bota_proto::ItemId;
 use serde_json::Value;
 
@@ -75,11 +75,15 @@ pub struct Section {
 }
 
 /// The shop's categories and words.
-#[derive(Resource, Clone, Debug, Default)]
+#[derive(Resource, Clone, Debug)]
 pub struct Catalog {
-    /// In Dota's order, tab by tab; categories bota sells nothing of are
-    /// left out.
+    /// What the match offers, in Dota's order, tab by tab: [`Catalog::offer`] cuts the build's
+    /// sections to the match's catalogue, and leaves out a category bota sells nothing of.
     pub sections: Vec<Section>,
+    /// Every section of this build's shop: what a match on its whole catalogue offers.
+    all: Vec<Section>,
+    /// The catalogue `sections` are cut to.
+    pub offered: Catalogue,
     /// Dota's words by lower-cased localization key.
     strings: HashMap<String, String>,
 }
@@ -101,10 +105,13 @@ impl Catalog {
             .collect();
         let mut catalog = Catalog {
             sections: Vec::new(),
+            all: Vec::new(),
+            offered: Catalogue::FULL,
             strings: data.strings,
         };
         if data.categories.is_empty() {
             catalog.add_leftovers(manifest);
+            catalog.all.clone_from(&catalog.sections);
             return catalog;
         }
         for (tab, key, title) in LAYOUT {
@@ -131,7 +138,28 @@ impl Catalog {
             }
         }
         catalog.add_leftovers(manifest);
+        catalog.all.clone_from(&catalog.sections);
         catalog
+    }
+
+    /// Cuts the shop to the items of a match on `catalogue`: a match shared with a client of an
+    /// older build sells none it lacks.
+    pub fn offer(&mut self, catalogue: Catalogue) {
+        self.offered = catalogue;
+        self.sections = self
+            .all
+            .iter()
+            .map(|section| Section {
+                items: section
+                    .items
+                    .iter()
+                    .copied()
+                    .filter(|id| catalogue.holds(ItemId(*id)))
+                    .collect(),
+                ..section.clone()
+            })
+            .filter(|section| !section.items.is_empty())
+            .collect();
     }
 
     /// Items bota sells that no category of Dota's lists, recipes aside (the
@@ -194,10 +222,11 @@ pub fn parts_of(id: u16) -> &'static [ItemId] {
     item_def(ItemId(id)).map_or(&[], |def| def.components)
 }
 
-/// The items one is a part of, in id order, at most [`MAX_INTO`].
-pub fn builds_into(id: u16) -> Vec<u16> {
+/// The items of `catalogue` one is a part of, in id order, at most [`MAX_INTO`].
+pub fn builds_into(id: u16, catalogue: Catalogue) -> Vec<u16> {
     crate::faces::ITEMS
         .iter()
+        .filter(|face| catalogue.holds(ItemId(face.id)))
         .filter(|face| {
             item_def(ItemId(face.id)).is_some_and(|def| {
                 def.recipes()

@@ -4,7 +4,7 @@
 
 use bevy::prelude::*;
 
-use super::catalog::{builds_into, parts_of};
+use super::catalog::{Catalog, builds_into, parts_of};
 use super::cell::{self, CELL, Chosen, Place};
 use super::panel::INNER;
 use crate::manifest::Manifest;
@@ -66,12 +66,11 @@ fn draw(
     mut commands: Commands,
     chosen: Res<Chosen>,
     mut last: Local<Option<Option<u16>>>,
-    fonts: Res<Fonts>,
-    manifest: Res<Manifest>,
-    server: Res<AssetServer>,
+    (fonts, manifest, server): (Res<Fonts>, Res<Manifest>, Res<AssetServer>),
+    catalog: Res<Catalog>,
     tree: Single<Entity, With<Tree>>,
 ) {
-    if *last == Some(chosen.0) {
+    if *last == Some(chosen.0) && !catalog.is_changed() {
         return;
     }
     *last = Some(chosen.0);
@@ -81,7 +80,7 @@ fn draw(
     };
     let art = (&*fonts, &*manifest, &*server);
     let rows = [PAD, PAD + CELL.1 + ROW_GAP, PAD + 2.0 * (CELL.1 + ROW_GAP)];
-    let into = builds_into(id);
+    let into = builds_into(id, catalog.offered);
     let parts = parts_of(id);
     let middle = Vec2::new(spread(0, 1), rows[1]);
     let tops: Vec<Vec2> = (0..into.len())

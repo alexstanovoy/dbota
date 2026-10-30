@@ -7,6 +7,7 @@ mod bars;
 mod buffs;
 mod camera;
 mod captions;
+mod catalogue;
 mod controls;
 mod cursors;
 mod death;
