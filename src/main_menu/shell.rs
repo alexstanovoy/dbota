@@ -409,7 +409,7 @@ fn demo_start(
             game.act(bota_client_core::Intent::ToggleReady);
         }
     }
-    if !state.begun && game.my_hero().is_some() {
+    if !state.begun && game.my_standing_hero().is_some() {
         state.begun = true;
         for cheat in [
             bota_proto::Cheat::StartGame,

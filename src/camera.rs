@@ -264,7 +264,7 @@ fn follow(
     // A camera placed by `--look` stays where it was put.
     if !core.found_my_hero
         && args.look.is_empty()
-        && core.my_hero().is_some()
+        && core.my_standing_hero().is_some()
         && let Some(slot) = core.my_slot
     {
         core.found_my_hero = true;

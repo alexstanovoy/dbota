@@ -865,7 +865,7 @@ fn clicks(
         cam.focus = Vec3::new(x, ground.at(x, y), -y);
     }
     if buttons.just_pressed(MouseButton::Right)
-        && core.my_hero().is_some()
+        && core.my_standing_hero().is_some()
         && core.controls_selection()
     {
         core.act(Intent::MoveTo((x, y)));

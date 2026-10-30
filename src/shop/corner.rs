@@ -500,7 +500,7 @@ fn stash(
     mut grab: Single<&mut Visibility, With<GrabAll>>,
 ) {
     let core = &session.0;
-    let dead = core.my_slot.is_some() && core.view().is_some() && core.my_hero().is_none();
+    let dead = core.my_slot.is_some() && core.view().is_some() && core.my_standing_hero().is_none();
     let shown = panels.shop || core.at_home_shop() || core.held_item.is_some() || dead;
     let display = if shown { Display::Flex } else { Display::None };
     if block.display != display {

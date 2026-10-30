@@ -76,7 +76,6 @@ pub fn plugin(app: &mut App) {
         .add_systems(
             Update,
             (
-                follow_respawn,
                 over_hud,
                 typing,
                 crate::chat::typing,
@@ -90,30 +89,6 @@ pub fn plugin(app: &mut App) {
             )
                 .chain(),
         );
-}
-
-/// Keeps one's hero selected, and in its control groups, through its death:
-/// bota makes a respawned hero a new unit, while in Dota the hero picked (or
-/// grouped) before it fell is the one that walks out of the fountain.
-fn follow_respawn(
-    mut session: NonSendMut<Session>,
-    mut groups: ResMut<ControlGroups>,
-    mut last: Local<Option<bota_proto::EntityId>>,
-) {
-    let core = &mut session.0;
-    let Some(now) = core.my_hero() else {
-        return;
-    };
-    if let Some(was) = last.replace(now)
-        && was != now
-    {
-        if core.selected == Some(was) {
-            core.selected = Some(now);
-        }
-        for kept in groups.0.iter_mut().filter(|kept| **kept == Some(was)) {
-            *kept = Some(now);
-        }
-    }
 }
 
 /// Keeps the bindings quiet while a line or a box has the keyboard, or the
@@ -280,7 +255,7 @@ fn keys(
     }
     let ctrl = keys.pressed(KeyCode::ControlLeft) || keys.pressed(KeyCode::ControlRight);
     seat(core, &fired, &mut panels, &mut groups, ctrl);
-    if core.my_hero().is_none() || !core.controls_selection() || core.over.is_some() {
+    if core.my_standing_hero().is_none() || !core.controls_selection() || core.over.is_some() {
         return;
     }
     command(core, &fired, &mut panels, ctrl);
@@ -464,7 +439,8 @@ fn mouse(
     // The picker alone says which unit a click is on; with none, the click is
     // for the ground at the cursor.
     let unit_of = |hit: crate::pick::Hit| hit.map(|(id, _)| id);
-    let commands = core.my_hero().is_some() && core.controls_selection() && core.over.is_none();
+    let commands =
+        core.my_standing_hero().is_some() && core.controls_selection() && core.over.is_none();
     let live = matches!(core.source, Source::Live(_));
     if buttons.just_pressed(MouseButton::Left) {
         if core.held_item.is_some() {
@@ -550,7 +526,7 @@ fn directional_move(
     mut walking: Local<Option<((f32, f32), f32)>>,
 ) {
     let core = &mut session.0;
-    let commands = core.my_hero().is_some()
+    let commands = core.my_standing_hero().is_some()
         && core.controls_selection()
         && core.over.is_none()
         && matches!(core.source, Source::Live(_))

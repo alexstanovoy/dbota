@@ -233,7 +233,7 @@ pub fn pick(
 /// aiming, and what the left button does.
 fn wants(core: &bota_client_core::App) -> (Want, Want, Want, Left) {
     let mine = core.my_team();
-    let commands = core.my_hero().is_some()
+    let commands = core.my_standing_hero().is_some()
         && core.controls_selection()
         && core.over.is_none()
         && matches!(core.source, Source::Live(_));
