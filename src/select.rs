@@ -86,7 +86,8 @@ pub fn plugin(app: &mut App) {
     app.init_resource::<ClockSeen>()
         .init_resource::<TacticalPhase>()
         .add_systems(Startup, spawn)
-        .add_systems(Update, (note_clock, show, clicks, looks, tactical).chain());
+        .add_systems(Update, (note_clock, show, clicks, looks).chain())
+        .add_systems(PreUpdate, tactical.after(crate::session::pump));
 }
 
 fn spawn(
@@ -216,7 +217,8 @@ fn show(session: NonSend<Session>, mut screen: Single<&mut Visibility, With<Scre
 }
 
 /// Whether the tactical phase is on, for the systems that cannot read the
-/// session.
+/// session. Set in the frame's `PreUpdate` right after the session is pumped, so it is never a
+/// frame behind what the pump did (the first queued buy goes out in the frame the match begins).
 fn tactical(session: NonSend<Session>, mut phase: ResMut<TacticalPhase>) {
     phase.set_if_neq(TacticalPhase(session.0.in_tactical_phase()));
 }

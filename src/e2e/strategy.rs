@@ -122,11 +122,6 @@ fn a_purchase_sounds_when_chosen_and_not_again_when_the_match_buys_it() {
 /// Items chosen in the strategy phase fill the bottom panel's own inventory; one dragged to
 /// another slot there is in that slot when the match begins and buys it.
 #[test]
-#[ignore = "FAILING, a dbota bug: when the match begins the client core sends the first chosen \
-            buy (PreUpdate) a frame before `select::tactical` clears TacticalPhase (Update, not \
-            ordered against `bag::follow_queue`), so `follow_queue` syncs the shortened queue and \
-            the first choice leaves the strategy bag; `arrange` then never moves it to its slot \
-            (fails about 4 runs in 5)"]
 fn an_item_moved_in_the_strategy_inventory_is_bought_into_that_slot() {
     let (_server, mut client) = strategy();
     for item in [ItemId::CLARITY, ItemId::IRON_BRANCH] {
