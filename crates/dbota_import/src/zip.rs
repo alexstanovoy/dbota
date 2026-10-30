@@ -424,7 +424,10 @@ mod tests {
     fn a_member_that_inflates_past_its_stated_size_is_refused() {
         let mut zip = zip_of("hud/a.png", &vec![0; 8 << 20]);
         let at = size_field(&zip);
-        zip[at..at + 4].copy_from_slice(&1000u32.to_le_bytes());
+        // The stated size is the packed length: small, and no reason to refuse the member before
+        // it is inflated.
+        let packed = zip[at - 4..at].to_vec();
+        zip[at..at + 4].copy_from_slice(&packed);
         let container = ZipContainer::open(zip).expect("a directory");
 
         let why = container.read(0).expect_err("a bomb");
