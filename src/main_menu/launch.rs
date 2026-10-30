@@ -9,7 +9,7 @@ use bota_proto::{ClientMsg, Codec, Role};
 
 use super::core::Launch;
 #[cfg(not(target_arch = "wasm32"))]
-use super::core::{Claim, Fill};
+use super::core::{LOCAL_SEATS, LocalRules};
 
 /// Which certificates `wss://` servers and the service must show.
 #[derive(Clone)]
@@ -93,120 +93,19 @@ pub struct Opened {
     pub server: Option<Hosted>,
 }
 
-/// A game server this client started, and the bots it started for the
-/// seats left to them. Ended when dropped: the lobby's host quitting ends
-/// its game, as Dota's local host does.
+/// A game server this client started. Ended when dropped: the lobby's host quitting ends its
+/// game, as Dota's local host does.
 pub struct Hosted {
     #[cfg(not(target_arch = "wasm32"))]
     server: std::process::Child,
-    #[cfg(not(target_arch = "wasm32"))]
-    bots: Vec<std::process::Child>,
 }
 
 #[cfg(not(target_arch = "wasm32"))]
 impl Drop for Hosted {
     fn drop(&mut self) {
-        for child in self.bots.iter_mut().chain([&mut self.server]) {
-            let _ = child.kill();
-            let _ = child.wait();
-        }
+        let _ = self.server.kill();
+        let _ = self.server.wait();
     }
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-/// The words of a bot command, as a shell would split them but run by
-/// none: blanks part words, '…' keeps what it holds, "…" too with \" and
-/// \\ inside. `{address}` in a word becomes the game's address.
-pub fn command_words(line: &str, address: &str) -> Result<Vec<String>, String> {
-    let mut words = Vec::new();
-    let mut word = String::new();
-    let mut started = false;
-    let mut chars = line.chars();
-    while let Some(c) = chars.next() {
-        match c {
-            c if c.is_whitespace() => {
-                if started {
-                    words.push(std::mem::take(&mut word));
-                    started = false;
-                }
-            }
-            '\'' => {
-                started = true;
-                loop {
-                    match chars.next() {
-                        Some('\'') => break,
-                        Some(c) => word.push(c),
-                        None => return Err("a ' is not closed".to_owned()),
-                    }
-                }
-            }
-            '"' => {
-                started = true;
-                loop {
-                    match chars.next() {
-                        Some('"') => break,
-                        Some('\\') => match chars.next() {
-                            Some(c @ ('"' | '\\')) => word.push(c),
-                            Some(c) => {
-                                word.push('\\');
-                                word.push(c);
-                            }
-                            None => return Err("a \" is not closed".to_owned()),
-                        },
-                        Some(c) => word.push(c),
-                        None => return Err("a \" is not closed".to_owned()),
-                    }
-                }
-            }
-            c => {
-                started = true;
-                word.push(c);
-            }
-        }
-    }
-    if started {
-        words.push(word);
-    }
-    if words.is_empty() {
-        return Err("the bot command is empty".to_owned());
-    }
-    Ok(words
-        .into_iter()
-        .map(|w| w.replace("{address}", address))
-        .collect())
-}
-
-/// Starts the bot command once for each of `seats`, each with a seat key of
-/// its own in `BOTA_SEAT_KEY` (never an argument: arguments show in process
-/// lists), its output on this client's terminal.
-#[cfg(not(target_arch = "wasm32"))]
-fn start_bots(
-    command: &str,
-    address: &str,
-    seats: u8,
-) -> std::io::Result<Vec<std::process::Child>> {
-    use std::process::{Command, Stdio};
-    let words = command_words(command, address)
-        .map_err(|why| std::io::Error::other(format!("the bot command: {why}")))?;
-    let mut bots = Vec::new();
-    for _ in 0..seats {
-        let mut bot = Command::new(&words[0]);
-        bot.args(&words[1..])
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::inherit());
-        if let Some(Claim(key)) = Claim::draw() {
-            bot.env("BOTA_SEAT_KEY", key.to_hex());
-        }
-        let started = bot.spawn().map_err(|why| {
-            std::io::Error::other(format!(
-                "the bot command did not start ({}): {why}",
-                words[0]
-            ))
-        })?;
-        bots.push(started);
-    }
-    Ok(bots)
 }
 
 /// A game being opened.
@@ -286,21 +185,21 @@ fn wire_of(server: &std::path::Path) -> Option<u64> {
     u64::from_str_radix(String::from_utf8_lossy(&output.stdout).trim(), 16).ok()
 }
 
-/// What a local lobby's game server is started with: on loopback, or on
-/// every address with plain text allowed (the local network is trusted, as
-/// Dota's LAN lobby trusts it); mid-only for two players, the whole map for
-/// more; the empty seats as its host fills them; cheats when its host
-/// enables them. It ends when nobody came, and when every seat stayed empty
-/// five minutes.
+/// What a local lobby's game server is started with: on loopback, or on every address with
+/// plain text allowed (the local network is trusted, as Dota's LAN lobby trusts it); the
+/// rules' map and the lobby's ten seats under any rules; the match starting with the seats
+/// held and ready, nothing in the empty ones; cheats when its host enables them. It ends when
+/// nobody came, and when every seat stayed empty five minutes.
 #[cfg(not(target_arch = "wasm32"))]
-pub fn host_args(port: u16, players: u8, lan: bool, cheats: bool) -> Vec<String> {
+pub fn host_args(port: u16, rules: LocalRules, lan: bool, cheats: bool) -> Vec<String> {
     let mut args: Vec<String> = [
         "--port",
         &port.to_string(),
         "--players",
-        &players.to_string(),
+        &LOCAL_SEATS.to_string(),
+        "--seated-start",
         "--map",
-        if players <= 2 { "2" } else { "0" },
+        &rules.map().0.to_string(),
         "--abandon-unjoined",
         "--empty-after-secs",
         "300",
@@ -397,10 +296,7 @@ fn start_server(
                 let _ = said.send((false, line));
             }
         })?;
-    let hosted = Hosted {
-        server: child,
-        bots: Vec::new(),
-    };
+    let hosted = Hosted { server: child };
     let deadline = std::time::Instant::now() + SERVER_PATIENCE;
     let mut complaint = String::new();
     let mut listening = None;
@@ -451,14 +347,14 @@ impl Opening {
                     let started = match &launch {
                         Launch::Host {
                             port,
-                            players,
                             lan,
                             replay,
                             server,
                             cheats,
+                            rules,
                             ..
                         } => Some(start_server(
-                            &host_args(*port, *players, *lan, *cheats),
+                            &host_args(*port, *rules, *lan, *cheats),
                             replay.as_deref(),
                             server.as_deref(),
                         )?),
@@ -497,25 +393,6 @@ impl Opening {
                     Transport::send(&mut net, &greeting)?;
                     Transport::send(&mut net, &bota_client_core::catalogue())?;
                     Transport::send(&mut net, &ClientMsg::Compress(Codec::Deflate))?;
-                    // The bots come once the host has asked for its seat, so
-                    // the host keeps the first one.
-                    let mut server = server;
-                    if let (
-                        Launch::Host {
-                            port,
-                            players,
-                            fill: Fill::Bot(command),
-                            ..
-                        },
-                        Some(hosted),
-                    ) = (&launch, server.as_mut())
-                    {
-                        hosted.bots = start_bots(
-                            command,
-                            &format!("127.0.0.1:{port}"),
-                            players.saturating_sub(1),
-                        )?;
-                    }
                     Ok((net, server))
                 })();
                 let _ = tell.send(opened);
@@ -609,39 +486,4 @@ pub fn lan_address() -> Option<std::net::IpAddr> {
 #[cfg(target_arch = "wasm32")]
 pub fn lan_address() -> Option<std::net::IpAddr> {
     None
-}
-
-#[cfg(all(test, not(target_arch = "wasm32")))]
-mod tests {
-    use super::command_words;
-
-    /// A bot command splits as a shell would, runs by none, and takes the
-    /// game's address where it asks for it.
-    #[test]
-    fn bot_commands_split_into_words() {
-        let at = "127.0.0.1:4455";
-        let words = |line: &str| command_words(line, at);
-        assert_eq!(
-            words("bot --addr {address}  --name 'Bot One'"),
-            Ok(vec!["bot", "--addr", at, "--name", "Bot One"]
-                .into_iter()
-                .map(String::from)
-                .collect())
-        );
-        assert_eq!(
-            words(r#""/opt/my bot/run" "say \"hi\" \\ {address}" ''"#),
-            Ok(vec![
-                "/opt/my bot/run".to_owned(),
-                format!(r#"say "hi" \ {at}"#),
-                String::new()
-            ])
-        );
-        assert_eq!(
-            words("a;b|c $(d)"),
-            Ok(vec!["a;b|c".to_owned(), "$(d)".to_owned()])
-        );
-        assert!(words("   ").is_err());
-        assert!(words("bot 'open").is_err());
-        assert!(words("bot \"open").is_err());
-    }
 }

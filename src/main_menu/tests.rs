@@ -12,10 +12,10 @@ use std::time::{Duration, Instant};
 
 use bota_client_core::{App as Core, Phase, Source};
 use bota_core::fountain_pos;
-use bota_proto::{HeroId, Order, Target};
+use bota_proto::{HeroId, MapId, Order, Target};
 use bota_radovid::proto::RulesetId;
 
-use super::core::{Act, Confirm, GameKind, Launch, MenuCore, Page, SeatFill};
+use super::core::{Act, Confirm, GameKind, LOCAL_SEATS, Launch, LocalRules, MenuCore, Page};
 use super::launch::{Hosted, Opening, Trust};
 use super::store::{Entry, SettingsStore};
 use super::view::PageView;
@@ -138,6 +138,26 @@ save_replays = {save_replays}
 games_per_source = 200
 game_capacity = 1
 lobby_games_max = 1
+# The full rules come first: the default of a lobby.
+[[ruleset]]
+id = "full"
+name = "Full rules"
+game = "bota"
+game_fingerprint = "{fingerprint:016x}"
+teams = [5, 5]
+rated = false
+[ruleset.launcher]
+kind = "local"
+binary = "{binary}"
+public_url = "ws://127.0.0.1:{{port}}"
+version_probe = ["--wire-fingerprint"]
+start_timeout_secs = {PATIENCE}
+args = ["--map", "0", "--mode", "lockstep", "--ack-timeout-ticks", "900",
+        "--match-id", "{{match_id}}", "--bind", "127.0.0.1", "--port", "0",
+        "--ws-port", "{{port}}", "--start-after-secs", "{PATIENCE}", "--abandon-unjoined",
+        "--empty-after-secs", "{PATIENCE}", "--pick-secs", "1", "--tactical-secs", "0"]
+env = {{ BOTA_SEATS = "{{seats}}" }}
+
 [[ruleset]]
 id = "{RULESET}"
 name = "1x1 Mid Only"
@@ -177,7 +197,7 @@ args = ["--map", "2", "--match-id", "{{match_id}}", "--bind", "127.0.0.1", "--po
         "--ws-port", "{{port}}"]
 env = {{ BOTA_SEATS = "{{seats}}" }}
 
-# Two against two, for the lobby page: its slots and its sides.
+# Two against two: another ruleset to choose in a lobby.
 [[ruleset]]
 id = "squad"
 name = "Squad"
@@ -691,8 +711,8 @@ fn a_decline_puts_the_other_back_in_place_and_cools_the_decliner_down() {
 
 /// Types the local lobby page's address to join.
 fn type_address(menu: &mut MenuCore, address: &str) {
-    menu.act(Act::Focus(2));
-    while !menu.form.value(2).is_empty() {
+    menu.act(Act::Focus(1));
+    while !menu.form.value(1).is_empty() {
         menu.act(Act::Erase);
     }
     menu.act(Act::Type(address.to_owned()));
@@ -975,7 +995,7 @@ fn every_local_path_works_with_no_account_and_no_service() {
     alice.act(Act::Host(false));
     let launch = alice.take_launch().expect("the lobby to open");
     assert!(
-        matches!(&launch, Launch::Host { name, players: 2, .. } if name == "alice"),
+        matches!(&launch, Launch::Host { name, rules: LocalRules::Full, .. } if name == "alice"),
         "{launch:?}"
     );
     let (mut hosted, server) = open_hosted(launch, &trust);
@@ -1101,11 +1121,13 @@ fn every_local_path_works_with_no_account_and_no_service() {
     assert!(alice.take_quit());
 }
 
-/// Hosts a local lobby on a free port with `fill` chosen for its empty
-/// seats, and opens it.
-fn host_with(menu: &mut MenuCore, trust: &Trust, fill: SeatFill) -> (Core, Option<Hosted>, u16) {
+/// Opens the local lobby page, chooses `rules` if any, and returns the launch of hosting it on
+/// a free port.
+fn host_launch(menu: &mut MenuCore, rules: Option<LocalRules>) -> Launch {
     menu.act(Act::Go(Page::LocalLobby));
-    menu.act(Act::Fill(fill));
+    if let Some(rules) = rules {
+        menu.act(Act::Rules(rules));
+    }
     let port = free_port();
     menu.act(Act::Focus(0));
     while !menu.form.value(0).is_empty() {
@@ -1113,86 +1135,47 @@ fn host_with(menu: &mut MenuCore, trust: &Trust, fill: SeatFill) -> (Core, Optio
     }
     menu.act(Act::Type(port.to_string()));
     menu.act(Act::Host(false));
-    let launch = menu.take_launch().expect("the lobby to open");
-    let (core, server) = open_hosted(launch, trust);
-    menu.game_started();
-    (core, server, port)
+    menu.take_launch().expect("the lobby to open")
 }
 
-/// A local lobby's empty seat takes what the lobby page chose, as Dota's
-/// lobby fills a slot with a bot: the bot
-/// command of the settings, run without a shell, given the game's address
-/// in its words and a seat key of its own in `BOTA_SEAT_KEY`, and ended with
-/// the lobby. Without a bot command the lobby is not opened and the page
-/// says why. The host keeps the first seat, and the lobby page and the hero
-/// screen tell the address others join at while a seat is open.
-#[cfg(unix)]
+/// A local lobby has ten seats and full rules unless the rules are changed, and changing them
+/// changes the rules only; nothing fills the seats nobody takes, so a lobby with one player
+/// seated starts a match with exactly one hero (one a seat taken, on the map of the rules).
 #[test]
-fn a_local_lobby_fills_its_empty_seats() {
-    let dir = Scratch::new("fill");
-    let (mut alice, trust) = offline("alice", &dir);
-
-    // A bot asked for with no bot command set: nothing opens, and the page
-    // says where to set it.
-    alice.act(Act::Go(Page::LocalLobby));
-    alice.act(Act::Fill(SeatFill::Bot));
-    alice.act(Act::Host(false));
-    assert!(
-        alice.take_launch().is_none(),
-        "no lobby without a bot to fill it"
-    );
-    assert!(
-        alice
-            .view()
-            .status
-            .is_some_and(|s| s.error && s.text.contains("bot command")),
-        "{:?}",
-        alice.view().status
-    );
-
-    // The bot command: a program that writes what it was given and waits.
-    let said = dir.0.join("bot-said");
-    alice.set_bot_command(&format!(
-        "/bin/sh -c 'echo \"$$ $BOTA_SEAT_KEY {{address}}\" > \"$0\"; exec sleep 60' '{}'",
-        said.display()
-    ));
-    let (mut hosted, server, port) = host_with(&mut alice, &trust, SeatFill::Bot);
-    pump_until("the host seated", &mut [&mut hosted], |c| {
-        c.my_slot.is_some()
-    });
-    let first = hosted.lobby.slots.first().map(|s| s.slot);
-    assert_eq!(hosted.my_slot, first, "the host keeps the first seat");
-    assert_eq!(
-        alice.hosted_at(),
-        Some(format!("127.0.0.1:{port} (this machine only)").as_str()),
-        "the address others type"
-    );
-    let deadline = Instant::now() + Duration::from_secs(PATIENCE);
-    let told = loop {
-        if let Ok(text) = std::fs::read_to_string(&said)
-            && text.ends_with('\n')
-        {
-            break text;
+fn a_local_lobby_has_ten_seats_under_any_rules_and_starts_with_the_seated() {
+    let dir = Scratch::new("ten");
+    for (chosen, rules, map) in [
+        (None, LocalRules::Full, MapId(0)),
+        (Some(LocalRules::SoloMid), LocalRules::SoloMid, MapId(2)),
+        (Some(LocalRules::Full), LocalRules::Full, MapId(0)),
+    ] {
+        let (mut alice, trust) = offline("alice", &dir);
+        let launch = host_launch(&mut alice, chosen);
+        assert!(
+            matches!(&launch, Launch::Host { rules: got, .. } if *got == rules),
+            "{launch:?}"
+        );
+        let (mut hosted, server) = open_hosted(launch, &trust);
+        alice.game_started();
+        // The lobby has all ten seats, one of them the host's.
+        pump_until("the host seated", &mut [&mut hosted], |c| {
+            c.my_slot.is_some() && c.lobby.slots.len() == usize::from(LOCAL_SEATS)
+        });
+        // Nobody else comes: the host picks and readies, and the match is the host alone.
+        let deadline = Instant::now() + Duration::from_secs(PATIENCE);
+        while hosted.view().is_none_or(|v| v.tick <= 5) {
+            assert!(
+                Instant::now() < deadline,
+                "{rules:?}: the match did not start"
+            );
+            play_step(&mut hosted, HeroId::SHADOW_FIEND);
+            std::thread::sleep(Duration::from_millis(5));
         }
-        assert!(Instant::now() < deadline, "the bot command never ran");
-        std::thread::sleep(Duration::from_millis(20));
-    };
-    let mut words = told.split_whitespace();
-    let (Some(pid), Some(key), Some(address)) = (words.next(), words.next(), words.next()) else {
-        panic!("a pid, a key and an address: {told:?}");
-    };
-    assert_eq!(address, format!("127.0.0.1:{port}"));
-    assert!(
-        key.len() == 64 && key.chars().all(|c| c.is_ascii_hexdigit()),
-        "a seat key in BOTA_SEAT_KEY: {key:?}"
-    );
-    // The lobby's end ends its bot (and waits for it).
-    assert!(Path::new(&format!("/proc/{pid}")).exists(), "the bot runs");
-    drop((hosted, server));
-    assert!(
-        !Path::new(&format!("/proc/{pid}")).exists(),
-        "the bot outlived its lobby"
-    );
+        let heroes = hosted.view().map_or(0, |v| v.players.len());
+        assert_eq!(heroes, 1, "{rules:?}: one player is one hero");
+        assert_eq!(hosted.session().map(|s| s.map().id), Some(map));
+        drop((hosted, server));
+    }
 }
 
 /// The gold of a client's own seat, as its view tells.
@@ -1327,26 +1310,14 @@ fn a_local_lobby_with_cheats_enabled_is_a_cheat_match() {
     assert!(!menu.view().host_cheats, "off unless asked for");
     menu.act(Act::ToggleCheats);
     assert!(menu.view().host_cheats);
-    for (at, value) in [free_port().to_string(), "1".to_owned()]
-        .into_iter()
-        .enumerate()
-    {
-        menu.act(Act::Focus(at));
-        while !menu.form.value(at).is_empty() {
-            menu.act(Act::Erase);
-        }
-        menu.act(Act::Type(value));
+    menu.act(Act::Focus(0));
+    while !menu.form.value(0).is_empty() {
+        menu.act(Act::Erase);
     }
+    menu.act(Act::Type(free_port().to_string()));
     menu.act(Act::Host(false));
     let launch = menu.take_launch().expect("the lobby to open");
-    assert!(matches!(
-        &launch,
-        Launch::Host {
-            cheats: true,
-            players: 1,
-            ..
-        }
-    ));
+    assert!(matches!(&launch, Launch::Host { cheats: true, .. }));
     let (mut core, _server) = open_hosted(launch, &trust);
     pump_until("seated", &mut [&mut core], |c| c.my_slot.is_some());
     core.act(bota_client_core::Intent::PickHero(HeroId::SHADOW_FIEND.0));
@@ -1535,8 +1506,8 @@ fn tab_walks_the_form_and_enter_presses_the_focused_button() {
     );
 }
 
-/// The local lobby page walks as it is drawn: its port and players, CREATE, then the address
-/// to join with PLAY and WATCH below.
+/// The local lobby page walks as it is drawn: its port, CREATE, then the address to join with
+/// PLAY and WATCH below.
 #[test]
 fn tab_walks_the_local_lobby_page_in_the_order_it_is_drawn() {
     let dir = Scratch::new("tab_local");
@@ -1545,10 +1516,9 @@ fn tab_walks_the_local_lobby_page_in_the_order_it_is_drawn() {
     let at = |m: &MenuCore| (m.form.focused_field(), m.form.focused_button().cloned());
     assert_eq!(at(&alice), (Some(0), None));
     for expected in [
-        (Some(1), None),
         (None, Some(Act::Host(false))),
         (None, Some(Act::Host(true))),
-        (Some(2), None),
+        (Some(1), None),
         (None, Some(Act::Direct(false))),
         (None, Some(Act::Direct(true))),
         (Some(0), None),
@@ -1612,7 +1582,8 @@ fn a_lobby_is_made_for_the_game_mode_chosen() {
             .map(|m| (m.name.as_str(), m.chosen))
             .collect::<Vec<_>>(),
         [
-            ("1x1 Mid Only", true),
+            ("Full rules", true),
+            ("1x1 Mid Only", false),
             ("Squad", false),
             ("Practice", false)
         ],
@@ -1719,6 +1690,64 @@ fn a_match_left_early_still_leaves_its_replay() {
     assert!(matches!(alice.menu.take_launch(), Some(Launch::Replay(_))));
 }
 
+/// A new lobby is made for the full rules with ten slots, five a side; the owner choosing solo
+/// mid changes the rules and nothing else (the slots and who sits in them stay), and the host
+/// alone starts a match with exactly one hero: nobody fills the empty slots.
+#[test]
+fn a_new_lobby_is_full_rules_with_ten_slots_and_solo_mid_changes_the_rules_only() {
+    let service = service();
+    let mut alice = Player::new(Some(&service));
+    alice.register("alice");
+    alice.menu.act(Act::Go(Page::Lobbies));
+    alice.fill(&["default"]);
+    alice.menu.act(Act::CreateLobby);
+    settle(&mut [&mut alice], |p| p.menu.page() == Page::Lobby);
+    let (state, _) = alice.menu.lobby.as_ref().expect("sat in the lobby");
+    assert_eq!(
+        state.ruleset.0, "full",
+        "the full rules unless another is chosen"
+    );
+    let slots = |lobby: &super::view::LobbyView| {
+        lobby
+            .teams
+            .iter()
+            .map(|t| (t.name.clone(), t.slots.len()))
+            .collect::<Vec<_>>()
+    };
+    let full = [("RADIANT".to_owned(), 5), ("DIRE".to_owned(), 5)];
+    assert_eq!(slots(&lobby_of(&alice)), full);
+
+    let solo = lobby_of(&alice)
+        .settings
+        .modes
+        .iter()
+        .find(|m| m.name == "1x1 Mid Only")
+        .expect("offered")
+        .id
+        .clone();
+    alice.menu.act(Act::ConfigureMode(solo));
+    settle(&mut [&mut alice], |p| {
+        lobby_of(p).settings.mode == "1x1 Mid Only"
+    });
+    assert_eq!(slots(&lobby_of(&alice)), full, "ten slots under solo mid");
+    assert_eq!(
+        seat_of(&lobby_of(&alice), "alice"),
+        Some((0, "RADIANT".to_owned()))
+    );
+
+    alice.menu.act(Act::ReadyLobby(true));
+    settle(&mut [&mut alice], |p| p.menu.page() == Page::Game);
+    let mut game = open(launch_of(&mut alice), &alice.trust);
+    let deadline = Instant::now() + Duration::from_secs(PATIENCE);
+    while game.view().is_none_or(|v| v.tick <= 5) {
+        assert!(Instant::now() < deadline, "the match never began");
+        play_step(&mut game, HeroId::SHADOW_FIEND);
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    let view = game.view().expect("the match runs");
+    assert_eq!(view.players.len(), 1, "the host alone: no bot, no dummy");
+}
+
 /// A game server of another wire than the client's is not used, and the menu says which it
 /// looked at; the real one, named, is found.
 #[cfg(unix)]
@@ -1790,7 +1819,7 @@ fn squad_lobby() -> (Service, Player, Player) {
     (service, alice, bob)
 }
 
-/// The slot grid, as the ruleset numbers it team by team: a member sits in a free slot at once,
+/// The slot grid, ten slots five a side under any ruleset: a member sits in a free slot at once,
 /// the owner moves another member and removes one, a member may look on instead.
 #[test]
 fn members_sit_in_slots_the_owner_moves_and_kicks_and_anyone_may_look_on() {
@@ -1801,19 +1830,20 @@ fn members_sit_in_slots_the_owner_moves_and_kicks_and_anyone_may_look_on() {
             .iter()
             .map(|t| (t.name.as_str(), t.slots.len()))
             .collect::<Vec<_>>(),
-        [("RADIANT", 2), ("DIRE", 2)]
+        [("RADIANT", 5), ("DIRE", 5)]
     );
+    // The two meet across the sides.
     assert_eq!(seat_of(&grid, "alice"), Some((0, "RADIANT".to_owned())));
-    assert_eq!(seat_of(&grid, "bob"), Some((1, "RADIANT".to_owned())));
+    assert_eq!(seat_of(&grid, "bob"), Some((5, "DIRE".to_owned())));
 
     // A free slot of the other side, at once; both menus see it.
-    bob.menu.act(Act::LobbySlot(3));
+    bob.menu.act(Act::LobbySlot(8));
     settle(&mut [&mut alice, &mut bob], |p| {
-        seat_of(&lobby_of(p), "bob") == Some((3, "DIRE".to_owned()))
+        seat_of(&lobby_of(p), "bob") == Some((8, "DIRE".to_owned()))
     });
     // The owner picks bob to move and clicks another slot.
     alice.menu.act(Act::MoveMember(
-        lobby_of(&alice).teams[1].slots[1]
+        lobby_of(&alice).teams[1].slots[3]
             .who
             .as_ref()
             .expect("bob")
@@ -1822,7 +1852,7 @@ fn members_sit_in_slots_the_owner_moves_and_kicks_and_anyone_may_look_on() {
     assert!(lobby_of(&alice).moving.is_some());
     alice.menu.act(Act::LobbySlot(2));
     settle(&mut [&mut alice, &mut bob], |p| {
-        seat_of(&lobby_of(p), "bob") == Some((2, "DIRE".to_owned()))
+        seat_of(&lobby_of(p), "bob") == Some((2, "RADIANT".to_owned()))
     });
     assert!(lobby_of(&alice).moving.is_none(), "the move was done");
     // A member who looks on holds no slot.
@@ -1867,11 +1897,11 @@ fn the_owner_changes_the_lobbys_settings_and_the_others_only_read_them() {
     settle(&mut [&mut alice, &mut bob], |p| {
         !lobby_of(p).settings.locked
     });
-    // Practice is a 1v1: the member past its slots now looks on.
-    settle(&mut [&mut bob], |p| {
-        lobby_of(p).spectators.iter().any(|m| m.name == "bob")
-            || seat_of(&lobby_of(p), "bob").is_some()
-    });
+    // The rules changed and the slots did not: bob keeps his.
+    assert_eq!(
+        seat_of(&lobby_of(&bob), "bob"),
+        Some((5, "DIRE".to_owned()))
+    );
     // The audience the owner sits in cannot shut him out; a member cannot change anything.
     alice.menu.act(Act::ConfigureAudience(
         bota_radovid::proto::Audience::BotsOnly,

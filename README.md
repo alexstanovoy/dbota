@@ -67,17 +67,13 @@ signed out and with no service reachable. There, you play under the profile name
 - **LOCAL LOBBY**: below its own lobby, a game server's address to join, `host:port` or `tcp://` (TCP),
   `ws://` or `wss://`, with no service at all (PLAY, or WATCH). Plain TCP to another machine is
   unprotected, and dbota says so once per host. Above it, a game hosted on this machine, as Dota's local lobby: dbota starts `bota_server`
-  (beside `dbota`, else `$BOTA_SERVER`, else on the `PATH`) for so many players on a port, for this machine
-  alone or (CREATE FOR THE LAN) for the local network too, in plain text, and seats you. The others join by
-  this machine's address under LOCAL LOBBY, which the hero screen and the LOCAL LOBBY page show while a
-  seat is open. The server ends when you quit dbota. The seats nobody else takes (**Empty seats**) stay
-  OPEN, or take the server's IDLE DUMMY (a hero that stands at its fountain and never acts, to practise or
-  test alone), or a BOT: the program set as the bot command (SETTINGS, Options, LOCAL LOBBY; `bot_command`
-  in the settings file), run once for each such seat when the lobby opens and ended with it. It is run
-  without a shell: its words split at blanks, `'…'` and `"…"` keep blanks inside, `{address}` becomes the
-  game's address (`127.0.0.1:port`), and the seat's key comes in the environment as `BOTA_SEAT_KEY` (64 hex
-  digits; never an argument, which other users see in the process list). Any program that speaks bota's
-  protocol can be the bot, for example `bot_command = /path/to/mybot --server {address}`.
+  (beside `dbota`, else `$BOTA_SERVER`, else on the `PATH`) on a port, for this machine
+  alone or (CREATE FOR THE LAN) for the local network too, in plain text, and seats you. The lobby has ten
+  seats, five a side, whatever its **Rules**: FULL RULES (the whole map, the default) or SOLO MID change the
+  rules only. The others join by this machine's address under LOCAL LOBBY, which the hero screen and the
+  LOCAL LOBBY page show while a seat is open. The match starts once every player seated is ready, with
+  exactly those players: nothing fills the empty seats, so one player is one hero. The server ends when you
+  quit dbota.
 - **DEMO HERO**: Dota's Demo Hero: the hero chosen alone on our map, with every cheat and Dota's demo
   panel at the side (spawn an allied or enemy hero, creep waves, neutrals, levels, gold, items, free
   spells, invulnerability, respawn, teleport, reset, the enemies' level, creep spawning, night, all

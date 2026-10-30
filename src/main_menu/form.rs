@@ -94,10 +94,9 @@ fn items_of(kind: FormKind, fields: usize) -> Vec<Item> {
         FormKind::Room => buttons(vec![Act::ConfigurePassword]),
         FormKind::Host => vec![
             Item::Field(0),
-            Item::Field(1),
             Item::Button(Act::Host(false)),
             Item::Button(Act::Host(true)),
-            Item::Field(2),
+            Item::Field(1),
             Item::Button(Act::Direct(false)),
             Item::Button(Act::Direct(true)),
         ],
@@ -153,7 +152,6 @@ impl Form {
                 };
                 vec![
                     Field::new("Port", &or(&prefs.host_port, DEFAULT_PORT), false, 5),
-                    Field::new("Players", &or(&prefs.host_players, "2"), false, 2),
                     Field::new("Address", &prefs.direct, false, 200),
                 ]
             }

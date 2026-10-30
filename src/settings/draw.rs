@@ -312,14 +312,11 @@ fn labelled(kit: &mut Kit, body: Entity, label: &str) -> Entity {
     row
 }
 
-/// A typed line (the profile name, the bot command): a field a click types
-/// into, Enter or Escape done. The bot command, long, takes a row of its own
-/// with what it is given under it.
+/// A typed line (the profile name): a field a click types into, Enter or Escape done.
 fn name_row(kit: &mut Kit, body: Entity, setting: TextSetting) {
     let row = labelled(kit, body, setting.label());
     let width = match setting {
         TextSetting::Name => px(240),
-        TextSetting::BotCommand => px(420),
     };
     let field = kit
         .commands
@@ -349,23 +346,6 @@ fn name_row(kit: &mut Kit, body: Entity, setting: TextSetting) {
         Pickable::IGNORE,
         ChildOf(field),
     ));
-    if setting == TextSetting::BotCommand {
-        let note = kit.node(
-            body,
-            Node {
-                width: px(ROW_WIDTH),
-                ..default()
-            },
-        );
-        kit.text(
-            note,
-            "A local lobby runs it once for each seat left to a bot, without a shell: \
-             {address} becomes the game's address (127.0.0.1:port), and the seat's key is in \
-             the environment as BOTA_SEAT_KEY.",
-            13.0,
-            ui::INK_DIM,
-        );
-    }
 }
 
 /// A checkbox and its label: a click anywhere on the row turns it.

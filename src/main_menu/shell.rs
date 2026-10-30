@@ -169,7 +169,6 @@ fn drive(
     }
     core.set_profile_name(&settings.name);
     core.set_replay_policy(settings.replays);
-    core.set_bot_command(&settings.bot_command);
     core.update();
     let mut opened_here = |core: &mut MenuCore, opened: std::io::Result<Session>| match opened {
         Ok(opened) => {

@@ -17,11 +17,10 @@ pub struct Prefs {
     pub login: String,
     /// The last direct address.
     pub direct: String,
-    /// The port and the seats of the last local lobby.
+    /// The port of the last local lobby.
     pub host_port: String,
-    pub host_players: String,
-    /// What the last local lobby's empty seats took.
-    pub host_fill: super::core::SeatFill,
+    /// The rules of the last local lobby; full ones until another is chosen.
+    pub host_rules: super::core::LocalRules,
     /// Whether the local lobby's host enables cheats.
     pub host_cheats: bool,
     /// Hosts the player was told plain TCP is unprotected for, and went on.
@@ -46,9 +45,8 @@ impl Prefs {
                 "login" => prefs.login = value,
                 "direct" => prefs.direct = value,
                 "host_port" => prefs.host_port = value,
-                "host_players" => prefs.host_players = value,
-                "host_fill" => {
-                    prefs.host_fill = super::core::SeatFill::named(&value).unwrap_or_default()
+                "host_rules" => {
+                    prefs.host_rules = super::core::LocalRules::named(&value).unwrap_or_default()
                 }
                 "host_cheats" => prefs.host_cheats = value == "true",
                 "plain_ok" if prefs.plain_ok.len() < MAX_PLAIN_HOSTS => prefs.plain_ok.push(value),
@@ -65,14 +63,13 @@ impl Prefs {
             ("login", &self.login),
             ("direct", &self.direct),
             ("host_port", &self.host_port),
-            ("host_players", &self.host_players),
         ] {
             if !value.is_empty() {
                 out.push_str(&format!("{name} = {value}\n"));
             }
         }
-        if self.host_fill != super::core::SeatFill::Open {
-            out.push_str(&format!("host_fill = {}\n", self.host_fill.name()));
+        if self.host_rules != super::core::LocalRules::default() {
+            out.push_str(&format!("host_rules = {}\n", self.host_rules.name()));
         }
         if self.host_cheats {
             out.push_str("host_cheats = true\n");

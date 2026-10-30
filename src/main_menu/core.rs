@@ -144,8 +144,8 @@ pub enum Act {
     LeaveGame,
     /// Takes the seat of the game left again.
     Reconnect,
-    /// What a local lobby's empty seats take.
-    Fill(SeatFill),
+    /// The rules a new local lobby plays by.
+    Rules(LocalRules),
     /// The game mode a new lobby is of.
     LobbyMode(RulesetId),
     /// In a lobby: sits in a slot (or none, looking on); the member being moved is put there.
@@ -160,39 +160,47 @@ pub enum Act {
     ConfigurePassword,
 }
 
-/// What a local lobby's seats other than one's own take, as Dota's lobby
-/// leaves a slot open or puts a bot in it.
+/// The rules a local lobby plays by. They choose the map and nothing else: the lobby has
+/// [`LOCAL_SEATS`] seats under any of them, and the match has the players seated.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum SeatFill {
-    /// Left to whoever joins by the address.
+pub enum LocalRules {
+    /// The whole map, played to the Ancient.
     #[default]
-    Open,
-    /// The bot command of the settings, once for each seat.
-    Bot,
+    Full,
+    /// The mid-only map: two lives a side or the first tower, twenty minutes.
+    SoloMid,
 }
 
-impl SeatFill {
-    pub const ALL: [SeatFill; 2] = [SeatFill::Open, SeatFill::Bot];
+impl LocalRules {
+    pub const ALL: [LocalRules; 2] = [LocalRules::Full, LocalRules::SoloMid];
 
     /// Its name in the menu's remembered choices.
     pub fn name(self) -> &'static str {
         match self {
-            SeatFill::Open => "open",
-            SeatFill::Bot => "bot",
+            LocalRules::Full => "full",
+            LocalRules::SoloMid => "solo_mid",
         }
     }
 
-    pub fn named(name: &str) -> Option<SeatFill> {
-        SeatFill::ALL.into_iter().find(|f| f.name() == name)
+    pub fn named(name: &str) -> Option<LocalRules> {
+        LocalRules::ALL.into_iter().find(|r| r.name() == name)
     }
-}
 
-/// How a local lobby's game server fills the seats left: as [`SeatFill`],
-/// with the bot's command line.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum Fill {
-    Open,
-    Bot(String),
+    /// What the menu calls them.
+    pub fn label(self) -> &'static str {
+        match self {
+            LocalRules::Full => "FULL RULES",
+            LocalRules::SoloMid => "SOLO MID",
+        }
+    }
+
+    /// The map of the game server's `--map`.
+    pub fn map(self) -> bota_proto::MapId {
+        match self {
+            LocalRules::Full => bota_proto::MapId(0),
+            LocalRules::SoloMid => bota_core::MAP2_ID,
+        }
+    }
 }
 
 /// What the menu asks before it goes on, as Dota's popups.
@@ -236,7 +244,6 @@ pub enum Launch {
     /// `lan`), and take a seat in it as a direct game.
     Host {
         port: u16,
-        players: u8,
         lan: bool,
         name: String,
         key: Option<Claim>,
@@ -247,8 +254,8 @@ pub enum Launch {
         /// The server binary, when not looked for (`$BOTA_SERVER`, beside
         /// this client, the `PATH`).
         server: Option<std::path::PathBuf>,
-        /// What the seats other than one's own take.
-        fill: Fill,
+        /// The rules of the lobby; its seats are [`LOCAL_SEATS`] under any.
+        rules: LocalRules,
     },
     /// Dota's Demo Hero: a game server started on this machine alone with
     /// cheats on, seating this player alone with the hero chosen.
@@ -484,8 +491,6 @@ pub struct MenuCore {
     pub(super) ladder: Vec<LadderRow>,
     /// The game server a local lobby starts, when not looked for.
     pub(super) server_binary: Option<std::path::PathBuf>,
-    /// The settings' bot command, which a local lobby's bot seats run.
-    bot_command: String,
     /// The address others type to join the local lobby this client hosts.
     hosted_at: Option<String>,
     /// The hero of the last Demo Hero started.
@@ -586,7 +591,6 @@ impl MenuCore {
             account_profile: None,
             ladder: Vec::new(),
             server_binary: None,
-            bot_command: String::new(),
             hosted_at: None,
             demo: None,
             tried_service: false,
@@ -603,13 +607,6 @@ impl MenuCore {
         core
     }
 
-    /// The settings' bot command, which a local lobby runs for its bot seats.
-    pub fn set_bot_command(&mut self, command: &str) {
-        if self.bot_command != command {
-            command.clone_into(&mut self.bot_command);
-        }
-    }
-
     /// The address others type under LOCAL LOBBY to join the local
     /// lobby this client hosts, while it is the game on screen.
     pub fn hosted_at(&self) -> Option<&str> {
@@ -618,10 +615,9 @@ impl MenuCore {
             .filter(|_| self.on_screen == Some(OnScreen::Local))
     }
 
-    /// What a local lobby's empty seats take, and whether a bot command is
-    /// set for them to take a bot.
-    pub(super) fn fill_choice(&self) -> (SeatFill, bool) {
-        (self.prefs.host_fill, !self.bot_command.trim().is_empty())
+    /// The rules a new local lobby is made for.
+    pub(super) fn rules_choice(&self) -> LocalRules {
+        self.prefs.host_rules
     }
 
     /// The settings' profile name, which local and direct games announce.
@@ -1435,8 +1431,8 @@ impl MenuCore {
                 let typed = self.form.take_secret(0);
                 self.configure(None, None, Some((!typed.is_empty()).then_some(typed)));
             }
-            Act::Fill(fill) => {
-                self.prefs.host_fill = fill;
+            Act::Rules(rules) => {
+                self.prefs.host_rules = rules;
                 self.save_prefs();
             }
             Act::ToggleCheats => {
@@ -1725,7 +1721,7 @@ impl MenuCore {
     /// Plain TCP to another machine carries everything in clear, so the
     /// player is told once per host before it goes.
     fn direct(&mut self, spectate: bool, anyway: bool) {
-        let address = self.form.value(2).trim().to_owned();
+        let address = self.form.value(1).trim().to_owned();
         let name = self.name();
         let host = match super::address::check(&address) {
             Ok(host) => host,
@@ -1765,45 +1761,22 @@ impl MenuCore {
             .parse::<u16>()
             .ok()
             .filter(|p| *p >= 1024);
-        let players = self
-            .form
-            .value(1)
-            .trim()
-            .parse::<u8>()
-            .ok()
-            .filter(|n| (1..=MAX_LOCAL_PLAYERS).contains(n));
-        let (Some(port), Some(players)) = (port, players) else {
-            self.tell(
-                format!("A port is 1024 to 65535, and players 1 to {MAX_LOCAL_PLAYERS}"),
-                true,
-            );
+        let Some(port) = port else {
+            self.tell("A port is 1024 to 65535".to_owned(), true);
             return;
         };
-        let fill = match self.prefs.host_fill {
-            SeatFill::Open => Fill::Open,
-            SeatFill::Bot if self.bot_command.trim().is_empty() => {
-                self.tell(
-                    "No bot command is set: SETTINGS, Options, LOCAL LOBBY".to_owned(),
-                    true,
-                );
-                return;
-            }
-            SeatFill::Bot => Fill::Bot(self.bot_command.trim().to_owned()),
-        };
         self.prefs.host_port = port.to_string();
-        self.prefs.host_players = players.to_string();
         self.save_prefs();
         let replay = self.recording_path("local");
         self.start(Launch::Host {
             port,
-            players,
             lan,
             name: self.name(),
             key: Claim::draw(),
             cheats: self.prefs.host_cheats,
             replay,
             server: self.server_binary.clone(),
-            fill,
+            rules: self.prefs.host_rules,
         });
     }
 }
@@ -1855,6 +1828,10 @@ pub fn error_text(error: &Error) -> String {
         Error::LobbyFull => "The lobby is full".to_owned(),
         Error::LobbyNotFull => "Waiting for more players".to_owned(),
         Error::NotAllReady => "Waiting for the other players to be ready".to_owned(),
+        Error::TeamTooLarge => {
+            "These rules take fewer players on a team than are seated there: move some to the other team"
+                .to_owned()
+        }
         Error::ServerStopping => "The service is shutting down".to_owned(),
         other => text::line(&format!("Refused: {other:?}"), text::MESSAGE),
     }
@@ -1865,8 +1842,8 @@ pub fn clock(secs: u32) -> String {
     format!("{}:{:02}", secs / 60, secs % 60)
 }
 
-/// Seats a local lobby has at most: the map's ten.
-pub const MAX_LOCAL_PLAYERS: u8 = 10;
+/// The seats of a local lobby, whatever its rules: five a side, as the map's.
+pub const LOCAL_SEATS: u8 = 10;
 
 /// Whether a typed service address can be tried at all, or what to type
 /// instead: an empty line or a game server's `host:port` would only fail

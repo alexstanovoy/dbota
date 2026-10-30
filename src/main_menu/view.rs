@@ -8,7 +8,7 @@ use bota_radovid::proto::{
     RulesetId,
 };
 
-use super::core::{Confirm, GameKind, MenuCore, Page, SeatFill, Status, clock};
+use super::core::{Confirm, GameKind, LocalRules, MenuCore, Page, Status, clock};
 use super::form::FormKind;
 use super::text;
 
@@ -239,9 +239,8 @@ pub enum PageView {
         busy: bool,
         /// Plain TCP to this host: the notice, and a button to go on.
         plain_host: Option<String>,
-        /// A local lobby's: what its empty seats take, and whether a bot
-        /// command is set.
-        fill: Option<(SeatFill, bool)>,
+        /// A local lobby's: the rules it is to play by.
+        rules: Option<LocalRules>,
         /// The address of the local lobby this client hosts now.
         hosted_at: Option<String>,
     },
@@ -444,7 +443,7 @@ impl MenuCore {
                 fields: self.fields(),
                 busy: self.connecting() && self.page != Page::LocalLobby,
                 plain_host: self.plain_host.as_ref().map(|h| text::line(h, text::NAME)),
-                fill: (self.page == Page::LocalLobby).then(|| self.fill_choice()),
+                rules: (self.page == Page::LocalLobby).then(|| self.rules_choice()),
                 hosted_at: self.hosted_at().map(str::to_owned),
             },
             Page::Home => self.home(),
@@ -785,7 +784,7 @@ fn lobby_view(
     let me = client.and_then(|c| c.me()).map(|me| me.id);
     let elapsed = u32::try_from(at.elapsed().as_millis()).unwrap_or(u32::MAX);
     let rules = client.and_then(|c| c.rulesets().find(|r| r.id == state.ruleset));
-    let sizes: Vec<u8> = rules.map(|r| r.teams.clone()).unwrap_or_default();
+    let sizes: Vec<u8> = state.teams.clone();
     let needed = rules.map_or(usize::MAX, |r| usize::from(r.lobby_min_players));
     let owner = Some(state.owner) == me;
     let row = |m: &bota_radovid::proto::LobbyMember| MemberRow {

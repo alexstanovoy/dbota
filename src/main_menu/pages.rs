@@ -3,7 +3,7 @@
 use bevy::prelude::*;
 use bota_core::HEROES;
 
-use super::core::{Act, Page, SeatFill};
+use super::core::{Act, LocalRules, Page};
 use super::form::FormKind;
 use super::screens::{ERROR, GREEN, Kit, PLAIN, RED, tab_color, tab_of};
 use super::view::{
@@ -124,7 +124,7 @@ pub fn draw(kit: &mut Kit, root: Entity, view: &MenuView) {
             fields,
             busy,
             plain_host,
-            fill,
+            rules,
             hosted_at,
         } => {
             form_page(
@@ -134,7 +134,7 @@ pub fn draw(kit: &mut Kit, root: Entity, view: &MenuView) {
                 fields,
                 *busy,
                 plain_host.as_deref(),
-                *fill,
+                *rules,
                 hosted_at.as_deref(),
                 (*kind == FormKind::Host).then_some(view.host_cheats),
             );
@@ -315,7 +315,7 @@ fn form_page(
     fields: &[FieldView],
     busy: bool,
     plain: Option<&str>,
-    fill: Option<(SeatFill, bool)>,
+    rules: Option<LocalRules>,
     hosted_at: Option<&str>,
     cheats: Option<bool>,
 ) -> Entity {
@@ -353,7 +353,7 @@ fn form_page(
     let hosting = kind == FormKind::Host;
     // The local lobby's address is below the lobby it hosts.
     let shown = match kind {
-        FormKind::Host if hosting => 2,
+        FormKind::Host if hosting => 1,
         FormKind::Host => 0,
         _ => fields.len(),
     };
@@ -363,8 +363,8 @@ fn form_page(
     if busy {
         kit.text(card, "Connecting to the service…", 15.0, ui::GOLDEN);
     }
-    if let Some((chosen, bot_set)) = fill.filter(|_| hosting) {
-        seat_fill(kit, card, chosen, bot_set);
+    if let Some(chosen) = rules.filter(|_| hosting) {
+        local_rules(kit, card, chosen);
     }
     if let Some(at) = hosted_at.filter(|_| hosting) {
         kit.text(
@@ -405,7 +405,7 @@ fn form_page(
         }
         FormKind::Lobby | FormKind::Room | FormKind::Replay | FormKind::None => {}
     }
-    if let Some(address) = fields.get(2).filter(|_| kind == FormKind::Host) {
+    if let Some(address) = fields.get(1).filter(|_| kind == FormKind::Host) {
         kit.bold(card, "JOIN BY ADDRESS", 20.0, ui::INK);
         kit.text(
             card,
@@ -413,7 +413,7 @@ fn form_page(
             14.0,
             ui::INK_DIM,
         );
-        field_box(kit, card, 2, address);
+        field_box(kit, card, 1, address);
         let join = kit.node(
             card,
             Node {
@@ -1048,10 +1048,10 @@ fn replay_row(kit: &mut Kit, column: Entity, replay: &ReplayRow) {
         .insert(Name::new(format!("delete {name}")));
 }
 
-/// What a local lobby's empty seats take: left open, or the bot command of the settings, as
-/// Dota's lobby leaves a slot open or adds a bot to it.
-fn seat_fill(kit: &mut Kit, card: Entity, chosen: SeatFill, bot_set: bool) {
-    kit.text(card, "Empty seats", 13.0, ui::INK_DIM);
+/// The rules of the lobby about to be hosted. The ten seats are the same under either: it
+/// starts with the players seated, and nothing takes the empty ones.
+fn local_rules(kit: &mut Kit, card: Entity, chosen: LocalRules) {
+    kit.text(card, "Rules", 13.0, ui::INK_DIM);
     let row = kit.node(
         card,
         Node {
@@ -1059,21 +1059,17 @@ fn seat_fill(kit: &mut Kit, card: Entity, chosen: SeatFill, bot_set: bool) {
             ..default()
         },
     );
-    for (fill, label) in [(SeatFill::Open, "OPEN"), (SeatFill::Bot, "BOT")] {
-        let look = if fill == chosen { GREEN } else { PLAIN };
-        kit.button(row, label, Act::Fill(fill), look, 34.0);
+    for rules in LocalRules::ALL {
+        let look = if rules == chosen { GREEN } else { PLAIN };
+        kit.button(row, rules.label(), Act::Rules(rules), look, 34.0);
     }
-    let note = match chosen {
-        SeatFill::Open => "Others join by this machine's address, typed under JOIN BY ADDRESS.",
-        SeatFill::Bot if bot_set => "Each empty seat runs the bot command of the settings.",
-        SeatFill::Bot => "No bot command is set yet: SETTINGS, Options, LOCAL LOBBY.",
-    };
-    let colour = if chosen == SeatFill::Bot && !bot_set {
-        ui::GOLDEN
-    } else {
-        ui::INK_DIM
-    };
-    kit.text(card, note, 13.0, colour);
+    kit.text(
+        card,
+        "Ten seats, five a side. Others join by this machine's address, typed under JOIN BY \
+         ADDRESS; the match starts with the players ready and nobody fills the empty seats.",
+        13.0,
+        ui::INK_DIM,
+    );
 }
 
 /// Dota's lobby setting "Enable cheats", for the local lobby's host: a box

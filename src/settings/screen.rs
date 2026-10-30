@@ -30,7 +30,7 @@ pub struct Screen {
     /// taken.
     pub capturing: Option<usize>,
     pub dropdown: Option<Choice>,
-    /// The line being typed into (the profile name, the bot command).
+    /// The line being typed into (the profile name).
     pub naming: Option<TextSetting>,
     /// A modifier key pressed while capturing and nothing else yet: bound
     /// alone when it is let go first.
@@ -262,7 +262,7 @@ fn capture(
     }
 }
 
-/// Types into a line (the profile name, the bot command); Enter or Escape
+/// Types into a line (the profile name); Enter or Escape
 /// is done with it.
 fn name<'a>(
     screen: &mut Screen,
