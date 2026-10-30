@@ -229,10 +229,15 @@ pub fn plugin(app: &mut App) {
 struct RootLock(Vec3);
 
 /// Takes root motion out of the animations: the joint keeps its height.
+/// Written only where a clip moved it: a root marked changed has its whole
+/// skeleton propagated again, and an unposed unit's (see `anim::animate`)
+/// would be every frame for nothing.
 fn hold_roots(mut roots: Query<(&RootLock, &mut Transform)>) {
     for (lock, mut t) in &mut roots {
-        t.translation.x = lock.0.x;
-        t.translation.z = lock.0.z;
+        if t.translation.x != lock.0.x || t.translation.z != lock.0.z {
+            t.translation.x = lock.0.x;
+            t.translation.z = lock.0.z;
+        }
     }
 }
 
