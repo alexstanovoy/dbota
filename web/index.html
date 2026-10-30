@@ -20,15 +20,17 @@
     (<code>steamapps/common/dota 2 beta</code>). Your browser may list every file in it before it asks;
     none is read until it is needed.</p>
     <div class="row">
-      <button id="pick" type="button">Choose the Dota 2 folder</button>
-      <button id="standins" type="button" class="quiet">Play with stand-ins</button>
+      <button id="pick" type="button">Use the Dota 2 folder</button>
     </div>
-    <p class="hint" id="prepared">No Dota 2? Load an asset cache someone prepared for this version of dbota
-    (a <code>.zip</code>, or the folder it was made from). The page checks it, then copies it into this
+    <p class="hint" id="prepared">No Dota 2 on this machine? Use an asset cache someone prepared from theirs for this
+    version of dbota: a <code>.zip</code>, or the folder it was made from. The page checks it, then copies it into this
     browser's own storage: nothing is uploaded.</p>
     <div class="row">
-      <button id="loadZip" type="button">Load a prepared asset cache</button>
-      <button id="loadFolder" type="button" class="quiet">Load it from a folder</button>
+      <button id="loadZip" type="button">Use a prepared cache (.zip)</button>
+      <button id="loadFolder" type="button">Use a prepared cache (folder)</button>
+    </div>
+    <div class="row">
+      <button id="standins" type="button" class="quiet">Play with stand-ins</button>
     </div>
     <input id="folder" type="file" webkitdirectory multiple hidden>
     <input id="packZip" type="file" accept=".zip,application/zip" hidden>
@@ -48,8 +50,8 @@
     <p id="staleWhy"></p>
     <div class="row">
       <button id="reimport" type="button">Re-import from the Dota 2 folder</button>
-      <button id="loadZipStale" type="button" class="quiet">Load a prepared asset cache</button>
-      <button id="loadFolderStale" type="button" class="quiet">Load it from a folder</button>
+      <button id="loadZipStale" type="button">Use a prepared cache (.zip)</button>
+      <button id="loadFolderStale" type="button">Use a prepared cache (folder)</button>
       <button id="standinsStale" type="button" class="quiet">Play with stand-ins</button>
     </div>
   </section>

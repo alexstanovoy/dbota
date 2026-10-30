@@ -1124,6 +1124,40 @@ def refusing_zips(good_zip, scratch):
     ]
 
 
+def check_directory_picker(page):
+    """Where the browser has `showDirectoryPicker` (Chromium) the folder button uses it: a stub
+    hands the page a folder in private storage (a cache of another build), which is walked and
+    taken to the worker, and refused there with its reason."""
+    page.evaluate(
+        """async () => {
+          const root = await navigator.storage.getDirectory();
+          const top = await root.getDirectoryHandle('picked-cache', { create: true });
+          const put = async (dir, name, text) => {
+            const w = await (await dir.getFileHandle(name, { create: true })).createWritable();
+            await w.write(text); await w.close();
+          };
+          await put(top, 'stamp.txt', 'v1/rev1/0000000000000000/1/2');
+          await put(top, 'index.txt', 'dbota-cache 1 rev 1\\n');
+          await put(await top.getDirectoryHandle('hud', { create: true }), 'a.png', 'x');
+          window.showDirectoryPicker = async () => top;
+        }"""
+    )
+    page.click("#loadFolder")
+    page.wait_for_function(
+        "() => document.getElementById('status').textContent.includes('is for assets v1/rev1/0000000000000000')",
+        timeout=60000,
+    )
+    walked = page.evaluate(
+        """async () => { const g = await import('./grant.js');
+          const root = await navigator.storage.getDirectory();
+          const files = await g.filesOfPrepared(await root.getDirectoryHandle('picked-cache'));
+          await root.removeEntry('picked-cache', { recursive: true });
+          return files.map(([p]) => p).sort().join(','); }"""
+    )
+    assert walked == "picked-cache/hud/a.png,picked-cache/index.txt,picked-cache/stamp.txt", walked
+    print("the directory picker's folder is walked and refused with its reason:", page.inner_text("#status"))
+
+
 def check_prepared_page(directory, cache_zip, cache_folder):
     """A prepared asset cache (`dbota export-cache`'s zip, or the cache folder itself) is taken
     by the page with no Dota install: a cache that is not usable is refused with its reason
@@ -1163,6 +1197,7 @@ def check_prepared_page(directory, cache_zip, cache_folder):
             page.wait_for_selector("#grant:not([hidden])", timeout=20000)
             assert state() is None, f"{what}: nothing was copied"
             print(f"refused ({what}):", page.inner_text("#status"))
+        check_directory_picker(page)
         started = time.time()
         load("#loadZip", cache_zip)
         page.wait_for_selector("#progress:not([hidden]), #ready:not([hidden])", timeout=120000)
@@ -1186,6 +1221,8 @@ def check_prepared_page(directory, cache_zip, cache_folder):
         page.wait_for_selector("#ready:not([hidden])", timeout=20000)
         page.click("#remove")
         page.wait_for_selector("#grant:not([hidden])", timeout=20000)
+        # Without the directory picker (Firefox, Safari) the same button uses `<input webkitdirectory>`.
+        page.evaluate("() => { delete window.showDirectoryPicker; }")
         load("#loadFolder", cache_folder)
         page.wait_for_selector("#ready:not([hidden])", timeout=600000)
         again = state()

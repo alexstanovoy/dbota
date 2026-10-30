@@ -81,16 +81,47 @@ export function pickWithInput(input) {
   });
 }
 
-// A prepared asset cache: the .zip file or the folder picked through an `<input type=file>`.
-// Resolves with `{zip: File}` or `{files: [[path, File], ...]}` (paths as the picker names
-// them, the picked folder first), or null when the picker is dismissed or holds nothing.
-export function pickPrepared(input) {
+// A prepared asset cache's folder as `[[path, File], ...]` (paths from the picked folder, which
+// is the first part of each, as `webkitRelativePath` names them): every file below a directory
+// handle. A cache is four folders deep and a few thousand files; a folder past those bounds is
+// not one (the importer module refuses it with its reason, as it does a list of the input).
+const MAX_PREPARED_FILES = 8200;
+const MAX_PREPARED_DEPTH = 8;
+
+export async function filesOfPrepared(handle) {
+  const files = [];
+  const walk = async (dir, prefix, depth) => {
+    for await (const [name, entry] of dir.entries()) {
+      if (files.length > MAX_PREPARED_FILES) return;
+      if (entry.kind === "file") files.push([prefix + name, await entry.getFile()]);
+      else if (depth < MAX_PREPARED_DEPTH) await walk(entry, prefix + name + "/", depth + 1);
+    }
+  };
+  await walk(handle, handle.name + "/", 0);
+  return files;
+}
+
+// A prepared asset cache: the .zip file through `zipInput`, or a folder through the directory
+// picker (Chromium) or, in every other browser, `folderInput` (`<input webkitdirectory>`).
+// Resolves with `{zip: File}` or `{files: [[path, File], ...]}`, or null when the picker is
+// dismissed or holds nothing.
+export async function pickPrepared(kind, zipInput, folderInput) {
+  if (kind === "folder" && canPick()) {
+    try {
+      const files = await filesOfPrepared(await showDirectoryPicker({ id: "dbota-cache", mode: "read" }));
+      return files.length ? { files } : null;
+    } catch (e) {
+      if (e && e.name === "AbortError") return null;
+      throw e;
+    }
+  }
+  const input = kind === "folder" ? folderInput : zipInput;
   return new Promise((resolve) => {
     input.value = "";
     input.onchange = () => {
       const list = [...input.files];
       if (!list.length) return resolve(null);
-      resolve(input.webkitdirectory ? { files: list.map((f) => [f.webkitRelativePath || f.name, f]) } : { zip: list[0] });
+      resolve(kind === "folder" ? { files: list.map((f) => [f.webkitRelativePath || f.name, f]) } : { zip: list[0] });
     };
     input.oncancel = () => resolve(null);
     input.click();

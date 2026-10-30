@@ -365,8 +365,17 @@ async function main() {
   };
   $("pick").onclick = pick;
   $("again").onclick = pick;
-  for (const id of ["loadZip", "loadZipStale"]) $(id).onclick = async () => loadPrepared(await grant.pickPrepared($("packZip")));
-  for (const id of ["loadFolder", "loadFolderStale"]) $(id).onclick = async () => loadPrepared(await grant.pickPrepared($("packFolder")));
+  for (const [kind, ids] of [["zip", ["loadZip", "loadZipStale"]], ["folder", ["loadFolder", "loadFolderStale"]]]) {
+    for (const id of ids) {
+      $(id).onclick = async () => {
+        try {
+          loadPrepared(await grant.pickPrepared(kind, $("packZip"), $("packFolder")));
+        } catch (e) {
+          say("Could not read it: " + (e && e.message ? e.message : e));
+        }
+      };
+    }
+  }
   $("remove").onclick = async () => {
     await cache.remove();
     await grant.forget().catch(() => {});

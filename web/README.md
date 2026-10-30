@@ -83,8 +83,8 @@ fingerprint at its foot, the settings the client's commit too.
 
 A friend without Dota 2 plays with Dota's look from a cache that someone with the game made: `dbota import` on
 the desktop, then `dbota export-cache cache.zip` (the converted assets, 400 MB zipped; hand it only to people you
-may). The page offers "Load a prepared asset cache" (the `.zip`) and "Load it from a folder" (the cache folder as
-`dbota import` wrote it, `stamp.txt` and `index.txt` at its top) next to the Dota folder, and at the question for
+may). The page offers "Use a prepared cache (.zip)" and "Use a prepared cache (folder)" (the cache folder as
+`dbota import` wrote it, `stamp.txt` and `index.txt` at its top) next to "Use the Dota 2 folder" (the folder through `showDirectoryPicker` where the browser has it, else `<input webkitdirectory>`), and at the question for
 a re-import. A zip packed with the cache's folder around it (what a file manager makes) is read too.
 
 Everything in it is untrusted, and all of it is checked in the worker (`crates/dbota_import/src/pack.rs`, the same
@@ -138,7 +138,7 @@ made in OPFS. The native importer tests are in `crates/dbota_import/tests/import
 `--prepared-page web/out --cache-zip cache.zip --cache-folder <cache folder>` needs no install, only a cache
 `dbota export-cache` made with this build (the `smoke.py` docstring has the commands): zips that must be refused
 (another build, a path that climbs out, an index that does not match) are refused with their reasons and copy nothing;
-the real zip is copied into private storage, kept over a reload and played until the scene is drawn; the cache
+the directory picker (stubbed with a folder in private storage) is walked and its folder refused with its reason; the real zip is copied into private storage, kept over a reload and played until the scene is drawn; the cache
 folder is then loaded the same way.
 
 Two more checks need no Dota install (the page runs on stand-ins, `?assets=none`); the docstring of
