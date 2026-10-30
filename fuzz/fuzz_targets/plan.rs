@@ -31,6 +31,8 @@ fn outputs(item: &Item) -> Vec<&str> {
         | Item::Tooltips { out, .. }
         | Item::Shop { out, .. }
         | Item::Labels { out, .. }
+        | Item::Styles { out, .. }
+        | Item::Particle { out, .. }
         | Item::Portraits { out, .. } => vec![out],
         Item::World { out, layers, .. } => vec![out, layers],
         Item::Placements {
