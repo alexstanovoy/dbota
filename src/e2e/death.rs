@@ -55,10 +55,14 @@ fn grey_portrait(client: &mut Client) -> bool {
     })
 }
 
-/// The base colours of the materials one's hero's model is drawn with, part by part.
+/// The base colours of the materials one's hero's model is drawn with, part by part; none
+/// while the model is not drawn yet (a risen hero is a new unit, and its body and parts spawn
+/// frames after the snapshot that tells of it, as many as the machine's load makes them).
 fn hero_colours(client: &mut Client) -> Vec<LinearRgba> {
     let id = client.me().id;
-    let body = client.body(id).expect("drawn");
+    let Some(body) = client.body(id) else {
+        return Vec::new();
+    };
     let world = client.world_mut();
     let handles: Vec<Handle<crate::fog::FoggedMaterial>> = world
         .query::<(
@@ -110,8 +114,7 @@ fn a_hero_lies_grey_rises_selected_and_is_black_at_its_fountain() {
     client.within(patience, "the dead seat shown", grey_portrait);
     client.cheat(Cheat::Respawn);
     client.until("risen", |c| c.core().ears().is_some_and(|id| id != fallen));
-    client.frames(3);
-    assert!(!grey_portrait(&mut client), "risen, in colour");
+    client.until("risen, in colour", |c| !grey_portrait(c));
     let risen = client.me().id;
     assert_eq!(
         client.core().selected,
@@ -134,7 +137,10 @@ fn a_hero_lies_grey_rises_selected_and_is_black_at_its_fountain() {
     let black = hero_colours(&mut client);
     client.core_mut().act(Intent::MoveTo((1000.0, 1000.0)));
     client.until("touchable again", |c| !untouchable(c));
-    client.frames(3);
+    client.until("its colours back", |c| {
+        let now = hero_colours(c);
+        now.len() == black.len() && now != black
+    });
     let coloured = hero_colours(&mut client);
     assert_eq!(black.len(), coloured.len());
     for (b, c) in black.iter().zip(&coloured) {
