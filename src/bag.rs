@@ -7,8 +7,8 @@
 
 use bevy::prelude::*;
 use bota_client_core::{BAG_SLOTS, Intent};
-use bota_core::item_def;
-use bota_proto::{ItemId, ItemView, SlotId};
+use bota_core::{Counts, item_def, queued_bag};
+use bota_proto::{DispenserView, ItemId, ItemView, SlotId};
 
 use crate::select::TacticalPhase;
 use crate::session::Session;
@@ -22,7 +22,7 @@ const ARRANGE_PATIENCE: f32 = 20.0;
 /// The slots of the strategy phase: an item and its charges, or none.
 #[derive(Resource, Default, Clone, Debug, PartialEq)]
 pub struct TacticalBag {
-    slots: [Option<(u16, u16)>; SLOTS],
+    slots: [Option<Counts>; SLOTS],
 }
 
 impl TacticalBag {
@@ -31,8 +31,13 @@ impl TacticalBag {
     /// that grew) or else the first free one. Items beyond the slots are
     /// not shown: the match puts them in the stash.
     pub fn sync(&mut self, queue: &[u16]) {
-        let mut wanted = crate::strategy::slots_of(queue);
-        let mut freed: Vec<(usize, u16)> = Vec::new();
+        let queue: Vec<ItemId> = queue.iter().map(|id| ItemId(*id)).collect();
+        // The bag the match will buy, by the rule it buys by.
+        let mut wanted: Vec<Counts> = queued_bag(SlotId(0), &queue, SLOTS)
+            .into_iter()
+            .flatten()
+            .collect();
+        let mut freed: Vec<(usize, ItemId)> = Vec::new();
         for (at, slot) in self.slots.iter_mut().enumerate() {
             let Some(entry) = *slot else { continue };
             match wanted.iter().position(|w| *w == entry) {
@@ -40,7 +45,7 @@ impl TacticalBag {
                     wanted.remove(i);
                 }
                 None => {
-                    freed.push((at, entry.0));
+                    freed.push((at, entry.id));
                     *slot = None;
                 }
             }
@@ -48,7 +53,7 @@ impl TacticalBag {
         for entry in wanted {
             let at = freed
                 .iter()
-                .position(|(_, id)| *id == entry.0)
+                .position(|(_, id)| *id == entry.id)
                 .map(|i| freed.remove(i).0)
                 .or_else(|| self.slots.iter().position(Option::is_none));
             if let Some(at) = at {
@@ -59,11 +64,12 @@ impl TacticalBag {
 
     /// The item in a slot, as the real inventory's view of it.
     pub fn item(&self, slot: u8, owner: SlotId) -> Option<ItemView> {
-        let (id, count) = (*self.slots.get(usize::from(slot))?)?;
-        let charged = item_def(ItemId(id)).is_some_and(|d| d.charges > 0);
+        let held = (*self.slots.get(usize::from(slot))?)?;
+        let charged =
+            item_def(held.id).is_some_and(|d| d.charges > 0) || held.id == ItemId::WARD_DISPENSER;
         Some(ItemView {
-            id: ItemId(id),
-            charges: charged.then(|| u8::try_from(count).unwrap_or(u8::MAX)),
+            id: held.id,
+            charges: charged.then_some(held.charges),
             cooldown_left: 0,
             mute_left: 0,
             mode: None,
@@ -73,7 +79,11 @@ impl TacticalBag {
             for_sale: false,
             owner,
             selling: None,
-            dispenser: None,
+            dispenser: (held.id == ItemId::WARD_DISPENSER).then_some(DispenserView {
+                observers: held.charges,
+                sentries: held.sentries,
+                sentry_active: false,
+            }),
             locked: None,
             disassembly: None,
         })
@@ -81,7 +91,7 @@ impl TacticalBag {
 
     /// The id of the item in a slot.
     pub fn id_at(&self, slot: u8) -> Option<u16> {
-        self.slots.get(usize::from(slot))?.map(|(id, _)| id)
+        self.slots.get(usize::from(slot))?.map(|held| held.id.0)
     }
 
     /// Moves what is in one slot into another, what is there coming back.
@@ -94,7 +104,7 @@ impl TacticalBag {
 
     /// The item ids by slot.
     fn ids(&self) -> [Option<u16>; SLOTS] {
-        self.slots.map(|s| s.map(|(id, _)| id))
+        self.slots.map(|s| s.map(|held| held.id.0))
     }
 }
 
@@ -183,5 +193,50 @@ fn arrange(
             from: from as u8,
             to: to as u8,
         });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bota_proto::DispenserView;
+
+    /// The strategy phase shows the bag the match will make of the choices, by the rule the
+    /// server buys by: consumables of a kind in one stack, an Observer and a Sentry Ward one Ward
+    /// Dispenser (the owner wants the strategy phase to stack, which Dota's does not).
+    #[test]
+    fn the_strategy_bag_stacks_what_the_match_will_stack() {
+        let mut bag = TacticalBag::default();
+        let queue: Vec<u16> = [
+            ItemId::OBSERVER_WARD,
+            ItemId::TANGO,
+            ItemId::SENTRY_WARD,
+            ItemId::HEALING_SALVE,
+            ItemId::TANGO,
+            ItemId::HEALING_SALVE,
+        ]
+        .map(|item| item.0)
+        .to_vec();
+        bag.sync(&queue);
+        let shown = |slot: u8| {
+            bag.item(slot, SlotId(0))
+                .map(|item| (item.id, item.charges, item.dispenser))
+        };
+        assert_eq!(
+            shown(0),
+            Some((
+                ItemId::WARD_DISPENSER,
+                Some(1),
+                Some(DispenserView {
+                    observers: 1,
+                    sentries: 1,
+                    sentry_active: false
+                })
+            )),
+            "the two wards are one dispenser"
+        );
+        assert_eq!(shown(1), Some((ItemId::TANGO, Some(6), None)));
+        assert_eq!(shown(2), Some((ItemId::HEALING_SALVE, Some(2), None)));
+        assert_eq!(shown(3), None);
     }
 }

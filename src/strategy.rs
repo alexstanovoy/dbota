@@ -9,8 +9,7 @@
 //! takes it back, as selling it does in Dota.
 
 use bevy::prelude::*;
-use bota_core::item_def;
-use bota_proto::{ItemId, Team};
+use bota_proto::Team;
 
 use crate::dota_text::Texts;
 use crate::manifest::Manifest;
@@ -618,24 +617,4 @@ fn clock_text(
     for mut text in &mut golds {
         text.set_if_neq(Text(gold.clone()));
     }
-}
-
-/// The inventory as the choices fill it: what stacks in Dota stacks, up to
-/// its limit; the rest take a slot each, the inventory's first.
-pub fn slots_of(queued: &[u16]) -> Vec<(u16, u16)> {
-    let mut slots: Vec<(u16, u16)> = Vec::new();
-    for &id in queued {
-        let def = item_def(ItemId(id));
-        let (charges, limit) =
-            def.map_or((0, 0), |d| (u16::from(d.charges), u16::from(d.stack_limit)));
-        let stacks = limit > 0 && charges > 0;
-        match slots
-            .iter_mut()
-            .find(|(held, count)| stacks && *held == id && *count + charges <= limit)
-        {
-            Some((_, count)) => *count += charges,
-            None => slots.push((id, charges)),
-        }
-    }
-    slots
 }
