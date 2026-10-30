@@ -481,7 +481,7 @@ fn shade_veil(
     veil: Option<Res<Veil>>,
     mut images: ResMut<Assets<Image>>,
     photo: Res<crate::minimap::PhotoTaken>,
-    mut rows: Local<Vec<f32>>,
+    mut blur: Local<Blur>,
 ) {
     let Some(veil) = veil else {
         return;
@@ -493,38 +493,66 @@ fn shade_veil(
     }
     let step = (time.delta_secs() * 5.0).clamp(0.05, 1.0);
     let grid = &mut *grid;
-    let mut changed = false;
+    let n = grid.n;
+    if n == 0 {
+        return;
+    }
     let fogged = grid.on && !grid.unveiled;
-    for (shade, lit) in grid.shade.iter_mut().zip(&grid.cells) {
-        let target = if *lit || !fogged { 0.0 } else { 1.0 };
-        if (*shade - target).abs() > 0.003 {
-            *shade += (target - *shade) * step;
-            changed = true;
-        } else if *shade != target {
-            *shade = target;
-            changed = true;
+    // The rows whose shades eased this frame: only their texels (and their
+    // neighbours', through the blur) are worked out again.
+    blur.changed.clear();
+    blur.changed.resize(n, false);
+    let rows_of = grid
+        .shade
+        .chunks_exact_mut(n)
+        .zip(grid.cells.chunks_exact(n));
+    for ((shades, lit), changed) in rows_of.zip(blur.changed.iter_mut()) {
+        for (shade, lit) in shades.iter_mut().zip(lit) {
+            let target = if *lit || !fogged { 0.0 } else { 1.0 };
+            if (*shade - target).abs() > 0.003 {
+                *shade += (target - *shade) * step;
+                *changed = true;
+            } else if *shade != target {
+                *shade = target;
+                *changed = true;
+            }
         }
     }
-    if !changed {
+    if !blur.changed.contains(&true) {
         return;
+    }
+    // The first write into a new grid or a new image: every row.
+    if blur.rows.len() != n * n || blur.image != Some(veil.image.id()) {
+        blur.rows.clear();
+        blur.rows.resize(n * n, 0.0);
+        blur.changed.fill(true);
+        blur.image = Some(veil.image.id());
     }
     let Some(mut image) = images.get_mut(&veil.image) else {
         return;
     };
-    let n = grid.n;
     let Some(data) = image.data.as_mut() else {
         return;
     };
     // A tent blur over a cell either way rounds the border's cell steps:
     // 1-2-1 along each row, then along each column, the edges repeated.
+    let Blur { rows, changed, .. } = &mut *blur;
     let shade = &grid.shade;
-    rows.resize(n * n, 0.0);
-    for (row, out) in shade.chunks_exact(n).zip(rows.chunks_exact_mut(n)) {
+    for ((row, out), _) in shade
+        .chunks_exact(n)
+        .zip(rows.chunks_exact_mut(n))
+        .zip(changed.iter())
+        .filter(|(_, c)| **c)
+    {
         for x in 0..n {
             out[x] = row[x.saturating_sub(1)] + 2.0 * row[x] + row[(x + 1).min(n - 1)];
         }
     }
     for cy in 0..n {
+        let near = |y: usize| changed[y];
+        if !(near(cy) || near(cy.saturating_sub(1)) || near((cy + 1).min(n - 1))) {
+            continue;
+        }
         let line = |y: usize| &rows[y * n..(y + 1) * n];
         let (south, here, north) = (
             line(cy.saturating_sub(1)),
@@ -546,6 +574,16 @@ fn shade_veil(
     // The image keeps its GPU texture when its data changes (Bevy writes
     // the new texels into it), so the materials bound to it need no
     // touching: touching them all rebuilt every one's bind group each frame.
+}
+
+/// The veil's blur between frames: each row's sums along the row, and which
+/// rows' shades changed this frame.
+#[derive(Default)]
+struct Blur {
+    rows: Vec<f32>,
+    changed: Vec<bool>,
+    /// The image the rows were written into.
+    image: Option<AssetId<Image>>,
 }
 
 /// The fog's cast, by how far the light has turned towards night: the day
