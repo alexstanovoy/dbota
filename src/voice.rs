@@ -1,8 +1,8 @@
 //! The voices: one's hero answering its move and attack orders as in Dota
 //! (now and then, not on every click) and speaking of the runes it takes and
-//! bottles, the announcer at hero selection and
-//! when the battle begins with the horn, the rooster at daybreak and the
-//! wolf at nightfall, and the click of the interface.
+//! bottles, the announcer at hero selection and through the pre-game with the
+//! ancients' horn, the rooster at daybreak and the wolf at nightfall, and the
+//! click of the interface.
 //! Silent where the cache has no such sound.
 
 use std::sync::Arc;
@@ -16,12 +16,42 @@ use crate::manifest::{Manifest, cache_path};
 use crate::session::Session;
 use crate::talk::{LineFace, Speech};
 
-/// Tenths of a second the start horn honks before it fades (Dota's
-/// horn_radiant.wav is loud for its first 6.5 s).
-const HORN_HONK_TENTHS: u32 = 65;
-/// Tenths of a second "the battle begins" lasts (announcer_battle_begin_01,
-/// 1.65 s decoded).
-const BATTLE_BEGINS_TENTHS: u32 = 17;
+/// A cue of the pre-game: the announcer's lines and the ancients' horn.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PregameCue {
+    /// "Prepare for battle" (Dota's `IsPrepStart`, as its pre-game starts).
+    Prepare,
+    /// "Thirty seconds to battle" (`IsGameStarting30`).
+    ThirtySeconds,
+    /// Each side's ancient's horn (the map's `GameStart.RadiantAncient` and
+    /// `GameStart.DireAncient`).
+    Horn,
+    /// "The battle begins!" (`IsGameStart`).
+    BattleBegins,
+}
+
+/// The pre-game's cues and the seconds before 0:00 at which each starts:
+/// owner-confirmed current Dota timings (2026-10-30), the times one hears in
+/// a game of Dota today. The install's announcer rules name the lines; Dota
+/// no longer plays its "Ten seconds to battle" (`IsGameStarting10`). A cue
+/// that would start before the match's pre-game does (a pre-game shorter
+/// than Dota's 1:30) is left out.
+pub const PREGAME_CUES: [(PregameCue, u32); 4] = [
+    (PregameCue::Prepare, 90),
+    (PregameCue::ThirtySeconds, 30),
+    (PregameCue::Horn, 12),
+    (PregameCue::BattleBegins, 3),
+];
+
+/// Seconds after its time within which a cue still starts: a match joined,
+/// a reconnect or a replay sought past it plays none it has missed.
+const CUE_GRACE_SECS: u32 = 2;
+
+/// The pre-game cues played in the match on screen, each with the game tick
+/// it started on, whether or not they could be heard (muted, no sound
+/// device): for the tests and tools.
+#[derive(Resource, Default, Debug)]
+pub struct PregameHeard(pub Vec<(PregameCue, u32)>);
 /// Seconds a hero keeps quiet after answering an order.
 const VOICE_REST: f32 = 6.0;
 
@@ -124,6 +154,8 @@ struct Voices {
     /// The power button's own click (Dota's `ui.menu_quit`).
     quit: Lines,
     choose: Lines,
+    prepare: Lines,
+    thirty: Lines,
     begins: Lines,
     /// "Radiant's / Dire's structures are fortified."
     fortified: [Lines; 2],
@@ -143,15 +175,12 @@ struct Heard {
     rest: f32,
     /// Whether the announcer has asked for a hero.
     asked: bool,
-    /// Whether the horn has sounded.
-    begun: bool,
-    /// Whether the battle has been announced.
-    announced: bool,
 }
 
 pub fn plugin(app: &mut App) {
     app.init_resource::<Voices>()
         .init_resource::<Announcer>()
+        .init_resource::<PregameHeard>()
         .add_systems(Startup, load_menu)
         .add_systems(Update, load.run_if(crate::loading::requested))
         .add_systems(PostUpdate, report.in_set(crate::loading::Report))
@@ -181,6 +210,8 @@ fn load(mut voices: ResMut<Voices>, manifest: Res<Manifest>, server: Res<AssetSe
         }
     }
     voices.choose = Lines::load(&manifest, &server, "sound.announcer.choose_hero");
+    voices.prepare = Lines::load(&manifest, &server, "sound.announcer.battle_prepare");
+    voices.thirty = Lines::load(&manifest, &server, "sound.announcer.battle_in_30");
     voices.begins = Lines::load(&manifest, &server, "sound.announcer.battle_begins");
     voices.day = Lines::load(&manifest, &server, "sound.day");
     voices.night = Lines::load(&manifest, &server, "sound.night");
@@ -317,13 +348,15 @@ fn rune_lines(
     }
 }
 
-/// The announcer asks for a hero once the selection opens, and the horn
-/// and the announcer start the battle when the clock reaches zero.
+/// The announcer asks for a hero once the selection opens; through the pre-game the announcer
+/// and the ancients play [`PREGAME_CUES`] on the game clock, each once.
+#[allow(clippy::too_many_arguments)]
 fn announce(
     mut commands: Commands,
     session: NonSend<Session>,
     mut voices: ResMut<Voices>,
     mut announcer: ResMut<Announcer>,
+    mut played: ResMut<PregameHeard>,
     time: Res<Time>,
     settings: Res<Settings>,
     args: Res<crate::Args>,
@@ -338,37 +371,43 @@ fn announce(
             announcer.push(source, 0.9, time.elapsed_secs());
         }
     }
-    // The horn, then the announcer's "the battle begins" once the horn has
-    // honked, timed to end as the clock reaches 0:00: each on its own game
-    // tick, whatever the frame rate.
     let Some(view) = core.view() else {
+        played.0.clear();
         return;
     };
     let rate = u32::from(core.tick_rate().max(1));
-    // The whole sequence ends on 0:00: the horn, then the line, then the
-    // clock starts.
-    let line_tick = core
-        .pregame_ticks()
-        .saturating_sub(BATTLE_BEGINS_TENTHS * rate / 10);
-    let horn_tick = line_tick.saturating_sub(HORN_HONK_TENTHS * rate / 10);
-    // Not for a match joined, or a replay opened, well after the start.
+    let pregame = core.pregame_ticks();
     // On the game clock: `-startgame` brings the horn on early.
     let now = view.game_tick();
-    let fresh = |at: u32| now >= at && now < at.saturating_add(2 * rate);
-    if fresh(horn_tick) && !heard.begun {
-        heard.begun = true;
-        if !silent {
-            // The horn of one's own side's ancient.
-            let dire = core.my_team() == Some(bota_proto::Team::Dire);
-            let horn = voices.horns[usize::from(dire)].take();
-            say(&mut commands, horn, 0.8);
+    for (cue, before) in PREGAME_CUES {
+        let at = pregame.checked_sub(before * rate);
+        let due = at.is_some_and(|at| now >= at && now < at + CUE_GRACE_SECS * rate);
+        if !due || played.0.iter().any(|(c, _)| *c == cue) {
+            continue;
         }
-    }
-    if fresh(line_tick) && !heard.announced {
-        heard.announced = true;
-        if !silent {
-            let line = voices.begins.take();
-            announcer.push(line, 0.9, time.elapsed_secs());
+        played.0.push((cue, now));
+        if silent {
+            continue;
+        }
+        match cue {
+            PregameCue::Prepare => {
+                let line = voices.prepare.take();
+                announcer.push(line, 0.9, time.elapsed_secs());
+            }
+            PregameCue::ThirtySeconds => {
+                let line = voices.thirty.take();
+                announcer.push(line, 0.9, time.elapsed_secs());
+            }
+            PregameCue::Horn => {
+                // The horn of one's own side's ancient.
+                let dire = core.my_team() == Some(bota_proto::Team::Dire);
+                let horn = voices.horns[usize::from(dire)].take();
+                say(&mut commands, horn, 0.8);
+            }
+            PregameCue::BattleBegins => {
+                let line = voices.begins.take();
+                announcer.push(line, 0.9, time.elapsed_secs());
+            }
         }
     }
 }
@@ -503,7 +542,13 @@ fn report(voices: Res<Voices>, server: Res<AssetServer>, mut parts: ResMut<crate
         .heroes
         .iter()
         .flat_map(|(_, moves, attacks)| [moves, attacks])
-        .chain([&voices.choose, &voices.begins, &voices.day, &voices.night])
+        .chain([
+            &voices.choose,
+            &voices.prepare,
+            &voices.thirty,
+            &voices.begins,
+        ])
+        .chain([&voices.day, &voices.night])
         .chain(voices.fortified.iter())
         .chain(voices.horns.iter())
         .chain(voices.runes.iter().map(|(_, lines)| lines));

@@ -19,6 +19,7 @@ mod icons;
 mod items;
 mod menu;
 mod minimap;
+mod pregame;
 mod refusals;
 mod rings;
 mod runes;

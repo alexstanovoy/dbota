@@ -676,6 +676,10 @@ sound sound.ping.warning_layer sounds/ui/ping_warning_layer.vsnd_c sounds/ui/pin
 # The phoneme table every hero's face speaks with.
 phonemes face.phonemes expressions/heroes/phonemes.txt expressions/heroes/phonemes.txt
 sound sound.announcer.choose_hero sounds/vo/announcer/announcer_choose_hero.vsnd_c sounds/vo/announcer/announcer_choose_hero.mp3 event=announcer_announcer_choose_hero
+# The pre-game's lines, as the announcer's rules name them (scripts/talker/response_rules_announcer: IsPrepStart,
+# IsGameStarting30); when each plays is src/voice.rs's PREGAME_CUES
+sound sound.announcer.battle_prepare sounds/vo/announcer/announcer_battle_prepare_01.vsnd_c sounds/vo/announcer/announcer_battle_prepare_01.mp3 event=announcer_announcer_battle_prepare_01
+sound sound.announcer.battle_in_30 sounds/vo/announcer/announcer_count_battle_30.vsnd_c sounds/vo/announcer/announcer_count_battle_30.mp3 event=announcer_announcer_count_battle_30
 sound sound.announcer.battle_begins sounds/vo/announcer/announcer_battle_begin_01.vsnd_c sounds/vo/announcer/announcer_battle_begin_01.mp3 event=announcer_announcer_battle_begin_01
 # The Glyph's only sound: the announcer tells both sides which side's structures are fortified (subtitles: "Radiant's structures are fortified.")
 sound sound.announcer.fortified.radiant sounds/vo/announcer/announcer_fort_rad.vsnd_c sounds/vo/announcer/announcer_fort_rad.mp3 event=announcer_announcer_fort_rad
