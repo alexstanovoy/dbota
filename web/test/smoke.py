@@ -1096,27 +1096,30 @@ def refusing_zips(good_zip, scratch):
     scratch.mkdir(parents=True, exist_ok=True)
     with zipfile.ZipFile(good_zip) as good:
         stamp = good.read("stamp.txt")
-        index = good.read("index.txt").decode()
+        header = good.read("index.txt").decode().split("\n", 1)[0] + "\n"
         some = next(n for n in good.namelist() if n.startswith("hud/"))
-        size = good.getinfo(some).file_size
+        data = good.read(some)
+    # A small cache of one file: valid but for the one thing wrong in each.
+    index = header + f"file {len(data)} {some}\n"
 
     def make(name, members):
         path = scratch / name
         with zipfile.ZipFile(path, "w") as z:
-            for member, data in members:
-                z.writestr(member, data)
+            for member, body in members:
+                z.writestr(member, body)
         return path
 
     # The paths of an archive are written as they are, including ones no tool would make.
     climbing = index + "file 16 ../escape.png\n"
+    size = len(data)
     return [
-        ("another build", make("stale.zip", [("stamp.txt", "v1/rev1/0000000000000000/1/2"), ("index.txt", index)]),
+        ("another build", make("stale.zip", [("stamp.txt", "v1/rev1/0000000000000000/1/2"), ("index.txt", index), (some, data)]),
          "is for assets v1/rev1/0000000000000000, but this dbota needs assets"),
-        ("a path that climbs out", make("climb.zip", [("stamp.txt", stamp), ("index.txt", climbing), ("../escape.png", b"x" * 16)]),
+        ("a path that climbs out", make("climb.zip", [("stamp.txt", stamp), ("index.txt", climbing), (some, data), ("../escape.png", b"x" * 16)]),
          "holds a file it must not: ../escape.png"),
-        ("a file the index does not list", make("unlisted.zip", [("stamp.txt", stamp), ("index.txt", index), ("hud/unlisted.png", b"x")]),
+        ("a file the index does not list", make("unlisted.zip", [("stamp.txt", stamp), ("index.txt", index), (some, data), ("hud/unlisted.png", b"x")]),
          "hud/unlisted.png is in it, but index.txt does not list it"),
-        ("a size the index does not say", make("size.zip", [("stamp.txt", stamp), ("index.txt", index), (some, b"x" * (size + 1))]),
+        ("a size the index does not say", make("size.zip", [("stamp.txt", stamp), ("index.txt", index), (some, data + b"x")]),
          f"{some} is {size + 1} bytes, but index.txt says {size}"),
     ]
 
