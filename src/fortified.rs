@@ -29,7 +29,8 @@ const RADIUS: usize = 1;
 struct Worn(HashMap<EntityId, Handle>);
 
 pub fn plugin(app: &mut App) {
-    app.init_resource::<Worn>().add_systems(Update, wear);
+    app.init_resource::<Worn>()
+        .add_systems(Update, wear.after(crate::units::Placed));
 }
 
 /// The units wearing the Glyph's buff, whichever side's, and the seconds it
@@ -48,6 +49,8 @@ fn covered(view: &bota_proto::WorldView) -> Vec<(&bota_proto::UnitView, f32)> {
 /// Plays the Glyph's effect on the units under it, following them, and ends it on the rest.
 fn wear(
     session: NonSend<Session>,
+    index: Res<crate::units::UnitIndex>,
+    drawn: Query<&crate::units::Unit>,
     ground: Res<Ground>,
     library: Option<Res<Library>>,
     mut playing: ResMut<Playing>,
@@ -65,7 +68,14 @@ fn wear(
         keep
     });
     for (unit, _) in covered {
-        let (x, y) = (unit.pos.x.to_f32(), unit.pos.y.to_f32());
+        // Where the unit is drawn this frame, so the effect moves with its model.
+        let (x, y) = index
+            .0
+            .get(&unit.id)
+            .and_then(|e| drawn.get(*e).ok())
+            .map_or((unit.pos.x.to_f32(), unit.pos.y.to_f32()), |u| {
+                (u.at.x, u.at.y)
+            });
         let at = Vec3::new(x, y, ground.at(x, y));
         let handle = match worn.0.get(&unit.id) {
             Some(handle) => *handle,

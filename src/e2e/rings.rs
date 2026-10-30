@@ -94,6 +94,84 @@ fn rings_of(client: &Client, colour: Color, radius: f32) -> Vec<Vec2> {
         .collect()
 }
 
+/// Shadow Fiend walking with the show-ranges key held, at the client's frame rate between the
+/// game's ticks: on every frame his attack range ring is round where his model is drawn that
+/// frame, within a pixel, and each raze spot moves as far as his model does, frame by frame (they
+/// were placed from where the game's tick put him, a step behind at times, and jumped at each
+/// tick: Alt's circles jittered as he walked).
+#[test]
+fn the_show_ranges_circles_move_with_the_walking_hero() {
+    use bevy::time::TimeUpdateStrategy;
+    let server = Server::start(1, &[]);
+    let mut client = Client::join(&server, HeroId::SHADOW_FIEND, &["--show-ranges"]);
+    client.stand_at(MID);
+    let raze = client
+        .me()
+        .abilities
+        .iter()
+        .position(|a| a.id == bota_proto::AbilityId::RAZE_NEAR)
+        .expect("Shadowraze");
+    client.core_mut().act(Intent::Press {
+        slot: bota_client_core::Slot::Ability(raze as u8),
+        ctrl: true,
+    });
+    client.until("Shadowraze learned", |c| c.me().abilities[raze].level > 0);
+    client.follow_me();
+    let me = client.me().clone();
+    let reach = me.attack_range.to_f32() + me.bound.to_f32();
+    client
+        .world_mut()
+        .insert_resource(TimeUpdateStrategy::ManualDuration(
+            std::time::Duration::from_secs_f32(1.0 / 75.0),
+        ));
+    client
+        .core_mut()
+        .act(Intent::MoveTo((MID.0 as f32 + 2000.0, MID.1 as f32)));
+    client.until("walking", |c| {
+        c.view()
+            .unit(me.id)
+            .is_some_and(|u| u.pos.x.to_f32() > MID.0 as f32 + 50.0)
+    });
+    let raze_red = crate::overlay::SOUL_RED.with_alpha(0.7);
+    let raze_radius = bota_core::rules::RAZE_RADIUS as f32;
+    let mut last: Option<(Vec2, Vec<Vec2>)> = None;
+    for _ in 0..60 {
+        client.frames(1);
+        let body = client.body(me.id).expect("drawn");
+        let at = client
+            .world()
+            .get::<crate::units::Unit>(body)
+            .expect("a unit")
+            .at;
+        let attack = rings_of(&client, Color::WHITE.with_alpha(0.6), reach);
+        assert_eq!(attack.len(), 1, "one attack range ring");
+        let (ring, model) = (
+            client
+                .screen_of((attack[0].x, attack[0].y))
+                .expect("on screen"),
+            client.screen_of((at.x, at.y)).expect("on screen"),
+        );
+        assert!(
+            ring.distance(model) < 1.0,
+            "ring {ring} round the model {model}"
+        );
+        let mut razes = rings_of(&client, raze_red, raze_radius);
+        assert_eq!(razes.len(), 3, "three raze spots");
+        razes.sort_by(|a, b| a.distance(at).total_cmp(&b.distance(at)));
+        if let Some((was, spots)) = &last {
+            let moved = at - *was;
+            for (now, then) in razes.iter().zip(spots) {
+                let step = *now - *then;
+                assert!(
+                    (step - moved).length() < 0.5,
+                    "a raze spot stepped {step}, the model {moved}"
+                );
+            }
+        }
+        last = Some((at, razes));
+    }
+}
+
 /// Blood Grenade taken up to throw, the pointer moving over the ground near the hero: on every
 /// frame the circle of the ground it would splash (its area, from the game's data) is round the
 /// very point under the pointer, within a pixel, as Dota draws it (it was a small mark of a

@@ -112,7 +112,7 @@ pub fn fresh(core: &Core, last: &mut Option<Heard>) -> Vec<PingKind> {
 }
 
 pub fn plugin(app: &mut App) {
-    app.add_systems(Update, draw);
+    app.add_systems(Update, draw.after(crate::units::Placed));
 }
 
 /// The ping binding pressed this frame, a warning before a plain ping.

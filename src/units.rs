@@ -193,6 +193,12 @@ const HERO_LIFT: f32 = 1200.0;
 /// Seconds a dead unit is shown falling at most.
 const FALL_SECONDS: f32 = 1.6;
 
+/// The frame's placing of every unit drawn (`Unit::at`, `Unit::facing` and the root's
+/// transform): what is drawn at a unit (rings, ranges, the effects it wears) reads its place
+/// after it, so it moves with the model in the same frame.
+#[derive(SystemSet, Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct Placed;
+
 pub fn plugin(app: &mut App) {
     app.init_resource::<UnitIndex>()
         .init_resource::<ReplacedScenes>()
@@ -211,7 +217,7 @@ pub fn plugin(app: &mut App) {
             (
                 build_graphs,
                 count_replaced_scenes,
-                sync_units,
+                sync_units.in_set(Placed),
                 fall,
                 bind_wearables,
             )

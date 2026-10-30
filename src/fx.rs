@@ -18,7 +18,7 @@ use crate::manifest::{At, Feed, Fx, Manifest, Trigger};
 use crate::map::Ground;
 use crate::particles::{Handle, Library, Playing};
 use crate::session::Session;
-use crate::units::{Attachments, Dying, UnitIndex};
+use crate::units::{Attachments, Dying, Unit, UnitIndex};
 
 /// The control points a bound particle is given: where it plays, and what a line's `cp1=` feeds.
 const PLACE: usize = 0;
@@ -36,7 +36,7 @@ struct Worn(HashMap<(EntityId, usize), Option<Handle>>);
 pub fn plugin(app: &mut App) {
     app.init_resource::<Heard>()
         .init_resource::<Worn>()
-        .add_systems(Update, (told, worn));
+        .add_systems(Update, (told, worn.after(crate::units::Placed)));
 }
 
 /// A point of the sim as a point of the ground, in the world's frame.
@@ -217,12 +217,13 @@ fn begin(
     handle
 }
 
-/// The units drawn: by their handle, whether they are falling, and where their models carry
-/// their hit locations.
+/// The units drawn: by their handle, whether they are falling, where each is drawn this frame
+/// and where their models carry their hit locations.
 #[derive(bevy::ecs::system::SystemParam)]
 struct Bodies<'w, 's> {
     index: Res<'w, UnitIndex>,
     dying: Query<'w, 's, (), With<Dying>>,
+    drawn: Query<'w, 's, &'static Unit>,
     attachments: Query<'w, 's, &'static Attachments>,
     places: Query<'w, 's, &'static GlobalTransform>,
 }
@@ -297,7 +298,17 @@ fn worn(
         .map(|u| (u.id, u.pos, u.true_sight_radius.to_f32(), Some(u), None));
     let lying = runes().map(|r| (r.id, r.pos, 0.0, None, Some(r)));
     for (id, pos, sight, unit, rune) in units.chain(lying) {
-        let at = on_ground(&ground, pos);
+        // Where a unit is drawn this frame, so what it wears moves with its model; a rune lies
+        // where it is.
+        let at = bodies
+            .index
+            .0
+            .get(&id)
+            .and_then(|e| bodies.drawn.get(*e).ok())
+            .map_or_else(
+                || on_ground(&ground, pos),
+                |u| Vec3::new(u.at.x, ground.at(u.at.x, u.at.y), -u.at.y),
+            );
         for (rule, fx) in &rules {
             let holds = match (unit, rune) {
                 (Some(unit), _) => wears(fx, unit, &stage.manifest),

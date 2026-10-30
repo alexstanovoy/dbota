@@ -83,7 +83,17 @@ struct Flying {
 pub fn plugin(app: &mut App) {
     app.init_resource::<Flying>()
         .add_systems(Startup, make_art)
-        .add_systems(Update, (missiles, bursts, casts, souls, level_ups, deaths));
+        .add_systems(
+            Update,
+            (
+                missiles,
+                bursts,
+                casts,
+                souls,
+                level_ups.after(crate::units::Placed),
+                deaths,
+            ),
+        );
 }
 
 fn glow(color: Color) -> StandardMaterial {
@@ -597,6 +607,8 @@ fn bursts(
 /// Dota's level up about a hero whenever it gains a level, following it while it plays.
 fn level_ups(
     session: NonSend<Session>,
+    index: Res<UnitIndex>,
+    drawn: Query<&Unit>,
     ground: Res<Ground>,
     library: Option<Res<Library>>,
     mut playing: ResMut<Playing>,
@@ -606,9 +618,16 @@ fn level_ups(
     let Some(view) = core.view() else {
         return;
     };
+    // Where the hero is drawn this frame, so the effect moves with its model.
     let on_ground = |unit: &bota_proto::UnitView| {
-        let (x, y) = (unit.pos.x.to_f32(), unit.pos.y.to_f32());
-        Vec3::new(x, ground.at(x, y), -y)
+        let at = index
+            .0
+            .get(&unit.id)
+            .and_then(|e| drawn.get(*e).ok())
+            .map_or(Vec2::new(unit.pos.x.to_f32(), unit.pos.y.to_f32()), |u| {
+                u.at
+            });
+        Vec3::new(at.x, ground.at(at.x, at.y), -at.y)
     };
     for event in &core.told {
         let EventKind::LevelUp { unit, level } = event else {

@@ -38,7 +38,7 @@ const ARCANE: Color = Color::srgb(0.45, 0.85, 1.0);
 const FLAG_HEIGHT: f32 = 90.0;
 /// How far a queued order's pennant reaches out from its pole.
 const FLAG_WIDTH: f32 = 40.0;
-const SOUL_RED: Color = Color::srgb(1.0, 0.25, 0.2);
+pub(crate) const SOUL_RED: Color = Color::srgb(1.0, 0.25, 0.2);
 const SOUL_VIOLET: Color = Color::srgb(0.72, 0.42, 1.0);
 
 /// Range and radius rings drawn this frame, for the visual check: none
@@ -286,7 +286,7 @@ fn own_ranges(gizmos: &mut Gizmos, ctx: &Ctx<'_, '_, '_>, me: &UnitView) {
             continue;
         }
         let a = 0.7;
-        let spot = raze_spot(me, which);
+        let spot = raze_spot(me, body, which);
         ring(
             gizmos,
             ctx,
@@ -298,10 +298,18 @@ fn own_ranges(gizmos: &mut Gizmos, ctx: &Ctx<'_, '_, '_>, me: &UnitView) {
     }
 }
 
-/// Where raze `which` lands from the caster, as the server lands it.
-fn raze_spot(caster: &UnitView, which: usize) -> (f32, f32) {
-    let at = raze_landing(caster.pos, caster.facing, which);
-    (at.x.to_f32(), at.y.to_f32())
+/// Where raze `which` lands from the caster as it is drawn (`body`): the server's landing
+/// from where the caster stands in the view, carried with the caster's drawn place and turned
+/// by its drawn turn since, so the spot moves with the model rather than by ticks.
+fn raze_spot(caster: &UnitView, body: &Unit, which: usize) -> (f32, f32) {
+    let landing = raze_landing(caster.pos, caster.facing, which);
+    let offset = Vec2::new(
+        (landing.x - caster.pos.x).to_f32(),
+        (landing.y - caster.pos.y).to_f32(),
+    );
+    let turned = body.facing - bota_client_core::radians(caster.facing);
+    let spot = body.at + Vec2::from_angle(turned).rotate(offset);
+    (spot.x, spot.y)
 }
 
 /// The reach of every enemy tower the watched hero is near, solid when the
@@ -444,7 +452,7 @@ fn casts(gizmos: &mut Gizmos, ctx: &Ctx<'_, '_, '_>) {
         match ability.map_or(Telegraph::None, |id| art_of(id).telegraph) {
             Telegraph::Raze { reach } => {
                 let k = (elapsed / point).clamp(0.0, 1.0);
-                let spot = raze_spot(u, reach);
+                let spot = raze_spot(u, body, reach);
                 ring(gizmos, ctx, spot, RAZE_RADIUS, SOUL_RED, false);
                 for f in [0.25, 0.5, 0.75, 1.0] {
                     if f <= k {
