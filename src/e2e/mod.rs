@@ -21,6 +21,7 @@ mod minimap;
 mod refusals;
 mod rings;
 mod runes;
+mod soundscape;
 mod start;
 mod strategy;
 mod trees;

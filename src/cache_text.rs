@@ -1,5 +1,5 @@
 //! The asset cache's small text files as the client reads them: where the map puts its trees
-//! and buildings, its lighting by day and by night, and the portrait framings. Any program of
+//! and buildings, its lighting by day and by night, its soundscapes, and the portrait framings. Any program of
 //! the user's may write the cache, so a line that does not read whole, or holds a number that
 //! is not finite, is no line; the lists are capped by their callers. Plain numbers only, no
 //! engine types: the fuzz targets take this file as it is.
@@ -226,6 +226,113 @@ pub fn ambient(text: &str, max: usize) -> Vec<AmbientLine> {
         .collect()
 }
 
+/// A soundscape the map places (`map/mid/soundscapes.txt`): its name, where it is (Dota
+/// coordinates), how far it is heard and the seconds it takes to fade in or out.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ScapeLine {
+    pub name: String,
+    pub at: [f32; 3],
+    pub radius: f32,
+    pub fade: f32,
+}
+
+/// A sound a soundscape plays: a loop, or one of its waves now and then (every `every` seconds,
+/// drawn in the range); its volume and pitch (percent) drawn in their ranges, where it sounds
+/// (Dota coordinates; everywhere when none) and its sound level in dB (0: none given).
+#[derive(Clone, Debug, PartialEq)]
+pub struct ScapeSound {
+    pub scape: String,
+    pub looped: bool,
+    pub volume: [f32; 2],
+    pub pitch: [f32; 2],
+    pub every: [f32; 2],
+    pub at: Option<[f32; 3]>,
+    pub db: f32,
+    pub waves: Vec<String>,
+}
+
+/// Waves one random sound picks among, at most.
+pub const MAX_WAVES: usize = 16;
+
+/// `lo,hi` (or one number for both) within `[min, max]`, `lo <= hi`.
+fn range(word: &str, min: f32, max: f32) -> Option<[f32; 2]> {
+    let (lo, hi) = word.split_once(',').unwrap_or((word, word));
+    let [lo, hi] = [number(lo)?, number(hi)?];
+    (min <= lo && lo <= hi && hi <= max).then_some([lo, hi])
+}
+
+/// A place `x,y,z`, or none for `-`.
+fn place(word: &str) -> Option<Option<[f32; 3]>> {
+    if word == "-" {
+        return Some(None);
+    }
+    let words: Vec<&str> = word.split(',').collect();
+    numbers::<3>(&words).map(Some)
+}
+
+/// A wave's path in the cache: relative, of plain names, a `.wav`.
+fn wave(word: &str) -> Option<String> {
+    let plain = word.split('/').all(|part| {
+        !part.is_empty()
+            && part != ".."
+            && part
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.'))
+    });
+    (plain && word.len() <= 256 && word.ends_with(".wav")).then(|| word.to_owned())
+}
+
+/// The soundscapes and their sounds of `soundscapes.txt`, of its first `max` lines: `scape
+/// <name> x y z radius fade`, `loop <scape> volume pitch <x,y,z|-> db wave` and `random <scape>
+/// vol_min,vol_max pitch_min,pitch_max time_min,time_max <x,y,z|-> db wave...`.
+pub fn soundscapes(text: &str, max: usize) -> (Vec<ScapeLine>, Vec<ScapeSound>) {
+    let mut scapes = Vec::new();
+    let mut sounds = Vec::new();
+    for w in lines(text, max) {
+        match w.as_slice() {
+            ["scape", name, rest @ ..] => {
+                let Some([x, y, z, radius, fade]) = numbers::<5>(rest) else {
+                    continue;
+                };
+                if radius > 0.0 && (0.0..=60.0).contains(&fade) {
+                    scapes.push(ScapeLine {
+                        name: (*name).to_owned(),
+                        at: [x, y, z],
+                        radius,
+                        fade,
+                    });
+                }
+            }
+            ["loop", scape, volume, pitch, at, db, path] => {
+                sounds.extend(sound(scape, true, [volume, pitch, "1", at, db], &[path]));
+            }
+            ["random", scape, volume, pitch, every, at, db, paths @ ..] => {
+                sounds.extend(sound(scape, false, [volume, pitch, every, at, db], paths));
+            }
+            _ => {}
+        }
+    }
+    (scapes, sounds)
+}
+
+/// One sound line's sound: its volume, pitch, period, place and level, and its waves.
+fn sound(scape: &str, looped: bool, w: [&str; 5], paths: &[&str]) -> Option<ScapeSound> {
+    let [volume, pitch, every, at, db] = w;
+    let waves: Vec<String> = paths.iter().filter_map(|p| wave(p)).collect();
+    let db = number(db).filter(|db| (0.0..=150.0).contains(db))?;
+    (!waves.is_empty() && waves.len() <= MAX_WAVES).then_some(())?;
+    Some(ScapeSound {
+        scape: scape.to_owned(),
+        looped,
+        volume: range(volume, 0.0, 4.0)?,
+        pitch: range(pitch, 1.0, 400.0)?,
+        every: range(every, 0.05, 3600.0)?,
+        at: place(at)?,
+        db,
+        waves,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -256,5 +363,16 @@ mod tests {
         let placed = ambient(placed, 16);
         assert_eq!(placed.len(), 2);
         assert_eq!(placed[1].data, Some((10, [1.0, 0.0, 0.0])));
+        let scapes = "scape day 1 2 3 16000 3\nscape bad 1 2 NaN 16000 3\n\
+            loop day 0.5 100 1,2,3 81 a/x.wav\nloop day NaN 100 - 0 a/x.wav\n\
+            random day 0.7,1 95,105 6,9 - 90 a/b.wav ../c.wav\nrandom day 1,0.5 100 6 - 0 a/b.wav\n";
+        let (scapes, sounds) = soundscapes(scapes, 16);
+        assert_eq!(scapes.len(), 1);
+        assert_eq!(sounds.len(), 2);
+        assert_eq!(
+            sounds[1].waves,
+            ["a/b.wav"],
+            "a wave out of the cache is no wave"
+        );
     }
 }

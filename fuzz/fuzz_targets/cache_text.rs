@@ -1,5 +1,6 @@
 //! The cache's small text files as the client reads them: the map's trees and buildings, its
-//! lighting and the portrait framings. Every number read is finite. No input panics.
+//! lighting, its soundscapes and the portrait framings. Every number read is finite. No input
+//! panics.
 #![no_main]
 
 #[path = "../../src/cache_text.rs"]
@@ -30,6 +31,16 @@ fuzz_target!(|data: &[u8]| {
             assert!(cp <= cache_text::MAX_CONTROL_POINT);
             finite(&value);
         }
+    }
+    let (scapes, sounds) = cache_text::soundscapes(text, 4096);
+    for s in scapes {
+        finite(&s.at);
+        assert!(s.radius > 0.0 && s.fade >= 0.0);
+    }
+    for s in sounds {
+        finite(&[s.volume, s.pitch, s.every].concat());
+        assert!(s.volume[0] <= s.volume[1] && s.every[0] > 0.0);
+        assert!(!s.waves.is_empty() && s.waves.len() <= cache_text::MAX_WAVES);
     }
     for line in text.lines() {
         if let Some(f) = cache_text::framing(line) {

@@ -86,6 +86,7 @@ mod session;
 mod settings;
 mod shop;
 mod sound;
+mod soundscape;
 mod stats;
 mod strategy;
 mod synth;
@@ -662,6 +663,7 @@ fn client_plugins(app: &mut App) {
             item_menu::plugin,
             icon_mips::plugin,
             ambient::plugin,
+            soundscape::plugin,
         ))
         .add_plugins((
             fortified::plugin,
