@@ -99,16 +99,16 @@ impl<S: Slice> ZipContainer<S> {
         })
     }
 
-    fn inflate(&self, member: &Member, entry: &Entry, data: &[u8]) -> Result<Vec<u8>, PackError> {
+    fn inflate(&self, member: &Member, entry: &Entry, data: Vec<u8>) -> Result<Vec<u8>, PackError> {
         if member.method == STORED {
-            return Ok(data.to_vec());
+            return Ok(data);
         }
         if entry.size == 0 {
             return Ok(Vec::new());
         }
         let size =
             usize::try_from(entry.size).map_err(|_| PackError::TooBig(shown(&entry.path)))?;
-        miniz_oxide::inflate::decompress_to_vec_with_limit(data, size).map_err(|e| {
+        miniz_oxide::inflate::decompress_to_vec_with_limit(&data, size).map_err(|e| {
             invalid(format!(
                 "member {} does not inflate: {:?}",
                 shown(&entry.path),
@@ -276,7 +276,7 @@ impl<S: Slice> Container for ZipContainer<S> {
             return Err(invalid(format!("has {} past its end", shown(&entry.path))));
         }
         let data = read(&self.slice, start, member.packed)?;
-        let bytes = self.inflate(member, entry, &data)?;
+        let bytes = self.inflate(member, entry, data)?;
         if bytes.len() as u64 != entry.size || crc32fast::hash(&bytes) != member.crc {
             return Err(invalid(format!("holds {} damaged", shown(&entry.path))));
         }

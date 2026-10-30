@@ -10,6 +10,9 @@
 //! lack `texture-compression-bc`) the reader hands them on decoded to plain
 //! channels.
 //!
+//! A model (glTF or GLB) is let through only when it names no image inside itself and no file
+//! but plain ones next to it (`gltf_file`): Bevy decodes an embedded image with no limits.
+//!
 //! Either way textures (PNG and KTX2 files) are let through only while the
 //! ones decoded before them have reached the GPU, a budget of decoded bytes
 //! at a time: loads finish far faster than a frame takes them in while the
@@ -33,6 +36,7 @@ use bevy::{
     prelude::*,
 };
 
+use crate::gltf_file;
 use crate::texture_file::{HEAD_BYTES, decoded_size};
 
 /// Decoded texture bytes let through at once, besides the one under way:
@@ -42,6 +46,9 @@ const DECODE_BUDGET: usize = if cfg!(target_arch = "wasm32") {
 } else {
     192 << 20
 };
+/// Longest model file read (the importer writes the map's glTF, 15 MB, as the largest).
+#[cfg(not(target_arch = "wasm32"))]
+const MAX_MODEL: u64 = 64 << 20;
 /// Frames without a texture arriving after which the budget lets every
 /// texture through: a load that never reports back must not stall the rest.
 const STALL_FRAMES: u32 = 120;
@@ -273,6 +280,19 @@ impl CacheReader {
         })
     }
 
+    /// Whether the file at `path` is a model, which is read whole and looked into.
+    fn is_model(path: &Path) -> bool {
+        path.extension().is_some_and(|e| e == "glb" || e == "gltf")
+    }
+
+    /// Refuses a model that names what the cache's models never do (see [`gltf_file`]).
+    fn vet_model(path: &Path, bytes: &[u8]) -> Result<(), AssetReaderError> {
+        gltf_file::check(bytes).map_err(|why| {
+            let why = format!("{}: {why}", path.display());
+            AssetReaderError::Io(std::io::Error::other(why).into())
+        })
+    }
+
     /// Waits until a texture file fits the decode budget, and refuses one
     /// whose header no decoder may be trusted with.
     async fn admit(&self, path: &Path, head: &[u8]) -> Result<(), AssetReaderError> {
@@ -308,6 +328,24 @@ impl AssetReader for CacheReader {
                 decoded,
             )));
         }
+        if Self::is_model(path) {
+            // Read whole, as the loader would: the file is the model's own bytes, vetted.
+            let mut bytes = Vec::new();
+            (&mut file).take(MAX_MODEL + 1).read_to_end(&mut bytes)?;
+            if bytes.len() as u64 > MAX_MODEL {
+                return Err(AssetReaderError::Io(
+                    std::io::Error::other(format!(
+                        "{}: more than {MAX_MODEL} bytes",
+                        path.display()
+                    ))
+                    .into(),
+                ));
+            }
+            Self::vet_model(path, &bytes)?;
+            return Ok(desktop::Served::Memory(bevy::asset::io::VecReader::new(
+                bytes,
+            )));
+        }
         let mut head = [0u8; HEAD_BYTES];
         let read = file.read(&mut head)?;
         file.seek(SeekFrom::Start(0))?;
@@ -329,6 +367,9 @@ impl AssetReader for CacheReader {
         };
         if self.decodes(path) {
             return Ok(browser::Bytes(self.decoded(path, &bytes).await?));
+        }
+        if Self::is_model(path) {
+            Self::vet_model(path, &bytes)?;
         }
         self.admit(path, &bytes[..bytes.len().min(HEAD_BYTES)])
             .await?;
@@ -404,6 +445,46 @@ mod tests {
         std::fs::write(root.join("small.json"), b"{}").unwrap();
         assert_eq!(read_small(&root, "huge.json"), None);
         assert_eq!(read_small(&root, "small.json"), Some(b"{}".to_vec()));
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    /// A model with an image inside it is refused by the reader the asset server loads the cache
+    /// through, before Bevy decodes the image (with no limits); a model with its image next to
+    /// it is served.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn a_model_with_an_embedded_image_is_not_served() {
+        let root = std::env::temp_dir().join(format!("dbota-model-{}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        let model = |json: &str| {
+            let mut file = b"glTF".to_vec();
+            file.extend(2u32.to_le_bytes());
+            file.extend((20 + json.len() as u32).to_le_bytes());
+            file.extend((json.len() as u32).to_le_bytes());
+            file.extend(0x4E4F_534Au32.to_le_bytes());
+            file.extend(json.as_bytes());
+            file
+        };
+        let padded = |json: &str| format!("{json}{}", " ".repeat((4 - json.len() % 4) % 4));
+        let embedded = padded(r#"{"images":[{"bufferView":0,"mimeType":"image/png"}]}"#);
+        let beside = padded(r#"{"images":[{"uri":"head.ktx2"}]}"#);
+        std::fs::write(root.join("embedded.glb"), model(&embedded)).unwrap();
+        std::fs::write(root.join("beside.glb"), model(&beside)).unwrap();
+        let reader = CacheReader::new(
+            root.clone(),
+            DecodeBudget::default(),
+            BlockTextures::default(),
+        );
+
+        let refused = bevy::tasks::block_on(reader.read(Path::new("embedded.glb")));
+        let served = bevy::tasks::block_on(reader.read(Path::new("beside.glb")));
+
+        let why = refused.err().expect("refused").to_string();
+        assert!(
+            why.contains("embedded.glb: an image inside the model"),
+            "{why}"
+        );
+        assert!(served.is_ok());
         std::fs::remove_dir_all(&root).unwrap();
     }
 }

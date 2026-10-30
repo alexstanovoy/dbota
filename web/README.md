@@ -6,7 +6,8 @@ wasm, drawn through WebGPU or WebGL2: see "Graphics" below). **Valve's files nev
 folder is read inside the tab with ranged reads, the converted copy lives in the browser's own
 storage (the Origin Private File System), the page has no code that sends it anywhere, and its
 Content-Security-Policy only allows connections to its own origin (game sockets are added when the page gets networking).
-"Play with stand-ins" is always offered; the client then draws its built-in shapes.
+"Play with stand-ins" is always offered; the client then draws its built-in shapes. A player without Dota 2 can load a
+prepared asset cache instead (see "Prepared caches").
 
 ## Parts
 
@@ -15,8 +16,8 @@ Content-Security-Policy only allows connections to its own origin (game sockets 
 | `index.html`, `page.css` | the gate (folder question, progress, ready) over the client's canvas; the CSP |
 | `boot.js` | a classic script that runs where the modules cannot: shows "Loading" at once and the one failure screen (`dbota_boot.fail`), for a browser too old, a part that does not load, code that cannot run, or a page that has not started in 30 s. Every later wait (storage, the graphics adapter, the download of the game, which shows its progress and ends when nothing arrives for 30 s) has a limit in `main.js` and ends on a screen that names the stage |
 | `main.js` | the flow: stored copy? folder grant, import progress, update check, delete, start the client that suits the browser; a start that fails ends in a message saying what to do |
-| `grant.js` | the folder grant: `showDirectoryPicker` (Chromium, the handle is remembered in IndexedDB so the copy can be checked for staleness without asking again), else `<input webkitdirectory>`; only `*.vpk` of `game/dota` and `maps/` are kept, whatever folder level was picked |
-| `import_worker.js` | a module Web Worker: runs `dbota_import` (wasm), writes each item's files with synchronous OPFS handles, stops on request |
+| `grant.js` | the prepared-cache picker (a `.zip` or a folder through `<input type=file>`), and the folder grant: `showDirectoryPicker` (Chromium, the handle is remembered in IndexedDB so the copy can be checked for staleness without asking again), else `<input webkitdirectory>`; only `*.vpk` of `game/dota` and `maps/` are kept, whatever folder level was picked |
+| `import_worker.js` | a module Web Worker: runs `dbota_import` (wasm), writes each item's files with synchronous OPFS handles, stops on request; also checks and copies a prepared cache |
 | `cache.js` | the OPFS cache: layout, reads, index and stamp, what is published to the client (`globalThis.dbota_cache`) |
 | `replays.js` | the player's own matches' replays, kept by the client in OPFS (a folder `dbota-replays` of its own, apart from the asset copy), else IndexedDB; published as `globalThis.dbota_replays` (list/read/write/remove, the index, a download, a file picker); the client decides what is kept and for how long (`src/replays`) |
 | `report.js` | `?report`: console lines to the page's server, for local debugging |
@@ -78,6 +79,24 @@ copy of another fingerprint anyway, draws stand-ins. A copy of this fingerprint 
 "Update from the Dota 2 folder" appears if the install changed. The gate shows the build's asset
 fingerprint at its foot, the settings the client's commit too.
 
+## Prepared caches
+
+A friend without Dota 2 plays with Dota's look from a cache that someone with the game made: `dbota import` on
+the desktop, then `dbota export-cache cache.zip` (the converted assets, 400 MB zipped; hand it only to people you
+may). The page offers "Load a prepared asset cache" (the `.zip`) and "Load it from a folder" (the cache folder as
+`dbota import` wrote it, `stamp.txt` and `index.txt` at its top) next to the Dota folder, and at the question for
+a re-import. A zip packed with the cache's folder around it (what a file manager makes) is read too.
+
+Everything in it is untrusted, and all of it is checked in the worker (`crates/dbota_import/src/pack.rs`, the same
+code as `dbota import-cache`) before the copy in private storage is touched: the stamp must start with this
+build's asset fingerprint, else the page says which assets the cache is for and which this dbota needs; `index.txt`
+must list exactly the files present with their sizes; every path must be plain (no `..`, no absolute path, no
+backslash), in one of the cache's folders with an extension the importer makes there, within its size limit; a zip
+has no encryption, links, zip64 or overlapping members, and each member is inflated into no more than its stated
+size and must match its CRC-32. Then the files are copied with progress and the index and stamp last; a file that
+turns out damaged ends the copy and removes the half-made one. The copy is published to the client as an import
+is, and nothing is requested from anywhere.
+
 ## What is imported
 
 Everything the manifest lists: the models (static ones, wearables and the animated ones with their
@@ -116,6 +135,11 @@ folder logic (`webkitdirectory` lists, `showDirectoryPicker` folder levels) agai
 made in OPFS. The native importer tests are in `crates/dbota_import/tests/import.rs`.
 
 `--replays-page DIR --server BOTA_SERVER --radovid RADOVID` (a build without a replay, any assets: `?assets=none`) plays a match through a real radovid that serves the page itself and keeps replays (`[artifacts] save_replays = true`): a practice lobby is entered alone and the page closed; the game server ends, and the next visit signs in with the kept session, fetches the replay it was away for and stores it in OPFS; the REPLAYS tab lists it and plays it, DOWNLOAD .BRP hands over the same bytes and OPEN A .BRP FILE plays the file again. `--shots` saves a screenshot of each step to `temp/smoke-replays` (the click positions in the script are for a 1280x720 page).
+`--prepared-page web/out --cache-zip cache.zip --cache-folder <cache folder>` needs no install, only a cache
+`dbota export-cache` made with this build (the `smoke.py` docstring has the commands): zips that must be refused
+(another build, a path that climbs out, an index that does not match) are refused with their reasons and copy nothing;
+the real zip is copied into private storage, kept over a reload and played until the scene is drawn; the cache
+folder is then loaded the same way.
 
 Two more checks need no Dota install (the page runs on stand-ins, `?assets=none`); the docstring of
 `smoke.py` has the build commands. `--replay-page` opens a build with a Zstandard-packed replay built in

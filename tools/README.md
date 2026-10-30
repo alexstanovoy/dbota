@@ -22,6 +22,24 @@ and older folders can be deleted. Caches up to version 6 were exported by a sepa
 script that kept its own tool in `~/.cache/dbota/tools`; that folder is no longer used and can be
 deleted. An asset that does not convert is reported and drawn as a stand-in.
 
+## A cache for someone without Dota 2
+
+A player without the game takes a cache that someone with it prepared, instead of importing:
+
+```sh
+target/release/dbota export-cache cache.zip       # on the machine with Dota 2: the cache in place as a zip (~400 MB)
+target/release/dbota import-cache cache.zip       # on the other: the zip, or the cache folder itself, in place of the cache
+```
+
+`import-cache` (and the menu's USE A PREPARED CACHE, which asks for the path; and the browser page's "Load a
+prepared asset cache", see `../web/README.md`) checks the whole cache before it installs anything, as it is
+untrusted: its stamp must be this build's asset fingerprint (a cache of another version is refused with the
+assets it is for and the ones this dbota needs, so both sides must run the same build), `index.txt` must list
+exactly the files present with their sizes, and every path must be plain, in one of the cache's folders, with
+an extension and a size the importer makes. The cache is installed beside the old one and swapped in when
+whole; a refused one leaves the old cache as it was. The zip holds Valve's converted assets: hand it only to
+people you may. `DBOTA_ASSETS` and `--cache-dir` name the cache to take it into, as for `import`.
+
 ## Files
 
 | file | role |

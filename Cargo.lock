@@ -2547,6 +2547,7 @@ dependencies = [
  "parley",
  "radovid",
  "rodio",
+ "serde",
  "serde_json",
  "tokio",
  "wasm-bindgen",

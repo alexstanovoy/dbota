@@ -209,6 +209,105 @@ fn assets_of_this_version_play() {
     );
 }
 
+/// A prepared cache of this build as a folder and as a zip (the real cache's small files, the
+/// importer's own stamp), in `scratch`.
+fn prepared(scratch: &Scratch) -> (PathBuf, PathBuf) {
+    let files = common::prepared::small_cache();
+    let (folder, zip) = (scratch.0.join("friend"), scratch.0.join("friend.zip"));
+    common::prepared::write_folder(&folder, &files);
+    common::prepared::write_zip(&zip, files.iter().map(|(n, b)| (n.as_str(), b.as_slice())));
+    (folder, zip)
+}
+
+/// A cache taken with `dbota import-cache`, from a folder or from a zip, is a cache of this
+/// build: no question at the start, the replay plays.
+#[test]
+#[ignore = "draws on the GPU in a headless compositor: tools/visual_check.sh runs it"]
+fn assets_taken_from_a_prepared_cache_play() {
+    let scratch = Scratch::new("prepared-play");
+    let (folder, zip) = prepared(&scratch);
+    let replay = replay();
+    let script = "await:game;wait:2;key:Escape;await:menu;click:disconnect;await:popup;click:ok;\
+                  await:nopopup;await:button:quit;key:Escape;await:popup;click:ok";
+    for (what, from) in [("a folder", folder), ("a zip", zip)] {
+        let cache = scratch.0.join(format!("assets-{}", what.replace(' ', "-")));
+        let taken = common::prepared::dbota(&cache, "import-cache", &from);
+        assert!(
+            taken.status.success(),
+            "{what}: {}",
+            common::prepared::said(&taken)
+        );
+        let args = [
+            "--cache-dir",
+            cache.to_str().expect("a UTF-8 path"),
+            "--replay",
+            replay.to_str().expect("a UTF-8 path"),
+            "--pov",
+            "0",
+        ];
+        played(what, run(&scratch, &args, script), script);
+        assert!(
+            !logged(&scratch).contains("out of date"),
+            "{what}: {}",
+            logged(&scratch)
+        );
+    }
+}
+
+/// With no asset cache the menu offers a prepared one: its button asks for a path, typed or
+/// pasted into the field, and Enter takes the cache there (a restart reads it).
+#[test]
+#[ignore = "draws on the GPU in a headless compositor: tools/visual_check.sh runs it"]
+fn the_menu_takes_a_prepared_cache_from_a_typed_path() {
+    let scratch = Scratch::new("prepared-menu");
+    let (_, zip) = prepared(&scratch);
+    let cache = scratch.0.join("assets");
+    let script = format!(
+        "await:button:use a prepared cache;click:use a prepared cache;await:button:load;\
+         text:{};shot:prepared-path.png;key:Enter;await:button:restart dbota;shot:prepared-loaded.png;\
+         key:Escape;await:popup;click:ok",
+        zip.display()
+    );
+    let args = ["--cache-dir", cache.to_str().expect("a UTF-8 path")];
+
+    played("the typed path", run(&scratch, &args, &script), &script);
+
+    let files = common::prepared::small_cache();
+    assert_eq!(common::prepared::read_folder(&cache), files);
+}
+
+/// A cache of another build typed into the field is refused, the terminal says which build it
+/// is for, and the menu offers the ways again; nothing is installed.
+#[test]
+#[ignore = "draws on the GPU in a headless compositor: tools/visual_check.sh runs it"]
+fn the_menu_refuses_a_prepared_cache_of_another_build() {
+    let scratch = Scratch::new("prepared-refused");
+    let mut files = common::prepared::small_cache();
+    files.insert(
+        "stamp.txt".to_owned(),
+        b"v1/rev1/0000000000000000/1/2".to_vec(),
+    );
+    let zip = scratch.0.join("stale.zip");
+    common::prepared::write_zip(&zip, files.iter().map(|(n, b)| (n.as_str(), b.as_slice())));
+    let cache = scratch.0.join("assets");
+    let script = format!(
+        "await:button:use a prepared cache;click:use a prepared cache;await:button:load;\
+         text:{};key:Enter;await:nobutton:cancel;await:button:use a prepared cache;\
+         shot:prepared-refused.png;key:Escape;await:popup;click:ok",
+        zip.display()
+    );
+    let args = ["--cache-dir", cache.to_str().expect("a UTF-8 path")];
+
+    played("a refused cache", run(&scratch, &args, &script), &script);
+
+    let log = logged(&scratch);
+    assert!(
+        log.contains("is for assets v1/rev1/0000000000000000"),
+        "{log}"
+    );
+    assert!(!cache.exists(), "a refused cache was installed");
+}
+
 #[test]
 #[ignore = "draws on the GPU in a headless compositor: tools/visual_check.sh runs it"]
 fn a_game_is_disconnected_from_and_rejoined() {

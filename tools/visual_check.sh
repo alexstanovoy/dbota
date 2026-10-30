@@ -133,7 +133,8 @@ fi
 # The way out: Escape on the menu asks to quit and OK ends the client with exit code 0; Escape in
 # a live game opens the dashboard, DISCONNECT leaves for the menu and RECONNECT takes the seat
 # again; a seat that LEAVES GAME ends the match as its loss and the other seat wins; a replay is left for the
-# menu; Demo Hero plays a hero with every cheat. One test at a time: each opens a window of its own
+# menu; Demo Hero plays a hero with every cheat; a prepared asset cache (a folder, a zip) is taken by
+# `dbota import-cache` and by a path typed into the menu, and a cache of another build is refused. One test at a time: each opens a window of its own
 # (in this check's compositor).
 if VISUAL_REPLAY="$(realpath "$replay")" DBOTA_QUIT_SHOTS="$out/quit" cargo test --release --quiet \
     --manifest-path "$here/Cargo.toml" --test menu_quit -- --ignored --test-threads 1 \

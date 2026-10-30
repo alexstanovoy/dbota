@@ -43,6 +43,7 @@ mod fog;
 mod fortified;
 mod framestats;
 mod fx;
+mod gltf_file;
 mod glyph;
 mod heap;
 mod hud;

@@ -32,7 +32,8 @@ Dota 2 install. Bots don't need it.
    It converts the models, map, textures, sounds and texts dbota uses into `~/.cache/dbota/v<N>`
    (`N` is `assets-manifest/version`; each version keeps a folder of its own, so older and newer
    clients share a machine). Valve's files stay in that cache for personal use; they are never part
-   of this repository. Without it dbota draws stand-ins. See `tools/README.md`; a
+   of this repository. Without it dbota draws stand-ins. Without Dota 2, take a cache someone with it
+   prepared (`dbota import-cache <folder|zip>`, made by their `dbota export-cache`): see `tools/README.md`; a
    `~/.cache/dbota/tools` folder left by the old export script can be deleted.
 
    The cache is stamped with the asset fingerprint of the dbota that made it (the cache version,

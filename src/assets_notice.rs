@@ -165,7 +165,9 @@ fn start(
 fn start_load(notice: &mut Notice, path: &str, cache: std::path::PathBuf) {
     let from = expand(path.trim());
     start(notice, Way::Load, move |progress| {
-        crate::import::load_cache(&from, &cache, progress).map(|()| true)
+        crate::import::load_cache(&from, &cache, progress)
+            .map(|()| true)
+            .inspect_err(|why| eprintln!("dbota import-cache: {why}"))
     });
 }
 
