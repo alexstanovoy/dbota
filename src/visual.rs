@@ -67,10 +67,16 @@ pub const HERO_DETAIL_MIN: f32 = 12.0;
 pub const JOINT_REACH: f32 = 400.0;
 
 /// The sharpest straight step the river's shading may take, in sRGB
-/// luminance (0 to 255) above the steps beside it. Water pieces each reading
-/// the normal map their own way stepped 3.3 to 7.0 (windowed and at 4K, by
-/// day and by night); one surface steps 1.5 to 1.8.
+/// luminance (0 to 255) above the steps beside it, all along a band. Water
+/// pieces each reading the normal map their own way stepped 3.3 to 7.0
+/// (windowed and at 4K, by day and by night; measured over whole bands); one
+/// surface steps 1.2 to 1.5 as [`water`] measures now (over whole bands, the
+/// foam rings drifting over it made 2.3 to 2.8, as seams do).
 pub const WATER_STEP_MAX: f32 = 2.5;
+/// The pieces a band of the river's measure is cut into along its length: a step counts only as
+/// far as every piece steps the same way. The foam rings that drift over the river are
+/// measured as steps of 2.3 to 2.8 across a whole band, but of 1.2 to 1.5 across its pieces.
+pub const WATER_PIECES: usize = 6;
 /// The share of the measured middle of the screen that must be water.
 pub const WATER_SHARE_MIN: f32 = 0.6;
 
@@ -1097,10 +1103,12 @@ fn clicks(c: &Checks) -> Option<(u32, Vec<String>)> {
 
 /// The river, unfogged, in the middle of the screen: no straight sharp step
 /// in its shading. Water is told by its colour, near the middle's median
-/// colour; in bands across the screen each column's (and each row's) mean
-/// over the water, and how far one step of that profile rises above the
-/// steps beside it: a seam between two pieces drawn apart steps the same way
-/// all along, ripples and the light's gradients are smooth.
+/// colour; in bands across the screen, each cut along its length into
+/// [`WATER_PIECES`], each column's (and each row's) mean over the water in a
+/// piece, and how far one step of the profiles, all of the pieces going the
+/// same way, rises above the steps beside it: a seam between two pieces drawn
+/// apart steps the same way all along, ripples and the light's gradients are
+/// smooth, and a foam ring or a speck steps the piece it is in alone.
 fn water(shot: &Shot, report: &mut impl FnMut(&str, bool, String)) {
     let (x0, y0) = (shot.w * 3 / 10, shot.h * 2 / 9);
     let (w, h) = (shot.w * 2 / 5, shot.h * 5 / 9);
@@ -1153,23 +1161,29 @@ fn water(shot: &Shot, report: &mut impl FnMut(&str, bool, String)) {
         return;
     }
     let band = (h / 18).max(8);
+    let piece = band / WATER_PIECES;
     let mut sharpest = (0.0f32, String::new());
     for (across, along, name) in [(w, h, "vertical"), (h, w, "horizontal")] {
         for start in (0..=along.saturating_sub(band)).step_by(band / 2) {
-            let profile: Vec<Option<f32>> = (0..across)
-                .map(|i| {
-                    let (mut sum, mut n) = (0.0, 0);
-                    for j in start..start + band {
-                        let (x, y) = if name == "vertical" { (i, j) } else { (j, i) };
-                        if let Some(l) = lum[y * w + x] {
-                            sum += l;
-                            n += 1;
-                        }
-                    }
-                    (n * 10 > band * 9).then(|| sum / n as f32)
+            // The band cut along its length into pieces, each its own profile across.
+            let pieces: Vec<Vec<Option<f32>>> = (0..WATER_PIECES)
+                .map(|p| {
+                    (0..across)
+                        .map(|i| {
+                            let (mut sum, mut n) = (0.0, 0);
+                            for j in start + p * piece..start + (p + 1) * piece {
+                                let (x, y) = if name == "vertical" { (i, j) } else { (j, i) };
+                                if let Some(l) = lum[y * w + x] {
+                                    sum += l;
+                                    n += 1;
+                                }
+                            }
+                            (n * 10 > piece * 9).then(|| sum / n as f32)
+                        })
+                        .collect()
                 })
                 .collect();
-            if let Some((rise, i)) = sharpest_step(&profile)
+            if let Some((rise, i)) = sharpest_step(&straight_steps(&pieces))
                 && rise > sharpest.0
             {
                 sharpest = (
@@ -1199,16 +1213,89 @@ fn water(shot: &Shot, report: &mut impl FnMut(&str, bool, String)) {
 /// left out.
 const WATER_COLOUR_REACH: f32 = 14.0;
 
-/// The step of a profile that rises most above the two steps beside it, and
-/// where; steps next to a gap (not water) are not measured.
-fn sharpest_step(profile: &[Option<f32>]) -> Option<(f32, usize)> {
-    let steps: Vec<Option<f32>> = profile
-        .windows(2)
-        .map(|p| Some((p[1]? - p[0]?).abs()))
-        .collect();
+/// The steps of the profiles of the pieces of one band that all go the same way, each the
+/// smallest of the pieces' (a gap in any piece leaves a gap), none where the pieces disagree.
+/// A seam is a step along the whole band; a foam ring, a lily pad's edge or a speck of light
+/// steps one piece of the band alone, and the ripples' bands are smooth.
+fn straight_steps(pieces: &[Vec<Option<f32>>]) -> Vec<Option<f32>> {
+    let Some(first) = pieces.first() else {
+        return Vec::new();
+    };
+    (0..first.len().saturating_sub(1))
+        .map(|i| {
+            let mut steps = Vec::new();
+            for piece in pieces {
+                steps.push(piece[i + 1]? - piece[i]?);
+            }
+            let up = steps.iter().all(|s| *s > 0.0);
+            let down = steps.iter().all(|s| *s < 0.0);
+            Some(if up || down {
+                steps.iter().map(|s| s.abs()).fold(f32::MAX, f32::min)
+            } else {
+                0.0
+            })
+        })
+        .collect()
+}
+
+/// The step that rises most above the two steps beside it, and where; steps next to a gap
+/// (not water) are not measured.
+fn sharpest_step(steps: &[Option<f32>]) -> Option<(f32, usize)> {
     steps
         .windows(3)
         .enumerate()
         .filter_map(|(i, s)| Some((s[1]? - (s[0]? + s[2]?) / 2.0, i + 1)))
         .max_by(|a, b| a.0.total_cmp(&b.0))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const SIZE: (usize, usize) = (1600, 900);
+    const WATER: [u8; 3] = [68, 84, 93];
+
+    /// A screenshot of plain river with `paint` laid over it: a pixel to its colour.
+    fn river(paint: impl Fn(usize, usize) -> Option<[u8; 3]>) -> Vec<u8> {
+        let mut data = Vec::with_capacity(SIZE.0 * SIZE.1 * 4);
+        for y in 0..SIZE.1 {
+            for x in 0..SIZE.0 {
+                let [r, g, b] = paint(x, y).unwrap_or(WATER);
+                data.extend([r, g, b, 255]);
+            }
+        }
+        data
+    }
+
+    /// What `water` says of the screenshot: whether it passes, and the step it measured.
+    fn judged(data: &[u8]) -> (bool, String) {
+        let shot = Shot {
+            data,
+            w: SIZE.0,
+            h: SIZE.1,
+            bgra: false,
+        };
+        let mut said = None;
+        water(&shot, &mut |_, pass, detail| said = Some((pass, detail)));
+        said.expect("a verdict")
+    }
+
+    /// Foam rings drifting over the river (each a few pixels of lighter water) are not a seam, as
+    /// they were when a band's mean was measured: one 6-pixel ring steps a 24-pixel band by 2.7.
+    #[test]
+    fn foam_on_the_river_is_not_a_seam() {
+        let foam = |x: usize, y: usize| {
+            ((700..706).contains(&x) && (400..406).contains(&y)).then_some(WATER.map(|c| c + 12))
+        };
+        let (pass, said) = judged(&river(foam));
+        assert!(pass, "{said}");
+    }
+
+    /// Two pieces of river drawn apart, a few levels of luminance between them, are a seam.
+    #[test]
+    fn a_step_all_along_the_river_is_a_seam() {
+        let pieces = |_: usize, y: usize| (y >= 450).then_some(WATER.map(|c| c + 3));
+        let (pass, said) = judged(&river(pieces));
+        assert!(!pass, "{said}");
+    }
 }
