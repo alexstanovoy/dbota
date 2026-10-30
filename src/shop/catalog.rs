@@ -7,8 +7,7 @@
 use std::{collections::HashMap, path::Path};
 
 use bevy::prelude::*;
-use bota_client_core::{ShopGroup, shop_groups};
-use bota_core::item_def;
+use bota_core::{item_def, sold as sold_item};
 use bota_proto::ItemId;
 use serde_json::Value;
 
@@ -69,7 +68,7 @@ const LAYOUT: [(Tab, &str, &str); 11] = [
 #[derive(Clone, Debug, PartialEq)]
 pub struct Section {
     pub tab: Tab,
-    /// Its name in `shops.txt`; none for the client core's own groups.
+    /// Its name in `shops.txt`; none for the section of what no category lists.
     pub key: Option<&'static str>,
     pub title: String,
     pub items: Vec<u16>,
@@ -86,7 +85,7 @@ pub struct Catalog {
 }
 
 impl Catalog {
-    /// The cache's shop data, or the client core's groups without it.
+    /// The cache's shop data, or one flat section of what bota sells without it.
     pub fn load(manifest: &Manifest) -> Catalog {
         let data = manifest.root.as_deref().and_then(read).unwrap_or_default();
         Catalog::build(data, manifest)
@@ -105,7 +104,7 @@ impl Catalog {
             strings: data.strings,
         };
         if data.categories.is_empty() {
-            catalog.sections = fallback();
+            catalog.add_leftovers(manifest);
             return catalog;
         }
         for (tab, key, title) in LAYOUT {
@@ -136,7 +135,7 @@ impl Catalog {
     }
 
     /// Items bota sells that no category of Dota's lists, recipes aside (the
-    /// build tree shows those), under the client core's last group.
+    /// build tree shows those), under a section of their own.
     fn add_leftovers(&mut self, manifest: &Manifest) {
         let placed = |id: u16, sections: &[Section]| sections.iter().any(|s| s.items.contains(&id));
         let rest: Vec<u16> = crate::faces::ITEMS
@@ -149,7 +148,7 @@ impl Catalog {
             self.sections.push(Section {
                 tab: Tab::Basics,
                 key: None,
-                title: group_name(ShopGroup::Other).to_string(),
+                title: "Other".to_string(),
                 items: rest,
             });
         }
@@ -185,9 +184,9 @@ impl Catalog {
     }
 }
 
-/// Whether bota sells an item: it exists and is not retired.
+/// Whether bota sells an item: neither retired nor unbuyable.
 fn sold(id: u16) -> bool {
-    item_def(ItemId(id)).is_some()
+    sold_item(ItemId(id)).is_some()
 }
 
 /// The parts an item is built from, its first recipe's, in order.
@@ -207,39 +206,6 @@ pub fn builds_into(id: u16) -> Vec<u16> {
         })
         .map(|face| face.id)
         .take(MAX_INTO)
-        .collect()
-}
-
-/// What a group of the client core's is called, for a shop without the
-/// cache.
-fn group_name(group: ShopGroup) -> &'static str {
-    match group {
-        ShopGroup::Consumables => "Consumables",
-        ShopGroup::Attributes => "Attributes",
-        ShopGroup::Equipment => "Equipment",
-        ShopGroup::Supports => "Supports",
-        ShopGroup::Upgrades => "Upgrades",
-        ShopGroup::Recipes => "Recipes",
-        ShopGroup::Other => "Other",
-    }
-}
-
-/// The client core's own groups, recipes aside, for a client without the
-/// cache: its upgrades on the second tab, the rest on the first.
-fn fallback() -> Vec<Section> {
-    shop_groups()
-        .into_iter()
-        .filter(|(group, _)| *group != ShopGroup::Recipes)
-        .map(|(group, items)| Section {
-            tab: if group == ShopGroup::Upgrades {
-                Tab::Upgrades
-            } else {
-                Tab::Basics
-            },
-            key: None,
-            title: group_name(group).to_string(),
-            items,
-        })
         .collect()
 }
 
