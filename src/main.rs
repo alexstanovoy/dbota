@@ -50,6 +50,8 @@ mod icon_mips;
 #[cfg(not(target_arch = "wasm32"))]
 mod import;
 mod input;
+#[cfg(not(target_arch = "wasm32"))]
+mod io_pool;
 mod item_menu;
 mod keys;
 mod layers;
@@ -416,6 +418,9 @@ fn main() -> AppExit {
             }
         };
     }
+    // Before Bevy's plugins make the pool with default stacks (see `io_pool`).
+    #[cfg(not(target_arch = "wasm32"))]
+    io_pool::make_default();
     // Before the first thread starts (see `ui::font_cx`).
     #[cfg(not(target_arch = "wasm32"))]
     let font_cx = ui::font_cx();

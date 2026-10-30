@@ -120,6 +120,16 @@ else
     exit 1
 fi
 
+# The models of a match load on one core: Bevy's loaders nest on the few loader threads that
+# machine gets, and overflowed their default stacks (src/io_pool.rs).
+if VISUAL_REPLAY="$(realpath "$replay")" cargo test --release --quiet --manifest-path "$here/Cargo.toml" \
+    --test io_stack -- --ignored > "$out/io_stack.log" 2>&1; then
+    echo "visual check: PASS a match loads on one core"
+else
+    echo "visual check: FAIL a match did not load on one core (see $out/io_stack.log)"
+    exit 1
+fi
+
 # The way out: Escape on the menu asks to quit and OK ends the client with exit code 0; Escape in
 # a live game opens the dashboard, DISCONNECT leaves for the menu and RECONNECT takes the seat
 # again; a seat that LEAVES GAME ends the match as its loss and the other seat wins; a replay is left for the

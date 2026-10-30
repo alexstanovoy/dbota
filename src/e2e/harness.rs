@@ -415,20 +415,12 @@ pub fn ring_of(points: &[Vec3]) -> (Vec2, f32) {
     (middle, radius)
 }
 
-/// The asset loaders' threads with stacks of 16 MiB: this crate's own loaders (the cache's
-/// files, decoded on the IO pool) run unoptimised in a test build, where two clients loading at
-/// once overflowed the default 2 MiB. The pools are the process's, made once by the first app.
+/// The asset loaders' threads with the stacks `main` gives them (see `io_pool`): this crate's own
+/// loaders run unoptimised in a test build, where two clients loading at once overflowed the
+/// default 2 MiB. The pools are the process's, made once by the first app.
 fn roomy_io_threads() {
     static MADE: std::sync::Once = std::sync::Once::new();
-    MADE.call_once(|| {
-        bevy::tasks::IoTaskPool::get_or_init(|| {
-            bevy::tasks::TaskPoolBuilder::default()
-                .num_threads(4)
-                .stack_size(16 << 20)
-                .thread_name("IO Task Pool".to_string())
-                .build()
-        });
-    });
+    MADE.call_once(|| crate::io_pool::make(4));
 }
 
 /// Bevy's plugins as `main` sets them up, without the window system (no window is opened; the
