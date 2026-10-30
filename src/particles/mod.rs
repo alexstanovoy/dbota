@@ -25,6 +25,8 @@ mod tests;
 
 pub use library::Library;
 pub use plugin::{Handle, Playing};
+#[cfg(test)]
+pub(crate) use render::ParticleFrame;
 
 use bevy::prelude::App;
 

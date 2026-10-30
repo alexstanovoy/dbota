@@ -49,17 +49,19 @@
 #   fx      <subject>.<trigger> at=<where> [particle=<particle logical>] [sound=<sound logical prefix>] [cp1=<feed>]
 #           an effect bound to a fact of the game by Dota's name for it (src/fx.rs). The importer skips these lines.
 #           subject: item.<ids.txt item name> | modifier.<Dota modifier name> | unit.<npc_units.txt name>
-#                    | rune.<rune kind by its art's name: water bounty haste doubledamage arcane regeneration
-#                      illusion invisibility shield>
+#                    | hero.<ids.txt hero name> | rune.<rune kind by its art's name: water bounty haste doubledamage
+#                      arcane regeneration illusion invisibility shield>
 #           trigger: use (the item was used) | land (the item thrown came down) | worn (the modifier is on a unit, a
-#                    unit of that name stands, or a rune of that kind lies in sight: from its start until it goes;
-#                    the particle follows the unit) | spawn (the rune appeared) | activate (the rune took effect on
-#                    a hero, at once or out of a Bottle) | store (a rune was put into the item)
+#                    unit of that name or that hero stands, or a rune of that kind lies in sight: from its start until
+#                    it goes or falls; the particle follows the unit and plays until then) | spawn (the rune
+#                    appeared) | activate (the rune took effect on a hero, at once or out of a Bottle) | store (a rune
+#                    was put into the item)
 #           at: caster (where the user, or the hero taking a rune, stands after) | caster_before (where it stood
 #               before) | point (the spot the use was aimed at, the throw came down, the rune appeared) | unit (the
 #               wearer, or the rune lying; for worn only, and only for worn)
 #           sound: one of the sounds of that logical name (its variants share it) plays at that spot
-#           cp1: what the particle's second control point is given: sight (how far the wearer gives true sight)
+#           cp1: what the particle's second control point is given: sight (how far the wearer gives true sight) |
+#                hitloc (where the wearer's model takes its hits, its attach_hitloc, following it)
 #   style   <vpk .vcss_c> <define>
 #           a colour one of Dota's stylesheets defines (`@define name: #rrggbb[aa];`), written with
 #           every other to text/styles.json under its name lower-cased, as #rrggbbaa.
@@ -377,6 +379,10 @@ particle rune.regeneration.owner particles/generic_gameplay/rune_regen_owner.vpc
 particle rune.shield.owner particles/status_fx/status_effect_shield_rune.vpcf_c particles/status_effect_shield_rune.json
 particle item.bottle particles/items_fx/bottle.vpcf_c particles/bottle.json
 
+# --- Heroes' default ambient effects (items_game.txt "<hero>'s Ambient Effects", the item of slot ambient_effects)
+particle hero.nevermore.ambient_glow particles/units/heroes/hero_nevermore/nevermore_ambient_glow.vpcf_c particles/nevermore_ambient_glow.json
+particle hero.nevermore.trail particles/units/heroes/hero_nevermore/nevermore_trail.vpcf_c particles/nevermore_trail.json
+
 # --- Effects bound to the game's facts (src/fx.rs)
 # Blink Dagger: the start where the hero stood, the end where it lands (items_fx/blink_dagger_*)
 fx item.blink.use at=caster_before particle=item.blink_start sound=sound.blink.activate
@@ -424,6 +430,10 @@ fx modifier.modifier_rune_regen.worn at=unit particle=rune.regeneration.owner
 fx modifier.modifier_rune_shield.worn at=unit particle=rune.shield.owner
 fx modifier.modifier_bottle_regeneration.worn at=unit particle=item.bottle sound=sound.bottle.drink
 fx item.bottle.store at=caster sound=sound.bottle.cork
+# Shadow Fiend's Ambient Effects (items_game.txt 509, its attached particles 310 and 311): a glow on him, and his
+# trail with its second control point on his attach_hitloc
+fx hero.nevermore.worn at=unit particle=hero.nevermore.ambient_glow
+fx hero.nevermore.worn at=unit particle=hero.nevermore.trail cp1=hitloc
 
 # --- Item icons (88x64, a few narrower), every Dota item name in ids.txt
 # Buff bar icons only.

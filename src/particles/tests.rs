@@ -348,25 +348,52 @@ fn a_shadowraze_draws_where_it_lands_and_its_embers_do_not_drift() {
     });
     let hero = client.me().pos;
     let hero = Vec3::new(hero.x.to_f32(), hero.y.to_f32(), 0.0);
-    let raze: Vec<u16> = client
-        .world()
-        .resource::<super::Library>()
-        .effect("hero.nevermore.raze")
-        .expect("the install's Shadowraze effect")
-        .defs
-        .iter()
-        .flat_map(|def| def.draws.iter().map(|draw| draw.look))
-        .collect();
+    // The looks only the raze draws with: the effects started besides it, before it or while it
+    // plays (the hero's ambient glow and trail, the map's ambient effects about him, a rune
+    // appearing), share some of its textures.
+    let looks = |effect: &super::library::Effect| -> Vec<u16> {
+        effect
+            .defs
+            .iter()
+            .flat_map(|def| def.draws.iter().map(|draw| draw.look))
+            .collect()
+    };
+    let raze_looks = |c: &Client| -> Vec<u16> {
+        let library = c.world().resource::<super::Library>();
+        let playing = c.world().resource::<super::Playing>();
+        let others: std::collections::HashSet<u16> = library
+            .effects
+            .iter()
+            .filter(|(name, effect)| *name != "hero.nevermore.raze" && playing.started(effect) > 0)
+            .flat_map(|(_, effect)| looks(effect))
+            .collect();
+        looks(
+            library
+                .effect("hero.nevermore.raze")
+                .expect("the install's Shadowraze effect"),
+        )
+        .into_iter()
+        .filter(|look| !others.contains(look))
+        .collect()
+    };
+    assert!(
+        !raze_looks(&client).is_empty(),
+        "the raze has looks of its own"
+    );
     // The cards of the looks the raze draws with: their heads, in the world's axes (bota's x,
     // the height, bota's y turned).
     let cards = |c: &Client| {
+        let raze = raze_looks(c);
         let frame = c.world().resource::<super::render::ParticleFrame>();
         frame
             .batches
             .iter()
             .filter(|batch| raze.contains(&batch.look))
-            .flat_map(|batch| &frame.quads[batch.range.start as usize..batch.range.end as usize])
-            .map(|q| Vec3::from(q.head))
+            .flat_map(|batch| {
+                frame.quads[batch.range.start as usize..batch.range.end as usize]
+                    .iter()
+                    .map(|q| (batch.look, Vec3::from(q.head)))
+            })
             .collect::<Vec<_>>()
     };
     assert!(
@@ -375,17 +402,30 @@ fn a_shadowraze_draws_where_it_lands_and_its_embers_do_not_drift() {
     );
     let patience = std::time::Duration::from_secs(10);
     client.within(patience, "the raze drawn", |c| !cards(c).is_empty());
-    let mut farthest: f32 = 0.0;
+    let (mut farthest, mut far_look): (f32, u16) = (0.0, 0);
     for _ in 0..60 {
         client.frames(1);
-        for card in cards(&client) {
-            let flat = Vec3::new(card.x, -card.z, 0.0);
-            farthest = farthest.max(flat.distance(hero));
+        for (look, card) in cards(&client) {
+            let off = Vec3::new(card.x, -card.z, 0.0).distance(hero);
+            if off > farthest {
+                (farthest, far_look) = (off, look);
+            }
         }
     }
     // A raze lands at most 700 out and bursts 250 wide; its fleks fly a little further (up to
     // some 1400 units). Drifting, the embers went over 7000 units off within the second.
-    assert!(farthest < 2000.0, "a card {farthest} units off the hero");
+    let library = client.world().resource::<super::Library>();
+    let playing = client.world().resource::<super::Playing>();
+    let sharing: Vec<String> = library
+        .effects
+        .iter()
+        .filter(|(_, effect)| looks(effect).contains(&far_look))
+        .map(|(name, effect)| format!("{name} (started {})", playing.started(effect)))
+        .collect();
+    assert!(
+        farthest < 2000.0,
+        "a card {farthest} units off the hero, of look {far_look}, which {sharing:?} draw with"
+    );
 }
 
 /// The Dire tower's shot as Dota draws it (reported: dark squares at the Dire tower's

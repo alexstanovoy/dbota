@@ -95,6 +95,14 @@ impl Playing {
         })
     }
 
+    /// Starts `effect` held on until it is ended (`Instance::end`), however long that is: what
+    /// a unit wears or the map places.
+    pub fn hold(&mut self, effect: &Arc<Effect>, seed: u32) -> Option<Handle> {
+        let handle = self.start(effect, seed)?;
+        self.get_mut(handle)?.hold();
+        Some(handle)
+    }
+
     /// The effect of `handle`, while it plays.
     pub fn get_mut(&mut self, handle: Handle) -> Option<&mut Instance> {
         let (generation, instance) = self.slots.get_mut(handle.slot)?;

@@ -92,15 +92,17 @@ pub enum At {
 pub enum Feed {
     /// How far the wearer gives true sight, in x.
     Sight,
+    /// Where the wearer's model takes its hits (its `attach_hitloc`), following it.
+    Hitloc,
 }
 
 /// One `fx` line: the particle and sound Dota shows with a fact of the game, keyed by Dota's
-/// name for it (`item.<key>`, `modifier.<name>`, `unit.<npc name>`); the grammar is in the
-/// manifest's header.
+/// name for it (`item.<key>`, `modifier.<name>`, `unit.<npc name>`, `hero.<name>`); the grammar
+/// is in the manifest's header.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Fx {
     /// `item.blink`, `modifier.modifier_item_blood_grenade_debuff`, `unit.npc_dota_observer_wards`,
-    /// `rune.haste`.
+    /// `hero.nevermore`, `rune.haste`.
     pub subject: String,
     pub trigger: Trigger,
     pub at: At,
@@ -144,6 +146,7 @@ impl Fx {
                 Some(("particle", logical)) => fx.particle = Some(logical.to_owned()),
                 Some(("sound", logical)) => fx.sound = Some(logical.to_owned()),
                 Some(("cp1", "sight")) => fx.cp1 = Some(Feed::Sight),
+                Some(("cp1", "hitloc")) => fx.cp1 = Some(Feed::Hitloc),
                 _ => return Err(format!("cannot read '{word}'")),
             }
         }

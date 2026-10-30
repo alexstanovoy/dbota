@@ -1,10 +1,10 @@
 //! Effects bound to the game's facts by data: the `fx` lines of the manifest name a Dota item, a
-//! modifier, a unit or a rune and the particle and sound Dota shows with it (grammar in the
-//! manifest's header). The game's events feed them: an item used (`EventKind::ItemUsed`), a throw
-//! come down (`EventKind::Landed`), a rune appeared, taken into effect or stored in a Bottle
-//! (`RuneSpawned`, `RuneActivated`, `RuneBottled`); and what is worn: a modifier or a unit of a
-//! Dota name, from the moment a unit shows it until it goes, and a rune lying in sight. A new item
-//! or rune with an effect adds lines there, not code.
+//! modifier, a unit, a hero or a rune and the particle and sound Dota shows with it (grammar in
+//! the manifest's header). The game's events feed them: an item used (`EventKind::ItemUsed`), a
+//! throw come down (`EventKind::Landed`), a rune appeared, taken into effect or stored in a Bottle
+//! (`RuneSpawned`, `RuneActivated`, `RuneBottled`); and what is worn: a modifier, a unit of a Dota
+//! name or a hero, from the moment a unit shows it until it goes, and a rune lying in sight. A new
+//! item, hero or rune with an effect adds lines there, not code.
 
 use std::collections::HashMap;
 
@@ -18,7 +18,7 @@ use crate::manifest::{At, Feed, Fx, Manifest, Trigger};
 use crate::map::Ground;
 use crate::particles::{Handle, Library, Playing};
 use crate::session::Session;
-use crate::units::{Dying, UnitIndex};
+use crate::units::{Attachments, Dying, UnitIndex};
 
 /// The control points a bound particle is given: where it plays, and what a line's `cp1=` feeds.
 const PLACE: usize = 0;
@@ -171,6 +171,11 @@ fn wears(fx: &Fx, unit: &UnitView, manifest: &Manifest) -> bool {
     if let Some(name) = fx.subject.strip_prefix("unit.") {
         return crate::units::npc_unit(unit) == Some(name);
     }
+    if let Some(name) = fx.subject.strip_prefix("hero.") {
+        return unit
+            .hero
+            .is_some_and(|hero| manifest.dota_name("hero", hero.0) == Some(name));
+    }
     let Some(modifier) = fx.subject.strip_prefix("modifier.") else {
         return false;
     };
@@ -200,7 +205,7 @@ fn begin(
         .particle
         .as_deref()
         .and_then(|name| library?.effect(name))
-        .and_then(|effect| playing.start(effect, seed));
+        .and_then(|effect| playing.hold(effect, seed));
     if let Some(instance) = handle.and_then(|h| playing.get_mut(h))
         && let Some(Feed::Sight) = fx.cp1
     {
@@ -212,14 +217,36 @@ fn begin(
     handle
 }
 
+/// The units drawn: by their handle, whether they are falling, and where their models carry
+/// their hit locations.
+#[derive(bevy::ecs::system::SystemParam)]
+struct Bodies<'w, 's> {
+    index: Res<'w, UnitIndex>,
+    dying: Query<'w, 's, (), With<Dying>>,
+    attachments: Query<'w, 's, &'static Attachments>,
+    places: Query<'w, 's, &'static GlobalTransform>,
+}
+
+impl Bodies<'_, '_> {
+    /// Where unit `id`'s model takes its hits, in the particles' frame.
+    fn hitloc(&self, id: EntityId) -> Option<Vec3> {
+        let body = *self.index.0.get(&id)?;
+        let at = self
+            .places
+            .get(self.attachments.get(body).ok()?.hitloc?)
+            .ok()?;
+        let at = at.translation();
+        Some(Vec3::new(at.x, -at.z, at.y))
+    }
+}
+
 /// Starts what each unit that has come to wear a worn line's subject wears, and each rune that
 /// lies in sight, keeps its particle where it is, and ends it when the unit stops wearing it,
 /// falls or leaves the view, or the rune is taken or leaves the sight.
 #[allow(clippy::too_many_arguments)]
 fn worn(
     session: NonSend<Session>,
-    index: Res<UnitIndex>,
-    dying: Query<(), With<Dying>>,
+    bodies: Bodies,
     ground: Res<Ground>,
     fog: Res<FogGrid>,
     library: Option<Res<Library>>,
@@ -231,10 +258,11 @@ fn worn(
         return;
     };
     let standing = |id: &EntityId| {
-        index
+        bodies
+            .index
             .0
             .get(id)
-            .is_some_and(|entity| !dying.contains(*entity))
+            .is_some_and(|entity| !bodies.dying.contains(*entity))
     };
     let rules: Vec<(usize, Fx)> = stage
         .manifest
@@ -292,6 +320,10 @@ fn worn(
             if let Some(instance) = handle.and_then(|h| playing.get_mut(h)) {
                 let place = Vec3::new(at.x, -at.z, at.y);
                 instance.set_control_point(PLACE, place, Vec3::ZERO, false);
+                if let Some(Feed::Hitloc) = fx.cp1 {
+                    let hit = bodies.hitloc(id).unwrap_or(place);
+                    instance.set_control_point(FEED, hit, Vec3::ZERO, false);
+                }
             }
         }
     }
@@ -333,6 +365,10 @@ mod tests {
                     .any(|(k, _, n)| k == "modifier" && n == name),
                 Some(("unit", npc)) => manifest.unit_art(npc).is_some(),
                 Some(("rune", art)) => crate::runes::of_art(art).is_some(),
+                Some(("hero", name)) => manifest
+                    .ids
+                    .iter()
+                    .any(|(k, _, n)| k == "hero" && n == name),
                 _ => false,
             };
             assert!(known, "{words:?}: no such subject");

@@ -18,6 +18,7 @@ use super::store::Particles;
 /// Most systems one playing effect has (a child shared by several parents counts each time).
 const MAX_NODES: usize = 512;
 /// Seconds an effect may play at most, end cap included: a definition that never ends stops.
+/// An effect held on (worn by a unit, placed on the map) counts them from when it is ended.
 const MAX_LIFE: f32 = 30.0;
 /// The bit of the creation time, which every emitted particle has written.
 const CREATION_WRITTEN: u64 = 1 << 8;
@@ -98,6 +99,8 @@ pub struct Instance {
     pub effect: Arc<Effect>,
     pub nodes: Vec<Node>,
     life: f32,
+    /// Held on until ended: no [`MAX_LIFE`] before that.
+    held: bool,
     /// The world's clock, in seconds.
     pub world_time: f32,
     /// Control points the operators set in a step, applied after it.
@@ -156,6 +159,7 @@ impl Instance {
             effect,
             nodes,
             life: 0.0,
+            held: false,
             world_time: 0.0,
             writes: Vec::new(),
         }
@@ -165,6 +169,7 @@ impl Instance {
     /// particles' columns hold.
     pub fn restart(&mut self, seed: u32) {
         self.life = 0.0;
+        self.held = false;
         for (index, node) in self.nodes.iter_mut().enumerate() {
             node.reset(seed.wrapping_add(129 * index as u32));
         }
@@ -185,9 +190,17 @@ impl Instance {
         }
     }
 
+    /// Holds the effect on until it is ended, however long that is.
+    pub fn hold(&mut self) {
+        self.held = true;
+    }
+
     /// Ends the effect: emitters stop, the end cap's functions run and the end cap children
     /// start, with what runs under them.
     pub fn end(&mut self) {
+        if std::mem::take(&mut self.held) {
+            self.life = 0.0;
+        }
         stop(
             &mut self.nodes,
             0,
@@ -281,7 +294,7 @@ impl Instance {
 
     /// Whether it has ended: past its end cap with nothing left to draw or emit.
     pub fn finished(&self) -> bool {
-        self.life > MAX_LIFE
+        (!self.held && self.life > MAX_LIFE)
             || self.nodes.iter().all(|node| {
                 (node.end_cap_child && !node.running)
                     || (node.parts.is_empty() && !node.may_emit(&self.effect))

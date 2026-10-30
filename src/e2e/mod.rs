@@ -12,6 +12,7 @@ mod controls;
 mod cursors;
 mod death;
 pub(crate) mod harness;
+mod hero_fx;
 mod icons;
 mod items;
 mod menu;
