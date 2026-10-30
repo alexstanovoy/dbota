@@ -134,9 +134,14 @@ impl Playing {
     }
 }
 
+/// The making of the effects' library, the frame the first match connects: what adds effects
+/// of its own to it reads after.
+#[derive(SystemSet, Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct Loaded;
+
 pub fn plugin(app: &mut App) {
     app.init_resource::<Playing>()
-        .add_systems(Update, load.run_if(crate::loading::requested))
+        .add_systems(Update, load.run_if(crate::loading::requested).in_set(Loaded))
         .add_systems(PostUpdate, tick.after(TransformSystems::Propagate));
 }
 

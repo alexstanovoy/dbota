@@ -23,6 +23,14 @@ fuzz_target!(|data: &[u8]| {
         finite(l.ambient.as_flattened());
         assert!(l.turn.is_finite() && l.turn > 0.0);
     }
+    for a in cache_text::ambient(text, 4096) {
+        finite(&a.at);
+        finite(&a.angles);
+        if let Some((cp, value)) = a.data {
+            assert!(cp <= cache_text::MAX_CONTROL_POINT);
+            finite(&value);
+        }
+    }
     for line in text.lines() {
         if let Some(f) = cache_text::framing(line) {
             finite(&f.numbers);

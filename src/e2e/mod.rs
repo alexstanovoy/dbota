@@ -3,6 +3,7 @@
 //! client opens; the tests read what the client would draw (entities, their components, the
 //! lines laid out for the GPU, colours, positions, menu entries), not pixels.
 
+mod ambient;
 mod bars;
 mod buffs;
 mod camera;

@@ -160,6 +160,72 @@ pub fn framing(line: &str) -> Option<FramingLine> {
     })
 }
 
+/// A particle system the map places (`map/mid/ambient.txt`): its effect's file stem, where
+/// (Dota coordinates) and how it is turned (Source's pitch, yaw and roll, degrees), whether it
+/// shows by day, by night and in the fog, and the value of its data control point, if it has
+/// one.
+#[derive(Clone, Debug, PartialEq)]
+pub struct AmbientLine {
+    pub effect: String,
+    pub at: [f32; 3],
+    pub angles: [f32; 3],
+    pub day: bool,
+    pub night: bool,
+    pub fog: bool,
+    pub data: Option<(usize, [f32; 3])>,
+}
+
+/// Control points a data point may be, as Source numbers them.
+pub const MAX_CONTROL_POINT: usize = 63;
+
+/// A flag of `0` or `1`.
+fn flag(word: &str) -> Option<bool> {
+    match word {
+        "0" => Some(false),
+        "1" => Some(true),
+        _ => None,
+    }
+}
+
+/// The map's particle systems of `ambient.txt` (`effect x y z pitch yaw roll day night fog
+/// [cp<n> x y z]`), of its first `max` lines; an effect's name is a plain file stem.
+pub fn ambient(text: &str, max: usize) -> Vec<AmbientLine> {
+    lines(text, max)
+        .filter_map(|w| {
+            let [effect, rest @ ..] = w.as_slice() else {
+                return None;
+            };
+            let plain = effect.len() <= 64
+                && effect
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || c == '_');
+            let (place, flags, data) = match rest.len() {
+                9 => (&rest[..6], &rest[6..9], None),
+                13 => (&rest[..6], &rest[6..9], Some(&rest[9..13])),
+                _ => return None,
+            };
+            let [x, y, z, pitch, yaw, roll] = numbers::<6>(place)?;
+            let data = match data {
+                Some([cp, v @ ..]) => {
+                    let cp: usize = cp.strip_prefix("cp")?.parse().ok()?;
+                    (cp <= MAX_CONTROL_POINT).then_some(())?;
+                    Some((cp, numbers::<3>(v)?))
+                }
+                _ => None,
+            };
+            plain.then(|| AmbientLine {
+                effect: (*effect).to_owned(),
+                at: [x, y, z],
+                angles: [pitch, yaw, roll],
+                day: flag(flags[0]).unwrap_or(false),
+                night: flag(flags[1]).unwrap_or(false),
+                fog: flag(flags[2]).unwrap_or(false),
+                data,
+            })
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -184,5 +250,11 @@ mod tests {
         );
         assert!(framing(&line.replacen(" 1 ", " -inf ", 1)).is_none());
         assert!(framing(&line.replace(" 1 1 bg.png", " NaN 1 bg.png")).is_none());
+        let placed = "fireflies 1 2 3 0 90 0 0 1 0\nbad/name 1 2 3 0 0 0 1 1 1\n\
+            surface 1 2 3 0 0 0 1 1 1 cp10 1 0 0\nnan 1 2 NaN 0 0 0 1 1 1\n\
+            far 1 2 3 0 0 0 1 1 1 cp64 1 0 0\n";
+        let placed = ambient(placed, 16);
+        assert_eq!(placed.len(), 2);
+        assert_eq!(placed[1].data, Some((10, [1.0, 0.0, 0.0])));
     }
 }

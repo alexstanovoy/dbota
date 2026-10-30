@@ -9,6 +9,7 @@
 #![allow(clippy::too_many_arguments, clippy::type_complexity)]
 
 mod ability_art;
+mod ambient;
 mod anim;
 #[cfg(not(target_arch = "wasm32"))]
 mod assets_notice;
@@ -660,6 +661,7 @@ fn client_plugins(app: &mut App) {
             drag::plugin,
             item_menu::plugin,
             icon_mips::plugin,
+            ambient::plugin,
         ))
         .add_plugins((
             fortified::plugin,

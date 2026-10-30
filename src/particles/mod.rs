@@ -24,7 +24,7 @@ mod store;
 mod tests;
 
 pub use library::Library;
-pub use plugin::{Handle, Playing};
+pub use plugin::{Handle, Loaded, Playing};
 #[cfg(test)]
 pub(crate) use render::ParticleFrame;
 
