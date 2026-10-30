@@ -46,22 +46,34 @@
 #   phonemes <logical> <vpk .txt> <out .txt>
 #           Valve's phoneme table (expressions/heroes/phonemes.txt, the "heroes/phonemes" expression file
 #           Dota's client loads): each phoneme's flex controller settings, added up by a speaking face.
-#   fx      <subject>.<trigger> at=<where> [particle=<particle logical>] [sound=<sound logical prefix>] [cp1=<feed>]
-#           an effect bound to a fact of the game by Dota's name for it (src/fx.rs). The importer skips these lines.
-#           subject: item.<ids.txt item name> | modifier.<Dota modifier name> | unit.<npc_units.txt name>
-#                    | hero.<ids.txt hero name> | rune.<rune kind by its art's name: water bounty haste doubledamage
-#                      arcane regeneration illusion invisibility shield>
-#           trigger: use (the item was used) | land (the item thrown came down) | worn (the modifier is on a unit, a
-#                    unit of that name or that hero stands, or a rune of that kind lies in sight: from its start until
-#                    it goes or falls; the particle follows the unit and plays until then) | spawn (the rune
-#                    appeared) | activate (the rune took effect on a hero, at once or out of a Bottle) | store (a rune
-#                    was put into the item)
-#           at: caster (where the user, or the hero taking a rune, stands after) | caster_before (where it stood
-#               before) | point (the spot the use was aimed at, the throw came down, the rune appeared) | unit (the
-#               wearer, or the rune lying; for worn only, and only for worn)
+#   fx      <subject>.<trigger> at=<where> [attach=<point>] [particle=<particle logical>] [sound=<sound logical prefix>]
+#           [cp<N>=<feed>]... [whose=own|foreign] [stacks=<n>|<from>..<to>]
+#           an effect bound to a fact of the game by Dota's name for it (src/fx.rs). The importer passes these lines on; the client reads them.
+#           subject: item.<ids.txt item name> | ability.<ids.txt ability name> | modifier.<Dota modifier name> |
+#                    unit.<npc_units.txt name, or npc_dota_hero_<hero>> | hero.<ids.txt hero name> |
+#                    rune.<rune kind by its art's name: water bounty haste doubledamage arcane regeneration
+#                    illusion invisibility shield> (an item, ability or modifier name may end in * for every name it starts)
+#           trigger: use (the item was used) | cast (the ability took effect) | land (the item or ability thrown came down) |
+#                    hit (a unit was struck or mended by the ability or item, or by an attack of the unit: not by another
+#                    ability) | died (a unit of that name died) | worn (the modifier, or an effect the ability or item put on,
+#                    is on a unit, a unit of that name or that hero stands, or a rune of that kind lies in sight: from its
+#                    start until it goes or falls; the particle follows the unit) |
+#                    held (a unit carries the item in an active slot) | casting (a unit is in the ability's cast point) |
+#                    flies (a missile of the ability or item flies) | spawn (the rune appeared) | activate (the rune
+#                    took effect on a hero, at once or out of a Bottle) | store (a rune was put into the item: the Bottle)
+#           at: caster (where the user, or the hero taking a rune, stands after) | caster_before (where it stood before) | point (the spot the
+#               use was aimed at, the throw came down, the rune appeared) | unit (the unit the fact is about: the wearer, or the rune lying, the one struck
+#               or mended, the one dead) | flight (each missile on its own, from its source to where it is) | chain (all the
+#               missiles a source has flying, from the source to the one farthest from it: a hook and its chain)
+#           attach: where on the unit it plays: origin (its feet, the default) | overhead (where its health bar floats) |
+#                   attach_<node> (a node of its model: attach_hitloc, attach_head, attach_eyeL), hitloc for attach_hitloc
 #           sound: one of the sounds of that logical name (its variants share it) plays at that spot
-#           cp1: what the particle's second control point is given: sight (how far the wearer gives true sight) |
-#                hitloc (where the wearer's model takes its hits, its attach_hitloc, following it)
+#           cp<N> (N from 1; the particle's first control point is where it plays): what that control point is given:
+#                 sight (how far the wearer gives true sight, in x) | stacks | seconds (the effect's stacks, the seconds it
+#                 has left) | mode (the attribute of the item: 0 strength, 1 agility, 2 intelligence) | charges (the share
+#                 of its charges the item held) | origin, overhead, attach_<node> (a point of the unit, followed) | x,y,z
+#           whose: for a worn line, only the effects the wearer put on itself (own) or another put on it (foreign)
+#           stacks: for a worn line, only while the effect holds that many
 #   state   item.<ids.txt item name> <state> icon=<texture logical> [text=<label key>]
 #           an item drawn by what the wire tells of it (src/item_look.rs): in a slot it is drawn with the icon of its
 #           first line whose state holds, and its tooltip shows that line's text; with none, its own icon. Read and
@@ -362,6 +374,72 @@ particle ward.sentry.ambient particles/items2_fx/ward_true_sight.vpcf_c particle
 particle item.blink_start particles/items_fx/blink_dagger_start.vpcf_c particles/blink_dagger_start.json
 particle item.blink_end particles/items_fx/blink_dagger_end.vpcf_c particles/blink_dagger_end.json
 
+# Items: the drink's flash and the mending, Mango, Magic Stick and Wand, Phase Boots, Power Treads, the Iron Branch's tree
+particle item.flask.cast particles/items_fx/generic_item_spell_caster_core_tangosalve.vpcf_c particles/generic_item_spell_caster_core_tangosalve.json
+particle item.flask.heal particles/items_fx/healing_flask.vpcf_c particles/healing_flask.json
+particle item.clarity.cast particles/items_fx/generic_item_spell_caster_core_clarity_mango.vpcf_c particles/generic_item_spell_caster_core_clarity_mango.json
+particle item.clarity.heal particles/items_fx/healing_clarity.vpcf_c particles/healing_clarity.json
+particle item.tango.heal particles/items_fx/healing_tango.vpcf_c particles/healing_tango.json
+particle item.mango.active particles/items3_fx/mango_active.vpcf_c particles/mango_active.json
+particle item.magic_stick particles/items2_fx/magic_stick.vpcf_c particles/magic_stick.json
+particle item.magic_wand particles/items2_fx/magic_wand.vpcf_c particles/magic_wand.json
+particle item.phase_boots particles/items2_fx/phase_boots.vpcf_c particles/phase_boots.json
+particle item.power_treads.swap particles/items_fx/power_treads_swap_attributes_effect.vpcf_c particles/power_treads_swap_attributes_effect.json
+particle item.power_treads.buff particles/items_fx/power_treads_buff.vpcf_c particles/power_treads_buff.json
+particle item.branches.tree particles/items3_fx/ggbranch_tree.vpcf_c particles/ggbranch_tree.json
+# Shadow Fiend: eyes and mouth, Feast of Souls, the head of a Requiem, the debuff of a Shadowraze
+particle hero.nevermore.ambient_eyes particles/units/heroes/hero_nevermore/shadow_fiend_ambient_eyes.vpcf_c particles/shadow_fiend_ambient_eyes.json
+particle hero.nevermore.frenzy particles/units/heroes/hero_nevermore/nevermore_souls.vpcf_c particles/nevermore_souls.json
+particle hero.nevermore.requiem_head particles/units/heroes/hero_nevermore/nevermore_requiem_head.vpcf_c particles/nevermore_requiem_head.json
+particle hero.nevermore.raze_debuff particles/units/heroes/hero_nevermore/nevermore_shadowraze_debuff.vpcf_c particles/nevermore_shadowraze_debuff.json
+# Pudge: Meat Hook with its chain, the hit, Rot, Dismember, Flesh Heap and Meat Shield
+particle hero.pudge.hook particles/units/heroes/hero_pudge/pudge_meathook.vpcf_c particles/pudge_meathook.json
+particle hero.pudge.hook_impact particles/units/heroes/hero_pudge/pudge_meathook_impact.vpcf_c particles/pudge_meathook_impact.json
+particle hero.pudge.rot particles/units/heroes/hero_pudge/pudge_rot.vpcf_c particles/pudge_rot.json
+particle hero.pudge.rot_recipient particles/units/heroes/hero_pudge/pudge_rot_recipient.vpcf_c particles/pudge_rot_recipient.json
+particle hero.pudge.dismember particles/units/heroes/hero_pudge/pudge_dismember.vpcf_c particles/pudge_dismember.json
+particle hero.pudge.meat_shield particles/units/heroes/hero_pudge/pudge_fleshheap_block_activation.vpcf_c particles/pudge_fleshheap_block_activation.json
+# What a unit under a stun, a disarm, a break, a slow, a purge or a mana burn shows, and the fountain's mending
+particle status.stunned particles/generic_gameplay/generic_stunned.vpcf_c particles/generic_stunned.json
+particle status.disarmed particles/generic_gameplay/generic_disarm.vpcf_c particles/generic_disarm.json
+particle status.broken particles/generic_gameplay/generic_break.vpcf_c particles/generic_break.json
+particle status.slowed_cold particles/generic_gameplay/generic_slowed_cold.vpcf_c particles/generic_slowed_cold.json
+particle status.purged particles/generic_gameplay/generic_purge.vpcf_c particles/generic_purge.json
+particle status.mana_burned particles/generic_gameplay/generic_manaburn.vpcf_c particles/generic_manaburn.json
+particle fountain.regen particles/generic_gameplay/radiant_fountain_regen.vpcf_c particles/radiant_fountain_regen.json
+# Neutral creeps' abilities
+particle neutral.kobold_speed particles/neutral_fx/kobold_speed_buff.vpcf_c particles/kobold_speed_buff.json
+particle neutral.troll_heal particles/neutral_fx/troll_heal.vpcf_c particles/troll_heal.json
+particle neutral.gnoll_poison particles/neutral_fx/gnoll_poison_debuff.vpcf_c particles/gnoll_poison_debuff.json
+particle neutral.fell_spirit particles/neutral_fx/fell_spirit_proj_enemy.vpcf_c particles/fell_spirit_proj_enemy.json
+particle neutral.fell_spirit_hit particles/neutral_fx/fell_spirit_proj_enemy_explosion.vpcf_c particles/fell_spirit_proj_enemy_explosion.json
+particle neutral.harpy_takeoff particles/neutral_fx/harpy_takeoff.vpcf_c particles/harpy_takeoff.json
+particle neutral.harpy_lightning_hit particles/neutral_fx/harpy_chain_lightning_impact.vpcf_c particles/harpy_chain_lightning_impact.json
+particle neutral.centaur_stomp particles/neutral_fx/neutral_centaur_khan_war_stomp.vpcf_c particles/neutral_centaur_khan_war_stomp.json
+particle neutral.wolf_howl particles/neutral_fx/wolf_intimidate_howl_cast.vpcf_c particles/wolf_intimidate_howl_cast.json
+particle neutral.wolf_howl_debuff particles/neutral_fx/wolf_intimidate_howl_cast_dmg_debuff.vpcf_c particles/wolf_intimidate_howl_cast_dmg_debuff.json
+particle neutral.hellcaller particles/neutral_fx/satyr_hellcaller.vpcf_c particles/satyr_hellcaller.json
+particle neutral.ogre_smash particles/neutral_fx/ogre_bruiser_smash.vpcf_c particles/ogre_bruiser_smash.json
+particle neutral.boulder particles/neutral_fx/mud_golem_hurl_boulder.vpcf_c particles/mud_golem_hurl_boulder.json
+particle neutral.boulder_hit particles/neutral_fx/mud_golem_hurl_boulder_explode.vpcf_c particles/mud_golem_hurl_boulder_explode.json
+particle neutral.enrage particles/neutral_fx/hellbear_power.vpcf_c particles/hellbear_power.json
+particle neutral.thunder_clap particles/neutral_fx/ursa_thunderclap.vpcf_c particles/ursa_thunderclap.json
+particle neutral.hurricane particles/neutral_fx/wildkin_ripper_hurricane_cast.vpcf_c particles/wildkin_ripper_hurricane_cast.json
+particle neutral.tornado particles/neutral_fx/tornado_ambient.vpcf_c particles/tornado_ambient.json
+particle neutral.ensnare_net particles/neutral_fx/dark_troll_ensnare.vpcf_c particles/dark_troll_ensnare.json
+particle neutral.ensnare particles/neutral_fx/dark_troll_ensnare_proj.vpcf_c particles/dark_troll_ensnare_proj.json
+particle neutral.raise_dead particles/neutral_fx/skeleton_spawn.vpcf_c particles/skeleton_spawn.json
+particle neutral.seed_shot particles/neutral_fx/pine_cone_seed_shot.vpcf_c particles/pine_cone_seed_shot.json
+particle neutral.seed_shot_hit particles/neutral_fx/pine_cone_seed_shot_impact.vpcf_c particles/pine_cone_seed_shot_impact.json
+particle neutral.fireball_cast particles/neutral_fx/black_dragon_fireball_cast.vpcf_c particles/black_dragon_fireball_cast.json
+particle neutral.fireball particles/neutral_fx/black_dragon_fireball_projectile.vpcf_c particles/black_dragon_fireball_projectile.json
+particle neutral.lizard_frenzy particles/neutral_fx/thunder_lizard_frenzy.vpcf_c particles/thunder_lizard_frenzy.json
+particle neutral.ice_bomb particles/neutral_fx/icefire_bomb.vpcf_c particles/icefire_bomb.json
+particle neutral.ice_bomb_debuff particles/neutral_fx/icefire_bomb_debuff.vpcf_c particles/icefire_bomb_debuff.json
+particle neutral.arm_of_the_deep particles/neutral_fx/frogmen_arm_of_the_deep_projectile.vpcf_c particles/frogmen_arm_of_the_deep_projectile.json
+particle neutral.arm_of_the_deep_hit particles/neutral_fx/frogmen_arm_of_the_deep_hit.vpcf_c particles/frogmen_arm_of_the_deep_hit.json
+particle neutral.water_bubble particles/neutral_fx/frogmen_water_bubble.vpcf_c particles/frogmen_water_bubble.json
+
 # --- Runes and the Bottle (generic_gameplay/rune_*: the glow each rune wears where it lies, the swirl a Bounty Rune
 # appears in, the burst of a Bounty Rune taken, the loops a power rune's buff wears on its hero (Regeneration's file
 # says regen); the Shield's is a status effect, of which the sprites around the body are drawn; items_fx/bottle
@@ -402,6 +480,143 @@ fx unit.npc_dota_sentry_wards.worn at=unit particle=ward.sentry.ambient cp1=sigh
 fx item.blood_grenade.use at=caster sound=sound.blood_grenade.cast
 fx item.blood_grenade.land at=point sound=sound.blood_grenade.location
 fx modifier.modifier_item_blood_grenade_debuff.worn at=unit sound=sound.blood_grenade.target
+# Healing Salve, Clarity, Tango: the flash about the one who drinks and the mending on the one drunk to
+fx item.flask.use at=caster particle=item.flask.cast sound=sound.item.flask
+fx item.flask.worn at=unit particle=item.flask.heal
+fx item.clarity.use at=caster particle=item.clarity.cast sound=sound.item.clarity
+fx item.clarity.worn at=unit particle=item.clarity.heal
+fx item.tango.use at=caster sound=sound.item.tango
+fx item.tango.worn at=unit particle=item.tango.heal
+# Enchanted Mango, Magic Stick and Wand (the burst scales with the charges they spent), Phase Boots
+fx item.enchanted_mango.use at=caster particle=item.mango.active sound=sound.item.mango
+fx item.magic_stick.use at=caster particle=item.magic_stick sound=sound.item.magic_stick cp1=charges
+fx item.magic_wand.use at=caster particle=item.magic_wand sound=sound.item.magic_stick cp1=charges
+fx item.phase_boots.use at=caster sound=sound.item.phase_boots
+fx item.phase_boots.worn at=unit particle=item.phase_boots
+# Power Treads: the burst of a swap of attribute, the glow of the attribute they are set to
+fx item.power_treads.use at=caster particle=item.power_treads.swap cp1=mode cp2=origin
+fx item.power_treads.held at=unit particle=item.power_treads.buff cp1=mode
+# Iron Branch plants a tree where it is aimed; the Ward Dispenser plants a ward
+fx item.branches.use at=point particle=item.branches.tree
+fx item.ward_dispenser.use at=point sound=sound.ward.activate
+# Shadow Fiend: eyes and mouth that burn, the Requiem's head swirl while it is cast and its cast
+# sound, Feast of Souls, the mark of a Shadowraze
+fx unit.npc_dota_hero_nevermore.worn at=unit particle=hero.nevermore.ambient_eyes cp1=attach_eyeL cp2=attach_eyeR cp3=attach_head
+fx ability.nevermore_requiem.casting at=unit particle=hero.nevermore.requiem_head sound=sound.requiem_cast cp3=attach_head
+fx ability.nevermore_frenzy.cast at=caster sound=sound.nevermore.frenzy
+fx ability.nevermore_frenzy.worn at=unit particle=hero.nevermore.frenzy cp1=origin cp2=attach_hitloc cp4=100,0,0 cp5=attach_hitloc
+fx ability.nevermore_shadowraze*.worn at=unit particle=hero.nevermore.raze_debuff cp3=origin
+# Pudge: Meat Hook (the throw, the chain and its head in flight, the hit), Rot (the ring on Pudge, the
+# rot on those it reaches), Dismember, Meat Shield
+fx ability.pudge_meat_hook.cast at=caster sound=sound.pudge.hook_throw
+fx ability.pudge_meat_hook.flies at=chain particle=hero.pudge.hook cp2=2200,0,0 cp3=10,0,0 cp4=1,0,0
+fx ability.pudge_meat_hook.hit at=unit attach=attach_hitloc particle=hero.pudge.hook_impact sound=sound.pudge.hook_impact
+fx ability.pudge_rot.worn at=unit whose=own particle=hero.pudge.rot sound=sound.pudge.rot cp1=250,1,250
+fx ability.pudge_rot.worn at=unit whose=foreign particle=hero.pudge.rot_recipient
+fx modifier.modifier_pudge_dismember.worn at=unit attach=attach_hitloc particle=hero.pudge.dismember sound=sound.pudge.dismember
+fx modifier.modifier_pudge_flesh_heap_block.worn at=unit particle=hero.pudge.meat_shield
+# What a unit under a stun, a disarm or a break shows over its head, and the fountain's mending
+fx modifier.modifier_stunned.worn at=unit attach=overhead particle=status.stunned
+fx modifier.modifier_disarmed.worn at=unit attach=overhead particle=status.disarmed cp1=attach_hitloc
+fx modifier.modifier_break.worn at=unit attach=overhead particle=status.broken
+fx modifier.modifier_fountain_aura_buff.worn at=unit particle=fountain.regen
+# Neutral creeps: auras and debuffs they leave on units, and each spell's cast, flight and hit
+fx modifier.modifier_kobold_taskmaster_speed_aura_bonus.worn at=unit particle=neutral.kobold_speed cp1=origin
+fx ability.forest_troll_high_priest_heal.cast at=caster sound=sound.neutral.troll_heal
+fx ability.forest_troll_high_priest_heal.hit at=unit attach=attach_hitloc particle=neutral.troll_heal
+fx modifier.modifier_gnoll_assassin_envenomed_weapon_poison.worn at=unit particle=neutral.gnoll_poison cp1=origin cp3=origin
+fx ability.fel_beast_haunt.flies at=flight particle=neutral.fell_spirit
+fx ability.fel_beast_haunt.hit at=unit attach=attach_hitloc particle=neutral.fell_spirit_hit
+fx modifier.modifier_ghost_frost_attack_slow.worn at=unit particle=status.slowed_cold
+fx ability.harpy_scout_take_off.cast at=caster particle=neutral.harpy_takeoff
+fx ability.harpy_storm_chain_lightning.cast at=caster sound=sound.neutral.harpy_lightning
+fx ability.harpy_storm_chain_lightning.hit at=unit attach=attach_hitloc particle=neutral.harpy_lightning_hit
+fx ability.centaur_khan_war_stomp.cast at=caster particle=neutral.centaur_stomp sound=sound.neutral.centaur_stomp
+fx ability.giant_wolf_intimidate.cast at=caster particle=neutral.wolf_howl cp1=attach_head cp2=1000,0,0
+fx modifier.modifier_giant_wolf_intimidate.worn at=unit particle=neutral.wolf_howl_debuff
+fx ability.satyr_trickster_purge.cast at=caster sound=sound.neutral.trickster_cast
+fx ability.satyr_trickster_purge.hit at=unit attach=attach_hitloc particle=status.purged
+fx ability.satyr_soulstealer_mana_burn.hit at=unit attach=attach_hitloc particle=status.mana_burned sound=sound.neutral.mana_burn
+fx ability.satyr_hellcaller_shockwave.cast at=caster sound=sound.neutral.shockwave
+fx ability.satyr_hellcaller_shockwave.flies at=flight particle=neutral.hellcaller
+fx ability.satyr_hellcaller_shockwave.hit at=unit sound=sound.neutral.shockwave_hit
+fx ability.ogre_bruiser_ogre_smash.cast at=caster particle=neutral.ogre_smash sound=sound.neutral.ogre_smash
+fx ability.ogre_bruiser_ogre_smash.hit at=unit sound=sound.neutral.ogre_smash_hit
+fx ability.mud_golem_hurl_boulder.cast at=caster sound=sound.neutral.boulder
+fx ability.mud_golem_hurl_boulder.flies at=flight particle=neutral.boulder
+fx ability.mud_golem_hurl_boulder.hit at=unit attach=attach_hitloc particle=neutral.boulder_hit sound=sound.neutral.boulder_hit
+fx ability.furbolg_enrage*.worn at=unit particle=neutral.enrage cp2=origin
+fx ability.polar_furbolg_ursa_warrior_thunder_clap.cast at=caster particle=neutral.thunder_clap sound=sound.neutral.thunder_clap
+fx ability.enraged_wildkin_tornado.cast at=caster sound=sound.neutral.tornado
+fx ability.enraged_wildkin_hurricane.cast at=caster particle=neutral.hurricane
+fx unit.npc_dota_enraged_wildkin_tornado.worn at=unit particle=neutral.tornado
+fx ability.dark_troll_warlord_ensnare.cast at=caster sound=sound.neutral.ensnare
+fx ability.dark_troll_warlord_ensnare.flies at=flight particle=neutral.ensnare
+fx ability.dark_troll_warlord_ensnare.worn at=unit particle=neutral.ensnare_net
+fx ability.dark_troll_warlord_raise_dead.cast at=caster particle=neutral.raise_dead sound=sound.neutral.raise_dead
+fx ability.warpine_raider_seed_shot.cast at=caster sound=sound.neutral.seed_shot
+fx ability.warpine_raider_seed_shot.flies at=flight particle=neutral.seed_shot
+fx ability.warpine_raider_seed_shot.hit at=unit attach=attach_hitloc particle=neutral.seed_shot_hit sound=sound.neutral.seed_shot_hit
+fx ability.black_dragon_fireball.cast at=caster particle=neutral.fireball_cast sound=sound.neutral.fireball
+fx ability.black_dragon_fireball.flies at=flight particle=neutral.fireball
+fx ability.black_dragon_fireball.hit at=unit sound=sound.neutral.fireball_hit
+fx ability.big_thunder_lizard_slam.cast at=caster sound=sound.neutral.lizard_stomp
+fx ability.big_thunder_lizard_frenzy.cast at=caster sound=sound.neutral.lizard_roar
+fx modifier.modifier_big_thunder_lizard_frenzy.worn at=unit particle=neutral.lizard_frenzy
+fx ability.ice_shaman_incendiary_bomb.cast at=caster sound=sound.neutral.ice_bomb
+fx ability.ice_shaman_incendiary_bomb.flies at=flight particle=neutral.ice_bomb
+fx ability.ice_shaman_incendiary_bomb.hit at=unit sound=sound.neutral.ice_bomb_hit
+fx ability.frogmen_arm_of_the_deep.cast at=caster sound=sound.neutral.arm_of_the_deep
+fx ability.frogmen_arm_of_the_deep.flies at=flight particle=neutral.arm_of_the_deep
+fx ability.frogmen_arm_of_the_deep.hit at=unit attach=attach_hitloc particle=neutral.arm_of_the_deep_hit sound=sound.neutral.arm_of_the_deep_hit
+fx ability.frogmen_water_bubble*.worn at=unit particle=neutral.water_bubble
+fx ability.spawnlord_master_stomp.cast at=caster sound=sound.neutral.spawnlord_stomp
+fx ability.spawnlord_master_freeze.cast at=caster sound=sound.neutral.spawnlord_freeze
+# Neutral creeps' deaths: the sound of each kind
+fx unit.npc_dota_neutral_kobold.died at=unit sound=sound.death.kobold
+fx unit.npc_dota_neutral_kobold_tunneler.died at=unit sound=sound.death.kobold
+fx unit.npc_dota_neutral_kobold_taskmaster.died at=unit sound=sound.death.kobold_taskmaster
+fx unit.npc_dota_neutral_forest_troll_berserker.died at=unit sound=sound.death.troll
+fx unit.npc_dota_neutral_forest_troll_high_priest.died at=unit sound=sound.death.troll
+fx unit.npc_dota_neutral_dark_troll.died at=unit sound=sound.death.troll
+fx unit.npc_dota_neutral_dark_troll_warlord.died at=unit sound=sound.death.troll_warlord
+fx unit.npc_dota_dark_troll_warlord_skeleton_warrior.died at=unit sound=sound.death.skeleton
+fx unit.npc_dota_neutral_gnoll_assassin.died at=unit sound=sound.death.gnoll
+fx unit.npc_dota_neutral_ghost.died at=unit sound=sound.death.ghost
+fx unit.npc_dota_neutral_fel_beast.died at=unit sound=sound.death.fell_beast
+fx unit.npc_dota_neutral_harpy_scout.died at=unit sound=sound.death.harpy
+fx unit.npc_dota_neutral_harpy_storm.died at=unit sound=sound.death.harpy
+fx unit.npc_dota_neutral_mud_golem.died at=unit sound=sound.death.golem
+fx unit.npc_dota_neutral_mud_golem_split.died at=unit sound=sound.death.golem
+fx unit.npc_dota_neutral_rock_golem.died at=unit sound=sound.death.golem
+fx unit.npc_dota_neutral_granite_golem.died at=unit sound=sound.death.golem
+fx unit.npc_dota_neutral_frostbitten_golem.died at=unit sound=sound.death.golem
+fx unit.npc_dota_neutral_centaur_khan.died at=unit sound=sound.death.centaur_khan
+fx unit.npc_dota_neutral_centaur_outrunner.died at=unit sound=sound.death.centaur_outrunner
+fx unit.npc_dota_neutral_alpha_wolf.died at=unit sound=sound.death.wolf
+fx unit.npc_dota_neutral_giant_wolf.died at=unit sound=sound.death.wolf
+fx unit.npc_dota_neutral_satyr_hellcaller.died at=unit sound=sound.death.satyr_hellcaller
+fx unit.npc_dota_neutral_satyr_trickster.died at=unit sound=sound.death.satyr
+fx unit.npc_dota_neutral_satyr_soulstealer.died at=unit sound=sound.death.satyr
+fx unit.npc_dota_neutral_prowler_shaman.died at=unit sound=sound.death.satyr_small
+fx unit.npc_dota_neutral_prowler_acolyte.died at=unit sound=sound.death.satyr_small
+fx unit.npc_dota_neutral_ogre_magi.died at=unit sound=sound.death.ogre
+fx unit.npc_dota_neutral_ogre_mauler.died at=unit sound=sound.death.ogre
+fx unit.npc_dota_neutral_polar_furbolg_champion.died at=unit sound=sound.death.furbolg_champion
+fx unit.npc_dota_neutral_polar_furbolg_ursa_warrior.died at=unit sound=sound.death.furbolg_ursa
+fx unit.npc_dota_neutral_enraged_wildkin.died at=unit sound=sound.death.wildkin
+fx unit.npc_dota_neutral_wildkin.died at=unit sound=sound.death.wildkin
+fx unit.npc_dota_neutral_black_dragon.died at=unit sound=sound.death.black_dragon
+fx unit.npc_dota_neutral_black_drake.died at=unit sound=sound.death.black_drake
+fx unit.npc_dota_neutral_big_thunder_lizard.died at=unit sound=sound.death.thunder_lizard_big
+fx unit.npc_dota_neutral_small_thunder_lizard.died at=unit sound=sound.death.thunder_lizard_small
+fx unit.npc_dota_neutral_ancient_frog.died at=unit sound=sound.death.frog_large
+fx unit.npc_dota_neutral_ancient_frog_mage.died at=unit sound=sound.death.frog_large
+fx unit.npc_dota_neutral_grown_frog.died at=unit sound=sound.death.frog_medium
+fx unit.npc_dota_neutral_grown_frog_mage.died at=unit sound=sound.death.frog_medium
+fx unit.npc_dota_neutral_froglet.died at=unit sound=sound.death.frog_small
+fx unit.npc_dota_neutral_froglet_mage.died at=unit sound=sound.death.frog_small
+fx unit.npc_dota_neutral_tadpole.died at=unit sound=sound.death.frog_small
 # Runes (rune.<kind>, the kind by its art's name: doubledamage is Amplify Damage): the glow each wears where it lies in
 # sight; a Bounty Rune appears in its swirl (Dota has no other spawn effect, and no spawn sound: the HUD tells it); a
 # rune taking effect, at once or out of a Bottle, sounds its Rune.* event on the hero (Rune.DD, Rune.Regen and
@@ -675,6 +890,108 @@ sound sound.item.clarity sounds/items/clarity_potion.vsnd_c sounds/items/clarity
 sound sound.item.magic_stick sounds/items/magic_stick_activate.vsnd_c sounds/items/magic_stick_activate.wav event=DOTA_Item.MagicStick.Activate
 sound sound.item.phase_boots sounds/items/phase_boots_activate.vsnd_c sounds/items/phase_boots_activate.wav event=DOTA_Item.PhaseBoots.Activate
 sound sound.item.blink sounds/weapons/hero/antimage/blink_out.vsnd_c sounds/weapons/hero/antimage/blink_out.wav event=DOTA_Item.BlinkDagger.Activate
+# Sounds of the abilities of Pudge and of the neutral creeps, and of the neutral creeps dying
+sound sound.item.mango sounds/items/mango.vsnd_c sounds/items/mango.wav event=DOTA_Item.Mango.Activate
+sound sound.pudge.hook_throw sounds/weapons/hero/pudge/hook_throw.vsnd_c sounds/weapons/hero/pudge/hook_throw.wav event=Hero_Pudge.AttackHookExtend
+sound sound.pudge.hook_impact sounds/weapons/hero/pudge/hook_impact.vsnd_c sounds/weapons/hero/pudge/hook_impact.wav event=Hero_Pudge.AttackHookImpact
+sound sound.pudge.rot sounds/weapons/hero/pudge/rot.vsnd_c sounds/weapons/hero/pudge/rot.wav event=Hero_Pudge.Rot
+sound sound.pudge.dismember sounds/weapons/hero/pudge/dismember_blood1.vsnd_c sounds/weapons/hero/pudge/dismember_blood1.wav event=Hero_Pudge.Dismember
+sound sound.pudge.dismember sounds/weapons/hero/pudge/dismember_blood2.vsnd_c sounds/weapons/hero/pudge/dismember_blood2.wav event=Hero_Pudge.Dismember
+sound sound.pudge.dismember sounds/weapons/hero/pudge/dismember_blood3.vsnd_c sounds/weapons/hero/pudge/dismember_blood3.wav event=Hero_Pudge.Dismember
+sound sound.hero.pudge.death sounds/weapons/hero/pudge/death.vsnd_c sounds/weapons/hero/pudge/death.wav event=Hero_Pudge.Death
+sound sound.neutral.kobold_whip sounds/weapons/creep/neutral/kobold_whip_01.vsnd_c sounds/weapons/creep/neutral/kobold_whip_01.wav event=n_creep_Kobold.Whip
+sound sound.neutral.kobold_whip sounds/weapons/creep/neutral/kobold_whip_02.vsnd_c sounds/weapons/creep/neutral/kobold_whip_02.wav event=n_creep_Kobold.Whip
+sound sound.neutral.troll_heal sounds/weapons/creep/neutral/troll_priest_heal.vsnd_c sounds/weapons/creep/neutral/troll_priest_heal.wav event=n_creep_ForestTrollHighPriest.Heal
+sound sound.neutral.harpy_lightning sounds/weapons/creep/neutral/harpystorm_transfer_01.vsnd_c sounds/weapons/creep/neutral/harpystorm_transfer_01.wav event=n_creep_HarpyStorm.ChainLighting
+sound sound.neutral.harpy_lightning sounds/weapons/creep/neutral/harpystorm_transfer_02.vsnd_c sounds/weapons/creep/neutral/harpystorm_transfer_02.wav event=n_creep_HarpyStorm.ChainLighting
+sound sound.neutral.harpy_lightning sounds/weapons/creep/neutral/harpystorm_transfer_03.vsnd_c sounds/weapons/creep/neutral/harpystorm_transfer_03.wav event=n_creep_HarpyStorm.ChainLighting
+sound sound.neutral.harpy_lightning sounds/weapons/creep/neutral/harpystorm_transfer_04.vsnd_c sounds/weapons/creep/neutral/harpystorm_transfer_04.wav event=n_creep_HarpyStorm.ChainLighting
+sound sound.neutral.centaur_stomp sounds/weapons/creep/neutral/centaur_khan_stomp_01.vsnd_c sounds/weapons/creep/neutral/centaur_khan_stomp_01.wav event=n_creep_Centaur.Stomp
+sound sound.neutral.trickster_cast sounds/weapons/creep/neutral/satyr_trickster_purge.vsnd_c sounds/weapons/creep/neutral/satyr_trickster_purge.wav event=n_creep_SatyrTrickster.Cast
+sound sound.neutral.mana_burn sounds/weapons/creep/neutral/satyr_soulstealer_manaburn.vsnd_c sounds/weapons/creep/neutral/satyr_soulstealer_manaburn.wav event=n_creep_SatyrSoulstealer.ManaBurn
+sound sound.neutral.shockwave sounds/weapons/creep/neutral/satyr_hellcaster_cast.vsnd_c sounds/weapons/creep/neutral/satyr_hellcaster_cast.wav event=n_creep_SatyrHellcaller.Shockwave
+sound sound.neutral.shockwave_hit sounds/weapons/creep/neutral/satyr_hellcaster_damage.vsnd_c sounds/weapons/creep/neutral/satyr_hellcaster_damage.wav event=n_creep_SatyrHellcaller.Shockwave.Damage
+sound sound.neutral.ogre_smash sounds/weapons/hero/ogre_magi/bloodlust_cast.vsnd_c sounds/weapons/hero/ogre_magi/bloodlust_cast.wav event=n_creep_OgreBruiser.Smash.Charge
+sound sound.neutral.ogre_smash_hit sounds/weapons/hero/visage/stun.vsnd_c sounds/weapons/hero/visage/stun.wav event=n_creep_OgreBruiser.Smash.Stun
+sound sound.neutral.boulder sounds/weapons/hero/tiny/tiny_toss_throw.vsnd_c sounds/weapons/hero/tiny/tiny_toss_throw.wav event=n_mud_golem.Boulder.Cast
+sound sound.neutral.boulder_hit sounds/weapons/hero/tiny/tiny_toss_impact.vsnd_c sounds/weapons/hero/tiny/tiny_toss_impact.wav event=n_mud_golem.Boulder.Target
+sound sound.neutral.thunder_clap sounds/weapons/creep/neutral/ursa_thunder_clap_01.vsnd_c sounds/weapons/creep/neutral/ursa_thunder_clap_01.wav event=n_creep_Ursa.Clap
+sound sound.neutral.tornado sounds/weapons/creep/neutral/wildkin_summon_tornado_01.vsnd_c sounds/weapons/creep/neutral/wildkin_summon_tornado_01.wav event=n_creep_Wildkin.SummonTornado
+sound sound.neutral.ensnare sounds/weapons/creep/neutral/troll_cast_net.vsnd_c sounds/weapons/creep/neutral/troll_cast_net.wav event=n_creep_TrollWarlord.Ensnare
+sound sound.neutral.raise_dead sounds/weapons/creep/neutral/troll_cast_raisedead.vsnd_c sounds/weapons/creep/neutral/troll_cast_raisedead.wav event=n_creep_TrollWarlord.RaiseDead
+sound sound.neutral.seed_shot sounds/weapons/creep/shared/whoosh01.vsnd_c sounds/weapons/creep/shared/whoosh01.wav event=n_creep_warpine.SeedShot.Cast
+sound sound.neutral.seed_shot sounds/weapons/creep/shared/whoosh02.vsnd_c sounds/weapons/creep/shared/whoosh02.wav event=n_creep_warpine.SeedShot.Cast
+sound sound.neutral.seed_shot sounds/weapons/creep/shared/whoosh03.vsnd_c sounds/weapons/creep/shared/whoosh03.wav event=n_creep_warpine.SeedShot.Cast
+sound sound.neutral.seed_shot_hit sounds/weapons/creep/neutral/seedshot_target.vsnd_c sounds/weapons/creep/neutral/seedshot_target.wav event=n_creep_warpine.SeedShot.Target
+sound sound.neutral.fireball sounds/weapons/hero/jakiro/attack_01.vsnd_c sounds/weapons/hero/jakiro/attack_01.wav event=n_black_dragon.Fireball.Cast
+sound sound.neutral.fireball_hit sounds/weapons/creep/neutral/black_dragon_fire.vsnd_c sounds/weapons/creep/neutral/black_dragon_fire.wav event=n_black_dragon.Fireball.Target
+sound sound.neutral.lizard_roar sounds/weapons/creep/neutral/thunderlizard_roar.vsnd_c sounds/weapons/creep/neutral/thunderlizard_roar.wav event=n_creep_Thunderlizard_Big.Roar
+sound sound.neutral.lizard_stomp sounds/weapons/creep/neutral/thunderlizard_stomp.vsnd_c sounds/weapons/creep/neutral/thunderlizard_stomp.wav event=n_creep_Thunderlizard_Big.Stomp
+sound sound.neutral.ice_bomb sounds/weapons/creep/shared/whoosh01.vsnd_c sounds/weapons/creep/shared/whoosh01.wav event=n_creep_ice_shaman.IceBomb.Cast
+sound sound.neutral.ice_bomb sounds/weapons/creep/shared/whoosh02.vsnd_c sounds/weapons/creep/shared/whoosh02.wav event=n_creep_ice_shaman.IceBomb.Cast
+sound sound.neutral.ice_bomb sounds/weapons/creep/shared/whoosh03.vsnd_c sounds/weapons/creep/shared/whoosh03.wav event=n_creep_ice_shaman.IceBomb.Cast
+sound sound.neutral.ice_bomb_hit sounds/weapons/creep/neutral/ice_bomb_target.vsnd_c sounds/weapons/creep/neutral/ice_bomb_target.wav event=n_creep_ice_shaman.IceBomb.Target
+sound sound.neutral.arm_of_the_deep sounds/weapons/hero/tidehunter/gush_projectile.vsnd_c sounds/weapons/hero/tidehunter/gush_projectile.wav event=n_frogs.ArmOfTheDeep
+sound sound.neutral.arm_of_the_deep_hit sounds/weapons/hero/slardar/bash_stun.vsnd_c sounds/weapons/hero/slardar/bash_stun.wav event=n_frogs.ArmOfTheDeep.Stun
+sound sound.neutral.water_bubble sounds/weapons/creep/neutral/n_frog_bubble_target.vsnd_c sounds/weapons/creep/neutral/n_frog_bubble_target.wav event=n_frogs.WaterBubble.Target
+sound sound.neutral.spawnlord_stomp sounds/weapons/creep/neutral/spawnlord_stomp.vsnd_c sounds/weapons/creep/neutral/spawnlord_stomp.wav event=n_creep_Spawnlord.Stomp
+sound sound.neutral.spawnlord_freeze sounds/weapons/creep/neutral/spawnlord_freeze.vsnd_c sounds/weapons/creep/neutral/spawnlord_freeze.wav event=n_creep_Spawnlord.Freeze
+sound sound.death.kobold sounds/misc/creep_deaths/death_kobold_common_01.vsnd_c sounds/misc/creep_deaths/death_kobold_common_01.wav event=n_creep_kobolds.Death
+sound sound.death.kobold sounds/misc/creep_deaths/death_kobold_common_02.vsnd_c sounds/misc/creep_deaths/death_kobold_common_02.wav event=n_creep_kobolds.Death
+sound sound.death.kobold sounds/misc/creep_deaths/death_kobold_common_03.vsnd_c sounds/misc/creep_deaths/death_kobold_common_03.wav event=n_creep_kobolds.Death
+sound sound.death.kobold sounds/misc/creep_deaths/death_kobold_common_04.vsnd_c sounds/misc/creep_deaths/death_kobold_common_04.wav event=n_creep_kobolds.Death
+sound sound.death.kobold_taskmaster sounds/misc/creep_deaths/death_kobold_taskmaster.vsnd_c sounds/misc/creep_deaths/death_kobold_taskmaster.wav event=n_creep_koboldTaskmaster.Death
+sound sound.death.troll sounds/misc/creep_deaths/death_troll_common_01.vsnd_c sounds/misc/creep_deaths/death_troll_common_01.wav event=n_creep_trollCommon.Death
+sound sound.death.troll sounds/misc/creep_deaths/death_troll_common_02.vsnd_c sounds/misc/creep_deaths/death_troll_common_02.wav event=n_creep_trollCommon.Death
+sound sound.death.troll sounds/misc/creep_deaths/death_troll_common_03.vsnd_c sounds/misc/creep_deaths/death_troll_common_03.wav event=n_creep_trollCommon.Death
+sound sound.death.troll sounds/misc/creep_deaths/death_troll_common_04.vsnd_c sounds/misc/creep_deaths/death_troll_common_04.wav event=n_creep_trollCommon.Death
+sound sound.death.troll_warlord sounds/misc/creep_deaths/death_troll_warlord.vsnd_c sounds/misc/creep_deaths/death_troll_warlord.wav event=n_creep_trollWarlord.Death
+sound sound.death.gnoll sounds/misc/creep_deaths/death_gnoll_01.vsnd_c sounds/misc/creep_deaths/death_gnoll_01.wav event=n_creep_gnoll.Death
+sound sound.death.gnoll sounds/misc/creep_deaths/death_gnoll_02.vsnd_c sounds/misc/creep_deaths/death_gnoll_02.wav event=n_creep_gnoll.Death
+sound sound.death.gnoll sounds/misc/creep_deaths/death_gnoll_03.vsnd_c sounds/misc/creep_deaths/death_gnoll_03.wav event=n_creep_gnoll.Death
+sound sound.death.gnoll sounds/misc/creep_deaths/death_gnoll_04.vsnd_c sounds/misc/creep_deaths/death_gnoll_04.wav event=n_creep_gnoll.Death
+sound sound.death.ghost sounds/misc/creep_deaths/death_ghost.vsnd_c sounds/misc/creep_deaths/death_ghost.wav event=n_creep_ghost.Death
+sound sound.death.fell_beast sounds/misc/creep_deaths/death_ghost_fellbeast_01.vsnd_c sounds/misc/creep_deaths/death_ghost_fellbeast_01.wav event=n_creep_fellbeast.Death
+sound sound.death.fell_beast sounds/misc/creep_deaths/death_ghost_fellbeast_02.vsnd_c sounds/misc/creep_deaths/death_ghost_fellbeast_02.wav event=n_creep_fellbeast.Death
+sound sound.death.harpy sounds/misc/creep_deaths/death_harpy_01.vsnd_c sounds/misc/creep_deaths/death_harpy_01.wav event=n_creep_harpy.Death
+sound sound.death.harpy sounds/misc/creep_deaths/death_harpy_02.vsnd_c sounds/misc/creep_deaths/death_harpy_02.wav event=n_creep_harpy.Death
+sound sound.death.harpy sounds/misc/creep_deaths/death_harpy_03.vsnd_c sounds/misc/creep_deaths/death_harpy_03.wav event=n_creep_harpy.Death
+sound sound.death.golem sounds/misc/creep_deaths/death_golem_rock_01.vsnd_c sounds/misc/creep_deaths/death_golem_rock_01.wav event=n_creep_golemRock.Death
+sound sound.death.golem sounds/misc/creep_deaths/death_golem_rock_02.vsnd_c sounds/misc/creep_deaths/death_golem_rock_02.wav event=n_creep_golemRock.Death
+sound sound.death.golem sounds/misc/creep_deaths/death_golem_granite.vsnd_c sounds/misc/creep_deaths/death_golem_granite.wav event=n_creep_golemRock.Death
+sound sound.death.centaur_khan sounds/misc/creep_deaths/death_centaur_khan.vsnd_c sounds/misc/creep_deaths/death_centaur_khan.wav event=n_creep_centaurKhan.Death
+sound sound.death.centaur_outrunner sounds/misc/creep_deaths/death_centaur_outrunner.vsnd_c sounds/misc/creep_deaths/death_centaur_outrunner.wav event=n_creep_centaurOutrunner.Death
+sound sound.death.wolf sounds/misc/creep_deaths/death_worg_01.vsnd_c sounds/misc/creep_deaths/death_worg_01.wav event=n_creep_Worg.Death
+sound sound.death.wolf sounds/misc/creep_deaths/death_worg_02.vsnd_c sounds/misc/creep_deaths/death_worg_02.wav event=n_creep_Worg.Death
+sound sound.death.wolf sounds/misc/creep_deaths/death_worg_03.vsnd_c sounds/misc/creep_deaths/death_worg_03.wav event=n_creep_Worg.Death
+sound sound.death.wolf sounds/misc/creep_deaths/death_worg_04.vsnd_c sounds/misc/creep_deaths/death_worg_04.wav event=n_creep_Worg.Death
+sound sound.death.satyr sounds/misc/creep_deaths/death_satyr_01.vsnd_c sounds/misc/creep_deaths/death_satyr_01.wav event=n_creep_SatyrCommon.Death
+sound sound.death.satyr sounds/misc/creep_deaths/death_satyr_02.vsnd_c sounds/misc/creep_deaths/death_satyr_02.wav event=n_creep_SatyrCommon.Death
+sound sound.death.satyr sounds/misc/creep_deaths/death_satyr_03.vsnd_c sounds/misc/creep_deaths/death_satyr_03.wav event=n_creep_SatyrCommon.Death
+sound sound.death.satyr sounds/misc/creep_deaths/death_satyr_04.vsnd_c sounds/misc/creep_deaths/death_satyr_04.wav event=n_creep_SatyrCommon.Death
+sound sound.death.satyr_hellcaller sounds/misc/creep_deaths/death_satyr_hellcaller.vsnd_c sounds/misc/creep_deaths/death_satyr_hellcaller.wav event=n_creep_SatyrH.Death
+sound sound.death.satyr_small sounds/misc/creep_deaths/death_satyr_small_01.vsnd_c sounds/misc/creep_deaths/death_satyr_small_01.wav event=n_creep_SatyrSmall.Death
+sound sound.death.satyr_small sounds/misc/creep_deaths/death_satyr_small_02.vsnd_c sounds/misc/creep_deaths/death_satyr_small_02.wav event=n_creep_SatyrSmall.Death
+sound sound.death.ogre sounds/misc/creep_deaths/death_ogre_01.vsnd_c sounds/misc/creep_deaths/death_ogre_01.wav event=n_creep_ogres.Death
+sound sound.death.ogre sounds/misc/creep_deaths/death_ogre_02.vsnd_c sounds/misc/creep_deaths/death_ogre_02.wav event=n_creep_ogres.Death
+sound sound.death.ogre sounds/misc/creep_deaths/death_ogre_03.vsnd_c sounds/misc/creep_deaths/death_ogre_03.wav event=n_creep_ogres.Death
+sound sound.death.ogre sounds/misc/creep_deaths/death_ogre_04.vsnd_c sounds/misc/creep_deaths/death_ogre_04.wav event=n_creep_ogres.Death
+sound sound.death.furbolg_champion sounds/misc/creep_deaths/death_furbolg_champion.vsnd_c sounds/misc/creep_deaths/death_furbolg_champion.wav event=n_creep_furbolgchampion.Death
+sound sound.death.furbolg_ursa sounds/misc/creep_deaths/death_furbolg_ursa.vsnd_c sounds/misc/creep_deaths/death_furbolg_ursa.wav event=n_creep_furbolgUrsa.Death
+sound sound.death.wildkin sounds/misc/creep_deaths/death_wildkin_01.vsnd_c sounds/misc/creep_deaths/death_wildkin_01.wav event=n_creep_Wildkin.Death
+sound sound.death.wildkin sounds/misc/creep_deaths/death_wildkin_02.vsnd_c sounds/misc/creep_deaths/death_wildkin_02.wav event=n_creep_Wildkin.Death
+sound sound.death.wildkin sounds/misc/creep_deaths/death_wildkin_03.vsnd_c sounds/misc/creep_deaths/death_wildkin_03.wav event=n_creep_Wildkin.Death
+sound sound.death.black_dragon sounds/misc/creep_deaths/death_black_dragon.vsnd_c sounds/misc/creep_deaths/death_black_dragon.wav event=n_creep_blackdragon.Death
+sound sound.death.black_drake sounds/misc/creep_deaths/death_black_drake_01.vsnd_c sounds/misc/creep_deaths/death_black_drake_01.wav event=n_creep_blackdrake.Death
+sound sound.death.black_drake sounds/misc/creep_deaths/death_black_drake_01.vsnd_c sounds/misc/creep_deaths/death_black_drake_01.wav event=n_creep_blackdrake.Death
+sound sound.death.thunder_lizard_big sounds/misc/creep_deaths/death_thunderlizard.vsnd_c sounds/misc/creep_deaths/death_thunderlizard.wav event=n_creep_Thunderlizard_Big.Death
+sound sound.death.thunder_lizard_small sounds/misc/creep_deaths/death_thunderlizard_small_01.vsnd_c sounds/misc/creep_deaths/death_thunderlizard_small_01.wav event=n_creep_Thunderlizard_Small.Death
+sound sound.death.thunder_lizard_small sounds/misc/creep_deaths/death_thunderlizard_small_02.vsnd_c sounds/misc/creep_deaths/death_thunderlizard_small_02.wav event=n_creep_Thunderlizard_Small.Death
+sound sound.death.skeleton sounds/misc/creep_deaths/death_skeleton_01.vsnd_c sounds/misc/creep_deaths/death_skeleton_01.wav event=n_creep_Skeleton.Death
+sound sound.death.skeleton sounds/misc/creep_deaths/death_skeleton_02.vsnd_c sounds/misc/creep_deaths/death_skeleton_02.wav event=n_creep_Skeleton.Death
+sound sound.death.frog_large sounds/physics/body/water_splash_large.vsnd_c sounds/physics/body/water_splash_large.wav event=n_frogs.death_splash.large
+sound sound.death.frog_medium sounds/physics/body/water_splash_medium.vsnd_c sounds/physics/body/water_splash_medium.wav event=n_frogs.death_splash.medium
+sound sound.death.frog_small sounds/physics/body/water_splash_small.vsnd_c sounds/physics/body/water_splash_small.wav event=n_frogs.death_splash.small
 # Runes taking effect (game_sounds_items: Rune.*) and the Bottle drunk and corked (Bottle.Drink, Bottle.Cork). Dota
 # plays nothing when a rune appears, and General.RunePickUp has no use the game's code shows.
 sound sound.rune.water sounds/items/rune_water.vsnd_c sounds/items/rune_water.wav event=Rune.Water

@@ -253,7 +253,7 @@ const MANA_HEIGHT: f32 = 4.0 * ui::DOTA;
 const BAR_REACH: f32 = 40.0;
 
 /// How high over its feet a unit's bar floats, in world units.
-fn bar_height(kind: UnitKind) -> f32 {
+pub(crate) fn bar_height(kind: UnitKind) -> f32 {
     match kind {
         UnitKind::Hero => 260.0,
         UnitKind::Tower => 560.0,

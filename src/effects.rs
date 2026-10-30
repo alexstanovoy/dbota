@@ -139,7 +139,7 @@ fn make_art(
 
 /// What a missile's effect reads of the units: their roots, models, poses and attachments.
 #[derive(bevy::ecs::system::SystemParam)]
-struct Shooters<'w, 's> {
+pub(crate) struct Shooters<'w, 's> {
     index: Res<'w, UnitIndex>,
     manifest: Res<'w, Manifest>,
     units: Query<
@@ -156,7 +156,7 @@ struct Shooters<'w, 's> {
 
 impl Shooters<'_, '_> {
     /// Where unit `id`'s missile leaves: the hand of the attack it swings.
-    fn launch(&self, id: EntityId) -> Option<Vec3> {
+    pub(crate) fn launch(&self, id: EntityId) -> Option<Vec3> {
         let (_, pose, attachments) = self.units.get(*self.index.0.get(&id)?).ok()?;
         let hand = usize::from(pose.is_some_and(|p| p.clip() == "attack2"));
         let attachments = attachments?;
@@ -164,8 +164,26 @@ impl Shooters<'_, '_> {
         Some(self.places.get(at).ok()?.translation())
     }
 
+    /// Where unit `id` is drawn this frame, in the sim's frame.
+    pub(crate) fn drawn(&self, id: EntityId) -> Option<Vec2> {
+        let (unit, _, _) = self.units.get(*self.index.0.get(&id)?).ok()?;
+        Some(unit.at)
+    }
+
+    /// Where the node `name` of unit `id`'s model is.
+    pub(crate) fn node(&self, id: EntityId, name: &str) -> Option<Vec3> {
+        let (_, _, attachments) = self.units.get(*self.index.0.get(&id)?).ok()?;
+        let at = self
+            .places
+            .get(attachments?.node(name)?)
+            .ok()?
+            .translation();
+        // A node whose transform has not been propagated yet sits at the world's origin.
+        (at != Vec3::ZERO).then_some(at)
+    }
+
     /// Where a missile hits unit `id`.
-    fn hit(&self, id: EntityId) -> Option<Vec3> {
+    pub(crate) fn hit(&self, id: EntityId) -> Option<Vec3> {
         let (_, _, attachments) = self.units.get(*self.index.0.get(&id)?).ok()?;
         Some(self.places.get(attachments?.hitloc?).ok()?.translation())
     }
@@ -235,7 +253,7 @@ impl Shooters<'_, '_> {
     }
 
     /// Unit `id`'s root in the world.
-    fn place(&self, id: EntityId) -> Option<Vec3> {
+    pub(crate) fn place(&self, id: EntityId) -> Option<Vec3> {
         Some(self.places.get(*self.index.0.get(&id)?).ok()?.translation())
     }
 
@@ -396,7 +414,7 @@ fn grenades(
 }
 
 /// Pulls a flying effect to `to` at the speed of a tick's move `dir`.
-fn steer(to: Vec3, dir: Vec3, playing: &mut Playing, handle: crate::particles::Handle) {
+pub(crate) fn steer(to: Vec3, dir: Vec3, playing: &mut Playing, handle: crate::particles::Handle) {
     let Some(instance) = playing.get_mut(handle) else {
         return;
     };

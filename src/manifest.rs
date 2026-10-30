@@ -7,6 +7,8 @@ use std::path::{Path, PathBuf};
 use bevy::prelude::*;
 use dbota_import::catalog::{FileKind, Id, Line as CatalogLine};
 
+use crate::fx::line::Fx;
+
 /// The manifest, compiled in.
 pub const MANIFEST: &str = include_str!("../assets-manifest/manifest.txt");
 /// Our ids to Dota names, compiled in.
@@ -52,112 +54,6 @@ pub struct UnitArt {
     /// The particle its attack's missile wears (its `ProjectileModel`), by
     /// logical name; absent for a unit that throws none.
     pub attack: Option<String>,
-}
-
-/// When a bound effect plays.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Trigger {
-    /// An item was used (`EventKind::ItemUsed`).
-    Use,
-    /// Something thrown came down (`EventKind::Landed`).
-    Land,
-    /// While the subject holds: a modifier on a unit, a unit of a Dota name standing, or a rune
-    /// of a kind lying in sight.
-    Worn,
-    /// A rune of the kind appeared (`EventKind::RuneSpawned`).
-    Spawn,
-    /// A rune of the kind took effect on a hero, at once or out of a Bottle
-    /// (`EventKind::RuneActivated`).
-    Activate,
-    /// A rune was stored in the item (`EventKind::RuneBottled`: the Bottle).
-    Store,
-}
-
-/// Where a bound effect plays.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum At {
-    /// The user, where it stands after the event.
-    Caster,
-    /// The user, where it stood in the view before.
-    CasterBefore,
-    /// The spot the event names: what a use was aimed at, where a throw came down, where a rune
-    /// appeared.
-    Point,
-    /// The unit that wears it, or the rune that lies.
-    Unit,
-}
-
-/// What feeds the second control point of a bound particle.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Feed {
-    /// How far the wearer gives true sight, in x.
-    Sight,
-    /// Where the wearer's model takes its hits (its `attach_hitloc`), following it.
-    Hitloc,
-}
-
-/// One `fx` line: the particle and sound Dota shows with a fact of the game, keyed by Dota's
-/// name for it (`item.<key>`, `modifier.<name>`, `unit.<npc name>`, `hero.<name>`); the grammar
-/// is in the manifest's header.
-#[derive(Clone, Debug, PartialEq)]
-pub struct Fx {
-    /// `item.blink`, `modifier.modifier_item_blood_grenade_debuff`, `unit.npc_dota_observer_wards`,
-    /// `hero.nevermore`, `rune.haste`.
-    pub subject: String,
-    pub trigger: Trigger,
-    pub at: At,
-    /// The logical name of the particle, when the line has one.
-    pub particle: Option<String>,
-    /// The logical prefix of the sounds, one of them played, when the line has one.
-    pub sound: Option<String>,
-    pub cp1: Option<Feed>,
-}
-
-impl Fx {
-    /// Reads the words after `fx`: `<subject>.<trigger> at=… [particle=…] [sound=…] [cp1=…]`.
-    pub fn parse(words: &[&str]) -> Result<Fx, String> {
-        let [name, rest @ ..] = words else {
-            return Err("no name".to_owned());
-        };
-        let (subject, trigger) = name.rsplit_once('.').ok_or("no trigger")?;
-        let trigger = match trigger {
-            "use" => Trigger::Use,
-            "land" => Trigger::Land,
-            "worn" => Trigger::Worn,
-            "spawn" => Trigger::Spawn,
-            "activate" => Trigger::Activate,
-            "store" => Trigger::Store,
-            other => return Err(format!("no trigger '{other}'")),
-        };
-        let mut fx = Fx {
-            subject: subject.to_owned(),
-            trigger,
-            at: At::Caster,
-            particle: None,
-            sound: None,
-            cp1: None,
-        };
-        for word in rest {
-            match word.split_once('=') {
-                Some(("at", "caster")) => fx.at = At::Caster,
-                Some(("at", "caster_before")) => fx.at = At::CasterBefore,
-                Some(("at", "point")) => fx.at = At::Point,
-                Some(("at", "unit")) => fx.at = At::Unit,
-                Some(("particle", logical)) => fx.particle = Some(logical.to_owned()),
-                Some(("sound", logical)) => fx.sound = Some(logical.to_owned()),
-                Some(("cp1", "sight")) => fx.cp1 = Some(Feed::Sight),
-                Some(("cp1", "hitloc")) => fx.cp1 = Some(Feed::Hitloc),
-                _ => return Err(format!("cannot read '{word}'")),
-            }
-        }
-        if fx.particle.is_none() && fx.sound.is_none() {
-            return Err("neither a particle nor a sound".to_owned());
-        }
-        if (trigger == Trigger::Worn) != (fx.at == At::Unit) {
-            return Err("only a worn effect is at the unit, and it is".to_owned());
-        }
-        Ok(fx)
-    }
 }
 
 /// Everything the cache was exported with, and which of it is there.

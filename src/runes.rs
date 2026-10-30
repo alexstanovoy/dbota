@@ -43,7 +43,6 @@ pub const fn text_name(kind: RuneKind) -> &'static str {
 }
 
 /// The kind of rune whose art has a name.
-#[cfg(test)]
 pub fn of_art(name: &str) -> Option<RuneKind> {
     RuneKind::ALL.into_iter().find(|kind| art(*kind) == name)
 }

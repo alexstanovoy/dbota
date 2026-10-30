@@ -1,42 +1,45 @@
-//! Effects bound to the game's facts by data: the `fx` lines of the manifest name a Dota item, a
-//! modifier, a unit, a hero or a rune and the particle and sound Dota shows with it (grammar in
-//! the manifest's header). The game's events feed them: an item used (`EventKind::ItemUsed`), a
-//! throw come down (`EventKind::Landed`), a rune appeared, taken into effect or stored in a Bottle
-//! (`RuneSpawned`, `RuneActivated`, `RuneBottled`); and what is worn: a modifier, a unit of a Dota
-//! name or a hero, from the moment a unit shows it until it goes, and a rune lying in sight. A new
-//! item, hero or rune with an effect adds lines there, not code.
+//! Effects bound to the game's facts by data: the `fx` lines of the manifest name a Dota item,
+//! ability, modifier or unit and the particle and sound Dota shows with it (grammar in the
+//! manifest's header). Four feeds drive them: the events the last pump told (an item used, an
+//! ability cast, a throw come down, a blow, a death: `told`), the effects and the units worn from
+//! the moment a unit shows them until they go (`worn`), and the missiles in flight (`flies`). A
+//! new item, ability or modifier with an effect adds lines there, not code.
+
+mod flies;
+pub mod line;
+pub mod rules;
+mod told;
+mod worn;
 
 use std::collections::HashMap;
 
 use bevy::{audio::Volume, prelude::*};
-use bota_proto::{EntityId, EventKind, Inflictor, ItemId, RuneView, UnitView, Vec2 as Spot};
+use bota_proto::{Attribute, ItemId, ItemView, UnitView, Vec2 as Spot};
 
 use crate::camera::RtsCamera;
 use crate::config::Settings;
-use crate::fog::FogGrid;
-use crate::manifest::{At, Feed, Fx, Manifest, Trigger};
+use crate::effects::Shooters;
 use crate::map::Ground;
 use crate::particles::{Handle, Library, Playing};
-use crate::session::Session;
-use crate::units::{Attachments, Dying, Unit, UnitIndex};
+use line::{Attach, Feed, Fx};
 
-/// The control points a bound particle is given: where it plays, and what a line's `cp1=` feeds.
+/// The control point a bound particle is placed by.
 const PLACE: usize = 0;
-const FEED: usize = 1;
+/// The item slots that are a hero's inventory; the backpack's three carry nothing active.
+const ACTIVE_SLOTS: usize = 6;
 
 /// What the game has sounded through the bound lines, by the logical prefix of the line's sound:
 /// for the end-to-end tests to ask what was heard.
 #[derive(Resource, Default)]
 pub struct Heard(pub HashMap<String, u32>);
 
-/// The worn effects playing: by the wearing unit and the line, the particle if the line has one.
-#[derive(Resource, Default)]
-struct Worn(HashMap<(EntityId, usize), Option<Handle>>);
-
 pub fn plugin(app: &mut App) {
-    app.init_resource::<Heard>()
-        .init_resource::<Worn>()
-        .add_systems(Update, (told, worn.after(crate::units::Placed)));
+    app.init_resource::<Heard>().add_plugins((
+        rules::plugin,
+        told::plugin,
+        worn::plugin,
+        flies::plugin,
+    ));
 }
 
 /// A point of the sim as a point of the ground, in the world's frame.
@@ -45,12 +48,49 @@ fn on_ground(ground: &Ground, at: Spot) -> Vec3 {
     Vec3::new(x, ground.at(x, y), -y)
 }
 
+/// Where a line puts its effect on a unit, in the world's frame: at its feet, over its head
+/// where its health bar floats, or at a node of its model (half way up where it has none).
+fn attach_point(ground: &Ground, bodies: &Shooters, unit: &UnitView, attach: &Attach) -> Vec3 {
+    // Where the unit is drawn this frame, so what it wears moves with its model.
+    let feet = match bodies.drawn(unit.id) {
+        Some(at) => Vec3::new(at.x, ground.at(at.x, at.y), -at.y),
+        None => on_ground(ground, unit.pos),
+    };
+    let over = Vec3::Y * crate::bars::bar_height(unit.kind);
+    match attach {
+        Attach::Origin => feet,
+        Attach::Overhead => feet + over,
+        Attach::Node(name) => bodies.node(unit.id, name).unwrap_or(feet + over * 0.5),
+    }
+}
+
+/// Whether every node of the model a line puts its effect at, or feeds it, can be told yet: a body
+/// whose scene has not been drawn once has none, and an effect started then would jump from the
+/// origin to the node and fly off with the speed of the jump.
+fn nodes_ready(fx: &Fx, bodies: &Shooters, unit: &UnitView) -> bool {
+    let feeds = fx.feeds.iter().filter_map(|(_, what)| match what {
+        Feed::Place(attach) => Some(attach),
+        _ => None,
+    });
+    std::iter::once(&fx.attach)
+        .chain(feeds)
+        .all(|attach| match attach {
+            Attach::Node(name) => bodies.node(unit.id, name).is_some(),
+            _ => true,
+        })
+}
+
+/// A point of the world's frame as a control point's place (the particles' frame is Z up).
+fn place_of(at: Vec3) -> Vec3 {
+    Vec3::new(at.x, -at.z, at.y)
+}
+
 /// What a bound line plays with: the audio, the camera that fades it, and the counters.
 #[derive(bevy::ecs::system::SystemParam)]
 struct Stage<'w, 's> {
     commands: Commands<'w, 's>,
     server: Res<'w, AssetServer>,
-    manifest: Res<'w, Manifest>,
+    manifest: Res<'w, crate::manifest::Manifest>,
     settings: Res<'w, Settings>,
     args: Res<'w, crate::Args>,
     camera: Single<'w, 's, &'static RtsCamera>,
@@ -79,316 +119,92 @@ impl Stage<'_, '_> {
             PlaybackSettings::DESPAWN.with_volume(Volume::Linear(gain)),
         ));
     }
+
+    /// Plays what a line plays at `at`, once: its particle (fed from `place`, the points of the
+    /// unit the fact is about) to play out on its own, and its sound.
+    fn play(
+        &mut self,
+        fx: &Fx,
+        (at, seed): (Vec3, u32),
+        (library, playing): (Option<&Library>, &mut Playing),
+        (feeds, place): (&Feeds, &dyn Fn(&Attach) -> Vec3),
+    ) {
+        if let Some(name) = &fx.particle {
+            let handle = crate::effects::play_once(library, playing, name, at, seed);
+            feed(fx, handle, playing, feeds, place);
+        }
+        if let Some(prefix) = &fx.sound {
+            self.sound(prefix, at, seed);
+        }
+    }
 }
 
-/// The `fx` lines of a trigger and a subject.
-fn lines<'a>(
-    manifest: &'a Manifest,
-    trigger: Trigger,
-    subject: &'a str,
-) -> impl Iterator<Item = &'a Fx> {
-    manifest
-        .fx
+/// What a line can feed its particle from the fact it plays for.
+#[derive(Default, Clone, Copy)]
+struct Feeds {
+    /// How far the wearer gives true sight.
+    sight: f32,
+    /// How many are held of the effect worn.
+    stacks: f32,
+    /// Seconds the effect worn has left.
+    seconds: f32,
+    /// The attribute the item concerned is set to.
+    mode: f32,
+    /// The share of its charges the item concerned held.
+    charges: f32,
+}
+
+/// The item of the id among a unit's active slots, if it has one.
+fn carried(unit: Option<&UnitView>, item: ItemId) -> Option<&ItemView> {
+    unit?
+        .items
         .iter()
-        .filter(move |fx| fx.trigger == trigger && fx.subject == subject)
+        .take(ACTIVE_SLOTS)
+        .flatten()
+        .find(|i| i.id == item)
 }
 
-/// The trigger, the subject (by its Dota name), the unit and the spot of an event an `fx` line may
-/// be bound to; none for any other.
-fn bound(
-    event: &EventKind,
-    manifest: &Manifest,
-) -> Option<(Trigger, String, Option<EntityId>, Option<Spot>)> {
-    let item = |id: ItemId| Some(format!("item.{}", manifest.dota_name("item", id.0)?));
-    let rune = |kind| format!("rune.{}", crate::runes::art(kind));
-    Some(match *event {
-        EventKind::ItemUsed {
-            caster,
-            item: id,
-            at,
-        } => (Trigger::Use, item(id)?, caster, at),
-        EventKind::Landed {
-            inflictor: Inflictor::Item(id),
-            caster,
-            at,
-        } => (Trigger::Land, item(id)?, caster, Some(at)),
-        EventKind::RuneSpawned { kind, at } => (Trigger::Spawn, rune(kind), None, Some(at)),
-        EventKind::RuneActivated { unit, kind, .. } => {
-            (Trigger::Activate, rune(kind), Some(unit), None)
-        }
-        // The one item a rune is stored in.
-        EventKind::RuneBottled { unit, .. } => {
-            (Trigger::Store, item(ItemId::BOTTLE)?, Some(unit), None)
-        }
-        _ => return None,
-    })
-}
-
-/// Fires the lines of every event the last pump told that a line is bound to.
-fn told(
-    session: NonSend<Session>,
-    ground: Res<Ground>,
-    library: Option<Res<Library>>,
-    mut playing: ResMut<Playing>,
-    mut stage: Stage,
-) {
-    let core = &session.0;
-    let Some(view) = core.view() else {
-        return;
+/// What an item gives a line to feed: the attribute it is set to and the share of its charges it
+/// holds (all, for one that has none to spend).
+fn item_feeds(item: Option<&ItemView>) -> (f32, f32) {
+    let mode = match item.and_then(|i| i.mode) {
+        None | Some(Attribute::Strength) => 0.0,
+        Some(Attribute::Agility) => 1.0,
+        Some(Attribute::Intelligence) => 2.0,
     };
-    let tick = view.tick;
-    for (n, event) in core.told.iter().enumerate() {
-        let Some((trigger, subject, caster, point)) = bound(event, &stage.manifest) else {
-            continue;
-        };
-        let stood = |v: Option<&bota_proto::WorldView>| {
-            v.zip(caster).and_then(|(v, id)| v.unit(id)).map(|u| u.pos)
-        };
-        let places = [
-            (At::Caster, stood(Some(view))),
-            (At::CasterBefore, stood(core.prev_view())),
-            (At::Point, point),
-        ];
-        let seed = tick.wrapping_mul(31).wrapping_add(n as u32);
-        let fxs: Vec<Fx> = lines(&stage.manifest, trigger, &subject).cloned().collect();
-        for fx in fxs {
-            let Some((_, Some(spot))) = places.iter().find(|(at, _)| *at == fx.at) else {
-                continue;
-            };
-            let at = on_ground(&ground, *spot);
-            if let Some(name) = &fx.particle {
-                crate::effects::play_once(library.as_deref(), &mut playing, name, at, seed);
-            }
-            if let Some(prefix) = &fx.sound {
-                stage.sound(prefix, at, seed);
-            }
+    let charges = item.map_or(0.0, |item| match bota_core::item_def(item.id) {
+        Some(def) if def.cast_charges > 0 => {
+            f32::from(item.charges.unwrap_or(0)) / f32::from(def.cast_charges)
         }
-    }
-}
-
-/// Whether a unit wears what a worn line is about.
-fn wears(fx: &Fx, unit: &UnitView, manifest: &Manifest) -> bool {
-    if let Some(name) = fx.subject.strip_prefix("unit.") {
-        return crate::units::npc_unit(unit) == Some(name);
-    }
-    if let Some(name) = fx.subject.strip_prefix("hero.") {
-        return unit
-            .hero
-            .is_some_and(|hero| manifest.dota_name("hero", hero.0) == Some(name));
-    }
-    let Some(modifier) = fx.subject.strip_prefix("modifier.") else {
-        return false;
-    };
-    unit.effects
-        .iter()
-        .any(|effect| manifest.dota_name("modifier", effect.id.0) == Some(modifier))
-}
-
-/// Whether a rune lying is what a worn line is about.
-fn lies(fx: &Fx, rune: &RuneView) -> bool {
-    fx.subject.strip_prefix("rune.") == Some(crate::runes::art(rune.kind))
-}
-
-/// Starts what a unit or a rune that has come to wear a worn line's subject wears (`sight`: how
-/// far it gives true sight): its particle, fed what the line says, and its sound; the particle,
-/// if any started.
-fn begin(
-    fx: &Fx,
-    (id, sight): (EntityId, f32),
-    at: Vec3,
-    library: Option<&Library>,
-    playing: &mut Playing,
-    stage: &mut Stage,
-) -> Option<Handle> {
-    let seed = id.idx ^ id.generation.rotate_left(16);
-    let handle = fx
-        .particle
-        .as_deref()
-        .and_then(|name| library?.effect(name))
-        .and_then(|effect| playing.hold(effect, seed));
-    if let Some(instance) = handle.and_then(|h| playing.get_mut(h))
-        && let Some(Feed::Sight) = fx.cp1
-    {
-        instance.set_control_point(FEED, Vec3::new(sight, 0.0, 0.0), Vec3::ZERO, true);
-    }
-    if let Some(prefix) = &fx.sound {
-        stage.sound(prefix, at, seed);
-    }
-    handle
-}
-
-/// The units drawn: by their handle, whether they are falling, where each is drawn this frame
-/// and where their models carry their hit locations.
-#[derive(bevy::ecs::system::SystemParam)]
-struct Bodies<'w, 's> {
-    index: Res<'w, UnitIndex>,
-    dying: Query<'w, 's, (), With<Dying>>,
-    drawn: Query<'w, 's, &'static Unit>,
-    attachments: Query<'w, 's, &'static Attachments>,
-    places: Query<'w, 's, &'static GlobalTransform>,
-}
-
-impl Bodies<'_, '_> {
-    /// Where unit `id`'s model takes its hits, in the particles' frame.
-    fn hitloc(&self, id: EntityId) -> Option<Vec3> {
-        let body = *self.index.0.get(&id)?;
-        let at = self
-            .places
-            .get(self.attachments.get(body).ok()?.hitloc?)
-            .ok()?;
-        let at = at.translation();
-        Some(Vec3::new(at.x, -at.z, at.y))
-    }
-}
-
-/// Starts what each unit that has come to wear a worn line's subject wears, and each rune that
-/// lies in sight, keeps its particle where it is, and ends it when the unit stops wearing it,
-/// falls or leaves the view, or the rune is taken or leaves the sight.
-#[allow(clippy::too_many_arguments)]
-fn worn(
-    session: NonSend<Session>,
-    bodies: Bodies,
-    ground: Res<Ground>,
-    fog: Res<FogGrid>,
-    library: Option<Res<Library>>,
-    mut playing: ResMut<Playing>,
-    mut worn: ResMut<Worn>,
-    mut stage: Stage,
-) {
-    let Some(view) = session.0.view() else {
-        return;
-    };
-    let standing = |id: &EntityId| {
-        bodies
-            .index
-            .0
-            .get(id)
-            .is_some_and(|entity| !bodies.dying.contains(*entity))
-    };
-    let rules: Vec<(usize, Fx)> = stage
-        .manifest
-        .fx
-        .iter()
-        .enumerate()
-        .filter(|(_, fx)| fx.trigger == Trigger::Worn)
-        .map(|(i, fx)| (i, fx.clone()))
-        .collect();
-    if rules.is_empty() {
-        return;
-    }
-    let runes = || crate::runes::shown(view, &fog);
-    worn.0.retain(|(id, rule), handle| {
-        let fx = rules.iter().find(|(i, _)| i == rule).map(|(_, fx)| fx);
-        let keep = fx.is_some_and(|fx| {
-            runes().any(|rune| rune.id == *id && lies(fx, rune))
-                || standing(id)
-                    && view
-                        .unit(*id)
-                        .is_some_and(|unit| wears(fx, unit, &stage.manifest))
-        });
-        if !keep && let Some(instance) = handle.and_then(|h| playing.get_mut(h)) {
-            instance.end();
-        }
-        keep
+        _ => 1.0,
     });
-    let units = view
-        .units
-        .iter()
-        .filter(|u| standing(&u.id))
-        .map(|u| (u.id, u.pos, u.true_sight_radius.to_f32(), Some(u), None));
-    let lying = runes().map(|r| (r.id, r.pos, 0.0, None, Some(r)));
-    for (id, pos, sight, unit, rune) in units.chain(lying) {
-        // Where a unit is drawn this frame, so what it wears moves with its model; a rune lies
-        // where it is.
-        let at = bodies
-            .index
-            .0
-            .get(&id)
-            .and_then(|e| bodies.drawn.get(*e).ok())
-            .map_or_else(
-                || on_ground(&ground, pos),
-                |u| Vec3::new(u.at.x, ground.at(u.at.x, u.at.y), -u.at.y),
-            );
-        for (rule, fx) in &rules {
-            let holds = match (unit, rune) {
-                (Some(unit), _) => wears(fx, unit, &stage.manifest),
-                (_, Some(rune)) => lies(fx, rune),
-                _ => false,
-            };
-            if !holds {
-                continue;
-            }
-            let handle = *worn.0.entry((id, *rule)).or_insert_with(|| {
-                begin(
-                    fx,
-                    (id, sight),
-                    at,
-                    library.as_deref(),
-                    &mut playing,
-                    &mut stage,
-                )
-            });
-            if let Some(instance) = handle.and_then(|h| playing.get_mut(h)) {
-                let place = Vec3::new(at.x, -at.z, at.y);
-                instance.set_control_point(PLACE, place, Vec3::ZERO, false);
-                if let Some(Feed::Hitloc) = fx.cp1 {
-                    let hit = bodies.hitloc(id).unwrap_or(place);
-                    instance.set_control_point(FEED, hit, Vec3::ZERO, false);
-                }
-            }
-        }
+    (mode, charges)
+}
+
+/// Gives the control points of a line's particle what the line feeds them.
+fn feed(
+    fx: &Fx,
+    handle: Option<Handle>,
+    playing: &mut Playing,
+    feeds: &Feeds,
+    place: &dyn Fn(&Attach) -> Vec3,
+) {
+    let Some(instance) = handle.and_then(|h| playing.get_mut(h)) else {
+        return;
+    };
+    for (point, what) in &fx.feeds {
+        let value = match what {
+            Feed::Sight => Vec3::new(feeds.sight, 0.0, 0.0),
+            Feed::Stacks => Vec3::new(feeds.stacks, 0.0, 0.0),
+            Feed::Seconds => Vec3::new(feeds.seconds, 0.0, 0.0),
+            Feed::Mode => Vec3::new(feeds.mode, 0.0, 0.0),
+            Feed::Charges => Vec3::new(feeds.charges, 0.0, 0.0),
+            Feed::Vector(vector) => *vector,
+            Feed::Place(attach) => place_of(place(attach)),
+        };
+        instance.set_control_point(*point, value, Vec3::ZERO, false);
     }
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// Every `fx` line of the manifest reads, names an item or modifier ids.txt knows (a unit
-    /// a `unit` line draws, a kind of rune), and names particles and sounds the manifest imports: a typo in a
-    /// line would otherwise show as an effect that never plays.
-    #[test]
-    fn every_fx_line_reads_and_names_what_the_manifest_has() {
-        let manifest = Manifest::load(std::path::Path::new("/nonexistent"));
-        let lines: Vec<Vec<&str>> = crate::manifest::MANIFEST
-            .lines()
-            .map(|l| l.split('#').next().unwrap_or_default())
-            .filter_map(|l| l.trim().strip_prefix("fx "))
-            .map(|l| l.split_whitespace().collect())
-            .collect();
-        assert!(!lines.is_empty());
-        let listed = |kind: &str, logical: &str| {
-            crate::manifest::MANIFEST.lines().any(|l| {
-                let mut words = l.split_whitespace();
-                words.next() == Some(kind) && words.next().is_some_and(|w| w.starts_with(logical))
-            })
-        };
-        for words in lines {
-            let fx = Fx::parse(&words).unwrap_or_else(|why| panic!("{words:?}: {why}"));
-            let known = match fx.subject.split_once('.') {
-                Some(("item", key)) => manifest
-                    .ids
-                    .iter()
-                    .any(|(k, _, name)| k == "item" && name == key),
-                Some(("modifier", name)) => manifest
-                    .ids
-                    .iter()
-                    .any(|(k, _, n)| k == "modifier" && n == name),
-                Some(("unit", npc)) => manifest.unit_art(npc).is_some(),
-                Some(("rune", art)) => crate::runes::of_art(art).is_some(),
-                Some(("hero", name)) => manifest
-                    .ids
-                    .iter()
-                    .any(|(k, _, n)| k == "hero" && n == name),
-                _ => false,
-            };
-            assert!(known, "{words:?}: no such subject");
-            if let Some(particle) = &fx.particle {
-                assert!(listed("particle", particle), "{words:?}: no such particle");
-            }
-            if let Some(sound) = &fx.sound {
-                assert!(listed("sound", sound), "{words:?}: no such sound");
-            }
-        }
-    }
-}
+mod tests;

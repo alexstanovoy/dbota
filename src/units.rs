@@ -64,6 +64,18 @@ pub struct Posable;
 pub struct Attachments {
     pub attack: [Option<Entity>; 2],
     pub hitloc: Option<Entity>,
+    /// Every `attach_*` node of the model, by its name (case as the model has it).
+    pub nodes: Vec<(String, Entity)>,
+}
+
+impl Attachments {
+    /// The node of a name.
+    pub fn node(&self, name: &str) -> Option<Entity> {
+        self.nodes
+            .iter()
+            .find(|(node, _)| node == name)
+            .map(|(_, entity)| *entity)
+    }
 }
 
 /// The animation player of a unit's model, on the unit's root.
@@ -1036,13 +1048,18 @@ fn on_model_ready(
 fn attachments(scene: Entity, children: &Query<&Children>, names: &Query<&Name>) -> Attachments {
     let mut found = Attachments::default();
     for part in children.iter_descendants(scene) {
-        let slot = match names.get(part).map(Name::as_str) {
-            Ok("attach_attack1") => &mut found.attack[0],
-            Ok("attach_attack2") => &mut found.attack[1],
-            Ok("attach_hitloc") => &mut found.hitloc,
-            _ => continue,
+        let Ok(name) = names.get(part).map(Name::as_str) else {
+            continue;
         };
-        *slot = Some(part);
+        if name.starts_with("attach_") {
+            found.nodes.push((name.to_owned(), part));
+        }
+        match name {
+            "attach_attack1" => found.attack[0] = Some(part),
+            "attach_attack2" => found.attack[1] = Some(part),
+            "attach_hitloc" => found.hitloc = Some(part),
+            _ => {}
+        }
     }
     found
 }

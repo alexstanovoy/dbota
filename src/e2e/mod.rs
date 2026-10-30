@@ -13,6 +13,7 @@ mod catalogue;
 mod controls;
 mod cursors;
 mod death;
+mod fx;
 pub(crate) mod harness;
 mod hero_fx;
 mod icons;

@@ -38,7 +38,7 @@ pub const INDEX: &str = "index.txt";
 pub const MAX_STAMP: u64 = 4096;
 
 /// Bumped when the importer's output changes for the same install; part of a cache's stamp.
-pub const IMPORT_REV: u32 = 26;
+pub const IMPORT_REV: u32 = 28;
 
 /// The manifest this build imports and draws, and its ids.
 pub const MANIFEST: &str = include_str!("../../../assets-manifest/manifest.txt");

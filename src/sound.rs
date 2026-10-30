@@ -42,6 +42,18 @@ struct Voice {
 #[derive(Resource, Default)]
 struct Voices(Vec<(Kind, Voice)>);
 
+/// How many times a hero's death has been sounded by its own row, for the end-to-end tests.
+#[cfg(test)]
+pub(crate) fn deaths_sounded(world: &World, hero: HeroId) -> usize {
+    let kind = row(Subject::Hero(hero), Event::Death, None);
+    world
+        .resource::<Voices>()
+        .0
+        .iter()
+        .find(|(k, _)| *k == kind)
+        .map_or(0, |(_, voice)| voice.next)
+}
+
 /// A kind of sound.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Kind {
@@ -809,7 +821,7 @@ mod tests {
     /// through the cooldown and mana refusals, every other Requiem sounded
     /// its cast), a side plays its own creeps' and towers' files, and a hero
     /// plays its own, none where Dota has none (Pudge died with Shadow
-    /// Fiend's).
+    /// Fiend's; his own fall has the sound of his Dota event).
     #[test]
     fn every_sound_resolves_to_exactly_the_files_of_its_event() {
         let manifest = manifest_with_every_sound();
@@ -827,7 +839,8 @@ mod tests {
             files_of(&manifest, row(fiend, Event::Attack, None)).len(),
             2
         );
-        for event in [Event::Attack, Event::Impact, Event::Death] {
+        one(row(pudge, Event::Death, None), "pudge/death");
+        for event in [Event::Attack, Event::Impact] {
             assert!(files_of(&manifest, row(pudge, event, None)).is_empty());
         }
         let counts = [
