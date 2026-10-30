@@ -176,11 +176,10 @@ impl Manifest {
         // A browser's page publishes its cache and its index (webcache.rs); a
         // page without one has no assets.
         #[cfg(target_arch = "wasm32")]
-        let (present, has_root): (&dyn Fn(&str) -> bool, bool) =
-            (&crate::webcache::present, crate::webcache::available());
+        let has_root = crate::webcache::available();
         #[cfg(not(target_arch = "wasm32"))]
-        let (present, has_root): (&dyn Fn(&str) -> bool, bool) =
-            (&|rel: &str| root.join(rel).is_file(), root.is_dir());
+        let has_root = root.is_dir();
+        let present = |rel: &str| in_cache(root, rel);
         let mut manifest = Manifest {
             root: has_root.then(|| root.to_path_buf()),
             ..Manifest::default()
@@ -267,6 +266,13 @@ impl Manifest {
     /// How the unit of a Dota name is drawn, if the manifest says.
     pub fn unit_art(&self, unit: &str) -> Option<&UnitArt> {
         self.units.iter().find(|a| a.unit == unit)
+    }
+
+    /// The asset path of the model of a tree the map places (a name of `map/mid/trees.txt`), if
+    /// the importer made it: it makes one for every such name, so the manifest lists none.
+    pub fn tree_model(&self, name: &str) -> Option<String> {
+        let rel = dbota_import::text::tree_model_path(name)?;
+        in_cache(self.root.as_deref()?, &rel).then(|| cache_path(&rel))
     }
 
     /// The model of a logical name, if its file is there.
@@ -418,6 +424,17 @@ pub fn load_unit_model(
             settings.load_meshes = bevy::asset::RenderAssetUsages::RENDER_WORLD;
         })
         .load(path)
+}
+
+/// Whether the cache at `root` (a browser's, its page-published index) holds the file `rel`.
+fn in_cache(root: &Path, rel: &str) -> bool {
+    #[cfg(target_arch = "wasm32")]
+    {
+        let _ = root;
+        crate::webcache::present(rel)
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    root.join(rel).is_file()
 }
 
 /// The asset path of a file relative to the cache.

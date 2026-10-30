@@ -43,7 +43,7 @@ deleted. An asset that does not convert is reported and drawn as a stand-in.
 | `models/creep/` | Radiant/Dire melee, ranged, flagbearer (6 clips each); siege (3 clips) and its `*_destruction` break-apart model | 41 MB |
 | `models/neutral/` | the 44 models of the 47 neutral creep kinds (golems and some others share one), each with idle, run, attack, death and, where the model has them, a second attack, stun and a cast pose | 126 MB |
 | `models/tower/` | Radiant (`radiant_tower002` + base) and Dire (`dire_tower002`) tier-1 towers | 4 MB |
-| `models/tree/` | the 9 tree models the map uses around mid (standing mesh + stump) | 8 MB |
+| `models/tree/` | every tree model the map places, derived from its entities (standing mesh + stump where it has one), and the planted tree | 17 MB |
 | `models/building/` | ancients, melee/ranged barracks (static, plus `*_destruction` collapse models), fountains | 73 MB |
 | `models/courier/` | default donkey courier, Radiant and Dire, walking and flying | 4 MB |
 | `models/neutral/roshan/`, `models/neutral/divine_sentinel_cube/` | Roshan (idle, run, his On The Move run, two swings and Bash's, death, stun, flail, Roar, Throw, Slam) and the Tormentor (idle, spawn, death, four flinches) | 11 MB |
@@ -138,8 +138,8 @@ Source2Viewer 20's export of the world, cropped this way, was (the golden tests 
   layer texture's mean colour, into the vertex colours as it loads the map.
 - **Water** (`water_dota.vfx`) has no colour texture; its normal/noise/flow maps are in `textures/ground/`.
 - **Trees.** `map/mid/trees.txt` lists every tree on the whole map:
-  `model dota_x dota_y height yaw_deg scale` (models under `models/tree/` exist for the 9 kinds used
-  around mid; meshes `<tree>_model` and the stump).
+  `model dota_x dota_y height yaw_deg scale` (the importer makes a model under `models/tree/` for every
+  model named here; its meshes are the standing tree and the stump).
 
 ## Not imported
 

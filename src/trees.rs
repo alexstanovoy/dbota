@@ -72,6 +72,8 @@ struct Planted {
 
 /// The parts of one tree model once its file has loaded.
 struct Kind {
+    /// The model of the map it is (`tree_pine_01`), or the planted tree's logical name.
+    name: String,
     /// The standing tree's mesh without morph targets, for one drawn alone.
     plain: Option<(Handle<Mesh>, Option<bevy::camera::primitives::Aabb>)>,
     gltf: Handle<Gltf>,
@@ -116,6 +118,18 @@ impl Forest {
         let at = self.trees.binary_search_by_key(&index, |t| t.index).ok()?;
         self.trees.get(at)
     }
+}
+
+/// The trees drawn, ascending: each one's index in the view's counting and the model of the map
+/// it stands as.
+#[cfg(test)]
+pub fn drawn(world: &World) -> Vec<(u32, String)> {
+    let forest = world.resource::<Forest>();
+    forest
+        .trees
+        .iter()
+        .map(|t| (t.index, forest.kinds[t.model].name.clone()))
+        .collect()
 }
 
 pub fn plugin(app: &mut App) {
@@ -181,7 +195,8 @@ fn plant(
             .or_default()
             .push(i);
     }
-    let mut names: Vec<String> = Vec::new();
+    let mut models: Vec<(String, String)> = Vec::new();
+    let mut asked: HashMap<String, Option<usize>> = HashMap::new();
     for (index, tree) in core.trees().iter().enumerate() {
         let (x, y) = (tree.x.to_f32(), tree.y.to_f32());
         let (cx, cy) = ((x / HASH_CELL) as i32, (y / HASH_CELL) as i32);
@@ -205,15 +220,14 @@ fn plant(
             (fallback, (index as f32 * 2.4) % std::f32::consts::TAU, 1.0),
             |t| (t.model.as_str(), t.yaw, t.scale),
         );
-        if manifest.model(&format!("tree.{name}")).is_none() {
+        // A model the cache lacks leaves its trees undrawn; the cache is asked once for each.
+        let model = *asked.entry(name.to_owned()).or_insert_with(|| {
+            let path = manifest.tree_model(name)?;
+            models.push((path, name.to_owned()));
+            Some(models.len() - 1)
+        });
+        let Some(model) = model else {
             continue;
-        }
-        let model = match names.iter().position(|n| n == name) {
-            Some(i) => i,
-            None => {
-                names.push(name.to_string());
-                names.len() - 1
-            }
         };
         forest.trees.push(Planted {
             index: index as u32,
@@ -223,25 +237,32 @@ fn plant(
             scale,
         });
     }
-    let models: Vec<_> = names
-        .iter()
-        .filter_map(|name| manifest.model(&format!("tree.{name}")))
-        .collect();
     forest.planted_kind = manifest.model(PLANTED_MODEL).map(|_| models.len());
     forest.kinds = models
         .into_iter()
-        .chain(manifest.model(PLANTED_MODEL))
-        .map(|m| Kind {
+        .chain(
+            manifest
+                .model(PLANTED_MODEL)
+                .map(|m| (m.path.clone(), PLANTED_MODEL.to_owned())),
+        )
+        .map(|(path, name)| Kind {
+            name,
             plain: None,
-            gltf: crate::manifest::load_model(&server, m.path.clone()),
+            gltf: crate::manifest::load_model(&server, path),
             tree: None,
             stump: None,
         })
         .collect();
     info!(
-        "forest: {} trees of {} models",
+        "forest: {} trees of {} models ({})",
         forest.trees.len(),
-        forest.kinds.len()
+        forest.kinds.len(),
+        forest
+            .kinds
+            .iter()
+            .map(|k| k.name.as_str())
+            .collect::<Vec<_>>()
+            .join(", ")
     );
 }
 

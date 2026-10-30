@@ -16,16 +16,16 @@ use heatel::portraits::framings;
 use heatel::texture::Role;
 use heatel::tooltips::Wanted;
 use heatel::world::{Band, EntityLump, ExportedWorld, WorldOptions, export_world, lighting};
-use heatel::{Error, Resource, Result, Sound, Source, Texture, Vpk};
+use heatel::{Error, Model, Resource, Result, Sound, Source, Texture, Vpk};
 
 use crate::text::{
     ParticleMaterial, ParticleModel, ParticleTexture, background_png, buildings_txt, labels_json,
-    lighting_txt, particle_json, portraits_txt, shop_json, styles_json, tooltips_json, trees_txt,
-    wanted,
+    lighting_txt, particle_json, portraits_txt, shop_json, styles_json, tooltips_json,
+    tree_model_path, tree_models, trees_txt, wanted,
 };
 
 /// Bumped when the importer's output changes for the same install; part of a cache's stamp.
-pub const IMPORT_REV: u32 = 10;
+pub const IMPORT_REV: u32 = 11;
 
 /// The manifest this build imports and draws, its ids and its cache version.
 pub const MANIFEST: &str = include_str!("../../../assets-manifest/manifest.txt");
@@ -571,6 +571,8 @@ enum Later {
     Layer(String),
     /// Bytes made already, written once the files before it are.
     Bytes(Vec<u8>),
+    /// The model of a tree the map places: its standing and stump meshes, as [`tree_model`] keeps them.
+    Tree(String),
 }
 
 impl<S: Source> Importer<S> {
@@ -757,7 +759,7 @@ fn make(
                 anims,
                 skin: skin.as_deref(),
             };
-            model(src, pak, &job, out)
+            model(src, &[pak], &job, out)
         }
         Item::Placements {
             src: path,
@@ -987,7 +989,7 @@ fn particle_models(
                 anims: &[],
                 skin: None,
             };
-            if let Err(err) = model(src, pak, &job, out) {
+            if let Err(err) = model(src, &[pak], &job, out) {
                 out.report.failed.push((vmdl.to_owned(), err.to_string()));
                 continue;
             }
@@ -1193,6 +1195,7 @@ fn later(src: &impl Source, packages: &[&Vpk], job: &Pending, out: &mut Out<'_>)
             Texture::parse(&bytes)?.first_frame_png()?
         }
         Later::Bytes(data) => return out.put(&job.path, data),
+        Later::Tree(vmdl) => return tree_model(src, packages, vmdl, &job.path, out),
     };
     out.put(&job.path, &data)
 }
@@ -1247,6 +1250,17 @@ fn placements(
     let bytes = read_from(src, &[map], &format!("{lump}_c"))?;
     let lump = EntityLump::read(&Resource::parse(&bytes)?)?;
     out.put(outs.trees, trees_txt(&lump.entities).as_bytes())?;
+    // Every tree the map places is drawn: its model is made from the map itself, not listed by hand.
+    for tree in tree_models(&lump.entities) {
+        let Some(path) = tree_model_path(&tree) else {
+            continue;
+        };
+        out.pending.push_back(Pending {
+            logical: format!("tree.{tree}"),
+            path,
+            what: Later::Tree(format!("models/props_tree/{tree}.vmdl_c")),
+        });
+    }
     out.put(outs.buildings, buildings_txt(&lump.entities).as_bytes())?;
     if let Some(path) = outs.lighting {
         out.put(path, lighting_txt(&lighting(&lump.entities)?).as_bytes())?;
@@ -1264,7 +1278,12 @@ struct ModelJob<'a> {
     skin: Option<&'a str>,
 }
 
-fn model(src: &impl Source, pak: &Vpk, job: &ModelJob<'_>, out: &mut Out<'_>) -> Result<()> {
+fn model(
+    src: &impl Source,
+    packages: &[&Vpk],
+    job: &ModelJob<'_>,
+    out: &mut Out<'_>,
+) -> Result<()> {
     let ModelJob {
         path,
         dest,
@@ -1282,7 +1301,7 @@ fn model(src: &impl Source, pak: &Vpk, job: &ModelJob<'_>, out: &mut Out<'_>) ->
         texture_uri: &ktx2_name,
         generator: GENERATOR,
     };
-    let exported = export_model_in_group(src, &[pak], path, &options, skin)?;
+    let exported = export_model_in_group(src, packages, path, &options, skin)?;
     let dir = dest.rsplit_once('/').map_or("", |(dir, _)| dir);
     let mut seen = HashSet::new();
     let mut decoded: Option<(String, Texture)> = None;
@@ -1290,17 +1309,47 @@ fn model(src: &impl Source, pak: &Vpk, job: &ModelJob<'_>, out: &mut Out<'_>) ->
         if !seen.insert(texture.uri.clone()) {
             continue;
         }
-        let image = image(src, pak, texture, &mut decoded)?;
+        let image = image(src, packages, texture, &mut decoded)?;
         out.put(&format!("{dir}/{}", texture.uri), &image)?;
     }
     // The model last: its presence says its images are there.
     out.put(dest, &exported.glb)
 }
 
+/// The model of a tree at `vmdl`, written to `dest`: every mesh but the model viewer's
+/// `_inspector` one, which is the tree standing (named `<tree>_model`, or the tree itself) and its
+/// stump (named for it, when the tree leaves one); the client tells them by the word "stump".
+fn tree_model(
+    src: &impl Source,
+    packages: &[&Vpk],
+    vmdl: &str,
+    dest: &str,
+    out: &mut Out<'_>,
+) -> Result<()> {
+    let bytes = read_from(src, packages, vmdl)?;
+    let resource = Resource::parse(&bytes)?;
+    let parts = Model::read(&resource)?;
+    let kept: Vec<String> = parts
+        .meshes
+        .iter()
+        .filter(|m| !m.name.ends_with("_inspector"))
+        .map(|m| m.name.clone())
+        .collect();
+    let job = ModelJob {
+        path: vmdl,
+        dest,
+        meshes: Some(&kept),
+        skeleton: false,
+        anims: &[],
+        skin: None,
+    };
+    model(src, packages, &job, out)
+}
+
 /// The KTX2 file of one image of a model: the texture itself, or its pixels packed.
 fn image(
     src: &impl Source,
-    pak: &Vpk,
+    packages: &[&Vpk],
     texture: &ExportedTexture,
     decoded: &mut Option<(String, Texture)>,
 ) -> Result<Vec<u8>> {
@@ -1308,7 +1357,7 @@ fn image(
         .as_ref()
         .is_none_or(|(vtex, _)| *vtex != texture.vtex)
     {
-        let bytes = read_from(src, &[pak], &format!("{}_c", texture.vtex))?;
+        let bytes = read_from(src, packages, &format!("{}_c", texture.vtex))?;
         *decoded = Some((texture.vtex.clone(), Texture::parse(&bytes)?));
     }
     let Some((_, source)) = decoded.as_ref() else {

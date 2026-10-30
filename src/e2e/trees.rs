@@ -1,6 +1,7 @@
 //! A Tango on a tree as Dota shows it: the tree under the cursor ringed in
 //! the hover yellow and named by the click; felled, it tips over and goes; regrown, it grows
-//! up over its stump.
+//! up over its stump; and every tree the match places stands in the forest as the model the map
+//! gives it.
 
 use std::time::Duration;
 
@@ -116,4 +117,47 @@ fn a_tango_rings_its_tree_and_the_tree_falls_and_grows_back() {
         "it grows up: {sizes:?}"
     );
     assert!(sizes[0] < sizes[sizes.len() - 1], "from small: {sizes:?}");
+}
+
+/// The forest draws every tree of the match, and each of the map's tree models stands in it: the
+/// bamboo, `tree_pine_03b` and `tree_cine_02_low` the importer once left out were never drawn
+/// (168 of the map's 2307 trees), though they block paths and a Tango can name them.
+#[test]
+fn every_tree_the_match_places_is_drawn_as_the_model_of_the_map() {
+    let server = Server::start(1, &[]);
+    let mut client = Client::join(&server, HeroId::SHADOW_FIEND, &[]);
+    client.until("the forest built", |c| {
+        c.world().resource::<crate::trees::SceneryReady>().0
+    });
+    let root = client
+        .world()
+        .resource::<crate::manifest::Manifest>()
+        .root
+        .clone()
+        .expect("the asset cache");
+    let text = std::fs::read_to_string(root.join("map/mid/trees.txt")).expect("the map's trees");
+    let mapped: std::collections::BTreeSet<&str> = text
+        .lines()
+        .filter(|line| !line.starts_with('#'))
+        .filter_map(|line| line.split_whitespace().next())
+        .collect();
+    let drawn = crate::trees::drawn(client.world());
+    let placed = client.core().trees().len();
+    let missing: Vec<usize> = (0..placed)
+        .filter(|i| {
+            drawn
+                .binary_search_by_key(&(*i as u32), |(index, _)| *index)
+                .is_err()
+        })
+        .collect();
+    assert!(
+        missing.is_empty(),
+        "{} of {placed} trees have no model drawn, such as the tree at {:?}",
+        missing.len(),
+        missing.first().map(|i| client.core().trees()[*i])
+    );
+    let models: std::collections::BTreeSet<&str> =
+        drawn.iter().map(|(_, model)| model.as_str()).collect();
+    let absent: Vec<_> = mapped.difference(&models).collect();
+    assert!(absent.is_empty(), "map models never drawn: {absent:?}");
 }

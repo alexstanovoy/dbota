@@ -5,7 +5,7 @@
 //! particle systems (`particles/*.json`). The client reads each (`src/cache_text.rs`,
 //! `src/tips.rs`, `src/particles/`, ...).
 
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 
 use heatel::Result;
 use heatel::keyvalues::{localization_table, text};
@@ -403,6 +403,27 @@ pub fn trees_txt(entities: &[Value]) -> String {
         }
     }
     out
+}
+
+/// The models of the trees `entities` place, each once, sorted: the trees the client draws.
+pub fn tree_models(entities: &[Value]) -> Vec<String> {
+    let placed = placements(entities);
+    let models: BTreeSet<&str> = placed
+        .iter()
+        .map(|p| p.model.as_str())
+        .filter(|model| TREES.iter().any(|t| model.starts_with(t)))
+        .collect();
+    models.into_iter().map(str::to_owned).collect()
+}
+
+/// Where the model of the tree `model` goes in the cache, and so where the client reads it from;
+/// none for a name that is not a plain model name (the map's file is the install's, but the
+/// cache is read back as a file of untrusted text).
+pub fn tree_model_path(model: &str) -> Option<String> {
+    let plain = !model.is_empty()
+        && model.len() <= 64
+        && model.chars().all(|c| c.is_ascii_alphanumeric() || c == '_');
+    plain.then(|| format!("models/tree/{model}/{model}.glb"))
 }
 
 /// Every building `entities` place, once per model and 32-unit cell:
