@@ -15,6 +15,8 @@ publish = false
 cargo-fuzz = true
 
 [dependencies]
+# The pack_folder target's structured input.
+arbitrary = { version = "1", features = ["derive"] }
 # The versions and decoders the client loads its cache with.
 bevy_asset = { version = "=0.19.1", default-features = false }
 bevy_image = { version = "=0.19.1", default-features = false, features = ["png", "ktx2", "zstd_rust"] }

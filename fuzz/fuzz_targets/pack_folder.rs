@@ -6,7 +6,7 @@
 
 use dbota_import::import::{IMPORT_REV, INDEX, STAMP, fingerprint, is_small, safe_path};
 use dbota_import::pack::{MAX_TOTAL, Pack, SliceFolder};
-use libfuzzer_sys::arbitrary::{self, Arbitrary};
+use arbitrary::Arbitrary;
 use libfuzzer_sys::fuzz_target;
 
 #[derive(Arbitrary, Debug)]
