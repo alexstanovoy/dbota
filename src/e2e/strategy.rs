@@ -102,6 +102,9 @@ fn a_purchase_sounds_when_chosen_and_not_again_when_the_match_buys_it() {
     };
     let chosen = [ItemId::CLARITY, ItemId::IRON_BRANCH, ItemId::HEALING_SALVE];
     for item in chosen {
+        // A kind of sound rests before it may sound again: the next choice comes after that, as
+        // a player's does, whatever the pace of the frames.
+        std::thread::sleep(Duration::from_secs_f32(crate::sound::REST * 2.0));
         client.core_mut().act(Intent::Buy(item.0));
         client.frames(15);
     }

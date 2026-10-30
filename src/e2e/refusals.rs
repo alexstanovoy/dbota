@@ -39,14 +39,16 @@ fn a_refusal_shows_dotas_line_and_a_dead_heros_order_none() {
     });
     client.core_mut().act(Intent::Buy(ItemId::OGRE_AXE.0));
     client.within(patience, "Not Enough Gold", |c| shows(c, &no_gold));
+    // Gone before the hero falls: waiting for it after, the match (which runs a tick a frame)
+    // goes on to the hero's respawn when frames are quick.
+    client.within(patience, "the last refusal gone", |c| {
+        c.core().reject.is_none()
+    });
     let map = bota_core::map_of(bota_core::MAP2_ID);
     client.cheat(Cheat::Teleport {
         at: bota_core::fountain_pos(map, Team::Dire),
     });
     client.until("the hero fallen", |c| c.core().ears().is_none());
-    client.within(patience, "the last refusal gone", |c| {
-        c.core().reject.is_none()
-    });
     client.core_mut().act(Intent::MoveTo((1000.0, 1000.0)));
     client.within(patience, "the dead hero's order turned down", |c| {
         let reason = c.core().reject.as_ref().map(|(r, _)| r.clone());

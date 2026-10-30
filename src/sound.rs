@@ -20,7 +20,7 @@ const EARSHOT: f32 = 1200.0;
 /// World units over which a sound fades out past [`EARSHOT`].
 const FADE: f32 = 3000.0;
 /// Seconds a kind of sound rests before it may sound again.
-const REST: f32 = 0.05;
+pub const REST: f32 = 0.05;
 /// New missiles a tick looked into at most: each is matched against every
 /// unit, and a snapshot may hold thousands of them.
 const SHOTS_PER_TICK: usize = 32;
