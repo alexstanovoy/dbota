@@ -477,7 +477,8 @@ def check_canvas_pixels(directory):
 # be injected): the page's re-dispatched events are the ones without it.
 OWN_EVENT = 7
 HANDED = """window.handed = [];
-addEventListener('pointermove', (e) => { if (!e.isTrusted && e.detail !== %d) handed.push([e.clientX, e.clientY]); }, true);""" % OWN_EVENT
+for (const type of ['pointermove', 'pointerdown', 'pointerup'])
+    addEventListener(type, (e) => { if (!e.isTrusted && e.detail !== %d) handed.push([e.clientX, e.clientY]); }, true);""" % OWN_EVENT
 
 
 def check_cursor_page(directory):
@@ -521,8 +522,12 @@ def check_cursor_page(directory):
         print("cursor: locked by a press, held inside the canvas")
         # The dashboard button, the top-left corner's first: in a replay page it opens the settings.
         mouse("pointermove", DASHBOARD[0] * size[2], DASHBOARD[1] * size[2])
-        mouse("pointerdown", button=0, buttons=1)
-        mouse("pointerup", button=0)
+        # A press carries the pointer's travel too in Chromium (large when the lock re-centres it);
+        # only a move is the cursor's motion, so the press stays where the cursor is.
+        mouse("pointerdown", -far, -far, button=0, buttons=1)
+        mouse("pointerup", -far, -far, button=0)
+        at = page.evaluate("handed.slice(-2)")
+        assert at == [list(DASHBOARD)] * 2, f"a press and a release are at the cursor, not moved by their travel: {at}"
         released = wait_console(page, console, r"cursor released at (\d+),(\d+)", 120, "the settings to let the pointer go")
         assert [int(released.group(1)), int(released.group(2))] == list(DASHBOARD), released.group(0)
         wait_lock(False, "the settings let the pointer go")
@@ -531,6 +536,22 @@ def check_cursor_page(directory):
         wait_lock(True, "closing the settings takes the pointer again")
         page.evaluate("document.exitPointerLock()")  # what the player's Esc does
         wait_lock(False, "the browser lets go")
+        # The next press on the canvas takes the cursor again, and the game's cursor is held in the
+        # canvas whatever travel the pointer reports after it.
+        page.mouse.click(size[0] // 2, size[1] // 2)
+        wait_lock(True, "a press after the lock was lost takes it again")
+        # Whatever else the real click brings (a busy page delivers its events late), every place the
+        # page hands on is inside the canvas, however far the pointer reports it travelled.
+        before = page.evaluate("handed.length")
+        for dx, dy in ((-far, far), (far, -far), (-far, -far)):
+            mouse("pointermove", dx, dy)
+        page.wait_for_timeout(2000)
+        placed = page.evaluate(f"handed.slice({before})")
+        assert len(placed) >= 3, placed
+        outside = [at for at in placed if not (0 <= at[0] <= last[0] and 0 <= at[1] <= last[1])]
+        assert not outside, f"held in the canvas after the re-lock: {outside}"
+        page.evaluate("document.exitPointerLock()")
+        wait_lock(False, "the browser lets go again")
         page.keyboard.press("F11")
         wait_lock(True, "F11 takes the pointer again")
         page.wait_for_function("() => !!document.fullscreenElement", timeout=60000)

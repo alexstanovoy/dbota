@@ -22,10 +22,14 @@ const handed = new WeakSet();
 
 let wanted = false;
 
+// Why a lock was refused, for the console only (a missing gesture, the browser's pause after an
+// Esc, the document not focused).
+const refused = (e) => console.debug(`pointer lock refused: ${e?.name ?? "error"}`);
+
 // Locks the pointer if the game keeps the cursor. A refusal (no gesture, the browser's pause after
 // an Esc) is the browser's answer: the next press asks again.
 export function take() {
-  if (wanted && !isLocked()) canvas.requestPointerLock()?.catch?.(() => {});
+  if (wanted && !isLocked()) canvas.requestPointerLock()?.catch?.(refused);
 }
 
 // Whether the game keeps the cursor, from the client.
@@ -56,15 +60,20 @@ function steer(e) {
   const bottom = Math.max(r.height - 1 / devicePixelRatio, 0);
   const k = deviceMotion ? devicePixelRatio : 1;
   const [x, y] = at ?? free ?? [r.width / 2, r.height / 2];
-  at = [clamp(x + e.movementX / k, 0, right), clamp(y + e.movementY / k, 0, bottom)];
+  // Only a move is motion. A press or a release happens where the cursor is, whatever movement the
+  // browser attaches to it (Chromium reports the pointer's travel since its last event on them
+  // too, and a lock that re-centres the pointer makes that travel large).
+  const moved = e.type === "pointermove";
+  const [dx, dy] = moved ? [e.movementX, e.movementY] : [0, 0];
+  at = [clamp(x + dx / k, 0, right), clamp(y + dy / k, 0, bottom)];
   const init = {
     bubbles: true,
     cancelable: true,
     composed: true,
     clientX: r.left + at[0],
     clientY: r.top + at[1],
-    movementX: e.movementX,
-    movementY: e.movementY,
+    movementX: dx,
+    movementY: dy,
     button: e.button,
     buttons: e.buttons,
     pointerId: e.pointerId,

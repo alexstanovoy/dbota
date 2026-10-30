@@ -269,7 +269,10 @@ the game then draws its own cursor, moved by the mouse and held inside the canva
 click, drag, hover and the edge pan go where it is. A browser locks only on a gesture: the
 pointer is taken by the click or key that brings a match on screen or closes the settings, by a
 press on the canvas, and by F11; Esc lets it go (the browser's own key), and the next press on
-the canvas takes it again.
+the canvas takes it again. Until it does (after an Esc, or when the browser refused the lock, which
+the console says with `pointer lock refused`), the browser's own cursor is free and can leave the
+page: a page cannot keep it in without the lock. Only a move moves the game's cursor; a press or
+a release happens where the cursor is.
 
 ## Picture quality
 
