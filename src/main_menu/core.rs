@@ -460,7 +460,7 @@ pub struct MenuCore {
     pub(super) results: VecDeque<MatchResult>,
     /// The result the Result page shows.
     pub(super) shown: Option<MatchId>,
-    on_screen: Option<OnScreen>,
+    pub(super) on_screen: Option<OnScreen>,
     launch: Option<Launch>,
     pub(super) launching: bool,
     /// A host waiting for the player's word on plain TCP.

@@ -2003,6 +2003,7 @@ version = "0.1.0"
 dependencies = [
  "bota_core",
  "bota_proto",
+ "bota_replay",
  "getrandom 0.4.3",
  "js-sys",
  "rustls",
@@ -2040,6 +2041,15 @@ dependencies = [
  "js-sys",
  "radovid_client",
  "radovid_proto",
+]
+
+[[package]]
+name = "bota_replay"
+version = "0.1.0"
+dependencies = [
+ "bota_core",
+ "bota_proto",
+ "serde",
 ]
 
 [[package]]
@@ -2535,6 +2545,7 @@ dependencies = [
  "bota_core",
  "bota_proto",
  "bota_radovid",
+ "bota_replay",
  "bytemuck",
  "clap",
  "dbota_import",

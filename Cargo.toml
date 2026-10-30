@@ -62,6 +62,7 @@ bevy = { version = "=0.19.1", default-features = false, features = [
 bota_client_core = { path = "../bota/crates/bota_client_core", features = ["ui"] }
 bota_core = { path = "../bota/crates/bota_core" }
 bota_proto = { path = "../bota/crates/bota_proto" }
+bota_replay = { path = "../bota/crates/bota_replay" }
 # The asset importer: `dbota import` on the desktop, and on every target the asset fingerprint a
 # cache must carry (the browser runs the importer as a module of its own, web/import_worker.js).
 dbota_import = { path = "crates/dbota_import" }

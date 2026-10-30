@@ -151,6 +151,7 @@ fn drive(
     mut pending: NonSendMut<Pending>,
     mut host: NonSendMut<Host>,
     mut session: NonSendMut<Session>,
+    mut post: NonSendMut<crate::postgame::PostGame>,
     mut epoch: ResMut<GameEpoch>,
     mut commands: Commands,
     mut index: ResMut<crate::units::UnitIndex>,
@@ -170,16 +171,21 @@ fn drive(
     core.set_profile_name(&settings.name);
     core.set_replay_policy(settings.replays);
     core.update();
+    let launch = core.take_launch();
+    if let Some(launch) = &launch {
+        post.expect(origin_of(launch, &args));
+    }
     let mut opened_here = |core: &mut MenuCore, opened: std::io::Result<Session>| match opened {
         Ok(opened) => {
             *session = opened;
+            post.begin();
             epoch.0 += 1;
             forget_units(&mut commands, &mut index);
             core.game_started();
         }
         Err(err) => core.launch_failed(&err.to_string()),
     };
-    match core.take_launch() {
+    match launch {
         // The command line's game again: as it was opened at the start.
         Some(Launch::Given) => opened_here(&mut core, crate::session::open(&args)),
         Some(Launch::Replay(path)) => opened_here(&mut core, open_replay(&path)),
@@ -205,6 +211,24 @@ fn drive(
             opened_here(&mut core, Ok(Session(Core::new(Source::Live(opened.link)))));
         }
         Err(err) => core.launch_failed(&err.to_string()),
+    }
+}
+
+/// Where the summary of the game a launch opens is read from.
+fn origin_of(launch: &Launch, args: &crate::Args) -> crate::postgame::Origin {
+    use crate::postgame::Origin;
+    match launch {
+        Launch::Replay(path) => Origin::File(path.clone()),
+        Launch::Blob(blob) => Origin::Blob(blob.0.clone()),
+        Launch::Given => args.replay.clone().map_or(Origin::Nothing, Origin::File),
+        Launch::Host {
+            replay: Some(path), ..
+        } => Origin::File(path.clone()),
+        Launch::Demo { .. } => Origin::Hidden,
+        // The service's artifact of the match is fetched by name once the service serves them.
+        Launch::Seat(_) | Launch::Host { .. } | Launch::Watch(_) | Launch::Direct { .. } => {
+            Origin::Nothing
+        }
     }
 }
 

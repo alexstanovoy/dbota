@@ -78,6 +78,13 @@ impl Server {
     }
 }
 
+impl Server {
+    /// Waits for the server to end by itself, as it does once its match is over.
+    pub fn wait(&mut self) {
+        let _ = self.child.wait();
+    }
+}
+
 impl Drop for Server {
     fn drop(&mut self) {
         let _ = self.child.kill();
