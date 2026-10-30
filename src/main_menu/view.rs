@@ -274,6 +274,8 @@ pub enum PageView {
     #[cfg(not(target_arch = "wasm32"))]
     DemoHero {
         heroes: Vec<(u16, String)>,
+        /// The service has a Demo Hero to start.
+        offered: bool,
     },
     /// The replays on this machine, and a field for any replay file.
     Replays {
@@ -421,8 +423,7 @@ impl MenuCore {
             return Vec::new();
         };
         let chosen = self.lobby_mode(client);
-        client
-            .rulesets()
+        super::core::lobby_rulesets(client)
             .map(|r| ModeRow {
                 id: r.id.clone(),
                 name: text::line(&r.name, text::NAME),
@@ -512,6 +513,10 @@ impl MenuCore {
             },
             #[cfg(not(target_arch = "wasm32"))]
             Page::DemoHero => PageView::DemoHero {
+                offered: self
+                    .client
+                    .as_ref()
+                    .is_some_and(|c| c.rulesets().any(bota_radovid::is_demo)),
                 heroes: bota_core::HEROES
                     .iter()
                     .enumerate()
@@ -851,7 +856,7 @@ fn lobby_view(
         locked: state.locked,
         modes: if owner {
             client.map_or_else(Vec::new, |c| {
-                c.rulesets()
+                super::core::lobby_rulesets(c)
                     .map(|r| ModeRow {
                         id: r.id.clone(),
                         name: text::line(&r.name, text::NAME),

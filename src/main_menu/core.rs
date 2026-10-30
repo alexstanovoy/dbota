@@ -70,6 +70,18 @@ pub enum Page {
     Settings,
 }
 
+impl Page {
+    /// Whether the page is the service's, shown only with an account.
+    pub fn needs_account(self) -> bool {
+        match self {
+            Page::Home | Page::MyGames | Page::Lobbies | Page::Lobby | Page::Profile => true,
+            #[cfg(not(target_arch = "wasm32"))]
+            Page::DemoHero => true,
+            _ => false,
+        }
+    }
+}
+
 /// What the player does in the menu.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Act {
@@ -107,7 +119,8 @@ pub enum Act {
     Host(bool),
     /// Turns the local lobby's cheats on or off (Dota's "Enable cheats").
     ToggleCheats,
-    /// Starts Dota's Demo Hero with a hero.
+    /// Starts Dota's Demo Hero with a hero: the service's Demo ruleset, started for this account alone
+    /// at once.
     #[cfg(not(target_arch = "wasm32"))]
     Demo(u16),
     /// Watches a kept replay, by its file name.
@@ -257,17 +270,12 @@ pub enum Launch {
         /// The rules of the lobby; its seats are [`LOCAL_SEATS`] under any.
         rules: LocalRules,
     },
-    /// Dota's Demo Hero: a game server started on this machine alone with
-    /// cheats on, seating this player alone with the hero chosen.
+    /// Dota's Demo Hero: the seat of a match of the service's Demo ruleset (cheats on, this
+    /// player alone), with the hero chosen to pick.
     #[cfg_attr(target_arch = "wasm32", allow(dead_code))] // only the desktop starts one
     Demo {
         hero: bota_proto::HeroId,
-        name: String,
-        key: Option<Claim>,
-        /// The server binary, when not looked for.
-        server: Option<std::path::PathBuf>,
-        /// Where the server writes the replay.
-        replay: Option<std::path::PathBuf>,
+        handoff: Handoff,
     },
     /// Watch a replay file.
     #[cfg_attr(target_arch = "wasm32", allow(dead_code))] // a browser opens no files by path
@@ -376,6 +384,8 @@ pub(super) enum Asked {
     Rejoin(MatchId),
     Watch(MatchId),
     Lobby,
+    /// The start of a Demo Hero.
+    Demo,
     History,
     Profile,
     Ladder,
@@ -405,8 +415,8 @@ pub(super) enum OnScreen {
     Direct,
     /// A game of a lobby on this machine.
     Local,
-    /// Dota's Demo Hero.
-    Demo,
+    /// Dota's Demo Hero: a match of the service.
+    Demo(MatchId),
     Replay,
     /// The game the command line named.
     Given,
@@ -495,6 +505,10 @@ pub struct MenuCore {
     hosted_at: Option<String>,
     /// The hero of the last Demo Hero started.
     demo: Option<bota_proto::HeroId>,
+    /// The hero of a Demo Hero being made: started, its match waited for.
+    demo_asked: Option<bota_proto::HeroId>,
+    /// The last Demo Hero's match: its result is no news.
+    demo_match: Option<MatchId>,
     /// Whether the service has been tried: a menu under a game named on the
     /// command line tries it once that game is left.
     tried_service: bool,
@@ -593,6 +607,8 @@ impl MenuCore {
             server_binary: None,
             hosted_at: None,
             demo: None,
+            demo_asked: None,
+            demo_match: None,
             tried_service: false,
         };
         // No service to reach: the menu opens on what needs none, and the sign-in shows when
@@ -702,7 +718,8 @@ impl MenuCore {
 
     /// The hero of the Demo Hero on screen, if one is.
     pub fn demo_hero(&self) -> Option<bota_proto::HeroId> {
-        self.demo.filter(|_| self.on_screen == Some(OnScreen::Demo))
+        self.demo
+            .filter(|_| matches!(self.on_screen, Some(OnScreen::Demo(_))))
     }
 
     /// Whether the game on screen is a replay opened from the menu.
@@ -733,6 +750,12 @@ impl MenuCore {
 
     pub fn logged_in(&self) -> bool {
         self.account
+    }
+
+    /// The account's matches not yet over, as far as the menu knows.
+    #[cfg(test)]
+    pub fn games_running(&self) -> usize {
+        self.games.len()
     }
 
     /// Whether a link is being opened: the Hello or the sign-in is not yet answered.
@@ -805,7 +828,7 @@ impl MenuCore {
             #[cfg(not(target_arch = "wasm32"))]
             Some(OnScreen::Direct | OnScreen::Local) => Page::LocalLobby,
             #[cfg(not(target_arch = "wasm32"))]
-            Some(OnScreen::Demo) => Page::DemoHero,
+            Some(OnScreen::Demo(_)) => Page::DemoHero,
             Some(OnScreen::Replay) => Page::Replays,
             _ if self.account => Page::Home,
             #[cfg(not(target_arch = "wasm32"))]
@@ -929,7 +952,7 @@ impl MenuCore {
             && self.lobby.is_none()
             && !self.keeper.fetching()
             && !self.launching
-            && !matches!(self.on_screen, Some(OnScreen::Match(_)))
+            && !matches!(self.on_screen, Some(OnScreen::Match(_) | OnScreen::Demo(_)))
             && !(self.page == Page::MyGames && !self.games.is_empty())
     }
 
@@ -979,13 +1002,11 @@ impl MenuCore {
         self.credentials = None;
         self.outbox.clear();
         self.lobby = None;
+        self.demo_asked = None;
         self.drop_link();
         if !self.account && !matches!(self.page, Page::Game | Page::LocalLobby) {
             // Not signed in: the pages of the account have nothing to show.
-            if matches!(
-                self.page,
-                Page::Home | Page::MyGames | Page::Lobbies | Page::Lobby | Page::Profile
-            ) {
+            if self.page.needs_account() {
                 let rest = self.rest_page(None);
                 self.go_form(rest);
             }
@@ -1146,6 +1167,10 @@ impl MenuCore {
                 self.tell("That match is over".to_owned(), true);
             }
             (Asked::Artifact(id), error) => self.keep_refused(id, error),
+            (Asked::Demo, _) => {
+                self.demo_asked = None;
+                self.tell(error_text(error), true);
+            }
             (Asked::Lobby, Error::NotInLobby { .. }) => {
                 self.lobby = None;
                 self.go(Page::Lobbies);
@@ -1158,8 +1183,17 @@ impl MenuCore {
         match event {
             Event::MatchFound { handoff } => {
                 self.note_game(handoff.clone());
+                let demo = self
+                    .demo_asked
+                    .filter(|_| self.is_demo_ruleset(&handoff.ruleset));
+                if demo.is_some() {
+                    self.demo_asked = None;
+                }
                 if self.on_screen.is_none() && !self.launching {
-                    self.start(Launch::Seat(handoff));
+                    match demo {
+                        Some(hero) => self.start(Launch::Demo { hero, handoff }),
+                        None => self.start(Launch::Seat(handoff)),
+                    }
                 } else {
                     self.tell(
                         "Another game of yours is ready: join it from MY GAMES".to_owned(),
@@ -1208,6 +1242,10 @@ impl MenuCore {
             self.reconnect = None;
         }
         self.games.retain(|g| g.match_id != id);
+        // A Demo Hero ends when its player quits it: no result to read, no replay to keep.
+        if self.demo_match == Some(id) {
+            return;
+        }
         self.keep_finished(&result);
         if self.results.len() >= MAX_RESULTS {
             self.results.pop_front();
@@ -1253,6 +1291,36 @@ impl MenuCore {
         }
     }
 
+    /// Whether the service lists `ruleset` as a Demo Hero.
+    pub(super) fn is_demo_ruleset(&self, ruleset: &RulesetId) -> bool {
+        self.client.as_ref().is_some_and(|client| {
+            client
+                .rulesets()
+                .any(|r| &r.id == ruleset && bota_radovid::is_demo(r))
+        })
+    }
+
+    /// Dota's Demo Hero with `hero`: the service's Demo ruleset started for this account alone, at
+    /// once (no queue, lobby or countdown); its match comes as any match does ([`Self::event`]).
+    #[cfg(not(target_arch = "wasm32"))]
+    fn start_demo(&mut self, hero: bota_proto::HeroId) {
+        if bota_core::hero_def(hero).is_none() || self.demo_asked.is_some() {
+            return;
+        }
+        let Some(ruleset) = self.client.as_ref().and_then(|client| {
+            client
+                .rulesets()
+                .find(|r| bota_radovid::is_demo(r))
+                .map(|r| r.id.clone())
+        }) else {
+            self.tell("This service offers no Demo Hero".to_owned(), true);
+            return;
+        };
+        self.demo_asked = Some(hero);
+        self.tell("Starting Demo Hero".to_owned(), false);
+        self.ask(ClientMsg::StartSolo { ruleset }, Asked::Demo);
+    }
+
     fn sit(&mut self, state: LobbyState) {
         self.lobby = Some((state, Instant::now()));
         if self.page == Page::Lobbies {
@@ -1294,7 +1362,7 @@ impl MenuCore {
             Launch::Seat(h) | Launch::Watch(h) => OnScreen::Match(h.match_id),
             Launch::Direct { .. } => OnScreen::Direct,
             Launch::Host { .. } => OnScreen::Local,
-            Launch::Demo { .. } => OnScreen::Demo,
+            Launch::Demo { handoff, .. } => OnScreen::Demo(handoff.match_id),
             Launch::Replay(_) | Launch::Blob(_) => OnScreen::Replay,
             Launch::Given => OnScreen::Given,
         });
@@ -1321,7 +1389,7 @@ impl MenuCore {
                 spectate: false,
                 key: *key,
             }),
-            // Demo Hero's server ends with it: there is no seat to take again.
+            // Leaving a Demo Hero ends it: there is no seat to take again.
             Launch::Demo { .. } => None,
             launch => (self.kind == GameKind::Play).then(|| launch.clone()),
         };
@@ -1329,6 +1397,9 @@ impl MenuCore {
             Launch::Demo { hero, .. } => Some(*hero),
             _ => None,
         };
+        if let Launch::Demo { handoff, .. } = &launch {
+            self.demo_match = Some(handoff.match_id);
+        }
         self.reconnect = None;
         self.confirm = None;
         self.launch = Some(launch);
@@ -1357,11 +1428,7 @@ impl MenuCore {
             Page::Login | Page::Register if self.prefs.service.is_empty() => Page::Service,
             page => page,
         };
-        let needs_login = matches!(
-            page,
-            Page::Home | Page::MyGames | Page::Lobbies | Page::Lobby | Page::Profile
-        );
-        if needs_login && !self.logged_in() {
+        if page.needs_account() && !self.logged_in() {
             let rest = self.rest_page(None);
             self.go_form(rest);
             return;
@@ -1440,18 +1507,7 @@ impl MenuCore {
                 self.save_prefs();
             }
             #[cfg(not(target_arch = "wasm32"))]
-            Act::Demo(hero) => {
-                let hero = bota_proto::HeroId(hero);
-                if bota_core::hero_def(hero).is_some() {
-                    self.start(Launch::Demo {
-                        hero,
-                        name: self.name(),
-                        key: Claim::draw(),
-                        server: self.server_binary.clone(),
-                        replay: self.recording_path("demo"),
-                    });
-                }
-            }
+            Act::Demo(hero) => self.start_demo(bota_proto::HeroId(hero)),
             Act::OpenReplay(name) => self.open_listed(&name),
             Act::DeleteReplay(name) => self.library.delete(&name),
             #[cfg(target_arch = "wasm32")]
@@ -1486,6 +1542,8 @@ impl MenuCore {
             Act::Disconnect => {
                 if self.in_game() {
                     match self.kind {
+                        // A Demo Hero is nobody else's to keep: leaving it ends it.
+                        GameKind::Play if self.demo_hero().is_some() => self.leave_game = true,
                         GameKind::Play => self.leave = true,
                         GameKind::Watch | GameKind::Replay => self.confirm = Some(Confirm::Leave),
                     }
@@ -1669,11 +1727,10 @@ impl MenuCore {
     /// The ruleset a new lobby is made for: the one chosen if the service still offers it, else
     /// the first it offers.
     pub(super) fn lobby_mode(&self, client: &Client) -> Option<RulesetId> {
-        client
-            .rulesets()
+        lobby_rulesets(client)
             .map(|r| &r.id)
             .find(|id| Some(*id) == self.lobby_mode.as_ref())
-            .or_else(|| client.rulesets().next().map(|r| &r.id))
+            .or_else(|| lobby_rulesets(client).next().map(|r| &r.id))
             .cloned()
     }
 
@@ -1781,6 +1838,14 @@ impl MenuCore {
     }
 }
 
+/// The rulesets a lobby may be made for: what the service offers but the Demo Hero, which has an
+/// entry of its own.
+pub(super) fn lobby_rulesets(
+    client: &Client,
+) -> impl Iterator<Item = &bota_radovid::proto::RulesetInfo> {
+    client.rulesets().filter(|r| !bota_radovid::is_demo(r))
+}
+
 /// What a refusal means to the player.
 pub fn error_text(error: &Error) -> String {
     let secs = |ms: &u32| ms.div_ceil(1000);
@@ -1827,6 +1892,7 @@ pub fn error_text(error: &Error) -> String {
         Error::UnknownLobby => "No open lobby has that name".to_owned(),
         Error::LobbyFull => "The lobby is full".to_owned(),
         Error::LobbyNotFull => "Waiting for more players".to_owned(),
+        Error::NoSoloStart => "This service does not start a Demo Hero".to_owned(),
         Error::NotAllReady => "Waiting for the other players to be ready".to_owned(),
         Error::TeamTooLarge => {
             "These rules take fewer players on a team than are seated there: move some to the other team"

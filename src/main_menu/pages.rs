@@ -16,7 +16,8 @@ use bota_radovid::proto::LOBBY_NO_SLOT;
 /// The tabs of the top bar: the service's once logged in, and what is played
 /// without it always.
 ///
-/// A browser cannot start a game server, so the local lobby and Demo Hero are not in its bar.
+/// A browser cannot start a game server, so the local lobby is not in its bar, nor is Demo Hero
+/// (the native client opens it; the browser may one day).
 #[cfg(not(target_arch = "wasm32"))]
 const TABS: [(Page, &str); 7] = [
     (Page::Home, "PLAY"),
@@ -38,10 +39,7 @@ const TABS: [(Page, &str); 5] = [
 
 /// Whether a tab's page is the service's, shown only with an account.
 fn online(page: Page) -> bool {
-    matches!(
-        page,
-        Page::Home | Page::MyGames | Page::Lobbies | Page::Profile
-    )
+    page.needs_account()
 }
 
 /// Dota's quit button (`#DOTAQuitButton`, a `TopBarSmallButton`): 62 by 61
@@ -169,7 +167,7 @@ pub fn draw(kit: &mut Kit, root: Entity, view: &MenuView) {
             shelf,
         } => replays_page(kit, body, list, fields, shelf),
         #[cfg(not(target_arch = "wasm32"))]
-        PageView::DemoHero { heroes } => demo_page(kit, body, heroes),
+        PageView::DemoHero { heroes, offered } => demo_page(kit, body, heroes, *offered),
         PageView::Joining => {
             kit.bold(body, "JOINING THE GAME…", 30.0, ui::INK);
         }
@@ -1107,9 +1105,9 @@ fn cheats_toggle(kit: &mut Kit, card: Entity, on: bool) {
 }
 
 /// DEMO HERO: every hero, its portrait and its name; a click starts Dota's
-/// Demo Hero with it, alone on our map with every cheat.
+/// Demo Hero with it, a game of the service alone on the map with every cheat.
 #[cfg(not(target_arch = "wasm32"))]
-fn demo_page(kit: &mut Kit, body: Entity, heroes: &[(u16, String)]) {
+fn demo_page(kit: &mut Kit, body: Entity, heroes: &[(u16, String)], offered: bool) {
     let column = kit.node(
         body,
         Node {
@@ -1126,6 +1124,10 @@ fn demo_page(kit: &mut Kit, body: Entity, heroes: &[(u16, String)]) {
         16.0,
         ui::INK_DIM,
     );
+    if !offered {
+        kit.text(column, "This service offers no Demo Hero.", 16.0, ERROR);
+        return;
+    }
     let grid = kit.node(
         column,
         Node {

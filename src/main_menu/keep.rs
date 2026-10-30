@@ -1,6 +1,6 @@
 //! Keeping the replays of the player's matches, by default: a match entered is noted, and when
 //! it ends its replay is fetched from the service (the participants' own copy of what the game
-//! server wrote) and handed to the library; a local lobby's or Demo Hero's is the server's own
+//! server wrote) and handed to the library; a local lobby's is the server's own
 //! file, adopted when the game is left. A fetch that fails is tried again in the background, on
 //! the next start too, and never holds the menu.
 
@@ -94,8 +94,6 @@ impl MenuCore {
             }),
             #[cfg(not(target_arch = "wasm32"))]
             Launch::Host { replay, .. } => self.record(replay, "local"),
-            #[cfg(not(target_arch = "wasm32"))]
-            Launch::Demo { replay, .. } => self.record(replay, "demo"),
             _ => {}
         }
     }
@@ -127,7 +125,7 @@ impl MenuCore {
     /// The game on screen was left: a local game's recording becomes a kept replay.
     pub(super) fn keep_left(&mut self, left: Option<OnScreen>) {
         #[cfg(not(target_arch = "wasm32"))]
-        if matches!(left, Some(OnScreen::Local | OnScreen::Demo))
+        if matches!(left, Some(OnScreen::Local))
             && let Some(recording) = self.keeper.recording.take()
         {
             self.library.adopt(recording.path, recording.mode);

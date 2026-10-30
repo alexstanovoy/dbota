@@ -50,18 +50,7 @@ fn shots(scratch: &Scratch) -> PathBuf {
 /// `scratch` (no service known, nothing of the user's touched): its exit
 /// code (none when killed past [`PATIENCE`]) and the steps it printed.
 fn run(scratch: &Scratch, args: &[&str], script: &str) -> (Option<i32>, String) {
-    run_with(scratch, args, script, &[])
-}
-
-/// [`run`] with more of the environment.
-fn run_with(
-    scratch: &Scratch,
-    args: &[&str],
-    script: &str,
-    env: &[(&str, &std::ffi::OsStr)],
-) -> (Option<i32>, String) {
     let mut child = common::client()
-        .envs(env.iter().copied())
         .args(args)
         .arg("--config")
         .arg(scratch.0.join("client.conf"))
@@ -510,33 +499,136 @@ fn server_binary() -> PathBuf {
     target.join("release/bota_server")
 }
 
-/// Dota's Demo Hero from the menu, with no account: the hero chosen on our
-/// map with the demo panel at the side and the match marked as one that
-/// cheats; the panel's buttons and a `-command` typed into the chat do
-/// what they say (the hero at level 30, the gold given), and Quit goes
-/// back to the menu. `DBOTA_QUIT_SHOTS` keeps the screenshots.
+/// A matchmaking service in this process with Dota's Demo Hero ruleset alone, launching the real
+/// game server; the client signs up to it and reaches Demo Hero through it. Shut down when dropped.
+struct DemoService {
+    runtime: tokio::runtime::Runtime,
+    service: Option<radovid::service::Service>,
+    url: String,
+    /// The service's certificate, on disk for the client's `--trust-cert`.
+    pem: PathBuf,
+}
+
+impl DemoService {
+    fn start(scratch: &Scratch) -> DemoService {
+        let port = std::net::TcpListener::bind("127.0.0.1:0")
+            .and_then(|l| l.local_addr())
+            .expect("a free port")
+            .port();
+        let config = format!(
+            r#"
+listen = "127.0.0.1:0"
+database = "{db}"
+tls_cert = "unused"
+tls_key = "unused"
+game_ports = "{port}-{port}"
+[password]
+memory_kib = 1024
+iterations = 1
+[limits]
+game_capacity = 1
+lobby_games_max = 1
+[[ruleset]]
+id = "demo"
+name = "Demo Hero"
+game = "bota"
+game_fingerprint = "{fingerprint:016x}"
+teams = [1, 1]
+rated = false
+audience = "humans_only"
+instant_solo = true
+info = "01"
+[ruleset.launcher]
+kind = "local"
+binary = "{binary}"
+public_url = "ws://127.0.0.1:{{port}}"
+version_probe = ["--wire-fingerprint"]
+args = ["--map", "0", "--cheats", "--match-id", "{{match_id}}", "--bind", "127.0.0.1",
+        "--port", "0", "--ws-port", "{{port}}", "--abandon-unjoined", "--empty-after-secs", "60",
+        "--tactical-secs", "0"]
+env = {{ BOTA_SEATS = "{{seats}}" }}
+"#,
+            db = scratch.0.join("radovid.db").display(),
+            fingerprint = bota_radovid::fingerprint(),
+            binary = server_binary().display(),
+        );
+        let path = scratch.0.join("radovid.toml");
+        std::fs::write(&path, config).expect("the configuration");
+        let config = radovid::config::Config::load(&path).expect("a valid configuration");
+        let identity =
+            radovid::tls::self_signed(vec!["127.0.0.1".to_owned()]).expect("a certificate");
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(2)
+            .enable_all()
+            .build()
+            .expect("a runtime");
+        let service = runtime
+            .block_on(radovid::service::Service::start(config, &identity))
+            .expect("the service starts");
+        let pem = scratch.0.join("service.pem");
+        std::fs::write(&pem, &identity.cert_pem).expect("the certificate");
+        DemoService {
+            url: format!("wss://127.0.0.1:{}", service.addr.port()),
+            runtime,
+            service: Some(service),
+            pem,
+        }
+    }
+
+    /// The client's arguments to reach the service.
+    fn args(&self) -> [String; 4] {
+        [
+            "--service".to_owned(),
+            self.url.clone(),
+            "--trust-cert".to_owned(),
+            self.pem.to_str().expect("a UTF-8 path").to_owned(),
+        ]
+    }
+}
+
+impl Drop for DemoService {
+    fn drop(&mut self) {
+        if let Some(service) = self.service.take() {
+            self.runtime.block_on(service.shutdown());
+        }
+    }
+}
+
+/// The script steps that create the account `demo` on the service and open the DEMO HERO page.
+const SIGN_UP: &str = "await:menu;await:button:create account;click:create account;\
+                       await:button:back;text:demo;key:Tab;text:correct horse battery;key:Tab;\
+                       text:correct horse battery;click:create account;await:button:demo hero;\
+                       click:demo hero;await:button:demo shadow fiend;";
+
+/// Plays `script` after [`SIGN_UP`] against a [`DemoService`]: the client's exit code, what it
+/// said, and the whole script.
+fn run_demo(scratch: &Scratch, script: &str) -> (Option<i32>, String, String) {
+    let service = DemoService::start(scratch);
+    let script = format!("{SIGN_UP}{script}");
+    let args = service.args();
+    let args: Vec<&str> = args.iter().map(String::as_str).collect();
+    let (code, said) = run(scratch, &args, &script);
+    (code, said, script)
+}
+
+/// Dota's Demo Hero from the menu, through the service: the hero chosen on the whole map
+/// with the demo panel at the side and the match marked as one that cheats; the panel's buttons
+/// and a `-command` typed into the chat do what they say (the hero at level 30, the gold
+/// given), and Quit goes back to the menu. `DBOTA_QUIT_SHOTS` keeps the screenshots.
 #[test]
 #[ignore = "draws on the GPU in a headless compositor: tools/visual_check.sh runs it"]
 fn demo_hero_plays_a_hero_with_every_cheat() {
     let scratch = Scratch::new("demo");
-    let server = server_binary();
-    let script = "await:menu;click:demo hero;await:button:demo shadow fiend;wait:1;\
-                  shot:demo-menu.png;click:demo shadow fiend;await:game;await:horn;\
-                  await:button:demo levelmax;wait:3;shot:demo-panel.png;click:demo levelmax;\
-                  await:level:30;say:-gold 20000;await:gold:20000;click:demo freespells;\
-                  click:demo spawnenemy;click:demo creepwave;wait:3;shot:demo-cheats.png;\
-                  click:demo night;wait:2;shot:demo-night.png;click:demo quit;await:menu;\
-                  wait:1;shot:demo-left.png;key:Escape;key:Escape;await:popup;click:ok";
-    played(
-        "Demo Hero",
-        run_with(
-            &scratch,
-            &[],
-            script,
-            &[("BOTA_SERVER", server.as_os_str())],
-        ),
-        script,
+    let (code, said, script) = run_demo(
+        &scratch,
+        "wait:1;shot:demo-menu.png;click:demo shadow fiend;await:game;await:horn;\
+         await:button:demo levelmax;wait:3;shot:demo-panel.png;click:demo levelmax;\
+         await:level:30;say:-gold 20000;await:gold:20000;click:demo freespells;\
+         click:demo spawnenemy;click:demo creepwave;wait:3;shot:demo-cheats.png;\
+         click:demo night;wait:2;shot:demo-night.png;click:demo quit;await:menu;\
+         wait:1;shot:demo-left.png;key:Escape;key:Escape;await:popup;click:ok",
     );
+    played("Demo Hero", (code, said), &script);
 }
 
 /// The scene's lights as a `light` step printed them: sun colour and lux, ambient colour and
@@ -581,19 +673,14 @@ impl Lights {
 #[ignore = "draws on the GPU in a headless compositor: tools/visual_check.sh runs it"]
 fn night_light_differs_from_day_light() {
     let scratch = Scratch::new("night-light");
-    let server = server_binary();
-    let script = "await:menu;click:demo hero;await:button:demo shadow fiend;\
-                  click:demo shadow fiend;await:game;await:horn;await:daylight:day;wait:1;\
-                  light;shot:light-day.png;click:demo night;await:daylight:night;wait:1;\
-                  light;shot:light-night.png;click:demo quit;await:menu;key:Escape;key:Escape;\
-                  await:popup;click:ok";
-    let (code, said) = run_with(
+    let (code, said, script) = run_demo(
         &scratch,
-        &[],
-        script,
-        &[("BOTA_SERVER", server.as_os_str())],
+        "click:demo shadow fiend;await:game;await:horn;await:daylight:day;wait:1;\
+         light;shot:light-day.png;click:demo night;await:daylight:night;wait:1;\
+         light;shot:light-night.png;click:demo quit;await:menu;key:Escape;key:Escape;\
+         await:popup;click:ok",
     );
-    played("night light", (code, said.clone()), script);
+    played("night light", (code, said.clone()), &script);
     let lights = Lights::parse(&said);
     assert_eq!(lights.len(), 2, "{said}");
     let (day, night) = (lights[0], lights[1]);

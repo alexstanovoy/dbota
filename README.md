@@ -18,7 +18,7 @@ Dota 2 install. Bots don't need it.
 
    A live match needs a client and a server built from the same bota: a server that sees another wire
    fingerprint refuses the client. `tools/build.sh` builds the server of `../bota` beside the client, which
-   is where LOCAL LOBBY and DEMO HERO look for it first (next the settings' or `$BOTA_SERVER`'s path, then
+   is where LOCAL LOBBY looks for it first (next the settings' or `$BOTA_SERVER`'s path, then
    the `PATH`); a server of another wire than the client's is skipped, and with none usable the menu says
    which it looked for. A replay opens only with the bota that recorded it. Ship the two files together.
 
@@ -75,17 +75,19 @@ signed out and with no service reachable. There, you play under the profile name
   LOCAL LOBBY page show while a seat is open. The match starts once every player seated is ready, with
   exactly those players: nothing fills the empty seats, so one player is one hero. The server ends when you
   quit dbota.
-- **DEMO HERO**: Dota's Demo Hero: the hero chosen alone on our map, with every cheat and Dota's demo
+- **DEMO HERO** (signed in): Dota's Demo Hero: the hero chosen alone on Dota's map, with every cheat and Dota's demo
   panel at the side (spawn an allied or enemy hero, creep waves, neutrals, levels, gold, items, free
   spells, invulnerability, respawn, teleport, reset, the enemies' level, creep spawning, night, all
-  vision, refresh). Its words come from the install's Demo Hero (`dota_addons/hero_demo`). Quit ends
-  its server.
+  vision, refresh). Its words come from the install's Demo Hero (`dota_addons/hero_demo`). It is a game of the
+  matchmaking service: the service's Demo ruleset (cheats on, one seat; radovid's README, "A ruleset for one player")
+  starts for you alone as soon as a hero is picked, with no queue, lobby or countdown; the page says so when the
+  service offers none. Quit (the panel's, or DISCONNECT on the dashboard) ends it. The browser client has no such page.
 - **REPLAYS**: the replays this client keeps, by default, the newest first, each with its date, mode,
   players and how it ended; WATCH opens one in the replay viewer, DELETE removes it. A match played through
   the matchmaking service has its replay fetched from the service when the match ends (by whoever sat in it;
   a lost or left match too; a service that keeps none, `[artifacts] save_replays` off in radovid, is told on
   the page and nothing is saved from it); a failed fetch is tried again in the background, and at the next
-  sign-in. A local lobby's and Demo Hero's replays are the server's own file, kept when the game is left (whole when the match ended or was left for good with LEAVE GAME; a game that is only disconnected from keeps what the server had written to disk so far). Where:
+  sign-in. A local lobby's replay is the server's own file, kept when the game is left (whole when the match ended or was left for good with LEAVE GAME; a game that is only disconnected from keeps what the server had written to disk so far). Where:
   `$XDG_DATA_HOME/dbota/replays` (`~/.local/share/dbota/replays`) on Linux, `~/Library/Application Support/dbota/replays`
   on macOS, `%LOCALAPPDATA%\dbota\replays` on Windows, named `YYYYMMDD-HHMMSS-mode-matchid.brp` (UTC) with a small
   `index.txt` beside them; in a browser, the page's private storage (OPFS, else IndexedDB), where each row also has
@@ -100,9 +102,8 @@ their console forms: `dota_create_item item_blink`): `-gold N`, `-lvlup N`, `-le
 `-wtf`/`-unwtf`, `-refresh`, `-respawn`, `-item NAME`, `-createhero NAME [enemy]` (at the cursor),
 `-spawncreeps`, `-disablecreepspawn`/`-enablecreepspawn`, `-spawnneutrals`, `-killcreeps [side]`,
 `-startgame`, `-allvision`/`-normalvision`, `-teleport` (to the cursor). Only a match its host
-started with cheats honours them: LOCAL LOBBY's "Enable cheats", DEMO HERO, or
-`bota_server --cheats`. Matchmaking's
-matches never cheat.
+started with cheats honours them: LOCAL LOBBY's "Enable cheats", `bota_server --cheats`, or a service's
+Demo ruleset (DEMO HERO). Matchmaking's queued matches never cheat.
 
 The power button at the top right quits, after Dota's question ("Confirm Quit"); `Esc` on the menu
 backs out of a page to the top one, and there asks the same. `Esc` in a game (with nothing to cancel or

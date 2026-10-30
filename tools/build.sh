@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Builds the desktop client and the game server it starts, side by side, so that LOCAL LOBBY and
-# DEMO HERO find a server of the same bota and the same wire: target/release/dbota and
+# Builds the desktop client and the game server it starts, side by side, so that LOCAL LOBBY
+# finds a server of the same bota and the same wire: target/release/dbota and
 # target/release/bota_server (`PROFILE=dist` builds both in `target/dist`).
 set -euo pipefail
 here=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)

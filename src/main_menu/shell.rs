@@ -185,7 +185,7 @@ fn drive(
         Some(Launch::Replay(path)) => opened_here(&mut core, open_replay(&path)),
         Some(Launch::Blob(blob)) => opened_here(&mut core, open_blob(&blob)),
         Some(launch) => {
-            if matches!(launch, Launch::Host { .. } | Launch::Demo { .. }) {
+            if matches!(launch, Launch::Host { .. }) {
                 // One lobby hosted at a time: the last one's server ends.
                 host.0 = None;
             }
@@ -242,7 +242,6 @@ fn guard(
     mut epoch: ResMut<GameEpoch>,
     mut commands: Commands,
     mut index: ResMut<crate::units::UnitIndex>,
-    mut host: NonSendMut<Host>,
 ) {
     let Some(mut core) = core else {
         return;
@@ -284,10 +283,6 @@ fn guard(
     if leave || (lost && !over) {
         // Escape leaves the game here, not the client too.
         fired.pressed.retain(|action| *action != escape);
-        // Demo Hero's server ends with it.
-        if core.demo_hero().is_some() {
-            host.0 = None;
-        }
         *session = idle();
         epoch.0 += 1;
         forget_units(&mut commands, &mut index);

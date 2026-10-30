@@ -236,6 +236,29 @@ args = ["--map", "0", "--mode", "lockstep", "--ack-timeout-ticks", "900",
 env = {{ BOTA_SEATS = "{{seats}}" }}
 artifact = "{artifacts}/replay-{{match_id}}.brp"
 artifact_args = ["--replay", "{{artifact}}"]
+
+# Demo Hero: cheats, free pick, one player started at once; bota's flag byte says it is a Demo.
+[[ruleset]]
+id = "demo"
+name = "Demo Hero"
+game = "bota"
+game_fingerprint = "{fingerprint:016x}"
+teams = [1, 1]
+rated = false
+audience = "humans_only"
+instant_solo = true
+info = "01"
+[ruleset.launcher]
+kind = "local"
+binary = "{binary}"
+public_url = "ws://127.0.0.1:{{port}}"
+version_probe = ["--wire-fingerprint"]
+start_timeout_secs = {PATIENCE}
+args = ["--map", "0", "--cheats", "--mode", "lockstep", "--ack-timeout-ticks", "900",
+        "--match-id", "{{match_id}}", "--bind", "127.0.0.1", "--port", "0",
+        "--ws-port", "{{port}}", "--abandon-unjoined", "--empty-after-secs", "{PATIENCE}",
+        "--pick-secs", "1", "--tactical-secs", "0"]
+env = {{ BOTA_SEATS = "{{seats}}" }}
 "#,
         db = dir.join("radovid.db").display(),
         artifacts = dir.join("artifacts").display(),
@@ -245,15 +268,24 @@ artifact_args = ["--replay", "{{artifact}}"]
 }
 
 pub(crate) fn service() -> Service {
-    service_saving(true)
+    start_service(true, |config| config)
 }
 
 /// The service, keeping the replays of its matches or not.
 fn service_saving(save_replays: bool) -> Service {
+    start_service(save_replays, |config| config)
+}
+
+/// [`service`] with its configuration changed by `change`.
+fn service_with(change: impl FnOnce(String) -> String) -> Service {
+    start_service(true, change)
+}
+
+fn start_service(save_replays: bool, change: impl FnOnce(String) -> String) -> Service {
     let binary = server_binary().to_owned();
     let dir = Scratch::new("service");
     let path = dir.0.join("radovid.toml");
-    std::fs::write(&path, config(&dir.0, &binary, save_replays)).expect("config");
+    std::fs::write(&path, change(config(&dir.0, &binary, save_replays))).expect("config");
     let config = radovid::config::Config::load(&path).expect("a valid configuration");
     let names = vec!["127.0.0.1".to_owned(), "localhost".to_owned()];
     let identity = radovid::tls::self_signed(names).expect("certificate");
@@ -1187,23 +1219,33 @@ fn own_gold(core: &Core) -> i32 {
         .unwrap_or(0)
 }
 
-/// Demo Hero from the menu with no account: a server of its own with
-/// cheats on, the hero chosen the one picked, and a cheat honoured.
+/// Demo Hero from the menu: a signed-in account asks the service for it, and its match (the Demo
+/// ruleset's, a game server of cheats started by the service) comes with the hero chosen to
+/// pick; a cheat is honoured, and quitting it ends the match and shows no result.
 #[test]
-fn demo_hero_starts_a_cheat_match_with_the_hero_chosen() {
-    let dir = Scratch::new("demo");
-    let (mut menu, trust) = offline("alice", &dir);
-    menu.act(Act::Go(Page::DemoHero));
-    assert_eq!(menu.page(), Page::DemoHero);
-    menu.act(Act::Demo(HeroId::PUDGE.0));
-    let launch = menu.take_launch().expect("a demo to start");
+fn demo_hero_starts_a_cheat_match_of_the_service_with_the_hero_chosen() {
+    let service = service();
+    let mut alice = Player::new(Some(&service));
+    alice.register("alice");
+    alice.menu.act(Act::Go(Page::DemoHero));
+    assert_eq!(alice.menu.page(), Page::DemoHero);
     assert!(
-        matches!(&launch, Launch::Demo { hero, name, .. } if *hero == HeroId::PUDGE && name == "alice")
+        matches!(
+            alice.menu.view().body,
+            PageView::DemoHero { offered: true, .. }
+        ),
+        "the service offers a Demo Hero"
     );
-    let (mut core, server) = open_hosted(launch, &trust);
-    assert!(server.is_some(), "the demo's server is this client's");
-    menu.game_started();
-    assert_eq!(menu.demo_hero(), Some(HeroId::PUDGE));
+    alice.menu.act(Act::Demo(HeroId::PUDGE.0));
+    settle(&mut [&mut alice], |p| p.menu.page() == Page::Game);
+    assert!(
+        alice.menu.lobby.is_none(),
+        "no lobby and no countdown for a Demo"
+    );
+    let launch = launch_of(&mut alice);
+    assert!(matches!(&launch, Launch::Demo { hero, .. } if *hero == HeroId::PUDGE));
+    let mut core = open(launch, &alice.trust);
+    assert_eq!(alice.menu.demo_hero(), Some(HeroId::PUDGE));
     pump_until("seated", &mut [&mut core], |c| c.my_slot.is_some());
     core.act(bota_client_core::Intent::PickHero(HeroId::PUDGE.0));
     core.act(bota_client_core::Intent::ToggleReady);
@@ -1221,13 +1263,41 @@ fn demo_hero_starts_a_cheat_match_with_the_hero_chosen() {
     pump_until("the gold comes", &mut [&mut core], |c| {
         own_gold(c) >= before + 5000
     });
-    // Leaving a demo leaves no seat to take again: its server ends with it.
-    menu.act(Act::Dashboard);
-    menu.act(Act::Disconnect);
-    assert!(menu.take_leave());
-    menu.left_game(None, false);
-    assert_eq!(menu.page(), Page::DemoHero);
-    assert!(!menu.view().reconnect);
+    // Leaving a Demo Hero ends it: no seat to take again, and its result is no news.
+    alice.menu.act(Act::Dashboard);
+    alice.menu.act(Act::Disconnect);
+    assert!(alice.menu.take_leave_game());
+    core.leave_game();
+    assert!(!alice.menu.take_leave(), "the leave goes out first");
+    alice.menu.left_game(None, false);
+    assert_eq!(alice.menu.page(), Page::DemoHero);
+    assert!(!alice.menu.view().reconnect);
+    // The lockstep server takes the leave with the client's next acknowledgement.
+    let deadline = Instant::now() + Duration::from_secs(PATIENCE);
+    while !alice.menu.games.is_empty() {
+        assert!(Instant::now() < deadline, "the Demo Hero did not end");
+        core.pump(1.0 / 30.0);
+        alice.menu.update();
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert_eq!(alice.menu.page(), Page::DemoHero);
+    assert!(alice.menu.results.is_empty());
+}
+
+/// The Demo Hero is the service's to offer: a menu without one says so, and the Demo ruleset is
+/// no game mode of a lobby.
+#[test]
+fn a_service_without_a_demo_offers_none() {
+    let service = service_with(|config| config.replace("info = \"01\"", ""));
+    let mut alice = Player::new(Some(&service));
+    alice.register("alice");
+    alice.menu.act(Act::Go(Page::DemoHero));
+    assert!(matches!(
+        alice.menu.view().body,
+        PageView::DemoHero { offered: false, .. }
+    ));
+    alice.menu.act(Act::Demo(HeroId::PUDGE.0));
+    assert!(alice.menu.take_launch().is_none());
 }
 
 /// A local game the host leaves for good (the match ends: the leaver's side loses) leaves its

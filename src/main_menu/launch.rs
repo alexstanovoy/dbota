@@ -50,7 +50,9 @@ impl Trust {
 /// The first message to a game server.
 fn hello(launch: &Launch) -> std::io::Result<ClientMsg> {
     match launch {
-        Launch::Seat(handoff) => bota_radovid::seat_hello(handoff, Role::Player),
+        Launch::Seat(handoff) | Launch::Demo { handoff, .. } => {
+            bota_radovid::seat_hello(handoff, Role::Player)
+        }
         Launch::Watch(handoff) => bota_radovid::seat_hello(handoff, Role::Spectator),
         Launch::Direct {
             name,
@@ -70,7 +72,7 @@ fn hello(launch: &Launch) -> std::io::Result<ClientMsg> {
                 bota_core::WIRE_FINGERPRINT,
             ))
         }
-        Launch::Host { name, key, .. } | Launch::Demo { name, key, .. } => Ok(ClientMsg::hello(
+        Launch::Host { name, key, .. } => Ok(ClientMsg::hello(
             Role::Player,
             name.as_str(),
             key.map(|k| k.0),
@@ -217,33 +219,6 @@ pub fn host_args(port: u16, rules: LocalRules, lan: bool, cheats: bool) -> Vec<S
     args
 }
 
-/// What Dota's Demo Hero is started with: one seat on our map, on this
-/// machine alone and a port of its own, cheats on, the hero chosen the only
-/// one to pick, and no planning before the game.
-#[cfg(not(target_arch = "wasm32"))]
-pub fn demo_args(hero: u16) -> Vec<String> {
-    [
-        "--port",
-        "0",
-        "--bind",
-        "127.0.0.1",
-        "--players",
-        "1",
-        "--map",
-        "0",
-        "--cheats",
-        "--tactical-secs",
-        "0",
-        "--heroes",
-        &hero.to_string(),
-        "--abandon-unjoined",
-        "--empty-after-secs",
-        "60",
-    ]
-    .map(str::to_owned)
-    .into()
-}
-
 /// Starts a game server with `args` and waits until it listens: the server,
 /// and the plain address it said it listens on.
 #[cfg(not(target_arch = "wasm32"))]
@@ -358,16 +333,6 @@ impl Opening {
                             replay.as_deref(),
                             server.as_deref(),
                         )?),
-                        Launch::Demo {
-                            hero,
-                            server,
-                            replay,
-                            ..
-                        } => Some(start_server(
-                            &demo_args(hero.0),
-                            replay.as_deref(),
-                            server.as_deref(),
-                        )?),
                         _ => None,
                     };
                     let (server, listening) = match started {
@@ -375,14 +340,14 @@ impl Opening {
                         None => (None, None),
                     };
                     let mut net = match &launch {
-                        Launch::Seat(h) | Launch::Watch(h) => {
+                        Launch::Seat(h) | Launch::Watch(h) | Launch::Demo { handoff: h, .. } => {
                             bota_radovid::connect_net(h, &trust.radovid)?
                         }
                         Launch::Direct { address, .. } => Net::open(
                             Endpoint::parse(address)?.with_tls(trust.direct.clone()),
                             Redial::DEFAULT,
                         )?,
-                        Launch::Host { .. } | Launch::Demo { .. } => Net::open(
+                        Launch::Host { .. } => Net::open(
                             Endpoint::parse(&listening.unwrap_or_default())?,
                             Redial::DEFAULT,
                         )?,
@@ -427,11 +392,13 @@ impl Opening {
         let opened = (|| -> std::io::Result<Box<dyn LiveLink>> {
             let greeting = hello(&launch)?;
             let mut link = match &launch {
-                Launch::Seat(h) | Launch::Watch(h) => bota_radovid::web_link(h)?,
+                Launch::Seat(h) | Launch::Watch(h) | Launch::Demo { handoff: h, .. } => {
+                    bota_radovid::web_link(h)?
+                }
                 Launch::Direct { address, .. } => {
                     bota_client_core::WebSocketLink::connect(address)?
                 }
-                Launch::Host { .. } | Launch::Demo { .. } => {
+                Launch::Host { .. } => {
                     return Err(std::io::Error::other(
                         "a local lobby needs the desktop client: a browser cannot start a server",
                     ));
