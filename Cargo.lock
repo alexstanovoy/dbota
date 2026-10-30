@@ -2563,6 +2563,7 @@ dependencies = [
  "heatel",
  "js-sys",
  "ktx2",
+ "miniz_oxide 0.9.1",
  "png",
  "serde_json",
  "texture2ddecoder",

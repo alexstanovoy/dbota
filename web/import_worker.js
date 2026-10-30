@@ -2,10 +2,14 @@
 // picked Dota files by slices (FileReaderSync) and writes the converted cache into the Origin
 // Private File System with synchronous access handles. Nothing is sent anywhere.
 //
-// Messages in:  {op: "check" | "import", files: [[path, File]], modified}  and {op: "stop"}
+// Also copies a prepared asset cache (a zip or a folder someone made with `dbota export-cache`)
+// into the same place once the importer module has checked it whole (pack.rs).
+//
+// Messages in:  {op: "check" | "import", files: [[path, File]], modified}, {op: "load", zip: File}
+//               or {op: "load", files: [[path, File]]}, and {op: "stop"}
 // Messages out: {type: "checked", fresh} | {type: "progress", done, total, item, bytes}
 //               | {type: "done", files, failures, deferred, stopped} | {type: "error", message}
-import init, { Install } from "./import/dbota_import.js";
+import init, { Install, Prepared } from "./import/dbota_import.js";
 import { dir, readState, remove, room } from "./cache.js";
 
 // The least storage an import needs: the converted cache is about 560 MB.
@@ -72,10 +76,55 @@ async function run(made, stamp) {
   post({ type: "done", stopped: false, files: report.files(), failures: report.failures() });
 }
 
+// A prepared cache is room for its files and a margin.
+const MARGIN = 100 * 2 ** 20;
+
+// Copies the prepared cache file by file. The checks that need no file's bytes (stamp, index,
+// paths, sizes) were all made when it was opened, before the cache in place is touched; a file
+// that turns out damaged while it is read ends the copy, and the half-made copy is removed.
+async function load(data) {
+  await init();
+  const pack = data.zip ? Prepared.from_zip(data.zip) : Prepared.from_folder(data.files);
+  try {
+    if ((await room()) < pack.bytes() + MARGIN) {
+      throw new Error("the browser has too little storage left for this asset cache (" + Math.ceil(pack.bytes() / 2 ** 20) + " MB)");
+    }
+    await remove();
+    const total = pack.len();
+    try {
+      for (let done = 0; done < total && !stopping; done++) {
+        const path = pack.path(done);
+        post({ type: "progress", done, total, item: path, bytes: 0 });
+        await writeFile(path, pack.read(done));
+        // A message ("stop") is handled while this awaits.
+        await new Promise((r) => setTimeout(r, 0));
+      }
+      if (!stopping) {
+        // The index and the stamp last: a cache without them is not a finished one.
+        await writeFile("index.txt", new TextEncoder().encode(pack.index()));
+        await writeFile("stamp.txt", new TextEncoder().encode(pack.stamp()));
+      }
+    } catch (e) {
+      await remove();
+      throw e;
+    }
+    if (stopping) {
+      await remove();
+      return post({ type: "done", stopped: true, files: 0, failures: [] });
+    }
+    post({ type: "done", stopped: false, files: total, failures: [] });
+  } finally {
+    pack.free();
+  }
+}
+
 self.onmessage = async ({ data }) => {
   if (data.op === "stop") {
     stopping = true;
     return;
+  }
+  if (data.op === "load") {
+    return load(data).catch((e) => post({ type: "error", message: String((e && e.message) || e) }));
   }
   try {
     const made = await install(data.files);

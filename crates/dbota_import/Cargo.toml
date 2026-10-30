@@ -10,7 +10,10 @@ description = "The asset importer: the manifest's assets read out of a local Dot
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
+crc32fast = { version = "1.5", default-features = false, features = ["std"] }
 heatel = { path = "../../../heatel", features = ["serde"] }
+# A prepared cache's zip: inflated with a limit, and written deflated.
+miniz_oxide = { version = "0.9.1", default-features = false, features = ["with-alloc"] }
 serde_json = "1"
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
@@ -23,7 +26,6 @@ web-sys = { version = "0.3", features = ["Blob", "File", "FileReaderSync"] }
 web = []
 
 [dev-dependencies]
-crc32fast = "1.5"
 texture2ddecoder = "0.1.2"
 bevy_image = { version = "=0.19.1", default-features = false, features = ["ktx2", "zstd_rust"] }
 ktx2 = "0.5"

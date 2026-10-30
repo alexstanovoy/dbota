@@ -34,7 +34,7 @@ build() {
 max_len() {
     case "$1" in
     import) echo 1048576 ;;
-    cache_image) echo 262144 ;;
+    cache_image | pack_zip) echo 262144 ;;
     *) echo 65536 ;;
     esac
 }

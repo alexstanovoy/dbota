@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Seeds the corpora of dbota's fuzz targets from a local Dota 2 install and,
-if given, the client's asset cache.
+if given, the client's asset cache (which also seeds the prepared-cache zips).
 
     python3 -I fuzz/seeds.py <.../dota 2 beta/game/dota> [<asset cache>]
 
@@ -129,6 +129,41 @@ def cache_seeds(cache):
                 write("cache_text", rel.replace("/", "_"), file.read(TEXT_SEED))
 
 
+def pack_seeds(cache):
+    """Prepared caches (zips) of the cache's smallest files, stored and deflated, whole and cut:
+    a valid one for the zip target to mutate from."""
+    import io
+    import zipfile
+
+    header = open(os.path.join(cache, "index.txt")).readline()
+    files = []
+    for folder, _, names in os.walk(cache):
+        for name in names:
+            path = os.path.join(folder, name)
+            rel = os.path.relpath(path, cache).replace(os.sep, "/")
+            if rel not in ("index.txt", "stamp.txt") and os.path.getsize(path) <= 4096:
+                files.append(rel)
+    files = sorted(files)[:: max(1, len(files) // 24)][:24]
+    index = header + "".join(
+        "file %d %s%s\n" % (
+            os.path.getsize(os.path.join(cache, f)),
+            f,
+            " small" if f.endswith((".txt", ".json")) or f.startswith("textures/ground/") else "",
+        )
+        for f in files
+    )
+    stamp = open(os.path.join(cache, "stamp.txt"), "rb").read()
+    for method, label in ((zipfile.ZIP_STORED, "stored"), (zipfile.ZIP_DEFLATED, "deflated")):
+        out = io.BytesIO()
+        with zipfile.ZipFile(out, "w", method) as zip_:
+            zip_.writestr("stamp.txt", stamp)
+            zip_.writestr("index.txt", index)
+            for f in files:
+                with open(os.path.join(cache, f), "rb") as file:
+                    zip_.writestr(f, file.read())
+        write("pack_zip", label, out.getvalue())
+
+
 def main(game):
     pak = Package(game, "pak01_dir.vpk")
     loc, scripts, portraits, shop = texts(pak)
@@ -140,3 +175,4 @@ if __name__ == "__main__":
     main(sys.argv[1])
     if len(sys.argv) > 2:
         cache_seeds(sys.argv[2])
+        pack_seeds(sys.argv[2])

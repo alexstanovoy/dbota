@@ -1,6 +1,7 @@
 # Coverage-guided fuzz targets for what dbota reads or makes besides Valve's formats (heatel
 # fuzzes those): the importer that converts an install into the asset cache, its manifest plan
-# and stamps, and the asset cache as the client reads it back. A workspace of its own: the
+# and stamps, the asset cache as the client reads it back, and a prepared cache (a zip or a
+# folder someone hands on) before it is taken. A workspace of its own: the
 # fuzzer's flags and libFuzzer stay out of the main build. `fuzz.sh` builds and runs them on
 # stable Rust.
 [package]
@@ -71,6 +72,20 @@ bench = false
 [[bin]]
 name = "cache_text"
 path = "fuzz_targets/cache_text.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "pack_zip"
+path = "fuzz_targets/pack_zip.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "pack_folder"
+path = "fuzz_targets/pack_folder.rs"
 test = false
 doc = false
 bench = false

@@ -1,6 +1,7 @@
 // Getting at the player's Dota 2 install: the files the importer reads, as `File` objects
 // that stay on this machine (nothing is read until it is sliced). The importer needs the
 // package files of `game/dota`: `pak01_dir.vpk`, the numbered parts and `maps/*.vpk`.
+// Also getting at a prepared asset cache someone else made (a .zip, or its folder).
 
 const DB = "dbota-grant";
 const KEY = "dota";
@@ -76,6 +77,22 @@ export function pickWithInput(input) {
     input.value = "";
     input.onchange = () => resolve(filesFromList(input.files));
     input.oncancel = () => resolve(new Map());
+    input.click();
+  });
+}
+
+// A prepared asset cache: the .zip file or the folder picked through an `<input type=file>`.
+// Resolves with `{zip: File}` or `{files: [[path, File], ...]}` (paths as the picker names
+// them, the picked folder first), or null when the picker is dismissed or holds nothing.
+export function pickPrepared(input) {
+  return new Promise((resolve) => {
+    input.value = "";
+    input.onchange = () => {
+      const list = [...input.files];
+      if (!list.length) return resolve(null);
+      resolve(input.webkitdirectory ? { files: list.map((f) => [f.webkitRelativePath || f.name, f]) } : { zip: list[0] });
+    };
+    input.oncancel = () => resolve(null);
     input.click();
   });
 }

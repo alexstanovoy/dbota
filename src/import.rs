@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 
 use dbota_import::cache_dir::{import_into, is_current, read_stamp, stamp};
 use dbota_import::import::{Flow, IDS, MANIFEST, Plan, plan_id, stamped_here};
+use dbota_import::pack_dir;
 use heatel::find_game_dir;
 
 /// What the cache at a path lacks for this build.
@@ -50,15 +51,58 @@ pub type Progress<'a> = &'a mut dyn FnMut(f32, &str);
 /// Steam places); does nothing when the cache was made from the same install already, unless
 /// `force`. Returns whether every asset converted.
 pub fn run(dota: Option<&Path>, cache: &Path, force: bool) -> Result<bool, String> {
+    run_with(dota, cache, force, &mut tenths())
+}
+
+/// A progress that prints a line per tenth of the way: a terminal, not a progress bar.
+pub fn tenths() -> impl FnMut(f32, &str) {
     let mut shown = 0;
-    run_with(dota, cache, force, &mut |done, item| {
-        // A line per tenth of the way: a terminal, not a progress bar.
+    move |done, item| {
         let tenth = (done * 10.0) as u32;
         if tenth > shown {
             shown = tenth;
             println!("  {tenth}0% ({item})");
         }
+    }
+}
+
+/// Puts the prepared cache at `from` (a folder, or a zip of one, as `dbota export-cache` makes it) in
+/// place of the cache at `cache`, once it has been checked whole: a cache of another build, or
+/// with a file it must not hold, is refused and the old one stays.
+pub fn load_cache(from: &Path, cache: &Path, progress: Progress) -> Result<(), String> {
+    println!(
+        "dbota import-cache: {} -> {}",
+        from.display(),
+        cache.display()
+    );
+    let started = std::time::Instant::now();
+    let summary = pack_dir::install(from, cache, &mut |done, total, item| {
+        progress(done as f32 / total.max(1) as f32, item);
     })
+    .map_err(|e| e.to_string())?;
+    println!(
+        "dbota import-cache: {} files, {} MB, assets {} in {:.0} s",
+        summary.files,
+        summary.bytes >> 20,
+        summary.stamp,
+        started.elapsed().as_secs_f32()
+    );
+    Ok(())
+}
+
+/// Writes the cache at `cache` as the zip `to`, for someone without Dota 2 to load.
+pub fn export_cache(cache: &Path, to: &Path) -> Result<(), String> {
+    let started = std::time::Instant::now();
+    let summary = pack_dir::export(cache, to).map_err(|e| e.to_string())?;
+    println!(
+        "dbota export-cache: {} files, {} MB of assets {} -> {} in {:.0} s",
+        summary.files,
+        summary.bytes >> 20,
+        summary.stamp,
+        to.display(),
+        started.elapsed().as_secs_f32()
+    );
+    Ok(())
 }
 
 /// [`run`], telling `progress` how far it is.

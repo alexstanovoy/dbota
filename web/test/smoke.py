@@ -12,6 +12,19 @@ shows the "pick a folder, read only what is needed" path without copying anythin
 Dota 2 install (DBOTA_DOTA_PATH or the usual Steam places); the game run needs WebGL2/WebGPU
 (SwiftShader does). Without an install that part is skipped, with a message.
 
+One more check needs a prepared asset cache, not an install:
+
+    dbota import          # a native cache of this build (DBOTA_ASSETS=... to keep it private)
+    dbota export-cache temp/cache.zip
+    PYTHONPATH=temp/pwlib python3 web/test/smoke.py --prepared-page web/out \\
+        --cache-zip temp/cache.zip --cache-folder "$DBOTA_ASSETS"
+
+* `--prepared-page`: zips the page must refuse (another build's stamp, a path that climbs out, an
+  index that does not match) are refused with their reasons and copy nothing; the real zip is
+  copied into private storage (files, stamp and bytes as the zip has them), kept over a reload and
+  played until the map is read and drawn; the cache folder is then loaded the same way. The page
+  requests nothing outside its own origin.
+
 Five more checks need no install and run on pages built with stand-ins (`?assets=none`):
 
     DBOTA_WEB_REPLAY=$PWD/chat.brp DBOTA_WEB_ARGS="--replay built-in --pov 0 --seek 4100" \
@@ -184,6 +197,34 @@ def check_icons_as_native(page, reference):
     wrong = [p for p in paths if got[p] != hashlib.sha256((root / p).read_bytes()).hexdigest()]
     assert not wrong, f"{len(wrong)} of {len(paths)} icons differ from the desktop's import, e.g. {wrong[:5]}"
     print(f"icons: all {len(paths)} the same as the desktop's import")
+def play_scene(page, report, settle):
+    """Plays on the copy in private storage: the client reads the map and the scene is drawn."""
+    page.click("#play")
+    try:
+        page.wait_for_function(
+            "() => globalThis.dbota_cache && globalThis.dbota_cache.reads && globalThis.dbota_cache.reads.count > 20",
+            timeout=180000,
+        )
+        # The map: its glTF, its geometry and its textures.
+        page.wait_for_function(
+            """() => { const s = globalThis.dbota_cache.reads.seen;
+               return s.has('map/mid/mid.gltf') && s.has('map/mid/mid.bin')
+                 && [...s].some((p) => p.startsWith('map/mid/') && p.endsWith('.ktx2')); }""",
+            timeout=300000,
+        )
+    except Exception:
+        print("status:", page.inner_text("#status"), file=sys.stderr)
+        report()
+        page.screenshot(path=str(HERE.parent.parent / "temp/smoke-fail.png"))
+        raise
+    reads = page.evaluate("() => globalThis.dbota_cache.reads")
+    seen = page.evaluate("() => globalThis.dbota_cache.reads.seen.size")
+    print("the client read", reads["count"], "times,", seen, "cache files, last:", reads["last"][-3:])
+    assert any(p.endswith((".png", ".ktx2", ".mp3", ".wav")) for p in reads["last"]), reads
+    # The map's chunks are merged and uploaded frame by frame after they are read.
+    page.wait_for_timeout(settle * 1000)
+    # A software GPU draws the whole map slowly: a frame may take minutes.
+    page.screenshot(path=str(HERE.parent.parent / "temp/smoke.png"), timeout=600000)
 
 
 def import_smoke(args, install):
@@ -271,32 +312,7 @@ def import_smoke(args, install):
         print("a stale copy holds the page and is imported again:", page.inner_text("#readyText"))
 
         if not args.no_game:
-            page.click("#play")
-            try:
-                page.wait_for_function(
-                    "() => globalThis.dbota_cache && globalThis.dbota_cache.reads && globalThis.dbota_cache.reads.count > 20",
-                    timeout=180000,
-                )
-                # The map: its glTF, its geometry and its textures.
-                page.wait_for_function(
-                    """() => { const s = globalThis.dbota_cache.reads.seen;
-                       return s.has('map/mid/mid.gltf') && s.has('map/mid/mid.bin')
-                         && [...s].some((p) => p.startsWith('map/mid/') && p.endsWith('.ktx2')); }""",
-                    timeout=300000,
-                )
-            except Exception:
-                print("status:", page.inner_text("#status"), file=sys.stderr)
-                report()
-                page.screenshot(path=str(HERE.parent.parent / "temp/smoke-fail.png"))
-                raise
-            reads = page.evaluate("() => globalThis.dbota_cache.reads")
-            seen = page.evaluate("() => globalThis.dbota_cache.reads.seen.size")
-            print("the client read", reads["count"], "times,", seen, "cache files, last:", reads["last"][-3:])
-            assert any(p.endswith((".png", ".ktx2", ".mp3", ".wav")) for p in reads["last"]), reads
-            # The map's chunks are merged and uploaded frame by frame after they are read.
-            page.wait_for_timeout(args.settle * 1000)
-            # A software GPU draws the whole map slowly: a frame may take minutes.
-            page.screenshot(path=str(HERE.parent.parent / "temp/smoke.png"), timeout=600000)
+            play_scene(page, report, args.settle)
 
         bad = [(m, u) for m, u, d in requests if not u.startswith(base) and not u.startswith("blob:") and not u.startswith("data:")]
         posts = [(m, u) for m, u, d in requests if m != "GET" or d]
@@ -1072,6 +1088,117 @@ def check_replays_page(directory, server_bin, radovid_bin, shots=False):
         service.terminate()
         service.wait(timeout=20)
     print("replays: kept in OPFS from a match through radovid, listed and played")
+def refusing_zips(good_zip, scratch):
+    """Zips the page must refuse: (name, path, the words of the reason). Their stamp, index and
+    files are those of the real prepared cache but for the one thing wrong."""
+    import zipfile
+
+    scratch.mkdir(parents=True, exist_ok=True)
+    with zipfile.ZipFile(good_zip) as good:
+        stamp = good.read("stamp.txt")
+        index = good.read("index.txt").decode()
+        some = next(n for n in good.namelist() if n.startswith("hud/"))
+        size = good.getinfo(some).file_size
+
+    def make(name, members):
+        path = scratch / name
+        with zipfile.ZipFile(path, "w") as z:
+            for member, data in members:
+                z.writestr(member, data)
+        return path
+
+    # The paths of an archive are written as they are, including ones no tool would make.
+    climbing = index + "file 16 ../escape.png\n"
+    return [
+        ("another build", make("stale.zip", [("stamp.txt", "v1/rev1/0000000000000000/1/2"), ("index.txt", index)]),
+         "is for assets v1/rev1/0000000000000000, but this dbota needs assets"),
+        ("a path that climbs out", make("climb.zip", [("stamp.txt", stamp), ("index.txt", climbing), ("../escape.png", b"x" * 16)]),
+         "holds a file it must not: ../escape.png"),
+        ("a file the index does not list", make("unlisted.zip", [("stamp.txt", stamp), ("index.txt", index), ("hud/unlisted.png", b"x")]),
+         "hud/unlisted.png is in it, but index.txt does not list it"),
+        ("a size the index does not say", make("size.zip", [("stamp.txt", stamp), ("index.txt", index), (some, b"x" * (size + 1))]),
+         f"{some} is {size + 1} bytes, but index.txt says {size}"),
+    ]
+
+
+def check_prepared_page(directory, cache_zip, cache_folder):
+    """A prepared asset cache (`dbota export-cache`'s zip, or the cache folder itself) is taken
+    by the page with no Dota install: a cache that is not usable is refused with its reason
+    before anything is copied; a good one is copied into private storage with progress, kept
+    over a reload, and played (the client reads it and the scene is drawn)."""
+    import zipfile
+
+    with zipfile.ZipFile(cache_zip) as good:
+        names = {n for n in good.namelist() if n not in ("stamp.txt", "index.txt")}
+        stamp = good.read("stamp.txt").decode()
+    refusing = refusing_zips(cache_zip, HERE.parent.parent / "temp/prepared-smoke")
+    with sync_playwright() as p:
+        server, base, browser, page, console, problems = opened(p, directory)
+        requests = []
+        page.on("request", lambda r: requests.append((r.method, r.url, r.post_data)))
+
+        def report():
+            print("console:", *[c[:300] for c in console[-25:]], sep="\n  ", file=sys.stderr)
+
+        def state():
+            return page.evaluate(
+                """async () => { const c = await import('./cache.js'); const s = await c.readState();
+                   return s && {stamp: s.stamp, files: [...s.files.keys()].sort()}; }"""
+            )
+
+        def load(button, path):
+            with page.expect_file_chooser() as chooser:
+                page.click(button)
+            chooser.value.set_files(str(path))
+
+        page.goto(base)
+        page.wait_for_selector("#grant:not([hidden])", timeout=20000)
+        assert page.is_visible("#loadZip") and page.is_visible("#loadFolder"), "loading a prepared cache is offered"
+        for what, path, words in refusing:
+            load("#loadZip", path)
+            page.wait_for_function(f"() => document.getElementById('status').textContent.includes({json.dumps(words)})", timeout=60000)
+            page.wait_for_selector("#grant:not([hidden])", timeout=20000)
+            assert state() is None, f"{what}: nothing was copied"
+            print(f"refused ({what}):", page.inner_text("#status"))
+        started = time.time()
+        load("#loadZip", cache_zip)
+        page.wait_for_selector("#progress:not([hidden]), #ready:not([hidden])", timeout=120000)
+        page.wait_for_selector("#ready:not([hidden])", timeout=600000)
+        print(f"zip loaded after {time.time() - started:.0f} s:", page.inner_text("#readyText"))
+        got = state()
+        assert got and got["stamp"] == stamp and set(got["files"]) == names, "the copy is the zip's files and stamp"
+        with zipfile.ZipFile(cache_zip) as good:
+            for path in ["text/tooltips.json", "map/mid/trees.txt"]:
+                same = page.evaluate(
+                    f"async () => {{ const b = await (await import('./cache.js')).readCache({json.dumps(path)});"
+                    " return Array.from(b.slice(0, 64)); }"
+                )
+                assert bytes(same) == good.read(path)[:64], f"{path} is as the zip has it"
+        page.reload()
+        page.wait_for_selector("#ready:not([hidden])", timeout=20000)
+        print("after reload: ready without loading again")
+        play_scene(page, report, 5)
+        # The same cache as a folder: the copy deleted, then taken from the folder.
+        page.goto(base)
+        page.wait_for_selector("#ready:not([hidden])", timeout=20000)
+        page.click("#remove")
+        page.wait_for_selector("#grant:not([hidden])", timeout=20000)
+        load("#loadFolder", cache_folder)
+        page.wait_for_selector("#ready:not([hidden])", timeout=600000)
+        again = state()
+        assert again == got, "the folder gives the same copy as the zip"
+        print("folder loaded:", page.inner_text("#readyText"))
+        bad = [(m, u) for m, u, d in requests if not u.startswith(base) and not u.startswith("blob:") and not u.startswith("data:")]
+        assert not bad, f"requests outside the page's own origin: {bad}"
+        assert not [(m, u) for m, u, d in requests if m != "GET" or d], "the page sent data"
+        errs = [c for c in console if "panicked" in c or "RuntimeError" in c]
+        assert not errs and not problems, (errs, problems)
+        page.click("#remove")
+        page.wait_for_selector("#grant:not([hidden])", timeout=20000)
+        assert state() is None, "the copy is deleted"
+        browser.close()
+        server.shutdown()
+    print("prepared cache test passed")
 
 
 def main():
@@ -1093,6 +1220,9 @@ def main():
     ap.add_argument("--replays-page", type=pathlib.Path, help="a build without a replay: a match through radovid is kept in OPFS")
     ap.add_argument("--radovid", help="the radovid binary, for --replays-page (with --server)")
     ap.add_argument("--shots", action="store_true", help="--replays-page saves a screenshot of every step to temp/smoke-replays")
+    ap.add_argument("--prepared-page", type=pathlib.Path, help="a build (web/out) that takes a prepared asset cache, with --cache-zip and --cache-folder")
+    ap.add_argument("--cache-zip", type=pathlib.Path, help="a zip `dbota export-cache` made with this build's assets, for --prepared-page")
+    ap.add_argument("--cache-folder", type=pathlib.Path, help="the cache folder that zip was made from, for --prepared-page")
     ap.add_argument("--only-wire", action="store_true", help="skip the import test even where an install is found")
     args = ap.parse_args()
     install = None if args.only_wire else find_install(args.install)
@@ -1100,6 +1230,10 @@ def main():
         import_smoke(args, install)
     else:
         print("skipped: the import test needs a Dota 2 install (DBOTA_DOTA_PATH or --install)")
+    if args.prepared_page:
+        if not (args.cache_zip and args.cache_folder):
+            sys.exit("--prepared-page needs --cache-zip and --cache-folder")
+        check_prepared_page(args.prepared_page, args.cache_zip, args.cache_folder)
     if args.startup_page:
         check_startup_page(args.startup_page)
     if args.keys_page:

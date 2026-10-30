@@ -2,6 +2,8 @@
 
 #![allow(dead_code)] // each test binary uses a part of this shared module
 
+pub mod prepared;
+
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::path::{Path, PathBuf};

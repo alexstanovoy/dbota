@@ -1,5 +1,6 @@
-// The page: asks for the player's Dota 2 folder (or not), has the worker build the private
-// asset cache from it, then starts the client (dbota.js, the game compiled to wasm).
+// The page: asks for the player's Dota 2 folder (or a prepared asset cache), has the worker
+// build the private asset cache from it (or check and copy the prepared one), then starts the
+// client (dbota.js, the game compiled to wasm).
 import * as cache from "./cache.js";
 import * as grant from "./grant.js";
 import * as replays from "./replays.js";
@@ -221,7 +222,9 @@ async function startGame() {
   }
 }
 
-function runWorker(op, files, modified, onMessage) {
+// Runs the import worker on `message`; resolves with its last message ("done", "checked" or
+// "error"), handing the progress ones to `onMessage`.
+function runWorker(message, onMessage) {
   const worker = new Worker("./import_worker.js", { type: "module" });
   return new Promise((resolve) => {
     worker.onmessage = ({ data }) => {
@@ -236,40 +239,60 @@ function runWorker(op, files, modified, onMessage) {
       resolve({ type: "error", message: e.message || "the import worker failed" });
     };
     $("cancel").onclick = () => worker.postMessage({ op: "stop" });
-    worker.postMessage({ op, files: [...files], modified });
+    worker.postMessage(message);
   });
 }
 
 const modifiedOf = (files) => files.get("pak01_dir.vpk")?.lastModified ?? 0;
+
+// The progress screen and what follows a worker's copy: `stage` heads the count, `failed`
+// starts the line saying why it did not work out.
+async function copyWith(message, stage, failed) {
+  navigator.storage.persist?.().catch(() => {});
+  say("");
+  show("progress");
+  const result = await runWorker(message, (m) => {
+    if (m.type !== "progress") return;
+    $("bar").value = m.total ? m.done / m.total : 0;
+    $("stage").textContent = `${stage}: ${m.done} of ${m.total}`;
+    $("detail").textContent = m.bytes ? `${m.item} (${mib(m.bytes)} written)` : m.item;
+  });
+  if (result.type === "error") {
+    say(failed + result.message);
+    show("grant");
+    return null;
+  }
+  if (result.stopped) {
+    say("Import cancelled.");
+    show("grant");
+    return null;
+  }
+  return result;
+}
 
 async function importFrom(files) {
   if (!files.has("pak01_dir.vpk")) {
     say("That folder has no pak01_dir.vpk. Pick the dota 2 beta folder (game/dota inside it holds the packages).");
     return show("grant");
   }
-  navigator.storage.persist?.().catch(() => {});
-  say("");
-  show("progress");
-  const result = await runWorker("import", files, modifiedOf(files), (m) => {
-    if (m.type !== "progress") return;
-    $("bar").value = m.total ? m.done / m.total : 0;
-    $("stage").textContent = `Making your private copy: ${m.done} of ${m.total}`;
-    $("detail").textContent = `${m.item} (${mib(m.bytes)} written)`;
-  });
-  if (result.type === "error") {
-    say("The import failed: " + result.message);
-    return show("grant");
-  }
-  if (result.stopped) {
-    say("Import cancelled.");
-    return show("grant");
-  }
+  const result = await copyWith({ op: "import", files: [...files], modified: modifiedOf(files) }, "Making your private copy", "The import failed: ");
+  if (!result) return;
   const list = $("failures");
   list.hidden = !result.failures.length;
   list.replaceChildren(...result.failures.slice(0, 30).map((f) => Object.assign(document.createElement("li"), { textContent: f })));
   await offerReady(
     `Imported ${result.files} files. ${result.failures.length ? result.failures.length + " could not be converted and use stand-ins." : ""}`
   );
+}
+
+// A prepared asset cache (`{zip}` or `{files}`, see grant.pickPrepared): the worker checks it
+// whole (this build's stamp, the index, the paths and sizes) before it copies anything, and
+// refuses with the reason (which build the cache is for) when it is not usable.
+async function loadPrepared(prepared) {
+  if (!prepared) return;
+  const result = await copyWith({ op: "load", ...prepared }, "Copying the prepared cache", "");
+  if (!result) return;
+  await offerReady(`Loaded ${result.files} files of the prepared asset cache.`);
 }
 
 // The cache is there: publish it to the client, then ask or start.
@@ -321,7 +344,7 @@ async function checkFresh() {
   if (!handle) return;
   const files = await grant.filesOf(handle).catch(() => new Map());
   if (!files.has("pak01_dir.vpk")) return;
-  const result = await runWorker("check", files, modifiedOf(files));
+  const result = await runWorker({ op: "check", files: [...files], modified: modifiedOf(files) });
   if (result.type === "checked" && !result.fresh) {
     $("update").hidden = false;
     $("update").onclick = () => importFrom(files);
@@ -342,6 +365,8 @@ async function main() {
   };
   $("pick").onclick = pick;
   $("again").onclick = pick;
+  for (const id of ["loadZip", "loadZipStale"]) $(id).onclick = async () => loadPrepared(await grant.pickPrepared($("packZip")));
+  for (const id of ["loadFolder", "loadFolderStale"]) $(id).onclick = async () => loadPrepared(await grant.pickPrepared($("packFolder")));
   $("remove").onclick = async () => {
     await cache.remove();
     await grant.forget().catch(() => {});

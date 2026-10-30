@@ -337,6 +337,21 @@ pub enum Command {
         #[arg(long)]
         force: bool,
     },
+    /// Take an asset cache someone prepared (a folder, or a zip made by `export-cache`) instead
+    /// of importing from Dota 2: for a player without it. The cache must be of this version of
+    /// dbota; it is checked whole before it replaces the one in place.
+    ImportCache {
+        /// The prepared cache: a folder, or a .zip file.
+        #[arg(value_name = "FOLDER|ZIP")]
+        from: PathBuf,
+    },
+    /// Write the asset cache in place as a zip, for someone without Dota 2 to take with
+    /// `import-cache`. The zip holds Valve's converted assets: hand it only to people you may.
+    ExportCache {
+        /// The zip to make; it must not exist.
+        #[arg(value_name = "ZIP")]
+        to: PathBuf,
+    },
 }
 
 impl Args {
@@ -380,6 +395,36 @@ fn default_cache_dir() -> PathBuf {
         .join(format!("v{}", ASSET_VERSION.trim()))
 }
 
+/// `dbota import`, `import-cache` and `export-cache`: what the command does to the asset cache
+/// at `cache`, and how it ends.
+#[cfg(not(target_arch = "wasm32"))]
+fn run_command(command: &Command, cache: &std::path::Path) -> AppExit {
+    let (name, done) = match command {
+        Command::Import { dota_path, force } => {
+            return match import::run(dota_path.as_deref(), cache, *force) {
+                Ok(true) => AppExit::Success,
+                Ok(false) => AppExit::from_code(3),
+                Err(why) => {
+                    eprintln!("dbota import: {why}");
+                    AppExit::error()
+                }
+            };
+        }
+        Command::ImportCache { from } => (
+            "import-cache",
+            import::load_cache(from, cache, &mut import::tenths()),
+        ),
+        Command::ExportCache { to } => ("export-cache", import::export_cache(cache, to)),
+    };
+    match done {
+        Ok(()) => AppExit::Success,
+        Err(why) => {
+            eprintln!("dbota {name}: {why}");
+            AppExit::error()
+        }
+    }
+}
+
 /// The client's version: its package version and the commit it was built from (build.rs).
 pub fn version() -> String {
     format!(
@@ -415,15 +460,8 @@ fn main() -> AppExit {
     #[cfg(not(all(target_arch = "wasm32", feature = "web-replay")))]
     let args = Args::parse();
     #[cfg(not(target_arch = "wasm32"))]
-    if let Some(Command::Import { dota_path, force }) = &args.command {
-        return match import::run(dota_path.as_deref(), &args.cache_dir, *force) {
-            Ok(true) => AppExit::Success,
-            Ok(false) => AppExit::from_code(3),
-            Err(why) => {
-                eprintln!("dbota import: {why}");
-                AppExit::error()
-            }
-        };
+    if let Some(command) = &args.command {
+        return run_command(command, &args.cache_dir);
     }
     // Before Bevy's plugins make the pool with default stacks (see `io_pool`).
     #[cfg(not(target_arch = "wasm32"))]

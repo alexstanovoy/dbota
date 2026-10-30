@@ -8,15 +8,9 @@ use std::path::{Path, PathBuf};
 
 use heatel::{Error, Result};
 
-use crate::import::{Flow, Plan, Progress, Report, Sink, run};
+use crate::import::{Flow, MAX_STAMP, Plan, Progress, Report, Sink, run};
+pub use crate::import::{INDEX, STAMP};
 use crate::source::InstallSource;
-
-/// The file of a finished cache that says what made it.
-pub const STAMP: &str = "stamp.txt";
-/// The file of a finished cache that lists its files (written last but the stamp).
-pub const INDEX: &str = "index.txt";
-/// Longest stamp read; a stamp is a few dozen bytes.
-const MAX_STAMP: u64 = 4096;
 
 /// Writes each file under a folder (paths are [`safe_path`](crate::import::safe_path)s).
 pub struct DirSink {
@@ -114,6 +108,12 @@ pub fn import_into(
     let mut sink = DirSink::new(&staging);
     sink.write(INDEX, report.index().as_bytes())?;
     sink.write(STAMP, stamp.as_bytes())?;
+    replace(&staging, cache)?;
+    Ok(report)
+}
+
+/// Puts the whole cache in `staging` in the place of the one at `cache`.
+pub(crate) fn replace(staging: &Path, cache: &Path) -> Result<()> {
     let old = sibling(cache, "old")?;
     remove(&old)?;
     let io = |source| Error::Io {
@@ -123,13 +123,12 @@ pub fn import_into(
     if cache.exists() {
         fs::rename(cache, &old).map_err(io)?;
     }
-    fs::rename(&staging, cache).map_err(io)?;
-    remove(&old)?;
-    Ok(report)
+    fs::rename(staging, cache).map_err(io)?;
+    remove(&old)
 }
 
 /// `.<name>.<what>` beside `cache`.
-fn sibling(cache: &Path, what: &str) -> Result<PathBuf> {
+pub(crate) fn sibling(cache: &Path, what: &str) -> Result<PathBuf> {
     let name = cache.file_name().ok_or_else(|| Error::Io {
         path: cache.display().to_string(),
         source: io::Error::other("the cache folder has no name"),
@@ -140,7 +139,7 @@ fn sibling(cache: &Path, what: &str) -> Result<PathBuf> {
     Ok(cache.with_file_name(sibling))
 }
 
-fn remove(dir: &Path) -> Result<()> {
+pub(crate) fn remove(dir: &Path) -> Result<()> {
     match fs::remove_dir_all(dir) {
         Ok(()) => Ok(()),
         Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(()),

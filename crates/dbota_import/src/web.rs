@@ -3,20 +3,25 @@
 //! item's converted files back to write into its cache (the Origin Private File System). Nothing leaves
 //! the page: there is no network code in here.
 
+use std::rc::Rc;
+
 use heatel::{Slice, SliceSource, Source};
 use js_sys::{Array, Uint8Array};
 use wasm_bindgen::prelude::*;
 use web_sys::{File, FileReaderSync};
 
 use crate::import::{self, IDS, Importer, MANIFEST, Plan, Sink};
+use crate::pack::{Container, MAX_FILES, Pack, SliceFolder};
+use crate::zip::ZipContainer;
 
 /// Most files an install may hold: Dota's has ~700 packages; a folder of more is not one.
-const MAX_FILES: usize = 4096;
+const MAX_PACKAGES: usize = 4096;
 
-/// A picked file, read by slices through the synchronous reader of a worker.
+/// A picked file, read by slices through the synchronous reader of a worker (one reader serves
+/// every file).
 struct Picked {
     file: File,
-    reader: FileReaderSync,
+    reader: Rc<FileReaderSync>,
 }
 
 impl Slice for Picked {
@@ -44,6 +49,7 @@ impl Slice for Picked {
 #[wasm_bindgen]
 pub struct Install {
     files: SliceSource<Picked>,
+    reader: Option<Rc<FileReaderSync>>,
     count: usize,
 }
 
@@ -53,6 +59,7 @@ impl Install {
     pub fn new() -> Install {
         Install {
             files: SliceSource::default(),
+            reader: None,
             count: 0,
         }
     }
@@ -63,10 +70,10 @@ impl Install {
         let wanted = path.ends_with(".vpk")
             && (!path.contains('/')
                 || (path.starts_with("maps/") && path.matches('/').count() == 1));
-        if !wanted || self.count >= MAX_FILES {
+        if !wanted || self.count >= MAX_PACKAGES {
             return Ok(false);
         }
-        let reader = FileReaderSync::new().map_err(|e| JsError::new(&format!("{e:?}")))?;
+        let reader = shared_reader(&mut self.reader)?;
         self.files.insert(path, Picked { file, reader });
         self.count += 1;
         Ok(true)
@@ -100,6 +107,14 @@ impl Default for Install {
     fn default() -> Self {
         Self::new()
     }
+}
+
+fn shared_reader(reader: &mut Option<Rc<FileReaderSync>>) -> Result<Rc<FileReaderSync>, JsError> {
+    if reader.is_none() {
+        let made = FileReaderSync::new().map_err(|e| JsError::new(&format!("{e:?}")))?;
+        *reader = Some(Rc::new(made));
+    }
+    Ok(reader.clone().expect("the reader was made above"))
 }
 
 /// Files an item made, waiting for the worker to write them.
@@ -201,4 +216,90 @@ impl Report {
 #[wasm_bindgen]
 pub fn cache_version() -> String {
     import::fingerprint()
+}
+
+/// A prepared cache the player picked, a zip or a folder of one, checked whole before anything
+/// of it is read (see [`crate::pack`]): the worker copies its files into the page's cache one by
+/// one with [`read`](Prepared::read).
+#[wasm_bindgen]
+pub struct Prepared(Pack<Box<dyn Container>>);
+
+#[wasm_bindgen]
+impl Prepared {
+    /// The cache in the zip file `file`; fails with the reason when it is not one of this build.
+    pub fn from_zip(file: File) -> Result<Prepared, JsError> {
+        let reader = shared_reader(&mut None)?;
+        let container = ZipContainer::open(Picked { file, reader })?;
+        Ok(Prepared(Pack::open(
+            Box::new(container) as Box<dyn Container>
+        )?))
+    }
+
+    /// The cache in the files of a picked folder: an array of `[path, File]` pairs, the paths
+    /// as the picker names them (`webkitRelativePath`).
+    pub fn from_folder(files: Array) -> Result<Prepared, JsError> {
+        if files.length() as usize > MAX_FILES + 2 {
+            return Err(JsError::new(&format!(
+                "This folder has {} files, an asset cache has at most {MAX_FILES}.",
+                files.length()
+            )));
+        }
+        let mut reader = None;
+        let mut picked = Vec::new();
+        for pair in files.iter() {
+            let pair = Array::from(&pair);
+            let (path, file) = (pair.get(0), pair.get(1));
+            let path = path
+                .as_string()
+                .ok_or_else(|| JsError::new("a file without a path"))?;
+            let file = file
+                .dyn_into::<File>()
+                .map_err(|_| JsError::new("not a file"))?;
+            picked.push((
+                path,
+                Picked {
+                    file,
+                    reader: shared_reader(&mut reader)?,
+                },
+            ));
+        }
+        let container = SliceFolder::new(picked)?;
+        Ok(Prepared(Pack::open(
+            Box::new(container) as Box<dyn Container>
+        )?))
+    }
+
+    /// How many files it holds (besides the stamp and the index).
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    /// Their size together.
+    pub fn bytes(&self) -> f64 {
+        self.0.bytes() as f64
+    }
+
+    /// The `n`th file's path in the cache.
+    pub fn path(&self, n: usize) -> Option<String> {
+        self.0.entry(n).map(|e| e.path.clone())
+    }
+
+    /// The `n`th file's bytes, checked against the index.
+    pub fn read(&self, n: usize) -> Result<Uint8Array, JsError> {
+        Ok(Uint8Array::from(&self.0.read(n)?[..]))
+    }
+
+    /// The stamp to write when the files are in: the cache's own.
+    pub fn stamp(&self) -> String {
+        self.0.stamp().to_owned()
+    }
+
+    /// The index file's text to write when the files are in.
+    pub fn index(&self) -> String {
+        self.0.index().to_owned()
+    }
 }

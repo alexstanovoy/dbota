@@ -27,6 +27,13 @@ use crate::text::{
     wanted,
 };
 
+/// The file of a finished cache that says what made it.
+pub const STAMP: &str = "stamp.txt";
+/// The file of a finished cache that lists its files (written last but the stamp).
+pub const INDEX: &str = "index.txt";
+/// Longest stamp read; a stamp is a few dozen bytes.
+pub const MAX_STAMP: u64 = 4096;
+
 /// Bumped when the importer's output changes for the same install; part of a cache's stamp.
 pub const IMPORT_REV: u32 = 13;
 
@@ -71,11 +78,11 @@ pub fn plan_id(manifest: &str, ids: &str) -> String {
 /// package directories (23 MB); a hostile install must not make the page read the whole 71 GB.
 const READ_LIMIT: u64 = 1 << 30;
 /// Most bytes one import writes.
-const WRITE_LIMIT: u64 = 1536 << 20;
+pub(crate) const WRITE_LIMIT: u64 = 1536 << 20;
 /// Most bytes one read may ask for.
-const READ_ONE_LIMIT: usize = 256 << 20;
+pub(crate) const READ_ONE_LIMIT: usize = 256 << 20;
 /// Longest cache path.
-const PATH_LIMIT: usize = 200;
+pub(crate) const PATH_LIMIT: usize = 200;
 /// The package directory every path of the manifest lives in.
 const DIR_VPK: &str = "pak01_dir.vpk";
 /// Where the tooltip texts go (the client reads them there).
