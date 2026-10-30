@@ -12,8 +12,8 @@ pub(super) fn value(key: &str) -> Option<String> {
         "raze_stack" => nums(&rules::RAZE_STACK_DAMAGE),
         "raze_secs" => secs(rules::RAZE_DEBUFF_TICKS),
         "raze_max_stacks" => rules::RAZE_MAX_STACKS.to_string(),
-        "grenade_dps" => rules::GRENADE_DAMAGE_PER_SECOND.to_string(),
-        "grenade_slow" => rules::GRENADE_SLOW_PCT.to_string(),
+        "grenade_dps" => grenade()?.damage_per_second.to_string(),
+        "grenade_slow" => grenade()?.slow_pct.to_string(),
         "talent_feast_speed" => rules::TALENT_FEAST_ATTACK_SPEED.to_string(),
         "talent_raze_stack" => rules::TALENT_RAZE_STACK_DAMAGE.to_string(),
         "talent_feast_souls" => rules::TALENT_FEAST_SOULS_PER_HERO.to_string(),
@@ -25,4 +25,9 @@ pub(super) fn value(key: &str) -> Option<String> {
         "talent_cast_speed" => (100 - rules::TALENT_FEAST_CAST_POINT_PCT).to_string(),
         _ => return None,
     })
+}
+
+/// What the Blood Grenade does, by bota's catalog.
+fn grenade() -> Option<bota_core::Grenade> {
+    bota_core::item_def(bota_proto::ItemId::BLOOD_GRENADE).and_then(bota_core::ItemDef::grenade)
 }

@@ -553,10 +553,11 @@ fn plain_item(content: &mut Content, def: &'static ItemDef) {
             )]);
         }
     }
-    if def.range > 0 {
-        content
-            .stats
-            .push(vec![Run::new(format!("Range {}", def.range), Tone::Value)]);
+    if def.cast_range > 0 {
+        content.stats.push(vec![Run::new(
+            format!("Range {}", def.cast_range),
+            Tone::Value,
+        )]);
     }
     if def.charges > 1 {
         content.stats.push(vec![Run::new(

@@ -114,10 +114,10 @@ fn item_value(def: &ItemDef, key: &str) -> Option<Levels> {
         "bonus_chance_damage" => one(c.pierce_damage),
         "damage_bonus" => one(c.damage_to_creeps),
         "damage_bonus_ranged" => one(def.carried_by(true).damage_to_creeps),
-        "abilitycastrange" | "quelling_range_tooltip" => one(def.range),
+        "abilitycastrange" | "quelling_range_tooltip" => one(def.cast_range),
         "tooltip_charges" => one(def.charges),
         "max_charges" => one(def.cast_charges),
-        "charge_radius" => one(rules::MAGIC_CHARGE_RANGE),
+        "charge_radius" => one(def.charge_radius()?),
         _ => use_value(def, key),
     }
 }
@@ -134,7 +134,7 @@ fn use_value(def: &ItemDef, key: &str) -> Option<Levels> {
         }
         (UseSpec::Ward { unit, .. }, "vision_range_tooltip") => one(unit.day_vision),
         (UseSpec::Ward { unit, .. }, "true_sight_range") => one(unit.true_sight),
-        (UseSpec::Teleport, "tooltip_channel_time") => one(secs(def.duration)),
+        (UseSpec::Teleport(_), "tooltip_channel_time") => one(secs(def.duration)),
         (UseSpec::Blink { range, .. }, "blink_range") => one(range),
         (UseSpec::Blink { overshoot, .. }, "blink_range_clamp") => one(overshoot),
         (UseSpec::Blink { .. }, "blink_damage_cooldown") => one(secs(def.breaks_on_damage)),
@@ -143,11 +143,11 @@ fn use_value(def: &ItemDef, key: &str) -> Option<Levels> {
         (UseSpec::Phase { ranged_pct, .. }, "phase_movement_speed_range") => one(ranged_pct),
         (UseSpec::Restore { hp_per_charge, .. }, "restore_per_charge") => one(hp_per_charge),
         (UseSpec::Replenish { mana }, "replenish_amount") => one(mana),
-        (UseSpec::Grenade, "impact_damage") => one(rules::GRENADE_IMPACT_DAMAGE),
-        (UseSpec::Grenade, "damage_over_time") => one(rules::GRENADE_DAMAGE_PER_SECOND),
-        (UseSpec::Grenade, "debuff_duration") => one(secs(rules::GRENADE_DEBUFF_TICKS)),
-        (UseSpec::Grenade, "movespeed_slow") => one(-rules::GRENADE_SLOW_PCT),
-        (UseSpec::Grenade, "radius") => one(rules::GRENADE_RADIUS),
+        (UseSpec::Grenade(g), "impact_damage") => one(g.impact_damage),
+        (UseSpec::Grenade(g), "damage_over_time") => one(g.damage_per_second),
+        (UseSpec::Grenade(g), "debuff_duration") => one(secs(g.debuff_ticks)),
+        (UseSpec::Grenade(g), "movespeed_slow") => one(-g.slow_pct),
+        (UseSpec::Grenade(g), "radius") => one(g.radius),
         _ => None,
     }
 }
