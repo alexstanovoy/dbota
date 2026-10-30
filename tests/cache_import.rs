@@ -16,6 +16,9 @@ use std::process::Command;
 use common::prepared::{Scratch, dbota, read_folder, said, small_cache, write_folder, write_zip};
 use dbota_import::import::{INDEX, STAMP, fingerprint};
 
+/// What a case of the index tests does to the files of a prepared cache.
+type Change = Box<dyn Fn(&mut BTreeMap<String, Vec<u8>>)>;
+
 /// A prepared folder of the small cache in `scratch`.
 fn prepared_folder(scratch: &Scratch) -> (std::path::PathBuf, BTreeMap<String, Vec<u8>>) {
     let files = small_cache();
@@ -243,7 +246,7 @@ fn an_index_that_does_not_match_the_files_is_refused() {
         .clone();
     let size = small[&some].len();
     let index = String::from_utf8(small[INDEX].clone()).expect("text");
-    let cases: Vec<(&str, Box<dyn Fn(&mut BTreeMap<String, Vec<u8>>)>, String)> = vec![
+    let cases: Vec<(&str, Change, String)> = vec![
         (
             "a file the index does not list",
             Box::new(|f| {
