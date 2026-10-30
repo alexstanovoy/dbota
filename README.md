@@ -320,12 +320,13 @@ CPU, RAM and VRAM of a busy stretch of the replay and of a live match against a 
 `bota_server` (settings at the top of the script). It rests on `--bench SECONDS`, which times
 that many seconds of frames once the scene is whole and prints them on one `bench:` line.
 
-`tools/gate.sh [REPLAY.brp]` is the merge gate: fmt, clippy, both browser clients' checks, the tests, the release
-build and `cargo deny check`, then, with a Dota 2 install, an import into a private asset cache
-(`DBOTA_ASSETS`, default `temp/assets`), the importer's ignored tests (when the reference cache they compare with is there) and `tools/visual_check.sh` on the given replay
-(default: one the bota example `local_match` records). It stops at the first failure and prints `GATE-OK`;
-`GATE_REQUIRE_INSTALL=1` makes a missing install a failure, `GATE_SKIP="deny"` leaves steps out while you iterate, and
-`GATE_LEAN=1` runs only fmt, clippy, one browser client check and the tests, and `GATE_FPS_CMD` and `GATE_FPS_BASE` add a frame-time comparison (`$GATE_FPS_CMD $GATE_FPS_BASE HEAD`) as the last step.
+`tools/gate.sh [REPLAY.brp]` is the merge gate: fmt, clippy, both browser clients' checks, an asset cache of this build (imported from
+your Dota 2 install once per asset stamp into `~/.cache/dbota-gate/<stamp>`, or `DBOTA_GATE_ASSETS`/`DBOTA_ASSETS`; the tests that start
+the client read it), the tests, the release build and `cargo deny check`, then the importer's ignored tests (when the reference cache they
+compare with is there) and `tools/visual_check.sh` on the given replay (default: one the bota example `local_match` records). It stops
+at the first failure and prints `GATE-OK`; `GATE_REQUIRE_INSTALL=1` makes a missing install a failure, `GATE_SKIP="deny"` leaves steps out
+while you iterate, `GATE_LEAN=1` runs only fmt, clippy, one browser client check, the asset cache and the tests, and `GATE_FPS_CMD` and
+`GATE_FPS_BASE` add a frame-time comparison (`$GATE_FPS_CMD $GATE_FPS_BASE HEAD`) as the last step.
 
 ### Without windows on the desktop
 
