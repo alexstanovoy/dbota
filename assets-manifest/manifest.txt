@@ -539,6 +539,7 @@ texture hud.levelup_button panorama/images/hud/reborn/levelup_button_1_psd.vtex_
 texture hud.levelup_well panorama/images/hud/reborn/levelup_plus_well_psd.vtex_c hud/levelup_plus_well_psd.png
 texture hud.tp_slot panorama/images/hud/reborn/bg_tp_slot_png.vtex_c hud/bg_tp_slot_png.png
 texture hud.neutral_slot panorama/images/hud/reborn/bg_neutral_slot_png.vtex_c hud/bg_neutral_slot_png.png
+texture hud.item_combine_lock panorama/images/hud/reborn/item_combine_lock_psd.vtex_c hud/item_combine_lock_psd.png
 texture hud.courier panorama/images/hud/reborn/courier_icon_psd.vtex_c hud/courier_icon_psd.png
 texture hud.glyph_on panorama/images/hud/reborn/icon_glyph_on_psd.vtex_c hud/icon_glyph_on_psd.png
 texture hud.glyph_off panorama/images/hud/reborn/icon_glyph_off_psd.vtex_c hud/icon_glyph_off_psd.png
@@ -1456,5 +1457,8 @@ texture cursor.learnability resource/cursor/source/cursor_learnability.png curso
 # --- The inventory's context menu (context_menu_inventory_item)
 label resource/localization/dota_english.txt DOTA_InventoryMenu_Sell
 label resource/localization/dota_english.txt DOTA_InventoryMenu_MoveToStash
+label resource/localization/dota_english.txt DOTA_InventoryMenu_Disassemble
+label resource/localization/dota_english.txt DOTA_InventoryMenu_LockCombine
+label resource/localization/dota_english.txt DOTA_InventoryMenu_UnlockCombine
 label resource/localization/dota_english.txt DOTA_InventoryMenu_MarkForSell
 label resource/localization/dota_english.txt DOTA_InventoryMenu_UnmarkForSell

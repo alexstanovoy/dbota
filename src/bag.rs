@@ -74,6 +74,8 @@ impl TacticalBag {
             owner,
             selling: None,
             dispenser: None,
+            locked: None,
+            disassembly: None,
         })
     }
 

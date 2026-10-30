@@ -1,10 +1,11 @@
 //! Dota's context menu of an inventory item (`context_menu_inventory_item`):
 //! a right click on an item opens its choices at the cursor, Sell (away from
-//! the shop, Mark for Sell, and again Unmark for Sell), Move to Stash where
-//! the stash can be reached; in the strategy phase, Sell takes the item off
-//! what is chosen. Each choice gives the order the same move gives by drag or key.
-//! Dota's Disassemble, Lock Combining and Alert Allies are not here: the
-//! simulator has no order for them.
+//! the shop, Mark for Sell, and again Unmark for Sell), Disassemble for a build that
+//! may come apart now, Move to Stash where the stash can be reached, and Lock Combining
+//! (Unlock Combining once locked) for an item that is part of a recipe; in the strategy
+//! phase, Sell takes the item off what is chosen. Each choice gives the order the same
+//! move gives by drag or key. Dota's Alert Allies is not here: the simulator has no
+//! order for it.
 
 use bevy::{prelude::*, window::PrimaryWindow};
 use bota_client_core::{BAG_SLOTS, Intent, Source, TOWN_PORTAL_SLOT};
@@ -30,8 +31,22 @@ const INK_HOVERED: Color = Color::srgb(0.918, 0.914, 0.914);
 /// What a choice does.
 #[derive(Component, Clone, Copy, Debug, PartialEq, Eq)]
 enum Choice {
-    Sell { slot: u8, mark: Option<bool> },
-    ToStash { slot: u8, to: u8 },
+    Sell {
+        slot: u8,
+        mark: Option<bool>,
+    },
+    ToStash {
+        slot: u8,
+        to: u8,
+    },
+    Disassemble {
+        slot: u8,
+    },
+    /// Sets the lock to `lock`: the choice offers the state the item is not in.
+    CombineLock {
+        slot: u8,
+        lock: bool,
+    },
 }
 
 impl Choice {
@@ -46,6 +61,13 @@ impl Choice {
                 mark: Some(true), ..
             } => ("DOTA_InventoryMenu_UnmarkForSell", "Unmark for Sell"),
             Choice::ToStash { .. } => ("DOTA_InventoryMenu_MoveToStash", "Move to Stash"),
+            Choice::Disassemble { .. } => ("DOTA_InventoryMenu_Disassemble", "Disassemble"),
+            Choice::CombineLock { lock: true, .. } => {
+                ("DOTA_InventoryMenu_LockCombine", "Lock Combining")
+            }
+            Choice::CombineLock { lock: false, .. } => {
+                ("DOTA_InventoryMenu_UnlockCombine", "Unlock Combining")
+            }
         }
     }
 }
@@ -87,11 +109,20 @@ fn choices(core: &bota_client_core::App, bag: &TacticalBag, slot: u8) -> Vec<Cho
             mark: (!at_shop).then(|| item.selling == Some(true)),
         });
     }
+    if core.can_disassemble(slot) {
+        out.push(Choice::Disassemble { slot });
+    }
     let free = (0..STASH_SLOTS as u8)
         .map(|i| BAG_SLOTS + i)
         .find(|s| core.item_in(*s).is_none());
     if let (true, true, Some(to)) = (slot < BAG_SLOTS, core.at_home_shop(), free) {
         out.push(Choice::ToStash { slot, to });
+    }
+    if let Some(locked) = core.combine_lock_of(slot) {
+        out.push(Choice::CombineLock {
+            slot,
+            lock: !locked,
+        });
     }
     out
 }
@@ -239,6 +270,10 @@ fn choose(
                 }
                 Choice::Sell { slot, .. } => core.act(Intent::Sell(slot)),
                 Choice::ToStash { slot, to } => core.act(Intent::Swap { from: slot, to }),
+                Choice::Disassemble { slot } => core.act(Intent::Disassemble(slot)),
+                Choice::CombineLock { slot, lock } => {
+                    core.act(Intent::SetCombineLock { slot, locked: lock })
+                }
             }
             done = true;
         }

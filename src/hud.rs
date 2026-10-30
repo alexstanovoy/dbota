@@ -138,6 +138,8 @@ enum Part {
     Charges,
     /// What a Ward Dispenser holds of the kind that is not active.
     OtherCharges,
+    /// Dota's padlock on an item locked against combining.
+    Lock,
 }
 
 /// The parent box of a part, to find a part's slot.
@@ -992,8 +994,37 @@ pub(crate) fn spawn_slot_box(
         // Nothing waits yet: clear all round (`dress` turns it).
         ui::split_disc(TAU, Color::NONE, Color::srgba(0.0, 0.0, 0.0, 0.0)),
     ));
+    commands.spawn((
+        face(Part::Lock),
+        Node {
+            position_type: PositionType::Absolute,
+            right: px(2),
+            top: px(2),
+            width: px(LOCK_SIZE),
+            height: px(LOCK_SIZE),
+            ..default()
+        },
+        ImageNode::default(),
+    ));
     spawn_slot_labels(commands, fonts, slot, keyed);
     slot
+}
+
+/// The padlock's side, in interface pixels.
+const LOCK_SIZE: f32 = 16.0;
+
+/// Whether a slot box shows Dota's combine lock.
+#[cfg(test)]
+pub(crate) fn combine_lock_shown(world: &mut World, slot_box: Entity) -> bool {
+    world
+        .query::<(&Part, &PartOf, &ImageNode)>()
+        .iter(world)
+        .any(|(part, of, image)| {
+            matches!(part, Part::Lock)
+                && of.0 == slot_box
+                && image.image != Handle::default()
+                && image.color != Color::NONE
+        })
 }
 
 /// The seconds in the middle of a slot box, its key, its cost and its
@@ -1706,6 +1737,8 @@ struct SlotFace {
     other_charges: String,
     no_mana: bool,
     frame: Color,
+    /// The padlock's art, on an item locked against combining.
+    lock: Option<String>,
 }
 
 /// The abilities of the subject the bottom panel is about: what its tooltips describe too.
@@ -1840,6 +1873,7 @@ fn ability_face(
         } else {
             Color::srgb(0.2, 0.22, 0.27)
         },
+        lock: None,
     })
 }
 
@@ -1907,6 +1941,9 @@ fn item_face(
         } else {
             Color::srgb(0.2, 0.22, 0.27)
         },
+        lock: (item.locked == Some(true))
+            .then(|| manifest.file("hud.item_combine_lock"))
+            .flatten(),
     })
 }
 
@@ -2040,6 +2077,17 @@ fn dress(
                     conic.stops[2].color = dark;
                     conic.stops[3].color = dark;
                 }
+            }
+        }
+        (Part::Lock, f) => {
+            if let Some(mut image) = image {
+                let lock = f.and_then(|f| f.lock.clone());
+                let tint = if lock.is_some() {
+                    Color::WHITE
+                } else {
+                    Color::NONE
+                };
+                set_image(&mut image, server, lock, tint);
             }
         }
         (Part::Pip(i), f) => {

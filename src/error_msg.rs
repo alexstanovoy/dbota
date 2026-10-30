@@ -70,6 +70,9 @@ pub fn told(reason: RejectReason) -> Option<Told> {
         Why::InventoryFull => dota("dota_hud_error_cant_pick_up_item", DENY),
         Why::Disabled => dota("dota_hud_error_unit_command_restricted", DENY),
         Why::NotYourItem | Why::Unsellable => dota("dota_hud_error_cant_sell_item", DENY),
+        // The menu offers neither unless it can be done, so a refusal is a race (the
+        // window ran out, the hero fell) and the item's own state says what happened.
+        Why::NotDisassemblable | Why::CannotLockCombining => own,
         Why::ClosedGround => dota("dota_hud_error_cant_cast_here", DENY),
         Why::OutOfStock => dota("dota_hud_error_item_out_of_stock", DENY),
         Why::QueueFull => dota("dota_hud_error_queue_full", DENY),
@@ -177,6 +180,8 @@ fn plain_words(reason: RejectReason) -> &'static str {
         Why::CatalogueMismatch => {
             "the server's items differ from this client's: build both from matching commits"
         }
+        Why::NotDisassemblable => "it can no longer be disassembled",
+        Why::CannotLockCombining => "it is part of no recipe",
     }
 }
 

@@ -123,3 +123,123 @@ fn a_dragged_item_follows_the_cursor_and_lands_where_dropped() {
     });
     assert!(ghost(&mut client).is_none(), "the icon let go");
 }
+
+/// The hero at its fountain with these items in its bag, each given by the cheat.
+fn with_items(items: &[ItemId]) -> (Server, Client) {
+    let server = Server::start(1, &[]);
+    let mut client = Client::join(&server, HeroId::SHADOW_FIEND, &[]);
+    for item in items {
+        client.cheat(Cheat::Item { item: *item });
+    }
+    (server, client)
+}
+
+/// Opens the item menu on a slot's box with a right click, once the box is laid out.
+fn open_menu(client: &mut Client, slot: u8) {
+    let patience = std::time::Duration::from_secs(20);
+    client.within(patience, "the slot's box laid out", |c| {
+        c.item_box(slot)
+            .and_then(|b| c.centre_of(b))
+            .is_some_and(|at| at != Vec2::ZERO)
+    });
+    let item_box = client.item_box(slot).expect("its box");
+    let on = client.centre_of(item_box).expect("laid out");
+    client.mouse(on);
+    client.click(MouseButton::Right);
+}
+
+/// The install's word for a menu key.
+fn word(client: &Client, key: &str) -> String {
+    client
+        .world()
+        .resource::<crate::dota_text::Texts>()
+        .label(key, &[])
+        .expect("the install's word")
+}
+
+/// Clicks the menu's choice saying `word`.
+fn choose(client: &mut Client, word: &str) {
+    let patience = std::time::Duration::from_secs(10);
+    client.within(patience, "the choice in the menu", |c| {
+        button_saying(c, word).is_some()
+    });
+    let choice = button_saying(client, word).expect("the choice");
+    client.frames(2);
+    let on = client.centre_of(choice).expect("laid out");
+    client.mouse(on);
+    client.click(MouseButton::Left);
+}
+
+/// Whether the padlock is drawn on the box of a slot.
+fn padlock(client: &mut Client, slot: u8) -> bool {
+    let item_box = client.item_box(slot).expect("its box");
+    crate::hud::combine_lock_shown(client.world_mut(), item_box)
+}
+
+/// A Bracer its parts just built offers Disassemble among the choices, in the install's words,
+/// and choosing it gives the three parts back with a padlock on each, as Dota does; an item that
+/// is built of nothing is offered no Disassemble.
+#[test]
+fn the_item_menu_disassembles_a_fresh_build_and_locks_the_parts() {
+    let (_server, mut client) =
+        with_items(&[ItemId::CIRCLET, ItemId::GAUNTLETS, ItemId::RECIPE_BRACER]);
+    let patience = std::time::Duration::from_secs(20);
+    client.within(patience, "the bracer built", |c| {
+        c.slot_of(ItemId::BRACER).is_some()
+    });
+    let slot = client.slot_of(ItemId::BRACER).expect("the bracer");
+    let disassemble = word(&client, "DOTA_InventoryMenu_Disassemble");
+    open_menu(&mut client, slot);
+    client.within(patience, "the item menu", |c| {
+        button_saying(c, &disassemble).is_some()
+    });
+    choose(&mut client, &disassemble);
+    client.within(patience, "the parts in the bag", |c| {
+        [ItemId::CIRCLET, ItemId::GAUNTLETS, ItemId::RECIPE_BRACER]
+            .iter()
+            .all(|part| c.slot_of(*part).is_some())
+            && c.slot_of(ItemId::BRACER).is_none()
+    });
+    for part in [ItemId::CIRCLET, ItemId::GAUNTLETS, ItemId::RECIPE_BRACER] {
+        let slot = client.slot_of(part).expect("the part");
+        client.within(patience, "a padlock on the part", |c| padlock(c, slot));
+    }
+    let circlet = client.slot_of(ItemId::CIRCLET).expect("the circlet");
+    open_menu(&mut client, circlet);
+    client.frames(4);
+    assert!(
+        button_saying(&mut client, &disassemble).is_none(),
+        "a part is built of nothing"
+    );
+}
+
+/// Lock Combining on an item that is a part of a recipe puts the padlock on it and turns the
+/// choice into Unlock Combining; choosing that takes the padlock off.
+#[test]
+fn the_item_menu_locks_and_unlocks_combining() {
+    let (_server, mut client) = with_items(&[ItemId::CIRCLET]);
+    let patience = std::time::Duration::from_secs(20);
+    client.within(patience, "the circlet in the bag", |c| {
+        c.slot_of(ItemId::CIRCLET).is_some()
+    });
+    let slot = client.slot_of(ItemId::CIRCLET).expect("the circlet");
+    let (lock, unlock) = (
+        word(&client, "DOTA_InventoryMenu_LockCombine"),
+        word(&client, "DOTA_InventoryMenu_UnlockCombine"),
+    );
+    assert!(!padlock(&mut client, slot));
+    open_menu(&mut client, slot);
+    client.within(patience, "Lock Combining offered", |c| {
+        button_saying(c, &lock).is_some()
+    });
+    assert!(button_saying(&mut client, &unlock).is_none());
+    choose(&mut client, &lock);
+    client.within(patience, "the padlock", |c| padlock(c, slot));
+    open_menu(&mut client, slot);
+    client.within(patience, "Unlock Combining offered", |c| {
+        button_saying(c, &unlock).is_some()
+    });
+    assert!(button_saying(&mut client, &lock).is_none());
+    choose(&mut client, &unlock);
+    client.within(patience, "the padlock gone", |c| !padlock(c, slot));
+}
