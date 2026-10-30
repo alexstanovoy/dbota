@@ -168,6 +168,7 @@ fn drive(
         return;
     }
     core.set_profile_name(&settings.name);
+    core.set_replay_policy(settings.replays);
     core.set_bot_command(&settings.bot_command);
     core.update();
     let mut opened_here = |core: &mut MenuCore, opened: std::io::Result<Session>| match opened {
@@ -183,6 +184,7 @@ fn drive(
         // The command line's game again: as it was opened at the start.
         Some(Launch::Given) => opened_here(&mut core, crate::session::open(&args)),
         Some(Launch::Replay(path)) => opened_here(&mut core, open_replay(&path)),
+        Some(Launch::Blob(blob)) => opened_here(&mut core, open_blob(&blob)),
         Some(launch) => {
             if matches!(launch, Launch::Host { .. } | Launch::Demo { .. }) {
                 // One lobby hosted at a time: the last one's server ends.
@@ -217,8 +219,14 @@ fn open_replay(path: &std::path::Path) -> std::io::Result<Session> {
     #[cfg(target_arch = "wasm32")]
     {
         let _ = path;
-        Err(std::io::Error::other("a browser opens no files"))
+        Err(std::io::Error::other("a browser opens no files by path"))
     }
+}
+
+/// A replay held in memory, watched through every eyes.
+fn open_blob(blob: &super::core::Blob) -> std::io::Result<Session> {
+    let player = bota_client_core::ReplayPlayer::from_reader(std::io::Cursor::new(blob.0.clone()));
+    Ok(Session(Core::new(Source::Replay(Box::new(player)))))
 }
 
 /// Keeps the game's keys quiet while the menu covers the screen, and brings

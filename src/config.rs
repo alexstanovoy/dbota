@@ -398,6 +398,8 @@ pub struct Settings {
     pub channels_require_stop: bool,
     /// What a right click on an allied unit does.
     pub right_click_allies: RightClickAllies,
+    /// Whether the client keeps the replays of the player's matches, and how many.
+    pub replays: crate::replays::Policy,
 }
 
 /// Characters a profile name has at most.
@@ -428,6 +430,7 @@ impl Default for Settings {
             teleport_requires_halt: false,
             channels_require_stop: false,
             right_click_allies: RightClickAllies::Follow,
+            replays: crate::replays::Policy::default(),
         }
     }
 }
@@ -577,6 +580,14 @@ impl Settings {
                     )
                 })?
             }
+            "save_replays" => self.replays.keep = flag()?,
+            "replays_max_count" => {
+                self.replays.max_count = parse_unit(value, 1.0, 1000.0)? as usize;
+            }
+            "replays_max_mib" => {
+                let least = (crate::replays::MAX_BYTES >> 20) as f32;
+                self.replays.max_bytes = (parse_unit(value, least, 65_536.0)? as u64) << 20;
+            }
             "name" => {
                 if value.chars().count() > MAX_NAME || value.chars().any(char::is_control) {
                     return Err(format!("a name is at most {MAX_NAME} printable characters"));
@@ -624,6 +635,12 @@ impl Settings {
         out.push_str(&format!(
             "right_click_allies = {}\n",
             self.right_click_allies.name()
+        ));
+        out.push_str(&format!("save_replays = {}\n", flag(self.replays.keep)));
+        out.push_str(&format!(
+            "replays_max_count = {}\nreplays_max_mib = {}\n",
+            self.replays.max_count,
+            self.replays.max_bytes >> 20
         ));
         out.push_str(&format!("display_mode = {}\n", self.display.name()));
         let q = &self.quality;
@@ -770,6 +787,26 @@ mod tests {
         }
         let (_, complaints) = Settings::parse("display_mode = tiny");
         assert!(complaints[0].contains("borderless"), "{complaints:?}");
+    }
+
+    /// Replays are kept by default, within caps, and the caps survive the file.
+    #[test]
+    fn replays_are_saved_by_default_within_caps_that_survive_the_file() {
+        let fresh = Settings::default();
+        assert!(fresh.replays.keep);
+        let capped = Settings {
+            replays: crate::replays::Policy {
+                keep: false,
+                max_count: 7,
+                max_bytes: 300 << 20,
+            },
+            ..Settings::default()
+        };
+        let (read, complaints) = Settings::parse(&capped.render());
+        assert!(complaints.is_empty(), "{complaints:?}");
+        assert_eq!(read.replays, capped.replays);
+        let (_, complaints) = Settings::parse("replays_max_mib = 1\nreplays_max_count = 0");
+        assert_eq!(complaints.len(), 2, "caps below one replay are refused");
     }
 
     /// Dota's defaults: right clicks follow allies, and no channel waits for a stop.

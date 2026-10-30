@@ -64,7 +64,7 @@ enum Item {
     Button(Act),
 }
 
-fn items(kind: FormKind, fields: usize) -> Vec<Item> {
+fn items_of(kind: FormKind, fields: usize) -> Vec<Item> {
     let links = [Act::Go(Page::Service)];
     #[cfg(not(target_arch = "wasm32"))]
     let links = links.into_iter().chain([Act::Go(Page::LocalLobby)]);
@@ -101,6 +101,9 @@ fn items(kind: FormKind, fields: usize) -> Vec<Item> {
             Item::Button(Act::Direct(false)),
             Item::Button(Act::Direct(true)),
         ],
+        #[cfg(target_arch = "wasm32")]
+        FormKind::Replay => vec![Item::Button(Act::OpenReplayFile)],
+        #[cfg(not(target_arch = "wasm32"))]
         FormKind::Replay => buttons(vec![Act::Submit]),
     }
 }
@@ -114,6 +117,8 @@ pub struct Form {
     items: Vec<Item>,
     /// An index into the items.
     focus: usize,
+    /// The replays whose buttons come before the rest of the replays page's items.
+    rows: Vec<String>,
 }
 
 impl Form {
@@ -152,6 +157,8 @@ impl Form {
                     Field::new("Address", &prefs.direct, false, 200),
                 ]
             }
+            // A browser picks a replay file with its own chooser.
+            FormKind::Replay if cfg!(target_arch = "wasm32") => Vec::new(),
             FormKind::Replay => vec![Field::new("Replay file", "", false, 1024)],
         };
         // The keyboard starts in the first empty field, the local lobby's in its first.
@@ -159,7 +166,7 @@ impl Form {
             FormKind::Host => 0,
             _ => fields.iter().position(|f| f.value.is_empty()).unwrap_or(0),
         };
-        let items = items(kind, fields.len());
+        let items = items_of(kind, fields.len());
         let focus = items
             .iter()
             .position(|i| *i == Item::Field(first))
@@ -169,7 +176,35 @@ impl Form {
             fields,
             items,
             focus,
+            rows: Vec::new(),
         }
+    }
+
+    /// The replays page lists these replays, each with buttons Tab visits before the page's
+    /// own; the keyboard stays where it was.
+    pub fn set_replay_rows(&mut self, names: &[String]) {
+        if self.kind != FormKind::Replay || self.rows == names {
+            return;
+        }
+        let was = self.items.get(self.focus).cloned();
+        let mut items: Vec<Item> = names
+            .iter()
+            .flat_map(|name| {
+                let watch = Item::Button(Act::OpenReplay(name.clone()));
+                #[cfg(target_arch = "wasm32")]
+                let download = Some(Item::Button(Act::DownloadReplay(name.clone())));
+                #[cfg(not(target_arch = "wasm32"))]
+                let download = None;
+                let delete = Item::Button(Act::DeleteReplay(name.clone()));
+                [Some(watch), download, Some(delete)].into_iter().flatten()
+            })
+            .collect();
+        items.extend(items_of(self.kind, self.fields.len()));
+        self.focus = was
+            .and_then(|was| items.iter().position(|i| *i == was))
+            .unwrap_or(0);
+        self.items = items;
+        self.rows = names.to_vec();
     }
 
     pub fn fields(&self) -> &[Field] {

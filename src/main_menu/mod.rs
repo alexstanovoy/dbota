@@ -10,6 +10,7 @@
 mod address;
 mod core;
 mod form;
+mod keep;
 mod launch;
 mod lobbies;
 mod overlay;
@@ -35,6 +36,7 @@ pub use launch::Trust;
 pub use prefs::page_service;
 pub use preview::{NAMES as PREVIEWS, view as preview};
 pub use screens::Disabled;
+pub(crate) use text::line;
 // What holds the menu: assets out of date, on the desktop (a browser page holds before the client).
 #[cfg(not(target_arch = "wasm32"))]
 pub use shell::Held;

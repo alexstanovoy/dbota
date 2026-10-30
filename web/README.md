@@ -17,6 +17,7 @@ Content-Security-Policy only allows connections to its own origin (game sockets 
 | `grant.js` | the folder grant: `showDirectoryPicker` (Chromium, the handle is remembered in IndexedDB so the copy can be checked for staleness without asking again), else `<input webkitdirectory>`; only `*.vpk` of `game/dota` and `maps/` are kept, whatever folder level was picked |
 | `import_worker.js` | a module Web Worker: runs `dbota_import` (wasm), writes each item's files with synchronous OPFS handles, stops on request |
 | `cache.js` | the OPFS cache: layout, reads, index and stamp, what is published to the client (`globalThis.dbota_cache`) |
+| `replays.js` | the player's own matches' replays, kept by the client in OPFS (a folder `dbota-replays` of its own, apart from the asset copy), else IndexedDB; published as `globalThis.dbota_replays` (list/read/write/remove, the index, a download, a file picker); the client decides what is kept and for how long (`src/replays`) |
 | `report.js` | `?report`: console lines to the page's server, for local debugging |
 | `keys.js` | which keys are the game's and which the browser's; F11 is the canvas's fullscreen |
 | `pointer.js` | the pointer while the game keeps the cursor: locked in a gesture, the game's cursor moved by its motion inside the canvas and handed to the client as the pointer's own |
@@ -112,6 +113,8 @@ worker imports, the copy persists over a reload, the client starts and reads it,
 own origin is requested and nothing is sent, the copy is deleted. It also unit-tests the
 folder logic (`webkitdirectory` lists, `showDirectoryPicker` folder levels) against a folder tree
 made in OPFS. The native importer tests are in `crates/dbota_import/tests/import.rs`.
+
+`--replays-page DIR --server BOTA_SERVER --radovid RADOVID` (a build without a replay, any assets: `?assets=none`) plays a match through a real radovid that serves the page itself and keeps replays (`[artifacts] save_replays = true`): a practice lobby is entered alone and the page closed; the game server ends, and the next visit signs in with the kept session, fetches the replay it was away for and stores it in OPFS; the REPLAYS tab lists it and plays it, DOWNLOAD .BRP hands over the same bytes and OPEN A .BRP FILE plays the file again. `--shots` saves a screenshot of each step to `temp/smoke-replays` (the click positions in the script are for a 1280x720 page).
 
 Two more checks need no Dota install (the page runs on stand-ins, `?assets=none`); the docstring of
 `smoke.py` has the build commands. `--replay-page` opens a build with a Zstandard-packed replay built in

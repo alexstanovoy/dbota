@@ -83,10 +83,20 @@ signed out and with no service reachable. There, you play under the profile name
   spells, invulnerability, respawn, teleport, reset, the enemies' level, creep spawning, night, all
   vision, refresh). Its words come from the install's Demo Hero (`dota_addons/hero_demo`). Quit ends
   its server.
-- **REPLAYS**: the replays in `~/.local/share/dbota/replays` (`$XDG_DATA_HOME/dbota/replays`), where a local
-  lobby keeps its games', the newest first, each with its date, its heroes and how it ended (read from the
-  file on a thread of its own); a file that cannot be watched says why (damaged, or recorded by another
-  version), and an empty one (a game that never started) is not listed. Any replay file opens by its path.
+- **REPLAYS**: the replays this client keeps, by default, the newest first, each with its date, mode,
+  players and how it ended; WATCH opens one in the replay viewer, DELETE removes it. A match played through
+  the matchmaking service has its replay fetched from the service when the match ends (by whoever sat in it;
+  a lost or left match too; a service that keeps none, `[artifacts] save_replays` off in radovid, is told on
+  the page and nothing is saved from it); a failed fetch is tried again in the background, and at the next
+  sign-in. A local lobby's and Demo Hero's replays are the server's own file, kept when the game is left (whole when the match ended or was left for good with LEAVE GAME; a game that is only disconnected from keeps what the server had written to disk so far). Where:
+  `$XDG_DATA_HOME/dbota/replays` (`~/.local/share/dbota/replays`) on Linux, `~/Library/Application Support/dbota/replays`
+  on macOS, `%LOCALAPPDATA%\dbota\replays` on Windows, named `YYYYMMDD-HHMMSS-mode-matchid.brp` (UTC) with a small
+  `index.txt` beside them; in a browser, the page's private storage (OPFS, else IndexedDB), where each row also has
+  DOWNLOAD .BRP and the page has OPEN A .BRP FILE, so a replay moves between the browser and a desktop.
+  SETTINGS, Options, REPLAYS turns saving off and caps the count and the bytes (50 and 1 GB on a desktop, 25 and
+  256 MB in a browser, by default); the oldest go when a new one is saved. A file that cannot be watched says why
+  (damaged, or recorded by another version), and one with no match in it (under 1 KB: a game that never started) is
+  not kept. On a desktop any replay file also opens by its path.
 
 Cheats are Dota's, typed into the chat (`Enter`, then `-gold 5000`) or the console (`\`, also in
 their console forms: `dota_create_item item_blink`): `-gold N`, `-lvlup N`, `-levelbots N`,

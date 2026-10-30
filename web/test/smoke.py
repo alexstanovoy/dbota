@@ -51,6 +51,7 @@ import json
 import os
 import pathlib
 import re
+import shutil
 import subprocess
 import sys
 import threading
@@ -159,7 +160,7 @@ def import_smoke(args, install):
     requests, console, failures = [], [], []
 
     def report():
-        print("console:", *[c[:300] for c in console[-25:]], sep="\n  ", file=sys.stderr)
+        print("console:", *[c[:300] for c in [c for c in console if "CommandQueue" not in c and not c.startswith("log.")][-25:]], sep="\n  ", file=sys.stderr)
         print("errors:", failures, file=sys.stderr)
 
     with sync_playwright() as p:
@@ -317,7 +318,7 @@ def wait_console(page, console, pattern, timeout, what):
             if m := seen.search(line):
                 return m
         page.wait_for_timeout(500)
-    print("console:", *[c[:300] for c in console[-25:]], sep="\n  ", file=sys.stderr)
+    print("console:", *[c[:300] for c in [c for c in console if "CommandQueue" not in c and not c.startswith("log.")][-25:]], sep="\n  ", file=sys.stderr)
     sys.exit(f"timed out waiting for {what}")
 
 
@@ -662,6 +663,248 @@ def check_startup_page(directory):
         print("out of memory: said on the page")
 
 
+# Where the main menu's buttons are in a 1280x720 page (calibrated by `--shots`): the page is
+# drawn at the viewport's size with the interface at its default scale, so they stay put.
+CLICK_LOBBIES = (329, 22)
+CLICK_REPLAYS = (505, 22)
+CLICK_READY = (310, 325)
+
+
+def wait_port(port, seconds=60):
+    import socket
+
+    deadline = time.time() + seconds
+    while time.time() < deadline:
+        try:
+            socket.create_connection(("127.0.0.1", port), timeout=1).close()
+            return
+        except OSError:
+            time.sleep(0.3)
+    sys.exit(f"nothing listens on port {port}")
+
+
+def radovid_config(directory, page_dir, server_bin, port, game_port, cert, key):
+    """A radovid for one practice ruleset whose games keep their replay and end quickly once the
+    player is gone, serving `page_dir` on its own origin."""
+    fingerprint = subprocess.run([server_bin, "--wire-fingerprint"], capture_output=True, text=True).stdout.strip()
+    return f"""
+listen = "127.0.0.1:{port}"
+database = "{directory}/radovid.db"
+tls_cert = "{cert}"
+tls_key = "{key}"
+game_ports = "{game_port}-{game_port}"
+[web]
+static_dir = "{page_dir}"
+[password]
+memory_kib = 1024
+iterations = 1
+[artifacts]
+save_replays = true
+[limits]
+game_capacity = 1
+lobby_games_max = 1
+[[ruleset]]
+id = "practice"
+name = "Practice"
+game = "bota"
+game_fingerprint = "{fingerprint}"
+teams = [1, 1]
+rated = false
+lobby_min_players = 1
+max_duration_secs = 600
+[ruleset.launcher]
+kind = "local"
+binary = "{server_bin}"
+public_url = "wss://127.0.0.1:{{port}}"
+version_probe = ["--wire-fingerprint"]
+args = ["--map", "2", "--match-id", "{{match_id}}", "--bind", "127.0.0.1", "--port", "0", "--ws-port", "{{port}}",
+        "--tls-cert", "{cert}", "--tls-key", "{key}", "--heroes", "1", "--pick-secs", "1", "--tactical-secs", "0",
+        "--start-after-secs", "120", "--abandon-unjoined", "--empty-after-secs", "5"]
+env = {{ BOTA_SEATS = "{{seats}}" }}
+artifact = "{directory}/replays/replay-{{match_id}}.brp"
+artifact_args = ["--replay", "{{artifact}}"]
+"""
+
+
+OPFS_REPLAYS = """async () => {
+  const root = await navigator.storage.getDirectory();
+  let dir;
+  try { dir = await root.getDirectoryHandle('dbota-replays'); } catch (e) { return []; }
+  const out = [];
+  for await (const [name, handle] of dir.entries()) {
+    if (handle.kind === 'file') out.push([name, (await handle.getFile()).size]);
+  }
+  return out;
+}"""
+
+
+def check_replays_page(directory, server_bin, radovid_bin, shots=False):
+    """A match through a real radovid is kept in the browser's private storage: the page enters a
+    practice match alone and is closed (the player gone, the game server ends and the service
+    records it); the next visit signs in with the kept session, fetches the replay it was away
+    for and stores it in OPFS. The REPLAYS tab lists it and plays it; DOWNLOAD .BRP hands over the
+    same bytes, OPEN A .BRP FILE plays that file, a new visit plays the stored one with WATCH and DELETE
+    removes it."""
+    work = HERE.parent.parent / "temp/smoke-replays"
+    work.mkdir(parents=True, exist_ok=True)
+    cert, key = work / "cert.pem", work / "key.pem"
+    subprocess.run([radovid_bin, "dev-cert", str(work)], check=True, capture_output=True)
+    for stale in [*work.glob("radovid.db*"), *(work / "replays").glob("*")]:
+        stale.unlink()
+    port, game = free_port(), free_port()
+    # radovid serves the page from a folder of its own (it follows no link out of it).
+    page_dir = work / "page"
+    shutil.rmtree(page_dir, ignore_errors=True)
+    shutil.copytree(directory, page_dir, symlinks=False)
+    (work / "radovid.toml").write_text(radovid_config(work, page_dir, server_bin, port, game, cert, key))
+    service = subprocess.Popen([radovid_bin, "serve", "--config", str(work / "radovid.toml")],
+                               stdout=subprocess.DEVNULL, stderr=open(work / "radovid.log", "w"))
+    try:
+        wait_port(port)
+        with sync_playwright() as p:
+            browser = p.chromium.launch(args=[*BROWSER_ARGS, "--ignore-certificate-errors"])
+            context = browser.new_context(viewport={"width": 1280, "height": 720}, ignore_https_errors=True,
+                                          accept_downloads=True)
+            page = context.new_page()
+            console, problems = [], []
+            page.on("console", lambda m: console.append(m.text))
+            page.on("pageerror", lambda e: problems.append(f"page error: {e}"))
+            url = f"https://127.0.0.1:{port}/?assets=none"
+
+            def shot(name):
+                if shots:
+                    page.screenshot(path=str(work / f"{name}.png"), timeout=600000)
+
+            def step(wait=4000):
+                page.wait_for_timeout(wait)
+
+            # First visit: register, make a practice lobby, ready up; then close the page.
+            page.goto(url)
+            wait_console(page, console, r"replays: kept in the browser's opfs storage", 600, "the replay storage")
+            step(15000)
+            shot("1-login")
+            for _ in range(3):  # login, password, SIGN IN, then REGISTER
+                page.keyboard.press("Tab")
+            page.keyboard.press("Enter")
+            step()
+            shot("2-register")
+            page.keyboard.type("smoker")
+            page.keyboard.press("Tab")
+            page.keyboard.type("correct horse battery")
+            page.keyboard.press("Tab")
+            page.keyboard.type("correct horse battery")
+            page.keyboard.press("Enter")
+            step(8000)
+            shot("3-home")
+            page.mouse.click(*CLICK_LOBBIES)
+            step()
+            shot("4-lobbies")
+            page.keyboard.type("alone")
+            page.keyboard.press("Tab")
+            page.keyboard.press("Tab")
+            page.keyboard.press("Enter")
+            step(6000)
+            shot("5-lobby")
+            page.mouse.click(*CLICK_READY)
+            wait_console(page, console, r"match known: tick \d+", 600, "the practice match")
+            step(5000)
+            shot("6-game")
+            page.close()
+
+            # The game server ends once its only seat has stayed empty; radovid records the match.
+            deadline = time.time() + 300
+            while time.time() < deadline and not list((work / "replays").glob("replay-*.brp")):
+                time.sleep(1)
+            files = sorted((work / "replays").glob("replay-*.brp"))
+            assert files, "the game server wrote a replay for radovid to keep"
+            time.sleep(15)
+
+            # The next visit: signed in again by the kept session, the replay is fetched and stored.
+            page = context.new_page()
+            console.clear()
+            page.on("console", lambda m: console.append(m.text))
+            page.on("pageerror", lambda e: problems.append(f"page error: {e}"))
+            page.goto(url)
+            deadline = time.time() + 600
+            stored = []
+            while time.time() < deadline and not any(n.endswith(".brp") for n, _ in stored):
+                page.wait_for_timeout(3000)
+                stored = page.evaluate(OPFS_REPLAYS)
+            replay = [(n, size) for n, size in stored if n.endswith(".brp")]
+            assert len(replay) == 1, f"the replay is stored in OPFS: {stored}"
+            name, size = replay[0]
+            assert size == files[0].stat().st_size, "the stored replay is the service's file"
+            assert any(n == "index.txt" for n, _ in stored), "the index is beside it"
+            shot("7a-stored")
+            wait_console(page, console, r"replays: 1 kept", 300, "the replay listed")
+            print(f"stored: {name} ({size} bytes) in OPFS")
+
+            # The REPLAYS tab lists it. DOWNLOAD .BRP hands over the stored bytes.
+            page.mouse.click(*CLICK_REPLAYS)
+            step()
+            shot("7-replays")
+            page.keyboard.press("Tab")  # the keyboard starts on OPEN A .BRP FILE: WATCH,
+            page.keyboard.press("Tab")  # then DOWNLOAD .BRP
+            with page.expect_download(timeout=120000) as download:
+                page.keyboard.press("Enter")
+            saved = work / "downloaded.brp"
+            download.value.save_as(str(saved))
+            assert download.value.suggested_filename == name, download.value.suggested_filename
+            assert saved.read_bytes() == files[0].read_bytes(), "the download is the replay the service kept"
+            assert saved.read_bytes()[:4] == b"\x28\xb5\x2f\xfd", "and a Zstandard stream, as a desktop reads"
+            print(f"download: {saved.stat().st_size} bytes, the same as the service's file")
+
+            # OPEN A .BRP FILE plays a file from the player's disk (one from a desktop would do).
+            page.keyboard.press("Tab")  # DELETE
+            page.keyboard.press("Tab")  # OPEN A .BRP FILE
+            with page.expect_file_chooser(timeout=120000) as chooser:
+                page.keyboard.press("Enter")
+            chooser.value.set_files(str(saved))
+            wait_console(page, console, r"match known: tick \d+", 600, "the opened file to play")
+            print("open from file: the downloaded replay plays")
+            page.close()
+
+            # A new visit: WATCH plays the stored replay, DELETE removes it.
+            page = context.new_page()
+            console.clear()
+            page.on("console", lambda m: console.append(m.text))
+            page.on("pageerror", lambda e: problems.append(f"page error: {e}"))
+            page.goto(url)
+            wait_console(page, console, r"replays: 1 kept", 600, "the replay listed again")
+            step(10000)
+            page.mouse.click(*CLICK_REPLAYS)
+            step()
+            page.keyboard.press("Tab")
+            page.keyboard.press("Enter")
+            step(20000)
+            shot("8-watch")
+            wait_console(page, console, r"match known: tick \d+", 600, "the stored replay to play")
+            print("watch: the stored replay plays")
+            bad = [c for c in console if "cannot be read" in c or "panicked" in c or "RuntimeError" in c]
+            assert not bad and not problems, (bad, problems)
+            page.close()
+            page = context.new_page()
+            page.goto(url)
+            step(15000)
+            page.mouse.click(*CLICK_REPLAYS)
+            step()
+            for _ in range(3):  # WATCH, DOWNLOAD .BRP, DELETE
+                page.keyboard.press("Tab")
+            page.keyboard.press("Enter")
+            deadline = time.time() + 120
+            left = page.evaluate(OPFS_REPLAYS)
+            while time.time() < deadline and any(n.endswith(".brp") for n, _ in left):
+                page.wait_for_timeout(2000)
+                left = page.evaluate(OPFS_REPLAYS)
+            assert not any(n.endswith(".brp") for n, _ in left), f"DELETE removed the replay: {left}"
+            print("delete: the replay is gone from OPFS")
+            browser.close()
+    finally:
+        service.terminate()
+        service.wait(timeout=20)
+    print("replays: kept in OPFS from a match through radovid, listed and played")
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--install")
@@ -676,6 +919,9 @@ def main():
     ap.add_argument("--keys-page", type=pathlib.Path, help="any page, even web/ unbuilt: whose keys are whose")
     ap.add_argument("--cursor-page", type=pathlib.Path, help="a replay build: the cursor kept in a match")
     ap.add_argument("--pixels-page", type=pathlib.Path, help="a replay build: the canvas drawn at its device pixels")
+    ap.add_argument("--replays-page", type=pathlib.Path, help="a build without a replay: a match through radovid is kept in OPFS")
+    ap.add_argument("--radovid", help="the radovid binary, for --replays-page (with --server)")
+    ap.add_argument("--shots", action="store_true", help="--replays-page saves a screenshot of every step to temp/smoke-replays")
     ap.add_argument("--only-wire", action="store_true", help="skip the import test even where an install is found")
     args = ap.parse_args()
     install = None if args.only_wire else find_install(args.install)
@@ -695,6 +941,10 @@ def main():
         check_cursor_page(args.cursor_page)
     if args.pixels_page:
         check_canvas_pixels(args.pixels_page)
+    if args.replays_page:
+        if not (args.server and args.radovid):
+            sys.exit("--replays-page needs --server and --radovid")
+        check_replays_page(args.replays_page, args.server, args.radovid, args.shots)
     if args.live_page:
         if not args.server:
             sys.exit("--live-page needs --server")

@@ -7,7 +7,8 @@ use super::core::{Act, Page, SeatFill};
 use super::form::FormKind;
 use super::screens::{ERROR, GREEN, Kit, PLAIN, RED, tab_color, tab_of};
 use super::view::{
-    FieldView, LobbyView, MemberRow, MenuView, PageView, ReplayRow, ResultView, RulesetRow, SlotRow,
+    FieldView, LobbyView, MemberRow, MenuView, PageView, ReplayRow, ReplayShelf, ResultView,
+    RulesetRow, SlotRow,
 };
 use crate::ui;
 use bota_radovid::proto::LOBBY_NO_SLOT;
@@ -162,7 +163,11 @@ pub fn draw(kit: &mut Kit, root: Entity, view: &MenuView) {
         } => super::lobbies::list(kit, body, list, fields, modes),
         PageView::Lobby(lobby) => lobby_page(kit, body, lobby),
         PageView::Result(result) => result_page(kit, body, result),
-        PageView::Replays { list, fields } => replays_page(kit, body, list, fields),
+        PageView::Replays {
+            list,
+            fields,
+            shelf,
+        } => replays_page(kit, body, list, fields, shelf),
         #[cfg(not(target_arch = "wasm32"))]
         PageView::DemoHero { heroes } => demo_page(kit, body, heroes),
         PageView::Joining => {
@@ -865,9 +870,16 @@ fn result_page(kit: &mut Kit, body: Entity, result: &ResultView) {
     kit.button(column, "CONTINUE", Act::Go(Page::Home), GREEN, 46.0);
 }
 
-/// REPLAYS: the replays on this machine, the newest first, each to watch;
-/// and any replay file by its path.
-fn replays_page(kit: &mut Kit, body: Entity, list: &[ReplayRow], fields: &[FieldView]) {
+/// REPLAYS: the replays this client keeps, the newest first, each to watch or delete (and in a
+/// browser to download); and any replay file, by its path on a desktop, from the file chooser in
+/// a browser.
+fn replays_page(
+    kit: &mut Kit,
+    body: Entity,
+    list: &[ReplayRow],
+    fields: &[FieldView],
+    shelf: &ReplayShelf,
+) {
     let column = kit.node(
         body,
         Node {
@@ -878,55 +890,46 @@ fn replays_page(kit: &mut Kit, body: Entity, list: &[ReplayRow], fields: &[Field
         },
     );
     kit.bold(column, "REPLAYS", 30.0, ui::INK);
+    let (note, colour) = if !shelf.store {
+        (
+            "This browser keeps no replays for the page. A replay file can still be opened below."
+                .to_owned(),
+            ui::GOLDEN,
+        )
+    } else if !shelf.keeping {
+        (
+            "Saving replays is off (SETTINGS, Options, REPLAYS): the ones below were kept before."
+                .to_owned(),
+            ui::GOLDEN,
+        )
+    } else if shelf.folder.is_empty() {
+        (
+            "The replays of your matches are kept in this browser, within the limits of SETTINGS, Options, REPLAYS.".to_owned(),
+            ui::INK_DIM,
+        )
+    } else {
+        (
+            format!(
+                "The replays of your matches are kept in {}, within the limits of SETTINGS, Options, REPLAYS.",
+                shelf.folder
+            ),
+            ui::INK_DIM,
+        )
+    };
+    kit.text(column, note, 13.0, colour);
+    if shelf.service_keeps_none {
+        kit.text(
+            column,
+            "The matchmaking service keeps no replays of its matches, so none of them is saved here; local games still are.",
+            13.0,
+            ui::GOLDEN,
+        );
+    }
     if list.is_empty() {
         kit.text(column, "No replays yet", 16.0, ui::INK_DIM);
     }
-    for (at, replay) in list.iter().enumerate() {
-        let row = kit.panel(
-            column,
-            Node {
-                padding: UiRect::all(px(10)),
-                column_gap: px(12),
-                align_items: AlignItems::Center,
-                ..default()
-            },
-        );
-        let label = kit.node(
-            row,
-            Node {
-                flex_grow: 1.0,
-                flex_direction: FlexDirection::Column,
-                ..default()
-            },
-        );
-        use super::replay_info::Summary;
-        let (headline, line, colour) = match &replay.summary {
-            Summary::Read { sides, outcome } => (
-                sides.clone(),
-                format!("{}  ·  {outcome}", replay.when),
-                ui::INK_DIM,
-            ),
-            Summary::Reading => (replay.when.clone(), "reading…".to_owned(), ui::INK_DIM),
-            Summary::Broken(why) => (
-                replay.when.clone(),
-                format!("cannot be watched: {why}"),
-                ERROR,
-            ),
-        };
-        kit.bold(label, headline, 16.0, ui::INK);
-        kit.text(label, line, 13.0, colour);
-        kit.text(
-            label,
-            format!("{}  ·  {}", replay.name, replay.size),
-            12.0,
-            ui::INK_DIM,
-        );
-        if !matches!(replay.summary, Summary::Broken(_)) {
-            let watch = kit.button(row, "WATCH", Act::OpenReplay(at), PLAIN, 34.0);
-            kit.commands
-                .entity(watch)
-                .insert(Name::new(format!("watch {at}")));
-        }
+    for replay in list {
+        replay_row(kit, column, replay);
     }
     let card = kit.panel(
         column,
@@ -938,10 +941,111 @@ fn replays_page(kit: &mut Kit, body: Entity, list: &[ReplayRow], fields: &[Field
             ..default()
         },
     );
-    for (at, field) in fields.iter().enumerate() {
-        field_box(kit, card, at, field);
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        for (at, field) in fields.iter().enumerate() {
+            field_box(kit, card, at, field);
+        }
+        kit.button(card, "OPEN", Act::Submit, GREEN, 40.0);
     }
-    kit.button(card, "OPEN", Act::Submit, GREEN, 40.0);
+    #[cfg(target_arch = "wasm32")]
+    {
+        let _ = fields;
+        let open = kit.button(card, "OPEN A .BRP FILE", Act::OpenReplayFile, GREEN, 40.0);
+        kit.commands
+            .entity(open)
+            .insert(Name::new("open replay file"));
+    }
+}
+
+/// What a replay's row says of where it was played.
+fn mode_label(mode: &str) -> String {
+    match mode {
+        "local" => "Local lobby".to_owned(),
+        "demo" => "Demo Hero".to_owned(),
+        "file" => "Replay file".to_owned(),
+        ruleset => format!("Online match · {ruleset}"),
+    }
+}
+
+fn replay_row(kit: &mut Kit, column: Entity, replay: &ReplayRow) {
+    let row = kit.panel(
+        column,
+        Node {
+            padding: UiRect::all(px(10)),
+            column_gap: px(12),
+            align_items: AlignItems::Center,
+            ..default()
+        },
+    );
+    let label = kit.node(
+        row,
+        Node {
+            flex_grow: 1.0,
+            flex_direction: FlexDirection::Column,
+            ..default()
+        },
+    );
+    use super::replay_info::Summary;
+    let known = |sides: &str| {
+        if sides.is_empty() {
+            mode_label(&replay.mode)
+        } else {
+            sides.to_owned()
+        }
+    };
+    let (headline, line, colour) = match &replay.summary {
+        Summary::Read { sides, outcome } if outcome.is_empty() => {
+            (known(sides), replay.when.clone(), ui::INK_DIM)
+        }
+        Summary::Read { sides, outcome } => (
+            known(sides),
+            format!("{}  ·  {outcome}", replay.when),
+            ui::INK_DIM,
+        ),
+        Summary::Reading => (
+            mode_label(&replay.mode),
+            format!("{}  ·  reading…", replay.when),
+            ui::INK_DIM,
+        ),
+        Summary::Broken(why) => (
+            mode_label(&replay.mode),
+            format!("{}  ·  cannot be watched: {why}", replay.when),
+            ERROR,
+        ),
+    };
+    kit.bold(label, headline, 16.0, ui::INK);
+    kit.text(label, line, 13.0, colour);
+    kit.text(
+        label,
+        format!("{}  ·  {}", replay.name, replay.size),
+        12.0,
+        ui::INK_DIM,
+    );
+    let name = &replay.name;
+    if !matches!(replay.summary, Summary::Broken(_)) {
+        let watch = kit.button(row, "WATCH", Act::OpenReplay(name.clone()), PLAIN, 34.0);
+        kit.commands
+            .entity(watch)
+            .insert(Name::new(format!("watch {name}")));
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        let download = kit.button(
+            row,
+            "DOWNLOAD .BRP",
+            Act::DownloadReplay(name.clone()),
+            PLAIN,
+            34.0,
+        );
+        kit.commands
+            .entity(download)
+            .insert(Name::new(format!("download {name}")));
+    }
+    let delete = kit.button(row, "DELETE", Act::DeleteReplay(name.clone()), RED, 34.0);
+    kit.commands
+        .entity(delete)
+        .insert(Name::new(format!("delete {name}")));
 }
 
 /// What a local lobby's empty seats take: left open, or the bot command of the settings, as

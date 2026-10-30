@@ -201,15 +201,31 @@ pub struct ResultView {
     pub seats: Vec<SeatRow>,
 }
 
-/// A replay on this machine.
+/// A replay this client keeps.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ReplayRow {
+    /// Its file name, which the buttons of its row name it by.
     pub name: String,
     pub size: String,
     /// When it was played.
     pub when: String,
-    /// Who played what and how it ended, as far as read.
+    /// Where it was played: a ruleset's id, `local`, `demo`, `file`.
+    pub mode: String,
+    /// Who played what and how it ended, as far as known.
     pub summary: super::replay_info::Summary,
+}
+
+/// What the REPLAYS page says of the place replays are kept.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ReplayShelf {
+    /// The folder, on a desktop; empty in a browser, which keeps them in its own storage.
+    pub folder: String,
+    /// Whether replays are kept at all now (the setting, and a store to keep them in).
+    pub keeping: bool,
+    /// Whether there is a store to keep them in.
+    pub store: bool,
+    /// The service said it keeps no replays of its matches, so none of them is fetched.
+    pub service_keeps_none: bool,
 }
 
 /// The page under the top bar.
@@ -264,6 +280,7 @@ pub enum PageView {
     Replays {
         list: Vec<ReplayRow>,
         fields: Vec<FieldView>,
+        shelf: ReplayShelf,
     },
     /// The settings screen, which draws itself over the menu.
     Settings,
@@ -465,16 +482,34 @@ impl MenuCore {
                 .map_or(PageView::Joining, |r| PageView::Result(self.result_view(r))),
             Page::Replays => PageView::Replays {
                 list: self
-                    .replays
+                    .library
+                    .records()
                     .iter()
                     .map(|r| ReplayRow {
                         name: r.name.clone(),
-                        size: r.size.clone(),
-                        when: r.when.clone(),
-                        summary: self.shelf.peek(&r.path, r.stamp),
+                        size: if r.bytes < 1_000_000 {
+                            format!("{} KB", r.bytes.div_ceil(1000))
+                        } else {
+                            format!("{:.1} MB", r.bytes as f64 / 1e6)
+                        },
+                        when: super::replay_info::when(
+                            std::time::UNIX_EPOCH + std::time::Duration::from_secs(r.when),
+                        ),
+                        mode: r.mode.clone(),
+                        summary: self.summary_of(r),
                     })
                     .collect(),
                 fields: self.fields(),
+                shelf: ReplayShelf {
+                    folder: self
+                        .library
+                        .dir()
+                        .map(|d| text::line(&d.display().to_string(), text::MESSAGE))
+                        .unwrap_or_default(),
+                    keeping: self.library.keeping(),
+                    store: self.library.standing() != crate::replays::Standing::Unavailable,
+                    service_keeps_none: self.service_keeps_none(),
+                },
             },
             #[cfg(not(target_arch = "wasm32"))]
             Page::DemoHero => PageView::DemoHero {
@@ -536,10 +571,8 @@ impl MenuCore {
             headline: view.headline,
             won: view.won,
             detail: view.detail,
-            replay: matches!(
-                result.reason,
-                EndReason::Decided | EndReason::Draw | EndReason::Left
-            ),
+            // A match that ran leaves a replay, a lost one too; one nobody came to leaves none.
+            replay: result.reason != EndReason::Abandoned && !self.service_keeps_none(),
         }
     }
 

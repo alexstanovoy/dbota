@@ -39,6 +39,7 @@ pub enum Toggle {
     ChannelsRequireStop,
     VoiceResponses,
     Muted,
+    SaveReplays,
     AutoQuality,
     Props,
     GpuBatching,
@@ -55,6 +56,7 @@ impl Toggle {
             Toggle::ChannelsRequireStop => "Abilities Require Hold/Cancel to Stop",
             Toggle::VoiceResponses => "Hero voice responses",
             Toggle::Muted => "Mute all sound",
+            Toggle::SaveReplays => "Save the replays of my matches",
             Toggle::AutoQuality => "Lower quality while frames run slow",
             Toggle::Props => "Map props",
             Toggle::GpuBatching => "GPU culling and batching",
@@ -71,6 +73,7 @@ impl Toggle {
             Toggle::ChannelsRequireStop => s.channels_require_stop,
             Toggle::VoiceResponses => s.voice,
             Toggle::Muted => s.muted,
+            Toggle::SaveReplays => s.replays.keep,
             Toggle::AutoQuality => s.quality.auto,
             Toggle::Props => s.quality.props,
             Toggle::GpuBatching => s.quality.gpu_batching,
@@ -87,6 +90,7 @@ impl Toggle {
             Toggle::ChannelsRequireStop => &mut s.channels_require_stop,
             Toggle::VoiceResponses => &mut s.voice,
             Toggle::Muted => &mut s.muted,
+            Toggle::SaveReplays => &mut s.replays.keep,
             Toggle::AutoQuality => &mut s.quality.auto,
             Toggle::Props => &mut s.quality.props,
             Toggle::GpuBatching => &mut s.quality.gpu_batching,
@@ -164,12 +168,18 @@ pub enum Choice {
     FrameCap,
     TextureSize,
     RightClickAllies,
+    ReplayCount,
+    ReplaySize,
 }
 
 /// The frame caps offered; 0 for none.
 const FRAME_CAPS: [u32; 6] = [0, 30, 60, 120, 144, 240];
 /// The texture sizes offered.
 const TEXTURE_SIZES: [u32; 6] = [512, 1024, 2048, 4096, 8192, 16_384];
+/// The numbers of replays offered to keep.
+const REPLAY_COUNTS: [usize; 6] = [10, 25, 50, 100, 250, 500];
+/// The sizes, in MiB, all the replays kept may take.
+const REPLAY_SIZES: [u64; 7] = [128, 256, 512, 1024, 2048, 4096, 8192];
 
 impl Choice {
     pub fn label(self) -> &'static str {
@@ -182,6 +192,8 @@ impl Choice {
             Choice::FrameCap => "Frame rate cap",
             Choice::TextureSize => "Largest texture size",
             Choice::RightClickAllies => "Right-Click Allies",
+            Choice::ReplayCount => "Replays kept, at most",
+            Choice::ReplaySize => "Replays may take, at most",
         }
     }
 
@@ -211,6 +223,8 @@ impl Choice {
             Choice::RightClickAllies => ["To Follow", "To Attack", "To Deny"]
                 .map(String::from)
                 .to_vec(),
+            Choice::ReplayCount => REPLAY_COUNTS.iter().map(usize::to_string).collect(),
+            Choice::ReplaySize => REPLAY_SIZES.iter().map(|mib| size_name(*mib)).collect(),
         }
     }
 
@@ -231,6 +245,10 @@ impl Choice {
             Choice::RightClickAllies => RightClickAllies::ALL
                 .iter()
                 .position(|c| *c == s.right_click_allies),
+            Choice::ReplayCount => REPLAY_COUNTS.iter().position(|n| *n == s.replays.max_count),
+            Choice::ReplaySize => REPLAY_SIZES
+                .iter()
+                .position(|mib| mib << 20 == s.replays.max_bytes),
         }
     }
 
@@ -267,6 +285,17 @@ impl Choice {
                     .copied()
                     .unwrap_or(s.right_click_allies);
             }
+            Choice::ReplayCount => {
+                s.replays.max_count = REPLAY_COUNTS
+                    .get(at)
+                    .copied()
+                    .unwrap_or(s.replays.max_count);
+            }
+            Choice::ReplaySize => {
+                s.replays.max_bytes = REPLAY_SIZES
+                    .get(at)
+                    .map_or(s.replays.max_bytes, |mib| mib << 20);
+            }
         }
     }
 
@@ -275,6 +304,15 @@ impl Choice {
         self.current(s)
             .and_then(|at| self.options().get(at).cloned())
             .unwrap_or_else(|| "Custom".into())
+    }
+}
+
+/// A size in MiB as the list shows it.
+fn size_name(mib: u64) -> String {
+    if mib >= 1024 {
+        format!("{} GB", mib / 1024)
+    } else {
+        format!("{mib} MB")
     }
 }
 
@@ -378,6 +416,10 @@ pub fn controls(tab: Tab) -> Vec<Control> {
             T(Toggle::ChannelsRequireStop),
             H("CAMERA"),
             T(Toggle::EdgePan),
+            H("REPLAYS"),
+            T(Toggle::SaveReplays),
+            C(Choice::ReplayCount),
+            C(Choice::ReplaySize),
             H("LOCAL LOBBY"),
             Control::Text(TextSetting::BotCommand),
         ],

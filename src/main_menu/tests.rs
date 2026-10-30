@@ -19,6 +19,7 @@ use super::core::{Act, Confirm, GameKind, Launch, MenuCore, Page, SeatFill};
 use super::launch::{Hosted, Opening, Trust};
 use super::store::{Entry, SettingsStore};
 use super::view::PageView;
+use crate::replays::{Disk, Library};
 
 pub(crate) const PASSWORD: &str = "correct horse battery";
 const RULESET: &str = "solo_mid";
@@ -118,7 +119,7 @@ impl Drop for Service {
     }
 }
 
-fn config(dir: &Path, binary: &Path) -> String {
+fn config(dir: &Path, binary: &Path, save_replays: bool) -> String {
     // One game at a time: the one port the system hands out now.
     let port = free_port();
     format!(
@@ -131,6 +132,8 @@ game_ports = "{port}-{port}"
 [password]
 memory_kib = 1024
 iterations = 1
+[artifacts]
+save_replays = {save_replays}
 [limits]
 games_per_source = 200
 game_capacity = 1
@@ -154,6 +157,8 @@ args = ["--map", "2", "--heroes", "1", "--mode", "lockstep", "--ack-timeout-tick
         "--ws-port", "{{port}}", "--start-after-secs", "{PATIENCE}", "--abandon-unjoined",
         "--empty-after-secs", "{PATIENCE}", "--pick-secs", "1", "--tactical-secs", "0"]
 env = {{ BOTA_SEATS = "{{seats}}" }}
+artifact = "{artifacts}/replay-{{match_id}}.brp"
+artifact_args = ["--replay", "{{artifact}}"]
 
 [[ruleset]]
 id = "arena"
@@ -209,18 +214,26 @@ args = ["--map", "0", "--mode", "lockstep", "--ack-timeout-ticks", "900",
         "--ws-port", "{{port}}", "--start-after-secs", "{PATIENCE}", "--abandon-unjoined",
         "--empty-after-secs", "{PATIENCE}", "--pick-secs", "1", "--tactical-secs", "0"]
 env = {{ BOTA_SEATS = "{{seats}}" }}
+artifact = "{artifacts}/replay-{{match_id}}.brp"
+artifact_args = ["--replay", "{{artifact}}"]
 "#,
         db = dir.join("radovid.db").display(),
+        artifacts = dir.join("artifacts").display(),
         fingerprint = bota_radovid::fingerprint(),
         binary = binary.display(),
     )
 }
 
 pub(crate) fn service() -> Service {
+    service_saving(true)
+}
+
+/// The service, keeping the replays of its matches or not.
+fn service_saving(save_replays: bool) -> Service {
     let binary = server_binary().to_owned();
     let dir = Scratch::new("service");
     let path = dir.0.join("radovid.toml");
-    std::fs::write(&path, config(&dir.0, &binary)).expect("config");
+    std::fs::write(&path, config(&dir.0, &binary, save_replays)).expect("config");
     let config = radovid::config::Config::load(&path).expect("a valid configuration");
     let names = vec!["127.0.0.1".to_owned(), "localhost".to_owned()];
     let identity = radovid::tls::self_signed(names).expect("certificate");
@@ -241,6 +254,11 @@ pub(crate) fn service() -> Service {
     }
 }
 
+/// A library keeping its replays in the folder `replays` of `dir`.
+fn kept_in(dir: &Scratch) -> Library {
+    Library::new(Box::new(Disk::new(dir.0.join("replays"))))
+}
+
 /// A player: the menu, its store and what it trusts.
 struct Player {
     menu: MenuCore,
@@ -258,6 +276,7 @@ impl Player {
             store.clone(),
             trust.radovid.clone(),
             service.map(|s| s.url.clone()),
+            kept_in(&dir),
         );
         Player {
             menu,
@@ -460,7 +479,136 @@ fn two_players_register_find_accept_play_and_see_their_result() {
     let mut sorted = headlines.clone();
     sorted.sort();
     assert_eq!(sorted, ["DEFEAT", "VICTORY"], "one won: {headlines:?}");
+    both_keep_the_replay(&mut alice, &mut bob);
+    bob_gets_a_replay_he_was_away_for(bob, &service);
     comes_back_logged_in(alice, &service);
+}
+
+/// The name pattern of a replay of the solo mid match `id`.
+fn is_replay_of(name: &str, id: u64) -> bool {
+    name.len() > 20 && name.ends_with(&format!("-solo_mid-{id}.brp"))
+}
+
+/// The match's replay was fetched from the service and kept by both seats with no click: a
+/// file in the player's folder named by day, mode and match, a row in the index beside it, a
+/// row on the REPLAYS page that opens in the replay viewer, and still there after a restart.
+fn both_keep_the_replay(alice: &mut Player, bob: &mut Player) {
+    settle(&mut [alice, bob], |p| p.menu.library.records().len() == 1);
+    let id = match alice.menu.view().body {
+        PageView::Result(_) => alice
+            .menu
+            .results
+            .back()
+            .map(|r| r.match_id.0)
+            .expect("result"),
+        other => panic!("{other:?}"),
+    };
+    for player in [&mut *alice, &mut *bob] {
+        let record = player.menu.library.records()[0].clone();
+        assert!(is_replay_of(&record.name, id), "{}", record.name);
+        assert_eq!(record.mode, "solo_mid");
+        assert_eq!(record.match_id, Some(id));
+        let folder = player._dir.0.join("replays");
+        let file = folder.join(&record.name);
+        assert_eq!(
+            std::fs::metadata(&file)
+                .expect("the replay is in the folder")
+                .len(),
+            record.bytes
+        );
+        settle(&mut [&mut *player], |_| {
+            std::fs::read_to_string(folder.join("index.txt"))
+                .is_ok_and(|index| index.contains(&record.name))
+        });
+        assert!(
+            player.menu.library.wanted().is_empty(),
+            "nothing is waited for any more"
+        );
+        // The replays page lists it, with the players and how it ended, and opens it.
+        player.menu.act(Act::Go(Page::Replays));
+        let PageView::Replays { list, shelf, .. } = player.menu.view().body else {
+            panic!("the replays page");
+        };
+        assert_eq!(list.len(), 1);
+        assert!(shelf.keeping && shelf.folder.ends_with("replays"));
+        let super::replay_info::Summary::Read { sides, outcome } = &list[0].summary else {
+            panic!("{:?}", list[0].summary);
+        };
+        assert!(sides.contains("alice") && sides.contains("bob"), "{sides}");
+        assert!(outcome.contains("won"), "{outcome}");
+        player.menu.act(Act::OpenReplay(record.name.clone()));
+        let Some(Launch::Replay(path)) = player.menu.take_launch() else {
+            panic!("the replay opens in the viewer");
+        };
+        assert_eq!(path, file);
+        let watched = super::replay_info::read(&path);
+        assert!(
+            matches!(&watched, super::replay_info::Summary::Read { outcome, .. } if outcome.contains("victory")),
+            "{watched:?}"
+        );
+        player.menu.game_started();
+        player.menu.left_game(None, true);
+        assert_eq!(player.menu.page(), Page::Replays);
+    }
+    // After a restart the folder's index lists it again.
+    let again = Library::new(Box::new(Disk::new(alice._dir.0.join("replays"))));
+    let deadline = Instant::now() + Duration::from_secs(PATIENCE);
+    let mut again = again;
+    while again.standing() != crate::replays::Standing::Ready {
+        assert!(Instant::now() < deadline, "the folder was not read");
+        again.poll();
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert_eq!(again.records().len(), 1);
+}
+
+/// A client that was away when its match ended gets the replay at its next sign-in: the match
+/// is noted in the folder's index, so a page closed mid-match still gets it.
+fn bob_gets_a_replay_he_was_away_for(bob: Player, service: &Service) {
+    let Player {
+        mut menu,
+        trust,
+        store,
+        _dir,
+    } = bob;
+    let record = menu.library.records()[0].clone();
+    let id = record.match_id.expect("an online match");
+    let folder = _dir.0.join("replays");
+    menu.library.delete(&record.name);
+    menu.library.want(crate::replays::Wanted {
+        match_id: id,
+        since: crate::replays::now(),
+        mode: "solo_mid".to_owned(),
+    });
+    let mut away = Player {
+        menu,
+        trust,
+        store,
+        _dir,
+    };
+    settle(&mut [&mut away], |_| {
+        !folder.join(&record.name).exists()
+            && std::fs::read_to_string(folder.join("index.txt"))
+                .is_ok_and(|index| index.contains(&format!("w\t{id}\t")))
+    });
+    drop(away.menu);
+    let menu = MenuCore::new(
+        away.store.clone(),
+        away.trust.radovid.clone(),
+        Some(service.url.clone()),
+        kept_in(&away._dir),
+    );
+    let mut back = Player {
+        menu,
+        trust: away.trust,
+        store: away.store,
+        _dir: away._dir,
+    };
+    settle(&mut [&mut back], |p| p.menu.library.records().len() == 1);
+    let kept = &back.menu.library.records()[0];
+    assert_eq!(kept.match_id, Some(id));
+    assert!(folder.join(&kept.name).is_file());
+    assert!(back.menu.library.wanted().is_empty());
 }
 
 /// A new run of the client logs in with the kept token, without a password;
@@ -483,6 +631,7 @@ fn comes_back_logged_in(player: Player, service: &Service) {
         store.clone(),
         trust.radovid.clone(),
         Some(service.url.clone()),
+        kept_in(&_dir),
     );
     let mut again = Player {
         menu,
@@ -786,8 +935,7 @@ fn offline(name: &str, dir: &Scratch) -> (MenuCore, Trust) {
     let store = SettingsStore::new(Some(dir.0.join(name).join("client.conf")));
     let trust = Trust::new(None).expect("trust");
     let nowhere = format!("wss://127.0.0.1:{}", free_port());
-    let mut menu = MenuCore::new(store, trust.radovid.clone(), Some(nowhere));
-    menu.replays_dir = Some(dir.0.join("replays"));
+    let mut menu = MenuCore::new(store, trust.radovid.clone(), Some(nowhere), kept_in(dir));
     menu.server_binary = Some(server_binary().to_owned());
     menu.set_profile_name(name);
     assert!(
@@ -923,28 +1071,18 @@ fn every_local_path_works_with_no_account_and_no_service() {
     carol.act(Act::Answer(true));
     assert!(carol.take_leave());
 
-    // The local lobby's replay is listed; its match never started, so the
-    // list says so and does not open it.
+    // A lobby whose match never started leaves no replay behind.
     drop(server);
     alice.left_game(None, false);
     alice.act(Act::Go(Page::Replays));
-    assert_eq!(alice.replays.len(), 1, "the lobby's replay");
+    assert!(
+        alice.library.records().is_empty(),
+        "a lobby that never began leaves no replay"
+    );
     let PageView::Replays { list, .. } = alice.view().body else {
         panic!("the replays page");
     };
-    assert_eq!(
-        list[0].summary,
-        super::replay_info::Summary::Broken("its match never started".to_owned())
-    );
-    alice.act(Act::OpenReplay(0));
-    assert!(alice.take_launch().is_none(), "nothing to watch");
-    assert!(
-        alice
-            .view()
-            .status
-            .is_some_and(|s| s.error && s.text.contains("never started"))
-    );
-    assert_eq!(alice.page(), Page::Replays);
+    assert!(list.is_empty());
 
     // Escape backs out to the top page, then asks to quit; Escape again or
     // Cancel closes the question, OK quits.
@@ -1107,6 +1245,76 @@ fn demo_hero_starts_a_cheat_match_with_the_hero_chosen() {
     menu.left_game(None, false);
     assert_eq!(menu.page(), Page::DemoHero);
     assert!(!menu.view().reconnect);
+}
+
+/// A local game the host leaves for good (the match ends: the leaver's side loses) leaves its
+/// replay: the server's own file, finished by the server, kept when the game is left, listed
+/// as a local game and opened by the viewer.
+#[test]
+fn a_local_game_left_for_good_leaves_its_replay() {
+    let dir = Scratch::new("local-replay");
+    let (mut menu, trust) = offline("alice", &dir);
+    menu.act(Act::Go(Page::LocalLobby));
+    let port = free_port();
+    for (at, value) in [(0, port.to_string()), (1, "1".to_owned())] {
+        menu.act(Act::Focus(at));
+        while !menu.form.value(at).is_empty() {
+            menu.act(Act::Erase);
+        }
+        menu.act(Act::Type(value));
+    }
+    menu.act(Act::Host(false));
+    let launch = menu.take_launch().expect("the lobby to open");
+    let Launch::Host {
+        replay: Some(recording),
+        ..
+    } = &launch
+    else {
+        panic!("the server is told where to record: {launch:?}");
+    };
+    let recording = recording.clone();
+    let (mut game, server) = open_hosted(launch, &trust);
+    menu.game_started();
+    pump_until("seated", &mut [&mut game], |c| c.my_slot.is_some());
+    game.act(bota_client_core::Intent::PickHero(HeroId::SHADOW_FIEND.0));
+    game.act(bota_client_core::Intent::ToggleReady);
+    pump_until("the match runs", &mut [&mut game], |c| {
+        c.view().is_some_and(|v| v.tick > 5)
+    });
+    game.leave_game();
+    // The server ends the match, finishes its file and exits.
+    let deadline = Instant::now() + Duration::from_secs(PATIENCE);
+    while std::fs::metadata(&recording).map_or(0, |m| m.len()) < 1024 {
+        assert!(
+            Instant::now() < deadline,
+            "the server never finished its replay"
+        );
+        game.pump(1.0 / 30.0);
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    drop(server);
+    menu.left_game(None, true);
+    settle_menu(&mut menu, |m| m.library.records().len() == 1);
+    let record = menu.library.records()[0].clone();
+    assert_eq!(record.mode, "local");
+    assert!(!recording.exists(), "the recording became the kept replay");
+    menu.act(Act::Go(Page::Replays));
+    let PageView::Replays { list, .. } = menu.view().body else {
+        panic!("the replays page");
+    };
+    assert_eq!(list.len(), 1);
+    menu.act(Act::OpenReplay(record.name.clone()));
+    assert!(matches!(menu.take_launch(), Some(Launch::Replay(_))));
+}
+
+/// Pumps one menu until `done` holds, within [`PATIENCE`].
+fn settle_menu(menu: &mut MenuCore, done: impl Fn(&MenuCore) -> bool) {
+    let deadline = Instant::now() + Duration::from_secs(PATIENCE);
+    while !done(menu) {
+        assert!(Instant::now() < deadline, "the menu did not settle");
+        menu.update();
+        std::thread::sleep(Duration::from_millis(5));
+    }
 }
 
 /// The local lobby's host turns cheats on, as Dota's "Enable cheats": the
@@ -1438,6 +1646,77 @@ fn a_host_starts_a_practice_lobby_alone_and_plays() {
     }
     let view = game.view().expect("the match runs");
     assert_eq!(view.players.len(), 1, "the host alone, no dummy");
+}
+
+/// Plays the practice lobby alone, leaves the match for good (the leaver's side loses) and
+/// waits for the service to tell the result.
+fn play_alone_and_leave(service: &Service) -> Player {
+    let mut alice = Player::new(Some(service));
+    alice.register("alice");
+    create_lobby(&mut alice, "Practice", "alone");
+    alice.menu.act(Act::ReadyLobby(true));
+    settle(&mut [&mut alice], |p| p.menu.page() == Page::Game);
+    let mut game = open(launch_of(&mut alice), &alice.trust);
+    let deadline = Instant::now() + Duration::from_secs(PATIENCE);
+    while game.view().is_none_or(|v| v.tick <= 5) {
+        assert!(Instant::now() < deadline, "the match never began");
+        play_step(&mut game, HeroId::SHADOW_FIEND);
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    game.leave_game();
+    let deadline = Instant::now() + Duration::from_secs(PATIENCE);
+    while alice.menu.results.is_empty() {
+        assert!(Instant::now() < deadline, "the match did not end");
+        game.pump(1.0 / 30.0);
+        alice.menu.update();
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    alice.menu.left_game(None, true);
+    alice
+}
+
+/// A service that keeps no replays says so when asked for one: the client saves nothing, shows
+/// nothing broken, and tells on the REPLAYS page that the service keeps none. Nothing was asked
+/// of the game server either.
+#[test]
+fn a_service_that_keeps_no_replays_leaves_the_client_with_none_and_a_note() {
+    let service = service_saving(false);
+    let mut alice = play_alone_and_leave(&service);
+    settle(&mut [&mut alice], |p| p.menu.service_keeps_none());
+    assert!(alice.menu.library.records().is_empty());
+    assert!(
+        alice.menu.library.wanted().is_empty(),
+        "nothing is waited for"
+    );
+    alice.menu.act(Act::Go(Page::Replays));
+    let PageView::Replays { list, shelf, .. } = alice.menu.view().body else {
+        panic!("the replays page");
+    };
+    assert!(list.is_empty() && shelf.service_keeps_none && shelf.keeping);
+    let status = alice.menu.view().status;
+    assert!(
+        status.as_ref().is_none_or(|s| !s.error),
+        "nothing looks broken: {status:?}"
+    );
+    assert!(
+        !service._dir.0.join("artifacts").exists(),
+        "the game server was never asked for a file"
+    );
+}
+
+/// The same match where the service keeps replays: the one-player match's replay is kept with
+/// no click, whatever way the match ended.
+#[test]
+fn a_match_left_early_still_leaves_its_replay() {
+    let service = service();
+    let mut alice = play_alone_and_leave(&service);
+    settle(&mut [&mut alice], |p| p.menu.library.records().len() == 1);
+    let record = alice.menu.library.records()[0].clone();
+    assert_eq!(record.mode, "practice");
+    assert!(alice._dir.0.join("replays").join(&record.name).is_file());
+    alice.menu.act(Act::Go(Page::Replays));
+    alice.menu.act(Act::OpenReplay(record.name.clone()));
+    assert!(matches!(alice.menu.take_launch(), Some(Launch::Replay(_))));
 }
 
 /// A game server of another wire than the client's is not used, and the menu says which it

@@ -2,6 +2,7 @@
 // asset cache from it, then starts the client (dbota.js, the game compiled to wasm).
 import * as cache from "./cache.js";
 import * as grant from "./grant.js";
+import * as replays from "./replays.js";
 import "./keys.js";
 import * as pointer from "./pointer.js";
 
@@ -146,6 +147,9 @@ async function startGame() {
   const slow = setTimeout(() => {
     $("starting").textContent = "Still starting... If nothing changes, the browser's console (F12) says why.";
   }, 60000);
+  // The client keeps the player's replays in this browser (replays.js); a storage that is
+  // missing only means it keeps none.
+  await replays.publish().catch((e) => console.warn("dbota: no replay storage:", e));
   const gpu = await graphics();
   if (!gpu.api) {
     clearTimeout(slow);

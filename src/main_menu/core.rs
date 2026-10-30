@@ -14,9 +14,11 @@ use bota_radovid::proto::{
 use bota_radovid::{Client, ClientError, Incoming, Tls};
 
 use super::form::{Form, FormKind};
+use super::keep::Keeper;
 use super::prefs::{Prefs, Saved};
 use super::store::{Entry, SettingsStore};
 use super::text;
+use crate::replays::Library;
 
 /// Messages from the service taken in one frame at most.
 const MAX_PER_FRAME: usize = 64;
@@ -108,8 +110,16 @@ pub enum Act {
     /// Starts Dota's Demo Hero with a hero.
     #[cfg(not(target_arch = "wasm32"))]
     Demo(u16),
-    /// Watches a listed replay.
-    OpenReplay(usize),
+    /// Watches a kept replay, by its file name.
+    OpenReplay(String),
+    /// Deletes a kept replay.
+    DeleteReplay(String),
+    /// Saves a kept replay to a file of the player's own (a browser's download).
+    #[cfg(target_arch = "wasm32")]
+    DownloadReplay(String),
+    /// Opens a replay file the player picks (a browser's file chooser).
+    #[cfg(target_arch = "wasm32")]
+    OpenReplayFile,
     /// Watches the replay of a finished match of the account's: fetched from the service once.
     WatchReplay(MatchId),
     /// Goes on with plain TCP to a host after the notice.
@@ -249,11 +259,33 @@ pub enum Launch {
         key: Option<Claim>,
         /// The server binary, when not looked for.
         server: Option<std::path::PathBuf>,
+        /// Where the server writes the replay.
+        replay: Option<std::path::PathBuf>,
     },
     /// Watch a replay file.
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))] // a browser opens no files by path
     Replay(std::path::PathBuf),
+    /// Watch a replay held in memory: one a browser read from storage or from a file.
+    #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+    Blob(Blob),
     /// The game the command line named, again.
     Given,
+}
+
+/// A replay's bytes, shared.
+#[derive(Clone)]
+pub struct Blob(pub std::sync::Arc<[u8]>);
+
+impl std::fmt::Debug for Blob {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Blob({} bytes)", self.0.len())
+    }
+}
+
+impl PartialEq for Blob {
+    fn eq(&self, other: &Blob) -> bool {
+        std::sync::Arc::ptr_eq(&self.0, &other.0)
+    }
 }
 
 /// The key a seat without a reservation is claimed with, which takes it
@@ -297,7 +329,7 @@ impl Launch {
                 GameKind::Play
             }
             Launch::Watch(_) => GameKind::Watch,
-            Launch::Replay(_) => GameKind::Replay,
+            Launch::Replay(_) | Launch::Blob(_) => GameKind::Replay,
             Launch::Direct { spectate, .. } => {
                 if *spectate {
                     GameKind::Watch
@@ -327,7 +359,7 @@ enum Conn {
 
 /// What a request was, for its answer.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Asked {
+pub(super) enum Asked {
     Login,
     Register,
     Resume,
@@ -344,17 +376,8 @@ enum Asked {
     Other,
 }
 
-/// A replay on its way from the service: appended to `part` chunk by chunk.
-struct Download {
-    match_id: MatchId,
-    part: std::path::PathBuf,
-    done: std::path::PathBuf,
-}
-
 /// How long the connection stays open after a seat left the game, for the message to go out.
 const LEAVE_GAME_FLUSH: std::time::Duration = std::time::Duration::from_millis(500);
-/// The longest replay taken from the service, bytes.
-const MAX_REPLAY_BYTES: u64 = 64 << 20;
 /// Finished matches listed under MY GAMES.
 const HISTORY_LEN: u8 = 20;
 /// Ladder rows shown on the profile.
@@ -370,7 +393,7 @@ pub struct Game {
 
 /// What is on screen instead of the menu.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum OnScreen {
+pub(super) enum OnScreen {
     Match(MatchId),
     Direct,
     /// A game of a lobby on this machine.
@@ -382,23 +405,6 @@ enum OnScreen {
     Given,
 }
 
-/// A replay file on this machine, as listed.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct ReplayFile {
-    pub path: std::path::PathBuf,
-    /// Its file name, safe to draw.
-    pub name: String,
-    /// Its size, `12.3 MB`.
-    pub size: String,
-    /// When it was written, in this machine's time.
-    pub when: String,
-    /// Its size and time, which a change of either reads anew.
-    pub stamp: super::replay_info::Stamp,
-}
-
-/// Replays listed at most, the newest first.
-const MAX_REPLAYS: usize = 50;
-
 /// The menu.
 pub struct MenuCore {
     pub(super) store: SettingsStore,
@@ -408,7 +414,7 @@ pub struct MenuCore {
     conn: Conn,
     /// Whether an account is signed in: its session is kept, the link to the service is not
     /// (it is open only while something live is on it, and a request opens it again).
-    account: bool,
+    pub(super) account: bool,
     /// The login or registration to send as soon as the link is open. Held only until then.
     credentials: Option<(ClientMsg, Asked)>,
     /// Requests that wait for the link to open and the session to resume.
@@ -466,18 +472,16 @@ pub struct MenuCore {
     /// The name this player goes by where there is no account: the
     /// settings' profile name.
     profile: String,
-    /// The replays on this machine, as last listed.
-    pub(super) replays: Vec<ReplayFile>,
-    /// What each replay holds, as read.
+    /// The replays this client keeps.
+    pub(super) library: Library,
+    /// What a kept replay holds, as read, where the library knows no more.
     pub(super) shelf: super::replay_info::Shelf,
-    /// Where they are kept ([`replays_dir`]).
-    pub(super) replays_dir: Option<std::path::PathBuf>,
+    /// The fetching of the replays of the player's matches.
+    pub(super) keeper: Keeper,
     /// The account's latest finished matches, from the service.
     pub(super) history: Vec<MatchResult>,
     pub(super) account_profile: Option<PublicAccount>,
     pub(super) ladder: Vec<LadderRow>,
-    /// A replay being fetched.
-    download: Option<Download>,
     /// The game server a local lobby starts, when not looked for.
     pub(super) server_binary: Option<std::path::PathBuf>,
     /// The settings' bot command, which a local lobby's bot seats run.
@@ -495,8 +499,13 @@ impl MenuCore {
     /// A menu over `store`, connecting at once when a service is known:
     /// `service` from the command line (or the page's own host), else the
     /// one remembered.
-    pub fn new(store: SettingsStore, tls: Tls, service: Option<String>) -> MenuCore {
-        let mut core = MenuCore::unconnected(store, tls, service);
+    pub fn new(
+        store: SettingsStore,
+        tls: Tls,
+        service: Option<String>,
+        library: Library,
+    ) -> MenuCore {
+        let mut core = MenuCore::unconnected(store, tls, service, library);
         core.reach_service();
         core
     }
@@ -518,7 +527,12 @@ impl MenuCore {
     }
 
     /// A menu over `store` that has not tried the service yet.
-    fn unconnected(store: SettingsStore, tls: Tls, service: Option<String>) -> MenuCore {
+    fn unconnected(
+        store: SettingsStore,
+        tls: Tls,
+        service: Option<String>,
+        library: Library,
+    ) -> MenuCore {
         let mut prefs = store
             .read(Entry::Menu)
             .map_or_else(Prefs::default, |t| Prefs::parse(&t));
@@ -565,13 +579,12 @@ impl MenuCore {
             leave_game: false,
             leave_at: None,
             profile: String::new(),
-            replays: Vec::new(),
+            library,
             shelf: Default::default(),
-            replays_dir: replays_dir(),
+            keeper: Keeper::default(),
             history: Vec::new(),
             account_profile: None,
             ladder: Vec::new(),
-            download: None,
             server_binary: None,
             bot_command: String::new(),
             hosted_at: None,
@@ -633,8 +646,9 @@ impl MenuCore {
         tls: Tls,
         service: Option<String>,
         kind: GameKind,
+        library: Library,
     ) -> MenuCore {
-        let mut core = MenuCore::unconnected(store, tls, service);
+        let mut core = MenuCore::unconnected(store, tls, service, library);
         core.page = Page::Game;
         core.on_screen = Some(OnScreen::Given);
         core.kind = kind;
@@ -761,6 +775,7 @@ impl MenuCore {
     /// there is no seat to take again.
     pub fn left_game(&mut self, why: Option<&str>, over: bool) {
         let left = self.on_screen.take();
+        self.keep_left(left);
         self.launching = false;
         self.status = None;
         self.confirm = None;
@@ -847,13 +862,13 @@ impl MenuCore {
     }
 
     /// Whether the link is open and signed in.
-    fn link_ready(&self) -> bool {
+    pub(super) fn link_ready(&self) -> bool {
         self.conn == Conn::LoggedIn && self.client.as_ref().is_some_and(|c| !c.hung_up())
     }
 
     /// Sends a request, noting what it was for its answer. With no link open it waits for one
     /// that is opened now and signed in again with the kept session.
-    fn ask(&mut self, msg: ClientMsg, asked: Asked) {
+    pub(super) fn ask(&mut self, msg: ClientMsg, asked: Asked) {
         if self.link_ready() {
             self.send(msg, asked);
         } else if !self.account {
@@ -916,7 +931,7 @@ impl MenuCore {
             && self.outbox.is_empty()
             && self.credentials.is_none()
             && self.lobby.is_none()
-            && self.download.is_none()
+            && !self.keeper.fetching()
             && !self.launching
             && !matches!(self.on_screen, Some(OnScreen::Match(_)))
             && !(self.page == Page::MyGames && !self.games.is_empty())
@@ -941,6 +956,10 @@ impl MenuCore {
     /// Takes in what the service said since the last frame.
     pub fn update(&mut self) {
         self.shelf.take();
+        self.keep_update();
+        if self.page == Page::Replays {
+            self.read_summaries();
+        }
         self.keep_link();
         for _ in 0..MAX_PER_FRAME {
             let Some(client) = &mut self.client else {
@@ -959,6 +978,7 @@ impl MenuCore {
 
     fn lost(&mut self, err: ClientError) {
         let was_signed_in = self.conn == Conn::LoggedIn;
+        self.keep_link_lost();
         let live = was_signed_in && !self.idle();
         self.credentials = None;
         self.outbox.clear();
@@ -1064,6 +1084,7 @@ impl MenuCore {
                     })
                     .collect();
                 self.send(ClientMsg::MyMatches, Asked::Other);
+                self.keep_signed_in();
                 for (msg, asked) in std::mem::take(&mut self.outbox) {
                     self.send(msg, asked);
                 }
@@ -1099,7 +1120,7 @@ impl MenuCore {
                 offset,
                 total,
                 data,
-            } => self.replay_chunk(match_id, offset, total, &data),
+            } => self.keep_chunk(match_id, offset, total, &data),
             Reply::Lobbies { list } => self.lobbies = list,
             Reply::Lobby { state } => self.sit(state),
             Reply::Queued { .. } => self.status = None,
@@ -1128,10 +1149,7 @@ impl MenuCore {
                 self.games.retain(|g| g.match_id != id);
                 self.tell("That match is over".to_owned(), true);
             }
-            (Asked::Artifact(_), Error::NoArtifact) => {
-                self.download = None;
-                self.tell("The service keeps no replay of that match".to_owned(), true);
-            }
+            (Asked::Artifact(id), error) => self.keep_refused(id, error),
             (Asked::Lobby, Error::NotInLobby { .. }) => {
                 self.lobby = None;
                 self.go(Page::Lobbies);
@@ -1194,6 +1212,7 @@ impl MenuCore {
             self.reconnect = None;
         }
         self.games.retain(|g| g.match_id != id);
+        self.keep_finished(&result);
         if self.results.len() >= MAX_RESULTS {
             self.results.pop_front();
         }
@@ -1238,85 +1257,6 @@ impl MenuCore {
         }
     }
 
-    /// Opens the replay of a finished match, fetching it first unless it is kept.
-    fn watch_replay(&mut self, match_id: MatchId) {
-        let Some(dir) = self.replays_dir.clone() else {
-            self.tell("This client keeps no replays".to_owned(), true);
-            return;
-        };
-        let done = dir.join(format!("match-{}.brp", match_id.0));
-        if done.is_file() {
-            self.start(Launch::Replay(done));
-            return;
-        }
-        if self.download.is_some() {
-            self.tell("A replay is being fetched already".to_owned(), false);
-            return;
-        }
-        if let Err(err) = std::fs::create_dir_all(&dir) {
-            self.tell(format!("Cannot keep replays: {err}"), true);
-            return;
-        }
-        let part = done.with_extension("brp.part");
-        if let Err(err) = std::fs::File::create(&part) {
-            self.tell(format!("Cannot keep replays: {err}"), true);
-            return;
-        }
-        self.download = Some(Download {
-            match_id,
-            part,
-            done,
-        });
-        self.ask(
-            ClientMsg::MatchArtifact {
-                match_id,
-                offset: 0,
-            },
-            Asked::Artifact(match_id),
-        );
-    }
-
-    /// One piece of the replay arrived: keep it and ask for the next, or open the whole.
-    fn replay_chunk(&mut self, match_id: MatchId, offset: u64, total: u64, data: &[u8]) {
-        let Some(download) = self.download.take_if(|d| d.match_id == match_id) else {
-            return;
-        };
-        let end = offset + data.len() as u64;
-        let appended = total <= MAX_REPLAY_BYTES
-            && !data.is_empty()
-            && end <= total
-            && std::fs::OpenOptions::new()
-                .append(true)
-                .open(&download.part)
-                .and_then(|mut file| std::io::Write::write_all(&mut file, data))
-                .is_ok();
-        if !appended {
-            let _ = std::fs::remove_file(&download.part);
-            self.tell("The replay could not be fetched".to_owned(), true);
-            return;
-        }
-        if end < total {
-            self.tell(
-                format!("Fetching the replay: {}%", end * 100 / total),
-                false,
-            );
-            self.download = Some(download);
-            self.ask(
-                ClientMsg::MatchArtifact {
-                    match_id,
-                    offset: end,
-                },
-                Asked::Artifact(match_id),
-            );
-        } else if std::fs::rename(&download.part, &download.done).is_ok() {
-            self.status = None;
-            self.start(Launch::Replay(download.done));
-        } else {
-            let _ = std::fs::remove_file(&download.part);
-            self.tell("The replay could not be kept".to_owned(), true);
-        }
-    }
-
     fn sit(&mut self, state: LobbyState) {
         self.lobby = Some((state, Instant::now()));
         if self.page == Page::Lobbies {
@@ -1349,7 +1289,7 @@ impl MenuCore {
         }
     }
 
-    fn start(&mut self, launch: Launch) {
+    pub(super) fn start(&mut self, launch: Launch) {
         if self.on_screen.is_some() {
             self.tell("Disconnect from the game you are in first".to_owned(), true);
             return;
@@ -1359,9 +1299,10 @@ impl MenuCore {
             Launch::Direct { .. } => OnScreen::Direct,
             Launch::Host { .. } => OnScreen::Local,
             Launch::Demo { .. } => OnScreen::Demo,
-            Launch::Replay(_) => OnScreen::Replay,
+            Launch::Replay(_) | Launch::Blob(_) => OnScreen::Replay,
             Launch::Given => OnScreen::Given,
         });
+        self.keep_start(&launch);
         self.hosted_at = match &launch {
             Launch::Host {
                 port, lan: true, ..
@@ -1441,12 +1382,7 @@ impl MenuCore {
             }
             Page::Profile => self.ask_profile(),
             Page::Lobbies => self.ask(ClientMsg::LobbyList, Asked::Other),
-            Page::Replays => {
-                self.replays = list_replays(self.replays_dir.as_deref());
-                for replay in &self.replays {
-                    self.shelf.summary(&replay.path, replay.stamp);
-                }
-            }
+            Page::Replays => self.read_summaries(),
             _ => {}
         }
     }
@@ -1516,20 +1452,16 @@ impl MenuCore {
                         name: self.name(),
                         key: Claim::draw(),
                         server: self.server_binary.clone(),
+                        replay: self.recording_path("demo"),
                     });
                 }
             }
-            Act::OpenReplay(at) => {
-                if let Some(file) = self.replays.get(at) {
-                    let path = file.path.clone();
-                    match self.shelf.peek(&path, file.stamp) {
-                        super::replay_info::Summary::Broken(why) => {
-                            self.tell(format!("That replay cannot be watched: {why}"), true);
-                        }
-                        _ => self.start(Launch::Replay(path)),
-                    }
-                }
-            }
+            Act::OpenReplay(name) => self.open_listed(&name),
+            Act::DeleteReplay(name) => self.library.delete(&name),
+            #[cfg(target_arch = "wasm32")]
+            Act::DownloadReplay(name) => self.library.export(&name),
+            #[cfg(target_arch = "wasm32")]
+            Act::OpenReplayFile => self.library.pick_file(),
             Act::WatchReplay(match_id) => self.watch_replay(match_id),
             Act::PlainAnyway => self.direct(false, true),
             Act::Dismiss => self.status = None,
@@ -1624,6 +1556,7 @@ impl MenuCore {
             Page::Register => self.register(),
             Page::LocalLobby if self.form.focused_field() == Some(2) => self.direct(false, false),
             Page::LocalLobby => self.host(false),
+            #[cfg(not(target_arch = "wasm32"))]
             Page::Replays => {
                 let path = self.form.value(0).trim().to_owned();
                 if path.is_empty() {
@@ -1860,12 +1793,7 @@ impl MenuCore {
         self.prefs.host_port = port.to_string();
         self.prefs.host_players = players.to_string();
         self.save_prefs();
-        let replay = self.replays_dir.as_ref().map(|dir| {
-            let secs = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map_or(0, |d| d.as_secs());
-            dir.join(format!("local-{secs}.brp"))
-        });
+        let replay = self.recording_path("local");
         self.start(Launch::Host {
             port,
             players,
@@ -1939,58 +1867,6 @@ pub fn clock(secs: u32) -> String {
 
 /// Seats a local lobby has at most: the map's ten.
 pub const MAX_LOCAL_PLAYERS: u8 = 10;
-
-/// Where replays are kept on this machine: `$XDG_DATA_HOME/dbota/replays`,
-/// else `~/.local/share/dbota/replays`; none in a browser.
-pub fn replays_dir() -> Option<std::path::PathBuf> {
-    if cfg!(target_arch = "wasm32") {
-        return None;
-    }
-    let base = std::env::var_os("XDG_DATA_HOME")
-        .filter(|dir| !dir.is_empty())
-        .map(std::path::PathBuf::from)
-        .or_else(|| {
-            std::env::var_os("HOME").map(|home| std::path::PathBuf::from(home).join(".local/share"))
-        })?;
-    Some(base.join("dbota").join("replays"))
-}
-
-/// The replays in `dir`, the newest first.
-fn list_replays(dir: Option<&std::path::Path>) -> Vec<ReplayFile> {
-    let Some(entries) = dir.and_then(|dir| std::fs::read_dir(dir).ok()) else {
-        return Vec::new();
-    };
-    let mut found: Vec<(std::time::SystemTime, ReplayFile)> = entries
-        .filter_map(Result::ok)
-        .take(10_000)
-        .filter(|e| e.path().extension().is_some_and(|x| x == "brp"))
-        .filter_map(|e| {
-            let meta = e.metadata().ok().filter(std::fs::Metadata::is_file)?;
-            let name = text::line(&e.file_name().to_string_lossy(), text::NAME);
-            let size = format!("{:.1} MB", meta.len() as f64 / 1e6);
-            let when = meta.modified().unwrap_or(std::time::UNIX_EPOCH);
-            Some((
-                when,
-                ReplayFile {
-                    path: e.path(),
-                    name,
-                    size,
-                    when: super::replay_info::when(when),
-                    stamp: super::replay_info::Stamp {
-                        len: meta.len(),
-                        modified: when,
-                    },
-                },
-            ))
-        })
-        .collect();
-    found.sort_by_key(|f| std::cmp::Reverse(f.0));
-    found
-        .into_iter()
-        .take(MAX_REPLAYS)
-        .map(|(_, f)| f)
-        .collect()
-}
 
 /// Whether a typed service address can be tried at all, or what to type
 /// instead: an empty line or a game server's `host:port` would only fail

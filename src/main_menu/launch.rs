@@ -77,7 +77,7 @@ fn hello(launch: &Launch) -> std::io::Result<ClientMsg> {
             bota_core::WIRE_FINGERPRINT,
         )),
         // The shell opens these as files, or as the command line did.
-        Launch::Replay(_) | Launch::Given => Err(not_here()),
+        Launch::Replay(_) | Launch::Blob(_) | Launch::Given => Err(not_here()),
     }
 }
 
@@ -462,9 +462,16 @@ impl Opening {
                             replay.as_deref(),
                             server.as_deref(),
                         )?),
-                        Launch::Demo { hero, server, .. } => {
-                            Some(start_server(&demo_args(hero.0), None, server.as_deref())?)
-                        }
+                        Launch::Demo {
+                            hero,
+                            server,
+                            replay,
+                            ..
+                        } => Some(start_server(
+                            &demo_args(hero.0),
+                            replay.as_deref(),
+                            server.as_deref(),
+                        )?),
                         _ => None,
                     };
                     let (server, listening) = match started {
@@ -483,7 +490,9 @@ impl Opening {
                             Endpoint::parse(&listening.unwrap_or_default())?,
                             Redial::DEFAULT,
                         )?,
-                        Launch::Replay(_) | Launch::Given => return Err(not_here()),
+                        Launch::Replay(_) | Launch::Blob(_) | Launch::Given => {
+                            return Err(not_here());
+                        }
                     };
                     Transport::send(&mut net, &greeting)?;
                     Transport::send(&mut net, &ClientMsg::Compress(Codec::Deflate))?;
@@ -549,7 +558,7 @@ impl Opening {
                         "a local lobby needs the desktop client: a browser cannot start a server",
                     ));
                 }
-                Launch::Replay(_) | Launch::Given => return Err(not_here()),
+                Launch::Replay(_) | Launch::Blob(_) | Launch::Given => return Err(not_here()),
             };
             link.send(&greeting)?;
             link.send(&ClientMsg::Compress(Codec::Deflate))?;

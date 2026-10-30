@@ -71,6 +71,7 @@ mod player_colour;
 mod portrait;
 mod quality;
 mod replay_controls;
+mod replays;
 mod scoreboard;
 mod script;
 mod seat_name;
@@ -637,9 +638,10 @@ fn menu(
     let pem: Option<String> = None;
     let trust = main_menu::Trust::new(pem.as_deref())?;
     let service = args.service.clone().or_else(main_menu::page_service);
+    let library = replays::Library::open_default();
     // A game named on the command line is on screen first, the menu under it.
     let core = if menu_first {
-        main_menu::MenuCore::new(store, trust.radovid.clone(), service)
+        main_menu::MenuCore::new(store, trust.radovid.clone(), service, library)
     } else {
         let kind = if args.replay.is_some() {
             main_menu::GameKind::Replay
@@ -648,7 +650,7 @@ fn menu(
         } else {
             main_menu::GameKind::Play
         };
-        main_menu::MenuCore::over_given(store, trust.radovid.clone(), service, kind)
+        main_menu::MenuCore::over_given(store, trust.radovid.clone(), service, kind, library)
     };
     app.insert_non_send(core)
         .insert_non_send(main_menu::Trusted(trust));

@@ -15,7 +15,7 @@ use bota_proto::{ServerMsg, Team};
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[cfg_attr(
     target_arch = "wasm32",
-    expect(dead_code, reason = "a browser lists no replay files to read")
+    allow(dead_code, reason = "a browser reads no replay files")
 )]
 pub enum Summary {
     /// Still being read.
@@ -40,6 +40,10 @@ pub struct Stamp {
 }
 
 /// Why a replay with no match in it has nothing to watch.
+#[cfg_attr(
+    target_arch = "wasm32",
+    allow(dead_code, reason = "a browser reads no replay files")
+)]
 const NEVER_STARTED: &str = "its match never started";
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -169,6 +173,10 @@ fn heroes(picks: &[bota_proto::Pick]) -> String {
 }
 
 /// Replays read so far, by path and stamp; the reading thread's answers.
+#[cfg_attr(
+    target_arch = "wasm32",
+    allow(dead_code, reason = "a browser reads no replay files")
+)]
 #[derive(Default)]
 pub struct Shelf {
     known: std::collections::HashMap<PathBuf, (Stamp, Summary)>,
@@ -178,6 +186,10 @@ pub struct Shelf {
     told: Option<std::sync::mpsc::Receiver<(PathBuf, Stamp, Summary)>>,
 }
 
+#[cfg_attr(
+    target_arch = "wasm32",
+    allow(dead_code, reason = "a browser reads no replay files")
+)]
 impl Shelf {
     /// What is known of `path` as it is now; a file not read yet (or changed
     /// since) is asked for and shows as being read.
@@ -270,8 +282,19 @@ pub fn when(time: std::time::SystemTime) -> String {
     }
 }
 
-/// A browser lists no replay files to date.
+/// When a replay was played, in the page's time zone: `2026-10-24 15:06`.
 #[cfg(target_arch = "wasm32")]
-pub fn when(_time: std::time::SystemTime) -> String {
-    String::new()
+pub fn when(time: std::time::SystemTime) -> String {
+    let Ok(since) = time.duration_since(std::time::UNIX_EPOCH) else {
+        return "unknown date".to_owned();
+    };
+    let at = js_sys::Date::new(&wasm_bindgen::JsValue::from_f64(since.as_millis() as f64));
+    format!(
+        "{:04}-{:02}-{:02} {:02}:{:02}",
+        at.get_full_year(),
+        at.get_month() + 1,
+        at.get_date(),
+        at.get_hours(),
+        at.get_minutes()
+    )
 }
