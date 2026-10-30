@@ -2,7 +2,8 @@
 //! sun's shadows, anti-aliasing, the 3D scene drawn at a share of the
 //! window's resolution, a cap on texture size, and a frame cap. With
 //! `auto_quality`, the settings are lowered a step at a time while frames
-//! run slower than the frame cap (or 30 fps) allows.
+//! run slower than the frame cap (or 30 fps) allows. Lights are clustered on
+//! the CPU (see [`cluster_on_cpu`]).
 
 use bevy::{
     anti_alias::{
@@ -32,6 +33,20 @@ pub fn plugin(app: &mut App) {
     );
     #[cfg(not(target_arch = "wasm32"))]
     app.add_systems(Last, cap_frames);
+    app.add_systems(Startup, cluster_on_cpu);
+}
+
+/// Clusters the point lights on the CPU, as Bevy does where compute shaders are
+/// missing (WebGL2), not with its GPU clustering: at most a handful of lights
+/// shine at once (the particles' pool), and the GPU's passes and read-back cost
+/// about 0.27 ms a frame for the main view at 4K and as much again for each
+/// other view, such as the animated portrait (measured against the CPU's).
+///
+/// The headless client the end-to-end tests run has no renderer, so no settings to set.
+fn cluster_on_cpu(settings: Option<ResMut<bevy::light::cluster::GlobalClusterSettings>>) {
+    if let Some(mut settings) = settings {
+        settings.gpu_clustering = None;
+    }
 }
 
 /// The sun's cascades at a shadow level: one close to the camera when low.
