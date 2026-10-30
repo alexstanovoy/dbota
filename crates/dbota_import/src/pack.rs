@@ -31,15 +31,16 @@ const MAX_SMALL_TOTAL: u64 = 128 << 20;
 const MAX_INDEX: u64 = 2 << 20;
 
 /// Where a cache's files live: the folders at its top and the extensions they hold.
-const PLACES: [(&str, &[&str]); 10] = [
+const PLACES: [(&str, &[&str]); 11] = [
     ("cursors", &["png"]),
+    ("expressions", &["txt"]),
     ("hud", &["png"]),
     ("icons", &["png"]),
     ("map", &["bin", "gltf", "ktx2", "png", "txt"]),
     ("minimap", &["png"]),
     ("models", &["glb", "ktx2", "png", "txt"]),
     ("particles", &["glb", "json", "ktx2", "png"]),
-    ("sounds", &["mp3", "wav"]),
+    ("sounds", &["mp3", "txt", "wav"]),
     ("text", &["json"]),
     ("textures", &["png"]),
 ];
