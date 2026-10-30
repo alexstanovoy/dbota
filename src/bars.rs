@@ -230,6 +230,10 @@ fn bar_size(kind: UnitKind) -> Option<(f32, f32)> {
 
 /// The height of a hero's mana bar under its health.
 const MANA_HEIGHT: f32 = 4.0 * ui::DOTA;
+/// Interface pixels around a bar that its parts (the threat mark above, the
+/// mana and channel wells below) may reach: a bar this near the screen is laid
+/// out and drawn.
+const BAR_REACH: f32 = 40.0;
 
 /// How high over its feet a unit's bar floats, in world units.
 fn bar_height(kind: UnitKind) -> f32 {
@@ -457,6 +461,10 @@ fn bars(
     let cam_gt = &cam_gt;
     let scale = p.ui_scale.0.max(0.1);
     let me = core.ears().and_then(|id| view.unit(id));
+    // The screen in interface pixels, as the bars' corners are.
+    let viewport = camera
+        .logical_viewport_rect()
+        .map(|r| Rect::from_corners(r.min / scale, r.max / scale));
     let mut alive = Vec::new();
     for (entity, unit, dying) in &units {
         let Some((w, h)) = bar_size(unit.kind) else {
@@ -483,8 +491,27 @@ fn bars(
             p.bars.0.insert(entity, bar);
             continue;
         };
-        lay_ticks(&mut p.commands, bar, live.max_hp, (w, h));
+        // A bar off the screen is out of the layout and not drawn: every bar
+        // moves on the screen as the camera does, and laying out and drawing the
+        // ones nobody sees was most of what the bars cost.
         let corner = Vec2::new(screen.x / scale - w / 2.0, screen.y / scale - h);
+        let on_screen = viewport.is_none_or(|room| {
+            let reach = Vec2::new(w + BAR_REACH, h + BAR_REACH);
+            !Rect::from_corners(corner - reach, corner + reach)
+                .intersect(room)
+                .is_empty()
+        });
+        if !on_screen {
+            set(
+                &mut nodes,
+                bar.root,
+                |n| n.display = Display::None,
+                Some(false),
+                None,
+            );
+            continue;
+        }
+        lay_ticks(&mut p.commands, bar, live.max_hp, (w, h));
         fill_bar(core, view, me, live, bar, corner, w, &mut nodes, &mut texts);
     }
     alive.sort_unstable();
@@ -513,6 +540,7 @@ fn fill_bar(
     let place = |node: &mut Node| {
         node.left = px(corner.x);
         node.top = px(corner.y);
+        node.display = Display::Flex;
     };
     set(nodes, bar.root, |n| place(n), Some(true), None);
     let max = live.max_hp.max(1) as f32;
