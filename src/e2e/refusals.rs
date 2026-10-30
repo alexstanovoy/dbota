@@ -48,7 +48,7 @@ fn a_refusal_shows_dotas_line_and_a_dead_heros_order_none() {
     client.cheat(Cheat::Teleport {
         at: bota_core::fountain_pos(map, Team::Dire),
     });
-    client.until("the hero fallen", |c| c.core().ears().is_none());
+    client.until("the hero fallen", |c| c.core().my_standing_hero().is_none());
     client.core_mut().act(Intent::MoveTo((1000.0, 1000.0)));
     client.within(patience, "the dead hero's order turned down", |c| {
         let reason = c.core().reject.as_ref().map(|(r, _)| r.clone());

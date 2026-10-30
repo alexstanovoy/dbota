@@ -116,21 +116,9 @@ fn blocks(client: &Client, id: EntityId) -> Option<(usize, usize)> {
     Some((segments.len(), standing))
 }
 
-/// The blocks a health counted in hits shows: one a hit of the blow that takes the least, and
-/// as many standing as hits are left.
-fn hits(count: bota_core::HitCount, hp: i32, max_hp: i32) -> (usize, usize) {
-    let least = count
-        .melee_hero
-        .min(count.ranged_hero)
-        .min(count.other)
-        .max(1);
-    let of = |health: i32| (health.max(0) as u32).div_ceil(least as u32) as usize;
-    (of(max_hp), of(hp))
-}
-
 /// A courier's and a planted ward's health is counted in hits (reported: hit-count
-/// bars and ward bars): their bars are blocks, one a hit, as many standing as hits are left,
-/// at Dota's sizes (a courier's 50 by 6, a ward's 40 by 5).
+/// bars and ward bars): their bars are two blocks, one a ranged hero's hit, both standing
+/// while the health is whole, at Dota's sizes (a courier's 50 by 6, a ward's 40 by 5).
 #[test]
 fn a_courier_and_a_ward_show_their_health_in_hits() {
     let server = Server::start(1, &[]);
@@ -167,32 +155,87 @@ fn a_courier_and_a_ward_show_their_health_in_hits() {
         ward(c).is_some_and(|id| bar(c, id).is_some())
     });
     let ward = ward(&client).expect("planted");
-    let live = client.view().unit(ward).expect("seen").clone();
     let (w, h, _) = bar(&client, ward).expect("barred");
     assert_eq!((w, h), (40.0 * crate::ui::DOTA, 5.0 * crate::ui::DOTA));
-    let counted = bota_core::OBSERVER_WARD
-        .hit_count
-        .expect("a ward's health is in hits");
-    assert_eq!(
-        blocks(&client, ward),
-        Some(hits(counted, live.hp, live.max_hp)),
-        "a ward's blocks"
-    );
+    assert_eq!(blocks(&client, ward), Some((2, 2)), "a ward's blocks");
     // The courier waits at the fountain, where the camera goes back to.
     let courier = client.core().my_courier().expect("a courier");
     client.core_mut().pinned = Some(bota_client_core::Pin::Unit(courier));
     client.until("the courier barred", |c| bar(c, courier).is_some());
-    let live = client.view().unit(courier).expect("seen").clone();
     let (w, h, _) = bar(&client, courier).expect("barred");
     assert_eq!((w, h), (50.0 * crate::ui::DOTA, 6.0 * crate::ui::DOTA));
-    let counted = bota_core::COURIER
-        .hit_count
-        .expect("a courier's health is in hits");
-    let (all, standing) = hits(counted, live.hp, live.max_hp);
-    assert!(all > 1, "a courier takes more than one hit");
-    assert_eq!(
-        blocks(&client, courier),
-        Some((all, standing)),
-        "a courier's blocks"
+    assert_eq!(blocks(&client, courier), Some((2, 2)), "a courier's blocks");
+}
+
+/// The width each block of a unit's bar is drawn, nought for one hidden.
+fn block_widths(client: &Client, id: EntityId) -> Vec<f32> {
+    let bars = client.world().resource::<crate::bars::Bars>();
+    let Some(body) = client.body(id) else {
+        return Vec::new();
+    };
+    bars.segments(body)
+        .iter()
+        .map(|s| {
+            let shown = client.world().get::<Visibility>(*s) != Some(&Visibility::Hidden);
+            match client.world().get::<Node>(*s).map(|n| n.width) {
+                Some(Val::Px(w)) if shown => w,
+                _ => 0.0,
+            }
+        })
+        .collect()
+}
+
+/// A creep's attack takes a sixth of a courier's health, a third of one of its two blocks
+/// (Dota: six creep attacks, two ranged hero attacks): the bar keeps its first block whole and
+/// the second two thirds full, as Dota draws a hit-count bar being bitten.
+#[test]
+fn a_creeps_attack_on_a_courier_leaves_its_second_block_partly_full() {
+    let server = Server::start(1, &[]);
+    let mut client = Client::join(&server, HeroId::SHADOW_FIEND, &[]);
+    // The hero stays at its fountain: the creeps have only the courier to attack.
+    client.until("a courier", |c| c.core().my_courier().is_some());
+    let courier = client.core().my_courier().expect("a courier");
+    client.core_mut().send_order_to(
+        Some(courier),
+        bota_proto::Order::Move {
+            target: bota_proto::Target::Pos(At::from_ints(MID.0, MID.1)),
+        },
     );
+    client.core_mut().pinned = Some(bota_client_core::Pin::Unit(courier));
+    client.until("the courier at mid", |c| {
+        c.view().unit(courier).is_some_and(|u| {
+            let (dx, dy) = (
+                (u.pos.x - At::from_ints(MID.0, MID.1).x).to_f32(),
+                (u.pos.y - At::from_ints(MID.0, MID.1).y).to_f32(),
+            );
+            dx * dx + dy * dy < 400.0 * 400.0
+        })
+    });
+    client.cheat(Cheat::CreateCreeps {
+        enemy: true,
+        at: At::from_ints(MID.0 + 300, MID.1),
+    });
+    client.until("a creep's attack on the courier", |c| {
+        c.view()
+            .unit(courier)
+            .and_then(|u| u.hit_health)
+            .is_some_and(|health| health.to_f32() < 6.0)
+    });
+    client.frames(2);
+    let health = client
+        .view()
+        .unit(courier)
+        .and_then(|u| u.hit_health)
+        .expect("exact health")
+        .to_f32();
+    assert!(health > 3.0, "a creep, not a hero, bit it: {health}");
+    let widths = block_widths(&client, courier);
+    assert_eq!(widths.len(), 2, "two blocks");
+    let (full, bitten) = (widths[0], widths[1]);
+    let share = (health - 3.0) / 3.0;
+    assert!(
+        full > 0.0 && (bitten - full * share).abs() < 0.5,
+        "{widths:?} at {health}"
+    );
+    assert!(bitten < full, "the second block is partly full: {widths:?}");
 }

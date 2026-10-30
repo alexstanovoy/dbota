@@ -19,8 +19,9 @@
 //! - Every health bar shown marks its health every 250 and every 1000 where
 //!   [`crate::bars::tick_marks`] puts the marks; with `--bars-check` (the
 //!   camera on the watched seat's courier) only the bars are measured, and a
-//!   bar of health counted in hits must stand as one block a hit, apart,
-//!   as many standing as the health has hits left.
+//!   bar of health counted in hits must stand as one block a ranged hero's
+//!   hit, apart, whole while their health is left and the one being bitten
+//!   filled by its share.
 //! - With `--water-check` (the camera on the river) only the river is
 //!   measured: one surface, no straight sharp step in its shading where one
 //!   of the map's water pieces meets the next.
@@ -676,11 +677,12 @@ fn bar_ticks(c: &Checks, report: &mut impl FnMut(&str, bool, String)) {
     );
 }
 
-/// Every shown bar of health counted in hits is one block a hit, the blocks
-/// apart, as many standing as the health has hits left.
+/// Every shown bar of health counted in hits is one block a ranged hero's
+/// hit, the blocks apart, whole while their health is left and the one
+/// being bitten filled by its share.
 fn bar_blocks(c: &Checks, report: &mut impl FnMut(&str, bool, String)) {
     let mut told = Vec::new();
-    for (e, _, live) in shown_bars(c) {
+    for (e, w, live) in shown_bars(c) {
         let Some((block, blocks)) = crate::bars::hit_blocks(live.kind, live.max_hp) else {
             continue;
         };
@@ -690,26 +692,32 @@ fn bar_blocks(c: &Checks, report: &mut impl FnMut(&str, bool, String)) {
             .iter()
             .filter_map(|s| c.laid.get(*s).ok())
             .collect();
-        let standing = parts
-            .iter()
-            .filter(|(_, v)| **v != Visibility::Hidden)
-            .count();
+        let health = crate::bars::exact_health(live);
+        let each = crate::bars::block_width(w, blocks);
+        let filled = parts.iter().enumerate().all(|(at, (n, v))| {
+            let fill = crate::bars::block_fill(health, block, at);
+            let width = match n.width {
+                Val::Px(width) => width,
+                _ => -1.0,
+            };
+            (**v != Visibility::Hidden) == (fill > 0.0)
+                && (fill == 0.0 || (width - each * fill).abs() < 0.5)
+        });
         let edges: Vec<(f32, f32)> = parts
             .iter()
-            .filter_map(|(n, _)| match (n.left, n.width) {
-                (Val::Px(l), Val::Px(w)) => Some((l, l + w)),
+            .filter_map(|(n, _)| match n.left {
+                Val::Px(l) => Some((l, l + each)),
                 _ => None,
             })
             .collect();
         let apart = edges.windows(2).all(|p| p[1].0 - p[0].1 >= 1.0);
-        let left = (live.hp.max(0) as u32).div_ceil(block as u32) as usize;
-        let right = parts.len() == blocks && standing == left && apart;
-        told.push((live.kind, live.hp, blocks, standing, right));
+        let right = parts.len() == blocks && filled && apart;
+        told.push((live.kind, health, blocks, right));
     }
     report(
-        "health counted in hits as one block a hit",
+        "health counted in hits as one block a ranged hero's hit",
         !told.is_empty() && told.iter().all(|(.., right)| *right),
-        format!("bars (kind, health, blocks, standing, right): {told:?}"),
+        format!("bars (kind, health, blocks, right): {told:?}"),
     );
 }
 

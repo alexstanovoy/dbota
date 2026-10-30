@@ -221,7 +221,8 @@ shop; there GRAB ALL moves what it holds into the bag, a slot a tick. A dead her
 the panel and in the top bar (either side's), turns grey with its respawn seconds over it. Health
 bars are the side's colour whoever watches: Radiant green, Dire red. Over every unit the bar
 marks its health as Dota's does, a small mark every 250 and a big one every 1000; a courier's or a
-ward's health, counted in hits, stands as one block a hit. Each seat has Dota's player colour
+ward's health, counted in hits, stands as one block a ranged hero's hit, the block being bitten
+partly filled. Each seat has Dota's player colour
 (read from the install: Radiant's blue, teal, purple, yellow, orange; Dire's pink, olive, light blue,
 dark green, brown): the strip over its portrait in the top bar, its row of the scoreboard, its pings and
 teleports, and its hero's mark on the minimap, ringed in its side's colour.

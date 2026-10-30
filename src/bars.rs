@@ -1,7 +1,8 @@
 //! Health bars over units, Dota's way: screen-space bars that keep their
 //! size, the health just lost trailing off, a small mark every 250 health
 //! and a big one every 1000 (`dota_health_per_vertical_marker`), level and
-//! name; health counted in hits (a courier's, a ward's) as one block a hit.
+//! name; health counted in hits (a courier's, a ward's) as one block a
+//! ranged hero's hit, the one being bitten partly filled.
 //! Also the numbers and words that rise off units.
 
 use std::collections::HashMap;
@@ -111,22 +112,38 @@ pub fn tick_marks(max_hp: i32, w: f32) -> Vec<(f32, bool)> {
         .collect()
 }
 
-/// A unit's health counted in hits, as Dota draws it: the health one block
-/// stands for (the smallest blow's share) and how many blocks there are.
+/// A unit's health counted in hits, as Dota draws it: one block a ranged
+/// hero's hit (a courier's two, a ward's two), each an equal share of its
+/// maximum. The health one block stands for and how many blocks there are;
 /// None for health that damage takes.
-pub fn hit_blocks(kind: UnitKind, max_hp: i32) -> Option<(i32, usize)> {
+pub fn hit_blocks(kind: UnitKind, max_hp: i32) -> Option<(f32, usize)> {
     let count = match kind {
         UnitKind::Courier => bota_core::COURIER.hit_count,
         UnitKind::Ward => bota_core::OBSERVER_WARD.hit_count,
         _ => None,
     }?;
-    let block = count
-        .melee_hero
-        .min(count.ranged_hero)
-        .min(count.other)
-        .max(1);
-    let blocks = usize::try_from((max_hp.max(1) as u32).div_ceil(block as u32)).ok()?;
-    Some((block, blocks.min(MAX_SEGMENTS)))
+    let blocks = usize::from(count.ranged_hero.max(1)).min(MAX_SEGMENTS);
+    Some((max_hp.max(1) as f32 / blocks as f32, blocks))
+}
+
+/// How much of block `at` stands with `health` left: whole below the
+/// health, the one being bitten by its share, none past it (a creep's
+/// attack takes a third of a courier's block, a fifth of a ward's).
+pub fn block_fill(health: f32, block: f32, at: usize) -> f32 {
+    ((health - block * at as f32) / block.max(f32::EPSILON)).clamp(0.0, 1.0)
+}
+
+/// A unit's health exactly where it is counted in hits, whole otherwise.
+pub fn exact_health(live: &UnitView) -> f32 {
+    live.hit_health
+        .map_or(live.hp as f32, |health| health.to_f32())
+        .max(0.0)
+}
+
+/// The width of one whole block of a bar `w` wide with `blocks` of them.
+pub fn block_width(w: f32, blocks: usize) -> f32 {
+    let gaps = SEGMENT_GAP * (blocks as f32 - 1.0);
+    ((w - gaps) / blocks as f32).max(1.0)
 }
 
 /// The pool of floating texts.
@@ -377,8 +394,7 @@ fn spawn_segments(
     let Some((_, blocks)) = hit_blocks(live.kind, live.max_hp) else {
         return Vec::new();
     };
-    let gaps = SEGMENT_GAP * (blocks as f32 - 1.0);
-    let each = ((w - gaps) / blocks as f32).max(1.0);
+    let each = block_width(w, blocks);
     (0..blocks)
         .map(|at| {
             let left = at as f32 * (each + SEGMENT_GAP);
@@ -562,11 +578,17 @@ fn fill_bar(
         Some(!blocks),
         None,
     );
-    if let Some((block, _)) = hit_blocks(live.kind, live.max_hp) {
-        // A block stands while any of its health is left.
-        let standing = usize::try_from((live.hp.max(0) as u32).div_ceil(block as u32)).unwrap_or(0);
+    if let Some((block, blocks)) = hit_blocks(live.kind, live.max_hp) {
+        let (health, each) = (exact_health(live), block_width(w, blocks));
         for (at, segment) in bar.segments.iter().enumerate() {
-            set(nodes, *segment, |_| {}, Some(at < standing), Some(color));
+            let fill = block_fill(health, block, at);
+            set(
+                nodes,
+                *segment,
+                |n| n.width = px(each * fill),
+                Some(fill > 0.0),
+                Some(color),
+            );
         }
     }
     if let Some(mana) = bar.mana {

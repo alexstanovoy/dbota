@@ -1653,10 +1653,10 @@ fn clock(ticks: i64, rate: u32) -> String {
     format!("{sign}{}:{:02}", seconds.abs() / 60, seconds.abs() % 60)
 }
 
-/// Whether a seat's hero lies dead, waiting to respawn (not yet spawned is
-/// not dead).
+/// Whether a seat's hero lies dead, waiting to respawn: the seat still
+/// names it (a hero is one unit all match), and not yet spawned is not dead.
 pub(crate) fn lies_dead(p: &PlayerView) -> bool {
-    p.unit.is_none() && p.respawn_left > 0
+    p.respawn_left > 0
 }
 
 /// The player in a place of the top bar: its side's n-th, in the order the
@@ -2161,7 +2161,7 @@ fn portrait(
     // Nothing in place of a portrait the cache has not, rather than white.
     let tint = if path.is_none() {
         Color::NONE
-    } else if p.is_some_and(|p| p.unit.is_none()) {
+    } else if p.is_some_and(lies_dead) {
         Color::srgb(0.3, 0.3, 0.3)
     } else {
         Color::WHITE

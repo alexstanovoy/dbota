@@ -90,9 +90,10 @@ fn untouchable(client: &Client) -> bool {
 }
 
 /// One's hero dies at the enemy's fountain: the top bar shows its portrait washed grey while
-/// it is down; it rises still selected and still in its control group (bota makes a risen hero
-/// a new unit, and the selection kept the fallen one); untouchable at its fountain its model is
-/// tinted black, and its colours come back with its first command.
+/// it is down, and the inventory still shows what it carries (a dead hero may swap it, as in
+/// Dota); it rises the same unit, still selected and still in its control group; untouchable
+/// at its fountain its model is tinted black, and its colours come back with its first
+/// command.
 #[test]
 fn a_hero_lies_grey_rises_selected_and_is_black_at_its_fountain() {
     let server = Server::start(1, &[]);
@@ -103,19 +104,37 @@ fn a_hero_lies_grey_rises_selected_and_is_black_at_its_fountain() {
     client.key(KeyCode::Digit1, ButtonState::Pressed);
     client.key(KeyCode::Digit1, ButtonState::Released);
     client.key(KeyCode::ControlLeft, ButtonState::Released);
+    client.cheat(Cheat::Item {
+        item: bota_proto::ItemId::BOOTS,
+    });
+    client.until("the boots carried", |c| {
+        c.slot_of(bota_proto::ItemId::BOOTS).is_some()
+    });
+    let boots = client.slot_of(bota_proto::ItemId::BOOTS);
     let fallen = client.me().id;
     let map = bota_core::map_of(bota_core::MAP2_ID);
     let theirs = bota_core::fountain_pos(map, Team::Dire);
     client.cheat(Cheat::Teleport { at: theirs });
     client.until("the hero fallen to the fountain", |c| {
-        c.core().ears().is_none()
+        c.core().my_standing_hero().is_none()
     });
     let patience = std::time::Duration::from_secs(20);
     client.within(patience, "the dead seat shown", grey_portrait);
+    assert_eq!(
+        client.core().my_hero(),
+        Some(fallen),
+        "the dead hero's handle"
+    );
+    assert_eq!(
+        client.slot_of(bota_proto::ItemId::BOOTS),
+        boots,
+        "the dead hero's inventory shown"
+    );
     client.cheat(Cheat::Respawn);
-    client.until("risen", |c| c.core().ears().is_some_and(|id| id != fallen));
+    client.until("risen", |c| c.core().my_standing_hero() == Some(fallen));
     client.until("risen, in colour", |c| !grey_portrait(c));
     let risen = client.me().id;
+    assert_eq!(risen, fallen, "the same hero rises");
     assert_eq!(
         client.core().selected,
         Some(risen),
