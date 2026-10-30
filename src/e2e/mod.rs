@@ -17,6 +17,7 @@ mod menu;
 mod minimap;
 mod refusals;
 mod rings;
+mod start;
 mod strategy;
 mod trees;
 mod window;

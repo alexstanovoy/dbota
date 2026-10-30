@@ -511,6 +511,8 @@ texture minimap.hero.nevermore panorama/images/heroes/icons/npc_dota_hero_neverm
 # --- HUD art and the minimap background
 # The Glyph of Fortification buff's icon (modifier_fountain_glyph): Dota's small Glyph.
 texture icon.glyph panorama/images/hud/icon_glyph_small_psd.vtex_c icons/glyph_small_psd.png
+texture loading.logo panorama/images/loadingscreens/default/dota_logo_psd.vtex_c loading/dota_logo_psd.png
+texture loading.throbber panorama/images/status_icons/loadingthrobber_round_png.vtex_c loading/loadingthrobber_round_png.png
 texture hud.gold panorama/images/hud/icon_gold_psd.vtex_c hud/icon_gold_psd.png
 texture hud.gold_large panorama/images/hud/reborn/gold_large_png.vtex_c hud/gold_large_png.png
 texture hud.gold_small panorama/images/hud/reborn/gold_small_psd.vtex_c hud/gold_small_psd.png

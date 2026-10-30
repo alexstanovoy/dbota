@@ -55,6 +55,7 @@ mod io_pool;
 mod item_menu;
 mod keys;
 mod layers;
+mod loading;
 #[cfg(not(target_arch = "wasm32"))]
 mod logging;
 mod loot;
@@ -268,6 +269,11 @@ pub struct Args {
     /// Debug: draw the ranges and camp boxes as if Alt were held.
     #[arg(long)]
     pub show_ranges: bool,
+    /// Debug: the loading holds the main thread this many seconds when it
+    /// begins, as a slow machine's loading may: the connection must stay up
+    /// meanwhile (for the loading test).
+    #[arg(long, value_name = "SECONDS")]
+    pub slow_load: Option<f32>,
     /// Debug: the camera's focus at the start, in bota world units.
     #[arg(long, value_name = "X,Y", value_delimiter = ',')]
     pub look: Vec<f32>,
@@ -535,6 +541,7 @@ fn client_plugins(app: &mut App) {
     app.add_plugins(FrameTimeDiagnosticsPlugin::default())
         .add_plugins((
             session::plugin,
+            loading::plugin,
             window::plugin,
             map::plugin,
             layers::plugin,

@@ -59,10 +59,15 @@ pub fn plugin(app: &mut App) {
     app.insert_resource(ready.clone())
         .init_resource::<Warming>()
         .add_systems(Last, (warm, gizmos).chain());
-    if let Some(render) = app.get_sub_app_mut(RenderApp) {
-        render
-            .insert_resource(ready)
-            .add_systems(Render, pipelines_ready.in_set(RenderSystems::Cleanup));
+    app.add_systems(PostUpdate, report.in_set(crate::loading::Report));
+    match app.get_sub_app_mut(RenderApp) {
+        Some(render) => {
+            render
+                .insert_resource(ready)
+                .add_systems(Render, pipelines_ready.in_set(RenderSystems::Cleanup));
+        }
+        // Nothing compiles without a renderer (the headless tests).
+        None => ready.0.store(true, Ordering::Relaxed),
     }
 }
 
@@ -112,4 +117,9 @@ fn gizmos(warming: Res<Warming>, mut gizmos: Gizmos) {
         1.0,
         Color::WHITE,
     );
+}
+
+/// The pipelines' part of the loading: compiled, the warm-up over.
+fn report(warming: Res<Warming>, mut parts: ResMut<crate::loading::Parts>) {
+    parts.set("pipelines", usize::from(warming.over), 1);
 }

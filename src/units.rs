@@ -203,7 +203,9 @@ pub fn plugin(app: &mut App) {
             },
         )
         .init_resource::<ModelBank>()
-        .add_systems(Startup, (load_models, make_stand_ins))
+        .add_systems(Startup, make_stand_ins)
+        .add_systems(Update, load_models.run_if(crate::loading::requested))
+        .add_systems(PostUpdate, report.in_set(crate::loading::Report))
         .add_systems(
             Update,
             (
@@ -790,8 +792,10 @@ fn sync_units(
             }
             // A few new units a frame: a wave, a camp or a seek brings
             // dozens, and each model's instance is a world of its own
-            // cloned in (some 0.3 ms); the rest come the next frames.
-            None if spawned >= SPAWNS_PER_FRAME => continue,
+            // cloned in (some 0.3 ms); the rest come the next frames. The
+            // heroes, a few at most, never wait: they are there in the first
+            // frame of the game, as the forest is.
+            None if spawned >= SPAWNS_PER_FRAME && u.kind != UnitKind::Hero => continue,
             None => {
                 // Not before its model has loaded whole, wearables and all.
                 let waiting = model_name(u, map, &p.manifest)
@@ -1109,6 +1113,15 @@ fn fall(mut commands: Commands, time: Res<Time>, mut dying: Query<(Entity, &mut 
             commands.entity(entity).despawn();
         }
     }
+}
+
+/// The unit models' part of the loading.
+fn report(bank: Res<ModelBank>, mut parts: ResMut<crate::loading::Parts>) {
+    if bank.0.is_empty() {
+        return;
+    }
+    let ready = bank.0.iter().filter(|m| m.ready()).count();
+    parts.set("models", ready, bank.0.len());
 }
 
 #[cfg(test)]

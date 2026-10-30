@@ -134,8 +134,10 @@ pub fn plugin(app: &mut App) {
             ..default()
         })
         .insert_resource(ClearColor(Color::srgb(0.02, 0.03, 0.04)))
-        .add_systems(Startup, (spawn_sun, spawn_map))
-        .add_systems(Update, (prepare_map, build_fallback_ground));
+        .add_systems(Startup, spawn_sun)
+        .add_systems(Update, spawn_map.run_if(crate::loading::requested))
+        .add_systems(Update, (prepare_map, build_fallback_ground))
+        .add_systems(PostUpdate, report.in_set(crate::loading::Report));
 }
 
 /// The map's loader, as the manifest, the arguments and the settings set it.
@@ -1115,4 +1117,19 @@ fn build_fallback_ground(
         heights: cells,
         surface: None,
     };
+}
+
+/// The world's part of the loading: the map read and its ground known.
+fn report(
+    ground: Res<Ground>,
+    manifest: Res<Manifest>,
+    file: Option<Res<MapFile>>,
+    mut parts: ResMut<crate::loading::Parts>,
+) {
+    // Asked for once its file is (let go once read), whole once read.
+    if ground.known() || manifest.map.is_none() {
+        parts.set("world", 1, 1);
+    } else if file.is_some() {
+        parts.set("world", 0, 1);
+    }
 }

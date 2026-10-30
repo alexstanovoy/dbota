@@ -41,6 +41,7 @@ struct Pool(Vec<Option<Vec<Entity>>>);
 pub fn plugin(app: &mut App) {
     app.init_resource::<Pool>()
         .add_systems(Update, spawn)
+        .add_systems(PostUpdate, report.in_set(crate::loading::Report))
         .add_systems(
             PostUpdate,
             // The pools' scenes moved after the frame's transforms were propagated: the trees
@@ -297,4 +298,29 @@ fn to_bevy(source: Mat4) -> Mat4 {
     let world = Mat4::from_cols(Vec4::X, Vec4::NEG_Z, Vec4::Y, Vec4::W);
     let scene = Mat4::from_cols(Vec4::NEG_Y, Vec4::Z, Vec4::NEG_X, Vec4::W);
     world * source * scene * Mat4::from_scale(Vec3::splat(UNITS_PER_METRE))
+}
+
+/// The particle models' part of the loading: each model's pool spawned (or
+/// its file failed).
+fn report(
+    library: Option<Res<Library>>,
+    pool: Res<Pool>,
+    server: Res<AssetServer>,
+    mut parts: ResMut<crate::loading::Parts>,
+) {
+    let Some(library) = library else {
+        return;
+    };
+    let done = library
+        .models
+        .iter()
+        .enumerate()
+        .filter(|(i, model)| {
+            pool.0.get(*i).is_some_and(Option::is_some)
+                || server
+                    .get_load_state(&model.gltf)
+                    .is_some_and(|s| s.is_failed())
+        })
+        .count();
+    parts.set("particles", done, library.models.len());
 }

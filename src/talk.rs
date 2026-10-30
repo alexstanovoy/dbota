@@ -97,7 +97,7 @@ impl Speech {
 pub fn plugin(app: &mut App) {
     app.init_resource::<Faces>()
         .init_resource::<Speech>()
-        .add_systems(Startup, load)
+        .add_systems(Update, load.run_if(crate::loading::requested))
         .add_systems(Update, follow);
 }
 

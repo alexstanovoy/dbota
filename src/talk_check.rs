@@ -191,6 +191,10 @@ fn load(
     now: f32,
 ) -> Result<(), String> {
     if stage.forced.is_none() {
+        // The models are asked for when the loading begins, a frame or so in.
+        if bank.0.is_empty() {
+            return Ok(());
+        }
         let logical = format!("hero.{}.model", check.hero);
         let model = bank.0.iter().position(|m| m.model.logical == logical);
         stage.forced = Some(model.ok_or(format!("no model {logical}"))?);

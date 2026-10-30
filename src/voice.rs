@@ -148,7 +148,9 @@ struct Heard {
 pub fn plugin(app: &mut App) {
     app.init_resource::<Voices>()
         .init_resource::<Announcer>()
-        .add_systems(Startup, load)
+        .add_systems(Startup, load_menu)
+        .add_systems(Update, load.run_if(crate::loading::requested))
+        .add_systems(PostUpdate, report.in_set(crate::loading::Report))
         .add_systems(Update, (answer, announce, fortified, herald, click, speak));
 }
 
@@ -161,8 +163,6 @@ fn load(mut voices: ResMut<Voices>, manifest: Res<Manifest>, server: Res<AssetSe
         let attacks = Lines::load(&manifest, &server, &format!("sound.voice.{name}.attack"));
         voices.heroes.push((name.to_string(), moves, attacks));
     }
-    voices.click = Lines::load(&manifest, &server, "sound.ui.click");
-    voices.quit = Lines::load(&manifest, &server, "sound.ui.quit");
     voices.choose = Lines::load(&manifest, &server, "sound.announcer.choose_hero");
     voices.begins = Lines::load(&manifest, &server, "sound.announcer.battle_begins");
     voices.day = Lines::load(&manifest, &server, "sound.day");
@@ -431,6 +431,30 @@ fn click(
         voices.click.take()
     };
     say(&mut commands, source, 0.5);
+}
+
+/// The menu's own sounds, there from the start: the clicks of its buttons.
+fn load_menu(mut voices: ResMut<Voices>, manifest: Res<Manifest>, server: Res<AssetServer>) {
+    voices.click = Lines::load(&manifest, &server, "sound.ui.click");
+    voices.quit = Lines::load(&manifest, &server, "sound.ui.quit");
+}
+
+/// The match's voices' part of the loading: the heroes' lines, the
+/// announcer, the horns, day and night.
+fn report(voices: Res<Voices>, server: Res<AssetServer>, mut parts: ResMut<crate::loading::Parts>) {
+    let lines = voices
+        .heroes
+        .iter()
+        .flat_map(|(_, moves, attacks)| [moves, attacks])
+        .chain([&voices.choose, &voices.begins, &voices.day, &voices.night])
+        .chain(voices.fortified.iter())
+        .chain(voices.horns.iter());
+    let (done, total) = lines.flat_map(|l| &l.sources).fold((0, 0), |(d, t), h| {
+        (d + usize::from(crate::loading::settled(&server, h)), t + 1)
+    });
+    if total > 0 {
+        parts.set("voices", done, total);
+    }
 }
 
 #[cfg(test)]

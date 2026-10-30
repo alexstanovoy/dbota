@@ -100,6 +100,16 @@ struct Forest {
     built: bool,
     /// The planted tree's model, among `kinds`.
     planted_kind: Option<usize>,
+    /// The real map's trees, read with the models at the start.
+    map: Vec<MapTree>,
+    /// Whether the match's trees are planted (every one paired with its model).
+    planted_all: bool,
+    /// The models the match's trees and the planted tree are drawn as: the
+    /// forest is built once all of them have loaded.
+    used: Vec<usize>,
+    /// Whether the chunks were built before the match's first view: that
+    /// view's felled trees are then laid as they stand, not animated.
+    viewed: bool,
     /// The planted tree's mesh, without the morph targets an entity with no
     /// weights cannot be drawn with, its material, and its bounds (the mesh
     /// leaves the CPU once on the GPU).
@@ -136,6 +146,11 @@ pub fn plugin(app: &mut App) {
     app.init_resource::<Forest>()
         .init_resource::<SceneryReady>()
         .init_resource::<TreeTarget>()
+        .add_systems(
+            Update,
+            preload.run_if(crate::loading::requested).before(plant),
+        )
+        .add_systems(PostUpdate, report.in_set(crate::loading::Report))
         .add_systems(Update, target_tree.after(crate::pick::update))
         .add_systems(
             Update,
@@ -173,30 +188,65 @@ fn map_trees(manifest: &Manifest) -> Vec<MapTree> {
         .collect()
 }
 
+/// Starts loading every tree model the map's file names, and the planted
+/// tree's, as the game starts: they are in place before a match tells its
+/// trees, so the forest stands in the frame the match begins.
+fn preload(manifest: Res<Manifest>, server: Res<AssetServer>, mut forest: ResMut<Forest>) {
+    forest.map = map_trees(&manifest);
+    let mut names: Vec<&str> = forest.map.iter().map(|t| t.model.as_str()).collect();
+    names.sort_unstable();
+    names.dedup();
+    let mut kinds: Vec<Kind> = names
+        .into_iter()
+        .filter_map(|name| Some(kind(&server, manifest.tree_model(name)?, name)))
+        .collect();
+    if let Some(m) = manifest.model(PLANTED_MODEL) {
+        forest.planted_kind = Some(kinds.len());
+        kinds.push(kind(&server, m.path.clone(), PLANTED_MODEL));
+    }
+    forest.kinds = kinds;
+}
+
+/// A tree model, its file asked of the asset server.
+fn kind(server: &AssetServer, path: String, name: &str) -> Kind {
+    Kind {
+        name: name.to_owned(),
+        plain: None,
+        gltf: crate::manifest::load_model(server, path),
+        tree: None,
+        stump: None,
+    }
+}
+
 /// Places one tree at every tree of the match once the match and the ground
-/// are known, and starts loading the models they need.
+/// are known, each as the model the map's tree there is (loaded since the
+/// start; a model only a stand-in tree needs is asked for now).
 fn plant(
     session: NonSend<Session>,
     manifest: Res<Manifest>,
     ground: Res<Ground>,
     server: Res<AssetServer>,
     mut forest: ResMut<Forest>,
-    mut done: Local<bool>,
 ) {
     let core = &session.0;
-    if *done || core.trees().is_empty() || !ground.known() {
+    if forest.planted_all || core.trees().is_empty() || !ground.known() {
         return;
     }
-    *done = true;
-    let known = map_trees(&manifest);
+    forest.planted_all = true;
+    let forest = &mut *forest;
+    let known = &forest.map;
     let mut grid: HashMap<(i32, i32), Vec<usize>> = HashMap::new();
     for (i, t) in known.iter().enumerate() {
         grid.entry(((t.x / HASH_CELL) as i32, (t.y / HASH_CELL) as i32))
             .or_default()
             .push(i);
     }
-    let mut models: Vec<(String, String)> = Vec::new();
-    let mut asked: HashMap<String, Option<usize>> = HashMap::new();
+    let mut asked: HashMap<String, Option<usize>> = forest
+        .kinds
+        .iter()
+        .enumerate()
+        .map(|(i, k)| (k.name.clone(), Some(i)))
+        .collect();
     for (index, tree) in core.trees().iter().enumerate() {
         let (x, y) = (tree.x.to_f32(), tree.y.to_f32());
         let (cx, cy) = ((x / HASH_CELL) as i32, (y / HASH_CELL) as i32);
@@ -223,8 +273,8 @@ fn plant(
         // A model the cache lacks leaves its trees undrawn; the cache is asked once for each.
         let model = *asked.entry(name.to_owned()).or_insert_with(|| {
             let path = manifest.tree_model(name)?;
-            models.push((path, name.to_owned()));
-            Some(models.len() - 1)
+            forest.kinds.push(kind(&server, path, name));
+            Some(forest.kinds.len() - 1)
         });
         let Some(model) = model else {
             continue;
@@ -237,22 +287,11 @@ fn plant(
             scale,
         });
     }
-    forest.planted_kind = manifest.model(PLANTED_MODEL).map(|_| models.len());
-    forest.kinds = models
-        .into_iter()
-        .chain(
-            manifest
-                .model(PLANTED_MODEL)
-                .map(|m| (m.path.clone(), PLANTED_MODEL.to_owned())),
-        )
-        .map(|(path, name)| Kind {
-            name,
-            plain: None,
-            gltf: crate::manifest::load_model(&server, path),
-            tree: None,
-            stump: None,
-        })
-        .collect();
+    let mut used: Vec<usize> = forest.trees.iter().map(|t| t.model).collect();
+    used.extend(forest.planted_kind);
+    used.sort_unstable();
+    used.dedup();
+    forest.used = used;
     info!(
         "forest: {} trees of {} models ({})",
         forest.trees.len(),
@@ -317,50 +356,70 @@ fn read_kinds(
     }
 }
 
-/// Builds the chunk meshes once the models are there, and rebuilds the
-/// chunks of trees that fell or grew back since.
+/// Keeps the forest built (see [`build`]) and says when the scenery is in
+/// place.
 fn rebuild(
-    mut commands: Commands,
+    commands: Commands,
     session: NonSend<Session>,
     mut forest: ResMut<Forest>,
-    mut meshes: ResMut<Assets<Mesh>>,
+    meshes: ResMut<Assets<Mesh>>,
     mut ready: ResMut<SceneryReady>,
-    ground: Res<Ground>,
     time: Res<Time>,
 ) {
-    if forest.kinds.is_empty()
-        && ground.known()
-        && forest.trees.is_empty()
-        && !ready.0
-        && session.0.view().is_some()
-    {
-        // Nothing to plant: the ground alone is the scenery.
-        ready.0 = !session.0.trees().is_empty();
+    build(commands, &session, &mut forest, meshes, &time);
+    // The scenery counts as in place from the match's first view on, as it
+    // did when the forest could only be built then: the minimap's photograph
+    // and a replay's start wait for it, under the match's own light.
+    let viewed = session.0.view().is_some();
+    if !ready.0 && viewed && (forest.built || (forest.planted_all && forest.trees.is_empty())) {
+        ready.0 = true;
+        info!("startup: forest built at {:.2} s", crate::since_start());
     }
-    let Some(view) = session.0.view() else {
-        return;
-    };
-    if forest.trees.is_empty() || forest.kinds.iter().any(|k| k.tree.is_none()) {
+}
+
+/// Builds the chunk meshes once the models are there, and rebuilds the
+/// chunks of trees that fell or grew back since.
+fn build(
+    mut commands: Commands,
+    session: &Session,
+    forest: &mut Forest,
+    mut meshes: ResMut<Assets<Mesh>>,
+    time: &Time,
+) {
+    if forest.trees.is_empty() || forest.used.iter().any(|&k| forest.kinds[k].tree.is_none()) {
         return;
     }
+    // The match's trees come before its first view: the forest is built
+    // then, all standing, so it is there in the first frame of the game.
+    let view = session.0.view();
+    let felled_now = view.map_or(&[][..], |v| &v.felled_trees[..]);
     let now = time.elapsed_secs();
     // Nothing fell, grew or is growing: the chunks stand as they are. (The
     // view tells the felled trees ascending.)
-    if forest.built && forest.growing.is_empty() && forest.told == view.felled_trees {
+    if forest.built
+        && forest.growing.is_empty()
+        && forest.told == felled_now
+        && (forest.viewed || view.is_none())
+    {
+        forest.viewed |= view.is_some();
         return;
     }
-    let mut told = view.felled_trees.clone();
+    let mut told = felled_now.to_vec();
     told.sort_unstable();
-    if forest.built {
+    // The first view after a build without one lays its felled trees as they
+    // stand (a seek, a rejoin): only what falls or grows while watched moves.
+    let watched = forest.viewed;
+    forest.viewed |= view.is_some();
+    if forest.built && watched {
         let fell = difference(&told, &forest.told);
         let grew = difference(&forest.told, &told);
         if fell.len() + grew.len() <= MAX_FX {
             for tree in fell {
-                animate_tree(&mut commands, &mut forest, &mut meshes, tree, Fx::Fall, now);
+                animate_tree(&mut commands, forest, &mut meshes, tree, Fx::Fall, now);
             }
             for tree in grew {
                 forest.growing.push((tree, now + GROW_SECS));
-                animate_tree(&mut commands, &mut forest, &mut meshes, tree, Fx::Grow, now);
+                animate_tree(&mut commands, forest, &mut meshes, tree, Fx::Grow, now);
             }
         }
     }
@@ -443,10 +502,6 @@ fn rebuild(
     }
     forest.felled = felled;
     forest.built = true;
-    if !ready.0 {
-        ready.0 = true;
-        info!("startup: forest built at {:.2} s", crate::since_start());
-    }
 }
 
 /// The trees of `a` that `b` lacks, both sorted.
@@ -757,4 +812,22 @@ fn merge<'a>(source: &Mesh, trees: impl Iterator<Item = &'a Planted>) -> Option<
         }
     }
     out
+}
+
+/// The tree models' part of the loading.
+fn report(forest: Res<Forest>, server: Res<AssetServer>, mut parts: ResMut<crate::loading::Parts>) {
+    if forest.kinds.is_empty() {
+        return;
+    }
+    let ready = forest
+        .kinds
+        .iter()
+        .filter(|k| {
+            k.tree.is_some()
+                || server
+                    .get_load_state(&k.gltf)
+                    .is_some_and(|s| s.is_failed())
+        })
+        .count();
+    parts.set("trees", ready, forest.kinds.len());
 }

@@ -89,12 +89,46 @@ fn cpu_ticks() -> Option<u64> {
 }
 
 pub fn plugin(app: &mut App) {
-    app.add_systems(Last, bench);
+    app.add_systems(Last, (bench, game_drawn));
     if app.world().resource::<crate::Args>().bench.is_some() {
         threads(app);
     }
     #[cfg(target_arch = "wasm32")]
     app.add_systems(Last, browser_memory);
+}
+
+/// Says how long after its start a match's game was first drawn whole: the
+/// forest standing and every hero of the view on the map. The measure of the
+/// wait between the strategy phase and play (`scene:` on the log).
+fn game_drawn(
+    session: NonSend<crate::session::Session>,
+    ready: Res<crate::trees::SceneryReady>,
+    units: Res<crate::units::UnitIndex>,
+    fog: Res<crate::fog::FogGrid>,
+    mut started: Local<Option<f32>>,
+    mut told: Local<bool>,
+) {
+    let core = &session.0;
+    if *told || core.statics().is_none() {
+        return;
+    }
+    let now = crate::since_start();
+    let began = *started.get_or_insert(now);
+    let Some(view) = core.view() else {
+        return;
+    };
+    let heroes = view
+        .units
+        .iter()
+        .filter(|u| u.kind == bota_proto::UnitKind::Hero && !fog.hides(u.seen_by))
+        .all(|u| units.0.contains_key(&u.id));
+    if ready.0 && heroes {
+        *told = true;
+        info!(
+            "scene: the game drawn whole {:.2} s after the match start",
+            now - began
+        );
+    }
 }
 
 /// Milliseconds each frame's work took on the main thread (`First` to

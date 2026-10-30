@@ -244,7 +244,8 @@ struct Humming {
 
 pub fn plugin(app: &mut App) {
     app.init_resource::<Voices>()
-        .add_systems(Startup, load)
+        .add_systems(Update, load.run_if(crate::loading::requested))
+        .add_systems(PostUpdate, report.in_set(crate::loading::Report))
         .add_systems(Update, (volume, play, portals));
 }
 
@@ -704,6 +705,17 @@ fn wav(samples: &[f32]) -> Vec<u8> {
         out.extend_from_slice(&((s.clamp(-1.0, 1.0) * 32767.0) as i16).to_le_bytes());
     }
     out
+}
+
+/// The sounds' part of the loading.
+fn report(voices: Res<Voices>, server: Res<AssetServer>, mut parts: ResMut<crate::loading::Parts>) {
+    let sources = voices.0.iter().flat_map(|(_, voice)| &voice.sources);
+    let (done, total) = sources.fold((0, 0), |(d, t), h| {
+        (d + usize::from(crate::loading::settled(&server, h)), t + 1)
+    });
+    if total > 0 {
+        parts.set("sounds", done, total);
+    }
 }
 
 #[cfg(test)]

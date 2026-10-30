@@ -145,11 +145,11 @@ fn connect(_args: &Args) -> std::io::Result<Session> {
     ))
 }
 
-/// Holds a replay still until the scenery is in place, so nothing of its
-/// start plays to a half-built map.
+/// Holds a replay still while the loading screen is up, so nothing of its
+/// start plays to a half-loaded world.
 fn hold_replay(
     mut session: NonSendMut<Session>,
-    ready: Res<crate::trees::SceneryReady>,
+    loading: Res<crate::loading::Loading>,
     mut held: Local<bool>,
     time: Res<Time>,
 ) {
@@ -158,7 +158,7 @@ fn hold_replay(
         return;
     };
     // A replay without a match start never gets scenery; give up after a while.
-    let waiting = !ready.0 && time.elapsed_secs() < 60.0;
+    let waiting = !loading.done() && time.elapsed_secs() < 60.0;
     if waiting && !*held && started {
         *held = true;
         player.paused = true;

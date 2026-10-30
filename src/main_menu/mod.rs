@@ -40,5 +40,5 @@ pub(crate) use text::line;
 // What holds the menu: assets out of date, on the desktop (a browser page holds before the client).
 #[cfg(not(target_arch = "wasm32"))]
 pub use shell::Held;
-pub use shell::{Preview, Trusted, idle, plugin};
+pub use shell::{GameEpoch, Preview, Trusted, idle, plugin};
 pub use store::SettingsStore;

@@ -128,7 +128,7 @@ impl Playing {
 
 pub fn plugin(app: &mut App) {
     app.init_resource::<Playing>()
-        .add_systems(Startup, load)
+        .add_systems(Update, load.run_if(crate::loading::requested))
         .add_systems(PostUpdate, tick.after(TransformSystems::Propagate));
 }
 
