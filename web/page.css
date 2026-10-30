@@ -13,6 +13,6 @@ progress { width: 100%; height: 14px; }
 code { color: #bbb; }
 #status { color: #f9a; min-height: 1.5em; }
 #failures { color: #999; font-size: 13px; }
-#starting { position: fixed; left: 0; right: 0; bottom: 12vh; margin: 0; text-align: center; color: #bbb; }
+#booting, #starting { position: fixed; left: 0; right: 0; bottom: 12vh; margin: 0; text-align: center; color: #bbb; }
 #failTitle { color: #f9a; font-weight: 600; }
 #failDetail { white-space: pre-wrap; word-break: break-word; font-size: 13px; color: #aaa; max-height: 40vh; overflow: auto; }

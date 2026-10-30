@@ -37,6 +37,10 @@ Five more checks need no install and run on pages built with stand-ins (`?assets
   locks the pointer, the game's cursor moves by the mouse's motion and stays inside the canvas, a
   press there is the game's at that place (the dashboard button opens the settings, which let the
   pointer go), and closing them or F11 after an Esc takes it again.
+* `--boot-page` (any build): the page never spins for ever: a part that does not load, code the
+  browser cannot run, a page that never arrives, a storage that hangs or is missing, a game download
+  that stalls or is refused each end on a screen that says the stage, while a slow download that keeps
+  moving is waited for and the game starts (Chromium, and Firefox where there is one).
 * `--fullscreen-page`: a replay build made with `DBOTA_WEB_ARGS="--replay built-in --pov 0 --settings video"`;
   the display mode and F11 put the canvas fullscreen and leaving it turns the setting back.
 * `--live-page` and `--server`: the page joins a bota_server over a WebSocket through the main
@@ -98,8 +102,8 @@ class Quiet(http.server.SimpleHTTPRequestHandler):
         pass
 
 
-def serve(directory=OUT):
-    handler = functools.partial(Quiet, directory=str(directory))
+def serve(directory=OUT, handler_class=Quiet):
+    handler = functools.partial(handler_class, directory=str(directory))
     server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)
     threading.Thread(target=server.serve_forever, daemon=True).start()
     return server
@@ -684,6 +688,119 @@ def check_startup_page(directory):
         print("out of memory: said on the page")
 
 
+def check_boot_page(directory):
+    """The page never spins for ever: each way the start can go wrong ends on the failure screen or the
+    asset screen, saying which stage failed. A part of the page that does not load, a page that never
+    arrives, code the browser cannot run, a browser storage that does not answer or is missing, a game
+    download that stalls or is refused. Chromium for all, Firefox (where one is installed) for the
+    stages that need no graphics."""
+    def screen(page, selector, title=None, timeout=180000):
+        page.wait_for_selector(selector, state="visible", timeout=timeout)
+        if title:
+            got = page.inner_text("#failTitle")
+            assert title in got, got
+        assert page.is_hidden("#booting") and page.is_hidden("#starting"), "no spinner is left over the screen"
+
+    hang = "() => new Promise(() => {})"
+    no_storage = "Object.defineProperty(navigator, 'storage', {value: undefined});"
+    hung_storage = f"navigator.storage.getDirectory = {hang};"
+
+    def case(engine, name, query, init=None, routes=(), then=None):
+        with sync_playwright() as p:
+            server = serve(directory)
+            try:
+                browser = getattr(p, engine).launch(args=BROWSER_ARGS if engine == "chromium" else [])
+            except Exception as e:
+                print(f"boot [{engine}]: skipped, no browser ({str(e)[:60]})")
+                return
+            page = browser.new_context(viewport={"width": 1280, "height": 720}).new_page()
+            if init:
+                page.add_init_script(init)
+            for pattern, handler in routes:
+                page.route(pattern, handler)
+            page.goto(f"http://127.0.0.1:{server.server_address[1]}/{query}", wait_until="commit")
+            then(page)
+            print(f"boot [{engine}]: {name}")
+            browser.close()
+        server.shutdown()
+
+    def never(route):
+        pass  # the request is left unanswered: a connection that stalls
+
+    for engine in ("chromium", "firefox"):
+        case(engine, "a part of the page that does not load is said", "?assets=none",
+             routes=[("**/main.js", lambda r: r.abort())],
+             then=lambda page: screen(page, "#failed", "A part of the page did not load"))
+        case(engine, "code the browser cannot run is said", "?assets=none",
+             routes=[("**/main.js", lambda r: r.fulfill(body="this is ( not javascript", content_type="text/javascript"))],
+             then=lambda page: screen(page, "#failed", "could not run in this browser"))
+        case(engine, "a page that never arrives ends on the failure screen", "?assets=none",
+             routes=[("**/main.js", never)],
+             then=lambda page: screen(page, "#failed", "did not start"))
+
+        def asks_for_the_folder(page, said):
+            screen(page, "#grant")
+            assert said in page.inner_text("#status"), page.inner_text("#status")
+
+        case(engine, "a storage that does not answer leaves the asset screen", "", init=hung_storage,
+             then=lambda page: asks_for_the_folder(page, "did not answer"))
+        case(engine, "a browser without storage leaves the asset screen", "", init=no_storage,
+             then=lambda page: asks_for_the_folder(page, "no private storage"))
+    case("chromium", "a download that stalls ends on the failure screen", "?assets=none",
+         routes=[("**/dbota_bg.wasm", never)],
+         then=lambda page: (screen(page, "#failed", "could not be downloaded"), assert_in(page.text_content("#failDetail"), "dbota_bg.wasm")))
+    case("chromium", "a refused download is said", "?assets=none",
+         routes=[("**/dbota_bg.wasm", lambda r: r.fulfill(status=404, body="no"))],
+         then=lambda page: (screen(page, "#failed", "could not be downloaded"), assert_in(page.text_content("#failDetail"), "404")))
+
+    def slow_but_moving():
+        """A download slower than the stall limit as a whole, but never silent for that long, is
+        waited for: each piece of the client restarts the clock, and the game then starts."""
+        sent = threading.Event()
+
+        class Trickle(Quiet):
+            def do_GET(self):
+                if not self.path.split("?")[0].endswith("/dbota_bg.wasm"):
+                    return super().do_GET()
+                body = pathlib.Path(self.directory, "dbota_bg.wasm").read_bytes()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/wasm")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                piece = 64 * 1024
+                try:
+                    # Seven pieces 6 s apart: 36 s in all, with a gap far inside the 30 s limit.
+                    for i in range(7):
+                        self.wfile.write(body[i * piece:(i + 1) * piece])
+                        self.wfile.flush()
+                        time.sleep(6)
+                    self.wfile.write(body[7 * piece:])
+                except OSError:
+                    pass
+                sent.set()
+
+        with sync_playwright() as p:
+            server = serve(directory, Trickle)
+            browser = p.chromium.launch(args=BROWSER_ARGS)
+            page = browser.new_context(viewport={"width": 1280, "height": 720}).new_page()
+            console = []
+            page.on("console", lambda m: console.append(m.text))
+            page.goto(f"http://127.0.0.1:{server.server_address[1]}/?assets=none", wait_until="commit")
+            assert sent.wait(600), "the slow download was served"
+            assert page.is_hidden("#failed"), page.inner_text("#failDetail")
+            wait_console(page, console, "dbota: running", 600, "the game to start after a slow download")
+            assert page.is_hidden("#failed")
+            print("boot [chromium]: a slow download that keeps moving is waited for")
+            browser.close()
+        server.shutdown()
+
+    slow_but_moving()
+
+
+def assert_in(text, part):
+    assert part in text, f"{part!r} not in {text!r}"
+
+
 # Where the main menu's buttons are in a 1280x720 page (calibrated by `--shots`): the page is
 # drawn at the viewport's size with the interface at its default scale, so they stay put.
 CLICK_LOBBIES = (329, 22)
@@ -939,6 +1056,7 @@ def main():
     ap.add_argument("--startup-page", type=pathlib.Path, help="any build: the client picked, failures shown")
     ap.add_argument("--keys-page", type=pathlib.Path, help="any page, even web/ unbuilt: whose keys are whose")
     ap.add_argument("--cursor-page", type=pathlib.Path, help="a replay build: the cursor kept in a match")
+    ap.add_argument("--boot-page", type=pathlib.Path, help="any build: every way the start can go wrong ends on a screen")
     ap.add_argument("--pixels-page", type=pathlib.Path, help="a replay build: the canvas drawn at its device pixels")
     ap.add_argument("--replays-page", type=pathlib.Path, help="a build without a replay: a match through radovid is kept in OPFS")
     ap.add_argument("--radovid", help="the radovid binary, for --replays-page (with --server)")
@@ -960,6 +1078,8 @@ def main():
         check_fullscreen_page(args.fullscreen_page)
     if args.cursor_page:
         check_cursor_page(args.cursor_page)
+    if args.boot_page:
+        check_boot_page(args.boot_page)
     if args.pixels_page:
         check_canvas_pixels(args.pixels_page)
     if args.replays_page:

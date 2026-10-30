@@ -13,6 +13,7 @@ Content-Security-Policy only allows connections to its own origin (game sockets 
 | File | What it does |
 | --- | --- |
 | `index.html`, `page.css` | the gate (folder question, progress, ready) over the client's canvas; the CSP |
+| `boot.js` | a classic script that runs where the modules cannot: shows "Loading" at once and the one failure screen (`dbota_boot.fail`), for a browser too old, a part that does not load, code that cannot run, or a page that has not started in 30 s. Every later wait (storage, the graphics adapter, the download of the game, which shows its progress and ends when nothing arrives for 30 s) has a limit in `main.js` and ends on a screen that names the stage |
 | `main.js` | the flow: stored copy? folder grant, import progress, update check, delete, start the client that suits the browser; a start that fails ends in a message saying what to do |
 | `grant.js` | the folder grant: `showDirectoryPicker` (Chromium, the handle is remembered in IndexedDB so the copy can be checked for staleness without asking again), else `<input webkitdirectory>`; only `*.vpk` of `game/dota` and `maps/` are kept, whatever folder level was picked |
 | `import_worker.js` | a module Web Worker: runs `dbota_import` (wasm), writes each item's files with synchronous OPFS handles, stops on request |
