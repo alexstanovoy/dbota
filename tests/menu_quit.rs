@@ -82,7 +82,12 @@ fn run_with(
         text
     });
     let code = wait(&mut child);
-    (code, said.join().unwrap_or_default())
+    let mut said = said.join().unwrap_or_default();
+    if code != Some(0) {
+        // What the client said on stderr is why a run failed.
+        said = format!("{said}\nstderr:\n{}", logged(scratch));
+    }
+    (code, said)
 }
 
 fn wait(child: &mut Child) -> Option<i32> {
@@ -348,6 +353,10 @@ fn serve_with(seats: u8, more: &[&str]) -> (Child, String) {
             "--pick-secs",
             "5",
             "--tactical-secs",
+            "0",
+            // A client that loads a match on a busy machine says nothing for seconds: the
+            // server must not let it go for silence (0 waits for ever).
+            "--idle-timeout-secs",
             "0",
         ])
         .stdout(Stdio::piped())
