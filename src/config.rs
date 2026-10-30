@@ -399,6 +399,19 @@ pub struct Settings {
     pub replays: crate::replays::Policy,
 }
 
+/// Settings older versions wrote that nothing reads now (a bot command for seats of the local
+/// lobby, the bloom switch, the aids that became always-on or went with their feature). A
+/// settings file keeps loading with them in it; the next save leaves them out.
+pub const RETIRED_KEYS: &[&str] = &[
+    "bot_command",
+    "bloom",
+    "deny_on_right_click_pct",
+    "attack_range",
+    "raze_marks",
+    "last_hit_marks",
+    "tower_ranges",
+];
+
 /// Characters a profile name has at most.
 pub const MAX_NAME: usize = 24;
 
@@ -484,6 +497,10 @@ impl Settings {
                     Some(Chord::parse(chord).ok_or_else(|| format!("no key called '{chord}'"))?)
                 }
             };
+            return Ok(());
+        }
+        // A key an older version wrote and no version reads any more: its file still loads.
+        if RETIRED_KEYS.contains(&name) {
             return Ok(());
         }
         let flag = || parse_flag(value).ok_or_else(|| format!("'{value}' is not true or false"));
@@ -715,6 +732,62 @@ mod tests {
         let (read, complaints) = Settings::parse(&changed.render());
         assert!(complaints.is_empty(), "{complaints:?}");
         assert_eq!(read, changed);
+    }
+
+    /// A settings file with every key some version of the client wrote loads without a word of
+    /// complaint, those no version reads now included: an update never breaks a user's file.
+    #[test]
+    fn a_file_with_every_key_an_older_version_wrote_loads_cleanly() {
+        let current = [
+            ("volume", "0.50"),
+            ("muted", "false"),
+            ("ui_scale", "1.00"),
+            ("name", "alice"),
+            ("damage_numbers", "true"),
+            ("voice_responses", "true"),
+            ("edge_pan", "true"),
+            ("animate_portrait", "true"),
+            ("scoreboard_items", "true"),
+            ("teleport_requires_halt", "false"),
+            ("channels_require_stop", "false"),
+            ("right_click_allies", "follow"),
+            ("display_mode", "windowed"),
+            ("quality", "high"),
+            ("shadows", "high"),
+            ("msaa", "4"),
+            ("anti_aliasing", "off"),
+            ("texture_size", "1024"),
+            ("props", "true"),
+            ("fps_cap", "144"),
+            ("gpu_batching", "true"),
+            ("auto_quality", "false"),
+            ("visual_clarity", "low"),
+            ("render_scale", "1.00"),
+            ("camera_distance", "1134"),
+            ("save_replays", "true"),
+            ("replays_max_count", "50"),
+            ("replays_max_mib", "512"),
+        ];
+        let retired = [
+            ("bot_command", "/path/to/mybot --server {address}"),
+            ("bloom", "true"),
+            ("deny_on_right_click_pct", "50"),
+            ("attack_range", "true"),
+            ("raze_marks", "true"),
+            ("last_hit_marks", "true"),
+            ("tower_ranges", "true"),
+        ];
+        let text: String = current
+            .iter()
+            .chain(&retired)
+            .map(|(key, value)| format!("{key} = {value}\n"))
+            .collect();
+        let (settings, complaints) = Settings::parse(&text);
+        assert!(complaints.is_empty(), "{complaints:?}");
+        assert!(
+            !settings.render().contains("bot_command"),
+            "a retired key is not written back"
+        );
     }
 
     /// Settings written to the file read back the same, whatever quality
