@@ -1779,8 +1779,13 @@ fn squad_lobby() -> (Service, Player, Player) {
     bob.menu.act(Act::Go(Page::Lobbies));
     bob.fill(&["slots", PASSWORD]);
     bob.menu.act(Act::Submit);
+    // Both are on the lobby page, but each page can be showing a grid from before the other sat
+    // down: the lobby is whole once both menus have both members in their slots.
     settle(&mut [&mut alice, &mut bob], |p| {
-        p.menu.page() == Page::Lobby
+        p.menu.page() == Page::Lobby && {
+            let grid = lobby_of(p);
+            seat_of(&grid, "alice").is_some() && seat_of(&grid, "bob").is_some()
+        }
     });
     (service, alice, bob)
 }

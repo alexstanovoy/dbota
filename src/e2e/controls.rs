@@ -50,11 +50,8 @@ fn right_click(client: &mut Client, id: EntityId) -> Option<(EntityId, bool)> {
     client.button(MouseButton::Right, ButtonState::Released);
     client.frames(2);
     let unit = unit?;
-    let deniable = bota_core::deniable(
-        unit.kind,
-        bota_proto::Fixed::from_int(unit.hp),
-        bota_proto::Fixed::from_int(unit.max_hp),
-    );
+    // The click's own rule, on the health the view gave: the same one the client decided by.
+    let deniable = crate::input::deny_click(unit.kind, unit.hp, unit.max_hp);
     Some((unit.id, deniable))
 }
 
@@ -74,15 +71,24 @@ fn among_creeps(mode: &str) -> (Server, Client) {
     (server, client)
 }
 
-/// An allied lane creep drawn on screen, worn down below half its health or not.
+/// An allied lane creep drawn on screen, worn down well below half its health (`low`) or well
+/// above it. A creep near the line could cross it between the snapshot the click was decided on
+/// and the one the test reads afterwards, and the click would be right about a health the test
+/// no longer sees: the clicks go to creeps whose side of the line the next ticks cannot change.
 fn ally_creep(client: &Client, low: bool) -> Option<EntityId> {
     let mine = client.me().team;
     client
         .view()
         .units
         .iter()
-        .filter(|u| u.team == mine && u.kind == UnitKind::CreepMelee)
-        .filter(|u| (2 * u.hp < u.max_hp) == low && u.hp > 0)
+        .filter(|u| u.team == mine && u.kind == UnitKind::CreepMelee && u.hp > 0)
+        .filter(|u| {
+            if low {
+                10 * u.hp < 4 * u.max_hp
+            } else {
+                10 * u.hp > 6 * u.max_hp
+            }
+        })
         .find(|u| client.body(u.id).is_some())
         .map(|u| u.id)
 }
@@ -215,8 +221,11 @@ fn teleport_then_click(extra: &[&str]) -> bool {
     let ground = (at.x.to_f32() + 300.0, at.y.to_f32() + 300.0);
     let pixel = client.screen_of(ground).expect("on screen");
     client.mouse(pixel);
+    let sent = client.tick();
     client.click(MouseButton::Right);
-    client.frames(15);
+    // Whatever the move does to the channel is done a few ticks on, not a few frames on: the
+    // server answers at its own pace.
+    client.until("ticks past the move", |c| c.tick() >= sent + 6);
     channels(&client)
 }
 
@@ -281,8 +290,9 @@ fn dismember_then_click(extra: &[&str]) -> bool {
     let ground = (at.x.to_f32() - 300.0, at.y.to_f32() + 300.0);
     let pixel = client.screen_of(ground).expect("on screen");
     client.mouse(pixel);
+    let sent = client.tick();
     client.click(MouseButton::Right);
-    client.frames(10);
+    client.until("ticks past the move", |c| c.tick() >= sent + 6);
     channelling(&client)
 }
 
