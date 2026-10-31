@@ -2188,14 +2188,10 @@ fn time_of_day(
     server: Res<AssetServer>,
     mut image: Single<&mut ImageNode, With<DayNight>>,
 ) {
-    let Some(view) = session.0.view() else {
+    let Some(night) = crate::daylight::night(&session.0) else {
         return;
     };
-    let name = if bota_core::time_of_day(view.day_tick()).night {
-        "hud.night"
-    } else {
-        "hud.day"
-    };
+    let name = if night { "hud.night" } else { "hud.day" };
     let path = manifest.file(name);
     let tint = if path.is_some() {
         Color::WHITE

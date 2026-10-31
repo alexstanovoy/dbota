@@ -161,8 +161,7 @@ fn ahead_of_hero(core: &Core) -> Option<Vec2> {
 
 /// Whether it is night in the view now.
 fn night(core: &Core) -> bool {
-    core.view()
-        .is_some_and(|view| bota_core::time_of_day(view.day_tick()).night)
+    crate::daylight::night(core).unwrap_or(false)
 }
 
 /// The panel's buttons, pressed.

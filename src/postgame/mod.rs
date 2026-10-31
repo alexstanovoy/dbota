@@ -161,7 +161,12 @@ fn from_stats(session: &Session) -> Option<MatchSummary> {
         .view()
         .map(|v| v.players.as_slice())
         .unwrap_or(&[]);
-    Some(MatchSummary::from_stats(*winner, stats, players))
+    Some(MatchSummary::from_stats(
+        *winner,
+        stats,
+        players,
+        session.0.pregame_ticks(),
+    ))
 }
 
 /// The metadata file of the match a replay holds, had in the order of what it costs: the file

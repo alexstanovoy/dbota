@@ -42,9 +42,10 @@ impl Server {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         let seats = seats.to_string();
-        let mut args = vec!["--map", "2", "--players", &seats];
+        let mut args = vec!["--players", &seats];
         args.extend(["--bind", "127.0.0.1", "--port", "0", "--cheats"]);
         let defaults = [
+            ("--map", "2"),
             ("--mode", "lockstep"),
             ("--pick-secs", "1"),
             ("--tactical-secs", "0"),

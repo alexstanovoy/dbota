@@ -157,11 +157,13 @@ impl MatchSummary {
 
     /// What the final numbers every client is sent tell, for a match with no file to read:
     /// no items, no graphs.
-    pub fn from_stats(winner: Team, stats: &MatchStats, players: &[PlayerView]) -> MatchSummary {
-        let seconds = stats
-            .duration
-            .saturating_sub(bota_core::rules::PREGAME_TICKS)
-            / TICKS_PER_SECOND;
+    pub fn from_stats(
+        winner: Team,
+        stats: &MatchStats,
+        players: &[PlayerView],
+        pregame_ticks: u32,
+    ) -> MatchSummary {
+        let seconds = stats.duration.saturating_sub(pregame_ticks) / TICKS_PER_SECOND;
         let minutes = (i64::from(seconds) / 60).max(1);
         let mut rows: Vec<Row> = stats
             .slots

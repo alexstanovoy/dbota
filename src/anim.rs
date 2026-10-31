@@ -487,7 +487,7 @@ fn standing(core: &Core, u: &UnitView) -> &'static str {
         UnitKind::Watcher if has(EffectId::LAMP_OFF) => "off",
         UnitKind::Watcher if view.game_tick() < core.pregame_ticks() => "off",
         UnitKind::Watcher if has(EffectId::VISION_GRANT) => {
-            if bota_core::time_of_day(view.day_tick()).night {
+            if crate::daylight::night(core).unwrap_or(false) {
                 "lit_night"
             } else {
                 "lit"

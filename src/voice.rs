@@ -486,10 +486,7 @@ fn herald(
     args: Res<crate::Args>,
     mut was_night: Local<Option<bool>>,
 ) {
-    let night = session
-        .0
-        .view()
-        .map(|view| bota_core::time_of_day(view.day_tick()).night);
+    let night = crate::daylight::night(&session.0);
     let turned = matches!((*was_night, night), (Some(was), Some(now)) if was != now);
     *was_night = night;
     if !turned || settings.muted || args.mute {

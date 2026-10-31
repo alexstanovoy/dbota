@@ -76,6 +76,14 @@ struct DayLook {
     ambient_color: LinearRgba,
 }
 
+/// Whether it is night in the match's view now: Dota's day and night on the game clock, from
+/// the horn its map's pregame puts off; none before the match is seen.
+pub fn night(core: &bota_client_core::App) -> Option<bool> {
+    let view = core.view()?;
+    let schedule = bota_core::rules::Schedule::of(core.pregame_ticks());
+    Some(bota_core::time_of_day(view.day_tick(), schedule).night)
+}
+
 pub fn plugin(app: &mut App) {
     let dota = app
         .world()
@@ -101,15 +109,11 @@ fn turn(
     mut daylight: ResMut<Daylight>,
     mut seen: Local<bool>,
 ) {
-    let Some(view) = session.0.view() else {
+    let Some(night) = night(&session.0) else {
         *seen = false;
         return;
     };
-    let goal = if bota_core::time_of_day(view.day_tick()).night {
-        1.0
-    } else {
-        0.0
-    };
+    let goal = if night { 1.0 } else { 0.0 };
     if !*seen {
         *seen = true;
         daylight.night = goal;

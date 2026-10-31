@@ -1,6 +1,7 @@
 //! The pre-game's cues on the game clock, as Dota plays them today: "Prepare for battle" at -1:30,
 //! "Thirty seconds to battle" at -0:30, the ancients' horn at -0:12 and "The battle begins!" at
-//! -0:03, each once, and none that would start before the match's pre-game does.
+//! -0:03, each once, and none that would start before the match's pre-game does: Dota's full game
+//! (90 s of pre-game) plays all four, Solo Mid (30 s) the last three.
 
 use std::time::Duration;
 
@@ -15,23 +16,25 @@ const THIRTY_BEFORE: u32 = 30;
 const HORN_BEFORE: u32 = 12;
 const BATTLE_BEGINS_BEFORE: u32 = 3;
 
-/// A match watched through its pre-game and a little past 0:00: each cue starts once, on the
-/// very tick its time before 0:00 falls on, and a cue whose time lies before the pre-game's
-/// start (Prepare for battle at -1:30 in a 30 s pre-game) does not play.
-#[test]
-fn the_pregame_cues_play_on_dotas_clock_once_each() {
-    let server = Server::start(1, &[]);
+/// A match on `map` watched through its pre-game, of `seconds`, and a little past 0:00: each cue
+/// starts once, on the very tick its time before 0:00 falls on, and a cue whose time lies before
+/// the pre-game's start (Prepare for battle at -1:30 in a 30 s pre-game) does not play.
+fn cues_play_on_dotas_clock_once_each(map: &str, seconds: u32) {
+    let server = Server::start(1, &["--map", map]);
     let mut client = Client::join(&server, HeroId::SHADOW_FIEND, &[]);
     let rate = u32::from(client.core().tick_rate());
     let pregame = client.core().pregame_ticks();
+    assert_eq!(pregame, seconds * rate, "the map's pre-game");
     assert!(
         pregame > HORN_BEFORE * rate,
         "a pre-game long enough for the horn"
     );
     let past_zero = pregame + rate;
-    client.within(Duration::from_secs(120), "the clock past 0:00", |c| {
-        c.view().game_tick() >= past_zero
-    });
+    client.within(
+        Duration::from_secs(u64::from(seconds) + 90),
+        "the clock past 0:00",
+        |c| c.view().game_tick() >= past_zero,
+    );
     let played = &client.world().resource::<PregameHeard>().0;
     let at = |cue: PregameCue| {
         let ticks: Vec<u32> = played
@@ -54,4 +57,16 @@ fn the_pregame_cues_play_on_dotas_clock_once_each() {
         first < rate,
         "the client saw the pre-game from its start: tick {first}"
     );
+}
+
+/// Dota's full game: ninety seconds of pre-game, so "Prepare for battle" opens it.
+#[test]
+fn the_full_games_pregame_cues_play_on_dotas_clock_once_each() {
+    cues_play_on_dotas_clock_once_each("0", 90);
+}
+
+/// Solo Mid: thirty seconds of pre-game, so it opens with "Thirty seconds to battle".
+#[test]
+fn solo_mids_pregame_cues_play_on_dotas_clock_once_each() {
+    cues_play_on_dotas_clock_once_each("2", 30);
 }
