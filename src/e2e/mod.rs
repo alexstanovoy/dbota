@@ -16,6 +16,7 @@ mod death;
 pub(crate) mod harness;
 mod hero_fx;
 mod icons;
+mod item_states;
 mod items;
 mod menu;
 mod minimap;

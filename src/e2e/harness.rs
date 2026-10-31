@@ -405,10 +405,22 @@ impl Client {
 /// A second seat, held by a client with no front end that gives no orders: it acknowledges
 /// what it is sent, so a lockstep match moves on. Joined first, it takes the first seat.
 pub fn quiet_seat(server: &Server, hero: bota_proto::HeroId) {
+    scripted_seat(server, hero, |_| Vec::new());
+}
+
+/// A second seat, held by a client with no front end that gives the orders `decide` gives it
+/// from each view it is sent.
+pub fn scripted_seat(
+    server: &Server,
+    hero: bota_proto::HeroId,
+    decide: impl FnMut(&bota_client_core::ClientSession) -> Vec<bota_client_core::IssuedOrder>
+    + Send
+    + 'static,
+) {
     let (mut link, seated) =
         bota_client_core::Link::join(&server.address, "quiet", hero, None).expect("a seat");
     std::thread::spawn(move || {
-        let _ = bota_client_core::play(&mut link, seated, &mut (), |_| Vec::new());
+        let _ = bota_client_core::play(&mut link, seated, &mut (), decide);
     });
 }
 
