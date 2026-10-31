@@ -100,6 +100,8 @@ fn bare(
         max_particles: 16,
         initial_particles: 0,
         max_time_step: 0.1,
+        sleep_after: heatel::particle::SLEEP_AFTER,
+        bounds: heatel::particle::BOUNDS,
         constants: Constants {
             color: [1.0; 4],
             radius: 5.0,

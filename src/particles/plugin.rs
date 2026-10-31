@@ -4,6 +4,8 @@
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
+use bevy::camera::primitives::{Aabb, Frustum};
+use bevy::math::Affine3A;
 use bevy::prelude::*;
 use bevy::tasks::ComputeTaskPool;
 use bevy::transform::TransformSystems;
@@ -15,6 +17,7 @@ use super::lights::{Light, gather};
 use super::models::{self, Placed};
 use super::render::{Batch, ParticleFrame};
 use super::sim::Instance;
+use super::store;
 use crate::camera::RtsCamera;
 use crate::manifest::Manifest;
 
@@ -59,6 +62,18 @@ impl Playing {
             .iter()
             .find(|(e, _)| Arc::ptr_eq(e, effect))
             .map_or(0, |(_, n)| *n)
+    }
+
+    /// The playing instances of `effect`.
+    #[cfg(test)]
+    pub fn instances_of<'a>(
+        &'a self,
+        effect: &'a Arc<Effect>,
+    ) -> impl Iterator<Item = &'a Instance> {
+        self.slots
+            .iter()
+            .filter_map(|(_, i)| i.as_ref())
+            .filter(move |i| Arc::ptr_eq(&i.effect, effect))
     }
 
     /// Starts `effect`, its draws keyed by `seed`.
@@ -166,7 +181,10 @@ pub struct Loaded;
 
 pub fn plugin(app: &mut App) {
     app.init_resource::<Playing>()
-        .add_systems(Update, load.run_if(crate::loading::requested).in_set(Loaded))
+        .add_systems(
+            Update,
+            load.run_if(crate::loading::requested).in_set(Loaded),
+        )
         .add_systems(PostUpdate, tick.after(TransformSystems::Propagate));
 }
 
@@ -197,6 +215,37 @@ fn load(mut commands: Commands, manifest: Res<Manifest>, server: Res<AssetServer
     commands.insert_resource(library);
 }
 
+/// Whether any of `instance`'s particles may be in `frustum`'s view: the box about them all,
+/// padded by its definition's bounding box as Source pads a system's bounds (about its first
+/// control point while it has none).
+fn in_view(instance: &Instance, frustum: &Frustum) -> bool {
+    let (mut low, mut high) = (Vec3::INFINITY, Vec3::NEG_INFINITY);
+    for node in &instance.nodes {
+        for p in &node.parts.vectors[store::POSITION][..node.parts.len()] {
+            low = low.min(*p);
+            high = high.max(*p);
+        }
+    }
+    if low.x > high.x {
+        let Some(first) = instance.nodes.first() else {
+            return false;
+        };
+        low = first.control_points[0].position;
+        high = low;
+    }
+    let [pad_low, pad_high] = instance.effect.defs[0].system.bounds;
+    let (low, high) = (low + Vec3::from(pad_low), high + Vec3::from(pad_high));
+    if !(low.is_finite() && high.is_finite()) {
+        return true;
+    }
+    // The particles' frame (x, y, height) to the world's (x, height, -y).
+    let aabb = Aabb::from_min_max(
+        Vec3::new(low.x, low.z, -high.y),
+        Vec3::new(high.x, high.z, -low.y),
+    );
+    frustum.intersects_obb(&aabb, &Affine3A::IDENTITY, true, false)
+}
+
 /// Steps every effect and gathers the frame's cards and lights.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn tick(
@@ -204,7 +253,7 @@ pub(super) fn tick(
     session: NonSend<crate::session::Session>,
     mut playing: ResMut<Playing>,
     library: Option<Res<Library>>,
-    camera: Query<&GlobalTransform, With<RtsCamera>>,
+    camera: Query<(&GlobalTransform, &Frustum), With<RtsCamera>>,
     ground: Res<crate::map::Ground>,
     mut frame: ResMut<ParticleFrame>,
 ) {
@@ -216,13 +265,14 @@ pub(super) fn tick(
         bota_client_core::Source::Replay(player) => player.speed,
         _ => 1.0,
     };
-    playing.advance(time.delta_secs() * pace, height);
+    let dt = time.delta_secs() * pace;
+    playing.advance(dt, height);
     playing.lights.clear();
     playing.placed.clear();
     let frame = &mut *frame;
     frame.quads.clear();
     frame.batches.clear();
-    let (Some(library), Ok(camera)) = (library, camera.single()) else {
+    let (Some(library), Ok((camera, frustum))) = (library, camera.single()) else {
         return;
     };
     let eye = Eye {
@@ -236,10 +286,14 @@ pub(super) fn tick(
         list.clear();
     }
     for instance in playing.slots.iter_mut().filter_map(|(_, i)| i.as_mut()) {
+        instance.seen(in_view(instance, frustum), dt);
         turn_to_screen(instance, &eye);
     }
     for instance in playing.slots.iter().filter_map(|(_, i)| i.as_ref()) {
-        draw(instance, &eye, height, &mut playing.lists);
+        // Out of view an effect draws no cards; its lights may still reach into it.
+        if !instance.out_of_view() {
+            draw(instance, &eye, height, &mut playing.lists);
+        }
         gather(instance, &mut playing.lights);
         models::gather(instance, &mut playing.placed);
     }

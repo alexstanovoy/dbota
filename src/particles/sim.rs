@@ -105,6 +105,12 @@ pub struct Instance {
     pub world_time: f32,
     /// Control points the operators set in a step, applied after it.
     writes: Vec<(Target, usize, ControlPoint)>,
+    /// Seconds since it was last in view.
+    undrawn: f32,
+    /// Out of view the last frame it was looked at.
+    out_of_view: bool,
+    /// Ended: it finishes, asleep or not.
+    ending: bool,
 }
 
 impl EmitterState {
@@ -162,6 +168,9 @@ impl Instance {
             held: false,
             world_time: 0.0,
             writes: Vec::new(),
+            undrawn: 0.0,
+            out_of_view: false,
+            ending: false,
         }
     }
 
@@ -170,6 +179,9 @@ impl Instance {
     pub fn restart(&mut self, seed: u32) {
         self.life = 0.0;
         self.held = false;
+        self.undrawn = 0.0;
+        self.out_of_view = false;
+        self.ending = false;
         for (index, node) in self.nodes.iter_mut().enumerate() {
             node.reset(seed.wrapping_add(129 * index as u32));
         }
@@ -198,6 +210,7 @@ impl Instance {
     /// Ends the effect: emitters stop, the end cap's functions run and the end cap children
     /// start, with what runs under them.
     pub fn end(&mut self) {
+        self.ending = true;
         if std::mem::take(&mut self.held) {
             self.life = 0.0;
         }
@@ -211,10 +224,39 @@ impl Instance {
         );
     }
 
+    /// Whether it was out of view the last frame it was looked at.
+    pub fn out_of_view(&self) -> bool {
+        self.out_of_view
+    }
+
+    /// Notes whether it was in view this frame, `dt` seconds after the last.
+    pub fn seen(&mut self, in_view: bool, dt: f32) {
+        self.out_of_view = !in_view;
+        self.undrawn = if in_view { 0.0 } else { self.undrawn + dt };
+    }
+
+    /// Whether it sleeps: out of view for longer than its definition's sleep time
+    /// (`m_flNoDrawTimeToGoToSleep`), as Source stops simulating a system no view draws, its
+    /// particles held where they are until it is in view again. One ended never sleeps, so it
+    /// finishes.
+    pub fn asleep(&self) -> bool {
+        !self.ending && self.undrawn > self.effect.defs[0].system.sleep_after
+    }
+
     /// Plays `dt` seconds on the ground `ground` gives (none while the game does not know it).
+    /// Asleep, only its clock and its control points move on: it wakes where it is placed then,
+    /// not swept from where it fell asleep.
     pub fn advance(&mut self, dt: f32, ground: Option<HeightAt<'_>>) {
         self.life += dt;
         self.world_time += dt;
+        if self.asleep() {
+            for node in &mut self.nodes {
+                for point in &mut node.control_points {
+                    point.previous = point.position;
+                }
+            }
+            return;
+        }
         for node in &mut self.nodes {
             node.world_time = self.world_time;
         }
