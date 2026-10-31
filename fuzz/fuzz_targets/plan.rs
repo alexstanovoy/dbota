@@ -21,36 +21,6 @@ fn cache() -> &'static PathBuf {
     })
 }
 
-fn outputs(item: &Item) -> Vec<&str> {
-    match item {
-        Item::Model { out, .. }
-        | Item::Texture { out, .. }
-        | Item::Sound { out, .. }
-        | Item::Expression { out, .. }
-        | Item::Phonemes { out, .. }
-        | Item::Tooltips { out, .. }
-        | Item::Shop { out, .. }
-        | Item::Labels { out, .. }
-        | Item::Styles { out, .. }
-        | Item::Particle { out, .. }
-        | Item::Portraits { out, .. } => vec![out],
-        Item::World { out, layers, .. } => vec![out, layers],
-        Item::Placements {
-            trees_out,
-            buildings_out,
-            lighting_out,
-            ..
-        } => [
-            Some(trees_out.as_str()),
-            Some(buildings_out.as_str()),
-            lighting_out.as_deref(),
-        ]
-        .into_iter()
-        .flatten()
-        .collect(),
-    }
-}
-
 fuzz_target!(|data: &[u8]| {
     let text = String::from_utf8_lossy(data);
     let mut parts = text.splitn(3, '\0');
@@ -61,7 +31,7 @@ fuzz_target!(|data: &[u8]| {
     );
     let plan = Plan::parse(manifest, ids);
     for item in &plan.items {
-        for out in outputs(item) {
+        for out in item.outputs() {
             let _ = (safe_path(out), is_small(out, 1));
         }
         if let Item::Tooltips { wanted, .. } = item {

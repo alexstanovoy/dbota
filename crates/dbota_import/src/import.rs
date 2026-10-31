@@ -276,6 +276,38 @@ impl Item {
         }
     }
 
+    /// The cache paths the item writes by name (a world's layers are a folder; a model's textures
+    /// and the world's geometry sit beside what is named).
+    pub fn outputs(&self) -> Vec<&str> {
+        match self {
+            Self::Model { out, .. }
+            | Self::Texture { out, .. }
+            | Self::Sound { out, .. }
+            | Self::Expression { out, .. }
+            | Self::Phonemes { out, .. }
+            | Self::Tooltips { out, .. }
+            | Self::Shop { out, .. }
+            | Self::Labels { out, .. }
+            | Self::Styles { out, .. }
+            | Self::Particle { out, .. }
+            | Self::Portraits { out, .. } => vec![out],
+            Self::World { out, layers, .. } => vec![out, layers],
+            Self::Placements {
+                trees_out,
+                buildings_out,
+                lighting_out,
+                ..
+            } => [
+                Some(trees_out.as_str()),
+                Some(buildings_out.as_str()),
+                lighting_out.as_deref(),
+            ]
+            .into_iter()
+            .flatten()
+            .collect(),
+        }
+    }
+
     pub fn logical(&self) -> &str {
         match self {
             Self::Model { logical, .. }

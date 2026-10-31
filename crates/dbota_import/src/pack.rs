@@ -11,12 +11,13 @@
 
 use std::collections::{HashMap, HashSet};
 use std::fmt;
+use std::sync::OnceLock;
 
 use heatel::Slice;
 
 use crate::import::{
-    INDEX, MAX_STAMP, PATH_LIMIT, READ_ONE_LIMIT, STAMP, WRITE_LIMIT, fingerprint, is_small,
-    safe_path, stamped_here,
+    IDS, INDEX, Item, MANIFEST, MAX_STAMP, PATH_LIMIT, Plan, READ_ONE_LIMIT, STAMP, WRITE_LIMIT,
+    fingerprint, is_small, safe_path, stamped_here,
 };
 
 /// Most files a cache holds besides the stamp and the index (a full one has ~1500).
@@ -30,20 +31,17 @@ const MAX_SMALL_TOTAL: u64 = 128 << 20;
 /// Longest index: a line is at most ~230 bytes.
 const MAX_INDEX: u64 = 2 << 20;
 
-/// Where a cache's files live: the folders at its top and the extensions they hold.
-const PLACES: [(&str, &[&str]); 11] = [
-    ("cursors", &["png"]),
-    ("expressions", &["txt"]),
-    ("hud", &["png"]),
-    ("icons", &["png"]),
-    ("map", &["bin", "gltf", "ktx2", "png", "txt"]),
-    ("minimap", &["png"]),
-    ("models", &["glb", "ktx2", "png", "txt"]),
-    ("particles", &["glb", "json", "ktx2", "png"]),
-    ("sounds", &["mp3", "txt", "wav"]),
-    ("text", &["json"]),
-    ("textures", &["png"]),
-];
+/// The folders at the top of a cache: those the manifest's outputs go in, so a folder the
+/// manifest adds (the loading screen's, the faces') is one a prepared cache may hold at once.
+fn folders() -> &'static HashSet<String> {
+    static FOLDERS: OnceLock<HashSet<String>> = OnceLock::new();
+    FOLDERS.get_or_init(|| {
+        let plan = Plan::parse(MANIFEST, IDS);
+        let tops = plan.items.iter().flat_map(Item::outputs);
+        tops.filter_map(|out| out.split_once('/').map(|(top, _)| top.to_owned()))
+            .collect()
+    })
+}
 
 /// The most bytes a file of an extension may have: well above the largest the importer makes
 /// (the map's geometry is 209 MB, its glTF 15 MB, a texture 22 MB, a particle file 0.2 MB) and
@@ -269,7 +267,7 @@ fn fingerprint_of_stamp(stamp: &str) -> String {
 }
 
 /// A cache file that is not the stamp or the index: a plain path in one of the cache's folders,
-/// with an extension the importer makes there.
+/// with an extension the importer makes.
 fn check_place(path: &str) -> Result<(), PackError> {
     if path == STAMP || path == INDEX {
         return Ok(());
@@ -280,11 +278,7 @@ fn check_place(path: &str) -> Result<(), PackError> {
     }
     let (top, rest) = path.split_once('/').ok_or_else(unsafe_path)?;
     let extension = rest.rsplit_once('.').map(|(_, e)| e);
-    let (_, extensions) = PLACES
-        .iter()
-        .find(|(folder, _)| *folder == top)
-        .ok_or_else(unsafe_path)?;
-    if extension.is_some_and(|e| extensions.contains(&e)) {
+    if folders().contains(top) && extension.is_some_and(|e| LIMITS.iter().any(|(l, _)| *l == e)) {
         Ok(())
     } else {
         Err(unsafe_path())
