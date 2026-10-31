@@ -5,6 +5,7 @@ use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use bevy::prelude::*;
+use bevy::tasks::ComputeTaskPool;
 use bevy::transform::TransformSystems;
 
 use super::draw::{Eye, Quad, draw, from_world, turn_to_screen};
@@ -21,6 +22,9 @@ use crate::manifest::Manifest;
 const MAX_PLAYING: usize = 2048;
 /// Ended effects kept to be played again without allocating.
 const MAX_SPARE: usize = 256;
+/// Effects playing from which they are stepped on the compute threads together: fewer step
+/// sooner than the threads would be handed them.
+const PARALLEL_FROM: usize = 4;
 
 /// A playing effect, by its slot and the slot's generation.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -112,14 +116,35 @@ impl Playing {
         instance.as_mut()
     }
 
+    /// Steps every effect by `dt`, on the compute threads when there are enough of them that
+    /// the effects take turns on no single thread (each effect steps alone: the order they step
+    /// in changes nothing), and retires the ones that are finished.
     fn advance(&mut self, dt: f32, ground: Option<HeightAt<'_>>) {
         self.clock += dt;
+        let pool = ComputeTaskPool::get();
+        let playing = self.slots.iter().filter(|(_, i)| i.is_some()).count();
+        if playing >= PARALLEL_FROM && pool.thread_num() > 1 {
+            // Several pieces a thread, so one heavy effect does not hold the rest up.
+            let piece = self.slots.len().div_ceil(pool.thread_num() * 4).max(1);
+            pool.scope(|scope| {
+                for slots in self.slots.chunks_mut(piece) {
+                    scope.spawn(async move {
+                        for instance in slots.iter_mut().filter_map(|(_, i)| i.as_mut()) {
+                            instance.advance(dt, ground);
+                        }
+                    });
+                }
+            });
+        } else {
+            for instance in self.slots.iter_mut().filter_map(|(_, i)| i.as_mut()) {
+                instance.advance(dt, ground);
+            }
+        }
         for slot in 0..self.slots.len() {
             let (generation, entry) = &mut self.slots[slot];
             let Some(instance) = entry else {
                 continue;
             };
-            instance.advance(dt, ground);
             if instance.finished() {
                 let instance = entry.take();
                 *generation = generation.wrapping_add(1);

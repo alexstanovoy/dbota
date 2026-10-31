@@ -7,7 +7,7 @@ use heatel::particle::{Bias, Curve, FloatInput, Mapping, Transform, VectorInput}
 use super::store::{Particles, slot};
 
 /// The ground's height at a point of the ground plane (Source's x and y).
-pub type HeightAt<'a> = &'a dyn Fn(f32, f32) -> f32;
+pub type HeightAt<'a> = &'a (dyn Fn(f32, f32) -> f32 + Sync);
 
 /// What an input may read besides the particle: the system's clock and control points, the
 /// ground and the parent system's particles.
