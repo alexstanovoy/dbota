@@ -137,7 +137,7 @@ const NOT_LAYERS: [&str; 3] = ["refl", "specular", "height"];
 /// The world's nodes the client leaves out of `mid.gltf`: the trees, buildings and map objectives
 /// (Watchers, Outposts, Shrines of Wisdom, Lotus Pools) it spawns itself as units, and the
 /// end-game cameras.
-const NOT_IN_WORLD: [&str; 20] = [
+pub const NOT_IN_WORLD: [&str; 20] = [
     "tree_",
     "dire_tree",
     "radiant_tower",

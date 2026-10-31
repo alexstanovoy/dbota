@@ -145,7 +145,8 @@ Two more checks need no Dota install, only a native import of this build served 
 `smoke.py` has the build commands. `--replay-page` opens a build with a Zstandard-packed replay built in
 (`DBOTA_WEB_REPLAY`, read through to `--seek` in `DBOTA_WEB_ARGS`) and expects the client's `match known` and
 `chat: N lines heard` console lines, the CJK fallback registered and no read error. Without an
-install the import test is skipped with a message. `OUT=dir web/build.sh` builds somewhere else than `web/out`.
+install the import test fails. The merge gate runs all of these in its `browser` step (`tools/browser_check.sh` builds the pages and
+runs every check). `OUT=dir web/build.sh` builds somewhere else than `web/out` (`APIS=webgpu`: only that API's client).
 
 ## Manual checks (the native directory dialog is out of automation's reach)
 

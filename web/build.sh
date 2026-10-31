@@ -4,6 +4,7 @@
 #   DBOTA_WEB_REPLAY=match.brp web/build.sh     # a page that plays the replay built into it
 #   PROFILE=release web/build.sh                # a quicker, bigger build for tests (default: web)
 #   OUT=temp/page web/build.sh                  # somewhere else than web/out
+#   APIS=webgpu web/build.sh                    # only that graphics API's client (default: "webgpu webgl2")
 set -euo pipefail
 export PATH="$PATH:$HOME/.cargo/bin"
 here=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)
@@ -22,7 +23,7 @@ export CARGO_ENCODED_RUSTFLAGS=${CARGO_ENCODED_RUSTFLAGS%$'\x1f'}
 mkdir -p "$out/import"
 # One client per graphics API (Bevy fixes its render paths when it is compiled); the page loads the
 # one the browser can draw with: dbota.js (WebGPU) or dbota_webgl2.js.
-for api in webgpu webgl2; do
+for api in ${APIS:-webgpu webgl2}; do
     cargo build --profile "$profile" --target wasm32-unknown-unknown --features "$api" "${features[@]}" -p dbota
     name=dbota; [ "$api" = webgpu ] || name=dbota_$api
     wasm-bindgen --target web --no-typescript --out-dir "$out" --out-name "$name" \

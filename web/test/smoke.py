@@ -10,7 +10,7 @@ the cache is kept, and deletes it. Also checks nothing but the page's own files 
 The folder given to the page is a farm of symlinks to the install's package files, so the test
 shows the "pick a folder, read only what is needed" path without copying anything. Needs the
 Dota 2 install (DBOTA_DOTA_PATH or the usual Steam places); the game run needs WebGL2/WebGPU
-(SwiftShader does). Without an install that part is skipped, with a message.
+(SwiftShader does). Without an install the test fails (`--only-wire` leaves that part out).
 
 One more check needs a prepared asset cache, not an install:
 
@@ -65,7 +65,7 @@ names it) that the pages play on through `?cache=http`, served under /cache besi
 * `--boot-page` (any build): the page never spins for ever: a part that does not load, code the
   browser cannot run, a page that never arrives, a storage that hangs or is missing, a game download
   that stalls or is refused each end on a screen that says the stage, while a slow download that keeps
-  moving is waited for and the game starts (Chromium, and Firefox where there is one).
+  moving is waited for and the game starts (Chromium and Firefox).
 * `--fullscreen-page`: a replay build made with `DBOTA_WEB_ARGS="--replay built-in --pov 0 --settings video"`;
   the display mode and F11 put the canvas fullscreen and leaving it turns the setting back.
 """
@@ -219,12 +219,11 @@ def check_icons_as_native(page, reference):
     make the same files: a block decoder that kept 32 of a BC3 block's 48 alpha index bits in a
     `usize` drew every icon jagged and dashed in the browser only. Every icon the browser made is
     compared, byte for byte, with the one a desktop `dbota import` made (`--reference-cache`, or
-    DBOTA_ASSETS); without one the check is skipped, with a message."""
+    DBOTA_ASSETS); without one the check fails."""
     reference = reference or os.environ.get("DBOTA_ASSETS")
     root = pathlib.Path(reference).expanduser() if reference else None
     if not root or not (root / "index.txt").is_file():
-        print("skipped: the icons are compared with a desktop import (--reference-cache DIR or DBOTA_ASSETS)")
-        return
+        sys.exit("the icons are compared with a desktop import: --reference-cache DIR or DBOTA_ASSETS must name one")
     paths = sorted(str(p.relative_to(root)) for p in (root / "icons").rglob("*.png"))
     assert paths, f"no icons in {root}"
     got = page.evaluate(ICONS_SUMS, paths)
@@ -263,7 +262,7 @@ def play_scene(page, report, settle):
 
 def import_smoke(args, install):
     folder = farm(install, HERE.parent.parent / "temp/smoke-install")
-    server = serve()
+    server = serve(args.import_page or OUT)
     base = f"http://127.0.0.1:{server.server_address[1]}/"
     requests, console, failures = [], [], []
 
@@ -284,7 +283,12 @@ def import_smoke(args, install):
         page.add_init_script("delete window.showDirectoryPicker")
 
         page.goto(base)
-        page.wait_for_selector("#grant:not([hidden])", timeout=20000)
+        try:
+            page.wait_for_selector("#grant:not([hidden])", timeout=90000)
+        except Exception:
+            report()
+            page.screenshot(path=str(HERE.parent.parent / "temp/smoke-grant.png"))
+            raise
         assert page.is_hidden("#standins") and "stand-in" not in page.inner_text("main"), "no way to play without assets is offered"
         assert "never leave your computer" in page.inner_text("#grant"), "the privacy promise is on the page"
 
@@ -847,6 +851,10 @@ def check_served_cache(directory):
                 self.end_headers()
                 self.wfile.write(body)
                 return
+            if self.path == "/cache/index.txt":
+                # a server without an index has none, whatever cache folder lies behind it
+                self.send_error(404)
+                return
             super().do_GET()
 
     for text in (index, None):
@@ -959,8 +967,8 @@ def check_boot_page(directory):
             try:
                 browser = getattr(p, engine).launch(args=BROWSER_ARGS if engine == "chromium" else [])
             except Exception as e:
-                print(f"boot [{engine}]: skipped, no browser ({str(e)[:60]})")
-                return
+                # a browser that is not there is a check that did not run: it fails
+                sys.exit(f"boot [{engine}]: no browser ({str(e)[:200]})")
             page = browser.new_context(viewport={"width": 1280, "height": 720}).new_page()
             if init:
                 page.add_init_script(init)
@@ -1317,7 +1325,7 @@ def refusing_zips(good_zip, scratch):
     size = len(data)
     return [
         ("another build", make("stale.zip", [("stamp.txt", "v1/rev1/0000000000000000/1/2"), ("index.txt", index), (some, data)]),
-         "is for assets v1/rev1/0000000000000000, but this dbota needs assets"),
+         "is for assets v1/rev1, but this dbota needs assets"),
         ("a path that climbs out", make("climb.zip", [("stamp.txt", stamp), ("index.txt", climbing), (some, data), ("../escape.png", b"x" * 16)]),
          "holds a file it must not: ../escape.png"),
         ("a file the index does not list", make("unlisted.zip", [("stamp.txt", stamp), ("index.txt", index), (some, data), ("hud/unlisted.png", b"x")]),
@@ -1347,7 +1355,7 @@ def check_directory_picker(page):
     )
     page.click("#loadFolder")
     page.wait_for_function(
-        "() => document.getElementById('status').textContent.includes('is for assets v1/rev1/0000000000000000')",
+        "() => document.getElementById('status').textContent.includes('is for assets v1/rev1')",
         timeout=60000,
     )
     walked = page.evaluate(
@@ -1396,7 +1404,10 @@ def check_prepared_page(directory, cache_zip, cache_folder):
         assert page.is_visible("#loadZip") and page.is_visible("#loadFolder"), "loading a prepared cache is offered"
         for what, path, words in refusing:
             load("#loadZip", path)
-            page.wait_for_function(f"() => document.getElementById('status').textContent.includes({json.dumps(words)})", timeout=60000)
+            try:
+                page.wait_for_function(f"() => document.getElementById('status').textContent.includes({json.dumps(words)})", timeout=60000)
+            except Exception:
+                raise AssertionError(f"{what}: wanted {words!r}, the page said {page.inner_text('#status')!r}")
             page.wait_for_selector("#grant:not([hidden])", timeout=20000)
             assert state() is None, f"{what}: nothing was copied"
             print(f"refused ({what}):", page.inner_text("#status"))
@@ -1447,6 +1458,7 @@ def check_prepared_page(directory, cache_zip, cache_folder):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--install")
+    ap.add_argument("--import-page", type=pathlib.Path, help="a build for the import test (default web/out)")
     ap.add_argument("--no-game", action="store_true")
     ap.add_argument("--reference-cache", help="a cache a desktop `dbota import` made, to compare the browser's icons with")
     ap.add_argument("--keep", action="store_true", help="leave the imported copy in place")
@@ -1473,8 +1485,8 @@ def main():
     install = None if args.only_wire else find_install(args.install)
     if install:
         import_smoke(args, install)
-    else:
-        print("skipped: the import test needs a Dota 2 install (DBOTA_DOTA_PATH or --install)")
+    elif not args.only_wire:
+        sys.exit("the import test needs a Dota 2 install (DBOTA_DOTA_PATH or --install); --only-wire leaves it out")
     if args.prepared_page:
         if not (args.cache_zip and args.cache_folder):
             sys.exit("--prepared-page needs --cache-zip and --cache-folder")

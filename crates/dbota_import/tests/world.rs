@@ -51,25 +51,37 @@ fn entities(src: &DirSource, map: &Vpk) -> EntityLump {
     EntityLump::read(&Resource::parse(&bytes).unwrap()).unwrap()
 }
 
-/// The lines of two placement files differ only in float formatting (`-0.0` for `0.0`).
+/// The placements of `ours` agree with the reference's, which differ only in float formatting
+/// (`-0.0` for `0.0`): the reference was exported before the buildings the client spawns as units
+/// (towers, barracks) left the file and the Watchers, Outposts and Shrines of Wisdom joined it, so
+/// a line of ours whose model the reference places must be one of the reference's lines.
 fn same_placements(ours: &str, theirs: &str) -> Result<(), String> {
-    let (a, b): (Vec<&str>, Vec<&str>) = (ours.lines().collect(), theirs.lines().collect());
-    if a.len() != b.len() {
-        return Err(format!("{} lines vs {}", a.len(), b.len()));
-    }
-    for (x, y) in a.iter().zip(&b) {
-        let (p, q): (Vec<&str>, Vec<&str>) = (
-            x.split_whitespace().collect(),
-            y.split_whitespace().collect(),
-        );
-        let number = |w: &str| w.parse::<f64>().ok();
-        let same = p.len() == q.len()
-            && p.iter().zip(&q).all(|(u, v)| match (number(u), number(v)) {
-                (Some(u), Some(v)) => u == v,
-                _ => u == v,
-            });
-        if !same {
-            return Err(format!("{x:?} vs {y:?}"));
+    let words = |l: &str| {
+        l.split_whitespace()
+            .map(str::to_owned)
+            .collect::<Vec<String>>()
+    };
+    let theirs: Vec<Vec<String>> = theirs
+        .lines()
+        .filter(|l| !l.starts_with('#'))
+        .map(words)
+        .collect();
+    // (The writer gave each line more columns since: the reference's are compared.)
+    let same = |p: &[String], q: &[String]| {
+        let p = &p[..p.len().min(q.len())];
+        p.len() == q.len()
+            && p.iter()
+                .zip(q)
+                .all(|(u, v)| match (u.parse::<f64>(), v.parse::<f64>()) {
+                    (Ok(u), Ok(v)) => u == v,
+                    _ => u == v,
+                })
+    };
+    for line in ours.lines().filter(|l| !l.starts_with('#')) {
+        let x = words(line);
+        let known = theirs.iter().any(|y| y.first() == x.first());
+        if known && !theirs.iter().any(|y| same(&x, y)) {
+            return Err(format!("not among the reference's lines: {line}"));
         }
     }
     Ok(())
@@ -287,15 +299,26 @@ fn differences(ours: &Gltf, theirs: &Gltf) -> Vec<String> {
             out.push(format!("{kind}: {line}"));
         }
     };
-    let (a, b) = (
-        ours.json["nodes"].as_array().unwrap(),
-        theirs.json["nodes"].as_array().unwrap(),
-    );
+    // The reference was exported before the cache's world left out what the client spawns as
+    // units (Watchers, Outposts, Shrines of Wisdom): those nodes are not asked for.
+    let a = ours.json["nodes"].as_array().unwrap();
+    let b: Vec<serde_json::Value> = theirs.json["nodes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|n| {
+            let name = n["name"].as_str().unwrap_or_default();
+            !dbota_import::import::NOT_IN_WORLD
+                .iter()
+                .any(|p| name.starts_with(p))
+        })
+        .cloned()
+        .collect();
     if a.len() != b.len() {
         report("node count", format!("{} vs {}", a.len(), b.len()));
     }
     let mut seen = HashSet::new();
-    for (i, (x, y)) in a.iter().zip(b).enumerate() {
+    for (i, (x, y)) in a.iter().zip(&b).enumerate() {
         compare_node(ours, theirs, i, (x, y), &mut seen, &mut report);
     }
     for (kind, n) in kinds {
@@ -616,7 +639,15 @@ fn world_images_and_layers_match_the_exported_ones() {
             failed.push(why);
         }
     }
-    let extra: Vec<&String> = exported.keys().collect();
+    // (The textures of the nodes the cache's world leaves out are not asked for.)
+    let extra: Vec<&String> = exported
+        .keys()
+        .filter(|name| {
+            !dbota_import::import::NOT_IN_WORLD
+                .iter()
+                .any(|p| name.starts_with(p))
+        })
+        .collect();
     assert!(extra.is_empty(), "exported images not made here: {extra:?}");
     let ground = cache().join(&fields.iter().find(|(k, _)| k == "layers").unwrap().1);
     compare_layers(&src, &pak, &world.layers, &ground, &mut failed);

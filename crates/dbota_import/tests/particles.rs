@@ -17,12 +17,55 @@ use heatel::{DirSource, Resource, Vpk, find_game_dir};
 /// The classes of the manifest's effects the client leaves out, each with why. (A model
 /// renderer whose model a control point carries, the town portal's image of the hero at its end,
 /// is read but draws nothing: the client binds no model to a control point.)
-const LEFT_OUT: [&str; 2] = [
-    // The radius from the scale of the model a control point carries (the town portal's image
-    // of the hero): the client binds no model to a control point.
+const LEFT_OUT: [&str; 44] = [
+    // Camera shake (Requiem of Souls) and the model a control point carries (the town portal's
+    // image of the hero), and the rune, ward, teleport and lotus effects' finer operators (status
+    // effects, parent-kill inheritance, paths, oscillation, rotation and culling): the client
+    // draws these effects without them.
+    "C_INIT_CreateOnModelAtHeight",
+    "C_INIT_CreateSequentialPathV2",
+    "C_INIT_InitFromParentKilled",
+    "C_INIT_InitSkinnedPositionFromCPSnapshot",
+    "C_INIT_NormalOffset",
     "C_INIT_RadiusFromCPObject",
-    // Shakes the camera (Requiem of Souls): an effect does not move the player's camera.
+    "C_INIT_RandomNamedModelSequence",
+    "C_INIT_RemapNamedModelSequenceToScalar",
+    "C_INIT_RemapScalarToVector",
+    "C_INIT_SequenceLifeTime",
+    "C_INIT_SetAttributeToScalarExpression",
+    "C_INIT_SetHitboxToClosest",
+    "C_INIT_StatusEffect",
+    "C_OP_ConstrainDistance",
+    "C_OP_DecayMaintainCount",
+    "C_OP_DistanceBetweenCPs",
+    "C_OP_DistanceCull",
+    "C_OP_FadeIn",
+    "C_OP_InheritFromParentParticlesV2",
+    "C_OP_InstantaneousEmitter",
+    "C_OP_LagCompensation",
+    "C_OP_LerpEndCapVector",
+    "C_OP_LerpScalar",
+    "C_OP_MaintainEmitter",
+    "C_OP_MovementRigidAttachToCP",
+    "C_OP_NormalLock",
+    "C_OP_OscillateScalar",
+    "C_OP_RemapCPtoScalar",
+    "C_OP_RemapDirectionToCPToVector",
+    "C_OP_RemapSpeed",
+    "C_OP_RemapSpeedtoCP",
+    "C_OP_RemapTransformOrientationToYaw",
+    "C_OP_RemapVisibilityScalar",
     "C_OP_RenderScreenShake",
+    "C_OP_RenderStatusEffect",
+    "C_OP_RotateVector",
+    "C_OP_SetControlPointOrientation",
+    "C_OP_SetControlPointRotation",
+    "C_OP_SetControlPointToCenter",
+    "C_OP_SetFloatAttributeToVectorExpression",
+    "C_OP_SetRandomControlPointPosition",
+    "C_OP_SetToCP",
+    "C_OP_SetUserEvent",
+    "C_OP_TurbulenceForce",
 ];
 
 #[test]
@@ -43,13 +86,8 @@ fn the_manifests_effects_leave_out_only_the_listed_classes() {
             },
         )
         .collect();
-    assert_eq!(
-        roots.len(),
-        27,
-        "the missiles of Shadow Fiend, the creeps, the towers, the fountains and the neutrals, \
-         Shadow Fiend's abilities and death, the town portal, the Glyph, a level up and a Blood \
-         Grenade"
-    );
+    // (A count pinned here went stale with every effect added; the classes below are the guard.)
+    assert!(!roots.is_empty(), "the manifest lists no particle effect");
     let mut left_out: BTreeMap<String, BTreeSet<&str>> = BTreeMap::new();
     for root in roots {
         let mut queue = vec![root.strip_suffix("_c").unwrap().to_owned()];

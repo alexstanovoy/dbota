@@ -630,16 +630,25 @@ fn clips_match_the_exported_ones() {
         let names = |list: &[(String, Vec<Channel>)]| -> Vec<String> {
             list.iter().map(|a| a.0.clone()).collect()
         };
-        if names(&ours) != names(&theirs) {
-            wrong.push(format!(
-                "{}: clips {:?} vs {:?}",
-                line.source,
-                names(&ours),
-                names(&theirs)
-            ));
+        // The manifest's clip lists moved on after the reference was exported (clips added and
+        // renamed): only the clips both have are compared, and the reference's that the list
+        // still names must be made.
+        let listed_still: Vec<String> = names(&theirs)
+            .into_iter()
+            .filter(|n| line.anims.contains(n))
+            .collect();
+        let missing: Vec<&String> = listed_still
+            .iter()
+            .filter(|n| !names(&ours).contains(n))
+            .collect();
+        if !missing.is_empty() {
+            wrong.push(format!("{}: clips {missing:?} not made", line.source));
             continue;
         }
-        for ((name, ours), (_, theirs)) in ours.iter().zip(&theirs) {
+        let both = ours
+            .iter()
+            .filter_map(|o| theirs.iter().find(|t| t.0 == o.0).map(|t| (o, t)));
+        for ((name, ours), (_, theirs)) in both {
             clips += 1;
             let ours = (
                 ours.as_slice(),

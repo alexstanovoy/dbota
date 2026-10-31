@@ -47,7 +47,10 @@ fn manifest_textures() -> Vec<(String, String)> {
         .filter_map(|line| {
             let words: Vec<&str> = line.split('#').next()?.split_whitespace().collect();
             match words.as_slice() {
-                ["texture", _, src, out, ..] => Some(((*src).to_owned(), (*out).to_owned())),
+                // A source that is a PNG is copied as it is: no compiled texture to compare.
+                ["texture", _, src, out, ..] if !src.ends_with(".png") => {
+                    Some(((*src).to_owned(), (*out).to_owned()))
+                }
                 _ => None,
             }
         })
