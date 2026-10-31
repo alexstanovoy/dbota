@@ -354,6 +354,13 @@ fn item_tip(
             .hints
             .push(format!("Ready in {} s", i.cooldown_left.div_ceil(rate)));
     }
+    // A Bottle's rune, in Dota's words, and the seconds before it takes effect by itself.
+    if let Some(rune) = i.rune
+        && let Some(line) = look.texts.label(crate::runes::bottled_key(rune.kind), &[])
+    {
+        let left = rune.ticks_left.div_ceil(rate);
+        content.hints.push(format!("{line} ({left} s)"));
+    }
     if slot >= bota_client_core::INVENTORY_SLOTS && slot != bota_client_core::TOWN_PORTAL_SLOT {
         content
             .hints

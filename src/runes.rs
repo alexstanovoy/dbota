@@ -6,10 +6,11 @@
 use std::collections::HashMap;
 
 use bevy::prelude::*;
-use bota_proto::{EntityId, EventKind, RuneKind, Team, WorldView};
+use bota_proto::{EntityId, EventKind, ItemId, ItemView, RuneKind, Team, WorldView};
 
 use crate::fog::FogGrid;
 use crate::loot::{Idle, play_idle};
+use crate::manifest::Manifest;
 use crate::map::{Ground, UNITS_PER_METRE};
 use crate::session::Session;
 use crate::units::ModelBank;
@@ -53,6 +54,22 @@ pub const fn text_name(kind: RuneKind) -> &'static str {
     }
 }
 
+/// Dota's word for a rune a Bottle keeps, its tooltip's line (`DOTA_Tooltip_Ability_item_bottle_*`:
+/// "Rune: Haste").
+pub const fn bottled_key(kind: RuneKind) -> &'static str {
+    match kind {
+        RuneKind::Water => "DOTA_Tooltip_Ability_item_bottle_water",
+        RuneKind::Bounty => "DOTA_Tooltip_Ability_item_bottle_bounty",
+        RuneKind::Haste => "DOTA_Tooltip_Ability_item_bottle_haste",
+        RuneKind::AmplifyDamage => "DOTA_Tooltip_Ability_item_bottle_double_damage",
+        RuneKind::Arcane => "DOTA_Tooltip_Ability_item_bottle_arcane",
+        RuneKind::Regeneration => "DOTA_Tooltip_Ability_item_bottle_regeneration",
+        RuneKind::Illusion => "DOTA_Tooltip_Ability_item_bottle_illusion",
+        RuneKind::Invisibility => "DOTA_Tooltip_Ability_item_bottle_invisible",
+        RuneKind::Shield => "DOTA_Tooltip_Ability_item_bottle_shield",
+    }
+}
+
 /// The kind of rune whose art has a name.
 #[cfg(test)]
 pub fn of_art(name: &str) -> Option<RuneKind> {
@@ -78,6 +95,26 @@ pub const fn sheet_cell(kind: RuneKind) -> (f32, f32) {
 
 /// The side of the sheet's rune cells, in its pixels.
 pub const SHEET_CELL: f32 = 32.0;
+
+/// The icon of an item as it stands in a slot, by logical name: Dota draws its Bottle by what it
+/// holds (`bottle_<rune>` with a rune kept in it) or by its charges (`bottle`, `_medium`,
+/// `_small`, `_empty` for 3, 2, 1 and none); any other item by its own name.
+pub fn item_icon(item: &ItemView, manifest: &Manifest) -> Option<String> {
+    if item.id != ItemId::BOTTLE {
+        return manifest.item_icon(item.id.0);
+    }
+    let name = manifest.dota_name("item", item.id.0)?;
+    let state = match (item.rune, item.charges) {
+        (Some(rune), _) => format!("_{}", art(rune.kind)),
+        (None, Some(0)) => "_empty".to_owned(),
+        (None, Some(1)) => "_small".to_owned(),
+        (None, Some(2)) => "_medium".to_owned(),
+        (None, _) => String::new(),
+    };
+    manifest
+        .file(&format!("icon.item.{name}{state}"))
+        .or_else(|| manifest.item_icon(item.id.0))
+}
 
 /// A rune on the map; the model it is drawn with, when the cache has it, is its [`Idle`].
 #[derive(Component, Debug)]

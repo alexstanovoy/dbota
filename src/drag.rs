@@ -130,7 +130,7 @@ fn follow(
     ghost.0.height = px(size.y);
     ghost.0.left = px(cursor.x / scale - size.x / 2.0);
     ghost.0.top = px(cursor.y / scale - size.y / 2.0);
-    let icon = manifest.item_icon(item.id.0).map(|p| server.load(p));
+    let icon = crate::runes::item_icon(&item, &manifest).map(|p| server.load(p));
     let handle = icon.clone().unwrap_or_default();
     if ghost.1.image != handle {
         ghost.1.image = handle;

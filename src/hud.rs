@@ -127,7 +127,7 @@ struct NeutralSlot;
 
 /// What a part of a slot box shows.
 #[derive(Component, Clone, Copy, PartialEq, Eq)]
-enum Part {
+pub(crate) enum Part {
     Icon,
     Sweep,
     Seconds,
@@ -136,7 +136,8 @@ enum Part {
     Pip(u8),
     Shade,
     Charges,
-    /// What a Ward Dispenser holds of the kind that is not active.
+    /// What a Ward Dispenser holds of the kind that is not active, or the
+    /// seconds a Bottle keeps its rune.
     OtherCharges,
     /// Dota's padlock on an item locked against combining.
     Lock,
@@ -144,7 +145,7 @@ enum Part {
 
 /// The parent box of a part, to find a part's slot.
 #[derive(Component, Clone, Copy)]
-struct PartOf(Entity);
+pub(crate) struct PartOf(pub(crate) Entity);
 
 /// The frame rate at the top right, and on a live link the ping and the time orders take to be
 /// received.
@@ -1902,7 +1903,7 @@ fn item_face(
         } else {
             String::new()
         },
-        icon: manifest.item_icon(item.id.0),
+        icon: crate::runes::item_icon(&item, manifest),
         look,
         sweep: unit.map_or(0.0, |u| {
             core.derived.wait_left(
@@ -1923,7 +1924,8 @@ fn item_face(
             .map(|c| c.to_string())
             .unwrap_or_default(),
         // A Ward Dispenser keeps two counts: the active kind's on the right
-        // and the other's on the left.
+        // and the other's on the left. A Bottle keeping a rune shows there the
+        // seconds before the rune takes effect by itself.
         other_charges: item
             .dispenser
             .map(|d| {
@@ -1934,6 +1936,7 @@ fn item_face(
                 }
             })
             .map(|c| c.to_string())
+            .or_else(|| item.rune.map(|r| r.ticks_left.div_ceil(rate).to_string()))
             .unwrap_or_default(),
         no_mana: mana < item.mana_cost,
         frame: if held {

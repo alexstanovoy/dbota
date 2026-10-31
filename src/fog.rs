@@ -104,9 +104,9 @@ struct Veil {
     cast: Handle<Image>,
     /// World units the image spans.
     span: f32,
-    /// By the material, the surface drawn with it, and whether it is
-    /// tinted black ([`untouchable`]).
-    made: HashMap<(AssetId<StandardMaterial>, u8, bool), Handle<FoggedMaterial>>,
+    /// By the material, the surface drawn with it, and how a hero's state
+    /// shades it ([`shade_heroes`]).
+    made: HashMap<(AssetId<StandardMaterial>, u8, Shade), Handle<FoggedMaterial>>,
 }
 
 /// A mesh given its fogged copy: the material it was given it from, and the
@@ -122,6 +122,27 @@ pub struct HeroPart(pub Entity);
 /// What a fountain-untouchable hero's colours are multiplied by: Dota's
 /// model "tinted black" (`modifier_fountain_invulnerability`).
 const UNTOUCHABLE_TINT: f32 = 0.08;
+/// How much of an invisible hero its own side sees: Dota draws it
+/// see-through.
+const INVISIBLE_ALPHA: f32 = 0.35;
+
+/// How a hero's state shades its model.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+enum Shade {
+    /// As it is.
+    Plain,
+    /// Tinted black: untouchable at its fountain.
+    Untouchable,
+    /// See-through: invisible, as its own side sees it.
+    Invisible,
+    /// Washed blue: an illusion, as its own side tells it from the hero
+    /// (Dota's `status_effect_illusion`).
+    Illusion,
+}
+
+/// What an illusion's colours are multiplied by, and the blue it glows.
+const ILLUSION_TINT: [f32; 3] = [0.45, 0.6, 1.0];
+const ILLUSION_GLOW: LinearRgba = LinearRgba::new(0.02, 0.06, 0.25, 1.0);
 
 /// Marks a mesh whose material the fog darkens: the ground, the trees and
 /// the buildings. Units need none: those in the fog are not drawn.
@@ -202,7 +223,7 @@ pub fn plugin(app: &mut App) {
         )
         .add_systems(
             PostUpdate,
-            (wrap, untouchable)
+            (wrap, shade_heroes)
                 .chain()
                 .after(crate::units::mark_figures),
         )
@@ -378,7 +399,13 @@ fn wrap(
             fogged: &mut fogged,
             clarity: settings.clarity.strength(),
         };
-        let Some(handle) = veil.copy(made, &material.0, surface, false, paths.map(|l| &**l)) else {
+        let Some(handle) = veil.copy(
+            made,
+            &material.0,
+            surface,
+            Shade::Plain,
+            paths.map(|l| &**l),
+        ) else {
             continue;
         };
         commands
@@ -396,33 +423,47 @@ struct Made<'a> {
 }
 
 impl Veil {
-    /// The fogged copy of a material drawn as `surface`, tinted black or
-    /// not, made the first time it is asked for; none while the material
+    /// The fogged copy of a material drawn as `surface`, shaded as `shade`
+    /// says, made the first time it is asked for; none while the material
     /// is not loaded.
     fn copy(
         &mut self,
         made: Made,
         material: &Handle<StandardMaterial>,
         surface: u8,
-        tinted: bool,
+        shade: Shade,
         paths: Option<&crate::layers::GroundLayers>,
     ) -> Option<Handle<FoggedMaterial>> {
-        let key = (material.id(), surface, tinted);
+        let key = (material.id(), surface, shade);
         if let Some(handle) = self.made.get(&key) {
             return Some(handle.clone());
         }
         let mut base = made.standard.get(material)?.clone();
-        if tinted {
-            let l = base.base_color.to_linear();
-            base.base_color = Color::linear_rgba(
-                l.red * UNTOUCHABLE_TINT,
-                l.green * UNTOUCHABLE_TINT,
-                l.blue * UNTOUCHABLE_TINT,
-                l.alpha,
-            );
-            // Its sheen too: Dota's tint leaves no colour on the model.
-            base.emissive = LinearRgba::BLACK;
-            base.specular_tint = Color::BLACK;
+        match shade {
+            Shade::Plain => {}
+            Shade::Untouchable => {
+                let l = base.base_color.to_linear();
+                base.base_color = Color::linear_rgba(
+                    l.red * UNTOUCHABLE_TINT,
+                    l.green * UNTOUCHABLE_TINT,
+                    l.blue * UNTOUCHABLE_TINT,
+                    l.alpha,
+                );
+                // Its sheen too: Dota's tint leaves no colour on the model.
+                base.emissive = LinearRgba::BLACK;
+                base.specular_tint = Color::BLACK;
+            }
+            Shade::Invisible => {
+                let alpha = base.base_color.alpha() * INVISIBLE_ALPHA;
+                base.base_color.set_alpha(alpha);
+                base.alpha_mode = AlphaMode::Blend;
+            }
+            Shade::Illusion => {
+                let l = base.base_color.to_linear();
+                let [r, g, b] = ILLUSION_TINT;
+                base.base_color = Color::linear_rgba(l.red * r, l.green * g, l.blue * b, l.alpha);
+                base.emissive = ILLUSION_GLOW;
+            }
         }
         let handle = made.fogged.add(FoggedMaterial {
             base,
@@ -439,11 +480,13 @@ impl Veil {
     }
 }
 
-/// Tints every hero black while it is untouchable at its fountain, as
-/// Dota's `modifier_fountain_invulnerability` does, and gives its colours
-/// back when that ends.
+/// Shades every hero as its state shows: black while it is untouchable at its
+/// fountain, as Dota's `modifier_fountain_invulnerability` tints it; see-through
+/// while it is invisible (a view holds an invisible hero only for its own side,
+/// or for one watching the whole map); washed blue when it is an illusion its
+/// view names as one (only its own side's does); its colours back when that ends.
 #[allow(clippy::type_complexity)]
-fn untouchable(
+fn shade_heroes(
     mut commands: Commands,
     session: NonSend<crate::session::Session>,
     veil: Option<ResMut<Veil>>,
@@ -457,21 +500,25 @@ fn untouchable(
         return;
     };
     for (entity, part, Wrapped(material, surface), now) in &parts {
-        let tinted = units
-            .get(part.0)
-            .ok()
-            .and_then(|unit| view.unit(unit.id))
-            .is_some_and(|unit| {
-                unit.effects
-                    .iter()
-                    .any(|e| e.id == bota_proto::EffectId::FOUNTAIN_INVULNERABLE)
-            });
+        let unit = units.get(part.0).ok().and_then(|unit| view.unit(unit.id));
+        let shade = unit.map_or(Shade::Plain, |unit| {
+            let wears = |id| unit.effects.iter().any(|e| e.id == id);
+            if wears(bota_proto::EffectId::FOUNTAIN_INVULNERABLE) {
+                Shade::Untouchable
+            } else if unit.statuses.bits & bota_proto::StatusFlags::INVISIBLE != 0 {
+                Shade::Invisible
+            } else if wears(bota_proto::EffectId::ILLUSION) {
+                Shade::Illusion
+            } else {
+                Shade::Plain
+            }
+        });
         let made = Made {
             standard: &standard,
             fogged: &mut fogged,
             clarity: settings.clarity.strength(),
         };
-        if let Some(handle) = veil.copy(made, material, *surface, tinted, None)
+        if let Some(handle) = veil.copy(made, material, *surface, shade, None)
             && now.0 != handle
         {
             commands.entity(entity).insert(MeshMaterial3d(handle));

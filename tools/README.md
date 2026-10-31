@@ -72,12 +72,12 @@ people you may. `DBOTA_ASSETS` and `--cache-dir` name the cache to take it into,
 | `map/mid/` | `mid.gltf` with its geometry in `mid.bin`, the default map from fountain to fountain around mid, its textures, `trees.txt`, `buildings.txt` (the places and yaws of the buildings and objectives the client spawns) | 354 MB |
 | `textures/ground/` | terrain layer textures (also used by `map.mid`) | 37 MB |
 | `textures/particle/` | 16 effect textures (smoke, glow, sparks, ground cracks, fire, the Glyph's rings, ...) | 1 MB |
-| `particles/` | the attack missiles of Shadow Fiend, the lane creeps and the towers (each unit's `ProjectileModel`): one JSON file per effect, its systems as heatel reads them (emitters, initializers, operators, forces, renderers, children), and their 40 textures as KTX2 under `particles/textures/` with their sprite sheets in the JSON; the client simulates and draws them | 10 MB |
+| `particles/` | the attack missiles of Shadow Fiend, the lane creeps and the towers (each unit's `ProjectileModel`), and the effects the manifest's `fx` lines bind (the runes' glows and buff loops, the Bottle's pour, wards, Blink Dagger, Blood Grenade): one JSON file per effect, its systems as heatel reads them (emitters, initializers, operators, forces, renderers, children), and their 40 textures as KTX2 under `particles/textures/` with their sprite sheets in the JSON; the client simulates and draws them | 10 MB |
 | `icons/`, `hud/`, `minimap/` | item and ability icons (Roshan's drops, the Bottle by charges and stored rune, Roshan's, the Tormentor's and the objective channels' abilities, rune buffs), hero portraits, minimap hero/creep/tower/building/Roshan/Cheese icons and the sheet the Watcher, Tormentor and rune icons are cells of, HUD, kill feed, timer and shop art, minimap | 3 MB |
 | `text/tooltips.json` | the names, descriptions, lore, notes and number labels of the items and abilities in `ids.txt`, read out of the install's own localization and scripts; the client puts the simulator's numbers into them (without the file, tooltips show only the simulator's plain names and numbers), and the aliases the shop's search finds items by | 30 KB |
 | `text/shop.json` | the shop's categories and the items each lists, in Dota's order (`scripts/shops.txt`), and the shop's words (category, tab and button names) from the install's localization; without it the shop shows bota's own groups and plain words | 16 KB |
 | `text/labels.json` | the interface's labels the manifest's `label` lines name (the stats tooltip's rows and lines, the talent tree's title and Attribute Bonus), out of the install's localization; the client fills in the simulator's numbers (without the file, its own words) | 2 KB |
-| `sounds/` | 48 WAVs and 50 MP3s (announcer, hero move/attack voice lines, the horns, `ambient/morning.wav` and `night.wav`) resolved through sound events | 17 MB |
+| `sounds/` | WAVs and MP3s (announcer, hero move/attack and rune voice lines, the horns, `ambient/morning.wav` and `night.wav`, the runes taken, the Bottle drunk and corked) resolved through sound events | 18 MB |
 
 Formats: glTF 2.0 binary (`.glb`) with KTX2 textures next to it (relative URIs), PNG, WAV, MP3. A model's or
 the map's texture is a KTX2 file as Dota stores it, block-compressed (BC1, BC3) with every mip level; an image
@@ -135,8 +135,9 @@ and are kept as `.mp3` (the stdlib cannot transcode them); playing them needs Be
   The chasm under the Tormentor is `objective.divine_sentinel.model`. They are
   exported in their default skin: the team colours of an owned Outpost or a lit Watcher and the Dire
   Tormentor and chasm are material groups the importer does not write yet. Items lying on the
-  ground are `item.<name>.model`, runes `rune.<kind>.model` (`doubledamage` is Amplify Damage); a
-  rune's glow is Dota's particles, not its model. The minimap's Watcher, Tormentor and rune icons
+  ground are `item.<name>.model` (`item.<name>_empty.model` once its charges are spent: the empty
+  Bottle), runes `rune.<kind>.model` (`doubledamage` is Amplify Damage); a rune's glow is Dota's
+  particle `rune.<kind>.glow`, bound to it by an `fx` line. The minimap's Watcher, Tormentor and rune icons
   are cells of `icon.minimap.sheet` (cells in the manifest's comment, from `scripts/mod_textures.txt`).
 
 ## The mid-lane map (`map.mid`)

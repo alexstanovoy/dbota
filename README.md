@@ -232,6 +232,18 @@ in its holder's colour, a Watcher or a Shrine dimmed while it cannot be used). A
 a Watcher or an Outpost plays Dota's generic channel. An Outpost captured and a Shrine gathered
 are told in the kill feed in Dota's words with its icons, and a Shrine gathered in the chat log too.
 
+Runes appear where and when the match's rules spawn them (the Dota map's default: all of them; the mid-only
+map none unless its server is started with `--runes`). Each one the side sees is Dota's model turning at its
+spot in its glow, a Bounty Rune appearing in its swirl, and its icon on the minimap, which keeps a rune the fog
+took until its spot is seen without it; a water or power rune appearing at the river shows Dota's toast (top or
+bottom). A right click on a rune walks the hero to it and takes it, `A` and a click on it destroys it. A rune
+taken sounds as in Dota, with the hero's own line for it, the chat and the kill feed tell it in Dota's words,
+and its buff shows on the hero (its loop) and on the buff bar; under an Invisibility Rune the hero is drawn
+see-through for its own side. The Bottle is drawn by its charges and by the rune it keeps, with the seconds
+before that rune goes off at the slot's left and the rune named in its tooltip; drinking from it pours over
+the hero, and a rune put into it corks it. `dota_spawn_rune <rune>` (a match with cheats) puts a rune at the
+spot nearest the cursor.
+
 Between the picks and the horn comes Dota's strategy screen: every seat's hero under its player's colour
 and the clock over STRATEGY TIME; at the left the hero you enter battle as, its name and abilities; at
 the right STARTING ITEMS: the gold that remains, the inventory as your choices fill it (what stacks in
