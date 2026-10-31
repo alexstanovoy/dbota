@@ -49,10 +49,15 @@
 #   fx      <subject>.<trigger> at=<where> [particle=<particle logical>] [sound=<sound logical prefix>] [cp1=<feed>]
 #           an effect bound to a fact of the game by Dota's name for it (src/fx.rs). The importer skips these lines.
 #           subject: item.<ids.txt item name> | modifier.<Dota modifier name> | unit.<npc_units.txt name>
-#           trigger: use (the item was used) | land (the item thrown came down) | worn (the modifier is on a unit, or
-#                    a unit of that name stands: from its start until it goes; the particle follows the unit)
-#           at: caster (where the user stands after) | caster_before (where it stood before) | point (the spot the
-#               use was aimed at, or the throw came down) | unit (the wearer; for worn only, and only for worn)
+#                    | rune.<rune kind by its art's name: water bounty haste doubledamage arcane regeneration
+#                      illusion invisibility shield>
+#           trigger: use (the item was used) | land (the item thrown came down) | worn (the modifier is on a unit, a
+#                    unit of that name stands, or a rune of that kind lies in sight: from its start until it goes;
+#                    the particle follows the unit) | spawn (the rune appeared) | activate (the rune took effect on
+#                    a hero, at once or out of a Bottle) | store (a rune was put into the item)
+#           at: caster (where the user, or the hero taking a rune, stands after) | caster_before (where it stood
+#               before) | point (the spot the use was aimed at, the throw came down, the rune appeared) | unit (the
+#               wearer, or the rune lying; for worn only, and only for worn)
 #           sound: one of the sounds of that logical name (its variants share it) plays at that spot
 #           cp1: what the particle's second control point is given: sight (how far the wearer gives true sight)
 #   style   <vpk .vcss_c> <define>
@@ -344,6 +349,28 @@ particle ward.sentry.ambient particles/items2_fx/ward_true_sight.vpcf_c particle
 particle item.blink_start particles/items_fx/blink_dagger_start.vpcf_c particles/blink_dagger_start.json
 particle item.blink_end particles/items_fx/blink_dagger_end.vpcf_c particles/blink_dagger_end.json
 
+# --- Runes and the Bottle (generic_gameplay/rune_*: the glow each rune wears where it lies, the swirl a Bounty Rune
+# appears in, the burst of a Bounty Rune taken, the loops a power rune's buff wears on its hero (Regeneration's file
+# says regen); the Shield's is a status effect, of which the sprites around the body are drawn; items_fx/bottle
+# is the drink pouring over the drinker). Their bindings are the fx lines below.
+particle rune.water.glow particles/generic_gameplay/rune_water.vpcf_c particles/rune_water.json
+particle rune.bounty.glow particles/generic_gameplay/rune_bounty.vpcf_c particles/rune_bounty.json
+particle rune.haste.glow particles/generic_gameplay/rune_haste.vpcf_c particles/rune_haste.json
+particle rune.doubledamage.glow particles/generic_gameplay/rune_doubledamage.vpcf_c particles/rune_doubledamage.json
+particle rune.arcane.glow particles/generic_gameplay/rune_arcane.vpcf_c particles/rune_arcane.json
+particle rune.regeneration.glow particles/generic_gameplay/rune_regeneration.vpcf_c particles/rune_regeneration.json
+particle rune.illusion.glow particles/generic_gameplay/rune_illusion.vpcf_c particles/rune_illusion.json
+particle rune.invisibility.glow particles/generic_gameplay/rune_invisibility.vpcf_c particles/rune_invisibility.json
+particle rune.shield.glow particles/generic_gameplay/rune_shield.vpcf_c particles/rune_shield.json
+particle rune.bounty.prespawn particles/generic_gameplay/rune_bounty_prespawn.vpcf_c particles/rune_bounty_prespawn.json
+particle rune.bounty.owner particles/generic_gameplay/rune_bounty_owner.vpcf_c particles/rune_bounty_owner.json
+particle rune.haste.owner particles/generic_gameplay/rune_haste_owner.vpcf_c particles/rune_haste_owner.json
+particle rune.doubledamage.owner particles/generic_gameplay/rune_doubledamage_owner.vpcf_c particles/rune_doubledamage_owner.json
+particle rune.arcane.owner particles/generic_gameplay/rune_arcane_owner.vpcf_c particles/rune_arcane_owner.json
+particle rune.regeneration.owner particles/generic_gameplay/rune_regen_owner.vpcf_c particles/rune_regen_owner.json
+particle rune.shield.owner particles/status_fx/status_effect_shield_rune.vpcf_c particles/status_effect_shield_rune.json
+particle item.bottle particles/items_fx/bottle.vpcf_c particles/bottle.json
+
 # --- Effects bound to the game's facts (src/fx.rs)
 # Blink Dagger: the start where the hero stood, the end where it lands (items_fx/blink_dagger_*)
 fx item.blink.use at=caster_before particle=item.blink_start sound=sound.blink.activate
@@ -358,6 +385,39 @@ fx unit.npc_dota_sentry_wards.worn at=unit particle=ward.sentry.ambient cp1=sigh
 fx item.blood_grenade.use at=caster sound=sound.blood_grenade.cast
 fx item.blood_grenade.land at=point sound=sound.blood_grenade.location
 fx modifier.modifier_item_blood_grenade_debuff.worn at=unit sound=sound.blood_grenade.target
+# Runes (rune.<kind>, the kind by its art's name: doubledamage is Amplify Damage): the glow each wears where it lies in
+# sight; a Bounty Rune appears in its swirl (Dota has no other spawn effect, and no spawn sound: the HUD tells it); a
+# rune taking effect, at once or out of a Bottle, sounds its Rune.* event on the hero (Rune.DD, Rune.Regen and
+# Rune.Invis are Dota's short names), a Bounty Rune's with its burst of gold.
+fx rune.water.worn at=unit particle=rune.water.glow
+fx rune.bounty.worn at=unit particle=rune.bounty.glow
+fx rune.haste.worn at=unit particle=rune.haste.glow
+fx rune.doubledamage.worn at=unit particle=rune.doubledamage.glow
+fx rune.arcane.worn at=unit particle=rune.arcane.glow
+fx rune.regeneration.worn at=unit particle=rune.regeneration.glow
+fx rune.illusion.worn at=unit particle=rune.illusion.glow
+fx rune.invisibility.worn at=unit particle=rune.invisibility.glow
+fx rune.shield.worn at=unit particle=rune.shield.glow
+fx rune.bounty.spawn at=point particle=rune.bounty.prespawn
+fx rune.water.activate at=caster sound=sound.rune.water
+fx rune.bounty.activate at=caster particle=rune.bounty.owner sound=sound.rune.bounty
+fx rune.haste.activate at=caster sound=sound.rune.haste
+fx rune.doubledamage.activate at=caster sound=sound.rune.doubledamage
+fx rune.arcane.activate at=caster sound=sound.rune.arcane
+fx rune.regeneration.activate at=caster sound=sound.rune.regeneration
+fx rune.illusion.activate at=caster sound=sound.rune.illusion
+fx rune.invisibility.activate at=caster sound=sound.rune.invisibility
+fx rune.shield.activate at=caster sound=sound.rune.shield
+# The runes' buffs on their heroes (modifier_rune_*: the owner loops Dota's modifiers wear; Invisibility has none, its
+# hero is drawn faded) and a drink from a Bottle (modifier_bottle_regeneration: items_fx/bottle and Bottle.Drink); a
+# rune put into a Bottle corks it (Bottle.Cork).
+fx modifier.modifier_rune_haste.worn at=unit particle=rune.haste.owner
+fx modifier.modifier_rune_doubledamage.worn at=unit particle=rune.doubledamage.owner
+fx modifier.modifier_rune_arcane.worn at=unit particle=rune.arcane.owner
+fx modifier.modifier_rune_regen.worn at=unit particle=rune.regeneration.owner
+fx modifier.modifier_rune_shield.worn at=unit particle=rune.shield.owner
+fx modifier.modifier_bottle_regeneration.worn at=unit particle=item.bottle sound=sound.bottle.drink
+fx item.bottle.store at=caster sound=sound.bottle.cork
 
 # --- Item icons (88x64, a few narrower), every Dota item name in ids.txt
 texture icon.item.boots panorama/images/items/boots_png.vtex_c icons/items/boots.png
@@ -680,6 +740,19 @@ sound sound.item.clarity sounds/items/clarity_potion.vsnd_c sounds/items/clarity
 sound sound.item.magic_stick sounds/items/magic_stick_activate.vsnd_c sounds/items/magic_stick_activate.wav event=DOTA_Item.MagicStick.Activate
 sound sound.item.phase_boots sounds/items/phase_boots_activate.vsnd_c sounds/items/phase_boots_activate.wav event=DOTA_Item.PhaseBoots.Activate
 sound sound.item.blink sounds/weapons/hero/antimage/blink_out.vsnd_c sounds/weapons/hero/antimage/blink_out.wav event=DOTA_Item.BlinkDagger.Activate
+# Runes taking effect (game_sounds_items: Rune.*) and the Bottle drunk and corked (Bottle.Drink, Bottle.Cork). Dota
+# plays nothing when a rune appears, and General.RunePickUp has no use the game's code shows.
+sound sound.rune.water sounds/items/rune_water.vsnd_c sounds/items/rune_water.wav event=Rune.Water
+sound sound.rune.bounty sounds/items/rune_bounty.vsnd_c sounds/items/rune_bounty.wav event=Rune.Bounty
+sound sound.rune.haste sounds/items/rune_haste.vsnd_c sounds/items/rune_haste.wav event=Rune.Haste
+sound sound.rune.doubledamage sounds/items/rune_dd.vsnd_c sounds/items/rune_dd.wav event=Rune.DD
+sound sound.rune.arcane sounds/items/rune_arcane.vsnd_c sounds/items/rune_arcane.wav event=Rune.Arcane
+sound sound.rune.regeneration sounds/items/rune_regen.vsnd_c sounds/items/rune_regen.wav event=Rune.Regen
+sound sound.rune.illusion sounds/items/rune_illusion.vsnd_c sounds/items/rune_illusion.wav event=Rune.Illusion
+sound sound.rune.invisibility sounds/items/rune_invis.vsnd_c sounds/items/rune_invis.wav event=Rune.Invis
+sound sound.rune.shield sounds/items/rune_shield.vsnd_c sounds/items/rune_shield.wav event=Rune.Shield
+sound sound.bottle.drink sounds/ui/bottle_pour.vsnd_c sounds/ui/bottle_pour.wav event=Bottle.Drink
+sound sound.bottle.cork sounds/ui/bottle_corked.vsnd_c sounds/ui/bottle_corked.wav event=Bottle.Cork
 
 # Town portal scroll: the hum over the landing (Loop_Appear) and over the leaving hero (Loop_Disappear), both
 # 4 s loops, and the sounds of the hero arriving and leaving.
@@ -761,6 +834,36 @@ sound sound.voice.pudge.attack sounds/vo/pudge/pud_attack_10.vsnd_c sounds/vo/pu
 sound sound.voice.pudge.attack sounds/vo/pudge/pud_attack_11.vsnd_c sounds/vo/pudge/pud_attack_11.mp3 event=pudge_pud_attack_11
 sound sound.voice.pudge.attack sounds/vo/pudge/pud_attack_12.vsnd_c sounds/vo/pudge/pud_attack_12.mp3 event=pudge_pud_attack_12
 sound sound.voice.pudge.attack sounds/vo/pudge/pud_attack_13.vsnd_c sounds/vo/pudge/pud_attack_13.mp3 event=pudge_pud_attack_13
+
+# A hero's own lines for a rune it takes (Haste, Double Damage, Regeneration, Illusion, Invisibility; the install has
+# none of either hero for Arcane, Shield, Water or Bounty) and for a rune it bottles; the variants of each share the
+# logical name, heard by the hero's player alone.
+sound sound.voice.nevermore.rune.haste sounds/vo/nevermore/nev_haste_01.vsnd_c sounds/vo/nevermore/nev_haste_01.mp3 event=nevermore_nev_haste_01
+sound sound.voice.nevermore.rune.haste sounds/vo/nevermore/nev_haste_02.vsnd_c sounds/vo/nevermore/nev_haste_02.mp3 event=nevermore_nev_haste_02
+sound sound.voice.nevermore.rune.doubledamage sounds/vo/nevermore/nev_doubdam_01.vsnd_c sounds/vo/nevermore/nev_doubdam_01.mp3 event=nevermore_nev_doubdam_01
+sound sound.voice.nevermore.rune.doubledamage sounds/vo/nevermore/nev_doubdam_02.vsnd_c sounds/vo/nevermore/nev_doubdam_02.mp3 event=nevermore_nev_doubdam_02
+sound sound.voice.nevermore.rune.regeneration sounds/vo/nevermore/nev_regen_01.vsnd_c sounds/vo/nevermore/nev_regen_01.mp3 event=nevermore_nev_regen_01
+sound sound.voice.nevermore.rune.regeneration sounds/vo/nevermore/nev_regen_02.vsnd_c sounds/vo/nevermore/nev_regen_02.mp3 event=nevermore_nev_regen_02
+sound sound.voice.nevermore.rune.illusion sounds/vo/nevermore/nev_illus_01.vsnd_c sounds/vo/nevermore/nev_illus_01.mp3 event=nevermore_nev_illus_01
+sound sound.voice.nevermore.rune.illusion sounds/vo/nevermore/nev_illus_02.vsnd_c sounds/vo/nevermore/nev_illus_02.mp3 event=nevermore_nev_illus_02
+sound sound.voice.nevermore.rune.invisibility sounds/vo/nevermore/nev_invis_01.vsnd_c sounds/vo/nevermore/nev_invis_01.mp3 event=nevermore_nev_invis_01
+sound sound.voice.nevermore.rune.invisibility sounds/vo/nevermore/nev_invis_02.vsnd_c sounds/vo/nevermore/nev_invis_02.mp3 event=nevermore_nev_invis_02
+sound sound.voice.nevermore.rune.bottle sounds/vo/nevermore/nev_bottle_01.vsnd_c sounds/vo/nevermore/nev_bottle_01.mp3 event=nevermore_nev_bottle_01
+sound sound.voice.nevermore.rune.bottle sounds/vo/nevermore/nev_bottle_02.vsnd_c sounds/vo/nevermore/nev_bottle_02.mp3 event=nevermore_nev_bottle_02
+sound sound.voice.nevermore.rune.bottle sounds/vo/nevermore/nev_bottle_03.vsnd_c sounds/vo/nevermore/nev_bottle_03.mp3 event=nevermore_nev_bottle_03
+sound sound.voice.pudge.rune.haste sounds/vo/pudge/pud_haste_01.vsnd_c sounds/vo/pudge/pud_haste_01.mp3 event=pudge_pud_haste_01
+sound sound.voice.pudge.rune.haste sounds/vo/pudge/pud_haste_02.vsnd_c sounds/vo/pudge/pud_haste_02.mp3 event=pudge_pud_haste_02
+sound sound.voice.pudge.rune.doubledamage sounds/vo/pudge/pud_doubdam_01.vsnd_c sounds/vo/pudge/pud_doubdam_01.mp3 event=pudge_pud_doubdam_01
+sound sound.voice.pudge.rune.doubledamage sounds/vo/pudge/pud_doubdam_02.vsnd_c sounds/vo/pudge/pud_doubdam_02.mp3 event=pudge_pud_doubdam_02
+sound sound.voice.pudge.rune.regeneration sounds/vo/pudge/pud_regen_01.vsnd_c sounds/vo/pudge/pud_regen_01.mp3 event=pudge_pud_regen_01
+sound sound.voice.pudge.rune.regeneration sounds/vo/pudge/pud_regen_02.vsnd_c sounds/vo/pudge/pud_regen_02.mp3 event=pudge_pud_regen_02
+sound sound.voice.pudge.rune.illusion sounds/vo/pudge/pud_illus_01.vsnd_c sounds/vo/pudge/pud_illus_01.mp3 event=pudge_pud_illus_01
+sound sound.voice.pudge.rune.illusion sounds/vo/pudge/pud_illus_02.vsnd_c sounds/vo/pudge/pud_illus_02.mp3 event=pudge_pud_illus_02
+sound sound.voice.pudge.rune.invisibility sounds/vo/pudge/pud_invis_01.vsnd_c sounds/vo/pudge/pud_invis_01.mp3 event=pudge_pud_invis_01
+sound sound.voice.pudge.rune.invisibility sounds/vo/pudge/pud_invis_02.vsnd_c sounds/vo/pudge/pud_invis_02.mp3 event=pudge_pud_invis_02
+sound sound.voice.pudge.rune.bottle sounds/vo/pudge/pud_bottle_01.vsnd_c sounds/vo/pudge/pud_bottle_01.mp3 event=pudge_pud_bottle_01
+sound sound.voice.pudge.rune.bottle sounds/vo/pudge/pud_bottle_02.vsnd_c sounds/vo/pudge/pud_bottle_02.mp3 event=pudge_pud_bottle_02
+sound sound.voice.pudge.rune.bottle sounds/vo/pudge/pud_bottle_03.vsnd_c sounds/vo/pudge/pud_bottle_03.mp3 event=pudge_pud_bottle_03
 
 # --- Neutral creeps (npc_units.txt `Model`, `ModelScale`, `AttackAnimationPoint`; one block per model, one `unit` line per
 # unit that wears it). Clips: idle, run, attack (+ attack2 when the model has a second swing), death, stun (when the
@@ -1338,6 +1441,10 @@ texture hud.tormentor_timer.dire panorama/images/hud/tormentor_timer_icon_dire_p
 texture hud.rune_timer.bounty panorama/images/hud/timer/bounty_rune_png.vtex_c hud/bounty_rune_png.png
 texture hud.rune_timer.power panorama/images/hud/timer/power_rune_png.vtex_c hud/power_rune_png.png
 texture hud.rune_timer.wisdom panorama/images/hud/timer/widsom_rune_png.vtex_c hud/widsom_rune_png.png
+# The toast of a rune appearing at the river (dota_hud_rune_spawn_toast: its backdrop, and the arrow pointing to the
+# top spot or, turned, the bottom one).
+texture hud.rune_toast.background panorama/images/hud/reborn/item_purchase_bg_psd.vtex_c hud/item_purchase_bg_psd.png
+texture hud.rune_toast.arrow panorama/images/hud/reborn/arrow_icon_psd.vtex_c hud/arrow_icon_psd.png
 
 # Objective announcements in Dota's words: the kill feed (DOTA_HUD_*) and chat (DOTA_Chat_*) lines of Roshan, the
 # Aegis, the Tormentor, Outposts, Shrines of Wisdom and the Banner, and the Outposts' names.
@@ -1371,6 +1478,56 @@ label resource/localization/dota_english.txt DOTA_Chat_Rune_XP
 label resource/localization/dota_english.txt DOTA_Chat_Rune_XP_Spotted
 label resource/localization/dota_english.txt DOTA_HUD_Rune_XP
 label resource/localization/dota_english.txt DOTA_HUD_ActivatedRune
+# Runes: a rune taken (chat DOTA_Chat_Rune_*, feed DOTA_HUD_Rune_*), bottled (DOTA_Chat_Rune_Bottle_*,
+# DOTA_HUD_BottledRune), destroyed (DOTA_HUD_DenyRune, DOTA_HUD_Rune_Deny*), the toast of a rune appearing at the river
+# (dota_hud_rune_spawn_toast) and a Bottle's stored rune in its tooltip (DOTA_Tooltip_Ability_item_bottle_*).
+label resource/localization/dota_english.txt DOTA_Chat_Rune_DoubleDamage
+label resource/localization/dota_english.txt DOTA_Chat_Rune_Haste
+label resource/localization/dota_english.txt DOTA_Chat_Rune_Illusion
+label resource/localization/dota_english.txt DOTA_Chat_Rune_Invisibility
+label resource/localization/dota_english.txt DOTA_Chat_Rune_Regeneration
+label resource/localization/dota_english.txt DOTA_Chat_Rune_Arcane
+label resource/localization/dota_english.txt DOTA_Chat_Rune_Water
+label resource/localization/dota_english.txt DOTA_Chat_Rune_Bounty
+label resource/localization/dota_english.txt DOTA_Chat_Rune_Bottle_DoubleDamage
+label resource/localization/dota_english.txt DOTA_Chat_Rune_Bottle_Haste
+label resource/localization/dota_english.txt DOTA_Chat_Rune_Bottle_Illusion
+label resource/localization/dota_english.txt DOTA_Chat_Rune_Bottle_Invisibility
+label resource/localization/dota_english.txt DOTA_Chat_Rune_Bottle_Regeneration
+label resource/localization/dota_english.txt DOTA_Chat_Rune_Bottle_Arcane
+label resource/localization/dota_english.txt DOTA_Chat_Rune_Bottle_Water
+label resource/localization/dota_english.txt DOTA_Chat_Rune_Bottle_Bounty
+label resource/localization/dota_english.txt DOTA_HUD_Rune_DoubleDamage
+label resource/localization/dota_english.txt DOTA_HUD_Rune_DenyDoubleDamage
+label resource/localization/dota_english.txt DOTA_HUD_Rune_Haste
+label resource/localization/dota_english.txt DOTA_HUD_Rune_DenyHaste
+label resource/localization/dota_english.txt DOTA_HUD_Rune_Illusion
+label resource/localization/dota_english.txt DOTA_HUD_Rune_DenyIllusion
+label resource/localization/dota_english.txt DOTA_HUD_Rune_Invisibility
+label resource/localization/dota_english.txt DOTA_HUD_Rune_DenyInvisibility
+label resource/localization/dota_english.txt DOTA_HUD_Rune_Regeneration
+label resource/localization/dota_english.txt DOTA_HUD_Rune_DenyRegeneration
+label resource/localization/dota_english.txt DOTA_HUD_Rune_Arcane
+label resource/localization/dota_english.txt DOTA_HUD_Rune_DenyArcane
+label resource/localization/dota_english.txt DOTA_HUD_Rune_Water
+label resource/localization/dota_english.txt DOTA_HUD_Rune_DenyWater
+label resource/localization/dota_english.txt DOTA_HUD_Rune_Bounty
+label resource/localization/dota_english.txt DOTA_HUD_Rune_DenyBounty
+label resource/localization/dota_english.txt DOTA_HUD_Rune_Shield
+label resource/localization/dota_english.txt DOTA_HUD_Rune_DenyShield
+label resource/localization/dota_english.txt DOTA_HUD_BottledRune
+label resource/localization/dota_english.txt DOTA_HUD_DenyRune
+label resource/localization/dota_english.txt DOTA_HUD_rune_spawned_top
+label resource/localization/dota_english.txt DOTA_HUD_rune_spawned_bottom
+label resource/localization/abilities_english.txt DOTA_Tooltip_Ability_item_bottle_double_damage
+label resource/localization/abilities_english.txt DOTA_Tooltip_Ability_item_bottle_haste
+label resource/localization/abilities_english.txt DOTA_Tooltip_Ability_item_bottle_illusion
+label resource/localization/abilities_english.txt DOTA_Tooltip_Ability_item_bottle_invisible
+label resource/localization/abilities_english.txt DOTA_Tooltip_Ability_item_bottle_regeneration
+label resource/localization/abilities_english.txt DOTA_Tooltip_Ability_item_bottle_bounty
+label resource/localization/abilities_english.txt DOTA_Tooltip_Ability_item_bottle_shield
+label resource/localization/abilities_english.txt DOTA_Tooltip_Ability_item_bottle_arcane
+label resource/localization/abilities_english.txt DOTA_Tooltip_Ability_item_bottle_water
 label resource/localization/dota_english.txt DOTA_HUD_RadiantBannerPlanted
 label resource/localization/dota_english.txt DOTA_HUD_DireBannerPlanted
 
@@ -1428,6 +1585,8 @@ style panorama/styles/dotastyles.vcss_c HeroSlot6Color
 style panorama/styles/dotastyles.vcss_c HeroSlot7Color
 style panorama/styles/dotastyles.vcss_c HeroSlot8Color
 style panorama/styles/dotastyles.vcss_c HeroSlot9Color
+# The rune toast's words.
+style panorama/styles/dotastyles.vcss_c bluegreyTextBright
 
 # Dota's strategy screen (the tactical phase): its words and its backdrop (dota_hud_pregame).
 label resource/localization/dota_english.txt DOTA_Hero_Selection_StrategyTime

@@ -86,6 +86,7 @@ impl TacticalBag {
             }),
             locked: None,
             disassembly: None,
+            rune: None,
         })
     }
 

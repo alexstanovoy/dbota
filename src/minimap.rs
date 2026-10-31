@@ -81,6 +81,10 @@ struct Minimap {
     /// The layer of the map's objectives' icons, under the units' marks, and
     /// the icons made so far: a match without objectives has none.
     objectives: (Entity, Vec<Entity>),
+    /// The layer of the runes' icons, over the objectives' and under the
+    /// units' marks, and the icons made so far: a match without runes has
+    /// none.
+    runes: (Entity, Vec<Entity>),
     /// A hero's mark and the icon in it, one a seat.
     heroes: Vec<(Entity, Entity)>,
     pings: Vec<Entity>,
@@ -114,6 +118,7 @@ pub fn plugin(app: &mut App) {
                 photograph,
                 marks,
                 objective_marks,
+                rune_marks.after(crate::runes::remember),
                 hero_marks,
                 pings,
                 clicks,
@@ -162,6 +167,9 @@ fn spawn(mut commands: Commands, mut images: ResMut<Assets<Image>>, docks: Res<D
         ))
         .id();
     let objectives = commands
+        .spawn((crate::ui::fill(), Pickable::IGNORE, ChildOf(frame)))
+        .id();
+    let runes = commands
         .spawn((crate::ui::fill(), Pickable::IGNORE, ChildOf(frame)))
         .id();
     // A mark is Dota's icon tinted by the side; without the icon, a plain disc.
@@ -252,6 +260,7 @@ fn spawn(mut commands: Commands, mut images: ResMut<Assets<Image>>, docks: Res<D
         fog,
         marks,
         objectives: (objectives, Vec::new()),
+        runes: (runes, Vec::new()),
         heroes,
         pings,
         view,
@@ -490,6 +499,82 @@ fn objective_icon(u: &UnitView) -> Option<(&'static str, Option<Rect>, Color, f3
             12.0,
         )),
         _ => None,
+    }
+}
+
+/// A rune's icon on the minimap: the rune it marks, and whether the watched
+/// vision sees it now (else it is remembered from when it did).
+#[derive(Component, Default, PartialEq)]
+pub struct RuneMark(pub Option<(bota_proto::EntityId, bota_proto::RuneKind, bool)>);
+
+/// Interface pixels across a rune's icon.
+const RUNE_ICON: f32 = 14.0;
+/// The tint of a rune remembered in the fog.
+const REMEMBERED: Color = Color::srgba(1.0, 1.0, 1.0, 0.6);
+
+/// Marks each rune the watched vision sees or remembers by Dota's icon of its
+/// kind, a cell of the minimap sheet. The icons are made as runes are seen,
+/// so a match without runes carries none.
+fn rune_marks(
+    mut commands: Commands,
+    mut minimap: ResMut<Minimap>,
+    memory: Res<crate::runes::RuneMemory>,
+    manifest: Res<crate::manifest::Manifest>,
+    server: Res<AssetServer>,
+    mut marks: Query<(&mut Node, &mut ImageNode, &mut Visibility, &mut RuneMark)>,
+    mut sheet: Local<Option<Option<Handle<Image>>>>,
+) {
+    let sheet = sheet
+        .get_or_insert_with(|| manifest.file("icon.minimap.sheet").map(|p| server.load(p)))
+        .clone();
+    let (layer, icons) = &mut minimap.runes;
+    while icons.len() < memory.runes.len() {
+        icons.push(
+            commands
+                .spawn((
+                    Node {
+                        position_type: PositionType::Absolute,
+                        width: px(RUNE_ICON),
+                        height: px(RUNE_ICON),
+                        ..default()
+                    },
+                    ImageNode::default(),
+                    RuneMark::default(),
+                    Visibility::Hidden,
+                    Pickable::IGNORE,
+                    ChildOf(*layer),
+                ))
+                .id(),
+        );
+    }
+    for (i, icon) in icons.iter().enumerate() {
+        let Ok((mut node, mut image, mut vis, mut mark)) = marks.get_mut(*icon) else {
+            continue;
+        };
+        let Some(rune) = memory.runes.get(i) else {
+            vis.set_if_neq(Visibility::Hidden);
+            mark.set_if_neq(RuneMark(None));
+            continue;
+        };
+        mark.set_if_neq(RuneMark(Some((rune.id, rune.kind, rune.seen))));
+        let at = on_map(rune.at.x, rune.at.y);
+        let (left, top) = (px(at.x - RUNE_ICON / 2.0), px(at.y - RUNE_ICON / 2.0));
+        if node.left != left || node.top != top {
+            node.left = left;
+            node.top = top;
+        }
+        let (x, y) = crate::runes::sheet_cell(rune.kind);
+        let cell = crate::runes::SHEET_CELL;
+        let rect = Some(Rect::new(x, y, x + cell, y + cell));
+        let tint = if rune.seen { Color::WHITE } else { REMEMBERED };
+        // Without the sheet, a plain disc of the rune's place.
+        let handle = sheet.clone().unwrap_or_default();
+        if image.image != handle || image.rect != rect || image.color != tint {
+            image.image = handle;
+            image.rect = rect;
+            image.color = tint;
+        }
+        vis.set_if_neq(Visibility::Inherited);
     }
 }
 

@@ -68,6 +68,7 @@ item 52 wind_lace
 item 53 blood_grenade
 item 54 ward_dispenser
 item 55 tango
+item 56 bottle
 ability 0 pudge_meat_hook
 ability 1 pudge_rot
 ability 2 pudge_innate_graft_flesh
@@ -229,6 +230,14 @@ effect 68 icon.ability.watcher_channel
 effect 69 icon.ability.ability_capture
 # A Shrine of Wisdom ready to be gathered: Dota's timer icon of the wisdom rune ("widsom" in its file name).
 effect 70 hud.rune_timer.wisdom
+# The runes' buffs wear Dota's rune spellicons; a drink from a Bottle the Bottle's icon.
+effect 71 icon.rune.haste
+effect 72 icon.rune.doubledamage
+effect 73 icon.rune.arcane
+effect 74 icon.rune.regeneration
+effect 75 icon.rune.invisibility
+effect 76 icon.rune.shield
+effect 77 icon.item.bottle
 
 # The Dota modifiers bota's effects are, for their tooltips (DOTA_Tooltip_<modifier>).
 modifier 1 modifier_flask_healing
@@ -292,3 +301,10 @@ modifier 64 modifier_fountain_invulnerability
 modifier 65 modifier_fountain_aura
 modifier 66 modifier_fountain_fury_swipes_damage_increase
 modifier 68 modifier_lamp_off
+modifier 71 modifier_rune_haste
+modifier 72 modifier_rune_doubledamage
+modifier 73 modifier_rune_arcane
+modifier 74 modifier_rune_regen
+modifier 75 modifier_rune_invis
+modifier 76 modifier_rune_shield
+modifier 77 modifier_bottle_regeneration

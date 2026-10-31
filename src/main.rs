@@ -74,6 +74,8 @@ mod portrait;
 mod quality;
 mod replay_controls;
 mod replays;
+mod rune_toast;
+mod runes;
 mod scoreboard;
 mod script;
 mod seat_name;
@@ -611,7 +613,7 @@ fn client_plugins(app: &mut App) {
             talk_check::plugin,
             stats::plugin,
         ))
-        .add_plugins((loot::plugin, fx::plugin))
+        .add_plugins((loot::plugin, runes::plugin, rune_toast::plugin, fx::plugin))
         .add_plugins((
             sound::plugin,
             effects::plugin,

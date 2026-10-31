@@ -87,6 +87,12 @@ impl Texts {
         self.styles.get(&name.to_lowercase()).copied()
     }
 
+    /// Whether the cache's labels are read at all: without them the client says what it shows
+    /// in its own words, with them only in Dota's.
+    pub fn has_labels(&self) -> bool {
+        !self.labels.is_empty()
+    }
+
     pub fn get(&self, key: &str) -> Option<&Entry> {
         self.entries.get(key)
     }

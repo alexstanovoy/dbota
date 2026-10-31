@@ -1,11 +1,11 @@
 //! The kill feed in the top-right corner: the client's lines, and the
 //! game's announcements in Dota's words with Dota's icons where the cache has
-//! them (an Outpost captured, a Shrine of Wisdom gathered); without them, the
-//! client's own text.
+//! them (an Outpost captured, a Shrine of Wisdom gathered, a rune taken,
+//! bottled or destroyed); without them, the client's own text.
 
 use bevy::prelude::*;
-use bota_client_core::{App as Core, FeedKind, FeedLine, Killer, Victim};
-use bota_proto::{Team, UnitKind, Vec2};
+use bota_client_core::{App as Core, FeedKind, FeedLine, Killer, RuneAct, Victim};
+use bota_proto::{RuneKind, Team, UnitKind, Vec2};
 
 use crate::dota_text::{Part, Texts};
 use crate::manifest::Manifest;
@@ -191,7 +191,8 @@ fn lay(core: &Core, texts: Option<&Texts>, manifest: &Manifest, line: &FeedLine)
                 if at == SLOTS {
                     break;
                 }
-                laid[at].0 = icon_file(&name).and_then(|logical| manifest.file(logical));
+                laid[at].0 =
+                    icon_file(&name, &line.kind).and_then(|logical| manifest.file(logical));
             }
             Part::Text(text) => {
                 laid[at].1.push_str(&text);
@@ -231,6 +232,37 @@ fn dota_parts(core: &Core, texts: &Texts, kind: &FeedKind) -> Option<Vec<Part>> 
                 &[
                     ("player_name", format!("{who} ")),
                     ("rune_name", format!(" {rune}")),
+                ],
+            )
+        }
+        FeedKind::Rune {
+            by,
+            team,
+            kind,
+            act,
+        } => {
+            let who = format!("{} ", activator(core, by, team));
+            let name = crate::runes::text_name(kind);
+            let (key, rune) = match act {
+                RuneAct::Activated { gold } => {
+                    let gold = gold.map_or_else(String::new, |g| g.to_string());
+                    let rune = texts.label(&format!("DOTA_HUD_Rune_{name}"), &[("gold", gold)])?;
+                    ("DOTA_HUD_ActivatedRune", rune)
+                }
+                RuneAct::Bottled => (
+                    "DOTA_HUD_BottledRune",
+                    texts.label(&format!("DOTA_HUD_Rune_{name}"), &[("gold", String::new())])?,
+                ),
+                RuneAct::Denied => (
+                    "DOTA_HUD_DenyRune",
+                    texts.label(&format!("DOTA_HUD_Rune_Deny{name}"), &[])?,
+                ),
+            };
+            texts.label_parts(
+                key,
+                &[
+                    ("player_name", who),
+                    ("rune_name", format!(" {}", rune.trim())),
                 ],
             )
         }
@@ -296,6 +328,23 @@ pub fn text(core: &Core, kind: &FeedKind) -> String {
                 activator(core, by, team)
             )
         }
+        FeedKind::Rune {
+            by,
+            team,
+            kind,
+            act,
+        } => {
+            let who = activator(core, by, team);
+            let rune = crate::runes::text_name(kind);
+            match act {
+                RuneAct::Activated { gold: Some(gold) } => {
+                    format!("{who} activated a {rune} rune ({gold} gold)")
+                }
+                RuneAct::Activated { gold: None } => format!("{who} activated a {rune} rune"),
+                RuneAct::Bottled => format!("{who} bottled a {rune} rune"),
+                RuneAct::Denied => format!("{who} denied a {rune} rune"),
+            }
+        }
     }
 }
 
@@ -324,16 +373,32 @@ fn death(core: &Core, victim: Victim, killer: Option<Killer>, gold: i32) -> Stri
     }
 }
 
-/// The cache's icon for a feed label's icon variable.
-fn icon_file(name: &str) -> Option<&'static str> {
-    Some(match name {
-        "outpost_captured_icon" => "hud.outpost_captured",
-        "outpost_lost_icon" => "hud.outpost_lost",
-        "outpost_icon" => "hud.outpost",
-        // The only rune a feed line tells here is the Shrine's wisdom.
-        "rune_icon" => "hud.rune_timer.wisdom",
+/// The cache's icon for a feed label's icon variable in a line of a kind.
+fn icon_file(name: &str, kind: &FeedKind) -> Option<&'static str> {
+    Some(match (name, kind) {
+        ("outpost_captured_icon", _) => "hud.outpost_captured",
+        ("outpost_lost_icon", _) => "hud.outpost_lost",
+        ("outpost_icon", _) => "hud.outpost",
+        ("rune_icon", FeedKind::Rune { kind, .. }) => rune_icon(*kind),
+        // The Shrine's wisdom.
+        ("rune_icon", _) => "hud.rune_timer.wisdom",
         _ => return None,
     })
+}
+
+/// A rune's icon in the feed: its buff's spellicon where Dota has one, else the HUD's rune timer
+/// of its sort (the Bounty Rune's, or the power runes', which the Water Rune shares).
+fn rune_icon(kind: RuneKind) -> &'static str {
+    match kind {
+        RuneKind::Haste => "icon.rune.haste",
+        RuneKind::AmplifyDamage => "icon.rune.doubledamage",
+        RuneKind::Arcane => "icon.rune.arcane",
+        RuneKind::Regeneration => "icon.rune.regeneration",
+        RuneKind::Invisibility => "icon.rune.invisibility",
+        RuneKind::Shield => "icon.rune.shield",
+        RuneKind::Bounty => "hud.rune_timer.bounty",
+        RuneKind::Water | RuneKind::Illusion => "hud.rune_timer.power",
+    }
 }
 
 /// A side as Dota's English names it.

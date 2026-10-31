@@ -77,12 +77,14 @@ pub fn told(reason: RejectReason) -> Option<Told> {
         Why::OutOfStock => dota("dota_hud_error_item_out_of_stock", DENY),
         Why::QueueFull => dota("dota_hud_error_queue_full", DENY),
         // What Dota has no line of, and the player must still hear to act:
-        // a cheat this match does not honour, a seat the server will not give.
+        // a cheat this match does not honour, a seat the server will not give,
+        // a Bottle that keeps a rune and so stays in hand.
         Why::NoCheats
         | Why::BadCheat
         | Why::NotAdmitted
         | Why::SeatHeld
-        | Why::CatalogueMismatch => own,
+        | Why::CatalogueMismatch
+        | Why::HoldsRune => own,
         // What the player needs no word for: the hero is dead (its panel
         // says so), the target was gone when the order came, or what the
         // interface never offers (an empty slot, a passive, another's unit,
@@ -182,6 +184,7 @@ fn plain_words(reason: RejectReason) -> &'static str {
         }
         Why::NotDisassemblable => "it can no longer be disassembled",
         Why::CannotLockCombining => "it is part of no recipe",
+        Why::HoldsRune => "a Bottle keeping a rune stays in hand",
     }
 }
 
@@ -201,6 +204,11 @@ pub fn console_words(error: &CommandError) -> String {
         CommandError::NeedsCursor(CursorUse::Teleport) => {
             "point at the ground to teleport to".to_string()
         }
+        CommandError::NeedsCursor(CursorUse::SpawnRune) => {
+            "point at the map to spawn a rune at the spot nearest it".to_string()
+        }
+        CommandError::NoRuneNamed => "which rune?".to_string(),
+        CommandError::UnknownRune(name) => format!("no rune called '{name}'"),
         CommandError::NotCreepSide(word) => {
             format!("'{word}' is not radiant, dire, neutral or all")
         }

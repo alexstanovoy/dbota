@@ -10,7 +10,7 @@ use crate::tip_content::Lookup;
 
 /// dbota's own name of every live effect, by id: what shows without the
 /// asset cache, or where Dota has no tooltip for it.
-const OWN_NAMES: [(u16, &str); 70] = [
+const OWN_NAMES: [(u16, &str); 77] = [
     (1, "Healing Salve"),
     (2, "Clarity"),
     (3, "Fountain Rejuvenation"),
@@ -81,6 +81,13 @@ const OWN_NAMES: [(u16, &str); 70] = [
     (68, "Deactivated"),
     (69, "Capturing"),
     (70, "Shrine Ready"),
+    (71, "Haste"),
+    (72, "Amplify Damage"),
+    (73, "Arcane"),
+    (74, "Regeneration"),
+    (75, "Invisible"),
+    (76, "Shielded"),
+    (77, "Bottle Regeneration"),
 ];
 
 /// dbota's own name of an effect; none for an id it does not know.

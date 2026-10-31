@@ -440,7 +440,9 @@ fn note_heard(session: NonSend<Session>, mut seen: Local<usize>) {
 /// The game's lines the last pump told, in Dota's words when the cache has
 /// them: `DOTA_Chat_Rune_XP` ("%s1 activated a Shrine of Wisdom.") for a
 /// Shrine gathered, naming the gatherer (its side to the other side, which
-/// is not told who).
+/// is not told who); and to a hero's own side (and to whoever watches) a rune
+/// it took into effect or put into its Bottle (`DOTA_Chat_Rune_<rune>`,
+/// `DOTA_Chat_Rune_Bottle_<rune>`; the install has none for a Shield Rune).
 fn notices(
     session: NonSend<Session>,
     texts: Option<Res<Texts>>,
@@ -452,26 +454,54 @@ fn notices(
         notice.age += time.delta_secs();
     }
     for event in &core.told {
-        let EventKind::ShrineActivated { team, by, .. } = event else {
+        let Some(text) = notice_text(core, texts.as_deref(), event) else {
             continue;
         };
-        let who = by
-            .and_then(|hero| core.view()?.unit(hero)?.owner)
-            .map_or_else(
-                || crate::feed::side_name(*team).to_owned(),
-                |slot| crate::seat_name::seat_name(core, slot),
-            );
-        let text = texts
-            .as_deref()
-            .and_then(|t| t.label("DOTA_Chat_Rune_XP", &[]))
-            .map_or_else(
-                || format!("{who} activated a Shrine of Wisdom."),
-                |line| line.replace("%s1", &who),
-            );
         if notices.0.len() == ROWS {
             notices.0.pop_front();
         }
         notices.0.push_back(Notice { text, age: 0.0 });
+    }
+}
+
+/// The log's line of a game's event, if it has one.
+fn notice_text(core: &Core, texts: Option<&Texts>, event: &EventKind) -> Option<String> {
+    let seat = |hero| core.view()?.unit(hero)?.owner;
+    let (key, own, who) = match *event {
+        EventKind::ShrineActivated { team, by, .. } => {
+            let who = by.and_then(seat).map_or_else(
+                || crate::feed::side_name(team).to_owned(),
+                |slot| crate::seat_name::seat_name(core, slot),
+            );
+            let own = format!("{who} activated a Shrine of Wisdom.");
+            ("DOTA_Chat_Rune_XP".to_owned(), own, who)
+        }
+        EventKind::RuneActivated { unit, kind, .. } | EventKind::RuneBottled { unit, kind } => {
+            let hero = core.view()?.unit(unit)?;
+            if core.my_team().is_some_and(|mine| mine != hero.team) {
+                return None;
+            }
+            let who = crate::seat_name::seat_name(core, hero.owner?);
+            let name = crate::runes::text_name(kind);
+            match event {
+                EventKind::RuneBottled { .. } => (
+                    format!("DOTA_Chat_Rune_Bottle_{name}"),
+                    format!("{who} has bottled a {name} rune."),
+                    who,
+                ),
+                _ => (
+                    format!("DOTA_Chat_Rune_{name}"),
+                    format!("{who} activated a {name} rune."),
+                    who,
+                ),
+            }
+        }
+        _ => return None,
+    };
+    match texts.filter(|texts| texts.has_labels()) {
+        // The install's words, or none where it has none.
+        Some(texts) => Some(texts.label(&key, &[])?.replace("%s1", &who)),
+        None => Some(own),
     }
 }
 

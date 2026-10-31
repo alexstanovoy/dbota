@@ -75,6 +75,12 @@ impl FogGrid {
         self.on && unit.kind == UnitKind::CreepNeutral
     }
 
+    /// The tick of the view the cells were worked out for, once they are
+    /// (they come a frame or more behind the view).
+    pub fn worked_out_at(&self) -> Option<u32> {
+        self.stamp.map(|(tick, _)| tick)
+    }
+
     /// Whether a bota world point is seen; everything is before the fog is
     /// known.
     pub fn lit(&self, x: f32, y: f32) -> bool {

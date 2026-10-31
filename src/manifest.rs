@@ -60,8 +60,16 @@ pub enum Trigger {
     Use,
     /// Something thrown came down (`EventKind::Landed`).
     Land,
-    /// While the subject holds: a modifier on a unit, or a unit of a Dota name standing.
+    /// While the subject holds: a modifier on a unit, a unit of a Dota name standing, or a rune
+    /// of a kind lying in sight.
     Worn,
+    /// A rune of the kind appeared (`EventKind::RuneSpawned`).
+    Spawn,
+    /// A rune of the kind took effect on a hero, at once or out of a Bottle
+    /// (`EventKind::RuneActivated`).
+    Activate,
+    /// A rune was stored in the item (`EventKind::RuneBottled`: the Bottle).
+    Store,
 }
 
 /// Where a bound effect plays.
@@ -71,9 +79,10 @@ pub enum At {
     Caster,
     /// The user, where it stood in the view before.
     CasterBefore,
-    /// The spot the event names: what a use was aimed at, where a throw came down.
+    /// The spot the event names: what a use was aimed at, where a throw came down, where a rune
+    /// appeared.
     Point,
-    /// The unit that wears it.
+    /// The unit that wears it, or the rune that lies.
     Unit,
 }
 
@@ -89,7 +98,8 @@ pub enum Feed {
 /// manifest's header.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Fx {
-    /// `item.blink`, `modifier.modifier_item_blood_grenade_debuff`, `unit.npc_dota_observer_wards`.
+    /// `item.blink`, `modifier.modifier_item_blood_grenade_debuff`, `unit.npc_dota_observer_wards`,
+    /// `rune.haste`.
     pub subject: String,
     pub trigger: Trigger,
     pub at: At,
@@ -111,6 +121,9 @@ impl Fx {
             "use" => Trigger::Use,
             "land" => Trigger::Land,
             "worn" => Trigger::Worn,
+            "spawn" => Trigger::Spawn,
+            "activate" => Trigger::Activate,
+            "store" => Trigger::Store,
             other => return Err(format!("no trigger '{other}'")),
         };
         let mut fx = Fx {

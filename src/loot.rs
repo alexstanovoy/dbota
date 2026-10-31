@@ -33,6 +33,11 @@ pub struct Loot {
     pub model: Option<String>,
 }
 
+/// The logical name of the model a thing on the ground is drawn with, an item's or a rune's: its
+/// idle clip loops once the model is ready ([`play_idle`]).
+#[derive(Component, Debug)]
+pub struct Idle(pub String);
+
 /// The entity of every item on the ground shown, by its wire handle.
 #[derive(Resource, Default)]
 struct LootIndex(HashMap<EntityId, Entity>);
@@ -47,12 +52,18 @@ pub fn plugin(app: &mut App) {
         .add_systems(Update, (sync_loot, name_hovered));
 }
 
-/// The logical name of the model an item lies as: its own where items.txt gives it one, a
+/// The logical name of the model an item lies as: its own where items.txt gives it one (its
+/// `ModelAlternate`, `item.<name>_empty.model`, once its charges are spent: the empty Bottle), a
 /// recipe's, else Dota's default box.
-fn model_name(item: u16, manifest: &Manifest) -> String {
-    let own = manifest
-        .dota_name("item", item)
-        .map(|name| format!("item.{name}.model"));
+fn model_name(item: &LootView, manifest: &Manifest) -> String {
+    let own = manifest.dota_name("item", item.item.0).map(|name| {
+        let empty = format!("item.{name}_empty.model");
+        if item.charges == Some(0) && manifest.model(&empty).is_some() {
+            empty
+        } else {
+            format!("item.{name}.model")
+        }
+    });
     match own {
         Some(name) if manifest.model(&name).is_some() => name,
         _ => "item.default.model".to_owned(),
@@ -90,7 +101,7 @@ fn sync_loot(
         if spawned >= SPAWNS_PER_FRAME {
             continue;
         }
-        let name = model_name(item.item.0, &manifest);
+        let name = model_name(item, &manifest);
         let Some(at) = bank.0.iter().position(|m| m.model.logical == name) else {
             continue;
         };
@@ -109,7 +120,8 @@ fn sync_loot(
         ));
         if let Some(body) = model {
             let scale = Transform::from_scale(Vec3::splat(UNITS_PER_METRE * entry.model.scale));
-            root.with_child((WorldAssetRoot(body), scale))
+            root.insert(Idle(name.clone()))
+                .with_child((WorldAssetRoot(body), scale))
                 .observe(play_idle);
         }
         index.0.insert(item.id, root.id());
@@ -126,12 +138,12 @@ fn sync_loot(
     });
 }
 
-/// Gives a lying item's model its idle clip, looping.
-fn play_idle(
+/// Gives the model of a thing on the ground (its parent wears [`Idle`]) its idle clip, looping.
+pub(crate) fn play_idle(
     ready: On<WorldInstanceReady>,
     mut commands: Commands,
     parents: Query<&ChildOf>,
-    loot: Query<&Loot>,
+    idle: Query<&Idle>,
     children: Query<&Children>,
     mut players: Query<&mut AnimationPlayer>,
     bank: Res<ModelBank>,
@@ -139,9 +151,8 @@ fn play_idle(
     let Some(entry) = parents
         .get(ready.entity)
         .ok()
-        .and_then(|c| loot.get(c.parent()).ok())
-        .and_then(|l| l.model.as_deref())
-        .and_then(|name| bank.0.iter().find(|m| m.model.logical == name))
+        .and_then(|c| idle.get(c.parent()).ok())
+        .and_then(|idle| bank.0.iter().find(|m| m.model.logical == idle.0))
     else {
         return;
     };
