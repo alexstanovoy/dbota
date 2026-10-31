@@ -19,6 +19,7 @@ mod hero_fx;
 mod icons;
 mod item_states;
 mod items;
+mod lotus;
 mod menu;
 mod minimap;
 mod pregame;
