@@ -91,7 +91,8 @@ pub struct Sound {
     pub event: String,
 }
 
-/// The world line: the map cut to a band, its terrain layers, trees and lighting.
+/// The world line: the map cut to a band, its terrain layers, trees and lighting, and the
+/// ambient particle systems and soundscapes the map places.
 #[derive(Clone, Debug, PartialEq)]
 pub struct World {
     pub logical: String,
@@ -104,6 +105,10 @@ pub struct World {
     pub layers: String,
     pub trees: Option<String>,
     pub lighting: Option<String>,
+    /// Where the map's ambient particle systems are listed (`ambient=`).
+    pub ambient: Option<String>,
+    /// Where the map's soundscapes are listed (`soundscapes=`).
+    pub soundscapes: Option<String>,
 }
 
 /// The portrait framings line.
@@ -409,6 +414,8 @@ fn manifest_line(words: &[&str]) -> Result<Line, String> {
                     "layers",
                     "trees",
                     "lighting",
+                    "ambient",
+                    "soundscapes",
                 ],
             )?;
             let [logical, src, out] = f.exactly::<3>("world")?;
@@ -423,6 +430,8 @@ fn manifest_line(words: &[&str]) -> Result<Line, String> {
                 layers: own(f.need("layers")?),
                 trees: f.get("trees").map(own),
                 lighting: f.get("lighting").map(own),
+                ambient: f.get("ambient").map(own),
+                soundscapes: f.get("soundscapes").map(own),
             }))
         }
         "portraits" => {

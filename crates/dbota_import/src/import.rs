@@ -11,6 +11,8 @@ use std::collections::{BTreeMap, HashSet, VecDeque};
 
 use heatel::export::{ExportedTexture, ModelOptions, export_model_in_group, read_from};
 use heatel::face::{PhonemeTable, Scene};
+use heatel::keyvalues;
+use heatel::kv3::Value;
 use heatel::material::Material;
 use heatel::particle::{Blend, Renderer, System};
 use heatel::portraits::framings;
@@ -22,10 +24,10 @@ use heatel::{Error, Model, Resource, Result, Sound, Source, Texture, Vpk};
 
 use crate::catalog::{self, Catalog, FileKind, Id, Line, LineError};
 use crate::text::{
-    ParticleMaterial, ParticleModel, ParticleTexture, background_png, buildings_txt,
-    expression_txt, labels_json, lighting_txt, lipsync_txt, particle_json, phonemes_txt,
-    portraits_txt, shop_json, styles_json, tooltips_json, tree_model_path, tree_models, trees_txt,
-    wanted,
+    ParticleMaterial, ParticleModel, ParticleTexture, ambient_txt, background_png, buildings_txt,
+    effect_stem, expression_txt, labels_json, lighting_txt, lipsync_txt, particle_json,
+    phonemes_txt, portraits_txt, shop_json, soundscape_files, soundscapes_txt, styles_json,
+    tooltips_json, tree_model_path, tree_models, trees_txt, wanted, wave_cache_path,
 };
 
 /// The file of a finished cache that says what made it.
@@ -36,7 +38,7 @@ pub const INDEX: &str = "index.txt";
 pub const MAX_STAMP: u64 = 4096;
 
 /// Bumped when the importer's output changes for the same install; part of a cache's stamp.
-pub const IMPORT_REV: u32 = 23;
+pub const IMPORT_REV: u32 = 24;
 
 /// The manifest this build imports and draws, and its ids.
 pub const MANIFEST: &str = include_str!("../../../assets-manifest/manifest.txt");
@@ -202,7 +204,8 @@ pub enum Item {
         skin: Option<String>,
     },
     /// The world's tree and building placements (`trees.txt`, `buildings.txt`), read from the
-    /// map package's entities.
+    /// map package's entities, and what else the manifest asks of them: lighting, ambient
+    /// particle systems and soundscapes.
     Placements {
         logical: String,
         src: String,
@@ -211,6 +214,12 @@ pub enum Item {
         buildings_out: String,
         /// The day and night lighting (`lighting.txt`), when the manifest asks for it.
         lighting_out: Option<String>,
+        /// The ambient particle systems (`ambient.txt`) and the particles they play, when the
+        /// manifest asks for them.
+        ambient_out: Option<String>,
+        /// The soundscapes (`soundscapes.txt`) and the sounds they play, when the manifest asks
+        /// for them.
+        soundscapes_out: Option<String>,
     },
     /// The world cut to `band`: its glTF (`out`), geometry and images beside it, and its terrain
     /// layer textures in `layers`.
@@ -448,6 +457,8 @@ impl Plan {
                             trees_out: trees.clone(),
                             buildings_out: format!("{dir}/buildings.txt"),
                             lighting_out: w.lighting.clone(),
+                            ambient_out: w.ambient.clone(),
+                            soundscapes_out: w.soundscapes.clone(),
                         });
                     }
                     plan.items.push(Item::World {
@@ -656,6 +667,10 @@ enum Later {
     Bytes(Vec<u8>),
     /// The model of a tree the map places: its standing and stump meshes, as [`tree_model`] keeps them.
     Tree(String),
+    /// A particle system the map places (`x.vpcf_c`), converted as the manifest's particles are.
+    Particle(String),
+    /// A sound a soundscape plays (`x.vsnd_c`), written under the path [`wave_cache_path`] gave.
+    Sound(String),
 }
 
 impl<S: Source> Importer<S> {
@@ -945,6 +960,8 @@ fn make(
             trees_out,
             buildings_out,
             lighting_out,
+            ambient_out,
+            soundscapes_out,
             ..
         } => {
             let at = open_map(src, maps, vpk)?;
@@ -952,8 +969,10 @@ fn make(
                 trees: trees_out,
                 buildings: buildings_out,
                 lighting: lighting_out.as_deref(),
+                ambient: ambient_out.as_deref(),
+                soundscapes: soundscapes_out.as_deref(),
             };
-            placements(src, &maps[at].1, path, &outs, out)
+            placements(src, [&maps[at].1, pak], path, &outs, out)
         }
         Item::World {
             logical,
@@ -1432,6 +1451,27 @@ fn later(src: &impl Source, packages: &[&Vpk], job: &Pending, out: &mut Out<'_>)
         }
         Later::Bytes(data) => return out.put(&job.path, data),
         Later::Tree(vmdl) => return tree_model(src, packages, vmdl, &job.path, out),
+        Later::Particle(vpcf) => {
+            let pak = packages
+                .last()
+                .ok_or_else(|| malformed("import", "no main package"))?;
+            return particle(src, pak, vpcf, &job.path, out);
+        }
+        Later::Sound(vsnd) => {
+            let bytes = read_from(src, packages, vsnd)?;
+            let sound = Sound::parse(&bytes)?;
+            if !job.path.ends_with(sound.extension()) {
+                return Err(malformed(
+                    "sound",
+                    format!(
+                        "{vsnd} is a {}, not the cache's {}",
+                        sound.extension(),
+                        job.path
+                    ),
+                ));
+            }
+            sound.file().into_owned()
+        }
     };
     out.put(&job.path, &data)
 }
@@ -1462,12 +1502,16 @@ struct PlacementOuts<'a> {
     trees: &'a str,
     buildings: &'a str,
     lighting: Option<&'a str>,
+    ambient: Option<&'a str>,
+    soundscapes: Option<&'a str>,
 }
 
-/// `trees.txt`, `buildings.txt` and `lighting.txt` from the entities of the world's default lump.
+/// `trees.txt`, `buildings.txt`, `lighting.txt`, `ambient.txt` and `soundscapes.txt` from the
+/// entities of the world's default lump (the map's package, then the main one, which holds the
+/// soundscape scripts), and the models, particles and sounds they name.
 fn placements(
     src: &impl Source,
-    map: &Vpk,
+    [map, pak]: [&Vpk; 2],
     world: &str,
     outs: &PlacementOuts<'_>,
     out: &mut Out<'_>,
@@ -1501,8 +1545,62 @@ fn placements(
     if let Some(path) = outs.lighting {
         out.put(path, lighting_txt(&lighting(&lump.entities)?).as_bytes())?;
     }
+    if let Some(path) = outs.ambient {
+        let (file, effects) = ambient_txt(&lump.entities);
+        out.put(path, file.as_bytes())?;
+        // Each effect is a logical of its own: one that fails does not drop the others.
+        for effect in effects {
+            let Some(stem) = effect_stem(&effect) else {
+                continue;
+            };
+            out.pending.push_back(Pending {
+                logical: format!("map.ambient.{stem}"),
+                path: format!("particles/map/{stem}.json"),
+                what: Later::Particle(format!("{effect}_c")),
+            });
+        }
+    }
+    if let Some(path) = outs.soundscapes {
+        soundscapes(src, pak, &lump.entities, path, out)?;
+    }
     Ok(())
 }
+
+/// `soundscapes.txt` from the entities and the scripts the main package's soundscape manifest
+/// lists (one that is missing or unreadable is left out), and the sounds it plays.
+fn soundscapes(
+    src: &impl Source,
+    pak: &Vpk,
+    entities: &[Value],
+    dest: &str,
+    out: &mut Out<'_>,
+) -> Result<()> {
+    let manifest = read_from(src, &[pak], SOUNDSCAPE_MANIFEST)?;
+    let mut files = Vec::new();
+    for path in soundscape_files(keyvalues::text(&manifest)?) {
+        if let Ok(bytes) = read_from(src, &[pak], &path) {
+            files.push(bytes);
+        }
+    }
+    let scripts: Vec<&str> = files
+        .iter()
+        .filter_map(|f| keyvalues::text(f).ok())
+        .collect();
+    let (file, waves) = soundscapes_txt(entities, &scripts);
+    out.put(dest, file.as_bytes())?;
+    for vsnd in waves {
+        let name = vsnd.trim_start_matches("sounds/").trim_end_matches(".vsnd");
+        out.pending.push_back(Pending {
+            logical: format!("map.soundscape.{}", name.replace('/', ".")),
+            path: wave_cache_path(&vsnd),
+            what: Later::Sound(format!("{vsnd}_c")),
+        });
+    }
+    Ok(())
+}
+
+/// Where Dota lists the files its soundscapes are in.
+const SOUNDSCAPE_MANIFEST: &str = "scripts/soundscapes_manifest.txt";
 
 /// What one model line asks for.
 struct ModelJob<'a> {

@@ -396,7 +396,7 @@ fn folders_of_newer_lines(
 }
 
 /// Whether the importer alone makes `rel`, so the exported cache has nothing like it: a
-/// world's `lighting=` file, the interface labels (`label` lines), and the portrait
+/// world's `lighting=`, `ambient=` and `soundscapes=` files, the interface labels (`label` lines), and the portrait
 /// backgrounds (`portraits` lines); the manifest's header says which kinds Source2Viewer never
 /// wrote. Their contents are checked by tests of their own.
 fn made_by_the_importer(rel: &str, manifest: &str) -> bool {
@@ -411,9 +411,14 @@ fn made_by_the_importer(rel: &str, manifest: &str) -> bool {
                 .is_some_and(|(dir, _)| rel.starts_with(&format!("{dir}/textures/"))),
             _ => false,
         })
-        || lines()
-            .flat_map(str::split_whitespace)
-            .any(|w| w.strip_prefix("lighting=") == Some(rel))
+        // The map's ambient particles and the sounds of its soundscapes.
+        || rel.starts_with("particles/map/")
+        || rel.starts_with("sounds/ambient/soundscapes/")
+        || lines().flat_map(str::split_whitespace).any(|w| {
+            ["lighting=", "ambient=", "soundscapes="]
+                .iter()
+                .any(|key| w.strip_prefix(key) == Some(rel))
+        })
 }
 
 /// The exported files this manifest asks for: its outputs, the images its glTF files name, and
