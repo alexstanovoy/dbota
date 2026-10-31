@@ -574,8 +574,11 @@ fn rune_marks(
         let cell = crate::runes::SHEET_CELL;
         let rect = Some(Rect::new(x, y, x + cell, y + cell));
         let tint = if rune.seen { Color::WHITE } else { REMEMBERED };
-        // Without the sheet, a plain disc of the rune's place.
-        let handle = sheet.clone().unwrap_or_default();
+        // A cache without the sheet has no rune to mark.
+        let Some(handle) = sheet.clone() else {
+            vis.set_if_neq(Visibility::Hidden);
+            continue;
+        };
         if image.image != handle || image.rect != rect || image.color != tint {
             image.image = handle;
             image.rect = rect;

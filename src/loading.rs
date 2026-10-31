@@ -94,7 +94,7 @@ const PATIENCE: f32 = 120.0;
 /// needs, or failed (nothing to wait for).
 pub fn settled<A: Asset>(server: &AssetServer, handle: &Handle<A>) -> bool {
     match server.get_load_state(handle) {
-        // Made in the client (a synthesized sound), not read: resident.
+        // Made in the client, not read: resident.
         None => true,
         Some(state) if state.is_failed() => true,
         Some(_) => server.is_loaded_with_dependencies(handle),

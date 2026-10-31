@@ -1,10 +1,8 @@
 //! Sounds: Dota's own from the cache, each cue of the client core matched to
-//! one (a cue Dota has no sound for, the low-health alarm and a hero kill's chime, is
-//! synthesized); quieter the farther
-//! from the camera, under the player's volume.
+//! one (a cue Dota has no sound for plays none); quieter the farther from the camera, under the
+//! player's volume.
 
 use std::collections::HashMap;
-use std::sync::Arc;
 
 use bevy::{audio::Volume, prelude::*};
 use bota_client_core::{Cue, CueKind};
@@ -14,7 +12,6 @@ use crate::camera::RtsCamera;
 use crate::config::Settings;
 use crate::manifest::Manifest;
 use crate::session::Session;
-use crate::synth::{RATE, Sfx, synth};
 
 /// World units from the camera within which a sound is heard at full.
 const EARSHOT: f32 = 1200.0;
@@ -262,55 +259,51 @@ pub fn plugin(app: &mut App) {
         .add_systems(Update, (volume, play, portals));
 }
 
-/// The logical names of the sounds a kind plays, each with every variant that
-/// shares it, and the synthesized sound of a cue Dota has none for.
-fn sources_of(kind: Kind, manifest: &Manifest) -> (Vec<String>, Option<Sfx>) {
+/// The logical names of the sounds a kind plays, each with every variant that shares it.
+fn sources_of(kind: Kind, manifest: &Manifest) -> Vec<String> {
     let named = |names: &[&str]| names.iter().map(|n| (*n).to_owned()).collect::<Vec<_>>();
-    let (names, synthesized) = match kind {
+    match kind {
         Kind::Cue(cue) => match cue {
-            CueKind::LastHit => (named(&["sound.last_hit"]), None),
-            CueKind::Deny => (named(&["sound.deny"]), None),
-            CueKind::Raze => (named(&["sound.raze"]), None),
-            CueKind::Requiem => (named(&["sound.requiem"]), None),
-            CueKind::LowHp => (vec![], Some(Sfx::LowHp)),
-            CueKind::Buy => (named(&["sound.buy"]), None),
-            CueKind::LevelUp => (named(&["sound.level_up"]), None),
-            CueKind::TowerShot => (named(&["sound.tower.hero_impact"]), None),
-            CueKind::HeroKill => (vec![], Some(Sfx::HeroKill)),
+            CueKind::LastHit => named(&["sound.last_hit"]),
+            CueKind::Deny => named(&["sound.deny"]),
+            CueKind::Raze => named(&["sound.raze"]),
+            CueKind::Requiem => named(&["sound.requiem"]),
+            // Dota has no sound for these (its low-health cue is none, and its own-kill
+            // notification is silent): they play none.
+            CueKind::LowHp | CueKind::HeroKill => vec![],
+            CueKind::Buy => named(&["sound.buy"]),
+            CueKind::LevelUp => named(&["sound.level_up"]),
+            CueKind::TowerShot => named(&["sound.tower.hero_impact"]),
             // A hero's own, sounded through its rows.
-            CueKind::Attack | CueKind::Hit | CueKind::HeroDeath => (vec![], None),
+            CueKind::Attack | CueKind::Hit | CueKind::HeroDeath => vec![],
             // Each reason has its own sound (Kind::Denied).
-            CueKind::Refused(_) | CueKind::Undeniable(_) => (vec![], None),
+            CueKind::Refused(_) | CueKind::Undeniable(_) => vec![],
         },
-        Kind::Denied(deny) => (named(deny.logical()), None),
-        Kind::Row(row) => (row.name(manifest).into_iter().collect(), None),
-        Kind::PortalArriving => (named(&["sound.portal.loop_appear"]), None),
-        Kind::PortalLeaving => (named(&["sound.portal.loop_disappear"]), None),
-        Kind::HeroArrived => (named(&["sound.portal.hero_appear"]), None),
-        Kind::HeroLeft => (named(&["sound.portal.hero_disappear"]), None),
-        Kind::Ping => (named(&["sound.ping.regular"]), None),
-        Kind::PingDanger => (named(&["sound.ping.danger"]), None),
-        Kind::PingDangerLayer => (named(&["sound.ping.warning_layer"]), None),
-    };
-    (names, synthesized)
+        Kind::Denied(deny) => named(deny.logical()),
+        Kind::Row(row) => row.name(manifest).into_iter().collect(),
+        Kind::PortalArriving => named(&["sound.portal.loop_appear"]),
+        Kind::PortalLeaving => named(&["sound.portal.loop_disappear"]),
+        Kind::HeroArrived => named(&["sound.portal.hero_appear"]),
+        Kind::HeroLeft => named(&["sound.portal.hero_disappear"]),
+        Kind::Ping => named(&["sound.ping.regular"]),
+        Kind::PingDanger => named(&["sound.ping.danger"]),
+        Kind::PingDangerLayer => named(&["sound.ping.warning_layer"]),
+    }
 }
 
 fn load(
     mut voices: ResMut<Voices>,
     manifest: Res<Manifest>,
     server: Res<AssetServer>,
-    mut audio: ResMut<Assets<AudioSource>>,
 ) {
     let kinds = [
         CueKind::LastHit,
         CueKind::Deny,
         CueKind::Raze,
         CueKind::Requiem,
-        CueKind::LowHp,
         CueKind::Buy,
         CueKind::LevelUp,
         CueKind::TowerShot,
-        CueKind::HeroKill,
     ]
     .map(Kind::Cue)
     .into_iter()
@@ -328,19 +321,12 @@ fn load(
     ])
     .chain(Row::all().into_iter().map(Kind::Row));
     for kind in kinds {
-        let (names, synthesized) = sources_of(kind, &manifest);
-        let mut sources: Vec<Handle<AudioSource>> = names
+        let names = sources_of(kind, &manifest);
+        let sources: Vec<Handle<AudioSource>> = names
             .iter()
             .flat_map(|name| manifest.sounds(name))
             .map(|path| server.load(path))
             .collect();
-        if sources.is_empty()
-            && let Some(sfx) = synthesized
-        {
-            sources.push(audio.add(AudioSource {
-                bytes: Arc::from(wav(&synth(sfx))),
-            }));
-        }
         voices.0.push((
             kind,
             Voice {
@@ -686,28 +672,6 @@ fn swings(
     }
 }
 
-/// A mono 16-bit PCM WAV file of samples at [`RATE`].
-fn wav(samples: &[f32]) -> Vec<u8> {
-    let data = (samples.len() * 2) as u32;
-    let mut out = Vec::with_capacity(44 + data as usize);
-    out.extend_from_slice(b"RIFF");
-    out.extend_from_slice(&(36 + data).to_le_bytes());
-    out.extend_from_slice(b"WAVEfmt ");
-    out.extend_from_slice(&16u32.to_le_bytes());
-    out.extend_from_slice(&1u16.to_le_bytes());
-    out.extend_from_slice(&1u16.to_le_bytes());
-    out.extend_from_slice(&RATE.to_le_bytes());
-    out.extend_from_slice(&(RATE * 2).to_le_bytes());
-    out.extend_from_slice(&2u16.to_le_bytes());
-    out.extend_from_slice(&16u16.to_le_bytes());
-    out.extend_from_slice(b"data");
-    out.extend_from_slice(&data.to_le_bytes());
-    for s in samples {
-        out.extend_from_slice(&((s.clamp(-1.0, 1.0) * 32767.0) as i16).to_le_bytes());
-    }
-    out
-}
-
 /// The sounds' part of the loading.
 fn report(voices: Res<Voices>, server: Res<AssetServer>, mut parts: ResMut<crate::loading::Parts>) {
     let sources = voices.0.iter().flat_map(|(_, voice)| &voice.sources);
@@ -801,7 +765,7 @@ mod tests {
 
     /// The files a kind of sound plays.
     fn files_of(manifest: &Manifest, kind: Kind) -> Vec<String> {
-        let (names, _) = sources_of(kind, manifest);
+        let names = sources_of(kind, manifest);
         names.iter().flat_map(|n| manifest.sounds(n)).collect()
     }
 

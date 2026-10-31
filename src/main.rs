@@ -91,7 +91,6 @@ mod sound;
 mod soundscape;
 mod stats;
 mod strategy;
-mod synth;
 mod talents;
 mod talk;
 mod talk_check;
