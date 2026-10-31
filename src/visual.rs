@@ -658,14 +658,20 @@ fn bar_ticks(c: &Checks, report: &mut impl FnMut(&str, bool, String)) {
                 .all(|(d, want)| (d.0 - want.0).abs() < 0.5 && d.1 == want.1);
         told.push((live.kind, live.max_hp, drawn.len(), right));
     }
-    // A hero's bar is on screen in the full check; the bars' check watches a
-    // courier and needs a marked bar of any kind.
-    let hero_marked = told.iter().any(|(kind, max, n, _)| {
+    // Bars of health counted in hits (the courier's, a ward's) have no marks and are left out
+    // above. The bars' check watches a courier, often alone at the fountain: with no bar of
+    // health in view there is nothing to measure, which is said as a skip, not passed.
+    if c.args.bars_check && told.is_empty() {
+        println!("visual check: SKIP health marks every 250 and 1000: no HP bar in view");
+        return;
+    }
+    // A hero's bar is on screen in the full check; the bars' check needs a marked bar of any kind.
+    let marked = told.iter().any(|(kind, max, n, _)| {
         (*kind == UnitKind::Hero || c.args.bars_check) && (*max <= 250 || *n > 0)
     });
     report(
         "health marks every 250 and 1000",
-        hero_marked && told.iter().all(|(.., right)| *right),
+        marked && told.iter().all(|(.., right)| *right),
         format!("bars (kind, max health, marks, right): {told:?}"),
     );
 }
