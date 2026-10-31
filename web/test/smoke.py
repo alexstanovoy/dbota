@@ -438,7 +438,8 @@ def check_replay_page(directory):
         server, base, browser, page, console, problems = opened(p, directory)
         page.goto(base + "?cache=http")
         wait_console(page, console, r"match known: tick \d+", 600, "the client to know the match")
-        heard = wait_console(page, console, r"chat: (\d+) lines heard", 120, "the chat lines of the replay")
+        # The lines arrive as the replay is read through to its seek tick.
+        heard = wait_console(page, console, r"chat: ([5-9]|\d\d+) lines heard", 300, "the chat lines of the replay")
         page.wait_for_timeout(3000)
         page.screenshot(path=str(HERE.parent.parent / "temp/smoke-replay.png"), timeout=600000)
         assert any("stands behind the Latin ones" in c for c in console), "the CJK fallback is registered"
