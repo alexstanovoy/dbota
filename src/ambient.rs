@@ -24,9 +24,11 @@ use crate::session::Session;
 const MAX_LINES: usize = 4096;
 /// Effects playing at once at most.
 pub const MAX_ACTIVE: usize = 48;
-/// World units about an emitter that count as its place for the view: its particles drift
-/// that far.
-const REACH: f32 = 400.0;
+/// World units about an emitter that count as its place for the view: the view's edge plus a
+/// small margin, so one starts just before it comes into sight. Most of the map's effects keep
+/// their particles well within it; the widest (fireflies, butterflies, bats) scatter theirs
+/// some 260 units out, so one just past the margin could have had a few at the screen's edge.
+const REACH: f32 = 200.0;
 /// bota = Dota + this, on x and y.
 const DOTA_TO_BOTA: f32 = 9216.0;
 
