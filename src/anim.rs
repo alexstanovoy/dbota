@@ -477,7 +477,7 @@ fn looping(pose: &mut Pose, clip: &'static str, duration: f32, dt: f32, pace: f3
 
 /// The loop a unit plays standing: a map objective's shows its state, as
 /// Dota's models do: a Watcher out until the horn and while put out, lit by
-/// day or by night; an Outpost a side holds; a Shrine ready to be gathered.
+/// day or by night; an Outpost a side holds; a Shrine ready to be gathered; a Lotus Pool.
 fn standing(core: &Core, u: &UnitView) -> &'static str {
     let has = |id: EffectId| u.effects.iter().any(|e| e.id == id);
     let Some(view) = core.view() else {
@@ -495,6 +495,9 @@ fn standing(core: &Core, u: &UnitView) -> &'static str {
         }
         UnitKind::Outpost if u.team != Team::Neutral => "captured",
         UnitKind::Shrine if has(EffectId::SHRINE_READY) => "active",
+        // Dota's pool plays fountain_channel while a hero plucks; the wire does not tell a
+        // pluck under way, so it idles.
+        UnitKind::LotusPool => "idle",
         _ => "idle",
     }
 }

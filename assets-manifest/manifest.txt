@@ -60,10 +60,11 @@
 #                    start until it goes or falls; the particle follows the unit) |
 #                    held (a unit carries the item in an active slot) | casting (a unit is in the ability's cast point) |
 #                    flies (a missile of the ability or item flies) | spawn (the rune appeared) | activate (the rune
-#                    took effect on a hero, at once or out of a Bottle) | store (a rune was put into the item: the Bottle)
+#                    took effect on a hero, at once or out of a Bottle) | store (a rune was put into the item: the Bottle) |
+#                    pluck (a hero plucked a lotus from the unit: a Lotus Pool)
 #           at: caster (where the user, or the hero taking a rune, stands after) | caster_before (where it stood before) | point (the spot the
 #               use was aimed at, the throw came down, the rune appeared) | unit (the unit the fact is about: the wearer, or the rune lying, the one struck
-#               or mended, the one dead) | flight (each missile on its own, from its source to where it is) | chain (all the
+#               or mended, the one dead, the pool plucked) | flight (each missile on its own, from its source to where it is) | chain (all the
 #               missiles a source has flying, from the source to the one farthest from it: a hook and its chain)
 #           attach: where on the unit it plays: origin (its feet, the default) | overhead (where its health bar floats) |
 #                   attach_<node> (a node of its model: attach_hitloc, attach_head, attach_eyeL), hitloc for attach_hitloc
@@ -71,7 +72,8 @@
 #           cp<N> (N from 1; the particle's first control point is where it plays): what that control point is given:
 #                 sight (how far the wearer gives true sight, in x) | stacks | seconds (the effect's stacks, the seconds it
 #                 has left) | mode (the attribute of the item: 0 strength, 1 agility, 2 intelligence) | charges (the share
-#                 of its charges the item held) | origin, overhead, attach_<node> (a point of the unit, followed) | x,y,z
+#                 of its charges the item held) | origin, overhead, attach_<node> (a point of the unit, followed) | x,y,z |
+#                 caster (where the user stands: the hero that plucked)
 #           whose: for a worn line, only the effects the wearer put on itself (own) or another put on it (foreign)
 #           stacks: for a worn line, only while the effect holds that many
 #   state   item.<ids.txt item name> <state> icon=<texture logical> [text=<label key>]
@@ -461,6 +463,8 @@ particle rune.arcane.owner particles/generic_gameplay/rune_arcane_owner.vpcf_c p
 particle rune.regeneration.owner particles/generic_gameplay/rune_regen_owner.vpcf_c particles/rune_regen_owner.json
 particle rune.shield.owner particles/status_fx/status_effect_shield_rune.vpcf_c particles/status_effect_shield_rune.json
 particle item.bottle particles/items_fx/bottle.vpcf_c particles/bottle.json
+particle lotus_pool.ambient particles/world_fountain_of_life/fol_ambient.vpcf_c particles/fol_ambient.json
+particle lotus_pool.pluck particles/world_fountain_of_life/fol_active.vpcf_c particles/fol_active.json
 
 # --- Heroes' default ambient effects (items_game.txt "<hero>'s Ambient Effects", the item of slot ambient_effects)
 particle hero.nevermore.ambient_glow particles/units/heroes/hero_nevermore/nevermore_ambient_glow.vpcf_c particles/nevermore_ambient_glow.json
@@ -654,6 +658,15 @@ fx item.bottle.store at=caster sound=sound.bottle.cork
 # trail with its second control point on his attach_hitloc
 fx hero.nevermore.worn at=unit particle=hero.nevermore.ambient_glow
 fx hero.nevermore.worn at=unit particle=hero.nevermore.trail cp1=hitloc
+# A Lotus Pool's ambient (the map's ambientfx); a lotus plucked (fol_active at the pool, its flash and trail to the
+# hero, LotusPool.Target); a lotus eaten (the lotuses are Enchanted Mangoes in the game's code: mango_active and
+# DOTA_Item.Mango.Activate); a Cheese eaten (DOTA_Item.Cheese.Activate).
+fx unit.npc_dota_lotus_pool.worn at=unit particle=lotus_pool.ambient
+fx unit.npc_dota_lotus_pool.pluck at=unit particle=lotus_pool.pluck sound=sound.lotus_pool.grant cp2=caster cp3=caster
+fx item.famango.use at=caster particle=item.mango.active sound=sound.item.mango
+fx item.great_famango.use at=caster particle=item.mango.active sound=sound.item.mango
+fx item.greater_famango.use at=caster particle=item.mango.active sound=sound.item.mango
+fx item.cheese.use at=caster sound=sound.item.cheese
 
 # --- Item icons (88x64, a few narrower), every Dota item name in ids.txt
 # Buff bar icons only.
@@ -1005,6 +1018,8 @@ sound sound.rune.invisibility sounds/items/rune_invis.vsnd_c sounds/items/rune_i
 sound sound.rune.shield sounds/items/rune_shield.vsnd_c sounds/items/rune_shield.wav event=Rune.Shield
 sound sound.bottle.drink sounds/ui/bottle_pour.vsnd_c sounds/ui/bottle_pour.wav event=Bottle.Drink
 sound sound.bottle.cork sounds/ui/bottle_corked.vsnd_c sounds/ui/bottle_corked.wav event=Bottle.Cork
+sound sound.item.cheese sounds/items/cheese.vsnd_c sounds/items/cheese.wav event=DOTA_Item.Cheese.Activate
+sound sound.lotus_pool.grant sounds/items/lotus_grant.vsnd_c sounds/items/lotus_grant.wav event=LotusPool.Target
 
 # Town portal scroll: the hum over the landing (Loop_Appear) and over the leaving hero (Loop_Disappear), both
 # 4 s loops, and the sounds of the hero arriving and leaving.
@@ -1545,6 +1560,24 @@ clip objective.xp_shrine.model active xp_shrine_idle_active_loop 11.900
 clip objective.xp_shrine.model channel xp_shrine_idle_active_Channeling 7.933
 clip objective.xp_shrine.model death xp_shrine_die 2.900
 unit npc_dota_xp_fountain objective.xp_shrine.model model_scale=1
+# Lotus Pools (npc_dota_lotus_pool; the map places fountain_of_life_update.vmdl, not the unit's Model, with its
+# ambientfx fol_ambient): idle loops. The model's material groups are its skins: 0 the pool of the Radiant's corner,
+# 1 the Dire's (the map's), 2 and 3 the Radiant's growing Great and Greater Healing Lotuses (_lvl2, _lvl3), 4 and 5
+# the Dire's (_lvl2_dire, _lvl3_dire); skin<n> names the model in group n. Its body groups mango1..mango6 are the
+# lotuses it holds, shown by count.
+model objective.lotus_pool.model models/props_gameplay/fountain_of_life/fountain_of_life_update.vmdl_c models/objective/lotus_pool/lotus_pool.glb anims=fountain_idle
+clip objective.lotus_pool.model idle fountain_idle 11.967
+model objective.lotus_pool.skin1.model models/props_gameplay/fountain_of_life/fountain_of_life_update.vmdl_c models/objective/lotus_pool/lotus_pool_skin1.glb anims=fountain_idle skin=1
+clip objective.lotus_pool.skin1.model idle fountain_idle 11.967
+model objective.lotus_pool.skin2.model models/props_gameplay/fountain_of_life/fountain_of_life_update.vmdl_c models/objective/lotus_pool/lotus_pool_skin2.glb anims=fountain_idle skin=2
+clip objective.lotus_pool.skin2.model idle fountain_idle 11.967
+model objective.lotus_pool.skin3.model models/props_gameplay/fountain_of_life/fountain_of_life_update.vmdl_c models/objective/lotus_pool/lotus_pool_skin3.glb anims=fountain_idle skin=3
+clip objective.lotus_pool.skin3.model idle fountain_idle 11.967
+model objective.lotus_pool.skin4.model models/props_gameplay/fountain_of_life/fountain_of_life_update.vmdl_c models/objective/lotus_pool/lotus_pool_skin4.glb anims=fountain_idle skin=4
+clip objective.lotus_pool.skin4.model idle fountain_idle 11.967
+model objective.lotus_pool.skin5.model models/props_gameplay/fountain_of_life/fountain_of_life_update.vmdl_c models/objective/lotus_pool/lotus_pool_skin5.glb anims=fountain_idle skin=5
+clip objective.lotus_pool.skin5.model idle fountain_idle 11.967
+unit npc_dota_lotus_pool objective.lotus_pool.model model_scale=1
 # Roshan's Banner planted (npc_dota_unit_roshans_banner); spawn, death (one of Dota's three each).
 model objective.roshans_banner.model models/props_gameplay/roshans_banner.vmdl_c models/objective/roshans_banner/roshans_banner.glb anims=roshan_banner_idle,roshan_banner_spawn,roshan_banner_death
 clip objective.roshans_banner.model idle roshan_banner_idle 25.000
@@ -1605,6 +1638,13 @@ model item.magic_wand.model models/props_gameplay/magic_wand.vmdl_c models/item/
 clip item.magic_wand.model idle tpscroll01_idle 4.000
 model item.enchanted_mango.model models/props_gameplay/mango.vmdl_c models/item/enchanted_mango/mango.glb anims=mango_idle
 clip item.enchanted_mango.model idle mango_idle 4.000
+# A lotus on the ground is fountain_of_life_consumable.vmdl (items.txt Model), one mesh by its tier.
+model item.famango.model models/props_gameplay/fountain_of_life/fountain_of_life_consumable.vmdl_c models/item/famango/famango.glb anims=fountain_consumable_idle meshes=fountain_consumable_1
+clip item.famango.model idle fountain_consumable_idle 4.000
+model item.great_famango.model models/props_gameplay/fountain_of_life/fountain_of_life_consumable.vmdl_c models/item/great_famango/great_famango.glb anims=fountain_consumable_idle meshes=fountain_consumable_2
+clip item.great_famango.model idle fountain_consumable_idle 4.000
+model item.greater_famango.model models/props_gameplay/fountain_of_life/fountain_of_life_consumable.vmdl_c models/item/greater_famango/greater_famango.glb anims=fountain_consumable_idle meshes=fountain_consumable_3
+clip item.greater_famango.model idle fountain_consumable_idle 4.000
 model item.recipe.model models/props_gameplay/recipe.vmdl_c models/item/recipe/recipe.glb anims=tpscroll01_idle
 clip item.recipe.model idle tpscroll01_idle 4.000
 

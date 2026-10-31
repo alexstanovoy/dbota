@@ -62,6 +62,7 @@ mod loading;
 #[cfg(not(target_arch = "wasm32"))]
 mod logging;
 mod loot;
+mod lotus;
 mod main_menu;
 mod manifest;
 mod map;
@@ -639,7 +640,13 @@ fn client_plugins(app: &mut App) {
             talk_check::plugin,
             stats::plugin,
         ))
-        .add_plugins((loot::plugin, runes::plugin, rune_toast::plugin, fx::plugin))
+        .add_plugins((
+            loot::plugin,
+            lotus::plugin,
+            runes::plugin,
+            rune_toast::plugin,
+            fx::plugin,
+        ))
         .add_plugins((
             sound::plugin,
             effects::plugin,

@@ -85,6 +85,10 @@ const NO_LINE: &[(&str, &str)] = &[
     ("ring_of_protection", "a stat component: no effect in Dota"),
     ("ring_of_regen", "a stat component: no effect in Dota"),
     ("robe", "a stat component: no effect in Dota"),
+    (
+        "royale_with_cheese",
+        "its Savory Shield is not simulated, and the game's code names no particle or sound for it",
+    ),
     ("slippers", "a stat component: no effect in Dota"),
     ("sobi_mask", "a stat component: no effect in Dota"),
     ("staff_of_wizardry", "a stat component: no effect in Dota"),

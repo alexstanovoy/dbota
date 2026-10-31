@@ -238,7 +238,11 @@ fn bar_size(kind: UnitKind) -> Option<(f32, f32)> {
         UnitKind::Tower | UnitKind::Barracks | UnitKind::Ancient => dota(120.0, 8.0),
         UnitKind::Filler => dota(90.0, 7.0),
         // The map's objectives never take damage: Dota shows them no health.
-        UnitKind::Fountain | UnitKind::Outpost | UnitKind::Watcher | UnitKind::Shrine => None,
+        UnitKind::Fountain
+        | UnitKind::Outpost
+        | UnitKind::Watcher
+        | UnitKind::Shrine
+        | UnitKind::LotusPool => None,
         UnitKind::Courier => dota(50.0, 6.0),
         UnitKind::Ward => dota(40.0, 5.0),
         _ => dota(55.0, 5.0),

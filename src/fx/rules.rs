@@ -153,7 +153,7 @@ fn subject_fits(fx: &Fx, subject: &Subject) -> Result<(), String> {
         Trigger::Cast | Trigger::Casting => matches!(subject, Subject::Abilities(_)),
         Trigger::Land | Trigger::Flies => items_or_abilities,
         Trigger::Hit => !matches!(subject, Subject::Effects(_) | Subject::Runes(_)),
-        Trigger::Died => matches!(subject, Subject::Units(_)),
+        Trigger::Died | Trigger::Pluck => matches!(subject, Subject::Units(_)),
         Trigger::Spawn | Trigger::Activate => matches!(subject, Subject::Runes(_)),
         Trigger::Worn => true,
     };

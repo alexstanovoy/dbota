@@ -152,6 +152,8 @@ struct Feeds {
     mode: f32,
     /// The share of its charges the item concerned held.
     charges: f32,
+    /// Where the user stands, in the world.
+    caster: Option<Vec3>,
 }
 
 /// The item of the id among a unit's active slots, if it has one.
@@ -201,6 +203,7 @@ fn feed(
             Feed::Charges => Vec3::new(feeds.charges, 0.0, 0.0),
             Feed::Vector(vector) => *vector,
             Feed::Place(attach) => place_of(place(attach)),
+            Feed::Caster => place_of(feeds.caster.unwrap_or_else(|| place(&Attach::Origin))),
         };
         instance.set_control_point(*point, value, Vec3::ZERO, false);
     }

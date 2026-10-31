@@ -121,6 +121,14 @@ impl Fact {
                 caster: Some(*unit),
                 ..blank
             },
+            // The pool, which every side is told of; the hero, to a side that sees it.
+            EventKind::LotusPlucked { pool, unit, .. } => Fact {
+                trigger: Trigger::Pluck,
+                named: Some(*pool),
+                caster: *unit,
+                unit: Some(*pool),
+                ..blank
+            },
             _ => return None,
         })
     }
@@ -223,7 +231,13 @@ fn told(
                     Some(unit) => attach_point(&ground, &bodies, unit, attach),
                     None => at,
                 };
-                let feeds = item_state(&fact, &views);
+                let feeds = Feeds {
+                    caster: fact
+                        .caster
+                        .and_then(|id| views.find(id))
+                        .map(|u| attach_point(&ground, &bodies, u, &Attach::Origin)),
+                    ..item_state(&fact, &views)
+                };
                 let with = (library.as_deref(), &mut *playing);
                 stage.play(fx, (at, seed), with, (&feeds, &place));
             }

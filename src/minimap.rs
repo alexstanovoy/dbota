@@ -498,6 +498,13 @@ fn objective_icon(u: &UnitView) -> Option<(&'static str, Option<Rect>, Color, f3
             },
             12.0,
         )),
+        // minimap_lotuspool (320,576 64x64).
+        UnitKind::LotusPool => Some((
+            "icon.minimap.sheet",
+            cell(320.0, 576.0, 64.0),
+            Color::WHITE,
+            16.0,
+        )),
         _ => None,
     }
 }

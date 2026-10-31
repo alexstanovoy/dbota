@@ -496,6 +496,7 @@ fn objective_unit(kind: UnitKind) -> Option<&'static str> {
         UnitKind::Outpost => Some("npc_dota_watch_tower"),
         UnitKind::Watcher => Some("npc_dota_lantern"),
         UnitKind::Shrine => Some("npc_dota_xp_fountain"),
+        UnitKind::LotusPool => Some("npc_dota_lotus_pool"),
         _ => None,
     }
 }
@@ -542,13 +543,20 @@ fn kind_name(map: &MapDef, kind: UnitKind, team: Team, pos: bota_proto::Vec2) ->
     }
 }
 
-/// The logical name of the model a unit is drawn with.
-fn model_name(unit: &UnitView, map: &MapDef, manifest: &Manifest) -> Option<String> {
+/// The logical name of the model a unit is drawn with, in its model's material
+/// group `skin`: the model of that skin (`<model stem>.skin<n>.model`) where
+/// the manifest has one.
+fn model_name(unit: &UnitView, map: &MapDef, manifest: &Manifest, skin: u8) -> Option<String> {
     if unit.kind == UnitKind::CreepNeutral
         || unit.kind == UnitKind::Ward
         || objective_unit(unit.kind).is_some()
     {
-        return unit_art(unit, manifest)?.model.clone();
+        let model = unit_art(unit, manifest)?.model.clone()?;
+        let skinned = model
+            .strip_suffix(".model")
+            .map(|stem| format!("{stem}.skin{skin}.model"))
+            .filter(|name| skin > 0 && manifest.model(name).is_some());
+        return Some(skinned.unwrap_or(model));
     }
     let side = match unit.team {
         Team::Radiant => "radiant",
@@ -578,11 +586,23 @@ fn model_name(unit: &UnitView, map: &MapDef, manifest: &Manifest) -> Option<Stri
     })
 }
 
-/// How every building stands on Dota's map: its model's name, its bota
-/// position, and the yaw the map turns the model by (radians, as the trees
-/// are turned), read from the map export.
+/// How every building stands on Dota's map, read from the map export.
 #[derive(Resource, Default)]
-pub struct BuildingYaws(pub Vec<(String, Vec2, f32)>);
+pub struct BuildingYaws(pub Vec<MapBuilding>);
+
+/// One building as Dota's map places it.
+pub struct MapBuilding {
+    /// Its model's name.
+    pub model: String,
+    /// Its bota position.
+    pub at: Vec2,
+    /// The yaw the map turns the model by (radians, as the trees are turned).
+    pub yaw: f32,
+    /// The model's material group the map draws it with.
+    pub skin: u8,
+    /// The map's scale of it on each of Dota's axes (x, y, up).
+    pub scale: [f32; 3],
+}
 
 impl BuildingYaws {
     pub fn load(root: Option<&std::path::Path>) -> BuildingYaws {
@@ -595,21 +615,25 @@ impl BuildingYaws {
         BuildingYaws(
             crate::cache_text::buildings(&text, MAX_MAP_BUILDINGS)
                 .into_iter()
-                .map(|b| {
-                    let at = Vec2::new(b.x + DOTA_ORIGIN, b.y + DOTA_ORIGIN);
-                    (b.model, at, b.yaw.to_radians())
+                .map(|b| MapBuilding {
+                    at: Vec2::new(b.x + DOTA_ORIGIN, b.y + DOTA_ORIGIN),
+                    model: b.model,
+                    yaw: b.yaw.to_radians(),
+                    skin: b.skin,
+                    scale: b.scale,
                 })
                 .collect(),
         )
     }
 
-    /// The facing a building at a place is drawn with: the map's yaw of the
-    /// same side's building of the same kind nearest it, within 600 units; a
-    /// map objective's, whichever side holds it, of the objective standing
-    /// there.
-    pub fn facing(&self, unit: &UnitView, at: Vec2) -> Option<f32> {
+    /// The map's own building a building at a place is: the same side's
+    /// building of the same kind nearest it, within 600 units; a map
+    /// objective's, whichever side holds it, the objective standing there.
+    pub fn placed(&self, unit: &UnitView, at: Vec2) -> Option<&MapBuilding> {
         let side = match (unit.kind, unit.team) {
-            (UnitKind::Outpost | UnitKind::Watcher | UnitKind::Shrine, _) => "",
+            (UnitKind::Outpost | UnitKind::Watcher | UnitKind::Shrine | UnitKind::LotusPool, _) => {
+                ""
+            }
             (_, Team::Radiant) => "radiant",
             (_, Team::Dire) => "dire",
             (_, Team::Neutral) => return None,
@@ -625,18 +649,25 @@ impl BuildingYaws {
             UnitKind::Outpost => "outpost",
             UnitKind::Watcher => "lantern_of_sight",
             UnitKind::Shrine => "xp_shrine",
+            UnitKind::LotusPool => "fountain_of_life",
             _ => return None,
         };
-        let (_, _, yaw) = self
-            .0
+        self.0
             .iter()
-            .filter(|(m, p, _)| {
-                m.starts_with(side) && m.contains(kind) && p.distance(at) < MODEL_MATCH_RADIUS
+            .filter(|b| {
+                b.model.starts_with(side)
+                    && b.model.contains(kind)
+                    && b.at.distance(at) < MODEL_MATCH_RADIUS
             })
-            .min_by(|a, b| a.1.distance(at).total_cmp(&b.1.distance(at)))?;
+            .min_by(|a, b| a.at.distance(at).total_cmp(&b.at.distance(at)))
+    }
+
+    /// The facing a building at a place is drawn with: the map's yaw of its
+    /// own building ([`BuildingYaws::placed`]).
+    pub fn facing(&self, unit: &UnitView, at: Vec2) -> Option<f32> {
         // A building model's face is its +x, as a unit's is, for both sides:
         // the map's yaw is its facing.
-        Some(*yaw)
+        self.placed(unit, at).map(|b| b.yaw)
     }
 }
 
@@ -712,10 +743,15 @@ fn required_models(manifest: &Manifest) -> Vec<String> {
             names.push(kind.replace("{}", side));
         }
     }
-    let objectives = [UnitKind::Outpost, UnitKind::Watcher, UnitKind::Shrine]
-        .into_iter()
-        .filter_map(objective_unit)
-        .chain(["npc_dota_observer_wards", "npc_dota_sentry_wards"]);
+    let objectives = [
+        UnitKind::Outpost,
+        UnitKind::Watcher,
+        UnitKind::Shrine,
+        UnitKind::LotusPool,
+    ]
+    .into_iter()
+    .filter_map(objective_unit)
+    .chain(["npc_dota_observer_wards", "npc_dota_sentry_wards"]);
     for unit in NEUTRALS.iter().map(|n| n.unit).chain(objectives) {
         match manifest.unit_art(unit) {
             Some(art) => names.extend(art.model.clone()),
@@ -796,8 +832,18 @@ fn sync_units(
         seen.push(u.id);
         let at = Vec2::new(body.x, body.y);
         let place = Vec3::new(body.x, p.ground.at(body.x, body.y), -body.y);
-        match p.index.0.get(&u.id).and_then(|e| units.get_mut(*e).ok()) {
-            Some((mut unit, mut transform)) => {
+        let skin = crate::lotus::skin(u, view, &p.yaws, at);
+        let drawn = p.index.0.get(&u.id).copied();
+        match drawn.and_then(|e| Some((e, units.get_mut(e).ok()?))) {
+            // A Lotus Pool is drawn anew in the skin of the lotus it grows
+            // from now on, once that model is there.
+            Some((entity, (unit, _)))
+                if u.kind == UnitKind::LotusPool && reskinned(&p, &unit, u, map, skin) =>
+            {
+                p.commands.entity(entity).despawn();
+                p.index.0.remove(&u.id);
+            }
+            Some((_, (mut unit, mut transform))) => {
                 let moved = at.distance(unit.at) / dt;
                 unit.speed += (moved - unit.speed) * (dt * 10.0).min(1.0);
                 unit.at = at;
@@ -816,14 +862,14 @@ fn sync_units(
             None if spawned >= SPAWNS_PER_FRAME && u.kind != UnitKind::Hero => continue,
             None => {
                 // Not before its model has loaded whole, wearables and all.
-                let waiting = model_name(u, map, &p.manifest)
+                let waiting = model_name(u, map, &p.manifest, skin)
                     .and_then(|name| p.bank.0.iter().find(|m| m.model.logical == name))
                     .is_some_and(|m| !m.ready());
                 if waiting {
                     continue;
                 }
                 let facing = drawn_facing(u, body.facing, at, &p.yaws);
-                let entity = spawn_unit(&mut p, u, map, at, facing, place);
+                let entity = spawn_unit(&mut p, u, map, (at, facing, place), skin);
                 spawned += 1;
                 p.index.0.insert(u.id, entity);
             }
@@ -862,16 +908,31 @@ fn sync_units(
     }
 }
 
-/// Spawns one unit: a root at its place, and its model or stand-in.
+/// Whether a unit drawn as `unit` is to be drawn with another model of its
+/// skin `skin` that has loaded whole.
+fn reskinned(p: &SyncParams, unit: &Unit, u: &UnitView, map: &MapDef, skin: u8) -> bool {
+    let Some(name) = model_name(u, map, &p.manifest, skin) else {
+        return false;
+    };
+    let drawn = unit.model.map(|m| p.bank.0[m].model.logical.as_str());
+    drawn != Some(name.as_str())
+        && p.bank
+            .0
+            .iter()
+            .any(|m| m.model.logical == name && m.ready() && m.scenes.is_some())
+}
+
+/// Spawns one unit: a root at its place (where it stands, the way it faces,
+/// and the spot in the world), and its model, in its material group `skin`,
+/// or stand-in.
 fn spawn_unit(
     p: &mut SyncParams,
     u: &UnitView,
     map: &MapDef,
-    at: Vec2,
-    facing: f32,
-    place: Vec3,
+    (at, facing, place): (Vec2, f32, Vec3),
+    skin: u8,
 ) -> Entity {
-    let model = model_name(u, map, &p.manifest).and_then(|name| {
+    let model = model_name(u, map, &p.manifest, skin).and_then(|name| {
         p.bank
             .0
             .iter()
@@ -909,7 +970,10 @@ fn spawn_unit(
             let size = unit_art(u, &p.manifest)
                 .and_then(|art| art.scale)
                 .unwrap_or(entry.model.scale);
-            let scale = Transform::from_scale(Vec3::splat(UNITS_PER_METRE * size));
+            // A building as the map scales it on each axis (glTF's x, up
+            // and z are Dota's y, up and x).
+            let [sx, sy, sz] = p.yaws.placed(u, at).map_or([1.0; 3], |b| b.scale);
+            let scale = Transform::from_scale(Vec3::new(sy, sz, sx) * (UNITS_PER_METRE * size));
             let scene = p
                 .commands
                 .spawn((WorldAssetRoot(scenes.body.clone()), scale, ChildOf(pivot)))

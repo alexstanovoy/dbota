@@ -247,6 +247,14 @@ before that rune goes off at the slot's left and the rune named in its tooltip; 
 the hero, and a rune put into it corks it. `dota_spawn_rune <rune>` (a match with cheats) puts a rune at the
 spot nearest the cursor.
 
+The Lotus Pools stand where the match's rules stand them (the Dota map's default; the mid-only map none
+unless its server is started with `--objectives lotus_pools`), drawn as the map draws them: the pool of the
+Dire's corner in its own colours, each in the look of the lotus it grows (healing, great or greater), with as
+many lotuses floating in it as it holds, its ambient glow, and its icon on the minimap. A lotus plucked
+bursts from the pool to the hero with Dota's sound; a lotus or a Cheese eaten sounds as in Dota. A lotus on
+the ground is Dota's lotus model of its kind, and the lotuses, Cheese and Royale with Cheese carry Dota's
+icons and words.
+
 Between the picks and the horn comes Dota's strategy screen: every seat's hero under its player's colour
 and the clock over STRATEGY TIME; at the left the hero you enter battle as, its name and abilities; at
 the right STARTING ITEMS: the gold that remains, the inventory as your choices fill it (what stacks in

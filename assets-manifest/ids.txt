@@ -69,6 +69,11 @@ item 53 blood_grenade
 item 54 ward_dispenser
 item 55 tango
 item 56 bottle
+item 57 famango
+item 58 great_famango
+item 59 greater_famango
+item 60 cheese
+item 61 royale_with_cheese
 ability 0 pudge_meat_hook
 ability 1 pudge_rot
 ability 2 pudge_innate_graft_flesh

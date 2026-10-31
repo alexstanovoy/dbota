@@ -363,7 +363,7 @@ pub fn background_png(vmat: &str) -> String {
 /// The models the client spawns as trees.
 const TREES: [&str; 2] = ["tree_", "dire_tree"];
 /// The models the client spawns as buildings, and as the map's objectives.
-const BUILDINGS: [&str; 15] = [
+const BUILDINGS: [&str; 16] = [
     "radiant_tower",
     "dire_tower",
     "radiant_ancient001",
@@ -379,6 +379,7 @@ const BUILDINGS: [&str; 15] = [
     "lantern_of_sight",
     "outpost",
     "xp_shrine",
+    "fountain_of_life",
 ];
 
 /// Every tree `entities` place, once per model and whole Dota unit:
@@ -427,11 +428,18 @@ pub fn tree_model_path(model: &str) -> Option<String> {
 }
 
 /// Every building `entities` place, once per model and 32-unit cell:
-/// `model dota_x dota_y yaw_deg`.
+/// `model dota_x dota_y yaw_deg skin scale_x scale_y scale_z`. The skin is the model's material
+/// group the map draws it with (the Lotus Pool of the Dire's corner is skin 1), 0 where the
+/// map names none; the scales are the map's own, per axis.
 pub fn buildings_txt(entities: &[Value]) -> String {
-    let mut out = String::from("# model dota_x dota_y yaw_deg (bota = dota + 9216 on x and y)\n");
+    let mut out = String::from(
+        "# model dota_x dota_y yaw_deg skin scale_x scale_y scale_z (bota = dota + 9216 on x and y)\n",
+    );
     let mut seen = HashSet::new();
-    for p in placements(entities) {
+    for (entity, p) in entities
+        .iter()
+        .filter_map(|e| Some((e, placements(std::slice::from_ref(e)).pop()?)))
+    {
         let key = (
             p.model.clone(),
             cell(p.origin[0], 32.0),
@@ -439,10 +447,42 @@ pub fn buildings_txt(entities: &[Value]) -> String {
         );
         if BUILDINGS.iter().any(|b| p.model.starts_with(b)) && seen.insert(key) {
             let [x, y, _] = p.origin;
-            out += &format!("{} {x:.1} {y:.1} {:.1}\n", p.model, p.yaw);
+            let [sx, sy, sz] = scales(entity);
+            out += &format!(
+                "{} {x:.1} {y:.1} {:.1} {} {sx:.3} {sy:.3} {sz:.3}\n",
+                p.model,
+                p.yaw,
+                skin(entity)
+            );
         }
     }
     out
+}
+
+/// The material group an entity draws its model with: its `skin`, 0 where it names none or
+/// a name rather than a number ("default").
+fn skin(entity: &Value) -> u32 {
+    entity
+        .get("skin")
+        .and_then(|s| match s.as_str() {
+            Some(s) => s.parse().ok(),
+            None => s.as_i64().and_then(|s| u32::try_from(s).ok()),
+        })
+        .unwrap_or(0)
+}
+
+/// An entity's scale on each axis, 1 where unset or not a finite positive number.
+fn scales(entity: &Value) -> [f64; 3] {
+    let list = entity
+        .get("scales")
+        .and_then(Value::as_array)
+        .unwrap_or_default();
+    std::array::from_fn(|i| {
+        list.get(i)
+            .and_then(Value::as_f64)
+            .filter(|s| s.is_finite() && *s > 0.0)
+            .unwrap_or(1.0)
+    })
 }
 
 /// `v / size` rounded half to even, as the old exporter keyed its duplicates.

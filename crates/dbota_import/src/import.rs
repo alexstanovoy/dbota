@@ -39,7 +39,7 @@ pub const INDEX: &str = "index.txt";
 pub const MAX_STAMP: u64 = 4096;
 
 /// Bumped when the importer's output changes for the same install; part of a cache's stamp.
-pub const IMPORT_REV: u32 = 28;
+pub const IMPORT_REV: u32 = 29;
 
 /// The manifest this build imports and draws, and its ids.
 pub const MANIFEST: &str = include_str!("../../../assets-manifest/manifest.txt");
@@ -134,8 +134,9 @@ pub const GENERATOR: &str = "dbota_assets";
 /// Layer textures the client has no use for.
 const NOT_LAYERS: [&str; 3] = ["refl", "specular", "height"];
 /// The world's nodes the client leaves out of `mid.gltf`: the trees, buildings and map objectives
-/// (Watchers, Outposts, Shrines of Wisdom) it spawns itself as units, and the end-game cameras.
-const NOT_IN_WORLD: [&str; 19] = [
+/// (Watchers, Outposts, Shrines of Wisdom, Lotus Pools) it spawns itself as units, and the
+/// end-game cameras.
+const NOT_IN_WORLD: [&str; 20] = [
     "tree_",
     "dire_tree",
     "radiant_tower",
@@ -153,6 +154,7 @@ const NOT_IN_WORLD: [&str; 19] = [
     "lantern_of_sight",
     "outpost",
     "xp_shrine",
+    "fountain_of_life",
     "bad_ancient_destruction_camera",
     "radiant_endcam",
 ];

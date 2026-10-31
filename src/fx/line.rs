@@ -24,6 +24,8 @@ pub enum Trigger {
     Activate,
     /// A rune was stored in the item (`EventKind::RuneBottled`: the Bottle).
     Store,
+    /// A hero plucked a lotus from the unit (`EventKind::LotusPlucked`: a Lotus Pool).
+    Pluck,
     /// While the subject holds: a modifier on a unit, an effect an ability or an item put on one,
     /// or a unit of a Dota name standing.
     Worn,
@@ -84,6 +86,8 @@ pub enum Feed {
     Vector(Vec3),
     /// A point of the unit the fact is about, followed.
     Place(Attach),
+    /// Where the user stands: the hero that plucked a lotus.
+    Caster,
 }
 
 /// Whose effect a worn line is about.
@@ -141,6 +145,7 @@ impl Fx {
             "spawn" => Trigger::Spawn,
             "activate" => Trigger::Activate,
             "store" => Trigger::Store,
+            "pluck" => Trigger::Pluck,
             "worn" => Trigger::Worn,
             "held" => Trigger::Held,
             "casting" => Trigger::Casting,
@@ -194,6 +199,7 @@ impl Fx {
             Trigger::Hit => &[At::Unit, At::Caster],
             Trigger::Spawn => &[At::Point],
             Trigger::Activate | Trigger::Store => &[At::Caster],
+            Trigger::Pluck => &[At::Unit, At::Caster],
             Trigger::Died | Trigger::Worn | Trigger::Held | Trigger::Casting => &[At::Unit],
             Trigger::Flies => &[At::Flight, At::Chain],
         };
@@ -271,6 +277,7 @@ fn feed_of(value: &str) -> Result<Feed, String> {
         "seconds" => Feed::Seconds,
         "mode" => Feed::Mode,
         "charges" => Feed::Charges,
+        "caster" => Feed::Caster,
         place if attach_of(place).is_ok() => Feed::Place(attach_of(place)?),
         _ => {
             let parts: Vec<f32> = value

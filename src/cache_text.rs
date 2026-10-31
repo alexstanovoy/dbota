@@ -21,6 +21,10 @@ pub struct BuildingLine {
     pub x: f32,
     pub y: f32,
     pub yaw: f32,
+    /// The model's material group the map draws it with.
+    pub skin: u8,
+    /// The map's scale of it on each of Dota's axes (x, y, up).
+    pub scale: [f32; 3],
 }
 
 /// Dota's lighting (`map/mid/lighting.txt`): for the sun and the ambient light, by day and
@@ -90,19 +94,23 @@ pub fn trees(text: &str, max: usize) -> Vec<TreeLine> {
         .collect()
 }
 
-/// The buildings of `buildings.txt` (`model x y yaw`), of its first `max` lines.
+/// The buildings of `buildings.txt` (`model x y yaw skin scale_x scale_y scale_z`), of its
+/// first `max` lines. A scale that is not a positive number reads as 1.
 pub fn buildings(text: &str, max: usize) -> Vec<BuildingLine> {
     lines(text, max)
         .filter_map(|w| {
-            let [model, rest @ ..] = w.as_slice() else {
+            let [model, x, y, yaw, skin, sx, sy, sz] = w.as_slice() else {
                 return None;
             };
-            let [x, y, yaw] = numbers::<3>(rest)?;
+            let [x, y, yaw] = numbers::<3>(&[*x, *y, *yaw])?;
+            let scale = numbers::<3>(&[*sx, *sy, *sz])?.map(|s| if s > 0.0 { s } else { 1.0 });
             Some(BuildingLine {
                 model: (*model).to_owned(),
                 x,
                 y,
                 yaw,
+                skin: skin.parse().ok()?,
+                scale,
             })
         })
         .collect()
@@ -342,7 +350,8 @@ mod tests {
     #[test]
     fn a_number_that_is_not_finite_is_no_line() {
         assert_eq!(trees("tree_a 1 2 3 4 1\ntree_b 1 2 3 NaN 1\n", 16).len(), 1);
-        assert_eq!(buildings("tower 1 2 3\nbarracks inf 2 3\n", 16).len(), 1);
+        let built = "tower 1 2 3 0 1 1 1\nbarracks inf 2 3 0 1 1 1\npool 1 2 3 1 1 1 NaN\n";
+        assert_eq!(buildings(built, 16).len(), 1);
         let light = "sun day 255 250 240 1\nsun night 50 60 90 0.5\n\
             ambient day 90 90 90 1\nambient night 20 20 40 1\nturn 3\n";
         assert_eq!(lighting(light).map(|l| l.turn), Some(3.0));

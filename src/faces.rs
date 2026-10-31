@@ -110,6 +110,11 @@ pub const ITEMS: [ItemFace; ITEM_DEFS.len()] = [
     ItemFace::new(ItemId::WARD_DISPENSER.0, "Wards"),
     ItemFace::new(ItemId::TANGO_SHARED.0, "Tango"),
     ItemFace::new(ItemId::BOTTLE.0, "Bottle"),
+    ItemFace::new(ItemId::HEALING_LOTUS.0, "Lotus"),
+    ItemFace::new(ItemId::GREAT_HEALING_LOTUS.0, "Great"),
+    ItemFace::new(ItemId::GREATER_HEALING_LOTUS.0, "Greater"),
+    ItemFace::new(ItemId::CHEESE.0, "Cheese"),
+    ItemFace::new(ItemId::ROYALE_WITH_CHEESE.0, "Royale"),
 ];
 
 /// Every timed effect, indexed by [`EffectId`]; the slot of a retired one

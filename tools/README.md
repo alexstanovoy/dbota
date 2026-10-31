@@ -70,7 +70,7 @@ people you may. `DBOTA_ASSETS` and `--cache-dir` name the cache to take it into,
 | `models/item/`, `models/rune/` | items on the ground (each item that has a `Model` in items.txt, Roshan's drops, the Bottle full and empty, Dota's default box for any other) and the nine runes, each looping its idle clip | 3 MB |
 | `models/ward/` | the Observer Ward and the Sentry Ward (`default_ward`, the Sentry in its skin 1), each with idle, spawn and die clips | 0.2 MB |
 | `models/portraits.txt`, `models/portrait_backgrounds/` | Dota's portrait framing of each model above (camera, light, ambient, the background's corner tints) and the background images it names | 1 MB |
-| `map/mid/` | `mid.gltf` with its geometry in `mid.bin`, the default map from fountain to fountain around mid, its textures, `trees.txt`, `buildings.txt` (the places and yaws of the buildings and objectives the client spawns) | 354 MB |
+| `map/mid/` | `mid.gltf` with its geometry in `mid.bin`, the default map from fountain to fountain around mid, its textures, `trees.txt`, `buildings.txt` (the places, yaws, skins and scales of the buildings and objectives the client spawns) | 354 MB |
 | `textures/ground/` | terrain layer textures (also used by `map.mid`) | 37 MB |
 | `textures/particle/` | 16 effect textures (smoke, glow, sparks, ground cracks, fire, the Glyph's rings, ...) | 1 MB |
 | `particles/` | the attack missiles of Shadow Fiend, the lane creeps and the towers (each unit's `ProjectileModel`), and the effects the manifest's `fx` lines bind (the runes' glows and buff loops, the Bottle's pour, wards, Blink Dagger, Blood Grenade, the casts, flights, hits, buffs and auras of items, abilities, statuses and units): one JSON file per effect, its systems as heatel reads them (emitters, initializers, operators, forces, renderers, children), and their 40 textures as KTX2 under `particles/textures/` with their sprite sheets in the JSON; the client simulates and draws them | 10 MB |
@@ -130,9 +130,11 @@ and are kept as `.mp3` (the stdlib cannot transcode them); playing them needs Be
 - **Flagbearers** use the melee meshes with their own animations; Dota attaches the banner at runtime
   on attachment `attach_banner`, which is not part of the exported model.
 - **Map objectives**: Roshan and the Tormentor are `neutral.*` models with `unit` lines like the
-  camps'; Watchers, Outposts, Shrines of Wisdom and a planted Banner are `objective.*` with their
-  unit lines, drawn where the match stands them: the map's own Watchers, Outposts and Shrines are
-  left out of `map.mid` (their yaws stay in `buildings.txt`), so a match without them shows none.
+  camps'; Watchers, Outposts, Shrines of Wisdom, Lotus Pools and a planted Banner are `objective.*`
+  with their unit lines, drawn where the match stands them: the map's own Watchers, Outposts,
+  Shrines and Lotus Pools are left out of `map.mid` (their yaws, skins and scales stay in
+  `buildings.txt`), so a match without them shows none. A Lotus Pool is exported once per skin
+  (`objective.lotus_pool.skin<n>.model`, the client picks the map's and the lotus tier's).
   The chasm under the Tormentor is `objective.divine_sentinel.model`. They are
   exported in their default skin: the team colours of an owned Outpost or a lit Watcher and the Dire
   Tormentor and chasm are material groups the importer does not write yet. Items lying on the
