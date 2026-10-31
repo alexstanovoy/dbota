@@ -135,7 +135,7 @@ folder logic (`webkitdirectory` lists, `showDirectoryPicker` folder levels) agai
 made in OPFS. The native importer tests are in `crates/dbota_import/tests/import.rs`.
 
 `--replays-page DIR --server BOTA_SERVER --radovid RADOVID` (a build without a replay, any assets: `?assets=none`) plays a match through a real radovid that serves the page itself and keeps replays (`[artifacts] save_replays = true`): a practice lobby is entered alone and the page closed; the game server ends, and the next visit signs in with the kept session, fetches the replay it was away for and stores it in OPFS; the REPLAYS tab lists it and plays it, DOWNLOAD .BRP hands over the same bytes and OPEN A .BRP FILE plays the file again. `--shots` saves a screenshot of each step to `temp/smoke-replays` (the click positions in the script are for a 1280x720 page).
-`--prepared-page web/out --cache-zip cache.zip --cache-folder <cache folder>` needs no install, only a cache
+`--prepared-page DIR --cache-zip cache.zip --cache-folder <cache folder>` (a build with a replay built in, so the client draws the map) needs no install, only a cache
 `dbota export-cache` made with this build (the `smoke.py` docstring has the commands): zips that must be refused
 (another build, a path that climbs out, an index that does not match) are refused with their reasons and copy nothing;
 the directory picker (stubbed with a folder in private storage) is walked and its folder refused with its reason; the real zip is copied into private storage, kept over a reload and played until the scene is drawn; the cache
