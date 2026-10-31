@@ -10,6 +10,8 @@ description = "The asset importer: the manifest's assets read out of a local Dot
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
+bota_core = { path = "../../../bota/crates/bota_core" }
+bota_proto = { path = "../../../bota/crates/bota_proto" }
 crc32fast = { version = "1.5", default-features = false, features = ["std"] }
 heatel = { path = "../../../heatel", features = ["serde"] }
 # A prepared cache's zip: inflated with a limit, and written deflated.

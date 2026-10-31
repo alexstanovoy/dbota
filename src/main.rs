@@ -339,6 +339,10 @@ pub enum Command {
         /// Import even when the cache was made from the same install already.
         #[arg(long)]
         force: bool,
+        /// Import nothing: check the cache against the manifest (glTF structure and clips, PNG,
+        /// WAV and MP3 formats, particle files, the texts) and list what is missing or wrong.
+        #[arg(long, conflicts_with_all = ["dota_path", "force"])]
+        verify: bool,
     },
     /// Take an asset cache someone prepared (a folder, or a zip made by `export-cache`) instead
     /// of importing from Dota 2: for a player without it. The cache must be of this version of
@@ -403,7 +407,21 @@ fn default_cache_dir() -> PathBuf {
 #[cfg(not(target_arch = "wasm32"))]
 fn run_command(command: &Command, cache: &std::path::Path) -> AppExit {
     let (name, done) = match command {
-        Command::Import { dota_path, force } => {
+        Command::Import {
+            dota_path,
+            force,
+            verify,
+        } => {
+            if *verify {
+                return match import::verify(cache) {
+                    Ok(true) => AppExit::Success,
+                    Ok(false) => AppExit::from_code(3),
+                    Err(why) => {
+                        eprintln!("dbota import --verify: {why}");
+                        AppExit::error()
+                    }
+                };
+            }
             return match import::run(dota_path.as_deref(), cache, *force) {
                 Ok(true) => AppExit::Success,
                 Ok(false) => AppExit::from_code(3),

@@ -49,7 +49,7 @@ people you may. `DBOTA_ASSETS` and `--cache-dir` name the cache to take it into,
 | `../assets-manifest/ids.txt` | bota item/ability/hero ids → Dota names, and whose tooltip texts to import |
 | `visual_check.sh` | measures the picture of a recorded match (see the main README) |
 | `bench.sh` | measures the binary's size, start and frame times |
-| `verify_assets.py` | checks a cache: glTF meshes/skins/clips/textures, wearable joints, PNG sizes, WAV/MP3 format (`verify_assets.py ../assets-manifest/manifest.txt <cache>`) |
+| `dbota import --verify` | checks a cache against the manifest: glTF meshes/skins/clips/textures, wearable joints, PNG sizes, WAV/MP3 format, particle files, texts |
 | `inspect_gltf.py` | prints a model's meshes, skins and animations (`--json` for machines) |
 
 ## What the cache holds (~810 MB per `v<N>` folder)
@@ -114,7 +114,7 @@ and are kept as `.mp3` (the stdlib cannot transcode them); playing them needs Be
   Wildwing's Tornado is an attachment model without a mesh). Models load when their first unit comes into view.
 - **Wearables.** Shadow Fiend's default head, shoulders and arms (and Pudge's seven default items) are separate skinned meshes. Spawn
   them alongside the hero and point their skin joints at the hero's joint entities with the same
-  name, **ignoring case** (`root0_jnt` vs `Root0_JNT`); `verify_assets.py` checks every wearable joint
+  name, **ignoring case** (`root0_jnt` vs `Root0_JNT`); `dbota import --verify` checks every wearable joint
   exists in the hero skeleton.
 - **Materials** are mapped by texture name, as Source2Viewer 20 maps them when it cannot read a
   game's compiled shaders: base colour and normal maps are right; the metallic/roughness,

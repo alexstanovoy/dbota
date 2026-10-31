@@ -83,11 +83,11 @@ fn the_plan_takes_every_line_and_the_tooltips() {
          layers=textures/ground trees=map/w/trees.txt\n\
          clip a idle idle 1.0\n\
          shop s scripts/shops.txt text/shop.json strings=loc.txt\n\
-         shop t scripts/shops.txt text/t.json\n\
          label loc/dota_english.txt DOTA_HUD_Armor\n",
         "item 0 boots\nitem 9 recipe\nability 2 nevermore_requiem\nhero 1 nevermore\n\
          text ability 3 pudge_innate_graft_flesh\n",
-    );
+    )
+    .expect("a plan");
     assert_eq!(plan.items.len(), 9);
     assert!(matches!(
         &plan.items[0],
@@ -127,6 +127,17 @@ fn the_plan_takes_every_line_and_the_tooltips() {
     ));
 }
 
+/// A line the importer cannot read is told, never dropped: a shop line without its words.
+#[test]
+fn a_line_that_cannot_be_read_stops_the_plan() {
+    let errors = Plan::parse("shop t scripts/shops.txt text/t.json\n", "").expect_err("no strings");
+    assert_eq!(errors.len(), 1, "{errors:?}");
+    assert!(
+        errors[0].to_string().contains("manifest.txt line 1"),
+        "{errors:?}"
+    );
+}
+
 #[test]
 fn a_hostile_asset_is_a_failure_in_the_report_not_a_panic() {
     let garbage = [0xA5u8; 300];
@@ -138,7 +149,8 @@ fn a_hostile_asset_is_a_failure_in_the_report_not_a_panic() {
         "texture bad textures/bad.vtex_c textures/bad.png\n\
          texture gone textures/gone.vtex_c textures/gone.png\n",
         "",
-    );
+    )
+    .expect("a plan");
     let mut sink = Memory::default();
     let report = run(&src, &plan, &mut sink, &mut |_| Flow::Continue).unwrap();
     assert_eq!(report.failed.len(), 2, "{report:?}");
@@ -152,7 +164,8 @@ fn a_hostile_asset_is_a_failure_in_the_report_not_a_panic() {
 
 #[test]
 fn a_package_that_is_not_one_ends_the_import_and_a_stop_is_honoured() {
-    let plan = Plan::parse("texture bad textures/bad.vtex_c textures/bad.png\n", "");
+    let plan =
+        Plan::parse("texture bad textures/bad.vtex_c textures/bad.png\n", "").expect("a plan");
     let mut sink = Memory::default();
     let src = install(&[("pak01_dir.vpk", vec![7; 100])]);
     assert!(run(&src, &plan, &mut sink, &mut |_| Flow::Continue).is_err());
@@ -189,7 +202,7 @@ impl heatel::Source for Huge {
 
 #[test]
 fn a_package_that_claims_a_huge_directory_is_refused_before_it_is_read() {
-    let plan = Plan::parse("sound s s.vsnd_c sounds/s.wav\n", "");
+    let plan = Plan::parse("sound s s.vsnd_c sounds/s.wav event=e\n", "").expect("a plan");
     let mut sink = Memory::default();
     assert!(run(Huge, &plan, &mut sink, &mut |_| Flow::Continue).is_err());
 }
@@ -206,7 +219,11 @@ fn the_index_marks_the_files_read_at_start() {
 /// never a panic, however deep the blocks nest.
 #[test]
 fn hostile_tooltip_texts_are_texts_or_errors() {
-    let wanted = wanted("item 0 boots\nability 1 x\nhero 0 h\n");
+    let wanted = wanted(
+        &dbota_import::catalog::parse("", "item 0 boots\nability 1 x\nhero 0 h\n")
+            .expect("ids")
+            .ids,
+    );
     let localization = "\u{feff}\"lang\" { \"Tokens\" {\n\
         \"DOTA_Tooltip_ability_item_boots\" \"Boots\"\n\
         \"DOTA_Tooltip_ability_item_boots_speed\" \"$move \\\"speed\\\"\"\n\

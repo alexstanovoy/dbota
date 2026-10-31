@@ -49,7 +49,8 @@ fn imported(test: &str) -> Imported {
     let plan = Plan::parse(
         &read(&repo().join("assets-manifest/manifest.txt")),
         &read(&repo().join("assets-manifest/ids.txt")),
-    );
+    )
+    .expect("the committed manifest and ids read");
     let started = std::time::Instant::now();
     let report = import_into(&game, &cache, &plan, "test", &mut |_| Flow::Continue).unwrap();
     let bytes: u64 = report.files.values().sum();
@@ -290,7 +291,13 @@ fn text_differs(ours: &Path, theirs: &Path) -> Option<String> {
             serde_json::from_str(&a).unwrap(),
             serde_json::from_str(&b).unwrap(),
         );
-        let wanted = wanted(&read(&repo().join("assets-manifest/ids.txt")));
+        let ids = dbota_import::catalog::parse(
+            &read(&repo().join("assets-manifest/manifest.txt")),
+            &read(&repo().join("assets-manifest/ids.txt")),
+        )
+        .expect("the committed manifest and ids read")
+        .ids;
+        let wanted = wanted(&ids);
         // Fields the importer has added since the export (`aliases`) are not in the exported one.
         let kept = |name: &String| match (a.get(name), b.get(name)) {
             (Some(Value::Object(ours)), Some(Value::Object(theirs))) => theirs

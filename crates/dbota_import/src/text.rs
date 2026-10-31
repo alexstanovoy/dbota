@@ -8,6 +8,8 @@
 
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 
+use crate::catalog::Id;
+
 use heatel::Result;
 use heatel::keyvalues::{localization_table, text};
 use heatel::kv3::Value;
@@ -20,21 +22,15 @@ use serde_json::{Map, Value as Json, json};
 
 /// The names of `ids.txt` whose texts the client shows: items and abilities (not recipes),
 /// `text` entries, and the heroes whose ability scripts hold them.
-pub fn wanted(ids: &str) -> Wanted {
+pub fn wanted(ids: &[Id]) -> Wanted {
     let mut names = Vec::new();
     let mut heroes = Vec::new();
-    for line in ids.lines() {
-        let words: Vec<&str> = line
-            .split('#')
-            .next()
-            .unwrap_or_default()
-            .split_whitespace()
-            .collect();
-        match words.as_slice() {
-            ["item", _, name, ..] if *name != "recipe" => names.push(format!("item_{name}")),
-            ["ability", _, name, ..] if *name != "recipe" => names.push((*name).to_owned()),
-            ["text", _, _, name, ..] => names.push((*name).to_owned()),
-            ["hero", _, name, ..] => heroes.push((*name).to_owned()),
+    for id in ids {
+        match id {
+            Id::Item { name, .. } if name != "recipe" => names.push(format!("item_{name}")),
+            Id::Ability { name, .. } if name != "recipe" => names.push(name.clone()),
+            Id::Text { key, .. } => names.push(key.clone()),
+            Id::Hero { name, .. } => heroes.push(name.clone()),
             _ => {}
         }
     }

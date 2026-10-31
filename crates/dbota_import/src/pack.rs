@@ -36,10 +36,16 @@ const MAX_INDEX: u64 = 2 << 20;
 fn folders() -> &'static HashSet<String> {
     static FOLDERS: OnceLock<HashSet<String>> = OnceLock::new();
     FOLDERS.get_or_init(|| {
-        let plan = Plan::parse(MANIFEST, IDS);
-        let tops = plan.items.iter().flat_map(Item::outputs);
-        tops.filter_map(|out| out.split_once('/').map(|(top, _)| top.to_owned()))
-            .collect()
+        // A manifest that cannot be read has no folders: nothing is accepted (the client does not
+        // start on it either).
+        Plan::parse(MANIFEST, IDS).map_or_else(
+            |_| HashSet::new(),
+            |plan| {
+                let tops = plan.items.iter().flat_map(Item::outputs);
+                tops.filter_map(|out| out.split_once('/').map(|(top, _)| top.to_owned()))
+                    .collect()
+            },
+        )
     })
 }
 

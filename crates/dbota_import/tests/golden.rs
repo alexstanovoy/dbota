@@ -15,6 +15,7 @@ use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
+use dbota_import::catalog::{FileKind, Line as Cl};
 use heatel::anim::read_clips;
 use heatel::kv3::{self, Value};
 use heatel::{DirSource, Resource, SliceSource, Source, Vpk, find_game_dir};
@@ -64,21 +65,59 @@ fn install() -> Install {
     }
 }
 
+/// The committed manifest as the catalog reads it, in the golden tests' line shape.
 fn manifest() -> Vec<Line> {
-    let text = std::fs::read_to_string(repo().join("assets-manifest/manifest.txt")).unwrap();
-    text.lines()
-        .filter_map(|line| {
-            let words: Vec<&str> = line.split('#').next()?.split_whitespace().collect();
-            let [kind, name, src, out, rest @ ..] = words.as_slice() else {
-                return None;
-            };
-            Some(Line {
-                kind: kind.to_string(),
-                name: name.to_string(),
-                src: src.to_string(),
-                out: out.to_string(),
-                rest: rest.iter().map(|w| w.to_string()).collect(),
-            })
+    let read =
+        |name: &str| std::fs::read_to_string(repo().join("assets-manifest").join(name)).unwrap();
+    let catalog = dbota_import::catalog::parse(&read("manifest.txt"), &read("ids.txt"))
+        .unwrap_or_else(|errors| panic!("{errors:?}"));
+    let line = |kind: &str, name: &str, src: &str, out: &str, rest: Vec<String>| Line {
+        kind: kind.to_owned(),
+        name: name.to_owned(),
+        src: src.to_owned(),
+        out: out.to_owned(),
+        rest,
+    };
+    let list = |key: &str, values: &[String]| format!("{key}={}", values.join(","));
+    catalog
+        .lines
+        .iter()
+        .filter_map(|l| match l {
+            Cl::Model(m) => {
+                let mut rest = Vec::new();
+                if !m.anims.is_empty() {
+                    rest.push(list("anims", &m.anims));
+                }
+                if let Some(meshes) = &m.meshes {
+                    rest.push(list("meshes", meshes));
+                }
+                Some(line("model", &m.logical, &m.src, &m.out, rest))
+            }
+            Cl::Clip(c) => Some(line(
+                "clip",
+                &c.model,
+                &c.logical,
+                &c.name,
+                vec![c.duration.to_string()],
+            )),
+            Cl::Sound(s) => Some(line(
+                "sound",
+                &s.logical,
+                &s.src,
+                &s.out,
+                vec![format!("event={}", s.event)],
+            )),
+            Cl::World(w) => Some(line(
+                "world",
+                &w.logical,
+                &w.src,
+                &w.out,
+                vec![format!("vpk={}", w.vpk)],
+            )),
+            Cl::File(f) if f.kind == FileKind::Texture => {
+                Some(line("texture", &f.logical, &f.src, &f.out, Vec::new()))
+            }
+            _ => None,
         })
         .collect()
 }

@@ -20,6 +20,7 @@ use heatel::tooltips::Wanted;
 use heatel::world::{Band, EntityLump, ExportedWorld, WorldOptions, export_world, lighting};
 use heatel::{Error, Model, Resource, Result, Sound, Source, Texture, Vpk};
 
+use crate::catalog::{self, Catalog, FileKind, Id, Line, LineError};
 use crate::text::{
     ParticleMaterial, ParticleModel, ParticleTexture, background_png, buildings_txt,
     expression_txt, labels_json, lighting_txt, lipsync_txt, particle_json, phonemes_txt,
@@ -265,17 +266,6 @@ pub enum Item {
 }
 
 impl Item {
-    /// The item of a line that converts one file of the install into one of the cache.
-    fn file(kind: &str, logical: &str, src: &str, out: &str) -> Self {
-        let (logical, src, out) = (logical.to_owned(), src.to_owned(), out.to_owned());
-        match kind {
-            "texture" => Self::Texture { logical, src, out },
-            "sound" => Self::Sound { logical, src, out },
-            "expression" => Self::Expression { logical, src, out },
-            _ => Self::Phonemes { logical, src, out },
-        }
-    }
-
     /// The cache paths the item writes by name (a world's layers are a folder; a model's textures
     /// and the world's geometry sit beside what is named).
     pub fn outputs(&self) -> Vec<&str> {
@@ -329,16 +319,10 @@ impl Item {
 
 /// The localization of the modifiers `ids.txt` names (`modifier <effect id> <dota modifier>`): their
 /// tooltip names and descriptions (`DOTA_Tooltip_<modifier>`, `..._Description`), as labels.
-fn modifier_labels(ids: &str) -> Vec<(String, String)> {
+fn modifier_labels(ids: &[Id]) -> Vec<(String, String)> {
     let mut keys = Vec::new();
-    for line in ids.lines() {
-        let words: Vec<&str> = line
-            .split('#')
-            .next()
-            .unwrap_or_default()
-            .split_whitespace()
-            .collect();
-        if let ["modifier", _, name, ..] = words.as_slice() {
+    for id in ids {
+        if let Id::Modifier { name, .. } = id {
             for suffix in ["", "_Description"] {
                 keys.push((
                     MODIFIER_TEXTS.to_owned(),
@@ -363,105 +347,94 @@ pub struct Plan {
 
 impl Plan {
     /// The plan of a manifest (`assets-manifest/manifest.txt`) and of the ids whose tooltip
-    /// texts the client shows (`assets-manifest/ids.txt`).
-    pub fn parse(manifest: &str, ids: &str) -> Self {
+    /// texts the client shows (`assets-manifest/ids.txt`); every line that cannot be read is told.
+    pub fn parse(manifest: &str, ids: &str) -> Result<Self, Vec<LineError>> {
+        Ok(Self::of(&catalog::parse(manifest, ids)?))
+    }
+
+    /// The plan of a catalog.
+    pub fn of(catalog: &Catalog) -> Self {
         let mut plan = Self::default();
-        let mut portraits_line = None;
+        let mut portraits = None;
         let mut labels = Vec::new();
         let mut styles = Vec::new();
-        for line in manifest.lines() {
-            let words: Vec<&str> = line
-                .split('#')
-                .next()
-                .unwrap_or_default()
-                .split_whitespace()
-                .collect();
-            match words.as_slice() {
-                ["model", logical, src, out, rest @ ..] => {
-                    let field = |key: &str| rest.iter().find_map(|w| w.strip_prefix(key));
-                    let list = |key: &str| {
-                        field(key).map(|v| v.split(',').map(str::to_owned).collect::<Vec<_>>())
-                    };
-                    let anims = list("anims=").unwrap_or_default();
-                    plan.items.push(Item::Model {
-                        logical: (*logical).to_owned(),
-                        src: (*src).to_owned(),
-                        out: (*out).to_owned(),
-                        meshes: list("meshes="),
-                        skeleton: field("attach=").is_some() || !anims.is_empty(),
-                        anims,
-                        skin: field("skin=").map(str::to_owned),
-                    });
-                }
-                [
-                    kind @ ("texture" | "sound" | "expression" | "phonemes"),
-                    logical,
-                    src,
-                    out,
-                    ..,
-                ] => plan.items.push(Item::file(kind, logical, src, out)),
-                ["particle", logical, src, out, ..] => plan.items.push(Item::Particle {
-                    logical: (*logical).to_owned(),
-                    src: (*src).to_owned(),
-                    out: (*out).to_owned(),
+        for line in &catalog.lines {
+            match line {
+                Line::Model(m) => plan.items.push(Item::Model {
+                    logical: m.logical.clone(),
+                    src: m.src.clone(),
+                    out: m.out.clone(),
+                    meshes: m.meshes.clone(),
+                    skeleton: m.attach.is_some() || !m.anims.is_empty(),
+                    anims: m.anims.clone(),
+                    skin: m.skin.clone(),
                 }),
-                ["world", logical, src, out, rest @ ..] => {
-                    let field = |key: &str| rest.iter().find_map(|w| w.strip_prefix(key));
-                    let dir = out.rsplit_once('/').map_or("", |(dir, _)| dir);
-                    let Some(vpk) = field("vpk=") else {
-                        continue;
-                    };
-                    if let Some(trees) = field("trees=") {
+                Line::File(f) => plan.items.push(match f.kind {
+                    FileKind::Texture => Item::Texture {
+                        logical: f.logical.clone(),
+                        src: f.src.clone(),
+                        out: f.out.clone(),
+                    },
+                    FileKind::Particle => Item::Particle {
+                        logical: f.logical.clone(),
+                        src: f.src.clone(),
+                        out: f.out.clone(),
+                    },
+                    FileKind::Expression => Item::Expression {
+                        logical: f.logical.clone(),
+                        src: f.src.clone(),
+                        out: f.out.clone(),
+                    },
+                    FileKind::Phonemes => Item::Phonemes {
+                        logical: f.logical.clone(),
+                        src: f.src.clone(),
+                        out: f.out.clone(),
+                    },
+                }),
+                Line::Sound(s) => plan.items.push(Item::Sound {
+                    logical: s.logical.clone(),
+                    src: s.src.clone(),
+                    out: s.out.clone(),
+                }),
+                Line::World(w) => {
+                    let dir = w.out.rsplit_once('/').map_or("", |(dir, _)| dir);
+                    if let Some(trees) = &w.trees {
                         plan.items.push(Item::Placements {
-                            logical: format!("{logical}.placements"),
-                            src: (*src).to_owned(),
-                            vpk: vpk.to_owned(),
-                            trees_out: trees.to_owned(),
+                            logical: format!("{}.placements", w.logical),
+                            src: w.src.clone(),
+                            vpk: w.vpk.clone(),
+                            trees_out: trees.clone(),
                             buildings_out: format!("{dir}/buildings.txt"),
-                            lighting_out: field("lighting=").map(str::to_owned),
+                            lighting_out: w.lighting.clone(),
                         });
                     }
-                    let number =
-                        |key: &str| field(key)?.parse::<f64>().ok().filter(|v| v.is_finite());
-                    let band = (number("half_width="), number("v_min="), number("v_max="));
-                    if let ((Some(half_width), Some(v_min), Some(v_max)), Some(layers)) =
-                        (band, field("layers="))
-                    {
-                        plan.items.push(Item::World {
-                            logical: (*logical).to_owned(),
-                            src: (*src).to_owned(),
-                            out: (*out).to_owned(),
-                            vpk: vpk.to_owned(),
-                            band: Band {
-                                half_width,
-                                v_min,
-                                v_max,
-                            },
-                            layers: layers.to_owned(),
-                        });
-                    }
-                }
-                ["shop", logical, src, out, rest @ ..] => {
-                    let Some(strings) = rest.iter().find_map(|w| w.strip_prefix("strings=")) else {
-                        continue;
-                    };
-                    plan.items.push(Item::Shop {
-                        logical: (*logical).to_owned(),
-                        src: (*src).to_owned(),
-                        strings: strings.to_owned(),
-                        out: (*out).to_owned(),
+                    plan.items.push(Item::World {
+                        logical: w.logical.clone(),
+                        src: w.src.clone(),
+                        out: w.out.clone(),
+                        vpk: w.vpk.clone(),
+                        band: Band {
+                            half_width: w.half_width,
+                            v_min: w.v_min,
+                            v_max: w.v_max,
+                        },
+                        layers: w.layers.clone(),
                     });
                 }
-                ["label", src, key, ..] => labels.push(((*src).to_owned(), (*key).to_owned())),
-                ["style", src, name, ..] => styles.push(((*src).to_owned(), (*name).to_owned())),
-                ["portraits", logical, src, out, ..] => {
-                    portraits_line = Some([logical, src, out].map(|w| (*w).to_owned()));
-                }
-                _ => {}
+                Line::Shop(s) => plan.items.push(Item::Shop {
+                    logical: s.logical.clone(),
+                    src: s.src.clone(),
+                    strings: s.strings.clone(),
+                    out: s.out.clone(),
+                }),
+                Line::Label { src, key } => labels.push((src.clone(), key.clone())),
+                Line::Style { src, name } => styles.push((src.clone(), name.clone())),
+                Line::Portraits(p) => portraits = Some(p),
+                Line::Clip(_) | Line::Unit(_) | Line::Fx(_) => {}
             }
         }
-        labels.extend(modifier_labels(ids));
-        let wanted = wanted(ids);
+        labels.extend(modifier_labels(&catalog.ids));
+        let wanted = wanted(&catalog.ids);
         if !wanted.names.is_empty() {
             plan.items.push(Item::Tooltips {
                 logical: "text.tooltips".to_owned(),
@@ -484,7 +457,7 @@ impl Plan {
             });
         }
         // Last, for it frames the models the manifest lists.
-        if let Some([logical, src, out]) = portraits_line {
+        if let Some(p) = portraits {
             let models = plan
                 .items
                 .iter()
@@ -497,9 +470,9 @@ impl Plan {
                 })
                 .collect();
             plan.items.push(Item::Portraits {
-                logical,
-                src,
-                out,
+                logical: p.logical.clone(),
+                src: p.src.clone(),
+                out: p.out.clone(),
                 models,
             });
         }

@@ -29,7 +29,10 @@ fuzz_target!(|data: &[u8]| {
         parts.next().unwrap_or_default(),
         parts.next().unwrap_or_default(),
     );
-    let plan = Plan::parse(manifest, ids);
+    // A manifest that cannot be read is told, never planned: only what reads is walked.
+    let Ok(plan) = Plan::parse(manifest, ids) else {
+        return;
+    };
     for item in &plan.items {
         for out in item.outputs() {
             let _ = (safe_path(out), is_small(out, 1));

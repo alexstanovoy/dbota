@@ -2560,6 +2560,8 @@ name = "dbota_import"
 version = "0.1.0"
 dependencies = [
  "bevy_image",
+ "bota_core",
+ "bota_proto",
  "crc32fast",
  "heatel",
  "js-sys",

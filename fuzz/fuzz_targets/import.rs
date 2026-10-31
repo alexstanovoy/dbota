@@ -59,6 +59,6 @@ fuzz_target!(|data: &[u8]| {
     let parts = files::split(data);
     let pack = files::resolve(&ROOTS, &parts);
     let src = files::install(&[("pak01_dir.vpk", &pack), ("maps/w.vpk", &pack)]);
-    let plan = Plan::parse(MANIFEST, IDS);
+    let plan = Plan::parse(MANIFEST, IDS).expect("the committed manifest reads");
     let _ = run(src, &plan, &mut Checked::default(), &mut |_| Flow::Continue);
 });

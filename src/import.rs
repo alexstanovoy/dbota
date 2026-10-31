@@ -44,6 +44,31 @@ pub fn warn_if_stale(cache: &Path) {
     }
 }
 
+/// Checks the cache at `cache` against the manifest and prints what is missing or wrong;
+/// returns whether everything checked out.
+pub fn verify(cache: &Path) -> Result<bool, String> {
+    let catalog = dbota_import::catalog::parse(MANIFEST, IDS).map_err(|errors| {
+        errors
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>()
+            .join("\n")
+    })?;
+    if !cache.is_dir() {
+        return Err(format!("no asset cache at {}", cache.display()));
+    }
+    let verified = dbota_import::verify::verify(&catalog, cache);
+    for failure in &verified.failures {
+        println!("FAIL {:44} {}", failure.name, failure.why);
+    }
+    println!(
+        "dbota import --verify: {} ok, {} failure(s)",
+        verified.ok,
+        verified.failures.len()
+    );
+    Ok(verified.failures.is_empty())
+}
+
 /// How far an import is: the share done (0 to 1) and the asset at hand.
 pub type Progress<'a> = &'a mut dyn FnMut(f32, &str);
 
@@ -126,7 +151,13 @@ pub fn run_with(
         return Ok(true);
     }
     println!("dbota import: {} -> {}", game.display(), cache.display());
-    let plan = Plan::parse(MANIFEST, IDS);
+    let plan = Plan::parse(MANIFEST, IDS).map_err(|errors| {
+        errors
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>()
+            .join("\n")
+    })?;
     let started = std::time::Instant::now();
     let report = import_into(&game, cache, &plan, &stamp, &mut |p| {
         progress(p.done as f32 / p.total.max(1) as f32, p.item);

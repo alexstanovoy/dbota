@@ -5,12 +5,15 @@
 
 #[cfg(any(unix, windows))]
 pub mod cache_dir;
+pub mod catalog;
 pub mod import;
 pub mod pack;
 #[cfg(any(unix, windows))]
 pub mod pack_dir;
 pub mod source;
 pub mod text;
+#[cfg(any(unix, windows))]
+pub mod verify;
 pub mod zip;
 
 pub use source::ADDONS;

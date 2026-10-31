@@ -5,6 +5,7 @@
 use std::path::{Path, PathBuf};
 
 use bevy::prelude::*;
+use dbota_import::catalog::{FileKind, Id, Line as CatalogLine};
 
 /// The manifest, compiled in.
 pub const MANIFEST: &str = include_str!("../assets-manifest/manifest.txt");
@@ -202,92 +203,84 @@ impl Manifest {
             root: has_root.then(|| root.to_path_buf()),
             ..Manifest::default()
         };
-        for line in MANIFEST.lines().map(str::trim) {
-            let words: Vec<&str> = line.split_whitespace().collect();
-            match words.as_slice() {
-                ["model", logical, _, path, rest @ ..] if present(path) => {
-                    manifest.models.push(model(logical, path, rest));
+        let catalog = match dbota_import::catalog::parse(MANIFEST, IDS) {
+            Ok(catalog) => catalog,
+            Err(errors) => {
+                for error in errors {
+                    error!("manifest: {error}");
                 }
-                ["unit", unit, model, rest @ ..] => {
-                    manifest.units.push(UnitArt {
-                        unit: (*unit).to_string(),
-                        model: (*model != "none").then(|| (*model).to_string()),
-                        scale: rest
-                            .iter()
-                            .find_map(|w| w.strip_prefix("model_scale="))
-                            .and_then(|s| s.parse().ok()),
-                        attack: rest
-                            .iter()
-                            .find_map(|w| w.strip_prefix("attack="))
-                            .map(str::to_owned),
-                    });
+                return manifest;
+            }
+        };
+        for line in &catalog.lines {
+            match line {
+                CatalogLine::Model(m) if present(&m.out) => manifest.models.push(model(m)),
+                CatalogLine::Unit(u) => manifest.units.push(UnitArt {
+                    unit: u.unit.clone(),
+                    model: u.model.clone(),
+                    scale: u.model_scale,
+                    attack: u.attack.clone(),
+                }),
+                CatalogLine::Fx(words) => {
+                    let words: Vec<&str> = words.iter().map(String::as_str).collect();
+                    match Fx::parse(&words) {
+                        Ok(fx) => manifest.fx.push(fx),
+                        Err(why) => error!("manifest line 'fx {}': {why}", words.join(" ")),
+                    }
                 }
-                ["fx", rest @ ..] => match Fx::parse(rest) {
-                    Ok(fx) => manifest.fx.push(fx),
-                    Err(why) => error!("manifest line '{line}': {why}"),
-                },
-                ["clip", model, logical, name, duration, rest @ ..] => {
-                    let point = rest
-                        .iter()
-                        .find_map(|w| w.strip_prefix("point="))
-                        .and_then(|p| p.parse().ok());
-                    if let Some(m) = manifest.models.iter_mut().find(|m| m.logical == *model) {
+                CatalogLine::Clip(c) => {
+                    if let Some(m) = manifest.models.iter_mut().find(|m| m.logical == c.model) {
                         m.clips.push(Clip {
-                            logical: (*logical).to_string(),
-                            name: (*name).to_string(),
-                            duration: duration.parse().unwrap_or(1.0),
-                            point,
+                            logical: c.logical.clone(),
+                            name: c.name.clone(),
+                            duration: c.duration,
+                            point: c.point,
                         });
                     }
                 }
-                ["texture" | "sound", logical, _, path, ..] if present(path) => {
-                    manifest
-                        .files
-                        .push(((*logical).to_string(), (*path).to_string()));
-                }
-                ["particle", logical, _, path, ..] if present(path) => {
-                    manifest
-                        .particles
-                        .push(((*logical).to_string(), (*path).to_string()));
-                }
-                ["world", _, _, path, ..] if present(path) => {
-                    manifest.map = Some(cache_path(path));
-                }
-                ["phonemes", _, _, path, ..] if present(path) => {
-                    manifest.phonemes = Some((*path).to_string());
-                }
-                ["expression", logical, _, path, ..] if present(path) => {
-                    if let Some(model) = logical.strip_suffix(".idle_expression") {
-                        manifest
-                            .expressions
-                            .push((model.to_string(), (*path).to_string()));
+                CatalogLine::File(f) if present(&f.out) => match f.kind {
+                    FileKind::Texture => manifest.files.push((f.logical.clone(), f.out.clone())),
+                    FileKind::Particle => {
+                        manifest.particles.push((f.logical.clone(), f.out.clone()));
                     }
+                    FileKind::Phonemes => manifest.phonemes = Some(f.out.clone()),
+                    FileKind::Expression => {
+                        if let Some(model) = f.logical.strip_suffix(".idle_expression") {
+                            manifest.expressions.push((model.to_owned(), f.out.clone()));
+                        }
+                    }
+                },
+                CatalogLine::Sound(s) if present(&s.out) => {
+                    manifest.files.push((s.logical.clone(), s.out.clone()));
+                }
+                CatalogLine::World(w) if present(&w.out) => {
+                    manifest.map = Some(cache_path(&w.out));
                 }
                 _ => {}
             }
         }
-        manifest.ids = IDS
-            .lines()
-            .filter_map(|line| {
-                let mut words = line.split_whitespace();
-                let kind = words.next()?;
-                if !matches!(kind, "item" | "ability" | "hero" | "effect" | "modifier") {
-                    return None;
+        for id in &catalog.ids {
+            match id {
+                Id::Item { id, name } => manifest.ids.push(("item".to_owned(), *id, name.clone())),
+                Id::Ability { id, name } => {
+                    manifest.ids.push(("ability".to_owned(), *id, name.clone()));
                 }
-                let id = words.next()?.parse().ok()?;
-                Some((kind.to_string(), id, words.next()?.to_string()))
-            })
-            .collect();
-        manifest.text_keys = IDS
-            .lines()
-            .filter_map(|line| {
-                let mut words = line.split('#').next()?.split_whitespace();
-                (words.next()? == "text").then_some(())?;
-                let kind = words.next()?.to_string();
-                let id = words.next()?.parse().ok()?;
-                Some((kind, id, words.next()?.to_string()))
-            })
-            .collect();
+                Id::Hero { id, name } => manifest.ids.push(("hero".to_owned(), *id, name.clone())),
+                Id::Effect { id, icon } => {
+                    manifest.ids.push(("effect".to_owned(), *id, icon.clone()));
+                }
+                Id::Modifier { effect, name } => {
+                    manifest
+                        .ids
+                        .push(("modifier".to_owned(), *effect, name.clone()));
+                }
+                Id::Text { of, id, key } => {
+                    manifest
+                        .text_keys
+                        .push((of.kind().to_owned(), *id, key.clone()));
+                }
+            }
+        }
         manifest
     }
 
@@ -423,16 +416,13 @@ impl Manifest {
     }
 }
 
-/// A model line's fields.
-fn model(logical: &str, path: &str, rest: &[&str]) -> Model {
-    let field = |key: &str| rest.iter().find_map(|w| w.strip_prefix(key));
+/// A model line, as the client holds it.
+fn model(line: &dbota_import::catalog::Model) -> Model {
     Model {
-        logical: logical.to_string(),
-        path: cache_path(path),
-        scale: field("model_scale=")
-            .and_then(|s| s.parse().ok())
-            .unwrap_or(1.0),
-        attach: field("attach=").map(str::to_string),
+        logical: line.logical.clone(),
+        path: cache_path(&line.out),
+        scale: line.model_scale.unwrap_or(1.0),
+        attach: line.attach.clone(),
         clips: Vec::new(),
     }
 }

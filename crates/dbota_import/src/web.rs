@@ -133,8 +133,16 @@ impl Install {
     /// Starts importing the manifest's assets out of this install; fails when the package
     /// directory is missing or is not one.
     pub fn start(self) -> Result<Job, JsError> {
-        let importer = Importer::new(self.files, Plan::parse(MANIFEST, IDS))
-            .map_err(|e| JsError::new(&e.to_string()))?;
+        let plan = Plan::parse(MANIFEST, IDS).map_err(|errors| {
+            JsError::new(
+                &errors
+                    .iter()
+                    .map(ToString::to_string)
+                    .collect::<Vec<_>>()
+                    .join("; "),
+            )
+        })?;
+        let importer = Importer::new(self.files, plan).map_err(|e| JsError::new(&e.to_string()))?;
         Ok(Job(importer))
     }
 }
