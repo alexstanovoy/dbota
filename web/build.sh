@@ -31,5 +31,8 @@ done
 cargo build --profile "$profile" --target wasm32-unknown-unknown -p dbota_import --features web
 wasm-bindgen --target web --no-typescript --out-dir "$out/import" "target/wasm32-unknown-unknown/$profile/dbota_import.wasm"
 cp web/index.html web/page.css web/boot.js web/main.js web/grant.js web/keys.js web/pointer.js web/cache.js web/import_worker.js web/replays.js web/report.js "$out/"
-ln -sfn "$here/assets" "$out/assets"
+# A copy, not a link: a service serving the folder does not follow a link out of it, and the
+# page would have no font to draw its words in.
+rm -rf -- "${out:?}/assets"
+cp -r "$here/assets" "$out/assets"
 echo "built $out"

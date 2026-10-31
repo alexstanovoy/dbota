@@ -47,6 +47,8 @@ names it) that the pages play on through `?cache=http`, served under /cache besi
 * `--replay-page`: the page plays a Zstandard-packed replay built into it (read through to the
   seek tick, as the packed file is decoded record by record) and the client says it knows the
   match and heard the chat lines, with no read error.
+* `--fonts-page` (any build): the page serves the interface fonts out of its own folder (a link out
+  of it is not followed, as a service's static directory does not) and the client takes them.
 * `--keys-page` (any page, even `web/` unbuilt): over the canvas the browser keeps its Ctrl and
   Cmd chords and F12, the game its keys (F5, Tab, Space, letters, right click, wheel).
 * `--pixels-page` (a replay build): at a device scale of 1.5, and after the page is resized, the
@@ -139,7 +141,13 @@ class Quiet(http.server.SimpleHTTPRequestHandler):
             if ".." in relative.parts:
                 return "/nonexistent"
             return str(cache_folder().joinpath(*relative.parts))
-        return super().translate_path(path)
+        found = super().translate_path(path)
+        # A file reached through a link out of the folder is not served, as a matchmaking service
+        # serves its static directory (`web/README.md`): the page must hold what it needs itself.
+        root = os.path.realpath(self.directory)
+        if os.path.commonpath([os.path.realpath(found), root]) != root:
+            return "/nonexistent"
+        return found
 
 
 def serve(directory=OUT, handler_class=Quiet):
@@ -864,6 +872,28 @@ def check_served_cache(directory):
             print("a served cache publishes its index")
 
 
+FONTS = ("bota-sans-bold.ttf", "bota-sans-regular.ttf", "bota-sans-cjk.otf")
+
+
+def check_fonts_page(directory):
+    """The page holds the fonts every word of the interface is drawn in, and the client takes them:
+    a page whose fonts do not arrive draws buttons, tabs and labels with no text at all."""
+    with sync_playwright() as p:
+        server, base, browser, page, console, problems = opened(p, directory)
+        page.goto(base + "?cache=http")
+        for name in FONTS:
+            got = page.evaluate(
+                "async (url) => { const r = await fetch(url); return [r.status, (await r.arrayBuffer()).byteLength]; }",
+                f"assets/fonts/{name}",
+            )
+            assert got[0] == 200 and got[1] > 10000, f"the page serves no {name}: {got}"
+        wait_console(page, console, "interface fonts: .* stands behind the Latin ones", 600, "the client to take its fonts")
+        assert not problems, problems
+        print("fonts: the page serves the interface fonts and the client has them")
+        browser.close()
+    server.shutdown()
+
+
 def check_startup_page(directory):
     """The page picks the client the browser can draw with, and a start that fails says so on the
     page: no graphics, a renderer that cannot be made (offering the WebGL2 client), no memory."""
@@ -1425,6 +1455,7 @@ def main():
     ap.add_argument("--fullscreen-page", type=pathlib.Path, help="a replay build opened on the Video settings")
     ap.add_argument("--server", help="a bota_server built with the websocket feature, for --replays-page")
     ap.add_argument("--served-page", type=pathlib.Path, help="any build: ?cache=http publishes the served cache's index")
+    ap.add_argument("--fonts-page", type=pathlib.Path, help="any build: the page holds its interface fonts")
     ap.add_argument("--startup-page", type=pathlib.Path, help="any build: the client picked, failures shown")
     ap.add_argument("--keys-page", type=pathlib.Path, help="any page, even web/ unbuilt: whose keys are whose")
     ap.add_argument("--cursor-page", type=pathlib.Path, help="a replay build: the cursor kept in a match")
@@ -1452,6 +1483,8 @@ def main():
         check_served_cache(args.served_page)
     if args.startup_page:
         check_startup_page(args.startup_page)
+    if args.fonts_page:
+        check_fonts_page(args.fonts_page)
     if args.keys_page:
         check_browser_keys(args.keys_page)
     if args.replay_page:
