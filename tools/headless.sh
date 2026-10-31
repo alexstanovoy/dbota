@@ -15,6 +15,8 @@
 #   DBOTA_HEADLESS_SCALE=N     its integer scale (default 1)
 #   DBOTA_WESTON=PATH          the weston to run (default: `weston` on PATH; packaged as `weston`)
 #   DBOTA_HEADLESS_LOG=FILE    weston's log and what its helpers print (default: discarded)
+#   DBOTA_HEADLESS_XWAYLAND=1  also an X server (Xwayland) in the compositor, DISPLAY set for COMMAND: X11 clients,
+#                              and input made through the X server (XTEST), e.g. the browser's real-mouse check
 # Exits with COMMAND's status; 125 when the compositor cannot start.
 set -uo pipefail
 
@@ -73,7 +75,9 @@ pdeath=()
 command -v setpriv > /dev/null && pdeath=(setpriv --pdeathsig TERM --)
 socket=dbota-headless-$$
 log=${DBOTA_HEADLESS_LOG:-/dev/null}
-env -u DISPLAY DBOTA_HEADLESS="$socket" "${pdeath[@]}" "$weston" --backend=headless --renderer=gl \
+xwayland=()
+[ "${DBOTA_HEADLESS_XWAYLAND:-0}" = 1 ] && xwayland=(--xwayland)
+env -u DISPLAY DBOTA_HEADLESS="$socket" "${pdeath[@]}" "$weston" --backend=headless --renderer=gl "${xwayland[@]}" \
     --width="${size%x*}" --height="${size#*x}" --scale="$scale" --socket="$socket" \
     --config="$dir/weston.ini" --log="$log" \
     -- "$(realpath -- "${BASH_SOURCE[0]}")" --dbota-headless-inner "$dir/status" "$@" \
