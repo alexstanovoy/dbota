@@ -16,10 +16,11 @@ One more check needs a prepared asset cache, not an install:
 
     dbota import          # a native cache of this build (DBOTA_ASSETS=... to keep it private)
     dbota export-cache temp/cache.zip
-    PYTHONPATH=temp/pwlib python3 web/test/smoke.py --prepared-page web/out \\
+    DBOTA_WEB_REPLAY=$PWD/match.brp PROFILE=release OUT=temp/page web/build.sh   # a page that plays a replay: the map is drawn
+    PYTHONPATH=temp/pwlib python3 web/test/smoke.py --prepared-page temp/page \\
         --cache-zip temp/cache.zip --cache-folder "$DBOTA_ASSETS"
 
-* `--prepared-page`: zips the page must refuse (another build's stamp, a path that climbs out, an
+* `--prepared-page` (a build with a replay built in, so the client draws the map): zips the page must refuse (another build's stamp, a path that climbs out, an
   index that does not match) are refused with their reasons and copy nothing; the real zip is
   copied into private storage (files, stamp and bytes as the zip has them), kept over a reload and
   played until the map is read and drawn; the cache folder is then loaded the same way. The page
