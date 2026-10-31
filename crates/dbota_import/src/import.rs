@@ -28,7 +28,7 @@ use crate::text::{
 };
 
 /// Bumped when the importer's output changes for the same install; part of a cache's stamp.
-pub const IMPORT_REV: u32 = 12;
+pub const IMPORT_REV: u32 = 13;
 
 /// The manifest this build imports and draws, its ids and its cache version.
 pub const MANIFEST: &str = include_str!("../../../assets-manifest/manifest.txt");

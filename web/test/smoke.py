@@ -50,6 +50,7 @@ Five more checks need no install and run on pages built with stand-ins (`?assets
 """
 import argparse
 import functools
+import hashlib
 import http.server
 import json
 import os
@@ -157,6 +158,34 @@ def check_grant_logic(page):
     print("folder grant logic ok")
 
 
+ICONS_SUMS = """async (paths) => {
+  const c = await import('./cache.js');
+  const hex = (b) => [...new Uint8Array(b)].map((v) => v.toString(16).padStart(2, '0')).join('');
+  const out = {};
+  for (const p of paths) out[p] = hex(await crypto.subtle.digest('SHA-256', await c.readCache(p)));
+  return out;
+}"""
+
+
+def check_icons_as_native(page, reference):
+    """The importer is the same code in the browser's wasm (32-bit) and on the desktop, and must
+    make the same files: a block decoder that kept 32 of a BC3 block's 48 alpha index bits in a
+    `usize` drew every icon jagged and dashed in the browser only. Every icon the browser made is
+    compared, byte for byte, with the one a desktop `dbota import` made (`--reference-cache`, or
+    DBOTA_ASSETS); without one the check is skipped, with a message."""
+    reference = reference or os.environ.get("DBOTA_ASSETS")
+    root = pathlib.Path(reference).expanduser() if reference else None
+    if not root or not (root / "index.txt").is_file():
+        print("skipped: the icons are compared with a desktop import (--reference-cache DIR or DBOTA_ASSETS)")
+        return
+    paths = sorted(str(p.relative_to(root)) for p in (root / "icons").rglob("*.png"))
+    assert paths, f"no icons in {root}"
+    got = page.evaluate(ICONS_SUMS, paths)
+    wrong = [p for p in paths if got[p] != hashlib.sha256((root / p).read_bytes()).hexdigest()]
+    assert not wrong, f"{len(wrong)} of {len(paths)} icons differ from the desktop's import, e.g. {wrong[:5]}"
+    print(f"icons: all {len(paths)} the same as the desktop's import")
+
+
 def import_smoke(args, install):
     folder = farm(install, HERE.parent.parent / "temp/smoke-install")
     server = serve()
@@ -217,6 +246,8 @@ def import_smoke(args, install):
         )
         print("cache:", state)
         assert state and state["files"] > 800 and state["head"] and state["head"] > 1000, state
+
+        check_icons_as_native(page, args.reference_cache)
 
         page.reload()
         page.wait_for_selector("#ready:not([hidden])", timeout=20000)
@@ -1047,6 +1078,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--install")
     ap.add_argument("--no-game", action="store_true")
+    ap.add_argument("--reference-cache", help="a cache a desktop `dbota import` made, to compare the browser's icons with")
     ap.add_argument("--keep", action="store_true", help="leave the imported copy in place")
     ap.add_argument("--settle", type=int, default=5, help="seconds the client draws before the screenshot")
     ap.add_argument("--replay-page", type=pathlib.Path, help="a build with a packed replay built in")
