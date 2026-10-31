@@ -929,40 +929,39 @@ fn spawn_unit(
         ))
         .id();
     p.commands.entity(root).insert(ModelOf(pivot));
-    match model.and_then(|index| Some((&p.bank.0[index], p.bank.0[index].scenes.as_ref()?))) {
-        Some((entry, scenes)) => {
-            let size = unit_art(u, &p.manifest)
-                .and_then(|art| art.scale)
-                .unwrap_or(entry.model.scale);
-            // A building as the map scales it on each axis (glTF's x, up
-            // and z are Dota's y, up and x).
-            let [sx, sy, sz] = p.yaws.placed(u, at).map_or([1.0; 3], |b| b.scale);
-            let scale = Transform::from_scale(Vec3::new(sy, sz, sx) * (UNITS_PER_METRE * size));
-            let scene = p
-                .commands
-                .spawn((WorldAssetRoot(scenes.body.clone()), scale, ChildOf(pivot)))
-                .observe(on_model_ready)
-                .id();
-            for wearable in &scenes.wearables {
-                p.commands
-                    .spawn((
-                        WorldAssetRoot(wearable.clone()),
-                        scale,
-                        ChildOf(pivot),
-                        Wearable::on(scene),
-                    ))
-                    .observe(
-                        |ready: On<WorldInstanceReady>, mut wearables: Query<&mut Wearable>| {
-                            if let Ok(mut w) = wearables.get_mut(ready.entity) {
-                                w.mark_ready();
-                            }
-                        },
-                    );
-            }
+    // A unit the manifest draws as nothing (a bare effect in Dota), or whose model the cache lacks
+    // (said at load), has no scene to spawn.
+    if let Some((entry, scenes)) =
+        model.and_then(|index| Some((&p.bank.0[index], p.bank.0[index].scenes.as_ref()?)))
+    {
+        let size = unit_art(u, &p.manifest)
+            .and_then(|art| art.scale)
+            .unwrap_or(entry.model.scale);
+        // A building as the map scales it on each axis (glTF's x, up
+        // and z are Dota's y, up and x).
+        let [sx, sy, sz] = p.yaws.placed(u, at).map_or([1.0; 3], |b| b.scale);
+        let scale = Transform::from_scale(Vec3::new(sy, sz, sx) * (UNITS_PER_METRE * size));
+        let scene = p
+            .commands
+            .spawn((WorldAssetRoot(scenes.body.clone()), scale, ChildOf(pivot)))
+            .observe(on_model_ready)
+            .id();
+        for wearable in &scenes.wearables {
+            p.commands
+                .spawn((
+                    WorldAssetRoot(wearable.clone()),
+                    scale,
+                    ChildOf(pivot),
+                    Wearable::on(scene),
+                ))
+                .observe(
+                    |ready: On<WorldInstanceReady>, mut wearables: Query<&mut Wearable>| {
+                        if let Ok(mut w) = wearables.get_mut(ready.entity) {
+                            w.mark_ready();
+                        }
+                    },
+                );
         }
-        // A unit the manifest draws as nothing (a bare effect in Dota), or whose model the cache
-        // lacks (said at load).
-        None => {}
     }
     root
 }
