@@ -291,11 +291,7 @@ fn sources_of(kind: Kind, manifest: &Manifest) -> Vec<String> {
     }
 }
 
-fn load(
-    mut voices: ResMut<Voices>,
-    manifest: Res<Manifest>,
-    server: Res<AssetServer>,
-) {
+fn load(mut voices: ResMut<Voices>, manifest: Res<Manifest>, server: Res<AssetServer>) {
     let kinds = [
         CueKind::LastHit,
         CueKind::Deny,
