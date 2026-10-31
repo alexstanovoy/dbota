@@ -4,7 +4,8 @@
 //!
 //! The install is hostile input: every read goes through a byte budget, every output path is
 //! checked before the sink sees it, an asset that fails to convert is reported and skipped (the
-//! client draws a stand-in for it), and the sizes of what is produced are capped.
+//! client draws a stand-in for it), and the sizes of what is produced are capped. An install
+//! that asks for more than the budget ends the import: no cache is finished from it.
 
 use std::cell::Cell;
 use std::collections::{BTreeMap, HashSet, VecDeque};
@@ -107,9 +108,11 @@ fn plan_id_of_text(text: &str) -> String {
     format!("{hash:016x}")
 }
 
-/// Most bytes one import reads from the install: the manifest's sources are ~62 MB plus the
-/// package directories (23 MB); a hostile install must not make the page read the whole 71 GB.
-const READ_LIMIT: u64 = 1 << 30;
+/// Most bytes one import reads from the install: the manifest's sources, the icon of every item
+/// and ability the scripts define and the package directories come to some 995 MB (measured on
+/// Dota 7.41f with the Lotus Pools, 2026-10-31); a hostile install must not make the page read
+/// the whole 71 GB.
+const READ_LIMIT: u64 = 2 << 30;
 /// Most bytes one import writes.
 pub(crate) const WRITE_LIMIT: u64 = 1536 << 20;
 /// Most bytes one read may ask for.
@@ -566,6 +569,9 @@ pub struct Report {
     /// Items that did not convert, with why; their assets stay stand-ins.
     pub failed: Vec<(String, String)>,
     pub stopped: bool,
+    /// Why the import was cut short by the install, when it was: it asked for more than the
+    /// importer reads. Nothing of such an import is a cache.
+    pub cut: Option<String>,
     /// Bytes read from the install.
     pub read: u64,
 }
@@ -607,11 +613,12 @@ pub fn safe_path(path: &str) -> bool {
         })
 }
 
-/// A source that stops answering once it has read `limit` bytes.
+/// A source that stops answering once it has read `limit` bytes, and remembers that it did.
 struct Metered<S> {
     inner: S,
     read: Cell<u64>,
     limit: u64,
+    over: Cell<bool>,
 }
 
 impl<S: Source> Source for Metered<S> {
@@ -622,6 +629,7 @@ impl<S: Source> Source for Metered<S> {
     fn read_at(&self, path: &str, offset: u64, len: usize) -> Result<Vec<u8>> {
         let total = self.read.get().saturating_add(len as u64);
         if total > self.limit || len > READ_ONE_LIMIT {
+            self.over.set(true);
             return Err(malformed(
                 "import",
                 format!("the install asks for more than {} bytes", self.limit),
@@ -675,10 +683,16 @@ enum Later {
 
 impl<S: Source> Importer<S> {
     pub fn new(src: S, plan: Plan) -> Result<Self> {
+        Self::with_limit(src, plan, READ_LIMIT)
+    }
+
+    /// An import that reads at most `limit` bytes of the install.
+    pub(crate) fn with_limit(src: S, plan: Plan, limit: u64) -> Result<Self> {
         let src = Metered {
             inner: src,
             read: Cell::new(0),
-            limit: READ_LIMIT,
+            limit,
+            over: Cell::new(false),
         };
         let pak = Vpk::open(&src, DIR_VPK)?;
         Ok(Self {
@@ -733,6 +747,7 @@ impl<S: Source> Importer<S> {
                 out.pending.retain(|p| p.logical != job.logical);
                 self.report.failed.push((job.logical, err.to_string()));
             }
+            self.cut_if_over();
             return true;
         }
         let Some(item) = self.plan.items.get(self.next) else {
@@ -745,7 +760,21 @@ impl<S: Source> Importer<S> {
                 .failed
                 .push((item.logical().to_owned(), err.to_string()));
         }
+        self.cut_if_over();
         true
+    }
+
+    /// Ends the import once the install has asked for more than the budget: what it made would
+    /// be a cache with holes no one sees.
+    fn cut_if_over(&mut self) {
+        if self.src.over.get() && self.report.cut.is_none() {
+            self.report.cut = Some(format!(
+                "the install asks for more than the {} bytes an import reads",
+                self.src.limit
+            ));
+            self.next = self.plan.items.len();
+            self.pending.clear();
+        }
     }
 
     /// Ends the import early.
@@ -888,7 +917,19 @@ pub fn run<S: Source>(
     sink: &mut dyn Sink,
     progress: &mut dyn FnMut(&Progress<'_>) -> Flow,
 ) -> Result<Report> {
-    let mut importer = Importer::new(src, plan.clone())?;
+    run_capped(src, plan, sink, progress, None)
+}
+
+/// [`run`], reading at most `limit` bytes of the install when given (else [`READ_LIMIT`]). An
+/// install that asks for more ends the import with an error.
+pub(crate) fn run_capped<S: Source>(
+    src: S,
+    plan: &Plan,
+    sink: &mut dyn Sink,
+    progress: &mut dyn FnMut(&Progress<'_>) -> Flow,
+    limit: Option<u64>,
+) -> Result<Report> {
+    let mut importer = Importer::with_limit(src, plan.clone(), limit.unwrap_or(READ_LIMIT))?;
     while let Some(item) = importer.upcoming() {
         let report = Progress {
             done: importer.done(),
@@ -902,7 +943,11 @@ pub fn run<S: Source>(
         }
         importer.step(sink);
     }
-    Ok(importer.finish())
+    let report = importer.finish();
+    match &report.cut {
+        Some(why) => Err(malformed("import", why.clone())),
+        None => Ok(report),
+    }
 }
 
 struct Out<'a> {
@@ -1640,11 +1685,14 @@ fn model(
     let mut seen = HashSet::new();
     let mut decoded: Option<(String, Texture)> = None;
     for texture in &exported.textures {
-        if !seen.insert(texture.uri.clone()) {
+        let file = format!("{dir}/{}", texture.uri);
+        // An image another model of the folder wrote already (a model exported in each of its
+        // skins shares most of them) is read once.
+        if !seen.insert(texture.uri.clone()) || out.report.files.contains_key(&file) {
             continue;
         }
         let image = image(src, packages, texture, &mut decoded)?;
-        out.put(&format!("{dir}/{}", texture.uri), &image)?;
+        out.put(&file, &image)?;
     }
     // The model last: its presence says its images are there.
     out.put(dest, &exported.glb)

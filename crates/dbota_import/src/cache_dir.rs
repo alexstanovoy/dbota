@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 
 use heatel::{Error, Result};
 
-use crate::import::{Flow, MAX_STAMP, Plan, Progress, Report, Sink, run};
+use crate::import::{Flow, MAX_STAMP, Plan, Progress, Report, Sink, run_capped};
 pub use crate::import::{INDEX, STAMP};
 use crate::source::InstallSource;
 
@@ -133,14 +133,35 @@ pub fn import_into(
     stamp: &str,
     progress: &mut dyn FnMut(&Progress<'_>) -> Flow,
 ) -> Result<Report> {
+    import_capped(game, cache, plan, stamp, progress, None)
+}
+
+/// [`import_into`], reading at most `limit` bytes of the install when given. An import the
+/// install cut short (it asked for more) leaves no cache: the old one stays.
+fn import_capped(
+    game: &Path,
+    cache: &Path,
+    plan: &Plan,
+    stamp: &str,
+    progress: &mut dyn FnMut(&Progress<'_>) -> Flow,
+    limit: Option<u64>,
+) -> Result<Report> {
     let staging = sibling(cache, "importing")?;
     remove(&staging)?;
-    let report = run(
+    let made = run_capped(
         InstallSource::new(game),
         plan,
         &mut DirSink::new(&staging),
         progress,
-    )?;
+        limit,
+    );
+    let report = match made {
+        Ok(report) => report,
+        Err(err) => {
+            remove(&staging)?;
+            return Err(err);
+        }
+    };
     if report.stopped {
         remove(&staging)?;
         return Ok(report);
@@ -216,6 +237,67 @@ mod tests {
         // A comment or the layout of the manifest is no plan change.
         let spaced = plan("# a note\n\ntexture   t  t.vtex_c   t.png   # why\n");
         assert_eq!(plan_id(&a), plan_id(&spaced));
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// A VPK (version 1) holding `files` after its directory tree, each in its own entry.
+    fn vpk(files: &[(&str, Vec<u8>)]) -> Vec<u8> {
+        let (mut tree, mut data) = (Vec::new(), Vec::new());
+        for (path, bytes) in files {
+            let (name, ext) = path.rsplit_once('.').unwrap();
+            for part in [ext, " ", name] {
+                tree.extend_from_slice(part.as_bytes());
+                tree.push(0);
+            }
+            tree.extend_from_slice(&0u32.to_le_bytes());
+            tree.extend_from_slice(&0u16.to_le_bytes());
+            tree.extend_from_slice(&0x7FFFu16.to_le_bytes());
+            tree.extend_from_slice(&(data.len() as u32).to_le_bytes());
+            tree.extend_from_slice(&(bytes.len() as u32).to_le_bytes());
+            tree.extend_from_slice(&0xFFFFu16.to_le_bytes());
+            tree.extend_from_slice(&[0, 0]);
+            data.extend_from_slice(bytes);
+        }
+        tree.push(0);
+        let mut out = 0x55AA_1234u32.to_le_bytes().to_vec();
+        out.extend_from_slice(&1u32.to_le_bytes());
+        out.extend_from_slice(&(tree.len() as u32).to_le_bytes());
+        out.extend(tree);
+        out.extend(data);
+        out
+    }
+
+    /// An install that asks for more than the import reads ends it with an error and finishes
+    /// no cache: the cache that was there stays as it was, its stamp unchanged.
+    #[test]
+    fn an_import_over_its_read_limit_fails_and_stamps_nothing() {
+        let dir = std::env::temp_dir().join(format!("dbota-cut-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        let (game, cache) = (dir.join("game"), dir.join("cache"));
+        fs::create_dir_all(&game).unwrap();
+        fs::create_dir_all(&cache).unwrap();
+        let pak = vpk(&[("t.vtex_c", vec![7; 256 << 10])]);
+        fs::write(game.join("pak01_dir.vpk"), &pak).unwrap();
+        fs::write(cache.join(STAMP), b"before").unwrap();
+        fs::write(cache.join(INDEX), b"").unwrap();
+        let plan = Plan::parse("texture t t.vtex_c t.png\n", "").unwrap();
+        let limit = Some(64 << 10);
+        let made = import_capped(
+            &game,
+            &cache,
+            &plan,
+            "after",
+            &mut |_| Flow::Continue,
+            limit,
+        );
+        let err = made.expect_err("an import over its limit fails");
+        assert!(err.to_string().contains("more than"), "{err}");
+        assert_eq!(read_stamp(&cache).as_deref(), Some("before"));
+        assert!(!sibling(&cache, "importing").unwrap().exists());
+        // Within its limit, the same install imports, its failures reported, and is stamped.
+        let made = import_capped(&game, &cache, &plan, "after", &mut |_| Flow::Continue, None);
+        assert!(made.is_ok_and(|r| r.cut.is_none()));
+        assert_eq!(read_stamp(&cache).as_deref(), Some("after"));
         fs::remove_dir_all(&dir).unwrap();
     }
 

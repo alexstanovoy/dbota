@@ -65,6 +65,12 @@ async function run(made, stamp) {
     await remove();
     return post({ type: "done", stopped: true, files: 0, failures: [] });
   }
+  // An install that asked for more than an import reads finishes no cache: its files go.
+  const cut = report.cut();
+  if (cut) {
+    await remove();
+    throw new Error(cut);
+  }
   // The index and the stamp last: a cache without them is not a finished one.
   await writeFile("index.txt", new TextEncoder().encode(report.index()));
   await writeFile("stamp.txt", new TextEncoder().encode(stamp));

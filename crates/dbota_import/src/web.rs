@@ -205,6 +205,12 @@ impl Report {
         self.0.index()
     }
 
+    /// Why the install cut the import short (it asked for more than an import reads), when it
+    /// did: nothing of such an import may be kept as a cache.
+    pub fn cut(&self) -> Option<String> {
+        self.0.cut.clone()
+    }
+
     /// One line per item that failed: `logical: why`.
     pub fn failures(&self) -> Vec<String> {
         self.0
