@@ -24,10 +24,15 @@ const PLAIN_CAST: &str = "cast1";
 /// Seconds a clip takes to fade in over the one before, which fades out
 /// meanwhile: the fade of Dota's unit sequences (their models'
 /// `m_flFadeInTime` and `m_flFadeOutTime`).
-const FADE_SECONDS: f32 = 0.2;
+pub(crate) const FADE_SECONDS: f32 = 0.2;
 /// Clips that may fade out under the one playing at once; a quicker change
 /// lets the faintest go.
 const MAX_FADING: usize = 2;
+/// The clip a model plays now and then while it stands idle, when it has one.
+pub const RARE_IDLE: &str = "idle_rare";
+/// Whole idle loops a unit stands through before its rare idle: this many, and up to three
+/// more by the unit, so units standing together do not play it in step.
+const LOOPS_BEFORE_RARE: u32 = 4;
 /// World units a second at which a run clip plays at its own pace.
 const RUN_PACE: f32 = 300.0;
 /// World units a second above which a unit counts as running.
@@ -58,6 +63,8 @@ pub struct Pose {
     share: f32,
     /// The clips fading out under it.
     fading: Vec<Fading>,
+    /// Whole idle loops stood through since the unit last did anything else.
+    idle_loops: u32,
 }
 
 /// A clip fading out under the one playing.
@@ -74,6 +81,12 @@ impl Pose {
     /// The clip playing, by logical name (`attack2` while the second attack swings).
     pub fn clip(&self) -> &'static str {
         self.clip
+    }
+
+    /// Whether a clip is still fading out under the one playing.
+    #[cfg(test)]
+    pub fn blending(&self) -> bool {
+        !self.fading.is_empty()
     }
 }
 
@@ -169,6 +182,9 @@ fn animate(
             }
             (None, None) => continue,
         };
+        if wanted.clip != "idle" && wanted.clip != RARE_IDLE {
+            pose.idle_loops = 0;
+        }
         let Some((_, node, duration, _)) = clip(wanted.clip).or_else(|| clip("idle")) else {
             continue;
         };
@@ -405,7 +421,49 @@ fn choose(
     };
     let name = if clip(name).is_some() { name } else { "idle" };
     let duration = clip(name).map_or(1.0, |c| c.0);
-    looping(pose, name, duration, dt, pace)
+    if name == "idle"
+        && let Some(rare) = rare_idle(pose, u.id, dt, &clip)
+    {
+        return rare;
+    }
+    let before = pose.loop_t;
+    let wanted = looping(pose, name, duration, dt, pace);
+    if name == "idle" && pose.loop_t < before {
+        pose.idle_loops = pose.idle_loops.saturating_add(1);
+    }
+    wanted
+}
+
+/// The rare idle a unit standing idle plays, once, after its share of whole idle loops; none
+/// when its model has no rare idle or it is not yet time.
+fn rare_idle(
+    pose: &mut Pose,
+    id: EntityId,
+    dt: f32,
+    clip: &impl Fn(&str) -> Option<(f32, Option<f32>)>,
+) -> Option<Wanted> {
+    let (duration, _) = clip(RARE_IDLE)?;
+    if pose.clip == RARE_IDLE {
+        pose.loop_t += dt;
+        if pose.loop_t < duration {
+            return Some(Wanted {
+                clip: RARE_IDLE,
+                t: pose.loop_t,
+            });
+        }
+        pose.loop_t = 0.0;
+        pose.idle_loops = 0;
+        return None;
+    }
+    let after = LOOPS_BEFORE_RARE + (id.idx ^ id.generation).wrapping_mul(0x9E37_79B9) % 4;
+    if pose.idle_loops < after {
+        return None;
+    }
+    pose.loop_t = 0.0;
+    Some(Wanted {
+        clip: RARE_IDLE,
+        t: 0.0,
+    })
 }
 
 /// A loop moved on by `dt` at `pace`.

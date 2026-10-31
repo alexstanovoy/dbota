@@ -4,6 +4,7 @@
 //! lines laid out for the GPU, colours, positions, menu entries), not pixels.
 
 mod ambient;
+mod anim;
 mod bars;
 mod buffs;
 mod camera;
