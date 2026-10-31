@@ -144,11 +144,7 @@ folder is then loaded the same way.
 Two more checks need no Dota install, only a native import of this build served as `?cache=http`; the docstring of
 `smoke.py` has the build commands. `--replay-page` opens a build with a Zstandard-packed replay built in
 (`DBOTA_WEB_REPLAY`, read through to `--seek` in `DBOTA_WEB_ARGS`) and expects the client's `match known` and
-`chat: N lines heard` console lines, the CJK fallback registered and no read error. `--live-page --server`
-opens a build without a replay, reaches the direct connection through the menu, joins a local `bota_server`
-(built with the `websocket` feature) over `ws://`, and expects the server's frames to be compressed parts
-(`ServerMsg::Compressed`) the client unpacks into a match, and a chat line typed in the page to come back
-heard; the page's CSP gets that one socket for the run, as a page with networking would. Without an
+`chat: N lines heard` console lines, the CJK fallback registered and no read error. Without an
 install the import test is skipped with a message. `OUT=dir web/build.sh` builds somewhere else than `web/out`.
 
 ## Manual checks (the native directory dialog is out of automation's reach)

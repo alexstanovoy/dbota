@@ -35,7 +35,8 @@ names it) that the pages play on through `?cache=http`, served under /cache besi
     CARGO_TARGET_DIR=temp/bota-target cargo build --release --manifest-path ../bota/Cargo.toml \
         -p bota_server --features websocket
     PYTHONPATH=temp/pwlib python3 web/test/smoke.py --replay-page temp/web-replay \
-        --live-page temp/web-live --server temp/bota-target/release/bota_server --startup-page temp/web-live
+        --replays-page temp/web-live --server temp/bota-target/release/bota_server --radovid RADOVID \
+        --startup-page temp/web-live
 
 * `--served-page` (any build): with `?cache=http` the page fetches the served cache's index.txt and
   publishes it to the client (without one, the cache is taken whole).
@@ -60,10 +61,6 @@ names it) that the pages play on through `?cache=http`, served under /cache besi
   moving is waited for and the game starts (Chromium, and Firefox where there is one).
 * `--fullscreen-page`: a replay build made with `DBOTA_WEB_ARGS="--replay built-in --pov 0 --settings video"`;
   the display mode and F11 put the canvas fullscreen and leaving it turns the setting back.
-* `--live-page` and `--server`: the page joins a bota_server over a WebSocket through the main
-  menu's direct connection, asks for compression, takes the compressed snapshots in (the match
-  goes on past its start), and chats a line of several scripts that comes back through the
-  server. The page's Content-Security-Policy gets that one socket for this run only.
 """
 import argparse
 import functools
@@ -396,15 +393,8 @@ BROWSER_ARGS = [
     # local-network request needing a permission nobody is there to give.
     "--disable-features=LocalNetworkAccessChecks,BlockInsecurePrivateNetworkRequests",
 ]
-# postcard's tag of `ServerMsg::Compressed` (the registry is append-only): every frame of a
-# compressed link that is not chat carries it, after the frame's four bytes of length.
-COMPRESSED_TAG = 14
 # The dashboard button's middle in a replay page of 1280x720 (logical pixels).
 DASHBOARD = (15, 15)
-# The local lobby page, where a game is joined by address, is the first page without a service;
-# its address field is the third stop of Tab (port, CREATE, CREATE FOR THE LAN), and Enter
-# there joins.
-TABS_TO_ADDRESS = 3
 
 
 def wait_console(page, console, pattern, timeout, what):
@@ -670,65 +660,6 @@ def free_port():
     with socket.socket() as s:
         s.bind(("127.0.0.1", 0))
         return s.getsockname()[1]
-
-
-def check_live_page(directory, server_bin):
-    """The page joins a bota_server over a WebSocket and asks for compression; the snapshots it is
-    sent are compressed and the match plays on in it."""
-    tcp, ws = free_port(), free_port()
-    game = subprocess.Popen(
-        [server_bin, "--port", str(tcp), "--ws-port", str(ws), "--mode", "realtime", "--map", "2",
-         "--players", "2", "--dummy-seat", "--pick-secs", "1", "--tactical-secs", "0", "--seed", "7"],
-        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-    )
-    try:
-        with sync_playwright() as p:
-            server, base, browser, page, console, problems = opened(p, directory)
-            sent, received = [], []
-
-            def on_socket(sock):
-                sock.on("framesent", lambda f: sent.append(f if isinstance(f, bytes) else f.encode()))
-                sock.on("framereceived", lambda f: received.append(f if isinstance(f, bytes) else f.encode()))
-
-            page.on("websocket", on_socket)
-            # The one socket of this run goes into the page's policy, as a page with networking has.
-            def with_socket(route):
-                response = route.fetch()
-                body = response.text().replace("connect-src 'self'", f"connect-src 'self' ws://127.0.0.1:{ws}")
-                route.fulfill(response=response, body=body)
-
-            page.route(re.compile(r".*/(index\.html)?(\?.*)?$"), with_socket)
-            menu = f"direct = ws://127.0.0.1:{ws}\nname = smoke\nplain_ok = 127.0.0.1\n"
-            page.add_init_script("localStorage.setItem('dbota.menu', " + json.dumps(menu) + ")")
-            page.goto(base + "?cache=http")
-            page.wait_for_timeout(15000)
-            for _ in range(TABS_TO_ADDRESS):
-                page.keyboard.press("Tab")
-                page.wait_for_timeout(1500)
-            page.keyboard.press("Enter")
-            wait_console(page, console, r"match known: tick \d+", 240, "the live match")
-            page.wait_for_timeout(8000)
-            # A software GPU draws a frame in seconds: each step gets one to itself.
-            page.keyboard.press("Enter")
-            page.wait_for_timeout(3000)
-            page.keyboard.type("hello from the browser")
-            page.wait_for_timeout(3000)
-            page.keyboard.press("Enter")
-            wait_console(page, console, r"chat: [1-9]\d* lines heard", 60, "the chat line to come back")
-            page.screenshot(path=str(HERE.parent.parent / "temp/smoke-live.png"), timeout=600000)
-            assert sent and received, "the page talked to the server"
-            packed = [f for f in received if f[4:5] == bytes([COMPRESSED_TAG])]
-            assert len(packed) >= 20, f"compressed parts received: {len(packed)} of {len(received)} frames"
-            assert any(f[4:5] != bytes([COMPRESSED_TAG]) for f in received), "the hello's answers came plain"
-            bad = [c for c in console if "panicked" in c or "RuntimeError" in c]
-            assert not bad and not problems, (bad, problems)
-            print(f"live: match known, {len(packed)} of {len(received)} server frames were compressed parts, "
-                  f"chat line heard, {len(sent)} frames sent")
-            browser.close()
-        server.shutdown()
-    finally:
-        game.terminate()
-        game.wait(timeout=10)
 
 
 NO_GRAPHICS = """
@@ -1346,8 +1277,7 @@ def main():
     ap.add_argument("--settle", type=int, default=5, help="seconds the client draws before the screenshot")
     ap.add_argument("--replay-page", type=pathlib.Path, help="a build with a packed replay built in")
     ap.add_argument("--fullscreen-page", type=pathlib.Path, help="a replay build opened on the Video settings")
-    ap.add_argument("--live-page", type=pathlib.Path, help="a build without a replay (the main menu)")
-    ap.add_argument("--server", help="a bota_server built with the websocket feature, for --live-page")
+    ap.add_argument("--server", help="a bota_server built with the websocket feature, for --replays-page")
     ap.add_argument("--served-page", type=pathlib.Path, help="any build: ?cache=http publishes the served cache's index")
     ap.add_argument("--startup-page", type=pathlib.Path, help="any build: the client picked, failures shown")
     ap.add_argument("--keys-page", type=pathlib.Path, help="any page, even web/ unbuilt: whose keys are whose")
@@ -1391,10 +1321,6 @@ def main():
         if not (args.server and args.radovid):
             sys.exit("--replays-page needs --server and --radovid")
         check_replays_page(args.replays_page, args.server, args.radovid, args.shots)
-    if args.live_page:
-        if not args.server:
-            sys.exit("--live-page needs --server")
-        check_live_page(args.live_page, args.server)
 
 
 if __name__ == "__main__":
