@@ -417,6 +417,10 @@ def wait_console(page, console, pattern, timeout, what):
                 return m
         page.wait_for_timeout(500)
     print("console:", *[c[:300] for c in [c for c in console if "CommandQueue" not in c and not c.startswith("log.")][-25:]], sep="\n  ", file=sys.stderr)
+    try:
+        page.screenshot(path=str(HERE.parent.parent / "temp/smoke-timeout.png"), timeout=60000)
+    except Exception as e:  # the page may be gone or too busy to draw
+        print("no screenshot:", e, file=sys.stderr)
     sys.exit(f"timed out waiting for {what}")
 
 
