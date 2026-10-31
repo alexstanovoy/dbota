@@ -86,6 +86,7 @@ impl MenuCore {
 
     /// A game is about to open: a match entered is noted, a local game's recording named.
     pub(super) fn keep_start(&mut self, launch: &Launch) {
+        self.meta_start(launch);
         match launch {
             Launch::Seat(handoff) if !self.service_keeps_none() => self.library.want(Wanted {
                 match_id: handoff.match_id.0,

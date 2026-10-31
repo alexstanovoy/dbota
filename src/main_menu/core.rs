@@ -390,6 +390,7 @@ pub(super) enum Asked {
     Profile,
     Ladder,
     Artifact(MatchId),
+    Meta(MatchId),
     Other,
 }
 
@@ -495,6 +496,8 @@ pub struct MenuCore {
     pub(super) shelf: super::replay_info::Shelf,
     /// The fetching of the replays of the player's matches.
     pub(super) keeper: Keeper,
+    /// The metadata of the match on screen, fetched for the post-game screen.
+    pub(super) meta: super::meta_fetch::MetaFetch,
     /// The account's latest finished matches, from the service.
     pub(super) history: Vec<MatchResult>,
     pub(super) account_profile: Option<PublicAccount>,
@@ -601,6 +604,7 @@ impl MenuCore {
             library,
             shelf: Default::default(),
             keeper: Keeper::default(),
+            meta: Default::default(),
             history: Vec::new(),
             account_profile: None,
             ladder: Vec::new(),
@@ -951,6 +955,7 @@ impl MenuCore {
             && self.credentials.is_none()
             && self.lobby.is_none()
             && !self.keeper.fetching()
+            && !self.meta.fetching()
             && !self.launching
             && !matches!(self.on_screen, Some(OnScreen::Match(_) | OnScreen::Demo(_)))
             && !(self.page == Page::MyGames && !self.games.is_empty())
@@ -998,6 +1003,7 @@ impl MenuCore {
     fn lost(&mut self, err: ClientError) {
         let was_signed_in = self.conn == Conn::LoggedIn;
         self.keep_link_lost();
+        self.meta_link_lost();
         let live = was_signed_in && !self.idle();
         self.credentials = None;
         self.outbox.clear();
@@ -1138,6 +1144,13 @@ impl MenuCore {
                 total,
                 data,
             } => self.keep_chunk(match_id, offset, total, &data),
+            Reply::ArtifactNamed {
+                match_id,
+                name,
+                offset,
+                total,
+                data,
+            } => self.meta_chunk(match_id, &name, offset, total, &data),
             Reply::Lobbies { list } => self.lobbies = list,
             Reply::Lobby { state } => self.sit(state),
             Reply::Queued { .. } => self.status = None,
@@ -1171,6 +1184,7 @@ impl MenuCore {
                 self.demo_asked = None;
                 self.tell(error_text(error), true);
             }
+            (Asked::Meta(id), _) => self.meta_none(id),
             (Asked::Lobby, Error::NotInLobby { .. }) => {
                 self.lobby = None;
                 self.go(Page::Lobbies);
@@ -1247,6 +1261,7 @@ impl MenuCore {
             return;
         }
         self.keep_finished(&result);
+        self.meta_finished(&result);
         if self.results.len() >= MAX_RESULTS {
             self.results.pop_front();
         }

@@ -298,3 +298,57 @@ fn the_screen_at_the_end_shows_every_seat_and_a_point_a_minute() {
         .count();
     assert_eq!(icons, PURCHASES.len(), "the three items bought are drawn");
 }
+
+/// A game of the service has its metadata fetched by the menu: when the file comes the screen
+/// shows the summary, and when the service has none it shows the final numbers.
+#[test]
+fn a_game_of_the_service_shows_the_fetched_file_or_the_final_numbers_when_there_is_none() {
+    use super::{Fetched, Origin, PostGame};
+    use crate::e2e::harness::Client;
+    use bota_radovid::proto::MatchId;
+    let played = play();
+    let meta = std::fs::read(&played.meta).expect("the meta file");
+    for (bytes, detail) in [(Some(meta), Detail::Meta), (None, Detail::Stats)] {
+        let mut client = Client::run(&["--replay", played.replay.to_str().expect("UTF-8")]);
+        let id = MatchId(7);
+        // Past the start-up, which sets the origin the command line names.
+        client.frames(3);
+        {
+            let mut post = client.world_mut().non_send_mut::<PostGame>();
+            post.expect(Origin::Service(id));
+            post.begin();
+        }
+        client.until("the replay played to its end", |c| {
+            if let bota_client_core::Source::Replay(player) = &mut c.core_mut().source {
+                player.advance_ticks(1.0e7);
+            }
+            c.core().over.is_some()
+        });
+        client.frames(3);
+        assert!(
+            client.world().non_send::<PostGame>().summary().is_none(),
+            "nothing is shown before the file comes"
+        );
+        client
+            .world_mut()
+            .non_send_mut::<PostGame>()
+            .provide(Fetched {
+                match_id: id,
+                bytes,
+            });
+        client.until("the screen shown", |c| {
+            c.world().non_send::<PostGame>().summary().is_some()
+        });
+        let summary = client
+            .world()
+            .non_send::<PostGame>()
+            .summary()
+            .cloned()
+            .expect("a summary");
+        assert_eq!(summary.detail, detail);
+        assert_eq!(summary.winner, Some(Team::Radiant));
+        if detail == Detail::Meta {
+            check(&summary, &played.stats);
+        }
+    }
+}

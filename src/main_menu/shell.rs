@@ -171,6 +171,9 @@ fn drive(
     core.set_profile_name(&settings.name);
     core.set_replay_policy(settings.replays);
     core.update();
+    if let Some(fetched) = core.take_meta() {
+        post.provide(fetched);
+    }
     let launch = core.take_launch();
     if let Some(launch) = &launch {
         post.expect(origin_of(launch, &args));
@@ -225,10 +228,9 @@ fn origin_of(launch: &Launch, args: &crate::Args) -> crate::postgame::Origin {
             replay: Some(path), ..
         } => Origin::File(path.clone()),
         Launch::Demo { .. } => Origin::Hidden,
-        // The service's artifact of the match is fetched by name once the service serves them.
-        Launch::Seat(_) | Launch::Host { .. } | Launch::Watch(_) | Launch::Direct { .. } => {
-            Origin::Nothing
-        }
+        // The service's artifact of the match, which the menu fetches.
+        Launch::Seat(handoff) => Origin::Service(handoff.match_id),
+        Launch::Host { .. } | Launch::Watch(_) | Launch::Direct { .. } => Origin::Nothing,
     }
 }
 

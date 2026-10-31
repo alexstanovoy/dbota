@@ -13,6 +13,7 @@ mod form;
 mod keep;
 mod launch;
 mod lobbies;
+mod meta_fetch;
 mod overlay;
 mod pages;
 mod prefs;

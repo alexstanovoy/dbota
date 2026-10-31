@@ -4,7 +4,7 @@
 //! Where the file comes from depends on the match: a local game's server writes it beside its
 //! replay; a replay file carries it at its end, or the recorder works it out from the replay's
 //! records; a replay held in memory likewise; a game of the matchmaking service has it fetched
-//! by the menu as an artifact of the service. A match with none of these (a direct
+//! by the menu as an artifact of the service (`meta`). A match with none of these (a direct
 //! game, a watched one) tells what every client is sent, the final numbers. Demo Hero, a
 //! sandbox with no end, shows nothing.
 
@@ -19,6 +19,7 @@ use std::time::Duration;
 use bevy::platform::time::Instant;
 use bevy::prelude::*;
 use bevy::tasks::{AsyncComputeTaskPool, Task, block_on, futures_lite::future};
+use bota_radovid::proto::MatchId;
 use summary::MatchSummary;
 
 use crate::session::Session;
@@ -36,6 +37,15 @@ pub enum Origin {
     File(std::path::PathBuf),
     /// A replay held in memory.
     Blob(Arc<[u8]>),
+    /// The service's artifact of this match, which the menu fetches.
+    Service(MatchId),
+}
+
+/// What the menu fetched of a match's metadata.
+pub struct Fetched {
+    pub match_id: MatchId,
+    /// The file; none when the service had none to give.
+    pub bytes: Option<Vec<u8>>,
 }
 
 type Loading = Task<Option<Vec<u8>>>;
@@ -45,6 +55,8 @@ enum Stage {
     Idle,
     /// The file is being had, off the frame.
     Loading(Loading),
+    /// Waiting for the menu's fetch to come.
+    Waiting(Instant),
     /// A file that was not finished when the match ended is had again soon.
     Retry(Instant),
     /// Settled: shown, or nothing to show.
@@ -57,6 +69,8 @@ pub struct PostGame {
     /// The origin of the game being opened.
     next: Origin,
     stage: Stage,
+    /// What the menu fetched, until the screen takes it.
+    fetched: Option<Fetched>,
     /// How many times the files of a local game were had again.
     tries: u8,
     /// What is to be shown, and how many times it was set.
@@ -70,6 +84,7 @@ impl Default for PostGame {
             origin: Origin::Nothing,
             next: Origin::Nothing,
             stage: Stage::Idle,
+            fetched: None,
             tries: 0,
             shown: None,
             version: 0,
@@ -79,6 +94,8 @@ impl Default for PostGame {
 
 /// How often and how many times a local game's files are looked at again while the server
 /// finishes them.
+/// How long a game of the service waits for its file before the final numbers are shown.
+const SERVICE_PATIENCE: Duration = Duration::from_secs(8);
 const RETRY_EVERY: Duration = Duration::from_millis(500);
 const RETRIES: u8 = 20;
 
@@ -96,9 +113,17 @@ impl PostGame {
 
     fn reset(&mut self) {
         self.stage = Stage::Idle;
+        self.fetched = None;
         self.tries = 0;
         if self.shown.take().is_some() {
             self.version += 1;
+        }
+    }
+
+    /// The file the menu fetched. A late one replaces the final numbers shown meanwhile.
+    pub fn provide(&mut self, fetched: Fetched) {
+        if matches!(&self.origin, Origin::Service(id) if *id == fetched.match_id) {
+            self.fetched = Some(fetched);
         }
     }
 
@@ -195,6 +220,7 @@ fn drive(session: NonSend<Session>, mut post: NonSendMut<PostGame>) {
         Stage::Idle => {
             post.stage = match &post.origin {
                 Origin::Hidden => Stage::Done,
+                Origin::Service(_) => Stage::Waiting(Instant::now()),
                 origin => match load(origin) {
                     Some(loading) => Stage::Loading(loading),
                     None => {
@@ -205,6 +231,20 @@ fn drive(session: NonSend<Session>, mut post: NonSendMut<PostGame>) {
                     }
                 },
             };
+        }
+        Stage::Waiting(since) => {
+            let waited = since.elapsed();
+            match post.fetched.take() {
+                Some(Fetched { bytes, .. }) => settle(post, &session, bytes, false),
+                // The file may still come and replace the numbers shown meanwhile.
+                None if waited >= SERVICE_PATIENCE && post.shown.is_none() => {
+                    if let Some(stats) = from_stats(&session) {
+                        post.shown = Some(stats);
+                        post.version += 1;
+                    }
+                }
+                None => {}
+            }
         }
         Stage::Retry(at) if Instant::now() >= *at => {
             post.stage = match load(&post.origin) {

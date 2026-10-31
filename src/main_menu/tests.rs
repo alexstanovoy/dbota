@@ -179,6 +179,12 @@ args = ["--map", "2", "--heroes", "1", "--mode", "lockstep", "--ack-timeout-tick
 env = {{ BOTA_SEATS = "{{seats}}" }}
 artifact = "{artifacts}/replay-{{match_id}}.brp"
 artifact_args = ["--replay", "{{artifact}}"]
+# The match's metadata, kept whether or not replays are.
+[ruleset.artifacts.meta]
+path = "{artifacts}/meta-{{match_id}}.meta"
+args = ["--meta", "{{artifact}}"]
+max_kib = 1024
+access = "audience"
 
 [[ruleset]]
 id = "arena"
@@ -516,6 +522,18 @@ fn two_players_register_find_accept_play_and_see_their_result() {
     settle(&mut [&mut alice, &mut bob], |p| {
         p.menu.page() == Page::Result
     });
+    // Both seats were handed the match's metadata file by name, whatever the service does with
+    // replays, and it tells the match they played.
+    settle(&mut [&mut alice, &mut bob], |p| p.menu.meta_ready());
+    for player in [&mut alice, &mut bob] {
+        let fetched = player.menu.take_meta().expect("the metadata was fetched");
+        let bytes = fetched.bytes.expect("the service had it");
+        let meta = bota_replay::meta::decode(&bytes).expect("a metadata file");
+        assert!(meta.complete);
+        assert_eq!(meta.header.match_id, fetched.match_id.0);
+        let summary = crate::postgame::summary::MatchSummary::from_meta(&meta).expect("a summary");
+        assert_eq!(summary.rows.len(), 2);
+    }
     let headlines: Vec<String> = [&alice, &bob]
         .iter()
         .map(|p| match p.menu.view().body {
