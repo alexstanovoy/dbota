@@ -152,6 +152,88 @@ pub enum Line {
     },
     /// An effect bound to a fact of the game: the words after `fx`, read by the client.
     Fx(Vec<String>),
+    /// An item drawn by its state.
+    State(ItemState),
+}
+
+/// A state line (`state item.<name> <state> icon=<texture> [text=<label>]`): an item in a state,
+/// the icon it is drawn with then and the label key of the install's words for that state.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ItemState {
+    /// The item's Dota name (`power_treads`).
+    pub item: String,
+    pub when: StateWhen,
+    /// The logical name of the icon's texture.
+    pub icon: String,
+    /// The label key of the words for the state.
+    pub text: Option<String>,
+}
+
+/// A state an item can be in, as the wire tells it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum StateWhen {
+    /// It keeps a rune of this kind (`rune=<rune art>`).
+    Rune(bota_proto::RuneKind),
+    /// It is set to this attribute (`mode=strength|agility|intelligence`).
+    Mode(bota_proto::Attribute),
+    /// It plants a Sentry Ward, or an Observer Ward (`ward=sentry|observer`).
+    Ward { sentry: bool },
+    /// It has this many charges left (`charges=<n>`).
+    Charges(u8),
+}
+
+/// The name Dota's art gives a kind of rune: its model, glow, sound, Bottle icon and the hero
+/// lines about it are named after it. Amplify Damage keeps Double Damage's art, the Bounty
+/// Rune is `goldxp`'s model under the name bounty.
+pub const fn rune_art(kind: bota_proto::RuneKind) -> &'static str {
+    use bota_proto::RuneKind;
+    match kind {
+        RuneKind::Water => "water",
+        RuneKind::Bounty => "bounty",
+        RuneKind::Haste => "haste",
+        RuneKind::AmplifyDamage => "doubledamage",
+        RuneKind::Arcane => "arcane",
+        RuneKind::Regeneration => "regeneration",
+        RuneKind::Illusion => "illusion",
+        RuneKind::Invisibility => "invisibility",
+        RuneKind::Shield => "shield",
+    }
+}
+
+fn state_line(rest: &[&str]) -> Result<ItemState, String> {
+    use bota_proto::{Attribute, RuneKind};
+    let [subject, state, fields @ ..] = rest else {
+        return Err("state takes an item and a state".to_owned());
+    };
+    let item = subject
+        .strip_prefix("item.")
+        .ok_or_else(|| format!("'{subject}' is no item.<name>"))?;
+    let when = match state.split_once('=') {
+        Some(("rune", art)) => StateWhen::Rune(
+            RuneKind::ALL
+                .into_iter()
+                .find(|k| rune_art(*k) == art)
+                .ok_or_else(|| format!("no rune '{art}'"))?,
+        ),
+        Some(("mode", "strength")) => StateWhen::Mode(Attribute::Strength),
+        Some(("mode", "agility")) => StateWhen::Mode(Attribute::Agility),
+        Some(("mode", "intelligence")) => StateWhen::Mode(Attribute::Intelligence),
+        Some(("ward", "sentry")) => StateWhen::Ward { sentry: true },
+        Some(("ward", "observer")) => StateWhen::Ward { sentry: false },
+        Some(("charges", n)) => StateWhen::Charges(
+            n.parse()
+                .map_err(|_| format!("charges '{n}' is no count"))?,
+        ),
+        _ => return Err(format!("no state '{state}'")),
+    };
+    let f = Fields::of(fields, &["icon", "text"])?;
+    f.exactly::<0>("state's fields")?;
+    Ok(ItemState {
+        item: item.to_owned(),
+        when,
+        icon: f.need("icon")?.to_owned(),
+        text: f.get("text").map(str::to_owned),
+    })
 }
 
 /// A line of `ids.txt`: our id of a kind and the Dota name it stands for.
@@ -469,6 +551,7 @@ fn manifest_line(words: &[&str]) -> Result<Line, String> {
             })
         }
         "fx" => Ok(Line::Fx(rest.iter().map(|w| own(w)).collect())),
+        "state" => state_line(rest).map(Line::State),
         other => Err(format!("no line kind '{other}'")),
     }
 }
@@ -518,8 +601,33 @@ fn id_line(words: &[&str]) -> Result<Id, String> {
 }
 
 /// What no single line shows: a clip of a model nobody lists, a unit drawn with a model that is
-/// not there, an attached model whose parent is not listed, an id named twice.
+/// not there, an attached model whose parent is not listed, a state drawn with a texture or
+/// told in a label that is not listed or of an item ids.txt does not name, an id named twice.
 fn cross_checks(catalog: &Catalog) -> Vec<LineError> {
+    let textures: BTreeSet<&str> = catalog
+        .lines
+        .iter()
+        .filter_map(|l| match l {
+            Line::File(f) if f.kind == FileKind::Texture => Some(f.logical.as_str()),
+            _ => None,
+        })
+        .collect();
+    let labels: BTreeSet<&str> = catalog
+        .lines
+        .iter()
+        .filter_map(|l| match l {
+            Line::Label { key, .. } => Some(key.as_str()),
+            _ => None,
+        })
+        .collect();
+    let items: BTreeSet<&str> = catalog
+        .ids
+        .iter()
+        .filter_map(|id| match id {
+            Id::Item { name, .. } => Some(name.as_str()),
+            _ => None,
+        })
+        .collect();
     let models: BTreeSet<&str> = catalog
         .lines
         .iter()
@@ -554,6 +662,20 @@ fn cross_checks(catalog: &Catalog) -> Vec<LineError> {
                 ..
             }) if !models.contains(parent.as_str()) => {
                 fail(format!("model {logical}: attach={parent} is no model"));
+            }
+            Line::State(st) => {
+                if !items.contains(st.item.as_str()) {
+                    fail(format!("state item.{}: no item of that name", st.item));
+                }
+                if !textures.contains(st.icon.as_str()) {
+                    fail(format!(
+                        "state item.{}: icon={} is no texture",
+                        st.item, st.icon
+                    ));
+                }
+                if let Some(text) = st.text.as_deref().filter(|t| !labels.contains(t)) {
+                    fail(format!("state item.{}: text={text} is no label", st.item));
+                }
             }
             _ => {}
         }
@@ -612,6 +734,14 @@ mod tests {
             ("sound s s.vsnd_c s.wav\n", "no 'event='"),
             ("shop s s.txt s.json\n", "no 'strings='"),
             ("clip nobody idle idle 1.0\n", "no model nobody"),
+            (
+                "state item.bottle mode=wisdom icon=icon.item.bottle\n",
+                "no state 'mode=wisdom'",
+            ),
+            (
+                "state item.bottle charges=1 icon=icon.item.nothing\n",
+                "is no texture",
+            ),
         ] {
             let errors = parse(&format!("{MANIFEST}{typo}"), IDS).expect_err(typo);
             assert!(

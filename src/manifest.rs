@@ -183,6 +183,8 @@ pub struct Manifest {
     pub units: Vec<UnitArt>,
     /// The effects bound to the game's facts (every `fx` line).
     pub fx: Vec<Fx>,
+    /// How items are drawn by their state (every `state` line, in order).
+    pub states: Vec<dbota_import::catalog::ItemState>,
     /// Our ids to Dota names: kind (`item`, `ability`, `hero`, `effect`,
     /// `modifier`: the Dota modifier an effect is), id,
     /// name (for an effect, the logical name of its icon).
@@ -231,6 +233,7 @@ impl Manifest {
                         Err(why) => error!("manifest line 'fx {}': {why}", words.join(" ")),
                     }
                 }
+                CatalogLine::State(state) => manifest.states.push(state.clone()),
                 CatalogLine::Clip(c) => {
                     if let Some(m) = manifest.models.iter_mut().find(|m| m.logical == c.model) {
                         m.clips.push(Clip {

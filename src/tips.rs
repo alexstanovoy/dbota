@@ -354,12 +354,15 @@ fn item_tip(
             .hints
             .push(format!("Ready in {} s", i.cooldown_left.div_ceil(rate)));
     }
-    // A Bottle's rune, in Dota's words, and the seconds before it takes effect by itself.
-    if let Some(rune) = i.rune
-        && let Some(line) = look.texts.label(crate::runes::bottled_key(rune.kind), &[])
+    // The state it is in, in Dota's words (the attribute Power Treads are set to, the rune a
+    // Bottle keeps), and the seconds before a kept rune takes effect by itself.
+    if let Some(line) =
+        crate::item_look::state_text(i, look.manifest).and_then(|key| look.texts.label(key, &[]))
     {
-        let left = rune.ticks_left.div_ceil(rate);
-        content.hints.push(format!("{line} ({left} s)"));
+        content.hints.push(match i.rune {
+            Some(rune) => format!("{line} ({} s)", rune.ticks_left.div_ceil(rate)),
+            None => line,
+        });
     }
     if slot >= bota_client_core::INVENTORY_SLOTS && slot != bota_client_core::TOWN_PORTAL_SLOT {
         content

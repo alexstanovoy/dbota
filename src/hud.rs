@@ -1903,7 +1903,7 @@ fn item_face(
         } else {
             String::new()
         },
-        icon: crate::runes::item_icon(&item, manifest),
+        icon: crate::item_look::icon(&item, manifest),
         look,
         sweep: unit.map_or(0.0, |u| {
             core.derived.wait_left(

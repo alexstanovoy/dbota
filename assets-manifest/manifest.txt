@@ -62,6 +62,11 @@
 #           sound: one of the sounds of that logical name (its variants share it) plays at that spot
 #           cp1: what the particle's second control point is given: sight (how far the wearer gives true sight) |
 #                hitloc (where the wearer's model takes its hits, its attach_hitloc, following it)
+#   state   item.<ids.txt item name> <state> icon=<texture logical> [text=<label key>]
+#           an item drawn by what the wire tells of it (src/item_look.rs): in a slot it is drawn with the icon of its
+#           first line whose state holds, and its tooltip shows that line's text; with none, its own icon. Read and
+#           checked by dbota_import's catalog. state: rune=<rune art> | mode=strength|agility|intelligence | ward=observer|sentry
+#           | charges=<n>
 #   style   <vpk .vcss_c> <define>
 #           a colour one of Dota's stylesheets defines (`@define name: #rrggbb[aa];`), written with
 #           every other to text/styles.json under its name lower-cased, as #rrggbbaa.
@@ -451,7 +456,8 @@ texture portrait.hero.nevermore panorama/images/heroes/npc_dota_hero_nevermore_p
 texture portrait.hero.nevermore.tall panorama/images/heroes/selection/npc_dota_hero_nevermore_png.vtex_c icons/heroes/nevermore_tall.png
 texture minimap.hero.nevermore panorama/images/heroes/icons/npc_dota_hero_nevermore_png.vtex_c icons/minimap/nevermore.png
 
-# --- Icons no script names (the Bottle's states, the fountain's and the towers' auras). The icon of every
+# --- Icons no script names (the states of the Bottle, Power Treads and the Ward Dispenser, the fountain's and the towers'
+# auras). The icon of every
 # item and ability the install's scripts define is imported without a line here, as icons/items/<name>.png and
 # icons/abilities/<name>.png (logical icon.item.<name>, icon.ability.<name>).
 texture icon.ability.fountain_heal panorama/images/spellicons/fountain_heal_png.vtex_c icons/abilities/fountain_heal.png
@@ -468,6 +474,34 @@ texture icon.item.bottle_regeneration panorama/images/items/bottle_regeneration_
 texture icon.item.bottle_illusion panorama/images/items/bottle_illusion_png.vtex_c icons/items/bottle_illusion.png
 texture icon.item.bottle_invisibility panorama/images/items/bottle_invisibility_png.vtex_c icons/items/bottle_invisibility.png
 texture icon.item.bottle_shield panorama/images/items/bottle_shield_png.vtex_c icons/items/bottle_shield.png
+texture icon.item.power_treads_str panorama/images/items/power_treads_str_png.vtex_c icons/items/power_treads_str.png
+texture icon.item.power_treads_agi panorama/images/items/power_treads_agi_png.vtex_c icons/items/power_treads_agi.png
+texture icon.item.power_treads_int panorama/images/items/power_treads_int_png.vtex_c icons/items/power_treads_int.png
+texture icon.item.ward_dispenser_sentry panorama/images/items/ward_dispenser_sentry_png.vtex_c icons/items/ward_dispenser_sentry.png
+
+# An item drawn by its state, as Dota draws it: the first line of the item whose state holds names the icon it is drawn
+# with and the install's words for that state its tooltip shows (state <subject> <state> icon=<texture> [text=<label>]).
+# States: rune=<rune art> (the rune a Bottle keeps), mode=strength|agility|intelligence (the attribute it is set to),
+# ward=observer|sentry (the ward a dispenser plants), charges=<n>. Dota's other state icons are of items bota has not
+# (armlet_active, radiance_inactive, bloodstone_active, buckler_active, ring_of_basilius_active, ring_of_aquila_active,
+# tranquil_boots_active, witch_blade_active, revenants_brooch_active, vambrace_str/agi/int) or of a setting
+# (power_treads_agi_colorblind) or a cosmetic style (*_arcana_alt*).
+state item.bottle rune=water icon=icon.item.bottle_water text=DOTA_Tooltip_Ability_item_bottle_water
+state item.bottle rune=bounty icon=icon.item.bottle_bounty text=DOTA_Tooltip_Ability_item_bottle_bounty
+state item.bottle rune=haste icon=icon.item.bottle_haste text=DOTA_Tooltip_Ability_item_bottle_haste
+state item.bottle rune=doubledamage icon=icon.item.bottle_doubledamage text=DOTA_Tooltip_Ability_item_bottle_double_damage
+state item.bottle rune=arcane icon=icon.item.bottle_arcane text=DOTA_Tooltip_Ability_item_bottle_arcane
+state item.bottle rune=regeneration icon=icon.item.bottle_regeneration text=DOTA_Tooltip_Ability_item_bottle_regeneration
+state item.bottle rune=illusion icon=icon.item.bottle_illusion text=DOTA_Tooltip_Ability_item_bottle_illusion
+state item.bottle rune=invisibility icon=icon.item.bottle_invisibility text=DOTA_Tooltip_Ability_item_bottle_invisible
+state item.bottle rune=shield icon=icon.item.bottle_shield text=DOTA_Tooltip_Ability_item_bottle_shield
+state item.bottle charges=2 icon=icon.item.bottle_medium
+state item.bottle charges=1 icon=icon.item.bottle_small
+state item.bottle charges=0 icon=icon.item.bottle_empty
+state item.power_treads mode=strength icon=icon.item.power_treads_str text=DOTA_Tooltip_Ability_item_power_treads_str
+state item.power_treads mode=agility icon=icon.item.power_treads_agi text=DOTA_Tooltip_Ability_item_power_treads_agi
+state item.power_treads mode=intelligence icon=icon.item.power_treads_int text=DOTA_Tooltip_Ability_item_power_treads_int
+state item.ward_dispenser ward=sentry icon=icon.item.ward_dispenser_sentry
 
 # --- HUD art and the minimap background
 # The Glyph of Fortification buff's icon (modifier_fountain_glyph): Dota's small Glyph.
@@ -1406,6 +1440,9 @@ label resource/localization/abilities_english.txt DOTA_Tooltip_Ability_item_bott
 label resource/localization/abilities_english.txt DOTA_Tooltip_Ability_item_bottle_shield
 label resource/localization/abilities_english.txt DOTA_Tooltip_Ability_item_bottle_arcane
 label resource/localization/abilities_english.txt DOTA_Tooltip_Ability_item_bottle_water
+label resource/localization/abilities_english.txt DOTA_Tooltip_Ability_item_power_treads_str
+label resource/localization/abilities_english.txt DOTA_Tooltip_Ability_item_power_treads_agi
+label resource/localization/abilities_english.txt DOTA_Tooltip_Ability_item_power_treads_int
 label resource/localization/dota_english.txt DOTA_HUD_RadiantBannerPlanted
 label resource/localization/dota_english.txt DOTA_HUD_DireBannerPlanted
 

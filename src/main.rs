@@ -54,6 +54,7 @@ mod import;
 mod input;
 #[cfg(not(target_arch = "wasm32"))]
 mod io_pool;
+mod item_look;
 mod item_menu;
 mod keys;
 mod layers;

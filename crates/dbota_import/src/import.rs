@@ -38,7 +38,7 @@ pub const INDEX: &str = "index.txt";
 pub const MAX_STAMP: u64 = 4096;
 
 /// Bumped when the importer's output changes for the same install; part of a cache's stamp.
-pub const IMPORT_REV: u32 = 25;
+pub const IMPORT_REV: u32 = 26;
 
 /// The manifest this build imports and draws, and its ids.
 pub const MANIFEST: &str = include_str!("../../../assets-manifest/manifest.txt");
@@ -483,7 +483,7 @@ impl Plan {
                 Line::Label { src, key } => labels.push((src.clone(), key.clone())),
                 Line::Style { src, name } => styles.push((src.clone(), name.clone())),
                 Line::Portraits(p) => portraits = Some(p),
-                Line::Clip(_) | Line::Unit(_) | Line::Fx(_) => {}
+                Line::Clip(_) | Line::Unit(_) | Line::Fx(_) | Line::State(_) => {}
             }
         }
         labels.extend(modifier_labels(&catalog.ids));

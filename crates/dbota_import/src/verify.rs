@@ -95,7 +95,7 @@ pub fn verify(catalog: &Catalog, cache: &Path) -> Verified {
                     );
                 }
             }
-            Line::Clip(_) | Line::Fx(_) => {}
+            Line::Clip(_) | Line::Fx(_) | Line::State(_) => {}
         }
     }
     verified
