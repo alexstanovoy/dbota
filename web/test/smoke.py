@@ -946,7 +946,7 @@ def assert_in(text, part):
 # drawn at the viewport's size with the interface at its default scale, so they stay put.
 CLICK_LOBBIES = (329, 22)
 CLICK_REPLAYS = (505, 22)
-CLICK_READY = (310, 325)
+CLICK_START = (310, 567)
 
 
 def wait_port(port, seconds=60):
@@ -1059,7 +1059,7 @@ def check_replays_page(directory, server_bin, radovid_bin, shots=False):
             def step(wait=4000):
                 page.wait_for_timeout(wait)
 
-            # First visit: register, make a practice lobby, ready up; then close the page.
+            # First visit: register, make a practice lobby, START NOW; then close the page.
             page.goto(url)
             wait_console(page, console, r"replays: kept in the browser's opfs storage", 600, "the replay storage")
             step(15000)
@@ -1086,7 +1086,7 @@ def check_replays_page(directory, server_bin, radovid_bin, shots=False):
             page.keyboard.press("Enter")
             step(6000)
             shot("5-lobby")
-            page.mouse.click(*CLICK_READY)
+            page.mouse.click(*CLICK_START)
             wait_console(page, console, r"match known: tick \d+", 600, "the practice match")
             step(5000)
             shot("6-game")
