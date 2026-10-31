@@ -4,7 +4,8 @@
 //!   cache the page's worker built from the player's own Dota install, in the Origin Private
 //!   File System. `files` is its index, `small` the files read synchronously at start, `read`
 //!   an async function giving a file's bytes (or null).
-//! - `{mode: "http"}`: a cache a developer serves next to the page (`web/README.md`).
+//! - `{mode: "http", files?: Map(path -> size)}`: a cache a developer serves next to the page
+//!   (`web/README.md`), with the index.txt it holds when there is one.
 //!
 //! Without it, the client draws its built-in stand-ins.
 
@@ -63,13 +64,27 @@ pub fn is_opfs() -> bool {
     field("mode").and_then(|m| m.as_string()).as_deref() == Some("opfs")
 }
 
-/// Whether the cache has the file `rel`: by its index in private storage; every listed file
-/// is taken to be there for a served cache.
+/// Whether the cache has the file `rel`: by its index, which the private storage and a served
+/// cache with an index.txt publish; every file is taken to be there for a served cache without.
 pub fn present(rel: &str) -> bool {
-    if !is_opfs() {
-        return available();
+    match field("files") {
+        Some(files) => Map::from(files).has(&rel.into()),
+        None => available(),
     }
-    field("files").is_some_and(|files| Map::from(files).has(&rel.into()))
+}
+
+/// The files of the cache's index whose path starts with `prefix` (none for a served cache
+/// without an index).
+pub fn listed(prefix: &str) -> Vec<String> {
+    let Some(files) = field("files") else {
+        return Vec::new();
+    };
+    Map::from(files)
+        .keys()
+        .into_iter()
+        .filter_map(|key| key.ok()?.as_string())
+        .filter(|path| path.starts_with(prefix))
+        .collect()
 }
 
 /// A file the page loaded into memory for the client's synchronous reads.

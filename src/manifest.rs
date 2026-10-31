@@ -259,6 +259,21 @@ impl Manifest {
                 _ => {}
             }
         }
+        // The icons of every item and ability of the install, which the importer makes under the
+        // names the install's scripts give: `icons/items/<name>.png` is `icon.item.<name>`.
+        for rel in cached_icons(root) {
+            let logical = rel
+                .strip_prefix("icons/items/")
+                .map(|n| ("icon.item.", n))
+                .or_else(|| {
+                    rel.strip_prefix("icons/abilities/")
+                        .map(|n| ("icon.ability.", n))
+                })
+                .and_then(|(kind, name)| Some(format!("{kind}{}", name.strip_suffix(".png")?)));
+            if let Some(logical) = logical {
+                manifest.files.push((logical, rel));
+            }
+        }
         for id in &catalog.ids {
             match id {
                 Id::Item { id, name } => manifest.ids.push(("item".to_owned(), *id, name.clone())),
@@ -413,6 +428,27 @@ impl Manifest {
                 if self.map.is_some() { "yes" } else { "no" }
             ),
         }
+    }
+}
+
+/// The icon files the cache at `root` lists in its index, relative to the cache.
+fn cached_icons(root: &Path) -> Vec<String> {
+    #[cfg(target_arch = "wasm32")]
+    {
+        let _ = root;
+        crate::webcache::listed("icons/")
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let Ok(index) = std::fs::read_to_string(root.join(dbota_import::cache_dir::INDEX)) else {
+            return Vec::new();
+        };
+        index
+            .lines()
+            .filter_map(|line| line.strip_prefix("file ")?.split_whitespace().nth(1))
+            .filter(|path| path.starts_with("icons/"))
+            .map(str::to_owned)
+            .collect()
     }
 }
 

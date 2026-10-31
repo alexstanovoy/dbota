@@ -36,6 +36,8 @@ Five more checks need no install and run on pages built with stand-ins (`?assets
     PYTHONPATH=temp/pwlib python3 web/test/smoke.py --replay-page temp/web-replay \
         --live-page temp/web-live --server temp/bota-target/release/bota_server --startup-page temp/web-live
 
+* `--served-page` (any build): with `?cache=http` the page fetches the served cache's index.txt and
+  publishes it to the client (without one, the cache is taken whole).
 * `--startup-page` (any build): the page loads the WebGPU client, or the WebGL2 one with
   `?gpu=webgl2`, and each draws; a browser without graphics, a renderer that cannot be made (the
   page then offers the WebGL2 client, which runs) and a client out of memory each end with a
@@ -268,6 +270,31 @@ def import_smoke(args, install):
         assert "cancelled" in page.inner_text("#status"), page.inner_text("#status")
         assert page.evaluate("async () => (await (await import('./cache.js')).readState()) === null")
         print("cancel leaves no copy")
+
+        # A write the browser refuses ends the import: the copy is unfinished (no index, no
+        # stamp), the page says so, and the question comes back. The worker is served with its
+        # 300th write failing.
+        def failing_worker(route):
+            body = route.fetch().text()
+            body = body.replace(
+                "async function writeFile(path, bytes) {",
+                'let writes = 0;\nasync function writeFile(path, bytes) {\n'
+                '  if (++writes === 300) throw new Error("injected: the write failed");',
+                1,
+            )
+            assert "injected" in body, "the worker's writeFile changed"
+            route.fulfill(body=body, content_type="text/javascript")
+
+        page.route("**/import_worker.js", failing_worker)
+        with page.expect_file_chooser() as chooser:
+            page.click("#pick")
+        chooser.value.set_files(str(folder))
+        page.wait_for_selector("#grant:not([hidden])", timeout=300000)
+        assert "injected" in page.inner_text("#status"), page.inner_text("#status")
+        assert page.evaluate("async () => (await (await import('./cache.js')).readState()) === null")
+        assert page.evaluate("() => globalThis.dbota_cache === undefined")
+        page.unroute("**/import_worker.js")
+        print("a failed write ends the import, unfinished")
 
         started = time.time()
         with page.expect_file_chooser() as chooser:
@@ -692,6 +719,48 @@ NO_WEBGPU_CANVAS = """
   HTMLCanvasElement.prototype.getContext = function (type, options) {
     return type === "webgpu" ? null : get.call(this, type, options);
   };"""
+
+
+def check_served_cache(directory):
+    """A cache a developer serves next to the page (`?cache=http`) publishes its index.txt, as
+    the private storage's cache does, so the client knows which files are there (the icons of
+    every item and ability among them); one without an index is still taken whole."""
+    index = "dbota-cache 1 rev 13\nfile 100 icons/items/blink.png\nfile 90 icons/abilities/nevermore_requiem.png small\nfile 5 text/labels.json small\n"
+
+    class Served(Quiet):
+        text = None
+
+        def do_GET(self):
+            if self.path == "/cache/index.txt" and self.text is not None:
+                body = self.text.encode()
+                self.send_response(200)
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+                return
+            super().do_GET()
+
+    for text in (index, None):
+        Served.text = text
+        with sync_playwright() as p:
+            server = serve(directory, Served)
+            base = f"http://127.0.0.1:{server.server_address[1]}/"
+            browser = p.chromium.launch(args=BROWSER_ARGS)
+            page = browser.new_context(viewport={"width": 1280, "height": 720}).new_page()
+            page.goto(base + "?cache=http")
+            page.wait_for_function("() => globalThis.dbota_cache && globalThis.dbota_cache.mode === 'http'", timeout=60000)
+            got = page.evaluate(
+                "() => { const f = globalThis.dbota_cache.files; return f ? [...f.entries()] : null; }"
+            )
+            browser.close()
+            server.shutdown()
+        if text is None:
+            assert got is None, f"an index from a server without one: {got}"
+            print("a served cache without an index is taken whole")
+        else:
+            want = [["icons/items/blink.png", 100], ["icons/abilities/nevermore_requiem.png", 90], ["text/labels.json", 5]]
+            assert got == want, got
+            print("a served cache publishes its index")
 
 
 def check_startup_page(directory):
@@ -1253,6 +1322,7 @@ def main():
     ap.add_argument("--fullscreen-page", type=pathlib.Path, help="a replay build opened on the Video settings")
     ap.add_argument("--live-page", type=pathlib.Path, help="a build without a replay (the main menu)")
     ap.add_argument("--server", help="a bota_server built with the websocket feature, for --live-page")
+    ap.add_argument("--served-page", type=pathlib.Path, help="any build: ?cache=http publishes the served cache's index")
     ap.add_argument("--startup-page", type=pathlib.Path, help="any build: the client picked, failures shown")
     ap.add_argument("--keys-page", type=pathlib.Path, help="any page, even web/ unbuilt: whose keys are whose")
     ap.add_argument("--cursor-page", type=pathlib.Path, help="a replay build: the cursor kept in a match")
@@ -1275,6 +1345,8 @@ def main():
         if not (args.cache_zip and args.cache_folder):
             sys.exit("--prepared-page needs --cache-zip and --cache-folder")
         check_prepared_page(args.prepared_page, args.cache_zip, args.cache_folder)
+    if args.served_page:
+        check_served_cache(args.served_page)
     if args.startup_page:
         check_startup_page(args.startup_page)
     if args.keys_page:

@@ -385,7 +385,7 @@ async function main() {
   };
   if (query.get("assets") === "none") return startGame();
   if (query.get("cache") === "http") {
-    globalThis.dbota_cache = { mode: "http" };
+    await within("The served cache", cache.publishServed());
     return startGame();
   }
   if (!(await cache.supported())) {

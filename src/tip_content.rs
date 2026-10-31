@@ -601,8 +601,9 @@ mod tests {
         let root = std::env::var_os("DBOTA_ASSETS").map_or_else(
             || {
                 let home = std::env::var_os("HOME").expect("HOME");
-                let version = include_str!("../assets-manifest/version").trim();
-                std::path::PathBuf::from(home).join(format!(".cache/dbota/v{version}"))
+                std::path::PathBuf::from(home)
+                    .join(".cache/dbota")
+                    .join(dbota_import::import::folder_name())
             },
             std::path::PathBuf::from,
         );

@@ -1,6 +1,6 @@
 # dbota asset manifest: every Valve asset the client uses, converted by `dbota import` (and the
-# browser's import) into the cache ($DBOTA_ASSETS, default ~/.cache/dbota/v<N>, N being the
-# version in assets-manifest/version). Outputs are relative to the cache root.
+# browser's import) into the cache ($DBOTA_ASSETS, default ~/.cache/dbota/<fingerprint>, see `dbota
+# cache-dir`). Outputs are relative to the cache root.
 #
 # Line kinds (whitespace-separated, '#' starts a comment):
 #   model   <logical> <vpk .vmdl_c> <out .glb> [anims=a,b,c] [meshes=m,n] [attach=<model>] [skin=<material group>] [model_scale=x]
@@ -420,143 +420,10 @@ fx modifier.modifier_bottle_regeneration.worn at=unit particle=item.bottle sound
 fx item.bottle.store at=caster sound=sound.bottle.cork
 
 # --- Item icons (88x64, a few narrower), every Dota item name in ids.txt
-texture icon.item.boots panorama/images/items/boots_png.vtex_c icons/items/boots.png
-texture icon.item.clarity panorama/images/items/clarity_png.vtex_c icons/items/clarity.png
-texture icon.item.flask panorama/images/items/flask_png.vtex_c icons/items/flask.png
-texture icon.item.branches panorama/images/items/branches_png.vtex_c icons/items/branches.png
-texture icon.item.ward_observer panorama/images/items/ward_observer_png.vtex_c icons/items/ward_observer.png
-texture icon.item.quelling_blade panorama/images/items/quelling_blade_png.vtex_c icons/items/quelling_blade.png
-texture icon.item.ward_sentry panorama/images/items/ward_sentry_png.vtex_c icons/items/ward_sentry.png
-texture icon.item.tango panorama/images/items/tango_png.vtex_c icons/items/tango.png
-texture icon.item.tpscroll panorama/images/items/tpscroll_png.vtex_c icons/items/tpscroll.png
-texture icon.item.circlet panorama/images/items/circlet_png.vtex_c icons/items/circlet.png
-texture icon.item.gauntlets panorama/images/items/gauntlets_png.vtex_c icons/items/gauntlets.png
-texture icon.item.slippers panorama/images/items/slippers_png.vtex_c icons/items/slippers.png
-texture icon.item.mantle panorama/images/items/mantle_png.vtex_c icons/items/mantle.png
-texture icon.item.belt_of_strength panorama/images/items/belt_of_strength_png.vtex_c icons/items/belt_of_strength.png
-texture icon.item.boots_of_elves panorama/images/items/boots_of_elves_png.vtex_c icons/items/boots_of_elves.png
-texture icon.item.robe panorama/images/items/robe_png.vtex_c icons/items/robe.png
-texture icon.item.ogre_axe panorama/images/items/ogre_axe_png.vtex_c icons/items/ogre_axe.png
-texture icon.item.blade_of_alacrity panorama/images/items/blade_of_alacrity_png.vtex_c icons/items/blade_of_alacrity.png
-texture icon.item.staff_of_wizardry panorama/images/items/staff_of_wizardry_png.vtex_c icons/items/staff_of_wizardry.png
-texture icon.item.gloves panorama/images/items/gloves_png.vtex_c icons/items/gloves.png
-texture icon.item.blades_of_attack panorama/images/items/blades_of_attack_png.vtex_c icons/items/blades_of_attack.png
-texture icon.item.broadsword panorama/images/items/broadsword_png.vtex_c icons/items/broadsword.png
-texture icon.item.quarterstaff panorama/images/items/quarterstaff_png.vtex_c icons/items/quarterstaff.png
-texture icon.item.ring_of_protection panorama/images/items/ring_of_protection_png.vtex_c icons/items/ring_of_protection.png
-texture icon.item.chainmail panorama/images/items/chainmail_png.vtex_c icons/items/chainmail.png
-texture icon.item.ring_of_regen panorama/images/items/ring_of_regen_png.vtex_c icons/items/ring_of_regen.png
-texture icon.item.sobi_mask panorama/images/items/sobi_mask_png.vtex_c icons/items/sobi_mask.png
-texture icon.item.vitality_booster panorama/images/items/vitality_booster_png.vtex_c icons/items/vitality_booster.png
-texture icon.item.energy_booster panorama/images/items/energy_booster_png.vtex_c icons/items/energy_booster.png
-texture icon.item.power_treads panorama/images/items/power_treads_png.vtex_c icons/items/power_treads.png
-texture icon.item.phase_boots panorama/images/items/phase_boots_png.vtex_c icons/items/phase_boots.png
-texture icon.item.blink panorama/images/items/blink_png.vtex_c icons/items/blink.png
-texture icon.item.bracer panorama/images/items/bracer_png.vtex_c icons/items/bracer.png
-texture icon.item.wraith_band panorama/images/items/wraith_band_png.vtex_c icons/items/wraith_band.png
-texture icon.item.null_talisman panorama/images/items/null_talisman_png.vtex_c icons/items/null_talisman.png
-texture icon.item.magic_stick panorama/images/items/magic_stick_png.vtex_c icons/items/magic_stick.png
-texture icon.item.magic_wand panorama/images/items/magic_wand_png.vtex_c icons/items/magic_wand.png
-texture icon.item.recipe panorama/images/items/recipe_png.vtex_c icons/items/recipe.png
-texture icon.item.enchanted_mango panorama/images/items/enchanted_mango_png.vtex_c icons/items/enchanted_mango.png
-texture icon.item.wind_lace panorama/images/items/wind_lace_png.vtex_c icons/items/wind_lace.png
-texture icon.item.blood_grenade panorama/images/items/blood_grenade_png.vtex_c icons/items/blood_grenade.png
-texture icon.item.ward_dispenser panorama/images/items/ward_dispenser_png.vtex_c icons/items/ward_dispenser.png
 # Buff bar icons only.
-texture icon.ability.fountain_heal panorama/images/spellicons/fountain_heal_png.vtex_c icons/abilities/fountain_heal.png
-texture icon.ability.flagbearer_creep_aura_effect panorama/images/spellicons/flagbearer_creep_aura_effect_png.vtex_c icons/abilities/flagbearer_creep_aura_effect.png
-texture icon.ability.tower_armor_aura panorama/images/spellicons/tower_armor_aura_png.vtex_c icons/abilities/tower_armor_aura.png
-texture icon.ability.backdoor_protection panorama/images/spellicons/backdoor_protection_png.vtex_c icons/abilities/backdoor_protection.png
-texture icon.ability.ursa_fury_swipes panorama/images/spellicons/ursa_fury_swipes_png.vtex_c icons/abilities/ursa_fury_swipes.png
-texture icon.item.bottle panorama/images/items/bottle_png.vtex_c icons/items/bottle.png
-texture icon.item.headdress panorama/images/items/headdress_png.vtex_c icons/items/headdress.png
-texture icon.item.eagle panorama/images/items/eagle_png.vtex_c icons/items/eagle.png
-texture icon.item.claymore panorama/images/items/claymore_png.vtex_c icons/items/claymore.png
-texture icon.item.talisman_of_evasion panorama/images/items/talisman_of_evasion_png.vtex_c icons/items/talisman_of_evasion.png
-texture icon.item.butterfly panorama/images/items/butterfly_png.vtex_c icons/items/butterfly.png
-texture icon.item.javelin panorama/images/items/javelin_png.vtex_c icons/items/javelin.png
-texture icon.item.demon_edge panorama/images/items/demon_edge_png.vtex_c icons/items/demon_edge.png
-texture icon.item.blitz_knuckles panorama/images/items/blitz_knuckles_png.vtex_c icons/items/blitz_knuckles.png
-texture icon.item.monkey_king_bar panorama/images/items/monkey_king_bar_png.vtex_c icons/items/monkey_king_bar.png
 
 # --- Ability icons (128x128), every ability in ids.txt (nevermore_frenzy = Feast of Souls)
-texture icon.ability.pudge_meat_hook panorama/images/spellicons/pudge_meat_hook_png.vtex_c icons/abilities/pudge_meat_hook.png
-texture icon.ability.pudge_rot panorama/images/spellicons/pudge_rot_png.vtex_c icons/abilities/pudge_rot.png
-texture icon.ability.pudge_flesh_heap panorama/images/spellicons/pudge_flesh_heap_png.vtex_c icons/abilities/pudge_flesh_heap.png
-texture icon.ability.pudge_innate_graft_flesh panorama/images/spellicons/pudge_innate_graft_flesh_png.vtex_c icons/abilities/pudge_innate_graft_flesh.png
-texture icon.ability.pudge_dismember panorama/images/spellicons/pudge_dismember_png.vtex_c icons/abilities/pudge_dismember.png
-texture icon.ability.courier_burst panorama/images/spellicons/courier_burst_png.vtex_c icons/abilities/courier_burst.png
-texture icon.ability.courier_return_to_base panorama/images/spellicons/courier_return_to_base_png.vtex_c icons/abilities/courier_return_to_base.png
-texture icon.ability.courier_take_stash_items panorama/images/spellicons/courier_take_stash_items_png.vtex_c icons/abilities/courier_take_stash_items.png
-texture icon.ability.courier_transfer_items panorama/images/spellicons/courier_transfer_items_png.vtex_c icons/abilities/courier_transfer_items.png
-texture icon.ability.courier_shield panorama/images/spellicons/courier_shield_png.vtex_c icons/abilities/courier_shield.png
-texture icon.ability.nevermore_shadowraze1 panorama/images/spellicons/nevermore_shadowraze1_png.vtex_c icons/abilities/nevermore_shadowraze1.png
-texture icon.ability.nevermore_shadowraze2 panorama/images/spellicons/nevermore_shadowraze2_png.vtex_c icons/abilities/nevermore_shadowraze2.png
-texture icon.ability.nevermore_shadowraze3 panorama/images/spellicons/nevermore_shadowraze3_png.vtex_c icons/abilities/nevermore_shadowraze3.png
-texture icon.ability.nevermore_requiem panorama/images/spellicons/nevermore_requiem_png.vtex_c icons/abilities/nevermore_requiem.png
-texture icon.ability.nevermore_necromastery panorama/images/spellicons/nevermore_necromastery_png.vtex_c icons/abilities/nevermore_necromastery.png
-texture icon.ability.nevermore_dark_lord panorama/images/spellicons/nevermore_dark_lord_png.vtex_c icons/abilities/nevermore_dark_lord.png
-texture icon.ability.nevermore_frenzy panorama/images/spellicons/nevermore_frenzy_png.vtex_c icons/abilities/nevermore_frenzy.png
 # Neutral creep abilities (ids 17..76), also the buff icons of their effects.
-texture icon.ability.kobold_tunneler_prospecting panorama/images/spellicons/kobold_tunneler_prospecting_png.vtex_c icons/abilities/kobold_tunneler_prospecting.png
-texture icon.ability.kobold_disarm panorama/images/spellicons/kobold_disarm_png.vtex_c icons/abilities/kobold_disarm.png
-texture icon.ability.kobold_taskmaster_speed_aura panorama/images/spellicons/kobold_taskmaster_speed_aura_png.vtex_c icons/abilities/kobold_taskmaster_speed_aura.png
-texture icon.ability.berserker_troll_break panorama/images/spellicons/berserker_troll_break_png.vtex_c icons/abilities/berserker_troll_break.png
-texture icon.ability.creep_piercing panorama/images/spellicons/creep_piercing_png.vtex_c icons/abilities/creep_piercing.png
-texture icon.ability.forest_troll_high_priest_heal panorama/images/spellicons/forest_troll_high_priest_heal_png.vtex_c icons/abilities/forest_troll_high_priest_heal.png
-texture icon.ability.forest_troll_high_priest_heal_amp_aura panorama/images/spellicons/forest_troll_high_priest_heal_amp_aura_png.vtex_c icons/abilities/forest_troll_high_priest_heal_amp_aura.png
-texture icon.ability.gnoll_assassin_envenomed_weapon panorama/images/spellicons/gnoll_assassin_envenomed_weapon_png.vtex_c icons/abilities/gnoll_assassin_envenomed_weapon.png
-texture icon.ability.fel_beast_haunt panorama/images/spellicons/fel_beast_haunt_png.vtex_c icons/abilities/fel_beast_haunt.png
-texture icon.ability.ghost_frost_attack panorama/images/spellicons/ghost_frost_attack_png.vtex_c icons/abilities/ghost_frost_attack.png
-texture icon.ability.harpy_scout_take_off panorama/images/spellicons/harpy_scout_take_off_png.vtex_c icons/abilities/harpy_scout_take_off.png
-texture icon.ability.harpy_storm_chain_lightning panorama/images/spellicons/harpy_storm_chain_lightning_png.vtex_c icons/abilities/harpy_storm_chain_lightning.png
-texture icon.ability.mudgolem_cloak_aura panorama/images/spellicons/mudgolem_cloak_aura_png.vtex_c icons/abilities/mudgolem_cloak_aura.png
-texture icon.ability.centaur_khan_war_stomp panorama/images/spellicons/centaur_khan_war_stomp_png.vtex_c icons/abilities/centaur_khan_war_stomp.png
-texture icon.ability.giant_wolf_intimidate panorama/images/spellicons/giant_wolf_intimidate_png.vtex_c icons/abilities/giant_wolf_intimidate.png
-texture icon.ability.alpha_wolf_critical_strike panorama/images/spellicons/alpha_wolf_critical_strike_png.vtex_c icons/abilities/alpha_wolf_critical_strike.png
-texture icon.ability.alpha_wolf_command_aura panorama/images/spellicons/alpha_wolf_command_aura_png.vtex_c icons/abilities/alpha_wolf_command_aura.png
-texture icon.ability.satyr_trickster_purge panorama/images/spellicons/satyr_trickster_purge_png.vtex_c icons/abilities/satyr_trickster_purge.png
-texture icon.ability.satyr_soulstealer_mana_burn panorama/images/spellicons/satyr_soulstealer_mana_burn_png.vtex_c icons/abilities/satyr_soulstealer_mana_burn.png
-texture icon.ability.forest_troll_high_priest_mana_aura panorama/images/spellicons/forest_troll_high_priest_mana_aura_png.vtex_c icons/abilities/forest_troll_high_priest_mana_aura.png
-texture icon.ability.satyr_hellcaller_shockwave panorama/images/spellicons/satyr_hellcaller_shockwave_png.vtex_c icons/abilities/satyr_hellcaller_shockwave.png
-texture icon.ability.satyr_hellcaller_unholy_aura panorama/images/spellicons/satyr_hellcaller_unholy_aura_png.vtex_c icons/abilities/satyr_hellcaller_unholy_aura.png
-texture icon.ability.ogre_bruiser_ogre_smash panorama/images/spellicons/ogre_bruiser_ogre_smash_png.vtex_c icons/abilities/ogre_bruiser_ogre_smash.png
-texture icon.ability.ogre_magi_frost_armor panorama/images/spellicons/ogre_magi_frost_armor_png.vtex_c icons/abilities/ogre_magi_frost_armor.png
-texture icon.ability.mud_golem_hurl_boulder panorama/images/spellicons/mud_golem_hurl_boulder_png.vtex_c icons/abilities/mud_golem_hurl_boulder.png
-texture icon.ability.mud_golem_rock_destroy panorama/images/spellicons/mud_golem_rock_destroy_png.vtex_c icons/abilities/mud_golem_rock_destroy.png
-texture icon.ability.centaur_khan_endurance_aura panorama/images/spellicons/centaur_khan_endurance_aura_png.vtex_c icons/abilities/centaur_khan_endurance_aura.png
-texture icon.ability.furbolg_enrage_attack_speed panorama/images/spellicons/furbolg_enrage_attack_speed_png.vtex_c icons/abilities/furbolg_enrage_attack_speed.png
-texture icon.ability.polar_furbolg_ursa_warrior_thunder_clap panorama/images/spellicons/polar_furbolg_ursa_warrior_thunder_clap_png.vtex_c icons/abilities/polar_furbolg_ursa_warrior_thunder_clap.png
-texture icon.ability.furbolg_enrage_damage panorama/images/spellicons/furbolg_enrage_damage_png.vtex_c icons/abilities/furbolg_enrage_damage.png
-texture icon.ability.enraged_wildkin_tornado panorama/images/spellicons/enraged_wildkin_tornado_png.vtex_c icons/abilities/enraged_wildkin_tornado.png
-texture icon.ability.enraged_wildkin_hurricane panorama/images/spellicons/enraged_wildkin_hurricane_png.vtex_c icons/abilities/enraged_wildkin_hurricane.png
-texture icon.ability.enraged_wildkin_toughness_aura panorama/images/spellicons/enraged_wildkin_toughness_aura_png.vtex_c icons/abilities/enraged_wildkin_toughness_aura.png
-texture icon.ability.dark_troll_warlord_ensnare panorama/images/spellicons/dark_troll_warlord_ensnare_png.vtex_c icons/abilities/dark_troll_warlord_ensnare.png
-texture icon.ability.dark_troll_warlord_raise_dead panorama/images/spellicons/dark_troll_warlord_raise_dead_png.vtex_c icons/abilities/dark_troll_warlord_raise_dead.png
-texture icon.ability.warpine_raider_seed_shot panorama/images/spellicons/warpine_raider_seed_shot_png.vtex_c icons/abilities/warpine_raider_seed_shot.png
-texture icon.ability.black_drake_magic_amplification_aura panorama/images/spellicons/black_drake_magic_amplification_aura_png.vtex_c icons/abilities/black_drake_magic_amplification_aura.png
-texture icon.ability.black_dragon_fireball panorama/images/spellicons/black_dragon_fireball_png.vtex_c icons/abilities/black_dragon_fireball.png
-texture icon.ability.black_dragon_splash_attack panorama/images/spellicons/black_dragon_splash_attack_png.vtex_c icons/abilities/black_dragon_splash_attack.png
-texture icon.ability.black_dragon_dragonhide_aura panorama/images/spellicons/black_dragon_dragonhide_aura_png.vtex_c icons/abilities/black_dragon_dragonhide_aura.png
-texture icon.ability.ancient_rock_golem_weakening_aura panorama/images/spellicons/ancient_rock_golem_weakening_aura_png.vtex_c icons/abilities/ancient_rock_golem_weakening_aura.png
-texture icon.ability.granite_golem_hp_aura panorama/images/spellicons/granite_golem_hp_aura_png.vtex_c icons/abilities/granite_golem_hp_aura.png
-texture icon.ability.big_thunder_lizard_wardrums_aura panorama/images/spellicons/big_thunder_lizard_wardrums_aura_png.vtex_c icons/abilities/big_thunder_lizard_wardrums_aura.png
-texture icon.ability.big_thunder_lizard_slam panorama/images/spellicons/big_thunder_lizard_slam_png.vtex_c icons/abilities/big_thunder_lizard_slam.png
-texture icon.ability.big_thunder_lizard_frenzy panorama/images/spellicons/big_thunder_lizard_frenzy_png.vtex_c icons/abilities/big_thunder_lizard_frenzy.png
-texture icon.ability.frostbitten_golem_time_warp_aura panorama/images/spellicons/frostbitten_golem_time_warp_aura_png.vtex_c icons/abilities/frostbitten_golem_time_warp_aura.png
-texture icon.ability.ice_shaman_incendiary_bomb panorama/images/spellicons/ice_shaman_incendiary_bomb_png.vtex_c icons/abilities/ice_shaman_incendiary_bomb.png
-texture icon.ability.spawnlord_aura panorama/images/spellicons/spawnlord_aura_png.vtex_c icons/abilities/spawnlord_aura.png
-texture icon.ability.spawnlord_master_stomp panorama/images/spellicons/spawnlord_master_stomp_png.vtex_c icons/abilities/spawnlord_master_stomp.png
-texture icon.ability.spawnlord_master_freeze panorama/images/spellicons/spawnlord_master_freeze_png.vtex_c icons/abilities/spawnlord_master_freeze.png
-texture icon.ability.frogmen_riverborn_aura panorama/images/spellicons/frogmen_riverborn_aura_png.vtex_c icons/abilities/frogmen_riverborn_aura.png
-texture icon.ability.frogmen_arm_of_the_deep panorama/images/spellicons/frogmen_arm_of_the_deep_png.vtex_c icons/abilities/frogmen_arm_of_the_deep.png
-texture icon.ability.frogmen_tendrils_of_the_deep panorama/images/spellicons/frogmen_tendrils_of_the_deep_png.vtex_c icons/abilities/frogmen_tendrils_of_the_deep.png
-texture icon.ability.frogmen_congregation_of_the_deep panorama/images/spellicons/frogmen_congregation_of_the_deep_png.vtex_c icons/abilities/frogmen_congregation_of_the_deep.png
-texture icon.ability.frogmen_water_bubble_small panorama/images/spellicons/frogmen_water_bubble_small_png.vtex_c icons/abilities/frogmen_water_bubble_small.png
-texture icon.ability.frogmen_water_bubble_medium panorama/images/spellicons/frogmen_water_bubble_medium_png.vtex_c icons/abilities/frogmen_water_bubble_medium.png
-texture icon.ability.frogmen_water_bubble_large panorama/images/spellicons/frogmen_water_bubble_large_png.vtex_c icons/abilities/frogmen_water_bubble_large.png
-texture icon.ability.hill_troll_rally panorama/images/spellicons/hill_troll_rally_png.vtex_c icons/abilities/hill_troll_rally.png
-texture icon.ability.tornado_tempest panorama/images/spellicons/tornado_tempest_png.vtex_c icons/abilities/tornado_tempest.png
 
 portraits portraits scripts/npc/portraits.txt models/portraits.txt
 
@@ -567,6 +434,24 @@ texture minimap.hero.pudge panorama/images/heroes/icons/npc_dota_hero_pudge_png.
 texture portrait.hero.nevermore panorama/images/heroes/npc_dota_hero_nevermore_png.vtex_c icons/heroes/nevermore.png
 texture portrait.hero.nevermore.tall panorama/images/heroes/selection/npc_dota_hero_nevermore_png.vtex_c icons/heroes/nevermore_tall.png
 texture minimap.hero.nevermore panorama/images/heroes/icons/npc_dota_hero_nevermore_png.vtex_c icons/minimap/nevermore.png
+
+# --- Icons no script names (the Bottle's states, the fountain's and the towers' auras). The icon of every
+# item and ability the install's scripts define is imported without a line here, as icons/items/<name>.png and
+# icons/abilities/<name>.png (logical icon.item.<name>, icon.ability.<name>).
+texture icon.ability.fountain_heal panorama/images/spellicons/fountain_heal_png.vtex_c icons/abilities/fountain_heal.png
+texture icon.ability.tower_armor_aura panorama/images/spellicons/tower_armor_aura_png.vtex_c icons/abilities/tower_armor_aura.png
+texture icon.item.bottle_medium panorama/images/items/bottle_medium_png.vtex_c icons/items/bottle_medium.png
+texture icon.item.bottle_small panorama/images/items/bottle_small_png.vtex_c icons/items/bottle_small.png
+texture icon.item.bottle_empty panorama/images/items/bottle_empty_png.vtex_c icons/items/bottle_empty.png
+texture icon.item.bottle_water panorama/images/items/bottle_water_png.vtex_c icons/items/bottle_water.png
+texture icon.item.bottle_bounty panorama/images/items/bottle_bounty_png.vtex_c icons/items/bottle_bounty.png
+texture icon.item.bottle_haste panorama/images/items/bottle_haste_png.vtex_c icons/items/bottle_haste.png
+texture icon.item.bottle_doubledamage panorama/images/items/bottle_doubledamage_png.vtex_c icons/items/bottle_doubledamage.png
+texture icon.item.bottle_arcane panorama/images/items/bottle_arcane_png.vtex_c icons/items/bottle_arcane.png
+texture icon.item.bottle_regeneration panorama/images/items/bottle_regeneration_png.vtex_c icons/items/bottle_regeneration.png
+texture icon.item.bottle_illusion panorama/images/items/bottle_illusion_png.vtex_c icons/items/bottle_illusion.png
+texture icon.item.bottle_invisibility panorama/images/items/bottle_invisibility_png.vtex_c icons/items/bottle_invisibility.png
+texture icon.item.bottle_shield panorama/images/items/bottle_shield_png.vtex_c icons/items/bottle_shield.png
 
 # --- HUD art and the minimap background
 # The Glyph of Fortification buff's icon (modifier_fountain_glyph): Dota's small Glyph.
@@ -1379,33 +1264,6 @@ clip rune.shield.model idle rune_invisibility_idle 4.000
 # (goldxp art is the bounty's); Roshan's and the Tormentor's abilities (their hidden passives roshan_devotion,
 # roshan_inherent_buffs and miniboss_inherent_buffs have no icon); the hero's hidden channels on a Watcher
 # (ability_lamp_use wears watcher_channel) and an Outpost (ability_capture); the Shrine's ability_xp_fountain has none.
-texture icon.item.aegis panorama/images/items/aegis_png.vtex_c icons/items/aegis.png
-texture icon.item.cheese panorama/images/items/cheese_png.vtex_c icons/items/cheese.png
-texture icon.item.refresher_shard panorama/images/items/refresher_shard_png.vtex_c icons/items/refresher_shard.png
-texture icon.item.roshans_banner panorama/images/items/roshans_banner_png.vtex_c icons/items/roshans_banner.png
-texture icon.item.bottle_medium panorama/images/items/bottle_medium_png.vtex_c icons/items/bottle_medium.png
-texture icon.item.bottle_small panorama/images/items/bottle_small_png.vtex_c icons/items/bottle_small.png
-texture icon.item.bottle_empty panorama/images/items/bottle_empty_png.vtex_c icons/items/bottle_empty.png
-texture icon.item.bottle_water panorama/images/items/bottle_water_png.vtex_c icons/items/bottle_water.png
-texture icon.item.bottle_bounty panorama/images/items/bottle_bounty_png.vtex_c icons/items/bottle_bounty.png
-texture icon.item.bottle_haste panorama/images/items/bottle_haste_png.vtex_c icons/items/bottle_haste.png
-texture icon.item.bottle_doubledamage panorama/images/items/bottle_doubledamage_png.vtex_c icons/items/bottle_doubledamage.png
-texture icon.item.bottle_arcane panorama/images/items/bottle_arcane_png.vtex_c icons/items/bottle_arcane.png
-texture icon.item.bottle_regeneration panorama/images/items/bottle_regeneration_png.vtex_c icons/items/bottle_regeneration.png
-texture icon.item.bottle_illusion panorama/images/items/bottle_illusion_png.vtex_c icons/items/bottle_illusion.png
-texture icon.item.bottle_invisibility panorama/images/items/bottle_invisibility_png.vtex_c icons/items/bottle_invisibility.png
-texture icon.item.bottle_shield panorama/images/items/bottle_shield_png.vtex_c icons/items/bottle_shield.png
-texture icon.ability.roshan_bash panorama/images/spellicons/roshan_bash_png.vtex_c icons/abilities/roshan_bash.png
-texture icon.ability.roshan_slam panorama/images/spellicons/roshan_slam_png.vtex_c icons/abilities/roshan_slam.png
-texture icon.ability.roshan_spell_block panorama/images/spellicons/roshan_spell_block_png.vtex_c icons/abilities/roshan_spell_block.png
-texture icon.ability.roshan_revengeroar panorama/images/spellicons/roshan_revengeroar_png.vtex_c icons/abilities/roshan_revengeroar.png
-texture icon.ability.roshan_grab_and_throw panorama/images/spellicons/roshan_grab_and_throw_png.vtex_c icons/abilities/roshan_grab_and_throw.png
-texture icon.ability.miniboss_unyielding_shield panorama/images/spellicons/miniboss_unyielding_shield_png.vtex_c icons/abilities/miniboss_unyielding_shield.png
-texture icon.ability.miniboss_reflect panorama/images/spellicons/miniboss_reflect_png.vtex_c icons/abilities/miniboss_reflect.png
-texture icon.ability.miniboss_radiance panorama/images/spellicons/miniboss_radiance_png.vtex_c icons/abilities/miniboss_radiance.png
-texture icon.ability.miniboss_alleviation panorama/images/spellicons/miniboss_alleviation_png.vtex_c icons/abilities/miniboss_alleviation.png
-texture icon.ability.watcher_channel panorama/images/spellicons/watcher_channel_png.vtex_c icons/abilities/watcher_channel.png
-texture icon.ability.ability_capture panorama/images/spellicons/ability_capture_png.vtex_c icons/abilities/ability_capture.png
 # Rune buff icons (panorama/images/spellicons/rune_*): Haste, Amplify Damage (the old Double Damage art), Arcane,
 # Regeneration, Invisibility, Shield.
 texture icon.rune.haste panorama/images/spellicons/rune_haste_png.vtex_c icons/runes/haste.png

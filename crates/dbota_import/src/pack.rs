@@ -265,10 +265,10 @@ impl<C: Container> Pack<C> {
     }
 }
 
-/// The part of a stamp that names the assets (`v17/rev11/<plan>`), made printable.
+/// The part of a stamp that names the assets (`rev13.1/<plan>`), made printable.
 fn fingerprint_of_stamp(stamp: &str) -> String {
-    let mut parts = stamp.splitn(4, '/');
-    let named: Vec<&str> = parts.by_ref().take(3).collect();
+    let mut parts = stamp.splitn(3, '/');
+    let named: Vec<&str> = parts.by_ref().take(2).collect();
     shown(&named.join("/"))
 }
 

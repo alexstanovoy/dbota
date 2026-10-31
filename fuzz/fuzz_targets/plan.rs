@@ -41,7 +41,7 @@ fuzz_target!(|data: &[u8]| {
             let _ = wanted.sources();
         }
     }
-    let prefix = stamp_prefix(ids, &plan_id(manifest, ids));
+    let prefix = stamp_prefix(&plan_id(&plan));
     std::fs::write(cache().join(STAMP), stamp).expect("a temporary file");
     let _ = (matches_plan(cache(), &prefix), is_current(cache(), &prefix));
 });

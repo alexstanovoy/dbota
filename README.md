@@ -29,9 +29,10 @@ Dota 2 install. Bots don't need it.
    target/release/dbota import       # or: dbota import --dota-path "<...>/dota 2 beta"
    ```
 
-   It converts the models, map, textures, sounds and texts dbota uses into `~/.cache/dbota/v<N>`
-   (`N` is `assets-manifest/version`; each version keeps a folder of its own, so older and newer
-   clients share a machine). Valve's files stay in that cache for personal use; they are never part
+   It converts the models, map, textures, sounds and texts dbota uses into `~/.cache/dbota/<fingerprint>`
+   (`dbota cache-dir` prints it; each build's fingerprint is a folder of its own, so older and newer
+   clients share a machine, and the folders beyond the two newest are removed by the next import).
+   Every item and ability of the install has its icon and its tooltip text in it. Valve's files stay in that cache for personal use; they are never part
    of this repository. Without it dbota draws stand-ins. Without Dota 2, take a cache someone with it
    prepared (`dbota import-cache <folder|zip>`, made by their `dbota export-cache`): see `tools/README.md`; a
    `~/.cache/dbota/tools` folder left by the old export script can be deleted.
@@ -153,7 +154,7 @@ Alone: add `--dummy-seat` to the server. A bot is any program that speaks bota's
 | `--name NAME` | `player` | the name the lobby shows | |
 | `--spectate` | off | watch instead of playing | |
 | `--replay FILE`, `--pov SEAT`, `--follow SEAT` | none | play a replay; as one seat sees it; camera on one seat's hero | |
-| `--cache-dir DIR` | `$DBOTA_ASSETS`, else `~/.cache/dbota/v<N>` | the exported asset cache | |
+| `--cache-dir DIR` | `$DBOTA_ASSETS`, else `~/.cache/dbota/<fingerprint>` (`dbota cache-dir`) | the exported asset cache | |
 | `--config FILE` | `~/.config/dbota/client.conf` | the settings file | |
 | `--set NAME=VALUE` | none | one setting for this run, over the file's | |
 | `--window WxH` | `1600x900` | the window's size when windowed | |

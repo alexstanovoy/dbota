@@ -120,7 +120,7 @@ the folder rather than linking it, a link out of the folder is not followed). A 
 takes its own origin for the service; one served by another server falls back to its host on port 4460.
 The page plays the replay built into it (keep it short: it is part of the program's memory;
 `DBOTA_WEB_ARGS` are the command line a page lacks). `?cache=http` plays an asset cache served
-under `/cache` next to the page (a developer's own export, e.g. `ln -s ~/.cache/dbota/v<N>
+under `/cache` next to the page (a developer's own export, e.g. `ln -s "$(dbota cache-dir)"
 web/out/cache`) and `?assets=none` skips the question. With `?report`, the console goes to the
 server's log as `/report?...` requests.
 

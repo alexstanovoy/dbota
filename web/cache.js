@@ -47,19 +47,39 @@ export async function readCache(path) {
 
 const decode = (bytes) => (bytes ? new TextDecoder().decode(bytes) : null);
 
-// The stamp (what the cache was made from) and the index of a finished cache, or null.
-export async function readState() {
-  const [stamp, index] = [decode(await readCache("stamp.txt")), decode(await readCache("index.txt"))];
-  if (!stamp || !index) return null;
+// The files an index.txt lists (`file <size> <path> [small]`, one a line): path to size, and the
+// small ones the client reads before it starts. The same file the folder and zip caches have.
+export function parseIndex(text) {
   const files = new Map();
   const small = [];
-  for (const line of index.split("\n")) {
+  for (const line of text.split("\n")) {
     const [kind, size, path, flag] = line.split(" ");
     if (kind !== "file") continue;
     files.set(path, Number(size));
     if (flag === "small") small.push(path);
   }
-  return { stamp, files, small };
+  return { files, small };
+}
+
+// The stamp (what the cache was made from) and the index of a finished cache, or null.
+export async function readState() {
+  const [stamp, index] = [decode(await readCache("stamp.txt")), decode(await readCache("index.txt"))];
+  if (!stamp || !index) return null;
+  return { stamp, ...parseIndex(index) };
+}
+
+// A cache a developer serves next to the page (`?cache=http`): its index is fetched, so the
+// client knows which files are there, as it does of the private storage's. A server without one
+// is a cache whose files are all taken to be there.
+export async function publishServed() {
+  let files;
+  try {
+    const response = await fetch("cache/index.txt");
+    if (response.ok) files = parseIndex(await response.text()).files;
+  } catch (e) {
+    console.warn("dbota: the served cache has no index:", e);
+  }
+  globalThis.dbota_cache = { mode: "http", files };
 }
 
 // What the client reads at start: the index, the small files in memory (it reads them

@@ -3,8 +3,8 @@
 
 use std::path::{Path, PathBuf};
 
-use dbota_import::cache_dir::{import_into, is_current, read_stamp, stamp};
-use dbota_import::import::{Flow, IDS, MANIFEST, Plan, plan_id, stamped_here};
+use dbota_import::cache_dir::{import_into, is_current, prune, read_stamp, stamp};
+use dbota_import::import::{Flow, IDS, MANIFEST, plan, plan_id, stamped_here};
 use dbota_import::pack_dir;
 use heatel::find_game_dir;
 
@@ -140,26 +140,15 @@ pub fn run_with(
     let game: PathBuf = find_game_dir(dota).ok_or_else(|| {
         "Dota 2 not found; pass --dota-path \"<...>/steamapps/common/dota 2 beta\"".to_string()
     })?;
-    let stamp = stamp(
-        &game,
-        dbota_import::import::VERSION,
-        &plan_id(MANIFEST, IDS),
-    )
-    .map_err(|e| e.to_string())?;
+    let plan = plan()?;
+    let stamp = stamp(&game, &plan_id(plan)).map_err(|e| e.to_string())?;
     if !force && is_current(cache, &stamp) {
         println!("dbota import: {} is up to date", cache.display());
         return Ok(true);
     }
     println!("dbota import: {} -> {}", game.display(), cache.display());
-    let plan = Plan::parse(MANIFEST, IDS).map_err(|errors| {
-        errors
-            .iter()
-            .map(ToString::to_string)
-            .collect::<Vec<_>>()
-            .join("\n")
-    })?;
     let started = std::time::Instant::now();
-    let report = import_into(&game, cache, &plan, &stamp, &mut |p| {
+    let report = import_into(&game, cache, plan, &stamp, &mut |p| {
         progress(p.done as f32 / p.total.max(1) as f32, p.item);
         Flow::Continue
     })
@@ -172,6 +161,13 @@ pub fn run_with(
         report.read >> 20,
         started.elapsed().as_secs_f32()
     );
+    // The caches of builds long gone leave when a cache of the default place is made.
+    let default_place = cache
+        .file_name()
+        .is_some_and(|n| n == dbota_import::import::folder_name().as_str());
+    if default_place && let Err(why) = prune(cache) {
+        eprintln!("dbota import: old caches stay: {why}");
+    }
     for (asset, why) in &report.failed {
         eprintln!("dbota import: {asset} drawn as a stand-in: {why}");
     }

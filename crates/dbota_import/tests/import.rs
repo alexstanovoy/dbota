@@ -88,7 +88,7 @@ fn the_plan_takes_every_line_and_the_tooltips() {
          text ability 3 pudge_innate_graft_flesh\n",
     )
     .expect("a plan");
-    assert_eq!(plan.items.len(), 9);
+    assert_eq!(plan.items.len(), 11);
     assert!(matches!(
         &plan.items[0],
         Item::Model { anims, skeleton: true, .. } if anims == &["idle"]
@@ -118,6 +118,13 @@ fn the_plan_takes_every_line_and_the_tooltips() {
         Item::Tooltips { wanted, out, .. }
             if wanted.names == ["item_boots", "nevermore_requiem", "pudge_innate_graft_flesh"]
                 && wanted.heroes == ["nevermore"] && out == "text/tooltips.json"
+    ));
+    assert!(matches!(
+        &plan.items[9],
+        Item::Icons {
+            abilities: false,
+            ..
+        }
     ));
     assert!(matches!(
         &plan.items[8],
@@ -151,6 +158,14 @@ fn a_hostile_asset_is_a_failure_in_the_report_not_a_panic() {
         "",
     )
     .expect("a plan");
+    // Only the textures: the install here has no scripts for the rest to read.
+    let plan = Plan {
+        items: plan
+            .items
+            .into_iter()
+            .filter(|i| matches!(i, Item::Texture { .. }))
+            .collect(),
+    };
     let mut sink = Memory::default();
     let report = run(&src, &plan, &mut sink, &mut |_| Flow::Continue).unwrap();
     assert_eq!(report.failed.len(), 2, "{report:?}");

@@ -9,16 +9,18 @@ and the browser build runs the same code on the folder the player picks.
 ```sh
 target/release/dbota import                       # Flatpak Steam, then ~/.steam/steam, then ~/.local/share/Steam
 target/release/dbota import --dota-path "/path/to/steamapps/common/dota 2 beta"
-DBOTA_ASSETS=/elsewhere target/release/dbota import   # cache location (default ~/.cache/dbota/v<N>)
+DBOTA_ASSETS=/elsewhere target/release/dbota import   # cache location (default: `dbota cache-dir`)
 ```
 
 An import reads ~1 GB of the install at most, writes ~810 MB (1520 files) and takes about a minute.
 It is made in a folder beside the cache and replaces it only once whole; `index.txt` lists the files
 and `stamp.txt` says what made it (the manifest version, the importer's revision, the size and
 change time of `pak01_dir.vpk`). Running it again does nothing while the stamp matches (`--force`
-imports anyway); a Dota update or a new dbota changes the stamp. A new manifest version imports into
-a new folder, `~/.cache/dbota/v<N>`: the client reads the folder of the version it was built with,
-and older folders can be deleted. Caches up to version 6 were exported by a separate Source2Viewer
+imports anyway); a Dota update or a new dbota changes the stamp. A build whose plan (what the
+manifest asks for, read: comments and layout do not count), importer or converters differ has another
+fingerprint and imports into a new folder, `~/.cache/dbota/<fingerprint>` (`dbota cache-dir`): the client
+reads the folder of the build it is, and the import removes the folders beyond the two newest.
+`dbota import --verify` checks a cache against the manifest. Caches up to version 6 were exported by a separate Source2Viewer
 script that kept its own tool in `~/.cache/dbota/tools`; that folder is no longer used and can be
 deleted. An asset that does not convert is reported and drawn as a stand-in.
 
@@ -45,14 +47,13 @@ people you may. `DBOTA_ASSETS` and `--cache-dir` name the cache to take it into,
 | file | role |
 | --- | --- |
 | `../assets-manifest/manifest.txt` | every imported asset: logical name, VPK source, cache path, clips; format in its header |
-| `../assets-manifest/version` | the cache version: the cache folder `v<N>` |
 | `../assets-manifest/ids.txt` | bota item/ability/hero ids → Dota names, and whose tooltip texts to import |
 | `visual_check.sh` | measures the picture of a recorded match (see the main README) |
 | `bench.sh` | measures the binary's size, start and frame times |
 | `dbota import --verify` | checks a cache against the manifest: glTF meshes/skins/clips/textures, wearable joints, PNG sizes, WAV/MP3 format, particle files, texts |
 | `inspect_gltf.py` | prints a model's meshes, skins and animations (`--json` for machines) |
 
-## What the cache holds (~810 MB per `v<N>` folder)
+## What the cache holds (~810 MB per fingerprint folder)
 
 | path | content | size |
 | --- | --- | --- |

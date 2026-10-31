@@ -22,7 +22,7 @@
 #   DBOTA_BIN               the binary to time (default target/release/dbota; implies BENCH_BUILD=0)
 #   BENCH_WASM=0            1: also build the browser clients (wasm32, profile `web`, WebGPU and
 #                           WebGL2) and report their sizes
-#   DBOTA_ASSETS            the asset cache (default ~/.cache/dbota/v<assets-manifest/version>)
+#   DBOTA_ASSETS            the asset cache (default: `dbota cache-dir`)
 # The runs draw in a private headless compositor on the GPU (tools/headless.sh, its output 1920x1080
 # unless DBOTA_HEADLESS_SIZE says otherwise); DBOTA_SHOW=1 runs them in windows on the desktop.
 set -euo pipefail
@@ -41,7 +41,7 @@ runs=${BENCH_RUNS:-3}
 server=${BENCH_SERVER-$here/../bota/target/release/bota_server}
 read -r -a extra <<< "${BENCH_ARGS:-}"
 read -r -a wrap <<< "${BENCH_WRAP:-}"
-cache=${DBOTA_ASSETS:-$HOME/.cache/dbota/v$(tr -d '[:space:]' < "$here/assets-manifest/version")}
+cache=${DBOTA_ASSETS:-$("$here/target/${BENCH_PROFILE:-release}/dbota" cache-dir)}
 profile=${BENCH_PROFILE:-release}
 bin=${DBOTA_BIN:-$here/target/$profile/dbota}
 out=$here/temp/bench

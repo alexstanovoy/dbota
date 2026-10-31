@@ -41,13 +41,9 @@ impl Drop for Scratch {
 pub fn real_cache() -> PathBuf {
     std::env::var_os("DBOTA_ASSETS").map_or_else(
         || {
-            let version = fs::read_to_string(
-                Path::new(env!("CARGO_MANIFEST_DIR")).join("assets-manifest/version"),
-            )
-            .expect("the asset version");
             PathBuf::from(std::env::var_os("HOME").expect("a home"))
                 .join(".cache/dbota")
-                .join(format!("v{}", version.trim()))
+                .join(dbota_import::import::folder_name())
         },
         PathBuf::from,
     )

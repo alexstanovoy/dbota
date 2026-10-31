@@ -134,7 +134,7 @@ fn a_cache_of_another_build_is_refused_naming_both_builds() {
     for zipped in [false, true] {
         let scratch = Scratch::new(if zipped { "stale-zip" } else { "stale-folder" });
         let mut files = small_cache();
-        files.insert(STAMP.to_owned(), b"v1/rev1/0000000000000000/1/2".to_vec());
+        files.insert(STAMP.to_owned(), b"rev1.1/0000000000000000/1/2".to_vec());
         let source = scratch.path("prepared");
         if zipped {
             let source = scratch.path("prepared.zip");
@@ -157,7 +157,7 @@ fn a_cache_of_another_build_is_refused_naming_both_builds() {
         assert!(!output.status.success());
         let said = said(&output);
         assert!(
-            said.contains("is for assets v1/rev1/0000000000000000"),
+            said.contains("is for assets rev1.1/0000000000000000"),
             "{said}"
         );
         assert!(
@@ -175,7 +175,7 @@ fn a_refused_cache_leaves_the_cache_in_place() {
     let (folder, files) = prepared_folder(&scratch);
     let cache = scratch.path("assets");
     succeeded(&dbota(&cache, "import-cache", &folder));
-    fs::write(folder.join(STAMP), "v1/rev1/0/1/2").expect("a stamp");
+    fs::write(folder.join(STAMP), "rev1.1/0/1/2").expect("a stamp");
 
     let output = dbota(&cache, "import-cache", &folder);
 

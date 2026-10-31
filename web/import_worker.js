@@ -49,20 +49,15 @@ async function run(made, stamp) {
   if ((await room()) < NEEDED) throw new Error("the browser has too little storage left for the imported assets (about 600 MB)");
   await remove();
   const job = made.start();
-  let writeErrors = 0;
   for (;;) {
     // A message ("stop") is handled while this awaits.
     post({ type: "progress", done: job.done(), total: job.total(), item: job.upcoming() ?? "", bytes: job.bytes() });
     if (stopping) break;
     const files = job.step();
     if (!files) break;
-    for (const [path, bytes] of files) {
-      try {
-        await writeFile(path, bytes);
-      } catch (e) {
-        if (++writeErrors > 20) throw e;
-      }
-    }
+    // A file that cannot be written ends the import: the cache stays unfinished (no index, no
+    // stamp), never an index that lists files that are not there.
+    for (const [path, bytes] of files) await writeFile(path, bytes);
     await new Promise((r) => setTimeout(r, 0));
   }
   const report = job.finish();
@@ -136,6 +131,8 @@ self.onmessage = async ({ data }) => {
     }
     await run(made, stamp);
   } catch (e) {
+    // Whatever was written is not a cache (it has no index or stamp): let the space go.
+    await remove().catch(() => {});
     post({ type: "error", message: String((e && e.message) || e) });
   }
 };

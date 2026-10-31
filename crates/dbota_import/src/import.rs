@@ -36,25 +36,51 @@ pub const INDEX: &str = "index.txt";
 pub const MAX_STAMP: u64 = 4096;
 
 /// Bumped when the importer's output changes for the same install; part of a cache's stamp.
-pub const IMPORT_REV: u32 = 13;
+pub const IMPORT_REV: u32 = 23;
 
-/// The manifest this build imports and draws, its ids and its cache version.
+/// The manifest this build imports and draws, and its ids.
 pub const MANIFEST: &str = include_str!("../../../assets-manifest/manifest.txt");
 pub const IDS: &str = include_str!("../../../assets-manifest/ids.txt");
-pub const VERSION: &str = include_str!("../../../assets-manifest/version");
 
-/// The asset fingerprint of this build: the cache version, the importer's revision and the
-/// manifest's hash ([`plan_id`]). A cache's stamp starts with the fingerprint of the build that
-/// made it (then `/` and what it was made from); a cache of another fingerprint may lack what
-/// this build draws, and is made again before the client reads it, on the desktop and in a
-/// browser alike.
-pub fn fingerprint() -> String {
-    fingerprint_of(VERSION, &plan_id(MANIFEST, IDS))
+/// The plan of this build's manifest and ids, read once; the reason it cannot be read otherwise.
+pub fn plan() -> Result<&'static Plan, String> {
+    static PLAN: std::sync::OnceLock<Result<Plan, String>> = std::sync::OnceLock::new();
+    PLAN.get_or_init(|| {
+        Plan::parse(MANIFEST, IDS).map_err(|errors| {
+            errors
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+                .join("\n")
+        })
+    })
+    .as_ref()
+    .map_err(Clone::clone)
 }
 
-/// The fingerprint of cache version `version` and plan `plan_id`, made by this importer revision.
-pub fn fingerprint_of(version: &str, plan_id: &str) -> String {
-    format!("v{}/rev{IMPORT_REV}/{plan_id}", version.trim())
+/// The asset fingerprint of this build: the importer's revision, the converters' revision
+/// (`heatel::OUTPUT_REV`) and the hash of its plan ([`plan_id`]). A cache's stamp starts with the
+/// fingerprint of the build that made it (then `/` and what it was made from); a cache of another
+/// fingerprint may lack what this build draws, and is made again before the client reads it, on
+/// the desktop and in a browser alike. An edit of a comment or of the layout of the manifest
+/// changes nothing here: the plan is what the manifest asks for, read.
+pub fn fingerprint() -> String {
+    let id = plan().map_or_else(
+        |why| format!("unreadable-{}", plan_id_of_text(&why)),
+        plan_id,
+    );
+    fingerprint_of(&id)
+}
+
+/// The fingerprint of plan `plan_id`, made by this importer revision and these converters.
+pub fn fingerprint_of(plan_id: &str) -> String {
+    format!("rev{IMPORT_REV}.{}/{plan_id}", heatel::OUTPUT_REV)
+}
+
+/// The name of the folder a cache of this build lives in beside the others of its machine:
+/// the fingerprint, as a name a file system takes.
+pub fn folder_name() -> String {
+    fingerprint().replace('/', "-")
 }
 
 /// Whether a cache stamped `stamp` was made by an importer of this build's [`fingerprint`].
@@ -65,11 +91,15 @@ pub fn stamped_here(stamp: &str) -> bool {
         .is_some_and(|rest| rest.starts_with('/'))
 }
 
-/// Names what an import of this manifest and these ids makes (FNV-1a 64 of both texts): part of
-/// a cache's stamp, so a cache made from other texts is stale even from the same install.
-pub fn plan_id(manifest: &str, ids: &str) -> String {
+/// Names what an import of this plan makes (FNV-1a 64 of the plan's typed items): part of a
+/// cache's stamp, so a cache made from another plan is stale even from the same install.
+pub fn plan_id(plan: &Plan) -> String {
+    plan_id_of_text(&format!("{plan:?}"))
+}
+
+fn plan_id_of_text(text: &str) -> String {
     let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
-    for byte in manifest.bytes().chain([0]).chain(ids.bytes()) {
+    for byte in text.bytes() {
         hash = (hash ^ u64::from(byte)).wrapping_mul(0x0100_0000_01b3);
     }
     format!("{hash:016x}")
@@ -192,13 +222,17 @@ pub enum Item {
         band: Band,
         layers: String,
     },
-    /// The tooltip texts of the names `ids.txt` gives, from the install's localization and
-    /// scripts.
+    /// The tooltip texts of the names `ids.txt` gives and of every item and ability the
+    /// install's scripts define, from the install's localization and scripts.
     Tooltips {
         logical: String,
         wanted: Wanted,
         out: String,
     },
+    /// The icon of every item (or of every ability) the install's scripts define, each under
+    /// the name its script gives it: `icons/items/<name>.png`, `icons/abilities/<name>.png`.
+    /// What the install has no icon for is left out.
+    Icons { logical: String, abilities: bool },
     /// The shop's categories and their items from the install's `shops.txt`, and the shop's
     /// words from the localization `strings`.
     Shop {
@@ -281,6 +315,13 @@ impl Item {
             | Self::Styles { out, .. }
             | Self::Particle { out, .. }
             | Self::Portraits { out, .. } => vec![out],
+            Self::Icons { abilities, .. } => {
+                vec![if *abilities {
+                    "icons/abilities"
+                } else {
+                    "icons/items"
+                }]
+            }
             Self::World { out, layers, .. } => vec![out, layers],
             Self::Placements {
                 trees_out,
@@ -304,6 +345,7 @@ impl Item {
             | Self::Placements { logical, .. }
             | Self::World { logical, .. }
             | Self::Tooltips { logical, .. }
+            | Self::Icons { logical, .. }
             | Self::Shop { logical, .. }
             | Self::Labels { logical, .. }
             | Self::Styles { logical, .. }
@@ -434,14 +476,11 @@ impl Plan {
             }
         }
         labels.extend(modifier_labels(&catalog.ids));
-        let wanted = wanted(&catalog.ids);
-        if !wanted.names.is_empty() {
-            plan.items.push(Item::Tooltips {
-                logical: "text.tooltips".to_owned(),
-                wanted,
-                out: TOOLTIPS.to_owned(),
-            });
-        }
+        plan.items.push(Item::Tooltips {
+            logical: "text.tooltips".to_owned(),
+            wanted: wanted(&catalog.ids),
+            out: TOOLTIPS.to_owned(),
+        });
         if !labels.is_empty() {
             plan.items.push(Item::Labels {
                 logical: "text.labels".to_owned(),
@@ -454,6 +493,12 @@ impl Plan {
                 logical: "text.styles".to_owned(),
                 keys: styles,
                 out: STYLES.to_owned(),
+            });
+        }
+        for abilities in [false, true] {
+            plan.items.push(Item::Icons {
+                logical: format!("icons.{}", if abilities { "abilities" } else { "items" }),
+                abilities,
             });
         }
         // Last, for it frames the models the manifest lists.
@@ -704,6 +749,101 @@ impl<S: Source> Importer<S> {
 /// The map packages opened so far, then the manifest's package (as the world reads them).
 /// A file of the install: an addon's loose file (under [`crate::ADDONS`]),
 /// else one of the main package.
+/// One script of the install that defines items or abilities: what it lists, and the hero it
+/// belongs to when it is a hero's.
+struct InstallScript {
+    entries: Vec<heatel::scripts::Entry>,
+    /// `pudge` for `scripts/npc/heroes/npc_dota_hero_pudge.txt`.
+    hero: Option<String>,
+    item: bool,
+}
+
+/// Most hero scripts read.
+const MAX_HERO_SCRIPTS: usize = 512;
+
+/// The scripts of the install that define items and abilities: `items.txt`, `npc_abilities.txt`
+/// and each hero's own.
+fn install_scripts(src: &impl Source, pak: &Vpk) -> Result<Vec<InstallScript>> {
+    let mut out = Vec::new();
+    for (path, item) in [
+        ("scripts/npc/items.txt", true),
+        ("scripts/npc/npc_abilities.txt", false),
+    ] {
+        out.push(InstallScript {
+            entries: heatel::scripts::entries(&read_from(src, &[pak], path)?)?,
+            hero: None,
+            item,
+        });
+    }
+    let heroes: Vec<(String, String)> = pak
+        .entries()
+        .filter(|e| e.dir() == "scripts/npc/heroes" && e.ext() == "txt")
+        .filter_map(|e| {
+            let hero = e.name().strip_prefix("npc_dota_hero_")?.to_owned();
+            Some((e.path(), hero))
+        })
+        .take(MAX_HERO_SCRIPTS)
+        .collect();
+    for (path, hero) in heroes {
+        out.push(InstallScript {
+            entries: heatel::scripts::entries(&read_from(src, &[pak], &path)?)?,
+            hero: Some(hero),
+            item: false,
+        });
+    }
+    Ok(out)
+}
+
+/// Writes the icon of every item, or of every ability, of the install's scripts. A script's
+/// entry with no icon in the install is left out; an icon that does not decode is a failure of
+/// its own and the rest go on.
+fn icons(src: &impl Source, pak: &Vpk, abilities: bool, out: &mut Out<'_>) -> Result<()> {
+    let (from, to) = if abilities {
+        ("panorama/images/spellicons", "icons/abilities")
+    } else {
+        ("panorama/images/items", "icons/items")
+    };
+    // Every recipe wears one icon, `recipe`, which no script names.
+    let mut names: Vec<String> = if abilities {
+        Vec::new()
+    } else {
+        vec!["recipe".to_owned()]
+    };
+    for script in install_scripts(src, pak)? {
+        if script.item != abilities {
+            names.extend(script.entries.iter().map(|e| e.icon_name().to_owned()));
+        }
+    }
+    let mut done = HashSet::new();
+    for name in names {
+        if !safe_name(&name) || !done.insert(name.clone()) {
+            continue;
+        }
+        let path = format!("{from}/{name}_png.vtex_c");
+        let bytes = match read_from(src, &[pak], &path) {
+            Ok(bytes) => bytes,
+            Err(Error::NotFound(_)) => continue,
+            Err(err) => return Err(err),
+        };
+        let png = Texture::parse(&bytes).and_then(|t| t.first_frame_png());
+        match png {
+            Ok(png) => out.put(&format!("{to}/{name}.png"), &png)?,
+            Err(err) => out.report.failed.push((path, err.to_string())),
+        }
+    }
+    Ok(())
+}
+
+/// Whether a script's icon name is one a file may be named after: folders (`consumables/high_five`)
+/// of letters, digits and underscores.
+fn safe_name(name: &str) -> bool {
+    name.len() <= 96
+        && name.split('/').count() <= 3
+        && name.split('/').all(|part| {
+            !part.is_empty() && part.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_')
+        })
+}
+
 fn read_any(src: &impl Source, pak: &Vpk, path: &str) -> Result<Vec<u8>> {
     if path.starts_with(crate::ADDONS) {
         let size = usize::try_from(src.size(path)?).unwrap_or(usize::MAX);
@@ -836,6 +976,18 @@ fn make(
         Item::Tooltips {
             wanted, out: dest, ..
         } => {
+            let mut wanted = wanted.clone();
+            for script in install_scripts(src, pak)? {
+                wanted
+                    .names
+                    .extend(script.entries.into_iter().map(|e| e.name));
+                wanted.heroes.extend(script.hero);
+            }
+            wanted.names.sort();
+            wanted.names.dedup();
+            wanted.heroes.sort();
+            wanted.heroes.dedup();
+            let wanted = &wanted;
             let files = wanted
                 .sources()
                 .iter()
@@ -844,6 +996,7 @@ fn make(
             let scripts: Vec<&[u8]> = files[1..].iter().map(Vec::as_slice).collect();
             out.put(dest, &tooltips_json(wanted, &files[0], &scripts)?)
         }
+        Item::Icons { abilities, .. } => icons(src, pak, *abilities, out),
         Item::Shop {
             src: path,
             strings,

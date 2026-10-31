@@ -57,8 +57,9 @@ skipped=0
 # per asset stamp (a hash of the manifest, the ids and the importer's revision) in a directory outside the repository, reused by
 # every run and every checkout with that stamp, and only read by the tests.
 key=$(
-    cat assets-manifest/manifest.txt assets-manifest/ids.txt assets-manifest/version
+    cat assets-manifest/manifest.txt assets-manifest/ids.txt
     grep -h 'pub const IMPORT_REV' crates/dbota_import/src/import.rs
+    grep -h 'pub const OUTPUT_REV' "$here/../heatel/src/lib.rs" 2>/dev/null || true
 )
 key=$(printf '%s' "$key" | sha256sum | cut -c1-16)
 export DBOTA_ASSETS=${DBOTA_ASSETS:-${DBOTA_GATE_ASSETS:-${XDG_CACHE_HOME:-$HOME/.cache}/dbota-gate}/$key}

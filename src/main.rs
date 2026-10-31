@@ -359,6 +359,9 @@ pub enum Command {
         #[arg(value_name = "ZIP")]
         to: PathBuf,
     },
+    /// Print the folder this build keeps its asset cache in (`$DBOTA_ASSETS`, else the folder
+    /// named by this build's fingerprint under `~/.cache/dbota`).
+    CacheDir,
 }
 
 impl Args {
@@ -382,12 +385,9 @@ impl Args {
 #[derive(Resource, Clone, Debug)]
 pub struct SettingsPath(pub Option<PathBuf>);
 
-/// The version of the asset cache this client reads, as `dbota import`
-/// writes it: each version has a folder of its own under `~/.cache/dbota`,
-/// so clients of different versions share a machine.
-const ASSET_VERSION: &str = include_str!("../assets-manifest/version");
-
-/// `$DBOTA_ASSETS`, else `~/.cache/dbota/v<ASSET_VERSION>`.
+/// `$DBOTA_ASSETS`, else `~/.cache/dbota/<fingerprint>`: each build's assets have a folder of
+/// their own, named by the fingerprint (`dbota_import::import::folder_name`), so clients of
+/// different builds share a machine.
 fn default_cache_dir() -> PathBuf {
     // In a browser the cache is served next to the page.
     if cfg!(target_arch = "wasm32") {
@@ -399,7 +399,7 @@ fn default_cache_dir() -> PathBuf {
     let home = std::env::var_os("HOME").unwrap_or_default();
     PathBuf::from(home)
         .join(".cache/dbota")
-        .join(format!("v{}", ASSET_VERSION.trim()))
+        .join(dbota_import::import::folder_name())
 }
 
 /// `dbota import`, `import-cache` and `export-cache`: what the command does to the asset cache
@@ -436,6 +436,10 @@ fn run_command(command: &Command, cache: &std::path::Path) -> AppExit {
             import::load_cache(from, cache, &mut import::tenths()),
         ),
         Command::ExportCache { to } => ("export-cache", import::export_cache(cache, to)),
+        Command::CacheDir => {
+            println!("{}", cache.display());
+            return AppExit::Success;
+        }
     };
     match done {
         Ok(()) => AppExit::Success,

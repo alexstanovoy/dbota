@@ -86,7 +86,7 @@ impl Install {
 
     /// What says the cache made from this install is still current: the size and modification
     /// time of the package directory (Dota's updater rewrites it with every content change),
-    /// with the manifest version and the importer's revision. Empty without the directory.
+    /// with the build's fingerprint. Empty without the directory.
     pub fn stamp(&self, modified: f64) -> String {
         match Source::size(&self.files, "pak01_dir.vpk") {
             Ok(size) => format!("{}/{size}/{modified}", cache_version()),

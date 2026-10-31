@@ -152,7 +152,7 @@ fn logged(scratch: &Scratch) -> String {
 #[ignore = "draws on the GPU in a headless compositor: tools/visual_check.sh runs it"]
 fn assets_of_another_version_hold_the_client_until_imported_again() {
     let scratch = Scratch::new("stale");
-    let cache = asset_cache(&scratch, "v1/rev1/0000000000000000/1/2");
+    let cache = asset_cache(&scratch, "rev1.1/0000000000000000/1/2");
     let replay = replay();
     let script = "await:button:re-import from dota 2;wait:3;shot:stale-assets.png;click:quit dbota";
     let args = [
@@ -274,7 +274,7 @@ fn the_menu_refuses_a_prepared_cache_of_another_build() {
     let mut files = common::prepared::small_cache();
     files.insert(
         "stamp.txt".to_owned(),
-        b"v1/rev1/0000000000000000/1/2".to_vec(),
+        b"rev1.1/0000000000000000/1/2".to_vec(),
     );
     let zip = scratch.0.join("stale.zip");
     common::prepared::write_zip(&zip, files.iter().map(|(n, b)| (n.as_str(), b.as_slice())));
@@ -291,7 +291,7 @@ fn the_menu_refuses_a_prepared_cache_of_another_build() {
 
     let log = logged(&scratch);
     assert!(
-        log.contains("is for assets v1/rev1/0000000000000000"),
+        log.contains("is for assets rev1.1/0000000000000000"),
         "{log}"
     );
     assert!(!cache.exists(), "a refused cache was installed");
@@ -735,13 +735,9 @@ impl Dota {
     fn read() -> Dota {
         let cache = std::env::var_os("DBOTA_ASSETS").map_or_else(
             || {
-                let version = std::fs::read_to_string(
-                    Path::new(env!("CARGO_MANIFEST_DIR")).join("assets-manifest/version"),
-                )
-                .expect("the asset version");
                 PathBuf::from(std::env::var_os("HOME").expect("a home"))
                     .join(".cache/dbota")
-                    .join(format!("v{}", version.trim()))
+                    .join(dbota_import::import::folder_name())
             },
             PathBuf::from,
         );

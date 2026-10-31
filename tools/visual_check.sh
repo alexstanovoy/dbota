@@ -59,7 +59,7 @@ if ! echo "$bars" | grep -q "PASS health counted in hits"; then exit 1; fi
 # off by turns, and each run's count of hero meshes must match the first's
 # and its hero-part checks pass.
 runs=${VISUAL_RUNS:-1}
-cache=${DBOTA_ASSETS:-$HOME/.cache/dbota/v$(tr -d '[:space:]' < "$here/assets-manifest/version")}
+cache=${DBOTA_ASSETS:-$("$here/target/release/dbota" cache-dir)}
 first=$(grep -m1 "hero parts:" "$out/dbota.out" 2>/dev/null || true)
 for run in $(seq 2 "$runs"); do
     if [ $((run % 2)) -eq 0 ]; then
