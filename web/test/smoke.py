@@ -1035,6 +1035,8 @@ def check_replays_page(directory, server_bin, radovid_bin, shots=False):
     page_dir = work / "page"
     shutil.rmtree(page_dir, ignore_errors=True)
     shutil.copytree(directory, page_dir, symlinks=False)
+    # The page plays on a native cache (`?cache=http`): hard links to its files, nothing copied.
+    shutil.copytree(cache_folder(), page_dir / "cache", copy_function=os.link)
     (work / "radovid.toml").write_text(radovid_config(work, page_dir, server_bin, port, game, cert, key))
     service = subprocess.Popen([radovid_bin, "serve", "--config", str(work / "radovid.toml")],
                                stdout=subprocess.DEVNULL, stderr=open(work / "radovid.log", "w"))
