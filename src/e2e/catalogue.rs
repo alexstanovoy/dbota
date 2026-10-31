@@ -4,16 +4,17 @@
 
 use bevy::prelude::*;
 use bota_client_core::{Link, Transport, join, play};
-use bota_core::{Catalogue, ITEM_COUNT};
+use bota_core::Catalogue;
 use bota_proto::{ClientMsg, HeroId, ItemId, ServerMsg};
 
 use super::harness::{Client, Server};
 use crate::shop::{Catalog, ShopCell};
 
-/// The catalogue of a build made before the last three items were appended: the Wind Lace,
-/// the Blood Grenade and the Ward Dispenser.
+/// The catalogue of a build made before the Wind Lace was appended: it holds neither the Wind
+/// Lace nor the Blood Grenade nor any item appended after them, however many items this build
+/// holds.
 fn older() -> Catalogue {
-    Catalogue::first(ITEM_COUNT as u16 - 3).expect("a prefix")
+    Catalogue::first(ItemId::WIND_LACE.0).expect("a prefix")
 }
 
 /// The client library of an older build: it says the older catalogue where this build's says
