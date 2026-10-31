@@ -4,12 +4,9 @@
 
 use std::collections::{HashMap, HashSet};
 
-use bevy::{
-    light::{NotShadowCaster, NotShadowReceiver},
-    prelude::*,
-};
+use bevy::prelude::*;
 use bota_client_core::flights;
-use bota_proto::{EntityId, EventKind, Team};
+use bota_proto::{EntityId, EventKind};
 
 use crate::ability_art::{Flight, art_by};
 use crate::anim::Pose;
@@ -18,16 +15,11 @@ use crate::map::Ground;
 use crate::particles::{Library, Playing};
 use crate::session::Session;
 use crate::units::{Attachments, Unit, UnitIndex};
-use crate::warmup::Warmup;
 
 /// How high missiles fly over the ground, in world units.
 const FLIGHT: f32 = 110.0;
 
-/// A missile on the map, by its wire handle.
-#[derive(Component)]
-struct Missile;
-
-/// How a missile is drawn: its source's attack effect, or a plain body.
+/// How a missile is drawn: as a particle effect.
 #[derive(Clone, Copy)]
 enum Body {
     Effect(crate::particles::Handle),
@@ -35,7 +27,6 @@ enum Body {
     Line(crate::particles::Handle),
     /// A Blood Grenade: its effect flies where the grenade does and bursts as its end.
     Grenade(crate::particles::Handle),
-    Bolt(Entity),
 }
 
 /// The effects of Shadow Fiend's abilities, by their manifest names.
@@ -55,17 +46,6 @@ const LAUNCH: usize = 0;
 const TARGET: usize = 1;
 const SPEED: usize = 2;
 
-/// The shared meshes and materials of the effects.
-#[derive(Resource)]
-struct Art {
-    bolt: Handle<Mesh>,
-    soul: Handle<Mesh>,
-    radiant: Handle<StandardMaterial>,
-    dire: Handle<StandardMaterial>,
-    soul_mat: Handle<StandardMaterial>,
-    grenade: Handle<StandardMaterial>,
-}
-
 /// The missiles drawn, by wire handle, and the raze marks already burst.
 #[derive(Resource, Default)]
 struct Flying {
@@ -82,7 +62,6 @@ struct Flying {
 
 pub fn plugin(app: &mut App) {
     app.init_resource::<Flying>()
-        .add_systems(Startup, make_art)
         .add_systems(
             Update,
             (
@@ -94,47 +73,6 @@ pub fn plugin(app: &mut App) {
                 deaths,
             ),
         );
-}
-
-fn glow(color: Color) -> StandardMaterial {
-    StandardMaterial {
-        base_color: color,
-        emissive: color.to_linear() * 3.0,
-        unlit: true,
-        ..default()
-    }
-}
-
-fn make_art(
-    mut commands: Commands,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
-) {
-    let art = Art {
-        bolt: meshes.add(Sphere::new(14.0)),
-        soul: meshes.add(Cuboid::new(16.0, 16.0, 120.0)),
-        radiant: materials.add(glow(Color::srgb(0.6, 1.0, 0.5))),
-        dire: materials.add(glow(Color::srgb(1.0, 0.45, 0.25))),
-        soul_mat: materials.add(glow(Color::srgb(0.75, 0.3, 1.0))),
-        grenade: materials.add(glow(Color::srgb(0.75, 0.04, 0.06))),
-    };
-    // Every kind of plain body, drawn while loading.
-    let pieces = [
-        (&art.bolt, &art.radiant),
-        (&art.bolt, &art.dire),
-        (&art.bolt, &art.grenade),
-        (&art.soul, &art.soul_mat),
-    ];
-    for (mesh, material) in pieces {
-        commands.spawn((
-            Warmup,
-            Mesh3d(mesh.clone()),
-            MeshMaterial3d(material.clone()),
-            NotShadowCaster,
-            NotShadowReceiver,
-        ));
-    }
-    commands.insert_resource(art);
 }
 
 /// What a missile's effect reads of the units: their roots, models, poses and attachments.
@@ -264,24 +202,18 @@ impl Shooters<'_, '_> {
     }
 }
 
-/// Keeps every missile in flight drawn where the frame puts it: an attack as its source's
-/// particle effect (ended, playing its impact, when the missile goes), anything else as a
-/// plain body.
+/// Keeps every missile in flight drawn where the frame puts it, as its source's particle effect
+/// (ended, playing its impact, when the missile goes); a missile with none is not drawn.
 #[allow(clippy::too_many_arguments)]
 fn missiles(
-    mut commands: Commands,
     session: NonSend<Session>,
-    art: Option<Res<Art>>,
     ground: Res<Ground>,
     mut flying: ResMut<Flying>,
-    mut transforms: Query<&mut Transform, With<Missile>>,
     shooters: Shooters,
     library: Option<Res<Library>>,
     mut playing: ResMut<Playing>,
 ) {
-    let (core, Some(art)) = (&session.0, art) else {
-        return;
-    };
+    let core = &session.0;
     let Some(view) = core.view() else {
         return;
     };
@@ -318,13 +250,12 @@ fn missiles(
                     .then(|| shooters.start_grenade(f, at, library.as_deref(), &mut playing))
                     .flatten()
                     .map(Body::Grenade);
-                let body = match line.or(grenade).or_else(|| {
+                let Some(body) = line.or(grenade).or_else(|| {
                     shooters
                         .start(f, at, library.as_deref(), &mut playing)
                         .map(Body::Effect)
-                }) {
-                    Some(body) => body,
-                    None => Body::Bolt(spawn_body(&mut commands, &art, f, flight, at, facing(dir))),
+                }) else {
+                    continue;
                 };
                 flying.missiles.insert(f.missile.id, body);
                 body
@@ -335,15 +266,9 @@ fn missiles(
             // Its effect is pulled to where it will be a tick on.
             Body::Grenade(handle) => steer(at + dir, dir, &mut playing, handle),
             Body::Line(_) => {}
-            Body::Bolt(e) => {
-                if let Ok(mut t) = transforms.get_mut(e) {
-                    t.translation = at;
-                    t.rotation = facing(dir);
-                }
-            }
         }
     }
-    land(&mut flying, &mut alive, &mut commands, &mut playing);
+    land(&mut flying, &mut alive, &mut playing);
     grenades(
         &mut flying,
         &ground,
@@ -354,12 +279,7 @@ fn missiles(
 }
 
 /// Ends what draws the missiles that are gone: a body goes, an effect plays its end cap.
-fn land(
-    flying: &mut Flying,
-    alive: &mut [EntityId],
-    commands: &mut Commands,
-    playing: &mut Playing,
-) {
+fn land(flying: &mut Flying, alive: &mut [EntityId], playing: &mut Playing) {
     // Sorted for the lookups below: thousands of missiles each searched
     // through all the others every frame.
     alive.sort_unstable();
@@ -369,7 +289,6 @@ fn land(
         let keep = is_alive(id);
         if !keep {
             match *body {
-                Body::Bolt(e) => commands.entity(e).despawn(),
                 Body::Effect(handle) | Body::Line(handle) | Body::Grenade(handle) => {
                     burst += usize::from(matches!(body, Body::Grenade(_)));
                     if let Some(instance) = playing.get_mut(handle) {
@@ -423,45 +342,6 @@ pub(crate) fn steer(to: Vec3, dir: Vec3, playing: &mut Playing, handle: crate::p
     if speed > 0.0 {
         instance.set_control_point(SPEED, Vec3::new(speed, 0.0, 0.0), Vec3::ZERO, false);
     }
-}
-
-/// The rotation that faces a missile along `dir` (unturned when it has not moved).
-fn facing(dir: Vec3) -> Quat {
-    if dir.length_squared() > 1e-3 {
-        Transform::default()
-            .looking_to(dir.normalize(), Vec3::Y)
-            .rotation
-    } else {
-        Quat::IDENTITY
-    }
-}
-
-/// A plain body for a missile with no effect of its own: a soul, a grenade, or a bolt in its
-/// side's colour.
-fn spawn_body(
-    commands: &mut Commands,
-    art: &Art,
-    f: &bota_client_core::Flight,
-    flight: Flight,
-    at: Vec3,
-    rotation: Quat,
-) -> Entity {
-    let (mesh, material) = match flight {
-        Flight::Soul => (art.soul.clone(), art.soul_mat.clone()),
-        Flight::Grenade => (art.bolt.clone(), art.grenade.clone()),
-        _ if f.missile.team == Team::Dire => (art.bolt.clone(), art.dire.clone()),
-        _ => (art.bolt.clone(), art.radiant.clone()),
-    };
-    commands
-        .spawn((
-            Missile,
-            Mesh3d(mesh),
-            MeshMaterial3d(material),
-            Transform::from_translation(at).with_rotation(rotation),
-            NotShadowCaster,
-            NotShadowReceiver,
-        ))
-        .id()
 }
 
 /// A point of the world in the particles' frame.

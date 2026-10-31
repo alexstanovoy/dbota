@@ -26,7 +26,8 @@ One more check needs a prepared asset cache, not an install:
   played until the map is read and drawn; the cache folder is then loaded the same way. The page
   requests nothing outside its own origin.
 
-Five more checks need no install and run on pages built with stand-ins (`?assets=none`):
+Five more checks need no install, only a native import of this build (`dbota import`, DBOTA_ASSETS
+names it) that the pages play on through `?cache=http`, served under /cache beside the page:
 
     DBOTA_WEB_REPLAY=$PWD/chat.brp DBOTA_WEB_ARGS="--replay built-in --pov 0 --seek 4100" \
         PROFILE=release OUT=temp/web-replay web/build.sh
@@ -114,9 +115,27 @@ def farm(install, root):
     return root / "dota 2 beta"
 
 
+# The asset cache the pages that need no import play on (`?cache=http`): a native import of this
+# build, served under /cache beside the page (DBOTA_ASSETS, else ~/.cache/dbota/v<N>).
+def cache_folder():
+    given = os.environ.get("DBOTA_ASSETS")
+    if given:
+        return pathlib.Path(given)
+    version = (HERE.parent.parent / "assets-manifest/version").read_text().strip()
+    return pathlib.Path("~/.cache/dbota").expanduser() / f"v{version}"
+
+
 class Quiet(http.server.SimpleHTTPRequestHandler):
     def log_message(self, *args):
         pass
+
+    def translate_path(self, path):
+        if path.split("?")[0].startswith("/cache/"):
+            relative = pathlib.PurePosixPath(path.split("?")[0][len("/cache/"):])
+            if ".." in relative.parts:
+                return "/nonexistent"
+            return str(cache_folder().joinpath(*relative.parts))
+        return super().translate_path(path)
 
 
 def serve(directory=OUT, handler_class=Quiet):
@@ -254,7 +273,7 @@ def import_smoke(args, install):
 
         page.goto(base)
         page.wait_for_selector("#grant:not([hidden])", timeout=20000)
-        assert page.is_visible("#standins"), "stand-ins must always be offered"
+        assert page.is_hidden("#standins") and "stand-in" not in page.inner_text("main"), "no way to play without assets is offered"
         assert "never leave your computer" in page.inner_text("#grant"), "the privacy promise is on the page"
 
         check_grant_logic(page)
@@ -417,7 +436,7 @@ def check_replay_page(directory):
     """A packed (Zstandard) replay built into the page is read through and played."""
     with sync_playwright() as p:
         server, base, browser, page, console, problems = opened(p, directory)
-        page.goto(base + "?assets=none")
+        page.goto(base + "?cache=http")
         wait_console(page, console, r"match known: tick \d+", 600, "the client to know the match")
         heard = wait_console(page, console, r"chat: (\d+) lines heard", 120, "the chat lines of the replay")
         page.wait_for_timeout(3000)
@@ -439,7 +458,7 @@ def check_fullscreen_page(directory):
     keeps its viewport, so the canvas filling a bigger screen is not seen here."""
     with sync_playwright() as p:
         server, base, browser, page, console, problems = opened(p, directory)
-        page.goto(base + "?assets=none")
+        page.goto(base + "?cache=http")
         wait_console(page, console, r"match known: tick \d+", 600, "the client to know the match")
         page.wait_for_timeout(4000)
         fullscreen = lambda: page.evaluate("!!document.fullscreenElement")
@@ -508,7 +527,7 @@ def check_browser_keys(directory):
     (even web/ as it is in the repository) serves."""
     with sync_playwright() as p:
         server, base, browser, page, console, problems = opened(p, directory)
-        page.goto(base + "?assets=none")
+        page.goto(base + "?cache=http")
         page.wait_for_function("document.getElementById('dbota') !== null")
         page.wait_for_timeout(1000)
         got = page.evaluate(KEYS_LOGIC)
@@ -538,7 +557,7 @@ def check_canvas_pixels(directory):
         page = browser.new_context(viewport={"width": 1280, "height": 720}, device_scale_factor=1.5).new_page()
         console = []
         page.on("console", lambda m: console.append(m.text))
-        page.goto(base + "?assets=none")
+        page.goto(base + "?cache=http")
         wait_console(page, console, r"match known: tick \d+", 600, "the client to know the match")
         for width, height in ((1280, 720), (1001, 667)):
             page.set_viewport_size({"width": width, "height": height})
@@ -568,7 +587,7 @@ def check_cursor_page(directory):
     with sync_playwright() as p:
         server, base, browser, page, console, problems = opened(p, directory)
         page.add_init_script(HANDED)
-        page.goto(base + "?assets=none")
+        page.goto(base + "?cache=http")
         wait_console(page, console, r"match known: tick \d+", 600, "the client to know the match")
         page.wait_for_timeout(4000)
         locked = lambda: page.evaluate("document.pointerLockElement === document.getElementById('dbota')")
@@ -676,7 +695,7 @@ def check_live_page(directory, server_bin):
             page.route(re.compile(r".*/(index\.html)?(\?.*)?$"), with_socket)
             menu = f"direct = ws://127.0.0.1:{ws}\nname = smoke\nplain_ok = 127.0.0.1\n"
             page.add_init_script("localStorage.setItem('dbota.menu', " + json.dumps(menu) + ")")
-            page.goto(base + "?assets=none")
+            page.goto(base + "?cache=http")
             page.wait_for_timeout(15000)
             for _ in range(TABS_TO_ADDRESS):
                 page.keyboard.press("Tab")
@@ -781,17 +800,17 @@ def check_startup_page(directory):
         got = page.inner_text("#failTitle")
         assert title in got, got
 
-    for query, api in (("?assets=none", "webgpu"), ("?assets=none&gpu=webgl2", "webgl2")):
+    for query, api in (("?cache=http", "webgpu"), ("?cache=http&gpu=webgl2", "webgl2")):
         for page, console, problems in run(query):
             wait_console(page, console, "dbota: drawing with " + api, 60, f"the {api} client")
             wait_console(page, console, "dbota: running", 600, f"the {api} client's first frame")
             assert page.is_hidden("#gate") and not problems, problems
             print(f"{api}: the client runs")
-    for page, console, problems in run("?assets=none", NO_GRAPHICS):
+    for page, console, problems in run("?cache=http", NO_GRAPHICS):
         failed(page, "does not let the page use the graphics card")
         assert not any("drawing with" in c for c in console), "no client is loaded without graphics"
         print("no graphics: said on the page")
-    for page, console, problems in run("?assets=none", NO_WEBGPU_CANVAS):
+    for page, console, problems in run("?cache=http", NO_WEBGPU_CANVAS):
         failed(page, "could not start its graphics")
         assert "wgpu surface" in page.text_content("#failDetail"), "the panic is in the details"
         page.click("#otherApi")
@@ -799,8 +818,8 @@ def check_startup_page(directory):
         wait_console(page, console, "dbota: running", 600, "the WebGL2 client's first frame")
         assert "gpu=webgl2" in page.url, page.url
         print("renderer not made: said on the page, the WebGL2 client runs instead")
-    # The client's memory capped at 96 MiB: the stand-ins' menu needs more.
-    for page, console, problems in run("?assets=none", args=["--js-flags=--wasm-max-mem-pages=1536"]):
+    # The client's memory capped at 96 MiB: the menu needs more.
+    for page, console, problems in run("?cache=http", args=["--js-flags=--wasm-max-mem-pages=1536"]):
         failed(page, "ran out of memory")
         print("out of memory: said on the page")
 
@@ -845,13 +864,13 @@ def check_boot_page(directory):
         pass  # the request is left unanswered: a connection that stalls
 
     for engine in ("chromium", "firefox"):
-        case(engine, "a part of the page that does not load is said", "?assets=none",
+        case(engine, "a part of the page that does not load is said", "?cache=http",
              routes=[("**/main.js", lambda r: r.abort())],
              then=lambda page: screen(page, "#failed", "A part of the page did not load"))
-        case(engine, "code the browser cannot run is said", "?assets=none",
+        case(engine, "code the browser cannot run is said", "?cache=http",
              routes=[("**/main.js", lambda r: r.fulfill(body="this is ( not javascript", content_type="text/javascript"))],
              then=lambda page: screen(page, "#failed", "could not run in this browser"))
-        case(engine, "a page that never arrives ends on the failure screen", "?assets=none",
+        case(engine, "a page that never arrives ends on the failure screen", "?cache=http",
              routes=[("**/main.js", never)],
              then=lambda page: screen(page, "#failed", "did not start"))
 
@@ -863,10 +882,10 @@ def check_boot_page(directory):
              then=lambda page: asks_for_the_folder(page, "did not answer"))
         case(engine, "a browser without storage leaves the asset screen", "", init=no_storage,
              then=lambda page: asks_for_the_folder(page, "no private storage"))
-    case("chromium", "a download that stalls ends on the failure screen", "?assets=none",
+    case("chromium", "a download that stalls ends on the failure screen", "?cache=http",
          routes=[("**/dbota_bg.wasm", never)],
          then=lambda page: (screen(page, "#failed", "could not be downloaded"), assert_in(page.text_content("#failDetail"), "dbota_bg.wasm")))
-    case("chromium", "a refused download is said", "?assets=none",
+    case("chromium", "a refused download is said", "?cache=http",
          routes=[("**/dbota_bg.wasm", lambda r: r.fulfill(status=404, body="no"))],
          then=lambda page: (screen(page, "#failed", "could not be downloaded"), assert_in(page.text_content("#failDetail"), "404")))
 
@@ -902,7 +921,7 @@ def check_boot_page(directory):
             page = browser.new_context(viewport={"width": 1280, "height": 720}).new_page()
             console = []
             page.on("console", lambda m: console.append(m.text))
-            page.goto(f"http://127.0.0.1:{server.server_address[1]}/?assets=none", wait_until="commit")
+            page.goto(f"http://127.0.0.1:{server.server_address[1]}/?cache=http", wait_until="commit")
             assert sent.wait(600), "the slow download was served"
             assert page.is_hidden("#failed"), page.inner_text("#failDetail")
             wait_console(page, console, "dbota: running", 600, "the game to start after a slow download")
@@ -1024,7 +1043,7 @@ def check_replays_page(directory, server_bin, radovid_bin, shots=False):
             console, problems = [], []
             page.on("console", lambda m: console.append(m.text))
             page.on("pageerror", lambda e: problems.append(f"page error: {e}"))
-            url = f"https://127.0.0.1:{port}/?assets=none"
+            url = f"https://127.0.0.1:{port}/?cache=http"
 
             def shot(name):
                 if shots:

@@ -4,7 +4,8 @@
 //!
 //! The install is hostile input: every read goes through a byte budget, every output path is
 //! checked before the sink sees it, an asset that fails to convert is reported and skipped (the
-//! client draws a stand-in for it), and the sizes of what is produced are capped. An install
+//! client draws nothing for it), and the sizes of what is produced are capped.
+//! An install
 //! that asks for more than the budget ends the import: no cache is finished from it.
 
 use std::cell::Cell;
@@ -568,7 +569,7 @@ pub struct Progress<'a> {
 pub struct Report {
     /// Files written: cache path and size.
     pub files: BTreeMap<String, u64>,
-    /// Items that did not convert, with why; their assets stay stand-ins.
+    /// Items that did not convert, with why; their assets are missing.
     pub failed: Vec<(String, String)>,
     pub stopped: bool,
     /// Why the import was cut short by the install, when it was: it asked for more than the

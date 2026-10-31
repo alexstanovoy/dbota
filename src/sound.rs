@@ -1,5 +1,6 @@
 //! Sounds: Dota's own from the cache, each cue of the client core matched to
-//! one, synthesized stand-ins for what the cache lacks; quieter the farther
+//! one (a cue Dota has no sound for, the low-health alarm and a hero kill's chime, is
+//! synthesized); quieter the farther
 //! from the camera, under the player's volume.
 
 use std::collections::HashMap;
@@ -262,39 +263,27 @@ pub fn plugin(app: &mut App) {
 }
 
 /// The logical names of the sounds a kind plays, each with every variant that
-/// shares it, and the synthesized stand-in used when the cache holds no
-/// Dota sounds at all.
+/// shares it, and the synthesized sound of a cue Dota has none for.
 fn sources_of(kind: Kind, manifest: &Manifest) -> (Vec<String>, Option<Sfx>) {
     let named = |names: &[&str]| names.iter().map(|n| (*n).to_owned()).collect::<Vec<_>>();
-    let (names, stand_in) = match kind {
+    let (names, synthesized) = match kind {
         Kind::Cue(cue) => match cue {
-            CueKind::LastHit => (named(&["sound.last_hit"]), Some(Sfx::LastHit)),
-            CueKind::Deny => (named(&["sound.deny"]), Some(Sfx::Deny)),
-            CueKind::Raze => (named(&["sound.raze"]), Some(Sfx::Raze)),
-            CueKind::Requiem => (named(&["sound.requiem"]), Some(Sfx::Requiem)),
+            CueKind::LastHit => (named(&["sound.last_hit"]), None),
+            CueKind::Deny => (named(&["sound.deny"]), None),
+            CueKind::Raze => (named(&["sound.raze"]), None),
+            CueKind::Requiem => (named(&["sound.requiem"]), None),
             CueKind::LowHp => (vec![], Some(Sfx::LowHp)),
-            CueKind::Buy => (named(&["sound.buy"]), Some(Sfx::Buy)),
-            CueKind::LevelUp => (named(&["sound.level_up"]), Some(Sfx::LevelUp)),
-            CueKind::TowerShot => (named(&["sound.tower.hero_impact"]), Some(Sfx::TowerShot)),
+            CueKind::Buy => (named(&["sound.buy"]), None),
+            CueKind::LevelUp => (named(&["sound.level_up"]), None),
+            CueKind::TowerShot => (named(&["sound.tower.hero_impact"]), None),
             CueKind::HeroKill => (vec![], Some(Sfx::HeroKill)),
             // A hero's own, sounded through its rows.
             CueKind::Attack | CueKind::Hit | CueKind::HeroDeath => (vec![], None),
             // Each reason has its own sound (Kind::Denied).
             CueKind::Refused(_) | CueKind::Undeniable(_) => (vec![], None),
         },
-        Kind::Denied(deny) => (named(deny.logical()), Some(Sfx::Refused)),
-        Kind::Row(row) => {
-            let stand_in = match row.event {
-                Event::Attack if matches!(row.subject, Subject::Hero(_)) => Some(Sfx::Attack),
-                Event::Impact if matches!(row.subject, Subject::Hero(_)) => Some(Sfx::Hit),
-                Event::Death => Some(Sfx::HeroDeath),
-                _ => None,
-            };
-            (
-                row.name(manifest).into_iter().collect(),
-                stand_in.filter(|_| !manifest.has_sounds()),
-            )
-        }
+        Kind::Denied(deny) => (named(deny.logical()), None),
+        Kind::Row(row) => (row.name(manifest).into_iter().collect(), None),
         Kind::PortalArriving => (named(&["sound.portal.loop_appear"]), None),
         Kind::PortalLeaving => (named(&["sound.portal.loop_disappear"]), None),
         Kind::HeroArrived => (named(&["sound.portal.hero_appear"]), None),
@@ -303,7 +292,7 @@ fn sources_of(kind: Kind, manifest: &Manifest) -> (Vec<String>, Option<Sfx>) {
         Kind::PingDanger => (named(&["sound.ping.danger"]), None),
         Kind::PingDangerLayer => (named(&["sound.ping.warning_layer"]), None),
     };
-    (names, stand_in)
+    (names, synthesized)
 }
 
 fn load(
@@ -339,14 +328,14 @@ fn load(
     ])
     .chain(Row::all().into_iter().map(Kind::Row));
     for kind in kinds {
-        let (names, stand_in) = sources_of(kind, &manifest);
+        let (names, synthesized) = sources_of(kind, &manifest);
         let mut sources: Vec<Handle<AudioSource>> = names
             .iter()
             .flat_map(|name| manifest.sounds(name))
             .map(|path| server.load(path))
             .collect();
         if sources.is_empty()
-            && let Some(sfx) = stand_in
+            && let Some(sfx) = synthesized
         {
             sources.push(audio.add(AudioSource {
                 bytes: Arc::from(wav(&synth(sfx))),

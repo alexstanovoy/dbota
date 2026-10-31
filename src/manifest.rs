@@ -59,8 +59,8 @@ pub struct UnitArt {
 /// Everything the cache was exported with, and which of it is there.
 #[derive(Resource, Clone, Debug, Default)]
 pub struct Manifest {
-    /// The cache folder; absent when it does not exist.
-    pub root: Option<PathBuf>,
+    /// The cache folder.
+    pub root: PathBuf,
     /// The models whose files are present.
     pub models: Vec<Model>,
     /// Textures and sounds whose files are present: logical name and path.
@@ -93,15 +93,9 @@ pub struct Manifest {
 impl Manifest {
     /// Reads the manifest against a cache folder.
     pub fn load(root: &Path) -> Manifest {
-        // A browser's page publishes its cache and its index (webcache.rs); a
-        // page without one has no assets.
-        #[cfg(target_arch = "wasm32")]
-        let has_root = crate::webcache::available();
-        #[cfg(not(target_arch = "wasm32"))]
-        let has_root = root.is_dir();
         let present = |rel: &str| in_cache(root, rel);
         let mut manifest = Manifest {
-            root: has_root.then(|| root.to_path_buf()),
+            root: root.to_path_buf(),
             ..Manifest::default()
         };
         let catalog = match dbota_import::catalog::parse(MANIFEST, IDS) {
@@ -210,7 +204,7 @@ impl Manifest {
     /// the importer made it: it makes one for every such name, so the manifest lists none.
     pub fn tree_model(&self, name: &str) -> Option<String> {
         let rel = dbota_import::text::tree_model_path(name)?;
-        in_cache(self.root.as_deref()?, &rel).then(|| cache_path(&rel))
+        in_cache(&self.root, &rel).then(|| cache_path(&rel))
     }
 
     /// The model of a logical name, if its file is there.
@@ -260,13 +254,6 @@ impl Manifest {
                 wanted(logical) && (path.ends_with(".wav") || path.ends_with(".mp3"))
             })
             .map(|(_, path)| path.as_str())
-    }
-
-    /// Whether the cache holds any sound at all.
-    pub fn has_sounds(&self) -> bool {
-        self.files
-            .iter()
-            .any(|(logical, _)| logical.starts_with("sound."))
     }
 
     /// The Dota name of one of our ids of a kind.
@@ -320,16 +307,13 @@ impl Manifest {
 
     /// How much of the cache is there, in words, for the settings screen.
     pub fn census(&self) -> String {
-        match &self.root {
-            None => "no Dota asset cache: built-in stand-ins".to_string(),
-            Some(root) => format!(
-                "Dota assets from {}: {} models, {} textures and sounds, map {}",
-                root.display(),
-                self.models.len(),
-                self.files.len(),
-                if self.map.is_some() { "yes" } else { "no" }
-            ),
-        }
+        format!(
+            "Dota assets from {}: {} models, {} textures and sounds, map {}",
+            self.root.display(),
+            self.models.len(),
+            self.files.len(),
+            if self.map.is_some() { "yes" } else { "no" }
+        )
     }
 }
 

@@ -176,7 +176,7 @@ pub struct FogExt {
     #[texture(103)]
     cast: Handle<Image>,
     /// The terrain's path textures and path field (`layers.rs`); white
-    /// stand-ins on every other surface.
+    /// placeholders on every other surface.
     #[texture(104)]
     #[sampler(105)]
     paths: Handle<Image>,

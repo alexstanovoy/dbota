@@ -1,6 +1,6 @@
 //! What a tooltip says, before it is drawn: Dota's text with the
-//! simulator's numbers in it, or, without the cache, only the simulator's own
-//! plain names and numbers.
+//! simulator's numbers in it, or, for an entry the cache has no text of, only the
+//! simulator's own plain names and numbers.
 
 use bevy::prelude::Color;
 use bota_core::{AbilityDef, ItemDef, ability_def, item_def};
@@ -608,7 +608,7 @@ mod tests {
             std::path::PathBuf::from,
         );
         let manifest = Manifest::load(&root);
-        let texts = Texts::load(manifest.root.as_deref());
+        let texts = Texts::load(&manifest.root);
         assert!(!texts.is_empty(), "no text file in {}", root.display());
         let mut unanswered = 0;
         for (kind, id, _) in &manifest.ids {

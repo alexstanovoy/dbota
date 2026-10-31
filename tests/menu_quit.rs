@@ -130,8 +130,7 @@ fn a_replay_is_left_for_the_menu() {
     );
 }
 
-/// An asset cache in `scratch` stamped `stamp`: finished (its index is there) and empty, so a
-/// client reading it draws stand-ins.
+/// An asset cache in `scratch` stamped `stamp`: finished (its index is there) and empty.
 fn asset_cache(scratch: &Scratch, stamp: &str) -> PathBuf {
     let cache = scratch.0.join("assets");
     std::fs::create_dir_all(&cache).expect("a cache folder");
@@ -165,23 +164,26 @@ fn assets_of_another_version_hold_the_client_until_imported_again() {
     ];
     played("stale assets", run(&scratch, &args, script), script);
     let log = logged(&scratch);
-    assert!(log.contains("out of date for this version"), "{log}");
+    assert!(log.contains("is out of date for this version"), "{log}");
     assert!(
         !log.contains("match known"),
         "the replay started on stale assets:\n{log}"
     );
 }
 
-/// The same with assets of this build's fingerprint: no question, the replay plays.
+/// With no asset cache at all the client is held at the screen that makes one: it offers the
+/// Dota 2 folder and a prepared cache (and QUIT), none of the menu is there, and the replay the
+/// command line names never starts.
 #[test]
 #[ignore = "draws on the GPU in a headless compositor: tools/visual_check.sh runs it"]
-fn assets_of_this_version_play() {
-    let scratch = Scratch::new("current");
-    let stamp = format!("{}/1/2", dbota_import::import::fingerprint());
-    let cache = asset_cache(&scratch, &stamp);
+fn with_no_assets_the_client_offers_only_the_ways_to_get_them() {
+    let scratch = Scratch::new("no-assets");
+    let cache = scratch.0.join("assets");
     let replay = replay();
-    let script = "await:game;wait:2;key:Escape;await:menu;click:disconnect;await:popup;click:ok;\
-                  await:nopopup;await:button:quit;key:Escape;await:popup;click:ok";
+    let script = "await:button:import from dota 2;await:button:use a prepared cache;\
+                  await:nobutton:sign in;await:nobutton:local lobby;await:nobutton:demo hero;\
+                  await:nobutton:replays;await:nobutton:settings;wait:2;shot:no-assets.png;\
+                  click:quit dbota";
     let args = [
         "--cache-dir",
         cache.to_str().expect("a UTF-8 path"),
@@ -190,11 +192,12 @@ fn assets_of_this_version_play() {
         "--pov",
         "0",
     ];
-    played("current assets", run(&scratch, &args, script), script);
+    played("no assets", run(&scratch, &args, script), script);
+    let log = logged(&scratch);
+    assert!(log.contains("no asset cache at"), "{log}");
     assert!(
-        !logged(&scratch).contains("out of date"),
-        "{}",
-        logged(&scratch)
+        !log.contains("match known"),
+        "the replay started with no assets:\n{log}"
     );
 }
 
@@ -243,18 +246,18 @@ fn assets_taken_from_a_prepared_cache_play() {
     }
 }
 
-/// With no asset cache the menu offers a prepared one: its button asks for a path, typed or
+/// With no asset cache the screen offers a prepared one: its button asks for a path, typed or
 /// pasted into the field, and Enter takes the cache there (a restart reads it).
 #[test]
 #[ignore = "draws on the GPU in a headless compositor: tools/visual_check.sh runs it"]
-fn the_menu_takes_a_prepared_cache_from_a_typed_path() {
+fn the_asset_screen_takes_a_prepared_cache_from_a_typed_path() {
     let scratch = Scratch::new("prepared-menu");
     let (_, zip) = prepared(&scratch);
     let cache = scratch.0.join("assets");
     let script = format!(
         "await:button:use a prepared cache;click:use a prepared cache;await:button:load;\
          text:{};shot:prepared-path.png;key:Enter;await:button:restart dbota;shot:prepared-loaded.png;\
-         key:Escape;await:popup;click:ok",
+         click:quit dbota",
         zip.display()
     );
     let args = ["--cache-dir", cache.to_str().expect("a UTF-8 path")];
@@ -266,10 +269,10 @@ fn the_menu_takes_a_prepared_cache_from_a_typed_path() {
 }
 
 /// A cache of another build typed into the field is refused, the terminal says which build it
-/// is for, and the menu offers the ways again; nothing is installed.
+/// is for, and the screen offers the ways again; nothing is installed.
 #[test]
 #[ignore = "draws on the GPU in a headless compositor: tools/visual_check.sh runs it"]
-fn the_menu_refuses_a_prepared_cache_of_another_build() {
+fn the_asset_screen_refuses_a_prepared_cache_of_another_build() {
     let scratch = Scratch::new("prepared-refused");
     let mut files = common::prepared::small_cache();
     files.insert(
@@ -282,7 +285,7 @@ fn the_menu_refuses_a_prepared_cache_of_another_build() {
     let script = format!(
         "await:button:use a prepared cache;click:use a prepared cache;await:button:load;\
          text:{};key:Enter;await:nobutton:cancel;await:button:use a prepared cache;\
-         shot:prepared-refused.png;key:Escape;await:popup;click:ok",
+         shot:prepared-refused.png;click:quit dbota",
         zip.display()
     );
     let args = ["--cache-dir", cache.to_str().expect("a UTF-8 path")];

@@ -49,7 +49,7 @@ pub struct MapGeometry {
 #[derive(TypePath)]
 pub struct MapLoader {
     /// The cache folder, for the ground layers' colours.
-    pub root: Option<PathBuf>,
+    pub root: PathBuf,
     /// The terrain's detail texture, a file of the cache.
     pub detail: Option<String>,
     /// Whether props are kept.
@@ -225,8 +225,7 @@ impl MapLoader {
         let water = water.unwrap_or_default();
         let paths = paths
             .choose(&mut kinds)
-            .zip(self.root.as_deref())
-            .and_then(|((dirt, stones), root)| crate::layers::pack_detail(root, &dirt, &stones))
+            .and_then(|(dirt, stones)| crate::layers::pack_detail(&self.root, &dirt, &stones))
             .map(|image| cx.add_labeled_asset("ground_paths".to_string(), image));
         Materials {
             kinds,

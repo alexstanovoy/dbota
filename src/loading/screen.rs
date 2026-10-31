@@ -79,7 +79,7 @@ fn spawn(
             margin: UiRect::new(px(-LOGO / 2.0), px(0), px(-LOGO / 2.0), px(0)),
             ..default()
         },
-        ui::art(&manifest, &server, "loading.logo", Color::NONE),
+        ui::art(&manifest, &server, "loading.logo"),
         ChildOf(root),
     ));
     sidebar(&mut commands, root, &fonts);
@@ -172,7 +172,7 @@ fn loading_panel(
             height: px(THROBBER),
             ..default()
         },
-        ui::art(manifest, server, "loading.throbber", Color::NONE),
+        ui::art(manifest, server, "loading.throbber"),
         ChildOf(panel),
     ));
     let well = commands

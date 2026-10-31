@@ -102,9 +102,7 @@ pub fn plugin(app: &mut App) {
 }
 
 fn load(manifest: Res<Manifest>, mut faces: ResMut<Faces>) {
-    let Some(root) = manifest.root.as_deref() else {
-        return;
-    };
+    let root = &manifest.root;
     let text =
         |rel: &str| crate::cachefs::read_small(root, rel).and_then(|b| String::from_utf8(b).ok());
     if let Some(table) = manifest.phonemes.as_deref().and_then(text) {
@@ -126,7 +124,7 @@ fn load(manifest: Res<Manifest>, mut faces: ResMut<Faces>) {
 /// The lip sync of a voice line (its cache path), if the cache has it.
 pub fn lipsync(manifest: &Manifest, sound: &str) -> Option<Arc<LineFace>> {
     let rel = dbota_import::import::lipsync_path(sound);
-    let bytes = crate::cachefs::read_small(manifest.root.as_deref()?, &rel)?;
+    let bytes = crate::cachefs::read_small(&manifest.root, &rel)?;
     let parsed = String::from_utf8(bytes)
         .ok()
         .as_deref()
@@ -289,7 +287,7 @@ pub fn trace(
     let file = line.map(|(line, _)| line.file.as_str());
     if file != traced.1.as_deref() {
         traced.1 = file.map(str::to_owned);
-        let root = manifest.root.as_deref().unwrap_or(std::path::Path::new(""));
+        let root = &manifest.root;
         if let (Some(file), Some(table)) = (file, manifest.phonemes.as_deref()) {
             println!(
                 "face-line: {} {}",

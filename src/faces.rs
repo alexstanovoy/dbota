@@ -1,5 +1,5 @@
-//! The words of items, effects and talents, for the tooltips of a game
-//! without Dota's own text and for the fallback shop.
+//! The words of items, effects and talents, for the tooltips of an entry Dota's own text
+//! lacks and for the items no category of Dota's shop lists.
 //!
 //! Item names, one to an item, found by the id the wire carries; effects and
 //! talents also carry blurb templates. The numbers in a blurb are the rules':

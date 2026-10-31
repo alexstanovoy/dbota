@@ -311,7 +311,7 @@ fn buttons(kit: &mut Kit, parent: Entity) {
             ..default()
         },
     );
-    let art = ui::art(kit.manifest, kit.server, "hud.show_items", ui::INK_DIM);
+    let art = ui::art(kit.manifest, kit.server, "hud.show_items");
     kit.commands.spawn((
         ShowItems,
         Button,
@@ -437,7 +437,7 @@ fn inventory(kit: &mut Kit, parent: Entity, at: At) {
             ..default()
         },
     );
-    let art = ui::art(kit.manifest, kit.server, "hud.neutral_slot", ui::PANEL_DEEP);
+    let art = ui::art(kit.manifest, kit.server, "hud.neutral_slot");
     kit.commands.spawn((
         Node {
             width: d(40.0),

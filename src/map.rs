@@ -14,7 +14,6 @@ use bevy::{
 
 use crate::layers::Family;
 use crate::manifest::Manifest;
-use crate::session::{MatchKnown, Session};
 use crate::terrain::{self, CELL};
 
 /// How bright the baked terrain is against the lighting: Dota doubles its
@@ -136,7 +135,7 @@ pub fn plugin(app: &mut App) {
         .insert_resource(ClearColor(Color::srgb(0.02, 0.03, 0.04)))
         .add_systems(Startup, spawn_sun)
         .add_systems(Update, spawn_map.run_if(crate::loading::requested))
-        .add_systems(Update, (prepare_map, build_fallback_ground))
+        .add_systems(Update, prepare_map)
         .add_systems(PostUpdate, report.in_set(crate::loading::Report));
 }
 
@@ -568,7 +567,7 @@ pub(crate) fn bake_transform(mut mesh: Mesh, global: &GlobalTransform) -> Mesh {
 /// The mean colour of the ground layer textures, read from the cache once
 /// each.
 pub(crate) struct LayerMeans {
-    pub(crate) root: Option<std::path::PathBuf>,
+    pub(crate) root: std::path::PathBuf,
     pub(crate) known: std::collections::HashMap<String, [f32; 3]>,
 }
 
@@ -585,10 +584,7 @@ impl LayerMeans {
             .trim_end_matches(".vtex");
         let root = &self.root;
         *self.known.entry(name.to_string()).or_insert_with(|| {
-            root.as_ref()
-                .and_then(|root| {
-                    crate::cachefs::read_small(root, &format!("textures/ground/{name}.png"))
-                })
+            crate::cachefs::read_small(root, &format!("textures/ground/{name}.png"))
                 .and_then(|bytes| mean_color(&bytes))
                 .unwrap_or([0.5; 3])
         })
@@ -611,8 +607,7 @@ impl LayerMeans {
     /// file in the cache.
     pub(crate) fn detail(&mut self, file: Option<&str>) -> f32 {
         let mean = file
-            .zip(self.root.as_ref())
-            .and_then(|(p, root)| crate::cachefs::read_small(root, p))
+            .and_then(|p| crate::cachefs::read_small(&self.root, p))
             .and_then(|bytes| mean_color(&bytes))
             .unwrap_or([0.5; 3]);
         ((mean[0] + mean[1] + mean[2]) / 3.0).max(0.05)
@@ -1057,66 +1052,6 @@ pub fn floor(ground: &Ground, below: f32, colours: Option<&ColourField>) -> Mesh
     mesh.insert_indices(Indices::U32(indices));
     mesh.compute_normals();
     mesh
-}
-
-/// Builds the ground from the match's terrain cells when no map came from
-/// the cache.
-fn build_fallback_ground(
-    mut commands: Commands,
-    session: NonSend<Session>,
-    known: Res<MatchKnown>,
-    manifest: Res<Manifest>,
-    mut ground: ResMut<Ground>,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
-    mut done: Local<bool>,
-) {
-    if *done || !known.0 || manifest.map.is_some() {
-        return;
-    }
-    *done = true;
-    let core = &session.0;
-    let n = core.terrain_cells();
-    // The wire allows a map of one cell, which has no slopes to build.
-    if n < 2 {
-        return;
-    }
-    let built = terrain::build(core.terrain(), n, 512.0);
-    let mut mesh = Mesh::new(
-        PrimitiveTopology::TriangleList,
-        RenderAssetUsages::RENDER_WORLD,
-    );
-    let to_bevy = |p: &[f32; 3]| [p[0], p[2], -p[1]];
-    mesh.insert_attribute(
-        Mesh::ATTRIBUTE_POSITION,
-        built.positions.iter().map(to_bevy).collect::<Vec<_>>(),
-    );
-    mesh.insert_attribute(
-        Mesh::ATTRIBUTE_NORMAL,
-        built.normals.iter().map(to_bevy).collect::<Vec<_>>(),
-    );
-    mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, built.uvs);
-    mesh.insert_attribute(Mesh::ATTRIBUTE_COLOR, built.colors);
-    mesh.insert_indices(Indices::U32(built.indices));
-    commands.spawn((
-        Mesh3d(meshes.add(mesh)),
-        MeshMaterial3d(materials.add(StandardMaterial {
-            perceptual_roughness: 0.95,
-            ..default()
-        })),
-    ));
-    let heights = terrain::Heights::new(core.terrain(), n);
-    let cells = (0..n * n)
-        .map(|i| {
-            let (cx, cy) = (i % n, i / n);
-            heights.at((cx as f32 + 0.5) * CELL, (cy as f32 + 0.5) * CELL)
-        })
-        .collect();
-    *ground = Ground {
-        n,
-        heights: cells,
-        surface: None,
-    };
 }
 
 /// The world's part of the loading: the map read and its ground known.

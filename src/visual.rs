@@ -7,7 +7,7 @@
 //!   than the same ground drawn again without the veil (a second shot of the
 //!   held frame), ground it sees is left alone, and the border is neither
 //!   hard nor smeared.
-//! - Heroes are drawn with their models, not stand-ins, each part on the
+//! - Heroes are drawn with their models, each part on the
 //!   hero's own live skeleton, and no model's scene is replaced once drawn.
 //! - Buildings never turn.
 //! - No range ring is drawn while the show-ranges key is up.
@@ -59,7 +59,7 @@ pub const BORDER_CELLS: (f32, f32) = (1.0, 5.0);
 /// How far seen ground's luminance may differ from its unfogged luminance.
 pub const SEEN_LUMINANCE_DRIFT: f32 = 0.05;
 /// The spread of luminance over a hero's body, at least: a model has
-/// shading and detail; a stand-in is one flat colour.
+/// shading and detail; a flat colour has none.
 pub const HERO_DETAIL_MIN: f32 = 12.0;
 
 /// How far from its unit's place a joint of a hero's skeleton may be, in
@@ -1004,7 +1004,7 @@ fn heroes(shot: &Shot, c: &Checks, report: &mut impl FnMut(&str, bool, String)) 
                 if unit.model.is_some() {
                     "loaded"
                 } else {
-                    "MISSING (stand-in)"
+                    "MISSING"
                 }
             ),
         );

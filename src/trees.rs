@@ -168,10 +168,7 @@ pub fn plugin(app: &mut App) {
 
 /// Reads the real map's trees, if the cache has them.
 fn map_trees(manifest: &Manifest) -> Vec<MapTree> {
-    let Some(root) = &manifest.root else {
-        return Vec::new();
-    };
-    let Some(text) = crate::cachefs::read_small(root, "map/mid/trees.txt")
+    let Some(text) = crate::cachefs::read_small(&manifest.root, "map/mid/trees.txt")
         .and_then(|bytes| String::from_utf8(bytes).ok())
     else {
         return Vec::new();
@@ -220,7 +217,7 @@ fn kind(server: &AssetServer, path: String, name: &str) -> Kind {
 
 /// Places one tree at every tree of the match once the match and the ground
 /// are known, each as the model the map's tree there is (loaded since the
-/// start; a model only a stand-in tree needs is asked for now).
+/// start; a model only a tree the map's file does not place needs is asked for now).
 fn plant(
     session: NonSend<Session>,
     manifest: Res<Manifest>,

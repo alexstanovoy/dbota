@@ -350,3 +350,24 @@ fn a_file_that_is_not_a_cache_is_refused() {
     );
     assert_untouched(&scratch, &scratch.path("assets"));
 }
+
+/// A run nobody watches (a capture) has no asset screen to show: without a cache of this build it
+/// ends at once with the reason and the way to a cache, drawing nothing.
+#[test]
+fn an_unattended_run_without_assets_ends_with_the_reason() {
+    let scratch = Scratch::new("unattended");
+    let cache = scratch.path("assets");
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_dbota"))
+        .arg("--cache-dir")
+        .arg(&cache)
+        .args(["--replay", "none.brp", "--screenshot-at", "10"])
+        .env_remove("DBOTA_ASSETS")
+        .output()
+        .expect("dbota runs");
+
+    assert_eq!(output.status.code(), Some(2), "{}", said(&output));
+    let said = said(&output);
+    assert!(said.contains("no asset cache at"), "{said}");
+    assert!(said.contains("dbota import-cache"), "{said}");
+    assert!(!cache.exists());
+}

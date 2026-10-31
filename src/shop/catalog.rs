@@ -1,8 +1,8 @@
 //! What the shop lists, where, and in which words: Dota's categories with
 //! the items each holds in Dota's order, as the cache's `text/shop.json`
 //! has them out of the player's own install (`dbota import`), cut to the
-//! items bota sells. Without the cache the shop falls back on the client
-//! core's own groups and plain words.
+//! items bota sells; an item no category lists is shown in a section of its own, and a word the
+//! cache lacks is the plain one.
 
 use std::{collections::HashMap, path::Path};
 
@@ -89,9 +89,10 @@ pub struct Catalog {
 }
 
 impl Catalog {
-    /// The cache's shop data, or one flat section of what bota sells without it.
+    /// The cache's shop data; a shop file that is missing or broken leaves what bota sells in the
+    /// one section of the items no category lists.
     pub fn load(manifest: &Manifest) -> Catalog {
-        let data = manifest.root.as_deref().and_then(read).unwrap_or_default();
+        let data = read(&manifest.root).unwrap_or_default();
         Catalog::build(data, manifest)
     }
 
@@ -109,11 +110,6 @@ impl Catalog {
             offered: Catalogue::FULL,
             strings: data.strings,
         };
-        if data.categories.is_empty() {
-            catalog.add_leftovers(manifest);
-            catalog.all.clone_from(&catalog.sections);
-            return catalog;
-        }
         for (tab, key, title) in LAYOUT {
             let Some((_, items)) = data.categories.iter().find(|(name, _)| name == key) else {
                 continue;

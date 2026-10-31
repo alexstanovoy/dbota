@@ -40,9 +40,6 @@ struct GlyphSeconds;
 /// Logical pixels across the button, and the frame's padding round it.
 const BUTTON: f32 = 42.0;
 const PAD: f32 = 7.0;
-/// The stand-in's colours without the cache: lit gold, dimmed grey.
-const READY: Color = Color::srgb(0.85, 0.68, 0.32);
-const WAITING: Color = Color::srgb(0.32, 0.34, 0.38);
 
 pub fn plugin(app: &mut App) {
     app.add_systems(Startup, spawn)
@@ -127,7 +124,7 @@ fn spawn(
 fn show(
     session: NonSend<Session>,
     mut frame: Single<&mut Visibility, With<GlyphFrame>>,
-    mut icon: Single<(&GlyphIcon, &mut ImageNode, &mut BackgroundColor), Without<GlyphSweep>>,
+    mut icon: Single<(&GlyphIcon, &mut ImageNode), Without<GlyphSweep>>,
     mut sweep: Single<&mut BackgroundGradient, With<GlyphSweep>>,
     mut seconds: Single<&mut Text, With<GlyphSeconds>>,
 ) {
@@ -144,23 +141,18 @@ fn show(
     };
     frame.set_if_neq(Visibility::Inherited);
     let waiting = ready_in > 0;
-    let (art, art_color, stand_in) = match (&icon.0.ready, &icon.0.waiting, waiting) {
-        (Some(ready), _, false) => (ready.clone(), Color::WHITE, Color::NONE),
-        (_, Some(dim), true) => (dim.clone(), Color::WHITE, Color::NONE),
-        (_, _, waiting) => (
-            Handle::default(),
-            Color::NONE,
-            if waiting { WAITING } else { READY },
-        ),
+    let (art, art_color) = match (&icon.0.ready, &icon.0.waiting, waiting) {
+        (Some(ready), _, false) => (ready.clone(), Color::WHITE),
+        (_, Some(dim), true) => (dim.clone(), Color::WHITE),
+        _ => (Handle::default(), Color::NONE),
     };
-    let (_, image, background) = &mut *icon;
+    let (_, image) = &mut *icon;
     if image.image != art {
         image.image = art;
     }
     if image.color != art_color {
         image.color = art_color;
     }
-    background.set_if_neq(BackgroundColor(stand_in));
     // Dark over what is still to wait, clear over what has passed.
     let left = (ready_in as f32 / GLYPH_COOLDOWN_TICKS as f32).clamp(0.0, 1.0);
     let dark = Color::srgba(0.0, 0.0, 0.0, if waiting { 0.68 } else { 0.0 });

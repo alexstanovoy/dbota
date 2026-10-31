@@ -2,9 +2,8 @@
 //!
 //! They come from the asset cache (`text/tooltips.json`, which
 //! `dbota import` builds out of the player's own Dota install) and
-//! are never part of this repository. Without the cache there is no text
-//! here at all, and the interface falls back to the simulator's own plain
-//! names and numbers.
+//! are never part of this repository. An entry the cache has no text of falls back to the
+//! simulator's own plain names and numbers.
 
 use std::{collections::HashMap, path::Path};
 
@@ -61,7 +60,7 @@ pub struct Texts {
 
 impl Texts {
     /// Reads the cache's text file; empty when there is none.
-    pub fn load(root: Option<&Path>) -> Texts {
+    pub fn load(root: &Path) -> Texts {
         Texts {
             entries: read_object(root, FILE)
                 .iter()
@@ -128,8 +127,8 @@ fn colour(hex: &str) -> Option<Color> {
 }
 
 /// The JSON object of a cache file; empty when there is none or it is not one.
-fn read_object(root: Option<&Path>, file: &str) -> serde_json::Map<String, Value> {
-    let Some(bytes) = root.and_then(|root| crate::cachefs::read_small(root, file)) else {
+fn read_object(root: &Path, file: &str) -> serde_json::Map<String, Value> {
+    let Some(bytes) = crate::cachefs::read_small(root, file) else {
         return serde_json::Map::new();
     };
     match serde_json::from_slice::<Value>(&bytes) {

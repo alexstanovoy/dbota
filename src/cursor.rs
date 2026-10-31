@@ -2,8 +2,8 @@
 //! enemy and green over a friend, the attack arrow, the reticle of an ability
 //! or an item taken up for aiming (white on the ground, tinted over an enemy
 //! or a friend), and the reticle an item dragged out into the world wears.
-//! The images are the install's (`resource/cursor/source`); where the cache
-//! has none the window's own arrow, crosshair and hand stand in.
+//! The images are the install's (`resource/cursor/source`); until one has loaded the window's own
+//! arrow, crosshair and hand are worn.
 
 use bevy::{
     prelude::*,
@@ -72,8 +72,8 @@ impl Shape {
         }
     }
 
-    /// The window's own cursor that stands in without the cache.
-    fn stand_in(self) -> SystemCursorIcon {
+    /// The window's own cursor worn until the image has loaded.
+    fn system_icon(self) -> SystemCursorIcon {
         match self {
             Shape::Default => SystemCursorIcon::Default,
             Shape::DefaultTeam => SystemCursorIcon::Pointer,
@@ -215,7 +215,7 @@ fn show(
     .iter()
     .find(|(s, _)| *s == wanted)
     .map(|(_, handle)| handle.clone());
-    // Until the image has loaded the stand-in is worn, and the cursor is set again then.
+    // Until the image has loaded the window's own cursor is worn, and the cursor is set again then.
     let ready = image.as_ref().is_some_and(|h| images.contains(h));
     if cursors.shown == Some((wanted, ready, bright)) {
         return;
@@ -227,7 +227,7 @@ fn show(
             hotspot: wanted.hotspot(),
             ..default()
         })),
-        None => CursorIcon::System(wanted.stand_in()),
+        None => CursorIcon::System(wanted.system_icon()),
     };
     commands.entity(*window).insert(icon);
 }

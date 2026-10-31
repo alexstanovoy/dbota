@@ -558,12 +558,10 @@ fn item_lists(commands: &mut Commands, kit: &Kit, catalog: &Catalog, contents: E
         "Common Items",
     );
     let art = (kit.fonts, kit.manifest, kit.server);
-    // Without the cache, the client core's basic groups.
-    let from_cache = catalog.sections.iter().any(|s| s.key.is_some());
-    let sections = catalog.sections.iter().filter(|s| match s.key {
-        Some(key) => SECTIONS.contains(&key),
-        None => !from_cache && s.tab == crate::shop::Tab::Basics,
-    });
+    let sections = catalog
+        .sections
+        .iter()
+        .filter(|s| s.key.is_some_and(|key| SECTIONS.contains(&key)));
     for section in sections {
         commands.spawn((
             ui::text(

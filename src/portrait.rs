@@ -105,9 +105,8 @@ struct Framing {
 struct Framings(HashMap<String, Framing>);
 
 impl Framings {
-    fn load(root: Option<&std::path::Path>) -> Self {
-        let text = root
-            .and_then(|r| crate::cachefs::read_small(r, "models/portraits.txt"))
+    fn load(root: &std::path::Path) -> Self {
+        let text = crate::cachefs::read_small(root, "models/portraits.txt")
             .and_then(|bytes| String::from_utf8(bytes).ok())
             .unwrap_or_default();
         Self(text.lines().filter_map(parse_line).collect())
@@ -237,7 +236,7 @@ pub fn plugin(app: &mut App) {
         .add_systems(
             PreStartup,
             |mut commands: Commands, manifest: Res<Manifest>| {
-                commands.insert_resource(Framings::load(manifest.root.as_deref()));
+                commands.insert_resource(Framings::load(&manifest.root));
             },
         )
         .add_systems(Startup, spawn)

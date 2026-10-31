@@ -429,7 +429,7 @@ fn spawn_shop_button(
             height: dota(COIN),
             ..default()
         },
-        ui::art(manifest, server, "hud.gold_small", GOLD_INK),
+        ui::art(manifest, server, "hud.gold_small"),
         Pickable::IGNORE,
         ChildOf(button),
     ));

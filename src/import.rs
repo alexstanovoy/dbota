@@ -18,7 +18,8 @@ pub enum Need {
     Reimport,
 }
 
-/// Whether the cache at `cache` needs an import before dbota draws Dota's art and sound.
+/// Whether the cache at `cache` needs an import before dbota draws Dota's art and sound: it
+/// draws nothing without one.
 pub fn need(cache: &Path) -> Option<Need> {
     if !cache.join(dbota_import::cache_dir::INDEX).is_file() {
         return Some(Need::Import);
@@ -27,20 +28,21 @@ pub fn need(cache: &Path) -> Option<Need> {
     (!made_here).then_some(Need::Reimport)
 }
 
-/// Warns when the cache at `cache` was not made by an import of this build's manifest.
-pub fn warn_if_stale(cache: &Path) {
-    match need(cache) {
-        Some(Need::Import) => eprintln!(
-            "dbota: no asset cache at {}: Dota's art and sound are drawn as stand-ins; run `dbota import`",
+/// Why a run that cannot show the asset screen (a capture, a check) ends: what the cache at `cache`
+/// lacks and what to do.
+pub fn refusal(need: Need, cache: &Path) -> String {
+    match need {
+        Need::Import => format!(
+            "no asset cache at {}: dbota draws Dota's art and sound from the cache and nothing else; \
+             run `dbota import`, or `dbota import-cache` for a cache someone prepared",
             cache.display()
         ),
-        Some(Need::Reimport) => eprintln!(
-            "dbota: the asset cache {} is out of date for this version (it needs assets {}): \
-             re-import it (the client asks before it plays, or `dbota import`)",
+        Need::Reimport => format!(
+            "the asset cache {} is out of date for this version (it needs assets {}): \
+             run `dbota import`, or `dbota import-cache` for a cache prepared by this version",
             cache.display(),
             dbota_import::import::fingerprint()
         ),
-        None => {}
     }
 }
 
@@ -169,7 +171,7 @@ pub fn run_with(
         eprintln!("dbota import: old caches stay: {why}");
     }
     for (asset, why) in &report.failed {
-        eprintln!("dbota import: {asset} drawn as a stand-in: {why}");
+        eprintln!("dbota import: {asset} did not convert: {why}");
     }
     Ok(report.failed.is_empty())
 }

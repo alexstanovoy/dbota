@@ -7,7 +7,7 @@
 //! - `{mode: "http", files?: Map(path -> size)}`: a cache a developer serves next to the page
 //!   (`web/README.md`), with the index.txt it holds when there is one.
 //!
-//! Without it, the client draws its built-in stand-ins.
+//! Without either, the client reads no asset (the page starts it only once a cache is published).
 
 use js_sys::{Function, Map, Promise, Reflect, Uint8Array};
 use wasm_bindgen::{JsCast, JsValue};
@@ -23,7 +23,7 @@ fn published() -> Option<JsValue> {
 /// Whether a published cache may be read: a served one always (a developer's own export); one
 /// in private storage only when its stamp carries this build's asset fingerprint. The page
 /// publishes no other (it asks for a re-import first); were one published anyway, the client
-/// draws stand-ins rather than what another dbota made.
+/// reads nothing of what another dbota made.
 fn current(cache: &JsValue) -> bool {
     let mode = Reflect::get(cache, &"mode".into())
         .ok()
@@ -40,7 +40,7 @@ fn current(cache: &JsValue) -> bool {
     if !here {
         SAID.call_once(|| {
             bevy::log::error!(
-                "the imported assets are stamped {stamp:?}, not this build's {}: drawn as stand-ins",
+                "the imported assets are stamped {stamp:?}, not this build's {}: not read",
                 dbota_import::import::fingerprint()
             );
         });

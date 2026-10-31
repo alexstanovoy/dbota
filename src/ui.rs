@@ -161,24 +161,13 @@ pub fn split_disc(a: f32, before: Color, after: Color) -> BackgroundGradient {
     ))
 }
 
-/// Dota's art at `logical` in the cache, or a plain disc or box of
-/// `stand_in` where the cache has none.
-pub fn art(
-    manifest: &Manifest,
-    server: &AssetServer,
-    logical: &str,
-    stand_in: Color,
-) -> impl Bundle {
-    match manifest.file(logical) {
-        Some(path) => (
-            ImageNode::new(server.load(path)),
-            BackgroundColor(Color::NONE),
-        ),
-        None => (
-            ImageNode::default().with_color(Color::NONE),
-            BackgroundColor(stand_in),
-        ),
-    }
+/// Dota's art at `logical` in the cache; nothing where the cache has none.
+pub fn art(manifest: &Manifest, server: &AssetServer, logical: &str) -> impl Bundle {
+    let image = match manifest.file(logical) {
+        Some(path) => ImageNode::new(server.load(path)),
+        None => ImageNode::default().with_color(Color::NONE),
+    };
+    (image, BackgroundColor(Color::NONE))
 }
 
 /// A picture that fills its node as Dota fills a portrait's frame: scaled

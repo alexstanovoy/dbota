@@ -361,7 +361,7 @@ fn icon_art(faces: &mut Faces, s: Shown) -> Handle<Image> {
 }
 
 /// Washes a chip's ring a buff's or a debuff's colour: Dota's ring art, or
-/// the plain border standing in for it.
+/// the plain border where it has none.
 fn wash_ring(
     ring: Entity,
     rim: Color,

@@ -662,12 +662,7 @@ fn spawn_innate(kit: &mut Spawner, row: Entity) {
             border_radius: BorderRadius::MAX,
             ..default()
         },
-        ui::art(
-            kit.manifest,
-            kit.server,
-            "hud.innate",
-            Color::srgb(0.75, 0.6, 0.3),
-        ),
+        ui::art(kit.manifest, kit.server, "hud.innate"),
         Pickable::IGNORE,
         ChildOf(button),
     ));
@@ -746,12 +741,7 @@ fn spawn_level_up(kit: &mut Spawner, cell: Entity, slot: u8) {
                 border_radius: BorderRadius::all(px(2)),
                 ..default()
             },
-            ui::art(
-                kit.manifest,
-                kit.server,
-                "hud.levelup_button",
-                Color::srgb(0.85, 0.7, 0.35),
-            ),
+            ui::art(kit.manifest, kit.server, "hud.levelup_button"),
             Visibility::Hidden,
             ChildOf(cell),
         ))
@@ -918,7 +908,7 @@ fn spawn_round_slots(kit: &mut Spawner, bar: Entity) {
             border_radius: BorderRadius::MAX,
             ..ui::fill()
         },
-        ui::art(kit.manifest, kit.server, "hud.neutral_slot", Color::NONE),
+        ui::art(kit.manifest, kit.server, "hud.neutral_slot"),
         Pickable::IGNORE,
         ChildOf(neutral),
     ));
@@ -1304,7 +1294,7 @@ fn spawn_seat_death(kit: &mut Spawner, card: Entity, seat: Place) {
                 align_items: AlignItems::Center,
                 ..hidden
             },
-            ui::art(kit.manifest, kit.server, "hud.top_bar_dead", Color::NONE),
+            ui::art(kit.manifest, kit.server, "hud.top_bar_dead"),
             Pickable::IGNORE,
             ChildOf(card),
         ))
@@ -1384,7 +1374,7 @@ fn spawn_menu(commands: &mut Commands, manifest: &Manifest, server: &AssetServer
                 margin: UiRect::horizontal(px(MENU_BUTTON_MARGIN)),
                 ..default()
             },
-            ui::art(manifest, server, art, ui::INK_DIM),
+            ui::art(manifest, server, art),
             ChildOf(bar),
         ));
         // Dota's #DashboardButton: the arrow's art with transform: scaleY(-1).

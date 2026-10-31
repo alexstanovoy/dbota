@@ -28,8 +28,7 @@ function within(stage, promise, ms = STORAGE_MS) {
   return Promise.race([promise, late]).finally(() => clearTimeout(timer));
 }
 
-// ?cache=http plays what a local server holds under /cache (a developer's own export); ?assets=none
-// skips the question and plays with stand-ins; ?gpu=webgl2 takes the WebGL2 client even where
+// ?cache=http plays what a local server holds under /cache (a developer's own export); ?gpu=webgl2 takes the WebGL2 client even where
 // WebGPU works.
 const query = new URLSearchParams(location.search);
 
@@ -133,8 +132,7 @@ function stopped(error) {
     fail(
       "The game ran out of memory",
       `The browser gave it no more memory (it asked for ${mib(refusal.requested)} with ${mib(refusal.heap)} in use; ` +
-        "a page's WebAssembly memory ends at 4 GB, often sooner). Close other tabs and reload; playing with " +
-        "stand-ins needs much less.",
+        "a page's WebAssembly memory ends at 4 GB, often sooner). Close other tabs and reload.",
       detail
     );
   } else {
@@ -281,7 +279,7 @@ async function importFrom(files) {
   list.hidden = !result.failures.length;
   list.replaceChildren(...result.failures.slice(0, 30).map((f) => Object.assign(document.createElement("li"), { textContent: f })));
   await offerReady(
-    `Imported ${result.files} files. ${result.failures.length ? result.failures.length + " could not be converted and use stand-ins." : ""}`
+    `Imported ${result.files} files. ${result.failures.length ? result.failures.length + " could not be converted and are missing." : ""}`
   );
 }
 
@@ -354,8 +352,6 @@ async function checkFresh() {
 
 async function main() {
   globalThis.dbota_boot.started();
-  $("standins").onclick = startGame;
-  $("standinsStale").onclick = startGame;
   $("play").onclick = startGame;
   $("reload").onclick = () => location.reload();
   $("otherApi").onclick = () => {
@@ -383,13 +379,12 @@ async function main() {
     say("The imported copy is deleted.");
     show("grant");
   };
-  if (query.get("assets") === "none") return startGame();
   if (query.get("cache") === "http") {
     await within("The served cache", cache.publishServed());
     return startGame();
   }
   if (!(await cache.supported())) {
-    say("This browser has no private storage for assets: playing with stand-ins is possible.");
+    say("This browser has no private storage for the assets dbota draws from, so it cannot play here. Use a browser with the Origin Private File System (a current Chrome, Edge, Firefox or Safari).");
     return show("grant");
   }
   let state;
@@ -399,7 +394,7 @@ async function main() {
     version = await within("The tool that reads your Dota files", importerVersion(), STALL_MS * 2);
   } catch (e) {
     console.warn("dbota:", e);
-    say(`${e.message}. Importing your Dota files is not possible now; playing with stand-ins is.`);
+    say(`${e.message}. Importing your Dota files is not possible now: reload the page, or try another browser.`);
     return show("grant");
   }
   $("version").textContent = `assets ${version}`;

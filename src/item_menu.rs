@@ -50,7 +50,7 @@ enum Choice {
 }
 
 impl Choice {
-    /// Dota's label key and its plain stand-in.
+    /// Dota's label key and the plain word where the cache has none.
     fn label(self) -> (&'static str, &'static str) {
         match self {
             Choice::Sell { mark: None, .. } => ("DOTA_InventoryMenu_Sell", "Sell"),

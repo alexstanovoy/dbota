@@ -6,8 +6,8 @@ wasm, drawn through WebGPU or WebGL2: see "Graphics" below). **Valve's files nev
 folder is read inside the tab with ranged reads, the converted copy lives in the browser's own
 storage (the Origin Private File System), the page has no code that sends it anywhere, and its
 Content-Security-Policy only allows connections to its own origin (game sockets are added when the page gets networking).
-"Play with stand-ins" is always offered; the client then draws its built-in shapes. A player without Dota 2 can load a
-prepared asset cache instead (see "Prepared caches").
+dbota draws Dota's art and plays its sounds from the asset cache and from nothing else: without one the page offers only
+the Dota 2 folder and a prepared asset cache (see "Prepared caches"), and the client is not started.
 
 ## Parts
 
@@ -73,8 +73,8 @@ then `/<size of pak01_dir.vpk>/<its modification time>`. Dota's updater rewrites
 every content change. At every start the page compares the copy's fingerprint with its own (the
 importer module's `cache_version()`): a copy another dbota made is never played. The page holds at
 "The assets are out of date for this version" with the re-import right there (one click where the
-browser still holds the folder, else from the folder picked again) or stand-ins; the client, given a
-copy of another fingerprint anyway, draws stand-ins. A copy of this fingerprint goes straight to
+browser still holds the folder, else from the folder picked again) or a prepared cache of this version; the client,
+given a copy of another fingerprint anyway, reads nothing of it. A copy of this fingerprint goes straight to
 "Play"; when the remembered folder is readable without a prompt it is compared in the background and
 "Update from the Dota 2 folder" appears if the install changed. The gate shows the build's asset
 fingerprint at its foot, the settings the client's commit too.
@@ -121,27 +121,27 @@ takes its own origin for the service; one served by another server falls back to
 The page plays the replay built into it (keep it short: it is part of the program's memory;
 `DBOTA_WEB_ARGS` are the command line a page lacks). `?cache=http` plays an asset cache served
 under `/cache` next to the page (a developer's own export, e.g. `ln -s "$(dbota cache-dir)"
-web/out/cache`) and `?assets=none` skips the question. With `?report`, the console goes to the
+web/out/cache`; the smoke tests serve it themselves). With `?report`, the console goes to the
 server's log as `/report?...` requests.
 
 ## Tests
 
 `web/test/smoke.py` drives headless Chromium (Playwright for Python; `pip install --target temp/pwlib
 playwright && PYTHONPATH=temp/pwlib python3 -m playwright install chromium`), against a folder made
-of hard links to the install's packages: privacy text and stand-ins offered, folder picks, the
+of hard links to the install's packages: privacy text and only the two ways to a cache offered (no way to play without assets), folder picks, the
 worker imports, the copy persists over a reload, the client starts and reads it, nothing but the page's
 own origin is requested and nothing is sent, the copy is deleted. It also unit-tests the
 folder logic (`webkitdirectory` lists, `showDirectoryPicker` folder levels) against a folder tree
 made in OPFS. The native importer tests are in `crates/dbota_import/tests/import.rs`.
 
-`--replays-page DIR --server BOTA_SERVER --radovid RADOVID` (a build without a replay, any assets: `?assets=none`) plays a match through a real radovid that serves the page itself and keeps replays (`[artifacts] save_replays = true`): a practice lobby is entered alone and the page closed; the game server ends, and the next visit signs in with the kept session, fetches the replay it was away for and stores it in OPFS; the REPLAYS tab lists it and plays it, DOWNLOAD .BRP hands over the same bytes and OPEN A .BRP FILE plays the file again. `--shots` saves a screenshot of each step to `temp/smoke-replays` (the click positions in the script are for a 1280x720 page).
+`--replays-page DIR --server BOTA_SERVER --radovid RADOVID` (a build without a replay, on a native cache served as `?cache=http`) plays a match through a real radovid that serves the page itself and keeps replays (`[artifacts] save_replays = true`): a practice lobby is entered alone and the page closed; the game server ends, and the next visit signs in with the kept session, fetches the replay it was away for and stores it in OPFS; the REPLAYS tab lists it and plays it, DOWNLOAD .BRP hands over the same bytes and OPEN A .BRP FILE plays the file again. `--shots` saves a screenshot of each step to `temp/smoke-replays` (the click positions in the script are for a 1280x720 page).
 `--prepared-page DIR --cache-zip cache.zip --cache-folder <cache folder>` (a build with a replay built in, so the client draws the map) needs no install, only a cache
 `dbota export-cache` made with this build (the `smoke.py` docstring has the commands): zips that must be refused
 (another build, a path that climbs out, an index that does not match) are refused with their reasons and copy nothing;
 the directory picker (stubbed with a folder in private storage) is walked and its folder refused with its reason; the real zip is copied into private storage, kept over a reload and played until the scene is drawn; the cache
 folder is then loaded the same way.
 
-Two more checks need no Dota install (the page runs on stand-ins, `?assets=none`); the docstring of
+Two more checks need no Dota install, only a native import of this build served as `?cache=http`; the docstring of
 `smoke.py` has the build commands. `--replay-page` opens a build with a Zstandard-packed replay built in
 (`DBOTA_WEB_REPLAY`, read through to `--seek` in `DBOTA_WEB_ARGS`) and expects the client's `match known` and
 `chat: N lines heard` console lines, the CJK fallback registered and no read error. `--live-page --server`
@@ -154,7 +154,7 @@ install the import test is skipped with a message. `OUT=dir web/build.sh` builds
 ## Manual checks (the native directory dialog is out of automation's reach)
 
 1. Serve `web/out`, open it in Chrome: the gate shows the privacy text, "Choose the Dota 2 folder" and
-   "Play with stand-ins" (which works at once).
+   "Use a prepared cache" (a .zip and a folder), and no way to play without assets.
 2. Choose the folder with the picker: `dota 2 beta`, then `game` and `dota` once each (all accepted), and a
    wrong folder (a message, no import). Progress counts up to its last step; "Cancel" returns to the question
    and leaves no copy. The ready screen says how many files were imported (about a minute and a half).

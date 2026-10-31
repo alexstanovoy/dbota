@@ -16,7 +16,7 @@ use crate::camera::RtsCamera;
 use crate::input::OverHud;
 use crate::map::Ground;
 use crate::session::Session;
-use crate::units::{Unit, UnitIndex, stand_in_size};
+use crate::units::{Unit, UnitIndex, unit_size};
 
 /// How far past a body's bound a click still lands, in world units.
 const MARGIN: f32 = 15.0;
@@ -146,7 +146,7 @@ pub fn candidate(unit: &bota_proto::UnitView, base: Vec3, mine: Option<Team>) ->
         .to_f32()
         .max(unit.collision.to_f32())
         .max(MIN_BOUND);
-    let (_, height) = stand_in_size(unit.kind, unit.bound.to_f32());
+    let (_, height) = unit_size(unit.kind, unit.bound.to_f32());
     Candidate {
         id: unit.id,
         kind: unit.kind,

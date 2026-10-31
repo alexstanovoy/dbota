@@ -193,11 +193,7 @@ fn load(mut commands: Commands, manifest: Res<Manifest>, server: Res<AssetServer
     let mut library = Library::default();
     let mut unsupported = BTreeSet::new();
     for (logical, path) in manifest.particles() {
-        let Some(bytes) = manifest
-            .root
-            .as_deref()
-            .and_then(|root| crate::cachefs::read_small(root, path))
-        else {
+        let Some(bytes) = crate::cachefs::read_small(&manifest.root, path) else {
             continue;
         };
         match library.add(logical, &bytes, &server) {

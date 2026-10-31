@@ -114,33 +114,17 @@ const REGION_ICON: f32 = 14.0 * ui::DOTA;
 const REGION_ROW: f32 = 19.0 * ui::DOTA;
 const REGION_GAP: f32 = 2.0 * ui::DOTA;
 
-/// The region's rows, top down, with their icons and stand-in colours.
-const REGION: [(Region, &str, Color); 5] = [
-    (Region::Damage, "hud.damage", Color::srgb(0.75, 0.75, 0.75)),
-    (
-        Region::AttackSpeed,
-        "hud.attack_speed",
-        Color::srgb(0.75, 0.75, 0.75),
-    ),
-    (Region::Armor, "hud.armor", Color::srgb(0.75, 0.75, 0.75)),
-    (
-        Region::MagicResist,
-        "hud.magic_resist",
-        Color::srgb(0.75, 0.75, 0.75),
-    ),
-    (
-        Region::MoveSpeed,
-        "hud.speed",
-        Color::srgb(0.75, 0.75, 0.75),
-    ),
+/// The region's rows, top down, with their icons.
+const REGION: [(Region, &str); 5] = [
+    (Region::Damage, "hud.damage"),
+    (Region::AttackSpeed, "hud.attack_speed"),
+    (Region::Armor, "hud.armor"),
+    (Region::MagicResist, "hud.magic_resist"),
+    (Region::MoveSpeed, "hud.speed"),
 ];
 
-/// The attributes' icons and stand-in colours, strength first.
-const ATTRIBUTES: [(&str, Color); 3] = [
-    ("hud.strength", Color::srgb(0.86, 0.25, 0.16)),
-    ("hud.agility", Color::srgb(0.2, 0.8, 0.25)),
-    ("hud.intelligence", Color::srgb(0.2, 0.75, 0.95)),
-];
+/// The attributes' icons, strength first.
+const ATTRIBUTES: [&str; 3] = ["hud.strength", "hud.agility", "hud.intelligence"];
 
 /// Dota's green of a bonus and red of a loss.
 const BONUS: Color = Color::srgb(0.38, 0.95, 0.4);
@@ -232,7 +216,7 @@ fn spawn_column(
             ChildOf(zone),
         ))
         .id();
-    for (region, icon, stand_in) in REGION {
+    for (region, icon) in REGION {
         let row = commands
             .spawn((
                 Node {
@@ -267,7 +251,7 @@ fn spawn_column(
                 border_radius: BorderRadius::all(px(2)),
                 ..default()
             },
-            ui::art(manifest, server, icon, stand_in),
+            ui::art(manifest, server, icon),
             Pickable::IGNORE,
             ChildOf(row),
         ));
@@ -299,7 +283,7 @@ fn spawn_foot(
             ChildOf(zone),
         ))
         .id();
-    for (k, (icon, stand_in)) in (0u8..).zip(ATTRIBUTES) {
+    for (k, icon) in (0u8..).zip(ATTRIBUTES) {
         let cell = commands
             .spawn((
                 Node {
@@ -341,7 +325,7 @@ fn spawn_foot(
                 border_radius: BorderRadius::MAX,
                 ..default()
             },
-            ui::art(manifest, server, icon, stand_in),
+            ui::art(manifest, server, icon),
             Pickable::IGNORE,
             ChildOf(cell),
         ));
@@ -456,7 +440,7 @@ fn spawn_tip_attribute(
     k: u8,
     tip: Entity,
 ) {
-    let (icon, stand_in) = ATTRIBUTES[usize::from(k)];
+    let icon = ATTRIBUTES[usize::from(k)];
     let row = commands
         .spawn((
             Node {
@@ -475,7 +459,7 @@ fn spawn_tip_attribute(
             border_radius: BorderRadius::MAX,
             ..default()
         },
-        ui::art(manifest, server, icon, stand_in),
+        ui::art(manifest, server, icon),
         ChildOf(row),
     ));
     let details = commands

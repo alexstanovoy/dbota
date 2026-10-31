@@ -33,7 +33,7 @@ Dota 2 install. Bots don't need it.
    (`dbota cache-dir` prints it; each build's fingerprint is a folder of its own, so older and newer
    clients share a machine, and the folders beyond the two newest are removed by the next import).
    Every item and ability of the install has its icon and its tooltip text in it. Valve's files stay in that cache for personal use; they are never part
-   of this repository. Without it dbota draws stand-ins. Without Dota 2, take a cache someone with it
+   of this repository. Without it dbota shows only the screen that makes it. Without Dota 2, take a cache someone with it
    prepared (`dbota import-cache <folder|zip>`, made by their `dbota export-cache`): see `tools/README.md`; a
    `~/.cache/dbota/tools` folder left by the old export script can be deleted.
 

@@ -1,11 +1,10 @@
 //! Units on the map: one entity per unit the client sees, carrying Dota's
-//! model of it or a stand-in, kept where the frame puts it, and kept a
-//! moment longer to fall when it dies.
+//! model of it, kept where the frame puts it, and kept a moment longer to fall when it dies.
 
 use std::collections::HashMap;
 
 use bevy::{
-    gltf::Gltf, light::NotShadowCaster, prelude::*, world_serialization::WorldAsset,
+    gltf::Gltf, prelude::*, world_serialization::WorldAsset,
     world_serialization::WorldInstanceReady,
 };
 use bota_client_core::{ClientSession, bodies};
@@ -189,16 +188,6 @@ impl BankModel {
 #[derive(Resource, Default)]
 pub struct ModelBank(pub Vec<BankModel>);
 
-/// The meshes and materials of the stand-ins.
-#[derive(Resource)]
-struct StandIns {
-    body: Handle<Mesh>,
-    building: Handle<Mesh>,
-    radiant: Handle<StandardMaterial>,
-    dire: Handle<StandardMaterial>,
-    neutral: Handle<StandardMaterial>,
-}
-
 /// The glow of a hero's own colours, in emissive units.
 const HERO_LIFT: f32 = 1200.0;
 
@@ -217,11 +206,10 @@ pub fn plugin(app: &mut App) {
         .add_systems(
             PreStartup,
             |mut commands: Commands, manifest: Res<Manifest>| {
-                commands.insert_resource(BuildingYaws::load(manifest.root.as_deref()));
+                commands.insert_resource(BuildingYaws::load(&manifest.root));
             },
         )
         .init_resource::<ModelBank>()
-        .add_systems(Startup, make_stand_ins)
         .add_systems(Update, load_models.run_if(crate::loading::requested))
         .add_systems(PostUpdate, report.in_set(crate::loading::Report))
         .add_systems(
@@ -313,14 +301,12 @@ pub(crate) fn mark_figures(
 }
 
 fn load_models(mut bank: ResMut<ModelBank>, server: Res<AssetServer>, manifest: Res<Manifest>) {
-    // A model the cache lacks is drawn as a stand-in: loudly, not silently.
-    if manifest.root.is_some() {
-        for name in required_models(&manifest) {
-            if manifest.model(&name).is_none() {
-                error!(
-                    "model {name} is not in the asset cache: drawn as a stand-in; run dbota import"
-                );
-            }
+    // A model the cache lacks is not drawn: loudly, not silently.
+    for name in required_models(&manifest) {
+        if manifest.model(&name).is_none() {
+            error!(
+                "model {name} is not in the asset cache: its units are not drawn; run dbota import"
+            );
         }
     }
     // Every unit model loads while the game does, the neutrals' too: with
@@ -359,25 +345,6 @@ fn bank_entry(server: &AssetServer, manifest: &Manifest, model: &Model) -> BankM
     }
 }
 
-fn make_stand_ins(
-    mut commands: Commands,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
-) {
-    let mat = |c: Color| StandardMaterial {
-        base_color: c,
-        perceptual_roughness: 0.8,
-        ..default()
-    };
-    commands.insert_resource(StandIns {
-        body: meshes.add(Capsule3d::new(0.5, 1.0)),
-        building: meshes.add(Cylinder::new(0.5, 1.0)),
-        radiant: materials.add(mat(Color::srgb(0.35, 0.75, 0.35))),
-        dire: materials.add(mat(Color::srgb(0.8, 0.3, 0.25))),
-        neutral: materials.add(mat(Color::srgb(0.75, 0.65, 0.4))),
-    });
-}
-
 /// Takes each model's scenes from its files, waits for all they need, and
 /// builds its animation graph once its file has loaded.
 fn build_graphs(
@@ -391,7 +358,7 @@ fn build_graphs(
         if entry.scenes.is_none() && !take_scenes(entry, &server, &gltfs) {
             continue;
         }
-        // Its own file failed: its units are drawn as stand-ins.
+        // Its own file failed: its units are not drawn.
         let Some(scenes) = &entry.scenes else {
             entry.loaded = true;
             continue;
@@ -460,7 +427,7 @@ fn take_scenes(entry: &mut BankModel, server: &AssetServer, gltfs: &Assets<Gltf>
     let body = match body {
         Ok(body) => body,
         Err(why) => {
-            error!("model {logical}: {why}; its units are drawn as stand-ins");
+            error!("model {logical}: {why}; its units are not drawn");
             return true;
         }
     };
@@ -605,9 +572,8 @@ pub struct MapBuilding {
 }
 
 impl BuildingYaws {
-    pub fn load(root: Option<&std::path::Path>) -> BuildingYaws {
-        let Some(text) = root
-            .and_then(|r| crate::cachefs::read_small(r, "map/mid/buildings.txt"))
+    pub fn load(root: &std::path::Path) -> BuildingYaws {
+        let Some(text) = crate::cachefs::read_small(root, "map/mid/buildings.txt")
             .and_then(|bytes| String::from_utf8(bytes).ok())
         else {
             return BuildingYaws::default();
@@ -718,7 +684,7 @@ pub fn hero_effect(hero: bota_proto::HeroId, what: &str, manifest: &Manifest) ->
 }
 
 /// Every model a match can need: each hero's and each lane unit's of both
-/// sides. One missing from the cache is drawn as a stand-in, and said so.
+/// sides. One missing from the cache is not drawn, and said so.
 fn required_models(manifest: &Manifest) -> Vec<String> {
     let mut names: Vec<String> = (0..bota_core::HEROES.len() as u16)
         .map(|id| {
@@ -767,14 +733,15 @@ const MODEL_MATCH_RADIUS: f32 = 600.0;
 /// Buildings read from the cache at most (the map has 50); every structure
 /// looks through them each frame.
 const MAX_MAP_BUILDINGS: usize = 1024;
-/// Heights of the stand-ins of buildings, in world units.
+/// Heights of the buildings' picking volumes, in world units.
 const TOWER_HEIGHT: f32 = 420.0;
 const BARRACKS_HEIGHT: f32 = 220.0;
 const ANCIENT_HEIGHT: f32 = 480.0;
 const FOUNTAIN_HEIGHT: f32 = 120.0;
 
-/// The radius and height of a unit's stand-in, in world units.
-pub fn stand_in_size(kind: UnitKind, bound: f32) -> (f32, f32) {
+/// The radius and height of a unit's volume (what a click picks, what the clarity disc spreads
+/// from), in world units.
+pub fn unit_size(kind: UnitKind, bound: f32) -> (f32, f32) {
     match kind {
         UnitKind::Hero => (40.0, 180.0),
         UnitKind::Tower => (bound * 0.7, TOWER_HEIGHT),
@@ -796,7 +763,6 @@ struct SyncParams<'w, 's> {
     bank: ResMut<'w, ModelBank>,
     manifest: Res<'w, Manifest>,
     yaws: Res<'w, BuildingYaws>,
-    stand_ins: Option<Res<'w, StandIns>>,
     ground: Res<'w, Ground>,
     fog: Res<'w, FogGrid>,
     time: Res<'w, Time>,
@@ -922,9 +888,7 @@ fn reskinned(p: &SyncParams, unit: &Unit, u: &UnitView, map: &MapDef, skin: u8) 
             .any(|m| m.model.logical == name && m.ready() && m.scenes.is_some())
 }
 
-/// Spawns one unit: a root at its place (where it stands, the way it faces,
-/// and the spot in the world), and its model, in its material group `skin`,
-/// or stand-in.
+/// Spawns one unit: a root at its place, and its model.
 fn spawn_unit(
     p: &mut SyncParams,
     u: &UnitView,
@@ -996,47 +960,11 @@ fn spawn_unit(
                     );
             }
         }
-        // A unit the manifest draws as nothing (a bare effect in Dota).
-        None if unit_art(u, &p.manifest).is_some_and(|art| art.model.is_none()) => {}
-        None => spawn_stand_in(p, u, pivot),
+        // A unit the manifest draws as nothing (a bare effect in Dota), or whose model the cache
+        // lacks (said at load).
+        None => {}
     }
     root
-}
-
-/// A coloured capsule or column in place of a model.
-fn spawn_stand_in(p: &mut SyncParams, u: &UnitView, pivot: Entity) {
-    let Some(art) = &p.stand_ins else {
-        return;
-    };
-    let (r, h) = stand_in_size(u.kind, u.bound.to_f32());
-    let building = kind_def(u.kind).structure;
-    let mesh = if building {
-        art.building.clone()
-    } else {
-        art.body.clone()
-    };
-    let material = match u.team {
-        Team::Radiant => art.radiant.clone(),
-        Team::Dire => art.dire.clone(),
-        Team::Neutral => art.neutral.clone(),
-    };
-    let scale = if building {
-        Vec3::new(2.0 * r, h, 2.0 * r)
-    } else {
-        Vec3::new(2.0 * r, h / 2.0, 2.0 * r)
-    };
-    let model = p
-        .commands
-        .spawn((
-            Mesh3d(mesh),
-            MeshMaterial3d(material),
-            Transform::from_xyz(0.0, h / 2.0, 0.0).with_scale(scale),
-            ChildOf(pivot),
-        ))
-        .id();
-    if u.kind == UnitKind::Fountain {
-        p.commands.entity(model).insert(NotShadowCaster);
-    }
 }
 
 /// Finds the animation player of a model's instance and gives it the

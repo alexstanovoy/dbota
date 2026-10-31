@@ -1,9 +1,8 @@
 //! Dota's player colours: each seat's own (`HeroSlot0Color` to
 //! `HeroSlot9Color` of the install's `dotastyles`: Radiant's five seats blue,
 //! teal, purple, yellow and orange, Dire's pink, olive, light blue, dark
-//! green and brown), read from the cache. Without the cache a seat takes its
-//! side's colour, which is absolute: Radiant green, Dire red, whoever
-//! watches.
+//! green and brown), read from the cache. A seat whose colour the cache lacks takes its side's
+//! colour, which is absolute: Radiant green, Dire red, whoever watches.
 
 use bevy::prelude::*;
 use bota_proto::{SlotId, Team, WorldView};

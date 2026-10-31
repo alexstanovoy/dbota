@@ -1,8 +1,8 @@
 //! dbota: a Dota-looking front end for the bota simulator, on Bevy.
 //!
 //! The game logic lives in `bota_client_core`; this crate draws it with
-//! Dota's own assets from a local cache (see `tools/README.md`) or with
-//! stand-ins when the cache is missing. World mapping (see `coords`): bota
+//! Dota's own assets from a local cache (see `tools/README.md`) and from nothing else: without
+//! one the client shows the screen that makes it (`assets_notice`). World mapping (see `coords`): bota
 //! (x, y) with y north maps to Bevy (x, height, -y).
 
 // Bevy systems take their data as arguments and queries.
@@ -499,13 +499,25 @@ fn main() -> AppExit {
     // Before the first thread starts (see `ui::font_cx`).
     #[cfg(not(target_arch = "wasm32"))]
     let font_cx = ui::font_cx();
-    // Assets out of date for this build hold the run at a screen asking for a re-import: no game
-    // starts, not even one the command line names (see `assets_notice`).
+    // Without a cache of this build the run is held at the screen that makes one: no game
+    // starts, not even one the command line names (see `assets_notice`). A run nobody watches
+    // has no screen to show.
     #[cfg(not(target_arch = "wasm32"))]
-    let held = assets_notice::holds(import::need(&args.cache_dir), &args);
+    let held = import::need(&args.cache_dir);
+    #[cfg(not(target_arch = "wasm32"))]
+    if let Some(need) = held
+        && args.unattended()
+    {
+        eprintln!("dbota: {}", import::refusal(need, &args.cache_dir));
+        return AppExit::from_code(2);
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    if let Some(need) = held {
+        eprintln!("dbota: {}", import::refusal(need, &args.cache_dir));
+    }
     #[cfg(target_arch = "wasm32")]
-    let held = false;
-    let menu_first = args.wants_menu() || held;
+    let held: Option<()> = None;
+    let menu_first = args.wants_menu() || held.is_some();
     let session = if menu_first {
         main_menu::idle()
     } else {
@@ -517,8 +529,6 @@ fn main() -> AppExit {
             }
         }
     };
-    #[cfg(not(target_arch = "wasm32"))]
-    import::warn_if_stale(&args.cache_dir);
     let settings_path = args.config.clone().or_else(config::default_path);
     let store = main_menu::SettingsStore::new(settings_path.clone());
     let mut settings = store.load_settings();
@@ -549,7 +559,10 @@ fn main() -> AppExit {
     client_resources(&mut app, &args, &settings, settings_path, &store, session);
     app.add_plugins(default_plugins(&args, &settings));
     client_plugins(&mut app);
-    if let Err(err) = menu(&mut app, &args, store, menu_first) {
+    // Held at the asset screen, there is no menu either: nothing but that screen to use.
+    if held.is_none()
+        && let Err(err) = menu(&mut app, &args, store, menu_first)
+    {
         eprintln!("dbota: {err}");
         return AppExit::error();
     }
@@ -588,7 +601,7 @@ fn client_resources(
     session: session::Session,
 ) {
     let manifest = manifest::Manifest::load(&args.cache_dir);
-    let texts = dota_text::Texts::load(manifest.root.as_deref());
+    let texts = dota_text::Texts::load(&manifest.root);
     let catalog = shop::Catalog::load(&manifest);
     let source = cache_source(app, &args.cache_dir);
     app.insert_resource(args.clone())

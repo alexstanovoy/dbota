@@ -207,7 +207,7 @@ fn spawn_ring(
             border_radius: BorderRadius::MAX,
             ..default()
         },
-        ui::art(manifest, server, which.art(), RING_FOOT),
+        ui::art(manifest, server, which.art()),
         Pickable::IGNORE,
         ChildOf(ring),
     ));

@@ -22,7 +22,7 @@ fingerprint and imports into a new folder, `~/.cache/dbota/<fingerprint>` (`dbot
 reads the folder of the build it is, and the import removes the folders beyond the two newest.
 `dbota import --verify` checks a cache against the manifest. Caches up to version 6 were exported by a separate Source2Viewer
 script that kept its own tool in `~/.cache/dbota/tools`; that folder is no longer used and can be
-deleted. An asset that does not convert is reported and drawn as a stand-in.
+deleted. An asset that does not convert is reported and missing: dbota draws nothing in its place.
 
 ## A cache for someone without Dota 2
 
@@ -168,10 +168,9 @@ Source2Viewer 20's export of the world, cropped this way, was (the golden tests 
 
 ## Not imported
 
-- Particle systems other than the attack missiles: razes, requiem, teleport, Glyph and deaths
-  still draw their own simple stand-ins. Of the missiles' classes, dynamic lights, models,
-  curl-noise forces, ground collision, a spline ramp and a distance remap are left out (see
-  `crates/dbota_import/tests/particles.rs`).
+- Particle classes the client does not simulate: dynamic lights, models,
+  curl-noise forces, ground collision, a spline ramp and a distance remap are left out of the
+  effects (see `crates/dbota_import/tests/particles.rs`).
 - Tower destruction models and non-default (event/crystal/mega) creep variants.
 - The full map outside the mid band (import it by raising `half_width` / `v_min` / `v_max` on the
   `world` line (they are 13100 and −11800 / 11700 now); the whole map with materials is ~330 MB).

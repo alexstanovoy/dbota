@@ -135,8 +135,12 @@ fn draw(
         ),
         _ => (Handle::default(), Vec2::ZERO),
     };
-    let stand_in = handle == Handle::default();
-    let side = if stand_in { MARKER_SIDE } else { CURSOR_SIDE };
+    let placeholder = handle == Handle::default();
+    let side = if placeholder {
+        MARKER_SIDE
+    } else {
+        CURSOR_SIDE
+    };
     // Interface pixels are scaled by the interface's scale; the cursor is
     // not. It moves by its transform, which takes no new layout.
     let k = ui_scale.0.max(f32::EPSILON);
@@ -147,7 +151,7 @@ fn draw(
         node.width = side;
         node.height = side;
     }
-    // The default image is a white texel: the stand-in's marker.
+    // The default image is a white texel: the placeholder.
     if image.image != handle {
         image.image = handle;
     }

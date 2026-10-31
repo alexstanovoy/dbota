@@ -105,27 +105,13 @@ pub fn spawn(
             ChildOf(parent),
         ))
         .id();
-    match manifest.item_icon(id) {
-        Some(path) => {
-            commands.spawn((
-                ImageNode::new(server.load(path)),
-                ui::fill(),
-                Pickable::IGNORE,
-                ChildOf(cell),
-            ));
-        }
-        // Without the cache: the simulator's short name on the dark ground.
-        None => {
-            let name = crate::faces::ITEMS
-                .iter()
-                .find(|face| face.id == id)
-                .map_or("?", |face| face.name);
-            commands.spawn((
-                ui::text(name, &fonts.regular, 9.0, ui::INK_DIM),
-                Pickable::IGNORE,
-                ChildOf(cell),
-            ));
-        }
+    if let Some(path) = manifest.item_icon(id) {
+        commands.spawn((
+            ImageNode::new(server.load(path)),
+            ui::fill(),
+            Pickable::IGNORE,
+            ChildOf(cell),
+        ));
     }
     if item_def(ItemId(id)).is_some_and(|def| def.stock.is_some()) {
         spawn_stock(commands, fonts, cell, id);

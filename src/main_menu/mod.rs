@@ -30,8 +30,9 @@ pub(crate) mod tests;
 
 #[cfg(not(target_arch = "wasm32"))]
 pub use core::Claim;
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(test, not(target_arch = "wasm32")))]
 pub use core::Page;
+#[cfg(not(target_arch = "wasm32"))]
 pub use core::{Act, DEFAULT_NAME, GameKind, MenuCore};
 pub use launch::Trust;
 pub use prefs::page_service;
@@ -40,6 +41,5 @@ pub use screens::Disabled;
 pub(crate) use text::line;
 // What holds the menu: assets out of date, on the desktop (a browser page holds before the client).
 #[cfg(not(target_arch = "wasm32"))]
-pub use shell::Held;
 pub use shell::{GameEpoch, Preview, Trusted, idle, plugin};
 pub use store::SettingsStore;

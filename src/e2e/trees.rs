@@ -28,8 +28,7 @@ fn pine_near_mid(client: &Client) -> Vec2 {
         .world()
         .resource::<crate::manifest::Manifest>()
         .root
-        .clone()
-        .expect("the asset cache");
+        .clone();
     let text = std::fs::read_to_string(root.join("map/mid/trees.txt")).expect("the map's trees");
     let mid = Vec2::new(MID.0 as f32, MID.1 as f32);
     // Dota's coordinates, bota's less 9216 on each axis.
@@ -133,8 +132,7 @@ fn every_tree_the_match_places_is_drawn_as_the_model_of_the_map() {
         .world()
         .resource::<crate::manifest::Manifest>()
         .root
-        .clone()
-        .expect("the asset cache");
+        .clone();
     let text = std::fs::read_to_string(root.join("map/mid/trees.txt")).expect("the map's trees");
     let mapped: std::collections::BTreeSet<&str> = text
         .lines()

@@ -16,7 +16,7 @@ use bevy::{
 use bota_core::kind_def;
 
 use crate::config::Settings;
-use crate::units::{Unit, stand_in_size};
+use crate::units::{Unit, unit_size};
 
 /// The disc's darkness at its middle at full strength.
 const DISC_ALPHA: f32 = 0.6;
@@ -114,7 +114,7 @@ fn lay_discs(
         if kind_def(unit.kind).structure {
             continue;
         }
-        let size = 2.0 * DISC_SPREAD * stand_in_size(unit.kind, 0.0).0;
+        let size = 2.0 * DISC_SPREAD * unit_size(unit.kind, 0.0).0;
         commands.spawn((
             UnderFoot,
             Mesh3d(disc.mesh.clone()),

@@ -1,16 +1,12 @@
-//! The first start: with no asset cache made from the local Dota 2 install,
-//! the menu says so at its foot and imports it with a click, the work
-//! `dbota import` does, its progress shown; then a restart picks the new
-//! cache up (models, the map and sounds are read as the client starts). A
-//! player without Dota 2 uses a prepared cache instead (a folder or a zip
-//! someone made with `dbota export-cache`): the button asks for its path and
-//! `dbota import-cache`'s work follows.
-//!
-//! A cache another dbota made (its stamp is not of this build's asset
-//! fingerprint) may lack what this one draws: a screen over everything holds
-//! the menu (no game starts, not even one the command line names) until it
-//! is imported again, with the button right there. Unattended runs (captures,
-//! checks) are only warned.
+//! The screen of a client without Dota's assets. dbota draws Dota's art and plays its sounds
+//! from the asset cache and from nothing else, so with no cache of this build (none made yet, or
+//! one another dbota made: its stamp is not of this build's asset fingerprint) this screen is
+//! all there is: no menu, no game, not even one the command line names. It imports the cache
+//! from the local Dota 2 install with a click, the work `dbota import` does, its progress shown;
+//! then a restart picks the new cache up. A player without Dota 2 uses a prepared cache instead
+//! (a folder or a zip someone made with `dbota export-cache`): the button asks for its path and
+//! `dbota import-cache`'s work follows. A run nobody watches (a capture, a check) has no screen
+//! to show and ends with the reason (see `main`).
 
 use std::sync::{
     Mutex,
@@ -28,7 +24,6 @@ use bevy::{
 };
 
 use crate::import::Need;
-use crate::main_menu::{MenuCore, Page};
 use crate::ui::{self, Fonts};
 
 /// What the work is: made from Dota 2's files, or taken from a prepared cache.
@@ -41,8 +36,6 @@ enum Way {
 /// Where the import is.
 #[derive(Clone, Debug, PartialEq)]
 enum State {
-    /// Nothing to say: the cache is this build's.
-    Fine,
     Needed(Need),
     /// The share done and the asset at hand.
     Working(Way, f32, String),
@@ -60,9 +53,6 @@ enum Told {
 struct Notice {
     state: State,
     told: Option<Mutex<Receiver<Told>>>,
-    /// The cache is out of date for this build: the screen holds everything until a restart
-    /// reads the new one.
-    holds: bool,
     /// The path of a prepared cache being typed.
     entering: Option<String>,
 }
@@ -70,7 +60,7 @@ struct Notice {
 /// Longest path typed or pasted, in characters.
 const MAX_PATH: usize = 1024;
 
-/// The line at the menu's foot.
+/// The screen.
 #[derive(Component)]
 struct Root;
 
@@ -87,25 +77,18 @@ enum Press {
     Quit,
 }
 
+/// Holds the client at this screen while its cache is missing or another build's.
 pub fn plugin(app: &mut App) {
     let args = app.world().resource::<crate::Args>();
-    let need = crate::import::need(&args.cache_dir);
-    let holds = holds(need, args);
-    let state = need.map_or(State::Fine, State::Needed);
+    let Some(need) = crate::import::need(&args.cache_dir) else {
+        return;
+    };
     app.insert_resource(Notice {
-        state,
+        state: State::Needed(need),
         told: None,
-        holds,
         entering: None,
     })
-    .insert_resource(crate::main_menu::Held(holds))
-    .add_systems(Update, (typing, listen, presses, hold, draw).chain());
-}
-
-/// Whether the cache at hand keeps this run from playing: one made by another dbota, in a run a
-/// person plays (an unattended one is only warned).
-pub fn holds(need: Option<Need>, args: &crate::Args) -> bool {
-    need == Some(Need::Reimport) && !args.unattended()
+    .add_systems(Update, (typing, listen, presses, draw).chain());
 }
 
 /// Takes in what the import thread said since the last frame.
@@ -131,8 +114,8 @@ fn listen(mut notice: ResMut<Notice>) {
                 Ok(true) => State::Done(way),
                 Ok(false) => State::Failed(
                     way,
-                    "imported, but some assets did not convert (they are drawn as stand-ins; \
-                     the terminal names them)"
+                    "imported, but some assets did not convert (the terminal names them); what \
+                     they draw is missing"
                         .to_owned(),
                 ),
                 Err(why) => State::Failed(way, why),
@@ -303,58 +286,13 @@ fn typing(
     }
 }
 
-/// The menu does nothing while the screen holds it, or the path is being typed.
-fn hold(notice: Res<Notice>, mut held: ResMut<crate::main_menu::Held>) {
-    let hold = notice.holds || notice.entering.is_some();
-    if held.0 != hold {
-        held.0 = hold;
-    }
-}
-
 /// The buttons that bring a cache, on a notice that asks for one.
 const WAYS: [(&str, Press); 2] = [
     ("IMPORT FROM DOTA 2", Press::Import),
     ("USE A PREPARED CACHE", Press::Prepared),
 ];
 
-/// What the line says, and its buttons.
-fn words(state: &State) -> Option<(String, Vec<(&'static str, Press)>)> {
-    Some(match state {
-        State::Fine => return None,
-        State::Needed(Need::Import) => (
-            "No Dota 2 assets yet: heroes, the map and sounds are drawn as stand-ins. \
-             dbota converts them from your Dota 2 install, on this machine (about a minute); \
-             without Dota 2, use a cache prepared from someone's."
-                .to_owned(),
-            WAYS.to_vec(),
-        ),
-        State::Needed(Need::Reimport) => (
-            "The Dota 2 assets were imported by another dbota version: some may be missing."
-                .to_owned(),
-            vec![("IMPORT AGAIN", Press::Import), WAYS[1]],
-        ),
-        State::Working(Way::Import, done, item) => (
-            format!("Importing from Dota 2… {:.0} %  {item}", done * 100.0),
-            vec![],
-        ),
-        State::Working(Way::Load, done, item) => (
-            format!("Taking the prepared cache… {:.0} %  {item}", done * 100.0),
-            vec![],
-        ),
-        State::Done(Way::Import) => (
-            "Dota 2 assets imported. dbota reads them as it starts.".to_owned(),
-            vec![("RESTART DBOTA", Press::Restart)],
-        ),
-        State::Done(Way::Load) => (
-            "The prepared cache is in place. dbota reads it as it starts.".to_owned(),
-            vec![("RESTART DBOTA", Press::Restart)],
-        ),
-        State::Failed(Way::Import, why) => (format!("Import failed: {why}"), WAYS.to_vec()),
-        State::Failed(Way::Load, why) => (why.clone(), WAYS.to_vec()),
-    })
-}
-
-/// The screen holding a run whose cache is out of date: its title, what it says and its buttons.
+/// The screen's title, what it says and its buttons.
 fn held_words(state: &State) -> (&'static str, String, Vec<(&'static str, Press)>) {
     let quit = ("QUIT", Press::Quit);
     let fingerprint = dbota_import::import::fingerprint();
@@ -389,7 +327,15 @@ fn held_words(state: &State) -> (&'static str, String, Vec<(&'static str, Press)
             why.clone(),
             vec![WAYS[0], WAYS[1], quit],
         ),
-        _ => (
+        State::Needed(Need::Import) => (
+            "No Dota 2 assets yet",
+            "dbota draws Dota's heroes, map and sounds from your own Dota 2 install and from nothing \
+             else. It converts them on this machine from your Dota 2 folder (about a minute). Without \
+             Dota 2, use a cache prepared for this version by someone who has it."
+                .to_owned(),
+            vec![WAYS[0], WAYS[1], quit],
+        ),
+        State::Needed(Need::Reimport) => (
             "The assets are out of date for this version",
             format!(
                 "They were imported by another dbota and may lack what this one draws \
@@ -439,7 +385,7 @@ fn button(commands: &mut Commands, fonts: &Fonts, parent: Entity, label: &str, p
     ));
 }
 
-/// The title, text and buttons of the screen that holds the run.
+/// The title, text and buttons of the screen.
 fn held_screen(notice: &Notice) -> (&'static str, String, Vec<(&'static str, Press)>) {
     if notice.entering.is_some() {
         return ("Use a prepared cache", ASK.to_owned(), ASKED.to_vec());
@@ -479,7 +425,7 @@ fn path_field(commands: &mut Commands, fonts: &Fonts, parent: Entity, path: &str
     ));
 }
 
-/// Draws the screen that holds the run: over everything, the menu, a game and the settings.
+/// Draws the screen: over everything, the menu, a game and the settings.
 fn draw_held(commands: &mut Commands, fonts: &Fonts, notice: &Notice) {
     let (title, text, buttons) = held_screen(notice);
     let screen = commands
@@ -532,101 +478,21 @@ fn draw_held(commands: &mut Commands, fonts: &Fonts, notice: &Notice) {
     }
 }
 
-/// Draws the line anew when what it says changes; shown while the menu covers
-/// the screen (not over a game, not under the settings).
+/// Draws the screen anew when what it says changes.
 fn draw(
     mut commands: Commands,
     notice: Res<Notice>,
     fonts: Res<Fonts>,
-    menu: Option<NonSend<MenuCore>>,
-    root: Query<(Entity, &mut Visibility), With<Root>>,
+    root: Query<Entity, With<Root>>,
     mut drawn: Local<Option<(State, Option<String>)>>,
 ) {
-    let shown = notice.holds || menu.is_some_and(|m| !m.shows_game() && m.page() != Page::Settings);
-    let mut root = root;
     let now = (notice.state.clone(), notice.entering.clone());
     if drawn.as_ref() == Some(&now) {
-        for (_, mut visibility) in &mut root {
-            visibility.set_if_neq(ui::visible(shown));
-        }
         return;
     }
     *drawn = Some(now);
-    for (entity, _) in &root {
+    for entity in &root {
         commands.entity(entity).despawn();
     }
-    if notice.holds {
-        draw_held(&mut commands, &fonts, &notice);
-        return;
-    }
-    let (text, buttons) = match &notice.entering {
-        Some(_) => (ASK.to_owned(), ASKED.to_vec()),
-        None => match words(&notice.state) {
-            Some(words) => words,
-            None => return,
-        },
-    };
-    let failed = matches!(notice.state, State::Failed(..));
-    let line = commands
-        .spawn((
-            Root,
-            Node {
-                position_type: PositionType::Absolute,
-                bottom: px(32),
-                left: percent(50),
-                width: px(820),
-                margin: UiRect::left(px(-410)),
-                padding: UiRect::axes(px(20), px(14)),
-                column_gap: px(18),
-                align_items: AlignItems::Center,
-                border: UiRect::all(px(1)),
-                border_radius: BorderRadius::all(px(4)),
-                ..default()
-            },
-            BackgroundColor(ui::PANEL),
-            BorderColor::all(if failed { ERROR } else { ui::GOLDEN }),
-            GlobalZIndex(62),
-            ui::visible(shown),
-        ))
-        .id();
-    let words = commands
-        .spawn((
-            Node {
-                flex_direction: FlexDirection::Column,
-                row_gap: px(10),
-                flex_grow: 1.0,
-                flex_shrink: 1.0,
-                ..default()
-            },
-            Pickable::IGNORE,
-            ChildOf(line),
-        ))
-        .id();
-    commands.spawn((
-        ui::text(text, &fonts.regular, 16.0, ui::INK),
-        Pickable::IGNORE,
-        ChildOf(words),
-    ));
-    if let Some(path) = &notice.entering {
-        path_field(&mut commands, &fonts, words, path);
-    }
-    let column = commands
-        .spawn((
-            Node {
-                flex_direction: FlexDirection::Column,
-                row_gap: px(8),
-                // Wide enough for the longest label on one line, whatever the text beside it.
-                flex_shrink: 0.0,
-                min_width: px(250),
-                ..default()
-            },
-            ChildOf(line),
-        ))
-        .id();
-    for (label, press) in buttons {
-        self::button(&mut commands, &fonts, column, label, press);
-    }
+    draw_held(&mut commands, &fonts, &notice);
 }
-
-/// A failed import's edge.
-const ERROR: Color = Color::srgb(0.9, 0.35, 0.3);
