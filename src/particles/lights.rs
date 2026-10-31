@@ -26,6 +26,9 @@ const MAX_GATHERED: usize = 1024;
 const LUX_PER_UNIT: f32 = 3350.0;
 /// Where a light of the pool waits unused: far under the map, so no view's clusters hold it.
 const PARKED: Vec3 = Vec3::new(0.0, -1.0e6, 0.0);
+/// How far from their middle, as a part of the shortest reach among them, the lights of one
+/// renderer may lie and still shine as one (see [`merge_close`]).
+const MERGE_SPREAD: f32 = 0.25;
 
 /// A light one particle asks for: where (the simulation's frame), its colour, its intensity in
 /// lumens (negative: a dark light) and its reach.
@@ -94,9 +97,10 @@ fn lights_of(light: &DeferredLight, node: &Node, out: &mut Vec<Light>) {
         light.color_blend,
         vector(&light.color_scale, &scene, parts, None, 3),
     );
+    let start = out.len();
     for i in 0..parts.len() {
         if out.len() == MAX_GATHERED {
-            return;
+            break;
         }
         let range = parts.scalars[store::RADIUS][i] * radius_scale;
         let intensity = parts.scalars[store::ALPHA][i] * alpha_scale;
@@ -115,6 +119,53 @@ fn lights_of(light: &DeferredLight, node: &Node, out: &mut Vec<Light>) {
             range,
         });
     }
+    merge_close(out, start);
+}
+
+/// The lights from `start` on, one renderer's, shine as one when they lie close together for
+/// their reach (all within [`MERGE_SPREAD`] of the shortest reach from their middle) and all
+/// light or all darken: their lumens summed, from their middle weighted by lumens, in their
+/// colours weighted alike, as far as the farthest reaches. A lamp's flame keeps a few lights
+/// flickering a few tens of units apart, each reaching hundreds: what they light is the same
+/// as from one, flickering as their sum does, and every light costs each pixel it reaches.
+fn merge_close(out: &mut Vec<Light>, start: usize) {
+    let lights = &out[start..];
+    if lights.len() < 2 {
+        return;
+    }
+    let dark = lights[0].lumens < 0.0;
+    let weight: f32 = lights.iter().map(|l| l.lumens.abs()).sum();
+    if weight <= 0.0 || lights.iter().any(|l| (l.lumens < 0.0) != dark) {
+        return;
+    }
+    let middle = lights
+        .iter()
+        .map(|l| l.position * l.lumens.abs())
+        .sum::<Vec3>()
+        / weight;
+    let shortest = lights.iter().map(|l| l.range).fold(f32::INFINITY, f32::min);
+    if lights
+        .iter()
+        .any(|l| l.position.distance(middle) > MERGE_SPREAD * shortest)
+    {
+        return;
+    }
+    let color = lights
+        .iter()
+        .map(|l| l.color.to_vec4() * l.lumens.abs())
+        .sum::<Vec4>()
+        / weight;
+    let one = Light {
+        position: middle,
+        color: LinearRgba::from_vec4(color),
+        lumens: lights.iter().map(|l| l.lumens).sum(),
+        range: lights
+            .iter()
+            .map(|l| l.range + l.position.distance(middle))
+            .fold(0.0, f32::max),
+    };
+    out.truncate(start);
+    out.push(one);
 }
 
 /// The colour scale as the blend reads it, in 0..255 or as a factor.

@@ -75,3 +75,37 @@ fn the_rivers_dragonflies_fly_by_day_and_its_fireflies_by_night() {
     assert!(!plays(&client, flies), "no dragonflies by night");
     within_budget(&client);
 }
+
+/// The particle lights shining now within `reach` of a place on the ground (bota's units).
+fn lights_near(client: &mut Client, at: Vec2, reach: f32) -> usize {
+    let world = client.world_mut();
+    world
+        .query::<(&PointLight, &GlobalTransform)>()
+        .iter(world)
+        .filter(|(light, place)| {
+            let p = place.translation();
+            light.intensity != 0.0 && Vec2::new(p.x, -p.z).distance(at) < reach
+        })
+        .count()
+}
+
+/// A lamp's flame lights the ground about it with one light: the few lights it keeps flickering
+/// a few tens of units apart, each reaching hundreds, shine as one, as every light costs each
+/// pixel it reaches.
+#[test]
+fn a_lamps_flame_lights_the_ground_with_one_light() {
+    let server = Server::start(1, &[]);
+    let mut client = Client::join(&server, HeroId::SHADOW_FIEND, &[]);
+    let middle = Vec2::new(MID.0 as f32, MID.1 as f32);
+    let (_, lamp) = nearest(&client, "lamp_flame_tintable", middle);
+    client.stand_at((lamp.x as i32 + 200, lamp.y as i32));
+    client.within(Duration::from_secs(60), "the lamp's flame lit", |c| {
+        plays(c, lamp) && lights_near(c, lamp, 100.0) > 0
+    });
+    for _ in 0..60 {
+        client.frames(1);
+        let lights = lights_near(&mut client, lamp, 100.0);
+        assert_eq!(lights, 1, "the lamp's flame shines as {lights} lights");
+    }
+    within_budget(&client);
+}
