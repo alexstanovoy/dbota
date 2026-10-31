@@ -29,7 +29,7 @@ One more check needs a prepared asset cache, not an install:
 Five more checks need no install, only a native import of this build (`dbota import`, DBOTA_ASSETS
 names it) that the pages play on through `?cache=http`, served under /cache beside the page:
 
-    DBOTA_WEB_REPLAY=$PWD/chat.brp DBOTA_WEB_ARGS="--replay built-in --pov 0 --seek 4100" \
+    DBOTA_WEB_REPLAY=$PWD/chat.brp DBOTA_WEB_ARGS="--replay built-in --pov 0 --seek 4600" \
         PROFILE=release OUT=temp/web-replay web/build.sh
     PROFILE=release OUT=temp/web-live web/build.sh
     CARGO_TARGET_DIR=temp/bota-target cargo build --release --manifest-path ../bota/Cargo.toml \
@@ -402,9 +402,9 @@ COMPRESSED_TAG = 14
 # The dashboard button's middle in a replay page of 1280x720 (logical pixels).
 DASHBOARD = (15, 15)
 # The local lobby page, where a game is joined by address, is the first page without a service;
-# its address field is the fourth stop of Tab (port, players, CREATE, CREATE FOR THE LAN), and Enter
+# its address field is the third stop of Tab (port, CREATE, CREATE FOR THE LAN), and Enter
 # there joins.
-TABS_TO_ADDRESS = 4
+TABS_TO_ADDRESS = 3
 
 
 def wait_console(page, console, pattern, timeout, what):
