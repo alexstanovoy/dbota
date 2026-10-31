@@ -86,10 +86,7 @@ fn load(
     manifest: Res<crate::manifest::Manifest>,
     server: Res<AssetServer>,
 ) {
-    let Some(text) = manifest
-        .root
-        .as_deref()
-        .and_then(|root| crate::cachefs::read_small(root, "map/mid/soundscapes.txt"))
+    let Some(text) = crate::cachefs::read_small(&manifest.root, "map/mid/soundscapes.txt")
         .and_then(|bytes| String::from_utf8(bytes).ok())
     else {
         return;

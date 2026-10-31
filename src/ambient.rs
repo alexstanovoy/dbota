@@ -95,7 +95,7 @@ fn load(
     manifest: Res<Manifest>,
     server: Res<AssetServer>,
 ) {
-    let (Some(root), Some(mut library)) = (manifest.root.as_deref(), library) else {
+    let (root, Some(mut library)) = (manifest.root.as_path(), library) else {
         return;
     };
     let Some(text) = crate::cachefs::read_small(root, "map/mid/ambient.txt")
