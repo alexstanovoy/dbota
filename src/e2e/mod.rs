@@ -33,5 +33,6 @@ mod strategy;
 mod trees;
 mod turning;
 mod watcher_capture;
+mod watcher_path;
 mod watchers;
 mod window;
