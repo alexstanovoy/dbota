@@ -13,7 +13,7 @@ mod worn;
 
 use std::collections::HashMap;
 
-use bevy::{audio::Volume, prelude::*};
+use bevy::prelude::*;
 use bota_proto::{Attribute, ItemId, ItemView, UnitView, Vec2 as Spot};
 
 use crate::camera::RtsCamera;
@@ -95,29 +95,50 @@ struct Stage<'w, 's> {
     args: Res<'w, crate::Args>,
     camera: Single<'w, 's, &'static RtsCamera>,
     heard: ResMut<'w, Heard>,
+    mixer: ResMut<'w, crate::mixer::Mixer>,
+    time: Res<'w, Time>,
 }
 
 impl Stage<'_, '_> {
     /// Sounds one of the sounds under `prefix` where `at` is (Bevy frame), faded by its distance
-    /// from the camera.
-    fn sound(&mut self, prefix: &str, at: Vec3, n: u32) {
+    /// from the camera, as the mixer lets it. A sound of `source` that loops sounds until the
+    /// voice returned is stopped.
+    fn sound(
+        &mut self,
+        prefix: &str,
+        at: Vec3,
+        n: u32,
+        source: Option<bota_proto::EntityId>,
+    ) -> Option<Entity> {
         let paths = self.manifest.sounds(prefix);
-        let Some(path) = paths.get(n as usize % paths.len().max(1)) else {
-            return;
-        };
+        let path = paths.get(n as usize % paths.len().max(1))?;
         *self.heard.0.entry(prefix.to_owned()).or_default() += 1;
         if self.settings.muted || self.args.mute {
-            return;
+            return None;
         }
         let focus = Vec2::new(self.camera.focus.x, -self.camera.focus.z);
-        let gain = crate::sound::fall_off((at.x, -at.z), focus);
+        let place = (at.x, -at.z);
+        let gain = crate::sound::fall_off(place, focus);
         if gain < 0.03 {
-            return;
+            return None;
         }
-        self.commands.spawn((
-            AudioPlayer::<AudioSource>::new(self.server.load(path.clone())),
-            PlaybackSettings::DESPAWN.with_volume(Volume::Linear(gain)),
-        ));
+        let request = crate::mixer::Request {
+            event: self.manifest.sound_event(prefix).unwrap_or_default(),
+            source,
+            target: None,
+            at: Some(place),
+            gain,
+            speed: 1.0,
+        };
+        let handle = self.server.load(path.clone());
+        let now = self.time.elapsed_secs_f64();
+        self.mixer.start(&mut self.commands, now, &request, handle)
+    }
+
+    /// Stops a voice that [`Stage::sound`] started, as its event fades out.
+    fn silence(&mut self, voice: Entity) {
+        let now = self.time.elapsed_secs_f64();
+        self.mixer.stop(&mut self.commands, now, voice);
     }
 
     /// Plays what a line plays at `at`, once: its particle (fed from `place`, the points of the
@@ -134,7 +155,7 @@ impl Stage<'_, '_> {
             feed(fx, handle, playing, feeds, place);
         }
         if let Some(prefix) = &fx.sound {
-            self.sound(prefix, at, seed);
+            self.sound(prefix, at, seed, None);
         }
     }
 }

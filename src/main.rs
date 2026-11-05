@@ -68,6 +68,7 @@ mod manifest;
 mod map;
 mod mapfile;
 mod minimap;
+mod mixer;
 mod overlay;
 mod particles;
 mod pick;

@@ -114,3 +114,37 @@ fn dotas_soundscapes_play_by_place_and_by_time_of_day() {
         0.0
     );
 }
+
+/// Roshan's pits sound only while Roshan stands in them: with none in the match, the camera held
+/// over either pit hears neither pit's loop, by day and by night, as Dota's map places them in the
+/// soundscape for him alone.
+#[test]
+fn an_empty_roshan_pit_is_silent() {
+    let server = Server::start(1, &[]);
+    let mut client = Client::join(&server, HeroId::SHADOW_FIEND, &[]);
+    let patience = Duration::from_secs(60);
+    for night in [false, true] {
+        client.cheat(Cheat::TimeOfDay { night });
+        let scape = if night {
+            "default_night"
+        } else {
+            "default_day"
+        };
+        // The bottom pit, then the top one.
+        for pit in [(3000.0, -3000.0), (-3000.0, 2400.0)] {
+            look_at(&mut client, pit);
+            client.within(patience, "the soundscape heard whole", |c| {
+                look_at(c, pit);
+                heard(c) == Some((scape.to_owned(), 1.0))
+            });
+            client.frames(2);
+            let pit_loops = sounds_of(&client, scape, "dire_pit_loop_01_l.wav", true).count();
+            assert_eq!(pit_loops, 2, "the {scape}'s two pit loops");
+            assert_eq!(
+                gain(&client, scape, "dire_pit_loop_01_l.wav", true),
+                0.0,
+                "a pit loop sounds at {pit:?} {scape} with no Roshan"
+            );
+        }
+    }
+}

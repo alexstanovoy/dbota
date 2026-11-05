@@ -21,9 +21,17 @@ use crate::runes;
 use crate::session::Session;
 use crate::units::{Dying, UnitIndex};
 
-/// The worn effects playing: by the wearing unit and the rule, the particle if the line has one.
+/// The worn effects playing: by the wearing unit and the rule, the particle if the line has one
+/// and the voice of its sound, which sounds for as long as the effect is worn.
 #[derive(Resource, Default)]
-struct Worn(HashMap<(EntityId, usize), Option<Handle>>);
+struct Worn(HashMap<(EntityId, usize), Wearing>);
+
+/// What one worn effect plays.
+#[derive(Clone, Copy)]
+struct Wearing {
+    particle: Option<Handle>,
+    voice: Option<Entity>,
+}
 
 pub(super) fn plugin(app: &mut App) {
     app.init_resource::<Worn>()
@@ -85,24 +93,28 @@ fn holding(rule: &Rule, unit: &UnitView) -> Option<Hold> {
 }
 
 /// Starts what a unit or a rune (`id`) that has come to wear a rule's subject wears: its
-/// particle, held on until it is ended, and its sound; the particle, if any started.
+/// particle, held on until it is ended, and its sound, stopped when the wearing ends.
 fn begin(
     fx: &Fx,
     id: EntityId,
     at: Vec3,
     (library, playing): (Option<&Library>, &mut Playing),
     stage: &mut Stage,
-) -> Option<Handle> {
+) -> Wearing {
     let seed = id.idx ^ id.generation.rotate_left(16);
     let handle = fx
         .particle
         .as_deref()
         .and_then(|name| library?.effect(name))
         .and_then(|effect| playing.hold(effect, seed));
-    if let Some(prefix) = &fx.sound {
-        stage.sound(prefix, at, seed);
+    let voice = fx
+        .sound
+        .as_deref()
+        .and_then(|prefix| stage.sound(prefix, at, seed, Some(id)));
+    Wearing {
+        particle: handle,
+        voice,
     }
-    handle
 }
 
 /// Starts what each unit that has come to wear a rule's subject wears, and each rune that lies in
@@ -139,7 +151,7 @@ fn worn(
     if wearing.is_empty() {
         return;
     }
-    worn.0.retain(|(id, rule), handle| {
+    worn.0.retain(|(id, rule), wearing| {
         let keep = rules.0.get(*rule).is_some_and(|rule| match rule.subject {
             Subject::Runes(kind) => {
                 runes::shown(view, &fog).any(|rune| rune.id == *id && rune.kind == kind)
@@ -151,8 +163,13 @@ fn worn(
                         .is_some_and(|unit| holding(rule, unit).is_some())
             }
         });
-        if !keep && let Some(instance) = handle.and_then(|h| playing.get_mut(h)) {
-            instance.end();
+        if !keep {
+            if let Some(instance) = wearing.particle.and_then(|h| playing.get_mut(h)) {
+                instance.end();
+            }
+            if let Some(voice) = wearing.voice {
+                stage.silence(voice);
+            }
         }
         keep
     });
@@ -166,7 +183,7 @@ fn worn(
                 continue;
             }
             let at = attach_point(&ground, &bodies, unit, &fx.attach);
-            let handle = *worn.0.entry((unit.id, *n)).or_insert_with(|| {
+            let handle = worn.0.entry((unit.id, *n)).or_insert_with(|| {
                 begin(
                     fx,
                     unit.id,
@@ -175,11 +192,11 @@ fn worn(
                     &mut stage,
                 )
             });
-            if let Some(instance) = handle.and_then(|h| playing.get_mut(h)) {
+            if let Some(instance) = handle.particle.and_then(|h| playing.get_mut(h)) {
                 instance.set_control_point(PLACE, place_of(at), Vec3::ZERO, false);
             }
             let place = |attach: &Attach| attach_point(&ground, &bodies, unit, attach);
-            feed(fx, handle, &mut playing, &held.feeds, &place);
+            feed(fx, handle.particle, &mut playing, &held.feeds, &place);
         }
     }
     for rune in runes::shown(view, &fog) {
@@ -188,11 +205,11 @@ fn worn(
             if rule.subject != Subject::Runes(rune.kind) {
                 continue;
             }
-            let handle = *worn.0.entry((rune.id, *n)).or_insert_with(|| {
+            let handle = worn.0.entry((rune.id, *n)).or_insert_with(|| {
                 let with = (library.as_deref(), &mut *playing);
                 begin(&rule.fx, rune.id, at, with, &mut stage)
             });
-            if let Some(instance) = handle.and_then(|h| playing.get_mut(h)) {
+            if let Some(instance) = handle.particle.and_then(|h| playing.get_mut(h)) {
                 instance.set_control_point(PLACE, place_of(at), Vec3::ZERO, false);
             }
         }

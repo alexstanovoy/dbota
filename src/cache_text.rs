@@ -323,6 +323,76 @@ pub fn soundscapes(text: &str, max: usize) -> (Vec<ScapeLine>, Vec<ScapeSound>) 
     (scapes, sounds)
 }
 
+/// A sound event's limits, as `sounds/events.txt` lists them.
+#[derive(Clone, Debug, PartialEq)]
+pub struct EventLine {
+    pub name: String,
+    /// The sound repeats until its source stops it.
+    pub looping: bool,
+    /// Seconds the longest sound of the event lasts.
+    pub duration: f32,
+    /// Seconds a stopped instance fades out over.
+    pub fade_out: f32,
+    /// A repeat within this many seconds and `block_units` of a sounding instance is not
+    /// played; 0 blocks none.
+    pub block: f32,
+    pub block_units: f32,
+    /// Most instances at once; 0 limits none.
+    pub limit: u32,
+    /// Whether the limit counts the instances of one entity apart.
+    pub per_entity: bool,
+    /// Whether a new instance stops the oldest (else it is not played).
+    pub stop_oldest: bool,
+    /// Seconds after which an instance is stopped; negative for never.
+    pub stop_at: f32,
+}
+
+/// The events of `events.txt` (`event <name> <loops> <duration> <fade_out> <block_s> <block_units> <limit>
+/// <per_entity> <stop_oldest> <stop_at>`), of its first `max` lines.
+pub fn sound_events(text: &str, max: usize) -> Vec<EventLine> {
+    lines(text, max)
+        .filter_map(|w| {
+            let ["event", name, looping, rest @ ..] = w.as_slice() else {
+                return None;
+            };
+            let [
+                duration,
+                fade_out,
+                block,
+                block_units,
+                limit,
+                per_entity,
+                stop_oldest,
+                stop_at,
+            ] = numbers::<8>(rest)?;
+            let flag = |n: f32| n != 0.0;
+            Some(EventLine {
+                name: (*name).to_owned(),
+                looping: flag(number(looping)?),
+                duration: duration.max(0.0),
+                fade_out: fade_out.max(0.0),
+                block: block.max(0.0),
+                block_units: block_units.max(0.0),
+                limit: limit.clamp(0.0, 1024.0) as u32,
+                per_entity: flag(per_entity),
+                stop_oldest: flag(stop_oldest),
+                stop_at,
+            })
+        })
+        .collect()
+}
+
+/// The places of Roshan's pits in `soundscapes.txt` (`pit <x> <y>`, Dota's frame), of its first
+/// `max` lines.
+pub fn roshan_pits(text: &str, max: usize) -> Vec<[f32; 2]> {
+    lines(text, max)
+        .filter_map(|w| match w.as_slice() {
+            ["pit", rest @ ..] => numbers::<2>(rest),
+            _ => None,
+        })
+        .collect()
+}
+
 /// One sound line's sound: its volume, pitch, period, place and level, and its waves.
 fn sound(scape: &str, looped: bool, w: [&str; 5], paths: &[&str]) -> Option<ScapeSound> {
     let [volume, pitch, every, at, db] = w;

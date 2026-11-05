@@ -26,6 +26,7 @@ mod pregame;
 mod refusals;
 mod rings;
 mod runes;
+mod sound_limits;
 mod soundscape;
 mod start;
 mod strategy;

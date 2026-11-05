@@ -9,7 +9,7 @@
 //! that asks for more than the budget ends the import: no cache is finished from it.
 
 use std::cell::Cell;
-use std::collections::{BTreeMap, HashSet, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, HashSet, VecDeque};
 
 use heatel::export::{ExportedTexture, ModelOptions, export_model_in_group, read_from};
 use heatel::face::{PhonemeTable, Scene};
@@ -18,7 +18,7 @@ use heatel::kv3::Value;
 use heatel::material::Material;
 use heatel::particle::{Blend, Renderer, System};
 use heatel::portraits::framings;
-use heatel::sound::Lipsync;
+use heatel::sound::{Lipsync, SoundEvent, read_sound_events, read_sound_stacks};
 use heatel::texture::Role;
 use heatel::tooltips::Wanted;
 use heatel::world::{Band, EntityLump, ExportedWorld, WorldOptions, export_world, lighting};
@@ -26,10 +26,11 @@ use heatel::{Error, Model, Resource, Result, Sound, Source, Texture, Vpk};
 
 use crate::catalog::{self, Catalog, FileKind, Id, Line, LineError};
 use crate::text::{
-    ParticleMaterial, ParticleModel, ParticleTexture, ambient_txt, background_png, buildings_txt,
-    effect_stem, expression_txt, labels_json, lighting_txt, lipsync_txt, particle_json,
-    phonemes_txt, portraits_txt, shop_json, soundscape_files, soundscapes_txt, styles_json,
-    tooltips_json, tree_model_path, tree_models, trees_txt, wanted, wave_cache_path,
+    ParticleMaterial, ParticleModel, ParticleTexture, ResolvedEvent, ambient_txt, background_png,
+    buildings_txt, effect_stem, expression_txt, labels_json, lighting_txt, lipsync_txt,
+    particle_json, phonemes_txt, portraits_txt, shop_json, sound_events_txt, soundscape_files,
+    soundscapes_txt, styles_json, tooltips_json, tree_model_path, tree_models, trees_txt, wanted,
+    wave_cache_path,
 };
 
 /// The file of a finished cache that says what made it.
@@ -40,7 +41,7 @@ pub const INDEX: &str = "index.txt";
 pub const MAX_STAMP: u64 = 4096;
 
 /// Bumped when the importer's output changes for the same install; part of a cache's stamp.
-pub const IMPORT_REV: u32 = 29;
+pub const IMPORT_REV: u32 = 30;
 
 /// The manifest this build imports and draws, and its ids.
 pub const MANIFEST: &str = include_str!("../../../assets-manifest/manifest.txt");
@@ -124,6 +125,8 @@ pub(crate) const PATH_LIMIT: usize = 200;
 const DIR_VPK: &str = "pak01_dir.vpk";
 /// Where the tooltip texts go (the client reads them there).
 const TOOLTIPS: &str = "text/tooltips.json";
+/// Where the limits of the sound events the manifest names are written ([`sound_events_txt`]).
+pub const SOUND_EVENTS: &str = "sounds/events.txt";
 /// Where the interface's labels go (the client reads them there).
 const LABELS: &str = "text/labels.json";
 const STYLES: &str = "text/styles.json";
@@ -292,6 +295,13 @@ pub enum Item {
         src: String,
         out: String,
     },
+    /// The sound events the manifest's `sound` lines name, with the limits Dota gives them
+    /// (their type's, their own) and whether their sound loops, as `sounds/events.txt`.
+    SoundEvents {
+        logical: String,
+        events: Vec<String>,
+        out: String,
+    },
     /// A facial scene (a hero's idle expression), as [`expression_txt`] writes it.
     Expression {
         logical: String,
@@ -322,6 +332,7 @@ impl Item {
             Self::Model { out, .. }
             | Self::Texture { out, .. }
             | Self::Sound { out, .. }
+            | Self::SoundEvents { out, .. }
             | Self::Expression { out, .. }
             | Self::Phonemes { out, .. }
             | Self::Tooltips { out, .. }
@@ -367,6 +378,7 @@ impl Item {
             | Self::Texture { logical, .. }
             | Self::Particle { logical, .. }
             | Self::Sound { logical, .. }
+            | Self::SoundEvents { logical, .. }
             | Self::Expression { logical, .. }
             | Self::Phonemes { logical, .. }
             | Self::Portraits { logical, .. } => logical,
@@ -491,6 +503,21 @@ impl Plan {
                 Line::Portraits(p) => portraits = Some(p),
                 Line::Clip(_) | Line::Unit(_) | Line::Fx(_) | Line::State(_) => {}
             }
+        }
+        let events: BTreeSet<String> = catalog
+            .lines
+            .iter()
+            .filter_map(|line| match line {
+                Line::Sound(s) => Some(s.event.clone()),
+                _ => None,
+            })
+            .collect();
+        if !events.is_empty() {
+            plan.items.push(Item::SoundEvents {
+                logical: "sound.events".to_owned(),
+                events: events.into_iter().collect(),
+                out: SOUND_EVENTS.to_owned(),
+            });
         }
         labels.extend(modifier_labels(&catalog.ids));
         plan.items.push(Item::Tooltips {
@@ -1140,6 +1167,9 @@ fn make(
             out: dest,
             ..
         } => sound(&read_from(src, &[pak], path)?, dest, out),
+        Item::SoundEvents {
+            events, out: dest, ..
+        } => sound_events(src, pak, events, dest, out),
         Item::Expression {
             src: path,
             out: dest,
@@ -1373,6 +1403,65 @@ fn sound(bytes: &[u8], dest: &str, out: &mut Out<'_>) -> Result<()> {
             .push((lipsync_path(dest), err.to_string())),
     }
     out.put(dest, &sound.file())
+}
+
+/// Where Dota keeps its sound events and the types that give them their limits.
+const SOUND_EVENTS_DIR: &str = "soundevents/";
+const SOUND_STACKS: &str = "soundstacks/soundstacks_dota_core.vsndstck_c";
+/// Most sound event files read.
+const MAX_EVENT_FILES: usize = 2048;
+
+/// `sounds/events.txt`: the events `wanted` as the install's sound event files state them,
+/// their limits completed by their type's ([`sound_events_txt`]). An event no file has, or one
+/// whose type is unknown, is left out: the client then limits nothing for it.
+fn sound_events(
+    src: &impl Source,
+    pak: &Vpk,
+    wanted: &[String],
+    dest: &str,
+    out: &mut Out<'_>,
+) -> Result<()> {
+    let stacks = read_sound_stacks(&Resource::parse(&read_from(src, &[pak], SOUND_STACKS)?)?)?;
+    let mut paths: Vec<String> = pak
+        .entries()
+        .map(|entry| entry.path())
+        .filter(|path| path.starts_with(SOUND_EVENTS_DIR) && path.ends_with(".vsndevts_c"))
+        .filter(|path| !path.contains("/voscripts/") && !path.contains("/music/"))
+        .collect();
+    paths.sort();
+    paths.truncate(MAX_EVENT_FILES);
+    let mut found: BTreeMap<String, SoundEvent> = BTreeMap::new();
+    for path in paths {
+        if found.len() == wanted.len() {
+            break;
+        }
+        let events = read_sound_events(&Resource::parse(&read_from(src, &[pak], &path)?)?)?;
+        for event in events {
+            if wanted.contains(&event.name) {
+                found.entry(event.name.clone()).or_insert(event);
+            }
+        }
+    }
+    let mut resolved = Vec::with_capacity(found.len());
+    for event in found.into_values() {
+        let looping = match event.files.first() {
+            Some(file) => {
+                let bytes = read_from(src, &[pak], &format!("{file}_c"))?;
+                Sound::parse(&bytes)?.looping()
+            }
+            None => false,
+        };
+        let stack = stacks.iter().find(|s| s.name == event.kind);
+        resolved.push(ResolvedEvent {
+            limits: match stack {
+                Some(stack) => event.limits.or(&stack.limits),
+                None => event.limits.clone(),
+            },
+            looping,
+            event,
+        });
+    }
+    out.put(dest, sound_events_txt(&resolved).as_bytes())
 }
 
 /// Where the lip sync of the sound written at `sound` goes: beside it, `<stem>.lipsync.txt`.

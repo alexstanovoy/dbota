@@ -672,6 +672,55 @@ fn ambient_line(entity: &Value) -> Option<(&str, &str, String)> {
     Some((effect, stem, line))
 }
 
+/// A sound event as the client plays it: the file's own words, the limits its type completes,
+/// and whether its first sound loops.
+pub struct ResolvedEvent {
+    pub event: heatel::sound::SoundEvent,
+    pub limits: heatel::sound::SoundLimits,
+    pub looping: bool,
+}
+
+/// What `sounds/events.txt` starts with.
+const EVENTS_HEADER: &str = "\
+# event <name> <loops 0|1> <duration_s> <fade_out_s> <block_s> <block_units> <limit_max> <limit_per_entity 0|1> <stop_oldest 0|1> <stop_at_s>
+# loops: the sound repeats until its source stops it. block_s 0: repeats are not blocked, else a repeat within
+# block_s seconds and block_units units of a sounding instance is not played. limit_max 0: no limit, else at most
+# that many at once (per entity when limit_per_entity), the oldest stopped for a new one when stop_oldest.
+# stop_at_s -1: never stopped by time.
+";
+
+/// `sounds/events.txt`, a line per event ([`EVENTS_HEADER`]). The block of a type that gives a
+/// duration blocks even where the type does not say it is on (`dota_update_default` blocks by
+/// its duration alone).
+pub fn sound_events_txt(events: &[ResolvedEvent]) -> String {
+    let mut out = String::from(EVENTS_HEADER);
+    for ResolvedEvent {
+        event,
+        limits,
+        looping,
+    } in events
+    {
+        let block = limits.block_duration.unwrap_or(0.0).max(0.0);
+        let blocked = limits.block_multiple_instances.unwrap_or(block > 0.0);
+        let limit = limits.limiter_max.unwrap_or(0.0).max(0.0);
+        let limited = limits.limiter_on.unwrap_or(false);
+        out += &format!(
+            "event {} {} {:.3} {:.3} {:.3} {:.1} {} {} {} {:.3}\n",
+            event.name,
+            u8::from(*looping),
+            event.duration.unwrap_or(0.0).max(0.0),
+            event.fade_out.unwrap_or(0.0).max(0.0),
+            if blocked { block } else { 0.0 },
+            limits.block_distance.unwrap_or(0.0).max(0.0),
+            if limited { limit as u32 } else { 0 },
+            u8::from(limits.limiter_match_entity.unwrap_or(false)),
+            u8::from(limits.limiter_stop_oldest.unwrap_or(true)),
+            limits.stop_at_time.unwrap_or(-1.0),
+        );
+    }
+    out
+}
+
 /// Most soundscape definitions kept, over all the files.
 const MAX_SCAPES: usize = 512;
 /// Most entries one soundscape has, nested soundscapes' included.
@@ -973,6 +1022,15 @@ fn placed_scape(entity: &Value) -> Option<(&str, [f64; 3], f64)> {
     plain_name(name).then_some((name, origin, radius.max(0.0)))
 }
 
+/// Where the map puts a Roshan pit: its `roshan_location` spawner or start point.
+fn roshan_pit(entity: &Value) -> Option<[f64; 3]> {
+    let class = entity.get("classname").and_then(Value::as_str)?;
+    let name = entity.get("targetname").and_then(Value::as_str)?;
+    let pit = matches!(class, "npc_dota_roshan_spawner" | "info_player_start_dota")
+        && name.contains("roshan_location");
+    pit.then(|| entity.get("origin").and_then(vector)).flatten()
+}
+
 /// `soundscapes.txt` from the entities of the map's default lump and the texts of the
 /// soundscape files (the first definition of a name wins), and the distinct waves it plays
 /// (`sounds/.../x.vsnd`, lower case, sorted). For each env_soundscape that starts on:
@@ -992,6 +1050,9 @@ pub fn soundscapes_txt(entities: &[Value], scripts: &[&str]) -> (String, Vec<Str
     let mut out = String::from(SCAPE_HEADER);
     let mut waves = BTreeSet::new();
     let mut written = HashSet::new();
+    for [x, y, _] in entities.iter().filter_map(roshan_pit).take(MAX_PLACED) {
+        out += &format!("pit {x:.1} {y:.1}\n");
+    }
     for (name, [x, y, z], radius) in entities.iter().filter_map(placed_scape).take(MAX_PLACED) {
         let Some(items) = defs.get(&name.to_ascii_lowercase()) else {
             continue;
@@ -1018,6 +1079,7 @@ pub fn soundscapes_txt(entities: &[Value], scripts: &[&str]) -> (String, Vec<Str
 }
 
 const SCAPE_HEADER: &str = "\
+# pit <dota_x> <dota_y>: where Roshan's pit is; the sounds the soundscapes place at a pit are Roshan's, and sound while he stands there
 # scape <name> dota_x dota_y dota_z radius fade_seconds: a soundscape the map places (bota = dota + 9216 on x and y)
 # loop <name> volume pitch_percent x,y,z|- soundlevel_db wave: a sound it keeps playing; - plays everywhere
 # random <name> vol_min,vol_max pitch_min,pitch_max time_min,time_max x,y,z|- soundlevel_db wave...: a sound picked from the waves, again after a time in seconds

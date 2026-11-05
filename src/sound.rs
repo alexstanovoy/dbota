@@ -6,11 +6,12 @@ use std::collections::HashMap;
 
 use bevy::{audio::Volume, prelude::*};
 use bota_client_core::{Cue, CueKind};
-use bota_proto::{HeroId, SlotId, Team, TeleportView, UnitKind};
+use bota_proto::{EntityId, HeroId, SlotId, Team, TeleportView, UnitKind};
 
 use crate::camera::RtsCamera;
 use crate::config::Settings;
 use crate::manifest::Manifest;
+use crate::mixer::{Mixer, Request};
 use crate::session::Session;
 
 /// World units from the camera within which a sound is heard at full.
@@ -31,6 +32,8 @@ const MELEE_GAIN: f32 = 0.6;
 struct Voice {
     /// The logical name of its row, for the trace.
     name: String,
+    /// The Dota sound event it plays, which the mixer's limits are of; empty if the manifest names none.
+    event: String,
     sources: Vec<Handle<AudioSource>>,
     rest: f32,
     next: usize,
@@ -253,7 +256,8 @@ struct Humming {
 }
 
 pub fn plugin(app: &mut App) {
-    app.init_resource::<Voices>()
+    app.add_plugins(crate::mixer::plugin)
+        .init_resource::<Voices>()
         .add_systems(Update, load.run_if(crate::loading::requested))
         .add_systems(PostUpdate, report.in_set(crate::loading::Report))
         .add_systems(Update, (volume, play, portals));
@@ -327,6 +331,11 @@ fn load(mut voices: ResMut<Voices>, manifest: Res<Manifest>, server: Res<AssetSe
             kind,
             Voice {
                 name: names.join("|"),
+                event: names
+                    .first()
+                    .and_then(|name| manifest.sound_event(name))
+                    .unwrap_or_default()
+                    .to_owned(),
                 sources,
                 rest: 0.0,
                 next: 0,
@@ -354,6 +363,7 @@ fn play(
     mut commands: Commands,
     mut session: NonSendMut<Session>,
     mut voices: ResMut<Voices>,
+    mut mixer: ResMut<Mixer>,
     time: Res<Time>,
     cam: Single<&RtsCamera>,
     settings: Res<Settings>,
@@ -370,7 +380,8 @@ fn play(
     let silent = settings.muted || args.mute;
     let focus = Vec2::new(cam.focus.x, -cam.focus.z);
     let tick = core.view().map_or(0, |v| v.tick);
-    let mut sound = |kind: Kind, gain: f32, at: Option<(f32, f32)>| {
+    let now = time.elapsed_secs_f64();
+    let mut sound = |kind: Kind, gain: f32, at: Option<(f32, f32)>, target: Option<EntityId>| {
         let fall = at.map_or(1.0, |at| fall_off(at, focus));
         let Some((_, voice)) = voices.0.iter_mut().find(|(k, _)| *k == kind) else {
             return;
@@ -385,21 +396,25 @@ fn play(
         if silent || voice.rest > 0.0 || voice.sources.is_empty() || fall * gain < 0.03 {
             return;
         }
-        voice.rest = REST;
         let source = voice.sources[voice.next % voice.sources.len()].clone();
-        voice.next += 1;
-        commands.spawn((
-            AudioPlayer::new(source),
-            PlaybackSettings::DESPAWN
-                .with_volume(Volume::Linear(gain * fall))
-                .with_speed(speed_of(kind)),
-        ));
+        let request = Request {
+            event: &voice.event,
+            source: None,
+            target,
+            at,
+            gain: gain * fall,
+            speed: speed_of(kind),
+        };
+        if mixer.start(&mut commands, now, &request, source).is_some() {
+            voice.rest = REST;
+            voice.next += 1;
+        }
     };
     // Dota sounds a purchase when it is made: once for each choice in the
     // strategy phase, and none for those the match then buys on its own.
     let (chosen, spoken) = queued.watch(core, time.elapsed_secs());
     if chosen {
-        sound(Kind::Cue(CueKind::Buy), BUY_GAIN, None);
+        sound(Kind::Cue(CueKind::Buy), BUY_GAIN, None, None);
     }
     let mut quiet = spoken;
     for cue in cues {
@@ -411,12 +426,13 @@ fn play(
             // Dota sounds a refusal it tells, and only that.
             CueKind::Refused(reason) => {
                 if let Some(told) = crate::error_msg::told(reason) {
-                    sound(Kind::Denied(told.sound), cue.gain, None);
+                    sound(Kind::Denied(told.sound), cue.gain, None, None);
                 }
             }
             CueKind::Undeniable(_) => sound(
                 Kind::Denied(crate::error_msg::Deny::General),
                 cue.gain,
+                None,
                 None,
             ),
             // A hero's attack, blow and fall are its own rows'.
@@ -427,10 +443,15 @@ fn play(
                     _ => Event::Death,
                 };
                 if let Some(hero) = cue.hero {
-                    sound(row(Subject::Hero(hero), event, None), cue.gain, cue.at);
+                    sound(
+                        row(Subject::Hero(hero), event, None),
+                        cue.gain,
+                        cue.at,
+                        None,
+                    );
                 }
             }
-            kind => sound(Kind::Cue(kind), cue.gain, cue.at),
+            kind => sound(Kind::Cue(kind), cue.gain, cue.at, None),
         }
     }
     queued.spoken = quiet;
@@ -439,10 +460,10 @@ fn play(
     // A ping is heard by its side wherever the camera is, as Dota's are.
     for kind in crate::pings::fresh(core, &mut last_ping) {
         match kind {
-            bota_proto::PingKind::Regular => sound(Kind::Ping, PING_GAIN, None),
+            bota_proto::PingKind::Regular => sound(Kind::Ping, PING_GAIN, None, None),
             bota_proto::PingKind::Danger => {
-                sound(Kind::PingDanger, PING_DANGER_GAIN, None);
-                sound(Kind::PingDangerLayer, PING_LAYER_GAIN, None);
+                sound(Kind::PingDanger, PING_DANGER_GAIN, None, None);
+                sound(Kind::PingDangerLayer, PING_LAYER_GAIN, None, None);
             }
         }
     }
@@ -562,7 +583,7 @@ fn ended_humming(
 fn shots(
     core: &bota_client_core::App,
     fog: &crate::fog::FogGrid,
-    sound: &mut impl FnMut(Kind, f32, Option<(f32, f32)>),
+    sound: &mut impl FnMut(Kind, f32, Option<(f32, f32)>, Option<EntityId>),
 ) {
     let (Some(view), Some(prev)) = (core.view(), core.prev_view()) else {
         return;
@@ -587,16 +608,23 @@ fn shots(
             continue;
         };
         match shooter.kind {
-            UnitKind::Tower => sound(row(Subject::Tower, Event::Attack, Some(side)), 0.7, at),
+            UnitKind::Tower => sound(
+                row(Subject::Tower, Event::Attack, Some(side)),
+                0.7,
+                at,
+                p.target,
+            ),
             UnitKind::CreepRanged => sound(
                 row(Subject::RangedCreep, Event::Attack, Some(side)),
                 0.35,
                 at,
+                p.target,
             ),
             UnitKind::CreepSiege => sound(
                 row(Subject::SiegeCreep, Event::Attack, Some(side)),
                 0.25,
                 at,
+                p.target,
             ),
             _ => {}
         }
@@ -619,6 +647,7 @@ fn shots(
                 row(Subject::RangedCreep, Event::Impact, Some(side)),
                 0.35,
                 at,
+                p.target,
             );
         }
     }
@@ -630,7 +659,7 @@ fn shots(
 fn swings(
     core: &bota_client_core::App,
     fog: &crate::fog::FogGrid,
-    sound: &mut impl FnMut(Kind, f32, Option<(f32, f32)>),
+    sound: &mut impl FnMut(Kind, f32, Option<(f32, f32)>, Option<EntityId>),
 ) {
     let (Some(view), Some(prev)) = (core.view(), core.prev_view()) else {
         return;
@@ -643,26 +672,31 @@ fn swings(
             .binary_search_by_key(&id, |a| a.unit)
             .ok()
             .and_then(|at| of.aggro[at].swing)
-            .map(|swing| of.tick + swing.strike_in)
     };
+    let strike_of =
+        |of: &bota_proto::WorldView, id| swing_of(of, id).map(|swing| of.tick + swing.strike_in);
     let melee = |u: &&bota_proto::UnitView| {
         matches!(u.kind, UnitKind::CreepMelee | UnitKind::CreepFlagbearer) && !fog.hides(u.seen_by)
     };
     for u in view.units.iter().filter(melee).take(SHOTS_PER_TICK) {
         let at = Some((u.pos.x.to_f32(), u.pos.y.to_f32()));
-        let (now, before) = (swing_of(view, u.id), swing_of(prev, u.id));
+        let (now, before) = (strike_of(view, u.id), strike_of(prev, u.id));
         if now.is_some() && now != before {
+            let target = swing_of(view, u.id).map(|swing| swing.target);
             sound(
                 row(Subject::MeleeCreep, Event::PreAttack, None),
                 MELEE_GAIN,
                 at,
+                target,
             );
         }
         if before.is_some_and(|due| now != Some(due) && due <= view.tick) {
+            let target = swing_of(prev, u.id).map(|swing| swing.target);
             sound(
                 row(Subject::MeleeCreep, Event::Attack, None),
                 MELEE_GAIN,
                 at,
+                target,
             );
         }
     }

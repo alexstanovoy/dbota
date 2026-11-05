@@ -32,6 +32,11 @@ const QUIETEST_RANDOM: f32 = 0.03;
 const NORMAL_DB: f32 = 75.0;
 /// bota = Dota + this, on x and y.
 const DOTA_TO_BOTA: f32 = 9216.0;
+/// Units about a Roshan pit's point within which a soundscape's sound is the pit's, and within
+/// which Roshan counts as standing in it.
+const PIT_REACH: f32 = 800.0;
+/// The Dota unit whose standing in a pit sounds it.
+const ROSHAN: &str = "npc_dota_roshan";
 
 /// What the soundscape plays now, whether or not there is a sound device: each soundscape's
 /// name and how far it has faded in, the one heard, and for each sound its soundscape, its first
@@ -52,6 +57,8 @@ pub struct Ambience {
 struct Scapes {
     scapes: Vec<ScapeLine>,
     sounds: Vec<Placed>,
+    /// Where Roshan stands in the view, bota's frame.
+    roshan: Vec<Vec2>,
     /// How far each soundscape has faded in, 0 to 1.
     weights: Vec<f32>,
     /// Whether the weights were set for the view under way: the first is heard as it is.
@@ -70,6 +77,11 @@ struct Placed {
     playing: Option<Entity>,
     next: f32,
     played: u32,
+    /// The Roshan pit (bota's frame) it is placed at: Dota's map puts the pit's sounds in the
+    /// soundscape, and Roshan, who is in one pit at a time, is what they sound for.
+    pit: Option<Vec2>,
+    /// Whether it may sound now: it is not a pit's, or Roshan stands in the pit.
+    open: bool,
 }
 
 pub fn plugin(app: &mut App) {
@@ -92,6 +104,10 @@ fn load(
         return;
     };
     let (mut lines, sounds) = crate::cache_text::soundscapes(&text, MAX_LINES);
+    let pits: Vec<Vec2> = crate::cache_text::roshan_pits(&text, MAX_LINES)
+        .into_iter()
+        .map(|[x, y]| Vec2::new(x + DOTA_TO_BOTA, y + DOTA_TO_BOTA))
+        .collect();
     lines.truncate(MAX_SCAPES);
     let sounds: Vec<Placed> = sounds
         .into_iter()
@@ -102,6 +118,12 @@ fn load(
                 .iter()
                 .map(|w| server.load(crate::manifest::cache_path(w)))
                 .collect();
+            let pit = line.at.and_then(|[x, y, _]| {
+                let at = Vec2::new(x + DOTA_TO_BOTA, y + DOTA_TO_BOTA);
+                pits.iter()
+                    .copied()
+                    .find(|pit| pit.distance(at) <= PIT_REACH)
+            });
             Some(Placed {
                 line,
                 scape,
@@ -109,6 +131,8 @@ fn load(
                 playing: None,
                 next: 0.0,
                 played: 0,
+                pit,
+                open: pit.is_none(),
             })
         })
         .take(MAX_SOUNDS)
@@ -204,6 +228,7 @@ fn play(
         return silence(&mut commands, scapes, &mut ambience);
     }
     let ear = Vec2::new(camera.focus.x, -camera.focus.z);
+    open_pits(scapes, &session);
     let heard = chosen(&scapes.scapes, ear, daylight.night >= 0.5);
     fade(scapes, heard, time.delta_secs());
     // A replay held holds the random sounds; the loops keep sounding, as Dota's ambience does
@@ -221,6 +246,26 @@ fn play(
     loops(&mut commands, scapes, ear, master, &mut sinks);
     randoms(&mut commands, scapes, ear, time.delta_secs() * pace, master);
     tell(scapes, heard, ear, &mut ambience);
+}
+
+/// Opens the sounds of the pits Roshan stands in, and shuts the other pits' (a pit of an empty
+/// map, or the pit he is not in, is silent).
+fn open_pits(scapes: &mut Scapes, session: &Session) {
+    scapes.roshan.clear();
+    if let Some(view) = session.0.view() {
+        scapes.roshan.extend(
+            view.units
+                .iter()
+                .filter(|u| crate::units::npc_unit(u) == Some(ROSHAN))
+                .map(|u| Vec2::new(u.pos.x.to_f32(), u.pos.y.to_f32())),
+        );
+    }
+    let Scapes { sounds, roshan, .. } = scapes;
+    for p in sounds.iter_mut() {
+        p.open = p
+            .pit
+            .is_none_or(|pit| roshan.iter().any(|at| at.distance(pit) <= PIT_REACH));
+    }
 }
 
 /// Moves each soundscape's weight towards 1 for the one heard and 0 for the rest, over its
@@ -242,7 +287,10 @@ fn fade(scapes: &mut Scapes, heard: Option<usize>, dt: f32) {
 
 /// A loop's gain now, before the player's volume.
 fn loop_gain(p: &Placed, weights: &[f32], ear: Vec2) -> f32 {
-    p.line.volume[0] * weights[p.scape] * reach(p.line.at, p.line.db, ear)
+    f32::from(u8::from(p.open))
+        * p.line.volume[0]
+        * weights[p.scape]
+        * reach(p.line.at, p.line.db, ear)
 }
 
 /// Plays the loudest loops that are heard, at their gains, and stops the others.
@@ -314,7 +362,10 @@ fn randoms(commands: &mut Commands, scapes: &mut Scapes, ear: Vec2, dt: f32, mas
         }
         p.next = draw(rng, p.line.every);
         let weight = weights[p.scape];
-        let gain = draw(rng, p.line.volume) * weight * reach(p.line.at, p.line.db, ear);
+        let gain = f32::from(u8::from(p.open))
+            * draw(rng, p.line.volume)
+            * weight
+            * reach(p.line.at, p.line.db, ear);
         if gain < QUIETEST_RANDOM {
             continue;
         }
@@ -356,7 +407,10 @@ fn tell(scapes: &Scapes, heard: Option<usize>, ear: Vec2, ambience: &mut Ambienc
         ambience.gains[i] = if p.line.looped {
             loop_gain(p, &scapes.weights, ear)
         } else {
-            p.line.volume[1] * scapes.weights[p.scape] * reach(p.line.at, p.line.db, ear)
+            f32::from(u8::from(p.open))
+                * p.line.volume[1]
+                * scapes.weights[p.scape]
+                * reach(p.line.at, p.line.db, ear)
         };
         ambience.played[i] = p.played;
     }

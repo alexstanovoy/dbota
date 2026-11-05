@@ -65,6 +65,8 @@ pub struct Manifest {
     pub models: Vec<Model>,
     /// Textures and sounds whose files are present: logical name and path.
     pub files: Vec<(String, String)>,
+    /// The Dota sound event each sound's logical name plays, for those whose files are present.
+    pub sound_events: Vec<(String, String)>,
     /// The particle effects whose files are present: logical name and path.
     pub particles: Vec<(String, String)>,
     /// The map file, when present.
@@ -148,6 +150,10 @@ impl Manifest {
                 },
                 CatalogLine::Sound(s) if present(&s.out) => {
                     manifest.files.push((s.logical.clone(), s.out.clone()));
+                    let named = (s.logical.clone(), s.event.clone());
+                    if !manifest.sound_events.contains(&named) {
+                        manifest.sound_events.push(named);
+                    }
                 }
                 CatalogLine::World(w) if present(&w.out) => {
                     manifest.map = Some(cache_path(&w.out));
@@ -230,6 +236,14 @@ impl Manifest {
             .iter()
             .find(|(name, _)| name == logical)
             .map(|(_, path)| path.as_str())
+    }
+
+    /// The Dota sound event the sounds of a logical name play.
+    pub fn sound_event(&self, name: &str) -> Option<&str> {
+        self.sound_events
+            .iter()
+            .find(|(logical, _)| logical == name)
+            .map(|(_, event)| event.as_str())
     }
 
     /// Every sound of a logical name, as asset paths: the variants share the name.
