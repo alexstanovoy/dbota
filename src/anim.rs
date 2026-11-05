@@ -214,6 +214,21 @@ fn animate(
         {
             trace(time.elapsed_secs(), view.tick, u, &pose, clips);
         }
+        if args.trace_feel && dying.is_some() {
+            let shown = clips
+                .iter()
+                .find(|clip| clip.1 == *node)
+                .map_or("?", |clip| clip.0.as_str());
+            let died = core
+                .session()
+                .and_then(|session| session.entity(unit.id))
+                .and_then(|track| track.last_death)
+                .map_or(0, |death| death.tick);
+            println!(
+                "dying tick={} died={died} unit={} clip={shown}",
+                view.tick, unit.id.idx
+            );
+        }
     }
 }
 

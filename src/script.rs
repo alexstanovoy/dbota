@@ -24,6 +24,7 @@
 //!   a test lifts when it has done its part);
 //! - `await:seats:R,D`: the top bar holds R places of Radiant and D of Dire;
 //! - `await:horn`: the game clock past the horn;
+//! - `await:tick:N`: the current view has reached simulation tick N;
 //! - `await:model:NAME`: a unit drawn with the cache model of that logical name;
 //! - `await:loot:NAME`: an item lying on the ground, drawn with the cache model of that logical name;
 //! - `await:heard:PREFIX`: a bound effect sounded a sound of that logical prefix at least once;
@@ -124,6 +125,8 @@ enum Awaited {
     Seats(u8, u8),
     /// The game clock past the horn.
     Horn,
+    /// The current view has reached this simulation tick.
+    Tick(u32),
     /// One's hero at this level or above.
     Level(u8),
     /// One's gold at this or above.
@@ -211,6 +214,9 @@ fn awaited(arg: &str) -> Result<Awaited, String> {
                         .parse()
                         .map_err(|_| format!("'{value}' is no level"))?,
                 ),
+                "tick" => {
+                    Awaited::Tick(value.parse().map_err(|_| format!("'{value}' is no tick"))?)
+                }
                 "gold" => {
                     Awaited::Gold(value.parse().map_err(|_| format!("'{value}' is no gold"))?)
                 }
@@ -362,6 +368,7 @@ fn holds(
                 .is_some_and(|view| view.game_tick() >= core.pregame_ticks())
         }
         Awaited::Level(level) => own(session).is_some_and(|me| me.level >= *level),
+        Awaited::Tick(tick) => session.0.view().is_some_and(|view| view.tick >= *tick),
         Awaited::Items(count) => {
             let core = &session.0;
             core.view().is_some()

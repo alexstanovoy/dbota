@@ -36,6 +36,15 @@ enum Step {
     Done,
 }
 
+struct RecordingServer(Child);
+
+impl Drop for RecordingServer {
+    fn drop(&mut self) {
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
+}
+
 fn cheat(cheat: Cheat) -> Step {
     Step::Order(Order::Cheat { cheat })
 }
@@ -48,10 +57,21 @@ fn record(
     name: &str,
     map: &str,
     seed: u64,
+    driver: impl FnMut(&WorldView) -> Step,
+) -> (PathBuf, u32) {
+    record_as(scratch, name, map, seed, HeroId::SHADOW_FIEND, driver)
+}
+
+fn record_as(
+    scratch: &Path,
+    name: &str,
+    map: &str,
+    seed: u64,
+    hero: HeroId,
     mut driver: impl FnMut(&WorldView) -> Step,
 ) -> (PathBuf, u32) {
     let replay = scratch.join(format!("{name}.brp"));
-    let mut server: Child = Command::new(common::server_binary())
+    let server: Child = Command::new(common::server_binary())
         .args(["--map", map, "--port", "0", "--bind", "127.0.0.1"])
         .args(["--players", "1", "--tactical-secs", "0", "--cheats"])
         .args(["--mode", "lockstep", "--empty-after-secs", "1"])
@@ -61,7 +81,8 @@ fn record(
         .stderr(Stdio::null())
         .spawn()
         .expect("bota_server starts");
-    let mut output = BufReader::new(server.stdout.take().expect("piped"));
+    let mut server = RecordingServer(server);
+    let mut output = BufReader::new(server.0.stdout.take().expect("piped"));
     let address = loop {
         let mut line = String::new();
         assert!(output.read_line(&mut line).expect("the server") > 0);
@@ -70,8 +91,7 @@ fn record(
         }
     };
     std::thread::spawn(move || for _ in output.lines() {});
-    let (mut link, seated) =
-        Link::join(&address, "feel", HeroId::SHADOW_FIEND, None).expect("a seat");
+    let (mut link, seated) = Link::join(&address, "feel", hero, None).expect("a seat");
     let mut seat = Seat::new(seated, SessionOptions::default());
     let started = Instant::now();
     let mut last_order = 0;
@@ -103,35 +123,44 @@ fn record(
                 }
             }
             Ingested::Over { .. } => break,
+            Ingested::Rejected { reason, .. } => panic!("recording order refused: {reason:?}"),
             _ => {}
         }
     }
     drop(link);
-    let _ = server.wait();
+    let _ = server.0.wait();
     (replay, ticks)
 }
 
 /// Plays a replay in the client with the trace on and returns its lines.
 fn trace(scratch: &Path, replay: &Path, seconds: u32) -> Vec<String> {
+    trace_at(scratch, replay, &format!("wait:{seconds};exit"), None)
+}
+
+fn trace_at(scratch: &Path, replay: &Path, script: &str, look: Option<Vec2>) -> Vec<String> {
     let cache =
         std::env::var("DBOTA_ASSETS").map_or_else(|_| scratch.join("assets"), PathBuf::from);
-    let script = format!("wait:{seconds};exit");
-    let mut child = common::client()
+    let mut command = common::client();
+    if let Some(look) = look {
+        command.args([
+            "--look",
+            &format!("{},{}", look.x.to_int(), look.y.to_int()),
+            "--distance",
+            "3000",
+        ]);
+    }
+    let mut child = command
         .args(["--replay"])
         .arg(replay)
         .args(["--pov", "0", "--trace-feel", "--mute", "--no-vsync"])
-        .args([
-            "--display-mode",
-            "windowed",
-            "--script",
-            &script,
-            "--config",
-        ])
+        .args(["--display-mode", "windowed", "--script", script, "--config"])
         .arg(scratch.join("client.conf"))
         .env("DBOTA_ASSETS", cache)
         .env("XDG_DATA_HOME", scratch.join("data"))
         .stdout(Stdio::piped())
-        .stderr(Stdio::null())
+        .stderr(Stdio::from(
+            std::fs::File::create(scratch.join("client.log")).expect("client log"),
+        ))
         .spawn()
         .expect("dbota runs");
     let stdout = child.stdout.take().expect("its stdout");
@@ -139,17 +168,28 @@ fn trace(scratch: &Path, replay: &Path, seconds: u32) -> Vec<String> {
         BufReader::new(stdout)
             .lines()
             .map_while(Result::ok)
-            .filter(|l| l.starts_with("anim ") || l.starts_with("sound "))
+            .filter(|l| {
+                l.starts_with("anim ") || l.starts_with("sound ") || l.starts_with("dying ")
+            })
             .collect::<Vec<_>>()
     });
     let started = Instant::now();
-    while child.try_wait().expect("waited for").is_none() {
+    let status = loop {
+        if let Some(status) = child.try_wait().expect("waited for") {
+            break status;
+        }
         if started.elapsed() > PATIENCE {
             let _ = child.kill();
+            let _ = child.wait();
             panic!("the client ran too long");
         }
         std::thread::sleep(Duration::from_millis(100));
-    }
+    };
+    assert!(
+        status.success(),
+        "client exited {status}: {}",
+        std::fs::read_to_string(scratch.join("client.log")).unwrap_or_default()
+    );
     said.join().expect("its output")
 }
 
@@ -491,4 +531,200 @@ fn the_ogre_bruiser_plays_the_smash_sequence_through_its_cast() {
         &[("ogre-smash", late.pos.clone(), late.tick)],
     );
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// The orders and observations of the creep-execution match.
+#[derive(Default)]
+struct HookExecution {
+    phase: u8,
+    cast_tick: u32,
+    victim: Option<EntityId>,
+    creeps: Vec<EntityId>,
+    killed: Option<u32>,
+    history: Vec<String>,
+}
+
+impl HookExecution {
+    const HOME: Vec2 = bota_core::rules::DEMO_LANE_CORNERS[1];
+
+    fn drive(&mut self, view: &WorldView) -> Step {
+        let next = match self.phase {
+            0 => cheat(Cheat::StartGame),
+            1 => cheat(Cheat::AllVision { on: true }),
+            2 => cheat(Cheat::CreepSpawning { on: false }),
+            3 => cheat(Cheat::KillCreeps {
+                which: bota_proto::CreepSide::All,
+            }),
+            4 => cheat(Cheat::Teleport { at: Self::HOME }),
+            5 => Step::Order(Order::Learn {
+                slot: bota_proto::AbilitySlot(0),
+            }),
+            6 if view.tick < 120 => return Step::Wait,
+            6 => cheat(Cheat::CreateCreeps {
+                enemy: true,
+                at: bota_core::rules::DEMO_LANE_CORNERS[0],
+            }),
+            7 => self.throw(view),
+            _ => return self.observe(view),
+        };
+        self.phase += 1;
+        next
+    }
+
+    fn throw(&mut self, view: &WorldView) -> Step {
+        let creep = view
+            .units
+            .iter()
+            .filter(|unit| unit.team == Team::Dire && unit.kind == UnitKind::CreepMelee)
+            .min_by_key(|unit| unit.pos.distance_squared(Self::HOME))
+            .expect("spawned melee creep");
+        assert_eq!(creep.hp, 550, "full health before Hook");
+        self.creeps = view
+            .units
+            .iter()
+            .filter(|unit| unit.team == Team::Dire && bota_core::kind_def(unit.kind).creep)
+            .map(|unit| {
+                assert_eq!(unit.hp, unit.max_hp, "every candidate is at full health");
+                assert!(
+                    unit.hp > bota_core::rules::HOOK_DAMAGE[0],
+                    "ordinary spell damage cannot kill a candidate"
+                );
+                unit.id
+            })
+            .collect();
+        self.cast_tick = view.tick;
+        let aim = bota_core::move_towards(
+            Self::HOME,
+            Self::HOME + (creep.pos - Self::HOME) * bota_proto::Fixed::from_int(3),
+            bota_proto::Fixed::from_int(1250),
+        );
+        Step::Order(Order::Cast {
+            slot: bota_proto::AbilitySlot(0),
+            target: Target::Pos(aim),
+        })
+    }
+
+    fn observe(&mut self, view: &WorldView) -> Step {
+        self.note(view);
+        // The first body inside Hook's width can be a neighbour of the aim.
+        if view.tick <= self.cast_tick + 45 {
+            let missing: Vec<_> = self
+                .creeps
+                .iter()
+                .copied()
+                .filter(|id| view.units.iter().all(|unit| unit.id != *id))
+                .collect();
+            assert!(missing.len() <= 1, "only one candidate dies at Hook impact");
+            if self.killed.is_none()
+                && let Some(victim) = missing.first()
+            {
+                assert_eq!(
+                    view.players[0]
+                        .creep_score
+                        .expect("own creep score")
+                        .last_hits,
+                    1,
+                    "Hook credited the last hit"
+                );
+                self.victim = Some(*victim);
+                self.killed = Some(view.tick);
+            }
+        }
+        if view.tick >= self.cast_tick + 60 {
+            Step::Done
+        } else {
+            Step::Wait
+        }
+    }
+
+    fn note(&mut self, view: &WorldView) {
+        if !(view.tick - self.cast_tick).is_multiple_of(5) {
+            return;
+        }
+        let creeps: Vec<_> = view
+            .units
+            .iter()
+            .filter(|unit| self.creeps.contains(&unit.id))
+            .map(|unit| (unit.id, unit.pos, unit.hp))
+            .collect();
+        let hook = view
+            .projectiles
+            .iter()
+            .filter(|projectile| {
+                projectile.inflictor
+                    == Some(bota_proto::Inflictor::Ability(
+                        bota_proto::AbilityId::MEAT_HOOK,
+                    ))
+            })
+            .min_by_key(|projectile| projectile.id.idx)
+            .map(|projectile| projectile.pos);
+        self.history.push(format!(
+            "tick={} creeps={creeps:?} hook={hook:?}",
+            view.tick
+        ));
+    }
+}
+
+fn trace_number(line: &str, key: &str) -> Option<u32> {
+    line.split_whitespace()
+        .find_map(|word| word.strip_prefix(key)?.parse().ok())
+}
+
+fn assert_hook_execution_drawn(scratch: &Path, replay: &Path, last_tick: u32, killed: u32) {
+    let lines = trace_at(
+        scratch,
+        replay,
+        &format!("await:tick:{last_tick};exit"),
+        Some(HookExecution::HOME),
+    );
+    let frames = frames(&lines);
+    // Seat views use opaque handles, full replays use world entity ids.
+    // Match the drawn lifecycle by its recorded death at Hook impact.
+    let victim = lines
+        .iter()
+        .find_map(|line| {
+            (line.starts_with("dying ")
+                && line.ends_with("clip=death")
+                && trace_number(line, "died=") == Some(killed))
+            .then(|| trace_number(line, "unit="))
+            .flatten()
+        })
+        .expect("the drawn creep plays its death animation at Hook impact");
+    assert!(
+        frames.iter().any(|frame| frame.unit == victim
+            && frame.tick < killed
+            && frame.kind.starts_with("Creep")),
+        "creep was drawn before Hook"
+    );
+    assert!(
+        frames.iter().any(|frame| frame.tick > killed + 10),
+        "client drew the scene after the kill"
+    );
+    assert!(
+        !frames
+            .iter()
+            .any(|frame| frame.unit == victim && frame.tick > killed + 2),
+        "creep has no living model after Hook"
+    );
+}
+
+/// A full-health creep executed by Hook leaves the server view and the
+/// client's living models, with the last hit credited to Pudge.
+#[test]
+#[ignore = "draws on the GPU in a headless compositor: tools/visual_check.sh runs it"]
+fn a_hook_executes_a_full_health_creep_in_a_match_and_the_drawn_scene() {
+    let scratch = scratch("hook_creep");
+    let mut execution = HookExecution::default();
+    let (replay, last_tick) = record_as(&scratch, "hook", "1", 1, HeroId::PUDGE, |view| {
+        execution.drive(view)
+    });
+    let killed = execution.killed.unwrap_or_else(|| {
+        panic!(
+            "Hook must execute the full-health creep: {:?}",
+            execution.history
+        )
+    });
+    assert!(execution.victim.is_some(), "the server executed a creep");
+    assert_hook_execution_drawn(&scratch, &replay, last_tick, killed);
+    std::fs::remove_dir_all(scratch).expect("scratch removed");
 }
