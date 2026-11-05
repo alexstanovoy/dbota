@@ -84,6 +84,13 @@ struct Placed {
     open: bool,
 }
 
+impl Placed {
+    /// 1 where the sound may sound, 0 where it is a pit's and Roshan is not in it.
+    fn openness(&self) -> f32 {
+        f32::from(u8::from(self.open))
+    }
+}
+
 pub fn plugin(app: &mut App) {
     app.init_resource::<Ambience>()
         .init_resource::<Scapes>()
@@ -287,10 +294,7 @@ fn fade(scapes: &mut Scapes, heard: Option<usize>, dt: f32) {
 
 /// A loop's gain now, before the player's volume.
 fn loop_gain(p: &Placed, weights: &[f32], ear: Vec2) -> f32 {
-    f32::from(u8::from(p.open))
-        * p.line.volume[0]
-        * weights[p.scape]
-        * reach(p.line.at, p.line.db, ear)
+    p.openness() * p.line.volume[0] * weights[p.scape] * reach(p.line.at, p.line.db, ear)
 }
 
 /// Plays the loudest loops that are heard, at their gains, and stops the others.
@@ -362,10 +366,8 @@ fn randoms(commands: &mut Commands, scapes: &mut Scapes, ear: Vec2, dt: f32, mas
         }
         p.next = draw(rng, p.line.every);
         let weight = weights[p.scape];
-        let gain = f32::from(u8::from(p.open))
-            * draw(rng, p.line.volume)
-            * weight
-            * reach(p.line.at, p.line.db, ear);
+        let gain =
+            p.openness() * draw(rng, p.line.volume) * weight * reach(p.line.at, p.line.db, ear);
         if gain < QUIETEST_RANDOM {
             continue;
         }
@@ -407,7 +409,7 @@ fn tell(scapes: &Scapes, heard: Option<usize>, ear: Vec2, ambience: &mut Ambienc
         ambience.gains[i] = if p.line.looped {
             loop_gain(p, &scapes.weights, ear)
         } else {
-            f32::from(u8::from(p.open))
+            p.openness()
                 * p.line.volume[1]
                 * scapes.weights[p.scape]
                 * reach(p.line.at, p.line.db, ear)

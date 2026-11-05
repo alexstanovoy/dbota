@@ -20,6 +20,7 @@ use crate::camera::RtsCamera;
 use crate::config::Settings;
 use crate::effects::Shooters;
 use crate::map::Ground;
+use crate::mixer::{Owner, Request, Started};
 use crate::particles::{Handle, Library, Playing};
 use line::{Attach, Feed, Fx};
 
@@ -101,43 +102,64 @@ struct Stage<'w, 's> {
 
 impl Stage<'_, '_> {
     /// Sounds one of the sounds under `prefix` where `at` is (Bevy frame), faded by its distance
-    /// from the camera, as the mixer lets it. A sound of `source` that loops sounds until the
-    /// voice returned is stopped.
-    fn sound(
-        &mut self,
-        prefix: &str,
-        at: Vec3,
-        n: u32,
-        source: Option<bota_proto::EntityId>,
-    ) -> Option<Entity> {
-        let paths = self.manifest.sounds(prefix);
-        let path = paths.get(n as usize % paths.len().max(1))?;
-        *self.heard.0.entry(prefix.to_owned()).or_default() += 1;
-        if self.settings.muted || self.args.mute {
-            return None;
-        }
+    /// from the camera, as the mixer lets it. A sound that loops sounds until `owner` stops the
+    /// voice returned; the sounds counted as heard are those the mixer took.
+    fn sound(&mut self, prefix: &str, at: Vec3, n: u32, owner: Owner) -> Started {
+        let files = self.manifest.sounds_with_events(prefix);
+        let Some((path, event)) = files.get(n as usize % files.len().max(1)) else {
+            return Started::Refused;
+        };
         let focus = Vec2::new(self.camera.focus.x, -self.camera.focus.z);
         let place = (at.x, -at.z);
         let gain = crate::sound::fall_off(place, focus);
-        if gain < 0.03 {
-            return None;
+        if self.settings.muted || self.args.mute || gain < 0.03 {
+            return Started::Refused;
         }
-        let request = crate::mixer::Request {
-            event: self.manifest.sound_event(prefix).unwrap_or_default(),
-            source,
-            target: None,
+        let request = Request {
+            event,
+            owner,
+            merge: None,
             at: Some(place),
             gain,
             speed: 1.0,
         };
         let handle = self.server.load(path.clone());
-        let now = self.time.elapsed_secs_f64();
-        self.mixer.start(&mut self.commands, now, &request, handle)
+        let now = self.time.elapsed();
+        let started = self.mixer.start(&mut self.commands, now, &request, handle);
+        if started != Started::Refused {
+            *self.heard.0.entry(prefix.to_owned()).or_default() += 1;
+        }
+        started
+    }
+
+    /// Whether the sounds under `prefix` loop: one that does is owned, and kept sounding.
+    fn loops(&self, prefix: &str) -> bool {
+        let files = self.manifest.sounds_with_events(prefix);
+        files
+            .first()
+            .is_some_and(|(_, event)| self.mixer.loops(event))
+    }
+
+    /// Moves a looping voice with its source: it is as loud as the camera's distance leaves it.
+    fn follow(&mut self, voice: Entity, at: Vec3) {
+        let focus = Vec2::new(self.camera.focus.x, -self.camera.focus.z);
+        let place = (at.x, -at.z);
+        let gain = if self.settings.muted || self.args.mute {
+            0.0
+        } else {
+            crate::sound::fall_off(place, focus)
+        };
+        self.mixer.follow(voice, place, gain);
+    }
+
+    /// Stops every voice: no match is on to sound.
+    fn silence_all(&mut self) {
+        self.mixer.stop_all(&mut self.commands);
     }
 
     /// Stops a voice that [`Stage::sound`] started, as its event fades out.
     fn silence(&mut self, voice: Entity) {
-        let now = self.time.elapsed_secs_f64();
+        let now = self.time.elapsed();
         self.mixer.stop(&mut self.commands, now, voice);
     }
 
@@ -155,7 +177,7 @@ impl Stage<'_, '_> {
             feed(fx, handle, playing, feeds, place);
         }
         if let Some(prefix) = &fx.sound {
-            self.sound(prefix, at, seed, None);
+            self.sound(prefix, at, seed, Owner::None);
         }
     }
 }

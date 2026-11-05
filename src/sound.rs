@@ -3,15 +3,16 @@
 //! player's volume.
 
 use std::collections::HashMap;
+use std::time::Duration;
 
 use bevy::{audio::Volume, prelude::*};
 use bota_client_core::{Cue, CueKind};
-use bota_proto::{EntityId, HeroId, SlotId, Team, TeleportView, UnitKind};
+use bota_proto::{HeroId, SlotId, Team, TeleportView, UnitKind};
 
 use crate::camera::RtsCamera;
 use crate::config::Settings;
 use crate::manifest::Manifest;
-use crate::mixer::{Mixer, Request};
+use crate::mixer::{Merge, Mixer, Owner, Request, Started};
 use crate::session::Session;
 
 /// World units from the camera within which a sound is heard at full.
@@ -32,9 +33,10 @@ const MELEE_GAIN: f32 = 0.6;
 struct Voice {
     /// The logical name of its row, for the trace.
     name: String,
-    /// The Dota sound event it plays, which the mixer's limits are of; empty if the manifest names none.
-    event: String,
     sources: Vec<Handle<AudioSource>>,
+    /// The Dota sound event each source plays, which the mixer's limits are of; empty where the
+    /// manifest names none.
+    events: Vec<String>,
     rest: f32,
     next: usize,
 }
@@ -322,21 +324,16 @@ fn load(mut voices: ResMut<Voices>, manifest: Res<Manifest>, server: Res<AssetSe
     .chain(Row::all().into_iter().map(Kind::Row));
     for kind in kinds {
         let names = sources_of(kind, &manifest);
-        let sources: Vec<Handle<AudioSource>> = names
+        let files: Vec<(String, String)> = names
             .iter()
-            .flat_map(|name| manifest.sounds(name))
-            .map(|path| server.load(path))
+            .flat_map(|name| manifest.sounds_with_events(name))
             .collect();
         voices.0.push((
             kind,
             Voice {
                 name: names.join("|"),
-                event: names
-                    .first()
-                    .and_then(|name| manifest.sound_event(name))
-                    .unwrap_or_default()
-                    .to_owned(),
-                sources,
+                sources: files.iter().map(|(path, _)| server.load(path)).collect(),
+                events: files.into_iter().map(|(_, event)| event).collect(),
                 rest: 0.0,
                 next: 0,
             },
@@ -357,8 +354,103 @@ fn volume(settings: Res<Settings>, args: Res<crate::Args>, mut global: ResMut<Gl
     global.volume = Volume::Linear(v);
 }
 
+/// What sounds the kinds of sound: the voices of the kinds, the mixer that bounds them, and
+/// where the listener is.
+struct Sounder<'a, 'w, 's> {
+    commands: &'a mut Commands<'w, 's>,
+    mixer: &'a mut Mixer,
+    voices: &'a mut Voices,
+    now: Duration,
+    focus: Vec2,
+    silent: bool,
+    /// The tick to trace the decisions of, when they are traced.
+    trace: Option<u32>,
+}
+
+impl Sounder<'_, '_, '_> {
+    /// Sounds one of a kind's sounds at `gain` before the distance, where `at` is; blows on what
+    /// `merge` names merge into one sound.
+    fn sound(&mut self, kind: Kind, gain: f32, at: Option<(f32, f32)>, merge: Option<Merge>) {
+        let fall = at.map_or(1.0, |at| fall_off(at, self.focus));
+        let Some((_, voice)) = self.voices.0.iter_mut().find(|(k, _)| *k == kind) else {
+            return;
+        };
+        if let Some(tick) = self.trace {
+            println!(
+                "sound tick={tick} name={} sources={}",
+                voice.name,
+                voice.sources.len()
+            );
+        }
+        if self.silent || voice.rest > 0.0 || voice.sources.is_empty() || fall * gain < 0.03 {
+            return;
+        }
+        let pick = voice.next % voice.sources.len();
+        let request = Request {
+            event: &voice.events[pick],
+            owner: Owner::None,
+            merge,
+            at,
+            gain: gain * fall,
+            speed: speed_of(kind),
+        };
+        let source = voice.sources[pick].clone();
+        if self.mixer.start(self.commands, self.now, &request, source) != Started::Refused {
+            voice.rest = REST;
+            voice.next += 1;
+        }
+    }
+
+    /// Sounds the cues of the client core, leaving `quiet` of the purchases unsounded; how many
+    /// are still to be left.
+    fn cues(&mut self, cues: Vec<Cue>, mut quiet: usize) -> usize {
+        for cue in cues {
+            if cue.kind == CueKind::Buy && quiet > 0 {
+                quiet -= 1;
+                continue;
+            }
+            match cue.kind {
+                // Dota sounds a refusal it tells, and only that.
+                CueKind::Refused(reason) => {
+                    if let Some(told) = crate::error_msg::told(reason) {
+                        self.sound(Kind::Denied(told.sound), cue.gain, None, None);
+                    }
+                }
+                CueKind::Undeniable(_) => {
+                    self.sound(
+                        Kind::Denied(crate::error_msg::Deny::General),
+                        cue.gain,
+                        None,
+                        None,
+                    );
+                }
+                // A hero's attack, blow and fall are its own rows'. The blows on one hero merge.
+                kind @ (CueKind::Attack | CueKind::Hit | CueKind::HeroDeath) => {
+                    let Some(hero) = cue.hero else {
+                        continue;
+                    };
+                    let (event, merge) = match kind {
+                        CueKind::Attack => (Event::Attack, None),
+                        CueKind::Hit => (Event::Impact, Some(Merge::Hero(hero))),
+                        _ => (Event::Death, None),
+                    };
+                    self.sound(
+                        row(Subject::Hero(hero), event, None),
+                        cue.gain,
+                        cue.at,
+                        merge,
+                    );
+                }
+                kind => self.sound(Kind::Cue(kind), cue.gain, cue.at, None),
+            }
+        }
+        quiet
+    }
+}
+
 /// Plays the cues of this frame, and the shots of creeps and towers the
 /// camera is near.
+#[allow(clippy::too_many_arguments)]
 fn play(
     mut commands: Commands,
     mut session: NonSendMut<Session>,
@@ -377,93 +469,31 @@ fn play(
     }
     let core = &mut session.0;
     let cues: Vec<Cue> = std::mem::take(&mut core.cues);
-    let silent = settings.muted || args.mute;
-    let focus = Vec2::new(cam.focus.x, -cam.focus.z);
-    let tick = core.view().map_or(0, |v| v.tick);
-    let now = time.elapsed_secs_f64();
-    let mut sound = |kind: Kind, gain: f32, at: Option<(f32, f32)>, target: Option<EntityId>| {
-        let fall = at.map_or(1.0, |at| fall_off(at, focus));
-        let Some((_, voice)) = voices.0.iter_mut().find(|(k, _)| *k == kind) else {
-            return;
-        };
-        if args.trace_feel {
-            println!(
-                "sound tick={tick} name={} sources={}",
-                voice.name,
-                voice.sources.len()
-            );
-        }
-        if silent || voice.rest > 0.0 || voice.sources.is_empty() || fall * gain < 0.03 {
-            return;
-        }
-        let source = voice.sources[voice.next % voice.sources.len()].clone();
-        let request = Request {
-            event: &voice.event,
-            source: None,
-            target,
-            at,
-            gain: gain * fall,
-            speed: speed_of(kind),
-        };
-        if mixer.start(&mut commands, now, &request, source).is_some() {
-            voice.rest = REST;
-            voice.next += 1;
-        }
+    let (chosen, spoken) = queued.watch(core, time.elapsed_secs());
+    let mut sounder = Sounder {
+        commands: &mut commands,
+        mixer: &mut mixer,
+        voices: &mut voices,
+        now: time.elapsed(),
+        focus: Vec2::new(cam.focus.x, -cam.focus.z),
+        silent: settings.muted || args.mute,
+        trace: args.trace_feel.then(|| core.view().map_or(0, |v| v.tick)),
     };
     // Dota sounds a purchase when it is made: once for each choice in the
     // strategy phase, and none for those the match then buys on its own.
-    let (chosen, spoken) = queued.watch(core, time.elapsed_secs());
     if chosen {
-        sound(Kind::Cue(CueKind::Buy), BUY_GAIN, None, None);
+        sounder.sound(Kind::Cue(CueKind::Buy), BUY_GAIN, None, None);
     }
-    let mut quiet = spoken;
-    for cue in cues {
-        if cue.kind == CueKind::Buy && quiet > 0 {
-            quiet -= 1;
-            continue;
-        }
-        match cue.kind {
-            // Dota sounds a refusal it tells, and only that.
-            CueKind::Refused(reason) => {
-                if let Some(told) = crate::error_msg::told(reason) {
-                    sound(Kind::Denied(told.sound), cue.gain, None, None);
-                }
-            }
-            CueKind::Undeniable(_) => sound(
-                Kind::Denied(crate::error_msg::Deny::General),
-                cue.gain,
-                None,
-                None,
-            ),
-            // A hero's attack, blow and fall are its own rows'.
-            kind @ (CueKind::Attack | CueKind::Hit | CueKind::HeroDeath) => {
-                let event = match kind {
-                    CueKind::Attack => Event::Attack,
-                    CueKind::Hit => Event::Impact,
-                    _ => Event::Death,
-                };
-                if let Some(hero) = cue.hero {
-                    sound(
-                        row(Subject::Hero(hero), event, None),
-                        cue.gain,
-                        cue.at,
-                        None,
-                    );
-                }
-            }
-            kind => sound(Kind::Cue(kind), cue.gain, cue.at, None),
-        }
-    }
-    queued.spoken = quiet;
-    shots(core, &fog, &mut sound);
-    swings(core, &fog, &mut sound);
+    queued.spoken = sounder.cues(cues, spoken);
+    shots(core, &fog, &mut sounder);
+    swings(core, &fog, &mut sounder);
     // A ping is heard by its side wherever the camera is, as Dota's are.
     for kind in crate::pings::fresh(core, &mut last_ping) {
         match kind {
-            bota_proto::PingKind::Regular => sound(Kind::Ping, PING_GAIN, None, None),
+            bota_proto::PingKind::Regular => sounder.sound(Kind::Ping, PING_GAIN, None, None),
             bota_proto::PingKind::Danger => {
-                sound(Kind::PingDanger, PING_DANGER_GAIN, None, None);
-                sound(Kind::PingDangerLayer, PING_LAYER_GAIN, None, None);
+                sounder.sound(Kind::PingDanger, PING_DANGER_GAIN, None, None);
+                sounder.sound(Kind::PingDangerLayer, PING_LAYER_GAIN, None, None);
             }
         }
     }
@@ -580,11 +610,7 @@ fn ended_humming(
 }
 
 /// The shots of creeps and towers that let a missile go this tick.
-fn shots(
-    core: &bota_client_core::App,
-    fog: &crate::fog::FogGrid,
-    sound: &mut impl FnMut(Kind, f32, Option<(f32, f32)>, Option<EntityId>),
-) {
+fn shots(core: &bota_client_core::App, fog: &crate::fog::FogGrid, sound: &mut Sounder) {
     let (Some(view), Some(prev)) = (core.view(), core.prev_view()) else {
         return;
     };
@@ -608,23 +634,23 @@ fn shots(
             continue;
         };
         match shooter.kind {
-            UnitKind::Tower => sound(
+            UnitKind::Tower => sound.sound(
                 row(Subject::Tower, Event::Attack, Some(side)),
                 0.7,
                 at,
-                p.target,
+                None,
             ),
-            UnitKind::CreepRanged => sound(
+            UnitKind::CreepRanged => sound.sound(
                 row(Subject::RangedCreep, Event::Attack, Some(side)),
                 0.35,
                 at,
-                p.target,
+                None,
             ),
-            UnitKind::CreepSiege => sound(
+            UnitKind::CreepSiege => sound.sound(
                 row(Subject::SiegeCreep, Event::Attack, Some(side)),
                 0.25,
                 at,
-                p.target,
+                None,
             ),
             _ => {}
         }
@@ -643,11 +669,11 @@ fn shots(
             && let Some(side) = Side::of(u.team)
         {
             let at = Some((p.pos.x.to_f32(), p.pos.y.to_f32()));
-            sound(
+            sound.sound(
                 row(Subject::RangedCreep, Event::Impact, Some(side)),
                 0.35,
                 at,
-                p.target,
+                p.target.map(Merge::Unit),
             );
         }
     }
@@ -656,11 +682,7 @@ fn shots(
 /// The swings of melee creeps in sight this tick, as Dota's sound sets tell
 /// them: a whoosh as one begins, a blow as one lands. A swing gone before its
 /// strike tick was broken off, and struck nothing.
-fn swings(
-    core: &bota_client_core::App,
-    fog: &crate::fog::FogGrid,
-    sound: &mut impl FnMut(Kind, f32, Option<(f32, f32)>, Option<EntityId>),
-) {
+fn swings(core: &bota_client_core::App, fog: &crate::fog::FogGrid, sound: &mut Sounder) {
     let (Some(view), Some(prev)) = (core.view(), core.prev_view()) else {
         return;
     };
@@ -682,21 +704,20 @@ fn swings(
         let at = Some((u.pos.x.to_f32(), u.pos.y.to_f32()));
         let (now, before) = (strike_of(view, u.id), strike_of(prev, u.id));
         if now.is_some() && now != before {
-            let target = swing_of(view, u.id).map(|swing| swing.target);
-            sound(
+            sound.sound(
                 row(Subject::MeleeCreep, Event::PreAttack, None),
                 MELEE_GAIN,
                 at,
-                target,
+                None,
             );
         }
         if before.is_some_and(|due| now != Some(due) && due <= view.tick) {
             let target = swing_of(prev, u.id).map(|swing| swing.target);
-            sound(
+            sound.sound(
                 row(Subject::MeleeCreep, Event::Attack, None),
                 MELEE_GAIN,
                 at,
-                target,
+                target.map(Merge::Unit),
             );
         }
     }
@@ -796,7 +817,11 @@ mod tests {
     /// The files a kind of sound plays.
     fn files_of(manifest: &Manifest, kind: Kind) -> Vec<String> {
         let names = sources_of(kind, manifest);
-        names.iter().flat_map(|n| manifest.sounds(n)).collect()
+        names
+            .iter()
+            .flat_map(|n| manifest.sounds_with_events(n))
+            .map(|(path, _)| path)
+            .collect()
     }
 
     /// Each sound plays the files of its own Dota event and no other's: a

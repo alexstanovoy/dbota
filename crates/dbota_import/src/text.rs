@@ -680,18 +680,30 @@ pub struct ResolvedEvent {
     pub looping: bool,
 }
 
+/// The largest values `sounds/events.txt` holds, which the client clamps to as well: a timer
+/// the install's data drives has a bound of its own.
+pub const MAX_EVENT_DURATION: f32 = 120.0;
+pub const MAX_EVENT_FADE_OUT: f32 = 10.0;
+pub const MAX_EVENT_BLOCK_SECS: f32 = 5.0;
+pub const MAX_EVENT_BLOCK_UNITS: f32 = 10_000.0;
+pub const MAX_EVENT_LIMIT: u32 = 256;
+pub const MAX_EVENT_STOP_AT: f32 = 600.0;
+
 /// What `sounds/events.txt` starts with.
 const EVENTS_HEADER: &str = "\
 # event <name> <loops 0|1> <duration_s> <fade_out_s> <block_s> <block_units> <limit_max> <limit_per_entity 0|1> <stop_oldest 0|1> <stop_at_s>
 # loops: the sound repeats until its source stops it. block_s 0: repeats are not blocked, else a repeat within
-# block_s seconds and block_units units of a sounding instance is not played. limit_max 0: no limit, else at most
-# that many at once (per entity when limit_per_entity), the oldest stopped for a new one when stop_oldest.
+# block_s seconds of a sounding instance and within block_units units of it (0: at any distance) is not played.
+# limit_max 0: no limit, else at most that many instances of the event at once (of one entity when
+# limit_per_entity), the oldest stopped for a new one when stop_oldest. Pools shared by several events
+# (limiter_event_name naming another) are not modelled: an event limits its own instances.
 # stop_at_s -1: never stopped by time.
+# Largest values: duration 120, fade_out 10, block_s 5, block_units 10000, limit_max 256, stop_at_s 600.
 ";
 
 /// `sounds/events.txt`, a line per event ([`EVENTS_HEADER`]). The block of a type that gives a
 /// duration blocks even where the type does not say it is on (`dota_update_default` blocks by
-/// its duration alone).
+/// its duration alone), and a block with no distance blocks at any distance.
 pub fn sound_events_txt(events: &[ResolvedEvent]) -> String {
     let mut out = String::from(EVENTS_HEADER);
     for ResolvedEvent {
@@ -700,22 +712,36 @@ pub fn sound_events_txt(events: &[ResolvedEvent]) -> String {
         looping,
     } in events
     {
-        let block = limits.block_duration.unwrap_or(0.0).max(0.0);
+        let block = limits
+            .block_duration
+            .unwrap_or(0.0)
+            .clamp(0.0, MAX_EVENT_BLOCK_SECS);
         let blocked = limits.block_multiple_instances.unwrap_or(block > 0.0);
-        let limit = limits.limiter_max.unwrap_or(0.0).max(0.0);
+        let limit = limits
+            .limiter_max
+            .unwrap_or(0.0)
+            .clamp(0.0, MAX_EVENT_LIMIT as f32);
         let limited = limits.limiter_on.unwrap_or(false);
+        let stop_at = limits.stop_at_time.unwrap_or(-1.0);
         out += &format!(
             "event {} {} {:.3} {:.3} {:.3} {:.1} {} {} {} {:.3}\n",
             event.name,
             u8::from(*looping),
-            event.duration.unwrap_or(0.0).max(0.0),
-            event.fade_out.unwrap_or(0.0).max(0.0),
+            event.duration.unwrap_or(0.0).clamp(0.0, MAX_EVENT_DURATION),
+            event.fade_out.unwrap_or(0.0).clamp(0.0, MAX_EVENT_FADE_OUT),
             if blocked { block } else { 0.0 },
-            limits.block_distance.unwrap_or(0.0).max(0.0),
+            limits
+                .block_distance
+                .unwrap_or(0.0)
+                .clamp(0.0, MAX_EVENT_BLOCK_UNITS),
             if limited { limit as u32 } else { 0 },
             u8::from(limits.limiter_match_entity.unwrap_or(false)),
             u8::from(limits.limiter_stop_oldest.unwrap_or(true)),
-            limits.stop_at_time.unwrap_or(-1.0),
+            if stop_at < 0.0 {
+                -1.0
+            } else {
+                stop_at.min(MAX_EVENT_STOP_AT)
+            },
         );
     }
     out

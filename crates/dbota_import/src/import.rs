@@ -299,7 +299,7 @@ pub enum Item {
     /// (their type's, their own) and whether their sound loops, as `sounds/events.txt`.
     SoundEvents {
         logical: String,
-        events: Vec<String>,
+        events: BTreeSet<String>,
         out: String,
     },
     /// A facial scene (a hero's idle expression), as [`expression_txt`] writes it.
@@ -515,7 +515,7 @@ impl Plan {
         if !events.is_empty() {
             plan.items.push(Item::SoundEvents {
                 logical: "sound.events".to_owned(),
-                events: events.into_iter().collect(),
+                events,
                 out: SOUND_EVENTS.to_owned(),
             });
         }
@@ -1408,16 +1408,19 @@ fn sound(bytes: &[u8], dest: &str, out: &mut Out<'_>) -> Result<()> {
 /// Where Dota keeps its sound events and the types that give them their limits.
 const SOUND_EVENTS_DIR: &str = "soundevents/";
 const SOUND_STACKS: &str = "soundstacks/soundstacks_dota_core.vsndstck_c";
-/// Most sound event files read.
+/// Most sound event files read, and most bytes of them: an install that holds more is not one
+/// this reads, and says so rather than leaving events out.
 const MAX_EVENT_FILES: usize = 2048;
+const MAX_EVENT_BYTES: usize = 128 << 20;
 
 /// `sounds/events.txt`: the events `wanted` as the install's sound event files state them,
-/// their limits completed by their type's ([`sound_events_txt`]). An event no file has, or one
-/// whose type is unknown, is left out: the client then limits nothing for it.
+/// their limits completed by their type's ([`sound_events_txt`]). A file that does not read and a
+/// sound whose loop cannot be told are reported. An event no file here has (a voice line's
+/// is in the voice scripts) is left out, and the client limits nothing for it.
 fn sound_events(
     src: &impl Source,
     pak: &Vpk,
-    wanted: &[String],
+    wanted: &BTreeSet<String>,
     dest: &str,
     out: &mut Out<'_>,
 ) -> Result<()> {
@@ -1428,29 +1431,58 @@ fn sound_events(
         .filter(|path| path.starts_with(SOUND_EVENTS_DIR) && path.ends_with(".vsndevts_c"))
         .filter(|path| !path.contains("/voscripts/") && !path.contains("/music/"))
         .collect();
+    if paths.len() > MAX_EVENT_FILES {
+        return Err(malformed(
+            "soundevents",
+            "more event files than any install has",
+        ));
+    }
     paths.sort();
-    paths.truncate(MAX_EVENT_FILES);
     let mut found: BTreeMap<String, SoundEvent> = BTreeMap::new();
+    let mut read = 0;
     for path in paths {
         if found.len() == wanted.len() {
             break;
         }
-        let events = read_sound_events(&Resource::parse(&read_from(src, &[pak], &path)?)?)?;
-        for event in events {
-            if wanted.contains(&event.name) {
-                found.entry(event.name.clone()).or_insert(event);
+        let bytes = match read_from(src, &[pak], &path) {
+            Ok(bytes) => bytes,
+            Err(err) => {
+                out.report.failed.push((path, err.to_string()));
+                continue;
             }
+        };
+        read += bytes.len();
+        if read > MAX_EVENT_BYTES {
+            return Err(malformed(
+                "soundevents",
+                "more event data than any install has",
+            ));
         }
+        match Resource::parse(&bytes).and_then(|r| read_sound_events(&r)) {
+            Ok(events) => {
+                for event in events.into_iter().filter(|e| wanted.contains(&e.name)) {
+                    found.entry(event.name.clone()).or_insert(event);
+                }
+            }
+            Err(err) => out.report.failed.push((path, err.to_string())),
+        }
+    }
+    for name in wanted.iter().filter(|name| !found.contains_key(*name)) {
+        out.report.failed.push((
+            name.clone(),
+            "no sound event file has this event".to_owned(),
+        ));
     }
     let mut resolved = Vec::with_capacity(found.len());
     for event in found.into_values() {
-        let looping = match event.files.first() {
-            Some(file) => {
-                let bytes = read_from(src, &[pak], &format!("{file}_c"))?;
-                Sound::parse(&bytes)?.looping()
-            }
-            None => false,
-        };
+        let looping = event.files.first().is_some_and(|file| {
+            let sound = read_from(src, &[pak], &format!("{file}_c"))
+                .and_then(|bytes| Ok(Sound::parse(&bytes)?.looping()));
+            sound.unwrap_or_else(|err| {
+                out.report.failed.push((file.clone(), err.to_string()));
+                false
+            })
+        });
         let stack = stacks.iter().find(|s| s.name == event.kind);
         resolved.push(ResolvedEvent {
             limits: match stack {

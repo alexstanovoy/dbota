@@ -4,6 +4,8 @@
 //! is not finite, is no line; the lists are capped by their callers. Plain numbers only, no
 //! engine types: the fuzz targets take this file as it is.
 
+use std::time::Duration;
+
 /// A tree the map places (`map/mid/trees.txt`): its model, Dota position and yaw in degrees.
 #[derive(Clone, Debug, PartialEq)]
 pub struct TreeLine {
@@ -323,19 +325,29 @@ pub fn soundscapes(text: &str, max: usize) -> (Vec<ScapeLine>, Vec<ScapeSound>) 
     (scapes, sounds)
 }
 
+/// The largest values an event of `events.txt` holds (the importer clamps to the same; a test
+/// holds the two together): the install's data drives timers, so each has a bound.
+pub const MAX_EVENT_DURATION: f32 = 120.0;
+pub const MAX_EVENT_FADE_OUT: f32 = 10.0;
+pub const MAX_EVENT_BLOCK_SECS: f32 = 5.0;
+pub const MAX_EVENT_BLOCK_UNITS: f32 = 10_000.0;
+pub const MAX_EVENT_LIMIT: u32 = 256;
+pub const MAX_EVENT_STOP_AT: f32 = 600.0;
+
 /// A sound event's limits, as `sounds/events.txt` lists them.
 #[derive(Clone, Debug, PartialEq)]
 pub struct EventLine {
     pub name: String,
     /// The sound repeats until its source stops it.
     pub looping: bool,
-    /// Seconds the longest sound of the event lasts.
-    pub duration: f32,
-    /// Seconds a stopped instance fades out over.
-    pub fade_out: f32,
-    /// A repeat within this many seconds and `block_units` of a sounding instance is not
-    /// played; 0 blocks none.
-    pub block: f32,
+    /// How long the longest sound of the event lasts.
+    pub duration: Duration,
+    /// How long a stopped instance fades out over.
+    pub fade_out: Duration,
+    /// A repeat within this long of a sounding instance, and within `block_units` of it, is
+    /// not played; zero blocks none.
+    pub block: Duration,
+    /// The distance of the block; zero blocks at any distance.
     pub block_units: f32,
     /// Most instances at once; 0 limits none.
     pub limit: u32,
@@ -343,12 +355,13 @@ pub struct EventLine {
     pub per_entity: bool,
     /// Whether a new instance stops the oldest (else it is not played).
     pub stop_oldest: bool,
-    /// Seconds after which an instance is stopped; negative for never.
-    pub stop_at: f32,
+    /// How long after its start an instance is stopped; none for never.
+    pub stop_at: Option<Duration>,
 }
 
-/// The events of `events.txt` (`event <name> <loops> <duration> <fade_out> <block_s> <block_units> <limit>
-/// <per_entity> <stop_oldest> <stop_at>`), of its first `max` lines.
+/// The events of `events.txt` (`event <name> <loops> <duration> <fade_out> <block_s> <block_units>
+/// <limit> <per_entity> <stop_oldest> <stop_at>`), of its first `max` lines; every number is
+/// clamped to its largest.
 pub fn sound_events(text: &str, max: usize) -> Vec<EventLine> {
     lines(text, max)
         .filter_map(|w| {
@@ -366,17 +379,18 @@ pub fn sound_events(text: &str, max: usize) -> Vec<EventLine> {
                 stop_at,
             ] = numbers::<8>(rest)?;
             let flag = |n: f32| n != 0.0;
+            let secs = |n: f32, most: f32| Duration::from_secs_f32(n.clamp(0.0, most));
             Some(EventLine {
                 name: (*name).to_owned(),
                 looping: flag(number(looping)?),
-                duration: duration.max(0.0),
-                fade_out: fade_out.max(0.0),
-                block: block.max(0.0),
-                block_units: block_units.max(0.0),
-                limit: limit.clamp(0.0, 1024.0) as u32,
+                duration: secs(duration, MAX_EVENT_DURATION),
+                fade_out: secs(fade_out, MAX_EVENT_FADE_OUT),
+                block: secs(block, MAX_EVENT_BLOCK_SECS),
+                block_units: block_units.clamp(0.0, MAX_EVENT_BLOCK_UNITS),
+                limit: limit.clamp(0.0, MAX_EVENT_LIMIT as f32) as u32,
                 per_entity: flag(per_entity),
                 stop_oldest: flag(stop_oldest),
-                stop_at,
+                stop_at: (stop_at >= 0.0).then(|| secs(stop_at, MAX_EVENT_STOP_AT)),
             })
         })
         .collect()
@@ -413,6 +427,32 @@ fn sound(scape: &str, looped: bool, w: [&str; 5], paths: &[&str]) -> Option<Scap
 
 #[cfg(test)]
 mod tests {
+    /// The install's data drives timers: a number past its largest is clamped, and the client's
+    /// largest are the importer's.
+    #[test]
+    fn event_numbers_are_clamped_to_their_largest_and_agree_with_the_importer() {
+        let line = "event Big 1 9999 9999 9999 9999999 9999 1 1 9999\n";
+        let [event] = &sound_events(line, 8)[..] else {
+            panic!("one event");
+        };
+        assert_eq!(event.duration.as_secs_f32(), MAX_EVENT_DURATION);
+        assert_eq!(event.fade_out.as_secs_f32(), MAX_EVENT_FADE_OUT);
+        assert_eq!(event.block.as_secs_f32(), MAX_EVENT_BLOCK_SECS);
+        assert_eq!(event.block_units, MAX_EVENT_BLOCK_UNITS);
+        assert_eq!(event.limit, MAX_EVENT_LIMIT);
+        assert_eq!(
+            event.stop_at.map(|d| d.as_secs_f32()),
+            Some(MAX_EVENT_STOP_AT)
+        );
+        use dbota_import::text as importer;
+        assert_eq!(MAX_EVENT_DURATION, importer::MAX_EVENT_DURATION);
+        assert_eq!(MAX_EVENT_FADE_OUT, importer::MAX_EVENT_FADE_OUT);
+        assert_eq!(MAX_EVENT_BLOCK_SECS, importer::MAX_EVENT_BLOCK_SECS);
+        assert_eq!(MAX_EVENT_BLOCK_UNITS, importer::MAX_EVENT_BLOCK_UNITS);
+        assert_eq!(MAX_EVENT_LIMIT, importer::MAX_EVENT_LIMIT);
+        assert_eq!(MAX_EVENT_STOP_AT, importer::MAX_EVENT_STOP_AT);
+    }
+
     use super::*;
 
     /// The numbers reach the renderer: `NaN` and `inf` (which Rust reads as numbers) made
