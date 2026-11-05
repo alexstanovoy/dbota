@@ -145,10 +145,11 @@ impl Stage<'_, '_> {
 
     /// The files of the sounds under `prefix` with the events they play, found once.
     fn files_of(&mut self, prefix: &str) -> &[(String, String)] {
-        let manifest = &self.manifest;
-        self.files
-            .entry(prefix.to_owned())
-            .or_insert_with(|| manifest.sounds_with_events(prefix))
+        if !self.files.contains_key(prefix) {
+            let found = self.manifest.sounds_with_events(prefix);
+            self.files.insert(prefix.to_owned(), found);
+        }
+        &self.files[prefix]
     }
 
     /// Moves a looping voice with its source: it is as loud as the camera's distance leaves it.

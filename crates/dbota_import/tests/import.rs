@@ -20,19 +20,49 @@ impl Sink for Memory {
 /// A package directory (VPK v2) with one `ext`-typed file `dir/name` whose bytes are in the
 /// directory's preload.
 fn package(dir: &str, name: &str, ext: &str, data: &[u8]) -> Vec<u8> {
+    package_of(&[(dir, name, ext, data)])
+}
+
+/// A package directory (VPK v2) of several files `(dir, name, ext, bytes)`, all in the
+/// directory's preload.
+fn package_of(files: &[(&str, &str, &str, &[u8])]) -> Vec<u8> {
+    let mut sorted = files.to_vec();
+    sorted.sort_by_key(|(dir, name, ext, _)| (*ext, *dir, *name));
     let mut tree = Vec::new();
-    for part in [ext, dir, name] {
+    let text = |tree: &mut Vec<u8>, part: &str| {
         tree.extend_from_slice(part.as_bytes());
         tree.push(0);
+    };
+    for (n, (dir, name, ext, data)) in sorted.iter().enumerate() {
+        let before = n.checked_sub(1).map(|n| sorted[n]);
+        if before.is_none_or(|(_, _, e, _)| e != *ext) {
+            text(&mut tree, ext);
+        }
+        if before.is_none_or(|(d, _, e, _)| e != *ext || d != *dir) {
+            text(&mut tree, dir);
+        }
+        text(&mut tree, name);
+        tree.extend_from_slice(&crc32fast::hash(data).to_le_bytes());
+        tree.extend_from_slice(&(data.len() as u16).to_le_bytes());
+        tree.extend_from_slice(&0x7FFFu16.to_le_bytes());
+        tree.extend_from_slice(&0u32.to_le_bytes());
+        tree.extend_from_slice(&0u32.to_le_bytes());
+        tree.extend_from_slice(&0xFFFFu16.to_le_bytes());
+        tree.extend_from_slice(data);
+        let after = sorted.get(n + 1);
+        // The end of a folder's files, then of a type's folders, then of the types.
+        let same_folder = after.is_some_and(|(d, _, e, _)| e == ext && d == dir);
+        let same_type = after.is_some_and(|(_, _, e, _)| e == ext);
+        if !same_folder {
+            tree.push(0);
+            if !same_type {
+                tree.push(0);
+                if after.is_none() {
+                    tree.push(0);
+                }
+            }
+        }
     }
-    tree.extend_from_slice(&crc32fast::hash(data).to_le_bytes());
-    tree.extend_from_slice(&(data.len() as u16).to_le_bytes());
-    tree.extend_from_slice(&0x7FFFu16.to_le_bytes());
-    tree.extend_from_slice(&0u32.to_le_bytes());
-    tree.extend_from_slice(&0u32.to_le_bytes());
-    tree.extend_from_slice(&0xFFFFu16.to_le_bytes());
-    tree.extend_from_slice(data);
-    tree.extend_from_slice(&[0, 0, 0]);
     let mut out = Vec::new();
     for word in [0x55AA_1234, 2, tree.len() as u32, 0, 0, 48, 0] {
         out.extend_from_slice(&u32::to_le_bytes(word));
@@ -137,6 +167,199 @@ fn the_plan_takes_every_line_and_the_tooltips() {
             if keys == &[("loc/dota_english.txt".to_owned(), "DOTA_HUD_Armor".to_owned())]
                 && out == "text/labels.json"
     ));
+}
+
+/// The index of `text` in the string table, added when it is not there.
+fn intern(strings: &mut Vec<String>, text: &str) -> i32 {
+    let at = strings.iter().position(|s| s == text).unwrap_or_else(|| {
+        strings.push(text.to_owned());
+        strings.len() - 1
+    });
+    at as i32
+}
+
+/// The few KV3 values the fake sound event files need.
+enum Kv3 {
+    Text(&'static str),
+    Number(f64),
+    List(Vec<Kv3>),
+    Object(Vec<(&'static str, Kv3)>),
+}
+
+impl Kv3 {
+    fn write(&self, strings: &mut Vec<String>, out: &mut Vec<u8>) {
+        match self {
+            Kv3::Text(text) => {
+                out.push(6);
+                out.extend_from_slice(&intern(strings, text).to_le_bytes());
+            }
+            Kv3::Number(n) => {
+                out.push(5);
+                out.extend_from_slice(&n.to_bits().to_le_bytes());
+            }
+            Kv3::List(items) => {
+                out.push(8);
+                out.extend_from_slice(&(items.len() as u32).to_le_bytes());
+                for item in items {
+                    item.write(strings, out);
+                }
+            }
+            Kv3::Object(members) => {
+                out.push(9);
+                out.extend_from_slice(&(members.len() as u32).to_le_bytes());
+                for (key, value) in members {
+                    out.extend_from_slice(&intern(strings, key).to_le_bytes());
+                    value.write(strings, out);
+                }
+            }
+        }
+    }
+}
+
+/// A compiled resource whose only block is `DATA`, the KV3 document (`VKV\x03`, stored).
+fn kv3_resource(root: &Kv3) -> Vec<u8> {
+    let mut strings: Vec<String> = Vec::new();
+    let mut body = Vec::new();
+    root.write(&mut strings, &mut body);
+    let mut data = Vec::new();
+    data.extend_from_slice(&0x0356_4B56u32.to_le_bytes());
+    data.extend_from_slice(&[
+        0x00, 0x05, 0x86, 0x1B, 0xD8, 0xF7, 0xC1, 0x40, 0xAD, 0x82, 0x75, 0xA4, 0x82, 0x67, 0xE7,
+        0x14,
+    ]);
+    data.extend_from_slice(&[0; 16]);
+    data.extend_from_slice(&(strings.len() as u32).to_le_bytes());
+    for string in &strings {
+        data.extend_from_slice(string.as_bytes());
+        data.push(0);
+    }
+    data.extend_from_slice(&body);
+    data.extend_from_slice(&u32::MAX.to_le_bytes());
+    let words =
+        |values: &[u32]| -> Vec<u8> { values.iter().flat_map(|v| v.to_le_bytes()).collect() };
+    let table_end = 16 + 12;
+    let mut out = words(&[(table_end + data.len()) as u32]);
+    out.extend_from_slice(&12u16.to_le_bytes());
+    out.extend_from_slice(&0u16.to_le_bytes());
+    out.extend_from_slice(&words(&[8, 1]));
+    let field = out.len() + 4;
+    out.extend_from_slice(b"DATA");
+    out.extend_from_slice(&words(&[(table_end - field) as u32, data.len() as u32]));
+    out.extend_from_slice(&data);
+    out
+}
+
+/// An install holding the event types and sound event files `(file, event names)`.
+fn sound_install(files: &[(String, Vec<&'static str>)]) -> SliceSource<Vec<u8>> {
+    let variable = |value: &'static str| {
+        Kv3::Object(vec![
+            ("data_type", Kv3::Text("float")),
+            ("value", Kv3::Text(value)),
+        ])
+    };
+    let stacks = kv3_resource(&Kv3::Object(vec![(
+        "dota_src1_3d",
+        Kv3::Object(vec![(
+            "operators",
+            Kv3::List(vec![Kv3::Object(vec![
+                ("name", Kv3::Text("public")),
+                (
+                    "operator_variables",
+                    Kv3::Object(vec![("block_duration", variable("0.05"))]),
+                ),
+            ])]),
+        )]),
+    )]));
+    let events: Vec<Vec<u8>> = files
+        .iter()
+        .map(|(_, names)| {
+            kv3_resource(&Kv3::Object(
+                names
+                    .iter()
+                    .map(|name| {
+                        (
+                            *name,
+                            Kv3::Object(vec![
+                                ("type", Kv3::Text("dota_src1_3d")),
+                                ("volume", Kv3::Number(1.0)),
+                            ]),
+                        )
+                    })
+                    .collect(),
+            ))
+        })
+        .collect();
+    let mut all: Vec<(&str, &str, &str, &[u8])> = vec![(
+        "soundstacks",
+        "soundstacks_dota_core",
+        "vsndstck_c",
+        &stacks,
+    )];
+    for ((name, _), bytes) in files.iter().zip(&events) {
+        all.push(("soundevents", name, "vsndevts_c", bytes));
+    }
+    install(&[("pak01_dir.vpk", package_of(&all))])
+}
+
+fn sound_events_plan(names: &[&str]) -> Plan {
+    Plan {
+        items: vec![Item::SoundEvents {
+            logical: "sound.events".to_owned(),
+            events: names.iter().map(|n| (*n).to_owned()).collect(),
+            out: "sounds/events.txt".to_owned(),
+        }],
+    }
+}
+
+/// An event a sound event file has is written and not reported; one no file has is reported
+/// once, by its name.
+#[test]
+fn a_found_sound_event_is_written_and_a_missing_one_is_reported_once() {
+    let src = sound_install(&[(
+        "game_sounds_t".to_owned(),
+        vec!["Found.Event", "Other.Event"],
+    )]);
+    let plan = sound_events_plan(&["Found.Event", "Missing.Event"]);
+    let mut sink = Memory::default();
+    let report = run(&src, &plan, &mut sink, &mut |_| Flow::Continue).expect("an import");
+    let text = String::from_utf8(sink.0["sounds/events.txt"].clone()).expect("text");
+    assert!(text.contains("\nevent Found.Event 0 "), "{text}");
+    assert!(!text.contains("Other.Event"), "{text}");
+    let missing = report
+        .failed
+        .iter()
+        .filter(|(name, _)| name == "Missing.Event")
+        .count();
+    assert_eq!(missing, 1, "{:?}", report.failed);
+    assert!(
+        report.failed.iter().all(|(name, _)| name != "Found.Event"),
+        "{:?}",
+        report.failed
+    );
+}
+
+/// An install with more sound event files than any install has ends the import with an error
+/// that says so, and drops none of them.
+#[test]
+fn more_sound_event_files_than_any_install_has_is_an_error() {
+    let files: Vec<(String, Vec<&'static str>)> = (0..2049)
+        .map(|n| (format!("game_sounds_{n}"), vec!["E.Event"]))
+        .collect();
+    let src = sound_install(&files);
+    let mut sink = Memory::default();
+    let plan = sound_events_plan(&["E.Event"]);
+    let report = run(&src, &plan, &mut sink, &mut |_| Flow::Continue).expect("a report");
+    assert!(
+        sink.0.is_empty(),
+        "events were written from a truncated install"
+    );
+    assert_eq!(
+        report.failed,
+        [(
+            "sound.events".to_owned(),
+            "soundevents: more event files than any install has".to_owned()
+        )]
+    );
 }
 
 /// A voice line's name is a scene of the voice scripts, not a sound event: the plan asks the

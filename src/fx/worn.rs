@@ -123,7 +123,9 @@ fn begin(
 }
 
 /// Sounds a wearing's sound until it has started (or plays out): a loop out of earshot is tried
-/// again every frame; a loop sounding follows its wearer.
+/// again every frame, so it starts late, when the camera comes near or the mixer has room, and
+/// not from the moment the effect began; a loop sounding follows its wearer. A sound that plays
+/// once and was refused is not tried again: its moment has passed.
 fn sound(fx: &Fx, id: EntityId, at: Vec3, wearing: &mut Wearing, stage: &mut Stage) {
     let Some(prefix) = fx.sound.as_deref() else {
         return;

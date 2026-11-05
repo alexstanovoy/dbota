@@ -6,10 +6,10 @@
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use bevy::audio::AudioPlayer;
+use bevy::audio::{AudioPlayer, PlaybackMode, PlaybackSettings};
 use bevy::prelude::*;
 use bota_client_core::{Intent, Slot};
-use bota_proto::{AbilityId, Cheat, HeroId, Vec2 as At};
+use bota_proto::{AbilityId, Cheat, EntityId, HeroId, Vec2 as At};
 
 use super::harness::{Client, MID, Server};
 use crate::mixer::{MERGE_WINDOW, Mixer};
@@ -32,27 +32,43 @@ fn alive(client: &mut Client, part: &str) -> usize {
         .count()
 }
 
-/// The players that start from now on whose cache path holds `part`, with the game clock of
-/// each start.
-fn listen(client: &mut Client, part: &'static str) -> Arc<Mutex<Vec<Duration>>> {
+/// A player that started: the game clock of its start and how it plays.
+type Start = (Duration, PlaybackMode);
+
+/// The players that start from now on whose cache path holds `part`.
+fn listen(client: &mut Client, part: &'static str) -> Arc<Mutex<Vec<Start>>> {
     let starts = Arc::new(Mutex::new(Vec::new()));
     let into = starts.clone();
     client.world_mut().add_observer(
         move |add: On<Add, AudioPlayer>,
-              players: Query<&AudioPlayer>,
+              players: Query<(&AudioPlayer, &PlaybackSettings)>,
               server: Res<AssetServer>,
               time: Res<Time>| {
-            let path = players
-                .get(add.entity)
-                .ok()
-                .and_then(|p| server.get_path(p.0.id()))
-                .map(|p| p.to_string());
+            let Ok((player, settings)) = players.get(add.entity) else {
+                return;
+            };
+            let path = server.get_path(player.0.id()).map(|p| p.to_string());
             if path.is_some_and(|p| p.contains(part)) {
-                into.lock().expect("unpoisoned").push(time.elapsed());
+                into.lock()
+                    .expect("unpoisoned")
+                    .push((time.elapsed(), settings.mode));
             }
         },
     );
     starts
+}
+
+/// Waits for Rot's sound to start and says what it is if it is not a loop: Rot's sound repeats
+/// until Rot is turned off (its file has a loop start).
+fn rot_starts_as_a_loop(client: &mut Client, starts: &Arc<Mutex<Vec<Start>>>) {
+    client.until("Rot's sound started", |_| {
+        !starts.lock().expect("unpoisoned").is_empty()
+    });
+    let (_, mode) = starts.lock().expect("unpoisoned")[0];
+    assert!(
+        matches!(mode, PlaybackMode::Loop),
+        "Rot is a one-shot: its sound plays once and stops, though it repeats until Rot is off"
+    );
 }
 
 /// The voices of the world's mixer sounding an event now.
@@ -131,7 +147,7 @@ fn blows_of_creeps_on_one_hero_merge_within_half_a_second() {
     let starts = starts.lock().expect("unpoisoned").clone();
     let tightest = starts
         .windows(2)
-        .map(|pair| pair[1] - pair[0])
+        .map(|pair| pair[1].0 - pair[0].0)
         .min()
         .expect("two blows");
     assert!(
@@ -145,7 +161,9 @@ fn blows_of_creeps_on_one_hero_merge_within_half_a_second() {
 #[test]
 fn rot_sounds_one_loop_while_it_is_on_and_none_after_it_is_turned_off() {
     let (_server, mut client, toggle) = pudge_with_rot();
+    let starts = listen(&mut client, "pudge/rot");
     toggle(&mut client);
+    rot_starts_as_a_loop(&mut client, &starts);
     client.until("Rot's loop sounding", |c| alive(c, "pudge/rot") == 1);
     client.frames(30);
     assert_eq!(alive(&mut client, "pudge/rot"), 1, "Rot's loop stacked");
@@ -168,6 +186,7 @@ fn rot_turned_on_out_of_earshot_sounds_when_the_camera_comes_and_follows_the_cam
     let at = (pudge.x.to_f32(), pudge.y.to_f32());
     look_at(&mut client, (at.0 + 9000.0, at.1));
     client.frames(5);
+    let starts = listen(&mut client, "pudge/rot");
     toggle(&mut client);
     client.until("Rot worn", |c| {
         c.me()
@@ -182,6 +201,7 @@ fn rot_turned_on_out_of_earshot_sounds_when_the_camera_comes_and_follows_the_cam
         "Rot heard from across the map"
     );
     look_at(&mut client, at);
+    rot_starts_as_a_loop(&mut client, &starts);
     client.until("Rot's loop sounding at Pudge", |c| {
         alive(c, "pudge/rot") == 1
     });
@@ -213,7 +233,9 @@ fn rot_is_quieter_when_pudge_walks_away_from_the_camera() {
 #[test]
 fn rot_does_not_sound_on_after_the_match_is_gone() {
     let (_server, mut client, toggle) = pudge_with_rot();
+    let starts = listen(&mut client, "pudge/rot");
     toggle(&mut client);
+    rot_starts_as_a_loop(&mut client, &starts);
     client.until("Rot's loop sounding", |c| alive(c, "pudge/rot") == 1);
     *client.world_mut().non_send_mut::<crate::session::Session>() = crate::main_menu::idle();
     client.until("Rot's loop gone with the match", |c| {
@@ -254,4 +276,29 @@ fn requiems_cast_sound_plays_out_after_the_cast_point() {
         clock(c) >= over + Duration::from_secs(1)
     });
     assert_eq!(sounding(&client, CAST), 1, "the cast sound was cut short");
+}
+
+/// Our hero's blows on two units sound each, and a second blow on the first within the merge
+/// window does not: blows merge by the unit struck, not by the hero who strikes.
+#[test]
+fn blows_of_a_hero_on_two_units_both_sound_and_on_one_unit_once() {
+    let server = Server::start(1, &[]);
+    let mut client = Client::join(&server, HeroId::SHADOW_FIEND, &[]);
+    let starts = listen(&mut client, "witch_doctor/projectile_impact");
+    let unit = |idx| EntityId { idx, generation: 1 };
+    let hero = Some(HeroId::SHADOW_FIEND);
+    for target in [unit(900), unit(901), unit(900)] {
+        client.core_mut().cue_blow(
+            hero,
+            bota_client_core::CueKind::Hit,
+            0.55,
+            None,
+            Some(target),
+        );
+        // Past the rest of the kind of sound, well within the merge window.
+        std::thread::sleep(Duration::from_millis(60));
+        client.frames(2);
+    }
+    let sounded = starts.lock().expect("unpoisoned").len();
+    assert_eq!(sounded, 2, "blows on two units, one of them twice");
 }

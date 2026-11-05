@@ -1476,12 +1476,6 @@ fn sound_events(
             "no sound event file has this event".to_owned(),
         ));
     }
-    for name in wanted.iter().filter(|name| !found.contains_key(*name)) {
-        out.report.failed.push((
-            name.clone(),
-            "no sound event file has this event".to_owned(),
-        ));
-    }
     let mut resolved = Vec::with_capacity(found.len());
     for event in found.into_values() {
         let looping = event.files.first().is_some_and(|file| {
