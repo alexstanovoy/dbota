@@ -1635,51 +1635,63 @@ fn a_ruleset_for_bots_is_not_listed_to_humans() {
     );
 }
 
-/// Makes a lobby of the game mode `mode` by name from the LOBBIES page.
-fn create_lobby(player: &mut Player, mode: &str, name: &str) {
+/// Makes a lobby from the LOBBIES page with `fields` (its name, and its password if any), then
+/// changes its game mode to `mode` in the lobby, as its host.
+fn create_lobby(player: &mut Player, mode: &str, fields: &[&str]) {
     player.menu.act(Act::Go(Page::Lobbies));
-    let PageView::Lobbies { modes, .. } = player.menu.view().body else {
-        panic!("the lobbies page");
-    };
-    let id = modes
-        .iter()
-        .find(|m| m.name == mode)
-        .unwrap_or_else(|| panic!("the mode {mode} is offered: {modes:?}"))
-        .id
-        .clone();
-    player.menu.act(Act::LobbyMode(id));
-    player.fill(&[name]);
+    player.fill(fields);
     player.menu.act(Act::CreateLobby);
     settle(&mut [player], |p| p.menu.page() == Page::Lobby);
+    let id = lobby_of(player)
+        .settings
+        .modes
+        .iter()
+        .find(|m| m.name == mode)
+        .unwrap_or_else(|| panic!("the mode {mode} is offered"))
+        .id
+        .clone();
+    player.menu.act(Act::ConfigureMode(id));
+    settle(&mut [player], |p| lobby_of(p).settings.mode == mode);
 }
 
-/// A lobby is made for the game mode chosen among those the service offers this account (not
-/// the bots-only one), and it is that ruleset's.
+/// A new lobby is of the mode the service names its default, first or not, and its host changes
+/// it in the lobby among those the service offers this account (not the bots-only one).
 #[test]
-fn a_lobby_is_made_for_the_game_mode_chosen() {
-    let service = service();
+fn a_new_lobby_is_of_the_services_default_mode_and_its_host_changes_it() {
+    let service = service_with(|config| {
+        config.replacen("[password]", "lobby_ruleset = \"squad\"\n[password]", 1)
+    });
     let mut alice = Player::new(Some(&service));
     alice.register("alice");
     alice.menu.act(Act::Go(Page::Lobbies));
-    let PageView::Lobbies { modes, .. } = alice.menu.view().body else {
-        panic!("the lobbies page");
-    };
+    alice.fill(&["my practice"]);
+    alice.menu.act(Act::CreateLobby);
+    settle(&mut [&mut alice], |p| p.menu.page() == Page::Lobby);
+    let modes = lobby_of(&alice).settings.modes;
     assert_eq!(
         modes
             .iter()
             .map(|m| (m.name.as_str(), m.chosen))
             .collect::<Vec<_>>(),
         [
-            ("Full rules", true),
+            ("Full rules", false),
             ("1x1 Mid Only", false),
-            ("Squad", false),
+            ("Squad", true),
             ("Practice", false)
         ],
-        "the first until one is chosen, none bots-only"
+        "the service's default, none bots-only"
     );
-    create_lobby(&mut alice, "Practice", "my practice");
-    let (state, _) = alice.menu.lobby.as_ref().expect("sat in the lobby");
-    assert_eq!(state.ruleset.0, "practice");
+    let practice = modes
+        .iter()
+        .find(|m| m.name == "Practice")
+        .expect("offered");
+    alice.menu.act(Act::ConfigureMode(practice.id.clone()));
+    settle(&mut [&mut alice], |p| {
+        p.menu
+            .lobby
+            .as_ref()
+            .is_some_and(|(state, _)| state.ruleset.0 == "practice")
+    });
 }
 
 /// A host starts a lobby of a ruleset that allows it with nobody else: the empty seat stays empty
@@ -1689,7 +1701,7 @@ fn a_host_starts_a_practice_lobby_alone_and_plays() {
     let service = service();
     let mut alice = Player::new(Some(&service));
     alice.register("alice");
-    create_lobby(&mut alice, "Practice", "alone");
+    create_lobby(&mut alice, "Practice", &["alone"]);
     let PageView::Lobby(lobby) = alice.menu.view().body else {
         panic!("the lobby page");
     };
@@ -1712,7 +1724,7 @@ fn a_host_starts_a_practice_lobby_alone_and_plays() {
 fn play_alone_and_leave(service: &Service) -> Player {
     let mut alice = Player::new(Some(service));
     alice.register("alice");
-    create_lobby(&mut alice, "Practice", "alone");
+    create_lobby(&mut alice, "Practice", &["alone"]);
     alice.menu.act(Act::ReadyLobby(true));
     settle(&mut [&mut alice], |p| p.menu.page() == Page::Game);
     let mut game = open(launch_of(&mut alice), &alice.trust);
@@ -1878,23 +1890,31 @@ fn seat_of(lobby: &super::view::LobbyView, name: &str) -> Option<(u8, String)> {
         .map(|(team, slot)| (slot.slot, team.clone()))
 }
 
-/// Alice makes a password lobby of the Squad mode and bob sits in it by name and password.
+/// Alice makes a password lobby of the Squad mode; bob finds it in the list and sits in it
+/// through the password dialog, a wrong password first: it is refused in the dialog, which stays
+/// for the right one.
 fn squad_lobby() -> (Service, Player, Player) {
     let service = service();
     let (mut alice, mut bob) = (Player::new(Some(&service)), Player::new(Some(&service)));
     alice.register("alice");
     bob.register("bob");
-    alice.menu.act(Act::Go(Page::Lobbies));
-    let PageView::Lobbies { modes, .. } = alice.menu.view().body else {
-        panic!("the lobbies page");
-    };
-    let squad = modes.iter().find(|m| m.name == "Squad").expect("offered");
-    alice.menu.act(Act::LobbyMode(squad.id.clone()));
-    alice.fill(&["slots", PASSWORD]);
-    alice.menu.act(Act::CreateLobby);
-    settle(&mut [&mut alice], |p| p.menu.page() == Page::Lobby);
+    create_lobby(&mut alice, "Squad", &["slots", PASSWORD]);
     bob.menu.act(Act::Go(Page::Lobbies));
-    bob.fill(&["slots", PASSWORD]);
+    settle(&mut [&mut bob], |p| !p.menu.lobbies.is_empty());
+    let listed = bob.menu.lobbies[0].clone();
+    assert!(listed.locked && listed.name == "slots", "{listed:?}");
+    bob.menu.act(Act::JoinLobby(listed.id));
+    let asked = bob.menu.view().password.expect("the password dialog");
+    assert_eq!((asked.lobby.as_str(), asked.error), ("slots", None));
+    bob.menu.act(Act::Type("wrong password".to_owned()));
+    bob.menu.act(Act::LobbyPassword(true));
+    settle(&mut [&mut bob], |p| {
+        p.menu.view().password.is_some_and(|d| d.error.is_some())
+    });
+    let refused = bob.menu.view().password.expect("the dialog stays");
+    assert_eq!(refused.error.as_deref(), Some("Wrong password: try again"));
+    assert!(refused.field.shown.is_empty(), "the wrong password is gone");
+    bob.menu.act(Act::Type(PASSWORD.to_owned()));
     bob.menu.act(Act::Submit);
     // Both are on the lobby page, but each page can be showing a grid from before the other sat
     // down: the lobby is whole once both menus have both members in their slots.
@@ -1904,6 +1924,7 @@ fn squad_lobby() -> (Service, Player, Player) {
             seat_of(&grid, "alice").is_some() && seat_of(&grid, "bob").is_some()
         }
     });
+    assert!(bob.menu.view().password.is_none(), "the dialog closed");
     (service, alice, bob)
 }
 

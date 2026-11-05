@@ -1,7 +1,8 @@
 //! The main menu, as Dota's: sign in or register with the matchmaking
 //! service, find a match per ruleset, answer MATCH FOUND, wait for a game
-//! server, rejoin or watch one's running games, lobbies by name and
-//! password, a game by address, and how a finished match went. The hero
+//! server, rejoin or watch one's running games, lobbies (searched, joined
+//! from the list, a locked one with its password), a game by address, and
+//! how a finished match went. The hero
 //! selection and the game itself are the rest of the client.
 //!
 //! [`core::MenuCore`] holds the state and the logic and is tested without

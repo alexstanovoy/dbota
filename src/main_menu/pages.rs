@@ -154,11 +154,7 @@ pub fn draw(kit: &mut Kit, root: Entity, view: &MenuView) {
             ratings,
             ladder,
         } => profile_page(kit, body, name, ratings, ladder),
-        PageView::Lobbies {
-            list,
-            fields,
-            modes,
-        } => super::lobbies::list(kit, body, list, fields, modes),
+        PageView::Lobbies { list, fields } => super::lobbies::list(kit, body, list, fields),
         PageView::Lobby(lobby) => lobby_page(kit, body, lobby),
         PageView::Result(result) => result_page(kit, body, result),
         PageView::Replays {
@@ -342,7 +338,11 @@ fn form_page(
             "A game hosted on this machine, no account needed, or a game server joined by its \
              address. You play under your profile name (SETTINGS, Options).",
         ),
-        FormKind::Lobby | FormKind::Room | FormKind::Replay | FormKind::None => ("", ""),
+        FormKind::Lobby
+        | FormKind::LobbyPassword
+        | FormKind::Room
+        | FormKind::Replay
+        | FormKind::None => ("", ""),
     };
     kit.bold(card, title, 26.0, ui::INK);
     if !hint.is_empty() {
@@ -401,7 +401,11 @@ fn form_page(
             kit.button(row, "CREATE", Act::Host(false), GREEN, 44.0);
             kit.button(row, "CREATE FOR THE LAN", Act::Host(true), PLAIN, 44.0);
         }
-        FormKind::Lobby | FormKind::Room | FormKind::Replay | FormKind::None => {}
+        FormKind::Lobby
+        | FormKind::LobbyPassword
+        | FormKind::Room
+        | FormKind::Replay
+        | FormKind::None => {}
     }
     if let Some(address) = fields.get(1).filter(|_| kind == FormKind::Host) {
         kit.bold(card, "JOIN BY ADDRESS", 20.0, ui::INK);
@@ -490,6 +494,8 @@ pub fn field_box(kit: &mut Kit, parent: Entity, at: usize, field: &FieldView) {
             },
             BackgroundColor(ui::PANEL_DEEP),
             BorderColor::all(edge),
+            // A script clicks a field by its label, as it does a button.
+            Name::new(field.label.to_lowercase()),
             ChildOf(column),
         ))
         .id();
@@ -652,17 +658,6 @@ fn lobby_page(kit: &mut Kit, body: Entity, lobby: &LobbyView) {
         member_row(kit, card, member, lobby);
     }
     kit.button(card, "LOOK ON", Act::LobbySlot(LOBBY_NO_SLOT), PLAIN, 28.0);
-    if lobby.waiting_approval > 0 {
-        kit.text(
-            card,
-            format!(
-                "{} waiting for the owner's approval",
-                lobby.waiting_approval
-            ),
-            14.0,
-            ui::INK_DIM,
-        );
-    }
     if let Some(secs) = lobby.starting_in_secs {
         kit.bold(card, format!("Starting in {secs}"), 22.0, ui::GOLDEN);
     }

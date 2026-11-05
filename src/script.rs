@@ -10,12 +10,17 @@
 //!   settings file's names);
 //! - `click:NAME`: the button of that name once it shows (the label in
 //!   lower case, or the name the menu gives it: `quit`, `ok`, `cancel`,
-//!   `return`, `disconnect`, `reconnect`; in a game `pick ready` and
-//!   `pick <hero>`); a button shown dimmed (`READY` alone in a lobby)
-//!   ends the client with exit code 2 at once;
+//!   `return`, `disconnect`, `reconnect`; `join <lobby>` in the list of
+//!   lobbies; in a game `pick ready` and `pick <hero>`), or a text field of
+//!   the menu by its label in lower case (the keyboard goes into it); a
+//!   button shown dimmed (`READY` alone in a lobby) ends the client with
+//!   exit code 2 at once;
 //! - `await:WHAT`: until `menu` covers the screen, a `game` is on it, a
-//!   `popup` (a question or the match-found offer) is up or `nopopup` is not, or a button named `button:NAME`
-//!   shows, or `nobutton:NAME` when none of that name does (hidden or not there);
+//!   `popup` (a question, the match-found offer or a lobby's password
+//!   dialog) is up or `nopopup` (a question or the dialog) is not, or a
+//!   button named `button:NAME` shows, or `nobutton:NAME` when none of that
+//!   name does (hidden or not there), or `text:TEXT` when a text shown on
+//!   the screen holds TEXT;
 //! - `await:seats:R,D`: the top bar holds R places of Radiant and D of Dire;
 //! - `await:horn`: the game clock past the horn;
 //! - `await:model:NAME`: a unit drawn with the cache model of that logical name;
@@ -111,6 +116,8 @@ enum Awaited {
     Button(String),
     /// No button of that name on the screen: none made, or one hidden.
     NoButton(String),
+    /// A text shown on the screen holds this.
+    Text(String),
     /// The top bar holds this many places of Radiant and of Dire.
     Seats(u8, u8),
     /// The game clock past the horn.
@@ -192,6 +199,7 @@ fn awaited(arg: &str) -> Result<Awaited, String> {
                     Awaited::Seats(r.parse().map_err(|_| bad())?, d.parse().map_err(|_| bad())?)
                 }
                 "nobutton" => Awaited::NoButton(value.to_owned()),
+                "text" => Awaited::Text(value.to_owned()),
                 "model" => Awaited::Model(value.to_owned()),
                 "loot" => Awaited::Loot(value.to_owned()),
                 "heard" => Awaited::Heard(value.to_owned()),
@@ -308,6 +316,7 @@ struct Screen<'w, 's> {
     buttons:
         Query<'w, 's, (&'static Name, &'static Node, &'static InheritedVisibility), With<Button>>,
     columns: Query<'w, 's, (&'static crate::hud::SeatColumn, &'static Node)>,
+    texts: Query<'w, 's, (&'static Text, &'static InheritedVisibility)>,
 }
 
 /// What the screen shows now, for the awaited steps.
@@ -329,12 +338,18 @@ fn holds(
         }
         Awaited::Popup => view
             .as_ref()
-            .is_some_and(|v| v.confirm.is_some() || v.offer.is_some()),
-        Awaited::NoPopup => view.as_ref().is_some_and(|v| v.confirm.is_none()),
+            .is_some_and(|v| v.confirm.is_some() || v.offer.is_some() || v.password.is_some()),
+        Awaited::NoPopup => view
+            .as_ref()
+            .is_some_and(|v| v.confirm.is_none() && v.password.is_none()),
         Awaited::Button(name) => screen.buttons.iter().any(|(n, ..)| n.as_str() == name),
         Awaited::NoButton(name) => !screen.buttons.iter().any(|(n, node, seen)| {
             n.as_str() == name && node.display != Display::None && seen.get()
         }),
+        Awaited::Text(text) => screen
+            .texts
+            .iter()
+            .any(|(shown, seen)| seen.get() && shown.0.contains(text.as_str())),
         Awaited::Seats(radiant, dire) => {
             crate::hud::seats_shown(&screen.columns) == (*radiant, *dire)
         }

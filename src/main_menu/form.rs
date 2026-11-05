@@ -14,8 +14,10 @@ pub enum FormKind {
     Service,
     Login,
     Register,
-    /// A lobby's name and password, to create or join one.
+    /// A new lobby's name and password, and the search of the open lobbies.
     Lobby,
+    /// The password of a locked lobby being joined, in its dialog.
+    LobbyPassword,
     /// The owner's password field in the lobby one sits in.
     Room,
     /// The local lobby page: a lobby hosted on this machine (port, players) and a game joined by
@@ -90,7 +92,16 @@ fn items_of(kind: FormKind, fields: usize) -> Vec<Item> {
                 .chain(links)
                 .collect(),
         ),
-        FormKind::Lobby => buttons(vec![Act::CreateLobby, Act::Submit]),
+        FormKind::Lobby => vec![
+            Item::Field(0),
+            Item::Field(1),
+            Item::Button(Act::CreateLobby),
+            Item::Field(2),
+            Item::Button(Act::SearchLobbies),
+        ],
+        FormKind::LobbyPassword => {
+            buttons(vec![Act::LobbyPassword(true), Act::LobbyPassword(false)])
+        }
         FormKind::Room => buttons(vec![Act::ConfigurePassword]),
         FormKind::Host => vec![
             Item::Field(0),
@@ -145,7 +156,14 @@ impl Form {
             FormKind::Lobby => vec![
                 Field::new("Lobby name", "", false, MAX_LOBBY_NAME_LEN),
                 Field::new("Password (optional)", "", true, MAX_LOBBY_PASSWORD_LEN),
+                Field::new("Search lobbies", "", false, MAX_LOBBY_NAME_LEN),
             ],
+            FormKind::LobbyPassword => vec![Field::new(
+                "Lobby password",
+                "",
+                true,
+                MAX_LOBBY_PASSWORD_LEN,
+            )],
             FormKind::Host => {
                 let or = |value: &str, default: &str| {
                     if value.is_empty() { default } else { value }.to_owned()

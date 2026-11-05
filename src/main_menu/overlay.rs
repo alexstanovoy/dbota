@@ -6,7 +6,9 @@ use bevy::prelude::*;
 
 use super::core::Act;
 use super::screens::{ERROR, GREEN, Kit, PLAIN, RED};
-use super::view::{ConfirmView, FinishedRow, GameRow, MenuView, OfferBox, SearchRow, WaitRow};
+use super::view::{
+    ConfirmView, FinishedRow, GameRow, MenuView, OfferBox, PasswordView, SearchRow, WaitRow,
+};
 use crate::ui;
 
 /// The overlay layer.
@@ -56,11 +58,71 @@ pub fn draw(kit: &mut Kit, root: Entity, view: &MenuView) {
     if let Some(confirm) = view.confirm.as_ref().filter(|_| view.covers()) {
         popup(kit, root, confirm);
     }
+    if let Some(password) = view.password.as_ref().filter(|_| view.covers()) {
+        password_popup(kit, root, password);
+    }
 }
 
 /// Dota's generic popup (`PopupPanel` of popups_shared): the screen dimmed,
 /// a dark card with a thin edge, its title, the question, OK and Cancel.
 fn popup(kit: &mut Kit, root: Entity, confirm: &ConfirmView) {
+    let card = popup_card(kit, root);
+    let ink = Color::srgb_u8(0xaf, 0xb4, 0xb4);
+    let title = kit.text(card, confirm.title, 30.0, ink);
+    kit.commands.entity(title).insert(Node {
+        margin: UiRect::bottom(px(15)),
+        ..default()
+    });
+    let text = kit.text(card, confirm.text, 20.0, ink);
+    kit.commands
+        .entity(text)
+        .insert(TextLayout::justify(Justify::Center));
+    popup_answers(kit, card, Act::Answer(true), Act::Answer(false));
+}
+
+/// The password of a locked lobby asked in Dota's popup: the lobby's name, the field, what the
+/// last try was told, OK and Cancel.
+fn password_popup(kit: &mut Kit, root: Entity, password: &PasswordView) {
+    let card = popup_card(kit, root);
+    let ink = Color::srgb_u8(0xaf, 0xb4, 0xb4);
+    let title = kit.text(card, "Lobby Password", 30.0, ink);
+    kit.commands.entity(title).insert(Node {
+        margin: UiRect::bottom(px(15)),
+        ..default()
+    });
+    kit.text(
+        card,
+        format!("{} has a password. Type it to join.", password.lobby),
+        20.0,
+        ink,
+    );
+    let column = kit.node(
+        card,
+        Node {
+            width: px(320),
+            flex_direction: FlexDirection::Column,
+            margin: UiRect::top(px(15)),
+            ..default()
+        },
+    );
+    super::pages::field_box(kit, column, 0, &password.field);
+    if let Some(error) = &password.error {
+        let said = kit.text(card, error.clone(), 18.0, ERROR);
+        kit.commands.entity(said).insert(Node {
+            margin: UiRect::top(px(10)),
+            ..default()
+        });
+    }
+    popup_answers(
+        kit,
+        card,
+        Act::LobbyPassword(true),
+        Act::LobbyPassword(false),
+    );
+}
+
+/// The screen dimmed and the popup's card over it.
+fn popup_card(kit: &mut Kit, root: Entity) -> Entity {
     let dim = kit
         .commands
         .spawn((
@@ -76,8 +138,7 @@ fn popup(kit: &mut Kit, root: Entity, confirm: &ConfirmView) {
             ChildOf(root),
         ))
         .id();
-    let card = kit
-        .commands
+    kit.commands
         .spawn((
             Node {
                 min_width: px(450),
@@ -97,17 +158,11 @@ fn popup(kit: &mut Kit, root: Entity, confirm: &ConfirmView) {
             Name::new("popup"),
             ChildOf(dim),
         ))
-        .id();
-    let ink = Color::srgb_u8(0xaf, 0xb4, 0xb4);
-    let title = kit.text(card, confirm.title, 30.0, ink);
-    kit.commands.entity(title).insert(Node {
-        margin: UiRect::bottom(px(15)),
-        ..default()
-    });
-    let text = kit.text(card, confirm.text, 20.0, ink);
-    kit.commands
-        .entity(text)
-        .insert(TextLayout::justify(Justify::Center));
+        .id()
+}
+
+/// A popup's OK and Cancel.
+fn popup_answers(kit: &mut Kit, card: Entity, ok: Act, cancel: Act) {
     let row = kit.node(
         card,
         Node {
@@ -115,9 +170,9 @@ fn popup(kit: &mut Kit, root: Entity, confirm: &ConfirmView) {
             ..default()
         },
     );
-    let ok = kit.popup_button(row, "OK", Act::Answer(true));
+    let ok = kit.popup_button(row, "OK", ok);
     kit.commands.entity(ok).insert(Name::new("ok"));
-    let cancel = kit.popup_button(row, "Cancel", Act::Answer(false));
+    let cancel = kit.popup_button(row, "Cancel", cancel);
     kit.commands.entity(cancel).insert(Name::new("cancel"));
 }
 

@@ -1,21 +1,15 @@
-//! LOBBIES: the open lobbies, and making or joining one by name and
-//! password.
+//! LOBBIES: making a lobby, and the open ones, searched by name or owner and
+//! joined from the list (a locked one through the password dialog).
 
 use bevy::prelude::*;
 
-use super::core::{Act, Page};
+use super::core::Act;
 use super::pages::field_box;
 use super::screens::{GREEN, Kit, PLAIN};
-use super::view::{FieldView, LobbyRow, ModeRow};
+use super::view::{FieldView, LobbyRow};
 use crate::ui;
 
-pub fn list(
-    kit: &mut Kit,
-    body: Entity,
-    lobbies: &[LobbyRow],
-    fields: &[FieldView],
-    modes: &[ModeRow],
-) {
+pub fn list(kit: &mut Kit, body: Entity, lobbies: &[LobbyRow], fields: &[FieldView]) {
     let page = kit.node(
         body,
         Node {
@@ -34,38 +28,19 @@ pub fn list(
             ..default()
         },
     );
-    kit.bold(card, "CREATE OR JOIN", 22.0, ui::INK);
+    kit.bold(card, "CREATE A LOBBY", 22.0, ui::INK);
     kit.text(
         card,
-        "A lobby with a password lets in whoever knows it.",
+        "It begins with the standard rules: you choose the game mode in the lobby. A password \
+         keeps out whoever does not know it.",
         13.0,
         ui::INK_DIM,
     );
-    for (at, field) in fields.iter().enumerate() {
+    let (create, search) = fields.split_at(fields.len().min(2));
+    for (at, field) in create.iter().enumerate() {
         field_box(kit, card, at, field);
     }
-    if modes.len() > 1 {
-        kit.text(card, "Game mode", 13.0, ui::INK_DIM);
-        for mode in modes {
-            let look = if mode.chosen { GREEN } else { PLAIN };
-            kit.button(
-                card,
-                &mode.name,
-                Act::LobbyMode(mode.id.clone()),
-                look,
-                34.0,
-            );
-        }
-    }
-    let row = kit.node(
-        card,
-        Node {
-            column_gap: px(10),
-            ..default()
-        },
-    );
-    kit.button(row, "CREATE", Act::CreateLobby, GREEN, 40.0);
-    kit.button(row, "JOIN BY NAME", Act::Submit, PLAIN, 40.0);
+    kit.button(card, "CREATE", Act::CreateLobby, GREEN, 40.0);
 
     let column = kit.node(
         page,
@@ -76,16 +51,12 @@ pub fn list(
             ..default()
         },
     );
-    let head = kit.node(
-        column,
-        Node {
-            column_gap: px(12),
-            align_items: AlignItems::Center,
-            ..default()
-        },
-    );
-    kit.bold(head, "OPEN LOBBIES", 22.0, ui::INK);
-    kit.button(head, "REFRESH", Act::Go(Page::Lobbies), PLAIN, 28.0);
+    kit.bold(column, "OPEN LOBBIES", 22.0, ui::INK);
+    for (at, field) in search.iter().enumerate() {
+        field_box(kit, column, create.len() + at, field);
+    }
+    let row = kit.node(column, Node::default());
+    kit.button(row, "SEARCH", Act::SearchLobbies, PLAIN, 34.0);
     if lobbies.is_empty() {
         kit.text(column, "No open lobby.", 15.0, ui::INK_DIM);
     }
@@ -118,6 +89,10 @@ pub fn list(
             13.0,
             ui::INK_DIM,
         );
-        kit.button(row, "JOIN", Act::AskLobby(lobby.id), GREEN, 34.0);
+        let join = kit.button(row, "JOIN", Act::JoinLobby(lobby.id), GREEN, 34.0);
+        // A script clicks it by the lobby's name.
+        kit.commands
+            .entity(join)
+            .insert(Name::new(format!("join {}", lobby.name.to_lowercase())));
     }
 }

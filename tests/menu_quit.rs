@@ -50,33 +50,95 @@ fn shots(scratch: &Scratch) -> PathBuf {
 /// `scratch` (no service known, nothing of the user's touched): its exit
 /// code (none when killed past [`PATIENCE`]) and the steps it printed.
 fn run(scratch: &Scratch, args: &[&str], script: &str) -> (Option<i32>, String) {
-    let mut child = common::client()
-        .args(args)
-        .arg("--config")
-        .arg(scratch.0.join("client.conf"))
-        .arg("--screenshot-dir")
-        .arg(shots(scratch))
-        .args(["--script", script])
-        .args(["--mute", "--no-vsync", "--display-mode", "windowed"])
-        .env("XDG_DATA_HOME", scratch.0.join("data"))
-        .env_remove("BOTA_SEAT_KEY")
-        .stdout(Stdio::piped())
-        .stderr(std::fs::File::create(scratch.0.join("stderr.log")).expect("a log file"))
-        .spawn()
-        .expect("dbota runs");
-    let stdout = child.stdout.take().expect("its stdout");
-    let said = std::thread::spawn(move || {
-        let mut text = String::new();
-        std::io::Read::read_to_string(&mut BufReader::new(stdout), &mut text).ok();
-        text
-    });
-    let code = wait(&mut child);
-    let mut said = said.join().unwrap_or_default();
-    if code != Some(0) {
-        // What the client said on stderr is why a run failed.
-        said = format!("{said}\nstderr:\n{}", logged(scratch));
+    Running::start(scratch, args, script, common::client()).finish()
+}
+
+/// A client started by [`Running::start`], its steps read as it prints them.
+struct Running<'a> {
+    scratch: &'a Scratch,
+    child: Child,
+    said: std::sync::Arc<std::sync::Mutex<String>>,
+    reader: Option<std::thread::JoinHandle<()>>,
+}
+
+impl Drop for Running<'_> {
+    /// A client left running (its test failed before it ended) is ended with it.
+    fn drop(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
     }
-    (code, said)
+}
+
+impl<'a> Running<'a> {
+    /// The client of `command` (the one [`common::client`] makes, its compositor set up as the
+    /// caller wants) with `args` and `script`, its settings and data in `scratch`.
+    fn start(scratch: &'a Scratch, args: &[&str], script: &str, mut command: Command) -> Self {
+        let mut child = command
+            .args(args)
+            .arg("--config")
+            .arg(scratch.0.join("client.conf"))
+            .arg("--screenshot-dir")
+            .arg(shots(scratch))
+            .args(["--script", script])
+            .args(["--mute", "--no-vsync", "--display-mode", "windowed"])
+            .env("XDG_DATA_HOME", scratch.0.join("data"))
+            .env_remove("BOTA_SEAT_KEY")
+            .stdout(Stdio::piped())
+            .stderr(std::fs::File::create(scratch.0.join("stderr.log")).expect("a log file"))
+            .spawn()
+            .expect("dbota runs");
+        let stdout = child.stdout.take().expect("its stdout");
+        let said = std::sync::Arc::new(std::sync::Mutex::new(String::new()));
+        let heard = std::sync::Arc::clone(&said);
+        let reader = std::thread::spawn(move || {
+            for line in BufReader::new(stdout).lines() {
+                let Ok(line) = line else { break };
+                let mut heard = heard.lock().expect("the output");
+                heard.push_str(&line);
+                heard.push('\n');
+            }
+        });
+        Running {
+            scratch,
+            child,
+            said,
+            reader: Some(reader),
+        }
+    }
+
+    /// Waits until the client has played `step` (its `script: STEP` line), at most
+    /// [`PATIENCE`]; panics with what it said when it ends first or takes longer.
+    fn until_played(&mut self, step: &str) {
+        let line = format!("script: {step}\n");
+        let started = Instant::now();
+        while !self.said.lock().expect("the output").contains(&line) {
+            let ended = self.child.try_wait().expect("waited for");
+            if ended.is_some() || started.elapsed() > PATIENCE {
+                let _ = self.child.kill();
+                let _ = self.child.wait();
+                panic!(
+                    "the client never played '{step}' ({ended:?}):\n{}\nstderr:\n{}",
+                    self.said.lock().expect("the output"),
+                    logged(self.scratch)
+                );
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        }
+    }
+
+    /// Its exit code (none when killed past [`PATIENCE`]) and the steps it printed.
+    fn finish(mut self) -> (Option<i32>, String) {
+        let code = wait(&mut self.child);
+        if let Some(reader) = self.reader.take() {
+            let _ = reader.join();
+        }
+        let mut said = std::mem::take(&mut *self.said.lock().expect("the output"));
+        if code != Some(0) {
+            // What the client said on stderr is why a run failed.
+            said = format!("{said}\nstderr:\n{}", logged(self.scratch));
+        }
+        (code, said)
+    }
 }
 
 fn wait(child: &mut Child) -> Option<i32> {
@@ -502,9 +564,9 @@ fn server_binary() -> PathBuf {
     target.join("release/bota_server")
 }
 
-/// A matchmaking service in this process with Dota's Demo Hero ruleset alone, launching the real
-/// game server; the client signs up to it and reaches Demo Hero through it. Shut down when dropped.
-struct DemoService {
+/// A matchmaking service in this process, launching the real game server: one game at a time.
+/// Shut down when dropped.
+struct Service {
     runtime: tokio::runtime::Runtime,
     service: Option<radovid::service::Service>,
     url: String,
@@ -512,12 +574,44 @@ struct DemoService {
     pem: PathBuf,
 }
 
-impl DemoService {
-    fn start(scratch: &Scratch) -> DemoService {
+/// Dota's Demo Hero, as a service's `[[ruleset]]` ([`Service::start`] fills in the binary and
+/// the fingerprint).
+const DEMO_RULESET: &str = r#"
+[[ruleset]]
+id = "demo"
+name = "Demo Hero"
+game = "bota"
+game_fingerprint = "{fingerprint}"
+teams = [1, 1]
+rated = false
+audience = "humans_only"
+instant_solo = true
+info = "01"
+[ruleset.launcher]
+kind = "local"
+binary = "{binary}"
+public_url = "ws://127.0.0.1:{port}"
+version_probe = ["--wire-fingerprint"]
+args = ["--map", "0", "--cheats", "--match-id", "{match_id}", "--bind", "127.0.0.1",
+        "--port", "0", "--ws-port", "{port}", "--abandon-unjoined", "--empty-after-secs", "60",
+        "--tactical-secs", "0"]
+env = { BOTA_SEATS = "{seats}" }
+"#;
+
+impl Service {
+    /// The service with `rulesets`, `[[ruleset]]` tables whose `{binary}` is the game server and
+    /// `{fingerprint}` the wire this client speaks.
+    fn start(scratch: &Scratch, rulesets: &str) -> Service {
         let port = std::net::TcpListener::bind("127.0.0.1:0")
             .and_then(|l| l.local_addr())
             .expect("a free port")
             .port();
+        let rulesets = rulesets
+            .replace("{binary}", &server_binary().display().to_string())
+            .replace(
+                "{fingerprint}",
+                &format!("{:016x}", bota_radovid::fingerprint()),
+            );
         let config = format!(
             r#"
 listen = "127.0.0.1:0"
@@ -531,29 +625,8 @@ iterations = 1
 [limits]
 game_capacity = 1
 lobby_games_max = 1
-[[ruleset]]
-id = "demo"
-name = "Demo Hero"
-game = "bota"
-game_fingerprint = "{fingerprint:016x}"
-teams = [1, 1]
-rated = false
-audience = "humans_only"
-instant_solo = true
-info = "01"
-[ruleset.launcher]
-kind = "local"
-binary = "{binary}"
-public_url = "ws://127.0.0.1:{{port}}"
-version_probe = ["--wire-fingerprint"]
-args = ["--map", "0", "--cheats", "--match-id", "{{match_id}}", "--bind", "127.0.0.1",
-        "--port", "0", "--ws-port", "{{port}}", "--abandon-unjoined", "--empty-after-secs", "60",
-        "--tactical-secs", "0"]
-env = {{ BOTA_SEATS = "{{seats}}" }}
-"#,
+{rulesets}"#,
             db = scratch.0.join("radovid.db").display(),
-            fingerprint = bota_radovid::fingerprint(),
-            binary = server_binary().display(),
         );
         let path = scratch.0.join("radovid.toml");
         std::fs::write(&path, config).expect("the configuration");
@@ -570,7 +643,7 @@ env = {{ BOTA_SEATS = "{{seats}}" }}
             .expect("the service starts");
         let pem = scratch.0.join("service.pem");
         std::fs::write(&pem, &identity.cert_pem).expect("the certificate");
-        DemoService {
+        Service {
             url: format!("wss://127.0.0.1:{}", service.addr.port()),
             runtime,
             service: Some(service),
@@ -589,7 +662,7 @@ env = {{ BOTA_SEATS = "{{seats}}" }}
     }
 }
 
-impl Drop for DemoService {
+impl Drop for Service {
     fn drop(&mut self) {
         if let Some(service) = self.service.take() {
             self.runtime.block_on(service.shutdown());
@@ -603,10 +676,10 @@ const SIGN_UP: &str = "await:menu;await:button:create account;click:create accou
                        text:correct horse battery;click:create account;await:button:demo hero;\
                        click:demo hero;await:button:demo shadow fiend;";
 
-/// Plays `script` after [`SIGN_UP`] against a [`DemoService`]: the client's exit code, what it
-/// said, and the whole script.
+/// Plays `script` after [`SIGN_UP`] against a [`Service`] of Demo Hero alone: the client's exit
+/// code, what it said, and the whole script.
 fn run_demo(scratch: &Scratch, script: &str) -> (Option<i32>, String, String) {
-    let service = DemoService::start(scratch);
+    let service = Service::start(scratch, DEMO_RULESET);
     let script = format!("{SIGN_UP}{script}");
     let args = service.args();
     let args: Vec<&str> = args.iter().map(String::as_str).collect();
@@ -774,4 +847,144 @@ impl Dota {
             ambient_scale: line("ambient", "night")[3] / line("ambient", "day")[3],
         }
     }
+}
+
+/// The full rules and solo mid, as a service offers them for lobbies ([`Service::start`] fills in
+/// the binary and the fingerprint). Solo mid's own games are one a side.
+const LOBBY_RULESETS: &str = r#"
+[[ruleset]]
+id = "full"
+name = "Full rules"
+game = "bota"
+game_fingerprint = "{fingerprint}"
+teams = [5, 5]
+rated = false
+[ruleset.launcher]
+kind = "local"
+binary = "{binary}"
+public_url = "ws://127.0.0.1:{port}"
+version_probe = ["--wire-fingerprint"]
+args = ["--map", "0", "--match-id", "{match_id}", "--bind", "127.0.0.1", "--port", "0",
+        "--ws-port", "{port}", "--abandon-unjoined", "--empty-after-secs", "60",
+        "--pick-secs", "5", "--tactical-secs", "0", "--idle-timeout-secs", "0"]
+env = { BOTA_SEATS = "{seats}" }
+
+[[ruleset]]
+id = "solo_mid"
+name = "1x1 Mid Only"
+game = "bota"
+game_fingerprint = "{fingerprint}"
+teams = [1, 1]
+rated = true
+[ruleset.launcher]
+kind = "local"
+binary = "{binary}"
+public_url = "ws://127.0.0.1:{port}"
+version_probe = ["--wire-fingerprint"]
+args = ["--map", "2", "--heroes", "1", "--match-id", "{match_id}", "--bind", "127.0.0.1",
+        "--port", "0", "--ws-port", "{port}", "--abandon-unjoined", "--empty-after-secs", "60",
+        "--pick-secs", "5", "--tactical-secs", "0", "--idle-timeout-secs", "0"]
+env = { BOTA_SEATS = "{seats}" }
+"#;
+
+/// The script steps that create the account `login` on the service and wait for the menu of an
+/// account.
+fn sign_up(login: &str) -> String {
+    format!(
+        "await:menu;await:button:create account;click:create account;await:button:back;\
+         text:{login};key:Tab;text:correct horse battery;key:Tab;text:correct horse battery;\
+         click:create account;await:button:log out;"
+    )
+}
+
+/// An open lobby `name` of the full rules, made through the protocol by an account of its own
+/// (kept open while the client is kept).
+fn open_lobby(service: &Service, login: &str, name: &str) -> bota_radovid::Client {
+    use bota_radovid::proto::{AccountKind, Audience, ClientMsg, Reply, RulesetId};
+    let pem = std::fs::read_to_string(&service.pem).expect("the certificate");
+    let tls = bota_radovid::Tls::trust_pem(&pem).expect("a trust");
+    let mut client = bota_radovid::Client::open(&service.url, &tls).expect("the service");
+    let answer = |client: &mut bota_radovid::Client, seq: u32| loop {
+        match client.wait(PATIENCE).expect("the connection") {
+            Some(bota_radovid::Incoming::Reply { seq: s, result }) if s == seq => {
+                break result.expect("done");
+            }
+            Some(_) => {}
+            None => panic!("no answer to request {seq}"),
+        }
+    };
+    let seq = client
+        .register(login, "correct horse battery", AccountKind::Human, None)
+        .expect("sent");
+    answer(&mut client, seq);
+    let seq = client
+        .request(ClientMsg::LobbyCreate {
+            ruleset: RulesetId("full".to_owned()),
+            name: name.to_owned(),
+            audience: Audience::Everyone,
+            password: None,
+        })
+        .expect("sent");
+    assert!(matches!(answer(&mut client, seq), Reply::Lobby { .. }));
+    client
+}
+
+/// The owner's report: three friends could not play a lobby together. Through a real service
+/// and three real clients: alice makes a lobby with a password (of the full rules, the default);
+/// bob finds it by a search of its name past a newer open lobby, joins it from the list through
+/// the password dialog, which says a wrong password is wrong and takes the right one at once (no
+/// owner's approval); carol finds it by its owner's name. Alice, the host, changes the mode in
+/// the lobby to solo mid, whose own games are one a side, and the match starts with the three.
+/// The clients run two at their usual size and carol's smaller and at low quality, for the memory.
+#[test]
+#[ignore = "draws on the GPU in a headless compositor: tools/visual_check.sh runs it"]
+fn three_friends_find_a_password_lobby_join_it_and_play_the_mode_the_host_chose() {
+    let scratch = Scratch::new("lobby");
+    let service = Service::start(&scratch, LOBBY_RULESETS);
+    let args = service.args();
+    let args: Vec<&str> = args.iter().map(String::as_str).collect();
+    let (alice_dir, bob_dir, carol_dir) = (
+        Scratch::new("lobby-alice"),
+        Scratch::new("lobby-bob"),
+        Scratch::new("lobby-carol"),
+    );
+    let alice_script = format!(
+        "{}click:lobbies;await:button:create;click:lobby name;text:Friday Night;\
+         click:password (optional);text:open sesame;click:create;await:button:leave;\
+         await:text:Game mode: Full rules;await:text:bob;await:text:carol;\
+         click:1x1 mid only;await:text:Game mode: 1x1 Mid Only;await:button:start now;\
+         click:start now;await:game;exit",
+        sign_up("alice")
+    );
+    let mut alice = Running::start(&alice_dir, &args, &alice_script, common::client());
+    alice.until_played("await:button:leave");
+    // Newer than alice's, so listed first: only a search that leaves it out finds hers.
+    let _decoy = open_lobby(&service, "dave", "Decoy Room");
+    let joiner = |login: &str, query: &str, tries: &str| {
+        format!(
+            "{}click:lobbies;await:button:join decoy room;await:button:join friday night;\
+             click:search lobbies;text:{query};click:search;await:nobutton:join decoy room;\
+             click:join friday night;await:popup;{tries}await:button:leave;\
+             await:text:Game mode: 1x1 Mid Only;click:ready;await:game;exit",
+            sign_up(login)
+        )
+    };
+    let bob_script = joiner(
+        "bob",
+        "FRIDAY",
+        "text:guess;click:ok;await:text:Wrong password;await:popup;text:open sesame;click:ok;",
+    );
+    let bob = Running::start(&bob_dir, &args, &bob_script, common::client());
+    let carol_script = joiner("carol", "ali", "text:open sesame;click:ok;");
+    let mut small = common::client();
+    small.env("DBOTA_HEADLESS_SIZE", "960x540");
+    let carol_args: Vec<&str> = args
+        .iter()
+        .copied()
+        .chain(["--window", "960x540", "--set", "quality=low"])
+        .collect();
+    let carol = Running::start(&carol_dir, &carol_args, &carol_script, small);
+    played("bob", bob.finish(), &bob_script);
+    played("carol", carol.finish(), &carol_script);
+    played("alice", alice.finish(), &alice_script);
 }

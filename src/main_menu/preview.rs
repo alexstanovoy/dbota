@@ -7,12 +7,12 @@ use super::core::{GameKind, LocalRules, Page, Status};
 use super::form::FormKind;
 use super::view::{
     AudienceRow, ConfirmView, FieldView, FinishedRow, GameRow, LobbyRow, LobbyView, MemberRow,
-    MenuView, ModeRow, OfferBox, PageView, ResultView, RulesetRow, SearchRow, SeatRow,
-    SettingsView, SlotRow, TeamRow, WaitRow,
+    MenuView, ModeRow, OfferBox, PageView, PasswordView, ResultView, RulesetRow, SearchRow,
+    SeatRow, SettingsView, SlotRow, TeamRow, WaitRow,
 };
 
 /// The names `--menu-preview` takes.
-pub const NAMES: [&str; 19] = [
+pub const NAMES: [&str; 20] = [
     "service",
     "login",
     "register",
@@ -24,6 +24,7 @@ pub const NAMES: [&str; 19] = [
     "waiting",
     "my-games",
     "lobbies",
+    "lobby-password",
     "lobby",
     "lobby-owner",
     "result",
@@ -62,6 +63,7 @@ fn form(page: Page, kind: FormKind, fields: Vec<FieldView>) -> MenuView {
         reconnect: false,
         can_leave_game: false,
         confirm: None,
+        password: None,
         can_quit: true,
         host_cheats: false,
     }
@@ -80,6 +82,7 @@ fn logged_in(page: Page, body: PageView) -> MenuView {
         reconnect: false,
         can_leave_game: false,
         confirm: None,
+        password: None,
         can_quit: true,
         host_cheats: false,
     }
@@ -223,11 +226,6 @@ pub fn view(name: &str) -> Option<MenuView> {
         "lobbies" => logged_in(
             Page::Lobbies,
             PageView::Lobbies {
-                modes: vec![ModeRow {
-                    id: RulesetId("solo_mid".to_owned()),
-                    name: "1x1 Mid Only".to_owned(),
-                    chosen: true,
-                }],
                 list: vec![
                     LobbyRow {
                         id: LobbyId(1),
@@ -247,11 +245,21 @@ pub fn view(name: &str) -> Option<MenuView> {
                     },
                 ],
                 fields: vec![
-                    field("Lobby name", "friends only", false),
-                    field("Password (optional)", "••••••", true),
+                    field("Lobby name", "", false),
+                    field("Password (optional)", "", false),
+                    field("Search lobbies", "friends", true),
                 ],
             },
         ),
+        "lobby-password" => {
+            let mut view = view("lobbies")?;
+            view.password = Some(PasswordView {
+                lobby: "friends only".to_owned(),
+                field: field("Lobby password", "", true),
+                error: Some("Wrong password: try again".to_owned()),
+            });
+            view
+        }
         "lobby" => logged_in(
             Page::Lobby,
             PageView::Lobby(LobbyView {
@@ -301,7 +309,6 @@ pub fn view(name: &str) -> Option<MenuView> {
                     editable: false,
                 },
                 fields: Vec::new(),
-                waiting_approval: 0,
                 me_ready: false,
                 waiting: None,
                 starts_short: false,
@@ -379,7 +386,6 @@ pub fn view(name: &str) -> Option<MenuView> {
                     editable: true,
                 },
                 fields: vec![field("Password (empty removes it)", "", false)],
-                waiting_approval: 0,
                 me_ready: false,
                 waiting: None,
                 starts_short: false,

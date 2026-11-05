@@ -21,6 +21,15 @@ pub struct FieldView {
     pub focused: bool,
 }
 
+/// The password dialog of a locked lobby being joined: its name, the field, and what the last
+/// try was told.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PasswordView {
+    pub lobby: String,
+    pub field: FieldView,
+    pub error: Option<String>,
+}
+
 /// A ruleset to search a game in.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RulesetRow {
@@ -172,7 +181,6 @@ pub struct LobbyView {
     pub settings: SettingsView,
     /// The owner's password field.
     pub fields: Vec<FieldView>,
-    pub waiting_approval: usize,
     pub me_ready: bool,
     /// Why the owner cannot start yet, as Dota's lobby says it.
     pub waiting: Option<&'static str>,
@@ -262,11 +270,11 @@ pub enum PageView {
         ratings: Vec<String>,
         ladder: Vec<String>,
     },
+    /// The open lobbies (all, or those the search found), and the fields to make one and to
+    /// search.
     Lobbies {
         list: Vec<LobbyRow>,
         fields: Vec<FieldView>,
-        /// The game modes the service offers this account, and the one a new lobby is of.
-        modes: Vec<ModeRow>,
     },
     Lobby(LobbyView),
     Result(ResultView),
@@ -332,6 +340,7 @@ pub struct MenuView {
     /// A match under way is played from this seat: LEAVE GAME leaves it for good.
     pub can_leave_game: bool,
     pub confirm: Option<ConfirmView>,
+    pub password: Option<PasswordView>,
     /// Whether there is a client to quit: a browser's page has none.
     pub can_quit: bool,
     /// Whether the local lobby's host enables cheats.
@@ -398,38 +407,21 @@ impl MenuCore {
                     text: LEAVE_TEXT,
                 },
             }),
+            password: self.join_prompt.as_ref().map(|prompt| PasswordView {
+                lobby: text::line(&prompt.name, text::NAME),
+                field: fields_of(&prompt.form)
+                    .into_iter()
+                    .next()
+                    .expect("the dialog has its password field"),
+                error: prompt.error.clone(),
+            }),
             can_quit: !cfg!(target_arch = "wasm32"),
             host_cheats: self.prefs.host_cheats,
         }
     }
 
     fn fields(&self) -> Vec<FieldView> {
-        self.form
-            .fields()
-            .iter()
-            .enumerate()
-            .map(|(at, f)| FieldView {
-                label: f.label,
-                shown: f.shown(),
-                focused: Some(at) == self.form.focused_field(),
-            })
-            .collect()
-    }
-
-    /// The game modes a new lobby may be of: what the service offers the account, the chosen one
-    /// marked (the first until one is).
-    fn modes(&self) -> Vec<ModeRow> {
-        let Some(client) = &self.client else {
-            return Vec::new();
-        };
-        let chosen = self.lobby_mode(client);
-        super::core::lobby_rulesets(client)
-            .map(|r| ModeRow {
-                id: r.id.clone(),
-                name: text::line(&r.name, text::NAME),
-                chosen: Some(&r.id) == chosen.as_ref(),
-            })
-            .collect()
+        fields_of(&self.form)
     }
 
     fn cooldown(&self) -> Option<String> {
@@ -466,7 +458,6 @@ impl MenuCore {
                     .map(lobby_row)
                     .collect(),
                 fields: self.fields(),
-                modes: self.modes(),
             },
             Page::Lobby => self
                 .lobby
@@ -892,7 +883,6 @@ fn lobby_view(
         spectators,
         settings,
         fields: Vec::new(),
-        waiting_approval: state.pending.len(),
         me_ready: state
             .members
             .iter()
@@ -903,6 +893,19 @@ fn lobby_view(
             .starting_in_ms
             .map(|ms| ms.saturating_sub(elapsed).div_ceil(1000)),
     }
+}
+
+/// A form's fields as drawn.
+fn fields_of(form: &super::form::Form) -> Vec<FieldView> {
+    form.fields()
+        .iter()
+        .enumerate()
+        .map(|(at, f)| FieldView {
+            label: f.label,
+            shown: f.shown(),
+            focused: Some(at) == form.focused_field(),
+        })
+        .collect()
 }
 
 fn rating_change(
