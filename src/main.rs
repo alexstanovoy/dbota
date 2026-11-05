@@ -76,6 +76,7 @@ mod pings;
 mod player_colour;
 mod portrait;
 mod postgame;
+mod preload;
 mod quality;
 mod replay_controls;
 mod replays;
@@ -693,6 +694,7 @@ fn client_plugins(app: &mut App) {
             keys::plugin,
             scoreboard::plugin,
             postgame::plugin,
+            preload::plugin,
             warmup::plugin,
             script::plugin,
             wash::plugin,

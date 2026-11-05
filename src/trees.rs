@@ -142,6 +142,23 @@ pub fn drawn(world: &World) -> Vec<(u32, String)> {
         .collect()
 }
 
+/// The chunks of the forest that draw a tree, as (x, y) cells of [`CHUNK`] units.
+#[cfg(test)]
+pub fn drawn_chunks(world: &World) -> std::collections::BTreeSet<(i32, i32)> {
+    let forest = world.resource::<Forest>();
+    forest
+        .chunks
+        .iter()
+        .filter(|(_, entities)| !entities.is_empty())
+        .map(|((x, y, _), _)| (*x, *y))
+        .collect()
+}
+
+/// The chunk of the forest a tree standing at `(x, y)` in bota's units belongs to.
+pub fn chunk_of((x, y): (f32, f32)) -> (i32, i32) {
+    ((x / CHUNK) as i32, (y / CHUNK) as i32)
+}
+
 pub fn plugin(app: &mut App) {
     app.init_resource::<Forest>()
         .init_resource::<SceneryReady>()
@@ -215,9 +232,10 @@ fn kind(server: &AssetServer, path: String, name: &str) -> Kind {
     }
 }
 
-/// Places one tree at every tree of the match once the match and the ground
-/// are known, each as the model the map's tree there is (loaded since the
-/// start; a model only a tree the map's file does not place needs is asked for now).
+/// Places one tree at every tree of the match once the match's trees (told when the client joins,
+/// before the hero is picked) and the ground are known, each as the model the map's tree there is
+/// (loaded since the start; a model only a tree the map's file does not place needs is asked for
+/// now).
 fn plant(
     session: NonSend<Session>,
     manifest: Res<Manifest>,
@@ -226,18 +244,13 @@ fn plant(
     mut forest: ResMut<Forest>,
 ) {
     let core = &session.0;
-    if forest.planted_all || core.trees().is_empty() || !ground.known() {
+    if forest.planted_all || !core.trees_known() || !ground.known() {
         return;
     }
     forest.planted_all = true;
+    let began = std::time::Instant::now();
     let forest = &mut *forest;
-    let known = &forest.map;
-    let mut grid: HashMap<(i32, i32), Vec<usize>> = HashMap::new();
-    for (i, t) in known.iter().enumerate() {
-        grid.entry(((t.x / HASH_CELL) as i32, (t.y / HASH_CELL) as i32))
-            .or_default()
-            .push(i);
-    }
+    let grid = tree_grid(&forest.map);
     let mut asked: HashMap<String, Option<usize>> = forest
         .kinds
         .iter()
@@ -246,27 +259,7 @@ fn plant(
         .collect();
     for (index, tree) in core.trees().iter().enumerate() {
         let (x, y) = (tree.x.to_f32(), tree.y.to_f32());
-        let (cx, cy) = ((x / HASH_CELL) as i32, (y / HASH_CELL) as i32);
-        let near = (-1..=1)
-            .flat_map(|dx| (-1..=1).map(move |dy| (cx + dx, cy + dy)))
-            .filter_map(|key| grid.get(&key))
-            .flatten()
-            .map(|i| &known[*i])
-            .filter(|t| (t.x - x).hypot(t.y - y) <= MATCH_REACH)
-            .min_by(|a, b| {
-                (a.x - x)
-                    .hypot(a.y - y)
-                    .total_cmp(&(b.x - x).hypot(b.y - y))
-            });
-        let fallback = if x + y < bota_core::rules::MAP_SIZE as f32 {
-            "tree_oak_01"
-        } else {
-            "dire_tree004"
-        };
-        let (name, yaw, scale) = near.map_or(
-            (fallback, (index as f32 * 2.4) % std::f32::consts::TAU, 1.0),
-            |t| (t.model.as_str(), t.yaw, t.scale),
-        );
+        let (name, yaw, scale) = look_of(&forest.map, &grid, (x, y), index);
         // A model the cache lacks leaves its trees undrawn; the cache is asked once for each.
         let model = *asked.entry(name.to_owned()).or_insert_with(|| {
             let path = manifest.tree_model(name)?;
@@ -290,9 +283,10 @@ fn plant(
     used.dedup();
     forest.used = used;
     info!(
-        "forest: {} trees of {} models ({})",
+        "forest: {} trees of {} models planted in {:.1} ms ({})",
         forest.trees.len(),
         forest.kinds.len(),
+        began.elapsed().as_secs_f64() * 1e3,
         forest
             .kinds
             .iter()
@@ -300,6 +294,48 @@ fn plant(
             .collect::<Vec<_>>()
             .join(", ")
     );
+}
+
+/// The map's file's trees by the cell they stand in.
+fn tree_grid(known: &[MapTree]) -> HashMap<(i32, i32), Vec<usize>> {
+    let mut grid: HashMap<(i32, i32), Vec<usize>> = HashMap::new();
+    for (i, t) in known.iter().enumerate() {
+        grid.entry(((t.x / HASH_CELL) as i32, (t.y / HASH_CELL) as i32))
+            .or_default()
+            .push(i);
+    }
+    grid
+}
+
+/// The model, turn and size of the tree at `(x, y)`: those of the map's file's tree nearest to it
+/// within [`MATCH_REACH`], else a model of its side of the map, turned by its number.
+fn look_of<'a>(
+    known: &'a [MapTree],
+    grid: &HashMap<(i32, i32), Vec<usize>>,
+    (x, y): (f32, f32),
+    index: usize,
+) -> (&'a str, f32, f32) {
+    let (cx, cy) = ((x / HASH_CELL) as i32, (y / HASH_CELL) as i32);
+    let near = (-1..=1)
+        .flat_map(|dx| (-1..=1).map(move |dy| (cx + dx, cy + dy)))
+        .filter_map(|key| grid.get(&key))
+        .flatten()
+        .map(|i| &known[*i])
+        .filter(|t| (t.x - x).hypot(t.y - y) <= MATCH_REACH)
+        .min_by(|a, b| {
+            (a.x - x)
+                .hypot(a.y - y)
+                .total_cmp(&(b.x - x).hypot(b.y - y))
+        });
+    let fallback = if x + y < bota_core::rules::MAP_SIZE as f32 {
+        "tree_oak_01"
+    } else {
+        "dire_tree004"
+    };
+    near.map_or(
+        (fallback, (index as f32 * 2.4) % std::f32::consts::TAU, 1.0),
+        |t| (t.model.as_str(), t.yaw, t.scale),
+    )
 }
 
 /// Takes each tree model's standing and stump meshes once its file loads.
@@ -363,12 +399,18 @@ fn rebuild(
     mut ready: ResMut<SceneryReady>,
     time: Res<Time>,
 ) {
+    let (began, was_built) = (std::time::Instant::now(), forest.built);
     build(commands, &session, &mut forest, meshes, &time);
-    // The scenery counts as in place from the match's first view on, as it
-    // did when the forest could only be built then: the minimap's photograph
-    // and a replay's start wait for it, under the match's own light.
-    let viewed = session.0.view().is_some();
-    if !ready.0 && viewed && (forest.built || (forest.planted_all && forest.trees.is_empty())) {
+    if forest.built && !was_built {
+        info!(
+            "forest: {} trees' chunks built in {:.1} ms",
+            forest.trees.len(),
+            began.elapsed().as_secs_f64() * 1e3
+        );
+    }
+    // The scenery counts as in place once the forest stands, which the trees told on joining
+    // allow before the hero is picked: the minimap's photograph and a replay's start wait for it.
+    if !ready.0 && (forest.built || (forest.planted_all && forest.trees.is_empty())) {
         ready.0 = true;
         info!("startup: forest built at {:.2} s", crate::since_start());
     }
@@ -447,12 +489,11 @@ fn build(
     if changed.is_empty() {
         return;
     }
-    let chunk_of = |at: Vec3| ((at.x / CHUNK) as i32, (-at.z / CHUNK) as i32);
     let mut dirty: Vec<(i32, i32, usize)> = changed
         .iter()
         .filter_map(|t| forest.planted(*t))
         .map(|t| {
-            let (cx, cy) = chunk_of(t.at);
+            let (cx, cy) = chunk_of((t.at.x, -t.at.z));
             (cx, cy, t.model)
         })
         .collect();
@@ -475,7 +516,7 @@ fn build(
             };
             let placed = forest.trees.iter().filter(|t| {
                 t.model == key.2
-                    && chunk_of(t.at) == (key.0, key.1)
+                    && chunk_of((t.at.x, -t.at.z)) == (key.0, key.1)
                     && (felled.binary_search(&t.index).is_ok() == stumps)
             });
             let Some(mut merged) = merge(source, placed) else {

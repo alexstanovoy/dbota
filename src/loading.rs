@@ -36,9 +36,6 @@ pub struct Loading {
     /// Seconds since the start when the loading began and ended.
     began: f32,
     ended: Option<f32>,
-    /// Whether the match's world stood once: from then on the game stays on
-    /// screen whatever comes and goes.
-    world_stood: bool,
 }
 
 impl Loading {
@@ -145,7 +142,6 @@ fn begin(
     loading.shown = true;
     loading.began = crate::since_start();
     loading.ended = None;
-    loading.world_stood = false;
     if !loading.asked {
         loading.asked = true;
         loading.requested = true;
@@ -164,23 +160,23 @@ fn track(
     fog: Res<crate::fog::FogGrid>,
     mut loading: ResMut<Loading>,
 ) {
-    if loading.game.is_none() || loading.world_stood {
+    // One screen per game: once it has lifted it never comes back. A need that shows up later is
+    // a bug the end-to-end test names, not a reason to cover the game again.
+    if loading.game.is_none() || loading.ended.is_some() {
         return;
     }
     let core = &session.0;
-    let world = match core.view() {
-        // Before the match: what it will draw.
-        None => true,
-        Some(view) => {
-            ready.0
-                && photo.0
-                && view
-                    .units
-                    .iter()
-                    .filter(|u| u.kind == bota_proto::UnitKind::Hero && !fog.hides(u.seen_by))
-                    .all(|u| units.0.contains_key(&u.id))
-        }
-    };
+    // The scenery and the minimap's photograph are made from the map file the client holds, before
+    // the match tells its own trees; the heroes only once a view shows them (a replay's first
+    // frame, a match joined late).
+    let world = ready.0
+        && photo.0
+        && core.view().is_none_or(|view| {
+            view.units
+                .iter()
+                .filter(|u| u.kind == bota_proto::UnitKind::Hero && !fog.hides(u.seen_by))
+                .all(|u| units.0.contains_key(&u.id))
+        });
     let progress = parts.share();
     if loading.progress != progress {
         loading.progress = progress;
@@ -195,9 +191,6 @@ fn track(
     let shown = !(waited || parts.complete() && world);
     if loading.shown != shown {
         loading.shown = shown;
-    }
-    if !shown && core.view().is_some() {
-        loading.world_stood = true;
     }
     if !shown && loading.ended.is_none() {
         let now = crate::since_start();

@@ -100,6 +100,18 @@ struct Framing {
     background: Option<(String, [Vec3; 4])>,
 }
 
+/// The cache paths of the backgrounds the portraits stand on, each once.
+pub fn background_paths(root: &std::path::Path) -> Vec<String> {
+    let mut paths: Vec<String> = Framings::load(root)
+        .0
+        .into_values()
+        .filter_map(|f| f.background.map(|(path, _)| path))
+        .collect();
+    paths.sort_unstable();
+    paths.dedup();
+    paths
+}
+
 /// Every framing of the cache, by the model's logical name.
 #[derive(Resource, Default)]
 struct Framings(HashMap<String, Framing>);

@@ -319,6 +319,7 @@ fn load_models(mut bank: ResMut<ModelBank>, server: Res<AssetServer>, manifest: 
     {
         bank.0.push(bank_entry(&server, &manifest, model));
     }
+    info!("loading: {} unit models held resident", bank.0.len());
 }
 
 /// The logical-name prefix of tree models: trees are not units and load
