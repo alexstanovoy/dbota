@@ -212,7 +212,7 @@ fn animate(
         if args.trace_feel
             && let Some(u) = live
         {
-            trace(time.elapsed_secs(), view.tick, u, &pose, clips);
+            trace(time.elapsed_secs(), view.tick, u, unit, &pose, clips);
         }
         if args.trace_feel && dying.is_some() {
             let shown = clips
@@ -237,6 +237,7 @@ fn trace(
     at: f32,
     tick: u32,
     u: &UnitView,
+    drawn: &Unit,
     pose: &Pose,
     clips: &[(String, AnimationNodeIndex, f32, Option<f32>)],
 ) {
@@ -257,12 +258,15 @@ fn trace(
         .and_then(|c| c.3)
         .map_or("none".to_owned(), |p| format!("{p:.3}"));
     println!(
-        "anim at={at:.3} tick={tick} unit={} kind={:?} neutral={:?} pos={:.0},{:.0} clip={} t={:.3} point={point} share={:.2} fading={}",
+        "anim at={at:.3} tick={tick} unit={} kind={:?} neutral={:?} hero={:?} pos={:.0},{:.0} drawn={:.0},{:.0} clip={} t={:.3} point={point} share={:.2} fading={}",
         u.id.idx,
         u.kind,
         u.neutral.and_then(bota_core::NeutralKind::of),
+        u.hero,
         u.pos.x.to_f32(),
         u.pos.y.to_f32(),
+        drawn.at.x,
+        drawn.at.y,
         pose.clip,
         pose.shown,
         pose.share,

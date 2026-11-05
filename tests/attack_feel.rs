@@ -200,6 +200,7 @@ struct Frame {
     tick: u32,
     unit: u32,
     pos: String,
+    drawn: String,
     kind: String,
     clip: String,
     t: f32,
@@ -223,6 +224,7 @@ fn frames(lines: &[String]) -> Vec<Frame> {
                 tick: get("tick=").parse().expect("tick"),
                 unit: get("unit=").parse().expect("unit"),
                 pos: get("pos=").to_owned(),
+                drawn: get("drawn=").to_owned(),
                 kind: get("kind=").to_owned(),
                 clip: get("clip=").to_owned(),
                 t: get("t=").parse().expect("t"),
@@ -726,5 +728,95 @@ fn a_hook_executes_a_full_health_creep_in_a_match_and_the_drawn_scene() {
     });
     assert!(execution.victim.is_some(), "the server executed a creep");
     assert_hook_execution_drawn(&scratch, &replay, last_tick, killed);
+    std::fs::remove_dir_all(scratch).expect("scratch removed");
+}
+
+/// A click close to Pudge chooses a direction, not the Hook's destination.
+#[test]
+#[ignore = "draws on the GPU in a headless compositor: tools/visual_check.sh runs it"]
+fn a_hook_aimed_nearby_reaches_a_distant_hero_and_draws_the_pull() {
+    let scratch = scratch("hook_range");
+    let home = bota_core::rules::DEMO_LANE_CORNERS[1];
+    let target_at = bota_core::rules::DEMO_LANE_CORNERS[0];
+    let mut phase = 0;
+    let mut cast_tick = 0;
+    let mut full = 0;
+    let mut pulled = false;
+    let (replay, last_tick) = record_as(&scratch, "range", "1", 1, HeroId::PUDGE, |view| {
+        let target = view
+            .units
+            .iter()
+            .find(|unit| unit.hero == Some(HeroId::SHADOW_FIEND));
+        let next = match phase {
+            0 => cheat(Cheat::StartGame),
+            1 => cheat(Cheat::AllVision { on: true }),
+            2 => cheat(Cheat::CreepSpawning { on: false }),
+            3 => cheat(Cheat::KillCreeps {
+                which: bota_proto::CreepSide::All,
+            }),
+            4 => cheat(Cheat::Teleport { at: home }),
+            5 => Step::Order(Order::Learn {
+                slot: bota_proto::AbilitySlot(0),
+            }),
+            6 if view.tick < 120 => return Step::Wait,
+            6 => cheat(Cheat::CreateHero {
+                hero: HeroId::SHADOW_FIEND,
+                enemy: true,
+                at: target_at,
+            }),
+            7 => {
+                let target = target.expect("an enemy hero");
+                assert_eq!(target.hp, target.max_hp, "full health before Hook");
+                full = target.hp;
+                cast_tick = view.tick;
+                let aim = home + (target.pos - home) * bota_proto::Fixed::from_ratio(1, 4);
+                Step::Order(Order::Cast {
+                    slot: bota_proto::AbilitySlot(0),
+                    target: Target::Pos(aim),
+                })
+            }
+            _ => {
+                pulled |= target.is_some_and(|target| {
+                    target.hp < full && target.pos.within(home, bota_proto::Fixed::from_int(200))
+                });
+                if view.tick >= cast_tick + 80 {
+                    return Step::Done;
+                }
+                return Step::Wait;
+            }
+        };
+        phase += 1;
+        next
+    });
+    assert!(
+        pulled,
+        "Hook must hit and pull the hero beyond the nearby click"
+    );
+    let lines = trace_at(
+        &scratch,
+        &replay,
+        &format!("await:tick:{last_tick};exit"),
+        Some(home),
+    );
+    let tag = format!("hero=Some({:?})", HeroId::SHADOW_FIEND);
+    let target_lines: Vec<_> = lines
+        .into_iter()
+        .filter(|line| line.contains(&tag))
+        .collect();
+    let frames = frames(&target_lines);
+    let drawn_at = |frame: &Frame| {
+        let (x, y) = frame.drawn.split_once(',').expect("drawn position");
+        Vec2::from_ints(x.parse().expect("x"), y.parse().expect("y"))
+    };
+    assert!(
+        frames.iter().any(|frame| frame.tick < cast_tick + 10
+            && drawn_at(frame).within(target_at, bota_proto::Fixed::from_int(50))),
+        "enemy model was drawn at its starting position before impact"
+    );
+    assert!(
+        frames.iter().any(|frame| frame.tick > cast_tick + 35
+            && drawn_at(frame).within(home, bota_proto::Fixed::from_int(200))),
+        "enemy model is drawn pulled to Pudge"
+    );
     std::fs::remove_dir_all(scratch).expect("scratch removed");
 }
