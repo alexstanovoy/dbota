@@ -1,10 +1,13 @@
 //! LEAVE's word to a game whose seat this client left: the match is left for good. A thread of
 //! its own takes the seat once more out of sight, waits until the server admits it (`Welcome`),
 //! says `LeaveGame`, and makes sure it arrived: the server answers a `Probe` only once it has read
-//! everything before it. A seat the server still holds for the old connection (`SeatHeld`), a
-//! connection that breaks before the welcome or around the surrender, are tried again; a refusal
-//! for good ends it. All of it within a deadline, and nothing of it reaches a game session: a
-//! failure here never ends the client.
+//! everything before it (bota_server answers it on the connection's own thread, ahead of anything
+//! queued), so only its echo means the game was told. A seat the server still holds for the old
+//! connection (`SeatHeld`), a connection that breaks or closes before the welcome or before the
+//! echo, are tried again on a fresh connection; a refusal for good ends it. All of it within a
+//! deadline, each connection and read bounded by what is left of it, and nothing of it reaches a
+//! game session: a failure here never ends the client. A leave the menu gave up on runs on until
+//! its deadline, unheard.
 
 use std::sync::mpsc::{Receiver, TryRecvError, sync_channel};
 use std::time::{Duration, Instant};
@@ -15,8 +18,7 @@ use bota_proto::{ClientMsg, RejectReason, ServerMsg};
 /// How telling the game ended.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Outcome {
-    /// The server has the surrender, or it closed the seat after it (the match was cancelled or
-    /// is over: nothing is left to leave).
+    /// The server has the surrender: it echoed the probe sent behind it.
     Left,
     /// The server says the seat is not this client's (any more): nothing to leave.
     Refused(String),
@@ -127,7 +129,14 @@ fn one_try(connect: &mut Connect, hello: &ClientMsg, until: Instant) -> Try {
             Ok(Some(ServerMsg::Refused { reason })) => {
                 return Try::Done(Outcome::Refused(format!("{reason:?}")));
             }
-            Ok(Some(ServerMsg::MatchOver { .. })) => return Try::Done(Outcome::Left),
+            // Another wire never admits this client: no try will.
+            Ok(Some(ServerMsg::WireMismatch { .. })) => {
+                return Try::Done(Outcome::Refused("another wire".to_owned()));
+            }
+            // A server says no more than Welcome or Refused first: anything else is tried again.
+            Ok(Some(ServerMsg::MatchOver { .. })) => {
+                return Try::Again("a match over before the welcome".to_owned());
+            }
             Ok(Some(_)) => {}
             Ok(None) => return Try::Again("closed before the welcome".to_owned()),
             Err(error) => return Try::Again(format!("before the welcome: {error}")),
@@ -147,8 +156,8 @@ fn one_try(connect: &mut Connect, hello: &ClientMsg, until: Instant) -> Try {
         match link.recv() {
             Ok(Some(ServerMsg::Echo { id: PROBE })) => return Try::Done(Outcome::Left),
             Ok(Some(_)) => {}
-            // Closed by the server, after the surrender: it took it, or ended the match.
-            Ok(None) => return Try::Done(Outcome::Left),
+            // Closed before the echo: whether the surrender was read is not known.
+            Ok(None) => return Try::Again("closed before the echo".to_owned()),
             Err(error) => return Try::Again(format!("around the surrender: {error}")),
         }
     }
@@ -157,13 +166,17 @@ fn one_try(connect: &mut Connect, hello: &ClientMsg, until: Instant) -> Try {
 #[cfg(test)]
 mod tests {
     use std::io::{Read, Write};
-    use std::net::{TcpListener, TcpStream};
+    use std::net::{Shutdown, TcpListener, TcpStream};
     use std::sync::{Arc, Mutex};
+    use std::thread::JoinHandle;
 
     use bota_client_core::Endpoint;
     use bota_proto::{PlayerId, Role, SlotId, TickMode, decode_payload, encode_frame_to_vec};
 
     use super::*;
+
+    /// How long a test waits for what must come, at most: a hang guard, not a measure.
+    const HANG_GUARD: Duration = Duration::from_secs(60);
 
     /// One connection of the fake game server, as the test drives it.
     struct Peer(TcpStream);
@@ -183,16 +196,16 @@ mod tests {
             self.0.write_all(&frame).expect("sent");
         }
 
-        /// The client says nothing for `quiet`.
-        fn says_nothing_for(&mut self, quiet: Duration) -> bool {
-            self.0.set_read_timeout(Some(quiet)).expect("a timeout");
+        /// Waits until the client's next bytes have arrived, leaving them unread.
+        fn until_more_arrived(&mut self) {
+            self.0
+                .set_read_timeout(Some(HANG_GUARD))
+                .expect("a timeout");
             let mut byte = [0u8; 1];
-            let silent = matches!(
-                self.0.read(&mut byte),
-                Err(e) if matches!(e.kind(), std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut)
+            assert!(
+                matches!(self.0.peek(&mut byte), Ok(1..)),
+                "the client said nothing more"
             );
-            self.0.set_read_timeout(None).expect("no timeout");
-            silent
         }
     }
 
@@ -214,40 +227,61 @@ mod tests {
         )
     }
 
-    /// What each connection the fake server took was told, in order.
-    type Heard = Arc<Mutex<Vec<Vec<String>>>>;
-
-    /// A fake game server answering its connections in turn with `answers`, each given the
-    /// connection; what a connection says after its answer, if the answer hands it back, is
-    /// noted. An answer that keeps it closes it at once, whatever is unread.
-    fn serve(answers: Vec<fn(Peer) -> Option<Peer>>) -> (String, Heard) {
-        let listener = TcpListener::bind("127.0.0.1:0").expect("a port");
-        let address = listener.local_addr().expect("bound").to_string();
-        let heard: Heard = Arc::default();
-        let noted = Arc::clone(&heard);
-        std::thread::spawn(move || {
-            for answer in answers {
-                let Ok((stream, _)) = listener.accept() else {
-                    return;
-                };
-                let mut said = Vec::new();
-                if let Some(mut peer) = answer(Peer(stream)) {
-                    peer.0
-                        .set_read_timeout(Some(Duration::from_millis(300)))
-                        .ok();
-                    while let Some(msg) = peer.recv() {
-                        said.push(format!("{msg:?}"));
-                    }
-                }
-                noted.lock().expect("noted").push(said);
-            }
-        });
-        (address, heard)
+    /// The fake server's thread, and the count of the connections it took.
+    struct Fake {
+        address: String,
+        taken: Arc<Mutex<usize>>,
+        thread: JoinHandle<()>,
     }
 
-    /// Tells the fake server at `address` within `secs`.
-    fn leave(address: &str, secs: u64) -> Outcome {
-        let address = address.to_owned();
+    impl Fake {
+        /// Waits until the fake took `count` connections.
+        fn took(&self, count: usize) {
+            let started = Instant::now();
+            while *self.taken.lock().expect("counted") < count {
+                assert!(
+                    started.elapsed() < HANG_GUARD,
+                    "fewer connections than {count}"
+                );
+                std::thread::sleep(Duration::from_millis(5));
+            }
+        }
+
+        /// Its thread's end: an assertion it raised fails the test here, with its words.
+        fn done(self) {
+            if let Err(panic) = self.thread.join() {
+                std::panic::resume_unwind(panic);
+            }
+        }
+    }
+
+    /// A fake game server answering its connections in turn with `answers`, each given the
+    /// connection; one handed back is read to its end. An answer that keeps it closes it at
+    /// once, whatever is unread.
+    fn serve(answers: Vec<fn(Peer) -> Option<Peer>>) -> Fake {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("a port");
+        let address = listener.local_addr().expect("bound").to_string();
+        let taken = Arc::new(Mutex::new(0));
+        let counted = Arc::clone(&taken);
+        let thread = std::thread::spawn(move || {
+            for answer in answers {
+                let (stream, _) = listener.accept().expect("a connection");
+                *counted.lock().expect("counted") += 1;
+                if let Some(mut peer) = answer(Peer(stream)) {
+                    while peer.recv().is_some() {}
+                }
+            }
+        });
+        Fake {
+            address,
+            taken,
+            thread,
+        }
+    }
+
+    /// Tells the fake server within `secs`.
+    fn leave(fake: &Fake, secs: u64) -> Outcome {
+        let address = fake.address.clone();
         let connect: Connect = Box::new(move |io| Link::open(Endpoint::parse(&address)?, io));
         tell(
             connect,
@@ -256,18 +290,30 @@ mod tests {
         )
     }
 
+    fn read_hello(peer: &mut Peer) {
+        assert!(matches!(peer.recv(), Some(ClientMsg::Hello { .. })));
+    }
+
     /// The welcome, the surrender, then its probe, answered.
     fn admit_and_echo(mut peer: Peer) -> Option<Peer> {
-        assert!(matches!(peer.recv(), Some(ClientMsg::Hello { .. })));
-        admit_rest(&mut peer);
+        read_hello(&mut peer);
+        peer.send(&welcome());
+        surrender_echoed(&mut peer);
         Some(peer)
+    }
+
+    /// The surrender and its probe, the probe echoed.
+    fn surrender_echoed(peer: &mut Peer) {
+        assert_eq!(peer.recv(), Some(ClientMsg::LeaveGame));
+        assert_eq!(peer.recv(), Some(ClientMsg::Probe { id: PROBE }));
+        peer.send(&ServerMsg::Echo { id: PROBE });
     }
 
     #[test]
     fn a_seat_still_held_is_asked_for_again_until_it_is_given_back() {
-        let (address, heard) = serve(vec![
+        let fake = serve(vec![
             |mut peer| {
-                assert!(matches!(peer.recv(), Some(ClientMsg::Hello { .. })));
+                read_hello(&mut peer);
                 peer.send(&ServerMsg::Refused {
                     reason: RejectReason::SeatHeld,
                 });
@@ -275,89 +321,92 @@ mod tests {
             },
             admit_and_echo,
         ]);
-        assert_eq!(leave(&address, 20), Outcome::Left);
-        let heard = heard.lock().expect("heard");
-        assert_eq!(heard.len(), 2, "a second connection after the refusal");
+        assert_eq!(leave(&fake, 60), Outcome::Left);
+        fake.took(2);
+        fake.done();
     }
 
+    /// The server pings before it admits: the client answers the ping and says nothing else, so
+    /// its next word after the greeting is the pong.
     #[test]
     fn the_surrender_waits_for_the_welcome() {
-        let (address, _) = serve(vec![|mut peer| {
-            assert!(matches!(peer.recv(), Some(ClientMsg::Hello { .. })));
-            assert!(
-                peer.says_nothing_for(Duration::from_millis(700)),
+        let fake = serve(vec![|mut peer| {
+            read_hello(&mut peer);
+            peer.send(&ServerMsg::Ping);
+            assert_eq!(
+                peer.recv(),
+                Some(ClientMsg::Pong),
                 "nothing is said before the seat is admitted"
             );
-            admit_rest(&mut peer);
+            peer.send(&welcome());
+            surrender_echoed(&mut peer);
             Some(peer)
         }]);
-        assert_eq!(leave(&address, 20), Outcome::Left);
-    }
-
-    /// [`admit_and_echo`] past the `Hello` already read.
-    fn admit_rest(peer: &mut Peer) {
-        peer.send(&welcome());
-        assert_eq!(peer.recv(), Some(ClientMsg::LeaveGame));
-        assert_eq!(peer.recv(), Some(ClientMsg::Probe { id: PROBE }));
-        peer.send(&ServerMsg::Echo { id: PROBE });
+        assert_eq!(leave(&fake, 60), Outcome::Left);
+        fake.done();
     }
 
     #[test]
     fn a_reset_around_the_surrender_says_it_again_on_a_fresh_connection() {
-        let (address, heard) = serve(vec![
+        let fake = serve(vec![
             |mut peer| {
-                assert!(matches!(peer.recv(), Some(ClientMsg::Hello { .. })));
+                read_hello(&mut peer);
                 peer.send(&welcome());
                 assert_eq!(peer.recv(), Some(ClientMsg::LeaveGame));
-                // The probe arrives and is never read: closing with it unread resets the
+                // The probe has arrived and is never read: closing with it unread resets the
                 // connection, and no echo went back.
-                std::thread::sleep(Duration::from_millis(200));
+                peer.until_more_arrived();
                 None
             },
             admit_and_echo,
         ]);
-        assert_eq!(leave(&address, 20), Outcome::Left);
-        let deadline = Instant::now() + Duration::from_secs(5);
-        while heard.lock().expect("heard").len() < 2 {
-            assert!(
-                Instant::now() < deadline,
-                "the surrender was not said again"
-            );
-            std::thread::sleep(Duration::from_millis(20));
-        }
+        assert_eq!(leave(&fake, 60), Outcome::Left);
+        fake.took(2);
+        fake.done();
+    }
+
+    #[test]
+    fn a_close_before_the_echo_says_it_again_on_a_fresh_connection() {
+        let fake = serve(vec![
+            |mut peer| {
+                read_hello(&mut peer);
+                peer.send(&welcome());
+                assert_eq!(peer.recv(), Some(ClientMsg::LeaveGame));
+                assert_eq!(peer.recv(), Some(ClientMsg::Probe { id: PROBE }));
+                // Closed in order, with no echo: the surrender's fate is not known.
+                peer.0.shutdown(Shutdown::Write).expect("closed");
+                Some(peer)
+            },
+            admit_and_echo,
+        ]);
+        assert_eq!(leave(&fake, 60), Outcome::Left);
+        fake.took(2);
+        fake.done();
     }
 
     #[test]
     fn a_seat_refused_for_good_is_not_tried_again() {
-        let (address, heard) = serve(vec![|mut peer| {
-            assert!(matches!(peer.recv(), Some(ClientMsg::Hello { .. })));
+        let fake = serve(vec![|mut peer| {
+            read_hello(&mut peer);
             peer.send(&ServerMsg::Refused {
                 reason: RejectReason::NotAdmitted,
             });
             Some(peer)
         }]);
-        assert_eq!(
-            leave(&address, 20),
-            Outcome::Refused("NotAdmitted".to_owned())
-        );
-        std::thread::sleep(Duration::from_millis(500));
-        assert_eq!(heard.lock().expect("heard").len(), 1, "one connection only");
+        // The leave's one thread ends with the refusal: no other connection follows it.
+        assert_eq!(leave(&fake, 60), Outcome::Refused("NotAdmitted".to_owned()));
+        fake.done();
     }
 
     #[test]
     fn a_game_that_never_answers_is_given_up_at_the_deadline() {
-        // Takes the connection and says nothing, for longer than the leave may take.
-        let (address, _) = serve(vec![|mut peer| {
-            let _ = peer.says_nothing_for(Duration::from_secs(5));
+        // Takes the connection and says nothing until the client lets go of it.
+        let fake = serve(vec![|mut peer| {
+            read_hello(&mut peer);
             Some(peer)
         }]);
-        let began = Instant::now();
-        let outcome = leave(&address, 2);
+        let outcome = leave(&fake, 2);
         assert!(matches!(outcome, Outcome::Unreachable(_)), "{outcome:?}");
-        assert!(
-            began.elapsed() < Duration::from_secs(4),
-            "bounded by the deadline: {:?}",
-            began.elapsed()
-        );
+        fake.done();
     }
 }

@@ -183,21 +183,18 @@ fn drive(
     if let Some(launch) = &launch {
         post.expect(origin_of(launch, &args));
     }
-    let mut opened_here = |core: &mut MenuCore, opened: std::io::Result<Session>| match opened {
-        Ok(opened) => {
-            *session = opened;
-            post.begin();
-            epoch.0 += 1;
-            forget_units(&mut commands, &mut index);
-            core.game_started();
-        }
-        Err(err) => core.launch_failed(&err.to_string()),
+    let mut opener = Opener {
+        session: &mut session,
+        post: &mut post,
+        epoch: &mut epoch,
+        commands: &mut commands,
+        index: &mut index,
     };
     match launch {
         // The command line's game again: as it was opened at the start.
-        Some(Launch::Given) => opened_here(&mut core, crate::session::open(&args)),
-        Some(Launch::Replay(path)) => opened_here(&mut core, open_replay(&path)),
-        Some(Launch::Blob(blob)) => opened_here(&mut core, open_blob(&blob)),
+        Some(Launch::Given) => opener.opened(&mut core, crate::session::open(&args)),
+        Some(Launch::Replay(path)) => opener.opened(&mut core, open_replay(&path)),
+        Some(Launch::Blob(blob)) => opener.opened(&mut core, open_blob(&blob)),
         Some(launch) => {
             if matches!(launch, Launch::Host { .. }) {
                 // One lobby hosted at a time: the last one's server ends.
@@ -207,6 +204,11 @@ fn drive(
         }
         None => {}
     }
+    adopt(&mut core, &mut pending, &mut host, &mut opener);
+}
+
+/// The game being opened, once it is: on screen, its server (a local lobby's) kept.
+fn adopt(core: &mut MenuCore, pending: &mut Pending, host: &mut Host, opener: &mut Opener) {
     let Some(opened) = pending.0.as_mut().and_then(Opening::poll) else {
         return;
     };
@@ -216,9 +218,35 @@ fn drive(
             if opened.server.is_some() {
                 host.0 = opened.server;
             }
-            opened_here(&mut core, Ok(Session(Core::new(Source::Live(opened.link)))));
+            opener.opened(core, Ok(Session(Core::new(Source::Live(opened.link)))));
         }
         Err(err) => core.launch_failed(&err.to_string()),
+    }
+}
+
+/// What a game opened takes over: the session, the summary to come, the epoch and the units of
+/// the game before.
+struct Opener<'a, 'w, 's> {
+    session: &'a mut Session,
+    post: &'a mut crate::postgame::PostGame,
+    epoch: &'a mut GameEpoch,
+    commands: &'a mut Commands<'w, 's>,
+    index: &'a mut crate::units::UnitIndex,
+}
+
+impl Opener<'_, '_, '_> {
+    /// The game is on screen, or the menu says why it could not be opened.
+    fn opened(&mut self, core: &mut MenuCore, opened: std::io::Result<Session>) {
+        match opened {
+            Ok(opened) => {
+                *self.session = opened;
+                self.post.begin();
+                self.epoch.0 += 1;
+                forget_units(self.commands, self.index);
+                core.game_started();
+            }
+            Err(err) => core.launch_failed(&err.to_string()),
+        }
     }
 }
 
@@ -302,6 +330,13 @@ fn guard(
     let game = &session.0;
     let seated = game.my_slot.is_some() && matches!(game.source, Source::Live(_));
     core.set_game_unsafe(seated && game.over.is_none() && !game.lost);
+    let with_others = game.lobby.slots.iter().any(|seat| {
+        Some(seat.slot) != game.lobby.slot && seat.role == Some(bota_proto::Role::Player)
+    });
+    core.set_game_company(
+        seated && game.phase == bota_client_core::Phase::Lobby,
+        with_others,
+    );
     let disconnect = core.take_leave();
     let shown = core.shows_game();
     if !shown {

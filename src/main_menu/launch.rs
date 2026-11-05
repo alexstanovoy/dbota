@@ -96,7 +96,7 @@ pub fn leave_connector(
         Launch::Seat(handoff) => {
             let (handoff, tls) = (handoff.clone(), trust.radovid.clone());
             Ok((
-                Box::new(move |_| bota_radovid::connect(&handoff, &tls)),
+                Box::new(move |io| bota_radovid::connect_within(&handoff, &tls, io)),
                 hello(launch)?,
             ))
         }

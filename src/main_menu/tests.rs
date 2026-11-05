@@ -2109,19 +2109,22 @@ fn a_refused_join_says_why_and_lists_the_lobbies_again() {
     );
 }
 
-/// LEAVE beside RECONNECT, asked and answered: the seat is not offered again. After a game this
-/// client does not host, LEAVE tries to tell it the match is left and, the game unreachable,
-/// forgets it, leaving the local lobby's server alone; after the local lobby's own game, the game
-/// server this client started for it ends: nothing listens on its port any more.
+/// LEAVE beside RECONNECT, asked and answered: the seat is not offered again, and its game is
+/// told. After a game this client does not host, the game unreachable, it is forgotten and the
+/// local lobby's server is left alone. After the local lobby's own game, the lobby's real server
+/// is told over loopback (its seat taken back with its key, the surrender made sure), and with
+/// nobody else seated, the server this client started ends: nothing listens on its port any more.
 #[test]
-fn leave_after_a_local_lobby_ends_its_server_and_the_seat() {
+fn leave_after_a_local_lobby_tells_its_server_and_ends_it() {
+    use super::leave::{Outcome, tell};
     let dir = Scratch::new("leave-host");
     let (mut menu, trust) = offline("host", &dir);
     let leave = |menu: &mut MenuCore| {
         assert!(menu.view().reconnect, "RECONNECT offered");
-        menu.act(Act::LeaveMatch);
+        menu.act(Act::LeaveSeat);
         assert!(menu.view().confirm.is_some(), "LEAVE asks first");
         menu.act(Act::Answer(true));
+        menu.take_leave_order().expect("LEAVE tells the game")
     };
 
     menu.act(Act::Go(Page::LocalLobby));
@@ -2131,10 +2134,9 @@ fn leave_after_a_local_lobby_ends_its_server_and_the_seat() {
     menu.take_launch().expect("a direct game");
     menu.game_started();
     menu.left_game(None, false);
-    leave(&mut menu);
-    let (id, _, _) = menu.take_leave_order().expect("LEAVE tells the game");
+    let (id, _, _) = leave(&mut menu);
     assert!(menu.take_launch().is_none(), "no game is opened for it");
-    menu.leave_done(id, super::leave::Outcome::Unreachable("refused".to_owned()));
+    menu.leave_done(id, Outcome::Unreachable("refused".to_owned()));
     assert!(!menu.view().reconnect, "an unreachable game is forgotten");
     assert_eq!(menu.page(), Page::LocalLobby, "the menu stays where it was");
     assert!(
@@ -2157,22 +2159,90 @@ fn leave_after_a_local_lobby_ends_its_server_and_the_seat() {
         std::thread::sleep(Duration::from_millis(5));
     };
     let hosted: Option<Hosted> = opened.server;
-    drop(opened.link);
     let listening = || std::net::TcpStream::connect(("127.0.0.1", port)).is_ok();
     assert!(hosted.is_some() && listening(), "the lobby's server runs");
     menu.game_started();
+    menu.set_game_company(true, false);
+    // The seat is left as a DISCONNECT leaves it.
+    drop(opened.link);
     menu.left_game(None, false);
-    leave(&mut menu);
+    let (id, left, until) = leave(&mut menu);
     assert!(
-        menu.take_leave_order().is_none(),
-        "its own server is not told: it ends"
+        matches!(&left, Launch::Direct { hosted: true, .. }),
+        "the lobby's own seat: {left:?}"
     );
+    let args = <crate::Args as clap::Parser>::parse_from(["dbota"]);
+    let (connect, hello) =
+        super::launch::leave_connector(&left, &trust, &args).expect("a connector");
+    let outcome = tell(connect, &hello, until);
+    assert_eq!(outcome, Outcome::Left, "the lobby's server was told");
+    menu.leave_done(id, outcome);
     assert!(!menu.view().reconnect, "nothing to take again");
-    assert!(menu.take_end_hosted(), "the lobby's server ends");
+    assert!(
+        menu.take_end_hosted(),
+        "nobody else sat: the lobby's server ends"
+    );
     assert!(!menu.take_end_hosted(), "once");
     // As the shell does: the server is let go, and its process with it.
     drop(hosted);
     assert!(!listening(), "the lobby's server process is gone");
+}
+
+/// LEAVE after the local lobby's own game with another person seated in it: the game is told,
+/// and the lobby's server runs on for the others.
+#[test]
+fn leave_after_a_local_lobby_with_others_keeps_its_server() {
+    use super::leave::Outcome;
+    let dir = Scratch::new("leave-host-others");
+    let (mut menu, _trust) = offline("host", &dir);
+    host_launch(&mut menu, None);
+    menu.game_started();
+    menu.set_game_company(false, true);
+    menu.left_game(None, false);
+    menu.act(Act::LeaveSeat);
+    menu.act(Act::Answer(true));
+    let (id, _, _) = menu.take_leave_order().expect("LEAVE tells the game");
+    menu.leave_done(id, Outcome::Left);
+    assert!(!menu.take_end_hosted(), "the others play on");
+    assert_eq!(
+        menu.view().status.map(|s| s.text).as_deref(),
+        Some("You left the game: your lobby's server runs on for the others")
+    );
+}
+
+/// While a game is told the match is left, its seat is not taken again: RECONNECT's own way back
+/// (here the same address) is refused, saying why; another game opens.
+#[test]
+fn a_game_being_left_is_not_joined_again_until_it_is_told() {
+    let dir = Scratch::new("leave-rejoin");
+    let (mut menu, _trust) = offline("leaver", &dir);
+    let direct = |menu: &mut MenuCore, address: &str| {
+        menu.act(Act::Go(Page::LocalLobby));
+        menu.act(Act::Focus(1));
+        while !menu.form.value(1).is_empty() {
+            menu.act(Act::Erase);
+        }
+        menu.act(Act::Type(address.to_owned()));
+        menu.act(Act::Direct(false));
+    };
+    direct(&mut menu, "127.0.0.1:1");
+    menu.take_launch().expect("a direct game");
+    menu.game_started();
+    menu.left_game(None, false);
+    menu.act(Act::LeaveSeat);
+    menu.act(Act::Answer(true));
+    menu.take_leave_order().expect("a leave");
+    direct(&mut menu, "127.0.0.1:1");
+    assert!(
+        menu.take_launch().is_none(),
+        "the game being left is not joined"
+    );
+    assert_eq!(
+        menu.view().status.map(|s| s.text).as_deref(),
+        Some("That game is being told you left it: wait until it is")
+    );
+    direct(&mut menu, "127.0.0.1:2");
+    assert!(menu.take_launch().is_some(), "another game opens");
 }
 
 /// A leave is known by its id: its outcome is taken while it is under way, and never once it was
@@ -2194,7 +2264,7 @@ fn a_leave_given_up_at_its_deadline_is_never_taken_back() {
         menu.take_launch().expect("a direct game");
         menu.game_started();
         menu.left_game(None, false);
-        menu.act(Act::LeaveMatch);
+        menu.act(Act::LeaveSeat);
         menu.act(Act::Answer(true));
         let (id, _, _) = menu.take_leave_order().expect("a leave");
         id
@@ -2204,7 +2274,7 @@ fn a_leave_given_up_at_its_deadline_is_never_taken_back() {
     let late = leave_a_game(&mut menu);
     menu.leave_times_out();
     menu.update();
-    let given_up = Some("The game could not be reached: it is left here".to_owned());
+    let given_up = Some("The game could not be told you left it: it is forgotten here".to_owned());
     assert_eq!(status(&menu), given_up);
     menu.leave_done(late, Outcome::Left);
     assert_eq!(

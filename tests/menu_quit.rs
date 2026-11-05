@@ -416,9 +416,8 @@ fn leave_ends_a_match_whose_server_died() {
         "await:game;click:pick shadow fiend;click:pick ready;await:level:1;key:Escape;\
          await:menu;click:disconnect;await:button:reconnect;await:file:{};click:reconnect;\
          await:text:Could not join the game;await:button:reconnect;shot:dead-server.png;\
-         click:leave match;await:popup;click:ok;await:text:The game could not be reached;\
-         await:nobutton:reconnect;await:nobutton:leave match;wait:1;\
-         shot:dead-server-left.png;key:Escape;await:popup;click:ok",
+         click:leave match;await:popup;click:ok;await:text:The game could not be told;\
+         await:nobutton:reconnect;await:nobutton:leave match;shot:dead-server-left.png;key:Escape;await:popup;click:ok",
         killed.display()
     );
     let mut client = Running::start(
@@ -454,7 +453,7 @@ fn leave_tells_a_live_game_the_match_is_left_for_good() {
     let script = "await:game;click:pick shadow fiend;click:pick ready;await:level:1;key:Escape;\
                   await:menu;click:disconnect;await:button:reconnect;click:leave match;\
                   await:popup;click:ok;await:text:You left the game;await:nobutton:reconnect;\
-                  await:nobutton:leave match;await:nobutton:return;wait:1;shot:live-left.png;\
+                  await:nobutton:leave match;await:nobutton:return;shot:live-left.png;\
                   key:Escape;await:popup;click:ok";
     let result = run(&scratch, &["--addr", &server.address], script);
     played("a live game left", result, script);
@@ -469,7 +468,8 @@ fn leave_tells_a_live_game_the_match_is_left_for_good() {
 }
 
 /// LEAVE during the picks: a seat left with DISCONNECT while heroes are being chosen (the clock
-/// long, the other seat holding on unready), then LEAVE and its question answered. The server
+/// long, the other seat holding on unready), then LEAVE, whose question says the match is
+/// cancelled for everyone, answered. The server
 /// cancels the match, as Dota cancels one abandoned during hero selection: it ends with no result
 /// (exit code 3), and the client says it left.
 #[test]
@@ -483,8 +483,9 @@ fn leave_during_the_picks_cancels_the_match() {
     let mut stays = Link::connect(&server.address, Duration::from_secs(60)).expect("connected");
     greet(&mut stays, Role::Player, "stays", None).expect("a seat");
     std::thread::spawn(move || while let Ok(Some(_)) = stays.recv() {});
-    let script = "await:game;wait:2;key:Escape;await:menu;click:disconnect;\
-                  await:button:reconnect;click:leave match;await:popup;click:ok;\
+    let script = "await:game;await:button:pick shadow fiend;key:Escape;await:menu;\
+                  click:disconnect;await:button:reconnect;click:leave match;await:popup;\
+                  await:text:cancels the match for everyone;click:ok;\
                   await:text:You left the game;await:nobutton:reconnect;key:Escape;await:popup;\
                   click:ok";
     let result = run(&scratch, &["--addr", &server.address], script);

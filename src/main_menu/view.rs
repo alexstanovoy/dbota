@@ -317,6 +317,9 @@ other players.  Do you really wish to quit dbota?";
 const LEAVE_GAME_TITLE: &str = "Confirm Leave Game";
 const LEAVE_GAME_TEXT: &str =
     "Leaving the game now ends it, and you will lose it.  Do you really wish to leave the game?";
+/// The same while the heroes are being picked: the match is cancelled for everyone.
+const LEAVE_PICKS_TEXT: &str = "The heroes are still being picked: leaving now cancels the match \
+for everyone, and no result is recorded.  Do you really wish to leave the game?";
 /// Dota's popup for leaving a game watched or a replay
 /// (`popup_confirm_close_replay`).
 const LEAVE_TITLE: &str = "Confirm Disconnect";
@@ -398,9 +401,15 @@ impl MenuCore {
                         QUIT_TEXT
                     },
                 },
-                Confirm::LeaveGame | Confirm::LeaveLeft => ConfirmView {
+                Confirm::LeaveGame | Confirm::LeaveSeat => ConfirmView {
                     title: LEAVE_GAME_TITLE,
-                    text: LEAVE_GAME_TEXT,
+                    // In the picks the server cancels the match instead of giving it away.
+                    text: match (c, self.game_in_picks, self.left_in_picks) {
+                        (Confirm::LeaveGame, true, _) | (Confirm::LeaveSeat, _, true) => {
+                            LEAVE_PICKS_TEXT
+                        }
+                        _ => LEAVE_GAME_TEXT,
+                    },
                 },
                 Confirm::Leave => ConfirmView {
                     title: LEAVE_TITLE,
