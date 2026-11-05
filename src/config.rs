@@ -153,7 +153,7 @@ impl Clarity {
 }
 
 /// What a right click on an allied unit does (Dota's "Right-Click Allies",
-/// `dota_force_right_click_attack`; "To Follow" by default).
+/// `dota_force_right_click_attack`; "To Deny" by default: a worn creep is attacked without the attack key, anything else followed).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RightClickAllies {
     /// Follow the unit.
@@ -436,7 +436,7 @@ impl Default for Settings {
             name: String::new(),
             teleport_requires_halt: false,
             channels_require_stop: false,
-            right_click_allies: RightClickAllies::Follow,
+            right_click_allies: RightClickAllies::Deny,
             replays: crate::replays::Policy::default(),
         }
     }
@@ -750,7 +750,7 @@ mod tests {
             ("scoreboard_items", "true"),
             ("teleport_requires_halt", "false"),
             ("channels_require_stop", "false"),
-            ("right_click_allies", "follow"),
+            ("right_click_allies", "deny"),
             ("display_mode", "windowed"),
             ("quality", "high"),
             ("shadows", "high"),
@@ -865,11 +865,11 @@ mod tests {
         assert_eq!(complaints.len(), 2, "caps below one replay are refused");
     }
 
-    /// Dota's defaults: right clicks follow allies, and no channel waits for a stop.
+    /// Dota's defaults: a right click denies a worn ally and follows the rest, and no channel waits for a stop.
     #[test]
     fn the_right_click_and_channel_options_start_as_dotas_and_survive_the_file() {
         let fresh = Settings::default();
-        assert_eq!(fresh.right_click_allies, RightClickAllies::Follow);
+        assert_eq!(fresh.right_click_allies, RightClickAllies::Deny);
         assert!(!fresh.teleport_requires_halt && !fresh.channels_require_stop);
         for mode in RightClickAllies::ALL {
             let settings = Settings {

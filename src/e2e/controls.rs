@@ -58,9 +58,15 @@ fn right_click(client: &mut Client, id: EntityId) -> Option<(EntityId, bool)> {
 /// A seat at the mid lane with a wave of its own side's creeps and one of the enemy's fighting
 /// beside it, run with Right-Click Allies set to `mode`.
 fn among_creeps(mode: &str) -> (Server, Client) {
-    let server = Server::start(1, &[]);
     let set = format!("right_click_allies={mode}");
-    let mut client = Client::join(&server, HeroId::SHADOW_FIEND, &["--set", &set]);
+    among_creeps_with(&["--set", &set])
+}
+
+/// [`among_creeps`] with the client started with `extra` arguments: none leaves every setting
+/// at its default.
+fn among_creeps_with(extra: &[&str]) -> (Server, Client) {
+    let server = Server::start(1, &[]);
+    let mut client = Client::join(&server, HeroId::SHADOW_FIEND, extra);
     client.stand_at(MID);
     for (enemy, dx) in [(false, -250), (true, 250)] {
         client.cheat(Cheat::CreateCreeps {
@@ -145,6 +151,47 @@ fn right_click_allies_follows_attacks_or_denies_as_set() {
         }
         assert_eq!(seen, [true, true], "{mode}: a creep of each health clicked");
     }
+}
+
+/// Dota's default: with no setting touched, a right click on an own creep below half its
+/// health attacks it, the hero kills it and the game counts a deny; above half the click only
+/// follows.
+#[test]
+fn a_default_right_click_denies_a_worn_creep_and_follows_a_healthy_one() {
+    let (_server, mut client) = among_creeps_with(&[]);
+    let click_creep = |client: &mut Client, low: bool| loop {
+        client.until("an allied creep", |c| ally_creep(c, low).is_some());
+        let creep = ally_creep(client, low).expect("there");
+        if let Some((got, _)) = right_click(client, creep) {
+            return got;
+        }
+    };
+    let healthy = click_creep(&mut client, false);
+    assert_eq!(
+        last_order(&client),
+        Some(Order::Move {
+            target: Target::Unit(healthy)
+        }),
+        "above half: a follow"
+    );
+    let worn = click_creep(&mut client, true);
+    assert_eq!(
+        last_order(&client),
+        Some(Order::Attack {
+            target: Target::Unit(worn)
+        }),
+        "below half: an attack, with no attack key pressed"
+    );
+    client.until("the worn creep denied", |c| {
+        c.core()
+            .floaters
+            .iter()
+            .any(|f| f.kind == bota_client_core::FloaterKind::Deny && f.unit == worn)
+    });
+    assert!(
+        client.view().unit(worn).is_none_or(|u| u.hp <= 0),
+        "the denied creep is dead"
+    );
 }
 
 /// Directional Move, bound to a key (the install's templates bind none): held, the hero walks

@@ -177,7 +177,7 @@ clash and resets them to the defaults; they are kept as `key.<action> = <chord>`
 
 | Key or mouse | Action |
 |---|---|
-| Right click | move, or attack what is under the cursor; on an ally, what Dota's "Right-Click Allies" says (`right_click_allies`, OPTIONS, CONTROLS): `follow` (the default, as in Dota) follows it; `attack` attacks it when the game lets it be denied (a lane creep or ward below half its health, a tower below a tenth) and else does nothing but tell why; `deny` attacks it when it can be denied and else follows it. A building is only attacked with `A` |
+| Right click | move, or attack what is under the cursor; on an ally, what Dota's "Right-Click Allies" says (`right_click_allies`, OPTIONS, CONTROLS): `follow` follows it; `attack` attacks it when the game lets it be denied (a lane creep or ward below half its health, a tower below a tenth) and else does nothing but tell why; `deny` (the default, as in Dota) attacks it when it can be denied and else follows it. A building is only attacked with `A` |
 | Left click | select; confirms a targeted ability or item |
 | `A` / `M` then left click | attack-move / move there, whatever is under the cursor |
 | `S` / `H` | stop / hold position |
