@@ -231,6 +231,44 @@ fn a_missile_flies_at_its_speed_to_its_target_and_its_impact_plays_where_it_ends
     assert!(instance.finished());
 }
 
+/// A frame that hitches (a long first frame, then short ones) leaves the particles at the speed
+/// they were made with: the displacement a long step took is not carried into each short one.
+#[test]
+fn a_long_frame_followed_by_short_ones_does_not_fling_the_particles() {
+    let flown = |frames: &[f32]| {
+        let system = bare(
+            1.0,
+            vec![sphere_flying(0, 200.0), lifetime_of(0.0)],
+            vec![always(Operator::BasicMovement {
+                gravity: VectorInput::Literal([0.0; 3]),
+                drag: FloatInput::Literal(0.0),
+                max_constraint_passes: 3,
+            })],
+            Vec::new(),
+            Vec::new(),
+        );
+        let mut instance = Instance::new(Arc::new(Effect::new(&[("fly".to_owned(), system)])), 5);
+        instance.set_control_point(0, Vec3::ZERO, Vec3::ZERO, true);
+        let mut time = 0.0;
+        for dt in frames {
+            instance.advance(*dt, None);
+            time += dt;
+        }
+        let at = instance.nodes[0].parts.vectors[store::POSITION][0];
+        (at.length(), time)
+    };
+    let (steady, _) = flown(&[1.0 / 250.0; 250]);
+    let mut hitch = vec![0.25];
+    hitch.extend([1.0 / 250.0; 250]);
+    let (hitched, time) = flown(&hitch);
+    // 200 units a second, over the whole time it flew.
+    assert!((steady - 200.0).abs() < 10.0, "steady flight {steady}");
+    assert!(
+        (hitched - 200.0 * time).abs() < 20.0,
+        "after a long first frame {hitched} units in {time} s"
+    );
+}
+
 /// Souls and sparks: a child's particles made where its parent's are, which keep taking their
 /// parent's places as those fly.
 #[test]

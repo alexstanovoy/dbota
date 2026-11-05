@@ -45,6 +45,9 @@ pub struct Node {
     end_cap_child: bool,
     delay: f32,
     last_step: f32,
+    /// The step before the last, in seconds: what the last displacement of an older particle was
+    /// taken over.
+    prev_step: f32,
     /// Whether it runs: an end cap child waits for its parent's end cap.
     running: bool,
     /// Whether it was stepped this frame (its children step only after it).
@@ -317,6 +320,7 @@ impl Instance {
             remaining -= step;
             let node = &mut subtree[0];
             let step_start = node.age;
+            node.prev_step = node.last_step;
             (node.age, node.last_step, node.steps) =
                 (node.age + step, step, node.steps.wrapping_add(1));
             if let Some(asked) = node.pre_emit(effect, world, step, frame, false, writes) {
@@ -364,6 +368,7 @@ impl Node {
             end_cap_child,
             delay,
             last_step: 0.0,
+            prev_step: 0.0,
             running: !end_cap_child,
             stepped: false,
             age: -delay,
@@ -391,6 +396,7 @@ impl Node {
     fn reset(&mut self, seed: u32) {
         (self.running, self.stepped, self.age, self.last_step) =
             (!self.end_cap_child, false, -self.delay, 0.0);
+        self.prev_step = 0.0;
         (
             self.in_end_cap,
             self.end_cap_start,
@@ -958,6 +964,7 @@ struct Clock {
     seed: u32,
     world_time: f32,
     emitting: bool,
+    prev_step: f32,
 }
 
 impl Node {
@@ -974,6 +981,7 @@ impl Node {
                 0.0
             },
             step_seed: self.steps ^ self.seed.rotate_left(13),
+            prev_step: self.prev_step,
         }
     }
 }
@@ -1010,6 +1018,7 @@ fn scene_of<'a>(
         seed: clock.seed,
         world_time: clock.world_time,
         emitting: clock.emitting,
+        prev_dt: clock.prev_step,
     }
 }
 

@@ -513,11 +513,23 @@ fn movement(
     let dt = scene.dt;
     let drag = float(drag, scene, parts, None, call.salt + 3).clamp(0.0, 1.0 - f32::EPSILON);
     let factor = (1.0 - drag).powf(dt * 30.0);
+    // Verlet: the displacement since the last step is the velocity over the length of that step.
+    // Over a step of another length it is rescaled (and the acceleration taken over both halves),
+    // else a long step followed by short ones would carry its whole displacement into each of
+    // them, a frame hitch flinging the particles about; steps of one length are as they were.
+    let before = if scene.prev_dt > 0.0 {
+        scene.prev_dt
+    } else {
+        dt
+    };
     for i in 0..parts.len() {
         let position = parts.vectors[store::POSITION][i];
         let acceleration = gravity + parts.force[i];
-        let step = (position - parts.vectors[store::PREVIOUS][i]) * factor
-            + parts.scalars[store::FORCE_SCALE][i] * dt * dt * acceleration;
+        // Made in this step: its displacement was set over this step.
+        let age = scene.age - parts.scalars[store::CREATION][i];
+        let before = if age <= dt * 1.001 + 1e-5 { dt } else { before };
+        let step = (position - parts.vectors[store::PREVIOUS][i]) * (factor * (dt / before))
+            + parts.scalars[store::FORCE_SCALE][i] * dt * ((dt + before) * 0.5) * acceleration;
         parts.force[i] = Vec3::ZERO;
         parts.vectors[store::PREVIOUS][i] = position;
         parts.vectors[store::POSITION][i] = position + step;
