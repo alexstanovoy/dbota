@@ -32,6 +32,11 @@ struct Pending(Option<Opening>);
 #[derive(Default)]
 struct Host(Option<Hosted>);
 
+/// LEAVE telling a game whose seat was left that the match is left for good: a leave of its own,
+/// apart from any game session.
+#[derive(Default)]
+struct Leaver(#[cfg(not(target_arch = "wasm32"))] Option<super::leave::LeaveOp>);
+
 /// A canned view drawn instead of the live one (`--menu-preview`).
 #[derive(Resource)]
 pub struct Preview(pub MenuView);
@@ -43,6 +48,7 @@ pub fn plugin(app: &mut App) {
     app.init_resource::<GameEpoch>()
         .insert_non_send(Pending::default())
         .insert_non_send(Host::default())
+        .insert_non_send(Leaver::default())
         .add_systems(
             PreUpdate,
             (escape, guard)
@@ -140,6 +146,9 @@ fn drive(
     trust: Option<NonSend<Trusted>>,
     mut pending: NonSendMut<Pending>,
     mut host: NonSendMut<Host>,
+    #[cfg_attr(target_arch = "wasm32", allow(unused_mut, unused_variables))] mut leaver: NonSendMut<
+        Leaver,
+    >,
     mut session: NonSendMut<Session>,
     mut post: NonSendMut<crate::postgame::PostGame>,
     mut epoch: ResMut<GameEpoch>,
@@ -158,10 +167,6 @@ fn drive(
         exit.write(AppExit::Success);
         return;
     }
-    if core.take_cancel_launch() {
-        // The game being opened is no longer wanted (LEAVE could not reach it in time).
-        pending.0 = None;
-    }
     if core.take_end_hosted() {
         // The local lobby's match was left for good: its server ends.
         host.0 = None;
@@ -169,6 +174,8 @@ fn drive(
     core.set_profile_name(&settings.name);
     core.set_replay_policy(settings.replays);
     core.update();
+    #[cfg(not(target_arch = "wasm32"))]
+    lead_leave(&mut core, &mut leaver, &trust.0, &args);
     if let Some(fetched) = core.take_meta() {
         post.provide(fetched);
     }
@@ -212,6 +219,25 @@ fn drive(
             opened_here(&mut core, Ok(Session(Core::new(Source::Live(opened.link)))));
         }
         Err(err) => core.launch_failed(&err.to_string()),
+    }
+}
+
+/// Starts the leave the menu asks for, and hands it its outcome: the menu takes it only for the
+/// leave under way, so one given up at its deadline is never taken.
+#[cfg(not(target_arch = "wasm32"))]
+fn lead_leave(core: &mut MenuCore, leaver: &mut Leaver, trust: &Trust, args: &crate::Args) {
+    use super::leave::{LeaveOp, Outcome};
+    if let Some((id, launch, until)) = core.take_leave_order() {
+        match super::launch::leave_connector(&launch, trust, args) {
+            Ok((connect, hello)) => leaver.0 = Some(LeaveOp::start(id, connect, hello, until)),
+            Err(error) => core.leave_done(id, Outcome::Unreachable(error.to_string())),
+        }
+    }
+    if let Some(op) = &mut leaver.0
+        && let Some(outcome) = op.poll()
+    {
+        core.leave_done(op.id, outcome);
+        leaver.0 = None;
     }
 }
 

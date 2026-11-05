@@ -13,6 +13,8 @@ mod core;
 mod form;
 mod keep;
 mod launch;
+#[cfg(not(target_arch = "wasm32"))]
+mod leave;
 mod lobbies;
 mod meta_fetch;
 mod overlay;

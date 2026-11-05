@@ -83,6 +83,42 @@ fn hello(launch: &Launch) -> std::io::Result<ClientMsg> {
     }
 }
 
+/// How LEAVE reaches the game of a seat left, and what it greets it with: the seat's own
+/// connection, out of sight and dialed again by nobody but the leave itself.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn leave_connector(
+    launch: &Launch,
+    trust: &Trust,
+    args: &crate::Args,
+) -> std::io::Result<(super::leave::Connect, ClientMsg)> {
+    use bota_client_core::{Endpoint, Link};
+    match launch {
+        Launch::Seat(handoff) => {
+            let (handoff, tls) = (handoff.clone(), trust.radovid.clone());
+            Ok((
+                Box::new(move |_| bota_radovid::connect(&handoff, &tls)),
+                hello(launch)?,
+            ))
+        }
+        Launch::Direct { address, .. } => {
+            let endpoint = Endpoint::parse(address)?.with_tls(trust.direct.clone());
+            Ok((
+                Box::new(move |io| Link::open(endpoint.clone(), io)),
+                hello(launch)?,
+            ))
+        }
+        Launch::Given => {
+            let (address, greeting) = crate::session::given_seat(args)?;
+            let endpoint = Endpoint::parse(&address)?;
+            Ok((
+                Box::new(move |io| Link::open(endpoint.clone(), io)),
+                greeting,
+            ))
+        }
+        _ => Err(std::io::Error::other("no seat of a game to leave")),
+    }
+}
+
 /// A replay and the command line's game are not opened here.
 fn not_here() -> std::io::Error {
     std::io::Error::other("opened by the shell, not over the network")

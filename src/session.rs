@@ -60,21 +60,13 @@ pub fn seat_key_given() -> bool {
     false
 }
 
-/// Joins the server the arguments name, as a player or a spectator.
+/// The server the arguments name and the `Hello` that takes their seat (or watches): with the
+/// seat key of the environment, else the one this run claims seats with.
 #[cfg(not(target_arch = "wasm32"))]
-fn connect(args: &Args) -> std::io::Result<Session> {
-    use bota_client_core::{Net, Transport};
-    use bota_proto::{ClientMsg, Codec, Role, SeatKey};
+pub fn given_seat(args: &Args) -> std::io::Result<(String, bota_proto::ClientMsg)> {
+    use bota_proto::{ClientMsg, Role, SeatKey};
     use std::io::{Error, ErrorKind};
     let addr = args.addr.as_deref().unwrap_or(DEFAULT_ADDR);
-    if !stays_private(addr) {
-        // Plain TCP is first-class (LAN, local play); the player is told what it means.
-        eprintln!(
-            "dbota: plain connection to {}: fine on your LAN, not safe across the internet; use \
-wss:// where the host has a certificate",
-            addr
-        );
-    }
     let key = std::env::var(SEAT_KEY_VAR)
         .ok()
         .filter(|hex| !hex.is_empty())
@@ -90,18 +82,31 @@ wss:// where the host has a certificate",
         // Without one, the seat is claimed with a key of this run's own, so
         // RECONNECT after a disconnect takes the same seat again.
         .or_else(|| (!args.spectate).then(claim).flatten());
-    let mut net = Net::connect(addr)?;
     let role = if args.spectate {
         Role::Spectator
     } else {
         Role::Player
     };
-    net.send(&ClientMsg::hello(
-        role,
-        args.name.as_str(),
-        key,
-        bota_core::WIRE_FINGERPRINT,
-    ))?;
+    let hello = ClientMsg::hello(role, args.name.as_str(), key, bota_core::WIRE_FINGERPRINT);
+    Ok((addr.to_owned(), hello))
+}
+
+/// Joins the server the arguments name, as a player or a spectator.
+#[cfg(not(target_arch = "wasm32"))]
+fn connect(args: &Args) -> std::io::Result<Session> {
+    use bota_client_core::{Net, Transport};
+    use bota_proto::{ClientMsg, Codec};
+    let (addr, hello) = given_seat(args)?;
+    if !stays_private(&addr) {
+        // Plain TCP is first-class (LAN, local play); the player is told what it means.
+        eprintln!(
+            "dbota: plain connection to {}: fine on your LAN, not safe across the internet; use \
+wss:// where the host has a certificate",
+            addr
+        );
+    }
+    let mut net = Net::connect(&addr)?;
+    net.send(&hello)?;
     net.send(&bota_client_core::catalogue())?;
     net.send(&ClientMsg::Compress(Codec::Deflate))?;
     Ok(Session(Core::new(Source::Live(Box::new(net)))))

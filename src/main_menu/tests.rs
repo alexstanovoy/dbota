@@ -2132,8 +2132,9 @@ fn leave_after_a_local_lobby_ends_its_server_and_the_seat() {
     menu.game_started();
     menu.left_game(None, false);
     leave(&mut menu);
-    menu.take_launch().expect("LEAVE tries to tell the game");
-    menu.launch_failed("connection refused");
+    let (id, _, _) = menu.take_leave_order().expect("LEAVE tells the game");
+    assert!(menu.take_launch().is_none(), "no game is opened for it");
+    menu.leave_done(id, super::leave::Outcome::Unreachable("refused".to_owned()));
     assert!(!menu.view().reconnect, "an unreachable game is forgotten");
     assert_eq!(menu.page(), Page::LocalLobby, "the menu stays where it was");
     assert!(
@@ -2163,7 +2164,7 @@ fn leave_after_a_local_lobby_ends_its_server_and_the_seat() {
     menu.left_game(None, false);
     leave(&mut menu);
     assert!(
-        menu.take_launch().is_none(),
+        menu.take_leave_order().is_none(),
         "its own server is not told: it ends"
     );
     assert!(!menu.view().reconnect, "nothing to take again");
@@ -2172,4 +2173,55 @@ fn leave_after_a_local_lobby_ends_its_server_and_the_seat() {
     // As the shell does: the server is let go, and its process with it.
     drop(hosted);
     assert!(!listening(), "the lobby's server process is gone");
+}
+
+/// A leave is known by its id: its outcome is taken while it is under way, and never once it was
+/// given up at its deadline (a connection that completes just then holds nothing of the menu),
+/// nor for another leave.
+#[test]
+fn a_leave_given_up_at_its_deadline_is_never_taken_back() {
+    use super::leave::Outcome;
+    let dir = Scratch::new("leave-deadline");
+    let (mut menu, _trust) = offline("leaver", &dir);
+    let leave_a_game = |menu: &mut MenuCore| {
+        menu.act(Act::Go(Page::LocalLobby));
+        menu.act(Act::Focus(1));
+        while !menu.form.value(1).is_empty() {
+            menu.act(Act::Erase);
+        }
+        menu.act(Act::Type("127.0.0.1:1".to_owned()));
+        menu.act(Act::Direct(false));
+        menu.take_launch().expect("a direct game");
+        menu.game_started();
+        menu.left_game(None, false);
+        menu.act(Act::LeaveMatch);
+        menu.act(Act::Answer(true));
+        let (id, _, _) = menu.take_leave_order().expect("a leave");
+        id
+    };
+    let status = |menu: &MenuCore| menu.view().status.map(|s| s.text);
+
+    let late = leave_a_game(&mut menu);
+    menu.leave_times_out();
+    menu.update();
+    let given_up = Some("The game could not be reached: it is left here".to_owned());
+    assert_eq!(status(&menu), given_up);
+    menu.leave_done(late, Outcome::Left);
+    assert_eq!(
+        status(&menu),
+        given_up,
+        "a leave given up is not taken back"
+    );
+
+    let next = leave_a_game(&mut menu);
+    assert_ne!(next, late);
+    menu.leave_done(late, Outcome::Left);
+    assert_eq!(
+        status(&menu).as_deref(),
+        Some("Leaving the game…"),
+        "nor taken for another leave"
+    );
+    menu.leave_done(next, Outcome::Left);
+    assert_eq!(status(&menu).as_deref(), Some("You left the game"));
+    assert!(!menu.view().reconnect);
 }

@@ -381,12 +381,18 @@ fn a_game_is_disconnected_from_and_rejoined() {
 /// [`leave_tells_a_live_game_the_match_is_left_for_good`]: `seats` seats, quick to start, ended
 /// when dropped.
 fn serve_guarded(seats: u8) -> common::Server {
+    serve_picking(seats, 5)
+}
+
+/// [`serve_guarded`] with `pick_secs` to pick.
+fn serve_picking(seats: u8, pick_secs: u32) -> common::Server {
     let seats = seats.to_string();
+    let pick_secs = pick_secs.to_string();
     common::serve(&[
         "--players",
         &seats,
         "--pick-secs",
-        "5",
+        &pick_secs,
         "--tactical-secs",
         "0",
         "--idle-timeout-secs",
@@ -459,6 +465,34 @@ fn leave_tells_a_live_game_the_match_is_left_for_good() {
     assert_eq!(
         outcome.winner, outcome.team,
         "the seat that stayed won: the leaver left"
+    );
+}
+
+/// LEAVE during the picks: a seat left with DISCONNECT while heroes are being chosen (the clock
+/// long, the other seat holding on unready), then LEAVE and its question answered. The server
+/// cancels the match, as Dota cancels one abandoned during hero selection: it ends with no result
+/// (exit code 3), and the client says it left.
+#[test]
+#[ignore = "draws on the GPU in a headless compositor: tools/visual_check.sh runs it"]
+fn leave_during_the_picks_cancels_the_match() {
+    use bota_client_core::{Link, Transport, greet};
+    use bota_proto::Role;
+    let scratch = Scratch::new("leave-picks");
+    let mut server = serve_picking(2, 600);
+    // The other seat, taken first and never readied: the picks go on.
+    let mut stays = Link::connect(&server.address, Duration::from_secs(60)).expect("connected");
+    greet(&mut stays, Role::Player, "stays", None).expect("a seat");
+    std::thread::spawn(move || while let Ok(Some(_)) = stays.recv() {});
+    let script = "await:game;wait:2;key:Escape;await:menu;click:disconnect;\
+                  await:button:reconnect;click:leave match;await:popup;click:ok;\
+                  await:text:You left the game;await:nobutton:reconnect;key:Escape;await:popup;\
+                  click:ok";
+    let result = run(&scratch, &["--addr", &server.address], script);
+    played("a seat left during the picks", result, script);
+    assert_eq!(
+        server.exit_code(PATIENCE),
+        Some(3),
+        "the server cancelled the match: abandoned, no result"
     );
 }
 

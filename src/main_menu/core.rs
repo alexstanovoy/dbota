@@ -507,11 +507,14 @@ pub struct MenuCore {
     quit: bool,
     /// The local lobby's server is to end: its match was left for good.
     end_hosted: bool,
-    /// LEAVE takes the seat left once more to tell its game the match is left for good, until
-    /// this deadline; an unreachable game is then forgotten.
-    leaving: Option<Instant>,
-    /// The game being opened is no longer wanted, once: the shell drops the opening.
-    cancel_launch: bool,
+    /// The leave under way: LEAVE telling a game whose seat was left that the match is left for
+    /// good (the shell runs it, [`super::leave`]). Its id and deadline: an outcome of another id,
+    /// or one past the deadline, is never taken.
+    leaving: Option<(u64, Instant)>,
+    /// The leave to start, once: its id, the seat's launch and the deadline.
+    leave_order: Option<(u64, Launch, Instant)>,
+    /// The id of the last leave started.
+    leaves: u64,
     /// The player left the game: the shell lets it go.
     leave: bool,
     /// The player confirmed leaving the match: the shell tells the server, then leaves.
@@ -643,7 +646,8 @@ impl MenuCore {
             hosted_at: None,
             end_hosted: false,
             leaving: None,
-            cancel_launch: false,
+            leave_order: None,
+            leaves: 0,
             demo: None,
             demo_asked: None,
             demo_match: None,
@@ -735,9 +739,31 @@ impl MenuCore {
         std::mem::take(&mut self.end_hosted)
     }
 
-    /// The game being opened is no longer wanted, once: the shell lets the opening go.
-    pub fn take_cancel_launch(&mut self) -> bool {
-        std::mem::take(&mut self.cancel_launch)
+    #[cfg(not(target_arch = "wasm32"))]
+    /// The leave the shell is to start, once: its id, the seat's launch and its deadline.
+    pub fn take_leave_order(&mut self) -> Option<(u64, Launch, Instant)> {
+        self.leave_order.take()
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    /// The outcome of the leave `id`: taken only for the leave under way, so a leave given up at
+    /// its deadline, or replaced, never comes back.
+    pub fn leave_done(&mut self, id: u64, outcome: super::leave::Outcome) {
+        use super::leave::Outcome;
+        if self.leaving.map(|(under_way, _)| under_way) != Some(id) {
+            return;
+        }
+        self.leaving = None;
+        self.tell(
+            match outcome {
+                Outcome::Left => "You left the game".to_owned(),
+                Outcome::Refused(_) => "The game holds no seat of yours any more".to_owned(),
+                Outcome::Unreachable(_) => {
+                    "The game could not be reached: it is left here".to_owned()
+                }
+            },
+            false,
+        );
     }
 
     /// The player left the game on screen or under the dashboard, once.
@@ -762,12 +788,6 @@ impl MenuCore {
     /// Whether a game is on screen or under the dashboard.
     pub fn in_game(&self) -> bool {
         self.on_screen.is_some() && !self.launching
-    }
-
-    /// Whether the player has a game to go back to: one is open and it is not the one LEAVE is
-    /// telling the match is left.
-    pub(super) fn game_offered(&self) -> bool {
-        self.in_game() && self.leaving.is_none()
     }
 
     /// The hero of the Demo Hero on screen, if one is.
@@ -822,24 +842,15 @@ impl MenuCore {
         self.launch.take()
     }
 
-    /// The shell has the game on screen (under the menu while LEAVE tells it the match is left:
-    /// the seat leaves at once).
+    /// The shell has the game on screen.
     pub fn game_started(&mut self) {
         self.launching = false;
-        if self.leaving.is_some() {
-            self.leave_game = true;
-        }
     }
 
     /// The shell could not open the game.
     pub fn launch_failed(&mut self, why: &str) {
         self.launching = false;
         let left = self.on_screen.take();
-        if self.leaving.is_some() {
-            // The game LEAVE was to tell cannot be reached: it is forgotten untold.
-            self.left_for_good("The game could not be reached: it is left here");
-            return;
-        }
         self.reconnect = self.last_seat.take();
         self.page = self.rest_page(left);
         self.form = Form::new(self.form_kind(), &self.prefs);
@@ -863,11 +874,6 @@ impl MenuCore {
         self.confirm = None;
         self.game_unsafe = false;
         self.reconnect = self.last_seat.take().filter(|_| !over);
-        if self.leaving.is_some() {
-            // LEAVE told the game the match is left: the menu stays where it was.
-            self.left_for_good("You left the game");
-            return;
-        }
         // A menu that came up under a game reaches the service now.
         if !self.tried_service {
             self.reach_service();
@@ -1044,13 +1050,17 @@ impl MenuCore {
     /// Takes in what the service said since the last frame.
     pub fn update(&mut self) {
         self.shelf.take();
-        if self.launching && self.leaving.is_some_and(|until| Instant::now() >= until) {
-            // The game LEAVE was to tell did not answer in time: it is forgotten untold.
-            self.launching = false;
-            self.launch = None;
-            self.on_screen = None;
-            self.cancel_launch = true;
-            self.left_for_good("The game could not be reached: it is left here");
+        if self
+            .leaving
+            .is_some_and(|(_, until)| Instant::now() >= until)
+        {
+            // The game LEAVE was telling did not answer in time: it is forgotten untold, and the
+            // leave's own outcome, should it come, is not taken.
+            self.leaving = None;
+            self.tell(
+                "The game could not be reached: it is left here".to_owned(),
+                false,
+            );
         }
         self.keep_update();
         if self.page == Page::Replays {
@@ -1649,20 +1659,20 @@ impl MenuCore {
             },
             Act::Back => self.back(),
             Act::Dashboard => {
-                if self.page == Page::Game && self.game_offered() {
+                if self.page == Page::Game && self.in_game() {
                     let top = self.rest_page(None);
                     self.go_form(top);
                 }
             }
             Act::ReturnToGame => {
-                if self.game_offered() {
+                if self.in_game() {
                     self.confirm = None;
                     self.plain_host = None;
                     self.page = Page::Game;
                 }
             }
             Act::Disconnect => {
-                if self.game_offered() {
+                if self.in_game() {
                     match self.kind {
                         // A Demo Hero is nobody else's to keep: leaving it ends it.
                         GameKind::Play if self.demo_hero().is_some() => self.leave_game = true,
@@ -1672,7 +1682,7 @@ impl MenuCore {
                 }
             }
             Act::LeaveGame => {
-                if self.game_offered() && self.kind == GameKind::Play && self.game_unsafe {
+                if self.in_game() && self.kind == GameKind::Play && self.game_unsafe {
                     self.confirm = Some(Confirm::LeaveGame);
                 }
             }
@@ -1707,7 +1717,7 @@ impl MenuCore {
             Page::Register => self.go_form(Page::Login),
             Page::Lobby => self.go(Page::Lobbies),
             page if page != top => self.go(top),
-            _ if self.game_offered() => self.act(Act::ReturnToGame),
+            _ if self.in_game() => self.act(Act::ReturnToGame),
             // A browser's page is closed by the browser.
             _ if cfg!(target_arch = "wasm32") => {}
             _ => self.confirm = Some(Confirm::Quit),
@@ -1952,9 +1962,9 @@ impl MenuCore {
 
     /// LEAVE, confirmed: the client is done with the game RECONNECT would go back to. A game this
     /// client hosts ends with its server; any other is told the match is left for good, as LEAVE
-    /// GAME tells it, by taking the seat once more without showing it ([`LEAVE_REACH`] at most:
-    /// a game that cannot be reached, its server dead, is forgotten). A service's match stays the
-    /// service's: MY GAMES lists it while the service says it runs.
+    /// GAME tells it ([`super::leave`]: the seat taken once more out of sight, the surrender once
+    /// admitted), within [`LEAVE_REACH`]; one that cannot be reached is forgotten untold. A
+    /// service's match stays the service's: MY GAMES lists it while the service says it runs.
     fn leave_left(&mut self) {
         let Some(left) = self.reconnect.take() else {
             return;
@@ -1965,21 +1975,24 @@ impl MenuCore {
             self.end_hosted = true;
             return;
         }
-        let page = self.page;
-        self.start(left);
-        if self.launching {
-            self.leaving = Some(Instant::now() + LEAVE_REACH);
-            self.page = page;
-            self.tell("Leaving the game…".to_owned(), false);
+        if cfg!(target_arch = "wasm32") {
+            // A browser opens no connection out of sight: the game is forgotten untold.
+            self.tell("You left the game".to_owned(), false);
+            return;
         }
+        self.leaves += 1;
+        let until = Instant::now() + LEAVE_REACH;
+        self.leaving = Some((self.leaves, until));
+        self.leave_order = Some((self.leaves, left, until));
+        self.tell("Leaving the game…".to_owned(), false);
     }
 
-    /// The game LEAVE was telling is done with: nothing of it is kept to take again.
-    fn left_for_good(&mut self, why: &str) {
-        self.leaving = None;
-        self.reconnect = None;
-        self.last_seat = None;
-        self.tell(why.to_owned(), false);
+    /// The leave under way runs out of time now, as if its deadline had passed.
+    #[cfg(test)]
+    pub(super) fn leave_times_out(&mut self) {
+        if let Some((_, until)) = &mut self.leaving {
+            *until = Instant::now();
+        }
     }
 
     /// A game by address: TCP (`host:port`, `tcp://`) or a WebSocket URL.

@@ -32,6 +32,18 @@ impl Server {
         let _ = self.child.kill();
         let _ = self.child.wait();
     }
+
+    /// The server's exit code once it ends by itself, waited for `within` at most.
+    pub fn exit_code(&mut self, within: Duration) -> Option<i32> {
+        let deadline = Instant::now() + within;
+        while Instant::now() < deadline {
+            if let Ok(Some(status)) = self.child.try_wait() {
+                return status.code();
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        None
+    }
 }
 
 impl Drop for Server {

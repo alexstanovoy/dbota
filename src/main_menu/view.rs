@@ -386,9 +386,9 @@ impl MenuCore {
             searches,
             waits,
             offer,
-            game: self.game_offered().then_some(self.kind),
-            can_leave_game: self.game_offered() && self.kind == GameKind::Play && self.game_unsafe,
-            reconnect: self.reconnect.is_some() && !self.game_offered() && !self.launching,
+            game: self.in_game().then_some(self.kind),
+            can_leave_game: self.in_game() && self.kind == GameKind::Play && self.game_unsafe,
+            reconnect: self.reconnect.is_some() && !self.in_game() && !self.launching,
             confirm: self.confirm.map(|c| match c {
                 Confirm::Quit => ConfirmView {
                     title: QUIT_TITLE,
