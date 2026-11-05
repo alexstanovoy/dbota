@@ -16,7 +16,7 @@ use std::sync::Arc;
 
 use bevy::tasks::{AsyncComputeTaskPool, Task, block_on, futures_lite::future::poll_once};
 use bota_client_core::SightGround;
-use bota_proto::{SeenBy, Team, UnitKind, UnitView};
+use bota_proto::{SeenBy, Team, UnitKind, UnitView, WorldView};
 
 use crate::session::Session;
 use crate::terrain::CELL;
@@ -50,9 +50,23 @@ pub struct FogGrid {
     stamp: Option<(u32, Option<Team>)>,
     /// How dark each cell is drawn now, 0 lit to 1 fogged.
     shade: Vec<f32>,
+    /// A different viewer must not inherit the old viewer's clear texels, even for one frame.
+    clear_veil: bool,
 }
 
 impl FogGrid {
+    fn forget_sight(&mut self, n: usize, team: Option<Team>, on: bool) {
+        self.team = team;
+        self.on = on;
+        self.n = n;
+        self.cells.resize(n * n, false);
+        self.cells.fill(!on);
+        self.shade.resize(n * n, 1.0);
+        self.shade.fill(if on { 1.0 } else { 0.0 });
+        self.stamp = None;
+        self.clear_veil = true;
+    }
+
     /// Whether the fog of the watched side hides a unit, missile or ground
     /// item of a whole-map view, which says which sides see it (`seen_by`):
     /// one side's fog hides what that side does not see, both sides' together
@@ -217,10 +231,9 @@ pub fn plugin(app: &mut App) {
     embedded_asset!(app, "fog.wgsl");
     app.init_resource::<FogGrid>()
         .add_plugins(MaterialPlugin::<FoggedMaterial>::default())
-        .add_systems(
-            Update,
-            (work_out, spawn_veil, shade_veil, cast_veil).chain(),
-        )
+        // Both snapshot ingestion and keyboard intents choose the viewer before its fog is read.
+        .add_systems(PreUpdate, work_out.after(crate::input::keys))
+        .add_systems(Update, (spawn_veil, shade_veil, cast_veil).chain())
         .add_systems(
             PostUpdate,
             (wrap, shade_heroes)
@@ -234,7 +247,12 @@ pub fn plugin(app: &mut App) {
 }
 
 /// Works out the lit cells when a new tick or a new side comes.
-fn work_out(session: NonSend<Session>, mut grid: ResMut<FogGrid>, mut lighting: Local<Lighting>) {
+fn work_out(
+    session: NonSend<Session>,
+    epoch: Res<crate::main_menu::GameEpoch>,
+    mut grid: ResMut<FogGrid>,
+    mut lighting: Local<Lighting>,
+) {
     let core = &session.0;
     let team = core.fog_team();
     let n = core.terrain_cells();
@@ -245,16 +263,15 @@ fn work_out(session: NonSend<Session>, mut grid: ResMut<FogGrid>, mut lighting: 
     // seeing everything) is shown with the fog of both sides together:
     // lit wherever either side's units see.
     let union = team.is_none() && core.my_slot.is_none() && view.viewer.is_none();
-    grid.team = team;
-    grid.on = team.is_some() || union;
+    let on = team.is_some() || union;
+    if grid.team != team || grid.on != on || grid.n != n || lighting.epoch != epoch.0 {
+        grid.forget_sight(n, team, on);
+        lighting.task = None;
+        lighting.ground = None;
+        lighting.epoch = epoch.0;
+    }
     if n == 0 {
         return;
-    }
-    // Laid with no fog too: its materials also draw the paths and clarity.
-    if grid.n != n {
-        grid.n = n;
-        grid.cells = vec![true; n * n];
-        grid.shade = vec![0.0; n * n];
     }
     if !grid.on {
         return;
@@ -264,7 +281,7 @@ fn work_out(session: NonSend<Session>, mut grid: ResMut<FogGrid>, mut lighting: 
         && let Some((stamp, cells)) = block_on(poll_once(task))
     {
         lighting.task = None;
-        if cells.len() == n * n {
+        if stamp.1 == team && cells.len() == n * n {
             grid.cells = cells;
             grid.stamp = Some(stamp);
         }
@@ -289,8 +306,16 @@ fn work_out(session: NonSend<Session>, mut grid: ResMut<FogGrid>, mut lighting: 
         grid.on = false;
         return;
     };
-    let view = view.clone();
-    lighting.task = Some(AsyncComputeTaskPool::get().spawn(async move {
+    lighting.task = Some(start_lighting(ground, view.clone(), team, n));
+}
+
+fn start_lighting(
+    ground: Arc<SightGround>,
+    view: WorldView,
+    team: Option<Team>,
+    n: usize,
+) -> Task<((u32, Option<Team>), Vec<bool>)> {
+    AsyncComputeTaskPool::get().spawn(async move {
         let mut cells = vec![false; n * n];
         match team {
             Some(team) => ground.lit(&view, team, &mut cells),
@@ -304,12 +329,13 @@ fn work_out(session: NonSend<Session>, mut grid: ResMut<FogGrid>, mut lighting: 
             }
         }
         ((view.tick, team), cells)
-    }));
+    })
 }
 
 /// The lighting under way on another thread, and the ground it reads.
 #[derive(Default)]
 struct Lighting {
+    epoch: u32,
     task: Option<Task<((u32, Option<Team>), Vec<bool>)>>,
     /// The ground, laid again when the forest changes.
     ground: Option<Arc<SightGround>>,
@@ -575,6 +601,9 @@ fn shade_veil(
             }
         }
     }
+    if grid.clear_veil {
+        blur.changed.fill(true);
+    }
     if !blur.changed.contains(&true) {
         return;
     }
@@ -591,6 +620,7 @@ fn shade_veil(
     let Some(data) = image.data.as_mut().filter(|data| data.len() == n * n * 4) else {
         return;
     };
+    grid.clear_veil = false;
     // A tent blur over a cell either way rounds the border's cell steps:
     // 1-2-1 along each row, then along each column, the edges repeated.
     let Blur { rows, changed, .. } = &mut *blur;

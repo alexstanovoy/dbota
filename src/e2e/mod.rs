@@ -15,6 +15,8 @@ mod courier;
 mod courier_spinner;
 mod cursors;
 mod death;
+mod fog;
+mod fog_pov;
 mod fx;
 mod ground_items;
 pub(crate) mod harness;

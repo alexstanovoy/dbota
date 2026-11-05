@@ -74,12 +74,16 @@ pub fn plugin(app: &mut App) {
         .init_resource::<ControlGroups>()
         .add_systems(PreUpdate, mute.before(crate::keys::fire))
         .add_systems(
+            PreUpdate,
+            (over_hud, typing, crate::chat::typing, keys)
+                .chain()
+                .after(crate::session::pump)
+                .after(bevy::ui::UiSystems::Focus)
+                .after(crate::keys::fire),
+        )
+        .add_systems(
             Update,
             (
-                over_hud,
-                typing,
-                crate::chat::typing,
-                keys,
                 channel_stops,
                 crate::pick::update,
                 crate::pings::send,
@@ -210,7 +214,7 @@ fn typing(
 
 /// What the bindings fired, done.
 #[allow(clippy::too_many_arguments)]
-fn keys(
+pub(crate) fn keys(
     mut session: NonSendMut<Session>,
     fired: Res<Fired>,
     keys: Res<ButtonInput<KeyCode>>,
