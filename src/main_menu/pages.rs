@@ -250,7 +250,8 @@ fn top_bar(kit: &mut Kit, root: Entity, view: &MenuView) {
 }
 
 /// The corner where Dota's play button stands: over a game, RETURN TO GAME
-/// and the way out of it (DISCONNECT); after leaving one's seat, RECONNECT.
+/// and the way out of it (DISCONNECT); after leaving one's seat, RECONNECT
+/// and LEAVE.
 fn play_area(kit: &mut Kit, root: Entity, view: &MenuView) {
     if view.game.is_none() && !view.reconnect {
         return;
@@ -283,6 +284,9 @@ fn play_area(kit: &mut Kit, root: Entity, view: &MenuView) {
     } else {
         let again = kit.button(corner, "RECONNECT", Act::Reconnect, GREEN, 64.0);
         kit.commands.entity(again).insert(Name::new("reconnect"));
+        // Dota's LEAVE: a way to be done with a game that cannot be taken again (its server died).
+        let leave = kit.button(corner, "LEAVE", Act::LeaveMatch, RED, 40.0);
+        kit.commands.entity(leave).insert(Name::new("leave match"));
     }
 }
 

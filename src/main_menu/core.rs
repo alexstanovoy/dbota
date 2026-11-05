@@ -160,6 +160,9 @@ pub enum Act {
     LeaveGame,
     /// Takes the seat of the game left again.
     Reconnect,
+    /// Dota's LEAVE beside RECONNECT: done with the game left, its seat is not taken again from
+    /// here (a server that died cannot give it back).
+    LeaveMatch,
     /// The rules a new local lobby plays by.
     Rules(LocalRules),
     /// In a lobby: sits in a slot (or none, looking on); the member being moved is put there.
@@ -493,6 +496,10 @@ pub struct MenuCore {
     last_seat: Option<Launch>,
     /// The player asked to quit: the shell ends the client.
     quit: bool,
+    /// The port of the game server this client started for its local lobby, while it may run.
+    hosted_port: Option<u16>,
+    /// The local lobby's server is to end: its match was left for good.
+    end_hosted: bool,
     /// The player left the game: the shell lets it go.
     leave: bool,
     /// The player confirmed leaving the match: the shell tells the server, then leaves.
@@ -622,6 +629,8 @@ impl MenuCore {
             ladder: Vec::new(),
             server_binary: None,
             hosted_at: None,
+            hosted_port: None,
+            end_hosted: false,
             demo: None,
             demo_asked: None,
             demo_match: None,
@@ -706,6 +715,11 @@ impl MenuCore {
     /// The player confirmed quitting, once.
     pub fn take_quit(&mut self) -> bool {
         std::mem::take(&mut self.quit)
+    }
+
+    /// The local lobby's game server is to end, once: the shell lets it go.
+    pub fn take_end_hosted(&mut self) -> bool {
+        std::mem::take(&mut self.end_hosted)
     }
 
     /// The player left the game on screen or under the dashboard, once.
@@ -1428,6 +1442,9 @@ impl MenuCore {
             Launch::Given => OnScreen::Given,
         });
         self.keep_start(&launch);
+        if let Launch::Host { port, .. } = &launch {
+            self.hosted_port = Some(*port);
+        }
         self.hosted_at = match &launch {
             Launch::Host {
                 port, lan: true, ..
@@ -1619,6 +1636,7 @@ impl MenuCore {
                     self.start(launch);
                 }
             }
+            Act::LeaveMatch => self.leave_match(),
         }
     }
 
@@ -1880,6 +1898,23 @@ impl MenuCore {
         if let Some((state, _)) = &self.lobby {
             let msg = msg(state.id);
             self.ask(msg, Asked::Lobby);
+        }
+    }
+
+    /// LEAVE: the client is done with the game RECONNECT would go back to. Nothing of it is kept
+    /// to take again, the notice about it goes, and when it is the local lobby's own game, the
+    /// server this client started for it ends too. A service's match stays the service's: MY
+    /// GAMES lists it while the service says it runs.
+    fn leave_match(&mut self) {
+        let Some(left) = self.reconnect.take() else {
+            return;
+        };
+        self.last_seat = None;
+        self.status = None;
+        let hosted = self.hosted_port.map(|port| format!("127.0.0.1:{port}"));
+        if matches!(&left, Launch::Direct { address, .. } if Some(address) == hosted.as_ref()) {
+            self.hosted_port = None;
+            self.end_hosted = true;
         }
     }
 

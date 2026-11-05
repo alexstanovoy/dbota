@@ -158,6 +158,10 @@ fn drive(
         exit.write(AppExit::Success);
         return;
     }
+    if core.take_end_hosted() {
+        // The local lobby's match was left for good: its server ends.
+        host.0 = None;
+    }
     core.set_profile_name(&settings.name);
     core.set_replay_policy(settings.replays);
     core.update();

@@ -10,11 +10,11 @@
 //!   settings file's names);
 //! - `click:NAME`: the button of that name once it shows (the label in
 //!   lower case, or the name the menu gives it: `quit`, `ok`, `cancel`,
-//!   `return`, `disconnect`, `reconnect`; `join <lobby>` in the list of
-//!   lobbies; in a game `pick ready` and `pick <hero>`), or a text field of
-//!   the menu by its label in lower case (the keyboard goes into it); a
-//!   button shown dimmed (`READY` alone in a lobby) ends the client with
-//!   exit code 2 at once;
+//!   `return`, `disconnect`, `reconnect`, `leave match`; `join <lobby>` in
+//!   the list of lobbies; in a game `pick ready` and `pick <hero>`), or a
+//!   text field of the menu by its label in lower case (the keyboard goes
+//!   into it); a button shown dimmed (`READY` alone in a lobby) ends the
+//!   client with exit code 2 at once;
 //! - `await:WHAT`: until `menu` covers the screen, a `game` is on it, a
 //!   `popup` (a question, the match-found offer or a lobby's password
 //!   dialog) is up or `nopopup` (a question or the dialog) is not, or a

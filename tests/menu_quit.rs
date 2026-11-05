@@ -377,6 +377,32 @@ fn a_game_is_disconnected_from_and_rejoined() {
     played("a live game", result, script);
 }
 
+/// The owner's report: when the game server died, the client offered only RECONNECT, which
+/// cannot succeed, and no way to be done with the match. A live game left with DISCONNECT, its
+/// server then killed: RECONNECT fails against the dead server and is offered again; LEAVE,
+/// beside it as Dota has it, ends the client's side of the match: neither button is left, and
+/// Escape on the menu asks to quit, nothing being under it.
+#[test]
+#[ignore = "draws on the GPU in a headless compositor: tools/visual_check.sh runs it"]
+fn leave_ends_a_match_whose_server_died() {
+    let scratch = Scratch::new("dead");
+    let (mut server, address) = serve();
+    let script = "await:game;click:pick shadow fiend;click:pick ready;await:level:1;\
+                  key:Escape;await:menu;click:disconnect;await:button:reconnect;wait:3;\
+                  click:reconnect;await:text:Could not join the game;await:button:reconnect;\
+                  shot:dead-server.png;click:leave match;await:nobutton:reconnect;\
+                  await:nobutton:leave match;wait:1;shot:dead-server-left.png;key:Escape;\
+                  await:popup;click:ok";
+    let mut client = Running::start(&scratch, &["--addr", &address], script, common::client());
+    // The server dies while the seat is left (`wait:3` gives the kill its time): a server that
+    // dies under a live game sends the client to the same place, RECONNECT, but sooner or later
+    // as its redialing gives up.
+    client.until_played("await:button:reconnect");
+    let _ = server.kill();
+    let _ = server.wait();
+    played("a match whose server died", client.finish(), script);
+}
+
 /// With no service configured the menu opens on the local pages, and a game's address typed
 /// with `text:` (as an input method commits it) joins that game.
 #[test]

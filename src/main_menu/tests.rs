@@ -2108,3 +2108,36 @@ fn a_refused_join_says_why_and_lists_the_lobbies_again() {
         Some("That lobby is gone")
     );
 }
+
+/// LEAVE beside RECONNECT: the seat is not offered again. After another game it leaves the local
+/// lobby's game server alone; after the local lobby's own game, that server ends with it.
+#[test]
+fn leave_after_a_local_lobby_ends_its_server_and_the_seat() {
+    let dir = Scratch::new("leave-host");
+    let (mut menu, _trust) = offline("host", &dir);
+    let play_and_leave = |menu: &mut MenuCore| {
+        menu.game_started();
+        menu.left_game(None, false);
+        assert!(menu.view().reconnect, "RECONNECT offered");
+        menu.act(Act::LeaveMatch);
+        assert!(!menu.view().reconnect, "nothing to take again");
+    };
+    host_launch(&mut menu, None);
+    menu.game_started();
+    menu.left_game(None, false);
+    menu.act(Act::Go(Page::LocalLobby));
+    menu.act(Act::Focus(1));
+    menu.act(Act::Type("127.0.0.1:1".to_owned()));
+    menu.act(Act::Direct(false));
+    menu.take_launch().expect("a direct game");
+    play_and_leave(&mut menu);
+    assert!(
+        !menu.take_end_hosted(),
+        "another game's LEAVE ends no server"
+    );
+
+    host_launch(&mut menu, None);
+    play_and_leave(&mut menu);
+    assert!(menu.take_end_hosted(), "the lobby's server ends");
+    assert!(!menu.take_end_hosted(), "once");
+}
