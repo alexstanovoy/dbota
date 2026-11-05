@@ -98,6 +98,8 @@ struct Stage<'w, 's> {
     heard: ResMut<'w, Heard>,
     mixer: ResMut<'w, crate::mixer::Mixer>,
     time: Res<'w, Time>,
+    /// The files and events of each prefix of sounds, found once.
+    files: Local<'s, HashMap<String, Vec<(String, String)>>>,
 }
 
 impl Stage<'_, '_> {
@@ -105,8 +107,8 @@ impl Stage<'_, '_> {
     /// from the camera, as the mixer lets it. A sound that loops sounds until `owner` stops the
     /// voice returned; the sounds counted as heard are those the mixer took.
     fn sound(&mut self, prefix: &str, at: Vec3, n: u32, owner: Owner) -> Started {
-        let files = self.manifest.sounds_with_events(prefix);
-        let Some((path, event)) = files.get(n as usize % files.len().max(1)) else {
+        let files = self.files_of(prefix);
+        let Some((path, event)) = files.get(n as usize % files.len().max(1)).cloned() else {
             return Started::Refused;
         };
         let focus = Vec2::new(self.camera.focus.x, -self.camera.focus.z);
@@ -116,7 +118,7 @@ impl Stage<'_, '_> {
             return Started::Refused;
         }
         let request = Request {
-            event,
+            event: &event,
             owner,
             merge: None,
             at: Some(place),
@@ -133,11 +135,20 @@ impl Stage<'_, '_> {
     }
 
     /// Whether the sounds under `prefix` loop: one that does is owned, and kept sounding.
-    fn loops(&self, prefix: &str) -> bool {
-        let files = self.manifest.sounds_with_events(prefix);
-        files
+    fn loops(&mut self, prefix: &str) -> bool {
+        let event = self
+            .files_of(prefix)
             .first()
-            .is_some_and(|(_, event)| self.mixer.loops(event))
+            .map(|(_, event)| event.clone());
+        event.is_some_and(|event| self.mixer.loops(&event))
+    }
+
+    /// The files of the sounds under `prefix` with the events they play, found once.
+    fn files_of(&mut self, prefix: &str) -> &[(String, String)] {
+        let manifest = &self.manifest;
+        self.files
+            .entry(prefix.to_owned())
+            .or_insert_with(|| manifest.sounds_with_events(prefix))
     }
 
     /// Moves a looping voice with its source: it is as loud as the camera's distance leaves it.
@@ -152,9 +163,9 @@ impl Stage<'_, '_> {
         self.mixer.follow(voice, place, gain);
     }
 
-    /// Stops every voice: no match is on to sound.
-    fn silence_all(&mut self) {
-        self.mixer.stop_all(&mut self.commands);
+    /// Stops every loop: no match is on to sound them.
+    fn silence_loops(&mut self) {
+        self.mixer.stop_loops(&mut self.commands);
     }
 
     /// Stops a voice that [`Stage::sound`] started, as its event fades out.

@@ -325,14 +325,12 @@ pub fn soundscapes(text: &str, max: usize) -> (Vec<ScapeLine>, Vec<ScapeSound>) 
     (scapes, sounds)
 }
 
-/// The largest values an event of `events.txt` holds (the importer clamps to the same; a test
-/// holds the two together): the install's data drives timers, so each has a bound.
-pub const MAX_EVENT_DURATION: f32 = 120.0;
-pub const MAX_EVENT_FADE_OUT: f32 = 10.0;
-pub const MAX_EVENT_BLOCK_SECS: f32 = 5.0;
-pub const MAX_EVENT_BLOCK_UNITS: f32 = 10_000.0;
-pub const MAX_EVENT_LIMIT: u32 = 256;
-pub const MAX_EVENT_STOP_AT: f32 = 600.0;
+/// The largest values an event of `events.txt` holds, the importer's own: the install's data
+/// drives timers, so each has a bound.
+pub use dbota_import::text::{
+    MAX_EVENT_BLOCK_SECS, MAX_EVENT_BLOCK_UNITS, MAX_EVENT_DURATION, MAX_EVENT_FADE_OUT,
+    MAX_EVENT_LIMIT, MAX_EVENT_STOP_AT,
+};
 
 /// A sound event's limits, as `sounds/events.txt` lists them.
 #[derive(Clone, Debug, PartialEq)]
@@ -427,10 +425,9 @@ fn sound(scape: &str, looped: bool, w: [&str; 5], paths: &[&str]) -> Option<Scap
 
 #[cfg(test)]
 mod tests {
-    /// The install's data drives timers: a number past its largest is clamped, and the client's
-    /// largest are the importer's.
+    /// The install's data drives timers: a number past its largest is clamped.
     #[test]
-    fn event_numbers_are_clamped_to_their_largest_and_agree_with_the_importer() {
+    fn event_numbers_are_clamped_to_their_largest() {
         let line = "event Big 1 9999 9999 9999 9999999 9999 1 1 9999\n";
         let [event] = &sound_events(line, 8)[..] else {
             panic!("one event");
@@ -444,13 +441,6 @@ mod tests {
             event.stop_at.map(|d| d.as_secs_f32()),
             Some(MAX_EVENT_STOP_AT)
         );
-        use dbota_import::text as importer;
-        assert_eq!(MAX_EVENT_DURATION, importer::MAX_EVENT_DURATION);
-        assert_eq!(MAX_EVENT_FADE_OUT, importer::MAX_EVENT_FADE_OUT);
-        assert_eq!(MAX_EVENT_BLOCK_SECS, importer::MAX_EVENT_BLOCK_SECS);
-        assert_eq!(MAX_EVENT_BLOCK_UNITS, importer::MAX_EVENT_BLOCK_UNITS);
-        assert_eq!(MAX_EVENT_LIMIT, importer::MAX_EVENT_LIMIT);
-        assert_eq!(MAX_EVENT_STOP_AT, importer::MAX_EVENT_STOP_AT);
     }
 
     use super::*;

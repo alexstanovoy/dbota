@@ -88,7 +88,7 @@ fn the_plan_takes_every_line_and_the_tooltips() {
          text ability 3 pudge_innate_graft_flesh\n",
     )
     .expect("a plan");
-    assert_eq!(plan.items.len(), 11);
+    assert_eq!(plan.items.len(), 12);
     assert!(matches!(
         &plan.items[0],
         Item::Model { anims, skeleton: true, .. } if anims == &["idle"]
@@ -115,23 +115,54 @@ fn the_plan_takes_every_line_and_the_tooltips() {
     ));
     assert!(matches!(
         &plan.items[7],
+        Item::SoundEvents { events, out, .. }
+            if events.iter().eq(["e"]) && out == "sounds/events.txt"
+    ));
+    assert!(matches!(
+        &plan.items[8],
         Item::Tooltips { wanted, out, .. }
             if wanted.names == ["item_boots", "nevermore_requiem", "pudge_innate_graft_flesh"]
                 && wanted.heroes == ["nevermore"] && out == "text/tooltips.json"
     ));
     assert!(matches!(
-        &plan.items[9],
+        &plan.items[10],
         Item::Icons {
             abilities: false,
             ..
         }
     ));
     assert!(matches!(
-        &plan.items[8],
+        &plan.items[9],
         Item::Labels { keys, out, .. }
             if keys == &[("loc/dota_english.txt".to_owned(), "DOTA_HUD_Armor".to_owned())]
                 && out == "text/labels.json"
     ));
+}
+
+/// A voice line's name is a scene of the voice scripts, not a sound event: the plan asks the
+/// sound event files for the sound events only, so that no real import reports every voice line
+/// as missing.
+#[test]
+fn the_plan_asks_for_sound_events_and_not_for_voice_lines() {
+    let plan = Plan::parse(
+        "sound a sounds/weapons/a.vsnd_c sounds/weapons/a.wav event=Hero_A.Attack\n\
+         sound b sounds/weapons/b.vsnd_c sounds/weapons/b.wav event=Hero_A.Attack\n\
+         sound v sounds/vo/pudge/v.vsnd_c sounds/vo/pudge/v.mp3 event=pudge_pud_move_14\n\
+         sound n sounds/vo/announcer/n.vsnd_c sounds/vo/announcer/n.mp3 event=announcer_n\n",
+        "",
+    )
+    .expect("a plan");
+    let asked: Vec<&std::collections::BTreeSet<String>> = plan
+        .items
+        .iter()
+        .filter_map(|item| match item {
+            Item::SoundEvents { events, .. } => Some(events),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(asked.len(), 1);
+    let events: Vec<&str> = asked[0].iter().map(String::as_str).collect();
+    assert_eq!(events, ["Hero_A.Attack"]);
 }
 
 /// A line the importer cannot read is told, never dropped: a shop line without its words.

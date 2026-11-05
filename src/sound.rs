@@ -7,12 +7,12 @@ use std::time::Duration;
 
 use bevy::{audio::Volume, prelude::*};
 use bota_client_core::{Cue, CueKind};
-use bota_proto::{HeroId, SlotId, Team, TeleportView, UnitKind};
+use bota_proto::{EntityId, HeroId, SlotId, Team, TeleportView, UnitKind};
 
 use crate::camera::RtsCamera;
 use crate::config::Settings;
 use crate::manifest::Manifest;
-use crate::mixer::{Merge, Mixer, Owner, Request, Started};
+use crate::mixer::{Mixer, Owner, Request, Started};
 use crate::session::Session;
 
 /// World units from the camera within which a sound is heard at full.
@@ -368,9 +368,9 @@ struct Sounder<'a, 'w, 's> {
 }
 
 impl Sounder<'_, '_, '_> {
-    /// Sounds one of a kind's sounds at `gain` before the distance, where `at` is; blows on what
-    /// `merge` names merge into one sound.
-    fn sound(&mut self, kind: Kind, gain: f32, at: Option<(f32, f32)>, merge: Option<Merge>) {
+    /// Sounds one of a kind's sounds at `gain` before the distance, where `at` is; blows on the
+    /// unit `merge` names merge into one sound.
+    fn sound(&mut self, kind: Kind, gain: f32, at: Option<(f32, f32)>, merge: Option<EntityId>) {
         let fall = at.map_or(1.0, |at| fall_off(at, self.focus));
         let Some((_, voice)) = self.voices.0.iter_mut().find(|(k, _)| *k == kind) else {
             return;
@@ -431,7 +431,7 @@ impl Sounder<'_, '_, '_> {
                     };
                     let (event, merge) = match kind {
                         CueKind::Attack => (Event::Attack, None),
-                        CueKind::Hit => (Event::Impact, Some(Merge::Hero(hero))),
+                        CueKind::Hit => (Event::Impact, cue.target),
                         _ => (Event::Death, None),
                     };
                     self.sound(
@@ -673,7 +673,7 @@ fn shots(core: &bota_client_core::App, fog: &crate::fog::FogGrid, sound: &mut So
                 row(Subject::RangedCreep, Event::Impact, Some(side)),
                 0.35,
                 at,
-                p.target.map(Merge::Unit),
+                p.target,
             );
         }
     }
@@ -717,7 +717,7 @@ fn swings(core: &bota_client_core::App, fog: &crate::fog::FogGrid, sound: &mut S
                 row(Subject::MeleeCreep, Event::Attack, None),
                 MELEE_GAIN,
                 at,
-                target.map(Merge::Unit),
+                target,
             );
         }
     }

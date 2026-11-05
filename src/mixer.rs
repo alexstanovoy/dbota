@@ -3,21 +3,24 @@
 //! importer) say how many instances of an event may sound at once and which repeats are
 //! blocked; a sound that loops sounds until its owner stops it. Every sound of the world's
 //! units starts through [`Mixer::start`] and a looping one ends through [`Mixer::stop`] (or at
-//! once, through [`Mixer::stop_all`], when the match is gone), so that nothing sounds without a
+//! once, through [`Mixer::stop_loops`], when the match is gone), so that nothing sounds without a
 //! bound and nothing outlives what it sounds for.
+//!
+//! A voice stolen while it fades out is cut where it is: the fade is for the sound that is stopped,
+//! not for the one that makes room.
 //!
 //! Outside the mixer, and so outside its [`MAX_VOICES`]: the portal hums (`sound.rs`, which end
 //! with their teleports), the soundscape's loops (`soundscape.rs`, at most 24 by its own bound),
 //! the voice lines (`voice.rs`) and the announcer.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::time::Duration;
 
 use bevy::{
     audio::{AudioSink, AudioSinkPlayback, PlaybackSettings, Volume},
     prelude::*,
 };
-use bota_proto::{EntityId, HeroId};
+use bota_proto::EntityId;
 
 use crate::cache_text::EventLine;
 use crate::manifest::Manifest;
@@ -41,20 +44,13 @@ pub enum Owner {
     Unit(EntityId),
 }
 
-/// What blows are merged by: those on one unit, or on one hero where only the hero is told.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Merge {
-    Unit(EntityId),
-    Hero(HeroId),
-}
-
 /// What asks to be sounded.
 pub struct Request<'a> {
     /// The Dota event the sound plays; one the cache does not know has no limits.
     pub event: &'a str,
     pub owner: Owner,
-    /// Whom the sound is about: blows on one unit merge.
-    pub merge: Option<Merge>,
+    /// The unit a blow lands on: blows on one unit merge.
+    pub merge: Option<EntityId>,
     /// Where it sounds, in the world; none for a sound heard wherever the camera is.
     pub at: Option<(f32, f32)>,
     pub gain: f32,
@@ -77,9 +73,8 @@ pub enum Started {
 pub struct Mixer {
     events: HashMap<String, EventLine>,
     voices: Vec<Voice>,
-    /// Every accepted start, for the tests: the event, what it merges by, and when.
-    #[cfg(test)]
-    log: Vec<(String, Option<Merge>, Duration)>,
+    /// The events a loop with no owner was refused for, told once each.
+    warned: HashSet<String>,
 }
 
 /// One sound sounding.
@@ -89,7 +84,7 @@ struct Voice {
     looping: bool,
     /// Whose sound it is, for the limits that count an entity's own.
     owner: Owner,
-    merge: Option<Merge>,
+    merge: Option<EntityId>,
     at: Option<(f32, f32)>,
     started: Duration,
     /// When it ends by itself; a loop never.
@@ -141,7 +136,7 @@ impl Mixer {
         self.drop_ended(commands, now);
         let rules = self.events.get(request.event).cloned();
         let looping = rules.as_ref().is_some_and(|r| r.looping);
-        if looping && request.owner == Owner::None {
+        if looping && request.owner == Owner::None && self.warned.insert(request.event.to_owned()) {
             warn!("{}: a loop with no owner plays once", request.event);
         }
         let kept = looping && request.owner != Owner::None;
@@ -177,9 +172,6 @@ impl Mixer {
             stopped: None,
             gain: request.gain,
         });
-        #[cfg(test)]
-        self.log
-            .push((request.event.to_owned(), request.merge, now));
         if kept {
             Started::Loop(entity)
         } else {
@@ -225,10 +217,12 @@ impl Mixer {
                     && (!rules.per_entity || v.owner == request.owner)
             };
             if self.voices.iter().filter(|v| counted(v)).count() >= rules.limit as usize {
-                if !rules.stop_oldest {
+                // The oldest one-shot gives way; a loop never does, its owner is the one to end
+                // it and nothing would start it again.
+                let oldest = self.voices.iter().position(|v| counted(v) && !v.looping);
+                if !rules.stop_oldest || oldest.is_none() {
                     return false;
                 }
-                let oldest = self.voices.iter().position(counted);
                 self.stop_at(commands, oldest, now);
             }
         }
@@ -257,11 +251,14 @@ impl Mixer {
         self.stop_at(commands, at, now);
     }
 
-    /// Stops every voice at once: no match is on to sound.
-    pub fn stop_all(&mut self, commands: &mut Commands) {
-        for voice in self.voices.drain(..) {
-            commands.entity(voice.entity).try_despawn();
-        }
+    /// Stops every loop at once, owners gone: no match is on to sound. One-shots play out.
+    pub fn stop_loops(&mut self, commands: &mut Commands) {
+        self.voices.retain(|voice| {
+            if voice.looping {
+                commands.entity(voice.entity).try_despawn();
+            }
+            !voice.looping
+        });
     }
 
     fn stop_at(&mut self, commands: &mut Commands, at: Option<usize>, now: Duration) {
@@ -327,18 +324,6 @@ impl Mixer {
             .iter()
             .filter(|v| v.event == event && v.sounding())
             .count()
-    }
-
-    /// The starts of an event the mixer took, with the unit each was a blow on, by its clock.
-    #[cfg(test)]
-    pub(crate) fn starts_of(&self, event: &str) -> Vec<(EntityId, Duration)> {
-        self.log
-            .iter()
-            .filter_map(|(name, merge, at)| match merge {
-                Some(Merge::Unit(id)) if name == event => Some((*id, *at)),
-                _ => None,
-            })
-            .collect()
     }
 
     /// The volume a looping voice of the event has now, before its fade.
@@ -493,7 +478,8 @@ mod tests {
         assert_eq!(mixer.voices[0].ends, Some(Duration::from_secs(3)));
     }
 
-    /// An event's limit stops its oldest voice for a new one, or refuses the new one.
+    /// An event's limit stops its oldest one-shot for a new voice, or refuses the new one; it
+    /// never stops a loop.
     #[test]
     fn a_limit_steals_the_oldest_voice_or_refuses_the_new_one() {
         let mut world = World::new();
@@ -534,5 +520,32 @@ mod tests {
             Handle::default(),
         );
         assert_eq!((first, second), (Started::Once, Started::Refused));
+    }
+
+    /// A limit never ends a loop whose owner is still wearing the effect: the new voice is
+    /// refused instead.
+    #[test]
+    fn a_limit_refuses_a_new_voice_rather_than_steal_a_loop() {
+        let mut world = World::new();
+        let mut limited = event("loop", true, 1);
+        limited.limit = 1;
+        let mut mixer = mixer(vec![limited]);
+        let mut commands = world.commands();
+        let now = Duration::ZERO;
+        let first = mixer.start(
+            &mut commands,
+            now,
+            &request("loop", owner(1)),
+            Handle::default(),
+        );
+        let second = mixer.start(
+            &mut commands,
+            now,
+            &request("loop", owner(2)),
+            Handle::default(),
+        );
+        assert!(matches!(first, Started::Loop(_)));
+        assert_eq!(second, Started::Refused);
+        assert_eq!(mixer.sounding("loop"), 1, "the first loop was stolen");
     }
 }

@@ -508,7 +508,8 @@ impl Plan {
             .lines
             .iter()
             .filter_map(|line| match line {
-                Line::Sound(s) => Some(s.event.clone()),
+                // A voice line's name is a scene of the voice scripts, not a sound event.
+                Line::Sound(s) if !s.src.starts_with(VOICE_LINES) => Some(s.event.clone()),
                 _ => None,
             })
             .collect();
@@ -1405,6 +1406,8 @@ fn sound(bytes: &[u8], dest: &str, out: &mut Out<'_>) -> Result<()> {
     out.put(dest, &sound.file())
 }
 
+/// Where Dota keeps its voice lines, whose names are not sound events.
+const VOICE_LINES: &str = "sounds/vo/";
 /// Where Dota keeps its sound events and the types that give them their limits.
 const SOUND_EVENTS_DIR: &str = "soundevents/";
 const SOUND_STACKS: &str = "soundstacks/soundstacks_dota_core.vsndstck_c";
@@ -1414,9 +1417,9 @@ const MAX_EVENT_FILES: usize = 2048;
 const MAX_EVENT_BYTES: usize = 128 << 20;
 
 /// `sounds/events.txt`: the events `wanted` as the install's sound event files state them,
-/// their limits completed by their type's ([`sound_events_txt`]). A file that does not read and a
-/// sound whose loop cannot be told are reported. An event no file here has (a voice line's
-/// is in the voice scripts) is left out, and the client limits nothing for it.
+/// their limits completed by their type's ([`sound_events_txt`]). An event no file has, a file
+/// that does not read and a sound whose loop cannot be told are reported, and the client limits
+/// nothing for the event. Voice lines are not events and are not asked for.
 fn sound_events(
     src: &impl Source,
     pak: &Vpk,
@@ -1466,6 +1469,12 @@ fn sound_events(
             }
             Err(err) => out.report.failed.push((path, err.to_string())),
         }
+    }
+    for name in wanted.iter().filter(|name| !found.contains_key(*name)) {
+        out.report.failed.push((
+            name.clone(),
+            "no sound event file has this event".to_owned(),
+        ));
     }
     for name in wanted.iter().filter(|name| !found.contains_key(*name)) {
         out.report.failed.push((

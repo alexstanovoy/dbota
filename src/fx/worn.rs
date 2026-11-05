@@ -179,7 +179,7 @@ fn worn(
         for (_, wearing) in worn.0.drain() {
             end(&wearing, &mut playing, &mut stage);
         }
-        stage.silence_all();
+        stage.silence_loops();
         return;
     };
     let standing = |id: &EntityId| {
