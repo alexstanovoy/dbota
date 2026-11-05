@@ -599,9 +599,9 @@ env = { BOTA_SEATS = "{seats}" }
 "#;
 
 impl Service {
-    /// The service with `rulesets`, `[[ruleset]]` tables whose `{binary}` is the game server and
-    /// `{fingerprint}` the wire this client speaks.
-    fn start(scratch: &Scratch, rulesets: &str) -> Service {
+    /// The service with `settings` (top-level keys) and `rulesets`, `[[ruleset]]` tables whose
+    /// `{binary}` is the game server and `{fingerprint}` the wire this client speaks.
+    fn start(scratch: &Scratch, settings: &str, rulesets: &str) -> Service {
         let port = std::net::TcpListener::bind("127.0.0.1:0")
             .and_then(|l| l.local_addr())
             .expect("a free port")
@@ -619,6 +619,7 @@ database = "{db}"
 tls_cert = "unused"
 tls_key = "unused"
 game_ports = "{port}-{port}"
+{settings}
 [password]
 memory_kib = 1024
 iterations = 1
@@ -679,7 +680,7 @@ const SIGN_UP: &str = "await:menu;await:button:create account;click:create accou
 /// Plays `script` after [`SIGN_UP`] against a [`Service`] of Demo Hero alone: the client's exit
 /// code, what it said, and the whole script.
 fn run_demo(scratch: &Scratch, script: &str) -> (Option<i32>, String, String) {
-    let service = Service::start(scratch, DEMO_RULESET);
+    let service = Service::start(scratch, "", DEMO_RULESET);
     let script = format!("{SIGN_UP}{script}");
     let args = service.args();
     let args: Vec<&str> = args.iter().map(String::as_str).collect();
@@ -849,26 +850,13 @@ impl Dota {
     }
 }
 
-/// The full rules and solo mid, as a service offers them for lobbies ([`Service::start`] fills in
-/// the binary and the fingerprint). Solo mid's own games are one a side.
-const LOBBY_RULESETS: &str = r#"
-[[ruleset]]
-id = "full"
-name = "Full rules"
-game = "bota"
-game_fingerprint = "{fingerprint}"
-teams = [5, 5]
-rated = false
-[ruleset.launcher]
-kind = "local"
-binary = "{binary}"
-public_url = "ws://127.0.0.1:{port}"
-version_probe = ["--wire-fingerprint"]
-args = ["--map", "0", "--match-id", "{match_id}", "--bind", "127.0.0.1", "--port", "0",
-        "--ws-port", "{port}", "--abandon-unjoined", "--empty-after-secs", "60",
-        "--pick-secs", "5", "--tactical-secs", "0", "--idle-timeout-secs", "0"]
-env = { BOTA_SEATS = "{seats}" }
+/// Solo mid and the full rules, as a service offers them for lobbies ([`Service::start`] fills in
+/// the binary and the fingerprint). Solo mid's own games are one a side. Listed first, it is still
+/// not the default of a lobby: [`LOBBY_SETTINGS`] names the full rules.
+const LOBBY_SETTINGS: &str = r#"lobby_ruleset = "full""#;
 
+/// The rulesets of [`LOBBY_SETTINGS`]' service.
+const LOBBY_RULESETS: &str = r#"
 [[ruleset]]
 id = "solo_mid"
 name = "1x1 Mid Only"
@@ -883,6 +871,23 @@ public_url = "ws://127.0.0.1:{port}"
 version_probe = ["--wire-fingerprint"]
 args = ["--map", "2", "--heroes", "1", "--match-id", "{match_id}", "--bind", "127.0.0.1",
         "--port", "0", "--ws-port", "{port}", "--abandon-unjoined", "--empty-after-secs", "60",
+        "--pick-secs", "5", "--tactical-secs", "0", "--idle-timeout-secs", "0"]
+env = { BOTA_SEATS = "{seats}" }
+
+[[ruleset]]
+id = "full"
+name = "Full rules"
+game = "bota"
+game_fingerprint = "{fingerprint}"
+teams = [5, 5]
+rated = false
+[ruleset.launcher]
+kind = "local"
+binary = "{binary}"
+public_url = "ws://127.0.0.1:{port}"
+version_probe = ["--wire-fingerprint"]
+args = ["--map", "0", "--match-id", "{match_id}", "--bind", "127.0.0.1", "--port", "0",
+        "--ws-port", "{port}", "--abandon-unjoined", "--empty-after-secs", "60",
         "--pick-secs", "5", "--tactical-secs", "0", "--idle-timeout-secs", "0"]
 env = { BOTA_SEATS = "{seats}" }
 "#;
@@ -933,14 +938,16 @@ fn open_lobby(service: &Service, login: &str, name: &str) -> bota_radovid::Clien
 /// and three real clients: alice makes a lobby with a password (of the full rules, the default);
 /// bob finds it by a search of its name past a newer open lobby, joins it from the list through
 /// the password dialog, which says a wrong password is wrong and takes the right one at once (no
-/// owner's approval); carol finds it by its owner's name. Alice, the host, changes the mode in
-/// the lobby to solo mid, whose own games are one a side, and the match starts with the three.
+/// owner's approval); carol finds it by its owner's name. The lobby begins with the full rules,
+/// which the service names its default though it lists solo mid first. Alice, the host, changes
+/// the mode in the lobby to solo mid, whose own games are one a side, and the match starts with
+/// the three: each client's top bar holds two of Radiant and one of Dire.
 /// The clients run two at their usual size and carol's smaller and at low quality, for the memory.
 #[test]
 #[ignore = "draws on the GPU in a headless compositor: tools/visual_check.sh runs it"]
 fn three_friends_find_a_password_lobby_join_it_and_play_the_mode_the_host_chose() {
     let scratch = Scratch::new("lobby");
-    let service = Service::start(&scratch, LOBBY_RULESETS);
+    let service = Service::start(&scratch, LOBBY_SETTINGS, LOBBY_RULESETS);
     let args = service.args();
     let args: Vec<&str> = args.iter().map(String::as_str).collect();
     let (alice_dir, bob_dir, carol_dir) = (
@@ -953,7 +960,7 @@ fn three_friends_find_a_password_lobby_join_it_and_play_the_mode_the_host_chose(
          click:password (optional);text:open sesame;click:create;await:button:leave;\
          await:text:Game mode: Full rules;await:text:bob;await:text:carol;\
          click:1x1 mid only;await:text:Game mode: 1x1 Mid Only;await:button:start now;\
-         click:start now;await:game;exit",
+         click:start now;await:game;await:seats:2,1;exit",
         sign_up("alice")
     );
     let mut alice = Running::start(&alice_dir, &args, &alice_script, common::client());
@@ -965,7 +972,7 @@ fn three_friends_find_a_password_lobby_join_it_and_play_the_mode_the_host_chose(
             "{}click:lobbies;await:button:join decoy room;await:button:join friday night;\
              click:search lobbies;text:{query};click:search;await:nobutton:join decoy room;\
              click:join friday night;await:popup;{tries}await:button:leave;\
-             await:text:Game mode: 1x1 Mid Only;click:ready;await:game;exit",
+             await:text:Game mode: 1x1 Mid Only;click:ready;await:game;await:seats:2,1;exit",
             sign_up(login)
         )
     };

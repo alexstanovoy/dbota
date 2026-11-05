@@ -1925,6 +1925,14 @@ fn squad_lobby() -> (Service, Player, Player) {
         }
     });
     assert!(bob.menu.view().password.is_none(), "the dialog closed");
+    // The password is the owner's to give: neither menu shows it, the member's least of all.
+    for player in [&alice, &bob] {
+        let shown = format!("{:?}", player.menu.view());
+        assert!(
+            !shown.contains(PASSWORD),
+            "the lobby's password shown: {shown}"
+        );
+    }
     (service, alice, bob)
 }
 
@@ -2025,4 +2033,78 @@ fn the_owner_changes_the_lobbys_settings_and_the_others_only_read_them() {
         p.menu.view().status.is_some_and(|s| s.error)
     });
     assert_eq!(lobby_of(&bob).settings.audience, "Humans and Bots");
+}
+
+/// The password dialog keeps nothing it was given once it is gone: Cancel and Escape close it
+/// with the typed password and the lobby it was for, the page's search stays as typed, the next
+/// dialog starts empty, and logging out closes it too, so the next login joins nothing.
+#[test]
+fn cancelling_or_logging_out_of_a_lobby_password_dialog_clears_its_secret_and_target() {
+    let service = service();
+    let (mut alice, mut bob) = (Player::new(Some(&service)), Player::new(Some(&service)));
+    alice.register("alice");
+    bob.register("bob");
+    alice.menu.act(Act::Go(Page::Lobbies));
+    alice.fill(&["protected", PASSWORD]);
+    alice.menu.act(Act::CreateLobby);
+    settle(&mut [&mut alice], |p| p.menu.page() == Page::Lobby);
+    bob.menu.act(Act::Go(Page::Lobbies));
+    settle(&mut [&mut bob], |p| !p.menu.lobbies.is_empty());
+    let lobby = bob.menu.lobbies[0].id;
+    bob.menu.act(Act::Focus(2));
+    bob.menu.act(Act::Type("protect".to_owned()));
+    for close in [Act::LobbyPassword(false), Act::Back] {
+        bob.menu.act(Act::JoinLobby(lobby));
+        bob.menu.act(Act::Type("discard me".to_owned()));
+        bob.menu.act(close);
+        assert!(bob.menu.join_prompt.is_none());
+        assert_eq!(bob.menu.page(), Page::Lobbies, "the dialog's close only");
+        assert_eq!(bob.menu.form.value(2), "protect", "the search stays");
+        bob.menu.act(Act::JoinLobby(lobby));
+        let fresh = bob.menu.view().password.expect("the dialog again");
+        assert!(fresh.field.shown.is_empty(), "a fresh password dialog");
+        bob.menu.act(Act::LobbyPassword(false));
+    }
+    bob.menu.act(Act::JoinLobby(lobby));
+    bob.menu.act(Act::Type("discard on logout".to_owned()));
+    bob.menu.act(Act::Logout);
+    settle(&mut [&mut bob], |p| {
+        p.menu.page() == Page::Login && !p.menu.link_open()
+    });
+    assert!(bob.menu.join_prompt.is_none());
+    assert_eq!(bob.menu.form.kind, super::form::FormKind::Login);
+    type_login(&mut bob, "bob", PASSWORD);
+    bob.menu.act(Act::Submit);
+    settle(&mut [&mut bob], |p| p.menu.page() == Page::Home);
+    assert!(
+        bob.menu.lobby.is_none(),
+        "the login was not taken over by a stale join"
+    );
+}
+
+/// A join refused because the list was out of date (here the lobby closed since) says why and
+/// asks for the list again, so the gone lobby leaves it.
+#[test]
+fn a_refused_join_says_why_and_lists_the_lobbies_again() {
+    let service = service();
+    let (mut alice, mut bob) = (Player::new(Some(&service)), Player::new(Some(&service)));
+    alice.register("alice");
+    bob.register("bob");
+    alice.menu.act(Act::Go(Page::Lobbies));
+    alice.fill(&["short lived"]);
+    alice.menu.act(Act::CreateLobby);
+    settle(&mut [&mut alice], |p| p.menu.page() == Page::Lobby);
+    bob.menu.act(Act::Go(Page::Lobbies));
+    settle(&mut [&mut bob], |p| !p.menu.lobbies.is_empty());
+    let lobby = bob.menu.lobbies[0].id;
+    alice.menu.act(Act::LeaveLobby);
+    settle(&mut [&mut alice], |p| p.menu.page() != Page::Lobby);
+    bob.menu.act(Act::JoinLobby(lobby));
+    settle(&mut [&mut bob], |p| {
+        p.menu.view().status.is_some_and(|s| s.error) && p.menu.lobbies.is_empty()
+    });
+    assert_eq!(
+        bob.menu.view().status.map(|s| s.text).as_deref(),
+        Some("That lobby is gone")
+    );
 }

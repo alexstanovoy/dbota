@@ -1176,6 +1176,11 @@ impl MenuCore {
     }
 
     fn refused(&mut self, error: &Error, asked: Asked) {
+        // A join refused for whatever reason may be a list out of date (the lobby full, locked,
+        // started or gone since): the list is asked again, as the search typed asks it.
+        if matches!(asked, Asked::Join(_)) && self.page == Page::Lobbies {
+            self.search_lobbies();
+        }
         match (asked, error) {
             (Asked::Resume, _) => {
                 self.store.remove(Entry::Session);

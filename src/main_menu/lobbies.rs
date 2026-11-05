@@ -51,7 +51,17 @@ pub fn list(kit: &mut Kit, body: Entity, lobbies: &[LobbyRow], fields: &[FieldVi
             ..default()
         },
     );
-    kit.bold(column, "OPEN LOBBIES", 22.0, ui::INK);
+    let head = kit.node(
+        column,
+        Node {
+            column_gap: px(12),
+            align_items: AlignItems::Center,
+            ..default()
+        },
+    );
+    kit.bold(head, "OPEN LOBBIES", 22.0, ui::INK);
+    // The list again, as the search typed asks it: a refresh keeps the search.
+    kit.button(head, "REFRESH", Act::SearchLobbies, PLAIN, 28.0);
     for (at, field) in search.iter().enumerate() {
         field_box(kit, column, create.len() + at, field);
     }
