@@ -51,6 +51,7 @@ struct Notices(std::collections::VecDeque<Notice>);
 /// One of the game's own lines.
 struct Notice {
     text: String,
+    event: EventKind,
     /// Seconds since it came.
     age: f32,
 }
@@ -444,23 +445,30 @@ fn note_heard(session: NonSend<Session>, mut seen: Local<usize>) {
 /// it took into effect or put into its Bottle (`DOTA_Chat_Rune_<rune>`,
 /// `DOTA_Chat_Rune_Bottle_<rune>`; the install has none for a Shield Rune).
 fn notices(
-    session: NonSend<Session>,
+    sight: crate::fog::EventSight,
     texts: Option<Res<Texts>>,
     time: Res<Time>,
     mut notices: ResMut<Notices>,
 ) {
-    let core = &session.0;
+    let core = sight.core();
     for notice in &mut notices.0 {
         notice.age += time.delta_secs();
     }
     for event in &core.told {
+        if !sight.allows(event, crate::fog::EventSubject::Event) {
+            continue;
+        }
         let Some(text) = notice_text(core, texts.as_deref(), event) else {
             continue;
         };
         if notices.0.len() == ROWS {
             notices.0.pop_front();
         }
-        notices.0.push_back(Notice { text, age: 0.0 });
+        notices.0.push_back(Notice {
+            text,
+            event: event.clone(),
+            age: 0.0,
+        });
     }
 }
 
@@ -523,25 +531,16 @@ impl Shown<'_> {
 /// The log's lines, newest at the foot. While a line is being typed nothing
 /// fades.
 fn show_log(
-    session: NonSend<Session>,
+    sight: crate::fog::EventSight,
     typing: Res<Typing>,
     notices: Res<Notices>,
     mut rows: Query<(&Row, &mut Text, &mut TextColor, &mut Node, &Children)>,
     mut pieces: Query<(&Piece, &mut TextSpan, &mut TextColor), Without<Row>>,
 ) {
-    let core = &session.0;
+    let core = sight.core();
     let reading = *typing == Typing::Chat;
     // A ping marks the map and says nothing in the log.
-    let mut shown: Vec<Shown> = core
-        .chat_lines()
-        .filter_map(|line| match &line.heard.line.body {
-            Body::Text(words) => Some(Shown::Heard(line, words.as_str())),
-            Body::Ping(_) => None,
-        })
-        .chain(notices.0.iter().map(Shown::Notice))
-        .collect();
-    // Oldest first, the newest ROWS kept.
-    shown.sort_by(|a, b| b.age().total_cmp(&a.age()));
+    let shown = log_lines(core, &notices, &sight);
     let shown = &shown[shown.len().saturating_sub(ROWS)..];
     let first = ROWS - shown.len();
     for (Row(row), mut text, mut color, mut node, children) in &mut rows {
@@ -586,6 +585,30 @@ fn show_log(
             tint.set_if_neq(TextColor(c.with_alpha(alpha)));
         }
     }
+}
+
+fn log_lines<'a>(
+    core: &'a Core,
+    notices: &'a Notices,
+    sight: &crate::fog::EventSight,
+) -> Vec<Shown<'a>> {
+    let mut shown: Vec<Shown> = core
+        .chat_lines()
+        .filter_map(|line| match &line.heard.line.body {
+            Body::Text(words) => Some(Shown::Heard(line, words.as_str())),
+            Body::Ping(_) => None,
+        })
+        .chain(
+            notices
+                .0
+                .iter()
+                .filter(|notice| sight.allows(&notice.event, crate::fog::EventSubject::Event))
+                .map(Shown::Notice),
+        )
+        .collect();
+    // Oldest first, the newest ROWS kept.
+    shown.sort_by(|a, b| b.age().total_cmp(&a.age()));
+    shown
 }
 
 /// The line being typed, and what went wrong with the last one sent.

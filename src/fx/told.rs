@@ -10,9 +10,9 @@ use super::line::{At, Attach, Trigger};
 use super::rules::{Rule, Rules, Subject};
 use super::{Feeds, Stage, attach_point, carried, item_feeds, on_ground};
 use crate::effects::Shooters;
+use crate::fog::EventSubject;
 use crate::map::Ground;
 use crate::particles::{Library, Playing};
-use crate::session::Session;
 
 pub(super) fn plugin(app: &mut App) {
     app.add_systems(Update, told.after(crate::units::Placed));
@@ -186,7 +186,7 @@ fn item_state(fact: &Fact, views: &Views) -> Feeds {
 
 /// Fires the lines of every fact the last pump told.
 fn told(
-    session: NonSend<Session>,
+    sight: crate::fog::EventSight,
     ground: Res<Ground>,
     rules: Res<Rules>,
     library: Option<Res<Library>>,
@@ -194,7 +194,7 @@ fn told(
     bodies: Shooters,
     mut stage: Stage,
 ) {
-    let core = &session.0;
+    let core = sight.core();
     let Some(now) = core.view() else {
         return;
     };
@@ -214,21 +214,29 @@ fn told(
             let fx = &rule.fx;
             let unit = match fx.at {
                 At::Caster => fact.caster.and_then(|id| now.unit(id)),
-                At::CasterBefore => fact
-                    .caster
-                    .zip(views.before)
-                    .and_then(|(id, before)| before.unit(id)),
+                At::CasterBefore => fact.caster.and_then(|id| core.before_event(n, id)),
                 At::Unit => fact.unit.and_then(|id| views.find(id)),
                 _ => None,
             };
+            // A use can have a visible start and a fogged end (a blink, for example).
+            let subject = match unit {
+                Some(unit) => EventSubject::Unit(unit),
+                None if fx.at == At::Point => {
+                    fact.point.map_or(EventSubject::Event, EventSubject::Point)
+                }
+                None => EventSubject::Event,
+            };
+            if !sight.allows(event, subject) {
+                continue;
+            }
             let at = match unit {
-                Some(unit) => Some(attach_point(&ground, &bodies, unit, &fx.attach)),
+                Some(unit) => Some(event_point(&ground, &bodies, unit, &fx.attach, fx.at)),
                 None if fx.at == At::Point => fact.point.map(|spot| on_ground(&ground, spot)),
                 None => None,
             };
             if let Some(at) = at {
                 let place = |attach: &Attach| match unit {
-                    Some(unit) => attach_point(&ground, &bodies, unit, attach),
+                    Some(unit) => event_point(&ground, &bodies, unit, attach, fx.at),
                     None => at,
                 };
                 let feeds = Feeds {
@@ -242,5 +250,21 @@ fn told(
                 stage.play(fx, (at, seed), with, (&feeds, &place));
             }
         }
+    }
+}
+
+fn event_point(
+    ground: &Ground,
+    bodies: &Shooters,
+    unit: &UnitView,
+    attach: &Attach,
+    at: At,
+) -> Vec3 {
+    let point = attach_point(ground, bodies, unit, attach);
+    if at == At::CasterBefore {
+        // Historical effects retain their origin when the same unit is now drawn elsewhere.
+        point + on_ground(ground, unit.pos) - attach_point(ground, bodies, unit, &Attach::Origin)
+    } else {
+        point
     }
 }

@@ -170,8 +170,9 @@ fn sync_runes(
 /// view than the last that held it: the fog's cells come a frame behind the view), and a water or power rune
 /// once the river's runes turn over (a new one appears there: the old are gone). Another
 /// vision to watch through starts from nothing.
-pub fn remember(session: NonSend<Session>, fog: Res<FogGrid>, mut memory: ResMut<RuneMemory>) {
-    let core = &session.0;
+pub fn remember(sight: crate::fog::EventSight, mut memory: ResMut<RuneMemory>) {
+    let core = sight.core();
+    let fog = sight.fog();
     let Some(view) = core.view() else {
         return;
     };
@@ -183,7 +184,7 @@ pub fn remember(session: NonSend<Session>, fog: Res<FogGrid>, mut memory: ResMut
     for rune in &mut memory.runes {
         rune.seen = false;
     }
-    for rune in shown(view, &fog) {
+    for rune in shown(view, fog) {
         let at = Vec2::new(rune.pos.x.to_f32(), rune.pos.y.to_f32());
         if let Some(known) = memory.runes.iter_mut().find(|r| r.id == rune.id) {
             known.at = at;
@@ -199,9 +200,10 @@ pub fn remember(session: NonSend<Session>, fog: Res<FogGrid>, mut memory: ResMut
             });
         }
     }
-    let turned = core.told.iter().any(
-        |event| matches!(event, EventKind::RuneSpawned { kind, .. } if *kind != RuneKind::Bounty),
-    );
+    let turned = core.told.iter().any(|event| {
+        sight.allows(event, crate::fog::EventSubject::Event)
+            && matches!(event, EventKind::RuneSpawned { kind, .. } if *kind != RuneKind::Bounty)
+    });
     // The sight worked out for a view after the last that held the rune, which did not.
     // Without fog everything is in sight.
     let sighted = |rune: &Remembered| {

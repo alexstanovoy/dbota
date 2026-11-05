@@ -10,7 +10,6 @@ use bota_proto::{RuneKind, Team, UnitKind, Vec2};
 use crate::dota_text::{Part, Texts};
 use crate::manifest::Manifest;
 use crate::seat_name::seat_name;
-use crate::session::Session;
 use crate::ui::{self, Fonts};
 
 /// Lines shown at most: what the client keeps.
@@ -24,6 +23,15 @@ const ICON: f32 = 18.0;
 /// One line of the feed, from the top.
 #[derive(Component)]
 struct Row(usize);
+
+#[cfg(test)]
+pub(crate) fn visible_rows(world: &mut World) -> usize {
+    world
+        .query::<(&Row, &Node)>()
+        .iter(world)
+        .filter(|(_, node)| node.display == Display::Flex)
+        .count()
+}
 
 /// A piece of a line: its `n`th icon or text.
 #[derive(Component, Clone, Copy)]
@@ -108,15 +116,15 @@ fn show(
     mut commands: Commands,
     column: Option<ResMut<Column>>,
     fonts: Res<Fonts>,
-    session: NonSend<Session>,
+    sight: crate::fog::EventSight,
     texts: Option<Res<Texts>>,
     manifest: Res<Manifest>,
     server: Res<AssetServer>,
     rows: Query<(&Row, &Children, &mut Node)>,
     mut slots: Query<(&Slot, Option<&mut ImageNode>, Option<&mut Text>, &mut Node), Without<Row>>,
 ) {
-    let core = &session.0;
-    let lines: Vec<&FeedLine> = core.feed.iter().rev().take(ROWS).rev().collect();
+    let core = sight.core();
+    let lines = visible_lines(core, &sight);
     let Some(mut column) = column else {
         return;
     };
@@ -167,6 +175,22 @@ fn show(
             }
         }
     }
+}
+
+fn visible_lines<'a>(core: &'a Core, sight: &crate::fog::EventSight) -> Vec<&'a FeedLine> {
+    let mut lines: Vec<&FeedLine> = core
+        .feed
+        .iter()
+        .rev()
+        .filter(|line| {
+            line.told
+                .as_ref()
+                .is_none_or(|event| sight.allows(event, crate::fog::EventSubject::Event))
+        })
+        .take(ROWS)
+        .collect();
+    lines.reverse();
+    lines
 }
 
 /// A line as Dota words it, or the client's text.

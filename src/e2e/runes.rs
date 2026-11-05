@@ -95,6 +95,373 @@ fn started(client: &Client, effect: &str) -> u32 {
         })
 }
 
+/// A real match whose top rune spot is hidden, with its particle library ready.
+fn hidden_spawn_match() -> (Server, Client, Spot) {
+    let (server, mut client) = rune_match();
+    client.stand_at(AWAY);
+    client.within(SOON, "the rune particle library ready", |c| {
+        c.world()
+            .get_resource::<crate::particles::Library>()
+            .is_some_and(|library| library.effect("rune.bounty.prespawn").is_some())
+    });
+    let at = bota_core::DOTA_RUNE_SPOTS[0].at;
+    client.within(SOON, "the hidden rune spot's fog known", |c| {
+        c.world()
+            .resource::<crate::fog::FogGrid>()
+            .worked_out_at()
+            .is_some()
+    });
+    assert!(
+        !client
+            .world()
+            .resource::<crate::fog::FogGrid>()
+            .lit(at.x.to_f32(), at.y.to_f32()),
+        "the spot is outside our vision"
+    );
+    (server, client, at)
+}
+
+fn reveal_spawn(client: &mut Client, kind: RuneKind, at: Spot) {
+    client.cheat(Cheat::Teleport {
+        at: at + Spot::from_ints(200, 0),
+    });
+    client.within(SOON, "the rune now visible in the snapshot", |c| {
+        c.view().runes.iter().any(|r| r.pos == at)
+    });
+    client.cheat(Cheat::SpawnRune { kind, at });
+    client.frames(2);
+}
+
+#[test]
+fn fog_hidden_water_rune_spawn_does_not_announce_its_spot() {
+    let (_server, mut client, at) = hidden_spawn_match();
+    client.cheat(Cheat::SpawnRune {
+        kind: RuneKind::Water,
+        at,
+    });
+    client.frames(2);
+    assert!(
+        !client.view().runes.iter().any(|rune| rune.pos == at),
+        "the snapshot keeps the hidden rune private"
+    );
+    let world = client.world_mut();
+    assert!(
+        world
+            .query::<&crate::rune_toast::RuneToast>()
+            .iter(world)
+            .all(|toast| toast.0.is_none()),
+        "a hidden spawn must not announce its spot in the HUD"
+    );
+    reveal_spawn(&mut client, RuneKind::Water, at);
+    let world = client.world_mut();
+    assert!(
+        world
+            .query::<&crate::rune_toast::RuneToast>()
+            .iter(world)
+            .any(|toast| toast.0.is_some_and(|(kind, ..)| kind == RuneKind::Water)),
+        "a visible spawn still announces its spot"
+    );
+}
+
+#[test]
+fn fog_hidden_bounty_rune_spawn_does_not_play_its_particle() {
+    let (_server, mut client, at) = hidden_spawn_match();
+    let before = started(&client, "rune.bounty.prespawn");
+    client.cheat(Cheat::SpawnRune {
+        kind: RuneKind::Bounty,
+        at,
+    });
+    client.frames(2);
+    assert!(
+        !client.view().runes.iter().any(|rune| rune.pos == at),
+        "the snapshot keeps the hidden Bounty private"
+    );
+    assert_eq!(
+        before,
+        started(&client, "rune.bounty.prespawn"),
+        "a hidden Bounty spawn must not start its particle"
+    );
+    reveal_spawn(&mut client, RuneKind::Bounty, at);
+    assert!(
+        started(&client, "rune.bounty.prespawn") > before,
+        "a visible Bounty spawn still plays its particle"
+    );
+}
+
+fn recorded_spawns(visible: bool) -> super::fog_pov::ReplayFile {
+    let mut game = super::fog_pov::Spectated::start("2");
+    let at = bota_core::DOTA_RUNE_SPOTS[0].at;
+    if visible {
+        game.cheat(Cheat::Teleport {
+            at: at + Spot::from_ints(200, 0),
+        });
+    }
+    game.wait("the recorded spot's vision settled", |_, client| {
+        let grid = client.world().resource::<crate::fog::FogGrid>();
+        grid.worked_out_at().is_some() && grid.lit(at.x.to_f32(), at.y.to_f32()) == visible
+    });
+    for kind in [RuneKind::Bounty, RuneKind::Water] {
+        game.cheat(Cheat::SpawnRune { kind, at });
+        game.wait("the real spawn present in the full stream", |_, client| {
+            client.view().runes.iter().any(|rune| {
+                rune.pos == at
+                    && rune.kind == kind
+                    && rune.seen_by.is_some_and(|seen| seen.radiant == visible)
+            })
+        });
+    }
+    game.save()
+}
+
+#[test]
+fn replay_hidden_water_spawn_does_not_announce_its_spot() {
+    let file = recorded_spawns(false);
+    for slot in [0, 1] {
+        let mut client = super::fog_pov::replay_from_side(&file, slot);
+        client.frames(2);
+        let world = client.world_mut();
+        assert!(
+            world
+                .query::<&crate::rune_toast::RuneToast>()
+                .iter(world)
+                .all(|toast| toast.0.is_none()),
+            "a fogged replay POV must not announce hidden rune coordinates"
+        );
+    }
+}
+
+#[test]
+fn replay_hidden_bounty_spawn_does_not_start_its_particle() {
+    let file = recorded_spawns(false);
+    for slot in [0, 1] {
+        let mut client = super::fog_pov::replay_from_side(&file, slot);
+        client.frames(2);
+        assert_eq!(
+            started(&client, "rune.bounty.prespawn"),
+            0,
+            "a fogged replay POV must not play hidden Bounty effects from the full stream"
+        );
+    }
+}
+
+#[test]
+fn replay_visible_rune_spawns_still_show_their_fx_and_hud() {
+    let file = recorded_spawns(true);
+    let mut client = super::fog_pov::replay_from_side(&file, 0);
+    client.frames(2);
+    assert!(
+        started(&client, "rune.bounty.prespawn") > 0,
+        "a visible replay spawn still plays its particle"
+    );
+    let world = client.world_mut();
+    assert!(
+        world
+            .query::<&crate::rune_toast::RuneToast>()
+            .iter(world)
+            .any(|toast| toast.0.is_some_and(|(kind, ..)| kind == RuneKind::Water)),
+        "a visible replay spawn still announces its spot"
+    );
+}
+
+#[test]
+fn replay_bounty_pickup_fx_follow_the_viewed_side() {
+    let mut game = super::fog_pov::Spectated::start("2");
+    let at = bota_core::DOTA_RUNE_SPOTS[0].at;
+    game.cheat(Cheat::SpawnRune {
+        kind: RuneKind::Bounty,
+        at,
+    });
+    game.wait("the rune before pickup", |_, client| {
+        client.view().runes.iter().any(|rune| rune.pos == at)
+    });
+    game.cheat(Cheat::Teleport { at });
+    game.wait("the real pickup recorded", |_, client| {
+        !client.view().runes.iter().any(|rune| rune.pos == at)
+            && client.view().units.iter().any(|unit| {
+                unit.kind == bota_proto::UnitKind::Hero
+                    && unit.team == bota_proto::Team::Radiant
+                    && unit.pos == at
+                    && unit.seen_by.is_some_and(|seen| !seen.dire)
+            })
+    });
+    let file = game.save();
+    for (slot, visible) in [(0, true), (1, false)] {
+        let mut client = super::fog_pov::replay_from_side(&file, slot);
+        client.frames(2);
+        assert_eq!(
+            started(&client, "rune.bounty.owner") > 0,
+            visible,
+            "the pickup particle must follow the viewed side's visibility"
+        );
+        let rune = label(&client, "DOTA_HUD_Rune_Bounty", &[("gold", String::new())]);
+        assert_eq!(
+            client
+                .shown_texts()
+                .iter()
+                .any(|text| text.contains(rune.trim())),
+            visible,
+            "the rune feed must follow the same event visibility as its particle"
+        );
+    }
+}
+
+#[test]
+fn replay_bottled_rune_contents_stay_private_from_the_enemy_pov() {
+    let file = recorded_bottling_with_both_sides_watching();
+    let at = bota_core::DOTA_RUNE_SPOTS[0].at;
+    let look = format!("{},{}", at.x.to_int(), at.y.to_int());
+    for (slot, visible) in [(0, true), (1, false)] {
+        let mut client = super::fog_pov::replay_from_side_with(&file, slot, &["--look", &look]);
+        client.frames(2);
+        assert_eq!(
+            heard(&client, "sound.bottle.cork") > 0,
+            visible,
+            "a private store event must not play through the enemy POV"
+        );
+        let rune = label(&client, "DOTA_HUD_Rune_Haste", &[]);
+        assert_eq!(
+            client
+                .shown_texts()
+                .iter()
+                .any(|text| text.contains(rune.trim())),
+            visible,
+            "the private bottle must not appear in the enemy's feed"
+        );
+    }
+}
+
+fn recorded_bottling_with_both_sides_watching() -> super::fog_pov::ReplayFile {
+    let mut game = super::fog_pov::Spectated::start("2");
+    game.cheat(Cheat::Item {
+        item: ItemId::BOTTLE,
+    });
+    let at = bota_core::DOTA_RUNE_SPOTS[0].at;
+    game.cheat(Cheat::Teleport {
+        at: at + Spot::from_ints(200, 0),
+    });
+    game.cheat(Cheat::CreateHero {
+        hero: HeroId::SHADOW_FIEND,
+        enemy: true,
+        at: at + Spot::from_ints(600, 0),
+    });
+    game.cheat(Cheat::SpawnRune {
+        kind: RuneKind::Haste,
+        at,
+    });
+    game.cheat(Cheat::Teleport { at });
+    game.wait("the Haste rune really bottled", |driver, _| {
+        driver
+            .view()
+            .unwrap()
+            .unit(driver.my_hero().unwrap())
+            .unwrap()
+            .items
+            .iter()
+            .flatten()
+            .any(|item| item.rune.is_some_and(|rune| rune.kind == RuneKind::Haste))
+    });
+    assert!(
+        game.driver
+            .view()
+            .unwrap()
+            .unit(game.driver.my_hero().unwrap())
+            .unwrap()
+            .seen_by
+            .is_none(),
+        "the driving seat is a server-filtered stream"
+    );
+    game.wait("both sides see the bottling hero", |_, client| {
+        client.view().units.iter().any(|unit| {
+            unit.owner == Some(bota_proto::SlotId(0))
+                && unit.seen_by.is_some_and(|seen| seen.radiant && seen.dire)
+        })
+    });
+    game.save()
+}
+
+#[test]
+fn a_union_replay_keeps_bottled_contents_private() {
+    let file = recorded_bottling_with_both_sides_watching();
+    let at = bota_core::DOTA_RUNE_SPOTS[0].at;
+    let look = format!("{},{}", at.x.to_int(), at.y.to_int());
+    let mut client = super::fog_pov::replay_observed(&file, None, &["--look", &look], |_| {});
+    let fog = client.world().resource::<crate::fog::FogGrid>();
+    assert!(fog.on);
+    assert!(fog.team.is_none(), "the ordinary union POV");
+    assert_eq!(
+        heard(&client, "sound.bottle.cork"),
+        0,
+        "union vision does not grant private bottle contents"
+    );
+    let rune = label(&client, "DOTA_HUD_Rune_Haste", &[]);
+    assert!(
+        !client
+            .shown_texts()
+            .iter()
+            .any(|text| text.contains(rune.trim())),
+        "the bottle is absent from the feed too"
+    );
+}
+
+#[test]
+fn replay_point_effects_and_sounds_follow_the_points_visibility() {
+    let mut game = super::fog_pov::Spectated::start("2");
+    game.cheat(Cheat::Item {
+        item: ItemId::BLOOD_GRENADE,
+    });
+    let hero = game
+        .driver
+        .view()
+        .unwrap()
+        .unit(game.driver.my_hero().unwrap())
+        .unwrap();
+    let slot = hero
+        .items
+        .iter()
+        .position(|item| item.is_some_and(|item| item.id == ItemId::BLOOD_GRENADE))
+        .unwrap();
+    let at = hero.pos + Spot::from_ints(100, 0);
+    let look = format!("{},{}", at.x.to_int(), at.y.to_int());
+    assert!(hero.seen_by.is_none(), "the source player is a side stream");
+    game.client.core_mut().pinned = None;
+    let world = game.client.world_mut();
+    world
+        .query::<&mut crate::camera::RtsCamera>()
+        .single_mut(world)
+        .unwrap()
+        .focus = Vec3::new(at.x.to_f32(), 0.0, -at.y.to_f32());
+    game.order(bota_proto::Order::Use {
+        slot: bota_proto::ItemSlot(slot as u8),
+        target: bota_proto::Target::Pos(at),
+    });
+    game.wait("the grenade really landed", |_, client| {
+        heard(client, "sound.blood_grenade.location") > 0
+    });
+    let file = game.save();
+    for (slot, visible) in [(0, true), (1, false)] {
+        let mut client = super::fog_pov::replay_from_side_with(&file, slot, &["--look", &look]);
+        client.within(SOON, "the replay point's sight worked out", |c| {
+            c.world()
+                .resource::<crate::fog::FogGrid>()
+                .worked_out_at()
+                .is_some()
+        });
+        assert_eq!(
+            client
+                .world()
+                .resource::<crate::fog::FogGrid>()
+                .lit(at.x.to_f32(), at.y.to_f32()),
+            visible,
+            "the fixture point must really be visible only to its owning side"
+        );
+        assert_eq!(
+            heard(&client, "sound.blood_grenade.location") > 0,
+            visible,
+            "a point effect's sound must use the point's fog, including full-stream replays"
+        );
+    }
+}
+
 /// How many times a bound sound, or a hero's line, of a logical name was heard.
 fn heard(client: &Client, logical: &str) -> u32 {
     client

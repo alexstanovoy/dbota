@@ -260,9 +260,60 @@ struct Humming {
 pub fn plugin(app: &mut App) {
     app.add_plugins(crate::mixer::plugin)
         .init_resource::<Voices>()
+        .init_resource::<PendingCues>()
         .add_systems(Update, load.run_if(crate::loading::requested))
         .add_systems(PostUpdate, report.in_set(crate::loading::Report))
-        .add_systems(Update, (volume, play, portals));
+        .add_systems(Update, (volume, (collect_cues, play).chain(), portals));
+}
+
+#[derive(Resource, Default)]
+struct PendingCues(Vec<Cue>);
+
+fn collect_cues(mut session: NonSendMut<Session>, mut pending: ResMut<PendingCues>) {
+    pending.0.clear();
+    pending.0.append(&mut session.0.cues);
+}
+
+/// A public fall says who died, without disclosing a position outside the selected sight.
+fn permitted_cue(cue: &mut Cue, sight: &crate::fog::EventSight) -> bool {
+    let Some(event) = &cue.told else {
+        return true;
+    };
+    if let bota_proto::EventKind::AbilityCast { caster, .. } = event {
+        let Some(unit) = sight.core().view().and_then(|view| view.unit(*caster)) else {
+            return false;
+        };
+        return sight.allows(event, crate::fog::EventSubject::Unit(unit));
+    }
+    if cue.kind == CueKind::HeroDeath {
+        if !sight.allows(event, crate::fog::EventSubject::Event) {
+            return false;
+        }
+        let known = match event {
+            bota_proto::EventKind::Died { unit, .. } => cue
+                .before
+                .as_ref()
+                .and_then(|before| before.iter().find(|before| before.id == *unit))
+                .is_some_and(|unit| sight.allows(event, crate::fog::EventSubject::Unit(unit))),
+            _ => false,
+        };
+        let seen = cue.at.is_some_and(|at| {
+            sight.allows(
+                event,
+                crate::fog::EventSubject::Point(bota_client_core::world_vec(at)),
+            )
+        });
+        if !known || !seen {
+            cue.at = None;
+        }
+        return true;
+    }
+    cue.at.is_none_or(|at| {
+        sight.allows(
+            event,
+            crate::fog::EventSubject::Point(bota_client_core::world_vec(at)),
+        )
+    })
 }
 
 /// The logical names of the sounds a kind plays, each with every variant that shares it.
@@ -403,8 +454,16 @@ impl Sounder<'_, '_, '_> {
 
     /// Sounds the cues of the client core, leaving `quiet` of the purchases unsounded; how many
     /// are still to be left.
-    fn cues(&mut self, cues: Vec<Cue>, mut quiet: usize) -> usize {
-        for cue in cues {
+    fn cues(
+        &mut self,
+        cues: impl Iterator<Item = Cue>,
+        mut quiet: usize,
+        sight: &crate::fog::EventSight,
+    ) -> usize {
+        for mut cue in cues {
+            if !permitted_cue(&mut cue, sight) {
+                continue;
+            }
             if cue.kind == CueKind::Buy && quiet > 0 {
                 quiet -= 1;
                 continue;
@@ -453,22 +512,21 @@ impl Sounder<'_, '_, '_> {
 #[allow(clippy::too_many_arguments)]
 fn play(
     mut commands: Commands,
-    mut session: NonSendMut<Session>,
+    sight: crate::fog::EventSight,
+    mut pending: ResMut<PendingCues>,
     mut voices: ResMut<Voices>,
     mut mixer: ResMut<Mixer>,
     time: Res<Time>,
     cam: Single<&RtsCamera>,
     settings: Res<Settings>,
     args: Res<crate::Args>,
-    fog: Res<crate::fog::FogGrid>,
     mut last_ping: Local<Option<bota_proto::Heard>>,
     mut queued: Local<QueuedBuys>,
 ) {
     for (_, voice) in &mut voices.0 {
         voice.rest = (voice.rest - time.delta_secs()).max(0.0);
     }
-    let core = &mut session.0;
-    let cues: Vec<Cue> = std::mem::take(&mut core.cues);
+    let core = sight.core();
     let (chosen, spoken) = queued.watch(core, time.elapsed_secs());
     let mut sounder = Sounder {
         commands: &mut commands,
@@ -484,9 +542,9 @@ fn play(
     if chosen {
         sounder.sound(Kind::Cue(CueKind::Buy), BUY_GAIN, None, None);
     }
-    queued.spoken = sounder.cues(cues, spoken);
-    shots(core, &fog, &mut sounder);
-    swings(core, &fog, &mut sounder);
+    queued.spoken = sounder.cues(pending.0.drain(..), spoken, &sight);
+    shots(core, sight.fog(), &mut sounder);
+    swings(core, sight.fog(), &mut sounder);
     // A ping is heard by its side wherever the camera is, as Dota's are.
     for kind in crate::pings::fresh(core, &mut last_ping) {
         match kind {

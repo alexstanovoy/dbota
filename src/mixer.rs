@@ -103,6 +103,14 @@ impl Voice {
 }
 
 impl Mixer {
+    #[cfg(test)]
+    pub(crate) fn event_at(&self, entity: Entity) -> Option<(&str, Option<(f32, f32)>)> {
+        self.voices
+            .iter()
+            .find(|voice| voice.entity == entity)
+            .map(|voice| (voice.event.as_str(), voice.at))
+    }
+
     /// Reads `sounds/events.txt` of the cache; a cache without it limits nothing, and says so.
     pub fn load(manifest: &Manifest) -> Mixer {
         let text = crate::cachefs::read_small(&manifest.root, "sounds/events.txt")

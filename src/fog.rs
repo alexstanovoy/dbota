@@ -21,6 +21,9 @@ use bota_proto::{SeenBy, Team, UnitKind, UnitView, WorldView};
 use crate::session::Session;
 use crate::terrain::CELL;
 
+mod events;
+pub(crate) use events::{EventSight, EventSubject};
+
 /// The image's alpha of a fully fogged cell: what the minimap lays over its
 /// photograph, and what the fog shader reads as full strength.
 const VEIL: f32 = 0.74;

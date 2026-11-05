@@ -9,7 +9,6 @@ use bota_proto::{EventKind, RuneKind};
 use crate::dota_text::Texts;
 use crate::hud::HudRoot;
 use crate::manifest::Manifest;
-use crate::session::Session;
 use crate::ui::{self, Fonts};
 
 /// Toasts shown at once at most: the river's two Water Runes appear together.
@@ -131,7 +130,7 @@ fn spawn(
 /// Starts a toast for each water or power rune the last pump told appeared, and ages the
 /// toasts shown.
 fn toast(
-    session: NonSend<Session>,
+    sight: crate::fog::EventSight,
     time: Res<Time>,
     mut toasts: Query<(&mut RuneToast, &mut Visibility)>,
 ) {
@@ -144,11 +143,11 @@ fn toast(
         }
         shown.set_if_neq(ui::visible(toast.0.is_some()));
     }
-    for event in &session.0.told {
+    for event in &sight.core().told {
         let EventKind::RuneSpawned { kind, at } = *event else {
             continue;
         };
-        if kind == RuneKind::Bounty {
+        if kind == RuneKind::Bounty || !sight.allows(event, crate::fog::EventSubject::Event) {
             continue;
         }
         // The bottom spot lies on the Radiant's side of the river: below the map's diagonal.
