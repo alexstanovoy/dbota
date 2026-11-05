@@ -80,20 +80,6 @@ pub struct MenuBody;
 pub fn draw(kit: &mut Kit, root: Entity, view: &MenuView) {
     top_bar(kit, root, view);
     play_area(kit, root, view);
-    if let Some(status) = &view.status {
-        let line = kit.node(
-            root,
-            Node {
-                padding: UiRect::axes(px(28), px(8)),
-                column_gap: px(14),
-                align_items: AlignItems::Center,
-                ..default()
-            },
-        );
-        let color = if status.error { ERROR } else { ui::GOLDEN };
-        kit.text(line, status.text.clone(), 15.0, color);
-        kit.button(line, "×", Act::Dismiss, PLAIN, 22.0);
-    }
     // Every page starts at the same height under the top bar and centres
     // on one column, as Dota's dashboard pages do; a long page scrolls.
     let body = kit.node(

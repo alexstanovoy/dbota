@@ -318,15 +318,15 @@ fn kept_in(dir: &Scratch) -> Library {
 }
 
 /// A player: the menu, its store and what it trusts.
-struct Player {
-    menu: MenuCore,
+pub(crate) struct Player {
+    pub(crate) menu: MenuCore,
     trust: Trust,
     store: SettingsStore,
     _dir: Scratch,
 }
 
 impl Player {
-    fn new(service: Option<&Service>) -> Player {
+    pub(crate) fn new(service: Option<&Service>) -> Player {
         let dir = Scratch::new("player");
         let store = SettingsStore::new(Some(dir.0.join("client.conf")));
         let trust = Trust::new(service.map(|s| s.pem.as_str())).expect("trust");
@@ -345,7 +345,7 @@ impl Player {
     }
 
     /// Types into the page's fields, one after another.
-    fn fill(&mut self, values: &[&str]) {
+    pub(crate) fn fill(&mut self, values: &[&str]) {
         self.menu.act(Act::Focus(0));
         for (at, value) in values.iter().enumerate() {
             self.menu.act(Act::Focus(at));
@@ -356,7 +356,7 @@ impl Player {
         }
     }
 
-    fn register(&mut self, login: &str) {
+    pub(crate) fn register(&mut self, login: &str) {
         settle(&mut [self], |p| p.menu.page() == Page::Login);
         self.menu.act(Act::Go(Page::Register));
         self.fill(&[login, PASSWORD, PASSWORD]);

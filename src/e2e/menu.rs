@@ -7,6 +7,7 @@ use std::time::Duration;
 
 use bevy::prelude::*;
 use bevy::text::{ComputedTextBlock, LineBreak};
+use bevy::window::{PrimaryWindow, WindowResized};
 
 use crate::main_menu::{Act, MenuCore, Page};
 
@@ -169,6 +170,237 @@ fn the_header_names_the_player_first_with_no_account_number() {
         })
         .collect::<Vec<_>>();
     assert!(numbered.is_empty(), "an account number shown: {numbered:?}");
+}
+
+/// The actual physical rectangle of a visible menu button or line, after Bevy's text layout.
+fn menu_rectangle(client: &mut Client, label: &str, button: bool) -> Rect {
+    let world = client.world_mut();
+    let entity = if button {
+        world
+            .query_filtered::<(Entity, &Name, &InheritedVisibility), With<Button>>()
+            .iter(world)
+            .find(|(_, name, shown)| shown.get() && name.as_str() == label)
+            .map(|(entity, ..)| entity)
+    } else {
+        world
+            .query::<(Entity, &Text, &InheritedVisibility)>()
+            .iter(world)
+            .find(|(_, text, shown)| shown.get() && text.0 == label)
+            .map(|(entity, ..)| entity)
+    }
+    .expect("the visible menu element");
+    let size = world.get::<ComputedNode>(entity).expect("laid out").size();
+    let centre = world
+        .get::<UiGlobalTransform>(entity)
+        .expect("on screen")
+        .translation;
+    assert!(
+        size.cmpgt(Vec2::ZERO).all(),
+        "a nonempty rectangle for {label}"
+    );
+    Rect::from_center_size(centre, size)
+}
+
+fn lobby_rectangles(client: &mut Client) -> [Rect; 3] {
+    ["create", "search", "refresh"].map(|label| menu_rectangle(client, label, true))
+}
+
+fn click_menu_button(client: &mut Client, name: &str) {
+    let at = menu_rectangle(client, name, true).center();
+    client.mouse(at);
+    client.click(MouseButton::Left);
+}
+
+fn resize_menu_window(client: &mut Client, size: UVec2) {
+    let world = client.world_mut();
+    let (window, width, height) = {
+        let (entity, mut window) = world
+            .query_filtered::<(Entity, &mut Window), With<PrimaryWindow>>()
+            .single_mut(world)
+            .expect("the primary window");
+        window.resolution.set_physical_resolution(size.x, size.y);
+        (entity, window.width(), window.height())
+    };
+    // The headless harness has no window backend to notify the cameras of the new size.
+    world.write_message(WindowResized {
+        window,
+        width,
+        height,
+    });
+    client.frames(5);
+}
+
+/// A second account creates the lobby; the client finds it through the list and join button.
+fn open_password_dialog(
+    client: &mut Client,
+    host: &mut crate::main_menu::tests::Player,
+    name: &str,
+) {
+    host.menu.act(Act::Go(Page::Lobbies));
+    host.fill(&[name, crate::main_menu::tests::PASSWORD]);
+    host.menu.act(Act::CreateLobby);
+    client.within(Duration::from_secs(30), "the host's lobby created", |_| {
+        host.menu.update();
+        host.menu.page() == Page::Lobby
+    });
+    act(client, Act::Go(Page::Lobbies));
+    let join = format!("join {name}");
+    client.within(Duration::from_secs(30), "the locked lobby listed", |c| {
+        buttons(c).iter().any(|b| b.0 == join && b.1 > 0.0)
+    });
+    click_menu_button(client, &join);
+    assert!(
+        client
+            .world()
+            .non_send::<MenuCore>()
+            .view()
+            .password
+            .is_some()
+    );
+}
+
+fn assert_error_in_bottom_band(client: &mut Client, error: Rect) {
+    let world = client.world_mut();
+    let size = world
+        .query_filtered::<&Window, With<PrimaryWindow>>()
+        .single(world)
+        .expect("the primary window")
+        .physical_size()
+        .as_vec2();
+    assert!(
+        (error.center().x - size.x * 0.5).abs() <= size.x * 0.02,
+        "bottom-centred error in {size:?}: {error:?}"
+    );
+    assert!(
+        error.min.y >= size.y * 0.8 && error.max.y <= size.y,
+        "the error lies in the window's bottom band in {size:?}: {error:?}"
+    );
+}
+
+/// A wrong password stays in the dialog. A retry after the lobby closes exercises the shared
+/// status overlay, so this still detects the original page-flow bug rather than only the popup.
+fn refused_password_join_keeps_content_still(
+    client: &mut Client,
+    host: &mut crate::main_menu::tests::Player,
+    name: &str,
+) {
+    open_password_dialog(client, host, name);
+    let before = lobby_rectangles(client);
+    act(client, Act::Type("wrong password".to_owned()));
+    click_menu_button(client, "ok");
+    client.within(
+        Duration::from_secs(30),
+        "the service refuses the password",
+        |c| {
+            c.world()
+                .non_send::<MenuCore>()
+                .view()
+                .password
+                .is_some_and(|p| p.error.as_deref() == Some("Wrong password: try again"))
+        },
+    );
+    assert_eq!(
+        before,
+        lobby_rectangles(client),
+        "content during the password refusal"
+    );
+    host.menu.act(Act::LeaveLobby);
+    client.within(Duration::from_secs(30), "the lobby closed", |_| {
+        host.menu.update();
+        host.menu.page() != Page::Lobby
+    });
+    act(client, Act::Type("another password".to_owned()));
+    click_menu_button(client, "ok");
+    let error = "That lobby is gone";
+    client.within(
+        Duration::from_secs(30),
+        "the service refuses the stale join",
+        |c| {
+            c.world()
+                .non_send::<MenuCore>()
+                .view()
+                .status
+                .is_some_and(|status| status.error && status.text == error)
+        },
+    );
+    assert_status_overlay_keeps_content_still(client, before, error);
+}
+
+fn assert_status_overlay_keeps_content_still(client: &mut Client, before: [Rect; 3], error: &str) {
+    client.frames(2);
+    assert!(
+        client
+            .world()
+            .non_send::<MenuCore>()
+            .view()
+            .password
+            .is_none()
+    );
+    let during = lobby_rectangles(client);
+    let error_rectangle = menu_rectangle(client, error, false);
+    click_menu_button(client, "×");
+    client.frames(2);
+    assert!(
+        client
+            .world()
+            .non_send::<MenuCore>()
+            .view()
+            .status
+            .is_none(),
+        "error dismissed"
+    );
+    let after = lobby_rectangles(client);
+    eprintln!(
+        "menu before: {before:?}\nmenu during: {during:?}\nmenu after: {after:?}\nerror: {error_rectangle:?}"
+    );
+    assert_eq!(
+        before, during,
+        "the error must not move content by even one pixel"
+    );
+    assert_eq!(before, after, "dismissing the error must not move content");
+    assert_error_in_bottom_band(client, error_rectangle);
+}
+
+/// Real password-dialog joins keep the content fixed, including with the dashboard over a
+/// running match. Both window sizes use their actual bounds for the error's bottom band.
+#[test]
+fn a_failed_lobby_join_overlays_the_bottom_without_moving_menu_content() {
+    let service = crate::main_menu::tests::service();
+    let mut host = crate::main_menu::tests::Player::new(Some(&service));
+    host.register("host");
+    let mut client = signed_up(&service, "alice");
+    client.within(Duration::from_secs(30), "the menu fonts loaded", |c| {
+        let fonts = c.world().resource::<crate::ui::Fonts>();
+        let loaded = c.world().resource::<Assets<Font>>();
+        loaded.contains(&fonts.regular) && loaded.contains(&fonts.bold)
+    });
+    client.frames(2);
+    for (over_game, size) in [
+        (false, UVec2::new(1600, 900)),
+        (true, UVec2::new(1280, 800)),
+    ] {
+        if over_game {
+            act(&mut client, Act::Go(Page::DemoHero));
+            act(&mut client, Act::Demo(bota_proto::HeroId::PUDGE.0));
+            client.within(Duration::from_secs(120), "a real Demo match running", |c| {
+                c.core().my_hero().is_some()
+            });
+            act(&mut client, Act::Dashboard);
+        }
+        resize_menu_window(&mut client, size);
+        assert_eq!(client.world().non_send::<MenuCore>().in_game(), over_game);
+        eprintln!("checking menu error: over_game={over_game}, window={size:?}");
+        refused_password_join_keeps_content_still(
+            &mut client,
+            &mut host,
+            if over_game { "live" } else { "menu" },
+        );
+        assert_eq!(client.world().non_send::<MenuCore>().in_game(), over_game);
+    }
+    act(&mut client, Act::Disconnect);
+    client.until("the Demo match disconnected", |c| {
+        !c.world().non_send::<MenuCore>().in_game()
+    });
 }
 
 /// Play shows only what Find Match queues for, each card's subtitle naming who it is for: a human sees the rated 1x1 Mid Only "for Humans and Bots"; the bots'

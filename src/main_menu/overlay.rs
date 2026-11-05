@@ -13,6 +13,12 @@ use crate::ui;
 
 /// The overlay layer.
 pub fn draw(kit: &mut Kit, root: Entity, view: &MenuView) {
+    // Match the page layer's visibility, including the dashboard over a live game.
+    if view.covers()
+        && let Some(status) = &view.status
+    {
+        status_line(kit, root, status);
+    }
     let (searching, waiting) = view.finding();
     if !searching.is_empty() || !waiting.is_empty() {
         // Bottom right over the menu, as Dota's; top right over a game,
@@ -61,6 +67,38 @@ pub fn draw(kit: &mut Kit, root: Entity, view: &MenuView) {
     if let Some(password) = view.password.as_ref().filter(|_| view.covers()) {
         password_popup(kit, root, password);
     }
+}
+
+/// Status belongs over the page: inserting a flex row under its tabs moves every hit target.
+fn status_line(kit: &mut Kit, root: Entity, status: &super::core::Status) {
+    let row = kit.node(
+        root,
+        Node {
+            position_type: PositionType::Absolute,
+            left: px(0),
+            bottom: percent(8),
+            width: percent(100),
+            justify_content: JustifyContent::Center,
+            ..default()
+        },
+    );
+    let line = kit.panel(
+        row,
+        Node {
+            max_width: percent(90),
+            padding: UiRect::axes(px(20), px(8)),
+            column_gap: px(14),
+            align_items: AlignItems::Center,
+            ..default()
+        },
+    );
+    let color = if status.error { ERROR } else { ui::GOLDEN };
+    kit.text(line, status.text.clone(), 15.0, color);
+    let dismiss = kit.button(line, "×", Act::Dismiss, PLAIN, 22.0);
+    kit.commands
+        .entity(dismiss)
+        .entry::<Node>()
+        .and_modify(|mut node| node.flex_shrink = 0.0);
 }
 
 /// Dota's generic popup (`PopupPanel` of popups_shared): the screen dimmed,

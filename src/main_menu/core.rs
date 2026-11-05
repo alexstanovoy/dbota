@@ -357,7 +357,7 @@ impl Launch {
     }
 }
 
-/// The line under the top bar: news or a refusal.
+/// The menu's status overlay: news or a refusal.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Status {
     pub text: String,
