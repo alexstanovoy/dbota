@@ -172,8 +172,8 @@ pub fn framing(line: &str) -> Option<FramingLine> {
 
 /// A particle system the map places (`map/mid/ambient.txt`): its effect's file stem, where
 /// (Dota coordinates) and how it is turned (Source's pitch, yaw and roll, degrees), whether it
-/// shows by day, by night and in the fog, and the value of its data control point, if it has
-/// one.
+/// shows by day and by night, and its data control point, if it has one. The legacy fog flag
+/// is read but cannot grant a viewer permission to see an effect.
 #[derive(Clone, Debug, PartialEq)]
 pub struct AmbientLine {
     pub effect: String,
@@ -181,7 +181,6 @@ pub struct AmbientLine {
     pub angles: [f32; 3],
     pub day: bool,
     pub night: bool,
-    pub fog: bool,
     pub data: Option<(usize, [f32; 3])>,
 }
 
@@ -199,7 +198,7 @@ fn flag(word: &str) -> Option<bool> {
 
 /// The map's particle systems of `ambient.txt` (`effect x y z pitch yaw roll day night fog
 /// [cp<n> x y z]`), of its first `max` lines; an effect's name is a plain file stem.
-pub fn ambient(text: &str, max: usize) -> Vec<AmbientLine> {
+pub fn ambient(text: &str, max: usize, mut malformed_fog: impl FnMut()) -> Vec<AmbientLine> {
     lines(text, max)
         .filter_map(|w| {
             let [effect, rest @ ..] = w.as_slice() else {
@@ -215,6 +214,10 @@ pub fn ambient(text: &str, max: usize) -> Vec<AmbientLine> {
                 _ => return None,
             };
             let [x, y, z, pitch, yaw, roll] = numbers::<6>(place)?;
+            if flag(flags[2]).is_none() {
+                malformed_fog();
+                return None;
+            }
             let data = match data {
                 Some([cp, v @ ..]) => {
                     let cp: usize = cp.strip_prefix("cp")?.parse().ok()?;
@@ -229,7 +232,6 @@ pub fn ambient(text: &str, max: usize) -> Vec<AmbientLine> {
                 angles: [pitch, yaw, roll],
                 day: flag(flags[0]).unwrap_or(false),
                 night: flag(flags[1]).unwrap_or(false),
-                fog: flag(flags[2]).unwrap_or(false),
                 data,
             })
         })
@@ -469,7 +471,7 @@ mod tests {
         let placed = "fireflies 1 2 3 0 90 0 0 1 0\nbad/name 1 2 3 0 0 0 1 1 1\n\
             surface 1 2 3 0 0 0 1 1 1 cp10 1 0 0\nnan 1 2 NaN 0 0 0 1 1 1\n\
             far 1 2 3 0 0 0 1 1 1 cp64 1 0 0\n";
-        let placed = ambient(placed, 16);
+        let placed = ambient(placed, 16, || {});
         assert_eq!(placed.len(), 2);
         assert_eq!(placed[1].data, Some((10, [1.0, 0.0, 0.0])));
         let scapes = "scape day 1 2 3 16000 3\nscape bad 1 2 NaN 16000 3\n\
@@ -482,6 +484,17 @@ mod tests {
             sounds[1].waves,
             ["a/b.wav"],
             "a wave out of the cache is no wave"
+        );
+    }
+
+    #[test]
+    fn a_malformed_ambient_fog_flag_is_reported_and_never_places_an_emitter() {
+        let mut faults = 0;
+        let emitters = ambient("fireflies 1 2 3 0 90 0 0 1 broken\n", 16, || faults += 1);
+        assert!(emitters.is_empty());
+        assert_eq!(
+            faults, 1,
+            "the loader can warn instead of silently dropping an emitter"
         );
     }
 }

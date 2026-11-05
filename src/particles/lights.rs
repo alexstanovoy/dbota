@@ -68,6 +68,7 @@ fn spawn(mut commands: Commands) {
 
 /// Appends the lights of every drawn deferred light renderer of `instance`.
 pub fn gather(instance: &Instance, out: &mut Vec<Light>) {
+    let first = out.len();
     for node in &instance.nodes {
         if node.parts.is_empty() {
             continue;
@@ -80,6 +81,9 @@ pub fn gather(instance: &Instance, out: &mut Vec<Light>) {
                 lights_of(light, node, out);
             }
         }
+    }
+    for light in &mut out[first..] {
+        light.lumens *= instance.presentation_opacity;
     }
 }
 

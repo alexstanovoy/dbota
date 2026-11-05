@@ -101,6 +101,10 @@ struct Frame {
 pub struct Instance {
     pub effect: Arc<Effect>,
     pub nodes: Vec<Node>,
+    /// Map decorations have no server approval: their origin must remain in our vision.
+    pub(crate) require_vision: bool,
+    /// Presentation opacity, independent of the imported particle simulation.
+    pub(crate) presentation_opacity: f32,
     life: f32,
     /// Held on until ended: no [`MAX_LIFE`] before that.
     held: bool,
@@ -167,6 +171,8 @@ impl Instance {
         Self {
             effect,
             nodes,
+            require_vision: false,
+            presentation_opacity: 1.0,
             life: 0.0,
             held: false,
             world_time: 0.0,
@@ -180,6 +186,8 @@ impl Instance {
     /// Plays the effect again from its start, its draws keyed by `seed`, keeping what its
     /// particles' columns hold.
     pub fn restart(&mut self, seed: u32) {
+        self.require_vision = false;
+        self.presentation_opacity = 1.0;
         self.life = 0.0;
         self.held = false;
         self.undrawn = 0.0;

@@ -2,7 +2,7 @@
 //! butterflies and dragonflies by day, moths, bats, the lamps' flames, the river's flow and its
 //! waterfalls' splashes, the Dire's lava), read by the importer into `map/mid/ambient.txt` and
 //! its effects into `particles/map/`. Each shows by day, by night or both as the map says, and
-//! where the fog hides the ground only if the map lets it. Only those near the camera play:
+//! only where the viewer sees the ground. Only those near the camera play:
 //! the ones whose place the view takes in, nearest the camera's focus first, at most
 //! [`MAX_ACTIVE`]; one that leaves is ended, and its particles live out their lives.
 
@@ -31,6 +31,8 @@ pub const MAX_ACTIVE: usize = 48;
 const REACH: f32 = 200.0;
 /// bota = Dota + this, on x and y.
 const DOTA_TO_BOTA: f32 = 9216.0;
+/// Decorations stay behind gameplay effects, rather than competing with them at full opacity.
+const DECORATION_OPACITY: f32 = 0.5;
 
 /// One particle system the map places.
 pub struct Emitter {
@@ -45,7 +47,6 @@ pub struct Emitter {
     middle: Vec3,
     day: bool,
     night: bool,
-    fog: bool,
     data: Option<(usize, Vec3)>,
 }
 
@@ -103,7 +104,11 @@ fn load(
     else {
         return;
     };
-    let lines = crate::cache_text::ambient(&text, MAX_LINES);
+    let mut malformed = 0;
+    let lines = crate::cache_text::ambient(&text, MAX_LINES, || malformed += 1);
+    if malformed > 0 {
+        warn!("map ambient: {malformed} emitters omitted because their fog flag is malformed");
+    }
     let mut unsupported = BTreeSet::new();
     let stems: BTreeSet<&str> = lines.iter().map(|l| l.effect.as_str()).collect();
     for stem in stems {
@@ -138,7 +143,6 @@ fn load(
                 middle: Vec3::new(at.x, z, -at.y),
                 day: line.day,
                 night: line.night,
-                fog: line.fog,
                 data: line.data.map(|(cp, v)| (cp, Vec3::from(v))),
             })
         })
@@ -163,7 +167,7 @@ fn play(
         let focus = Vec2::new(camera.focus.x, -camera.focus.z);
         for (i, e) in ambient.emitters.iter().enumerate() {
             let shown = if night { e.night } else { e.day };
-            let unfogged = e.fog || !fog.on || fog.lit(e.at.x, e.at.y);
+            let unfogged = !fog.on || fog.lit(e.at.x, e.at.y);
             let sphere = Sphere {
                 center: e.middle.into(),
                 radius: REACH,
@@ -201,6 +205,8 @@ fn play(
             continue;
         };
         if let Some(instance) = playing.get_mut(handle) {
+            instance.require_vision = true;
+            instance.presentation_opacity = DECORATION_OPACITY;
             instance.set_control_point(0, e.place, e.forward, true);
             if let Some((cp, value)) = e.data {
                 instance.set_control_point(cp, value, Vec3::ZERO, true);

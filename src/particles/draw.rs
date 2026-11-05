@@ -84,6 +84,10 @@ pub fn draw(instance: &Instance, eye: &Eye, ground: Option<HeightAt<'_>>, out: &
                 }
                 _ => {}
             }
+            for quad in &mut list[first..] {
+                quad.head_color[3] *= instance.presentation_opacity;
+                quad.tail_color[3] *= instance.presentation_opacity;
+            }
             if d.blend == Blend::Alpha {
                 sort_back_to_front(&mut list[first..], eye);
             }

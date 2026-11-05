@@ -243,10 +243,9 @@ fn in_view(instance: &Instance, frustum: &Frustum) -> bool {
 }
 
 /// Steps every effect and gathers the frame's cards and lights.
-#[allow(clippy::too_many_arguments)]
 pub(super) fn tick(
     time: Res<Time>,
-    session: NonSend<crate::session::Session>,
+    sight: crate::fog::EventSight,
     mut playing: ResMut<Playing>,
     library: Option<Res<Library>>,
     camera: Query<(&GlobalTransform, &Frustum), With<RtsCamera>>,
@@ -256,7 +255,7 @@ pub(super) fn tick(
     let height = |x: f32, y: f32| ground.surface_at(x, y);
     let height: Option<HeightAt<'_>> = ground.known().then_some(&height);
     // Effects keep the game's pace: a replay held or sped up holds or speeds them.
-    let pace = match &session.0.source {
+    let pace = match &sight.core().source {
         bota_client_core::Source::Replay(player) if player.paused => 0.0,
         bota_client_core::Source::Replay(player) => player.speed,
         _ => 1.0,
@@ -282,10 +281,17 @@ pub(super) fn tick(
         list.clear();
     }
     for instance in playing.slots.iter_mut().filter_map(|(_, i)| i.as_mut()) {
-        instance.seen(in_view(instance, frustum), dt);
+        instance.seen(
+            permitted(instance, sight.fog()) && in_view(instance, frustum),
+            dt,
+        );
         turn_to_screen(instance, &eye);
     }
     for instance in playing.slots.iter().filter_map(|(_, i)| i.as_ref()) {
+        // Ended emitters can still have live tails, lights and models; fog hides those too.
+        if !permitted(instance, sight.fog()) {
+            continue;
+        }
         // Out of view an effect draws no cards; its lights may still reach into it.
         if !instance.out_of_view() {
             draw(instance, &eye, height, &mut playing.lists);
@@ -306,4 +312,13 @@ pub(super) fn tick(
             center: sum / list.len() as f32,
         });
     }
+}
+
+fn permitted(instance: &Instance, fog: &crate::fog::FogGrid) -> bool {
+    !instance.require_vision
+        || !fog.on
+        || instance.nodes.first().is_some_and(|node| {
+            let at = node.control_points[0].position;
+            fog.lit(at.x, at.y)
+        })
 }

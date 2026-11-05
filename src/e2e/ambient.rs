@@ -8,6 +8,7 @@ use bota_proto::{Cheat, HeroId};
 
 use super::harness::{Client, MID, Server};
 use crate::ambient::{Ambient, MAX_ACTIVE};
+use crate::fog::FogGrid;
 
 /// The emitter of an effect nearest a point (bota's units): its index and place.
 fn nearest(client: &Client, effect: &str, to: Vec2) -> (usize, Vec2) {
@@ -108,4 +109,117 @@ fn a_lamps_flame_lights_the_ground_with_one_light() {
         assert_eq!(lights, 1, "the lamp's flame shines as {lights} lights");
     }
     within_budget(&client);
+}
+
+fn look_at(client: &mut Client, at: Vec2) {
+    client.core_mut().pinned = None;
+    let world = client.world_mut();
+    world
+        .query::<&mut crate::camera::RtsCamera>()
+        .single_mut(world)
+        .expect("the camera")
+        .focus = Vec3::new(at.x, 0.0, -at.y);
+    client.frames(2);
+}
+
+fn splash_opacities(client: &Client, at: Vec2) -> impl Iterator<Item = f32> + '_ {
+    let effect = client
+        .world()
+        .resource::<crate::particles::Library>()
+        .effect("map.map_riverflow_waterfall_splash")
+        .expect("the waterfall effect");
+    let frame = client.world().resource::<crate::particles::ParticleFrame>();
+    frame
+        .batches
+        .iter()
+        .filter(move |batch| {
+            effect
+                .defs
+                .iter()
+                .any(|def| def.draws.iter().any(|draw| draw.look == batch.look))
+        })
+        .flat_map(move |batch| {
+            frame.quads[batch.range.start as usize..batch.range.end as usize].iter()
+        })
+        .filter(move |quad| Vec2::new(quad.head[0], -quad.head[2]).distance(at) < 300.0)
+        .map(|quad| quad.head_color[3].max(quad.tail_color[3]))
+}
+
+fn visible_waterfall_match() -> (Server, Client, Vec2) {
+    let server = Server::start(1, &[]);
+    let mut client = Client::join(&server, HeroId::SHADOW_FIEND, &[]);
+    client.within(
+        Duration::from_secs(30),
+        "the map's waterfall effects loaded",
+        |c| {
+            c.world()
+                .resource::<crate::ambient::Ambient>()
+                .emitters
+                .iter()
+                .any(|e| e.name == "map.map_riverflow_waterfall_splash")
+        },
+    );
+    let at = client
+        .world()
+        .resource::<crate::ambient::Ambient>()
+        .emitters
+        .iter()
+        .filter(|e| e.name == "map.map_riverflow_waterfall_splash")
+        .min_by(|a, b| {
+            a.at.distance(Vec2::new(9000.0, 4000.0))
+                .total_cmp(&b.at.distance(Vec2::new(9000.0, 4000.0)))
+        })
+        .expect("a waterfall")
+        .at;
+    client.stand_at((at.x as i32, at.y as i32));
+    client.within(
+        Duration::from_secs(30),
+        "visible waterfall particles drawn",
+        |c| c.world().resource::<FogGrid>().lit(at.x, at.y) && splash_opacities(c, at).count() > 0,
+    );
+    (server, client, at)
+}
+
+#[test]
+fn fog_hides_waterfall_splash_particles_as_soon_as_vision_is_lost() {
+    let (_server, mut client, at) = visible_waterfall_match();
+    client.cheat(Cheat::Teleport {
+        at: bota_proto::Vec2::from_ints(4000, 4000),
+    });
+    look_at(&mut client, at);
+    client.within(
+        Duration::from_secs(30),
+        "the waterfall hidden by fog",
+        |c| !c.world().resource::<FogGrid>().lit(at.x, at.y),
+    );
+    client.frames(2);
+    assert_eq!(
+        splash_opacities(&client, at).count(),
+        0,
+        "hidden waterfall particles must not draw, including their fading tails"
+    );
+}
+
+#[test]
+fn fog_waterfall_splashes_stay_translucent_in_the_revealed_scene() {
+    let (_server, mut client, at) = visible_waterfall_match();
+    client
+        .world_mut()
+        .insert_resource(bevy::time::TimeUpdateStrategy::ManualDuration(
+            Duration::from_secs_f32(1.0 / 60.0),
+        ));
+    let mut peak = 0.0_f32;
+    for _ in 0..60 {
+        client.frames(1);
+        peak = splash_opacities(&client, at).fold(peak, f32::max);
+    }
+    eprintln!("waterfall peak opacity: {peak}");
+    assert!(
+        peak > 0.01,
+        "visible water must still have splash particles"
+    );
+    assert!(
+        peak <= 0.5,
+        "decorative water splashes must stay translucent: {peak}"
+    );
 }
