@@ -80,6 +80,22 @@ impl Server {
 }
 
 impl Server {
+    /// Holds the server still (SIGSTOP) while `then` runs, so that what the client sends in it
+    /// stays unanswered for as long as the test looks; the server goes on after.
+    pub fn frozen<R>(&self, then: impl FnOnce() -> R) -> R {
+        let signal = |name: &str| {
+            let status = Command::new("kill")
+                .args([name, &self.child.id().to_string()])
+                .status()
+                .expect("kill runs");
+            assert!(status.success(), "{name} sent to the server");
+        };
+        signal("-STOP");
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(then));
+        signal("-CONT");
+        result.unwrap_or_else(|panic| std::panic::resume_unwind(panic))
+    }
+
     /// Waits for the server to end by itself, as it does once its match is over.
     pub fn wait(&mut self) {
         let _ = self.child.wait();

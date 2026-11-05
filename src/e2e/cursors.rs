@@ -82,3 +82,23 @@ fn the_cursor_is_dotas_own_for_what_a_click_would_do() {
     client.key(KeyCode::KeyA, bevy::input::ButtonState::Released);
     points_at(&mut client, Some(foe), "cursor.attack_enemy");
 }
+
+/// Dota keeps its cursor when a button goes down: an order waiting for the server's word does
+/// not change the image the window wears.
+#[test]
+fn a_click_whose_order_is_unanswered_leaves_the_cursor_as_it_was() {
+    let server = Server::start(1, &[]);
+    let mut client = Client::join(&server, HeroId::SHADOW_FIEND, &[]);
+    client.stand_at(MID);
+    points_at(&mut client, None, "cursor.default");
+    let before = worn(&mut client);
+    assert!(before.is_some(), "the install's image is worn");
+    server.frozen(|| {
+        client.click(MouseButton::Right);
+        client.until("the order sent and unanswered", |c| {
+            c.core().source.pending_orders() > 0
+        });
+        client.frames(5);
+        assert_eq!(worn(&mut client), before, "the image worn while it waits");
+    });
+}
