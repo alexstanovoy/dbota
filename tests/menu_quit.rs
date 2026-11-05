@@ -377,30 +377,89 @@ fn a_game_is_disconnected_from_and_rejoined() {
     played("a live game", result, script);
 }
 
+/// The game server of [`leave_ends_a_match_whose_server_died`] and
+/// [`leave_tells_a_live_game_the_match_is_left_for_good`]: `seats` seats, quick to start, ended
+/// when dropped.
+fn serve_guarded(seats: u8) -> common::Server {
+    let seats = seats.to_string();
+    common::serve(&[
+        "--players",
+        &seats,
+        "--pick-secs",
+        "5",
+        "--tactical-secs",
+        "0",
+        "--idle-timeout-secs",
+        "0",
+    ])
+}
+
 /// The owner's report: when the game server died, the client offered only RECONNECT, which
 /// cannot succeed, and no way to be done with the match. A live game left with DISCONNECT, its
-/// server then killed: RECONNECT fails against the dead server and is offered again; LEAVE,
-/// beside it as Dota has it, ends the client's side of the match: neither button is left, and
-/// Escape on the menu asks to quit, nothing being under it.
+/// server then killed (the client waits at a barrier until the server is gone): RECONNECT fails
+/// against the dead server and is offered again; LEAVE, beside it as Dota has it, asks, cannot
+/// reach the game and forgets it: neither button is left, and Escape on the menu asks to quit,
+/// nothing being under it.
 #[test]
 #[ignore = "draws on the GPU in a headless compositor: tools/visual_check.sh runs it"]
 fn leave_ends_a_match_whose_server_died() {
     let scratch = Scratch::new("dead");
-    let (mut server, address) = serve();
-    let script = "await:game;click:pick shadow fiend;click:pick ready;await:level:1;\
-                  key:Escape;await:menu;click:disconnect;await:button:reconnect;wait:3;\
-                  click:reconnect;await:text:Could not join the game;await:button:reconnect;\
-                  shot:dead-server.png;click:leave match;await:nobutton:reconnect;\
-                  await:nobutton:leave match;wait:1;shot:dead-server-left.png;key:Escape;\
-                  await:popup;click:ok";
-    let mut client = Running::start(&scratch, &["--addr", &address], script, common::client());
-    // The server dies while the seat is left (`wait:3` gives the kill its time): a server that
-    // dies under a live game sends the client to the same place, RECONNECT, but sooner or later
-    // as its redialing gives up.
+    let mut server = serve_guarded(1);
+    let killed = scratch.0.join("server-killed");
+    let script = format!(
+        "await:game;click:pick shadow fiend;click:pick ready;await:level:1;key:Escape;\
+         await:menu;click:disconnect;await:button:reconnect;await:file:{};click:reconnect;\
+         await:text:Could not join the game;await:button:reconnect;shot:dead-server.png;\
+         click:leave match;await:popup;click:ok;await:text:The game could not be reached;\
+         await:nobutton:reconnect;await:nobutton:leave match;wait:1;\
+         shot:dead-server-left.png;key:Escape;await:popup;click:ok",
+        killed.display()
+    );
+    let mut client = Running::start(
+        &scratch,
+        &["--addr", &server.address],
+        &script,
+        common::client(),
+    );
+    // The seat is left; the server dies, gone before the client tries it again.
     client.until_played("await:button:reconnect");
-    let _ = server.kill();
-    let _ = server.wait();
-    played("a match whose server died", client.finish(), script);
+    server.kill();
+    std::fs::write(&killed, "").expect("the barrier lifted");
+    played("a match whose server died", client.finish(), &script);
+}
+
+/// LEAVE on a game whose server lives tells it the match is left for good, as LEAVE GAME does:
+/// a seat left with DISCONNECT, then LEAVE and its question answered; the other seat is told it
+/// won, the menu offers neither RECONNECT nor LEAVE, and nothing of the game shows.
+#[test]
+#[ignore = "draws on the GPU in a headless compositor: tools/visual_check.sh runs it"]
+fn leave_tells_a_live_game_the_match_is_left_for_good() {
+    use bota_client_core::{Link, play};
+    use bota_proto::HeroId;
+    let scratch = Scratch::new("leave-live");
+    let server = serve_guarded(2);
+    // The first to join holds the first seat; dbota takes the second.
+    let (mut link, seated) =
+        Link::join(&server.address, "stays", HeroId::SHADOW_FIEND, None).expect("a seat");
+    let (done, outcome) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = done.send(play(&mut link, seated, &mut (), |_| Vec::new()));
+    });
+    let script = "await:game;click:pick shadow fiend;click:pick ready;await:level:1;key:Escape;\
+                  await:menu;click:disconnect;await:button:reconnect;click:leave match;\
+                  await:popup;click:ok;await:text:You left the game;await:nobutton:reconnect;\
+                  await:nobutton:leave match;await:nobutton:return;wait:1;shot:live-left.png;\
+                  key:Escape;await:popup;click:ok";
+    let result = run(&scratch, &["--addr", &server.address], script);
+    played("a live game left", result, script);
+    let outcome = outcome
+        .recv_timeout(PATIENCE)
+        .expect("the other seat saw the end in time")
+        .expect("it saw the end");
+    assert_eq!(
+        outcome.winner, outcome.team,
+        "the seat that stayed won: the leaver left"
+    );
 }
 
 /// With no service configured the menu opens on the local pages, and a game's address typed

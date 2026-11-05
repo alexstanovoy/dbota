@@ -158,6 +158,10 @@ fn drive(
         exit.write(AppExit::Success);
         return;
     }
+    if core.take_cancel_launch() {
+        // The game being opened is no longer wanted (LEAVE could not reach it in time).
+        pending.0 = None;
+    }
     if core.take_end_hosted() {
         // The local lobby's match was left for good: its server ends.
         host.0 = None;

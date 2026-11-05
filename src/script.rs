@@ -20,7 +20,8 @@
 //!   dialog) is up or `nopopup` (a question or the dialog) is not, or a
 //!   button named `button:NAME` shows, or `nobutton:NAME` when none of that
 //!   name does (hidden or not there), or `text:TEXT` when a text shown on
-//!   the screen holds TEXT;
+//!   the screen holds TEXT, or `file:PATH` once that file exists (a barrier
+//!   a test lifts when it has done its part);
 //! - `await:seats:R,D`: the top bar holds R places of Radiant and D of Dire;
 //! - `await:horn`: the game clock past the horn;
 //! - `await:model:NAME`: a unit drawn with the cache model of that logical name;
@@ -117,6 +118,8 @@ enum Awaited {
     NoButton(String),
     /// A text shown on the screen holds this.
     Text(String),
+    /// This file exists: a barrier the test lifts.
+    File(std::path::PathBuf),
     /// The top bar holds this many places of Radiant and of Dire.
     Seats(u8, u8),
     /// The game clock past the horn.
@@ -198,6 +201,7 @@ fn awaited(arg: &str) -> Result<Awaited, String> {
                 }
                 "nobutton" => Awaited::NoButton(value.to_owned()),
                 "text" => Awaited::Text(value.to_owned()),
+                "file" => Awaited::File(value.into()),
                 "model" => Awaited::Model(value.to_owned()),
                 "loot" => Awaited::Loot(value.to_owned()),
                 "heard" => Awaited::Heard(value.to_owned()),
@@ -344,6 +348,7 @@ fn holds(
         Awaited::NoButton(name) => !screen.buttons.iter().any(|(n, node, seen)| {
             n.as_str() == name && node.display != Display::None && seen.get()
         }),
+        Awaited::File(path) => path.exists(),
         Awaited::Text(text) => screen
             .texts
             .iter()

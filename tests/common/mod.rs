@@ -26,10 +26,17 @@ pub struct Server {
     pub address: String,
 }
 
-impl Drop for Server {
-    fn drop(&mut self) {
+impl Server {
+    /// Kills the server and waits until it is gone: nothing listens at its address after.
+    pub fn kill(&mut self) {
         let _ = self.child.kill();
         let _ = self.child.wait();
+    }
+}
+
+impl Drop for Server {
+    fn drop(&mut self) {
+        self.kill();
     }
 }
 

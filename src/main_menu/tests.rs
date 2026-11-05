@@ -2109,35 +2109,67 @@ fn a_refused_join_says_why_and_lists_the_lobbies_again() {
     );
 }
 
-/// LEAVE beside RECONNECT: the seat is not offered again. After another game it leaves the local
-/// lobby's game server alone; after the local lobby's own game, that server ends with it.
+/// LEAVE beside RECONNECT, asked and answered: the seat is not offered again. After a game this
+/// client does not host, LEAVE tries to tell it the match is left and, the game unreachable,
+/// forgets it, leaving the local lobby's server alone; after the local lobby's own game, the game
+/// server this client started for it ends: nothing listens on its port any more.
 #[test]
 fn leave_after_a_local_lobby_ends_its_server_and_the_seat() {
     let dir = Scratch::new("leave-host");
-    let (mut menu, _trust) = offline("host", &dir);
-    let play_and_leave = |menu: &mut MenuCore| {
-        menu.game_started();
-        menu.left_game(None, false);
+    let (mut menu, trust) = offline("host", &dir);
+    let leave = |menu: &mut MenuCore| {
         assert!(menu.view().reconnect, "RECONNECT offered");
         menu.act(Act::LeaveMatch);
-        assert!(!menu.view().reconnect, "nothing to take again");
+        assert!(menu.view().confirm.is_some(), "LEAVE asks first");
+        menu.act(Act::Answer(true));
     };
-    host_launch(&mut menu, None);
-    menu.game_started();
-    menu.left_game(None, false);
+
     menu.act(Act::Go(Page::LocalLobby));
     menu.act(Act::Focus(1));
     menu.act(Act::Type("127.0.0.1:1".to_owned()));
     menu.act(Act::Direct(false));
     menu.take_launch().expect("a direct game");
-    play_and_leave(&mut menu);
+    menu.game_started();
+    menu.left_game(None, false);
+    leave(&mut menu);
+    menu.take_launch().expect("LEAVE tries to tell the game");
+    menu.launch_failed("connection refused");
+    assert!(!menu.view().reconnect, "an unreachable game is forgotten");
+    assert_eq!(menu.page(), Page::LocalLobby, "the menu stays where it was");
     assert!(
         !menu.take_end_hosted(),
         "another game's LEAVE ends no server"
     );
 
-    host_launch(&mut menu, None);
-    play_and_leave(&mut menu);
+    let launch = host_launch(&mut menu, None);
+    let Launch::Host { port, .. } = &launch else {
+        panic!("a local lobby: {launch:?}");
+    };
+    let port = *port;
+    let mut opening = Opening::start(launch, &trust);
+    let deadline = Instant::now() + Duration::from_secs(PATIENCE);
+    let opened = loop {
+        if let Some(opened) = opening.poll() {
+            break opened.expect("the lobby opens");
+        }
+        assert!(Instant::now() < deadline, "the lobby did not open");
+        std::thread::sleep(Duration::from_millis(5));
+    };
+    let hosted: Option<Hosted> = opened.server;
+    drop(opened.link);
+    let listening = || std::net::TcpStream::connect(("127.0.0.1", port)).is_ok();
+    assert!(hosted.is_some() && listening(), "the lobby's server runs");
+    menu.game_started();
+    menu.left_game(None, false);
+    leave(&mut menu);
+    assert!(
+        menu.take_launch().is_none(),
+        "its own server is not told: it ends"
+    );
+    assert!(!menu.view().reconnect, "nothing to take again");
     assert!(menu.take_end_hosted(), "the lobby's server ends");
     assert!(!menu.take_end_hosted(), "once");
+    // As the shell does: the server is let go, and its process with it.
+    drop(hosted);
+    assert!(!listening(), "the lobby's server process is gone");
 }
