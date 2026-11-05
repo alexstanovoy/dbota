@@ -164,6 +164,8 @@ pub struct SettingsView {
     /// The owner's choices; empty for the others.
     pub modes: Vec<ModeRow>,
     pub audiences: Vec<AudienceRow>,
+    /// The game's cheats: none when the mode has none, else whether they are on.
+    pub cheats: Option<bool>,
     /// The owner changes them (the page has a password field then).
     pub editable: bool,
 }
@@ -893,6 +895,7 @@ fn lobby_view(
         } else {
             Vec::new()
         },
+        cheats: state.cheats,
         editable: owner,
     };
     LobbyView {

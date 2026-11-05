@@ -19,7 +19,8 @@ affiliated with or endorsed by Valve.
 - **Play locally:** host a lobby of up to ten players on your machine or LAN, on the full Dota map or Solo Mid, or
   join one by address. Empty seats stay empty; one player is one hero.
 - **Play online:** sign in to a radovid matchmaking service to queue for rated matches, accept or decline a found
-  match, create lobbies or search the open ones and join at once (a locked one asks for its password), rejoin
+  match, create lobbies or search the open ones and join at once (a locked one asks for its password; its owner may
+  turn the game's cheats on for everyone in it, shown to all before they ready), rejoin
   running games, and try heroes alone in Demo Hero with Dota's cheat panel.
 - **Watch:** spectate live matches, or play replays with pause, speed, either team's vision or one player's view.
   Replays of your own matches are kept and listed for you.

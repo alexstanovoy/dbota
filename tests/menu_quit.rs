@@ -1223,3 +1223,37 @@ fn three_friends_find_a_password_lobby_join_it_and_play_the_mode_the_host_chose(
     played("carol", carol.finish(), &carol_script);
     played("alice", alice.finish(), &alice_script);
 }
+
+/// The owner's report: a lobby could not be started with cheats, to test. The full rules with
+/// the game's cheats ([`LOBBY_RULESETS`]'s, with `cheats_args`): alice, the owner, turns them on
+/// in her lobby; bob, who joins, is shown they are on; the match is started with them, and a
+/// cheat typed into the chat gives alice her gold.
+#[test]
+#[ignore = "draws on the GPU in a headless compositor: tools/visual_check.sh runs it"]
+fn a_lobby_owner_turns_cheats_on_and_everyone_sees_and_plays_with_them() {
+    let scratch = Scratch::new("cheats");
+    // The full rules' launcher is the last table: the key goes to it.
+    let rulesets = format!("{LOBBY_RULESETS}cheats_args = [\"--lobby-cheats\"]\n");
+    let service = Service::start(&scratch, LOBBY_SETTINGS, &rulesets);
+    let args = service.args();
+    let args: Vec<&str> = args.iter().map(String::as_str).collect();
+    let (alice_dir, bob_dir) = (Scratch::new("cheats-alice"), Scratch::new("cheats-bob"));
+    let alice_script = format!(
+        "{}click:lobbies;await:button:create;click:lobby name;text:Sandbox;click:create;\
+         await:button:leave;await:text:Cheats: off;click:enable cheats;await:text:Cheats: on;\
+         await:text:bob;await:button:start now;click:start now;await:game;\
+         click:pick shadow fiend;click:pick ready;await:level:1;say:-gold 20000;\
+         await:gold:20000;exit",
+        sign_up("alice")
+    );
+    let mut alice = Running::start(&alice_dir, &args, &alice_script, common::client());
+    alice.until_played("await:text:Cheats: on");
+    let bob_script = format!(
+        "{}click:lobbies;click:join sandbox;await:button:leave;await:text:Cheats: on;\
+         await:nobutton:enable cheats;await:nobutton:disable cheats;click:ready;await:game;exit",
+        sign_up("bob")
+    );
+    let bob = Running::start(&bob_dir, &args, &bob_script, common::client());
+    played("bob", bob.finish(), &bob_script);
+    played("alice", alice.finish(), &alice_script);
+}

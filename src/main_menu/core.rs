@@ -173,6 +173,8 @@ pub enum Act {
     /// The owner's settings of the lobby one sits in.
     ConfigureMode(RulesetId),
     ConfigureAudience(Audience),
+    /// Turns the game's cheats on or off, for a mode that has them.
+    ConfigureCheats(bool),
     /// Sets the password typed (empty removes it).
     ConfigurePassword,
 }
@@ -1724,6 +1726,9 @@ impl MenuCore {
             }
             Act::ConfigureMode(ruleset) => self.configure(Some(ruleset), None, None),
             Act::ConfigureAudience(audience) => self.configure(None, Some(audience), None),
+            Act::ConfigureCheats(on) => {
+                self.lobby_ask(|lobby| ClientMsg::LobbyCheats { lobby, on });
+            }
             Act::ConfigurePassword => {
                 let typed = self.form.take_secret(0);
                 self.configure(None, None, Some((!typed.is_empty()).then_some(typed)));
@@ -2245,6 +2250,7 @@ pub fn error_text(error: &Error) -> String {
         Error::BadLobbyName => "A lobby name is 1 to 32 characters".to_owned(),
         Error::UnknownLobby => "That lobby is gone".to_owned(),
         Error::LobbyPasswordRequired => "This lobby has a password".to_owned(),
+        Error::NoCheats => "This game mode has no cheats".to_owned(),
         Error::LobbyFull => "The lobby is full".to_owned(),
         Error::LobbyNotFull => "Waiting for more players".to_owned(),
         Error::NoSoloStart => "This service does not start a Demo Hero".to_owned(),

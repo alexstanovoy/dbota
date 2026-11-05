@@ -629,6 +629,15 @@ fn lobby_page(kit: &mut Kit, body: Entity, lobby: &LobbyView) {
     );
     let lock = if lobby.locked { " · password" } else { "" };
     kit.bold(card, format!("LOBBY: {}{lock}", lobby.name), 24.0, ui::INK);
+    if lobby.settings.cheats == Some(true) {
+        // Everyone is told before readying: the match will be played with cheats.
+        kit.bold(
+            card,
+            "CHEATS ON: this match is played with the game's cheats",
+            16.0,
+            ui::GOLDEN,
+        );
+    }
     if let Some(name) = &lobby.moving {
         kit.text(
             card,
@@ -753,6 +762,14 @@ fn settings_card(kit: &mut Kit, page: Entity, lobby: &LobbyView) {
         15.0,
         ui::INK,
     );
+    if let Some(on) = settings.cheats {
+        let (said, ink) = if on {
+            ("Cheats: on", ui::GOLDEN)
+        } else {
+            ("Cheats: off", ui::INK)
+        };
+        kit.text(card, said, 15.0, ink);
+    }
     if !settings.editable {
         kit.text(card, "Only the owner changes these.", 13.0, ui::INK_DIM);
         return;
@@ -769,6 +786,27 @@ fn settings_card(kit: &mut Kit, page: Entity, lobby: &LobbyView) {
                 30.0,
             );
         }
+    }
+    match settings.cheats {
+        Some(false) => {
+            kit.button(
+                card,
+                "ENABLE CHEATS",
+                Act::ConfigureCheats(true),
+                PLAIN,
+                30.0,
+            );
+        }
+        Some(true) => {
+            kit.button(
+                card,
+                "DISABLE CHEATS",
+                Act::ConfigureCheats(false),
+                PLAIN,
+                30.0,
+            );
+        }
+        None => {}
     }
     kit.text(card, "Open to", 13.0, ui::INK_DIM);
     for audience in &settings.audiences {
