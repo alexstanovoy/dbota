@@ -15,7 +15,7 @@ fn owned(client: &Client, item: ItemId) -> usize {
         .count()
 }
 
-fn cells(client: &mut Client, place: Place) -> Vec<(ItemId, Vec2)> {
+pub(super) fn cells(client: &mut Client, place: Place) -> Vec<(ItemId, Vec2)> {
     let scale = window_scale(client);
     let world = client.world_mut();
     let mut found: Vec<_> = world
@@ -64,7 +64,7 @@ fn drag_icon_at(client: &mut Client) -> Option<Vec2> {
         .map(|(_, _, _, placed)| placed.translation / scale)
 }
 
-fn point_item(client: &mut Client, item: ItemId, place: Place) {
+pub(super) fn point_item(client: &mut Client, item: ItemId, place: Place) {
     client.until("the shop item laid out", |c| {
         cells(c, place)
             .iter()

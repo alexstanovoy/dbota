@@ -1,5 +1,5 @@
 //! Dota's context menu of an inventory item (`context_menu_inventory_item`):
-//! a right click on an item opens its choices at the cursor, Sell (away from
+//! a right click opens Show in Shop and the item's choices at the cursor, Sell (away from
 //! the shop, Mark for Sell, and again Unmark for Sell), Disassemble for a build that
 //! may come apart now, Move to Stash where the stash can be reached, and Lock Combining
 //! (Unlock Combining once locked) for an item that is part of a recipe; in the strategy
@@ -31,6 +31,9 @@ const INK_HOVERED: Color = Color::srgb(0.918, 0.914, 0.914);
 /// What a choice does.
 #[derive(Component, Clone, Copy, Debug, PartialEq, Eq)]
 enum Choice {
+    ShowInShop {
+        item: u16,
+    },
     Sell {
         slot: u8,
         mark: Option<bool>,
@@ -53,6 +56,7 @@ impl Choice {
     /// Dota's label key and the plain word where the cache has none.
     fn label(self) -> (&'static str, &'static str) {
         match self {
+            Choice::ShowInShop { .. } => ("DOTA_InventoryMenu_ShowInShop", "Show in Shop"),
             Choice::Sell { mark: None, .. } => ("DOTA_InventoryMenu_Sell", "Sell"),
             Choice::Sell {
                 mark: Some(false), ..
@@ -74,10 +78,16 @@ impl Choice {
 
 /// The menu open now: where, and the choices.
 #[derive(Resource, Default)]
-struct Menu {
+pub(crate) struct Menu {
     open: Option<(Vec2, Vec<Choice>)>,
     /// Set when the menu changed and must be drawn anew.
     stale: bool,
+}
+
+impl Menu {
+    pub(crate) fn is_open(&self) -> bool {
+        self.open.is_some()
+    }
 }
 
 /// The menu's box.
@@ -85,12 +95,30 @@ struct Menu {
 struct Root;
 
 pub fn plugin(app: &mut App) {
-    app.init_resource::<Menu>()
-        .add_systems(Update, (open, draw, choose).chain());
+    app.init_resource::<Menu>().add_systems(
+        Update,
+        (
+            open.in_set(MenuSystems::Open),
+            draw,
+            choose.in_set(MenuSystems::Choose),
+        )
+            .chain(),
+    );
+}
+
+#[derive(SystemSet, Debug, Hash, PartialEq, Eq, Clone, Copy)]
+pub(crate) enum MenuSystems {
+    Open,
+    Choose,
 }
 
 /// The choices of the item in a slot.
-fn choices(core: &bota_client_core::App, bag: &TacticalBag, slot: u8) -> Vec<Choice> {
+fn choices(
+    core: &bota_client_core::App,
+    bag: &TacticalBag,
+    settling: &crate::drag::Settling,
+    slot: u8,
+) -> Vec<Choice> {
     if core.in_tactical_phase() {
         return bag
             .id_at(slot)
@@ -98,10 +126,16 @@ fn choices(core: &bota_client_core::App, bag: &TacticalBag, slot: u8) -> Vec<Cho
             .into_iter()
             .collect();
     }
-    let Some(item) = core.item_in(slot) else {
+    let Some(shown) = crate::shop::displayed_item(core, bag, settling, slot) else {
         return Vec::new();
     };
-    let mut out = Vec::new();
+    let mut out = vec![Choice::ShowInShop { item: shown.id.0 }];
+    if !core.controls_selection() || !matches!(core.source, Source::Live(_)) {
+        return out;
+    }
+    let Some(item) = core.item_in(slot) else {
+        return out;
+    };
     if slot != TOWN_PORTAL_SLOT {
         let at_shop = core.at_home_shop()
             || slot >= BAG_SLOTS
@@ -136,6 +170,7 @@ fn choices(core: &bota_client_core::App, bag: &TacticalBag, slot: u8) -> Vec<Cho
 fn open(
     session: NonSend<Session>,
     bag: Res<TacticalBag>,
+    settling: Res<crate::drag::Settling>,
     mouse: Res<ButtonInput<MouseButton>>,
     items: Query<(&Interaction, &ItemBox)>,
     roots: Query<&Interaction, Or<(With<Root>, With<Choice>)>>,
@@ -153,15 +188,9 @@ fn open(
         .iter()
         .find(|(i, _)| **i != Interaction::None)
         .map(|(_, b)| b.0);
-    let may = core.in_tactical_phase()
-        || (core.my_hero().is_some()
-            && core.controls_selection()
-            && matches!(core.source, Source::Live(_)));
     let at = window.cursor_position();
-    if let (true, true, Some(slot), Some(at)) =
-        (mouse.just_pressed(MouseButton::Right), may, hovered, at)
-    {
-        let list = choices(core, &bag, slot);
+    if let (true, Some(slot), Some(at)) = (mouse.just_pressed(MouseButton::Right), hovered, at) {
+        let list = choices(core, &bag, &settling, slot);
         if !list.is_empty() {
             menu.open = Some((at / ui_scale.0.max(0.1), list));
             menu.stale = true;
@@ -248,6 +277,8 @@ fn choose(
     mut inks: Query<&mut TextColor>,
     mouse: Res<ButtonInput<MouseButton>>,
     bag: Res<TacticalBag>,
+    mut panels: ResMut<crate::input::Panels>,
+    mut chosen: ResMut<crate::shop::Chosen>,
 ) {
     let core = &mut session.0;
     let mut done = false;
@@ -266,6 +297,10 @@ fn choose(
         }
         if lit && mouse.just_pressed(MouseButton::Left) {
             match *choice {
+                Choice::ShowInShop { item } => {
+                    panels.shop = true;
+                    chosen.0 = Some(item);
+                }
                 Choice::Sell { slot, .. } if core.in_tactical_phase() => {
                     // Strategy phase: the item leaves what is chosen.
                     if let Some(id) = bag.id_at(slot) {

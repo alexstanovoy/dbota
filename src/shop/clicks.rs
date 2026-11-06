@@ -17,8 +17,52 @@ use crate::session::Session;
 pub fn plugin(app: &mut App) {
     app.add_systems(
         Update,
-        (buttons, cells, sell).run_if(super::match_or_tactical),
+        (
+            buttons,
+            cells.before(crate::item_menu::MenuSystems::Choose),
+            sell,
+            inventory
+                .after(crate::input::boxes)
+                .after(crate::item_menu::MenuSystems::Open)
+                .before(crate::item_menu::MenuSystems::Choose),
+        )
+            .run_if(super::match_or_tactical),
     );
+}
+
+/// Only a release on the pressed inventory slot selects a passive item's tree.
+/// Menu presses belong to the menu, not to the inventory behind it.
+fn inventory(
+    session: NonSend<Session>,
+    mouse: Res<ButtonInput<MouseButton>>,
+    panels: Res<Panels>,
+    bag: Res<crate::bag::TacticalBag>,
+    settling: Res<crate::drag::Settling>,
+    menu: Res<crate::item_menu::Menu>,
+    mut chosen: ResMut<Chosen>,
+    mut pressed: Local<Option<u8>>,
+    items: Query<(&Interaction, &crate::hud::ItemBox, &InheritedVisibility)>,
+) {
+    if menu.is_open() {
+        *pressed = None;
+        return;
+    }
+    let hovered = items
+        .iter()
+        .find(|(over, _, seen)| **over != Interaction::None && seen.get())
+        .map(|(_, item, _)| item.0);
+    if mouse.just_pressed(MouseButton::Left) {
+        *pressed = hovered
+            .filter(|slot| super::displayed_item(&session.0, &bag, &settling, *slot).is_some());
+    }
+    if mouse.just_released(MouseButton::Left)
+        && let Some(slot) = pressed.take().filter(|slot| Some(*slot) == hovered)
+        && panels.shop
+        && let Some(item) = super::displayed_item(&session.0, &bag, &settling, slot)
+        && item.aim.is_none()
+    {
+        chosen.0 = Some(item.id.0);
+    }
 }
 
 /// The shop's buttons: the gold opens and closes the shop, the search box

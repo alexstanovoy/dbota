@@ -1987,6 +1987,7 @@ label resource/localization/dota_english.txt DOTA_InventoryMenu_LockCombine
 label resource/localization/dota_english.txt DOTA_InventoryMenu_UnlockCombine
 label resource/localization/dota_english.txt DOTA_InventoryMenu_MarkForSell
 label resource/localization/dota_english.txt DOTA_InventoryMenu_UnmarkForSell
+label resource/localization/dota_english.txt DOTA_InventoryMenu_ShowInShop
 
 # 7.41f particles/props/creep_banners: the banner preview binds attach_banner on the lane model.
 particle creep.radiant.banner particles/props/creep_banners/radiant_creep_banner.vpcf_c particles/creep_radiant_banner.json
