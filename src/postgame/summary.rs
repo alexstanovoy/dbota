@@ -6,6 +6,7 @@
 //! client's reading: a rate is a total over the minutes, an advantage is one side's total less
 //! the other's, and a summary without a file is the final numbers every client is sent.
 
+pub use super::recording::StructureFall;
 use bota_proto::{HeroId, ItemId, MatchStats, PlayerView, SlotId, Team};
 use bota_replay::meta::{Meta, MetaRecord, stat};
 
@@ -38,6 +39,13 @@ pub struct Row {
     pub healing: Option<i32>,
     /// The inventory then the backpack; empty for a summary of the final numbers alone.
     pub items: [Option<ItemId>; BAG],
+    /// Optional recording facts retained for the match-results consumer. Old files omit them.
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub name: Option<String>,
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub bot: Option<bool>,
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub left_at: Option<u32>,
 }
 
 /// What a side was ahead by at one game minute: the Radiant's total less the Dire's.
@@ -67,6 +75,9 @@ pub struct MatchSummary {
     pub rows: Vec<Row>,
     /// One for the start of the game and one for every whole game minute after, in order.
     pub points: Vec<Point>,
+    /// Building falls, with optional location companions in newer recordings.
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub structures: Vec<StructureFall>,
 }
 
 fn team_of(side: u8) -> Team {
@@ -157,12 +168,14 @@ impl MatchSummary {
         let minutes = (i64::from(seconds) / 60).max(1);
         let mut rows: Vec<Row> = seats.iter().filter_map(|seat| row(seat, minutes)).collect();
         rows.sort_by_key(|row| (row.team == Team::Dire, row.slot));
+        super::recording::enrich_rows(meta, &mut rows);
         Some(MatchSummary {
             detail: Detail::Meta,
             winner: end.map(|(_, winner)| winner.map_or(Team::Neutral, team_of)),
             seconds,
             rows,
             points: points(&seats),
+            structures: super::recording::structures(meta),
         })
     }
 
@@ -201,6 +214,14 @@ impl MatchSummary {
                     tower_damage: Some(seat.structure_damage),
                     healing: None,
                     items: [None; BAG],
+                    name: None,
+                    bot: None,
+                    left_at: stats
+                        .leaves
+                        .iter()
+                        .filter(|left| left.slot == seat.slot)
+                        .map(|left| left.tick)
+                        .min(),
                 })
             })
             .collect();
@@ -211,6 +232,7 @@ impl MatchSummary {
             seconds,
             rows,
             points: Vec::new(),
+            structures: Vec::new(),
         }
     }
 }
@@ -243,6 +265,9 @@ fn row(seat: &Seat, minutes: i64) -> Option<Row> {
         tower_damage: get(stat::STRUCTURE_DAMAGE).map(to_i32),
         healing: get(stat::HEALING).map(to_i32),
         items,
+        name: None,
+        bot: None,
+        left_at: None,
     })
 }
 

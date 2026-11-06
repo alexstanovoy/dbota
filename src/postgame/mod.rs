@@ -9,6 +9,7 @@
 //! sandbox with no end, shows nothing.
 
 mod draw;
+mod recording;
 pub mod summary;
 #[cfg(test)]
 mod tests;

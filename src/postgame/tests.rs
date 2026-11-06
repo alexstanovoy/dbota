@@ -130,6 +130,19 @@ fn summary_of(bytes: &[u8]) -> MatchSummary {
 fn check(summary: &MatchSummary, stats: &bota_proto::MatchStats) {
     assert_eq!(summary.detail, Detail::Meta);
     assert_eq!(summary.winner, Some(Team::Radiant));
+    assert_eq!(summary.rows[0].name.as_deref(), Some("postgame"));
+    assert_eq!(summary.rows[0].bot, Some(true));
+    assert_eq!(summary.rows[0].left_at, None);
+    assert!(
+        summary
+            .structures
+            .iter()
+            .any(|fall| fall.kind == UnitKind::Tower
+                && fall.team == Team::Dire
+                && fall.lane == Some(bota_core::rules::LANE_MID)
+                && fall.tier == Some(1)),
+        "the actual replay retains the deciding tower's location"
+    );
     let me = summary
         .rows
         .iter()
@@ -257,40 +270,128 @@ fn recording_extensions() -> Vec<u8> {
     let mut out = Writer::default();
     for record in [
         MetaRecord::Header(MetaHeader {
-            magic: MetaHeader::MAGIC, schema: 1, wire_fingerprint: 1, rules_version: 0,
-            match_id: 1, map: 0, tick_rate: 30, pregame_ticks: 0,
-            catalogue_items: 0, catalogue_digest: 0,
+            magic: MetaHeader::MAGIC,
+            schema: 1,
+            wire_fingerprint: 1,
+            rules_version: 0,
+            match_id: 1,
+            map: 0,
+            tick_rate: 30,
+            pregame_ticks: 0,
+            catalogue_items: 0,
+            catalogue_digest: 0,
         }),
-        MetaRecord::Seat { slot: 0, team: 0, hero: HeroId::SHADOW_FIEND.0 },
-        MetaRecord::Sample { tick: 1800, slot: 0, stats: vec![(stat::NET_WORTH, 1000)] },
-        MetaRecord::Structure { tick: 900, kind: UnitKind::Tower as u8, team: 1 },
-        MetaRecord::End { tick: 1800, winner: Some(0) },
+        MetaRecord::Seat {
+            slot: 0,
+            team: 0,
+            hero: HeroId::SHADOW_FIEND.0,
+        },
+        MetaRecord::Sample {
+            tick: 1800,
+            slot: 0,
+            stats: vec![(stat::NET_WORTH, 1000)],
+        },
+        MetaRecord::Structure {
+            tick: 900,
+            kind: UnitKind::Tower as u8,
+            team: 1,
+        },
+        MetaRecord::End {
+            tick: 1800,
+            winner: Some(0),
+        },
     ] {
         assert!(out.push(&record, false));
     }
     let mut bytes = out.into_bytes();
     bytes.extend(bota_proto::encode_frame_to_vec(&(10_u32, 1234_u32, 0_u8)).expect("leave frame"));
-    bytes.extend(bota_proto::encode_frame_to_vec(&(11_u32, 0_u8, "offline player", false)).expect("name frame"));
-    bytes.extend(bota_proto::encode_frame_to_vec(&(12_u32, 0_u32, Some(1_u8), Some(2_u8), None::<bool>)).expect("location frame"));
+    bytes.extend(
+        bota_proto::encode_frame_to_vec(&(11_u32, 0_u8, "offline player", false))
+            .expect("name frame"),
+    );
+    bytes.extend(
+        bota_proto::encode_frame_to_vec(&(
+            12_u32,
+            0_u32,
+            Some(bota_core::rules::LANE_MID),
+            Some(2_u8),
+            None::<bool>,
+        ))
+        .expect("location frame"),
+    );
     bytes
 }
 
 #[test]
 fn a_standalone_replay_summary_retains_its_recorded_player_name() {
     let summary = summary_of(&recording_extensions());
-    assert!(format!("{summary:?}").contains("name: Some(\"offline player\")"), "the menu needs the recorded player name: {summary:?}");
+    assert_eq!(summary.rows[0].name.as_deref(), Some("offline player"));
+    assert_eq!(summary.rows[0].bot, Some(false));
 }
 
 #[test]
 fn a_standalone_replay_summary_identifies_the_leaver_and_leave_tick() {
     let summary = summary_of(&recording_extensions());
-    assert!(format!("{summary:?}").contains("left_at: Some(1234)"), "the menu needs the leave tick on the matching row: {summary:?}");
+    assert_eq!(summary.rows[0].left_at, Some(1234));
 }
 
 #[test]
 fn a_standalone_replay_summary_keeps_the_towers_lane_and_tier() {
     let summary = summary_of(&recording_extensions());
-    assert!(format!("{summary:?}").contains("lane: Some(1), tier: Some(2)"), "the menu needs the objective location: {summary:?}");
+    assert_eq!(summary.structures.len(), 1);
+    let building = &summary.structures[0];
+    assert_eq!(building.team, Team::Dire);
+    assert_eq!(building.kind, UnitKind::Tower);
+    assert_eq!(building.lane, Some(bota_core::rules::LANE_MID));
+    assert_eq!(building.tier, Some(2));
+}
+
+#[test]
+fn unknown_buildings_and_hostile_location_indices_do_not_shift_a_known_fall() {
+    use bota_replay::meta::MetaRecord;
+    let mut meta = bota_replay::meta::decode(&recording_extensions()).expect("metadata");
+    meta.records.insert(
+        0,
+        MetaRecord::Structure {
+            tick: 800,
+            kind: 255,
+            team: 1,
+        },
+    );
+    for record in &mut meta.records {
+        if let MetaRecord::StructureLocation { index, .. } = record {
+            *index = 1;
+        }
+    }
+    meta.records.push(MetaRecord::StructureLocation {
+        index: u32::MAX,
+        lane: Some(2),
+        tier: Some(4),
+        ranged: Some(true),
+    });
+    let summary = MatchSummary::from_meta(&meta).expect("summary");
+    assert_eq!(summary.structures.len(), 1);
+    assert_eq!(summary.structures[0].lane, Some(bota_core::rules::LANE_MID));
+    assert_eq!(summary.structures[0].tier, Some(2));
+}
+
+#[test]
+fn old_metadata_keeps_optional_identity_and_departure_fields_unknown() {
+    let mut meta = bota_replay::meta::decode(&recording_extensions()).expect("metadata");
+    meta.records.retain(|record| {
+        !matches!(
+            record,
+            bota_replay::meta::MetaRecord::SeatName { .. }
+                | bota_replay::meta::MetaRecord::Leave { .. }
+                | bota_replay::meta::MetaRecord::StructureLocation { .. }
+        )
+    });
+    let summary = MatchSummary::from_meta(&meta).expect("old summary");
+    assert_eq!(summary.rows[0].name, None);
+    assert_eq!(summary.rows[0].bot, None);
+    assert_eq!(summary.rows[0].left_at, None);
+    assert_eq!(summary.structures[0].lane, None);
+    assert_eq!(summary.structures[0].tier, None);
 }
 
 /// The screen a match ends on: a replay played to its end shows a row for every seat, the bought
