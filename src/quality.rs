@@ -426,3 +426,32 @@ fn cap_frames(settings: Res<Settings>, mut due: Local<Option<std::time::Instant>
     let base = if now > next + period { now } else { next };
     *due = Some(base + period);
 }
+
+#[cfg(test)]
+mod tests {
+    use bevy::ecs::system::RunSystemOnce;
+    use bevy::render::batching::gpu_preprocessing::{
+        GpuPreprocessingMode, GpuPreprocessingSupport,
+    };
+
+    use super::*;
+
+    /// With GPU batching off, a GPU that could cull is told it cannot preprocess at all, so every
+    /// view's phases batch as the CPU builds the instances (Bevy picks a camera's mode as
+    /// `support.min(...)` of what the view asks).
+    #[test]
+    fn batching_on_the_cpu_makes_every_view_batch_on_the_cpu() {
+        let mut world = World::new();
+        world.insert_resource(GpuPreprocessingSupport {
+            max_supported_mode: GpuPreprocessingMode::Culling,
+        });
+        world.run_system_once(batch_on_cpu).expect("it runs");
+        let support = world.resource::<GpuPreprocessingSupport>();
+        for asked in [
+            GpuPreprocessingMode::Culling,
+            GpuPreprocessingMode::PreprocessingOnly,
+        ] {
+            assert!(support.min(asked) == GpuPreprocessingMode::None);
+        }
+    }
+}
