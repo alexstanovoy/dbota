@@ -44,6 +44,11 @@ pub(super) fn secs(ticks: u32) -> String {
     hundredths((i64::from(ticks) * 100 + rate / 2) / rate)
 }
 
+/// Seconds that `ms` milliseconds last, to the nearest hundredth.
+pub(super) fn millis(ms: u32) -> String {
+    hundredths((i64::from(ms) + 5) / 10)
+}
+
 /// A fixed-point value to the nearest hundredth.
 pub(super) fn fixed(value: Fixed) -> String {
     hundredths((i64::from(value.raw) * 100 + (1 << (Fixed::FRAC_BITS - 1))) >> Fixed::FRAC_BITS)

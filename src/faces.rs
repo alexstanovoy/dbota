@@ -216,6 +216,35 @@ fn talent_face(talent: Talent) -> TalentFace {
             "Feast of Souls Grants +{talent_cast_speed}% Cast Speed",
             "While a feast runs, cast points last {talent_cast_pct}% of their length.",
         ),
+        Talent::Armor => ("+{talent_armor} Armor", "Gain {talent_armor} armor."),
+        Talent::SpellLifesteal => (
+            "+{talent_spell_lifesteal}% Spell Lifesteal",
+            "Heal for {talent_spell_lifesteal}% of the damage your spells deal.",
+        ),
+        Talent::RotSlow => (
+            "+{talent_rot_slow}% Rot Slow",
+            "Rot slows {talent_rot_slow}% more.",
+        ),
+        Talent::HookDamage => (
+            "+{talent_hook_damage} Meat Hook Damage",
+            "Meat Hook deals {talent_hook_damage} more damage.",
+        ),
+        Talent::HookCooldown => (
+            "-{talent_hook_cooldown}s Meat Hook Cooldown",
+            "Meat Hook is ready {talent_hook_cooldown} s sooner.",
+        ),
+        Talent::DismemberDuration => (
+            "+{talent_dismember_secs}s Dismember Duration",
+            "Dismember holds {talent_dismember_secs} s longer and bites {talent_dismember_bites} more times.",
+        ),
+        Talent::FleshHeapBonuses => (
+            "{talent_heap_factor}x Flesh Heap and Meat Shield Bonuses",
+            "Each Flesh Heap stack gives {talent_heap_factor} times the strength, and Meat Shield blocks {talent_heap_factor} times as much.",
+        ),
+        Talent::DismemberDamage => (
+            "{talent_dismember_factor}x Dismember Damage/Heal",
+            "Dismember deals {talent_dismember_factor} times its damage a second and {talent_dismember_str_factor} times its share of strength, and heals by as much.",
+        ),
     };
     TalentFace {
         name: fill(name),
@@ -265,11 +294,15 @@ mod tests {
         for face in EFFECTS.iter().chain(&SPELL_EFFECT_FACES) {
             assert!(!face.blurb().contains('{'), "effect {}", face.id);
         }
-        let tree = talents(bota_proto::HeroId::SHADOW_FIEND.0).expect("Shadow Fiend has a tree");
-        assert!(
-            tree.iter()
-                .all(|t| !t.name.contains('{') && !t.blurb.contains('{'))
-        );
+        for (id, hero) in bota_core::HEROES.iter().enumerate() {
+            let tree = talents(id as u16).unwrap_or_else(|| panic!("{} has a tree", hero.name));
+            assert!(
+                tree.iter()
+                    .all(|t| !t.name.contains('{') && !t.blurb.contains('{')),
+                "{}",
+                hero.name
+            );
+        }
         assert!(talents(u16::MAX).is_none());
     }
 }
