@@ -87,7 +87,12 @@ fn fast_forward(core: &mut bota_client_core::App, next: u32) -> bool {
 }
 
 /// Debug: takes a replay to `--seek`'s tick at the start.
-fn seek(args: Res<Args>, mut session: NonSendMut<Session>, mut done: Local<bool>) {
+fn seek(
+    args: Res<Args>,
+    mut session: NonSendMut<Session>,
+    mut jumped: ResMut<crate::units::JumpedOver>,
+    mut done: Local<bool>,
+) {
     let Some(next) = args.seek.filter(|_| !*done) else {
         return;
     };
@@ -98,8 +103,12 @@ fn seek(args: Res<Args>, mut session: NonSendMut<Session>, mut done: Local<bool>
         *done = true;
         return;
     }
+    let from = core.view().map(|view| view.tick);
     if core.view().is_some() && !fast_forward(core, next) {
         *done = true;
+    }
+    if let (Some(from), Some(view)) = (from, core.view()) {
+        jumped.note(from, view.tick);
     }
 }
 

@@ -138,7 +138,10 @@ impl Buildings {
 
 /// A recorded match in which the watching seat's hero stands at its enemy's Ancient, and the
 /// replay of the enemy's buildings falling, with the tick they are gone on.
-fn record_the_buildings_falling(after: u32) -> (super::fog_pov::ReplayFile, Buildings, u32) {
+fn record_the_buildings_falling(
+    after: u32,
+    late: u32,
+) -> (super::fog_pov::ReplayFile, Buildings, u32) {
     let mut game = Spectated::start_unrecorded("0");
     game.cheat(Cheat::Invulnerable { on: true });
     let watcher = SlotId(WATCHING_SEAT);
@@ -189,7 +192,7 @@ fn record_the_buildings_falling(after: u32) -> (super::fog_pov::ReplayFile, Buil
         );
     }
     let ids: Vec<EntityId> = seen.iter().chain([&unseen]).map(|u| u.id).collect();
-    let (file, gone) = game.save_after_falls(&ids, after);
+    let (file, gone) = game.save_after_falls(&ids, after, late);
     (
         file,
         Buildings {
@@ -207,7 +210,7 @@ fn record_the_buildings_falling(after: u32) -> (super::fog_pov::ReplayFile, Buil
 /// sees nothing is gone at once, though it too sounds, as Dota sounds a fall everywhere.
 #[test]
 fn buildings_collapse_in_their_destruction_models_to_the_viewer_who_sees_them_fall() {
-    let (file, buildings, _) = record_the_buildings_falling(3);
+    let (file, buildings, _) = record_the_buildings_falling(3, 0);
     let mut heard = None;
     let mut client = replay_observed(&file, Some(WATCHING_SEAT), &[], |client| {
         heard = Some(Heard::listen(client));
@@ -262,7 +265,7 @@ fn buildings_collapse_in_their_destruction_models_to_the_viewer_who_sees_them_fa
 #[test]
 fn a_replay_started_past_the_fall_shows_no_collapse_and_no_building() {
     let settle = crate::capture::SETTLE_TICKS;
-    let (file, buildings, gone) = record_the_buildings_falling(settle + 70);
+    let (file, buildings, gone) = record_the_buildings_falling(settle + 70, 0);
     // Landing more than a second after the fall: sooner, the jump would show it falling.
     let past = (gone + settle + 60).to_string();
     let mut client = replay_observed(&file, Some(WATCHING_SEAT), &["--seek", &past], |_| {});
@@ -278,5 +281,21 @@ fn a_replay_started_past_the_fall_shows_no_collapse_and_no_building() {
              in the view {standing}, at tick {tick} of a fall on {gone}",
             building.kind
         );
+    }
+}
+
+/// Live play tells a fall late when the server coalesces ticks: the death is of an earlier tick
+/// than the view that shows the building gone, by more than a second. It collapses all the same;
+/// only a replay's own jump skips what it jumped over.
+#[test]
+fn a_fall_told_ticks_late_in_live_play_still_collapses() {
+    // Two seconds at the match's thirty ticks a second.
+    let (file, buildings, _) = record_the_buildings_falling(3, 60);
+    let mut client = replay_observed(&file, Some(WATCHING_SEAT), &[], |_| {});
+    client.frames(2);
+    for building in &buildings.seen {
+        let drawn = falling(&mut client, building.id)
+            .unwrap_or_else(|| panic!("the {:?} collapses though told late", building.kind));
+        assert_eq!(drawn.model, buildings.expected_model(building));
     }
 }

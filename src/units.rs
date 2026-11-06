@@ -221,6 +221,7 @@ pub struct Placed;
 
 pub fn plugin(app: &mut App) {
     app.init_resource::<UnitIndex>()
+        .init_resource::<JumpedOver>()
         .init_resource::<ReplacedScenes>()
         .add_systems(
             PreStartup,
@@ -829,6 +830,28 @@ struct SyncParams<'w, 's> {
     ground: Res<'w, Ground>,
     fog: Res<'w, FogGrid>,
     time: Res<'w, Time>,
+    jumped: Res<'w, JumpedOver>,
+}
+
+/// The ticks a replay was taken over without showing them (a seek: [`crate::capture`]): what fell
+/// in them is shown as fallen, not falling. Live play never sets it, so a death the server tells
+/// late (ticks coalesced) still falls.
+#[derive(Resource, Default)]
+pub struct JumpedOver(Option<(u32, u32)>);
+
+impl JumpedOver {
+    /// Notes the replay went from the view of tick `from` to that of tick `to` unseen.
+    pub fn note(&mut self, from: u32, to: u32) {
+        self.0 = match self.0 {
+            Some((began, _)) => Some((began.min(from), to)),
+            None => Some((from, to)),
+        };
+    }
+
+    /// Whether something that died on `tick` died in the jump.
+    pub fn over(&self, tick: u32) -> bool {
+        self.0.is_some_and(|(from, to)| from < tick && tick <= to)
+    }
 }
 
 /// New units of any kind spawned a frame at most (heroes have more room: [`spawn_cap`]), and
@@ -943,7 +966,6 @@ fn move_drawn_unit(
 
 /// Sight loss and replay jumps remove the old body; only a told death plays a fall.
 fn remove_missing_units(p: &mut SyncParams, seen: &[EntityId], core: &bota_client_core::App) {
-    let now = core.view().map_or(0, |view| view.tick);
     let gone: Vec<EntityId> = p
         .index
         .0
@@ -964,10 +986,7 @@ fn remove_missing_units(p: &mut SyncParams, seen: &[EntityId], core: &bota_clien
                 let u = &track.unit;
                 u.kind != UnitKind::Courier
                     && track.last_death.is_some_and(|death| {
-                        death.tick >= track.last_seen_tick
-                            // A replay that jumped ahead shows what it came to: a death
-                            // long past is not played as a fall.
-                            && now.saturating_sub(death.tick) <= core.tick_rate().into()
+                        death.tick >= track.last_seen_tick && !p.jumped.over(death.tick)
                     })
                     && (!p.fog.on || p.fog.lit(u.pos.x.to_f32(), u.pos.y.to_f32()))
             });
@@ -1454,6 +1473,7 @@ mod tests {
         let mut app = App::new();
         app.insert_non_send(Session(core))
             .init_resource::<UnitIndex>()
+            .init_resource::<JumpedOver>()
             .init_resource::<ModelBank>()
             .init_resource::<Manifest>()
             .init_resource::<BuildingYaws>()

@@ -360,12 +360,13 @@ impl Spectated {
 
     /// A replay of the match as the watching spectator sees it now, with `fallen` standing for
     /// a moment and then brought down, each told by its death and its fall, as the server tells
-    /// them; the replay ends `after` ticks after. The tick the first of them is gone on comes
+    /// them; the replay ends `after` ticks after, the fall told `late` ticks late. The tick the first of them is gone on comes
     /// with it.
     pub(super) fn save_after_falls(
         self,
         fallen: &[bota_proto::EntityId],
         after: u32,
+        late: u32,
     ) -> (ReplayFile, u32) {
         let alive = self
             .client
@@ -415,22 +416,31 @@ impl Spectated {
         put(ServerMsg::MatchStart { info });
         let first = alive.tick;
         let mut last = first;
-        for ahead in 0..STANDING_TICKS + after {
+        // `late` ticks pass between the last view with them standing and the first without, as when
+        // the server coalesces ticks; their fall is told with the later view, but as of the tick
+        // they fell on.
+        let fell_on = first + STANDING_TICKS;
+        for ahead in (0..STANDING_TICKS).chain(STANDING_TICKS + late..STANDING_TICKS + late + after)
+        {
             let tick = first + ahead;
-            let standing = ahead < STANDING_TICKS;
-            let mut view = if standing {
+            let mut view = if ahead < STANDING_TICKS {
                 alive.clone()
             } else {
                 gone.clone()
             };
             view.tick = tick;
             put(ServerMsg::Snapshot { view });
-            let events = if ahead == STANDING_TICKS {
-                falls.clone()
+            // The server tells each tick's events once, and the fall's with the first view that
+            // lacks the buildings.
+            let (told_for, events) = if ahead == STANDING_TICKS + late {
+                (fell_on, falls.clone())
             } else {
-                Vec::new()
+                (tick, Vec::new())
             };
-            put(ServerMsg::Events { tick, events });
+            put(ServerMsg::Events {
+                tick: told_for,
+                events,
+            });
             last = tick;
         }
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(format!(
