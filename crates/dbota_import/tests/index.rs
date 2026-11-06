@@ -199,7 +199,7 @@ fn local_cache_ownership_metadata_is_validated_but_not_an_asset() {
         };
         let result = Pack::open(folder);
         if valid {
-            let pack = result.ok().expect("valid local marker");
+            let pack = result.expect("valid local marker");
             assert_eq!(pack.len(), 1);
             assert_eq!(pack.entry(0).unwrap().path, "icons/items/blink.png");
             assert!(!pack.index().contains(OWNER_MARKER));
