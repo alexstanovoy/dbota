@@ -82,6 +82,8 @@ pub struct Catalog {
     pub sections: Vec<Section>,
     /// Every section of this build's shop: what a match on its whole catalogue offers.
     all: Vec<Section>,
+    /// Every authored category, including contexts outside the live shop tabs.
+    categories: HashMap<String, Vec<u16>>,
     /// The catalogue `sections` are cut to.
     pub offered: Catalogue,
     /// Dota's words by lower-cased localization key.
@@ -107,13 +109,11 @@ impl Catalog {
         let mut catalog = Catalog {
             sections: Vec::new(),
             all: Vec::new(),
+            categories: HashMap::new(),
             offered: Catalogue::FULL,
             strings: data.strings,
         };
-        for (tab, key, title) in LAYOUT {
-            let Some((_, items)) = data.categories.iter().find(|(name, _)| name == key) else {
-                continue;
-            };
+        for (key, items) in data.categories {
             let mut ids: Vec<u16> = Vec::new();
             for id in items
                 .iter()
@@ -123,7 +123,15 @@ impl Catalog {
                     ids.push(id);
                 }
             }
-            if !ids.is_empty() {
+            catalog.categories.insert(key, ids);
+        }
+        for (tab, key, title) in LAYOUT {
+            if let Some(ids) = catalog
+                .categories
+                .get(key)
+                .filter(|items| !items.is_empty())
+                .cloned()
+            {
                 let title = catalog.word(title, key).to_string();
                 catalog.sections.push(Section {
                     tab,
@@ -136,6 +144,16 @@ impl Catalog {
         catalog.add_leftovers(manifest);
         catalog.all.clone_from(&catalog.sections);
         catalog
+    }
+
+    /// A native category in authored order, limited to this match's catalogue.
+    pub fn category(&self, key: &str) -> impl Iterator<Item = u16> + '_ {
+        self.categories
+            .get(key)
+            .into_iter()
+            .flatten()
+            .copied()
+            .filter(|id| self.offered.holds(ItemId(*id)))
     }
 
     /// Cuts the shop to the items of a match on `catalogue`: a match shared with a client of an

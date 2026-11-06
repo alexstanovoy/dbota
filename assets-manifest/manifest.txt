@@ -1959,6 +1959,9 @@ label resource/localization/dota_english.txt DOTA_Item_Build_Starting_Items
 label resource/localization/dota_english.txt DOTA_Hero_Selection_RemainingGold
 label resource/localization/dota_english.txt DOTA_Hero_Selection_Inventory
 label resource/localization/dota_english.txt dota_item_build_common_starting_items
+label resource/localization/dota_english.txt dota_pregame_shop_pregame_consumables
+label resource/localization/dota_english.txt dota_pregame_shop_pregame_attributes
+label resource/localization/dota_english.txt dota_pregame_shop_pregame_accessories
 texture strategy.background panorama/images/backgrounds/pregame_bg_lowquality_psd.vtex_c hud/pregame_bg_lowquality_psd.png
 
 # --- Mouse cursors (resource/cursor/source: 32 by 32 PNGs, copied as they are; their hotspots are in src/cursor.rs)

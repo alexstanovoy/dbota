@@ -43,19 +43,16 @@ const BATTLE_INK: Color = Color::srgba(1.0, 1.0, 1.0, 0.565);
 /// Inventory slots a hero has, then its backpack's.
 const BAG: usize = 6;
 const BACKPACK_SLOTS: usize = 3;
-/// The shop's categories offered to start with (`shops.txt` names): its
-/// basics but the secret shop's, and the cheap upgrades.
-const SECTIONS: [&str; 5] = [
-    "consumables",
-    "attributes",
-    "weapons_armor",
-    "misc",
-    "basics",
+/// The normal preparation storefront's authored categories and title fallbacks.
+const SECTIONS: [(&str, &str); 3] = [
+    ("pregame_consumables", "Consumables"),
+    ("pregame_attributes", "Attributes"),
+    ("pregame_accessories", "Accessories"),
 ];
 
 /// The screen.
 #[derive(Component)]
-struct Screen;
+pub(crate) struct Screen;
 
 /// The ability of the hero one enters battle as, by id: hovered, it opens
 /// the ability's tooltip as in the game.
@@ -558,16 +555,17 @@ fn item_lists(commands: &mut Commands, kit: &Kit, catalog: &Catalog, contents: E
         "Common Items",
     );
     let art = (kit.fonts, kit.manifest, kit.server);
-    let sections = catalog
-        .sections
-        .iter()
-        .filter(|s| s.key.is_some_and(|key| SECTIONS.contains(&key)));
-    for section in sections {
+    for (key, plain) in SECTIONS {
+        let items: Vec<_> = catalog.category(key).collect();
+        if items.is_empty() {
+            continue;
+        }
         commands.spawn((
             ui::text(
-                section.title.to_uppercase(),
+                kit.word(&format!("dota_pregame_shop_{key}"), plain)
+                    .to_uppercase(),
                 &kit.fonts.regular,
-                12.0 * ui::DOTA,
+                16.0 * ui::DOTA,
                 TITLE_INK,
             ),
             ChildOf(column),
@@ -585,8 +583,8 @@ fn item_lists(commands: &mut Commands, kit: &Kit, catalog: &Catalog, contents: E
             ))
             .id();
         let size = (LIST_ITEM.0 * ui::DOTA, LIST_ITEM.1 * ui::DOTA);
-        for id in &section.items {
-            spawn_cell(commands, art, list, *id, Place::Grid, size);
+        for id in items {
+            spawn_cell(commands, art, list, id, Place::Grid, size);
         }
     }
 }
