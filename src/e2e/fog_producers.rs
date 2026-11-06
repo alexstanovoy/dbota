@@ -241,6 +241,7 @@ fn record_teleport(lose_origin: bool) -> (ReplayFile, Spot, Spot) {
     (game.save(), from, to)
 }
 
+/// Public destination is a guard; the hidden origin is the reproduced privacy failure.
 #[test]
 fn a_public_teleport_destination_does_not_disclose_a_hidden_channel_origin() {
     let (file, from, to) = record_teleport(false);
@@ -492,6 +493,8 @@ fn observe_ping_frames(
     }
 }
 
+/// Guard: core POV filtering already hides enemy team chat and pings. The regression
+/// reproduced here is an allied world ring drawn through fog; union intentionally hears both.
 #[test]
 fn team_pings_and_team_chat_follow_the_replay_pov() {
     use bota_proto::{Audience, Ping, PingAt, PingKind};
@@ -629,5 +632,141 @@ fn a_witnessed_teleport_departure_keeps_the_last_seen_origin() {
     assert!(
         heard(&client, &sounds, "sound.portal.hero_disappear"),
         "the last witnessed origin keeps its departure sound"
+    );
+}
+
+#[derive(Resource, Default)]
+struct GrenadeLandings(Vec<(Spot, usize, Option<bota_proto::EntityId>)>);
+
+fn observe_grenade_landings(
+    session: NonSend<crate::session::Session>,
+    library: Option<Res<crate::particles::Library>>,
+    playing: Res<crate::particles::Playing>,
+    mut landings: ResMut<GrenadeLandings>,
+) {
+    let Some(effect) = library
+        .as_ref()
+        .and_then(|library| library.effect("item.blood_grenade"))
+    else {
+        return;
+    };
+    for event in &session.0.told {
+        let bota_proto::EventKind::Landed {
+            inflictor: bota_proto::Inflictor::Item(bota_proto::ItemId::BLOOD_GRENADE),
+            at,
+            missile,
+            ..
+        } = event
+        else {
+            continue;
+        };
+        let endings = playing
+            .instances_of(effect)
+            .filter(|instance| {
+                instance.ending()
+                    && instance.flight_id() == *missile
+                    && instance.nodes.first().is_some_and(|node| {
+                        let point = node.control_points[0].position;
+                        Vec2::new(point.x, point.y)
+                            .distance(Vec2::new(at.x.to_f32(), at.y.to_f32()))
+                            < 1.0
+                    })
+            })
+            .count();
+        landings.0.push((*at, endings, *missile));
+    }
+}
+
+fn record_two_grenades() -> (ReplayFile, Spot) {
+    use bota_proto::ItemId;
+    let mut game = Spectated::start("2");
+    for _ in 0..2 {
+        game.cheat(Cheat::Item {
+            item: ItemId::BLOOD_GRENADE,
+        });
+    }
+    let caster = game.driver.my_hero().unwrap();
+    let from = game.driver.view().unwrap().unit(caster).unwrap().pos;
+    for distance in [850, 900] {
+        game.cheat(Cheat::Refresh);
+        let unit = game.driver.view().unwrap().unit(caster).unwrap();
+        let slot = ItemSlot(
+            unit.items
+                .iter()
+                .position(|item| item.is_some_and(|item| item.id == ItemId::BLOOD_GRENADE))
+                .expect("the next grenade") as u8,
+        );
+        game.order(Order::Use {
+            slot,
+            target: Target::Pos(from + Spot::from_ints(distance, 0)),
+        });
+        if distance == 850 {
+            game.wait(
+                "the first throw has completed its cast point",
+                |_, client| {
+                    client.view().projectiles.iter().any(|shot| {
+                        shot.inflictor == Some(bota_proto::Inflictor::Item(ItemId::BLOOD_GRENADE))
+                    })
+                },
+            );
+        }
+    }
+    game.wait("both real grenades fly together", |_, client| {
+        client
+            .view()
+            .projectiles
+            .iter()
+            .filter(|shot| {
+                shot.inflictor == Some(bota_proto::Inflictor::Item(ItemId::BLOOD_GRENADE))
+            })
+            .count()
+            == 2
+    });
+    game.wait("both real grenades have landed", |_, client| {
+        client.view().projectiles.is_empty()
+    });
+    let settled = game.driver.view().unwrap().tick + u32::from(game.driver.tick_rate());
+    game.wait("both grenade endings recorded", |driver, _| {
+        driver.view().unwrap().tick >= settled
+    });
+    (game.save(), from)
+}
+
+#[test]
+fn two_grenades_keep_their_own_flights_and_each_land_once() {
+    let (file, from) = record_two_grenades();
+    let look = format!("{},{}", from.x.to_int() + 450, from.y.to_int());
+    let client = replay_observed(&file, Some(0), &["--look", &look], |client| {
+        client.app.init_resource::<GrenadeLandings>().add_systems(
+            Update,
+            observe_grenade_landings.after(crate::effects::Flights),
+        );
+    });
+    let effect = client
+        .world()
+        .resource::<crate::particles::Library>()
+        .effect("item.blood_grenade")
+        .unwrap();
+    let playing = client.world().resource::<crate::particles::Playing>();
+    let landings = &client.world().resource::<GrenadeLandings>().0;
+    assert_eq!(
+        landings.len(),
+        2,
+        "both actual landing facts reached the replay"
+    );
+    assert!(
+        landings
+            .iter()
+            .all(|(_, endings, missile)| *endings == 1 && missile.is_some()),
+        "each landing ends exactly its own particle: {landings:?}"
+    );
+    assert_eq!(
+        playing.started(effect),
+        2,
+        "landing A must not steal B's still-flying body and restart B"
+    );
+    assert!(
+        playing.drawn_endings(effect) >= 2,
+        "both visible endings contribute rendered output"
     );
 }

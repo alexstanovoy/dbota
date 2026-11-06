@@ -121,6 +121,10 @@ impl EventSight<'_> {
         self.projectile(id).unwrap_or(false)
     }
 
+    pub fn has_projectile(&self, id: EntityId) -> bool {
+        self.projectile(id).is_some()
+    }
+
     /// Full replays keep both teams' conversations; presentation follows the selected eyes.
     pub fn allows_chat(&self, heard: &bota_proto::Heard) -> bool {
         use bota_proto::{Audience, Speaker};

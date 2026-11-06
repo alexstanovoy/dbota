@@ -40,11 +40,9 @@ pub enum EffectSight {
 /// The last row actually presented, retained across any number of snapshots in one pump.
 #[derive(Clone, Copy)]
 pub(super) struct FlightRecord {
-    id: bota_proto::EntityId,
+    pub(super) id: bota_proto::EntityId,
     at: Vec2,
     seen: bota_proto::SeenBy,
-    caster: Option<bota_proto::EntityId>,
-    inflictor: Option<bota_proto::Inflictor>,
 }
 
 /// Most effects playing at once; past it a new one is not started.
@@ -189,28 +187,16 @@ impl Playing {
                 id: projectile.id,
                 at: Vec2::new(projectile.pos.x.to_f32(), projectile.pos.y.to_f32()),
                 seen,
-                caster: projectile.source,
-                inflictor: projectile.inflictor,
             });
         }
     }
 
-    pub fn matches_flight(
-        &self,
-        handle: Handle,
-        inflictor: bota_proto::Inflictor,
-        caster: Option<bota_proto::EntityId>,
-        sight: &crate::fog::EventSight,
-    ) -> bool {
+    pub fn witnessed_flight(&self, handle: Handle, sight: &crate::fog::EventSight) -> bool {
         self.slots
             .get(handle.slot)
             .filter(|(generation, _)| *generation == handle.generation)
             .and_then(|(_, instance)| instance.as_ref()?.flight)
-            .is_some_and(|flight| {
-                flight.inflictor == Some(inflictor)
-                    && flight.caster == caster
-                    && !sight.fog().hides(Some(flight.seen))
-            })
+            .is_some_and(|flight| !sight.fog().hides(Some(flight.seen)))
     }
 
     /// Retires an instance without an impact or an end cap, as when vision of it is lost.
@@ -236,12 +222,7 @@ impl Playing {
     pub fn finish_flight(&mut self, handle: Handle, sight: &crate::fog::EventSight) {
         let last = self.get_mut(handle).and_then(|instance| {
             let flight = instance.flight?;
-            let still_present = sight
-                .core()
-                .view()?
-                .projectiles
-                .iter()
-                .any(|projectile| projectile.id == flight.id);
+            let still_present = sight.has_projectile(flight.id);
             (!still_present
                 && !sight.fog().hides(Some(flight.seen))
                 && sight.allows_point(flight.at.x, flight.at.y))

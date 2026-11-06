@@ -256,6 +256,11 @@ impl Instance {
     }
 
     #[cfg(test)]
+    pub fn flight_id(&self) -> Option<bota_proto::EntityId> {
+        self.flight.map(|flight| flight.id)
+    }
+
+    #[cfg(test)]
     pub fn ending(&self) -> bool {
         self.ending
     }

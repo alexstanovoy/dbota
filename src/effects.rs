@@ -57,11 +57,14 @@ struct Flying {
     following: Vec<(crate::particles::Handle, EntityId)>,
 }
 
+#[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub(crate) struct Flights;
+
 pub fn plugin(app: &mut App) {
     app.init_resource::<Flying>().add_systems(
         Update,
         (
-            missiles,
+            missiles.in_set(Flights),
             bursts,
             casts.after(crate::units::Placed),
             souls,
@@ -160,7 +163,9 @@ impl Shooters<'_, '_> {
 
     /// Source's uniform object scale, from the scene actually drawn, before metre conversion.
     pub(crate) fn object_scale(&self, id: EntityId) -> f32 {
-        if self.sight.visible_unit(id).is_none() { return 1.0; }
+        if self.sight.visible_unit(id).is_none() {
+            return 1.0;
+        }
         self.index
             .0
             .get(&id)
@@ -372,31 +377,29 @@ fn grenades(
     let landed = sight.core().told.iter().filter_map(|event| match event {
         EventKind::Landed {
             inflictor,
-            caster,
             at,
+            missile,
             ..
         } if art_by(*inflictor).flight == Flight::Grenade
-            && sight.allows(event, crate::fog::EventSubject::Point(*at)) =>
+            && sight.allows(event, crate::fog::EventSubject::Point(*at))
+            && missile.is_none_or(|id| !sight.has_projectile(id)) =>
         {
-            Some((*inflictor, *caster, *at))
+            Some((*missile, *at))
         }
         _ => None,
     });
-    for (n, (inflictor, caster, point)) in landed.enumerate() {
+    for (n, (missile, point)) in landed.enumerate() {
         let (x, y) = (point.x.to_f32(), point.y.to_f32());
         let at = Vec3::new(x, ground.at(x, y), -y);
-        // Reuse a witnessed flight for its authoritative landing. If only the landing is
-        // visible, start there without drawing any of the private path that preceded it.
-        let held = flying.missiles.iter().find_map(|(id, body)| match *body {
-            Body::Grenade(handle) if playing.matches_flight(handle, inflictor, caster, sight) => {
-                Some((*id, handle))
+        // Exact identity prevents a landing from taking another throw by the same caster.
+        // A newly visible landing gets a fresh effect, without its private preceding path.
+        let held = missile.and_then(|id| match flying.missiles.get(&id).copied() {
+            Some(Body::Grenade(handle)) if playing.witnessed_flight(handle, sight) => {
+                flying.missiles.remove(&id);
+                Some(handle)
             }
             _ => None,
         });
-        if let Some((id, _)) = held {
-            flying.missiles.remove(&id);
-        }
-        let held = held.map(|(_, handle)| handle);
         if let Some(handle) =
             held.or_else(|| play_once(library, playing, GRENADE, at, n as u32, EffectSight::Point))
             && let Some(instance) = playing.get_mut(handle)
