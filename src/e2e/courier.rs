@@ -1,5 +1,6 @@
 //! A courier's owner reaching level four changes the model drawn in the match.
 
+mod delivery;
 mod return_locked;
 
 use bevy::{ecs::system::SystemState, prelude::*};

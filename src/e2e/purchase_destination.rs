@@ -6,7 +6,7 @@ use bota_proto::{Cheat, HeroId, ItemId};
 
 use super::harness::{Client, MID, Server};
 
-fn icon_in_slot(client: &mut Client, slot: u8, item: ItemId) -> bool {
+pub(super) fn icon_in_slot(client: &mut Client, slot: u8, item: ItemId) -> bool {
     let Some(slot_box) = client.item_box(slot) else {
         return false;
     };
