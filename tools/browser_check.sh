@@ -68,7 +68,7 @@ DBOTA_WEB_REPLAY=$chat DBOTA_WEB_ARGS="--replay built-in --pov 0 --settings vide
 rm -f "$work/cache.zip"
 "$here/tools/test_client.sh" export-cache "$work/cache.zip"
 
-in_private_environment python3 web/test/smoke.py --import-page "$pages/replay" --reference-cache "$DBOTA_ASSETS" \
+in_private_environment python3 web/test/smoke.py --import-page "$pages/replay" --reference-cache "$DBOTA_ASSETS" --start-page "$pages/plain" \
     --prepared-page "$pages/replay" --cache-zip "$work/cache.zip" --cache-folder "$DBOTA_ASSETS" \
     --served-page "$pages/plain" --startup-page "$pages/plain" --keys-page "$pages/plain" --boot-page "$pages/plain" --busy-page "$pages/plain" \
     --replay-page "$pages/replay" --scene-page "$pages/replay" --cursor-page "$pages/replay" --pixels-page "$pages/replay" \

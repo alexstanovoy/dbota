@@ -112,4 +112,4 @@ gate and headless runs. [tools/README.md](tools/README.md) is the asset import a
 ## License
 
 MIT, see [LICENSE](LICENSE). The interface fonts in `assets/fonts` are subsets of Liberation Sans and Noto Sans CJK
-under the SIL Open Font License (`OFL.txt`, `OFL-NotoSansCJK.txt`).
+under the SIL Open Font License (`OFL.txt`, `OFL-NotoSansCJK.txt`). Other third-party material is listed in [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).

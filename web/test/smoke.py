@@ -38,6 +38,10 @@ names it) that the pages play on through `?cache=http`, served under /cache besi
         --replays-page temp/web-live --server temp/bota-target/release/bota_server --radovid RADOVID \
         --startup-page temp/web-live
 
+* `--start-page` (any build): the start window in both states: without a copy exactly "Use Dota 2 folder" (red) and
+  "Use cache (.zip / folder)" (grey, offering a .zip or a folder); with one "Play" (red) and "Delete and import again"
+  (grey), whose delete empties only the page's own cache and returns to the first state; in both, the native client's
+  caption and its three links (Windows, Linux, macOS) pointing where `native.js` says.
 * `--served-page` (any build): with `?cache=http` the page fetches the served cache's index.txt and
   publishes it to the client; a missing or invalid index ends startup with an error.
 * `--startup-page` (any build): the page loads the WebGPU client, or the WebGL2 one with
@@ -1653,6 +1657,122 @@ def refusing_zips(good_zip, scratch):
     ]
 
 
+def open_cache_kinds(page):
+    """The start window's "Use cache" button offers its two kinds (.zip, folder) once pressed."""
+    if page.is_hidden("#cacheKinds"):
+        page.click("#useCache")
+    page.wait_for_selector("#cacheKinds:not([hidden])", timeout=5000)
+
+
+START_PRIMARY = "rgb(170, 34, 34)"
+START_SECONDARY = "rgba(0, 0, 0, 0)"
+
+START_WITH_COPY = """async (header) => {
+  const cache = await import('./cache.js');
+  const version = (await cache.importer()).cache_version();
+  const root = await navigator.storage.getDirectory();
+  const put = async (dir, name, text) => {
+    const w = await (await dir.getFileHandle(name, { create: true })).createWritable();
+    await w.write(text); await w.close();
+  };
+  const copy = await root.getDirectoryHandle('dbota', { create: true });
+  await put(copy, 'stamp.txt', version + '/1/2');
+  await put(copy, 'index.txt', header + 'file 3 hud/a.png\\n');
+  await put(await copy.getDirectoryHandle('hud', { create: true }), 'a.png', 'png');
+  // What is not the copy: the player's replays and another page's folder.
+  await put(await root.getDirectoryHandle('dbota-replays', { create: true }), 'kept.brp', 'replay');
+  await put(await root.getDirectoryHandle('foreign', { create: true }), 'kept.txt', 'foreign');
+}"""
+
+START_STORAGE = """async () => {
+  const cache = await import('./cache.js');
+  const root = await navigator.storage.getDirectory();
+  const names = [];
+  for await (const [name] of root.entries()) names.push(name);
+  const read = async (dir, name) => (await (await (await root.getDirectoryHandle(dir)).getFileHandle(name)).getFile()).text();
+  return { names: names.sort(), state: await cache.readState(), replay: await read('dbota-replays', 'kept.brp'),
+           foreign: await read('foreign', 'kept.txt') };
+}"""
+
+
+def start_buttons(page):
+    """(text, background colour) of every button the start window shows."""
+    shown = page.evaluate(
+        """() => [...document.querySelectorAll('#gate button')].filter((b) => b.offsetParent !== null)
+             .map((b) => [b.textContent.trim(), getComputedStyle(b).backgroundColor])"""
+    )
+    return [tuple(button) for button in shown]
+
+
+def check_native_links(page):
+    got = page.evaluate(
+        """async () => {
+          const { NATIVE_CLIENT } = await import('./native.js');
+          const footer = document.getElementById('native');
+          return { visible: footer.offsetParent !== null, caption: footer.querySelector('span').textContent.trim(),
+                   constants: NATIVE_CLIENT,
+                   links: [...footer.querySelectorAll('a[data-os]')].map((a) => ({
+                     text: a.textContent.trim(), href: a.getAttribute('href'), rel: a.rel, os: a.dataset.os,
+                     drawn: a.querySelector('svg path')?.getAttribute('d')?.length > 100 })),
+                   credit: (({ href, textContent }) => ({ href: new URL(href).pathname, text: textContent }))(footer.querySelector('#credit a')) };
+        }"""
+    )
+    assert got["visible"], "the native client links are shown"
+    assert got["caption"] == "Native client", got["caption"]
+    assert got["credit"] == {"href": "/THIRD-PARTY-NOTICES.md", "text": "Icons: Font Awesome, CC BY 4.0"}, got["credit"]
+    shipped = page.evaluate("async (href) => { const r = await fetch(href); return r.ok && (await r.text()); }", got["credit"]["href"])
+    assert shipped and "Font Awesome Free" in shipped and "CC BY 4.0" in shipped, "the credit link serves the notice"
+    assert [l["text"] for l in got["links"]] == ["Windows", "Linux", "macOS"], got["links"]
+    for link in got["links"]:
+        assert link["href"] == got["constants"][link["os"]], f"{link['text']} points where native.js says: {link}"
+        assert link["href"].startswith("https://"), link
+        assert "noopener" in link["rel"], f"{link['text']} opens without noopener"
+        assert link["drawn"], f"{link['text']} has its icon"
+
+
+def check_start_page(directory):
+    """The start window: two buttons without a copy, "Play" and "Delete and import again" with one,
+    the delete leaving only the page's own copy behind it, and the native client's links in both."""
+    with sync_playwright() as p:
+        server, base, browser, page, console, problems = opened(p, directory)
+        page.goto(base)
+        page.wait_for_selector("#grant:not([hidden])", timeout=60000)
+        assert start_buttons(page) == [("Use Dota 2 folder", START_PRIMARY), ("Use cache (.zip / folder)", START_SECONDARY)], start_buttons(page)
+        open_cache_kinds(page)
+        assert [t for t, _ in start_buttons(page)][2:] == [".zip file", "Folder"], "the cache button offers a .zip or a folder"
+        page.click("#useCache")
+        assert len(start_buttons(page)) == 2, "pressing it again closes the choice"
+        check_native_links(page)
+        print("no copy: two buttons, the cache kinds, the native client links")
+
+        source = (HERE.parent.parent / "crates/dbota_import/src/import.rs").read_text()
+        revision = re.search(r"pub const IMPORT_REV: u32 = (\d+)", source).group(1)
+        page.evaluate(START_WITH_COPY, f"dbota-cache 1 rev {revision}\n")
+        page.reload()
+        page.wait_for_selector("#ready:not([hidden])", timeout=60000)
+        assert page.is_hidden("#grant")
+        assert start_buttons(page) == [("Play", START_PRIMARY), ("Delete and import again", START_SECONDARY)], start_buttons(page)
+        check_native_links(page)
+        print("a copy: Play and Delete and import again, the native client links")
+
+        page.click("#remove")
+        page.wait_for_selector("#grant:not([hidden])", timeout=20000)
+        assert start_buttons(page) == [("Use Dota 2 folder", START_PRIMARY), ("Use cache (.zip / folder)", START_SECONDARY)], start_buttons(page)
+        check_native_links(page)
+        after = page.evaluate(START_STORAGE)
+        assert after["state"] is None, "the copy is deleted"
+        assert after["names"] == ["dbota-replays", "foreign"], f"only the page's copy is removed: {after['names']}"
+        assert (after["replay"], after["foreign"]) == ("replay", "foreign")
+        page.reload()
+        page.wait_for_selector("#grant:not([hidden])", timeout=60000)
+        assert [t for t, _ in start_buttons(page)] == ["Use Dota 2 folder", "Use cache (.zip / folder)"], "still no copy after a reload"
+        assert not problems, problems
+        print("delete: back to no copy, replays and others' storage untouched")
+        browser.close()
+    server.shutdown()
+    print("start window test passed")
+
+
 def check_directory_picker(page):
     """Where the browser has `showDirectoryPicker` (Chromium) the folder button uses it: a stub
     hands the page a folder in private storage (a cache of another build), which is walked and
@@ -1671,6 +1791,7 @@ def check_directory_picker(page):
           window.showDirectoryPicker = async () => top;
         }"""
     )
+    open_cache_kinds(page)
     page.click("#loadFolder")
     page.wait_for_function(
         "() => document.getElementById('status').textContent.includes('is for assets v1/rev1')",
@@ -1713,12 +1834,14 @@ def check_prepared_page(directory, cache_zip, cache_folder):
             )
 
         def load(button, path):
+            open_cache_kinds(page)
             with page.expect_file_chooser() as chooser:
                 page.click(button)
             chooser.value.set_files(str(path))
 
         page.goto(base)
         page.wait_for_selector("#grant:not([hidden])", timeout=20000)
+        open_cache_kinds(page)
         assert page.is_visible("#loadZip") and page.is_visible("#loadFolder"), "loading a prepared cache is offered"
         for what, path, words in refusing:
             load("#loadZip", path)
@@ -1785,6 +1908,7 @@ def main():
     ap.add_argument("--scene-page", type=pathlib.Path, help="a replay build: forest and heroes drawn on both graphics APIs")
     ap.add_argument("--fullscreen-page", type=pathlib.Path, help="a replay build opened on the Video settings")
     ap.add_argument("--server", help="a bota_server built with the websocket feature, for --replays-page")
+    ap.add_argument("--start-page", type=pathlib.Path, help="any build: the start window's two states and the native client links")
     ap.add_argument("--served-page", type=pathlib.Path, help="any build: ?cache=http publishes the served cache's index")
     ap.add_argument("--fonts-page", type=pathlib.Path, help="any build: the page holds its interface fonts")
     ap.add_argument("--startup-page", type=pathlib.Path, help="any build: the client picked, failures shown")
@@ -1811,6 +1935,8 @@ def main():
         if not (args.cache_zip and args.cache_folder):
             sys.exit("--prepared-page needs --cache-zip and --cache-folder")
         check_prepared_page(args.prepared_page, args.cache_zip, args.cache_folder)
+    if args.start_page:
+        check_start_page(args.start_page)
     if args.served_page:
         check_served_cache(args.served_page)
     if args.startup_page:

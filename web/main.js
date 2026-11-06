@@ -5,6 +5,7 @@ import "./busy.js";
 import * as cache from "./cache.js";
 import * as grant from "./grant.js";
 import * as replays from "./replays.js";
+import { NATIVE_CLIENT } from "./native.js";
 import "./keys.js";
 import * as pointer from "./pointer.js";
 
@@ -12,8 +13,15 @@ const $ = (id) => document.getElementById(id);
 const show = (...ids) => {
   $("booting").hidden = true;
   for (const id of ["grant", "ready", "progress", "failed", "stale"]) $(id).hidden = !ids.includes(id);
+  closeCacheKinds();
+  $("native").hidden = !ids.some((id) => ["grant", "ready", "stale"].includes(id));
   $("gate").hidden = false;
 };
+// "Use cache" opens a choice of what the cache is: a .zip file or a folder.
+function closeCacheKinds() {
+  $("cacheKinds").hidden = true;
+  $("useCache").setAttribute("aria-expanded", "false");
+}
 const say = (text) => ($("status").textContent = text);
 // A busy server (busy.js): said where the page shows what it is doing now.
 const busy = globalThis.dbota_busy;
@@ -373,9 +381,7 @@ async function checkFresh() {
   if (!files.has("pak01_dir.vpk")) return;
   const result = await runWorker({ op: "check", files: [...files], modified: modifiedOf(files) });
   if (result.type === "checked" && !result.fresh) {
-    $("update").hidden = false;
-    $("update").onclick = () => importFrom(files);
-    say("Dota 2 has changed since the copy was made.");
+    say("Dota 2 has changed since the copy was made: delete the copy and import again.");
   }
 }
 
@@ -389,10 +395,16 @@ async function main() {
     location.assign(url);
   };
   $("pick").onclick = pick;
-  $("again").onclick = pick;
+  for (const link of $("native").querySelectorAll("a[data-os]")) link.href = NATIVE_CLIENT[link.dataset.os];
+  $("useCache").onclick = () => {
+    const open = $("cacheKinds").hidden;
+    $("cacheKinds").hidden = !open;
+    $("useCache").setAttribute("aria-expanded", String(open));
+  };
   for (const [kind, ids] of [["zip", ["loadZip", "loadZipStale"]], ["folder", ["loadFolder", "loadFolderStale"]]]) {
     for (const id of ids) {
       $(id).onclick = async () => {
+        closeCacheKinds();
         try {
           loadPrepared(await grant.pickPrepared(kind, $("packZip"), $("packFolder")));
         } catch (e) {

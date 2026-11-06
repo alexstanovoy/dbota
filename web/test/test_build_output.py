@@ -18,6 +18,7 @@ class BuildOutputTests(unittest.TestCase):
         for source in REPOSITORY.joinpath("web").iterdir():
             if source.is_file():
                 shutil.copyfile(source, self.root / "web" / source.name)
+        shutil.copyfile(REPOSITORY / "THIRD-PARTY-NOTICES.md", self.root / "THIRD-PARTY-NOTICES.md")
         (self.root / "assets/fonts").mkdir(parents=True)
         self.font = self.root / "assets/fonts/keep.ttf"
         self.font.write_bytes(b"source font must survive")
@@ -71,6 +72,14 @@ class BuildOutputTests(unittest.TestCase):
         self.assertEqual(self.font.read_bytes(), b"source font must survive")
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("unowned web output", result.stderr)
+
+    def test_output_ships_the_notice_the_page_links_to(self):
+        result = self.build("out")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        notice = (self.root / "out/THIRD-PARTY-NOTICES.md").read_text()
+        self.assertIn("Font Awesome Free", notice)
+        self.assertIn("CC BY 4.0", notice)
+        self.assertIn('href="THIRD-PARTY-NOTICES.md"', (self.root / "out/index.html").read_text())
 
     def test_owned_output_rebuilds_and_copies_fonts(self):
         for _ in range(2):

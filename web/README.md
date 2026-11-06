@@ -4,13 +4,14 @@ The page asks for the player's own Dota 2 folder, builds a private copy of the a
 the client (compiled to wasm, drawn through WebGPU or WebGL2). **Valve's files never leave the player's machine**: the
 folder is read inside the tab with ranged reads, the copy lives in the browser's Origin Private File System, the page
 has no code that sends it anywhere, and its Content-Security-Policy allows connections only to its own origin and the
-game servers. Without a copy the page offers only the Dota 2 folder or a prepared cache, and the client doesn't start.
+game servers. Without a copy the page offers two buttons, "Use Dota 2 folder" and "Use cache (.zip / folder)", and the client doesn't start; with one, "Play" and "Delete and import again". Below both, the native client's download links.
 
 ## Parts
 
 | File | What it does |
 | --- | --- |
 | `index.html`, `page.css` | the gate (folder question, progress, ready) over the client's canvas; the CSP |
+| `native.js` | where the native client's download links point (one constant per system, placeholders for now) |
 | `boot.js` | a classic script: "Loading" at once, and the one failure screen for a browser too old, a part that won't load or a start that stalls; every later wait has a limit in `main.js` and ends on a screen naming the stage |
 | `busy.js` | a server busy sending pages answers 503 with Retry-After: every fetch, module and worker of the page's own origin goes through here, says so on the page, waits as asked (1 to 60 s) and tries once more |
 | `main.js` | the flow: stored copy, folder grant, import progress, update check, delete, start the client that suits the browser |
@@ -79,6 +80,8 @@ PYTHONPATH=temp/pwlib python3 -m playwright install chromium`); its docstring ha
 - Against a folder of hard links to the install's packages: the privacy text and only the two ways to a cache, folder
   picks at every level, the worker's import, the copy kept over a reload, the client reading it, no request beyond the
   page's origin, and deletion.
+- `--start-page`: the start window in both states (two buttons without a copy; "Play" and "Delete and import again" with
+  one), the delete returning to the first without touching the player's replays, and the native client's links.
 - `--prepared-page`: bad zips (another build, a path that climbs out, a wrong index) are refused with their reasons;
   the real zip and cache folder are copied, kept over a reload and played.
 - `--replays-page`: a match through a real radovid that serves the page and keeps replays; the next visit fetches the
@@ -91,12 +94,12 @@ The merge gate runs them all in its `browser` step (`tools/browser_check.sh`).
 
 ## Manual checks (the native folder dialog is out of automation's reach)
 
-1. Serve `web/out` and open it in Chrome: the privacy text, "Choose the Dota 2 folder", the prepared caches, and no way
-   to play without assets.
+1. Serve `web/out` and open it in Chrome: the privacy text, "Use Dota 2 folder" and "Use cache (.zip / folder)" (the latter offers a
+   .zip or a folder), and no way to play without assets.
 2. Pick `dota 2 beta`, then `game` and `dota` (all accepted), then a wrong folder (a message, no import). "Cancel"
    returns to the question and leaves no copy.
 3. Reload: "Play" at once; devtools shows the copy in OPFS and no request beyond the page's own files.
-4. After a Dota update, "Update from the Dota 2 folder" appears; "Delete the imported copy" empties the storage.
+4. After a Dota update, the page says so; "Delete and import again" empties the storage.
 5. Firefox and Safari use the fallback: the browser says it will "upload" the folder, which only lists it; watch
    Network to see that nothing leaves.
 
