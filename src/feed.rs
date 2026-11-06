@@ -721,6 +721,17 @@ fn dota_parts(core: &Core, texts: &Texts, kind: &FeedKind) -> Option<Vec<Part>> 
                 &[("player_name", activator(core, by, team))],
             )
         }
+        FeedKind::BossRoared {
+            objective: bota_proto::ObjectiveKind::Roshan,
+            team,
+        } => texts.label_parts(
+            if team == Team::Radiant {
+                "DOTA_HUD_RadiantRoshanRoar"
+            } else {
+                "DOTA_HUD_DireRoshanRoar"
+            },
+            &[],
+        ),
         FeedKind::BossFell {
             objective: bota_proto::ObjectiveKind::Roshan,
             team: Some(team),
@@ -850,6 +861,9 @@ pub fn text(core: &Core, kind: &FeedKind) -> String {
                 .get(usize::from(item.0))
                 .map_or("the item", |item| item.name)
         ),
+        FeedKind::BossRoared { objective: _, team } => {
+            format!("Roshan roars at {}", side_name(team))
+        }
         FeedKind::BossFell { objective, team } => {
             let name = match objective {
                 bota_proto::ObjectiveKind::Roshan => "Roshan",
@@ -1002,7 +1016,7 @@ fn icon_file(core: &Core, name: &str, kind: &FeedKind) -> Option<&'static str> {
         ("outpost_lost_icon", _) => "hud.outpost_lost",
         ("outpost_icon", _) => "hud.outpost",
         ("aegis_icon", FeedKind::Loot { .. }) => "hud.aegis",
-        ("roshan_icon", FeedKind::BossFell { .. }) => "hud.roshan",
+        ("roshan_icon", FeedKind::BossFell { .. } | FeedKind::BossRoared { .. }) => "hud.roshan",
         ("rune_icon", FeedKind::Rune { kind, .. }) => rune_icon(*kind),
         // The Shrine's wisdom.
         ("rune_icon", _) => "hud.rune_timer.wisdom",

@@ -356,3 +356,19 @@ text ability 82 roshan_spell_block
 modifier 83 modifier_roshan_inherent_buffs
 modifier 84 modifier_roshan_devotion_aura
 modifier 85 modifier_roshan_spell_block
+
+ability 83 roshan_bash
+text ability 83 roshan_bash
+
+ability 84 roshan_slam
+text ability 84 roshan_slam
+
+ability 85 roshan_revengeroar
+text ability 85 roshan_revengeroar
+modifier 86 modifier_roshan_slam
+modifier 87 modifier_bashed
+modifier 88 modifier_roshan_revengeroar_windup
+modifier 89 modifier_roshan_revengeroar_aura
+modifier 90 modifier_roshan_revengeroar_disarm
+modifier 91 modifier_roshan_revengeroar
+modifier 92 modifier_silence

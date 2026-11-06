@@ -2108,3 +2108,30 @@ fx unit.npc_dota_creep_goodguys_flagbearer.worn at=unit attach=attach_banner par
 fx unit.npc_dota_creep_badguys_flagbearer.worn at=unit attach=attach_banner particle=creep.dire.banner
 fx unit.npc_dota_creep_goodguys_flagbearer.worn at=unit particle=creep.radiant.inspiration
 fx unit.npc_dota_creep_badguys_flagbearer.worn at=unit particle=creep.dire.inspiration
+
+# Roshan's active abilities and announced death, read from the installed creep sound events.
+particle neutral.roshan_roar particles/neutral_fx/roshan_roar.vpcf_c particles/roshan_roar.json
+particle neutral.roshan_slam particles/neutral_fx/roshan_slam.vpcf_c particles/roshan_slam.json
+particle neutral.roshan_bash particles/neutral_fx/roshan_bash.vpcf_c particles/roshan_bash.json
+particle neutral.roshan_death particles/neutral_fx/roshan_death.vpcf_c particles/roshan_death.json
+sound sound.neutral.roshan_slam sounds/weapons/creep/roshan/slam.vsnd_c sounds/weapons/creep/roshan/slam.wav event=Roshan.Slam
+sound sound.neutral.roshan_bash sounds/weapons/creep/roshan/bash.vsnd_c sounds/weapons/creep/roshan/bash.wav event=Roshan.Bash
+sound sound.neutral.roshan_roar sounds/weapons/creep/roshan/revenge_roar.vsnd_c sounds/weapons/creep/roshan/revenge_roar.wav event=Roshan.RevengeRoar
+sound sound.neutral.roshan_roar sounds/weapons/creep/roshan/revenge_roar_layer.vsnd_c sounds/weapons/creep/roshan/revenge_roar_layer.wav event=Roshan.RevengeRoar.Layer
+sound sound.announcer.roshan.radiant sounds/vo/announcer/announcer_roshan_fallen_rad.vsnd_c sounds/vo/announcer/announcer_roshan_fallen_rad.mp3 event=announcer_announcer_roshan_fallen_rad
+sound sound.announcer.roshan.dire sounds/vo/announcer/announcer_roshan_fallen_dire.vsnd_c sounds/vo/announcer/announcer_roshan_fallen_dire.mp3 event=announcer_announcer_roshan_fallen_dire
+fx ability.roshan_slam.cast at=caster particle=neutral.roshan_slam sound=sound.neutral.roshan_slam
+fx ability.roshan_revengeroar.cast at=caster particle=neutral.roshan_roar
+fx ability.roshan_bash.cast at=caster sound=sound.neutral.roshan_bash
+fx modifier.modifier_bashed.worn at=unit attach=overhead particle=status.stunned
+fx modifier.modifier_roshan_revengeroar_disarm.worn at=unit attach=overhead particle=status.disarmed cp1=attach_hitloc
+fx modifier.modifier_silence.worn at=unit attach=overhead particle=status.silenced
+fx unit.npc_dota_roshan.died at=unit particle=neutral.roshan_death
+
+particle status.silenced particles/generic_gameplay/generic_silenced.vpcf_c particles/generic_silenced.json
+
+# Consumable refresh and the planted Banner's ambient effect. The unit owns the latter's lifetime.
+particle item.refresher particles/items2_fx/refresher.vpcf_c particles/refresher.json
+fx item.refresher_shard.use at=caster particle=item.refresher
+particle objective.banner particles/units/roshan_banner/roshan_banner_base.vpcf_c particles/roshan_banner_base.json
+fx unit.npc_dota_unit_roshans_banner.worn at=unit particle=objective.banner

@@ -55,6 +55,8 @@ pub struct Pose {
     since_strike: Option<f32>,
     /// The strike tick of the swing under way, to tell one swing from the next.
     swing_due: Option<u32>,
+    /// The tick of the attack whose follow-through is playing.
+    struck_at: Option<u32>,
     /// How many swings it has made, for alternating attack clips.
     swings: u32,
     /// The pace of the last swing: clip seconds per simulated second.
@@ -454,6 +456,9 @@ fn choose(
         // the clip there rather than playing the blow's follow-through.
         if core.view().is_some_and(|v| v.tick < due) {
             pose.since_strike = None;
+            pose.struck_at = None;
+        } else {
+            pose.struck_at = Some(due);
         }
     }
     if let Some(since) = pose.since_strike.as_mut() {
@@ -463,6 +468,16 @@ fn choose(
         } else {
             "attack2"
         };
+        let proc = core
+            .session()
+            .and_then(|s| s.entity(u.id))
+            .and_then(|t| t.last_ability_cast)
+            .filter(|cast| {
+                pose.struck_at
+                    .is_some_and(|tick| tick.abs_diff(cast.tick) <= 1)
+            })
+            .and_then(|cast| art_of(cast.ability).attack);
+        let last = proc.filter(|name| clip(name).is_some()).unwrap_or(last);
         let last = if clip(last).is_some() { last } else { "attack" };
         if let Some((duration, point)) = clip(last) {
             let t = point.unwrap_or(0.4) + *since * pose.swing_tempo.max(0.5);

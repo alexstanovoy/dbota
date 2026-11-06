@@ -43,6 +43,8 @@ pub struct AbilityArt {
     pub scorches: bool,
     /// The clip its caster loops while it channels it, when it has one.
     pub channel: Option<&'static str>,
+    /// The attack follow-through used by a conditional attack proc.
+    pub attack: Option<&'static str>,
 }
 
 const PLAIN: AbilityArt = AbilityArt {
@@ -51,6 +53,7 @@ const PLAIN: AbilityArt = AbilityArt {
     flight: Flight::None,
     scorches: false,
     channel: None,
+    attack: None,
 };
 
 const RAZE: AbilityArt = AbilityArt {
@@ -108,6 +111,11 @@ fn neutral_art(ability: NeutralAbility) -> AbilityArt {
     );
     AbilityArt {
         clip: neutral_cast_clip(ability),
+        attack: matches!(
+            ability.spell(),
+            Spell::Strike(bota_core::Strike::Bash { .. })
+        )
+        .then_some("bash"),
         flight: if bolt { Flight::Bolt } else { Flight::None },
         ..PLAIN
     }
@@ -121,7 +129,8 @@ fn neutral_art(ability: NeutralAbility) -> AbilityArt {
 const fn neutral_cast_clip(ability: NeutralAbility) -> &'static str {
     use NeutralAbility as N;
     match ability {
-        N::Heal
+        N::RevengeRoar
+        | N::Heal
         | N::TakeOff
         | N::ChainLightning
         | N::WarStomp
@@ -139,14 +148,15 @@ const fn neutral_cast_clip(ability: NeutralAbility) -> &'static str {
         | N::Frenzy
         | N::IcefireBomb
         | N::Desecrate => "cast1",
-        N::Vex
+        N::Bash
+        | N::Vex
         | N::Intimidate
         | N::OgreSmash
         | N::RaiseDead
         | N::WaterBubbleSmall
         | N::WaterBubbleMedium
         | N::WaterBubbleLarge => "cast2",
-        N::Slam => "cast3",
+        N::Slam | N::RoshanSlam => "cast3",
         N::ArmOfTheDeep | N::TendrilsOfTheDeep | N::CongregationsOfTheDeep => "cast5",
         // Never cast, so never shown: Dota's default animation.
         N::SpellBlock

@@ -35,9 +35,15 @@ fn roshan_stands_in_the_pit_as_his_imported_model_with_a_health_bar() {
 /// Slay the real server's Roshan through an attack order. The trusted test setup changes
 /// health and attack amplification; combat, loot, visibility and events use normal paths.
 fn slain_roshan() -> (Server, Client) {
+    slain_roshan_with(&[])
+}
+
+fn slain_roshan_with(extra: &[&str]) -> (Server, Client) {
     use bota_client_core::Intent;
     use bota_proto::{ModifierSpec, Target};
-    let server = Server::start(1, &["--objectives", "roshan"]);
+    let mut args = vec!["--objectives", "roshan"];
+    args.extend_from_slice(extra);
+    let server = Server::start(1, &args);
     let mut client = Client::join(&server, HeroId::SHADOW_FIEND, &[]);
 
     client.cheat(Cheat::StartGame);
@@ -462,4 +468,186 @@ fn a_blocked_dismember_draws_the_spent_cooldown_without_a_channel() {
                 *part == crate::hud::Part::Seconds && parent.0 == slot && !text.0.is_empty()
             })
     });
+}
+
+fn particle_started(client: &Client, name: &str) -> u32 {
+    let library = client.world().resource::<crate::particles::Library>();
+    let effect = library
+        .effect(name)
+        .unwrap_or_else(|| panic!("missing particle {name}"));
+    client
+        .world()
+        .resource::<crate::particles::Playing>()
+        .started(effect)
+}
+
+#[test]
+fn roshans_slam_draws_its_cast_animation_particle_and_slow_on_the_player() {
+    use bota_proto::Vec2;
+    let server = Server::start(1, &["--objectives", "roshan", "--immortal-heroes"]);
+    let mut client = Client::join(&server, HeroId::SHADOW_FIEND, &[]);
+    client.cheat(Cheat::StartGame);
+    let pit = bota_core::ROSHAN_DAY_PIT;
+    client.stand_at((pit.x.to_int() + 100, pit.y.to_int()));
+    client.cheat(Cheat::CreateCreeps {
+        enemy: false,
+        at: pit + Vec2::from_ints(0, 100),
+    });
+    let mut casting = false;
+    let mut slowed = false;
+    client.until(
+        "Slam's imported animation, particles and player slow",
+        |c| {
+            if let Some(boss) = c.view().units.iter().find(|u| u.kind == UnitKind::Roshan) {
+                casting |= c
+                    .body(boss.id)
+                    .and_then(|e| c.world().get::<crate::anim::Pose>(e))
+                    .is_some_and(|p| p.clip() == "cast3");
+            }
+            slowed |= c
+                .me()
+                .effects
+                .iter()
+                .any(|e| e.id == bota_proto::EffectId(83));
+            casting && slowed && particle_started(c, "neutral.roshan_slam") > 0
+        },
+    );
+}
+
+#[test]
+fn a_respawned_roshan_roars_with_animation_particles_global_sound_and_message() {
+    use bota_client_core::{CueKind, FeedKind, Intent};
+    use bota_proto::Target;
+    let (_server, mut client) = slain_roshan_with(&[
+        "--mode",
+        "realtime",
+        "--tick-rate",
+        "300",
+        "--immortal-heroes",
+    ]);
+    client.core_mut().act(Intent::Stop);
+    client.cheat(Cheat::ClearModifiers {
+        target: Target::None,
+    });
+    client.cheat(Cheat::CreepSpawning { on: false });
+    client.until("Roshan's natural 8–11 minute respawn", |c| {
+        c.view().units.iter().any(|u| u.kind == UnitKind::Roshan)
+    });
+    let boss = client
+        .view()
+        .units
+        .iter()
+        .find(|u| u.kind == UnitKind::Roshan)
+        .expect("respawned boss")
+        .clone();
+    client.core_mut().act(Intent::AttackAt {
+        at: (boss.pos.x.to_f32(), boss.pos.y.to_f32()),
+        unit: Some(boss.id),
+    });
+    let mut animation = false;
+    let mut sounded = false;
+    client.until(
+        "Roar's visible and globally announced player effects",
+        |c| {
+            sounded |= crate::sound::cues_sounded(c.world(), CueKind::BossRoar) > 0;
+            animation |= c
+                .body(boss.id)
+                .and_then(|e| c.world().get::<crate::anim::Pose>(e))
+                .is_some_and(|p| p.clip() == "cast1");
+            sounded
+                && animation
+                && particle_started(c, "neutral.roshan_roar") > 0
+                && c.core()
+                    .feed
+                    .iter()
+                    .any(|line| matches!(line.kind, FeedKind::BossRoared { .. }))
+        },
+    );
+    assert!(feed_texts(&mut client).iter().any(|s| s.contains("roar")));
+}
+
+#[test]
+fn refresher_shard_displays_its_mana_cost_on_the_item_and_plays_its_refresh_effect() {
+    use bevy::prelude::*;
+    use bota_client_core::{Intent, Slot};
+    use bota_proto::ItemId;
+    let server = Server::start(1, &[]);
+    let mut client = Client::join(&server, HeroId::SHADOW_FIEND, &[]);
+    client.cheat(Cheat::StartGame);
+    client.cheat(Cheat::Item {
+        item: ItemId::REFRESHER_SHARD,
+    });
+    let slot = client.slot_of(ItemId::REFRESHER_SHARD).expect("Shard");
+    client.within(
+        std::time::Duration::from_secs(15),
+        "Shard's 200 mana cost drawn on its own item icon",
+        |c| {
+            let world = c.world_mut();
+            let Some(parent) = world
+                .query::<(Entity, &crate::hud::ItemBox)>()
+                .iter(world)
+                .find(|(_, b)| b.0 == slot)
+                .map(|(e, _)| e)
+            else {
+                return false;
+            };
+            world
+                .query::<(&crate::hud::Part, &crate::hud::PartOf, &Text)>()
+                .iter(world)
+                .any(|(part, of, text)| {
+                    *part == crate::hud::Part::Cost && of.0 == parent && text.0 == "200"
+                })
+        },
+    );
+    client.core_mut().act(Intent::Press {
+        slot: Slot::Item(slot),
+        ctrl: false,
+    });
+    client.until(
+        "Shard consumed and the imported refresh effect started",
+        |c| {
+            c.slot_of(ItemId::REFRESHER_SHARD).is_none()
+                && particle_started(c, "item.refresher") > 0
+        },
+    );
+}
+
+#[test]
+fn roshans_bash_uses_its_unique_attack_animation_and_stuns_the_player() {
+    let server = Server::start(
+        1,
+        &[
+            "--objectives",
+            "roshan",
+            "--immortal-heroes",
+            "--mode",
+            "realtime",
+            "--tick-rate",
+            "300",
+        ],
+    );
+    let mut client = Client::join(&server, HeroId::SHADOW_FIEND, &[]);
+    client.cheat(Cheat::StartGame);
+    let pit = bota_core::ROSHAN_DAY_PIT;
+    client.stand_at((pit.x.to_int() + 100, pit.y.to_int()));
+    let mut stunned = false;
+    client.within(
+        std::time::Duration::from_secs(15),
+        "Bash's distinct attack animation and player stun",
+        |c| {
+            stunned |= c
+                .me()
+                .effects
+                .iter()
+                .any(|e| e.id == bota_proto::EffectId(84));
+            stunned
+                && c.view()
+                    .units
+                    .iter()
+                    .find(|u| u.kind == UnitKind::Roshan)
+                    .and_then(|u| c.body(u.id))
+                    .and_then(|e| c.world().get::<crate::anim::Pose>(e))
+                    .is_some_and(|p| p.clip() == "bash")
+        },
+    );
 }

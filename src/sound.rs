@@ -48,6 +48,17 @@ pub(crate) fn deaths_sounded(world: &World, hero: HeroId) -> usize {
         .map_or(0, |(_, binding)| binding.next)
 }
 
+/// How many times the sound renderer accepted a cue, for player-path checks.
+#[cfg(test)]
+pub(crate) fn cues_sounded(world: &World, kind: CueKind) -> usize {
+    world
+        .resource::<Voices>()
+        .0
+        .iter()
+        .find(|(k, _)| *k == Kind::Cue(kind))
+        .map_or(0, |(_, v)| v.next)
+}
+
 /// A kind of sound.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Kind {
@@ -371,6 +382,7 @@ fn sources_of(kind: Kind, manifest: &Manifest) -> Vec<String> {
     let named = |names: &[&str]| names.iter().map(|n| (*n).to_owned()).collect::<Vec<_>>();
     match kind {
         Kind::Cue(cue) => match cue {
+            CueKind::BossRoar => named(&["sound.neutral.roshan_roar"]),
             CueKind::LastHit => named(&["sound.last_hit"]),
             CueKind::Deny => named(&["sound.deny"]),
             CueKind::Raze => named(&["sound.raze"]),
@@ -404,6 +416,7 @@ fn sources_of(kind: Kind, manifest: &Manifest) -> Vec<String> {
 
 fn load(mut bindings: ResMut<Bindings>, manifest: Res<Manifest>, server: Res<AssetServer>) {
     let kinds = [
+        CueKind::BossRoar,
         CueKind::LastHit,
         CueKind::Deny,
         CueKind::Raze,

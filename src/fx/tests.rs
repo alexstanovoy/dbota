@@ -65,6 +65,26 @@ fn carries_stats_alone(id: u16) -> bool {
 /// The items and abilities of ids.txt that have no `fx` line, and why. Everything else of ids.txt
 /// has one (its own, or one for the modifier of the effect it shows on the buff bar).
 const NO_LINE: &[(&str, &str)] = &[
+    (
+        "aegis",
+        "the passive reincarnation is represented by the hero's death and rise, with an item lifetime indicator",
+    ),
+    (
+        "roshan_inherent_buffs",
+        "permanent intrinsic properties, with no persistent particle",
+    ),
+    (
+        "roshan_devotion",
+        "armor and slow resistance, with no persistent particle",
+    ),
+    (
+        "roshan_spell_block",
+        "the spent spell-block cooldown is shown in the ability panel",
+    ),
+    (
+        "roshans_banner",
+        "the placed unit owns its ambient effect, ending it when the unit is removed",
+    ),
     // Items
     (
         "butterfly",

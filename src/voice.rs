@@ -177,6 +177,7 @@ struct Voices {
     /// The announcer's lines of a tower or barracks that fell, by their logical name
     /// (`sound.announcer.tower.fall.yr.top`, ...).
     buildings: Vec<(String, Lines)>,
+    roshan: [Lines; 2],
     /// The horn at each side's ancient: Radiant's, then Dire's.
     horns: [Lines; 2],
     /// Daybreak's birds and rooster, and nightfall's howl.
@@ -210,6 +211,7 @@ pub fn plugin(app: &mut App) {
                 announce,
                 fortified,
                 building_fell,
+                boss_fell,
                 herald,
                 click,
                 speak,
@@ -254,6 +256,11 @@ fn load(mut voices: ResMut<Voices>, manifest: Res<Manifest>, server: Res<AssetSe
     voices.day = Lines::load(&manifest, &server, "sound.day");
     voices.night = Lines::load(&manifest, &server, "sound.night");
     for (i, side) in ["radiant", "dire"].into_iter().enumerate() {
+        voices.roshan[i] = Lines::load(
+            &manifest,
+            &server,
+            &format!("sound.announcer.roshan.{side}"),
+        );
         voices.fortified[i] = Lines::load(
             &manifest,
             &server,
@@ -703,6 +710,7 @@ fn report(voices: Res<Voices>, server: Res<AssetServer>, mut parts: ResMut<crate
         .chain([&voices.day, &voices.night])
         .chain(voices.fortified.iter())
         .chain(voices.buildings.iter().map(|(_, lines)| lines))
+        .chain(voices.roshan.iter())
         .chain(voices.horns.iter())
         .chain(voices.runes.iter().map(|(_, lines)| lines));
     let (done, total) = lines.flat_map(|l| &l.sources).fold((0, 0), |(d, t), h| {
@@ -710,6 +718,29 @@ fn report(voices: Res<Voices>, server: Res<AssetServer>, mut parts: ResMut<crate
     });
     if total > 0 {
         parts.set("voices", done, total);
+    }
+}
+
+fn boss_fell(
+    session: NonSend<Session>,
+    mut voices: ResMut<Voices>,
+    mut announcer: ResMut<Announcer>,
+    time: Res<Time>,
+    settings: Res<Settings>,
+    args: Res<crate::Args>,
+) {
+    if settings.muted || args.mute {
+        return;
+    }
+    for event in &session.0.told {
+        if let EventKind::BossFell {
+            objective: bota_proto::ObjectiveKind::Roshan,
+            team: Some(team),
+        } = *event
+        {
+            let line = voices.roshan[usize::from(team == Team::Dire)].take();
+            announcer.push(line, 0.9, time.elapsed_secs());
+        }
     }
 }
 

@@ -1932,7 +1932,11 @@ fn item_face(
             Some(action) if !look.passive => settings.label(action),
             _ => String::new(),
         },
-        cost: String::new(),
+        cost: if item.mana_cost > 0 {
+            item.mana_cost.to_string()
+        } else {
+            String::new()
+        },
         pips: (0, 0),
         charges: item
             .charges
