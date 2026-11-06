@@ -609,6 +609,7 @@ fn log_lines<'a>(
 ) -> Vec<Shown<'a>> {
     let mut shown: Vec<Shown> = core
         .chat_lines()
+        .filter(|line| sight.allows_chat(&line.heard))
         .filter_map(|line| match &line.heard.line.body {
             Body::Text(words) => Some(Shown::Heard(line, words.as_str())),
             Body::Ping(_) => None,

@@ -115,6 +115,35 @@ impl EventSight<'_> {
             .is_some_and(|projectile| self.allows_projectile(projectile))
     }
 
+    /// Full replays keep both teams' conversations; presentation follows the selected eyes.
+    pub fn allows_chat(&self, heard: &bota_proto::Heard) -> bool {
+        use bota_proto::{Audience, Speaker};
+        let core = self.core();
+        let side = |slot| {
+            core.statics()
+                .and_then(|statics| statics.pick(slot))
+                .map(|pick| pick.team)
+                .or_else(|| {
+                    core.lobby
+                        .slots
+                        .iter()
+                        .find(|seat| seat.slot == slot)
+                        .map(|seat| seat.team)
+                })
+        };
+        let viewer = core
+            .fog_team()
+            .or_else(|| core.pov.or(core.my_slot).or(core.lobby.slot).and_then(side));
+        match (&heard.from, heard.line.to) {
+            (Speaker::Seat(slot), Audience::Team) => {
+                side(*slot).is_some_and(|speaker| viewer.is_none_or(|team| team == speaker))
+            }
+            (Speaker::Seat(_), Audience::All) => true,
+            (Speaker::Spectator(_), Audience::Spectators) => self.core().my_slot.is_none(),
+            _ => false,
+        }
+    }
+
     pub fn flights(&self) -> Vec<bota_client_core::Flight> {
         let Some(view) = self.core().view() else {
             return Vec::new();

@@ -423,3 +423,139 @@ fn switching_pov_cancels_hidden_flights_and_their_ongoing_tails() {
         "the same projectile was still in flight after the switch"
     );
 }
+
+#[derive(Resource, Default)]
+struct PingFrames(Vec<Vec<Vec2>>, Vec<Vec<Vec2>>, Vec<Vec<Vec2>>);
+
+fn observe_ping_frames(
+    sight: crate::fog::EventSight,
+    colours: Res<crate::player_colour::PlayerColours>,
+    drawn: Res<crate::pings::DrawnPings>,
+    rings: Query<(&Node, &Visibility), With<crate::minimap::PingRing>>,
+    mut frames: ResMut<PingFrames>,
+) {
+    frames.1.push(drawn.0.clone());
+    frames.2.push(
+        rings
+            .iter()
+            .filter(|(_, visibility)| **visibility != Visibility::Hidden)
+            .filter_map(|(node, _)| {
+                let (Val::Px(left), Val::Px(top), Val::Px(width), Val::Px(height)) =
+                    (node.left, node.top, node.width, node.height)
+                else {
+                    return None;
+                };
+                Some(Vec2::new(left + width / 2.0, top + height / 2.0))
+            })
+            .collect(),
+    );
+    let marks = crate::pings::marks(&sight, &colours, |_| None);
+    if !marks.is_empty() {
+        frames
+            .0
+            .push(marks.into_iter().map(|mark| mark.at).collect());
+    }
+}
+
+#[test]
+fn team_pings_and_team_chat_follow_the_replay_pov() {
+    use bota_proto::{Audience, Ping, PingAt, PingKind};
+    let mut game = Spectated::pair("2");
+    let radiant = hero(&game.client, 0).pos;
+    let dire = hero(&game.client, 1).pos;
+    let hidden = Spot::from_ints(10000, 13000);
+    game.driver.ping(Ping {
+        kind: PingKind::Regular,
+        at: PingAt::Spot(radiant),
+    });
+    game.driver.ping(Ping {
+        kind: PingKind::Regular,
+        at: PingAt::Spot(hidden),
+    });
+    game.other.as_mut().unwrap().ping(Ping {
+        kind: PingKind::Danger,
+        at: PingAt::Spot(dire),
+    });
+    game.driver
+        .say(Audience::Team, "radiant-private-marker")
+        .expect("Radiant chat");
+    game.other
+        .as_mut()
+        .unwrap()
+        .say(Audience::Team, "dire-private-marker")
+        .expect("Dire chat");
+    game.cheat(Cheat::Gold { amount: 1 });
+    game.record_team_lines(5);
+    let file = game.save();
+    for (pov, own, enemy) in [
+        (Some(0), radiant, Some(dire)),
+        (Some(1), dire, Some(radiant)),
+        (None, radiant, None),
+    ] {
+        let sounds = Sounds::default();
+        let into = sounds.clone();
+        let mut client = replay_observed(&file, pov, &[], |client| {
+            listen(client, into);
+            client
+                .app
+                .init_resource::<PingFrames>()
+                .add_systems(PostUpdate, observe_ping_frames);
+        });
+        let frames = &client.world().resource::<PingFrames>().0;
+        let point = |at: Spot| Vec2::new(at.x.to_f32(), at.y.to_f32());
+        assert!(
+            frames.iter().flatten().any(|at| *at == point(own)),
+            "POV {pov:?} keeps its team's ping"
+        );
+        if let Some(enemy) = enemy {
+            assert!(
+                !frames.iter().flatten().any(|at| *at == point(enemy)),
+                "POV {pov:?} exposed the enemy team ping"
+            );
+        }
+        let rings = &client.world().resource::<PingFrames>().2;
+        let minimap_at = |at: Spot| crate::minimap::on_map(at.x.to_f32(), at.y.to_f32());
+        assert!(
+            rings
+                .iter()
+                .flatten()
+                .any(|at| at.distance(minimap_at(own)) < 0.01),
+            "the allied minimap ring is laid out"
+        );
+        if let Some(enemy) = enemy {
+            assert!(
+                !rings
+                    .iter()
+                    .flatten()
+                    .any(|at| at.distance(minimap_at(enemy)) < 0.01),
+                "an enemy ping was laid out on the minimap"
+            );
+        }
+        assert_eq!(
+            heard(&client, &sounds, "sound.ping.regular"),
+            pov != Some(1)
+        );
+        assert_eq!(heard(&client, &sounds, "sound.ping.danger"), pov != Some(0));
+        let drawn = &client.world().resource::<PingFrames>().1;
+        if pov == Some(0) {
+            assert!(
+                !drawn.iter().flatten().any(|at| *at == point(hidden)),
+                "an allied ping in fog must not draw a world ring"
+            );
+        }
+        let world = client.world_mut();
+        let shown = world
+            .query::<(&TextSpan, &ChildOf)>()
+            .iter(world)
+            .filter(|(_, parent)| {
+                world
+                    .get::<Node>(parent.parent())
+                    .is_some_and(|node| node.display != Display::None)
+            })
+            .map(|(span, _)| span.0.as_str())
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert_eq!(shown.contains("radiant-private-marker"), pov != Some(1));
+        assert_eq!(shown.contains("dire-private-marker"), pov != Some(0));
+    }
+}

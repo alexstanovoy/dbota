@@ -164,6 +164,10 @@ struct PhotoCamera(u8);
 #[derive(Resource, Default)]
 pub struct PhotoTaken(pub bool);
 
+#[cfg(test)]
+#[derive(Component)]
+pub(crate) struct PingRing;
+
 pub fn plugin(app: &mut App) {
     app.init_resource::<PhotoTaken>()
         .add_systems(Startup, spawn)
@@ -301,7 +305,7 @@ fn spawn(mut commands: Commands, mut images: ResMut<Assets<Image>>, docks: Res<D
         .collect();
     let pings = (0..PINGS)
         .map(|_| {
-            commands
+            let id = commands
                 .spawn((
                     Node {
                         position_type: PositionType::Absolute,
@@ -314,7 +318,10 @@ fn spawn(mut commands: Commands, mut images: ResMut<Assets<Image>>, docks: Res<D
                     Pickable::IGNORE,
                     ChildOf(frame),
                 ))
-                .id()
+                .id();
+            #[cfg(test)]
+            commands.entity(id).insert(PingRing);
+            id
         })
         .collect();
     let view = commands
@@ -913,7 +920,7 @@ fn pings(
             crate::teleport::origin(&sight, teleport).map(|origin| origin.at),
         )
     });
-    let marks = crate::pings::marks(core, &colours, |_| None)
+    let marks = crate::pings::marks(&sight, &colours, |_| None)
         .into_iter()
         .map(|mark| {
             let ticks = (mark.age * crate::pings::TICKS_PER_SECOND) as u32;

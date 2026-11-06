@@ -55,16 +55,18 @@ impl Mark {
 /// unit is drawn this frame, which a ping at it follows; the view's place
 /// stands in.
 pub fn marks(
-    core: &Core,
+    sight: &crate::fog::EventSight,
     colours: &crate::player_colour::PlayerColours,
     drawn: impl Fn(EntityId) -> Option<Vec2>,
 ) -> Vec<Mark> {
+    let core = sight.core();
     let Some(view) = core.view() else {
         return Vec::new();
     };
     core.chat_lines()
         .rev()
         .filter(|line| line.age < PING_SECS)
+        .filter(|line| sight.allows_chat(&line.heard))
         .filter_map(|line| {
             let Body::Ping(ping) = &line.heard.line.body else {
                 return None;
@@ -75,7 +77,7 @@ pub fn marks(
             let at = match ping.at {
                 PingAt::Spot(at) => Vec2::new(at.x.to_f32(), at.y.to_f32()),
                 PingAt::Unit(id) => {
-                    let place = view.unit(id)?.pos;
+                    let place = sight.visible_unit(id)?.pos;
                     drawn(id).unwrap_or(Vec2::new(place.x.to_f32(), place.y.to_f32()))
                 }
             };
@@ -93,7 +95,8 @@ pub fn marks(
 /// What each ping line the client has heard since the last call was, oldest
 /// first: for the sound, which is made once per ping. `last` is the newest
 /// line already looked at.
-pub fn fresh(core: &Core, last: &mut Option<Heard>) -> Vec<PingKind> {
+pub fn fresh(sight: &crate::fog::EventSight, last: &mut Option<Heard>) -> Vec<PingKind> {
+    let core = sight.core();
     let lines: Vec<&ChatLine> = core.chat_lines().collect();
     let newest = lines.last().map(|line| line.heard.clone());
     let from = last
@@ -104,6 +107,7 @@ pub fn fresh(core: &Core, last: &mut Option<Heard>) -> Vec<PingKind> {
     lines[from..]
         .iter()
         .filter(|line| line.age < PING_SECS)
+        .filter(|line| sight.allows_chat(&line.heard))
         .filter_map(|line| match &line.heard.line.body {
             Body::Ping(Ping { kind, .. }) => Some(*kind),
             Body::Text(_) => None,
@@ -111,8 +115,14 @@ pub fn fresh(core: &Core, last: &mut Option<Heard>) -> Vec<PingKind> {
         .collect()
 }
 
+#[cfg(test)]
+#[derive(Resource, Default)]
+pub(crate) struct DrawnPings(pub Vec<Vec2>);
+
 pub fn plugin(app: &mut App) {
     app.add_systems(Update, draw.after(crate::units::Placed));
+    #[cfg(test)]
+    app.init_resource::<DrawnPings>();
 }
 
 /// The ping binding pressed this frame, a warning before a plain ping.
@@ -171,19 +181,27 @@ pub fn send(
 
 /// Draws every ping that still shows on the ground: rings swelling out from
 /// its spot and an arrow over it, following the unit a ping names.
-fn draw(
+pub(crate) fn draw(
     mut gizmos: Gizmos,
-    session: NonSend<Session>,
+    #[cfg(test)] mut drawn_pings: ResMut<DrawnPings>,
+    sight: crate::fog::EventSight,
     ground: Res<Ground>,
     index: Res<UnitIndex>,
     colours: Res<crate::player_colour::PlayerColours>,
     units: Query<&Unit>,
 ) {
+    #[cfg(test)]
+    drawn_pings.0.clear();
     let drawn = |id: EntityId| {
         let unit = units.get(*index.0.get(&id)?).ok()?;
         Some(unit.at)
     };
-    for mark in marks(&session.0, &colours, drawn) {
+    for mark in marks(&sight, &colours, drawn)
+        .into_iter()
+        .filter(|mark| sight.allows_point(mark.at.x, mark.at.y))
+    {
+        #[cfg(test)]
+        drawn_pings.0.push(mark.at);
         let color = mark.color();
         let base = Vec3::new(
             mark.at.x,

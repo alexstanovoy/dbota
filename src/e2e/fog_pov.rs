@@ -285,6 +285,35 @@ impl Spectated {
             });
     }
 
+    /// Team lines are private on the live spectator socket. Preserve the real messages
+    /// received by the two players, as a full server replay's Heard records do.
+    pub(super) fn record_team_lines(&mut self, count: usize) {
+        let (driver, other, recording) = (&mut self.driver, &mut self.other, &mut self.recording);
+        let mut lines = Vec::new();
+        self.client.within(
+            SOON,
+            "both players received their real team messages",
+            |_| {
+                driver.pump(0.0);
+                other.as_mut().expect("the other player").pump(0.0);
+                recording.poll();
+                lines = driver
+                    .chat_lines()
+                    .chain(other.as_ref().unwrap().chat_lines())
+                    .map(|line| line.heard.clone())
+                    .collect();
+                lines.len() == count
+            },
+        );
+        for line in lines {
+            let bytes = bota_proto::encode_frame_to_vec(&ReplayRecord::Heard(line))
+                .expect("a real team message");
+            assert!(recording.bytes.len() + bytes.len() <= MAX_RECORD_BYTES);
+            recording.bytes.extend(bytes);
+        }
+        recording.whole = recording.bytes.len();
+    }
+
     pub(super) fn save(self) -> ReplayFile {
         self.recording.save(self._server)
     }

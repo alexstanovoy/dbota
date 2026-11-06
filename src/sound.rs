@@ -572,7 +572,7 @@ fn play(
     shots(core, sight.fog(), &mut sounder);
     swings(core, sight.fog(), &mut sounder);
     // A ping is heard by its side wherever the camera is, as Dota's are.
-    for kind in crate::pings::fresh(core, &mut last_ping) {
+    for kind in crate::pings::fresh(&sight, &mut last_ping) {
         match kind {
             bota_proto::PingKind::Regular => sounder.sound(Kind::Ping, 1.0, None, None),
             bota_proto::PingKind::Danger => {
