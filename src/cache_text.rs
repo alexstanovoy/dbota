@@ -4,7 +4,9 @@
 //! is not finite, is no line; the lists are capped by their callers. Plain numbers only, no
 //! engine types: the fuzz targets take this file as it is.
 
-use std::time::Duration;
+use std::{path::Path, time::Duration};
+
+use crate::cache_path;
 
 /// A tree the map places (`map/mid/trees.txt`): its model, Dota position and yaw in degrees.
 #[derive(Clone, Debug, PartialEq)]
@@ -158,7 +160,11 @@ pub fn framing(line: &str) -> Option<FramingLine> {
     let words: Vec<&str> = words.collect();
     let numbers_part = words.get(..FRAMING_NUMBERS)?;
     let background = match &words[FRAMING_NUMBERS..] {
-        [tints @ .., path] if tints.len() == 12 && *path != "-" => {
+        [tints @ .., path]
+            if tints.len() == 12
+                && cache_path::image_format(Path::new(path))
+                    == Some(cache_path::ImageFormat::Png) =>
+        {
             Some(((*path).to_owned(), numbers::<12>(tints)?))
         }
         _ => None,
@@ -574,6 +580,34 @@ mod tests {
     }
 
     use super::*;
+
+    #[test]
+    fn typed_asset_intake_limits_portrait_backgrounds_to_safe_png_paths() {
+        let numbers = ["1"; FRAMING_NUMBERS].join(" ");
+        let line = |path: &str| format!("hero.x.model {numbers} 1 1 1 1 1 1 1 1 1 1 1 1 {path}");
+        for path in ["models/background.png", "models/background.PNG"] {
+            let frame = framing(&line(path)).expect("valid framing numbers");
+            assert_eq!(
+                frame.background.map(|(name, _)| name),
+                Some(path.to_owned())
+            );
+        }
+        for path in [
+            "models/background",
+            "models/background.",
+            "models/background.ktx2",
+            "models/background.glb",
+            "../background.png",
+            "/background.png",
+        ] {
+            let frame =
+                framing(&line(path)).expect("valid camera framing survives a bad background");
+            assert!(
+                frame.background.is_none(),
+                "unsafe background retained: {path}"
+            );
+        }
+    }
 
     /// The numbers reach the renderer: `NaN` and `inf` (which Rust reads as numbers) made
     /// cameras, lights and trees of no finite place.

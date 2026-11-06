@@ -40,8 +40,8 @@ use bevy::{
     prelude::*,
 };
 
-use crate::gltf_file;
 use crate::texture_file::{HEAD_BYTES, decoded_size};
+use crate::{cache_path, gltf_file};
 
 /// Decoded texture bytes let through at once, besides the one under way:
 /// less in a browser, whose memory never shrinks back.
@@ -304,7 +304,7 @@ impl CacheReader {
 
 impl CacheReader {
     fn check_path(path: &Path) -> Result<(), AssetReaderError> {
-        if path.to_str().is_some_and(dbota_import::import::safe_path) {
+        if cache_path::is_safe(path) {
             return Ok(());
         }
         Err(AssetReaderError::Io(
@@ -316,18 +316,11 @@ impl CacheReader {
         ))
     }
 
-    fn extension_is(path: &Path, expected: &str) -> bool {
-        path.extension().is_some_and(|extension| {
-            extension
-                .as_encoded_bytes()
-                .eq_ignore_ascii_case(expected.as_bytes())
-        })
-    }
-
     /// Whether the file at `path` is handed on decoded: a KTX2 texture when
     /// the GPU samples no block format.
     fn decodes(&self, path: &Path) -> bool {
-        !self.block.sampled() && Self::extension_is(path, "ktx2")
+        !self.block.sampled()
+            && cache_path::image_format(path) == Some(cache_path::ImageFormat::Ktx2)
     }
 
     /// A KTX2 texture's bytes decoded to plain channels, within the decode
@@ -341,11 +334,6 @@ impl CacheReader {
         })
     }
 
-    /// Whether the file at `path` is a model, which is read whole and looked into.
-    fn is_model(path: &Path) -> bool {
-        Self::extension_is(path, "glb") || Self::extension_is(path, "gltf")
-    }
-
     /// Refuses a model that names what the cache's models never do (see [`gltf_file`]).
     fn vet_model(path: &Path, bytes: &[u8]) -> Result<(), AssetReaderError> {
         gltf_file::check(bytes).map_err(|why| {
@@ -357,7 +345,7 @@ impl CacheReader {
     /// Waits until a texture file fits the decode budget, and refuses one
     /// whose header no decoder may be trusted with.
     async fn admit(&self, path: &Path, head: &[u8]) -> Result<(), AssetReaderError> {
-        let png = Self::extension_is(path, "png");
+        let png = cache_path::image_format(path) == Some(cache_path::ImageFormat::Png);
         let size = if png {
             Some(crate::texture_file::png_size(head))
         } else {
@@ -416,7 +404,7 @@ impl AssetReader for CacheReader {
                 decoded,
             )));
         }
-        if Self::is_model(path) {
+        if cache_path::is_model(path) {
             // Read whole, as the loader would: the file is the model's own bytes, vetted.
             let bytes = whole()?;
             Self::vet_model(path, &bytes)?;
@@ -447,7 +435,7 @@ impl AssetReader for CacheReader {
         if self.decodes(path) {
             return Ok(browser::Bytes(self.decoded(path, &bytes).await?));
         }
-        if Self::is_model(path) {
+        if cache_path::is_model(path) {
             Self::vet_model(path, &bytes)?;
         }
         self.admit(path, &bytes[..bytes.len().min(HEAD_BYTES)])

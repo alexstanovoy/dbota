@@ -3,6 +3,8 @@
 //! panics.
 #![no_main]
 
+#[path = "../../src/cache_path.rs"]
+mod cache_path;
 #[path = "../../src/cache_text.rs"]
 mod cache_text;
 

@@ -8,10 +8,12 @@
 //! as a file next to it (a binary buffer inside a GLB has no URI), so that is all a model is
 //! let to name.
 //!
-//! Plain std and serde, no Bevy: the fuzz targets read this file as their own module.
+//! No Bevy: the fuzz targets read this with the shared cache-path checks.
 
 use serde::Deserialize;
 use std::path::Path;
+
+use crate::cache_path;
 
 const GLB_MAGIC: &[u8; 4] = b"glTF";
 const GLB_JSON: u32 = 0x4E4F_534A;
@@ -59,6 +61,12 @@ pub fn check(file: &[u8]) -> Result<(), String> {
                 uri.escape_debug().take(64).collect::<String>()
             ));
         }
+        if cache_path::image_format(Path::new(uri)).is_none() {
+            return Err(format!(
+                "an image file named {:?}, not a PNG or KTX2 image",
+                uri.escape_debug().take(64).collect::<String>()
+            ));
+        }
     }
     for uri in document.buffers.iter().filter_map(|b| b.uri.as_deref()) {
         plain(uri)?;
@@ -86,12 +94,7 @@ fn json(file: &[u8]) -> Result<&[u8], String> {
 
 /// `uri` as a bare file name of the characters the export writes in them.
 fn plain(uri: &str) -> Result<(), String> {
-    let name = !uri.is_empty()
-        && uri != "."
-        && uri != ".."
-        && uri
-            .bytes()
-            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-' | b'.' | b'+'));
+    let name = !uri.contains('/') && cache_path::is_safe(Path::new(uri));
     if name {
         Ok(())
     } else {
@@ -182,6 +185,26 @@ mod tests {
                 assert_eq!(
                     why,
                     format!("an image file named {uri:?} without a format extension")
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn typed_asset_intake_limits_model_images_to_png_and_ktx2() {
+        for uri in ["texture.png", "texture.PNG", "texture.ktx2", "texture.KTX2"] {
+            let json = format!(r#"{{"images":[{{"uri":"{uri}"}}]}}"#);
+            assert_eq!(check(json.as_bytes()), Ok(()));
+            assert_eq!(check(&glb(&json)), Ok(()));
+        }
+        for uri in ["texture.bin", "texture.glb", "texture.wav"] {
+            let json = format!(r#"{{"images":[{{"uri":"{uri}"}}]}}"#);
+            for file in [json.as_bytes().to_vec(), glb(&json)] {
+                assert_eq!(
+                    check(&file),
+                    Err(format!(
+                        "an image file named {uri:?}, not a PNG or KTX2 image"
+                    ))
                 );
             }
         }

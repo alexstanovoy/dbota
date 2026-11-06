@@ -19,6 +19,7 @@ mod bag;
 mod bars;
 mod buff_words;
 mod buffs;
+mod cache_path;
 mod cache_text;
 mod cachefs;
 mod camera;

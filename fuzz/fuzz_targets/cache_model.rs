@@ -2,6 +2,8 @@
 //! read as a model. No input panics.
 #![no_main]
 
+#[path = "../../src/cache_path.rs"]
+mod cache_path;
 #[path = "../../src/gltf_file.rs"]
 mod gltf_file;
 
