@@ -34,6 +34,16 @@ pub fn make_default() {
     make(threads_for(bevy::tasks::available_parallelism()));
 }
 
+/// [`make`] for a test process, with the four threads a machine of sixteen cores gets. A test
+/// that builds an app with plugins that make the task pools (`MinimalPlugins`, Bevy's default
+/// plugins) calls it first: the pool is the process's and made once, and `TaskPoolPlugin`
+/// makes it with Bevy's default 2 MiB stacks when it finds none, which the models a client
+/// test loads overflow. The harness calls it for its clients; later calls leave the pool.
+#[cfg(test)]
+pub fn make_for_tests() {
+    make(4);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

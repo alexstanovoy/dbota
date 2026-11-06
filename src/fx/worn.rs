@@ -374,6 +374,7 @@ mod tests {
         let memory = Dir::default();
         memory.insert_asset(std::path::Path::new("cast.wav"), source.bytes.to_vec());
         let mut app = App::new();
+        crate::io_pool::make_for_tests();
         app.add_plugins(MinimalPlugins)
             .register_asset_source(
                 crate::CACHE_SOURCE,

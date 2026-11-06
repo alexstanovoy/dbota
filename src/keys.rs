@@ -664,6 +664,7 @@ mod tests {
     /// The same, run with command line `args`.
     fn app_run_as(settings: Settings, args: &[&str]) -> App {
         use clap::Parser;
+        crate::io_pool::make_for_tests();
         let mut app = App::new();
         app.add_plugins((MinimalPlugins, InputPlugin))
             .insert_resource(settings)
@@ -671,6 +672,20 @@ mod tests {
             .add_plugins(plugin);
         app.update();
         app
+    }
+
+    /// Run alone, as it is when a keys test is the first of a process (a job with one CPU runs
+    /// its tests in order, `keys` before `stats`), the pool a model-loading test then meets is
+    /// the loaders' (an overflow of the small default stacks aborts the run).
+    #[test]
+    fn a_keys_app_leaves_the_io_pool_to_the_loaders_that_need_big_stacks() {
+        let _app = app(Settings::default());
+        let pool = bevy::tasks::IoTaskPool::get();
+        let used = bevy::tasks::block_on(pool.spawn(async {
+            let frame = [1u8; 4 << 20];
+            std::hint::black_box(&frame)[frame.len() - 1]
+        }));
+        assert_eq!(used, 1);
     }
 
     /// A capture or a visual check takes no key from the desktop it runs on: the owner's Alt

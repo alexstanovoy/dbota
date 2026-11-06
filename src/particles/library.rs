@@ -498,6 +498,7 @@ mod tests {
     use super::*;
 
     fn asset_app() -> App {
+        crate::io_pool::make_for_tests();
         let mut app = App::new();
         app.add_plugins(MinimalPlugins);
         let source = crate::cache_source(&mut app, std::path::Path::new("temp/typed_intake"));

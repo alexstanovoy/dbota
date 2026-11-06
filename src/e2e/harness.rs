@@ -235,7 +235,7 @@ impl Client {
             None if menu_first => crate::main_menu::idle(),
             None => crate::session::open(&args).expect("the game the arguments name"),
         };
-        roomy_io_threads();
+        crate::io_pool::make_for_tests();
         let mut app = App::new();
         crate::client_resources(
             &mut app,
@@ -595,14 +595,6 @@ pub fn ring_of(points: &[Vec3]) -> (Vec2, f32) {
     let middle = around.iter().copied().sum::<Vec2>() / around.len() as f32;
     let radius = around.iter().map(|p| p.distance(middle)).sum::<f32>() / around.len() as f32;
     (middle, radius)
-}
-
-/// The asset loaders' threads with the stacks `main` gives them (see `io_pool`): this crate's own
-/// loaders run unoptimised in a test build, where two clients loading at once overflowed the
-/// default 2 MiB. The pools are the process's, made once by the first app.
-fn roomy_io_threads() {
-    static MADE: std::sync::Once = std::sync::Once::new();
-    MADE.call_once(|| crate::io_pool::make(4));
 }
 
 /// Bevy's plugins as `main` sets them up, without the window system (no window is opened; the
