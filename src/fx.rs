@@ -206,8 +206,6 @@ impl Stage<'_, '_> {
 /// What a line can feed its particle from the fact it plays for.
 #[derive(Default, Clone, Copy)]
 struct Feeds {
-    /// How far the wearer gives true sight.
-    sight: f32,
     /// How many are held of the effect worn.
     stacks: f32,
     /// Seconds the effect worn has left.
@@ -260,7 +258,6 @@ fn feed(
     };
     for (point, what) in &fx.feeds {
         let value = match what {
-            Feed::Sight => Vec3::new(feeds.sight, 0.0, 0.0),
             Feed::Stacks => Vec3::new(feeds.stacks, 0.0, 0.0),
             Feed::Seconds => Vec3::new(feeds.seconds, 0.0, 0.0),
             Feed::Mode => Vec3::new(feeds.mode, 0.0, 0.0),

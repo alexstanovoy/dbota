@@ -71,8 +71,6 @@ pub enum Attach {
 /// What a control point of a bound particle is given.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Feed {
-    /// How far the wearer gives true sight, in x.
-    Sight,
     /// How many are held of the effect worn, in x.
     Stacks,
     /// Seconds the effect worn has left, in x.
@@ -272,7 +270,6 @@ fn stacks_of(value: &str) -> Result<(u32, u32), String> {
 
 fn feed_of(value: &str) -> Result<Feed, String> {
     Ok(match value {
-        "sight" => Feed::Sight,
         "stacks" => Feed::Stacks,
         "seconds" => Feed::Seconds,
         "mode" => Feed::Mode,

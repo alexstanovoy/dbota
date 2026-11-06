@@ -54,7 +54,6 @@ fn holding(rule: &Rule, unit: &UnitView) -> Option<Hold> {
     let fx = &rule.fx;
     let held = |stacks, ticks_left: Option<u32>, feeds| Hold {
         feeds: Feeds {
-            sight: unit.true_sight_radius.to_f32(),
             stacks: stacks as f32,
             seconds: ticks_left.map_or(0.0, |ticks| ticks as f32 / TICKS_PER_SECOND as f32),
             ..feeds
