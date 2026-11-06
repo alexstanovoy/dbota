@@ -81,7 +81,7 @@ fn a_fallen_tower_is_swapped_for_its_destruction_model_and_collapses_before_it_i
 }
 
 /// A falling tower stays posed with the camera 4000 away, past the reach a standing one is posed
-/// within: its collapse flings debris far past that box (the Dire ancient's 1300 and more).
+/// within: a collapse may fling debris past that box, by however far its clip says.
 #[test]
 fn a_falling_tower_is_posed_with_the_camera_past_a_standing_ones_reach() {
     let server = Server::start(1, &["--map", "0", "--tick-rate", "600"]);
