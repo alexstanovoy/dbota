@@ -409,6 +409,8 @@ fn made_by_the_importer(rel: &str, manifest: &str) -> bool {
         || rel.starts_with("sounds/vo/")
         || rel.starts_with("models/tree")
         || rel == "text/styles.json"
+        // The limits of the install's sound events, which the manifest-only export never wrote.
+        || rel == dbota_import::import::SOUND_EVENTS
         || (rel == "text/labels.json" && kind("label"))
         || (rel.starts_with("models/portrait_backgrounds/") && kind("portraits"))
         || lines().any(|l| match l.split_whitespace().collect::<Vec<_>>()[..] {
