@@ -3,7 +3,7 @@
 //! so a manifest line that brings in another one fails here until it is simulated or added.
 //!
 //! ```sh
-//! cargo test --release -p dbota_import --test particles -- --ignored
+//! cargo test --profile test-release -p dbota_import --test particles -- --include-ignored
 //! ```
 //!
 //! `DBOTA_DOTA_PATH` (a `dota 2 beta` folder) overrides where the install is looked for.
@@ -17,7 +17,7 @@ use heatel::{DirSource, Resource, Vpk, find_game_dir};
 /// The classes of the manifest's effects the client leaves out, each with why. (A model
 /// renderer whose model a control point carries, the town portal's image of the hero at its end,
 /// is read but draws nothing: the client binds no model to a control point.)
-const LEFT_OUT: [&str; 44] = [
+const LEFT_OUT: [&str; 42] = [
     // Camera shake (Requiem of Souls) and the model a control point carries (the town portal's
     // image of the hero), and the rune, ward, teleport and lotus effects' finer operators (status
     // effects, parent-kill inheritance, paths, oscillation, rotation and culling): the client
@@ -47,7 +47,6 @@ const LEFT_OUT: [&str; 44] = [
     "C_OP_LerpScalar",
     "C_OP_MaintainEmitter",
     "C_OP_MovementRigidAttachToCP",
-    "C_OP_NormalLock",
     "C_OP_OscillateScalar",
     "C_OP_RemapCPtoScalar",
     "C_OP_RemapDirectionToCPToVector",
@@ -63,7 +62,6 @@ const LEFT_OUT: [&str; 44] = [
     "C_OP_SetControlPointToCenter",
     "C_OP_SetFloatAttributeToVectorExpression",
     "C_OP_SetRandomControlPointPosition",
-    "C_OP_SetToCP",
     "C_OP_SetUserEvent",
     "C_OP_TurbulenceForce",
 ];
