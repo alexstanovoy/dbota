@@ -313,7 +313,16 @@ pub fn plugin(app: &mut App) {
         .add_systems(Startup, spawn_hud)
         .add_systems(
             Update,
-            (readouts, gauges, slots, portrait, xp, level_ups, innate)
+            (
+                readouts,
+                gauges,
+                // A drop is drawn in the frame it is let go: its preview is made by `boxes`.
+                slots.after(crate::input::boxes),
+                portrait,
+                xp,
+                level_ups,
+                innate,
+            )
                 .run_if(crate::select::match_or_tactical),
         )
         .add_systems(
