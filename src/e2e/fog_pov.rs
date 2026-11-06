@@ -26,6 +26,7 @@ struct Recording {
     started: bool,
     whole: usize,
     tick: u32,
+    deaths: Vec<(bota_proto::EntityId, usize, u32)>,
 }
 
 impl Recording {
@@ -50,6 +51,7 @@ impl Recording {
             started: false,
             whole: 0,
             tick: 0,
+            deaths: Vec::new(),
         }
     }
 
@@ -81,9 +83,20 @@ impl Recording {
                     self.append(ServerMsg::Snapshot { view });
                 }
                 ServerMsg::Events { tick, events } if self.started => {
+                    let deaths: Vec<_> = events
+                        .iter()
+                        .filter_map(|event| match event {
+                            bota_proto::EventKind::Died { unit, .. } => Some(*unit),
+                            _ => None,
+                        })
+                        .collect();
                     self.append(ServerMsg::Events { tick, events });
                     self.whole = self.bytes.len();
                     self.tick = tick;
+                    for unit in deaths {
+                        assert!(self.deaths.len() < 4096, "bounded death markers");
+                        self.deaths.push((unit, self.whole, tick));
+                    }
                 }
                 _ => {}
             }
@@ -91,16 +104,20 @@ impl Recording {
     }
 
     fn save(&self, server: Server) -> ReplayFile {
-        assert!(self.whole > 0, "a whole tick recorded");
+        self.save_until(server, self.whole, self.tick)
+    }
+
+    fn save_until(&self, server: Server, end: usize, tick: u32) -> ReplayFile {
+        assert!(end > 0, "a whole tick recorded");
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(format!(
             "target/e2e/fog_replay_{}_{}.brp",
             std::process::id(),
             NEXT_REPLAY.fetch_add(1, Ordering::Relaxed)
         ));
-        std::fs::write(&path, &self.bytes[..self.whole]).expect("the replay fixture written once");
+        std::fs::write(&path, &self.bytes[..end]).expect("the replay fixture written once");
         ReplayFile {
             path,
-            tick: self.tick,
+            tick,
             _server: server,
         }
     }
@@ -124,11 +141,37 @@ pub(super) struct Spectated {
     pub(super) driver: Core,
     pub(super) client: Client,
     recording: Recording,
+    pub(super) other: Option<Core>,
+    hero: HeroId,
 }
 
 impl Spectated {
     pub(super) fn start(map: &str) -> Self {
-        let server = Server::start(2, &["--map", map, "--spectators", "open", "--runes", "all"]);
+        Self::start_with(map, HeroId::SHADOW_FIEND, false)
+    }
+
+    pub(super) fn pair(map: &str) -> Self {
+        Self::start_with(map, HeroId::SHADOW_FIEND, true)
+    }
+
+    pub(super) fn hero(map: &str, hero: HeroId) -> Self {
+        Self::start_with(map, hero, false)
+    }
+
+    fn start_with(map: &str, hero: HeroId, pair: bool) -> Self {
+        let server = Server::start(
+            2,
+            &[
+                "--map",
+                map,
+                "--spectators",
+                "open",
+                "--runes",
+                "all",
+                "--seed",
+                "1",
+            ],
+        );
         let args = crate::Args::parse_from(["dbota", "--addr", &server.address]);
         let driver = crate::session::open(&args)
             .expect("the driving player connects")
@@ -140,11 +183,26 @@ impl Spectated {
             driver,
             client,
             recording,
+            other: None,
+            hero,
         };
         game.wait("the driving seat assigned", |driver, _| {
             driver.my_slot.is_some()
         });
-        quiet_seat(&game._server, HeroId::SHADOW_FIEND);
+        if pair {
+            let mut net = Net::connect(&game._server.address).expect("the second player connects");
+            net.send(&ClientMsg::hello(
+                Role::Player,
+                "marker",
+                None,
+                bota_core::WIRE_FINGERPRINT,
+            ))
+            .unwrap();
+            net.send(&bota_client_core::catalogue()).unwrap();
+            game.other = Some(Core::new(Source::Live(Box::new(net))));
+        } else {
+            quiet_seat(&game._server, HeroId::SHADOW_FIEND);
+        }
         game.wait("the real match begins", |driver, client| {
             driver.view().is_some() && client.core().view().is_some()
         });
@@ -161,13 +219,22 @@ impl Spectated {
     }
 
     pub(super) fn wait(&mut self, what: &str, mut done: impl FnMut(&Core, &mut Client) -> bool) {
-        let (driver, recording) = (&mut self.driver, &mut self.recording);
+        let (driver, recording, other, hero) = (
+            &mut self.driver,
+            &mut self.recording,
+            &mut self.other,
+            self.hero,
+        );
         self.client.within(SOON, what, |client| {
-            driver.pump(0.0);
-            if driver.view().is_none() && driver.my_slot.is_some() && !driver.ready {
-                driver.act(Intent::PickHero(HeroId::SHADOW_FIEND.0));
-                driver.act(Intent::ToggleReady);
+            pick_and_pump(driver, hero);
+            if let Some(other) = other {
+                pick_and_pump(other, HeroId::SHADOW_FIEND);
             }
+            assert!(
+                !driver.lost,
+                "the driver lost its real server link: {:?}",
+                driver.feed.last().map(|line| &line.kind)
+            );
             recording.poll();
             done(driver, client)
         });
@@ -206,10 +273,13 @@ impl Spectated {
             .max(self.recording.tick)
             .max(self.client.tick());
         self.driver.act(Intent::Cheat(cheat));
-        let (driver, recording) = (&mut self.driver, &mut self.recording);
+        let (driver, recording, other) = (&mut self.driver, &mut self.recording, &mut self.other);
         self.client
             .within(SOON, "the tick after the cheat recorded", |_| {
                 driver.pump(0.0);
+                if let Some(other) = other {
+                    other.pump(0.0);
+                }
                 recording.poll();
                 recording.tick > before + 1
             });
@@ -219,19 +289,54 @@ impl Spectated {
         self.recording.save(self._server)
     }
 
+    pub(super) fn until_death(&mut self, unit: bota_proto::EntityId) {
+        let (driver, recording, other) = (&mut self.driver, &mut self.recording, &mut self.other);
+        self.client
+            .within(SOON, "the victim's death recorded", |_| {
+                driver.pump(0.0);
+                if let Some(other) = other {
+                    other.pump(0.0);
+                }
+                recording.poll();
+                recording.deaths.iter().any(|(id, _, _)| *id == unit)
+            });
+    }
+
+    pub(super) fn save_through_death(self, unit: bota_proto::EntityId) -> ReplayFile {
+        let (_, end, tick) = self
+            .recording
+            .deaths
+            .iter()
+            .find(|(id, _, _)| *id == unit)
+            .copied()
+            .expect("the death was recorded");
+        self.recording.save_until(self._server, end, tick)
+    }
+
     pub(super) fn order(&mut self, order: bota_proto::Order) {
         let before = self
             .recording
             .tick
             .max(self.driver.view().expect("the match").tick);
         self.driver.send_order(order);
-        let (driver, recording) = (&mut self.driver, &mut self.recording);
+        let (driver, recording, other) = (&mut self.driver, &mut self.recording, &mut self.other);
         self.client
             .within(SOON, "the order's next tick recorded", |_| {
                 driver.pump(0.0);
+                if let Some(other) = other {
+                    other.pump(0.0);
+                }
                 recording.poll();
                 recording.tick > before + 1
             });
+    }
+}
+
+fn pick_and_pump(core: &mut Core, hero: HeroId) {
+    core.pump(0.0);
+    if core.view().is_none() && core.my_slot.is_some() && !core.ready {
+        core.act(Intent::PickHero(hero.0));
+        core.act(Intent::ToggleReady);
     }
 }
 

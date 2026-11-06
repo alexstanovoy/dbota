@@ -14,8 +14,7 @@ use bota_core::{kind_def, rules};
 use bota_proto::{EffectId, EntityId};
 
 use crate::map::Ground;
-use crate::particles::{Handle, Library, Playing};
-use crate::session::Session;
+use crate::particles::{EffectSight, Handle, Library, Playing};
 
 /// The effects of a structure's cover and a creep's, by their manifest names.
 const STRUCTURE: &str = "glyph.structure";
@@ -48,7 +47,7 @@ fn covered(view: &bota_proto::WorldView) -> Vec<(&bota_proto::UnitView, f32)> {
 
 /// Plays the Glyph's effect on the units under it, following them, and ends it on the rest.
 fn wear(
-    session: NonSend<Session>,
+    sight: crate::fog::EventSight,
     index: Res<crate::units::UnitIndex>,
     drawn: Query<&crate::units::Unit>,
     ground: Res<Ground>,
@@ -56,14 +55,21 @@ fn wear(
     mut playing: ResMut<Playing>,
     mut worn: ResMut<Worn>,
 ) {
-    let Some(view) = session.0.view() else {
+    let Some(view) = sight.core().view() else {
         return;
     };
-    let covered = covered(view);
+    let covered: Vec<_> = covered(view)
+        .into_iter()
+        .filter(|(unit, _)| sight.allows_unit(unit))
+        .collect();
     worn.0.retain(|id, handle| {
         let keep = covered.iter().any(|(unit, _)| unit.id == *id);
-        if !keep && let Some(instance) = playing.get_mut(*handle) {
-            instance.end();
+        if !keep {
+            if sight.visible_unit(*id).is_none() {
+                playing.cancel(*handle);
+            } else if let Some(instance) = playing.get_mut(*handle) {
+                instance.end();
+            }
         }
         keep
     });
@@ -88,7 +94,8 @@ fn wear(
                 let Some(effect) = library.as_deref().and_then(|l| l.effect(name)) else {
                     continue;
                 };
-                let Some(handle) = playing.start(effect, unit.id.idx) else {
+                let Some(handle) = playing.start(effect, unit.id.idx, EffectSight::Unit(unit.id))
+                else {
                     continue;
                 };
                 if let Some(instance) = playing.get_mut(handle) {

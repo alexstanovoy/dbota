@@ -5,14 +5,13 @@
 use std::collections::{HashMap, HashSet};
 
 use bevy::prelude::*;
-use bota_client_core::flights;
 use bota_proto::{EntityId, EventKind};
 
 use crate::ability_art::{Flight, art_by};
 use crate::anim::Pose;
 use crate::manifest::Manifest;
 use crate::map::Ground;
-use crate::particles::{Library, Playing};
+use crate::particles::{EffectSight, Library, Playing};
 use crate::session::Session;
 use crate::units::{Attachments, Rig, Unit, UnitIndex};
 
@@ -75,6 +74,7 @@ pub fn plugin(app: &mut App) {
 /// What a missile's effect reads of the units: their roots, models, poses and attachments.
 #[derive(bevy::ecs::system::SystemParam)]
 pub(crate) struct Shooters<'w, 's> {
+    sight: crate::fog::EventSight<'w>,
     index: Res<'w, UnitIndex>,
     manifest: Res<'w, Manifest>,
     ground: Res<'w, Ground>,
@@ -118,6 +118,7 @@ impl Shooters<'_, '_> {
 
     /// Where unit `id`'s missile leaves: the hand of the attack it swings.
     pub(crate) fn launch(&self, id: EntityId) -> Option<Vec3> {
+        self.sight.visible_unit(id)?;
         let (_, pose, attachments) = self.units.get(*self.index.0.get(&id)?).ok()?;
         let hand = usize::from(pose.is_some_and(|p| p.clip() == "attack2"));
         let attachments = attachments?;
@@ -127,12 +128,16 @@ impl Shooters<'_, '_> {
 
     /// Where unit `id` is drawn this frame, in the sim's frame.
     pub(crate) fn drawn(&self, id: EntityId) -> Option<Vec2> {
+        self.sight.visible_unit(id)?;
         let (unit, _, _) = self.units.get(*self.index.0.get(&id)?).ok()?;
         Some(unit.at)
     }
 
     /// The elevation of the model actually drawn, shared with picking and bars.
     pub(crate) fn flight_height(&self, id: EntityId) -> f32 {
+        if self.sight.visible_unit(id).is_none() {
+            return 0.0;
+        }
         self.index
             .0
             .get(&id)
@@ -147,6 +152,7 @@ impl Shooters<'_, '_> {
 
     /// The drawn attachment's full frame, including its animated orientation.
     pub(crate) fn node_frame(&self, id: EntityId, name: &str) -> Option<GlobalTransform> {
+        self.sight.visible_unit(id)?;
         let (_, _, attachments) = self.units.get(*self.index.0.get(&id)?).ok()?;
         let frame = self.places.get(attachments?.node(name)?).ok()?;
         (frame.translation() != Vec3::ZERO).then_some(*frame)
@@ -154,6 +160,7 @@ impl Shooters<'_, '_> {
 
     /// Source's uniform object scale, from the scene actually drawn, before metre conversion.
     pub(crate) fn object_scale(&self, id: EntityId) -> f32 {
+        if self.sight.visible_unit(id).is_none() { return 1.0; }
         self.index
             .0
             .get(&id)
@@ -166,6 +173,7 @@ impl Shooters<'_, '_> {
     }
 
     pub(crate) fn facing(&self, id: EntityId) -> Option<f32> {
+        self.sight.visible_unit(id)?;
         self.units
             .get(*self.index.0.get(&id)?)
             .ok()
@@ -174,6 +182,7 @@ impl Shooters<'_, '_> {
 
     /// Where a missile hits unit `id`.
     pub(crate) fn hit(&self, id: EntityId) -> Option<Vec3> {
+        self.sight.visible_unit(id)?;
         let (_, _, attachments) = self.units.get(*self.index.0.get(&id)?).ok()?;
         let attached = attachments
             .and_then(|attachments| attachments.hitloc)
@@ -198,6 +207,7 @@ impl Shooters<'_, '_> {
         let handle = playing.start(
             effect,
             f.missile.id.idx ^ f.missile.id.generation.rotate_left(16),
+            EffectSight::Projectile(f.missile.id),
         )?;
         let instance = playing.get_mut(handle)?;
         let launch = f.missile.source.and_then(|s| self.launch(s)).unwrap_or(at);
@@ -231,6 +241,7 @@ impl Shooters<'_, '_> {
         let handle = playing.start(
             effect,
             f.missile.id.idx ^ f.missile.id.generation.rotate_left(16),
+            EffectSight::Projectile(f.missile.id),
         )?;
         let instance = playing.get_mut(handle)?;
         let launch = f.missile.source.and_then(|s| self.launch(s)).unwrap_or(at);
@@ -246,6 +257,7 @@ impl Shooters<'_, '_> {
 
     /// Unit `id`'s root in the world.
     pub(crate) fn place(&self, id: EntityId) -> Option<Vec3> {
+        self.sight.visible_unit(id)?;
         Some(self.places.get(*self.index.0.get(&id)?).ok()?.translation())
     }
 
@@ -268,16 +280,12 @@ fn missiles(
     library: Option<Res<Library>>,
     mut playing: ResMut<Playing>,
 ) {
-    let core = sight.core();
-    let Some(view) = core.view() else {
+    if sight.core().view().is_none() {
         return;
-    };
-    let shown = flights(view, core.prev_view(), core.smooth.alpha());
+    }
+    let shown = sight.flights();
     let mut alive = Vec::with_capacity(shown.len());
-    for f in shown
-        .iter()
-        .filter(|f| !sight.fog().hides(f.missile.seen_by))
-    {
+    for f in &shown {
         let flight = f
             .missile
             .inflictor
@@ -359,7 +367,7 @@ fn grenades(
     });
     for (n, (x, y)) in landed.enumerate() {
         let at = Vec3::new(x, ground.at(x, y), -y);
-        if let Some(handle) = play_once(library, playing, GRENADE, at, n as u32)
+        if let Some(handle) = play_once(library, playing, GRENADE, at, n as u32, EffectSight::Point)
             && let Some(instance) = playing.get_mut(handle)
         {
             instance.set_control_point(TARGET, from_world(at), Vec3::ZERO, true);
@@ -399,6 +407,7 @@ fn start_line(
     let handle = playing.start(
         effect,
         f.missile.id.idx ^ f.missile.id.generation.rotate_left(16),
+        EffectSight::Projectile(f.missile.id),
     )?;
     let instance = playing.get_mut(handle)?;
     let from = at - dir;
@@ -417,8 +426,9 @@ pub(crate) fn play_once(
     name: &str,
     at: Vec3,
     seed: u32,
+    sight: EffectSight,
 ) -> Option<crate::particles::Handle> {
-    let handle = playing.start(library?.effect(name)?, seed)?;
+    let handle = playing.start(library?.effect(name)?, seed, sight)?;
     playing
         .get_mut(handle)?
         .set_control_point(0, from_world(at), Vec3::ZERO, true);
@@ -448,7 +458,14 @@ fn casts(
         }
         if let Some(at) = shooters.place(*caster) {
             let at = Vec3::new(at.x, ground.at(at.x, -at.z), at.z);
-            play_once(library.as_deref(), &mut playing, REQUIEM, at, caster.idx);
+            play_once(
+                library.as_deref(),
+                &mut playing,
+                REQUIEM,
+                at,
+                caster.idx,
+                EffectSight::KnownPoint(sight.knowledge(unit.seen_by)),
+            );
         }
     }
 }
@@ -456,14 +473,15 @@ fn casts(
 /// Necromastery: a soul flies from each unit Shadow Fiend brings down to him, as Dota shows
 /// the soul he gains.
 fn souls(
-    session: NonSend<Session>,
+    sight: crate::fog::EventSight,
     ground: Res<Ground>,
     library: Option<Res<Library>>,
     mut playing: ResMut<Playing>,
     shooters: Shooters,
     mut flying: ResMut<Flying>,
 ) {
-    for event in &session.0.told {
+    let core = sight.core();
+    for (n, event) in core.told.iter().enumerate() {
         let EventKind::Died {
             unit,
             killer: Some(killer),
@@ -474,7 +492,7 @@ fn souls(
             continue;
         };
         // Necromastery is Shadow Fiend's own.
-        let view = session.0.view();
+        let view = core.view();
         if !view
             .and_then(|v| v.unit(*killer))
             .is_some_and(|u| u.hero == Some(bota_proto::HeroId::SHADOW_FIEND))
@@ -484,7 +502,17 @@ fn souls(
         // The fallen unit may be gone from the scene already: its last place in the view.
         let last = view
             .and_then(|v| v.unit(*unit))
-            .or_else(|| session.0.prev_view().and_then(|v| v.unit(*unit)));
+            .or_else(|| core.before_event(n, *unit));
+        let Some(victim) = last else {
+            continue;
+        };
+        let before = core.before_event(n, *unit).unwrap_or(victim);
+        if !sight.allows(event, crate::fog::EventSubject::Unit(before))
+            || !sight.allows(event, crate::fog::EventSubject::Point(victim.pos))
+            || sight.visible_unit(*killer).is_none()
+        {
+            continue;
+        }
         let fallen = last.map(|u| {
             let (x, y) = (u.pos.x.to_f32(), u.pos.y.to_f32());
             Vec3::new(x, ground.at(x, y) + FLIGHT, -y)
@@ -492,9 +520,14 @@ fn souls(
         let (Some(from), Some(to)) = (shooters.hit(*unit).or(fallen), shooters.hit(*killer)) else {
             continue;
         };
-        if let Some(handle) =
-            play_once(library.as_deref(), &mut playing, NECRO_SOUL, from, unit.idx)
-        {
+        if let Some(handle) = play_once(
+            library.as_deref(),
+            &mut playing,
+            NECRO_SOUL,
+            from,
+            unit.idx,
+            EffectSight::KnownPoint(sight.knowledge(before.seen_by)),
+        ) {
             if let Some(instance) = playing.get_mut(handle) {
                 instance.set_control_point(1, from_world(to), Vec3::ZERO, true);
             }
@@ -503,6 +536,10 @@ fn souls(
     }
     // The soul follows its hero while it flies.
     flying.souls.retain(|(handle, hero)| {
+        if sight.visible_unit(*hero).is_none() {
+            playing.cancel(*handle);
+            return false;
+        }
         let Some(instance) = playing.get_mut(*handle) else {
             return false;
         };
@@ -540,7 +577,14 @@ fn bursts(
         }
         let (x, y) = (p.pos.x.to_f32(), p.pos.y.to_f32());
         let at = Vec3::new(x, ground.at(x, y), -y);
-        play_once(library.as_deref(), &mut playing, RAZE, at, p.id.idx);
+        play_once(
+            library.as_deref(),
+            &mut playing,
+            RAZE,
+            at,
+            p.id.idx,
+            EffectSight::Point,
+        );
     }
 }
 
@@ -581,7 +625,14 @@ fn level_ups(
         }
         let at = on_ground(hero);
         let seed = unit.idx ^ u32::from(*level) << 24;
-        if let Some(handle) = play_once(library.as_deref(), &mut playing, LEVEL_UP, at, seed) {
+        if let Some(handle) = play_once(
+            library.as_deref(),
+            &mut playing,
+            LEVEL_UP,
+            at,
+            seed,
+            EffectSight::Unit(*unit),
+        ) {
             flying.following.push((handle, *unit));
         }
     }
@@ -616,7 +667,8 @@ fn deaths(
         let fallen = core
             .view()
             .and_then(|v| v.unit(*unit))
-            .or_else(|| core.prev_view().and_then(|v| v.unit(*unit)));
+            .or_else(|| core.prev_view().and_then(|v| v.unit(*unit)))
+            .or_else(|| core.before_event(n, *unit));
         let Some(hero) = fallen.filter(|u| u.kind == bota_proto::UnitKind::Hero) else {
             continue;
         };
@@ -635,8 +687,14 @@ fn deaths(
         };
         let (x, y) = (hero.pos.x.to_f32(), hero.pos.y.to_f32());
         let at = Vec3::new(x, ground.at(x, y), -y);
-        if let Some(handle) = play_once(library.as_deref(), &mut playing, &name, at, unit.idx)
-            && let Some(instance) = playing.get_mut(handle)
+        if let Some(handle) = play_once(
+            library.as_deref(),
+            &mut playing,
+            &name,
+            at,
+            unit.idx,
+            EffectSight::KnownPoint(sight.knowledge(before.seen_by)),
+        ) && let Some(instance) = playing.get_mut(handle)
         {
             // Dota's places its parts about control point 1, the hero.
             instance.set_control_point(1, from_world(at), Vec3::ZERO, true);

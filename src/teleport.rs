@@ -10,12 +10,17 @@ use bota_core::rules;
 use bota_proto::{EntityId, SlotId, TeleportView, WorldView};
 
 use crate::map::Ground;
-use crate::particles::{Handle, Library, Playing};
-use crate::session::Session;
+use crate::particles::{EffectSight, Handle, Library, Playing};
 
 /// The effects of a teleport's start and landing, by their manifest names.
 const START: &str = "item.teleport_start";
 const LANDING: &str = "item.teleport_end";
+
+#[derive(Clone, Copy)]
+pub struct Origin {
+    pub at: (f32, f32),
+    pub seen: bota_proto::SeenBy,
+}
 /// The effects playing, by seat and end (true: the landing).
 #[derive(Resource, Default)]
 struct Portals(HashMap<(SlotId, bool), Handle>);
@@ -37,23 +42,27 @@ pub fn progress(teleport: &TeleportView) -> f32 {
 }
 
 /// Where the channelling hero of a teleport stands, when it is in sight.
-pub fn origin(view: &WorldView, teleport: &TeleportView) -> Option<(f32, f32)> {
+pub fn origin(sight: &crate::fog::EventSight, teleport: &TeleportView) -> Option<Origin> {
+    let view = sight.core().view()?;
     let unit = view.player(teleport.slot)?.unit?;
-    let unit = view.unit(unit)?;
-    Some((unit.pos.x.to_f32(), unit.pos.y.to_f32()))
+    let unit = sight.visible_unit(unit)?;
+    Some(Origin {
+        at: (unit.pos.x.to_f32(), unit.pos.y.to_f32()),
+        seen: sight.knowledge(unit.seen_by),
+    })
 }
 
 /// Keeps Dota's effect at the landing of every teleport and at the feet of every hero in sight
 /// that channels one; one whose channel ended plays its end.
 fn portals(
-    session: NonSend<Session>,
+    sight: crate::fog::EventSight,
     ground: Res<Ground>,
     library: Option<Res<Library>>,
     colours: Res<crate::player_colour::PlayerColours>,
     mut playing: ResMut<Playing>,
     mut known: ResMut<Portals>,
 ) {
-    let Some(view) = session.0.view() else {
+    let Some(view) = sight.core().view() else {
         return;
     };
     let mut wanted = Vec::with_capacity(2 * view.teleports.len());
@@ -62,21 +71,30 @@ fn portals(
             teleport.destination.x.to_f32(),
             teleport.destination.y.to_f32(),
         );
-        wanted.push((teleport, true, landing));
-        if let Some(at) = origin(view, teleport) {
-            wanted.push((teleport, false, at));
+        wanted.push((teleport, true, landing, EffectSight::Public));
+        if let Some(origin) = origin(&sight, teleport) {
+            wanted.push((
+                teleport,
+                false,
+                origin.at,
+                EffectSight::KnownPoint(origin.seen),
+            ));
         }
     }
     known.0.retain(|key, handle| {
         let keep = wanted
             .iter()
-            .any(|(t, landing, _)| (t.slot, *landing) == *key);
-        if !keep && let Some(instance) = playing.get_mut(*handle) {
-            instance.end();
+            .any(|(t, landing, _, _)| (t.slot, *landing) == *key);
+        if !keep {
+            if !key.1 && view.teleports.iter().any(|t| t.slot == key.0) {
+                playing.cancel(*handle);
+            } else if let Some(instance) = playing.get_mut(*handle) {
+                instance.end();
+            }
         }
         keep
     });
-    for (teleport, landing, (x, y)) in wanted {
+    for (teleport, landing, (x, y), permission) in wanted {
         let at = Vec3::new(x, y, ground.at(x, y));
         let key = (teleport.slot, landing);
         let handle = match known.0.get(&key) {
@@ -87,7 +105,7 @@ fn portals(
                     continue;
                 };
                 let seed = u32::from(teleport.slot.0) << 1 | u32::from(landing);
-                let Some(handle) = playing.start(effect, seed) else {
+                let Some(handle) = playing.start(effect, seed, permission) else {
                     continue;
                 };
                 let color = colours.of(view, teleport.slot).to_srgba();
@@ -106,6 +124,7 @@ fn portals(
             }
         };
         if let Some(instance) = playing.get_mut(handle) {
+            instance.sight = permission;
             // The start's place is the hero's; the landing's, Dota's CP1, is where it lands.
             instance.set_control_point(HERO, at, Vec3::ZERO, false);
             if landing {

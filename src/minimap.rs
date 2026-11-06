@@ -898,19 +898,21 @@ fn ping_size(elapsed: u32) -> f32 {
 /// whichever side it brings (Dota marks both, through the fog), and then
 /// every spot the side's players pinged, swelling the same way.
 fn pings(
-    session: NonSend<Session>,
+    sight: crate::fog::EventSight,
     minimap: Res<Minimap>,
     colours: Res<crate::player_colour::PlayerColours>,
     mut nodes: Query<(&mut Node, &mut BorderColor, &mut Visibility)>,
 ) {
-    let core = &session.0;
+    let core = sight.core();
     let Some(view) = core.view() else {
         return;
     };
-    let teleports = view
-        .teleports
-        .iter()
-        .flat_map(|teleport| teleport_rings(teleport, crate::teleport::origin(view, teleport)));
+    let teleports = view.teleports.iter().flat_map(|teleport| {
+        teleport_rings(
+            teleport,
+            crate::teleport::origin(&sight, teleport).map(|origin| origin.at),
+        )
+    });
     let marks = crate::pings::marks(core, &colours, |_| None)
         .into_iter()
         .map(|mark| {

@@ -148,7 +148,7 @@ fn observe_purchases(sight: crate::fog::EventSight, mut purchases: ResMut<Purcha
 }
 
 #[test]
-fn a_full_stream_keeps_purchases_private_in_enemy_and_union_views() {
+fn purchases_stay_private_to_enemy_pov_and_are_public_in_union() {
     let mut game = Spectated::start("2");
     game.order(Order::Buy {
         item: ItemId::IRON_BRANCH,
@@ -165,7 +165,7 @@ fn a_full_stream_keeps_purchases_private_in_enemy_and_union_views() {
     });
     game.cheat(Cheat::Gold { amount: 1 });
     let file = game.save();
-    for (pov, allowed) in [(Some(0), true), (Some(1), false), (None, false)] {
+    for (pov, allowed) in [(Some(0), true), (Some(1), false), (None, true)] {
         let client = replay_observed(&file, pov, &[], |client| {
             client
                 .app

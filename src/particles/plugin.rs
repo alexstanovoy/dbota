@@ -21,6 +21,18 @@ use super::store;
 use crate::camera::RtsCamera;
 use crate::manifest::Manifest;
 
+/// What authorizes a world effect, rechecked for cards, lights, models and ongoing tails.
+#[derive(Clone, Copy, Debug)]
+pub enum EffectSight {
+    /// A public fact such as a teleport destination.
+    Public,
+    Point,
+    /// A historical unit fact: the viewers that knew it, and the still-visible point.
+    KnownPoint(bota_proto::SeenBy),
+    Unit(bota_proto::EntityId),
+    Projectile(bota_proto::EntityId),
+}
+
 /// Most effects playing at once; past it a new one is not started.
 const MAX_PLAYING: usize = 2048;
 /// Ended effects kept to be played again without allocating.
@@ -53,9 +65,19 @@ pub struct Playing {
     /// How many times each effect was started, for the end-to-end tests to ask what the game
     /// drew.
     started: Vec<(Arc<Effect>, u32)>,
+    #[cfg(test)]
+    drawn: Vec<(Arc<Effect>, u32)>,
 }
 
 impl Playing {
+    /// Frames in which this effect contributed cards, lights or models to the renderer.
+    #[cfg(test)]
+    pub fn drawn(&self, effect: &Arc<Effect>) -> u32 {
+        self.drawn
+            .iter()
+            .find(|(held, _)| Arc::ptr_eq(held, effect))
+            .map_or(0, |(_, count)| *count)
+    }
     /// How many times `effect` was started.
     pub fn started(&self, effect: &Arc<Effect>) -> u32 {
         self.started
@@ -77,7 +99,7 @@ impl Playing {
     }
 
     /// Starts `effect`, its draws keyed by `seed`.
-    pub fn start(&mut self, effect: &Arc<Effect>, seed: u32) -> Option<Handle> {
+    pub fn start(&mut self, effect: &Arc<Effect>, seed: u32, sight: EffectSight) -> Option<Handle> {
         let mut instance = match self
             .spare
             .iter()
@@ -91,6 +113,7 @@ impl Playing {
             None => Instance::new(Arc::clone(effect), seed),
         };
         instance.world_time = self.clock;
+        instance.sight = sight;
         match self
             .started
             .iter_mut()
@@ -116,8 +139,8 @@ impl Playing {
 
     /// Starts `effect` held on until it is ended (`Instance::end`), however long that is: what
     /// a unit wears or the map places.
-    pub fn hold(&mut self, effect: &Arc<Effect>, seed: u32) -> Option<Handle> {
-        let handle = self.start(effect, seed)?;
+    pub fn hold(&mut self, effect: &Arc<Effect>, seed: u32, sight: EffectSight) -> Option<Handle> {
+        let handle = self.start(effect, seed, sight)?;
         self.get_mut(handle)?.hold();
         Some(handle)
     }
@@ -268,7 +291,7 @@ fn in_view(instance: &Instance, frustum: &Frustum) -> bool {
 }
 
 /// Steps every effect and gathers the frame's cards and lights.
-pub(super) fn tick(
+pub(crate) fn tick(
     time: Res<Time>,
     sight: crate::fog::EventSight,
     mut playing: ResMut<Playing>,
@@ -307,22 +330,46 @@ pub(super) fn tick(
     }
     for instance in playing.slots.iter_mut().filter_map(|(_, i)| i.as_mut()) {
         instance.seen(
-            permitted(instance, sight.fog()) && in_view(instance, frustum),
+            permitted(instance, &sight) && in_view(instance, frustum),
             dt,
         );
         turn_to_screen(instance, &eye);
     }
     for instance in playing.slots.iter().filter_map(|(_, i)| i.as_ref()) {
         // Ended emitters can still have live tails, lights and models; fog hides those too.
-        if !permitted(instance, sight.fog()) {
+        if !permitted(instance, &sight) {
             continue;
         }
+        #[cfg(test)]
+        let before = (
+            playing.lists.iter().map(Vec::len).sum::<usize>(),
+            playing.lights.len(),
+            playing.placed.len(),
+        );
         // Out of view an effect draws no cards; its lights may still reach into it.
         if !instance.out_of_view() {
             draw(instance, &eye, height, &mut playing.lists);
         }
         gather(instance, &mut playing.lights);
         models::gather(instance, &mut playing.placed);
+        #[cfg(test)]
+        if before
+            != (
+                playing.lists.iter().map(Vec::len).sum::<usize>(),
+                playing.lights.len(),
+                playing.placed.len(),
+            )
+        {
+            if let Some((_, count)) = playing
+                .drawn
+                .iter_mut()
+                .find(|(held, _)| Arc::ptr_eq(held, &instance.effect))
+            {
+                *count = count.saturating_add(1);
+            } else {
+                playing.drawn.push((Arc::clone(&instance.effect), 1));
+            }
+        }
     }
     for (look, list) in playing.lists.iter().enumerate() {
         if list.is_empty() {
@@ -339,11 +386,17 @@ pub(super) fn tick(
     }
 }
 
-fn permitted(instance: &Instance, fog: &crate::fog::FogGrid) -> bool {
-    !instance.require_vision
-        || !fog.on
-        || instance.nodes.first().is_some_and(|node| {
-            let at = node.control_points[0].position;
-            fog.lit(at.x, at.y)
-        })
+fn permitted(instance: &Instance, sight: &crate::fog::EventSight) -> bool {
+    match instance.sight {
+        EffectSight::Public => true,
+        EffectSight::Unit(id) => sight.visible_unit(id).is_some(),
+        EffectSight::Projectile(id) => sight.sees_projectile(id),
+        EffectSight::KnownPoint(seen) if sight.fog().hides(Some(seen)) => false,
+        EffectSight::Point | EffectSight::KnownPoint(_) => {
+            instance.nodes.first().is_some_and(|node| {
+                let at = node.control_points[0].position;
+                sight.allows_point(at.x, at.y)
+            })
+        }
+    }
 }

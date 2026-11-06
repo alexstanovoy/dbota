@@ -6,7 +6,7 @@
 use std::collections::{HashMap, HashSet};
 
 use bevy::prelude::*;
-use bota_client_core::{Flight, flights};
+use bota_client_core::Flight;
 use bota_proto::EntityId;
 
 use super::line::{At, Trigger};
@@ -14,8 +14,7 @@ use super::rules::Rules;
 use super::{Feeds, feed, place_of};
 use crate::effects::{Shooters, steer};
 use crate::map::Ground;
-use crate::particles::{Handle, Library, Playing};
-use crate::session::Session;
+use crate::particles::{EffectSight, Handle, Library, Playing};
 
 /// How high missiles fly over the ground, in world units.
 const FLIGHT: f32 = 110.0;
@@ -68,7 +67,7 @@ fn followed<'a>(
 /// missile first shows, held at the hand and the missile while it flies, ended when it is gone.
 #[allow(clippy::too_many_arguments)]
 fn flies(
-    session: NonSend<Session>,
+    sight: crate::fog::EventSight,
     ground: Res<Ground>,
     rules: Res<Rules>,
     library: Option<Res<Library>>,
@@ -76,16 +75,19 @@ fn flies(
     mut flying: ResMut<Flying>,
     bodies: Shooters,
 ) {
-    let core = &session.0;
-    let Some(view) = core.view() else {
+    if sight.core().view().is_none() {
         return;
-    };
-    let shown = flights(view, core.prev_view(), core.smooth.alpha());
+    }
+    let shown = sight.flights();
     let mut alive: HashSet<(usize, EntityId)> = HashSet::new();
     for (n, rule) in rules.of(Trigger::Flies) {
         let fx = &rule.fx;
         let own = shown.iter().filter(|f| rule.names(f.missile.inflictor));
-        let stands = |id| view.unit(id).map(|u| (u.pos.x.to_f32(), u.pos.y.to_f32()));
+        let stands = |id| {
+            sight
+                .visible_unit(id)
+                .map(|u| (u.pos.x.to_f32(), u.pos.y.to_f32()))
+        };
         for (key, flight) in followed(fx.at == At::Chain, own, stands) {
             alive.insert((n, key));
             let tip = at(&ground, flight);
@@ -102,7 +104,13 @@ fn flies(
                         .particle
                         .as_deref()
                         .and_then(|name| library.as_deref()?.effect(name))
-                        .and_then(|effect| playing.hold(effect, key.idx ^ key.generation))
+                        .and_then(|effect| {
+                            playing.hold(
+                                effect,
+                                key.idx ^ key.generation,
+                                EffectSight::Projectile(flight.missile.id),
+                            )
+                        })
                     else {
                         continue;
                     };
@@ -113,6 +121,7 @@ fn flies(
             let Some(instance) = playing.get_mut(handle) else {
                 continue;
             };
+            instance.sight = EffectSight::Projectile(flight.missile.id);
             instance.set_control_point(LAUNCH, place_of(hand), Vec3::ZERO, false);
             if fx.at == At::Chain {
                 instance.set_control_point(TIP, place_of(tip), Vec3::ZERO, false);
@@ -124,8 +133,8 @@ fn flies(
     }
     flying.0.retain(|key, handle| {
         let keep = alive.contains(key);
-        if !keep && let Some(instance) = playing.get_mut(*handle) {
-            instance.end();
+        if !keep {
+            playing.cancel(*handle);
         }
         keep
     });

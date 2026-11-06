@@ -244,12 +244,32 @@ fn told(
                 let feeds = Feeds {
                     caster: fact
                         .caster
-                        .and_then(|id| views.find(id))
+                        .and_then(|id| {
+                            if fx.at == At::CasterBefore {
+                                core.before_event(n, id)
+                            } else {
+                                sight.visible_unit(id)
+                            }
+                        })
                         .map(|u| attach_point(&ground, &bodies, u, &Attach::Origin)),
                     ..item_state(&fact, &views)
                 };
                 let with = (library.as_deref(), &mut *playing);
-                stage.play(fx, (at, seed), with, (&feeds, &place));
+                let permission = match (unit, event) {
+                    (Some(unit), _) => {
+                        crate::particles::EffectSight::KnownPoint(sight.knowledge(unit.seen_by))
+                    }
+                    (
+                        None,
+                        EventKind::ItemUsed {
+                            target: Some(id), ..
+                        },
+                    ) => crate::particles::EffectSight::KnownPoint(
+                        sight.knowledge(now.unit(*id).and_then(|unit| unit.seen_by)),
+                    ),
+                    _ => crate::particles::EffectSight::Point,
+                };
+                stage.play(fx, (at, seed), with, (&feeds, &place), permission);
             }
         }
     }

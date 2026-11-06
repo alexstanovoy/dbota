@@ -101,8 +101,8 @@ struct Frame {
 pub struct Instance {
     pub effect: Arc<Effect>,
     pub nodes: Vec<Node>,
-    /// Map decorations have no server approval: their origin must remain in our vision.
-    pub(crate) require_vision: bool,
+    /// Presentation permission is supplied by the producer, never by the imported effect.
+    pub(crate) sight: super::EffectSight,
     /// Presentation opacity, independent of the imported particle simulation.
     pub(crate) presentation_opacity: f32,
     life: f32,
@@ -171,7 +171,7 @@ impl Instance {
         Self {
             effect,
             nodes,
-            require_vision: false,
+            sight: super::EffectSight::Public,
             presentation_opacity: 1.0,
             life: 0.0,
             held: false,
@@ -186,7 +186,7 @@ impl Instance {
     /// Plays the effect again from its start, its draws keyed by `seed`, keeping what its
     /// particles' columns hold.
     pub fn restart(&mut self, seed: u32) {
-        self.require_vision = false;
+        self.sight = super::EffectSight::Public;
         self.presentation_opacity = 1.0;
         self.life = 0.0;
         self.held = false;

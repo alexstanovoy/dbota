@@ -253,9 +253,10 @@ impl QueuedBuys {
 
 /// The loops of one teleport under way, and what its landing needs.
 struct Humming {
-    loops: Vec<Entity>,
+    landing_loop: Option<Entity>,
+    origin_loop: Option<Entity>,
     landing: (f32, f32),
-    origin: Option<(f32, f32)>,
+    origin: Option<crate::teleport::Origin>,
 }
 
 pub fn plugin(app: &mut App) {
@@ -594,15 +595,15 @@ pub(crate) fn fall_off((x, y): (f32, f32), focus: Vec2) -> f32 {
 /// goes quiet.
 fn portals(
     mut commands: Commands,
-    session: NonSend<Session>,
+    sight: crate::fog::EventSight,
     voices: Res<Voices>,
     cam: Single<&RtsCamera>,
     settings: Res<Settings>,
     args: Res<crate::Args>,
     mut humming: Local<HashMap<SlotId, Humming>>,
 ) {
-    let ends: Vec<(SlotId, bool)> = session
-        .0
+    let ends: Vec<(SlotId, bool)> = sight
+        .core()
         .told
         .iter()
         .filter_map(|event| match *event {
@@ -610,7 +611,7 @@ fn portals(
             _ => None,
         })
         .collect();
-    let Some(view) = session.0.view() else {
+    let Some(view) = sight.core().view() else {
         return;
     };
     let silent = settings.muted || args.mute;
@@ -644,13 +645,16 @@ fn portals(
         let Some(hum) = humming.remove(&slot) else {
             continue;
         };
-        for entity in hum.loops {
+        for entity in hum.landing_loop.into_iter().chain(hum.origin_loop) {
             commands.entity(entity).despawn();
         }
         if landed {
             play(&mut commands, Kind::HeroArrived, hum.landing, false);
-            if let Some(origin) = hum.origin {
-                play(&mut commands, Kind::HeroLeft, origin, false);
+            if let Some(origin) = hum
+                .origin
+                .filter(|origin| !sight.fog().hides(Some(origin.seen)))
+            {
+                play(&mut commands, Kind::HeroLeft, origin.at, false);
             }
         }
     }
@@ -659,19 +663,23 @@ fn portals(
             teleport.destination.x.to_f32(),
             teleport.destination.y.to_f32(),
         );
-        let hum = humming.entry(teleport.slot).or_insert_with(|| {
-            let origin = crate::teleport::origin(view, teleport);
-            let loops = [
-                play(&mut commands, Kind::PortalArriving, landing, true),
-                origin.and_then(|at| play(&mut commands, Kind::PortalLeaving, at, true)),
-            ];
-            Humming {
-                loops: loops.into_iter().flatten().collect(),
-                landing,
-                origin,
-            }
+        let hum = humming.entry(teleport.slot).or_insert_with(|| Humming {
+            landing_loop: play(&mut commands, Kind::PortalArriving, landing, true),
+            origin_loop: None,
+            landing,
+            origin: None,
         });
-        hum.origin = crate::teleport::origin(view, teleport).or(hum.origin);
+        hum.origin = crate::teleport::origin(&sight, teleport);
+        match (hum.origin, hum.origin_loop) {
+            (None, Some(entity)) => {
+                commands.entity(entity).despawn();
+                hum.origin_loop = None;
+            }
+            (Some(origin), None) => {
+                hum.origin_loop = play(&mut commands, Kind::PortalLeaving, origin.at, true);
+            }
+            _ => {}
+        }
     }
 }
 

@@ -44,16 +44,22 @@ impl EventSight<'_> {
         self.core()
             .view()
             .and_then(|view| view.unit(id))
-            .is_some_and(|unit| !self.fog.hides(unit.seen_by))
+            .is_some_and(|unit| self.allows_unit(unit))
     }
 
     fn sees_point(&self, at: Vec2) -> bool {
+        self.sees_point_xy(at.x.to_f32(), at.y.to_f32())
+    }
+
+    fn sees_point_xy(&self, x: f32, y: f32) -> bool {
         // An explicit snapshot row remains authoritative while the asynchronous grid catches up.
         self.core().view().is_some_and(|view| {
-            view.runes
-                .iter()
-                .any(|rune| rune.pos == at && !self.fog.hides(rune.seen_by))
-        }) || self.fog.n > 0 && self.fog.lit(at.x.to_f32(), at.y.to_f32())
+            view.runes.iter().any(|rune| {
+                rune.pos.x.to_f32() == x
+                    && rune.pos.y.to_f32() == y
+                    && !self.fog.hides(rune.seen_by)
+            })
+        }) || self.fog.n > 0 && self.fog.lit(x, y)
     }
 
     pub fn allows(&self, event: &EventKind, subject: EventSubject<'_>) -> bool {
@@ -61,16 +67,78 @@ impl EventSight<'_> {
     }
 
     pub fn allows_unit(&self, unit: &UnitView) -> bool {
-        self.core().view().is_some() && self.placement(EventSubject::Unit(unit), false)
+        self.core().view().is_some()
+            && (!self.fog.on
+                || if bota_core::kind_def(unit.kind).always_seen {
+                    // A map object's location is public, but its effects still require sight.
+                    self.sees_point(unit.pos)
+                } else {
+                    !self.fog.hides(unit.seen_by)
+                })
+    }
+
+    pub fn visible_unit(&self, id: EntityId) -> Option<&UnitView> {
+        self.core()
+            .view()?
+            .unit(id)
+            .filter(|unit| self.allows_unit(unit))
+    }
+
+    /// Side streams omit visibility bits because the server already selected their audience.
+    pub fn knowledge(&self, seen: Option<bota_proto::SeenBy>) -> bota_proto::SeenBy {
+        match self.core().view().and_then(|view| view.viewer) {
+            Some(team) => bota_proto::SeenBy {
+                radiant: team == bota_proto::Team::Radiant,
+                dire: team == bota_proto::Team::Dire,
+            },
+            None => seen.unwrap_or_default(),
+        }
+    }
+
+    pub fn allows_point(&self, x: f32, y: f32) -> bool {
+        x.is_finite() && y.is_finite() && (!self.fog.on || self.sees_point_xy(x, y))
+    }
+
+    pub fn allows_projectile(&self, projectile: &bota_proto::ProjectileView) -> bool {
+        self.core().view().is_some() && !self.fog.hides(projectile.seen_by)
+    }
+
+    pub fn sees_projectile(&self, id: EntityId) -> bool {
+        self.core()
+            .view()
+            .and_then(|view| {
+                view.projectiles
+                    .binary_search_by_key(&id, |p| p.id)
+                    .ok()
+                    .map(|i| &view.projectiles[i])
+            })
+            .is_some_and(|projectile| self.allows_projectile(projectile))
+    }
+
+    pub fn flights(&self) -> Vec<bota_client_core::Flight> {
+        let Some(view) = self.core().view() else {
+            return Vec::new();
+        };
+        bota_client_core::flights(view, self.core().prev_view(), self.core().smooth.alpha())
+            .into_iter()
+            .filter(|flight| self.allows_projectile(&flight.missile))
+            .collect()
     }
 
     fn placement(&self, subject: EventSubject<'_>, default: bool) -> bool {
         !self.fog.on
             || match subject {
                 EventSubject::Event => default,
-                EventSubject::Unit(unit) => !self.fog.hides(unit.seen_by),
+                EventSubject::Unit(unit) => self.allows_unit(unit),
                 EventSubject::Point(at) => self.sees_point(at),
             }
+    }
+
+    fn shown(&self, subject: EventSubject<'_>, told: bool, default: bool) -> bool {
+        // A side stream also carries globally known map objects. Their locations being known
+        // does not authorize a positional effect or sound outside actual sight.
+        let map_object = matches!(subject, EventSubject::Unit(unit) if bota_core::kind_def(unit.kind).always_seen);
+        told && !map_object || self.placement(subject, default)
     }
 
     fn allows_item_use(
@@ -83,7 +151,7 @@ impl EventSight<'_> {
         let target_seen = target.is_none_or(|unit| self.sees_unit(unit));
         // A caster's flash can remain visible while the aimed unit and its point are private.
         (told || !self.fog.on || !matches!(subject, EventSubject::Point(_)) || target_seen)
-            && (told || self.placement(subject, self.sees_point(at) && target_seen))
+            && self.shown(subject, told, self.sees_point(at) && target_seen)
     }
 
     fn announced_death(&self, view: &WorldView, unit: EntityId) -> bool {
@@ -99,7 +167,7 @@ impl EventSight<'_> {
             return false;
         };
         let told = view.viewer.is_some();
-        let shown = |default| told || self.placement(subject, default);
+        let shown = |default| self.shown(subject, told, default);
         match *event {
             EventKind::Landed { at, .. }
             | EventKind::TreeFelled { at, .. }
@@ -135,8 +203,7 @@ impl EventSight<'_> {
             }
             EventKind::ItemBought { slot, .. } => {
                 (told
-                    || !self.fog.on && self.fog.team.is_none()
-                    || self.fog.team.is_some_and(|team| {
+                    || self.fog.team.is_none_or(|team| {
                         view.players
                             .iter()
                             .any(|player| player.slot == slot && player.team == team)

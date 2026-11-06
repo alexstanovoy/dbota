@@ -219,9 +219,10 @@ impl Stage<'_, '_> {
         (at, seed): (Vec3, u32),
         (library, playing): (Option<&Library>, &mut Playing),
         (feeds, place): (&Feeds, &dyn Fn(&Attach) -> Vec3),
+        sight: crate::particles::EffectSight,
     ) {
         if let Some(name) = &fx.particle {
-            let handle = crate::effects::play_once(library, playing, name, at, seed);
+            let handle = crate::effects::play_once(library, playing, name, at, seed, sight);
             feed(fx, handle, playing, feeds, place);
         }
         if let Some(prefix) = &fx.sound {

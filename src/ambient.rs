@@ -200,12 +200,11 @@ fn play(
         let Some(handle) = library
             .as_deref()
             .and_then(|l| l.effect(&e.name))
-            .and_then(|effect| playing.hold(effect, seed))
+            .and_then(|effect| playing.hold(effect, seed, crate::particles::EffectSight::Point))
         else {
             continue;
         };
         if let Some(instance) = playing.get_mut(handle) {
-            instance.require_vision = true;
             instance.presentation_opacity = DECORATION_OPACITY;
             instance.set_control_point(0, e.place, e.forward, true);
             if let Some((cp, value)) = e.data {

@@ -15,12 +15,10 @@ use super::{
     on_ground, place_of,
 };
 use crate::effects::Shooters;
-use crate::fog::FogGrid;
 use crate::map::Ground;
 use crate::mixer::{Owner, Started};
-use crate::particles::{Handle, Library, Playing};
+use crate::particles::{EffectSight, Handle, Library, Playing};
 use crate::runes;
-use crate::session::Session;
 use crate::units::{Dying, UnitIndex};
 
 /// The worn effects playing: by the wearing unit and the rule, the particle if the line has one
@@ -109,13 +107,14 @@ fn begin(
     at: Vec3,
     (library, playing): (Option<&Library>, &mut Playing),
     stage: &mut Stage,
+    sight: EffectSight,
 ) -> Wearing {
     let seed = id.idx ^ id.generation.rotate_left(16);
     let handle = fx
         .particle
         .as_deref()
         .and_then(|name| library?.effect(name))
-        .and_then(|effect| playing.hold(effect, seed));
+        .and_then(|effect| playing.hold(effect, seed, sight));
     let mut wearing = Wearing {
         particle: handle,
         voice: None,
@@ -168,11 +167,10 @@ fn end(wearing: &Wearing, playing: &mut Playing, stage: &mut Stage) {
 /// in view nothing stands: every wearing ends.
 #[allow(clippy::too_many_arguments)]
 fn worn(
-    session: NonSend<Session>,
+    sight: crate::fog::EventSight,
     index: Res<UnitIndex>,
     dying: Query<(), With<Dying>>,
     ground: Res<Ground>,
-    fog: Res<FogGrid>,
     rules: Res<Rules>,
     library: Option<Res<Library>>,
     mut playing: ResMut<Playing>,
@@ -180,7 +178,7 @@ fn worn(
     bodies: Shooters,
     mut stage: Stage,
 ) {
-    let Some(view) = session.0.view() else {
+    let Some(view) = sight.core().view() else {
         for (_, wearing) in worn.0.drain() {
             end(&wearing, &mut playing, &mut stage);
         }
@@ -188,10 +186,11 @@ fn worn(
         return;
     };
     let standing = |id: &EntityId| {
-        index
-            .0
-            .get(id)
-            .is_some_and(|entity| !dying.contains(*entity))
+        sight.visible_unit(*id).is_some()
+            && index
+                .0
+                .get(id)
+                .is_some_and(|entity| !dying.contains(*entity))
     };
     let wearing = rules
         .of(Trigger::Worn)
@@ -204,7 +203,7 @@ fn worn(
     worn.0.retain(|(id, rule), wearing| {
         let keep = rules.0.get(*rule).is_some_and(|rule| match rule.subject {
             Subject::Runes(kind) => {
-                runes::shown(view, &fog).any(|rune| rune.id == *id && rune.kind == kind)
+                runes::shown(view, sight.fog()).any(|rune| rune.id == *id && rune.kind == kind)
             }
             _ => {
                 standing(id)
@@ -226,7 +225,7 @@ fn worn(
     for unit in view.units.iter().filter(|u| standing(&u.id)) {
         wear_unit(unit, &wearing, &scene, &mut worn, &mut playing, &mut stage);
     }
-    for rune in runes::shown(view, &fog) {
+    for rune in runes::shown(view, sight.fog()) {
         let at = on_ground(&ground, rune.pos);
         for (n, rule) in &wearing {
             if rule.subject != Subject::Runes(rune.kind) {
@@ -234,7 +233,7 @@ fn worn(
             }
             let handle = worn.0.entry((rune.id, *n)).or_insert_with(|| {
                 let with = (library.as_deref(), &mut *playing);
-                begin(&rule.fx, rune.id, at, with, &mut stage)
+                begin(&rule.fx, rune.id, at, with, &mut stage, EffectSight::Point)
             });
             sound(&rule.fx, rune.id, at, handle, &mut stage);
             if let Some(instance) = handle.particle.and_then(|h| playing.get_mut(h)) {
@@ -269,10 +268,16 @@ fn wear_unit(
             continue;
         }
         let at = attach_point(scene.ground, scene.bodies, unit, &fx.attach);
-        let handle = worn
-            .0
-            .entry((unit.id, *n))
-            .or_insert_with(|| begin(fx, unit.id, at, (scene.library, &mut *playing), stage));
+        let handle = worn.0.entry((unit.id, *n)).or_insert_with(|| {
+            begin(
+                fx,
+                unit.id,
+                at,
+                (scene.library, &mut *playing),
+                stage,
+                EffectSight::Unit(unit.id),
+            )
+        });
         sound(fx, unit.id, at, handle, stage);
         if let Some(instance) = handle.particle.and_then(|h| playing.get_mut(h)) {
             instance.bind_control_point(

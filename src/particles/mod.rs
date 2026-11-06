@@ -27,7 +27,9 @@ mod tests;
 pub(crate) use library::Effect;
 pub use library::Library;
 pub(crate) use plugin::Simulation;
-pub use plugin::{Handle, Loaded, Playing};
+#[cfg(test)]
+pub(crate) use plugin::tick as gather_frame;
+pub use plugin::{EffectSight, Handle, Loaded, Playing};
 #[cfg(test)]
 pub(crate) use render::ParticleFrame;
 
