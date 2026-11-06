@@ -235,7 +235,7 @@ pub struct Args {
     pub bars_check: bool,
     /// Debug: print what a unit's animation shows each frame (`anim tick=…
     /// unit=… clip=… t=… share=… fading=…`) and each creep sound decided
-    /// (`sound tick=… kind=… sources=…`), for the end-to-end tests of how an
+    /// (`sound tick=… name=… on=… heard=… sources=…`), for the end-to-end tests of how an
     /// attack looks and sounds.
     #[arg(long)]
     pub trace_feel: bool,

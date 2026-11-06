@@ -245,6 +245,30 @@ fn scratch(name: &str) -> PathBuf {
     dir
 }
 
+/// A spot on the mid lane of the Dota map, from the map's own data: halfway between the two
+/// sides' first mid towers. The server's cheats take only open ground, and `record` panics on a
+/// refused order, so the fight cannot start on closed ground unnoticed. (Map coordinates run
+/// from 0; a spot with a negative coordinate is put on the map's corner, which is closed.)
+fn mid_lane_between_first_towers() -> Vec2 {
+    use bota_core::rules::LANE_MID;
+    let map = bota_core::map_of(bota_proto::MapId(0));
+    let first_mid_tower = |towers: &[(u8, u8, Vec2)]| {
+        towers
+            .iter()
+            .find(|&&(lane, tier, _)| lane == LANE_MID && tier == 1)
+            .map(|&(_, _, at)| at)
+            .expect("the map has a first mid tower on each side")
+    };
+    let (radiant, dire) = (
+        first_mid_tower(map.radiant_towers),
+        first_mid_tower(map.dire_towers),
+    );
+    Vec2::from_ints(
+        (radiant.x.to_int() + dire.x.to_int()) / 2,
+        (radiant.y.to_int() + dire.y.to_int()) / 2,
+    )
+}
+
 /// Fighting enemy creeps at the lane: waves of both sides are made where the
 /// hero stands, a swing of his is broken off by a stop right after the order,
 /// then he fights on.
@@ -253,7 +277,7 @@ fn lane_fight(scratch: &Path) -> (PathBuf, u32) {
     let mut waited = 0u32;
     let mut target: Option<EntityId> = None;
     let mut ordered_at = 0;
-    let at = Vec2::from_ints(-1500, -1200);
+    let at = mid_lane_between_first_towers();
     record(scratch, "lane", "0", 1, |view| {
         let me = view.units.iter().find(|u| u.hero.is_some());
         let enemy_creep = view
@@ -402,8 +426,8 @@ fn a_broken_off_swing_is_a_cancel_and_clips_fade_and_melee_creeps_sound() {
         }
     }
     assert!(fades > 0, "no clip change was seen to fade from the start");
-    // Sound: melee creeps whoosh as a swing begins; the blow as it lands sounds only on the
-    // hero one plays, which this lane fight has none of.
+    // Sound: melee creeps whoosh as a swing begins; the blow as it lands is heard only on the
+    // hero one plays.
     let heard = |kind: &str| {
         lines
             .iter()
@@ -417,16 +441,37 @@ fn a_broken_off_swing_is_a_cancel_and_clips_fade_and_melee_creeps_sound() {
         said.iter().all(|l| !l.ends_with("sources=0")),
         "{kind} has no sound in the cache"
     );
-    // The blows landed (they are decided) and none was heard: a lane fight watched has no hero
-    // of the player's.
+    // The blows landed (they are decided), and Dota hears a creep's blow on the hero one plays
+    // alone: the lane fight has that hero in it, so its blows are heard and every other blow
+    // is not.
     let blows = heard("sound.creep.melee.attack");
     assert!(
         !blows.is_empty(),
         "no melee blow was decided in the lane fight"
     );
+    let mut heroes: Vec<u32> = all
+        .iter()
+        .filter(|f| f.kind == "Hero")
+        .map(|f| f.unit)
+        .collect();
+    heroes.sort_unstable();
+    heroes.dedup();
+    assert_eq!(heroes.len(), 1, "the lane fight has the seat's hero alone");
+    let own_hero = heroes[0].to_string();
+    let on_own_hero = |l: &&String| l.contains(&format!(" on={own_hero} "));
+    let (own, others): (Vec<_>, Vec<_>) = blows.into_iter().partition(on_own_hero);
     assert!(
-        blows.iter().all(|l| l.contains(" heard=false ")),
-        "a blow on no hero of the player's was sounded: {blows:?}"
+        !own.is_empty(),
+        "no melee blow fell on the hero of the seat"
+    );
+    assert!(!others.is_empty(), "no melee blow fell on anyone else");
+    assert!(
+        own.iter().all(|l| l.contains(" heard=true ")),
+        "a blow on the hero one plays was not heard: {own:?}"
+    );
+    assert!(
+        others.iter().all(|l| l.contains(" heard=false ")),
+        "a blow on no hero of the player's was heard: {others:?}"
     );
     keep(&replay, "lane", &shots);
     let _ = std::fs::remove_dir_all(&dir);

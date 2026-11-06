@@ -433,8 +433,9 @@ impl Sounder<'_, '_, '_> {
         };
         if let Some(tick) = self.trace {
             println!(
-                "sound tick={tick} name={} heard={} sources={}",
+                "sound tick={tick} name={} on={} heard={} sources={}",
                 voice.name,
+                merge.map_or("none".to_owned(), |unit| unit.idx.to_string()),
                 !voice.own_hero_only || (merge.is_some() && merge == self.ears),
                 voice.sources.len()
             );
