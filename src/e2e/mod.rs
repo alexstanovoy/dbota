@@ -73,6 +73,7 @@ mod sentry_ward;
 mod settings;
 mod shell;
 mod sf_orbits;
+mod sf_threads;
 mod shop_inventory;
 mod shop_queue;
 mod shop_sound;
