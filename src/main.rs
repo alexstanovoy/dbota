@@ -396,17 +396,19 @@ pub struct SettingsPath(pub Option<PathBuf>);
 /// their own, named by the fingerprint (`dbota_import::import::folder_name`), so clients of
 /// different builds share a machine.
 fn default_cache_dir() -> PathBuf {
-    // In a browser the cache is served next to the page.
-    if cfg!(target_arch = "wasm32") {
-        return PathBuf::from("cache");
+    #[cfg(target_arch = "wasm32")]
+    {
+        PathBuf::from("cache")
     }
-    if let Some(dir) = std::env::var_os("DBOTA_ASSETS").filter(|d| !d.is_empty()) {
-        return PathBuf::from(dir);
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        if let Some(dir) = std::env::var_os("DBOTA_ASSETS").filter(|d| !d.is_empty()) {
+            return PathBuf::from(dir);
+        }
+        import::managed_cache_root()
+            .unwrap_or_else(|| PathBuf::from(".cache/dbota"))
+            .join(dbota_import::import::folder_name())
     }
-    let home = std::env::var_os("HOME").unwrap_or_default();
-    PathBuf::from(home)
-        .join(".cache/dbota")
-        .join(dbota_import::import::folder_name())
 }
 
 /// `dbota import`, `import-cache` and `export-cache`: what the command does to the asset cache

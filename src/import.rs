@@ -3,7 +3,7 @@
 
 use std::path::{Path, PathBuf};
 
-use dbota_import::cache_dir::{import_into, is_current, prune, read_stamp, stamp};
+use dbota_import::cache_dir::{import_into, is_current, prune, read_stamp, record_managed, stamp};
 use dbota_import::import::{Flow, IDS, MANIFEST, plan, plan_id, stamped_here};
 use dbota_import::pack_dir;
 use heatel::find_game_dir;
@@ -114,6 +114,7 @@ pub fn load_cache(from: &Path, cache: &Path, progress: Progress) -> Result<(), S
         summary.stamp,
         started.elapsed().as_secs_f32()
     );
+    maintain_managed_cache(cache);
     Ok(())
 }
 
@@ -163,15 +164,26 @@ pub fn run_with(
         report.read >> 20,
         started.elapsed().as_secs_f32()
     );
-    // The caches of builds long gone leave when a cache of the default place is made.
-    let default_place = cache
-        .file_name()
-        .is_some_and(|n| n == dbota_import::import::folder_name().as_str());
-    if default_place && let Err(why) = prune(cache) {
-        eprintln!("dbota import: old caches stay: {why}");
-    }
+    maintain_managed_cache(cache);
     for (asset, why) in &report.failed {
         eprintln!("dbota import: {asset} did not convert: {why}");
     }
     Ok(report.failed.is_empty())
+}
+
+/// The only root whose caches this client manages. Custom cache locations carry no deletion authority.
+pub fn managed_cache_root() -> Option<PathBuf> {
+    std::env::var_os("HOME")
+        .map(PathBuf::from)
+        .filter(|home| home.is_absolute())
+        .map(|home| home.join(".cache/dbota"))
+}
+
+fn maintain_managed_cache(cache: &Path) {
+    if let Some(root) = managed_cache_root()
+        && cache == root.join(dbota_import::import::folder_name())
+        && let Err(why) = record_managed(&root, cache).and_then(|()| prune(&root, cache))
+    {
+        eprintln!("dbota import: old caches stay: {why}");
+    }
 }

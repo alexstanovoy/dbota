@@ -19,6 +19,14 @@ manifest hash) and lives in `~/.cache/dbota/<fingerprint>` (`dbota cache-dir`), 
 machine; an import keeps the two newest. A dbota of another fingerprint opens at "the assets are out of date" with a
 button that imports again. The settings screen shows the client's commit and the fingerprint it needs.
 
+Automatic asset-cache pruning is confined to the default managed root, `~/.cache/dbota`.
+A successful import there records `.dbota-cache-root` in the root and `.dbota-owned-cache`
+inside its cache. Only completely named, marked cache directories are eligible for pruning;
+unmarked caches and custom cache locations are left alone. Ownership markers are omitted from
+asset packs. Only an import or prepared-cache installation that actually writes a cache establishes
+its ownership. Up-to-date unmarked caches and old siblings are never adopted merely
+because they resemble caches.
+
 ## Running it for tests and tools
 
 `dbota --help` lists every option, the debug ones included (`--screenshot-at`, `--bench`, `--visual-check`). A seat key
