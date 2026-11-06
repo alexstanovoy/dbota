@@ -29,8 +29,6 @@ pub const MAX_ACTIVE: usize = 48;
 /// their particles well within it; the widest (fireflies, butterflies, bats) scatter theirs
 /// some 260 units out, so one just past the margin could have had a few at the screen's edge.
 const REACH: f32 = 200.0;
-/// bota = Dota + this, on x and y.
-const DOTA_TO_BOTA: f32 = 9216.0;
 /// Decorations stay behind gameplay effects, rather than competing with them at full opacity.
 const DECORATION_OPACITY: f32 = 0.5;
 
@@ -134,7 +132,7 @@ fn load(
             let name = format!("map.{}", line.effect);
             library.effect(&name)?;
             let [x, y, z] = line.at;
-            let at = Vec2::new(x + DOTA_TO_BOTA, y + DOTA_TO_BOTA);
+            let at = crate::coords::dota_to_sim(x, y);
             Some(Emitter {
                 name,
                 at,

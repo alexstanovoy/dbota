@@ -30,8 +30,6 @@ const QUIETEST_LOOP: f32 = 0.005;
 const QUIETEST_RANDOM: f32 = 0.03;
 /// The sound level a sound placed without one has: Source's normal level.
 const NORMAL_DB: f32 = 75.0;
-/// bota = Dota + this, on x and y.
-const DOTA_TO_BOTA: f32 = 9216.0;
 /// Units about a Roshan pit's point within which a soundscape's sound is the pit's, and within
 /// which Roshan counts as standing in it.
 const PIT_REACH: f32 = 800.0;
@@ -113,7 +111,7 @@ fn load(
     let (mut lines, sounds) = crate::cache_text::soundscapes(&text, MAX_LINES);
     let pits: Vec<Vec2> = crate::cache_text::roshan_pits(&text, MAX_LINES)
         .into_iter()
-        .map(|[x, y]| Vec2::new(x + DOTA_TO_BOTA, y + DOTA_TO_BOTA))
+        .map(|[x, y]| crate::coords::dota_to_sim(x, y))
         .collect();
     lines.truncate(MAX_SCAPES);
     let sounds: Vec<Placed> = sounds
@@ -126,7 +124,7 @@ fn load(
                 .map(|w| server.load(crate::manifest::cache_path(w)))
                 .collect();
             let pit = line.at.and_then(|[x, y, _]| {
-                let at = Vec2::new(x + DOTA_TO_BOTA, y + DOTA_TO_BOTA);
+                let at = crate::coords::dota_to_sim(x, y);
                 pits.iter()
                     .copied()
                     .find(|pit| pit.distance(at) <= PIT_REACH)
@@ -184,7 +182,7 @@ fn reach(at: Option<[f32; 3]>, db: f32, ear: Vec2) -> f32 {
     };
     let db = if db > 0.0 { db } else { NORMAL_DB };
     let far = 50.0 * (db - 50.0).max(1.0);
-    let d = Vec2::new(x + DOTA_TO_BOTA, y + DOTA_TO_BOTA).distance(ear);
+    let d = crate::coords::dota_to_sim(x, y).distance(ear);
     (1.0 - d / far).clamp(0.0, 1.0)
 }
 
@@ -204,7 +202,7 @@ fn chosen(scapes: &[ScapeLine], ear: Vec2, night: bool) -> Option<usize> {
         .enumerate()
         .filter(|(_, s)| allowed(&s.name))
         .map(|(i, s)| {
-            let at = Vec2::new(s.at[0] + DOTA_TO_BOTA, s.at[1] + DOTA_TO_BOTA);
+            let at = crate::coords::dota_to_sim(s.at[0], s.at[1]);
             (i, at.distance(ear), s.radius)
         })
         .filter(|(_, d, radius)| d <= radius)

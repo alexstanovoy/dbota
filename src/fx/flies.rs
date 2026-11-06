@@ -12,12 +12,10 @@ use bota_proto::EntityId;
 use super::line::{At, Trigger};
 use super::rules::Rules;
 use super::{Feeds, feed, place_of};
-use crate::effects::{Shooters, steer};
+use crate::effects::{MISSILE_HEIGHT, Shooters, steer};
 use crate::map::Ground;
 use crate::particles::{EffectSight, Handle, Library, Playing};
 
-/// How high missiles fly over the ground, in world units.
-const FLIGHT: f32 = 110.0;
 /// The control points a flight's particle is given.
 const LAUNCH: usize = 0;
 const TIP: usize = 1;
@@ -33,7 +31,11 @@ pub(super) fn plugin(app: &mut App) {
 
 /// Where a flight is, in the world's frame.
 fn at(ground: &Ground, flight: &Flight) -> Vec3 {
-    Vec3::new(flight.x, ground.at(flight.x, flight.y) + FLIGHT, -flight.y)
+    Vec3::new(
+        flight.x,
+        ground.at(flight.x, flight.y) + MISSILE_HEIGHT,
+        -flight.y,
+    )
 }
 
 /// The missile of each key a rule follows: itself, or for a chain the one farthest from its

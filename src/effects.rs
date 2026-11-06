@@ -16,7 +16,7 @@ use crate::session::Session;
 use crate::units::{Attachments, Rig, Unit, UnitIndex};
 
 /// How high missiles fly over the ground, in world units.
-const FLIGHT: f32 = 110.0;
+pub(crate) const MISSILE_HEIGHT: f32 = 110.0;
 
 /// How a missile is drawn: as a particle effect.
 #[derive(Clone, Copy)]
@@ -270,7 +270,7 @@ impl Shooters<'_, '_> {
     fn at_flight(&self, id: EntityId) -> Option<Vec3> {
         let at = self.drawn(id)?;
         let height = self.flight_height(id);
-        let height = if height > 0.0 { height } else { FLIGHT };
+        let height = if height > 0.0 { height } else { MISSILE_HEIGHT };
         Some(Vec3::new(at.x, self.ground.at(at.x, at.y) + height, -at.y))
     }
 }
@@ -299,7 +299,7 @@ fn missiles(
             continue;
         }
         alive.push(f.missile.id);
-        let at = Vec3::new(f.x, ground.at(f.x, f.y) + FLIGHT, -f.y);
+        let at = Vec3::new(f.x, ground.at(f.x, f.y) + MISSILE_HEIGHT, -f.y);
         let dir = Vec3::new(f.x - f.tail_x, 0.0, -(f.y - f.tail_y));
         let body = match flying.missiles.get(&f.missile.id).copied() {
             Some(body) => body,
@@ -551,7 +551,7 @@ fn souls(
         }
         let fallen = last.map(|u| {
             let (x, y) = (u.pos.x.to_f32(), u.pos.y.to_f32());
-            Vec3::new(x, ground.at(x, y) + FLIGHT, -y)
+            Vec3::new(x, ground.at(x, y) + MISSILE_HEIGHT, -y)
         });
         let (Some(from), Some(to)) = (shooters.hit(*unit).or(fallen), shooters.hit(*killer)) else {
             continue;

@@ -10,6 +10,12 @@ use std::f32::consts::FRAC_PI_2;
 
 use bevy::prelude::*;
 
+/// Dota's map coordinates use the centre of the square as their origin.
+pub fn dota_to_sim(x: f32, y: f32) -> Vec2 {
+    const ORIGIN: f32 = 9216.0;
+    Vec2::new(x + ORIGIN, y + ORIGIN)
+}
+
 /// Rotation for a model whose front is Bevy forward (-Z) to face sim angle `facing`.
 pub fn sim_facing_to_rotation(facing: f32) -> Quat {
     Quat::from_rotation_y(facing - FRAC_PI_2)
