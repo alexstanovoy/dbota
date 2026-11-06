@@ -853,7 +853,8 @@ struct SyncParams<'w, 's> {
     time: Res<'w, Time>,
 }
 
-/// New units spawned a frame at most, and planted trees stood.
+/// New units of any kind spawned a frame at most (heroes have more room: [`spawn_cap`]), and
+/// planted trees stood.
 pub(crate) const SPAWNS_PER_FRAME: usize = 4;
 
 /// New units spawned a frame at most once one of `kind` would be: the few of any kind, and a
