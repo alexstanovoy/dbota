@@ -28,6 +28,7 @@ mod purchase_destination;
 mod refusals;
 mod rings;
 mod runes;
+mod slot_looks;
 mod sound_limits;
 mod soundscape;
 mod start;

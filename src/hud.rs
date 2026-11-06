@@ -29,6 +29,8 @@ use crate::wash::Washed;
 const ABILITY: f32 = 58.0;
 /// The size of an item box.
 const ITEM: (f32, f32) = (66.0, 48.0);
+/// The tint of an icon in the backpack, whose items are carried and not active.
+const BACKPACK_ICON: Color = Color::srgb(0.55, 0.55, 0.55);
 /// The height of a backpack box.
 const BACKPACK_ROW: f32 = 30.0;
 /// The portrait's frame, of Dota's shape.
@@ -1730,6 +1732,17 @@ struct SlotFace {
     frame: Color,
     /// The padlock's art, on an item locked against combining.
     lock: Option<String>,
+    /// What the face is of.
+    kind: FaceKind,
+}
+
+/// What a slot's face is of: an ability, an item at hand or an item lying in the backpack, which
+/// is carried and not active.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum FaceKind {
+    Ability,
+    Item,
+    Backpack,
 }
 
 /// The abilities of the subject the bottom panel is about: what its tooltips describe too.
@@ -1865,6 +1878,7 @@ fn ability_face(
             Color::srgb(0.2, 0.22, 0.27)
         },
         lock: None,
+        kind: FaceKind::Ability,
     })
 }
 
@@ -1937,6 +1951,11 @@ fn item_face(
         lock: (item.locked == Some(true))
             .then(|| manifest.file("hud.item_combine_lock"))
             .flatten(),
+        kind: if (INVENTORY_SLOTS..BAG_SLOTS).contains(&slot) {
+            FaceKind::Backpack
+        } else {
+            FaceKind::Item
+        },
     })
 }
 
@@ -2037,6 +2056,8 @@ fn dress(
                     // Taken up by a drag: what shows in the slot is its shadow.
                     Some(f) if f.lifted => Color::srgba(1.0, 1.0, 1.0, 0.25),
                     Some(f) if !f.look.learned => Color::srgb(0.35, 0.35, 0.35),
+                    // An item in the backpack works for nobody: its icon is greyed.
+                    Some(f) if f.kind == FaceKind::Backpack => BACKPACK_ICON,
                     Some(_) => Color::WHITE,
                     None => Color::NONE,
                 };
