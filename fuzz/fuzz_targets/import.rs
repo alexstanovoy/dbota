@@ -10,7 +10,7 @@ use heatel::fuzzing::files;
 use libfuzzer_sys::fuzz_target;
 
 const MANIFEST: &str = "\
-model hero.m.model models/m.vmdl_c models/m/m.glb anims=idle,run,attack attach=x
+model hero.m.model models/m.vmdl_c models/m/m.glb anims=idle,run,attack attach=unit.n.model
 model unit.n.model models/n.vmdl_c models/n/n.glb meshes=n_lod0
 texture icon.t materials/t.vtex_c icons/t.png
 sound sound.s sounds/s.vsnd_c sounds/s.wav event=s
@@ -18,7 +18,7 @@ world map.mid maps/w/world.vwrld_c map/mid/mid.gltf vpk=maps/w.vpk half_width=1e
 portraits models.portraits scripts/npc/portraits.txt models/portraits.txt
 shop text.shop scripts/shops.txt text/shop.json strings=resource/localization/dota_english.txt
 ";
-const IDS: &str = "item 1 blink\nability 2 nevermore_shadowraze1\nhero 3 nevermore\n";
+const IDS: &str = "item 1 blink\nability 2 nevermore_shadowraze1\nhero 1 nevermore\n";
 /// The sources, the input's first files.
 const ROOTS: [&str; 12] = [
     "models/m.vmdl_c",
