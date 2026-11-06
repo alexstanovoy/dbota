@@ -1354,6 +1354,7 @@ mod tests {
             evasion: Fixed::ZERO,
             hit_health: None,
             vision_grant: None,
+            cast_rates: None,
             seen_by: None,
             attack_range: fixed(150),
             attack_time: 1700,

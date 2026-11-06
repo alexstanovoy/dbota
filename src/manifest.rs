@@ -304,6 +304,12 @@ impl Manifest {
             .or_else(|| self.file(&format!("portrait.hero.{name}")))
     }
 
+    /// The asset path of a hero's icon (the wide picture of its top bar and kill feed).
+    pub fn hero_icon(&self, hero: u16) -> Option<String> {
+        let name = self.dota_name("hero", hero)?;
+        self.file(&format!("portrait.hero.{name}"))
+    }
+
     /// The asset path of an item's icon.
     pub fn item_icon(&self, id: u16) -> Option<String> {
         self.file(&format!("icon.item.{}", self.dota_name("item", id)?))

@@ -1730,6 +1730,24 @@ texture hud.topbar.cheese panorama/images/items/topbar/cheese_psd.vtex_c hud/top
 texture hud.outpost panorama/images/hud/icon_outpost_psd.vtex_c hud/icon_outpost_psd.png
 texture hud.outpost_captured panorama/images/hud/icon_outpost_captured_psd.vtex_c hud/icon_outpost_captured_psd.png
 texture hud.outpost_lost panorama/images/hud/icon_outpost_lost_psd.vtex_c hud/icon_outpost_lost_psd.png
+# The kill feed (top right): the icon between the killer and what fell (a kill by one's own side, by the enemy,
+# or by neither when the viewer has no side) and Dota's lines for a tower and a barracks fallen, their names.
+texture hud.kill panorama/images/hud/icon_kill_png.vtex_c hud/icon_kill_png.png
+texture hud.kill_ally panorama/images/hud/icon_kill_ally_psd.vtex_c hud/icon_kill_ally_psd.png
+texture hud.kill_enemy panorama/images/hud/icon_kill_enemy_psd.vtex_c hud/icon_kill_enemy_psd.png
+label resource/localization/dota_english.txt DOTA_HUD_Tower_Killed
+label resource/localization/dota_english.txt DOTA_HUD_BarracksKilled
+label resource/localization/dota_english.txt DOTA_Location_Name_GoodGuys
+label resource/localization/dota_english.txt DOTA_Location_Name_BadGuys
+label resource/localization/dota_english.txt DOTA_Location_Name_TopLane
+label resource/localization/dota_english.txt DOTA_Location_Name_MidLane
+label resource/localization/dota_english.txt DOTA_Location_Name_BotLane
+label resource/localization/dota_english.txt DOTA_Location_Name_Tower1
+label resource/localization/dota_english.txt DOTA_Location_Name_Tower2
+label resource/localization/dota_english.txt DOTA_Location_Name_Tower3
+label resource/localization/dota_english.txt DOTA_Location_Name_Tower4
+label resource/localization/dota_english.txt DOTA_Chat_Melee
+label resource/localization/dota_english.txt DOTA_Chat_Ranged
 texture hud.roshan_timer panorama/images/hud/reborn/roshan_timer_roshan_psd.vtex_c hud/roshan_timer_roshan_psd.png
 texture hud.roshan_timer_bg panorama/images/hud/reborn/roshan_timer_bg_v2_png.vtex_c hud/roshan_timer_bg_v2_png.png
 texture hud.tormentor panorama/images/control_icons/24px/tormentor_png.vtex_c hud/tormentor_png.png

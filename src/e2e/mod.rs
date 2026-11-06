@@ -16,6 +16,7 @@ mod courier_spinner;
 mod cursors;
 mod death;
 mod event_visibility;
+mod feed;
 mod flagbearer;
 mod fog;
 mod fog_pov;

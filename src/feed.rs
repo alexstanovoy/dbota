@@ -14,8 +14,9 @@ use crate::ui::{self, Fonts};
 
 /// Lines shown at most: what the client keeps.
 const ROWS: usize = 8;
-/// Icons and texts a line holds at most, alternating, an icon first.
-const SLOTS: usize = 3;
+/// Icons and texts a line holds at most, alternating, an icon first: a kill's killer, kill icon
+/// and victim, and up to four assists.
+const SLOTS: usize = 7;
 const SIZE: f32 = 14.0;
 /// Interface pixels of an icon's side in a line.
 const ICON: f32 = 18.0;
@@ -195,6 +196,9 @@ fn visible_lines<'a>(core: &'a Core, sight: &crate::fog::EventSight) -> Vec<&'a 
 
 /// A line as Dota words it, or the client's text.
 fn lay(core: &Core, texts: Option<&Texts>, manifest: &Manifest, line: &FeedLine) -> Laid {
+    if let Some(laid) = hero_kill(core, manifest, &line.kind) {
+        return laid;
+    }
     let mut laid: Laid = Default::default();
     let dota = texts.and_then(|texts| dota_parts(core, texts, &line.kind));
     let Some(parts) = dota else {
@@ -216,7 +220,7 @@ fn lay(core: &Core, texts: Option<&Texts>, manifest: &Manifest, line: &FeedLine)
                     break;
                 }
                 laid[at].0 =
-                    icon_file(&name, &line.kind).and_then(|logical| manifest.file(logical));
+                    icon_file(core, &name, &line.kind).and_then(|logical| manifest.file(logical));
             }
             Part::Text(text) => {
                 laid[at].1.push_str(&text);
@@ -227,10 +231,105 @@ fn lay(core: &Core, texts: Option<&Texts>, manifest: &Manifest, line: &FeedLine)
     laid
 }
 
+/// A hero's fall as Dota's feed draws it: the killer's hero icon, the kill icon (the ally's when
+/// one's own side struck it, the enemy's when the other did) and the fallen hero's icon, then the
+/// icons of the heroes that assisted. None when a hero in it is not known by its seat (a tower's
+/// or a creep's kill, a hero no seat drives), which the text tells.
+fn hero_kill(core: &Core, manifest: &Manifest, kind: &FeedKind) -> Option<Laid> {
+    let FeedKind::HeroDied {
+        victim,
+        killer,
+        assists,
+        ..
+    } = *kind
+    else {
+        return None;
+    };
+    let (Victim::Seat(fallen), Some(Killer::Seat(striker))) = (victim, killer) else {
+        return None;
+    };
+    let hero_icon = |slot: bota_proto::SlotId| {
+        let hero = core.view()?.player(slot)?.hero;
+        manifest.hero_icon(hero.0)
+    };
+    let team_of = |slot: bota_proto::SlotId| core.view()?.player(slot).map(|p| p.team);
+    let swords = match (core.my_team(), team_of(striker)) {
+        (Some(mine), Some(theirs)) if mine == theirs => "hud.kill_ally",
+        (Some(_), Some(_)) => "hud.kill_enemy",
+        _ => "hud.kill",
+    };
+    let mut laid: Laid = Default::default();
+    laid[0].0 = Some(hero_icon(striker)?);
+    laid[1].0 = manifest.file(swords);
+    laid[2].0 = Some(hero_icon(fallen)?);
+    let helpers = bota_proto::assisting_seats(assists).filter_map(hero_icon);
+    for (pair, icon) in laid[3..].iter_mut().zip(helpers) {
+        pair.0 = Some(icon);
+    }
+    Some(laid)
+}
+
+/// What a tower or a barracks that fell was called, in Dota's words: its side, its lane and its
+/// tier, or whether the barracks is the melee or the ranged one.
+fn building_parts(texts: &Texts, kind: &FeedKind) -> Option<Vec<Part>> {
+    let FeedKind::StructureFell {
+        team,
+        kind: building,
+        lane,
+        tier,
+        ranged,
+    } = *kind
+    else {
+        return None;
+    };
+    let word = |key: &str| texts.label(key, &[]);
+    let side = word(match team {
+        Team::Radiant => "DOTA_Location_Name_GoodGuys",
+        _ => "DOTA_Location_Name_BadGuys",
+    })?;
+    let lane = word(match lane? {
+        0 => "DOTA_Location_Name_MidLane",
+        1 => "DOTA_Location_Name_TopLane",
+        _ => "DOTA_Location_Name_BotLane",
+    })?;
+    match building {
+        UnitKind::Tower => {
+            let tier = word(&format!("DOTA_Location_Name_Tower{}", tier?))?;
+            texts.label_parts(
+                "DOTA_HUD_Tower_Killed",
+                &[
+                    ("killer", String::new()),
+                    ("tower_name", format!("{side} {lane} {tier}")),
+                    ("gold", String::new()),
+                ],
+            )
+        }
+        UnitKind::Barracks => {
+            let rax = word(if ranged? {
+                "DOTA_Chat_Ranged"
+            } else {
+                "DOTA_Chat_Melee"
+            })?;
+            texts.label_parts(
+                "DOTA_HUD_BarracksKilled",
+                &[
+                    ("killer", String::new()),
+                    ("team", side),
+                    ("lane", lane),
+                    ("rax_type", rax),
+                    ("gold", String::new()),
+                ],
+            )
+        }
+        _ => None,
+    }
+}
+
 /// The parts of Dota's feed line for an event the client words with the
 /// install's labels; none for any other, or without the labels.
 fn dota_parts(core: &Core, texts: &Texts, kind: &FeedKind) -> Option<Vec<Part>> {
     match *kind {
+        FeedKind::StructureFell { .. } => building_parts(texts, kind),
         FeedKind::Captured { building, by } => {
             let name = outpost_name(core, Some(texts), building);
             let (key, values) = match core.my_team() {
@@ -333,8 +432,15 @@ pub fn text(core: &Core, kind: &FeedKind) -> String {
             victim,
             killer,
             gold,
-        } => death(core, victim, killer, gold),
-        FeedKind::StructureFell { team } => format!("a {team:?} structure has fallen"),
+            assists,
+        } => death(core, victim, killer, gold, assists),
+        FeedKind::StructureFell {
+            team,
+            kind,
+            lane,
+            tier,
+            ranged,
+        } => structure(team, kind, lane, tier, ranged),
         FeedKind::Disconnected { seat } => format!("{} disconnected", seat_name(core, seat)),
         FeedKind::ProtocolBroken { ref why } => format!("the server broke the protocol: {why}"),
         FeedKind::ConnectionLost => "connection to the server lost".to_string(),
@@ -372,8 +478,34 @@ pub fn text(core: &Core, kind: &FeedKind) -> String {
     }
 }
 
-/// A hero's death, with its killer and the gold it paid when they are known.
-fn death(core: &Core, victim: Victim, killer: Option<Killer>, gold: i32) -> String {
+/// A building's fall in the client's own words: its side, its lane and its tier.
+fn structure(
+    team: Team,
+    kind: UnitKind,
+    lane: Option<u8>,
+    tier: Option<u8>,
+    ranged: Option<bool>,
+) -> String {
+    let lane = lane.map_or("", |lane| match lane {
+        0 => " mid",
+        1 => " top",
+        _ => " bottom",
+    });
+    let tier = tier.map_or_else(String::new, |tier| format!(" tier {tier}"));
+    let ranged = match ranged {
+        Some(true) => " ranged",
+        Some(false) => " melee",
+        None => "",
+    };
+    format!(
+        "a {team:?}{lane}{tier}{ranged} {} has fallen",
+        bota_core::kind_def(kind).name
+    )
+}
+
+/// A hero's death, with its killer, the gold it paid and the seats that assisted when they are
+/// known.
+fn death(core: &Core, victim: Victim, killer: Option<Killer>, gold: i32, assists: u16) -> String {
     let victim = match victim {
         Victim::Seat(slot) => seat_name(core, slot),
         Victim::Hero(team) => format!("a {team:?} hero"),
@@ -390,16 +522,31 @@ fn death(core: &Core, victim: Victim, killer: Option<Killer>, gold: i32) -> Stri
         } => format!("the {team:?} fountain"),
         Killer::Unit { kind, team } => format!("a {team:?} {}", bota_core::kind_def(kind).name),
     });
+    let helpers: Vec<String> = bota_proto::assisting_seats(assists)
+        .map(|slot| seat_name(core, slot))
+        .collect();
+    let with = if helpers.is_empty() {
+        String::new()
+    } else {
+        format!(" (assisted by {})", helpers.join(", "))
+    };
     match by {
-        Some(by) if gold > 0 => format!("{victim} was slain by {by} for {gold} gold"),
-        Some(by) => format!("{victim} was slain by {by}"),
+        Some(by) if gold > 0 => format!("{victim} was slain by {by}{with} for {gold} gold"),
+        Some(by) => format!("{victim} was slain by {by}{with}"),
         None => format!("{victim} died"),
     }
 }
 
 /// The cache's icon for a feed label's icon variable in a line of a kind.
-fn icon_file(name: &str, kind: &FeedKind) -> Option<&'static str> {
+fn icon_file(core: &Core, name: &str, kind: &FeedKind) -> Option<&'static str> {
     Some(match (name, kind) {
+        // What fell with a side: the enemy struck it for the side that lost it, the ally's icon
+        // for the other; a viewer with no side sees the plain one.
+        ("killed_icon", FeedKind::StructureFell { team, .. }) => match core.my_team() {
+            Some(mine) if mine == *team => "hud.kill_enemy",
+            Some(_) => "hud.kill_ally",
+            None => "hud.kill",
+        },
         ("outpost_captured_icon", _) => "hud.outpost_captured",
         ("outpost_lost_icon", _) => "hud.outpost_lost",
         ("outpost_icon", _) => "hud.outpost",
@@ -432,4 +579,43 @@ pub fn side_name(team: Team) -> &'static str {
         Team::Dire => "The Dire",
         Team::Neutral => "The neutrals",
     }
+}
+
+/// The lines the feed shows, from the top: the cache paths of the icons shown and the text.
+#[cfg(test)]
+pub fn shown(world: &mut World) -> Vec<(Vec<String>, String)> {
+    let server = world.resource::<AssetServer>().clone();
+    let mut rows: Vec<(usize, Vec<String>, String)> = Vec::new();
+    let lines: Vec<(usize, Vec<Entity>, bool)> = world
+        .query::<(&Row, &Children, &Node)>()
+        .iter(world)
+        .map(|(row, children, node)| (row.0, children.to_vec(), node.display != Display::None))
+        .collect();
+    for (row, children, shown) in lines {
+        if !shown {
+            continue;
+        }
+        let (mut icons, mut text) = (Vec::new(), String::new());
+        for child in children {
+            if let (Some(Slot::Icon(_)), Some(image), Some(node)) = (
+                world.get::<Slot>(child),
+                world.get::<ImageNode>(child),
+                world.get::<Node>(child),
+            ) && node.display != Display::None
+                && let Some(path) = server.get_path(image.image.id())
+            {
+                icons.push(path.to_string());
+            }
+            if let (Some(Slot::Text(_)), Some(piece)) =
+                (world.get::<Slot>(child), world.get::<Text>(child))
+            {
+                text.push_str(&piece.0);
+            }
+        }
+        rows.push((row, icons, text));
+    }
+    rows.sort_by_key(|(row, ..)| *row);
+    rows.into_iter()
+        .map(|(_, icons, text)| (icons, text))
+        .collect()
 }
