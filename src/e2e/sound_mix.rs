@@ -71,10 +71,15 @@ fn client() -> (Server, Client) {
 /// Every event carries as far as Dota's data says: `distance_max`, else the reach of its sound
 /// level (81 dB, 2500 units, 20 log10 per decade), bounded by the client's documented maximum
 /// reach. This approximation falls linearly to nothing there and sounds as loud as its volume
-/// times its group's level times the makeup gain.
+/// times its group's level times the makeup gain, once the mixer's layers are off: the
+/// announcer's lines at the match's start, which a slow machine meets, duck the weapons (the
+/// next test), and the sum below leaves layers out.
 #[test]
 fn every_event_carries_and_sounds_as_its_sound_level_and_group_say() {
-    let (_server, client) = client();
+    let (_server, mut client) = client();
+    client.until("the mixer's layers are off", |c| {
+        c.world().resource::<Mixer>().layers_at_rest()
+    });
     let mixer = client.world().resource::<Mixer>();
     let volumes = group_volumes();
     let lines = event_lines();
@@ -152,6 +157,10 @@ fn the_ping_levels_stay_where_they_were() {
 #[test]
 fn the_announcer_ducks_the_weapons_of_the_world_in_a_client() {
     let (_server, mut client) = client();
+    // `before` is the weapons at rest: an announcer line of the match's start is a duck already.
+    client.until("the mixer's layers are off", |c| {
+        c.world().resource::<Mixer>().layers_at_rest()
+    });
     client
         .world_mut()
         .insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_millis(

@@ -817,6 +817,12 @@ impl Mixer {
             .map(|v| v.fog_share)
     }
 
+    /// Whether no layer is on: the groups sound at their own levels.
+    #[cfg(test)]
+    pub(crate) fn layers_at_rest(&self) -> bool {
+        self.layers.iter().all(|l| l.amount() <= 0.0)
+    }
+
     /// How far a layer is on now, 0 to 1.
     #[cfg(test)]
     pub(crate) fn layer_amount(&self, layer: &str) -> Option<f32> {
