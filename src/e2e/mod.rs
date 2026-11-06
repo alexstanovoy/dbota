@@ -34,6 +34,7 @@ mod purchase_destination;
 mod refusals;
 mod rings;
 mod runes;
+mod secret_shop;
 mod sentry_ward;
 mod shopkeepers;
 mod slot_looks;

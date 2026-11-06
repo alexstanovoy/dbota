@@ -24,6 +24,10 @@ const EDGE_CHOSEN: Color = Color::srgb(0.92, 0.93, 0.95);
 #[derive(Component, Clone, Copy)]
 pub struct ShopCell(pub u16);
 
+/// A secret-shop component which is out of reach of both physical carriers.
+#[derive(Component)]
+pub struct ShopAccessShade;
+
 /// Where an icon sits.
 #[derive(Component, Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Place {
@@ -73,7 +77,7 @@ pub struct Chosen(pub Option<u16>);
 
 pub fn plugin(app: &mut App) {
     app.init_resource::<Chosen>()
-        .add_systems(Update, (stock, edges));
+        .add_systems(Update, (stock, edges, shop_access));
 }
 
 /// Spawns an item's icon of `size` under `parent`, with its corner count
@@ -116,7 +120,27 @@ pub fn spawn(
     if item_def(ItemId(id)).is_some_and(|def| def.stock.is_some()) {
         spawn_stock(commands, fonts, cell, id);
     }
+    if item_def(ItemId(id)).is_some_and(|def| def.secret_shop) {
+        commands.spawn((
+            ShopAccessShade,
+            ui::fill(),
+            BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.6)),
+            Visibility::Hidden,
+            Pickable::IGNORE,
+            ChildOf(cell),
+        ));
+    }
     cell
+}
+
+fn shop_access(
+    session: NonSend<Session>,
+    mut shades: Query<&mut Visibility, With<ShopAccessShade>>,
+) {
+    let shown = ui::visible(!session.0.secret_shop_accessible());
+    for mut shade in &mut shades {
+        shade.set_if_neq(shown);
+    }
 }
 
 /// The corner count and the empty shop's shade of an item sold from a

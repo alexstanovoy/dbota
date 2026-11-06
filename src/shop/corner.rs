@@ -456,7 +456,7 @@ fn gold(session: NonSend<Session>, mut text: Single<(&mut Text, &mut TextColor),
             .map_or("-".to_string(), |g| g.to_string())
     };
     text.0.set_if_neq(Text(shown));
-    let ink = if core.at_home_shop() {
+    let ink = if core.at_home_shop() || core.at_secret_shop() {
         Color::WHITE
     } else {
         GOLD_INK
@@ -474,7 +474,10 @@ fn shop_button(
     mut shown: Local<&'static str>,
 ) {
     let hovered = *button.0 != Interaction::None;
-    let logical = match (session.0.at_home_shop(), hovered) {
+    let logical = match (
+        session.0.at_home_shop() || session.0.at_secret_shop(),
+        hovered,
+    ) {
         (false, false) => "shop.button",
         (false, true) => "shop.button_hover",
         (true, false) => "shop.button_inrange",

@@ -103,6 +103,7 @@ struct Minimap {
     photo: Handle<Image>,
     fog: Entity,
     marks: Vec<Entity>,
+    shops: Vec<Entity>,
     /// The layer of the map's objectives' icons, under the units' marks, and
     /// the icons made so far: a match without objectives has none.
     objectives: (Entity, Vec<Entity>),
@@ -120,6 +121,10 @@ struct Minimap {
 /// now, none while it marks none.
 #[derive(Component, Default)]
 pub struct HeroMark(pub Option<(Team, bota_proto::SlotId)>);
+
+/// A shopkeeper marked even through fog: its position is public map geometry.
+#[derive(Component)]
+pub struct ShopMark(pub Option<bota_proto::Vec2>);
 
 /// The photograph on the minimap.
 #[derive(Component)]
@@ -143,6 +148,7 @@ pub fn plugin(app: &mut App) {
                 photograph,
                 marks,
                 objective_marks,
+                shop_marks,
                 rune_marks.after(crate::runes::remember),
                 hero_marks,
                 pings,
@@ -197,6 +203,25 @@ fn spawn(mut commands: Commands, mut images: ResMut<Assets<Image>>, docks: Res<D
     let runes = commands
         .spawn((crate::ui::fill(), Pickable::IGNORE, ChildOf(frame)))
         .id();
+    let shops = (0..bota_proto::MAX_SECRET_SHOPS)
+        .map(|_| {
+            commands
+                .spawn((
+                    ShopMark(None),
+                    Node {
+                        position_type: PositionType::Absolute,
+                        width: px(14),
+                        height: px(14),
+                        ..default()
+                    },
+                    ImageNode::default(),
+                    Visibility::Hidden,
+                    Pickable::IGNORE,
+                    ChildOf(objectives),
+                ))
+                .id()
+        })
+        .collect();
     // A mark is Dota's icon tinted by the side; without the icon, a plain disc.
     let marks = (0..MARKS)
         .map(|_| {
@@ -284,6 +309,7 @@ fn spawn(mut commands: Commands, mut images: ResMut<Assets<Image>>, docks: Res<D
         photo,
         fog,
         marks,
+        shops,
         objectives: (objectives, Vec::new()),
         runes: (runes, Vec::new()),
         heroes,
@@ -362,6 +388,34 @@ fn photograph(
 pub(crate) fn on_map(x: f32, y: f32) -> Vec2 {
     let inner = SIDE - 6.0;
     Vec2::new(x / MAP_SIZE * inner, (1.0 - y / MAP_SIZE) * inner)
+}
+
+fn shop_marks(
+    session: NonSend<Session>,
+    minimap: Res<Minimap>,
+    manifest: Res<crate::manifest::Manifest>,
+    server: Res<AssetServer>,
+    mut handles: Local<IconHandles>,
+    mut marks: Query<(&mut ShopMark, &mut Node, &mut ImageNode, &mut Visibility)>,
+) {
+    let shops = session.0.statics().map(|statics| statics.secret_shops());
+    let icon = handles.get("icon.minimap.shop", &manifest, &server);
+    for (at, entity) in minimap.shops.iter().enumerate() {
+        let Ok((mut mark, mut node, mut image, mut visibility)) = marks.get_mut(*entity) else {
+            continue;
+        };
+        let shop = shops.and_then(|shops| shops.get(at));
+        mark.0 = shop.map(|shop| shop.pos);
+        let Some((shop, icon)) = shop.zip(icon.as_ref()) else {
+            *visibility = Visibility::Hidden;
+            continue;
+        };
+        let pos = on_map(shop.pos.x.to_f32(), shop.pos.y.to_f32());
+        node.left = px(pos.x - 7.0);
+        node.top = px(pos.y - 7.0);
+        image.image = icon.clone();
+        *visibility = Visibility::Inherited;
+    }
 }
 
 /// Puts a mark on every unit shown, the fog over the photo, and the camera's

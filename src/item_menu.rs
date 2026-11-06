@@ -103,7 +103,11 @@ fn choices(core: &bota_client_core::App, bag: &TacticalBag, slot: u8) -> Vec<Cho
     };
     let mut out = Vec::new();
     if slot != TOWN_PORTAL_SLOT {
-        let at_shop = core.at_home_shop() || slot >= BAG_SLOTS;
+        let at_shop = core.at_home_shop()
+            || slot >= BAG_SLOTS
+            || core
+                .slot_unit()
+                .is_some_and(|unit| core.unit_at_secret_shop(unit.id));
         out.push(Choice::Sell {
             slot,
             mark: (!at_shop).then(|| item.selling == Some(true)),
