@@ -253,3 +253,27 @@ fn buildings_collapse_in_their_destruction_models_to_the_viewer_who_sees_them_fa
         );
     }
 }
+
+/// A replay started past the fall shows the place as the fall left it, at once: the buildings
+/// were never there to collapse.
+#[test]
+fn a_replay_started_past_the_fall_shows_no_collapse_and_no_building() {
+    let settle = crate::capture::SETTLE_TICKS;
+    let (file, buildings, gone) = record_the_buildings_falling(settle + 70);
+    // Landing more than a second after the fall: sooner, the jump would show it falling.
+    let past = (gone + settle + 60).to_string();
+    let mut client = replay_observed(&file, Some(WATCHING_SEAT), &["--seek", &past], |_| {});
+    client.frames(2);
+    let tick = client.tick();
+    for building in buildings.seen.iter().chain([&buildings.unseen]) {
+        let collapsing = falling(&mut client, building.id).is_some();
+        let drawn = client.body(building.id).is_some();
+        let standing = client.view().unit(building.id).is_some();
+        assert!(
+            !collapsing && !drawn,
+            "the {:?} is not drawn, nor collapsing: collapsing {collapsing}, drawn {drawn}, \
+             in the view {standing}, at tick {tick} of a fall on {gone}",
+            building.kind
+        );
+    }
+}

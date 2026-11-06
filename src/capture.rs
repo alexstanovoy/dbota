@@ -15,7 +15,7 @@ use crate::session::Session;
 const HOLD_SECONDS: f32 = 1.0;
 
 /// Ticks before a wanted tick a replay slows back to its own pace.
-const SETTLE_TICKS: u32 = 90;
+pub(crate) const SETTLE_TICKS: u32 = 90;
 
 /// The screenshots still to take.
 #[derive(Resource, Default)]

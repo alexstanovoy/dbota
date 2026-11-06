@@ -943,6 +943,7 @@ fn move_drawn_unit(
 
 /// Sight loss and replay jumps remove the old body; only a told death plays a fall.
 fn remove_missing_units(p: &mut SyncParams, seen: &[EntityId], core: &bota_client_core::App) {
+    let now = core.view().map_or(0, |view| view.tick);
     let gone: Vec<EntityId> = p
         .index
         .0
@@ -962,9 +963,12 @@ fn remove_missing_units(p: &mut SyncParams, seen: &[EntityId], core: &bota_clien
             .is_some_and(|track| {
                 let u = &track.unit;
                 u.kind != UnitKind::Courier
-                    && track
-                        .last_death
-                        .is_some_and(|death| death.tick >= track.last_seen_tick)
+                    && track.last_death.is_some_and(|death| {
+                        death.tick >= track.last_seen_tick
+                            // A replay that jumped ahead shows what it came to: a death
+                            // long past is not played as a fall.
+                            && now.saturating_sub(death.tick) <= core.tick_rate().into()
+                    })
                     && (!p.fog.on || p.fog.lit(u.pos.x.to_f32(), u.pos.y.to_f32()))
             });
         if died {
