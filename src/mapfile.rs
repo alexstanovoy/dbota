@@ -106,13 +106,15 @@ const MAX_INDICES: usize = 1 << 26;
 const MAX_VERTICES: usize = 1 << 24;
 
 /// One triangle list to read: where its indices and attributes lie, where
-/// it stands, what it draws as, and the chunk it is merged in.
+/// it stands, what it draws as, the chunk it is merged in, and whether its
+/// top is ground units walk on ([`GROUND_PROPS`]).
 struct Job {
     indices: Span,
     attributes: Vec<(MeshVertexAttribute, Span)>,
     global: GlobalTransform,
     kind: Kind,
     chunk: (i32, i32),
+    ground: bool,
 }
 
 /// One piece of the map read, cut and placed in the world.
@@ -122,7 +124,15 @@ struct Piece {
     material: Handle<StandardMaterial>,
     surface: Surface,
     chunk: (i32, i32),
+    /// For a prop units walk on, the level the map stands it at.
+    ground: Option<f32>,
 }
+
+/// The props of the map (glTF node names start with these) whose top units walk on, as Dota's
+/// traces find a solid prop's collision over the terrain: the Tormentor's chasms, whose shutter
+/// (`divine_sentinel.vmdl`, `solid 6`, closed while no Tormentor stands in it) lies over a pit
+/// of the terrain.
+const GROUND_PROPS: [&str; 1] = ["divine_sentinel."];
 
 /// Merged meshes handed to the main thread as each chunk of the map is
 /// done, so they reach the GPU and leave memory while the rest is read.
@@ -160,9 +170,9 @@ impl AssetLoader for MapLoader {
             .read_asset_bytes(bin_path)
             .await
             .map_err(std::io::Error::other)?;
-        let terrain = self.stream(jobs, &bin, &materials).await;
+        let (terrain, lids) = self.stream(jobs, &bin, &materials).await;
         drop(bin);
-        let (mut map, field) = finish(terrain, materials.terrain);
+        let (mut map, field) = finish(terrain, &lids, materials.terrain);
         map.layers = materials.paths.map(|detail| crate::layers::GroundLayers {
             detail,
             field: cx.add_labeled_asset("ground_field".to_string(), field),
@@ -340,10 +350,17 @@ impl MapLoader {
     /// Reads the pieces chunk by chunk, on every core, merging each chunk's
     /// into batches handed to the main thread as soon as the chunk is done.
     /// The terrain is kept back: its colours are made continuous over the
-    /// whole map once all of it is read.
-    async fn stream(&self, mut jobs: Vec<Job>, bin: &[u8], materials: &Materials) -> Vec<Piece> {
+    /// whole map once all of it is read; and so is a copy of every prop whose
+    /// top is ground, for the ground's height.
+    async fn stream(
+        &self,
+        mut jobs: Vec<Job>,
+        bin: &[u8],
+        materials: &Materials,
+    ) -> (Vec<Piece>, Vec<(Mesh, f32)>) {
         jobs.sort_by_key(|job| job.chunk);
         let mut terrain = Vec::new();
+        let mut lids = Vec::new();
         let mut rest = &jobs[..];
         while let Some(first) = rest.first() {
             let end = rest
@@ -357,6 +374,9 @@ impl MapLoader {
                 if piece.surface == Surface::Terrain {
                     terrain.push(piece);
                 } else {
+                    if let Some(level) = piece.ground {
+                        lids.push((piece.mesh.clone(), level));
+                    }
                     add_to_batches(
                         &mut batches,
                         piece.mesh,
@@ -374,7 +394,7 @@ impl MapLoader {
             // must come round to upload the chunk before the next is read.
             crate::cachefs::next_frame().await;
         }
-        terrain
+        (terrain, lids)
     }
 }
 
@@ -397,6 +417,9 @@ fn jobs(doc: &Value, materials: &Materials) -> Vec<Job> {
         };
         let affine = root * bevy::math::Affine3A::from_mat4(matrix);
         let chunk = chunk_of(Vec3::from(affine.translation));
+        let ground = node["name"]
+            .as_str()
+            .is_some_and(|name| GROUND_PROPS.iter().any(|prop| name.starts_with(prop)));
         for primitive in mesh["primitives"].as_array().unwrap_or(&empty) {
             let kind = primitive["material"]
                 .as_u64()
@@ -426,6 +449,7 @@ fn jobs(doc: &Value, materials: &Materials) -> Vec<Job> {
                 global: GlobalTransform::from(affine),
                 kind,
                 chunk,
+                ground,
             });
         }
     }
@@ -484,6 +508,7 @@ fn pieces(jobs: &[Job], bin: &[u8], materials: &Materials) -> Vec<Piece> {
                     material,
                     surface,
                     chunk: job.chunk,
+                    ground: job.ground.then(|| job.global.translation().y),
                 })
             });
         }
@@ -491,12 +516,20 @@ fn pieces(jobs: &[Job], bin: &[u8], materials: &Materials) -> Vec<Piece> {
     pieces.into_iter().flatten().collect()
 }
 
-/// The terrain: its heights taken for the ground, its colours made
-/// continuous, merged by chunk; and the field of its paths' colours.
-fn finish(mut terrain: Vec<Piece>, material: Handle<StandardMaterial>) -> (MapGeometry, Image) {
+/// The terrain: its heights taken for the ground, raised to the top of every
+/// prop units walk on, its colours made continuous, merged by chunk; and the
+/// field of its paths' colours.
+fn finish(
+    mut terrain: Vec<Piece>,
+    lids: &[(Mesh, f32)],
+    material: Handle<StandardMaterial>,
+) -> (MapGeometry, Image) {
     let mut samples = Samples::new(crate::terrain::MAP_CELLS);
     for piece in &terrain {
         samples.add(&piece.mesh);
+    }
+    for (lid, level) in lids {
+        samples.cover(lid, *level);
     }
     let mut meshes: Vec<&mut Mesh> = terrain.iter_mut().map(|p| &mut p.mesh).collect();
     let field = smooth_terrain(&mut meshes);
@@ -788,6 +821,7 @@ mod tests {
             global: GlobalTransform::IDENTITY,
             kind: Kind::Skip,
             chunk: (0, 0),
+            ground: false,
         }
     }
 

@@ -883,8 +883,14 @@ pub(crate) struct Samples {
     n: usize,
     sum: Vec<f32>,
     count: Vec<u32>,
+    /// Per cell, the level of the props over it that units walk on.
+    cover: Vec<Option<f32>>,
     surface: TerrainSurface,
 }
+
+/// How level a face of a prop must be for units to walk on it: the up share
+/// of its normal (60 degrees of slope at most).
+const LEVEL: f32 = 0.5;
 
 impl Samples {
     pub(crate) fn new(n: usize) -> Samples {
@@ -892,6 +898,7 @@ impl Samples {
             n,
             sum: vec![0.0; n * n],
             count: vec![0; n * n],
+            cover: vec![None; n * n],
             surface: TerrainSurface {
                 cells: vec![Vec::new(); n * n],
                 ..TerrainSurface::default()
@@ -914,6 +921,38 @@ impl Samples {
             let at = cy as usize * self.n + cx as usize;
             self.sum[at] += y;
             self.count[at] += 1;
+        }
+        self.add_triangles(mesh, positions);
+    }
+
+    /// Lays a prop units walk on over the ground, level at `level` (where the map stands it):
+    /// each cell under one of its faces turned up stands at least that high, whatever pit of
+    /// the terrain the prop lies over; its triangles are the drawn ground's too.
+    pub(crate) fn cover(&mut self, mesh: &Mesh, level: f32) {
+        let (Some(VertexAttributeValues::Float32x3(positions)), Some(indices)) =
+            (mesh.attribute(Mesh::ATTRIBUTE_POSITION), mesh.indices())
+        else {
+            return;
+        };
+        let points: Vec<Vec3> = positions
+            .iter()
+            .map(|&[x, y, z]| Vec3::new(x, -z, y))
+            .collect();
+        let indices: Vec<usize> = indices.iter().collect();
+        let cell = |v: f32| ((v / CELL).floor().max(0.0) as usize).min(self.n - 1);
+        for t in indices.as_chunks::<3>().0 {
+            let [a, b, c] = t.map(|i| points[i]);
+            // Level enough to stand on, whichever way it is wound.
+            if (b - a).cross(c - a).normalize_or_zero().z.abs() < LEVEL {
+                continue;
+            }
+            let (lo, hi) = (a.min(b).min(c), a.max(b).max(c));
+            for cy in cell(lo.y)..=cell(hi.y) {
+                for cx in cell(lo.x)..=cell(hi.x) {
+                    let covered = &mut self.cover[cy * self.n + cx];
+                    *covered = Some(covered.map_or(level, |was| was.max(level)));
+                }
+            }
         }
         self.add_triangles(mesh, positions);
     }
@@ -962,6 +1001,11 @@ impl Samples {
             .map(|(s, c)| (*c > 0).then(|| [s / *c as f32]))
             .collect();
         fill_holes(&mut heights, n, [(0, 1), (0, -1), (1, 0), (-1, 0)], n);
+        for (height, cover) in heights.iter_mut().zip(&self.cover) {
+            if let (Some([terrain]), Some(level)) = (height.as_mut(), cover) {
+                *terrain = terrain.max(*level);
+            }
+        }
         let surface =
             (!self.surface.triangles.is_empty()).then(|| std::sync::Arc::new(self.surface));
         Ground {

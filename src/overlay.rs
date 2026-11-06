@@ -26,7 +26,7 @@ const TOWER_WARNING: f32 = rules::TOWER_ATTACK_RANGE as f32 - TOWER_WARNING_TRIM
 /// World units a tower's warning begins inside its attack range.
 const TOWER_WARNING_TRIM: f32 = 50.0;
 /// World units the lines float over the ground.
-const LIFT: f32 = 8.0;
+pub(crate) const LIFT: f32 = 8.0;
 /// Ticks an order marker lasts.
 const ORDER_TICKS: u32 = 15;
 
