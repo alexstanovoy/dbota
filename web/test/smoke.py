@@ -39,7 +39,7 @@ names it) that the pages play on through `?cache=http`, served under /cache besi
         --startup-page temp/web-live
 
 * `--served-page` (any build): with `?cache=http` the page fetches the served cache's index.txt and
-  publishes it to the client (without one, the cache is taken whole).
+  publishes it to the client; a missing or invalid index ends startup with an error.
 * `--startup-page` (any build): the page loads the WebGPU client, or the WebGL2 one with
   `?gpu=webgl2`, and each draws; a browser without graphics, a renderer that cannot be made (the
   page then offers the WebGL2 client, which runs) and a client out of memory each end with a
@@ -835,49 +835,53 @@ NO_WEBGPU_CANVAS = """
 
 
 def check_served_cache(directory):
-    """A cache a developer serves next to the page (`?cache=http`) publishes its index.txt, as
-    the private storage's cache does, so the client knows which files are there (the icons of
-    every item and ability among them); one without an index is still taken whole."""
-    index = "dbota-cache 1 rev 13\nfile 100 icons/items/blink.png\nfile 90 icons/abilities/nevermore_requiem.png small\nfile 5 text/labels.json small\n"
-
+    """A served cache publishes its validated index; a missing index grants no assets."""
     class Served(Quiet):
         text = None
 
         def do_GET(self):
-            if self.path == "/cache/index.txt" and self.text is not None:
-                body = self.text.encode()
-                self.send_response(200)
-                self.send_header("Content-Length", str(len(body)))
-                self.end_headers()
-                self.wfile.write(body)
-                return
             if self.path == "/cache/index.txt":
-                # a server without an index has none, whatever cache folder lies behind it
-                self.send_error(404)
+                if self.text is None:
+                    self.send_error(404)
+                else:
+                    body = self.text.encode()
+                    self.send_response(200)
+                    self.send_header("Content-Length", str(len(body)))
+                    self.end_headers()
+                    self.wfile.write(body)
                 return
             super().do_GET()
 
-    for text in (index, None):
-        Served.text = text
-        with sync_playwright() as p:
-            server = serve(directory, Served)
-            base = f"http://127.0.0.1:{server.server_address[1]}/"
-            browser = p.chromium.launch(args=BROWSER_ARGS)
-            page = browser.new_context(viewport={"width": 1280, "height": 720}).new_page()
-            page.goto(base + "?cache=http")
-            page.wait_for_function("() => globalThis.dbota_cache && globalThis.dbota_cache.mode === 'http'", timeout=60000)
-            got = page.evaluate(
-                "() => { const f = globalThis.dbota_cache.files; return f ? [...f.entries()] : null; }"
-            )
+    with sync_playwright() as p:
+        server = serve(directory, Served)
+        base = f"http://127.0.0.1:{server.server_address[1]}/"
+        browser = p.chromium.launch(args=BROWSER_ARGS)
+        try:
+            page = browser.new_page()
+            # A static page of this origin, without starting the game or requiring its assets.
+            page.goto(base + "cache.js")
+            header = page.evaluate("""async () => {
+                const module = await import('./import/dbota_import.js');
+                await module.default(); return module.cache_index_header();
+            }""")
+            Served.text = header + "\nfile 100 icons/items/blink.png\nfile 90 icons/abilities/nevermore_requiem.png\nfile 5 text/labels.json small\n"
+            got = page.evaluate("""async () => {
+                await (await import('./cache.js')).publishServed();
+                return [...globalThis.dbota_cache.files];
+            }""")
+            assert got == [["icons/items/blink.png", 100], ["icons/abilities/nevermore_requiem.png", 90], ["text/labels.json", 5]], got
+            Served.text = None
+            got = page.evaluate("""async () => {
+                try { await (await import('./cache.js')).publishServed(); return 'accepted'; }
+                catch (e) { return String(e); }
+            }""")
+            assert "HTTP 404" in got, got
+            assert page.evaluate("globalThis.dbota_cache === undefined")
+            print("a served cache publishes only a validated index; a missing index grants no assets")
+        finally:
             browser.close()
             server.shutdown()
-        if text is None:
-            assert got is None, f"an index from a server without one: {got}"
-            print("a served cache without an index is taken whole")
-        else:
-            want = [["icons/items/blink.png", 100], ["icons/abilities/nevermore_requiem.png", 90], ["text/labels.json", 5]]
-            assert got == want, got
-            print("a served cache publishes its index")
+            server.server_close()
 
 
 FONTS = ("bota-sans-bold.ttf", "bota-sans-regular.ttf", "bota-sans-cjk.otf")

@@ -60,10 +60,10 @@ impl DirContainer {
                 } else {
                     return Err(PackError::Unsafe(shown(&path)));
                 }
-                if entries.len() > MAX_FILES + 2 {
+                if entries.len() > crate::pack::MAX_ENTRIES {
                     return Err(PackError::TooBig(format!(
                         "it has more than {} files, a cache has at most {MAX_FILES}",
-                        MAX_FILES + 2
+                        crate::pack::MAX_ENTRIES
                     )));
                 }
             }

@@ -252,7 +252,7 @@ impl Prepared {
     /// The cache in the files of a picked folder: an array of `[path, File]` pairs, the paths
     /// as the picker names them (`webkitRelativePath`).
     pub fn from_folder(files: Array) -> Result<Prepared, JsError> {
-        if files.length() as usize > MAX_FILES + 2 {
+        if files.length() as usize > crate::pack::MAX_ENTRIES {
             return Err(JsError::new(&format!(
                 "This folder has {} files, an asset cache has at most {MAX_FILES}.",
                 files.length()
@@ -316,4 +316,47 @@ impl Prepared {
     pub fn index(&self) -> String {
         self.0.index().to_owned()
     }
+}
+
+/// The same index parser used by native runtime discovery and prepared-cache validation.
+#[wasm_bindgen]
+pub struct CacheIndex(crate::index::CacheIndex);
+
+#[wasm_bindgen]
+impl CacheIndex {
+    #[wasm_bindgen(constructor)]
+    pub fn new(bytes: Uint8Array) -> Result<CacheIndex, JsError> {
+        let error = |why: crate::pack::PackError| JsError::new(&why.to_string());
+        crate::index::CacheIndex::check_length(u64::from(bytes.length())).map_err(error)?;
+        crate::index::CacheIndex::parse(&bytes.to_vec())
+            .map(CacheIndex)
+            .map_err(error)
+    }
+
+    pub fn files(&self) -> Array {
+        self.0
+            .files()
+            .iter()
+            .map(|file| {
+                Array::of3(
+                    &file.path.clone().into(),
+                    &JsValue::from_f64(file.size as f64),
+                    &file.small.into(),
+                )
+            })
+            .collect()
+    }
+}
+
+#[wasm_bindgen]
+pub fn cache_metadata_limits() -> Array {
+    Array::of2(
+        &JsValue::from_f64(import::MAX_STAMP as f64),
+        &JsValue::from_f64(crate::index::MAX_INDEX as f64),
+    )
+}
+
+#[wasm_bindgen]
+pub fn cache_index_header() -> String {
+    crate::index::CacheIndex::header()
 }

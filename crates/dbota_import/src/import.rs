@@ -37,6 +37,9 @@ use crate::text::{
 pub const STAMP: &str = "stamp.txt";
 /// The file of a finished cache that lists its files (written last but the stamp).
 pub const INDEX: &str = "index.txt";
+/// Local ownership metadata, never listed or copied as an asset.
+pub const OWNER_MARKER: &str = ".dbota-owned-cache";
+pub const OWNER_TEXT: &str = "dbota owned cache 1\n";
 /// Longest stamp read; a stamp is a few dozen bytes.
 pub const MAX_STAMP: u64 = 4096;
 
@@ -616,7 +619,7 @@ impl Report {
     /// ones a client reads before it starts (`small`). Written last: its presence says the
     /// import finished.
     pub fn index(&self) -> String {
-        let mut text = format!("dbota-cache 1 rev {IMPORT_REV}\n");
+        let mut text = format!("{}\n", crate::index::CacheIndex::header());
         for (path, size) in &self.files {
             let small = if is_small(path, *size) { " small" } else { "" };
             text.push_str(&format!("file {size} {path}{small}\n"));

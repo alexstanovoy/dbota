@@ -96,3 +96,7 @@ The merge gate runs them all in its `browser` step (`tools/browser_check.sh`).
 4. After a Dota update, "Update from the Dota 2 folder" appears; "Delete the imported copy" empties the storage.
 5. Firefox and Safari use the fallback: the browser says it will "upload" the folder, which only lists it; watch
    Network to see that nothing leaves.
+
+A cache served with `?cache=http` must include `index.txt` from the same build. Missing,
+malformed, or oversized indexes end startup with an error. The browser uses the same bounded
+index parser as native cache discovery and prepared-cache installation.

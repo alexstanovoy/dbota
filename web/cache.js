@@ -33,11 +33,12 @@ export async function dir(parts, create = false) {
 }
 
 // A cache file's bytes, or null when it is not there.
-export async function readCache(path) {
+export async function readCache(path, limit = Infinity) {
   const parts = path.split("/");
   const name = parts.pop();
   try {
     const file = await (await (await dir(parts)).getFileHandle(name)).getFile();
+    if (file.size > limit) throw new Error(`${path} is ${file.size} bytes, at most ${limit}`);
     return new Uint8Array(await file.arrayBuffer());
   } catch (e) {
     if (e && (e.name === "NotFoundError" || e.name === "TypeMismatchError")) return null;
@@ -47,39 +48,74 @@ export async function readCache(path) {
 
 const decode = (bytes) => (bytes ? new TextDecoder().decode(bytes) : null);
 
-// The files an index.txt lists (`file <size> <path> [small]`, one a line): path to size, and the
-// small ones the client reads before it starts. The same file the folder and zip caches have.
-export function parseIndex(text) {
-  const files = new Map();
-  const small = [];
-  for (const line of text.split("\n")) {
-    const [kind, size, path, flag] = line.split(" ");
-    if (kind !== "file") continue;
-    files.set(path, Number(size));
-    if (flag === "small") small.push(path);
-  }
-  return { files, small };
+// Both cache transports use the importer's validated index, also used by the native client.
+let indexModule;
+async function indexApi() {
+  indexModule ??= import("./import/dbota_import.js").then(async (module) => {
+    await module.default();
+    return module;
+  });
+  return indexModule;
 }
 
-// The stamp (what the cache was made from) and the index of a finished cache, or null.
-export async function readState() {
-  const [stamp, index] = [decode(await readCache("stamp.txt")), decode(await readCache("index.txt"))];
-  if (!stamp || !index) return null;
-  return { stamp, ...parseIndex(index) };
-}
-
-// A cache a developer serves next to the page (`?cache=http`): its index is fetched, so the
-// client knows which files are there, as it does of the private storage's. A server without one
-// is a cache whose files are all taken to be there.
-export async function publishServed() {
-  let files;
+export async function parseIndex(bytes) {
+  const { CacheIndex } = await indexApi();
+  const checked = new CacheIndex(bytes);
   try {
-    const response = await fetch("cache/index.txt");
-    if (response.ok) files = parseIndex(await response.text()).files;
-  } catch (e) {
-    console.warn("dbota: the served cache has no index:", e);
+    const files = new Map();
+    const small = [];
+    for (const [path, size, resident] of checked.files()) {
+      files.set(path, size);
+      if (resident) small.push(path);
+    }
+    return { files, small };
+  } finally {
+    checked.free();
   }
-  globalThis.dbota_cache = { mode: "http", files };
+}
+
+// The stamp and index are bounded before any whole-file read is attempted.
+export async function readState() {
+  const [stampLimit, indexLimit] = (await indexApi()).cache_metadata_limits();
+  const stamp = decode(await readCache("stamp.txt", stampLimit));
+  if (!stamp) return null;
+  const index = await readCache("index.txt", indexLimit);
+  if (!index) return null;
+  return { stamp, ...(await parseIndex(index)) };
+}
+
+async function responseBytes(response, limit) {
+  const length = response.headers.get("content-length");
+  if (length !== null && Number(length) > limit) {
+    await response.body?.cancel();
+    throw new Error(`index.txt is ${length} bytes, at most ${limit}`);
+  }
+  if (!response.body) throw new Error("index.txt has no response body");
+  const reader = response.body.getReader();
+  const bytes = new Uint8Array(limit);
+  let used = 0;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) return bytes.subarray(0, used);
+      if (value.byteLength > limit - used) throw new Error(`index.txt exceeds ${limit} bytes`);
+      bytes.set(value, used);
+      used += value.byteLength;
+    }
+  } finally {
+    await reader.cancel().catch(() => {});
+    reader.releaseLock();
+  }
+}
+
+// A served cache must carry a usable index too; no missing or malformed index grants files.
+export async function publishServed() {
+  delete globalThis.dbota_cache;
+  const [, limit] = (await indexApi()).cache_metadata_limits();
+  const response = await fetch("cache/index.txt", { signal: AbortSignal.timeout(15000) });
+  if (!response.ok) throw new Error(`cache/index.txt returned HTTP ${response.status}`);
+  const index = await parseIndex(await responseBytes(response, limit));
+  globalThis.dbota_cache = { mode: "http", files: index.files };
 }
 
 // What the client reads at start: the index, the small files in memory (it reads them

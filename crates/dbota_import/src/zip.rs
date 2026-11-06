@@ -213,10 +213,10 @@ fn parse_directory(directory: &[u8], count: usize) -> Result<Vec<Member>, PackEr
         if method == STORED && packed != size {
             return Err(invalid(format!("stores {} with two sizes", shown(name))));
         }
-        if files.len() >= MAX_FILES + 2 {
+        if files.len() >= crate::pack::MAX_ENTRIES {
             return Err(PackError::TooBig(format!(
                 "it has more than {} files, a cache has at most {MAX_FILES}",
-                MAX_FILES + 2
+                crate::pack::MAX_ENTRIES
             )));
         }
         files.push(Member {

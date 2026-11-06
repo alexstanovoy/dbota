@@ -7,6 +7,7 @@
 pub mod cache_dir;
 pub mod catalog;
 pub mod import;
+pub mod index;
 pub mod pack;
 #[cfg(any(unix, windows))]
 pub mod pack_dir;

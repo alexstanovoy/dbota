@@ -4,8 +4,8 @@
 //!   cache the page's worker built from the player's own Dota install, in the Origin Private
 //!   File System. `files` is its index, `small` the files read synchronously at start, `read`
 //!   an async function giving a file's bytes (or null).
-//! - `{mode: "http", files?: Map(path -> size)}`: a cache a developer serves next to the page
-//!   (`web/README.md`), with the index.txt it holds when there is one.
+//! - `{mode: "http", files: Map(path -> size)}`: a cache a developer serves next to the page
+//!   (`web/README.md`), with its validated index.txt.
 //!
 //! Without either, the client reads no asset (the page starts it only once a cache is published).
 
@@ -54,27 +54,17 @@ fn field(name: &str) -> Option<JsValue> {
         .filter(|v| !v.is_undefined() && !v.is_null())
 }
 
-/// Whether the page has a cache of either kind for the client.
-pub fn available() -> bool {
-    published().is_some()
-}
-
 /// Whether the page's cache is the private-storage one.
 pub fn is_opfs() -> bool {
     field("mode").and_then(|m| m.as_string()).as_deref() == Some("opfs")
 }
 
-/// Whether the cache has the file `rel`: by its index, which the private storage and a served
-/// cache with an index.txt publish; every file is taken to be there for a served cache without.
+/// Whether the validated index published by the page lists `rel`.
 pub fn present(rel: &str) -> bool {
-    match field("files") {
-        Some(files) => Map::from(files).has(&rel.into()),
-        None => available(),
-    }
+    field("files").is_some_and(|files| Map::from(files).has(&rel.into()))
 }
 
-/// The files of the cache's index whose path starts with `prefix` (none for a served cache
-/// without an index).
+/// The validated cache paths whose names start with `prefix`.
 pub fn listed(prefix: &str) -> Vec<String> {
     let Some(files) = field("files") else {
         return Vec::new();

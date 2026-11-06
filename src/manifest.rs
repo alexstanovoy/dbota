@@ -340,15 +340,22 @@ fn cached_icons(root: &Path) -> Vec<String> {
     }
     #[cfg(not(target_arch = "wasm32"))]
     {
-        let Ok(index) = std::fs::read_to_string(root.join(dbota_import::cache_dir::INDEX)) else {
+        if matches!(std::fs::symlink_metadata(root), Err(e) if e.kind() == std::io::ErrorKind::NotFound)
+        {
             return Vec::new();
-        };
-        index
-            .lines()
-            .filter_map(|line| line.strip_prefix("file ")?.split_whitespace().nth(1))
-            .filter(|path| path.starts_with("icons/"))
-            .map(str::to_owned)
-            .collect()
+        }
+        match dbota_import::index::CacheIndex::read(root) {
+            Ok(index) => index
+                .files()
+                .iter()
+                .filter(|file| file.path.starts_with("icons/"))
+                .map(|file| file.path.clone())
+                .collect(),
+            Err(why) => {
+                error!("cache icon index: {why}");
+                Vec::new()
+            }
+        }
     }
 }
 
@@ -414,4 +421,42 @@ fn in_cache(root: &Path, rel: &str) -> bool {
 /// The asset path of a file relative to the cache.
 pub fn cache_path(rel: &str) -> String {
     format!("{}://{rel}", crate::CACHE_SOURCE)
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod index_tests {
+    use super::*;
+
+    #[test]
+    fn runtime_icons_reject_malformed_and_oversized_indexes() {
+        let root = std::env::temp_dir().join(format!("dbota-runtime-index-{}", std::process::id()));
+        std::fs::create_dir(&root).unwrap();
+        let header = format!("dbota-cache 1 rev {}\n", dbota_import::import::IMPORT_REV);
+        let valid = format!("{header}file 1 icons/items/blink.png\n");
+        let cases = [
+            (
+                "oversized",
+                format!("{valid}{}", " ".repeat(2 * 1024 * 1024)),
+            ),
+            (
+                "wrong header",
+                "wrong\nfile 1 icons/items/blink.png\n".to_owned(),
+            ),
+            (
+                "unsafe path",
+                format!("{header}file 1 icons/items/../../outside.png\n"),
+            ),
+            (
+                "duplicate",
+                format!("{valid}file 1 icons/items/blink.png\n"),
+            ),
+        ];
+        for (scenario, text) in cases {
+            std::fs::write(root.join("index.txt"), text).unwrap();
+            assert!(cached_icons(&root).is_empty(), "accepted {scenario} index");
+        }
+        std::fs::write(root.join("index.txt"), valid).unwrap();
+        assert_eq!(cached_icons(&root), ["icons/items/blink.png"]);
+        std::fs::remove_dir_all(root).unwrap();
+    }
 }
