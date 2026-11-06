@@ -81,6 +81,33 @@ fn the_menus_buttons_of_a_height_are_one_width_and_never_wrap() {
     uniform_buttons(&mut client, Page::DemoHero);
 }
 
+/// A replay with a long name leaves the buttons of its row their width: the row's words do not
+/// squeeze them (the owner's replay folder, with a recording of another version, did). The
+/// replays are in the folder the client keeps its own in, before its library first reads it.
+#[test]
+fn a_replays_long_name_leaves_the_buttons_of_its_row_their_width() {
+    let long = format!("20261106-090826-{}.brp", "long-".repeat(15));
+    let short = "20261106-091018-local.brp";
+    let index = format!(
+        "dbota-replays 1\nr\t1793956218\t12\t-\tlocal\t{short}\t\t\nr\t1793956106\t12\t-\tlocal\t{long}\t\t\n"
+    );
+    let files = [
+        ("replays/index.txt", index.as_str()),
+        ("replays/20261106-091018-local.brp", "not a replay"),
+        (&format!("replays/{long}"), "not a replay"),
+    ];
+    let mut client = Client::run_with_files(&[], &files);
+    client.within(Duration::from_secs(30), "the menu laid out", |c| {
+        buttons(c).iter().any(|b| b.1 > 0.0)
+    });
+    act(&mut client, Act::Go(Page::Replays));
+    client.within(Duration::from_secs(30), "both replays listed", |c| {
+        let names: Vec<String> = buttons(c).into_iter().map(|b| b.0).collect();
+        names.contains(&format!("delete {long}")) && names.contains(&format!("delete {short}"))
+    });
+    uniform_buttons(&mut client, Page::Replays);
+}
+
 /// The buttons of `page` that show are one width by height and their words stay on one line.
 fn uniform_buttons(client: &mut Client, page: Page) {
     act(client, Act::Go(page));

@@ -12,6 +12,8 @@ mod name;
 
 #[cfg(target_arch = "wasm32")]
 pub use browser::open as open_browser;
+#[cfg(all(test, not(target_arch = "wasm32")))]
+pub use disk::keep_in_for_tests;
 #[cfg(not(target_arch = "wasm32"))]
 pub use disk::{Disk, default_dir, recording_path};
 pub use index::{MAX_BYTES, Policy, Record, Wanted};

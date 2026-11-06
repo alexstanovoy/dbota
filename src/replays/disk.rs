@@ -19,7 +19,31 @@ const STALE_SECS: u64 = 3600;
 /// The longest index read, in bytes.
 const MAX_INDEX: u64 = 4 << 20;
 
+#[cfg(test)]
+thread_local! {
+    static TEST_DIR: std::cell::RefCell<Option<PathBuf>> = const { std::cell::RefCell::new(None) };
+}
+
+/// Makes the clients the calling thread builds keep their replays in `dir`, not in the user's
+/// folder, which a test must neither read nor write.
+#[cfg(test)]
+pub fn keep_in_for_tests(dir: PathBuf) {
+    TEST_DIR.with(|kept| *kept.borrow_mut() = Some(dir));
+}
+
+/// Where replays are kept on this machine, if the platform has such a place. Closed in a test
+/// build unless the test said where (`keep_in_for_tests`): the user's folder is neither read
+/// nor written by a test.
+#[cfg(test)]
+pub fn default_dir() -> Option<PathBuf> {
+    Some(TEST_DIR.with(|kept| kept.borrow().clone()).expect(
+        "a test opened the user's replay folder: call replays::keep_in_for_tests(dir) first, \
+         or build the library with Library::none()",
+    ))
+}
+
 /// Where replays are kept on this machine, if the platform has such a place.
+#[cfg(not(test))]
 pub fn default_dir() -> Option<PathBuf> {
     let env = |name: &str| {
         std::env::var_os(name)

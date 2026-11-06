@@ -14,9 +14,20 @@ use std::time::{Duration, Instant};
 /// The client, to be given its arguments, drawing in a headless compositor of its own on the GPU
 /// (tools/headless.sh, or the one the run is already in): no window shows on the desktop, unless
 /// `DBOTA_SHOW=1` asks for it.
+///
+/// Its data folder (where it keeps its replays) is one of its own under the test target's
+/// scratch folder, never the user's; a test that looks into it sets `XDG_DATA_HOME` itself.
 pub fn client() -> Command {
+    static NEXT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+    let data = std::path::PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join(format!(
+        "client-data-{}-{}",
+        std::process::id(),
+        NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    ));
     let mut command = Command::new(concat!(env!("CARGO_MANIFEST_DIR"), "/tools/headless.sh"));
-    command.arg(env!("CARGO_BIN_EXE_dbota"));
+    command
+        .arg(env!("CARGO_BIN_EXE_dbota"))
+        .env("XDG_DATA_HOME", data);
     command
 }
 

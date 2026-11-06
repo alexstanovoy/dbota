@@ -177,6 +177,9 @@ impl Kit<'_, '_, '_> {
                         height * BUTTON_WIDTH_PER_HEIGHT
                     }),
                     height: px(height),
+                    // Not squeezed by the words beside it either: a long replay name or reason
+                    // in its row made its delete button narrower than the others.
+                    flex_shrink: 0.0,
                     padding: UiRect::axes(px(height * 0.2), px(0)),
                     justify_content: JustifyContent::Center,
                     align_items: AlignItems::Center,

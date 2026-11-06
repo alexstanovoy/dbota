@@ -209,8 +209,13 @@ impl Client {
         let scratch = Scratch::new();
         let config = scratch.0.join(crate::config::FILE_NAME);
         for (name, text) in files {
-            std::fs::write(scratch.0.join(name), text).expect("a file of the settings folder");
+            let path = scratch.0.join(name);
+            std::fs::create_dir_all(path.parent().expect("a folder")).expect("its folder");
+            std::fs::write(path, text).expect("a file of the settings folder");
         }
+        // The replays of this client, and no others: the user's folder is neither read nor
+        // written by a test (a `replays/` among `files` is its library).
+        crate::replays::keep_in_for_tests(scratch.0.join("replays"));
         let config = config.to_str().expect("a UTF-8 path");
         let mut line = vec!["dbota", "--config", config];
         if !extra.contains(&"--window") {
