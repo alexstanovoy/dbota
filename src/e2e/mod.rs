@@ -5,6 +5,7 @@
 
 mod ambient;
 mod anim;
+mod animation_reference;
 mod announcer;
 mod arcane_tips;
 mod bars;
@@ -16,6 +17,7 @@ mod controls;
 mod courier;
 mod courier_spinner;
 mod creep_blows;
+mod creep_walk;
 mod cursors;
 mod death;
 mod event_visibility;
@@ -29,6 +31,7 @@ mod ground_items;
 mod ground_targets;
 pub(crate) mod harness;
 mod hero_fx;
+mod hero_walk;
 mod icons;
 mod item_drop_range;
 mod item_states;

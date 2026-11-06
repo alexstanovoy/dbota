@@ -48,7 +48,7 @@ pub const LAST_USE_TEXT: &str = "dbota last use 1\n";
 pub const MAX_STAMP: u64 = 4096;
 
 /// Bumped when the importer's output changes for the same install; part of a cache's stamp.
-pub const IMPORT_REV: u32 = 32;
+pub const IMPORT_REV: u32 = 33;
 
 /// The manifest this build imports and draws, and its ids.
 pub const MANIFEST: &str = include_str!("../../../assets-manifest/manifest.txt");
@@ -1820,8 +1820,9 @@ fn model(
         meshes: keep.as_deref(),
         skeleton,
         anims: &anims,
-        texture_uri: &ktx2_name,
+        in_place_activities: &["ACT_DOTA_RUN", "ACT_DOTA_WALK"],
         generator: GENERATOR,
+        ..ModelOptions::new(&ktx2_name)
     };
     let exported = export_model_in_group(src, packages, path, &options, skin)?;
     let dir = dest.rsplit_once('/').map_or("", |(dir, _)| dir);

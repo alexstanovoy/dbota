@@ -243,30 +243,7 @@ pub fn plugin(app: &mut App) {
             )
                 .chain(),
         )
-        .add_systems(PostUpdate, mark_figures)
-        .add_systems(
-            PostUpdate,
-            hold_roots
-                .after(bevy::app::AnimationSystems)
-                .before(bevy::transform::TransformSystems::Propagate),
-        );
-}
-
-/// A root joint held in place across the ground, by its bind translation.
-#[derive(Component)]
-struct RootLock(Vec3);
-
-/// Takes root motion out of the animations: the joint keeps its height.
-/// Written only where a clip moved it: a root marked changed has its whole
-/// skeleton propagated again, and an unposed unit's (see `anim::animate`)
-/// would be every frame for nothing.
-fn hold_roots(mut roots: Query<(&RootLock, &mut Transform)>) {
-    for (lock, mut t) in &mut roots {
-        if t.translation.x != lock.0.x || t.translation.z != lock.0.z {
-            t.translation.x = lock.0.x;
-            t.translation.z = lock.0.z;
-        }
-    }
+        .add_systems(PostUpdate, mark_figures);
 }
 
 /// Marks every mesh of a unit's model but a building's a
@@ -1105,7 +1082,6 @@ fn on_model_ready(
     players: Query<(), With<AnimationPlayer>>,
     units: Query<&Unit>,
     bank: Res<ModelBank>,
-    joints: Query<(&Name, &Transform)>,
     names: Query<&Name>,
     mut wearables: Query<&mut Wearable>,
 ) {
@@ -1140,16 +1116,6 @@ fn on_model_ready(
         commands
             .entity(unit)
             .insert(attachments(ready.entity, &children, &names));
-    }
-    // Pudge's run carries him forward eight metres a cycle on his root
-    // joint (Dota moves the unit, not the bone): the root is held where
-    // its bind pose puts it, up and down aside.
-    for part in children.iter_descendants(ready.entity) {
-        if let Ok((name, t)) = joints.get(part)
-            && name.as_str() == "root"
-        {
-            commands.entity(part).insert(RootLock(t.translation));
-        }
     }
     // Buildings stand in the fog too, and are drawn dulled there, as are the
     // neutrals a one-sided view of a full stream shows through it.

@@ -44,8 +44,9 @@ impl Line {
             meshes: meshes.as_deref(),
             skeleton: self.skeleton,
             anims: &anims,
-            texture_uri: &texture_uri,
+            in_place_activities: &[],
             generator: GENERATOR,
+            ..ModelOptions::new(&texture_uri)
         };
         export_model(src, &[pak], &self.source, &options)
             .unwrap_or_else(|e| panic!("{}: {e}", self.source))
