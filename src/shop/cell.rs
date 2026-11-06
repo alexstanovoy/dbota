@@ -253,5 +253,5 @@ fn purchasable(core: &bota_client_core::App, item: u16) -> bool {
             .gold
             .is_some_and(|gold| core.price_of(item).0 <= gold)
         && core.stock_of(item).is_none_or(|stock| stock.left > 0)
-        && bota_client_core::purchase_fits(view, player, session.map(), ItemId(item))
+        && bota_client_core::purchase_fits(view, player, session.statics(), ItemId(item))
 }
