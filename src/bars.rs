@@ -61,7 +61,6 @@ pub struct Bar {
     name: Option<Entity>,
     /// The well and the fill of a hero's teleport channel.
     channel: Option<(Entity, Entity)>,
-    threat: Entity,
     /// The colour of the bar's outline when its unit is not under the cursor.
     outline: Color,
 }
@@ -283,9 +282,8 @@ fn bar_size(kind: UnitKind) -> Option<(f32, f32)> {
 
 /// The height of a hero's mana bar under its health.
 const MANA_HEIGHT: f32 = 4.0 * ui::DOTA;
-/// Interface pixels around a bar that its parts (the threat mark above, the
-/// mana and channel wells below) may reach: a bar this near the screen is laid
-/// out and drawn.
+/// Interface pixels around a bar that its parts (the mana and channel wells
+/// below) may reach: a bar this near the screen is laid out and drawn.
 const BAR_REACH: f32 = 40.0;
 
 /// How high over its feet a unit's bar floats, in world units.
@@ -341,14 +339,6 @@ fn spawn_bar(commands: &mut Commands, layer: Entity, fonts: &Fonts, live: &UnitV
     let ghost = part(commands, Color::srgba(1.0, 0.9, 0.7, 0.85));
     let fill = part(commands, ui::HP_FOE);
     let segments = spawn_segments(commands, root, live, (w, h));
-    let threat = commands
-        .spawn((
-            ui::absolute(w / 2.0 - 5.0, -12.0, 10.0, 8.0),
-            BackgroundColor(Color::srgb(1.0, 0.25, 0.2)),
-            Visibility::Hidden,
-            ChildOf(root),
-        ))
-        .id();
     let hero = kind == UnitKind::Hero;
     let mana = hero.then(|| {
         let well = commands
@@ -432,7 +422,6 @@ fn spawn_bar(commands: &mut Commands, layer: Entity, fonts: &Fonts, live: &UnitV
         level,
         name,
         channel,
-        threat,
         outline,
     }
 }
@@ -530,7 +519,6 @@ fn bars(
     };
     let cam_gt = &cam_gt;
     let scale = p.ui_scale.0.max(0.1);
-    let me = core.ears().and_then(|id| view.unit(id));
     // The screen in interface pixels, as the bars' corners are.
     let viewport = camera
         .logical_viewport_rect()
@@ -584,7 +572,7 @@ fn bars(
             continue;
         }
         lay_ticks(&mut p.commands, bar, live.max_hp, (w, h));
-        fill_bar(core, view, me, live, bar, corner, w, &mut nodes, &mut texts);
+        fill_bar(core, view, live, bar, corner, w, &mut nodes, &mut texts);
     }
     alive.sort_unstable();
     p.bars.0.retain(|entity, bar| {
@@ -601,7 +589,6 @@ fn bars(
 fn fill_bar(
     core: &bota_client_core::App,
     view: &bota_proto::WorldView,
-    me: Option<&UnitView>,
     live: &UnitView,
     bar: &Bar,
     corner: Vec2,
@@ -679,12 +666,6 @@ fn fill_bar(
             .to_string();
         t.set_if_neq(Text(s));
     }
-    let threat = me.is_some_and(|me| {
-        live.kind != UnitKind::Hero
-            && live.team != me.team
-            && crate::overlay::targets(core, live.id, me.id)
-    });
-    set(nodes, bar.threat, |_| {}, Some(threat), None);
 }
 
 /// Changes one node: its layout, whether it shows, its colour.

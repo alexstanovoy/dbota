@@ -369,3 +369,59 @@ fn a_creeps_bar_has_an_opaque_black_frame_round_a_grey_well_and_a_heros_is_as_it
         "a hero's well as it was"
     );
 }
+
+/// Every visible node of a unit's bar that sits above the bar itself.
+fn drawn_above(client: &Client, id: EntityId) -> Vec<Rect> {
+    let bars = client.world().resource::<crate::bars::Bars>();
+    let Some(root) = client.body(id).and_then(|body| bars.root(body)) else {
+        return Vec::new();
+    };
+    let Some(children) = client.world().get::<Children>(root) else {
+        return Vec::new();
+    };
+    children
+        .iter()
+        .filter(|part| client.world().get::<Visibility>(*part) != Some(&Visibility::Hidden))
+        .filter_map(|part| {
+            let node = client.world().get::<Node>(part)?;
+            let (Val::Px(left), Val::Px(top), Val::Px(w), Val::Px(h)) =
+                (node.left, node.top, node.width, node.height)
+            else {
+                return None;
+            };
+            (top < 0.0).then(|| Rect::new(left, top, left + w, top + h))
+        })
+        .collect()
+}
+
+/// Reported: a red square floated over whoever had chosen the hero as its target, which
+/// spoiled the look and is not Dota's (an attacker's bar is just its bar). An enemy
+/// creep that attacks the hero draws nothing above its bar.
+#[test]
+fn an_enemy_attacking_the_hero_has_no_mark_above_its_bar() {
+    let server = Server::start(1, &[]);
+    let mut client = Client::join(&server, HeroId::SHADOW_FIEND, &[]);
+    client.stand_at(MID);
+    client.cheat(Cheat::CreateCreeps {
+        enemy: true,
+        at: At::from_ints(MID.0 + 300, MID.1),
+    });
+    let me = client.me().id;
+    let attacker = |c: &mut Client| {
+        c.view()
+            .units
+            .iter()
+            .find(|u| {
+                u.team != c.me().team
+                    && u.kind == UnitKind::CreepMelee
+                    && crate::overlay::targets(c.core(), u.id, me)
+                    && bar(c, u.id).is_some()
+            })
+            .map(|u| u.id)
+    };
+    client.until("an enemy creep attacks the hero, bar drawn", |c| {
+        attacker(c).is_some()
+    });
+    let id = attacker(&mut client).expect("an attacker");
+    assert_eq!(drawn_above(&client, id), Vec::<Rect>::new());
+}
