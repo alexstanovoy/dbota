@@ -53,3 +53,58 @@ fn a_backpack_items_icon_is_greyed_against_the_inventorys() {
         "the backpack's icon ({worn}) is as bright as the inventory's ({carried})"
     );
 }
+
+/// The edge colour of an item slot's box.
+fn edge(client: &mut Client, slot: u8) -> Color {
+    let item_box = client.item_box(slot).expect("the slot box");
+    client
+        .world()
+        .get::<BorderColor>(item_box)
+        .expect("a bordered box")
+        .top
+}
+
+/// The background of the key label of an item slot's box, and its text.
+fn key_label(client: &mut Client, slot: u8) -> (Color, String) {
+    let item_box = client.item_box(slot).expect("the slot box");
+    let world = client.world_mut();
+    let mut parts = world.query::<(&Part, &PartOf, &Text, &BackgroundColor)>();
+    parts
+        .iter(world)
+        .find(|(part, of, ..)| of.0 == item_box && matches!(part, Part::Key))
+        .map(|(_, _, text, bg)| (bg.0, text.0.clone()))
+        .expect("a key label with a background")
+}
+
+/// Boots work on their own and Clarity is used: Dota sinks the passive one's slot (an inset shadow,
+/// stood for here by a dark edge) and sets the active one's key on a badge. The two were the same
+/// box, told apart only by the key's letter.
+#[test]
+fn a_passive_items_slot_has_a_dark_edge_and_an_active_items_key_a_badge() {
+    let server = Server::start(1, &[]);
+    let mut client = Client::join(&server, HeroId::SHADOW_FIEND, &[]);
+    for item in [ItemId::BOOTS, ItemId::CLARITY] {
+        client.cheat(Cheat::Item { item });
+    }
+    client.until("both in the bag", |c| {
+        c.slot_of(ItemId::BOOTS).is_some() && c.slot_of(ItemId::CLARITY).is_some()
+    });
+    let (passive, active) = (
+        client.slot_of(ItemId::BOOTS).expect("boots"),
+        client.slot_of(ItemId::CLARITY).expect("clarity"),
+    );
+    client.frames(5);
+    let (dark, flat) = (edge(&mut client, passive), edge(&mut client, active));
+    assert!(
+        brightness(dark) < brightness(flat) * 0.7,
+        "the passive item's edge ({dark:?}) is not dark against the active one's ({flat:?})"
+    );
+    let (badge, key) = key_label(&mut client, active);
+    assert!(!key.is_empty(), "the active item has a key");
+    assert_ne!(badge, Color::NONE, "the active item's key has no badge");
+    let (none, nothing) = key_label(&mut client, passive);
+    assert!(
+        nothing.is_empty() && none == Color::NONE,
+        "the passive one has a key"
+    );
+}

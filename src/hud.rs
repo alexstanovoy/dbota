@@ -31,6 +31,11 @@ const ABILITY: f32 = 58.0;
 const ITEM: (f32, f32) = (66.0, 48.0);
 /// The tint of an icon in the backpack, whose items are carried and not active.
 const BACKPACK_ICON: Color = Color::srgb(0.55, 0.55, 0.55);
+/// The edge of the slot of a passive item: Dota sinks it with an inset shadow, which a flat dark
+/// edge stands for here.
+const SUNKEN_EDGE: Color = Color::srgb(0.05, 0.06, 0.07);
+/// The badge under the key of an item, Dota's `#Hotkey` (`#2127268a`).
+const KEY_BADGE: Color = Color::srgba(0.13, 0.15, 0.15, 0.54);
 /// The height of a backpack box.
 const BACKPACK_ROW: f32 = 30.0;
 /// The portrait's frame, of Dota's shape.
@@ -1037,6 +1042,7 @@ fn spawn_slot_labels(commands: &mut Commands, fonts: &Fonts, slot: Entity, keyed
             PartOf(slot),
             ui::text("", &fonts.bold, size, color),
             ui::shadow(),
+            BackgroundColor(Color::NONE),
             node,
             Pickable::IGNORE,
             ChildOf(slot),
@@ -1045,7 +1051,10 @@ fn spawn_slot_labels(commands: &mut Commands, fonts: &Fonts, slot: Entity, keyed
     if keyed {
         label(
             Part::Key,
-            at(Some(3.0), Some(1.0), None, None),
+            Node {
+                padding: UiRect::horizontal(px(2)),
+                ..at(Some(3.0), Some(1.0), None, None)
+            },
             12.0,
             ui::INK,
         );
@@ -1945,6 +1954,9 @@ fn item_face(
         no_mana: mana < item.mana_cost,
         frame: if held {
             ui::GOLDEN
+        } else if look.passive {
+            // Dota sinks the slot of an item that works on its own (an inset shadow).
+            SUNKEN_EDGE
         } else {
             Color::srgb(0.2, 0.22, 0.27)
         },
@@ -2119,11 +2131,11 @@ fn dress(
                 bg.set_if_neq(BackgroundColor(c));
             }
         }
+        (Part::Key, f) => dress_key(f, text, bg),
         (label, f) => {
             if let Some(mut text) = text {
                 let s = f.map_or(String::new(), |f| match label {
                     Part::Seconds => f.seconds.clone(),
-                    Part::Key => f.key.clone(),
                     Part::Cost => f.cost.clone(),
                     Part::Charges => f.charges.clone(),
                     Part::OtherCharges => f.other_charges.clone(),
@@ -2132,6 +2144,24 @@ fn dress(
                 text.set_if_neq(Text(s));
             }
         }
+    }
+}
+
+/// Sets the key label of a slot box: its letter, and for an item the badge Dota sets it on
+/// (`.Reborn .InventoryItem #Hotkey`; an ability's key sits on a badge of another make, which
+/// this leaves as it was).
+fn dress_key(face: Option<&SlotFace>, text: Option<Mut<Text>>, bg: Option<Mut<BackgroundColor>>) {
+    let key = face.map_or("", |f| f.key.as_str());
+    if let Some(mut text) = text {
+        text.set_if_neq(Text(key.to_owned()));
+    }
+    let badged = face.is_some_and(|f| f.kind != FaceKind::Ability) && !key.is_empty();
+    if let Some(mut bg) = bg {
+        bg.set_if_neq(BackgroundColor(if badged {
+            KEY_BADGE
+        } else {
+            Color::NONE
+        }));
     }
 }
 
