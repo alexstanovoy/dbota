@@ -162,3 +162,31 @@ fn items_used_and_carried_show_the_effects_and_sounds_dota_gives_them() {
         started(c, "item.power_treads.swap") > 0
     });
 }
+
+/// A Blink Dagger used by a client run with `--mute` (as the visual checks run it): its start and
+/// end effects, and the dagger's sound, which the mixer takes though the master volume is nil.
+#[test]
+fn a_blink_sounds_the_daggers_activation_in_a_muted_client() {
+    let server = Server::start(1, &[]);
+    let mut client = Client::join(&server, HeroId::SHADOW_FIEND, &["--mute"]);
+    client.stand_at(MID);
+    client.cheat(Cheat::Item {
+        item: ItemId::BLINK_DAGGER,
+    });
+    client.until("the dagger carried", |c| {
+        c.slot_of(ItemId::BLINK_DAGGER).is_some()
+    });
+    let slot = client
+        .slot_of(ItemId::BLINK_DAGGER)
+        .expect("the dagger carried");
+    let from = client.me().pos;
+    client.core_mut().send_order(bota_proto::Order::Use {
+        slot: bota_proto::ItemSlot(slot),
+        target: bota_proto::Target::Pos(from + bota_proto::Vec2::from_ints(600, 0)),
+    });
+    client.until("the start effect", |c| started(c, "item.blink_start") > 0);
+    client.until("the end effect", |c| started(c, "item.blink_end") > 0);
+    client.until("the dagger's sound", |c| {
+        heard(c, "sound.blink.activate") > 0
+    });
+}

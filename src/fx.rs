@@ -142,10 +142,17 @@ impl Stage<'_, '_> {
         };
         let focus = Vec2::new(self.camera.focus.x, -self.camera.focus.z);
         let place = (at.x, -at.z);
-        let gain = crate::sound::fall_off(place, focus);
-        if self.settings.muted || self.args.mute || gain < 0.03 {
+        let fall = crate::sound::fall_off(place, focus);
+        if fall < 0.03 {
             return Started::Refused;
         }
+        // Muted, the mixer still takes the sound (at no volume), as it does for the player who
+        // unmutes while it sounds: the decision does not depend on the volume knob.
+        let gain = if self.settings.muted || self.args.mute {
+            0.0
+        } else {
+            fall
+        };
         let request = Request {
             event: &event,
             owner,
