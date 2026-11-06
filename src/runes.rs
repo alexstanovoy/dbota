@@ -121,8 +121,8 @@ pub fn shown<'a>(
     view.runes.iter().filter(|rune| !fog.hides(rune.seen_by))
 }
 
-/// Puts each rune the vision sees on the map, where it lies, and takes away those taken,
-/// destroyed or gone from sight.
+/// Puts each rune the vision sees on the map, where it lies now (a hook drags one along), and
+/// takes away those taken, destroyed or gone from sight.
 fn sync_runes(
     mut commands: Commands,
     session: NonSend<Session>,
@@ -130,13 +130,21 @@ fn sync_runes(
     ground: Res<Ground>,
     fog: Res<FogGrid>,
     mut index: ResMut<RuneIndex>,
+    mut bodies: Query<&mut Transform, With<RuneBody>>,
 ) {
     let Some(view) = session.0.view() else {
         return;
     };
     let mut spawned = 0;
     for rune in shown(view, &fog) {
-        if index.0.contains_key(&rune.id) || spawned >= SPAWNS_PER_FRAME {
+        if let Some(body) = index.0.get(&rune.id) {
+            if let Ok(mut place) = bodies.get_mut(*body) {
+                let (x, y) = (rune.pos.x.to_f32(), rune.pos.y.to_f32());
+                place.translation = Vec3::new(x, ground.at(x, y), -y);
+            }
+            continue;
+        }
+        if spawned >= SPAWNS_PER_FRAME {
             continue;
         }
         let name = format!("rune.{}.model", art(rune.kind));

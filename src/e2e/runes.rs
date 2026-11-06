@@ -1202,3 +1202,99 @@ fn a_rune_lying_on_the_ground_plays_its_idle_animation() {
         "half a second later no part of the rune's model has moved"
     );
 }
+
+/// Where every rune body of `kind` is drawn, on the ground's plane.
+fn drawn_all(client: &mut Client, kind: RuneKind) -> Vec<Vec2> {
+    let model = format!("rune.{}.model", crate::runes::art(kind));
+    let world = client.world_mut();
+    world
+        .query_filtered::<(&crate::loot::Idle, &Transform), With<RuneBody>>()
+        .iter(world)
+        .filter(|(idle, _)| idle.0 == model)
+        .map(|(_, place)| Vec2::new(place.translation.x, -place.translation.z))
+        .collect()
+}
+
+/// Whether a Meat Hook flies, as the view tells it.
+fn hook_flies(client: &Client) -> bool {
+    client.view().projectiles.iter().any(|p| {
+        p.inflictor
+            == Some(bota_proto::Inflictor::Ability(
+                bota_proto::AbilityId::MEAT_HOOK,
+            ))
+    })
+}
+
+/// A rune Pudge hooks is drawn coming with the hook and lies drawn where the hook leaves it;
+/// nothing stays drawn at its spot, on the map or the minimap (owner, 2026-11-06).
+#[test]
+fn a_hooked_rune_is_drawn_with_the_hook_and_nothing_stays_at_its_spot() {
+    let server = Server::start(1, &["--runes", "all"]);
+    let mut client = Client::join(&server, HeroId::PUDGE, &[]);
+    client.cheat(Cheat::StartGame);
+    let spot = top_spot();
+    let home = (spot.0 - 1100, spot.1);
+    let (spot_at, home_at) = (
+        Vec2::new(spot.0 as f32, spot.1 as f32),
+        Vec2::new(home.0 as f32, home.1 as f32),
+    );
+    client.stand_at(home);
+    client.cheat(Cheat::Levels { count: 5 });
+    client.cheat(Cheat::Wtf { on: true });
+    let slot = client
+        .me()
+        .abilities
+        .iter()
+        .position(|a| a.id == bota_proto::AbilityId::MEAT_HOOK)
+        .expect("the hook") as u8;
+    client.core_mut().act(Intent::Press {
+        slot: Slot::Ability(slot),
+        ctrl: true,
+    });
+    client.frames(3);
+    spawn_rune(&mut client, RuneKind::Haste, spot);
+    client.within(SOON, "the Haste Rune drawn at its spot", |c| {
+        drawn_all(c, RuneKind::Haste)
+            .iter()
+            .any(|at| at.distance(spot_at) < 20.0)
+    });
+    let core = client.core_mut();
+    core.act(Intent::Press {
+        slot: Slot::Ability(slot),
+        ctrl: false,
+    });
+    core.act(Intent::Aimed {
+        at: (spot_at.x, spot_at.y),
+        unit: None,
+    });
+    client.within(SOON, "the rune drawn coming with the hook", |c| {
+        hook_flies(c)
+            && drawn_all(c, RuneKind::Haste)
+                .iter()
+                .any(|at| at.distance(spot_at) > 200.0 && at.distance(home_at) > 200.0)
+    });
+    assert!(
+        drawn_all(&mut client, RuneKind::Haste)
+            .iter()
+            .all(|at| at.distance(spot_at) > 100.0),
+        "and nothing drawn left at its spot"
+    );
+    // Pudge steps off, so the rune lies where the hook leaves it.
+    client.stand_at((home.0, home.1 + 400));
+    client.within(SOON, "the hook back", |c| !hook_flies(c));
+    client.within(SOON, "the rune drawn where the hook was thrown from", |c| {
+        let drawn = drawn_all(c, RuneKind::Haste);
+        !drawn.is_empty() && drawn.iter().all(|at| at.distance(home_at) < 5.0)
+    });
+    client.frames(3);
+    assert_eq!(
+        rune_marks(&mut client),
+        [(RuneKind::Haste, true)],
+        "one icon on the minimap, of the rune seen"
+    );
+    let memory = &client.world().resource::<crate::runes::RuneMemory>().runes;
+    assert!(
+        memory.iter().all(|rune| rune.at.distance(home_at) < 5.0),
+        "and the minimap keeps it where it lies, not at its spot"
+    );
+}
