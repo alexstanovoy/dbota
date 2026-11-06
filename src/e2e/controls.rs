@@ -276,6 +276,54 @@ fn a_settings_file_from_when_follow_was_the_default_still_denies_by_default() {
     );
 }
 
+/// What the client wrote before the inventory keys became Z X C V B N: every binding, the
+/// defaults of then among them (the items on the digits, Camera Lock on Y, the Shop on B).
+const FILE_FROM_WHEN_ITEMS_WERE_ON_DIGITS: &str = "# dbota settings.
+volume = 0.80
+key.camera_lock = Y
+key.item_1 = 1
+key.item_2 = 2
+key.item_3 = 3
+key.item_4 = 4
+key.item_5 = 5
+key.item_6 = 6
+key.shop = B
+";
+
+/// A player whose settings file holds the inventory keys of the old defaults (the digits) never
+/// chose them: the keys are Dota's Z X C V B N, as for a player with no file. A key rebound to
+/// something else, once the file has a version, is kept.
+#[test]
+fn a_settings_file_from_when_items_were_on_digits_still_uses_z_x_c_v_b_n_by_default() {
+    let server = Server::start(1, &[]);
+    let mut client = Client::join_with_settings(
+        &server,
+        HeroId::SHADOW_FIEND,
+        FILE_FROM_WHEN_ITEMS_WERE_ON_DIGITS,
+    );
+    client.cheat(Cheat::Item {
+        item: bota_proto::ItemId::TANGO,
+    });
+    let slot = client
+        .slot_of(bota_proto::ItemId::TANGO)
+        .expect("the tango");
+    let key = [
+        KeyCode::KeyZ,
+        KeyCode::KeyX,
+        KeyCode::KeyC,
+        KeyCode::KeyV,
+        KeyCode::KeyB,
+        KeyCode::KeyN,
+    ][usize::from(slot)];
+    client.key(key, ButtonState::Pressed);
+    client.key(key, ButtonState::Released);
+    client.frames(2);
+    assert!(
+        client.core().aiming.is_some(),
+        "{key:?} takes the tango of slot {slot} up for aiming"
+    );
+}
+
 /// Directional Move, bound to a key (the install's templates bind none): held, the hero walks
 /// the straight line towards the cursor; let go, it stops.
 #[test]

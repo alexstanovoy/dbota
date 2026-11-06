@@ -413,9 +413,23 @@ pub const RETIRED_KEYS: &[&str] = &[
 ];
 
 /// The version of the settings file's layout, written first in it. A file with none was written
-/// before 2: while To Follow was the default of Right-Click Allies, which the file then held as
-/// `follow` though the player never chose it, so a file of version below 2 keeps no `follow`.
+/// before 2: it held every setting, the defaults of then too (Right-Click Allies as `follow`, the
+/// items on the digits), though the player never chose them, so a file of version below 2 keeps
+/// none of [`DEFAULTS_BEFORE_2`].
 pub const SETTINGS_VERSION: u32 = 2;
+
+/// The defaults the client wrote to files before version 2 and has changed since.
+const DEFAULTS_BEFORE_2: [(&str, &str); 9] = [
+    ("right_click_allies", "follow"),
+    ("key.camera_lock", "Y"),
+    ("key.item_1", "1"),
+    ("key.item_2", "2"),
+    ("key.item_3", "3"),
+    ("key.item_4", "4"),
+    ("key.item_5", "5"),
+    ("key.item_6", "6"),
+    ("key.shop", "B"),
+];
 
 /// Characters a profile name has at most.
 pub const MAX_NAME: usize = 24;
@@ -490,10 +504,9 @@ impl Settings {
                 complaints.push(format!("line {}: expected name = value", number + 1));
                 continue;
             };
-            // A `follow` an older file holds was the default then, not a choice.
+            // What an older file holds of the defaults of then was not a choice.
             if version < SETTINGS_VERSION
-                && name.trim() == "right_click_allies"
-                && value.trim() == "follow"
+                && DEFAULTS_BEFORE_2.contains(&(name.trim(), value.trim()))
             {
                 continue;
             }
