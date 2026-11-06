@@ -40,9 +40,10 @@ const RUN_PACE: f32 = 300.0;
 /// World units a second above which a unit counts as running.
 const RUNNING: f32 = 25.0;
 /// World units out of the camera's view within which a unit's skeleton is
-/// still posed: past the tallest model and the shadow it casts into view,
-/// and a frame of panning.
-const POSED_REACH: f32 = 1500.0;
+/// still posed: past the widest model's reach from its feet. Its shadow is
+/// followed on its own ([`shadow_reaches`]), and the view is this frame's, so
+/// no margin for panning is needed.
+const POSED_REACH: f32 = 800.0;
 /// World units over its feet a unit's model may reach, for its shadow: past
 /// the tallest building and Roshan.
 const TALLEST: f32 = 1200.0;
