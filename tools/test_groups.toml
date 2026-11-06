@@ -1,0 +1,455 @@
+# The test groups of this repository, read by tools/test_groups.py (its header says how they are used).
+#
+# Every test (unit, integration, doc, and the ignored ones the gate runs itself) is in exactly one group. A group selects
+# tests by package, target ("lib", "bin:NAME", "test:NAME") and libtest name filters (substrings, as libtest matches them), or
+# holds Python unittest files (`unittest = DIR, modules = [...]`). A file says which groups a change to it runs:
+#   - a file a group's `paths` names runs that group; the files of a test (its module, its e2e file, tests/NAME.rs) must be
+#     named by its group, or `check` fails;
+#   - a `[[route]]` names groups for files several groups read: "*" is every group, "prefix*" every group of that prefix, an
+#     empty list none (documents, things only the gate runs);
+#   - a file nothing names makes `check` fail, and runs every group until it is named.
+# Modules many others use (fan-in of ten or more: session, manifest, ui, units, map, hud, fog, config, camera, ...) are routed
+# to every client group. The groups are a way to run less while working: the gate runs the whole suite.
+
+profile = "test-release"
+cargo_flags = ["--quiet"]
+baselines = "tools/known_baselines.txt"
+
+# Tests the gate runs through its own steps, with the step.
+[[outside]]
+path = "web/test/test_cache_index.py"
+step = "browser (tools/browser_check.sh builds the page first)"
+
+[[outside]]
+path = "tools/test_groups.py"
+step = "none: the script, not a test (test_test_groups.py tests it)"
+
+# Files outside the groups' own.
+[[route]]
+paths = ["Cargo.toml", "Cargo.lock", "build.rs", "assets-manifest/**", "crates/dbota_import/Cargo.toml", "crates/dbota_import/src/**"]
+groups = ["*"]
+
+[[route]]
+# the client's shared modules and the harness every end-to-end test runs through
+paths = [
+    "src/main.rs", "src/session.rs", "src/manifest.rs", "src/ui.rs", "src/units.rs", "src/map.rs", "src/hud.rs", "src/fog.rs",
+    "src/fog/**", "src/fog.wgsl", "src/config.rs", "src/camera.rs", "src/dota_text.rs", "src/input.rs", "src/main_menu/**",
+    "src/keys.rs", "src/cachefs.rs", "src/loading.rs", "src/loading/**", "src/pick.rs", "src/settings/**", "src/minimap.rs",
+    "src/daylight.rs",
+    "src/e2e/mod.rs", "src/e2e/harness.rs", "tests/common/**", "assets/**",
+]
+groups = ["client_*"]
+
+[[route]]
+# documents, the licence, the fuzz targets and deny.toml (the gate's own steps)
+paths = ["**.md", "LICENSE", ".gitignore", "deny.toml", "fuzz/**", "tools/*.sh", "tools/inspect_gltf.py", "tools/subset_fonts.py"]
+groups = []
+
+[[group]]
+name = "import"
+about = "the asset importer: its units, the golden comparisons and the cache index (the ignored install tests are the gate's)"
+paths = ["crates/dbota_import/src/**", "crates/dbota_import/tests/**"]
+tests = [{ package = "dbota_import" }]
+
+[[group]]
+name = "web"
+about = "the browser build's output (Python unittest)"
+paths = ["web/**"]
+tests = [{ unittest = "web/test", modules = ["test_build_output"] }]
+
+[[group]]
+name = "tooling"
+about = "the test groups' own machinery (Python unittest)"
+paths = ["tools/test_groups.py", "tools/test_groups.toml", "tools/known_baselines.txt", "tools/test_test_groups.py"]
+tests = [{ unittest = "tools", modules = ["test_test_groups"] }]
+
+[[group]]
+name = "client_menu"
+about = "the menus, settings, replays, controls and the way into a game"
+paths = [
+    "src/replays/**",
+    "src/postgame/**",
+    "src/replay_controls.rs",
+    "src/quality.rs",
+    "src/window.rs",
+    "src/web_cursor.rs",
+    "src/webpage.rs",
+    "src/webcache.rs",
+    "src/cursor.rs",
+    "src/assets_notice.rs",
+    "src/demo.rs",
+    "src/logging.rs",
+    "src/framestats.rs",
+    "src/error_msg.rs",
+    "src/seat_name.rs",
+    "src/chat.rs",
+    "src/cheats.rs",
+    "src/preload.rs",
+    "src/e2e/menu.rs",
+    "src/e2e/controls.rs",
+    "src/e2e/cursors.rs",
+    "src/e2e/pregame.rs",
+    "src/e2e/start.rs",
+    "src/e2e/window.rs",
+    "src/e2e/refusals.rs",
+    "tests/connect.rs",
+    "tests/menu_quit.rs",
+    "tests/ping.rs",
+    "tests/refused_replays.rs",
+]
+tests = [
+    { package = "dbota", target = "bin:dbota", filters = [
+        "main_menu::",
+        "config::",
+        "keys::",
+        "input::",
+        "window::",
+        "logging::",
+        "postgame::",
+        "replays::",
+        "e2e::menu::",
+        "e2e::controls::",
+        "e2e::cursors::",
+        "e2e::pregame::",
+        "e2e::start::",
+        "e2e::window::",
+        "e2e::refusals::",
+    ] },
+    { package = "dbota", target = "test:connect" },
+    { package = "dbota", target = "test:menu_quit" },
+    { package = "dbota", target = "test:ping" },
+    { package = "dbota", target = "test:refused_replays" },
+]
+
+[[group]]
+name = "client_cache"
+about = "reading the asset cache: files, texts, icons, faces, portraits and the tip texts"
+paths = [
+    "src/cache_text.rs",
+    "src/gltf_file.rs",
+    "src/texture_file.rs",
+    "src/sound_file.rs",
+    "src/mapfile.rs",
+    "src/io_pool.rs",
+    "src/import.rs",
+    "src/tip_content.rs",
+    "src/tip_numbers.rs",
+    "src/tips.rs",
+    "src/icon_mips.rs",
+    "src/ability_art.rs",
+    "src/faces/**",
+    "src/face.rs",
+    "src/faces.rs",
+    "src/portrait.rs",
+    "src/talk.rs",
+    "src/talk_check.rs",
+    "src/script.rs",
+    "src/e2e/catalogue.rs",
+    "src/e2e/icons.rs",
+    "src/e2e/arcane_tips.rs",
+    "src/e2e/animation_reference.rs",
+    "tests/cache_import.rs",
+    "tests/fonts.rs",
+    "tests/io_stack.rs",
+    "tests/portrait_talk.rs",
+]
+tests = [
+    { package = "dbota", target = "bin:dbota", filters = [
+        "cache_text::",
+        "cachefs::",
+        "gltf_file::",
+        "texture_file::",
+        "sound_file::",
+        "mapfile::",
+        "io_pool::",
+        "import::",
+        "tip_content::",
+        "manifest::",
+        "ability_art::",
+        "dota_text::",
+        "faces::",
+        "portrait::",
+        "e2e::catalogue::",
+        "e2e::icons::",
+        "e2e::arcane_tips::",
+    ] },
+    { package = "dbota", target = "test:cache_import" },
+    { package = "dbota", target = "test:fonts" },
+    { package = "dbota", target = "test:io_stack" },
+    { package = "dbota", target = "test:portrait_talk" },
+]
+
+[[group]]
+name = "client_audio"
+about = "sound: the mixer, attenuation, the soundscape, ambient sound, voice lines and what the client sounds"
+paths = [
+    "src/sound.rs",
+    "src/mixer.rs",
+    "src/attenuation.rs",
+    "src/audio_output.rs",
+    "src/voice.rs",
+    "src/soundscape.rs",
+    "src/ambient.rs",
+    "src/e2e/announcer.rs",
+    "src/e2e/ambient.rs",
+    "src/e2e/captions.rs",
+    "src/e2e/sound_limits.rs",
+    "src/e2e/sound_mix.rs",
+    "src/e2e/sound_volume.rs",
+    "src/e2e/soundscape.rs",
+    "src/e2e/game_audio_end.rs",
+    "src/e2e/shop_sound.rs",
+    "src/e2e/pudge_attack_sounds.rs",
+    "src/e2e/creep_blows.rs",
+]
+tests = [
+    { package = "dbota", target = "bin:dbota", filters = [
+        "sound::",
+        "mixer::",
+        "audio_output::",
+        "attenuation::",
+        "voice::",
+        "e2e::announcer::",
+        "e2e::ambient::",
+        "e2e::captions::",
+        "e2e::sound_limits::",
+        "e2e::sound_mix::",
+        "e2e::sound_volume::",
+        "e2e::soundscape::",
+        "e2e::game_audio_end::",
+        "e2e::shop_sound::",
+        "e2e::pudge_attack_sounds::",
+        "e2e::creep_blows::",
+    ] },
+]
+
+[[group]]
+name = "client_fx"
+about = "particle effects, spell and building effects and the light and water they sit in"
+paths = [
+    "src/fx/**",
+    "src/fx.rs",
+    "src/particles/**",
+    "src/effects.rs",
+    "src/glyph.rs",
+    "src/lotus.rs",
+    "src/wash.rs",
+    "src/wash.wgsl",
+    "src/water.rs",
+    "src/terrain.rs",
+    "src/fortified.rs",
+    "src/e2e/fx.rs",
+    "src/e2e/hero_fx.rs",
+    "src/e2e/lotus.rs",
+    "src/e2e/tower_fall.rs",
+    "src/e2e/tower_cadence.rs",
+    "src/e2e/building_fall.rs",
+    "tests/blink.rs",
+    "tests/blood_grenade.rs",
+]
+tests = [
+    { package = "dbota", target = "bin:dbota", filters = [
+        "particles::",
+        "fx::tests::",
+        "e2e::fx::",
+        "e2e::hero_fx::",
+        "e2e::lotus::",
+        "e2e::tower_fall::",
+        "e2e::tower_cadence::",
+        "e2e::building_fall::",
+    ] },
+    { package = "dbota", target = "test:blink" },
+    { package = "dbota", target = "test:blood_grenade" },
+]
+
+[[group]]
+name = "client_shop"
+about = "shops, items, the backpack, stats, talents, buffs and the purchase flow"
+paths = [
+    "src/shop/**",
+    "src/bag.rs",
+    "src/item_look.rs",
+    "src/item_menu.rs",
+    "src/stats/**",
+    "src/stats.rs",
+    "src/talents.rs",
+    "src/strategy.rs",
+    "src/buffs.rs",
+    "src/buff_words.rs",
+    "src/loot.rs",
+    "src/drag.rs",
+    "src/e2e/shop_inventory.rs",
+    "src/e2e/shop_queue.rs",
+    "src/e2e/preparation_shop.rs",
+    "src/e2e/secret_shop.rs",
+    "src/e2e/quickbuy.rs",
+    "src/e2e/items.rs",
+    "src/e2e/item_states.rs",
+    "src/e2e/item_drop_range.rs",
+    "src/e2e/ground_items.rs",
+    "src/e2e/purchase_destination.rs",
+    "src/e2e/shopkeepers.rs",
+    "src/e2e/slot_looks.rs",
+    "src/e2e/loot_names.rs",
+    "src/e2e/talent_glow.rs",
+    "src/e2e/strategy.rs",
+    "src/e2e/buffs.rs",
+    "src/e2e/sentry_ward.rs",
+    "src/e2e/wisdom_contest.rs",
+    "tests/item_sell.rs",
+    "tests/ground_items.rs",
+    "tests/wards.rs",
+]
+tests = [
+    { package = "dbota", target = "bin:dbota", filters = [
+        "shop::",
+        "stats::",
+        "bag::",
+        "buff_words::",
+        "e2e::shop_inventory::",
+        "e2e::shop_queue::",
+        "e2e::preparation_shop::",
+        "e2e::secret_shop::",
+        "e2e::quickbuy::",
+        "e2e::items::",
+        "e2e::item_states::",
+        "e2e::item_drop_range::",
+        "e2e::ground_items::",
+        "e2e::purchase_destination::",
+        "e2e::shopkeepers::",
+        "e2e::slot_looks::",
+        "e2e::loot_names::",
+        "e2e::talent_glow::",
+        "e2e::strategy::",
+        "e2e::buffs::",
+        "e2e::sentry_ward::",
+        "e2e::wisdom_contest::",
+    ] },
+    { package = "dbota", target = "test:item_sell" },
+    { package = "dbota", target = "test:ground_items" },
+    { package = "dbota", target = "test:wards" },
+]
+
+[[group]]
+name = "client_world"
+about = "units, animation, the camera, picking, runes and the watchers of the match"
+paths = [
+    "src/anim.rs",
+    "src/courier.rs",
+    "src/death.rs",
+    "src/drill.rs",
+    "src/teleport.rs",
+    "src/trees.rs",
+    "src/map_props.rs",
+    "src/coords.rs",
+    "src/capture.rs",
+    "src/select.rs",
+    "src/heap.rs",
+    "src/layers.rs",
+    "src/overlay.rs",
+    "src/player_colour.rs",
+    "src/runes.rs",
+    "src/rune_toast.rs",
+    "src/clarity.rs",
+    "src/e2e/anim.rs",
+    "src/e2e/camera.rs",
+    "src/e2e/courier.rs",
+    "src/e2e/courier_spinner.rs",
+    "src/e2e/creep_walk.rs",
+    "src/e2e/death.rs",
+    "src/e2e/hero_walk.rs",
+    "src/e2e/kill_credit.rs",
+    "src/e2e/trees.rs",
+    "src/e2e/turning.rs",
+    "src/e2e/runes.rs",
+    "src/e2e/rune_lifecycle.rs",
+    "src/e2e/flagbearer.rs",
+    "src/e2e/flagbearer_gold.rs",
+    "src/e2e/watcher_capture.rs",
+    "src/e2e/watcher_channel.rs",
+    "src/e2e/watcher_path.rs",
+    "src/e2e/watchers.rs",
+    "src/warmup.rs",
+    "src/e2e/building_clicks.rs",
+    "tests/attack_feel.rs",
+]
+tests = [
+    { package = "dbota", target = "bin:dbota", filters = [
+        "units::",
+        "camera::",
+        "coords::",
+        "pick::",
+        "map::tests::",
+        "e2e::anim::",
+        "e2e::camera::",
+        "e2e::courier::",
+        "e2e::courier_spinner::",
+        "e2e::creep_walk::",
+        "e2e::death::",
+        "e2e::hero_walk::",
+        "e2e::kill_credit::",
+        "e2e::trees::",
+        "e2e::turning::",
+        "e2e::runes::",
+        "e2e::rune_lifecycle::",
+        "e2e::flagbearer::",
+        "e2e::flagbearer_gold::",
+        "e2e::watcher_capture::",
+        "e2e::watcher_channel::",
+        "e2e::watcher_path::",
+        "e2e::watchers::",
+        "e2e::building_clicks::",
+    ] },
+    { package = "dbota", target = "test:attack_feel" },
+]
+
+[[group]]
+name = "client_fog"
+about = "the fog of war and what is visible through it, with the minimap"
+paths = [
+    "src/e2e/fog.rs",
+    "src/e2e/fog_pov.rs",
+    "src/e2e/fog_producers.rs",
+    "src/e2e/event_visibility.rs",
+    "src/e2e/minimap.rs",
+]
+tests = [
+    { package = "dbota", target = "bin:dbota", filters = [
+        "fog::",
+        "e2e::fog::",
+        "e2e::fog_pov::",
+        "e2e::fog_producers::",
+        "e2e::event_visibility::",
+        "e2e::minimap::",
+    ] },
+]
+
+[[group]]
+name = "client_hud"
+about = "the in-game interface: bars, the feed, the scoreboard, pings and rings"
+paths = [
+    "src/bars.rs",
+    "src/channel_bar.rs",
+    "src/feed.rs",
+    "src/pings.rs",
+    "src/scoreboard/**",
+    "src/visual.rs",
+    "src/e2e/bars.rs",
+    "src/e2e/feed.rs",
+    "src/e2e/rings.rs",
+    "src/e2e/ground_targets.rs",
+    "src/ground_targets.rs",
+    "tests/tower_line.rs",
+]
+tests = [
+    { package = "dbota", target = "bin:dbota", filters = [
+        "hud::",
+        "ui::",
+        "visual::",
+        "e2e::bars::",
+        "e2e::feed::",
+        "e2e::rings::",
+        "e2e::ground_targets::",
+    ] },
+    { package = "dbota", target = "test:tower_line" },
+]

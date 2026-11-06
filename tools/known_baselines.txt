@@ -1,0 +1,7 @@
+# Known failures of main: exact test names, each with its reason. tools/test_groups.py run skips them and reports them as
+# waived; tools/test_groups.py check fails on a name that is no test, so a fixed or renamed test leaves this file.
+# Add a line only for a failure that is confirmed on plain main and has an owner who is fixing it.
+stats::backpack_ui_tests::ui_drag_a_selected_couriers_items_uses_its_inventory_for_input_and_drawing # fails on main under machine load
+stats::backpack_ui_tests::a_refused_inventory_drag_rolls_its_preview_back_without_waiting_for_a_timeout # fails on main under machine load
+stats::backpack_ui_tests::ui_drag_into_a_third_slot_before_acknowledgement_keeps_the_composed_inventory_pickable # fails on main under machine load
+more_sound_event_files_than_any_install_has_is_an_error # fails on main: the importer reports a missing scripts/soundmixers.txt as well

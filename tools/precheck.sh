@@ -1,12 +1,14 @@
 #!/usr/bin/env bash
 # The fast check to run while working, before tools/gate.sh: it stops at the first thing that is wrong.
 #
-#   tools/precheck.sh [BASE]     BASE: the branch the work is compared with (default: main)
+#   tools/precheck.sh [--full] [BASE]   BASE: the branch the work is compared with (default: main); --full: every test group
 #
 # Formatting is no part of it: it changes no code, and is checked last, by the gate.
 # Steps, each only for what the work touches (the files changed since the merge-base with BASE, committed or not):
 #   clippy  the crates with a changed file and every crate of the repository that depends on them
-#   test    the tests of those crates; the tests that failed in the last run go first, and the run stops at the first failure
+#   test-groups  every test in exactly one group and every file routed (tools/test_groups.py check; the gate's check too)
+#   test    the test groups the change affects (tools/test_groups.py select shows the commands); the tests that failed in
+#           the last run go first, and the run stops at the first failure. --full or PRECHECK_ALL=1 runs every group
 #   wasm    the browser build checks, only when a crate they cover changed
 # A warm checkout takes a few minutes at most for a typical change. The gate stays the confirmation: a failure there that
 # this would have caught is a process bug. PRECHECK_ALL=1 takes every crate. Failed test names are kept in
@@ -20,7 +22,10 @@ cd -- "$(git rev-parse --show-toplevel)" || exit 2
 . "$(dirname -- "${BASH_SOURCE[0]}")/client_env.sh"
 # Windows on the desktop, or a compositor of an outer run, would take the tests off their private home.
 unset DBOTA_SHOW DBOTA_HEADLESS
+full=${PRECHECK_ALL:-0}
+if [ "${1:-}" = --full ]; then full=1; shift; fi
 base=${1:-${PRECHECK_BASE:-main}}
+if [ "$full" = 1 ]; then selection=(--all); else selection=(--base "$base"); fi
 # the browser check (the one client of tools/gate.sh that is quickest), when a source of the client changed
 wasm_crates="dbota"
 wasm_checks=(
@@ -42,7 +47,7 @@ step() { local name=$1 t=$SECONDS; shift; echo "== $name"; "$@" || { echo "PRECH
 
 mb=$(git merge-base HEAD "$base" 2>/dev/null || git rev-parse HEAD)
 changed=$( { git diff --name-only "$mb"; git ls-files --others --exclude-standard; } | sort -u)
-plan_out=$(PRECHECK_ALL=${PRECHECK_ALL:-0} CHANGED="$changed" python3 - <<'PY'
+plan_out=$(PRECHECK_ALL=$full CHANGED="$changed" python3 - <<'PY'
 import json, os, subprocess
 meta = json.loads(subprocess.run(["cargo", "metadata", "--format-version", "1", "--offline"], capture_output=True, text=True, check=True).stdout)
 root = meta["workspace_root"].rstrip("/") + "/"
@@ -73,57 +78,27 @@ while todo:
         if cur in ds and i not in hit:
             hit.add(i); todo.append(i)
 print(" ".join(sorted(name[i] for i in hit)))
-# a crate at the root of the repository: tests are picked by module from the changed source files, "all" when one cannot be
-root_pkgs = [i for i in pkgs if dirs[i] == ""]
-filt = []
-if root_pkgs and hit == {root_pkgs[0]} and not everything:
-    for f in files:
-        if f.endswith(".md") or f.startswith(("tools/", "docs/", "fuzz/")): continue
-        if f.startswith("src/") and f.endswith(".rs") and os.path.basename(f) not in ("main.rs", "lib.rs"):
-            mod = f[4:-3].replace("/", "::")
-            filt.append(mod[:-5] + "::" if mod.endswith("::mod") else mod)
-        elif f.startswith("tests/") and f.endswith(".rs"):
-            continue
-        else:
-            filt = ["*"]; break
-    if "*" in filt: filt = []
-print(" ".join(sorted(set(filt))))
 PY
 )
-plan=$(sed -n 1p <<< "$plan_out")
-filters=$(sed -n 2p <<< "$plan_out")
-if [ -z "$plan" ]; then
-    echo "precheck: no crate touched"
+plan=$plan_out
+groups=$(python3 tools/test_groups.py select "${selection[@]}" | sed -n 's/^# groups: //p') || { echo "PRECHECK-FAIL select" >&2; exit 2; }
+if [ -z "$plan" ] && [ "$groups" = none ]; then
+    echo "precheck: no crate and no test group touched"
     stamp_put "$(tree_key)" precheck
     echo "PRECHECK-OK ($((SECONDS - started)) s)"
     exit 0
 fi
-echo "precheck: crates $plan"
+echo "precheck: crates ${plan:-none}; test groups $groups"
 pflags=(); for c in $plan; do pflags+=(-p "$c"); done
 
-step clippy cargo clippy "${pflags[@]}" --all-targets -- -D warnings || exit 1
+[ -z "$plan" ] || step clippy cargo clippy "${pflags[@]}" --all-targets -- -D warnings || exit 1
 for c in $plan; do
     e=$(extra_clippy "$c")
     [ -z "$e" ] || step "clippy ($c)" bash -c "$e" || exit 1
 done
 
-run_tests() { # the failed ones first, then everything of the touched crates
-    local log; log=$(mktemp)
-    if [ -s "$record" ]; then
-        echo "   first, the tests that failed last time"
-        # shellcheck disable=SC2046
-        cargo test --profile test-release "${pflags[@]}" -- $(cat "$record") 2>&1 | tee "$log"
-        if [ "${PIPESTATUS[0]}" -ne 0 ]; then rm -f "$log"; return 1; fi
-    fi
-    cargo test --profile test-release "${pflags[@]}" -- $filters 2>&1 | tee "$log"
-    local rc=${PIPESTATUS[0]}
-    if [ "$rc" -ne 0 ]; then
-        sed -n 's/^---- \(.*\) stdout ----$/\1/p' "$log" | sort -u > "$record"
-    else
-        rm -f "$record"
-    fi
-    rm -f "$log"
-    return "$rc"
+run_tests() { # the failed ones first, then the groups the change affects
+    python3 tools/test_groups.py run --record "$record" "${selection[@]}"
 }
 assets() {
     mkdir -p "$(dirname -- "$DBOTA_ASSETS")"
@@ -131,6 +106,7 @@ assets() {
     return 0
 }
 [ -d "$DBOTA_ASSETS" ] || step assets assets
+step test-groups python3 tools/test_groups.py check || exit 1
 step test in_private_environment run_tests || exit 1
 for c in $plan; do
     e=$(extra_test "$c"); [ -z "$e" ] || step "test ($c)" in_private_environment bash -c "$e" || exit 1
