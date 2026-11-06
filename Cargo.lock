@@ -2045,7 +2045,6 @@ dependencies = [
  "bota_proto",
  "js-sys",
  "radovid_client",
- "radovid_proto",
 ]
 
 [[package]]
