@@ -138,8 +138,6 @@ fn trace(scratch: &Path, replay: &Path, seconds: u32) -> Vec<String> {
 }
 
 fn trace_at(scratch: &Path, replay: &Path, script: &str, look: Option<Vec2>) -> Vec<String> {
-    let cache =
-        std::env::var("DBOTA_ASSETS").map_or_else(|_| scratch.join("assets"), PathBuf::from);
     let mut command = common::client();
     if let Some(look) = look {
         command.args([
@@ -155,7 +153,6 @@ fn trace_at(scratch: &Path, replay: &Path, script: &str, look: Option<Vec2>) -> 
         .args(["--pov", "0", "--trace-feel", "--mute", "--no-vsync"])
         .args(["--display-mode", "windowed", "--script", script, "--config"])
         .arg(scratch.join("settings.conf"))
-        .env("DBOTA_ASSETS", cache)
         .env("XDG_DATA_HOME", scratch.join("data"))
         .stdout(Stdio::piped())
         .stderr(Stdio::from(

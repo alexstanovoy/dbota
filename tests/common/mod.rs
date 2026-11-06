@@ -3,6 +3,7 @@
 #![allow(dead_code)] // each test binary uses a part of this shared module
 
 pub mod prepared;
+pub mod source_scan;
 
 use std::ffi::OsStr;
 use std::io::{BufRead, BufReader, Read, Write};
@@ -13,13 +14,13 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, mpsc};
 use std::time::{Duration, Instant};
 
-pub const CLIENT_ENVIRONMENT: &[&str] = &[
-    "BOTA_SERVER",
-    "DBOTA_SERVICE",
-    "BOTA_SEAT_KEY",
-    "DBOTA_DRILL",
-    "DBOTA_DRILL_SHOTS",
-];
+/// The variables no client inherits, from the list the shell wrappers read too.
+pub fn client_environment() -> impl Iterator<Item = &'static str> {
+    include_str!("../../tools/client_environment.txt")
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty() && !line.starts_with('#'))
+}
 
 /// A client's files live until its last command or child is dropped.
 struct ClientScratch(PathBuf);
@@ -100,8 +101,9 @@ impl ClientCommand {
             _scratch: Arc::clone(&self.scratch),
         })
     }
-    pub fn get_envs(&self) -> impl Iterator<Item = (&OsStr, Option<&OsStr>)> {
-        self.command.get_envs()
+    /// The private HOME of this client, which holds all its files.
+    pub fn home(&self) -> &Path {
+        &self.scratch.0
     }
 }
 
@@ -165,7 +167,7 @@ fn isolated_client(cache: &Path, prefix: Option<Command>, headless: bool) -> Cli
         .env("LOCALAPPDATA", scratch.join("data"))
         .env("APPDATA", scratch.join("data"))
         .env("DBOTA_ASSETS", cache);
-    for name in CLIENT_ENVIRONMENT {
+    for name in client_environment() {
         command.env_remove(name);
     }
     ClientCommand {

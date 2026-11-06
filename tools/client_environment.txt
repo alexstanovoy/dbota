@@ -1,0 +1,9 @@
+# Variables that steer a client from outside: a server to start, a matchmaking service, a seat to
+# take, the debug drill. A client started by a test, a check or a measurement never inherits them.
+# One name per line; the shell wrappers (tools/client_env.sh) and tests/common read this file, and
+# tests/client_guard.rs checks that the client names no other variable of its own.
+BOTA_SERVER
+DBOTA_SERVICE
+BOTA_SEAT_KEY
+DBOTA_DRILL
+DBOTA_DRILL_SHOTS

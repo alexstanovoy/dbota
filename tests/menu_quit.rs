@@ -6,9 +6,11 @@
 //! takes the seat again, and quitting from there warns the game is under
 //! way; a replay is left after Dota's question, back to the menu.
 //!
-//! They draw on the GPU (in a headless compositor, tools/headless.sh), so they
-//! are left out of a plain `cargo test`; `tools/visual_check.sh` runs them.
-//! `DBOTA_QUIT_SHOTS` names a folder to keep their screenshots in.
+//! The runs draw on the GPU (in a headless compositor, tools/headless.sh), so they
+//! are `#[ignore]`d in a plain `cargo test`; `tools/visual_check.sh` runs them.
+//! `DBOTA_QUIT_SHOTS` names a folder to keep their screenshots in. The tests at the
+//! top of the file, which check how the harness isolates a client, draw nothing and
+//! always run.
 
 mod common;
 
@@ -23,12 +25,7 @@ const PATIENCE: Duration = Duration::from_secs(240);
 #[test]
 fn client_scratch_is_removed_after_the_child_exits() {
     let mut client = common::binary(Path::new("unused"));
-    let home = client
-        .get_envs()
-        .find(|(key, _)| *key == "HOME")
-        .and_then(|(_, value)| value)
-        .map(PathBuf::from)
-        .expect("private home");
+    let home = client.home().to_owned();
     assert!(home.is_dir());
     let result = client.arg("--version").output().expect("the client starts");
     assert!(result.status.success());
@@ -39,12 +36,7 @@ fn client_scratch_is_removed_after_the_child_exits() {
 #[test]
 fn client_scratch_outlives_its_command_until_the_child_is_dropped() {
     let mut client = common::binary(Path::new("unused"));
-    let home = client
-        .get_envs()
-        .find(|(key, _)| *key == "HOME")
-        .and_then(|(_, value)| value)
-        .map(PathBuf::from)
-        .expect("private home");
+    let home = client.home().to_owned();
     let mut child = client
         .arg("--version")
         .stdout(Stdio::null())
@@ -104,15 +96,21 @@ fn client_harness_refuses_a_cache_without_an_index() {
 #[test]
 fn client_harness_isolates_the_subprocess_environment() {
     if std::env::var_os("DBOTA_ENV_PROBE_CHILD").is_some() {
+        let names: Vec<_> = common::client_environment().collect();
+        let mut probe =
+            String::from("printf '%s\\n' \"$HOME\" \"$XDG_CONFIG_HOME\" \"$XDG_DATA_HOME\"");
+        for name in &names {
+            probe.push_str(&format!(" \"${{{name}-unset}}\""));
+        }
         let mut shell = Command::new("sh");
-        shell.args(["-c", "printf '%s\\n' \"$HOME\" \"$XDG_CONFIG_HOME\" \"$XDG_DATA_HOME\" \"${BOTA_SERVER-unset}\" \"${DBOTA_SERVICE-unset}\" \"${BOTA_SEAT_KEY-unset}\" \"${DBOTA_DRILL-unset}\" \"${DBOTA_DRILL_SHOTS-unset}\""]);
+        shell.args(["-c", &probe]);
         let output = common::wrapped(shell)
             .output()
             .expect("environment probe starts");
         assert!(output.status.success());
         let text = String::from_utf8(output.stdout).expect("UTF-8 environment");
         let values: Vec<_> = text.lines().collect();
-        assert_eq!(values.len(), 8, "{values:?}");
+        assert_eq!(values.len(), 3 + names.len(), "{values:?}");
         let home = Path::new(values[0]);
         assert!(home.starts_with(env!("CARGO_TARGET_TMPDIR")));
         assert_eq!(Path::new(values[1]), home.join("config"));
@@ -123,20 +121,18 @@ fn client_harness_isolates_the_subprocess_environment() {
         );
         return;
     }
-    let output = Command::new(std::env::current_exe().expect("test binary"))
+    let mut parent = Command::new(std::env::current_exe().expect("test binary"));
+    parent
         .args([
             "--exact",
             "client_harness_isolates_the_subprocess_environment",
             "--nocapture",
         ])
-        .env("DBOTA_ENV_PROBE_CHILD", "1")
-        .env("BOTA_SERVER", "/untrusted/server")
-        .env("DBOTA_SERVICE", "wss://invalid.invalid")
-        .env("BOTA_SEAT_KEY", "invalid")
-        .env("DBOTA_DRILL", "1")
-        .env("DBOTA_DRILL_SHOTS", "/untrusted/shots")
-        .output()
-        .expect("child test starts");
+        .env("DBOTA_ENV_PROBE_CHILD", "1");
+    for name in common::client_environment() {
+        parent.env(name, "/untrusted");
+    }
+    let output = parent.output().expect("child test starts");
     assert!(
         output.status.success(),
         "{}",

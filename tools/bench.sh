@@ -19,14 +19,19 @@
 #                           (it must exec dbota, so its pid is dbota's)
 #   BENCH_PROFILE=release   the cargo profile built and timed (`dist` is what ships)
 #   BENCH_BUILD=1           0: use the binary already built
-#   DBOTA_BIN               the binary to time (default target/release/dbota; implies BENCH_BUILD=0)
+#   DBOTA_BIN               the binary to time (default <CARGO_TARGET_DIR or target>/<profile>/dbota; implies BENCH_BUILD=0)
 #   BENCH_WASM=0            1: also build the browser clients (wasm32, profile `web`, WebGPU and
 #                           WebGL2) and report their sizes
-#   DBOTA_ASSETS            the asset cache (default: `dbota cache-dir`)
+#   DBOTA_ASSETS            the asset cache (required: one `DBOTA_ASSETS=DIR dbota import` made; the managed
+#                           ~/.cache/dbota is no default, as the runs must not touch the user's own data)
+# The runs use a private home, like tools/test_client.sh: default settings, an empty replay library, no
+# BOTA_SERVER or other variable of tools/client_environment.txt, all removed when the script ends.
 # The runs draw in a private headless compositor on the GPU (tools/headless.sh, its output 1920x1080
 # unless DBOTA_HEADLESS_SIZE says otherwise); DBOTA_SHOW=1 runs them in windows on the desktop.
 set -euo pipefail
 here=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)
+# shellcheck source=tools/client_env.sh
+. "$here/tools/client_env.sh"
 [ -n "${DBOTA_HEADLESS:-}" ] || [ "${DBOTA_SHOW:-0}" = 1 ] || exec "$here/tools/headless.sh" "$0" "$@"
 replay=${1:-}
 if [ -z "$replay" ] || [ ! -f "$replay" ]; then
@@ -41,9 +46,10 @@ runs=${BENCH_RUNS:-3}
 server=${BENCH_SERVER-$here/../bota/target/release/bota_server}
 read -r -a extra <<< "${BENCH_ARGS:-}"
 read -r -a wrap <<< "${BENCH_WRAP:-}"
-cache=${DBOTA_ASSETS:-$("$here/target/${BENCH_PROFILE:-release}/dbota" cache-dir)}
+cache=${DBOTA_ASSETS:?DBOTA_ASSETS must name a test asset cache}
+[ -f "$cache/index.txt" ] || { echo "test asset cache has no index: $cache" >&2; exit 1; }
 profile=${BENCH_PROFILE:-release}
-bin=${DBOTA_BIN:-$here/target/$profile/dbota}
+bin=$(client_binary "$profile")
 out=$here/temp/bench
 mkdir -p "$out"
 
@@ -57,6 +63,13 @@ if [ "${BENCH_WASM:-0}" = 1 ]; then
         cp "$here/target/wasm32-unknown-unknown/web/dbota.wasm" "$out/dbota_$api.wasm"
     done
 fi
+
+# From here on everything runs on a private home; the builds above needed the real one for cargo.
+target=${CARGO_TARGET_DIR:-$here/target}
+mkdir -p "$target"
+private_home=$(mktemp -d "$target/bench-client.XXXXXX")
+trap 'rm -r -- "$private_home"' EXIT
+private_client_environment "$private_home" "$target/tmp/gpu-cache"
 
 # Drops the asset cache and the binary from the page cache: a cold start.
 drop_caches() {

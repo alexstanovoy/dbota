@@ -87,7 +87,8 @@ gesture) and draws its own cursor.
   `Alt`, health bars in side colours, and each hero's talking portrait (`--talk-check HERO`). It needs the asset cache
   and exits non-zero on a failed check.
 - `tools/bench.sh REPLAY.brp` measures binary size, cold and warm start, and frame times, CPU, RAM and VRAM of a busy
-  replay stretch and of a live match (`--bench SECONDS` underneath).
+  replay stretch and of a live match (`--bench SECONDS` underneath). Like `tools/test_client.sh`, which the visual and
+  browser checks start the client through, it needs `DBOTA_ASSETS` and runs the client on a private home.
 - `tools/precheck.sh` is the quick loop (clippy and tests of what changed); it stamps a green tree.
 - `tools/gate.sh [REPLAY.brp]` is the merge gate: an audit that every ignored test runs somewhere, fmt, clippy, the fuzz
   targets' type check, both browser clients, an asset cache of this build (imported once per stamp into
@@ -110,4 +111,9 @@ cargo test --release -p dbota_import -- --ignored   # DBOTA_DOTA_PATH, DBOTA_REF
 The fonts in `assets/fonts` are made by `tools/subset_fonts.py`; other scripts come from the system's fonts on the
 desktop, and a browser has only the shipped ones.
 
-The headless E2E client requires `DBOTA_ASSETS` to name an explicitly imported test asset cache.
+Nothing that tests, drives or measures the client may touch the user's settings, replays (the replay library prunes the
+oldest beyond its limits), `~/.cache/dbota` or the variables that steer the client: the headless E2E client requires
+`DBOTA_ASSETS` to name an explicitly imported test asset cache and takes its files from a private folder; the tests
+that start the client binary use `tests/common`, the tools `tools/test_client.sh` or `tools/client_env.sh` (the
+scrubbed variables are listed in `tools/client_environment.txt`). `tests/client_guard.rs` fails on a launch or an
+environment variable that bypasses them.

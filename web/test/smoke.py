@@ -128,13 +128,12 @@ def farm(install, root):
 
 
 # The asset cache the pages that need no import play on (`?cache=http`): a native import of this
-# build, served under /cache beside the page (DBOTA_ASSETS, else ~/.cache/dbota/v<N>).
+# build, served under /cache beside the page. DBOTA_ASSETS must name it: the user's own cache is no default.
 def cache_folder():
     given = os.environ.get("DBOTA_ASSETS")
-    if given:
-        return pathlib.Path(given)
-    version = (HERE.parent.parent / "assets-manifest/version").read_text().strip()
-    return pathlib.Path("~/.cache/dbota").expanduser() / f"v{version}"
+    if not given:
+        sys.exit("DBOTA_ASSETS must name a native import of this build for the pages that play on a served cache")
+    return pathlib.Path(given)
 
 
 class Quiet(http.server.SimpleHTTPRequestHandler):
