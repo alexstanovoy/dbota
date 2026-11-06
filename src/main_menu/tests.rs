@@ -808,7 +808,7 @@ fn start_server() -> (Server, String, String) {
 
 /// [`start_server`] with more of the server's options.
 fn start_server_with(extra: &[&str]) -> (Server, String, String) {
-    let mut child = super::scrubbed_command(server_binary())
+    let mut child = crate::steering::scrubbed_command(server_binary())
         .args(extra)
         .args([
             "--map",

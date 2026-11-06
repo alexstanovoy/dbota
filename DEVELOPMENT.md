@@ -111,7 +111,8 @@ cargo test --release -p dbota_import -- --ignored   # DBOTA_DOTA_PATH, DBOTA_REF
 The fonts in `assets/fonts` are made by `tools/subset_fonts.py`; other scripts come from the system's fonts on the
 desktop, and a browser has only the shipped ones.
 
-Nothing that tests, drives or measures the client may touch the user's settings, replays (the replay library prunes the
+This keeps accidents out; it is not a sandbox against code that means to leave (a process can still resolve the
+system's home from its user id). Nothing that tests, drives or measures the client may touch the user's settings, replays (the replay library prunes the
 oldest beyond its limits), `~/.cache/dbota` or the variables that steer the client. Two layers hold that:
 
 - Structure: `tools/precheck.sh`, `tools/gate.sh` and `tools/headless.sh` run the tests and everything started under

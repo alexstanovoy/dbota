@@ -260,28 +260,136 @@ fn bench_refuses_the_managed_asset_cache() {
 }
 
 #[test]
-fn the_harness_refuses_the_managed_asset_cache() {
+fn the_integration_harness_refuses_the_managed_asset_cache_by_name_and_through_a_link() {
     if std::env::var_os("DBOTA_MANAGED_CACHE_CHILD").is_some() {
         common::asset_cache();
         return;
     }
     let scratch = common::prepared::Scratch::new("harness-managed-cache");
-    let output = std::process::Command::new(std::env::current_exe().expect("test binary"))
+    let managed = managed_looking_cache(&scratch);
+    let mut named = vec![scratch.path("home/.cache/dbota/not-made")];
+    #[cfg(unix)]
+    {
+        let link = scratch.path("innocent");
+        std::os::unix::fs::symlink(&managed, &link).expect("link");
+        named.push(link);
+    }
+    for cache in named {
+        let output = std::process::Command::new(std::env::current_exe().expect("test binary"))
+            .args([
+                "--exact",
+                "the_integration_harness_refuses_the_managed_asset_cache_by_name_and_through_a_link",
+                "--nocapture",
+            ])
+            .env("DBOTA_MANAGED_CACHE_CHILD", "1")
+            .env("DBOTA_ASSETS", &cache)
+            .output()
+            .expect("child test starts");
+        assert!(!output.status.success(), "{} was accepted", cache.display());
+        assert!(
+            String::from_utf8_lossy(&output.stderr)
+                .contains("DBOTA_ASSETS names the managed asset cache"),
+            "{}: {}",
+            cache.display(),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+}
+
+#[test]
+fn a_client_built_on_a_managed_cache_is_refused() {
+    let scratch = common::prepared::Scratch::new("binary-managed-cache");
+    let managed = scratch.path("home/.cache/dbota/v9");
+    let refused = std::panic::catch_unwind(|| common::binary(&managed));
+    assert!(refused.is_err(), "common::binary took a managed cache");
+}
+
+#[cfg(unix)]
+#[test]
+fn import_assets_refuses_the_managed_cache_before_it_touches_it() {
+    let scratch = common::prepared::Scratch::new("import-managed-cache");
+    let tools = copy_tools(&scratch, &[]);
+    let managed = scratch.path("home/.cache/dbota/v9");
+    let output = std::process::Command::new("bash")
         .args([
-            "--exact",
-            "the_harness_refuses_the_managed_asset_cache",
-            "--nocapture",
+            "-c",
+            &format!(
+                ". '{}'; import_assets",
+                tools.join("client_env.sh").display()
+            ),
         ])
-        .env("DBOTA_MANAGED_CACHE_CHILD", "1")
-        .env("DBOTA_ASSETS", scratch.path("home/.cache/dbota/v9"))
+        .env("DBOTA_ASSETS", &managed)
+        .env("CARGO_TARGET_DIR", scratch.path("target"))
         .output()
-        .expect("child test starts");
+        .expect("bash starts");
     assert!(!output.status.success());
     assert!(
         String::from_utf8_lossy(&output.stderr)
             .contains("DBOTA_ASSETS names the managed asset cache"),
         "{}",
         String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        !managed.exists(),
+        "the refused import still made the managed folder"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn run_scrubbed_starts_a_command_without_the_steering_variables() {
+    let scratch = common::prepared::Scratch::new("run-scrubbed");
+    let tools = copy_tools(&scratch, &[]);
+    let mut command = std::process::Command::new("bash");
+    command.args([
+        "-c",
+        &format!(
+            ". '{}'; run_scrubbed sh -c '{}'",
+            tools.join("client_env.sh").display(),
+            "printf \"%s\\n\" \"$PATH_KEPT\" \"${BOTA_SEATS-unset}\" \"${BOTA_REFEREE_KEY-unset}\""
+        ),
+    ]);
+    command.env("PATH_KEPT", "kept");
+    untrusted_environment(&mut command);
+    let output = command.output().expect("bash starts");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let text = String::from_utf8(output.stdout).expect("UTF-8");
+    assert_eq!(text.lines().collect::<Vec<_>>(), ["kept", "unset", "unset"]);
+}
+
+/// `play_script` is what the scripted drawing tests (blink, wards, ping...) start the client with:
+/// it must build its command without breaking the isolated client's own rules. With no compositor
+/// the client cannot start, which is how the test ends before drawing anything.
+#[test]
+fn play_script_builds_its_client_within_the_isolation_rules() {
+    if std::env::var_os("DBOTA_PLAY_SCRIPT_CHILD").is_some() {
+        common::play_script("127.0.0.1:1", "exit", "regression");
+        return;
+    }
+    let output = std::process::Command::new(std::env::current_exe().expect("test binary"))
+        .args([
+            "--exact",
+            "play_script_builds_its_client_within_the_isolation_rules",
+            "--nocapture",
+        ])
+        .env("DBOTA_PLAY_SCRIPT_CHILD", "1")
+        .env("DBOTA_WESTON", "/nonexistent/weston")
+        .env_remove("DBOTA_HEADLESS")
+        .env_remove("DBOTA_SHOW")
+        .output()
+        .expect("child test starts");
+    let said = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !said.contains("isolated client keeps"),
+        "play_script broke the isolation rules: {said}"
+    );
+    assert!(
+        said.contains("exit Some(125)"),
+        "the client was not even started: {said}"
     );
 }
 
@@ -396,6 +504,33 @@ fn precheck_and_gate_run_the_tests_on_a_private_home() {
     assert!(precheck.contains("step test in_private_environment run_tests"));
     assert!(precheck.contains("step \"test ($c)\" in_private_environment bash -c \"$e\""));
     let gate = read("gate.sh");
+    for script in [&precheck, &gate] {
+        assert!(script.contains("unset DBOTA_SHOW DBOTA_HEADLESS"));
+        assert!(script.contains("refuse_managed_asset_cache || exit 1"));
+        assert!(script.contains("import_assets"));
+        assert!(
+            !script.contains("cargo run --release -q -- import"),
+            "an import on the caller's home"
+        );
+    }
+    assert!(gate.contains("run_scrubbed cargo run --release -q --manifest-path"));
+    let wrapped = |name: &str, what: &str| {
+        for line in read(name).lines().filter(|line| line.contains(what)) {
+            assert!(
+                line.contains("in_private_environment"),
+                "tools/{name} runs `{what}` outside a private home: {line}"
+            );
+        }
+    };
+    wrapped("visual_check.sh", "cargo test");
+    wrapped("browser_check.sh", "python3 -m unittest");
+    wrapped(
+        "browser_check.sh",
+        "python3 web/test/smoke.py --import-page",
+    );
+    assert!(read("browser_check.sh").contains("\nrun_scrubbed \"$server\""));
+    let smoke = std::fs::read_to_string(manifest().join("web/test/smoke.py")).expect("smoke test");
+    assert!(smoke.contains("env=without_steering_variables()"));
     for step in [
         "step test in_private_environment cargo test --profile test-release",
         "step install-tests in_private_environment cargo test --release -p dbota_import -- --ignored",
@@ -480,50 +615,46 @@ fn the_isolated_client_refuses_to_be_given_the_variables_it_isolates() {
             .unwrap_or_default();
         assert!(message.contains("isolated client"), "{name}: {message}");
     }
+    for name in ["HOME", "XDG_DATA_HOME"] {
+        let refused = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            client.env_remove(name);
+        }));
+        assert!(refused.is_err(), "env_remove({name}) was accepted");
+    }
 }
 
-/// Every Rust, shell and Python file of the repository, by path relative to it: all of them, so
-/// that a new folder is not a hole. Build output and data folders hold no source.
+/// Every Rust, shell, Python and JavaScript-module file git knows or would add (tracked, or new
+/// and not ignored), by path relative to the repository: a new folder is not a hole, and a skip
+/// list cannot go stale.
 fn repository_sources() -> Vec<(String, String)> {
     let root = manifest();
-    let mut directories = vec![root.clone()];
-    let mut files = Vec::new();
-    while let Some(directory) = directories.pop() {
-        for entry in std::fs::read_dir(&directory).expect("source directory") {
-            let entry = entry.expect("source entry");
-            let path = entry.path();
-            if entry.file_type().expect("entry type").is_dir() {
-                if !matches!(
-                    path.file_name().and_then(|name| name.to_str()),
-                    Some(
-                        "target"
-                            | ".git"
-                            | "node_modules"
-                            | "pkg"
-                            | "dist"
-                            | "out"
-                            | "temp"
-                            | "assets"
-                            | "assets-manifest"
-                    )
-                ) {
-                    directories.push(path);
-                }
-            } else if matches!(
-                path.extension().and_then(|extension| extension.to_str()),
-                Some("rs" | "sh" | "py")
-            ) {
-                files.push(path);
-            }
-        }
-    }
-    files.sort();
-    files
+    let listed = std::process::Command::new("git")
+        .args([
+            "ls-files",
+            "-z",
+            "--cached",
+            "--others",
+            "--exclude-standard",
+        ])
+        .current_dir(&root)
+        .output()
+        .expect("git lists the repository's files");
+    assert!(listed.status.success(), "git ls-files failed");
+    let mut paths: Vec<String> = String::from_utf8(listed.stdout)
+        .expect("UTF-8 paths")
+        .split('\0')
+        .filter(|path| matches!(path.rsplit('.').next(), Some("rs" | "sh" | "py" | "mjs")))
+        .map(str::to_owned)
+        .collect();
+    paths.sort();
+    paths.dedup();
+    assert!(paths.len() > 100, "git listed only {} sources", paths.len());
+    paths
         .into_iter()
+        .filter(|path| root.join(path).is_file())
         .map(|path| {
-            let text = std::fs::read_to_string(&path).expect("source text");
-            let relative = path.strip_prefix(&root).expect("inside the repository");
-            (relative.to_string_lossy().into_owned(), text)
+            let text = std::fs::read_to_string(root.join(&path)).expect("source text");
+            (path, text)
         })
         .collect()
 }
@@ -553,19 +684,14 @@ const APPROVED_LAUNCH_LINES: &[(&str, &str, &str)] = &[
         "client_binary names the binary the isolating tools run",
     ),
     (
-        "tools/precheck.sh",
-        "(flock 9 && cargo run --release -q -- import) 9> \"$DBOTA_ASSETS.lock\" > /dev/null 2>&1 || echo \"   no asset cache (no usable install): the tests that need it fail\"",
-        "`import` reads the user's Dota install and writes only the explicit DBOTA_ASSETS",
+        "tools/client_env.sh",
+        "in_private_environment bash -c 'exec cargo run --release -q -- import ${DBOTA_DOTA_PATH:+--dota-path \"$DBOTA_DOTA_PATH\"}'",
+        "`import` reads the Dota install the caller names, on a private home, and writes only the explicit DBOTA_ASSETS",
     ),
     (
         "tools/gate.sh",
-        "if (flock 9 && cargo run --release -q -- import) 9> \"$DBOTA_ASSETS.lock\" > \"$logs/import.log\" 2>&1; then",
-        "`import`, as above",
-    ),
-    (
-        "tools/gate.sh",
-        "if ! cargo run --release -q --manifest-path \"$here/../bota/Cargo.toml\" -p bota_server --example local_match \\",
-        "bota's local_match example, not the client",
+        "if ! run_scrubbed cargo run --release -q --manifest-path \"$here/../bota/Cargo.toml\" -p bota_server --example local_match \\",
+        "bota's local_match example, not the client, without the variables that steer a server",
     ),
     (
         "tools/build.sh",
@@ -608,8 +734,12 @@ fn client_and_server_launches_use_the_isolation_wrappers() {
                 "{path}: the approved line `{line}` is gone (APPROVED_LAUNCH_LINES is stale)"
             );
         }
-        // client_env.sh spells the managed cache to refuse it.
-        if !path.starts_with("src/") && path != "tools/client_env.sh" {
+        // These spell the managed cache to refuse it or to test the refusal.
+        let spells_it = [
+            "tools/client_env.sh",
+            "crates/dbota_import/tests/managed_path.rs",
+        ];
+        if !path.starts_with("src/") && !spells_it.contains(&path.as_str()) {
             assert!(
                 !names_the_managed_cache(&text),
                 "{path} names the user's managed asset cache ~/.cache/dbota: take an explicit DBOTA_ASSETS"
@@ -687,6 +817,8 @@ fn the_cache_guard_sees_the_managed_cache_and_not_the_gates() {
     }
 }
 
+const CHILD_MARKER: &str = "tells a test that runs itself in a child process which half it is";
+
 /// Variables the client and its tests name that need no scrubbing, and why.
 const KNOWN_VARIABLES: &[(&str, &str)] = &[
     (
@@ -717,6 +849,16 @@ const KNOWN_VARIABLES: &[(&str, &str)] = &[
         "DBOTA_REFERENCE",
         "the importer's golden tests name their reference cache",
     ),
+    ("DBOTA_SEAT_TEST_CHILD", CHILD_MARKER),
+    ("DBOTA_TEST_ENV_CHILD", CHILD_MARKER),
+    ("DBOTA_SERVER_ENVIRONMENT_CHILD", CHILD_MARKER),
+    ("DBOTA_REFERENCE_TEST_CHILD", CHILD_MARKER),
+    ("DBOTA_TEST_NO_CACHE_CHILD", CHILD_MARKER),
+    ("DBOTA_TEST_BAD_CACHE_CHILD", CHILD_MARKER),
+    ("DBOTA_ENV_PROBE_CHILD", CHILD_MARKER),
+    ("DBOTA_MANAGED_CACHE_CHILD", CHILD_MARKER),
+    ("DBOTA_SERVER_SCRUB_CHILD", CHILD_MARKER),
+    ("DBOTA_PLAY_SCRIPT_CHILD", CHILD_MARKER),
     (
         "DBOTA_IMPORTED",
         "the importer's tests name an imported cache to read",
@@ -818,6 +960,16 @@ fn the_environment_audit_sees_every_way_a_source_can_name_a_variable() {
         ),
         ("after a test module", late_in_file, "BOTA_LATE"),
         (
+            "a marker not on the list",
+            "fn f() { std::env::var(\"DBOTA_NEW_CHILD\"); }",
+            "DBOTA_NEW_CHILD",
+        ),
+        (
+            "removing the home",
+            "fn f() { command.env_remove(\"HOME\"); }",
+            "HOME",
+        ),
+        (
             "an escape",
             "fn f() { std::env::var(\"\\x42OTA_ESCAPED\"); }",
             "BOTA_ESCAPED",
@@ -854,7 +1006,7 @@ fn the_environment_audit_sees_every_way_a_source_can_name_a_variable() {
         "// std::env::var(\"BOTA_COMMENTED\")",
         "/* \"BOTA_BLOCK\" /* nested */ \"HOME\" */ fn f() {}",
         "fn f() { command.env(\"HOME\", \"x\").env_remove(\"BOTA_SERVER\"); }",
-        "fn f() { std::env::var(\"DBOTA_ASSETS\"); std::env::var(\"DBOTA_ANYTHING_CHILD\"); }",
+        "fn f() { std::env::var(\"DBOTA_ASSETS\"); std::env::var(\"DBOTA_SERVER_SCRUB_CHILD\"); }",
         "fn f() { std::env::var(\"PATH\"); }",
     ] {
         assert_eq!(

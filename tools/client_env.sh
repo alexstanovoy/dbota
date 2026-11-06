@@ -18,9 +18,17 @@
 #       purpose, which is the harness's business) made under the target folder and removed after;
 #       its status is the command's. A test that starts the client without the harness's wrappers
 #       still cannot reach the user's files.
+#   refuse_managed_asset_cache
+#       Fails when DBOTA_ASSETS is, or leads through a link into, the managed ~/.cache/dbota,
+#       whose maintenance prunes the caches it owns and where a run writes use stamps.
 #   require_test_asset_cache
-#       Fails unless DBOTA_ASSETS names an asset cache with an index that is no part of the
-#       managed ~/.cache/dbota (a run would write its use stamps there).
+#       That, and fails unless DBOTA_ASSETS names an asset cache with an index.
+#   import_assets
+#       `dbota import` into DBOTA_ASSETS (refused when that is managed), on a private home, the
+#       Dota install given by DBOTA_DOTA_PATH.
+#   run_scrubbed COMMAND...
+#       COMMAND without the variables in client_environment.txt: for the game servers the tools
+#       start (a seat list or referee key in the caller's shell must not decide who sits).
 #   client_binary [PROFILE]
 #       The built client: $DBOTA_BIN, else <target dir>/<PROFILE, default release>/dbota, where the
 #       target dir is $CARGO_TARGET_DIR, else this checkout's target.
@@ -44,11 +52,15 @@ private_home_environment() {
         XDG_CACHE_HOME="$gpu_cache"
 }
 
-private_client_environment() {
+_scrub_steering_variables() {
     local name
     while read -r name; do
         case $name in '' | '#'*) ;; *) unset "$name" ;; esac
     done < "$_client_env_here/tools/client_environment.txt"
+}
+
+private_client_environment() {
+    _scrub_steering_variables
     private_home_environment "$@"
 }
 
@@ -63,14 +75,34 @@ in_private_environment() {
     )
 }
 
+refuse_managed_asset_cache() {
+    local path
+    for path in "${DBOTA_ASSETS:-}" "$(realpath -m -- "${DBOTA_ASSETS:-/}")"; do
+        case "/$path/" in
+            */.cache/dbota/*)
+                echo "DBOTA_ASSETS names the managed asset cache $DBOTA_ASSETS: import into a private folder" >&2
+                return 1 ;;
+        esac
+    done
+}
+
 require_test_asset_cache() {
     : "${DBOTA_ASSETS:?DBOTA_ASSETS must name a test asset cache}"
-    case "/$DBOTA_ASSETS/" in
-        */.cache/dbota/*)
-            echo "DBOTA_ASSETS names the managed asset cache $DBOTA_ASSETS: import into a private folder" >&2
-            return 1 ;;
-    esac
+    refuse_managed_asset_cache || return 1
     [ -f "$DBOTA_ASSETS/index.txt" ] || { echo "test asset cache has no index: $DBOTA_ASSETS" >&2; return 1; }
+}
+
+import_assets() {
+    : "${DBOTA_ASSETS:?DBOTA_ASSETS must name where to import}"
+    refuse_managed_asset_cache || return 1
+    in_private_environment bash -c 'exec cargo run --release -q -- import ${DBOTA_DOTA_PATH:+--dota-path "$DBOTA_DOTA_PATH"}'
+}
+
+run_scrubbed() {
+    (
+        _scrub_steering_variables
+        exec "$@"
+    )
 }
 
 client_binary() {

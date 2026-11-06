@@ -2,7 +2,7 @@
 # matchmaking service, a seat to take, the debug drill, the seats and referee key of a server. A
 # client or server started by a test, a check or a measurement never inherits them. One name per
 # line; the shell tools (tools/client_env.sh) and tests/common read this file, the client's own
-# server launch (src/main_menu/launch.rs) includes it, and tests/client_guard.rs checks that the
+# server launch and the test harnesses take it through src/steering.rs, and tests/client_guard.rs checks that the
 # client names no other variable of its own.
 BOTA_SERVER
 DBOTA_SERVICE

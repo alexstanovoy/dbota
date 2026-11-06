@@ -13,6 +13,8 @@
 # VISUAL_TICK (4000, day, is the default; 12000 is night).
 set -euo pipefail
 here=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)
+# shellcheck source=tools/client_env.sh
+. "$here/tools/client_env.sh"
 # The whole check in one headless compositor: the clients it starts and the tests' share it.
 [ -n "${DBOTA_HEADLESS:-}" ] || [ "${DBOTA_SHOW:-0}" = 1 ] || exec "$here/tools/headless.sh" "$0" "$@"
 replay=${1:-${VISUAL_REPLAY:-}}
@@ -114,7 +116,7 @@ else
 fi
 
 # A replay the client refuses ends it cleanly, never a crash, however early it is refused.
-if cargo test --release --quiet --manifest-path "$here/Cargo.toml" --test refused_replays \
+if in_private_environment cargo test --release --quiet --manifest-path "$here/Cargo.toml" --test refused_replays \
     -- --ignored > "$out/refused.log" 2>&1; then
     echo "visual check: PASS refused replays end the client cleanly"
 else
@@ -124,7 +126,7 @@ fi
 
 # The models of a match load on one core: Bevy's loaders nest on the few loader threads that
 # machine gets, and overflowed their default stacks (src/io_pool.rs).
-if VISUAL_REPLAY="$(realpath "$replay")" cargo test --release --quiet --manifest-path "$here/Cargo.toml" \
+if VISUAL_REPLAY="$(realpath "$replay")" in_private_environment cargo test --release --quiet --manifest-path "$here/Cargo.toml" \
     --test io_stack -- --ignored > "$out/io_stack.log" 2>&1; then
     echo "visual check: PASS a match loads on one core"
 else
@@ -138,7 +140,7 @@ fi
 # menu; Demo Hero plays a hero with every cheat; a prepared asset cache (a folder, a zip) is taken by
 # `dbota import-cache` and by a path typed into the menu, and a cache of another build is refused. One test at a time: each opens a window of its own
 # (in this check's compositor).
-if VISUAL_REPLAY="$(realpath "$replay")" DBOTA_QUIT_SHOTS="$out/quit" cargo test --release --quiet \
+if VISUAL_REPLAY="$(realpath "$replay")" DBOTA_QUIT_SHOTS="$out/quit" in_private_environment cargo test --release --quiet \
     --manifest-path "$here/Cargo.toml" --test menu_quit -- --ignored --test-threads 1 \
     > "$out/quit.log" 2>&1; then
     echo "visual check: PASS the menu, a game and a replay are quit and left as Dota's are; Demo Hero cheats"
@@ -150,7 +152,7 @@ fi
 # How an attack looks and sounds: a swing broken off is a cancel, clips cross-fade over 0.2 s, melee
 # creeps whoosh and hit, the Ogre Bruiser plays its Smash through its cast point. Each test records a
 # match on a real bota_server and plays its replay with the client's trace.
-if cargo test --release --quiet --manifest-path "$here/Cargo.toml" --test attack_feel \
+if in_private_environment cargo test --release --quiet --manifest-path "$here/Cargo.toml" --test attack_feel \
     -- --ignored --test-threads 1 > "$out/attack_feel.log" 2>&1; then
     echo "visual check: PASS a broken-off swing is a cancel, clips fade, creeps sound, the Smash plays through"
 else
@@ -160,7 +162,7 @@ fi
 
 # Selling in the strategy phase: the item menu's Sell takes a chosen item back, so the match begins
 # with the one item left.
-if cargo test --release --quiet --manifest-path "$here/Cargo.toml" --test item_sell \
+if in_private_environment cargo test --release --quiet --manifest-path "$here/Cargo.toml" --test item_sell \
     -- --ignored > "$out/sell.log" 2>&1; then
     echo "visual check: PASS an item sold in the strategy phase is not bought"
 else
@@ -172,7 +174,7 @@ fi
 # (one test at a time, each in a window of its own): a placed ward in Dota's ward model with its
 # ambient effect, a dropped item on the ground with its model, a Blink Dagger's two effects and a
 # Blood Grenade's throw, landing and splatter, and a tower's line to a hero in its reach.
-if cargo test --release --quiet --manifest-path "$here/Cargo.toml" --test wards --test ground_items \
+if in_private_environment cargo test --release --quiet --manifest-path "$here/Cargo.toml" --test wards --test ground_items \
     --test blink --test blood_grenade --test tower_line -- --ignored --test-threads 1 > "$out/effects.log" 2>&1; then
     echo "visual check: PASS wards, items on the ground, a blink, a grenade and a tower's line are drawn and sounded"
 else
@@ -181,7 +183,7 @@ else
 fi
 
 # The ping in the corner is the line's: a server behind a delayed line, read off the drawn text.
-if cargo test --release --quiet --manifest-path "$here/Cargo.toml" --test ping \
+if in_private_environment cargo test --release --quiet --manifest-path "$here/Cargo.toml" --test ping \
     -- --ignored --test-threads 1 > "$out/ping.log" 2>&1; then
     echo "visual check: PASS the corner tells the line's ping, not a multiple of the tick"
 else
@@ -191,7 +193,7 @@ fi
 
 # The talking portrait in a game: one's hero answers a move and an attack order with a voice line,
 # and the portrait's jaw moves with the line's phonemes and rests once it has ended, for each hero.
-if cargo test --release --quiet --manifest-path "$here/Cargo.toml" --test portrait_talk \
+if in_private_environment cargo test --release --quiet --manifest-path "$here/Cargo.toml" --test portrait_talk \
     -- --ignored --test-threads 1 --nocapture > "$out/talk.log" 2>&1; then
     echo "visual check: PASS each hero says its move and attack lines with its face"
 else

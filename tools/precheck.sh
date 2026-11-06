@@ -18,6 +18,8 @@ cd -- "$(git rev-parse --show-toplevel)" || exit 2
 . "$(dirname -- "${BASH_SOURCE[0]}")/stamp.sh"
 # shellcheck source=tools/client_env.sh
 . "$(dirname -- "${BASH_SOURCE[0]}")/client_env.sh"
+# Windows on the desktop, or a compositor of an outer run, would take the tests off their private home.
+unset DBOTA_SHOW DBOTA_HEADLESS
 base=${1:-${PRECHECK_BASE:-main}}
 # the browser check (the one client of tools/gate.sh that is quickest), when a source of the client changed
 wasm_crates="dbota"
@@ -33,6 +35,7 @@ key=$( cat assets-manifest/manifest.txt assets-manifest/ids.txt
 key=$(printf '%s' "$key" | sha256sum | cut -c1-16)
 export DBOTA_ASSETS=${DBOTA_ASSETS:-${DBOTA_GATE_ASSETS:-${XDG_CACHE_HOME:-$HOME/.cache}/dbota-gate}/$key}
 
+refuse_managed_asset_cache || exit 1
 record=$(git rev-parse --git-path precheck-failed)
 started=$SECONDS
 step() { local name=$1 t=$SECONDS; shift; echo "== $name"; "$@" || { echo "PRECHECK-FAIL $name ($((SECONDS - t)) s)"; return 1; }; echo "   $name $((SECONDS - t)) s"; }
@@ -124,7 +127,7 @@ run_tests() { # the failed ones first, then everything of the touched crates
 }
 assets() {
     mkdir -p "$(dirname -- "$DBOTA_ASSETS")"
-    (flock 9 && cargo run --release -q -- import) 9> "$DBOTA_ASSETS.lock" > /dev/null 2>&1 || echo "   no asset cache (no usable install): the tests that need it fail"
+    (flock 9 && import_assets) 9> "$DBOTA_ASSETS.lock" > /dev/null 2>&1 || echo "   no asset cache (no usable install): the tests that need it fail"
     return 0
 }
 [ -d "$DBOTA_ASSETS" ] || step assets assets

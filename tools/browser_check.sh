@@ -11,6 +11,8 @@
 # Output goes to GATE_LOGS/browser (default temp/gate/browser).
 set -euo pipefail
 here=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)
+# shellcheck source=tools/client_env.sh
+. "$here/tools/client_env.sh"
 cd "$here"
 bota=${DBOTA_GATE_BOTA:-$here/../bota}
 radovid=${DBOTA_GATE_RADOVID:-$here/../radovid}
@@ -36,7 +38,7 @@ radovid_bin=$(target_of "$radovid")/release/radovid
 chat=$work/chat.brp
 rm -f "$chat" "$work/server.out"
 cargo build --release --quiet
-"$server" --port 0 --bind 127.0.0.1 --mode realtime --tick-rate 120 --map 2 --players 2 --dummy-seat --pick-secs 1 \
+run_scrubbed "$server" --port 0 --bind 127.0.0.1 --mode realtime --tick-rate 120 --map 2 --players 2 --dummy-seat --pick-secs 1 \
     --tactical-secs 0 --seed 7 --empty-after-secs 4 --replay "$chat" > "$work/server.out" 2>&1 &
 srv=$!
 addr=
@@ -58,14 +60,14 @@ export PROFILE=release
 pages=temp/gate-pages
 rm -rf "$pages"
 OUT=$pages/plain web/build.sh
-DBOTA_INDEX_PAGE="$here/$pages/plain" python3 -m unittest discover -s web/test -p test_cache_index.py -v
+DBOTA_INDEX_PAGE="$here/$pages/plain" in_private_environment python3 -m unittest discover -s web/test -p test_cache_index.py -v
 # (both clients: the real-input cursor check runs the page on the WebGL2 and the WebGPU one)
 DBOTA_WEB_REPLAY=$chat DBOTA_WEB_ARGS="--replay built-in --pov 0 --seek 4600" OUT=$pages/replay web/build.sh
 DBOTA_WEB_REPLAY=$chat DBOTA_WEB_ARGS="--replay built-in --pov 0 --settings video" APIS=webgpu OUT=$pages/video web/build.sh
 rm -f "$work/cache.zip"
 "$here/tools/test_client.sh" export-cache "$work/cache.zip"
 
-python3 web/test/smoke.py --import-page "$pages/replay" --reference-cache "$DBOTA_ASSETS" \
+in_private_environment python3 web/test/smoke.py --import-page "$pages/replay" --reference-cache "$DBOTA_ASSETS" \
     --prepared-page "$pages/replay" --cache-zip "$work/cache.zip" --cache-folder "$DBOTA_ASSETS" \
     --served-page "$pages/plain" --startup-page "$pages/plain" --keys-page "$pages/plain" --boot-page "$pages/plain" --busy-page "$pages/plain" \
     --replay-page "$pages/replay" --scene-page "$pages/replay" --cursor-page "$pages/replay" --pixels-page "$pages/replay" \

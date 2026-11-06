@@ -69,6 +69,33 @@ pub fn stamp_prefix(plan_id: &str) -> String {
 }
 
 /// Retention protects caches used within this window, up to the managed capacity.
+/// Whether `path` is the managed cache root (`~/.cache/dbota`) or inside it, by its names or, as
+/// far as it exists, by where its symbolic links lead: the folder whose maintenance owns and
+/// prunes caches, which a test or tool must not name as its own.
+pub fn inside_managed_cache(path: &Path) -> bool {
+    fn named(path: &Path) -> bool {
+        let parts: Vec<_> = path.components().collect();
+        parts
+            .windows(2)
+            .any(|pair| pair[0].as_os_str() == ".cache" && pair[1].as_os_str() == "dbota")
+    }
+    if named(path) {
+        return true;
+    }
+    // The longest prefix that exists is resolved; the rest is appended as it is spelled.
+    let (mut existing, mut rest) = (path, PathBuf::new());
+    loop {
+        if let Ok(real) = fs::canonicalize(existing) {
+            return named(&real.join(&rest));
+        }
+        let (Some(parent), Some(name)) = (existing.parent(), existing.file_name()) else {
+            return false;
+        };
+        rest = Path::new(name).join(&rest);
+        existing = parent;
+    }
+}
+
 pub const CACHE_USE_WINDOW: Duration = Duration::from_secs(24 * 60 * 60);
 pub const MAX_CACHES: usize = 8;
 

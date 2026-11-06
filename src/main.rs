@@ -99,6 +99,8 @@ mod sound;
 mod sound_file;
 mod soundscape;
 mod stats;
+#[cfg(not(target_arch = "wasm32"))]
+mod steering;
 mod strategy;
 mod talents;
 mod talk;

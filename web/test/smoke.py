@@ -136,6 +136,14 @@ def cache_folder():
     return pathlib.Path(given)
 
 
+# The environment of the services the checks start, which start game servers: without the variables that steer
+# a client or a server from outside (tools/client_environment.txt), such as a seat list in the caller's shell.
+def without_steering_variables():
+    listed = (HERE.parent.parent / "tools/client_environment.txt").read_text().splitlines()
+    steering = {line.strip() for line in listed if line.strip() and not line.startswith("#")}
+    return {name: value for name, value in os.environ.items() if name not in steering}
+
+
 class Quiet(http.server.SimpleHTTPRequestHandler):
     def log_message(self, *args):
         pass
@@ -1463,7 +1471,8 @@ def check_replays_page(directory, server_bin, radovid_bin, shots=False):
     shutil.copytree(cache_folder(), page_dir / "cache", copy_function=os.link)
     (work / "radovid.toml").write_text(radovid_config(work, page_dir, server_bin, port, game, cert, key))
     service = subprocess.Popen([radovid_bin, "serve", "--config", str(work / "radovid.toml")],
-                               stdout=subprocess.DEVNULL, stderr=open(work / "radovid.log", "w"))
+                               stdout=subprocess.DEVNULL, stderr=open(work / "radovid.log", "w"),
+                               env=without_steering_variables())
     try:
         wait_port(port)
         with sync_playwright() as p:

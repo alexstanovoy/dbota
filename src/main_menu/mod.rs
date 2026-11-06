@@ -37,8 +37,6 @@ pub use core::Claim;
 pub use core::Page;
 pub use core::{Act, DEFAULT_NAME, GameKind, MenuCore};
 pub use launch::Trust;
-#[cfg(all(test, not(target_arch = "wasm32")))]
-pub(crate) use launch::scrubbed_command;
 pub use prefs::page_service;
 pub use preview::{NAMES as PREVIEWS, view as preview};
 pub use screens::Disabled;

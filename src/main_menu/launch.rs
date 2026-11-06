@@ -231,30 +231,10 @@ pub(super) fn server_binary(
     ))
 }
 
-/// The variables that steer a client or a game server from outside, one name a line: the same
-/// list the test harnesses and tools keep out of what they start.
-#[cfg(not(target_arch = "wasm32"))]
-const STEERING_VARIABLES: &str = include_str!("../../tools/client_environment.txt");
-
-/// A command that starts `program` without the variables that steer a game server (a seat list
-/// or referee key in the player's shell must not decide who sits in a lobby this client hosts).
-#[cfg(not(target_arch = "wasm32"))]
-pub(crate) fn scrubbed_command(program: impl AsRef<std::ffi::OsStr>) -> std::process::Command {
-    let mut command = std::process::Command::new(program);
-    for name in STEERING_VARIABLES
-        .lines()
-        .map(str::trim)
-        .filter(|line| !line.is_empty() && !line.starts_with('#'))
-    {
-        command.env_remove(name);
-    }
-    command
-}
-
 /// The wire a game server binary speaks, from its own `--wire-fingerprint`.
 #[cfg(not(target_arch = "wasm32"))]
 fn wire_of(server: &std::path::Path) -> Option<u64> {
-    let output = scrubbed_command(server)
+    let output = crate::steering::scrubbed_command(server)
         .arg("--wire-fingerprint")
         .stdin(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
@@ -312,7 +292,7 @@ fn start_server(
 ) -> std::io::Result<(Hosted, String)> {
     use std::io::BufRead;
     use std::process::Stdio;
-    let mut command = scrubbed_command(server_binary(server, environment)?);
+    let mut command = crate::steering::scrubbed_command(server_binary(server, environment)?);
     command
         .args(args)
         .stdin(Stdio::null())

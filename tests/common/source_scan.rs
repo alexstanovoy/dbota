@@ -159,8 +159,9 @@ fn after_character_or_lifetime(chars: &[char], start: usize) -> usize {
     }
 }
 
-/// A string literal of Rust source and whether it only sets or removes a variable of a child
-/// process (`.env("NAME", ..)`, `.env_remove("NAME")`), which cannot read anything.
+/// A string literal of Rust source and whether it only sets a variable of a child process
+/// (`.env("NAME", value)`, with a value: removing `HOME` would hand the child the system's idea
+/// of the home), which cannot read anything.
 #[derive(Debug, PartialEq)]
 pub struct Literal {
     pub text: String,
@@ -177,7 +178,8 @@ pub fn literals(source: &str) -> Vec<Literal> {
         let for_child = at >= 3
             && tokens[at - 1] == Token::Punct('(')
             && tokens[at - 3] == Token::Punct('.')
-            && matches!(&tokens[at - 2], Token::Word(w) if w == "env" || w == "env_remove");
+            && tokens.get(at + 1) == Some(&Token::Punct(','))
+            && matches!(&tokens[at - 2], Token::Word(w) if w == "env");
         found.push(Literal {
             text: text.clone(),
             for_child,
@@ -221,7 +223,7 @@ pub fn environment_violations(
     }
     for literal in literals(source) {
         let name = literal.text.as_str();
-        if is_project_variable(name) && !handled(name) && !name.ends_with("_CHILD") {
+        if is_project_variable(name) && !handled(name) {
             found.push(format!("unhandled variable {name}"));
         }
         if is_location_variable(name) && !resolver && !literal.for_child {

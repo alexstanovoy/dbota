@@ -38,6 +38,8 @@ mkdir -p "$logs"
 . "$here/tools/stamp.sh"
 # shellcheck source=tools/client_env.sh
 . "$here/tools/client_env.sh"
+# Windows on the desktop, or a compositor of an outer run, would take the tests off their private home.
+unset DBOTA_SHOW DBOTA_HEADLESS
 # The gate confirms; the precheck finds. It starts only on a tree tools/precheck.sh has passed, and not again on a tree that
 # already passed (formatting is left out of both). GATE_PRECHECKED=1 and GATE_AGAIN=1 skip the two checks, for a head that is
 # gated on behalf of something else (a merge, a consumer check) and was checked elsewhere.
@@ -71,6 +73,8 @@ key=$(printf '%s' "$key" | sha256sum | cut -c1-16)
 export DBOTA_REFERENCE=${DBOTA_REFERENCE:-${XDG_CACHE_HOME:-$HOME/.cache}/dbota-gate/reference-v6}
 export DBOTA_ASSETS=${DBOTA_ASSETS:-${DBOTA_GATE_ASSETS:-${XDG_CACHE_HOME:-$HOME/.cache}/dbota-gate}/$key}
 
+refuse_managed_asset_cache || exit 1
+
 step() { # name command...
     local name=$1
     shift
@@ -103,7 +107,7 @@ step web-webgpu web webgpu
 echo "== assets"
 have_install=0
 mkdir -p "$(dirname -- "$DBOTA_ASSETS")"
-if (flock 9 && cargo run --release -q -- import) 9> "$DBOTA_ASSETS.lock" > "$logs/import.log" 2>&1; then
+if (flock 9 && import_assets) 9> "$DBOTA_ASSETS.lock" > "$logs/import.log" 2>&1; then
     have_install=1
 else
     tail -n 5 "$logs/import.log"
@@ -136,7 +140,7 @@ if [ "$have_install" = 1 ]; then
     if [ -z "$replay" ]; then
         echo "== replay (recorded by ../bota)"
         replay=$logs/replay.brp
-        if ! cargo run --release -q --manifest-path "$here/../bota/Cargo.toml" -p bota_server --example local_match \
+        if ! run_scrubbed cargo run --release -q --manifest-path "$here/../bota/Cargo.toml" -p bota_server --example local_match \
             -- --replay "$replay" > "$logs/replay.log" 2>&1; then
             tail -n 40 "$logs/replay.log"
             echo "GATE-FAIL replay (full output: $logs/replay.log)"

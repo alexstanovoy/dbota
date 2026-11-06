@@ -14,12 +14,13 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, mpsc};
 use std::time::{Duration, Instant};
 
+// The client's own list of steering variables and its scrubbed commands, shared by path.
+#[path = "../../src/steering.rs"]
+pub mod steering;
+
 /// The variables no client inherits, from the list the shell wrappers read too.
 pub fn client_environment() -> impl Iterator<Item = &'static str> {
-    include_str!("../../tools/client_environment.txt")
-        .lines()
-        .map(str::trim)
-        .filter(|line| !line.is_empty() && !line.starts_with('#'))
+    steering::variables()
 }
 
 /// The folders that say where a user's files are, which the isolated client points into its
@@ -34,20 +35,22 @@ const LOCATION_VARIABLES: &[&str] = &[
     "APPDATA",
 ];
 
+fn is_location(key: &OsStr) -> bool {
+    key.to_str()
+        .is_some_and(|key| LOCATION_VARIABLES.contains(&key))
+}
+
 fn is_isolated(key: &OsStr) -> bool {
-    key.to_str().is_some_and(|key| {
-        LOCATION_VARIABLES.contains(&key) || client_environment().any(|name| name == key)
-    })
+    is_location(key)
+        || key
+            .to_str()
+            .is_some_and(|key| client_environment().any(|name| name == key))
 }
 
 /// A command that starts `program` (a game server, or anything that must not take the steering
 /// variables of the developer's shell) without the variables of `tools/client_environment.txt`.
 pub fn server_command(program: impl AsRef<OsStr>) -> Command {
-    let mut command = Command::new(program);
-    for name in client_environment() {
-        command.env_remove(name);
-    }
-    command
+    steering::scrubbed_command(program)
 }
 
 /// A client's files live until its last command or child is dropped.
@@ -133,7 +136,14 @@ impl ClientCommand {
         self.command.env("XDG_DATA_HOME", dir);
         self
     }
+    /// Removes a variable of the client, except its home and XDG folders: without `HOME` a
+    /// program falls back to the home the system names, which is the user's.
     pub fn env_remove(&mut self, key: impl AsRef<OsStr>) -> &mut Self {
+        let key = key.as_ref();
+        assert!(
+            !is_location(key),
+            "the isolated client keeps {key:?} to itself: removing it hands the client the user's home"
+        );
         self.command.env_remove(key);
         self
     }
@@ -176,6 +186,7 @@ pub fn wrapped(prefix: Command) -> ClientCommand {
 }
 
 fn isolated_client(cache: &Path, prefix: Option<Command>, headless: bool) -> ClientCommand {
+    refuse_managed_cache(cache);
     static NEXT_CLIENT: AtomicU32 = AtomicU32::new(0);
     let root = PathBuf::from(env!("CARGO_TARGET_TMPDIR"));
     let scratch = (0..1024)
@@ -229,13 +240,14 @@ fn isolated_client(cache: &Path, prefix: Option<Command>, headless: bool) -> Cli
     }
 }
 
-/// Whether `path` is the user's managed asset cache or inside it (`~/.cache/dbota/...`), where
-/// a client run would write the use stamps its maintenance reads.
-pub fn is_managed_cache(path: &Path) -> bool {
-    let parts: Vec<_> = path.components().collect();
-    parts
-        .windows(2)
-        .any(|pair| pair[0].as_os_str() == ".cache" && pair[1].as_os_str() == "dbota")
+/// Panics when `cache` is the user's managed asset cache or inside it (`~/.cache/dbota/...`,
+/// also through symbolic links): a client run would write the use stamps its maintenance reads.
+pub fn refuse_managed_cache(cache: &Path) {
+    assert!(
+        !dbota_import::cache_dir::inside_managed_cache(cache),
+        "DBOTA_ASSETS names the managed asset cache {}: import into a private folder",
+        cache.display()
+    );
 }
 
 pub fn asset_cache() -> PathBuf {
@@ -243,11 +255,7 @@ pub fn asset_cache() -> PathBuf {
         .filter(|path| !path.is_empty())
         .map(PathBuf::from)
         .expect("DBOTA_ASSETS must name a test asset cache");
-    assert!(
-        !is_managed_cache(&cache),
-        "DBOTA_ASSETS names the managed asset cache {}: import into a private folder",
-        cache.display()
-    );
+    refuse_managed_cache(&cache);
     assert!(
         cache.join(dbota_import::cache_dir::INDEX).is_file(),
         "test asset cache has no index: {}",
@@ -399,7 +407,7 @@ fn run_script(address: &str, script: &str, tag: &str, shots: Option<&Path>) {
         command.arg("--screenshot-dir").arg(shots);
     }
     let mut child = command
-        .env("XDG_DATA_HOME", scratch.join("data"))
+        .data_dir(&scratch.join("data"))
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
         .spawn()

@@ -119,7 +119,7 @@ impl Server {
                 args.extend([option, value]);
             }
         }
-        let mut child = Command::new(crate::main_menu::tests::server_binary())
+        let mut child = crate::steering::scrubbed_command(crate::main_menu::tests::server_binary())
             .args(args)
             .args(extra)
             .stdout(Stdio::piped())
@@ -295,6 +295,10 @@ impl Client {
         crate::replays::keep_in_for_tests(scratch.0.join("replays"));
         let config = config.to_str().expect("a UTF-8 path");
         let cache = std::env::var("DBOTA_ASSETS").expect("DBOTA_ASSETS names a test asset cache");
+        assert!(
+            !dbota_import::cache_dir::inside_managed_cache(std::path::Path::new(&cache)),
+            "DBOTA_ASSETS names the managed asset cache {cache}: import into a private folder"
+        );
         let shots = scratch.0.join("shots");
         let shots = shots.to_str().expect("a UTF-8 path");
         let mut line = vec![
@@ -891,5 +895,30 @@ fn client_ignores_inherited_service_and_seat_environment() {
     assert!(
         String::from_utf8_lossy(&output.stdout).contains("1 passed"),
         "the child test did not run"
+    );
+}
+
+#[test]
+fn the_in_process_client_refuses_the_managed_asset_cache() {
+    if std::env::var_os("DBOTA_MANAGED_CACHE_CHILD").is_some() {
+        Client::run(&[]);
+        return;
+    }
+    let output = Command::new(std::env::current_exe().expect("the test binary"))
+        .args([
+            "--exact",
+            "e2e::harness::the_in_process_client_refuses_the_managed_asset_cache",
+            "--nocapture",
+        ])
+        .env("DBOTA_MANAGED_CACHE_CHILD", "1")
+        .env("DBOTA_ASSETS", "/nowhere/.cache/dbota/v9")
+        .output()
+        .expect("the isolated test starts");
+    assert!(!output.status.success());
+    assert!(
+        String::from_utf8_lossy(&output.stderr)
+            .contains("DBOTA_ASSETS names the managed asset cache"),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
     );
 }
