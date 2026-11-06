@@ -497,6 +497,69 @@ fn leave_during_the_picks_cancels_the_match() {
     );
 }
 
+/// LEAVE after a game of the local lobby this client hosts never stops the lobby's server: a
+/// mate who sat after the host's last look at the lobby plays on. The host makes the lobby from
+/// the menu, a foe and a mate join (the mate on the host's side), and mid-match the host leaves
+/// with DISCONNECT and LEAVE: the client says the server runs on while anyone plays, and the
+/// mate's match goes on ticking.
+#[test]
+#[ignore = "draws on the GPU in a headless compositor: tools/visual_check.sh runs it"]
+fn leave_after_hosting_keeps_the_server_running_for_the_others() {
+    use bota_client_core::{Link, play};
+    use bota_proto::HeroId;
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicU32, Ordering};
+    let scratch = Scratch::new("leave-hosted");
+    let port = std::net::TcpListener::bind("127.0.0.1:0")
+        .and_then(|l| l.local_addr())
+        .expect("a free port")
+        .port();
+    let address = format!("127.0.0.1:{port}");
+    let ticking = scratch.0.join("mate-ticking");
+    let script = format!(
+        "await:menu;await:button:create;key:Backspace;key:Backspace;key:Backspace;\
+         key:Backspace;text:{port};click:create;await:game;click:pick shadow fiend;\
+         click:pick ready;await:level:1;key:Escape;await:menu;click:disconnect;\
+         await:button:reconnect;click:leave match;await:popup;click:ok;\
+         await:text:runs on while anyone plays;await:file:{};key:Escape;await:popup;click:ok",
+        ticking.display()
+    );
+    let mut command = common::client();
+    command.env("BOTA_SERVER", common::server_binary());
+    let mut host = Running::start(&scratch, &[], &script, command);
+    host.until_played("await:game");
+    // The foe sits on the other side, the mate on the host's.
+    let mate_tick = Arc::new(AtomicU32::new(0));
+    let mut players = Vec::new();
+    for name in ["foe", "mate"] {
+        let (mut link, seated) =
+            Link::join(&address, name, HeroId::SHADOW_FIEND, None).expect("a seat");
+        let tick = Arc::clone(&mate_tick);
+        players.push(std::thread::spawn(move || {
+            let _ = play(&mut link, seated, &mut (), |session| {
+                if name == "mate" {
+                    let now = session.current().map_or(0, |view| view.tick);
+                    tick.store(now, Ordering::SeqCst);
+                }
+                Vec::new()
+            });
+        }));
+    }
+    host.until_played("await:text:runs on while anyone plays");
+    // The host has left: the mate's match goes on.
+    let left_at = mate_tick.load(Ordering::SeqCst);
+    let deadline = Instant::now() + PATIENCE;
+    while mate_tick.load(Ordering::SeqCst) < left_at + 90 {
+        assert!(
+            Instant::now() < deadline,
+            "the mate's match stopped at tick {left_at}"
+        );
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    std::fs::write(&ticking, "").expect("the barrier lifted");
+    played("a hosted game left", host.finish(), &script);
+}
+
 /// With no service configured the menu opens on the local pages, and a game's address typed
 /// with `text:` (as an input method commits it) joins that game.
 #[test]

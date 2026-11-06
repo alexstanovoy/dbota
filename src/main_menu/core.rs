@@ -391,18 +391,19 @@ pub(super) struct JoinPrompt {
     pub(super) form: Form,
 }
 
-/// A leave under way: its id and deadline, the game it tells, and whether that game is the local
-/// lobby's own with others still seated in it.
+/// A leave under way: its id and deadline, the game it tells, whether that game is the local
+/// lobby's own, and whether its seat was left in the picks.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) struct Leaving {
     id: u64,
     until: Instant,
     game: SeatOf,
     hosted: bool,
-    others: bool,
+    in_picks: bool,
 }
 
-/// Which game a launch takes a seat of, to tell one game from another.
+/// Which game a launch takes a seat of, to tell one game from another: an address by its host
+/// and port, `localhost` and `127.0.0.1` alike, with or without `tcp://`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum SeatOf {
     Match(MatchId),
@@ -416,10 +417,20 @@ impl SeatOf {
             Launch::Seat(h) | Launch::Watch(h) | Launch::Demo { handoff: h, .. } => {
                 Some(SeatOf::Match(h.match_id))
             }
-            Launch::Direct { address, .. } => Some(SeatOf::Address(address.clone())),
+            Launch::Direct { address, .. } => Some(SeatOf::Address(same_address(address))),
             Launch::Given => Some(SeatOf::Given),
             Launch::Host { .. } | Launch::Replay(_) | Launch::Blob(_) => None,
         }
+    }
+}
+
+/// An address as one game: no `tcp://`, the loopback host spelled one way, lower case.
+fn same_address(address: &str) -> String {
+    let address = address.trim().to_ascii_lowercase();
+    let address = address.strip_prefix("tcp://").unwrap_or(&address);
+    match address.strip_prefix("localhost:") {
+        Some(port) => format!("127.0.0.1:{port}"),
+        None => address.to_owned(),
     }
 }
 
@@ -539,8 +550,9 @@ pub struct MenuCore {
     last_seat: Option<Launch>,
     /// The player asked to quit: the shell ends the client.
     quit: bool,
-    /// The local lobby's server is to end: its match was left for good.
-    end_hosted: bool,
+    /// A leave of the local lobby's own game is to be stopped, once: a new lobby replaces the
+    /// server it was telling, and nothing of the old game may reach the new one.
+    cancel_leave: bool,
     /// The leave under way: LEAVE telling a game whose seat was left that the match is left for
     /// good (the shell runs it, `super::leave`). An outcome of another id, or one past its
     /// deadline, is never taken.
@@ -551,11 +563,8 @@ pub struct MenuCore {
     last_leave_id: u64,
     /// The game on screen is in its picks, as the shell last saw it.
     pub(super) game_in_picks: bool,
-    /// The game on screen has another person seated, as the shell last saw it.
-    game_with_others: bool,
-    /// What the seat RECONNECT offers was left in: its picks, and whether others sat in it.
+    /// The seat RECONNECT offers was left in the picks.
     pub(super) left_in_picks: bool,
-    left_with_others: bool,
     /// The player left the game: the shell lets it go.
     leave: bool,
     /// The player confirmed leaving the match: the shell tells the server, then leaves.
@@ -685,14 +694,12 @@ impl MenuCore {
             ladder: Vec::new(),
             server_binary: None,
             hosted_at: None,
-            end_hosted: false,
+            cancel_leave: false,
             leaving: None,
             leave_order: None,
             last_leave_id: 0,
             game_in_picks: false,
-            game_with_others: false,
             left_in_picks: false,
-            left_with_others: false,
             demo: None,
             demo_asked: None,
             demo_match: None,
@@ -779,9 +786,10 @@ impl MenuCore {
         std::mem::take(&mut self.quit)
     }
 
-    /// The local lobby's game server is to end, once: the shell lets it go.
-    pub fn take_end_hosted(&mut self) -> bool {
-        std::mem::take(&mut self.end_hosted)
+    /// The leave of the local lobby's own game is to be stopped, once: a new lobby replaces its
+    /// server (the shell starts the new one only once the leave has stopped).
+    pub fn take_cancel_leave(&mut self) -> bool {
+        std::mem::take(&mut self.cancel_leave)
     }
 
     #[cfg(not(target_arch = "wasm32"))]
@@ -801,7 +809,7 @@ impl MenuCore {
         let told = match outcome {
             Outcome::Left => "You left the game",
             Outcome::Refused(_) => "The game holds no seat of yours any more",
-            Outcome::Unreachable(_) => UNTOLD,
+            Outcome::Unreachable(_) | Outcome::Cancelled => UNTOLD,
         };
         self.leave_finished(&leaving, told);
     }
@@ -882,11 +890,9 @@ impl MenuCore {
         self.launch.take()
     }
 
-    /// What the shell sees of the game on screen: whether it is in its picks, and whether
-    /// another person sits in it.
-    pub fn set_game_company(&mut self, in_picks: bool, with_others: bool) {
+    /// What the shell sees of the game on screen: whether it is in its picks.
+    pub fn set_game_in_picks(&mut self, in_picks: bool) {
         self.game_in_picks = in_picks;
-        self.game_with_others = with_others;
     }
 
     /// The shell has the game on screen.
@@ -922,7 +928,6 @@ impl MenuCore {
         self.game_unsafe = false;
         self.reconnect = self.last_seat.take().filter(|_| !over);
         self.left_in_picks = self.game_in_picks;
-        self.left_with_others = self.game_with_others;
         // A menu that came up under a game reaches the service now.
         if !self.tried_service {
             self.reach_service();
@@ -1530,6 +1535,14 @@ impl MenuCore {
     }
 
     pub(super) fn start(&mut self, launch: Launch) {
+        if matches!(launch, Launch::Host { .. })
+            && self.leaving.as_ref().is_some_and(|leaving| leaving.hosted)
+        {
+            // The new lobby replaces the server the leave was telling: the leave stops first,
+            // and its outcome is never taken.
+            self.leaving = None;
+            self.cancel_leave = true;
+        }
         if self
             .leaving
             .as_ref()
@@ -2020,8 +2033,8 @@ impl MenuCore {
     /// told the match is left for good, as LEAVE GAME tells it (`super::leave`: the seat taken
     /// once more out of sight, the surrender once admitted), within [`LEAVE_REACH`]; one that
     /// cannot be reached is forgotten untold. The local lobby's own game is told the same over
-    /// loopback, and its server ends after unless another person sits in it. A service's match
-    /// stays the service's: MY GAMES lists it while the service says it runs.
+    /// loopback, and its server runs on for whoever plays. A service's match stays the
+    /// service's: MY GAMES lists it while the service says it runs.
     fn leave_seat(&mut self) {
         let Some(left) = self.reconnect.take() else {
             return;
@@ -2044,26 +2057,23 @@ impl MenuCore {
             until,
             game,
             hosted,
-            others: self.left_with_others,
+            in_picks: self.left_in_picks,
         });
         self.leave_order = Some((self.last_leave_id, left, until));
         self.tell("Leaving the game…".to_owned(), false);
     }
 
-    /// A leave is over, `told` saying how: the local lobby's server ends unless another person
-    /// sits in its game.
+    /// A leave is over, `told` saying how. The local lobby's server is never stopped here: this
+    /// client cannot know who plays on (a seat may have been taken since it last saw the lobby),
+    /// so the server ends by itself once its match is over or empty (`--empty-after-secs`).
     fn leave_finished(&mut self, leaving: &Leaving, told: &str) {
-        if leaving.hosted && leaving.others {
-            self.tell(
-                format!("{told}: your lobby's server runs on for the others"),
-                false,
-            );
-            return;
-        }
-        if leaving.hosted {
-            self.end_hosted = true;
-        }
-        self.tell(told.to_owned(), false);
+        let told = match (leaving.hosted, leaving.in_picks) {
+            // A seat left in the picks cancels the match, the local lobby's too.
+            (_, true) => format!("{told}: the match is cancelled"),
+            (true, false) => format!("{told}: your lobby's server runs on while anyone plays"),
+            (false, false) => told.to_owned(),
+        };
+        self.tell(told, false);
     }
 
     /// The leave under way runs out of time now, as if its deadline had passed.

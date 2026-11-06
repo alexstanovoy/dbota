@@ -35,7 +35,30 @@ struct Host(Option<Hosted>);
 /// LEAVE telling a game whose seat was left that the match is left for good: a leave of its own,
 /// apart from any game session.
 #[derive(Default)]
-struct Leaver(#[cfg(not(target_arch = "wasm32"))] Option<super::leave::LeaveOp>);
+struct Leaver {
+    #[cfg(not(target_arch = "wasm32"))]
+    op: Option<super::leave::LeaveOp>,
+    /// A new local lobby waiting for the stopped leave of the old one to end: the new server is
+    /// started only once nothing of the old game's leave can reach it.
+    #[cfg(not(target_arch = "wasm32"))]
+    waiting_host: Option<Launch>,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl Leaver {
+    /// The launch to open now: a new local lobby waits while a leave is still going (it is the
+    /// old lobby's, stopped by the menu), and comes back once it has ended.
+    fn hold_host(&mut self, launch: Option<Launch>) -> Option<Launch> {
+        match launch {
+            Some(host @ Launch::Host { .. }) if self.op.is_some() => {
+                self.waiting_host = Some(host);
+                None
+            }
+            None if self.op.is_none() => self.waiting_host.take(),
+            launch => launch,
+        }
+    }
+}
 
 /// A canned view drawn instead of the live one (`--menu-preview`).
 #[derive(Resource)]
@@ -167,10 +190,6 @@ fn drive(
         exit.write(AppExit::Success);
         return;
     }
-    if core.take_end_hosted() {
-        // The local lobby's match was left for good: its server ends.
-        host.0 = None;
-    }
     core.set_profile_name(&settings.name);
     core.set_replay_policy(settings.replays);
     core.update();
@@ -183,6 +202,8 @@ fn drive(
     if let Some(launch) = &launch {
         post.expect(origin_of(launch, &args));
     }
+    #[cfg(not(target_arch = "wasm32"))]
+    let launch = leaver.hold_host(launch);
     let mut opener = Opener {
         session: &mut session,
         post: &mut post,
@@ -255,17 +276,22 @@ impl Opener<'_, '_, '_> {
 #[cfg(not(target_arch = "wasm32"))]
 fn lead_leave(core: &mut MenuCore, leaver: &mut Leaver, trust: &Trust, args: &crate::Args) {
     use super::leave::{LeaveOp, Outcome};
+    if core.take_cancel_leave()
+        && let Some(op) = &leaver.op
+    {
+        op.cancel();
+    }
     if let Some((id, launch, until)) = core.take_leave_order() {
         match super::launch::leave_connector(&launch, trust, args) {
-            Ok((connect, hello)) => leaver.0 = Some(LeaveOp::start(id, connect, hello, until)),
+            Ok((connect, hello)) => leaver.op = Some(LeaveOp::start(id, connect, hello, until)),
             Err(error) => core.leave_done(id, Outcome::Unreachable(error.to_string())),
         }
     }
-    if let Some(op) = &mut leaver.0
+    if let Some(op) = &mut leaver.op
         && let Some(outcome) = op.poll()
     {
         core.leave_done(op.id, outcome);
-        leaver.0 = None;
+        leaver.op = None;
     }
 }
 
@@ -330,13 +356,7 @@ fn guard(
     let game = &session.0;
     let seated = game.my_slot.is_some() && matches!(game.source, Source::Live(_));
     core.set_game_unsafe(seated && game.over.is_none() && !game.lost);
-    let with_others = game.lobby.slots.iter().any(|seat| {
-        Some(seat.slot) != game.lobby.slot && seat.role == Some(bota_proto::Role::Player)
-    });
-    core.set_game_company(
-        seated && game.phase == bota_client_core::Phase::Lobby,
-        with_others,
-    );
+    core.set_game_in_picks(seated && game.phase == bota_client_core::Phase::Lobby);
     let disconnect = core.take_leave();
     let shown = core.shows_game();
     if !shown {

@@ -9,6 +9,8 @@
 //! game session: a failure here never ends the client. A leave the menu gave up on runs on until
 //! its deadline, unheard.
 
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, TryRecvError, sync_channel};
 use std::time::{Duration, Instant};
 
@@ -24,6 +26,8 @@ pub enum Outcome {
     Refused(String),
     /// The game could not be reached before the deadline: it is forgotten untold.
     Unreachable(String),
+    /// The leave was stopped ([`LeaveOp::cancel`]) before it said anything more.
+    Cancelled,
 }
 
 /// What [`Outcome::Left`] is made sure of with: the id of the probe sent after `LeaveGame`.
@@ -40,6 +44,7 @@ pub type Connect = Box<dyn FnMut(Duration) -> std::io::Result<Link> + Send>;
 pub struct LeaveOp {
     pub id: u64,
     done: Receiver<Outcome>,
+    cancelled: Arc<AtomicBool>,
 }
 
 impl LeaveOp {
@@ -47,17 +52,33 @@ impl LeaveOp {
     /// left, until `until`.
     pub fn start(id: u64, connect: Connect, hello: ClientMsg, until: Instant) -> LeaveOp {
         let (tell_done, done) = sync_channel(1);
+        let cancelled = Arc::new(AtomicBool::new(false));
+        let stop = Arc::clone(&cancelled);
         let spawned = std::thread::Builder::new()
             .name("dbota-leave".to_owned())
             .spawn(move || {
-                let _ = tell_done.send(tell(connect, &hello, until));
+                let _ = tell_done.send(tell(connect, &hello, until, &stop));
             });
         if let Err(error) = spawned {
             let (tell_done, done) = sync_channel(1);
             let _ = tell_done.send(Outcome::Unreachable(error.to_string()));
-            return LeaveOp { id, done };
+            return LeaveOp {
+                id,
+                done,
+                cancelled,
+            };
         }
-        LeaveOp { id, done }
+        LeaveOp {
+            id,
+            done,
+            cancelled,
+        }
+    }
+
+    /// Stops the leave: it opens no other connection and says no `LeaveGame` from now on. Its
+    /// outcome still comes, once it has stopped.
+    pub fn cancel(&self) {
+        self.cancelled.store(true, Ordering::SeqCst);
     }
 
     /// The outcome, once there is one.
@@ -79,11 +100,19 @@ enum Try {
     Again(String),
 }
 
-/// Tells the game the match is left, trying again until `until`.
-pub fn tell(mut connect: Connect, hello: &ClientMsg, until: Instant) -> Outcome {
+/// Tells the game the match is left, trying again until `until`, unless `cancelled` stops it.
+pub fn tell(
+    mut connect: Connect,
+    hello: &ClientMsg,
+    until: Instant,
+    cancelled: &AtomicBool,
+) -> Outcome {
     let mut wait = Duration::from_millis(100);
     loop {
-        let why = match one_try(&mut connect, hello, until) {
+        if cancelled.load(Ordering::SeqCst) {
+            return Outcome::Cancelled;
+        }
+        let why = match one_try(&mut connect, hello, until, cancelled) {
             Try::Done(outcome) => return outcome,
             Try::Again(why) => why,
         };
@@ -102,7 +131,12 @@ fn io_time(until: Instant) -> Option<Duration> {
     (!left.is_zero()).then(|| left.min(DEFAULT_IO_TIMEOUT))
 }
 
-fn one_try(connect: &mut Connect, hello: &ClientMsg, until: Instant) -> Try {
+fn one_try(
+    connect: &mut Connect,
+    hello: &ClientMsg,
+    until: Instant,
+    cancelled: &AtomicBool,
+) -> Try {
     let Some(io) = io_time(until) else {
         return Try::Again("out of time".to_owned());
     };
@@ -141,6 +175,9 @@ fn one_try(connect: &mut Connect, hello: &ClientMsg, until: Instant) -> Try {
             Ok(None) => return Try::Again("closed before the welcome".to_owned()),
             Err(error) => return Try::Again(format!("before the welcome: {error}")),
         }
+    }
+    if cancelled.load(Ordering::SeqCst) {
+        return Try::Done(Outcome::Cancelled);
     }
     // The surrender, then a probe behind it: its echo says the server has read both.
     let said = link
@@ -283,10 +320,12 @@ mod tests {
     fn leave(fake: &Fake, secs: u64) -> Outcome {
         let address = fake.address.clone();
         let connect: Connect = Box::new(move |io| Link::open(Endpoint::parse(&address)?, io));
+        let cancelled = AtomicBool::new(false);
         tell(
             connect,
             &hello(),
             Instant::now() + Duration::from_secs(secs),
+            &cancelled,
         )
     }
 
@@ -408,5 +447,26 @@ mod tests {
         let outcome = leave(&fake, 2);
         assert!(matches!(outcome, Outcome::Unreachable(_)), "{outcome:?}");
         fake.done();
+    }
+
+    /// A leave stopped before it starts opens no connection and says nothing.
+    #[test]
+    fn a_cancelled_leave_opens_no_connection() {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("a port");
+        let address = listener.local_addr().expect("bound").to_string();
+        listener.set_nonblocking(true).expect("non-blocking");
+        let connect: Connect = Box::new(move |io| Link::open(Endpoint::parse(&address)?, io));
+        let cancelled = AtomicBool::new(true);
+        let outcome = tell(
+            connect,
+            &hello(),
+            Instant::now() + Duration::from_secs(60),
+            &cancelled,
+        );
+        assert_eq!(outcome, Outcome::Cancelled);
+        assert!(
+            listener.accept().is_err(),
+            "no connection came to the server"
+        );
     }
 }

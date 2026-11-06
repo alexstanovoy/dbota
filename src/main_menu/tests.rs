@@ -2110,13 +2110,14 @@ fn a_refused_join_says_why_and_lists_the_lobbies_again() {
 }
 
 /// LEAVE beside RECONNECT, asked and answered: the seat is not offered again, and its game is
-/// told. After a game this client does not host, the game unreachable, it is forgotten and the
-/// local lobby's server is left alone. After the local lobby's own game, the lobby's real server
-/// is told over loopback (its seat taken back with its key, the surrender made sure), and with
-/// nobody else seated, the server this client started ends: nothing listens on its port any more.
+/// told. After a game this client does not host, the game unreachable, it is forgotten. After the
+/// local lobby's own game, left in the picks, the lobby's real server is told over loopback (its
+/// seat taken back with its key, the surrender made sure): the server cancels the match and ends
+/// by itself; the client stops nothing.
 #[test]
-fn leave_after_a_local_lobby_tells_its_server_and_ends_it() {
+fn leave_after_a_local_lobby_tells_its_server_which_ends_by_itself() {
     use super::leave::{Outcome, tell};
+    use std::sync::atomic::AtomicBool;
     let dir = Scratch::new("leave-host");
     let (mut menu, trust) = offline("host", &dir);
     let leave = |menu: &mut MenuCore| {
@@ -2139,10 +2140,6 @@ fn leave_after_a_local_lobby_tells_its_server_and_ends_it() {
     menu.leave_done(id, Outcome::Unreachable("refused".to_owned()));
     assert!(!menu.view().reconnect, "an unreachable game is forgotten");
     assert_eq!(menu.page(), Page::LocalLobby, "the menu stays where it was");
-    assert!(
-        !menu.take_end_hosted(),
-        "another game's LEAVE ends no server"
-    );
 
     let launch = host_launch(&mut menu, None);
     let Launch::Host { port, .. } = &launch else {
@@ -2158,11 +2155,11 @@ fn leave_after_a_local_lobby_tells_its_server_and_ends_it() {
         assert!(Instant::now() < deadline, "the lobby did not open");
         std::thread::sleep(Duration::from_millis(5));
     };
-    let hosted: Option<Hosted> = opened.server;
+    let _hosted: Option<Hosted> = opened.server;
     let listening = || std::net::TcpStream::connect(("127.0.0.1", port)).is_ok();
-    assert!(hosted.is_some() && listening(), "the lobby's server runs");
+    assert!(listening(), "the lobby's server runs");
     menu.game_started();
-    menu.set_game_company(true, false);
+    menu.set_game_in_picks(true);
     // The seat is left as a DISCONNECT leaves it.
     drop(opened.link);
     menu.left_game(None, false);
@@ -2174,39 +2171,69 @@ fn leave_after_a_local_lobby_tells_its_server_and_ends_it() {
     let args = <crate::Args as clap::Parser>::parse_from(["dbota"]);
     let (connect, hello) =
         super::launch::leave_connector(&left, &trust, &args).expect("a connector");
-    let outcome = tell(connect, &hello, until);
+    let outcome = tell(connect, &hello, until, &AtomicBool::new(false));
     assert_eq!(outcome, Outcome::Left, "the lobby's server was told");
     menu.leave_done(id, outcome);
     assert!(!menu.view().reconnect, "nothing to take again");
-    assert!(
-        menu.take_end_hosted(),
-        "nobody else sat: the lobby's server ends"
+    assert_eq!(
+        menu.view().status.map(|s| s.text).as_deref(),
+        Some("You left the game: the match is cancelled")
     );
-    assert!(!menu.take_end_hosted(), "once");
-    // As the shell does: the server is let go, and its process with it.
-    drop(hosted);
-    assert!(!listening(), "the lobby's server process is gone");
+    // The server, still held by this client, cancelled the match and ended by itself.
+    let deadline = Instant::now() + Duration::from_secs(PATIENCE);
+    while listening() {
+        assert!(Instant::now() < deadline, "the lobby's server played on");
+        std::thread::sleep(Duration::from_millis(20));
+    }
 }
 
-/// LEAVE after the local lobby's own game with another person seated in it: the game is told,
-/// and the lobby's server runs on for the others.
+/// What LEAVE says after the local lobby's own game: mid-match its server runs on while anyone
+/// plays (this client cannot know who does, and stops nothing); in the picks the match is
+/// cancelled, whoever else sat in it.
 #[test]
-fn leave_after_a_local_lobby_with_others_keeps_its_server() {
+fn leave_after_a_local_lobby_says_what_becomes_of_its_match() {
     use super::leave::Outcome;
-    let dir = Scratch::new("leave-host-others");
+    let dir = Scratch::new("leave-host-words");
+    let (mut menu, _trust) = offline("host", &dir);
+    for (in_picks, said) in [
+        (
+            false,
+            "You left the game: your lobby's server runs on while anyone plays",
+        ),
+        (true, "You left the game: the match is cancelled"),
+    ] {
+        host_launch(&mut menu, None);
+        menu.game_started();
+        menu.set_game_in_picks(in_picks);
+        menu.left_game(None, false);
+        menu.act(Act::LeaveSeat);
+        menu.act(Act::Answer(true));
+        let (id, _, _) = menu.take_leave_order().expect("LEAVE tells the game");
+        menu.leave_done(id, Outcome::Left);
+        assert_eq!(menu.view().status.map(|s| s.text).as_deref(), Some(said));
+    }
+}
+
+/// A new local lobby replaces the server a leave was telling: that leave is stopped and its
+/// outcome never taken, so nothing of the old game reaches the new lobby on the same port.
+#[test]
+fn a_new_local_lobby_stops_the_leave_of_the_old_one() {
+    use super::leave::Outcome;
+    let dir = Scratch::new("leave-host-new");
     let (mut menu, _trust) = offline("host", &dir);
     host_launch(&mut menu, None);
     menu.game_started();
-    menu.set_game_company(false, true);
     menu.left_game(None, false);
     menu.act(Act::LeaveSeat);
     menu.act(Act::Answer(true));
-    let (id, _, _) = menu.take_leave_order().expect("LEAVE tells the game");
-    menu.leave_done(id, Outcome::Left);
-    assert!(!menu.take_end_hosted(), "the others play on");
-    assert_eq!(
+    let (old, _, _) = menu.take_leave_order().expect("LEAVE tells the game");
+    host_launch(&mut menu, None);
+    assert!(menu.take_cancel_leave(), "the old lobby's leave is stopped");
+    menu.leave_done(old, Outcome::Left);
+    assert_ne!(
         menu.view().status.map(|s| s.text).as_deref(),
-        Some("You left the game: your lobby's server runs on for the others")
+        Some("You left the game: your lobby's server runs on while anyone plays"),
+        "the stopped leave's outcome is not taken"
     );
 }
 

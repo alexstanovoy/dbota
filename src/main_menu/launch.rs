@@ -223,6 +223,12 @@ fn wire_of(server: &std::path::Path) -> Option<u64> {
     u64::from_str_radix(String::from_utf8_lossy(&output.stdout).trim(), 16).ok()
 }
 
+/// How long the server of a lobby this client hosts plays on with every seat empty before it
+/// ends by itself: room for a dropped player to come back, and the host's LEAVE never stops a
+/// server others may still play on.
+#[cfg(not(target_arch = "wasm32"))]
+const HOSTED_EMPTY_AFTER_SECS: &str = "300";
+
 /// What a local lobby's game server is started with: on loopback, or on every address with
 /// plain text allowed (the local network is trusted, as Dota's LAN lobby trusts it); the
 /// rules' map and the lobby's ten seats under any rules; the match starting with the seats
@@ -240,7 +246,7 @@ pub fn host_args(port: u16, rules: LocalRules, lan: bool, cheats: bool) -> Vec<S
         &rules.map().0.to_string(),
         "--abandon-unjoined",
         "--empty-after-secs",
-        "300",
+        HOSTED_EMPTY_AFTER_SECS,
     ]
     .map(str::to_owned)
     .into();
