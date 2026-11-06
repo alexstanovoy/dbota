@@ -17,6 +17,7 @@ pub const GAP: f32 = 4.0;
 
 /// The frame of an icon: as it stands, under the cursor, chosen.
 const EDGE: Color = Color::srgb(0.42, 0.34, 0.16);
+const EDGE_UNAVAILABLE: Color = Color::srgb(0.18, 0.18, 0.18);
 const EDGE_HOVER: Color = Color::srgb(0.86, 0.72, 0.36);
 const EDGE_CHOSEN: Color = Color::srgb(0.92, 0.93, 0.95);
 
@@ -215,6 +216,7 @@ fn stock(
 /// The frame of each icon: brighter under the cursor, white for the item
 /// whose tree is shown.
 fn edges(
+    session: NonSend<Session>,
     chosen: Res<Chosen>,
     mut cells: Query<(&ShopCell, &Place, &Interaction, &mut BorderColor)>,
 ) {
@@ -223,9 +225,33 @@ fn edges(
             EDGE_HOVER
         } else if chosen.0 == Some(cell.0) && *place != Place::Tree {
             EDGE_CHOSEN
+        } else if *place == Place::Quick {
+            if purchasable(&session.0, cell.0) {
+                ui::GOLDEN
+            } else {
+                EDGE_UNAVAILABLE
+            }
         } else {
             EDGE
         };
         border.set_if_neq(BorderColor::all(edge));
     }
+}
+
+/// Gold marks a purchase the server can place now: enough gold and stock,
+/// with a carrier at any shop the missing parts require.
+fn purchasable(core: &bota_client_core::App, item: u16) -> bool {
+    let (Some(session), Some(view), Some(slot)) = (core.session(), core.view(), core.my_slot)
+    else {
+        return false;
+    };
+    let Some(player) = view.player(slot) else {
+        return false;
+    };
+    core.offers(item)
+        && player
+            .gold
+            .is_some_and(|gold| core.price_of(item).0 <= gold)
+        && core.stock_of(item).is_none_or(|stock| stock.left > 0)
+        && bota_client_core::purchase_fits(view, player, session.map(), ItemId(item))
 }
