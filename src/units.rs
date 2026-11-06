@@ -1445,6 +1445,7 @@ pub(crate) mod tests {
                 respawn_left: 0,
                 creep_score: None,
                 seen_at: Some(900),
+                backpack: None,
             }],
             projectiles: Vec::new(),
             loot: Vec::new(),

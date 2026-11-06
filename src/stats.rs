@@ -930,3 +930,344 @@ fn own_gives(k: u8, values: &[(&str, String)]) -> String {
         ),
     }
 }
+
+#[cfg(test)]
+mod backpack_tests {
+    use super::*;
+    use crate::e2e::harness::{Client, MID, Server};
+    use bevy::input::ButtonState;
+    use bota_client_core::{ControlledUnit, Intent, Refused, Slot};
+    use bota_proto::{Cheat, HeroId, ItemId, ItemSlot, ItemView, RejectReason};
+
+    fn strength_shown(client: &mut Client) -> Option<String> {
+        let world = client.world_mut();
+        world
+            .query::<(&Line, &Text, &Node, &InheritedVisibility)>()
+            .iter(world)
+            .find(|(line, _, node, seen)| {
+                matches!(line, Line::Attribute(0, Shown::Sum))
+                    && node.display != Display::None
+                    && seen.get()
+            })
+            .map(|(_, text, ..)| text.0.clone())
+    }
+
+    fn drag_item(client: &mut Client, from: u8, to: u8) {
+        client.until("the item slots laid out", |c| {
+            [from, to].into_iter().all(|slot| {
+                c.item_box(slot)
+                    .and_then(|node| c.centre_of(node))
+                    .is_some_and(|at| at != Vec2::ZERO)
+            })
+        });
+        let start = client
+            .item_box(from)
+            .and_then(|node| client.centre_of(node))
+            .expect("source slot");
+        let end = client
+            .item_box(to)
+            .and_then(|node| client.centre_of(node))
+            .expect("destination slot");
+        client.mouse(start);
+        client.button(MouseButton::Left, ButtonState::Pressed);
+        client.mouse(start + Vec2::new(0.0, -60.0));
+        client.mouse(end);
+        client.button(MouseButton::Left, ButtonState::Released);
+    }
+
+    fn await_swap(client: &mut Client, to: u8, item: ItemId) {
+        client.until("the item moved and the order acknowledged", |c| {
+            c.slot_of(item) == Some(to) && c.core().source.pending_orders() == 0
+        });
+    }
+
+    fn with_treads(near_shop: bool) -> (Server, Client, Fixed) {
+        let server = Server::start(1, &["--map", "1"]);
+        let mut client = Client::join(&server, HeroId::SHADOW_FIEND, &[]);
+        client.cheat(Cheat::StartGame);
+        client.cheat(Cheat::CreepSpawning { on: false });
+        client.cheat(Cheat::KillCreeps {
+            which: bota_proto::CreepSide::All,
+        });
+        if !near_shop {
+            client.stand_at(MID);
+        }
+        let bare = client.me().attributes.strength;
+        client.cheat(Cheat::Item {
+            item: ItemId::POWER_TREADS,
+        });
+        client.until("the item grants Strength", |c| {
+            c.me().attributes.strength > bare
+        });
+        let worn = client.me().attributes.strength;
+        client.until("the HUD shows the item Strength", |c| {
+            strength_shown(c) == Some(worn.to_int().to_string())
+        });
+        client.until("the game is ready for input", |c| {
+            c.world().resource::<crate::loading::Loading>().done()
+        });
+        (server, client, bare)
+    }
+
+    fn return_from_backpack(
+        server: &Server,
+        client: &mut Client,
+        slot: u8,
+        near_shop: bool,
+        item: ItemId,
+    ) {
+        server.frozen(|| {
+            drag_item(client, rules::INVENTORY_SLOTS as u8, slot);
+            assert!(
+                client.core().source.pending_orders() > 0,
+                "the real swap was issued"
+            );
+            let session = client.core().session().expect("a session");
+            let apply_tick =
+                client.tick() + bota_client_core::OrderLatency::measured(session).lands();
+            let predicted = session
+                .waits()
+                .mute_left(ControlledUnit::Hero, ItemSlot(slot), apply_tick)
+                .expect("inventory slot");
+            if near_shop {
+                assert_eq!(
+                    predicted, 0,
+                    "before acknowledgement, a shop swap predicts readiness at application"
+                );
+            } else {
+                assert_eq!(
+                    predicted,
+                    rules::BACKPACK_MUTE_TICKS,
+                    "before acknowledgement, a lane swap predicts six seconds after application"
+                );
+            }
+        });
+        await_swap(client, slot, item);
+    }
+
+    fn wait_for_lane_readiness(client: &mut Client, slot: u8, bare: Fixed, item: ItemView) {
+        assert!(
+            item.mute_left > 0 && item.mute_left <= rules::BACKPACK_MUTE_TICKS,
+            "swap starts the six-second inactivity"
+        );
+        assert_eq!(
+            client.me().attributes.strength,
+            bare,
+            "all bonuses wait, not only the active"
+        );
+        client.core_mut().reject = None;
+        client.core_mut().act(Intent::Press {
+            slot: Slot::Item(slot),
+            ctrl: false,
+        });
+        client.within(
+            std::time::Duration::from_secs(10),
+            "the inactive item's use is refused",
+            |c| {
+                matches!(
+                    c.core().reject,
+                    Some((Refused::Rule(RejectReason::NotReady), _))
+                )
+            },
+        );
+        assert_eq!(
+            client.me().items[usize::from(slot)].expect("held").mode,
+            item.mode,
+            "the refused use did not change the item"
+        );
+        let ready = client.tick()
+            + client.me().items[usize::from(slot)]
+                .expect("held")
+                .mute_left;
+        client.until("the six-second inactivity expires", |c| c.tick() >= ready);
+    }
+
+    fn exhaust_first_entry_grace(client: &mut Client) {
+        // Valve 7.38/7.38b: this scene pins ordinary six-second inactivity,
+        // after the separate once-per-item, five-second exception expires.
+        let after = client.tick() + rules::BACKPACK_GRACE_TICKS;
+        client.until("first-entry backpack grace exhausted", |c| {
+            c.tick() >= after
+        });
+    }
+
+    fn a_backpack_round_trip(near_shop: bool) {
+        let (server, mut client, bare) = with_treads(near_shop);
+        let worn = client.me().attributes.strength;
+        let slot = client
+            .slot_of(ItemId::POWER_TREADS)
+            .expect("Treads in inventory");
+        let pocket = rules::INVENTORY_SLOTS as u8;
+        drag_item(&mut client, slot, pocket);
+        await_swap(&mut client, pocket, ItemId::POWER_TREADS);
+        assert_eq!(
+            client.me().attributes.strength,
+            bare,
+            "backpack gives no stats"
+        );
+        client.until("the HUD loses the backpacked item's Strength", |c| {
+            strength_shown(c) == Some(bare.to_int().to_string())
+        });
+        exhaust_first_entry_grace(&mut client);
+        return_from_backpack(&server, &mut client, slot, near_shop, ItemId::POWER_TREADS);
+        let item = client.me().items[usize::from(slot)].expect("Treads returned");
+        if near_shop {
+            assert_eq!(item.mute_left, 0, "a shop swap adds no inactive time");
+        } else {
+            wait_for_lane_readiness(&mut client, slot, bare, item);
+        }
+        assert_eq!(
+            client.me().attributes.strength,
+            worn,
+            "stats return without dropping or picking up the item"
+        );
+        client.until("the restored Strength is drawn", |c| {
+            strength_shown(c) == Some(worn.to_int().to_string())
+        });
+        if near_shop {
+            client.core_mut().act(Intent::Press {
+                slot: Slot::Item(slot),
+                ctrl: false,
+            });
+            client.within(
+                std::time::Duration::from_secs(10),
+                "the shop swap permits the active",
+                |c| c.me().items[usize::from(slot)].is_some_and(|held| held.mode != item.mode),
+            );
+        }
+    }
+
+    #[test]
+    fn a_backpack_swap_in_the_lane_restores_stats_after_six_seconds() {
+        a_backpack_round_trip(false);
+    }
+
+    #[test]
+    fn a_backpack_swap_near_a_shop_restores_stats_without_inactive_time() {
+        a_backpack_round_trip(true);
+    }
+
+    fn treads_returned_in_the_lane() -> (Server, Client, Fixed, u8) {
+        let (server, mut client, bare) = with_treads(false);
+        let slot = client.slot_of(ItemId::POWER_TREADS).expect("Treads");
+        let pocket = rules::INVENTORY_SLOTS as u8;
+        drag_item(&mut client, slot, pocket);
+        await_swap(&mut client, pocket, ItemId::POWER_TREADS);
+        exhaust_first_entry_grace(&mut client);
+        return_from_backpack(&server, &mut client, slot, false, ItemId::POWER_TREADS);
+        assert!(
+            client.me().items[usize::from(slot)]
+                .expect("Treads")
+                .mute_left
+                > 0
+        );
+        (server, client, bare, slot)
+    }
+
+    fn go_to_shop(client: &mut Client) {
+        let at = bota_core::fountain_pos(
+            client.core().session().expect("session").map(),
+            client.me().team,
+        );
+        client.stand_at((at.x.to_int(), at.y.to_int()));
+    }
+
+    #[test]
+    fn entering_shop_clears_the_lane_slots_prediction_before_a_shop_swap() {
+        let (server, mut client, bare, slot) = treads_returned_in_the_lane();
+        client.cheat(Cheat::Item {
+            item: ItemId::CIRCLET,
+        });
+        let circlet = client.slot_of(ItemId::CIRCLET).expect("Circlet");
+        let pocket = rules::INVENTORY_SLOTS as u8;
+        drag_item(&mut client, circlet, pocket);
+        await_swap(&mut client, pocket, ItemId::CIRCLET);
+        let left = client.me().items[usize::from(slot)]
+            .expect("Treads")
+            .mute_left;
+        assert!(left > 0, "the lane timer is still running");
+        let natural_expiry = client.tick() + left;
+        go_to_shop(&mut client);
+        assert!(
+            client.tick() < natural_expiry,
+            "shop clearing happens before natural expiration"
+        );
+        assert_eq!(
+            client.me().items[usize::from(slot)]
+                .expect("Treads")
+                .mute_left,
+            0,
+            "entering shop range clears inactivity (Spring Cleaning 2018)"
+        );
+        assert_eq!(
+            client.core().session().expect("session").waits().mute_left(
+                ControlledUnit::Hero,
+                ItemSlot(slot),
+                client.tick()
+            ),
+            Some(0),
+            "the slot journal cannot keep the earlier lane timer"
+        );
+        return_from_backpack(&server, &mut client, slot, true, ItemId::CIRCLET);
+        assert_eq!(
+            client.me().items[usize::from(slot)]
+                .expect("Circlet")
+                .mute_left,
+            0
+        );
+        let restored = (bare + Fixed::from_int(2)).to_int().to_string();
+        client.until("the HUD draws the active Circlet's Strength", |c| {
+            strength_shown(c) == Some(restored.clone())
+        });
+    }
+
+    #[test]
+    fn entering_shop_clears_backpacked_residual_inactivity_and_the_next_swap_stays_ready() {
+        let (server, mut client, bare, slot) = treads_returned_in_the_lane();
+        let pocket = rules::INVENTORY_SLOTS as u8;
+        drag_item(&mut client, slot, pocket);
+        await_swap(&mut client, pocket, ItemId::POWER_TREADS);
+        let left = client.me().items[usize::from(pocket)]
+            .expect("Treads")
+            .mute_left;
+        assert!(
+            left > 0,
+            "the backpacked stack carries residual lane inactivity"
+        );
+        let natural_expiry = client.tick() + left;
+        go_to_shop(&mut client);
+        assert!(
+            client.tick() < natural_expiry,
+            "shop clearing happens before natural expiration"
+        );
+        assert_eq!(
+            client.me().items[usize::from(pocket)]
+                .expect("Treads")
+                .mute_left,
+            0,
+            "entering shop range clears even backpacked residual inactivity"
+        );
+        let landed = (slot + 1) % rules::INVENTORY_SLOTS as u8;
+        return_from_backpack(&server, &mut client, landed, true, ItemId::POWER_TREADS);
+        let item = client.me().items[usize::from(landed)].expect("Treads");
+        assert_eq!(
+            item.mute_left, 0,
+            "shop landing clears residual stack inactivity"
+        );
+        assert!(
+            client.me().attributes.strength > bare,
+            "the passive works at once"
+        );
+        let restored = client.me().attributes.strength.to_int().to_string();
+        client.until("the HUD draws the restored Treads Strength", |c| {
+            strength_shown(c) == Some(restored.clone())
+        });
+        client.core_mut().act(Intent::Press {
+            slot: Slot::Item(landed),
+            ctrl: false,
+        });
+        client.until("the landed Treads active works at once", |c| {
+            c.me().items[usize::from(landed)].is_some_and(|held| held.mode != item.mode)
+        });
+    }
+}
