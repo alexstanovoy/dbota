@@ -35,6 +35,11 @@ const QUICK_SPACE: f32 = 3.0;
 /// Quick-buy slots in a row, and the rows Dota has.
 const QUICK_COLUMNS: usize = 4;
 const QUICK_SLOTS: usize = 2 * QUICK_COLUMNS;
+const QUICK_ROW_PADDING: f32 = 4.0;
+/// One pixel of slack prevents f32 rounding from wrapping the fourth cell;
+/// the overflow badge at x=170 stays clear of this 169px row.
+const QUICK_ROW_WIDTH: f32 =
+    QUICK_ROW_PADDING + QUICK_COLUMNS as f32 * (QUICK_SPACE + QUICK_ITEM.0) + 1.0;
 /// The width of the kept item's column (`#StickyItemSlotContainer`).
 const STICKY_WIDTH: f32 = 53.0;
 /// The shop button (`#ShopButton`) and its place in the block.
@@ -97,6 +102,10 @@ pub(super) struct QuickDrop;
 /// The quick-buy rows' hint while they are empty.
 #[derive(Component)]
 struct QuickHint;
+
+/// The overflow badge is outside the wrapping rows (`#OverflowIndicator`).
+#[derive(Component)]
+struct QuickOverflow;
 
 /// GRAB ALL's moves still to send: stash slot, bag slot.
 #[derive(Resource, Default)]
@@ -273,11 +282,11 @@ fn spawn_quick(
     commands.spawn((
         QuickRow,
         Node {
-            width: dota(4.0 + QUICK_COLUMNS as f32 * (QUICK_SPACE + QUICK_ITEM.0)),
+            width: dota(QUICK_ROW_WIDTH),
             flex_wrap: FlexWrap::Wrap,
             align_items: AlignItems::Center,
             align_content: AlignContent::FlexStart,
-            padding: UiRect::new(dota(4.0), px(0), dota(8.0), dota(8.0)),
+            padding: UiRect::new(dota(QUICK_ROW_PADDING), px(0), dota(8.0), dota(8.0)),
             row_gap: dota(4.0),
             ..default()
         },
@@ -301,6 +310,36 @@ fn spawn_quick(
         ChildOf(rows),
     ));
     spawn_sticky(commands, (fonts, manifest, server), rows);
+    spawn_overflow(commands, fonts, rows);
+}
+
+fn spawn_overflow(commands: &mut Commands, fonts: &Fonts, rows: Entity) {
+    commands.spawn((
+        QuickOverflow,
+        ui::text(
+            "",
+            &fonts.regular,
+            11.0 * DOTA,
+            Color::srgb(0.761, 0.745, 0.639),
+        ),
+        Node {
+            display: Display::None,
+            position_type: PositionType::Absolute,
+            left: dota(170.0),
+            top: dota(58.0),
+            min_width: dota(16.0),
+            min_height: dota(16.0),
+            padding: UiRect::all(dota(1.0)),
+            border: UiRect::all(dota(1.0)),
+            border_radius: BorderRadius::all(dota(3.0)),
+            ..default()
+        },
+        TextLayout::justify(Justify::Center),
+        BackgroundColor(Color::srgb(0.129, 0.153, 0.149)),
+        BorderColor::all(Color::BLACK),
+        Pickable::IGNORE,
+        ChildOf(rows),
+    ));
 }
 
 /// The kept item in its own darker column at the quick-buy rows' right.
@@ -517,10 +556,8 @@ fn stash(
     grab.set_if_neq(ui::visible(!grab_moves(core).is_empty()));
 }
 
-/// The quick-buy rows, rebuilt as what is left to buy of the quick-buy item
-/// changes: its missing parts in build order, or the item itself when none
-/// is missing, as many as Dota's two rows hold and then how many more; a
-/// hint while there is none.
+/// Two visible rows of the queue's unbought components. Later entries stay
+/// queued and fill freed cells; the empty queue shows its hint.
 fn quick_row(
     mut commands: Commands,
     session: NonSend<Session>,
@@ -530,6 +567,7 @@ fn quick_row(
     server: Res<AssetServer>,
     row: Single<Entity, With<QuickRow>>,
     mut hint: Single<&mut Visibility, With<QuickHint>>,
+    mut overflow: Single<(&mut Text, &mut Node), With<QuickOverflow>>,
 ) {
     let core = &session.0;
     let items = core.quick_buy_parts().to_vec();
@@ -537,6 +575,12 @@ fn quick_row(
         return;
     }
     hint.set_if_neq(ui::visible(items.is_empty()));
+    overflow.1.display = if items.len() > QUICK_SLOTS {
+        Display::Flex
+    } else {
+        Display::None
+    };
+    overflow.0.0 = format!("+{}", items.len().saturating_sub(QUICK_SLOTS));
     commands.entity(*row).despawn_children();
     let size = (QUICK_ITEM.0 * DOTA, QUICK_ITEM.1 * DOTA);
     for id in items.iter().take(QUICK_SLOTS) {
@@ -555,22 +599,6 @@ fn quick_row(
             .and_modify(|mut node| {
                 node.margin.left = dota(QUICK_SPACE);
             });
-    }
-    if items.len() > QUICK_SLOTS {
-        commands.spawn((
-            ui::text(
-                format!("+{}", items.len() - QUICK_SLOTS),
-                &fonts.bold,
-                11.0 * DOTA,
-                STASH_INK,
-            ),
-            ui::shadow(),
-            Node {
-                margin: UiRect::left(dota(QUICK_SPACE)),
-                ..default()
-            },
-            ChildOf(*row),
-        ));
     }
     *last = Some(items);
 }
@@ -655,5 +683,27 @@ impl Grab {
     pub fn start(&mut self, core: &bota_client_core::App) {
         self.moves = grab_moves(core).into();
         self.sent = None;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn four_quickbuy_cells_fit_at_every_supported_ui_scale() {
+        for index in 0..=1900 {
+            let scale = 0.615 + (2.5 - 0.615) * index as f32 / 1900.0;
+            let available = QUICK_ROW_WIDTH * DOTA * scale - QUICK_ROW_PADDING * DOTA * scale;
+            let cell = QUICK_ITEM.0 * DOTA * scale + QUICK_SPACE * DOTA * scale;
+            let mut used = 0.0;
+            for _ in 0..QUICK_COLUMNS {
+                used += cell;
+            }
+            assert!(
+                used <= available,
+                "four cells need {used}, row has {available}, UiScale={scale}"
+            );
+        }
     }
 }

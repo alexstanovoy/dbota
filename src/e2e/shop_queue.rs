@@ -488,3 +488,131 @@ fn an_inventory_quickbuy_drop_is_consumed_before_world_release_with_a_stale_hud_
             .all(|loot| loot.item != ItemId::BOOTS)
     );
 }
+fn quick_rows(client: &mut Client) -> Vec<f32> {
+    let world = client.world_mut();
+    let parent = world
+        .query::<(&Place, &ChildOf)>()
+        .iter(world)
+        .find(|(place, _)| **place == Place::Quick)
+        .expect("Quickbuy cells")
+        .1
+        .parent();
+    let children = world.get::<Children>(parent).expect("Quickbuy content");
+    let mut rows: Vec<f32> = children
+        .iter()
+        .filter_map(|e| {
+            let node = world.get::<ComputedNode>(e)?;
+            (node.size().y > 0.0)
+                .then(|| {
+                    world
+                        .get::<bevy::ui::UiGlobalTransform>(e)
+                        .map(|t| t.translation.y)
+                })
+                .flatten()
+        })
+        .collect();
+    rows.sort_by(f32::total_cmp);
+    rows.dedup_by(|a, b| (*a - *b).abs() < 1.0);
+    rows
+}
+
+#[test]
+fn several_queued_builds_show_only_two_rows_and_hidden_entries_fill_freed_cells() {
+    let server = Server::start(1, &[]);
+    let mut client = Client::join(&server, HeroId::SHADOW_FIEND, &["--shop", "basics"]);
+    client.key(KeyCode::ControlLeft, ButtonState::Pressed);
+    client.key(KeyCode::ShiftLeft, ButtonState::Pressed);
+    for item in [
+        ItemId::BOOTS,
+        ItemId::CLARITY,
+        ItemId::IRON_BRANCH,
+        ItemId::IRON_BRANCH,
+        ItemId::IRON_BRANCH,
+        ItemId::IRON_BRANCH,
+        ItemId::IRON_BRANCH,
+        ItemId::IRON_BRANCH,
+        ItemId::IRON_BRANCH,
+    ] {
+        point_item(&mut client, item, Place::Grid);
+        client.click(MouseButton::Left);
+    }
+    client.key(KeyCode::ShiftLeft, ButtonState::Released);
+    client.key(KeyCode::ControlLeft, ButtonState::Released);
+    client.until("all nine queued with eight visible cells", |c| {
+        c.core().quick_buy.targets().len() == 9 && cells(c, Place::Quick).len() == 8
+    });
+    assert_eq!(
+        client.core().quick_buy.targets().len(),
+        9,
+        "all requested entries remain queued"
+    );
+    assert_eq!(cells(&mut client, Place::Quick).len(), 8);
+    assert_eq!(
+        quick_rows(&mut client).len(),
+        2,
+        "no third row of overflow content"
+    );
+    assert!(
+        client.shown_texts().contains(&"+1".to_string()),
+        "Dota's separate overflow badge remains visible"
+    );
+    point_item(&mut client, ItemId::BOOTS, Place::Quick);
+    client.click(MouseButton::Right);
+    client.until("the first queued item bought", |c| {
+        c.slot_of(ItemId::BOOTS).is_some()
+    });
+    client.until("the hidden branch fills the freed cell", |c| {
+        cells(c, Place::Quick)
+            .iter()
+            .filter(|(id, _)| *id == ItemId::IRON_BRANCH)
+            .count()
+            == 7
+    });
+    assert_eq!(client.core().quick_buy.targets().len(), 8);
+    assert_eq!(
+        cells(&mut client, Place::Quick)
+            .iter()
+            .filter(|(id, _)| *id == ItemId::IRON_BRANCH)
+            .count(),
+        7,
+        "hidden entries fill freed cells"
+    );
+    assert_eq!(quick_rows(&mut client).len(), 2);
+    assert!(!client.shown_texts().contains(&"+1".to_string()));
+}
+
+#[test]
+fn ten_quickbuy_entries_keep_two_rows_and_a_plus_two_badge_at_fractional_scales() {
+    let server = Server::start(1, &[]);
+    let mut client = Client::join(&server, HeroId::SHADOW_FIEND, &[]);
+    for _ in 0..10 {
+        client.core_mut().set_quick_buy(ItemId::IRON_BRANCH.0, true);
+    }
+    client.until("ten entries and the +2 badge drawn", |c| {
+        cells(c, Place::Quick).len() == 8 && c.shown_texts().contains(&"+2".to_string())
+    });
+    let window_factor = client.world().resource::<UiScale>().0
+        / client
+            .world()
+            .resource::<crate::config::Settings>()
+            .ui_scale;
+    for scale in [
+        1.0, 0.624921, 0.63385, 0.6358342, 0.6378184, 0.6447632, 0.6517079, 0.6536921, 0.6576605,
+    ] {
+        client
+            .world_mut()
+            .resource_mut::<crate::config::Settings>()
+            .ui_scale = scale / window_factor;
+        client.until("the requested UI scale laid out", |c| {
+            (c.world().resource::<UiScale>().0 - scale).abs() < 0.0001
+        });
+        assert_eq!(
+            quick_rows(&mut client).len(),
+            2,
+            "four icons must fit per row at UiScale={scale}"
+        );
+        assert_eq!(cells(&mut client, Place::Quick).len(), 8);
+        assert!(client.shown_texts().contains(&"+2".to_string()));
+        assert_eq!(client.core().quick_buy.targets().len(), 10);
+    }
+}
