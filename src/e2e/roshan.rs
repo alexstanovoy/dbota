@@ -1096,3 +1096,110 @@ fn a_banner_destroyed_by_real_enemy_attacks_removes_its_model_and_every_owned_pa
         |c| c.body(banner).is_none() && banner_instances(c) == 0,
     );
 }
+
+#[test]
+fn an_illusion_cannot_drop_a_copied_banner_as_real_ground_loot() {
+    use bota_client_core::{Intent, Refused};
+    use bota_proto::{ItemId, RejectReason, RuneKind};
+    let server = Server::start(1, &["--runes", "illusion", "--tick-rate", "1200"]);
+    let mut client = Client::join(&server, HeroId::SHADOW_FIEND, &[]);
+    client.cheat(Cheat::CreepSpawning { on: false });
+    client.cheat(Cheat::StartGame);
+    let at = bota_core::DOTA_RUNE_SPOTS[0].at;
+    client.stand_at((at.x.to_int() + 300, at.y.to_int()));
+    client.cheat(Cheat::Item {
+        item: ItemId::ROSHANS_BANNER,
+    });
+    let slot = client.slot_of(ItemId::ROSHANS_BANNER).expect("real Banner");
+    let real = client.me().id;
+    client.core_mut().act(Intent::Cheat(Cheat::SpawnRune {
+        kind: RuneKind::Illusion,
+        at,
+    }));
+    let tick = client.tick();
+    client.within(
+        std::time::Duration::from_secs(30),
+        "illusion rune cheat answered",
+        |c| {
+            assert!(
+                !c.core().lost,
+                "stream failed: {}",
+                c.core()
+                    .feed
+                    .iter()
+                    .find_map(|f| match &f.kind {
+                        bota_client_core::FeedKind::ProtocolBroken { why } => Some(why.as_str()),
+                        _ => None,
+                    })
+                    .unwrap_or("connection lost")
+            );
+            c.tick() > tick + 1
+        },
+    );
+    let rune = client
+        .view()
+        .runes
+        .iter()
+        .find(|r| r.kind == RuneKind::Illusion)
+        .expect("visible rune")
+        .clone();
+    client.core_mut().send_order(bota_proto::Order::Take {
+        target: bota_proto::Target::Unit(rune.id),
+    });
+    client.until("the rune creates a controlled illusion", |c| {
+        c.view()
+            .units
+            .iter()
+            .any(|u| u.kind == UnitKind::Hero && u.id != real && u.team == c.me().team)
+    });
+    let copy = client
+        .view()
+        .units
+        .iter()
+        .find(|u| u.kind == UnitKind::Hero && u.id != real && u.team == client.me().team)
+        .expect("illusion")
+        .clone();
+    client.core_mut().act(Intent::SelectUnit(Some(copy.id)));
+    assert!(client.core().controls_selection());
+    assert_eq!(
+        client.core().item_in(slot).expect("copied inventory").id,
+        ItemId::ROSHANS_BANNER
+    );
+    client.core_mut().reject = None;
+    client.core_mut().act(Intent::PutAt {
+        slot,
+        at: (copy.pos.x.to_f32(), copy.pos.y.to_f32()),
+        unit: None,
+    });
+    client.until("the copied-item drop is answered", |c| {
+        c.core().reject.is_some() || c.core().item_in(slot).is_none()
+    });
+    assert!(matches!(
+        client.core().reject,
+        Some((Refused::Rule(RejectReason::ItemRestricted), _))
+    ));
+    assert!(
+        client
+            .view()
+            .loot
+            .iter()
+            .all(|l| l.item != ItemId::ROSHANS_BANNER)
+    );
+    assert_eq!(
+        client.core().item_in(slot).expect("copy retained").id,
+        ItemId::ROSHANS_BANNER
+    );
+    client.core_mut().act(Intent::SelectUnit(Some(real)));
+    let here = client.me().pos;
+    client.core_mut().act(Intent::PutAt {
+        slot,
+        at: (here.x.to_f32(), here.y.to_f32()),
+        unit: None,
+    });
+    client.until("the real hero can drop the real Banner", |c| {
+        c.view()
+            .loot
+            .iter()
+            .any(|l| l.item == ItemId::ROSHANS_BANNER)
+    });
+}
