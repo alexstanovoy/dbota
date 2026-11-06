@@ -71,6 +71,12 @@ pub struct Draw {
 /// library's model (none: the cache lacks it) with its chance.
 pub struct ModelDraw {
     pub renderer: usize,
+    pub skins: Vec<ModelSkin>,
+}
+
+/// One material group of a renderer's weighted model list.
+pub struct ModelSkin {
+    pub index: u16,
     pub models: Vec<(Option<u16>, f32)>,
 }
 
@@ -302,7 +308,7 @@ impl Library {
         &mut self,
         root: &Value,
         server: &AssetServer,
-    ) -> Result<HashMap<String, u16>, String> {
+    ) -> Result<HashMap<(String, u16), u16>, String> {
         let mut out = HashMap::new();
         for model in root
             .get("models")
@@ -320,6 +326,15 @@ impl Library {
             if !cache_path::is_model(Path::new(file)) {
                 return Err(format!("model file {file:?}"));
             }
+            let skin = match model.get("skin") {
+                None => 0,
+                Some(value) => value
+                    .as_u64()
+                    .ok_or("model skin is not an unsigned integer")?,
+            };
+            if skin >= 64 {
+                return Err(format!("model skin {skin}"));
+            }
             let index = match self.models.iter().position(|m| m.file == file) {
                 Some(at) => at,
                 None if self.models.len() < MAX_MODELS => {
@@ -334,7 +349,7 @@ impl Library {
                 }
                 None => continue,
             };
-            out.insert(vmdl.to_owned(), index as u16);
+            out.insert((vmdl.to_owned(), skin as u16), index as u16);
         }
         Ok(out)
     }
@@ -342,21 +357,35 @@ impl Library {
 
 /// The model renderers of `system` the client draws: those whose models come from their list
 /// (one whose model a control point carries draws that model, and the client binds none).
-fn model_draws(system: &System, models: &HashMap<String, u16>) -> Vec<ModelDraw> {
+fn model_draws(system: &System, models: &HashMap<(String, u16), u16>) -> Vec<ModelDraw> {
     system
         .renderers
         .iter()
         .enumerate()
-        .filter_map(|(renderer, r)| match &r.class {
-            Renderer::Models(m) if m.model_input.is_none() => Some(ModelDraw {
-                renderer,
-                models: m
-                    .models
-                    .iter()
-                    .map(|(path, weight)| (models.get(path).copied(), *weight))
-                    .collect(),
-            }),
-            _ => None,
+        .filter_map(|(renderer, r)| {
+            let Renderer::Models(m) = &r.class else {
+                return None;
+            };
+            if m.model_input.is_some() {
+                return None;
+            }
+            let skins = (0..64)
+                .filter_map(|skin| {
+                    let choices: Vec<_> = m
+                        .models
+                        .iter()
+                        .map(|(path, weight)| (models.get(&(path.clone(), skin)).copied(), *weight))
+                        .collect();
+                    choices
+                        .iter()
+                        .any(|(model, _)| model.is_some())
+                        .then_some(ModelSkin {
+                            index: skin,
+                            models: choices,
+                        })
+                })
+                .collect();
+            Some(ModelDraw { renderer, skins })
         })
         .collect()
 }

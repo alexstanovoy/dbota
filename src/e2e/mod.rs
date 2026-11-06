@@ -32,6 +32,7 @@ mod flagbearer_gold;
 mod fog;
 mod fog_pov;
 mod fog_producers;
+mod frog_shield;
 mod fx;
 mod game_audio_end;
 mod gathering;

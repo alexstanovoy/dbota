@@ -122,3 +122,56 @@ fn the_manifests_effects_leave_out_only_the_listed_classes() {
     let classes: Vec<&str> = left_out.keys().map(String::as_str).collect();
     assert_eq!(classes, LEFT_OUT, "{left_out:#?}");
 }
+
+#[test]
+#[ignore = "needs a local Dota 2 install"]
+fn particle_models_import_the_skin_selected_by_the_installed_renderer() {
+    let game = find_game_dir(None).expect("local install");
+    let source = DirSource::new(&game);
+    let pak = Vpk::open(&source, "pak01_dir.vpk").expect("VPK");
+    let bytes = pak
+        .read_file(&source, "models/particle/sphere.vmdl_c")
+        .expect("sphere");
+    let sphere = heatel::Model::read(&Resource::parse(&bytes).expect("resource")).expect("model");
+    let material = &sphere.material_groups[5].1[0];
+    let plan = dbota_import::import::Plan::parse(
+        "particle bubble particles/neutral_fx/frogmen_water_bubble.vpcf_c particles/bubble.json\n",
+        "",
+    )
+    .expect("particle plan");
+    let folder = PathBuf::from(env!("CARGO_TARGET_TMPDIR"))
+        .join(format!("particle_skin_{}", std::process::id()));
+    let report = dbota_import::cache_dir::import_into(&game, &folder, &plan, "test", &mut |_| {
+        dbota_import::import::Flow::Continue
+    })
+    .expect("import");
+    assert!(report.failed.is_empty(), "{:?}", report.failed);
+    let particle: serde_json::Value = serde_json::from_slice(
+        &std::fs::read(folder.join("particles/bubble.json")).expect("particle"),
+    )
+    .expect("particle JSON");
+    let model = particle["models"]
+        .as_array()
+        .expect("models")
+        .iter()
+        .find(|m| m["vmdl"] == "models/particle/sphere.vmdl" && m["skin"] == 5)
+        .expect("the sphere's selected skin 5 is imported");
+    let glb = std::fs::read(folder.join(model["file"].as_str().expect("model file"))).expect("GLB");
+    let length = u32::from_le_bytes(glb[12..16].try_into().expect("JSON length")) as usize;
+    let gltf: serde_json::Value = serde_json::from_slice(&glb[20..20 + length]).expect("glTF JSON");
+    let expected = material
+        .rsplit('/')
+        .next()
+        .expect("name")
+        .trim_end_matches(".vmat");
+    assert!(
+        gltf["materials"]
+            .as_array()
+            .expect("materials")
+            .iter()
+            .any(|m| m["name"] == expected),
+        "the authored skin's material {expected}, got {:?}",
+        gltf["materials"]
+    );
+    std::fs::remove_dir_all(folder).expect("scratch removed");
+}

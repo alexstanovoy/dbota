@@ -91,6 +91,7 @@
 #                 Radiant, 1 the Dire; an Outpost's own, the side a Watcher is lit for) | sight (how far the unit sees
 #                 now, or sees for the side it is lit for, in x) | gathered:<x,y,z>[+<x,y,z>] (the first vector times the
 #                 share of the unit's countdown run, 0 to 1, plus the second)
+#                 | model_radius (the worn body's imported render-bounds radius)
 #           whose: for a worn line, only the effects the wearer put on itself (own) or another put on it (foreign)
 #           stacks: for a worn line, only while the effect holds that many
 #           side: for a worn line, only while the unit is held for that side
@@ -632,7 +633,10 @@ fx ability.ice_shaman_incendiary_bomb.hit at=unit sound=sound.neutral.ice_bomb_h
 fx ability.frogmen_arm_of_the_deep.cast at=caster sound=sound.neutral.arm_of_the_deep
 fx ability.frogmen_arm_of_the_deep.flies at=flight particle=neutral.arm_of_the_deep
 fx ability.frogmen_arm_of_the_deep.hit at=unit attach=attach_hitloc particle=neutral.arm_of_the_deep_hit sound=sound.neutral.arm_of_the_deep_hit
-fx ability.frogmen_water_bubble*.worn at=unit particle=neutral.water_bubble
+# The sphere's source radius is 8; its initializer divides CP1.x by 8. Valve supplies CP1 in
+# code. Our reading uses the recipient's imported render-bounds radius at its hit location.
+# Keep this interpretation here so a gameplay capture can refine the binding in one place.
+fx ability.frogmen_water_bubble*.worn at=unit attach=attach_hitloc particle=neutral.water_bubble cp1=model_radius
 fx ability.spawnlord_master_stomp.cast at=caster sound=sound.neutral.spawnlord_stomp
 fx ability.spawnlord_master_freeze.cast at=caster sound=sound.neutral.spawnlord_freeze
 # Neutral creeps' deaths: the sound of each kind

@@ -104,6 +104,8 @@ pub enum Feed {
     Sight,
     /// The share of the unit's countdown run (0 to 1) times the first vector, plus the second.
     Gathered(Vec3, Vec3),
+    /// The worn unit's imported render-bounds radius, in x.
+    ModelRadius,
 }
 
 /// Whose effect a worn line is about.
@@ -328,6 +330,7 @@ fn feed_of(value: &str) -> Result<Feed, String> {
         "caster" => Feed::Caster,
         "side" => Feed::Side,
         "sight" => Feed::Sight,
+        "model_radius" => Feed::ModelRadius,
         place if attach_of(place).is_ok() => Feed::Place(attach_of(place)?),
         _ => match value.strip_prefix("gathered:") {
             Some(vectors) => {

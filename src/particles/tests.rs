@@ -86,6 +86,74 @@ fn lifetime_of(seconds: f32) -> Initializer {
     }
 }
 
+#[test]
+fn model_particles_follow_their_skin_control_point_and_fall_back_to_default_materials() {
+    let mut instance = Instance::new(model_skin_effect(), 1);
+    instance.advance(0.02, None);
+    for (skin, expected) in [
+        (5.0, Some(42)),
+        (0.0, Some(7)),
+        (2.0, Some(7)),
+        (64.0, None),
+    ] {
+        instance.set_control_point(2, Vec3::new(skin, 0.0, 0.0), Vec3::ZERO, false);
+        let mut placed = Vec::new();
+        super::models::gather(&instance, &mut placed);
+        assert_eq!(
+            placed.iter().map(|p| p.model).collect::<Vec<_>>(),
+            expected.into_iter().collect::<Vec<_>>(),
+            "skin {skin}"
+        );
+    }
+}
+
+fn model_skin_effect() -> Arc<Effect> {
+    use super::library::{ModelDraw, ModelSkin};
+    use heatel::particle::{Models, Renderer};
+    let renderer = Models {
+        models: vec![("models/example.vmdl".to_owned(), 1.0)],
+        model_input: None,
+        original_model: false,
+        ignore_normal: true,
+        orient_z: false,
+        ignore_radius: false,
+        local_scale: false,
+        suppress_tint: false,
+        center_offset: false,
+        scale_control_point: None,
+        local_offset: VectorInput::Literal([0.0; 3]),
+        local_rotation: VectorInput::Literal([0.0; 3]),
+        component_scale: VectorInput::Literal([1.0; 3]),
+        manual_selection: FloatInput::Literal(-1.0),
+        skin: FloatInput::ControlPointComponent {
+            control_point: point(2),
+            component: 0,
+            mapping: Mapping::Direct,
+        },
+        override_material: None,
+        animated: false,
+        radius_scale: FloatInput::Literal(1.0),
+        roll_scale: FloatInput::Literal(1.0),
+    };
+    let mut definition = system(1.0, Vec::new(), Vec::new(), Vec::new());
+    definition.renderers = vec![always(Renderer::Models(Box::new(renderer)))];
+    let mut effect = Effect::new(&[("example".to_owned(), definition)]);
+    effect.defs[0].model_draws = vec![ModelDraw {
+        renderer: 0,
+        skins: vec![
+            ModelSkin {
+                index: 0,
+                models: vec![(Some(7), 1.0)],
+            },
+            ModelSkin {
+                index: 5,
+                models: vec![(Some(42), 1.0)],
+            },
+        ],
+    }];
+    Arc::new(effect)
+}
+
 /// A system of one burst of `count` particles and the functions given.
 fn bare(
     count: f32,

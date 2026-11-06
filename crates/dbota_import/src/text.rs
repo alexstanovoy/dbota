@@ -233,11 +233,13 @@ pub struct ParticleModel {
     pub vmdl: String,
     /// Its glTF file in the cache.
     pub file: String,
+    /// The material-group index the renderer selects.
+    pub skin: u16,
 }
 
 /// A particle file: `{"version", "root", "systems": [{"path", "system"}], "textures":
 /// [{"vtex", "file", "sheet"}], "materials": [{"vmat", "vtex", "blend", "sheets"}], "models":
-/// [{"vmdl", "file"}]}`, the root system first, each system as heatel's serde form of
+/// [{"vmdl", "file", "skin"}]}`, the root system first, each system as heatel's serde form of
 /// [`System`] (children by path), a sheet as its sequences of `{"clamp", "frames": [[display
 /// time, cropped u0 v0 u1 v1, uncropped u0 v0 u1 v1]]}` or `null`.
 pub fn particle_json(
@@ -267,7 +269,7 @@ pub fn particle_json(
         .collect();
     let models: Vec<Json> = models
         .iter()
-        .map(|m| json!({ "vmdl": m.vmdl, "file": m.file }))
+        .map(|m| json!({ "vmdl": m.vmdl, "file": m.file, "skin": m.skin }))
         .collect();
     to_vec(
         "particle",

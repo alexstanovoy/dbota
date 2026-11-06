@@ -354,7 +354,15 @@ fn wear_unit(
             );
         }
         let place = |attach: &Attach| attach_point(scene.ground, scene.bodies, unit, attach);
-        feed(fx, handle.particle, playing, &held.feeds, &place);
+        let mut feeds = held.feeds;
+        if fx
+            .feeds
+            .iter()
+            .any(|(_, feed)| matches!(feed, super::line::Feed::ModelRadius))
+        {
+            feeds.model_radius = scene.bodies.model_radius(unit.id).unwrap_or(0.0);
+        }
+        feed(fx, handle.particle, playing, &feeds, &place);
     }
 }
 

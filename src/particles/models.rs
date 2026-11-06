@@ -172,23 +172,35 @@ pub fn gather(instance: &Instance, out: &mut Vec<Placed>) {
 /// (by the manual selection, or by chance), placed, turned and scaled by it.
 fn place_particles(models: &Models, d: &ModelDraw, node: &Node, out: &mut Vec<Placed>) {
     let (scene, parts) = (node.scene_now(), &node.parts);
-    let total: f32 = d
-        .models
-        .iter()
-        .filter(|(m, w)| m.is_some() && *w > 0.0)
-        .map(|(_, w)| w)
-        .sum();
     let radius_scale = float(&models.radius_scale, &scene, parts, None, 1);
     let roll_scale = float(&models.roll_scale, &scene, parts, None, 2);
     for i in 0..parts.len() {
         if out.len() == MAX_PLACED {
             return;
         }
+        let skin = float(&models.skin, &scene, parts, Some(i), 2);
+        if !skin.is_finite() || !(0.0..64.0).contains(&skin) {
+            continue;
+        }
+        let Some(choices) = d
+            .skins
+            .iter()
+            .find(|s| s.index == skin as u16)
+            .or_else(|| d.skins.iter().find(|s| s.index == 0))
+        else {
+            continue;
+        };
+        let total: f32 = choices
+            .models
+            .iter()
+            .filter(|(m, w)| m.is_some() && *w > 0.0)
+            .map(|(_, w)| *w)
+            .sum();
         let manual = float(&models.manual_selection, &scene, parts, Some(i), 3);
-        let picked = if manual >= 0.0 && (manual as usize) < d.models.len() {
-            d.models[manual as usize].0
+        let picked = if manual >= 0.0 && (manual as usize) < choices.models.len() {
+            choices.models[manual as usize].0
         } else {
-            pick(&d.models, total, random(parts.seed[i], 0x30DE))
+            pick(&choices.models, total, random(parts.seed[i], 0x30DE))
         };
         let Some(model) = picked else {
             continue;

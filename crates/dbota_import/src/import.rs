@@ -18,7 +18,7 @@ use heatel::face::{PhonemeTable, Scene};
 use heatel::keyvalues;
 use heatel::kv3::Value;
 use heatel::material::Material;
-use heatel::particle::{Blend, Renderer, System};
+use heatel::particle::{Blend, FloatInput, Renderer, System};
 use heatel::portraits::framings;
 use heatel::sound::{
     Lipsync, SoundEvent, SoundMixer, read_sound_events, read_sound_mixer, read_sound_stacks,
@@ -1416,42 +1416,104 @@ fn particle_models(
 ) -> Vec<ParticleModel> {
     let listed = systems
         .iter()
-        .flat_map(|(_, s)| &s.renderers)
+        .flat_map(|(_, system)| &system.renderers)
         .filter_map(|r| match &r.class {
-            Renderer::Models(m) if m.model_input.is_none() => Some(m.paths()),
+            Renderer::Models(m) if m.model_input.is_none() => Some(m),
             _ => None,
-        })
-        .flatten();
+        });
     let mut models: Vec<ParticleModel> = Vec::new();
-    for vmdl in listed {
-        if models.iter().any(|m| m.vmdl == vmdl) {
+    for renderer in listed {
+        for vmdl in renderer.paths() {
+            let result =
+                export_particle_skins(src, pak, vmdl, &renderer.skin, dir, out, &mut models);
+            if let Err(err) = result {
+                out.report.failed.push((vmdl.to_owned(), err.to_string()));
+            }
+        }
+    }
+    models
+}
+
+/// Literal skin selectors export that group; computed selectors can pick any installed group.
+fn export_particle_skins(
+    src: &impl Source,
+    pak: &Vpk,
+    vmdl: &str,
+    selector: &FloatInput,
+    dir: &str,
+    out: &mut Out<'_>,
+    models: &mut Vec<ParticleModel>,
+) -> Result<()> {
+    let path = format!("{vmdl}_c");
+    let bytes = read_from(src, &[pak], &path)?;
+    let resource = Resource::parse(&bytes)?;
+    let source = Model::read(&resource)?;
+    let count = source.material_groups.len().max(1);
+    let skins = particle_skin_indices(selector, count)?;
+    for skin in skins {
+        if models
+            .iter()
+            .any(|m| m.vmdl == vmdl && usize::from(m.skin) == skin)
+        {
             continue;
         }
-        let name = vmdl.rsplit('/').next().unwrap_or(vmdl);
-        let file = join(
-            dir,
-            &format!("models/{}.glb", name.trim_end_matches(".vmdl")),
-        );
+        // Some shipped renderers select a group the model lacks (break_effect: 2 with
+        // only its default group). Without a material remap, its default materials remain.
+        let group_index = if skin < count { skin } else { 0 };
+        let name = vmdl
+            .rsplit('/')
+            .next()
+            .unwrap_or(vmdl)
+            .trim_end_matches(".vmdl");
+        let suffix = if group_index == 0 {
+            String::new()
+        } else {
+            format!("_skin{group_index}")
+        };
+        let file = join(dir, &format!("models/{name}{suffix}.glb"));
         if !out.report.files.contains_key(&file) {
-            let job = ModelJob {
-                path: &format!("{vmdl}_c"),
-                dest: &file,
-                meshes: None,
-                skeleton: false,
-                anims: &[],
-                skin: None,
-            };
-            if let Err(err) = model(src, &[pak], &job, out) {
-                out.report.failed.push((vmdl.to_owned(), err.to_string()));
-                continue;
-            }
+            let group = (group_index != 0).then(|| source.material_groups[group_index].0.as_str());
+            model(
+                src,
+                &[pak],
+                &ModelJob {
+                    path: &path,
+                    dest: &file,
+                    meshes: None,
+                    skeleton: false,
+                    anims: &[],
+                    skin: group,
+                },
+                out,
+            )?;
         }
         models.push(ParticleModel {
             vmdl: vmdl.to_owned(),
             file,
+            skin: skin as u16,
         });
     }
-    models
+    Ok(())
+}
+
+fn particle_skin_indices(selector: &FloatInput, count: usize) -> Result<std::ops::Range<usize>> {
+    const MAX_SKINS: usize = 64;
+    match selector {
+        FloatInput::Literal(value)
+            if value.is_finite() && (0.0..MAX_SKINS as f32).contains(value) =>
+        {
+            Ok((*value as usize)..(*value as usize + 1))
+        }
+        FloatInput::Literal(value) => Err(Error::Malformed {
+            what: "particle model",
+            detail: format!("skin {value} outside 0..{MAX_SKINS}"),
+        }),
+        _ if count <= MAX_SKINS => Ok(0..count),
+        _ => Err(Error::Malformed {
+            what: "particle model",
+            detail: format!("{count} skins"),
+        }),
+    }
 }
 
 /// The materials the systems' projected renderers draw with, each with its colour texture and

@@ -4,7 +4,9 @@
 use std::collections::HashMap;
 
 use bevy::{
-    gltf::Gltf, prelude::*, world_serialization::WorldAsset,
+    gltf::{Gltf, GltfMesh},
+    prelude::*,
+    world_serialization::WorldAsset,
     world_serialization::WorldInstanceReady,
 };
 use bota_client_core::{ClientSession, bodies};
@@ -63,6 +65,10 @@ pub struct Pivot(pub Entity);
 /// A model scene whose instance is ready.
 #[derive(Component)]
 pub struct Posable;
+
+/// The imported body's render-bounds radius at its drawn scale, in world units.
+#[derive(Component)]
+pub(crate) struct RenderRadius(pub f32);
 
 /// Where a unit's model carries what its attacks need, as its model names them: the hands an
 /// attack's missile leaves from (`attach_attack1`, `attach_attack2`) and the place one hits
@@ -184,6 +190,7 @@ pub struct BankModel {
     pub loaded: bool,
     variants: Vec<ModelVariant>,
     elevation: f32,
+    render_radius: f32,
 }
 
 struct ModelVariant {
@@ -381,6 +388,7 @@ fn bank_entry(server: &AssetServer, manifest: &Manifest, model: &Model) -> BankM
         loaded: false,
         variants: Vec::new(),
         elevation: 0.0,
+        render_radius: 0.0,
     }
 }
 
@@ -390,11 +398,12 @@ fn build_graphs(
     mut bank: ResMut<ModelBank>,
     server: Res<AssetServer>,
     gltfs: Res<Assets<Gltf>>,
+    gltf_meshes: Res<Assets<GltfMesh>>,
     mut graphs: ResMut<Assets<AnimationGraph>>,
 ) {
     use bevy::asset::RecursiveDependencyLoadState as State;
     for entry in bank.0.iter_mut().filter(|m| !m.loaded) {
-        if entry.scenes.is_none() && !take_scenes(entry, &server, &gltfs) {
+        if entry.scenes.is_none() && !take_scenes(entry, &server, &gltfs, &gltf_meshes) {
             continue;
         }
         // Its own file failed: its units are not drawn.
@@ -441,10 +450,44 @@ fn build_graphs(
     }
 }
 
+/// The enclosing sphere of the imported render bounds, computed once when the model loads.
+fn render_radius(gltf: &Gltf, gltf_meshes: &Assets<GltfMesh>) -> Option<f32> {
+    #[derive(serde::Deserialize)]
+    struct Bounds {
+        min: [f32; 3],
+        max: [f32; 3],
+    }
+    #[derive(serde::Deserialize)]
+    struct Extras {
+        render_bounds: Bounds,
+    }
+    let (mut low, mut high) = (Vec3::INFINITY, Vec3::NEG_INFINITY);
+    for handle in &gltf.meshes {
+        let metadata = &gltf_meshes.get(handle)?.extras.as_ref()?.value;
+        if metadata.len() > 1 << 20 {
+            return None;
+        }
+        let bounds = serde_json::from_str::<Extras>(metadata).ok()?.render_bounds;
+        let (min, max) = (Vec3::from(bounds.min), Vec3::from(bounds.max));
+        if !min.is_finite() || !max.is_finite() || !min.cmple(max).all() {
+            return None;
+        }
+        low = low.min(min);
+        high = high.max(max);
+    }
+    let radius = (high - low).length() * 0.5;
+    (radius.is_finite() && radius > 0.0).then_some(radius)
+}
+
 /// Takes a model's first scene and each wearable's from their files once
 /// every file has loaded or failed; whether it has. A wearable whose file
 /// failed is left off, loudly.
-fn take_scenes(entry: &mut BankModel, server: &AssetServer, gltfs: &Assets<Gltf>) -> bool {
+fn take_scenes(
+    entry: &mut BankModel,
+    server: &AssetServer,
+    gltfs: &Assets<Gltf>,
+    gltf_meshes: &Assets<GltfMesh>,
+) -> bool {
     use bevy::asset::LoadState;
     let scene = |file: &Handle<Gltf>| match server.load_state(file) {
         LoadState::Loaded => Some(
@@ -470,6 +513,18 @@ fn take_scenes(entry: &mut BankModel, server: &AssetServer, gltfs: &Assets<Gltf>
             return true;
         }
     };
+    // Bounds are geometry metadata; a failed material or image must not discard them.
+    let Some(gltf) = gltfs.get(&entry.gltf) else {
+        return false;
+    };
+    if gltf
+        .meshes
+        .iter()
+        .any(|mesh| gltf_meshes.get(mesh).is_none())
+    {
+        return false;
+    }
+    entry.render_radius = render_radius(gltf, gltf_meshes).unwrap_or(0.0);
     let mut wearables = Vec::with_capacity(wearing.len());
     for (file, scene) in entry.wearing.iter().zip(wearing) {
         match scene {
@@ -1102,7 +1157,12 @@ fn spawn_model_scene(
         let scale = map_scale(p.yaws.placed(u, at).map_or([1.0; 3], |b| b.scale), size);
         let scene = p
             .commands
-            .spawn((WorldAssetRoot(scenes.body.clone()), scale, ChildOf(pivot)))
+            .spawn((
+                WorldAssetRoot(scenes.body.clone()),
+                scale,
+                ChildOf(pivot),
+                RenderRadius(entry.render_radius * scale.scale.abs().max_element()),
+            ))
             .observe(on_model_ready)
             .id();
         for wearable in &scenes.wearables {

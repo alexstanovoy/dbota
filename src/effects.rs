@@ -99,6 +99,9 @@ pub(crate) struct Shooters<'w, 's> {
     /// Where each unit's root is put this frame, before the frame's transforms propagate.
     roots: Query<'w, 's, &'static Transform>,
     rigs: Query<'w, 's, &'static Rig>,
+    pivots: Query<'w, 's, &'static crate::units::ModelOf>,
+    children: Query<'w, 's, &'static Children>,
+    radii: Query<'w, 's, &'static crate::units::RenderRadius>,
 }
 
 impl Shooters<'_, '_> {
@@ -124,6 +127,18 @@ impl Shooters<'_, '_> {
             .map(Body::Grenade);
         line.or(grenade)
             .or_else(|| self.start(f, at, library, playing).map(Body::Effect))
+    }
+
+    /// The actual imported model's enclosing render-bounds sphere, at its scene's scale.
+    pub(crate) fn model_radius(&self, id: EntityId) -> Option<f32> {
+        self.sight.visible_unit(id)?;
+        let pivot = self.pivots.get(*self.index.0.get(&id)?).ok()?.0;
+        self.children
+            .get(pivot)
+            .ok()?
+            .iter()
+            .find_map(|child| self.radii.get(child).ok().map(|radius| radius.0))
+            .filter(|radius| radius.is_finite() && *radius > 0.0)
     }
 
     /// Where unit `id`'s missile leaves: the hand of the attack it swings.

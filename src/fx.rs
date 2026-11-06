@@ -100,6 +100,14 @@ fn attach_basis(bodies: &Shooters, unit: &UnitView, attach: &Attach) -> Mat3 {
 /// whose scene has not been drawn once has none, and an effect started then would jump from the
 /// origin to the node and fly off with the speed of the jump.
 fn nodes_ready(fx: &Fx, bodies: &Shooters, unit: &UnitView) -> bool {
+    if fx
+        .feeds
+        .iter()
+        .any(|(_, feed)| matches!(feed, Feed::ModelRadius))
+        && bodies.model_radius(unit.id).is_none()
+    {
+        return false;
+    }
     let feeds = fx.feeds.iter().filter_map(|(_, what)| match what {
         Feed::Place(attach) => Some(attach),
         _ => None,
@@ -243,6 +251,8 @@ impl Stage<'_, '_> {
 /// What a line can feed its particle from the fact it plays for.
 #[derive(Default, Clone, Copy)]
 struct Feeds {
+    /// The worn unit's imported render-bounds radius.
+    model_radius: f32,
     /// How many are held of the effect worn.
     stacks: f32,
     /// Seconds the effect worn has left.
@@ -305,6 +315,7 @@ fn feed(
             Feed::Seconds => Vec3::new(feeds.seconds, 0.0, 0.0),
             Feed::Mode => Vec3::new(feeds.mode, 0.0, 0.0),
             Feed::Charges => Vec3::new(feeds.charges, 0.0, 0.0),
+            Feed::ModelRadius => Vec3::new(feeds.model_radius, 0.0, 0.0),
             Feed::Vector(vector) => *vector,
             Feed::Place(attach) => place_of(place(attach)),
             Feed::Caster => place_of(feeds.caster.unwrap_or_else(|| place(&Attach::Origin))),
