@@ -80,10 +80,12 @@ fn attach_basis(bodies: &Shooters, unit: &UnitView, attach: &Attach) -> Mat3 {
         && let Some(frame) = bodies.node_frame(unit.id, name)
     {
         let rotation = frame.to_scale_rotation_translation().1;
+        // Only the skeleton root is converted to Bevy's frame. A joint or attachment's
+        // local axes are still Source X/Y/Z; converting them as model axes turns twice.
         return Mat3::from_cols(
-            place_of(rotation * Vec3::NEG_Z),
-            place_of(rotation * Vec3::NEG_X),
+            place_of(rotation * Vec3::X),
             place_of(rotation * Vec3::Y),
+            place_of(rotation * Vec3::Z),
         );
     }
     let facing = bodies

@@ -207,9 +207,21 @@ fn assert_banner_frame(
             < 0.01,
         "the flag stays at its current drawn attachment: {banner:?}, {attachment:?}"
     );
+    // Joint and attachment local axes stay in Source's frame below the converted skeleton
+    // root. The exported model's pole is glTF Y, authored Source Z.
+    let pole = banner.rotation * Vec3::Y;
+    let forward = banner.rotation * Vec3::NEG_Z;
     assert!(
-        banner.rotation.dot(attachment.rotation).abs() > 0.9999,
-        "the flag follows its current drawn attachment's turn"
+        forward.dot(attachment.rotation * Vec3::X) > 0.9999,
+        "the drawn banner's forward follows the attachment's authored X: {forward:?}, {attachment:?}"
+    );
+    assert!(
+        pole.dot(attachment.rotation * Vec3::Z) > 0.9999,
+        "the drawn pole follows the attachment's authored up axis: {pole:?}, {attachment:?}"
+    );
+    assert!(
+        pole.dot(Vec3::Y) > 0.85,
+        "the flag stands up instead of sideways: {pole:?}"
     );
     let playing = world.resource::<crate::particles::Playing>();
     let instance = playing.instances_of(effect).next().expect("banner playing");
@@ -217,4 +229,122 @@ fn assert_banner_frame(
         (instance.nodes[0].control_points[7].position.x - 0.93).abs() < 0.001,
         "the particle reads the actual lane model scale"
     );
+}
+
+/// Dismember's blur aligns its particle normals to CP0's X. Its victim's hit-location
+/// attachment has the same Source-local axes as a flag socket, below the converted root.
+#[test]
+fn dismember_blur_follows_the_victims_authored_attachment_frame() {
+    let server = Server::start(1, &[]);
+    let mut client = cast_dismember(&server);
+    let victim = client
+        .view()
+        .units
+        .iter()
+        .find(|u| u.kind == UnitKind::Hero && u.team != client.me().team)
+        .expect("victim")
+        .id;
+    client.until("the Dismember blur particles", |c| {
+        dismember_normals(c).is_some()
+    });
+    server.frozen(|| {
+        let world = client.world();
+        let body = client.body(victim).expect("victim drawn");
+        let socket = world
+            .get::<crate::units::Attachments>(body)
+            .expect("attachments")
+            .node("attach_hitloc")
+            .expect("hit location");
+        let rotation = world
+            .get::<GlobalTransform>(socket)
+            .expect("socket frame")
+            .to_scale_rotation_translation()
+            .1;
+        let to_particle = |v: Vec3| Vec3::new(v.x, -v.z, v.y);
+        let (basis, normals) = dismember_normals(&client).expect("live blur");
+        for (actual, axis) in basis.into_iter().zip([Vec3::X, Vec3::Y, Vec3::Z]) {
+            assert!(
+                actual.dot(to_particle(rotation * axis)) > 0.9999,
+                "Dismember CP0 follows the victim's authored {axis:?}: {actual:?}, {rotation:?}"
+            );
+        }
+        for normal in normals {
+            assert!(
+                normal.dot(to_particle(rotation * Vec3::X)) > 0.999,
+                "the rendered blur normal follows the victim's Source X: {normal:?}"
+            );
+        }
+    });
+}
+
+fn dismember_normals(client: &Client) -> Option<([Vec3; 3], Vec<Vec3>)> {
+    let world = client.world();
+    let effect = world
+        .resource::<crate::particles::Library>()
+        .effect("hero.pudge.dismember")?;
+    let instance = world
+        .resource::<crate::particles::Playing>()
+        .instances_of(effect)
+        .next()?;
+    let blur = instance.nodes.iter().find(|node| {
+        effect.defs[node.def]
+            .system
+            .initializers
+            .iter()
+            .any(|init| {
+                matches!(
+                    init.class,
+                    heatel::particle::Initializer::NormalAlignToCp { axis: 0, .. }
+                )
+            })
+    })?;
+    // Field 21 (normal) is the particle store's vector column 4.
+    let normals = blur.parts.vectors[4].clone();
+    if normals.is_empty() {
+        return None;
+    }
+    let cp = blur.control_points[0];
+    Some(([cp.forward, cp.left, cp.up], normals))
+}
+
+fn cast_dismember(server: &Server) -> Client {
+    use bota_client_core::{Intent, Slot};
+    use bota_proto::{AbilityId, Vec2 as Spot};
+
+    let mut client = Client::join(server, HeroId::PUDGE, &[]);
+    let mid = super::harness::MID;
+    client.stand_at(mid);
+    client.cheat(Cheat::Levels { count: 5 });
+    let slot = client
+        .me()
+        .abilities
+        .iter()
+        .position(|a| a.id == AbilityId::DISMEMBER)
+        .expect("Dismember") as u8;
+    client.core_mut().act(Intent::Press {
+        slot: Slot::Ability(slot),
+        ctrl: true,
+    });
+    client.frames(3);
+    client.cheat(Cheat::CreateHero {
+        hero: HeroId::SHADOW_FIEND,
+        enemy: true,
+        at: Spot::from_ints(mid.0 + 120, mid.1),
+    });
+    let victim = client
+        .view()
+        .units
+        .iter()
+        .find(|u| u.kind == UnitKind::Hero && u.team != client.me().team)
+        .map(|u| (u.id, u.pos))
+        .expect("victim");
+    client.core_mut().act(Intent::Press {
+        slot: Slot::Ability(slot),
+        ctrl: false,
+    });
+    client.core_mut().act(Intent::Aimed {
+        at: (victim.1.x.to_f32(), victim.1.y.to_f32()),
+        unit: Some(victim.0),
+    });
+    client
 }
