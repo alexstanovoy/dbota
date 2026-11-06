@@ -6,7 +6,7 @@
 //! Dota.
 
 use bevy::prelude::*;
-use bota_client_core::{CommandError, CursorUse, Refused, Undeniable};
+use bota_client_core::{CommandError, CursorUse, PurchaseAvailability, Refused, Undeniable};
 use bota_proto::RejectReason;
 
 use crate::dota_text::Texts;
@@ -75,6 +75,7 @@ pub fn told(reason: RejectReason) -> Option<Told> {
         Why::NotDisassemblable | Why::CannotLockCombining => own,
         Why::ClosedGround => dota("dota_hud_error_cant_cast_here", DENY),
         Why::OutOfStock => dota("dota_hud_error_item_out_of_stock", DENY),
+        Why::NothingToBuy => dota("dota_hud_error_item_already_purchased", DENY),
         Why::QueueFull => dota("dota_hud_error_queue_full", DENY),
         // What Dota has no line of, and the player must still hear to act:
         // a cheat this match does not honour, a seat the server will not give,
@@ -101,11 +102,48 @@ pub fn told(reason: RejectReason) -> Option<Told> {
     }
 }
 
+/// Quickbuy uses purchase-specific lines, while other orders retain their own wording.
+fn purchase_told(availability: PurchaseAvailability) -> Option<Told> {
+    use PurchaseAvailability as Why;
+    let key = match availability {
+        Why::Available | Why::NoBuyer => return None,
+        Why::NotOffered => None,
+        Why::InsufficientGold => Some("dota_hud_error_not_enough_gold"),
+        Why::OutOfStock => Some("dota_hud_error_item_out_of_stock"),
+        Why::NoPlacement => Some("dota_hud_error_cant_purchase_inventory_full"),
+        Why::NoShop => Some("dota_hud_error_secret_shop_not_in_range"),
+        Why::NothingToBuy => Some("dota_hud_error_item_already_purchased"),
+    };
+    Some(Told { key, sound: DENY })
+}
+
+fn purchase_words(availability: PurchaseAvailability) -> &'static str {
+    use PurchaseAvailability as Why;
+    match availability {
+        Why::Available => "purchase available",
+        Why::NoBuyer => "no active buyer",
+        Why::NotOffered => "the shop does not sell this item",
+        Why::InsufficientGold => "not enough gold",
+        Why::OutOfStock => "item is out of stock",
+        Why::NoPlacement => "can't purchase, inventory is full",
+        Why::NoShop => "secret shop not in range",
+        Why::NothingToBuy => "every component has already been purchased",
+    }
+}
+
 /// The line a refusal shows, if any: Dota's from the cache, else the plain
 /// words.
 pub fn line(refused: &Refused, texts: &Texts) -> Option<String> {
     match refused {
         Refused::QuickBuyFull => Some("Quickbuy is full".to_string()),
+        Refused::Purchase(availability) => {
+            let told = purchase_told(*availability)?;
+            Some(
+                told.key
+                    .and_then(|key| texts.label(key, &[]))
+                    .unwrap_or_else(|| capitalised(purchase_words(*availability))),
+            )
+        }
         Refused::Rule(reason) => {
             let told = told(*reason)?;
             Some(
@@ -145,6 +183,7 @@ fn undeniable_words(why: Undeniable) -> &'static str {
 pub fn plain(refused: &Refused) -> String {
     match refused {
         Refused::QuickBuyFull => "quickbuy is full".to_string(),
+        Refused::Purchase(availability) => purchase_words(*availability).to_string(),
         Refused::Rule(reason) => plain_words(*reason).to_string(),
         Refused::Undeniable(why) => undeniable_words(*why).to_string(),
         Refused::Command(error) => console_words(error),
@@ -189,6 +228,7 @@ fn plain_words(reason: RejectReason) -> &'static str {
         Why::CannotLockCombining => "it is part of no recipe",
         Why::HoldsRune => "a Bottle keeping a rune stays in hand",
         Why::ItemRestricted => "this item must stay in the inventory",
+        Why::NothingToBuy => "every component has already been purchased",
     }
 }
 

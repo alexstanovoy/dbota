@@ -3,6 +3,7 @@
 //! wait for the next one over a darkened picture when none is left.
 
 use bevy::prelude::*;
+use bota_client_core::PurchaseAvailability;
 use bota_core::item_def;
 use bota_proto::ItemId;
 
@@ -230,7 +231,7 @@ fn edges(
         } else if chosen.0 == Some(cell.0) && *place != Place::Tree {
             EDGE_CHOSEN
         } else if *place == Place::Quick {
-            if purchasable(&session.0, cell.0) {
+            if session.0.purchase_availability(cell.0) == PurchaseAvailability::Available {
                 ui::GOLDEN
             } else {
                 EDGE_UNAVAILABLE
@@ -240,22 +241,4 @@ fn edges(
         };
         border.set_if_neq(BorderColor::all(edge));
     }
-}
-
-/// Gold marks a purchase the server can place now: enough gold and stock,
-/// with a carrier at any shop the missing parts require.
-fn purchasable(core: &bota_client_core::App, item: u16) -> bool {
-    let (Some(session), Some(view), Some(slot)) = (core.session(), core.view(), core.my_slot)
-    else {
-        return false;
-    };
-    let Some(player) = view.player(slot) else {
-        return false;
-    };
-    core.offers(item)
-        && player
-            .gold
-            .is_some_and(|gold| core.price_of(item).0 <= gold)
-        && core.stock_of(item).is_none_or(|stock| stock.left > 0)
-        && bota_client_core::purchase_fits(view, player, session.statics(), ItemId(item))
 }
