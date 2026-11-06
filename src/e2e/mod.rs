@@ -35,6 +35,7 @@ mod purchase_destination;
 mod quickbuy;
 mod refusals;
 mod rings;
+mod rune_lifecycle;
 mod runes;
 mod secret_shop;
 mod sentry_ward;
