@@ -18,7 +18,7 @@ const ROT: &str = "Hero_Pudge.Rot";
 
 /// The players of the world whose cache path holds `part`: what is sounding. A sound that plays
 /// once is dropped at once where there is no sound device, as these tests run; a loop stays.
-fn alive(client: &mut Client, part: &str) -> usize {
+pub(super) fn alive(client: &mut Client, part: &str) -> usize {
     let world = client.world_mut();
     let mut players = world.query::<&AudioPlayer>();
     players
@@ -98,7 +98,7 @@ fn look_at(client: &mut Client, (x, y): (f32, f32)) {
 }
 
 /// A Pudge on the map with Rot learned and the toggle that turns it on and off.
-fn pudge_with_rot() -> (Server, Client, impl Fn(&mut Client)) {
+pub(super) fn pudge_with_rot() -> (Server, Client, impl Fn(&mut Client)) {
     let server = Server::start(1, &[]);
     let mut client = Client::join(&server, HeroId::PUDGE, &[]);
     client.stand_at(MID);

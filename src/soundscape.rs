@@ -231,7 +231,7 @@ fn play(
     let Ok(camera) = camera.single() else {
         return silence(&mut commands, scapes, &mut ambience);
     };
-    if session.0.view().is_none() {
+    if session.0.view().is_none() || session.0.lost {
         return silence(&mut commands, scapes, &mut ambience);
     }
     let ear = Vec2::new(camera.focus.x, -camera.focus.z);
@@ -344,7 +344,11 @@ fn loops(
                     .with_volume(Volume::Linear(gain * master))
                     .with_speed(speed);
                 let player = AudioPlayer::new(p.waves[0].clone());
-                p.playing = Some(commands.spawn((player, settings)).id());
+                p.playing = Some(
+                    commands
+                        .spawn((crate::mixer::GameAudio, player, settings))
+                        .id(),
+                );
             }
             (None, false) => {}
         }
@@ -379,6 +383,7 @@ fn randoms(commands: &mut Commands, scapes: &mut Scapes, ear: Vec2, dt: f32, mas
         }
         let speed = draw(rng, p.line.pitch) / 100.0;
         commands.spawn((
+            crate::mixer::GameAudio,
             AudioPlayer::new(wave),
             PlaybackSettings::DESPAWN
                 .with_volume(Volume::Linear(gain * master))

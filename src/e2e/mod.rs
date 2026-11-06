@@ -24,6 +24,7 @@ mod flagbearer;
 mod fog;
 mod fog_pov;
 mod fx;
+mod game_audio_end;
 mod ground_items;
 mod ground_targets;
 pub(crate) mod harness;

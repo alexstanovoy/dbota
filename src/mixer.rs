@@ -36,6 +36,11 @@ const UNKNOWN_LENGTH: Duration = Duration::from_secs(10);
 /// Most events read from the cache.
 const MAX_EVENTS: usize = 1 << 14;
 
+/// Marks the sound player of a sound of the game: the match's world, voices, announcer and
+/// ambience, which end with the match. The menu's own sounds do not carry it.
+#[derive(Component)]
+pub struct GameAudio;
+
 /// Whom a looping sound sounds for: it ends with that unit's wearing of the effect it sounds.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Owner {
@@ -75,6 +80,10 @@ pub struct Mixer {
     voices: Vec<Voice>,
     /// The events a loop with no owner was refused for, told once each.
     warned: HashSet<String>,
+    /// No match is on to sound: nothing starts.
+    closed: bool,
+    /// How many times the game's sounds were ended, for what queues outside the mixer.
+    ends: u32,
 }
 
 /// One sound sounding.
@@ -144,6 +153,9 @@ impl Mixer {
         source: Handle<AudioSource>,
     ) -> Started {
         self.drop_ended(commands, now);
+        if self.closed {
+            return Started::Refused;
+        }
         let rules = self.events.get(request.event).cloned();
         let looping = rules.as_ref().is_some_and(|r| r.looping);
         if looping && request.owner == Owner::None && self.warned.insert(request.event.to_owned()) {
@@ -165,6 +177,7 @@ impl Mixer {
         };
         let entity = commands
             .spawn((
+                GameAudio,
                 AudioPlayer::new(source),
                 playback
                     .with_volume(Volume::Linear(gain))
@@ -262,6 +275,33 @@ impl Mixer {
     pub fn stop(&mut self, commands: &mut Commands, now: Duration, entity: Entity) {
         let at = self.voices.iter().position(|v| v.entity == entity);
         self.stop_at(commands, at, now);
+    }
+
+    /// Whether no match is on to sound: the mixer starts nothing.
+    pub fn is_closed(&self) -> bool {
+        self.closed
+    }
+
+    /// Ends every voice at once, one-shots and loops, and starts none until it is opened again
+    /// (a match is back in view); the match they sounded in is gone.
+    pub fn close(&mut self, commands: &mut Commands) {
+        if !self.closed {
+            self.ends += 1;
+        }
+        self.closed = true;
+        for voice in self.voices.drain(..) {
+            commands.entity(voice.entity).try_despawn();
+        }
+    }
+
+    /// How many times the game's sounds were ended.
+    pub fn ends(&self) -> u32 {
+        self.ends
+    }
+
+    /// Lets voices start again.
+    pub fn open(&mut self) {
+        self.closed = false;
     }
 
     /// Stops every loop at once, owners gone: no match is on to sound. One-shots play out.
@@ -392,7 +432,54 @@ pub fn plugin(app: &mut App) {
              mut sinks: Query<&mut AudioSink>| {
                 mixer.tick(&mut commands, time.elapsed(), &mut sinks);
             },
-        );
+        )
+        .add_systems(Update, end_with_the_match);
+}
+
+/// Silences the game when its match is gone: the player left it (the menu's idle session took
+/// its place), the game on screen was replaced, or the connection dropped. Every sound of the
+/// game ends at once, the mixer's voices included, and the mixer starts none until a match is
+/// in view again. Before the first match nothing ends: the pick phase has its own voices.
+fn end_with_the_match(
+    session: NonSend<crate::session::Session>,
+    epoch: Res<crate::main_menu::GameEpoch>,
+    mut commands: Commands,
+    mut mixer: ResMut<Mixer>,
+    audio: Query<Entity, With<GameAudio>>,
+    mut seen: Local<(u32, bool)>,
+) {
+    let core = &session.0;
+    let (seen_epoch, had_match) = &mut *seen;
+    let live = core.view().is_some() && !core.lost;
+    let replaced = *seen_epoch != epoch.0;
+    *seen_epoch = epoch.0;
+    if live && !replaced {
+        *had_match = true;
+        mixer.open();
+        return;
+    }
+    let ended = core.lost || replaced || (*had_match && core.view().is_none());
+    if !ended && !mixer.is_closed() {
+        return;
+    }
+    if ended {
+        let was_playing = *had_match;
+        mixer.close(&mut commands);
+        for entity in &audio {
+            commands.entity(entity).try_despawn();
+        }
+        *had_match = false;
+        // A game that never showed a match left nothing stale to keep out: the pick phase's
+        // sounds of the next game start as they come.
+        if !core.lost && !was_playing {
+            mixer.open();
+        }
+    }
+    // Closed after a match it stays until the match that follows is in view.
+    if live {
+        *had_match = true;
+        mixer.open();
+    }
 }
 
 #[cfg(test)]

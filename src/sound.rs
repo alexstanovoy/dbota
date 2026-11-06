@@ -629,6 +629,7 @@ fn portals(
         Some(
             commands
                 .spawn((
+                    crate::mixer::GameAudio,
                     AudioPlayer::new(source),
                     playback.with_volume(Volume::Linear(gain)),
                 ))

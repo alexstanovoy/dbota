@@ -259,6 +259,17 @@ fn load(mut voices: ResMut<Voices>, manifest: Res<Manifest>, server: Res<AssetSe
     }
 }
 
+/// Plays a sound of the game once: it ends with the match.
+fn say_in_game(
+    commands: &mut Commands,
+    source: Option<Handle<AudioSource>>,
+    gain: f32,
+) -> Option<Entity> {
+    let line = say(commands, source, gain)?;
+    commands.entity(line).insert(crate::mixer::GameAudio);
+    Some(line)
+}
+
 /// Plays a sound once; the entity playing it.
 fn say(commands: &mut Commands, source: Option<Handle<AudioSource>>, gain: f32) -> Option<Entity> {
     source.map(|source| {
@@ -329,7 +340,7 @@ fn answer(
     };
     heard.rest = VOICE_REST;
     let player = (!settings.muted && !args.mute)
-        .then(|| say(&mut commands, Some(source), 0.8))
+        .then(|| say_in_game(&mut commands, Some(source), 0.8))
         .flatten();
     if let Some(face) = face {
         speech.say(core.my_hero(), face, player, real.elapsed_secs());
@@ -371,7 +382,7 @@ fn rune_lines(
         };
         *heard.0.entry(logical).or_default() += 1;
         if settings.voice && !settings.muted && !args.mute {
-            say(&mut commands, lines.take(), 0.8);
+            say_in_game(&mut commands, lines.take(), 0.8);
         }
     }
 }
@@ -430,7 +441,7 @@ fn announce(
                 // The horn of one's own side's ancient.
                 let dire = core.my_team() == Some(bota_proto::Team::Dire);
                 let horn = voices.horns[usize::from(dire)].take();
-                say(&mut commands, horn, 0.8);
+                say_in_game(&mut commands, horn, 0.8);
             }
             PregameCue::BattleBegins => {
                 let line = voices.begins.take();
@@ -575,8 +586,15 @@ fn speak(
     mut announcer: ResMut<Announcer>,
     time: Res<Time>,
     lines: Query<(), With<AnnouncerLine>>,
+    mixer: Res<crate::mixer::Mixer>,
+    mut seen_ends: Local<u32>,
 ) {
     let now = time.elapsed_secs();
+    // The lines called in a match that has ended are not read in the next.
+    if *seen_ends != mixer.ends() {
+        *seen_ends = mixer.ends();
+        announcer.waiting.clear();
+    }
     // A line spawned this frame is not in the query yet.
     let speaking =
         announcer.speaking.is_some() && (now - announcer.began < 0.2 || !lines.is_empty());
@@ -586,6 +604,7 @@ fn speak(
     if let Some((source, gain)) = announcer.next(now, speaking) {
         let line = commands
             .spawn((
+                crate::mixer::GameAudio,
                 AnnouncerLine,
                 AudioPlayer::new(source),
                 PlaybackSettings::DESPAWN.with_volume(Volume::Linear(gain)),
@@ -619,7 +638,7 @@ fn herald(
     } else {
         voices.day.take()
     };
-    say(&mut commands, source, 0.5);
+    say_in_game(&mut commands, source, 0.5);
 }
 
 /// A button that sounds as Dota's quit button does.
