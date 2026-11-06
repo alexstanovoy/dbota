@@ -511,6 +511,18 @@ impl Sounder<'_, '_, '_> {
             return;
         }
         let pick = binding.next % binding.sources.len();
+        let factor_source = if matches!(
+            kind,
+            Kind::Row(Row {
+                subject: Subject::Hero(_),
+                event: Event::Attack,
+                ..
+            })
+        ) {
+            emitter
+        } else {
+            self.ears
+        };
         let request = Request {
             event: if binding.events[pick].is_empty() {
                 &binding.name
@@ -524,7 +536,7 @@ impl Sounder<'_, '_, '_> {
             listener: Some((self.focus.x, self.focus.y)),
             gain,
             speed: speed_of(kind),
-            on_player: sounds_from_the_players_entity(kind, self.own, self.ears),
+            on_player: sounds_from_the_players_entity(kind, self.own, factor_source),
             fog: Some(self.fog),
         };
         let source = binding.sources[pick].clone();
@@ -1220,6 +1232,52 @@ mod tests {
             2,
             "one emitter's instance limit refused another emitter or allowed its own excess"
         );
+    }
+
+    #[test]
+    fn only_the_actual_thrower_gets_the_players_volume_factor() {
+        let (mut app, emitters) =
+            scene_app("event Synthetic.Attack 0 120 0 0 100 0 0 0 -1 1 70 10000 - 0.25 -1\n");
+        let mut expected = Vec::new();
+        for (index, emitter) in emitters.iter().enumerate() {
+            let cues = emit_projectiles(&mut app, &[*emitter]);
+            let cue = cues
+                .iter()
+                .find(|cue| cue.kind == CueKind::Attack)
+                .expect("the actual launch cue");
+            let at = cue.at.expect("a positional launch");
+            let gain = app
+                .world()
+                .resource::<Mixer>()
+                .gain_for("Synthetic.Attack", at, (0.0, 0.0));
+            let player = if index == 0 { 0.25 } else { 1.0 };
+            expected.push((at.0, cue.gain * gain * player));
+            app.world_mut()
+                .resource_mut::<Time>()
+                .advance_by(Duration::from_millis(100));
+            app.update();
+        }
+        let world = app.world_mut();
+        let mut actual: Vec<_> = world
+            .query::<(Entity, &PlaybackSettings)>()
+            .iter(world)
+            .filter_map(|(entity, settings)| {
+                let (_, at) = world.resource::<Mixer>().event_at(entity)?;
+                Some((at?.0, settings.volume.to_linear()))
+            })
+            .collect();
+        actual.sort_by(|a, b| a.0.total_cmp(&b.0));
+        expected.sort_by(|a, b| a.0.total_cmp(&b.0));
+        assert_eq!(actual.len(), 2, "both real launch cues started");
+        for (actual, expected) in actual.iter().zip(expected) {
+            assert!(
+                (actual.1 - expected.1).abs() < 0.000_01,
+                "emitter at {} sounded at {}, expected {}",
+                actual.0,
+                actual.1,
+                expected.1
+            );
+        }
     }
 
     /// Looks at the shops once a second as long as `looks` lasts: `(in match, near)`.

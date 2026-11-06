@@ -155,6 +155,7 @@ fn sound(fx: &Fx, id: EntityId, at: Vec3, wearing: &mut Wearing, stage: &mut Sta
 mod tests {
     use super::*;
     use crate::fog::FogGrid;
+    use crate::session::Session;
     use bevy::asset::{
         AssetApp,
         io::{
@@ -211,6 +212,75 @@ mod tests {
             .insert(handle.id(), source)
             .expect("the reserved audio asset id");
         (app, handle)
+    }
+
+    fn policy_mixer(policy: &str) -> crate::mixer::Mixer {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        static NEXT: AtomicUsize = AtomicUsize::new(0);
+        let root = std::env::temp_dir().join(format!(
+            "dbota-fx-policy-{}-{}",
+            std::process::id(),
+            NEXT.fetch_add(1, Ordering::Relaxed)
+        ));
+        std::fs::create_dir_all(root.join("sounds")).expect("fixture folder");
+        std::fs::write(root.join("sounds/events.txt"), policy).expect("fixture event");
+        let mixer = crate::mixer::Mixer::load(&crate::manifest::Manifest {
+            root: root.clone(),
+            ..Default::default()
+        });
+        std::fs::remove_dir_all(root).expect("the event was already read");
+        mixer
+    }
+
+    #[test]
+    fn an_own_emitters_one_shot_gets_its_player_factor_without_becoming_a_loop() {
+        let (mut app, source) = casting_sound_app();
+        let (core, emitters) = crate::units::tests::owned_hero_scene();
+        app.insert_non_send(Session(core));
+        app.insert_resource(policy_mixer(
+            "event Synthetic.Cast 1 120 0 0 0 0 1 0 -1 1 70 10000 - 0.25 -1\n",
+        ));
+        let world = app.world_mut();
+        let expected = world.resource::<crate::mixer::Mixer>().gain_for(
+            "Synthetic.Cast",
+            (0.0, 0.0),
+            (0.0, 0.0),
+        ) * 0.25;
+        let fx =
+            Fx::parse(&["ability.test.cast", "at=caster", "sound=cast"]).expect("a one-shot row");
+        world
+            .run_system_once(move |mut stage: Stage, mut playing: ResMut<Playing>| {
+                stage.play(
+                    &fx,
+                    (Vec3::ZERO, 0),
+                    (None, &mut playing),
+                    (&Feeds::default(), &|_| Vec3::ZERO),
+                    crate::particles::EffectSight::Point,
+                    Some(emitters[0]),
+                );
+            })
+            .expect("the actual one-shot FX producer");
+        let (player, settings) = world
+            .query::<(&AudioPlayer, &PlaybackSettings)>()
+            .single(world)
+            .expect("one physical player");
+        assert_eq!(player.0.id(), source.id());
+        assert!(
+            world
+                .resource::<Assets<AudioSource>>()
+                .get(&source)
+                .is_some()
+        );
+        assert!(
+            matches!(settings.mode, PlaybackMode::Despawn),
+            "emitter identity became loop ownership"
+        );
+        assert!(
+            (settings.volume.to_linear() - expected).abs() < 0.000_01,
+            "an own emitter sounded at {}, expected {expected}",
+            settings.volume.to_linear()
+        );
     }
 
     #[test]

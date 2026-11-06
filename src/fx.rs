@@ -151,14 +151,14 @@ impl Stage<'_, '_> {
         };
         let focus = Vec2::new(self.camera.focus.x, -self.camera.focus.z);
         let place = (at.x, -at.z);
-        let own_hero = self.session.0.my_hero().map(Owner::Unit);
+        let own_hero = self.session.0.my_hero();
         let request = Request {
             event: if event.is_empty() { prefix } else { &event },
             owner,
             emitter,
             at: Some(place),
             listener: Some((focus.x, focus.y)),
-            on_player: own_hero == Some(owner),
+            on_player: emitter.is_some() && emitter == own_hero,
             fog: Some(&self.fog),
             ..Request::default()
         };
