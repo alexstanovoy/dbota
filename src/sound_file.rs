@@ -149,6 +149,27 @@ mod tests {
         assert_eq!(why, None, "an MP3 after an ID3v2 tag");
     }
 
+    /// The call the client made before (rodio's own probe, as Bevy's `AudioSource::decoder`
+    /// makes it) panics inside symphonia on the fuzzer's first tagged file, which the decoder
+    /// refuses cleanly. (The other two made symphonia allocate 4 GiB: not run here.) Should a
+    /// symphonia update stop panicking, this says so.
+    #[test]
+    fn rodios_own_probe_panics_on_a_tag_the_decoder_refuses() {
+        let file = hex("49443304c071aa54555555555555011c01ff");
+        let probed = file.clone();
+        let old = std::panic::catch_unwind(move || {
+            let len = probed.len() as u64;
+            rodio::Decoder::builder()
+                .with_byte_len(len)
+                .with_data(Cursor::new(probed))
+                .build()
+                .is_ok()
+        });
+        assert!(old.is_err(), "rodio's own probe of the tag: {old:?}");
+        let why = decoder(file).err().expect("refused");
+        assert!(why.contains("a broken ID3v2 tag"), "{why}");
+    }
+
     /// Files that start with an ID3v2 tag, found by fuzzing: symphonia read the tag (rodio hands
     /// it every file its WAV reader refuses), panicking on the first and allocating 4 GiB for
     /// the others; any of them in the cache took the client down when it played. A tag is
