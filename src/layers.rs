@@ -298,6 +298,40 @@ pub fn plugin(app: &mut App) {
 /// World units around a tree its shade reaches.
 const SHADE_REACH: f32 = 150.0;
 
+/// Lays the shade of the `standing` trees (bota points) into the alpha of the
+/// field's left half, at whatever resolution the field has (two cells wide for
+/// one tall, RGBA, covering [`FIELD_CELLS`] of [`FIELD_CELL`]); false, writing
+/// nothing, when the image is not such a field.
+fn lay_forest_shade(field: &mut Image, standing: impl Iterator<Item = (f32, f32)>) -> bool {
+    let (w, h) = (field.width() as usize, field.height() as usize);
+    let rgba = field.texture_descriptor.format.block_copy_size(None) == Some(4);
+    let Some(data) = field
+        .data
+        .as_mut()
+        .filter(|d| rgba && h > 0 && w == 2 * h && d.len() == w * h * 4)
+    else {
+        return false;
+    };
+    let n = h;
+    let cell = FIELD_CELL * FIELD_CELLS as f32 / n as f32;
+    let mut shade = vec![0.0f32; n * n];
+    let reach = (SHADE_REACH / cell).ceil() as i32;
+    for (x, y) in standing {
+        let (x, y) = (x / cell, y / cell);
+        for cy in (y as i32 - reach).max(0)..=(y as i32 + reach).min(n as i32 - 1) {
+            for cx in (x as i32 - reach).max(0)..=(x as i32 + reach).min(n as i32 - 1) {
+                let d = (cx as f32 + 0.5 - x).hypot(cy as f32 + 0.5 - y) * cell;
+                let k = (1.0 - d / SHADE_REACH).max(0.0);
+                shade[cy as usize * n + cx as usize] += k * k;
+            }
+        }
+    }
+    for (i, s) in shade.iter().enumerate() {
+        data[((i / n) * w + i % n) * 4 + 3] = unit_byte(*s);
+    }
+    true
+}
+
 /// Writes the forest's shade into the field's alpha whenever a tree falls or
 /// grows back: every standing tree darkens the ground around it, most at its
 /// foot.
@@ -322,27 +356,84 @@ fn shade_forest(
     let Some(mut image) = images.get_mut(&layers.field) else {
         return;
     };
-    let n = FIELD_CELLS;
-    let mut shade = vec![0.0f32; n * n];
-    let reach = (SHADE_REACH / FIELD_CELL).ceil() as i32;
-    for (i, tree) in trees.iter().enumerate() {
-        if felled.binary_search(&(i as u32)).is_ok() {
-            continue;
-        }
-        let (x, y) = (tree.x.to_f32() / FIELD_CELL, tree.y.to_f32() / FIELD_CELL);
-        for cy in (y as i32 - reach).max(0)..=(y as i32 + reach).min(n as i32 - 1) {
-            for cx in (x as i32 - reach).max(0)..=(x as i32 + reach).min(n as i32 - 1) {
-                let d = (cx as f32 + 0.5 - x).hypot(cy as f32 + 0.5 - y) * FIELD_CELL;
-                let k = (1.0 - d / SHADE_REACH).max(0.0);
-                shade[cy as usize * n + cx as usize] += k * k;
-            }
-        }
-    }
-    let Some(data) = image.data.as_mut() else {
-        return;
-    };
-    for (i, s) in shade.iter().enumerate() {
-        data[((i / n) * 2 * n + i % n) * 4 + 3] = unit_byte(*s);
+    let standing = trees
+        .iter()
+        .enumerate()
+        .filter(|(i, _)| felled.binary_search(&(*i as u32)).is_err())
+        .map(|(_, tree)| (tree.x.to_f32(), tree.y.to_f32()));
+    if !lay_forest_shade(&mut image, standing) {
+        warn!("the ground's field is not two cells wide for one tall, in RGBA: no forest shade");
     }
     *drawn = Some(felled);
+}
+
+#[cfg(test)]
+mod tests {
+    use bevy::asset::RenderAssetUsages;
+    use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
+
+    use super::*;
+
+    /// A field of `n` cells a side (two wide for one tall), all clear.
+    fn field(n: u32) -> Image {
+        let size = Extent3d {
+            width: 2 * n,
+            height: n,
+            depth_or_array_layers: 1,
+        };
+        let format = TextureFormat::Rgba8Unorm;
+        Image::new_fill(
+            size,
+            TextureDimension::D2,
+            &[0; 4],
+            format,
+            RenderAssetUsages::all(),
+        )
+    }
+
+    /// The shade written at the cell under a bota point.
+    fn shade_at(field: &Image, (x, y): (f32, f32)) -> u8 {
+        let (w, n) = (field.width() as usize, field.height() as usize);
+        let cell = FIELD_CELL * FIELD_CELLS as f32 / n as f32;
+        let (cx, cy) = ((x / cell) as usize, (y / cell) as usize);
+        field.data.as_ref().expect("data")[(cy * w + cx) * 4 + 3]
+    }
+
+    #[test]
+    fn the_forest_shade_lies_under_its_trees_in_a_field_of_any_size() {
+        let tree = (5000.0, 7000.0);
+        for n in [
+            FIELD_CELLS as u32,
+            FIELD_CELLS as u32 / 2,
+            FIELD_CELLS as u32 / 4,
+        ] {
+            let mut field = field(n);
+            assert!(
+                lay_forest_shade(&mut field, [tree].into_iter()),
+                "a field of {n} cells"
+            );
+            assert!(
+                shade_at(&field, tree) > 0,
+                "shade under the tree in a field of {n} cells"
+            );
+            assert_eq!(
+                shade_at(&field, (12_000.0, 3000.0)),
+                0,
+                "none far from it ({n} cells)"
+            );
+        }
+    }
+
+    #[test]
+    fn an_image_that_is_no_field_is_left_as_it_is() {
+        let mut square = field(64);
+        square.resize(Extent3d {
+            width: 64,
+            height: 64,
+            depth_or_array_layers: 1,
+        });
+        let before = square.data.clone();
+        assert!(!lay_forest_shade(&mut square, [(100.0, 100.0)].into_iter()));
+        assert_eq!(square.data, before);
+    }
 }

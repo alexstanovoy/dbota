@@ -170,17 +170,25 @@ fn field_size(client: &Client) -> Option<UVec2> {
         .map(Image::size)
 }
 
-/// The Potato preset's texture cap (512) halves the map's textures as they load, but not the
-/// ground's field of path colours and forest shade: the client writes that cell by cell, and a
-/// halved field ran the forest's shade past its end, ending the client as the forest stood.
+/// The Low and Potato presets' texture caps (1024, 512) halve the map's textures as they load,
+/// but not the ground's field of path colours and forest shade (1156 by 578): the client writes
+/// that cell by cell, and a halved field ran the forest's shade past its end, ending the client
+/// as the forest stood.
 #[test]
-fn the_lowest_presets_texture_cap_leaves_the_grounds_field_whole() {
-    let server = Server::start(1, &[]);
-    let mut client = Client::join(&server, HeroId::SHADOW_FIEND, &["--set", "quality=potato"]);
-    client.until("the ground's field and the forest known", |c| {
-        field_size(c).is_some() && !c.core().trees().is_empty()
-    });
-    client.frames(30);
-    let cells = crate::layers::FIELD_CELLS as u32;
-    assert_eq!(field_size(&client), Some(UVec2::new(2 * cells, cells)));
+fn the_low_presets_texture_caps_leave_the_grounds_field_whole() {
+    for preset in ["low", "potato"] {
+        let server = Server::start(1, &[]);
+        let quality = format!("quality={preset}");
+        let mut client = Client::join(&server, HeroId::SHADOW_FIEND, &["--set", &quality]);
+        client.until("the ground's field and the forest known", |c| {
+            field_size(c).is_some() && !c.core().trees().is_empty()
+        });
+        client.frames(30);
+        let cells = crate::layers::FIELD_CELLS as u32;
+        assert_eq!(
+            field_size(&client),
+            Some(UVec2::new(2 * cells, cells)),
+            "{preset}"
+        );
+    }
 }
