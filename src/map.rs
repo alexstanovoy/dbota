@@ -1136,6 +1136,78 @@ fn report(
 mod tests {
     use super::*;
 
+    /// A ground of 2 by 2 cells of `heights`, and when given, one terrain triangle with a corner
+    /// `pit` deep in the first cell.
+    fn ground(heights: [f32; 4], pit: Option<f32>) -> Ground {
+        let surface = pit.map(|pit| {
+            std::sync::Arc::new(TerrainSurface {
+                points: vec![
+                    [10.0, 10.0, pit],
+                    [60.0, 10.0, heights[0]],
+                    [10.0, 60.0, heights[0]],
+                ],
+                triangles: vec![[0, 1, 2]],
+                cells: vec![vec![0], vec![], vec![], vec![]],
+            })
+        });
+        Ground {
+            n: 2,
+            heights: heights.to_vec(),
+            surface,
+        }
+    }
+
+    #[test]
+    fn the_lowest_ground_is_its_lowest_cell_not_their_mean() {
+        assert_eq!(ground([40.0, 10.0, 30.0, 50.0], None).lowest(), Some(10.0));
+    }
+
+    #[test]
+    fn a_pit_narrower_than_a_cell_is_the_lowest_ground() {
+        assert_eq!(
+            ground([40.0, 40.0, 40.0, 40.0], Some(-25.0)).lowest(),
+            Some(-25.0)
+        );
+    }
+
+    #[test]
+    fn ground_not_yet_known_has_no_lowest() {
+        assert_eq!(Ground::default().lowest(), None);
+    }
+
+    /// The floor shadows are followed to lies under the lowest ground, by the depth the floor
+    /// drawn under the map's holes has, and moves with the ground.
+    #[test]
+    fn the_shadow_floor_lies_under_the_lowest_ground() {
+        use bevy::ecs::system::RunSystemOnce;
+        let mut world = World::new();
+        world.insert_resource(ground([40.0, 40.0, 40.0, 40.0], Some(-25.0)));
+        world.init_resource::<crate::shadow_casters::ShadowFloor>();
+        world
+            .run_system_once(crate::shadow_casters::find_floor)
+            .expect("it runs");
+        let floor = world
+            .resource::<crate::shadow_casters::ShadowFloor>()
+            .0
+            .expect("a floor");
+        assert!(
+            floor < -25.0 - 30.0,
+            "under the pit and the hole floor's 30: {floor}"
+        );
+        world.insert_resource(ground([5.0, 40.0, 40.0, 40.0], None));
+        world
+            .run_system_once(crate::shadow_casters::find_floor)
+            .expect("it runs");
+        let moved = world
+            .resource::<crate::shadow_casters::ShadowFloor>()
+            .0
+            .expect("a floor");
+        assert!(
+            moved > floor && moved < 5.0 - 30.0,
+            "under the new ground: {moved}"
+        );
+    }
+
     /// A PNG of one grey row, `width` texels long: stored (not deflated), so the test needs no
     /// encoder.
     fn grey_row_png(width: u32, grey: u8) -> Vec<u8> {
