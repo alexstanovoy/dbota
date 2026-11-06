@@ -288,6 +288,10 @@ model fountain.dire.model models/props_structures/dire_fountain002.vmdl_c models
 # Base fillers (the map's entities use 001; npc_units names 002).
 model filler.radiant.model models/props_structures/radiant_statue001.vmdl_c models/building/filler_radiant/filler_radiant.glb
 model filler.dire.model models/props_structures/dire_column001.vmdl_c models/building/filler_dire/filler_dire.glb
+model filler.radiant.destruction models/props_structures/radiant_statue001_destruction.vmdl_c models/building/filler_radiant_destruction/filler_radiant_destruction.glb anims=radiant_statue001_destruction_death
+clip filler.radiant.destruction death radiant_statue001_destruction_death 6.667
+model filler.dire.destruction models/props_structures/dire_column001_destruction.vmdl_c models/building/filler_dire_destruction/filler_dire_destruction.glb anims=dire_column001_destruction_death
+clip filler.dire.destruction death dire_column001_destruction_death 6.667
 
 # --- Default courier (npc_dota_courier: donkey; Dire uses donkey_dire). The *.flying models are the winged couriers.
 model courier.radiant.model models/props_gameplay/donkey.vmdl_c models/courier/radiant/courier_radiant.glb anims=donkey_idle,donkey_run,donkey_death,donkey_spawn
@@ -917,8 +921,17 @@ sound sound.blood_grenade.target sounds/physics/damage/npc/spatter03.vsnd_c soun
 sound sound.blood_grenade.target sounds/physics/damage/npc/spatter04.vsnd_c sounds/physics/damage/npc/spatter04.wav event=Item.BloodGrenade.Target
 sound sound.tower.impact sounds/physics/damage/npc/tower_projectile.vsnd_c sounds/physics/damage/npc/tower_projectile.wav event=Tower.Water.ProjectileImpact
 sound sound.tower.hero_impact sounds/physics/damage/player/tower_projectile01.vsnd_c sounds/physics/damage/player/tower_projectile01.wav event=Tower.HeroImpact
-sound sound.tower.radiant.destroyed sounds/physics/damage/building/radiant_tower_destruction_01.vsnd_c sounds/physics/damage/building/radiant_tower_destruction_01.wav event=Building_RadiantTower.Destruction
-sound sound.tower.dire.destroyed sounds/physics/damage/building/dire_tower_destruction_01.vsnd_c sounds/physics/damage/building/dire_tower_destruction_01.wav event=Building_DireTower.Destruction
+sound sound.tower.destroyed.radiant sounds/physics/damage/building/radiant_tower_destruction_01.vsnd_c sounds/physics/damage/building/radiant_tower_destruction_01.wav event=Building_RadiantTower.Destruction
+sound sound.tower.destroyed.radiant sounds/physics/damage/building/radiant_tower_destruction_02.vsnd_c sounds/physics/damage/building/radiant_tower_destruction_02.wav event=Building_RadiantTower.Destruction
+sound sound.tower.destroyed.radiant sounds/physics/damage/building/radiant_tower_destruction_03.vsnd_c sounds/physics/damage/building/radiant_tower_destruction_03.wav event=Building_RadiantTower.Destruction
+sound sound.tower.destroyed.dire sounds/physics/damage/building/dire_tower_destruction_01.vsnd_c sounds/physics/damage/building/dire_tower_destruction_01.wav event=Building_DireTower.Destruction
+sound sound.tower.destroyed.dire sounds/physics/damage/building/dire_tower_destruction_02.vsnd_c sounds/physics/damage/building/dire_tower_destruction_02.wav event=Building_DireTower.Destruction
+sound sound.tower.destroyed.dire sounds/physics/damage/building/dire_tower_destruction_03.vsnd_c sounds/physics/damage/building/dire_tower_destruction_03.wav event=Building_DireTower.Destruction
+sound sound.building.destroyed sounds/physics/damage/engines/dire_base_destruction_01.vsnd_c sounds/physics/damage/engines/dire_base_destruction_01.wav event=Building_Generic.Destruction
+sound sound.building.destroyed sounds/physics/damage/engines/dire_base_destruction_02.vsnd_c sounds/physics/damage/engines/dire_base_destruction_02.wav event=Building_Generic.Destruction
+sound sound.building.destroyed sounds/physics/damage/engines/dire_base_destruction_03.vsnd_c sounds/physics/damage/engines/dire_base_destruction_03.wav event=Building_Generic.Destruction
+sound sound.ancient.destroyed.radiant sounds/physics/damage/building/radiant_ancient_destruction_lose.vsnd_c sounds/physics/damage/building/radiant_ancient_destruction_lose.wav event=Radiant.ancient.Destruction
+sound sound.ancient.destroyed.dire sounds/physics/damage/building/dire_ancient_destruction_lose.vsnd_c sounds/physics/damage/building/dire_ancient_destruction_lose.wav event=Dire.ancient.Destruction
 sound sound.click sounds/ui/buttonclick.vsnd_c sounds/ui/buttonclick.wav event=General.ButtonClick
 sound sound.buy sounds/ui/buy.vsnd_c sounds/ui/buy.wav event=General.Buy
 sound sound.no_gold sounds/ui/ui_general_deny.vsnd_c sounds/ui/ui_general_deny.wav event=General.NoGold

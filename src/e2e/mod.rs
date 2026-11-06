@@ -11,6 +11,7 @@ mod arcane_tips;
 mod bars;
 mod buffs;
 mod building_clicks;
+mod building_fall;
 mod camera;
 mod captions;
 mod catalogue;

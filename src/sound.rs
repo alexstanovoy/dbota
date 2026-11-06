@@ -88,6 +88,9 @@ enum Subject {
     RangedCreep,
     SiegeCreep,
     Tower,
+    /// A barracks or a filler: Dota gives them one generic event.
+    Building,
+    Ancient,
     Hero(HeroId),
 }
 
@@ -102,6 +105,8 @@ enum Event {
     Impact,
     /// A hero falling.
     Death,
+    /// A building brought down.
+    Destroyed,
 }
 
 /// A row of the manifest's sound bindings, the sound of an event of a kind
@@ -131,6 +136,8 @@ impl Row {
             Subject::RangedCreep => "creep.ranged".to_owned(),
             Subject::SiegeCreep => "creep.siege".to_owned(),
             Subject::Tower => "tower".to_owned(),
+            Subject::Building => "building".to_owned(),
+            Subject::Ancient => "ancient".to_owned(),
             Subject::Hero(hero) => format!("hero.{}", manifest.dota_name("hero", hero.0)?),
         };
         let event = match self.event {
@@ -138,6 +145,7 @@ impl Row {
             Event::Attack => "attack",
             Event::Impact => "impact",
             Event::Death => "death",
+            Event::Destroyed => "destroyed",
         };
         Some(match self.side {
             Some(side) => format!("sound.{subject}.{event}.{}", side.name()),
@@ -157,8 +165,11 @@ impl Row {
                 Row::new(Subject::RangedCreep, Event::Impact, Some(side)),
                 Row::new(Subject::SiegeCreep, Event::Attack, Some(side)),
                 Row::new(Subject::Tower, Event::Attack, Some(side)),
+                Row::new(Subject::Tower, Event::Destroyed, Some(side)),
+                Row::new(Subject::Ancient, Event::Destroyed, Some(side)),
             ]);
         }
+        rows.push(Row::new(Subject::Building, Event::Destroyed, None));
         for hero in 0..bota_core::HEROES.len() {
             let subject = Subject::Hero(HeroId(hero as u16));
             for event in [Event::PreAttack, Event::Attack, Event::Impact, Event::Death] {
@@ -167,6 +178,22 @@ impl Row {
         }
         rows
     }
+}
+
+/// The row of the sound of the fall a building was told by.
+fn fall_row(told: &bota_proto::EventKind) -> Option<Row> {
+    let bota_proto::EventKind::StructureDestroyed { team, kind, .. } = *told else {
+        return None;
+    };
+    let side = Side::of(team);
+    Some(match kind {
+        UnitKind::Tower => Row::new(Subject::Tower, Event::Destroyed, side),
+        UnitKind::Ancient => Row::new(Subject::Ancient, Event::Destroyed, side),
+        UnitKind::Barracks | UnitKind::Filler => {
+            Row::new(Subject::Building, Event::Destroyed, None)
+        }
+        _ => return None,
+    })
 }
 
 /// The side a creep or a tower fights for: Dota gives each its own sound set.
@@ -326,8 +353,10 @@ fn sources_of(kind: Kind, manifest: &Manifest) -> Vec<String> {
             CueKind::Buy => named(&["sound.buy"]),
             CueKind::LevelUp => named(&["sound.level_up"]),
             CueKind::TowerShot => named(&["sound.tower.hero_impact"]),
-            // A hero's own, sounded through its rows.
-            CueKind::Attack | CueKind::Hit | CueKind::HeroDeath => vec![],
+            // A hero's own, sounded through its rows; so is a building's fall.
+            CueKind::Attack | CueKind::Hit | CueKind::HeroDeath | CueKind::StructureFell => {
+                vec![]
+            }
             // Each reason has its own sound (Kind::Denied).
             CueKind::Refused(_) | CueKind::Undeniable(_) | CueKind::QuickBuyFull => vec![],
         },
@@ -514,6 +543,12 @@ impl Sounder<'_, '_, '_> {
                         cue.at,
                         merge,
                     );
+                }
+                // The fall of a building is the sound of its kind and side.
+                CueKind::StructureFell => {
+                    if let Some(row) = cue.told.as_ref().and_then(fall_row) {
+                        self.sound(Kind::Row(row), cue.gain, cue.at, None);
+                    }
                 }
                 kind => self.sound(Kind::Cue(kind), cue.gain, cue.at, None),
             }

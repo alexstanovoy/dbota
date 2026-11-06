@@ -17,6 +17,9 @@ use crate::fog::FogGrid;
 
 const SOON: Duration = Duration::from_secs(30);
 const MAX_RECORD_BYTES: usize = 32 * 1024 * 1024;
+/// Ticks a replay made by [`Spectated::save_after_falls`] shows the buildings standing, before
+/// they fall.
+const STANDING_TICKS: u32 = 2;
 static NEXT_REPLAY: AtomicU32 = AtomicU32::new(0);
 
 struct Recording {
@@ -27,10 +30,13 @@ struct Recording {
     whole: usize,
     tick: u32,
     deaths: Vec<(bota_proto::EntityId, usize, u32)>,
+    /// Whether the bytes are not kept: a test that makes its own records needs the match's
+    /// description and no more.
+    discard: bool,
 }
 
 impl Recording {
-    fn open(server: &Server) -> Self {
+    fn open(server: &Server, discard: bool) -> Self {
         let mut net = Net::connect(&server.address).expect("the recording spectator connects");
         net.send(&ClientMsg::hello(
             Role::Spectator,
@@ -52,10 +58,14 @@ impl Recording {
             whole: 0,
             tick: 0,
             deaths: Vec::new(),
+            discard,
         }
     }
 
     fn append(&mut self, message: ServerMsg) {
+        if self.discard {
+            return;
+        }
         let bytes = bota_proto::encode_frame_to_vec(&ReplayRecord::Msg(message))
             .expect("a real server message encodes");
         assert!(
@@ -147,18 +157,24 @@ pub(super) struct Spectated {
 
 impl Spectated {
     pub(super) fn start(map: &str) -> Self {
-        Self::start_with(map, HeroId::SHADOW_FIEND, false)
+        Self::start_with(map, HeroId::SHADOW_FIEND, false, false)
+    }
+
+    /// [`Spectated::start`] for a test that makes its own records ([`Spectated::save_after_falls`]):
+    /// the match is not recorded.
+    pub(super) fn start_unrecorded(map: &str) -> Self {
+        Self::start_with(map, HeroId::SHADOW_FIEND, false, true)
     }
 
     pub(super) fn pair(map: &str) -> Self {
-        Self::start_with(map, HeroId::SHADOW_FIEND, true)
+        Self::start_with(map, HeroId::SHADOW_FIEND, true, false)
     }
 
     pub(super) fn hero(map: &str, hero: HeroId) -> Self {
-        Self::start_with(map, hero, false)
+        Self::start_with(map, hero, false, false)
     }
 
-    fn start_with(map: &str, hero: HeroId, pair: bool) -> Self {
+    fn start_with(map: &str, hero: HeroId, pair: bool, discard: bool) -> Self {
         let server = Server::start(
             2,
             &[
@@ -176,7 +192,7 @@ impl Spectated {
         let driver = crate::session::open(&args)
             .expect("the driving player connects")
             .0;
-        let recording = Recording::open(&server);
+        let recording = Recording::open(&server, discard);
         let client = Client::run(&["--addr", &server.address, "--spectate"]);
         let mut game = Self {
             _server: server,
@@ -340,6 +356,97 @@ impl Spectated {
             .copied()
             .expect("the death was recorded");
         self.recording.save_until(self._server, end, tick)
+    }
+
+    /// A replay of the match as the watching spectator sees it now, with `fallen` standing for
+    /// a moment and then brought down, each told by its death and its fall, as the server tells
+    /// them; the replay ends `after` ticks after. The tick the first of them is gone on comes
+    /// with it.
+    pub(super) fn save_after_falls(
+        self,
+        fallen: &[bota_proto::EntityId],
+        after: u32,
+    ) -> (ReplayFile, u32) {
+        let alive = self
+            .client
+            .core()
+            .view()
+            .expect("a view of the match")
+            .clone();
+        let info = self.recording.info.clone().expect("the match description");
+        let mut gone = alive.clone();
+        let falls: Vec<bota_proto::EventKind> = fallen
+            .iter()
+            .flat_map(|id| {
+                let unit = alive.unit(*id).expect("a standing building");
+                [
+                    bota_proto::EventKind::Died {
+                        unit: *id,
+                        killer: None,
+                        denied: false,
+                        gold: 0,
+                        bounty: None,
+                        assists: 0,
+                        awards: None,
+                        credited_hero: None,
+                    },
+                    bota_proto::EventKind::StructureDestroyed {
+                        unit: *id,
+                        team: unit.team,
+                        kind: unit.kind,
+                        lane: Some(0),
+                        tier: Some(1),
+                        ranged: Some(false),
+                    },
+                ]
+            })
+            .collect();
+        gone.units.retain(|unit| !fallen.contains(&unit.id));
+        let mut bytes = Vec::new();
+        bota_proto::encode_frame(
+            &ReplayRecord::Header(ReplayHeader::new(bota_core::WIRE_FINGERPRINT)),
+            &mut bytes,
+        )
+        .expect("the header encodes");
+        let mut put = |message: ServerMsg| {
+            bota_proto::encode_frame(&ReplayRecord::Msg(message), &mut bytes)
+                .expect("a message encodes");
+        };
+        put(ServerMsg::MatchStart { info });
+        let first = alive.tick;
+        let mut last = first;
+        for ahead in 0..STANDING_TICKS + after {
+            let tick = first + ahead;
+            let standing = ahead < STANDING_TICKS;
+            let mut view = if standing {
+                alive.clone()
+            } else {
+                gone.clone()
+            };
+            view.tick = tick;
+            put(ServerMsg::Snapshot { view });
+            let events = if ahead == STANDING_TICKS {
+                falls.clone()
+            } else {
+                Vec::new()
+            };
+            put(ServerMsg::Events { tick, events });
+            last = tick;
+        }
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(format!(
+            "target/e2e/fall_replay_{}_{}.brp",
+            std::process::id(),
+            NEXT_REPLAY.fetch_add(1, Ordering::Relaxed)
+        ));
+        std::fs::write(&path, &bytes).expect("the replay fixture written once");
+        (
+            ReplayFile {
+                path,
+                tick: last,
+                _server: self._server,
+            },
+            first + STANDING_TICKS,
+        )
     }
 
     pub(super) fn order(&mut self, order: bota_proto::Order) {
