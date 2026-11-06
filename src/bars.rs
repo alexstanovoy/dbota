@@ -62,6 +62,21 @@ pub struct Bar {
     /// The well and the fill of a hero's teleport channel.
     channel: Option<(Entity, Entity)>,
     threat: Entity,
+    /// The colour of the bar's outline when its unit is not under the cursor.
+    outline: Color,
+}
+
+/// Whether a unit is a creep, whose bar has Dota's frame round a grey well
+/// (`creep_health_bar_*.svg`); the other bars are as they were.
+fn is_creep(kind: UnitKind) -> bool {
+    matches!(
+        kind,
+        UnitKind::CreepMelee
+            | UnitKind::CreepFlagbearer
+            | UnitKind::CreepRanged
+            | UnitKind::CreepSiege
+            | UnitKind::CreepNeutral
+    )
 }
 
 /// The bar of every unit root.
@@ -170,10 +185,17 @@ pub fn plugin(app: &mut App) {
         .add_systems(Update, hover_outline.after(crate::pick::update));
 }
 
+/// The well of a bar, top and bottom.
+const WELL: (Color, Color) = (
+    Color::srgb(0.349, 0.349, 0.349),
+    Color::srgb(0.502, 0.502, 0.502),
+);
+
 /// The outline of a bar: dark, and light while its unit is under the
 /// cursor, as Dota lights a hovered unit's bar
-/// (`dota_hud_healthbar_hoveroutline_alpha`).
+/// (`dota_hud_healthbar_hoveroutline_alpha`). A creep's is Dota's opaque black stroke.
 const OUTLINE: Color = Color::srgba(0.0, 0.0, 0.0, 0.9);
+const OUTLINE_CREEP: Color = Color::BLACK;
 const OUTLINE_HOVERED: Color = Color::srgba(1.0, 1.0, 1.0, 0.9);
 
 /// Lights the bar of the unit a click would get, and dims the one lit
@@ -183,20 +205,25 @@ fn hover_outline(
     index: Res<crate::units::UnitIndex>,
     bars: Res<Bars>,
     mut outlines: Query<&mut Outline>,
-    mut lit: Local<Option<Entity>>,
+    mut lit: Local<Option<(Entity, Color)>>,
 ) {
     let now = hover
         .left()
         .and_then(|(id, _)| index.0.get(&id))
         .and_then(|unit| bars.0.get(unit))
-        .map(|bar| bar.root);
-    if now == *lit {
+        .map(|bar| (bar.root, bar.outline));
+    if now.map(|(root, _)| root) == lit.map(|(root, _)| root) {
         return;
     }
-    for (root, color) in [(*lit, OUTLINE), (now, OUTLINE_HOVERED)] {
-        if let Some(mut outline) = root.and_then(|r| outlines.get_mut(r).ok()) {
-            outline.color = color;
-        }
+    if let Some((root, rest)) = *lit
+        && let Ok(mut outline) = outlines.get_mut(root)
+    {
+        outline.color = rest;
+    }
+    if let Some((root, _)) = now
+        && let Ok(mut outline) = outlines.get_mut(root)
+    {
+        outline.color = OUTLINE_HOVERED;
     }
     *lit = now;
 }
@@ -271,15 +298,32 @@ pub(crate) fn bar_height(kind: UnitKind) -> f32 {
 fn spawn_bar(commands: &mut Commands, layer: Entity, fonts: &Fonts, live: &UnitView) -> Bar {
     let kind = live.kind;
     let (w, h) = bar_size(kind).unwrap_or((40.0, 5.0));
+    let creep = is_creep(kind);
+    let outline = if creep { OUTLINE_CREEP } else { OUTLINE };
     let root = commands
         .spawn((
             ui::absolute(0.0, 0.0, w, h),
             BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.85)),
-            Outline::new(px(1.0), px(0.0), OUTLINE),
+            Outline::new(
+                px(if creep { ui::DOTA.max(1.0) } else { 1.0 }),
+                px(0.0),
+                outline,
+            ),
             Visibility::Hidden,
             ChildOf(layer),
         ))
         .id();
+    if creep {
+        // Dota's well (`creep_health_bar_background.svg`: #595959 to #808080) in Dota's black
+        // stroke: the bars of creeps that stand close are told apart.
+        commands.entity(root).insert((
+            BackgroundColor(WELL.0),
+            BackgroundGradient::from(LinearGradient::to_bottom(vec![
+                WELL.0.into(),
+                WELL.1.into(),
+            ])),
+        ));
+    }
     let part = |commands: &mut Commands, color: Color| {
         commands
             .spawn((
@@ -384,6 +428,7 @@ fn spawn_bar(commands: &mut Commands, layer: Entity, fonts: &Fonts, live: &UnitV
         name,
         channel,
         threat,
+        outline,
     }
 }
 

@@ -294,3 +294,78 @@ fn an_enemy_heros_two_attacks_take_a_wards_two_blocks_one_each() {
         c.view().unit(ours).is_none()
     });
 }
+
+/// A creep's bar is framed as Dota's art frames it (`creep_health_bar_background.svg`): an opaque
+/// black stroke round a grey well (equal in red, green and blue), so that the bars of creeps that
+/// stand close are told apart (the well was a translucent black and the frame the same, and the
+/// bars ran together). A hero's bar is as it was: a translucent black well and outline.
+#[test]
+fn a_creeps_bar_has_an_opaque_black_frame_round_a_grey_well_and_a_heros_is_as_it_was() {
+    let server = Server::start(1, &[]);
+    let mut client = Client::join(&server, HeroId::SHADOW_FIEND, &[]);
+    client.stand_at(MID);
+    client.cheat(Cheat::CreateCreeps {
+        enemy: true,
+        at: At::from_ints(MID.0 + 400, MID.1),
+    });
+    client.until("a creep barred", |c| {
+        c.view()
+            .units
+            .iter()
+            .any(|u| u.kind == UnitKind::CreepMelee && bar(c, u.id).is_some())
+    });
+    let root_of = |client: &Client, id: EntityId| {
+        let body = client.body(id).expect("drawn");
+        client
+            .world()
+            .resource::<crate::bars::Bars>()
+            .root(body)
+            .expect("a bar")
+    };
+    let creep = client
+        .view()
+        .units
+        .iter()
+        .find(|u| u.kind == UnitKind::CreepMelee && bar(&client, u.id).is_some())
+        .map(|u| u.id)
+        .expect("a barred creep");
+    let root = root_of(&client, creep);
+    let frame = client.world().get::<Outline>(root).expect("a frame");
+    assert_eq!(frame.color, Color::BLACK, "an opaque black frame");
+    let well = client
+        .world()
+        .get::<BackgroundGradient>(root)
+        .expect("a gradient well");
+    let Some(Gradient::Linear(linear)) = well.0.first() else {
+        panic!("a linear gradient");
+    };
+    for stop in &linear.stops {
+        let c = stop.color.to_srgba();
+        assert!(
+            (c.red - c.green).abs() < 0.01 && (c.green - c.blue).abs() < 0.01,
+            "a grey well, not {c:?}"
+        );
+        assert!(
+            (0.25..=0.6).contains(&c.red) && c.alpha == 1.0,
+            "an opaque grey of Dota's well, not {c:?}"
+        );
+    }
+    let hero = client.me().id;
+    client.until("the hero barred", |c| bar(c, hero).is_some());
+    let root = root_of(&client, hero);
+    let frame = client.world().get::<Outline>(root).expect("a frame");
+    assert_eq!(
+        frame.color.to_srgba().alpha,
+        0.9,
+        "a hero's outline as it was"
+    );
+    assert!(
+        client.world().get::<BackgroundGradient>(root).is_none(),
+        "a hero's well is no gradient"
+    );
+    assert_eq!(
+        client.world().get::<BackgroundColor>(root).map(|b| b.0),
+        Some(Color::srgba(0.0, 0.0, 0.0, 0.85)),
+        "a hero's well as it was"
+    );
+}
