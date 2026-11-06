@@ -86,17 +86,12 @@ fn start(args: Res<crate::Args>, manifest: Res<Manifest>, mut commands: Commands
     let Some(hero) = args.talk_check.clone() else {
         return;
     };
+    let lines = order_lines(&manifest, &hero);
     // The move line with the most to say.
-    let line = manifest
-        .sound_files(&format!("sound.voice.{hero}.move"))
-        .filter_map(|rel| crate::talk::lipsync(&manifest, rel))
-        .max_by(|a, b| a.lipsync.end().total_cmp(&b.lipsync.end()));
-    let names = ["move", "attack"].map(|kind| format!("sound.voice.{hero}.{kind}"));
-    let lines = names
+    let line = lines
         .iter()
-        .flat_map(|name| manifest.sound_files(name))
-        .map(|rel| (rel.to_owned(), crate::talk::lipsync(&manifest, rel)))
-        .collect();
+        .filter_map(|(_, face)| face.clone())
+        .max_by(|a, b| a.lipsync.end().total_cmp(&b.lipsync.end()));
     commands.insert_resource(Check {
         hero,
         line,
@@ -111,6 +106,47 @@ fn start(args: Res<crate::Args>, manifest: Res<Manifest>, mut commands: Commands
         line_rest: Vec::new(),
         moved: Vec::new(),
     });
+}
+
+/// Every line the hero's own rules say to a move or an attack order, by its voice event, with
+/// its face: out of the hero's voice pack. None when the pack does not read (told).
+fn order_lines(manifest: &Manifest, hero: &str) -> Vec<(String, Option<Arc<LineFace>>)> {
+    let rel = dbota_import::voice::pack_path(hero);
+    let voice = crate::cachefs::read_small(&manifest.root, &rel)
+        .ok_or_else(|| "not in the cache".to_owned())
+        .and_then(|bytes| {
+            let voice = dbota_import::voice::open(hero, &bytes)?;
+            Ok(crate::hero_voice::loaded(voice, &rel))
+        });
+    let voice = match voice {
+        Ok(voice) => voice,
+        Err(why) => {
+            error!("talk check: {rel}: {why}");
+            return Vec::new();
+        }
+    };
+    let rules = &voice.rules;
+    let orders = ["TLK_DOTA_MOVE", "TLK_DOTA_ATTACK"];
+    let answers = |rule: &dbota_import::voice::rules::Rule| {
+        rule.criteria.iter().any(|&c| {
+            let c = &rules.criteria[c];
+            c.key.eq_ignore_ascii_case("concept")
+                && orders.iter().any(|o| c.matcher.matches(Some(o)))
+        })
+    };
+    rules
+        .rules
+        .iter()
+        .filter(|rule| answers(rule))
+        .flat_map(|rule| &rule.lines)
+        .flat_map(|line| {
+            let event = &rules.events[line.event];
+            event
+                .sounds
+                .iter()
+                .map(|&s| (event.name.clone(), voice.sounds[s].1.clone()))
+        })
+        .collect()
 }
 
 /// What the check moves: the stage, the line said, the model's clips.

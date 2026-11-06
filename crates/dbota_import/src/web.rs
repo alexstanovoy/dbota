@@ -360,3 +360,28 @@ pub fn cache_metadata_limits() -> Array {
 pub fn cache_index_header() -> String {
     crate::index::CacheIndex::header()
 }
+
+/// The most bytes of a hero's voice pack: what the voice worker reads at most.
+#[wasm_bindgen]
+pub fn voice_pack_limit() -> usize {
+    crate::voice::pack::MAX_PACK_BYTES
+}
+
+/// The records of `hero`'s voice pack, checked whole with the reader the native client uses
+/// ([`crate::voice::open`]): `[name, start, end]` each, the record's place in `bytes`. The
+/// voice worker hands each record to the page by itself.
+#[wasm_bindgen]
+pub fn voice_pack_records(hero: &str, bytes: &[u8]) -> Result<Array, JsError> {
+    crate::voice::open(hero, bytes).map_err(|why| JsError::new(&why))?;
+    let records = crate::voice::pack::read(bytes).map_err(|why| JsError::new(&why.to_string()))?;
+    Ok(records
+        .into_iter()
+        .map(|record| {
+            Array::of3(
+                &record.name.into(),
+                &(record.data.start as u32).into(),
+                &(record.data.end as u32).into(),
+            )
+        })
+        .collect())
+}

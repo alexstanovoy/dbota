@@ -11,7 +11,8 @@
 //!
 //! Outside the mixer, and so outside its [`MAX_VOICES`]: the portal hums (`sound.rs`, which end
 //! with their teleports), the soundscape's loops (`soundscape.rs`, at most 24 by its own bound),
-//! the voice lines (`voice.rs`) and the announcer.
+//! the announcer (`voice.rs`). A hero's voice lines (`hero_voice.rs`) sound through it, their
+//! events those of the hero spoken for ([`Mixer::set_voice_events`]).
 
 use std::collections::{HashMap, HashSet};
 use std::time::Duration;
@@ -143,6 +144,8 @@ pub struct Mixer {
     /// The loudest each group sounded since the last tick: what the layers' triggers are told.
     activity: HashMap<String, f32>,
     last_tick: Option<Duration>,
+    /// The events [`Mixer::set_voice_events`] took, to give back when the voice changes.
+    voice_events: Vec<String>,
 }
 
 /// A mix layer and how far each of its triggers has it on, 0 to 1 (a trigger ramps at its own
@@ -262,6 +265,23 @@ impl Mixer {
                 .collect(),
             ..Mixer::default()
         }
+    }
+
+    /// Takes the sound events of the voice the client speaks with (a hero's pack's
+    /// `events.txt`), in place of the voice's it took before: only the hero spoken for has its
+    /// lines' limits and mix groups here. Returns how many it took.
+    pub fn set_voice_events(&mut self, text: &str) -> usize {
+        for name in std::mem::take(&mut self.voice_events) {
+            self.events.remove(&name);
+        }
+        let room = MAX_EVENTS.saturating_sub(self.events.len());
+        for line in crate::cache_text::sound_events(text, room) {
+            if !self.events.contains_key(&line.name) {
+                self.voice_events.push(line.name.clone());
+                self.events.insert(line.name.clone(), line);
+            }
+        }
+        self.voice_events.len()
     }
 
     /// The volume and sound level factors of a mix group now: its level in the default mix, as
@@ -492,6 +512,22 @@ impl Mixer {
             Started::Loop(entity)
         } else {
             Started::Once
+        }
+    }
+
+    /// [`Mixer::start`], and the entity of the voice it started, if it started one: what a
+    /// line's lip sync follows.
+    pub fn start_heard(
+        &mut self,
+        commands: &mut Commands,
+        now: Duration,
+        request: &Request,
+        source: Handle<AudioSource>,
+    ) -> Option<Entity> {
+        match self.start(commands, now, request, source) {
+            Started::Loop(entity) => Some(entity),
+            Started::Once => self.voices.last().map(|voice| voice.entity),
+            Started::Refused => None,
         }
     }
 

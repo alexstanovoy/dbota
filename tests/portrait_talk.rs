@@ -1,10 +1,10 @@
 //! The talking portrait, end to end in the real client: one's hero answers a move order and an
-//! attack order with a voice line, and the bottom panel's portrait says it. The face's morph
-//! weights as drawn (`--face-trace`, the idle expression held) open the jaw in step with the
-//! line's phonemes (the lip sync file the importer wrote beside the sound, and Valve's phoneme
-//! table, through Source's box filter), and come back to the rest face, still, once the line has ended. For each hero the
-//! game has. Drawn on the GPU in a headless compositor, so it is left out of a plain
-//! `cargo test`; `tools/visual_check.sh` runs it.
+//! attack order with a voice line of its rules, and the bottom panel's portrait says it. The
+//! face's morph weights as drawn (`--face-trace`, the idle expression held) open the jaw in step
+//! with the line's phonemes (the lip sync the importer packed with the line in the hero's voice
+//! pack, and Valve's phoneme table, through Source's box filter), and come back to the rest face,
+//! still, once the line has ended. For each hero the game has. Drawn on the GPU in a headless
+//! compositor, so it is left out of a plain `cargo test`; `tools/visual_check.sh` runs it.
 
 mod common;
 
@@ -88,9 +88,22 @@ fn read_trace(said: &str) -> Trace {
     }
 }
 
-/// The phonemes of a lip sync file (start, end, code) and when its data ends.
-fn lipsync(file: &PathBuf) -> (Vec<(f32, f32, u32)>, f32) {
-    let text = std::fs::read_to_string(file).expect("the line's lip sync file");
+/// A record of a voice pack, named `PACK#RECORD` as the trace names a line's lip sync.
+fn pack_record(file: &std::path::Path) -> (String, Vec<u8>) {
+    let named = file.display().to_string();
+    let (pack, record) = named.split_once('#').expect("a line of a voice pack");
+    let bytes = std::fs::read(pack).expect("the hero's voice pack");
+    let records = dbota_import::voice::pack::read(&bytes).expect("a voice pack");
+    let found = records
+        .iter()
+        .find(|r| r.name == record)
+        .expect("the record in the pack");
+    (pack.to_owned(), bytes[found.data.clone()].to_vec())
+}
+
+/// The phonemes of a line's lip sync (start, end, code) and when its data ends.
+fn lipsync(file: &std::path::Path) -> (Vec<(f32, f32, u32)>, f32) {
+    let text = String::from_utf8(pack_record(file).1).expect("the line's lip sync");
     let mut phonemes = Vec::new();
     let mut end = 0.0f32;
     for words in text
@@ -229,9 +242,10 @@ fn play(hero: &str, enemy: &str) -> String {
         "0",
         "--cheats",
     ]);
-    // One's hero rests between answers for 6 s.
+    // The hero first says its line entering battle and says nothing over it; it answers a move
+    // and an attack each at most once in 6 s.
     let script = format!(
-        "await:game;click:pick {hero};click:pick ready;await:level:1;wait:4;\
+        "await:game;click:pick {hero};click:pick ready;await:level:1;wait:8;\
          mouse:0.9,0.15;rclick;wait:7;key:Space;wait:0.5;\
          mouse:0.56,0.46;say:-createhero {enemy} enemy;wait:0.4;rclick;wait:7;exit"
     );
@@ -286,7 +300,43 @@ fn play(hero: &str, enemy: &str) -> String {
     said
 }
 
-/// Checks that `hero` says a move line, then an attack line, with its face.
+/// The concepts (`TLK_DOTA_MOVE`, ...) a line of the trace answers: those of the rules of its pack
+/// that may say its sound.
+fn concepts_of(file: &std::path::Path) -> Vec<String> {
+    let (pack, _) = pack_record(file);
+    let named = file.display().to_string();
+    let record = named.split_once('#').expect("a pack's record").1;
+    let sound: usize = record
+        .strip_prefix("lipsync/")
+        .and_then(|r| r.strip_suffix(".txt"))
+        .and_then(|n| n.parse().ok())
+        .expect("a lip sync record");
+    let hero = std::path::Path::new(&pack)
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .expect("the pack's hero");
+    let bytes = std::fs::read(&pack).expect("the hero's voice pack");
+    let rules = dbota_import::voice::open(hero, &bytes)
+        .expect("the pack opens")
+        .rules;
+    let mut concepts = Vec::new();
+    for rule in &rules.rules {
+        let says = rule
+            .lines
+            .iter()
+            .any(|l| rules.events[l.event].sounds.contains(&sound));
+        for &c in rule.criteria.iter().filter(|_| says) {
+            let c = &rules.criteria[c];
+            if c.key.eq_ignore_ascii_case("concept") {
+                concepts.push(c.expr.clone());
+            }
+        }
+    }
+    concepts
+}
+
+/// Checks that `hero`, after whatever it said entering battle, says a move line, then an attack
+/// line, with its face.
 fn says_its_lines(hero: &str, enemy: &str) {
     let trace = read_trace(&play(hero, enemy));
     let results: Vec<Result<String, String>> =
@@ -294,14 +344,18 @@ fn says_its_lines(hero: &str, enemy: &str) {
     for result in &results {
         println!("{hero}: {}", result.as_ref().unwrap_or_else(|e| e));
     }
-    let kinds: Vec<String> = trace
-        .lines
-        .iter()
-        .map(|s| s.file.display().to_string())
-        .collect();
+    let kinds: Vec<Vec<String>> = trace.lines.iter().map(|s| concepts_of(&s.file)).collect();
+    let last = kinds.len().saturating_sub(2);
+    let answered = |at: usize, concept: &str| {
+        kinds
+            .get(at)
+            .is_some_and(|k| k.iter().any(|c| c == concept))
+    };
     assert!(
-        trace.lines.len() == 2 && kinds[0].contains("_move_") && kinds[1].contains("_attack_"),
-        "{hero}: a move line then an attack line, not {kinds:?}"
+        kinds.len() >= 2
+            && answered(last, "TLK_DOTA_MOVE")
+            && answered(last + 1, "TLK_DOTA_ATTACK"),
+        "{hero}: a move line then an attack line last, not {kinds:?}"
     );
     assert!(results.iter().all(Result::is_ok), "{hero}: {results:#?}");
 }

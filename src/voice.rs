@@ -1,20 +1,15 @@
-//! The voices: one's hero answering its move and attack orders as in Dota
-//! (now and then, not on every click) and speaking of the runes it takes and
-//! bottles, the announcer at hero selection and through the pre-game with the
+//! The voices: the announcer at hero selection and through the pre-game with the
 //! ancients' horn, the rooster at daybreak and the wolf at nightfall, and the
-//! click of the interface.
+//! click of the interface. What one's hero says is its own rules' (`hero_voice.rs`).
 //! Silent where the cache has no such sound.
-
-use std::sync::Arc;
 
 use bevy::{audio::Volume, prelude::*};
 use bota_client_core::Phase;
-use bota_proto::{EventKind, Order, Team, UnitKind};
+use bota_proto::{EventKind, Team, UnitKind};
 
 use crate::config::Settings;
 use crate::manifest::{Manifest, cache_path};
 use crate::session::Session;
-use crate::talk::{LineFace, Speech};
 
 /// A cue of the pre-game: the announcer's lines and the ancients' horn.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -57,54 +52,31 @@ pub struct PregameHeard(pub Vec<(PregameCue, u32)>);
 #[cfg(test)]
 #[derive(Resource, Default, Debug)]
 pub struct BuildingsHeard(pub Vec<String>);
-/// Seconds a hero keeps quiet after answering an order.
-const VOICE_REST: f32 = 6.0;
-
 /// The sounds of one logical name, played in turn.
 #[derive(Default)]
 struct Lines {
     sources: Vec<Handle<AudioSource>>,
-    /// Per sound, the face it is said with (a voice line's lip sync).
-    faces: Vec<Option<Arc<LineFace>>>,
     next: usize,
 }
 
 impl Lines {
     fn load(manifest: &Manifest, server: &AssetServer, name: &str) -> Lines {
-        Lines::of(manifest, server, manifest.sound_files(name))
+        Lines::of(server, manifest.sound_files(name))
     }
 
-    fn of<'a>(
-        manifest: &Manifest,
-        server: &AssetServer,
-        files: impl Iterator<Item = &'a str>,
-    ) -> Lines {
-        let (sources, faces) = files
-            .map(|rel| {
-                (
-                    server.load(cache_path(rel)),
-                    crate::talk::lipsync(manifest, rel),
-                )
-            })
-            .unzip();
+    fn of<'a>(server: &AssetServer, files: impl Iterator<Item = &'a str>) -> Lines {
         Lines {
-            sources,
-            faces,
+            sources: files.map(|rel| server.load(cache_path(rel))).collect(),
             next: 0,
         }
     }
 
     /// The next of the sounds, if there are any.
     fn take(&mut self) -> Option<Handle<AudioSource>> {
-        self.take_line().map(|(source, _)| source)
-    }
-
-    /// The next of the sounds and its face.
-    fn take_line(&mut self) -> Option<(Handle<AudioSource>, Option<Arc<LineFace>>)> {
         let at = self.next % self.sources.len().max(1);
         let source = self.sources.get(at)?.clone();
         self.next += 1;
-        Some((source, self.faces.get(at).cloned().flatten()))
+        Some(source)
     }
 }
 
@@ -160,11 +132,6 @@ const ANNOUNCER_GROUP: &str = "Announcer";
 
 #[derive(Resource, Default)]
 struct Voices {
-    /// By hero Dota name: its move and attack answers.
-    heroes: Vec<(String, Lines, Lines)>,
-    /// A hero's lines of the runes it takes and bottles, by their logical name
-    /// (`sound.voice.<hero>.rune.<rune art>`, `….rune.bottle`).
-    runes: Vec<(String, Lines)>,
     click: Lines,
     /// The power button's own click (Dota's `ui.menu_quit`).
     quit: Lines,
@@ -188,11 +155,8 @@ struct Voices {
 /// What the voices remember between frames.
 #[derive(Default)]
 struct Heard {
+    /// The game the memory is of: another game starts it afresh.
     epoch: u32,
-    /// The last order sent that was looked at.
-    seq: u32,
-    /// Seconds before the hero may answer again.
-    rest: f32,
     /// Whether the announcer has asked for a hero.
     asked: bool,
 }
@@ -207,8 +171,6 @@ pub fn plugin(app: &mut App) {
         .add_systems(
             Update,
             (
-                answer,
-                rune_lines,
                 announce,
                 fortified,
                 building_fell,
@@ -223,22 +185,6 @@ pub fn plugin(app: &mut App) {
 }
 
 fn load(mut voices: ResMut<Voices>, manifest: Res<Manifest>, server: Res<AssetServer>) {
-    for id in 0..bota_core::HEROES.len() as u16 {
-        let Some(name) = manifest.dota_name("hero", id) else {
-            continue;
-        };
-        let moves = Lines::load(&manifest, &server, &format!("sound.voice.{name}.move"));
-        let attacks = Lines::load(&manifest, &server, &format!("sound.voice.{name}.attack"));
-        voices.heroes.push((name.to_string(), moves, attacks));
-        let arts = bota_proto::RuneKind::ALL.map(crate::runes::art);
-        for what in arts.into_iter().chain(["bottle"]) {
-            let logical = format!("sound.voice.{name}.rune.{what}");
-            let lines = Lines::load(&manifest, &server, &logical);
-            if !lines.sources.is_empty() {
-                voices.runes.push((logical, lines));
-            }
-        }
-    }
     voices.choose = Lines::load(&manifest, &server, "sound.announcer.choose_hero");
     voices.prepare = Lines::load(&manifest, &server, "sound.announcer.battle_prepare");
     voices.thirty = Lines::load(&manifest, &server, "sound.announcer.battle_in_30");
@@ -268,7 +214,6 @@ fn load(mut voices: ResMut<Voices>, manifest: Res<Manifest>, server: Res<AssetSe
             &format!("sound.announcer.fortified.{side}"),
         );
         voices.horns[i] = Lines::of(
-            &manifest,
             &server,
             manifest
                 .sound_files("sound.horn")
@@ -298,118 +243,6 @@ fn say(commands: &mut Commands, source: Option<Handle<AudioSource>>, gain: f32) 
             ))
             .id()
     })
-}
-
-/// One's hero answers a move or an attack order, then keeps quiet a while. Muted, the hero
-/// still says it, unheard: its portrait's mouth moves (Dota's responses do not hang on the
-/// volume).
-fn answer(
-    mut commands: Commands,
-    session: NonSend<Session>,
-    manifest: Res<Manifest>,
-    mut voices: ResMut<Voices>,
-    mut speech: ResMut<Speech>,
-    settings: Res<Settings>,
-    args: Res<crate::Args>,
-    time: Res<Time>,
-    real: Res<Time<bevy::time::Real>>,
-    mut heard: Local<Heard>,
-    epoch: Res<crate::main_menu::GameEpoch>,
-) {
-    if heard.epoch != epoch.0 {
-        *heard = Heard {
-            epoch: epoch.0,
-            ..default()
-        };
-    }
-    let core = &session.0;
-    heard.rest = (heard.rest - time.delta_secs()).max(0.0);
-    if core.seq() == heard.seq {
-        return;
-    }
-    heard.seq = core.seq();
-    if !settings.voice || heard.rest > 0.0 {
-        return;
-    }
-    let (Some(slot), Some(view)) = (core.my_slot, core.view()) else {
-        return;
-    };
-    let Some(order) = core
-        .shown_orders
-        .iter()
-        .find(|s| s.slot == slot && s.unit.is_none_or(|u| Some(u) == core.my_hero()))
-        .map(|s| s.order)
-    else {
-        return;
-    };
-    let attack = match order {
-        Order::Move { .. } => false,
-        Order::Attack { .. } => true,
-        _ => return,
-    };
-    let Some(name) = view
-        .player(slot)
-        .and_then(|p| manifest.dota_name("hero", p.hero.0))
-    else {
-        return;
-    };
-    let Some((_, moves, attacks)) = voices.heroes.iter_mut().find(|(n, _, _)| n == name) else {
-        return;
-    };
-    let Some((source, face)) = (if attack {
-        attacks.take_line()
-    } else {
-        moves.take_line()
-    }) else {
-        return;
-    };
-    heard.rest = VOICE_REST;
-    let player = (!settings.muted && !args.mute)
-        .then(|| say_in_game(&mut commands, Some(source), 0.8))
-        .flatten();
-    if let Some(face) = face {
-        speech.say(core.my_hero(), face, player, real.elapsed_secs());
-    }
-}
-
-/// One's hero speaks of a rune it took into effect, at once or out of its Bottle, and of one it
-/// put into its Bottle, as Dota's heroes do, to its own player alone. Counted in the bound
-/// effects' [`crate::fx::Heard`] by the line's logical name, muted or not.
-fn rune_lines(
-    mut commands: Commands,
-    session: NonSend<Session>,
-    manifest: Res<Manifest>,
-    mut voices: ResMut<Voices>,
-    settings: Res<Settings>,
-    args: Res<crate::Args>,
-    mut heard: ResMut<crate::fx::Heard>,
-) {
-    let core = &session.0;
-    let (Some(me), Some(view)) = (core.my_hero(), core.view()) else {
-        return;
-    };
-    let Some(hero) = core
-        .my_slot
-        .and_then(|slot| view.player(slot))
-        .and_then(|p| manifest.dota_name("hero", p.hero.0))
-    else {
-        return;
-    };
-    for event in &core.told {
-        let what = match *event {
-            EventKind::RuneActivated { unit, kind, .. } if unit == me => crate::runes::art(kind),
-            EventKind::RuneBottled { unit, .. } if unit == me => "bottle",
-            _ => continue,
-        };
-        let logical = format!("sound.voice.{hero}.rune.{what}");
-        let Some((_, lines)) = voices.runes.iter_mut().find(|(name, _)| *name == logical) else {
-            continue;
-        };
-        *heard.0.entry(logical).or_default() += 1;
-        if settings.voice && !settings.muted && !args.mute {
-            say_in_game(&mut commands, lines.take(), 0.8);
-        }
-    }
 }
 
 /// The announcer asks for a hero once the selection opens; through the pre-game the announcer
@@ -710,25 +543,21 @@ fn load_menu(mut voices: ResMut<Voices>, manifest: Res<Manifest>, server: Res<As
     voices.quit = Lines::load(&manifest, &server, "sound.ui.quit");
 }
 
-/// The match's voices' part of the loading: the heroes' lines (their runes'
-/// too), the announcer, the horns, day and night.
+/// The match's voices' part of the loading: the announcer, Roshan's lines, the
+/// horns, day and night (one's hero's lines are its voice pack's, `hero_voice.rs`).
 fn report(voices: Res<Voices>, server: Res<AssetServer>, mut parts: ResMut<crate::loading::Parts>) {
-    let lines = voices
-        .heroes
-        .iter()
-        .flat_map(|(_, moves, attacks)| [moves, attacks])
-        .chain([
-            &voices.choose,
-            &voices.prepare,
-            &voices.thirty,
-            &voices.begins,
-        ])
-        .chain([&voices.day, &voices.night])
-        .chain(voices.fortified.iter())
-        .chain(voices.buildings.iter().map(|(_, lines)| lines))
-        .chain(voices.roshan.iter())
-        .chain(voices.horns.iter())
-        .chain(voices.runes.iter().map(|(_, lines)| lines));
+    let lines = [
+        &voices.choose,
+        &voices.prepare,
+        &voices.thirty,
+        &voices.begins,
+    ]
+    .into_iter()
+    .chain([&voices.day, &voices.night])
+    .chain(voices.fortified.iter())
+    .chain(voices.buildings.iter().map(|(_, lines)| lines))
+    .chain(voices.roshan.iter())
+    .chain(voices.horns.iter());
     let (done, total) = lines.flat_map(|l| &l.sources).fold((0, 0), |(d, t), h| {
         (d + usize::from(crate::loading::settled(&server, h)), t + 1)
     });

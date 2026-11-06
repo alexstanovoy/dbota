@@ -7,6 +7,7 @@ import * as grant from "./grant.js";
 import * as replays from "./replays.js";
 import { NATIVE_CLIENT } from "./native.js";
 import "./keys.js";
+import "./voice.js";
 import * as pointer from "./pointer.js";
 
 const $ = (id) => document.getElementById(id);

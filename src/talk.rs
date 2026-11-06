@@ -34,7 +34,8 @@ impl Faces {
     }
 }
 
-/// A voice line's lip sync, and the cache file it was read from.
+/// A voice line's lip sync, and where in the cache it was read from: a voice pack's record
+/// (`sounds/voice/pudge.bin#lipsync/12.txt`).
 pub struct LineFace {
     pub lipsync: Lipsync,
     pub file: String,
@@ -123,20 +124,6 @@ fn load(manifest: Res<Manifest>, mut faces: ResMut<Faces>) {
             None => warn!("{rel}: the expression does not read"),
         }
     }
-}
-
-/// The lip sync of a voice line (its cache path), if the cache has it.
-pub fn lipsync(manifest: &Manifest, sound: &str) -> Option<Arc<LineFace>> {
-    let rel = dbota_import::import::lipsync_path(sound);
-    let bytes = crate::cachefs::read_small(&manifest.root, &rel)?;
-    let parsed = String::from_utf8(bytes)
-        .ok()
-        .as_deref()
-        .and_then(Lipsync::parse);
-    if parsed.is_none() {
-        warn!("{rel}: the lip sync does not read");
-    }
-    parsed.map(|lipsync| Arc::new(LineFace { lipsync, file: rel }))
 }
 
 /// Keeps the line on its sound's clock while it plays, and ends it once its face is still.

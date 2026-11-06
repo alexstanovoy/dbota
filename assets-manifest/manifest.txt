@@ -1190,86 +1190,8 @@ sound sound.horn sounds/ambient/horn_dire.vsnd_c sounds/ambient/horn_dire.wav ev
 sound sound.day sounds/ambient/morning.vsnd_c sounds/ambient/morning.wav event=General.Morning
 sound sound.night sounds/ambient/night.vsnd_c sounds/ambient/night.wav event=General.Night
 
-# Order acknowledgements (one vo event per line; all variants share the logical name, the first 12 of each).
-# Not taken: nev_move_14/15, pud_move_15/16/17, pud_attack_14/15/16.
-sound sound.voice.nevermore.move sounds/vo/nevermore/nev_move_01.vsnd_c sounds/vo/nevermore/nev_move_01.mp3 event=nevermore_nev_move_01
-sound sound.voice.nevermore.move sounds/vo/nevermore/nev_move_02.vsnd_c sounds/vo/nevermore/nev_move_02.mp3 event=nevermore_nev_move_02
-sound sound.voice.nevermore.move sounds/vo/nevermore/nev_move_03.vsnd_c sounds/vo/nevermore/nev_move_03.mp3 event=nevermore_nev_move_03
-sound sound.voice.nevermore.move sounds/vo/nevermore/nev_move_04.vsnd_c sounds/vo/nevermore/nev_move_04.mp3 event=nevermore_nev_move_04
-sound sound.voice.nevermore.move sounds/vo/nevermore/nev_move_05.vsnd_c sounds/vo/nevermore/nev_move_05.mp3 event=nevermore_nev_move_05
-sound sound.voice.nevermore.move sounds/vo/nevermore/nev_move_06.vsnd_c sounds/vo/nevermore/nev_move_06.mp3 event=nevermore_nev_move_06
-sound sound.voice.nevermore.move sounds/vo/nevermore/nev_move_07.vsnd_c sounds/vo/nevermore/nev_move_07.mp3 event=nevermore_nev_move_07
-sound sound.voice.nevermore.move sounds/vo/nevermore/nev_move_09.vsnd_c sounds/vo/nevermore/nev_move_09.mp3 event=nevermore_nev_move_09
-sound sound.voice.nevermore.move sounds/vo/nevermore/nev_move_10.vsnd_c sounds/vo/nevermore/nev_move_10.mp3 event=nevermore_nev_move_10
-sound sound.voice.nevermore.move sounds/vo/nevermore/nev_move_11.vsnd_c sounds/vo/nevermore/nev_move_11.mp3 event=nevermore_nev_move_11
-sound sound.voice.nevermore.move sounds/vo/nevermore/nev_move_12.vsnd_c sounds/vo/nevermore/nev_move_12.mp3 event=nevermore_nev_move_12
-sound sound.voice.nevermore.move sounds/vo/nevermore/nev_move_13.vsnd_c sounds/vo/nevermore/nev_move_13.mp3 event=nevermore_nev_move_13
-sound sound.voice.nevermore.attack sounds/vo/nevermore/nev_attack_01.vsnd_c sounds/vo/nevermore/nev_attack_01.mp3 event=nevermore_nev_attack_01
-sound sound.voice.nevermore.attack sounds/vo/nevermore/nev_attack_02.vsnd_c sounds/vo/nevermore/nev_attack_02.mp3 event=nevermore_nev_attack_02
-sound sound.voice.nevermore.attack sounds/vo/nevermore/nev_attack_03.vsnd_c sounds/vo/nevermore/nev_attack_03.mp3 event=nevermore_nev_attack_03
-sound sound.voice.nevermore.attack sounds/vo/nevermore/nev_attack_04.vsnd_c sounds/vo/nevermore/nev_attack_04.mp3 event=nevermore_nev_attack_04
-sound sound.voice.nevermore.attack sounds/vo/nevermore/nev_attack_05.vsnd_c sounds/vo/nevermore/nev_attack_05.mp3 event=nevermore_nev_attack_05
-sound sound.voice.nevermore.attack sounds/vo/nevermore/nev_attack_06.vsnd_c sounds/vo/nevermore/nev_attack_06.mp3 event=nevermore_nev_attack_06
-sound sound.voice.nevermore.attack sounds/vo/nevermore/nev_attack_07.vsnd_c sounds/vo/nevermore/nev_attack_07.mp3 event=nevermore_nev_attack_07
-sound sound.voice.nevermore.attack sounds/vo/nevermore/nev_attack_08.vsnd_c sounds/vo/nevermore/nev_attack_08.mp3 event=nevermore_nev_attack_08
-sound sound.voice.nevermore.attack sounds/vo/nevermore/nev_attack_09.vsnd_c sounds/vo/nevermore/nev_attack_09.mp3 event=nevermore_nev_attack_09
-sound sound.voice.nevermore.attack sounds/vo/nevermore/nev_attack_10.vsnd_c sounds/vo/nevermore/nev_attack_10.mp3 event=nevermore_nev_attack_10
-sound sound.voice.nevermore.attack sounds/vo/nevermore/nev_attack_11.vsnd_c sounds/vo/nevermore/nev_attack_11.mp3 event=nevermore_nev_attack_11
-sound sound.voice.nevermore.attack sounds/vo/nevermore/nev_attack_12.vsnd_c sounds/vo/nevermore/nev_attack_12.mp3 event=nevermore_nev_attack_12
-sound sound.voice.pudge.move sounds/vo/pudge/pud_move_01.vsnd_c sounds/vo/pudge/pud_move_01.mp3 event=pudge_pud_move_01
-sound sound.voice.pudge.move sounds/vo/pudge/pud_move_03.vsnd_c sounds/vo/pudge/pud_move_03.mp3 event=pudge_pud_move_03
-sound sound.voice.pudge.move sounds/vo/pudge/pud_move_04.vsnd_c sounds/vo/pudge/pud_move_04.mp3 event=pudge_pud_move_04
-sound sound.voice.pudge.move sounds/vo/pudge/pud_move_05.vsnd_c sounds/vo/pudge/pud_move_05.mp3 event=pudge_pud_move_05
-sound sound.voice.pudge.move sounds/vo/pudge/pud_move_06.vsnd_c sounds/vo/pudge/pud_move_06.mp3 event=pudge_pud_move_06
-sound sound.voice.pudge.move sounds/vo/pudge/pud_move_07.vsnd_c sounds/vo/pudge/pud_move_07.mp3 event=pudge_pud_move_07
-sound sound.voice.pudge.move sounds/vo/pudge/pud_move_09.vsnd_c sounds/vo/pudge/pud_move_09.mp3 event=pudge_pud_move_09
-sound sound.voice.pudge.move sounds/vo/pudge/pud_move_10.vsnd_c sounds/vo/pudge/pud_move_10.mp3 event=pudge_pud_move_10
-sound sound.voice.pudge.move sounds/vo/pudge/pud_move_11.vsnd_c sounds/vo/pudge/pud_move_11.mp3 event=pudge_pud_move_11
-sound sound.voice.pudge.move sounds/vo/pudge/pud_move_12.vsnd_c sounds/vo/pudge/pud_move_12.mp3 event=pudge_pud_move_12
-sound sound.voice.pudge.move sounds/vo/pudge/pud_move_13.vsnd_c sounds/vo/pudge/pud_move_13.mp3 event=pudge_pud_move_13
-sound sound.voice.pudge.move sounds/vo/pudge/pud_move_14.vsnd_c sounds/vo/pudge/pud_move_14.mp3 event=pudge_pud_move_14
-sound sound.voice.pudge.attack sounds/vo/pudge/pud_attack_01.vsnd_c sounds/vo/pudge/pud_attack_01.mp3 event=pudge_pud_attack_01
-sound sound.voice.pudge.attack sounds/vo/pudge/pud_attack_02.vsnd_c sounds/vo/pudge/pud_attack_02.mp3 event=pudge_pud_attack_02
-sound sound.voice.pudge.attack sounds/vo/pudge/pud_attack_03.vsnd_c sounds/vo/pudge/pud_attack_03.mp3 event=pudge_pud_attack_03
-sound sound.voice.pudge.attack sounds/vo/pudge/pud_attack_04.vsnd_c sounds/vo/pudge/pud_attack_04.mp3 event=pudge_pud_attack_04
-sound sound.voice.pudge.attack sounds/vo/pudge/pud_attack_05.vsnd_c sounds/vo/pudge/pud_attack_05.mp3 event=pudge_pud_attack_05
-sound sound.voice.pudge.attack sounds/vo/pudge/pud_attack_06.vsnd_c sounds/vo/pudge/pud_attack_06.mp3 event=pudge_pud_attack_06
-sound sound.voice.pudge.attack sounds/vo/pudge/pud_attack_08.vsnd_c sounds/vo/pudge/pud_attack_08.mp3 event=pudge_pud_attack_08
-sound sound.voice.pudge.attack sounds/vo/pudge/pud_attack_09.vsnd_c sounds/vo/pudge/pud_attack_09.mp3 event=pudge_pud_attack_09
-sound sound.voice.pudge.attack sounds/vo/pudge/pud_attack_10.vsnd_c sounds/vo/pudge/pud_attack_10.mp3 event=pudge_pud_attack_10
-sound sound.voice.pudge.attack sounds/vo/pudge/pud_attack_11.vsnd_c sounds/vo/pudge/pud_attack_11.mp3 event=pudge_pud_attack_11
-sound sound.voice.pudge.attack sounds/vo/pudge/pud_attack_12.vsnd_c sounds/vo/pudge/pud_attack_12.mp3 event=pudge_pud_attack_12
-sound sound.voice.pudge.attack sounds/vo/pudge/pud_attack_13.vsnd_c sounds/vo/pudge/pud_attack_13.mp3 event=pudge_pud_attack_13
-
-# A hero's own lines for a rune it takes (Haste, Double Damage, Regeneration, Illusion, Invisibility; the install has
-# none of either hero for Arcane, Shield, Water or Bounty) and for a rune it bottles; the variants of each share the
-# logical name, heard by the hero's player alone.
-sound sound.voice.nevermore.rune.haste sounds/vo/nevermore/nev_haste_01.vsnd_c sounds/vo/nevermore/nev_haste_01.mp3 event=nevermore_nev_haste_01
-sound sound.voice.nevermore.rune.haste sounds/vo/nevermore/nev_haste_02.vsnd_c sounds/vo/nevermore/nev_haste_02.mp3 event=nevermore_nev_haste_02
-sound sound.voice.nevermore.rune.doubledamage sounds/vo/nevermore/nev_doubdam_01.vsnd_c sounds/vo/nevermore/nev_doubdam_01.mp3 event=nevermore_nev_doubdam_01
-sound sound.voice.nevermore.rune.doubledamage sounds/vo/nevermore/nev_doubdam_02.vsnd_c sounds/vo/nevermore/nev_doubdam_02.mp3 event=nevermore_nev_doubdam_02
-sound sound.voice.nevermore.rune.regeneration sounds/vo/nevermore/nev_regen_01.vsnd_c sounds/vo/nevermore/nev_regen_01.mp3 event=nevermore_nev_regen_01
-sound sound.voice.nevermore.rune.regeneration sounds/vo/nevermore/nev_regen_02.vsnd_c sounds/vo/nevermore/nev_regen_02.mp3 event=nevermore_nev_regen_02
-sound sound.voice.nevermore.rune.illusion sounds/vo/nevermore/nev_illus_01.vsnd_c sounds/vo/nevermore/nev_illus_01.mp3 event=nevermore_nev_illus_01
-sound sound.voice.nevermore.rune.illusion sounds/vo/nevermore/nev_illus_02.vsnd_c sounds/vo/nevermore/nev_illus_02.mp3 event=nevermore_nev_illus_02
-sound sound.voice.nevermore.rune.invisibility sounds/vo/nevermore/nev_invis_01.vsnd_c sounds/vo/nevermore/nev_invis_01.mp3 event=nevermore_nev_invis_01
-sound sound.voice.nevermore.rune.invisibility sounds/vo/nevermore/nev_invis_02.vsnd_c sounds/vo/nevermore/nev_invis_02.mp3 event=nevermore_nev_invis_02
-sound sound.voice.nevermore.rune.bottle sounds/vo/nevermore/nev_bottle_01.vsnd_c sounds/vo/nevermore/nev_bottle_01.mp3 event=nevermore_nev_bottle_01
-sound sound.voice.nevermore.rune.bottle sounds/vo/nevermore/nev_bottle_02.vsnd_c sounds/vo/nevermore/nev_bottle_02.mp3 event=nevermore_nev_bottle_02
-sound sound.voice.nevermore.rune.bottle sounds/vo/nevermore/nev_bottle_03.vsnd_c sounds/vo/nevermore/nev_bottle_03.mp3 event=nevermore_nev_bottle_03
-sound sound.voice.pudge.rune.haste sounds/vo/pudge/pud_haste_01.vsnd_c sounds/vo/pudge/pud_haste_01.mp3 event=pudge_pud_haste_01
-sound sound.voice.pudge.rune.haste sounds/vo/pudge/pud_haste_02.vsnd_c sounds/vo/pudge/pud_haste_02.mp3 event=pudge_pud_haste_02
-sound sound.voice.pudge.rune.doubledamage sounds/vo/pudge/pud_doubdam_01.vsnd_c sounds/vo/pudge/pud_doubdam_01.mp3 event=pudge_pud_doubdam_01
-sound sound.voice.pudge.rune.doubledamage sounds/vo/pudge/pud_doubdam_02.vsnd_c sounds/vo/pudge/pud_doubdam_02.mp3 event=pudge_pud_doubdam_02
-sound sound.voice.pudge.rune.regeneration sounds/vo/pudge/pud_regen_01.vsnd_c sounds/vo/pudge/pud_regen_01.mp3 event=pudge_pud_regen_01
-sound sound.voice.pudge.rune.regeneration sounds/vo/pudge/pud_regen_02.vsnd_c sounds/vo/pudge/pud_regen_02.mp3 event=pudge_pud_regen_02
-sound sound.voice.pudge.rune.illusion sounds/vo/pudge/pud_illus_01.vsnd_c sounds/vo/pudge/pud_illus_01.mp3 event=pudge_pud_illus_01
-sound sound.voice.pudge.rune.illusion sounds/vo/pudge/pud_illus_02.vsnd_c sounds/vo/pudge/pud_illus_02.mp3 event=pudge_pud_illus_02
-sound sound.voice.pudge.rune.invisibility sounds/vo/pudge/pud_invis_01.vsnd_c sounds/vo/pudge/pud_invis_01.mp3 event=pudge_pud_invis_01
-sound sound.voice.pudge.rune.invisibility sounds/vo/pudge/pud_invis_02.vsnd_c sounds/vo/pudge/pud_invis_02.mp3 event=pudge_pud_invis_02
-sound sound.voice.pudge.rune.bottle sounds/vo/pudge/pud_bottle_01.vsnd_c sounds/vo/pudge/pud_bottle_01.mp3 event=pudge_pud_bottle_01
-sound sound.voice.pudge.rune.bottle sounds/vo/pudge/pud_bottle_02.vsnd_c sounds/vo/pudge/pud_bottle_02.mp3 event=pudge_pud_bottle_02
-sound sound.voice.pudge.rune.bottle sounds/vo/pudge/pud_bottle_03.vsnd_c sounds/vo/pudge/pud_bottle_03.mp3 event=pudge_pud_bottle_03
+# A hero's own lines (order acknowledgements, runes, kills...) are not listed: each hero's voice pack is made from
+# its response rules (crates/dbota_import/src/voice.rs).
 
 # --- Neutral creeps (npc_units.txt `Model`, `ModelScale`, `AttackAnimationPoint`; one block per model, one `unit` line per
 # unit that wears it). Clips: idle, run, attack (+ attack2 when the model has a second swing), death, stun (when the

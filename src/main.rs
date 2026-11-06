@@ -51,6 +51,7 @@ mod gltf_file;
 mod glyph;
 mod ground_targets;
 mod heap;
+mod hero_voice;
 mod hud;
 mod icon_mips;
 #[cfg(not(target_arch = "wasm32"))]
@@ -126,6 +127,8 @@ mod web_cursor;
 mod webcache;
 #[cfg(target_arch = "wasm32")]
 mod webpage;
+#[cfg(target_arch = "wasm32")]
+mod webvoice;
 mod window;
 
 #[cfg(test)]
@@ -727,6 +730,7 @@ fn client_plugins(app: &mut App, read_environment: bool) {
             shadow_casters::plugin,
             ambient::plugin,
             soundscape::plugin,
+            hero_voice::plugin,
         ))
         .add_plugins((
             fortified::plugin,

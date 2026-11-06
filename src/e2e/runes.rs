@@ -10,6 +10,7 @@ use bevy::input::ButtonState;
 use bevy::prelude::*;
 use bota_client_core::{Intent, Slot};
 use bota_proto::{Cheat, EffectId, HeroId, ItemId, RuneKind, StatusFlags, Vec2 as Spot};
+use dbota_import::voice::concept::Concept;
 
 use super::harness::{Client, Server, pose_of, subtree};
 use crate::hud::{Part, PartOf};
@@ -17,7 +18,7 @@ use crate::minimap::RuneMark;
 use crate::runes::RuneBody;
 
 /// The Dota map's top river rune spot.
-fn top_spot() -> (i32, i32) {
+pub(super) fn top_spot() -> (i32, i32) {
     let at = bota_core::DOTA_RUNE_SPOTS[0].at;
     (at.x.to_int(), at.y.to_int())
 }
@@ -26,7 +27,7 @@ fn top_spot() -> (i32, i32) {
 const AWAY: (i32, i32) = (4000, 4000);
 
 /// Patience for what follows at once from what the test did.
-const SOON: Duration = Duration::from_secs(30);
+pub(super) const SOON: Duration = Duration::from_secs(30);
 
 /// A match of one seat that spawns runes, one's Shadow Fiend on the map and the game begun.
 fn rune_match() -> (Server, Client) {
@@ -37,7 +38,7 @@ fn rune_match() -> (Server, Client) {
 }
 
 /// Puts a rune of `kind` at the rune spot nearest `at`, as `dota_spawn_rune` does.
-fn spawn_rune(client: &mut Client, kind: RuneKind, at: (i32, i32)) {
+pub(super) fn spawn_rune(client: &mut Client, kind: RuneKind, at: (i32, i32)) {
     client.cheat(Cheat::SpawnRune {
         kind,
         at: Spot::from_ints(at.0, at.1),
@@ -46,7 +47,7 @@ fn spawn_rune(client: &mut Client, kind: RuneKind, at: (i32, i32)) {
 
 /// The rune of `kind` drawn on the map, if one is: where it stands, and the model it wears (a
 /// rune is known by its model).
-fn drawn(client: &mut Client, kind: RuneKind) -> Option<(Vec3, String)> {
+pub(super) fn drawn(client: &mut Client, kind: RuneKind) -> Option<(Vec3, String)> {
     let model = format!("rune.{}.model", crate::runes::art(kind));
     let world = client.world_mut();
     world
@@ -58,7 +59,7 @@ fn drawn(client: &mut Client, kind: RuneKind) -> Option<(Vec3, String)> {
 
 /// Puts the pointer on a point of the ground, once the camera has settled enough for the
 /// ground under the pointer to be that point.
-fn point_at(client: &mut Client, (x, y): (f32, f32)) {
+pub(super) fn point_at(client: &mut Client, (x, y): (f32, f32)) {
     client.within(SOON, "the pointer on the spot", |c| {
         let Some(on) = c.screen_of((x, y)) else {
             return false;
@@ -493,7 +494,7 @@ fn replay_point_effects_and_sounds_follow_the_points_visibility() {
     }
 }
 
-/// How many times a bound sound, or a hero's line, of a logical name was heard.
+/// How many times a bound sound of a logical name was heard.
 fn heard(client: &Client, logical: &str) -> u32 {
     client
         .world()
@@ -837,14 +838,19 @@ fn a_rune_clicked_is_taken_with_its_sound_line_buff_and_chat() {
     client.within(SOON, "the Haste Rune drawn", |c| {
         drawn(c, RuneKind::Haste).is_some()
     });
+    // The hero says nothing under the loading screen, nor over a line it is still saying (the
+    // battle's start).
+    client.until("the game shown", |c| {
+        c.world().resource::<crate::loading::Loading>().done()
+    });
+    super::hero_voice::quiet(&mut client);
     point_at(&mut client, (spot.0 as f32, spot.1 as f32));
     client.click(MouseButton::Right);
     client.within(SOON, "the haste on the hero", |c| {
         wears(c, EffectId::RUNE_HASTE)
     });
-    client.within(SOON, "its sound and the hero's line", |c| {
-        heard(c, "sound.rune.haste") > 0 && heard(c, "sound.voice.nevermore.rune.haste") > 0
-    });
+    client.within(SOON, "its sound", |c| heard(c, "sound.rune.haste") > 0);
+    super::hero_voice::wait_spoken(&mut client, Concept::Powerup, "DOTA_RUNE_HASTE");
     client.within(SOON, "the buff's loop", |c| {
         started(c, "rune.haste.owner") > 0
     });
@@ -1057,6 +1063,11 @@ fn the_bottle_shows_its_charges_and_the_rune_it_keeps() {
     client.within(SOON, "the Arcane Rune drawn", |c| {
         drawn(c, RuneKind::Arcane).is_some()
     });
+    // The hero says nothing under the loading screen, nor over a line it is still saying.
+    client.until("the game shown", |c| {
+        c.world().resource::<crate::loading::Loading>().done()
+    });
+    super::hero_voice::quiet(&mut client);
     client.stand_at(spot);
     let arcane = file(&client, "icon.item.bottle_arcane");
     client.within(SOON, "the rune in the Bottle", |c| {
@@ -1067,9 +1078,8 @@ fn the_bottle_shows_its_charges_and_the_rune_it_keeps() {
         .parse()
         .expect("the seconds it keeps the rune");
     assert!((80..=90).contains(&seconds), "{seconds} s left");
-    client.within(SOON, "the cork and the hero's line", |c| {
-        heard(c, "sound.bottle.cork") > 0 && heard(c, "sound.voice.nevermore.rune.bottle") > 0
-    });
+    client.within(SOON, "the cork", |c| heard(c, "sound.bottle.cork") > 0);
+    super::hero_voice::wait_spoken(&mut client, Concept::Bottling, "");
     let item_box = client.item_box(slot).expect("its box");
     let on = client.centre_of(item_box).expect("laid out");
     client.mouse(on);

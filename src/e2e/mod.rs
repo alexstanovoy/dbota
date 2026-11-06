@@ -37,6 +37,7 @@ mod ground_items;
 mod ground_targets;
 pub(crate) mod harness;
 mod hero_fx;
+mod hero_voice;
 mod hero_walk;
 mod icons;
 mod item_drop_range;
