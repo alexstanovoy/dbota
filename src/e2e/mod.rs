@@ -34,7 +34,6 @@ mod loot_names;
 mod lotus;
 mod menu;
 mod minimap;
-mod missile_falls;
 mod pregame;
 mod purchase_destination;
 mod quickbuy;
