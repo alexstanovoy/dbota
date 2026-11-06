@@ -76,7 +76,7 @@ impl<'a> Running<'a> {
         let mut child = command
             .args(args)
             .arg("--config")
-            .arg(scratch.0.join("client.conf"))
+            .arg(scratch.0.join("settings.conf"))
             .arg("--screenshot-dir")
             .arg(shots(scratch))
             .args(["--script", script])

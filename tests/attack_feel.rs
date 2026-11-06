@@ -154,7 +154,7 @@ fn trace_at(scratch: &Path, replay: &Path, script: &str, look: Option<Vec2>) -> 
         .arg(replay)
         .args(["--pov", "0", "--trace-feel", "--mute", "--no-vsync"])
         .args(["--display-mode", "windowed", "--script", script, "--config"])
-        .arg(scratch.join("client.conf"))
+        .arg(scratch.join("settings.conf"))
         .env("DBOTA_ASSETS", cache)
         .env("XDG_DATA_HOME", scratch.join("data"))
         .stdout(Stdio::piped())

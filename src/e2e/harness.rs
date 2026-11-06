@@ -134,7 +134,6 @@ impl Drop for Scratch {
 pub struct Client {
     pub app: App,
     _scratch: Scratch,
-    config: PathBuf,
 }
 
 /// One match at a time in the process, held by its [`Server`]: each client loads the whole
@@ -156,25 +155,29 @@ impl Client {
     /// picked: it returns once the pick is past (in the strategy phase, where the server has
     /// one).
     pub fn pick(server: &Server, hero: bota_proto::HeroId, extra: &[&str]) -> Client {
-        Client::pick_with_settings(server, hero, extra, None)
+        Client::pick_with_files(server, hero, extra, &[])
     }
 
-    /// [`Client::join`] with a settings file already on disk, as an older version left it.
-    pub fn join_with_settings(server: &Server, hero: bota_proto::HeroId, file: &str) -> Client {
-        let mut client = Client::pick_with_settings(server, hero, &[], Some(file));
+    /// [`Client::join`] with files (by name and text) already in the folder of its settings.
+    pub fn join_with_files(
+        server: &Server,
+        hero: bota_proto::HeroId,
+        files: &[(&str, &str)],
+    ) -> Client {
+        let mut client = Client::pick_with_files(server, hero, &[], files);
         client.until("the hero on the map", |c| c.core().ears().is_some());
         client
     }
 
-    fn pick_with_settings(
+    fn pick_with_files(
         server: &Server,
         hero: bota_proto::HeroId,
         extra: &[&str],
-        file: Option<&str>,
+        files: &[(&str, &str)],
     ) -> Client {
         let mut args = vec!["--addr", server.address.as_str()];
         args.extend_from_slice(extra);
-        let mut client = Client::run_with_settings(&args, file);
+        let mut client = Client::run_with_files(&args, files);
         client.until("the hero picked", |c| {
             let core = c.core_mut();
             if core.view().is_none() && core.my_slot.is_some() && !core.ready {
@@ -189,24 +192,24 @@ impl Client {
     /// The client run with `extra` command-line arguments, its settings in a folder of its own,
     /// in a window of 1920 by 1080 unless they say another, as `main` builds it (with no sound device: see `audio_output`).
     pub fn run(extra: &[&str]) -> Client {
-        Self::build(extra, None, None)
+        Self::build(extra, None, &[])
     }
 
-    /// [`Client::run`] with settings left on disk by an older client.
-    pub fn run_with_settings(extra: &[&str], file: Option<&str>) -> Client {
-        Self::build(extra, None, file)
+    /// [`Client::run`] with files (by name and text) already in the folder of its settings.
+    pub fn run_with_files(extra: &[&str], files: &[(&str, &str)]) -> Client {
+        Self::build(extra, None, files)
     }
 
     /// Independently connected test players do not share the desktop reconnect claim.
     pub fn run_with_core(extra: &[&str], core: Core) -> Client {
-        Self::build(extra, Some(core), None)
+        Self::build(extra, Some(core), &[])
     }
 
-    fn build(extra: &[&str], core: Option<Core>, file: Option<&str>) -> Client {
+    fn build(extra: &[&str], core: Option<Core>, files: &[(&str, &str)]) -> Client {
         let scratch = Scratch::new();
-        let config = scratch.0.join("client.conf");
-        if let Some(text) = file {
-            std::fs::write(&config, text).expect("a settings file");
+        let config = scratch.0.join(crate::config::FILE_NAME);
+        for (name, text) in files {
+            std::fs::write(scratch.0.join(name), text).expect("a file of the settings folder");
         }
         let config = config.to_str().expect("a UTF-8 path");
         let mut line = vec!["dbota", "--config", config];
@@ -255,13 +258,12 @@ impl Client {
         Client {
             app,
             _scratch: scratch,
-            config: config.into(),
         }
     }
 
-    /// The settings file as it is on disk now.
-    pub fn settings_file(&self) -> String {
-        std::fs::read_to_string(&self.config).expect("the settings file")
+    /// A file of the folder of the client's settings, as it is on disk now.
+    pub fn settings_folder_file(&self, name: &str) -> String {
+        std::fs::read_to_string(self._scratch.0.join(name)).expect("the file")
     }
 
     /// Runs frames until `done` holds, within [`PATIENCE`].

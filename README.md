@@ -65,7 +65,7 @@ You need Rust, Steam with Dota 2 installed, and the bota repository checked out 
    `target/release/dbota --addr 127.0.0.1:4455`. Open a replay with `dbota --replay match.brp` (`--pov 0` to watch
    through seat 0's eyes).
 
-`dbota --help` lists every option. Settings live in `~/.config/dbota/client.conf` and on the SETTINGS screen.
+`dbota --help` lists every option. Settings live in `~/.config/dbota/settings.conf` and on the SETTINGS screen.
 
 ## Controls
 
@@ -77,7 +77,7 @@ or `Space` pause, `=` / `-` speed, `.` one tick, `Tab` switch vision.
 
 ## Settings
 
-The VIDEO tab, `client.conf` or `--set NAME=VALUE` set what the picture may cost:
+The VIDEO tab, `settings.conf` or `--set NAME=VALUE` set what the picture may cost:
 
 | Setting | Values | Default |
 |---|---|---|
@@ -99,7 +99,9 @@ The VIDEO tab, `client.conf` or `--set NAME=VALUE` set what the picture may cost
 
 `texture_size`, `props` and `gpu_batching` apply on the next start, the rest at once. Without a GPU, Mesa's lavapipe
 (`VK_ICD_FILENAMES=.../lvp_icd.json`) draws it at `--set quality=potato`. Hotkeys are `key.<action> = <chord>` lines in
-the same file, which also holds every other setting (sound, interface, controls, replays) by name.
+the same file, which also holds every other setting (sound, interface, controls, replays) by name; it holds only
+what was changed from the defaults, so a default changed later reaches it. An older client's `client.conf` is ignored
+and left as it is: its settings are dropped.
 
 ## For developers
 

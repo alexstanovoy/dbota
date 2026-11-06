@@ -244,18 +244,11 @@ right_click_allies = follow
 save_replays = true
 ";
 
-/// A player whose settings file was written while To Follow was the default has the right click
-/// follow a worn creep, though they never chose it; the default is Dota's, To Deny, and a file
-/// that predates its return does not hold the player to the old one. A choice made since
-/// (any file with a version) is kept.
-#[test]
-fn a_settings_file_from_when_follow_was_the_default_still_denies_by_default() {
+/// Right clicks a worn allied creep of a client whose settings folder holds `files`: the order the
+/// click sent.
+fn click_a_worn_ally(files: &[(&str, &str)]) -> (Client, Order, EntityId) {
     let server = Server::start(1, &[]);
-    let mut client = Client::join_with_settings(
-        &server,
-        HeroId::SHADOW_FIEND,
-        FILE_FROM_WHEN_FOLLOW_WAS_THE_DEFAULT,
-    );
+    let mut client = Client::join_with_files(&server, HeroId::SHADOW_FIEND, files);
     client.stand_at(MID);
     for (enemy, dx) in [(false, -250), (true, 250)] {
         client.cheat(Cheat::CreateCreeps {
@@ -268,94 +261,45 @@ fn a_settings_file_from_when_follow_was_the_default_still_denies_by_default() {
     let (got, _) = (0..CLICK_TRIES)
         .find_map(|_| right_click(&mut client, creep))
         .unwrap_or_else(|| panic!("no click got a unit in {CLICK_TRIES} tries"));
+    let order = last_order(&client).expect("the click sent an order");
+    (client, order, got)
+}
+
+/// A player whose old `client.conf` holds `follow` (the default of its day, written into every
+/// file) has the right click deny all the same: the client reads its own `settings.conf` and
+/// never the old file, so what the old file pinned is dropped, and Dota's To Deny is the default.
+/// The old file is left as it was.
+#[test]
+fn an_old_client_conf_with_follow_is_ignored_and_the_right_click_denies_by_default() {
+    let (client, order, got) = click_a_worn_ally(&[(
+        crate::config::OLD_FILE_NAME,
+        FILE_FROM_WHEN_FOLLOW_WAS_THE_DEFAULT,
+    )]);
     assert_eq!(
-        last_order(&client),
-        Some(Order::Attack {
+        order,
+        Order::Attack {
             target: Target::Unit(got)
-        }),
+        },
         "the click on a worn ally attacks it"
     );
-    let migrated = client.settings_file();
-    assert!(
-        migrated.contains("settings_version = 2"),
-        "the migrated file is written with its version: {migrated}"
-    );
-    assert!(
-        !migrated.contains("right_click_allies = follow"),
-        "the migrated file holds no old default: {migrated}"
+    assert_eq!(
+        client.settings_folder_file(crate::config::OLD_FILE_NAME),
+        FILE_FROM_WHEN_FOLLOW_WAS_THE_DEFAULT,
+        "the old file is left as it was"
     );
 }
 
-/// A file of the current version holds what the player chose, whatever it equals: Follow and the
-/// items on the digits stay as written, and the file is left as it is.
+/// What `settings.conf` says is honoured: Follow chosen there makes the click follow the creep.
 #[test]
-fn a_settings_file_of_the_current_version_keeps_follow_and_the_digits() {
-    let file = "settings_version = 2\nright_click_allies = follow\nkey.item_1 = 1\n";
-    let server = Server::start(1, &[]);
-    let client = Client::join_with_settings(&server, HeroId::SHADOW_FIEND, file);
-    let settings = client.world().resource::<crate::config::Settings>();
+fn a_value_in_settings_conf_is_honoured() {
+    let (_client, order, got) =
+        click_a_worn_ally(&[(crate::config::FILE_NAME, "right_click_allies = follow\n")]);
     assert_eq!(
-        settings.right_click_allies,
-        crate::config::RightClickAllies::Follow,
-        "the chosen Follow"
-    );
-    assert_eq!(
-        settings.key(crate::keys::Action::Item(0)),
-        crate::keys::Chord::parse("1"),
-        "the chosen digit"
-    );
-    assert_eq!(
-        client.settings_file(),
-        file,
-        "a current file is not rewritten"
-    );
-}
-
-/// What the client wrote before the inventory keys became Z X C V B N: every binding, the
-/// defaults of then among them (the items on the digits, Camera Lock on Y, the Shop on B).
-const FILE_FROM_WHEN_ITEMS_WERE_ON_DIGITS: &str = "# dbota settings.
-volume = 0.80
-key.camera_lock = Y
-key.item_1 = 1
-key.item_2 = 2
-key.item_3 = 3
-key.item_4 = 4
-key.item_5 = 5
-key.item_6 = 6
-key.shop = B
-";
-
-/// A player whose settings file holds the inventory keys of the old defaults (the digits) never
-/// chose them: the keys are Dota's Z X C V B N, as for a player with no file. A key rebound to
-/// something else, once the file has a version, is kept.
-#[test]
-fn a_settings_file_from_when_items_were_on_digits_still_uses_z_x_c_v_b_n_by_default() {
-    let server = Server::start(1, &[]);
-    let mut client = Client::join_with_settings(
-        &server,
-        HeroId::SHADOW_FIEND,
-        FILE_FROM_WHEN_ITEMS_WERE_ON_DIGITS,
-    );
-    client.cheat(Cheat::Item {
-        item: bota_proto::ItemId::TANGO,
-    });
-    let slot = client
-        .slot_of(bota_proto::ItemId::TANGO)
-        .expect("the tango");
-    let key = [
-        KeyCode::KeyZ,
-        KeyCode::KeyX,
-        KeyCode::KeyC,
-        KeyCode::KeyV,
-        KeyCode::KeyB,
-        KeyCode::KeyN,
-    ][usize::from(slot)];
-    client.key(key, ButtonState::Pressed);
-    client.key(key, ButtonState::Released);
-    client.frames(2);
-    assert!(
-        client.core().aiming.is_some(),
-        "{key:?} takes the tango of slot {slot} up for aiming"
+        order,
+        Order::Move {
+            target: Target::Unit(got)
+        },
+        "the click on a worn ally follows it"
     );
 }
 

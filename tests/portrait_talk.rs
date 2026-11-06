@@ -237,7 +237,7 @@ fn play(hero: &str, enemy: &str) -> String {
     );
     let mut child = common::client()
         .args(["--addr", &server.address, "--config"])
-        .arg(scratch.join("client.conf"))
+        .arg(scratch.join("settings.conf"))
         .args([
             "--script",
             &script,

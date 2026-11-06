@@ -142,7 +142,7 @@ fn run_script(address: &str, script: &str, tag: &str, shots: Option<&Path>) {
     let mut command = client();
     command
         .args(["--addr", address, "--config"])
-        .arg(scratch.join("client.conf"))
+        .arg(scratch.join("settings.conf"))
         .args([
             "--script",
             script,

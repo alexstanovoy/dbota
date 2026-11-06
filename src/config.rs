@@ -412,25 +412,6 @@ pub const RETIRED_KEYS: &[&str] = &[
     "tower_ranges",
 ];
 
-/// The version of the settings file's layout, written first in it. A file with none was written
-/// before 2: it held every setting, the defaults of then too (Right-Click Allies as `follow`, the
-/// items on the digits), though the player never chose them, so a file of version below 2 keeps
-/// none of [`DEFAULTS_BEFORE_2`].
-pub const SETTINGS_VERSION: u32 = 2;
-
-/// The defaults the client wrote to files before version 2 and has changed since.
-const DEFAULTS_BEFORE_2: [(&str, &str); 9] = [
-    ("right_click_allies", "follow"),
-    ("key.camera_lock", "Y"),
-    ("key.item_1", "1"),
-    ("key.item_2", "2"),
-    ("key.item_3", "3"),
-    ("key.item_4", "4"),
-    ("key.item_5", "5"),
-    ("key.item_6", "6"),
-    ("key.shop", "B"),
-];
-
 /// Characters a profile name has at most.
 pub const MAX_NAME: usize = 24;
 
@@ -484,21 +465,11 @@ impl Settings {
         Action::Ability(slot)
     }
 
-    /// The version of the layout a settings file's text says it has: 0 for a file with none.
-    pub fn version_of(text: &str) -> u32 {
-        text.lines()
-            .take(MAX_LINES)
-            .filter_map(|line| line.trim().strip_prefix("settings_version"))
-            .find_map(|rest| rest.trim().strip_prefix('=')?.trim().parse::<u32>().ok())
-            .unwrap_or(0)
-    }
-
     /// Reads settings from text, keeping the defaults for anything absent.
     /// Returns them with one complaint per line that could not be read.
     pub fn parse(text: &str) -> (Settings, Vec<String>) {
         let mut settings = Settings::default();
         let mut complaints = Vec::new();
-        let version = Settings::version_of(text);
         for (number, line) in text.lines().enumerate().take(MAX_LINES) {
             let line = line.trim();
             if line.is_empty() || line.starts_with('#') {
@@ -508,12 +479,6 @@ impl Settings {
                 complaints.push(format!("line {}: expected name = value", number + 1));
                 continue;
             };
-            // What an older file holds of the defaults of then was not a choice.
-            if version < SETTINGS_VERSION
-                && DEFAULTS_BEFORE_2.contains(&(name.trim(), value.trim()))
-            {
-                continue;
-            }
             if let Err(why) = settings.set(name.trim(), value.trim()) {
                 complaints.push(format!("line {}: {why}", number + 1));
             }
@@ -537,13 +502,6 @@ impl Settings {
         // A key an older version wrote and no version reads any more: its file still loads.
         if RETIRED_KEYS.contains(&name) {
             return Ok(());
-        }
-        // The layout's version is read before the lines (`parse`); the line itself says nothing.
-        if name == "settings_version" {
-            return value
-                .parse::<u32>()
-                .map(drop)
-                .map_err(|_| format!("'{value}' is not a version number"));
         }
         let flag = || parse_flag(value).ok_or_else(|| format!("'{value}' is not true or false"));
         match name {
@@ -652,54 +610,76 @@ impl Settings {
         Ok(())
     }
 
-    /// The settings as the text of a file [`Settings::parse`] reads back.
+    /// The settings as the text of a file [`Settings::parse`] reads back: only what the player
+    /// changed from the defaults. A default is never written, so that a default changed in a
+    /// later version reaches a file written before it, instead of the file keeping the old one.
     pub fn render(&self) -> String {
-        let flag = |on: bool| if on { "true" } else { "false" };
+        self.render_against(&Settings::default())
+    }
+
+    /// [`Settings::render`] against other defaults than today's: the lines whose value differs
+    /// from `defaults`.
+    fn render_against(&self, defaults: &Settings) -> String {
         let mut out =
             String::from("# dbota settings. Keys use the names listed in the client README.\n");
-        out.push_str(&format!("settings_version = {SETTINGS_VERSION}\n"));
-        if !self.name.is_empty() {
-            out.push_str(&format!("name = {}\n", self.name));
+        for ((name, value), (_, default)) in self.entries().into_iter().zip(defaults.entries()) {
+            if value != default {
+                out.push_str(&format!("{name} = {value}\n"));
+            }
         }
-        out.push_str(&format!("volume = {:.2}\n", self.volume));
-        out.push_str(&format!("muted = {}\n", flag(self.muted)));
-        out.push_str(&format!("voice_responses = {}\n", flag(self.voice)));
-        out.push_str(&format!("ui_scale = {:.2}\n", self.ui_scale));
-        for (name, on) in [
-            ("damage_numbers", self.aids.numbers),
-            ("edge_pan", self.aids.edge_pan),
-            ("animate_portrait", self.animate_portrait),
-            ("scoreboard_items", self.scoreboard_items),
-            ("teleport_requires_halt", self.teleport_requires_halt),
-            ("channels_require_stop", self.channels_require_stop),
-        ] {
-            out.push_str(&format!("{name} = {}\n", flag(on)));
-        }
-        out.push_str(&format!(
-            "right_click_allies = {}\n",
-            self.right_click_allies.name()
-        ));
-        out.push_str(&format!("save_replays = {}\n", flag(self.replays.keep)));
-        out.push_str(&format!(
-            "replays_max_count = {}\nreplays_max_mib = {}\n",
-            self.replays.max_count,
-            self.replays.max_bytes >> 20
-        ));
-        out.push_str(&format!("display_mode = {}\n", self.display.name()));
+        out
+    }
+
+    /// Every setting as the name and value its line has, in the file's order.
+    fn entries(&self) -> Vec<(String, String)> {
+        let flag = |on: bool| if on { "true" } else { "false" }.to_owned();
         let q = &self.quality;
-        out.push_str(&format!(
-            "shadows = {}\n",
-            ["off", "low", "high"][usize::from(q.shadows.min(2))]
-        ));
-        out.push_str(&format!("anti_aliasing = {}\n", q.anti_alias.name()));
-        out.push_str(&format!("render_scale = {:.3}\n", q.render_scale));
-        out.push_str(&format!("texture_size = {}\n", q.texture_size));
-        out.push_str(&format!("props = {}\n", flag(q.props)));
-        out.push_str(&format!("fps_cap = {}\n", q.fps_cap));
-        out.push_str(&format!("gpu_batching = {}\n", flag(q.gpu_batching)));
-        out.push_str(&format!("auto_quality = {}\n", flag(q.auto)));
-        out.push_str(&format!("visual_clarity = {}\n", self.clarity.name()));
         let c = &self.camera;
+        let mut out: Vec<(String, String)> = vec![
+            ("name".into(), self.name.clone()),
+            ("volume".into(), format!("{:.2}", self.volume)),
+            ("muted".into(), flag(self.muted)),
+            ("voice_responses".into(), flag(self.voice)),
+            ("ui_scale".into(), format!("{:.2}", self.ui_scale)),
+            ("damage_numbers".into(), flag(self.aids.numbers)),
+            ("edge_pan".into(), flag(self.aids.edge_pan)),
+            ("animate_portrait".into(), flag(self.animate_portrait)),
+            ("scoreboard_items".into(), flag(self.scoreboard_items)),
+            (
+                "teleport_requires_halt".into(),
+                flag(self.teleport_requires_halt),
+            ),
+            (
+                "channels_require_stop".into(),
+                flag(self.channels_require_stop),
+            ),
+            (
+                "right_click_allies".into(),
+                self.right_click_allies.name().into(),
+            ),
+            ("save_replays".into(), flag(self.replays.keep)),
+            (
+                "replays_max_count".into(),
+                self.replays.max_count.to_string(),
+            ),
+            (
+                "replays_max_mib".into(),
+                (self.replays.max_bytes >> 20).to_string(),
+            ),
+            ("display_mode".into(), self.display.name().into()),
+            (
+                "shadows".into(),
+                ["off", "low", "high"][usize::from(q.shadows.min(2))].into(),
+            ),
+            ("anti_aliasing".into(), q.anti_alias.name().into()),
+            ("render_scale".into(), format!("{:.3}", q.render_scale)),
+            ("texture_size".into(), q.texture_size.to_string()),
+            ("props".into(), flag(q.props)),
+            ("fps_cap".into(), q.fps_cap.to_string()),
+            ("gpu_batching".into(), flag(q.gpu_batching)),
+            ("auto_quality".into(), flag(q.auto)),
+            ("visual_clarity".into(), self.clarity.name().into()),
+        ];
         for (name, value) in [
             ("camera_pitch", c.pitch),
             ("camera_fov", c.fov),
@@ -708,11 +688,11 @@ impl Settings {
             ("camera_distance_max", c.distance_max),
             ("camera_pan_speed", c.pan_speed),
         ] {
-            out.push_str(&format!("{name} = {value}\n"));
+            out.push((name.into(), value.to_string()));
         }
         for (binding, chord) in keys::all().zip(self.keys) {
             let chord = chord.map_or_else(|| "none".to_owned(), Chord::name);
-            out.push_str(&format!("key.{} = {chord}\n", binding.name));
+            out.push((format!("key.{}", binding.name), chord));
         }
         out
     }
@@ -721,14 +701,39 @@ impl Settings {
 /// Lines read from a settings file at most.
 const MAX_LINES: usize = 512;
 
+/// The name of the settings file. Older clients kept every setting, defaults included, in
+/// [`OLD_FILE_NAME`]; those pinned defaults a later version changed, so the format has a new name
+/// and the old file is not read.
+pub const FILE_NAME: &str = "settings.conf";
+
+/// The settings file older clients wrote, which is never read nor deleted.
+pub const OLD_FILE_NAME: &str = "client.conf";
+
+/// Why a settings file may not be the retired one: it would be read, and written over.
+pub fn refuse_retired(path: &std::path::Path) -> Result<(), String> {
+    if path.file_name().is_some_and(|name| name == OLD_FILE_NAME) {
+        return Err(format!(
+            "{} is the name of an older client's settings file, which is not read; give the settings another name, such as {FILE_NAME}",
+            path.display()
+        ));
+    }
+    Ok(())
+}
+
+/// The old settings file beside `settings`, when there is one: it is ignored.
+pub fn ignored_old_file(settings: &std::path::Path) -> Option<PathBuf> {
+    let old = settings.with_file_name(OLD_FILE_NAME);
+    (old != settings && old.is_file()).then_some(old)
+}
+
 /// Where the settings live when no path is given:
-/// `$XDG_CONFIG_HOME/dbota/client.conf`, else `~/.config/dbota/client.conf`.
+/// `$XDG_CONFIG_HOME/dbota/settings.conf`, else `~/.config/dbota/settings.conf`.
 pub fn default_path() -> Option<PathBuf> {
     let base = std::env::var_os("XDG_CONFIG_HOME")
         .filter(|dir| !dir.is_empty())
         .map(PathBuf::from)
         .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".config")))?;
-    Some(base.join("dbota").join("client.conf"))
+    Some(base.join("dbota").join(FILE_NAME))
 }
 
 /// A number within `lo..=hi`.
@@ -830,6 +835,134 @@ mod tests {
         assert!(
             !settings.render().contains("bot_command"),
             "a retired key is not written back"
+        );
+    }
+
+    /// The settings file has a name of its own, apart from the older clients' `client.conf`, which
+    /// is found beside it and ignored, never read; and that name is refused as a settings path.
+    #[test]
+    fn the_settings_file_is_not_the_old_clients_and_the_old_one_beside_it_is_found_to_be_ignored() {
+        let dir =
+            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target/e2e/config_names");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("a scratch folder");
+        let settings = dir.join(FILE_NAME);
+        assert_ne!(FILE_NAME, OLD_FILE_NAME);
+        assert_eq!(ignored_old_file(&settings), None, "none beside it yet");
+        std::fs::write(dir.join(OLD_FILE_NAME), "right_click_allies = follow\n").expect("written");
+        assert_eq!(ignored_old_file(&settings), Some(dir.join(OLD_FILE_NAME)));
+        assert_eq!(refuse_retired(&settings), Ok(()));
+        let refused = refuse_retired(&dir.join(OLD_FILE_NAME)).expect_err("the retired name");
+        assert!(
+            refused.contains("older client's settings file"),
+            "{refused}"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Every kind of setting reaches the file and reads back: a setting `entries` leaves out would
+    /// never be saved. Each field here differs from its default, so each must be written.
+    #[test]
+    fn every_setting_survives_the_file() {
+        let default = Settings::default();
+        let settings = Settings {
+            volume: 0.31,
+            muted: !default.muted,
+            voice: !default.voice,
+            ui_scale: 1.5,
+            aids: Aids {
+                numbers: !default.aids.numbers,
+                edge_pan: !default.aids.edge_pan,
+            },
+            keys: std::array::from_fn(|_| Chord::parse("Ctrl+Alt+K")),
+            animate_portrait: !default.animate_portrait,
+            scoreboard_items: !default.scoreboard_items,
+            quality: Quality {
+                shadows: 0,
+                anti_alias: AntiAlias::Msaa2,
+                render_scale: 0.5,
+                texture_size: 512,
+                props: !default.quality.props,
+                fps_cap: 77,
+                gpu_batching: !default.quality.gpu_batching,
+                auto: !default.quality.auto,
+            },
+            display: DisplayMode::Windowed,
+            clarity: Clarity::High,
+            camera: CameraSettings {
+                pitch: default.camera.pitch + 1.0,
+                fov: default.camera.fov + 1.0,
+                distance: default.camera.distance + 1.0,
+                distance_min: default.camera.distance_min + 1.0,
+                distance_max: default.camera.distance_max + 1.0,
+                pan_speed: default.camera.pan_speed + 1.0,
+            },
+            name: "alice".to_owned(),
+            teleport_requires_halt: !default.teleport_requires_halt,
+            channels_require_stop: !default.channels_require_stop,
+            right_click_allies: RightClickAllies::Follow,
+            replays: crate::replays::Policy {
+                keep: !default.replays.keep,
+                max_count: 7,
+                max_bytes: 128 << 20,
+            },
+        };
+        let text = settings.render();
+        let unwritten: Vec<String> = settings
+            .entries()
+            .into_iter()
+            .zip(default.entries())
+            .filter(|((name, _), _)| !text.lines().any(|l| l.starts_with(&format!("{name} = "))))
+            .map(|((name, _), _)| name)
+            .collect();
+        assert!(
+            unwritten.is_empty(),
+            "never written though changed: {unwritten:?}"
+        );
+        let (read, complaints) = Settings::parse(&text);
+        assert!(complaints.is_empty(), "{complaints:?}");
+        assert_eq!(read, settings);
+    }
+
+    /// A default is not a choice: nothing of the defaults is written.
+    #[test]
+    fn a_settings_file_of_the_defaults_holds_no_setting() {
+        let text = Settings::default().render();
+        assert!(
+            text.lines().all(|line| line.starts_with('#')),
+            "only the comment: {text}"
+        );
+    }
+
+    /// The root of the bugs where a default changed and a file kept the old one: a file is
+    /// written against the defaults of its day, so what the player never changed is not in it,
+    /// and a default flipped in code takes effect for a file written before.
+    #[test]
+    fn a_default_changed_in_code_takes_effect_for_a_file_written_before() {
+        let mut old_defaults = Settings {
+            right_click_allies: RightClickAllies::Follow,
+            ..Settings::default()
+        };
+        old_defaults.keys[keys::index_of(Action::Item(0)).expect("the first item key")] =
+            Chord::parse("1");
+        let mut played = old_defaults.clone();
+        played.volume = 0.3;
+        let file = played.render_against(&old_defaults);
+        assert!(!file.contains("right_click_allies"), "{file}");
+        assert!(!file.contains("key.item_1"), "{file}");
+        let (read, complaints) = Settings::parse(&file);
+        assert!(complaints.is_empty(), "{complaints:?}");
+        assert_eq!(
+            read.right_click_allies,
+            Settings::default().right_click_allies
+        );
+        assert_eq!(
+            read.key(Action::Item(0)),
+            Settings::default().key(Action::Item(0))
+        );
+        assert!(
+            (read.volume - 0.3).abs() < 1e-6,
+            "what the player changed stays"
         );
     }
 

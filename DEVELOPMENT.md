@@ -49,7 +49,7 @@ Matchmaking on one machine: bring up a radovid service as its README's "A develo
 `dbota --service wss://localhost:4460 --trust-cert dev/cert.pem`. A match needs a second account in the same ruleset
 (a bot client, or a second dbota with its own `--config` and `XDG_DATA_HOME`).
 
-Files the client keeps: settings in `~/.config/dbota/client.conf`, the service login in `~/.config/dbota/session` (owner
+Files the client keeps: settings in `~/.config/dbota/settings.conf`, the service login in `~/.config/dbota/session` (owner
 only), replays in `$XDG_DATA_HOME/dbota/replays` (`~/Library/Application Support/dbota/replays` on macOS,
 `%LOCALAPPDATA%\dbota\replays` on Windows) as `YYYYMMDD-HHMMSS-mode-matchid.brp` with an `index.txt`, and in a browser
 in OPFS (else IndexedDB).

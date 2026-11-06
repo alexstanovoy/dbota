@@ -139,7 +139,7 @@ fn a_tower_stops_drawing_its_line_once_the_hero_is_out_of_reach() {
     );
     let mut child = common::client()
         .args(["--addr", &address, "--config"])
-        .arg(scratch.join("client.conf"))
+        .arg(scratch.join("settings.conf"))
         .args([
             "--script",
             &script,

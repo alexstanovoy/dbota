@@ -13,7 +13,7 @@ const MAX_ENTRY: usize = 64 * 1024;
 /// One thing the store keeps.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Entry {
-    /// The settings file (`client.conf`).
+    /// The settings file (`settings.conf`).
     Settings,
     /// The menu's choices: the service, the last login, direct addresses.
     Menu,
@@ -25,7 +25,7 @@ pub enum Entry {
 impl Entry {
     fn key(self) -> &'static str {
         match self {
-            Entry::Settings => "dbota.client.conf",
+            Entry::Settings => "dbota.settings.conf",
             Entry::Menu => "dbota.menu",
             Entry::Session => "dbota.session",
         }
@@ -137,13 +137,6 @@ impl SettingsStore {
         let (settings, complaints) = Settings::parse(&text);
         for complaint in complaints {
             eprintln!("dbota settings: {complaint}");
-        }
-        // Migrated once: a file left as it was would migrate again at every start, and drop a
-        // value the player writes later that equals a default of old.
-        if Settings::version_of(&text) < crate::config::SETTINGS_VERSION
-            && let Err(why) = self.save_settings(&settings)
-        {
-            eprintln!("dbota settings: the migrated file could not be written: {why}");
         }
         settings
     }

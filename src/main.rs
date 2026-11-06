@@ -193,7 +193,7 @@ pub struct Args {
     /// Root of the asset cache `dbota import` makes.
     #[arg(long, global = true, default_value_os_t = default_cache_dir())]
     pub cache_dir: PathBuf,
-    /// The settings file; `~/.config/dbota/client.conf` when absent.
+    /// The settings file; `~/.config/dbota/settings.conf` when absent.
     #[arg(long, value_name = "FILE")]
     pub config: Option<PathBuf>,
     /// A setting for this run, as a line of the settings file says it, over
@@ -544,6 +544,12 @@ fn main() -> AppExit {
         }
     };
     let settings_path = args.config.clone().or_else(config::default_path);
+    if let Some(path) = &args.config
+        && let Err(why) = config::refuse_retired(path)
+    {
+        eprintln!("dbota: --config: {why}");
+        return AppExit::error();
+    }
     let store = main_menu::SettingsStore::new(settings_path.clone());
     let mut settings = store.load_settings();
     for line in &args.set {
@@ -560,6 +566,15 @@ fn main() -> AppExit {
         settings.display = mode;
     }
     let mut app = App::new();
+    let old_settings = settings_path.as_deref().and_then(config::ignored_old_file);
+    app.add_systems(Startup, move || {
+        if let Some(old) = &old_settings {
+            info!(
+                "{} is an older client's settings file: it is ignored, and left as it is",
+                old.display()
+            );
+        }
+    });
     // Which client runs on which assets, first in the log.
     app.add_systems(Startup, || {
         info!(

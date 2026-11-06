@@ -328,7 +328,7 @@ pub(crate) struct Player {
 impl Player {
     pub(crate) fn new(service: Option<&Service>) -> Player {
         let dir = Scratch::new("player");
-        let store = SettingsStore::new(Some(dir.0.join("client.conf")));
+        let store = SettingsStore::new(Some(dir.0.join(crate::config::FILE_NAME)));
         let trust = Trust::new(service.map(|s| s.pem.as_str())).expect("trust");
         let menu = MenuCore::new(
             store.clone(),
@@ -958,7 +958,7 @@ fn the_settings_open_from_the_menu_and_last_past_a_restart() {
     settings.volume = 0.25;
     settings.clarity = crate::config::Clarity::Off;
     player.store.save_settings(&settings).expect("saved");
-    let restarted = SettingsStore::new(Some(player._dir.0.join("client.conf")));
+    let restarted = SettingsStore::new(Some(player._dir.0.join(crate::config::FILE_NAME)));
     assert_eq!(restarted.load_settings(), settings);
 }
 
@@ -1002,7 +1002,7 @@ fn pump_until(what: &str, cores: &mut [&mut Core], done: impl Fn(&Core) -> bool)
 /// A menu with no account whose service nobody answers at, named `name`
 /// in its settings, keeping its replays in its own folder.
 fn offline(name: &str, dir: &Scratch) -> (MenuCore, Trust) {
-    let store = SettingsStore::new(Some(dir.0.join(name).join("client.conf")));
+    let store = SettingsStore::new(Some(dir.0.join(name).join(crate::config::FILE_NAME)));
     let trust = Trust::new(None).expect("trust");
     let nowhere = format!("wss://127.0.0.1:{}", free_port());
     let mut menu = MenuCore::new(store, trust.radovid.clone(), Some(nowhere), kept_in(dir));
