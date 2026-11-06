@@ -225,17 +225,37 @@ fn worn(
     for unit in view.units.iter().filter(|u| standing(&u.id)) {
         wear_unit(unit, &wearing, &scene, &mut worn, &mut playing, &mut stage);
     }
-    for rune in runes::shown(view, sight.fog()) {
-        let at = on_ground(&ground, rune.pos);
-        for (n, rule) in &wearing {
+    wear_runes(
+        view,
+        sight.fog(),
+        &wearing,
+        &scene,
+        &mut worn,
+        &mut playing,
+        &mut stage,
+    );
+}
+
+fn wear_runes(
+    view: &bota_proto::WorldView,
+    fog: &crate::fog::FogGrid,
+    wearing: &[(usize, &Rule)],
+    scene: &Scene,
+    worn: &mut Worn,
+    playing: &mut Playing,
+    stage: &mut Stage,
+) {
+    for rune in runes::shown(view, fog) {
+        let at = on_ground(scene.ground, rune.pos);
+        for (n, rule) in wearing {
             if rule.subject != Subject::Runes(rune.kind) {
                 continue;
             }
             let handle = worn.0.entry((rune.id, *n)).or_insert_with(|| {
-                let with = (library.as_deref(), &mut *playing);
-                begin(&rule.fx, rune.id, at, with, &mut stage, EffectSight::Point)
+                let with = (scene.library, &mut *playing);
+                begin(&rule.fx, rune.id, at, with, stage, EffectSight::Point)
             });
-            sound(&rule.fx, rune.id, at, handle, &mut stage);
+            sound(&rule.fx, rune.id, at, handle, stage);
             if let Some(instance) = handle.particle.and_then(|h| playing.get_mut(h)) {
                 instance.set_control_point(PLACE, place_of(at), Vec3::ZERO, false);
             }
