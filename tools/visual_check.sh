@@ -97,9 +97,15 @@ for d,_,fs in os.walk(sys.argv[1]):
         except OSError: pass' "$cache"
     fi
     portrait=$([ $((run % 4)) -ge 2 ] && echo true || echo false)
+    repeat_status=0
     checks=$("$here/tools/test_client.sh" --replay "$replay" --pov 0 --screenshot-at "$tick" \
         --screenshot-dir "$out" --screenshot-prefix repeat- --distance 6500 \
-        --set animate_portrait="$portrait" --visual-check --mute --no-vsync --display-mode windowed 2>/dev/null || true)
+        --set animate_portrait="$portrait" --visual-check --mute --no-vsync --display-mode windowed 2>/dev/null) \
+        || repeat_status=$?
+    if [ "$repeat_status" -ne 0 ] || ! echo "$checks" | grep -q "PASS hero parts"; then
+        echo "visual check: FAIL run $run (animated portrait $portrait) ended with $repeat_status, hero parts not passed"
+        exit 1
+    fi
     line=$(echo "$checks" | grep -m1 "visual check: hero parts:" || true)
     if [ "$line" != "$first" ]; then
         echo "visual check: FAIL hero parts differ on run $run: '$line' against '$first'"
