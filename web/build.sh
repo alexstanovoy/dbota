@@ -10,7 +10,7 @@ export PATH="$PATH:$HOME/.cargo/bin"
 here=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)
 cd "$here"
 profile=${PROFILE:-web}
-out=${OUT:-web/out}
+out=$(python3 web/output.py prepare "${OUT:-web/out}")
 features=()
 [ -n "${DBOTA_WEB_REPLAY:-}" ] && features=(--features web-replay)
 export DBOTA_WEB_ARGS=${DBOTA_WEB_ARGS:---replay built-in --follow 0}
@@ -34,6 +34,5 @@ wasm-bindgen --target web --no-typescript --out-dir "$out/import" "target/wasm32
 cp web/index.html web/page.css web/boot.js web/main.js web/grant.js web/keys.js web/pointer.js web/cache.js web/import_worker.js web/replays.js web/report.js "$out/"
 # A copy, not a link: a service serving the folder does not follow a link out of it, and the
 # page would have no font to draw its words in.
-rm -rf -- "${out:?}/assets"
-cp -r "$here/assets" "$out/assets"
+python3 web/output.py assets "$out"
 echo "built $out"

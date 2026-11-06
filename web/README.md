@@ -97,6 +97,12 @@ The merge gate runs them all in its `browser` step (`tools/browser_check.sh`).
 5. Firefox and Safari use the fallback: the browser says it will "upload" the folder, which only lists it; watch
    Network to see that nothing leaves.
 
+The build requires Python 3. Its output directory must be empty or carry the
+`.dbota-web-output` marker created by `web/build.sh`. An older unmarked output is refused;
+choose a new empty directory. Assets in an owned output carry `.dbota-web-assets` and only
+those owned assets may be replaced. Source directories and symbolic links in an output are
+refused before the build starts.
+
 A cache served with `?cache=http` must include `index.txt` from the same build. Missing,
 malformed, or oversized indexes end startup with an error. The browser uses the same bounded
 index parser as native cache discovery and prepared-cache installation.
