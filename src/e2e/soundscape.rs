@@ -56,13 +56,13 @@ fn sounds_of<'a>(
         .map(|(i, _)| i)
 }
 
-/// Waves the random sounds of a wave name have played.
-fn played(client: &Client, wave: &str) -> u32 {
+/// Eligible random wave draws, independently of mute and mixer admission.
+fn scheduled(client: &Client, wave: &str) -> u32 {
     let ambience = client.world().resource::<Ambience>();
     ambience
         .sounds
         .iter()
-        .zip(&ambience.played)
+        .zip(&ambience.scheduled)
         .filter(|((_, w, looped), _)| !looped && w.ends_with(wave))
         .map(|(_, n)| *n)
         .sum()
@@ -98,10 +98,10 @@ fn dotas_soundscapes_play_by_place_and_by_time_of_day() {
     // The camera held over the bottom woods while the birds are waited for.
     let woods = (1000.0, -5400.0);
     look_at(&mut client, woods);
-    let birds = played(&client, "birds01.wav");
+    let birds = scheduled(&client, "birds01.wav");
     client.within(patience, "a bird singing", |c| {
         look_at(c, woods);
-        played(c, "birds01.wav") > birds
+        scheduled(c, "birds01.wav") > birds
     });
     client.cheat(Cheat::TimeOfDay { night: true });
     client.within(patience, "the night's soundscape heard whole", |c| {

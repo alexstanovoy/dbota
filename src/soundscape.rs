@@ -40,7 +40,7 @@ const ROSHAN: &str = "npc_dota_roshan";
 /// What the soundscape plays now, whether or not there is a sound device: each soundscape's
 /// name and how far it has faded in, the one heard, and for each sound its soundscape, its first
 /// wave, whether it loops, its gain now (before the player's volume; a random sound's at its loudest draw) and
-/// how many waves it has played. The tests and tools read it.
+/// how many random waves were scheduled, including muted or refused draws. The tests and tools read it.
 #[derive(Resource, Default, Debug)]
 pub struct Ambience {
     pub scapes: Vec<String>,
@@ -48,7 +48,7 @@ pub struct Ambience {
     pub heard: Option<usize>,
     pub sounds: Vec<(usize, String, bool)>,
     pub gains: Vec<f32>,
-    pub played: Vec<u32>,
+    pub scheduled: Vec<u32>,
 }
 
 /// The soundscapes of the cache and what they play, and the state of their sounds.
@@ -68,14 +68,14 @@ struct Scapes {
 }
 
 /// A soundscape's sound: its line, its soundscape's index, its waves loaded, the entity of its
-/// loop while it sounds, the seconds to its next random wave and the waves it played.
+/// loop while it sounds, the seconds to its next random wave and the random waves it scheduled.
 struct Placed {
     line: ScapeSound,
     scape: usize,
     waves: Vec<Handle<AudioSource>>,
     playing: Option<Entity>,
     next: f32,
-    played: u32,
+    scheduled: u32,
     /// The Roshan pit (bota's frame) it is placed at: Dota's map puts the pit's sounds in the
     /// soundscape, and Roshan, who is in one pit at a time, is what they sound for.
     pit: Option<Vec2>,
@@ -136,7 +136,7 @@ fn load(
                 waves,
                 playing: None,
                 next: 0.0,
-                played: 0,
+                scheduled: 0,
                 pit,
                 open: pit.is_none(),
             })
@@ -152,7 +152,7 @@ fn load(
             .map(|p| (p.scape, p.line.waves[0].clone(), p.line.looped))
             .collect(),
         gains: vec![0.0; sounds.len()],
-        played: vec![0; sounds.len()],
+        scheduled: vec![0; sounds.len()],
     };
     info!(
         "soundscapes: {} ({} sounds)",
@@ -403,7 +403,7 @@ fn randoms(
         }
         let pick = (draw(rng, [0.0, 1.0]) * p.waves.len() as f32) as usize;
         let wave = p.waves[pick.min(p.waves.len() - 1)].clone();
-        p.played = p.played.saturating_add(1);
+        p.scheduled = p.scheduled.saturating_add(1);
         if master <= 0.0 {
             continue;
         }
@@ -452,7 +452,7 @@ fn tell(scapes: &Scapes, heard: Option<usize>, ear: Vec2, ambience: &mut Ambienc
                 * scapes.weights[p.scape]
                 * reach(p.line.at, p.line.db, ear)
         };
-        ambience.played[i] = p.played;
+        ambience.scheduled[i] = p.scheduled;
     }
 }
 
@@ -478,7 +478,7 @@ mod tests {
                     waves: vec![Handle::default()],
                     playing: None,
                     next: 0.0,
-                    played: 0,
+                    scheduled: 0,
                     pit: None,
                     open: true,
                 })
