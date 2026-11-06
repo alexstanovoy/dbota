@@ -32,9 +32,11 @@ ARGS = [
     "--disable-gpu-vsync", "--disable-frame-rate-limit",
     "--disable-features=LocalNetworkAccessChecks,BlockInsecurePrivateNetworkRequests",
 ]
-# What ends a run: the client died. Its ERROR lines are said on stderr with the result, since a run
-# that drew less is no measure of the same picture, but they do not stop it.
+# What ends a run: the client died. Its other ERROR lines are said on stderr with the result.
 FAILED = re.compile(r"panicked|RuntimeError")
+# What makes a run no measure: a pipeline the renderer could not make draws nothing of what it
+# was for, and a frame that draws less is faster for it.
+UNDRAWN = re.compile(r"[Ss]hader compilation failed|[Pp]ipeline .*(failed|error)|Validation Error")
 
 
 def platform():
@@ -61,8 +63,11 @@ def run(p, base, api, size, timeout):
         while time.time() < deadline:
             for line in console:
                 if m := re.search(r"bench: .*", line):
-                    for error in {c[:300] for c in console if "ERROR" in c}:
+                    errors = {c[:300] for c in console if "ERROR" in c}
+                    for error in errors:
                         print(f"{api}: logged: {error}", file=sys.stderr)
+                    if undrawn := [e for e in errors if UNDRAWN.search(e)]:
+                        sys.exit(f"{api}: no measure, the renderer drew less: {undrawn[0]}")
                     return m.group(0)
                 if FAILED.search(line) or line.startswith("page error"):
                     sys.exit(f"{api}: {line[:400]}")
