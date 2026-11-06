@@ -19,6 +19,7 @@ mod fx;
 pub(crate) mod harness;
 mod hero_fx;
 mod icons;
+mod item_drop_range;
 mod item_states;
 mod items;
 mod lotus;
