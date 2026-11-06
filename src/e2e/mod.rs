@@ -16,6 +16,7 @@ mod courier_spinner;
 mod cursors;
 mod death;
 mod fx;
+mod ground_items;
 pub(crate) mod harness;
 mod hero_fx;
 mod icons;

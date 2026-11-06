@@ -487,8 +487,8 @@ particle hero.nevermore.trail particles/units/heroes/hero_nevermore/nevermore_tr
 # Blink Dagger: the start where the hero stood, the end where it lands (items_fx/blink_dagger_*)
 fx item.blink.use at=caster_before particle=item.blink_start sound=sound.blink.activate
 fx item.blink.use at=caster particle=item.blink_end
-# Wards: the sound of planting one, and the ambient effect each wears (items_game.txt 7555 and 7556; the item feeds the
-# Sentry's no radius, so its true-sight disc has none: an eye over the ward and a glow on its lamp)
+# Wards: the sound of planting one, and the ambient effect each wears (items_game.txt 7555 and 7556; the Sentry's item gives
+# its particle no radius, so it draws no true-sight disc: an eye over the ward and a glow on its lamp)
 fx item.ward_observer.use at=point sound=sound.ward.activate
 fx item.ward_sentry.use at=point sound=sound.ward.activate
 fx unit.npc_dota_observer_wards.worn at=unit particle=ward.observer.ambient

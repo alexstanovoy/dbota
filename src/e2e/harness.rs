@@ -645,3 +645,25 @@ impl Client {
             .find(|s| self.core().item_in(*s).is_some_and(|i| i.id == item))
     }
 }
+
+/// `root` and everything under it.
+pub fn subtree(world: &World, root: Entity) -> Vec<Entity> {
+    let mut found = Vec::new();
+    let mut stack = vec![root];
+    while let Some(entity) = stack.pop() {
+        found.push(entity);
+        if let Some(children) = world.get::<Children>(entity) {
+            stack.extend(children.iter());
+        }
+    }
+    found
+}
+
+/// Every transform under `root`: the pose its model is in.
+pub fn pose_of(client: &Client, root: Entity) -> Vec<(Entity, Transform)> {
+    let world = client.world();
+    subtree(world, root)
+        .into_iter()
+        .filter_map(|e| Some((e, *world.get::<Transform>(e)?)))
+        .collect()
+}

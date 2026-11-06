@@ -1258,14 +1258,24 @@ fn collapse(
     mut fallen: Query<(Entity, &mut Unit, &ModelOf), Added<Dying>>,
 ) {
     for (entity, mut unit, pivot) in &mut fallen {
-        let Some(replacement) = unit
+        let Some((name, replacement)) = unit
             .base_model
             .and_then(|base| destruction_name(&p.bank.0[base].model.logical))
-            .and_then(|name| p.bank.0.iter().position(|m| m.model.logical == name))
-            .filter(|index| p.bank.0[*index].ready() && p.bank.0[*index].scenes.is_some())
+            .and_then(|name| {
+                let index = p.bank.0.iter().position(|m| m.model.logical == name)?;
+                Some((name, index))
+            })
         else {
             continue;
         };
+        // Added<Dying> fires once: a model not ready now is not drawn later, so say so.
+        if !p.bank.0[replacement].ready() || p.bank.0[replacement].scenes.is_none() {
+            warn!(
+                "{name} is not loaded: the fallen {:?} keeps its own model",
+                unit.kind
+            );
+            continue;
+        }
         let Some(last) = session.0.session().and_then(|s| s.entity(unit.id)) else {
             continue;
         };

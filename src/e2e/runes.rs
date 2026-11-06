@@ -11,7 +11,7 @@ use bevy::prelude::*;
 use bota_client_core::{Intent, Slot};
 use bota_proto::{Cheat, EffectId, HeroId, ItemId, RuneKind, StatusFlags, Vec2 as Spot};
 
-use super::harness::{Client, Server};
+use super::harness::{Client, Server, pose_of, subtree};
 use crate::hud::{Part, PartOf};
 use crate::minimap::RuneMark;
 use crate::runes::RuneBody;
@@ -399,28 +399,6 @@ fn an_invisible_hero_is_see_through_and_an_attack_click_destroys_a_rune() {
         !wears(&client, EffectId::RUNE_SHIELD),
         "destroyed, not taken"
     );
-}
-
-/// `root` and everything under it.
-fn subtree(world: &World, root: Entity) -> Vec<Entity> {
-    let mut found = Vec::new();
-    let mut stack = vec![root];
-    while let Some(entity) = stack.pop() {
-        found.push(entity);
-        if let Some(children) = world.get::<Children>(entity) {
-            stack.extend(children.iter());
-        }
-    }
-    found
-}
-
-/// Every transform under `root`: the pose its model is in.
-fn pose_of(client: &Client, root: Entity) -> Vec<(Entity, Transform)> {
-    let world = client.world();
-    subtree(world, root)
-        .into_iter()
-        .filter_map(|e| Some((e, *world.get::<Transform>(e)?)))
-        .collect()
 }
 
 /// A rune lying on the ground turns in its idle clip, as Dota's runes do (the model was posed

@@ -151,7 +151,6 @@ fn sync_runes(
         if let Some((body, scale)) = body {
             let scale = Transform::from_scale(Vec3::splat(UNITS_PER_METRE * scale));
             root.insert(Idle(name));
-            let id = root.id();
             spawn_idle_model(&mut commands, id, body, scale);
         }
         index.0.insert(rune.id, id);

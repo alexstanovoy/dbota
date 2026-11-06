@@ -58,7 +58,16 @@ fn a_fallen_tower_is_swapped_for_its_destruction_model_and_collapses_before_it_i
             100,
         )));
     let (model, clip, _) = falling(&mut client, tower.id).expect("falling");
-    assert_eq!(model, "tower.dire.destruction", "the model it falls in");
+    let side = if enemy == Team::Dire {
+        "dire"
+    } else {
+        "radiant"
+    };
+    assert_eq!(
+        model,
+        format!("tower.{side}.destruction"),
+        "the model it falls in"
+    );
     assert_eq!(clip, "death", "the clip it plays");
     // Longer than a unit's fall, so the whole collapse (6.7 s) can be seen.
     client.frames(30);
