@@ -26,7 +26,8 @@ class CacheIndexTests(unittest.TestCase):
         cls.playwright = sync_playwright().start()
         cls.browser = cls.playwright.chromium.launch(args=["--no-sandbox"])
         cls.page = cls.browser.new_page()
-        cls.page.goto(f"http://127.0.0.1:{cls.server.server_port}/")
+        # Keep the game bootstrap out of transport tests, also when pointed at a full build.
+        cls.page.goto(f"http://127.0.0.1:{cls.server.server_port}/cache.js")
         import re
         source = (REPOSITORY / "crates/dbota_import/src/import.rs").read_text()
         revision = re.search(r"pub const IMPORT_REV: u32 = (\d+)", source).group(1)

@@ -1,9 +1,13 @@
 //! `dbota import`: the asset cache made from the local Dota 2 install, by the same converter
 //! the browser runs. Valve's files land only in the cache, never in a repository.
 
+use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 
-use dbota_import::cache_dir::{import_into, is_current, prune, read_stamp, record_managed, stamp};
+use dbota_import::cache_dir::{
+    ManagedCacheLock, PruneReport, begin_managed_import, import_into, is_current,
+    lock_managed_root, prune, read_stamp, record_managed, stamp, touch_last_use,
+};
 use dbota_import::import::{Flow, IDS, MANIFEST, plan, plan_id, stamped_here};
 use dbota_import::pack_dir;
 use heatel::find_game_dir;
@@ -102,6 +106,8 @@ pub fn load_cache(from: &Path, cache: &Path, progress: Progress) -> Result<(), S
         from.display(),
         cache.display()
     );
+    let root = managed_cache_root();
+    let _lease = managed_import(root.as_deref(), cache)?;
     let started = std::time::Instant::now();
     let summary = pack_dir::install(from, cache, &mut |done, total, item| {
         progress(done as f32 / total.max(1) as f32, item);
@@ -114,7 +120,7 @@ pub fn load_cache(from: &Path, cache: &Path, progress: Progress) -> Result<(), S
         summary.stamp,
         started.elapsed().as_secs_f32()
     );
-    maintain_managed_cache(cache);
+    report_maintenance(root.as_deref(), cache);
     Ok(())
 }
 
@@ -140,13 +146,26 @@ pub fn run_with(
     force: bool,
     progress: Progress,
 ) -> Result<bool, String> {
+    let root = managed_cache_root();
+    run_with_in(dota, cache, force, progress, root.as_deref())
+}
+
+fn run_with_in(
+    dota: Option<&Path>,
+    cache: &Path,
+    force: bool,
+    progress: Progress,
+    root: Option<&Path>,
+) -> Result<bool, String> {
     let game: PathBuf = find_game_dir(dota).ok_or_else(|| {
         "Dota 2 not found; pass --dota-path \"<...>/steamapps/common/dota 2 beta\"".to_string()
     })?;
     let plan = plan()?;
     let stamp = stamp(&game, &plan_id(plan)).map_err(|e| e.to_string())?;
+    let _lease = managed_import(root, cache)?;
     if !force && is_current(cache, &stamp) {
         println!("dbota import: {} is up to date", cache.display());
+        report_maintenance(root, cache);
         return Ok(true);
     }
     println!("dbota import: {} -> {}", game.display(), cache.display());
@@ -164,26 +183,235 @@ pub fn run_with(
         report.read >> 20,
         started.elapsed().as_secs_f32()
     );
-    maintain_managed_cache(cache);
+    report_maintenance(root, cache);
     for (asset, why) in &report.failed {
         eprintln!("dbota import: {asset} did not convert: {why}");
     }
     Ok(report.failed.is_empty())
 }
 
-/// The only root whose caches this client manages. Custom cache locations carry no deletion authority.
+/// The only root whose caches this client manages. Custom locations carry no deletion authority.
 pub fn managed_cache_root() -> Option<PathBuf> {
-    std::env::var_os("HOME")
-        .map(PathBuf::from)
+    managed_cache_root_in(std::env::var_os("HOME").as_deref())
+}
+
+pub fn managed_cache_root_in(home: Option<&OsStr>) -> Option<PathBuf> {
+    home.map(PathBuf::from)
         .filter(|home| home.is_absolute())
         .map(|home| home.join(".cache/dbota"))
 }
 
-fn maintain_managed_cache(cache: &Path) {
-    if let Some(root) = managed_cache_root()
-        && cache == root.join(dbota_import::import::folder_name())
-        && let Err(why) = record_managed(&root, cache).and_then(|()| prune(&root, cache))
+pub fn cache_dir_in(home: Option<&OsStr>, assets: Option<&OsStr>) -> PathBuf {
+    assets
+        .filter(|assets| !assets.is_empty())
+        .map(PathBuf::from)
+        .unwrap_or_else(|| {
+            managed_cache_root_in(home)
+                .unwrap_or_else(|| PathBuf::from(".cache/dbota"))
+                .join(dbota_import::import::folder_name())
+        })
+}
+
+fn matching_root<'a>(root: Option<&'a Path>, cache: &Path) -> Option<&'a Path> {
+    root.filter(|root| {
+        cache == root.join(dbota_import::import::folder_name())
+            && !std::fs::symlink_metadata(root).is_ok_and(|meta| meta.file_type().is_symlink())
+    })
+}
+
+fn managed_import(root: Option<&Path>, cache: &Path) -> Result<Option<ManagedCacheLock>, String> {
+    matching_root(root, cache)
+        .map(|root| begin_managed_import(root, cache))
+        .transpose()
+        .map_err(|why| why.to_string())
+}
+
+fn maintain_managed_cache(root: Option<&Path>, cache: &Path) -> Result<PruneReport, String> {
+    let Some(root) = matching_root(root, cache) else {
+        return Ok(PruneReport::default());
+    };
+    dbota_import::index::CacheIndex::read(cache).map_err(|why| why.to_string())?;
+    if !std::fs::symlink_metadata(cache.join(dbota_import::import::STAMP))
+        .is_ok_and(|meta| meta.is_file())
+        || !read_stamp(cache).is_some_and(|stamp| stamped_here(&stamp))
     {
-        eprintln!("dbota import: old caches stay: {why}");
+        return Err("the cache stamp does not belong to this build".to_owned());
+    }
+    record_managed(root, cache).map_err(|why| why.to_string())?;
+    touch_last_use(cache).map_err(|why| why.to_string())?;
+    prune(root, cache).map_err(|why| why.to_string())
+}
+
+fn report_maintenance(root: Option<&Path>, cache: &Path) {
+    match maintain_managed_cache(root, cache) {
+        Ok(report) => {
+            for (path, why) in report.failures {
+                eprintln!("dbota import: cache {} stays: {why}", path.display());
+            }
+        }
+        Err(why) => eprintln!("dbota import: old caches stay: {why}"),
+    }
+}
+
+pub fn note_cache_use(root: Option<&Path>, cache: &Path) -> Result<(), String> {
+    let _lease = matching_root(root, cache)
+        .map(lock_managed_root)
+        .transpose()
+        .map_err(|why| why.to_string())?;
+    dbota_import::index::CacheIndex::read(cache).map_err(|why| why.to_string())?;
+    if matching_root(root, cache).is_some() {
+        let report = maintain_managed_cache(root, cache)?;
+        for (path, why) in report.failures {
+            eprintln!("dbota: cache {} stays: {why}", path.display());
+        }
+    } else if let Err(why) = touch_last_use(cache) {
+        // Unmanaged/read-only caches are never pruned by this client.
+        eprintln!("dbota: unmanaged cache use could not be recorded: {why}");
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use dbota_import::cache_dir::{MAX_CACHES, record_managed};
+    use dbota_import::import::{INDEX, OWNER_MARKER, STAMP, fingerprint, folder_name};
+    use dbota_import::index::CacheIndex;
+    use std::fs;
+
+    struct Caches {
+        scratch: PathBuf,
+        home: PathBuf,
+        root: PathBuf,
+        current: PathBuf,
+    }
+
+    impl Caches {
+        fn new() -> Self {
+            use std::sync::atomic::{AtomicUsize, Ordering};
+            static NEXT: AtomicUsize = AtomicUsize::new(0);
+            let scratch = (0..128)
+                .find_map(|_| {
+                    let path = std::env::temp_dir().join(format!(
+                        "dbota-root-{}-{}",
+                        std::process::id(),
+                        NEXT.fetch_add(1, Ordering::Relaxed)
+                    ));
+                    fs::create_dir(&path).ok().map(|()| path)
+                })
+                .expect("a fresh root fixture");
+            let home = scratch.join("home");
+            let root = managed_cache_root_in(Some(home.as_os_str())).unwrap();
+            let current = root.join(folder_name());
+            for n in 0..MAX_CACHES + 1 {
+                let path = if n == MAX_CACHES {
+                    current.clone()
+                } else {
+                    root.join(format!("rev29.1-{n:016x}"))
+                };
+                fs::create_dir_all(&path).unwrap();
+                fs::write(path.join(INDEX), format!("{}\n", CacheIndex::header())).unwrap();
+                fs::write(path.join(STAMP), format!("{}/1/2", fingerprint())).unwrap();
+                fs::File::options()
+                    .write(true)
+                    .open(path.join(STAMP))
+                    .unwrap()
+                    .set_modified(std::time::UNIX_EPOCH)
+                    .unwrap();
+                record_managed(&root, &path).unwrap();
+            }
+            Self {
+                scratch,
+                home,
+                root,
+                current,
+            }
+        }
+
+        fn count(&self) -> usize {
+            fs::read_dir(&self.root)
+                .unwrap()
+                .filter(|entry| entry.as_ref().unwrap().file_type().unwrap().is_dir())
+                .count()
+        }
+    }
+
+    impl Drop for Caches {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.scratch);
+        }
+    }
+
+    #[test]
+    fn a_custom_assets_override_does_not_authorize_managed_root_pruning() {
+        let caches = Caches::new();
+        let custom = caches.scratch.join("custom").join(folder_name());
+        fs::create_dir_all(&custom).unwrap();
+        fs::write(custom.join("keep"), b"custom data").unwrap();
+        let selected = cache_dir_in(Some(caches.home.as_os_str()), Some(custom.as_os_str()));
+        maintain_managed_cache(Some(&caches.root), &selected).unwrap();
+        assert_eq!(caches.count(), MAX_CACHES + 1);
+        assert_eq!(fs::read(custom.join("keep")).unwrap(), b"custom data");
+        assert!(!custom.join(OWNER_MARKER).exists());
+    }
+
+    #[test]
+    fn unset_and_relative_homes_grant_no_deletion_authority() {
+        let caches = Caches::new();
+        for home in [
+            None,
+            Some(OsStr::new("relative-home")),
+            Some(OsStr::new("")),
+        ] {
+            let root = managed_cache_root_in(home);
+            assert!(root.is_none());
+            maintain_managed_cache(root.as_deref(), &caches.current).unwrap();
+            assert_eq!(caches.count(), MAX_CACHES + 1);
+        }
+    }
+
+    #[test]
+    fn an_up_to_date_import_records_use_and_maintains_its_root() {
+        let caches = Caches::new();
+        let install = caches.scratch.join("install");
+        let game = install.join("game/dota");
+        fs::create_dir_all(&game).unwrap();
+        fs::write(game.join("pak01_dir.vpk"), b"x").unwrap();
+        let expected = stamp(&game, &plan_id(plan().unwrap())).unwrap();
+        fs::write(caches.current.join(STAMP), expected).unwrap();
+        fs::remove_file(caches.current.join(OWNER_MARKER)).unwrap();
+        assert!(
+            run_with_in(
+                Some(&install),
+                &caches.current,
+                false,
+                &mut |_, _| panic!("an up-to-date cache is not converted"),
+                Some(&caches.root)
+            )
+            .unwrap()
+        );
+        assert!(
+            caches
+                .current
+                .join(dbota_import::import::LAST_USE_MARKER)
+                .is_file()
+        );
+        assert_eq!(caches.count(), MAX_CACHES);
+    }
+
+    #[test]
+    fn the_real_default_folder_records_use_and_prunes_expired_caches() {
+        let caches = Caches::new();
+        fs::remove_file(caches.current.join(OWNER_MARKER)).unwrap();
+        let selected = cache_dir_in(Some(caches.home.as_os_str()), None);
+        assert_eq!(selected, caches.current);
+        maintain_managed_cache(Some(&caches.root), &selected).unwrap();
+        assert_eq!(caches.count(), MAX_CACHES);
+        assert!(selected.join(OWNER_MARKER).is_file());
+        assert!(
+            selected
+                .join(dbota_import::import::LAST_USE_MARKER)
+                .is_file()
+        );
     }
 }

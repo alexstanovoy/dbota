@@ -40,6 +40,10 @@ pub const INDEX: &str = "index.txt";
 /// Local ownership metadata, never listed or copied as an asset.
 pub const OWNER_MARKER: &str = ".dbota-owned-cache";
 pub const OWNER_TEXT: &str = "dbota owned cache 1\n";
+pub const ROOT_MARKER: &str = ".dbota-cache-root";
+pub const ROOT_TEXT: &str = "dbota managed root 1\n";
+pub const LAST_USE_MARKER: &str = ".dbota-last-use";
+pub const LAST_USE_TEXT: &str = "dbota last use 1\n";
 /// Longest stamp read; a stamp is a few dozen bytes.
 pub const MAX_STAMP: u64 = 4096;
 

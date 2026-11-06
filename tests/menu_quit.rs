@@ -196,7 +196,11 @@ fn a_replay_is_left_for_the_menu() {
 fn asset_cache(scratch: &Scratch, stamp: &str) -> PathBuf {
     let cache = scratch.0.join("assets");
     std::fs::create_dir_all(&cache).expect("a cache folder");
-    std::fs::write(cache.join("index.txt"), "dbota-cache 1\n").expect("an index");
+    std::fs::write(
+        cache.join("index.txt"),
+        format!("{}\n", dbota_import::index::CacheIndex::header()),
+    )
+    .expect("an index");
     std::fs::write(cache.join("stamp.txt"), stamp).expect("a stamp");
     cache
 }

@@ -16,16 +16,23 @@ client, then in the settings' path or `$BOTA_SERVER`, then on the `PATH`, and sk
 
 The asset cache is stamped with the asset fingerprint of the build that made it (cache version, importer revision,
 manifest hash) and lives in `~/.cache/dbota/<fingerprint>` (`dbota cache-dir`), so builds of different versions share a
-machine; an import keeps the two newest. A dbota of another fingerprint opens at "the assets are out of date" with a
+machine; recently used caches are retained as described below. A dbota of another fingerprint opens at "the assets are out of date" with a
 button that imports again. The settings screen shows the client's commit and the fingerprint it needs.
 
 Automatic asset-cache pruning is confined to the default managed root, `~/.cache/dbota`.
-A successful import there records `.dbota-cache-root` in the root and `.dbota-owned-cache`
-inside its cache. Only completely named, marked cache directories are eligible for pruning;
-unmarked caches and custom cache locations are left alone. Ownership markers are omitted from
-asset packs. Only an import or prepared-cache installation that actually writes a cache establishes
-its ownership. Up-to-date unmarked caches and old siblings are never adopted merely
-because they resemble caches.
+A managed root must be a real directory: symlinking that directory to another disk disables
+its pruning, with a diagnostic. Cache parents must remain under the user's control; the
+filesystem checks do not isolate concurrent changes by other processes with the same access.
+
+A client records when it last uses a cache. Pruning retains recently used caches for 24 hours
+by default and bounds the number of managed caches to eight. Completed cache writes and
+up-to-date imports maintain this root. Legacy directories are adopted only after their full
+name, bounded index, and build stamp validate; invalid directories and custom cache locations
+carry no deletion authority. Ownership and last-use metadata are excluded from asset packs.
+If all eight slots are recently used, another managed import is refused before its cache is
+created. Expired caches release slots first. Managed imports and startup use updates serialize
+on the root's lock; a cache with unsafe contents stays in place and is reported while pruning
+continues past it.
 
 ## Running it for tests and tools
 

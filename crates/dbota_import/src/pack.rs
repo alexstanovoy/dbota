@@ -14,11 +14,13 @@ use std::fmt;
 
 use heatel::Slice;
 
-use crate::import::{INDEX, MAX_STAMP, OWNER_MARKER, OWNER_TEXT, STAMP, fingerprint, stamped_here};
-use crate::index::{CacheIndex, MAX_INDEX, check_place};
+use crate::import::{
+    INDEX, LAST_USE_MARKER, MAX_STAMP, OWNER_MARKER, OWNER_TEXT, STAMP, fingerprint, stamped_here,
+};
+use crate::index::{CacheIndex, MAX_INDEX, check_place, is_metadata, last_use_seconds};
 pub use crate::index::{MAX_FILE, MAX_FILES, MAX_TOTAL, size_limit};
-/// Asset files plus the index, stamp and optional local ownership marker.
-pub const MAX_ENTRIES: usize = MAX_FILES + 3;
+/// Asset files plus the index, stamp and optional local ownership/usage metadata.
+pub const MAX_ENTRIES: usize = MAX_FILES + 4;
 
 /// Why a prepared cache is not taken.
 #[derive(Debug, PartialEq, Eq)]
@@ -136,7 +138,7 @@ impl<C: Container> Pack<C> {
         let entries = container.entries();
         if entries.len() > MAX_ENTRIES {
             return Err(PackError::TooBig(format!(
-                "it has {} files, a cache has at most {MAX_FILES}",
+                "it has {} files, a cache has at most {MAX_ENTRIES} entries including metadata",
                 entries.len()
             )));
         }
@@ -166,6 +168,13 @@ impl<C: Container> Pack<C> {
         {
             return Err(PackError::Invalid(
                 "invalid local ownership marker".to_owned(),
+            ));
+        }
+        if at.contains_key(LAST_USE_MARKER)
+            && last_use_seconds(&text(&container, &at, LAST_USE_MARKER, 96)?).is_none()
+        {
+            return Err(PackError::Invalid(
+                "invalid local last-use stamp".to_owned(),
             ));
         }
         let index = text(&container, &at, INDEX, MAX_INDEX)?;
@@ -290,12 +299,10 @@ fn list(
         .iter()
         .map(|file| file.path.as_str())
         .collect();
-    if let Some(extra) = entries.iter().find(|e| {
-        e.path != STAMP
-            && e.path != INDEX
-            && e.path != OWNER_MARKER
-            && !seen.contains(e.path.as_str())
-    }) {
+    if let Some(extra) = entries
+        .iter()
+        .find(|e| !is_metadata(&e.path) && !seen.contains(e.path.as_str()))
+    {
         return Err(PackError::Invalid(format!(
             "{} is in it, but index.txt does not list it",
             shown(&extra.path)
@@ -316,7 +323,7 @@ impl<S: Slice> SliceFolder<S> {
     pub fn new(files: Vec<(String, S)>) -> Result<Self, PackError> {
         if files.len() > MAX_ENTRIES {
             return Err(PackError::TooBig(format!(
-                "it has {} files, a cache has at most {MAX_FILES}",
+                "it has {} files, a cache has at most {MAX_ENTRIES} entries including metadata",
                 files.len()
             )));
         }

@@ -402,12 +402,10 @@ fn default_cache_dir() -> PathBuf {
     }
     #[cfg(not(target_arch = "wasm32"))]
     {
-        if let Some(dir) = std::env::var_os("DBOTA_ASSETS").filter(|d| !d.is_empty()) {
-            return PathBuf::from(dir);
-        }
-        import::managed_cache_root()
-            .unwrap_or_else(|| PathBuf::from(".cache/dbota"))
-            .join(dbota_import::import::folder_name())
+        import::cache_dir_in(
+            std::env::var_os("HOME").as_deref(),
+            std::env::var_os("DBOTA_ASSETS").as_deref(),
+        )
     }
 }
 
@@ -518,6 +516,14 @@ fn main() -> AppExit {
     #[cfg(not(target_arch = "wasm32"))]
     if let Some(need) = held {
         eprintln!("dbota: {}", import::refusal(need, &args.cache_dir));
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    if held.is_none()
+        && let Err(why) =
+            import::note_cache_use(import::managed_cache_root().as_deref(), &args.cache_dir)
+    {
+        eprintln!("dbota: cache use could not be recorded: {why}");
+        return AppExit::from_code(2);
     }
     #[cfg(target_arch = "wasm32")]
     let held: Option<()> = None;

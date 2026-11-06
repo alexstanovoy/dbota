@@ -352,7 +352,7 @@ fn cached_icons(root: &Path) -> Vec<String> {
                 .map(|file| file.path.clone())
                 .collect(),
             Err(why) => {
-                error!("cache icon index: {why}");
+                warn!("cache icon index: {why}");
                 Vec::new()
             }
         }

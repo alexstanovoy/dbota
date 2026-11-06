@@ -140,7 +140,8 @@ fn runtime_and_prepared_cache_reads_share_the_validated_index() {
             _ => panic!("runtime and prepared validation diverged"),
         }
     }
-    // Sparse, not allocated or read: a corrupt index cannot reserve memory from its length.
+    // Requires a sparse-file filesystem (the Linux gate uses one): no payload is allocated or read.
+    // A corrupt index cannot reserve memory from its advertised length.
     std::fs::File::options()
         .write(true)
         .open(root.join(INDEX))
@@ -205,6 +206,82 @@ fn local_cache_ownership_metadata_is_validated_but_not_an_asset() {
         } else {
             let error = result.err().expect("invalid marker rejected").to_string();
             assert!(error.contains("invalid local ownership marker"), "{error}");
+        }
+    }
+}
+
+#[test]
+#[ignore = "reads the real imported cache; the gate install-tests step supplies DBOTA_ASSETS"]
+fn the_real_imported_cache_passes_shared_index_validation() {
+    let root = std::path::PathBuf::from(
+        std::env::var_os("DBOTA_IMPORTED")
+            .or_else(|| std::env::var_os("DBOTA_ASSETS"))
+            .expect("an imported cache"),
+    );
+    let index = CacheIndex::read(&root).expect("the real cache passes the bounded reader");
+    assert!(!index.files().is_empty());
+    for file in index.files() {
+        let metadata =
+            std::fs::symlink_metadata(root.join(&file.path)).expect("every listed file exists");
+        assert!(metadata.is_file(), "{} is not a regular file", file.path);
+        assert_eq!(metadata.len(), file.size, "{} changed size", file.path);
+    }
+    println!(
+        "real cache index: {} files, {} bytes accepted",
+        index.files().len(),
+        index.bytes()
+    );
+}
+
+#[test]
+fn local_last_use_metadata_is_bounded_and_excluded_from_asset_entries() {
+    use dbota_import::import::{LAST_USE_MARKER, LAST_USE_TEXT};
+    struct Folder {
+        entries: Vec<Entry>,
+        bytes: Vec<Vec<u8>>,
+    }
+    impl Container for Folder {
+        fn entries(&self) -> &[Entry] {
+            &self.entries
+        }
+        fn read(&self, at: usize) -> Result<Vec<u8>, PackError> {
+            Ok(self.bytes[at].clone())
+        }
+    }
+    for valid in [true, false] {
+        let files = [
+            (STAMP, format!("{}/1/2", fingerprint()).into_bytes()),
+            (INDEX, index("file 1 icons/items/blink.png\n")),
+            (
+                LAST_USE_MARKER,
+                if valid {
+                    format!("{LAST_USE_TEXT}1234\n").into_bytes()
+                } else {
+                    b"untrusted local metadata".to_vec()
+                },
+            ),
+            ("icons/items/blink.png", vec![1]),
+        ];
+        let folder = Folder {
+            entries: files
+                .iter()
+                .map(|(path, bytes)| Entry {
+                    path: (*path).to_owned(),
+                    size: bytes.len() as u64,
+                })
+                .collect(),
+            bytes: files.into_iter().map(|(_, bytes)| bytes).collect(),
+        };
+        match Pack::open(folder) {
+            Ok(pack) if valid => {
+                assert_eq!(pack.len(), 1);
+                assert_eq!(pack.entry(0).unwrap().path, "icons/items/blink.png");
+            }
+            Err(error) if !valid => assert!(
+                error.to_string().contains("invalid local last-use stamp"),
+                "{error}"
+            ),
+            _ => panic!("last-use metadata validation diverged"),
         }
     }
 }

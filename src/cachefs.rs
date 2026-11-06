@@ -234,7 +234,7 @@ fn settle(mut due: ResMut<DueTextures>, budget: Res<DecodeBudget>) {
     budget.tick();
 }
 
-/// Reads the cache folder's files; directories and meta files as Bevy does.
+/// Reads cache files and their metadata; raw directory enumeration is disabled.
 pub struct CacheReader {
     budget: DecodeBudget,
     block: BlockTextures,
@@ -387,7 +387,14 @@ impl AssetReader for CacheReader {
         &'a self,
         path: &'a Path,
     ) -> Result<Box<PathStream>, AssetReaderError> {
-        self.files.read_directory(path).await
+        let _ = path;
+        Err(AssetReaderError::Io(
+            std::io::Error::new(
+                std::io::ErrorKind::Unsupported,
+                "cache directory listing is disabled; use the validated index",
+            )
+            .into(),
+        ))
     }
 
     async fn is_directory<'a>(&'a self, path: &'a Path) -> Result<bool, AssetReaderError> {
@@ -435,6 +442,27 @@ pub fn read_small(root: &Path, rel: &str) -> Option<Vec<u8>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn cache_directories_cannot_be_listed_without_index_validation() {
+        let root = std::env::temp_dir().join(format!("dbota-listing-{}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        let reader = CacheReader::new(
+            root.clone(),
+            DecodeBudget::default(),
+            BlockTextures::default(),
+        );
+        let error = bevy::tasks::block_on(reader.read_directory(Path::new("")))
+            .err()
+            .expect("raw directory listing must not bypass the index")
+            .to_string();
+        assert!(
+            error.contains("cache directory listing is disabled"),
+            "{error}"
+        );
+        std::fs::remove_dir_all(root).unwrap();
+    }
 
     /// The small files are read whole: a huge one planted in the cache
     /// filled the memory.

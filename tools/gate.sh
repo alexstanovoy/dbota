@@ -3,7 +3,7 @@
 #
 #   tools/gate.sh [REPLAY.brp]
 #
-# Steps: ignored-audit (every #[ignore]d test has a step that runs it), fuzz-check (the fuzz targets compile), clippy, web-webgpu and web-webgl2 (the browser clients compile), assets (the asset cache of this build, imported
+# Steps: build-output (hostile web build destinations), ignored-audit (every #[ignore]d test has a step that runs it), fuzz-check (the fuzz targets compile), clippy, web-webgpu and web-webgl2 (the browser clients compile), assets (the asset cache of this build, imported
 # once per stamp from a Dota 2 install), test, build (release), deny, then, with the cache: reference (the importer's golden
 # reference cache, exported once from the install by tools/reference_cache.sh), install-tests (the ignored importer tests),
 # visual (tools/visual_check.sh on a replay) and browser (tools/browser_check.sh: the pages built, every check of
@@ -90,6 +90,7 @@ step() { # name command...
 # The browser clients, one per graphics API; the build embeds a replay, any file does for a check.
 web() { DBOTA_WEB_REPLAY="$here/Cargo.toml" cargo check --target wasm32-unknown-unknown --profile web -p dbota --features "web-replay,$1"; }
 
+step build-output python3 -m unittest discover -s web/test -p test_build_output.py -v
 step ignored-audit tools/ignored_audit.sh
 step fuzz-check fuzz/fuzz.sh check
 step clippy cargo clippy --all-targets -- -D warnings

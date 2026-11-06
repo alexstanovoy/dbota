@@ -5,11 +5,13 @@
 use std::fs;
 use std::io::{self, Read};
 use std::path::{Path, PathBuf};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use heatel::{Error, Result};
 
 use crate::import::{
-    Flow, MAX_STAMP, OWNER_MARKER, OWNER_TEXT, Plan, Progress, Report, Sink, run_capped,
+    Flow, LAST_USE_MARKER, LAST_USE_TEXT, MAX_STAMP, OWNER_MARKER, OWNER_TEXT, Plan, Progress,
+    ROOT_MARKER, ROOT_TEXT, Report, Sink, run_capped, stamped_here,
 };
 pub use crate::import::{INDEX, STAMP};
 use crate::source::InstallSource;
@@ -66,65 +68,176 @@ pub fn stamp_prefix(plan_id: &str) -> String {
     crate::import::fingerprint_of(plan_id)
 }
 
-/// How many owned caches stay under the managed root, including the current one.
-pub const KEPT_CACHES: usize = 2;
+/// Retention protects caches used within this window, up to the managed capacity.
+pub const CACHE_USE_WINDOW: Duration = Duration::from_secs(24 * 60 * 60);
+pub const MAX_CACHES: usize = 8;
 
-/// Marks a successfully installed cache as owned by this explicitly managed root.
-/// Ownership travels with the directory; asset packs omit this local metadata.
+#[derive(Default, Debug)]
+pub struct PruneReport {
+    pub failures: Vec<(PathBuf, String)>,
+    pub remaining: usize,
+    pub admission_blocked: bool,
+}
+
+/// Marks a cache as owned by the explicitly configured root.
 pub fn record_managed(root: &Path, current: &Path) -> Result<()> {
     managed_name(root, current)?;
     plain_directory(root)?;
     plain_directory(current)?;
-    if !marker(
-        root.join(".dbota-cache-root"),
-        b"dbota managed root 1\n",
-        true,
-    )? {
-        return Err(managed_io(
-            root,
-            io::Error::other("invalid managed root ownership marker"),
-        ));
-    }
-    if !marker(current.join(OWNER_MARKER), OWNER_TEXT.as_bytes(), true)? {
-        return Err(managed_io(
-            root,
-            io::Error::other("invalid managed cache ownership marker"),
-        ));
-    }
-    Ok(())
+    ensure_marker(&root.join(ROOT_MARKER), ROOT_TEXT.as_bytes())?;
+    ensure_marker(&current.join(OWNER_MARKER), OWNER_TEXT.as_bytes())
 }
 
-/// Keeps the current cache and the newest other owned cache. An unmarked directory is never
-/// adopted by pruning, even when its name, stamp and index look like a cache.
-pub fn prune(root: &Path, current: &Path) -> Result<()> {
+/// Updates local usage metadata without copying it into portable asset packs.
+pub fn touch_last_use(cache: &Path) -> Result<()> {
+    touch_last_use_at(cache, SystemTime::now())
+}
+
+fn touch_last_use_at(cache: &Path, used: SystemTime) -> Result<()> {
+    plain_directory(cache)?;
+    let path = cache.join(LAST_USE_MARKER);
+    if fs::symlink_metadata(&path).is_ok() && last_use(cache)?.is_none() {
+        return Err(managed_io(
+            &path,
+            io::Error::other("invalid cache last-use stamp"),
+        ));
+    }
+    let seconds = used
+        .duration_since(UNIX_EPOCH)
+        .map_err(|e| managed_io(&path, io::Error::other(e)))?
+        .as_secs();
+    let text = format!("{LAST_USE_TEXT}{seconds}\n");
+    complete_file(&path, text.as_bytes(), |temporary| {
+        fs::rename(temporary, &path)
+    })
+}
+
+pub fn prune(root: &Path, current: &Path) -> Result<PruneReport> {
+    prune_at(root, current, SystemTime::now())
+}
+
+fn prune_at(root: &Path, current: &Path, now: SystemTime) -> Result<PruneReport> {
     let current_name = managed_name(root, current)?;
     plain_directory(root)?;
     plain_directory(current)?;
-    if !marker(
-        root.join(".dbota-cache-root"),
-        b"dbota managed root 1\n",
-        false,
-    )? || !marker(current.join(OWNER_MARKER), OWNER_TEXT.as_bytes(), false)?
+    let report = PruneReport::default();
+    if !marker_matches(&root.join(ROOT_MARKER), ROOT_TEXT.as_bytes())?
+        || !marker_matches(&current.join(OWNER_MARKER), OWNER_TEXT.as_bytes())?
     {
-        return Ok(());
+        return Ok(report);
     }
-    let mut caches = owned_caches(root)?;
-    caches
-        .sort_by_key(|(name, made)| (name != current_name, std::cmp::Reverse(*made), name.clone()));
-    for (name, _) in caches.into_iter().skip(KEPT_CACHES) {
-        let path = root.join(&name);
-        // remove_dir_all does not follow links in the tree. Recheck ownership immediately before
-        // removal; never resolve a cache symlink to a directory outside the managed root.
-        plain_directory(&path)?;
-        if marker(path.join(OWNER_MARKER), OWNER_TEXT.as_bytes(), false)? {
-            bounded_tree(&path)?;
-            remove(&path)?;
-        }
-    }
-    Ok(())
+    prune_records(root, current_name, now, false)
 }
 
-fn owned_caches(root: &Path) -> Result<Vec<(String, std::time::SystemTime)>> {
+fn prune_records(
+    root: &Path,
+    current_name: &str,
+    now: SystemTime,
+    reserve: bool,
+) -> Result<PruneReport> {
+    let mut report = PruneReport::default();
+    let mut caches = owned_caches(root, &mut report, now)?;
+    let present = caches.iter().any(|(name, _)| name == current_name);
+    let limit = MAX_CACHES - usize::from(reserve && !present);
+    caches.sort_by_key(|(name, used)| (*used, name.clone()));
+    let mut surplus = caches.len().saturating_sub(limit);
+    report.remaining = caches.len();
+    for (name, used) in caches {
+        if surplus == 0 {
+            break;
+        }
+        let expired = now
+            .duration_since(used)
+            .is_ok_and(|age| age > CACHE_USE_WINDOW);
+        if name == current_name || !expired {
+            continue;
+        }
+        let path = root.join(&name);
+        // These checks inspect the final components. Other processes with the same filesystem
+        // access must not replace cache parents while the operation resolves its paths.
+        match remove_owned(&path) {
+            Ok(()) => {
+                surplus -= 1;
+                report.remaining -= 1;
+            }
+            Err(why) => report.failures.push((path, why.to_string())),
+        }
+    }
+    if surplus > 0 {
+        let why = format!(
+            "managed cache capacity is {MAX_CACHES}; {} caches are recent or could not be removed",
+            report.remaining
+        );
+        report.admission_blocked = reserve && !present;
+        report.failures.push((root.to_path_buf(), why));
+    }
+    Ok(report)
+}
+
+/// A managed import holds the root lock through publication, so concurrent imports cannot
+/// both admit a ninth cache. Startup use updates take the same lock before protecting a cache.
+pub struct ManagedCacheLock {
+    _file: fs::File,
+}
+
+pub fn lock_managed_root(root: &Path) -> Result<ManagedCacheLock> {
+    fs::create_dir_all(root).map_err(|e| managed_io(root, e))?;
+    plain_directory(root)?;
+    ensure_marker(&root.join(ROOT_MARKER), ROOT_TEXT.as_bytes())?;
+    let path = root.join(".dbota-cache-lock");
+    ensure_marker(&path, b"dbota cache lock 1\n")?;
+    let file = fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(&path)
+        .map_err(|e| managed_io(&path, e))?;
+    file.lock().map_err(|e| managed_io(&path, e))?;
+    Ok(ManagedCacheLock { _file: file })
+}
+
+pub fn begin_managed_import(root: &Path, current: &Path) -> Result<ManagedCacheLock> {
+    begin_managed_import_at(root, current, SystemTime::now())
+}
+
+fn begin_managed_import_at(
+    root: &Path,
+    current: &Path,
+    now: SystemTime,
+) -> Result<ManagedCacheLock> {
+    let name = managed_name(root, current)?;
+    let lock = lock_managed_root(root)?;
+    let report = prune_records(root, name, now, true)?;
+    for (path, why) in report.failures {
+        eprintln!("dbota import: cache {} stays: {why}", path.display());
+    }
+    if report.admission_blocked {
+        return Err(managed_io(
+            root,
+            io::Error::other(format!(
+                "managed cache capacity is {MAX_CACHES}; recent or unremovable caches occupy every slot"
+            )),
+        ));
+    }
+    Ok(lock)
+}
+
+fn remove_owned(path: &Path) -> Result<()> {
+    plain_directory(path)?;
+    if !marker_matches(&path.join(OWNER_MARKER), OWNER_TEXT.as_bytes())? {
+        return Err(managed_io(
+            path,
+            io::Error::other("cache ownership marker changed"),
+        ));
+    }
+    bounded_tree(path)?;
+    remove(path)
+}
+
+fn owned_caches(
+    root: &Path,
+    report: &mut PruneReport,
+    now: SystemTime,
+) -> Result<Vec<(String, SystemTime)>> {
     let mut caches = Vec::new();
     let entries = fs::read_dir(root).map_err(|e| managed_io(root, e))?;
     for (count, entry) in entries.enumerate() {
@@ -134,33 +247,97 @@ fn owned_caches(root: &Path) -> Result<Vec<(String, std::time::SystemTime)>> {
                 io::Error::other("managed cache root has more than 4096 entries"),
             ));
         }
-        let entry = entry.map_err(|e| managed_io(root, e))?;
-        let Some(name) = entry.file_name().to_str().map(str::to_owned) else {
-            continue;
+        let entry = match entry {
+            Ok(entry) => entry,
+            Err(why) => {
+                report.failures.push((root.to_path_buf(), why.to_string()));
+                continue;
+            }
         };
-        if !cache_name(&name) || !entry.file_type().map_err(|e| managed_io(root, e))?.is_dir() {
-            continue;
-        }
-        if !marker(
-            entry.path().join(OWNER_MARKER),
-            OWNER_TEXT.as_bytes(),
-            false,
-        )? {
-            continue;
-        }
-        let path = entry.path();
-        if !fs::symlink_metadata(path.join(INDEX)).is_ok_and(|meta| meta.is_file()) {
-            continue;
-        }
-        let made = fs::symlink_metadata(path.join(STAMP))
-            .ok()
-            .filter(|m| m.is_file())
-            .and_then(|m| m.modified().ok());
-        if let Some(made) = made {
-            caches.push((name, made));
+        match owned_cache(&entry, report, now) {
+            Ok(Some(cache)) => caches.push(cache),
+            Ok(None) => {}
+            Err(why) => {
+                // An unreadable candidate is not a free slot. Keep it protected without
+                // claiming ownership; a disappeared entry needs no capacity reservation.
+                if !matches!(&why, Error::Io { source, .. } if source.kind() == io::ErrorKind::NotFound)
+                    && let Some(name) = entry.file_name().to_str().filter(|name| cache_name(name))
+                {
+                    caches.push((name.to_owned(), now));
+                }
+                report.failures.push((entry.path(), why.to_string()));
+            }
         }
     }
     Ok(caches)
+}
+
+fn owned_cache(
+    entry: &fs::DirEntry,
+    report: &mut PruneReport,
+    now: SystemTime,
+) -> Result<Option<(String, SystemTime)>> {
+    let path = entry.path();
+    let Some(name) = entry.file_name().to_str().map(str::to_owned) else {
+        return Ok(None);
+    };
+    if !cache_name(&name)
+        || !entry
+            .file_type()
+            .map_err(|e| managed_io(&path, e))?
+            .is_dir()
+    {
+        return Ok(None);
+    }
+    let marker = path.join(OWNER_MARKER);
+    let owned = marker_matches(&marker, OWNER_TEXT.as_bytes())?;
+    if !owned && (fs::symlink_metadata(&marker).is_ok() || !valid_legacy_cache(&path)) {
+        return Ok(None);
+    }
+    let used = match cache_use_time(&path) {
+        Ok(used) => used,
+        Err(why) if owned => {
+            // Unknown age cannot authorize deletion or make an owned directory disappear
+            // from the capacity calculation. It stays protected until its metadata is repaired.
+            report.failures.push((path.clone(), why.to_string()));
+            now
+        }
+        Err(why) => return Err(why),
+    };
+    if !owned {
+        ensure_marker(&marker, OWNER_TEXT.as_bytes())?;
+    }
+    Ok(Some((name, used)))
+}
+
+fn valid_legacy_cache(path: &Path) -> bool {
+    fs::symlink_metadata(path.join(STAMP)).is_ok_and(|meta| meta.is_file())
+        && crate::index::CacheIndex::read(path).is_ok()
+        && read_stamp(path).is_some_and(|stamp| stamped_here(&stamp))
+}
+
+fn cache_use_time(path: &Path) -> Result<SystemTime> {
+    if let Some(used) = last_use(path)? {
+        return Ok(used);
+    }
+    let stamp = path.join(STAMP);
+    fs::symlink_metadata(&stamp)
+        .and_then(|meta| meta.modified())
+        .map_err(|why| managed_io(&stamp, why))
+}
+
+fn last_use(cache: &Path) -> Result<Option<SystemTime>> {
+    let path = cache.join(LAST_USE_MARKER);
+    let bytes = match metadata_bytes(&path, 96)? {
+        Some(bytes) => bytes,
+        None => return Ok(None),
+    };
+    let text = std::str::from_utf8(&bytes).ok();
+    let seconds = text.and_then(crate::index::last_use_seconds);
+    seconds
+        .and_then(|seconds| UNIX_EPOCH.checked_add(Duration::from_secs(seconds)))
+        .map(Some)
+        .ok_or_else(|| managed_io(&path, io::Error::other("invalid cache last-use stamp")))
 }
 
 fn bounded_tree(root: &Path) -> Result<()> {
@@ -235,32 +412,97 @@ fn plain_directory(path: &Path) -> Result<()> {
     Ok(())
 }
 
-fn marker(path: PathBuf, expected: &[u8], create: bool) -> Result<bool> {
-    if create {
-        use std::io::Write;
+fn marker_matches(path: &Path, expected: &[u8]) -> Result<bool> {
+    Ok(metadata_bytes(path, expected.len() as u64)?.is_some_and(|bytes| bytes == expected))
+}
+
+fn metadata_bytes(path: &Path, limit: u64) -> Result<Option<Vec<u8>>> {
+    let meta = match fs::symlink_metadata(path) {
+        Ok(meta) => meta,
+        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(e) => return Err(managed_io(path, e)),
+    };
+    if !meta.is_file() || meta.len() > limit {
+        return Ok(Some(Vec::new()));
+    }
+    // This bounded open is not atomic with the metadata check: a same-user replacement
+    // can still follow a link or block on a FIFO. Cache parents must not be replaced concurrently.
+    let mut bytes = Vec::new();
+    fs::File::open(path)
+        .and_then(|file| file.take(limit + 1).read_to_end(&mut bytes))
+        .map_err(|e| managed_io(path, e))?;
+    Ok(Some(bytes))
+}
+
+fn ensure_marker(path: &Path, expected: &[u8]) -> Result<()> {
+    if marker_matches(path, expected)? {
+        return Ok(());
+    }
+    if fs::symlink_metadata(path).is_ok() {
+        // Another publisher can win after the first read; its complete marker is valid too.
+        if marker_matches(path, expected)? {
+            return Ok(());
+        }
+        return Err(managed_io(
+            path,
+            io::Error::other("invalid cache ownership marker"),
+        ));
+    }
+    match complete_file(path, expected, |temporary| fs::hard_link(temporary, path)) {
+        Ok(()) => Ok(()),
+        Err(_) if marker_matches(path, expected)? => Ok(()),
+        Err(why) => Err(why),
+    }
+}
+
+fn complete_file(
+    path: &Path,
+    bytes: &[u8],
+    publish: impl FnOnce(&Path) -> io::Result<()>,
+) -> Result<()> {
+    use std::io::Write;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    static NEXT: AtomicUsize = AtomicUsize::new(0);
+    let parent = path
+        .parent()
+        .ok_or_else(|| managed_io(path, io::Error::other("metadata path has no parent")))?;
+    let mut temporary = None;
+    for _ in 0..32 {
+        let candidate = parent.join(format!(
+            ".dbota-metadata-{}-{}",
+            std::process::id(),
+            NEXT.fetch_add(1, Ordering::Relaxed)
+        ));
         match fs::OpenOptions::new()
             .write(true)
             .create_new(true)
-            .open(&path)
+            .open(&candidate)
         {
-            Ok(mut file) => file.write_all(expected).map_err(|e| managed_io(&path, e))?,
+            Ok(file) => {
+                temporary = Some((candidate, file));
+                break;
+            }
             Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {}
-            Err(e) => return Err(managed_io(&path, e)),
+            Err(e) => return Err(managed_io(path, e)),
         }
     }
-    let meta = match fs::symlink_metadata(&path) {
-        Ok(meta) => meta,
-        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(false),
-        Err(e) => return Err(managed_io(&path, e)),
+    let (temporary, mut file) = temporary.ok_or_else(|| {
+        managed_io(
+            path,
+            io::Error::other("metadata temporary names are occupied"),
+        )
+    })?;
+    let result = file
+        .write_all(bytes)
+        .and_then(|()| file.sync_all())
+        .and_then(|()| publish(&temporary));
+    drop(file);
+    let cleanup = fs::remove_file(&temporary);
+    let cleanup = match cleanup {
+        Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(()),
+        other => other,
     };
-    if !meta.is_file() || meta.len() != expected.len() as u64 {
-        return Ok(false);
-    }
-    let mut bytes = Vec::new();
-    fs::File::open(&path)
-        .and_then(|file| file.take(expected.len() as u64 + 1).read_to_end(&mut bytes))
-        .map_err(|e| managed_io(&path, e))?;
-    Ok(bytes == expected)
+    result.and(cleanup).map_err(|e| managed_io(path, e))
 }
 
 fn managed_io(path: &Path, source: io::Error) -> Error {
@@ -467,85 +709,232 @@ mod tests {
         fs::remove_dir_all(&dir).unwrap();
     }
 
+    pub(super) fn fresh_dir(label: &str) -> PathBuf {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        static NEXT: AtomicUsize = AtomicUsize::new(0);
+        for _ in 0..128 {
+            let path = std::env::temp_dir().join(format!(
+                "dbota-{label}-{}-{}",
+                std::process::id(),
+                NEXT.fetch_add(1, Ordering::Relaxed)
+            ));
+            match fs::create_dir(&path) {
+                Ok(()) => return path,
+                Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {}
+                Err(e) => panic!("cannot create test directory: {e}"),
+            }
+        }
+        panic!("test directory names occupied");
+    }
+
+    fn now() -> SystemTime {
+        UNIX_EPOCH + Duration::from_secs(1_000_000)
+    }
+
+    pub(super) fn cache(root: &Path, name: &str, made: u64, owned: bool) -> PathBuf {
+        let path = root.join(name);
+        fs::create_dir_all(&path).unwrap();
+        fs::write(
+            path.join(INDEX),
+            format!("{}\n", crate::index::CacheIndex::header()),
+        )
+        .unwrap();
+        fs::write(
+            path.join(STAMP),
+            format!("{}/1/2", crate::import::fingerprint()),
+        )
+        .unwrap();
+        fs::File::options()
+            .write(true)
+            .open(path.join(STAMP))
+            .unwrap()
+            .set_modified(UNIX_EPOCH + Duration::from_secs(made))
+            .unwrap();
+        if owned {
+            record_managed(root, &path).unwrap();
+        }
+        path
+    }
+
+    fn many_caches(root: &Path, count: usize, owned: bool) -> Vec<PathBuf> {
+        (0..count)
+            .map(|n| cache(root, &format!("rev29.1-{n:016x}"), n as u64, owned))
+            .collect()
+    }
+
+    #[test]
+    fn a_recently_used_cache_survives_a_newer_import() {
+        let root = fresh_dir("recent-use");
+        let old = many_caches(&root, MAX_CACHES, true);
+        let current = cache(&root, &crate::import::folder_name(), 1000, true);
+        touch_last_use_at(&old[0], now() - Duration::from_secs(3600)).unwrap();
+        let report = prune_at(&root, &current, now()).unwrap();
+        assert!(
+            old[0].exists(),
+            "a recently used cache survives the newer import"
+        );
+        assert!(
+            !old[1].exists(),
+            "an expired cache releases the slot instead"
+        );
+        assert_eq!(report.remaining, MAX_CACHES);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn valid_legacy_caches_are_adopted_and_pruned() {
+        let root = fresh_dir("adoption");
+        let old = many_caches(&root, MAX_CACHES, false);
+        let current = cache(&root, &crate::import::folder_name(), 1000, true);
+        prune_at(&root, &current, now()).unwrap();
+        assert!(
+            !old[0].exists(),
+            "the oldest validated legacy cache is pruned"
+        );
+        assert!(
+            old[1].join(OWNER_MARKER).is_file(),
+            "retained legacy ownership is recorded"
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
     #[test]
     fn pruning_preserves_unowned_siblings_with_cache_like_names_and_files() {
-        let dir = std::env::temp_dir().join(format!("dbota-prune-hostile-{}", std::process::id()));
-        fs::create_dir(&dir).unwrap();
-        let current = dir.join("rev29.1-1111111111111111");
-        for name in [
+        let root = fresh_dir("prune-hostile");
+        let current = cache(&root, &crate::import::folder_name(), 1000, true);
+        for n in 100..100 + MAX_CACHES {
+            cache(&root, &format!("rev29.1-{n:016x}"), n as u64, true);
+        }
+        let invalid = [
             "revolution",
             "v",
             "rev29.1-0000000000000000",
-            "rev29.1-1111111111111111",
-        ] {
-            let cache = dir.join(name);
-            fs::create_dir_all(&cache).unwrap();
-            fs::write(cache.join(STAMP), b"not ownership").unwrap();
-            fs::write(cache.join(INDEX), b"not ownership").unwrap();
-            fs::write(cache.join("keep"), b"unrelated data").unwrap();
-        }
-        fs::write(dir.join(".dbota-cache-root"), b"dbota managed root 1\n").unwrap();
-        fs::write(current.join(".dbota-owned-cache"), b"dbota owned cache 1\n").unwrap();
-        fs::write(dir.join("revolution").join(OWNER_MARKER), OWNER_TEXT).unwrap();
-        fs::write(dir.join("v").join(OWNER_MARKER), OWNER_TEXT).unwrap();
-        prune(&dir, &current).unwrap();
-        for name in ["revolution", "v", "rev29.1-0000000000000000"] {
-            assert_eq!(
-                fs::read(dir.join(name).join("keep")).ok(),
-                Some(b"unrelated data".to_vec()),
-                "deleted unowned {name}"
-            );
-        }
-        fs::remove_dir_all(dir).unwrap();
-    }
-
-    /// Caches of other builds beyond the two newest are removed; folders that are no cache stay.
-    #[test]
-    fn old_caches_are_pruned_to_the_two_newest() {
-        let dir = std::env::temp_dir().join(format!("dbota-prune-{}", std::process::id()));
-        fs::create_dir(&dir).unwrap();
-        for (at, name) in [
-            "rev13.1-0000000000000000",
-            "rev13.1-1111111111111111",
-            "rev13.1-2222222222222222",
-            "rev13.1-3333333333333333",
-        ]
-        .iter()
-        .enumerate()
-        {
-            let cache = dir.join(name);
-            fs::create_dir_all(&cache).unwrap();
-            fs::write(cache.join(INDEX), b"").unwrap();
-            fs::write(cache.join(STAMP), b"s").unwrap();
-            record_managed(&dir, &cache).unwrap();
-            let when = std::time::UNIX_EPOCH + std::time::Duration::from_secs(1_000 + at as u64);
+            "rev29.1-0000000000000001",
+        ];
+        for name in invalid {
+            let path = root.join(name);
+            fs::create_dir(&path).unwrap();
+            fs::write(path.join(INDEX), b"not an index").unwrap();
+            fs::write(path.join(STAMP), b"not a stamp").unwrap();
+            if name == "rev29.1-0000000000000000" {
+                fs::write(
+                    path.join(STAMP),
+                    format!("{}/1/2", crate::import::fingerprint()),
+                )
+                .unwrap();
+            }
+            if name == "rev29.1-0000000000000001" {
+                fs::write(
+                    path.join(INDEX),
+                    format!("{}\n", crate::index::CacheIndex::header()),
+                )
+                .unwrap();
+            }
+            fs::write(path.join("keep"), b"unrelated data").unwrap();
             fs::File::options()
                 .write(true)
-                .open(cache.join(STAMP))
+                .open(path.join(STAMP))
                 .unwrap()
-                .set_modified(when)
+                .set_modified(UNIX_EPOCH)
                 .unwrap();
+            if !cache_name(name) {
+                fs::write(path.join(OWNER_MARKER), OWNER_TEXT).unwrap();
+            }
         }
-        fs::create_dir_all(dir.join("revolution")).unwrap();
-        fs::create_dir_all(dir.join("replays")).unwrap();
-        // The oldest of the three newest is the current one, and stays beside the newest.
-        prune(&dir, &dir.join("rev13.1-2222222222222222")).unwrap();
-        let mut left: Vec<String> = fs::read_dir(&dir)
-            .unwrap()
-            .map(|e| e.unwrap().file_name().into_string().unwrap())
-            .filter(|name| !name.starts_with('.'))
-            .collect();
-        left.sort();
+        prune_at(&root, &current, now()).unwrap();
+        for name in invalid {
+            assert_eq!(
+                fs::read(root.join(name).join("keep")).unwrap(),
+                b"unrelated data"
+            );
+        }
+        for name in ["rev29.1-0000000000000000", "rev29.1-0000000000000001"] {
+            assert!(!root.join(name).join(OWNER_MARKER).exists());
+        }
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn owned_expired_caches_are_bounded_by_the_eight_cache_capacity() {
+        let root = fresh_dir("prune-capacity");
+        let old = many_caches(&root, MAX_CACHES + 1, true);
+        let current = cache(&root, &crate::import::folder_name(), 1000, true);
+        let report = prune_at(&root, &current, now()).unwrap();
+        assert_eq!(report.remaining, MAX_CACHES);
+        assert!(!old[0].exists());
+        assert!(!old[1].exists());
+        assert!(current.exists());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn a_ninth_import_is_refused_when_all_eight_caches_are_recent() {
+        let root = fresh_dir("prune-admission");
+        let caches = many_caches(&root, MAX_CACHES, true);
+        for cache in &caches {
+            touch_last_use_at(cache, now()).unwrap();
+        }
+        let requested = root.join(crate::import::folder_name());
+        let error = begin_managed_import_at(&root, &requested, now())
+            .err()
+            .expect("capacity refusal")
+            .to_string();
+        assert!(error.contains("capacity is 8"), "{error}");
+        assert!(!requested.exists());
+        assert!(caches.iter().all(|cache| cache.exists()));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn a_cache_with_a_damaged_use_stamp_still_consumes_capacity() {
+        let root = fresh_dir("prune-damaged-use");
+        let caches = many_caches(&root, MAX_CACHES, true);
+        for cache in &caches {
+            touch_last_use_at(cache, now()).unwrap();
+        }
+        fs::write(caches[0].join(LAST_USE_MARKER), b"damaged").unwrap();
+        let requested = root.join(crate::import::folder_name());
+        let error = begin_managed_import_at(&root, &requested, now())
+            .err()
+            .expect("damaged owned cache still occupies a slot")
+            .to_string();
+        assert!(error.contains("capacity is 8"), "{error}");
+        assert!(caches.iter().all(|cache| cache.exists()));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn concurrent_marker_writers_publish_complete_markers() {
+        let root = fresh_dir("marker-publication");
+        let current = cache(&root, &crate::import::folder_name(), 1000, false);
+        let ready = std::sync::Barrier::new(8);
+        std::thread::scope(|scope| {
+            for _ in 0..8 {
+                let ready = &ready;
+                let root = &root;
+                let current = &current;
+                scope.spawn(move || {
+                    ready.wait();
+                    record_managed(root, current).unwrap();
+                });
+            }
+        });
         assert_eq!(
-            left,
-            [
-                "replays",
-                "rev13.1-2222222222222222",
-                "rev13.1-3333333333333333",
-                "revolution"
-            ]
+            fs::read(root.join(ROOT_MARKER)).unwrap(),
+            ROOT_TEXT.as_bytes()
         );
-        fs::remove_dir_all(&dir).unwrap();
+        assert_eq!(
+            fs::read(current.join(OWNER_MARKER)).unwrap(),
+            OWNER_TEXT.as_bytes()
+        );
+        assert!(!fs::read_dir(&root).unwrap().any(|entry| {
+            entry
+                .unwrap()
+                .file_name()
+                .to_string_lossy()
+                .starts_with(".dbota-metadata-")
+        }));
+        fs::remove_dir_all(root).unwrap();
     }
 
     /// The stamp is read whole: a huge one planted in the cache filled the memory.
@@ -572,39 +961,81 @@ mod tests {
 
 #[cfg(all(test, unix))]
 mod managed_tests {
+    use super::tests::{cache, fresh_dir};
     use super::*;
     use std::os::unix::fs::symlink;
 
     #[test]
-    fn managed_pruning_refuses_outside_paths_and_preserves_symlink_targets() {
-        let scratch =
-            std::env::temp_dir().join(format!("dbota-prune-links-{}", std::process::id()));
-        fs::create_dir(&scratch).unwrap();
+    fn managed_pruning_preserves_cache_symlink_targets() {
+        let scratch = fresh_dir("prune-links");
         let root = scratch.join("managed");
+        let current = cache(&root, &crate::import::folder_name(), 1000, true);
         let outside = scratch.join("outside");
-        let current = root.join("rev29.1-1111111111111111");
-        for path in [&current, &outside] {
-            fs::create_dir_all(path).unwrap();
-            fs::write(path.join("keep"), b"keep").unwrap();
-        }
-        fs::write(current.join(STAMP), b"stamp").unwrap();
-        fs::write(current.join(INDEX), b"index").unwrap();
-        record_managed(&root, &current).unwrap();
-        let name = "rev29.1-0000000000000000";
-        symlink(&outside, root.join(name)).unwrap();
+        fs::create_dir(&outside).unwrap();
+        fs::write(outside.join("keep"), b"keep").unwrap();
         fs::write(outside.join(OWNER_MARKER), OWNER_TEXT).unwrap();
+        symlink(&outside, root.join("rev29.1-0000000000000000")).unwrap();
         prune(&root, &current).unwrap();
-        let error = prune(&root, &root.join(name)).expect_err("symlink current cache");
-        assert!(error.to_string().contains("not a link"), "{error}");
         assert_eq!(fs::read(outside.join("keep")).unwrap(), b"keep");
-        let fake_current = outside.join(current.file_name().unwrap());
-        let error = prune(&root, &fake_current).expect_err("outside the explicit managed root");
-        assert!(error.to_string().contains("not a named child"), "{error}");
+        fs::remove_dir_all(scratch).unwrap();
+    }
+
+    #[test]
+    fn managed_pruning_refuses_a_symlink_current_cache() {
+        let scratch = fresh_dir("prune-current-link");
+        let root = scratch.join("managed");
+        let current = cache(&root, &crate::import::folder_name(), 1000, true);
+        let alias = root.join("rev29.1-0000000000000000");
+        symlink(&current, &alias).unwrap();
+        let error = prune(&root, &alias).expect_err("current link").to_string();
+        assert!(error.contains("not a link"), "{error}");
+        fs::remove_dir_all(scratch).unwrap();
+    }
+
+    #[test]
+    fn managed_pruning_refuses_a_cache_outside_its_root() {
+        let scratch = fresh_dir("prune-outside");
+        let root = scratch.join("managed");
+        let current = cache(&root, &crate::import::folder_name(), 1000, true);
+        let error = prune(&root, &scratch.join(current.file_name().unwrap()))
+            .expect_err("outside root")
+            .to_string();
+        assert!(error.contains("not a named child"), "{error}");
+        fs::remove_dir_all(scratch).unwrap();
+    }
+
+    #[test]
+    fn managed_pruning_refuses_a_symlink_root() {
+        let scratch = fresh_dir("prune-root-link");
+        let root = scratch.join("managed");
+        let current = cache(&root, &crate::import::folder_name(), 1000, true);
         let alias = scratch.join("alias");
         symlink(&root, &alias).unwrap();
-        let error =
-            prune(&alias, &alias.join(current.file_name().unwrap())).expect_err("symlink root");
-        assert!(error.to_string().contains("not a link"), "{error}");
+        let error = prune(&alias, &alias.join(current.file_name().unwrap()))
+            .expect_err("root link")
+            .to_string();
+        assert!(error.contains("not a link"), "{error}");
         fs::remove_dir_all(scratch).unwrap();
+    }
+
+    #[test]
+    fn one_unremovable_cache_does_not_stop_pruning_other_expired_caches() {
+        let root = fresh_dir("prune-entry-failure");
+        let old: Vec<_> = (0..MAX_CACHES + 1)
+            .map(|n| cache(&root, &format!("rev29.1-{n:016x}"), n as u64, true))
+            .collect();
+        let current = cache(&root, &crate::import::folder_name(), 1000, true);
+        symlink(&current, old[0].join("link")).unwrap();
+        let report =
+            prune_at(&root, &current, UNIX_EPOCH + Duration::from_secs(1_000_000)).unwrap();
+        assert!(old[0].exists());
+        assert!(!old[1].exists());
+        assert!(
+            report
+                .failures
+                .iter()
+                .any(|(path, why)| path == &old[0] && why.contains("link or special"))
+        );
+        fs::remove_dir_all(root).unwrap();
     }
 }

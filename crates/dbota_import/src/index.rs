@@ -1,8 +1,8 @@
 //! The validated, bounded asset-cache index used by every cache reader.
 
 use crate::import::{
-    IDS, INDEX, Item, MANIFEST, OWNER_MARKER, PATH_LIMIT, Plan, READ_ONE_LIMIT, STAMP, WRITE_LIMIT,
-    is_small, safe_path,
+    IDS, INDEX, Item, LAST_USE_MARKER, LAST_USE_TEXT, MANIFEST, OWNER_MARKER, PATH_LIMIT, Plan,
+    READ_ONE_LIMIT, STAMP, WRITE_LIMIT, is_small, safe_path,
 };
 use crate::pack::{PackError, shown};
 use std::collections::HashSet;
@@ -64,7 +64,7 @@ pub fn size_limit(path: &str) -> u64 {
 
 /// A permitted container path: top-level metadata or a plain asset path with an imported extension.
 pub(crate) fn check_place(path: &str) -> Result<(), PackError> {
-    if path == STAMP || path == INDEX || path == OWNER_MARKER {
+    if is_metadata(path) {
         return Ok(());
     }
     let unsafe_path = || PackError::Unsafe(shown(path));
@@ -133,14 +133,10 @@ impl CacheIndex {
                 )));
             }
             let file = checked_line(line)?;
-            if file.path == STAMP
-                || file.path == INDEX
-                || file.path == OWNER_MARKER
-                || !seen.insert(file.path)
-            {
+            if is_metadata(&file.path) || !seen.insert(file.path.clone()) {
                 return Err(PackError::Invalid(format!(
                     "index.txt lists {} again",
-                    shown(file.path)
+                    shown(&file.path)
                 )));
             }
             check_file(&file)?;
@@ -153,11 +149,7 @@ impl CacheIndex {
                     "{total} bytes of files ({small_total} to keep in memory), at most {MAX_TOTAL} ({MAX_SMALL_TOTAL})"
                 )));
             }
-            files.push(IndexFile {
-                path: file.path.to_owned(),
-                size: file.size,
-                small: file.small,
-            });
+            files.push(file);
         }
         Ok(Self {
             text: text.to_owned(),
@@ -189,6 +181,8 @@ impl CacheIndex {
         }
         Self::check_length(meta.len())?;
         let mut bytes = Vec::new();
+        // Metadata inspection and this bounded open are separate. A same-user path swap
+        // can follow a link or block on a FIFO; cache parents must not be replaced concurrently.
         std::fs::File::open(&path)
             .map_err(io)?
             .take(MAX_INDEX + 1)
@@ -198,64 +192,68 @@ impl CacheIndex {
     }
 }
 
-fn checked_line(line: &str) -> Result<Listed<'_>, PackError> {
+fn checked_line(line: &str) -> Result<IndexFile, PackError> {
     let line = line
         .strip_suffix('\n')
         .ok_or_else(|| PackError::Invalid("index.txt does not end with a new line".to_owned()))?;
-    let file = listed(line).ok_or_else(|| {
+    let invalid = || {
         PackError::Invalid(format!(
             "index.txt has a line it cannot read: {:?}",
             shown(line)
         ))
-    })?;
-    check_place(file.path)?;
-    Ok(file)
-}
-
-/// One line of the index: a file the cache says it holds.
-struct Listed<'a> {
-    path: &'a str,
-    size: u64,
-    small: bool,
-}
-
-fn listed(line: &str) -> Option<Listed<'_>> {
+    };
     let mut words = line.split(' ');
-    (words.next()? == "file").then_some(())?;
-    let size = words.next()?;
-    // A size is plain digits: no sign, no spaces, not longer than any file's.
-    if size.is_empty() || size.len() > 10 || !size.bytes().all(|b| b.is_ascii_digit()) {
-        return None;
+    if words.next() != Some("file") {
+        return Err(invalid());
     }
-    let path = words.next()?;
+    let size = words.next().ok_or_else(invalid)?;
+    if size.is_empty() || size.len() > 10 || !size.bytes().all(|b| b.is_ascii_digit()) {
+        return Err(invalid());
+    }
+    let path = words.next().ok_or_else(invalid)?;
+    check_place(path)?;
     let small = match words.next() {
         None => false,
         Some("small") => true,
-        Some(_) => return None,
+        Some(_) => return Err(invalid()),
     };
-    words.next().is_none().then_some(())?;
-    Some(Listed {
-        path,
-        size: size.parse().ok()?,
+    if words.next().is_some() {
+        return Err(invalid());
+    }
+    Ok(IndexFile {
+        path: path.to_owned(),
+        size: size.parse().map_err(|_| invalid())?,
         small,
     })
 }
 
-fn check_file(file: &Listed<'_>) -> Result<(), PackError> {
-    let limit = size_limit(file.path);
+fn check_file(file: &IndexFile) -> Result<(), PackError> {
+    let limit = size_limit(&file.path);
     if file.size > limit {
         return Err(PackError::TooBig(format!(
             "{} is {} bytes, at most {limit}",
-            shown(file.path),
+            shown(&file.path),
             file.size
         )));
     }
-    if file.small != is_small(file.path, file.size) {
+    if file.small != is_small(&file.path, file.size) {
         return Err(PackError::Invalid(format!(
             "index.txt marks {} wrongly as {}",
-            shown(file.path),
+            shown(&file.path),
             if file.small { "small" } else { "not small" }
         )));
     }
     Ok(())
+}
+
+pub(crate) fn is_metadata(path: &str) -> bool {
+    matches!(path, STAMP | INDEX | OWNER_MARKER | LAST_USE_MARKER)
+}
+
+pub(crate) fn last_use_seconds(text: &str) -> Option<u64> {
+    let seconds = text.strip_prefix(LAST_USE_TEXT)?.strip_suffix('\n')?;
+    if seconds.is_empty() || seconds.len() > 20 || !seconds.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    seconds.parse().ok()
 }

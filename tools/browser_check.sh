@@ -58,6 +58,7 @@ export PROFILE=release
 pages=temp/gate-pages
 rm -rf "$pages"
 OUT=$pages/plain web/build.sh
+DBOTA_INDEX_PAGE="$here/$pages/plain" python3 -m unittest discover -s web/test -p test_cache_index.py -v
 # (both clients: the real-input cursor check runs the page on the WebGL2 and the WebGPU one)
 DBOTA_WEB_REPLAY=$chat DBOTA_WEB_ARGS="--replay built-in --pov 0 --seek 4600" OUT=$pages/replay web/build.sh
 DBOTA_WEB_REPLAY=$chat DBOTA_WEB_ARGS="--replay built-in --pov 0 --settings video" APIS=webgpu OUT=$pages/video web/build.sh
