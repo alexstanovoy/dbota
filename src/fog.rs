@@ -230,12 +230,54 @@ impl MaterialExtension for FogExt {
     }
 }
 
+/// Snapshot ids need not be sorted in a full stream. Build one lookup for all particle
+/// instances, and reject stale lookups across a seek, POV change or menu handoff.
+#[derive(Resource)]
+struct ProjectileSight {
+    stamp: Option<(u32, u32, Option<Team>)>,
+    rows: Vec<(bota_proto::EntityId, bool)>,
+}
+
+impl Default for ProjectileSight {
+    fn default() -> Self {
+        Self {
+            stamp: None,
+            rows: Vec::with_capacity(bota_proto::MAX_PROJECTILES),
+        }
+    }
+}
+
+fn index_projectiles(
+    session: NonSend<Session>,
+    epoch: Res<crate::main_menu::GameEpoch>,
+    fog: Res<FogGrid>,
+    mut index: ResMut<ProjectileSight>,
+) {
+    index.rows.clear();
+    index.stamp = None;
+    if let Some(view) = session.0.view() {
+        index.rows.extend(
+            view.projectiles
+                .iter()
+                .map(|projectile| (projectile.id, !fog.hides(projectile.seen_by))),
+        );
+        index.rows.sort_unstable_by_key(|(id, _)| *id);
+        index.stamp = Some((epoch.0, view.tick, session.0.fog_team()));
+    }
+}
+
 pub fn plugin(app: &mut App) {
     embedded_asset!(app, "fog.wgsl");
     app.init_resource::<FogGrid>()
+        .init_resource::<ProjectileSight>()
         .add_plugins(MaterialPlugin::<FoggedMaterial>::default())
         // Both snapshot ingestion and keyboard intents choose the viewer before its fog is read.
-        .add_systems(PreUpdate, work_out.after(crate::input::keys))
+        .add_systems(
+            PreUpdate,
+            (work_out, index_projectiles)
+                .chain()
+                .after(crate::input::keys),
+        )
         .add_systems(Update, (spawn_veil, shade_veil, cast_veil).chain())
         .add_systems(
             PostUpdate,

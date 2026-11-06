@@ -374,6 +374,7 @@ fn grenades(
             inflictor,
             caster,
             at,
+            ..
         } if art_by(*inflictor).flight == Flight::Grenade
             && sight.allows(event, crate::fog::EventSubject::Point(*at)) =>
         {

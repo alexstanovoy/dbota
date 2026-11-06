@@ -68,6 +68,7 @@ impl Fact {
                 inflictor,
                 caster,
                 at,
+                ..
             } => Fact {
                 trigger: Trigger::Land,
                 by: Some(*inflictor),

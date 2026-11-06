@@ -21,6 +21,8 @@ pub(crate) enum EventSubject<'a> {
 pub(crate) struct EventSight<'w> {
     session: NonSend<'w, Session>,
     fog: Res<'w, FogGrid>,
+    projectiles: Res<'w, super::ProjectileSight>,
+    epoch: Res<'w, crate::main_menu::GameEpoch>,
 }
 
 impl EventSight<'_> {
@@ -103,16 +105,20 @@ impl EventSight<'_> {
         self.core().view().is_some() && !self.fog.hides(projectile.seen_by)
     }
 
+    fn projectile(&self, id: EntityId) -> Option<bool> {
+        let view = self.core().view()?;
+        if self.projectiles.stamp != Some((self.epoch.0, view.tick, self.core().fog_team())) {
+            return None;
+        }
+        self.projectiles
+            .rows
+            .binary_search_by_key(&id, |(id, _)| *id)
+            .ok()
+            .map(|index| self.projectiles.rows[index].1)
+    }
+
     pub fn sees_projectile(&self, id: EntityId) -> bool {
-        self.core()
-            .view()
-            // Full streams retain simulation order, unlike sorted side projections.
-            .and_then(|view| {
-                view.projectiles
-                    .iter()
-                    .find(|projectile| projectile.id == id)
-            })
-            .is_some_and(|projectile| self.allows_projectile(projectile))
+        self.projectile(id).unwrap_or(false)
     }
 
     /// Full replays keep both teams' conversations; presentation follows the selected eyes.
@@ -208,17 +214,18 @@ impl EventSight<'_> {
         target: Option<EntityId>,
         caster: Option<EntityId>,
     ) -> bool {
-        if matches!(subject, EventSubject::Point(_))
-            && self
-                .aim_knowledge(caster)
-                .is_some_and(|seen| !self.fog.hides(Some(seen)))
-        {
-            return true;
-        }
         let target_seen = target.is_none_or(|unit| self.sees_unit(unit));
-        // A caster's flash can remain visible while the aimed unit and its point are private.
-        (told || !self.fog.on || !matches!(subject, EventSubject::Point(_)) || target_seen)
-            && self.shown(subject, told, self.sees_point(at) && target_seen)
+        match subject {
+            EventSubject::Point(point) => {
+                self.aim_knowledge(caster)
+                    .is_some_and(|seen| !self.fog.hides(Some(seen)))
+                    || told
+                    || !self.fog.on
+                    || self.sees_point(point) && target_seen
+            }
+            EventSubject::Unit(_) => self.shown(subject, told, false),
+            EventSubject::Event => told || !self.fog.on || self.sees_point(at) && target_seen,
+        }
     }
 
     fn announced_death(&self, view: &WorldView, unit: EntityId) -> bool {
