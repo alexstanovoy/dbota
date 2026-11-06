@@ -34,9 +34,13 @@ ARGS = [
 ]
 # What ends a run: the client died. Its other ERROR lines are said on stderr with the result.
 FAILED = re.compile(r"panicked|RuntimeError")
-# What makes a run no measure: a pipeline the renderer could not make draws nothing of what it
-# was for, and a frame that draws less is faster for it.
-UNDRAWN = re.compile(r"[Ss]hader compilation failed|[Pp]ipeline .*(failed|error)|Validation Error")
+# What makes a run no measure: any error the renderer logs (wgpu, naga, Bevy's render crates: a
+# shader that does not compile or process, a pipeline or module it cannot make, a validation
+# error). What it failed to make draws nothing, and a frame that draws less is faster for it.
+UNDRAWN = re.compile(
+    r"wgpu|naga|bevy_render|bevy_pbr|bevy_core_pipeline|bevy_shader|bevy_ui_render"
+    r"|[Ss]hader|[Pp]ipeline|Validation Error"
+)
 
 
 def platform():
