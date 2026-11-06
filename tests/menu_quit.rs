@@ -1085,7 +1085,8 @@ impl Dota {
 /// Solo mid and the full rules, as a service offers them for lobbies ([`Service::start`] fills in
 /// the binary and the fingerprint). Solo mid's own games are one a side. Listed first, it is still
 /// not the default of a lobby: [`LOBBY_SETTINGS`] names the full rules.
-const LOBBY_SETTINGS: &str = r#"lobby_ruleset = "full""#;
+const LOBBY_SETTINGS: &str = r#"lobby_teams = [5, 5]
+lobby_ruleset = "full""#;
 
 /// The rulesets of [`LOBBY_SETTINGS`]' service.
 const LOBBY_RULESETS: &str = r#"

@@ -500,3 +500,18 @@ fn demo_hero_runs_on_the_service_and_its_cheats_take_effect() {
     let menu = client.world().non_send::<MenuCore>();
     assert_eq!(menu.page(), Page::DemoHero, "no result page for a Demo");
 }
+
+#[test]
+fn unlimited_account_limits_are_drawn_and_find_match_still_queues() {
+    let service = crate::main_menu::tests::service();
+    let mut client = signed_up(&service, "alice");
+    client.within(Duration::from_secs(30), "the explicit unlimited label", |client| {
+        client.shown_texts().iter().any(|text| text == "Games going: 0 · no account limit")
+    });
+    click_menu_button(&mut client, "find match");
+    client.within(Duration::from_secs(30), "a real queue entry", |client| {
+        client.world().non_send::<MenuCore>().view().searches.len() == 1
+            && client.shown_texts().iter().any(|text| text == "Games going: 1 · no account limit")
+    });
+    assert!(client.shown_texts().iter().any(|text| text == "Games going: 1 · no account limit"));
+}

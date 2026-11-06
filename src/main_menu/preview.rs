@@ -106,7 +106,7 @@ fn home() -> PageView {
                 audience: "Humans and Bots",
             },
         ],
-        in_flight: (1, 2),
+        in_flight: (1, Some(bota_radovid::proto::AccountGameLimit::Limited(2))),
         cooldown: None,
     }
 }

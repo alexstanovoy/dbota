@@ -11,7 +11,7 @@ use super::view::{
     RulesetRow, SlotRow,
 };
 use crate::ui;
-use bota_radovid::proto::LOBBY_NO_SLOT;
+use bota_radovid::proto::{AccountGameLimit, LOBBY_NO_SLOT};
 
 /// The tabs of the top bar: the service's once logged in, and what is played
 /// without it always.
@@ -498,7 +498,7 @@ fn home(
     kit: &mut Kit,
     body: Entity,
     rulesets: &[RulesetRow],
-    in_flight: (usize, u8),
+    in_flight: (usize, Option<AccountGameLimit>),
     cooldown: Option<&str>,
 ) {
     let column = kit.node(
@@ -556,8 +556,11 @@ fn home(
             15.0,
             ui::INK_DIM,
         );
-        let can =
-            cooldown.is_none() && (in_flight.1 == 0 || in_flight.0 < usize::from(in_flight.1));
+        let can = cooldown.is_none() && match in_flight.1 {
+            Some(AccountGameLimit::Unlimited) => true,
+            Some(AccountGameLimit::Limited(maximum)) => in_flight.0 < usize::from(maximum),
+            None => false,
+        };
         let look = if can { GREEN } else { PLAIN };
         kit.button(
             card,
@@ -567,14 +570,12 @@ fn home(
             52.0,
         );
     }
-    if in_flight.1 > 0 {
-        kit.text(
-            column,
-            format!("Games going: {} of {} at once", in_flight.0, in_flight.1),
-            14.0,
-            ui::INK_DIM,
-        );
-    }
+    let count = match in_flight.1 {
+        Some(AccountGameLimit::Limited(maximum)) => Some(format!("Games going: {} of {maximum} at once", in_flight.0)),
+        Some(AccountGameLimit::Unlimited) => Some(format!("Games going: {} · no account limit", in_flight.0)),
+        None => None,
+    };
+    if let Some(count) = count { kit.text(column, count, 14.0, ui::INK_DIM); }
     if let Some(cooldown) = cooldown {
         kit.text(column, cooldown, 15.0, ERROR);
     }

@@ -45,9 +45,12 @@ seat's eyes.
 lower case; in a game `pick ready`, `pick <hero>`), `await:menu|game|popup|nopopup|button:NAME`, `shot:FILE`,
 `wait:SECONDS`. A dimmed button or a wait over two minutes ends the run with exit code 2.
 
-Matchmaking on one machine: bring up a radovid service as its README's "A development setup on one machine" says, then
+Matchmaking on one machine: use the game-specific [launch guide](../bota/crates/bota_radovid/matchmaking.md)
+and example beside `bota_radovid`, then
 `dbota --service wss://localhost:4460 --trust-cert dev/cert.pem`. A match needs a second account in the same ruleset
-(a bot client, or a second dbota with its own `--config` and `XDG_DATA_HOME`).
+(a bot client, or a second dbota with its own `--config` and `XDG_DATA_HOME`). Rebuild control clients with
+protocol 14 together with the service. Play shows an explicit unlimited account allowance; missing limit data
+is kept distinct from an unlimited allowance.
 
 Files the client keeps: settings in `~/.config/dbota/settings.conf`, the service login in `~/.config/dbota/session` (owner
 only), replays in `$XDG_DATA_HOME/dbota/replays` (`~/Library/Application Support/dbota/replays` on macOS,

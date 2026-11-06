@@ -4,7 +4,7 @@
 
 use bevy::platform::time::Instant;
 use bota_radovid::proto::{
-    AccountId, EndReason, LobbyId, MatchId, MatchResult, Outcome, ProposalId, QueueEntryId,
+    AccountGameLimit, AccountId, EndReason, LobbyId, MatchId, MatchResult, Outcome, ProposalId, QueueEntryId,
     RulesetId,
 };
 
@@ -257,7 +257,7 @@ pub enum PageView {
     Home {
         rulesets: Vec<RulesetRow>,
         /// Games in flight and the account's limit.
-        in_flight: (usize, u8),
+        in_flight: (usize, Option<AccountGameLimit>),
         cooldown: Option<String>,
     },
     MyGames {
@@ -572,7 +572,7 @@ impl MenuCore {
                 .collect(),
             in_flight: (
                 in_flight,
-                client.limits(None).map_or(0, |l| l.games_per_account),
+                client.limits(None).map(|limits| limits.games_per_account),
             ),
             cooldown: self.cooldown(),
         }

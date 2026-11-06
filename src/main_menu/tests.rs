@@ -129,6 +129,7 @@ database = "{db}"
 tls_cert = "unused"
 tls_key = "unused"
 game_ports = "{port}-{port}"
+lobby_teams = [5, 5]
 [password]
 memory_kib = 1024
 iterations = 1
