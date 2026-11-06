@@ -1,5 +1,6 @@
-//! Drawing the settings screen: its header of tabs, the tab's rows and,
-//! for the hotkeys, the reset button and what clashes. The layout is built
+//! Drawing the settings screen, a window over the dimmed screen: its side navigation of tabs,
+//! the open tab's title and close cross, the tab's rows and, for the hotkeys, the reset button
+//! and what clashes. The layout is built
 //! again when the screen's state changes; the values in it are kept up to
 //! date in place, so a slider stays held while it is dragged.
 
@@ -10,6 +11,7 @@ use super::screen::Screen;
 use crate::config::Settings;
 use crate::hud::Blocker;
 use crate::keys::{self, Group};
+use crate::theme::{self, Face, Type};
 use crate::ui::{self, Fonts};
 
 /// The screen's layer.
@@ -72,19 +74,28 @@ const FIELD: Color = Color::srgb(0.1, 0.12, 0.15);
 const CLASH: Color = Color::srgb(1.0, 0.42, 0.36);
 const ROW_WIDTH: f32 = 560.0;
 
+/// The settings window over the dimmed screen, as Dota's: under the top bar, the side
+/// navigation at its left and the tab's rows at its right.
+const WINDOW_WIDTH: f32 = 1100.0;
+const WINDOW_TOP: f32 = 64.0;
+const WINDOW_FOOT: f32 = 10.0;
+const NAV_WIDTH: f32 = 260.0;
+const HEADER_HEIGHT: f32 = 76.0;
+const NAV_TAB_HEIGHT: f32 = 48.0;
+/// The window's close cross, across.
+const CLOSE_ICON: f32 = 20.0;
+
 pub fn spawn_root(mut commands: Commands) {
     commands.spawn((
         Root,
         Blocker,
         Interaction::default(),
         Node {
-            flex_direction: FlexDirection::Column,
+            justify_content: JustifyContent::Center,
+            align_items: AlignItems::Stretch,
             ..ui::fill()
         },
-        BackgroundGradient::from(LinearGradient::to_bottom(vec![
-            Color::srgb(0.06, 0.08, 0.11).into(),
-            Color::srgb(0.02, 0.025, 0.035).into(),
-        ])),
+        BackgroundColor(theme::scrim()),
         GlobalZIndex(65),
         Visibility::Hidden,
     ));
@@ -96,6 +107,7 @@ pub fn layout(
     screen: Res<Screen>,
     fonts: Res<Fonts>,
     manifest: Res<crate::manifest::Manifest>,
+    server: Res<AssetServer>,
     root: Single<Entity, With<Root>>,
 ) {
     if !screen.is_changed() || !screen.open {
@@ -106,13 +118,40 @@ pub fn layout(
         commands: &mut commands,
         fonts: &fonts,
     };
-    header(&mut kit, *root, screen.tab);
+    let window = kit
+        .commands
+        .spawn((
+            Node {
+                width: px(WINDOW_WIDTH),
+                max_width: percent(100),
+                margin: UiRect::new(px(0), px(0), px(WINDOW_TOP), px(WINDOW_FOOT)),
+                border: UiRect::all(px(1)),
+                ..default()
+            },
+            BackgroundColor(theme::WINDOW),
+            BorderColor::all(theme::WINDOW_EDGE),
+            theme::window_shadow(),
+            Name::new("settings window"),
+            ChildOf(*root),
+        ))
+        .id();
+    navigation(&mut kit, window, screen.tab);
+    let content = kit.node(
+        window,
+        Node {
+            flex_grow: 1.0,
+            flex_direction: FlexDirection::Column,
+            ..default()
+        },
+    );
+    header(&mut kit, content, screen.tab, &manifest, &server);
     let body = kit
         .commands
         .spawn((
             Body,
             Node {
                 flex_grow: 1.0,
+                flex_basis: px(0),
                 flex_direction: FlexDirection::Column,
                 align_items: AlignItems::Center,
                 padding: UiRect::all(px(24)),
@@ -121,7 +160,7 @@ pub fn layout(
                 ..default()
             },
             ScrollPosition::default(),
-            ChildOf(*root),
+            ChildOf(content),
         ))
         .id();
     match screen.tab {
@@ -134,27 +173,152 @@ pub fn layout(
             if tab == Tab::Options {
                 heading(&mut kit, body, "ASSETS");
                 let line = labelled(&mut kit, body, "");
-                kit.text(line, manifest.census(), 13.0, ui::INK_DIM);
+                kit.text(line, manifest.census(), 13.0, theme::INK_4);
             }
         }
     }
-    version_line(&mut kit, *root);
 }
 
-/// Which client runs and which assets it reads, small in the corner: the build's commit and the
-/// asset fingerprint a cache must carry for it.
-fn version_line(kit: &mut Kit, root: Entity) {
+/// Which client runs and which assets it reads, small at the foot of the navigation: the build's
+/// commit and the asset fingerprint a cache must carry for it.
+fn version_line(kit: &mut Kit, nav: Entity) {
     let text = format!(
         "{}  ·  assets {}",
         crate::version(),
         dbota_import::import::fingerprint()
     );
-    let line = kit.text(root, text, 11.0, ui::INK_DIM);
+    let line = kit.text(nav, text, 11.0, theme::INK_5);
     kit.commands.entity(line).insert(Node {
-        position_type: PositionType::Absolute,
-        right: px(12),
-        bottom: px(8),
+        margin: UiRect::new(px(20), px(12), px(0), px(12)),
         ..default()
+    });
+}
+
+/// The window's left column: SETTINGS, a tab per row (the open one lit), the version line.
+fn navigation(kit: &mut Kit, window: Entity, on: Tab) {
+    let nav = kit
+        .commands
+        .spawn((
+            Node {
+                width: px(NAV_WIDTH),
+                flex_shrink: 0.0,
+                flex_direction: FlexDirection::Column,
+                ..default()
+            },
+            theme::downward(theme::WINDOW_NAV),
+            Pickable::IGNORE,
+            ChildOf(window),
+        ))
+        .id();
+    let title = kit.typed(nav, "SETTINGS", theme::TITLE, theme::INK_1);
+    kit.commands.entity(title).insert(Node {
+        margin: UiRect::new(px(20), px(20), px(22), px(28)),
+        ..default()
+    });
+    for tab in Tab::ALL {
+        let lit = tab == on;
+        let button = kit
+            .commands
+            .spawn((
+                TabButton(tab),
+                Button,
+                Node {
+                    height: px(NAV_TAB_HEIGHT),
+                    padding: UiRect::left(px(20)),
+                    align_items: AlignItems::Center,
+                    border: UiRect::left(px(6)),
+                    ..default()
+                },
+                BorderColor::all(if lit { theme::SELECT } else { Color::NONE }),
+                Name::new(tab.title().to_lowercase()),
+                ChildOf(nav),
+            ))
+            .id();
+        if lit {
+            kit.commands
+                .entity(button)
+                .insert(theme::rightward(theme::SELECT_FILL));
+        }
+        let role = Type {
+            face: if lit { Face::Bold } else { Face::Semibold },
+            size: 17.0,
+            tracking: 2.0,
+            figures: false,
+        };
+        let ink = if lit { theme::INK_1 } else { theme::NAV_INK };
+        kit.typed(button, tab.title(), role, ink);
+    }
+    kit.node(
+        nav,
+        Node {
+            flex_grow: 1.0,
+            ..default()
+        },
+    );
+    version_line(kit, nav);
+}
+
+/// The open tab's title and the window's close cross.
+fn header(
+    kit: &mut Kit,
+    content: Entity,
+    on: Tab,
+    manifest: &crate::manifest::Manifest,
+    server: &AssetServer,
+) {
+    let bar = kit
+        .commands
+        .spawn((
+            Node {
+                height: px(HEADER_HEIGHT),
+                flex_shrink: 0.0,
+                padding: UiRect::new(px(40), px(16), px(0), px(0)),
+                align_items: AlignItems::Center,
+                justify_content: JustifyContent::SpaceBetween,
+                border: UiRect::bottom(px(1)),
+                ..default()
+            },
+            BorderColor::all(theme::DIVIDER),
+            ChildOf(content),
+        ))
+        .id();
+    kit.typed(bar, on.title(), theme::TITLE, theme::INK_1);
+    let close = kit
+        .commands
+        .spawn((
+            CloseButton,
+            Button,
+            Node {
+                width: px(theme::HIT),
+                height: px(theme::HIT),
+                justify_content: JustifyContent::Center,
+                align_items: AlignItems::Center,
+                ..default()
+            },
+            Name::new("close"),
+            ChildOf(bar),
+        ))
+        .id();
+    let cross = match manifest.file("menu.window_close") {
+        Some(path) => kit
+            .commands
+            .spawn((
+                Node {
+                    width: px(CLOSE_ICON),
+                    height: px(CLOSE_ICON),
+                    ..default()
+                },
+                ImageNode::new(server.load(path)).with_color(theme::INK_3),
+                Pickable::IGNORE,
+                ChildOf(close),
+            ))
+            .id(),
+        None => kit.typed(close, "×", theme::TITLE, theme::INK_3),
+    };
+    kit.commands.entity(close).insert(crate::main_menu::Wash {
+        target: cross,
+        rest: theme::INK_3,
+        hover: theme::INK_1,
     });
 }
 
@@ -165,24 +329,32 @@ struct Kit<'a, 'w, 's> {
 }
 
 impl Kit<'_, '_, '_> {
-    fn text(&mut self, parent: Entity, s: impl Into<String>, size: f32, color: Color) -> Entity {
+    fn typed(&mut self, parent: Entity, s: impl Into<String>, role: Type, color: Color) -> Entity {
         self.commands
             .spawn((
-                ui::text(s, &self.fonts.regular, size, color),
+                theme::text(s, self.fonts, role, color),
                 Pickable::IGNORE,
                 ChildOf(parent),
             ))
             .id()
     }
 
+    fn text(&mut self, parent: Entity, s: impl Into<String>, size: f32, color: Color) -> Entity {
+        let role = Type {
+            size,
+            ..theme::BODY
+        };
+        self.typed(parent, s, role, color)
+    }
+
     fn bold(&mut self, parent: Entity, s: impl Into<String>, size: f32, color: Color) -> Entity {
-        self.commands
-            .spawn((
-                ui::text(s, &self.fonts.bold, size, color),
-                Pickable::IGNORE,
-                ChildOf(parent),
-            ))
-            .id()
+        let role = Type {
+            face: Face::Bold,
+            size,
+            tracking: 0.0,
+            figures: false,
+        };
+        self.typed(parent, s, role, color)
     }
 
     fn node(&mut self, parent: Entity, node: Node) -> Entity {
@@ -216,56 +388,6 @@ impl Kit<'_, '_, '_> {
         self.bold(button, label, 14.0, ui::INK);
         button
     }
-}
-
-/// The title, the tabs and the way out.
-fn header(kit: &mut Kit, root: Entity, on: Tab) {
-    let bar = kit
-        .commands
-        .spawn((
-            Node {
-                height: px(60),
-                padding: UiRect::axes(px(28), px(0)),
-                column_gap: px(30),
-                align_items: AlignItems::Center,
-                border: UiRect::bottom(px(1)),
-                ..default()
-            },
-            BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.55)),
-            BorderColor::all(ui::EDGE),
-            ChildOf(root),
-        ))
-        .id();
-    kit.bold(bar, "SETTINGS", 26.0, ui::INK);
-    let tabs = kit.node(
-        bar,
-        Node {
-            column_gap: px(6),
-            flex_grow: 1.0,
-            ..default()
-        },
-    );
-    for tab in Tab::ALL {
-        let lit = tab == on;
-        let button = kit
-            .commands
-            .spawn((
-                TabButton(tab),
-                Button,
-                Node {
-                    padding: UiRect::axes(px(14), px(18)),
-                    border: UiRect::bottom(px(3)),
-                    ..default()
-                },
-                BorderColor::all(if lit { ui::GOLDEN } else { Color::NONE }),
-                Name::new(tab.title().to_lowercase()),
-                ChildOf(tabs),
-            ))
-            .id();
-        let color = if lit { ui::INK } else { ui::INK_DIM };
-        kit.bold(button, tab.title(), 17.0, color);
-    }
-    kit.button(bar, "DONE", CloseButton);
 }
 
 /// A heading over a group of rows.
@@ -308,7 +430,7 @@ fn labelled(kit: &mut Kit, body: Entity, label: &str) -> Entity {
             ..default()
         },
     );
-    kit.text(row, label, 15.0, ui::INK);
+    kit.typed(row, label, theme::LABEL, theme::INK_2);
     row
 }
 
