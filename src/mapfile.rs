@@ -175,7 +175,7 @@ impl AssetLoader for MapLoader {
         let (mut map, field) = finish(terrain, &lids, materials.terrain);
         map.layers = materials.paths.map(|detail| crate::layers::GroundLayers {
             detail,
-            field: cx.add_labeled_asset("ground_field".to_string(), field),
+            field: cx.add_labeled_asset(crate::layers::FIELD_LABEL.to_string(), field),
         });
         Ok(map)
     }

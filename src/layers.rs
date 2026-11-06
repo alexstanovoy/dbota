@@ -73,6 +73,9 @@ const DETAIL_SIZE: u32 = 512;
 /// against its mean, halved), and the field: dirt colours on its left half,
 /// stone colours on its right, the forest's shade in the left half's alpha
 /// and which stone in the right half's.
+/// The label the map's loader gives the field among its assets.
+pub(crate) const FIELD_LABEL: &str = "ground_field";
+
 #[derive(Resource, Clone)]
 pub struct GroundLayers {
     pub detail: Handle<Image>,
@@ -304,7 +307,10 @@ const SHADE_REACH: f32 = 150.0;
 /// nothing, when the image is not such a field.
 fn lay_forest_shade(field: &mut Image, standing: impl Iterator<Item = (f32, f32)>) -> bool {
     let (w, h) = (field.width() as usize, field.height() as usize);
-    let rgba = field.texture_descriptor.format.block_copy_size(None) == Some(4);
+    let rgba = matches!(
+        field.texture_descriptor.format,
+        TextureFormat::Rgba8Unorm | TextureFormat::Rgba8UnormSrgb
+    );
     let Some(data) = field
         .data
         .as_mut()
@@ -435,5 +441,11 @@ mod tests {
         let before = square.data.clone();
         assert!(!lay_forest_shade(&mut square, [(100.0, 100.0)].into_iter()));
         assert_eq!(square.data, before);
+        let mut red = field(64);
+        red.texture_descriptor.format = TextureFormat::R32Float;
+        assert!(
+            !lay_forest_shade(&mut red, [(100.0, 100.0)].into_iter()),
+            "a field of another format"
+        );
     }
 }
