@@ -279,7 +279,9 @@ fn pictures(
                 } else {
                     Color::WHITE
                 };
-                (manifest.portrait(l.hero.0), tint)
+                // Dota's scoreboard row (`dota_hud_scoreboard_player.vxml`) draws a
+                // DOTAHeroImage of no `heroimagestyle`: the landscape picture.
+                (manifest.hero_icon(l.hero.0), tint)
             }
             (Field::Ult, Some(l)) => (ult_art(&manifest, l.ult), Color::WHITE),
             (Field::Item(slot), Some(l)) => {
@@ -353,4 +355,22 @@ fn rings(
             gradient.set_if_neq(crate::hud::xp_ring(crate::hud::xp_share(l.level, l.xp)));
         }
     }
+}
+
+/// What each shown row's hero picture is drawn with: the row's side, its place on the side and
+/// the picture's asset path (none: no picture), for the tests.
+#[cfg(test)]
+pub(crate) fn drawn_heroes(world: &mut World) -> Vec<(Team, u8, Option<String>)> {
+    let server = world.resource::<AssetServer>().clone();
+    let mut out: Vec<(Team, u8, Option<String>)> = world
+        .query::<(&At, &Field, &ImageNode, &InheritedVisibility)>()
+        .iter(world)
+        .filter(|(_, field, _, shown)| **field == Field::Hero && shown.get())
+        .map(|(at, _, image, _)| {
+            let path = server.get_path(image.image.id()).map(|p| p.to_string());
+            (at.team, at.rank, path)
+        })
+        .collect();
+    out.sort_by_key(|(team, rank, _)| (*team == Team::Dire, *rank));
+    out
 }

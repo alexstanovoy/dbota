@@ -61,6 +61,7 @@ mod rings;
 mod roshan;
 mod rune_lifecycle;
 mod runes;
+mod scoreboard;
 mod secret_shop;
 mod sentry_ward;
 mod shop_inventory;
