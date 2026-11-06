@@ -531,14 +531,18 @@ fn shade_heroes(
 fn shade_veil(
     time: Res<Time>,
     mut grid: ResMut<FogGrid>,
-    veil: Option<Res<Veil>>,
+    veil: Option<ResMut<Veil>>,
     mut images: ResMut<Assets<Image>>,
+    mut fogged: ResMut<Assets<FoggedMaterial>>,
     photo: Res<crate::minimap::PhotoTaken>,
     mut blur: Local<Blur>,
 ) {
-    let Some(veil) = veil else {
+    let Some(mut veil) = veil else {
         return;
     };
+    if grid.n > 0 {
+        fit_veil(&mut veil, grid.n, &mut images, &mut fogged);
+    }
     // The minimap's photograph is of the map unfogged; when everything is
     // seen the shades ease back to lit.
     if !photo.0 {
@@ -584,7 +588,7 @@ fn shade_veil(
     let Some(mut image) = images.get_mut(&veil.image) else {
         return;
     };
-    let Some(data) = image.data.as_mut() else {
+    let Some(data) = image.data.as_mut().filter(|data| data.len() == n * n * 4) else {
         return;
     };
     // A tent blur over a cell either way rounds the border's cell steps:
@@ -678,6 +682,34 @@ fn cast_veil(
     }
 }
 
+/// Fits the veil to a match's grid of `n` cells a side: it is made for the first match's, and
+/// every match sends its own. Its image takes the grid's size, and every fogged material made
+/// so far maps it over the grid's span.
+fn fit_veil(
+    veil: &mut Veil,
+    n: usize,
+    images: &mut Assets<Image>,
+    fogged: &mut Assets<FoggedMaterial>,
+) {
+    let span = n as f32 * CELL;
+    if veil.span == span {
+        return;
+    }
+    veil.span = span;
+    if let Some(mut image) = images.get_mut(&veil.image) {
+        image.resize(Extent3d {
+            width: n as u32,
+            height: n as u32,
+            depth_or_array_layers: 1,
+        });
+    }
+    for handle in veil.made.values() {
+        if let Some(mut material) = fogged.get_mut(handle) {
+            material.extension.params.x = span;
+        }
+    }
+}
+
 /// Sets the visual clarity aid's strength on every fogged material when the
 /// settings change it.
 fn clarity(
@@ -697,5 +729,70 @@ fn clarity(
         {
             m.extension.params.w = strength;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use bevy::ecs::system::RunSystemOnce;
+
+    use super::*;
+
+    /// The veil is made once, for the first match's grid; every match sends its own grid. A
+    /// later match of a larger grid wrote its rows past the image's data, and the client
+    /// panicked: a replay or server of a small grid first, then any normal match. And the
+    /// materials made for the first match kept its span, so a later match of another grid was
+    /// drawn with its veil misplaced.
+    #[test]
+    fn a_match_of_a_larger_grid_than_the_veils_is_shaded_into_a_veil_of_its_size() {
+        let mut app = App::new();
+        app.init_resource::<Assets<Image>>()
+            .init_resource::<Assets<FoggedMaterial>>()
+            .init_resource::<Time>()
+            .insert_resource(crate::minimap::PhotoTaken(true));
+        app.insert_resource(FogGrid {
+            n: 1,
+            ..FogGrid::default()
+        });
+        app.world_mut().run_system_once(spawn_veil).unwrap();
+        let world = app.world_mut();
+        let first_span = world.resource::<Veil>().span;
+        let made = world
+            .resource_mut::<Assets<FoggedMaterial>>()
+            .add(FoggedMaterial {
+                base: StandardMaterial::default(),
+                extension: FogExt {
+                    params: Vec4::new(first_span, VEIL, 0.0, 0.0),
+                    veil: Handle::default(),
+                    cast: Handle::default(),
+                    paths: Handle::default(),
+                    field: Handle::default(),
+                },
+            });
+        world
+            .resource_mut::<Veil>()
+            .made
+            .insert((AssetId::default(), 0, Shade::Plain), made.clone());
+        let n = 8;
+        app.insert_resource(FogGrid {
+            on: true,
+            n,
+            cells: vec![false; n * n],
+            shade: vec![0.0; n * n],
+            ..FogGrid::default()
+        });
+
+        app.world_mut().run_system_once(shade_veil).unwrap();
+
+        let veil = app.world().resource::<Veil>().image.clone();
+        let images = app.world().resource::<Assets<Image>>();
+        let image = images.get(&veil).expect("the veil's image");
+        assert_eq!(image.width() as usize, n);
+        assert_eq!(image.data.as_ref().map(Vec::len), Some(n * n * 4));
+        let span = n as f32 * CELL;
+        assert_eq!(app.world().resource::<Veil>().span, span);
+        let fogged = app.world().resource::<Assets<FoggedMaterial>>();
+        let material = fogged.get(&made).expect("the material made before");
+        assert_eq!(material.extension.params.x, span);
     }
 }
