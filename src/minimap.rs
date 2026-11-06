@@ -96,6 +96,31 @@ pub(crate) fn shown_unit_marks(world: &mut World) -> Vec<(Option<String>, Vec2)>
         .collect()
 }
 
+/// The tint of each unit mark showing with its middle on the minimap, for the end-to-end tests.
+#[cfg(test)]
+pub(crate) fn shown_unit_tints(world: &mut World) -> Vec<(Color, Vec2)> {
+    let marks = world.resource::<Minimap>().marks.clone();
+    marks
+        .into_iter()
+        .filter_map(|mark| {
+            let (node, image, vis) = world
+                .query::<(&Node, &ImageNode, &Visibility)>()
+                .get(world, mark)
+                .ok()?;
+            let (Val::Px(left), Val::Px(top), Val::Px(width)) = (node.left, node.top, node.width)
+            else {
+                return None;
+            };
+            (*vis != Visibility::Hidden).then(|| {
+                (
+                    image.color,
+                    Vec2::new(left + width / 2.0, top + width / 2.0),
+                )
+            })
+        })
+        .collect()
+}
+
 /// The minimap's frame, the photo, the marks and the camera frame.
 #[derive(Resource)]
 struct Minimap {
@@ -430,6 +455,7 @@ fn marks(
     ground: Res<Ground>,
     manifest: Res<crate::manifest::Manifest>,
     server: Res<AssetServer>,
+    colours: Res<crate::player_colour::PlayerColours>,
     mut nodes: Query<(&mut Node, &mut BackgroundColor, &mut Visibility)>,
     mut images: Query<&mut ImageNode>,
     mut handles: Local<IconHandles>,
@@ -472,7 +498,11 @@ fn marks(
             ..node.clone()
         });
         let handle = icon.unwrap_or_default();
-        let tint = crate::overlay::team_color(u.team);
+        // A courier is its owner's, and wears the colour of that seat.
+        let tint = match u.owner.filter(|_| u.kind == UnitKind::Courier) {
+            Some(owner) => colours.of(view, owner),
+            None => crate::overlay::team_color(u.team),
+        };
         if image.image != handle || image.color != tint {
             image.image = handle;
             image.color = tint;

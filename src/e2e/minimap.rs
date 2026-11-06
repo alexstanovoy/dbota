@@ -236,3 +236,40 @@ fn an_enemy_ward_is_marked_on_the_minimap_only_when_it_is_seen() {
         marked(c, "icon.minimap.ward_observer", seen)
     });
 }
+
+/// One's courier is marked on the minimap in the colour of its owner's seat, as Dota paints it,
+/// not in the green of its side.
+#[test]
+fn ones_courier_is_marked_on_the_minimap_in_its_owners_player_colour() {
+    let server = Server::start(1, &[]);
+    let mut client = Client::join(&server, HeroId::SHADOW_FIEND, &[]);
+    client.cheat(Cheat::StartGame);
+    let (courier, owner) = client
+        .view()
+        .units
+        .iter()
+        .find(|u| u.kind == UnitKind::Courier && u.owner == client.core().my_slot)
+        .map(|u| (u.pos, u.owner.expect("owned")))
+        .expect("one's courier");
+    let own = client
+        .world()
+        .resource::<crate::player_colour::PlayerColours>()
+        .of(client.view(), owner);
+    assert_ne!(
+        own,
+        crate::overlay::team_color(Team::Radiant),
+        "the seat's colour is not its side's"
+    );
+    let middle = crate::minimap::on_map(courier.x.to_f32(), courier.y.to_f32());
+    client.within(Duration::from_secs(20), "the courier marked", |c| {
+        crate::minimap::shown_unit_tints(c.world_mut())
+            .iter()
+            .any(|(_, found)| found.distance(middle) < 1.0)
+    });
+    let tint = crate::minimap::shown_unit_tints(client.world_mut())
+        .into_iter()
+        .find(|(_, found)| found.distance(middle) < 1.0)
+        .expect("marked")
+        .0;
+    assert_eq!(tint, own, "the courier's mark wears its owner's colour");
+}
