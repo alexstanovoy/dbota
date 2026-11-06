@@ -20,7 +20,7 @@ pub(crate) use cell::ShopAccessShade;
 pub use cell::{Place, ShopCell, spawn as spawn_cell};
 pub use corner::STICKY;
 #[cfg(test)]
-pub(crate) use corner::drawn_gold;
+pub(crate) use corner::{GrabAll, drawn_gold};
 pub(crate) use drag::ShopDrag;
 pub use plugin::plugin;
 

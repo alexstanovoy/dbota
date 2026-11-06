@@ -42,12 +42,36 @@ fn stash(client: &Client) -> &[Option<bota_proto::ItemView>] {
         .expect("own stash")
 }
 
+fn grab_shown(client: &mut Client) -> bool {
+    let world = client.world_mut();
+    world
+        .query_filtered::<&InheritedVisibility, With<crate::shop::GrabAll>>()
+        .single(world)
+        .expect("GRAB ALL button")
+        .get()
+}
+
+fn assert_grab_follows_hero(client: &mut Client, home: bota_proto::Vec2) {
+    assert!(
+        client.core().at_home_shop(),
+        "the courier still reaches home"
+    );
+    client.frames(2);
+    assert!(
+        !grab_shown(client),
+        "the courier cannot give GRAB ALL access to the distant hero"
+    );
+    client.cheat(Cheat::Teleport { at: home });
+    client.until("GRAB ALL enabled when the hero returns home", grab_shown);
+}
+
 #[test]
 fn base_shop_purchases_fill_hero_at_shop_and_stash_away_from_shop() {
     // https://liquipedia.net/dota2/Base_Shop: base-shop items may be bought
     // remotely into the stash; the courier retrieves them on a separate order.
     let server = Server::start(1, &[]);
     let mut client = Client::join(&server, HeroId::SHADOW_FIEND, &[]);
+    let home = client.me().pos;
     client.cheat(Cheat::Gold { amount: 10000 });
     client
         .world_mut()
@@ -98,4 +122,5 @@ fn base_shop_purchases_fill_hero_at_shop_and_stash_away_from_shop() {
             .all(Option::is_none),
         "default purchases do not automatically load the courier"
     );
+    assert_grab_follows_hero(&mut client, home);
 }

@@ -802,7 +802,7 @@ fn sounds_from_the_players_entity(
 fn shop_change(core: &bota_client_core::App, watch: &mut ShopWatch, now: f32) -> Option<bool> {
     let looked = core
         .my_standing_hero()
-        .map(|hero| core.at_home_shop() || core.unit_at_secret_shop(hero));
+        .map(|hero| core.unit_at_home_shop(hero) || core.unit_at_secret_shop(hero));
     watch.look(core.view().is_some(), looked, now)
 }
 

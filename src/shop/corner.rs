@@ -608,12 +608,15 @@ fn quick_row(
 /// backpack, and a scroll onto the scrolls the hero already carries.
 pub fn grab_moves(core: &bota_client_core::App) -> Vec<(u8, u8)> {
     let plan = || {
-        if !matches!(core.source, Source::Live(_)) || !core.at_home_shop() {
+        if !matches!(core.source, Source::Live(_)) {
             return None;
         }
         let view = core.view()?;
         let player = view.player(core.my_slot?)?;
         let hero = view.unit(player.unit?)?;
+        if !core.unit_at_home_shop(hero.id) {
+            return None;
+        }
         let mut free: VecDeque<u8> = (0..BAG_SLOTS)
             .filter(|slot| {
                 hero.items
@@ -654,7 +657,10 @@ fn grab_step(mut session: NonSendMut<Session>, mut grab: ResMut<Grab>) {
     let Some(tick) = core.view().map(|v| v.tick) else {
         return;
     };
-    if !core.at_home_shop() {
+    if !core
+        .my_standing_hero()
+        .is_some_and(|hero| core.unit_at_home_shop(hero))
+    {
         grab.moves.clear();
         return;
     }

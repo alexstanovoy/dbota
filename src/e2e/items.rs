@@ -71,6 +71,40 @@ fn the_item_menu_offers_sell_and_moves_an_item_to_the_stash() {
     );
 }
 
+#[test]
+fn the_item_menu_does_not_use_the_couriers_home_access_for_the_hero() {
+    let (_server, mut client, slot) = with_a_tango();
+    client.stand_at(super::harness::MID);
+    assert!(client.core().at_home_shop(), "the courier remains at home");
+    let texts = client.world().resource::<crate::dota_text::Texts>();
+    let sell = texts.label("DOTA_InventoryMenu_Sell", &[]).expect("Sell");
+    let mark = texts
+        .label("DOTA_InventoryMenu_MarkForSell", &[])
+        .expect("Mark for Sell");
+    let to_stash = texts
+        .label("DOTA_InventoryMenu_MoveToStash", &[])
+        .expect("Move to Stash");
+    let item_box = client.item_box(slot).expect("the hero's item");
+    let at = client.centre_of(item_box).expect("the slot laid out");
+    client.mouse(at);
+    client.click(MouseButton::Right);
+    client.until("the item menu", |client| {
+        button_saying(client, &sell).is_some() || button_saying(client, &mark).is_some()
+    });
+    assert!(
+        button_saying(&mut client, &mark).is_some(),
+        "the hero may mark the item for sale"
+    );
+    assert!(
+        button_saying(&mut client, &sell).is_none(),
+        "the distant hero must mark a sale instead"
+    );
+    assert!(
+        button_saying(&mut client, &to_stash).is_none(),
+        "the distant hero cannot reach the stash"
+    );
+}
+
 /// The dragged item's icon, where it is drawn: its middle, in the window's pixels.
 fn ghost(client: &mut Client) -> Option<Vec2> {
     let world = client.world_mut();
