@@ -32,14 +32,14 @@ struct Fact {
     caster: Option<EntityId>,
     /// The unit the fact is about: the one struck, the one dead.
     unit: Option<EntityId>,
-    /// The spot a use was aimed at, a throw came down on, a rune appeared at.
+    /// The spot a use was aimed at, a throw came down on, a rune appeared at, a warp left from.
     point: Option<Spot>,
     /// The kind of rune the event is about.
     rune: Option<RuneKind>,
 }
 
 impl Fact {
-    fn of(event: &EventKind) -> Option<Fact> {
+    fn of(event: &EventKind, views: &Views) -> Option<Fact> {
         let blank = Fact {
             trigger: Trigger::Use,
             by: None,
@@ -143,6 +143,16 @@ impl Fact {
                 unit: Some(*unit),
                 ..blank
             },
+            // A warp's fact is about the gate it came out of: `at=unit` plays at that gate (the
+            // unit that came out is the caster, `at=caster`), `at=point` at the gate it left.
+            EventKind::GateWarped { from, to, unit } => Fact {
+                trigger: Trigger::Warp,
+                named: Some(*to),
+                caster: *unit,
+                unit: Some(*to),
+                point: views.find(*from).map(|gate| gate.pos),
+                ..blank
+            },
             _ => return None,
         })
     }
@@ -217,7 +227,7 @@ fn told(
         before: core.prev_view(),
     };
     for (n, event) in core.told.iter().enumerate() {
-        let Some(fact) = Fact::of(event) else {
+        let Some(fact) = Fact::of(event, &views) else {
             continue;
         };
         let seed = now.tick.wrapping_mul(31).wrapping_add(n as u32);

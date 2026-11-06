@@ -56,6 +56,7 @@
 #           Dota's client loads): each phoneme's flex controller settings, added up by a speaking face.
 #   fx      <subject>.<trigger> at=<where> [attach=<point>] [particle=<particle logical>] [sound=<sound logical prefix>]
 #           [cp<N>=<feed>]... [whose=own|foreign] [stacks=<n>|<from>..<to>] [side=radiant|dire]
+#           [look=radiant|dire]
 #           an effect bound to a fact of the game by Dota's name for it (src/fx.rs). The importer passes these lines on; the client reads them.
 #           subject: item.<ids.txt item name> | ability.<ids.txt ability name> | modifier.<Dota modifier name> |
 #                    effect.<bota effect key that is no Dota modifier: bota_shrine_ready> |
@@ -74,9 +75,10 @@
 #                    Outpost) | channelled (a hero channels at the unit the ability that works it: an Outpost captured, a
 #                    Watcher lit; from the channel's start until it ends) | gathering (a side runs the unit's countdown by
 #                    standing near it, forward or back: a Shrine of Wisdom gathered, a lotus plucked from a Lotus Pool)
+#                    | warp (a unit came out of the unit after a warp through its twin: a Twin Gate)
 #           at: caster (where the user, or the hero taking a rune, stands after) | caster_before (where it stood before) | point (the spot the
-#               use was aimed at, the throw came down, the rune appeared) | unit (the unit the fact is about: the wearer, or the rune lying, the one struck
-#               or mended, the one dead, the pool plucked) | flight (each missile on its own, from its source to where it is) | chain (all the
+#               use was aimed at, the throw came down, the rune appeared, the gate a warp left) | unit (the unit the fact is about: the wearer, or the rune lying, the one struck
+#               or mended, the one dead, the pool plucked, the gate come out of) | flight (each missile on its own, from its source to where it is) | chain (all the
 #               missiles a source has flying, from the source to the one farthest from it: a hook and its chain)
 #           attach: where on the unit it plays: origin (its feet, the default) | overhead (where its health bar floats) |
 #                   attach_<node> (a node of its model: attach_hitloc, attach_head, attach_eyeL), hitloc for attach_hitloc
@@ -92,6 +94,8 @@
 #           whose: for a worn line, only the effects the wearer put on itself (own) or another put on it (foreign)
 #           stacks: for a worn line, only while the effect holds that many
 #           side: for a worn line, only while the unit is held for that side
+#           look: for a worn line, only on a wearer that takes on that side's look: its own side's, or the one the map
+#                 gives a neutral building (the north-western Twin Gate the Dire's)
 #   state   item.<ids.txt item name> <state> icon=<texture logical> [text=<label key>]
 #           an item drawn by what the wire tells of it (src/item_look.rs): in a slot it is drawn with the icon of its
 #           first line whose state holds, and its tooltip shows that line's text; with none, its own icon. Read and
@@ -508,6 +512,11 @@ particle shrine.ambient particles/base_static/experience_shrine_ambient.vpcf_c p
 particle shrine.active particles/base_static/experience_shrine_active.vpcf_c particles/experience_shrine_active.json
 particle lotus_pool.gathering particles/econ/generic/generic_progress_meter/generic_progress_circle.vpcf_c particles/generic_progress_circle.json
 particle lotus_pool.pluck particles/world_fountain_of_life/fol_active.vpcf_c particles/fol_active.json
+particle twin_gate.ambient particles/base_static/team_portal_ambient.vpcf_c particles/team_portal_ambient.json
+particle twin_gate.dire_ambient particles/base_static/team_portal_dire_ambient.vpcf_c particles/team_portal_dire_ambient.json
+particle twin_gate.active particles/base_static/team_portal_active.vpcf_c particles/team_portal_active.json
+particle twin_gate.dire_active particles/base_static/team_portal_dire_active.vpcf_c particles/team_portal_dire_active.json
+particle twin_gate.arrival particles/units/heroes/heroes_underlord/abbysal_underlord_portal_owner.vpcf_c particles/abbysal_underlord_portal_owner.json
 
 # --- Heroes' default ambient effects (items_game.txt "<hero>'s Ambient Effects", the item of slot ambient_effects)
 particle hero.nevermore.ambient_glow particles/units/heroes/hero_nevermore/nevermore_ambient_glow.vpcf_c particles/nevermore_ambient_glow.json
@@ -738,6 +747,18 @@ fx item.famango.use at=caster particle=item.mango.active sound=sound.item.mango
 fx item.great_famango.use at=caster particle=item.mango.active sound=sound.item.mango
 fx item.greater_famango.use at=caster particle=item.mango.active sound=sound.item.mango
 fx item.cheese.use at=caster sound=sound.item.cheese
+# The Twin Gates, as the server's modifier_twin_gate_fx and twin_gate_portal_warp play them: npc_dota_portal1 (the
+# north-western gate, look=dire) wears the Dire's ambient and channel glow, the other the Radiant's, their control
+# points on the model's attach_portal and attach_portal_reverse as the particles' own configurations drive them. A
+# channel glows and hums at both gates (TwinGate.Channel); a warp landed sounds TwinGate.Channel.End at the gate it
+# left, and TwinGate.Teleport.Appear with abbysal_underlord_portal_owner on the unit come out (Dota sounds it at the
+# gate, 140 off: on the unit it sounds the moment its side sees it arrive, not a view later).
+fx unit.npc_dota_unit_twin_gate.worn at=unit particle=twin_gate.ambient cp1=attach_portal cp2=attach_portal_reverse look=radiant
+fx unit.npc_dota_unit_twin_gate.worn at=unit particle=twin_gate.dire_ambient cp1=attach_portal cp2=attach_portal_reverse look=dire
+fx modifier.modifier_twin_gate_fx.worn at=unit attach=attach_portal particle=twin_gate.active sound=sound.twin_gate.channel look=radiant
+fx modifier.modifier_twin_gate_fx.worn at=unit attach=attach_portal particle=twin_gate.dire_active sound=sound.twin_gate.channel look=dire
+fx unit.npc_dota_unit_twin_gate.warp at=point sound=sound.twin_gate.channel_end
+fx unit.npc_dota_unit_twin_gate.warp at=caster attach=hitloc particle=twin_gate.arrival sound=sound.twin_gate.appear
 
 # --- Item icons (88x64, a few narrower), every Dota item name in ids.txt
 # Buff bar icons only.
@@ -1132,6 +1153,9 @@ sound sound.outpost.captured sounds/ambient/outpost_captured.vsnd_c sounds/ambie
 sound sound.watcher.channel sounds/ambient/outpost_channel.vsnd_c sounds/ambient/outpost_channel.wav event=Lantern.Channel
 sound sound.watcher.on sounds/ambient/shrine_cast.vsnd_c sounds/ambient/shrine_cast.wav event=Lantern.On
 sound sound.watcher.off sounds/ambient/lantern_off.vsnd_c sounds/ambient/lantern_off.wav event=Lantern.Off
+sound sound.twin_gate.channel sounds/ambient/twin_gate_channel.vsnd_c sounds/ambient/twin_gate_channel.wav event=TwinGate.Channel
+sound sound.twin_gate.channel_end sounds/ambient/twin_gate_out.vsnd_c sounds/ambient/twin_gate_out.wav event=TwinGate.Channel.End
+sound sound.twin_gate.appear sounds/ambient/twin_gate_in.vsnd_c sounds/ambient/twin_gate_in.wav event=TwinGate.Teleport.Appear
 
 # Town portal scroll: the hum over the landing (Loop_Appear) and over the leaving hero (Loop_Disappear), both
 # 4 s loops, and the sounds of the hero arriving and leaving.
@@ -1694,6 +1718,13 @@ clip objective.lotus_pool.skin4.model idle fountain_idle 11.967
 model objective.lotus_pool.skin5.model models/props_gameplay/fountain_of_life/fountain_of_life_update.vmdl_c models/objective/lotus_pool/lotus_pool_skin5.glb anims=fountain_idle skin=5
 clip objective.lotus_pool.skin5.model idle fountain_idle 11.967
 unit npc_dota_lotus_pool objective.lotus_pool.model model_scale=1
+# Twin Gates (npc_dota_unit_twin_gate; the map places team_portal.vmdl, not the unit's Model, in material group 0
+# for both): ACT_DOTA_IDLE is team_portal_idle_reverse, ACT_DOTA_CHANNEL_ABILITY_1 team_portal_channel_big, played
+# while a warp is channelled through it.
+model objective.team_portal.model models/props_gameplay/team_portal/team_portal.vmdl_c models/objective/team_portal/team_portal.glb anims=team_portal_idle_reverse,team_portal_channel_big
+clip objective.team_portal.model idle team_portal_idle_reverse 10.647
+clip objective.team_portal.model channel team_portal_channel_big 7.425
+unit npc_dota_unit_twin_gate objective.team_portal.model model_scale=1
 model_variant objective.lotus_pool.model objective.lotus_pool.skin1.model pool_tier=healing map_skin=1
 model_variant objective.lotus_pool.model objective.lotus_pool.skin2.model pool_tier=great map_skin=0
 model_variant objective.lotus_pool.model objective.lotus_pool.skin3.model pool_tier=greater map_skin=0

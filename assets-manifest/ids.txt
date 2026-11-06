@@ -392,3 +392,9 @@ modifier 95 modifier_roshan_moving
 modifier 96 modifier_knockback
 modifier 97 modifier_roshan_moving_knockback_timeout
 modifier 98 modifier_ghost_state
+
+# Every unit's hidden channel at a Twin Gate.
+ability 87 twin_gate_portal_warp
+# A Twin Gate a warp is channelled through wears the warp's icon.
+effect 99 icon.ability.twin_gate_portal_warp
+modifier 99 modifier_twin_gate_fx

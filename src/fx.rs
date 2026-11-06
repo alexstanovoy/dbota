@@ -152,6 +152,18 @@ impl Stage<'_, '_> {
         let focus = Vec2::new(self.camera.focus.x, -self.camera.focus.z);
         let place = (at.x, -at.z);
         let own_hero = self.session.0.my_hero();
+        // A unit of the watched side always stands in that side's sight: a sound on it is not
+        // muted by a fog of war that has not yet caught up with where it stands (a unit that
+        // came out of a teleport or a warp this tick).
+        let own_side = emitter.is_some_and(|id| {
+            self.fog.team.is_some_and(|team| {
+                self.session
+                    .0
+                    .view()
+                    .and_then(|view| view.unit(id))
+                    .is_some_and(|unit| unit.team == team)
+            })
+        });
         let request = Request {
             event: if event.is_empty() { prefix } else { &event },
             owner,
@@ -159,7 +171,7 @@ impl Stage<'_, '_> {
             at: Some(place),
             listener: Some((focus.x, focus.y)),
             on_player: emitter.is_some() && emitter == own_hero,
-            fog: Some(&self.fog),
+            fog: (!own_side).then_some(&self.fog),
             ..Request::default()
         };
         let handle = self.server.load(path.clone());
@@ -207,7 +219,8 @@ impl Stage<'_, '_> {
     }
 
     /// Plays what a line plays at `at`, once: its particle (fed from `place`, the points of the
-    /// unit the fact is about) to play out on its own, and its sound.
+    /// unit the fact is about) to play out on its own, and its sound, from `source`, the unit it
+    /// plays at when it plays at one.
     fn play(
         &mut self,
         fx: &Fx,

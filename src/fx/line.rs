@@ -29,6 +29,9 @@ pub enum Trigger {
     Pluck,
     /// The unit was taken over by a side (`EventKind::Captured`: an Outpost).
     Captured,
+    /// A unit came out of the unit after a warp through its twin (`EventKind::GateWarped`: a Twin
+    /// Gate).
+    Warp,
     /// While the subject holds: a modifier on a unit, an effect an ability or an item put on one,
     /// or a unit of a Dota name standing.
     Worn,
@@ -136,6 +139,9 @@ pub struct Fx {
     pub stacks: (u32, u32),
     /// The side a worn line's unit must be held for, when the line names one.
     pub side: Option<Team>,
+    /// The side whose look the wearer must take on (its own side's, or the one the map gives a
+    /// neutral building), for a worn line that asks.
+    pub look: Option<Team>,
 }
 
 impl Fx {
@@ -145,7 +151,7 @@ impl Fx {
     }
 
     /// Reads the words after `fx`: `<subject>.<trigger> at=… [attach=…] [particle=…] [sound=…]
-    /// [cp<N>=…] [whose=…] [stacks=…]`.
+    /// [cp<N>=…] [whose=…] [stacks=…] [look=…]`.
     pub fn parse(words: &[&str]) -> Result<Fx, String> {
         let [name, rest @ ..] = words else {
             return Err("no name".to_owned());
@@ -162,6 +168,7 @@ impl Fx {
             "store" => Trigger::Store,
             "pluck" => Trigger::Pluck,
             "captured" => Trigger::Captured,
+            "warp" => Trigger::Warp,
             "worn" => Trigger::Worn,
             "held" => Trigger::Held,
             "casting" => Trigger::Casting,
@@ -181,6 +188,7 @@ impl Fx {
             whose: Whose::Any,
             stacks: (0, u32::MAX),
             side: None,
+            look: None,
         };
         let mut at = None;
         for word in rest {
@@ -195,6 +203,7 @@ impl Fx {
                 "whose" => fx.whose = whose_of(value)?,
                 "stacks" => fx.stacks = stacks_of(value)?,
                 "side" => fx.side = Some(side_of(value)?),
+                "look" => fx.look = Some(side_of(value)?),
                 _ => match key.strip_prefix("cp").and_then(|n| n.parse::<usize>().ok()) {
                     Some(point) if point > 0 => fx.feeds.push((point, feed_of(value)?)),
                     _ => return Err(format!("cannot read '{word}'")),
@@ -227,6 +236,7 @@ impl Fx {
             | Trigger::Casting
             | Trigger::Channelled
             | Trigger::Gathering => &[At::Unit],
+            Trigger::Warp => &[At::Unit, At::Caster, At::Point],
             Trigger::Flies => &[At::Flight, At::Chain],
         };
         if !places.contains(&self.at) {
@@ -236,8 +246,10 @@ impl Fx {
             ));
         }
         let worn = self.trigger == Trigger::Worn;
-        if !worn && (self.whose != Whose::Any || self.stacks != (0, u32::MAX)) {
-            return Err("only a worn line asks whose or how many".to_owned());
+        if !worn
+            && (self.whose != Whose::Any || self.stacks != (0, u32::MAX) || self.look.is_some())
+        {
+            return Err("only a worn line asks whose, how many or whose look".to_owned());
         }
         if !worn && self.side.is_some() {
             return Err("only a worn line asks which side holds the unit".to_owned());

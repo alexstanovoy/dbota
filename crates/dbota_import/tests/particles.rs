@@ -17,7 +17,7 @@ use heatel::{DirSource, Resource, Vpk, find_game_dir};
 /// The classes of the manifest's effects the client leaves out, each with why. (A model
 /// renderer whose model a control point carries, the town portal's image of the hero at its end,
 /// is read but draws nothing: the client binds no model to a control point.)
-const LEFT_OUT: [&str; 52] = [
+const LEFT_OUT: [&str; 53] = [
     // Camera shake (Requiem of Souls) and the model a control point carries (the town portal's
     // image of the hero), and the rune, ward, teleport and lotus effects' finer operators (status
     // effects, parent-kill inheritance, paths, oscillation, rotation and culling): the client
@@ -26,6 +26,8 @@ const LEFT_OUT: [&str; 52] = [
     // channel places its motes on a spiral round it with C_INIT_CreateSpiralSphere, which the
     // client does not, so they keep where its other initializers put them): the client draws
     // their effects without them.
+    // The Twin Gates' ambient strings a cable of rope between two of its points
+    // (team_portal_ambient_rope): the client draws the glow without it.
     "C_INIT_CreateOnModelAtHeight",
     "C_INIT_CreateSequentialPathV2",
     "C_INIT_CreateSpiralSphere",
@@ -65,6 +67,7 @@ const LEFT_OUT: [&str; 52] = [
     "C_OP_RemapSpeedtoCP",
     "C_OP_RemapTransformOrientationToYaw",
     "C_OP_RemapVisibilityScalar",
+    "C_OP_RenderCables",
     "C_OP_RenderScreenShake",
     "C_OP_RenderStatusEffect",
     "C_OP_RotateVector",

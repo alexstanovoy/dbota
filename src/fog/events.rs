@@ -295,6 +295,13 @@ impl EventSight<'_> {
             EventKind::LotusGrown { pool, .. } | EventKind::LotusPlucked { pool, .. } => {
                 shown(self.sees_unit(pool))
             }
+            // As the server tells it: to a side that sees either gate's spot or the unit.
+            EventKind::GateWarped { from, to, unit } => shown(
+                [from, to].into_iter().any(|gate| {
+                    self.unit(gate)
+                        .is_some_and(|gate| self.sees_point(gate.pos))
+                }) || unit.is_some_and(|unit| self.sees_unit(unit)),
+            ),
             // These deaths, like captures and Wisdom, are public announcements in the protocol.
             EventKind::Died { unit, .. } => {
                 // Death removes the victim's vision. Its exact before-state is the evidence,

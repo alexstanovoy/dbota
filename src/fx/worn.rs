@@ -69,6 +69,9 @@ fn holding(rule: &Rule, unit: &UnitView, facts: &Facts) -> Option<Hold> {
     if fx.side.is_some_and(|wanted| side != Some(wanted)) {
         return None;
     }
+    if fx.look.is_some() && fx.look != crate::units::look(unit) {
+        return None;
+    }
     let side = match side {
         Some(Team::Dire) => 1.0,
         _ => 0.0,

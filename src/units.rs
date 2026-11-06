@@ -511,6 +511,19 @@ pub fn held_for(unit: &UnitView) -> Option<Team> {
     }
 }
 
+/// The side whose look a unit takes on: its own side's, or for a neutral building the one the
+/// map gives it (a Twin Gate, by the gate it is).
+pub fn look(unit: &UnitView) -> Option<Team> {
+    match unit.team {
+        Team::Radiant | Team::Dire => Some(unit.team),
+        Team::Neutral => bota_core::MAPS
+            .iter()
+            .flat_map(|map| map.twin_gates)
+            .find(|gate| unit.kind == UnitKind::TwinGate && gate.at == unit.pos)
+            .map(|gate| gate.look),
+    }
+}
+
 /// The Dota unit (`npc_units.txt`) a ward, a map objective or a neutral creep is.
 pub fn npc_unit(unit: &UnitView) -> Option<&'static str> {
     match objective_unit(unit.kind) {
@@ -668,9 +681,14 @@ impl BuildingYaws {
     /// objective's, whichever side holds it, the objective standing there.
     pub fn placed(&self, unit: &UnitView, at: Vec2) -> Option<&MapBuilding> {
         let side = match (unit.kind, unit.team) {
-            (UnitKind::Outpost | UnitKind::Watcher | UnitKind::Shrine | UnitKind::LotusPool, _) => {
-                ""
-            }
+            (
+                UnitKind::Outpost
+                | UnitKind::Watcher
+                | UnitKind::Shrine
+                | UnitKind::LotusPool
+                | UnitKind::TwinGate,
+                _,
+            ) => "",
             (_, Team::Radiant) => "radiant",
             (_, Team::Dire) => "dire",
             (_, Team::Neutral) => return None,
@@ -687,6 +705,7 @@ impl BuildingYaws {
             UnitKind::Watcher => "lantern_of_sight",
             UnitKind::Shrine => "xp_shrine",
             UnitKind::LotusPool => "fountain_of_life",
+            UnitKind::TwinGate => "team_portal",
             _ => return None,
         };
         self.0

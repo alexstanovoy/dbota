@@ -765,7 +765,8 @@ fn looping(pose: &mut Pose, clip: &'static str, duration: f32, dt: f32, pace: f3
 
 /// The loop a unit plays standing: a map objective's shows its state, as
 /// Dota's models do: a Watcher out until the horn and while put out, lit by
-/// day or by night; an Outpost a side holds; a Shrine ready to be gathered; a Lotus Pool.
+/// day or by night; an Outpost a side holds; a Shrine ready to be gathered; a Lotus Pool; a Twin
+/// Gate a warp is channelled through.
 fn standing(core: &Core, u: &UnitView) -> &'static str {
     let has = |id: EffectId| u.effects.iter().any(|e| e.id == id);
     let Some(view) = core.view() else {
@@ -786,6 +787,9 @@ fn standing(core: &Core, u: &UnitView) -> &'static str {
         // Dota's pool plays fountain_channel while a hero plucks; the wire does not tell a
         // pluck under way, so it idles.
         UnitKind::LotusPool => "idle",
+        // A Twin Gate a warp is channelled through, at either end, plays its
+        // ACT_DOTA_CHANNEL_ABILITY_1 as long as it glows.
+        UnitKind::TwinGate if has(EffectId::TWIN_GATE_ACTIVE) => "channel",
         _ => "idle",
     }
 }

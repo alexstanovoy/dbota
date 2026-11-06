@@ -96,6 +96,8 @@ pub(crate) struct Shooters<'w, 's> {
         ),
     >,
     places: Query<'w, 's, &'static GlobalTransform>,
+    /// Where each unit's root is put this frame, before the frame's transforms propagate.
+    roots: Query<'w, 's, &'static Transform>,
     rigs: Query<'w, 's, &'static Rig>,
 }
 
@@ -158,12 +160,25 @@ impl Shooters<'_, '_> {
         self.node_frame(id, name).map(|frame| frame.translation())
     }
 
-    /// The drawn attachment's full frame, including its animated orientation.
+    /// The drawn attachment's full frame, including its animated orientation, where the unit's
+    /// root stands this frame: a node's world frame is propagated after the frame's systems
+    /// run, so one read in them still stands where the root stood last frame. Taken relative
+    /// to that root and put on the root's place now, a node of a unit that jumped (a teleport,
+    /// a warp) is where the unit now is, not where it left.
     pub(crate) fn node_frame(&self, id: EntityId, name: &str) -> Option<GlobalTransform> {
         self.sight.visible_unit(id)?;
-        let (_, _, attachments) = self.units.get(*self.index.0.get(&id)?).ok()?;
+        let entity = *self.index.0.get(&id)?;
+        let (_, _, attachments) = self.units.get(entity).ok()?;
         let frame = self.places.get(attachments?.node(name)?).ok()?;
-        (frame.translation() != Vec3::ZERO).then_some(*frame)
+        if frame.translation() == Vec3::ZERO {
+            return None;
+        }
+        Some(match (self.places.get(entity), self.roots.get(entity)) {
+            (Ok(last), Ok(now)) => GlobalTransform::from(
+                now.compute_affine() * last.affine().inverse() * frame.affine(),
+            ),
+            _ => *frame,
+        })
     }
 
     /// Source's uniform object scale, from the scene actually drawn, before metre conversion.

@@ -264,7 +264,8 @@ fn bar_size(kind: UnitKind) -> Option<(f32, f32)> {
         | UnitKind::Outpost
         | UnitKind::Watcher
         | UnitKind::Shrine
-        | UnitKind::LotusPool => None,
+        | UnitKind::LotusPool
+        | UnitKind::TwinGate => None,
         UnitKind::Courier => dota(50.0, 6.0),
         UnitKind::Ward => dota(40.0, 5.0),
         _ => dota(55.0, 5.0),

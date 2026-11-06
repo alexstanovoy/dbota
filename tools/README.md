@@ -69,9 +69,9 @@ lines stay MP3 (Bevy's `mp3` feature plays them).
   normals are right, metallic/roughness/occlusion are approximate. Every material keeps Valve's parameters in
   `extras.vmat`.
 - **Buildings and siege creeps** die by swapping in their `*.destruction` model and playing `death` once.
-- **Map objectives** (Watchers, Outposts, Shrines, Lotus Pools, a planted Banner) are left out of the map mesh and drawn
-  only where the match stands them; their places stay in `buildings.txt`. Team-coloured material groups (an owned
-  Outpost, a lit Watcher) are not written yet.
+- **Map objectives** (Watchers, Outposts, Shrines, Lotus Pools, Twin Gates, a planted Banner) are left out of the map
+  mesh and drawn only where the match stands them; their places stay in `buildings.txt`. Team-coloured material groups
+  (an owned Outpost, a lit Watcher) are not written yet.
 
 ## The mid-lane map (`map.mid`)
 

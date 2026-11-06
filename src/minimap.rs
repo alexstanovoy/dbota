@@ -641,6 +641,14 @@ fn objective_icon(u: &UnitView) -> Option<(&'static str, Option<Rect>, Color, f3
             Color::WHITE,
             16.0,
         )),
+        // The unit's MinimapIcon minimap_underlord_portal (256,576 64x64), as big as a Lotus
+        // Pool's (MinimapIconSize 500 both).
+        UnitKind::TwinGate => Some((
+            "icon.minimap.sheet",
+            cell(256.0, 576.0, 64.0),
+            Color::WHITE,
+            16.0,
+        )),
         _ => None,
     }
 }

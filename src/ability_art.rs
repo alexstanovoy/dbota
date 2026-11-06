@@ -85,9 +85,9 @@ pub fn art_of(id: AbilityId) -> AbilityArt {
             flight: Flight::Soul,
             ..PLAIN
         },
-        // Dota's ACT_DOTA_GENERIC_CHANNEL_1, the channel at an Outpost or a
-        // Watcher.
-        AbilityId::CAPTURE | AbilityId::LAMP_USE => AbilityArt {
+        // Dota's ACT_DOTA_GENERIC_CHANNEL_1, the channel at an Outpost, a
+        // Watcher or a Twin Gate (twin_gate_portal_warp's AbilityCastAnimation).
+        AbilityId::CAPTURE | AbilityId::LAMP_USE | AbilityId::TWIN_GATE_WARP => AbilityArt {
             channel: Some("channel"),
             ..PLAIN
         },

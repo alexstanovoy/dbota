@@ -52,7 +52,7 @@ pub const LAST_USE_TEXT: &str = "dbota last use 1\n";
 pub const MAX_STAMP: u64 = 4096;
 
 /// Bumped when the importer's output changes for the same install; part of a cache's stamp.
-pub const IMPORT_REV: u32 = 37;
+pub const IMPORT_REV: u32 = 38;
 
 /// The manifest this build imports and draws, and its ids.
 pub const MANIFEST: &str = include_str!("../../../assets-manifest/manifest.txt");
@@ -157,9 +157,9 @@ const NOT_LAYERS: [&str; 3] = ["refl", "specular", "height"];
 pub const MAP_PROPS: [&str; 1] = ["shopkeeper"];
 
 /// The world's nodes the client leaves out of `mid.gltf`: the trees, buildings and map objectives
-/// (Watchers, Outposts, Shrines of Wisdom, Lotus Pools) it spawns itself as units, and the
-/// end-game cameras.
-pub const NOT_IN_WORLD: [&str; 21] = [
+/// (Watchers, Outposts, Shrines of Wisdom, Lotus Pools, Twin Gates) it spawns itself as units, and
+/// the end-game cameras.
+pub const NOT_IN_WORLD: [&str; 22] = [
     "tree_",
     "dire_tree",
     "radiant_tower",
@@ -178,6 +178,7 @@ pub const NOT_IN_WORLD: [&str; 21] = [
     "outpost",
     "xp_shrine",
     "fountain_of_life",
+    "team_portal",
     "shopkeeper",
     "bad_ancient_destruction_camera",
     "radiant_endcam",

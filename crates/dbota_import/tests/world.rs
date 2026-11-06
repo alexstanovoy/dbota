@@ -105,6 +105,61 @@ fn trees_and_buildings_match_the_exported_ones() {
     .unwrap();
 }
 
+/// The Twin Gates bota stands are the install's own: each `npc_dota_unit_twin_gate` of the map's
+/// entities where bota places one (shifted by half the map, to the hundredth of a unit), facing
+/// its yaw (to the brad), and in the look the server gives it (`npc_dota_portal1` the Dire's).
+#[test]
+#[ignore = "needs a local Dota 2 install"]
+fn twin_gates_stand_where_the_install_places_them() {
+    let src = DirSource::new(find_game_dir(None).expect("Dota 2 not found"));
+    let map = Vpk::open(&src, "maps/dota.vpk").unwrap();
+    let lump = entities(&src, &map);
+    let number = |v: &heatel::kv3::Value| v.as_f64().unwrap();
+    let mut placed: Vec<(i64, i64, u16, bota_proto::Team)> = lump
+        .entities
+        .iter()
+        .filter(|e| {
+            e.get("classname").and_then(heatel::kv3::Value::as_str)
+                == Some("npc_dota_unit_twin_gate")
+        })
+        .map(|e| {
+            let origin = e.get("origin").and_then(|o| o.as_array()).unwrap();
+            let yaw = number(&e.get("angles").and_then(|a| a.as_array()).unwrap()[1]);
+            let hundredths = |dota: f64| ((dota + 9216.0) * 100.0).round() as i64;
+            let name = e
+                .get("targetname")
+                .and_then(heatel::kv3::Value::as_str)
+                .unwrap();
+            let look = if name.ends_with("npc_dota_portal1") {
+                bota_proto::Team::Dire
+            } else {
+                bota_proto::Team::Radiant
+            };
+            (
+                hundredths(number(&origin[0])),
+                hundredths(number(&origin[1])),
+                (yaw.rem_euclid(360.0) / 360.0 * 65536.0).round() as u16,
+                look,
+            )
+        })
+        .collect();
+    placed.sort();
+    let hundredths = |v: bota_proto::Fixed| (i64::from(v.raw) * 100 + (1 << 15)) >> 16;
+    let mut ours: Vec<(i64, i64, u16, bota_proto::Team)> = bota_core::DOTA_TWIN_GATES
+        .iter()
+        .map(|g| {
+            (
+                hundredths(g.at.x),
+                hundredths(g.at.y),
+                g.facing.brads,
+                g.look,
+            )
+        })
+        .collect();
+    ours.sort();
+    assert_eq!(ours, placed);
+}
+
 /// The texture stems (`x_psd_1234abcd`) reachable from `roots` through external references
 /// (model → material → texture), read from `packages`.
 fn texture_closure(src: &DirSource, packages: &[&Vpk], roots: &[String]) -> BTreeSet<String> {

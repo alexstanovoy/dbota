@@ -169,7 +169,8 @@ fn subject_fits(fx: &Fx, subject: &Subject) -> Result<(), String> {
         | Trigger::Pluck
         | Trigger::Captured
         | Trigger::Channelled
-        | Trigger::Gathering => {
+        | Trigger::Gathering
+        | Trigger::Warp => {
             matches!(subject, Subject::Units(_))
         }
         Trigger::Spawn | Trigger::Activate => matches!(subject, Subject::Runes(_)),
