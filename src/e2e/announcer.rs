@@ -30,6 +30,7 @@ fn denied(unit: u32) -> EventKind {
         gold: 0,
         bounty: None,
         assists: 0,
+        awards: None,
     }
 }
 

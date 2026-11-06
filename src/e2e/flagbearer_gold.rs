@@ -327,3 +327,68 @@ fn gold_receipts(client: &Client) -> Vec<i32> {
     amounts.sort_unstable();
     amounts
 }
+
+#[test]
+fn an_unseen_kill_receipt_draws_one_gold_caption_over_its_recipient() {
+    use bota_proto::{EntityId, EventKind, GoldAward, GoldAwardKind, ServerMsg};
+    let server = Server::start(1, &[]);
+    let mut client = Client::join(&server, HeroId::SHADOW_FIEND, &[]);
+    client.follow_me();
+    // Exercise an unseen wire fact in a real match: no victim transform or feed row is supplied.
+    let unseen = EntityId {
+        idx: 50_000,
+        generation: 1,
+    };
+    assert!(client.core().known(unseen).is_none());
+    let hero = client.me().id;
+    let recipient = client.core().my_slot.expect("own seat");
+    let team = client.me().team;
+    server.frozen(|| {
+        let tick = client.tick() + 1;
+        let mut view = client.view().clone();
+        view.tick = tick;
+        client.core_mut().handle(ServerMsg::Snapshot { view });
+        client.core_mut().handle(ServerMsg::Events {
+            tick,
+            events: vec![EventKind::Died {
+                unit: unseen,
+                killer: Some(hero),
+                denied: false,
+                gold: 0,
+                bounty: Some(37),
+                assists: 0,
+                awards: Some(Box::new(vec![GoldAward {
+                    recipient,
+                    team,
+                    kind: GoldAwardKind::KillBounty,
+                    amount: 37,
+                }])),
+            }],
+        });
+        assert!(
+            client.core().told.iter().any(|event| matches!(event,
+            EventKind::Died { unit, .. } if *unit == unseen)),
+            "the stream accepted the unseen death receipt"
+        );
+        assert_eq!(
+            gold_receipts(&client),
+            [37],
+            "the unseen kill credit is not dropped"
+        );
+        let receipt = client
+            .core()
+            .floaters
+            .iter()
+            .find(|floater| floater.kind == bota_client_core::FloaterKind::Gold)
+            .expect("gold caption");
+        assert_eq!(
+            receipt.unit, hero,
+            "the recipient supplies the drawn anchor"
+        );
+        client.until("the unseen kill's gold caption is drawn", |client| {
+            crate::bars::drawn_gold_popups(client.world_mut()) == [37]
+        });
+        assert_eq!(crate::bars::drawn_gold_popups(client.world_mut()), [37]);
+        assert!(crate::feed::shown(client.world_mut()).is_empty());
+    });
+}
