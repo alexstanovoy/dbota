@@ -6,7 +6,9 @@ use std::time::Duration;
 use bevy::input::ButtonState;
 use bevy::prelude::*;
 use bota_client_core::{Refused, Undeniable};
-use bota_proto::{Cheat, EntityId, HeroId, Order, Target, UnitKind, Vec2 as At};
+use bota_proto::{
+    Cheat, CreepSide, EntityId, HeroId, ModifierSpec, Order, Target, Team, UnitKind, Vec2 as At,
+};
 
 use super::harness::{Client, MID, Server};
 
@@ -81,6 +83,9 @@ fn among_creeps_with(extra: &[&str]) -> (Server, Client) {
 /// above it. A creep near the line could cross it between the snapshot the click was decided on
 /// and the one the test reads afterwards, and the click would be right about a health the test
 /// no longer sees: the clicks go to creeps whose side of the line the next ticks cannot change.
+/// A worn creep is also kept from death: one within a tenth of its health could fall before the
+/// hero's blow lands, and then nobody denies it. The one with least health goes: the fewer blows
+/// it takes, the sooner the deny.
 fn ally_creep(client: &Client, low: bool) -> Option<EntityId> {
     let mine = client.me().team;
     client
@@ -90,12 +95,13 @@ fn ally_creep(client: &Client, low: bool) -> Option<EntityId> {
         .filter(|u| u.team == mine && u.kind == UnitKind::CreepMelee && u.hp > 0)
         .filter(|u| {
             if low {
-                10 * u.hp < 4 * u.max_hp
+                u.max_hp < 10 * u.hp && 10 * u.hp < 4 * u.max_hp
             } else {
                 10 * u.hp > 6 * u.max_hp
             }
         })
-        .find(|u| client.body(u.id).is_some())
+        .filter(|u| client.body(u.id).is_some())
+        .min_by_key(|u| u.hp)
         .map(|u| u.id)
 }
 
@@ -159,6 +165,18 @@ fn right_click_allies_follows_attacks_or_denies_as_set() {
 #[test]
 fn a_default_right_click_denies_a_worn_creep_and_follows_a_healthy_one() {
     let (_server, mut client) = among_creeps_with(&[]);
+    // The lane's creeps march on and the enemy wave wears them down while the hero closes in, so
+    // a worn creep could leave or fall before a blow of the normal strength lands: the hero's
+    // blows are made strong enough to deny a worn creep with the first.
+    let me = client.me().id;
+    client.cheat(Cheat::ApplyModifier {
+        target: Target::Unit(me),
+        spec: ModifierSpec {
+            physical_damage: ModifierSpec::MAX_SCALE,
+            ..ModifierSpec::NOMINAL
+        },
+        ticks: 100_000,
+    });
     let click_creep = |client: &mut Client, low: bool| loop {
         client.until("an allied creep", |c| ally_creep(c, low).is_some());
         let creep = ally_creep(client, low).expect("there");
@@ -174,6 +192,17 @@ fn a_default_right_click_denies_a_worn_creep_and_follows_a_healthy_one() {
         }),
         "above half: a follow"
     );
+    // The enemy wave would keep wearing the allies down and finish the worn creep in the race
+    // for its last points: a deny is the hero's kill alone, so once a creep is worn the enemy
+    // goes.
+    client.until("an allied creep worn", |c| ally_creep(c, true).is_some());
+    client.cheat(Cheat::KillCreeps {
+        which: match client.me().team {
+            Team::Radiant => CreepSide::Dire,
+            Team::Dire => CreepSide::Radiant,
+            Team::Neutral => unreachable!("a hero is on a side"),
+        },
+    });
     let worn = click_creep(&mut client, true);
     assert_eq!(
         last_order(&client),
