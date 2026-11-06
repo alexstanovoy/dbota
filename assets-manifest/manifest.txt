@@ -1044,6 +1044,8 @@ sound sound.portal.loop_appear sounds/ui/portal_loop.vsnd_c sounds/ui/portal_loo
 sound sound.portal.loop_disappear sounds/ui/portal_loop_alt.vsnd_c sounds/ui/portal_loop_alt.wav event=Portal.Loop_Disappear
 sound sound.portal.hero_appear sounds/ui/portal_appear.vsnd_c sounds/ui/portal_appear.wav event=Portal.Hero_Appear
 sound sound.portal.hero_disappear sounds/ui/portal_disappear.vsnd_c sounds/ui/portal_disappear.wav event=Portal.Hero_Disappear
+sound sound.shop.available sounds/ui/shop_available.vsnd_c sounds/ui/shop_available.wav event=Shop.Available
+sound sound.shop.unavailable sounds/ui/shop_unavailable.vsnd_c sounds/ui/shop_unavailable.wav event=Shop.Unavailable
 
 # HUD and announcer. sound.level_up above is General.LevelUp; sound.click above is the old General.ButtonClick,
 # sound.ui.click the Panorama button click. The horn is two positional sounds in Dota (one at each ancient,

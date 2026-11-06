@@ -79,6 +79,9 @@ enum Kind {
     Ping,
     PingDanger,
     PingDangerLayer,
+    /// The hero one plays coming into the range of a shop, and going out of it.
+    ShopAvailable,
+    ShopUnavailable,
 }
 
 /// The sound of a row.
@@ -343,6 +346,8 @@ fn sources_of(kind: Kind, manifest: &Manifest) -> Vec<String> {
         Kind::Ping => named(&["sound.ping.regular"]),
         Kind::PingDanger => named(&["sound.ping.danger"]),
         Kind::PingDangerLayer => named(&["sound.ping.warning_layer"]),
+        Kind::ShopAvailable => named(&["sound.shop.available"]),
+        Kind::ShopUnavailable => named(&["sound.shop.unavailable"]),
     }
 }
 
@@ -369,6 +374,8 @@ fn load(mut voices: ResMut<Voices>, manifest: Res<Manifest>, server: Res<AssetSe
         Kind::Ping,
         Kind::PingDanger,
         Kind::PingDangerLayer,
+        Kind::ShopAvailable,
+        Kind::ShopUnavailable,
     ])
     .chain(Row::all().into_iter().map(Kind::Row));
     for kind in kinds {
@@ -529,6 +536,7 @@ fn play(
     args: Res<crate::Args>,
     mut last_ping: Local<Option<bota_proto::Heard>>,
     mut queued: Local<QueuedBuys>,
+    mut shops: Local<ShopWatch>,
 ) {
     for (_, voice) in &mut voices.0 {
         voice.rest = (voice.rest - time.delta_secs()).max(0.0);
@@ -551,6 +559,11 @@ fn play(
         sounder.sound(Kind::Cue(CueKind::Buy), BUY_GAIN, None, None);
     }
     queued.spoken = sounder.cues(pending.0.drain(..), spoken, &sight);
+    match shop_change(core, &mut shops, time.elapsed_secs()) {
+        Some(true) => sounder.sound(Kind::ShopAvailable, 1.0, None, None),
+        Some(false) => sounder.sound(Kind::ShopUnavailable, 1.0, None, None),
+        None => {}
+    }
     shots(core, sight.fog(), &mut sounder);
     swings(core, sight.fog(), &mut sounder);
     // A ping is heard by its side wherever the camera is, as Dota's are.
@@ -673,6 +686,63 @@ fn ended_humming(
         .copied()
         .chain(untold.map(|slot| (slot, false)))
         .collect()
+}
+
+/// Seconds a change of the hero's range of a shop must hold before it sounds, so a hero
+/// walking along the edge of the range does not chime on every step.
+const SHOP_SETTLE: f32 = 0.25;
+
+/// What the sounds of the shops are told by: whether the hero one plays is in the range of a
+/// shop, as of the last look.
+#[derive(Default)]
+struct ShopWatch {
+    /// Where the hero was last known to stand: none before the first look of a match.
+    near: Option<bool>,
+    /// A change not yet held for [`SHOP_SETTLE`]: where it goes and since when.
+    changing: Option<(bool, f32)>,
+}
+
+impl ShopWatch {
+    /// Takes one look: `looked` is none while no match is in view (the watch forgets, so the next
+    /// match's first look only learns where its hero stands) or while the hero lies dead (it
+    /// keeps the state it fell in), else whether the hero is in the range of a shop. The change
+    /// to sound, once it has held.
+    fn look(&mut self, in_match: bool, looked: Option<bool>, now: f32) -> Option<bool> {
+        if !in_match {
+            *self = ShopWatch::default();
+            return None;
+        }
+        let near = looked?;
+        let Some(was) = self.near else {
+            self.near = Some(near);
+            return None;
+        };
+        if near == was {
+            self.changing = None;
+            return None;
+        }
+        let since = match self.changing {
+            Some((to, since)) if to == near => since,
+            _ => now,
+        };
+        self.changing = Some((near, since));
+        if now - since < SHOP_SETTLE {
+            return None;
+        }
+        self.near = Some(near);
+        self.changing = None;
+        Some(near)
+    }
+}
+
+/// Whether the hero one plays has come into the range of a shop (`Some(true)`) or gone out of it
+/// (`Some(false)`), as Dota sounds it: the home shop's, or a secret shop's (the courier's range
+/// does not count).
+fn shop_change(core: &bota_client_core::App, watch: &mut ShopWatch, now: f32) -> Option<bool> {
+    let looked = core
+        .my_standing_hero()
+        .map(|hero| core.at_home_shop() || core.unit_at_secret_shop(hero));
+    watch.look(core.view().is_some(), looked, now)
 }
 
 /// The shots of creeps and towers that let a missile go this tick.
@@ -804,6 +874,76 @@ fn report(voices: Res<Voices>, server: Res<AssetServer>, mut parts: ResMut<crate
 mod tests {
     use super::*;
     use bota_proto::{EntityId, Team};
+
+    /// Looks at the shops once a second as long as `looks` lasts: `(in match, near)`.
+    fn watched(watch: &mut ShopWatch, looks: &[(bool, Option<bool>)]) -> Vec<Option<bool>> {
+        looks
+            .iter()
+            .enumerate()
+            .map(|(second, (in_match, near))| watch.look(*in_match, *near, second as f32))
+            .collect()
+    }
+
+    #[test]
+    fn a_hero_starting_in_a_shop_hears_nothing_and_leaving_then_returning_sounds_each_once() {
+        let mut watch = ShopWatch::default();
+        let heard = watched(
+            &mut watch,
+            &[
+                (true, Some(true)),
+                (true, Some(true)),
+                (true, Some(false)),
+                (true, Some(false)),
+                (true, Some(true)),
+                (true, Some(true)),
+            ],
+        );
+        assert_eq!(
+            heard,
+            [None, None, None, Some(false), None, Some(true)],
+            "the change sounds once it has held for a look"
+        );
+    }
+
+    #[test]
+    fn a_hero_stepping_along_the_edge_of_the_range_does_not_chime() {
+        let mut watch = ShopWatch::default();
+        let mut heard = vec![watch.look(true, Some(true), 0.0)];
+        for step in 1..40 {
+            let near = step % 2 == 0;
+            heard.push(watch.look(true, Some(near), step as f32 * 0.1));
+        }
+        assert!(heard.iter().all(Option::is_none), "{heard:?}");
+    }
+
+    #[test]
+    fn a_dead_hero_keeps_the_state_it_fell_in() {
+        let mut watch = ShopWatch::default();
+        let heard = watched(
+            &mut watch,
+            &[
+                (true, Some(false)),
+                (true, None),
+                (true, None),
+                (true, Some(false)),
+            ],
+        );
+        assert_eq!(
+            heard, [None; 4],
+            "dying away from the shop and standing there again"
+        );
+    }
+
+    #[test]
+    fn a_second_match_starting_in_the_shop_does_not_inherit_the_first_ones_state() {
+        let mut watch = ShopWatch::default();
+        let first = watched(&mut watch, &[(true, Some(false)), (true, Some(false))]);
+        let between = watched(&mut watch, &[(false, None), (false, None)]);
+        let second = watched(&mut watch, &[(true, Some(true)), (true, Some(true))]);
+        assert_eq!(first, [None; 2]);
+        assert_eq!(between, [None; 2]);
+        assert_eq!(second, [None; 2], "the first look of a match only learns");
+    }
 
     fn teleport(slot: u8) -> TeleportView {
         TeleportView {
