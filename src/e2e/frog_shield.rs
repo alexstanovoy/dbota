@@ -11,6 +11,24 @@ fn a_marshmages_water_bubble_draws_its_shield_around_the_hurt_ally() {
 }
 
 #[test]
+#[should_panic(expected = "drawn radius")]
+fn the_shield_radius_guard_rejects_a_hundredfold_error_in_the_drawn_scale() {
+    with_bubble(|client, frog| {
+        // Deliberately corrupt the submitted model frame, without changing its CP1.
+        // This is a negative control of the same quantitative guard used by the real cast.
+        let sphere = visible_bubbles(client)[0];
+        {
+            let mut transform = client
+                .world_mut()
+                .get_mut::<GlobalTransform>(sphere)
+                .expect("sphere frame");
+            *transform = transform.mul_transform(Transform::from_scale(Vec3::splat(0.01)));
+        }
+        assert_drawn_bubbles(client, frog);
+    });
+}
+
+#[test]
 fn a_bubble_keeps_its_last_radius_while_the_recipient_scene_is_rebuilt() {
     with_bubble(|client, frog| {
         let before = bubble_radius(client);
@@ -67,8 +85,13 @@ fn a_bubble_with_unavailable_bounds_uses_a_visible_selection_volume_fallback() {
             before + 1,
             "missing imported bounds must not silently prevent the effect from starting"
         );
-        assert!(bubble_radius(client).is_finite());
-        assert!(bubble_radius(client) > 1.0);
+        let unit = client.view().unit(frog).expect("recipient");
+        let (radius, height) = crate::units::unit_size(unit.kind, unit.bound.to_f32());
+        let expected = Vec3::new(radius, radius, height * 0.5).length();
+        assert!(
+            (bubble_radius(client) - expected).abs() < 0.001,
+            "missing metadata uses the selection box's half-diagonal {expected}"
+        );
         assert_eq!(visible_bubbles(client).len(), 2);
     });
 }
@@ -152,10 +175,6 @@ fn assert_drawn_bubbles(client: &mut Client, frog: EntityId) {
             .world()
             .get::<GlobalTransform>(sphere)
             .expect("sphere frame");
-        assert!(
-            transform.to_scale_rotation_translation().0.min_element() > 1.0,
-            "the shield has a real radius, not the zero-CP epsilon: {transform:?}"
-        );
         let drawn_radius = model_radius * transform.to_scale_rotation_translation().0.max_element();
         // The nominal 8-unit sphere's packed vertices stop slightly short of its axes.
         // Allow 2% for that tessellation and float conversion, never arbitrary undersizing.
@@ -188,7 +207,7 @@ fn sphere_radius_metres(client: &Client) -> f32 {
         .resource::<crate::particles::Library>()
         .models
         .iter()
-        .find(|m| m.file.ends_with("/sphere_skin5.glb"))
+        .find(|m| m.file.ends_with("/sphere.vmdl.skin5.glb"))
         .expect("sphere skin");
     let glb = std::fs::read(world.resource::<crate::Args>().cache_dir.join(&model.file))
         .expect("sphere GLB");
@@ -324,7 +343,7 @@ fn visible_bubbles(client: &mut Client) -> Vec<Entity> {
         .resource::<crate::particles::Library>()
         .models
         .iter()
-        .find(|m| m.file.ends_with("/sphere_skin5.glb"))
+        .find(|m| m.file.ends_with("/sphere.vmdl.skin5.glb"))
         .expect("bubble's selected skin")
         .gltf
         .clone();

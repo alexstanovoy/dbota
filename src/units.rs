@@ -460,7 +460,7 @@ fn render_radius(gltf: &Gltf, gltf_meshes: &Assets<GltfMesh>) -> Option<f32> {
     }
     #[derive(serde::Deserialize)]
     struct Extras {
-        render_bounds: Bounds,
+        render_bounds: Option<Bounds>,
     }
     let (mut low, mut high) = (Vec3::INFINITY, Vec3::NEG_INFINITY);
     for handle in &gltf.meshes {
@@ -468,11 +468,17 @@ fn render_radius(gltf: &Gltf, gltf_meshes: &Assets<GltfMesh>) -> Option<f32> {
         if mesh.primitives.is_empty() {
             continue;
         }
-        let metadata = &mesh.extras.as_ref()?.value;
+        // Empty used buffers have no bounds, even when the source listed a primitive.
+        let Some(extras) = &mesh.extras else {
+            continue;
+        };
+        let metadata = &extras.value;
         if metadata.len() > 1 << 20 {
             return None;
         }
-        let bounds = serde_json::from_str::<Extras>(metadata).ok()?.render_bounds;
+        let Some(bounds) = serde_json::from_str::<Extras>(metadata).ok()?.render_bounds else {
+            continue;
+        };
         let (min, max) = (Vec3::from(bounds.min), Vec3::from(bounds.max));
         if !min.is_finite() || !max.is_finite() || !min.cmple(max).all() {
             return None;
@@ -1418,6 +1424,50 @@ fn report(bank: Res<ModelBank>, mut parts: ResMut<crate::loading::Parts>) {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
+
+    #[test]
+    fn empty_buffer_meshes_do_not_discard_other_meshes_render_bounds() {
+        use bevy::gltf::{GltfExtras, GltfPrimitive};
+        let mesh = |extras| GltfMesh {
+            index: 0,
+            name: "test".to_owned(),
+            extras,
+            primitives: vec![GltfPrimitive {
+                index: 0,
+                parent_mesh_index: 0,
+                name: "empty or drawn".to_owned(),
+                mesh: Handle::default(),
+                material: None,
+                extras: None,
+                material_extras: None,
+            }],
+        };
+        let mut meshes = Assets::default();
+        let valid = meshes.add(mesh(Some(GltfExtras {
+            value: r#"{"render_bounds":{"min":[10,20,30],"max":[12,24,36]}}"#.to_owned(),
+        })));
+        let empty = meshes.add(mesh(None));
+        let gltf = Gltf {
+            meshes: vec![valid, empty],
+            scenes: Vec::new(),
+            named_scenes: Default::default(),
+            named_meshes: Default::default(),
+            materials: Vec::new(),
+            named_materials: Default::default(),
+            nodes: Vec::new(),
+            named_nodes: Default::default(),
+            skins: Vec::new(),
+            named_skins: Default::default(),
+            default_scene: None,
+            animations: Vec::new(),
+            named_animations: Default::default(),
+            source: None,
+        };
+        assert_eq!(
+            render_radius(&gltf, &meshes),
+            Some(Vec3::new(2.0, 4.0, 6.0).length() * 0.5)
+        );
+    }
 
     /// A hero unit of no seat, as a server or a replay may send any number of.
     fn stray_hero(idx: u32) -> UnitView {

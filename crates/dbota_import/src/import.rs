@@ -52,7 +52,7 @@ pub const LAST_USE_TEXT: &str = "dbota last use 1\n";
 pub const MAX_STAMP: u64 = 4096;
 
 /// Bumped when the importer's output changes for the same install; part of a cache's stamp.
-pub const IMPORT_REV: u32 = 40;
+pub const IMPORT_REV: u32 = 41;
 
 /// The manifest this build imports and draws, and its ids.
 pub const MANIFEST: &str = include_str!("../../../assets-manifest/manifest.txt");
@@ -1490,22 +1490,15 @@ fn export_particle_skins(
 }
 
 fn particle_model_path(dir: &str, vmdl: &str, skin: usize) -> String {
-    let name = vmdl
-        .strip_prefix("models/")
-        .unwrap_or(vmdl)
-        .trim_end_matches(".vmdl");
-    let suffix = if skin == 0 {
-        String::new()
-    } else {
-        format!("_skin{skin}")
-    };
-    join(dir, &format!("models/{name}{suffix}.glb"))
+    // Retain the complete source name and extension. A model named x_skin5.vmdl
+    // must remain distinct from material group 5 of x.vmdl.
+    join(dir, &format!("{vmdl}.skin{skin}.glb"))
 }
 
 fn particle_skin_indices(selector: &FloatInput, count: usize) -> std::ops::Range<usize> {
     const MAX_SKINS: usize = 64;
     // Unsupported selectors retain the default material rather than dropping the renderer.
-    // The install guard pins the largest shipped table (currently 14) below this work bound.
+    // The install guard checks every imported table against this work bound.
     match selector {
         FloatInput::Literal(value)
             if value.is_finite() && (0.0..MAX_SKINS as f32).contains(value) =>
@@ -2167,15 +2160,48 @@ fn image(
 mod particle_model_tests {
     use super::*;
 
+    struct Discard;
+    impl Sink for Discard {
+        fn write(&mut self, _: &str, _: &[u8]) -> Result<()> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    #[ignore = "needs a local Dota 2 install"]
+    fn particle_model_import_runs_on_the_in_app_workers_two_mib_stack() {
+        std::thread::Builder::new()
+            .name("particle_import".to_owned())
+            .stack_size(2 << 20)
+            .spawn(|| {
+                let game = heatel::find_game_dir(None).expect("install");
+                let mut plan = plan().expect("plan").clone();
+                plan.items
+                    .retain(|item| matches!(item, Item::Particle { .. }));
+                let report = run(
+                    crate::source::InstallSource::new(&game),
+                    &plan,
+                    &mut Discard,
+                    &mut |_| Flow::Continue,
+                )
+                .expect("particle import");
+                assert!(report.failed.is_empty(), "{:?}", report.failed);
+                assert!(
+                    report
+                        .files
+                        .keys()
+                        .any(|file| file.ends_with("/sphere.vmdl.skin5.glb")),
+                    "the worker must export the shield's selected material group"
+                );
+            })
+            .expect("worker")
+            .join()
+            .expect("particle import worker completes");
+    }
+
     #[test]
     #[ignore = "needs a local Dota 2 install"]
     fn repeated_model_renderers_do_not_repeat_source_reads_or_exports() {
-        struct Discard;
-        impl Sink for Discard {
-            fn write(&mut self, _: &str, _: &[u8]) -> Result<()> {
-                Ok(())
-            }
-        }
         let read = |count| {
             let src = Metered {
                 inner: heatel::DirSource::new(heatel::find_game_dir(None).expect("install")),
@@ -2230,6 +2256,14 @@ mod particle_model_tests {
         assert_ne!(first, second, "the full model path is the asset's identity");
         assert!(crate::import::safe_path(&first));
         assert!(crate::import::safe_path(&second));
+    }
+
+    #[test]
+    fn a_skin_suffix_in_a_model_name_cannot_alias_another_models_skin() {
+        assert_ne!(
+            particle_model_path("particles", "models/x.vmdl", 5),
+            particle_model_path("particles", "models/x_skin5.vmdl", 0)
+        );
     }
 
     #[test]

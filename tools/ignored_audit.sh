@@ -10,7 +10,7 @@ cd "$here"
 bad=0
 while IFS= read -r file; do
     case "$file" in
-        crates/dbota_import/tests/*) ;; # gate step install-tests: cargo test -p dbota_import -- --ignored
+        crates/dbota_import/tests/* | crates/dbota_import/src/*) ;; # gate step install-tests: cargo test -p dbota_import -- --ignored
         src/tip_content.rs) ;;          # gate step tip-content
         src/e2e/memory.rs) ;;           # run in a process of its own by its test clients_one_after_another_leave_no_memory_behind
         src/fog/clarity_render.rs)

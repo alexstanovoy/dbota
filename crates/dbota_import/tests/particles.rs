@@ -176,40 +176,135 @@ fn particle_models_import_the_skin_selected_by_the_installed_renderer() {
     std::fs::remove_dir_all(folder).expect("scratch removed");
 }
 
-/// Geometry copies are currently limited to selected literal groups: 35 model/group pairs
-/// from 32 paths, about 1.97 MB of GLBs and 1120 pooled roots. A computed selector must not
-/// silently turn a large material table into hundreds of extra scene instances.
+/// Manifest and map effects share the client's model budget. Count unique geometry files,
+/// including output directories and aliases whose absent material group resolves to zero.
 #[test]
 #[ignore = "needs a local Dota 2 install"]
 fn installed_particle_models_fit_the_skin_and_geometry_budget() {
-    use heatel::particle::{FloatInput, Renderer};
     let source = DirSource::new(find_game_dir(None).expect("local install"));
     let pak = Vpk::open(&source, "pak01_dir.vpk").expect("VPK");
-    let mut queue: Vec<_> = include_str!("../../../assets-manifest/manifest.txt")
-        .lines()
-        .filter_map(|line| {
-            let mut words = line.split_whitespace();
-            (words.next() == Some("particle")).then(|| {
-                words
-                    .nth(1)
-                    .expect("source")
-                    .trim_end_matches("_c")
-                    .to_owned()
-            })
-        })
-        .collect();
+    let requests = installed_model_requests(&source, &pak);
+    assert!(
+        !requests.is_empty(),
+        "the guard must inspect installed models"
+    );
+    let mut counts = BTreeMap::new();
+    let mut geometry = BTreeSet::new();
+    let mut selected = 0;
+    for ((dir, model), selectors) in &requests {
+        let count = *counts.entry(model.clone()).or_insert_with(|| {
+            let bytes = pak
+                .read_file(&source, &format!("{model}_c"))
+                .expect("model");
+            let data = Resource::parse(&bytes)
+                .expect("resource")
+                .data()
+                .expect("DATA")
+                .expect("model data");
+            data.get("m_materialGroups")
+                .and_then(heatel::kv3::Value::as_array)
+                .map_or(1, |g| g.len().max(1))
+        });
+        assert!(
+            count <= 64,
+            "{model}: {count} groups need an explicit budget review"
+        );
+        for selector in selectors {
+            let indices = match selector {
+                Some(skin) => usize::from(*skin)..usize::from(*skin) + 1,
+                None => 0..count,
+            };
+            for skin in indices {
+                selected += 1;
+                geometry.insert((dir, model, if skin < count { skin } else { 0 }));
+            }
+        }
+    }
+    assert!(
+        geometry.len() <= 64,
+        "{} geometry variants exceed the shared client budget",
+        geometry.len()
+    );
+    eprintln!(
+        "particle models including map ambient: {} source paths, {} directory/model pairs, {selected} selected groups, {} unique geometry files, max {} groups; {} total pooled roots, {} extra roots from skins",
+        counts.len(),
+        requests.len(),
+        geometry.len(),
+        counts.values().max().expect("tables"),
+        geometry.len() * 32,
+        (geometry.len() - requests.len()) * 32
+    );
+}
+
+fn installed_particle_roots(source: &DirSource) -> Vec<(String, String)> {
+    use heatel::world::EntityLump;
+    let mut roots = Vec::new();
+    let mut ambient_count = 0;
+    for line in include_str!("../../../assets-manifest/manifest.txt").lines() {
+        let words: Vec<_> = line.split_whitespace().collect();
+        if words.first() == Some(&"particle") {
+            let dir = words[3].rsplit_once('/').map_or("", |(dir, _)| dir);
+            roots.push((words[2].trim_end_matches("_c").to_owned(), dir.to_owned()));
+        }
+        if words.first() != Some(&"world") || !words.iter().any(|w| w.starts_with("ambient=")) {
+            continue;
+        }
+        let vpk = words
+            .iter()
+            .find_map(|w| w.strip_prefix("vpk="))
+            .expect("map VPK");
+        let map = Vpk::open(source, vpk).expect("map");
+        let bytes = map.read_file(source, words[2]).expect("world");
+        let world = Resource::parse(&bytes)
+            .expect("world resource")
+            .data()
+            .expect("DATA")
+            .expect("world data");
+        let lump = world
+            .get("m_entityLumps")
+            .and_then(heatel::kv3::Value::as_array)
+            .and_then(|v| v.first())
+            .and_then(heatel::kv3::Value::as_str)
+            .expect("default entity lump");
+        let bytes = map.read_file(source, &format!("{lump}_c")).expect("lump");
+        let lump =
+            EntityLump::read(&Resource::parse(&bytes).expect("lump resource")).expect("entities");
+        let (_, effects) = dbota_import::text::ambient_txt(&lump.entities);
+        ambient_count += effects.len();
+        roots.extend(
+            effects
+                .into_iter()
+                .map(|path| (path, "particles/map".to_owned())),
+        );
+    }
+    assert!(
+        ambient_count > 0,
+        "the guard must include installed map emitters"
+    );
+    roots
+}
+
+type ModelRequests = BTreeMap<(String, String), BTreeSet<Option<u16>>>;
+
+fn installed_model_requests(source: &DirSource, pak: &Vpk) -> ModelRequests {
+    use heatel::particle::{FloatInput, Renderer};
+    let mut queue = installed_particle_roots(source);
     let mut seen = BTreeSet::new();
-    let mut models = BTreeSet::new();
-    let mut pairs = BTreeSet::new();
-    while let Some(path) = queue.pop() {
-        if !seen.insert(path.clone()) {
+    let mut requests = ModelRequests::new();
+    while let Some((path, dir)) = queue.pop() {
+        if !seen.insert((path.clone(), dir.clone())) {
             continue;
         }
         let bytes = pak
-            .read_file(&source, &format!("{path}_c"))
+            .read_file(source, &format!("{path}_c"))
             .expect("particle");
         let system = System::read(&Resource::parse(&bytes).expect("resource")).expect("system");
-        queue.extend(system.children.iter().map(|child| child.path.clone()));
+        queue.extend(
+            system
+                .children
+                .iter()
+                .map(|child| (child.path.clone(), dir.clone())),
+        );
         for renderer in system.renderers {
             let Renderer::Models(model) = renderer.class else {
                 continue;
@@ -217,52 +312,23 @@ fn installed_particle_models_fit_the_skin_and_geometry_budget() {
             if model.model_input.is_some() {
                 continue;
             }
-            let FloatInput::Literal(skin) = model.skin else {
-                panic!("{path}: computed skins need a material-only variant/budget review");
-            };
-            let skin = if skin.is_finite() && (0.0..64.0).contains(&skin) {
-                skin as u16
-            } else {
-                0
+            let skin = match model.skin {
+                FloatInput::Literal(value) => {
+                    Some(if value.is_finite() && (0.0..64.0).contains(&value) {
+                        value as u16
+                    } else {
+                        0
+                    })
+                }
+                _ => None,
             };
             for name in model.paths() {
-                models.insert(name.to_owned());
-                pairs.insert((name.to_owned(), skin));
+                requests
+                    .entry((dir.clone(), name.to_owned()))
+                    .or_default()
+                    .insert(skin);
             }
         }
     }
-    assert!(
-        !models.is_empty(),
-        "the guard must inspect installed models"
-    );
-    assert!(
-        pairs.len() <= 64,
-        "{} model variants exceed the client library capacity",
-        pairs.len()
-    );
-    let mut maximum = 0;
-    for model in &models {
-        let bytes = pak
-            .read_file(&source, &format!("{model}_c"))
-            .expect("model");
-        let data = Resource::parse(&bytes)
-            .expect("resource")
-            .data()
-            .expect("DATA")
-            .expect("model data");
-        let count = data
-            .get("m_materialGroups")
-            .and_then(heatel::kv3::Value::as_array)
-            .map_or(0, |groups| groups.len());
-        maximum = maximum.max(count);
-        assert!(
-            count <= 64,
-            "{model}: {count} material groups need an explicit budget review"
-        );
-    }
-    eprintln!(
-        "particle models: {} paths, {} selected groups, maximum {maximum} material groups",
-        models.len(),
-        pairs.len()
-    );
+    requests
 }

@@ -304,7 +304,8 @@ impl Library {
 
 impl Library {
     /// Models keyed by full `.vmdl` path and material-group index, each geometry file loaded
-    /// once. Exceeding the global geometry budget is an explicit import error.
+    /// once. A model exceeding the shared geometry budget is warned about and omitted;
+    /// the effect keeps its other renderers and previously loaded models.
     fn models(
         &mut self,
         root: &Value,
@@ -349,9 +350,10 @@ impl Library {
                     self.models.len() - 1
                 }
                 None => {
-                    return Err(format!(
-                        "particle models exceed {MAX_MODELS} loaded geometry variants"
-                    ));
+                    warn!(
+                        "particle model {vmdl} skin {skin}: shared geometry limit {MAX_MODELS} reached; this model omitted"
+                    );
+                    continue;
                 }
             };
             out.insert((vmdl.to_owned(), skin as u16), index as u16);

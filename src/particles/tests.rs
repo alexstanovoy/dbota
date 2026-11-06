@@ -179,6 +179,39 @@ fn model_draws_map_heatel_groups_to_loaded_geometry_and_cache_their_weights() {
     assert_eq!(draws[0].skins[1].total_weight, 2.0);
 }
 
+#[test]
+fn a_full_model_budget_drops_only_the_new_model_and_keeps_the_effect() {
+    use super::library::{Library, MAX_MODELS, ParticleModel};
+    use bevy::prelude::*;
+    let mut app = App::new();
+    app.add_plugins((MinimalPlugins, AssetPlugin::default()));
+    let server = app.world().resource::<AssetServer>();
+    let mut library = Library {
+        models: (0..MAX_MODELS)
+            .map(|i| ParticleModel {
+                file: format!("kept_{i}.glb"),
+                gltf: Handle::default(),
+            })
+            .collect(),
+        ..Library::default()
+    };
+    let system = model_skin_effect().defs[0].system.clone();
+    let bytes = serde_json::to_vec(&serde_json::json!({
+        "version": 3, "systems": [{"path": "example", "system": system}],
+        "models": [
+            {"vmdl": "models/overflow.vmdl", "file": "overflow.glb", "skin": 0},
+            {"vmdl": "models/example.vmdl", "file": "kept_0.glb", "skin": 0}
+        ]
+    }))
+    .expect("particle file");
+    library
+        .add("budget", &bytes, server)
+        .expect("one omitted model does not drop the effect");
+    assert_eq!(library.models.len(), MAX_MODELS);
+    let draw = &library.effect("budget").expect("effect kept").defs[0].model_draws[0];
+    assert_eq!(draw.skins[0].models, vec![(Some(0), 1.0)]);
+}
+
 /// A system of one burst of `count` particles and the functions given.
 fn bare(
     count: f32,

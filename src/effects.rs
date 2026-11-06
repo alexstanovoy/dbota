@@ -141,7 +141,7 @@ impl Shooters<'_, '_> {
             .find_map(|child| self.radii.get(child).ok())?;
         Some(radius.0.unwrap_or_else(|| {
             // Missing metadata was warned about when this scene loaded. Its selection
-            // cylinder gives an explicit visible fallback, rather than a zero-sized effect.
+            // box gives an explicit visible fallback, rather than a zero-sized effect.
             let (radius, height) = crate::units::unit_size(unit.kind, unit.bound.to_f32());
             radius.hypot(radius).hypot(height * 0.5)
         }))
