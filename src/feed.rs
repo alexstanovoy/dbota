@@ -17,39 +17,57 @@ const ROWS: usize = 8;
 /// Icons and texts a line holds at most, alternating, an icon first: a kill's killer, kill icon
 /// and victim, and up to four assists.
 const SLOTS: usize = 7;
-/// The styles below are those of Dota's combat event row (`dota_hud_combat_event_row.css`), in
-/// its pixels, which `dota` scales.
-/// Height of a row (`DOTACombatEventRow`) and the gap above it.
+// The styles below are Dota's, copied from two of its stylesheets in the install (the manifest's
+// `style` lines read only `@define` colours, not rule values like these, nor gradients), in its
+// pixels, which `dota` scales:
+//   ROW  = panorama/styles/hud/dota_hud_combat_event_row.vcss_c
+//   LIST = panorama/styles/hud/dota_hud_combat_events.vcss_c
+/// A colour as the stylesheets write it, `#rrggbbaa`.
+const fn hex(r: u8, g: u8, b: u8, a: u8) -> Color {
+    Color::srgba(
+        r as f32 / 255.0,
+        g as f32 / 255.0,
+        b as f32 / 255.0,
+        a as f32 / 255.0,
+    )
+}
+
+/// ROW `DOTACombatEventRow`: the height of a row and the gap above it (`margin-top`).
 const ROW_HEIGHT: f32 = 30.0;
 const ROW_GAP: f32 = 5.0;
-/// Size of a row's text (`.EventListLabel`: 18px bold white, shadowed).
-const LABEL_SIZE: f32 = 18.0;
-/// Width of a hero icon (`.CombatEventHeroIcon`), which the other icons of a line share here.
+/// ROW `.EventListLabel`: the size of a row's text (`font-size: 18px; font-weight: bold`, white,
+/// shadowed).
+pub(crate) const LABEL_SIZE: f32 = 18.0;
+/// ROW `.CombatEventHeroIcon`: the width of a hero icon, which the other icons of a line share here.
 const ICON: f32 = 24.0;
-/// The slanted end of a row (`#SlashContainer`), and the slanted bar of its team (`#TeamColorBar`).
+/// ROW `#SlashContainer` (`width`), and `#TeamColorBar` (`width`, `height`, `margin-left`,
+/// `margin-top`, `transform: rotateZ(25deg)`).
 const SLASH_WIDTH: f32 = 18.0;
 const BAR: (f32, f32) = (12.0, 44.0);
 const BAR_LEFT: f32 = 7.0;
-const BAR_TURN_DEGREES: f32 = 25.0;
-/// The shade behind every row and the tints of the side it is about (`.AllyEvent`, `.EnemyEvent`).
-pub(crate) const SHADE: Color = Color::srgba(0.0, 0.0, 0.0, 0.533);
-pub(crate) const ALLY_TINT: Color = Color::srgba(0.18, 0.2745, 0.149, 0.8);
-pub(crate) const ENEMY_TINT: Color = Color::srgba(0.357, 0.208, 0.145, 0.8);
-/// The ends of the bar's gradient, top to bottom, by side.
-pub(crate) const ALLY_BAR: [Color; 2] = [
-    Color::srgb(0.384, 0.624, 0.322),
-    Color::srgb(0.263, 0.431, 0.22),
-];
-pub(crate) const ENEMY_BAR: [Color; 2] = [
-    Color::srgb(0.82, 0.278, 0.122),
-    Color::srgb(0.643, 0.22, 0.098),
-];
-/// Seconds of a row's entrance (`@keyframes CombatEvent`: the row grows from a fifth to one and a
-/// half times its size in the first half, and settles to one, fading in) and of its exit
-/// (`toastExitDuration`), and how long the client keeps a line.
-const ENTER_SECONDS: f32 = 0.3;
-const EXIT_SECONDS: f32 = 0.2;
-const LINE_SECONDS: f32 = 8.0;
+const BAR_TOP: f32 = -6.0;
+pub(crate) const BAR_TURN_DEGREES: f32 = 25.0;
+/// ROW `.AllyEvent .EventListLabel` and `.EnemyEvent .EventListLabel`: the shade behind every row
+/// (`from( #00000088 )`) and the tints of the side it is about (`to( #2E4826cc )`, `to( #5B3525cc
+/// )`).
+pub(crate) const SHADE: Color = hex(0x00, 0x00, 0x00, 0x88);
+pub(crate) const ALLY_TINT: Color = hex(0x2E, 0x48, 0x26, 0xcc);
+pub(crate) const ENEMY_TINT: Color = hex(0x5B, 0x35, 0x25, 0xcc);
+/// ROW `.AllyEvent #TeamColorBar` and `.EnemyEvent #TeamColorBar`: the ends of the bar's
+/// gradient, top to bottom.
+pub(crate) const ALLY_BAR: [Color; 2] = [hex(0x62, 0x9f, 0x52, 0xff), hex(0x43, 0x6e, 0x38, 0xff)];
+pub(crate) const ENEMY_BAR: [Color; 2] = [hex(0xd1, 0x47, 0x1f, 0xff), hex(0xa4, 0x38, 0x19, 0xff)];
+/// LIST `#ToastManager > .ToastPanel`: the seconds of a row's entrance (`animation-duration: .41s`,
+/// `@keyframes 'CombatEvent'`, which ROW also holds: from a fifth of its size at 0 to one and a half
+/// at 50 % and one at 100 %, fading in over the first half); of the slide and fade of its coming
+/// and going (`transition-duration: toastExitDuration`, `@define toastExitDuration: 0.2s`); and the
+/// way it slides in from (`transform: translateX( -40px )`, mirrored with `.HUDFlipped`).
+pub(crate) const ENTER_SECONDS: f32 = 0.41;
+const SLIDE_SECONDS: f32 = 0.2;
+pub(crate) const SLIDE: f32 = 40.0;
+/// How long the client keeps a line: Dota's own script, which holds that, is not in the install's
+/// styles.
+const LINE_SECONDS: f32 = bota_client_core::FEED_LINE_SECONDS;
 
 /// One line of the feed, from the top.
 #[derive(Component)]
@@ -201,7 +219,7 @@ fn spawn_row(commands: &mut Commands, fonts: &Fonts, column: Entity, row: usize,
             Node {
                 position_type: PositionType::Absolute,
                 left: ui::dota(BAR_LEFT),
-                top: ui::dota(-6.0),
+                top: ui::dota(BAR_TOP),
                 width: ui::dota(BAR.0),
                 height: ui::dota(BAR.1),
                 display: Display::None,
@@ -266,8 +284,16 @@ fn entrance_scale(age: f32) -> f32 {
 /// seconds before the client drops the line.
 fn opacity_at(age: f32) -> f32 {
     let entering = (age / (ENTER_SECONDS / 2.0)).clamp(0.0, 1.0);
-    let leaving = ((LINE_SECONDS - age) / EXIT_SECONDS).clamp(0.0, 1.0);
+    let leaving = ((LINE_SECONDS - age) / SLIDE_SECONDS).clamp(0.0, 1.0);
     entering.min(leaving)
+}
+
+/// How far from its place a row is `age` seconds after it came, from 1 (the whole of [`SLIDE`])
+/// to 0, and again as it goes.
+fn displacement_at(age: f32) -> f32 {
+    let coming = 1.0 - (age / SLIDE_SECONDS).clamp(0.0, 1.0);
+    let going = 1.0 - ((LINE_SECONDS - age) / SLIDE_SECONDS).clamp(0.0, 1.0);
+    coming.max(going)
 }
 
 fn faded(color: Color, opacity: f32) -> Color {
@@ -309,7 +335,35 @@ impl Side {
     }
 }
 
-#[allow(clippy::type_complexity)]
+/// The parts of a row besides the row itself, which `show` dresses.
+#[derive(bevy::ecs::system::SystemParam)]
+struct Parts<'w, 's> {
+    slots: Query<
+        'w,
+        's,
+        (
+            &'static Slot,
+            Option<&'static mut ImageNode>,
+            Option<&'static mut Text>,
+            Option<&'static mut TextColor>,
+            &'static mut Node,
+        ),
+        (Without<Row>, Without<Slash>, Without<Bar>),
+    >,
+    slashes: Query<
+        'w,
+        's,
+        (&'static mut Node, &'static mut BackgroundColor),
+        (With<Slash>, Without<Row>, Without<Slot>, Without<Bar>),
+    >,
+    bars: Query<
+        'w,
+        's,
+        (&'static mut Node, &'static mut BackgroundGradient),
+        (With<Bar>, Without<Row>, Without<Slot>, Without<Slash>),
+    >,
+}
+
 fn show(
     mut commands: Commands,
     column: Option<ResMut<Column>>,
@@ -327,24 +381,7 @@ fn show(
         &mut UiTransform,
         &mut Dress,
     )>,
-    mut slots: Query<
-        (
-            &Slot,
-            Option<&mut ImageNode>,
-            Option<&mut Text>,
-            Option<&mut TextColor>,
-            &mut Node,
-        ),
-        (Without<Row>, Without<Slash>, Without<Bar>),
-    >,
-    mut slashes: Query<
-        (&mut Node, &mut BackgroundColor),
-        (With<Slash>, Without<Row>, Without<Slot>, Without<Bar>),
-    >,
-    mut bars: Query<
-        (&mut Node, &mut BackgroundGradient),
-        (With<Bar>, Without<Row>, Without<Slot>, Without<Slash>),
-    >,
+    mut parts: Parts,
 ) {
     let core = sight.core();
     let all = visible_lines(core, &sight);
@@ -400,6 +437,15 @@ fn show(
         if transform.scale != scale {
             transform.scale = scale;
         }
+        // The toasts at the left come in from the left, the feed at the right from the right.
+        let from = match place {
+            Place::Left => -SLIDE,
+            Place::Corner => SLIDE,
+        };
+        let slid = Val2::px(from * displacement_at(line.age) * ui::DOTA, 0.0);
+        if transform.translation != slid {
+            transform.translation = slid;
+        }
         let wanted = Dress {
             side: side_of(core, &line.kind),
             opacity: opacity_at(line.age),
@@ -410,7 +456,7 @@ fn show(
         }
         let laid = lay(core, texts.as_deref(), &manifest, line);
         for child in children {
-            if let Ok((mut node, mut background)) = slashes.get_mut(*child) {
+            if let Ok((mut node, mut background)) = parts.slashes.get_mut(*child) {
                 if dressed {
                     let display = if wanted.side.is_some() {
                         Display::Flex
@@ -426,7 +472,7 @@ fn show(
                 }
                 continue;
             }
-            if let Ok((mut node, mut gradient)) = bars.get_mut(*child) {
+            if let Ok((mut node, mut gradient)) = parts.bars.get_mut(*child) {
                 if dressed {
                     node.display = if wanted.side.is_some() {
                         Display::Flex
@@ -443,7 +489,7 @@ fn show(
                 }
                 continue;
             }
-            let Ok((slot, image, text, colour, mut node)) = slots.get_mut(*child) else {
+            let Ok((slot, image, text, colour, mut node)) = parts.slots.get_mut(*child) else {
                 continue;
             };
             match (*slot, image, text) {
@@ -984,6 +1030,8 @@ pub struct Look {
     pub bar: Option<[Color; 2]>,
     pub bar_turn_degrees: Option<f32>,
     pub scale: f32,
+    /// How far the row is from its place across, in interface pixels.
+    pub slid: f32,
     pub text_size: f32,
 }
 
@@ -1018,6 +1066,15 @@ pub fn looks(world: &mut World) -> Vec<Look> {
                     .expect("transformed")
                     .scale
                     .x,
+                slid: match world
+                    .get::<UiTransform>(entity)
+                    .expect("transformed")
+                    .translation
+                    .x
+                {
+                    Val::Px(x) => x,
+                    other => panic!("slid in pixels, not {other:?}"),
+                },
                 text_size: 0.0,
             };
             for child in children {

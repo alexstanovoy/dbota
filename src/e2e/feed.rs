@@ -234,8 +234,8 @@ fn a_hero_kill_row_is_tinted_by_whose_side_it_is_good_for() {
     assert_eq!(ally.slash, Some(ALLY_TINT), "the slanted end in the green");
     assert_eq!(ally.bar, None, "the bar belongs to the toasts at the left");
     assert!(
-        (ally.text_size - 18.0 * crate::ui::DOTA).abs() < 0.01,
-        "Dota's 18px text"
+        (ally.text_size - crate::feed::LABEL_SIZE * crate::ui::DOTA).abs() < 0.01,
+        "Dota's size of text"
     );
     client.core_mut().feed.clear();
     client.frames(2);
@@ -276,8 +276,8 @@ fn a_building_toast_has_the_tint_the_slanted_end_and_the_bar_of_its_side() {
     assert_eq!(good.bar, Some(ALLY_BAR));
     assert!(
         good.bar_turn_degrees
-            .is_some_and(|turn| (turn - 25.0).abs() < 0.01),
-        "turned by 25 degrees: {:?}",
+            .is_some_and(|turn| (turn - crate::feed::BAR_TURN_DEGREES).abs() < 0.01),
+        "turned as Dota's bar is: {:?}",
         good.bar_turn_degrees
     );
     client.core_mut().feed.clear();
@@ -338,7 +338,7 @@ fn a_row_grows_in_and_fades_out_as_dotas_keyframes_have_it() {
     };
     let arriving = scale_at(0.0);
     assert!(arriving.scale < 0.8, "starts small: {}", arriving.scale);
-    let swelling = scale_at(0.15);
+    let swelling = scale_at(crate::feed::ENTER_SECONDS / 2.0);
     assert!(
         swelling.scale > 1.3,
         "swells past its size: {}",
@@ -351,6 +351,18 @@ fn a_row_grows_in_and_fades_out_as_dotas_keyframes_have_it() {
         settled.scale
     );
     let leaving = scale_at(7.9);
+    let from_left = -crate::feed::SLIDE * crate::ui::DOTA;
+    assert!(
+        (arriving.slid - from_left).abs() < 3.0,
+        "a toast comes in from the left: {}",
+        arriving.slid
+    );
+    assert!(settled.slid.abs() < 1e-3, "and rests: {}", settled.slid);
+    assert!(
+        leaving.slid < -1.0 && leaving.slid > from_left,
+        "and slides away as it goes: {}",
+        leaving.slid
+    );
     let alpha = |look: &crate::feed::Look| look.gradient.expect("tinted")[0].alpha();
     assert!(
         alpha(&leaving) < alpha(&settled),
