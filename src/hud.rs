@@ -1894,14 +1894,14 @@ fn ability_face(
 /// The face of an item slot.
 fn item_face(
     core: &Core,
-    (bag, settling, now): (&crate::bag::TacticalBag, &crate::drag::Settling, f32),
+    (bag, settling): (&crate::bag::TacticalBag, &crate::drag::Settling),
     manifest: &Manifest,
     settings: &Settings,
     unit: Option<&UnitView>,
     kit: Option<&Kit>,
     slot: u8,
 ) -> Option<SlotFace> {
-    let item = match settling.over(slot, now) {
+    let item = match settling.over(core, slot) {
         Some(shown) => shown,
         None => subject_item(core, bag, unit, kit, slot),
     }?;
@@ -1988,7 +1988,6 @@ fn slots(
     server: Res<AssetServer>,
     bag: Res<crate::bag::TacticalBag>,
     settling: Res<crate::drag::Settling>,
-    time: Res<Time>,
     mut boxes: Query<
         (
             Entity,
@@ -2022,7 +2021,7 @@ fn slots(
             }
             (_, Some(ItemBox(slot))) => item_face(
                 core,
-                (&bag, &settling, time.elapsed_secs()),
+                (&bag, &settling),
                 &manifest,
                 &settings,
                 unit,

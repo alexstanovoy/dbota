@@ -17,6 +17,10 @@ use crate::manifest::Manifest;
 use crate::session::Session;
 use crate::ui::{self, Fonts};
 
+#[cfg(test)]
+#[path = "stats/backpack_ui_tests.rs"]
+mod backpack_ui_tests;
+
 /// The region over the portrait the tooltip opens for.
 #[derive(Component)]
 struct StatsZone;

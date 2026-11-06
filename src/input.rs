@@ -635,7 +635,6 @@ fn boxes(
     over: Res<OverHud>,
     mut bag: ResMut<crate::bag::TacticalBag>,
     mut settling: ResMut<crate::drag::Settling>,
-    time: Res<Time>,
 ) {
     let over_hud = over.0;
     let core = &mut session.0;
@@ -662,7 +661,7 @@ fn boxes(
             if tactical {
                 bag.id_at(slot).is_some()
             } else {
-                core.item_in(slot).is_some()
+                settling.item_in(core, slot).is_some()
             }
         };
         if let Some(slot) = hovered_item
@@ -687,10 +686,7 @@ fn boxes(
             if to == from {
                 press(core, Slot::Item(from), false);
             } else if from != TOWN_PORTAL_SLOT {
-                if let Some(moved) = core.item_in(from) {
-                    settling.start((from, to), moved, core.item_in(to), time.elapsed_secs());
-                }
-                core.act(Intent::Swap { from, to });
+                settling.swap(core, from, to);
             }
         } else if let Some(seat) = hovered_seat
             && from != TOWN_PORTAL_SLOT
