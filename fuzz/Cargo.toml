@@ -14,6 +14,10 @@ publish = false
 [package.metadata]
 cargo-fuzz = true
 
+# These crates are used by the client parsers included through #[path].
+[package.metadata.cargo-machete]
+ignored = ["hound", "rodio", "serde", "serde_json"]
+
 [dependencies]
 # The pack_folder target's structured input.
 arbitrary = { version = "1", features = ["derive"] }
