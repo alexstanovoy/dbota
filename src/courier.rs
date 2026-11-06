@@ -578,7 +578,7 @@ fn spin(
     if moving {
         let turn =
             bevy::math::Rot2::radians(-std::f32::consts::TAU * time.delta_secs() / SPINNER_TURN);
-        spinner.1.rotation = spinner.1.rotation * turn;
+        spinner.1.rotation *= turn;
     }
 }
 

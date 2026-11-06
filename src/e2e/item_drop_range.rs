@@ -105,8 +105,8 @@ fn check_drop(distance: i32) {
         .loot
         .iter()
         .find(|l| l.item == ItemId::BOOTS)
-        .unwrap()
-        .clone();
+        .copied()
+        .expect("the dropped boots in the view");
     client.until("the dropped boots model drawn beside its carrier", |c| {
         let body = c.body(c.me().id).expect("the drawn hero");
         let at = c

@@ -37,7 +37,7 @@ fn a_planted_sentry_draws_no_true_sight_disc_on_the_ground() {
             .resource::<Library>()
             .effect("ward.sentry.ambient")
             .expect("the effect in the library");
-        c.world().resource::<Playing>().started(&effect)
+        c.world().resource::<Playing>().started(effect)
     };
     client.until("the Sentry's ambient effect", |c| started(c) > 0);
     let world = client.world();
@@ -47,7 +47,7 @@ fn a_planted_sentry_draws_no_true_sight_disc_on_the_ground() {
         .expect("the effect in the library");
     let radius = world
         .resource::<Playing>()
-        .instances_of(&effect)
+        .instances_of(effect)
         .map(|i| i.nodes[0].control_points[RADIUS_POINT].position.x)
         .collect::<Vec<_>>();
     assert!(!radius.is_empty(), "the effect plays");
