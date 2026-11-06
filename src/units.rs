@@ -856,6 +856,16 @@ struct SyncParams<'w, 's> {
 /// New units spawned a frame at most, and planted trees stood.
 pub(crate) const SPAWNS_PER_FRAME: usize = 4;
 
+/// New units spawned a frame at most once one of `kind` would be: the few of any kind, and a
+/// hero of every seat besides.
+fn spawn_cap(kind: UnitKind) -> usize {
+    if kind == UnitKind::Hero {
+        SPAWNS_PER_FRAME + bota_proto::limits::MAX_SEATS
+    } else {
+        SPAWNS_PER_FRAME
+    }
+}
+
 /// Spawns what came into view, moves what stays, and lets go of what left:
 /// a unit that left where its side could still see it has died, and falls.
 fn sync_units(
@@ -880,8 +890,10 @@ fn sync_units(
             continue;
         }
         seen.push(u.id);
-        // Bound scene creation per frame; the few heroes never wait behind a wave.
-        let can_spawn = spawned < SPAWNS_PER_FRAME || u.kind == UnitKind::Hero;
+        // Bound scene creation per frame: a wave, a camp or a seek brings dozens, and each
+        // model's instance is a world of its own cloned in; a match's heroes, one a seat, have
+        // room besides ([`spawn_cap`]), and heroes past that wait like the rest.
+        let can_spawn = spawned < spawn_cap(u.kind);
         spawned += usize::from(sync_body(&mut p, &mut units, body, map, view, can_spawn));
     }
     seen.sort_unstable();
@@ -1252,6 +1264,174 @@ fn report(bank: Res<ModelBank>, mut parts: ResMut<crate::loading::Parts>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A hero unit of no seat, as a server or a replay may send any number of.
+    fn stray_hero(idx: u32) -> UnitView {
+        use bota_proto::{Angle, Attributes, Fixed, HeroId, StatusFlags, Vec2};
+        let fixed = |units: i32| Fixed { raw: units << 16 };
+        UnitView {
+            id: EntityId { idx, generation: 1 },
+            kind: UnitKind::Hero,
+            team: Team::Radiant,
+            pos: Vec2::from_ints(0, 0),
+            facing: Angle { brads: 0 },
+            hp: 600,
+            max_hp: 600,
+            mana: 0,
+            max_mana: 0,
+            move_speed: fixed(300),
+            attack_damage: 50,
+            attack_damage_min: 50,
+            attack_damage_max: 50,
+            hp_regen: Fixed::ZERO,
+            mana_regen: Fixed::ZERO,
+            town_portal: None,
+            neutral: None,
+            cast: None,
+            queue: Vec::new(),
+            status_resist: Fixed::ZERO,
+            evasion: Fixed::ZERO,
+            hit_health: None,
+            vision_grant: None,
+            seen_by: None,
+            attack_range: fixed(150),
+            attack_time: 1700,
+            attack_point: 500,
+            attack_speed: 100,
+            attributes: Attributes::ZERO,
+            primary: None,
+            armor: Fixed::ZERO,
+            magic_resist: Fixed::ZERO,
+            collision: fixed(24),
+            bound: fixed(24),
+            vision_radius: fixed(1800),
+            true_sight_radius: Fixed::ZERO,
+            statuses: StatusFlags { bits: 0 },
+            hero: Some(HeroId::SHADOW_FIEND),
+            owner: None,
+            level: 1,
+            abilities: Vec::new(),
+            items: Vec::new(),
+            effects: Vec::new(),
+        }
+    }
+
+    /// A replay of one snapshot that shows `heroes` heroes of no seat.
+    fn replay_of_heroes(heroes: u32) -> Vec<u8> {
+        use bota_proto::{
+            HeroId, MapId, MatchInfo, Pick, PlayerView, ReplayHeader, ReplayRecord, ServerMsg,
+            SlotId, TickMode, Vec2, WorldView, encode_frame_to_vec,
+        };
+        let start = ServerMsg::MatchStart {
+            info: MatchInfo {
+                match_id: 1,
+                map: MapId(0),
+                tick_rate: 30,
+                pregame_ticks: 900,
+                trees: Vec::new(),
+                terrain_cells: 1,
+                terrain_rle: vec![(1, 0x80)],
+                opaque_cells: Vec::new(),
+                mode: TickMode::Lockstep,
+                picks: vec![Pick {
+                    slot: SlotId(0),
+                    team: Team::Radiant,
+                    hero: HeroId::SHADOW_FIEND,
+                }],
+                shop: Vec::new(),
+                fountains: [Vec2::ZERO, Vec2::ZERO],
+                shop_range: 0,
+                cheats: false,
+                objectives: bota_proto::ObjectiveSet::NONE,
+                runes: bota_proto::RuneSet::NONE,
+                catalogue: bota_core::Catalogue::FULL.prefix(),
+            },
+        };
+        let view = WorldView {
+            tick: 900,
+            viewer: None,
+            units: (1..=heroes).map(stray_hero).collect(),
+            players: vec![PlayerView {
+                slot: SlotId(0),
+                team: Team::Radiant,
+                hero: HeroId::SHADOW_FIEND,
+                unit: None,
+                level: 1,
+                xp: 0,
+                gold: None,
+                stash: None,
+                kit: None,
+                kills: 0,
+                deaths: 0,
+                assists: 0,
+                last_hits: 0,
+                denies: 0,
+                respawn_left: 0,
+                creep_score: None,
+                seen_at: Some(900),
+            }],
+            projectiles: Vec::new(),
+            loot: Vec::new(),
+            aggro: Vec::new(),
+            order_delays: Vec::new(),
+            skipped_ticks: Vec::new(),
+            stock: Vec::new(),
+            talents: Vec::new(),
+            teleports: Vec::new(),
+            glyphs: Vec::new(),
+            clock: None,
+            felled_trees: Vec::new(),
+            planted_trees: Vec::new(),
+            runes: Vec::new(),
+            pools: Vec::new(),
+        };
+        [
+            ReplayRecord::Header(ReplayHeader::new(bota_core::WIRE_FINGERPRINT)),
+            ReplayRecord::Msg(start),
+            ReplayRecord::Msg(ServerMsg::Snapshot { view }),
+        ]
+        .iter()
+        .flat_map(|record| encode_frame_to_vec(record).expect("a record"))
+        .collect()
+    }
+
+    /// Each new unit's model is a world of its own cloned in, so new units are spawned a few a
+    /// frame; heroes were let through all at once, as a match has a few. A replay or server
+    /// showing thousands of heroes of no seat (new ones every snapshot) froze the client: a
+    /// frame spawns no more heroes than a match has seats besides the few of any kind.
+    #[test]
+    fn a_view_of_thousands_of_heroes_spawns_a_frames_worth_at_a_time() {
+        use bevy::ecs::system::RunSystemOnce;
+        use bota_client_core::{App as Core, ReplayPlayer, Source};
+        let player = ReplayPlayer::from_reader(std::io::Cursor::new(replay_of_heroes(4096)));
+        let mut core = Core::new(Source::Replay(Box::new(player)));
+        for _ in 0..100 {
+            if core.lost || core.view().is_some() {
+                break;
+            }
+            core.pump(0.1);
+        }
+        let shown = core.view().map_or(0, |v| v.units.len());
+        let error = match &core.source {
+            Source::Replay(player) => player.error().map(ToString::to_string),
+            Source::Live(_) => None,
+        };
+        assert_eq!(shown, 4096, "the replay's view; its error: {error:?}");
+        let mut app = App::new();
+        app.insert_non_send(Session(core))
+            .init_resource::<UnitIndex>()
+            .init_resource::<ModelBank>()
+            .init_resource::<Manifest>()
+            .init_resource::<BuildingYaws>()
+            .init_resource::<Ground>()
+            .init_resource::<FogGrid>()
+            .init_resource::<Time>();
+
+        app.world_mut().run_system_once(sync_units).unwrap();
+
+        let spawned = app.world_mut().query::<&Unit>().iter(app.world()).count();
+        assert_eq!(spawned, SPAWNS_PER_FRAME + bota_proto::limits::MAX_SEATS);
+    }
 
     /// Every hero and lane unit has a model line in the manifest: what the
     /// importer exports and the client draws.
