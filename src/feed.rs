@@ -703,6 +703,12 @@ fn building_parts(texts: &Texts, kind: &FeedKind) -> Option<Vec<Part>> {
 fn dota_parts(core: &Core, texts: &Texts, kind: &FeedKind) -> Option<Vec<Part>> {
     match *kind {
         FeedKind::StructureFell { .. } => building_parts(texts, kind),
+        FeedKind::ItemPlaced { item, team } => {
+            let keys = crate::faces::ITEMS
+                .get(usize::from(item.0))?
+                .placed_labels?;
+            texts.label_parts(keys[usize::from(team == Team::Dire)], &[])
+        }
         FeedKind::Loot {
             item,
             by,
@@ -824,6 +830,13 @@ fn outpost_name(
 /// the install's labels.
 pub fn text(core: &Core, kind: &FeedKind) -> String {
     match *kind {
+        FeedKind::ItemPlaced { item, team } => format!(
+            "{} placed {}",
+            side_name(team),
+            crate::faces::ITEMS
+                .get(usize::from(item.0))
+                .map_or("an item", |i| i.name)
+        ),
         FeedKind::Loot {
             item,
             by,

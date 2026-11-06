@@ -88,7 +88,7 @@ fn the_lines_on_the_map_are_one_width_scaled_with_the_window() {
 }
 
 /// The middles of the rings drawn this frame at a radius, in a colour.
-fn rings_of(client: &Client, colour: Color, radius: f32) -> Vec<Vec2> {
+pub(super) fn rings_of(client: &Client, colour: Color, radius: f32) -> Vec<Vec2> {
     rings(client, colour)
         .into_iter()
         .filter(|(_, r)| (r - radius).abs() < 2.0)
@@ -220,9 +220,10 @@ fn aiming_blood_grenade_draws_its_area_under_the_cursor() {
 /// vision.
 fn what_a_ward_gives(item: bota_proto::ItemId) -> f32 {
     let def = bota_core::item_def(item).expect("the ward's data");
-    let bota_core::UseSpec::Ward { unit, .. } = def.effect else {
+    let bota_core::UseSpec::Ward { units, .. } = def.effect else {
         panic!("{item:?} is no ward");
     };
+    let unit = &units[0];
     (if unit.true_sight > 0 {
         unit.true_sight
     } else {

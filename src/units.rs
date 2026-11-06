@@ -492,13 +492,7 @@ fn unit_art<'a>(unit: &UnitView, manifest: &'a Manifest) -> Option<&'a UnitArt> 
 /// The Dota unit a kind of the map's objectives is (npc_units.txt), whose
 /// `unit` line in the manifest draws it.
 fn objective_unit(kind: UnitKind) -> Option<&'static str> {
-    match kind {
-        UnitKind::Outpost => Some("npc_dota_watch_tower"),
-        UnitKind::Watcher => Some("npc_dota_lantern"),
-        UnitKind::Shrine => Some("npc_dota_xp_fountain"),
-        UnitKind::LotusPool => Some("npc_dota_lotus_pool"),
-        _ => None,
-    }
+    kind_def(kind).npc
 }
 
 /// The side a unit is held for, as Dota colours a map objective by it: a side's own unit's (an
@@ -780,15 +774,10 @@ fn required_models(manifest: &Manifest) -> Vec<String> {
             names.push(kind.replace("{}", side));
         }
     }
-    let objectives = [
-        UnitKind::Outpost,
-        UnitKind::Watcher,
-        UnitKind::Shrine,
-        UnitKind::LotusPool,
-    ]
-    .into_iter()
-    .filter_map(objective_unit)
-    .chain(["npc_dota_observer_wards", "npc_dota_sentry_wards"]);
+    let objectives = bota_core::UNIT_KINDS
+        .iter()
+        .filter_map(|row| row.npc)
+        .chain(["npc_dota_observer_wards", "npc_dota_sentry_wards"]);
     for unit in NEUTRALS.iter().map(|n| n.unit).chain(objectives) {
         match manifest.unit_art(unit) {
             Some(art) => names.extend(art.model.clone()),

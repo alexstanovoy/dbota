@@ -69,6 +69,7 @@ impl TacticalBag {
             item_def(held.id).is_some_and(|d| d.charges > 0) || held.id == ItemId::WARD_DISPENSER;
         Some(ItemView {
             expires_in: None,
+            level: 1,
             id: held.id,
             charges: charged.then_some(held.charges),
             cooldown_left: 0,

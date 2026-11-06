@@ -19,6 +19,14 @@ pub fn loot_labels(id: ItemId) -> Option<[&'static str; 2]> {
     LABELS.iter().find_map(|(item, labels)| (*item == id).then_some(*labels))
 }
 
+/// Installed team labels for planting notable ground items.
+pub fn placed_labels(id: ItemId) -> Option<[&'static str; 2]> {
+    const LABELS: &[(ItemId, [&str; 2])] = &[
+        (ItemId::ROSHANS_BANNER, ["DOTA_HUD_RadiantBannerPlanted", "DOTA_HUD_DireBannerPlanted"]),
+    ];
+    LABELS.iter().find_map(|(item, labels)| (*item == id).then_some(*labels))
+}
+
 /// One timed effect, as the client shows it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct EffectFace {

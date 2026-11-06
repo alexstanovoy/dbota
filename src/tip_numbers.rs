@@ -202,8 +202,8 @@ fn use_value(def: &ItemDef, key: &str) -> Option<Levels> {
         (UseSpec::Ward { ticks, .. }, "duration_minutes_tooltip") => {
             one(plain(f64::from(*ticks) / f64::from(60 * TICKS_PER_SECOND)))
         }
-        (UseSpec::Ward { unit, .. }, "vision_range_tooltip") => one(unit.day_vision),
-        (UseSpec::Ward { unit, .. }, "true_sight_range") => one(unit.true_sight),
+        (UseSpec::Ward { units, .. }, "vision_range_tooltip") => one(units[0].day_vision),
+        (UseSpec::Ward { units, .. }, "true_sight_range") => one(units[0].true_sight),
         (UseSpec::Teleport(_), "tooltip_channel_time") => one(secs(def.duration)),
         (UseSpec::Blink { range, .. }, "blink_range") => one(range),
         (UseSpec::Blink { overshoot, .. }, "blink_range_clamp") => one(overshoot),

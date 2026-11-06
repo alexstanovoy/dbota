@@ -286,3 +286,70 @@ fn feed_texts(client: &mut Client) -> Vec<String> {
         .map(|(_, text, _)| text.0.clone())
         .collect()
 }
+
+#[test]
+fn planting_a_banner_draws_its_aura_preview_model_and_public_message() {
+    use bota_client_core::{FeedKind, Intent, Slot};
+    use bota_proto::{ItemId, Team};
+    let server = Server::start(1, &[]);
+    let mut client = Client::join(&server, HeroId::SHADOW_FIEND, &[]);
+    client.cheat(Cheat::StartGame);
+    client.stand_at(super::harness::MID);
+    client.cheat(Cheat::Item {
+        item: ItemId::ROSHANS_BANNER,
+    });
+    let slot = client.slot_of(ItemId::ROSHANS_BANNER).expect("banner");
+    assert_eq!(client.core().item_in(slot).expect("item").level, 1);
+    assert_eq!(client.core().area_of(Slot::Item(slot)), 600);
+    client.core_mut().act(Intent::Press {
+        slot: Slot::Item(slot),
+        ctrl: false,
+    });
+    let from = client.me().pos;
+    let at = (from.x.to_f32() + 200., from.y.to_f32());
+    let screen = client.screen_of(at).expect("on screen");
+    client.mouse(screen);
+    client.until("Banner aura preview drawn", |c| {
+        !super::rings::rings_of(c, crate::overlay::GOOD, 600.).is_empty()
+    });
+    client.core_mut().act(Intent::Aimed { at, unit: None });
+    client.until("planted Banner drawn from the NPC catalogue", |c| {
+        let Some(banner) = c.view().units.iter().find(|u| u.kind == UnitKind::Banner) else {
+            return false;
+        };
+        let Some(body) = c.body(banner.id) else {
+            return false;
+        };
+        let Some(model) = c.world().get::<Unit>(body).and_then(|u| u.model) else {
+            return false;
+        };
+        c.world().resource::<ModelBank>().0[model].model.logical == "objective.roshans_banner.model"
+            && c.core().feed.iter().any(|line| {
+                matches!(
+                    line.kind,
+                    FeedKind::ItemPlaced {
+                        item: ItemId::ROSHANS_BANNER,
+                        team: Team::Radiant
+                    }
+                )
+            })
+    });
+    client.until("Banner public message drawn", |c| {
+        feed_texts(c)
+            .iter()
+            .any(|s| s.to_lowercase().contains("banner"))
+    });
+    client.cheat(Cheat::CreateCreeps {
+        enemy: false,
+        at: bota_proto::Vec2::from_ints(at.0 as i32, at.1 as i32),
+    });
+    client.until("allied lane creeps show the protection effect", |c| {
+        c.view().units.iter().any(|u| {
+            bota_core::kind_def(u.kind).lane_creep
+                && u.team == Team::Radiant
+                && u.effects
+                    .iter()
+                    .any(|e| e.id == bota_proto::EffectId::FORTIFIED)
+        })
+    });
+}
