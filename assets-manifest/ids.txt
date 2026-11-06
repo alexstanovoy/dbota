@@ -398,3 +398,4 @@ ability 87 twin_gate_portal_warp
 # A Twin Gate a warp is channelled through wears the warp's icon.
 effect 99 icon.ability.twin_gate_portal_warp
 modifier 99 modifier_twin_gate_fx
+modifier 100 modifier_pudge_meat_hook_followthrough
