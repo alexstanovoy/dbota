@@ -36,6 +36,7 @@ mod soundscape;
 mod start;
 mod strategy;
 mod tower_cadence;
+mod tower_fall;
 mod trees;
 mod turning;
 mod watcher_capture;

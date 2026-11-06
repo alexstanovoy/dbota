@@ -237,6 +237,7 @@ pub fn plugin(app: &mut App) {
                 build_graphs,
                 count_replaced_scenes,
                 sync_units.in_set(Placed),
+                collapse,
                 fall,
                 bind_wearables,
             )
@@ -1243,11 +1244,57 @@ fn bind_wearables(
     }
 }
 
-/// Ages the fallen and lets them go once they have fallen.
-fn fall(mut commands: Commands, time: Res<Time>, mut dying: Query<(Entity, &mut Dying)>) {
-    for (entity, mut d) in &mut dying {
+/// The model a fallen unit's model is swapped for, by the manifest's naming: `tower.dire.model`
+/// falls apart as `tower.dire.destruction` (Dota's baked destruction models).
+fn destruction_name(model: &str) -> Option<String> {
+    Some(format!("{}.destruction", model.strip_suffix(".model")?))
+}
+
+/// Swaps a unit that has just died, whose model has a destruction model in the bank, for it: it
+/// plays its death clip from the start, on the same ground at the same facing.
+fn collapse(
+    session: NonSend<Session>,
+    mut p: SyncParams,
+    mut fallen: Query<(Entity, &mut Unit, &ModelOf), Added<Dying>>,
+) {
+    for (entity, mut unit, pivot) in &mut fallen {
+        let Some(replacement) = unit
+            .base_model
+            .and_then(|base| destruction_name(&p.bank.0[base].model.logical))
+            .and_then(|name| p.bank.0.iter().position(|m| m.model.logical == name))
+            .filter(|index| p.bank.0[*index].ready() && p.bank.0[*index].scenes.is_some())
+        else {
+            continue;
+        };
+        let Some(last) = session.0.session().and_then(|s| s.entity(unit.id)) else {
+            continue;
+        };
+        p.commands.entity(pivot.0).despawn_related::<Children>();
+        p.commands
+            .entity(entity)
+            .remove::<Rig>()
+            .insert(crate::anim::Pose::default());
+        unit.model = Some(replacement);
+        unit.elevation = p.bank.0[replacement].elevation;
+        spawn_model_scene(&mut p, &last.unit, pivot.0, Some(replacement), unit.at);
+    }
+}
+
+/// Ages the fallen and lets them go once they have fallen: after the death clip of the model
+/// they are drawn with, and never before [`FALL_SECONDS`].
+fn fall(
+    mut commands: Commands,
+    time: Res<Time>,
+    bank: Res<ModelBank>,
+    mut dying: Query<(Entity, &Unit, &mut Dying)>,
+) {
+    for (entity, unit, mut d) in &mut dying {
         d.0 += time.delta_secs();
-        if d.0 > FALL_SECONDS {
+        let death = unit
+            .model
+            .and_then(|model| bank.0[model].clips.iter().find(|c| c.0 == "death"))
+            .map_or(0.0, |clip| clip.2);
+        if d.0 > death.max(FALL_SECONDS) {
             commands.entity(entity).despawn();
         }
     }

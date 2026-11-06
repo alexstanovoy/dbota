@@ -240,6 +240,11 @@ clip tower.radiant.model attack radiant_tower002_attack 0.967 point=0.6
 model tower.dire.model models/props_structures/dire_tower002.vmdl_c models/tower/dire/dire_tower.glb anims=dire_tower002_idle_showcase,dire_tower002_attack
 clip tower.dire.model idle dire_tower002_idle_showcase 0.500
 clip tower.dire.model attack dire_tower002_attack 0.967 point=0.6
+# A fallen tower is swapped for its baked destruction model, which plays its collapse once.
+model tower.radiant.destruction models/props_structures/radiant_tower002_destruction.vmdl_c models/tower/radiant_destruction/radiant_tower_destruction.glb anims=radiant_tower002_destruction_death
+clip tower.radiant.destruction death radiant_tower002_destruction_death 6.667
+model tower.dire.destruction models/props_structures/dire_tower002_destruction.vmdl_c models/tower/dire_destruction/dire_tower_destruction.glb anims=dire_tower002_destruction_death
+clip tower.dire.destruction death dire_tower002_destruction_death 6.667
 
 # --- Trees. Every model the default map places as a tree (a name starting tree_ or dire_tree) is made
 # by the importer from the map's own entities, to models/tree/<name>/<name>.glb, each with its standing
