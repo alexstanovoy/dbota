@@ -28,28 +28,32 @@ mkdir -p "$out"
 : "${DBOTA_ASSETS:?DBOTA_ASSETS must name a test asset cache}"
 export DBOTA_ASSETS
 cargo build --release --quiet --manifest-path "$here/Cargo.toml"
+# A run's checks hold when it said at least one passed check and no failed one: a client that
+# ended before its verdict says neither.
+held() { echo "$1" | grep -q "^visual check: PASS" && ! echo "$1" | grep -q "FAIL"; }
 status=0
 "$here/tools/test_client.sh" --replay "$replay" --pov 0 --screenshot-at "$tick" \
     --screenshot-dir "$out" --screenshot-prefix check- --distance 6500 \
     --visual-check --mute --no-vsync --display-mode windowed 2> "$out/dbota.log" | tee "$out/dbota.out" || status=$?
 [ "$status" -eq 0 ] || exit "$status"
+held "$(cat "$out/dbota.out")" || { echo "visual check: FAIL the first seat's checks gave no verdict"; exit 1; }
 # The same seen by the other side, one window more.
 dire=$("$here/tools/test_client.sh" --replay "$replay" --pov 1 --screenshot-at "$tick" \
     --screenshot-dir "$out" --screenshot-prefix check-dire- --distance 6500 \
     --visual-check --mute --no-vsync --display-mode windowed 2>> "$out/dbota.log" || true)
 echo "$dire" | sed 's/^visual check: /visual check (Dire): /'
-if echo "$dire" | grep -q "FAIL"; then exit 1; fi
+held "$dire" || { echo "visual check: FAIL the Dire seat's checks did not all pass"; exit 1; }
 
 # The cheapest presets are measured as the full one is: their scene drawn below the window's
 # resolution and (Potato) its batches built on the CPU, without the map's props, must still pass
 # the fog, hero and interface checks. A client that ends or draws a black scene fails them; one
 # that says no check at all fails too.
 for preset in low potato; do
-    shown=$("$here/target/release/dbota" --replay "$replay" --pov 0 --screenshot-at "$tick" \
+    shown=$("$here/tools/test_client.sh" --replay "$replay" --pov 0 --screenshot-at "$tick" \
         --screenshot-dir "$out" --screenshot-prefix "check-$preset-" --distance 6500 --set quality="$preset" \
         --visual-check --mute --no-vsync --display-mode windowed 2>> "$out/dbota.log" || echo "visual check: FAIL the client ended")
     echo "$shown" | sed "s/^visual check: /visual check ($preset): /"
-    if echo "$shown" | grep -q "FAIL" || ! echo "$shown" | grep -q "^visual check: PASS"; then exit 1; fi
+    held "$shown" || exit 1
 done
 
 # The river is one surface: the camera on it where the mid lane crosses it
@@ -76,7 +80,8 @@ if ! echo "$bars" | grep -q "PASS health counted in hits"; then exit 1; fi
 # and its hero-part checks pass.
 runs=${VISUAL_RUNS:-1}
 cache=$DBOTA_ASSETS
-first=$(grep -m1 "hero parts:" "$out/dbota.out" 2>/dev/null || true)
+first=$(grep -m1 "hero parts" "$out/dbota.out" 2>/dev/null || true)
+echo "$first" | grep -q "PASS hero parts" || { echo "visual check: FAIL the first run's hero parts: '$first'"; exit 1; }
 for run in $(seq 2 "$runs"); do
     if [ $((run % 2)) -eq 0 ]; then
         python3 -c 'import os,sys
@@ -90,7 +95,7 @@ for d,_,fs in os.walk(sys.argv[1]):
     checks=$("$here/tools/test_client.sh" --replay "$replay" --pov 0 --screenshot-at "$tick" \
         --screenshot-dir "$out" --screenshot-prefix repeat- --distance 6500 \
         --set animate_portrait="$portrait" --visual-check --mute --no-vsync --display-mode windowed 2>/dev/null || true)
-    line=$(echo "$checks" | grep -m1 "hero parts:" || true)
+    line=$(echo "$checks" | grep -m1 "hero parts" || true)
     if [ "$line" != "$first" ]; then
         echo "visual check: FAIL hero parts differ on run $run: '$line' against '$first'"
         exit 1
