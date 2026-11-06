@@ -22,7 +22,7 @@ pub use cell::{Place, ShopCell, spawn as spawn_cell};
 pub(crate) use corner::Grab;
 pub use corner::STICKY;
 #[cfg(test)]
-pub(crate) use corner::{GrabAll, drawn_gold};
+pub(crate) use corner::{GrabAll, ShopButton, drawn_gold, drawn_gold_style};
 pub(crate) use drag::ShopDrag;
 pub use plugin::plugin;
 

@@ -32,7 +32,7 @@ pub(super) fn icon_in_slot(client: &mut Client, slot: u8, item: ItemId) -> bool 
         })
 }
 
-fn stash(client: &Client) -> &[Option<bota_proto::ItemView>] {
+pub(super) fn stash(client: &Client) -> &[Option<bota_proto::ItemView>] {
     client
         .view()
         .player(client.core().my_slot.expect("seated"))

@@ -24,6 +24,7 @@ mod creep_blows;
 mod creep_walk;
 mod cursors;
 mod death;
+mod enemy_base_shop;
 mod event_visibility;
 mod feed;
 mod flagbearer;

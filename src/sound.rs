@@ -990,12 +990,12 @@ fn sounds_from_the_players_entity(
 }
 
 /// Whether the hero one plays has come into the range of a shop (`Some(true)`) or gone out of it
-/// (`Some(false)`), as Dota sounds it: the home shop's, or a secret shop's (the courier's range
+/// (`Some(false)`), as Dota sounds it: either base shop's, or a secret shop's (the courier's range
 /// does not count).
 fn shop_change(core: &bota_client_core::App, watch: &mut ShopWatch, now: f32) -> Option<bool> {
     let looked = core
         .my_standing_hero()
-        .map(|hero| core.unit_at_home_shop(hero) || core.unit_at_secret_shop(hero));
+        .map(|hero| core.unit_at_base_shop(hero) || core.unit_at_secret_shop(hero));
     watch.look(core.view().is_some(), looked, now)
 }
 

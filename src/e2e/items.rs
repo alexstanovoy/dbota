@@ -27,7 +27,7 @@ fn with_a_tango() -> (Server, Client, u8) {
 }
 
 /// The button whose text shows `word`, shown.
-fn button_saying(client: &mut Client, word: &str) -> Option<Entity> {
+pub(super) fn button_saying(client: &mut Client, word: &str) -> Option<Entity> {
     let world = client.world_mut();
     let label = world
         .query::<(&Text, &ChildOf, &InheritedVisibility)>()

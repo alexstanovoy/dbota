@@ -134,13 +134,13 @@ fn choices(
     let Some(item) = core.item_in(slot) else {
         return out;
     };
-    let at_home = core
+    let base_shop = core
         .slot_unit()
-        .is_some_and(|unit| core.unit_at_home_shop(unit.id));
+        .is_some_and(|unit| core.unit_at_base_shop(unit.id));
     if slot != TOWN_PORTAL_SLOT
         && bota_core::item_def(item.id).is_some_and(|def| def.limits.sellable)
     {
-        let at_shop = at_home
+        let at_shop = base_shop
             || slot >= BAG_SLOTS
             || core
                 .slot_unit()
@@ -156,7 +156,7 @@ fn choices(
     let free = (0..STASH_SLOTS as u8)
         .map(|i| BAG_SLOTS + i)
         .find(|s| core.item_in(*s).is_none());
-    if let (true, true, Some(to)) = (slot < BAG_SLOTS, at_home, free) {
+    if let (true, true, Some(to)) = (slot < BAG_SLOTS, base_shop, free) {
         out.push(Choice::ToStash { slot, to });
     }
     if let Some(locked) = core.combine_lock_of(slot) {

@@ -504,7 +504,7 @@ fn gold(session: NonSend<Session>, mut text: Single<(&mut Text, &mut TextColor),
             .map_or("-".to_string(), |g| g.to_string())
     };
     text.0.set_if_neq(Text(shown));
-    let ink = if core.at_home_shop() || core.at_secret_shop() {
+    let ink = if core.at_base_shop() || core.at_secret_shop() {
         Color::WHITE
     } else {
         GOLD_INK
@@ -523,7 +523,7 @@ fn shop_button(
 ) {
     let hovered = *button.0 != Interaction::None;
     let logical = match (
-        session.0.at_home_shop() || session.0.at_secret_shop(),
+        session.0.at_base_shop() || session.0.at_secret_shop(),
         hovered,
     ) {
         (false, false) => "shop.button",
@@ -540,7 +540,7 @@ fn shop_button(
     }
 }
 
-/// The stash while the shop is open, at home, while an item is held for
+/// The stash while the shop is open, at either base, while an item is held for
 /// moving, or while one's own hero lies dead, as Dota shows it then (its
 /// HUD's `StashVisible` without `StashActive`: what was bought is seen, and
 /// nothing is taken out); GRAB ALL while what is in it can be taken.
@@ -552,7 +552,7 @@ fn stash(
 ) {
     let core = &session.0;
     let dead = core.my_slot.is_some() && core.view().is_some() && core.my_standing_hero().is_none();
-    let shown = panels.shop || core.at_home_shop() || core.held_item.is_some() || dead;
+    let shown = panels.shop || core.at_base_shop() || core.held_item.is_some() || dead;
     let display = if shown { Display::Flex } else { Display::None };
     if block.display != display {
         block.display = display;
@@ -607,7 +607,7 @@ fn quick_row(
     *last = Some(items);
 }
 
-/// The moves that take what the stash holds into the hero's bag at home:
+/// The moves that take what the stash holds into the hero's bag at either base:
 /// each stash slot into the first free slot, the inventory before the
 /// backpack, and a scroll onto the scrolls the hero already carries.
 pub fn grab_moves(core: &bota_client_core::App) -> Vec<(u8, u8)> {
@@ -618,7 +618,7 @@ pub fn grab_moves(core: &bota_client_core::App) -> Vec<(u8, u8)> {
         let view = core.view()?;
         let player = view.player(core.my_slot?)?;
         let hero = view.unit(player.unit?)?;
-        if !core.unit_at_home_shop(hero.id) {
+        if !core.unit_at_base_shop(hero.id) {
             return None;
         }
         let mut free: VecDeque<u8> = (0..BAG_SLOTS)
@@ -663,7 +663,7 @@ fn grab_step(mut session: NonSendMut<Session>, mut grab: ResMut<Grab>) {
     };
     if !core
         .my_standing_hero()
-        .is_some_and(|hero| core.unit_at_home_shop(hero))
+        .is_some_and(|hero| core.unit_at_base_shop(hero))
     {
         grab.moves.clear();
         return;
@@ -703,11 +703,16 @@ impl Grab {
 
 #[cfg(test)]
 pub(crate) fn drawn_gold(world: &mut World) -> Option<String> {
-    let (text, shown) = world
-        .query_filtered::<(&Text, &InheritedVisibility), With<Gold>>()
+    drawn_gold_style(world).map(|(text, _)| text)
+}
+
+#[cfg(test)]
+pub(crate) fn drawn_gold_style(world: &mut World) -> Option<(String, Color)> {
+    let (text, ink, shown) = world
+        .query_filtered::<(&Text, &TextColor, &InheritedVisibility), With<Gold>>()
         .single(world)
         .ok()?;
-    shown.get().then(|| text.0.clone())
+    shown.get().then(|| (text.0.clone(), ink.0))
 }
 
 #[cfg(test)]
