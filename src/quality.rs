@@ -222,7 +222,9 @@ fn scale(
 }
 
 /// Halves every texture of a model or the map larger than `texture_size`
-/// as it loads, before it reaches the GPU.
+/// as it loads, before it reaches the GPU. Images a loader makes itself (a
+/// labelled asset, such as the ground's field of path colours, which the client
+/// writes cell by cell) keep their size.
 fn shrink_textures(
     mut events: MessageReader<AssetEvent<Image>>,
     mut images: ResMut<Assets<Image>>,
@@ -236,6 +238,7 @@ fn shrink_textures(
         };
         let from_scene = server.get_path(*id).is_some_and(|path| {
             path.source().as_str() == Some(crate::CACHE_SOURCE)
+                && path.label().is_none()
                 && ["models/", "map/", "textures/"]
                     .iter()
                     .any(|dir| path.path().starts_with(dir))

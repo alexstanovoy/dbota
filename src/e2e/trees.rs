@@ -159,3 +159,28 @@ fn every_tree_the_match_places_is_drawn_as_the_model_of_the_map() {
     let absent: Vec<_> = mapped.difference(&models).collect();
     assert!(absent.is_empty(), "map models never drawn: {absent:?}");
 }
+
+/// The size of the ground's field of path colours and forest shade, once the map made it.
+fn field_size(client: &Client) -> Option<UVec2> {
+    let world = client.world();
+    let layers = world.get_resource::<crate::layers::GroundLayers>()?;
+    world
+        .resource::<Assets<Image>>()
+        .get(&layers.field)
+        .map(Image::size)
+}
+
+/// The Potato preset's texture cap (512) halves the map's textures as they load, but not the
+/// ground's field of path colours and forest shade: the client writes that cell by cell, and a
+/// halved field ran the forest's shade past its end, ending the client as the forest stood.
+#[test]
+fn the_lowest_presets_texture_cap_leaves_the_grounds_field_whole() {
+    let server = Server::start(1, &[]);
+    let mut client = Client::join(&server, HeroId::SHADOW_FIEND, &["--set", "quality=potato"]);
+    client.until("the ground's field and the forest known", |c| {
+        field_size(c).is_some() && !c.core().trees().is_empty()
+    });
+    client.frames(30);
+    let cells = crate::layers::FIELD_CELLS as u32;
+    assert_eq!(field_size(&client), Some(UVec2::new(2 * cells, cells)));
+}
