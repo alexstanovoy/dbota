@@ -133,6 +133,8 @@ fn blows_of_creeps_on_one_hero_merge_within_half_a_second() {
     let server = Server::start(1, &[]);
     let mut client = Client::join(&server, HeroId::SHADOW_FIEND, &[]);
     client.stand_at(MID);
+    // Keep the victim alive through all four measured blows.
+    client.cheat(Cheat::Levels { count: 24 });
     client.cheat(Cheat::Wtf { on: true });
     let starts = listen(&mut client, "melee_hit");
     for dx in [-120, 0, 120] {
@@ -144,6 +146,10 @@ fn blows_of_creeps_on_one_hero_merge_within_half_a_second() {
     client.until("the creeps' blows sounded", |_| {
         starts.lock().expect("unpoisoned").len() >= 4
     });
+    assert!(
+        client.me().hp > 0,
+        "the hero survives the four measured blow sounds"
+    );
     let starts = starts.lock().expect("unpoisoned").clone();
     let tightest = starts
         .windows(2)
