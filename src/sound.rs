@@ -22,7 +22,7 @@ pub const REST: f32 = 0.05;
 const SHOTS_PER_TICK: usize = 32;
 
 /// One kind of sound and the sources it may be played from.
-struct Voice {
+struct Binding {
     /// The logical name of its row, for the trace.
     name: String,
     sources: Vec<Handle<AudioSource>>,
@@ -37,18 +37,18 @@ struct Voice {
 
 /// Every kind of sound the client plays.
 #[derive(Resource, Default)]
-struct Voices(Vec<(Kind, Voice)>);
+struct Bindings(Vec<(Kind, Binding)>);
 
 /// How many times a hero's death has been sounded by its own row, for the end-to-end tests.
 #[cfg(test)]
 pub(crate) fn deaths_sounded(world: &World, hero: HeroId) -> usize {
     let kind = row(Subject::Hero(hero), Event::Death, None);
     world
-        .resource::<Voices>()
+        .resource::<Bindings>()
         .0
         .iter()
         .find(|(k, _)| *k == kind)
-        .map_or(0, |(_, voice)| voice.next)
+        .map_or(0, |(_, binding)| binding.next)
 }
 
 /// A kind of sound.
@@ -280,7 +280,7 @@ struct Humming {
 
 pub fn plugin(app: &mut App) {
     app.add_plugins(crate::mixer::plugin)
-        .init_resource::<Voices>()
+        .init_resource::<Bindings>()
         .init_resource::<PendingCues>()
         .add_systems(Update, load.run_if(crate::loading::requested))
         .add_systems(PostUpdate, report.in_set(crate::loading::Report))
@@ -374,7 +374,7 @@ fn sources_of(kind: Kind, manifest: &Manifest) -> Vec<String> {
     }
 }
 
-fn load(mut voices: ResMut<Voices>, manifest: Res<Manifest>, server: Res<AssetServer>) {
+fn load(mut bindings: ResMut<Bindings>, manifest: Res<Manifest>, server: Res<AssetServer>) {
     let kinds = [
         CueKind::LastHit,
         CueKind::Deny,
@@ -407,9 +407,9 @@ fn load(mut voices: ResMut<Voices>, manifest: Res<Manifest>, server: Res<AssetSe
             .iter()
             .flat_map(|name| manifest.sounds_with_events(name))
             .collect();
-        voices.0.push((
+        bindings.0.push((
             kind,
-            Voice {
+            Binding {
                 name: names.join("|"),
                 sources: files.iter().map(|(path, _)| server.load(path)).collect(),
                 events: files.into_iter().map(|(_, event)| event).collect(),
@@ -434,12 +434,11 @@ fn volume(settings: Res<Settings>, args: Res<crate::Args>, mut global: ResMut<Gl
     global.volume = Volume::Linear(v);
 }
 
-/// What sounds the kinds of sound: the voices of the kinds, the mixer that bounds them, and
-/// where the listener is.
+/// The bindings that choose sources, the mixer that owns active playback, and the listener.
 struct Sounder<'a, 'w, 's> {
     commands: &'a mut Commands<'w, 's>,
     mixer: &'a mut Mixer,
-    voices: &'a mut Voices,
+    bindings: &'a mut Bindings,
     now: Duration,
     focus: Vec2,
     silent: bool,
@@ -457,29 +456,29 @@ impl Sounder<'_, '_, '_> {
     /// Sounds one of a kind's sounds at `gain` before the distance, where `at` is; blows on the
     /// unit `merge` names merge into one sound.
     fn sound(&mut self, kind: Kind, gain: f32, at: Option<(f32, f32)>, merge: Option<EntityId>) {
-        let Some((_, voice)) = self.voices.0.iter_mut().find(|(k, _)| *k == kind) else {
+        let Some((_, binding)) = self.bindings.0.iter_mut().find(|(k, _)| *k == kind) else {
             return;
         };
         if let Some(tick) = self.trace {
             println!(
                 "sound tick={tick} name={} on={} heard={} sources={}",
-                voice.name,
+                binding.name,
                 merge.map_or("none".to_owned(), |unit| unit.idx.to_string()),
-                !voice.own_hero_only || (merge.is_some() && merge == self.ears),
-                voice.sources.len()
+                !binding.own_hero_only || (merge.is_some() && merge == self.ears),
+                binding.sources.len()
             );
         }
         // A blow taken as damage is heard on the hero one plays alone, so on no one's while
         // spectating or watching a replay.
-        if voice.own_hero_only && (merge.is_none() || merge != self.ears) {
+        if binding.own_hero_only && (merge.is_none() || merge != self.ears) {
             return;
         }
-        if self.silent || voice.rest > 0.0 || voice.sources.is_empty() {
+        if self.silent || binding.rest > 0.0 || binding.sources.is_empty() {
             return;
         }
-        let pick = voice.next % voice.sources.len();
+        let pick = binding.next % binding.sources.len();
         let request = Request {
-            event: &voice.events[pick],
+            event: &binding.events[pick],
             owner: Owner::None,
             merge,
             at,
@@ -489,10 +488,10 @@ impl Sounder<'_, '_, '_> {
             on_player: sounds_from_the_players_entity(kind, self.own, self.ears),
             fog: Some(self.fog),
         };
-        let source = voice.sources[pick].clone();
+        let source = binding.sources[pick].clone();
         if self.mixer.start(self.commands, self.now, &request, source) != Started::Refused {
-            voice.rest = REST;
-            voice.next += 1;
+            binding.rest = REST;
+            binding.next += 1;
         }
     }
 
@@ -565,7 +564,7 @@ fn play(
     mut commands: Commands,
     sight: crate::fog::EventSight,
     mut pending: ResMut<PendingCues>,
-    mut voices: ResMut<Voices>,
+    mut bindings: ResMut<Bindings>,
     mut mixer: ResMut<Mixer>,
     time: Res<Time>,
     cam: Single<&RtsCamera>,
@@ -575,15 +574,15 @@ fn play(
     mut queued: Local<QueuedBuys>,
     mut shops: Local<ShopWatch>,
 ) {
-    for (_, voice) in &mut voices.0 {
-        voice.rest = (voice.rest - time.delta_secs()).max(0.0);
+    for (_, binding) in &mut bindings.0 {
+        binding.rest = (binding.rest - time.delta_secs()).max(0.0);
     }
     let core = sight.core();
     let (chosen, spoken) = queued.watch(core, time.elapsed_secs());
     let mut sounder = Sounder {
         commands: &mut commands,
         mixer: &mut mixer,
-        voices: &mut voices,
+        bindings: &mut bindings,
         now: time.elapsed(),
         focus: Vec2::new(cam.focus.x, -cam.focus.z),
         silent: settings.muted || args.mute,
@@ -624,7 +623,7 @@ fn play(
 fn portals(
     mut commands: Commands,
     sight: crate::fog::EventSight,
-    voices: Res<Voices>,
+    bindings: Res<Bindings>,
     mixer: Res<Mixer>,
     cam: Single<&RtsCamera>,
     settings: Res<Settings>,
@@ -646,9 +645,9 @@ fn portals(
     let silent = settings.muted || args.mute;
     let focus = Vec2::new(cam.focus.x, -cam.focus.z);
     let play = |commands: &mut Commands, kind: Kind, at: (f32, f32), looped: bool| {
-        let (_, voice) = voices.0.iter().find(|(k, _)| *k == kind)?;
-        let source = voice.sources.first().cloned()?;
-        let gain = mixer.gain_for(voice.events.first()?, at, (focus.x, focus.y));
+        let (_, binding) = bindings.0.iter().find(|(kind_key, _)| *kind_key == kind)?;
+        let source = binding.sources.first().cloned()?;
+        let gain = mixer.gain_for(binding.events.first()?, at, (focus.x, focus.y));
         if silent || gain < 0.03 {
             return None;
         }
@@ -934,8 +933,12 @@ fn swings(core: &bota_client_core::App, fog: &crate::fog::FogGrid, sound: &mut S
 }
 
 /// The sounds' part of the loading.
-fn report(voices: Res<Voices>, server: Res<AssetServer>, mut parts: ResMut<crate::loading::Parts>) {
-    let sources = voices.0.iter().flat_map(|(_, voice)| &voice.sources);
+fn report(
+    bindings: Res<Bindings>,
+    server: Res<AssetServer>,
+    mut parts: ResMut<crate::loading::Parts>,
+) {
+    let sources = bindings.0.iter().flat_map(|(_, binding)| &binding.sources);
     let (done, total) = sources.fold((0, 0), |(d, t), h| {
         (d + usize::from(crate::loading::settled(&server, h)), t + 1)
     });
