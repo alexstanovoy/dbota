@@ -7,6 +7,7 @@
 
 use bevy::prelude::*;
 
+pub use crate::cachefs::RESIDENT_BUDGET;
 use crate::manifest::Manifest;
 
 /// The handles that keep the images resident.
@@ -57,36 +58,20 @@ pub fn paths(manifest: &Manifest) -> Vec<String> {
     paths
 }
 
-/// The most the held images may take decoded. A browser's memory never shrinks back (see
-/// `cachefs`), so what stays resident is bounded here, apart from the in-flight gate of the
-/// decoder; the browser holds the textures as the cache exports them, compressed, so never more
-/// than the PNGs measured natively.
-pub const RESIDENT_BUDGET: usize = 48 << 20;
-
-/// The bytes the held images take decoded, from the headers of their files in the cache; none
-/// in a browser, which does not read them here.
-#[cfg(not(target_arch = "wasm32"))]
+/// The cache's requested image sizes, for the export's resident-art regression.
+/// An unreadable or malformed header makes the measurement fail.
+#[cfg(all(test, not(target_arch = "wasm32")))]
 pub fn decoded_bytes(root: &std::path::Path, paths: &[String]) -> Option<usize> {
     use std::io::Read;
-    Some(
-        paths
-            .iter()
-            .filter_map(|path| {
-                let mut head = Vec::new();
-                std::fs::File::open(root.join(path))
-                    .ok()?
-                    .take(crate::texture_file::HEAD_BYTES as u64)
-                    .read_to_end(&mut head)
-                    .ok()?;
-                crate::texture_file::decoded_size(&head)?.ok()
-            })
-            .sum(),
-    )
-}
-
-#[cfg(target_arch = "wasm32")]
-pub fn decoded_bytes(_root: &std::path::Path, _paths: &[String]) -> Option<usize> {
-    None
+    paths.iter().try_fold(0usize, |total, path| {
+        let mut head = [0; crate::texture_file::HEAD_BYTES];
+        let read = std::fs::File::open(root.join(path))
+            .ok()?
+            .read(&mut head)
+            .ok()?;
+        let bytes = crate::texture_file::png_size(&head[..read]).ok()?;
+        total.checked_add(bytes)
+    })
 }
 
 fn ask(manifest: Res<Manifest>, server: Res<AssetServer>, mut art: ResMut<Art>) {
@@ -95,22 +80,11 @@ fn ask(manifest: Res<Manifest>, server: Res<AssetServer>, mut art: ResMut<Art>) 
         .iter()
         .map(|path| server.load(crate::manifest::cache_path(path)))
         .collect();
-    let decoded = decoded_bytes(&manifest.root, &paths);
-    match decoded {
-        Some(bytes) => info!(
-            "loading: {} interface images held resident, {} MiB decoded (at most {} MiB)",
-            art.0.len(),
-            bytes >> 20,
-            RESIDENT_BUDGET >> 20
-        ),
-        None => info!(
-            "loading: {} interface images held resident, decoded size not measured in a browser",
-            art.0.len()
-        ),
-    }
-    if decoded.is_some_and(|bytes| bytes > RESIDENT_BUDGET) {
-        warn!("loading: the held interface images take more than {RESIDENT_BUDGET} bytes decoded");
-    }
+    info!(
+        "loading: {} interface images requested within a {} MiB decoded residency limit",
+        art.0.len(),
+        RESIDENT_BUDGET >> 20
+    );
 }
 
 fn report(art: Res<Art>, server: Res<AssetServer>, mut parts: ResMut<crate::loading::Parts>) {

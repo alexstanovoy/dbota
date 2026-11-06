@@ -18,6 +18,10 @@
 //! at a time: loads finish far faster than a frame takes them in while the
 //! map is prepared, and every texture of the cache sat decoded in memory at
 //! once.
+//!
+//! PNGs are the interface's retained art; their decoded-byte and path allowance
+//! lasts for the reader's lifetime, even after upload or a failed load. Models
+//! and the world use KTX2 textures and the separate in-flight allowance.
 
 use std::{
     collections::HashMap,
@@ -49,6 +53,11 @@ const DECODE_BUDGET: usize = if cfg!(target_arch = "wasm32") {
 /// Frames without a texture arriving after which the budget lets every
 /// texture through: a load that never reports back must not stall the rest.
 const STALL_FRAMES: u32 = 120;
+/// PNG bytes admitted for retained interface art, separately from transient
+/// decoding. The same bound applies on desktop and web.
+pub const RESIDENT_BUDGET: usize = 48 << 20;
+/// Tiny images must not turn the byte allowance into unbounded path metadata.
+const MAX_RESIDENT_IMAGES: usize = 4096;
 
 /// The textures read and not yet handed to the GPU, by cache path, with
 /// their decoded size, and the reads waiting for room.
@@ -61,11 +70,42 @@ struct InFlight {
     idle: u32,
 }
 
-/// The decode budget shared by the reader and the systems that settle it.
+#[derive(Default)]
+struct ResidentImages {
+    bytes: usize,
+    images: HashMap<PathBuf, usize>,
+}
+
+/// Decode allowances shared by the reader and the systems that settle uploads.
 #[derive(Resource, Clone, Default)]
-pub struct DecodeBudget(Arc<Mutex<InFlight>>);
+pub struct DecodeBudget {
+    in_flight: Arc<Mutex<InFlight>>,
+    resident: Arc<Mutex<ResidentImages>>,
+}
 
 impl DecodeBudget {
+    fn retain(&self, path: &Path, bytes: usize) -> Result<(), String> {
+        let mut resident = self
+            .resident
+            .lock()
+            .map_err(|_| "resident interface image budget is unavailable".to_string())?;
+        let previous = resident.images.get(path).copied();
+        let total = resident.bytes - previous.unwrap_or(0) + bytes;
+        if total > RESIDENT_BUDGET {
+            return Err(format!(
+                "resident interface image budget exceeded ({total} > {RESIDENT_BUDGET} decoded bytes)"
+            ));
+        }
+        if previous.is_none() && resident.images.len() >= MAX_RESIDENT_IMAGES {
+            return Err(format!(
+                "resident interface image budget exceeded ({MAX_RESIDENT_IMAGES} paths)"
+            ));
+        }
+        resident.bytes = total;
+        resident.images.insert(path.to_path_buf(), bytes);
+        Ok(())
+    }
+
     /// Resolves once a texture of `bytes` decoded fits, and counts it. One
     /// larger than the whole budget goes alone, so it counts as the budget.
     fn take<'a>(&'a self, path: &'a Path, bytes: usize) -> Take<'a> {
@@ -85,7 +125,7 @@ impl DecodeBudget {
 
     /// Lets a texture's bytes go once it is on the GPU or failed.
     fn settle(&self, path: &Path) {
-        if let Ok(mut flight) = self.0.lock()
+        if let Ok(mut flight) = self.in_flight.lock()
             && let Some(bytes) = flight.textures.remove(path)
         {
             flight.bytes -= bytes;
@@ -96,7 +136,7 @@ impl DecodeBudget {
 
     /// The textures read and not yet settled.
     fn in_flight(&self) -> Vec<PathBuf> {
-        self.0
+        self.in_flight
             .lock()
             .map(|flight| flight.textures.keys().cloned().collect())
             .unwrap_or_default()
@@ -105,7 +145,7 @@ impl DecodeBudget {
     /// Counts a frame; after [`STALL_FRAMES`] of nothing arriving, forgets
     /// what is in flight.
     fn tick(&self) {
-        let Ok(mut flight) = self.0.lock() else {
+        let Ok(mut flight) = self.in_flight.lock() else {
             return;
         };
         if flight.textures.is_empty() {
@@ -137,7 +177,7 @@ impl Future for Take<'_> {
     type Output = ();
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<()> {
-        let Ok(mut flight) = self.budget.0.lock() else {
+        let Ok(mut flight) = self.budget.in_flight.lock() else {
             return Poll::Ready(());
         };
         if flight.bytes > 0 && flight.bytes + self.bytes > DECODE_BUDGET {
@@ -293,14 +333,24 @@ impl CacheReader {
     /// Waits until a texture file fits the decode budget, and refuses one
     /// whose header no decoder may be trusted with.
     async fn admit(&self, path: &Path, head: &[u8]) -> Result<(), AssetReaderError> {
-        match decoded_size(head) {
-            Some(Ok(bytes)) => self.budget.take(path, bytes).await,
-            Some(Err(why)) => {
-                let why = format!("{}: {why}", path.display());
-                return Err(AssetReaderError::Io(std::io::Error::other(why).into()));
-            }
-            None => {}
+        let png = path.extension().is_some_and(|extension| extension == "png");
+        let size = if png {
+            Some(crate::texture_file::png_size(head))
+        } else {
+            decoded_size(head)
+        };
+        let Some(size) = size else {
+            return Ok(());
+        };
+        let failed = |why: String| {
+            let why = format!("{}: {why}", path.display());
+            AssetReaderError::Io(std::io::Error::other(why).into())
+        };
+        let bytes = size.map_err(failed)?;
+        if png {
+            self.budget.retain(path, bytes).map_err(failed)?;
         }
+        self.budget.take(path, bytes).await;
         Ok(())
     }
 }
@@ -442,6 +492,143 @@ pub fn read_small(root: &Path, rel: &str) -> Option<Vec<u8>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn interface_png(side: u32) -> Vec<u8> {
+        let mut png = b"\x89PNG\r\n\x1a\n\0\0\0\x0dIHDR".to_vec();
+        png.extend(side.to_be_bytes());
+        png.extend(side.to_be_bytes());
+        png.extend([8, 6, 0, 0, 0]);
+        png
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn resident_interface_images_are_limited_before_native_decoding() {
+        let root = std::env::temp_dir().join(format!("dbota-resident-{}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        let budget = DecodeBudget::default();
+        let reader = CacheReader::new(root.clone(), budget.clone(), BlockTextures::default());
+        let png = interface_png(2048);
+        assert_eq!(decoded_size(&png), Some(Ok(16 << 20)));
+        for index in 0..3 {
+            let name = format!("{index}.png");
+            std::fs::write(root.join(&name), &png).unwrap();
+            assert!(bevy::tasks::block_on(reader.read(Path::new(&name))).is_ok());
+            budget.settle(Path::new(&name));
+        }
+        std::fs::write(root.join("excess.png"), &png).unwrap();
+        let why = bevy::tasks::block_on(reader.read(Path::new("excess.png")))
+            .err()
+            .expect("resident images must stay bounded after the GPU accepts them")
+            .to_string();
+        assert!(why.contains("resident interface image budget"), "{why}");
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn resident_interface_images_are_limited_at_the_shared_browser_admission() {
+        let budget = DecodeBudget::default();
+        let reader = CacheReader::new(PathBuf::new(), budget.clone(), BlockTextures::default());
+        let png = interface_png(2048);
+        for index in 0..3 {
+            let name = format!("{index}.png");
+            assert!(bevy::tasks::block_on(reader.admit(Path::new(&name), &png)).is_ok());
+            budget.settle(Path::new(&name));
+        }
+        let why = bevy::tasks::block_on(reader.admit(Path::new("excess.png"), &png))
+            .expect_err("HTTP and private-storage reads share the resident image bound")
+            .to_string();
+        assert!(why.contains("resident interface image budget"), "{why}");
+    }
+
+    #[test]
+    fn resident_interface_images_are_limited_when_their_header_is_unreadable() {
+        let reader = CacheReader::new(
+            PathBuf::new(),
+            DecodeBudget::default(),
+            BlockTextures::default(),
+        );
+        let why = bevy::tasks::block_on(reader.admit(Path::new("broken.png"), b"not an image"))
+            .expect_err("a missing image size cannot consume zero resident bytes")
+            .to_string();
+        assert!(why.contains("broken.png: no texture header"), "{why}");
+    }
+
+    #[test]
+    fn resident_interface_images_are_limited_to_png_headers() {
+        let reader = CacheReader::new(
+            PathBuf::new(),
+            DecodeBudget::default(),
+            BlockTextures::default(),
+        );
+        let mut ktx2 = b"\xABKTX 20\xBB\r\n\x1A\n".to_vec();
+        for word in [133u32, 1, 64, 64, 0, 0, 1, 1, 0] {
+            ktx2.extend(word.to_le_bytes());
+        }
+        ktx2.resize(80, 0);
+        for field in [0u64, 2048, 2048] {
+            ktx2.extend(field.to_le_bytes());
+        }
+        assert_eq!(decoded_size(&ktx2), Some(Ok(2048)));
+        let why = bevy::tasks::block_on(reader.admit(Path::new("wrong.png"), &ktx2))
+            .expect_err("a recognized KTX2 header cannot stand for a PNG image")
+            .to_string();
+        assert!(why.contains("wrong.png: no texture header"), "{why}");
+        assert!(bevy::tasks::block_on(reader.admit(Path::new("model.ktx2"), &ktx2)).is_ok());
+    }
+
+    #[test]
+    fn resident_interface_images_are_limited_when_a_retained_path_grows() {
+        let budget = DecodeBudget::default();
+        let reader = CacheReader::new(PathBuf::new(), budget.clone(), BlockTextures::default());
+        let png = interface_png(2048);
+        for index in 0..3 {
+            let name = format!("{index}.png");
+            assert!(bevy::tasks::block_on(reader.admit(Path::new(&name), &png)).is_ok());
+            budget.settle(Path::new(&name));
+        }
+        let retained = Path::new("0.png");
+        assert!(bevy::tasks::block_on(reader.admit(retained, &png)).is_ok());
+        budget.settle(retained);
+        let why = bevy::tasks::block_on(reader.admit(retained, &interface_png(2304)))
+            .expect_err("a larger replacement must reserve its extra decoded bytes")
+            .to_string();
+        assert!(why.contains("resident interface image budget"), "{why}");
+    }
+
+    #[test]
+    fn resident_interface_images_are_limited_when_many_tiny_paths_arrive() {
+        let budget = DecodeBudget::default();
+        let reader = CacheReader::new(PathBuf::new(), budget.clone(), BlockTextures::default());
+        let png = interface_png(1);
+        for index in 0..4096 {
+            let name = format!("{index}.png");
+            assert!(bevy::tasks::block_on(reader.admit(Path::new(&name), &png)).is_ok());
+            budget.settle(Path::new(&name));
+        }
+        let why = bevy::tasks::block_on(reader.admit(Path::new("excess.png"), &png))
+            .expect_err("tiny files cannot grow retained path metadata without a bound")
+            .to_string();
+        assert!(why.contains("resident interface image budget"), "{why}");
+    }
+
+    #[test]
+    fn resident_interface_images_are_limited_after_decode_stall_recovery() {
+        let budget = DecodeBudget::default();
+        let reader = CacheReader::new(PathBuf::new(), budget.clone(), BlockTextures::default());
+        let png = interface_png(2048);
+        for index in 0..3 {
+            let name = format!("{index}.png");
+            assert!(bevy::tasks::block_on(reader.admit(Path::new(&name), &png)).is_ok());
+        }
+        for _ in 0..STALL_FRAMES {
+            budget.tick();
+        }
+        let why = bevy::tasks::block_on(reader.admit(Path::new("excess.png"), &png))
+            .expect_err("decode progress recovery cannot renew resident allowance")
+            .to_string();
+        assert!(why.contains("resident interface image budget"), "{why}");
+    }
 
     #[cfg(not(target_arch = "wasm32"))]
     #[test]

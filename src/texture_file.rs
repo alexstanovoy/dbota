@@ -45,7 +45,12 @@ pub fn decoded_size(head: &[u8]) -> Option<Result<usize, String>> {
     }
 }
 
-fn png_size(head: &[u8]) -> Result<usize, String> {
+/// The decoded size of a file loaded as PNG, refusing other formats even when
+/// they have a recognizable texture header.
+pub fn png_size(head: &[u8]) -> Result<usize, String> {
+    if !head.starts_with(&PNG_MAGIC) {
+        return Err("no texture header for a PNG".into());
+    }
     let ihdr = head
         .get(8..26)
         .filter(|ihdr| ihdr[4..8] == *b"IHDR")
