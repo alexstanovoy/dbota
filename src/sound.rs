@@ -15,19 +15,11 @@ use crate::manifest::Manifest;
 use crate::mixer::{Mixer, Owner, Request, Started};
 use crate::session::Session;
 
-/// World units from the camera within which a sound is heard at full.
-const EARSHOT: f32 = 1200.0;
-/// World units over which a sound fades out past [`EARSHOT`].
-const FADE: f32 = 3000.0;
 /// Seconds a kind of sound rests before it may sound again.
 pub const REST: f32 = 0.05;
 /// New missiles a tick looked into at most: each is matched against every
 /// unit, and a snapshot may hold thousands of them.
 const SHOTS_PER_TICK: usize = 32;
-
-/// The level creeps' and towers' sounds are set to against the interface's; the mixer scales
-/// each by its event's own volume (a melee creep's events state 1, a ranged creep's 0.6).
-const WORLD_GAIN: f32 = 0.6;
 
 /// One kind of sound and the sources it may be played from.
 struct Voice {
@@ -424,6 +416,10 @@ struct Sounder<'a, 'w, 's> {
     silent: bool,
     /// The hero the player hears the damage taken of.
     ears: Option<EntityId>,
+    /// The hero of the player's own seat: none for a spectator or a replay.
+    own: Option<EntityId>,
+    /// The fog of war, for the events that are heard only where their source is in sight.
+    fog: &'a crate::fog::FogGrid,
     /// The tick to trace the decisions of, when they are traced.
     trace: Option<u32>,
 }
@@ -432,7 +428,6 @@ impl Sounder<'_, '_, '_> {
     /// Sounds one of a kind's sounds at `gain` before the distance, where `at` is; blows on the
     /// unit `merge` names merge into one sound.
     fn sound(&mut self, kind: Kind, gain: f32, at: Option<(f32, f32)>, merge: Option<EntityId>) {
-        let fall = at.map_or(1.0, |at| fall_off(at, self.focus));
         let Some((_, voice)) = self.voices.0.iter_mut().find(|(k, _)| *k == kind) else {
             return;
         };
@@ -449,7 +444,7 @@ impl Sounder<'_, '_, '_> {
         if voice.own_hero_only && (merge.is_none() || merge != self.ears) {
             return;
         }
-        if self.silent || voice.rest > 0.0 || voice.sources.is_empty() || fall * gain < 0.03 {
+        if self.silent || voice.rest > 0.0 || voice.sources.is_empty() {
             return;
         }
         let pick = voice.next % voice.sources.len();
@@ -458,8 +453,11 @@ impl Sounder<'_, '_, '_> {
             owner: Owner::None,
             merge,
             at,
-            gain: gain * fall,
+            listener: Some((self.focus.x, self.focus.y)),
+            gain,
             speed: speed_of(kind),
+            on_player: sounds_from_the_players_entity(kind, self.own, self.ears),
+            fog: Some(self.fog),
         };
         let source = voice.sources[pick].clone();
         if self.mixer.start(self.commands, self.now, &request, source) != Started::Refused {
@@ -553,6 +551,8 @@ fn play(
         focus: Vec2::new(cam.focus.x, -cam.focus.z),
         silent: settings.muted || args.mute,
         ears: core.ears(),
+        own: core.my_hero(),
+        fog: sight.fog(),
         trace: args.trace_feel.then(|| core.view().map_or(0, |v| v.tick)),
     };
     // Dota sounds a purchase when it is made: once for each choice in the
@@ -580,12 +580,6 @@ fn play(
     }
 }
 
-/// How much of its volume a sound at a place keeps for a listener at `focus`.
-pub(crate) fn fall_off((x, y): (f32, f32), focus: Vec2) -> f32 {
-    let far = Vec2::new(x, y).distance(focus);
-    (1.0 - (far - EARSHOT).max(0.0) / FADE).clamp(0.0, 1.0)
-}
-
 /// Hums over every teleport under way, at the landing and, when the hero is
 /// in sight, where it stands; a teleport the server tells landed has a sound
 /// at both ends, one it tells was broken off, or that vanishes untold, only
@@ -594,6 +588,7 @@ fn portals(
     mut commands: Commands,
     sight: crate::fog::EventSight,
     voices: Res<Voices>,
+    mixer: Res<Mixer>,
     cam: Single<&RtsCamera>,
     settings: Res<Settings>,
     args: Res<crate::Args>,
@@ -614,12 +609,9 @@ fn portals(
     let silent = settings.muted || args.mute;
     let focus = Vec2::new(cam.focus.x, -cam.focus.z);
     let play = |commands: &mut Commands, kind: Kind, at: (f32, f32), looped: bool| {
-        let source = voices
-            .0
-            .iter()
-            .find(|(k, _)| *k == kind)
-            .and_then(|(_, voice)| voice.sources.first().cloned())?;
-        let gain = fall_off(at, focus);
+        let (_, voice) = voices.0.iter().find(|(k, _)| *k == kind)?;
+        let source = voice.sources.first().cloned()?;
+        let gain = mixer.gain_for(voice.events.first()?, at, (focus.x, focus.y));
         if silent || gain < 0.03 {
             return None;
         }
@@ -748,6 +740,25 @@ impl ShopWatch {
     }
 }
 
+/// Whether a sound is from the entity of the player the game is played on, which Dota gives the
+/// event's `volume_on_player_mult` for: the attack and blow rows of a hero are the watched hero's
+/// own, and that is the player's only when the seat has a hero and it is the one watched.
+fn sounds_from_the_players_entity(
+    kind: Kind,
+    own: Option<EntityId>,
+    ears: Option<EntityId>,
+) -> bool {
+    let hero_blow = matches!(
+        kind,
+        Kind::Row(Row {
+            subject: Subject::Hero(_),
+            event: Event::Attack | Event::Impact,
+            ..
+        })
+    );
+    hero_blow && own.is_some() && own == ears
+}
+
 /// Whether the hero one plays has come into the range of a shop (`Some(true)`) or gone out of it
 /// (`Some(false)`), as Dota sounds it: the home shop's, or a secret shop's (the courier's range
 /// does not count).
@@ -785,19 +796,19 @@ fn shots(core: &bota_client_core::App, fog: &crate::fog::FogGrid, sound: &mut So
         match shooter.kind {
             UnitKind::Tower => sound.sound(
                 row(Subject::Tower, Event::Attack, Some(side)),
-                WORLD_GAIN,
+                1.0,
                 at,
                 None,
             ),
             UnitKind::CreepRanged => sound.sound(
                 row(Subject::RangedCreep, Event::Attack, Some(side)),
-                WORLD_GAIN,
+                1.0,
                 at,
                 None,
             ),
             UnitKind::CreepSiege => sound.sound(
                 row(Subject::SiegeCreep, Event::Attack, Some(side)),
-                WORLD_GAIN,
+                1.0,
                 at,
                 None,
             ),
@@ -820,7 +831,7 @@ fn shots(core: &bota_client_core::App, fog: &crate::fog::FogGrid, sound: &mut So
             let at = Some((p.pos.x.to_f32(), p.pos.y.to_f32()));
             sound.sound(
                 row(Subject::RangedCreep, Event::Impact, Some(side)),
-                WORLD_GAIN,
+                1.0,
                 at,
                 p.target,
             );
@@ -855,7 +866,7 @@ fn swings(core: &bota_client_core::App, fog: &crate::fog::FogGrid, sound: &mut S
         if now.is_some() && now != before {
             sound.sound(
                 row(Subject::MeleeCreep, Event::PreAttack, None),
-                WORLD_GAIN,
+                1.0,
                 at,
                 None,
             );
@@ -864,7 +875,7 @@ fn swings(core: &bota_client_core::App, fog: &crate::fog::FogGrid, sound: &mut S
             let target = swing_of(prev, u.id).map(|swing| swing.target);
             sound.sound(
                 row(Subject::MeleeCreep, Event::Attack, None),
-                WORLD_GAIN,
+                1.0,
                 at,
                 target,
             );
@@ -895,6 +906,31 @@ mod tests {
             .enumerate()
             .map(|(second, (in_match, near))| watch.look(*in_match, *near, second as f32))
             .collect()
+    }
+
+    #[test]
+    fn only_the_players_own_heros_blows_get_the_players_factor() {
+        let hero = |event| row(Subject::Hero(HeroId::PUDGE), event, None);
+        let id = |idx| Some(EntityId { idx, generation: 1 });
+        let (me, ally, enemy) = (id(1), id(2), id(3));
+        for event in [Event::Attack, Event::Impact] {
+            assert!(sounds_from_the_players_entity(hero(event), me, me));
+            assert!(
+                !sounds_from_the_players_entity(hero(event), me, ally),
+                "an ally's"
+            );
+            assert!(
+                !sounds_from_the_players_entity(hero(event), me, enemy),
+                "an enemy's"
+            );
+            assert!(
+                !sounds_from_the_players_entity(hero(event), None, enemy),
+                "a spectator's"
+            );
+        }
+        assert!(!sounds_from_the_players_entity(hero(Event::Death), me, me));
+        let creep = row(Subject::MeleeCreep, Event::Attack, None);
+        assert!(!sounds_from_the_players_entity(creep, me, me));
     }
 
     #[test]

@@ -22,7 +22,9 @@ use bevy::{
 };
 use bota_proto::EntityId;
 
-use crate::cache_text::EventLine;
+use crate::attenuation::falloff;
+use crate::cache_text::{EventLine, GroupLine, LayerLine};
+use crate::fog::FogGrid;
 use crate::manifest::Manifest;
 
 /// Voices sounding at once at most, fading ones included: the oldest one-shot is stopped for a
@@ -58,9 +60,45 @@ pub struct Request<'a> {
     pub merge: Option<EntityId>,
     /// Where it sounds, in the world; none for a sound heard wherever the camera is.
     pub at: Option<(f32, f32)>,
+    /// Where the listener is (the camera's focus): the sound carries from `at` to it as its
+    /// event says.
+    pub listener: Option<(f32, f32)>,
+    /// How strongly the caller asks for it, before the event's volume, its carrying and the mix.
     pub gain: f32,
     pub speed: f32,
+    /// Whether it sounds from the entity of the player the game is played on, which Dota gives
+    /// the event's `volume_on_player_mult` for.
+    pub on_player: bool,
+    /// The fog of war, for an event that is heard only where its source is in sight.
+    pub fog: Option<&'a FogGrid>,
 }
+
+impl Default for Request<'_> {
+    fn default() -> Self {
+        Request {
+            event: "",
+            owner: Owner::None,
+            merge: None,
+            at: None,
+            listener: None,
+            gain: 1.0,
+            speed: 1.0,
+            on_player: false,
+            fog: None,
+        }
+    }
+}
+
+/// The loudness every world sound is made up by: Dota's default mix keeps the interface's group
+/// at 0.5, and the client's interface sounds (clicks, the menu) play at their own level
+/// outside the mix, so the mix as a whole is raised until its interface group sounds as loud as
+/// the interface does. The player's volume setting is the master above this.
+pub const MIX_MAKEUP_GAIN: f32 = 2.0;
+/// Quietest a sound with a place is started at: below it, it is not heard.
+const QUIETEST_START: f32 = 0.03;
+/// Most mix layers, and so most states of them, the mixer follows.
+const MAX_LAYERS: usize = 64;
+const MAX_GROUPS: usize = 256;
 
 /// What became of a request.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -82,9 +120,41 @@ pub struct Mixer {
     warned: HashSet<String>,
     /// No match is on to sound: nothing starts.
     closed: bool,
+    /// The player has muted the game: voices are taken and kept, at no volume, so that the
+    /// decisions about them do not depend on the volume knob and unmuting finds them sounding.
+    muted: bool,
     /// How many times the game's sounds were ended, for what queues outside the mixer.
     ends: u32,
+    /// The mix groups and the levels of the default mix.
+    groups: HashMap<String, GroupLine>,
+    /// The mix layers, each with how far it is on now.
+    layers: Vec<LayerState>,
+    /// The loudest each group sounded since the last tick: what the layers' triggers are told.
+    activity: HashMap<String, f32>,
+    last_tick: Option<Duration>,
 }
+
+/// A mix layer and how far each of its triggers has it on, 0 to 1 (a trigger ramps at its own
+/// attack and release; the layer is as much on as its most-on trigger).
+struct LayerState {
+    line: LayerLine,
+    amounts: Vec<f32>,
+}
+
+impl LayerState {
+    fn new(line: LayerLine) -> LayerState {
+        let amounts = vec![0.0; line.triggers.len()];
+        LayerState { line, amounts }
+    }
+
+    fn amount(&self) -> f32 {
+        self.amounts.iter().copied().fold(0.0, f32::max)
+    }
+}
+
+/// How fast (per second) the fog of war's share of a loop moves when its source goes into
+/// sight or out of it: the `volume_FOW_filter_vel` of Dota's sound event types, 1.
+const FOG_FILTER_VELOCITY: f32 = 1.0;
 
 /// One sound sounding.
 struct Voice {
@@ -102,8 +172,18 @@ struct Voice {
     despawn: bool,
     /// The start of its fade-out once stopped, and how long the fade lasts.
     stopped: Option<(Duration, Duration)>,
-    /// The event's own volume, which every gain the voice has is of.
-    volume: f32,
+    /// The mix group it sounds in.
+    group: Option<String>,
+    /// What the request asked, times the event's volume and the player's factor.
+    base: f32,
+    /// Where the listener was when it last moved.
+    listener: Option<(f32, f32)>,
+    /// The radius within which sight counts for it, when the fog of war decides whether it is
+    /// heard, and how much of it the fog lets through now (a loop's share moves at
+    /// [`FOG_FILTER_VELOCITY`]).
+    fog_radius: Option<f32>,
+    fog_share: f32,
+    /// `base` as the distance to the listener leaves it.
     gain: f32,
 }
 
@@ -131,10 +211,88 @@ impl Mixer {
             return Mixer::default();
         };
         let events = crate::cache_text::sound_events(&text, MAX_EVENTS);
+        let mix = crate::cachefs::read_small(&manifest.root, "sounds/mixer.txt")
+            .and_then(|bytes| String::from_utf8(bytes).ok());
+        if mix.is_none() {
+            warn!("sounds/mixer.txt is missing from the cache: no sound is mixed");
+        }
+        let (groups, layers) = crate::cache_text::mixer_lines(&mix.unwrap_or_default(), 4096);
         Mixer {
             events: events.into_iter().map(|e| (e.name.clone(), e)).collect(),
+            groups: groups
+                .into_iter()
+                .take(MAX_GROUPS)
+                .map(|g| (g.name.clone(), g))
+                .collect(),
+            layers: layers
+                .into_iter()
+                .take(MAX_LAYERS)
+                .map(LayerState::new)
+                .collect(),
             ..Mixer::default()
         }
+    }
+
+    /// The volume and sound level factors of a mix group now: its level in the default mix, as
+    /// each layer that is on takes it from 1 towards its own, `lerp(1, vol, a) · (1 − mute · a)`
+    /// for the volume and `lerp(1, lvl, a)` for the level, `a` being how far the layer is on.
+    fn group_factors(&self, group: Option<&str>) -> (f32, f32) {
+        let Some(name) = group else {
+            return (1.0, 1.0);
+        };
+        let (mut volume, mut level) = self
+            .groups
+            .get(name)
+            .map_or((1.0, 1.0), |g| (g.volume * (1.0 - g.mute), g.level));
+        for layer in &self.layers {
+            let a = layer.amount();
+            for set in layer.line.levels.iter().filter(|l| l.group == name) {
+                volume *= (1.0 + (set.volume - 1.0) * a) * (1.0 - set.mute * a);
+                level *= 1.0 + (set.level - 1.0) * a;
+            }
+        }
+        (volume, level)
+    }
+
+    /// The share of its volume the event keeps over `distance` in its mix group now.
+    fn spatial(&self, rules: Option<&EventLine>, distance: f32) -> f32 {
+        let level = rules.map_or(crate::attenuation::DEFAULT_LEVEL_DB, |r| r.sound_level);
+        let max = rules.and_then(|r| r.distance_max);
+        let group = rules.and_then(|r| r.group.as_deref());
+        falloff(distance, level, max, self.group_factors(group).1)
+    }
+
+    /// What the loudness of a sound of the event is at the sink: its gain times its group's mix
+    /// level times [`MIX_MAKEUP_GAIN`], at most 1. A sound of no group is the interface's, which
+    /// the makeup gain is calibrated to: it sounds at its own level.
+    fn sink_gain(&self, event_gain: f32, group: Option<&str>) -> f32 {
+        if self.muted {
+            return 0.0;
+        }
+        let makeup = if group.is_some() {
+            MIX_MAKEUP_GAIN
+        } else {
+            1.0
+        };
+        (event_gain * self.group_factors(group).0 * makeup).clamp(0.0, 1.0)
+    }
+
+    /// How loud a sound of the event heard from `at` by a listener at `listener` is at the sink,
+    /// for the sounds that play outside the mixer's voices (the portals' hums).
+    pub fn gain_for(&self, event: &str, at: (f32, f32), listener: (f32, f32)) -> f32 {
+        let rules = self.events.get(event);
+        let distance = Vec2::from(at).distance(Vec2::from(listener));
+        let volume = rules.map_or(1.0, |r| r.volume);
+        let group = rules.and_then(|r| r.group.as_deref());
+        self.sink_gain(volume * self.spatial(rules, distance), group)
+    }
+
+    /// Tells the layers that a sound of `volume` (before the mix) sounded in the group this
+    /// frame, for a sound that plays outside the mixer's voices (the announcer's line).
+    pub fn note_activity(&mut self, group: &str, volume: f32) {
+        let volume = volume * self.group_factors(Some(group)).0;
+        let heard = self.activity.entry(group.to_owned()).or_insert(0.0);
+        *heard = heard.max(volume);
     }
 
     /// Whether the event's sound repeats until its owner stops it.
@@ -157,6 +315,33 @@ impl Mixer {
             return Started::Refused;
         }
         let rules = self.events.get(request.event).cloned();
+        let (volume, group) = (
+            rules.as_ref().map_or(1.0, |r| r.volume),
+            rules.as_ref().and_then(|r| r.group.clone()),
+        );
+        let player = if request.on_player {
+            rules.as_ref().map_or(1.0, |r| r.player_mult)
+        } else {
+            1.0
+        };
+        let base = request.gain * volume * player;
+        let distance = match (request.at, request.listener) {
+            (Some(at), Some(listener)) => Some(Vec2::from(at).distance(Vec2::from(listener))),
+            _ => None,
+        };
+        let spatial = distance.map_or(1.0, |d| self.spatial(rules.as_ref(), d));
+        if distance.is_some() && request.gain * spatial < QUIETEST_START {
+            return Started::Refused;
+        }
+        // An event that follows the fog of war is heard only where its source is in sight.
+        if let (Some(radius), Some(at), Some(fog)) = (
+            rules.as_ref().and_then(|r| r.fog_radius),
+            request.at,
+            request.fog,
+        ) && !fog.lit_within(at.0, at.1, radius)
+        {
+            return Started::Refused;
+        }
         let looping = rules.as_ref().is_some_and(|r| r.looping);
         if looping && request.owner == Owner::None && self.warned.insert(request.event.to_owned()) {
             warn!("{}: a loop with no owner plays once", request.event);
@@ -168,8 +353,7 @@ impl Mixer {
             return Started::Refused;
         }
         let (ends, despawn) = lifetime(rules.as_ref(), kept);
-        let volume = rules.as_ref().map_or(1.0, |r| r.volume);
-        let gain = request.gain * volume;
+        let gain = base * spatial;
         let playback = if kept {
             PlaybackSettings::LOOP
         } else {
@@ -180,7 +364,7 @@ impl Mixer {
                 GameAudio,
                 AudioPlayer::new(source),
                 playback
-                    .with_volume(Volume::Linear(gain))
+                    .with_volume(Volume::Linear(self.sink_gain(gain, group.as_deref())))
                     .with_speed(request.speed),
             ))
             .id();
@@ -195,7 +379,11 @@ impl Mixer {
             ends: ends.map(|length| now + length),
             despawn,
             stopped: None,
-            volume,
+            group,
+            base,
+            listener: request.listener,
+            fog_radius: rules.as_ref().and_then(|r| r.fog_radius),
+            fog_share: 1.0,
             gain,
         });
         if kept {
@@ -289,6 +477,9 @@ impl Mixer {
             self.ends += 1;
         }
         self.closed = true;
+        for layer in &mut self.layers {
+            layer.amounts.fill(0.0);
+        }
         for voice in self.voices.drain(..) {
             commands.entity(voice.entity).try_despawn();
         }
@@ -330,11 +521,12 @@ impl Mixer {
         commands.entity(voice.entity).try_despawn();
     }
 
-    /// Moves a loop with its source: where it sounds, and how loud that place is to the listener.
-    pub fn follow(&mut self, entity: Entity, at: (f32, f32), gain: f32) {
+    /// Moves a loop with its source and its listener: where it sounds, and how loud that place
+    /// is to the listener (worked out at the next tick).
+    pub fn follow(&mut self, entity: Entity, at: (f32, f32), listener: (f32, f32)) {
         if let Some(voice) = self.voices.iter_mut().find(|v| v.entity == entity) {
             voice.at = Some(at);
-            voice.gain = gain * voice.volume;
+            voice.listener = Some(listener);
         }
     }
 
@@ -344,8 +536,10 @@ impl Mixer {
         commands: &mut Commands,
         now: Duration,
         sinks: &mut Query<&mut AudioSink>,
+        fog: Option<&FogGrid>,
     ) {
         self.drop_ended(commands, now);
+        self.update_voices(now, fog);
         for voice in self.voices.iter().filter(|v| v.looping || !v.sounding()) {
             let Ok(mut sink) = sinks.get_mut(voice.entity) else {
                 continue;
@@ -353,8 +547,90 @@ impl Mixer {
             let left = voice.stopped.map_or(1.0, |(since, fade)| {
                 1.0 - (now.saturating_sub(since).as_secs_f32() / fade.as_secs_f32()).clamp(0.0, 1.0)
             });
-            sink.set_volume(Volume::Linear(voice.gain * left));
+            sink.set_volume(Volume::Linear(self.voice_sink_gain(voice) * left));
         }
+    }
+
+    /// What a voice sounds at the sink now, before its fade-out.
+    fn voice_sink_gain(&self, voice: &Voice) -> f32 {
+        self.sink_gain(voice.gain, voice.group.as_deref()) * voice.fog_share
+    }
+
+    /// Moves the layers, and works out each loop's carrying to its listener and its share the fog
+    /// of war lets through: a loop whose source goes out of sight goes quiet over a second, and
+    /// comes back as it comes into sight again.
+    fn update_voices(&mut self, now: Duration, fog: Option<&FogGrid>) {
+        let dt = self.move_layers(now);
+        let spatials: Vec<f32> = self
+            .voices
+            .iter()
+            .map(|voice| match (voice.at, voice.listener) {
+                (Some(at), Some(listener)) => {
+                    let distance = Vec2::from(at).distance(Vec2::from(listener));
+                    self.spatial(self.events.get(&voice.event), distance)
+                }
+                _ => 1.0,
+            })
+            .collect();
+        for (voice, spatial) in self.voices.iter_mut().zip(spatials) {
+            if !voice.looping {
+                continue;
+            }
+            voice.gain = voice.base * spatial;
+            if let (Some(radius), Some(at), Some(fog)) = (voice.fog_radius, voice.at, fog) {
+                let target = if fog.lit_within(at.0, at.1, radius) {
+                    1.0
+                } else {
+                    0.0
+                };
+                let step = FOG_FILTER_VELOCITY * dt;
+                voice.fog_share = if target > voice.fog_share {
+                    (voice.fog_share + step).min(target)
+                } else {
+                    (voice.fog_share - step).max(target)
+                };
+            }
+        }
+    }
+
+    /// Moves each trigger of each layer towards on while its group sounds at its threshold or
+    /// louder, and towards off when it does not, at the pace of its own attack and release; the
+    /// seconds since the last look.
+    fn move_layers(&mut self, now: Duration) -> f32 {
+        let dt = self
+            .last_tick
+            .map_or(0.0, |last| now.saturating_sub(last).as_secs_f32());
+        self.last_tick = Some(now);
+        for voice in self.voices.iter().filter(|v| v.sounding()) {
+            if let Some(group) = &voice.group {
+                let heard = voice.gain * self.group_factors(Some(group)).0;
+                let entry = self.activity.entry(group.clone()).or_insert(0.0);
+                *entry = entry.max(heard);
+            }
+        }
+        let pace = |span: Duration| {
+            if span.is_zero() {
+                f32::INFINITY
+            } else {
+                dt / span.as_secs_f32()
+            }
+        };
+        for layer in &mut self.layers {
+            for (trigger, amount) in layer.line.triggers.iter().zip(&mut layer.amounts) {
+                let on = self
+                    .activity
+                    .get(&trigger.group)
+                    .is_some_and(|heard| *heard >= trigger.threshold);
+                let target = if on { trigger.amount } else { 0.0 };
+                *amount = if target > *amount {
+                    (*amount + pace(trigger.attack)).min(target)
+                } else {
+                    (*amount - pace(trigger.release)).max(target)
+                };
+            }
+        }
+        self.activity.clear();
+        dt
     }
 
     fn drop_ended(&mut self, commands: &mut Commands, now: Duration) {
@@ -377,6 +653,24 @@ impl Mixer {
             .iter()
             .filter(|v| v.event == event && v.sounding())
             .count()
+    }
+
+    /// How much of a voice the fog of war lets through now.
+    #[cfg(test)]
+    pub(crate) fn fog_share(&self, entity: Entity) -> Option<f32> {
+        self.voices
+            .iter()
+            .find(|v| v.entity == entity)
+            .map(|v| v.fog_share)
+    }
+
+    /// How far a layer is on now, 0 to 1.
+    #[cfg(test)]
+    pub(crate) fn layer_amount(&self, layer: &str) -> Option<f32> {
+        self.layers
+            .iter()
+            .find(|l| l.line.name == layer)
+            .map(LayerState::amount)
     }
 
     /// The volume of the newest voice of the event sounding now, before any fade.
@@ -429,11 +723,20 @@ pub fn plugin(app: &mut App) {
             |mut commands: Commands,
              mut mixer: ResMut<Mixer>,
              time: Res<Time>,
-             mut sinks: Query<&mut AudioSink>| {
-                mixer.tick(&mut commands, time.elapsed(), &mut sinks);
+             mut sinks: Query<&mut AudioSink>,
+             fog: Option<Res<FogGrid>>| {
+                mixer.tick(&mut commands, time.elapsed(), &mut sinks, fog.as_deref());
             },
         )
-        .add_systems(Update, end_with_the_match);
+        .add_systems(Update, end_with_the_match)
+        .add_systems(
+            Update,
+            |mut mixer: ResMut<Mixer>,
+             settings: Res<crate::config::Settings>,
+             args: Res<crate::Args>| {
+                mixer.muted = settings.muted || args.mute;
+            },
+        );
 }
 
 /// Silences the game when its match is gone: the player left it (the menu's idle session took
@@ -499,7 +802,17 @@ mod tests {
             stop_oldest: true,
             stop_at: None,
             volume: 1.0,
+            sound_level: 70.0,
+            distance_max: None,
+            group: None,
+            player_mult: 1.0,
+            fog_radius: None,
         }
+    }
+
+    /// A fresh mixer of the same events.
+    fn mixer_again(from: &Mixer) -> Mixer {
+        mixer(from.events.values().cloned().collect())
     }
 
     fn mixer(events: Vec<EventLine>) -> Mixer {
@@ -517,6 +830,7 @@ mod tests {
             at: None,
             gain: 1.0,
             speed: 1.0,
+            ..Request::default()
         }
     }
 
@@ -573,26 +887,280 @@ mod tests {
         assert_eq!(mixer.voices.len(), MAX_VOICES);
     }
 
-    /// A loop that follows its source keeps its event's volume: the camera's distance is of the
-    /// event's level, not of the file's.
+    fn mixer_with_groups_and_layers() -> Mixer {
+        let (groups, layers) = crate::cache_text::mixer_lines(
+            "group Weapons 0.4 1 0 0 0 90 60\n\
+             group Announcer 0.4 1 0 0 0 90 90\n\
+             group Creeps 0.2 1 0 0 0 80 90\n\
+             layer Announcer Announcer 0.4 1.0 0.3 0.5\n\
+             layerlevel Announcer Weapons 0.7 1 0\n\
+             layerlevel Announcer Creeps 0.5 0 0\n",
+            64,
+        );
+        let mut mixer = mixer(vec![
+            EventLine {
+                group: Some("Weapons".to_owned()),
+                sound_level: 81.0,
+                distance_max: Some(2500.0),
+                ..event("Gun", false, 1)
+            },
+            EventLine {
+                group: Some("Creeps".to_owned()),
+                sound_level: 72.0,
+                ..event("Club", false, 1)
+            },
+        ]);
+        mixer.groups = groups.into_iter().map(|g| (g.name.clone(), g)).collect();
+        mixer.layers = layers.into_iter().map(LayerState::new).collect();
+        mixer
+    }
+
+    /// The share of a sound that reaches the sink beside its source, in its group.
     #[test]
-    fn a_followed_loop_keeps_the_volume_of_its_event() {
+    fn a_mix_group_scales_its_events_by_its_level_and_the_makeup_gain() {
+        let mixer = mixer_with_groups_and_layers();
+        let near = |event| mixer.gain_for(event, (0.0, 0.0), (0.0, 0.0));
+        assert!((near("Gun") - 0.4 * MIX_MAKEUP_GAIN).abs() < 1e-5);
+        assert!((near("Club") - 0.2 * MIX_MAKEUP_GAIN).abs() < 1e-5);
+        assert_eq!(
+            near("Unknown"),
+            1.0,
+            "an event of no group is not mixed down"
+        );
+    }
+
+    /// Dota's `Announcer` layer: while the announcer speaks, the world's weapons go to 0.7 of
+    /// their level over the layer's attack, and creeps to half (and their reach to nothing),
+    /// back to full over its release.
+    #[test]
+    fn the_announcer_ducks_the_world_while_it_speaks_and_lets_go_after() {
+        let mut mixer = mixer_with_groups_and_layers();
+        let beside = |mixer: &Mixer| mixer.gain_for("Gun", (0.0, 0.0), (0.0, 0.0));
+        let full = beside(&mixer);
+        let mut now = Duration::ZERO;
+        let mut step = |mixer: &mut Mixer, speaking: bool, seconds: f32| {
+            if speaking {
+                mixer.note_activity("Announcer", 1.0);
+            }
+            now += Duration::from_secs_f32(seconds);
+            mixer.move_layers(now);
+        };
+        step(&mut mixer, true, 0.0);
+        assert_eq!(beside(&mixer), full, "not at the first look");
+        step(&mut mixer, true, 0.15);
+        let halfway = mixer.layer_amount("Announcer").expect("the layer");
+        assert!((halfway - 0.5).abs() < 1e-3, "attack 0.3 s: {halfway}");
+        step(&mut mixer, true, 0.3);
+        assert!((beside(&mixer) - full * 0.7).abs() < 1e-4, "ducked to 0.7");
+        let creeps = |mixer: &Mixer| mixer.gain_for("Club", (200.0, 0.0), (0.0, 0.0));
+        assert_eq!(creeps(&mixer), 0.0, "creeps carry nowhere while it speaks");
+        step(&mut mixer, false, 0.25);
+        assert!(
+            (mixer.layer_amount("Announcer").unwrap() - 0.5).abs() < 1e-3,
+            "release 0.5 s"
+        );
+        step(&mut mixer, false, 0.5);
+        assert!((beside(&mixer) - full).abs() < 1e-5, "let go");
+        assert!(creeps(&mixer) > 0.0);
+    }
+
+    #[test]
+    fn a_quiet_announcer_below_the_threshold_ducks_nothing() {
+        let mut mixer = mixer_with_groups_and_layers();
+        let mut now = Duration::ZERO;
+        for _ in 0..20 {
+            mixer.note_activity("Announcer", 0.5);
+            now += Duration::from_millis(100);
+            mixer.move_layers(now);
+        }
+        assert_eq!(mixer.layer_amount("Announcer"), Some(0.0));
+    }
+
+    /// A sound beside the player's own entity carries the event's factor for it.
+    #[test]
+    fn the_players_own_entity_sounds_at_the_events_player_factor() {
         let mut world = World::new();
-        let mut quiet = event("loop", true, 1);
-        quiet.volume = 0.5;
-        let mut mixer = mixer(vec![quiet]);
+        let mut mixer = mixer(vec![EventLine {
+            player_mult: 1.25,
+            ..event("Own", false, 1)
+        }]);
         let mut commands = world.commands();
-        let started = mixer.start(
+        let request = Request {
+            on_player: true,
+            ..request("Own", Owner::None)
+        };
+        mixer.start(&mut commands, Duration::ZERO, &request, Handle::default());
+        assert_eq!(mixer.voice_gain("Own"), Some(1.25));
+    }
+
+    /// An event that follows the fog of war is not heard where its source is out of sight.
+    #[test]
+    fn an_event_that_follows_the_fog_is_heard_only_where_its_source_is_in_sight() {
+        let cell = crate::terrain::CELL;
+        let fog = FogGrid::with_seen_cells(4, &[5]);
+        let mut world = World::new();
+        let mut mixer = mixer(vec![EventLine {
+            fog_radius: Some(0.0),
+            ..event("Seen", false, 1)
+        }]);
+        let mut commands = world.commands();
+        let heard_at = |mixer: &mut Mixer, commands: &mut Commands, x: f32| {
+            let request = Request {
+                at: Some((x, 1.5 * cell)),
+                fog: Some(&fog),
+                ..request("Seen", Owner::None)
+            };
+            mixer.start(commands, Duration::ZERO, &request, Handle::default())
+        };
+        assert_eq!(
+            heard_at(&mut mixer, &mut commands, 1.5 * cell),
+            Started::Once
+        );
+        let mut mixer = mixer_again(&mixer);
+        assert_eq!(
+            heard_at(&mut mixer, &mut commands, 3.5 * cell),
+            Started::Refused
+        );
+    }
+
+    /// A sound of no mix group is the interface's: it sounds at its own level, not made up.
+    #[test]
+    fn an_event_of_no_group_sounds_at_its_own_volume_without_the_makeup_gain() {
+        let mixer = mixer(vec![EventLine {
+            volume: 0.3,
+            ..event("Click", false, 1)
+        }]);
+        let heard = mixer.gain_for("Click", (0.0, 0.0), (0.0, 0.0));
+        assert!((heard - 0.3).abs() < 1e-6, "{heard}");
+    }
+
+    /// A loop that follows its source and its listener keeps its event's volume and carries as
+    /// the event says: half way to its `distance_max` it is half as loud.
+    #[test]
+    fn a_followed_loop_carries_by_its_events_distance_and_keeps_its_volume() {
+        let mut world = World::new();
+        let mut mixer = mixer(vec![EventLine {
+            volume: 0.5,
+            sound_level: 81.0,
+            distance_max: Some(1000.0),
+            ..event("loop", true, 1)
+        }]);
+        let mut commands = world.commands();
+        let Started::Loop(voice) = mixer.start(
             &mut commands,
             Duration::ZERO,
             &request("loop", owner(1)),
             Handle::default(),
-        );
-        let Started::Loop(voice) = started else {
+        ) else {
             panic!("a loop");
         };
-        mixer.follow(voice, (0.0, 0.0), 0.8);
-        assert_eq!(mixer.loop_gain("loop"), Some(0.4));
+        mixer.follow(voice, (500.0, 0.0), (0.0, 0.0));
+        mixer.update_voices(Duration::from_millis(10), None);
+        assert_eq!(mixer.loop_gain("loop"), Some(0.25));
+        mixer.follow(voice, (1500.0, 0.0), (0.0, 0.0));
+        mixer.update_voices(Duration::from_millis(20), None);
+        assert_eq!(mixer.loop_gain("loop"), Some(0.0), "past its distance_max");
+    }
+
+    /// A loop whose source moves out of sight goes quiet over a second, and comes back as it
+    /// comes into sight: the fog is looked at every frame, not only when it starts.
+    #[test]
+    fn a_loop_whose_source_moves_into_the_fog_goes_quiet_and_returns_in_sight() {
+        let cell = crate::terrain::CELL;
+        let fog = FogGrid::with_seen_cells(4, &[5]);
+        let (seen, unseen) = ((1.5 * cell, 1.5 * cell), (3.5 * cell, 3.5 * cell));
+        let mut world = World::new();
+        let mut mixer = mixer(vec![EventLine {
+            fog_radius: Some(0.0),
+            ..event("loop", true, 1)
+        }]);
+        let mut commands = world.commands();
+        let request = Request {
+            at: Some(seen),
+            fog: Some(&fog),
+            ..request("loop", owner(1))
+        };
+        let Started::Loop(voice) =
+            mixer.start(&mut commands, Duration::ZERO, &request, Handle::default())
+        else {
+            panic!("a loop in sight");
+        };
+        let mut now = Duration::ZERO;
+        let mut look = |mixer: &mut Mixer, at: (f32, f32), seconds: f32| {
+            mixer.follow(voice, at, at);
+            now += Duration::from_secs_f32(seconds);
+            mixer.update_voices(now, Some(&fog));
+            mixer.fog_share(voice).expect("the voice")
+        };
+        assert_eq!(look(&mut mixer, seen, 0.5), 1.0);
+        assert!(
+            (look(&mut mixer, unseen, 0.5) - 0.5).abs() < 1e-4,
+            "half a second out of sight"
+        );
+        assert_eq!(look(&mut mixer, unseen, 0.6), 0.0, "silent");
+        assert!(
+            (look(&mut mixer, seen, 0.25) - 0.25).abs() < 1e-4,
+            "coming back"
+        );
+        assert_eq!(look(&mut mixer, seen, 2.0), 1.0, "audible again");
+    }
+
+    /// A nonzero fog radius hears a source out of sight whose circle touches seen ground, and not
+    /// one whose circle does not.
+    #[test]
+    fn a_fog_radius_hears_a_source_beside_seen_ground_and_not_one_far_from_it() {
+        let cell = crate::terrain::CELL;
+        let fog = FogGrid::with_seen_cells(4, &[5]);
+        let mut world = World::new();
+        let mut commands = world.commands();
+        let mut started = |radius: f32, x: f32| {
+            let mut mixer = mixer(vec![EventLine {
+                fog_radius: Some(radius),
+                ..event("Seen", false, 1)
+            }]);
+            let request = Request {
+                at: Some((x, 1.5 * cell)),
+                fog: Some(&fog),
+                ..request("Seen", Owner::None)
+            };
+            mixer.start(&mut commands, Duration::ZERO, &request, Handle::default())
+        };
+        let beside = 0.5 * cell; // half a cell west of the seen cell
+        assert_eq!(started(0.0, beside), Started::Refused);
+        assert_eq!(started(0.4 * cell, beside), Started::Refused);
+        assert_eq!(started(0.6 * cell, beside), Started::Once);
+    }
+
+    /// A layer with several triggers moves each at its own attack: the layer is as on as the
+    /// most-on of them.
+    #[test]
+    fn each_trigger_of_a_layer_ramps_at_its_own_attack() {
+        let (groups, layers) = crate::cache_text::mixer_lines(
+            "group Weapons 1 1 0 0 0 90 60\n\
+             layer Duck Slow 0.1 1.0 1.0 1.0\n\
+             layer Duck Fast 0.1 1.0 0.1 0.1\n\
+             layerlevel Duck Weapons 0.5 1 0\n",
+            64,
+        );
+        let mut mixer = mixer(vec![event("x", false, 1)]);
+        mixer.groups = groups.into_iter().map(|g| (g.name.clone(), g)).collect();
+        mixer.layers = layers.into_iter().map(LayerState::new).collect();
+        let mut now = Duration::ZERO;
+        for _ in 0..2 {
+            mixer.note_activity("Fast", 1.0);
+            now += Duration::from_millis(50);
+            mixer.move_layers(now);
+        }
+        let amount = mixer.layer_amount("Duck").expect("the layer");
+        assert!(
+            (amount - 0.5).abs() < 1e-3,
+            "the fast trigger's pace, not the slow one's: {amount}"
+        );
+        mixer.move_layers(now + Duration::from_millis(100));
+        assert!(
+            mixer.layer_amount("Duck").unwrap() < 0.01,
+            "released at the fast trigger's pace"
+        );
     }
 
     /// A loop with no owner would sound for ever with nothing to stop it: it plays once.

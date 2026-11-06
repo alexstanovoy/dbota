@@ -15,6 +15,8 @@ use super::harness::{Client, MID, Server};
 use crate::mixer::{MERGE_WINDOW, Mixer};
 
 const ROT: &str = "Hero_Pudge.Rot";
+/// The factor Dota gives a sound from the entity of the player (`volume_on_player_mult`).
+const OWN_ENTITY: f32 = 1.25;
 
 /// The players of the world whose cache path holds `part`: what is sounding. A sound that plays
 /// once is dropped at once where there is no sound device, as these tests run; a loop stays.
@@ -211,7 +213,9 @@ fn rot_turned_on_out_of_earshot_sounds_when_the_camera_comes_and_follows_the_cam
     client.until("Rot's loop sounding at Pudge", |c| {
         alive(c, "pudge/rot") == 1
     });
-    client.until("Rot at its full volume", |c| rot_gain(c) == Some(1.0));
+    client.until("Rot at its full volume", |c| {
+        rot_gain(c) == Some(OWN_ENTITY)
+    });
     look_at(&mut client, (at.0 + 3000.0, at.1));
     client.until("Rot quieter with the distance", |c| {
         rot_gain(c).is_some_and(|gain| gain < 0.6)
@@ -226,7 +230,9 @@ fn rot_is_quieter_when_pudge_walks_away_from_the_camera() {
     let at = (pudge.x.to_f32(), pudge.y.to_f32());
     look_at(&mut client, at);
     toggle(&mut client);
-    client.until("Rot at its full volume", |c| rot_gain(c) == Some(1.0));
+    client.until("Rot at its full volume", |c| {
+        rot_gain(c) == Some(OWN_ENTITY)
+    });
     client.cheat(Cheat::Teleport {
         at: At::from_ints(MID.0 + 3000, MID.1),
     });

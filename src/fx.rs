@@ -17,7 +17,6 @@ use bevy::prelude::*;
 use bota_proto::{Attribute, ItemId, ItemView, UnitView, Vec2 as Spot};
 
 use crate::camera::RtsCamera;
-use crate::config::Settings;
 use crate::effects::Shooters;
 use crate::map::Ground;
 use crate::mixer::{Owner, Request, Started};
@@ -124,11 +123,11 @@ struct Stage<'w, 's> {
     commands: Commands<'w, 's>,
     server: Res<'w, AssetServer>,
     manifest: Res<'w, crate::manifest::Manifest>,
-    settings: Res<'w, Settings>,
-    args: Res<'w, crate::Args>,
     camera: Single<'w, 's, &'static RtsCamera>,
     heard: ResMut<'w, Heard>,
     mixer: ResMut<'w, crate::mixer::Mixer>,
+    fog: Res<'w, crate::fog::FogGrid>,
+    session: NonSend<'w, crate::session::Session>,
     time: Res<'w, Time>,
     /// The files and events of each prefix of sounds, found once.
     files: Local<'s, HashMap<String, Vec<(String, String)>>>,
@@ -145,24 +144,15 @@ impl Stage<'_, '_> {
         };
         let focus = Vec2::new(self.camera.focus.x, -self.camera.focus.z);
         let place = (at.x, -at.z);
-        let fall = crate::sound::fall_off(place, focus);
-        if fall < 0.03 {
-            return Started::Refused;
-        }
-        // Muted, the mixer still takes the sound (at no volume), as it does for the player who
-        // unmutes while it sounds: the decision does not depend on the volume knob.
-        let gain = if self.settings.muted || self.args.mute {
-            0.0
-        } else {
-            fall
-        };
+        let own_hero = self.session.0.my_hero().map(Owner::Unit);
         let request = Request {
             event: &event,
             owner,
-            merge: None,
             at: Some(place),
-            gain,
-            speed: 1.0,
+            listener: Some((focus.x, focus.y)),
+            on_player: own_hero == Some(owner),
+            fog: Some(&self.fog),
+            ..Request::default()
         };
         let handle = self.server.load(path.clone());
         let now = self.time.elapsed();
@@ -194,13 +184,7 @@ impl Stage<'_, '_> {
     /// Moves a looping voice with its source: it is as loud as the camera's distance leaves it.
     fn follow(&mut self, voice: Entity, at: Vec3) {
         let focus = Vec2::new(self.camera.focus.x, -self.camera.focus.z);
-        let place = (at.x, -at.z);
-        let gain = if self.settings.muted || self.args.mute {
-            0.0
-        } else {
-            crate::sound::fall_off(place, focus)
-        };
-        self.mixer.follow(voice, place, gain);
+        self.mixer.follow(voice, (at.x, -at.z), (focus.x, focus.y));
     }
 
     /// Stops every loop: no match is on to sound them.

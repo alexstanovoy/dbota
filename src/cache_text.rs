@@ -330,8 +330,9 @@ pub fn soundscapes(text: &str, max: usize) -> (Vec<ScapeLine>, Vec<ScapeSound>) 
 /// The largest values an event of `events.txt` holds, the importer's own: the install's data
 /// drives timers, so each has a bound.
 pub use dbota_import::text::{
-    MAX_EVENT_BLOCK_SECS, MAX_EVENT_BLOCK_UNITS, MAX_EVENT_DURATION, MAX_EVENT_FADE_OUT,
-    MAX_EVENT_LIMIT, MAX_EVENT_STOP_AT, MAX_EVENT_VOLUME,
+    MAX_EVENT_BLOCK_SECS, MAX_EVENT_BLOCK_UNITS, MAX_EVENT_DISTANCE, MAX_EVENT_DURATION,
+    MAX_EVENT_FADE_OUT, MAX_EVENT_FOG_RADIUS, MAX_EVENT_LIMIT, MAX_EVENT_PLAYER_MULT,
+    MAX_EVENT_SOUND_LEVEL, MAX_EVENT_STOP_AT, MAX_EVENT_VOLUME, MAX_MIX_FACTOR, MAX_MIX_SECS,
 };
 
 /// A sound event's limits, as `sounds/events.txt` lists them.
@@ -359,6 +360,17 @@ pub struct EventLine {
     pub stop_at: Option<Duration>,
     /// The event's own volume, 1 being its file's.
     pub volume: f32,
+    /// How far it carries, in decibels.
+    pub sound_level: f32,
+    /// The distance beyond which it is not heard, when it has one.
+    pub distance_max: Option<f32>,
+    /// The mix group it belongs to.
+    pub group: Option<String>,
+    /// The factor on the player's own entity.
+    pub player_mult: f32,
+    /// The radius about the source within which sight counts, when the fog of war decides
+    /// whether it is heard.
+    pub fog_radius: Option<f32>,
 }
 
 /// The events of `events.txt` (`event <name> <loops> <duration> <fade_out> <block_s> <block_units>
@@ -368,6 +380,9 @@ pub fn sound_events(text: &str, max: usize) -> Vec<EventLine> {
     lines(text, max)
         .filter_map(|w| {
             let ["event", name, looping, rest @ ..] = w.as_slice() else {
+                return None;
+            };
+            let [numbers_of_limits @ .., group, player_mult, fog_radius] = rest else {
                 return None;
             };
             let [
@@ -380,7 +395,10 @@ pub fn sound_events(text: &str, max: usize) -> Vec<EventLine> {
                 stop_oldest,
                 stop_at,
                 volume,
-            ] = numbers::<9>(rest)?;
+                sound_level,
+                distance_max,
+            ] = numbers::<11>(numbers_of_limits)?;
+            let [player_mult, fog_radius] = numbers::<2>(&[*player_mult, *fog_radius])?;
             let flag = |n: f32| n != 0.0;
             let secs = |n: f32, most: f32| Duration::from_secs_f32(n.clamp(0.0, most));
             Some(EventLine {
@@ -395,9 +413,109 @@ pub fn sound_events(text: &str, max: usize) -> Vec<EventLine> {
                 stop_oldest: flag(stop_oldest),
                 stop_at: (stop_at >= 0.0).then(|| secs(stop_at, MAX_EVENT_STOP_AT)),
                 volume: volume.clamp(0.0, MAX_EVENT_VOLUME),
+                sound_level: sound_level.clamp(0.0, MAX_EVENT_SOUND_LEVEL),
+                distance_max: (distance_max > 0.0).then(|| distance_max.min(MAX_EVENT_DISTANCE)),
+                group: (*group != "-").then(|| (*group).to_owned()),
+                player_mult: player_mult.clamp(0.0, MAX_EVENT_PLAYER_MULT),
+                fog_radius: (fog_radius >= 0.0).then(|| fog_radius.min(MAX_EVENT_FOG_RADIUS)),
             })
         })
         .collect()
+}
+
+/// A mix group's level in the default mix, and what ducks it.
+#[derive(Clone, Debug, PartialEq)]
+pub struct GroupLine {
+    pub name: String,
+    pub volume: f32,
+    pub level: f32,
+    pub mute: f32,
+}
+
+/// What a layer does to one group while it is on.
+#[derive(Clone, Debug, PartialEq)]
+pub struct LayerLevel {
+    pub group: String,
+    pub volume: f32,
+    pub level: f32,
+    pub mute: f32,
+}
+
+/// What switches a layer on: the volume of the trigger group passing the threshold.
+#[derive(Clone, Debug, PartialEq)]
+pub struct LayerTrigger {
+    pub group: String,
+    pub threshold: f32,
+    pub amount: f32,
+    pub attack: Duration,
+    pub release: Duration,
+}
+
+/// A mix layer: the levels it sets while any of its triggers holds.
+#[derive(Clone, Debug, PartialEq)]
+pub struct LayerLine {
+    pub name: String,
+    pub triggers: Vec<LayerTrigger>,
+    pub levels: Vec<LayerLevel>,
+}
+
+/// The mix groups and layers of `mixer.txt` (`group <name> <volume> <level> <mute> …`,
+/// `layer <name> <trigger group> <threshold> <amount> <attack> <release>`, `layerlevel <layer>
+/// <group> <volume> <level> <mute>`), of its first `max` lines; every number is clamped.
+pub fn mixer_lines(text: &str, max: usize) -> (Vec<GroupLine>, Vec<LayerLine>) {
+    let factor = |n: f32| n.clamp(0.0, MAX_MIX_FACTOR);
+    let secs = |n: f32| Duration::from_secs_f32(n.clamp(0.0, MAX_MIX_SECS));
+    let mut groups = Vec::new();
+    let mut layers: Vec<LayerLine> = Vec::new();
+    for w in lines(text, max) {
+        match w.as_slice() {
+            ["group", name, rest @ ..] => {
+                if let Some([volume, level, mute]) = numbers::<3>(rest.get(..3).unwrap_or(&[])) {
+                    groups.push(GroupLine {
+                        name: (*name).to_owned(),
+                        volume: factor(volume),
+                        level: factor(level),
+                        mute: mute.clamp(0.0, 1.0),
+                    });
+                }
+            }
+            ["layer", name, group, rest @ ..] => {
+                let Some([threshold, amount, attack, release]) = numbers::<4>(rest) else {
+                    continue;
+                };
+                let trigger = LayerTrigger {
+                    group: (*group).to_owned(),
+                    threshold: factor(threshold),
+                    amount: amount.clamp(0.0, 1.0),
+                    attack: secs(attack),
+                    release: secs(release),
+                };
+                match layers.iter_mut().find(|l| l.name == *name) {
+                    Some(layer) => layer.triggers.push(trigger),
+                    None => layers.push(LayerLine {
+                        name: (*name).to_owned(),
+                        triggers: vec![trigger],
+                        levels: Vec::new(),
+                    }),
+                }
+            }
+            ["layerlevel", name, group, rest @ ..] => {
+                let Some([volume, level, mute]) = numbers::<3>(rest) else {
+                    continue;
+                };
+                if let Some(layer) = layers.iter_mut().find(|l| l.name == *name) {
+                    layer.levels.push(LayerLevel {
+                        group: (*group).to_owned(),
+                        volume: factor(volume),
+                        level: factor(level),
+                        mute: mute.clamp(0.0, 1.0),
+                    });
+                }
+            }
+            _ => {}
+        }
+    }
+    (groups, layers)
 }
 
 /// The places of Roshan's pits in `soundscapes.txt` (`pit <x> <y>`, Dota's frame), of its first
@@ -434,7 +552,7 @@ mod tests {
     /// The install's data drives timers: a number past its largest is clamped.
     #[test]
     fn event_numbers_are_clamped_to_their_largest() {
-        let line = "event Big 1 9999 9999 9999 9999999 9999 1 1 9999 9999\n";
+        let line = "event Big 1 9999 9999 9999 9999999 9999 1 1 9999 9999 999 9999999 G 99 99999\n";
         let [event] = &sound_events(line, 8)[..] else {
             panic!("one event");
         };
@@ -448,6 +566,11 @@ mod tests {
             Some(MAX_EVENT_STOP_AT)
         );
         assert_eq!(event.volume, MAX_EVENT_VOLUME);
+        assert_eq!(event.sound_level, MAX_EVENT_SOUND_LEVEL);
+        assert_eq!(event.distance_max, Some(MAX_EVENT_DISTANCE));
+        assert_eq!(event.player_mult, MAX_EVENT_PLAYER_MULT);
+        assert_eq!(event.fog_radius, Some(MAX_EVENT_FOG_RADIUS));
+        assert_eq!(event.group.as_deref(), Some("G"));
     }
 
     use super::*;

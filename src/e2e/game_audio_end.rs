@@ -49,6 +49,7 @@ fn start_long_sound(client: &mut Client) {
             at: None,
             gain: 1.0,
             speed: 1.0,
+            ..Request::default()
         };
         mixer.start(&mut commands, now, &request, Handle::default());
     });
@@ -97,6 +98,7 @@ fn start_refused(client: &mut Client) {
             at: None,
             gain: 1.0,
             speed: 1.0,
+            ..Request::default()
         };
         mixer.start(&mut commands, now, &request, Handle::default())
     });

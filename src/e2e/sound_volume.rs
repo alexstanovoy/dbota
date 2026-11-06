@@ -21,14 +21,15 @@ fn played_at(client: &mut Client, event: &str, gain: f32) -> Option<f32> {
             merge: None,
             at: None,
             gain,
-            speed: 1.0,
+            ..Request::default()
         };
         mixer.start(&mut commands, Duration::ZERO, &request, Handle::default());
         mixer.voice_gain(event)
     })
 }
 
-/// The `volume` of each event line of the cache's `sounds/events.txt` (the line's last number).
+/// The `volume` of each event line of the cache's `sounds/events.txt` (the twelfth word of the
+/// line).
 fn stated_volumes() -> Vec<(String, f32)> {
     let cache = std::path::PathBuf::from(std::env::var("DBOTA_ASSETS").expect("DBOTA_ASSETS"));
     let text =
@@ -39,7 +40,7 @@ fn stated_volumes() -> Vec<(String, f32)> {
             let words: Vec<&str> = line.split_whitespace().collect();
             assert_eq!(
                 words.len(),
-                12,
+                17,
                 "an event line states its volume after its limits: {line}"
             );
             (words[1].to_owned(), words[11].parse().expect("a volume"))

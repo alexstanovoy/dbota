@@ -33,6 +33,9 @@ const VEIL: f32 = 0.74;
 /// screen (a tenth and a half in linear light), and cooled.
 const DAY_CAST: [f32; 3] = [0.14, 0.14, 0.15];
 
+/// The longest radius a sound's sight is looked for within (its data's own bound).
+const MAX_FOG_RADIUS: f32 = crate::cache_text::MAX_EVENT_FOG_RADIUS;
+
 /// The cells the watched side sees, worked out once a tick.
 #[derive(Resource, Default)]
 pub struct FogGrid {
@@ -58,6 +61,21 @@ pub struct FogGrid {
 }
 
 impl FogGrid {
+    /// A grid of `n` by `n` cells of which only those at `seen` (row-major indexes) are seen.
+    #[cfg(test)]
+    pub(crate) fn with_seen_cells(n: usize, seen: &[usize]) -> FogGrid {
+        let mut cells = vec![false; n * n];
+        for at in seen {
+            cells[*at] = true;
+        }
+        FogGrid {
+            on: true,
+            n,
+            cells,
+            ..FogGrid::default()
+        }
+    }
+
     fn forget_sight(&mut self, n: usize, team: Option<Team>, on: bool) {
         self.team = team;
         self.on = on;
@@ -96,6 +114,26 @@ impl FogGrid {
     /// (they come a frame or more behind the view).
     pub fn worked_out_at(&self) -> Option<u32> {
         self.stamp.map(|(tick, _)| tick)
+    }
+
+    /// Whether any seen ground lies within `radius` of a bota world point: the point itself, or
+    /// a seen cell that the circle about it touches (the nearest point of the cell to the centre
+    /// within the radius). Ground beyond the grid counts as seen, as in [`FogGrid::lit`].
+    pub fn lit_within(&self, x: f32, y: f32, radius: f32) -> bool {
+        if self.lit(x, y) {
+            return true;
+        }
+        let radius = radius.clamp(0.0, MAX_FOG_RADIUS);
+        let low = |v: f32| ((v - radius) / CELL).floor().max(0.0) as usize;
+        let high = |v: f32| ((v + radius) / CELL).floor().max(0.0) as usize;
+        let nearest = |c: usize, v: f32| v.clamp(c as f32 * CELL, (c + 1) as f32 * CELL) - v;
+        (low(y)..=high(y)).any(|cy| {
+            (low(x)..=high(x)).any(|cx| {
+                let seen = cx >= self.n || cy >= self.n || self.cells[cy * self.n + cx];
+                let (dx, dy) = (nearest(cx, x), nearest(cy, y));
+                seen && dx * dx + dy * dy <= radius * radius
+            })
+        })
     }
 
     /// Whether a bota world point is seen; everything is before the fog is
@@ -812,6 +850,44 @@ mod tests {
     use bevy::ecs::system::RunSystemOnce;
 
     use super::*;
+
+    /// A grid of 6 by 6 cells of which only the cell at (1, 1) is seen.
+    fn one_cell_seen() -> FogGrid {
+        FogGrid::with_seen_cells(6, &[7])
+    }
+
+    /// Sight within a radius counts as the circle touches a seen cell: a nonzero radius hears
+    /// a source beside the seen ground, not one far from it, and exactly at the corner.
+    #[test]
+    fn sight_within_a_radius_counts_exactly_by_the_circle_against_the_seen_cells() {
+        let fog = one_cell_seen();
+        // The seen cell spans (CELL, CELL) to (2 CELL, 2 CELL).
+        let beside = (0.5 * CELL, 1.5 * CELL); // half a cell west of it
+        assert!(!fog.lit_within(beside.0, beside.1, 0.0));
+        assert!(
+            !fog.lit_within(beside.0, beside.1, 0.4 * CELL),
+            "not far enough"
+        );
+        assert!(
+            fog.lit_within(beside.0, beside.1, 0.5 * CELL + 0.01),
+            "it touches"
+        );
+        // Diagonally off its corner: within the radius only along the diagonal distance.
+        let corner = (CELL - 3.0, CELL - 4.0); // five units from the corner
+        assert!(!fog.lit_within(corner.0, corner.1, 4.9));
+        assert!(fog.lit_within(corner.0, corner.1, 5.01));
+        // A far source sees nothing, whatever the circle's bounding box holds.
+        assert!(!fog.lit_within(4.5 * CELL, 4.5 * CELL, 1.0 * CELL));
+    }
+
+    #[test]
+    fn ground_beyond_the_grid_counts_as_seen_within_a_radius() {
+        let fog = one_cell_seen();
+        assert!(
+            fog.lit_within(5.9 * CELL, 5.9 * CELL, 0.5 * CELL),
+            "the circle leaves the grid"
+        );
+    }
 
     /// The veil is made once, for the first match's grid; every match sends its own grid. A
     /// later match of a larger grid wrote its rows past the image's data, and the client

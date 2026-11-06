@@ -115,7 +115,7 @@ const ANNOUNCER_PATIENCE: f32 = 3.0;
 /// The announcer's lines in the order they were called: one speaks at a time,
 /// and the next starts when it ends, as in Dota.
 #[derive(Resource, Default)]
-struct Announcer {
+pub(crate) struct Announcer {
     waiting: std::collections::VecDeque<(Handle<AudioSource>, f32, f32)>,
     /// The line being spoken.
     speaking: Option<Entity>,
@@ -124,7 +124,13 @@ struct Announcer {
 }
 
 impl Announcer {
-    fn push(&mut self, source: Option<Handle<AudioSource>>, gain: f32, now: f32) {
+    /// Forgets the lines waiting, for the tests.
+    #[cfg(test)]
+    pub(crate) fn waiting_clear(&mut self) {
+        self.waiting.clear();
+    }
+
+    pub(crate) fn push(&mut self, source: Option<Handle<AudioSource>>, gain: f32, now: f32) {
         if let Some(source) = source {
             self.waiting.push_back((source, gain, now));
         }
@@ -147,6 +153,10 @@ impl Announcer {
 
 #[derive(Component)]
 struct AnnouncerLine;
+
+/// The mix group of the announcer's lines (Dota's mixer groups them by their path,
+/// `announcer_`, which these lines are not played through an event to match).
+const ANNOUNCER_GROUP: &str = "Announcer";
 
 #[derive(Resource, Default)]
 struct Voices {
@@ -586,7 +596,7 @@ fn speak(
     mut announcer: ResMut<Announcer>,
     time: Res<Time>,
     lines: Query<(), With<AnnouncerLine>>,
-    mixer: Res<crate::mixer::Mixer>,
+    mut mixer: ResMut<crate::mixer::Mixer>,
     mut seen_ends: Local<u32>,
 ) {
     let now = time.elapsed_secs();
@@ -600,6 +610,10 @@ fn speak(
         announcer.speaking.is_some() && (now - announcer.began < 0.2 || !lines.is_empty());
     if !speaking {
         announcer.speaking = None;
+    } else {
+        // The mixer's layers duck the world while the announcer speaks (Dota's `Announcer`
+        // layer); a line is a sound of the announcer's group at the event's full volume.
+        mixer.note_activity(ANNOUNCER_GROUP, 1.0);
     }
     if let Some((source, gain)) = announcer.next(now, speaking) {
         let line = commands

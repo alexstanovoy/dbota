@@ -13,6 +13,7 @@ mod ambient;
 mod anim;
 #[cfg(not(target_arch = "wasm32"))]
 mod assets_notice;
+mod attenuation;
 mod audio_output;
 mod bag;
 mod bars;
