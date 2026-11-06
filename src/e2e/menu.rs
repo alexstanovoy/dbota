@@ -9,7 +9,7 @@ use bevy::prelude::*;
 use bevy::text::{ComputedTextBlock, LineBreak};
 use bevy::window::{PrimaryWindow, WindowResized};
 
-use crate::main_menu::{Act, MenuCore, Page};
+use crate::main_menu::{Act, MenuButton, MenuCore, Page};
 
 use super::harness::Client;
 
@@ -29,6 +29,14 @@ fn buttons(client: &mut Client) -> Vec<(String, f32, f32, bool)> {
             // A button of words alone: not an icon's, not a box ticked beside its words, not
             // one of the top bar's tabs (underlined, as wide as their words, as Dota's are).
             let node = world.get::<Node>(button)?;
+            // A text field's box is a button too (named by its label for scripts), but it holds
+            // what is typed, and clips it rather than lets it wrap.
+            if matches!(
+                world.get::<MenuButton>(button),
+                Some(MenuButton(Act::Focus(_)))
+            ) {
+                return None;
+            }
             if node.border.top == Val::Px(0.0) && node.border.bottom != Val::Px(0.0) {
                 return None;
             }

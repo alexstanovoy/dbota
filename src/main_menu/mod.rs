@@ -40,6 +40,8 @@ pub use launch::Trust;
 pub use prefs::page_service;
 pub use preview::{NAMES as PREVIEWS, view as preview};
 pub use screens::Disabled;
+#[cfg(test)]
+pub(crate) use screens::MenuButton;
 pub use shell::{GameEpoch, Preview, Trusted, idle, plugin};
 pub use store::SettingsStore;
 pub(crate) use text::line;
