@@ -7,10 +7,10 @@
 use std::time::Duration;
 
 use bevy::prelude::*;
-use bota_client_core::{Intent, Slot};
+use bota_client_core::{INVENTORY_SLOTS, Intent, Slot};
 use bota_proto::{Cheat, EntityId, HeroId, ItemId, UnitKind};
 
-use super::harness::{Client, Server};
+use super::harness::{Client, MID, Server};
 use crate::units::{ModelBank, Unit};
 
 /// Patience for what follows at once from what the test did.
@@ -187,7 +187,9 @@ fn icon_of(client: &mut Client, slot: u8) -> Option<String> {
 #[test]
 fn lotuses_and_cheese_show_their_icons_and_names_and_cheese_eaten_sounds() {
     let server = Server::start(1, &["--objectives", "lotus_pools"]);
-    let mut client = Client::join(&server, HeroId::SHADOW_FIEND, &[]);
+    // The startup camera can still be travelling from mid when the inventory is ready.
+    let look = format!("{},{}", MID.0, MID.1);
+    let mut client = Client::join(&server, HeroId::SHADOW_FIEND, &["--look", &look]);
     client.cheat(Cheat::StartGame);
     let items = [
         (ItemId::GREAT_HEALING_LOTUS, "great_famango"),
@@ -224,12 +226,20 @@ fn lotuses_and_cheese_show_their_icons_and_names_and_cheese_eaten_sounds() {
         });
     }
     let slot = client.slot_of(ItemId::CHEESE).expect("the Cheese");
-    client.within(SOON, "one's hero drawn", |c| c.body(c.me().id).is_some());
+    assert!(
+        slot < INVENTORY_SLOTS,
+        "the granted Cheese is in the active inventory"
+    );
+    let cheese = client.core().item_in(slot).expect("the granted Cheese");
+    assert_eq!(cheese.cooldown_left, 0);
+    assert_eq!(cheese.mute_left, 0);
+    // Wait for the camera, not just the body: the use sound is positional.
+    client.follow_me();
     client.core_mut().act(Intent::Press {
         slot: Slot::Item(slot),
         ctrl: false,
     });
     client.within(SOON, "the Cheese eaten", |c| {
-        heard(c, "sound.item.cheese") > 0
+        c.slot_of(ItemId::CHEESE).is_none() && heard(c, "sound.item.cheese") > 0
     });
 }
