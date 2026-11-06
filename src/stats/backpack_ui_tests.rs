@@ -3,6 +3,7 @@
 
 use super::*;
 use crate::e2e::harness::{Client, MID, Server};
+use crate::hud::{Part, PartOf};
 use bevy::input::ButtonState;
 use bota_client_core::Intent;
 use bota_proto::{Cheat, CreepSide, HeroId, ItemId};
@@ -582,4 +583,128 @@ fn a_refused_inventory_drag_rolls_its_preview_back_without_waiting_for_a_timeout
         !icon(&mut client, bota_client_core::TOWN_PORTAL_SLOT)
             .is_some_and(|p| p.contains("circlet"))
     );
+}
+
+// Cooldown presentation shares the actual mouse-drag fixture above.
+fn icon_tint(client: &mut Client, slot: u8) -> Option<Color> {
+    let item_box = client.item_box(slot)?;
+    let world = client.world_mut();
+    world
+        .query::<(&crate::hud::Part, &crate::hud::PartOf, &ImageNode)>()
+        .iter(world)
+        .find(|(part, of, _)| of.0 == item_box && matches!(part, crate::hud::Part::Icon))
+        .map(|(_, _, image)| image.color)
+}
+
+fn brightness(color: Color) -> f32 {
+    let color = color.to_srgba();
+    (color.red + color.green + color.blue) / 3.0 * color.alpha
+}
+
+fn countdown(client: &mut Client, slot: u8) -> String {
+    let item_box = client.item_box(slot).expect("slot box");
+    let world = client.world_mut();
+    world
+        .query::<(&Part, &PartOf, &Text)>()
+        .iter(world)
+        .find(|(part, of, _)| of.0 == item_box && matches!(part, Part::Seconds))
+        .map(|(_, _, text)| text.0.clone())
+        .expect("countdown label")
+}
+
+fn sweep(client: &mut Client, slot: u8) -> (f32, f32) {
+    let item_box = client.item_box(slot).expect("slot box");
+    let world = client.world_mut();
+    let gradient = world
+        .query::<(&Part, &PartOf, &BackgroundGradient)>()
+        .iter(world)
+        .find(|(part, of, _)| of.0 == item_box && matches!(part, Part::Sweep))
+        .map(|(_, _, gradient)| gradient)
+        .expect("cooldown sweep");
+    let Gradient::Conic(conic) = &gradient.0[0] else {
+        panic!("conic sweep")
+    };
+    (
+        conic.stops[2].color.alpha(),
+        conic.stops[1].angle.expect("sweep angle"),
+    )
+}
+
+fn inactive_item_returned(item: ItemId) -> (Server, Client, Color, Color) {
+    let (server, mut client, _, _) = scene(item);
+    client.frames(2);
+    let active = icon_tint(&mut client, 0).expect("inventory icon");
+    drag(&mut client, 0, 6);
+    client.until("item in backpack", |c| c.slot_of(item) == Some(6));
+    // 7.38b gives only the first entry five seconds of grace. Let it expire:
+    // https://www.dota2.com/datafeed/patchnotes?version=7.38b&language=english
+    let expired = client.tick() + 160;
+    client.until("first-entry grace expired", |c| c.tick() >= expired);
+    let inactive = icon_tint(&mut client, 6).expect("backpack icon");
+    assert!(brightness(inactive) < brightness(active));
+    drag(&mut client, 6, 0);
+    client.until("inactive item returned", |c| c.slot_of(item) == Some(0));
+    (server, client, active, inactive)
+}
+
+fn backpack_inactivity_is_drawn(item: ItemId) {
+    let (server, mut client, active, inactive) = inactive_item_returned(item);
+    server.frozen(|| {
+        client.frames(2);
+        let held = client.me().items[0].expect("returned item");
+        assert!(
+            held.mute_left > 150,
+            "{item:?}: nearly six seconds of server inactivity"
+        );
+        assert_eq!(
+            held.cooldown_left, 0,
+            "{item:?}: no active cooldown masks the bug"
+        );
+        assert_eq!(
+            countdown(&mut client, 0),
+            "6",
+            "{item:?}: backpack countdown"
+        );
+        assert_eq!(
+            icon_tint(&mut client, 0),
+            Some(inactive),
+            "{item:?}: inactive icon stays grey"
+        );
+        assert!(
+            sweep(&mut client, 0).0 > 0.0,
+            "{item:?}: visible cooldown sweep"
+        );
+    });
+    client.until("inactivity half finished", |c| {
+        c.me().items[0].is_some_and(|i| i.mute_left <= 90)
+    });
+    server.frozen(|| {
+        client.frames(2);
+        let (_, angle) = sweep(&mut client, 0);
+        assert!(
+            (2.5..4.0).contains(&angle),
+            "{item:?}: half the sweep has cleared, angle={angle}"
+        );
+    });
+    client.until("backpack inactivity ends", |c| {
+        c.me().items[0].is_some_and(|i| i.mute_left == 0)
+    });
+    client.frames(2);
+    assert_eq!(countdown(&mut client, 0), "", "{item:?}: countdown ends");
+    assert_eq!(
+        icon_tint(&mut client, 0),
+        Some(active),
+        "{item:?}: icon regains its colour"
+    );
+    assert_eq!(sweep(&mut client, 0).0, 0.0, "{item:?}: sweep ends");
+}
+
+#[test]
+fn returned_active_item_shows_backpack_inactivity_until_it_expires() {
+    backpack_inactivity_is_drawn(ItemId::POWER_TREADS);
+}
+
+#[test]
+fn returned_passive_item_shows_backpack_inactivity_until_it_expires() {
+    backpack_inactivity_is_drawn(ItemId::CIRCLET);
 }

@@ -29,8 +29,8 @@ use crate::wash::Washed;
 const ABILITY: f32 = 58.0;
 /// The size of an item box.
 const ITEM: (f32, f32) = (66.0, 48.0);
-/// The tint of an icon in the backpack, whose items are carried and not active.
-const BACKPACK_ICON: Color = Color::srgb(0.55, 0.55, 0.55);
+/// The tint of an inactive item, in the backpack or waiting after its return.
+const INACTIVE_ICON: Color = Color::srgb(0.55, 0.55, 0.55);
 /// The edge of the slot of a passive item: Dota sinks it with an inset shadow, which a flat dark
 /// edge stands for here.
 const SUNKEN_EDGE: Color = Color::srgb(0.05, 0.06, 0.07);
@@ -1754,13 +1754,12 @@ struct SlotFace {
     kind: FaceKind,
 }
 
-/// What a slot's face is of: an ability, an item at hand or an item lying in the backpack, which
-/// is carried and not active.
+/// What a slot's face is of: an ability, an active item or an inactive item.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum FaceKind {
     Ability,
     Item,
-    Backpack,
+    InactiveItem,
 }
 
 /// The abilities of the subject the bottom panel is about: what its tooltips describe too.
@@ -1954,8 +1953,8 @@ fn item_face(
         seconds: if let Some(left) = item.expires_in {
             let seconds = left.div_ceil(rate);
             format!("{}:{:02}", seconds / 60, seconds % 60)
-        } else if item.cooldown_left > 0 {
-            item.cooldown_left.div_ceil(rate).to_string()
+        } else if look.cooldown_left > 0 {
+            look.cooldown_left.div_ceil(rate).to_string()
         } else {
             String::new()
         },
@@ -1965,7 +1964,7 @@ fn item_face(
             core.derived.wait_left(
                 u.id,
                 bota_client_core::ITEM_WAIT_BASE + slot,
-                item.cooldown_left,
+                look.cooldown_left,
             )
         }),
         key: match item_action(slot) {
@@ -2010,8 +2009,8 @@ fn item_face(
         lock: (item.locked == Some(true))
             .then(|| manifest.file("hud.item_combine_lock"))
             .flatten(),
-        kind: if (INVENTORY_SLOTS..BAG_SLOTS).contains(&slot) {
-            FaceKind::Backpack
+        kind: if (INVENTORY_SLOTS..BAG_SLOTS).contains(&slot) || item.mute_left > 0 {
+            FaceKind::InactiveItem
         } else {
             FaceKind::Item
         },
@@ -2114,8 +2113,7 @@ fn dress(
                     // Taken up by a drag: what shows in the slot is its shadow.
                     Some(f) if f.lifted => Color::srgba(1.0, 1.0, 1.0, 0.25),
                     Some(f) if !f.look.learned => Color::srgb(0.35, 0.35, 0.35),
-                    // An item in the backpack works for nobody: its icon is greyed.
-                    Some(f) if f.kind == FaceKind::Backpack => BACKPACK_ICON,
+                    Some(f) if f.kind == FaceKind::InactiveItem => INACTIVE_ICON,
                     Some(_) => Color::WHITE,
                     None => Color::NONE,
                 };
