@@ -45,6 +45,7 @@ mod loot_names;
 mod lotus;
 mod menu;
 mod minimap;
+mod outposts;
 mod pregame;
 mod preparation_shop;
 mod pudge_attack_sounds;

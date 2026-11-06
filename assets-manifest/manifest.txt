@@ -12,7 +12,8 @@
 #           skeleton; bind its joints to the parent's joint entities by name, ignoring case
 #           (Dota "bonemerge"; e.g. the arms say root0_jnt where Shadow Fiend says Root0_JNT).
 #   model_variant <base logical> <model logical> modifier=<Dota modifier> [height=<world units>]
-#           or pool_tier=healing|great|greater map_skin=<map material group>.
+#           or side=radiant|dire (the side a map objective is held for: an Outpost's own, the side a
+#           Watcher is lit for), or pool_tier=healing|great|greater map_skin=<map material group>.
 #           The first matching row selects a model; elevation belongs to that drawn model.
 #   clip    <model> <logical clip> <glTF animation name> <duration s> [point=<s>]
 #           point = the Dota attack/cast point in seconds at base speed (npc scripts), not a frame.
@@ -52,7 +53,7 @@
 #           Valve's phoneme table (expressions/heroes/phonemes.txt, the "heroes/phonemes" expression file
 #           Dota's client loads): each phoneme's flex controller settings, added up by a speaking face.
 #   fx      <subject>.<trigger> at=<where> [attach=<point>] [particle=<particle logical>] [sound=<sound logical prefix>]
-#           [cp<N>=<feed>]... [whose=own|foreign] [stacks=<n>|<from>..<to>]
+#           [cp<N>=<feed>]... [whose=own|foreign] [stacks=<n>|<from>..<to>] [side=radiant|dire]
 #           an effect bound to a fact of the game by Dota's name for it (src/fx.rs). The importer passes these lines on; the client reads them.
 #           subject: item.<ids.txt item name> | ability.<ids.txt ability name> | modifier.<Dota modifier name> |
 #                    unit.<npc_units.txt name, or npc_dota_hero_<hero>> | hero.<ids.txt hero name> |
@@ -66,7 +67,9 @@
 #                    held (a unit carries the item in an active slot) | casting (a unit is in the ability's cast point) |
 #                    flies (a missile of the ability or item flies) | spawn (the rune appeared) | activate (the rune
 #                    took effect on a hero, at once or out of a Bottle) | store (a rune was put into the item: the Bottle) |
-#                    pluck (a hero plucked a lotus from the unit: a Lotus Pool)
+#                    pluck (a hero plucked a lotus from the unit: a Lotus Pool) | captured (a side took the unit over: an
+#                    Outpost) | channelled (a hero channels at the unit the ability that works it: an Outpost captured, a
+#                    Watcher lit; from the channel's start until it ends)
 #           at: caster (where the user, or the hero taking a rune, stands after) | caster_before (where it stood before) | point (the spot the
 #               use was aimed at, the throw came down, the rune appeared) | unit (the unit the fact is about: the wearer, or the rune lying, the one struck
 #               or mended, the one dead, the pool plucked) | flight (each missile on its own, from its source to where it is) | chain (all the
@@ -78,9 +81,11 @@
 #                 stacks | seconds (the effect's stacks, the seconds it
 #                 has left) | mode (the attribute of the item: 0 strength, 1 agility, 2 intelligence) | charges (the share
 #                 of its charges the item held) | origin, overhead, attach_<node> (a point of the unit, followed) | x,y,z |
-#                 caster (where the user stands: the hero that plucked)
+#                 caster (where the user stands: the hero that plucked) | side (the side the unit is held for: 0 the
+#                 Radiant, 1 the Dire; an Outpost's own, the side a Watcher is lit for)
 #           whose: for a worn line, only the effects the wearer put on itself (own) or another put on it (foreign)
 #           stacks: for a worn line, only while the effect holds that many
+#           side: for a worn line, only while the unit is held for that side
 #   state   item.<ids.txt item name> <state> icon=<texture logical> [text=<label key>]
 #           an item drawn by what the wire tells of it (src/item_look.rs): in a slot it is drawn with the icon of its
 #           first line whose state holds, and its tooltip shows that line's text; with none, its own icon. Read and
@@ -486,6 +491,10 @@ particle rune.regeneration.owner particles/generic_gameplay/rune_regen_owner.vpc
 particle rune.shield.owner particles/status_fx/status_effect_shield_rune.vpcf_c particles/status_effect_shield_rune.json
 particle item.bottle particles/items_fx/bottle.vpcf_c particles/bottle.json
 particle lotus_pool.ambient particles/world_fountain_of_life/fol_ambient.vpcf_c particles/fol_ambient.json
+particle outpost.radiant_ambient particles/world_outpost/world_outpost_radiant_ambient.vpcf_c particles/world_outpost_radiant_ambient.json
+particle outpost.dire_ambient particles/world_outpost/world_outpost_dire_ambient.vpcf_c particles/world_outpost_dire_ambient.json
+particle outpost.channel particles/world_outpost/world_outpost_channel.vpcf_c particles/world_outpost_channel.json
+particle outpost.captured particles/world_outpost/world_outpost_channel_finish.vpcf_c particles/world_outpost_channel_finish.json
 particle lotus_pool.pluck particles/world_fountain_of_life/fol_active.vpcf_c particles/fol_active.json
 
 # --- Heroes' default ambient effects (items_game.txt "<hero>'s Ambient Effects", the item of slot ambient_effects)
@@ -690,6 +699,13 @@ fx hero.nevermore.worn at=unit particle=hero.nevermore.trail cp1=hitloc
 # DOTA_Item.Mango.Activate); a Cheese eaten (DOTA_Item.Cheese.Activate).
 fx unit.npc_dota_lotus_pool.worn at=unit particle=lotus_pool.ambient
 fx unit.npc_dota_lotus_pool.pluck at=unit particle=lotus_pool.pluck sound=sound.lotus_pool.grant cp2=caster cp3=caster
+# An Outpost (the game's code, CDOTA_Ability_Capture and the watch tower): its side's ambient while a side holds it, the
+# channel's rings and Outpost.Channel while a hero captures it, the burst and Outpost.Captured when it is taken; all at
+# the model's attach_fx.
+fx unit.npc_dota_watch_tower.worn at=unit attach=attach_fx particle=outpost.radiant_ambient side=radiant
+fx unit.npc_dota_watch_tower.worn at=unit attach=attach_fx particle=outpost.dire_ambient side=dire
+fx unit.npc_dota_watch_tower.channelled at=unit attach=attach_fx particle=outpost.channel sound=sound.outpost.channel
+fx unit.npc_dota_watch_tower.captured at=unit attach=attach_fx particle=outpost.captured sound=sound.outpost.captured
 fx item.famango.use at=caster particle=item.mango.active sound=sound.item.mango
 fx item.great_famango.use at=caster particle=item.mango.active sound=sound.item.mango
 fx item.greater_famango.use at=caster particle=item.mango.active sound=sound.item.mango
@@ -1070,6 +1086,8 @@ sound sound.bottle.drink sounds/ui/bottle_pour.vsnd_c sounds/ui/bottle_pour.wav 
 sound sound.bottle.cork sounds/ui/bottle_corked.vsnd_c sounds/ui/bottle_corked.wav event=Bottle.Cork
 sound sound.item.cheese sounds/items/cheese.vsnd_c sounds/items/cheese.wav event=DOTA_Item.Cheese.Activate
 sound sound.lotus_pool.grant sounds/items/lotus_grant.vsnd_c sounds/items/lotus_grant.wav event=LotusPool.Target
+sound sound.outpost.channel sounds/ambient/outpost_channel.vsnd_c sounds/ambient/outpost_channel.wav event=Outpost.Channel
+sound sound.outpost.captured sounds/ambient/outpost_captured.vsnd_c sounds/ambient/outpost_captured.wav event=Outpost.Captured
 
 # Town portal scroll: the hum over the landing (Loop_Appear) and over the leaving hero (Loop_Disappear), both
 # 4 s loops, and the sounds of the hero arriving and leaving.
@@ -1587,8 +1605,8 @@ unit npc_dota_enraged_wildkin_tornado none
 # objective units drawn where the match stands them (the map's own copies are left out of map.mid, their
 # yaws kept in map/mid/buildings.txt); the chasm under the Tormentor is the map's prop_dynamic
 # sentinel_base_* (scale 0.7), still part of map.mid. These
-# are the models' default skins: an owned Outpost (skin 1 Radiant, 2 Dire), a lit Watcher (1, 2), the Dire
-# Tormentor and the Dire chasm (1) wear another material group, which the importer does not export yet.
+# are the models' default skins; an Outpost and a Watcher held for a side wear its material group (1 the Radiant's,
+# 2 the Dire's) as the model_variant rows say; the Dire Tormentor and the Dire chasm (1) wear another, not exported yet.
 # Roshan (npc_dota_roshan: BAT 2.0, attack point 0.6 s). Clips by activity: attack/attack2 the plain swings
 # (attack3 left out), bash the swing Bash procs on (modifier roshan_bash), run_haste his On The Move run, cast1
 # Roar of Retribution (ACT_DOTA_CAST_ABILITY_1, windup 0.5 s), cast2 Throw (ABILITY_2, cast point 0.25 s),
@@ -1646,12 +1664,23 @@ clip prop.shopkeeper_fountain.model idle shopkeeper_ftn_idle_loop 7.867
 model prop.shopkeeper_fountain.skin1.model models/props_gameplay/shopkeeper_fountain/shopkeeper_fountain.vmdl_c models/prop/shopkeeper_fountain_skin1/shopkeeper_fountain.glb anims=shopkeeper_ftn_idle_loop skin=1
 clip prop.shopkeeper_fountain.skin1.model idle shopkeeper_ftn_idle_loop 7.867
 
-# Outposts (npc_dota_watch_tower): idle unowned, captured while a side owns it, transition while captured.
+# Outposts (npc_dota_watch_tower): idle unowned, captured while a side owns it, transition while captured. Its
+# disc turns teal for the Radiant and red for the Dire: material groups 1 (outpost_radiant) and 2 (outpost_dire).
 model objective.outpost.model models/props_structures/outpost.vmdl_c models/objective/outpost/outpost.glb anims=outpost_neutral_idle,outpost_captured_idle,outpost_transition
 clip objective.outpost.model idle outpost_neutral_idle 2.950
 clip objective.outpost.model captured outpost_captured_idle 19.917
 clip objective.outpost.model transition outpost_transition 2.900
+model objective.outpost.skin1.model models/props_structures/outpost.vmdl_c models/objective/outpost/outpost_skin1.glb anims=outpost_neutral_idle,outpost_captured_idle,outpost_transition skin=1
+clip objective.outpost.skin1.model idle outpost_neutral_idle 2.950
+clip objective.outpost.skin1.model captured outpost_captured_idle 19.917
+clip objective.outpost.skin1.model transition outpost_transition 2.900
+model objective.outpost.skin2.model models/props_structures/outpost.vmdl_c models/objective/outpost/outpost_skin2.glb anims=outpost_neutral_idle,outpost_captured_idle,outpost_transition skin=2
+clip objective.outpost.skin2.model idle outpost_neutral_idle 2.950
+clip objective.outpost.skin2.model captured outpost_captured_idle 19.917
+clip objective.outpost.skin2.model transition outpost_transition 2.900
 unit npc_dota_watch_tower objective.outpost.model model_scale=1
+model_variant objective.outpost.model objective.outpost.skin1.model side=radiant
+model_variant objective.outpost.model objective.outpost.skin2.model side=dire
 # Shrines of Wisdom (npc_dota_xp_fountain): idle dormant, spawn as it activates, active while active, channel
 # while a hero gathers, death as it goes dormant. Its floating stones are a mesh of this model;
 # xp_shrine_stones.vmdl is used by neither the unit nor the map.

@@ -135,6 +135,14 @@ impl Fact {
                 unit: Some(*pool),
                 ..blank
             },
+            // Told to both sides, the hero that took it only to its own.
+            EventKind::Captured { unit, by, .. } => Fact {
+                trigger: Trigger::Captured,
+                named: Some(*unit),
+                caster: *by,
+                unit: Some(*unit),
+                ..blank
+            },
             _ => return None,
         })
     }

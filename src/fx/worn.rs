@@ -2,11 +2,11 @@
 //! of a Dota name standing; and of the runes lying in sight. From the moment a unit shows it until
 //! it goes, its particle follows the unit and is fed what the line asks; its sound is made once.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use bevy::{prelude::*, transform::TransformSystems};
 use bota_core::rules::TICKS_PER_SECOND;
-use bota_proto::{EntityId, UnitView};
+use bota_proto::{EntityId, Team, UnitView};
 
 use super::line::{Attach, Fx, Trigger, Whose};
 use super::rules::{Rule, Rules, Subject};
@@ -19,7 +19,7 @@ use crate::map::Ground;
 use crate::mixer::{Owner, Started};
 use crate::particles::{EffectSight, Handle, Library, Playing};
 use crate::runes;
-use crate::units::{Dying, UnitIndex};
+use crate::units::{Dying, UnitIndex, held_for};
 
 /// The worn effects playing: by the wearing unit and the rule, the particle if the line has one
 /// and the loop of its sound, which sounds for as long as the effect is worn.
@@ -51,17 +51,35 @@ struct Hold {
     feeds: Feeds,
 }
 
+/// What the frame tells of the units beyond their own views: the map objectives heroes channel
+/// at.
+struct Facts {
+    channelled: HashSet<EntityId>,
+}
+
 /// What `unit` holds of the rule's subject, if it wears it, or carries it, as the line asks.
-fn holding(rule: &Rule, unit: &UnitView) -> Option<Hold> {
+fn holding(rule: &Rule, unit: &UnitView, facts: &Facts) -> Option<Hold> {
     let fx = &rule.fx;
+    let side = held_for(unit);
+    if fx.side.is_some_and(|wanted| side != Some(wanted)) {
+        return None;
+    }
+    let side = match side {
+        Some(Team::Dire) => 1.0,
+        _ => 0.0,
+    };
     let held = |stacks, ticks_left: Option<u32>, feeds| Hold {
         feeds: Feeds {
             stacks: stacks as f32,
             seconds: ticks_left.map_or(0.0, |ticks| ticks as f32 / TICKS_PER_SECOND as f32),
+            side,
             ..feeds
         },
     };
     match (&rule.subject, fx.trigger) {
+        (Subject::Units(units), Trigger::Channelled) => (units.is(unit)
+            && facts.channelled.contains(&unit.id))
+        .then(|| held(0, None, Feeds::default())),
         (Subject::Units(units), _) => units.is(unit).then(|| held(0, None, Feeds::default())),
         (Subject::Abilities(ids), Trigger::Casting) => unit
             .cast
@@ -168,6 +186,7 @@ fn end(wearing: &Wearing, playing: &mut Playing, stage: &mut Stage) {
 #[allow(clippy::too_many_arguments)]
 fn worn(
     sight: crate::fog::EventSight,
+    channels: Res<crate::anim::Channels>,
     index: Res<UnitIndex>,
     dying: Query<(), With<Dying>>,
     ground: Res<Ground>,
@@ -196,10 +215,14 @@ fn worn(
         .of(Trigger::Worn)
         .chain(rules.of(Trigger::Held))
         .chain(rules.of(Trigger::Casting))
+        .chain(rules.of(Trigger::Channelled))
         .collect::<Vec<_>>();
     if wearing.is_empty() {
         return;
     }
+    let facts = Facts {
+        channelled: channels.objectives(view),
+    };
     worn.0.retain(|(id, rule), wearing| {
         let keep = rules.0.get(*rule).is_some_and(|rule| match rule.subject {
             Subject::Runes(kind) => {
@@ -209,7 +232,7 @@ fn worn(
                 standing(id)
                     && view
                         .unit(*id)
-                        .is_some_and(|unit| holding(rule, unit).is_some())
+                        .is_some_and(|unit| holding(rule, unit, &facts).is_some())
             }
         });
         if !keep {
@@ -218,6 +241,7 @@ fn worn(
         keep
     });
     let scene = Scene {
+        facts: &facts,
         ground: &ground,
         bodies: &bodies,
         library: library.as_deref(),
@@ -265,6 +289,7 @@ fn wear_runes(
 
 /// What the effects worn are placed with.
 struct Scene<'a> {
+    facts: &'a Facts,
     ground: &'a Ground,
     bodies: &'a Shooters<'a, 'a>,
     library: Option<&'a Library>,
@@ -280,7 +305,7 @@ fn wear_unit(
     stage: &mut Stage,
 ) {
     for (n, rule) in wearing {
-        let Some(held) = holding(rule, unit) else {
+        let Some(held) = holding(rule, unit, scene.facts) else {
             continue;
         };
         let fx = &rule.fx;

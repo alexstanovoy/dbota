@@ -30,7 +30,15 @@ fn model_variants_reject_unknown_models_modifiers_and_invalid_conditions() {
         ),
         (
             "model_variant ground flying modifier=modifier_courier_flying pool_tier=great map_skin=0",
-            "model_variant requires modifier= or both pool_tier= and map_skin=",
+            "model_variant requires modifier=, side= or both pool_tier= and map_skin=",
+        ),
+        (
+            "model_variant ground flying side=green",
+            "model_variant: unknown side=green",
+        ),
+        (
+            "model_variant ground flying side=radiant modifier=modifier_courier_flying",
+            "model_variant requires modifier=, side= or both pool_tier= and map_skin=",
         ),
         (
             "model_variant ground flying modifier=modifier_courier_flying height=160\nmodel_variant ground ground modifier=modifier_courier_flying",

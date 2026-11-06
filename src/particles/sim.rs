@@ -260,6 +260,7 @@ impl Instance {
         self.flight.map(|flight| flight.id)
     }
 
+    /// Whether it was ended: for the end-to-end tests to ask what still plays.
     #[cfg(test)]
     pub fn ending(&self) -> bool {
         self.ending

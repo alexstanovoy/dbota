@@ -2,6 +2,7 @@
 //! by Dota's name for it. The grammar is in the manifest's header.
 
 use bevy::prelude::Vec3;
+use bota_proto::Team;
 
 /// When a bound effect plays.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -26,6 +27,8 @@ pub enum Trigger {
     Store,
     /// A hero plucked a lotus from the unit (`EventKind::LotusPlucked`: a Lotus Pool).
     Pluck,
+    /// The unit was taken over by a side (`EventKind::Captured`: an Outpost).
+    Captured,
     /// While the subject holds: a modifier on a unit, an effect an ability or an item put on one,
     /// or a unit of a Dota name standing.
     Worn,
@@ -33,6 +36,9 @@ pub enum Trigger {
     Held,
     /// While a unit is in the cast point of the ability.
     Casting,
+    /// While a hero channels at the unit the ability that works it (an Outpost captured, a
+    /// Watcher lit).
+    Channelled,
     /// While a missile of the ability or item flies.
     Flies,
 }
@@ -86,6 +92,8 @@ pub enum Feed {
     Place(Attach),
     /// Where the user stands: the hero that plucked a lotus.
     Caster,
+    /// The side the unit is held for, in x: 0 the Radiant, 1 the Dire (`units::held_for`).
+    Side,
 }
 
 /// Whose effect a worn line is about.
@@ -119,6 +127,8 @@ pub struct Fx {
     pub whose: Whose,
     /// The stacks a worn effect must hold, from and up to.
     pub stacks: (u32, u32),
+    /// The side a worn line's unit must be held for, when the line names one.
+    pub side: Option<Team>,
 }
 
 impl Fx {
@@ -144,9 +154,11 @@ impl Fx {
             "activate" => Trigger::Activate,
             "store" => Trigger::Store,
             "pluck" => Trigger::Pluck,
+            "captured" => Trigger::Captured,
             "worn" => Trigger::Worn,
             "held" => Trigger::Held,
             "casting" => Trigger::Casting,
+            "channelled" => Trigger::Channelled,
             "flies" => Trigger::Flies,
             other => return Err(format!("no trigger '{other}'")),
         };
@@ -160,6 +172,7 @@ impl Fx {
             feeds: Vec::new(),
             whose: Whose::Any,
             stacks: (0, u32::MAX),
+            side: None,
         };
         let mut at = None;
         for word in rest {
@@ -173,6 +186,7 @@ impl Fx {
                 "sound" => fx.sound = Some(value.to_owned()),
                 "whose" => fx.whose = whose_of(value)?,
                 "stacks" => fx.stacks = stacks_of(value)?,
+                "side" => fx.side = Some(side_of(value)?),
                 _ => match key.strip_prefix("cp").and_then(|n| n.parse::<usize>().ok()) {
                     Some(point) if point > 0 => fx.feeds.push((point, feed_of(value)?)),
                     _ => return Err(format!("cannot read '{word}'")),
@@ -198,7 +212,12 @@ impl Fx {
             Trigger::Spawn => &[At::Point],
             Trigger::Activate | Trigger::Store => &[At::Caster],
             Trigger::Pluck => &[At::Unit, At::Caster],
-            Trigger::Died | Trigger::Worn | Trigger::Held | Trigger::Casting => &[At::Unit],
+            Trigger::Died
+            | Trigger::Captured
+            | Trigger::Worn
+            | Trigger::Held
+            | Trigger::Casting
+            | Trigger::Channelled => &[At::Unit],
             Trigger::Flies => &[At::Flight, At::Chain],
         };
         if !places.contains(&self.at) {
@@ -210,6 +229,9 @@ impl Fx {
         let worn = self.trigger == Trigger::Worn;
         if !worn && (self.whose != Whose::Any || self.stacks != (0, u32::MAX)) {
             return Err("only a worn line asks whose or how many".to_owned());
+        }
+        if !worn && self.side.is_some() {
+            return Err("only a worn line asks which side holds the unit".to_owned());
         }
         if !matches!(self.at, At::Unit | At::Caster | At::CasterBefore)
             && self.attach != Attach::Origin
@@ -245,6 +267,14 @@ fn attach_of(value: &str) -> Result<Attach, String> {
     })
 }
 
+fn side_of(value: &str) -> Result<Team, String> {
+    Ok(match value {
+        "radiant" => Team::Radiant,
+        "dire" => Team::Dire,
+        other => return Err(format!("no side '{other}'")),
+    })
+}
+
 fn whose_of(value: &str) -> Result<Whose, String> {
     Ok(match value {
         "own" => Whose::Own,
@@ -275,6 +305,7 @@ fn feed_of(value: &str) -> Result<Feed, String> {
         "mode" => Feed::Mode,
         "charges" => Feed::Charges,
         "caster" => Feed::Caster,
+        "side" => Feed::Side,
         place if attach_of(place).is_ok() => Feed::Place(attach_of(place)?),
         _ => {
             let parts: Vec<f32> = value

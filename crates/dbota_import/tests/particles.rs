@@ -17,11 +17,13 @@ use heatel::{DirSource, Resource, Vpk, find_game_dir};
 /// The classes of the manifest's effects the client leaves out, each with why. (A model
 /// renderer whose model a control point carries, the town portal's image of the hero at its end,
 /// is read but draws nothing: the client binds no model to a control point.)
-const LEFT_OUT: [&str; 42] = [
+const LEFT_OUT: [&str; 45] = [
     // Camera shake (Requiem of Souls) and the model a control point carries (the town portal's
     // image of the hero), and the rune, ward, teleport and lotus effects' finer operators (status
     // effects, parent-kill inheritance, paths, oscillation, rotation and culling): the client
     // draws these effects without them.
+    // And the map objectives' finer functions (their ambients, channels and rings): the client draws
+    // their effects without them.
     "C_INIT_CreateOnModelAtHeight",
     "C_INIT_CreateSequentialPathV2",
     "C_INIT_InitFromParentKilled",
@@ -35,6 +37,7 @@ const LEFT_OUT: [&str; 42] = [
     "C_INIT_SetAttributeToScalarExpression",
     "C_INIT_SetHitboxToClosest",
     "C_INIT_StatusEffect",
+    "C_OP_ColorInterpolateRandom",
     "C_OP_ConstrainDistance",
     "C_OP_DecayMaintainCount",
     "C_OP_DistanceBetweenCPs",
@@ -45,6 +48,8 @@ const LEFT_OUT: [&str; 42] = [
     "C_OP_LagCompensation",
     "C_OP_LerpEndCapVector",
     "C_OP_LerpScalar",
+    "C_OP_LocalAccelerationForce",
+    "C_OP_LockToSavedSequentialPathV2",
     "C_OP_MaintainEmitter",
     "C_OP_MovementRigidAttachToCP",
     "C_OP_OscillateScalar",

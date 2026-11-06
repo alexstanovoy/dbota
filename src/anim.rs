@@ -102,6 +102,28 @@ impl Channels {
     pub fn of(&self, unit: EntityId) -> Option<AbilityId> {
         self.0.get(&unit).copied()
     }
+
+    /// The map objectives heroes channel at (an Outpost captured, a Watcher lit): the wire
+    /// tells a cast's caster but not its target, so each hero channelling the ability an
+    /// objective's kind is worked with is taken to be at the nearest objective of that kind
+    /// within the ability's reach, edge to edge.
+    pub fn objectives(&self, view: &WorldView) -> HashSet<EntityId> {
+        let place = |u: &UnitView| Vec2::new(u.pos.x.to_f32(), u.pos.y.to_f32());
+        self.0
+            .iter()
+            .filter_map(|(hero, ability)| {
+                let hero = view.unit(*hero)?;
+                let reach = bota_core::ability_def(*ability)?.range as f32;
+                view.units
+                    .iter()
+                    .filter(|u| bota_core::kind_def(u.kind).interact == Some(*ability))
+                    .map(|u| (u, place(u).distance(place(hero))))
+                    .filter(|(u, apart)| *apart <= reach + hero.bound.to_f32() + u.bound.to_f32())
+                    .min_by(|a, b| a.1.total_cmp(&b.1))
+                    .map(|(u, _)| u.id)
+            })
+            .collect()
+    }
 }
 
 /// Takes in the casts of the frame and lets go of the channels that ended: [`Channels`] is
@@ -167,7 +189,7 @@ fn animate(
         return;
     };
     let dt = time.delta_secs();
-    let lamps = watchers_channelled(view, &channels);
+    let worked = channels.objectives(view);
     for (unit, mut pose, model_of, at, rig, dying) in &mut units {
         if let Ok(mut pivot) = pivots.get_mut(model_of.0) {
             let rotation = sim_facing_to_rotation(unit.facing);
@@ -183,8 +205,8 @@ fn animate(
         let clip = |name: &str| clips.iter().find(|c| c.0 == name);
         let live = view.unit(unit.id);
         let channel = channels.0.get(&unit.id).and_then(|id| art_of(*id).channel);
-        // A Watcher a hero channels at plays its own channel clip meanwhile.
-        let channel = channel.or_else(|| lamps.contains(&unit.id).then_some("channel"));
+        // An objective a hero channels at plays its own channel clip meanwhile (a Watcher's).
+        let channel = channel.or_else(|| worked.contains(&unit.id).then_some("channel"));
         let wanted = match (dying, live) {
             (Some(d), _) => Wanted {
                 clip: "death",
@@ -509,29 +531,6 @@ fn looping(pose: &mut Pose, clip: &'static str, duration: f32, dt: f32, pace: f3
         clip,
         t: pose.loop_t,
     }
-}
-
-/// The Watchers heroes channel their lamps at: the wire tells a cast's caster but not its target,
-/// so each channelling hero is taken to be at the Watcher nearest it within the ability's reach,
-/// edge to edge.
-fn watchers_channelled(view: &WorldView, channels: &Channels) -> HashSet<EntityId> {
-    let lamp = bota_core::ability_def(AbilityId::LAMP_USE).map_or(0, |def| def.range) as f32;
-    let place = |u: &UnitView| Vec2::new(u.pos.x.to_f32(), u.pos.y.to_f32());
-    channels
-        .0
-        .iter()
-        .filter(|(_, ability)| **ability == AbilityId::LAMP_USE)
-        .filter_map(|(hero, _)| view.unit(*hero))
-        .filter_map(|hero| {
-            view.units
-                .iter()
-                .filter(|u| u.kind == UnitKind::Watcher)
-                .map(|u| (u, place(u).distance(place(hero))))
-                .filter(|(u, apart)| *apart <= lamp + hero.bound.to_f32() + u.bound.to_f32())
-                .min_by(|a, b| a.1.total_cmp(&b.1))
-                .map(|(u, _)| u.id)
-        })
-        .collect()
 }
 
 /// The loop a unit plays standing: a map objective's shows its state, as

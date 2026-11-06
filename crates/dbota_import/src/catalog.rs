@@ -76,6 +76,9 @@ pub struct ModelVariant {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ModelCondition {
     Modifier(String),
+    /// The side a map objective is held for (`side=radiant|dire`): an Outpost's own, the side a
+    /// Watcher is lit for.
+    Side(bota_proto::Team),
     Pool {
         tier: bota_proto::LotusTier,
         map_skin: u8,
@@ -586,15 +589,24 @@ fn manifest_line(words: &[&str]) -> Result<Line, String> {
 }
 
 fn model_variant(words: &[&str]) -> Result<ModelVariant, String> {
-    let fields = Fields::of(words, &["modifier", "pool_tier", "map_skin", "height"])?;
+    let fields = Fields::of(
+        words,
+        &["modifier", "side", "pool_tier", "map_skin", "height"],
+    )?;
     let [base, model] = fields.exactly::<2>("model_variant")?;
     let when = match (
         fields.get("modifier"),
+        fields.get("side"),
         fields.get("pool_tier"),
         fields.get("map_skin"),
     ) {
-        (Some(modifier), None, None) => ModelCondition::Modifier(modifier.to_owned()),
-        (None, Some(tier), Some(skin)) => {
+        (Some(modifier), None, None, None) => ModelCondition::Modifier(modifier.to_owned()),
+        (None, Some(side), None, None) => ModelCondition::Side(match side {
+            "radiant" => bota_proto::Team::Radiant,
+            "dire" => bota_proto::Team::Dire,
+            _ => return Err(format!("model_variant: unknown side={side}")),
+        }),
+        (None, None, Some(tier), Some(skin)) => {
             let tier = match tier {
                 "healing" => bota_proto::LotusTier::Healing,
                 "great" => bota_proto::LotusTier::Great,
@@ -608,7 +620,8 @@ fn model_variant(words: &[&str]) -> Result<ModelVariant, String> {
         }
         _ => {
             return Err(
-                "model_variant requires modifier= or both pool_tier= and map_skin=".to_owned(),
+                "model_variant requires modifier=, side= or both pool_tier= and map_skin="
+                    .to_owned(),
             );
         }
     };

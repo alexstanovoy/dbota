@@ -192,6 +192,7 @@ struct ModelVariant {
 #[derive(Clone, Copy)]
 enum ModelCondition {
     Effect(EffectId),
+    Side(Team),
     Pool { tier: LotusTier, map_skin: u8 },
 }
 
@@ -340,6 +341,7 @@ fn load_model_variants(bank: &mut ModelBank, manifest: &Manifest) {
                 };
                 ModelCondition::Effect(effect.id)
             }
+            Condition::Side(side) => ModelCondition::Side(*side),
             Condition::Pool { tier, map_skin } => ModelCondition::Pool {
                 tier: *tier,
                 map_skin: *map_skin,
@@ -499,6 +501,15 @@ fn objective_unit(kind: UnitKind) -> Option<&'static str> {
     }
 }
 
+/// The side a unit is held for, as Dota colours a map objective by it: a side's own unit's (an
+/// Outpost it holds).
+pub fn held_for(unit: &UnitView) -> Option<Team> {
+    match unit.team {
+        Team::Radiant | Team::Dire => Some(unit.team),
+        Team::Neutral => None,
+    }
+}
+
 /// The Dota unit (`npc_units.txt`) a ward, a map objective or a neutral creep is.
 pub fn npc_unit(unit: &UnitView) -> Option<&'static str> {
     match objective_unit(unit.kind) {
@@ -597,6 +608,7 @@ fn selected_model_index(
         .iter()
         .find(|variant| match variant.when {
             ModelCondition::Effect(effect) => unit.effects.iter().any(|held| held.id == effect),
+            ModelCondition::Side(side) => held_for(unit) == Some(side),
             ModelCondition::Pool {
                 tier,
                 map_skin: skin,
