@@ -40,6 +40,10 @@ pub const MERGE_WINDOW: Duration = Duration::from_millis(500);
 const UNKNOWN_LENGTH: Duration = Duration::from_secs(10);
 /// Most events read from the cache.
 const MAX_EVENTS: usize = 1 << 14;
+const MISSING_EVENT_BLOCK: Duration = Duration::from_millis(50);
+const MISSING_EVENT_BLOCK_UNITS: f32 = 100.0;
+const MAX_RECENT_GAMEPLAY: usize = MAX_VOICES * 2;
+const MAX_RECENT_AMBIENCE: usize = MAX_AMBIENCE_VOICES * 2;
 
 /// Marks the sound player of a sound of the game: the match's world, voices, announcer and
 /// ambience, which end with the match. The menu's own sounds do not carry it.
@@ -56,7 +60,7 @@ pub enum Owner {
 
 /// What asks to be sounded.
 pub struct Request<'a> {
-    /// The Dota event the sound plays; one the cache does not know has no limits.
+    /// The sound event, or a stable binding name when the cache has no event metadata.
     pub event: &'a str,
     pub owner: Owner,
     /// The unit a blow lands on: blows on one unit merge.
@@ -119,6 +123,7 @@ pub enum Started {
 pub struct Mixer {
     events: HashMap<String, EventLine>,
     voices: Vec<Voice>,
+    recent: Vec<Recent>,
     /// The events a loop with no owner was refused for, told once each.
     warned: HashSet<String>,
     /// No match is on to sound: nothing starts.
@@ -167,7 +172,6 @@ struct Voice {
     class: VoiceClass,
     /// Whose sound it is, for the limits that count an entity's own.
     owner: Owner,
-    merge: Option<EntityId>,
     at: Option<(f32, f32)>,
     started: Duration,
     /// The playback deadline; an owned loop without a stop time has none.
@@ -201,6 +205,17 @@ struct InitialMix {
     group: Option<String>,
 }
 
+/// Merge and missing-event repeat windows can outlive the physical player. Background history
+/// has its own allowance so completed ambience cannot consume gameplay admission history.
+struct Recent {
+    event: String,
+    merge: Option<EntityId>,
+    at: Option<(f32, f32)>,
+    started: Duration,
+    expires: Duration,
+    class: VoiceClass,
+}
+
 impl Voice {
     fn sounding(&self) -> bool {
         self.stopped.is_none()
@@ -216,12 +231,12 @@ impl Mixer {
             .map(|voice| (voice.event.as_str(), voice.at))
     }
 
-    /// Reads `sounds/events.txt` of the cache; a cache without it limits nothing, and says so.
+    /// Reads the event policies; missing metadata uses the bounded fallback repeat policy.
     pub fn load(manifest: &Manifest) -> Mixer {
         let text = crate::cachefs::read_small(&manifest.root, "sounds/events.txt")
             .and_then(|bytes| String::from_utf8(bytes).ok());
         let Some(text) = text else {
-            warn!("sounds/events.txt is missing from the cache: no sound is limited");
+            warn!("sounds/events.txt is missing from the cache: using the fallback repeat policy");
             return Mixer::default();
         };
         let events = crate::cache_text::sound_events(&text, MAX_EVENTS);
@@ -370,12 +385,27 @@ impl Mixer {
             warn!("{}: a loop with no owner plays once", request.event);
         }
         let kept = looping && request.owner != Owner::None;
-        if self.blocked(request, rules.as_ref(), now)
+        if self.blocked(request, rules.as_ref(), now) {
+            return Started::Refused;
+        }
+        let window = history_window(request, rules.as_ref());
+        if (!window.is_zero() && !self.history_has_room(class))
             || !self.make_room(commands, now, request, rules.as_ref(), class)
         {
             return Started::Refused;
         }
-        self.spawn_voice(commands, now, request, source, rules.as_ref(), kept, class, mix)
+        let started = self.spawn_voice(
+            commands,
+            now,
+            request,
+            source,
+            rules.as_ref(),
+            kept,
+            class,
+            mix,
+        );
+        self.remember_trigger(request, now, window, class);
+        started
     }
 
     fn initial_mix(&self, request: &Request, rules: Option<&EventLine>) -> Option<InitialMix> {
@@ -398,15 +428,17 @@ impl Mixer {
             return None;
         }
         // An event that follows the fog of war is heard only where its source is in sight.
-        if let (Some(radius), Some(at), Some(fog)) = (
-            rules.and_then(|r| r.fog_radius),
-            request.at,
-            request.fog,
-        ) && !fog.lit_within(at.0, at.1, radius)
+        if let (Some(radius), Some(at), Some(fog)) =
+            (rules.and_then(|r| r.fog_radius), request.at, request.fog)
+            && !fog.lit_within(at.0, at.1, radius)
         {
             return None;
         }
-        Some(InitialMix { base, gain: base * spatial, group })
+        Some(InitialMix {
+            base,
+            gain: base * spatial,
+            group,
+        })
     }
 
     fn spawn_voice(
@@ -431,7 +463,9 @@ impl Mixer {
                 GameAudio,
                 AudioPlayer::new(source),
                 playback
-                    .with_volume(Volume::Linear(self.sink_gain(mix.gain, mix.group.as_deref())))
+                    .with_volume(Volume::Linear(
+                        self.sink_gain(mix.gain, mix.group.as_deref()),
+                    ))
                     .with_speed(request.speed),
             ))
             .id();
@@ -441,7 +475,6 @@ impl Mixer {
             looping: kept,
             class,
             owner: request.owner,
-            merge: request.merge,
             at: request.at,
             started: now,
             ends: ends.map(|length| now + length),
@@ -465,20 +498,64 @@ impl Mixer {
     fn blocked(&self, request: &Request, rules: Option<&EventLine>, now: Duration) -> bool {
         let block = rules.map_or(Duration::ZERO, |r| r.block);
         let units = rules.map_or(0.0, |r| r.block_units);
-        self.voices
+        let sounding = self
+            .voices
             .iter()
             .filter(|v| v.event == request.event && v.sounding())
             .any(|v| {
                 let age = now.saturating_sub(v.started);
-                let near = match (v.at, request.at) {
-                    (Some(a), Some(b)) if units > 0.0 => {
-                        Vec2::from(a).distance(Vec2::from(b)) <= units
-                    }
-                    _ => true,
-                };
-                let merged = request.merge.is_some() && v.merge == request.merge;
-                (age < block && near) || (age < MERGE_WINDOW && merged)
-            })
+                age < block && within_repeat_range(v.at, request.at, units)
+            });
+        sounding
+            || self
+                .recent
+                .iter()
+                .filter(|recent| recent.event == request.event)
+                .any(|recent| {
+                    let age = now.saturating_sub(recent.started);
+                    let merged = request.merge.is_some() && recent.merge == request.merge;
+                    let fallback = rules.is_none()
+                        && age < MISSING_EVENT_BLOCK
+                        && within_repeat_range(recent.at, request.at, MISSING_EVENT_BLOCK_UNITS);
+                    (merged && age < MERGE_WINDOW) || fallback
+                })
+    }
+
+    fn history_has_room(&self, class: VoiceClass) -> bool {
+        let capacity = match class {
+            VoiceClass::World => MAX_RECENT_GAMEPLAY,
+            VoiceClass::Ambience => MAX_RECENT_AMBIENCE,
+        };
+        self.recent
+            .iter()
+            .filter(|recent| recent.class == class)
+            .count()
+            < capacity
+    }
+
+    fn remember_trigger(
+        &mut self,
+        request: &Request,
+        now: Duration,
+        window: Duration,
+        class: VoiceClass,
+    ) {
+        if window.is_zero() {
+            return;
+        }
+        assert!(
+            self.history_has_room(class),
+            "trigger admission must reserve history before eviction"
+        );
+        self.recent.push(Recent {
+            event: request.event.to_owned(),
+            merge: request.merge,
+            at: request.at,
+            started: now,
+            expires: now + window,
+            class,
+        });
+        assert!(self.recent.len() <= MAX_RECENT_GAMEPLAY + MAX_RECENT_AMBIENCE);
     }
 
     /// Makes room for a voice: the event's limit stops the oldest of its voices (or refuses the
@@ -549,6 +626,7 @@ impl Mixer {
             self.ends += 1;
         }
         self.closed = true;
+        self.recent.clear();
         for layer in &mut self.layers {
             layer.amounts.fill(0.0);
         }
@@ -706,6 +784,7 @@ impl Mixer {
     }
 
     fn drop_ended(&mut self, commands: &mut Commands, now: Duration) {
+        self.recent.retain(|recent| now < recent.expires);
         self.voices.retain(|voice| {
             let faded = voice
                 .stopped
@@ -762,6 +841,26 @@ impl Mixer {
             .iter()
             .find(|v| v.event == event && v.looping && v.sounding())
             .map(|v| v.gain)
+    }
+}
+
+fn history_window(request: &Request, rules: Option<&EventLine>) -> Duration {
+    let fallback = if rules.is_none() {
+        MISSING_EVENT_BLOCK
+    } else {
+        Duration::ZERO
+    };
+    if request.merge.is_some() {
+        fallback.max(MERGE_WINDOW)
+    } else {
+        fallback
+    }
+}
+
+fn within_repeat_range(a: Option<(f32, f32)>, b: Option<(f32, f32)>, units: f32) -> bool {
+    match (a, b) {
+        (Some(a), Some(b)) if units > 0.0 => Vec2::from(a).distance(Vec2::from(b)) <= units,
+        _ => true,
     }
 }
 
@@ -935,6 +1034,39 @@ mod tests {
         })
     }
 
+    fn an_app() -> App {
+        use clap::Parser;
+
+        let mut app = App::new();
+        app.init_resource::<Time>()
+            .init_resource::<crate::main_menu::GameEpoch>()
+            .insert_resource(Manifest::default())
+            .insert_resource(crate::config::Settings::default())
+            .insert_resource(crate::Args::parse_from(["dbota"]))
+            .insert_non_send(crate::main_menu::idle())
+            .add_plugins(plugin);
+        app.update();
+        app
+    }
+
+    fn start_and_finish(world: &mut World, request: &Request) {
+        let started = world.resource_scope(|world, mut mixer: Mut<Mixer>| {
+            mixer.start(
+                &mut world.commands(),
+                Duration::ZERO,
+                request,
+                Handle::default(),
+            )
+        });
+        assert_eq!(started, Started::Once);
+        world.flush();
+        let player = world
+            .query_filtered::<Entity, With<AudioPlayer>>()
+            .single(world)
+            .expect("one physical player");
+        world.despawn(player);
+    }
+
     #[test]
     fn unknown_length_players_cannot_outlive_their_reserved_voice_slots() {
         let mut sources = Assets::<AudioSource>::default();
@@ -943,11 +1075,12 @@ mod tests {
         let mut mixer = Mixer::default();
         for period in 0..3 {
             let now = UNKNOWN_LENGTH * period;
-            for _ in 0..MAX_VOICES {
+            for index in 0..MAX_VOICES {
+                let event = format!("missing-duration-{index}");
                 mixer.start(
                     &mut world.commands(),
                     now,
-                    &request("missing-duration", Owner::None),
+                    &request(&event, Owner::None),
                     source.clone(),
                 );
             }
@@ -965,13 +1098,7 @@ mod tests {
 
     #[test]
     fn a_failed_or_finished_player_releases_its_slot_immediately() {
-        let mut app = App::new();
-        app.init_resource::<Time>()
-            .init_resource::<crate::main_menu::GameEpoch>()
-            .insert_resource(Manifest::default())
-            .insert_non_send(crate::main_menu::idle())
-            .add_plugins(plugin);
-        app.update();
+        let mut app = an_app();
         let world = app.world_mut();
         world.insert_resource(mixer(vec![event("loop", true, 120)]));
         let player = world.resource_scope(|world, mut mixer: Mut<Mixer>| {
@@ -1045,6 +1172,262 @@ mod tests {
     #[test]
     fn ambience_at_an_event_limit_preserves_the_gameplay_player() {
         ambience_preserves_gameplay(1);
+    }
+
+    #[test]
+    fn a_finished_player_does_not_erase_the_target_merge_window() {
+        let mut app = an_app();
+        let world = app.world_mut();
+        world.insert_resource(mixer(vec![event("hit", false, 120)]));
+        let mut blow = request("hit", Owner::None);
+        blow.merge = Some(EntityId {
+            idx: 90,
+            generation: 1,
+        });
+        start_and_finish(world, &blow);
+        let repeated = world.resource_scope(|world, mut mixer: Mut<Mixer>| {
+            mixer.start(
+                &mut world.commands(),
+                Duration::from_millis(100),
+                &blow,
+                Handle::default(),
+            )
+        });
+        assert_eq!(
+            repeated,
+            Started::Refused,
+            "completion released a still-active merge block"
+        );
+    }
+
+    #[test]
+    fn completed_trigger_history_is_bounded_and_expiry_reopens_admission() {
+        let mut app = an_app();
+        let world = app.world_mut();
+        for index in 0..128 {
+            let event = format!("missing-{index}");
+            start_and_finish(world, &request(&event, Owner::None));
+        }
+        let overflow = request("overflow", Owner::None);
+        let refused = world.resource_scope(|world, mut mixer: Mut<Mixer>| {
+            mixer.start(
+                &mut world.commands(),
+                Duration::ZERO,
+                &overflow,
+                Handle::default(),
+            )
+        });
+        assert_eq!(
+            refused,
+            Started::Refused,
+            "completed triggers had no history bound"
+        );
+        let after_expiry = world.resource_scope(|world, mut mixer: Mut<Mixer>| {
+            mixer.start(
+                &mut world.commands(),
+                Duration::from_millis(50),
+                &overflow,
+                Handle::default(),
+            )
+        });
+        assert_eq!(
+            after_expiry,
+            Started::Once,
+            "history did not expire at its exact deadline"
+        );
+    }
+
+    #[test]
+    fn history_saturation_refuses_before_evicting_an_existing_event_instance() {
+        let mut app = an_app();
+        let world = app.world_mut();
+        let mut limited = event("limited", false, 120);
+        limited.limit = 1;
+        world.insert_resource(mixer(vec![limited]));
+        for index in 0..MAX_RECENT_GAMEPLAY {
+            start_and_finish(world, &request(&format!("unknown-{index}"), Owner::None));
+        }
+        let started = world.resource_scope(|world, mut mixer: Mut<Mixer>| {
+            mixer.start(
+                &mut world.commands(),
+                Duration::ZERO,
+                &request("limited", Owner::None),
+                Handle::default(),
+            )
+        });
+        assert_eq!(
+            started,
+            Started::Once,
+            "a nonmerging known event needs no history slot"
+        );
+        world.flush();
+        let before: HashSet<_> = world
+            .query_filtered::<Entity, With<AudioPlayer>>()
+            .iter(world)
+            .collect();
+        let mut merging = request("limited", Owner::None);
+        merging.merge = Some(EntityId {
+            idx: 90,
+            generation: 1,
+        });
+        let refused = world.resource_scope(|world, mut mixer: Mut<Mixer>| {
+            mixer.start(
+                &mut world.commands(),
+                Duration::ZERO,
+                &merging,
+                Handle::default(),
+            )
+        });
+        world.flush();
+        let after: HashSet<_> = world
+            .query_filtered::<Entity, With<AudioPlayer>>()
+            .iter(world)
+            .collect();
+        assert_eq!(refused, Started::Refused);
+        assert_eq!(
+            after, before,
+            "history rejection happened after event-limit eviction"
+        );
+    }
+
+    #[test]
+    fn ambient_trigger_history_does_not_consume_gameplay_history() {
+        let mut app = an_app();
+        let world = app.world_mut();
+        for index in 0..MAX_RECENT_AMBIENCE {
+            let name = format!("ambient-{index}");
+            let started = world.resource_scope(|world, mut mixer: Mut<Mixer>| {
+                mixer.start_ambience(
+                    &mut world.commands(),
+                    Duration::ZERO,
+                    &request(&name, Owner::None),
+                    Handle::default(),
+                )
+            });
+            assert_eq!(started, Started::Once);
+            world.flush();
+            let player = world
+                .query_filtered::<Entity, With<AudioPlayer>>()
+                .single(world)
+                .unwrap();
+            world.despawn(player);
+        }
+        let overflow = world.resource_scope(|world, mut mixer: Mut<Mixer>| {
+            mixer.start_ambience(
+                &mut world.commands(),
+                Duration::ZERO,
+                &request("ambient-overflow", Owner::None),
+                Handle::default(),
+            )
+        });
+        assert_eq!(
+            overflow,
+            Started::Refused,
+            "background trigger history was not bounded"
+        );
+        for index in 0..MAX_RECENT_GAMEPLAY {
+            start_and_finish(world, &request(&format!("world-{index}"), Owner::None));
+        }
+        let overflow = world.resource_scope(|world, mut mixer: Mut<Mixer>| {
+            mixer.start(
+                &mut world.commands(),
+                Duration::ZERO,
+                &request("world-overflow", Owner::None),
+                Handle::default(),
+            )
+        });
+        assert_eq!(overflow, Started::Refused);
+    }
+
+    #[test]
+    fn closing_the_match_clears_completed_trigger_merge_blocks() {
+        let mut app = an_app();
+        let world = app.world_mut();
+        world.insert_resource(mixer(vec![event("hit", false, 120)]));
+        let mut blow = request("hit", Owner::None);
+        blow.merge = Some(EntityId {
+            idx: 90,
+            generation: 1,
+        });
+        start_and_finish(world, &blow);
+        let blocked = world.resource_scope(|world, mut mixer: Mut<Mixer>| {
+            mixer.start(
+                &mut world.commands(),
+                Duration::from_millis(100),
+                &blow,
+                Handle::default(),
+            )
+        });
+        assert_eq!(
+            blocked,
+            Started::Refused,
+            "the current match must really hold a merge block"
+        );
+        let next_match = world.resource_scope(|world, mut mixer: Mut<Mixer>| {
+            mixer.close(&mut world.commands());
+            mixer.open();
+            mixer.start(
+                &mut world.commands(),
+                Duration::from_millis(100),
+                &blow,
+                Handle::default(),
+            )
+        });
+        assert_eq!(
+            next_match,
+            Started::Once,
+            "a new match inherited the old target's merge block"
+        );
+    }
+
+    #[test]
+    fn imported_repeat_blocks_count_sounding_instances_not_finished_triggers() {
+        let mut app = an_app();
+        let world = app.world_mut();
+        let mut event = event("known", false, 120);
+        event.block = Duration::from_secs(1);
+        world.insert_resource(mixer(vec![event]));
+        let first = world.resource_scope(|world, mut mixer: Mut<Mixer>| {
+            mixer.start(
+                &mut world.commands(),
+                Duration::ZERO,
+                &request("known", Owner::None),
+                Handle::default(),
+            )
+        });
+        assert_eq!(first, Started::Once);
+        world.flush();
+        let blocked = world.resource_scope(|world, mut mixer: Mut<Mixer>| {
+            mixer.start(
+                &mut world.commands(),
+                Duration::from_millis(100),
+                &request("known", Owner::None),
+                Handle::default(),
+            )
+        });
+        assert_eq!(
+            blocked,
+            Started::Refused,
+            "a sounding instance lost its imported block"
+        );
+        let player = world
+            .query_filtered::<Entity, With<AudioPlayer>>()
+            .single(world)
+            .unwrap();
+        world.despawn(player);
+        let finished = world.resource_scope(|world, mut mixer: Mut<Mixer>| {
+            mixer.start(
+                &mut world.commands(),
+                Duration::from_millis(100),
+                &request("known", Owner::None),
+                Handle::default(),
+            )
+        });
+        assert_eq!(
+            finished,
+            Started::Once,
+            "imported sounding-instance policy became trigger history"
+        );
     }
 
     /// The world's voices are bounded, fading ones counted: a one-shot gives way to a new voice,
