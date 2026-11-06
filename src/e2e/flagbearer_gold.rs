@@ -168,9 +168,15 @@ fn both_allied_heroes_receive_the_flagbearer_bonus_and_only_the_last_hitter_gets
     let mut game = Allies::start();
     let flag = enemy_flagbearer(&mut game);
     approach_and_prepare(&mut game, &flag);
-    game.server.frozen(|| {
+    let feed_before = game.server.frozen(|| {
+        game.first.follow_me();
+        game.second.follow_me();
         check_wallet_hud(&mut game.first);
         check_wallet_hud(&mut game.second);
+        [
+            crate::feed::shown(game.first.world_mut()),
+            crate::feed::shown(game.second.world_mut()),
+        ]
     });
     let before = [purse(&game.first), purse(&game.second)];
     game.first.core_mut().send_order_to(
@@ -200,6 +206,46 @@ fn both_allied_heroes_receive_the_flagbearer_bonus_and_only_the_last_hitter_gets
         eprintln!(
             "flagbearer wallets: killer={total}, ally={bonus}, kill component={}",
             total - bonus
+        );
+        assert_eq!(
+            gold_receipts(&game.second),
+            vec![bonus],
+            "the ally gets its own popup record"
+        );
+        let mut expected = vec![total - bonus, bonus];
+        expected.sort_unstable();
+        assert_eq!(
+            gold_receipts(&game.first),
+            expected,
+            "the killer gets two popup records"
+        );
+        game.second
+            .until("the ally's bonus caption propagated and drawn", |client| {
+                crate::bars::drawn_gold_popups(client.world_mut()) == vec![bonus]
+            });
+        game.first
+            .until("the killer's two captions propagated and drawn", |client| {
+                crate::bars::drawn_gold_popups(client.world_mut()) == expected
+            });
+        assert_eq!(
+            crate::bars::drawn_gold_popups(game.second.world_mut()),
+            vec![bonus],
+            "the ally sees its own bonus popup"
+        );
+        assert_eq!(
+            crate::bars::drawn_gold_popups(game.first.world_mut()),
+            expected,
+            "the killer sees separate kill and bonus popups"
+        );
+        assert_eq!(
+            crate::feed::shown(game.first.world_mut()),
+            feed_before[0],
+            "the killer's flagbearer rewards add no kill-feed row"
+        );
+        assert_eq!(
+            crate::feed::shown(game.second.world_mut()),
+            feed_before[1],
+            "the ally's bonus adds no kill-feed row"
         );
     });
 }
@@ -268,4 +314,16 @@ fn approach_and_prepare(game: &mut Allies, flag: &bota_proto::UnitView) {
             ticks: 3000,
         },
     );
+}
+
+fn gold_receipts(client: &Client) -> Vec<i32> {
+    let mut amounts: Vec<_> = client
+        .core()
+        .floaters
+        .iter()
+        .filter(|floater| floater.kind == bota_client_core::FloaterKind::Gold)
+        .map(|floater| floater.amount)
+        .collect();
+    amounts.sort_unstable();
+    amounts
 }

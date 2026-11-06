@@ -23,15 +23,21 @@ fn four_seats() -> (Server, Client) {
 
 /// Tells a line to the feed as the core would, and waits for it to be drawn.
 fn feed(client: &mut Client, kind: FeedKind) -> (bool, Vec<String>, String) {
+    let gold = crate::bars::drawn_gold_popups(client.world_mut());
     client.core_mut().feed.push(FeedLine {
         kind,
         age: 0.0,
         told: None,
     });
     client.frames(3);
-    crate::feed::shown(client.world_mut())
-        .pop()
-        .expect("the line is drawn")
+    let mut rows = crate::feed::shown(client.world_mut());
+    assert_eq!(rows.len(), 1, "one feed event draws exactly one row");
+    assert_eq!(
+        crate::bars::drawn_gold_popups(client.world_mut()),
+        gold,
+        "drawing the feed never emits another gold popup"
+    );
+    rows.pop().expect("the line is drawn")
 }
 
 fn portrait(client: &Client, slot: u8) -> String {

@@ -165,6 +165,10 @@ pub fn block_width(w: f32, blocks: usize) -> f32 {
 #[derive(Resource, Default)]
 struct Floaters(Vec<Entity>);
 
+/// The meaning of a rendered floating caption, separate from its localized text.
+#[derive(Component, Default)]
+struct FloaterText(Option<FloaterKind>);
+
 /// The layer the bars and floaters sit in, under the rest of the interface.
 #[derive(Resource)]
 struct Layer(Entity);
@@ -236,6 +240,7 @@ fn spawn_layer(mut commands: Commands, fonts: Res<Fonts>, mut pool: ResMut<Float
         let text = commands
             .spawn((
                 ui::text("", &fonts.bold, 16.0, Color::WHITE),
+                FloaterText::default(),
                 ui::shadow(),
                 Node {
                     position_type: PositionType::Absolute,
@@ -736,6 +741,7 @@ fn floaters(
         &mut Node,
         &mut Visibility,
         &mut UiTransform,
+        &mut FloaterText,
     )>,
     index: Res<crate::units::UnitIndex>,
     units: Query<&crate::units::Unit>,
@@ -762,15 +768,24 @@ fn floaters(
         .take(FLOATERS)
         .collect();
     for (i, entity) in pool.0.iter().enumerate() {
-        let Ok((mut text, mut font, mut color, mut node, mut visibility, mut transform)) =
-            texts.get_mut(*entity)
+        let Ok((
+            mut text,
+            mut font,
+            mut color,
+            mut node,
+            mut visibility,
+            mut transform,
+            mut caption,
+        )) = texts.get_mut(*entity)
         else {
             continue;
         };
         let Some(f) = shown.get(i) else {
+            caption.0 = None;
             visibility.set_if_neq(Visibility::Hidden);
             continue;
         };
+        caption.0 = Some(f.kind);
         // Floaters set off together from one place stack upwards.
         let stacked = shown[..i]
             .iter()
@@ -840,4 +855,24 @@ fn look(kind: FloaterKind) -> (f32, Color) {
         FloaterKind::Gold => (18.0, ui::GOLDEN),
         FloaterKind::Deny => (28.0, Color::srgb(0.6, 0.85, 1.0)),
     }
+}
+
+#[cfg(test)]
+pub(crate) fn drawn_gold_popups(world: &mut World) -> Vec<i32> {
+    let mut amounts: Vec<_> = world
+        .query::<(&FloaterText, &Text, &Visibility, &InheritedVisibility)>()
+        .iter(world)
+        .filter(|(caption, _, own, inherited)| {
+            caption.0 == Some(FloaterKind::Gold) && **own != Visibility::Hidden && inherited.get()
+        })
+        .map(|(_, text, ..)| {
+            text.0
+                .strip_prefix('+')
+                .expect("a gold caption has a plus")
+                .parse::<i32>()
+                .expect("a gold caption is an integer")
+        })
+        .collect();
+    amounts.sort_unstable();
+    amounts
 }
