@@ -589,6 +589,7 @@ fn the_imported_cache_matches_the_exported_one() {
         ours.len() - extra.len(),
         required.len()
     );
+    common::assert_compared("cache files", ours.len() - extra.len());
     assert!(failed.is_empty(), "{}", failed.join("\n"));
 }
 

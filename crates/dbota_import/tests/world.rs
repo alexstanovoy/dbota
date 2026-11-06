@@ -153,12 +153,13 @@ fn world_images_come_from_its_nodes_and_entities() {
     let all = texture_closure(&src, &[&map, &pak], &roots);
     let dir = cache().join(&out).parent().unwrap().to_owned();
     let mut missing = Vec::new();
-    let mut from_entities = 0;
+    let (mut from_entities, mut reached) = (0, 0);
     for entry in std::fs::read_dir(&dir).unwrap() {
         let name = entry.unwrap().file_name().into_string().unwrap();
         let Some(stem) = name.strip_suffix(".png") else {
             continue;
         };
+        reached += 1;
         // Images Source2Viewer made from one: `<texture>_orm_<hash>`.
         let stem = stem.split("_orm_").next().unwrap();
         if !all.contains(stem) {
@@ -167,6 +168,7 @@ fn world_images_come_from_its_nodes_and_entities() {
             from_entities += 1;
         }
     }
+    common::assert_compared("world images", reached);
     println!(
         "{} textures reached, {from_entities} images only through entities",
         all.len()
@@ -655,6 +657,8 @@ fn world_images_and_layers_match_the_exported_ones() {
     assert!(extra.is_empty(), "exported images not made here: {extra:?}");
     let ground = cache().join(&fields.iter().find(|(k, _)| k == "layers").unwrap().1);
     compare_layers(&src, &pak, &world.layers, &ground, &mut failed);
+    common::assert_compared("world images", world.textures.len());
+    common::assert_compared("world layers", world.layers.len());
     println!(
         "{} images and {} layers compared",
         world.textures.len(),

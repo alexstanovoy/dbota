@@ -358,6 +358,7 @@ fn materials_match_the_exported_ones() {
         }
     }
     println!("{compared} materials match");
+    common::assert_compared("materials", compared);
     assert!(compared > 300, "{compared}");
 }
 
@@ -425,10 +426,12 @@ fn mesh_names(dota: &Install, model: &str) -> BTreeSet<String> {
 #[ignore = "needs a local Dota 2 install and its asset cache"]
 fn models_have_the_meshes_and_clips_the_manifest_and_export_name() {
     let dota = install();
+    let mut compared = 0;
     for line in dota.lines("model") {
         let Some(path) = common::exported(&line.out) else {
             continue;
         };
+        compared += 1;
         let json = gltf_json(&path);
         let meshes = mesh_names(&dota, &line.src);
         let prefix = format!("{}.", line.src);
@@ -475,6 +478,7 @@ fn models_have_the_meshes_and_clips_the_manifest_and_export_name() {
             check_clip(clip, &anims);
         }
     }
+    common::assert_compared("exported models", compared);
 }
 
 /// A clip's animation exists, and the manifest's duration is its `(frames - 1) / fps`, held
@@ -502,6 +506,7 @@ fn textures_exported_with_models_come_from_files_they_reference() {
     // Not the world's: entity-placed models (shopkeepers, outposts, banners) bring textures
     // that only the entity lumps name.
     let dota = install();
+    let mut compared = 0;
     for line in dota.lines("model") {
         let roots = [line.src.clone()];
         let reachable: HashSet<String> = dota
@@ -516,6 +521,7 @@ fn textures_exported_with_models_come_from_files_they_reference() {
         let Some(path) = common::exported(&line.out) else {
             continue;
         };
+        compared += 1;
         let dir = path.parent().unwrap();
         for png in std::fs::read_dir(dir).unwrap() {
             let png = png.unwrap().file_name().into_string().unwrap();
@@ -534,6 +540,7 @@ fn textures_exported_with_models_come_from_files_they_reference() {
             );
         }
     }
+    common::assert_compared("exported models", compared);
 }
 
 /// Every `vsnd_files*` entry of every sound event, by event name.

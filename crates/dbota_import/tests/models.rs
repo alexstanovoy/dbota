@@ -383,10 +383,12 @@ fn models_match_the_exported_ones() {
     let pak = Vpk::open(&src, "pak01_dir.vpk").unwrap();
     let mut differ = Vec::new();
     let mut data = Vec::new();
+    let mut compared = 0;
     for line in models() {
         let Some(reference) = common::exported(&line.out) else {
             continue;
         };
+        compared += 1;
         let (source, ours) = (&line.source, line.export(&src, &pak));
         let theirs = Glb::parse(&std::fs::read(reference).unwrap());
         let ours = Glb::parse(&ours.glb);
@@ -403,6 +405,7 @@ fn models_match_the_exported_ones() {
             ));
         }
     }
+    common::assert_compared("exported models", compared);
     assert!(
         differ.is_empty(),
         "{} models differ:\n{}",
@@ -619,11 +622,12 @@ fn clips_match_the_exported_ones() {
     let pak = Vpk::open(&src, "pak01_dir.vpk").unwrap();
     let durations = manifest_durations();
     let mut wrong = Vec::new();
-    let mut clips = 0;
+    let (mut clips, mut exported_models) = (0, 0);
     for line in models().into_iter().filter(|l| !l.anims.is_empty()) {
         let Some(reference) = common::exported(&line.out) else {
             continue;
         };
+        exported_models += 1;
         let exported = line.export(&src, &pak);
         let ours = animations(&Glb::parse(&exported.glb));
         let theirs = animations(&Glb::parse(&std::fs::read(reference).unwrap()));
@@ -669,5 +673,6 @@ fn clips_match_the_exported_ones() {
         wrong.len(),
         wrong.join("\n")
     );
+    common::assert_compared("exported models", exported_models);
     assert!(clips >= 104, "only {clips} clips compared");
 }
