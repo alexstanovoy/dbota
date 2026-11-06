@@ -11,6 +11,7 @@
 //! Plain std and serde, no Bevy: the fuzz targets read this file as their own module.
 
 use serde::Deserialize;
+use std::path::Path;
 
 const GLB_MAGIC: &[u8; 4] = b"glTF";
 const GLB_JSON: u32 = 0x4E4F_534A;
@@ -48,6 +49,16 @@ pub fn check(file: &[u8]) -> Result<(), String> {
         }
         let uri = image.uri.as_deref().ok_or("an image without a file")?;
         plain(uri)?;
+        // Bevy's external-image loader unwraps the filename extension.
+        if Path::new(uri)
+            .extension()
+            .is_none_or(|extension| extension.is_empty())
+        {
+            return Err(format!(
+                "an image file named {:?} without a format extension",
+                uri.escape_debug().take(64).collect::<String>()
+            ));
+        }
     }
     for uri in document.buffers.iter().filter_map(|b| b.uri.as_deref()) {
         plain(uri)?;
@@ -155,6 +166,23 @@ mod tests {
             for file in [glb(json), json.as_bytes().to_vec()] {
                 let error = check(&file).expect_err(json);
                 assert!(error.contains(why), "{json}: {error}");
+            }
+        }
+    }
+
+    #[test]
+    fn an_extensionless_image_is_refused_before_bevy_loads_it() {
+        let buffer = r#"{"buffers":[{"uri":"texture"}]}"#;
+        assert_eq!(check(buffer.as_bytes()), Ok(()));
+        assert_eq!(check(&glb(buffer)), Ok(()));
+        for uri in ["texture", ".png", "texture."] {
+            let image = format!(r#"{{"images":[{{"uri":"{uri}"}}]}}"#);
+            for file in [image.as_bytes().to_vec(), glb(&image)] {
+                let why = check(&file).expect_err("an image loader needs a nonempty extension");
+                assert_eq!(
+                    why,
+                    format!("an image file named {uri:?} without a format extension")
+                );
             }
         }
     }
