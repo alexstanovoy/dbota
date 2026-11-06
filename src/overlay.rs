@@ -31,7 +31,7 @@ pub(crate) const LIFT: f32 = 8.0;
 const ORDER_TICKS: u32 = 15;
 
 pub(crate) const GOOD: Color = Color::srgb(0.42, 0.95, 0.52);
-const BAD: Color = Color::srgb(1.0, 0.27, 0.22);
+pub(crate) const BAD: Color = Color::srgb(1.0, 0.27, 0.22);
 const GOLDEN: Color = Color::srgb(1.0, 0.8, 0.3);
 const ARCANE: Color = Color::srgb(0.45, 0.85, 1.0);
 /// How tall a queued order's flag stands, in world units.
@@ -613,7 +613,8 @@ fn aim(
         return;
     };
     let (wx, wy) = (cursor.x, -cursor.z);
-    let within = reach <= 0.0 || caster.at.distance(Vec2::new(wx, wy)) <= reach;
+    let within = (reach <= 0.0 || caster.at.distance(Vec2::new(wx, wy)) <= reach)
+        && core.placement_allowed(slot, (wx, wy));
     let color = if within { GOOD } else { BAD };
     // The area a use at the point takes in, as Dota draws it under the cursor.
     let area = core.area_of(slot) as f32;

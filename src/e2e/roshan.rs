@@ -852,3 +852,64 @@ fn interrupting_roshans_grab_with_hook_releases_the_allied_model_position_and_fa
         })
     });
 }
+
+#[test]
+fn pit_placement_previews_mark_wards_banners_and_branches_as_forbidden() {
+    use bota_client_core::{Intent, Slot};
+    use bota_proto::ItemId;
+    let server = Server::start(1, &["--objectives", "roshan"]);
+    let mut client = Client::join(&server, HeroId::SHADOW_FIEND, &[]);
+    client.cheat(Cheat::StartGame);
+    client.cheat(Cheat::Invulnerable { on: true });
+    let pit = bota_core::ROSHAN_DAY_PIT;
+    client.stand_at((pit.x.to_int() + 120, pit.y.to_int()));
+    for item in [
+        ItemId::OBSERVER_WARD,
+        ItemId::SENTRY_WARD,
+        ItemId::WARD_DISPENSER,
+        ItemId::ROSHANS_BANNER,
+        ItemId::IRON_BRANCH,
+    ] {
+        client.cheat(Cheat::Item { item });
+        let slot = client
+            .slot_of(item)
+            .unwrap_or_else(|| panic!("placement item {item:?} is held"));
+        client.core_mut().act(Intent::Press {
+            slot: Slot::Item(slot),
+            ctrl: false,
+        });
+        let radius = client.core().area_of(Slot::Item(slot)).max(24) as f32;
+        let screen = client
+            .screen_of((pit.x.to_f32() + 180., pit.y.to_f32()))
+            .expect("pit on screen");
+        client.mouse(screen);
+        client.until("the placement preview has been drawn", |c| {
+            !super::rings::rings_of(c, crate::overlay::GOOD, radius).is_empty()
+                || !super::rings::rings_of(c, crate::overlay::BAD, radius).is_empty()
+        });
+        assert!(
+            !super::rings::rings_of(&client, crate::overlay::BAD, radius).is_empty(),
+            "{item:?} is forbidden inside the pit"
+        );
+        client.stand_at(super::harness::MID);
+        let here = client.me().pos;
+        let screen = client
+            .screen_of((here.x.to_f32() + 180., here.y.to_f32()))
+            .expect("ordinary ground on screen");
+        client.mouse(screen);
+        client.until(
+            "the same placement preview is allowed on ordinary ground",
+            |c| !super::rings::rings_of(c, crate::overlay::GOOD, radius).is_empty(),
+        );
+        client.core_mut().act(Intent::CancelAim);
+        client.core_mut().act(Intent::PutAt {
+            slot,
+            at: (here.x.to_f32() + 80., here.y.to_f32()),
+            unit: None,
+        });
+        client.until("the previous item was put on the ground", |c| {
+            c.slot_of(item).is_none()
+        });
+        client.stand_at((pit.x.to_int() + 120, pit.y.to_int()));
+    }
+}
