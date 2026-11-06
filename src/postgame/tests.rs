@@ -250,6 +250,49 @@ fn a_file_with_things_of_a_later_build_still_reads() {
     );
 }
 
+// Encode the extension records as tuples so these regressions also compile against the
+// reader from before their enum variants existed. Their tags are pinned by the meta registry.
+fn recording_extensions() -> Vec<u8> {
+    use bota_replay::meta::{MetaHeader, MetaRecord, Writer, stat};
+    let mut out = Writer::default();
+    for record in [
+        MetaRecord::Header(MetaHeader {
+            magic: MetaHeader::MAGIC, schema: 1, wire_fingerprint: 1, rules_version: 0,
+            match_id: 1, map: 0, tick_rate: 30, pregame_ticks: 0,
+            catalogue_items: 0, catalogue_digest: 0,
+        }),
+        MetaRecord::Seat { slot: 0, team: 0, hero: HeroId::SHADOW_FIEND.0 },
+        MetaRecord::Sample { tick: 1800, slot: 0, stats: vec![(stat::NET_WORTH, 1000)] },
+        MetaRecord::Structure { tick: 900, kind: UnitKind::Tower as u8, team: 1 },
+        MetaRecord::End { tick: 1800, winner: Some(0) },
+    ] {
+        assert!(out.push(&record, false));
+    }
+    let mut bytes = out.into_bytes();
+    bytes.extend(bota_proto::encode_frame_to_vec(&(10_u32, 1234_u32, 0_u8)).expect("leave frame"));
+    bytes.extend(bota_proto::encode_frame_to_vec(&(11_u32, 0_u8, "offline player", false)).expect("name frame"));
+    bytes.extend(bota_proto::encode_frame_to_vec(&(12_u32, 0_u32, Some(1_u8), Some(2_u8), None::<bool>)).expect("location frame"));
+    bytes
+}
+
+#[test]
+fn a_standalone_replay_summary_retains_its_recorded_player_name() {
+    let summary = summary_of(&recording_extensions());
+    assert!(format!("{summary:?}").contains("name: Some(\"offline player\")"), "the menu needs the recorded player name: {summary:?}");
+}
+
+#[test]
+fn a_standalone_replay_summary_identifies_the_leaver_and_leave_tick() {
+    let summary = summary_of(&recording_extensions());
+    assert!(format!("{summary:?}").contains("left_at: Some(1234)"), "the menu needs the leave tick on the matching row: {summary:?}");
+}
+
+#[test]
+fn a_standalone_replay_summary_keeps_the_towers_lane_and_tier() {
+    let summary = summary_of(&recording_extensions());
+    assert!(format!("{summary:?}").contains("lane: Some(1), tier: Some(2)"), "the menu needs the objective location: {summary:?}");
+}
+
 /// The screen a match ends on: a replay played to its end shows a row for every seat, the bought
 /// items as icons, and a point a game minute on each graph.
 #[test]
