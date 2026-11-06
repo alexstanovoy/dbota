@@ -66,6 +66,21 @@ fn act(client: &mut Client, act: Act) {
     client.frames(5);
 }
 
+/// The in-process client lists and keeps replays in a folder of its own, never the user's.
+#[test]
+fn each_client_uses_its_own_replay_directory() {
+    let mut client = local_menu();
+    act(&mut client, Act::Go(Page::Replays));
+    let folder = client.replay_dir().display().to_string();
+    let shown = client.shown_texts();
+    assert!(shown.iter().any(|text| text.contains(&folder)), "{shown:?}");
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target/e2e");
+    assert!(client.replay_dir().starts_with(&root));
+    let other = local_menu();
+    assert!(other.replay_dir().starts_with(root));
+    assert_ne!(PathBuf::from(folder), other.replay_dir());
+}
+
 /// Every page's buttons of one height are laid out one width, whatever they say, and their
 /// words never wrap (a longer label made a wider button, a long one wrapped onto two lines);
 /// a lone glyph's button (the close cross) is square.
