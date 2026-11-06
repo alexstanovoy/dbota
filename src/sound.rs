@@ -544,7 +544,8 @@ impl Sounder<'_, '_, '_> {
                         merge,
                     );
                 }
-                // The fall of a building is the sound of its kind and side.
+                // The fall of a building is the sound of its kind and side; two of a kind that fall
+                // on one tick sound once, as every kind of sound rests [`REST`] after it starts.
                 CueKind::StructureFell => {
                     if let Some(row) = cue.told.as_ref().and_then(fall_row) {
                         self.sound(Kind::Row(row), cue.gain, cue.at, None);

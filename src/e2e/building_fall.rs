@@ -235,9 +235,12 @@ fn buildings_collapse_in_their_destruction_models_to_the_viewer_who_sees_them_fa
         1,
         "the tower in sight sounds, the one that fell out of it does not"
     );
-    assert!(
-        heard.count("Building_Generic.Destruction") >= 1,
-        "the barracks and the filler sound (as one, when they fall together)"
+    assert_eq!(
+        heard.count("Building_Generic.Destruction"),
+        1,
+        "the barracks and the filler fell on one tick, and a kind of sound rests ({} s, `sound::REST`) \
+         after it sounds: they sound as one",
+        crate::sound::REST
     );
     assert_eq!(
         heard.count(buildings.ancient_sound()),
