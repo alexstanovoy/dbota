@@ -33,7 +33,7 @@ pub const MAX_VOICES: usize = 64;
 /// How long the blows on one unit merge into one sound: the owner's rule, half a second of a
 /// unit's pain is one sound, not each blow in full.
 pub const MERGE_WINDOW: Duration = Duration::from_millis(500);
-/// How long a sound of an event the cache does not know counts as sounding.
+/// An unknown-duration sound stops at this deadline so it cannot escape the voice budget.
 const UNKNOWN_LENGTH: Duration = Duration::from_secs(10);
 /// Most events read from the cache.
 const MAX_EVENTS: usize = 1 << 14;
@@ -166,10 +166,8 @@ struct Voice {
     merge: Option<EntityId>,
     at: Option<(f32, f32)>,
     started: Duration,
-    /// When it ends by itself; a loop never.
+    /// The playback deadline; an owned loop without a stop time has none.
     ends: Option<Duration>,
-    /// Whether its entity is despawned at the end (its length is known, or it loops).
-    despawn: bool,
     /// The start of its fade-out once stopped, and how long the fade lasts.
     stopped: Option<(Duration, Duration)>,
     /// The mix group it sounds in.
@@ -352,7 +350,7 @@ impl Mixer {
         {
             return Started::Refused;
         }
-        let (ends, despawn) = lifetime(rules.as_ref(), kept);
+        let ends = lifetime(rules.as_ref(), kept);
         let gain = base * spatial;
         let playback = if kept {
             PlaybackSettings::LOOP
@@ -377,7 +375,6 @@ impl Mixer {
             at: request.at,
             started: now,
             ends: ends.map(|length| now + length),
-            despawn,
             stopped: None,
             group,
             base,
@@ -639,7 +636,7 @@ impl Mixer {
                 .stopped
                 .is_some_and(|(since, fade)| now.saturating_sub(since) >= fade);
             let over = faded || voice.ends.is_some_and(|ends| now >= ends);
-            if over && (voice.despawn || voice.stopped.is_some()) {
+            if over {
                 commands.entity(voice.entity).try_despawn();
             }
             !over
@@ -693,25 +690,28 @@ impl Mixer {
     }
 }
 
-/// How long a voice lasts by itself (none for a loop) and whether its entity is despawned then:
-/// the event's length, cut short by its stop time; a sound of unknown length is forgotten after
-/// [`UNKNOWN_LENGTH`] and left to finish by itself.
-fn lifetime(rules: Option<&EventLine>, kept: bool) -> (Option<Duration>, bool) {
+/// The deadline for stopping a voice: the event's length or stop time, with a bounded fallback
+/// when neither is known. Only an owned loop may wait indefinitely for its owner to stop it.
+fn lifetime(rules: Option<&EventLine>, kept: bool) -> Option<Duration> {
     let length = rules.map(|r| r.duration).filter(|d| !d.is_zero());
     let stop = rules.and_then(|r| r.stop_at);
-    let ends = match (kept, length, stop) {
+    match (kept, length, stop) {
         (true, _, stop) => stop,
         (false, Some(length), Some(stop)) => Some(length.min(stop)),
         (false, Some(length), None) => Some(length),
         (false, None, Some(stop)) => Some(stop),
         (false, None, None) => Some(UNKNOWN_LENGTH),
-    };
-    (ends, kept || length.is_some() || stop.is_some())
+    }
+}
+
+fn retire_player(removed: On<Remove, AudioPlayer>, mut mixer: ResMut<Mixer>) {
+    mixer.voices.retain(|voice| voice.entity != removed.entity);
 }
 
 /// Reads the cache's events at startup.
 pub fn plugin(app: &mut App) {
     app.init_resource::<Mixer>()
+        .add_observer(retire_player)
         .add_systems(
             Startup,
             |mut mixer: ResMut<Mixer>, manifest: Res<Manifest>| {
@@ -786,6 +786,25 @@ fn end_with_the_match(
 }
 
 #[cfg(test)]
+pub(crate) fn two_minute_source() -> AudioSource {
+    let mut samples = std::io::Cursor::new(Vec::new());
+    let specification = hound::WavSpec {
+        channels: 1,
+        sample_rate: 100,
+        bits_per_sample: 16,
+        sample_format: hound::SampleFormat::Int,
+    };
+    let mut writer = hound::WavWriter::new(&mut samples, specification).expect("valid wave");
+    for _ in 0..12_000 {
+        writer.write_sample(0i16).expect("sample fits");
+    }
+    writer.finalize().expect("complete two-minute source");
+    AudioSource {
+        bytes: samples.into_inner().into(),
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
@@ -839,6 +858,66 @@ mod tests {
             idx: n,
             generation: 1,
         })
+    }
+
+    #[test]
+    fn unknown_length_players_cannot_outlive_their_reserved_voice_slots() {
+        let mut sources = Assets::<AudioSource>::default();
+        let source = sources.add(two_minute_source());
+        let mut world = World::new();
+        let mut mixer = Mixer::default();
+        for period in 0..3 {
+            let now = UNKNOWN_LENGTH * period;
+            for _ in 0..MAX_VOICES {
+                mixer.start(
+                    &mut world.commands(),
+                    now,
+                    &request("missing-duration", Owner::None),
+                    source.clone(),
+                );
+            }
+            world.flush();
+            let players = world.query::<&AudioPlayer>().iter(&world).count();
+            assert_eq!(
+                players, MAX_VOICES,
+                "live players escaped accounting in period {period}"
+            );
+        }
+        mixer.close(&mut world.commands());
+        world.flush();
+        assert_eq!(world.query::<&AudioPlayer>().iter(&world).count(), 0);
+    }
+
+    #[test]
+    fn a_failed_or_finished_player_releases_its_slot_immediately() {
+        let mut app = App::new();
+        app.init_resource::<Time>()
+            .init_resource::<crate::main_menu::GameEpoch>()
+            .insert_resource(Manifest::default())
+            .insert_non_send(crate::main_menu::idle())
+            .add_plugins(plugin);
+        app.update();
+        let world = app.world_mut();
+        world.insert_resource(mixer(vec![event("loop", true, 120)]));
+        let player = world.resource_scope(|world, mut mixer: Mut<Mixer>| {
+            let Started::Loop(player) = mixer.start(
+                &mut world.commands(),
+                Duration::ZERO,
+                &request("loop", owner(1)),
+                Handle::default(),
+            ) else {
+                panic!("the loop must start");
+            };
+            player
+        });
+        world.flush();
+        assert_eq!(world.resource::<Mixer>().sounding("loop"), 1);
+        world.despawn(player);
+        assert_eq!(
+            world.resource::<Mixer>().sounding("loop"),
+            0,
+            "the output ended the player but its voice reservation survived"
+        );
     }
 
     /// The world's voices are bounded, fading ones counted: a one-shot gives way to a new voice,
