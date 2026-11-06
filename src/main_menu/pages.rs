@@ -556,11 +556,12 @@ fn home(
             15.0,
             ui::INK_DIM,
         );
-        let can = cooldown.is_none() && match in_flight.1 {
-            Some(AccountGameLimit::Unlimited) => true,
-            Some(AccountGameLimit::Limited(maximum)) => in_flight.0 < usize::from(maximum),
-            None => false,
-        };
+        let can = cooldown.is_none()
+            && match in_flight.1 {
+                Some(AccountGameLimit::Unlimited) => true,
+                Some(AccountGameLimit::Limited(maximum)) => in_flight.0 < usize::from(maximum),
+                None => false,
+            };
         let look = if can { GREEN } else { PLAIN };
         kit.button(
             card,
@@ -571,11 +572,17 @@ fn home(
         );
     }
     let count = match in_flight.1 {
-        Some(AccountGameLimit::Limited(maximum)) => Some(format!("Games going: {} of {maximum} at once", in_flight.0)),
-        Some(AccountGameLimit::Unlimited) => Some(format!("Games going: {} · no account limit", in_flight.0)),
+        Some(AccountGameLimit::Limited(maximum)) => {
+            Some(format!("Games going: {} of {maximum} at once", in_flight.0))
+        }
+        Some(AccountGameLimit::Unlimited) => {
+            Some(format!("Games going: {} · no account limit", in_flight.0))
+        }
         None => None,
     };
-    if let Some(count) = count { kit.text(column, count, 14.0, ui::INK_DIM); }
+    if let Some(count) = count {
+        kit.text(column, count, 14.0, ui::INK_DIM);
+    }
     if let Some(cooldown) = cooldown {
         kit.text(column, cooldown, 15.0, ERROR);
     }

@@ -4,8 +4,8 @@
 
 use bevy::platform::time::Instant;
 use bota_radovid::proto::{
-    AccountGameLimit, AccountId, EndReason, LobbyId, MatchId, MatchResult, Outcome, ProposalId, QueueEntryId,
-    RulesetId,
+    AccountGameLimit, AccountId, EndReason, LobbyId, MatchId, MatchResult, Outcome, ProposalId,
+    QueueEntryId, RulesetId,
 };
 
 use super::core::{Confirm, GameKind, LocalRules, MenuCore, Page, Status, clock};
