@@ -4,7 +4,7 @@ worker import it into the browser's private storage, starts the client on it, re
 the cache is kept, and deletes it. Also checks nothing but the page's own files is requested.
 
     python3 -m pip install --target temp/pwlib playwright && PYTHONPATH=temp/pwlib python3 -m playwright install chromium
-    web/build.sh                                  # builds web/out
+    WASM_OPT=0 web/build.sh                       # builds web/out
     PYTHONPATH=temp/pwlib python3 web/test/smoke.py [--install "<dota 2 beta dir>"] [--no-game]
 
 The folder given to the page is a farm of symlinks to the install's package files, so the test

@@ -33,7 +33,7 @@ class BuildOutputTests(unittest.TestCase):
         return subprocess.run(
             ["bash", "web/build.sh"], cwd=self.root, capture_output=True, text=True,
             env={**os.environ, "PATH": f"{self.tools}:{os.environ['PATH']}",
-                 "OUT": destination, "PROFILE": "release"}, timeout=15,
+                 "OUT": destination, "PROFILE": "release", "WASM_OPT": "0"}, timeout=15,
         )
 
     def test_hostile_destinations_preserve_source_fonts(self):

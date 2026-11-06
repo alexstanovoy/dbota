@@ -21,6 +21,7 @@ work=${GATE_LOGS:-$here/temp/gate}/browser
 mkdir -p "$work"
 pwlib=${DBOTA_GATE_PWLIB:-${XDG_CACHE_HOME:-$HOME/.cache}/dbota-gate/pwlib}
 export PYTHONPATH=$pwlib PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
+python3 -m unittest discover -s web/test -p test_optimize.py
 if ! python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); import playwright' "$pwlib" 2> /dev/null; then
     python3 -m pip install --quiet --target "$pwlib" playwright
 fi
@@ -58,6 +59,7 @@ wait "$srv" || true
 # The pages: one without a replay (the boot, startup, served-cache and key checks, the radovid replays page),
 # one that plays the chat replay (the import test, replay, cursor, real-input cursor, pixels, prepared cache) and one that opens on the Video settings.
 export PROFILE=release
+export WASM_OPT=${WASM_OPT:-0}
 pages=temp/gate-pages
 rm -rf "$pages"
 OUT=$pages/plain web/build.sh
@@ -66,13 +68,14 @@ DBOTA_INDEX_PAGE="$here/$pages/plain" in_private_environment python3 -m unittest
 # (both clients: the real-input cursor check runs the page on the WebGL2 and the WebGPU one)
 DBOTA_WEB_REPLAY=$chat DBOTA_WEB_ARGS="--replay built-in --pov 0 --seek 4600" OUT=$pages/replay web/build.sh
 DBOTA_WEB_REPLAY=$chat DBOTA_WEB_ARGS="--replay built-in --pov 0 --settings video" APIS=webgpu OUT=$pages/video web/build.sh
+PROFILE=web DBOTA_WEB_REPLAY=$chat DBOTA_WEB_ARGS="--replay built-in --pov 0 --seek 4600" OUT=$pages/web web/build.sh
 rm -f "$work/cache.zip"
 "$here/tools/test_client.sh" export-cache "$work/cache.zip"
 
 in_private_environment python3 web/test/smoke.py --import-page "$pages/replay" --reference-cache "$DBOTA_ASSETS" --start-page "$pages/plain" \
     --prepared-page "$pages/replay" --cache-zip "$work/cache.zip" --cache-folder "$DBOTA_ASSETS" \
     --served-page "$pages/plain" --startup-page "$pages/plain" --keys-page "$pages/plain" --boot-page "$pages/plain" --busy-page "$pages/plain" \
-    --replay-page "$pages/replay" --scene-page "$pages/replay" --cursor-page "$pages/replay" --pixels-page "$pages/replay" \
+    --replay-page "$pages/replay" --scene-page "$pages/web" --cursor-page "$pages/replay" --pixels-page "$pages/replay" \
     --fullscreen-page "$pages/video" \
     --replays-page "$pages/plain" --server "$server" --radovid "$radovid_bin"
 # The real mouse: a headful Chromium on an X server (Xwayland) in a private compositor, moved through XTEST.
