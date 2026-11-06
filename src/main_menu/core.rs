@@ -232,6 +232,9 @@ pub enum Confirm {
     /// Leave for good the match whose seat was left (LEAVE beside RECONNECT): it is told so if
     /// it can be reached.
     LeaveSeat,
+    /// Host a new local lobby (on the LAN with `true`) while this client's lobby server runs: it
+    /// ends, and the game in it for everyone.
+    Rehost(bool),
 }
 
 /// How the game on screen is had.
@@ -403,7 +406,7 @@ pub(super) struct Leaving {
 }
 
 /// Which game a launch takes a seat of, to tell one game from another: an address by its host
-/// and port, `localhost` and `127.0.0.1` alike, with or without `tcp://`.
+/// and port, `localhost` and `127.0.0.1` alike, with or without its scheme.
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum SeatOf {
     Match(MatchId),
@@ -424,10 +427,15 @@ impl SeatOf {
     }
 }
 
-/// An address as one game: no `tcp://`, the loopback host spelled one way, lower case.
+/// An address as one game: no `tcp://`, `ws://` or `wss://`, the loopback host spelled one way,
+/// lower case.
 fn same_address(address: &str) -> String {
     let address = address.trim().to_ascii_lowercase();
-    let address = address.strip_prefix("tcp://").unwrap_or(&address);
+    let address = ["tcp://", "ws://", "wss://"]
+        .iter()
+        .find_map(|scheme| address.strip_prefix(scheme))
+        .unwrap_or(&address)
+        .trim_end_matches('/');
     match address.strip_prefix("localhost:") {
         Some(port) => format!("127.0.0.1:{port}"),
         None => address.to_owned(),
@@ -565,6 +573,9 @@ pub struct MenuCore {
     pub(super) game_in_picks: bool,
     /// The seat RECONNECT offers was left in the picks.
     pub(super) left_in_picks: bool,
+    /// The game server of the local lobby this client hosts is running, as the shell last saw:
+    /// quitting or hosting another lobby ends the game in it for everyone.
+    pub(super) hosting: bool,
     /// The player left the game: the shell lets it go.
     leave: bool,
     /// The player confirmed leaving the match: the shell tells the server, then leaves.
@@ -700,6 +711,7 @@ impl MenuCore {
             last_leave_id: 0,
             game_in_picks: false,
             left_in_picks: false,
+            hosting: false,
             demo: None,
             demo_asked: None,
             demo_match: None,
@@ -888,6 +900,20 @@ impl MenuCore {
     /// The game the shell is to open next, once.
     pub fn take_launch(&mut self) -> Option<Launch> {
         self.launch.take()
+    }
+
+    /// Whether the game server of the local lobby this client hosts is running.
+    pub fn set_hosting(&mut self, running: bool) {
+        self.hosting = running;
+    }
+
+    /// A new local lobby waits until the stopped leave of the old one has ended.
+    pub fn waiting_for_leave(&mut self) {
+        self.tell(
+            "Your last lobby is still being told you left it: the new one opens in a moment"
+                .to_owned(),
+            false,
+        );
     }
 
     /// What the shell sees of the game on screen: whether it is in its picks.
@@ -1538,9 +1564,10 @@ impl MenuCore {
         if matches!(launch, Launch::Host { .. })
             && self.leaving.as_ref().is_some_and(|leaving| leaving.hosted)
         {
-            // The new lobby replaces the server the leave was telling: the leave stops first,
-            // and its outcome is never taken.
+            // The new lobby replaces the server the leave was telling: the leave stops first
+            // (or, not started yet, never starts), and its outcome is never taken.
             self.leaving = None;
+            self.leave_order = None;
             self.cancel_leave = true;
         }
         if self
@@ -1679,6 +1706,9 @@ impl MenuCore {
             }
             Act::LeaveLobby => self.lobby_ask(|lobby| ClientMsg::LobbyLeave { lobby }),
             Act::Direct(spectate) => self.direct(spectate, false),
+            // The client does not know who plays in the lobby it hosts: it says what ending its
+            // server means, and ends it only when told to.
+            Act::Host(lan) if self.hosting => self.confirm = Some(Confirm::Rehost(lan)),
             Act::Host(lan) => self.host(lan),
             Act::LobbySlot(slot) => {
                 let account = self.moving.take();
@@ -1724,6 +1754,7 @@ impl MenuCore {
                 Some(Confirm::Leave) if yes => self.leave = true,
                 Some(Confirm::LeaveGame) if yes => self.leave_game = true,
                 Some(Confirm::LeaveSeat) if yes => self.leave_seat(),
+                Some(Confirm::Rehost(lan)) if yes => self.host(lan),
                 _ => {}
             },
             Act::Back => self.back(),
@@ -2070,7 +2101,7 @@ impl MenuCore {
         let told = match (leaving.hosted, leaving.in_picks) {
             // A seat left in the picks cancels the match, the local lobby's too.
             (_, true) => format!("{told}: the match is cancelled"),
-            (true, false) => format!("{told}: your lobby's server runs on while anyone plays"),
+            (true, false) => format!("{told}: the match goes on for whoever plays"),
             (false, false) => told.to_owned(),
         };
         self.tell(told, false);

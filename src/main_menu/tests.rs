@@ -2198,7 +2198,7 @@ fn leave_after_a_local_lobby_says_what_becomes_of_its_match() {
     for (in_picks, said) in [
         (
             false,
-            "You left the game: your lobby's server runs on while anyone plays",
+            "You left the game: the match goes on for whoever plays",
         ),
         (true, "You left the game: the match is cancelled"),
     ] {
@@ -2229,10 +2229,20 @@ fn a_new_local_lobby_stops_the_leave_of_the_old_one() {
     let (old, _, _) = menu.take_leave_order().expect("LEAVE tells the game");
     host_launch(&mut menu, None);
     assert!(menu.take_cancel_leave(), "the old lobby's leave is stopped");
+    // A leave not yet started when the new lobby comes in the same frame never starts.
+    menu.game_started();
+    menu.left_game(None, false);
+    menu.act(Act::LeaveSeat);
+    menu.act(Act::Answer(true));
+    host_launch(&mut menu, None);
+    assert!(
+        menu.take_leave_order().is_none(),
+        "the unstarted leave is dropped"
+    );
     menu.leave_done(old, Outcome::Left);
     assert_ne!(
         menu.view().status.map(|s| s.text).as_deref(),
-        Some("You left the game: your lobby's server runs on while anyone plays"),
+        Some("You left the game: the match goes on for whoever plays"),
         "the stopped leave's outcome is not taken"
     );
 }
@@ -2321,4 +2331,42 @@ fn a_leave_given_up_at_its_deadline_is_never_taken_back() {
     menu.leave_done(next, Outcome::Left);
     assert_eq!(status(&menu).as_deref(), Some("You left the game"));
     assert!(!menu.view().reconnect);
+}
+
+/// While the server of the lobby this client hosts runs, the client cannot know who plays in it:
+/// quitting and hosting another lobby both say they end the game it hosts for everyone, and a
+/// new lobby is hosted only when that is answered yes.
+#[test]
+fn quitting_or_hosting_again_says_it_ends_the_hosted_game() {
+    let dir = Scratch::new("rehost");
+    let (mut menu, _trust) = offline("host", &dir);
+    host_launch(&mut menu, None);
+    menu.game_started();
+    menu.left_game(None, false);
+    menu.set_hosting(true);
+    menu.act(Act::Quit);
+    let asked = menu.view().confirm.expect("the question");
+    assert!(
+        asked.text.contains("ends the game you host for everyone"),
+        "{asked:?}"
+    );
+    menu.act(Act::Answer(false));
+    menu.act(Act::Go(Page::LocalLobby));
+    menu.act(Act::Host(false));
+    assert!(
+        menu.take_launch().is_none(),
+        "nothing is hosted before the answer"
+    );
+    let asked = menu.view().confirm.expect("the question");
+    assert!(
+        asked
+            .text
+            .contains("ends the game you host now for everyone"),
+        "{asked:?}"
+    );
+    menu.act(Act::Answer(true));
+    assert!(
+        matches!(menu.take_launch(), Some(Launch::Host { .. })),
+        "the new lobby, once answered"
+    );
 }

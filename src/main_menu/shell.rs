@@ -48,9 +48,10 @@ struct Leaver {
 impl Leaver {
     /// The launch to open now: a new local lobby waits while a leave is still going (it is the
     /// old lobby's, stopped by the menu), and comes back once it has ended.
-    fn hold_host(&mut self, launch: Option<Launch>) -> Option<Launch> {
+    fn hold_host(&mut self, core: &mut MenuCore, launch: Option<Launch>) -> Option<Launch> {
         match launch {
             Some(host @ Launch::Host { .. }) if self.op.is_some() => {
+                core.waiting_for_leave();
                 self.waiting_host = Some(host);
                 None
             }
@@ -190,6 +191,7 @@ fn drive(
         exit.write(AppExit::Success);
         return;
     }
+    core.set_hosting(host.0.as_mut().is_some_and(Hosted::running));
     core.set_profile_name(&settings.name);
     core.set_replay_policy(settings.replays);
     core.update();
@@ -203,7 +205,7 @@ fn drive(
         post.expect(origin_of(launch, &args));
     }
     #[cfg(not(target_arch = "wasm32"))]
-    let launch = leaver.hold_host(launch);
+    let launch = leaver.hold_host(&mut core, launch);
     let mut opener = Opener {
         session: &mut session,
         post: &mut post,

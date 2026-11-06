@@ -309,6 +309,14 @@ pub struct ConfirmView {
 /// Dota's quit popup (`DOTA_ConfirmQuit`), with this client's name.
 const QUIT_TITLE: &str = "Confirm Quit";
 const QUIT_TEXT: &str = "Do you really wish to quit dbota?";
+/// The same while the server of the lobby this client hosts runs: quitting ends it, and the game
+/// in it for everyone, whoever is still playing.
+const QUIT_TEXT_HOSTING: &str = "Quitting ends the game you host for everyone in it.  Do you \
+really wish to quit dbota?";
+/// Hosting another lobby while this client's lobby server runs ends it.
+const REHOST_TITLE: &str = "Confirm New Lobby";
+const REHOST_TEXT: &str = "A new lobby ends the game you host now for everyone in it.  Do you \
+really wish to host a new lobby?";
 /// The same when a seat is left in a game under way (`DOTA_ConfirmQuitDescUnsafe`).
 const QUIT_TEXT_UNSAFE: &str = "Leaving a game before it has finished may ruin the game for \
 other players.  Do you really wish to quit dbota?";
@@ -395,11 +403,17 @@ impl MenuCore {
             confirm: self.confirm.map(|c| match c {
                 Confirm::Quit => ConfirmView {
                     title: QUIT_TITLE,
-                    text: if self.game_unsafe {
+                    text: if self.hosting {
+                        QUIT_TEXT_HOSTING
+                    } else if self.game_unsafe {
                         QUIT_TEXT_UNSAFE
                     } else {
                         QUIT_TEXT
                     },
+                },
+                Confirm::Rehost(_) => ConfirmView {
+                    title: REHOST_TITLE,
+                    text: REHOST_TEXT,
                 },
                 Confirm::LeaveGame | Confirm::LeaveSeat => ConfirmView {
                     title: LEAVE_GAME_TITLE,

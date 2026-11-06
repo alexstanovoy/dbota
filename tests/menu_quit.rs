@@ -500,7 +500,7 @@ fn leave_during_the_picks_cancels_the_match() {
 /// LEAVE after a game of the local lobby this client hosts never stops the lobby's server: a
 /// mate who sat after the host's last look at the lobby plays on. The host makes the lobby from
 /// the menu, a foe and a mate join (the mate on the host's side), and mid-match the host leaves
-/// with DISCONNECT and LEAVE: the client says the server runs on while anyone plays, and the
+/// with DISCONNECT and LEAVE: the client says the match goes on for whoever plays, and the
 /// mate's match goes on ticking.
 #[test]
 #[ignore = "draws on the GPU in a headless compositor: tools/visual_check.sh runs it"]
@@ -516,12 +516,15 @@ fn leave_after_hosting_keeps_the_server_running_for_the_others() {
         .port();
     let address = format!("127.0.0.1:{port}");
     let ticking = scratch.0.join("mate-ticking");
+    // The host readies only once both have sat: a lobby starts with whoever is seated and ready.
+    let joined = scratch.0.join("both-joined");
     let script = format!(
         "await:menu;await:button:create;key:Backspace;key:Backspace;key:Backspace;\
-         key:Backspace;text:{port};click:create;await:game;click:pick shadow fiend;\
-         click:pick ready;await:level:1;key:Escape;await:menu;click:disconnect;\
-         await:button:reconnect;click:leave match;await:popup;click:ok;\
-         await:text:runs on while anyone plays;await:file:{};key:Escape;await:popup;click:ok",
+         key:Backspace;text:{port};click:create;await:game;await:file:{};\
+         click:pick shadow fiend;click:pick ready;await:level:1;key:Escape;await:menu;\
+         click:disconnect;await:button:reconnect;click:leave match;await:popup;click:ok;\
+         await:text:goes on for whoever plays;await:file:{};key:Escape;await:popup;click:ok",
+        joined.display(),
         ticking.display()
     );
     let mut command = common::client();
@@ -545,7 +548,8 @@ fn leave_after_hosting_keeps_the_server_running_for_the_others() {
             });
         }));
     }
-    host.until_played("await:text:runs on while anyone plays");
+    std::fs::write(&joined, "").expect("the barrier lifted");
+    host.until_played("await:text:goes on for whoever plays");
     // The host has left: the mate's match goes on.
     let left_at = mate_tick.load(Ordering::SeqCst);
     let deadline = Instant::now() + PATIENCE;
@@ -558,6 +562,47 @@ fn leave_after_hosting_keeps_the_server_running_for_the_others() {
     }
     std::fs::write(&ticking, "").expect("the barrier lifted");
     played("a hosted game left", host.finish(), &script);
+}
+
+/// The host of a local lobby, DISCONNECTed to the menu while a foe still plays, quits: the
+/// client cannot know who plays in its lobby, so the question says quitting ends the game it
+/// hosts for everyone, and once answered the lobby's server is gone.
+#[test]
+#[ignore = "draws on the GPU in a headless compositor: tools/visual_check.sh runs it"]
+fn quitting_after_a_disconnect_says_it_ends_the_hosted_game() {
+    use bota_client_core::{Link, play};
+    use bota_proto::HeroId;
+    let scratch = Scratch::new("quit-hosted");
+    let port = std::net::TcpListener::bind("127.0.0.1:0")
+        .and_then(|l| l.local_addr())
+        .expect("a free port")
+        .port();
+    let address = format!("127.0.0.1:{port}");
+    let script = format!(
+        "await:menu;await:button:create;key:Backspace;key:Backspace;key:Backspace;\
+         key:Backspace;text:{port};click:create;await:game;click:pick shadow fiend;\
+         click:pick ready;await:level:1;key:Escape;await:menu;click:disconnect;\
+         await:button:reconnect;click:quit;await:popup;\
+         await:text:ends the game you host for everyone;click:ok"
+    );
+    let mut command = common::client();
+    command.env("BOTA_SERVER", common::server_binary());
+    let mut host = Running::start(&scratch, &[], &script, command);
+    host.until_played("await:game");
+    let (mut link, seated) =
+        Link::join(&address, "foe", HeroId::SHADOW_FIEND, None).expect("a seat");
+    std::thread::spawn(move || {
+        let _ = play(&mut link, seated, &mut (), |_| Vec::new());
+    });
+    played("a hosted game quit", host.finish(), &script);
+    let deadline = Instant::now() + PATIENCE;
+    while std::net::TcpStream::connect(&address).is_ok() {
+        assert!(
+            Instant::now() < deadline,
+            "the lobby's server outlived its host"
+        );
+        std::thread::sleep(Duration::from_millis(50));
+    }
 }
 
 /// With no service configured the menu opens on the local pages, and a game's address typed

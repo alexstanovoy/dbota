@@ -139,6 +139,22 @@ pub struct Hosted {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
+impl Hosted {
+    /// Whether the server still runs: it ends by itself once its match is over or empty.
+    pub fn running(&mut self) -> bool {
+        matches!(self.server.try_wait(), Ok(None))
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+impl Hosted {
+    /// A browser starts no server.
+    pub fn running(&mut self) -> bool {
+        false
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
 impl Drop for Hosted {
     fn drop(&mut self) {
         let _ = self.server.kill();

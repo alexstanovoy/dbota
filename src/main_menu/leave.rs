@@ -20,7 +20,8 @@ use bota_proto::{ClientMsg, RejectReason, ServerMsg};
 /// How telling the game ended.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Outcome {
-    /// The server has the surrender: it echoed the probe sent behind it.
+    /// The server has the surrender: it echoed the probe sent behind it, or it closed the
+    /// connection after it and was gone by the next try.
     Left,
     /// The server says the seat is not this client's (any more): nothing to leave.
     Refused(String),
@@ -98,6 +99,12 @@ enum Try {
     Done(Outcome),
     /// Worth another try, for this reason.
     Again(String),
+    /// The server closed the connection after the surrender, before its echo: tried again, and
+    /// a server that is gone by then took it, or ended the match with it (bota_server cancels a
+    /// match left in the picks and exits, closing its connections before every probe is read).
+    ClosedAfterSurrender,
+    /// No connection was made: a server that closed after the surrender and is gone now.
+    NoConnection(String),
 }
 
 /// Tells the game the match is left, trying again until `until`, unless `cancelled` stops it.
@@ -108,6 +115,7 @@ pub fn tell(
     cancelled: &AtomicBool,
 ) -> Outcome {
     let mut wait = Duration::from_millis(100);
+    let mut closed_after_surrender = false;
     loop {
         if cancelled.load(Ordering::SeqCst) {
             return Outcome::Cancelled;
@@ -115,6 +123,13 @@ pub fn tell(
         let why = match one_try(&mut connect, hello, until, cancelled) {
             Try::Done(outcome) => return outcome,
             Try::Again(why) => why,
+            Try::ClosedAfterSurrender => {
+                closed_after_surrender = true;
+                "closed before the echo".to_owned()
+            }
+            // The server that closed after the surrender is gone: nothing is left to leave.
+            Try::NoConnection(_) if closed_after_surrender => return Outcome::Left,
+            Try::NoConnection(why) => why,
         };
         let left = until.saturating_duration_since(Instant::now());
         if left.is_zero() {
@@ -142,7 +157,7 @@ fn one_try(
     };
     let mut link = match connect(io) {
         Ok(link) => link.with_redial(Redial::OFF),
-        Err(error) => return Try::Again(format!("no connection: {error}")),
+        Err(error) => return Try::NoConnection(format!("no connection: {error}")),
     };
     if let Err(error) = link.send(hello) {
         return Try::Again(format!("the greeting was not sent: {error}"));
@@ -194,7 +209,7 @@ fn one_try(
             Ok(Some(ServerMsg::Echo { id: PROBE })) => return Try::Done(Outcome::Left),
             Ok(Some(_)) => {}
             // Closed before the echo: whether the surrender was read is not known.
-            Ok(None) => return Try::Again("closed before the echo".to_owned()),
+            Ok(None) => return Try::ClosedAfterSurrender,
             Err(error) => return Try::Again(format!("around the surrender: {error}")),
         }
     }
@@ -468,5 +483,22 @@ mod tests {
             listener.accept().is_err(),
             "no connection came to the server"
         );
+    }
+
+    /// The server closes after the surrender without its echo and is gone by the next try (as
+    /// bota_server is when a leave in the picks cancels the match): the leave is done.
+    #[test]
+    fn a_server_gone_after_closing_on_the_surrender_was_left() {
+        let fake = serve(vec![|mut peer| {
+            read_hello(&mut peer);
+            peer.send(&welcome());
+            assert_eq!(peer.recv(), Some(ClientMsg::LeaveGame));
+            assert_eq!(peer.recv(), Some(ClientMsg::Probe { id: PROBE }));
+            peer.0.shutdown(Shutdown::Write).expect("closed");
+            Some(peer)
+        }]);
+        // One connection only: the fake's listener is gone once it has answered it.
+        assert_eq!(leave(&fake, 60), Outcome::Left);
+        fake.done();
     }
 }
