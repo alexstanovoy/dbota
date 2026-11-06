@@ -17,7 +17,7 @@ use heatel::{DirSource, Resource, Vpk, find_game_dir};
 /// The classes of the manifest's effects the client leaves out, each with why. (A model
 /// renderer whose model a control point carries, the town portal's image of the hero at its end,
 /// is read but draws nothing: the client binds no model to a control point.)
-const LEFT_OUT: [&str; 53] = [
+const LEFT_OUT: [&str; 51] = [
     // Camera shake (Requiem of Souls) and the model a control point carries (the town portal's
     // image of the hero), and the rune, ward, teleport and lotus effects' finer operators (status
     // effects, parent-kill inheritance, paths, oscillation, rotation and culling): the client
@@ -43,7 +43,6 @@ const LEFT_OUT: [&str; 53] = [
     "C_INIT_SetHitboxToClosest",
     "C_INIT_StatusEffect",
     "C_OP_ColorInterpolateRandom",
-    "C_OP_ConstrainDistance",
     "C_OP_CylindricalDistanceToTransform",
     "C_OP_DecayMaintainCount",
     "C_OP_DistanceBetweenCPs",
@@ -73,7 +72,6 @@ const LEFT_OUT: [&str; 53] = [
     "C_OP_RotateVector",
     "C_OP_SetControlPointOrientation",
     "C_OP_SetControlPointRotation",
-    "C_OP_SetControlPointToCenter",
     "C_OP_SetControlPointsToModelParticles",
     "C_OP_SetFloatAttributeToVectorExpression",
     "C_OP_SetRandomControlPointPosition",

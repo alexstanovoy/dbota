@@ -15,6 +15,8 @@ use super::ops::{Call, Memory, Restart, Target, operate};
 use super::pre::{PreCall, Stop, pre_emit};
 use super::store::Particles;
 
+mod bounds;
+
 /// Most systems one playing effect has (a child shared by several parents counts each time).
 const MAX_NODES: usize = 512;
 /// Seconds an effect may play at most, end cap included: a definition that never ends stops.
@@ -77,6 +79,7 @@ pub struct Node {
     strengths: Vec<f32>,
     times: Vec<f32>,
     pub parts: Particles,
+    bounds: bounds::Bounds,
     emitted: u32,
     seed: u32,
     steps: u32,
@@ -307,6 +310,10 @@ impl Instance {
                 .parent
                 .is_none_or(|p| self.nodes[p].stepped);
             self.nodes[index].stepped = parent_stepped && self.advance_node(index, dt, ground);
+            self.write_positions(index);
+        }
+        if self.effect.bounds_needed {
+            bounds::update(&self.effect, &mut self.nodes);
         }
         for node in &mut self.nodes {
             for point in &mut node.control_points {
@@ -349,7 +356,9 @@ impl Instance {
             if let Some(asked) = node.first_frame(effect, world, frame, writes) {
                 stop(subtree, index, asked);
             }
-            for (target, cp, point) in writes.drain(..) {
+            for (target, cp, point) in
+                writes.extract_if(.., |(target, _, _)| !matches!(target, Target::Position(_)))
+            {
                 write_control_point(effect, subtree, index, target, cp, point);
             }
         }
@@ -370,11 +379,34 @@ impl Instance {
             if let Some(asked) = node.operate(effect, world, step, frame, writes) {
                 restart(effect, subtree, index, asked);
             }
-            for (target, cp, point) in writes.drain(..) {
+            for (target, cp, point) in
+                writes.extract_if(.., |(target, _, _)| !matches!(target, Target::Position(_)))
+            {
                 write_control_point(effect, subtree, index, target, cp, point);
             }
         }
         true
+    }
+
+    /// Ancestor writes wait until the current node releases its parent's particle borrow.
+    /// The current node already reads the new value during its pre-emission pass.
+    fn write_positions(&mut self, source: usize) {
+        use heatel::particle::ParentSet;
+        let Self { nodes, writes, .. } = self;
+        for (target, cp, point) in writes.drain(..) {
+            let Target::Position(mode) = target else {
+                unreachable!("only position writes remain");
+            };
+            let base = match mode {
+                ParentSet::Parent => nodes[source].parent.unwrap_or(source),
+                ParentSet::Root => 0,
+                _ => source,
+            };
+            let end = nodes[base].end;
+            for node in &mut nodes[base..end] {
+                node.place_position(cp, point.position);
+            }
+        }
     }
 
     /// Whether it has ended: past its end cap with nothing left to draw or emit.
@@ -426,6 +458,7 @@ impl Node {
             strengths: Vec::with_capacity(system.forces.len().max(system.initializers.len())),
             times: Vec::new(),
             parts,
+            bounds: bounds::Bounds::default(),
             emitted: 0,
             seed,
             steps: 0,
@@ -433,6 +466,7 @@ impl Node {
     }
 
     fn reset(&mut self, seed: u32) {
+        self.bounds.valid = false;
         (self.running, self.stepped, self.age, self.last_step) =
             (!self.end_cap_child, false, -self.delay, 0.0);
         self.prev_step = 0.0;
@@ -469,6 +503,12 @@ impl Node {
         };
         self.placed |= 1 << cp;
         self.control_points[cp] = ControlPoint { previous, ..point };
+    }
+
+    fn place_position(&mut self, cp: usize, position: Vec3) {
+        let mut point = self.control_points[cp];
+        point.position = position;
+        self.place(cp, point);
     }
 
     /// The scene as it stands after the last step, for drawing.
@@ -579,14 +619,17 @@ impl Node {
             let scene = scene_of(&self.control_points, self.clock(), world, step, frame);
             let mut call = PreCall {
                 parts: &self.parts,
+                bounds: [self.bounds.min, self.bounds.max],
                 emitting: self.emitting && asked.is_none(),
                 done: &mut self.pre_done[index],
                 writes,
             };
             asked = asked.or(pre_emit(&op.class, &scene, &mut call));
             for &(target, cp, point) in &writes[before..] {
-                if let Target::Own = target {
-                    self.place(cp, point);
+                match target {
+                    Target::Own => self.place(cp, point),
+                    Target::Position(_) => self.place_position(cp, point.position),
+                    _ => (),
                 }
             }
         }
@@ -1122,7 +1165,7 @@ fn write_control_point(
         let child = nodes[0].children[k] - base;
         let in_group = |g: i32| group(&nodes[child]) == g;
         let hit = match target {
-            Target::Own => false,
+            Target::Own | Target::Position(_) => false,
             Target::Children(g) => in_group(g),
             Target::Child(g, n) | Target::ChildPosition(g, n, _) => {
                 let hit = in_group(g) && matched == n;

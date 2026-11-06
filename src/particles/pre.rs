@@ -22,6 +22,7 @@ pub struct Stop {
 /// emits, whether the operator ran once already, and where it puts the control points it sets.
 pub struct PreCall<'a> {
     pub parts: &'a Particles,
+    pub bounds: [Vec3; 2],
     pub emitting: bool,
     pub done: &'a mut bool,
     pub writes: &'a mut Vec<(Target, usize, ControlPoint)>,
@@ -73,6 +74,26 @@ pub fn pre_emit(op: &PreEmission, scene: &Scene<'_>, call: &mut PreCall<'_>) -> 
 /// Runs one of the pre-emission operators of the town portal, the Glyph and the trails.
 fn pre_emit_more(op: &PreEmission, scene: &Scene<'_>, call: &mut PreCall<'_>) {
     match op {
+        PreEmission::SetControlPointToCenter {
+            control_point,
+            offset,
+            average,
+            target,
+        } => {
+            let center = if *average && !call.parts.is_empty() {
+                call.parts.vectors[super::store::POSITION]
+                    .iter()
+                    .copied()
+                    .sum::<Vec3>()
+                    / call.parts.len() as f32
+            } else {
+                (call.bounds[0] + call.bounds[1]) * 0.5
+            };
+            let mut point = scene.control_points[control_point.index()];
+            point.position = center + Vec3::from(*offset);
+            call.writes
+                .push((Target::Position(*target), control_point.index(), point));
+        }
         PreEmission::SetControlPointFromObjectScale { input, output } => {
             let mut point = scene.control_points[output.index()];
             point.position = Vec3::splat(scene.control_points[input.index()].object_scale);

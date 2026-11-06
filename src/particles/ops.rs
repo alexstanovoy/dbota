@@ -26,6 +26,8 @@ pub enum Target {
     Own,
     Child(i32, usize),
     ChildPosition(i32, usize, bool),
+    /// A position-only write starting at this system, its parent or the root.
+    Position(heatel::particle::ParentSet),
 }
 
 /// What an operator keeps from one step to the next, from the effect's start.

@@ -101,6 +101,7 @@ pub struct Def {
 /// An effect: its root system first, then every system under it.
 pub struct Effect {
     pub defs: Vec<Def>,
+    pub(super) bounds_needed: bool,
 }
 
 impl Effect {
@@ -116,7 +117,18 @@ impl Effect {
                 system: system.clone(),
             })
             .collect();
-        Self { defs }
+        let bounds_needed = systems.iter().any(|(_, system)| {
+            system.pre_emission.iter().any(|op| {
+                matches!(
+                    op.class,
+                    heatel::particle::PreEmission::SetControlPointToCenter { .. }
+                )
+            })
+        });
+        Self {
+            defs,
+            bounds_needed,
+        }
     }
 }
 

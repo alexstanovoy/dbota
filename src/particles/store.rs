@@ -93,6 +93,11 @@ pub struct Particles {
 }
 
 impl Particles {
+    /// A scalar attribute by Source field, for observations of the simulated/drawn state.
+    #[cfg(test)]
+    pub fn scalar_field(&self, field: Field, index: usize) -> f32 {
+        self.scalar(slot(field), index)
+    }
     pub fn len(&self) -> usize {
         self.number.len()
     }

@@ -8,8 +8,8 @@ use std::sync::Arc;
 use bevy::math::Vec3;
 use heatel::particle::{
     Child, Constants, ControlPoint, ControlPointsFromParticles, Emitter, EndCap, Field, FloatInput,
-    Force, Function, Initializer, Mapping, Operator, PlaceOnGround, SetMethod, Sphere, System,
-    Timing, TraceMiss, Transform, VectorInput,
+    Force, Function, Initializer, Mapping, Operator, PlaceOnGround, PreEmission, SetMethod, Sphere,
+    System, Timing, TraceMiss, Transform, VectorInput,
 };
 
 use super::eval::HeightAt;
@@ -228,6 +228,7 @@ fn bare(
         max_time_step: 0.1,
         sleep_after: heatel::particle::SLEEP_AFTER,
         bounds: heatel::particle::BOUNDS,
+        infinite_bounds: false,
         constants: Constants {
             color: [1.0; 4],
             radius: 5.0,
@@ -319,6 +320,298 @@ fn run_on(instance: &mut Instance, seconds: f32, ground: Option<HeightAt<'_>>) {
     for _ in 0..(seconds * 60.0).round() as usize {
         instance.advance(1.0 / 60.0, ground);
     }
+}
+
+fn center_setter(average: bool, target: heatel::particle::ParentSet) -> PreEmission {
+    PreEmission::SetControlPointToCenter {
+        control_point: point(2),
+        offset: [1.0, 2.0, 3.0],
+        average,
+        target,
+    }
+}
+
+#[test]
+fn center_control_points_use_last_bounds_or_the_live_mean_and_retain_empty_bounds() {
+    use heatel::particle::ParentSet;
+    for average in [false, true] {
+        let mut system = system(3.0, Vec::new(), Vec::new(), Vec::new());
+        system.bounds = [[-2.0, -4.0, -6.0], [4.0, 6.0, 8.0]];
+        system.pre_emission = vec![always(center_setter(average, ParentSet::Own))];
+        let mut instance =
+            Instance::new(Arc::new(Effect::new(&[("center".to_owned(), system)])), 7);
+        instance.advance(1.0 / 60.0, None);
+        instance.nodes[0].parts.vectors[store::POSITION].copy_from_slice(&[
+            Vec3::new(10.0, 0.0, 0.0),
+            Vec3::new(14.0, 6.0, 0.0),
+            Vec3::new(100.0, 0.0, 0.0),
+        ]);
+        instance.nodes[0].parts.scalars[store::RADIUS].copy_from_slice(&[1.0, 2.0, 3.0]);
+        instance.advance(1.0 / 60.0, None);
+        instance.advance(1.0 / 60.0, None);
+        // Extrema include the unequal radii and the asymmetric definition padding.
+        let box_center = Vec3::new(58.0, 5.5, 4.0);
+        let expected = if average {
+            Vec3::new(1.0 + 124.0 / 3.0, 4.0, 3.0)
+        } else {
+            box_center
+        };
+        assert!(
+            instance.nodes[0].control_points[2]
+                .position
+                .distance(expected)
+                < 0.001,
+            "average={average}: expected {expected:?}, got {:?}",
+            instance.nodes[0].control_points[2].position
+        );
+        instance.nodes[0].parts.clear();
+        instance.set_control_point(0, Vec3::splat(1000.0), Vec3::ZERO, true);
+        instance.advance(1.0 / 60.0, None);
+        assert!(
+            instance.nodes[0].control_points[2]
+                .position
+                .distance(box_center)
+                < 0.001,
+            "with no live positions to average, the last bounds remain the reference"
+        );
+    }
+}
+
+#[test]
+fn center_control_point_parent_scopes_write_positions_without_overwriting_frames() {
+    use heatel::particle::ParentSet;
+    for (target, first) in [
+        (ParentSet::Own, 2),
+        (ParentSet::Parent, 1),
+        (ParentSet::Root, 0),
+    ] {
+        let child = |name: &str| Child {
+            path: name.to_owned(),
+            end_cap: false,
+            delay: 0.0,
+        };
+        let root = system(0.0, Vec::new(), Vec::new(), vec![child("parent")]);
+        let parent = system(0.0, Vec::new(), Vec::new(), vec![child("emitter")]);
+        let mut emitter = system(3.0, Vec::new(), Vec::new(), vec![child("descendant")]);
+        emitter.pre_emission = vec![always(center_setter(true, target))];
+        let descendant = system(0.0, Vec::new(), Vec::new(), Vec::new());
+        let mut instance = Instance::new(
+            Arc::new(Effect::new(&[
+                ("root".to_owned(), root),
+                ("parent".to_owned(), parent),
+                ("emitter".to_owned(), emitter),
+                ("descendant".to_owned(), descendant),
+            ])),
+            8,
+        );
+        instance.advance(1.0 / 60.0, None);
+        instance.nodes[2].parts.vectors[store::POSITION].copy_from_slice(&[Vec3::splat(10.0); 3]);
+        for (i, node) in instance.nodes.iter_mut().enumerate() {
+            let frame = &mut node.control_points[2];
+            frame.position = Vec3::ZERO;
+            let rotation = bevy::math::Quat::from_rotation_z(i as f32 * 0.2);
+            (frame.forward, frame.left, frame.up) =
+                (rotation * Vec3::X, rotation * Vec3::Y, rotation * Vec3::Z);
+            frame.object_scale = i as f32 + 0.5;
+        }
+        let frames: Vec<_> = instance.nodes.iter().map(|n| n.control_points[2]).collect();
+        instance.advance(1.0 / 60.0, None);
+        for (i, node) in instance.nodes.iter().enumerate() {
+            let frame = node.control_points[2];
+            assert_eq!(
+                frame.position,
+                if i >= first {
+                    Vec3::new(11.0, 12.0, 13.0)
+                } else {
+                    Vec3::ZERO
+                }
+            );
+            assert_eq!(
+                frame.forward, frames[i].forward,
+                "a position setter preserves each recipient's basis"
+            );
+            assert_eq!(frame.left, frames[i].left);
+            assert_eq!(frame.up, frames[i].up);
+            assert_eq!(
+                frame.object_scale, frames[i].object_scale,
+                "bound objects retain their scale"
+            );
+        }
+    }
+}
+
+#[test]
+fn a_center_includes_finite_children_and_omits_infinite_children() {
+    use heatel::particle::ParentSet;
+    for infinite in [false, true] {
+        let mut root = system(
+            0.0,
+            Vec::new(),
+            Vec::new(),
+            vec![Child {
+                path: "child".to_owned(),
+                end_cap: false,
+                delay: 0.0,
+            }],
+        );
+        root.pre_emission = vec![always(center_setter(false, ParentSet::Own))];
+        let mut child = system(1.0, Vec::new(), Vec::new(), Vec::new());
+        child.infinite_bounds = infinite;
+        let mut instance = Instance::new(
+            Arc::new(Effect::new(&[
+                ("root".to_owned(), root),
+                ("child".to_owned(), child),
+            ])),
+            9,
+        );
+        instance.advance(1.0 / 60.0, None);
+        instance.nodes[1].parts.vectors[store::POSITION][0] = Vec3::splat(100.0);
+        instance.advance(1.0 / 60.0, None);
+        instance.advance(1.0 / 60.0, None);
+        let expected = Vec3::new(1.0, 2.0, 3.0)
+            + if infinite {
+                Vec3::ZERO
+            } else {
+                Vec3::splat(100.0)
+            };
+        assert_eq!(instance.nodes[0].control_points[2].position, expected);
+    }
+}
+
+#[test]
+fn distance_constraints_keep_both_sides_of_the_shell_in_local_and_global_frames() {
+    use heatel::particle::{Constraint, Distance};
+    for global_center in [false, true] {
+        let offset = Vec3::new(5.0, -7.0, 50.0);
+        let mut system = system(
+            4.0,
+            vec![always(Operator::BasicMovement {
+                gravity: VectorInput::Literal([0.0; 3]),
+                drag: FloatInput::Literal(0.0),
+                max_constraint_passes: 3,
+            })],
+            Vec::new(),
+            Vec::new(),
+        );
+        system.constraints = vec![always(Constraint::Distance(Box::new(Distance {
+            min_distance: FloatInput::Literal(5.0),
+            max_distance: FloatInput::ControlPointComponent {
+                control_point: point(2),
+                component: 0,
+                mapping: Mapping::Direct,
+            },
+            transform: Transform::point(point(7)),
+            center_offset: VectorInput::Literal(offset.to_array()),
+            global_center,
+        })))];
+        let mut instance =
+            Instance::new(Arc::new(Effect::new(&[("shell".to_owned(), system)])), 11);
+        instance.set_control_point(2, Vec3::new(75.0, 0.0, 0.0), Vec3::ZERO, false);
+        instance.advance(1.0 / 60.0, None);
+        let frame = &mut instance.nodes[0].control_points[7];
+        frame.position = Vec3::new(100.0, 200.0, 300.0);
+        frame.previous = frame.position;
+        frame.forward = Vec3::Y;
+        frame.left = -Vec3::X;
+        let center = if global_center {
+            offset
+        } else {
+            frame.position + frame.rotate(offset)
+        };
+        let positions = [
+            center + Vec3::X * 2.0,
+            center + Vec3::Y * 100.0,
+            center + Vec3::Z * 30.0,
+            center + Vec3::Y * 10.0,
+        ];
+        instance.nodes[0].parts.vectors[store::POSITION].copy_from_slice(&positions);
+        instance.nodes[0].parts.vectors[store::PREVIOUS].copy_from_slice(&positions);
+        instance.advance(1.0 / 60.0, None);
+        let parts = &instance.nodes[0].parts;
+        for (position, expected) in parts.vectors[store::POSITION]
+            .iter()
+            .zip([5.0, 75.0, 30.0, 10.0])
+        {
+            assert!(
+                (position.distance(center) - expected).abs() < 0.001,
+                "global={global_center}, {position:?} must be {expected} from {center:?}"
+            );
+        }
+        assert_eq!(
+            parts.vectors[store::PREVIOUS],
+            positions,
+            "the projection preserves the previous positions used by Verlet movement"
+        );
+    }
+}
+
+fn constrained_positions(minimum: f32, maximum: f32, positions: &[Vec3]) -> Vec<Vec3> {
+    use heatel::particle::{Constraint, Distance};
+    let mut system = system(
+        positions.len() as f32,
+        vec![always(Operator::BasicMovement {
+            gravity: VectorInput::Literal([0.0; 3]),
+            drag: FloatInput::Literal(0.0),
+            max_constraint_passes: 1,
+        })],
+        Vec::new(),
+        Vec::new(),
+    );
+    system.constraints = vec![always(Constraint::Distance(Box::new(Distance {
+        min_distance: FloatInput::Literal(minimum),
+        max_distance: FloatInput::Literal(maximum),
+        transform: Transform::Identity,
+        center_offset: VectorInput::Literal([0.0; 3]),
+        global_center: true,
+    })))];
+    let mut instance = Instance::new(Arc::new(Effect::new(&[("shell".to_owned(), system)])), 11);
+    instance.advance(1.0 / 60.0, None);
+    instance.nodes[0].parts.vectors[store::POSITION].copy_from_slice(positions);
+    instance.nodes[0].parts.vectors[store::PREVIOUS].copy_from_slice(positions);
+    instance.advance(1.0 / 60.0, None);
+    instance.nodes[0].parts.vectors[store::POSITION].clone()
+}
+
+#[test]
+fn distance_constraints_keep_sources_negative_limit_semantics() {
+    let positions = [Vec3::X * 2.0, Vec3::Y * 100.0, Vec3::Z * 30.0, Vec3::ZERO];
+    assert_eq!(
+        constrained_positions(0.0, -1.0, &positions),
+        positions,
+        "a negative maximum disables the outer shell"
+    );
+    let constrained = constrained_positions(-5.0, 75.0, &positions);
+    for (position, radius) in constrained.iter().zip([75.0, 75.0, 30.0, 0.0]) {
+        assert!(
+            (position.length() - radius).abs() < 0.001,
+            "a negative minimum pushes undersized non-central particles to the outer shell"
+        );
+    }
+}
+
+#[test]
+fn distance_constraints_reseed_the_center_and_keep_sources_four_lane_offset_rule() {
+    let positions = [
+        Vec3::ZERO,
+        Vec3::X * 2.0,
+        Vec3::Y * 100.0,
+        Vec3::new(6.0, 8.0, 0.0),
+    ];
+    let constrained = constrained_positions(5.0, 75.0, &positions);
+    assert!(
+        (constrained[0].length() - 5.0).abs() < 0.001,
+        "the centre gets a finite radial direction"
+    );
+    assert!(constrained[1].distance(Vec3::splat(5.0 / 3.0f32.sqrt())) < 0.001);
+    assert_eq!(
+        constrained[2], positions[2],
+        "zero X offset cannot be normalized in the reseeded block"
+    );
+    assert_eq!(
+        constrained[3],
+        Vec3::splat(6.0),
+        "the non-central lane replicates its X offset"
+    );
 }
 
 #[test]

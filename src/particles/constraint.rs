@@ -4,10 +4,10 @@
 
 use bevy::math::Vec3;
 use heatel::particle::{
-    Constraint, DistanceToPath, Field, FloatInput, Function, Planar, WorldTrace,
+    Constraint, Distance, DistanceToPath, Field, FloatInput, Function, Planar, WorldTrace,
 };
 
-use super::eval::{HeightAt, Scene, float, in_ball};
+use super::eval::{HeightAt, Scene, between, float, in_ball, vector};
 use super::path::bezier;
 use super::store::{self, Particles, slot};
 
@@ -62,6 +62,7 @@ pub fn constrain(
 fn apply(c: &Constraint, scene: &Scene<'_>, parts: &mut Particles, k: u32) -> bool {
     let salt = 0xC000 + k * 64;
     match c {
+        Constraint::Distance(d) => distance(d, scene, parts, salt),
         Constraint::DistanceToPath(d) => distance_to_path(d, scene, parts),
         Constraint::Planar(p) => planar(p, scene, parts, salt),
         Constraint::WorldTrace(w) => match scene.ground {
@@ -70,6 +71,92 @@ fn apply(c: &Constraint, scene: &Scene<'_>, parts: &mut Particles, k: u32) -> bo
         },
         _ => false,
     }
+}
+
+/// Project onto the shell after movement. Only position changes: the next Verlet step
+/// retains the previous position, as it does for the other positional constraints.
+fn distance(d: &Distance, scene: &Scene<'_>, parts: &mut Particles, salt: u32) -> bool {
+    let frame = scene.transform_at(&d.transform, scene.age);
+    let offset = vector(&d.center_offset, scene, parts, None, salt + 2);
+    let center = if d.global_center {
+        offset
+    } else {
+        frame.position + frame.rotate(offset)
+    };
+    let least = float(&d.min_distance, scene, parts, None, salt);
+    let most = float(&d.max_distance, scene, parts, None, salt + 1);
+    let limits = [least, if most < 0.0 { f32::MAX } else { most }];
+    let mut moved = false;
+    for block in (0..parts.len()).step_by(4) {
+        moved |= distance_block(center, limits, block, scene, parts, salt + 3);
+    }
+    moved
+}
+
+/// Source's four-lane centre reseed also replicates the non-central lanes' X offset.
+/// VRF 2d13e415, Particles/Constraints/ConstrainDistance.cs:63-139 documents that quirk.
+fn distance_block(
+    center: Vec3,
+    [least, most]: [f32; 2],
+    block: usize,
+    scene: &Scene<'_>,
+    parts: &mut Particles,
+    salt: u32,
+) -> bool {
+    let end = parts.len().min(block + 4);
+    let deltas: [Vec3; 4] = std::array::from_fn(|lane| {
+        parts.vectors[store::POSITION]
+            .get(block + lane)
+            .map_or(Vec3::ZERO, |position| *position - center)
+    });
+    let outside = |delta: Vec3| {
+        delta.length_squared() < least * least || delta.length_squared() > most * most
+    };
+    if !deltas[..end - block].iter().copied().any(outside) {
+        return false;
+    }
+    let reseed = least > 0.0
+        && deltas[..end - block]
+            .iter()
+            .any(|delta| delta.length_squared() <= 0.0);
+    let mut moved = false;
+    for i in block..end {
+        let original = deltas[i - block];
+        let squared = original.length_squared();
+        let held = outside(original);
+        if !held && !reseed {
+            continue;
+        }
+        let delta = if !reseed {
+            original
+        } else if squared > 0.0 {
+            Vec3::splat(original.x)
+        } else {
+            let seed = scene.step_seed ^ parts.seed[i];
+            Vec3::from_array(std::array::from_fn(|axis| {
+                between(seed, salt + axis as u32, -0.001, 0.001)
+            }))
+        };
+        let Some(direction) = delta.try_normalize() else {
+            continue;
+        };
+        let position = if held {
+            center
+                + direction
+                    * if least > 0.0 && squared < least * least {
+                        least
+                    } else {
+                        most
+                    }
+        } else {
+            center + delta
+        };
+        if position != parts.vectors[store::POSITION][i] {
+            parts.vectors[store::POSITION][i] = position;
+            moved = true;
+        }
+    }
+    moved
 }
 
 /// `C_OP_ConstrainDistanceToPath`: each particle kept between the least and the largest
