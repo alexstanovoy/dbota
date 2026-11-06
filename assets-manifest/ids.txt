@@ -101,6 +101,7 @@ item 85 blight_stone
 item 86 orb_of_venom
 item 87 orb_of_frost
 item 91 infused_raindrop
+item 92 ghost
 ability 0 pudge_meat_hook
 ability 1 pudge_rot
 ability 2 pudge_innate_graft_flesh
@@ -273,6 +274,7 @@ effect 77 icon.item.bottle
 effect 78 icon.item.blight_stone
 effect 79 icon.item.orb_of_venom
 effect 80 icon.item.orb_of_frost
+effect 98 icon.item.ghost
 
 # The Dota modifiers bota's effects are, for their tooltips (DOTA_Tooltip_<modifier>).
 modifier 1 modifier_flask_healing
@@ -388,3 +390,4 @@ modifier 94 modifier_roshan_grab_thrown
 modifier 95 modifier_roshan_moving
 modifier 96 modifier_knockback
 modifier 97 modifier_roshan_moving_knockback_timeout
+modifier 98 modifier_ghost_state

@@ -233,6 +233,8 @@ fn use_value(def: &ItemDef, key: &str) -> Option<Levels> {
         (UseSpec::Grenade(g), "debuff_duration") => one(secs(g.debuff_ticks)),
         (UseSpec::Grenade(g), "movespeed_slow") => one(-g.slow_pct),
         (UseSpec::Grenade(g), "radius") => one(g.radius),
+        (UseSpec::Ethereal { ticks, .. }, "duration") => one(secs(*ticks)),
+        (UseSpec::Ethereal { magic_pct, .. }, "extra_spell_damage_percent") => one(-magic_pct),
         _ => None,
     }
 }
@@ -381,6 +383,20 @@ mod tests {
         assert_eq!(shown("min_damage"), Some(vec!["75".to_owned()]));
         assert_eq!(shown("initial_charges"), Some(vec!["6".to_owned()]));
         assert_eq!(shown("mana_regen"), Some(vec!["0.6".to_owned()]));
+    }
+
+    /// The Ghost Scepter's tooltip prints Ghost Form's duration and magic vulnerability, and the
+    /// attributes it adds, as the simulator holds them.
+    #[test]
+    fn the_ghost_scepter_tooltip_reads_ghost_form_from_the_simulator() {
+        let ghost = item_def(ItemId::GHOST_SCEPTER).expect("a Ghost Scepter");
+        let shown = |key| value(Subject::Item(ghost), key);
+        assert_eq!(shown("duration"), Some(vec!["4".to_owned()]));
+        assert_eq!(
+            shown("extra_spell_damage_percent"),
+            Some(vec!["-30".to_owned()])
+        );
+        assert_eq!(shown("bonus_all_stats"), Some(vec!["5".to_owned()]));
     }
 
     /// A poison that beat twice a second would be told so: the tooltip follows the simulator's

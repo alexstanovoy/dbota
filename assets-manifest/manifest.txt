@@ -416,6 +416,7 @@ particle item.faerie_fire.active particles/items3_fx/fish_bones_active.vpcf_c pa
 particle item.blight_stone.corruption particles/items2_fx/orb_of_blight.vpcf_c particles/orb_of_blight.json
 particle item.orb_of_venom.poison particles/items2_fx/orb_of_venom.vpcf_c particles/orb_of_venom.json
 particle item.orb_of_frost.frost particles/items2_fx/orb_of_frost.vpcf_c particles/orb_of_frost.json
+particle item.ghost.form particles/items_fx/ghost.vpcf_c particles/ghost.json
 particle item.magic_stick particles/items2_fx/magic_stick.vpcf_c particles/magic_stick.json
 particle item.magic_wand particles/items2_fx/magic_wand.vpcf_c particles/magic_wand.json
 particle item.phase_boots particles/items2_fx/phase_boots.vpcf_c particles/phase_boots.json
@@ -540,6 +541,8 @@ fx item.faerie_fire.use at=caster particle=item.faerie_fire.active sound=sound.i
 fx modifier.modifier_blight_stone_buff.worn at=unit particle=item.blight_stone.corruption
 fx modifier.modifier_item_orb_of_venom_slow.worn at=unit particle=item.orb_of_venom.poison
 fx modifier.modifier_orb_of_frost_debuff.worn at=unit particle=item.orb_of_frost.frost
+fx item.ghost.use at=caster sound=sound.item.ghost
+fx modifier.modifier_ghost_state.worn at=unit particle=item.ghost.form
 fx item.magic_stick.use at=caster particle=item.magic_stick sound=sound.item.magic_stick cp1=charges
 fx item.magic_wand.use at=caster particle=item.magic_wand sound=sound.item.magic_stick cp1=charges
 fx item.phase_boots.use at=caster sound=sound.item.phase_boots
@@ -1008,6 +1011,7 @@ sound sound.item.blink sounds/weapons/hero/antimage/blink_out.vsnd_c sounds/weap
 # Sounds of the abilities of Pudge and of the neutral creeps, and of the neutral creeps dying
 sound sound.item.mango sounds/items/mango.vsnd_c sounds/items/mango.wav event=DOTA_Item.Mango.Activate
 sound sound.item.faerie_fire sounds/items/faerie_spark.vsnd_c sounds/items/faerie_spark.wav event=DOTA_Item.FaerieSpark.Activate
+sound sound.item.ghost sounds/items/ghost_activate.vsnd_c sounds/items/ghost_activate.wav event=DOTA_Item.GhostScepter.Activate
 sound sound.pudge.hook_throw sounds/weapons/hero/pudge/hook_throw.vsnd_c sounds/weapons/hero/pudge/hook_throw.wav event=Hero_Pudge.AttackHookExtend
 sound sound.pudge.hook_impact sounds/weapons/hero/pudge/hook_impact.vsnd_c sounds/weapons/hero/pudge/hook_impact.wav event=Hero_Pudge.AttackHookImpact
 sound sound.pudge.rot sounds/weapons/hero/pudge/rot.vsnd_c sounds/weapons/hero/pudge/rot.wav event=Hero_Pudge.Rot
