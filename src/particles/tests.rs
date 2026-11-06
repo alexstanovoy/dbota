@@ -94,7 +94,9 @@ fn model_particles_follow_their_skin_control_point_and_fall_back_to_default_mate
         (5.0, Some(42)),
         (0.0, Some(7)),
         (2.0, Some(7)),
-        (64.0, None),
+        (64.0, Some(7)),
+        (-1.0, Some(7)),
+        (f32::NAN, Some(7)),
     ] {
         instance.set_control_point(2, Vec3::new(skin, 0.0, 0.0), Vec3::ZERO, false);
         let mut placed = Vec::new();
@@ -108,7 +110,6 @@ fn model_particles_follow_their_skin_control_point_and_fall_back_to_default_mate
 }
 
 fn model_skin_effect() -> Arc<Effect> {
-    use super::library::{ModelDraw, ModelSkin};
     use heatel::particle::{Models, Renderer};
     let renderer = Models {
         models: vec![("models/example.vmdl".to_owned(), 1.0)],
@@ -138,20 +139,44 @@ fn model_skin_effect() -> Arc<Effect> {
     let mut definition = system(1.0, Vec::new(), Vec::new(), Vec::new());
     definition.renderers = vec![always(Renderer::Models(Box::new(renderer)))];
     let mut effect = Effect::new(&[("example".to_owned(), definition)]);
-    effect.defs[0].model_draws = vec![ModelDraw {
-        renderer: 0,
-        skins: vec![
-            ModelSkin {
-                index: 0,
-                models: vec![(Some(7), 1.0)],
-            },
-            ModelSkin {
-                index: 5,
-                models: vec![(Some(42), 1.0)],
-            },
-        ],
-    }];
+    let loaded = std::collections::HashMap::from([
+        (("models/example.vmdl".to_owned(), 0), 7),
+        (("models/example.vmdl".to_owned(), 5), 42),
+    ]);
+    effect.defs[0].model_draws = super::library::model_draws(&effect.defs[0].system, &loaded);
     Arc::new(effect)
+}
+
+#[test]
+fn model_draws_map_heatel_groups_to_loaded_geometry_and_cache_their_weights() {
+    let mut effect = model_skin_effect();
+    let def = &mut Arc::get_mut(&mut effect).expect("unique effect").defs[0];
+    let heatel::particle::Renderer::Models(model) = &mut def.system.renderers[0].class else {
+        panic!("models");
+    };
+    model.models = vec![
+        ("a".to_owned(), 2.0),
+        ("b".to_owned(), 3.0),
+        ("missing".to_owned(), 100.0),
+    ];
+    let loaded = std::collections::HashMap::from([
+        (("a".to_owned(), 0), 7),
+        (("b".to_owned(), 0), 8),
+        (("a".to_owned(), 5), 42),
+    ]);
+    let draws = super::library::model_draws(&def.system, &loaded);
+    assert_eq!(draws.len(), 1);
+    assert_eq!(draws[0].skins.len(), 2);
+    assert_eq!(
+        draws[0].skins[0].models,
+        vec![(Some(7), 2.0), (Some(8), 3.0), (None, 100.0)]
+    );
+    assert_eq!(draws[0].skins[0].total_weight, 5.0);
+    assert_eq!(
+        draws[0].skins[1].models,
+        vec![(Some(42), 2.0), (None, 3.0), (None, 100.0)]
+    );
+    assert_eq!(draws[0].skins[1].total_weight, 2.0);
 }
 
 /// A system of one burst of `count` particles and the functions given.

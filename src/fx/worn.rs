@@ -360,7 +360,7 @@ fn wear_unit(
             .iter()
             .any(|(_, feed)| matches!(feed, super::line::Feed::ModelRadius))
         {
-            feeds.model_radius = scene.bodies.model_radius(unit.id).unwrap_or(0.0);
+            feeds.model_radius = scene.bodies.model_radius(unit.id);
         }
         feed(fx, handle.particle, playing, &feeds, &place);
     }

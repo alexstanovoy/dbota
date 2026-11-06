@@ -67,8 +67,7 @@ pub struct Draw {
     pub material: usize,
 }
 
-/// A model renderer of a system: its definition's index, and each model of its list as the
-/// library's model (none: the cache lacks it) with its chance.
+/// A model renderer's loaded material groups and weighted model choices.
 pub struct ModelDraw {
     pub renderer: usize,
     pub skins: Vec<ModelSkin>,
@@ -78,6 +77,8 @@ pub struct ModelDraw {
 pub struct ModelSkin {
     pub index: u16,
     pub models: Vec<(Option<u16>, f32)>,
+    /// Sum of positive weights for loaded models, computed once when the effect is read.
+    pub total_weight: f32,
 }
 
 /// A model particles are drawn as: its glTF file, loaded once.
@@ -302,8 +303,8 @@ impl Library {
 }
 
 impl Library {
-    /// The models of the file (by `.vmdl` path) as the library's, each file loaded once; past
-    /// the most models the library keeps, a model draws nothing.
+    /// Models keyed by full `.vmdl` path and material-group index, each geometry file loaded
+    /// once. Exceeding the global geometry budget is an explicit import error.
     fn models(
         &mut self,
         root: &Value,
@@ -347,7 +348,11 @@ impl Library {
                     });
                     self.models.len() - 1
                 }
-                None => continue,
+                None => {
+                    return Err(format!(
+                        "particle models exceed {MAX_MODELS} loaded geometry variants"
+                    ));
+                }
             };
             out.insert((vmdl.to_owned(), skin as u16), index as u16);
         }
@@ -357,7 +362,7 @@ impl Library {
 
 /// The model renderers of `system` the client draws: those whose models come from their list
 /// (one whose model a control point carries draws that model, and the client binds none).
-fn model_draws(system: &System, models: &HashMap<(String, u16), u16>) -> Vec<ModelDraw> {
+pub(super) fn model_draws(system: &System, models: &HashMap<(String, u16), u16>) -> Vec<ModelDraw> {
     system
         .renderers
         .iter()
@@ -376,12 +381,18 @@ fn model_draws(system: &System, models: &HashMap<(String, u16), u16>) -> Vec<Mod
                         .iter()
                         .map(|(path, weight)| (models.get(&(path.clone(), skin)).copied(), *weight))
                         .collect();
+                    let total_weight = choices
+                        .iter()
+                        .filter(|(model, weight)| model.is_some() && *weight > 0.0)
+                        .map(|(_, weight)| *weight)
+                        .sum();
                     choices
                         .iter()
                         .any(|(model, _)| model.is_some())
                         .then_some(ModelSkin {
                             index: skin,
                             models: choices,
+                            total_weight,
                         })
                 })
                 .collect();

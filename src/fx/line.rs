@@ -249,6 +249,11 @@ impl Fx {
         }
         let worn = self.trigger == Trigger::Worn;
         if !worn
+            && self.feeds.iter().any(|(_, feed)| matches!(feed, Feed::ModelRadius))
+        {
+            return Err("model_radius requires a worn line".to_owned());
+        }
+        if !worn
             && (self.whose != Whose::Any || self.stacks != (0, u32::MAX) || self.look.is_some())
         {
             return Err("only a worn line asks whose, how many or whose look".to_owned());

@@ -131,14 +131,21 @@ impl Shooters<'_, '_> {
 
     /// The actual imported model's enclosing render-bounds sphere, at its scene's scale.
     pub(crate) fn model_radius(&self, id: EntityId) -> Option<f32> {
-        self.sight.visible_unit(id)?;
+        let unit = self.sight.visible_unit(id)?;
         let pivot = self.pivots.get(*self.index.0.get(&id)?).ok()?.0;
-        self.children
+        let radius = self
+            .children
             .get(pivot)
             .ok()?
             .iter()
-            .find_map(|child| self.radii.get(child).ok().map(|radius| radius.0))
-            .filter(|radius| radius.is_finite() && *radius > 0.0)
+            .find_map(|child| self.radii.get(child).ok())?;
+        Some(radius.0.unwrap_or_else(|| {
+            // Missing metadata was warned about when this scene loaded. Its selection
+            // cylinder gives an explicit visible fallback, rather than a zero-sized effect.
+            let (radius, height) = crate::units::unit_size(unit.kind, unit.bound.to_f32());
+            radius.hypot(radius).hypot(height * 0.5)
+        }))
+        .filter(|radius| radius.is_finite() && *radius > 0.0)
     }
 
     /// Where unit `id`'s missile leaves: the hand of the attack it swings.

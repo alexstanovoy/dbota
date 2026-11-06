@@ -66,9 +66,10 @@ pub struct Pivot(pub Entity);
 #[derive(Component)]
 pub struct Posable;
 
-/// The imported body's render-bounds radius at its drawn scale, in world units.
-#[derive(Component)]
-pub(crate) struct RenderRadius(pub f32);
+/// The imported bounds' half-diagonal at the drawn scale, in world units. None explicitly
+/// uses the selection-volume fallback; a missing component means the scene is rebuilding.
+#[derive(Component, Default)]
+pub(crate) struct RenderRadius(pub Option<f32>);
 
 /// Where a unit's model carries what its attacks need, as its model names them: the hands an
 /// attack's missile leaves from (`attach_attack1`, `attach_attack2`) and the place one hits
@@ -190,7 +191,7 @@ pub struct BankModel {
     pub loaded: bool,
     variants: Vec<ModelVariant>,
     elevation: f32,
-    render_radius: f32,
+    render_radius: Option<f32>,
 }
 
 struct ModelVariant {
@@ -388,7 +389,7 @@ fn bank_entry(server: &AssetServer, manifest: &Manifest, model: &Model) -> BankM
         loaded: false,
         variants: Vec::new(),
         elevation: 0.0,
-        render_radius: 0.0,
+        render_radius: None,
     }
 }
 
@@ -463,7 +464,11 @@ fn render_radius(gltf: &Gltf, gltf_meshes: &Assets<GltfMesh>) -> Option<f32> {
     }
     let (mut low, mut high) = (Vec3::INFINITY, Vec3::NEG_INFINITY);
     for handle in &gltf.meshes {
-        let metadata = &gltf_meshes.get(handle)?.extras.as_ref()?.value;
+        let mesh = gltf_meshes.get(handle)?;
+        if mesh.primitives.is_empty() {
+            continue;
+        }
+        let metadata = &mesh.extras.as_ref()?.value;
         if metadata.len() > 1 << 20 {
             return None;
         }
@@ -524,7 +529,12 @@ fn take_scenes(
     {
         return false;
     }
-    entry.render_radius = render_radius(gltf, gltf_meshes).unwrap_or(0.0);
+    entry.render_radius = render_radius(gltf, gltf_meshes);
+    if entry.render_radius.is_none() {
+        warn!(
+            "model {logical}: no valid render bounds; size-bound effects use the unit's selection volume"
+        );
+    }
     let mut wearables = Vec::with_capacity(wearing.len());
     for (file, scene) in entry.wearing.iter().zip(wearing) {
         match scene {
@@ -1161,7 +1171,11 @@ fn spawn_model_scene(
                 WorldAssetRoot(scenes.body.clone()),
                 scale,
                 ChildOf(pivot),
-                RenderRadius(entry.render_radius * scale.scale.abs().max_element()),
+                RenderRadius(
+                    entry
+                        .render_radius
+                        .map(|radius| radius * scale.scale.abs().max_element()),
+                ),
             ))
             .observe(on_model_ready)
             .id();

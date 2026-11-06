@@ -7,6 +7,102 @@ use super::harness::{Client, Server};
 
 #[test]
 fn a_marshmages_water_bubble_draws_its_shield_around_the_hurt_ally() {
+    with_bubble(assert_drawn_bubbles);
+}
+
+#[test]
+fn a_bubble_keeps_its_last_radius_while_the_recipient_scene_is_rebuilt() {
+    with_bubble(|client, frog| {
+        let before = bubble_radius(client);
+        let scene = recipient_scene(client, frog);
+        let radius = client
+            .world_mut()
+            .entity_mut(scene)
+            .take::<crate::units::RenderRadius>()
+            .expect("radius");
+        client.frames(3);
+        assert_eq!(
+            bubble_radius(client),
+            before,
+            "a temporarily unavailable radius is not zero"
+        );
+        client.world_mut().entity_mut(scene).insert(radius);
+    });
+}
+
+#[test]
+fn a_bubble_with_unavailable_bounds_uses_a_visible_selection_volume_fallback() {
+    with_bubble(|client, frog| {
+        let _live = std::mem::replace(
+            &mut client.core_mut().source,
+            bota_client_core::Source::Live(Box::new(super::creep_walk::ControlledFrames)),
+        );
+        let original = client.view().unit(frog).expect("frog").clone();
+        let mut bare = original.clone();
+        bare.effects.retain(|e| e.id != EffectId(54));
+        super::creep_walk::tell(client, bare);
+        client.frames(120);
+        let scene = recipient_scene(client, frog);
+        client
+            .world_mut()
+            .entity_mut(scene)
+            .insert(crate::units::RenderRadius::default());
+        let effect = client
+            .world()
+            .resource::<crate::particles::Library>()
+            .effect("neutral.water_bubble")
+            .expect("bubble")
+            .clone();
+        let before = client
+            .world()
+            .resource::<crate::particles::Playing>()
+            .started(&effect);
+        super::creep_walk::tell(client, original);
+        client.frames(30);
+        assert_eq!(
+            client
+                .world()
+                .resource::<crate::particles::Playing>()
+                .started(&effect),
+            before + 1,
+            "missing imported bounds must not silently prevent the effect from starting"
+        );
+        assert!(bubble_radius(client).is_finite());
+        assert!(bubble_radius(client) > 1.0);
+        assert_eq!(visible_bubbles(client).len(), 2);
+    });
+}
+
+fn recipient_scene(client: &Client, frog: EntityId) -> Entity {
+    let world = client.world();
+    let body = client.body(frog).expect("recipient");
+    let pivot = world.get::<crate::units::ModelOf>(body).expect("pivot").0;
+    world
+        .get::<Children>(pivot)
+        .expect("children")
+        .iter()
+        .find(|e| world.get::<crate::units::RenderRadius>(*e).is_some())
+        .expect("body scene")
+}
+
+fn bubble_radius(client: &Client) -> f32 {
+    let world = client.world();
+    let effect = world
+        .resource::<crate::particles::Library>()
+        .effect("neutral.water_bubble")
+        .expect("bubble");
+    world
+        .resource::<crate::particles::Playing>()
+        .instances_of(effect)
+        .find(|i| i.nodes[0].parts.len() == 2)
+        .expect("active spheres")
+        .nodes[0]
+        .control_points[1]
+        .position
+        .x
+}
+
+fn with_bubble(check: impl FnOnce(&mut Client, EntityId)) {
     let server = Server::start(1, &["--map", "0", "--seed", "5"]);
     let mut client = Client::join(&server, HeroId::SHADOW_FIEND, &[]);
     client.cheat(Cheat::Invulnerable { on: true });
@@ -37,12 +133,14 @@ fn a_marshmages_water_bubble_draws_its_shield_around_the_hurt_ally() {
             })
         });
         client.frames(30);
-        assert_drawn_bubbles(&mut client, frog);
+        check(&mut client, frog);
     });
 }
 
 fn assert_drawn_bubbles(client: &mut Client, frog: EntityId) {
     assert_bubble_binding(client, frog);
+    let expected = bubble_radius(client);
+    let model_radius = sphere_radius_metres(client);
     let spheres = visible_bubbles(client);
     assert_eq!(
         spheres.len(),
@@ -57,6 +155,13 @@ fn assert_drawn_bubbles(client: &mut Client, frog: EntityId) {
         assert!(
             transform.to_scale_rotation_translation().0.min_element() > 1.0,
             "the shield has a real radius, not the zero-CP epsilon: {transform:?}"
+        );
+        let drawn_radius = model_radius * transform.to_scale_rotation_translation().0.max_element();
+        // The nominal 8-unit sphere's packed vertices stop slightly short of its axes.
+        // Allow 2% for that tessellation and float conversion, never arbitrary undersizing.
+        assert!(
+            (drawn_radius / expected - 1.0).abs() <= 0.02,
+            "drawn radius {drawn_radius} must match CP1 radius {expected} within 2%"
         );
         let body = client.body(frog).expect("recipient drawn");
         let hit = client
@@ -75,6 +180,35 @@ fn assert_drawn_bubbles(client: &mut Client, frog: EntityId) {
             "the bubble surrounds the drawn recipient's hit location"
         );
     }
+}
+
+fn sphere_radius_metres(client: &Client) -> f32 {
+    let world = client.world();
+    let model = world
+        .resource::<crate::particles::Library>()
+        .models
+        .iter()
+        .find(|m| m.file.ends_with("/sphere_skin5.glb"))
+        .expect("sphere skin");
+    let glb = std::fs::read(world.resource::<crate::Args>().cache_dir.join(&model.file))
+        .expect("sphere GLB");
+    let length = u32::from_le_bytes(glb[12..16].try_into().expect("JSON length")) as usize;
+    let json: serde_json::Value = serde_json::from_slice(&glb[20..20 + length]).expect("JSON");
+    let (mut low, mut high) = (Vec3::INFINITY, Vec3::NEG_INFINITY);
+    for mesh in json["meshes"].as_array().expect("meshes") {
+        for p in mesh["primitives"].as_array().expect("primitives") {
+            let a = &json["accessors"]
+                [p["attributes"]["POSITION"].as_u64().expect("position") as usize];
+            let point = |key: &str| {
+                Vec3::from_array(std::array::from_fn(|i| {
+                    a[key][i].as_f64().expect("extreme") as f32
+                }))
+            };
+            low = low.min(point("min"));
+            high = high.max(point("max"));
+        }
+    }
+    (high - low).max_element() * 0.5
 }
 
 fn assert_bubble_binding(client: &Client, frog: EntityId) {
@@ -98,7 +232,8 @@ fn assert_bubble_binding(client: &Client, frog: EntityId) {
     let stored = world
         .get::<crate::units::RenderRadius>(scene)
         .expect("imported radius")
-        .0;
+        .0
+        .expect("valid imported bounds");
     assert!(
         (stored - expected).abs() < 0.01,
         "imported model radius {stored}, accessor reference {expected}"

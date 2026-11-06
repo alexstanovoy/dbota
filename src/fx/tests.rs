@@ -2,6 +2,41 @@ use super::line::Fx;
 use super::rules::Rule;
 use crate::manifest::{MANIFEST, Manifest};
 
+#[test]
+fn model_radius_is_only_accepted_for_worn_effects() {
+    for (trigger, at) in [
+        ("use", "caster"),
+        ("cast", "caster"),
+        ("hit", "unit"),
+        ("land", "point"),
+        ("died", "unit"),
+        ("spawn", "point"),
+        ("activate", "caster"),
+        ("store", "caster"),
+        ("pluck", "unit"),
+        ("held", "unit"),
+        ("casting", "unit"),
+        ("flies", "flight"),
+    ] {
+        let name = format!("ability.example.{trigger}");
+        let at = format!("at={at}");
+        let result = Fx::parse(&[&name, &at, "particle=example", "cp1=model_radius"]);
+        assert_eq!(
+            result.expect_err(trigger),
+            "model_radius requires a worn line"
+        );
+    }
+    assert!(
+        Fx::parse(&[
+            "ability.example.worn",
+            "at=unit",
+            "particle=example",
+            "cp1=model_radius"
+        ])
+        .is_ok()
+    );
+}
+
 /// The `fx` lines of the manifest, read.
 fn lines() -> Vec<Fx> {
     MANIFEST

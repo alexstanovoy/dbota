@@ -635,6 +635,8 @@ fx ability.frogmen_arm_of_the_deep.flies at=flight particle=neutral.arm_of_the_d
 fx ability.frogmen_arm_of_the_deep.hit at=unit attach=attach_hitloc particle=neutral.arm_of_the_deep_hit sound=sound.neutral.arm_of_the_deep_hit
 # The sphere's source radius is 8; its initializer divides CP1.x by 8. Valve supplies CP1 in
 # code. Our reading uses the recipient's imported render-bounds radius at its hit location.
+# The radius is the AABB's half-diagonal about the box centre, not a farthest-vertex
+# measurement about attach_hitloc. Missing metadata uses the warned selection-volume fallback.
 # Keep this interpretation here so a gameplay capture can refine the binding in one place.
 fx ability.frogmen_water_bubble*.worn at=unit attach=attach_hitloc particle=neutral.water_bubble cp1=model_radius
 fx ability.spawnlord_master_stomp.cast at=caster sound=sound.neutral.spawnlord_stomp

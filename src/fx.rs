@@ -252,7 +252,7 @@ impl Stage<'_, '_> {
 #[derive(Default, Clone, Copy)]
 struct Feeds {
     /// The worn unit's imported render-bounds radius.
-    model_radius: f32,
+    model_radius: Option<f32>,
     /// How many are held of the effect worn.
     stacks: f32,
     /// Seconds the effect worn has left.
@@ -315,7 +315,12 @@ fn feed(
             Feed::Seconds => Vec3::new(feeds.seconds, 0.0, 0.0),
             Feed::Mode => Vec3::new(feeds.mode, 0.0, 0.0),
             Feed::Charges => Vec3::new(feeds.charges, 0.0, 0.0),
-            Feed::ModelRadius => Vec3::new(feeds.model_radius, 0.0, 0.0),
+            Feed::ModelRadius => {
+                let Some(radius) = feeds.model_radius.filter(|r| r.is_finite() && *r > 0.0) else {
+                    continue;
+                };
+                Vec3::new(radius, 0.0, 0.0)
+            }
             Feed::Vector(vector) => *vector,
             Feed::Place(attach) => place_of(place(attach)),
             Feed::Caster => place_of(feeds.caster.unwrap_or_else(|| place(&Attach::Origin))),

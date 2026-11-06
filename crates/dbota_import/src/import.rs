@@ -52,7 +52,7 @@ pub const LAST_USE_TEXT: &str = "dbota last use 1\n";
 pub const MAX_STAMP: u64 = 4096;
 
 /// Bumped when the importer's output changes for the same install; part of a cache's stamp.
-pub const IMPORT_REV: u32 = 38;
+pub const IMPORT_REV: u32 = 40;
 
 /// The manifest this build imports and draws, and its ids.
 pub const MANIFEST: &str = include_str!("../../../assets-manifest/manifest.txt");
@@ -1414,21 +1414,21 @@ fn particle_models(
     dir: &str,
     out: &mut Out<'_>,
 ) -> Vec<ParticleModel> {
-    let listed = systems
-        .iter()
-        .flat_map(|(_, system)| &system.renderers)
-        .filter_map(|r| match &r.class {
-            Renderer::Models(m) if m.model_input.is_none() => Some(m),
-            _ => None,
-        });
-    let mut models: Vec<ParticleModel> = Vec::new();
-    for renderer in listed {
-        for vmdl in renderer.paths() {
-            let result =
-                export_particle_skins(src, pak, vmdl, &renderer.skin, dir, out, &mut models);
-            if let Err(err) = result {
-                out.report.failed.push((vmdl.to_owned(), err.to_string()));
+    let mut requests: BTreeMap<&str, Vec<&FloatInput>> = BTreeMap::new();
+    for renderer in systems.iter().flat_map(|(_, system)| &system.renderers) {
+        if let Renderer::Models(model) = &renderer.class {
+            if model.model_input.is_some() {
+                continue;
             }
+            for path in model.paths() {
+                requests.entry(path).or_default().push(&model.skin);
+            }
+        }
+    }
+    let mut models: Vec<ParticleModel> = Vec::new();
+    for (vmdl, selectors) in requests {
+        if let Err(err) = export_particle_skins(src, pak, vmdl, &selectors, dir, out, &mut models) {
+            out.report.failed.push((vmdl.to_owned(), err.to_string()));
         }
     }
     models
@@ -1439,7 +1439,7 @@ fn export_particle_skins(
     src: &impl Source,
     pak: &Vpk,
     vmdl: &str,
-    selector: &FloatInput,
+    selectors: &[&FloatInput],
     dir: &str,
     out: &mut Out<'_>,
     models: &mut Vec<ParticleModel>,
@@ -1449,7 +1449,10 @@ fn export_particle_skins(
     let resource = Resource::parse(&bytes)?;
     let source = Model::read(&resource)?;
     let count = source.material_groups.len().max(1);
-    let skins = particle_skin_indices(selector, count)?;
+    let skins: BTreeSet<_> = selectors
+        .iter()
+        .flat_map(|selector| particle_skin_indices(selector, count))
+        .collect();
     for skin in skins {
         if models
             .iter()
@@ -1460,17 +1463,7 @@ fn export_particle_skins(
         // Some shipped renderers select a group the model lacks (break_effect: 2 with
         // only its default group). Without a material remap, its default materials remain.
         let group_index = if skin < count { skin } else { 0 };
-        let name = vmdl
-            .rsplit('/')
-            .next()
-            .unwrap_or(vmdl)
-            .trim_end_matches(".vmdl");
-        let suffix = if group_index == 0 {
-            String::new()
-        } else {
-            format!("_skin{group_index}")
-        };
-        let file = join(dir, &format!("models/{name}{suffix}.glb"));
+        let file = particle_model_path(dir, vmdl, group_index);
         if !out.report.files.contains_key(&file) {
             let group = (group_index != 0).then(|| source.material_groups[group_index].0.as_str());
             model(
@@ -1496,23 +1489,32 @@ fn export_particle_skins(
     Ok(())
 }
 
-fn particle_skin_indices(selector: &FloatInput, count: usize) -> Result<std::ops::Range<usize>> {
+fn particle_model_path(dir: &str, vmdl: &str, skin: usize) -> String {
+    let name = vmdl
+        .strip_prefix("models/")
+        .unwrap_or(vmdl)
+        .trim_end_matches(".vmdl");
+    let suffix = if skin == 0 {
+        String::new()
+    } else {
+        format!("_skin{skin}")
+    };
+    join(dir, &format!("models/{name}{suffix}.glb"))
+}
+
+fn particle_skin_indices(selector: &FloatInput, count: usize) -> std::ops::Range<usize> {
     const MAX_SKINS: usize = 64;
+    // Unsupported selectors retain the default material rather than dropping the renderer.
+    // The install guard pins the largest shipped table (currently 14) below this work bound.
     match selector {
         FloatInput::Literal(value)
             if value.is_finite() && (0.0..MAX_SKINS as f32).contains(value) =>
         {
-            Ok((*value as usize)..(*value as usize + 1))
+            (*value as usize)..(*value as usize + 1)
         }
-        FloatInput::Literal(value) => Err(Error::Malformed {
-            what: "particle model",
-            detail: format!("skin {value} outside 0..{MAX_SKINS}"),
-        }),
-        _ if count <= MAX_SKINS => Ok(0..count),
-        _ => Err(Error::Malformed {
-            what: "particle model",
-            detail: format!("{count} skins"),
-        }),
+        FloatInput::Literal(_) => 0..1,
+        _ if count <= MAX_SKINS => 0..count,
+        _ => 0..1,
     }
 }
 
@@ -2159,4 +2161,98 @@ fn image(
         return Err(Error::NotFound(texture.vtex.clone()));
     };
     texture.to_ktx2(source)
+}
+
+#[cfg(test)]
+mod particle_model_tests {
+    use super::*;
+
+    #[test]
+    #[ignore = "needs a local Dota 2 install"]
+    fn repeated_model_renderers_do_not_repeat_source_reads_or_exports() {
+        struct Discard;
+        impl Sink for Discard {
+            fn write(&mut self, _: &str, _: &[u8]) -> Result<()> {
+                Ok(())
+            }
+        }
+        let read = |count| {
+            let src = Metered {
+                inner: heatel::DirSource::new(heatel::find_game_dir(None).expect("install")),
+                read: Cell::new(0),
+                limit: READ_LIMIT,
+                over: Cell::new(false),
+            };
+            let pak = Vpk::open(&src, DIR_VPK).expect("VPK");
+            let bytes = pak
+                .read_file(&src, "particles/neutral_fx/frogmen_water_bubble.vpcf_c")
+                .expect("particle");
+            let mut system =
+                System::read(&Resource::parse(&bytes).expect("resource")).expect("system");
+            let renderer = system
+                .renderers
+                .iter()
+                .find(|r| matches!(r.class, Renderer::Models(_)))
+                .expect("model renderer")
+                .clone();
+            system.renderers = vec![renderer; count];
+            src.read.set(0);
+            let (mut sink, mut report, mut written, mut pending) =
+                (Discard, Report::default(), 0, VecDeque::new());
+            let mut out = Out {
+                sink: &mut sink,
+                report: &mut report,
+                written: &mut written,
+                pending: &mut pending,
+            };
+            let models = particle_models(
+                &src,
+                &pak,
+                &[("bubble".to_owned(), system)],
+                "particles",
+                &mut out,
+            );
+            assert_eq!(models.len(), 1);
+            assert!(report.failed.is_empty(), "{:?}", report.failed);
+            (src.read.get(), report.files)
+        };
+        assert_eq!(
+            read(1),
+            read(200),
+            "renderer aliases must dedupe before parsing the model"
+        );
+    }
+
+    #[test]
+    fn particle_model_destinations_keep_models_with_the_same_basename_distinct() {
+        let first = particle_model_path("particles", "models/first/sphere.vmdl", 5);
+        let second = particle_model_path("particles", "models/second/sphere.vmdl", 5);
+        assert_ne!(first, second, "the full model path is the asset's identity");
+        assert!(crate::import::safe_path(&first));
+        assert!(crate::import::safe_path(&second));
+    }
+
+    #[test]
+    fn skin_selection_keeps_supported_indices_and_falls_back_at_the_boundary() {
+        for (value, expected) in [
+            (0.0, 0..1),
+            (63.9, 63..64),
+            (64.0, 0..1),
+            (f32::NAN, 0..1),
+            (-1.0, 0..1),
+        ] {
+            assert_eq!(
+                particle_skin_indices(&FloatInput::Literal(value), 1),
+                expected,
+                "skin {value}"
+            );
+        }
+        let computed = FloatInput::ControlPointComponent {
+            control_point: heatel::particle::ControlPoint::new(1).expect("CP1"),
+            component: 0,
+            mapping: heatel::particle::Mapping::Direct,
+        };
+        assert_eq!(particle_skin_indices(&computed, 20), 0..20);
+        assert_eq!(particle_skin_indices(&computed, 65), 0..1);
+    }
 }

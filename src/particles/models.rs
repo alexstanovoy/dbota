@@ -178,29 +178,29 @@ fn place_particles(models: &Models, d: &ModelDraw, node: &Node, out: &mut Vec<Pl
         if out.len() == MAX_PLACED {
             return;
         }
-        let skin = float(&models.skin, &scene, parts, Some(i), 2);
-        if !skin.is_finite() || !(0.0..64.0).contains(&skin) {
-            continue;
-        }
+        let value = float(&models.skin, &scene, parts, Some(i), 2);
+        let skin = if value.is_finite() && (0.0..64.0).contains(&value) {
+            value as u16
+        } else {
+            0
+        };
         let Some(choices) = d
             .skins
             .iter()
-            .find(|s| s.index == skin as u16)
+            .find(|s| s.index == skin)
             .or_else(|| d.skins.iter().find(|s| s.index == 0))
         else {
             continue;
         };
-        let total: f32 = choices
-            .models
-            .iter()
-            .filter(|(m, w)| m.is_some() && *w > 0.0)
-            .map(|(_, w)| *w)
-            .sum();
         let manual = float(&models.manual_selection, &scene, parts, Some(i), 3);
         let picked = if manual >= 0.0 && (manual as usize) < choices.models.len() {
             choices.models[manual as usize].0
         } else {
-            pick(&choices.models, total, random(parts.seed[i], 0x30DE))
+            pick(
+                &choices.models,
+                choices.total_weight,
+                random(parts.seed[i], 0x30DE),
+            )
         };
         let Some(model) = picked else {
             continue;

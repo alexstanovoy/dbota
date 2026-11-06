@@ -175,3 +175,94 @@ fn particle_models_import_the_skin_selected_by_the_installed_renderer() {
     );
     std::fs::remove_dir_all(folder).expect("scratch removed");
 }
+
+/// Geometry copies are currently limited to selected literal groups: 35 model/group pairs
+/// from 32 paths, about 1.97 MB of GLBs and 1120 pooled roots. A computed selector must not
+/// silently turn a large material table into hundreds of extra scene instances.
+#[test]
+#[ignore = "needs a local Dota 2 install"]
+fn installed_particle_models_fit_the_skin_and_geometry_budget() {
+    use heatel::particle::{FloatInput, Renderer};
+    let source = DirSource::new(find_game_dir(None).expect("local install"));
+    let pak = Vpk::open(&source, "pak01_dir.vpk").expect("VPK");
+    let mut queue: Vec<_> = include_str!("../../../assets-manifest/manifest.txt")
+        .lines()
+        .filter_map(|line| {
+            let mut words = line.split_whitespace();
+            (words.next() == Some("particle")).then(|| {
+                words
+                    .nth(1)
+                    .expect("source")
+                    .trim_end_matches("_c")
+                    .to_owned()
+            })
+        })
+        .collect();
+    let mut seen = BTreeSet::new();
+    let mut models = BTreeSet::new();
+    let mut pairs = BTreeSet::new();
+    while let Some(path) = queue.pop() {
+        if !seen.insert(path.clone()) {
+            continue;
+        }
+        let bytes = pak
+            .read_file(&source, &format!("{path}_c"))
+            .expect("particle");
+        let system = System::read(&Resource::parse(&bytes).expect("resource")).expect("system");
+        queue.extend(system.children.iter().map(|child| child.path.clone()));
+        for renderer in system.renderers {
+            let Renderer::Models(model) = renderer.class else {
+                continue;
+            };
+            if model.model_input.is_some() {
+                continue;
+            }
+            let FloatInput::Literal(skin) = model.skin else {
+                panic!("{path}: computed skins need a material-only variant/budget review");
+            };
+            let skin = if skin.is_finite() && (0.0..64.0).contains(&skin) {
+                skin as u16
+            } else {
+                0
+            };
+            for name in model.paths() {
+                models.insert(name.to_owned());
+                pairs.insert((name.to_owned(), skin));
+            }
+        }
+    }
+    assert!(
+        !models.is_empty(),
+        "the guard must inspect installed models"
+    );
+    assert!(
+        pairs.len() <= 64,
+        "{} model variants exceed the client library capacity",
+        pairs.len()
+    );
+    let mut maximum = 0;
+    for model in &models {
+        let bytes = pak
+            .read_file(&source, &format!("{model}_c"))
+            .expect("model");
+        let data = Resource::parse(&bytes)
+            .expect("resource")
+            .data()
+            .expect("DATA")
+            .expect("model data");
+        let count = data
+            .get("m_materialGroups")
+            .and_then(heatel::kv3::Value::as_array)
+            .map_or(0, |groups| groups.len());
+        maximum = maximum.max(count);
+        assert!(
+            count <= 64,
+            "{model}: {count} material groups need an explicit budget review"
+        );
+    }
+    eprintln!(
+        "particle models: {} paths, {} selected groups, maximum {maximum} material groups",
+        models.len(),
+        pairs.len()
+    );
+}
