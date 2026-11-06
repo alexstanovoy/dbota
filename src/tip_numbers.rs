@@ -173,7 +173,17 @@ fn item_value(def: &ItemDef, key: &str) -> Option<Levels> {
         "tooltip_charges" => one(def.charges),
         "max_charges" => one(def.cast_charges),
         "charge_radius" => one(def.charge_radius()?),
-        _ => use_value(def, key),
+        _ => attack_value(def, key).or_else(|| use_value(def, key)),
+    }
+}
+
+/// A value of what the item's passive lays on whatever its carrier's attacks strike.
+fn attack_value(def: &ItemDef, key: &str) -> Option<Levels> {
+    let laid = def.on_attack?;
+    match key {
+        "corruption_armor" => one(fixed(-laid.armor)),
+        "corruption_duration" => one(secs(laid.ticks)),
+        _ => None,
     }
 }
 

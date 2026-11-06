@@ -97,6 +97,7 @@ item 81 cloak
 item 82 lifesteal
 item 83 voodoo_mask
 item 84 faerie_fire
+item 85 blight_stone
 ability 0 pudge_meat_hook
 ability 1 pudge_rot
 ability 2 pudge_innate_graft_flesh
@@ -266,6 +267,7 @@ effect 74 icon.rune.regeneration
 effect 75 icon.rune.invisibility
 effect 76 icon.rune.shield
 effect 77 icon.item.bottle
+effect 78 icon.item.blight_stone
 
 # The Dota modifiers bota's effects are, for their tooltips (DOTA_Tooltip_<modifier>).
 modifier 1 modifier_flask_healing
@@ -336,3 +338,4 @@ modifier 74 modifier_rune_regen
 modifier 75 modifier_rune_invis
 modifier 76 modifier_rune_shield
 modifier 77 modifier_bottle_regeneration
+modifier 78 modifier_blight_stone_buff
