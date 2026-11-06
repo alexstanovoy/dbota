@@ -331,7 +331,7 @@ pub fn soundscapes(text: &str, max: usize) -> (Vec<ScapeLine>, Vec<ScapeSound>) 
 /// drives timers, so each has a bound.
 pub use dbota_import::text::{
     MAX_EVENT_BLOCK_SECS, MAX_EVENT_BLOCK_UNITS, MAX_EVENT_DURATION, MAX_EVENT_FADE_OUT,
-    MAX_EVENT_LIMIT, MAX_EVENT_STOP_AT,
+    MAX_EVENT_LIMIT, MAX_EVENT_STOP_AT, MAX_EVENT_VOLUME,
 };
 
 /// A sound event's limits, as `sounds/events.txt` lists them.
@@ -357,10 +357,12 @@ pub struct EventLine {
     pub stop_oldest: bool,
     /// How long after its start an instance is stopped; none for never.
     pub stop_at: Option<Duration>,
+    /// The event's own volume, 1 being its file's.
+    pub volume: f32,
 }
 
 /// The events of `events.txt` (`event <name> <loops> <duration> <fade_out> <block_s> <block_units>
-/// <limit> <per_entity> <stop_oldest> <stop_at>`), of its first `max` lines; every number is
+/// <limit> <per_entity> <stop_oldest> <stop_at> <volume>`), of its first `max` lines; every number is
 /// clamped to its largest.
 pub fn sound_events(text: &str, max: usize) -> Vec<EventLine> {
     lines(text, max)
@@ -377,7 +379,8 @@ pub fn sound_events(text: &str, max: usize) -> Vec<EventLine> {
                 per_entity,
                 stop_oldest,
                 stop_at,
-            ] = numbers::<8>(rest)?;
+                volume,
+            ] = numbers::<9>(rest)?;
             let flag = |n: f32| n != 0.0;
             let secs = |n: f32, most: f32| Duration::from_secs_f32(n.clamp(0.0, most));
             Some(EventLine {
@@ -391,6 +394,7 @@ pub fn sound_events(text: &str, max: usize) -> Vec<EventLine> {
                 per_entity: flag(per_entity),
                 stop_oldest: flag(stop_oldest),
                 stop_at: (stop_at >= 0.0).then(|| secs(stop_at, MAX_EVENT_STOP_AT)),
+                volume: volume.clamp(0.0, MAX_EVENT_VOLUME),
             })
         })
         .collect()
@@ -430,7 +434,7 @@ mod tests {
     /// The install's data drives timers: a number past its largest is clamped.
     #[test]
     fn event_numbers_are_clamped_to_their_largest() {
-        let line = "event Big 1 9999 9999 9999 9999999 9999 1 1 9999\n";
+        let line = "event Big 1 9999 9999 9999 9999999 9999 1 1 9999 9999\n";
         let [event] = &sound_events(line, 8)[..] else {
             panic!("one event");
         };
@@ -443,6 +447,7 @@ mod tests {
             event.stop_at.map(|d| d.as_secs_f32()),
             Some(MAX_EVENT_STOP_AT)
         );
+        assert_eq!(event.volume, MAX_EVENT_VOLUME);
     }
 
     use super::*;

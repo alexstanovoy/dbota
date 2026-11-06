@@ -93,6 +93,8 @@ struct Voice {
     despawn: bool,
     /// The start of its fade-out once stopped, and how long the fade lasts.
     stopped: Option<(Duration, Duration)>,
+    /// The event's own volume, which every gain the voice has is of.
+    volume: f32,
     gain: f32,
 }
 
@@ -154,6 +156,8 @@ impl Mixer {
             return Started::Refused;
         }
         let (ends, despawn) = lifetime(rules.as_ref(), kept);
+        let volume = rules.as_ref().map_or(1.0, |r| r.volume);
+        let gain = request.gain * volume;
         let playback = if kept {
             PlaybackSettings::LOOP
         } else {
@@ -163,7 +167,7 @@ impl Mixer {
             .spawn((
                 AudioPlayer::new(source),
                 playback
-                    .with_volume(Volume::Linear(request.gain))
+                    .with_volume(Volume::Linear(gain))
                     .with_speed(request.speed),
             ))
             .id();
@@ -178,7 +182,8 @@ impl Mixer {
             ends: ends.map(|length| now + length),
             despawn,
             stopped: None,
-            gain: request.gain,
+            volume,
+            gain,
         });
         if kept {
             Started::Loop(entity)
@@ -289,7 +294,7 @@ impl Mixer {
     pub fn follow(&mut self, entity: Entity, at: (f32, f32), gain: f32) {
         if let Some(voice) = self.voices.iter_mut().find(|v| v.entity == entity) {
             voice.at = Some(at);
-            voice.gain = gain;
+            voice.gain = gain * voice.volume;
         }
     }
 
@@ -332,6 +337,16 @@ impl Mixer {
             .iter()
             .filter(|v| v.event == event && v.sounding())
             .count()
+    }
+
+    /// The volume of the newest voice of the event sounding now, before any fade.
+    #[cfg(test)]
+    pub(crate) fn voice_gain(&self, event: &str) -> Option<f32> {
+        self.voices
+            .iter()
+            .rev()
+            .find(|v| v.event == event && v.sounding())
+            .map(|v| v.gain)
     }
 
     /// The volume a looping voice of the event has now, before its fade.
@@ -396,6 +411,7 @@ mod tests {
             per_entity: false,
             stop_oldest: true,
             stop_at: None,
+            volume: 1.0,
         }
     }
 
@@ -468,6 +484,28 @@ mod tests {
         );
         assert_eq!(refused, Started::Refused, "no loop is stolen");
         assert_eq!(mixer.voices.len(), MAX_VOICES);
+    }
+
+    /// A loop that follows its source keeps its event's volume: the camera's distance is of the
+    /// event's level, not of the file's.
+    #[test]
+    fn a_followed_loop_keeps_the_volume_of_its_event() {
+        let mut world = World::new();
+        let mut quiet = event("loop", true, 1);
+        quiet.volume = 0.5;
+        let mut mixer = mixer(vec![quiet]);
+        let mut commands = world.commands();
+        let started = mixer.start(
+            &mut commands,
+            Duration::ZERO,
+            &request("loop", owner(1)),
+            Handle::default(),
+        );
+        let Started::Loop(voice) = started else {
+            panic!("a loop");
+        };
+        mixer.follow(voice, (0.0, 0.0), 0.8);
+        assert_eq!(mixer.loop_gain("loop"), Some(0.4));
     }
 
     /// A loop with no owner would sound for ever with nothing to stop it: it plays once.

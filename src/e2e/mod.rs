@@ -49,6 +49,7 @@ mod shop_queue;
 mod shopkeepers;
 mod slot_looks;
 mod sound_limits;
+mod sound_volume;
 mod soundscape;
 mod start;
 mod strategy;

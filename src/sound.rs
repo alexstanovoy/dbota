@@ -25,9 +25,9 @@ pub const REST: f32 = 0.05;
 /// unit, and a snapshot may hold thousands of them.
 const SHOTS_PER_TICK: usize = 32;
 
-/// The gain of a melee creep's whoosh and blow: their events play at full
-/// volume where a ranged creep's shot plays at 0.6, which sounds at 0.35 here.
-const MELEE_GAIN: f32 = 0.6;
+/// The level creeps' and towers' sounds are set to against the interface's; the mixer scales
+/// each by its event's own volume (a melee creep's events state 1, a ranged creep's 0.6).
+const WORLD_GAIN: f32 = 0.6;
 
 /// One kind of sound and the sources it may be played from.
 struct Voice {
@@ -202,12 +202,8 @@ impl Side {
     }
 }
 
-/// Dota's volumes of its ping events (`General.Ping`, `General.PingWarning`
-/// and its second layer `PingWarning.Layer`, in game_sounds_ui), and the
-/// layer's pitch, played as speed.
-const PING_GAIN: f32 = 0.6;
-const PING_DANGER_GAIN: f32 = 0.5;
-const PING_LAYER_GAIN: f32 = 0.5;
+/// The pitch of the second layer of a danger ping (`PingWarning.Layer`), played as speed; the
+/// volumes of the ping events are their own, the mixer's.
 const PING_LAYER_SPEED: f32 = 1.25;
 
 /// How fast a kind is played: Dota's pitch where its event raises it.
@@ -560,10 +556,10 @@ fn play(
     // A ping is heard by its side wherever the camera is, as Dota's are.
     for kind in crate::pings::fresh(core, &mut last_ping) {
         match kind {
-            bota_proto::PingKind::Regular => sounder.sound(Kind::Ping, PING_GAIN, None, None),
+            bota_proto::PingKind::Regular => sounder.sound(Kind::Ping, 1.0, None, None),
             bota_proto::PingKind::Danger => {
-                sounder.sound(Kind::PingDanger, PING_DANGER_GAIN, None, None);
-                sounder.sound(Kind::PingDangerLayer, PING_LAYER_GAIN, None, None);
+                sounder.sound(Kind::PingDanger, 1.0, None, None);
+                sounder.sound(Kind::PingDangerLayer, 1.0, None, None);
             }
         }
     }
@@ -706,19 +702,19 @@ fn shots(core: &bota_client_core::App, fog: &crate::fog::FogGrid, sound: &mut So
         match shooter.kind {
             UnitKind::Tower => sound.sound(
                 row(Subject::Tower, Event::Attack, Some(side)),
-                0.7,
+                WORLD_GAIN,
                 at,
                 None,
             ),
             UnitKind::CreepRanged => sound.sound(
                 row(Subject::RangedCreep, Event::Attack, Some(side)),
-                0.35,
+                WORLD_GAIN,
                 at,
                 None,
             ),
             UnitKind::CreepSiege => sound.sound(
                 row(Subject::SiegeCreep, Event::Attack, Some(side)),
-                0.25,
+                WORLD_GAIN,
                 at,
                 None,
             ),
@@ -741,7 +737,7 @@ fn shots(core: &bota_client_core::App, fog: &crate::fog::FogGrid, sound: &mut So
             let at = Some((p.pos.x.to_f32(), p.pos.y.to_f32()));
             sound.sound(
                 row(Subject::RangedCreep, Event::Impact, Some(side)),
-                0.35,
+                WORLD_GAIN,
                 at,
                 p.target,
             );
@@ -776,7 +772,7 @@ fn swings(core: &bota_client_core::App, fog: &crate::fog::FogGrid, sound: &mut S
         if now.is_some() && now != before {
             sound.sound(
                 row(Subject::MeleeCreep, Event::PreAttack, None),
-                MELEE_GAIN,
+                WORLD_GAIN,
                 at,
                 None,
             );
@@ -785,7 +781,7 @@ fn swings(core: &bota_client_core::App, fog: &crate::fog::FogGrid, sound: &mut S
             let target = swing_of(prev, u.id).map(|swing| swing.target);
             sound.sound(
                 row(Subject::MeleeCreep, Event::Attack, None),
-                MELEE_GAIN,
+                WORLD_GAIN,
                 at,
                 target,
             );
