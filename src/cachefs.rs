@@ -46,9 +46,6 @@ const DECODE_BUDGET: usize = if cfg!(target_arch = "wasm32") {
 } else {
     192 << 20
 };
-/// Longest model file read (the importer writes the map's glTF, 15 MB, as the largest).
-#[cfg(not(target_arch = "wasm32"))]
-const MAX_MODEL: u64 = 64 << 20;
 /// Frames without a texture arriving after which the budget lets every
 /// texture through: a load that never reports back must not stall the rest.
 const STALL_FRAMES: u32 = 120;
@@ -320,9 +317,25 @@ impl AssetReader for CacheReader {
             }
             Err(err) => return Err(err.into()),
         };
-        if self.decodes(path) {
+        // No larger than a cache may hold a file of its kind: the loaders read it whole.
+        let limit = dbota_import::pack::size_limit(&path.to_string_lossy());
+        let too_big = || {
+            let why = format!("{}: more than {limit} bytes", path.display());
+            AssetReaderError::Io(std::io::Error::other(why).into())
+        };
+        if file.metadata()?.len() > limit {
+            return Err(too_big());
+        }
+        let mut whole = || -> Result<Vec<u8>, AssetReaderError> {
             let mut bytes = Vec::new();
-            file.read_to_end(&mut bytes)?;
+            (&mut file).take(limit + 1).read_to_end(&mut bytes)?;
+            if bytes.len() as u64 > limit {
+                return Err(too_big());
+            }
+            Ok(bytes)
+        };
+        if self.decodes(path) {
+            let bytes = whole()?;
             let decoded = self.decoded(path, &bytes).await?;
             return Ok(desktop::Served::Memory(bevy::asset::io::VecReader::new(
                 decoded,
@@ -330,17 +343,7 @@ impl AssetReader for CacheReader {
         }
         if Self::is_model(path) {
             // Read whole, as the loader would: the file is the model's own bytes, vetted.
-            let mut bytes = Vec::new();
-            (&mut file).take(MAX_MODEL + 1).read_to_end(&mut bytes)?;
-            if bytes.len() as u64 > MAX_MODEL {
-                return Err(AssetReaderError::Io(
-                    std::io::Error::other(format!(
-                        "{}: more than {MAX_MODEL} bytes",
-                        path.display()
-                    ))
-                    .into(),
-                ));
-            }
+            let bytes = whole()?;
             Self::vet_model(path, &bytes)?;
             return Ok(desktop::Served::Memory(bevy::asset::io::VecReader::new(
                 bytes,
@@ -484,6 +487,42 @@ mod tests {
             why.contains("embedded.glb: an image inside the model"),
             "{why}"
         );
+        assert!(served.is_ok());
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    /// A texture is served open or read whole by the size its file has, which the header that
+    /// is checked says nothing of: a file larger than any of its kind a cache may hold is not
+    /// served, even with a header within the caps.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn a_texture_file_past_the_size_of_its_kind_is_not_served() {
+        let root = std::env::temp_dir().join(format!("dbota-big-texture-{}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        let mut png = b"\x89PNG\r\n\x1a\n\0\0\0\x0dIHDR".to_vec();
+        png.extend(16u32.to_be_bytes());
+        png.extend(16u32.to_be_bytes());
+        png.extend([8, 6, 0, 0, 0]);
+        std::fs::write(root.join("small.png"), &png).unwrap();
+        std::fs::write(root.join("huge.png"), &png).unwrap();
+        // Sparse: nothing is written past the header.
+        std::fs::File::options()
+            .write(true)
+            .open(root.join("huge.png"))
+            .unwrap()
+            .set_len(64 << 30)
+            .unwrap();
+        let reader = CacheReader::new(
+            root.clone(),
+            DecodeBudget::default(),
+            BlockTextures::default(),
+        );
+
+        let refused = bevy::tasks::block_on(reader.read(Path::new("huge.png")));
+        let served = bevy::tasks::block_on(reader.read(Path::new("small.png")));
+
+        let why = refused.err().expect("refused").to_string();
+        assert!(why.contains("huge.png: more than"), "{why}");
         assert!(served.is_ok());
         std::fs::remove_dir_all(&root).unwrap();
     }

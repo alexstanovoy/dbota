@@ -65,6 +65,15 @@ const LIMITS: [(&str, u64); 9] = [
     ("wav", 64 << 20),
 ];
 
+/// The most bytes a cache file at `path` may have: by its extension, else the most any file may.
+pub fn size_limit(path: &str) -> u64 {
+    let extension = path.rsplit_once('.').map(|(_, e)| e);
+    LIMITS
+        .iter()
+        .find(|(e, _)| Some(*e) == extension)
+        .map_or(MAX_FILE, |(_, limit)| *limit)
+}
+
 /// Why a prepared cache is not taken.
 #[derive(Debug, PartialEq, Eq)]
 pub enum PackError {
@@ -422,11 +431,7 @@ fn check_file(entry: &Entry, file: &Listed<'_>) -> Result<(), PackError> {
             file.size
         )));
     }
-    let extension = file.path.rsplit_once('.').map(|(_, e)| e);
-    let limit = LIMITS
-        .iter()
-        .find(|(e, _)| Some(*e) == extension)
-        .map_or(MAX_FILE, |(_, limit)| *limit);
+    let limit = size_limit(file.path);
     if file.size > limit {
         return Err(PackError::TooBig(format!(
             "{} is {} bytes, at most {limit}",
