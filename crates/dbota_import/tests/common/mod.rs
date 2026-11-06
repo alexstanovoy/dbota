@@ -9,10 +9,10 @@ use std::path::PathBuf;
 /// Fails the test, with how to make the cache, when it is absent or empty: a golden test with
 /// nothing to compare with must not pass.
 pub fn reference() -> PathBuf {
-    let path = std::env::var_os("DBOTA_REFERENCE").map_or_else(
-        || PathBuf::from(std::env::var_os("HOME").unwrap()).join(".cache/dbota/v6"),
-        PathBuf::from,
-    );
+    let path = std::env::var_os("DBOTA_REFERENCE")
+        .filter(|path| !path.is_empty())
+        .map(PathBuf::from)
+        .expect("DBOTA_REFERENCE must name the reference cache");
     let held = std::fs::read_dir(&path).map(|mut entries| entries.next().is_some());
     assert!(
         held.as_ref().is_ok_and(|held| *held),

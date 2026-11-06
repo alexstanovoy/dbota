@@ -357,7 +357,7 @@ fn a_file_that_is_not_a_cache_is_refused() {
 fn an_unattended_run_without_assets_ends_with_the_reason() {
     let scratch = Scratch::new("unattended");
     let cache = scratch.path("assets");
-    let output = std::process::Command::new(env!("CARGO_BIN_EXE_dbota"))
+    let output = common::binary(&cache)
         .arg("--cache-dir")
         .arg(&cache)
         .args(["--replay", "none.brp", "--screenshot-at", "10"])

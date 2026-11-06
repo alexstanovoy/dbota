@@ -4,31 +4,187 @@
 
 pub mod prepared;
 
+use std::ffi::OsStr;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
-use std::sync::mpsc;
+use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::{Arc, mpsc};
 use std::time::{Duration, Instant};
 
-/// The client, to be given its arguments, drawing in a headless compositor of its own on the GPU
-/// (tools/headless.sh, or the one the run is already in): no window shows on the desktop, unless
-/// `DBOTA_SHOW=1` asks for it.
-///
-/// Its data folder (where it keeps its replays) is one of its own under the test target's
-/// scratch folder, never the user's; a test that looks into it sets `XDG_DATA_HOME` itself.
-pub fn client() -> Command {
-    static NEXT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
-    let data = std::path::PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join(format!(
-        "client-data-{}-{}",
-        std::process::id(),
-        NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
-    ));
-    let mut command = Command::new(concat!(env!("CARGO_MANIFEST_DIR"), "/tools/headless.sh"));
+pub const CLIENT_ENVIRONMENT: &[&str] = &[
+    "BOTA_SERVER",
+    "DBOTA_SERVICE",
+    "BOTA_SEAT_KEY",
+    "DBOTA_DRILL",
+    "DBOTA_DRILL_SHOTS",
+];
+
+/// A client's files live until its last command or child is dropped.
+struct ClientScratch(PathBuf);
+
+impl Drop for ClientScratch {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
+pub struct ClientCommand {
+    command: Command,
+    scratch: Arc<ClientScratch>,
+}
+
+pub struct ClientChild {
+    child: Child,
+    _scratch: Arc<ClientScratch>,
+}
+
+impl std::ops::Deref for ClientChild {
+    type Target = Child;
+    fn deref(&self) -> &Child {
+        &self.child
+    }
+}
+
+impl std::ops::DerefMut for ClientChild {
+    fn deref_mut(&mut self) -> &mut Child {
+        &mut self.child
+    }
+}
+
+impl Drop for ClientChild {
+    fn drop(&mut self) {
+        if self.child.try_wait().ok().flatten().is_none() {
+            let _ = self.child.kill();
+            let _ = self.child.wait();
+        }
+    }
+}
+
+impl ClientCommand {
+    pub fn arg(&mut self, arg: impl AsRef<OsStr>) -> &mut Self {
+        self.command.arg(arg);
+        self
+    }
+    pub fn args<I, S>(&mut self, args: I) -> &mut Self
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<OsStr>,
+    {
+        self.command.args(args);
+        self
+    }
+    pub fn env(&mut self, key: impl AsRef<OsStr>, value: impl AsRef<OsStr>) -> &mut Self {
+        self.command.env(key, value);
+        self
+    }
+    pub fn env_remove(&mut self, key: impl AsRef<OsStr>) -> &mut Self {
+        self.command.env_remove(key);
+        self
+    }
+    pub fn stdout(&mut self, config: impl Into<Stdio>) -> &mut Self {
+        self.command.stdout(config);
+        self
+    }
+    pub fn stderr(&mut self, config: impl Into<Stdio>) -> &mut Self {
+        self.command.stderr(config);
+        self
+    }
+    pub fn output(&mut self) -> std::io::Result<std::process::Output> {
+        self.command.output()
+    }
+    pub fn spawn(&mut self) -> std::io::Result<ClientChild> {
+        self.command.spawn().map(|child| ClientChild {
+            child,
+            _scratch: Arc::clone(&self.scratch),
+        })
+    }
+    pub fn get_envs(&self) -> impl Iterator<Item = (&OsStr, Option<&OsStr>)> {
+        self.command.get_envs()
+    }
+}
+
+/// The client draws in a private headless compositor.
+pub fn client() -> ClientCommand {
+    isolated_client(&asset_cache(), None, true)
+}
+
+/// A client for commands that prepare their own cache, without a compositor.
+pub fn binary(cache: &Path) -> ClientCommand {
+    isolated_client(cache, None, false)
+}
+
+/// Runs the isolated client through a caller's process wrapper.
+pub fn wrapped(prefix: Command) -> ClientCommand {
+    isolated_client(&asset_cache(), Some(prefix), true)
+}
+
+fn isolated_client(cache: &Path, prefix: Option<Command>, headless: bool) -> ClientCommand {
+    static NEXT_CLIENT: AtomicU32 = AtomicU32::new(0);
+    let root = PathBuf::from(env!("CARGO_TARGET_TMPDIR"));
+    let scratch = (0..1024)
+        .find_map(|_| {
+            let path = root.join(format!(
+                "client-{}-{}",
+                std::process::id(),
+                NEXT_CLIENT.fetch_add(1, Ordering::Relaxed)
+            ));
+            match std::fs::create_dir(&path) {
+                Ok(()) => Some(path),
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => None,
+                Err(error) => panic!(
+                    "cannot create private client directory {}: {error}",
+                    path.display()
+                ),
+            }
+        })
+        .expect("no free private client directory");
+    let mut command = match prefix {
+        Some(mut prefix) => {
+            if headless {
+                prefix.arg(concat!(env!("CARGO_MANIFEST_DIR"), "/tools/headless.sh"));
+            }
+            prefix.arg(env!("CARGO_BIN_EXE_dbota"));
+            prefix
+        }
+        None if headless => {
+            let mut command =
+                Command::new(concat!(env!("CARGO_MANIFEST_DIR"), "/tools/headless.sh"));
+            command.arg(env!("CARGO_BIN_EXE_dbota"));
+            command
+        }
+        None => Command::new(env!("CARGO_BIN_EXE_dbota")),
+    };
     command
-        .arg(env!("CARGO_BIN_EXE_dbota"))
-        .env("XDG_DATA_HOME", data);
-    command
+        .env("HOME", &scratch)
+        .env("XDG_CONFIG_HOME", scratch.join("config"))
+        .env("XDG_DATA_HOME", scratch.join("data"))
+        .env("XDG_CACHE_HOME", root.join("gpu-cache"))
+        .env("XDG_STATE_HOME", scratch.join("state"))
+        .env("LOCALAPPDATA", scratch.join("data"))
+        .env("APPDATA", scratch.join("data"))
+        .env("DBOTA_ASSETS", cache);
+    for name in CLIENT_ENVIRONMENT {
+        command.env_remove(name);
+    }
+    ClientCommand {
+        command,
+        scratch: Arc::new(ClientScratch(scratch)),
+    }
+}
+
+pub fn asset_cache() -> PathBuf {
+    let cache = std::env::var_os("DBOTA_ASSETS")
+        .filter(|path| !path.is_empty())
+        .map(PathBuf::from)
+        .expect("DBOTA_ASSETS must name a test asset cache");
+    assert!(
+        cache.join(dbota_import::cache_dir::INDEX).is_file(),
+        "test asset cache has no index: {}",
+        cache.display()
+    );
+    cache
 }
 
 /// A running game server, ended when it is dropped.
@@ -154,6 +310,8 @@ fn run_script(address: &str, script: &str, tag: &str, shots: Option<&Path>) {
     command
         .args(["--addr", address, "--config"])
         .arg(scratch.join("settings.conf"))
+        .arg("--cache-dir")
+        .arg(asset_cache())
         .args([
             "--script",
             script,
@@ -168,7 +326,6 @@ fn run_script(address: &str, script: &str, tag: &str, shots: Option<&Path>) {
     }
     let mut child = command
         .env("XDG_DATA_HOME", scratch.join("data"))
-        .env_remove("BOTA_SEAT_KEY")
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
         .spawn()

@@ -23,14 +23,16 @@ if [ -z "$replay" ] || [ ! -f "$replay" ]; then
     exit 2
 fi
 mkdir -p "$out"
+: "${DBOTA_ASSETS:?DBOTA_ASSETS must name a test asset cache}"
+export DBOTA_ASSETS
 cargo build --release --quiet --manifest-path "$here/Cargo.toml"
 status=0
-"$here/target/release/dbota" --replay "$replay" --pov 0 --screenshot-at "$tick" \
+"$here/tools/test_client.sh" --replay "$replay" --pov 0 --screenshot-at "$tick" \
     --screenshot-dir "$out" --screenshot-prefix check- --distance 6500 \
     --visual-check --mute --no-vsync --display-mode windowed 2> "$out/dbota.log" | tee "$out/dbota.out" || status=$?
 [ "$status" -eq 0 ] || exit "$status"
 # The same seen by the other side, one window more.
-dire=$("$here/target/release/dbota" --replay "$replay" --pov 1 --screenshot-at "$tick" \
+dire=$("$here/tools/test_client.sh" --replay "$replay" --pov 1 --screenshot-at "$tick" \
     --screenshot-dir "$out" --screenshot-prefix check-dire- --distance 6500 \
     --visual-check --mute --no-vsync --display-mode windowed 2>> "$out/dbota.log" || true)
 echo "$dire" | sed 's/^visual check: /visual check (Dire): /'
@@ -39,7 +41,7 @@ if echo "$dire" | grep -q "FAIL"; then exit 1; fi
 # The river is one surface: the camera on it where the mid lane crosses it
 # (VISUAL_RIVER, bota world units), nearer than the camera starts, at the
 # same tick, its seams measured.
-river=$("$here/target/release/dbota" --replay "$replay" --look "${VISUAL_RIVER:-8000,9600}" --distance 2500 \
+river=$("$here/tools/test_client.sh" --replay "$replay" --look "${VISUAL_RIVER:-8000,9600}" --distance 2500 \
     --screenshot-at "$tick" --screenshot-dir "$out" --screenshot-prefix check-river- \
     --visual-check --water-check --mute --no-vsync --display-mode windowed 2>> "$out/dbota.log" || true)
 echo "$river"
@@ -47,7 +49,7 @@ if ! echo "$river" | grep -q "PASS the river"; then exit 1; fi
 
 # The health bars near: the camera on the first seat's courier, whose health is counted in hits,
 # every bar's marks and every bar of blocks measured.
-bars=$("$here/target/release/dbota" --replay "$replay" --pov 0 --bars-check --distance 2500 \
+bars=$("$here/tools/test_client.sh" --replay "$replay" --pov 0 --bars-check --distance 2500 \
     --screenshot-at "$tick" --screenshot-dir "$out" --screenshot-prefix check-bars- \
     --visual-check --mute --no-vsync --display-mode windowed 2>> "$out/dbota.log" || true)
 echo "$bars"
@@ -59,7 +61,7 @@ if ! echo "$bars" | grep -q "PASS health counted in hits"; then exit 1; fi
 # off by turns, and each run's count of hero meshes must match the first's
 # and its hero-part checks pass.
 runs=${VISUAL_RUNS:-1}
-cache=${DBOTA_ASSETS:-$("$here/target/release/dbota" cache-dir)}
+cache=$DBOTA_ASSETS
 first=$(grep -m1 "hero parts:" "$out/dbota.out" 2>/dev/null || true)
 for run in $(seq 2 "$runs"); do
     if [ $((run % 2)) -eq 0 ]; then
@@ -71,7 +73,7 @@ for d,_,fs in os.walk(sys.argv[1]):
         except OSError: pass' "$cache"
     fi
     portrait=$([ $((run % 4)) -ge 2 ] && echo true || echo false)
-    checks=$("$here/target/release/dbota" --replay "$replay" --pov 0 --screenshot-at "$tick" \
+    checks=$("$here/tools/test_client.sh" --replay "$replay" --pov 0 --screenshot-at "$tick" \
         --screenshot-dir "$out" --screenshot-prefix repeat- --distance 6500 \
         --set animate_portrait="$portrait" --visual-check --mute --no-vsync --display-mode windowed 2>/dev/null || true)
     line=$(echo "$checks" | grep -m1 "hero parts:" || true)
@@ -90,7 +92,7 @@ echo "visual check: PASS hero parts identical and on their skeletons over $runs 
 # Each hero's portrait says a line with its face (src/talk_check.rs); its frames idle,
 # talking and checked are saved in the output folder.
 for hero in pudge nevermore; do
-    talk=$("$here/target/release/dbota" --replay "$replay" --pov 0 --talk-check "$hero" \
+    talk=$("$here/tools/test_client.sh" --replay "$replay" --pov 0 --talk-check "$hero" \
         --screenshot-dir "$out" --screenshot-prefix portrait- --mute --no-vsync \
         --display-mode windowed 2>> "$out/dbota.log" || true)
     echo "$talk" | grep "talking portrait" || echo "visual check: FAIL talking portrait $hero: no verdict"
@@ -100,7 +102,7 @@ done
 # A system whose fontconfig lists no font at all still starts, on the shipped fonts: the CJK
 # fallback is registered and the picture is taken.
 echo '<?xml version="1.0"?><fontconfig></fontconfig>' > "$out/no-fonts.conf"
-if FONTCONFIG_FILE="$out/no-fonts.conf" "$here/target/release/dbota" --replay "$replay" --pov 0 \
+if FONTCONFIG_FILE="$out/no-fonts.conf" "$here/tools/test_client.sh" --replay "$replay" --pov 0 \
     --screenshot-at "$tick" --screenshot-dir "$out" --screenshot-prefix nofonts- --mute --no-vsync \
     > "$out/nofonts.out" 2> "$out/nofonts.log" \
     && grep -q "stands behind the Latin ones" "$out/nofonts.log" \

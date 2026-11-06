@@ -606,15 +606,10 @@ mod tests {
     #[test]
     #[ignore = "needs the asset cache"]
     fn audit_dota_numbers_against_the_simulator() {
-        let root = std::env::var_os("DBOTA_ASSETS").map_or_else(
-            || {
-                let home = std::env::var_os("HOME").expect("HOME");
-                std::path::PathBuf::from(home)
-                    .join(".cache/dbota")
-                    .join(dbota_import::import::folder_name())
-            },
-            std::path::PathBuf::from,
-        );
+        let root = std::env::var_os("DBOTA_ASSETS")
+            .filter(|path| !path.is_empty())
+            .map(std::path::PathBuf::from)
+            .expect("DBOTA_ASSETS must name the test asset cache");
         let manifest = Manifest::load(&root);
         let texts = Texts::load(&manifest.root);
         assert!(!texts.is_empty(), "no text file in {}", root.display());

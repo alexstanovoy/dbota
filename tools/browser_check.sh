@@ -46,7 +46,7 @@ for _ in $(seq 100); do
     sleep 0.3
 done
 [ -n "$addr" ] || { kill "$srv" 2> /dev/null; echo "browser_check: the server did not start"; cat "$work/server.out"; exit 1; }
-"$here/tools/headless.sh" target/release/dbota --addr "$addr" --config "$work/chat.conf" --mute --no-vsync --display-mode windowed \
+"$here/tools/headless.sh" "$here/tools/test_client.sh" --addr "$addr" --config "$work/chat.conf" --mute --no-vsync --display-mode windowed \
     --script "await:game;wait:30;say:one;wait:1;say:two;wait:1;say:three;wait:1;say:four;wait:1;say:five;wait:1;say:six;wait:20;exit" \
     > "$work/chat-client.out" 2>&1 || { kill "$srv" 2> /dev/null; tail -n 20 "$work/chat-client.out"; echo "browser_check: the chat client failed"; exit 1; }
 wait "$srv" || true
@@ -63,7 +63,7 @@ DBOTA_INDEX_PAGE="$here/$pages/plain" python3 -m unittest discover -s web/test -
 DBOTA_WEB_REPLAY=$chat DBOTA_WEB_ARGS="--replay built-in --pov 0 --seek 4600" OUT=$pages/replay web/build.sh
 DBOTA_WEB_REPLAY=$chat DBOTA_WEB_ARGS="--replay built-in --pov 0 --settings video" APIS=webgpu OUT=$pages/video web/build.sh
 rm -f "$work/cache.zip"
-target/release/dbota export-cache "$work/cache.zip"
+"$here/tools/test_client.sh" export-cache "$work/cache.zip"
 
 python3 web/test/smoke.py --import-page "$pages/replay" --reference-cache "$DBOTA_ASSETS" \
     --prepared-page "$pages/replay" --cache-zip "$work/cache.zip" --cache-folder "$DBOTA_ASSETS" \

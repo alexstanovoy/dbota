@@ -6,7 +6,7 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::io::{BufWriter, Write};
 use std::path::{Path, PathBuf};
-use std::process::{Command, Output};
+use std::process::Output;
 
 use dbota_import::import::{INDEX, Report, STAMP};
 use dbota_import::zip::ZipWriter;
@@ -37,16 +37,9 @@ impl Drop for Scratch {
     }
 }
 
-/// The asset cache `dbota import` made for this build: `DBOTA_ASSETS`, else the usual place.
+/// The explicitly supplied asset cache `dbota import` made for this build.
 pub fn real_cache() -> PathBuf {
-    std::env::var_os("DBOTA_ASSETS").map_or_else(
-        || {
-            PathBuf::from(std::env::var_os("HOME").expect("a home"))
-                .join(".cache/dbota")
-                .join(dbota_import::import::folder_name())
-        },
-        PathBuf::from,
-    )
+    super::asset_cache()
 }
 
 /// Every file below `dir` by its `/`-separated path.
@@ -128,7 +121,7 @@ pub fn write_zip<'a>(zip: &Path, files: impl IntoIterator<Item = (&'a str, &'a [
 
 /// `dbota <command> <argument>` run with the asset cache at `cache`.
 pub fn dbota(cache: &Path, command: &str, argument: &Path) -> Output {
-    Command::new(env!("CARGO_BIN_EXE_dbota"))
+    super::binary(cache)
         .arg("--cache-dir")
         .arg(cache)
         .arg(command)

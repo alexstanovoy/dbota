@@ -20,6 +20,131 @@ use std::time::{Duration, Instant};
 /// Seconds a run may take.
 const PATIENCE: Duration = Duration::from_secs(240);
 
+#[test]
+fn client_scratch_is_removed_after_the_child_exits() {
+    let mut client = common::binary(Path::new("unused"));
+    let home = client
+        .get_envs()
+        .find(|(key, _)| *key == "HOME")
+        .and_then(|(_, value)| value)
+        .map(PathBuf::from)
+        .expect("private home");
+    assert!(home.is_dir());
+    let result = client.arg("--version").output().expect("the client starts");
+    assert!(result.status.success());
+    drop(client);
+    assert!(!home.exists(), "{} remains", home.display());
+}
+
+#[test]
+fn client_scratch_outlives_its_command_until_the_child_is_dropped() {
+    let mut client = common::binary(Path::new("unused"));
+    let home = client
+        .get_envs()
+        .find(|(key, _)| *key == "HOME")
+        .and_then(|(_, value)| value)
+        .map(PathBuf::from)
+        .expect("private home");
+    let mut child = client
+        .arg("--version")
+        .stdout(Stdio::null())
+        .spawn()
+        .expect("client starts");
+    drop(client);
+    assert!(home.is_dir());
+    assert!(child.wait().expect("client exits").success());
+    drop(child);
+    assert!(!home.exists());
+}
+
+#[test]
+fn client_harness_refuses_to_start_without_an_explicit_asset_cache() {
+    if std::env::var_os("DBOTA_TEST_NO_CACHE_CHILD").is_some() {
+        common::client();
+        return;
+    }
+    let output = Command::new(std::env::current_exe().expect("the test binary"))
+        .args([
+            "--exact",
+            "client_harness_refuses_to_start_without_an_explicit_asset_cache",
+            "--nocapture",
+        ])
+        .env("DBOTA_TEST_NO_CACHE_CHILD", "1")
+        .env_remove("DBOTA_ASSETS")
+        .output()
+        .expect("the isolated test starts");
+    assert!(!output.status.success());
+    assert!(
+        String::from_utf8_lossy(&output.stderr)
+            .contains("DBOTA_ASSETS must name a test asset cache")
+    );
+}
+
+#[test]
+fn client_harness_refuses_a_cache_without_an_index() {
+    if std::env::var_os("DBOTA_TEST_BAD_CACHE_CHILD").is_some() {
+        common::client();
+        return;
+    }
+    let scratch = Scratch::new("bad-cache");
+    let output = Command::new(std::env::current_exe().expect("the test binary"))
+        .args([
+            "--exact",
+            "client_harness_refuses_a_cache_without_an_index",
+            "--nocapture",
+        ])
+        .env("DBOTA_TEST_BAD_CACHE_CHILD", "1")
+        .env("DBOTA_ASSETS", scratch.0.join("missing"))
+        .output()
+        .expect("the isolated test starts");
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("test asset cache has no index"));
+}
+
+#[test]
+fn client_harness_isolates_the_subprocess_environment() {
+    if std::env::var_os("DBOTA_ENV_PROBE_CHILD").is_some() {
+        let mut shell = Command::new("sh");
+        shell.args(["-c", "printf '%s\\n' \"$HOME\" \"$XDG_CONFIG_HOME\" \"$XDG_DATA_HOME\" \"${BOTA_SERVER-unset}\" \"${DBOTA_SERVICE-unset}\" \"${BOTA_SEAT_KEY-unset}\" \"${DBOTA_DRILL-unset}\" \"${DBOTA_DRILL_SHOTS-unset}\""]);
+        let output = common::wrapped(shell)
+            .output()
+            .expect("environment probe starts");
+        assert!(output.status.success());
+        let text = String::from_utf8(output.stdout).expect("UTF-8 environment");
+        let values: Vec<_> = text.lines().collect();
+        assert_eq!(values.len(), 8, "{values:?}");
+        let home = Path::new(values[0]);
+        assert!(home.starts_with(env!("CARGO_TARGET_TMPDIR")));
+        assert_eq!(Path::new(values[1]), home.join("config"));
+        assert_eq!(Path::new(values[2]), home.join("data"));
+        assert!(
+            values[3..].iter().all(|value| *value == "unset"),
+            "{values:?}"
+        );
+        return;
+    }
+    let output = Command::new(std::env::current_exe().expect("test binary"))
+        .args([
+            "--exact",
+            "client_harness_isolates_the_subprocess_environment",
+            "--nocapture",
+        ])
+        .env("DBOTA_ENV_PROBE_CHILD", "1")
+        .env("BOTA_SERVER", "/untrusted/server")
+        .env("DBOTA_SERVICE", "wss://invalid.invalid")
+        .env("BOTA_SEAT_KEY", "invalid")
+        .env("DBOTA_DRILL", "1")
+        .env("DBOTA_DRILL_SHOTS", "/untrusted/shots")
+        .output()
+        .expect("child test starts");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(String::from_utf8_lossy(&output.stdout).contains("1 passed"));
+}
+
 /// A scratch folder, emptied when dropped.
 struct Scratch(PathBuf);
 
@@ -56,7 +181,7 @@ fn run(scratch: &Scratch, args: &[&str], script: &str) -> (Option<i32>, String) 
 /// A client started by [`Running::start`], its steps read as it prints them.
 struct Running<'a> {
     scratch: &'a Scratch,
-    child: Child,
+    child: common::ClientChild,
     said: std::sync::Arc<std::sync::Mutex<String>>,
     reader: Option<std::thread::JoinHandle<()>>,
 }
@@ -72,7 +197,15 @@ impl Drop for Running<'_> {
 impl<'a> Running<'a> {
     /// The client of `command` (the one [`common::client`] makes, its compositor set up as the
     /// caller wants) with `args` and `script`, its settings and data in `scratch`.
-    fn start(scratch: &'a Scratch, args: &[&str], script: &str, mut command: Command) -> Self {
+    fn start(
+        scratch: &'a Scratch,
+        args: &[&str],
+        script: &str,
+        mut command: common::ClientCommand,
+    ) -> Self {
+        if !args.contains(&"--cache-dir") {
+            command.arg("--cache-dir").arg(common::asset_cache());
+        }
         let mut child = command
             .args(args)
             .arg("--config")
@@ -82,7 +215,6 @@ impl<'a> Running<'a> {
             .args(["--script", script])
             .args(["--mute", "--no-vsync", "--display-mode", "windowed"])
             .env("XDG_DATA_HOME", scratch.0.join("data"))
-            .env_remove("BOTA_SEAT_KEY")
             .stdout(Stdio::piped())
             .stderr(std::fs::File::create(scratch.0.join("stderr.log")).expect("a log file"))
             .spawn()
@@ -1045,14 +1177,7 @@ struct Dota {
 
 impl Dota {
     fn read() -> Dota {
-        let cache = std::env::var_os("DBOTA_ASSETS").map_or_else(
-            || {
-                PathBuf::from(std::env::var_os("HOME").expect("a home"))
-                    .join(".cache/dbota")
-                    .join(dbota_import::import::folder_name())
-            },
-            PathBuf::from,
-        );
+        let cache = common::asset_cache();
         let text = std::fs::read_to_string(cache.join("map/mid/lighting.txt"))
             .expect("the cache's lighting.txt");
         let line = |light: &str, time: &str| -> [f32; 4] {

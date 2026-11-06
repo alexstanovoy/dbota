@@ -72,8 +72,10 @@ pub fn given_seat(args: &Args) -> std::io::Result<(String, bota_proto::ClientMsg
     use bota_proto::{ClientMsg, Role, SeatKey};
     use std::io::{Error, ErrorKind};
     let addr = args.addr.as_deref().unwrap_or(DEFAULT_ADDR);
-    let key = std::env::var(SEAT_KEY_VAR)
-        .ok()
+    let key = args
+        .read_environment
+        .then(|| std::env::var(SEAT_KEY_VAR).ok())
+        .flatten()
         .filter(|hex| !hex.is_empty())
         .map(|hex| {
             SeatKey::from_hex(hex.trim()).ok_or_else(|| {
@@ -214,5 +216,31 @@ pub fn pump(
         if ready {
             info!("match known: tick {}", core.view().map_or(0, |v| v.tick));
         }
+    }
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod environment_tests {
+    use clap::Parser;
+
+    #[test]
+    fn parsed_test_arguments_do_not_take_an_inherited_seat_key() {
+        if std::env::var_os("DBOTA_SEAT_TEST_CHILD").is_some() {
+            let args = crate::Args::parse_from(["dbota", "--addr", "127.0.0.1:1"]);
+            assert!(super::given_seat(&args).is_ok());
+            return;
+        }
+        let output = std::process::Command::new(std::env::current_exe().expect("test binary"))
+            .args(["--exact", "session::environment_tests::parsed_test_arguments_do_not_take_an_inherited_seat_key", "--nocapture"])
+            .env("DBOTA_SEAT_TEST_CHILD", "1")
+            .env("BOTA_SEAT_KEY", "invalid")
+            .output()
+            .expect("child test");
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(String::from_utf8_lossy(&output.stdout).contains("1 passed"));
     }
 }

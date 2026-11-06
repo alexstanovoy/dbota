@@ -109,3 +109,5 @@ cargo test --release -p dbota_import -- --ignored   # DBOTA_DOTA_PATH, DBOTA_REF
 
 The fonts in `assets/fonts` are made by `tools/subset_fonts.py`; other scripts come from the system's fonts on the
 desktop, and a browser has only the shipped ones.
+
+The headless E2E client requires `DBOTA_ASSETS` to name an explicitly imported test asset cache.

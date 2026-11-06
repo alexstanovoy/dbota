@@ -30,8 +30,7 @@ fn a_match_loads_on_one_core() {
         r#"cpu=$(taskset -pc $$ | sed 's/.*: //' | cut -d, -f1 | cut -d- -f1); exec taskset -c "$cpu" "$@""#,
         "pinned",
     ]);
-    let client = common::client();
-    pinned.arg(client.get_program()).args(client.get_args());
+    let mut pinned = common::wrapped(pinned);
     let output = pinned
         .args(["--replay"])
         .arg(&replay)

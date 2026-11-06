@@ -161,6 +161,9 @@ pub const CACHE_SOURCE: &str = "cache";
 the client watches through that seat's eyes."
 )]
 pub struct Args {
+    /// Whether this client takes its seat and debug controls from the process environment.
+    #[arg(skip)]
+    pub read_environment: bool,
     #[cfg(not(target_arch = "wasm32"))]
     #[command(subcommand)]
     pub command: Option<Command>,
@@ -390,7 +393,7 @@ impl Args {
             && self.replay.is_none()
             && self.addr.is_none()
             && !self.spectate
-            && !crate::session::seat_key_given()
+            && !(self.read_environment && crate::session::seat_key_given())
     }
 }
 
@@ -497,6 +500,8 @@ fn main() -> AppExit {
     );
     #[cfg(not(all(target_arch = "wasm32", feature = "web-replay")))]
     let args = Args::parse();
+    let mut args = args;
+    args.read_environment = true;
     #[cfg(not(target_arch = "wasm32"))]
     if let Some(command) = &args.command {
         return run_command(command, &args.cache_dir);
@@ -589,7 +594,7 @@ fn main() -> AppExit {
     app.insert_resource(font_cx);
     client_resources(&mut app, &args, &settings, settings_path, &store, session);
     app.add_plugins(default_plugins(&args, &settings));
-    client_plugins(&mut app);
+    client_plugins(&mut app, args.read_environment);
     // Held at the asset screen, there is no menu either: nothing but that screen to use.
     if held.is_none()
         && let Err(err) = menu(&mut app, &args, store, menu_first)
@@ -649,7 +654,7 @@ fn client_resources(
 }
 
 /// dbota's own plugins, after Bevy's: everything the menu, a match and a replay draw and play with.
-fn client_plugins(app: &mut App) {
+fn client_plugins(app: &mut App, read_environment: bool) {
     app.add_plugins(FrameTimeDiagnosticsPlugin::default())
         .add_plugins((
             session::plugin,
@@ -699,7 +704,6 @@ fn client_plugins(app: &mut App) {
             shop::plugin,
             glyph::plugin,
             tips::plugin,
-            drill::plugin,
             buffs::plugin,
             talents::plugin,
             voice::plugin,
@@ -736,6 +740,9 @@ fn client_plugins(app: &mut App) {
             replay_controls::plugin,
         ))
         .add_plugins((demo::plugin, error_msg::plugin, main_menu::plugin));
+    if read_environment {
+        app.add_plugins(drill::plugin);
+    }
     #[cfg(not(target_arch = "wasm32"))]
     app.add_plugins(assets_notice::plugin);
 }

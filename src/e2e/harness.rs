@@ -14,7 +14,7 @@ use bevy::input::mouse::MouseButtonInput;
 use bevy::prelude::*;
 use bevy::window::{CursorMoved, PrimaryWindow};
 use bota_client_core::{App as Core, Intent};
-use clap::Parser;
+use clap::{CommandFactory, FromArgMatches};
 
 use crate::session::Session;
 
@@ -173,7 +173,7 @@ impl Drop for Server {
     }
 }
 
-/// A scratch folder for the client's settings, emptied when dropped.
+/// A scratch folder for the client's settings and replays, emptied when dropped.
 struct Scratch(PathBuf);
 
 impl Scratch {
@@ -197,7 +197,7 @@ impl Drop for Scratch {
 /// The client, all of it but the window and the GPU.
 pub struct Client {
     pub app: App,
-    _scratch: Scratch,
+    scratch: Scratch,
 }
 
 /// One match at a time in the process, held by its [`Server`]: each client loads the whole
@@ -207,6 +207,10 @@ pub struct Client {
 static TURN: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 impl Client {
+    pub fn replay_dir(&self) -> PathBuf {
+        self.scratch.0.join("replays")
+    }
+
     /// The client joined to `server`'s seat, run with `extra` command-line arguments, its hero
     /// picked: the match is under way and the hero on the map when it returns.
     pub fn join(server: &Server, hero: bota_proto::HeroId, extra: &[&str]) -> Client {
@@ -253,7 +257,7 @@ impl Client {
         client
     }
 
-    /// The client run with `extra` command-line arguments, its settings in a folder of its own,
+    /// The client run with `extra` command-line arguments, its settings and replays in a folder of its own,
     /// in a window of 1920 by 1080 unless they say another, as `main` builds it (with no sound device: see `audio_output`).
     pub fn run(extra: &[&str]) -> Client {
         Self::build(extra, None, &[])
@@ -281,12 +285,27 @@ impl Client {
         // written by a test (a `replays/` among `files` is its library).
         crate::replays::keep_in_for_tests(scratch.0.join("replays"));
         let config = config.to_str().expect("a UTF-8 path");
-        let mut line = vec!["dbota", "--config", config];
+        let cache = std::env::var("DBOTA_ASSETS").expect("DBOTA_ASSETS names a test asset cache");
+        let shots = scratch.0.join("shots");
+        let shots = shots.to_str().expect("a UTF-8 path");
+        let mut line = vec![
+            "dbota",
+            "--config",
+            config,
+            "--cache-dir",
+            &cache,
+            "--screenshot-dir",
+            shots,
+        ];
         if !extra.contains(&"--window") {
             line.extend(["--window", "1920x1080"]);
         }
         line.extend_from_slice(extra);
-        let args = crate::Args::parse_from(line);
+        let matches = crate::Args::command().get_matches_from(line);
+        let mut args = crate::Args::from_arg_matches(&matches).expect("client arguments");
+        if matches.value_source("service") != Some(clap::parser::ValueSource::CommandLine) {
+            args.service = None;
+        }
         assert!(
             crate::import::need(&args.cache_dir).is_none(),
             "{} holds no asset cache of this build: DBOTA_ASSETS names one `dbota import` made",
@@ -315,7 +334,7 @@ impl Client {
             session,
         );
         app.add_plugins(headless(&args, &settings));
-        crate::client_plugins(&mut app);
+        crate::client_plugins(&mut app, args.read_environment);
         crate::menu(&mut app, &args, store, menu_first).expect("the menu");
         // What the renderer would take of the entities drawn: kept, as no render world takes it.
         app.add_plugins(bevy::render::sync_world::SyncWorldPlugin);
@@ -324,15 +343,12 @@ impl Client {
         }
         app.finish();
         app.cleanup();
-        Client {
-            app,
-            _scratch: scratch,
-        }
+        Client { app, scratch }
     }
 
     /// A file of the folder of the client's settings, as it is on disk now.
     pub fn settings_folder_file(&self, name: &str) -> String {
-        std::fs::read_to_string(self._scratch.0.join(name)).expect("the file")
+        std::fs::read_to_string(self.scratch.0.join(name)).expect("the file")
     }
 
     /// Runs frames until `done` holds, within [`PATIENCE`].
@@ -831,4 +847,40 @@ mod patience_tests {
     fn a_short_wait_is_stuck_at_the_floor_of_the_hard_bound() {
         Patience::of(10 * SECOND).pass_after("never", 180 * SECOND);
     }
+}
+
+#[test]
+fn client_ignores_inherited_service_and_seat_environment() {
+    if std::env::var_os("DBOTA_TEST_ENV_CHILD").is_some() {
+        let mut client = Client::run(&[]);
+        client.frames(3);
+        assert_eq!(
+            client
+                .world()
+                .non_send::<crate::main_menu::MenuCore>()
+                .page(),
+            crate::main_menu::Page::LocalLobby
+        );
+        return;
+    }
+    let output = Command::new(std::env::current_exe().expect("the test binary"))
+        .args([
+            "--exact",
+            "e2e::harness::client_ignores_inherited_service_and_seat_environment",
+            "--nocapture",
+        ])
+        .env("DBOTA_TEST_ENV_CHILD", "1")
+        .env("DBOTA_SERVICE", "wss://invalid.invalid")
+        .env("BOTA_SEAT_KEY", "invalid")
+        .output()
+        .expect("the isolated test starts");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&output.stdout).contains("1 passed"),
+        "the child test did not run"
+    );
 }
