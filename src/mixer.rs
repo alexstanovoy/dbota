@@ -371,7 +371,7 @@ impl Mixer {
         }
         let kept = looping && request.owner != Owner::None;
         if self.blocked(request, rules.as_ref(), now)
-            || !self.make_room(commands, now, request, rules.as_ref())
+            || !self.make_room(commands, now, request, rules.as_ref(), class)
         {
             return Started::Refused;
         }
@@ -490,6 +490,7 @@ impl Mixer {
         now: Duration,
         request: &Request,
         rules: Option<&EventLine>,
+        class: VoiceClass,
     ) -> bool {
         if let Some(rules) = rules.filter(|r| r.limit > 0) {
             let counted = |v: &Voice| {
@@ -498,6 +499,9 @@ impl Mixer {
                     && (!rules.per_entity || v.owner == request.owner)
             };
             if self.voices.iter().filter(|v| counted(v)).count() >= rules.limit as usize {
+                if class == VoiceClass::Ambience {
+                    return false;
+                }
                 // The oldest one-shot gives way; a loop never does, its owner is the one to end
                 // it and nothing would start it again.
                 let oldest = self.voices.iter().position(|v| counted(v) && !v.looping);
@@ -991,13 +995,12 @@ mod tests {
         );
     }
 
-    #[test]
-    fn ambience_at_a_full_world_budget_preserves_every_gameplay_player() {
+    fn ambience_preserves_gameplay(gameplay_players: usize) {
         let mut world = World::new();
         let mut limited = event("shared", false, 120);
         limited.limit = 1;
         let mut mixer = mixer(vec![event("world", false, 120), limited]);
-        for _ in 0..MAX_VOICES - 1 {
+        for _ in 1..gameplay_players {
             mixer.start(
                 &mut world.commands(),
                 Duration::ZERO,
@@ -1032,6 +1035,16 @@ mod tests {
             after, before,
             "ambience evicted a gameplay event before refusing admission"
         );
+    }
+
+    #[test]
+    fn ambience_at_a_full_world_budget_preserves_every_gameplay_player() {
+        ambience_preserves_gameplay(MAX_VOICES);
+    }
+
+    #[test]
+    fn ambience_at_an_event_limit_preserves_the_gameplay_player() {
+        ambience_preserves_gameplay(1);
     }
 
     /// The world's voices are bounded, fading ones counted: a one-shot gives way to a new voice,
