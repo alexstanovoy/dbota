@@ -216,6 +216,28 @@ fn instance_layout() -> VertexBufferLayout {
     }
 }
 
+/// How a card's colour meets the target's: premultiplied over it, or multiplying
+/// it. Multiplying leaves the target's alpha as it is: multiplied too, a card's
+/// clear texels cleared the scene's alpha, and the scene drawn below the window's
+/// resolution, laid over the window by its alpha, showed a black square there.
+fn blend(modulate: bool) -> BlendState {
+    if !modulate {
+        return BlendState::PREMULTIPLIED_ALPHA_BLENDING;
+    }
+    BlendState {
+        color: BlendComponent {
+            src_factor: BlendFactor::Dst,
+            dst_factor: BlendFactor::Src,
+            operation: BlendOperation::Add,
+        },
+        alpha: BlendComponent {
+            src_factor: BlendFactor::Zero,
+            dst_factor: BlendFactor::One,
+            operation: BlendOperation::Add,
+        },
+    }
+}
+
 impl bevy::render::render_resource::Specializer<RenderPipeline> for Specializer {
     type Key = Key;
 
@@ -238,19 +260,7 @@ impl bevy::render::render_resource::Specializer<RenderPipeline> for Specializer 
             stencil: StencilState::default(),
             bias: DepthBiasState::default(),
         });
-        let blend = if key.modulate {
-            let component = BlendComponent {
-                src_factor: BlendFactor::Dst,
-                dst_factor: BlendFactor::Src,
-                operation: BlendOperation::Add,
-            };
-            BlendState {
-                color: component,
-                alpha: component,
-            }
-        } else {
-            BlendState::PREMULTIPLIED_ALPHA_BLENDING
-        };
+        let blend = blend(key.modulate);
         let fragment = descriptor.fragment_mut()?;
         if key.modulate {
             fragment.shader_defs.push("MODULATE".into());
@@ -437,5 +447,39 @@ impl<P: PhaseItem> RenderCommand<P> for DrawBatch {
         pass.set_vertex_buffer(0, buffer.slice(..));
         pass.draw(0..6, batch.range.clone());
         RenderCommandResult::Success
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The target's alpha after a blend of `src` (premultiplied colour, alpha) over a target
+    /// of alpha `dst`.
+    fn alpha_after(blend: BlendState, src: f32, dst: f32) -> f32 {
+        let factor = |f: BlendFactor| match f {
+            BlendFactor::Zero => 0.0,
+            BlendFactor::One => 1.0,
+            BlendFactor::Src | BlendFactor::SrcAlpha => src,
+            BlendFactor::Dst | BlendFactor::DstAlpha => dst,
+            BlendFactor::OneMinusSrcAlpha => 1.0 - src,
+            other => panic!("a factor the cards do not use: {other:?}"),
+        };
+        let a = blend.alpha;
+        assert_eq!(a.operation, BlendOperation::Add);
+        src * factor(a.src_factor) + dst * factor(a.dst_factor)
+    }
+
+    #[test]
+    fn no_card_makes_an_opaque_scene_see_through() {
+        for modulate in [false, true] {
+            for src in [0.0, 0.25, 1.0] {
+                assert_eq!(
+                    alpha_after(blend(modulate), src, 1.0),
+                    1.0,
+                    "modulate {modulate}, card alpha {src}"
+                );
+            }
+        }
     }
 }
