@@ -69,8 +69,9 @@ fn client() -> (Server, Client) {
 }
 
 /// Every event carries as far as Dota's data says: `distance_max`, else the reach of its sound
-/// level (81 dB, 2500 units, 20 log10 per decade), falling linearly to nothing there, and sounds
-/// as loud as its volume times its group's level times the makeup gain.
+/// level (81 dB, 2500 units, 20 log10 per decade), bounded by the client's documented maximum
+/// reach. This approximation falls linearly to nothing there and sounds as loud as its volume
+/// times its group's level times the makeup gain.
 #[test]
 fn every_event_carries_and_sounds_as_its_sound_level_and_group_say() {
     let (_server, client) = client();
@@ -79,9 +80,9 @@ fn every_event_carries_and_sounds_as_its_sound_level_and_group_say() {
     let lines = event_lines();
     assert!(lines.len() > 100, "{}", lines.len());
     for line in &lines {
-        let reach = line
-            .distance_max
-            .unwrap_or_else(|| 2500.0 * 10f32.powf((line.level - 81.0) / 20.0));
+        let reach = line.distance_max.unwrap_or_else(|| {
+            (2500.0 * 10f32.powf((line.level - 81.0) / 20.0)).min(crate::attenuation::LONGEST_REACH)
+        });
         let group = line
             .group
             .as_ref()

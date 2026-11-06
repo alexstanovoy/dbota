@@ -47,8 +47,8 @@ fn every_catalogue_creep_walks_with_its_authored_sequence_and_moving_joints() {
     let cases = catalogue();
     assert_eq!(
         cases.len(),
-        65,
-        "47 neutral kinds and both teams of all nine lane forms"
+        66,
+        "48 neutral kinds and both teams of all nine lane forms"
     );
     let mut failures = Vec::new();
     let mut skipped = 0;
@@ -90,7 +90,7 @@ fn catalogue() -> Vec<Creep> {
         .iter()
         .map(|neutral| Creep {
             name: neutral.unit.to_owned(),
-            kind: UnitKind::CreepNeutral,
+            kind: neutral.def.kind,
             team: Team::Neutral,
             neutral: Some(neutral.kind.id()),
             speed: neutral.def.move_speed,
@@ -127,6 +127,8 @@ fn creep_view(client: &Client, case: &Creep, index: usize) -> UnitView {
     unit.owner = None;
     unit.cast = None;
     unit.cast_rates = None;
+    unit.forced = None;
+    unit.channel = None;
     unit.town_portal = None;
     unit.abilities.clear();
     unit.effects.clear();

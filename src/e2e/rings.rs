@@ -223,7 +223,7 @@ fn what_a_ward_gives(item: bota_proto::ItemId) -> f32 {
     let bota_core::UseSpec::Ward { units, .. } = def.effect else {
         panic!("{item:?} is no ward");
     };
-    let unit = &units[0];
+    let unit = units[0].unit();
     (if unit.true_sight > 0 {
         unit.true_sight
     } else {

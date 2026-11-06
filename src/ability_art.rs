@@ -307,12 +307,20 @@ mod tests {
                 });
                 let Some(point) = point else { continue };
                 let def = ability.entry().def;
+                // Immediate activation may schedule an explicit effect windup.
+                let effect_point = match ability.spell() {
+                    Spell::Cast {
+                        act: Act::Roar(spec),
+                        ..
+                    } => spec.windup * 1000 / bota_core::rules::TICKS_PER_SECOND,
+                    _ => def.point,
+                };
                 assert!(
-                    (point * 1000.0 - def.point as f32).abs() < 1.0,
-                    "{} on {}: clip point {point} s, cast point {} ms",
+                    (point * 1000.0 - effect_point as f32).abs() < 1.0,
+                    "{} on {}: clip point {point} s, effect point {} ms",
                     def.name,
                     neutral.unit,
-                    def.point
+                    effect_point
                 );
                 checked.push(def.name);
             }
