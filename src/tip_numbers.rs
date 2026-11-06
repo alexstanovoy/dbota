@@ -198,6 +198,7 @@ fn use_value(def: &ItemDef, key: &str) -> Option<Levels> {
         (UseSpec::Phase { ranged_pct, .. }, "phase_movement_speed_range") => one(ranged_pct),
         (UseSpec::Restore { hp_per_charge, .. }, "restore_per_charge") => one(hp_per_charge),
         (UseSpec::Replenish { mana }, "replenish_amount") => one(mana),
+        (UseSpec::Eat { health, .. }, "hp_restore") => one(health),
         (UseSpec::Grenade(g), "impact_damage") => one(g.impact_damage),
         (UseSpec::Grenade(g), "damage_over_time") => one(g.damage_per_second),
         (UseSpec::Grenade(g), "debuff_duration") => one(secs(g.debuff_ticks)),

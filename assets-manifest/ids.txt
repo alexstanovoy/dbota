@@ -96,6 +96,7 @@ item 80 shawl
 item 81 cloak
 item 82 lifesteal
 item 83 voodoo_mask
+item 84 faerie_fire
 ability 0 pudge_meat_hook
 ability 1 pudge_rot
 ability 2 pudge_innate_graft_flesh

@@ -401,6 +401,7 @@ particle item.clarity.cast particles/items_fx/generic_item_spell_caster_core_cla
 particle item.clarity.heal particles/items_fx/healing_clarity.vpcf_c particles/healing_clarity.json
 particle item.tango.heal particles/items_fx/healing_tango.vpcf_c particles/healing_tango.json
 particle item.mango.active particles/items3_fx/mango_active.vpcf_c particles/mango_active.json
+particle item.faerie_fire.active particles/items3_fx/fish_bones_active.vpcf_c particles/fish_bones_active.json
 particle item.magic_stick particles/items2_fx/magic_stick.vpcf_c particles/magic_stick.json
 particle item.magic_wand particles/items2_fx/magic_wand.vpcf_c particles/magic_wand.json
 particle item.phase_boots particles/items2_fx/phase_boots.vpcf_c particles/phase_boots.json
@@ -512,6 +513,7 @@ fx item.tango.use at=caster sound=sound.item.tango
 fx item.tango.worn at=unit particle=item.tango.heal
 # Enchanted Mango, Magic Stick and Wand (the burst scales with the charges they spent), Phase Boots
 fx item.enchanted_mango.use at=caster particle=item.mango.active sound=sound.item.mango
+fx item.faerie_fire.use at=caster particle=item.faerie_fire.active sound=sound.item.faerie_fire
 fx item.magic_stick.use at=caster particle=item.magic_stick sound=sound.item.magic_stick cp1=charges
 fx item.magic_wand.use at=caster particle=item.magic_wand sound=sound.item.magic_stick cp1=charges
 fx item.phase_boots.use at=caster sound=sound.item.phase_boots
@@ -946,6 +948,7 @@ sound sound.item.phase_boots sounds/items/phase_boots_activate.vsnd_c sounds/ite
 sound sound.item.blink sounds/weapons/hero/antimage/blink_out.vsnd_c sounds/weapons/hero/antimage/blink_out.wav event=DOTA_Item.BlinkDagger.Activate
 # Sounds of the abilities of Pudge and of the neutral creeps, and of the neutral creeps dying
 sound sound.item.mango sounds/items/mango.vsnd_c sounds/items/mango.wav event=DOTA_Item.Mango.Activate
+sound sound.item.faerie_fire sounds/items/faerie_spark.vsnd_c sounds/items/faerie_spark.wav event=DOTA_Item.FaerieSpark.Activate
 sound sound.pudge.hook_throw sounds/weapons/hero/pudge/hook_throw.vsnd_c sounds/weapons/hero/pudge/hook_throw.wav event=Hero_Pudge.AttackHookExtend
 sound sound.pudge.hook_impact sounds/weapons/hero/pudge/hook_impact.vsnd_c sounds/weapons/hero/pudge/hook_impact.wav event=Hero_Pudge.AttackHookImpact
 sound sound.pudge.rot sounds/weapons/hero/pudge/rot.vsnd_c sounds/weapons/hero/pudge/rot.wav event=Hero_Pudge.Rot
