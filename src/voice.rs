@@ -9,7 +9,7 @@ use std::sync::Arc;
 
 use bevy::{audio::Volume, prelude::*};
 use bota_client_core::Phase;
-use bota_proto::{EventKind, Order, Team};
+use bota_proto::{EventKind, Order, Team, UnitKind};
 
 use crate::config::Settings;
 use crate::manifest::{Manifest, cache_path};
@@ -52,6 +52,11 @@ const CUE_GRACE_SECS: u32 = 2;
 /// device): for the tests and tools.
 #[derive(Resource, Default, Debug)]
 pub struct PregameHeard(pub Vec<(PregameCue, u32)>);
+/// The announcer's lines of the buildings that fell, by their logical name, as they were called
+/// (muted, or with no sound device, too): for the tests, which keep it from growing in a match.
+#[cfg(test)]
+#[derive(Resource, Default, Debug)]
+pub struct BuildingsHeard(pub Vec<String>);
 /// Seconds a hero keeps quiet after answering an order.
 const VOICE_REST: f32 = 6.0;
 
@@ -159,6 +164,9 @@ struct Voices {
     begins: Lines,
     /// "Radiant's / Dire's structures are fortified."
     fortified: [Lines; 2],
+    /// The announcer's lines of a tower or barracks that fell, by their logical name
+    /// (`sound.announcer.tower.fall.yr.top`, ...).
+    buildings: Vec<(String, Lines)>,
     /// The horn at each side's ancient: Radiant's, then Dire's.
     horns: [Lines; 2],
     /// Daybreak's birds and rooster, and nightfall's howl.
@@ -187,9 +195,18 @@ pub fn plugin(app: &mut App) {
         .add_systems(
             Update,
             (
-                answer, rune_lines, announce, fortified, herald, click, speak,
+                answer,
+                rune_lines,
+                announce,
+                fortified,
+                building_fell,
+                herald,
+                click,
+                speak,
             ),
         );
+    #[cfg(test)]
+    app.init_resource::<BuildingsHeard>();
 }
 
 fn load(mut voices: ResMut<Voices>, manifest: Res<Manifest>, server: Res<AssetServer>) {
@@ -213,6 +230,17 @@ fn load(mut voices: ResMut<Voices>, manifest: Res<Manifest>, server: Res<AssetSe
     voices.prepare = Lines::load(&manifest, &server, "sound.announcer.battle_prepare");
     voices.thirty = Lines::load(&manifest, &server, "sound.announcer.battle_in_30");
     voices.begins = Lines::load(&manifest, &server, "sound.announcer.battle_begins");
+    for what in ["tower.fall", "tower.deny", "rax.fall"] {
+        for who in ["yr", "enm", "rad", "dire"] {
+            for lane in ["top", "mid", "bot"] {
+                let logical = format!("sound.announcer.{what}.{who}.{lane}");
+                let lines = Lines::load(&manifest, &server, &logical);
+                if !lines.sources.is_empty() {
+                    voices.buildings.push((logical, lines));
+                }
+            }
+        }
+    }
     voices.day = Lines::load(&manifest, &server, "sound.day");
     voices.night = Lines::load(&manifest, &server, "sound.night");
     for (i, side) in ["radiant", "dire"].into_iter().enumerate() {
@@ -447,6 +475,100 @@ fn fortified(
     }
 }
 
+/// The logical name of the announcer's line when a building fell, as Dota's announcer rules
+/// choose it (`response_rules_announcer`): a tower or barracks only; for a player the line of
+/// the side that lost it (`yr`: one's own, `enm`: the other's), for a spectator that of the
+/// side's own (`rad`, `dire`); a tower the lost side's own struck is a deny; by lane (0 mid,
+/// 1 top, 2 bottom).
+///
+/// The mapping is written here, not read from the install's rules: `response_rules_announcer` is
+/// a general rule engine (criteria over the speaker, the team, the event and its context) with
+/// no table of these lines to read, and an engine for the whole file is far more code, and more
+/// room for error, than these 36 names. The sound events themselves are the install's data (the
+/// manifest), and a test holds that every name this function can make is among them.
+pub fn building_line(
+    my_team: Option<Team>,
+    lost: Team,
+    kind: UnitKind,
+    lane: Option<u8>,
+    denied: bool,
+) -> Option<String> {
+    let what = match (kind, denied) {
+        (UnitKind::Tower, false) => "tower.fall",
+        (UnitKind::Tower, true) => "tower.deny",
+        (UnitKind::Barracks, _) => "rax.fall",
+        _ => return None,
+    };
+    let who = match (my_team, lost) {
+        (Some(mine), lost) if mine == lost => "yr",
+        (Some(_), _) => "enm",
+        (None, Team::Radiant) => "rad",
+        (None, _) => "dire",
+    };
+    let lane = match lane? {
+        0 => "mid",
+        1 => "top",
+        _ => "bot",
+    };
+    Some(format!("sound.announcer.{what}.{who}.{lane}"))
+}
+
+/// The announcer's line for each tower or barracks that fell in what the last pump told, told
+/// to every seat and spectator as Dota's announcer does.
+fn building_fell(
+    session: NonSend<Session>,
+    mut voices: ResMut<Voices>,
+    #[cfg(test)] mut heard: ResMut<BuildingsHeard>,
+    mut announcer: ResMut<Announcer>,
+    time: Res<Time>,
+    settings: Res<Settings>,
+    args: Res<crate::Args>,
+) {
+    let core = &session.0;
+    let told = &core.told;
+    for event in told {
+        let EventKind::StructureDestroyed {
+            unit,
+            team,
+            kind,
+            lane,
+            ..
+        } = *event
+        else {
+            continue;
+        };
+        // Its death tells whether its own side struck it.
+        let denied = told.iter().any(
+            |e| matches!(e, EventKind::Died { unit: dead, denied: true, .. } if *dead == unit),
+        );
+        let Some(name) = building_line(core.my_team(), team, kind, lane, denied) else {
+            continue;
+        };
+        #[cfg(test)]
+        heard.0.push(name.clone());
+        if settings.muted || args.mute {
+            continue;
+        }
+        if let Some((_, lines)) = voices.buildings.iter_mut().find(|(n, _)| *n == name) {
+            announcer.push(lines.take(), 0.9, time.elapsed_secs());
+        }
+    }
+}
+
+/// Runs the building announcer once over what the core was told, and answers how many lines it
+/// queued for the announcer and how many of Dota's it has loaded: for the tests.
+#[cfg(test)]
+pub fn announce_buildings_once(world: &mut World) -> (usize, usize) {
+    use bevy::ecs::system::RunSystemOnce;
+    let before = world.resource::<Announcer>().waiting.len();
+    world
+        .run_system_once(building_fell)
+        .expect("the system runs");
+    let voices = world.resource::<Voices>();
+    let waiting = world.resource::<Announcer>().waiting.len();
+    (waiting - before, voices.buildings.len())
+}
+
 /// Starts the next announcer line once the one before it has ended.
 fn speak(
     mut commands: Commands,
@@ -547,6 +669,7 @@ fn report(voices: Res<Voices>, server: Res<AssetServer>, mut parts: ResMut<crate
         ])
         .chain([&voices.day, &voices.night])
         .chain(voices.fortified.iter())
+        .chain(voices.buildings.iter().map(|(_, lines)| lines))
         .chain(voices.horns.iter())
         .chain(voices.runes.iter().map(|(_, lines)| lines));
     let (done, total) = lines.flat_map(|l| &l.sources).fold((0, 0), |(d, t), h| {

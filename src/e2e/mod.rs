@@ -5,6 +5,7 @@
 
 mod ambient;
 mod anim;
+mod announcer;
 mod arcane_tips;
 mod bars;
 mod buffs;

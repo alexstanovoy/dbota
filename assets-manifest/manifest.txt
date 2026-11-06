@@ -1065,6 +1065,45 @@ sound sound.announcer.battle_begins sounds/vo/announcer/announcer_battle_begin_0
 # The Glyph's only sound: the announcer tells both sides which side's structures are fortified (subtitles: "Radiant's structures are fortified.")
 sound sound.announcer.fortified.radiant sounds/vo/announcer/announcer_fort_rad.vsnd_c sounds/vo/announcer/announcer_fort_rad.mp3 event=announcer_announcer_fort_rad
 sound sound.announcer.fortified.dire sounds/vo/announcer/announcer_fort_dire.vsnd_c sounds/vo/announcer/announcer_fort_dire.mp3 event=announcer_announcer_fort_dire
+# The announcer's lines for a tower or barracks that fell (scripts/talker/response_rules_announcer: IsTowerKilled/IsEnemyTowerKilled and the
+# Good/Bad variants a spectator hears, IsBarracksKilled likewise; twr_deny_* when the owner's own side struck it). yr = the listener's side lost it,
+# enm = the other side did, rad/dire = what a spectator hears; by lane. Which plays when is src/voice.rs.
+sound sound.announcer.rax.fall.dire.bot sounds/vo/announcer/announcer_rax_fall_dire_bot.vsnd_c sounds/vo/announcer/announcer_rax_fall_dire_bot.mp3 event=announcer_announcer_rax_fall_dire_bot
+sound sound.announcer.rax.fall.dire.mid sounds/vo/announcer/announcer_rax_fall_dire_mid.vsnd_c sounds/vo/announcer/announcer_rax_fall_dire_mid.mp3 event=announcer_announcer_rax_fall_dire_mid
+sound sound.announcer.rax.fall.dire.top sounds/vo/announcer/announcer_rax_fall_dire_top.vsnd_c sounds/vo/announcer/announcer_rax_fall_dire_top.mp3 event=announcer_announcer_rax_fall_dire_top
+sound sound.announcer.rax.fall.enm.bot sounds/vo/announcer/announcer_rax_fall_enm_bot.vsnd_c sounds/vo/announcer/announcer_rax_fall_enm_bot.mp3 event=announcer_announcer_rax_fall_enm_bot
+sound sound.announcer.rax.fall.enm.mid sounds/vo/announcer/announcer_rax_fall_enm_mid.vsnd_c sounds/vo/announcer/announcer_rax_fall_enm_mid.mp3 event=announcer_announcer_rax_fall_enm_mid
+sound sound.announcer.rax.fall.enm.top sounds/vo/announcer/announcer_rax_fall_enm_top.vsnd_c sounds/vo/announcer/announcer_rax_fall_enm_top.mp3 event=announcer_announcer_rax_fall_enm_top
+sound sound.announcer.rax.fall.rad.bot sounds/vo/announcer/announcer_rax_fall_rad_bot.vsnd_c sounds/vo/announcer/announcer_rax_fall_rad_bot.mp3 event=announcer_announcer_rax_fall_rad_bot
+sound sound.announcer.rax.fall.rad.mid sounds/vo/announcer/announcer_rax_fall_rad_mid.vsnd_c sounds/vo/announcer/announcer_rax_fall_rad_mid.mp3 event=announcer_announcer_rax_fall_rad_mid
+sound sound.announcer.rax.fall.rad.top sounds/vo/announcer/announcer_rax_fall_rad_top.vsnd_c sounds/vo/announcer/announcer_rax_fall_rad_top.mp3 event=announcer_announcer_rax_fall_rad_top
+sound sound.announcer.rax.fall.yr.bot sounds/vo/announcer/announcer_rax_fall_yr_bot.vsnd_c sounds/vo/announcer/announcer_rax_fall_yr_bot.mp3 event=announcer_announcer_rax_fall_yr_bot
+sound sound.announcer.rax.fall.yr.mid sounds/vo/announcer/announcer_rax_fall_yr_mid.vsnd_c sounds/vo/announcer/announcer_rax_fall_yr_mid.mp3 event=announcer_announcer_rax_fall_yr_mid
+sound sound.announcer.rax.fall.yr.top sounds/vo/announcer/announcer_rax_fall_yr_top.vsnd_c sounds/vo/announcer/announcer_rax_fall_yr_top.mp3 event=announcer_announcer_rax_fall_yr_top
+sound sound.announcer.tower.deny.dire.bot sounds/vo/announcer/announcer_twr_deny_dire_bot.vsnd_c sounds/vo/announcer/announcer_twr_deny_dire_bot.mp3 event=announcer_announcer_twr_deny_dire_bot
+sound sound.announcer.tower.deny.dire.mid sounds/vo/announcer/announcer_twr_deny_dire_mid.vsnd_c sounds/vo/announcer/announcer_twr_deny_dire_mid.mp3 event=announcer_announcer_twr_deny_dire_mid
+sound sound.announcer.tower.deny.dire.top sounds/vo/announcer/announcer_twr_deny_dire_top.vsnd_c sounds/vo/announcer/announcer_twr_deny_dire_top.mp3 event=announcer_announcer_twr_deny_dire_top
+sound sound.announcer.tower.deny.enm.bot sounds/vo/announcer/announcer_twr_deny_enm_bot.vsnd_c sounds/vo/announcer/announcer_twr_deny_enm_bot.mp3 event=announcer_announcer_twr_deny_enm_bot
+sound sound.announcer.tower.deny.enm.mid sounds/vo/announcer/announcer_twr_deny_enm_mid.vsnd_c sounds/vo/announcer/announcer_twr_deny_enm_mid.mp3 event=announcer_announcer_twr_deny_enm_mid
+sound sound.announcer.tower.deny.enm.top sounds/vo/announcer/announcer_twr_deny_enm_top.vsnd_c sounds/vo/announcer/announcer_twr_deny_enm_top.mp3 event=announcer_announcer_twr_deny_enm_top
+sound sound.announcer.tower.deny.rad.bot sounds/vo/announcer/announcer_twr_deny_rad_bot.vsnd_c sounds/vo/announcer/announcer_twr_deny_rad_bot.mp3 event=announcer_announcer_twr_deny_rad_bot
+sound sound.announcer.tower.deny.rad.mid sounds/vo/announcer/announcer_twr_deny_rad_mid.vsnd_c sounds/vo/announcer/announcer_twr_deny_rad_mid.mp3 event=announcer_announcer_twr_deny_rad_mid
+sound sound.announcer.tower.deny.rad.top sounds/vo/announcer/announcer_twr_deny_rad_top.vsnd_c sounds/vo/announcer/announcer_twr_deny_rad_top.mp3 event=announcer_announcer_twr_deny_rad_top
+sound sound.announcer.tower.deny.yr.bot sounds/vo/announcer/announcer_twr_deny_yr_bot.vsnd_c sounds/vo/announcer/announcer_twr_deny_yr_bot.mp3 event=announcer_announcer_twr_deny_yr_bot
+sound sound.announcer.tower.deny.yr.mid sounds/vo/announcer/announcer_twr_deny_yr_mid.vsnd_c sounds/vo/announcer/announcer_twr_deny_yr_mid.mp3 event=announcer_announcer_twr_deny_yr_mid
+sound sound.announcer.tower.deny.yr.top sounds/vo/announcer/announcer_twr_deny_yr_top.vsnd_c sounds/vo/announcer/announcer_twr_deny_yr_top.mp3 event=announcer_announcer_twr_deny_yr_top
+sound sound.announcer.tower.fall.dire.bot sounds/vo/announcer/announcer_twr_fall_dire_bot.vsnd_c sounds/vo/announcer/announcer_twr_fall_dire_bot.mp3 event=announcer_announcer_twr_fall_dire_bot
+sound sound.announcer.tower.fall.dire.mid sounds/vo/announcer/announcer_twr_fall_dire_mid.vsnd_c sounds/vo/announcer/announcer_twr_fall_dire_mid.mp3 event=announcer_announcer_twr_fall_dire_mid
+sound sound.announcer.tower.fall.dire.top sounds/vo/announcer/announcer_twr_fall_dire_top.vsnd_c sounds/vo/announcer/announcer_twr_fall_dire_top.mp3 event=announcer_announcer_twr_fall_dire_top
+sound sound.announcer.tower.fall.enm.bot sounds/vo/announcer/announcer_twr_fall_enm_bot.vsnd_c sounds/vo/announcer/announcer_twr_fall_enm_bot.mp3 event=announcer_announcer_twr_fall_enm_bot
+sound sound.announcer.tower.fall.enm.mid sounds/vo/announcer/announcer_twr_fall_enm_mid.vsnd_c sounds/vo/announcer/announcer_twr_fall_enm_mid.mp3 event=announcer_announcer_twr_fall_enm_mid
+sound sound.announcer.tower.fall.enm.top sounds/vo/announcer/announcer_twr_fall_enm_top.vsnd_c sounds/vo/announcer/announcer_twr_fall_enm_top.mp3 event=announcer_announcer_twr_fall_enm_top
+sound sound.announcer.tower.fall.rad.bot sounds/vo/announcer/announcer_twr_fall_rad_bot.vsnd_c sounds/vo/announcer/announcer_twr_fall_rad_bot.mp3 event=announcer_announcer_twr_fall_rad_bot
+sound sound.announcer.tower.fall.rad.mid sounds/vo/announcer/announcer_twr_fall_rad_mid.vsnd_c sounds/vo/announcer/announcer_twr_fall_rad_mid.mp3 event=announcer_announcer_twr_fall_rad_mid
+sound sound.announcer.tower.fall.rad.top sounds/vo/announcer/announcer_twr_fall_rad_top.vsnd_c sounds/vo/announcer/announcer_twr_fall_rad_top.mp3 event=announcer_announcer_twr_fall_rad_top
+sound sound.announcer.tower.fall.yr.bot sounds/vo/announcer/announcer_twr_fall_yr_bot.vsnd_c sounds/vo/announcer/announcer_twr_fall_yr_bot.mp3 event=announcer_announcer_twr_fall_yr_bot
+sound sound.announcer.tower.fall.yr.mid sounds/vo/announcer/announcer_twr_fall_yr_mid.vsnd_c sounds/vo/announcer/announcer_twr_fall_yr_mid.mp3 event=announcer_announcer_twr_fall_yr_mid
+sound sound.announcer.tower.fall.yr.top sounds/vo/announcer/announcer_twr_fall_yr_top.vsnd_c sounds/vo/announcer/announcer_twr_fall_yr_top.mp3 event=announcer_announcer_twr_fall_yr_top
 sound sound.horn sounds/ambient/horn_radiant.vsnd_c sounds/ambient/horn_radiant.wav event=GameStart.RadiantAncient
 sound sound.horn sounds/ambient/horn_dire.vsnd_c sounds/ambient/horn_dire.wav event=GameStart.DireAncient
 sound sound.day sounds/ambient/morning.vsnd_c sounds/ambient/morning.wav event=General.Morning
