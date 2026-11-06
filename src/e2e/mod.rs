@@ -24,6 +24,7 @@ mod lotus;
 mod menu;
 mod minimap;
 mod pregame;
+mod purchase_destination;
 mod refusals;
 mod rings;
 mod runes;
