@@ -100,6 +100,7 @@ item 84 faerie_fire
 item 85 blight_stone
 item 86 orb_of_venom
 item 87 orb_of_frost
+item 91 infused_raindrop
 ability 0 pudge_meat_hook
 ability 1 pudge_rot
 ability 2 pudge_innate_graft_flesh

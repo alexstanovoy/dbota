@@ -173,7 +173,9 @@ fn item_value(def: &ItemDef, key: &str) -> Option<Levels> {
         "tooltip_charges" => one(def.charges),
         "max_charges" => one(def.cast_charges),
         "charge_radius" => one(def.charge_radius()?),
-        _ => attack_value(def, key).or_else(|| use_value(def, key)),
+        _ => attack_value(def, key)
+            .or_else(|| block_value(def, key))
+            .or_else(|| use_value(def, key)),
     }
 }
 
@@ -188,6 +190,18 @@ fn attack_value(def: &ItemDef, key: &str) -> Option<Levels> {
         "heal_reduction" => one(laid.restoration_cut_pct),
         "damage" if laid.dps > 0 => one(laid.dps),
         "tick_interval" if laid.dps > 0 => one(secs(laid.beat_ticks)),
+        _ => None,
+    }
+}
+
+/// A value of the magical damage the item's passive blocks off a blow on its carrier.
+fn block_value(def: &ItemDef, key: &str) -> Option<Levels> {
+    let block = def.magic_block?;
+    match key {
+        "magic_damage_block" => one(block.amount),
+        "min_damage" => one(block.min_damage),
+        "initial_charges" => one(def.charges),
+        "mana_regen" => one(per_second(def.carried.mana_regen)),
         _ => None,
     }
 }
@@ -355,6 +369,18 @@ mod tests {
         assert_eq!(shown("damage"), Some(vec!["12".to_owned()]));
         assert_eq!(shown("tick_interval"), Some(vec!["1".to_owned()]));
         assert_eq!(shown("poison_duration"), Some(vec!["3".to_owned()]));
+    }
+
+    /// Infused Raindrops' tooltip prints its block, the least damage it answers to, its charges
+    /// and its mana regeneration as the simulator holds them.
+    #[test]
+    fn the_raindrops_tooltip_reads_its_block_from_the_simulator() {
+        let drops = item_def(ItemId::INFUSED_RAINDROP).expect("Infused Raindrops");
+        let shown = |key| value(Subject::Item(drops), key);
+        assert_eq!(shown("magic_damage_block"), Some(vec!["120".to_owned()]));
+        assert_eq!(shown("min_damage"), Some(vec!["75".to_owned()]));
+        assert_eq!(shown("initial_charges"), Some(vec!["6".to_owned()]));
+        assert_eq!(shown("mana_regen"), Some(vec!["0.6".to_owned()]));
     }
 
     /// A poison that beat twice a second would be told so: the tooltip follows the simulator's

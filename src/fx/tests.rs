@@ -58,6 +58,7 @@ fn carries_stats_alone(id: u16) -> bool {
             && def.on_attack.is_none()
             && def.reincarnation.is_none()
             && def.expiry_recovery.is_none()
+            && def.magic_block.is_none()
             && matches!(def.effect, bota_core::UseSpec::None)
             && procs_nothing(&def.carried)
             && def.ranged.as_ref().is_none_or(procs_nothing)
@@ -91,6 +92,10 @@ const NO_LINE: &[(&str, &str)] = &[
     (
         "butterfly",
         "Dota draws no effect for the passive; the evasion is a floating word, not a particle",
+    ),
+    (
+        "infused_raindrop",
+        "a passive whose block the server does not tell",
     ),
     (
         "javelin",
