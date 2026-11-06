@@ -29,13 +29,21 @@ static NEXT: AtomicU32 = AtomicU32::new(0);
 /// it is long enough for a machine running many other jobs.
 const PATIENCE: u64 = 300;
 
+/// The folder tests keep their files in: `$CARGO_TARGET_DIR`, else this checkout's `target`.
+pub(crate) fn target_dir() -> PathBuf {
+    std::env::var_os("CARGO_TARGET_DIR").map_or_else(
+        || PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target"),
+        PathBuf::from,
+    )
+}
+
 /// A scratch folder under the target folder, emptied when dropped.
 struct Scratch(PathBuf);
 
 impl Scratch {
     fn new(what: &str) -> Scratch {
-        let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(format!(
-            "target/menu-tests/{what}-{}-{}",
+        let dir = target_dir().join(format!(
+            "menu-tests/{what}-{}-{}",
             std::process::id(),
             NEXT.fetch_add(1, Ordering::Relaxed)
         ));
@@ -80,7 +88,7 @@ pub(crate) fn server_binary() -> &'static Path {
         if let Some(path) = std::env::var_os("BOTA_SERVER_BIN") {
             return PathBuf::from(path);
         }
-        let target = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target/bota");
+        let target = target_dir().join("bota");
         let cargo = std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into());
         let status = Command::new(cargo)
             .args([
@@ -800,7 +808,7 @@ fn start_server() -> (Server, String, String) {
 
 /// [`start_server`] with more of the server's options.
 fn start_server_with(extra: &[&str]) -> (Server, String, String) {
-    let mut child = Command::new(server_binary())
+    let mut child = super::scrubbed_command(server_binary())
         .args(extra)
         .args([
             "--map",

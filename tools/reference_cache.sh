@@ -6,7 +6,7 @@
 #
 # The exporter script was replaced by `dbota import` (commit ad097c5); the golden tests keep comparing with what it exported,
 # so this runs the exporter and manifest of the commit before it, from git history, with its checksum-pinned Source2Viewer-CLI
-# (kept in ~/.cache/dbota/tools, downloaded once). It needs a Dota 2 install (DBOTA_DOTA_PATH or the usual Steam places) and
+# (downloaded once into the reference cache's own tools folder). It needs a Dota 2 install (DBOTA_DOTA_PATH or the usual Steam places) and
 # takes a while; nothing of Valve's lands anywhere but the cache. Does nothing when the cache is complete.
 set -euo pipefail
 here=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)

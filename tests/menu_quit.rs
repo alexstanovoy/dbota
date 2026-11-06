@@ -210,7 +210,7 @@ impl<'a> Running<'a> {
             .arg(shots(scratch))
             .args(["--script", script])
             .args(["--mute", "--no-vsync", "--display-mode", "windowed"])
-            .env("XDG_DATA_HOME", scratch.0.join("data"))
+            .data_dir(&scratch.0.join("data"))
             .stdout(Stdio::piped())
             .stderr(std::fs::File::create(scratch.0.join("stderr.log")).expect("a log file"))
             .spawn()
@@ -660,7 +660,7 @@ fn leave_after_hosting_keeps_the_server_running_for_the_others() {
         ticking.display()
     );
     let mut command = common::client();
-    command.env("BOTA_SERVER", common::server_binary());
+    command.server(&common::server_binary());
     let mut host = Running::start(&scratch, &[], &script, command);
     host.until_played("await:game");
     // The foe sits on the other side, the mate on the host's.
@@ -720,7 +720,7 @@ fn quitting_after_a_disconnect_says_it_ends_the_hosted_game() {
         admitted.display()
     );
     let mut command = common::client();
-    command.env("BOTA_SERVER", common::server_binary());
+    command.server(&common::server_binary());
     let mut host = Running::start(&scratch, &[], &script, command);
     host.until_played("await:game");
     let (mut link, seated) =
@@ -859,7 +859,7 @@ fn serve_seats(seats: u8) -> (Child, String) {
 
 /// [`serve_seats`] with more of the server's arguments.
 fn serve_with(seats: u8, more: &[&str]) -> (Child, String) {
-    let mut child = Command::new(server_binary())
+    let mut child = common::server_command(common::server_binary())
         .args(more)
         .args(["--map", if seats > 2 { "0" } else { "2" }])
         .args(["--port", "0", "--bind", "127.0.0.1"])
@@ -891,40 +891,6 @@ fn serve_with(seats: u8, more: &[&str]) -> (Child, String) {
     // Its output is read to the end, so it never writes into a closed pipe.
     std::thread::spawn(move || for _ in output.lines() {});
     (child, address)
-}
-
-/// The game server: `BOTA_SERVER_BIN`, else built from the bota workspace
-/// dbota builds against.
-fn server_binary() -> PathBuf {
-    if let Some(path) = std::env::var_os("BOTA_SERVER_BIN") {
-        return PathBuf::from(path);
-    }
-    let cargo = std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into());
-    let out = Command::new(&cargo)
-        .args(["metadata", "--format-version", "1"])
-        .current_dir(env!("CARGO_MANIFEST_DIR"))
-        .output()
-        .expect("cargo metadata runs");
-    let meta: serde_json::Value = serde_json::from_slice(&out.stdout).expect("cargo metadata");
-    let manifest = meta["packages"]
-        .as_array()
-        .and_then(|p| p.iter().find(|p| p["name"] == "bota_client_core"))
-        .and_then(|p| p["manifest_path"].as_str())
-        .expect("bota_client_core is a dependency");
-    let root = Path::new(manifest)
-        .ancestors()
-        .nth(3)
-        .expect("the bota workspace");
-    let target = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target/bota");
-    let status = Command::new(&cargo)
-        .args(["build", "--quiet", "--release", "-p", "bota_server"])
-        .args(["--features", "websocket", "--target-dir"])
-        .arg(&target)
-        .current_dir(root)
-        .status()
-        .expect("cargo runs");
-    assert!(status.success(), "bota_server builds");
-    target.join("release/bota_server")
 }
 
 /// A matchmaking service in this process, launching the real game server: one game at a time.
@@ -970,7 +936,7 @@ impl Service {
             .expect("a free port")
             .port();
         let rulesets = rulesets
-            .replace("{binary}", &server_binary().display().to_string())
+            .replace("{binary}", &common::server_binary().display().to_string())
             .replace(
                 "{fingerprint}",
                 &format!("{:016x}", bota_radovid::fingerprint()),

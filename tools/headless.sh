@@ -17,6 +17,9 @@
 #   DBOTA_HEADLESS_LOG=FILE    weston's log and what its helpers print (default: discarded)
 #   DBOTA_HEADLESS_XWAYLAND=1  also an X server (Xwayland) in the compositor, DISPLAY set for COMMAND: X11 clients,
 #                              and input made through the X server (XTEST), e.g. the browser's real-mouse check
+# COMMAND runs on a private home (tools/client_env.sh in_private_environment: HOME and the XDG folders
+# in a scratch folder, the toolchain and the Dota install kept) except under DBOTA_SHOW=1, which is
+# for a person looking at the windows with their own settings.
 # Exits with COMMAND's status; 125 when the compositor cannot start.
 set -uo pipefail
 
@@ -26,7 +29,10 @@ if [ "${1:-}" = --dbota-headless-inner ]; then
     shift 2
     # The command's own output goes where the caller's went (fds 3 and 4), not into weston's log.
     exec 1>&3 2>&4 3>&- 4>&-
-    "$@"
+    # What the command starts, the tests among it, runs on a private home: see tools/client_env.sh.
+    # shellcheck source=tools/client_env.sh
+    . "$(dirname -- "$(realpath -- "${BASH_SOURCE[0]}")")/client_env.sh"
+    in_private_environment "$@"
     status=$?
     echo "$status" > "$status_file"
     exit "$status"

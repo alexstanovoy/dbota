@@ -22,6 +22,34 @@ pub fn client_environment() -> impl Iterator<Item = &'static str> {
         .filter(|line| !line.is_empty() && !line.starts_with('#'))
 }
 
+/// The folders that say where a user's files are, which the isolated client points into its
+/// private home.
+const LOCATION_VARIABLES: &[&str] = &[
+    "HOME",
+    "XDG_CONFIG_HOME",
+    "XDG_DATA_HOME",
+    "XDG_STATE_HOME",
+    "XDG_CACHE_HOME",
+    "LOCALAPPDATA",
+    "APPDATA",
+];
+
+fn is_isolated(key: &OsStr) -> bool {
+    key.to_str().is_some_and(|key| {
+        LOCATION_VARIABLES.contains(&key) || client_environment().any(|name| name == key)
+    })
+}
+
+/// A command that starts `program` (a game server, or anything that must not take the steering
+/// variables of the developer's shell) without the variables of `tools/client_environment.txt`.
+pub fn server_command(program: impl AsRef<OsStr>) -> Command {
+    let mut command = Command::new(program);
+    for name in client_environment() {
+        command.env_remove(name);
+    }
+    command
+}
+
 /// A client's files live until its last command or child is dropped.
 struct ClientScratch(PathBuf);
 
@@ -76,8 +104,33 @@ impl ClientCommand {
         self.command.args(args);
         self
     }
+    /// Sets a variable of the client, except those the isolated client keeps for itself: its
+    /// home and XDG folders and the variables of `tools/client_environment.txt`, for which a test
+    /// that means it uses [`ClientCommand::server`], [`ClientCommand::seat_key`] or
+    /// [`ClientCommand::data_dir`].
     pub fn env(&mut self, key: impl AsRef<OsStr>, value: impl AsRef<OsStr>) -> &mut Self {
+        let key = key.as_ref();
+        assert!(
+            !is_isolated(key),
+            "the isolated client keeps {key:?} to itself: set it with the method that names its purpose"
+        );
         self.command.env(key, value);
+        self
+    }
+    /// The game server this client starts when it hosts a local lobby (`BOTA_SERVER`).
+    pub fn server(&mut self, binary: &Path) -> &mut Self {
+        self.command.env("BOTA_SERVER", binary);
+        self
+    }
+    /// The seat key this client takes (`BOTA_SEAT_KEY`), as a test of the key itself needs.
+    pub fn seat_key(&mut self, key: &str) -> &mut Self {
+        self.command.env("BOTA_SEAT_KEY", key);
+        self
+    }
+    /// A data folder for this client other than the one in its private home, for a test that
+    /// reads what the client kept in it.
+    pub fn data_dir(&mut self, dir: &Path) -> &mut Self {
+        self.command.env("XDG_DATA_HOME", dir);
         self
     }
     pub fn env_remove(&mut self, key: impl AsRef<OsStr>) -> &mut Self {
@@ -176,11 +229,25 @@ fn isolated_client(cache: &Path, prefix: Option<Command>, headless: bool) -> Cli
     }
 }
 
+/// Whether `path` is the user's managed asset cache or inside it (`~/.cache/dbota/...`), where
+/// a client run would write the use stamps its maintenance reads.
+pub fn is_managed_cache(path: &Path) -> bool {
+    let parts: Vec<_> = path.components().collect();
+    parts
+        .windows(2)
+        .any(|pair| pair[0].as_os_str() == ".cache" && pair[1].as_os_str() == "dbota")
+}
+
 pub fn asset_cache() -> PathBuf {
     let cache = std::env::var_os("DBOTA_ASSETS")
         .filter(|path| !path.is_empty())
         .map(PathBuf::from)
         .expect("DBOTA_ASSETS must name a test asset cache");
+    assert!(
+        !is_managed_cache(&cache),
+        "DBOTA_ASSETS names the managed asset cache {}: import into a private folder",
+        cache.display()
+    );
     assert!(
         cache.join(dbota_import::cache_dir::INDEX).is_file(),
         "test asset cache has no index: {}",
@@ -224,7 +291,7 @@ impl Drop for Server {
 /// A game server on a port of its own choosing, started with `args` beside the map and the
 /// port, and its address.
 pub fn serve(args: &[&str]) -> Server {
-    let mut child = Command::new(server_binary())
+    let mut child = server_command(server_binary())
         .args(["--map", "2", "--port", "0", "--bind", "127.0.0.1"])
         .args(args)
         .stdout(Stdio::piped())
@@ -266,7 +333,12 @@ pub fn server_binary() -> PathBuf {
         .ancestors()
         .nth(3)
         .expect("the bota workspace");
-    let target = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target/bota");
+    let target = std::env::var_os("CARGO_TARGET_DIR")
+        .map_or_else(
+            || PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target"),
+            PathBuf::from,
+        )
+        .join("bota");
     let status = Command::new(&cargo)
         .args(["build", "--quiet", "--release", "-p", "bota_server"])
         .args(["--features", "websocket", "--target-dir"])

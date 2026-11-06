@@ -9,7 +9,7 @@ mod common;
 
 use std::io::{BufRead, BufReader};
 use std::path::PathBuf;
-use std::process::{Child, Command, Stdio};
+use std::process::{Child, Stdio};
 use std::time::{Duration, Instant};
 
 /// Seconds a run may take.
@@ -39,7 +39,7 @@ const DISTANCE: &str = "5000";
 /// A game server of one seat with a strategy phase long enough to play in,
 /// on a port of its own choosing, and its address.
 fn serve() -> (Child, String) {
-    let mut child = Command::new(server_binary())
+    let mut child = common::server_command(common::server_binary())
         .args(["--map", "2", "--port", "0", "--bind", "127.0.0.1"])
         .args([
             "--players",
@@ -65,40 +65,6 @@ fn serve() -> (Child, String) {
     };
     std::thread::spawn(move || for _ in output.lines() {});
     (child, address)
-}
-
-/// The game server: `BOTA_SERVER_BIN`, else built from the bota workspace
-/// dbota builds against.
-fn server_binary() -> PathBuf {
-    if let Some(path) = std::env::var_os("BOTA_SERVER_BIN") {
-        return PathBuf::from(path);
-    }
-    let cargo = std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into());
-    let out = Command::new(&cargo)
-        .args(["metadata", "--format-version", "1"])
-        .current_dir(env!("CARGO_MANIFEST_DIR"))
-        .output()
-        .expect("cargo metadata runs");
-    let meta: serde_json::Value = serde_json::from_slice(&out.stdout).expect("cargo metadata");
-    let manifest = meta["packages"]
-        .as_array()
-        .and_then(|p| p.iter().find(|p| p["name"] == "bota_client_core"))
-        .and_then(|p| p["manifest_path"].as_str())
-        .expect("bota_client_core is a dependency");
-    let root = std::path::Path::new(manifest)
-        .ancestors()
-        .nth(3)
-        .expect("the bota workspace");
-    let target = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target/bota");
-    let status = Command::new(&cargo)
-        .args(["build", "--quiet", "--release", "-p", "bota_server"])
-        .args(["--features", "websocket", "--target-dir"])
-        .arg(&target)
-        .current_dir(root)
-        .status()
-        .expect("cargo runs");
-    assert!(status.success(), "bota_server builds");
-    target.join("release/bota_server")
 }
 
 /// The camera put on a spot of the world by the minimap.
@@ -150,7 +116,7 @@ fn a_tower_stops_drawing_its_line_once_the_hero_is_out_of_reach() {
             "--display-mode",
             "windowed",
         ])
-        .env("XDG_DATA_HOME", scratch.join("data"))
+        .data_dir(&scratch.join("data"))
         .env_remove("BOTA_SEAT_KEY")
         .stdout(Stdio::piped())
         .stderr(Stdio::null())

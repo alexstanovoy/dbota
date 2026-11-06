@@ -246,7 +246,7 @@ fn play(hero: &str, enemy: &str) -> String {
             "animate_portrait=true",
         ])
         .args(["--mute", "--no-vsync", "--display-mode", "windowed"])
-        .env("XDG_DATA_HOME", scratch.join("data"))
+        .data_dir(&scratch.join("data"))
         .env_remove("BOTA_SEAT_KEY")
         .stdout(Stdio::piped())
         .stderr(std::fs::File::create(scratch.join("client.log")).expect("a log file"))

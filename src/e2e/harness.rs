@@ -187,8 +187,8 @@ struct Scratch(PathBuf);
 
 impl Scratch {
     fn new() -> Scratch {
-        let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(format!(
-            "target/e2e/{}-{}",
+        let dir = crate::main_menu::tests::target_dir().join(format!(
+            "e2e/{}-{}",
             std::process::id(),
             NEXT.fetch_add(1, Ordering::Relaxed)
         ));

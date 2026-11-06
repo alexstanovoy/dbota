@@ -74,7 +74,7 @@ fn each_client_uses_its_own_replay_directory() {
     let folder = client.replay_dir().display().to_string();
     let shown = client.shown_texts();
     assert!(shown.iter().any(|text| text.contains(&folder)), "{shown:?}");
-    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target/e2e");
+    let root = crate::main_menu::tests::target_dir().join("e2e");
     assert!(client.replay_dir().starts_with(&root));
     let other = local_menu();
     assert!(other.replay_dir().starts_with(root));

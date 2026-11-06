@@ -1,24 +1,76 @@
-# Sourced by the tools that start the real client (test_client.sh, bench.sh). The client reads and
-# writes its settings, replays (the replay library prunes the oldest files beyond its limits) and
-# asset cache under the user's HOME and XDG folders, so none of these tools may run it as it is.
+# Sourced by the tools that start the real client or run the tests that do (test_client.sh,
+# bench.sh, headless.sh, precheck.sh, gate.sh). The client reads and writes its settings, replays
+# (the replay library prunes the oldest files beyond its limits) and asset cache under the user's
+# HOME and XDG folders, so none of these tools may run it, or the tests that start it, as they are.
 #
-#   private_client_environment HOME_DIR GPU_CACHE_DIR
+#   private_home_environment HOME_DIR GPU_CACHE_DIR
 #       HOME and every XDG/Windows data folder under HOME_DIR, the shader cache in GPU_CACHE_DIR
-#       (the compiled shaders are worth keeping between runs), and none of the variables in
-#       client_environment.txt. The caller names and removes HOME_DIR.
+#       (the compiled shaders are worth keeping between runs). What the next commands still need
+#       from the real home is named before it is hidden: the Rust toolchain (CARGO_HOME,
+#       RUSTUP_HOME), the compiler cache (SCCACHE_DIR), the browsers of Playwright and the Dota
+#       install (DBOTA_DOTA_PATH, found in the usual Steam places, read only). The caller names and
+#       removes HOME_DIR.
+#   private_client_environment HOME_DIR GPU_CACHE_DIR
+#       The above, and none of the variables in client_environment.txt: for the tools that start
+#       the client themselves.
+#   in_private_environment COMMAND...
+#       COMMAND with the private home (only that: a test below it may set a steering variable on
+#       purpose, which is the harness's business) made under the target folder and removed after;
+#       its status is the command's. A test that starts the client without the harness's wrappers
+#       still cannot reach the user's files.
+#   require_test_asset_cache
+#       Fails unless DBOTA_ASSETS names an asset cache with an index that is no part of the
+#       managed ~/.cache/dbota (a run would write its use stamps there).
 #   client_binary [PROFILE]
 #       The built client: $DBOTA_BIN, else <target dir>/<PROFILE, default release>/dbota, where the
 #       target dir is $CARGO_TARGET_DIR, else this checkout's target.
 _client_env_here=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)
 
-private_client_environment() {
-    local home=$1 gpu_cache=$2 name
-    while read -r name; do
-        case $name in '' | '#'*) ;; *) unset "$name" ;; esac
-    done < "$_client_env_here/tools/client_environment.txt"
+private_home_environment() {
+    local home=$1 gpu_cache=$2 library real_home=$HOME
+    export CARGO_HOME="${CARGO_HOME:-$real_home/.cargo}" RUSTUP_HOME="${RUSTUP_HOME:-$real_home/.rustup}"
+    export SCCACHE_DIR="${SCCACHE_DIR:-${XDG_CACHE_HOME:-$real_home/.cache}/sccache}"
+    export PLAYWRIGHT_BROWSERS_PATH="${PLAYWRIGHT_BROWSERS_PATH:-${XDG_CACHE_HOME:-$real_home/.cache}/ms-playwright}"
+    if [ -z "${DBOTA_DOTA_PATH:-}" ]; then
+        for library in .var/app/com.valvesoftware.Steam/.local/share/Steam .steam/steam .local/share/Steam; do
+            if [ -f "$real_home/$library/steamapps/common/dota 2 beta/game/dota/pak01_dir.vpk" ]; then
+                export DBOTA_DOTA_PATH="$real_home/$library/steamapps/common/dota 2 beta"
+                break
+            fi
+        done
+    fi
     export HOME="$home" XDG_CONFIG_HOME="$home/config" XDG_DATA_HOME="$home/data" \
         XDG_STATE_HOME="$home/state" LOCALAPPDATA="$home/data" APPDATA="$home/data" \
         XDG_CACHE_HOME="$gpu_cache"
+}
+
+private_client_environment() {
+    local name
+    while read -r name; do
+        case $name in '' | '#'*) ;; *) unset "$name" ;; esac
+    done < "$_client_env_here/tools/client_environment.txt"
+    private_home_environment "$@"
+}
+
+in_private_environment() {
+    (
+        target=${CARGO_TARGET_DIR:-$_client_env_here/target}
+        mkdir -p "$target"
+        scratch=$(mktemp -d "$target/private-environment.XXXXXX") || exit 1
+        trap 'rm -r -- "$scratch"' EXIT
+        private_home_environment "$scratch" "$target/tmp/gpu-cache"
+        "$@"
+    )
+}
+
+require_test_asset_cache() {
+    : "${DBOTA_ASSETS:?DBOTA_ASSETS must name a test asset cache}"
+    case "/$DBOTA_ASSETS/" in
+        */.cache/dbota/*)
+            echo "DBOTA_ASSETS names the managed asset cache $DBOTA_ASSETS: import into a private folder" >&2
+            return 1 ;;
+    esac
+    [ -f "$DBOTA_ASSETS/index.txt" ] || { echo "test asset cache has no index: $DBOTA_ASSETS" >&2; return 1; }
 }
 
 client_binary() {

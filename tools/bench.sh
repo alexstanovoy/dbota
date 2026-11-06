@@ -46,8 +46,8 @@ runs=${BENCH_RUNS:-3}
 server=${BENCH_SERVER-$here/../bota/target/release/bota_server}
 read -r -a extra <<< "${BENCH_ARGS:-}"
 read -r -a wrap <<< "${BENCH_WRAP:-}"
-cache=${DBOTA_ASSETS:?DBOTA_ASSETS must name a test asset cache}
-[ -f "$cache/index.txt" ] || { echo "test asset cache has no index: $cache" >&2; exit 1; }
+require_test_asset_cache || exit 1
+cache=$DBOTA_ASSETS
 profile=${BENCH_PROFILE:-release}
 bin=$(client_binary "$profile")
 out=$here/temp/bench

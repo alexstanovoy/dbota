@@ -36,6 +36,8 @@ logs=${GATE_LOGS:-$here/temp/gate}
 mkdir -p "$logs"
 # shellcheck source=tools/stamp.sh
 . "$here/tools/stamp.sh"
+# shellcheck source=tools/client_env.sh
+. "$here/tools/client_env.sh"
 # The gate confirms; the precheck finds. It starts only on a tree tools/precheck.sh has passed, and not again on a tree that
 # already passed (formatting is left out of both). GATE_PRECHECKED=1 and GATE_AGAIN=1 skip the two checks, for a head that is
 # gated on behalf of something else (a merge, a consumer check) and was checked elsewhere.
@@ -112,7 +114,7 @@ else
     echo "   no usable Dota 2 install: the tests that need the cache fail"
     skipped=1
 fi
-step test cargo test --profile test-release
+step test in_private_environment cargo test --profile test-release
 # Formatting changes no code, so it is the last step: a gate that fails only here needs `cargo fmt` and an amend, not a rerun.
 if [ "${GATE_LEAN:-0}" = 1 ]; then
     step fmt cargo fmt --check
@@ -128,8 +130,8 @@ if [ "$have_install" = 1 ]; then
     # The importer's golden tests also compare with a reference cache (see crates/dbota_import/tests/common): made once from
     # the install, kept beside the asset caches.
     step reference flock "$DBOTA_REFERENCE.lock" tools/reference_cache.sh
-    step install-tests cargo test --release -p dbota_import -- --ignored
-    step tip-content cargo test --release -p dbota tip_content -- --ignored
+    step install-tests in_private_environment cargo test --release -p dbota_import -- --ignored
+    step tip-content in_private_environment cargo test --release -p dbota tip_content -- --ignored
     replay=${1:-${GATE_REPLAY:-}}
     if [ -z "$replay" ]; then
         echo "== replay (recorded by ../bota)"

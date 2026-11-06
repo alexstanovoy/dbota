@@ -11,7 +11,7 @@ fn dbota(args: &[&str], key: Option<&str>) -> Output {
     let mut command = common::client();
     command.args(args).env_remove("BOTA_SEAT_KEY");
     if let Some(key) = key {
-        command.env("BOTA_SEAT_KEY", key);
+        command.seat_key(key);
     }
     command.output().expect("dbota runs")
 }

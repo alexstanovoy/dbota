@@ -16,6 +16,8 @@ set -uo pipefail
 cd -- "$(git rev-parse --show-toplevel)" || exit 2
 # shellcheck source=tools/stamp.sh
 . "$(dirname -- "${BASH_SOURCE[0]}")/stamp.sh"
+# shellcheck source=tools/client_env.sh
+. "$(dirname -- "${BASH_SOURCE[0]}")/client_env.sh"
 base=${1:-${PRECHECK_BASE:-main}}
 # the browser check (the one client of tools/gate.sh that is quickest), when a source of the client changed
 wasm_crates="dbota"
@@ -126,9 +128,9 @@ assets() {
     return 0
 }
 [ -d "$DBOTA_ASSETS" ] || step assets assets
-step test run_tests || exit 1
+step test in_private_environment run_tests || exit 1
 for c in $plan; do
-    e=$(extra_test "$c"); [ -z "$e" ] || step "test ($c)" bash -c "$e" || exit 1
+    e=$(extra_test "$c"); [ -z "$e" ] || step "test ($c)" in_private_environment bash -c "$e" || exit 1
 done
 
 for c in $plan; do

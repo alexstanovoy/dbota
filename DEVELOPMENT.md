@@ -112,8 +112,15 @@ The fonts in `assets/fonts` are made by `tools/subset_fonts.py`; other scripts c
 desktop, and a browser has only the shipped ones.
 
 Nothing that tests, drives or measures the client may touch the user's settings, replays (the replay library prunes the
-oldest beyond its limits), `~/.cache/dbota` or the variables that steer the client: the headless E2E client requires
-`DBOTA_ASSETS` to name an explicitly imported test asset cache and takes its files from a private folder; the tests
-that start the client binary use `tests/common`, the tools `tools/test_client.sh` or `tools/client_env.sh` (the
-scrubbed variables are listed in `tools/client_environment.txt`). `tests/client_guard.rs` fails on a launch or an
-environment variable that bypasses them.
+oldest beyond its limits), `~/.cache/dbota` or the variables that steer the client. Two layers hold that:
+
+- Structure: `tools/precheck.sh`, `tools/gate.sh` and `tools/headless.sh` run the tests and everything started under
+  them on a private home (`in_private_environment` in `tools/client_env.sh`: `HOME` and the XDG folders in a scratch
+  folder, `CARGO_HOME`, `RUSTUP_HOME` and the Dota install, `DBOTA_DOTA_PATH`, kept), so even a test that starts the
+  client carelessly cannot reach real data. Run your own `cargo test` the same way (`in_private_environment cargo test
+  ...`). `DBOTA_SHOW=1` shows windows with your own settings and is for looking only.
+- Convention: the headless E2E client takes `DBOTA_ASSETS`, a test asset cache that is no part of `~/.cache/dbota`, and a
+  private folder for its files; the tests that start the client binary use `tests/common`, the tools
+  `tools/test_client.sh` or `tools/client_env.sh` (the scrubbed variables are listed in `tools/client_environment.txt`).
+  `tests/client_guard.rs` is a lint over the sources for the usual ways round them (it cannot be complete: the first
+  layer is what holds).

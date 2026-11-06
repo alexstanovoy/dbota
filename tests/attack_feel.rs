@@ -17,7 +17,7 @@ mod common;
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
+use std::process::{Child, Stdio};
 use std::time::{Duration, Instant};
 
 use bota_client_core::{Ingested, IssuedOrder, Link, Seat, SessionOptions, Transport};
@@ -71,7 +71,7 @@ fn record_as(
     mut driver: impl FnMut(&WorldView) -> Step,
 ) -> (PathBuf, u32) {
     let replay = scratch.join(format!("{name}.brp"));
-    let server: Child = Command::new(common::server_binary())
+    let server: Child = common::server_command(common::server_binary())
         .args(["--map", map, "--port", "0", "--bind", "127.0.0.1"])
         .args(["--players", "1", "--tactical-secs", "0", "--cheats"])
         .args(["--mode", "lockstep", "--empty-after-secs", "1"])
@@ -153,7 +153,7 @@ fn trace_at(scratch: &Path, replay: &Path, script: &str, look: Option<Vec2>) -> 
         .args(["--pov", "0", "--trace-feel", "--mute", "--no-vsync"])
         .args(["--display-mode", "windowed", "--script", script, "--config"])
         .arg(scratch.join("settings.conf"))
-        .env("XDG_DATA_HOME", scratch.join("data"))
+        .data_dir(&scratch.join("data"))
         .stdout(Stdio::piped())
         .stderr(Stdio::from(
             std::fs::File::create(scratch.join("client.log")).expect("client log"),
