@@ -7,18 +7,18 @@
 
 use std::collections::{HashMap, HashSet};
 
-use bevy::{
-    camera::primitives::{Frustum, Sphere},
-    prelude::*,
-};
+use bevy::{camera::primitives::Sphere, math::Vec3A, mesh::skinning::SkinnedMesh, prelude::*};
 use bota_client_core::App as Core;
 use bota_proto::{
     AbilityId, EffectId, EntityId, EventKind, StatusFlags, Team, UnitKind, UnitView, WorldView,
 };
 
 use crate::ability_art::art_of;
+use crate::camera::RtsCamera;
 use crate::coords::sim_facing_to_rotation;
+use crate::map::MainSun;
 use crate::session::Session;
+use crate::shadow_casters::{ShadowFloor, shadow_reaches};
 use crate::units::{Dying, ModelBank, ModelOf, Rig, Unit};
 
 /// The clip of a cast with no art of its own, and of an item's use.
@@ -43,6 +43,12 @@ const RUNNING: f32 = 25.0;
 /// still posed: past the tallest model and the shadow it casts into view,
 /// and a frame of panning.
 const POSED_REACH: f32 = 1500.0;
+/// World units over its feet a unit's model may reach, for its shadow: past
+/// the tallest building and Roshan.
+const TALLEST: f32 = 1200.0;
+/// World units either side of its feet a unit's model may reach, for its
+/// shadow.
+const SHADOW_REACH: f32 = 400.0;
 
 /// Where a unit's model is in its clips.
 #[derive(Component, Debug, Default)]
@@ -138,7 +144,7 @@ pub fn plugin(app: &mut App) {
         PostUpdate,
         (note_channels.in_set(NoteChannels), animate)
             .chain()
-            .before(TransformSystems::Propagate),
+            .before(bevy::app::AnimationSystems),
     );
 }
 
@@ -177,19 +183,28 @@ fn animate(
         &Unit,
         &mut Pose,
         &ModelOf,
-        &GlobalTransform,
+        &Transform,
         Option<&Rig>,
         Option<&Dying>,
     )>,
-    mut pivots: Query<&mut Transform>,
-    mut players: Query<&mut AnimationPlayer>,
-    camera: Single<&Frustum, With<crate::camera::RtsCamera>>,
+    mut pivots: Query<&mut Transform, (Without<Unit>, Without<RtsCamera>)>,
+    mut players: Query<(&mut AnimationPlayer, Has<AnimationGraphHandle>)>,
+    camera: Single<(&Transform, &Projection), With<RtsCamera>>,
     args: Res<crate::Args>,
+    (mut commands, children, skins): (Commands, Query<&Children>, Query<(), With<SkinnedMesh>>),
+    (sun, floor): (Query<&GlobalTransform, With<MainSun>>, Res<ShadowFloor>),
 ) {
     let core = &session.0;
     let Some(view) = core.view() else {
         return;
     };
+    // The view as this frame's camera has it: Bevy works the camera's frustum
+    // out only after the animations, and a unit coming into view by a jump of
+    // the camera (a minimap click, the match's start) is posed in its first
+    // frame there.
+    let (camera, projection) = *camera;
+    let frustum = projection.compute_frustum(&GlobalTransform::from(*camera));
+    let shadow = sun.single().ok().zip(floor.0);
     let dt = time.delta_secs();
     let worked = channels.objectives(view);
     for (unit, mut pose, model_of, at, rig, dying) in &mut units {
@@ -252,27 +267,37 @@ fn animate(
         let Some((_, node, duration, _)) = clip(wanted.clip).or_else(|| clip("idle")) else {
             continue;
         };
-        let Ok(mut player) = players.get_mut(rig.0) else {
+        let Ok((mut player, posed)) = players.get_mut(rig.0) else {
             continue;
         };
         let from = clip(pose.clip).map(|c| c.1);
-        // A unit no view sees nor will in a frame is not posed: its clips
-        // weigh nothing, so its joints are neither evaluated nor moved
-        // (nor propagated). Its clip and time still follow the simulation,
-        // so it is posed right the frame it comes near.
-        let near = camera.intersects_sphere(
+        // A unit no view sees nor will in a frame, and whose shadow falls
+        // outside the view, is not posed. Its clip and time still follow the
+        // simulation, so it is posed right the frame it comes near.
+        let center = Vec3A::from(at.translation);
+        let near = frustum.intersects_sphere(
             &Sphere {
-                center: at.translation_vec3a(),
+                center,
                 radius: POSED_REACH,
             },
             true,
-        );
+        ) || shadow.is_some_and(|(sun, floor)| {
+            let reach = Vec3A::new(SHADOW_REACH, 0.0, SHADOW_REACH);
+            let tallest = Vec3A::new(SHADOW_REACH, TALLEST, SHADOW_REACH);
+            let around = (center - reach, center + tallest);
+            shadow_reaches(&frustum, around, sun.forward().as_vec3(), floor)
+        });
+        let graph = bank.0[model].graph.as_ref();
+        if near != posed && (graph.is_some() || !near) {
+            let graph = graph.filter(|_| near);
+            set_posed(&mut commands, (rig.0, model_of.0), graph, &children, &skins);
+        }
         if pose.clip != wanted.clip || !player.is_playing_animation(*node) {
             cross_fade(&mut pose, &mut player, from, *node);
             pose.clip = wanted.clip;
         }
         pose.shown = wanted.t.clamp(0.0, (*duration - 1e-3).max(0.0));
-        weigh(&mut pose, &mut player, *node, dt, near);
+        weigh(&mut pose, &mut player, *node, dt);
         if args.trace_feel
             && let Some(u) = live
         {
@@ -338,6 +363,37 @@ fn trace(
     );
 }
 
+/// Poses a unit's model again (`graph` given), or stops posing it. Unposed,
+/// its player has no graph and its skinned meshes no bounds following the
+/// joints, so Bevy passes over every joint at once (with a graph it walks each
+/// joint through every clip, whatever they weigh) and over the bounds, which
+/// hold still with the joints while the model moves with its unit.
+fn set_posed(
+    commands: &mut Commands,
+    (player, pivot): (Entity, Entity),
+    graph: Option<&Handle<AnimationGraph>>,
+    children: &Query<&Children>,
+    skins: &Query<(), With<SkinnedMesh>>,
+) {
+    use bevy::camera::visibility::DynamicSkinnedMeshBounds;
+    let meshes = children
+        .iter_descendants(pivot)
+        .filter(|e| skins.contains(*e));
+    if let Some(graph) = graph {
+        commands
+            .entity(player)
+            .insert(AnimationGraphHandle(graph.clone()));
+        for mesh in meshes {
+            commands.entity(mesh).insert(DynamicSkinnedMeshBounds);
+        }
+    } else {
+        commands.entity(player).remove::<AnimationGraphHandle>();
+        for mesh in meshes {
+            commands.entity(mesh).remove::<DynamicSkinnedMeshBounds>();
+        }
+    }
+}
+
 /// Starts clip `to` over the one playing (`from`), which fades out as `to`
 /// fades in, as Dota cross-fades a unit's sequences; a clip coming back
 /// before it faded out picks up from the weight it had left.
@@ -381,13 +437,7 @@ fn cross_fade(
 
 /// Moves a fade on by `dt` and weighs the clip playing, at `pose.shown`,
 /// and each fading out, held where it was left; a faded clip is let go.
-fn weigh(
-    pose: &mut Pose,
-    player: &mut AnimationPlayer,
-    node: AnimationNodeIndex,
-    dt: f32,
-    near: bool,
-) {
+fn weigh(pose: &mut Pose, player: &mut AnimationPlayer, node: AnimationNodeIndex, dt: f32) {
     let step = dt / FADE_SECONDS;
     pose.share = (pose.share + step).min(1.0);
     for fading in &mut pose.fading {
@@ -397,15 +447,14 @@ fn weigh(
         }
     }
     pose.fading.retain(|f| f.weight > 0.0);
-    let shown = |weight: f32| if near { weight } else { 0.0 };
     if let Some(active) = player.animation_mut(node) {
         active.set_seek_time(pose.shown);
-        active.set_weight(shown(pose.share));
+        active.set_weight(pose.share);
     }
     for fading in &pose.fading {
         if let Some(active) = player.animation_mut(fading.node) {
             active.set_seek_time(fading.t);
-            active.set_weight(shown(fading.weight));
+            active.set_weight(fading.weight);
         }
     }
 }
