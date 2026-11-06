@@ -412,6 +412,11 @@ pub const RETIRED_KEYS: &[&str] = &[
     "tower_ranges",
 ];
 
+/// The version of the settings file's layout, written first in it. A file with none was written
+/// before 2: while To Follow was the default of Right-Click Allies, which the file then held as
+/// `follow` though the player never chose it, so a file of version below 2 keeps no `follow`.
+pub const SETTINGS_VERSION: u32 = 2;
+
 /// Characters a profile name has at most.
 pub const MAX_NAME: usize = 24;
 
@@ -470,6 +475,12 @@ impl Settings {
     pub fn parse(text: &str) -> (Settings, Vec<String>) {
         let mut settings = Settings::default();
         let mut complaints = Vec::new();
+        let version = text
+            .lines()
+            .take(MAX_LINES)
+            .filter_map(|line| line.trim().strip_prefix("settings_version"))
+            .find_map(|rest| rest.trim().strip_prefix('=')?.trim().parse::<u32>().ok())
+            .unwrap_or(0);
         for (number, line) in text.lines().enumerate().take(MAX_LINES) {
             let line = line.trim();
             if line.is_empty() || line.starts_with('#') {
@@ -479,6 +490,13 @@ impl Settings {
                 complaints.push(format!("line {}: expected name = value", number + 1));
                 continue;
             };
+            // A `follow` an older file holds was the default then, not a choice.
+            if version < SETTINGS_VERSION
+                && name.trim() == "right_click_allies"
+                && value.trim() == "follow"
+            {
+                continue;
+            }
             if let Err(why) = settings.set(name.trim(), value.trim()) {
                 complaints.push(format!("line {}: {why}", number + 1));
             }
@@ -502,6 +520,13 @@ impl Settings {
         // A key an older version wrote and no version reads any more: its file still loads.
         if RETIRED_KEYS.contains(&name) {
             return Ok(());
+        }
+        // The layout's version is read before the lines (`parse`); the line itself says nothing.
+        if name == "settings_version" {
+            return value
+                .parse::<u32>()
+                .map(drop)
+                .map_err(|_| format!("'{value}' is not a version number"));
         }
         let flag = || parse_flag(value).ok_or_else(|| format!("'{value}' is not true or false"));
         match name {
@@ -615,6 +640,7 @@ impl Settings {
         let flag = |on: bool| if on { "true" } else { "false" };
         let mut out =
             String::from("# dbota settings. Keys use the names listed in the client README.\n");
+        out.push_str(&format!("settings_version = {SETTINGS_VERSION}\n"));
         if !self.name.is_empty() {
             out.push_str(&format!("name = {}\n", self.name));
         }

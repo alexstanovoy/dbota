@@ -155,9 +155,25 @@ impl Client {
     /// picked: it returns once the pick is past (in the strategy phase, where the server has
     /// one).
     pub fn pick(server: &Server, hero: bota_proto::HeroId, extra: &[&str]) -> Client {
+        Client::pick_with_settings(server, hero, extra, None)
+    }
+
+    /// [`Client::join`] with a settings file already on disk, as an older version left it.
+    pub fn join_with_settings(server: &Server, hero: bota_proto::HeroId, file: &str) -> Client {
+        let mut client = Client::pick_with_settings(server, hero, &[], Some(file));
+        client.until("the hero on the map", |c| c.core().ears().is_some());
+        client
+    }
+
+    fn pick_with_settings(
+        server: &Server,
+        hero: bota_proto::HeroId,
+        extra: &[&str],
+        file: Option<&str>,
+    ) -> Client {
         let mut args = vec!["--addr", server.address.as_str()];
         args.extend_from_slice(extra);
-        let mut client = Client::run(&args);
+        let mut client = Client::run_with_settings(&args, file);
         client.until("the hero picked", |c| {
             let core = c.core_mut();
             if core.view().is_none() && core.my_slot.is_some() && !core.ready {
@@ -172,8 +188,17 @@ impl Client {
     /// The client run with `extra` command-line arguments, its settings in a folder of its own,
     /// in a window of 1920 by 1080 unless they say another, as `main` builds it (with no sound device: see `audio_output`).
     pub fn run(extra: &[&str]) -> Client {
+        Client::run_with_settings(extra, None)
+    }
+
+    /// [`Client::run`] with a settings file already on disk, as an older version of the client
+    /// left it.
+    pub fn run_with_settings(extra: &[&str], file: Option<&str>) -> Client {
         let scratch = Scratch::new();
         let config = scratch.0.join("client.conf");
+        if let Some(text) = file {
+            std::fs::write(&config, text).expect("a settings file");
+        }
         let config = config.to_str().expect("a UTF-8 path");
         let mut line = vec!["dbota", "--config", config];
         if !extra.contains(&"--window") {

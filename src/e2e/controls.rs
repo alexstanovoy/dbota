@@ -223,6 +223,59 @@ fn a_default_right_click_denies_a_worn_creep_and_follows_a_healthy_one() {
     );
 }
 
+/// What the client wrote while Follow was the default (f01f00f to e24efe2): every setting, the
+/// right click's among them, as `follow`.
+const FILE_FROM_WHEN_FOLLOW_WAS_THE_DEFAULT: &str =
+    "# dbota settings. Keys use the names listed in the client README.
+volume = 0.80
+muted = false
+voice_responses = true
+ui_scale = 1.00
+damage_numbers = true
+edge_pan = true
+animate_portrait = true
+scoreboard_items = true
+teleport_requires_halt = false
+channels_require_stop = false
+right_click_allies = follow
+save_replays = true
+";
+
+/// A player whose settings file was written while To Follow was the default has the right click
+/// follow a worn creep, though they never chose it; the default is Dota's, To Deny, and a file
+/// that predates its return does not hold the player to the old one. A choice made since
+/// (any file with a version) is kept.
+#[test]
+fn a_settings_file_from_when_follow_was_the_default_still_denies_by_default() {
+    let server = Server::start(1, &[]);
+    let mut client = Client::join_with_settings(
+        &server,
+        HeroId::SHADOW_FIEND,
+        FILE_FROM_WHEN_FOLLOW_WAS_THE_DEFAULT,
+    );
+    client.stand_at(MID);
+    for (enemy, dx) in [(false, -250), (true, 250)] {
+        client.cheat(Cheat::CreateCreeps {
+            enemy,
+            at: At::from_ints(MID.0 + dx, MID.1 + 200),
+        });
+    }
+    client.until("a worn allied creep", |c| ally_creep(c, true).is_some());
+    let creep = ally_creep(&client, true).expect("there");
+    let (got, _) = loop {
+        if let Some(hit) = right_click(&mut client, creep) {
+            break hit;
+        }
+    };
+    assert_eq!(
+        last_order(&client),
+        Some(Order::Attack {
+            target: Target::Unit(got)
+        }),
+        "the click on a worn ally attacks it"
+    );
+}
+
 /// Directional Move, bound to a key (the install's templates bind none): held, the hero walks
 /// the straight line towards the cursor; let go, it stops.
 #[test]
