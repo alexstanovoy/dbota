@@ -40,9 +40,15 @@ pub const HOVER_RING: Color = Color::srgba(1.0, 0.85, 0.2, 0.9);
 /// is inside whatever the rounding.
 const EDGE_SLACK: f32 = 1.0;
 
-/// The radius of a unit's cylinder.
-pub fn radius_of(bound: f32, collision: f32) -> f32 {
-    (bound.max(collision).max(MIN_BOUND) + MARGIN).max(RING)
+/// The radius of a unit's cylinder. A big building's follows its body, not the hull the sim
+/// keeps units out of (an Ancient's is hundreds of units wider than its model): the ground
+/// beside it must stay clickable to walk round it.
+pub fn radius_of(kind: UnitKind, bound: f32, collision: f32) -> f32 {
+    let reach = match kind {
+        UnitKind::Tower | UnitKind::Barracks | UnitKind::Ancient => unit_size(kind, bound).0,
+        _ => bound.max(collision),
+    };
+    (reach.max(MIN_BOUND) + MARGIN).max(RING)
 }
 
 /// Which side of the cursor's owner a target must be on.
@@ -152,8 +158,11 @@ pub fn candidate(unit: &bota_proto::UnitView, base: Vec3, mine: Option<Team>) ->
         kind: unit.kind,
         enemy: Some(unit.team) != mine,
         base,
-        radius: radius_of(unit.bound.to_f32(), unit.collision.to_f32()),
-        height: height.max(bound * HEIGHT_PER_BOUND),
+        radius: radius_of(unit.kind, unit.bound.to_f32(), unit.collision.to_f32()),
+        height: match unit.kind {
+            UnitKind::Tower | UnitKind::Barracks | UnitKind::Ancient => height,
+            _ => height.max(bound * HEIGHT_PER_BOUND),
+        },
     }
 }
 
@@ -391,7 +400,7 @@ mod tests {
             kind,
             enemy,
             base: Vec3::new(x, 0.0, z),
-            radius: radius_of(24.0, 0.0),
+            radius: radius_of(kind, 24.0, 0.0),
             height: 90.0,
         }
     }

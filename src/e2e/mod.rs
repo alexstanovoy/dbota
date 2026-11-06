@@ -10,6 +10,7 @@ mod announcer;
 mod arcane_tips;
 mod bars;
 mod buffs;
+mod building_clicks;
 mod camera;
 mod captions;
 mod catalogue;
