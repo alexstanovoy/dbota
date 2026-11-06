@@ -67,15 +67,14 @@ pub(crate) const FIELD_CELLS: usize = (bota_core::rules::MAP_SIZE as f32 / FIELD
 pub(crate) const FIELD_RANGE: f32 = 1.5;
 /// Texels a side of the path textures as packed.
 const DETAIL_SIZE: u32 = 512;
+/// The label the map's loader gives the field among its assets.
+pub(crate) const FIELD_LABEL: &str = "ground_field";
 
 /// The textures the terrain's paths are drawn with: the detail of the dirt
 /// and the two stones (red, green and blue, each its texture's brightness
 /// against its mean, halved), and the field: dirt colours on its left half,
 /// stone colours on its right, the forest's shade in the left half's alpha
 /// and which stone in the right half's.
-/// The label the map's loader gives the field among its assets.
-pub(crate) const FIELD_LABEL: &str = "ground_field";
-
 #[derive(Resource, Clone)]
 pub struct GroundLayers {
     pub detail: Handle<Image>,
