@@ -33,6 +33,8 @@ struct Recording {
     /// Whether the bytes are not kept: a test that makes its own records needs the match's
     /// description and no more.
     discard: bool,
+    /// Recorded no further: what comes is read and let go.
+    closed: bool,
 }
 
 impl Recording {
@@ -59,6 +61,7 @@ impl Recording {
             tick: 0,
             deaths: Vec::new(),
             discard,
+            closed: false,
         }
     }
 
@@ -76,7 +79,11 @@ impl Recording {
     }
 
     fn poll(&mut self) {
-        for message in self.net.poll() {
+        let messages = self.net.poll();
+        if self.closed {
+            return;
+        }
+        for message in messages {
             match message {
                 ServerMsg::MatchStart { info } => self.info = Some(info),
                 ServerMsg::Snapshot { view } => {
@@ -157,37 +164,41 @@ pub(super) struct Spectated {
 
 impl Spectated {
     pub(super) fn start(map: &str) -> Self {
-        Self::start_with(map, HeroId::SHADOW_FIEND, false, false)
+        Self::start_with(map, HeroId::SHADOW_FIEND, false, false, &[])
     }
 
     /// [`Spectated::start`] for a test that makes its own records ([`Spectated::save_after_falls`]):
     /// the match is not recorded.
     pub(super) fn start_unrecorded(map: &str) -> Self {
-        Self::start_with(map, HeroId::SHADOW_FIEND, false, true)
+        Self::start_with(map, HeroId::SHADOW_FIEND, false, true, &[])
     }
 
     pub(super) fn pair(map: &str) -> Self {
-        Self::start_with(map, HeroId::SHADOW_FIEND, true, false)
+        Self::start_with(map, HeroId::SHADOW_FIEND, true, false, &[])
     }
 
     pub(super) fn hero(map: &str, hero: HeroId) -> Self {
-        Self::start_with(map, hero, false, false)
+        Self::start_with(map, hero, false, false, &[])
     }
 
-    fn start_with(map: &str, hero: HeroId, pair: bool, discard: bool) -> Self {
-        let server = Server::start(
-            2,
-            &[
-                "--map",
-                map,
-                "--spectators",
-                "open",
-                "--runes",
-                "all",
-                "--seed",
-                "1",
-            ],
-        );
+    /// The match on `map` with the server's `extra` options besides these.
+    pub(super) fn with_options(map: &str, extra: &[&str]) -> Self {
+        Self::start_with(map, HeroId::SHADOW_FIEND, false, false, extra)
+    }
+
+    fn start_with(map: &str, hero: HeroId, pair: bool, discard: bool, extra: &[&str]) -> Self {
+        let mut options = vec![
+            "--map",
+            map,
+            "--spectators",
+            "open",
+            "--runes",
+            "all",
+            "--seed",
+            "1",
+        ];
+        options.extend_from_slice(extra);
+        let server = Server::start(2, &options);
         let args = crate::Args::parse_from(["dbota", "--addr", &server.address]);
         let driver = crate::session::open(&args)
             .expect("the driving player connects")
@@ -457,6 +468,12 @@ impl Spectated {
             },
             first + STANDING_TICKS,
         )
+    }
+
+    /// Ends the replay at the last whole tick recorded; the match goes on unrecorded, the
+    /// replay saved by [`Self::save`].
+    pub(super) fn stop_recording(&mut self) {
+        self.recording.closed = true;
     }
 
     pub(super) fn order(&mut self, order: bota_proto::Order) {

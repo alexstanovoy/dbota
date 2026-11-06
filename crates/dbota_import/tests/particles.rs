@@ -17,15 +17,18 @@ use heatel::{DirSource, Resource, Vpk, find_game_dir};
 /// The classes of the manifest's effects the client leaves out, each with why. (A model
 /// renderer whose model a control point carries, the town portal's image of the hero at its end,
 /// is read but draws nothing: the client binds no model to a control point.)
-const LEFT_OUT: [&str; 45] = [
+const LEFT_OUT: [&str; 46] = [
     // Camera shake (Requiem of Souls) and the model a control point carries (the town portal's
     // image of the hero), and the rune, ward, teleport and lotus effects' finer operators (status
     // effects, parent-kill inheritance, paths, oscillation, rotation and culling): the client
     // draws these effects without them.
-    // And the map objectives' finer functions (their ambients, channels and rings): the client draws
+    // And the map objectives' finer functions (their ambients, channels and rings; the Watcher's
+    // channel places its motes on a spiral round it with C_INIT_CreateSpiralSphere, which the
+    // client does not, so they keep where its other initializers put them): the client draws
     // their effects without them.
     "C_INIT_CreateOnModelAtHeight",
     "C_INIT_CreateSequentialPathV2",
+    "C_INIT_CreateSpiralSphere",
     "C_INIT_InitFromParentKilled",
     "C_INIT_InitSkinnedPositionFromCPSnapshot",
     "C_INIT_NormalOffset",

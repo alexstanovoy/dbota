@@ -334,6 +334,7 @@ modifier 60 modifier_illusion
 modifier 64 modifier_fountain_invulnerability
 modifier 65 modifier_fountain_aura
 modifier 66 modifier_fountain_fury_swipes_damage_increase
+modifier 67 modifier_lamp_on
 modifier 68 modifier_lamp_off
 modifier 71 modifier_rune_haste
 modifier 72 modifier_rune_doubledamage

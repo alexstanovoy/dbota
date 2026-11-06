@@ -94,6 +94,8 @@ pub enum Feed {
     Caster,
     /// The side the unit is held for, in x: 0 the Radiant, 1 the Dire (`units::held_for`).
     Side,
+    /// How far the unit sees now, or sees for the side it is lit for, in x.
+    Sight,
 }
 
 /// Whose effect a worn line is about.
@@ -306,6 +308,7 @@ fn feed_of(value: &str) -> Result<Feed, String> {
         "charges" => Feed::Charges,
         "caster" => Feed::Caster,
         "side" => Feed::Side,
+        "sight" => Feed::Sight,
         place if attach_of(place).is_ok() => Feed::Place(attach_of(place)?),
         _ => {
             let parts: Vec<f32> = value

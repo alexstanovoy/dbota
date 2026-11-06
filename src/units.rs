@@ -502,11 +502,12 @@ fn objective_unit(kind: UnitKind) -> Option<&'static str> {
 }
 
 /// The side a unit is held for, as Dota colours a map objective by it: a side's own unit's (an
-/// Outpost it holds).
+/// Outpost it holds), or the side a neutral one is lit for (a Watcher), which the wire tells
+/// every view.
 pub fn held_for(unit: &UnitView) -> Option<Team> {
     match unit.team {
         Team::Radiant | Team::Dire => Some(unit.team),
-        Team::Neutral => None,
+        Team::Neutral => unit.lit_for,
     }
 }
 
@@ -1356,6 +1357,7 @@ pub(crate) mod tests {
             hit_health: None,
             vision_grant: None,
             cast_rates: None,
+            lit_for: None,
             seen_by: None,
             attack_range: fixed(150),
             attack_time: 1700,

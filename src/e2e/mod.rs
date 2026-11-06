@@ -75,6 +75,7 @@ mod trees;
 mod turning;
 mod watcher_capture;
 mod watcher_channel;
+mod watcher_colours;
 mod watcher_path;
 mod watchers;
 mod window;

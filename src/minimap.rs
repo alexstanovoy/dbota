@@ -594,15 +594,11 @@ fn objective_icon(u: &UnitView) -> Option<(&'static str, Option<Rect>, Color, f3
             crate::overlay::team_color(u.team),
             14.0,
         )),
-        // minimap_watcher (128,0 64x64).
+        // minimap_watcher (128,0 64x64), tinted by the side it is lit for, as an Outpost's.
         UnitKind::Watcher => Some((
             "icon.minimap.sheet",
             cell(128.0, 0.0, 64.0),
-            if has(EffectId::VISION_GRANT) {
-                Color::WHITE
-            } else {
-                DORMANT
-            },
+            crate::units::held_for(u).map_or(DORMANT, crate::overlay::team_color),
             12.0,
         )),
         // The unit's minimap_wisdom has no texture in the install: the wisdom

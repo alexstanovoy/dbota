@@ -82,7 +82,8 @@
 #                 has left) | mode (the attribute of the item: 0 strength, 1 agility, 2 intelligence) | charges (the share
 #                 of its charges the item held) | origin, overhead, attach_<node> (a point of the unit, followed) | x,y,z |
 #                 caster (where the user stands: the hero that plucked) | side (the side the unit is held for: 0 the
-#                 Radiant, 1 the Dire; an Outpost's own, the side a Watcher is lit for)
+#                 Radiant, 1 the Dire; an Outpost's own, the side a Watcher is lit for) | sight (how far the unit sees
+#                 now, or sees for the side it is lit for, in x)
 #           whose: for a worn line, only the effects the wearer put on itself (own) or another put on it (foreign)
 #           stacks: for a worn line, only while the effect holds that many
 #           side: for a worn line, only while the unit is held for that side
@@ -495,6 +496,8 @@ particle outpost.radiant_ambient particles/world_outpost/world_outpost_radiant_a
 particle outpost.dire_ambient particles/world_outpost/world_outpost_dire_ambient.vpcf_c particles/world_outpost_dire_ambient.json
 particle outpost.channel particles/world_outpost/world_outpost_channel.vpcf_c particles/world_outpost_channel.json
 particle outpost.captured particles/world_outpost/world_outpost_channel_finish.vpcf_c particles/world_outpost_channel_finish.json
+particle watcher.controlled particles/econ/items/items_fx/lantern_of_sight_controlled.vpcf_c particles/lantern_of_sight_controlled.json
+particle watcher.channel particles/econ/items/items_fx/lantern_of_sight_channeling.vpcf_c particles/lantern_of_sight_channeling.json
 particle lotus_pool.pluck particles/world_fountain_of_life/fol_active.vpcf_c particles/fol_active.json
 
 # --- Heroes' default ambient effects (items_game.txt "<hero>'s Ambient Effects", the item of slot ambient_effects)
@@ -706,6 +709,13 @@ fx unit.npc_dota_watch_tower.worn at=unit attach=attach_fx particle=outpost.radi
 fx unit.npc_dota_watch_tower.worn at=unit attach=attach_fx particle=outpost.dire_ambient side=dire
 fx unit.npc_dota_watch_tower.channelled at=unit attach=attach_fx particle=outpost.channel sound=sound.outpost.channel
 fx unit.npc_dota_watch_tower.captured at=unit attach=attach_fx particle=outpost.captured sound=sound.outpost.captured
+# A Watcher (the game's code, CDOTA_Ability_Lamp_Use and the lantern): lit, its eyes, spawn and sight ring in the colour of
+# the side it is lit for (lantern_of_sight_controlled: control point 12 picks the Dire's orange over the Radiant's teal,
+# 11 is the ring's radius) with Lantern.On; put out, Lantern.Off; its channel effect and Lantern.Channel while a hero
+# channels at it.
+fx modifier.modifier_lamp_on.worn at=unit particle=watcher.controlled sound=sound.watcher.on cp1=attach_lantern_top_eyes_a cp2=attach_lantern_top_eyes_b cp3=attach_lantern_top_eyes_c cp4=attach_lantern_top_eyes_d cp5=attach_lantern_bot_eyes_a cp6=attach_lantern_bot_eyes_b cp7=attach_lantern_bot_eyes_c cp8=attach_lantern_bot_eyes_d cp21=attach_lantern_top_eyes_a_end cp22=attach_lantern_top_eyes_b_end cp23=attach_lantern_top_eyes_c_end cp24=attach_lantern_top_eyes_d_end cp25=attach_lantern_bot_eyes_a_end cp26=attach_lantern_bot_eyes_b_end cp27=attach_lantern_bot_eyes_c_end cp28=attach_lantern_bot_eyes_d_end cp11=sight cp12=side
+fx modifier.modifier_lamp_off.worn at=unit sound=sound.watcher.off
+fx unit.npc_dota_lantern.channelled at=unit particle=watcher.channel sound=sound.watcher.channel
 fx item.famango.use at=caster particle=item.mango.active sound=sound.item.mango
 fx item.great_famango.use at=caster particle=item.mango.active sound=sound.item.mango
 fx item.greater_famango.use at=caster particle=item.mango.active sound=sound.item.mango
@@ -1088,6 +1098,9 @@ sound sound.item.cheese sounds/items/cheese.vsnd_c sounds/items/cheese.wav event
 sound sound.lotus_pool.grant sounds/items/lotus_grant.vsnd_c sounds/items/lotus_grant.wav event=LotusPool.Target
 sound sound.outpost.channel sounds/ambient/outpost_channel.vsnd_c sounds/ambient/outpost_channel.wav event=Outpost.Channel
 sound sound.outpost.captured sounds/ambient/outpost_captured.vsnd_c sounds/ambient/outpost_captured.wav event=Outpost.Captured
+sound sound.watcher.channel sounds/ambient/outpost_channel.vsnd_c sounds/ambient/outpost_channel.wav event=Lantern.Channel
+sound sound.watcher.on sounds/ambient/shrine_cast.vsnd_c sounds/ambient/shrine_cast.wav event=Lantern.On
+sound sound.watcher.off sounds/ambient/lantern_off.vsnd_c sounds/ambient/lantern_off.wav event=Lantern.Off
 
 # Town portal scroll: the hum over the landing (Loop_Appear) and over the leaving hero (Loop_Disappear), both
 # 4 s loops, and the sounds of the hero arriving and leaving.
@@ -1643,7 +1656,8 @@ clip objective.divine_sentinel.model open_idle divine_sentinel_open_idle 0.000
 clip objective.divine_sentinel.model close divine_sentinel_spawn_close 1.300
 # Watchers (npc_dota_lantern). idle: ready to be captured (ACT_DOTA_RUN); off: before the horn and while
 # deactivated (ACT_DOTA_IDLE, a held pose); cooldown (FLAIL); channel while a hero channels it; capture the
-# capture itself; lit and lit_night while on (CHANNEL_ABILITY_2/3).
+# capture itself; lit and lit_night while on (CHANNEL_ABILITY_2/3). Lit for a side it wears that side's material
+# group: 1 (lantern_of_sight_radiant), 2 (lantern_of_sight_dire).
 model objective.lantern_of_sight.model models/props_gameplay/lantern/lantern_of_sight.vmdl_c models/objective/lantern_of_sight/lantern_of_sight.glb anims=lantern_idle_ready_to_be_captured,lantern_idle_dead_not_ready,lantern_idle_cooldown,lantern_channel,lantern_idle_capture,lantern_idle_open,lantern_idle_open_night
 clip objective.lantern_of_sight.model idle lantern_idle_ready_to_be_captured 11.975
 clip objective.lantern_of_sight.model off lantern_idle_dead_not_ready 0.000
@@ -1652,7 +1666,25 @@ clip objective.lantern_of_sight.model channel lantern_channel 1.967
 clip objective.lantern_of_sight.model capture lantern_idle_capture 7.967
 clip objective.lantern_of_sight.model lit lantern_idle_open 7.967
 clip objective.lantern_of_sight.model lit_night lantern_idle_open_night 7.967
+model objective.lantern_of_sight.skin1.model models/props_gameplay/lantern/lantern_of_sight.vmdl_c models/objective/lantern_of_sight/lantern_of_sight_skin1.glb anims=lantern_idle_ready_to_be_captured,lantern_idle_dead_not_ready,lantern_idle_cooldown,lantern_channel,lantern_idle_capture,lantern_idle_open,lantern_idle_open_night skin=1
+clip objective.lantern_of_sight.skin1.model idle lantern_idle_ready_to_be_captured 11.975
+clip objective.lantern_of_sight.skin1.model off lantern_idle_dead_not_ready 0.000
+clip objective.lantern_of_sight.skin1.model cooldown lantern_idle_cooldown 0.967
+clip objective.lantern_of_sight.skin1.model channel lantern_channel 1.967
+clip objective.lantern_of_sight.skin1.model capture lantern_idle_capture 7.967
+clip objective.lantern_of_sight.skin1.model lit lantern_idle_open 7.967
+clip objective.lantern_of_sight.skin1.model lit_night lantern_idle_open_night 7.967
+model objective.lantern_of_sight.skin2.model models/props_gameplay/lantern/lantern_of_sight.vmdl_c models/objective/lantern_of_sight/lantern_of_sight_skin2.glb anims=lantern_idle_ready_to_be_captured,lantern_idle_dead_not_ready,lantern_idle_cooldown,lantern_channel,lantern_idle_capture,lantern_idle_open,lantern_idle_open_night skin=2
+clip objective.lantern_of_sight.skin2.model idle lantern_idle_ready_to_be_captured 11.975
+clip objective.lantern_of_sight.skin2.model off lantern_idle_dead_not_ready 0.000
+clip objective.lantern_of_sight.skin2.model cooldown lantern_idle_cooldown 0.967
+clip objective.lantern_of_sight.skin2.model channel lantern_channel 1.967
+clip objective.lantern_of_sight.skin2.model capture lantern_idle_capture 7.967
+clip objective.lantern_of_sight.skin2.model lit lantern_idle_open 7.967
+clip objective.lantern_of_sight.skin2.model lit_night lantern_idle_open_night 7.967
 unit npc_dota_lantern objective.lantern_of_sight.model model_scale=1
+model_variant objective.lantern_of_sight.model objective.lantern_of_sight.skin1.model side=radiant
+model_variant objective.lantern_of_sight.model objective.lantern_of_sight.skin2.model side=dire
 # The map's shop keepers (prop.<the map's model name>.model, skin n as .skin<n>.model: the map places one per entry
 # of buildings.txt, standing at its place and playing idle in a loop). The fountain keeper's skin 1 is the Dire's.
 model prop.shopkeeper.model models/heroes/shopkeeper/shopkeeper.vmdl_c models/prop/shopkeeper/shopkeeper.glb anims=shpkpr_idle_loop_alt

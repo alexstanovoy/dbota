@@ -6,7 +6,7 @@ use std::collections::{HashMap, HashSet};
 
 use bevy::{prelude::*, transform::TransformSystems};
 use bota_core::rules::TICKS_PER_SECOND;
-use bota_proto::{EntityId, Team, UnitView};
+use bota_proto::{EntityId, Fixed, Team, UnitView};
 
 use super::line::{Attach, Fx, Trigger, Whose};
 use super::rules::{Rule, Rules, Subject};
@@ -68,11 +68,16 @@ fn holding(rule: &Rule, unit: &UnitView, facts: &Facts) -> Option<Hold> {
         Some(Team::Dire) => 1.0,
         _ => 0.0,
     };
+    let sight = unit
+        .vision_radius
+        .max(unit.vision_grant.map_or(Fixed::ZERO, |(_, radius)| radius))
+        .to_f32();
     let held = |stacks, ticks_left: Option<u32>, feeds| Hold {
         feeds: Feeds {
             stacks: stacks as f32,
             seconds: ticks_left.map_or(0.0, |ticks| ticks as f32 / TICKS_PER_SECOND as f32),
             side,
+            sight,
             ..feeds
         },
     };

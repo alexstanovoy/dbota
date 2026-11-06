@@ -213,7 +213,6 @@ const NO_LINE: &[(&str, &str)] = &[
         "tornado_tempest",
         "the tornado's own unit wears the particle",
     ),
-    ("watcher_channel", "a channel: the clip is its effect"),
 ];
 
 /// Every item and ability of ids.txt has an `fx` line, or is listed above with the reason Dota
