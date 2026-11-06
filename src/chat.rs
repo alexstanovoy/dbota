@@ -56,6 +56,10 @@ struct Notice {
     age: f32,
 }
 
+/// The column of toasts over the chat's lines, which `feed` fills: a building's fall, a rune.
+#[derive(Component)]
+pub struct ToastColumn;
+
 /// The whole log, from the foot of the screen up.
 #[derive(Component)]
 struct Log;
@@ -331,6 +335,17 @@ fn spawn(mut commands: Commands, fonts: Res<Fonts>) {
             ChildOf(root),
         ))
         .id();
+    commands.spawn((
+        ToastColumn,
+        Node {
+            flex_direction: FlexDirection::Column,
+            row_gap: px(2),
+            margin: UiRect::bottom(px(4)),
+            ..default()
+        },
+        Pickable::IGNORE,
+        ChildOf(log),
+    ));
     for row in 0..ROWS {
         spawn_row(&mut commands, &fonts, log, row);
     }

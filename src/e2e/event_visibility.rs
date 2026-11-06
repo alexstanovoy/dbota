@@ -194,9 +194,12 @@ fn a_hidden_hero_death_is_announced_without_a_positional_sound() {
                 .any(|line| matches!(line.kind, bota_client_core::FeedKind::HeroDied { .. })),
             "a real hero death was recorded"
         );
+        let lines = crate::feed::shown(client.world_mut());
         assert!(
-            crate::feed::visible_rows(client.world_mut()) > 0,
-            "the public announcement remains in the feed"
+            lines.iter().any(|(left, _, text)| !left
+                && text.contains("Shadow Fiend")
+                && text.contains("slain")),
+            "the hero's death remains in the kill feed: {lines:?}"
         );
         let heard = heard.lock().unwrap();
         assert!(!heard.is_empty(), "the announced death still sounds");

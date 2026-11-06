@@ -23,15 +23,25 @@ const ICON: f32 = 18.0;
 
 /// One line of the feed, from the top.
 #[derive(Component)]
-struct Row(usize);
+struct Row(usize, Place);
 
-#[cfg(test)]
-pub(crate) fn visible_rows(world: &mut World) -> usize {
-    world
-        .query::<(&Row, &Node)>()
-        .iter(world)
-        .filter(|(_, node)| node.display == Display::Flex)
-        .count()
+/// Where a line is drawn: the kill feed at the top right (a hero's fall, the connection), or the
+/// toasts at the left above the HUD, over the chat (a building's fall, a rune, a Shrine, an
+/// Outpost), as Dota places them.
+#[derive(Component, Clone, Copy, PartialEq, Eq, Debug)]
+enum Place {
+    Corner,
+    Left,
+}
+
+impl Place {
+    /// Where a line of this kind belongs.
+    fn of(kind: &FeedKind) -> Place {
+        match kind {
+            FeedKind::StructureFell { .. } => Place::Left,
+            _ => Place::Corner,
+        }
+    }
 }
 
 /// A piece of a line: its `n`th icon or text.
@@ -45,11 +55,13 @@ pub fn plugin(app: &mut App) {
     app.add_systems(Update, show);
 }
 
-/// The feed's column and the lines made in it so far.
+/// The feed's corner column and the lines made in it so far, and the rows made in the toast
+/// column the chat holds.
 #[derive(Resource)]
 struct Column {
     entity: Entity,
     rows: usize,
+    toast_rows: usize,
 }
 
 /// The feed's column under the frame rate, lines right-aligned. Its lines
@@ -69,14 +81,18 @@ pub fn spawn(commands: &mut Commands, root: Entity) {
             ChildOf(root),
         ))
         .id();
-    commands.insert_resource(Column { entity, rows: 0 });
+    commands.insert_resource(Column {
+        entity,
+        rows: 0,
+        toast_rows: 0,
+    });
 }
 
 /// The next line of the column: [`SLOTS`] pairs of an icon and a text.
-fn spawn_row(commands: &mut Commands, fonts: &Fonts, column: Entity, row: usize) {
+fn spawn_row(commands: &mut Commands, fonts: &Fonts, column: Entity, row: usize, place: Place) {
     let line = commands
         .spawn((
-            Row(row),
+            Row(row, place),
             Node {
                 display: Display::None,
                 align_items: AlignItems::Center,
@@ -116,6 +132,7 @@ type Laid = [(Option<String>, String); SLOTS];
 fn show(
     mut commands: Commands,
     column: Option<ResMut<Column>>,
+    toasts: Option<Single<Entity, With<crate::chat::ToastColumn>>>,
     fonts: Res<Fonts>,
     sight: crate::fog::EventSight,
     texts: Option<Res<Texts>>,
@@ -125,16 +142,44 @@ fn show(
     mut slots: Query<(&Slot, Option<&mut ImageNode>, Option<&mut Text>, &mut Node), Without<Row>>,
 ) {
     let core = sight.core();
-    let lines = visible_lines(core, &sight);
+    let all = visible_lines(core, &sight);
+    let of = |place| -> Vec<&FeedLine> {
+        all.iter()
+            .copied()
+            .filter(|line| Place::of(&line.kind) == place)
+            .collect()
+    };
+    let (corner, left) = (of(Place::Corner), of(Place::Left));
     let Some(mut column) = column else {
         return;
     };
-    while column.rows < lines.len() {
-        spawn_row(&mut commands, &fonts, column.entity, column.rows);
+    while column.rows < corner.len() {
+        spawn_row(
+            &mut commands,
+            &fonts,
+            column.entity,
+            column.rows,
+            Place::Corner,
+        );
         column.rows += 1;
     }
-    for (Row(row), children, mut node) in rows {
-        let line = lines.get(*row);
+    if let Some(toasts) = toasts {
+        while column.toast_rows < left.len() {
+            spawn_row(
+                &mut commands,
+                &fonts,
+                *toasts,
+                column.toast_rows,
+                Place::Left,
+            );
+            column.toast_rows += 1;
+        }
+    }
+    for (Row(row, place), children, mut node) in rows {
+        let line = match place {
+            Place::Corner => corner.get(*row),
+            Place::Left => left.get(*row),
+        };
         let display = if line.is_some() {
             Display::Flex
         } else {
@@ -219,8 +264,7 @@ fn lay(core: &Core, texts: Option<&Texts>, manifest: &Manifest, line: &FeedLine)
                 if at == SLOTS {
                     break;
                 }
-                laid[at].0 =
-                    icon_file(core, &name, &line.kind).and_then(|logical| manifest.file(logical));
+                laid[at].0 = icon_path(core, manifest, &name, &line.kind);
             }
             Part::Text(text) => {
                 laid[at].1.push_str(&text);
@@ -278,6 +322,7 @@ fn building_parts(texts: &Texts, kind: &FeedKind) -> Option<Vec<Part>> {
         lane,
         tier,
         ranged,
+        killer,
     } = *kind
     else {
         return None;
@@ -292,7 +337,7 @@ fn building_parts(texts: &Texts, kind: &FeedKind) -> Option<Vec<Part>> {
         1 => "DOTA_Location_Name_TopLane",
         _ => "DOTA_Location_Name_BotLane",
     })?;
-    match building {
+    let parts = match building {
         UnitKind::Tower => {
             let tier = word(&format!("DOTA_Location_Name_Tower{}", tier?))?;
             texts.label_parts(
@@ -302,7 +347,7 @@ fn building_parts(texts: &Texts, kind: &FeedKind) -> Option<Vec<Part>> {
                     ("tower_name", format!("{side} {lane} {tier}")),
                     ("gold", String::new()),
                 ],
-            )
+            )?
         }
         UnitKind::Barracks => {
             let rax = word(if ranged? {
@@ -319,10 +364,14 @@ fn building_parts(texts: &Texts, kind: &FeedKind) -> Option<Vec<Part>> {
                     ("rax_type", rax),
                     ("gold", String::new()),
                 ],
-            )
+            )?
         }
-        _ => None,
-    }
+        _ => return None,
+    };
+    // The hero that struck it leads, its icon before the sword.
+    let killer =
+        matches!(killer, Some(Killer::Seat(_))).then(|| Part::Icon("killer_icon".to_owned()));
+    Some(killer.into_iter().chain(parts).collect())
 }
 
 /// The parts of Dota's feed line for an event the client words with the
@@ -440,6 +489,7 @@ pub fn text(core: &Core, kind: &FeedKind) -> String {
             lane,
             tier,
             ranged,
+            killer: _,
         } => structure(team, kind, lane, tier, ranged),
         FeedKind::Disconnected { seat } => format!("{} disconnected", seat_name(core, seat)),
         FeedKind::ProtocolBroken { ref why } => format!("the server broke the protocol: {why}"),
@@ -537,6 +587,23 @@ fn death(core: &Core, victim: Victim, killer: Option<Killer>, gold: i32, assists
     }
 }
 
+/// The cache path of the icon a feed label's icon variable stands for in a line of a kind: the
+/// hero that struck a building by its icon, any other by its logical name in the cache.
+fn icon_path(core: &Core, manifest: &Manifest, name: &str, kind: &FeedKind) -> Option<String> {
+    if let (
+        "killer_icon",
+        FeedKind::StructureFell {
+            killer: Some(Killer::Seat(slot)),
+            ..
+        },
+    ) = (name, kind)
+    {
+        let hero = core.view()?.player(*slot)?.hero;
+        return manifest.hero_icon(hero.0);
+    }
+    icon_file(core, name, kind).and_then(|logical| manifest.file(logical))
+}
+
 /// The cache's icon for a feed label's icon variable in a line of a kind.
 fn icon_file(core: &Core, name: &str, kind: &FeedKind) -> Option<&'static str> {
     Some(match (name, kind) {
@@ -581,17 +648,25 @@ pub fn side_name(team: Team) -> &'static str {
     }
 }
 
-/// The lines the feed shows, from the top: the cache paths of the icons shown and the text.
+/// The lines the feed shows, from the top, with where each is drawn (true: the toasts at the
+/// left): the cache paths of the icons shown and the text.
 #[cfg(test)]
-pub fn shown(world: &mut World) -> Vec<(Vec<String>, String)> {
+pub fn shown(world: &mut World) -> Vec<(bool, Vec<String>, String)> {
     let server = world.resource::<AssetServer>().clone();
-    let mut rows: Vec<(usize, Vec<String>, String)> = Vec::new();
-    let lines: Vec<(usize, Vec<Entity>, bool)> = world
+    let mut rows: Vec<(bool, usize, Vec<String>, String)> = Vec::new();
+    let lines: Vec<(usize, Place, Vec<Entity>, bool)> = world
         .query::<(&Row, &Children, &Node)>()
         .iter(world)
-        .map(|(row, children, node)| (row.0, children.to_vec(), node.display != Display::None))
+        .map(|(row, children, node)| {
+            (
+                row.0,
+                row.1,
+                children.to_vec(),
+                node.display != Display::None,
+            )
+        })
         .collect();
-    for (row, children, shown) in lines {
+    for (row, place, children, shown) in lines {
         if !shown {
             continue;
         }
@@ -612,10 +687,10 @@ pub fn shown(world: &mut World) -> Vec<(Vec<String>, String)> {
                 text.push_str(&piece.0);
             }
         }
-        rows.push((row, icons, text));
+        rows.push((place == Place::Left, row, icons, text));
     }
-    rows.sort_by_key(|(row, ..)| *row);
+    rows.sort_by_key(|(left, row, ..)| (*left, *row));
     rows.into_iter()
-        .map(|(_, icons, text)| (icons, text))
+        .map(|(left, _, icons, text)| (left, icons, text))
         .collect()
 }

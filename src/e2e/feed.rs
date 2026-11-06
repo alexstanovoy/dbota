@@ -22,7 +22,7 @@ fn four_seats() -> (Server, Client) {
 }
 
 /// Tells a line to the feed as the core would, and waits for it to be drawn.
-fn feed(client: &mut Client, kind: FeedKind) -> (Vec<String>, String) {
+fn feed(client: &mut Client, kind: FeedKind) -> (bool, Vec<String>, String) {
     client.core_mut().feed.push(FeedLine {
         kind,
         age: 0.0,
@@ -68,7 +68,7 @@ fn a_hero_kill_is_icons_for_killer_kill_victim_and_assists() {
     let helper = (0..4u8)
         .find(|s| *s != victim && *s != killer && team_of(&client, *s) == mine)
         .expect("an ally besides the killer");
-    let (icons, text) = feed(
+    let (left, icons, text) = feed(
         &mut client,
         FeedKind::HeroDied {
             victim: Victim::Seat(SlotId(victim)),
@@ -83,42 +83,59 @@ fn a_hero_kill_is_icons_for_killer_kill_victim_and_assists() {
         portrait(&client, victim),
         portrait(&client, helper),
     ];
+    assert!(
+        !left,
+        "a hero's fall stays in the kill feed at the top right"
+    );
     assert_eq!(
         icons, expected,
         "killer, kill, victim, assist; text {text:?}"
     );
 }
 
-/// A tower's fall is Dota's line of it: the kill icon of the side that lost it and its name.
+/// A tower's fall is Dota's line of it: the hero that destroyed it, the kill icon of its side
+/// and the tower's name. The destroyer is a seat of the other side, so that its icon cannot be
+/// taken for the viewer's own.
 #[test]
 fn a_fallen_tower_is_worded_as_dota_words_it() {
     let (_server, mut client) = four_seats();
+    client.within(SOON, "four seats on the scoreboard", |c| {
+        c.view().players.len() == 4
+    });
     let mine = client.me().team;
-    let lost = if mine == Team::Radiant {
-        Team::Dire
-    } else {
-        Team::Radiant
-    };
-    let (icons, text) = feed(
+    let foe = (0..4u8)
+        .find(|s| client.view().player(SlotId(*s)).expect("a seat").team != mine)
+        .expect("a foe");
+    let (left, icons, text) = feed(
         &mut client,
         FeedKind::StructureFell {
-            team: lost,
+            team: mine,
             kind: UnitKind::Tower,
             lane: Some(1),
             tier: Some(2),
             ranged: None,
+            killer: Some(Killer::Seat(SlotId(foe))),
         },
     );
-    let side = if lost == Team::Radiant {
+    assert!(
+        left,
+        "a building's fall is a toast at the left above the HUD"
+    );
+    let side = if mine == Team::Radiant {
         "Radiant"
     } else {
         "Dire"
     };
     assert_eq!(text.trim(), format!("{side} Top Tier 2 Tower"));
+    assert_ne!(
+        icons[0],
+        portrait(&client, client.core().my_slot.expect("a seat").0),
+        "the destroyer is not the viewer"
+    );
     assert_eq!(
         icons,
-        vec![file(&client, "hud.kill_ally")],
-        "the ally's kill icon"
+        vec![portrait(&client, foe), file(&client, "hud.kill_enemy")],
+        "the hero that destroyed it, then the sword of the other side"
     );
 }
 
@@ -126,7 +143,7 @@ fn a_fallen_tower_is_worded_as_dota_words_it() {
 #[test]
 fn a_fallen_barracks_is_worded_as_dota_words_it() {
     let (_server, mut client) = four_seats();
-    let (icons, text) = feed(
+    let (left, icons, text) = feed(
         &mut client,
         FeedKind::StructureFell {
             team: Team::Dire,
@@ -134,8 +151,10 @@ fn a_fallen_barracks_is_worded_as_dota_words_it() {
             lane: Some(2),
             tier: None,
             ranged: Some(true),
+            killer: None,
         },
     );
+    assert!(left, "at the left");
     assert_eq!(text.trim(), "Dire Bottom Ranged Barracks");
     assert_eq!(icons.len(), 1, "one kill icon");
 }
