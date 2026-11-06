@@ -240,10 +240,8 @@ fn buildings_collapse_in_their_destruction_models_to_the_viewer_who_sees_them_fa
     );
     assert_eq!(
         heard.count("Building_Generic.Destruction"),
-        1,
-        "the barracks and the filler fell on one tick, and a kind of sound rests ({} s, `sound::REST`) \
-         after it sounds: they sound as one",
-        crate::sound::REST
+        2,
+        "the barracks and filler lie beyond the event's repeat radius and both sound"
     );
     assert_eq!(
         heard.count(buildings.ancient_sound()),
