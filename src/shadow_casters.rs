@@ -40,7 +40,7 @@ pub fn plugin(app: &mut App) {
         );
 }
 
-fn find_floor(ground: Res<Ground>, mut floor: ResMut<ShadowFloor>) {
+pub(crate) fn find_floor(ground: Res<Ground>, mut floor: ResMut<ShadowFloor>) {
     if ground.is_changed() {
         floor.set_if_neq(ShadowFloor(
             ground.lowest().map(|lowest| lowest - BELOW_GROUND),

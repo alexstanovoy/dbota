@@ -800,7 +800,7 @@ fn required_models(manifest: &Manifest) -> Vec<String> {
 const MODEL_MATCH_RADIUS: f32 = 600.0;
 /// Buildings read from the cache at most (the map has 50); every structure
 /// looks through them each frame.
-const MAX_MAP_BUILDINGS: usize = 1024;
+pub(crate) const MAX_MAP_BUILDINGS: usize = 1024;
 /// Heights of the buildings' picking volumes, in world units.
 const TOWER_HEIGHT: f32 = 420.0;
 const BARRACKS_HEIGHT: f32 = 220.0;

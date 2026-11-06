@@ -151,7 +151,9 @@ fn a_hero_far_from_the_view_is_not_posed_and_is_posed_in_the_first_frame_the_vie
 }
 
 /// A unit's model is posed from the first frame it is drawn in the view, its skinned meshes'
-/// bounds following its joints, not only once it has left the view and come back.
+/// bounds following its joints, not only once it has left the view and come back. A pin, not a
+/// reproduction: the glTF loader gives every skinned mesh those bounds when it spawns, and this
+/// holds the posing code to leaving them there.
 #[test]
 fn a_hero_drawn_in_the_view_is_posed_from_its_first_frame() {
     let server = Server::start(1, &[]);
@@ -165,9 +167,9 @@ fn a_hero_drawn_in_the_view_is_posed_from_its_first_frame() {
     );
 }
 
-/// The widest reach either side of its feet, the height over them and the depth under them of a
-/// model's bind pose, in world units, read from its file in the cache (the bounds glTF keeps of
-/// every mesh's positions).
+/// The widest reach from its feet at any yaw (a mesh's bounds' corner), the height over them and
+/// the depth under them of a model's bind pose, in world units, read from its file in the cache
+/// (the bounds glTF keeps of every mesh's positions).
 fn bind_pose_extent(file: &std::path::Path, scale: f32) -> (f32, f32, f32) {
     let file = std::fs::read(file).expect("a model file of the cache");
     let json_len = u32::from_le_bytes(file[12..16].try_into().expect("a GLB header")) as usize;
@@ -189,9 +191,8 @@ fn bind_pose_extent(file: &std::path::Path, scale: f32) -> (f32, f32, f32) {
                     .collect()
             };
             let (min, max) = (corner("min"), corner("max"));
-            for v in [min[0], max[0], min[2], max[2]] {
-                reach = reach.max(v.abs() * k);
-            }
+            let side = |axis: usize| min[axis].abs().max(max[axis].abs());
+            reach = reach.max(side(0).hypot(side(2)) * k);
             height = height.max(max[1] * k);
             depth = depth.max(-min[1] * k);
         }
@@ -200,8 +201,9 @@ fn bind_pose_extent(file: &std::path::Path, scale: f32) -> (f32, f32, f32) {
 }
 
 /// Every model a living unit is posed with (one with clips, and what is worn on one), at every
-/// size a unit wears it, fits the box it is posed by with room for its clips to reach past its
-/// bind pose, a quarter more again. A dying unit's destruction model is posed whatever its box.
+/// size a unit wears it and grown by the largest scale the map places a building at, fits the
+/// box it is posed by at any yaw with room for its clips to reach past its bind pose, a quarter
+/// more again. A dying unit's destruction model is posed whatever its box.
 #[test]
 fn every_posed_model_fits_the_box_it_is_posed_by() {
     use clap::Parser;
@@ -226,6 +228,13 @@ fn every_posed_model_fits_the_box_it_is_posed_by() {
             .iter()
             .any(|m| crate::units::destruction_name(&m.logical).as_deref() == Some(name))
     };
+    let buildings =
+        std::fs::read_to_string(root.join("map/mid/buildings.txt")).expect("buildings.txt");
+    let placed = crate::cache_text::buildings(&buildings, crate::units::MAX_MAP_BUILDINGS)
+        .iter()
+        .flat_map(|b| b.scale)
+        .fold(1.0f32, f32::max);
+    assert!(placed > 1.0, "the fountains are placed larger: {placed}");
     let mut measured = 0;
     for model in &models {
         let body = model.attach.as_deref().unwrap_or(&model.logical);
@@ -241,7 +250,7 @@ fn every_posed_model_fits_the_box_it_is_posed_by() {
             .find(|m| m.logical == body)
             .and_then(|m| m.model_scale);
         for scale in units.chain([own.unwrap_or(1.0)]) {
-            let (reach, height, depth) = bind_pose_extent(&root.join(&model.out), scale);
+            let (reach, height, depth) = bind_pose_extent(&root.join(&model.out), scale * placed);
             let name = &model.logical;
             assert!(
                 reach * 1.25 <= crate::anim::MODEL_REACH,

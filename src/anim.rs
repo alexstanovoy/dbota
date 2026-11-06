@@ -39,18 +39,21 @@ const LOOPS_BEFORE_RARE: u32 = 4;
 const RUN_PACE: f32 = 300.0;
 /// World units a second above which a unit counts as running.
 const RUNNING: f32 = 25.0;
-/// World units either side of its feet a living unit's model may reach: the
-/// widest bind pose in the cache (a Lotus Pool, 430) and room for its clips to
-/// swing past it. `every_posed_model_fits_the_box_it_is_posed_by` measures the
+/// World units either side of its feet a living unit's model may reach, at any
+/// yaw: the widest bind pose's corner in the cache (a Lotus Pool, 652 at the
+/// largest scale the map places a building at) and room for its clips to swing
+/// past it. `every_posed_model_fits_the_box_it_is_posed_by` measures the
 /// bind poses; that the clips stay within a quarter more is assumed, not
 /// measured. A dying unit is always posed: the destruction models' clips
 /// fling their debris far past any such box.
-pub(crate) const MODEL_REACH: f32 = 800.0;
+pub(crate) const MODEL_REACH: f32 = 850.0;
 /// World units over its feet a living unit's model may reach: the tallest bind
-/// pose (a Divine Sentinel's cube, 484) and room for its clips.
+/// pose (a Divine Sentinel's cube, 533 at the largest placed scale) and room
+/// for its clips.
 pub(crate) const MODEL_HEIGHT: f32 = 800.0;
 /// World units under its feet a living unit's model may reach: the deepest
-/// bind pose (a Divine Sentinel, 199) and room for its clips.
+/// bind pose (a Divine Sentinel, 219 at the largest placed scale) and room for
+/// its clips.
 pub(crate) const MODEL_DEPTH: f32 = 300.0;
 /// World units a posed unit's box is grown by before it is let go: a unit
 /// standing at the edge of what is posed is not posed and let go frame after
@@ -151,7 +154,8 @@ pub fn plugin(app: &mut App) {
         PostUpdate,
         (note_channels.in_set(NoteChannels), animate)
             .chain()
-            .before(bevy::app::AnimationSystems),
+            .before(bevy::app::AnimationSystems)
+            .after(crate::shadow_casters::find_floor),
     );
 }
 
@@ -199,7 +203,10 @@ fn animate(
     camera: Single<(&Transform, &Projection), With<RtsCamera>>,
     args: Res<crate::Args>,
     (mut commands, children, skins): (Commands, Query<&Children>, Query<(), With<SkinnedMesh>>),
-    (sun, floor): (Query<&GlobalTransform, With<MainSun>>, Res<ShadowFloor>),
+    (sun, floor): (
+        Query<(&GlobalTransform, &DirectionalLight), With<MainSun>>,
+        Res<ShadowFloor>,
+    ),
 ) {
     let core = &session.0;
     let Some(view) = core.view() else {
@@ -211,7 +218,13 @@ fn animate(
     // frame there.
     let (camera, projection) = *camera;
     let frustum = projection.compute_frustum(&GlobalTransform::from(*camera));
-    let shadow = sun.single().ok().zip(floor.0);
+    // Without shadow maps (the Low and Potato presets) no unit's shadow is drawn.
+    let shadow = sun
+        .single()
+        .ok()
+        .filter(|(_, light)| light.shadow_maps_enabled)
+        .map(|(at, _)| at)
+        .zip(floor.0);
     let dt = time.delta_secs();
     let worked = channels.objectives(view);
     for (unit, mut pose, model_of, at, rig, dying) in &mut units {
@@ -360,9 +373,10 @@ fn trace(
 }
 
 /// Whether a unit standing at `feet` may be seen or throw its shadow into the
-/// view: its model's box ([`MODEL_REACH`], [`MODEL_HEIGHT`]), grown by
-/// [`LET_GO_MARGIN`] while it is `posed`, meets the frustum, or its shadow cast
-/// by the `shadow` sun down to its floor does.
+/// view: its model's box ([`MODEL_REACH`] either side, [`MODEL_HEIGHT`] over,
+/// [`MODEL_DEPTH`] under its feet), grown by [`LET_GO_MARGIN`] while it is
+/// `posed`, meets the frustum, or its shadow cast by the `shadow` sun (when
+/// it casts shadows) down to its floor does.
 fn in_reach(
     frustum: &bevy::camera::primitives::Frustum,
     feet: Vec3,
@@ -720,6 +734,35 @@ mod tests {
         assert!(
             !in_reach(&view(), past, true, None),
             "let go past the margin"
+        );
+    }
+
+    /// A sun 45 degrees up, shining toward `x` (its light falling that way).
+    fn sun_toward(x: f32) -> GlobalTransform {
+        GlobalTransform::from(Transform::default().looking_to(Vec3::new(x, -1.0, 0.0), Vec3::Y))
+    }
+
+    /// A unit whose model is out of the view is posed when its shadow falls into it, and not
+    /// when its shadow falls away or there is no shadow at all.
+    #[test]
+    fn a_unit_out_of_view_is_posed_only_while_its_shadow_falls_into_it() {
+        // The box, and its shadow's box with the shadow cull's margin, end short of what the
+        // camera sees down to 300 under the ground, where the box's bottom is; its shadow at 45
+        // degrees reaches 800 further, into the view.
+        let feet = Vec3::new(-(665.0 + MODEL_REACH + 300.0), 0.0, 0.0);
+        assert!(
+            !in_reach(&view(), feet, false, None),
+            "the model alone is out of view"
+        );
+        let toward = sun_toward(1.0);
+        assert!(
+            in_reach(&view(), feet, false, Some((&toward, 0.0))),
+            "its shadow falls in"
+        );
+        let away = sun_toward(-1.0);
+        assert!(
+            !in_reach(&view(), feet, false, Some((&away, 0.0))),
+            "its shadow falls away"
         );
     }
 }
