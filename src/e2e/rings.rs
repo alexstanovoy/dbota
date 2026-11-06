@@ -213,3 +213,59 @@ fn aiming_blood_grenade_draws_its_area_under_the_cursor() {
         );
     }
 }
+
+/// What a ward gives, from its item's data row: its true sight where it gives that, else its
+/// vision.
+fn what_a_ward_gives(item: bota_proto::ItemId) -> f32 {
+    let def = bota_core::item_def(item).expect("the ward's data");
+    let bota_core::UseSpec::Ward { unit, .. } = def.effect else {
+        panic!("{item:?} is no ward");
+    };
+    (if unit.true_sight > 0 {
+        unit.true_sight
+    } else {
+        unit.day_vision
+    }) as f32
+}
+
+/// Aiming a ward draws the circle of what it will give, as Dota does: an Observer Ward's vision
+/// and a Sentry Ward's true sight, from the data of each. Round the very point under the pointer
+/// as it moves, within a pixel, like the grenade's (only a small mark marked the spot before).
+#[test]
+fn aiming_a_ward_draws_its_vision_or_true_sight_circle_under_the_cursor() {
+    use bota_client_core::{Intent, Slot};
+    for item in [
+        bota_proto::ItemId::OBSERVER_WARD,
+        bota_proto::ItemId::SENTRY_WARD,
+    ] {
+        let radius = what_a_ward_gives(item);
+        let server = Server::start(1, &[]);
+        let mut client = Client::join(&server, HeroId::SHADOW_FIEND, &[]);
+        client.stand_at(MID);
+        client.cheat(bota_proto::Cheat::Item { item });
+        let slot = client.slot_of(item).expect("the ward in the bag");
+        client.core_mut().act(Intent::Press {
+            slot: Slot::Item(slot),
+            ctrl: false,
+        });
+        let me = client.me().pos;
+        let (x, y) = (me.x.to_f32(), me.y.to_f32());
+        // Within the ward's reach (500), where the circle is drawn in the colour of a use that
+        // would be made.
+        for step in 0..25 {
+            let spot = (x + 200.0 + 10.0 * step as f32, y + 100.0);
+            let pointer = client.screen_of(spot).expect("the spot on screen");
+            client.mouse(pointer);
+            client.frames(1);
+            let circles = rings_of(&client, crate::overlay::GOOD, radius);
+            assert_eq!(circles.len(), 1, "{item:?}: one circle of {radius}");
+            let middle = client
+                .screen_of((circles[0].x, circles[0].y))
+                .expect("on screen");
+            assert!(
+                middle.distance(pointer) < 1.0,
+                "{item:?}: the circle round {middle}, the pointer at {pointer}"
+            );
+        }
+    }
+}
