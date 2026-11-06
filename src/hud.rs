@@ -1911,7 +1911,10 @@ fn item_face(
     let rate = u32::from(core.tick_rate().max(1));
     Some(SlotFace {
         lifted: held,
-        seconds: if item.cooldown_left > 0 {
+        seconds: if let Some(left) = item.expires_in {
+            let seconds = left.div_ceil(rate);
+            format!("{}:{:02}", seconds / 60, seconds % 60)
+        } else if item.cooldown_left > 0 {
             item.cooldown_left.div_ceil(rate).to_string()
         } else {
             String::new()

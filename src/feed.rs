@@ -703,6 +703,29 @@ fn building_parts(texts: &Texts, kind: &FeedKind) -> Option<Vec<Part>> {
 fn dota_parts(core: &Core, texts: &Texts, kind: &FeedKind) -> Option<Vec<Part>> {
     match *kind {
         FeedKind::StructureFell { .. } => building_parts(texts, kind),
+        FeedKind::Loot {
+            item,
+            by,
+            team,
+            destroyed,
+        } => {
+            let labels = crate::faces::loot_labels(item)?;
+            texts.label_parts(
+                labels[usize::from(destroyed)],
+                &[("player_name", activator(core, by, team))],
+            )
+        }
+        FeedKind::BossFell {
+            objective: bota_proto::ObjectiveKind::Roshan,
+            team: Some(team),
+        } => texts.label_parts(
+            if team == Team::Radiant {
+                "DOTA_HUD_KilledRoshanGood"
+            } else {
+                "DOTA_HUD_KilledRoshanBad"
+            },
+            &[("gold", String::new())],
+        ),
         FeedKind::Captured { building, by } => {
             let name = outpost_name(core, Some(texts), building);
             let (key, values) = match core.my_team() {
@@ -801,6 +824,30 @@ fn outpost_name(
 /// the install's labels.
 pub fn text(core: &Core, kind: &FeedKind) -> String {
     match *kind {
+        FeedKind::Loot {
+            item,
+            by,
+            team,
+            destroyed,
+        } => format!(
+            "{} {} {}",
+            activator(core, by, team),
+            if destroyed { "denied" } else { "picked up" },
+            crate::faces::ITEMS
+                .get(usize::from(item.0))
+                .map_or("the item", |item| item.name)
+        ),
+        FeedKind::BossFell { objective, team } => {
+            let name = match objective {
+                bota_proto::ObjectiveKind::Roshan => "Roshan",
+                bota_proto::ObjectiveKind::Tormentor => "Tormentor",
+                _ => "The objective",
+            };
+            match team {
+                Some(team) => format!("{name} was slain by {}", side_name(team)),
+                None => format!("{name} has fallen"),
+            }
+        }
         FeedKind::HeroDied {
             victim,
             killer,
@@ -941,6 +988,8 @@ fn icon_file(core: &Core, name: &str, kind: &FeedKind) -> Option<&'static str> {
         ("outpost_captured_icon", _) => "hud.outpost_captured",
         ("outpost_lost_icon", _) => "hud.outpost_lost",
         ("outpost_icon", _) => "hud.outpost",
+        ("aegis_icon", FeedKind::Loot { .. }) => "hud.aegis",
+        ("roshan_icon", FeedKind::BossFell { .. }) => "hud.roshan",
         ("rune_icon", FeedKind::Rune { kind, .. }) => rune_icon(*kind),
         // The Shrine's wisdom.
         ("rune_icon", _) => "hud.rune_timer.wisdom",
@@ -1100,4 +1149,9 @@ pub fn looks(world: &mut World) -> Vec<Look> {
             look
         })
         .collect()
+}
+
+#[cfg(test)]
+pub(crate) fn root(world: &World) -> Option<Entity> {
+    world.get_resource::<Column>().map(|column| column.entity)
 }

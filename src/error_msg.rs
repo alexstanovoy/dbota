@@ -84,7 +84,8 @@ pub fn told(reason: RejectReason) -> Option<Told> {
         | Why::NotAdmitted
         | Why::SeatHeld
         | Why::CatalogueMismatch
-        | Why::HoldsRune => own,
+        | Why::HoldsRune
+        | Why::ItemRestricted => own,
         // What the player needs no word for: the hero is dead (its panel
         // says so), the target was gone when the order came, or what the
         // interface never offers (an empty slot, a passive, another's unit,
@@ -177,7 +178,7 @@ fn plain_words(reason: RejectReason) -> &'static str {
         Why::BadCheat => "the cheat is out of bounds",
         Why::OutOfStock => "the shop has none left",
         Why::CannotLearn => "that talent cannot be learned now",
-        Why::Unsellable => "a free scroll sells for nothing",
+        Why::Unsellable => "this item cannot be sold",
         Why::NotAdmitted => "no seat for this client: a wrong key, or none open",
         Why::SeatHeld => "another live connection holds the seat",
         Why::QueueFull => "too many orders queued",
@@ -187,6 +188,7 @@ fn plain_words(reason: RejectReason) -> &'static str {
         Why::NotDisassemblable => "it can no longer be disassembled",
         Why::CannotLockCombining => "it is part of no recipe",
         Why::HoldsRune => "a Bottle keeping a rune stays in hand",
+        Why::ItemRestricted => "this item must stay in the inventory",
     }
 }
 

@@ -135,7 +135,7 @@ fn choices(
     let at_home = core
         .slot_unit()
         .is_some_and(|unit| core.unit_at_home_shop(unit.id));
-    if slot != TOWN_PORTAL_SLOT {
+    if slot != TOWN_PORTAL_SLOT && bota_core::item_def(item.id).is_some_and(|def| def.limits.sellable) {
         let at_shop = at_home
             || slot >= BAG_SLOTS
             || core

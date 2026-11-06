@@ -257,7 +257,16 @@ impl Shooters<'_, '_> {
 
     /// Where missile `f` hits: its target's hit location, else where it is now.
     fn aim(&self, f: &bota_client_core::Flight, at: Vec3) -> Vec3 {
-        f.missile.target.and_then(|t| self.hit(t)).unwrap_or(at)
+        f.missile.target.and_then(|target| {
+            self.hit(target).or_else(|| {
+                let view = self.sight.core().view()?;
+                let loot = view.loot.iter().find(|loot| loot.id == target)?;
+                if self.sight.fog().hides(loot.seen_by) { return None; }
+                let x = loot.pos.x.to_f32();
+                let y = loot.pos.y.to_f32();
+                Some(Vec3::new(x, self.ground.at(x, y), -y))
+            })
+        }).unwrap_or(at)
     }
 
     /// Unit `id`'s root in the world.

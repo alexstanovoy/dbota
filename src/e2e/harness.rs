@@ -709,3 +709,17 @@ pub fn pose_of(client: &Client, root: Entity) -> Vec<(Entity, Transform)> {
         .filter_map(|e| Some((e, *world.get::<Transform>(e)?)))
         .collect()
 }
+
+/// A bounded ancestry query for assertions about one drawn widget rather than the whole UI.
+pub fn descends_from(world: &World, mut entity: Entity, root: Entity) -> bool {
+    for _ in 0..32 {
+        if entity == root {
+            return true;
+        }
+        let Some(parent) = world.get::<ChildOf>(entity) else {
+            return false;
+        };
+        entity = parent.parent();
+    }
+    false
+}

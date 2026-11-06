@@ -346,3 +346,8 @@ modifier 77 modifier_bottle_regeneration
 modifier 78 modifier_blight_stone_buff
 modifier 79 modifier_item_orb_of_venom_slow
 modifier 80 modifier_orb_of_frost_debuff
+
+item 88 aegis
+item 89 refresher_shard
+item 90 roshans_banner
+modifier 81 modifier_aegis_regen
