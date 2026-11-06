@@ -51,6 +51,139 @@ fn advance_to_flag_wave(client: &mut Client) {
     }
 }
 
+#[test]
+fn inspiration_draws_above_the_terrain_for_both_teams_and_viewers() {
+    for viewer in [Team::Radiant, Team::Dire] {
+        check_inspiration_for_viewer(viewer);
+    }
+}
+
+fn check_inspiration_for_viewer(viewer: Team) {
+    let server = Server::start(if viewer == Team::Dire { 2 } else { 1 }, &["--seed", "5"]);
+    if viewer == Team::Dire {
+        super::harness::quiet_seat(&server, HeroId::PUDGE);
+    }
+    let mut client = Client::join(&server, HeroId::SHADOW_FIEND, &[]);
+    assert_eq!(client.me().team, viewer);
+    client.cheat(Cheat::Invulnerable { on: true });
+    client.cheat(Cheat::AllVision { on: true });
+    client.cheat(Cheat::StartGame);
+    advance_to_flag_wave(&mut client);
+    client
+        .world_mut()
+        .insert_resource(bevy::time::TimeUpdateStrategy::ManualDuration(
+            Duration::from_secs_f32(1.0 / 60.0),
+        ));
+    let flags: Vec<_> = client
+        .view()
+        .units
+        .iter()
+        .filter(|u| u.kind == UnitKind::CreepFlagbearer)
+        .map(|u| (u.id, u.team))
+        .collect();
+    assert_eq!(flags.len(), 2);
+    server.frozen(|| {
+        for (id, team) in flags {
+            check_inspiration_circle(&mut client, id, team, viewer);
+        }
+    });
+    client.cheat(Cheat::AllVision { on: false });
+    let own = client
+        .view()
+        .units
+        .iter()
+        .find(|u| u.kind == UnitKind::CreepFlagbearer && u.team == viewer)
+        .expect("own flagbearer")
+        .id;
+    server.frozen(|| {
+        check_inspiration_circle(&mut client, own, viewer, viewer);
+    });
+}
+
+fn check_inspiration_circle(client: &mut Client, id: EntityId, team: Team, viewer: Team) {
+    centre_camera_on(client, id);
+    client.until("this flagbearer's scene ready", |c| {
+        c.body(id).is_some_and(|body| {
+            c.world()
+                .get::<crate::units::Attachments>(body)
+                .is_some_and(|a| a.node("attach_banner").is_some())
+        })
+    });
+    client.frames(30);
+    assert_inspiration_circle(client, id, team, viewer);
+}
+
+fn inspiration_circle(client: &Client, team: Team) -> (Vec3, Vec<u16>) {
+    use heatel::particle::Renderer;
+    let side = if team == Team::Radiant {
+        "radiant"
+    } else {
+        "dire"
+    };
+    let world = client.world();
+    let effect = world
+        .resource::<crate::particles::Library>()
+        .effect(&format!("creep.{side}.inspiration"))
+        .expect("imported Inspiration");
+    let mut instances = world
+        .resource::<crate::particles::Playing>()
+        .instances_of(effect);
+    let instance = instances.next().expect("Inspiration playing");
+    assert!(
+        instances.next().is_none(),
+        "one flagbearer per team in this wave"
+    );
+    let node = instance.nodes.iter().find(|n| effect.defs[n.def].system.renderers.iter().any(|r|
+        matches!(&r.class, Renderer::Sprites(s) if s.look.texture.as_ref().is_some_and(|t| t.contains("ping_circle")))))
+        .expect("the authored circle renderer");
+    assert_eq!(node.parts.len(), 1, "one persistent circle for {team:?}");
+    let position = node.parts.vectors[0][0];
+    let center = Vec3::new(position.x, position.z, -position.y);
+    let looks: Vec<_> = effect.defs[node.def].draws.iter().map(|d| d.look).collect();
+    (center, looks)
+}
+
+fn assert_inspiration_circle(client: &Client, id: EntityId, team: Team, viewer: Team) {
+    let world = client.world();
+    let (center, looks) = inspiration_circle(client, team);
+    let frame = world.resource::<crate::particles::ParticleFrame>();
+
+    let cards: Vec<_> = frame
+        .batches
+        .iter()
+        .filter(|b| looks.contains(&b.look))
+        .flat_map(|b| &frame.quads[b.range.start as usize..b.range.end as usize])
+        .filter(|q| ((Vec3::from(q.head) + Vec3::from(q.tail)) * 0.5).distance(center) < 0.01)
+        .collect();
+    assert_eq!(
+        cards.len(),
+        1,
+        "the actual card for {id:?}, {team:?} viewed by {viewer:?}; center={center:?}, looks={looks:?}, batches={:?}",
+        frame.batches
+    );
+    let q = cards[0];
+    let alpha = if team == Team::Radiant { 0.3 } else { 1.0 };
+    assert!(
+        (q.head_color[3] - alpha).abs() < 0.001,
+        "source alpha: {:?}",
+        q.head_color
+    );
+    let ground = world.resource::<crate::map::Ground>();
+    let clearance = center.y - ground.surface_at(center.x, -center.z);
+    assert!(
+        (clearance - 18.0).abs() < 2.0,
+        "the circle clears drawn terrain: {team:?} viewed by {viewer:?}, clearance {clearance}, center {center:?}"
+    );
+    let normal = Vec3::from(q.head_side)
+        .cross(Vec3::from(q.tail) - Vec3::from(q.head))
+        .normalize();
+    assert!(normal.y.abs() > 0.9, "the circle faces up: {normal:?}");
+    eprintln!(
+        "Inspiration {team:?} viewed by {viewer:?}: card alpha {}, clearance {clearance}",
+        q.head_color[3]
+    );
+}
+
 fn check_flag(client: &mut Client, id: EntityId, team: Team) {
     let side = match team {
         Team::Radiant => "radiant",
