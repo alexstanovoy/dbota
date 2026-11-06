@@ -106,11 +106,11 @@ impl EventSight<'_> {
     pub fn sees_projectile(&self, id: EntityId) -> bool {
         self.core()
             .view()
+            // Full streams retain simulation order, unlike sorted side projections.
             .and_then(|view| {
                 view.projectiles
-                    .binary_search_by_key(&id, |p| p.id)
-                    .ok()
-                    .map(|i| &view.projectiles[i])
+                    .iter()
+                    .find(|projectile| projectile.id == id)
             })
             .is_some_and(|projectile| self.allows_projectile(projectile))
     }
@@ -142,6 +142,36 @@ impl EventSight<'_> {
             (Speaker::Spectator(_), Audience::Spectators) => self.core().my_slot.is_none(),
             _ => false,
         }
+    }
+
+    pub fn death_witness(&self, event: &EventKind) -> Option<&UnitView> {
+        let EventKind::Died { unit, .. } = event else {
+            return None;
+        };
+        let core = self.core();
+        let index = core.told.iter().position(|known| known == event)?;
+        core.before_event(index, *unit)
+    }
+
+    /// The casting side knows its own aim even after a target dies or leaves sight.
+    /// Union knowledge includes each side's own orders, just as it includes purchases.
+    pub fn aim_knowledge(&self, caster: Option<EntityId>) -> Option<bota_proto::SeenBy> {
+        let caster = caster?;
+        let team = self.unit(caster).map(|unit| unit.team).or_else(|| {
+            self.core()
+                .view()?
+                .players
+                .iter()
+                .find(|player| player.unit == Some(caster))
+                .map(|player| player.team)
+        })?;
+        if !matches!(team, bota_proto::Team::Radiant | bota_proto::Team::Dire) {
+            return None;
+        }
+        Some(bota_proto::SeenBy {
+            radiant: team == bota_proto::Team::Radiant,
+            dire: team == bota_proto::Team::Dire,
+        })
     }
 
     pub fn flights(&self) -> Vec<bota_client_core::Flight> {
@@ -176,7 +206,15 @@ impl EventSight<'_> {
         told: bool,
         at: Vec2,
         target: Option<EntityId>,
+        caster: Option<EntityId>,
     ) -> bool {
+        if matches!(subject, EventSubject::Point(_))
+            && self
+                .aim_knowledge(caster)
+                .is_some_and(|seen| !self.fog.hides(Some(seen)))
+        {
+            return true;
+        }
         let target_seen = target.is_none_or(|unit| self.sees_unit(unit));
         // A caster's flash can remain visible while the aimed unit and its point are private.
         (told || !self.fog.on || !matches!(subject, EventSubject::Point(_)) || target_seen)
@@ -205,8 +243,9 @@ impl EventSight<'_> {
             EventKind::ItemUsed {
                 at: Some(at),
                 target,
+                caster,
                 ..
-            } => self.allows_item_use(subject, told, at, target),
+            } => self.allows_item_use(subject, told, at, target, caster),
             EventKind::RuneDenied { unit, at, team, .. } => {
                 (told || self.fog.team == Some(team) || self.sees_point(at) && self.sees_unit(unit))
                     && shown(true)
@@ -244,11 +283,17 @@ impl EventSight<'_> {
             }
             // These deaths, like captures and Wisdom, are public announcements in the protocol.
             EventKind::Died { unit, .. } => {
-                // An announcement carries no position: a derived cue must still see its spot.
-                self.placement(
-                    subject,
-                    told || self.sees_unit(unit) || self.announced_death(view, unit),
-                )
+                // Death removes the victim's vision. Its exact before-state is the evidence,
+                // independent of when the asynchronous post-death ground grid finishes.
+                match subject {
+                    EventSubject::Event => {
+                        told || self.sees_unit(unit) || self.announced_death(view, unit)
+                    }
+                    EventSubject::Unit(before) => self.allows_unit(before),
+                    EventSubject::Point(at) => self
+                        .death_witness(event)
+                        .is_some_and(|before| before.pos == at && self.allows_unit(before)),
+                }
             }
             EventKind::StructureDestroyed { .. }
             | EventKind::Captured { .. }

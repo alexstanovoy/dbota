@@ -29,8 +29,22 @@ pub enum EffectSight {
     Point,
     /// A historical unit fact: the viewers that knew it, and the still-visible point.
     KnownPoint(bota_proto::SeenBy),
+    /// A fact already witnessed, such as a death or the point one's own order aimed at.
+    Witnessed(bota_proto::SeenBy),
+    /// The last visible point of a flight that ended, independent of its attachment CPs.
+    FlightEnd(bota_proto::SeenBy, Vec2),
     Unit(bota_proto::EntityId),
     Projectile(bota_proto::EntityId),
+}
+
+/// The last row actually presented, retained across any number of snapshots in one pump.
+#[derive(Clone, Copy)]
+pub(super) struct FlightRecord {
+    id: bota_proto::EntityId,
+    at: Vec2,
+    seen: bota_proto::SeenBy,
+    caster: Option<bota_proto::EntityId>,
+    inflictor: Option<bota_proto::Inflictor>,
 }
 
 /// Most effects playing at once; past it a new one is not started.
@@ -67,6 +81,8 @@ pub struct Playing {
     started: Vec<(Arc<Effect>, u32)>,
     #[cfg(test)]
     drawn: Vec<(Arc<Effect>, u32)>,
+    #[cfg(test)]
+    drawn_endings: Vec<(Arc<Effect>, u32)>,
 }
 
 impl Playing {
@@ -78,6 +94,14 @@ impl Playing {
             .find(|(held, _)| Arc::ptr_eq(held, effect))
             .map_or(0, |(_, count)| *count)
     }
+    #[cfg(test)]
+    pub fn drawn_endings(&self, effect: &Arc<Effect>) -> u32 {
+        self.drawn_endings
+            .iter()
+            .find(|(held, _)| Arc::ptr_eq(held, effect))
+            .map_or(0, |(_, count)| *count)
+    }
+
     /// How many times `effect` was started.
     pub fn started(&self, effect: &Arc<Effect>) -> u32 {
         self.started
@@ -154,6 +178,41 @@ impl Playing {
         instance.as_mut()
     }
 
+    pub fn note_flight(
+        &mut self,
+        handle: Handle,
+        projectile: &bota_proto::ProjectileView,
+        seen: bota_proto::SeenBy,
+    ) {
+        if let Some(instance) = self.get_mut(handle) {
+            instance.flight = Some(FlightRecord {
+                id: projectile.id,
+                at: Vec2::new(projectile.pos.x.to_f32(), projectile.pos.y.to_f32()),
+                seen,
+                caster: projectile.source,
+                inflictor: projectile.inflictor,
+            });
+        }
+    }
+
+    pub fn matches_flight(
+        &self,
+        handle: Handle,
+        inflictor: bota_proto::Inflictor,
+        caster: Option<bota_proto::EntityId>,
+        sight: &crate::fog::EventSight,
+    ) -> bool {
+        self.slots
+            .get(handle.slot)
+            .filter(|(generation, _)| *generation == handle.generation)
+            .and_then(|(_, instance)| instance.as_ref()?.flight)
+            .is_some_and(|flight| {
+                flight.inflictor == Some(inflictor)
+                    && flight.caster == caster
+                    && !sight.fog().hides(Some(flight.seen))
+            })
+    }
+
     /// Retires an instance without an impact or an end cap, as when vision of it is lost.
     pub fn cancel(&mut self, handle: Handle) {
         let Some((generation, entry)) = self.slots.get_mut(handle.slot) else {
@@ -169,6 +228,33 @@ impl Playing {
         self.free.push(handle.slot);
         if self.spare.len() < MAX_SPARE {
             self.spare.push(instance);
+        }
+    }
+
+    /// A flight leaving sight is cancelled. A visibly finished flight keeps its ending at
+    /// its last known point, without consulting a hidden target or retaining its live id.
+    pub fn finish_flight(&mut self, handle: Handle, sight: &crate::fog::EventSight) {
+        let last = self.get_mut(handle).and_then(|instance| {
+            let flight = instance.flight?;
+            let still_present = sight
+                .core()
+                .view()?
+                .projectiles
+                .iter()
+                .any(|projectile| projectile.id == flight.id);
+            (!still_present
+                && !sight.fog().hides(Some(flight.seen))
+                && sight.allows_point(flight.at.x, flight.at.y))
+            .then_some((flight.seen, flight.at))
+        });
+        match last {
+            Some((seen, at)) => {
+                if let Some(instance) = self.get_mut(handle) {
+                    instance.sight = EffectSight::FlightEnd(seen, at);
+                    instance.end();
+                }
+            }
+            None => self.cancel(handle),
         }
     }
 
@@ -360,6 +446,19 @@ pub(crate) fn tick(
                 playing.placed.len(),
             )
         {
+            if instance.ending() {
+                if let Some((_, count)) = playing
+                    .drawn_endings
+                    .iter_mut()
+                    .find(|(held, _)| Arc::ptr_eq(held, &instance.effect))
+                {
+                    *count = count.saturating_add(1);
+                } else {
+                    playing
+                        .drawn_endings
+                        .push((Arc::clone(&instance.effect), 1));
+                }
+            }
             if let Some((_, count)) = playing
                 .drawn
                 .iter_mut()
@@ -391,6 +490,10 @@ fn permitted(instance: &Instance, sight: &crate::fog::EventSight) -> bool {
         EffectSight::Public => true,
         EffectSight::Unit(id) => sight.visible_unit(id).is_some(),
         EffectSight::Projectile(id) => sight.sees_projectile(id),
+        EffectSight::Witnessed(seen) => !sight.fog().hides(Some(seen)),
+        EffectSight::FlightEnd(seen, at) => {
+            !sight.fog().hides(Some(seen)) && sight.allows_point(at.x, at.y)
+        }
         EffectSight::KnownPoint(seen) if sight.fog().hides(Some(seen)) => false,
         EffectSight::Point | EffectSight::KnownPoint(_) => {
             instance.nodes.first().is_some_and(|node| {

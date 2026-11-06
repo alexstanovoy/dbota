@@ -176,10 +176,29 @@ fn heard(client: &Client, sounds: &Sounds, logical: &str) -> bool {
         .any(|path| sources.iter().any(|source| path.ends_with(source)))
 }
 
-fn record_teleport() -> (ReplayFile, Spot, Spot) {
-    let mut game = Spectated::start("2");
+fn record_teleport(lose_origin: bool) -> (ReplayFile, Spot, Spot) {
+    let mut game = if lose_origin {
+        Spectated::pair("2")
+    } else {
+        Spectated::start("2")
+    };
     let from = bota_core::DOTA_RUNE_SPOTS[0].at;
     game.cheat(Cheat::Teleport { at: from });
+    if lose_origin {
+        game.other
+            .as_mut()
+            .unwrap()
+            .act(Intent::Cheat(Cheat::Teleport {
+                at: from + Spot::from_ints(200, 0),
+            }));
+        game.wait("Dire can see the origin before the channel", |_, client| {
+            hero(client, 0).seen_by.is_some_and(|seen| seen.dire)
+        });
+        game.other.as_mut().unwrap().send_order(Order::Move {
+            target: Target::None,
+        });
+        game.cheat(Cheat::Invulnerable { on: true });
+    }
     game.cheat(Cheat::Refresh);
     let fountain = game
         .driver
@@ -194,6 +213,22 @@ fn record_teleport() -> (ReplayFile, Spot, Spot) {
         slot: ItemSlot(bota_client_core::TOWN_PORTAL_SLOT),
         target: Target::Unit(target),
     });
+    if lose_origin {
+        game.wait("the real channel begins", |_, client| {
+            !client.view().teleports.is_empty()
+        });
+        let away = hero(&game.client, 1).pos + Spot::from_ints(4000, 0);
+        game.other
+            .as_mut()
+            .unwrap()
+            .act(Intent::Cheat(Cheat::Teleport { at: away }));
+        game.wait(
+            "Dire loses current sight while the channel continues",
+            |_, client| {
+                !client.view().teleports.is_empty() && !hero(client, 0).seen_by.unwrap().dire
+            },
+        );
+    }
     game.wait("the real teleport lands", |driver, _| {
         driver.told.iter().any(|event| {
             matches!(
@@ -208,7 +243,7 @@ fn record_teleport() -> (ReplayFile, Spot, Spot) {
 
 #[test]
 fn a_public_teleport_destination_does_not_disclose_a_hidden_channel_origin() {
-    let (file, from, to) = record_teleport();
+    let (file, from, to) = record_teleport(false);
     for (pov, origin_seen) in [(Some(0), true), (Some(1), false), (None, true)] {
         let sounds = Sounds::default();
         let into = sounds.clone();
@@ -558,4 +593,41 @@ fn team_pings_and_team_chat_follow_the_replay_pov() {
         assert_eq!(shown.contains("radiant-private-marker"), pov != Some(1));
         assert_eq!(shown.contains("dire-private-marker"), pov != Some(0));
     }
+}
+
+#[test]
+fn a_visible_hook_retracts_with_its_end_cap() {
+    let (file, at) = record_hook();
+    let look = format!("{},{}", at.x.to_int(), at.y.to_int());
+    let client = replay_observed(&file, Some(0), &["--look", &look], |_| {});
+    let effect = client
+        .world()
+        .resource::<crate::particles::Library>()
+        .effect("hero.pudge.hook")
+        .unwrap();
+    let playing = client.world().resource::<crate::particles::Playing>();
+    assert!(playing.drawn(effect) > 0, "the real hook flew visibly");
+    assert!(
+        playing.drawn_endings(effect) > 0,
+        "a visible retraction draws its ending rather than being cancelled"
+    );
+}
+
+#[test]
+fn a_witnessed_teleport_departure_keeps_the_last_seen_origin() {
+    let (file, from, _) = record_teleport(true);
+    let sounds = Sounds::default();
+    let into = sounds.clone();
+    let look = format!("{},{}", from.x.to_int(), from.y.to_int());
+    let client = replay_observed(&file, Some(1), &["--look", &look], |client| {
+        listen(client, into)
+    });
+    assert!(
+        heard(&client, &sounds, "sound.portal.loop_disappear"),
+        "Dire witnessed the beginning"
+    );
+    assert!(
+        heard(&client, &sounds, "sound.portal.hero_disappear"),
+        "the last witnessed origin keeps its departure sound"
+    );
 }

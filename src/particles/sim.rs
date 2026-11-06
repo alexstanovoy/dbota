@@ -103,6 +103,7 @@ pub struct Instance {
     pub nodes: Vec<Node>,
     /// Presentation permission is supplied by the producer, never by the imported effect.
     pub(crate) sight: super::EffectSight,
+    pub(super) flight: Option<super::plugin::FlightRecord>,
     /// Presentation opacity, independent of the imported particle simulation.
     pub(crate) presentation_opacity: f32,
     life: f32,
@@ -172,6 +173,7 @@ impl Instance {
             effect,
             nodes,
             sight: super::EffectSight::Public,
+            flight: None,
             presentation_opacity: 1.0,
             life: 0.0,
             held: false,
@@ -187,6 +189,7 @@ impl Instance {
     /// particles' columns hold.
     pub fn restart(&mut self, seed: u32) {
         self.sight = super::EffectSight::Public;
+        self.flight = None;
         self.presentation_opacity = 1.0;
         self.life = 0.0;
         self.held = false;
@@ -250,6 +253,11 @@ impl Instance {
                 play_end_cap: true,
             },
         );
+    }
+
+    #[cfg(test)]
+    pub fn ending(&self) -> bool {
+        self.ending
     }
 
     /// Whether it was out of view the last frame it was looked at.

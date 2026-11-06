@@ -89,12 +89,7 @@ struct ItemPoints(Vec<bool>);
 
 fn observe_item_points(sight: crate::fog::EventSight, mut points: ResMut<ItemPoints>) {
     for event in &sight.core().told {
-        if let bota_proto::EventKind::ItemUsed {
-            item: ItemId::HEALING_SALVE,
-            at: Some(at),
-            ..
-        } = event
-        {
+        if let bota_proto::EventKind::ItemUsed { at: Some(at), .. } = event {
             points
                 .0
                 .push(sight.allows(event, crate::fog::EventSubject::Point(*at)));
@@ -228,11 +223,24 @@ fn purchases_are_shown_without_a_sight_grid_and_without_a_selected_side() {
 fn particle_by_pov(file: &ReplayFile, logical: &str) {
     for (pov, visible) in [(Some(0), true), (Some(1), false), (None, true)] {
         let client = replay_observed(file, pov, &[], |_| {});
+        let effect = client
+            .world()
+            .resource::<crate::particles::Library>()
+            .effect(logical)
+            .unwrap();
+        let playing = client.world().resource::<crate::particles::Playing>();
         assert_eq!(
-            started(&client, logical) > 0,
+            playing.started(effect) > 0,
             visible,
-            "POV {pov:?}: {logical} may start only for a visible subject"
+            "POV {pov:?}: {logical} admission"
         );
+        if !visible {
+            assert_eq!(
+                playing.drawn(effect),
+                0,
+                "POV {pov:?}: {logical} never reaches rendered output"
+            );
+        }
     }
 }
 
@@ -251,7 +259,7 @@ fn a_hidden_hero_death_does_not_start_its_particle() {
 }
 
 #[test]
-fn a_hidden_requiem_cast_does_not_start_its_burst() {
+fn guard_a_hidden_requiem_cast_does_not_start_its_burst() {
     let mut game = Spectated::start("2");
     game.cheat(Cheat::Invulnerable { on: true });
     game.cheat(Cheat::Levels { count: 6 });
@@ -275,8 +283,7 @@ fn a_hidden_requiem_cast_does_not_start_its_burst() {
     particle_by_pov(&game.save(), "hero.nevermore.requiem");
 }
 
-#[test]
-fn a_hidden_grenade_does_not_start_its_flight_or_landing_particle() {
+fn recorded_grenade() -> (ReplayFile, Spot) {
     let mut game = Spectated::start("2");
     game.cheat(Cheat::Item {
         item: ItemId::BLOOD_GRENADE,
@@ -306,7 +313,34 @@ fn a_hidden_grenade_does_not_start_its_flight_or_landing_particle() {
         })
     });
     game.cheat(Cheat::Gold { amount: 1 });
-    particle_by_pov(&game.save(), "item.blood_grenade");
+    (game.save(), at)
+}
+
+#[test]
+fn a_hidden_grenade_does_not_start_its_flight_or_landing_particle() {
+    particle_by_pov(&recorded_grenade().0, "item.blood_grenade");
+}
+
+#[test]
+fn a_visible_grenade_lands_with_one_drawn_end_cap() {
+    let (file, at) = recorded_grenade();
+    let look = format!("{},{}", at.x.to_int(), at.y.to_int());
+    let client = replay_observed(&file, Some(0), &["--look", &look], |_| {});
+    let effect = client
+        .world()
+        .resource::<crate::particles::Library>()
+        .effect("item.blood_grenade")
+        .unwrap();
+    let playing = client.world().resource::<crate::particles::Playing>();
+    assert_eq!(
+        playing.started(effect),
+        1,
+        "one real grenade owns its flight and its landing"
+    );
+    assert!(
+        playing.drawn_endings(effect) > 0,
+        "the visible landing draws an end cap"
+    );
 }
 
 fn driving_hero(client: &Client) -> Option<&bota_proto::UnitView> {
@@ -360,12 +394,6 @@ fn approach_camp(game: &mut Spectated) -> (Spot, bota_proto::EntityId, bota_prot
             _ => false,
         },
     );
-    // Radiant keeps sight after the victim falls; Dire has no observer here.
-    game.cheat(Cheat::CreateHero {
-        hero: bota_proto::HeroId::SHADOW_FIEND,
-        enemy: false,
-        at: at + Spot::from_ints(200, 200),
-    });
     let target = game
         .driver
         .view()
@@ -614,6 +642,11 @@ fn recorded_blink() -> (ReplayFile, Spot) {
         })
     });
     game.cheat(Cheat::Gold { amount: 1 });
+    // Keep a complete visual lifetime after the use; EOF pauses particle simulation.
+    let settled = game.driver.view().unwrap().tick + u32::from(game.driver.tick_rate());
+    game.wait("the post-blink visual lifetime recorded", |driver, _| {
+        driver.view().unwrap().tick >= settled
+    });
     (game.save(), from)
 }
 
@@ -647,4 +680,107 @@ fn a_blink_keeps_its_visible_start_and_hides_its_fogged_destination() {
             "the start must retain its old location, not follow the hero to the hidden end"
         );
     }
+}
+
+fn darken_the_death_frame(
+    session: NonSend<crate::session::Session>,
+    mut fog: ResMut<crate::fog::FogGrid>,
+) {
+    if session
+        .0
+        .told
+        .iter()
+        .any(|event| matches!(event, bota_proto::EventKind::Died { .. }))
+    {
+        // The async worker is allowed to finish the post-death grid before presentation.
+        fog.cells.fill(false);
+    }
+}
+
+#[test]
+fn own_hero_death_keeps_its_witnessed_effect_after_the_sight_grid_goes_dark() {
+    let (file, at) = record_hidden_death();
+    let look = format!("{},{}", at.x.to_int(), at.y.to_int());
+    let mut client = replay_observed(&file, Some(0), &["--look", &look], |client| {
+        client.app.add_systems(
+            Update,
+            darken_the_death_frame.before(crate::effects::deaths),
+        );
+    });
+    client.until("the hero's sole source of sight is gone", |c| {
+        let fog = c.world().resource::<crate::fog::FogGrid>();
+        fog.worked_out_at().is_some_and(|tick| tick == c.tick())
+            && !fog.lit(at.x.to_f32(), at.y.to_f32())
+    });
+    let effect = client
+        .world()
+        .resource::<crate::particles::Library>()
+        .effect("hero.nevermore.death")
+        .unwrap();
+    let playing = client.world().resource::<crate::particles::Playing>();
+    assert!(
+        playing.started(effect) > 0,
+        "the owner witnessed its death before losing vision"
+    );
+    assert!(
+        playing.drawn(effect) > 0,
+        "the witnessed death contributes actual rendered output despite the now-dark grid"
+    );
+}
+
+fn darken_item_use_frame(
+    session: NonSend<crate::session::Session>,
+    mut fog: ResMut<crate::fog::FogGrid>,
+) {
+    if session
+        .0
+        .told
+        .iter()
+        .any(|event| matches!(event, bota_proto::EventKind::ItemUsed { .. }))
+    {
+        fog.cells.fill(false);
+    }
+}
+
+#[test]
+fn the_owners_replay_keeps_its_aimed_blink_point_without_current_sight() {
+    let (file, from) = recorded_blink();
+    let look = format!("{},{}", from.x.to_int() - 800, from.y.to_int() - 800);
+    let client = replay_observed(&file, Some(0), &["--look", &look], |client| {
+        // Blink's flash is shorter than the general replay harness's 100 ms frame.
+        client.app.add_systems(
+            Startup,
+            |mut clock: ResMut<bevy::time::TimeUpdateStrategy>| {
+                *clock = bevy::time::TimeUpdateStrategy::ManualDuration(
+                    std::time::Duration::from_secs_f32(1.0 / 60.0),
+                );
+            },
+        );
+        client.app.init_resource::<ItemPoints>().add_systems(
+            Update,
+            (darken_item_use_frame, observe_item_points)
+                .chain()
+                .before(crate::fx::PresentFacts),
+        );
+    });
+    let points = &client.world().resource::<ItemPoints>().0;
+    assert!(!points.is_empty(), "the actual use reached presentation");
+    assert!(
+        points.iter().all(|shown| *shown),
+        "the owner retains every aimed point when current ground sight is gone"
+    );
+    let effect = client
+        .world()
+        .resource::<crate::particles::Library>()
+        .effect("item.blink_end")
+        .unwrap();
+    let playing = client.world().resource::<crate::particles::Playing>();
+    assert!(
+        playing.started(effect) > 0,
+        "the owner knows the point it aimed at"
+    );
+    assert!(
+        playing.drawn(effect) > 0,
+        "the known aim draws despite the async grid being dark"
+    );
 }

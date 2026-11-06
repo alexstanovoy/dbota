@@ -316,6 +316,10 @@ fn missiles(
                 body
             }
         };
+        let handle = match body {
+            Body::Effect(handle) | Body::Grenade(handle) | Body::Line(handle) => handle,
+        };
+        playing.note_flight(handle, &f.missile, sight.knowledge(f.missile.seen_by));
         match body {
             Body::Effect(handle) => shooters.steer(f, at, dir, &mut playing, handle),
             // Its effect is pulled to where it will be a tick on.
@@ -323,12 +327,23 @@ fn missiles(
             Body::Line(_) => {}
         }
     }
-    land(&mut flying, &mut alive, &mut playing);
-    grenades(&ground, library.as_deref(), &mut playing, &sight);
+    grenades(
+        &ground,
+        library.as_deref(),
+        &mut playing,
+        &sight,
+        &mut flying,
+    );
+    land(&mut flying, &mut alive, &mut playing, &sight);
 }
 
 /// A missing grenade can have left vision: its burst requires a visible landing fact.
-fn land(flying: &mut Flying, alive: &mut [EntityId], playing: &mut Playing) {
+fn land(
+    flying: &mut Flying,
+    alive: &mut [EntityId],
+    playing: &mut Playing,
+    sight: &crate::fog::EventSight,
+) {
     // Sorted for the lookups below: thousands of missiles each searched
     // through all the others every frame.
     alive.sort_unstable();
@@ -337,12 +352,9 @@ fn land(flying: &mut Flying, alive: &mut [EntityId], playing: &mut Playing) {
         let keep = is_alive(id);
         if !keep {
             match *body {
+                // Visible grenade landings were reused above; a missing untold one is hidden.
                 Body::Grenade(handle) => playing.cancel(handle),
-                Body::Effect(handle) | Body::Line(handle) => {
-                    if let Some(instance) = playing.get_mut(handle) {
-                        instance.end();
-                    }
-                }
+                Body::Effect(handle) | Body::Line(handle) => playing.finish_flight(handle, sight),
             }
         }
         keep
@@ -355,21 +367,41 @@ fn grenades(
     library: Option<&Library>,
     playing: &mut Playing,
     sight: &crate::fog::EventSight,
+    flying: &mut Flying,
 ) {
     let landed = sight.core().told.iter().filter_map(|event| match event {
-        EventKind::Landed { inflictor, at, .. }
-            if art_by(*inflictor).flight == Flight::Grenade
-                && sight.allows(event, crate::fog::EventSubject::Point(*at)) =>
+        EventKind::Landed {
+            inflictor,
+            caster,
+            at,
+        } if art_by(*inflictor).flight == Flight::Grenade
+            && sight.allows(event, crate::fog::EventSubject::Point(*at)) =>
         {
-            Some((at.x.to_f32(), at.y.to_f32()))
+            Some((*inflictor, *caster, *at))
         }
         _ => None,
     });
-    for (n, (x, y)) in landed.enumerate() {
+    for (n, (inflictor, caster, point)) in landed.enumerate() {
+        let (x, y) = (point.x.to_f32(), point.y.to_f32());
         let at = Vec3::new(x, ground.at(x, y), -y);
-        if let Some(handle) = play_once(library, playing, GRENADE, at, n as u32, EffectSight::Point)
+        // Reuse a witnessed flight for its authoritative landing. If only the landing is
+        // visible, start there without drawing any of the private path that preceded it.
+        let held = flying.missiles.iter().find_map(|(id, body)| match *body {
+            Body::Grenade(handle) if playing.matches_flight(handle, inflictor, caster, sight) => {
+                Some((*id, handle))
+            }
+            _ => None,
+        });
+        if let Some((id, _)) = held {
+            flying.missiles.remove(&id);
+        }
+        let held = held.map(|(_, handle)| handle);
+        if let Some(handle) =
+            held.or_else(|| play_once(library, playing, GRENADE, at, n as u32, EffectSight::Point))
             && let Some(instance) = playing.get_mut(handle)
         {
+            instance.sight = EffectSight::Point;
+            instance.set_control_point(0, from_world(at), Vec3::ZERO, true);
             instance.set_control_point(TARGET, from_world(at), Vec3::ZERO, true);
             instance.end();
         }
@@ -526,7 +558,7 @@ fn souls(
             NECRO_SOUL,
             from,
             unit.idx,
-            EffectSight::KnownPoint(sight.knowledge(before.seen_by)),
+            EffectSight::Witnessed(sight.knowledge(before.seen_by)),
         ) {
             if let Some(instance) = playing.get_mut(handle) {
                 instance.set_control_point(1, from_world(to), Vec3::ZERO, true);
@@ -652,7 +684,7 @@ fn level_ups(
 
 /// A hero's death effect where it falls, when Dota's hero has one (`<hero>.death`, Shadow
 /// Fiend's `nevermore_death`).
-fn deaths(
+pub(crate) fn deaths(
     sight: crate::fog::EventSight,
     manifest: Res<Manifest>,
     ground: Res<Ground>,
@@ -693,7 +725,7 @@ fn deaths(
             &name,
             at,
             unit.idx,
-            EffectSight::KnownPoint(sight.knowledge(before.seen_by)),
+            EffectSight::Witnessed(sight.knowledge(before.seen_by)),
         ) && let Some(instance) = playing.get_mut(handle)
         {
             // Dota's places its parts about control point 1, the hero.

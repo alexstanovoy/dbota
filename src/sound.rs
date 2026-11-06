@@ -295,21 +295,18 @@ fn permitted_cue(cue: &mut Cue, sight: &crate::fog::EventSight) -> bool {
         if !sight.allows(event, crate::fog::EventSubject::Event) {
             return false;
         }
-        let known = match event {
+        let witnessed = match event {
             bota_proto::EventKind::Died { unit, .. } => cue
                 .before
                 .as_ref()
-                .and_then(|before| before.iter().find(|before| before.id == *unit))
-                .is_some_and(|unit| sight.allows(event, crate::fog::EventSubject::Unit(unit))),
-            _ => false,
+                .and_then(|before| before.iter().find(|before| before.id == *unit)),
+            _ => None,
         };
-        let seen = cue.at.is_some_and(|at| {
-            sight.allows(
-                event,
-                crate::fog::EventSubject::Point(bota_client_core::world_vec(at)),
-            )
+        let seen = witnessed.is_some_and(|unit| {
+            sight.allows(event, crate::fog::EventSubject::Unit(unit))
+                && cue.at == Some((unit.pos.x.to_f32(), unit.pos.y.to_f32()))
         });
-        if !known || !seen {
+        if !seen {
             cue.at = None;
         }
         return true;
@@ -669,8 +666,11 @@ fn portals(
             landing,
             origin: None,
         });
-        hum.origin = crate::teleport::origin(&sight, teleport);
-        match (hum.origin, hum.origin_loop) {
+        let origin = crate::teleport::origin(&sight, teleport);
+        // The hero can leave sight on the completion frame. Keep the last witnessed origin
+        // for its departure, while the ongoing loop still follows current sight only.
+        hum.origin = origin.or(hum.origin);
+        match (origin, hum.origin_loop) {
             (None, Some(entity)) => {
                 commands.entity(entity).despawn();
                 hum.origin_loop = None;

@@ -34,6 +34,9 @@ const ACTIVE_SLOTS: usize = 6;
 #[derive(Resource, Default)]
 pub struct Heard(pub HashMap<String, u32>);
 
+#[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub(crate) struct PresentFacts;
+
 pub fn plugin(app: &mut App) {
     app.init_resource::<Heard>().add_plugins((
         rules::plugin,

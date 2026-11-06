@@ -15,7 +15,10 @@ use crate::map::Ground;
 use crate::particles::{Library, Playing};
 
 pub(super) fn plugin(app: &mut App) {
-    app.add_systems(Update, told.after(crate::units::Placed));
+    app.add_systems(
+        Update,
+        told.after(crate::units::Placed).in_set(super::PresentFacts),
+    );
 }
 
 /// What an event says happened, in the terms the lines are keyed by.
@@ -256,6 +259,18 @@ fn told(
                 };
                 let with = (library.as_deref(), &mut *playing);
                 let permission = match (unit, event) {
+                    (None, EventKind::ItemUsed { caster, .. })
+                        if sight
+                            .aim_knowledge(*caster)
+                            .is_some_and(|seen| !sight.fog().hides(Some(seen))) =>
+                    {
+                        crate::particles::EffectSight::Witnessed(
+                            sight.aim_knowledge(*caster).unwrap_or_default(),
+                        )
+                    }
+                    (_, EventKind::Died { .. }) => crate::particles::EffectSight::Witnessed(
+                        sight.knowledge(sight.death_witness(event).and_then(|unit| unit.seen_by)),
+                    ),
                     (Some(unit), _) => {
                         crate::particles::EffectSight::KnownPoint(sight.knowledge(unit.seen_by))
                     }

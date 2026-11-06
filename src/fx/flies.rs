@@ -118,6 +118,11 @@ fn flies(
                     handle
                 }
             };
+            playing.note_flight(
+                handle,
+                &flight.missile,
+                sight.knowledge(flight.missile.seen_by),
+            );
             let Some(instance) = playing.get_mut(handle) else {
                 continue;
             };
@@ -134,7 +139,7 @@ fn flies(
     flying.0.retain(|key, handle| {
         let keep = alive.contains(key);
         if !keep {
-            playing.cancel(*handle);
+            playing.finish_flight(*handle, &sight);
         }
         keep
     });
