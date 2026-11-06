@@ -49,9 +49,12 @@ struct Branch(u8);
 /// Dota's tree icon on the button, where the cache has it.
 #[derive(Component)]
 struct TalentArt {
-    /// The icon as it is, and lit while a point could go into the tree.
+    /// The icon as it is; lit while a talent could be taken; and aglow with Dota's Attribute
+    /// Bonus glow while only a skill point could go into the bonus (Dota's `SkillUpgradable`
+    /// without `CanLevelStats`).
     plain: Handle<Image>,
     lit: Handle<Image>,
+    attributes: Handle<Image>,
 }
 
 /// The tiers of the tree, hidden for a hero without one.
@@ -83,6 +86,8 @@ fn branch() -> impl Bundle {
 }
 
 const GOLD: Color = Color::srgb(0.95, 0.75, 0.3);
+/// The button's rim while no talent could be taken.
+const RIM: Color = Color::srgb(0.2, 0.22, 0.27);
 const OPEN: Color = Color::srgb(0.75, 0.78, 0.84);
 const SHUT: Color = Color::srgb(0.38, 0.4, 0.45);
 
@@ -114,18 +119,21 @@ pub fn spawn_button(kit: &mut Spawner, row: Entity, column: Entity) {
                 row_gap: px(3),
                 ..default()
             },
-            BorderColor::all(Color::srgb(0.2, 0.22, 0.27)),
+            BorderColor::all(RIM),
             BackgroundColor(ui::PANEL_DEEP),
             ChildOf(row),
         ))
         .id();
-    let art = (kit.manifest.file("hud.talents")).zip(kit.manifest.file("hud.talents_learnable"));
-    if let Some((plain, lit)) = art {
+    let art = (kit.manifest.file("hud.talents"))
+        .zip(kit.manifest.file("hud.talents_learnable"))
+        .zip(kit.manifest.file("hud.attributes_learnable"));
+    if let Some(((plain, lit), attributes)) = art {
         let plain = kit.server.load(plain);
         kit.commands.spawn((
             TalentArt {
                 plain: plain.clone(),
                 lit: kit.server.load(lit),
+                attributes: kit.server.load(attributes),
             },
             ImageNode::new(plain),
             Node {
@@ -454,18 +462,23 @@ fn show_attribute(
     }
 }
 
-/// Dota's tree icon, lit while a skill point could go into a talent or the
-/// Attribute Bonus.
+/// Dota's tree icon of one's own hero: lit while a talent could be taken, aglow with the
+/// Attribute Bonus's glow while only the bonus could take a skill point, plain otherwise.
 fn light(session: NonSend<Session>, mut art: Query<(&TalentArt, &mut ImageNode)>) {
     let core = &session.0;
     let seat = crate::hud::subject(core).0.map(|p| p.slot);
     let mine = seat.is_some() && seat == core.my_slot;
-    let lit = seat.and_then(|s| core.talents_of(s)).is_some_and(|t| {
-        t.may_learn_attribute_bonus == Some(true)
-            || (0..8).any(|k| t.may_learn.is_some_and(|m| m.has(TalentSlot(k))))
-    });
+    let state = seat.and_then(|s| core.talents_of(s)).filter(|_| mine);
+    let talent = state.is_some_and(|t| talent_to_take(&t));
+    let attribute = state.is_some_and(|t| t.may_learn_attribute_bonus == Some(true));
     for (art, mut image) in &mut art {
-        let want = if lit && mine { &art.lit } else { &art.plain };
+        let want = if talent {
+            &art.lit
+        } else if attribute {
+            &art.attributes
+        } else {
+            &art.plain
+        };
         if image.image != *want {
             image.image = want.clone();
         }
@@ -547,8 +560,14 @@ fn glow(time: &Time) -> f32 {
     0.55 + 0.45 * (time.elapsed_secs() * 4.0).sin().abs()
 }
 
-/// The button, for any hero the panel is about, its rim aglow while a
-/// point could go into the tree; the tree's body for a hero that has one.
+/// Whether a talent of the tree could be taken right now: what lights the tree as Dota's
+/// `CanLevelStats` does. A skill point the Attribute Bonus alone could take does not.
+fn talent_to_take(talents: &bota_proto::TalentView) -> bool {
+    talents.may_learn.is_some_and(|m| m.bits != 0)
+}
+
+/// The button, for any hero the panel is about, its rim aglow while one's own hero could take
+/// a talent; the tree's body for a hero that has one.
 fn show_button(
     session: NonSend<Session>,
     time: Res<Time>,
@@ -557,10 +576,9 @@ fn show_button(
 ) {
     let core = &session.0;
     let hero = crate::hud::subject_hero(core);
-    let any = seat_talents(core).is_some_and(|t| {
-        t.may_learn_attribute_bonus == Some(true)
-            || (0..8).any(|k| t.may_learn.is_some_and(|m| m.has(TalentSlot(k))))
-    });
+    let seat = crate::hud::subject(core).0.map(|p| p.slot);
+    let mine = seat.is_some() && seat == core.my_slot;
+    let any = mine && seat_talents(core).is_some_and(|t| talent_to_take(&t));
     for mut v in &mut body {
         v.set_if_neq(ui::visible(hero.and_then(|h| talents(h.0)).is_some()));
     }
@@ -569,7 +587,7 @@ fn show_button(
         rim.set_if_neq(BorderColor::all(if any {
             GOLD.with_alpha(glow(&time))
         } else {
-            Color::srgb(0.2, 0.22, 0.27)
+            RIM
         }));
     }
 }
@@ -645,4 +663,38 @@ fn show(
             SHUT
         }));
     }
+}
+
+/// What the tree button shows, as the end-to-end tests read it.
+#[cfg(test)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum TreeShown {
+    Plain,
+    /// Lit: a talent could be taken.
+    Talent,
+    /// Aglow with the Attribute Bonus's glow.
+    Attributes,
+}
+
+/// The tree icon the button draws and whether its rim glows.
+#[cfg(test)]
+pub(crate) fn tree_shown(world: &mut World) -> (Option<TreeShown>, bool) {
+    let shown = world
+        .query::<(&TalentArt, &ImageNode)>()
+        .iter(world)
+        .next()
+        .map(|(art, image)| {
+            if image.image == art.lit {
+                TreeShown::Talent
+            } else if image.image == art.attributes {
+                TreeShown::Attributes
+            } else {
+                TreeShown::Plain
+            }
+        });
+    let aglow = world
+        .query_filtered::<&BorderColor, With<TalentButton>>()
+        .iter(world)
+        .any(|rim| rim.top != RIM);
+    (shown, aglow)
 }

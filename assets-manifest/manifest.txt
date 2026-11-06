@@ -763,7 +763,8 @@ texture hud.ability_bevel panorama/images/hud/reborn/ability_bevel_psd.vtex_c hu
 texture hud.levelup panorama/images/hud/reborn/levelup_plus_fill_psd.vtex_c hud/levelup_plus_fill_psd.png
 texture hud.minimap_border panorama/images/hud/default/actionpanel/minimapborder_png.vtex_c hud/minimapborder_png.png
 # The hero panel: the stat icons over the portrait, the attribute icons, the talent tree button
-# (lit while a point could go into it), the innate's mark, the level-up plate and its plus, the town
+# (lit while a talent could be taken, aglow with the Attribute Bonus's glow while only the bonus
+# could take a skill point), the innate's mark, the level-up plate and its plus, the town
 # portal and neutral slots' empty art, the courier button; the Glyph button against the minimap.
 texture hud.attack_speed panorama/images/hud/reborn/icon_attack_speed_psd.vtex_c hud/icon_attack_speed_psd.png
 texture hud.magic_resist panorama/images/hud/reborn/icon_magic_resist_psd.vtex_c hud/icon_magic_resist_psd.png
@@ -772,6 +773,7 @@ texture hud.agility panorama/images/primary_attribute_icons/primary_attribute_ic
 texture hud.intelligence panorama/images/primary_attribute_icons/primary_attribute_icon_intelligence_psd.vtex_c hud/primary_attribute_icon_intelligence_psd.png
 texture hud.talents panorama/images/hud/reborn/stat_branch_large_png.vtex_c hud/stat_branch_large_png.png
 texture hud.talents_learnable panorama/images/hud/reborn/statbranch_button_lvlup_psd.vtex_c hud/statbranch_button_lvlup_psd.png
+texture hud.attributes_learnable panorama/images/hud/reborn/statbranch_attribs_lvlup_psd.vtex_c hud/statbranch_attribs_lvlup_psd.png
 texture hud.innate panorama/images/hud/facets/innate_icon_png.vtex_c hud/innate_icon_png.png
 texture hud.levelup_button panorama/images/hud/reborn/levelup_button_1_psd.vtex_c hud/levelup_button_1_psd.png
 texture hud.levelup_well panorama/images/hud/reborn/levelup_plus_well_psd.vtex_c hud/levelup_plus_well_psd.png
