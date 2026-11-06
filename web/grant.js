@@ -1,6 +1,7 @@
 // Getting at the player's Dota 2 install: the files the importer reads, as `File` objects
 // that stay on this machine (nothing is read until it is sliced). The importer needs the
-// package files of `game/dota`: `pak01_dir.vpk`, the numbered parts and `maps/*.vpk`.
+// package files of `game/dota`: `pak01_dir.vpk`, the numbered parts and `maps/*.vpk`, and the
+// interface's typefaces, `panorama/fonts/*.otf`.
 // Also getting at a prepared asset cache someone else made (a .zip, or its folder).
 
 const DB = "dbota-grant";
@@ -9,6 +10,7 @@ const KEY = "dota";
 export const canPick = () => typeof showDirectoryPicker === "function";
 
 const isPack = (name) => name.endsWith(".vpk");
+const isFont = (name) => name.endsWith(".otf");
 
 // `game/dota` inside a picked folder: the folder itself, or `dota`, or `game/dota` below it.
 async function findDota(handle) {
@@ -37,6 +39,12 @@ export async function filesOf(handle) {
         if (file.kind === "file" && isPack(inner)) files.set("maps/" + inner, await file.getFile());
       }
     }
+    if (entry.kind === "directory" && name === "panorama") {
+      const fonts = await entry.getDirectoryHandle("fonts").catch(() => null);
+      for await (const [inner, file] of fonts ? fonts.entries() : []) {
+        if (file.kind === "file" && isFont(inner)) files.set("panorama/fonts/" + inner, await file.getFile());
+      }
+    }
   }
   return files;
 }
@@ -50,7 +58,7 @@ export async function pickFolder() {
 }
 
 // A folder picked through `<input webkitdirectory>` (every browser): its FileList holds every
-// file below the folder, so only the package files are kept, relative to the folder that has
+// file below the folder, so only the package files and typefaces are kept, relative to the folder that has
 // `pak01_dir.vpk` closest to the top.
 export function filesFromList(list) {
   let base = null;
@@ -64,9 +72,12 @@ export function filesFromList(list) {
   if (base === null) return files;
   for (const file of list) {
     const path = file.webkitRelativePath || file.name;
-    if (!path.startsWith(base) || !isPack(path)) continue;
+    if (!path.startsWith(base)) continue;
     const rel = path.slice(base.length);
-    if (!rel.includes("/") || (rel.startsWith("maps/") && rel.split("/").length === 2)) files.set(rel, file);
+    const depth = rel.split("/").length;
+    const pack = isPack(rel) && (depth === 1 || (rel.startsWith("maps/") && depth === 2));
+    const font = isFont(rel) && rel.startsWith("panorama/fonts/") && depth === 3;
+    if (pack || font) files.set(rel, file);
   }
   return files;
 }

@@ -92,6 +92,8 @@ pub enum FileKind {
     Particle,
     Expression,
     Phonemes,
+    /// A typeface the install ships as a loose file (`panorama/fonts/x.otf`), copied whole.
+    Font,
 }
 
 /// A line that converts one file of the install into one of the cache.
@@ -484,13 +486,14 @@ fn manifest_line(words: &[&str]) -> Result<Line, String> {
                 attack: f.get("attack").map(own),
             }))
         }
-        "texture" | "particle" | "expression" | "phonemes" => {
+        "texture" | "particle" | "expression" | "phonemes" | "font" => {
             let f = Fields::of(rest, &[])?;
             let [logical, src, out] = f.exactly::<3>(kind)?;
             let kind = match *kind {
                 "texture" => FileKind::Texture,
                 "particle" => FileKind::Particle,
                 "expression" => FileKind::Expression,
+                "font" => FileKind::Font,
                 _ => FileKind::Phonemes,
             };
             Ok(Line::File(File {

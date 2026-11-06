@@ -512,6 +512,50 @@ fn a_hostile_asset_is_a_failure_in_the_report_not_a_panic() {
     );
 }
 
+/// A typeface is copied whole from the loose file beside the packages when it reads as an
+/// OpenType or TrueType font; a file that is not one, or is larger than any typeface, is a
+/// failure in the report and writes nothing.
+#[test]
+fn a_loose_typeface_is_copied_and_a_file_that_is_no_font_is_refused() {
+    let otf = [b"OTTO".as_slice(), &[7u8; 60]].concat();
+    let ttf = [[0u8, 1, 0, 0].as_slice(), &[9u8; 60]].concat();
+    let src = install(&[
+        ("pak01_dir.vpk", package("x", "y", "txt", b"z")),
+        ("panorama/fonts/title.otf", otf.clone()),
+        ("panorama/fonts/body.otf", ttf.clone()),
+        ("panorama/fonts/script.otf", b"<script>".repeat(8)),
+        ("panorama/fonts/huge.otf", [b"OTTO".as_slice(), &vec![0; 9 << 20]].concat()),
+    ]);
+    let plan = Plan::parse(
+        "font a panorama/fonts/title.otf fonts/title.otf\n\
+         font b panorama/fonts/body.otf fonts/body.otf\n\
+         font c panorama/fonts/script.otf fonts/script.otf\n\
+         font d panorama/fonts/huge.otf fonts/huge.otf\n\
+         font e panorama/fonts/gone.otf fonts/gone.otf\n",
+        "",
+    )
+    .expect("a plan");
+    let plan = Plan {
+        items: plan
+            .items
+            .into_iter()
+            .filter(|i| matches!(i, Item::Font { .. }))
+            .collect(),
+    };
+    let mut sink = Memory::default();
+    let report = run(&src, &plan, &mut sink, &mut |_| Flow::Continue).unwrap();
+    assert_eq!(sink.0.get("fonts/title.otf"), Some(&otf));
+    assert_eq!(sink.0.get("fonts/body.otf"), Some(&ttf));
+    let failed: Vec<&str> = report.failed.iter().map(|(item, _)| item.as_str()).collect();
+    assert_eq!(failed, ["c", "d", "e"], "{report:?}");
+    assert!(
+        report.failed[0].1.contains("not an OpenType or TrueType font"),
+        "{report:?}"
+    );
+    assert!(report.failed[1].1.contains("larger than"), "{report:?}");
+    assert_eq!(sink.0.len(), 2);
+}
+
 #[test]
 fn a_package_that_is_not_one_ends_the_import_and_a_stop_is_honoured() {
     let plan =

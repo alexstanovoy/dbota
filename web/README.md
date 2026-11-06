@@ -15,7 +15,7 @@ game servers. Without a copy the page offers two buttons, "Use Dota 2 folder" an
 | `boot.js` | a classic script: "Loading" at once, and the one failure screen for a browser too old, a part that won't load or a start that stalls; every later wait has a limit in `main.js` and ends on a screen naming the stage |
 | `busy.js` | a server busy sending pages answers 503 with Retry-After: every fetch, module and worker of the page's own origin goes through here, says so on the page, waits as asked (1 to 60 s) and tries once more |
 | `main.js` | the flow: stored copy, folder grant, import progress, update check, delete, start the client that suits the browser |
-| `grant.js` | the prepared-cache picker and the folder grant (`showDirectoryPicker`, remembered in IndexedDB; else `<input webkitdirectory>`); keeps only the `*.vpk` files it needs, whatever folder level was picked |
+| `grant.js` | the prepared-cache picker and the folder grant (`showDirectoryPicker`, remembered in IndexedDB; else `<input webkitdirectory>`); keeps only the `*.vpk` files and the interface's typefaces (`panorama/fonts/*.otf`) it needs, whatever folder level was picked |
 | `import_worker.js` | a Web Worker running `dbota_import` (wasm), writing with synchronous OPFS handles; also checks and copies a prepared cache |
 | `cache.js` | the OPFS cache: layout, reads, index and stamp, published to the client as `globalThis.dbota_cache` |
 | `replays.js` | the player's replays in OPFS (else IndexedDB), published as `globalThis.dbota_replays` |

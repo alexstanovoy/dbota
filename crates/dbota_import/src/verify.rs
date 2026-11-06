@@ -255,6 +255,10 @@ fn check_file(cache: &Path, kind: FileKind, out: &str) -> Result<(), String> {
                 Err(format!("textures or models missing: {missing:?}"))
             }
         }
+        FileKind::Font => match data.get(..4) {
+            Some(b"OTTO" | b"\0\x01\0\0" | b"true") => Ok(()),
+            _ => Err("not an OpenType or TrueType font".to_owned()),
+        },
         FileKind::Expression | FileKind::Phonemes => Ok(()),
     }
 }

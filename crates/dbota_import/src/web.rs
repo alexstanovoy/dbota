@@ -64,13 +64,10 @@ impl Install {
         }
     }
 
-    /// Adds a file; false when it is not one the importer reads (only `*.vpk` at the top or
-    /// in `maps/`) or the install has too many.
+    /// Adds a file; false when it is not one the importer reads (`*.vpk` at the top or in
+    /// `maps/`, the typefaces of `panorama/fonts/`) or the install has too many.
     pub fn add(&mut self, path: String, file: File) -> Result<bool, JsError> {
-        let wanted = path.ends_with(".vpk")
-            && (!path.contains('/')
-                || (path.starts_with("maps/") && path.matches('/').count() == 1));
-        if !wanted || self.count >= MAX_PACKAGES {
+        if !wanted(&path) || self.count >= MAX_PACKAGES {
             return Ok(false);
         }
         let reader = shared_reader(&mut self.reader)?;
@@ -108,6 +105,17 @@ impl Default for Install {
         Self::new()
     }
 }
+
+/// Whether the importer reads the install's file at `path` (relative to `game/dota`): a package
+/// at the top or in `maps/`, or a typeface the interface draws with.
+fn wanted(path: &str) -> bool {
+    let depth = path.matches('/').count();
+    (path.ends_with(".vpk") && (depth == 0 || (depth == 1 && path.starts_with("maps/"))))
+        || (path.ends_with(".otf") && depth == 2 && path.starts_with(FONTS))
+}
+
+/// The folder of the install's typefaces.
+const FONTS: &str = "panorama/fonts/";
 
 fn shared_reader(reader: &mut Option<Rc<FileReaderSync>>) -> Result<Rc<FileReaderSync>, JsError> {
     if reader.is_none() {

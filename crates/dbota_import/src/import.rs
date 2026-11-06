@@ -344,6 +344,13 @@ pub enum Item {
         src: String,
         out: String,
     },
+    /// A typeface the install keeps as a loose file beside its packages, copied whole once it
+    /// reads as an OpenType or TrueType font.
+    Font {
+        logical: String,
+        src: String,
+        out: String,
+    },
     /// Dota's portrait framings of the manifest's models, as `portraits.txt` (see
     /// [`portraits_txt`]): `models` pairs each model's logical name with its `.vmdl`.
     Portraits {
@@ -367,6 +374,7 @@ impl Item {
             | Self::Voice { out, .. }
             | Self::Expression { out, .. }
             | Self::Phonemes { out, .. }
+            | Self::Font { out, .. }
             | Self::Tooltips { out, .. }
             | Self::Shop { out, .. }
             | Self::Labels { out, .. }
@@ -415,6 +423,7 @@ impl Item {
             | Self::Voice { logical, .. }
             | Self::Expression { logical, .. }
             | Self::Phonemes { logical, .. }
+            | Self::Font { logical, .. }
             | Self::Portraits { logical, .. } => logical,
         }
     }
@@ -489,6 +498,11 @@ impl Plan {
                         out: f.out.clone(),
                     },
                     FileKind::Phonemes => Item::Phonemes {
+                        logical: f.logical.clone(),
+                        src: f.src.clone(),
+                        out: f.out.clone(),
+                    },
+                    FileKind::Font => Item::Font {
                         logical: f.logical.clone(),
                         src: f.src.clone(),
                         out: f.out.clone(),
@@ -1253,6 +1267,30 @@ fn make(
             models,
             ..
         } => portraits(src, pak, path, dest, models, out),
+        Item::Font {
+            src: path,
+            out: dest,
+            ..
+        } => out.put(dest, &font(src, path)?),
+    }
+}
+
+/// The largest typeface read: Dota's are under 0.2 MB, a full CJK one is 16 MB.
+const FONT_LIMIT: usize = 8 << 20;
+
+/// The typeface the install keeps loose at `path` (under `game/dota`), when it is one: an
+/// OpenType (CFF) or TrueType font of at most [`FONT_LIMIT`] bytes. The client's font engine
+/// reads the rest of it as the untrusted file it is.
+fn font(src: &impl Source, path: &str) -> Result<Vec<u8>> {
+    let size = src.size(path)?;
+    let size = usize::try_from(size)
+        .ok()
+        .filter(|size| *size <= FONT_LIMIT)
+        .ok_or_else(|| malformed("font", format!("{path} is larger than {FONT_LIMIT} bytes")))?;
+    let bytes = src.read_at(path, 0, size)?;
+    match bytes.get(..4) {
+        Some(b"OTTO" | b"\0\x01\0\0" | b"true") => Ok(bytes),
+        _ => Err(malformed("font", format!("{path} is not an OpenType or TrueType font"))),
     }
 }
 

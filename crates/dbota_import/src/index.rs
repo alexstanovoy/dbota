@@ -41,13 +41,14 @@ fn folders() -> &'static HashSet<String> {
 /// (the map's geometry is 209 MB, its glTF 15 MB, a texture 22 MB, a particle file 0.2 MB) and
 /// well below what a parser holds in memory several times over (a JSON file is a tree of
 /// allocations ten times its size).
-const LIMITS: [(&str, u64); 9] = [
+const LIMITS: [(&str, u64); 10] = [
     ("bin", MAX_FILE),
     ("glb", 64 << 20),
     ("gltf", 64 << 20),
     ("json", 16 << 20),
     ("ktx2", 64 << 20),
     ("mp3", 16 << 20),
+    ("otf", 8 << 20),
     ("png", 64 << 20),
     ("txt", 16 << 20),
     ("wav", 64 << 20),
