@@ -616,6 +616,44 @@ fn play(
     }
 }
 
+struct PortalAudio<'a> {
+    bindings: &'a Bindings,
+    mixer: &'a Mixer,
+    focus: Vec2,
+    silent: bool,
+}
+
+impl PortalAudio<'_> {
+    fn play(
+        &self,
+        commands: &mut Commands,
+        kind: Kind,
+        at: (f32, f32),
+        looped: bool,
+    ) -> Option<Entity> {
+        let (_, binding) = self.bindings.0.iter().find(|(key, _)| *key == kind)?;
+        let source = binding.sources.first().cloned()?;
+        let gain = self.mixer.gain_for(binding.events.first()?, at, (self.focus.x, self.focus.y));
+        if self.silent || gain < 0.03 {
+            return None;
+        }
+        let playback = if looped {
+            PlaybackSettings::LOOP
+        } else {
+            PlaybackSettings::DESPAWN
+        };
+        Some(
+            commands
+                .spawn((
+                    crate::mixer::GameAudio,
+                    AudioPlayer::new(source),
+                    playback.with_volume(Volume::Linear(gain)),
+                ))
+                .id(),
+        )
+    }
+}
+
 /// Hums over every teleport under way, at the landing and, when the hero is
 /// in sight, where it stands; a teleport the server tells landed has a sound
 /// at both ends, one it tells was broken off, or that vanishes untold, only
@@ -644,29 +682,25 @@ fn portals(
     };
     let silent = settings.muted || args.mute;
     let focus = Vec2::new(cam.focus.x, -cam.focus.z);
-    let play = |commands: &mut Commands, kind: Kind, at: (f32, f32), looped: bool| {
-        let (_, binding) = bindings.0.iter().find(|(kind_key, _)| *kind_key == kind)?;
-        let source = binding.sources.first().cloned()?;
-        let gain = mixer.gain_for(binding.events.first()?, at, (focus.x, focus.y));
-        if silent || gain < 0.03 {
-            return None;
-        }
-        let playback = if looped {
-            PlaybackSettings::LOOP
-        } else {
-            PlaybackSettings::DESPAWN
-        };
-        Some(
-            commands
-                .spawn((
-                    crate::mixer::GameAudio,
-                    AudioPlayer::new(source),
-                    playback.with_volume(Volume::Linear(gain)),
-                ))
-                .id(),
-        )
+    let audio = PortalAudio {
+        bindings: &bindings,
+        mixer: &mixer,
+        focus,
+        silent,
     };
-    for (slot, landed) in ended_humming(humming.keys().copied(), &view.teleports, &ends) {
+    finish_portals(&mut commands, &audio, &mut humming, &view.teleports, &ends, sight.fog());
+    follow_portals(&mut commands, &audio, &mut humming, view, &sight);
+}
+
+fn finish_portals(
+    commands: &mut Commands,
+    audio: &PortalAudio,
+    humming: &mut HashMap<SlotId, Humming>,
+    teleports: &[TeleportView],
+    ends: &[(SlotId, bool)],
+    fog: &crate::fog::FogGrid,
+) {
+    for (slot, landed) in ended_humming(humming.keys().copied(), teleports, ends) {
         let Some(hum) = humming.remove(&slot) else {
             continue;
         };
@@ -674,27 +708,36 @@ fn portals(
             commands.entity(entity).despawn();
         }
         if landed {
-            play(&mut commands, Kind::HeroArrived, hum.landing, false);
+            audio.play(commands, Kind::HeroArrived, hum.landing, false);
             if let Some(origin) = hum
                 .origin
-                .filter(|origin| !sight.fog().hides(Some(origin.seen)))
+                .filter(|origin| !fog.hides(Some(origin.seen)))
             {
-                play(&mut commands, Kind::HeroLeft, origin.at, false);
+                audio.play(commands, Kind::HeroLeft, origin.at, false);
             }
         }
     }
+}
+
+fn follow_portals(
+    commands: &mut Commands,
+    audio: &PortalAudio,
+    humming: &mut HashMap<SlotId, Humming>,
+    view: &bota_proto::WorldView,
+    sight: &crate::fog::EventSight,
+) {
     for teleport in &view.teleports {
         let landing = (
             teleport.destination.x.to_f32(),
             teleport.destination.y.to_f32(),
         );
         let hum = humming.entry(teleport.slot).or_insert_with(|| Humming {
-            landing_loop: play(&mut commands, Kind::PortalArriving, landing, true),
+            landing_loop: audio.play(commands, Kind::PortalArriving, landing, true),
             origin_loop: None,
             landing,
             origin: None,
         });
-        let origin = crate::teleport::origin(&sight, teleport);
+        let origin = crate::teleport::origin(sight, teleport);
         // The hero can leave sight on the completion frame. Keep the last witnessed origin
         // for its departure, while the ongoing loop still follows current sight only.
         hum.origin = origin.or(hum.origin);
@@ -704,7 +747,7 @@ fn portals(
                 hum.origin_loop = None;
             }
             (Some(origin), None) => {
-                hum.origin_loop = play(&mut commands, Kind::PortalLeaving, origin.at, true);
+                hum.origin_loop = audio.play(commands, Kind::PortalLeaving, origin.at, true);
             }
             _ => {}
         }
