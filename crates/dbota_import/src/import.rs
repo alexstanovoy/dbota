@@ -18,7 +18,9 @@ use heatel::kv3::Value;
 use heatel::material::Material;
 use heatel::particle::{Blend, Renderer, System};
 use heatel::portraits::framings;
-use heatel::sound::{Lipsync, SoundEvent, read_sound_events, read_sound_stacks};
+use heatel::sound::{
+    Lipsync, SoundEvent, SoundMixer, read_sound_events, read_sound_mixer, read_sound_stacks,
+};
 use heatel::texture::Role;
 use heatel::tooltips::Wanted;
 use heatel::world::{Band, EntityLump, ExportedWorld, WorldOptions, export_world, lighting};
@@ -26,11 +28,11 @@ use heatel::{Error, Model, Resource, Result, Sound, Source, Texture, Vpk};
 
 use crate::catalog::{self, Catalog, FileKind, Id, Line, LineError};
 use crate::text::{
-    ParticleMaterial, ParticleModel, ParticleTexture, ResolvedEvent, ambient_txt, background_png,
-    buildings_txt, effect_stem, expression_txt, labels_json, lighting_txt, lipsync_txt,
-    particle_json, phonemes_txt, portraits_txt, shop_json, sound_events_txt, soundscape_files,
-    soundscapes_txt, styles_json, tooltips_json, tree_model_path, tree_models, trees_txt, wanted,
-    wave_cache_path,
+    DEFAULT_SOUND_LEVEL, ParticleMaterial, ParticleModel, ParticleTexture, ResolvedEvent,
+    ambient_txt, background_png, buildings_txt, effect_stem, expression_txt, labels_json,
+    lighting_txt, lipsync_txt, particle_json, phonemes_txt, portraits_txt, shop_json,
+    sound_events_txt, sound_mixer_txt, soundscape_files, soundscapes_txt, styles_json,
+    tooltips_json, tree_model_path, tree_models, trees_txt, wanted, wave_cache_path,
 };
 
 /// The file of a finished cache that says what made it.
@@ -48,7 +50,7 @@ pub const LAST_USE_TEXT: &str = "dbota last use 1\n";
 pub const MAX_STAMP: u64 = 4096;
 
 /// Bumped when the importer's output changes for the same install; part of a cache's stamp.
-pub const IMPORT_REV: u32 = 33;
+pub const IMPORT_REV: u32 = 35;
 
 /// The manifest this build imports and draws, and its ids.
 pub const MANIFEST: &str = include_str!("../../../assets-manifest/manifest.txt");
@@ -134,6 +136,10 @@ const DIR_VPK: &str = "pak01_dir.vpk";
 const TOOLTIPS: &str = "text/tooltips.json";
 /// Where the limits of the sound events the manifest names are written ([`sound_events_txt`]).
 pub const SOUND_EVENTS: &str = "sounds/events.txt";
+/// Where Dota's mix groups, mix levels and mix layers are written ([`sound_mixer_txt`]).
+pub const SOUND_MIXER: &str = "sounds/mixer.txt";
+/// Where Dota keeps its mixer.
+const SOUND_MIXER_SRC: &str = "scripts/soundmixers.txt";
 /// Where the interface's labels go (the client reads them there).
 const LABELS: &str = "text/labels.json";
 const STYLES: &str = "text/styles.json";
@@ -314,6 +320,9 @@ pub enum Item {
         events: BTreeSet<String>,
         out: String,
     },
+    /// Dota's mixer: the mix groups, the levels of its default mix and its layers, as
+    /// `sounds/mixer.txt`.
+    SoundMixer { logical: String, out: String },
     /// A facial scene (a hero's idle expression), as [`expression_txt`] writes it.
     Expression {
         logical: String,
@@ -345,6 +354,7 @@ impl Item {
             | Self::Texture { out, .. }
             | Self::Sound { out, .. }
             | Self::SoundEvents { out, .. }
+            | Self::SoundMixer { out, .. }
             | Self::Expression { out, .. }
             | Self::Phonemes { out, .. }
             | Self::Tooltips { out, .. }
@@ -391,6 +401,7 @@ impl Item {
             | Self::Particle { logical, .. }
             | Self::Sound { logical, .. }
             | Self::SoundEvents { logical, .. }
+            | Self::SoundMixer { logical, .. }
             | Self::Expression { logical, .. }
             | Self::Phonemes { logical, .. }
             | Self::Portraits { logical, .. } => logical,
@@ -534,6 +545,10 @@ impl Plan {
                 logical: "sound.events".to_owned(),
                 events,
                 out: SOUND_EVENTS.to_owned(),
+            });
+            plan.items.push(Item::SoundMixer {
+                logical: "sound.mixer".to_owned(),
+                out: SOUND_MIXER.to_owned(),
             });
         }
         labels.extend(modifier_labels(&catalog.ids));
@@ -1187,6 +1202,10 @@ fn make(
         Item::SoundEvents {
             events, out: dest, ..
         } => sound_events(src, pak, events, dest, out),
+        Item::SoundMixer { out: dest, .. } => {
+            let mixer = read_sound_mixer(&read_from(src, &[pak], SOUND_MIXER_SRC)?)?;
+            out.put(dest, sound_mixer_txt(&mixer).as_bytes())
+        }
         Item::Expression {
             src: path,
             out: dest,
@@ -1444,6 +1463,15 @@ fn sound_events(
     out: &mut Out<'_>,
 ) -> Result<()> {
     let stacks = read_sound_stacks(&Resource::parse(&read_from(src, &[pak], SOUND_STACKS)?)?)?;
+    let mixer = match read_from(src, &[pak], SOUND_MIXER_SRC).and_then(|b| read_sound_mixer(&b)) {
+        Ok(mixer) => mixer,
+        Err(err) => {
+            out.report
+                .failed
+                .push((SOUND_MIXER_SRC.to_owned(), err.to_string()));
+            SoundMixer::default()
+        }
+    };
     let mut paths: Vec<String> = pak
         .entries()
         .map(|entry| entry.path())
@@ -1503,11 +1531,27 @@ fn sound_events(
             })
         });
         let stack = stacks.iter().find(|s| s.name == event.kind);
+        let defaults = stack.map(|s| s.defaults.clone()).unwrap_or_default();
+        let level = event
+            .sound_level
+            .or(defaults.sound_level)
+            .unwrap_or(DEFAULT_SOUND_LEVEL);
+        // An event names its group, or leaves it to the path of its first file (`USEPATHMATCH`).
+        let group = event
+            .mix_group
+            .clone()
+            .filter(|name| !name.is_empty() && name != "USEPATHMATCH")
+            .or_else(|| {
+                let file = event.files.first()?;
+                mixer.group_of(file, "", level).map(|g| g.name.clone())
+            });
         resolved.push(ResolvedEvent {
             limits: match stack {
                 Some(stack) => event.limits.or(&stack.limits),
                 None => event.limits.clone(),
             },
+            defaults,
+            group,
             looping,
             event,
         });

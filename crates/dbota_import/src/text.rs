@@ -678,6 +678,11 @@ fn ambient_line(entity: &Value) -> Option<(&str, &str, String)> {
 pub struct ResolvedEvent {
     pub event: heatel::sound::SoundEvent,
     pub limits: heatel::sound::SoundLimits,
+    /// What the event's type gives where the event states none.
+    pub defaults: heatel::sound::SoundDefaults,
+    /// The mix group the event's sound belongs to: the one it names, else the one the mixer's
+    /// path matching gives its first file.
+    pub group: Option<String>,
     pub looping: bool,
 }
 
@@ -690,17 +695,34 @@ pub const MAX_EVENT_BLOCK_UNITS: f32 = 10_000.0;
 pub const MAX_EVENT_LIMIT: u32 = 256;
 pub const MAX_EVENT_STOP_AT: f32 = 600.0;
 pub const MAX_EVENT_VOLUME: f32 = 4.0;
+pub const MAX_EVENT_SOUND_LEVEL: f32 = 200.0;
+pub const MAX_EVENT_DISTANCE: f32 = 100_000.0;
+pub const MAX_EVENT_PLAYER_MULT: f32 = 4.0;
+pub const MAX_EVENT_FOG_RADIUS: f32 = 10_000.0;
+/// The sound level of an event that states none and whose type gives none (Dota's `dota_src1_3d`).
+pub const DEFAULT_SOUND_LEVEL: f32 = 70.0;
 
 /// What `sounds/events.txt` starts with.
 const EVENTS_HEADER: &str = "\
-# event <name> <loops 0|1> <duration_s> <fade_out_s> <block_s> <block_units> <limit_max> <limit_per_entity 0|1> <stop_oldest 0|1> <stop_at_s> <volume>
+# event <name> <loops 0|1> <duration_s> <fade_out_s> <block_s> <block_units> <limit_max> \
+<limit_per_entity 0|1> <stop_oldest 0|1> <stop_at_s> <volume> <sound_level_db> <distance_max> \
+<mix_group|-> <player_mult> <fog_radius>
 # loops: the sound repeats until its source stops it. block_s 0: repeats are not blocked, else a repeat within
 # block_s seconds of a sounding instance and within block_units units of it (0: at any distance) is not played.
 # limit_max 0: no limit, else at most that many instances of the event at once (of one entity when
 # limit_per_entity), the oldest stopped for a new one when stop_oldest. Pools shared by several events
 # (limiter_event_name naming another) are not modelled: an event limits its own instances.
 # stop_at_s -1: never stopped by time. volume: the event's own, 1 being its file's (an event that states none: 1).
-# Largest values: duration 120, fade_out 10, block_s 5, block_units 10000, limit_max 256, stop_at_s 600, volume 4.
+# sound_level_db: how far it carries (the event's, else its type's, else 70). distance_max: \
+units beyond which it is
+# not heard, -1 for none. mix_group: the group of scripts/soundmixers.txt it belongs to, - for \
+none. player_mult: the
+# factor on the player's own entity. fog_radius: -1 when the volume ignores the fog of war, else \
+the radius about the
+# source within which sight counts.
+# Largest values: duration 120, fade_out 10, block_s 5, block_units 10000, limit_max 256, \
+stop_at_s 600, volume 4, sound_level 200, distance_max 100000, player_mult 4,
+# fog_radius 10000.
 ";
 
 /// `sounds/events.txt`, a line per event ([`EVENTS_HEADER`]). The block of a type that gives a
@@ -711,6 +733,8 @@ pub fn sound_events_txt(events: &[ResolvedEvent]) -> String {
     for ResolvedEvent {
         event,
         limits,
+        defaults,
+        group,
         looping,
     } in events
     {
@@ -726,7 +750,7 @@ pub fn sound_events_txt(events: &[ResolvedEvent]) -> String {
         let limited = limits.limiter_on.unwrap_or(false);
         let stop_at = limits.stop_at_time.unwrap_or(-1.0);
         out += &format!(
-            "event {} {} {:.3} {:.3} {:.3} {:.1} {} {} {} {:.3} {:.3}\n",
+            "event {} {} {:.3} {:.3} {:.3} {:.1} {} {} {} {:.3} {:.3} {:.1} {:.1} {} {:.3} {:.1}\n",
             event.name,
             u8::from(*looping),
             event.duration.unwrap_or(0.0).clamp(0.0, MAX_EVENT_DURATION),
@@ -745,6 +769,38 @@ pub fn sound_events_txt(events: &[ResolvedEvent]) -> String {
                 stop_at.min(MAX_EVENT_STOP_AT)
             },
             event.volume.unwrap_or(1.0).clamp(0.0, MAX_EVENT_VOLUME),
+            event
+                .sound_level
+                .or(defaults.sound_level)
+                .unwrap_or(DEFAULT_SOUND_LEVEL)
+                .clamp(0.0, MAX_EVENT_SOUND_LEVEL),
+            event
+                .distance_max
+                .or(defaults.distance_max)
+                .filter(|distance| *distance > 0.0)
+                .map_or(-1.0, |distance| distance.min(MAX_EVENT_DISTANCE)),
+            group
+                .as_deref()
+                .filter(|name| !name.is_empty() && !name.contains(char::is_whitespace))
+                .unwrap_or("-"),
+            event
+                .volume_on_player_mult
+                .or(defaults.volume_on_player_mult)
+                .unwrap_or(1.0)
+                .clamp(0.0, MAX_EVENT_PLAYER_MULT),
+            if event
+                .use_fog_of_war
+                .or(defaults.use_fog_of_war)
+                .unwrap_or(false)
+            {
+                event
+                    .fog_of_war_radius
+                    .or(defaults.fog_of_war_radius)
+                    .unwrap_or(0.0)
+                    .clamp(0.0, MAX_EVENT_FOG_RADIUS)
+            } else {
+                -1.0
+            },
         );
     }
     out
@@ -1365,5 +1421,215 @@ mod tests {
         let manifest =
             "soundscapes_manifest\n{\n\"file\" \"scripts/a.txt\"\n//\"file\" \"scripts/b.txt\"\n}";
         assert_eq!(soundscape_files(manifest), ["scripts/a.txt"]);
+    }
+}
+
+/// What `sounds/mixer.txt` starts with.
+const MIXER_HEADER: &str = "\
+# group <name> <volume> <level> <mute> <is_ducked 0|1> <causes_ducking 0|1> <duck_to_percent> \
+<ducker_threshold>
+# A mix group with the volume, sound level multiplier and mute of the Default_Mix (1 1 0 where \
+it names none).
+# layer <name> <trigger_group> <threshold> <amount> <attack_s> <release_s>
+# A layer is on while the trigger group's volume passes the threshold; one line for each of its \
+triggers.
+# layerlevel <layer> <group> <volume> <level> <mute>
+# What the layer does to a group while it is on.
+";
+
+/// `sounds/mixer.txt`: the mix groups with the levels of the `Default_Mix` and the layers, as the
+/// client applies them. Names without white space only: the others are left out.
+pub fn sound_mixer_txt(mixer: &heatel::sound::SoundMixer) -> String {
+    let word = |name: &str| !name.is_empty() && !name.contains(char::is_whitespace);
+    let clamp = |n: f32, most: f32| {
+        if n.is_finite() {
+            n.clamp(0.0, most)
+        } else {
+            0.0
+        }
+    };
+    let default = mixer.mixes.iter().find(|mix| mix.name == "Default_Mix");
+    let mut out = String::from(MIXER_HEADER);
+    for group in mixer.groups.iter().filter(|g| word(&g.name)) {
+        let level = default.and_then(|mix| mix.levels.iter().find(|l| l.group == group.name));
+        let (volume, lvl, mute) = level.map_or((1.0, 1.0, 0.0), |l| (l.volume, l.level, l.mute));
+        out += &format!(
+            "group {} {:.3} {:.3} {:.3} {} {} {:.1} {:.1}\n",
+            group.name,
+            clamp(volume, MAX_MIX_FACTOR),
+            clamp(lvl, MAX_MIX_FACTOR),
+            clamp(mute, 1.0),
+            u8::from(group.is_ducked),
+            u8::from(group.causes_ducking),
+            clamp(group.duck_to_percent, 100.0),
+            clamp(group.ducker_threshold, 100.0),
+        );
+    }
+    for layer in mixer.layers.iter().filter(|l| word(&l.name)) {
+        for trigger in layer.triggers.iter().filter(|t| word(&t.trigger)) {
+            out += &format!(
+                "layer {} {} {:.3} {:.3} {:.3} {:.3}\n",
+                layer.name,
+                trigger.trigger,
+                clamp(trigger.threshold, MAX_MIX_FACTOR),
+                clamp(trigger.amount, 1.0),
+                clamp(trigger.attack, MAX_MIX_SECS),
+                clamp(trigger.release, MAX_MIX_SECS),
+            );
+        }
+        for level in layer.levels.iter().filter(|l| word(&l.group)) {
+            out += &format!(
+                "layerlevel {} {} {:.3} {:.3} {:.3}\n",
+                layer.name,
+                level.group,
+                clamp(level.volume, MAX_MIX_FACTOR),
+                clamp(level.level, MAX_MIX_FACTOR),
+                clamp(level.mute, 1.0),
+            );
+        }
+    }
+    out
+}
+
+/// The largest factor and the longest ramp `sounds/mixer.txt` holds, which the client clamps to as
+/// well.
+pub const MAX_MIX_FACTOR: f32 = 4.0;
+pub const MAX_MIX_SECS: f32 = 60.0;
+
+#[cfg(test)]
+mod mixer_tests {
+    use super::*;
+    use heatel::sound::{
+        GroupLevel, LayerTrigger, Mix, MixGroup, MixLayer, SoundDefaults, SoundEvent, SoundLimits,
+        SoundMixer,
+    };
+
+    fn event(name: &str) -> SoundEvent {
+        SoundEvent {
+            name: name.to_owned(),
+            kind: String::new(),
+            files: Vec::new(),
+            volume: None,
+            pitch: None,
+            pitch_jitter: None,
+            sound_level: None,
+            distance_max: None,
+            mix_group: None,
+            spread_radius: None,
+            delay: None,
+            fade_in: None,
+            fade_out: None,
+            duration: None,
+            volume_on_player_mult: None,
+            use_fog_of_war: None,
+            fog_of_war_radius: None,
+            layers: Vec::new(),
+            limits: SoundLimits::default(),
+        }
+    }
+
+    fn line_of(event: SoundEvent, defaults: SoundDefaults, group: Option<&str>) -> String {
+        let resolved = ResolvedEvent {
+            limits: SoundLimits::default(),
+            event,
+            defaults,
+            group: group.map(str::to_owned),
+            looping: false,
+        };
+        sound_events_txt(&[resolved])
+            .lines()
+            .find(|l| l.starts_with("event "))
+            .expect("an event line")
+            .to_owned()
+    }
+
+    #[test]
+    fn an_event_states_its_level_range_group_player_factor_and_fog_after_its_volume() {
+        let mut stated = event("A.B");
+        stated.sound_level = Some(81.0);
+        stated.distance_max = Some(2500.0);
+        stated.volume_on_player_mult = Some(2.0);
+        stated.use_fog_of_war = Some(true);
+        stated.fog_of_war_radius = Some(300.0);
+        let line = line_of(stated, SoundDefaults::default(), Some("Weapons"));
+        assert!(
+            line.ends_with(" 1.000 81.0 2500.0 Weapons 2.000 300.0"),
+            "{line}"
+        );
+    }
+
+    #[test]
+    fn an_event_that_states_nothing_gets_its_types_defaults_and_then_dotas() {
+        let defaults = SoundDefaults {
+            sound_level: Some(75.0),
+            distance_max: Some(-1.0),
+            volume_on_player_mult: Some(1.25),
+            use_fog_of_war: Some(false),
+            fog_of_war_radius: None,
+        };
+        let line = line_of(event("A.B"), defaults, None);
+        assert!(line.ends_with(" 1.000 75.0 -1.0 - 1.250 -1.0"), "{line}");
+        let bare = line_of(event("A.B"), SoundDefaults::default(), None);
+        assert!(bare.ends_with(" 1.000 70.0 -1.0 - 1.000 -1.0"), "{bare}");
+    }
+
+    #[test]
+    fn the_mixer_file_lists_groups_with_the_default_mix_and_the_layers() {
+        let group = |name: &str| MixGroup {
+            name: name.to_owned(),
+            path_substring: String::new(),
+            class_substring: String::new(),
+            sound_level_min: None,
+            priority: 50,
+            is_ducked: name == "ambient",
+            causes_ducking: false,
+            duck_to_percent: 90.0,
+            ducker_threshold: 60.0,
+        };
+        let level = |name: &str, volume: f32| GroupLevel {
+            group: name.to_owned(),
+            volume,
+            level: 1.0,
+            mute: 0.0,
+        };
+        let mixer = SoundMixer {
+            groups: vec![group("Weapons"), group("ambient"), group("Odd Name")],
+            mixes: vec![Mix {
+                name: "Default_Mix".to_owned(),
+                levels: vec![level("Weapons", 0.4)],
+            }],
+            layers: vec![MixLayer {
+                name: "Announcer".to_owned(),
+                levels: vec![level("Weapons", 0.7)],
+                triggers: vec![LayerTrigger {
+                    trigger: "Announcer".to_owned(),
+                    threshold: 0.4,
+                    amount: 1.0,
+                    attack: 0.3,
+                    release: 0.5,
+                }],
+            }],
+        };
+        let text = sound_mixer_txt(&mixer);
+        assert!(
+            text.contains("\ngroup Weapons 0.400 1.000 0.000 0 0 90.0 60.0\n"),
+            "{text}"
+        );
+        assert!(
+            text.contains("\ngroup ambient 1.000 1.000 0.000 1 0 90.0 60.0\n"),
+            "{text}"
+        );
+        assert!(
+            !text.contains("Odd"),
+            "a name with white space is left out: {text}"
+        );
+        assert!(
+            text.contains("\nlayer Announcer Announcer 0.400 1.000 0.300 0.500\n"),
+            "{text}"
+        );
+        assert!(
+            text.contains("\nlayerlevel Announcer Weapons 0.700 1.000 0.000\n"),
+            "{text}"
+        );
     }
 }

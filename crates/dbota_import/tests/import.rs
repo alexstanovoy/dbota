@@ -118,7 +118,7 @@ fn the_plan_takes_every_line_and_the_tooltips() {
          text ability 3 pudge_innate_graft_flesh\n",
     )
     .expect("a plan");
-    assert_eq!(plan.items.len(), 12);
+    assert_eq!(plan.items.len(), 13);
     assert!(matches!(
         &plan.items[0],
         Item::Model { anims, skeleton: true, .. } if anims == &["idle"]
@@ -150,19 +150,23 @@ fn the_plan_takes_every_line_and_the_tooltips() {
     ));
     assert!(matches!(
         &plan.items[8],
+        Item::SoundMixer { out, .. } if out == "sounds/mixer.txt"
+    ));
+    assert!(matches!(
+        &plan.items[9],
         Item::Tooltips { wanted, out, .. }
             if wanted.names == ["item_boots", "nevermore_requiem", "pudge_innate_graft_flesh"]
                 && wanted.heroes == ["nevermore"] && out == "text/tooltips.json"
     ));
     assert!(matches!(
-        &plan.items[10],
+        &plan.items[11],
         Item::Icons {
             abilities: false,
             ..
         }
     ));
     assert!(matches!(
-        &plan.items[9],
+        &plan.items[10],
         Item::Labels { keys, out, .. }
             if keys == &[("loc/dota_english.txt".to_owned(), "DOTA_HUD_Armor".to_owned())]
                 && out == "text/labels.json"
