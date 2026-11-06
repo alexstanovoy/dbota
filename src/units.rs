@@ -34,6 +34,8 @@ pub struct Unit {
     base_model: Option<usize>,
     /// Elevation of the model actually drawn, not a pending replacement.
     elevation: f32,
+    /// Forced elevation of the interpolated body.
+    lift: f32,
     /// Its bota position and facing as drawn this frame.
     pub at: Vec2,
     /// Facing, radians counter-clockwise from east.
@@ -587,7 +589,7 @@ fn base_model_name(unit: &UnitView, map: &MapDef, manifest: &Manifest) -> Option
 
 /// Elevation follows the model actually drawn, including while another model loads.
 pub fn flight_height(unit: &Unit) -> f32 {
-    unit.elevation
+    unit.elevation + unit.lift
 }
 
 fn selected_model_index(
@@ -942,7 +944,7 @@ fn sync_body(
     }
     let place = Vec3::new(at.x, p.ground.at(at.x, at.y), -at.y);
     let facing = drawn_facing(live, body.facing, at, &p.yaws);
-    let entity = spawn_unit(p, live, (at, facing, place), (base, selected));
+    let entity = spawn_unit(p, live, (at, facing, place), body.height, (base, selected));
     p.index.0.insert(live.id, entity);
     true
 }
@@ -958,6 +960,7 @@ fn move_drawn_unit(
     let moved = at.distance(unit.at) / dt;
     unit.speed += (moved - unit.speed) * (dt * 10.0).min(1.0);
     unit.at = at;
+    unit.lift = body.height;
     unit.facing = drawn_facing(body.unit, body.facing, at, &p.yaws);
     let place = Vec3::new(at.x, p.ground.at(at.x, at.y) + flight_height(unit), -at.y);
     // Avoid propagating an unchanged root through its whole skeleton.
@@ -1012,6 +1015,7 @@ fn spawn_unit(
     p: &mut SyncParams,
     u: &UnitView,
     (at, facing, place): (Vec2, f32, Vec3),
+    lift: f32,
     (base_model, model): (Option<usize>, Option<usize>),
 ) -> Entity {
     let model = model.filter(|index| p.bank.0[*index].scenes.is_some());
@@ -1022,6 +1026,7 @@ fn spawn_unit(
         model,
         base_model,
         elevation: model.map_or(0.0, |index| p.bank.0[index].elevation),
+        lift,
         at,
         facing,
         speed: 0.0,

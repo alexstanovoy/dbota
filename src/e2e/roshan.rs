@@ -651,3 +651,204 @@ fn roshans_bash_uses_its_unique_attack_animation_and_stuns_the_player() {
         },
     );
 }
+
+/// Quiet lockstep ticks still go through the real socket and normal acknowledgements;
+/// the renderer resumes before any interaction being asserted.
+fn advance_quietly_to(client: &mut Client, elapsed_seconds: u32) {
+    use std::time::{Duration, Instant};
+    let goal = client.core().pregame_ticks() + elapsed_seconds * bota_core::rules::TICKS_PER_SECOND;
+    let deadline = Instant::now() + Duration::from_secs(120);
+    for _ in 0..150000 {
+        if client.view().game_tick() >= goal {
+            client.frames(3);
+            return;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "real lockstep server did not reach the fixture time"
+        );
+        client.core_mut().pump(0.0);
+        assert!(
+            !client.core().lost,
+            "the stream remains valid while advancing quietly"
+        );
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    panic!("bounded lockstep advance exhausted");
+}
+
+fn migration_with_an_ally_in_roshans_path() -> (Server, Client, bota_proto::EntityId) {
+    use bota_client_core::{Intent, Slot};
+    use bota_proto::{Team, Vec2};
+    let server = Server::start(
+        1,
+        &[
+            "--objectives",
+            "roshan",
+            "--immortal-heroes",
+            "--tick-rate",
+            "1200",
+        ],
+    );
+    let mut client = Client::join(&server, HeroId::PUDGE, &[]);
+    client.cheat(Cheat::CreepSpawning { on: false });
+    client.cheat(Cheat::StartGame);
+    client.cheat(Cheat::Levels { count: 5 });
+    client.cheat(Cheat::Invulnerable { on: true });
+    for slot in [0, 3] {
+        client.core_mut().act(Intent::Press {
+            slot: Slot::Ability(slot),
+            ctrl: true,
+        });
+        client.until("fixture ability learned", |c| {
+            c.me()
+                .abilities
+                .get(slot as usize)
+                .is_some_and(|a| a.level == 1)
+        });
+    }
+    let pit = bota_core::ROSHAN_DAY_PIT;
+    client.stand_at((pit.x.to_int() + 260, pit.y.to_int() + 650));
+    client.until("the observer's model loaded", |c| {
+        c.body(c.me().id)
+            .and_then(|e| c.world().get::<Unit>(e))
+            .is_some_and(|u| u.model.is_some())
+    });
+    advance_quietly_to(&mut client, 15 * 60 - 3);
+    client.cheat(Cheat::CreateHero {
+        hero: HeroId::PUDGE,
+        enemy: false,
+        at: pit + Vec2::from_ints(230, 0),
+    });
+    client.until("the allied hero on screen", |c| {
+        c.view()
+            .units
+            .iter()
+            .any(|u| u.kind == UnitKind::Hero && u.id != c.me().id && u.team == Team::Radiant)
+    });
+    let victim = client
+        .view()
+        .units
+        .iter()
+        .find(|u| u.kind == UnitKind::Hero && u.id != client.me().id && u.team == Team::Radiant)
+        .expect("ally")
+        .id;
+    (server, client, victim)
+}
+
+#[test]
+fn a_natural_pit_migration_draws_grab_flight_and_landing_even_when_spell_block_fires_during_the_channel()
+ {
+    use bota_client_core::{Intent, Slot};
+    use bota_proto::{EventKind, ForcedPhase, Vec2};
+    let (_server, mut client, victim) = migration_with_an_ally_in_roshans_path();
+    client.until("the ally grabbed during the natural pit change", |c| {
+        c.view()
+            .unit(victim)
+            .is_some_and(|u| u.forced.is_some_and(|f| f.phase == ForcedPhase::Held))
+    });
+    let boss = client
+        .view()
+        .units
+        .iter()
+        .find(|u| u.kind == UnitKind::Roshan)
+        .expect("boss")
+        .clone();
+    assert_eq!(
+        boss.channel.expect("grab channel").ability,
+        bota_core::NeutralAbility::GrabAndThrow.id()
+    );
+    client.cheat(Cheat::Teleport {
+        at: boss.pos + Vec2::from_ints(-150, 0),
+    });
+    client.core_mut().act(Intent::Press {
+        slot: Slot::Ability(3),
+        ctrl: false,
+    });
+    client.core_mut().act(Intent::Aimed {
+        at: (boss.pos.x.to_f32(), boss.pos.y.to_f32()),
+        unit: Some(boss.id),
+    });
+    let mut blocked = false;
+    let mut kept_channel = false;
+    let mut airborne = false;
+    let mut raised = false;
+    client.until("a full grab, visible arc and ordinary landing",|c|{
+        blocked|=c.core().told.iter().any(|e|matches!(e,EventKind::AbilityCast{caster,ability} if *caster==boss.id&&*ability==bota_core::NeutralAbility::SpellBlock.id()));
+        if blocked {kept_channel|=c.view().unit(boss.id).is_some_and(|u|u.channel.is_some_and(|ch|ch.ability==bota_core::NeutralAbility::GrabAndThrow.id()))&&c.body(boss.id).and_then(|e|c.world().get::<crate::anim::Pose>(e)).is_some_and(|p|p.clip()=="cast2");}
+        let Some(hero)=c.view().unit(victim) else{return false;};
+        airborne|=hero.forced.is_some_and(|f|f.phase==ForcedPhase::Airborne);
+        raised|=c.body(victim).and_then(|e|c.world().get::<Unit>(e)).is_some_and(|u|crate::units::flight_height(u)>10.0);
+        airborne&&raised&&hero.forced.is_none()
+    });
+    assert!(blocked);
+    assert!(kept_channel);
+    client.until("the landed model is back on the ground", |c| {
+        c.body(victim)
+            .and_then(|e| c.world().get::<Unit>(e))
+            .is_some_and(|u| crate::units::flight_height(u) < 1.0)
+    });
+}
+
+#[test]
+fn interrupting_roshans_grab_with_hook_releases_the_allied_model_position_and_facing() {
+    use bevy::prelude::*;
+    use bota_client_core::{Intent, Slot};
+    use bota_proto::ForcedPhase;
+    let (_server, mut client, victim) = migration_with_an_ally_in_roshans_path();
+    client.until("the ally held by Roshan", |c| {
+        c.view()
+            .unit(victim)
+            .is_some_and(|u| u.forced.is_some_and(|f| f.phase == ForcedPhase::Held))
+    });
+    let at = client.view().unit(victim).expect("held ally").pos;
+    let boss = client
+        .view()
+        .units
+        .iter()
+        .find(|u| u.kind == UnitKind::Roshan)
+        .expect("boss")
+        .pos;
+    let outward = bota_core::point_along(at, at + (at - boss), bota_core::rules::units(600));
+    client.cheat(Cheat::Teleport { at: outward });
+    client.core_mut().act(Intent::Press {
+        slot: Slot::Ability(0),
+        ctrl: false,
+    });
+    client.core_mut().act(Intent::Aimed {
+        at: (at.x.to_f32(), at.y.to_f32()),
+        unit: Some(victim),
+    });
+    client.until("the hook pulls the ally clear of the grab", |c| {
+        c.view().unit(victim).is_some_and(|u| {
+            u.forced.is_none()
+                && u.pos.distance_squared(at) > bota_core::rules::units(200).squared_raw()
+        })
+    });
+    let released = client.view().unit(victim).expect("released ally").clone();
+    client.until("the recovered model moves and turns normally", |c| {
+        let Some(ally) = c.view().unit(victim) else {
+            return false;
+        };
+        if ally.forced.is_some()
+            || ally.pos.distance_squared(released.pos) < bota_core::rules::units(30).squared_raw()
+            || ally.facing == released.facing
+        {
+            return false;
+        }
+        let Some(body) = c.body(victim) else {
+            return false;
+        };
+        let world = c.world();
+        let Some(unit) = world.get::<Unit>(body) else {
+            return false;
+        };
+        let Some(model) = world.get::<crate::units::ModelOf>(body) else {
+            return false;
+        };
+        world.get::<Transform>(model.0).is_some_and(|t| {
+            t.rotation
+                .abs_diff_eq(crate::coords::sim_facing_to_rotation(unit.facing), 0.001)
+        })
+    });
+}

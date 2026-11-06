@@ -372,3 +372,11 @@ modifier 89 modifier_roshan_revengeroar_aura
 modifier 90 modifier_roshan_revengeroar_disarm
 modifier 91 modifier_roshan_revengeroar
 modifier 92 modifier_silence
+
+ability 86 roshan_grab_and_throw
+text ability 86 roshan_grab_and_throw
+modifier 93 modifier_roshan_grab
+modifier 94 modifier_roshan_grab_thrown
+modifier 95 modifier_roshan_moving
+modifier 96 modifier_knockback
+modifier 97 modifier_roshan_moving_knockback_timeout

@@ -93,6 +93,7 @@ pub fn art_of(id: AbilityId) -> AbilityArt {
         },
         AbilityId::DISMEMBER => AbilityArt {
             clip: "dismember",
+            channel: Some("dismember_channel"),
             ..PLAIN
         },
         id => NeutralAbility::of(id).map_or(PLAIN, neutral_art),
@@ -116,6 +117,14 @@ fn neutral_art(ability: NeutralAbility) -> AbilityArt {
             Spell::Strike(bota_core::Strike::Bash { .. })
         )
         .then_some("bash"),
+        channel: matches!(
+            ability.spell(),
+            Spell::Cast {
+                act: Act::Grab(_),
+                ..
+            }
+        )
+        .then_some("cast2"),
         flight: if bolt { Flight::Bolt } else { Flight::None },
         ..PLAIN
     }
@@ -148,7 +157,8 @@ const fn neutral_cast_clip(ability: NeutralAbility) -> &'static str {
         | N::Frenzy
         | N::IcefireBomb
         | N::Desecrate => "cast1",
-        N::Bash
+        N::GrabAndThrow
+        | N::Bash
         | N::Vex
         | N::Intimidate
         | N::OgreSmash
@@ -207,6 +217,21 @@ pub fn art_by(inflictor: Inflictor) -> AbilityArt {
         },
         Inflictor::Item(_) => PLAIN,
     }
+}
+
+/// Activity overrides keyed by the installed modifier identity.
+pub fn run_clip(effects: &[bota_proto::EffectView]) -> &'static str {
+    const ACTIVITIES: &[(&str, &str)] = &[("modifier_roshan_moving", "run_haste")];
+    effects
+        .iter()
+        .filter_map(|e| bota_core::effect_def(e.id))
+        .find_map(|effect| {
+            ACTIVITIES
+                .iter()
+                .find(|(key, _)| *key == effect.key)
+                .map(|(_, clip)| *clip)
+        })
+        .unwrap_or("run")
 }
 
 #[cfg(test)]

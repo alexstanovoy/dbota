@@ -206,9 +206,9 @@ fn animate(
         // A clip of no length is a held pose (a Watcher put out).
         let clip = |name: &str| clips.iter().find(|c| c.0 == name);
         let live = view.unit(unit.id);
-        let channel = channels.0.get(&unit.id).and_then(|id| art_of(*id).channel);
-        // An objective a hero channels at plays its own channel clip meanwhile (a Watcher's).
-        let channel = channel.or_else(|| worked.contains(&unit.id).then_some("channel"));
+        let channel = live
+            .and_then(|u| u.channel.filter(|_| u.forced.is_none()))
+            .and_then(|c| art_of(c.ability).channel.map(|name| (c, name)));
         let wanted = match (dying, live) {
             (Some(d), _) => Wanted {
                 clip: "death",
@@ -216,8 +216,31 @@ fn animate(
             },
             (None, Some(u)) => {
                 let clip = |name: &str| clip(name).map(|c| (c.2, c.3));
-                match channel.and_then(|name| Some((name, clip(name)?.0))) {
-                    Some((name, duration)) => looping(&mut pose, name, duration, dt, 1.0),
+                match channel.and_then(|(channel, name)| Some((channel, name, clip(name)?))) {
+                    Some((channel, name, (duration, point))) => {
+                        let offset = if art_of(channel.ability).clip == name {
+                            point.unwrap_or(0.0)
+                        } else {
+                            0.0
+                        };
+                        let elapsed = (channel.elapsed as f32 + core.smooth.alpha())
+                            / bota_core::rules::TICKS_PER_SECOND as f32;
+                        Wanted {
+                            clip: name,
+                            t: if duration > 0.0 {
+                                (offset + elapsed) % duration
+                            } else {
+                                0.0
+                            },
+                        }
+                    }
+                    None if worked.contains(&unit.id) => {
+                        if let Some((duration, _)) = clip("channel") {
+                            looping(&mut pose, "channel", duration, dt, 1.0)
+                        } else {
+                            choose(core, u, unit, &mut pose, dt, clip)
+                        }
+                    }
                     None => choose(core, u, unit, &mut pose, dt, clip),
                 }
             }
@@ -397,6 +420,16 @@ fn choose(
     dt: f32,
     clip: impl Fn(&str) -> Option<(f32, Option<f32>)>,
 ) -> Wanted {
+    if u.forced.is_some() {
+        pose.swing_due = None;
+        pose.since_strike = None;
+        pose.struck_at = None;
+        for name in ["flail", "stun"] {
+            if let Some((duration, _)) = clip(name) {
+                return looping(pose, name, duration, dt, 1.0);
+            }
+        }
+    }
     let rate = f32::from(core.tick_rate().max(1));
     let sub = core.smooth.alpha();
     if let (Some(cast), Some(began)) = (u.cast, core.cast_began(u.id)) {
@@ -468,15 +501,23 @@ fn choose(
         } else {
             "attack2"
         };
-        let proc = core
-            .session()
-            .and_then(|s| s.entity(u.id))
-            .and_then(|t| t.last_ability_cast)
-            .filter(|cast| {
-                pose.struck_at
-                    .is_some_and(|tick| tick.abs_diff(cast.tick) <= 1)
+        let proc = core.session().and_then(|session| {
+            pose.struck_at.and_then(|tick| {
+                session
+                    .recent_events()
+                    .iter()
+                    .rev()
+                    .take_while(|event| event.tick >= tick.saturating_sub(1))
+                    .find_map(|event| match event.kind {
+                        EventKind::AbilityCast { caster, ability }
+                            if caster == u.id && tick.abs_diff(event.tick) <= 1 =>
+                        {
+                            art_of(ability).attack
+                        }
+                        _ => None,
+                    })
             })
-            .and_then(|cast| art_of(cast.ability).attack);
+        });
         let last = proc.filter(|name| clip(name).is_some()).unwrap_or(last);
         let last = if clip(last).is_some() { last } else { "attack" };
         if let Some((duration, point)) = clip(last) {
@@ -488,7 +529,10 @@ fn choose(
         pose.since_strike = None;
     }
     let (name, pace) = if unit.speed > RUNNING && unit.kind != UnitKind::Tower {
-        ("run", unit.speed / RUN_PACE)
+        (
+            crate::ability_art::run_clip(&u.effects),
+            unit.speed / RUN_PACE,
+        )
     } else {
         (standing(core, u), 1.0)
     };
