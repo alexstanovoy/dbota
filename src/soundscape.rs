@@ -411,6 +411,7 @@ fn randoms(
         let request = Request {
             event: &p.line.waves[pick.min(p.line.waves.len() - 1)],
             owner: Owner::None,
+            emitter: None,
             merge: None,
             at: p
                 .line

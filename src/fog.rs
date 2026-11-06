@@ -276,6 +276,11 @@ struct ProjectileSight {
     rows: Vec<(bota_proto::EntityId, bool)>,
 }
 
+#[cfg(test)]
+pub(crate) fn init_test_event_sight(app: &mut App) {
+    app.init_resource::<ProjectileSight>();
+}
+
 impl Default for ProjectileSight {
     fn default() -> Self {
         Self {

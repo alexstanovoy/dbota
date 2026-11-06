@@ -73,16 +73,6 @@ fn rot_starts_as_a_loop(client: &mut Client, starts: &Arc<Mutex<Vec<Start>>>) {
     );
 }
 
-/// The voices of the world's mixer sounding an event now.
-fn sounding(client: &Client, event: &str) -> usize {
-    client.world().resource::<Mixer>().sounding(event)
-}
-
-/// The game clock.
-fn clock(client: &Client) -> Duration {
-    client.world().resource::<Time>().elapsed()
-}
-
 /// The volume Rot's loop has now.
 fn rot_gain(client: &Client) -> Option<f32> {
     client.world().resource::<Mixer>().loop_gain(ROT)
@@ -255,10 +245,9 @@ fn rot_does_not_sound_on_after_the_match_is_gone() {
     });
 }
 
-/// Requiem's cast sound is five seconds long and plays out after the cast point is over.
+/// The casting row starts once with automatic completion; ending the cast never restarts it.
 #[test]
-fn requiems_cast_sound_plays_out_after_the_cast_point() {
-    const CAST: &str = "Hero_Nevermore.RequiemOfSoulsCast";
+fn requiems_cast_sound_starts_once_as_a_one_shot() {
     let server = Server::start(1, &[]);
     let mut client = Client::join(&server, HeroId::SHADOW_FIEND, &[]);
     client.stand_at(MID);
@@ -277,17 +266,22 @@ fn requiems_cast_sound_plays_out_after_the_cast_point() {
     client.until("Requiem learned", |c| {
         c.me().abilities[usize::from(slot)].level > 0
     });
+    let starts = listen(&mut client, "requiem_cast");
     client.core_mut().act(Intent::Press {
         slot: Slot::Ability(slot),
         ctrl: false,
     });
-    client.until("the cast sounded", |c| sounding(c, CAST) == 1);
-    client.until("the cast point over", |c| c.me().cast.is_none());
-    let over = clock(&client);
-    client.until("a second past the cast point", |c| {
-        clock(c) >= over + Duration::from_secs(1)
+    client.until("the casting sound was admitted", |_| {
+        !starts.lock().expect("unpoisoned").is_empty()
     });
-    assert_eq!(sounding(&client, CAST), 1, "the cast sound was cut short");
+    client.until("the cast point over", |c| c.me().cast.is_none());
+    client.frames(10);
+    let starts = starts.lock().expect("unpoisoned");
+    assert_eq!(starts.len(), 1, "cast completion restarted the sound");
+    assert!(
+        matches!(starts[0].1, PlaybackMode::Despawn),
+        "the casting sound was kept as a loop"
+    );
 }
 
 /// Our hero's blows on two units sound each, and a second blow on the first within the merge
@@ -299,6 +293,11 @@ fn blows_of_a_hero_on_two_units_both_sound_and_on_one_unit_once() {
     let starts = listen(&mut client, "witch_doctor/projectile_impact");
     let unit = |idx| EntityId { idx, generation: 1 };
     let hero = Some(HeroId::SHADOW_FIEND);
+    client
+        .world_mut()
+        .insert_resource(bevy::time::TimeUpdateStrategy::ManualDuration(
+            Duration::from_millis(60),
+        ));
     for target in [unit(900), unit(901), unit(900)] {
         client.core_mut().cue_blow(
             hero,
@@ -307,9 +306,7 @@ fn blows_of_a_hero_on_two_units_both_sound_and_on_one_unit_once() {
             None,
             Some(target),
         );
-        // Past the rest of the kind of sound, well within the merge window.
-        std::thread::sleep(Duration::from_millis(60));
-        client.frames(2);
+        client.frames(1);
     }
     let sounded = starts.lock().expect("unpoisoned").len();
     assert_eq!(sounded, 2, "blows on two units, one of them twice");

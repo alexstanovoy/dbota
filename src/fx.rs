@@ -14,7 +14,7 @@ mod worn;
 use std::collections::HashMap;
 
 use bevy::prelude::*;
-use bota_proto::{Attribute, ItemId, ItemView, UnitView, Vec2 as Spot};
+use bota_proto::{Attribute, EntityId, ItemId, ItemView, UnitView, Vec2 as Spot};
 
 use crate::camera::RtsCamera;
 use crate::effects::Shooters;
@@ -137,7 +137,14 @@ impl Stage<'_, '_> {
     /// Sounds one of the sounds under `prefix` where `at` is (Bevy frame), faded by its distance
     /// from the camera, as the mixer lets it. A sound that loops sounds until `owner` stops the
     /// voice returned; the sounds counted as heard are those the mixer took.
-    fn sound(&mut self, prefix: &str, at: Vec3, n: u32, owner: Owner) -> Started {
+    fn sound(
+        &mut self,
+        prefix: &str,
+        at: Vec3,
+        n: u32,
+        owner: Owner,
+        emitter: Option<EntityId>,
+    ) -> Started {
         let files = self.files_of(prefix);
         let Some((path, event)) = files.get(n as usize % files.len().max(1)).cloned() else {
             return Started::Refused;
@@ -146,8 +153,9 @@ impl Stage<'_, '_> {
         let place = (at.x, -at.z);
         let own_hero = self.session.0.my_hero().map(Owner::Unit);
         let request = Request {
-            event: &event,
+            event: if event.is_empty() { prefix } else { &event },
             owner,
+            emitter,
             at: Some(place),
             listener: Some((focus.x, focus.y)),
             on_player: own_hero == Some(owner),
@@ -207,13 +215,14 @@ impl Stage<'_, '_> {
         (library, playing): (Option<&Library>, &mut Playing),
         (feeds, place): (&Feeds, &dyn Fn(&Attach) -> Vec3),
         sight: crate::particles::EffectSight,
+        emitter: Option<EntityId>,
     ) {
         if let Some(name) = &fx.particle {
             let handle = crate::effects::play_once(library, playing, name, at, seed, sight);
             feed(fx, handle, playing, feeds, place);
         }
         if let Some(prefix) = &fx.sound {
-            self.sound(prefix, at, seed, Owner::None);
+            self.sound(prefix, at, seed, Owner::None, emitter);
         }
     }
 }

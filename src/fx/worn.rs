@@ -140,7 +140,7 @@ fn sound(fx: &Fx, id: EntityId, at: Vec3, wearing: &mut Wearing, stage: &mut Sta
         return;
     }
     let seed = id.idx ^ id.generation.rotate_left(16);
-    match stage.sound(prefix, at, seed, Owner::Unit(id)) {
+    match stage.sound(prefix, at, seed, Owner::Unit(id), Some(id)) {
         Started::Loop(voice) => {
             wearing.voice = Some(voice);
             wearing.waiting = false;
@@ -148,6 +148,136 @@ fn sound(fx: &Fx, id: EntityId, at: Vec3, wearing: &mut Wearing, stage: &mut Sta
         Started::Once => wearing.waiting = false,
         // Out of earshot or blocked: a one-shot is lost, a loop is tried again.
         Started::Refused => wearing.waiting = stage.loops(prefix),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::fog::FogGrid;
+    use bevy::asset::{
+        AssetApp,
+        io::{
+            AssetSourceBuilder,
+            memory::{Dir, MemoryAssetReader},
+        },
+    };
+    use bevy::audio::{AudioLoader, AudioSink, PlaybackMode, Source};
+    use bevy::ecs::system::RunSystemOnce;
+    use clap::Parser;
+    use std::time::Duration;
+
+    fn casting_sound_app() -> (App, bevy::asset::Handle<AudioSource>) {
+        let source = crate::mixer::two_minute_source();
+        let decoder = crate::sound_file::decoder(source.clone()).expect("a valid synthetic WAV");
+        assert_eq!(decoder.total_duration(), Some(Duration::from_secs(120)));
+        let memory = Dir::default();
+        memory.insert_asset(std::path::Path::new("cast.wav"), source.bytes.to_vec());
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins)
+            .register_asset_source(
+                crate::CACHE_SOURCE,
+                AssetSourceBuilder::new(move || {
+                    Box::new(MemoryAssetReader {
+                        root: memory.clone(),
+                    })
+                }),
+            )
+            .add_plugins(bevy::asset::AssetPlugin::default())
+            .init_asset::<AudioSource>()
+            .init_asset_loader::<AudioLoader>()
+            .init_resource::<Playing>()
+            .init_resource::<super::super::Heard>()
+            .init_resource::<crate::mixer::Mixer>()
+            .init_resource::<FogGrid>()
+            .insert_resource(crate::config::Settings::default())
+            .insert_resource(crate::Args::parse_from(["dbota"]))
+            .insert_resource(crate::manifest::Manifest {
+                files: vec![("cast".to_owned(), "cast.wav".to_owned())],
+                sound_events: vec![("cast.wav".to_owned(), "Synthetic.Cast".to_owned())],
+                ..Default::default()
+            })
+            .insert_non_send(crate::main_menu::idle());
+        app.world_mut().spawn(crate::camera::RtsCamera {
+            focus: Vec3::ZERO,
+            distance: 1000.0,
+        });
+        let handle = app
+            .world()
+            .resource::<AssetServer>()
+            .load::<AudioSource>(crate::manifest::cache_path("cast.wav"));
+        app.world_mut()
+            .resource_mut::<Assets<AudioSource>>()
+            .insert(handle.id(), source)
+            .expect("the reserved audio asset id");
+        (app, handle)
+    }
+
+    #[test]
+    fn ending_a_cast_effect_leaves_its_one_shot_player_until_its_deadline() {
+        let (mut app, source) = casting_sound_app();
+        let world = app.world_mut();
+        let fx = Fx::parse(&["ability.test.casting", "at=unit", "sound=cast"])
+            .expect("a sound-only casting row");
+        let wearing = world
+            .run_system_once(move |mut stage: Stage, mut playing: ResMut<Playing>| {
+                begin(
+                    &fx,
+                    EntityId {
+                        idx: 1,
+                        generation: 1,
+                    },
+                    Vec3::ZERO,
+                    (None, &mut playing),
+                    &mut stage,
+                    EffectSight::Point,
+                )
+            })
+            .expect("the real worn producer starts");
+        let (player, settings) = world
+            .query::<(&AudioPlayer, &PlaybackSettings)>()
+            .single(world)
+            .expect("one physical player");
+        assert!(matches!(settings.mode, PlaybackMode::Despawn));
+        assert_eq!(player.0.id(), source.id());
+        assert!(
+            world
+                .resource::<Assets<AudioSource>>()
+                .get(&player.0)
+                .is_some(),
+            "the real WAV is resident"
+        );
+        world
+            .resource_mut::<Time>()
+            .advance_by(Duration::from_secs(2));
+        world
+            .run_system_once(move |mut stage: Stage, mut playing: ResMut<Playing>| {
+                end(&wearing, &mut playing, &mut stage);
+            })
+            .expect("the real worn producer ends");
+        assert_eq!(
+            world.query::<&AudioPlayer>().iter(world).count(),
+            1,
+            "owner completion cut the one-shot"
+        );
+        world
+            .resource_mut::<Time>()
+            .advance_by(Duration::from_secs(8));
+        world
+            .run_system_once(
+                |mut commands: Commands,
+                 mut mixer: ResMut<crate::mixer::Mixer>,
+                 time: Res<Time>,
+                 mut sinks: Query<&mut AudioSink>| {
+                    mixer.tick(&mut commands, time.elapsed(), &mut sinks, None);
+                },
+            )
+            .expect("the playback deadline is applied");
+        assert_eq!(
+            world.query::<&AudioPlayer>().iter(world).count(),
+            0,
+            "the bounded deadline left a physical player"
+        );
     }
 }
 

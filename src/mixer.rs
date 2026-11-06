@@ -63,6 +63,8 @@ pub struct Request<'a> {
     /// The sound event, or a stable binding name when the cache has no event metadata.
     pub event: &'a str,
     pub owner: Owner,
+    /// The event emitter for per-entity limits, independently of loop ownership and hit target.
+    pub emitter: Option<EntityId>,
     /// The unit a blow lands on: blows on one unit merge.
     pub merge: Option<EntityId>,
     /// Where it sounds, in the world; none for a sound heard wherever the camera is.
@@ -85,6 +87,7 @@ impl Default for Request<'_> {
         Request {
             event: "",
             owner: Owner::None,
+            emitter: None,
             merge: None,
             at: None,
             listener: None,
@@ -170,8 +173,7 @@ struct Voice {
     event: String,
     looping: bool,
     class: VoiceClass,
-    /// Whose sound it is, for the limits that count an entity's own.
-    owner: Owner,
+    emitter: Option<EntityId>,
     at: Option<(f32, f32)>,
     started: Duration,
     /// The playback deadline; an owned loop without a stop time has none.
@@ -474,7 +476,7 @@ impl Mixer {
             event: request.event.to_owned(),
             looping: kept,
             class,
-            owner: request.owner,
+            emitter: request.emitter,
             at: request.at,
             started: now,
             ends: ends.map(|length| now + length),
@@ -573,7 +575,7 @@ impl Mixer {
             let counted = |v: &Voice| {
                 v.event == request.event
                     && v.sounding()
-                    && (!rules.per_entity || v.owner == request.owner)
+                    && (!rules.per_entity || v.emitter == request.emitter)
             };
             if self.voices.iter().filter(|v| counted(v)).count() >= rules.limit as usize {
                 if class == VoiceClass::Ambience {

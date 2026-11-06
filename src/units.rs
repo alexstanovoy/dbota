@@ -1312,7 +1312,7 @@ fn report(bank: Res<ModelBank>, mut parts: ResMut<crate::loading::Parts>) {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
 
     /// A hero unit of no seat, as a server or a replay may send any number of.
@@ -1369,6 +1369,10 @@ mod tests {
 
     /// A replay of one snapshot that shows `heroes` heroes of no seat.
     fn replay_of_heroes(heroes: u32) -> Vec<u8> {
+        replay_of_heroes_on_grid(heroes, 1)
+    }
+
+    pub(crate) fn replay_of_heroes_on_grid(heroes: u32, cells: u32) -> Vec<u8> {
         use bota_proto::{
             HeroId, MapId, MatchInfo, Pick, PlayerView, ReplayHeader, ReplayRecord, ServerMsg,
             SlotId, TickMode, Vec2, WorldView, encode_frame_to_vec,
@@ -1380,8 +1384,12 @@ mod tests {
                 tick_rate: 30,
                 pregame_ticks: 900,
                 trees: Vec::new(),
-                terrain_cells: 1,
-                terrain_rle: vec![(1, 0x80)],
+                terrain_cells: cells,
+                terrain_rle: vec![(
+                    u16::try_from(cells.checked_mul(cells).expect("fixture grid area"))
+                        .expect("the fixture grid fits one terrain run"),
+                    0x80,
+                )],
                 opaque_cells: Vec::new(),
                 mode: TickMode::Lockstep,
                 picks: vec![Pick {
@@ -1446,6 +1454,39 @@ mod tests {
         .iter()
         .flat_map(|record| encode_frame_to_vec(record).expect("a record"))
         .collect()
+    }
+
+    pub(crate) fn owned_hero_scene() -> (bota_client_core::App, [EntityId; 2]) {
+        use bota_client_core::{App as Core, Intent, ReplayPlayer, Source};
+        use bota_proto::{ServerMsg, SlotId};
+
+        let replay = replay_of_heroes_on_grid(2, 4);
+        let player = ReplayPlayer::from_reader(std::io::Cursor::new(replay));
+        let mut core = Core::new(Source::Replay(Box::new(player)));
+        for _ in 0..100 {
+            if core.lost || core.view().is_some() {
+                break;
+            }
+            core.pump(0.1);
+        }
+        let mut view = core.view().expect("a replay scene").clone();
+        let emitters = [view.units[0].id, view.units[1].id];
+        view.tick += 1;
+        view.units[0].owner = Some(SlotId(0));
+        view.players[0].unit = Some(emitters[0]);
+        view.units[1].pos.x = bota_proto::Fixed::from_int(110);
+        core.handle(ServerMsg::Snapshot { view });
+        let why = core.feed.iter().rev().find_map(|line| match &line.kind {
+            bota_client_core::FeedKind::ProtocolBroken { why } => Some(why.as_str()),
+            _ => None,
+        });
+        assert!(
+            !core.lost,
+            "the shared owned/stray hero fixture is valid: {why:?}"
+        );
+        core.act(Intent::NextEyes);
+        assert_eq!(core.my_hero(), Some(emitters[0]));
+        (core, emitters)
     }
 
     /// Each new unit's model is a world of its own cloned in, so new units are spawned a few a

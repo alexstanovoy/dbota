@@ -101,13 +101,20 @@ fn a_purchase_sounds_when_chosen_and_not_again_when_the_match_buys_it() {
             .count()
     };
     let chosen = [ItemId::CLARITY, ItemId::IRON_BRANCH, ItemId::HEALING_SALVE];
+    let clock = client
+        .world_mut()
+        .remove_resource::<bevy::time::TimeUpdateStrategy>()
+        .expect("the current clock strategy");
+    client
+        .world_mut()
+        .insert_resource(bevy::time::TimeUpdateStrategy::ManualDuration(
+            Duration::from_millis(100),
+        ));
     for item in chosen {
-        // A kind of sound rests before it may sound again: the next choice comes after that, as
-        // a player's does, whatever the pace of the frames.
-        std::thread::sleep(Duration::from_secs_f32(crate::sound::REST * 2.0));
         client.core_mut().act(Intent::Buy(item.0));
-        client.frames(15);
+        client.frames(1);
     }
+    client.world_mut().insert_resource(clock);
     assert!(client.core().in_tactical_phase(), "still choosing");
     assert_eq!(buys(&heard), chosen.len(), "one purchase sound a choice");
     client.until("the match begun", |c| c.core().ears().is_some());

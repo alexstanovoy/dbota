@@ -285,7 +285,12 @@ fn told(
                     ),
                     _ => crate::particles::EffectSight::Point,
                 };
-                stage.play(fx, (at, seed), with, (&feeds, &place), permission);
+                let emitter = unit
+                    .map(|unit| unit.id)
+                    .or(fact.caster)
+                    .or(fact.unit)
+                    .or(fact.named);
+                stage.play(fx, (at, seed), with, (&feeds, &place), permission, emitter);
             }
         }
     }

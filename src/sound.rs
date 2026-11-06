@@ -15,8 +15,6 @@ use crate::manifest::Manifest;
 use crate::mixer::{Mixer, Owner, Request, Started};
 use crate::session::Session;
 
-/// Seconds a kind of sound rests before it may sound again.
-pub const REST: f32 = 0.05;
 /// New missiles a tick looked into at most: each is matched against every
 /// unit, and a snapshot may hold thousands of them.
 const SHOTS_PER_TICK: usize = 32;
@@ -31,7 +29,6 @@ struct Binding {
     events: Vec<String>,
     /// Heard on the hero the player plays alone (the manifest's `heard=own_hero`).
     own_hero_only: bool,
-    rest: f32,
     next: usize,
 }
 
@@ -295,6 +292,37 @@ fn collect_cues(mut session: NonSendMut<Session>, mut pending: ResMut<PendingCue
     pending.0.append(&mut session.0.cues);
 }
 
+fn cue_emitter(cue: &Cue) -> Option<EntityId> {
+    if let Some(thrower) = &cue.thrower {
+        return Some(thrower.id);
+    }
+    match cue.told.as_ref()? {
+        bota_proto::EventKind::Damaged { source, target, .. } => {
+            if cue.kind == CueKind::TowerShot {
+                Some(*target)
+            } else {
+                *source
+            }
+        }
+        bota_proto::EventKind::Died {
+            unit,
+            killer,
+            credited_hero,
+            ..
+        } => {
+            if cue.kind == CueKind::HeroDeath {
+                Some(*unit)
+            } else {
+                credited_hero.as_deref().copied().or(*killer)
+            }
+        }
+        bota_proto::EventKind::AbilityCast { caster, .. } => Some(*caster),
+        bota_proto::EventKind::LevelUp { unit, .. } => Some(*unit),
+        bota_proto::EventKind::StructureDestroyed { unit, .. } => Some(*unit),
+        _ => None,
+    }
+}
+
 /// A public fall says who died, without disclosing a position outside the selected sight.
 fn permitted_cue(cue: &mut Cue, sight: &crate::fog::EventSight) -> bool {
     if let Some(thrower) = &cue.thrower {
@@ -414,7 +442,6 @@ fn load(mut bindings: ResMut<Bindings>, manifest: Res<Manifest>, server: Res<Ass
                 sources: files.iter().map(|(path, _)| server.load(path)).collect(),
                 events: files.into_iter().map(|(_, event)| event).collect(),
                 own_hero_only: names.iter().any(|n| manifest.own_hero_sounds.contains(n)),
-                rest: 0.0,
                 next: 0,
             },
         ));
@@ -455,7 +482,14 @@ struct Sounder<'a, 'w, 's> {
 impl Sounder<'_, '_, '_> {
     /// Sounds one of a kind's sounds at `gain` before the distance, where `at` is; blows on the
     /// unit `merge` names merge into one sound.
-    fn sound(&mut self, kind: Kind, gain: f32, at: Option<(f32, f32)>, merge: Option<EntityId>) {
+    fn sound(
+        &mut self,
+        kind: Kind,
+        gain: f32,
+        at: Option<(f32, f32)>,
+        emitter: Option<EntityId>,
+        merge: Option<EntityId>,
+    ) {
         let Some((_, binding)) = self.bindings.0.iter_mut().find(|(k, _)| *k == kind) else {
             return;
         };
@@ -473,13 +507,18 @@ impl Sounder<'_, '_, '_> {
         if binding.own_hero_only && (merge.is_none() || merge != self.ears) {
             return;
         }
-        if self.silent || binding.rest > 0.0 || binding.sources.is_empty() {
+        if self.silent || binding.sources.is_empty() {
             return;
         }
         let pick = binding.next % binding.sources.len();
         let request = Request {
-            event: &binding.events[pick],
+            event: if binding.events[pick].is_empty() {
+                &binding.name
+            } else {
+                &binding.events[pick]
+            },
             owner: Owner::None,
+            emitter,
             merge,
             at,
             listener: Some((self.focus.x, self.focus.y)),
@@ -490,7 +529,6 @@ impl Sounder<'_, '_, '_> {
         };
         let source = binding.sources[pick].clone();
         if self.mixer.start(self.commands, self.now, &request, source) != Started::Refused {
-            binding.rest = REST;
             binding.next += 1;
         }
     }
@@ -511,11 +549,12 @@ impl Sounder<'_, '_, '_> {
                 quiet -= 1;
                 continue;
             }
+            let emitter = cue_emitter(&cue);
             match cue.kind {
                 // Dota sounds a refusal it tells, and only that.
                 CueKind::Refused(reason) => {
                     if let Some(told) = crate::error_msg::told(reason) {
-                        self.sound(Kind::Denied(told.sound), cue.gain, None, None);
+                        self.sound(Kind::Denied(told.sound), cue.gain, None, emitter, None);
                     }
                 }
                 CueKind::Undeniable(_) | CueKind::QuickBuyFull => {
@@ -523,6 +562,7 @@ impl Sounder<'_, '_, '_> {
                         Kind::Denied(crate::error_msg::Deny::General),
                         cue.gain,
                         None,
+                        emitter,
                         None,
                     );
                 }
@@ -540,17 +580,16 @@ impl Sounder<'_, '_, '_> {
                         row(Subject::Hero(hero), event, None),
                         cue.gain,
                         cue.at,
+                        emitter,
                         merge,
                     );
                 }
-                // The fall of a building is the sound of its kind and side; two of a kind that fall
-                // on one tick sound once, as every kind of sound rests [`REST`] after it starts.
                 CueKind::StructureFell => {
                     if let Some(row) = cue.told.as_ref().and_then(fall_row) {
-                        self.sound(Kind::Row(row), cue.gain, cue.at, None);
+                        self.sound(Kind::Row(row), cue.gain, cue.at, emitter, None);
                     }
                 }
-                kind => self.sound(Kind::Cue(kind), cue.gain, cue.at, None),
+                kind => self.sound(Kind::Cue(kind), cue.gain, cue.at, emitter, None),
             }
         }
         quiet
@@ -574,9 +613,6 @@ fn play(
     mut queued: Local<QueuedBuys>,
     mut shops: Local<ShopWatch>,
 ) {
-    for (_, binding) in &mut bindings.0 {
-        binding.rest = (binding.rest - time.delta_secs()).max(0.0);
-    }
     let core = sight.core();
     let (chosen, spoken) = queued.watch(core, time.elapsed_secs());
     let mut sounder = Sounder {
@@ -594,12 +630,12 @@ fn play(
     // Dota sounds a purchase when it is made: once for each choice in the
     // strategy phase, and none for those the match then buys on its own.
     if chosen {
-        sounder.sound(Kind::Cue(CueKind::Buy), BUY_GAIN, None, None);
+        sounder.sound(Kind::Cue(CueKind::Buy), BUY_GAIN, None, None, None);
     }
     queued.spoken = sounder.cues(pending.0.drain(..), spoken, &sight);
     match shop_change(core, &mut shops, time.elapsed_secs()) {
-        Some(true) => sounder.sound(Kind::ShopAvailable, 1.0, None, None),
-        Some(false) => sounder.sound(Kind::ShopUnavailable, 1.0, None, None),
+        Some(true) => sounder.sound(Kind::ShopAvailable, 1.0, None, None, None),
+        Some(false) => sounder.sound(Kind::ShopUnavailable, 1.0, None, None, None),
         None => {}
     }
     shots(core, sight.fog(), &mut sounder);
@@ -607,10 +643,10 @@ fn play(
     // A ping is heard by its side wherever the camera is, as Dota's are.
     for kind in crate::pings::fresh(&sight, &mut last_ping) {
         match kind {
-            bota_proto::PingKind::Regular => sounder.sound(Kind::Ping, 1.0, None, None),
+            bota_proto::PingKind::Regular => sounder.sound(Kind::Ping, 1.0, None, None, None),
             bota_proto::PingKind::Danger => {
-                sounder.sound(Kind::PingDanger, 1.0, None, None);
-                sounder.sound(Kind::PingDangerLayer, 1.0, None, None);
+                sounder.sound(Kind::PingDanger, 1.0, None, None, None);
+                sounder.sound(Kind::PingDangerLayer, 1.0, None, None, None);
             }
         }
     }
@@ -624,30 +660,21 @@ struct PortalAudio<'a> {
 }
 
 impl PortalAudio<'_> {
-    fn play(
-        &self,
-        commands: &mut Commands,
-        kind: Kind,
-        at: (f32, f32),
-        looped: bool,
-    ) -> Option<Entity> {
+    fn hum(&self, commands: &mut Commands, kind: Kind, at: (f32, f32)) -> Option<Entity> {
         let (_, binding) = self.bindings.0.iter().find(|(key, _)| *key == kind)?;
         let source = binding.sources.first().cloned()?;
-        let gain = self.mixer.gain_for(binding.events.first()?, at, (self.focus.x, self.focus.y));
+        let gain = self
+            .mixer
+            .gain_for(binding.events.first()?, at, (self.focus.x, self.focus.y));
         if self.silent || gain < 0.03 {
             return None;
         }
-        let playback = if looped {
-            PlaybackSettings::LOOP
-        } else {
-            PlaybackSettings::DESPAWN
-        };
         Some(
             commands
                 .spawn((
                     crate::mixer::GameAudio,
                     AudioPlayer::new(source),
-                    playback.with_volume(Volume::Linear(gain)),
+                    PlaybackSettings::LOOP.with_volume(Volume::Linear(gain)),
                 ))
                 .id(),
         )
@@ -661,8 +688,9 @@ impl PortalAudio<'_> {
 fn portals(
     mut commands: Commands,
     sight: crate::fog::EventSight,
-    bindings: Res<Bindings>,
-    mixer: Res<Mixer>,
+    mut bindings: ResMut<Bindings>,
+    mut mixer: ResMut<Mixer>,
+    time: Res<Time>,
     cam: Single<&RtsCamera>,
     settings: Res<Settings>,
     args: Res<crate::Args>,
@@ -682,38 +710,53 @@ fn portals(
     };
     let silent = settings.muted || args.mute;
     let focus = Vec2::new(cam.focus.x, -cam.focus.z);
+    {
+        let core = sight.core();
+        let mut sounder = Sounder {
+            commands: &mut commands,
+            mixer: &mut mixer,
+            bindings: &mut bindings,
+            now: time.elapsed(),
+            focus,
+            silent,
+            ears: core.ears(),
+            own: core.my_hero(),
+            fog: sight.fog(),
+            trace: None,
+        };
+        finish_portals(&mut sounder, core, &mut humming, &view.teleports, &ends);
+    }
     let audio = PortalAudio {
         bindings: &bindings,
         mixer: &mixer,
         focus,
         silent,
     };
-    finish_portals(&mut commands, &audio, &mut humming, &view.teleports, &ends, sight.fog());
     follow_portals(&mut commands, &audio, &mut humming, view, &sight);
 }
 
 fn finish_portals(
-    commands: &mut Commands,
-    audio: &PortalAudio,
+    sounder: &mut Sounder,
+    core: &bota_client_core::App,
     humming: &mut HashMap<SlotId, Humming>,
     teleports: &[TeleportView],
     ends: &[(SlotId, bool)],
-    fog: &crate::fog::FogGrid,
 ) {
     for (slot, landed) in ended_humming(humming.keys().copied(), teleports, ends) {
         let Some(hum) = humming.remove(&slot) else {
             continue;
         };
         for entity in hum.landing_loop.into_iter().chain(hum.origin_loop) {
-            commands.entity(entity).despawn();
+            sounder.commands.entity(entity).despawn();
         }
         if landed {
-            audio.play(commands, Kind::HeroArrived, hum.landing, false);
+            let emitter = core.body_of(slot);
+            sounder.sound(Kind::HeroArrived, 1.0, Some(hum.landing), emitter, None);
             if let Some(origin) = hum
                 .origin
-                .filter(|origin| !fog.hides(Some(origin.seen)))
+                .filter(|origin| !sounder.fog.hides(Some(origin.seen)))
             {
-                audio.play(commands, Kind::HeroLeft, origin.at, false);
+                sounder.sound(Kind::HeroLeft, 1.0, Some(origin.at), emitter, None);
             }
         }
     }
@@ -732,7 +775,7 @@ fn follow_portals(
             teleport.destination.y.to_f32(),
         );
         let hum = humming.entry(teleport.slot).or_insert_with(|| Humming {
-            landing_loop: audio.play(commands, Kind::PortalArriving, landing, true),
+            landing_loop: audio.hum(commands, Kind::PortalArriving, landing),
             origin_loop: None,
             landing,
             origin: None,
@@ -747,7 +790,7 @@ fn follow_portals(
                 hum.origin_loop = None;
             }
             (Some(origin), None) => {
-                hum.origin_loop = audio.play(commands, Kind::PortalLeaving, origin.at, true);
+                hum.origin_loop = audio.hum(commands, Kind::PortalLeaving, origin.at);
             }
             _ => {}
         }
@@ -825,7 +868,7 @@ impl ShopWatch {
 fn sounds_from_the_players_entity(
     kind: Kind,
     own: Option<EntityId>,
-    ears: Option<EntityId>,
+    entity: Option<EntityId>,
 ) -> bool {
     let hero_blow = matches!(
         kind,
@@ -835,7 +878,7 @@ fn sounds_from_the_players_entity(
             ..
         })
     );
-    hero_blow && own.is_some() && own == ears
+    hero_blow && own.is_some() && own == entity
 }
 
 /// Whether the hero one plays has come into the range of a shop (`Some(true)`) or gone out of it
@@ -872,27 +915,19 @@ fn shots(core: &bota_client_core::App, fog: &crate::fog::FogGrid, sound: &mut So
         let Some(side) = Side::of(shooter.team) else {
             continue;
         };
-        match shooter.kind {
-            UnitKind::Tower => sound.sound(
-                row(Subject::Tower, Event::Attack, Some(side)),
-                1.0,
-                at,
-                None,
-            ),
-            UnitKind::CreepRanged => sound.sound(
-                row(Subject::RangedCreep, Event::Attack, Some(side)),
-                1.0,
-                at,
-                None,
-            ),
-            UnitKind::CreepSiege => sound.sound(
-                row(Subject::SiegeCreep, Event::Attack, Some(side)),
-                1.0,
-                at,
-                None,
-            ),
-            _ => {}
-        }
+        let subject = match shooter.kind {
+            UnitKind::Tower => Subject::Tower,
+            UnitKind::CreepRanged => Subject::RangedCreep,
+            UnitKind::CreepSiege => Subject::SiegeCreep,
+            _ => continue,
+        };
+        sound.sound(
+            row(subject, Event::Attack, Some(side)),
+            1.0,
+            at,
+            Some(shooter.id),
+            None,
+        );
     }
     // A ranged creep's missile gone since the last tick has landed.
     for p in prev.projectiles.iter().filter(|p| {
@@ -912,6 +947,7 @@ fn shots(core: &bota_client_core::App, fog: &crate::fog::FogGrid, sound: &mut So
                 row(Subject::RangedCreep, Event::Impact, Some(side)),
                 1.0,
                 at,
+                Some(u.id),
                 p.target,
             );
         }
@@ -959,7 +995,13 @@ fn swings(core: &bota_client_core::App, fog: &crate::fog::FogGrid, sound: &mut S
         let at = Some((u.pos.x.to_f32(), u.pos.y.to_f32()));
         let (now, before) = (strike_of(view, u.id), strike_of(prev, u.id));
         if now.is_some() && now != before {
-            sound.sound(row(subject, Event::PreAttack, None), 1.0, at, None);
+            sound.sound(
+                row(subject, Event::PreAttack, None),
+                1.0,
+                at,
+                Some(u.id),
+                None,
+            );
         }
         if subject == Subject::MeleeCreep
             && before.is_some_and(|due| now != Some(due) && due <= view.tick)
@@ -969,6 +1011,7 @@ fn swings(core: &bota_client_core::App, fog: &crate::fog::FogGrid, sound: &mut S
                 row(Subject::MeleeCreep, Event::Attack, None),
                 1.0,
                 at,
+                Some(u.id),
                 target,
             );
         }
@@ -994,6 +1037,190 @@ fn report(
 mod tests {
     use super::*;
     use bota_proto::{EntityId, Team};
+
+    fn protocol_error(core: &bota_client_core::App) -> Option<&str> {
+        core.feed.iter().rev().find_map(|line| match &line.kind {
+            bota_client_core::FeedKind::ProtocolBroken { why } => Some(why.as_str()),
+            _ => None,
+        })
+    }
+
+    fn sound_policy_app(policy: &str) -> App {
+        use clap::Parser;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        static NEXT: AtomicUsize = AtomicUsize::new(0);
+        let root = std::env::temp_dir().join(format!(
+            "dbota-sound-policy-{}-{}",
+            std::process::id(),
+            NEXT.fetch_add(1, Ordering::Relaxed)
+        ));
+        std::fs::create_dir_all(root.join("sounds")).expect("fixture folder");
+        std::fs::write(root.join("sounds/events.txt"), policy).expect("fixture event");
+        let mixer = Mixer::load(&Manifest {
+            root: root.clone(),
+            ..Manifest::default()
+        });
+        std::fs::remove_dir_all(root).expect("fixture removed after reading");
+        let mut app = App::new();
+        app.init_resource::<Time>()
+            .init_resource::<crate::fog::FogGrid>()
+            .init_resource::<crate::main_menu::GameEpoch>()
+            .init_resource::<PendingCues>()
+            .insert_resource(Settings::default())
+            .insert_resource(crate::Args::parse_from(["dbota"]))
+            .insert_resource(mixer)
+            .insert_resource(Bindings(vec![(
+                row(Subject::Hero(HeroId::SHADOW_FIEND), Event::Attack, None),
+                Binding {
+                    name: "synthetic".to_owned(),
+                    sources: vec![Handle::default()],
+                    events: vec!["Synthetic.Attack".to_owned()],
+                    own_hero_only: false,
+                    next: 0,
+                },
+            )]))
+            .insert_non_send(crate::main_menu::idle())
+            .add_systems(Update, (collect_cues, play).chain());
+        app.world_mut().spawn(RtsCamera {
+            focus: Vec3::ZERO,
+            distance: 1000.0,
+        });
+        crate::fog::init_test_event_sight(&mut app);
+        app
+    }
+
+    fn scene_app(policy: &str) -> (App, [EntityId; 2]) {
+        let (core, emitters) = crate::units::tests::owned_hero_scene();
+        let mut app = sound_policy_app(policy);
+        app.insert_non_send(Session(core));
+        (app, emitters)
+    }
+
+    fn emit_projectiles(app: &mut App, emitters: &[EntityId]) -> Vec<Cue> {
+        use bota_proto::{Angle, ProjectileView, ServerMsg};
+
+        let mut session = app.world_mut().non_send_mut::<Session>();
+        let mut view = session.0.view().expect("the scene").clone();
+        view.tick += 1;
+        for emitter in emitters {
+            let unit = view.unit(*emitter).expect("the actual emitter");
+            let (pos, team) = (unit.pos, unit.team);
+            view.projectiles.push(ProjectileView {
+                id: EntityId {
+                    idx: 100 + view.projectiles.len() as u32,
+                    generation: 1,
+                },
+                pos,
+                facing: Angle::default(),
+                team,
+                ability: None,
+                source: Some(*emitter),
+                target: None,
+                inflictor: None,
+                seen_by: None,
+                model: None,
+            });
+        }
+        session.0.handle(ServerMsg::Snapshot { view });
+        assert!(
+            !session.0.lost,
+            "valid projectile snapshot: {:?}",
+            protocol_error(&session.0)
+        );
+        session.0.cues.clone()
+    }
+
+    #[test]
+    fn separated_emitters_of_one_row_sound_in_the_same_frame() {
+        let (mut app, emitters) =
+            scene_app("event Synthetic.Attack 0 120 0 0.05 100 0 0 0 -1 1 70 10000 - 1 -1\n");
+        emit_projectiles(&mut app, &emitters);
+        app.update();
+        let world = app.world_mut();
+        assert_eq!(
+            world.query::<&AudioPlayer>().iter(world).count(),
+            2,
+            "the imported repeat distance permits both source positions"
+        );
+    }
+
+    #[test]
+    fn a_portal_landing_cannot_exceed_the_world_voice_budget() {
+        let mut world = World::new();
+        let mut mixer = Mixer::default();
+        let mut sources = Assets::<AudioSource>::default();
+        let source = sources.add(crate::mixer::two_minute_source());
+        for index in 0..crate::mixer::MAX_VOICES {
+            let event = format!("gameplay{index}");
+            mixer.start(
+                &mut world.commands(),
+                Duration::ZERO,
+                &Request {
+                    event: &event,
+                    owner: Owner::None,
+                    merge: None,
+                    at: None,
+                    gain: 1.0,
+                    speed: 1.0,
+                    ..Request::default()
+                },
+                source.clone(),
+            );
+        }
+        let mut bindings = Bindings(vec![(
+            Kind::HeroArrived,
+            Binding {
+                name: "landing".to_owned(),
+                sources: vec![source],
+                events: vec!["Synthetic.Landing".to_owned()],
+                own_hero_only: false,
+                next: 0,
+            },
+        )]);
+        let fog = crate::fog::FogGrid::default();
+        {
+            let mut commands = world.commands();
+            let mut sounder = Sounder {
+                commands: &mut commands,
+                mixer: &mut mixer,
+                bindings: &mut bindings,
+                now: Duration::ZERO,
+                focus: Vec2::ZERO,
+                silent: false,
+                ears: None,
+                own: None,
+                fog: &fog,
+                trace: None,
+            };
+            sounder.sound(Kind::HeroArrived, 1.0, Some((0.0, 0.0)), None, None);
+        }
+        world.flush();
+        assert_eq!(
+            world.query::<&AudioPlayer>().iter(&world).count(),
+            crate::mixer::MAX_VOICES,
+            "a portal landing bypassed the mixer of the other world sounds"
+        );
+    }
+
+    #[test]
+    fn projectile_cues_limit_each_emitter_without_claiming_loop_ownership() {
+        let (mut app, emitters) =
+            scene_app("event Synthetic.Attack 0 120 0 0 100 1 1 0 -1 1 70 10000 - 1 -1\n");
+        for emitter in [emitters[0], emitters[1], emitters[0]] {
+            emit_projectiles(&mut app, &[emitter]);
+            app.world_mut()
+                .resource_mut::<Time>()
+                .advance_by(Duration::from_millis(100));
+            app.update();
+        }
+        let world = app.world_mut();
+        assert_eq!(
+            world.query::<&AudioPlayer>().iter(world).count(),
+            2,
+            "one emitter's instance limit refused another emitter or allowed its own excess"
+        );
+    }
 
     /// Looks at the shops once a second as long as `looks` lasts: `(in match, near)`.
     fn watched(watch: &mut ShopWatch, looks: &[(bool, Option<bool>)]) -> Vec<Option<bool>> {
