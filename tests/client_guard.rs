@@ -365,6 +365,10 @@ const KNOWN_VARIABLES: &[(&str, &str)] = &[
         "DBOTA_ASSETS",
         "every harness names its test asset cache explicitly",
     ),
+    (
+        "DBOTA_DOTA_PATH",
+        "a test names the Dota install it reads, which stays untouched",
+    ),
     ("BOTA_SERVER_BIN", "a test names a ready game server binary"),
     (
         "DBOTA_SHOTS",

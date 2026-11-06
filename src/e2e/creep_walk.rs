@@ -3,7 +3,7 @@ use std::time::Duration;
 
 use bevy::{mesh::skinning::SkinnedMesh, prelude::*, time::TimeUpdateStrategy};
 use bota_proto::{EntityId, HeroId, NeutralId, ServerMsg, Team, UnitKind, UnitView, Vec2 as Spot};
-use heatel::{DirSource, Resource, Vpk, find_game_dir};
+use heatel::{DirSource, Resource, Vpk};
 
 use super::harness::{Client, Server, pose_of, subtree};
 
@@ -42,7 +42,7 @@ fn every_catalogue_creep_walks_with_its_authored_sequence_and_moving_joints() {
         .insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_secs_f32(
             1.0 / 60.0,
         )));
-    let source = DirSource::new(find_game_dir(None).expect("local install"));
+    let source = DirSource::new(super::harness::game_dir());
     let pak = Vpk::open(&source, "pak01_dir.vpk").expect("VPK");
     let cases = catalogue();
     assert_eq!(

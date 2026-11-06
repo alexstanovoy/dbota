@@ -5,12 +5,12 @@ use super::{
 };
 use bevy::{mesh::skinning::SkinnedMesh, prelude::*, time::TimeUpdateStrategy};
 use bota_proto::{Angle, HeroId, Vec2 as Spot};
-use heatel::{DirSource, Vpk, find_game_dir};
+use heatel::{DirSource, Vpk};
 use std::{collections::HashMap, time::Duration};
 
 #[test]
 fn both_heroes_walk_without_trajectory_or_heading_changes_and_keep_their_wearables() {
-    let source = DirSource::new(find_game_dir(None).expect("install"));
+    let source = DirSource::new(super::harness::game_dir());
     let pak = Vpk::open(&source, "pak01_dir.vpk").expect("VPK");
     let mut failures = Vec::new();
     for hero in [HeroId::SHADOW_FIEND, HeroId::PUDGE] {

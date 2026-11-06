@@ -173,6 +173,15 @@ impl Drop for Server {
     }
 }
 
+/// The game folder of the Dota install the tests that read Valve's files use, read only:
+/// `DBOTA_DOTA_PATH` names the install, else the usual Steam places under the home folder (which
+/// a test run on a private home does not have).
+pub fn game_dir() -> PathBuf {
+    let given = std::env::var_os("DBOTA_DOTA_PATH").map(PathBuf::from);
+    heatel::find_game_dir(given.as_deref())
+        .expect("a Dota 2 install: DBOTA_DOTA_PATH names it, or a usual Steam place holds it")
+}
+
 /// A scratch folder for the client's settings and replays, emptied when dropped.
 struct Scratch(PathBuf);
 
