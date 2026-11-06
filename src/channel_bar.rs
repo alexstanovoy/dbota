@@ -1,7 +1,7 @@
 //! Dota's channel bar (`dota_hud_channelbar`): while one's hero channels an ability that runs a
 //! known time (a Watcher lit or put out, an Outpost captured), the ability's round icon and a
-//! bar that fills with the channel, in the middle of the screen. A teleport has its own bar over
-//! the hero (see `bars`).
+//! bar that fills with the channel, above the hero's panel at the bottom of the screen. A
+//! teleport has its own bar over the hero (see `bars`).
 
 use bevy::prelude::*;
 use bota_client_core::App as Core;
@@ -12,14 +12,18 @@ use crate::manifest::Manifest;
 use crate::session::{MatchKnown, Session};
 use crate::ui::dota;
 
-/// The sizes of Dota's css, in its pixels: the icon's disc and where it stands, and the well of
-/// the bar, its border and where it starts (`#ChannelbarContainer`, `#ChannelBarChannel`).
-const WIDTH: f32 = 474.0;
-const HEIGHT: f32 = 80.0;
-const ICON: f32 = 76.0;
-const ICON_LEFT: f32 = 23.0;
-const WELL: (f32, f32) = (380.0, 34.0);
-const WELL_LEFT: f32 = 94.0;
+/// The sizes of the bar in Dota's pixels: the icon's disc and where it stands, and the well of
+/// the bar, its border and where it starts (Dota's `#ChannelbarContainer` is 380 wide with a
+/// 30 high well; its icon is shrunk to fit the well, and the bar stands just above the hero's
+/// panel).
+const WIDTH: f32 = 380.0;
+const HEIGHT: f32 = 64.0;
+const ICON: f32 = 60.0;
+const ICON_LEFT: f32 = 6.0;
+const WELL: (f32, f32) = (300.0, 30.0);
+const WELL_LEFT: f32 = 70.0;
+/// Where the bar's bottom edge stands above the window's.
+const BOTTOM: f32 = 250.0;
 const WELL_BORDER: f32 = 2.0;
 const WELL_COLOUR: Color = Color::srgba(0.0, 0.0, 0.0, 0.933);
 
@@ -54,10 +58,10 @@ fn spawn(mut commands: Commands) {
             Node {
                 position_type: PositionType::Absolute,
                 left: percent(50),
-                top: percent(50),
+                bottom: dota(BOTTOM),
                 width: dota(WIDTH),
                 height: dota(HEIGHT),
-                margin: UiRect::new(dota(-WIDTH / 2.0), px(0), dota(-HEIGHT / 2.0), px(0)),
+                margin: UiRect::left(dota(-WIDTH / 2.0)),
                 ..default()
             },
             Visibility::Hidden,

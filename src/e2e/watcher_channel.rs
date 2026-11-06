@@ -1,5 +1,5 @@
 //! A hero's channel at a Watcher as Dota shows it: the Watcher plays its channel animation and
-//! the middle of the screen shows the channel bar, which fills as the channel runs and goes
+//! the lower middle of the screen shows the channel bar, which fills as the channel runs and goes
 //! when it ends.
 
 use bevy::prelude::*;
@@ -48,8 +48,7 @@ fn bar(client: &mut Client) -> (bool, f32) {
 }
 
 #[test]
-fn a_watcher_channels_in_its_animation_and_the_bar_shows_the_heros_channel_in_the_middle_of_the_screen()
- {
+fn a_watcher_channels_in_its_animation_and_the_bar_shows_the_channel_near_the_bottom() {
     let server = Server::start(1, &["--map", "0", "--objectives", "watchers"]);
     let mut client = Client::join(&server, HeroId::SHADOW_FIEND, &[]);
     client.cheat(Cheat::StartGame);
@@ -91,10 +90,30 @@ fn a_watcher_channels_in_its_animation_and_the_bar_shows_the_heros_channel_in_th
         )
     };
     let middle = client.centre_of(root).expect("the bar is laid out");
+    let size = client
+        .world()
+        .get::<bevy::ui::ComputedNode>(root)
+        .expect("the bar is laid out")
+        .size();
+    let dota_pixel = window.y / 1080.0;
     assert!(
-        middle.distance(window / 2.0) < 1.5,
-        "the bar's middle {middle} is the window's middle {}",
+        (middle.x - window.x / 2.0).abs() < 1.5,
+        "the bar is centred across: its middle {middle} against the window's {}",
         window / 2.0
+    );
+    assert!(
+        middle.y > window.y * 0.7,
+        "the bar is near the bottom: its middle {middle} in a window of {window}"
+    );
+    let bottom = middle.y + size.y / 2.0;
+    assert!(
+        (window.y - bottom - 250.0 * dota_pixel).abs() < 1.5,
+        "the bar's bottom edge stands 250 of Dota's pixels above the window's: it is at {bottom} \
+         in a window of {window}"
+    );
+    assert!(
+        size.x <= 380.0 * dota_pixel + 1.0 && size.y <= 64.0 * dota_pixel + 1.0,
+        "the bar is no bigger than 380x70 of Dota's pixels, it is {size} in a window of {window}"
     );
     let mut fills = vec![bar(&mut client).1];
     // The channel is bounded by the lamp's own duration; a margin of ticks is for the view's lag.
