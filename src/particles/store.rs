@@ -89,6 +89,10 @@ pub struct Particles {
     pub seed: Vec<u32>,
     /// The force gathered this step.
     pub force: Vec<Vec3>,
+    /// The length of the step its displacement (previous place to place) was set over: the
+    /// step it was born in, then each it moved in. Movement rescales the displacement from it to
+    /// the step it takes, whenever the particle was born.
+    pub span: Vec<f32>,
     pub killed: Vec<bool>,
 }
 
@@ -125,6 +129,7 @@ impl Particles {
         self.number.reserve(more);
         self.seed.reserve(more);
         self.force.reserve(more);
+        self.span.reserve(more);
         self.killed.reserve(more);
     }
 
@@ -132,8 +137,8 @@ impl Particles {
         let _ = self.compact_with(|_| false);
     }
 
-    /// Adds a particle with the defaults, created at `time`.
-    pub fn push(&mut self, defaults: &Defaults, number: u32, seed: u32, time: f32) {
+    /// Adds a particle with the defaults, created at `time` in a step of `step` seconds.
+    pub fn push(&mut self, defaults: &Defaults, number: u32, seed: u32, time: f32, step: f32) {
         for (column, value) in self.scalars.iter_mut().zip(defaults.scalars) {
             column.push(value);
         }
@@ -144,6 +149,7 @@ impl Particles {
         self.number.push(number);
         self.seed.push(seed);
         self.force.push(Vec3::ZERO);
+        self.span.push(step);
         self.killed.push(false);
     }
 
@@ -264,6 +270,7 @@ impl Particles {
                 self.number[kept] = self.number[i];
                 self.seed[kept] = self.seed[i];
                 self.force[kept] = self.force[i];
+                self.span[kept] = self.span[i];
             }
             kept += 1;
         }
@@ -284,6 +291,7 @@ impl Particles {
         self.number.truncate(kept);
         self.seed.truncate(kept);
         self.force.truncate(kept);
+        self.span.truncate(kept);
         self.killed.truncate(kept);
         len - kept
     }

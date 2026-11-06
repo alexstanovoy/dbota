@@ -47,9 +47,6 @@ pub struct Node {
     end_cap_child: bool,
     delay: f32,
     last_step: f32,
-    /// The step before the last, in seconds: what the last displacement of an older particle was
-    /// taken over.
-    prev_step: f32,
     /// Whether it runs: an end cap child waits for its parent's end cap.
     running: bool,
     /// Whether it was stepped this frame (its children step only after it).
@@ -368,7 +365,6 @@ impl Instance {
             remaining -= step;
             let node = &mut subtree[0];
             let step_start = node.age;
-            node.prev_step = node.last_step;
             (node.age, node.last_step, node.steps) =
                 (node.age + step, step, node.steps.wrapping_add(1));
             if let Some(asked) = node.pre_emit(effect, world, step, frame, false, writes) {
@@ -439,7 +435,6 @@ impl Node {
             end_cap_child,
             delay,
             last_step: 0.0,
-            prev_step: 0.0,
             running: !end_cap_child,
             stepped: false,
             age: -delay,
@@ -469,7 +464,6 @@ impl Node {
         self.bounds.valid = false;
         (self.running, self.stepped, self.age, self.last_step) =
             (!self.end_cap_child, false, -self.delay, 0.0);
-        self.prev_step = 0.0;
         (
             self.in_end_cap,
             self.end_cap_start,
@@ -587,7 +581,7 @@ impl Node {
         let system = &effect.defs[self.def].system;
         let first = self.parts.len();
         for _ in 0..system.initial_particles.min(system.max_particles) {
-            self.spawn(effect, self.age);
+            self.spawn(effect, self.age, 0.0);
         }
         self.initialize(effect, world, first, frame, 0.0);
         asked
@@ -636,7 +630,8 @@ impl Node {
         asked
     }
 
-    fn spawn(&mut self, effect: &Effect, time: f32) {
+    /// A particle created at `time` in a step of `step` seconds (0 before the first).
+    fn spawn(&mut self, effect: &Effect, time: f32, step: f32) {
         let def = &effect.defs[self.def];
         if self.parts.len() >= def.system.max_particles as usize {
             return;
@@ -644,7 +639,7 @@ impl Node {
         let number = self.emitted;
         self.emitted = self.emitted.wrapping_add(1);
         let seed = self.seed.wrapping_mul(0x9E37_79B9) ^ number.wrapping_mul(0x85EB_CA6B);
-        self.parts.push(&def.defaults, number, seed, time);
+        self.parts.push(&def.defaults, number, seed, time, step);
     }
 
     fn may_emit(&self, effect: &Effect) -> bool {
@@ -708,7 +703,7 @@ impl Node {
             self.emission(emitter, index, strength, step, step_start, &mut times);
             let first = self.parts.len();
             for &time in &times {
-                self.spawn(effect, time);
+                self.spawn(effect, time, step);
             }
             if self.parts.len() > first {
                 self.initialize(effect, world, first, frame, step);
@@ -1090,7 +1085,6 @@ struct Clock {
     seed: u32,
     world_time: f32,
     emitting: bool,
-    prev_step: f32,
 }
 
 impl Node {
@@ -1107,7 +1101,6 @@ impl Node {
                 0.0
             },
             step_seed: self.steps ^ self.seed.rotate_left(13),
-            prev_step: self.prev_step,
         }
     }
 }
@@ -1144,7 +1137,6 @@ fn scene_of<'a>(
         seed: clock.seed,
         world_time: clock.world_time,
         emitting: clock.emitting,
-        prev_dt: clock.prev_step,
     }
 }
 

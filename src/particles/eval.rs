@@ -19,8 +19,6 @@ pub struct Scene<'a> {
     pub control_points: &'a [ControlPoint; 64],
     /// The step's length.
     pub dt: f32,
-    /// The length of the step before it; 0 before the first.
-    pub prev_dt: f32,
     /// Changes every step: what varying draws are keyed by.
     pub step_seed: u32,
     /// The system's age when the frame began, and the frame's length: a control point moves

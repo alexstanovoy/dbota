@@ -727,6 +727,44 @@ fn a_long_frame_followed_by_short_ones_does_not_fling_the_particles() {
     );
 }
 
+/// A particle born at the very end of a step keeps the speed it was born with through a short
+/// step and a long one after it (a frame hitch): its displacement spans the step it was born in,
+/// not the next one.
+#[test]
+fn a_particle_born_at_a_steps_end_keeps_its_speed_through_a_hitch() {
+    let mut system = bare(
+        1.0,
+        vec![sphere_flying(0, 200.0), lifetime_of(0.0)],
+        vec![always(Operator::BasicMovement {
+            gravity: VectorInput::Literal([0.0; 3]),
+            drag: FloatInput::Literal(0.0),
+            max_constraint_passes: 3,
+        })],
+        Vec::new(),
+        Vec::new(),
+    );
+    system.emitters = vec![always(Emitter::Instantaneous {
+        count: FloatInput::Literal(1.0),
+        start_time: FloatInput::Literal(0.1),
+        max_per_frame: -1,
+    })];
+    let mut instance = Instance::new(Arc::new(Effect::new(&[("fly".to_owned(), system)])), 5);
+    instance.set_control_point(0, Vec3::ZERO, Vec3::ZERO, true);
+    let mut flown = Vec::new();
+    for dt in [0.1, 0.001, 0.2] {
+        instance.advance(dt, None);
+        let parts = &instance.nodes[0].parts;
+        flown.push(parts.vectors[store::POSITION].first().map(|p| p.length()));
+    }
+    // Born at 0.1 s, the end of the first step (which moves it a step ahead, as every particle
+    // born in a step is), then 200 units a second: 0.2 units in the millisecond, 40 in the 0.2 s.
+    let [Some(born), Some(short), Some(long)] = flown[..] else {
+        panic!("one particle each frame: {flown:?}");
+    };
+    assert!((short - born - 0.2).abs() < 0.01, "the 1 ms step: {flown:?}");
+    assert!((long - short - 40.0).abs() < 0.5, "the 0.2 s step: {flown:?}");
+}
+
 /// Souls and sparks: a child's particles made where its parent's are, which keep taking their
 /// parent's places as those fly.
 #[test]
