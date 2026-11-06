@@ -2,6 +2,8 @@
 // own install, kept in the Origin Private File System (private to this page, never uploaded).
 // `readCache` serves it to the client; the import worker writes it (import_worker.js).
 
+import "./busy.js";
+
 export const ROOT = "dbota";
 
 let rootHandle;
@@ -48,18 +50,24 @@ export async function readCache(path, limit = Infinity) {
 
 const decode = (bytes) => (bytes ? new TextDecoder().decode(bytes) : null);
 
-// Both cache transports use the importer's validated index, also used by the native client.
+// The importer (dbota_import, wasm), loaded once for the page or the worker: both cache
+// transports use its validated index, also used by the native client. Its module and wasm come
+// through busy.js; the first caller's `onBusy` is told when a busy server makes them wait.
 let indexModule;
-async function indexApi() {
-  indexModule ??= import("./import/dbota_import.js").then(async (module) => {
-    await module.default();
+export async function importer(onBusy) {
+  const busy = globalThis.dbota_busy;
+  indexModule ??= busy.import("./import/dbota_import.js", onBusy).then(async (module) => {
+    const wasm = busy.wasm(new URL("./import/dbota_import_bg.wasm", import.meta.url), onBusy);
+    // An importer already started (a test's) does not wait for it, and its failure is no one's.
+    wasm.catch(() => {});
+    await module.default({ module_or_path: wasm });
     return module;
   });
   return indexModule;
 }
 
 export async function parseIndex(bytes) {
-  const { CacheIndex } = await indexApi();
+  const { CacheIndex } = await importer();
   const checked = new CacheIndex(bytes);
   try {
     const files = new Map();
@@ -75,8 +83,8 @@ export async function parseIndex(bytes) {
 }
 
 // The stamp and index are bounded before any whole-file read is attempted.
-export async function readState() {
-  const [stampLimit, indexLimit] = (await indexApi()).cache_metadata_limits();
+export async function readState(onBusy) {
+  const [stampLimit, indexLimit] = (await importer(onBusy)).cache_metadata_limits();
   const stamp = decode(await readCache("stamp.txt", stampLimit));
   if (!stamp) return null;
   const index = await readCache("index.txt", indexLimit);
@@ -108,11 +116,18 @@ async function responseBytes(response, limit) {
   }
 }
 
-// A served cache must carry a usable index too; no missing or malformed index grants files.
-export async function publishServed() {
+// Each request for a served cache's index: past this it is given up.
+const INDEX_MS = 15000;
+
+// A served cache must carry a usable index too; no missing or malformed index grants files. A
+// busy server's 503 is waited out and the index asked for once more (busy.js, which tells
+// `onBusy`); whichever answer is taken is read within the same bound.
+export async function publishServed(onBusy) {
   delete globalThis.dbota_cache;
-  const [, limit] = (await indexApi()).cache_metadata_limits();
-  const response = await fetch("cache/index.txt", { signal: AbortSignal.timeout(15000) });
+  const busy = globalThis.dbota_busy;
+  const [, limit] = (await importer(onBusy)).cache_metadata_limits();
+  const signal = AbortSignal.timeout(2 * INDEX_MS + busy.MAX_S * 1000);
+  const response = await busy.fetch("cache/index.txt", { signal }, onBusy);
   if (!response.ok) throw new Error(`cache/index.txt returned HTTP ${response.status}`);
   const index = await parseIndex(await responseBytes(response, limit));
   globalThis.dbota_cache = { mode: "http", files: index.files };

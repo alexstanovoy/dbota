@@ -66,6 +66,9 @@ names it) that the pages play on through `?cache=http`, served under /cache besi
   browser cannot run, a page that never arrives, a storage that hangs or is missing, a game download
   that stalls or is refused each end on a screen that says the stage, while a slow download that keeps
   moving is waited for and the game starts (Chromium and Firefox).
+* `--busy-page` (any build): a server answering 503 with Retry-After (busy) is told on the page and
+  tried once more after the wait: the page's own scripts (Chromium and Firefox), the served cache's
+  index and the game's download; a download refused twice ends on the failure screen.
 * `--fullscreen-page`: a replay build made with `DBOTA_WEB_ARGS="--replay built-in --pov 0 --settings video"`;
   the display mode and F11 put the canvas fullscreen and leaving it turns the setting back.
 """
@@ -1057,6 +1060,207 @@ def check_boot_page(directory):
     slow_but_moving()
 
 
+def check_busy_page(directory):
+    """A busy server answers 503 with a Retry-After of seconds (as radovid does when the pages it is
+    sending hold their share of its connections). The page says it is busy and when it tries
+    again, waits that long and tries once more: a part of the page itself (loaded again whole),
+    the served cache's index and the game's download each get through on the second try, and a
+    download turned away twice ends on the failure screen naming the 503. Retry-After is read as
+    seconds or a date, within 1 to 60 s, 5 s when it is missing or no number."""
+
+    class Busy(Quiet):
+        # path -> how many of its first requests are turned away, and the Retry-After sent
+        refuse = {}
+        asked = {}
+        index = None
+        # Bytes of an index past its bound sent instead, when set.
+        oversized = 0
+
+        def do_GET(self):
+            path = self.path.split("?")[0]
+            Busy.asked[path] = Busy.asked.get(path, 0) + 1
+            times, after = Busy.refuse.get(path, (0, ""))
+            if Busy.asked[path] <= times:
+                self.send_response(503)
+                if after:
+                    self.send_header("Retry-After", after)
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+                return
+            if path == "/cache/index.txt" and Busy.oversized:
+                # Past the index's bound, with no length said: only reading it shows that.
+                self.send_response(200)
+                self.end_headers()
+                try:
+                    self.wfile.write(b"x" * Busy.oversized)
+                except OSError:
+                    pass
+                return
+            if path == "/cache/index.txt":
+                body = Busy.index.encode()
+                self.send_response(200)
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+                return
+            super().do_GET()
+
+    # The index of a served cache as this build writes it (its header is the importer's).
+    with sync_playwright() as p:
+        server = serve(directory, Busy)
+        browser = p.chromium.launch(args=BROWSER_ARGS)
+        try:
+            page = browser.new_page()
+            page.goto(f"http://127.0.0.1:{server.server_address[1]}/cache.js")
+            header = page.evaluate("""async () => {
+                const module = await import('./import/dbota_import.js');
+                await module.default(); return module.cache_index_header();
+            }""")
+            Busy.index = header + "\nfile 5 text/labels.json small\n"
+            index_limit = page.evaluate("""async () => {
+                const module = await import('./import/dbota_import.js');
+                return module.cache_metadata_limits()[1];
+            }""")
+        finally:
+            browser.close()
+            server.shutdown()
+            server.server_close()
+
+    def case(name, query, refuse, then, engine="chromium"):
+        Busy.refuse, Busy.asked = refuse, {}
+        with sync_playwright() as p:
+            server = serve(directory, Busy)
+            browser = getattr(p, engine).launch(args=BROWSER_ARGS if engine == "chromium" else [])
+            page = browser.new_context(viewport={"width": 1280, "height": 720}).new_page()
+            page.add_init_script(said_log)
+            page.goto(f"http://127.0.0.1:{server.server_address[1]}/{query}", wait_until="commit")
+            then(page)
+            print(f"busy [{engine}]: {name}")
+            browser.close()
+        server.shutdown()
+
+    # Every line the page's status lines say, kept by the page itself (over a reload too): a
+    # busy line shows for as long as the wait, which a look from here could miss.
+    said_log = """(() => {
+      const said = JSON.parse(sessionStorage.getItem("said") || "[]");
+      new MutationObserver(() => {
+        for (const id of ["booting", "starting", "status"]) {
+          const text = document.getElementById(id)?.textContent;
+          if (text && !said.includes(text)) {
+            said.push(text);
+            sessionStorage.setItem("said", JSON.stringify(said));
+          }
+        }
+      }).observe(document, { subtree: true, childList: true, characterData: true });
+    })();"""
+
+    def says(page, words, timeout=60000):
+        deadline = time.time() + timeout / 1000
+        said = []
+        while time.time() < deadline:
+            try:
+                said = page.evaluate("() => JSON.parse(sessionStorage.getItem('said') || '[]')")
+                if any(words in line for line in said):
+                    return
+            except Exception:
+                pass  # the page is loading again
+            time.sleep(0.1)
+        sys.exit(f"busy: the page never said {words!r} (said {said}; asked {Busy.asked})")
+
+    def page_again(page):
+        # The server's 2 s where asking for the file again is turned away too; where the browser
+        # had asked for it more than once (Firefox), its record of the 503 and the usual 5 s.
+        says(page, "busy: trying again in ")
+        said = page.evaluate("() => JSON.parse(sessionStorage.getItem('said') || '[]')")
+        assert any(f"trying again in {n} s" in line for line in said for n in (2, 5)), said
+        page.wait_for_selector("#grant", state="visible", timeout=120000)
+        assert page.is_hidden("#failed"), page.inner_text("#failDetail")
+
+    for engine in ("chromium", "firefox"):
+        case("a part of the page turned away is loaded again after the wait", "",
+             {"/main.js": (2, "2")}, page_again, engine)
+
+    def index_again(page):
+        page.wait_for_function("() => globalThis.dbota_cache && globalThis.dbota_cache.mode === 'http'", timeout=60000)
+        got = page.evaluate("() => { const f = globalThis.dbota_cache.files; return f ? [...f.entries()] : null; }")
+        assert got == [["text/labels.json", 5]], got
+        assert Busy.asked["/cache/index.txt"] == 2, Busy.asked
+
+    case("the served cache's index is fetched again after the wait", "?cache=http",
+         {"/cache/index.txt": (1, "1")}, index_again)
+
+    def download_again(page):
+        says(page, "busy: trying again in 1 s")
+        says(page, "Downloading the game", 120000)
+        page.wait_for_timeout(3000)
+        # Whatever the client then does with the page's arguments, the download is not what failed.
+        if page.is_visible("#failed"):
+            assert "could not be downloaded" not in page.inner_text("#failTitle"), page.text_content("#failDetail")
+        assert Busy.asked["/dbota_bg.wasm"] == 2, Busy.asked
+
+    case("the game's download is fetched again after the wait", "?cache=http",
+         {"/dbota_bg.wasm": (1, "1")}, download_again)
+
+    def refused_twice(page):
+        page.wait_for_selector("#failed", state="visible", timeout=120000)
+        assert_in(page.inner_text("#failTitle"), "could not be downloaded")
+        assert_in(page.text_content("#failDetail"), "503")
+        assert Busy.asked["/dbota_bg.wasm"] == 2, Busy.asked
+
+    case("a download turned away twice is a failure", "?cache=http",
+         {"/dbota_bg.wasm": (2, "1")}, refused_twice)
+
+    def retried_index_bounded(page):
+        # The index asked for again after the wait is read within the same bound as any.
+        got = page.evaluate("""async () => {
+          try { await (await import('./cache.js')).publishServed(); return 'accepted'; }
+          catch (e) { return String(e); }
+        }""")
+        assert f"exceeds {index_limit} bytes" in got, got
+        assert page.evaluate("globalThis.dbota_cache === undefined")
+        assert Busy.asked["/cache/index.txt"] == 2, Busy.asked
+
+    Busy.oversized = index_limit + 1
+    case("an index fetched again after the wait is read within the index's bound", "cache.js",
+         {"/cache/index.txt": (1, "1")}, retried_index_bounded)
+    Busy.oversized = 0
+
+    def worker_wasm_again(page):
+        # The import worker on its own (from a page of the origin that starts nothing), told to
+        # check an install of no files: its importer's wasm comes on the second try, the page is
+        # told of the wait, and the check then says what is missing.
+        got = page.evaluate("""() => new Promise((done) => {
+          const worker = new Worker("./import_worker.js", { type: "module" });
+          const heard = [];
+          worker.onmessage = ({ data }) => {
+            heard.push(data);
+            if (data.type !== "busy") { worker.terminate(); done(heard); }
+          };
+          worker.onerror = (e) => { worker.terminate(); done([...heard, { type: "worker error", message: e.message }]); };
+          worker.postMessage({ op: "check", files: [], modified: 0 });
+        })""")
+        assert got[0] == {"type": "busy", "seconds": 1}, got
+        assert got[1]["type"] == "error" and "pak01_dir.vpk" in got[1]["message"], got
+        assert Busy.asked["/import/dbota_import_bg.wasm"] == 2, Busy.asked
+
+    case("the import worker's wasm is fetched again after the wait", "cache.js",
+         {"/import/dbota_import_bg.wasm": (1, "1")}, worker_wasm_again)
+
+    def waits(page):
+        got = page.evaluate("""() => {
+          const busy = (after) => globalThis.dbota_busy.seconds(new Response(null, { status: 503,
+            headers: after === null ? {} : { "retry-after": after } }));
+          const at = (s) => new Date(Date.now() + s * 1000).toUTCString();
+          return [null, "", "soon", "-3", "0", "7", "9999", at(30), at(-30), "1.5"].map(busy);
+        }""")
+        assert got[:7] == [5, 5, 5, 5, 1, 7, 60], got
+        assert 28 <= got[7] <= 31, got
+        assert got[8:] == [1, 5], got
+
+    case("Retry-After is read within its bounds", "", {}, lambda page: (
+        page.wait_for_function("() => globalThis.dbota_busy !== undefined", timeout=60000), waits(page)))
+
+
 def assert_in(text, part):
     assert part in text, f"{part!r} not in {text!r}"
 
@@ -1477,6 +1681,7 @@ def main():
     ap.add_argument("--cursor-page", type=pathlib.Path, help="a replay build: the cursor kept in a match")
     ap.add_argument("--cursor-input-page", type=pathlib.Path, help="a replay build: the cursor with a real mouse (X server)")
     ap.add_argument("--boot-page", type=pathlib.Path, help="any build: every way the start can go wrong ends on a screen")
+    ap.add_argument("--busy-page", type=pathlib.Path, help="any build: a busy server's 503 is waited for and tried once more")
     ap.add_argument("--pixels-page", type=pathlib.Path, help="a replay build: the canvas drawn at its device pixels")
     ap.add_argument("--replays-page", type=pathlib.Path, help="a build without a replay: a match through radovid is kept in OPFS")
     ap.add_argument("--radovid", help="the radovid binary, for --replays-page (with --server)")
@@ -1513,6 +1718,8 @@ def main():
         check_cursor_input(args.cursor_input_page)
     if args.boot_page:
         check_boot_page(args.boot_page)
+    if args.busy_page:
+        check_busy_page(args.busy_page)
     if args.pixels_page:
         check_canvas_pixels(args.pixels_page)
     if args.replays_page:

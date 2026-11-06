@@ -9,8 +9,9 @@
 //               or {op: "load", files: [[path, File]]}, and {op: "stop"}
 // Messages out: {type: "checked", fresh} | {type: "progress", done, total, item, bytes}
 //               | {type: "done", files, failures, deferred, stopped} | {type: "error", message}
-import init, { Install, Prepared } from "./import/dbota_import.js";
-import { dir, readState, remove, room } from "./cache.js";
+//               | {type: "busy", seconds}: the server was busy and is asked again in that long
+import { Install, Prepared } from "./import/dbota_import.js";
+import { dir, importer, readState, remove, room } from "./cache.js";
 
 // The least storage an import needs: the converted cache is about 560 MB.
 const NEEDED = 1200 * 2 ** 20;
@@ -38,8 +39,12 @@ async function writeFile(path, bytes) {
 let stopping = false;
 const post = (message) => self.postMessage(message);
 
+// The importer's wasm (cache.js), fetched once more after a busy server's wait (busy.js), which
+// the page is told of.
+const loaded = () => importer((seconds) => post({ type: "busy", seconds }));
+
 async function install(files) {
-  await init();
+  await loaded();
   const made = new Install();
   for (const [path, file] of files) made.add(path, file);
   return made;
@@ -84,7 +89,7 @@ const MARGIN = 100 * 2 ** 20;
 // paths, sizes) were all made when it was opened, before the cache in place is touched; a file
 // that turns out damaged while it is read ends the copy, and the half-made copy is removed.
 async function load(data) {
-  await init();
+  await loaded();
   const pack = data.zip ? Prepared.from_zip(data.zip) : Prepared.from_folder(data.files);
   try {
     if ((await room()) < pack.bytes() + MARGIN) {

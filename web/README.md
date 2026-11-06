@@ -12,6 +12,7 @@ game servers. Without a copy the page offers only the Dota 2 folder or a prepare
 | --- | --- |
 | `index.html`, `page.css` | the gate (folder question, progress, ready) over the client's canvas; the CSP |
 | `boot.js` | a classic script: "Loading" at once, and the one failure screen for a browser too old, a part that won't load or a start that stalls; every later wait has a limit in `main.js` and ends on a screen naming the stage |
+| `busy.js` | a server busy sending pages answers 503 with Retry-After: every fetch, module and worker of the page's own origin goes through here, says so on the page, waits as asked (1 to 60 s) and tries once more |
 | `main.js` | the flow: stored copy, folder grant, import progress, update check, delete, start the client that suits the browser |
 | `grant.js` | the prepared-cache picker and the folder grant (`showDirectoryPicker`, remembered in IndexedDB; else `<input webkitdirectory>`); keeps only the `*.vpk` files it needs, whatever folder level was picked |
 | `import_worker.js` | a Web Worker running `dbota_import` (wasm), writing with synchronous OPFS handles; also checks and copies a prepared cache |
@@ -82,6 +83,8 @@ PYTHONPATH=temp/pwlib python3 -m playwright install chromium`); its docstring ha
   the real zip and cache folder are copied, kept over a reload and played.
 - `--replays-page`: a match through a real radovid that serves the page and keeps replays; the next visit fetches the
   replay, lists, plays, downloads and reopens it.
+- `--busy-page`: a server that answers 503 with Retry-After once gets the page's own script, the served cache's index and
+  the game's download on the second try, with the wait said on the page; a download refused twice is a failure.
 - `--replay-page`: a build with a packed replay plays it with chat and the CJK font fallback.
 
 The merge gate runs them all in its `browser` step (`tools/browser_check.sh`).

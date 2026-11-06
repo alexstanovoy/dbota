@@ -1,6 +1,7 @@
 // The page: asks for the player's Dota 2 folder (or a prepared asset cache), has the worker
 // build the private asset cache from it (or check and copy the prepared one), then starts the
 // client (dbota.js, the game compiled to wasm).
+import "./busy.js";
 import * as cache from "./cache.js";
 import * as grant from "./grant.js";
 import * as replays from "./replays.js";
@@ -14,6 +15,15 @@ const show = (...ids) => {
   $("gate").hidden = false;
 };
 const say = (text) => ($("status").textContent = text);
+// A busy server (busy.js): said where the page shows what it is doing now.
+const busy = globalThis.dbota_busy;
+const sayBusy = (wait) => {
+  const line = busy.line(wait);
+  for (const id of ["booting", "starting"]) if (!$(id).hidden) return ($(id).textContent = line);
+  say(line);
+};
+// The longest a busy server may make a stage wait, on top of the stage's own limit.
+const BUSY_MS = busy.MAX_S * 1000;
 const mib = (n) => (n / 2 ** 20).toFixed(0) + " MB";
 
 // Every wait on the browser has a limit, so the page never waits for ever: a stage that does not
@@ -144,7 +154,7 @@ addEventListener("unhandledrejection", (e) => stopped(e.reason));
 
 // The wasm of the client as a response the browser compiles while it arrives, counting the bytes:
 // the player sees the download move, and a download that gets nothing for STALL_MS ends as an error.
-function downloaded(url, onBytes) {
+function downloaded(url, onBytes, onBusy) {
   const abort = new AbortController();
   let seen = Date.now();
   let stalled = false;
@@ -154,7 +164,13 @@ function downloaded(url, onBytes) {
       abort.abort();
     }
   }, 1000);
-  const response = fetch(url, { signal: abort.signal })
+  const waited = (wait) => {
+    // The wait the server asked for is no stall.
+    seen = Date.now() + wait * 1000;
+    onBusy(wait);
+  };
+  const response = busy
+    .fetch(url, { signal: abort.signal }, waited)
     .then((res) => {
       if (!res.ok) throw new Error(`${url} answered ${res.status}`);
       const total = res.headers.get("content-encoding") ? 0 : Number(res.headers.get("content-length")) || 0;
@@ -199,9 +215,12 @@ async function startGame() {
   console.info("dbota: drawing with " + gpu.api);
   const wasm = gpu.api === "webgpu" ? "dbota_bg.wasm" : "dbota_webgl2_bg.wasm";
   try {
-    const { default: init } = await within("The game's script", import(gpu.api === "webgpu" ? "./dbota.js" : "./dbota_webgl2.js"), STALL_MS * 2);
-    const module_or_path = downloaded("./" + wasm, (got, total) =>
-      sayStarting(`Downloading the game: ${mib(got)}${total ? " of " + mib(total) : ""}`)
+    const script = gpu.api === "webgpu" ? "./dbota.js" : "./dbota_webgl2.js";
+    const { default: init } = await within("The game's script", busy.import(script, sayBusy), STALL_MS * 2 + BUSY_MS);
+    const module_or_path = downloaded(
+      "./" + wasm,
+      (got, total) => sayStarting(`Downloading the game: ${mib(got)}${total ? " of " + mib(total) : ""}`),
+      sayBusy
     );
     await init({ module_or_path });
     sayStarting("Starting the game...");
@@ -220,21 +239,33 @@ async function startGame() {
   }
 }
 
+// The worker's own files: one of them turned away by a busy server leaves the worker unmade.
+const WORKER_FILES = ["./import_worker.js", "./busy.js", "./cache.js", "./import/dbota_import.js"];
+
 // Runs the import worker on `message`; resolves with its last message ("done", "checked" or
-// "error"), handing the progress ones to `onMessage`.
-function runWorker(message, onMessage) {
+// "error"), handing the progress ones to `onMessage`. A worker that could not be made because
+// the server was busy is made again once, after the wait the server asked for.
+function runWorker(message, onMessage, again = true) {
   const worker = new Worker("./import_worker.js", { type: "module" });
   return new Promise((resolve) => {
+    let heard = false;
     worker.onmessage = ({ data }) => {
+      heard = true;
+      if (data.type === "busy") return sayBusy(data.seconds);
       onMessage?.(data);
       if (data.type !== "progress") {
         worker.terminate();
         resolve(data);
       }
     };
-    worker.onerror = (e) => {
+    worker.onerror = async (e) => {
       worker.terminate();
-      resolve({ type: "error", message: e.message || "the import worker failed" });
+      const failed = { type: "error", message: e.message || "the import worker failed" };
+      const wait = again && !heard ? await busy.busyFor(WORKER_FILES) : null;
+      if (wait === null) return resolve(failed);
+      sayBusy(wait);
+      await busy.sleep(wait);
+      resolve(runWorker(message, onMessage, false));
     };
     $("cancel").onclick = () => worker.postMessage({ op: "stop" });
     worker.postMessage(message);
@@ -317,9 +348,7 @@ async function pick() {
 // This build's asset fingerprint (the cache version, the importer's revision and the manifest's
 // hash): a copy's stamp starts with the fingerprint of the dbota that made it, as on the desktop.
 async function importerVersion() {
-  const { default: init, cache_version } = await import("./import/dbota_import.js");
-  await init();
-  return cache_version();
+  return (await cache.importer(sayBusy)).cache_version();
 }
 
 // A copy another dbota made is not played: the page holds at the question until it is made
@@ -380,7 +409,7 @@ async function main() {
     show("grant");
   };
   if (query.get("cache") === "http") {
-    await within("The served cache", cache.publishServed());
+    await within("The served cache", cache.publishServed(sayBusy), 2 * STORAGE_MS + BUSY_MS);
     return startGame();
   }
   if (!(await cache.supported())) {
@@ -390,8 +419,8 @@ async function main() {
   let state;
   let version;
   try {
-    state = await within("The browser's private storage", cache.readState().catch(() => null));
-    version = await within("The tool that reads your Dota files", importerVersion(), STALL_MS * 2);
+    state = await within("The browser's private storage", cache.readState(sayBusy).catch(() => null), STORAGE_MS + BUSY_MS);
+    version = await within("The tool that reads your Dota files", importerVersion(), STALL_MS * 2 + 2 * BUSY_MS);
   } catch (e) {
     console.warn("dbota:", e);
     say(`${e.message}. Importing your Dota files is not possible now: reload the page, or try another browser.`);
