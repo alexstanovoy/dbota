@@ -7,7 +7,7 @@
 use std::{collections::HashMap, path::Path};
 
 use bevy::prelude::*;
-use bota_core::{Catalogue, item_def, sold as sold_item};
+use bota_core::{Catalogue, ITEMS, item_def, sold as sold_item};
 use bota_proto::ItemId;
 use serde_json::Value;
 
@@ -180,9 +180,7 @@ impl Catalog {
     /// build tree shows those), under a section of their own.
     fn add_leftovers(&mut self, manifest: &Manifest) {
         let placed = |id: u16, sections: &[Section]| sections.iter().any(|s| s.items.contains(&id));
-        let rest: Vec<u16> = crate::faces::ITEMS
-            .iter()
-            .map(|face| face.id)
+        let rest: Vec<u16> = item_ids()
             .filter(|id| sold(*id) && manifest.dota_name("item", *id) != Some("recipe"))
             .filter(|id| !placed(*id, &self.sections))
             .collect();
@@ -226,6 +224,11 @@ impl Catalog {
     }
 }
 
+/// Every item id of this build's catalogue, in order.
+fn item_ids() -> impl Iterator<Item = u16> {
+    (0..ITEMS.len()).map(|id| u16::try_from(id).expect("item ids are u16"))
+}
+
 /// Whether bota sells an item: neither retired nor unbuyable.
 fn sold(id: u16) -> bool {
     sold_item(ItemId(id)).is_some()
@@ -238,16 +241,14 @@ pub fn parts_of(id: u16) -> &'static [ItemId] {
 
 /// The items of `catalogue` one is a part of, in id order, at most [`MAX_INTO`].
 pub fn builds_into(id: u16, catalogue: Catalogue) -> Vec<u16> {
-    crate::faces::ITEMS
-        .iter()
-        .filter(|face| catalogue.holds(ItemId(face.id)))
-        .filter(|face| {
-            item_def(ItemId(face.id)).is_some_and(|def| {
+    item_ids()
+        .filter(|item| catalogue.holds(ItemId(*item)))
+        .filter(|item| {
+            item_def(ItemId(*item)).is_some_and(|def| {
                 def.recipes()
                     .any(|recipe| recipe.parts.contains(&ItemId(id)))
             })
         })
-        .map(|face| face.id)
         .take(MAX_INTO)
         .collect()
 }
@@ -306,6 +307,28 @@ fn read(root: &Path) -> Option<Data> {
 mod tests {
     use super::*;
 
+    /// Every live item of bota's id registry has its line in `ids.txt`: an icon, and the text of
+    /// its own Dota key. An item appended to bota without one fails here, rather than landing in
+    /// the shop's section of what no category lists, nameless and with no icon.
+    #[test]
+    fn every_live_item_of_the_registry_has_its_icon_and_its_text() {
+        let manifest = Manifest::load(Path::new("/nonexistent"));
+        for entry in bota_proto::registered(bota_proto::IdSpace::Item).filter(|e| !e.retired) {
+            assert!(
+                manifest.dota_name("item", entry.id).is_some(),
+                "item {} ({}) has no line in ids.txt",
+                entry.id,
+                entry.name
+            );
+            assert_eq!(
+                manifest.text_key("item", entry.id).as_deref(),
+                Some(entry.name),
+                "item {} is told of by another item's text",
+                entry.id
+            );
+        }
+    }
+
     /// Every item bota sells can be bought from the shop's tabs, once,
     /// recipes aside (the build tree has those), whether the cache gives
     /// Dota's categories (whatever they list) or not.
@@ -339,10 +362,10 @@ mod tests {
                 .iter()
                 .flat_map(|s| s.items.clone())
                 .collect();
-            for face in crate::faces::ITEMS.iter().filter(|f| sold(f.id)) {
-                let recipe = manifest.dota_name("item", face.id) == Some("recipe");
-                let times = listed.iter().filter(|id| **id == face.id).count();
-                assert_eq!(times, usize::from(!recipe), "{}", face.name);
+            for item in item_ids().filter(|id| sold(*id)) {
+                let recipe = manifest.dota_name("item", item) == Some("recipe");
+                let times = listed.iter().filter(|id| **id == item).count();
+                assert_eq!(times, usize::from(!recipe), "item {item}");
             }
         }
     }

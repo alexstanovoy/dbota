@@ -1,34 +1,15 @@
-//! The words of items, effects and talents, for the tooltips of an entry Dota's own text
-//! lacks and for the items no category of Dota's shop lists.
+//! The words of effects and talents, for the tooltips of an entry Dota's own text lacks.
 //!
-//! Item names, one to an item, found by the id the wire carries; effects and
-//! talents also carry blurb templates. The numbers in a blurb are the rules':
-//! a template names them and `bota_core` gives them.
+//! Effects and talents carry blurb templates, found by the id the wire carries. The numbers in a
+//! blurb are the rules': a template names them and `bota_core` gives them.
 
 mod blurb;
 mod keys;
 
-use bota_core::{
-    EFFECT_COUNT, EFFECTS as EFFECT_DEFS, ITEMS as ITEM_DEFS, Talent, effect_def, hero_def,
-};
-use bota_proto::{EffectId, HeroId, ItemId};
+use bota_core::{EFFECT_COUNT, EFFECTS as EFFECT_DEFS, Talent, effect_def, hero_def};
+use bota_proto::{EffectId, HeroId};
 
 use blurb::fill;
-
-/// One item, as the client shows and aims it.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct ItemFace {
-    /// The id it answers to on the wire.
-    pub id: u16,
-    /// Short name for the panel and the shop.
-    pub name: &'static str,
-}
-
-impl ItemFace {
-    const fn new(id: u16, name: &'static str) -> ItemFace {
-        ItemFace { id, name }
-    }
-}
 
 /// One timed effect, as the client shows it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -49,73 +30,6 @@ impl EffectFace {
         fill(self.template)
     }
 }
-
-/// Every item the shop sells, in id order.
-pub const ITEMS: [ItemFace; ITEM_DEFS.len()] = [
-    ItemFace::new(ItemId::BOOTS.0, "Boots"),
-    ItemFace::new(ItemId::CLARITY.0, "Clarity"),
-    ItemFace::new(ItemId::HEALING_SALVE.0, "Salve"),
-    ItemFace::new(ItemId::IRON_BRANCH.0, "Branch"),
-    ItemFace::new(ItemId::OBSERVER_WARD.0, "Obs"),
-    ItemFace::new(ItemId::QUELLING_BLADE.0, "Quell"),
-    ItemFace::new(ItemId::SENTRY_WARD.0, "Sentry"),
-    ItemFace::new(ItemId::TANGO.0, "Tango"),
-    ItemFace::new(ItemId::TOWN_PORTAL_SCROLL.0, "TP"),
-    ItemFace::new(ItemId::CIRCLET.0, "Circlet"),
-    ItemFace::new(ItemId::GAUNTLETS.0, "Gauntlet"),
-    ItemFace::new(ItemId::SLIPPERS.0, "Slippers"),
-    ItemFace::new(ItemId::MANTLE.0, "Mantle"),
-    ItemFace::new(ItemId::BELT.0, "Belt"),
-    ItemFace::new(ItemId::BAND.0, "Band"),
-    ItemFace::new(ItemId::ROBE.0, "Robe"),
-    ItemFace::new(ItemId::OGRE_AXE.0, "Ogre Axe"),
-    ItemFace::new(ItemId::BLADE_OF_ALACRITY.0, "Alacrity"),
-    ItemFace::new(ItemId::STAFF_OF_WIZARDRY.0, "Wizardry"),
-    ItemFace::new(ItemId::GLOVES.0, "Gloves"),
-    ItemFace::new(ItemId::BLADES_OF_ATTACK.0, "Blades"),
-    ItemFace::new(ItemId::BROADSWORD.0, "Broad"),
-    ItemFace::new(ItemId::QUARTERSTAFF.0, "Qstaff"),
-    ItemFace::new(ItemId::RING_OF_PROTECTION.0, "Ring Pro"),
-    ItemFace::new(ItemId::CHAINMAIL.0, "Chain"),
-    ItemFace::new(ItemId::RING_OF_REGEN.0, "Regen"),
-    ItemFace::new(ItemId::SAGES_MASK.0, "Sage"),
-    ItemFace::new(ItemId::VITALITY_BOOSTER.0, "Vitality"),
-    ItemFace::new(ItemId::ENERGY_BOOSTER.0, "Energy"),
-    ItemFace::new(ItemId::POWER_TREADS.0, "Treads"),
-    ItemFace::new(ItemId::PHASE_BOOTS.0, "Phase"),
-    ItemFace::new(ItemId::BLINK_DAGGER.0, "Blink"),
-    ItemFace::new(ItemId::BRACER.0, "Bracer"),
-    ItemFace::new(ItemId::WRAITH_BAND.0, "Wraith"),
-    ItemFace::new(ItemId::NULL_TALISMAN.0, "Null"),
-    ItemFace::new(ItemId::MAGIC_STICK.0, "Stick"),
-    ItemFace::new(ItemId::MAGIC_WAND.0, "Wand"),
-    // Retired: the recipe Phase Boots were built with.
-    ItemFace::new(37, "Retired"),
-    ItemFace::new(ItemId::RECIPE_BRACER.0, "Rcp Bracer"),
-    ItemFace::new(ItemId::RECIPE_WRAITH_BAND.0, "Rcp Wraith"),
-    ItemFace::new(ItemId::RECIPE_NULL_TALISMAN.0, "Rcp Null"),
-    ItemFace::new(ItemId::RECIPE_MAGIC_WAND.0, "Rcp Wand"),
-    ItemFace::new(ItemId::MANGO.0, "Mango"),
-    ItemFace::new(ItemId::EAGLESONG.0, "Eaglesong"),
-    ItemFace::new(ItemId::CLAYMORE.0, "Claymore"),
-    ItemFace::new(ItemId::TALISMAN_OF_EVASION.0, "Talisman"),
-    ItemFace::new(ItemId::BUTTERFLY.0, "Butterfly"),
-    ItemFace::new(ItemId::JAVELIN.0, "Javelin"),
-    ItemFace::new(ItemId::DEMON_EDGE.0, "Demon Edge"),
-    ItemFace::new(ItemId::BLITZ_KNUCKLES.0, "Blitz"),
-    ItemFace::new(ItemId::RECIPE_MONKEY_KING_BAR.0, "Rcp MKB"),
-    ItemFace::new(ItemId::MONKEY_KING_BAR.0, "MKB"),
-    ItemFace::new(ItemId::WIND_LACE.0, "Lace"),
-    ItemFace::new(ItemId::BLOOD_GRENADE.0, "Grenade"),
-    ItemFace::new(ItemId::WARD_DISPENSER.0, "Wards"),
-    ItemFace::new(ItemId::TANGO_SHARED.0, "Tango"),
-    ItemFace::new(ItemId::BOTTLE.0, "Bottle"),
-    ItemFace::new(ItemId::HEALING_LOTUS.0, "Lotus"),
-    ItemFace::new(ItemId::GREAT_HEALING_LOTUS.0, "Great"),
-    ItemFace::new(ItemId::GREATER_HEALING_LOTUS.0, "Greater"),
-    ItemFace::new(ItemId::CHEESE.0, "Cheese"),
-    ItemFace::new(ItemId::ROYALE_WITH_CHEESE.0, "Royale"),
-];
 
 /// Every timed effect, indexed by [`EffectId`]; the slot of a retired one
 /// holds nothing.
@@ -296,10 +210,6 @@ mod tests {
 
     #[test]
     fn every_face_is_placed_at_its_own_id() {
-        for (index, face) in ITEMS.iter().enumerate() {
-            assert_eq!(usize::from(face.id), index, "{} is in place", face.name);
-            assert!(!face.name.is_empty(), "item {index} has a name");
-        }
         for (index, face) in EFFECTS.iter().enumerate().skip(1) {
             assert_eq!(usize::from(face.id), index, "effect {index} is in place");
             assert_eq!(effect(face.id), Some(face), "effect {index} is found");
