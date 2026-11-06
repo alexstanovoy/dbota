@@ -428,6 +428,29 @@ fn made_by_the_importer(rel: &str, manifest: &str) -> bool {
         })
 }
 
+/// Whether the reference's world file `rel` is a texture of a map prop, which the importer now
+/// writes beside the prop's own model.
+fn moved_to_props(rel: &str) -> bool {
+    rel.starts_with("map/mid/")
+        && rel.ends_with(".ktx2")
+        && dbota_import::import::MAP_PROPS
+            .iter()
+            .any(|prop| texture_name(rel).contains(prop))
+}
+
+/// The file name of `rel`.
+fn texture_name(rel: &str) -> &str {
+    rel.rsplit('/').next().unwrap_or(rel)
+}
+
+/// The textures of the props' models in `ours`, by file name.
+fn prop_textures(ours: &BTreeMap<String, PathBuf>) -> BTreeMap<&str, &Path> {
+    ours.iter()
+        .filter(|(rel, _)| rel.starts_with("models/prop/") && rel.ends_with(".ktx2"))
+        .map(|(rel, path)| (texture_name(rel), path.as_path()))
+        .collect()
+}
+
 /// The exported files this manifest asks for: its outputs, the images its glTF files name, and
 /// the ground layers' folder.
 fn required(theirs: &BTreeMap<String, PathBuf>) -> BTreeSet<String> {
@@ -474,7 +497,23 @@ fn the_imported_cache_matches_the_exported_one() {
     // The exported cache may hold more than this manifest asks for (it was exported for the
     // manifests of other versions too); what it asks for must all be here.
     let required = required(&theirs);
-    let missing: Vec<&String> = required.iter().filter(|k| !ours.contains_key(*k)).collect();
+    // The map's props were baked into the reference's world, their textures beside it; they are
+    // the props' own models now, and their textures lie beside those.
+    let props = prop_textures(&ours);
+    let moved: Vec<&String> = required
+        .iter()
+        .filter(|k| !ours.contains_key(*k) && moved_to_props(k))
+        .collect();
+    let missing: Vec<&String> = required
+        .iter()
+        .filter(|k| !ours.contains_key(*k) && !moved.contains(k))
+        .chain(
+            moved
+                .iter()
+                .copied()
+                .filter(|k| !props.contains_key(texture_name(k))),
+        )
+        .collect();
     assert!(
         missing.is_empty(),
         "{} files not imported: {missing:?}",
@@ -528,6 +567,11 @@ fn the_imported_cache_matches_the_exported_one() {
                 continue;
             }
             failed.push(format!("{rel}: {why}"));
+        }
+    }
+    for rel in moved.iter().filter(|k| props.contains_key(texture_name(k))) {
+        if let Some(why) = differs(rel, props[texture_name(rel)], &theirs[*rel]) {
+            failed.push(format!("{rel} (a prop's now): {why}"));
         }
     }
     for (ext, (n, a, b)) in &kinds {
