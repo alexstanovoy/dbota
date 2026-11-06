@@ -616,3 +616,57 @@ fn ten_quickbuy_entries_keep_two_rows_and_a_plus_two_badge_at_fractional_scales(
         assert_eq!(client.core().quick_buy.targets().len(), 10);
     }
 }
+#[test]
+fn an_inventory_drop_queues_the_item_shown_by_a_pending_swap_preview() {
+    let server = Server::start(1, &[]);
+    let mut client = Client::join(&server, HeroId::SHADOW_FIEND, &[]);
+    client.core_mut().act(Intent::SelectHero);
+    client.cheat(Cheat::Item {
+        item: ItemId::BOOTS,
+    });
+    client.cheat(Cheat::Item {
+        item: ItemId::CLARITY,
+    });
+    let from = client.slot_of(ItemId::BOOTS).expect("boots");
+    let to = client.slot_of(ItemId::CLARITY).expect("clarity");
+    let end = quick_drop(&mut client);
+    let slot_at = |c: &mut Client, slot| {
+        let e = c.item_box(slot).expect("slot");
+        c.centre_of(e).expect("laid out")
+    };
+    let a = slot_at(&mut client, from);
+    let b = slot_at(&mut client, to);
+    server.frozen(|| {
+        client.mouse(a);
+        client.button(MouseButton::Left, ButtonState::Pressed);
+        client.mouse(b);
+        client.button(MouseButton::Left, ButtonState::Released);
+        assert_eq!(
+            client.core().item_in(from).expect("snapshot item").id,
+            ItemId::BOOTS
+        );
+        assert_eq!(
+            client
+                .world()
+                .resource::<crate::drag::Settling>()
+                .item_in(client.core(), from)
+                .expect("drawn preview")
+                .id,
+            ItemId::CLARITY
+        );
+        client.mouse(a);
+        client.button(MouseButton::Left, ButtonState::Pressed);
+        client.mouse(end);
+        client.button(MouseButton::Left, ButtonState::Released);
+        assert_eq!(
+            client.core().quick_buy.targets(),
+            &[ItemId::CLARITY.0],
+            "Quickbuy must use the drawn preview, not the older snapshot"
+        );
+        client.until("the preview item queued visibly", |c| {
+            cells(c, Place::Quick)
+                .iter()
+                .any(|(id, _)| *id == ItemId::CLARITY)
+        });
+    });
+}

@@ -20,3 +20,16 @@ pub use cell::{Place, ShopCell, spawn as spawn_cell};
 pub use corner::STICKY;
 pub(crate) use drag::ShopDrag;
 pub use plugin::plugin;
+
+/// The item an inventory slot shows, including ordered moves not in the snapshot yet.
+pub(crate) fn displayed_item(
+    core: &bota_client_core::App,
+    bag: &crate::bag::TacticalBag,
+    settling: &crate::drag::Settling,
+    slot: u8,
+) -> Option<bota_proto::ItemView> {
+    let (_, unit, kit) = crate::hud::subject(core);
+    settling
+        .over(core, slot)
+        .unwrap_or_else(|| crate::hud::subject_item(core, bag, unit, kit, slot))
+}

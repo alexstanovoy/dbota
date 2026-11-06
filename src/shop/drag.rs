@@ -48,6 +48,7 @@ fn track(
     cells: Query<(&Interaction, &ShopCell, &Place, &InheritedVisibility)>,
     drop: Query<(&Interaction, &InheritedVisibility), With<QuickDrop>>,
     bag: Res<TacticalBag>,
+    settling: Res<crate::drag::Settling>,
 ) {
     drag.clicked = None;
     let Some(cursor) = window.cursor_position() else {
@@ -76,10 +77,9 @@ fn track(
     let inside = drop
         .iter()
         .any(|(over, seen)| *over != Interaction::None && seen.get());
-    let inventory = core.held_item.and_then(|slot| {
-        let (_, unit, kit) = crate::hud::subject(core);
-        crate::hud::subject_item(core, &bag, unit, kit, slot).map(|item| item.id.0)
-    });
+    let inventory = core
+        .held_item
+        .and_then(|slot| super::displayed_item(core, &bag, &settling, slot).map(|item| item.id.0));
     let from_shop = held
         .as_ref()
         .filter(|held| held.dragging && held.place != Place::Quick)
