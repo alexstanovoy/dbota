@@ -149,7 +149,9 @@ const fn neutral_cast_clip(ability: NeutralAbility) -> &'static str {
         N::Slam => "cast3",
         N::ArmOfTheDeep | N::TendrilsOfTheDeep | N::CongregationsOfTheDeep => "cast5",
         // Never cast, so never shown: Dota's default animation.
-        N::StrengthOfTheImmortal
+        N::SpellBlock
+        | N::Devotion
+        | N::StrengthOfTheImmortal
         | N::ProspectingAura
         | N::NeutralUpgrade
         | N::StealWeapon

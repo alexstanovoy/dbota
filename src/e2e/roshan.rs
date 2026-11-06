@@ -400,3 +400,66 @@ fn roshans_npc_level_and_growing_health_reach_the_drawn_panel() {
         crate::hud::health_readouts(c.world_mut()).contains(&expected)
     });
 }
+
+#[test]
+fn a_blocked_dismember_draws_the_spent_cooldown_without_a_channel() {
+    use bevy::prelude::*;
+    use bota_client_core::{Intent, Slot};
+    use bota_proto::{EventKind, StatusFlags};
+    let server = Server::start(1, &["--objectives", "roshan"]);
+    let mut client = Client::join(&server, HeroId::PUDGE, &[]);
+    client.cheat(Cheat::StartGame);
+    client.cheat(Cheat::Levels { count: 5 });
+    client.cheat(Cheat::Invulnerable { on: true });
+    client.core_mut().act(Intent::Press {
+        slot: Slot::Ability(3),
+        ctrl: true,
+    });
+    client.until("Dismember learned", |c| {
+        c.me().abilities.get(3).is_some_and(|a| a.level == 1)
+    });
+    let pit = bota_core::ROSHAN_DAY_PIT;
+    client.stand_at((pit.x.to_int() + 100, pit.y.to_int()));
+    client.until("Roshan visible", |c| {
+        c.view().units.iter().any(|u| u.kind == UnitKind::Roshan)
+    });
+    let boss = client
+        .view()
+        .units
+        .iter()
+        .find(|u| u.kind == UnitKind::Roshan)
+        .expect("boss")
+        .clone();
+    let mana = client.me().mana;
+    client.core_mut().act(Intent::Press {
+        slot: Slot::Ability(3),
+        ctrl: false,
+    });
+    client.core_mut().act(Intent::Aimed {
+        at: (boss.pos.x.to_f32(), boss.pos.y.to_f32()),
+        unit: Some(boss.id),
+    });
+    let mut blocked = false;
+    client.until("spell block and Pudge's spent cooldown",|c| {
+        blocked |= c.core().told.iter().any(|event|matches!(event,EventKind::AbilityCast {ability,..} if *ability==bota_core::NeutralAbility::SpellBlock.id()));
+        blocked && c.me().abilities.get(3).is_some_and(|a|a.cooldown_left>0) && c.me().mana<mana-90
+    });
+    assert_eq!(client.me().statuses.bits & StatusFlags::CHANNELLING, 0);
+    client.until("Dismember cooldown text actually drawn", |c| {
+        let world = c.world_mut();
+        let slot = world
+            .query::<(Entity, &crate::hud::AbilityBox)>()
+            .iter(world)
+            .find(|(_, b)| b.0 == 3)
+            .map(|(e, _)| e);
+        let Some(slot) = slot else {
+            return false;
+        };
+        world
+            .query::<(&crate::hud::Part, &crate::hud::PartOf, &Text)>()
+            .iter(world)
+            .any(|(part, parent, text)| {
+                *part == crate::hud::Part::Seconds && parent.0 == slot && !text.0.is_empty()
+            })
+    });
+}

@@ -348,3 +348,11 @@ modifier 81 modifier_aegis_regen
 ability 80 roshan_inherent_buffs
 text ability 80 roshan_inherent_buffs
 modifier 82 modifier_roshan_devotion
+
+ability 81 roshan_devotion
+text ability 81 roshan_devotion
+ability 82 roshan_spell_block
+text ability 82 roshan_spell_block
+modifier 83 modifier_roshan_inherent_buffs
+modifier 84 modifier_roshan_devotion_aura
+modifier 85 modifier_roshan_spell_block
