@@ -158,3 +158,27 @@ fn a_fallen_barracks_is_worded_as_dota_words_it() {
     assert_eq!(text.trim(), "Dire Bottom Ranged Barracks");
     assert_eq!(icons.len(), 1, "one kill icon");
 }
+
+/// A rune taken, a Shrine gathered and an Outpost captured are toasts at the left too, with the
+/// rune's own icon.
+#[test]
+fn a_rune_taken_is_a_toast_at_the_left_with_its_icon() {
+    let (_server, mut client) = four_seats();
+    let me = client.core().my_slot.expect("a seat");
+    let team = client.me().team;
+    let (left, icons, text) = feed(
+        &mut client,
+        FeedKind::Rune {
+            by: Some(me),
+            team,
+            kind: bota_proto::RuneKind::Haste,
+            act: bota_client_core::RuneAct::Activated { gold: None },
+        },
+    );
+    assert!(left, "at the left above the HUD: {text:?}");
+    assert_eq!(
+        icons,
+        vec![file(&client, "icon.rune.haste")],
+        "the rune's own icon"
+    );
+}

@@ -38,7 +38,10 @@ impl Place {
     /// Where a line of this kind belongs.
     fn of(kind: &FeedKind) -> Place {
         match kind {
-            FeedKind::StructureFell { .. } => Place::Left,
+            FeedKind::StructureFell { .. }
+            | FeedKind::Rune { .. }
+            | FeedKind::ShrineActivated { .. }
+            | FeedKind::Captured { .. } => Place::Left,
             _ => Place::Corner,
         }
     }
