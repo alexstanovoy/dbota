@@ -14,6 +14,56 @@ use super::harness::Client;
 
 type Heard = Arc<Mutex<Vec<Option<(f32, f32)>>>>;
 
+#[derive(Resource, Default)]
+struct Purchases(Vec<bool>);
+
+fn observe_purchases(sight: crate::fog::EventSight, mut purchases: ResMut<Purchases>) {
+    for event in &sight.core().told {
+        if matches!(event, bota_proto::EventKind::ItemBought { .. }) {
+            purchases
+                .0
+                .push(sight.allows(event, crate::fog::EventSubject::Event));
+        }
+    }
+}
+
+#[test]
+fn a_full_stream_keeps_purchases_private_in_enemy_and_union_views() {
+    let mut game = Spectated::start("2");
+    game.order(Order::Buy {
+        item: ItemId::IRON_BRANCH,
+    });
+    game.wait("the real purchase arrives", |driver, _| {
+        driver.view().unwrap().units.iter().any(|unit| {
+            unit.owner == Some(bota_proto::SlotId(0))
+                && unit
+                    .items
+                    .iter()
+                    .flatten()
+                    .any(|item| item.id == ItemId::IRON_BRANCH)
+        })
+    });
+    game.cheat(Cheat::Gold { amount: 1 });
+    let file = game.save();
+    for (pov, allowed) in [(Some(0), true), (Some(1), false), (None, false)] {
+        let client = replay_observed(&file, pov, &[], |client| {
+            client
+                .app
+                .init_resource::<Purchases>()
+                .add_systems(Update, observe_purchases);
+        });
+        let observations = &client.world().resource::<Purchases>().0;
+        assert!(
+            !observations.is_empty(),
+            "the full stream contains the purchase"
+        );
+        assert!(
+            observations.iter().all(|seen| *seen == allowed),
+            "POV {pov:?}"
+        );
+    }
+}
+
 fn driving_hero(client: &Client) -> Option<&bota_proto::UnitView> {
     client
         .view()
@@ -207,6 +257,24 @@ fn a_hidden_hero_death_is_announced_without_a_positional_sound() {
             heard.iter().any(Option::is_some),
             visible,
             "a hidden death must not sound at its private world position"
+        );
+    }
+}
+
+#[test]
+fn a_hidden_throwers_core_attack_cue_is_silent_and_a_visible_thrower_sounds() {
+    let (file, at) = record_hidden_death();
+    let look = format!("{},{}", at.x.to_int(), at.y.to_int());
+    for (slot, visible) in [(0, true), (1, false)] {
+        let heard = Heard::default();
+        let into = heard.clone();
+        let _client = replay_observed(&file, Some(slot), &["--look", &look], |client| {
+            listen(client, "Hero_Nevermore.Attack", into);
+        });
+        assert_eq!(
+            !heard.lock().unwrap().is_empty(),
+            visible,
+            "POV {slot}: attack cues may name and locate only a visible thrower"
         );
     }
 }

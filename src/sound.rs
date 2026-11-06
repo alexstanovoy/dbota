@@ -277,8 +277,12 @@ fn collect_cues(mut session: NonSendMut<Session>, mut pending: ResMut<PendingCue
 
 /// A public fall says who died, without disclosing a position outside the selected sight.
 fn permitted_cue(cue: &mut Cue, sight: &crate::fog::EventSight) -> bool {
+    if let Some(thrower) = &cue.thrower {
+        return sight.allows_unit(thrower);
+    }
     let Some(event) = &cue.told else {
-        return true;
+        // Local interface cues need no world subject; positional cues must have one.
+        return cue.at.is_none();
     };
     if let bota_proto::EventKind::AbilityCast { caster, .. } = event {
         let Some(unit) = sight.core().view().and_then(|view| view.unit(*caster)) else {

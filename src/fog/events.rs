@@ -57,7 +57,11 @@ impl EventSight<'_> {
     }
 
     pub fn allows(&self, event: &EventKind, subject: EventSubject<'_>) -> bool {
-        self.core().view().is_some() && self.fact(event, subject)
+        self.fact(event, subject)
+    }
+
+    pub fn allows_unit(&self, unit: &UnitView) -> bool {
+        self.core().view().is_some() && self.placement(EventSubject::Unit(unit), false)
     }
 
     fn placement(&self, subject: EventSubject<'_>, default: bool) -> bool {
@@ -70,7 +74,9 @@ impl EventSight<'_> {
     }
 
     fn fact(&self, event: &EventKind, subject: EventSubject<'_>) -> bool {
-        let view = self.core().view().expect("allows checks the view");
+        let Some(view) = self.core().view() else {
+            return false;
+        };
         let told = view.viewer.is_some();
         let shown = |default| told || self.placement(subject, default);
         match *event {
@@ -94,6 +100,7 @@ impl EventSight<'_> {
                 shown(self.sees_unit(unit))
             }
             EventKind::RuneBottled { unit, .. } => {
+                // Without a selected side, even disabling fog does not expose private inventory.
                 (told
                     || self
                         .fog
@@ -103,7 +110,7 @@ impl EventSight<'_> {
             }
             EventKind::ItemBought { slot, .. } => {
                 (told
-                    || self.fog.team.is_none_or(|team| {
+                    || self.fog.team.is_some_and(|team| {
                         view.players
                             .iter()
                             .any(|player| player.slot == slot && player.team == team)
@@ -120,6 +127,7 @@ impl EventSight<'_> {
                     subject,
                     told || self.sees_unit(unit)
                         || self.unit(unit).map_or_else(
+                            // An unknown unit is public only if the roster names a player's body.
                             || view.players.iter().any(|player| player.unit == Some(unit)),
                             |unit| bota_core::kind_def(unit.kind).death_announced,
                         ),
