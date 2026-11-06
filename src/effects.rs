@@ -14,7 +14,7 @@ use crate::manifest::Manifest;
 use crate::map::Ground;
 use crate::particles::{Library, Playing};
 use crate::session::Session;
-use crate::units::{Attachments, Unit, UnitIndex};
+use crate::units::{Attachments, Rig, Unit, UnitIndex};
 
 /// How high missiles fly over the ground, in world units.
 const FLIGHT: f32 = 110.0;
@@ -90,6 +90,7 @@ pub(crate) struct Shooters<'w, 's> {
         ),
     >,
     places: Query<'w, 's, &'static GlobalTransform>,
+    rigs: Query<'w, 's, &'static Rig>,
 }
 
 impl Shooters<'_, '_> {
@@ -119,14 +120,34 @@ impl Shooters<'_, '_> {
 
     /// Where the node `name` of unit `id`'s model is.
     pub(crate) fn node(&self, id: EntityId, name: &str) -> Option<Vec3> {
+        self.node_frame(id, name).map(|frame| frame.translation())
+    }
+
+    /// The drawn attachment's full frame, including its animated orientation.
+    pub(crate) fn node_frame(&self, id: EntityId, name: &str) -> Option<GlobalTransform> {
         let (_, _, attachments) = self.units.get(*self.index.0.get(&id)?).ok()?;
-        let at = self
-            .places
-            .get(attachments?.node(name)?)
-            .ok()?
-            .translation();
-        // A node whose transform has not been propagated yet sits at the world's origin.
-        (at != Vec3::ZERO).then_some(at)
+        let frame = self.places.get(attachments?.node(name)?).ok()?;
+        (frame.translation() != Vec3::ZERO).then_some(*frame)
+    }
+
+    /// Source's uniform object scale, from the scene actually drawn, before metre conversion.
+    pub(crate) fn object_scale(&self, id: EntityId) -> f32 {
+        self.index
+            .0
+            .get(&id)
+            .and_then(|entity| self.rigs.get(*entity).ok())
+            .and_then(|rig| self.places.get(rig.0).ok())
+            .map_or(1.0, |frame| {
+                frame.to_scale_rotation_translation().0.abs().max_element()
+                    / crate::map::UNITS_PER_METRE
+            })
+    }
+
+    pub(crate) fn facing(&self, id: EntityId) -> Option<f32> {
+        self.units
+            .get(*self.index.0.get(&id)?)
+            .ok()
+            .map(|(unit, _, _)| unit.facing)
     }
 
     /// Where a missile hits unit `id`.

@@ -73,6 +73,11 @@ pub fn pre_emit(op: &PreEmission, scene: &Scene<'_>, call: &mut PreCall<'_>) -> 
 /// Runs one of the pre-emission operators of the town portal, the Glyph and the trails.
 fn pre_emit_more(op: &PreEmission, scene: &Scene<'_>, call: &mut PreCall<'_>) {
     match op {
+        PreEmission::SetControlPointFromObjectScale { input, output } => {
+            let mut point = scene.control_points[output.index()];
+            point.position = Vec3::splat(scene.control_points[input.index()].object_scale);
+            call.writes.push((Target::Own, output.index(), point));
+        }
         PreEmission::SetSingleControlPointPosition {
             control_point,
             position,

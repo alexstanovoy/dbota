@@ -5,7 +5,7 @@
 
 use std::sync::Arc;
 
-use bevy::math::Vec3;
+use bevy::math::{Mat3, Vec3};
 use heatel::particle::{Emitter, EndCap, FloatInput, Function, Timing};
 
 use super::eval::{ControlPoint, HeightAt, Scene, float};
@@ -206,10 +206,27 @@ impl Instance {
             node.placed |= 1 << cp;
             let point = &mut node.control_points[cp];
             point.position = position;
+            point.object_scale = 1.0;
             if jump || first {
                 point.previous = position;
             }
             point.face(forward);
+        }
+    }
+
+    /// Binds a model's full attachment frame, including roll and its object's scale.
+    pub fn bind_control_point(
+        &mut self,
+        cp: usize,
+        position: Vec3,
+        basis: Mat3,
+        object_scale: f32,
+    ) {
+        self.set_control_point(cp, position, Vec3::ZERO, false);
+        for node in &mut self.nodes {
+            let point = &mut node.control_points[cp];
+            (point.forward, point.left, point.up) = (basis.x_axis, basis.y_axis, basis.z_axis);
+            point.object_scale = object_scale;
         }
     }
 

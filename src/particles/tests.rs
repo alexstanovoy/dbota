@@ -566,3 +566,224 @@ fn the_fountain_shoots_its_own_missile() {
     let patience = std::time::Duration::from_secs(20);
     client.within(patience, "the fountain's missile drawn", |c| drawn(c));
 }
+
+#[test]
+fn flagbearer_banner_particles_copy_their_attachment_orientation_and_object_scale() {
+    let effect = flagbearer_banner_definition();
+    let mut instance = Instance::new(effect, 1);
+    instance.set_control_point(0, Vec3::new(100.0, 200.0, 50.0), Vec3::Y, true);
+    instance.advance(0.02, None);
+    let node = &instance.nodes[0];
+    assert_eq!(
+        node.control_points[7].position,
+        Vec3::ONE,
+        "an unbound object has unit scale"
+    );
+    assert!(!node.parts.is_empty());
+    assert!((node.parts.scalars[store::YAW][0] - std::f32::consts::FRAC_PI_2).abs() < 0.00001);
+    assert_eq!(
+        node.parts.vectors[store::POSITION][0],
+        Vec3::new(80.0, 207.0, 50.0)
+    );
+    instance.nodes[0].parts.vectors[store::NORMAL][0] = Vec3::X;
+    instance.bind_control_point(
+        0,
+        Vec3::new(300.0, 400.0, 75.0),
+        bevy::math::Mat3::from_rotation_z(std::f32::consts::PI),
+        0.93,
+    );
+    instance.advance(0.02, None);
+    let node = &instance.nodes[0];
+    assert_eq!(node.control_points[7].position, Vec3::splat(0.93));
+    assert_eq!(
+        node.parts.vectors[store::POSITION][0],
+        Vec3::new(280.0, 407.0, 75.0)
+    );
+    assert_eq!(
+        node.parts.vectors[store::PREVIOUS][0],
+        node.parts.vectors[store::POSITION][0]
+    );
+    assert!((node.parts.scalars[store::YAW][0].abs() - std::f32::consts::PI).abs() < 0.00001);
+    assert!((node.parts.vectors[store::NORMAL][0] - Vec3::Y).length() < 0.00001);
+}
+
+fn flagbearer_banner_definition() -> Arc<Effect> {
+    let mut definition = system(
+        1.0,
+        vec![
+            always(Operator::RemapOrientationToRotations {
+                transform: Transform::point(point(0)),
+                rotation_offset: [0.0; 3],
+                use_quaternion: false,
+                write_normal: false,
+            }),
+            always(Operator::SetToControlPoint {
+                control_point: point(0),
+                offset: [-20.0, 7.0, 0.0],
+                local: false,
+            }),
+            always(Operator::NormalLock {
+                control_point: point(0),
+            }),
+        ],
+        Vec::new(),
+        Vec::new(),
+    );
+    definition.initializers = vec![always(sphere_at(0))];
+    definition.pre_emission = vec![always(
+        heatel::particle::PreEmission::SetControlPointFromObjectScale {
+            input: point(0),
+            output: point(7),
+        },
+    )];
+    Arc::new(Effect::new(&[("banner".to_owned(), definition)]))
+}
+
+#[test]
+fn flagbearer_angle_offsets_compose_locally_at_both_pitch_gimbal_locks() {
+    for pitch in [-std::f32::consts::FRAC_PI_2, std::f32::consts::FRAC_PI_2] {
+        let instance = flagbearer_particle_instance(
+            vec![always(Operator::RemapOrientationToRotations {
+                transform: Transform::point(point(0)),
+                rotation_offset: [0.0, 90.0, 0.0],
+                use_quaternion: false,
+                write_normal: true,
+            })],
+            bevy::math::Quat::from_rotation_y(pitch),
+        );
+        // A local quarter-turn about Z sends forward to Y, which either pitch leaves at Y.
+        let normal = instance.nodes[0].parts.vectors[store::NORMAL][0];
+        assert!(
+            (normal - Vec3::Y).length() < 0.00001,
+            "pitch {pitch}: {normal:?}"
+        );
+    }
+}
+
+#[test]
+fn flagbearer_quaternion_offsets_read_roll_pitch_yaw_and_write_all_rotation_columns() {
+    for (offset, forward, up) in [
+        ([90.0, 0.0, 0.0], Vec3::X, Vec3::NEG_Y),
+        ([0.0, 90.0, 0.0], Vec3::NEG_Z, Vec3::X),
+        ([0.0, 0.0, 90.0], Vec3::Y, Vec3::Z),
+    ] {
+        let instance = flagbearer_particle_instance(
+            vec![always(Operator::RemapOrientationToRotations {
+                transform: Transform::point(point(0)),
+                rotation_offset: offset,
+                use_quaternion: true,
+                write_normal: false,
+            })],
+            bevy::math::Quat::IDENTITY,
+        );
+        let parts = &instance.nodes[0].parts;
+        let rotation = bevy::math::Quat::from_euler(
+            bevy::math::EulerRot::ZYX,
+            parts.scalar(store::slot(Field::YAW), 0),
+            parts.scalar(store::slot(Field::PITCH), 0),
+            parts.scalar(store::slot(Field::ROLL), 0),
+        );
+        assert!(
+            (rotation * Vec3::X - forward).length() < 0.00001,
+            "{offset:?}"
+        );
+        assert!((rotation * Vec3::Z - up).length() < 0.00001, "{offset:?}");
+    }
+}
+
+#[test]
+fn flagbearer_local_control_point_offsets_snap_position_and_previous_position() {
+    let instance = flagbearer_particle_instance(
+        vec![always(Operator::SetToControlPoint {
+            control_point: point(0),
+            offset: [-20.0, 7.0, 0.0],
+            local: true,
+        })],
+        bevy::math::Quat::from_rotation_z(std::f32::consts::FRAC_PI_2),
+    );
+    let parts = &instance.nodes[0].parts;
+    assert!((parts.vectors[store::POSITION][0] - Vec3::new(3.0, 0.0, 30.0)).length() < 0.00001);
+    assert_eq!(
+        parts.vectors[store::PREVIOUS][0],
+        parts.vectors[store::POSITION][0]
+    );
+}
+
+#[test]
+fn flagbearer_normal_lock_keeps_a_unit_normal_for_a_particle_born_halfway_through_the_step() {
+    let mut instance = flagbearer_particle_instance(
+        vec![always(Operator::NormalLock {
+            control_point: point(0),
+        })],
+        bevy::math::Quat::IDENTITY,
+    );
+    let node = &mut instance.nodes[0];
+    node.parts.vectors[store::NORMAL][0] = Vec3::X;
+    node.parts.scalars[store::CREATION][0] = node.age + 0.01;
+    instance.bind_control_point(
+        0,
+        Vec3::new(10.0, 20.0, 30.0),
+        bevy::math::Mat3::from_rotation_z(std::f32::consts::FRAC_PI_2),
+        1.0,
+    );
+    instance.advance(0.02, None);
+    let normal = instance.nodes[0].parts.vectors[store::NORMAL][0];
+    assert!(
+        (normal.length() - 1.0).abs() < 0.00001,
+        "normal length: {normal:?}"
+    );
+    let diagonal = Vec3::new(
+        std::f32::consts::FRAC_1_SQRT_2,
+        std::f32::consts::FRAC_1_SQRT_2,
+        0.0,
+    );
+    assert!(
+        (normal - diagonal).length() < 0.00001,
+        "half turn: {normal:?}"
+    );
+}
+
+#[test]
+fn flagbearer_absolute_normal_and_delta_lock_obey_the_definition_order() {
+    let mut instance = flagbearer_particle_instance(
+        vec![
+            always(Operator::RemapOrientationToRotations {
+                transform: Transform::point(point(0)),
+                rotation_offset: [0.0; 3],
+                use_quaternion: true,
+                write_normal: true,
+            }),
+            always(Operator::NormalLock {
+                control_point: point(0),
+            }),
+        ],
+        bevy::math::Quat::IDENTITY,
+    );
+    instance.bind_control_point(
+        0,
+        Vec3::new(10.0, 20.0, 30.0),
+        bevy::math::Mat3::from_rotation_z(std::f32::consts::FRAC_PI_2),
+        1.0,
+    );
+    instance.advance(0.02, None);
+    // The writer sets Y, then the lock applies a further quarter-turn: combining the two
+    // operations is permitted, and order matters. Neither silently disables the other.
+    assert!((instance.nodes[0].parts.vectors[store::NORMAL][0] - Vec3::NEG_X).length() < 0.00001);
+}
+
+fn flagbearer_particle_instance(
+    operators: Vec<Function<Operator>>,
+    rotation: bevy::math::Quat,
+) -> Instance {
+    let definition = bare(1.0, vec![sphere_at(0)], operators, Vec::new(), Vec::new());
+    let effect = Arc::new(Effect::new(&[("banner".to_owned(), definition)]));
+    let mut instance = Instance::new(effect, 1);
+    instance.bind_control_point(
+        0,
+        Vec3::new(10.0, 20.0, 30.0),
+        bevy::math::Mat3::from_quat(rotation),
+        1.0,
+    );
+    instance.advance(0.02, None);
+    instance
+}

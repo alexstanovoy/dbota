@@ -23,7 +23,10 @@ mod store;
 #[cfg(test)]
 mod tests;
 
+#[cfg(test)]
+pub(crate) use library::Effect;
 pub use library::Library;
+pub(crate) use plugin::Simulation;
 pub use plugin::{Handle, Loaded, Playing};
 #[cfg(test)]
 pub(crate) use render::ParticleFrame;

@@ -74,6 +74,24 @@ pub(crate) fn attach_point(
     }
 }
 
+/// The model attachment's Source axes, as well as its place, follow the drawn pose.
+fn attach_basis(bodies: &Shooters, unit: &UnitView, attach: &Attach) -> Mat3 {
+    if let Attach::Node(name) = attach
+        && let Some(frame) = bodies.node_frame(unit.id, name)
+    {
+        let rotation = frame.to_scale_rotation_translation().1;
+        return Mat3::from_cols(
+            place_of(rotation * Vec3::NEG_Z),
+            place_of(rotation * Vec3::NEG_X),
+            place_of(rotation * Vec3::Y),
+        );
+    }
+    let facing = bodies
+        .facing(unit.id)
+        .unwrap_or(f32::from(unit.facing.brads) * std::f32::consts::TAU / 65536.0);
+    Mat3::from_rotation_z(facing)
+}
+
 /// Whether every node of the model a line puts its effect at, or feeds it, can be told yet: a body
 /// whose scene has not been drawn once has none, and an effect started then would jump from the
 /// origin to the node and fly off with the speed of the jump.

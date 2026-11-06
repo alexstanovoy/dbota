@@ -77,6 +77,8 @@ pub struct ControlPoint {
     pub forward: Vec3,
     pub left: Vec3,
     pub up: Vec3,
+    /// Scale of the model object bound here, or one when no object is bound.
+    pub object_scale: f32,
 }
 
 impl Default for ControlPoint {
@@ -87,6 +89,7 @@ impl Default for ControlPoint {
             forward: Vec3::X,
             left: Vec3::Y,
             up: Vec3::Z,
+            object_scale: 1.0,
         }
     }
 }

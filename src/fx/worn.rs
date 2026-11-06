@@ -4,14 +4,15 @@
 
 use std::collections::HashMap;
 
-use bevy::prelude::*;
+use bevy::{prelude::*, transform::TransformSystems};
 use bota_core::rules::TICKS_PER_SECOND;
 use bota_proto::{EntityId, UnitView};
 
 use super::line::{Attach, Fx, Trigger, Whose};
 use super::rules::{Rule, Rules, Subject};
 use super::{
-    Feeds, PLACE, Stage, attach_point, carried, feed, item_feeds, nodes_ready, on_ground, place_of,
+    Feeds, PLACE, Stage, attach_basis, attach_point, carried, feed, item_feeds, nodes_ready,
+    on_ground, place_of,
 };
 use crate::effects::Shooters;
 use crate::fog::FogGrid;
@@ -40,8 +41,11 @@ struct Wearing {
 }
 
 pub(super) fn plugin(app: &mut App) {
-    app.init_resource::<Worn>()
-        .add_systems(Update, worn.after(crate::units::Placed));
+    app.init_resource::<Worn>().add_systems(
+        PostUpdate,
+        worn.after(TransformSystems::Propagate)
+            .before(crate::particles::Simulation),
+    );
 }
 
 /// What a unit holds of a rule's subject.
@@ -271,7 +275,12 @@ fn wear_unit(
             .or_insert_with(|| begin(fx, unit.id, at, (scene.library, &mut *playing), stage));
         sound(fx, unit.id, at, handle, stage);
         if let Some(instance) = handle.particle.and_then(|h| playing.get_mut(h)) {
-            instance.set_control_point(PLACE, place_of(at), Vec3::ZERO, false);
+            instance.bind_control_point(
+                PLACE,
+                place_of(at),
+                attach_basis(scene.bodies, unit, &fx.attach),
+                scene.bodies.object_scale(unit.id),
+            );
         }
         let place = |attach: &Attach| attach_point(scene.ground, scene.bodies, unit, attach);
         feed(fx, handle.particle, playing, &held.feeds, &place);

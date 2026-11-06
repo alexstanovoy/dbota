@@ -172,8 +172,7 @@ model hero.pudge.head models/heroes/pudge/hair.vmdl_c models/hero/pudge_head/pud
 model hero.pudge.belt models/heroes/pudge/belt.vmdl_c models/hero/pudge_belt/pudge_belt.glb attach=hero.pudge.model
 
 # --- Lane creeps (npc_units.txt; attack rate 1.0; attack point melee 0.467 s, ranged 0.5 s)
-# The flagbearers are the melee meshes with their own animations; Dota adds the banner at runtime on
-# attachment attach_banner (bone Root_0, offset 0.898 0.915 0.089 in, angles -12.6 10.1 1.5); it is not exported.
+# Flagbearers carry a model particle at attach_banner; their Inspiration ring is a separate particle.
 model creep.radiant.melee.model models/creeps/lane_creeps/creep_radiant_melee/radiant_melee.vmdl_c models/creep/radiant_melee/radiant_melee.glb anims=idle,run,attack,attack2,death,stun model_scale=0.93
 clip creep.radiant.melee.model idle idle 1.433
 clip creep.radiant.melee.model run run 0.800
@@ -1925,3 +1924,13 @@ label resource/localization/dota_english.txt DOTA_InventoryMenu_LockCombine
 label resource/localization/dota_english.txt DOTA_InventoryMenu_UnlockCombine
 label resource/localization/dota_english.txt DOTA_InventoryMenu_MarkForSell
 label resource/localization/dota_english.txt DOTA_InventoryMenu_UnmarkForSell
+
+# 7.41f particles/props/creep_banners: the banner preview binds attach_banner on the lane model.
+particle creep.radiant.banner particles/props/creep_banners/radiant_creep_banner.vpcf_c particles/creep_radiant_banner.json
+particle creep.dire.banner particles/props/creep_banners/dire_creep_banner.vpcf_c particles/creep_dire_banner.json
+particle creep.radiant.inspiration particles/props/creep_banners/radiant_creep_banner_ring.vpcf_c particles/creep_radiant_inspiration.json
+particle creep.dire.inspiration particles/props/creep_banners/dire_creep_banner_ring.vpcf_c particles/creep_dire_inspiration.json
+fx unit.npc_dota_creep_goodguys_flagbearer.worn at=unit attach=attach_banner particle=creep.radiant.banner
+fx unit.npc_dota_creep_badguys_flagbearer.worn at=unit attach=attach_banner particle=creep.dire.banner
+fx unit.npc_dota_creep_goodguys_flagbearer.worn at=unit particle=creep.radiant.inspiration
+fx unit.npc_dota_creep_badguys_flagbearer.worn at=unit particle=creep.dire.inspiration

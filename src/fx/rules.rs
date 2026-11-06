@@ -41,6 +41,10 @@ impl Units {
             return Some(Units::Hero(HeroId(id)));
         }
         let lane = match npc {
+            "npc_dota_creep_goodguys_flagbearer" => {
+                Some((UnitKind::CreepFlagbearer, Team::Radiant))
+            }
+            "npc_dota_creep_badguys_flagbearer" => Some((UnitKind::CreepFlagbearer, Team::Dire)),
             "npc_dota_creep_goodguys_melee" => Some((UnitKind::CreepMelee, Team::Radiant)),
             "npc_dota_creep_goodguys_ranged" => Some((UnitKind::CreepRanged, Team::Radiant)),
             "npc_dota_goodguys_siege" => Some((UnitKind::CreepSiege, Team::Radiant)),

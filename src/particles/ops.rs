@@ -2,7 +2,7 @@
 
 use std::f32::consts::TAU;
 
-use bevy::math::Vec3;
+use bevy::math::{EulerRot, Mat3, Quat, Vec3};
 use heatel::particle::{
     ControlPointsFromParticles, CpOffset, Field, Force, Operator, Oscillate, PositionLock,
     VectorInput,
@@ -31,7 +31,7 @@ pub enum Target {
 /// What an operator keeps from one step to the next, from the effect's start.
 #[derive(Clone, Debug, Default)]
 pub struct Memory {
-    /// Where the followed transform was (`C_OP_PositionLock`).
+    /// Where the followed transform was (`C_OP_PositionLock`, `C_OP_NormalLock`).
     pub lock: Option<ControlPoint>,
     /// The parent's particle copied next (`C_OP_InheritFromParentParticles`).
     pub parent_index: i32,
@@ -110,6 +110,35 @@ pub fn operate(op: &Operator, scene: &Scene<'_>, parts: &mut Particles, call: &m
                 parts,
                 *max_constraint_passes,
             );
+        }
+        Operator::RemapOrientationToRotations {
+            transform,
+            rotation_offset,
+            use_quaternion,
+            write_normal,
+        } => {
+            orientation_rotations(
+                scene,
+                parts,
+                transform,
+                *rotation_offset,
+                *use_quaternion,
+                *write_normal,
+            );
+        }
+        Operator::SetToControlPoint {
+            control_point,
+            offset,
+            local,
+        } => {
+            let frame = scene.control_points[control_point.index()];
+            let offset = Vec3::from(*offset);
+            let position = frame.position + if *local { frame.rotate(offset) } else { offset };
+            parts.vectors[store::POSITION].fill(position);
+            parts.vectors[store::PREVIOUS].fill(position);
+        }
+        Operator::NormalLock { control_point } => {
+            normal_lock(scene, parts, call, control_point.index());
         }
         Operator::PositionLock(lock) => position_lock(lock, scene, parts, call),
         Operator::SpinUpdate => {
@@ -1267,5 +1296,59 @@ fn ramp_scalar_linear(
         let v = parts.scalar(slot, i)
             + between(seed, call.salt, rate[0], rate[1]) * scene.dt * call.strength;
         parts.set_scalar(slot, i, v.clamp(min, max));
+    }
+}
+
+/// Source's pitch/yaw/roll are rotations about Y/Z/X, composed Z then Y then X.
+fn orientation_rotations(
+    scene: &Scene<'_>,
+    parts: &mut Particles,
+    transform: &heatel::particle::Transform,
+    offset_degrees: [f32; 3],
+    quaternion_order: bool,
+    write_normal: bool,
+) {
+    let frame = scene.transform_at(transform, scene.age);
+    let basis = Mat3::from_cols(frame.forward, frame.left, frame.up);
+    let base = Quat::from_mat3(&basis);
+    // VRF Particles/Utils/TransformOrientationMath.cs:28-37, revision
+    // 81f3ff8daf4a5d69862b0e0cda1f981e6205890d, gives the two stored component orders.
+    // Its angle path adds Euler values; compose in both modes here so gimbal lock
+    // cannot change which local axes the offset turns about.
+    let [x, y, z] = offset_degrees.map(f32::to_radians);
+    let (yaw, pitch, roll) = if quaternion_order {
+        (z, y, x)
+    } else {
+        (y, x, z)
+    };
+    let rotation = base * Quat::from_euler(EulerRot::ZYX, yaw, pitch, roll);
+    if write_normal {
+        parts.vectors[store::NORMAL].fill(rotation * Vec3::X);
+    } else {
+        let (yaw, pitch, roll) = rotation.to_euler(EulerRot::ZYX);
+        parts.scalars[store::PITCH].fill(pitch);
+        parts.scalars[store::YAW].fill(yaw);
+        parts.scalars[store::ROLL].fill(roll);
+    }
+}
+
+/// Follow a control point's change of orientation, including only a new particle's part of a step.
+fn normal_lock(scene: &Scene<'_>, parts: &mut Particles, call: &mut Call<'_>, cp: usize) {
+    let frame = scene.control_points[cp];
+    let previous = call.memory.lock.replace(frame).unwrap_or(frame);
+    let matrix = |point: ControlPoint| Mat3::from_cols(point.forward, point.left, point.up);
+    let delta = Quat::from_mat3(&(matrix(frame) * matrix(previous).transpose())).normalize();
+    // Operators run in definition order. A preceding write_normal has already
+    // replaced the normal; this lock then rotates that value too. Do not silently
+    // disable either operation when a definition deliberately combines them.
+    for at in 0..parts.len() {
+        let age = (scene.age - parts.scalars[store::CREATION][at]).max(0.0);
+        let share = if scene.dt > 0.0 {
+            (age / scene.dt).min(1.0)
+        } else {
+            0.0
+        };
+        let normal = &mut parts.vectors[store::NORMAL][at];
+        *normal = (Quat::IDENTITY.slerp(delta, share) * *normal).normalize_or_zero();
     }
 }

@@ -179,13 +179,20 @@ impl Playing {
 #[derive(SystemSet, Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct Loaded;
 
+/// Particle simulation after the frame's world and attachment transforms are ready.
+#[derive(SystemSet, Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct Simulation;
+
 pub fn plugin(app: &mut App) {
     app.init_resource::<Playing>()
         .add_systems(
             Update,
             load.run_if(crate::loading::requested).in_set(Loaded),
         )
-        .add_systems(PostUpdate, tick.after(TransformSystems::Propagate));
+        .add_systems(
+            PostUpdate,
+            tick.after(TransformSystems::Propagate).in_set(Simulation),
+        );
 }
 
 /// Reads every particle file the manifest lists; what does not read is left out, said once.

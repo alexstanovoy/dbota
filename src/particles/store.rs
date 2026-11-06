@@ -29,6 +29,7 @@ pub const CREATION: usize = 5;
 pub const SEQUENCE: usize = 6;
 pub const TRAIL_LENGTH: usize = 7;
 pub const YAW: usize = 8;
+pub const PITCH: usize = 12;
 pub const FORCE_SCALE: usize = 15;
 
 pub const POSITION: usize = 0;
@@ -52,7 +53,7 @@ pub fn slot(field: Field) -> Slot {
         13 => Slot::Scalar(9),
         16 => Slot::Scalar(10),
         18 => Slot::Scalar(11),
-        20 => Slot::Scalar(12),
+        20 => Slot::Scalar(PITCH),
         26 => Slot::Scalar(13),
         27 => Slot::Scalar(14),
         34 => Slot::Scalar(FORCE_SCALE),
