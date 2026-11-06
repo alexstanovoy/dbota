@@ -56,6 +56,7 @@
 #           [cp<N>=<feed>]... [whose=own|foreign] [stacks=<n>|<from>..<to>] [side=radiant|dire]
 #           an effect bound to a fact of the game by Dota's name for it (src/fx.rs). The importer passes these lines on; the client reads them.
 #           subject: item.<ids.txt item name> | ability.<ids.txt ability name> | modifier.<Dota modifier name> |
+#                    effect.<bota effect key that is no Dota modifier: bota_shrine_ready> |
 #                    unit.<npc_units.txt name, or npc_dota_hero_<hero>> | hero.<ids.txt hero name> |
 #                    rune.<rune kind by its art's name: water bounty haste doubledamage arcane regeneration
 #                    illusion invisibility shield> (an item, ability or modifier name may end in * for every name it starts)
@@ -69,7 +70,8 @@
 #                    took effect on a hero, at once or out of a Bottle) | store (a rune was put into the item: the Bottle) |
 #                    pluck (a hero plucked a lotus from the unit: a Lotus Pool) | captured (a side took the unit over: an
 #                    Outpost) | channelled (a hero channels at the unit the ability that works it: an Outpost captured, a
-#                    Watcher lit; from the channel's start until it ends)
+#                    Watcher lit; from the channel's start until it ends) | gathering (a side runs the unit's countdown by
+#                    standing near it, forward or back: a Shrine of Wisdom gathered, a lotus plucked from a Lotus Pool)
 #           at: caster (where the user, or the hero taking a rune, stands after) | caster_before (where it stood before) | point (the spot the
 #               use was aimed at, the throw came down, the rune appeared) | unit (the unit the fact is about: the wearer, or the rune lying, the one struck
 #               or mended, the one dead, the pool plucked) | flight (each missile on its own, from its source to where it is) | chain (all the
@@ -83,7 +85,8 @@
 #                 of its charges the item held) | origin, overhead, attach_<node> (a point of the unit, followed) | x,y,z |
 #                 caster (where the user stands: the hero that plucked) | side (the side the unit is held for: 0 the
 #                 Radiant, 1 the Dire; an Outpost's own, the side a Watcher is lit for) | sight (how far the unit sees
-#                 now, or sees for the side it is lit for, in x)
+#                 now, or sees for the side it is lit for, in x) | gathered:<x,y,z>[+<x,y,z>] (the first vector times the
+#                 share of the unit's countdown run, 0 to 1, plus the second)
 #           whose: for a worn line, only the effects the wearer put on itself (own) or another put on it (foreign)
 #           stacks: for a worn line, only while the effect holds that many
 #           side: for a worn line, only while the unit is held for that side
@@ -498,6 +501,9 @@ particle outpost.channel particles/world_outpost/world_outpost_channel.vpcf_c pa
 particle outpost.captured particles/world_outpost/world_outpost_channel_finish.vpcf_c particles/world_outpost_channel_finish.json
 particle watcher.controlled particles/econ/items/items_fx/lantern_of_sight_controlled.vpcf_c particles/lantern_of_sight_controlled.json
 particle watcher.channel particles/econ/items/items_fx/lantern_of_sight_channeling.vpcf_c particles/lantern_of_sight_channeling.json
+particle shrine.ambient particles/base_static/experience_shrine_ambient.vpcf_c particles/experience_shrine_ambient.json
+particle shrine.active particles/base_static/experience_shrine_active.vpcf_c particles/experience_shrine_active.json
+particle lotus_pool.gathering particles/econ/generic/generic_progress_meter/generic_progress_circle.vpcf_c particles/generic_progress_circle.json
 particle lotus_pool.pluck particles/world_fountain_of_life/fol_active.vpcf_c particles/fol_active.json
 
 # --- Heroes' default ambient effects (items_game.txt "<hero>'s Ambient Effects", the item of slot ambient_effects)
@@ -716,6 +722,13 @@ fx unit.npc_dota_watch_tower.captured at=unit attach=attach_fx particle=outpost.
 fx modifier.modifier_lamp_on.worn at=unit particle=watcher.controlled sound=sound.watcher.on cp1=attach_lantern_top_eyes_a cp2=attach_lantern_top_eyes_b cp3=attach_lantern_top_eyes_c cp4=attach_lantern_top_eyes_d cp5=attach_lantern_bot_eyes_a cp6=attach_lantern_bot_eyes_b cp7=attach_lantern_bot_eyes_c cp8=attach_lantern_bot_eyes_d cp21=attach_lantern_top_eyes_a_end cp22=attach_lantern_top_eyes_b_end cp23=attach_lantern_top_eyes_c_end cp24=attach_lantern_top_eyes_d_end cp25=attach_lantern_bot_eyes_a_end cp26=attach_lantern_bot_eyes_b_end cp27=attach_lantern_bot_eyes_c_end cp28=attach_lantern_bot_eyes_d_end cp11=sight cp12=side
 fx modifier.modifier_lamp_off.worn at=unit sound=sound.watcher.off
 fx unit.npc_dota_lantern.channelled at=unit particle=watcher.channel sound=sound.watcher.channel
+# A Shrine of Wisdom (the game's code, the XP fountain building): its glow while it stands; ready, the ring on the ground at
+# its radius (control point 1) that fills with the share a side has gathered (control point 4's y).
+fx unit.npc_dota_xp_fountain.worn at=unit particle=shrine.ambient cp2=attach_fx
+fx effect.bota_shrine_ready.worn at=unit particle=shrine.active cp1=300,0,0 cp2=attach_fx cp4=gathered:0,1,0
+# A Lotus Pool (the game's code, the lotus pool building): while a hero plucks, Dota's progress circle runs out from the
+# middle to the pool's 350 as the pluck's countdown runs (control point 1: radius, thickness and count scale, speed).
+fx unit.npc_dota_lotus_pool.gathering at=unit particle=lotus_pool.gathering cp1=gathered:350,0,0+0,1,0
 fx item.famango.use at=caster particle=item.mango.active sound=sound.item.mango
 fx item.great_famango.use at=caster particle=item.mango.active sound=sound.item.mango
 fx item.greater_famango.use at=caster particle=item.mango.active sound=sound.item.mango

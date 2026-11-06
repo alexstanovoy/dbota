@@ -39,6 +39,9 @@ pub enum Trigger {
     /// While a hero channels at the unit the ability that works it (an Outpost captured, a
     /// Watcher lit).
     Channelled,
+    /// While a side runs the unit's countdown by standing near it (a Shrine of Wisdom gathered, a
+    /// lotus plucked from a Lotus Pool), forward or back.
+    Gathering,
     /// While a missile of the ability or item flies.
     Flies,
 }
@@ -96,6 +99,8 @@ pub enum Feed {
     Side,
     /// How far the unit sees now, or sees for the side it is lit for, in x.
     Sight,
+    /// The share of the unit's countdown run (0 to 1) times the first vector, plus the second.
+    Gathered(Vec3, Vec3),
 }
 
 /// Whose effect a worn line is about.
@@ -161,6 +166,7 @@ impl Fx {
             "held" => Trigger::Held,
             "casting" => Trigger::Casting,
             "channelled" => Trigger::Channelled,
+            "gathering" => Trigger::Gathering,
             "flies" => Trigger::Flies,
             other => return Err(format!("no trigger '{other}'")),
         };
@@ -219,7 +225,8 @@ impl Fx {
             | Trigger::Worn
             | Trigger::Held
             | Trigger::Casting
-            | Trigger::Channelled => &[At::Unit],
+            | Trigger::Channelled
+            | Trigger::Gathering => &[At::Unit],
             Trigger::Flies => &[At::Flight, At::Chain],
         };
         if !places.contains(&self.at) {
@@ -310,15 +317,24 @@ fn feed_of(value: &str) -> Result<Feed, String> {
         "side" => Feed::Side,
         "sight" => Feed::Sight,
         place if attach_of(place).is_ok() => Feed::Place(attach_of(place)?),
-        _ => {
-            let parts: Vec<f32> = value
-                .split(',')
-                .map(|n| n.parse().map_err(|_| format!("no feed '{value}'")))
-                .collect::<Result<_, _>>()?;
-            let [x, y, z] = parts[..] else {
-                return Err(format!("no feed '{value}'"));
-            };
-            Feed::Vector(Vec3::new(x, y, z))
-        }
+        _ => match value.strip_prefix("gathered:") {
+            Some(vectors) => {
+                let (share, plus) = vectors.split_once('+').unwrap_or((vectors, "0,0,0"));
+                Feed::Gathered(vector_of(share)?, vector_of(plus)?)
+            }
+            None => Feed::Vector(vector_of(value)?),
+        },
     })
+}
+
+/// `x,y,z`.
+fn vector_of(value: &str) -> Result<Vec3, String> {
+    let parts: Vec<f32> = value
+        .split(',')
+        .map(|n| n.parse().map_err(|_| format!("no feed '{value}'")))
+        .collect::<Result<_, _>>()?;
+    let [x, y, z] = parts[..] else {
+        return Err(format!("no feed '{value}'"));
+    };
+    Ok(Vec3::new(x, y, z))
 }

@@ -32,6 +32,7 @@ mod fog_pov;
 mod fog_producers;
 mod fx;
 mod game_audio_end;
+mod gathering;
 mod ground_items;
 mod ground_targets;
 pub(crate) mod harness;

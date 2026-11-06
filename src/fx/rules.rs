@@ -115,6 +115,14 @@ impl Rule {
             "item" => Subject::Items(ids("item").into_iter().map(ItemId).collect()),
             "ability" => Subject::Abilities(ids("ability").into_iter().map(AbilityId).collect()),
             "modifier" => Subject::Effects(ids("modifier").into_iter().map(EffectId).collect()),
+            // An effect of bota's own that is no modifier of Dota's: a Shrine ready.
+            "effect" => Subject::Effects(
+                bota_core::EFFECTS
+                    .iter()
+                    .filter(|effect| !effect.retired && effect.key == name)
+                    .map(|effect| effect.id)
+                    .collect(),
+            ),
             "unit" => Subject::Units(Units::of(name, manifest).ok_or("no such unit")?),
             "hero" => {
                 let npc = format!("npc_dota_hero_{name}");
@@ -157,7 +165,11 @@ fn subject_fits(fx: &Fx, subject: &Subject) -> Result<(), String> {
         Trigger::Cast | Trigger::Casting => matches!(subject, Subject::Abilities(_)),
         Trigger::Land | Trigger::Flies => items_or_abilities,
         Trigger::Hit => !matches!(subject, Subject::Effects(_) | Subject::Runes(_)),
-        Trigger::Died | Trigger::Pluck | Trigger::Captured | Trigger::Channelled => {
+        Trigger::Died
+        | Trigger::Pluck
+        | Trigger::Captured
+        | Trigger::Channelled
+        | Trigger::Gathering => {
             matches!(subject, Subject::Units(_))
         }
         Trigger::Spawn | Trigger::Activate => matches!(subject, Subject::Runes(_)),

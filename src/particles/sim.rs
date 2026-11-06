@@ -630,6 +630,15 @@ impl Node {
                     let start = state.time_base + noise.start_time.literal().unwrap_or(0.0);
                     duration == 0.0 || self.age - self.last_step <= start + duration
                 }
+                Emitter::Maintain {
+                    duration,
+                    start_time,
+                    ..
+                } => {
+                    let duration = duration.literal().unwrap_or(0.0);
+                    let start = state.time_base + start_time.literal().unwrap_or(0.0);
+                    duration == 0.0 || self.age <= start + duration
+                }
                 _ => false,
             })
     }
@@ -729,6 +738,39 @@ impl Node {
             }
             Emitter::Noise(noise) => {
                 self.noise_emission(noise, index, strength, (step, step_start), times);
+            }
+            Emitter::Maintain {
+                count,
+                scale,
+                start_time,
+                duration,
+                rate,
+            } => {
+                let start = self.emitters[index].time_base + value(start_time, self);
+                let duration = value(duration, self);
+                if start > self.age || (duration != 0.0 && self.age - step > start + duration) {
+                    return;
+                }
+                let wanted = (value(count, self) * value(scale, self) * strength.min(1.0)).max(0.0);
+                let lacking = (wanted as usize)
+                    .saturating_sub(self.parts.len())
+                    .min(MAX_EMITTED);
+                match rate {
+                    // All it lacks, at once.
+                    None => times.resize(lacking, self.age),
+                    // What its rate makes over the step, no more than it lacks.
+                    Some(rate) => {
+                        let rate = f64::from(value(rate, self).max(0.0));
+                        let from = f64::from(step_start.max(start));
+                        self.emitters[index].release(
+                            rate,
+                            (from, f64::from(self.age)),
+                            step,
+                            times,
+                        );
+                        times.truncate(lacking);
+                    }
+                }
             }
             _ => {}
         }
@@ -952,7 +994,9 @@ impl Node {
             // An emitter that runs for ever goes on as it was.
             match &emitter.class {
                 Emitter::Instantaneous { .. } => *state = fresh,
-                Emitter::Continuous { duration, .. } if duration.literal() != Some(0.0) => {
+                Emitter::Continuous { duration, .. } | Emitter::Maintain { duration, .. }
+                    if duration.literal() != Some(0.0) =>
+                {
                     *state = fresh;
                 }
                 Emitter::Noise(noise) if noise.duration.literal() != Some(0.0) => {

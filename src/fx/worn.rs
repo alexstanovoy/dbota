@@ -72,12 +72,16 @@ fn holding(rule: &Rule, unit: &UnitView, facts: &Facts) -> Option<Hold> {
         .vision_radius
         .max(unit.vision_grant.map_or(Fixed::ZERO, |(_, radius)| radius))
         .to_f32();
+    let gathered = unit.gathering.map_or(0.0, |g| {
+        g.progress.min(g.ticks) as f32 / g.ticks.max(1) as f32
+    });
     let held = |stacks, ticks_left: Option<u32>, feeds| Hold {
         feeds: Feeds {
             stacks: stacks as f32,
             seconds: ticks_left.map_or(0.0, |ticks| ticks as f32 / TICKS_PER_SECOND as f32),
             side,
             sight,
+            gathered,
             ..feeds
         },
     };
@@ -85,6 +89,9 @@ fn holding(rule: &Rule, unit: &UnitView, facts: &Facts) -> Option<Hold> {
         (Subject::Units(units), Trigger::Channelled) => (units.is(unit)
             && facts.channelled.contains(&unit.id))
         .then(|| held(0, None, Feeds::default())),
+        (Subject::Units(units), Trigger::Gathering) => {
+            (units.is(unit) && unit.gathering.is_some()).then(|| held(0, None, Feeds::default()))
+        }
         (Subject::Units(units), _) => units.is(unit).then(|| held(0, None, Feeds::default())),
         (Subject::Abilities(ids), Trigger::Casting) => unit
             .cast
@@ -221,6 +228,7 @@ fn worn(
         .chain(rules.of(Trigger::Held))
         .chain(rules.of(Trigger::Casting))
         .chain(rules.of(Trigger::Channelled))
+        .chain(rules.of(Trigger::Gathering))
         .collect::<Vec<_>>();
     if wearing.is_empty() {
         return;

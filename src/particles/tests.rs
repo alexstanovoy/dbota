@@ -787,3 +787,63 @@ fn flagbearer_particle_instance(
     instance.advance(0.02, None);
     instance
 }
+
+/// A system that keeps `count` times control point 1's x particles alive, each living
+/// `lifetime` seconds: all it lacks at once, or `rate` a second.
+fn maintained(count: f32, lifetime: f32, rate: Option<f32>) -> Arc<Effect> {
+    let mut system = bare(
+        count,
+        vec![sphere_at(0), lifetime_of(lifetime)],
+        vec![always(Operator::Decay { rope: false })],
+        Vec::new(),
+        Vec::new(),
+    );
+    system.max_particles = 64;
+    system.emitters = vec![always(Emitter::Maintain {
+        count: FloatInput::Literal(count),
+        scale: FloatInput::ControlPointComponent {
+            control_point: point(1),
+            component: 0,
+            mapping: Mapping::Direct,
+        },
+        start_time: FloatInput::Literal(0.0),
+        duration: FloatInput::Literal(0.0),
+        rate: rate.map(FloatInput::Literal),
+    })];
+    Arc::new(Effect::new(&[("maintained".to_owned(), system)]))
+}
+
+/// C_OP_MaintainEmitter (Dota's progress circle): as many alive as its count scaled by what the
+/// control point gives, made up again as they die, more as the scale rises.
+#[test]
+fn a_maintain_emitter_keeps_its_scaled_count_alive() {
+    let mut instance = Instance::new(maintained(40.0, 0.3, None), 3);
+    instance.set_control_point(0, Vec3::ZERO, Vec3::ZERO, true);
+    instance.set_control_point(1, Vec3::new(0.25, 0.0, 0.0), Vec3::ZERO, true);
+    run(&mut instance, 1.0);
+    assert_eq!(
+        instance.nodes[0].parts.len(),
+        10,
+        "a quarter of 40, kept past their lives"
+    );
+    instance.set_control_point(1, Vec3::new(1.0, 0.0, 0.0), Vec3::ZERO, true);
+    run(&mut instance, 0.1);
+    assert_eq!(
+        instance.nodes[0].parts.len(),
+        40,
+        "all 40 once the scale is whole"
+    );
+}
+
+/// One not instantaneous makes up what it lacks at its rate, no faster.
+#[test]
+fn a_maintain_emitter_with_a_rate_makes_up_its_count_at_that_rate() {
+    let mut instance = Instance::new(maintained(40.0, 10.0, Some(20.0)), 3);
+    instance.set_control_point(0, Vec3::ZERO, Vec3::ZERO, true);
+    instance.set_control_point(1, Vec3::new(1.0, 0.0, 0.0), Vec3::ZERO, true);
+    run(&mut instance, 1.0);
+    let made = instance.nodes[0].parts.len();
+    assert!((19..=21).contains(&made), "20 a second: {made} after one");
+    run(&mut instance, 2.0);
+    assert_eq!(instance.nodes[0].parts.len(), 40, "no more than it keeps");
+}

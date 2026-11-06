@@ -244,6 +244,8 @@ struct Feeds {
     side: f32,
     /// How far the unit sees now, or for the side it is lit for.
     sight: f32,
+    /// The share of the unit's countdown run, 0 to 1.
+    gathered: f32,
 }
 
 /// The item of the id among a unit's active slots, if it has one.
@@ -295,6 +297,7 @@ fn feed(
             Feed::Caster => place_of(feeds.caster.unwrap_or_else(|| place(&Attach::Origin))),
             Feed::Side => Vec3::new(feeds.side, 0.0, 0.0),
             Feed::Sight => Vec3::new(feeds.sight, 0.0, 0.0),
+            Feed::Gathered(share, plus) => *share * feeds.gathered + *plus,
         };
         instance.set_control_point(*point, value, Vec3::ZERO, false);
     }

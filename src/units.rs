@@ -1358,6 +1358,7 @@ pub(crate) mod tests {
             vision_grant: None,
             cast_rates: None,
             lit_for: None,
+            gathering: None,
             seen_by: None,
             attack_range: fixed(150),
             attack_time: 1700,
