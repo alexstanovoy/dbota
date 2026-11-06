@@ -47,6 +47,8 @@ names it) that the pages play on through `?cache=http`, served under /cache besi
 * `--replay-page`: the page plays a Zstandard-packed replay built into it (read through to the
   seek tick, as the packed file is decoded record by record) and the client says it knows the
   match and heard the chat lines, with no read error.
+* `--scene-page`: a replay reaches the drawn forest and heroes on WebGPU and WebGL2, with a
+  visible canvas and no page error. A client panic fails the check immediately.
 * `--fonts-page` (any build): the page serves the interface fonts out of its own folder (a link out
   of it is not followed, as a service's static directory does not) and the client takes them.
 * `--keys-page` (any page, even `web/` unbuilt): over the canvas the browser keeps its Ctrl and
@@ -467,6 +469,39 @@ def check_replay_page(directory):
         print(f"packed replay: match known, {lines} chat lines heard, no read error")
         browser.close()
     server.shutdown()
+
+
+def check_scene_page(directory):
+    """A replay reaches the drawn forest and heroes on both graphics APIs."""
+    with sync_playwright() as p:
+        for api in ("webgpu", "webgl2"):
+            server, base, browser, page, console, problems = opened(p, directory)
+            try:
+                page.add_init_script("""globalThis.dbota_scene_drawn = false;
+                  const log = console.log.bind(console);
+                  console.log = (...args) => {
+                    if (args.some(a => typeof a === 'string' && a.includes('scene: the game drawn whole')))
+                      globalThis.dbota_scene_drawn = true;
+                    log(...args);
+                  };""")
+                query = "?cache=http" + ("&gpu=webgl2" if api == "webgl2" else "")
+                page.goto(base + query)
+                page.wait_for_function(
+                    "() => globalThis.dbota_scene_drawn || document.querySelector('#failed:not([hidden])')",
+                    polling=100, timeout=600000,
+                )
+                assert page.evaluate("globalThis.dbota_scene_drawn"), (
+                    api, page.text_content("#failTitle"), page.text_content("#failDetail")
+                )
+                assert any(f"dbota: drawing with {api}" in c for c in console), f"the {api} client was selected"
+                assert page.locator("#dbota").is_visible(), "the game's canvas is visible"
+                assert page.locator("#dbota").evaluate("c => c.width > 0 && c.height > 0"), "the canvas has pixels"
+                assert not problems, problems
+                print(f"scene: {api} draws the forest and heroes")
+            finally:
+                browser.close()
+                server.shutdown()
+                server.server_close()
 
 
 def check_fullscreen_page(directory):
@@ -1672,6 +1707,7 @@ def main():
     ap.add_argument("--keep", action="store_true", help="leave the imported copy in place")
     ap.add_argument("--settle", type=int, default=5, help="seconds the client draws before the screenshot")
     ap.add_argument("--replay-page", type=pathlib.Path, help="a build with a packed replay built in")
+    ap.add_argument("--scene-page", type=pathlib.Path, help="a replay build: forest and heroes drawn on both graphics APIs")
     ap.add_argument("--fullscreen-page", type=pathlib.Path, help="a replay build opened on the Video settings")
     ap.add_argument("--server", help="a bota_server built with the websocket feature, for --replays-page")
     ap.add_argument("--served-page", type=pathlib.Path, help="any build: ?cache=http publishes the served cache's index")
@@ -1710,6 +1746,8 @@ def main():
         check_browser_keys(args.keys_page)
     if args.replay_page:
         check_replay_page(args.replay_page)
+    if args.scene_page:
+        check_scene_page(args.scene_page)
     if args.fullscreen_page:
         check_fullscreen_page(args.fullscreen_page)
     if args.cursor_page:

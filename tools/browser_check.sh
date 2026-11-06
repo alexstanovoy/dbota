@@ -68,7 +68,7 @@ target/release/dbota export-cache "$work/cache.zip"
 python3 web/test/smoke.py --import-page "$pages/replay" --reference-cache "$DBOTA_ASSETS" \
     --prepared-page "$pages/replay" --cache-zip "$work/cache.zip" --cache-folder "$DBOTA_ASSETS" \
     --served-page "$pages/plain" --startup-page "$pages/plain" --keys-page "$pages/plain" --boot-page "$pages/plain" --busy-page "$pages/plain" \
-    --replay-page "$pages/replay" --cursor-page "$pages/replay" --pixels-page "$pages/replay" \
+    --replay-page "$pages/replay" --scene-page "$pages/replay" --cursor-page "$pages/replay" --pixels-page "$pages/replay" \
     --fullscreen-page "$pages/video" \
     --replays-page "$pages/plain" --server "$server" --radovid "$radovid_bin"
 # The real mouse: a headful Chromium on an X server (Xwayland) in a private compositor, moved through XTEST.

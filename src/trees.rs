@@ -248,7 +248,7 @@ fn plant(
         return;
     }
     forest.planted_all = true;
-    let began = std::time::Instant::now();
+    let began = bevy::platform::time::Instant::now();
     let forest = &mut *forest;
     let grid = tree_grid(&forest.map);
     let mut asked: HashMap<String, Option<usize>> = forest
@@ -399,7 +399,7 @@ fn rebuild(
     mut ready: ResMut<SceneryReady>,
     time: Res<Time>,
 ) {
-    let (began, was_built) = (std::time::Instant::now(), forest.built);
+    let (began, was_built) = (bevy::platform::time::Instant::now(), forest.built);
     build(commands, &session, &mut forest, meshes, &time);
     if forest.built && !was_built {
         info!(
