@@ -19,7 +19,7 @@ use crate::coords::sim_facing_to_rotation;
 use crate::map::MainSun;
 use crate::session::Session;
 use crate::shadow_casters::{ShadowFloor, shadow_reaches};
-use crate::units::{Dying, ModelBank, ModelOf, Rig, Unit};
+use crate::units::{Dying, ModelBank, ModelOf, Rig, Unit, UnitIndex};
 
 /// The clip of a cast with no art of its own, and of an item's use.
 const PLAIN_CAST: &str = "cast1";
@@ -69,8 +69,8 @@ pub struct Pose {
     loop_t: f32,
     /// Seconds since the last swing struck, while its follow-through plays.
     since_strike: Option<f32>,
-    /// The strike tick of the swing under way, to tell one swing from the next.
-    swing_due: Option<u32>,
+    /// The target identifies the current windup; its deadline follows attack speed.
+    swing: Option<(EntityId, u32)>,
     /// The tick of the attack whose follow-through is playing.
     struck_at: Option<u32>,
     /// How many swings it has made, for alternating attack clips.
@@ -185,6 +185,12 @@ struct Wanted {
     t: f32,
 }
 
+/// The body and its attack target in the same interpolated frame.
+struct Drawn<'a> {
+    unit: &'a Unit,
+    target: Option<Vec2>,
+}
+
 fn animate(
     session: NonSend<Session>,
     bank: Res<ModelBank>,
@@ -200,6 +206,8 @@ fn animate(
     )>,
     mut pivots: Query<&mut Transform, (Without<Unit>, Without<RtsCamera>)>,
     mut players: Query<(&mut AnimationPlayer, Has<AnimationGraphHandle>)>,
+    placed: Query<&Unit>,
+    index: Res<UnitIndex>,
     camera: Single<(&Transform, &Projection), With<RtsCamera>>,
     args: Res<crate::Args>,
     (mut commands, children, skins): (Commands, Query<&Children>, Query<(), With<SkinnedMesh>>),
@@ -251,6 +259,23 @@ fn animate(
             },
             (None, Some(u)) => {
                 let clip = |name: &str| clip(name).map(|c| (c.2, c.3));
+                let target = view
+                    .aggro
+                    .binary_search_by_key(&u.id, |a| a.unit)
+                    .ok()
+                    .and_then(|at| view.aggro[at].swing)
+                    .and_then(|swing| {
+                        index
+                            .0
+                            .get(&swing.target)
+                            .and_then(|entity| placed.get(*entity).ok())
+                            .map(|target| target.at)
+                            .or_else(|| {
+                                view.unit(swing.target).map(|target| {
+                                    Vec2::new(target.pos.x.to_f32(), target.pos.y.to_f32())
+                                })
+                            })
+                    });
                 match channel.and_then(|(channel, name)| Some((channel, name, clip(name)?))) {
                     Some((channel, name, (duration, point))) => {
                         let offset = if art_of(channel.ability).clip == name {
@@ -273,10 +298,10 @@ fn animate(
                         if let Some((duration, _)) = clip("channel") {
                             looping(&mut pose, "channel", duration, dt, 1.0)
                         } else {
-                            choose(core, u, unit, &mut pose, dt, clip)
+                            choose(core, u, Drawn { unit, target }, &mut pose, dt, clip)
                         }
                     }
-                    None => choose(core, u, unit, &mut pose, dt, clip),
+                    None => choose(core, u, Drawn { unit, target }, &mut pose, dt, clip),
                 }
             }
             (None, None) => continue,
@@ -495,13 +520,14 @@ fn weigh(pose: &mut Pose, player: &mut AnimationPlayer, node: AnimationNodeIndex
 fn choose(
     core: &Core,
     u: &UnitView,
-    unit: &Unit,
+    drawn: Drawn<'_>,
     pose: &mut Pose,
     dt: f32,
     clip: impl Fn(&str) -> Option<(f32, Option<f32>)>,
 ) -> Wanted {
+    let unit = drawn.unit;
     if u.forced.is_some() {
-        pose.swing_due = None;
+        pose.swing = None;
         pose.since_strike = None;
         pose.struck_at = None;
         for name in ["flail", "stun"] {
@@ -512,6 +538,8 @@ fn choose(
     }
     let rate = f32::from(core.tick_rate().max(1));
     let sub = core.smooth.alpha();
+    let tick = core.view().map_or(0, |view| view.tick);
+    let snapshot_interval = core.smooth.interval.max(1.0 / rate);
     if let (Some(cast), Some(began)) = (u.cast, core.cast_began(u.id)) {
         // A model without the cast's clip (Dota has none either) goes on
         // with what it was doing.
@@ -519,7 +547,7 @@ fn choose(
         if let Some((duration, point)) = clip(name) {
             // The clip's point lands on the tick the view says the cast goes
             // off, counted from when its cast point was first seen.
-            let ran = core.view().map_or(began, |v| v.tick).saturating_sub(began);
+            let ran = tick.saturating_sub(began);
             let whole = (ran + cast.goes_off_in) as f32;
             let point = point.unwrap_or(duration * 0.5);
             pose.since_strike = None;
@@ -529,12 +557,29 @@ fn choose(
             };
         }
     }
-    let swing = core.view().and_then(|view| {
-        view.aggro
-            .binary_search_by_key(&u.id, |a| a.unit)
-            .ok()
-            .and_then(|at| view.aggro[at].swing)
-    });
+    let swing = core
+        .view()
+        .and_then(|view| {
+            view.aggro
+                .binary_search_by_key(&u.id, |a| a.unit)
+                .ok()
+                .and_then(|at| view.aggro[at].swing)
+        })
+        .filter(|swing| {
+            pose.swing.is_some_and(|(target, _)| target == swing.target)
+                || swing_left(swing.strike_in, sub, rate) <= snapshot_interval
+                || drawn_turn_done(
+                    drawn.unit.at,
+                    drawn.unit.facing,
+                    drawn.target,
+                    drawn_turn_rate(u.kind, u.hero, u.neutral),
+                )
+        });
+    if let Some(swing) = swing
+        && pose.swing.is_some_and(|(target, _)| target != swing.target)
+    {
+        pose.swings += 1;
+    }
     let attack = if pose.swings.is_multiple_of(2) {
         "attack"
     } else {
@@ -546,14 +591,10 @@ fn choose(
         "attack"
     };
     if let (Some(swing), Some((_, point))) = (swing, clip(attack)) {
-        let tick = core.view().map_or(0, |v| v.tick);
         let due = tick.saturating_add(swing.strike_in);
-        if pose.swing_due.is_some_and(|d| d.abs_diff(due) > 1) {
-            pose.swings += 1;
-        }
-        pose.swing_due = Some(due);
+        pose.swing = Some((swing.target, due));
         let windup = (u.attack_point as f32 / 1000.0).max(0.05);
-        let left = ((swing.strike_in as f32 - sub) / rate).max(0.0);
+        let left = swing_left(swing.strike_in, sub, rate);
         let point = point.unwrap_or(0.4);
         pose.swing_tempo = point / windup;
         pose.since_strike = Some(0.0);
@@ -562,12 +603,12 @@ fn choose(
             t: (1.0 - left / windup).clamp(0.0, 1.0) * point,
         };
     }
-    if let Some(due) = pose.swing_due.take() {
+    if let Some((_, due)) = pose.swing.take() {
         pose.swings += 1;
         // A windup gone before its strike tick was broken off (an order, its
         // target falling or getting away): nothing was struck, and Dota cuts
         // the clip there rather than playing the blow's follow-through.
-        if core.view().is_some_and(|v| v.tick < due) {
+        if tick < due {
             pose.since_strike = None;
             pose.struck_at = None;
         } else {
@@ -629,6 +670,56 @@ fn choose(
         pose.idle_loops = pose.idle_loops.saturating_add(1);
     }
     wanted
+}
+
+/// Remaining time uses the same presentation clock for the gate and the clip.
+fn swing_left(strike_in: u32, sub: f32, rate: f32) -> f32 {
+    ((strike_in as f32 - sub) / rate).max(0.0)
+}
+
+/// Buildings keep their authored map yaw, so they have no drawn turn to await.
+/// Other models follow the simulator's base turn rate; unknown definitions trust it.
+fn drawn_turn_rate(
+    kind: UnitKind,
+    hero: Option<bota_proto::HeroId>,
+    neutral: Option<bota_proto::NeutralId>,
+) -> u16 {
+    if bota_core::kind_def(kind).structure {
+        return 0;
+    }
+    hero.and_then(bota_core::hero_def)
+        .map(|hero| hero.unit)
+        .or_else(|| {
+            neutral
+                .and_then(bota_core::NeutralKind::of)
+                .map(|neutral| neutral.def())
+        })
+        .or_else(|| {
+            bota_core::FIXED_UNIT_DEFS
+                .iter()
+                .copied()
+                .find(|def| def.kind == kind)
+        })
+        .map_or(0, |def| def.turn_rate)
+}
+
+/// A new windup can wait for the displayed turn. An unknown target position
+/// trusts the authoritative check; a zero drawn turn rate needs no visual turn.
+/// The caller releases the wait near the strike deadline;
+/// ongoing windups follow their target without restarting when its pace changes.
+fn drawn_turn_done(from: Vec2, facing: f32, target: Option<Vec2>, turn_rate: u16) -> bool {
+    if turn_rate == 0 {
+        return true;
+    }
+    let Some(at) = target else {
+        return true;
+    };
+    let wanted = (at.y - from.y).atan2(at.x - from.x);
+    let gap = (wanted - facing + std::f32::consts::PI).rem_euclid(std::f32::consts::TAU)
+        - std::f32::consts::PI;
+    let tolerance =
+        f32::from(bota_core::rules::ATTACK_ANGLE_BRADS) * std::f32::consts::TAU / 65536.0;
+    gap.abs() <= tolerance
 }
 
 /// The rare idle a unit standing idle plays, once, after its share of whole idle loops; none
@@ -764,5 +855,62 @@ mod tests {
             !in_reach(&view(), feet, false, Some((&away, 0.0))),
             "its shadow falls away"
         );
+    }
+}
+
+#[cfg(test)]
+mod turn_tests {
+    use super::*;
+
+    #[test]
+    fn c_turn_zero_rate_has_no_front_but_a_turning_model_does() {
+        let behind = Some(Vec2::new(-100.0, 0.0));
+        assert_eq!(bota_core::FOUNTAIN.turn_rate, 0);
+        assert!(drawn_turn_done(
+            Vec2::ZERO,
+            0.0,
+            behind,
+            bota_core::FOUNTAIN.turn_rate
+        ));
+        let hero = bota_core::hero_def(bota_proto::HeroId::SHADOW_FIEND)
+            .expect("hero")
+            .unit;
+        assert!(hero.turn_rate > 0);
+        assert!(!drawn_turn_done(Vec2::ZERO, 0.0, behind, hero.turn_rate));
+        assert!(drawn_turn_done(
+            Vec2::ZERO,
+            std::f32::consts::PI,
+            behind,
+            hero.turn_rate
+        ));
+    }
+
+    #[test]
+    fn every_structure_kind_has_no_drawn_turn_rate() {
+        let mut count = 0;
+        for def in bota_core::UNIT_KINDS.iter().filter(|def| def.structure) {
+            assert_eq!(
+                drawn_turn_rate(def.kind, None, None),
+                0,
+                "fixed model: {:?}",
+                def.kind
+            );
+            count += 1;
+        }
+        assert!(count > 0, "the catalogue must contain structures");
+        assert!(
+            drawn_turn_rate(UnitKind::Hero, Some(bota_proto::HeroId::SHADOW_FIEND), None) > 0,
+            "a hero model really turns"
+        );
+    }
+
+    #[test]
+    fn c_turn_an_unknown_target_position_trusts_the_authoritative_facing_check() {
+        assert!(drawn_turn_done(
+            Vec2::ZERO,
+            0.0,
+            None,
+            bota_core::rules::FAST_TURN_RATE_BRADS
+        ));
     }
 }
