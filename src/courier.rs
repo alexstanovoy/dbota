@@ -110,6 +110,10 @@ struct CourierWait(CourierButton);
 #[derive(Component)]
 struct CourierKey(CourierButton);
 
+/// The arrows that turn round the deliver button while the courier is on its way.
+#[derive(Component)]
+pub struct CourierSpinner;
+
 /// The badge of how many items the courier carries, and its count.
 #[derive(Component)]
 struct CourierLoad;
@@ -117,9 +121,21 @@ struct CourierLoad;
 struct CourierLoadCount;
 
 pub fn plugin(app: &mut App) {
-    app.add_systems(Startup, spawn)
-        .add_systems(Update, (show, load, click).run_if(|k: Res<MatchKnown>| k.0));
+    app.add_systems(Startup, spawn).add_systems(
+        Update,
+        (show, load, click, spin).run_if(|k: Res<MatchKnown>| k.0),
+    );
 }
+
+/// `#Spinner`: its size, the turn it makes in `SpinnerRotate`'s time (against the clock) and
+/// the stroke and arrowheads of `courier_spinner.svg` (a 48-unit square), in Dota's pixels.
+const SPINNER: f32 = 46.0;
+const SPINNER_TURN: f32 = 1.5;
+const SPINNER_STROKE: f32 = 2.0 * SPINNER / 48.0;
+const ARROW: (f32, f32) = (4.0 * SPINNER / 48.0, 6.2 * SPINNER / 48.0);
+/// The svg's own paint: one blue, fading out along each arc over its first 13 percent.
+const SPINNER_BLUE: Color = Color::srgb(0.776, 0.855, 1.0);
+const ARC_FADE: f32 = 0.13;
 
 fn spawn(
     mut commands: Commands,
@@ -127,6 +143,7 @@ fn spawn(
     manifest: Res<Manifest>,
     server: Res<AssetServer>,
     docks: Res<Docks>,
+    mut images: ResMut<Assets<Image>>,
 ) {
     for which in CourierButton::ALL {
         let outer = if which == CourierButton::Deliver {
@@ -157,10 +174,107 @@ fn spawn(
             .id();
         spawn_ring(&mut commands, (&fonts, &manifest, &server), button, which);
         spawn_key(&mut commands, &fonts, button, which);
+        if which == CourierButton::Deliver {
+            spawn_spinner(&mut commands, &mut images, button);
+        }
         if which == CourierButton::Select {
             spawn_load(&mut commands, &fonts, docks.courier);
         }
     }
+}
+
+/// The two arcs with their arrowheads, round the deliver button: hidden until the courier is on
+/// its way (see [`spin`]).
+fn spawn_spinner(commands: &mut Commands, images: &mut Assets<Image>, button: Entity) {
+    let tail = |alpha: f32| SPINNER_BLUE.with_alpha(alpha);
+    // Clockwise from twelve o'clock. The right arc runs from its faded tail at the top to its
+    // head at six o'clock; the left from its tail there to its head at twelve.
+    let half = std::f32::consts::PI;
+    let stops = vec![
+        AngularColorStop::new(tail(0.0), 0.0),
+        AngularColorStop::new(tail(0.0), half * ARC_FADE),
+        AngularColorStop::new(tail(1.0), half),
+        AngularColorStop::new(tail(0.0), half),
+        AngularColorStop::new(tail(0.0), half * (1.0 + ARC_FADE)),
+        AngularColorStop::new(tail(1.0), std::f32::consts::TAU),
+    ];
+    let spinner = commands
+        .spawn((
+            CourierSpinner,
+            Node {
+                position_type: PositionType::Absolute,
+                width: dota(SPINNER),
+                height: dota(SPINNER),
+                border: UiRect::all(dota(SPINNER_STROKE)),
+                border_radius: BorderRadius::MAX,
+                ..default()
+            },
+            BorderGradient::from(ConicGradient::new(UiPosition::CENTER, stops)),
+            bevy::ui::UiTransform::default(),
+            Visibility::Hidden,
+            Pickable::IGNORE,
+            ChildOf(button),
+        ))
+        .id();
+    let arrow = images.add(arrowhead());
+    // Heads at the top pointing right and at the bottom pointing left: clockwise.
+    for (top, turned) in [(true, false), (false, true)] {
+        let mut node = Node {
+            position_type: PositionType::Absolute,
+            width: dota(ARROW.0),
+            height: dota(ARROW.1),
+            left: px(0),
+            right: px(0),
+            margin: UiRect::horizontal(Val::Auto),
+            ..default()
+        };
+        if top {
+            node.top = dota(-SPINNER_STROKE + 0.5);
+        } else {
+            node.bottom = dota(-SPINNER_STROKE + 0.5);
+        }
+        let image = ImageNode::new(arrow.clone()).with_color(SPINNER_BLUE);
+        commands.spawn((
+            node,
+            if turned { image.with_flip_x() } else { image },
+            Pickable::IGNORE,
+            ChildOf(spinner),
+        ));
+    }
+}
+
+/// A white triangle pointing right, antialiased, for the spinner's arrowheads.
+fn arrowhead() -> Image {
+    const SIDE: u32 = 32;
+    const SAMPLES: u32 = 4;
+    let mut pixels = Vec::with_capacity((SIDE * SIDE * 4) as usize);
+    for y in 0..SIDE {
+        for x in 0..SIDE {
+            let inside = (0..SAMPLES * SAMPLES)
+                .filter(|k| {
+                    let u =
+                        (x as f32 + ((k % SAMPLES) as f32 + 0.5) / SAMPLES as f32) / SIDE as f32;
+                    let v =
+                        (y as f32 + ((k / SAMPLES) as f32 + 0.5) / SAMPLES as f32) / SIDE as f32;
+                    // The tip at the right middle, the base the whole left side.
+                    (v - 0.5).abs() <= 0.5 * (1.0 - u)
+                })
+                .count();
+            let alpha = (255 * inside as u32 / (SAMPLES * SAMPLES)) as u8;
+            pixels.extend([255, 255, 255, alpha]);
+        }
+    }
+    Image::new(
+        bevy::render::render_resource::Extent3d {
+            width: SIDE,
+            height: SIDE,
+            depth_or_array_layers: 1,
+        },
+        bevy::render::render_resource::TextureDimension::D2,
+        pixels,
+        bevy::render::render_resource::TextureFormat::Rgba8UnormSrgb,
+        bevy::asset::RenderAssetUsages::RENDER_WORLD,
+    )
 }
 
 /// A button's round ring with its glow, its icon and its wait.
@@ -427,6 +541,45 @@ fn fade_ring(usable: bool, border: &mut Mut<BorderGradient>, glow: &mut Mut<Back
         BackgroundGradient::default()
     };
     glow.set_if_neq(ground);
+}
+
+/// Shows the spinner while one's courier is on its way (Dota's `Moving`, `DeliveringToHero`,
+/// `GoingToFountain` and `GoingToSecretShop` all show it: the client sees only that the courier
+/// moves) and turns it against the clock; it holds still where it stands.
+fn spin(
+    session: NonSend<Session>,
+    time: Res<Time>,
+    mut last: Local<Option<(u32, bota_proto::Vec2, bool)>>,
+    mut spinner: Single<(&mut Visibility, &mut bevy::ui::UiTransform), With<CourierSpinner>>,
+) {
+    let core = &session.0;
+    let courier = core
+        .view()
+        .and_then(|view| Some((view.tick, view.unit(core.my_courier()?)?.pos)));
+    let moving = match (courier, *last) {
+        (Some((tick, at)), Some((was_tick, _, moving))) if tick == was_tick => {
+            *last = Some((tick, at, moving));
+            moving
+        }
+        (Some((tick, at)), Some((_, was, _))) => {
+            *last = Some((tick, at, at != was));
+            at != was
+        }
+        (Some((tick, at)), None) => {
+            *last = Some((tick, at, false));
+            false
+        }
+        (None, _) => {
+            *last = None;
+            false
+        }
+    };
+    spinner.0.set_if_neq(ui::visible(moving));
+    if moving {
+        let turn =
+            bevy::math::Rot2::radians(-std::f32::consts::TAU * time.delta_secs() / SPINNER_TURN);
+        spinner.1.rotation = spinner.1.rotation * turn;
+    }
 }
 
 /// The badge of how many items one's courier carries, while it carries any.

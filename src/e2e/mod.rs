@@ -12,6 +12,7 @@ mod captions;
 mod catalogue;
 mod controls;
 mod courier;
+mod courier_spinner;
 mod cursors;
 mod death;
 mod fx;
