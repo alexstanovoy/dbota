@@ -2,8 +2,8 @@
 //! a right click opens Show in Shop and the item's choices at the cursor, Sell (away from
 //! the shop, Mark for Sell, and again Unmark for Sell), Disassemble for a build that
 //! may come apart now, Move to Stash where the stash can be reached, and Lock Combining
-//! (Unlock Combining once locked) for an item that is part of a recipe; in the strategy
-//! phase, Sell takes the item off what is chosen. Each choice gives the order the same
+//! (Unlock Combining once locked) for an item that is part of a recipe. A strategy-phase
+//! right click refunds a pending purchase directly. Each choice gives the order the same
 //! move gives by drag or key. Dota's Alert Allies is not here: the simulator has no
 //! order for it.
 
@@ -120,11 +120,7 @@ fn choices(
     slot: u8,
 ) -> Vec<Choice> {
     if core.in_tactical_phase() {
-        return bag
-            .id_at(slot)
-            .map(|_| Choice::Sell { slot, mark: None })
-            .into_iter()
-            .collect();
+        return Vec::new();
     }
     let Some(shown) = crate::shop::displayed_item(core, bag, settling, slot) else {
         return Vec::new();
@@ -165,11 +161,10 @@ fn choices(
     out
 }
 
-/// Opens the menu on a right click on an item box, and closes it on any click
-/// elsewhere.
+/// Refunds preparation items directly; otherwise opens the inventory menu.
 fn open(
-    session: NonSend<Session>,
-    bag: Res<TacticalBag>,
+    mut session: NonSendMut<Session>,
+    mut bag: ResMut<TacticalBag>,
     settling: Res<crate::drag::Settling>,
     mouse: Res<ButtonInput<MouseButton>>,
     items: Query<(&Interaction, &ItemBox)>,
@@ -182,7 +177,7 @@ fn open(
     if !pressed {
         return;
     }
-    let core = &session.0;
+    let core = &mut session.0;
     let on_menu = roots.iter().any(|i| *i != Interaction::None);
     let hovered = items
         .iter()
@@ -190,6 +185,12 @@ fn open(
         .map(|(_, b)| b.0);
     let at = window.cursor_position();
     if let (true, Some(slot), Some(at)) = (mouse.just_pressed(MouseButton::Right), hovered, at) {
+        if core.in_tactical_phase() {
+            bag.refund(core, slot);
+            menu.open = None;
+            menu.stale = true;
+            return;
+        }
         let list = choices(core, &bag, &settling, slot);
         if !list.is_empty() {
             menu.open = Some((at / ui_scale.0.max(0.1), list));
@@ -276,7 +277,6 @@ fn choose(
     mut choices: Query<(&Interaction, &Choice, &mut BackgroundColor, &Children)>,
     mut inks: Query<&mut TextColor>,
     mouse: Res<ButtonInput<MouseButton>>,
-    bag: Res<TacticalBag>,
     mut panels: ResMut<crate::input::Panels>,
     mut chosen: ResMut<crate::shop::Chosen>,
 ) {
@@ -300,12 +300,6 @@ fn choose(
                 Choice::ShowInShop { item } => {
                     panels.shop = true;
                     chosen.0 = Some(item);
-                }
-                Choice::Sell { slot, .. } if core.in_tactical_phase() => {
-                    // Strategy phase: the item leaves what is chosen.
-                    if let Some(id) = bag.id_at(slot) {
-                        core.act(Intent::Unqueue(id));
-                    }
                 }
                 Choice::Sell { slot, .. } => core.act(Intent::Sell(slot)),
                 Choice::ToStash { slot, to } => core.act(Intent::Swap { from: slot, to }),

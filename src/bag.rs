@@ -7,7 +7,7 @@
 
 use bevy::prelude::*;
 use bota_client_core::{BAG_SLOTS, Intent};
-use bota_core::{Counts, item_def, queued_bag};
+use bota_core::{Counts, item_def, queued_bag, ward_counts};
 use bota_proto::{DispenserView, ItemId, ItemView, SlotId};
 
 use crate::select::TacticalPhase;
@@ -95,6 +95,25 @@ impl TacticalBag {
         self.slots.get(usize::from(slot))?.map(|held| held.id.0)
     }
 
+    /// Refunds every pending purchase represented by the displayed stack.
+    pub fn refund(&mut self, core: &mut bota_client_core::App, slot: u8) {
+        let Some(held) = self.slots.get_mut(usize::from(slot)).and_then(Option::take) else {
+            return;
+        };
+        if let Some((observers, sentries)) = ward_counts(held.id, held.charges, held.sentries) {
+            for (id, charges) in [
+                (ItemId::OBSERVER_WARD, observers),
+                (ItemId::SENTRY_WARD, sentries),
+            ] {
+                if charges > 0 {
+                    refund_charges(core, id, charges);
+                }
+            }
+        } else {
+            refund_charges(core, held.id, held.charges);
+        }
+    }
+
     /// Moves what is in one slot into another, what is there coming back.
     pub fn swap(&mut self, from: u8, to: u8) {
         let (from, to) = (usize::from(from), usize::from(to));
@@ -106,6 +125,20 @@ impl TacticalBag {
     /// The item ids by slot.
     fn ids(&self) -> [Option<u16>; SLOTS] {
         self.slots.map(|s| s.map(|held| held.id.0))
+    }
+}
+
+fn refund_charges(core: &mut bota_client_core::App, id: ItemId, charges: u8) {
+    let Some(definition) = item_def(id) else {
+        return;
+    };
+    let purchases = if definition.charges == 0 {
+        1
+    } else {
+        charges.div_ceil(definition.charges)
+    };
+    for _ in 0..purchases {
+        core.act(Intent::Unqueue(id.0));
     }
 }
 

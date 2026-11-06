@@ -5,8 +5,8 @@
 //! at the right STARTING ITEMS, the gold that remains, the inventory as the
 //! choices fill it, and the shop's basic items to buy. What is bought here is
 //! bought when the match begins, in the slots they are put in. The inventory
-//! is the bottom panel's own: drag moves an item, and the item menu's Sell
-//! takes it back, as selling it does in Dota.
+//! uses the bottom panel's slots: drag moves an item and a right click
+//! takes its pending purchase back at full price.
 
 use bevy::prelude::*;
 use bota_proto::Team;
