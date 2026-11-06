@@ -303,6 +303,19 @@ impl CacheReader {
 }
 
 impl CacheReader {
+    fn check_path(path: &Path) -> Result<(), AssetReaderError> {
+        if path.to_str().is_some_and(dbota_import::import::safe_path) {
+            return Ok(());
+        }
+        Err(AssetReaderError::Io(
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "not a plain relative cache path",
+            )
+            .into(),
+        ))
+    }
+
     fn extension_is(path: &Path, expected: &str) -> bool {
         path.extension().is_some_and(|extension| {
             extension
@@ -370,6 +383,7 @@ impl AssetReader for CacheReader {
     #[cfg(not(target_arch = "wasm32"))]
     async fn read<'a>(&'a self, path: &'a Path) -> Result<impl Reader + 'a, AssetReaderError> {
         use std::io::{Read, Seek, SeekFrom};
+        Self::check_path(path)?;
         let full = self.root.join(path);
         let mut file = match std::fs::File::open(&full) {
             Ok(file) => file,
@@ -419,6 +433,7 @@ impl AssetReader for CacheReader {
 
     #[cfg(target_arch = "wasm32")]
     async fn read<'a>(&'a self, path: &'a Path) -> Result<impl Reader + 'a, AssetReaderError> {
+        Self::check_path(path)?;
         let bytes = if crate::webcache::is_opfs() {
             let rel = path.to_string_lossy();
             match crate::webcache::read(&rel).await {
@@ -441,6 +456,7 @@ impl AssetReader for CacheReader {
     }
 
     async fn read_meta<'a>(&'a self, path: &'a Path) -> Result<impl Reader + 'a, AssetReaderError> {
+        Self::check_path(path)?;
         self.files.read_meta(path).await
     }
 
@@ -459,6 +475,7 @@ impl AssetReader for CacheReader {
     }
 
     async fn is_directory<'a>(&'a self, path: &'a Path) -> Result<bool, AssetReaderError> {
+        Self::check_path(path)?;
         self.files.is_directory(path).await
     }
 }
@@ -479,6 +496,7 @@ const MAX_SMALL: u64 = 16 << 20;
 /// asset server: from disk, or in a browser with a synchronous request to
 /// the page's server.
 pub fn read_small(root: &Path, rel: &str) -> Option<Vec<u8>> {
+    CacheReader::check_path(Path::new(rel)).ok()?;
     #[cfg(not(target_arch = "wasm32"))]
     {
         use std::io::Read;
@@ -534,6 +552,83 @@ mod tests {
             ktx2.extend(field.to_le_bytes());
         }
         ktx2
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    fn path_fixture(label: &str) -> (PathBuf, CacheReader) {
+        let base =
+            std::env::temp_dir().join(format!("dbota-cache-path-{label}-{}", std::process::id()));
+        let root = base.join("cache");
+        std::fs::create_dir_all(root.join("child")).unwrap();
+        std::fs::create_dir_all(base.join("outside_dir")).unwrap();
+        std::fs::write(root.join("inside.bin"), b"inside").unwrap();
+        std::fs::write(root.join("inside.bin.meta"), b"inside metadata").unwrap();
+        std::fs::write(base.join("outside.bin"), b"outside").unwrap();
+        std::fs::write(base.join("outside.bin.meta"), b"outside metadata").unwrap();
+        let reader = CacheReader::new(root, DecodeBudget::default(), BlockTextures::default());
+        (base, reader)
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn cache_paths_stay_inside_the_reader_root() {
+        let (base, reader) = path_fixture("read");
+        let parsed = bevy::asset::AssetPath::parse("cache://../outside.bin");
+        assert_eq!(parsed.path(), Path::new("../outside.bin"));
+        assert!(bevy::tasks::block_on(reader.read(Path::new("inside.bin"))).is_ok());
+        for path in [PathBuf::from("../outside.bin"), base.join("outside.bin")] {
+            let why = bevy::tasks::block_on(reader.read(&path))
+                .err()
+                .expect("a cache request cannot open an owned marker outside the root")
+                .to_string();
+            assert!(why.contains("not a plain relative cache path"), "{why}");
+        }
+        std::fs::remove_dir_all(base).unwrap();
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn cache_paths_stay_inside_the_metadata_root() {
+        let (base, reader) = path_fixture("meta");
+        assert!(bevy::tasks::block_on(reader.read_meta(Path::new("inside.bin"))).is_ok());
+        for path in [PathBuf::from("../outside.bin"), base.join("outside.bin")] {
+            let why = bevy::tasks::block_on(reader.read_meta(&path))
+                .err()
+                .expect("metadata cannot bypass the cache path boundary")
+                .to_string();
+            assert!(why.contains("not a plain relative cache path"), "{why}");
+        }
+        std::fs::remove_dir_all(base).unwrap();
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn cache_paths_stay_inside_the_small_file_root() {
+        let (base, _reader) = path_fixture("small");
+        let root = base.join("cache");
+        assert_eq!(read_small(&root, "inside.bin"), Some(b"inside".to_vec()));
+        for path in [PathBuf::from("../outside.bin"), base.join("outside.bin")] {
+            assert_eq!(
+                read_small(&root, path.to_str().unwrap()),
+                None,
+                "a small read cannot escape its cache root"
+            );
+        }
+        std::fs::remove_dir_all(base).unwrap();
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn cache_paths_stay_inside_the_directory_probe_root() {
+        let (base, reader) = path_fixture("directory");
+        assert!(bevy::tasks::block_on(reader.is_directory(Path::new("child"))).unwrap());
+        for path in [PathBuf::from("../outside_dir"), base.join("outside_dir")] {
+            let why = bevy::tasks::block_on(reader.is_directory(&path))
+                .expect_err("directory metadata cannot probe outside the cache root")
+                .to_string();
+            assert!(why.contains("not a plain relative cache path"), "{why}");
+        }
+        std::fs::remove_dir_all(base).unwrap();
     }
 
     #[cfg(not(target_arch = "wasm32"))]
