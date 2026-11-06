@@ -40,15 +40,16 @@ dire=$("$here/tools/test_client.sh" --replay "$replay" --pov 1 --screenshot-at "
 echo "$dire" | sed 's/^visual check: /visual check (Dire): /'
 if echo "$dire" | grep -q "FAIL"; then exit 1; fi
 
-# The cheapest presets draw the same game: the scene below the window's resolution and its
-# batches built on the CPU (Potato) are measured as the full one is. A client that ends or
-# draws a black scene fails the fog and hero checks.
+# The cheapest presets are measured as the full one is: their scene drawn below the window's
+# resolution and (Potato) its batches built on the CPU, without the map's props, must still pass
+# the fog, hero and interface checks. A client that ends or draws a black scene fails them; one
+# that says no check at all fails too.
 for preset in low potato; do
     shown=$("$here/target/release/dbota" --replay "$replay" --pov 0 --screenshot-at "$tick" \
         --screenshot-dir "$out" --screenshot-prefix "check-$preset-" --distance 6500 --set quality="$preset" \
         --visual-check --mute --no-vsync --display-mode windowed 2>> "$out/dbota.log" || echo "visual check: FAIL the client ended")
     echo "$shown" | sed "s/^visual check: /visual check ($preset): /"
-    if echo "$shown" | grep -q "FAIL"; then exit 1; fi
+    if echo "$shown" | grep -q "FAIL" || ! echo "$shown" | grep -q "^visual check: PASS"; then exit 1; fi
 done
 
 # The river is one surface: the camera on it where the mid lane crosses it
