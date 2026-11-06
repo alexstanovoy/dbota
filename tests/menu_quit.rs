@@ -582,12 +582,14 @@ fn quitting_after_a_disconnect_says_it_ends_the_hosted_game() {
         .expect("a free port")
         .port();
     let address = format!("127.0.0.1:{port}");
+    let admitted = scratch.0.join("foe_admitted");
     let script = format!(
         "await:menu;await:button:create;key:Backspace;key:Backspace;key:Backspace;\
          key:Backspace;text:{port};click:create;await:game;click:pick shadow fiend;\
-         click:pick ready;await:level:1;key:Escape;await:menu;click:disconnect;\
+         await:file:{};click:pick ready;await:level:1;key:Escape;await:menu;click:disconnect;\
          await:button:reconnect;click:quit;await:popup;\
-         await:text:ends the game you host for everyone;click:ok"
+         await:text:ends the game you host for everyone;click:ok",
+        admitted.display()
     );
     let mut command = common::client();
     command.env("BOTA_SERVER", common::server_binary());
@@ -598,6 +600,7 @@ fn quitting_after_a_disconnect_says_it_ends_the_hosted_game() {
     std::thread::spawn(move || {
         let _ = play(&mut link, seated, &mut (), |_| Vec::new());
     });
+    std::fs::write(&admitted, b"ready").expect("release the host after the foe joins");
     played("a hosted game quit", host.finish(), &script);
     let deadline = Instant::now() + PATIENCE;
     while std::net::TcpStream::connect(&address).is_ok() {
