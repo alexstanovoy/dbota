@@ -125,10 +125,18 @@ pub fn draw(kit: &mut Kit, root: Entity, view: &MenuView) {
         }
         PageView::Home {
             rulesets,
+            allow_matchmaking_bots,
             in_flight,
             cooldown,
         } => {
-            home(kit, body, rulesets, *in_flight, cooldown.as_deref());
+            home(
+                kit,
+                body,
+                rulesets,
+                *in_flight,
+                *allow_matchmaking_bots,
+                cooldown.as_deref(),
+            );
         }
         PageView::MyGames {
             games,
@@ -363,7 +371,7 @@ fn form_page(
         );
     }
     if let Some(on) = cheats.filter(|_| hosting) {
-        cheats_toggle(kit, card, on);
+        checkbox(kit, card, "Enable cheats", Act::ToggleCheats, on);
     }
     let row = kit.node(
         card,
@@ -499,6 +507,7 @@ fn home(
     body: Entity,
     rulesets: &[RulesetRow],
     in_flight: (usize, Option<AccountGameLimit>),
+    allow_matchmaking_bots: bool,
     cooldown: Option<&str>,
 ) {
     let column = kit.node(
@@ -510,6 +519,13 @@ fn home(
         },
     );
     kit.bold(column, "PLAY", 30.0, ui::INK);
+    checkbox(
+        kit,
+        column,
+        "Allow matchmaking with bots",
+        Act::ToggleMatchmakingBots,
+        allow_matchmaking_bots,
+    );
     if rulesets.is_empty() {
         kit.text(
             column,
@@ -1101,15 +1117,13 @@ fn local_rules(kit: &mut Kit, card: Entity, chosen: LocalRules) {
     );
 }
 
-/// Dota's lobby setting "Enable cheats", for the local lobby's host: a box
-/// that turns on and off.
-fn cheats_toggle(kit: &mut Kit, card: Entity, on: bool) {
+fn checkbox(kit: &mut Kit, card: Entity, label: &'static str, action: Act, on: bool) {
     let row = kit
         .commands
         .spawn((
-            super::screens::MenuButton(Act::ToggleCheats),
+            super::screens::MenuButton(action),
             Button,
-            Name::new("enable cheats"),
+            Name::new(label.to_ascii_lowercase()),
             Node {
                 column_gap: px(10),
                 align_items: AlignItems::Center,
@@ -1132,7 +1146,7 @@ fn cheats_toggle(kit: &mut Kit, card: Entity, on: bool) {
         Pickable::IGNORE,
         ChildOf(row),
     ));
-    kit.text(row, "Enable cheats", 16.0, ui::INK);
+    kit.text(row, label, 16.0, ui::INK);
 }
 
 /// DEMO HERO: every hero, its portrait and its name; a click starts Dota's

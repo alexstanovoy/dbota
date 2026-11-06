@@ -256,6 +256,7 @@ pub enum PageView {
     },
     Home {
         rulesets: Vec<RulesetRow>,
+        allow_matchmaking_bots: bool,
         /// Games in flight and the account's limit.
         in_flight: (usize, Option<AccountGameLimit>),
         cooldown: Option<String>,
@@ -550,8 +551,9 @@ impl MenuCore {
             return PageView::Joining;
         };
         let searches = client.searches();
-        let in_flight = searches.entries().len() + searches.slot_waits().len() + self.games.len();
+        let in_flight = searches.groups().len() + searches.slot_waits().len() + self.games.len();
         PageView::Home {
+            allow_matchmaking_bots: self.prefs.allow_matchmaking_bots,
             rulesets: client
                 .rulesets()
                 // Play lists what Find Match queues (radovid: a ruleset with a queue is rated);
@@ -717,8 +719,8 @@ fn search_rows(
 ) -> Vec<SearchRow> {
     client
         .searches()
-        .entries()
-        .iter()
+        .groups()
+        .into_iter()
         .map(|s| SearchRow {
             entry: s.entry,
             ruleset: names(&s.ruleset),

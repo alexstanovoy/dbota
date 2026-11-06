@@ -23,6 +23,8 @@ pub struct Prefs {
     pub host_rules: super::core::LocalRules,
     /// Whether the local lobby's host enables cheats.
     pub host_cheats: bool,
+    /// Whether a new matchmaking search also enters the everyone queue.
+    pub allow_matchmaking_bots: bool,
     /// Hosts the player was told plain TCP is unprotected for, and went on.
     pub plain_ok: Vec<String>,
 }
@@ -49,6 +51,7 @@ impl Prefs {
                     prefs.host_rules = super::core::LocalRules::named(&value).unwrap_or_default()
                 }
                 "host_cheats" => prefs.host_cheats = value == "true",
+                "allow_matchmaking_bots" => prefs.allow_matchmaking_bots = value == "true",
                 "plain_ok" if prefs.plain_ok.len() < MAX_PLAIN_HOSTS => prefs.plain_ok.push(value),
                 _ => {}
             }
@@ -73,6 +76,9 @@ impl Prefs {
         }
         if self.host_cheats {
             out.push_str("host_cheats = true\n");
+        }
+        if self.allow_matchmaking_bots {
+            out.push_str("allow_matchmaking_bots = true\n");
         }
         for host in &self.plain_ok {
             out.push_str(&format!("plain_ok = {host}\n"));

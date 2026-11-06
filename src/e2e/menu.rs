@@ -237,7 +237,7 @@ fn menu_rectangle(client: &mut Client, label: &str, button: bool) -> Rect {
             .find(|(_, text, shown)| shown.get() && text.0 == label)
             .map(|(entity, ..)| entity)
     }
-    .expect("the visible menu element");
+    .unwrap_or_else(|| panic!("the visible menu element {label:?}"));
     let size = world.get::<ComputedNode>(entity).expect("laid out").size();
     let centre = world
         .get::<UiGlobalTransform>(entity)
@@ -569,5 +569,227 @@ fn unlimited_account_limits_are_drawn_and_find_match_still_queues() {
             .shown_texts()
             .iter()
             .any(|text| text == "Games going: 1 · no account limit")
+    );
+}
+
+#[test]
+fn allowing_matchmaking_with_bots_is_a_drawn_switch() {
+    use bota_radovid::Audience;
+    let service = crate::main_menu::tests::service();
+    let mut client = signed_up(&service, "alice");
+    assert!(
+        client
+            .shown_texts()
+            .iter()
+            .any(|text| text == "Allow matchmaking with bots"),
+        "Play must offer the matchmaking audience switch"
+    );
+    assert!(!matchmaking_checkbox_is_checked(&mut client));
+    let mut bot = waiting_matchmaking_bot(&service);
+    search_without_bots_and_cancel(&mut client, &service);
+    click_menu_button(&mut client, "allow matchmaking with bots");
+    assert!(matchmaking_checkbox_is_checked(&mut client));
+    assert_matchmaking_preference_survives_reload(&client, &service);
+    click_menu_button(&mut client, "find match");
+    client.within(
+        Duration::from_secs(120),
+        "a match with the waiting bot",
+        |client| {
+            for _ in 0..64 {
+                if bot.poll().expect("bot link").is_none() {
+                    break;
+                }
+            }
+            client.world().non_send::<MenuCore>().view().offer.is_some()
+        },
+    );
+    let snapshot = matchmaking_snapshot(&service, "alice");
+    assert_eq!(snapshot.queued.len(), 2);
+    assert_eq!(snapshot.queued[0].search, snapshot.queued[1].search);
+    assert!(
+        snapshot
+            .queued
+            .iter()
+            .any(|entry| entry.audience == Audience::HumansOnly)
+    );
+    assert!(
+        snapshot
+            .queued
+            .iter()
+            .any(|entry| entry.audience == Audience::Everyone)
+    );
+    assert_eq!(snapshot.proposals.len(), 1);
+    assert_eq!(
+        client.world().non_send::<MenuCore>().view().searches.len(),
+        1,
+        "one search is drawn"
+    );
+    accept_matchmaking_with_bot(&mut client, &mut bot, &service);
+}
+
+fn waiting_matchmaking_bot(service: &crate::main_menu::tests::Service) -> bota_radovid::Client {
+    let tls = bota_radovid::Tls::trust_pem(&service.pem).expect("service certificate");
+    let mut bot = bota_radovid::Client::open(&service.url, &tls).expect("bot connection");
+    let seq = bot
+        .register(
+            "bot",
+            crate::main_menu::tests::PASSWORD,
+            bota_radovid::AccountKind::Bot,
+            Some("fixture".into()),
+        )
+        .expect("register bot");
+    matchmaking_reply(&mut bot, seq);
+    let seq = bot
+        .queue(&bota_radovid::RulesetId("solo_mid".into()))
+        .expect("bot queue");
+    matchmaking_reply(&mut bot, seq);
+    bot
+}
+
+fn search_without_bots_and_cancel(client: &mut Client, service: &crate::main_menu::tests::Service) {
+    click_menu_button(client, "find match");
+    client.within(Duration::from_secs(30), "the human search", |client| {
+        !client
+            .world()
+            .non_send::<MenuCore>()
+            .view()
+            .searches
+            .is_empty()
+    });
+    let snapshot = matchmaking_snapshot(service, "alice");
+    assert_eq!(snapshot.queued.len(), 1);
+    assert_eq!(
+        snapshot.queued[0].audience,
+        bota_radovid::Audience::HumansOnly
+    );
+    assert!(
+        snapshot.proposals.is_empty(),
+        "the waiting bot cannot match with the switch off"
+    );
+    act(client, Act::Go(Page::MyGames));
+    click_menu_button(client, "cancel");
+    client.within(Duration::from_secs(30), "the search cancelled", |client| {
+        client
+            .world()
+            .non_send::<MenuCore>()
+            .view()
+            .searches
+            .is_empty()
+    });
+    act(client, Act::Go(Page::Home));
+}
+
+fn accept_matchmaking_with_bot(
+    client: &mut Client,
+    bot: &mut bota_radovid::Client,
+    service: &crate::main_menu::tests::Service,
+) {
+    use bota_radovid::{ClientMsg, Reply};
+    click_menu_button(client, "accept");
+    let mut handed_off = false;
+    client.within(
+        Duration::from_secs(120),
+        "the accepted match consumes both entries",
+        |client| {
+            for _ in 0..64 {
+                match bot.poll().expect("bot link") {
+                    Some(bota_radovid::Incoming::Event(bota_radovid::Event::MatchFound {
+                        ..
+                    })) => handed_off = true,
+                    Some(_) => {}
+                    None => break,
+                }
+            }
+            handed_off
+                && client
+                    .world()
+                    .non_send::<MenuCore>()
+                    .view()
+                    .searches
+                    .is_empty()
+        },
+    );
+    assert!(matchmaking_snapshot(service, "alice").queued.is_empty());
+    assert!(bot.searches().entries().is_empty());
+    let seq = bot.request(ClientMsg::MyMatches).expect("match snapshot");
+    assert!(matches!(matchmaking_reply(bot, seq), Reply::Handoffs { list } if list.len() == 1));
+}
+
+fn matchmaking_reply(client: &mut bota_radovid::Client, seq: u32) -> bota_radovid::Reply {
+    let deadline = std::time::Instant::now() + Duration::from_secs(120);
+    while std::time::Instant::now() < deadline {
+        if let Some(bota_radovid::Incoming::Reply { seq: got, result }) = client
+            .wait(Duration::from_millis(50))
+            .expect("control connection")
+            && got == seq
+        {
+            return result.expect("request accepted");
+        }
+    }
+    panic!("no reply to {seq}");
+}
+
+fn matchmaking_snapshot(
+    service: &crate::main_menu::tests::Service,
+    login: &str,
+) -> bota_radovid::Activities {
+    let tls = bota_radovid::Tls::trust_pem(&service.pem).expect("certificate");
+    let mut client = bota_radovid::Client::open(&service.url, &tls).expect("snapshot connection");
+    let seq = client
+        .login(login, crate::main_menu::tests::PASSWORD, None)
+        .expect("snapshot login");
+    match matchmaking_reply(&mut client, seq) {
+        bota_radovid::Reply::LoggedIn { activities, .. } => activities,
+        other => panic!("login reply: {other:?}"),
+    }
+}
+
+fn matchmaking_checkbox_is_checked(client: &mut Client) -> bool {
+    let world = client.world_mut();
+    let checkbox = world
+        .query_filtered::<(&Name, &Children), With<Button>>()
+        .iter(world)
+        .find(|(name, _)| name.as_str() == "allow matchmaking with bots")
+        .and_then(|(_, children)| children.first().copied())
+        .expect("the drawn checkbox");
+    world
+        .get::<BackgroundColor>(checkbox)
+        .expect("checkbox fill")
+        .0
+        != Color::NONE
+}
+
+fn assert_matchmaking_preference_survives_reload(
+    client: &Client,
+    service: &crate::main_menu::tests::Service,
+) {
+    let menu = client.settings_folder_file("menu.conf");
+    let session = client.settings_folder_file("session");
+    let certificate = client
+        .world()
+        .resource::<crate::Args>()
+        .config
+        .as_ref()
+        .expect("isolated config")
+        .with_file_name("audience-service.pem");
+    std::fs::write(&certificate, &service.pem).expect("test certificate");
+    let mut resumed = Client::run_with_files(
+        &[
+            "--service",
+            &service.url,
+            "--trust-cert",
+            certificate.to_str().expect("UTF-8 path"),
+        ],
+        &[("menu.conf", &menu), ("session", &session)],
+    );
+    resumed.within(
+        Duration::from_secs(120),
+        "the saved session resumed",
+        |client| client.world().non_send::<MenuCore>().page() == Page::Home,
+    );
+    resumed.frames(5);
+    assert!(
+        matchmaking_checkbox_is_checked(&mut resumed),
+        "the saved switch is checked after reload"
     );
 }

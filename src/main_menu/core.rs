@@ -99,6 +99,7 @@ pub enum Act {
     Logout,
     /// Searches a game of a ruleset.
     Find(RulesetId),
+    ToggleMatchmakingBots,
     Cancel(QueueEntryId),
     Accept(ProposalId),
     Decline(ProposalId),
@@ -1331,7 +1332,7 @@ impl MenuCore {
                 }
                 self.sit(state);
             }
-            Reply::Queued { .. } => self.status = None,
+            Reply::Queued { .. } | Reply::QueuesJoined { .. } => self.status = None,
             _ => {}
         }
     }
@@ -1442,7 +1443,12 @@ impl MenuCore {
                 "Someone did not accept: you are back in the queue at your place".to_owned(),
                 false,
             ),
-            Event::QueueLeft { reason, .. } if reason != QueueLeftReason::Cancelled => {
+            Event::QueueLeft { reason, .. }
+                if !matches!(
+                    reason,
+                    QueueLeftReason::Cancelled | QueueLeftReason::Matched
+                ) =>
+            {
                 let why = match reason {
                     QueueLeftReason::TimedOut => "The match was not accepted in time",
                     _ => "You declined the match",
@@ -1705,7 +1711,20 @@ impl MenuCore {
             Act::PreviousField => self.keyboard().previous(),
             Act::Submit => self.press(),
             Act::Logout => self.logout(),
-            Act::Find(ruleset) => self.ask(ClientMsg::QueueJoin { ruleset }, Asked::Queue),
+            Act::Find(ruleset) => {
+                let mut audiences = vec![Audience::HumansOnly];
+                if self.prefs.allow_matchmaking_bots {
+                    audiences.push(Audience::Everyone);
+                }
+                self.ask(
+                    ClientMsg::QueueJoinAudiences { ruleset, audiences },
+                    Asked::Queue,
+                );
+            }
+            Act::ToggleMatchmakingBots => {
+                self.prefs.allow_matchmaking_bots = !self.prefs.allow_matchmaking_bots;
+                self.save_prefs();
+            }
             Act::Cancel(entry) => self.ask(ClientMsg::QueueLeave { entry }, Asked::Other),
             Act::Accept(proposal) => self.ask(ClientMsg::MatchAccept { proposal }, Asked::Accept),
             Act::Decline(proposal) => self.ask(ClientMsg::MatchDecline { proposal }, Asked::Other),

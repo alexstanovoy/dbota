@@ -90,6 +90,7 @@ fn logged_in(page: Page, body: PageView) -> MenuView {
 
 fn home() -> PageView {
     PageView::Home {
+        allow_matchmaking_bots: false,
         rulesets: vec![
             RulesetRow {
                 id: RulesetId("solo_mid".to_owned()),
