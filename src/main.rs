@@ -94,6 +94,7 @@ mod seat_name;
 mod select;
 mod session;
 mod settings;
+mod shadow_casters;
 mod shop;
 mod sound;
 mod sound_file;
@@ -723,6 +724,7 @@ fn client_plugins(app: &mut App, read_environment: bool) {
             drag::plugin,
             item_menu::plugin,
             icon_mips::plugin,
+            shadow_casters::plugin,
             ambient::plugin,
             soundscape::plugin,
         ))

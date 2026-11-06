@@ -96,6 +96,16 @@ impl Ground {
     pub fn known(&self) -> bool {
         self.n > 0
     }
+
+    /// The lowest the drawn ground goes, once it is known: its lowest cell or,
+    /// lower, a terrain triangle's corner in a pit narrower than a cell.
+    pub fn lowest(&self) -> Option<f32> {
+        let corners = self
+            .surface
+            .iter()
+            .flat_map(|s| s.points.iter().map(|p| p[2]));
+        self.heights.iter().copied().chain(corners).reduce(f32::min)
+    }
 }
 
 /// The height of triangle `t` at `(x, y)`, if the point is over it.
