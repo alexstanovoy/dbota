@@ -19,7 +19,8 @@ use crate::keys::{Action, Fired};
 use crate::session::{MatchKnown, Session};
 use bota_proto::Team;
 pub use draw::BOARD_Z;
-use draw::{At, Bags, Board, Field, Inventories, Seats, ShowItems, TeamScore};
+pub(crate) use draw::TeamScore;
+use draw::{At, Bags, Board, Field, Inventories, Seats, ShowItems};
 pub use model::{Line, Ult, lines};
 
 /// A talent's pip, not learned and learned.

@@ -351,6 +351,7 @@ fn an_unseen_kill_receipt_draws_one_gold_caption_over_its_recipient() {
         client.core_mut().handle(ServerMsg::Events {
             tick,
             events: vec![EventKind::Died {
+                credited_hero: None,
                 unit: unseen,
                 killer: Some(hero),
                 denied: false,
