@@ -50,10 +50,6 @@ item 34 null_talisman
 item 35 magic_stick
 item 36 magic_wand
 item 37 recipe
-item 38 recipe
-item 39 recipe
-item 40 recipe
-item 41 recipe
 item 42 enchanted_mango
 item 43 eagle
 item 44 claymore
@@ -62,12 +58,10 @@ item 46 butterfly
 item 47 javelin
 item 48 demon_edge
 item 49 blitz_knuckles
-item 50 recipe
 item 51 monkey_king_bar
 item 52 wind_lace
 item 53 blood_grenade
 item 54 ward_dispenser
-item 55 tango
 item 56 bottle
 item 57 famango
 item 58 great_famango
@@ -291,7 +285,6 @@ modifier 16 modifier_pudge_rot
 modifier 17 modifier_nevermore_requiem_fear
 modifier 18 modifier_nevermore_requiem_slow
 modifier 19 modifier_nevermore_frenzy
-modifier 20 modifier_nevermore_frenzy
 modifier 21 modifier_item_blood_grenade_debuff
 modifier 22 modifier_rooted
 modifier 23 modifier_disarmed
@@ -351,3 +344,7 @@ item 88 aegis
 item 89 refresher_shard
 item 90 roshans_banner
 modifier 81 modifier_aegis_regen
+
+ability 80 roshan_inherent_buffs
+text ability 80 roshan_inherent_buffs
+modifier 82 modifier_roshan_devotion

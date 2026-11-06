@@ -2352,6 +2352,17 @@ fn regen_text(per_second: bota_proto::Fixed) -> String {
     }
 }
 
+/// The actual health readout nodes, for player-path assertions.
+#[cfg(test)]
+pub(crate) fn health_readouts(world: &mut World) -> Vec<String> {
+    world
+        .query::<(&Readout, &Text)>()
+        .iter(world)
+        .filter(|(kind, _)| **kind == Readout::Hp)
+        .map(|(_, text)| text.0.clone())
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

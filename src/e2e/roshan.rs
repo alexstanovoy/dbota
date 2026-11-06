@@ -353,3 +353,50 @@ fn planting_a_banner_draws_its_aura_preview_model_and_public_message() {
         })
     });
 }
+
+#[test]
+fn roshans_npc_level_and_growing_health_reach_the_drawn_panel() {
+    use bota_client_core::Intent;
+    let server = Server::start(
+        1,
+        &[
+            "--objectives",
+            "roshan",
+            "--tick-rate",
+            "600",
+            "--immortal-heroes",
+        ],
+    );
+    let mut client = Client::join(&server, HeroId::SHADOW_FIEND, &[]);
+    client.cheat(Cheat::StartGame);
+    let pit = bota_core::ROSHAN_DAY_PIT;
+    client.stand_at((pit.x.to_int() + 100, pit.y.to_int()));
+    client.until("Roshan visible", |c| {
+        c.view().units.iter().any(|u| u.kind == UnitKind::Roshan)
+    });
+    let boss = client
+        .view()
+        .units
+        .iter()
+        .find(|u| u.kind == UnitKind::Roshan)
+        .expect("boss")
+        .clone();
+    assert_eq!(boss.level, 30);
+    assert_eq!(boss.attack_speed, 200);
+    client.core_mut().act(Intent::SelectUnit(Some(boss.id)));
+    client.until("Roshan's current health in the panel", |c| {
+        crate::hud::health_readouts(c.world_mut())
+            .iter()
+            .any(|s| s == &format!("{} / {}", boss.max_hp, boss.max_hp))
+    });
+    client.until("growth changes the actual health readout", |c| {
+        let Some(current) = c.view().units.iter().find(|u| u.id == boss.id) else {
+            return false;
+        };
+        if current.max_hp <= boss.max_hp {
+            return false;
+        }
+        let expected = format!("{} / {}", current.max_hp, current.max_hp);
+        crate::hud::health_readouts(c.world_mut()).contains(&expected)
+    });
+}
