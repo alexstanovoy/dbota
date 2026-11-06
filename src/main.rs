@@ -713,10 +713,8 @@ fn client_plugins(app: &mut App) {
             wash::plugin,
             death::plugin,
             replay_controls::plugin,
-            demo::plugin,
-            error_msg::plugin,
         ))
-        .add_plugins(main_menu::plugin);
+        .add_plugins((demo::plugin, error_msg::plugin, main_menu::plugin));
     #[cfg(not(target_arch = "wasm32"))]
     app.add_plugins(assets_notice::plugin);
 }
