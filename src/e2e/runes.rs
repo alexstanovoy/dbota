@@ -548,6 +548,8 @@ fn a_rune_lies_drawn_and_the_minimap_keeps_it_until_its_spot_is_seen_without_it(
         [(RuneKind::Bounty, false)],
         "remembered in the fog"
     );
+    // Bring the camera within hearing range before the teleport picks up the rune.
+    client.stand_at((spot.0 + 400, spot.1));
     client.stand_at(spot);
     client.within(SOON, "the rune taken", |c| {
         heard(c, "sound.rune.bounty") > 0
@@ -654,6 +656,7 @@ fn the_bottle_shows_its_charges_and_the_rune_it_keeps() {
     // The pour is worn by the hero's drawn body: the drink (2.7 s) must not run out before the
     // hero's model has loaded on a busy machine.
     client.within(SOON, "one's hero drawn", |c| c.body(c.me().id).is_some());
+    client.follow_me();
     client.core_mut().act(Intent::Press {
         slot: Slot::Item(slot),
         ctrl: false,
