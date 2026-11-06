@@ -182,7 +182,10 @@ fn attack_value(def: &ItemDef, key: &str) -> Option<Levels> {
     let laid = def.on_attack?;
     match key {
         "corruption_armor" => one(fixed(-laid.armor)),
-        "corruption_duration" | "poison_duration" => one(secs(laid.ticks)),
+        "corruption_duration" | "poison_duration" | "duration" => one(secs(laid.ticks)),
+        "slow_melee" => one(-laid.slow_pct),
+        "slow_ranged" => one(-laid.ranged_slow_pct),
+        "heal_reduction" => one(laid.restoration_cut_pct),
         "damage" if laid.dps > 0 => one(laid.dps),
         "tick_interval" if laid.dps > 0 => one(1),
         _ => None,

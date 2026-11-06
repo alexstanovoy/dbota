@@ -404,6 +404,7 @@ particle item.mango.active particles/items3_fx/mango_active.vpcf_c particles/man
 particle item.faerie_fire.active particles/items3_fx/fish_bones_active.vpcf_c particles/fish_bones_active.json
 particle item.blight_stone.corruption particles/items2_fx/orb_of_blight.vpcf_c particles/orb_of_blight.json
 particle item.orb_of_venom.poison particles/items2_fx/orb_of_venom.vpcf_c particles/orb_of_venom.json
+particle item.orb_of_frost.frost particles/items2_fx/orb_of_frost.vpcf_c particles/orb_of_frost.json
 particle item.magic_stick particles/items2_fx/magic_stick.vpcf_c particles/magic_stick.json
 particle item.magic_wand particles/items2_fx/magic_wand.vpcf_c particles/magic_wand.json
 particle item.phase_boots particles/items2_fx/phase_boots.vpcf_c particles/phase_boots.json
@@ -518,6 +519,7 @@ fx item.enchanted_mango.use at=caster particle=item.mango.active sound=sound.ite
 fx item.faerie_fire.use at=caster particle=item.faerie_fire.active sound=sound.item.faerie_fire
 fx modifier.modifier_blight_stone_buff.worn at=unit particle=item.blight_stone.corruption
 fx modifier.modifier_item_orb_of_venom_slow.worn at=unit particle=item.orb_of_venom.poison
+fx modifier.modifier_orb_of_frost_debuff.worn at=unit particle=item.orb_of_frost.frost
 fx item.magic_stick.use at=caster particle=item.magic_stick sound=sound.item.magic_stick cp1=charges
 fx item.magic_wand.use at=caster particle=item.magic_wand sound=sound.item.magic_stick cp1=charges
 fx item.phase_boots.use at=caster sound=sound.item.phase_boots
