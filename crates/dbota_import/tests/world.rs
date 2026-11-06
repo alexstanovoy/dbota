@@ -639,13 +639,17 @@ fn world_images_and_layers_match_the_exported_ones() {
             failed.push(why);
         }
     }
-    // (The textures of the nodes the cache's world leaves out are not asked for.)
+    // (The textures of the nodes the cache's world leaves out are not asked for; a map prop's
+    // are named for its model whatever the node was, as the Dire keeper's "secretshopkeeper".)
     let extra: Vec<&String> = exported
         .keys()
         .filter(|name| {
             !dbota_import::import::NOT_IN_WORLD
                 .iter()
                 .any(|p| name.starts_with(p))
+                && !dbota_import::import::MAP_PROPS
+                    .iter()
+                    .any(|prop| name.contains(prop))
         })
         .collect();
     assert!(extra.is_empty(), "exported images not made here: {extra:?}");
