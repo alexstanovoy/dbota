@@ -187,7 +187,7 @@ fn attack_value(def: &ItemDef, key: &str) -> Option<Levels> {
         "slow_ranged" => one(-laid.ranged_slow_pct),
         "heal_reduction" => one(laid.restoration_cut_pct),
         "damage" if laid.dps > 0 => one(laid.dps),
-        "tick_interval" if laid.dps > 0 => one(1),
+        "tick_interval" if laid.dps > 0 => one(secs(laid.beat_ticks)),
         _ => None,
     }
 }
@@ -336,5 +336,45 @@ fn requiem_value(def: &AbilityDef, key: &str) -> Option<Levels> {
         "requiem_line_width_end" => one(rules::REQUIEM_LINE_WIDTH_END),
         "soul_death_release" => one(plain(f64::from(rules::REQUIEM_DEATH_LINES_PCT) / 100.0)),
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use bota_core::item_def;
+    use bota_proto::ItemId;
+
+    use super::*;
+
+    /// Orb of Venom's tooltip prints `damage`, `tick_interval` and `poison_duration` as the
+    /// simulator holds them: 12 every 1 second for 3 seconds.
+    #[test]
+    fn the_poison_attack_tooltip_reads_its_beat_from_the_simulator() {
+        let venom = item_def(ItemId::ORB_OF_VENOM).expect("an Orb of Venom");
+        let shown = |key| value(Subject::Item(venom), key);
+        assert_eq!(shown("damage"), Some(vec!["12".to_owned()]));
+        assert_eq!(shown("tick_interval"), Some(vec!["1".to_owned()]));
+        assert_eq!(shown("poison_duration"), Some(vec!["3".to_owned()]));
+    }
+
+    /// A poison that beat twice a second would be told so: the tooltip follows the simulator's
+    /// beat rather than a number of its own.
+    #[test]
+    fn a_faster_beat_is_told_as_it_is() {
+        static FAST: std::sync::LazyLock<ItemDef> = std::sync::LazyLock::new(|| {
+            let venom = item_def(ItemId::ORB_OF_VENOM).expect("an Orb of Venom");
+            let laid = venom.on_attack.expect("it poisons");
+            ItemDef {
+                on_attack: Some(bota_core::OnAttack {
+                    beat_ticks: TICKS_PER_SECOND / 2,
+                    ..laid
+                }),
+                ..*venom
+            }
+        });
+        assert_eq!(
+            value(Subject::Item(&FAST), "tick_interval"),
+            Some(vec!["0.5".to_owned()])
+        );
     }
 }
