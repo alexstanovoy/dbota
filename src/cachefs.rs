@@ -303,10 +303,18 @@ impl CacheReader {
 }
 
 impl CacheReader {
+    fn extension_is(path: &Path, expected: &str) -> bool {
+        path.extension().is_some_and(|extension| {
+            extension
+                .as_encoded_bytes()
+                .eq_ignore_ascii_case(expected.as_bytes())
+        })
+    }
+
     /// Whether the file at `path` is handed on decoded: a KTX2 texture when
     /// the GPU samples no block format.
     fn decodes(&self, path: &Path) -> bool {
-        !self.block.sampled() && path.extension().is_some_and(|e| e == "ktx2")
+        !self.block.sampled() && Self::extension_is(path, "ktx2")
     }
 
     /// A KTX2 texture's bytes decoded to plain channels, within the decode
@@ -322,7 +330,7 @@ impl CacheReader {
 
     /// Whether the file at `path` is a model, which is read whole and looked into.
     fn is_model(path: &Path) -> bool {
-        path.extension().is_some_and(|e| e == "glb" || e == "gltf")
+        Self::extension_is(path, "glb") || Self::extension_is(path, "gltf")
     }
 
     /// Refuses a model that names what the cache's models never do (see [`gltf_file`]).
@@ -336,7 +344,7 @@ impl CacheReader {
     /// Waits until a texture file fits the decode budget, and refuses one
     /// whose header no decoder may be trusted with.
     async fn admit(&self, path: &Path, head: &[u8]) -> Result<(), AssetReaderError> {
-        let png = path.extension().is_some_and(|extension| extension == "png");
+        let png = Self::extension_is(path, "png");
         let size = if png {
             Some(crate::texture_file::png_size(head))
         } else {
@@ -505,6 +513,30 @@ mod tests {
     }
 
     #[cfg(not(target_arch = "wasm32"))]
+    fn binary_model(json: &str) -> Vec<u8> {
+        let json = format!("{json}{}", " ".repeat((4 - json.len() % 4) % 4));
+        let mut file = b"glTF".to_vec();
+        file.extend(2u32.to_le_bytes());
+        file.extend((20 + json.len() as u32).to_le_bytes());
+        file.extend((json.len() as u32).to_le_bytes());
+        file.extend(0x4E4F_534Au32.to_le_bytes());
+        file.extend(json.as_bytes());
+        file
+    }
+
+    fn block_texture_header() -> Vec<u8> {
+        let mut ktx2 = b"\xABKTX 20\xBB\r\n\x1A\n".to_vec();
+        for word in [133u32, 1, 64, 64, 0, 0, 1, 1, 0] {
+            ktx2.extend(word.to_le_bytes());
+        }
+        ktx2.resize(80, 0);
+        for field in [104u64, 2048, 2048] {
+            ktx2.extend(field.to_le_bytes());
+        }
+        ktx2
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
     #[test]
     fn resident_interface_images_are_limited_before_native_decoding() {
         let root = std::env::temp_dir().join(format!("dbota-resident-{}", std::process::id()));
@@ -545,6 +577,91 @@ mod tests {
     }
 
     #[test]
+    fn resident_interface_images_are_limited_with_mixed_case_png_extensions() {
+        for (loaded_extension, excess_extension) in [("png", "PNG"), ("PNG", "png"), ("PnG", "pNg")]
+        {
+            for extension in [loaded_extension, excess_extension] {
+                assert!(
+                    matches!(
+                        bevy::image::ImageFormat::from_extension(extension),
+                        Some(bevy::image::ImageFormat::Png)
+                    ),
+                    "the budget must cover every spelling the decoder accepts"
+                );
+            }
+            let budget = DecodeBudget::default();
+            let reader = CacheReader::new(PathBuf::new(), budget.clone(), BlockTextures::default());
+            let png = interface_png(2048);
+            for index in 0..3 {
+                let name = format!("{index}.{loaded_extension}");
+                assert!(bevy::tasks::block_on(reader.admit(Path::new(&name), &png)).is_ok());
+                budget.settle(Path::new(&name));
+            }
+            let excess = format!("excess.{excess_extension}");
+            let why = bevy::tasks::block_on(reader.admit(Path::new(&excess), &png))
+                .expect_err("extension case cannot bypass retained image admission")
+                .to_string();
+            assert!(why.contains("resident interface image budget"), "{why}");
+        }
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn cache_format_dispatch_vets_embedded_models_with_mixed_case_extensions() {
+        let root = std::env::temp_dir().join(format!("dbota-model-case-{}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        let reader = CacheReader::new(
+            root.clone(),
+            DecodeBudget::default(),
+            BlockTextures::default(),
+        );
+        let json =
+            r#"{"asset":{"version":"2.0"},"images":[{"bufferView":0,"mimeType":"image/png"}]}"#;
+        for extension in ["gltf", "GLTF", "GlTf", "glb", "GLB", "GlB"] {
+            let name = format!("embedded.{extension}");
+            let bytes = if extension.eq_ignore_ascii_case("glb") {
+                binary_model(json)
+            } else {
+                json.as_bytes().to_vec()
+            };
+            std::fs::write(root.join(&name), bytes).unwrap();
+            let why = bevy::tasks::block_on(reader.read(Path::new(&name)))
+                .err()
+                .expect("extension case cannot bypass embedded-image validation")
+                .to_string();
+            assert!(why.contains("an image inside the model"), "{name}: {why}");
+        }
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn cache_format_dispatch_decodes_ktx2_with_mixed_case_extensions() {
+        let root = std::env::temp_dir().join(format!("dbota-ktx-case-{}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        let block = BlockTextures::default();
+        block.0.store(false, Ordering::Relaxed);
+        let budget = DecodeBudget::default();
+        let reader = CacheReader::new(root.clone(), budget.clone(), block);
+        let ktx2 = block_texture_header();
+        for extension in ["ktx2", "KTX2", "KtX2"] {
+            assert!(matches!(
+                bevy::image::ImageFormat::from_extension(extension),
+                Some(bevy::image::ImageFormat::Ktx2)
+            ));
+            let name = format!("truncated.{extension}");
+            std::fs::write(root.join(&name), &ktx2).unwrap();
+            let why = bevy::tasks::block_on(reader.read(Path::new(&name)))
+                .err()
+                .expect("a GPU without BC support must attempt plain decoding")
+                .to_string();
+            assert!(why.contains("level 0 out of the file"), "{name}: {why}");
+            budget.settle(Path::new(&name));
+        }
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn resident_interface_images_are_limited_when_their_header_is_unreadable() {
         let reader = CacheReader::new(
             PathBuf::new(),
@@ -564,14 +681,7 @@ mod tests {
             DecodeBudget::default(),
             BlockTextures::default(),
         );
-        let mut ktx2 = b"\xABKTX 20\xBB\r\n\x1A\n".to_vec();
-        for word in [133u32, 1, 64, 64, 0, 0, 1, 1, 0] {
-            ktx2.extend(word.to_le_bytes());
-        }
-        ktx2.resize(80, 0);
-        for field in [0u64, 2048, 2048] {
-            ktx2.extend(field.to_le_bytes());
-        }
+        let ktx2 = block_texture_header();
         assert_eq!(decoded_size(&ktx2), Some(Ok(2048)));
         let why = bevy::tasks::block_on(reader.admit(Path::new("wrong.png"), &ktx2))
             .expect_err("a recognized KTX2 header cannot stand for a PNG image")
@@ -699,20 +809,10 @@ mod tests {
     fn a_model_with_an_embedded_image_is_not_served() {
         let root = std::env::temp_dir().join(format!("dbota-model-{}", std::process::id()));
         std::fs::create_dir_all(&root).unwrap();
-        let model = |json: &str| {
-            let mut file = b"glTF".to_vec();
-            file.extend(2u32.to_le_bytes());
-            file.extend((20 + json.len() as u32).to_le_bytes());
-            file.extend((json.len() as u32).to_le_bytes());
-            file.extend(0x4E4F_534Au32.to_le_bytes());
-            file.extend(json.as_bytes());
-            file
-        };
-        let padded = |json: &str| format!("{json}{}", " ".repeat((4 - json.len() % 4) % 4));
-        let embedded = padded(r#"{"images":[{"bufferView":0,"mimeType":"image/png"}]}"#);
-        let beside = padded(r#"{"images":[{"uri":"head.ktx2"}]}"#);
-        std::fs::write(root.join("embedded.glb"), model(&embedded)).unwrap();
-        std::fs::write(root.join("beside.glb"), model(&beside)).unwrap();
+        let embedded = r#"{"images":[{"bufferView":0,"mimeType":"image/png"}]}"#;
+        let beside = r#"{"images":[{"uri":"head.ktx2"}]}"#;
+        std::fs::write(root.join("embedded.glb"), binary_model(embedded)).unwrap();
+        std::fs::write(root.join("beside.glb"), binary_model(beside)).unwrap();
         let reader = CacheReader::new(
             root.clone(),
             DecodeBudget::default(),
