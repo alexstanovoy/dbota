@@ -12,7 +12,7 @@ use crate::fx::line::Fx;
 /// The manifest, compiled in.
 pub const MANIFEST: &str = include_str!("../assets-manifest/manifest.txt");
 /// Our ids to Dota names, compiled in.
-const IDS: &str = include_str!("../assets-manifest/ids.txt");
+pub(crate) const IDS: &str = include_str!("../assets-manifest/ids.txt");
 
 /// One animation of a model.
 #[derive(Clone, Debug, PartialEq)]

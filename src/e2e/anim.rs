@@ -149,3 +149,106 @@ fn a_hero_far_from_the_view_is_not_posed_and_is_posed_in_the_first_frame_the_vie
     client.frames(1);
     assert_ne!(super::harness::pose_of(&client, body), first, "and play on");
 }
+
+/// A unit's model is posed from the first frame it is drawn in the view, its skinned meshes'
+/// bounds following its joints, not only once it has left the view and come back.
+#[test]
+fn a_hero_drawn_in_the_view_is_posed_from_its_first_frame() {
+    let server = Server::start(1, &[]);
+    let mut client = Client::join(&server, HeroId::SHADOW_FIEND, &[]);
+    client.follow_me();
+    client.until("the hero's model drawn", |c| posed(c).is_some());
+    assert_eq!(
+        posed(&client),
+        Some((true, true)),
+        "posed, bounds following its joints"
+    );
+}
+
+/// The widest reach either side of its feet and the height over them of a model's bind pose, in
+/// world units, read from its file in the cache (the bounds glTF keeps of every mesh's positions).
+fn bind_pose_extent(file: &std::path::Path, scale: f32) -> (f32, f32) {
+    let file = std::fs::read(file).expect("a model file of the cache");
+    let json_len = u32::from_le_bytes(file[12..16].try_into().expect("a GLB header")) as usize;
+    let doc: serde_json::Value =
+        serde_json::from_slice(&file[20..20 + json_len]).expect("its JSON");
+    let k = crate::map::UNITS_PER_METRE * scale;
+    let (mut reach, mut height) = (0.0f32, 0.0f32);
+    for mesh in doc["meshes"].as_array().into_iter().flatten() {
+        for primitive in mesh["primitives"].as_array().into_iter().flatten() {
+            let Some(at) = primitive["attributes"]["POSITION"].as_u64() else {
+                continue;
+            };
+            let accessor = &doc["accessors"][at as usize];
+            let corner = |key: &str| -> Vec<f32> {
+                let values = accessor[key].as_array().into_iter().flatten();
+                values
+                    .filter_map(|v| v.as_f64())
+                    .map(|v| v as f32)
+                    .collect()
+            };
+            let (min, max) = (corner("min"), corner("max"));
+            for v in [min[0], max[0], min[2], max[2]] {
+                reach = reach.max(v.abs() * k);
+            }
+            height = height.max(max[1] * k);
+        }
+    }
+    (reach, height)
+}
+
+/// Every model a unit is posed with (one with clips, and what is worn on one), at every size a
+/// unit wears it, fits the box it is posed by with room for its clips to reach past its bind
+/// pose, a quarter more again.
+#[test]
+fn every_posed_model_fits_the_box_it_is_posed_by() {
+    use clap::Parser;
+    use dbota_import::catalog::{Line as CatalogLine, parse};
+    let root = crate::Args::parse_from(["dbota"]).cache_dir;
+    let catalog = parse(crate::manifest::MANIFEST, crate::manifest::IDS).expect("the manifest");
+    let models: Vec<_> = catalog
+        .lines
+        .iter()
+        .filter_map(|l| match l {
+            CatalogLine::Model(m) => Some(m),
+            _ => None,
+        })
+        .collect();
+    let posed = |name: &str| {
+        models
+            .iter()
+            .any(|m| m.logical == name && !m.anims.is_empty())
+    };
+    let mut measured = 0;
+    for model in &models {
+        let body = model.attach.as_deref().unwrap_or(&model.logical);
+        if !posed(body) {
+            continue;
+        }
+        let units = catalog.lines.iter().filter_map(|l| match l {
+            CatalogLine::Unit(u) if u.model.as_deref() == Some(body) => u.model_scale,
+            _ => None,
+        });
+        let own = models
+            .iter()
+            .find(|m| m.logical == body)
+            .and_then(|m| m.model_scale);
+        for scale in units.chain([own.unwrap_or(1.0)]) {
+            let (reach, height) = bind_pose_extent(&root.join(&model.out), scale);
+            let name = &model.logical;
+            assert!(
+                reach * 1.25 <= crate::anim::MODEL_REACH,
+                "{name} at {scale} reaches {reach:.0}"
+            );
+            assert!(
+                height * 1.25 <= crate::anim::MODEL_HEIGHT,
+                "{name} at {scale} stands {height:.0}"
+            );
+            measured += 1;
+        }
+    }
+    assert!(
+        measured > 50,
+        "the cache's posed models were measured: {measured}"
+    );
+}

@@ -7,7 +7,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use bevy::{camera::primitives::Sphere, math::Vec3A, mesh::skinning::SkinnedMesh, prelude::*};
+use bevy::{math::Vec3A, mesh::skinning::SkinnedMesh, prelude::*};
 use bota_client_core::App as Core;
 use bota_proto::{
     AbilityId, EffectId, EntityId, EventKind, StatusFlags, Team, UnitKind, UnitView, WorldView,
@@ -39,17 +39,17 @@ const LOOPS_BEFORE_RARE: u32 = 4;
 const RUN_PACE: f32 = 300.0;
 /// World units a second above which a unit counts as running.
 const RUNNING: f32 = 25.0;
-/// World units out of the camera's view within which a unit's skeleton is
-/// still posed: past the widest model's reach from its feet. Its shadow is
-/// followed on its own ([`shadow_reaches`]), and the view is this frame's, so
-/// no margin for panning is needed.
-const POSED_REACH: f32 = 800.0;
-/// World units over its feet a unit's model may reach, for its shadow: past
-/// the tallest building and Roshan.
-const TALLEST: f32 = 1200.0;
-/// World units either side of its feet a unit's model may reach, for its
-/// shadow.
-const SHADOW_REACH: f32 = 400.0;
+/// World units either side of its feet any unit's model may reach, posed: the widest
+/// one's bind pose (a tower falling apart, 564) and room for its clips to swing
+/// wider (`every_posed_model_fits_the_box_it_is_posed_by` measures the cache's).
+pub(crate) const MODEL_REACH: f32 = 800.0;
+/// World units over its feet any unit's model may reach, posed: the tallest
+/// one's bind pose (an ancient falling, 549) and room for its clips.
+pub(crate) const MODEL_HEIGHT: f32 = 800.0;
+/// World units a posed unit's box is grown by before it is let go: a unit
+/// standing at the edge of what is posed is not posed and let go frame after
+/// frame (each a change of its components).
+const LET_GO_MARGIN: f32 = 200.0;
 
 /// Where a unit's model is in its clips.
 #[derive(Component, Debug, Default)]
@@ -272,22 +272,10 @@ fn animate(
             continue;
         };
         let from = clip(pose.clip).map(|c| c.1);
-        // A unit no view sees nor will in a frame, and whose shadow falls
-        // outside the view, is not posed. Its clip and time still follow the
+        // A unit whose model could not be in the view nor throw its shadow
+        // into it is not posed. Its clip and time still follow the
         // simulation, so it is posed right the frame it comes near.
-        let center = Vec3A::from(at.translation);
-        let near = frustum.intersects_sphere(
-            &Sphere {
-                center,
-                radius: POSED_REACH,
-            },
-            true,
-        ) || shadow.is_some_and(|(sun, floor)| {
-            let reach = Vec3A::new(SHADOW_REACH, 0.0, SHADOW_REACH);
-            let tallest = Vec3A::new(SHADOW_REACH, TALLEST, SHADOW_REACH);
-            let around = (center - reach, center + tallest);
-            shadow_reaches(&frustum, around, sun.forward().as_vec3(), floor)
-        });
+        let near = in_reach(&frustum, at.translation, posed, shadow);
         let graph = bank.0[model].graph.as_ref();
         if near != posed && (graph.is_some() || !near) {
             let graph = graph.filter(|_| near);
@@ -362,6 +350,27 @@ fn trace(
         pose.share,
         fading.join(",")
     );
+}
+
+/// Whether a unit standing at `feet` may be seen or throw its shadow into the
+/// view: its model's box ([`MODEL_REACH`], [`MODEL_HEIGHT`]), grown by
+/// [`LET_GO_MARGIN`] while it is `posed`, meets the frustum, or its shadow cast
+/// by the `shadow` sun down to its floor does.
+fn in_reach(
+    frustum: &bevy::camera::primitives::Frustum,
+    feet: Vec3,
+    posed: bool,
+    shadow: Option<(&GlobalTransform, f32)>,
+) -> bool {
+    let grow = if posed { LET_GO_MARGIN } else { 0.0 };
+    let feet = Vec3A::from(feet);
+    let low = feet - Vec3A::new(MODEL_REACH + grow, grow, MODEL_REACH + grow);
+    let high = feet + Vec3A::new(MODEL_REACH + grow, MODEL_HEIGHT + grow, MODEL_REACH + grow);
+    let model = bevy::camera::primitives::Aabb::from_min_max(low.into(), high.into());
+    frustum.intersects_obb_identity(&model)
+        || shadow.is_some_and(|(sun, floor)| {
+            shadow_reaches(frustum, (low, high), sun.forward().as_vec3(), floor)
+        })
 }
 
 /// Poses a unit's model again (`graph` given), or stops posing it. Unposed,
@@ -666,5 +675,44 @@ fn standing(core: &Core, u: &UnitView) -> &'static str {
         // pluck under way, so it idles.
         UnitKind::LotusPool => "idle",
         _ => "idle",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use bevy::camera::primitives::Frustum;
+    use bevy::math::primitives::ViewFrustum;
+
+    use super::*;
+
+    /// A camera 3000 units over the origin looking straight down with a 25-degree lens: it sees
+    /// the ground within ~665 units of it.
+    fn view() -> Frustum {
+        let projection = Mat4::perspective_rh(25f32.to_radians(), 1.0, 10.0, 10_000.0);
+        let camera = Transform::from_xyz(0.0, 3000.0, 0.0).looking_at(Vec3::ZERO, Vec3::NEG_Z);
+        Frustum(ViewFrustum::from_clip_from_world(
+            &(projection * camera.to_matrix().inverse()),
+        ))
+    }
+
+    /// A unit just past what is posed is not posed, but one posed there is kept posed until it is
+    /// past the margin too: one standing at the edge is not posed and let go every frame.
+    #[test]
+    fn a_unit_at_the_edge_of_the_posed_reach_is_not_let_go_and_posed_again_each_frame() {
+        let edge = 665.0 + MODEL_REACH + LET_GO_MARGIN / 2.0;
+        let feet = Vec3::new(edge, 0.0, 0.0);
+        assert!(
+            !in_reach(&view(), feet, false, None),
+            "not posed when it comes there"
+        );
+        assert!(
+            in_reach(&view(), feet, true, None),
+            "kept posed while it stands there"
+        );
+        let past = Vec3::new(665.0 + MODEL_REACH + LET_GO_MARGIN * 2.0, 0.0, 0.0);
+        assert!(
+            !in_reach(&view(), past, true, None),
+            "let go past the margin"
+        );
     }
 }
