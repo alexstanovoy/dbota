@@ -162,15 +162,7 @@ fn halve(level: &[[u8; 4]], side: usize) -> Vec<[u8; 4]> {
 /// A PNG's linear brightness over [`DETAIL_SIZE`] squared texels, each
 /// against the mean and halved: 0.5 is the texture's mean.
 fn brightness(bytes: &[u8]) -> Option<Vec<f32>> {
-    let image = Image::from_buffer(
-        bytes,
-        bevy::image::ImageType::Extension("png"),
-        bevy::image::CompressedImageFormats::NONE,
-        true,
-        ImageSampler::Default,
-        RenderAssetUsages::MAIN_WORLD,
-    )
-    .ok()?;
+    let image = crate::map::ground_png(bytes)?;
     let (w, h) = (image.width(), image.height());
     if w < DETAIL_SIZE || h < DETAIL_SIZE {
         return None;

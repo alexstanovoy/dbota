@@ -614,9 +614,13 @@ impl LayerMeans {
     }
 }
 
-/// The mean linear RGB of a PNG, sampled sparsely.
-fn mean_color(bytes: &[u8]) -> Option<[f32; 3]> {
-    let image = Image::from_buffer(
+/// A ground texture's PNG decoded, read straight from the cache rather than through its asset
+/// reader: so it is held to the same caps first (the decoder allocates what a header says).
+pub(crate) fn ground_png(bytes: &[u8]) -> Option<Image> {
+    if !matches!(crate::texture_file::decoded_size(bytes), Some(Ok(_))) {
+        return None;
+    }
+    Image::from_buffer(
         bytes,
         bevy::image::ImageType::Extension("png"),
         bevy::image::CompressedImageFormats::NONE,
@@ -624,7 +628,12 @@ fn mean_color(bytes: &[u8]) -> Option<[f32; 3]> {
         ImageSampler::Default,
         RenderAssetUsages::MAIN_WORLD,
     )
-    .ok()?;
+    .ok()
+}
+
+/// The mean linear RGB of a PNG, sampled sparsely.
+fn mean_color(bytes: &[u8]) -> Option<[f32; 3]> {
+    let image = ground_png(bytes)?;
     let (w, h) = (image.width(), image.height());
     let mut sum = [0.0f32; 3];
     let mut n = 0.0;
@@ -1066,5 +1075,77 @@ fn report(
         parts.set("world", 1, 1);
     } else if file.is_some() {
         parts.set("world", 0, 1);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A PNG of one grey row, `width` texels long: stored (not deflated), so the test needs no
+    /// encoder.
+    fn grey_row_png(width: u32, grey: u8) -> Vec<u8> {
+        fn crc32(bytes: &[u8]) -> u32 {
+            let mut crc = !0u32;
+            for &b in bytes {
+                crc ^= u32::from(b);
+                for _ in 0..8 {
+                    crc = (crc >> 1) ^ (0xEDB8_8320 & (crc & 1).wrapping_neg());
+                }
+            }
+            !crc
+        }
+        fn chunk(out: &mut Vec<u8>, kind: &[u8; 4], data: &[u8]) {
+            out.extend((data.len() as u32).to_be_bytes());
+            let start = out.len();
+            out.extend(kind);
+            out.extend(data);
+            let crc = crc32(&out[start..]);
+            out.extend(crc.to_be_bytes());
+        }
+        let mut row = vec![0u8];
+        row.extend(std::iter::repeat_n(grey, width as usize));
+        let (mut a, mut b) = (1u32, 0u32);
+        for &byte in &row {
+            a = (a + u32::from(byte)) % 65_521;
+            b = (b + a) % 65_521;
+        }
+        let mut zlib = vec![0x78, 0x01, 1];
+        let len = row.len() as u16;
+        zlib.extend(len.to_le_bytes());
+        zlib.extend((!len).to_le_bytes());
+        zlib.extend(&row);
+        zlib.extend(((b << 16) | a).to_be_bytes());
+        let mut ihdr = width.to_be_bytes().to_vec();
+        ihdr.extend(1u32.to_be_bytes());
+        ihdr.extend([8, 0, 0, 0, 0]);
+        let mut png = b"\x89PNG\r\n\x1a\n".to_vec();
+        chunk(&mut png, b"IHDR", &ihdr);
+        chunk(&mut png, b"IDAT", &zlib);
+        chunk(&mut png, b"IEND", &[]);
+        png
+    }
+
+    /// The ground textures are read straight from the cache, past the asset server's reader: a
+    /// PNG whose header is past the caps every cache texture is held to (`texture_file`) is
+    /// refused before the decoder allocates what it says, and the layer is drawn middling grey.
+    #[test]
+    fn a_ground_texture_past_the_caps_is_not_decoded() {
+        let root = std::env::temp_dir().join(format!("dbota-ground-{}", std::process::id()));
+        let ground = root.join("textures/ground");
+        std::fs::create_dir_all(&ground).unwrap();
+        std::fs::write(ground.join("plain.png"), grey_row_png(64, 255)).unwrap();
+        std::fs::write(ground.join("wide.png"), grey_row_png(16_385, 255)).unwrap();
+        let mut means = LayerMeans {
+            root: root.clone(),
+            known: Default::default(),
+        };
+
+        let plain = means.of("materials/plain.vtex");
+        let wide = means.of("materials/wide.vtex");
+
+        assert_eq!(plain, [1.0; 3]);
+        assert_eq!(wide, [0.5; 3]);
+        std::fs::remove_dir_all(&root).unwrap();
     }
 }
