@@ -28,8 +28,8 @@ fn quickbuy_is_gold_only_when_current_gold_and_stock_allow_purchase_even_away_fr
     let home = client.me().pos;
     client.stand_at(MID);
     assert!(
-        !client.core().at_home_shop(),
-        "base items can be bought remotely into the stash"
+        !client.core().unit_at_home_shop(client.me().id),
+        "the hero is away from the home shop"
     );
     client.core_mut().set_quick_buy(ItemId::BOOTS.0, false);
     client.cheat(Cheat::Gold { amount: -100000 });
