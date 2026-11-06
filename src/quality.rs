@@ -454,4 +454,30 @@ mod tests {
             assert!(support.min(asked) == GpuPreprocessingMode::None);
         }
     }
+
+    /// The plugin makes the render world batch on the CPU only when GPU batching is off.
+    #[test]
+    fn the_render_world_batches_on_the_cpu_only_with_gpu_batching_off() {
+        use bevy::render::{RenderApp, RenderStartup};
+        for gpu_batching in [false, true] {
+            let mut app = App::new();
+            let mut settings = Settings::default();
+            settings.quality.gpu_batching = gpu_batching;
+            app.insert_resource(settings);
+            app.insert_sub_app(RenderApp, bevy::app::SubApp::new());
+            plugin(&mut app);
+            let render = app.sub_app_mut(RenderApp).world_mut();
+            render.insert_resource(GpuPreprocessingSupport {
+                max_supported_mode: GpuPreprocessingMode::Culling,
+            });
+            let _ = render.try_run_schedule(RenderStartup);
+            let mode = render
+                .resource::<GpuPreprocessingSupport>()
+                .max_supported_mode;
+            assert!(
+                (mode == GpuPreprocessingMode::None) == !gpu_batching,
+                "GPU batching {gpu_batching}"
+            );
+        }
+    }
 }
