@@ -90,6 +90,9 @@ impl DecodeBudget {
             .lock()
             .map_err(|_| "resident interface image budget is unavailable".to_string())?;
         let previous = resident.images.get(path).copied();
+        // A failed reload leaves the old image alive; the reader has no replacement
+        // confirmation, so smaller headers cannot release its reservation.
+        let bytes = bytes.max(previous.unwrap_or(0));
         let total = resident.bytes - previous.unwrap_or(0) + bytes;
         if total > RESIDENT_BUDGET {
             return Err(format!(
@@ -592,6 +595,28 @@ mod tests {
         budget.settle(retained);
         let why = bevy::tasks::block_on(reader.admit(retained, &interface_png(2304)))
             .expect_err("a larger replacement must reserve its extra decoded bytes")
+            .to_string();
+        assert!(why.contains("resident interface image budget"), "{why}");
+    }
+
+    #[test]
+    fn resident_interface_images_do_not_refund_a_failed_shrinking_reload() {
+        let budget = DecodeBudget::default();
+        let reader = CacheReader::new(PathBuf::new(), budget.clone(), BlockTextures::default());
+        let large = interface_png(2048);
+        for index in 0..3 {
+            let name = format!("{index}.png");
+            assert!(bevy::tasks::block_on(reader.admit(Path::new(&name), &large)).is_ok());
+            budget.settle(Path::new(&name));
+        }
+        let retained = Path::new("0.png");
+        let corrupt_replacement = interface_png(1);
+        assert!(bevy::tasks::block_on(reader.admit(retained, &corrupt_replacement)).is_ok());
+        // Its header passes, but its absent pixel data cannot replace the old GPU image.
+        // Failed loads settle transient decoding just as successful uploads do.
+        budget.settle(retained);
+        let why = bevy::tasks::block_on(reader.admit(Path::new("new.png"), &interface_png(1)))
+            .expect_err("a failed shrinking reload leaves the old large image resident")
             .to_string();
         assert!(why.contains("resident interface image budget"), "{why}");
     }
