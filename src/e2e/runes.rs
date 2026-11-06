@@ -4,7 +4,7 @@
 //! with its sound, its hero's line, its buff and its lines in the chat and the feed, the Bottle's
 //! icon by its charges and by the rune it keeps, and an invisible hero drawn see-through.
 
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use bevy::input::ButtonState;
 use bevy::prelude::*;
@@ -563,6 +563,151 @@ fn a_rune_lies_drawn_and_the_minimap_keeps_it_until_its_spot_is_seen_without_it(
     client.within(SOON, "the feed's line", |c| {
         c.shown_texts().iter().any(|t| t.contains(rune.trim()))
     });
+}
+
+fn reach_rune_minute(client: &mut Client, minute: u32) {
+    let target = bota_core::rules::Schedule::of(client.core().pregame_ticks()).at_minute(minute);
+    let deadline = Instant::now() + Duration::from_secs(240);
+    while client.view().game_tick() < target {
+        assert!(Instant::now() < deadline, "the match reaches {minute}:00");
+        assert!(!client.core().lost, "the connection remains live");
+        client.core_mut().pump(0.0);
+        std::thread::yield_now();
+    }
+    client.frames(2);
+}
+
+fn rune_drawn_near(client: &mut Client, kind: RuneKind, spot: (i32, i32)) -> bool {
+    let model = format!("rune.{}.model", crate::runes::art(kind));
+    let at = Vec2::new(spot.0 as f32, spot.1 as f32);
+    let world = client.world_mut();
+    world
+        .query_filtered::<(&crate::loot::Idle, &Transform), With<RuneBody>>()
+        .iter(world)
+        .any(|(idle, t)| {
+            idle.0 == model && Vec2::new(t.translation.x, -t.translation.z).distance(at) < 1000.0
+        })
+}
+
+fn remembered_rune(client: &Client, id: bota_proto::EntityId) -> Option<crate::runes::Remembered> {
+    client
+        .world()
+        .resource::<crate::runes::RuneMemory>()
+        .runes
+        .iter()
+        .find(|r| r.id == id)
+        .copied()
+}
+
+fn forget_unseen_water_at_four(
+    client: &mut Client,
+    water: bota_proto::RuneView,
+    jungle: bota_proto::EntityId,
+) {
+    client.stand_at(AWAY);
+    client.until("the Water Rune remembered out of sight", |c| {
+        remembered_rune(c, water.id).is_some_and(|r| !r.seen)
+    });
+    reach_rune_minute(client, 4);
+    assert!(
+        remembered_rune(client, water.id).is_none(),
+        "unseen water expires at its recorded deadline"
+    );
+    assert!(
+        remembered_rune(client, jungle).is_some(),
+        "the persistent jungle bounty stays remembered"
+    );
+    let spot = top_spot();
+    assert!(
+        !client
+            .world()
+            .resource::<crate::runes::RuneMemory>()
+            .runes
+            .iter()
+            .any(|r| {
+                r.kind == RuneKind::Water
+                    && r.at.distance(Vec2::new(spot.0 as f32, spot.1 as f32)) < 1000.0
+            }),
+        "the unseen 4:00 replacement is not revealed"
+    );
+}
+
+fn see_opening_bounty(client: &mut Client, spot: usize) -> bota_proto::EntityId {
+    let at = bota_core::DOTA_RUNE_SPOTS[spot].at;
+    client.stand_at((at.x.to_int() + 400, at.y.to_int()));
+    client
+        .view()
+        .runes
+        .iter()
+        .find(|r| r.kind == RuneKind::Bounty && r.pos == at)
+        .expect("the opening bounty at this spawner")
+        .id
+}
+
+#[test]
+fn opening_river_bounties_and_unseen_water_expire_at_their_server_deadlines() {
+    let server = Server::start(1, &["--map", "0", "--runes", "all"]);
+    let mut client = Client::join(&server, HeroId::SHADOW_FIEND, &[]);
+    client.cheat(Cheat::CreepSpawning { on: false });
+    client.cheat(Cheat::KillCreeps {
+        which: bota_proto::CreepSide::All,
+    });
+    client.cheat(Cheat::StartGame);
+    let jungle = see_opening_bounty(&mut client, 3);
+    let river = see_opening_bounty(&mut client, 0);
+    client.stand_at(AWAY);
+    client.until("both bounties remembered out of sight", |c| {
+        [jungle, river]
+            .iter()
+            .all(|id| remembered_rune(c, *id).is_some_and(|r| !r.seen))
+    });
+    reach_rune_minute(&mut client, 2);
+    assert!(
+        remembered_rune(&client, river).is_none(),
+        "the expired river bounty leaves fog memory"
+    );
+    assert!(
+        remembered_rune(&client, jungle).is_some_and(|r| !r.seen),
+        "the jungle bounty persists"
+    );
+    let spot = top_spot();
+    let at = Spot::from_ints(spot.0, spot.1);
+    assert!(
+        !client
+            .world()
+            .resource::<crate::runes::RuneMemory>()
+            .runes
+            .iter()
+            .any(|r| {
+                r.kind == RuneKind::Water
+                    && r.at.distance(Vec2::new(spot.0 as f32, spot.1 as f32)) < 1000.0
+            }),
+        "the unseen 2:00 replacement is not revealed"
+    );
+    client.stand_at((spot.0 + 400, spot.1));
+    assert!(
+        client
+            .view()
+            .runes
+            .iter()
+            .all(|r| r.kind != RuneKind::Bounty || !r.pos.within(at, bota_core::rules::units(1000))),
+        "the river's opening bounty is gone"
+    );
+    let water = client
+        .view()
+        .runes
+        .iter()
+        .find(|r| r.kind == RuneKind::Water && r.pos == at)
+        .copied()
+        .expect("the top Water Rune");
+    assert_eq!(
+        water.expires_at,
+        Some(bota_core::rules::Schedule::of(client.core().pregame_ticks()).at_minute(4))
+    );
+    client.within(SOON, "water replaces the bounty model", |c| {
+        rune_drawn_near(c, RuneKind::Water, spot) && !rune_drawn_near(c, RuneKind::Bounty, spot)
+    });
+    forget_unseen_water_at_four(&mut client, water, jungle);
 }
 
 /// A Haste Rune appearing at the river shows Dota's toast; a right click on it walks the hero

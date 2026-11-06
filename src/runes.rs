@@ -6,7 +6,7 @@
 use std::collections::HashMap;
 
 use bevy::prelude::*;
-use bota_proto::{EntityId, EventKind, RuneKind, Team, WorldView};
+use bota_proto::{EntityId, RuneKind, Team, WorldView};
 
 use crate::fog::FogGrid;
 use crate::loot::{Idle, spawn_idle_model};
@@ -86,10 +86,13 @@ pub struct Remembered {
     pub seen: bool,
     /// The tick of the last view that held it.
     pub tick: u32,
+    /// Expiry learned while visible, in game-clock ticks; independent of
+    /// whether this side is told of any later spawn.
+    expires_at: Option<u32>,
 }
 
-/// What the watched side remembers of the runes it saw: Dota keeps a rune the fog took on the
-/// minimap until its spot is seen empty, or until the river's runes turn over.
+/// What the watched side remembers of the runes it saw, until its spot is
+/// seen empty or the expiry learned while visible is reached.
 #[derive(Resource, Default)]
 pub struct RuneMemory {
     /// The vision the memory is of: another side's memory is not this one's.
@@ -167,9 +170,9 @@ fn sync_runes(
 
 /// Keeps what the watched vision has seen of the runes: a rune in sight is remembered; one
 /// remembered is forgotten once its spot is in sight without it (sight worked out for a later
-/// view than the last that held it: the fog's cells come a frame behind the view), and a water or power rune
-/// once the river's runes turn over (a new one appears there: the old are gone). Another
-/// vision to watch through starts from nothing.
+/// view than the last that held it: the fog's cells come a frame behind the view),
+/// or at the expiry its spawner reported while visible. Another vision starts
+/// from nothing.
 pub fn remember(sight: crate::fog::EventSight, mut memory: ResMut<RuneMemory>) {
     let core = sight.core();
     let fog = sight.fog();
@@ -190,6 +193,7 @@ pub fn remember(sight: crate::fog::EventSight, mut memory: ResMut<RuneMemory>) {
             known.at = at;
             known.seen = true;
             known.tick = view.tick;
+            known.expires_at = rune.expires_at;
         } else if memory.runes.len() < REMEMBERED {
             memory.runes.push(Remembered {
                 id: rune.id,
@@ -197,13 +201,11 @@ pub fn remember(sight: crate::fog::EventSight, mut memory: ResMut<RuneMemory>) {
                 kind: rune.kind,
                 seen: true,
                 tick: view.tick,
+                expires_at: rune.expires_at,
             });
         }
     }
-    let turned = core.told.iter().any(|event| {
-        sight.allows(event, crate::fog::EventSubject::Event)
-            && matches!(event, EventKind::RuneSpawned { kind, .. } if *kind != RuneKind::Bounty)
-    });
+
     // The sight worked out for a view after the last that held the rune, which did not.
     // Without fog everything is in sight.
     let sighted = |rune: &Remembered| {
@@ -211,7 +213,8 @@ pub fn remember(sight: crate::fog::EventSight, mut memory: ResMut<RuneMemory>) {
             || fog.worked_out_at().is_some_and(|tick| tick > rune.tick)
                 && fog.lit(rune.at.x, rune.at.y)
     };
-    memory
-        .runes
-        .retain(|rune| rune.seen || !(sighted(rune) || turned && rune.kind != RuneKind::Bounty));
+    memory.runes.retain(|rune| {
+        let expired = rune.expires_at.is_some_and(|at| view.game_tick() >= at);
+        !expired && (rune.seen || !sighted(rune))
+    });
 }
