@@ -69,6 +69,12 @@ fn check_inspiration_for_viewer(viewer: Team) {
     client.cheat(Cheat::AllVision { on: true });
     client.cheat(Cheat::StartGame);
     advance_to_flag_wave(&mut client);
+    client.until("the hero body available", |c| c.body(c.me().id).is_some());
+    // Recreate the cold-load interleaving with initial camera placement still pending.
+    client.core_mut().found_my_hero = false;
+    client.until("the initial hero camera placement", |c| {
+        c.core().found_my_hero
+    });
     client
         .world_mut()
         .insert_resource(bevy::time::TimeUpdateStrategy::ManualDuration(
