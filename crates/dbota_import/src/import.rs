@@ -8,6 +8,8 @@
 //! An install
 //! that asks for more than the budget ends the import: no cache is finished from it.
 
+mod voice;
+
 use std::cell::Cell;
 use std::collections::{BTreeMap, BTreeSet, HashSet, VecDeque};
 
@@ -50,7 +52,7 @@ pub const LAST_USE_TEXT: &str = "dbota last use 1\n";
 pub const MAX_STAMP: u64 = 4096;
 
 /// Bumped when the importer's output changes for the same install; part of a cache's stamp.
-pub const IMPORT_REV: u32 = 34;
+pub const IMPORT_REV: u32 = 37;
 
 /// The manifest this build imports and draws, and its ids.
 pub const MANIFEST: &str = include_str!("../../../assets-manifest/manifest.txt");
@@ -323,6 +325,13 @@ pub enum Item {
     /// Dota's mixer: the mix groups, the levels of its default mix and its layers, as
     /// `sounds/mixer.txt`.
     SoundMixer { logical: String, out: String },
+    /// A hero's voice pack ([`crate::voice`]): its pruned response rules and the sounds of
+    /// their lines, at [`crate::voice::pack_path`].
+    Voice {
+        logical: String,
+        hero: String,
+        out: String,
+    },
     /// A facial scene (a hero's idle expression), as [`expression_txt`] writes it.
     Expression {
         logical: String,
@@ -355,6 +364,7 @@ impl Item {
             | Self::Sound { out, .. }
             | Self::SoundEvents { out, .. }
             | Self::SoundMixer { out, .. }
+            | Self::Voice { out, .. }
             | Self::Expression { out, .. }
             | Self::Phonemes { out, .. }
             | Self::Tooltips { out, .. }
@@ -402,6 +412,7 @@ impl Item {
             | Self::Sound { logical, .. }
             | Self::SoundEvents { logical, .. }
             | Self::SoundMixer { logical, .. }
+            | Self::Voice { logical, .. }
             | Self::Expression { logical, .. }
             | Self::Phonemes { logical, .. }
             | Self::Portraits { logical, .. } => logical,
@@ -571,6 +582,15 @@ impl Plan {
                 out: STYLES.to_owned(),
             });
         }
+        for id in &catalog.ids {
+            if let Id::Hero { name, .. } = id {
+                plan.items.push(Item::Voice {
+                    logical: format!("voice.{name}"),
+                    hero: name.clone(),
+                    out: crate::voice::pack_path(name),
+                });
+            }
+        }
         for abilities in [false, true] {
             plan.items.push(Item::Icons {
                 logical: format!("icons.{}", if abilities { "abilities" } else { "items" }),
@@ -630,6 +650,8 @@ pub struct Report {
     pub files: BTreeMap<String, u64>,
     /// Items that did not convert, with why; their assets are missing.
     pub failed: Vec<(String, String)>,
+    /// What converted items left out on purpose, told for the log (a voice pack's pruning).
+    pub notes: Vec<String>,
     pub stopped: bool,
     /// Why the import was cut short by the install, when it was: it asked for more than the
     /// importer reads. Nothing of such an import is a cache.
@@ -1202,6 +1224,9 @@ fn make(
         Item::SoundEvents {
             events, out: dest, ..
         } => sound_events(src, pak, events, dest, out),
+        Item::Voice {
+            hero, out: dest, ..
+        } => voice::voice(src, pak, hero, dest, out),
         Item::SoundMixer { out: dest, .. } => {
             let mixer = read_sound_mixer(&read_from(src, &[pak], SOUND_MIXER_SRC)?)?;
             out.put(dest, sound_mixer_txt(&mixer).as_bytes())
@@ -1454,6 +1479,19 @@ const SOUND_STACKS: &[&str] = &[
 const MAX_EVENT_FILES: usize = 2048;
 const MAX_EVENT_BYTES: usize = 128 << 20;
 
+/// The event types of [`SOUND_STACKS`], which give the events their limits and defaults.
+fn sound_stacks(src: &impl Source, pak: &Vpk) -> Result<Vec<heatel::sound::SoundStack>> {
+    let mut stacks = Vec::new();
+    for path in SOUND_STACKS {
+        stacks.extend(read_sound_stacks(&Resource::parse(&read_from(
+            src,
+            &[pak],
+            path,
+        )?)?)?);
+    }
+    Ok(stacks)
+}
+
 /// `sounds/events.txt`: the events `wanted` as the install's sound event files state them,
 /// their limits completed by their type's ([`sound_events_txt`]). An event no file has, a file
 /// that does not read and a sound whose loop cannot be told are reported, and the client limits
@@ -1465,14 +1503,7 @@ fn sound_events(
     dest: &str,
     out: &mut Out<'_>,
 ) -> Result<()> {
-    let mut stacks = Vec::new();
-    for path in SOUND_STACKS {
-        stacks.extend(read_sound_stacks(&Resource::parse(&read_from(
-            src,
-            &[pak],
-            path,
-        )?)?)?);
-    }
+    let stacks = sound_stacks(src, pak)?;
     let mixer = match read_from(src, &[pak], SOUND_MIXER_SRC).and_then(|b| read_sound_mixer(&b)) {
         Ok(mixer) => mixer,
         Err(err) => {
@@ -1540,33 +1571,44 @@ fn sound_events(
                 false
             })
         });
-        let stack = stacks.iter().find(|s| s.name == event.kind);
-        let defaults = stack.map(|s| s.defaults.clone()).unwrap_or_default();
-        let level = event
-            .sound_level
-            .or(defaults.sound_level)
-            .unwrap_or(DEFAULT_SOUND_LEVEL);
-        // An event names its group, or leaves it to the path of its first file (`USEPATHMATCH`).
-        let group = event
-            .mix_group
-            .clone()
-            .filter(|name| !name.is_empty() && name != "USEPATHMATCH")
-            .or_else(|| {
-                let file = event.files.first()?;
-                mixer.group_of(file, "", level).map(|g| g.name.clone())
-            });
-        resolved.push(ResolvedEvent {
-            limits: match stack {
-                Some(stack) => event.limits.or(&stack.limits),
-                None => event.limits.clone(),
-            },
-            defaults,
-            group,
-            looping,
-            event,
-        });
+        resolved.push(resolve_event(event, looping, &stacks, &mixer));
     }
     out.put(dest, sound_events_txt(&resolved).as_bytes())
+}
+
+/// An event with what its type gives it: its limits completed by its type's, its type's
+/// defaults, and its mix group.
+fn resolve_event(
+    event: SoundEvent,
+    looping: bool,
+    stacks: &[heatel::sound::SoundStack],
+    mixer: &SoundMixer,
+) -> ResolvedEvent {
+    let stack = stacks.iter().find(|s| s.name == event.kind);
+    let defaults = stack.map(|s| s.defaults.clone()).unwrap_or_default();
+    let level = event
+        .sound_level
+        .or(defaults.sound_level)
+        .unwrap_or(DEFAULT_SOUND_LEVEL);
+    // An event names its group, or leaves it to the path of its first file (`USEPATHMATCH`).
+    let group = event
+        .mix_group
+        .clone()
+        .filter(|name| !name.is_empty() && name != "USEPATHMATCH")
+        .or_else(|| {
+            let file = event.files.first()?;
+            mixer.group_of(file, "", level).map(|g| g.name.clone())
+        });
+    ResolvedEvent {
+        limits: match stack {
+            Some(stack) => event.limits.or(&stack.limits),
+            None => event.limits.clone(),
+        },
+        defaults,
+        group,
+        looping,
+        event,
+    }
 }
 
 /// Where the lip sync of the sound written at `sound` goes: beside it, `<stem>.lipsync.txt`.

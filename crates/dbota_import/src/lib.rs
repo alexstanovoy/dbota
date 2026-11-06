@@ -15,6 +15,7 @@ pub mod source;
 pub mod text;
 #[cfg(any(unix, windows))]
 pub mod verify;
+pub mod voice;
 pub mod zip;
 
 pub use source::ADDONS;

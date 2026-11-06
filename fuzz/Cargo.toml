@@ -106,3 +106,10 @@ path = "fuzz_targets/cache_model.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "voice_pack"
+path = "fuzz_targets/voice_pack.rs"
+test = false
+doc = false
+bench = false

@@ -164,6 +164,40 @@ def pack_seeds(cache):
         write("pack_zip", label, out.getvalue())
 
 
+def small_pack(data):
+    """A voice pack with its rules and events whole and each sound cut to its first bytes, its
+    lip syncs left out: small enough to mutate, every index of its rules still good."""
+    import struct
+    if data[:8] != b"DBVOICE\x01":
+        return None
+    (count,), at, out = struct.unpack_from("<I", data, 8), 12, []
+    for _ in range(count):
+        (n,) = struct.unpack_from("<H", data, at)
+        name = data[at + 2:at + 2 + n]
+        at += 2 + n
+        (size,) = struct.unpack_from("<I", data, at)
+        body = data[at + 4:at + 4 + size]
+        at += 4 + size
+        if name.startswith(b"lipsync/"):
+            continue
+        if name.startswith(b"sound/"):
+            body = body[:16]
+        out.append(struct.pack("<H", len(name)) + name + struct.pack("<I", len(body)) + body)
+    return data[:8] + struct.pack("<I", len(out)) + b"".join(out)
+
+
+def voice_seeds(cache):
+    """Each hero's voice pack, made small, behind the byte that names its hero (even: Pudge,
+    odd: Shadow Fiend)."""
+    for pick, hero in ((0, "pudge"), (1, "nevermore")):
+        path = os.path.join(cache, "sounds", "voice", hero + ".bin")
+        if os.path.isfile(path):
+            with open(path, "rb") as file:
+                small = small_pack(file.read())
+            if small:
+                write("voice_pack", hero, bytes([pick]) + small)
+
+
 def main(game):
     pak = Package(game, "pak01_dir.vpk")
     loc, scripts, portraits, shop = texts(pak)
@@ -176,3 +210,4 @@ if __name__ == "__main__":
     if len(sys.argv) > 2:
         cache_seeds(sys.argv[2])
         pack_seeds(sys.argv[2])
+        voice_seeds(sys.argv[2])

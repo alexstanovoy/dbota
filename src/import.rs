@@ -184,6 +184,9 @@ fn run_with_in(
         started.elapsed().as_secs_f32()
     );
     report_maintenance(root, cache);
+    for note in &report.notes {
+        println!("dbota import: {note}");
+    }
     for (asset, why) in &report.failed {
         eprintln!("dbota import: {asset} did not convert: {why}");
     }
