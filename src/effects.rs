@@ -56,8 +56,6 @@ struct Flying {
     souls: Vec<(crate::particles::Handle, EntityId)>,
     /// The effects that follow a unit for their life (a level up), by the unit.
     following: Vec<(crate::particles::Handle, EntityId)>,
-    /// How many grenades whose flight was drawn burst this frame, as their effects' ends.
-    burst_grenades: usize,
 }
 
 pub fn plugin(app: &mut App) {
@@ -66,7 +64,7 @@ pub fn plugin(app: &mut App) {
         (
             missiles,
             bursts,
-            casts,
+            casts.after(crate::units::Placed),
             souls,
             level_ups.after(crate::units::Placed),
             deaths,
@@ -94,6 +92,30 @@ pub(crate) struct Shooters<'w, 's> {
 }
 
 impl Shooters<'_, '_> {
+    fn start_body(
+        &self,
+        f: &bota_client_core::Flight,
+        at: Vec3,
+        dir: Vec3,
+        library: Option<&Library>,
+        playing: &mut Playing,
+    ) -> Option<Body> {
+        let flight = f
+            .missile
+            .inflictor
+            .map_or(Flight::Bolt, |by| art_by(by).flight);
+        let line = (flight == Flight::Soul)
+            .then(|| start_line(f, at, dir, &self.ground, library, playing))
+            .flatten()
+            .map(Body::Line);
+        let grenade = (flight == Flight::Grenade)
+            .then(|| self.start_grenade(f, at, library, playing))
+            .flatten()
+            .map(Body::Grenade);
+        line.or(grenade)
+            .or_else(|| self.start(f, at, library, playing).map(Body::Effect))
+    }
+
     /// Where unit `id`'s missile leaves: the hand of the attack it swings.
     pub(crate) fn launch(&self, id: EntityId) -> Option<Vec3> {
         let (_, pose, attachments) = self.units.get(*self.index.0.get(&id)?).ok()?;
@@ -238,22 +260,24 @@ impl Shooters<'_, '_> {
 
 /// Keeps every missile in flight drawn where the frame puts it, as its source's particle effect
 /// (ended, playing its impact, when the missile goes); a missile with none is not drawn.
-#[allow(clippy::too_many_arguments)]
 fn missiles(
-    session: NonSend<Session>,
+    sight: crate::fog::EventSight,
     ground: Res<Ground>,
     mut flying: ResMut<Flying>,
     shooters: Shooters,
     library: Option<Res<Library>>,
     mut playing: ResMut<Playing>,
 ) {
-    let core = &session.0;
+    let core = sight.core();
     let Some(view) = core.view() else {
         return;
     };
     let shown = flights(view, core.prev_view(), core.smooth.alpha());
     let mut alive = Vec::with_capacity(shown.len());
-    for f in &shown {
+    for f in shown
+        .iter()
+        .filter(|f| !sight.fog().hides(f.missile.seen_by))
+    {
         let flight = f
             .missile
             .inflictor
@@ -276,19 +300,8 @@ fn missiles(
                 continue;
             }
             None => {
-                let line = (flight == Flight::Soul)
-                    .then(|| start_line(f, at, dir, &ground, library.as_deref(), &mut playing))
-                    .flatten()
-                    .map(Body::Line);
-                let grenade = (flight == Flight::Grenade)
-                    .then(|| shooters.start_grenade(f, at, library.as_deref(), &mut playing))
-                    .flatten()
-                    .map(Body::Grenade);
-                let Some(body) = line.or(grenade).or_else(|| {
-                    shooters
-                        .start(f, at, library.as_deref(), &mut playing)
-                        .map(Body::Effect)
-                }) else {
+                let Some(body) = shooters.start_body(f, at, dir, library.as_deref(), &mut playing)
+                else {
                     continue;
                 };
                 flying.missiles.insert(f.missile.id, body);
@@ -303,28 +316,21 @@ fn missiles(
         }
     }
     land(&mut flying, &mut alive, &mut playing);
-    grenades(
-        &mut flying,
-        &ground,
-        library.as_deref(),
-        &mut playing,
-        &core.told,
-    );
+    grenades(&ground, library.as_deref(), &mut playing, &sight);
 }
 
-/// Ends what draws the missiles that are gone: a body goes, an effect plays its end cap.
+/// A missing grenade can have left vision: its burst requires a visible landing fact.
 fn land(flying: &mut Flying, alive: &mut [EntityId], playing: &mut Playing) {
     // Sorted for the lookups below: thousands of missiles each searched
     // through all the others every frame.
     alive.sort_unstable();
     let is_alive = |id: &EntityId| alive.binary_search(id).is_ok();
-    let mut burst = 0;
     flying.missiles.retain(|id, body| {
         let keep = is_alive(id);
         if !keep {
             match *body {
-                Body::Effect(handle) | Body::Line(handle) | Body::Grenade(handle) => {
-                    burst += usize::from(matches!(body, Body::Grenade(_)));
+                Body::Grenade(handle) => playing.cancel(handle),
+                Body::Effect(handle) | Body::Line(handle) => {
                     if let Some(instance) = playing.get_mut(handle) {
                         instance.end();
                     }
@@ -333,29 +339,25 @@ fn land(flying: &mut Flying, alive: &mut [EntityId], playing: &mut Playing) {
         }
         keep
     });
-    flying.burst_grenades = burst;
 }
 
-/// Bursts each grenade where the server says it landed, which a side is told whenever it sees
-/// the spot, whether or not it saw the flight: one whose flight was drawn burst as its effect's
-/// end; the others play the effect there, ended at once, its burst alone.
+/// A visible landing plays the grenade's end cap at its actual point, even if the flight was hidden.
 fn grenades(
-    flying: &mut Flying,
     ground: &Ground,
     library: Option<&Library>,
     playing: &mut Playing,
-    told: &[EventKind],
+    sight: &crate::fog::EventSight,
 ) {
-    let landed = told.iter().filter_map(|event| match event {
-        EventKind::Landed { inflictor, at, .. } if art_by(*inflictor).flight == Flight::Grenade => {
+    let landed = sight.core().told.iter().filter_map(|event| match event {
+        EventKind::Landed { inflictor, at, .. }
+            if art_by(*inflictor).flight == Flight::Grenade
+                && sight.allows(event, crate::fog::EventSubject::Point(*at)) =>
+        {
             Some((at.x.to_f32(), at.y.to_f32()))
         }
         _ => None,
     });
     for (n, (x, y)) in landed.enumerate() {
-        if n < flying.burst_grenades {
-            continue;
-        }
         let at = Vec3::new(x, ground.at(x, y), -y);
         if let Some(handle) = play_once(library, playing, GRENADE, at, n as u32)
             && let Some(instance) = playing.get_mut(handle)
@@ -425,17 +427,23 @@ pub(crate) fn play_once(
 
 /// A requiem's cast: Dota's burst of souls about its caster as it goes off.
 fn casts(
-    session: NonSend<Session>,
+    sight: crate::fog::EventSight,
     library: Option<Res<Library>>,
     mut playing: ResMut<Playing>,
     shooters: Shooters,
     ground: Res<Ground>,
 ) {
-    for event in &session.0.told {
+    for event in &sight.core().told {
         let EventKind::AbilityCast { caster, ability } = event else {
             continue;
         };
         if *ability != bota_proto::AbilityId::REQUIEM {
+            continue;
+        }
+        let Some(unit) = sight.core().view().and_then(|view| view.unit(*caster)) else {
+            continue;
+        };
+        if !sight.allows(event, crate::fog::EventSubject::Unit(unit)) {
             continue;
         }
         if let Some(at) = shooters.place(*caster) {
@@ -538,7 +546,7 @@ fn bursts(
 
 /// Dota's level up about a hero whenever it gains a level, following it while it plays.
 fn level_ups(
-    session: NonSend<Session>,
+    sight: crate::fog::EventSight,
     index: Res<UnitIndex>,
     drawn: Query<&Unit>,
     ground: Res<Ground>,
@@ -546,7 +554,7 @@ fn level_ups(
     mut playing: ResMut<Playing>,
     mut flying: ResMut<Flying>,
 ) {
-    let core = &session.0;
+    let core = sight.core();
     let Some(view) = core.view() else {
         return;
     };
@@ -568,6 +576,9 @@ fn level_ups(
         let Some(hero) = view.unit(*unit) else {
             continue;
         };
+        if !sight.allows(event, crate::fog::EventSubject::Unit(hero)) {
+            continue;
+        }
         let at = on_ground(hero);
         let seed = unit.idx ^ u32::from(*level) << 24;
         if let Some(handle) = play_once(library.as_deref(), &mut playing, LEVEL_UP, at, seed) {
@@ -576,12 +587,14 @@ fn level_ups(
     }
     // Each follows its hero while it plays and the hero is seen.
     flying.following.retain(|(handle, unit)| {
+        let Some(hero) = view.unit(*unit).filter(|hero| sight.allows_unit(hero)) else {
+            playing.cancel(*handle);
+            return false;
+        };
         let Some(instance) = playing.get_mut(*handle) else {
             return false;
         };
-        if let Some(hero) = view.unit(*unit) {
-            instance.set_control_point(0, from_world(on_ground(hero)), Vec3::ZERO, false);
-        }
+        instance.set_control_point(0, from_world(on_ground(hero)), Vec3::ZERO, false);
         true
     });
 }
@@ -589,14 +602,14 @@ fn level_ups(
 /// A hero's death effect where it falls, when Dota's hero has one (`<hero>.death`, Shadow
 /// Fiend's `nevermore_death`).
 fn deaths(
-    session: NonSend<Session>,
+    sight: crate::fog::EventSight,
     manifest: Res<Manifest>,
     ground: Res<Ground>,
     library: Option<Res<Library>>,
     mut playing: ResMut<Playing>,
 ) {
-    let core = &session.0;
-    for event in &core.told {
+    let core = sight.core();
+    for (n, event) in core.told.iter().enumerate() {
         let EventKind::Died { unit, .. } = event else {
             continue;
         };
@@ -607,6 +620,13 @@ fn deaths(
         let Some(hero) = fallen.filter(|u| u.kind == bota_proto::UnitKind::Hero) else {
             continue;
         };
+        // Corpse rows have lost their live visibility: keep the pre-death sight and check the spot.
+        let before = core.before_event(n, *unit).unwrap_or(hero);
+        if !sight.allows(event, crate::fog::EventSubject::Unit(before))
+            || !sight.allows(event, crate::fog::EventSubject::Point(hero.pos))
+        {
+            continue;
+        }
         let Some(name) = hero
             .hero
             .and_then(|h| crate::units::hero_effect(h, "death", &manifest))

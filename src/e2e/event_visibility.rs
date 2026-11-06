@@ -14,6 +14,126 @@ use super::harness::Client;
 
 type Heard = Arc<Mutex<Vec<Option<(f32, f32)>>>>;
 
+fn rune_wearer(view: &bota_proto::WorldView) -> &bota_proto::UnitView {
+    view.units
+        .iter()
+        .find(|unit| unit.owner == Some(bota_proto::SlotId(2)))
+        .expect("the created allied rune wearer")
+}
+
+fn record_invisible_item_recipient() -> (ReplayFile, Spot) {
+    let mut game = Spectated::start("0");
+    let at = bota_core::DOTA_RUNE_SPOTS[0].at;
+    game.cheat(Cheat::Invulnerable { on: true });
+    game.cheat(Cheat::Teleport {
+        at: at + Spot::from_ints(400, 0),
+    });
+    game.cheat(Cheat::CreateHero {
+        hero: bota_proto::HeroId::PUDGE,
+        enemy: false,
+        at,
+    });
+    game.cheat(Cheat::SpawnRune {
+        kind: bota_proto::RuneKind::Invisibility,
+        at,
+    });
+    game.cheat(Cheat::CreateHero {
+        hero: bota_proto::HeroId::PUDGE,
+        enemy: true,
+        at: at + Spot::from_ints(-1000, 0),
+    });
+    game.wait(
+        "the allied rune wearer invisible on visible ground",
+        |_, client| {
+            rune_wearer(client.view()).statuses.bits & bota_proto::StatusFlags::INVISIBLE != 0
+                && rune_wearer(client.view())
+                    .seen_by
+                    .is_some_and(|seen| !seen.dire)
+                && driving_hero(client)
+                    .is_some_and(|hero| hero.seen_by.is_some_and(|seen| seen.dire))
+        },
+    );
+    let point = use_salve_on_recipient(&mut game);
+    (game.save(), point)
+}
+
+fn use_salve_on_recipient(game: &mut Spectated) -> Spot {
+    game.cheat(Cheat::Item {
+        item: ItemId::HEALING_SALVE,
+    });
+    let hero = game.driver.my_hero().unwrap();
+    let view = game.driver.view().unwrap();
+    let slot = ItemSlot(
+        view.unit(hero)
+            .unwrap()
+            .items
+            .iter()
+            .position(|item| item.is_some_and(|item| item.id == ItemId::HEALING_SALVE))
+            .unwrap() as u8,
+    );
+    let target = rune_wearer(view).id;
+    let point = rune_wearer(view).pos;
+    game.order(Order::Use {
+        slot,
+        target: Target::Unit(target),
+    });
+    game.wait("the real salve is spent", |driver, _| {
+        driver.view().unwrap().unit(hero).unwrap().items[slot.0 as usize].is_none()
+    });
+    game.cheat(Cheat::Gold { amount: 1 });
+    point
+}
+
+#[derive(Resource, Default)]
+struct ItemPoints(Vec<bool>);
+
+fn observe_item_points(sight: crate::fog::EventSight, mut points: ResMut<ItemPoints>) {
+    for event in &sight.core().told {
+        if let bota_proto::EventKind::ItemUsed {
+            item: ItemId::HEALING_SALVE,
+            at: Some(at),
+            ..
+        } = event
+        {
+            points
+                .0
+                .push(sight.allows(event, crate::fog::EventSubject::Point(*at)));
+        }
+    }
+}
+
+#[test]
+fn an_invisible_item_target_stays_private_in_replay_despite_visible_ground() {
+    let (file, at) = record_invisible_item_recipient();
+    let look = format!("{},{}", at.x.to_int(), at.y.to_int());
+    for (slot, visible) in [(Some(0), true), (Some(1), false), (None, true)] {
+        let mut client = replay_observed(&file, slot, &["--look", &look], |client| {
+            client
+                .app
+                .init_resource::<ItemPoints>()
+                .add_systems(Update, observe_item_points);
+        });
+        client.until("the invisible recipient's ground is visible", |c| {
+            c.world()
+                .resource::<crate::fog::FogGrid>()
+                .lit(at.x.to_f32(), at.y.to_f32())
+        });
+        assert!(
+            started(&client, "item.flask.cast") > 0,
+            "the visible caster's use still draws"
+        );
+        let points = &client.world().resource::<ItemPoints>().0;
+        assert!(
+            !points.is_empty(),
+            "the full stream records the real unit-targeted use"
+        );
+        assert!(
+            points.iter().all(|shown| *shown == visible),
+            "POV {slot:?}: visible ground cannot disclose an invisible recipient"
+        );
+    }
+}
+
 #[derive(Resource, Default)]
 struct Purchases(Vec<bool>);
 
@@ -62,6 +182,131 @@ fn a_full_stream_keeps_purchases_private_in_enemy_and_union_views() {
             "POV {pov:?}"
         );
     }
+}
+
+fn disable_sight(mut grid: ResMut<crate::fog::FogGrid>) {
+    grid.on = false;
+}
+
+#[test]
+fn purchases_are_shown_without_a_sight_grid_and_without_a_selected_side() {
+    let mut game = Spectated::start("2");
+    game.order(Order::Buy {
+        item: ItemId::IRON_BRANCH,
+    });
+    game.wait("the purchase recorded", |driver, _| {
+        driver.view().unwrap().units.iter().any(|unit| {
+            unit.owner == Some(bota_proto::SlotId(0))
+                && unit
+                    .items
+                    .iter()
+                    .flatten()
+                    .any(|item| item.id == ItemId::IRON_BRANCH)
+        })
+    });
+    game.cheat(Cheat::Gold { amount: 1 });
+    let file = game.save();
+    for (pov, allowed) in [(Some(0), true), (Some(1), false), (None, true)] {
+        let client = replay_observed(&file, pov, &[], |client| {
+            client
+                .app
+                .init_resource::<Purchases>()
+                .add_systems(Update, (disable_sight, observe_purchases).chain());
+        });
+        let purchases = &client.world().resource::<Purchases>().0;
+        assert!(
+            !purchases.is_empty(),
+            "the actual purchase reached the full stream"
+        );
+        assert!(
+            purchases.iter().all(|shown| *shown == allowed),
+            "POV {pov:?}: no sight grid makes purchases public only without a side"
+        );
+    }
+}
+
+fn particle_by_pov(file: &ReplayFile, logical: &str) {
+    for (pov, visible) in [(Some(0), true), (Some(1), false), (None, true)] {
+        let client = replay_observed(file, pov, &[], |_| {});
+        assert_eq!(
+            started(&client, logical) > 0,
+            visible,
+            "POV {pov:?}: {logical} may start only for a visible subject"
+        );
+    }
+}
+
+#[test]
+fn a_hidden_hero_level_up_does_not_start_its_particle() {
+    let mut game = Spectated::start("2");
+    game.cheat(Cheat::Levels { count: 1 });
+    game.cheat(Cheat::Gold { amount: 1 });
+    particle_by_pov(&game.save(), "hero.levelup");
+}
+
+#[test]
+fn a_hidden_hero_death_does_not_start_its_particle() {
+    let (file, _) = record_hidden_death();
+    particle_by_pov(&file, "hero.nevermore.death");
+}
+
+#[test]
+fn a_hidden_requiem_cast_does_not_start_its_burst() {
+    let mut game = Spectated::start("2");
+    game.cheat(Cheat::Invulnerable { on: true });
+    game.cheat(Cheat::Levels { count: 6 });
+    let hero = game.driver.my_hero().unwrap();
+    let unit = game.driver.view().unwrap().unit(hero).unwrap();
+    let slot = AbilitySlot(
+        unit.abilities
+            .iter()
+            .position(|ability| ability.id == AbilityId::REQUIEM)
+            .unwrap() as u8,
+    );
+    game.order(Order::Learn { slot });
+    game.order(Order::Cast {
+        slot,
+        target: Target::None,
+    });
+    game.wait("the real requiem cast", |driver, _| {
+        driver.view().unwrap().unit(hero).unwrap().abilities[slot.0 as usize].cooldown_left > 0
+    });
+    game.cheat(Cheat::Gold { amount: 1 });
+    particle_by_pov(&game.save(), "hero.nevermore.requiem");
+}
+
+#[test]
+fn a_hidden_grenade_does_not_start_its_flight_or_landing_particle() {
+    let mut game = Spectated::start("2");
+    game.cheat(Cheat::Item {
+        item: ItemId::BLOOD_GRENADE,
+    });
+    let hero = game.driver.my_hero().unwrap();
+    let unit = game.driver.view().unwrap().unit(hero).unwrap();
+    let at = unit.pos + Spot::from_ints(100, 0);
+    let slot = ItemSlot(
+        unit.items
+            .iter()
+            .position(|item| item.is_some_and(|item| item.id == ItemId::BLOOD_GRENADE))
+            .unwrap() as u8,
+    );
+    game.order(Order::Use {
+        slot,
+        target: Target::Pos(at),
+    });
+    game.wait("the grenade really lands", |driver, _| {
+        driver.told.iter().any(|event| {
+            matches!(
+                event,
+                bota_proto::EventKind::Landed {
+                    inflictor: bota_proto::Inflictor::Item(ItemId::BLOOD_GRENADE),
+                    ..
+                }
+            )
+        })
+    });
+    game.cheat(Cheat::Gold { amount: 1 });
+    particle_by_pov(&game.save(), "item.blood_grenade");
 }
 
 fn driving_hero(client: &Client) -> Option<&bota_proto::UnitView> {
@@ -265,16 +510,16 @@ fn a_hidden_hero_death_is_announced_without_a_positional_sound() {
 fn a_hidden_throwers_core_attack_cue_is_silent_and_a_visible_thrower_sounds() {
     let (file, at) = record_hidden_death();
     let look = format!("{},{}", at.x.to_int(), at.y.to_int());
-    for (slot, visible) in [(0, true), (1, false)] {
+    for (slot, visible) in [(Some(0), true), (Some(1), false), (None, true)] {
         let heard = Heard::default();
         let into = heard.clone();
-        let _client = replay_observed(&file, Some(slot), &["--look", &look], |client| {
+        let _client = replay_observed(&file, slot, &["--look", &look], |client| {
             listen(client, "Hero_Nevermore.Attack", into);
         });
         assert_eq!(
             !heard.lock().unwrap().is_empty(),
             visible,
-            "POV {slot}: attack cues may name and locate only a visible thrower"
+            "POV {slot:?}: attack cues may name and locate only a visible thrower"
         );
     }
 }

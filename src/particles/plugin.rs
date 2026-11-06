@@ -131,6 +131,24 @@ impl Playing {
         instance.as_mut()
     }
 
+    /// Retires an instance without an impact or an end cap, as when vision of it is lost.
+    pub fn cancel(&mut self, handle: Handle) {
+        let Some((generation, entry)) = self.slots.get_mut(handle.slot) else {
+            return;
+        };
+        if *generation != handle.generation {
+            return;
+        }
+        let Some(instance) = entry.take() else {
+            return;
+        };
+        *generation = generation.wrapping_add(1);
+        self.free.push(handle.slot);
+        if self.spare.len() < MAX_SPARE {
+            self.spare.push(instance);
+        }
+    }
+
     /// Steps every effect by `dt`, on the compute threads when there are enough of them that
     /// the effects take turns on no single thread (each effect steps alone: the order they step
     /// in changes nothing), and retires the ones that are finished.

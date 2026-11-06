@@ -47,7 +47,9 @@ impl Fact {
             rune: None,
         };
         Some(match event {
-            EventKind::ItemUsed { caster, item, at } => Fact {
+            EventKind::ItemUsed {
+                caster, item, at, ..
+            } => Fact {
                 by: Some(Inflictor::Item(*item)),
                 caster: *caster,
                 point: *at,

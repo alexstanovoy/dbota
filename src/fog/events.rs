@@ -3,7 +3,7 @@
 use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
 use bota_client_core::App as Core;
-use bota_proto::{EntityId, EventKind, UnitView, Vec2};
+use bota_proto::{EntityId, EventKind, UnitView, Vec2, WorldView};
 
 use super::FogGrid;
 use crate::session::Session;
@@ -73,6 +73,27 @@ impl EventSight<'_> {
             }
     }
 
+    fn allows_item_use(
+        &self,
+        subject: EventSubject<'_>,
+        told: bool,
+        at: Vec2,
+        target: Option<EntityId>,
+    ) -> bool {
+        let target_seen = target.is_none_or(|unit| self.sees_unit(unit));
+        // A caster's flash can remain visible while the aimed unit and its point are private.
+        (told || !self.fog.on || !matches!(subject, EventSubject::Point(_)) || target_seen)
+            && (told || self.placement(subject, self.sees_point(at) && target_seen))
+    }
+
+    fn announced_death(&self, view: &WorldView, unit: EntityId) -> bool {
+        self.unit(unit).map_or_else(
+            // An unknown unit is public only if the roster names a player's body.
+            || view.players.iter().any(|player| player.unit == Some(unit)),
+            |unit| bota_core::kind_def(unit.kind).death_announced,
+        )
+    }
+
     fn fact(&self, event: &EventKind, subject: EventSubject<'_>) -> bool {
         let Some(view) = self.core().view() else {
             return false;
@@ -81,10 +102,14 @@ impl EventSight<'_> {
         let shown = |default| told || self.placement(subject, default);
         match *event {
             EventKind::Landed { at, .. }
-            | EventKind::ItemUsed { at: Some(at), .. }
             | EventKind::TreeFelled { at, .. }
             | EventKind::TreeGrew { at }
             | EventKind::RuneSpawned { at, .. } => shown(self.sees_point(at)),
+            EventKind::ItemUsed {
+                at: Some(at),
+                target,
+                ..
+            } => self.allows_item_use(subject, told, at, target),
             EventKind::RuneDenied { unit, at, team, .. } => {
                 (told || self.fog.team == Some(team) || self.sees_point(at) && self.sees_unit(unit))
                     && shown(true)
@@ -110,6 +135,7 @@ impl EventSight<'_> {
             }
             EventKind::ItemBought { slot, .. } => {
                 (told
+                    || !self.fog.on && self.fog.team.is_none()
                     || self.fog.team.is_some_and(|team| {
                         view.players
                             .iter()
@@ -125,12 +151,7 @@ impl EventSight<'_> {
                 // An announcement carries no position: a derived cue must still see its spot.
                 self.placement(
                     subject,
-                    told || self.sees_unit(unit)
-                        || self.unit(unit).map_or_else(
-                            // An unknown unit is public only if the roster names a player's body.
-                            || view.players.iter().any(|player| player.unit == Some(unit)),
-                            |unit| bota_core::kind_def(unit.kind).death_announced,
-                        ),
+                    told || self.sees_unit(unit) || self.announced_death(view, unit),
                 )
             }
             EventKind::StructureDestroyed { .. }
