@@ -17,13 +17,82 @@ const ROWS: usize = 8;
 /// Icons and texts a line holds at most, alternating, an icon first: a kill's killer, kill icon
 /// and victim, and up to four assists.
 const SLOTS: usize = 7;
-const SIZE: f32 = 14.0;
-/// Interface pixels of an icon's side in a line.
-const ICON: f32 = 18.0;
+/// The styles below are those of Dota's combat event row (`dota_hud_combat_event_row.css`), in
+/// its pixels, which `dota` scales.
+/// Height of a row (`DOTACombatEventRow`) and the gap above it.
+const ROW_HEIGHT: f32 = 30.0;
+const ROW_GAP: f32 = 5.0;
+/// Size of a row's text (`.EventListLabel`: 18px bold white, shadowed).
+const LABEL_SIZE: f32 = 18.0;
+/// Width of a hero icon (`.CombatEventHeroIcon`), which the other icons of a line share here.
+const ICON: f32 = 24.0;
+/// The slanted end of a row (`#SlashContainer`), and the slanted bar of its team (`#TeamColorBar`).
+const SLASH_WIDTH: f32 = 18.0;
+const BAR: (f32, f32) = (12.0, 44.0);
+const BAR_LEFT: f32 = 7.0;
+const BAR_TURN_DEGREES: f32 = 25.0;
+/// The shade behind every row and the tints of the side it is about (`.AllyEvent`, `.EnemyEvent`).
+pub(crate) const SHADE: Color = Color::srgba(0.0, 0.0, 0.0, 0.533);
+pub(crate) const ALLY_TINT: Color = Color::srgba(0.18, 0.2745, 0.149, 0.8);
+pub(crate) const ENEMY_TINT: Color = Color::srgba(0.357, 0.208, 0.145, 0.8);
+/// The ends of the bar's gradient, top to bottom, by side.
+pub(crate) const ALLY_BAR: [Color; 2] = [
+    Color::srgb(0.384, 0.624, 0.322),
+    Color::srgb(0.263, 0.431, 0.22),
+];
+pub(crate) const ENEMY_BAR: [Color; 2] = [
+    Color::srgb(0.82, 0.278, 0.122),
+    Color::srgb(0.643, 0.22, 0.098),
+];
+/// Seconds of a row's entrance (`@keyframes CombatEvent`: the row grows from a fifth to one and a
+/// half times its size in the first half, and settles to one, fading in) and of its exit
+/// (`toastExitDuration`), and how long the client keeps a line.
+const ENTER_SECONDS: f32 = 0.3;
+const EXIT_SECONDS: f32 = 0.2;
+const LINE_SECONDS: f32 = 8.0;
 
 /// One line of the feed, from the top.
 #[derive(Component)]
 struct Row(usize, Place);
+
+/// Whose side a line is good for, as Dota tints it: its own (`.AllyEvent`) or the other's
+/// (`.EnemyEvent`).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Side {
+    Ally,
+    Enemy,
+}
+
+impl Side {
+    fn tint(self) -> Color {
+        match self {
+            Side::Ally => ALLY_TINT,
+            Side::Enemy => ENEMY_TINT,
+        }
+    }
+
+    fn bar(self) -> [Color; 2] {
+        match self {
+            Side::Ally => ALLY_BAR,
+            Side::Enemy => ENEMY_BAR,
+        }
+    }
+}
+
+/// How a row is dressed now, to dress it anew only when it changes: its side and its opacity.
+#[derive(Component, Default, PartialEq)]
+struct Dress {
+    side: Option<Side>,
+    opacity: f32,
+}
+
+/// The slanted end of a row.
+#[derive(Component)]
+struct Slash;
+
+/// The slanted bar of a row's side.
+#[derive(Component)]
+struct Bar;
 
 /// Where a line is drawn: the kill feed at the top right (a hero's fall, the connection), or the
 /// toasts at the left above the HUD, over the chat (a building's fall, a rune, a Shrine, an
@@ -91,26 +160,69 @@ pub fn spawn(commands: &mut Commands, root: Entity) {
     });
 }
 
-/// The next line of the column: [`SLOTS`] pairs of an icon and a text.
+/// The next line of the column: [`SLOTS`] pairs of an icon and a text, with the slanted end and
+/// bar a line about one side wears.
 fn spawn_row(commands: &mut Commands, fonts: &Fonts, column: Entity, row: usize, place: Place) {
     let line = commands
         .spawn((
             Row(row, place),
+            Dress::default(),
             Node {
                 display: Display::None,
                 align_items: AlignItems::Center,
+                height: ui::dota(ROW_HEIGHT),
+                margin: UiRect::top(ui::dota(ROW_GAP)),
                 ..default()
             },
             Pickable::IGNORE,
             ChildOf(column),
         ))
         .id();
+    // The slanted end is at the side the row is read from: the left of the toasts, the right of
+    // the feed (Dota's flipped HUD).
+    let slash = |commands: &mut Commands| {
+        commands.spawn((
+            Slash,
+            Node {
+                width: ui::dota(SLASH_WIDTH),
+                height: Val::Percent(100.0),
+                display: Display::None,
+                ..default()
+            },
+            BackgroundColor(SHADE),
+            Pickable::IGNORE,
+            ChildOf(line),
+        ));
+    };
+    if place == Place::Left {
+        slash(commands);
+        commands.spawn((
+            Bar,
+            Node {
+                position_type: PositionType::Absolute,
+                left: ui::dota(BAR_LEFT),
+                top: ui::dota(-6.0),
+                width: ui::dota(BAR.0),
+                height: ui::dota(BAR.1),
+                display: Display::None,
+                ..default()
+            },
+            UiTransform::from_rotation(Rot2::degrees(BAR_TURN_DEGREES)),
+            BackgroundGradient::from(LinearGradient::to_bottom(vec![
+                ColorStop::new(Color::WHITE, percent(0)),
+                ColorStop::new(Color::WHITE, percent(100)),
+            ])),
+            Pickable::IGNORE,
+            ChildOf(line),
+        ));
+    }
     for n in 0..SLOTS {
         commands.spawn((
             Slot::Icon(n),
             Node {
-                width: px(ICON),
-                height: px(ICON),
+                width: ui::dota(ICON),
+                height: ui::dota(ICON),
+                margin: UiRect::right(ui::dota(4.0)),
                 display: Display::None,
                 ..default()
             },
@@ -120,11 +232,18 @@ fn spawn_row(commands: &mut Commands, fonts: &Fonts, column: Entity, row: usize,
         ));
         commands.spawn((
             Slot::Text(n),
-            ui::text("", &fonts.regular, SIZE, ui::INK),
+            ui::text("", &fonts.bold, LABEL_SIZE * ui::DOTA, Color::WHITE),
             ui::shadow(),
+            Node {
+                padding: UiRect::axes(ui::dota(4.0), px(0)),
+                ..default()
+            },
             Pickable::IGNORE,
             ChildOf(line),
         ));
+    }
+    if place == Place::Corner {
+        slash(commands);
     }
 }
 
@@ -132,6 +251,65 @@ fn spawn_row(commands: &mut Commands, fonts: &Fonts, column: Entity, row: usize,
 /// text.
 type Laid = [(Option<String>, String); SLOTS];
 
+/// The scale a row has `age` seconds after it came (`@keyframes CombatEvent`): from a fifth to
+/// one and a half in the first half of its entrance, then down to one.
+fn entrance_scale(age: f32) -> f32 {
+    let at = (age / ENTER_SECONDS).clamp(0.0, 1.0);
+    if at < 0.5 {
+        0.2 + (1.5 - 0.2) * (at / 0.5)
+    } else {
+        1.5 - 0.5 * ((at - 0.5) / 0.5)
+    }
+}
+
+/// How opaque a row is `age` seconds after it came: fading in with the entrance, out in the
+/// seconds before the client drops the line.
+fn opacity_at(age: f32) -> f32 {
+    let entering = (age / (ENTER_SECONDS / 2.0)).clamp(0.0, 1.0);
+    let leaving = ((LINE_SECONDS - age) / EXIT_SECONDS).clamp(0.0, 1.0);
+    entering.min(leaving)
+}
+
+fn faded(color: Color, opacity: f32) -> Color {
+    color.with_alpha(color.alpha() * opacity)
+}
+
+/// Whose side a line is good for, from the viewer's: a kill by its own side, an enemy structure
+/// fallen, a building captured by its own; none for the rest, which Dota leaves undyed. A viewer
+/// of no side is taken for the Radiant, as the minimap and the scoreboard take it.
+fn side_of(core: &Core, kind: &FeedKind) -> Option<Side> {
+    let mine = core.my_team().unwrap_or(Team::Radiant);
+    let team_of = |slot: bota_proto::SlotId| core.view()?.player(slot).map(|p| p.team);
+    let good_for = |team: Team| {
+        if team == mine {
+            Side::Ally
+        } else {
+            Side::Enemy
+        }
+    };
+    match *kind {
+        FeedKind::HeroDied { victim, killer, .. } => match (killer, victim) {
+            (Some(Killer::Seat(slot)), _) => team_of(slot).map(good_for),
+            (Some(Killer::Unit { team, .. }), _) => Some(good_for(team)),
+            (None, Victim::Seat(slot)) => team_of(slot).map(|team| good_for(team).flip()),
+            (None, Victim::Hero(team)) => Some(good_for(team).flip()),
+        },
+        FeedKind::StructureFell { team, .. } => Some(good_for(team).flip()),
+        FeedKind::Captured { by, .. } => Some(good_for(by)),
+        _ => None,
+    }
+}
+
+impl Side {
+    fn flip(self) -> Side {
+        match self {
+            Side::Ally => Side::Enemy,
+            Side::Enemy => Side::Ally,
+        }
+    }
+}
+
+#[allow(clippy::type_complexity)]
 fn show(
     mut commands: Commands,
     column: Option<ResMut<Column>>,
@@ -141,8 +319,32 @@ fn show(
     texts: Option<Res<Texts>>,
     manifest: Res<Manifest>,
     server: Res<AssetServer>,
-    rows: Query<(&Row, &Children, &mut Node)>,
-    mut slots: Query<(&Slot, Option<&mut ImageNode>, Option<&mut Text>, &mut Node), Without<Row>>,
+    mut rows: Query<(
+        Entity,
+        &Row,
+        &Children,
+        &mut Node,
+        &mut UiTransform,
+        &mut Dress,
+    )>,
+    mut slots: Query<
+        (
+            &Slot,
+            Option<&mut ImageNode>,
+            Option<&mut Text>,
+            Option<&mut TextColor>,
+            &mut Node,
+        ),
+        (Without<Row>, Without<Slash>, Without<Bar>),
+    >,
+    mut slashes: Query<
+        (&mut Node, &mut BackgroundColor),
+        (With<Slash>, Without<Row>, Without<Slot>, Without<Bar>),
+    >,
+    mut bars: Query<
+        (&mut Node, &mut BackgroundGradient),
+        (With<Bar>, Without<Row>, Without<Slot>, Without<Slash>),
+    >,
 ) {
     let core = sight.core();
     let all = visible_lines(core, &sight);
@@ -178,7 +380,7 @@ fn show(
             column.toast_rows += 1;
         }
     }
-    for (Row(row, place), children, mut node) in rows {
+    for (entity, Row(row, place), children, mut node, mut transform, mut dress) in &mut rows {
         let line = match place {
             Place::Corner => corner.get(*row),
             Place::Left => left.get(*row),
@@ -194,9 +396,54 @@ fn show(
         let Some(line) = line else {
             continue;
         };
+        let scale = bevy::math::Vec2::splat(entrance_scale(line.age));
+        if transform.scale != scale {
+            transform.scale = scale;
+        }
+        let wanted = Dress {
+            side: side_of(core, &line.kind),
+            opacity: opacity_at(line.age),
+        };
+        let dressed = *dress != wanted;
+        if dressed {
+            dress_row(&mut commands, entity, *place, &wanted);
+        }
         let laid = lay(core, texts.as_deref(), &manifest, line);
         for child in children {
-            let Ok((slot, image, text, mut node)) = slots.get_mut(*child) else {
+            if let Ok((mut node, mut background)) = slashes.get_mut(*child) {
+                if dressed {
+                    let display = if wanted.side.is_some() {
+                        Display::Flex
+                    } else {
+                        Display::None
+                    };
+                    node.display = display;
+                    let colour = match (place, wanted.side) {
+                        (Place::Corner, Some(side)) => side.tint(),
+                        _ => SHADE,
+                    };
+                    background.0 = faded(colour, wanted.opacity);
+                }
+                continue;
+            }
+            if let Ok((mut node, mut gradient)) = bars.get_mut(*child) {
+                if dressed {
+                    node.display = if wanted.side.is_some() {
+                        Display::Flex
+                    } else {
+                        Display::None
+                    };
+                    if let Some(side) = wanted.side {
+                        let [top, bottom] = side.bar().map(|c| faded(c, wanted.opacity));
+                        *gradient = BackgroundGradient::from(LinearGradient::to_bottom(vec![
+                            ColorStop::new(top, percent(0)),
+                            ColorStop::new(bottom, percent(100)),
+                        ]));
+                    }
+                }
+                continue;
+            }
+            let Ok((slot, image, text, colour, mut node)) = slots.get_mut(*child) else {
                 continue;
             };
             match (*slot, image, text) {
@@ -216,14 +463,42 @@ fn show(
                             image.image = handle;
                         }
                     }
+                    if dressed {
+                        image.color = faded(Color::WHITE, wanted.opacity);
+                    }
                 }
                 (Slot::Text(n), _, Some(mut text)) => {
                     text.set_if_neq(Text(laid[n].1.clone()));
+                    if let (true, Some(mut colour)) = (dressed, colour) {
+                        colour.0 = faded(Color::WHITE, wanted.opacity);
+                    }
                 }
                 _ => {}
             }
         }
+        *dress = wanted;
     }
+}
+
+/// Gives a row the tint of its side behind it, or none: Dota's label gradient runs from the side's
+/// colour at the end of the row that has the slanted end to the shade at the other.
+fn dress_row(commands: &mut Commands, row: Entity, place: Place, dress: &Dress) {
+    let Some(side) = dress.side else {
+        commands.entity(row).remove::<BackgroundGradient>();
+        return;
+    };
+    let tint = faded(side.tint(), dress.opacity);
+    let shade = faded(SHADE, dress.opacity);
+    let (from, to) = match place {
+        Place::Left => (tint, shade),
+        Place::Corner => (shade, tint),
+    };
+    commands
+        .entity(row)
+        .insert(BackgroundGradient::from(LinearGradient::to_right(vec![
+            ColorStop::new(from, percent(0)),
+            ColorStop::new(to, percent(100)),
+        ])));
 }
 
 fn visible_lines<'a>(core: &'a Core, sight: &crate::fog::EventSight) -> Vec<&'a FeedLine> {
@@ -695,5 +970,77 @@ pub fn shown(world: &mut World) -> Vec<(bool, Vec<String>, String)> {
     rows.sort_by_key(|(left, row, ..)| (*left, *row));
     rows.into_iter()
         .map(|(left, _, icons, text)| (left, icons, text))
+        .collect()
+}
+
+/// How a visible row is dressed, for the end-to-end tests: where it is drawn (true: the toasts at
+/// the left), its gradient's ends, its slanted end's and bar's colours (none when not shown), its
+/// scale, and its text's size in interface pixels.
+#[cfg(test)]
+pub struct Look {
+    pub left: bool,
+    pub gradient: Option<[Color; 2]>,
+    pub slash: Option<Color>,
+    pub bar: Option<[Color; 2]>,
+    pub bar_turn_degrees: Option<f32>,
+    pub scale: f32,
+    pub text_size: f32,
+}
+
+#[cfg(test)]
+pub fn looks(world: &mut World) -> Vec<Look> {
+    let rows: Vec<(Entity, bool)> = world
+        .query::<(Entity, &Row, &Node)>()
+        .iter(world)
+        .filter(|(_, _, node)| node.display != Display::None)
+        .map(|(entity, row, _)| (entity, row.1 == Place::Left))
+        .collect();
+    let ends = |gradient: &BackgroundGradient| -> Option<[Color; 2]> {
+        let Some(bevy::ui::Gradient::Linear(linear)) = gradient.0.first() else {
+            return None;
+        };
+        Some([linear.stops.first()?.color, linear.stops.last()?.color])
+    };
+    rows.into_iter()
+        .map(|(entity, left)| {
+            let children = world
+                .get::<Children>(entity)
+                .expect("a row's parts")
+                .to_vec();
+            let mut look = Look {
+                left,
+                gradient: world.get::<BackgroundGradient>(entity).and_then(ends),
+                slash: None,
+                bar: None,
+                bar_turn_degrees: None,
+                scale: world
+                    .get::<UiTransform>(entity)
+                    .expect("transformed")
+                    .scale
+                    .x,
+                text_size: 0.0,
+            };
+            for child in children {
+                let shown = world
+                    .get::<Node>(child)
+                    .is_some_and(|node| node.display != Display::None);
+                if world.get::<Slash>(child).is_some() && shown {
+                    look.slash = world.get::<BackgroundColor>(child).map(|c| c.0);
+                }
+                if world.get::<Bar>(child).is_some() && shown {
+                    look.bar = world.get::<BackgroundGradient>(child).and_then(ends);
+                    look.bar_turn_degrees = world
+                        .get::<UiTransform>(child)
+                        .map(|t| t.rotation.as_degrees());
+                }
+                if let Some(font) = world.get::<TextFont>(child) {
+                    look.text_size = match font.font_size {
+                        FontSize::Px(px) => px,
+                        _ => 0.0,
+                    };
+                }
+            }
+            look
+        })
         .collect()
 }

@@ -339,6 +339,8 @@ fn spawn(mut commands: Commands, fonts: Res<Fonts>) {
         ToastColumn,
         Node {
             flex_direction: FlexDirection::Column,
+            // Each row is as wide as what it says, as Dota's rows are.
+            align_items: AlignItems::FlexStart,
             row_gap: px(2),
             margin: UiRect::bottom(px(4)),
             ..default()
