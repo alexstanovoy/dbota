@@ -161,7 +161,7 @@ impl Row {
         }
         for hero in 0..bota_core::HEROES.len() {
             let subject = Subject::Hero(HeroId(hero as u16));
-            for event in [Event::Attack, Event::Impact, Event::Death] {
+            for event in [Event::PreAttack, Event::Attack, Event::Impact, Event::Death] {
                 rows.push(Row::new(subject, event, None));
             }
         }
@@ -839,9 +839,9 @@ fn shots(core: &bota_client_core::App, fog: &crate::fog::FogGrid, sound: &mut So
     }
 }
 
-/// The swings of melee creeps in sight this tick, as Dota's sound sets tell
-/// them: a whoosh as one begins, a blow as one lands. A swing gone before its
-/// strike tick was broken off, and struck nothing.
+/// Windup sounds for visible heroes and melee creeps, plus the creeps' strikes.
+/// Hero impacts already come through their damage cues; sounding them here too
+/// would duplicate a hit and sound canceled or missed blows.
 fn swings(core: &bota_client_core::App, fog: &crate::fog::FogGrid, sound: &mut Sounder) {
     let (Some(view), Some(prev)) = (core.view(), core.prev_view()) else {
         return;
@@ -857,21 +857,34 @@ fn swings(core: &bota_client_core::App, fog: &crate::fog::FogGrid, sound: &mut S
     };
     let strike_of =
         |of: &bota_proto::WorldView, id| swing_of(of, id).map(|swing| of.tick + swing.strike_in);
-    let melee = |u: &&bota_proto::UnitView| {
-        matches!(u.kind, UnitKind::CreepMelee | UnitKind::CreepFlagbearer) && !fog.hides(u.seen_by)
-    };
-    for u in view.units.iter().filter(melee).take(SHOTS_PER_TICK) {
+    let melee = view
+        .units
+        .iter()
+        .filter(|u| {
+            matches!(u.kind, UnitKind::CreepMelee | UnitKind::CreepFlagbearer)
+                && !fog.hides(u.seen_by)
+        })
+        .take(SHOTS_PER_TICK);
+    // Hero windups do not consume the existing creep sound budget.
+    let heroes = view
+        .units
+        .iter()
+        .filter(|u| u.kind == UnitKind::Hero && !fog.hides(u.seen_by))
+        .take(SHOTS_PER_TICK);
+    for u in melee.chain(heroes) {
+        let subject = match (u.kind, u.hero) {
+            (UnitKind::Hero, Some(hero)) => Subject::Hero(hero),
+            (UnitKind::CreepMelee | UnitKind::CreepFlagbearer, _) => Subject::MeleeCreep,
+            _ => continue,
+        };
         let at = Some((u.pos.x.to_f32(), u.pos.y.to_f32()));
         let (now, before) = (strike_of(view, u.id), strike_of(prev, u.id));
         if now.is_some() && now != before {
-            sound.sound(
-                row(Subject::MeleeCreep, Event::PreAttack, None),
-                1.0,
-                at,
-                None,
-            );
+            sound.sound(row(subject, Event::PreAttack, None), 1.0, at, None);
         }
-        if before.is_some_and(|due| now != Some(due) && due <= view.tick) {
+        if subject == Subject::MeleeCreep
+            && before.is_some_and(|due| now != Some(due) && due <= view.tick)
+        {
             let target = swing_of(prev, u.id).map(|swing| swing.target);
             sound.sound(
                 row(Subject::MeleeCreep, Event::Attack, None),
@@ -1103,8 +1116,33 @@ mod tests {
             2
         );
         one(row(pudge, Event::Death, None), "pudge/death");
-        for event in [Event::Attack, Event::Impact] {
-            assert!(files_of(&manifest, row(pudge, event, None)).is_empty());
+        for (event, count, path, dota_event) in [
+            (
+                Event::PreAttack,
+                4,
+                "hero/shared/small_blade/whoosh",
+                "Hero_Pudge.PreAttack",
+            ),
+            (Event::Attack, 3, "hero/pudge/attack", "Hero_Pudge.Attack"),
+            (Event::Impact, 3, "hero/pudge/attack", "Hero_Pudge.Attack"),
+        ] {
+            let files = files_of(&manifest, row(pudge, event, None));
+            let expected: Vec<_> = (1..=count)
+                .map(|index| {
+                    crate::manifest::cache_path(&format!("sounds/weapons/{path}{index:02}.wav"))
+                })
+                .collect();
+            assert_eq!(files, expected, "{event:?}: exactly the install's variants");
+            let logical = Row::new(pudge, event, None)
+                .name(&manifest)
+                .expect("a sound row");
+            assert!(
+                manifest
+                    .sounds_with_events(&logical)
+                    .iter()
+                    .all(|(_, event)| event == dota_event),
+                "{event:?}: the install's event name"
+            );
         }
         let counts = [
             (

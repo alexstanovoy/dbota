@@ -870,6 +870,17 @@ shop text.shop scripts/shops.txt text/shop.json strings=resource/localization/do
 sound sound.hero.nevermore.attack sounds/weapons/hero/nevermore/attack01.vsnd_c sounds/weapons/hero/nevermore/attack01.wav event=Hero_Nevermore.Attack
 sound sound.hero.nevermore.attack sounds/weapons/hero/nevermore/attack02.vsnd_c sounds/weapons/hero/nevermore/attack02.wav event=Hero_Nevermore.Attack
 sound sound.hero.nevermore.impact sounds/weapons/hero/witch_doctor/projectile_impact.vsnd_c sounds/weapons/hero/witch_doctor/projectile_impact.wav event=Hero_Nevermore.ProjectileImpact
+# Pudge's melee impact is Hero_Pudge.Attack; his sound set has no ProjectileImpact event.
+sound sound.hero.pudge.preattack sounds/weapons/hero/shared/small_blade/whoosh01.vsnd_c sounds/weapons/hero/shared/small_blade/whoosh01.wav event=Hero_Pudge.PreAttack
+sound sound.hero.pudge.preattack sounds/weapons/hero/shared/small_blade/whoosh02.vsnd_c sounds/weapons/hero/shared/small_blade/whoosh02.wav event=Hero_Pudge.PreAttack
+sound sound.hero.pudge.preattack sounds/weapons/hero/shared/small_blade/whoosh03.vsnd_c sounds/weapons/hero/shared/small_blade/whoosh03.wav event=Hero_Pudge.PreAttack
+sound sound.hero.pudge.preattack sounds/weapons/hero/shared/small_blade/whoosh04.vsnd_c sounds/weapons/hero/shared/small_blade/whoosh04.wav event=Hero_Pudge.PreAttack
+sound sound.hero.pudge.attack sounds/weapons/hero/pudge/attack01.vsnd_c sounds/weapons/hero/pudge/attack01.wav event=Hero_Pudge.Attack
+sound sound.hero.pudge.attack sounds/weapons/hero/pudge/attack02.vsnd_c sounds/weapons/hero/pudge/attack02.wav event=Hero_Pudge.Attack
+sound sound.hero.pudge.attack sounds/weapons/hero/pudge/attack03.vsnd_c sounds/weapons/hero/pudge/attack03.wav event=Hero_Pudge.Attack
+sound sound.hero.pudge.impact sounds/weapons/hero/pudge/attack01.vsnd_c sounds/weapons/hero/pudge/attack01.wav event=Hero_Pudge.Attack
+sound sound.hero.pudge.impact sounds/weapons/hero/pudge/attack02.vsnd_c sounds/weapons/hero/pudge/attack02.wav event=Hero_Pudge.Attack
+sound sound.hero.pudge.impact sounds/weapons/hero/pudge/attack03.vsnd_c sounds/weapons/hero/pudge/attack03.wav event=Hero_Pudge.Attack
 sound sound.raze sounds/weapons/hero/nevermore/shadowraze.vsnd_c sounds/weapons/hero/nevermore/shadowraze.wav event=Hero_Nevermore.Shadowraze
 sound sound.requiem_cast sounds/weapons/hero/nevermore/requiem_cast.vsnd_c sounds/weapons/hero/nevermore/requiem_cast.wav event=Hero_Nevermore.RequiemOfSoulsCast
 sound sound.requiem sounds/weapons/hero/nevermore/requiem_of_souls.vsnd_c sounds/weapons/hero/nevermore/requiem_of_souls.wav event=Hero_Nevermore.RequiemOfSouls

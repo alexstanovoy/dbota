@@ -46,6 +46,7 @@ mod menu;
 mod minimap;
 mod pregame;
 mod preparation_shop;
+mod pudge_attack_sounds;
 mod purchase_destination;
 mod quickbuy;
 mod refusals;
