@@ -11,6 +11,9 @@
 #           attach= marks a wearable: a skinned mesh whose joints share names with the parent's
 #           skeleton; bind its joints to the parent's joint entities by name, ignoring case
 #           (Dota "bonemerge"; e.g. the arms say root0_jnt where Shadow Fiend says Root0_JNT).
+#   model_variant <base logical> <model logical> modifier=<Dota modifier> [height=<world units>]
+#           or pool_tier=healing|great|greater map_skin=<map material group>.
+#           The first matching row selects a model; elevation belongs to that drawn model.
 #   clip    <model> <logical clip> <glTF animation name> <duration s> [point=<s>]
 #           point = the Dota attack/cast point in seconds at base speed (npc scripts), not a frame.
 #           A neutral model's cast1..cast6 are Dota's ACT_DOTA_CAST_ABILITY_1..6, the activity an ability's
@@ -287,6 +290,9 @@ clip courier.radiant.model run donkey_run 0.533
 clip courier.radiant.model death donkey_death 1.367
 clip courier.radiant.model spawn donkey_spawn 1.233
 model courier.radiant.flying.model models/props_gameplay/donkey_wings.vmdl_c models/courier/radiant_flying/courier_radiant_flying.glb anims=donkey_wings_idle,donkey_wings_run,donkey_wings_die
+# Ground-authored flying models are raised 160 units by the game:
+# https://www.dota2.com/workshop/requirements/npcs?l=swedish (Couriers).
+model_variant courier.radiant.model courier.radiant.flying.model modifier=modifier_courier_flying height=160
 clip courier.radiant.flying.model idle donkey_wings_idle 2.000
 clip courier.radiant.flying.model run donkey_wings_run 2.000
 clip courier.radiant.flying.model death donkey_wings_die 2.000
@@ -296,6 +302,7 @@ clip courier.dire.model run donkey_run 0.533
 clip courier.dire.model death donkey_death 1.367
 clip courier.dire.model spawn donkey_spawn 1.967
 model courier.dire.flying.model models/props_gameplay/donkey_dire_wings.vmdl_c models/courier/dire_flying/courier_dire_flying.glb anims=donkey_wings_idle,donkey_wings_run,donkey_wings_die
+model_variant courier.dire.model courier.dire.flying.model modifier=modifier_courier_flying height=160
 clip courier.dire.flying.model idle donkey_wings_idle 2.000
 clip courier.dire.flying.model run donkey_wings_run 2.000
 clip courier.dire.flying.model death donkey_wings_die 2.000
@@ -1578,6 +1585,11 @@ clip objective.lotus_pool.skin4.model idle fountain_idle 11.967
 model objective.lotus_pool.skin5.model models/props_gameplay/fountain_of_life/fountain_of_life_update.vmdl_c models/objective/lotus_pool/lotus_pool_skin5.glb anims=fountain_idle skin=5
 clip objective.lotus_pool.skin5.model idle fountain_idle 11.967
 unit npc_dota_lotus_pool objective.lotus_pool.model model_scale=1
+model_variant objective.lotus_pool.model objective.lotus_pool.skin1.model pool_tier=healing map_skin=1
+model_variant objective.lotus_pool.model objective.lotus_pool.skin2.model pool_tier=great map_skin=0
+model_variant objective.lotus_pool.model objective.lotus_pool.skin3.model pool_tier=greater map_skin=0
+model_variant objective.lotus_pool.model objective.lotus_pool.skin4.model pool_tier=great map_skin=1
+model_variant objective.lotus_pool.model objective.lotus_pool.skin5.model pool_tier=greater map_skin=1
 # Roshan's Banner planted (npc_dota_unit_roshans_banner); spawn, death (one of Dota's three each).
 model objective.roshans_banner.model models/props_gameplay/roshans_banner.vmdl_c models/objective/roshans_banner/roshans_banner.glb anims=roshan_banner_idle,roshan_banner_spawn,roshan_banner_death
 clip objective.roshans_banner.model idle roshan_banner_idle 25.000

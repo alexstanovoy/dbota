@@ -501,7 +501,11 @@ impl Plan {
                 Line::Label { src, key } => labels.push((src.clone(), key.clone())),
                 Line::Style { src, name } => styles.push((src.clone(), name.clone())),
                 Line::Portraits(p) => portraits = Some(p),
-                Line::Clip(_) | Line::Unit(_) | Line::Fx(_) | Line::State(_) => {}
+                Line::Clip(_)
+                | Line::Unit(_)
+                | Line::Fx(_)
+                | Line::State(_)
+                | Line::ModelVariant(_) => {}
             }
         }
         let events: BTreeSet<String> = catalog

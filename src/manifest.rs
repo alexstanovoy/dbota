@@ -63,6 +63,8 @@ pub struct Manifest {
     pub root: PathBuf,
     /// The models whose files are present.
     pub models: Vec<Model>,
+    /// Model changes driven by the unit's state, in manifest order.
+    pub model_variants: Vec<dbota_import::catalog::ModelVariant>,
     /// Textures and sounds whose files are present: logical name and path.
     pub files: Vec<(String, String)>,
     /// The Dota sound event each sound file plays, by its cache path, for those whose files
@@ -113,6 +115,7 @@ impl Manifest {
         for line in &catalog.lines {
             match line {
                 CatalogLine::Model(m) if present(&m.out) => manifest.models.push(model(m)),
+                CatalogLine::ModelVariant(variant) => manifest.model_variants.push(variant.clone()),
                 CatalogLine::Unit(u) => manifest.units.push(UnitArt {
                     unit: u.unit.clone(),
                     model: u.model.clone(),

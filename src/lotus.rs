@@ -4,39 +4,13 @@
 //! `mango1` to `mango6`).
 
 use bevy::prelude::*;
-use bota_proto::{LotusTier, UnitKind, UnitView, WorldView};
+use bota_proto::UnitKind;
 
 use crate::session::Session;
-use crate::units::{BuildingYaws, ModelOf, Posable, Unit};
+use crate::units::{ModelOf, Posable, Unit};
 
 pub fn plugin(app: &mut App) {
     app.add_systems(Update, show_lotuses);
-}
-
-/// The material group of `fountain_of_life_update.vmdl` a unit is drawn in:
-/// 0 for anything but a Lotus Pool. The map draws the pool of the Dire's
-/// corner in group 1 and the other in 0; the model's groups 2 and 3
-/// (`fountain_of_life_update_lvl2`, `_lvl3`) are the Radiant's pool and 4
-/// and 5 (`_lvl2_dire`, `_lvl3_dire`) the Dire's, growing Great and Greater
-/// Healing Lotuses.
-pub fn skin(u: &UnitView, view: &WorldView, yaws: &BuildingYaws, at: Vec2) -> u8 {
-    if u.kind != UnitKind::LotusPool {
-        return 0;
-    }
-    let dire = yaws.placed(u, at).is_some_and(|b| b.skin == 1);
-    let tier = view
-        .pools
-        .iter()
-        .find(|pool| pool.id == u.id)
-        .map_or(LotusTier::Healing, |pool| pool.tier);
-    match (dire, tier) {
-        (false, LotusTier::Healing) => 0,
-        (true, LotusTier::Healing) => 1,
-        (false, LotusTier::Great) => 2,
-        (false, LotusTier::Greater) => 3,
-        (true, LotusTier::Great) => 4,
-        (true, LotusTier::Greater) => 5,
-    }
 }
 
 /// Body groups of the pool's model, one per lotus it can hold.

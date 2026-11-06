@@ -499,7 +499,9 @@ fn bars(
         }
         let head = Vec3::new(
             unit.at.x,
-            p.ground.at(unit.at.x, unit.at.y) + bar_height(unit.kind),
+            p.ground.at(unit.at.x, unit.at.y)
+                + crate::units::flight_height(unit)
+                + bar_height(unit.kind),
             -unit.at.y,
         );
         let Ok(screen) = camera.world_to_viewport(cam_gt, head) else {

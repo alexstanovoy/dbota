@@ -305,12 +305,10 @@ pub fn stands(
     mine: Option<Team>,
 ) -> impl Iterator<Item = (Candidate, Vec2)> {
     view.units.iter().map(move |u| {
-        let drawn = index
-            .0
-            .get(&u.id)
-            .and_then(|e| units.get(*e).ok())
-            .map_or(Vec2::new(u.pos.x.to_f32(), u.pos.y.to_f32()), |d| d.at);
-        let base = Vec3::new(drawn.x, ground.at(drawn.x, drawn.y), -drawn.y);
+        let body = index.0.get(&u.id).and_then(|e| units.get(*e).ok());
+        let drawn = body.map_or(Vec2::new(u.pos.x.to_f32(), u.pos.y.to_f32()), |d| d.at);
+        let height = body.map_or(0.0, crate::units::flight_height);
+        let base = Vec3::new(drawn.x, ground.at(drawn.x, drawn.y) + height, -drawn.y);
         (
             candidate(u, base, mine),
             Vec2::new(u.pos.x.to_f32(), u.pos.y.to_f32()),

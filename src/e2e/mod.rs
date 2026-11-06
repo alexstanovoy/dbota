@@ -11,6 +11,7 @@ mod camera;
 mod captions;
 mod catalogue;
 mod controls;
+mod courier;
 mod cursors;
 mod death;
 mod fx;

@@ -51,10 +51,19 @@ fn on_ground(ground: &Ground, at: Spot) -> Vec3 {
 
 /// Where a line puts its effect on a unit, in the world's frame: at its feet, over its head
 /// where its health bar floats, or at a node of its model (half way up where it has none).
-fn attach_point(ground: &Ground, bodies: &Shooters, unit: &UnitView, attach: &Attach) -> Vec3 {
+pub(crate) fn attach_point(
+    ground: &Ground,
+    bodies: &Shooters,
+    unit: &UnitView,
+    attach: &Attach,
+) -> Vec3 {
     // Where the unit is drawn this frame, so what it wears moves with its model.
     let feet = match bodies.drawn(unit.id) {
-        Some(at) => Vec3::new(at.x, ground.at(at.x, at.y), -at.y),
+        Some(at) => Vec3::new(
+            at.x,
+            ground.at(at.x, at.y) + bodies.flight_height(unit.id),
+            -at.y,
+        ),
         None => on_ground(ground, unit.pos),
     };
     let over = Vec3::Y * crate::bars::bar_height(unit.kind);

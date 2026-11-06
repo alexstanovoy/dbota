@@ -9,7 +9,9 @@ use bevy::{
 };
 use bota_client_core::{ClientSession, bodies};
 use bota_core::{MapDef, NEUTRALS, NeutralKind, barracks_ranged_at, kind_def};
-use bota_proto::{EntityId, ProjectileModel, Team, UnitKind, UnitView};
+use bota_proto::{
+    EffectId, EntityId, LotusTier, ProjectileModel, Team, UnitKind, UnitView, WorldView,
+};
 
 use crate::coords::sim_facing_to_rotation;
 use crate::fog::FogGrid;
@@ -28,6 +30,10 @@ pub struct Unit {
     pub team: Team,
     /// Its place in the [`ModelBank`], when Dota's model of it is drawn.
     pub model: Option<usize>,
+    /// The ordinary model, whose manifest rows select state variants.
+    base_model: Option<usize>,
+    /// Elevation of the model actually drawn, not a pending replacement.
+    elevation: f32,
     /// Its bota position and facing as drawn this frame.
     pub at: Vec2,
     /// Facing, radians counter-clockwise from east.
@@ -174,6 +180,19 @@ pub struct BankModel {
     /// Whether the model, its wearables and everything they need are all
     /// loaded: no unit is drawn with it before, so no part goes missing.
     pub loaded: bool,
+    variants: Vec<ModelVariant>,
+    elevation: f32,
+}
+
+struct ModelVariant {
+    model: usize,
+    when: ModelCondition,
+}
+
+#[derive(Clone, Copy)]
+enum ModelCondition {
+    Effect(EffectId),
+    Pool { tier: LotusTier, map_skin: u8 },
 }
 
 impl BankModel {
@@ -319,7 +338,37 @@ fn load_models(mut bank: ResMut<ModelBank>, server: Res<AssetServer>, manifest: 
     {
         bank.0.push(bank_entry(&server, &manifest, model));
     }
+    load_model_variants(&mut bank, &manifest);
     info!("loading: {} unit models held resident", bank.0.len());
+}
+
+/// Resolve data rows once; selection in a frame compares only indexes and typed state.
+fn load_model_variants(bank: &mut ModelBank, manifest: &Manifest) {
+    use dbota_import::catalog::ModelCondition as Condition;
+    for variant in &manifest.model_variants {
+        let base = bank.0.iter().position(|m| m.model.logical == variant.base);
+        let model = bank.0.iter().position(|m| m.model.logical == variant.model);
+        let (Some(base), Some(model)) = (base, model) else {
+            continue;
+        };
+        let when = match &variant.when {
+            Condition::Modifier(name) => {
+                let Some(effect) = bota_core::EFFECTS
+                    .iter()
+                    .find(|effect| !effect.retired && effect.key == name)
+                else {
+                    continue;
+                };
+                ModelCondition::Effect(effect.id)
+            }
+            Condition::Pool { tier, map_skin } => ModelCondition::Pool {
+                tier: *tier,
+                map_skin: *map_skin,
+            },
+        };
+        bank.0[model].elevation = variant.height;
+        bank.0[base].variants.push(ModelVariant { model, when });
+    }
 }
 
 /// The logical-name prefix of tree models: trees are not units and load
@@ -343,6 +392,8 @@ fn bank_entry(server: &AssetServer, manifest: &Manifest, model: &Model) -> BankM
         clips: Vec::new(),
         graph: None,
         loaded: false,
+        variants: Vec::new(),
+        elevation: 0.0,
     }
 }
 
@@ -511,20 +562,15 @@ fn kind_name(map: &MapDef, kind: UnitKind, team: Team, pos: bota_proto::Vec2) ->
     }
 }
 
-/// The logical name of the model a unit is drawn with, in its model's material
-/// group `skin`: the model of that skin (`<model stem>.skin<n>.model`) where
-/// the manifest has one.
-fn model_name(unit: &UnitView, map: &MapDef, manifest: &Manifest, skin: u8) -> Option<String> {
+/// The ordinary model name, looked up once when a body appears. Manifest
+/// rows select state variants from its cached index on subsequent frames.
+fn base_model_name(unit: &UnitView, map: &MapDef, manifest: &Manifest) -> Option<String> {
     if unit.kind == UnitKind::CreepNeutral
         || unit.kind == UnitKind::Ward
         || objective_unit(unit.kind).is_some()
     {
         let model = unit_art(unit, manifest)?.model.clone()?;
-        let skinned = model
-            .strip_suffix(".model")
-            .map(|stem| format!("{stem}.skin{skin}.model"))
-            .filter(|name| skin > 0 && manifest.model(name).is_some());
-        return Some(skinned.unwrap_or(model));
+        return Some(model);
     }
     let side = match unit.team {
         Team::Radiant => "radiant",
@@ -552,6 +598,38 @@ fn model_name(unit: &UnitView, map: &MapDef, manifest: &Manifest, skin: u8) -> O
         UnitKind::Courier => format!("courier.{side}.model"),
         _ => return None,
     })
+}
+
+/// Elevation follows the model actually drawn, including while another model loads.
+pub fn flight_height(unit: &Unit) -> f32 {
+    unit.elevation
+}
+
+fn selected_model_index(
+    base: Option<usize>,
+    unit: &UnitView,
+    view: &WorldView,
+    map_skin: u8,
+    bank: &ModelBank,
+) -> Option<usize> {
+    let base = base?;
+    let variant = bank.0[base]
+        .variants
+        .iter()
+        .find(|variant| match variant.when {
+            ModelCondition::Effect(effect) => unit.effects.iter().any(|held| held.id == effect),
+            ModelCondition::Pool {
+                tier,
+                map_skin: skin,
+            } => {
+                skin == map_skin
+                    && view
+                        .pools
+                        .iter()
+                        .any(|pool| pool.id == unit.id && pool.tier == tier)
+            }
+        });
+    Some(variant.map_or(base, |variant| variant.model))
 }
 
 /// How every building stands on Dota's map, read from the map export.
@@ -725,6 +803,12 @@ fn required_models(manifest: &Manifest) -> Vec<String> {
             None => names.push(format!("{unit} (no unit line)")),
         }
     }
+    names.extend(
+        manifest
+            .model_variants
+            .iter()
+            .map(|variant| variant.model.clone()),
+    );
     names
 }
 
@@ -789,7 +873,6 @@ fn sync_units(
     let shown = bodies(view, core.prev_view(), core.smooth.alpha());
     let mut spawned = 0;
     let mut seen = Vec::with_capacity(shown.len());
-    let dt = p.time.delta_secs().max(1e-4);
     for body in &shown {
         let u = body.unit;
         // Buildings are seen through the fog, as in Dota.
@@ -797,52 +880,78 @@ fn sync_units(
             continue;
         }
         seen.push(u.id);
-        let at = Vec2::new(body.x, body.y);
-        let place = Vec3::new(body.x, p.ground.at(body.x, body.y), -body.y);
-        let skin = crate::lotus::skin(u, view, &p.yaws, at);
-        let drawn = p.index.0.get(&u.id).copied();
-        match drawn.and_then(|e| Some((e, units.get_mut(e).ok()?))) {
-            // A Lotus Pool is drawn anew in the skin of the lotus it grows
-            // from now on, once that model is there.
-            Some((entity, (unit, _)))
-                if u.kind == UnitKind::LotusPool && reskinned(&p, &unit, u, map, skin) =>
-            {
-                p.commands.entity(entity).despawn();
-                p.index.0.remove(&u.id);
-            }
-            Some((_, (mut unit, mut transform))) => {
-                let moved = at.distance(unit.at) / dt;
-                unit.speed += (moved - unit.speed) * (dt * 10.0).min(1.0);
-                unit.at = at;
-                unit.facing = drawn_facing(u, body.facing, at, &p.yaws);
-                // Moved only when it moves: a changed root sends its whole
-                // model, skeleton and all, through transform propagation.
-                if transform.translation != place {
-                    transform.translation = place;
-                }
-            }
-            // A few new units a frame: a wave, a camp or a seek brings
-            // dozens, and each model's instance is a world of its own
-            // cloned in (some 0.3 ms); the rest come the next frames. The
-            // heroes, a few at most, never wait: they are there in the first
-            // frame of the game, as the forest is.
-            None if spawned >= SPAWNS_PER_FRAME && u.kind != UnitKind::Hero => continue,
-            None => {
-                // Not before its model has loaded whole, wearables and all.
-                let waiting = model_name(u, map, &p.manifest, skin)
-                    .and_then(|name| p.bank.0.iter().find(|m| m.model.logical == name))
-                    .is_some_and(|m| !m.ready());
-                if waiting {
-                    continue;
-                }
-                let facing = drawn_facing(u, body.facing, at, &p.yaws);
-                let entity = spawn_unit(&mut p, u, map, (at, facing, place), skin);
-                spawned += 1;
-                p.index.0.insert(u.id, entity);
-            }
-        }
+        // Bound scene creation per frame; the few heroes never wait behind a wave.
+        let can_spawn = spawned < SPAWNS_PER_FRAME || u.kind == UnitKind::Hero;
+        spawned += usize::from(sync_body(&mut p, &mut units, body, map, view, can_spawn));
     }
     seen.sort_unstable();
+    remove_missing_units(&mut p, &seen, core);
+}
+
+fn sync_body(
+    p: &mut SyncParams,
+    units: &mut Query<(&mut Unit, &mut Transform)>,
+    body: &bota_client_core::Body<'_>,
+    map: &MapDef,
+    view: &WorldView,
+    can_spawn: bool,
+) -> bool {
+    let live = body.unit;
+    let at = Vec2::new(body.x, body.y);
+    let drawn = p.index.0.get(&live.id).copied();
+    let base = match drawn.and_then(|entity| units.get(entity).ok()) {
+        Some((unit, _)) => unit.base_model,
+        None => base_model_name(live, map, &p.manifest).and_then(|name| {
+            p.bank
+                .0
+                .iter()
+                .position(|model| model.model.logical == name)
+        }),
+    };
+    let map_skin = p.yaws.placed(live, at).map_or(0, |building| building.skin);
+    let selected = selected_model_index(base, live, view, map_skin, &p.bank);
+    if let Some((entity, (mut unit, mut transform))) =
+        drawn.and_then(|entity| Some((entity, units.get_mut(entity).ok()?)))
+    {
+        if model_changed(&p.bank, unit.model, selected) {
+            p.commands.entity(entity).despawn();
+            p.index.0.remove(&live.id);
+        } else {
+            move_drawn_unit(p, &mut unit, &mut transform, body);
+        }
+        return false;
+    }
+    if !can_spawn || selected.is_some_and(|index| !p.bank.0[index].ready()) {
+        return false;
+    }
+    let place = Vec3::new(at.x, p.ground.at(at.x, at.y), -at.y);
+    let facing = drawn_facing(live, body.facing, at, &p.yaws);
+    let entity = spawn_unit(p, live, (at, facing, place), (base, selected));
+    p.index.0.insert(live.id, entity);
+    true
+}
+
+fn move_drawn_unit(
+    p: &SyncParams,
+    unit: &mut Unit,
+    transform: &mut Transform,
+    body: &bota_client_core::Body<'_>,
+) {
+    let at = Vec2::new(body.x, body.y);
+    let dt = p.time.delta_secs().max(1e-4);
+    let moved = at.distance(unit.at) / dt;
+    unit.speed += (moved - unit.speed) * (dt * 10.0).min(1.0);
+    unit.at = at;
+    unit.facing = drawn_facing(body.unit, body.facing, at, &p.yaws);
+    let place = Vec3::new(at.x, p.ground.at(at.x, at.y) + flight_height(unit), -at.y);
+    // Avoid propagating an unchanged root through its whole skeleton.
+    if transform.translation != place {
+        transform.translation = place;
+    }
+}
+
+/// Sight loss and replay jumps remove the old body; only a told death plays a fall.
+fn remove_missing_units(p: &mut SyncParams, seen: &[EntityId], core: &bota_client_core::App) {
     let gone: Vec<EntityId> = p
         .index
         .0
@@ -875,46 +984,37 @@ fn sync_units(
     }
 }
 
-/// Whether a unit drawn as `unit` is to be drawn with another model of its
-/// skin `skin` that has loaded whole.
-fn reskinned(p: &SyncParams, unit: &Unit, u: &UnitView, map: &MapDef, skin: u8) -> bool {
-    let Some(name) = model_name(u, map, &p.manifest, skin) else {
-        return false;
-    };
-    let drawn = unit.model.map(|m| p.bank.0[m].model.logical.as_str());
-    drawn != Some(name.as_str())
-        && p.bank
-            .0
-            .iter()
-            .any(|m| m.model.logical == name && m.ready() && m.scenes.is_some())
+/// Whether the view selects another model for a drawn unit and that model
+/// has loaded whole.
+fn model_changed(bank: &ModelBank, drawn: Option<usize>, selected: Option<usize>) -> bool {
+    drawn != selected
+        && selected.is_some_and(|index| bank.0[index].ready() && bank.0[index].scenes.is_some())
 }
 
 /// Spawns one unit: a root at its place, and its model.
 fn spawn_unit(
     p: &mut SyncParams,
     u: &UnitView,
-    map: &MapDef,
     (at, facing, place): (Vec2, f32, Vec3),
-    skin: u8,
+    (base_model, model): (Option<usize>, Option<usize>),
 ) -> Entity {
-    let model = model_name(u, map, &p.manifest, skin).and_then(|name| {
-        p.bank
-            .0
-            .iter()
-            .position(|m| m.model.logical == name && m.scenes.is_some())
-    });
+    let model = model.filter(|index| p.bank.0[*index].scenes.is_some());
+    let unit = Unit {
+        id: u.id,
+        kind: u.kind,
+        team: u.team,
+        model,
+        base_model,
+        elevation: model.map_or(0.0, |index| p.bank.0[index].elevation),
+        at,
+        facing,
+        speed: 0.0,
+    };
+    let place = place + Vec3::Y * flight_height(&unit);
     let root = p
         .commands
         .spawn((
-            Unit {
-                id: u.id,
-                kind: u.kind,
-                team: u.team,
-                model,
-                at,
-                facing,
-                speed: 0.0,
-            },
+            unit,
             crate::anim::Pose::default(),
             Transform::from_translation(place),
             Visibility::default(),
@@ -930,6 +1030,17 @@ fn spawn_unit(
         ))
         .id();
     p.commands.entity(root).insert(ModelOf(pivot));
+    spawn_model_scene(p, u, pivot, model, at);
+    root
+}
+
+fn spawn_model_scene(
+    p: &mut SyncParams,
+    u: &UnitView,
+    pivot: Entity,
+    model: Option<usize>,
+    at: Vec2,
+) {
     // A unit the manifest draws as nothing (a bare effect in Dota), or whose model the cache lacks
     // (said at load), has no scene to spawn.
     if let Some((entry, scenes)) =
@@ -964,7 +1075,6 @@ fn spawn_unit(
                 );
         }
     }
-    root
 }
 
 /// Finds the animation player of a model's instance and gives it the

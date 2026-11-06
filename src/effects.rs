@@ -79,6 +79,7 @@ pub fn plugin(app: &mut App) {
 pub(crate) struct Shooters<'w, 's> {
     index: Res<'w, UnitIndex>,
     manifest: Res<'w, Manifest>,
+    ground: Res<'w, Ground>,
     units: Query<
         'w,
         's,
@@ -107,6 +108,15 @@ impl Shooters<'_, '_> {
         Some(unit.at)
     }
 
+    /// The elevation of the model actually drawn, shared with picking and bars.
+    pub(crate) fn flight_height(&self, id: EntityId) -> f32 {
+        self.index
+            .0
+            .get(&id)
+            .and_then(|entity| self.units.get(*entity).ok())
+            .map_or(0.0, |(unit, _, _)| crate::units::flight_height(unit))
+    }
+
     /// Where the node `name` of unit `id`'s model is.
     pub(crate) fn node(&self, id: EntityId, name: &str) -> Option<Vec3> {
         let (_, _, attachments) = self.units.get(*self.index.0.get(&id)?).ok()?;
@@ -122,7 +132,12 @@ impl Shooters<'_, '_> {
     /// Where a missile hits unit `id`.
     pub(crate) fn hit(&self, id: EntityId) -> Option<Vec3> {
         let (_, _, attachments) = self.units.get(*self.index.0.get(&id)?).ok()?;
-        Some(self.places.get(attachments?.hitloc?).ok()?.translation())
+        let attached = attachments
+            .and_then(|attachments| attachments.hitloc)
+            .and_then(|node| self.places.get(node).ok())
+            .map(GlobalTransform::translation)
+            .filter(|place| *place != Vec3::ZERO);
+        attached.or_else(|| self.at_flight(id))
     }
 
     /// Starts the attack effect of missile `f` (an attack's, its look's particle), from its
@@ -183,10 +198,7 @@ impl Shooters<'_, '_> {
 
     /// Where missile `f` hits: its target's hit location, else where it is now.
     fn aim(&self, f: &bota_client_core::Flight, at: Vec3) -> Vec3 {
-        f.missile
-            .target
-            .and_then(|t| self.hit(t).or_else(|| self.at_flight(t)))
-            .unwrap_or(at)
+        f.missile.target.and_then(|t| self.hit(t)).unwrap_or(at)
     }
 
     /// Unit `id`'s root in the world.
@@ -196,8 +208,10 @@ impl Shooters<'_, '_> {
 
     /// Unit `id`'s place at missile height, when it has no attachment for it.
     fn at_flight(&self, id: EntityId) -> Option<Vec3> {
-        let root = *self.index.0.get(&id)?;
-        Some(self.places.get(root).ok()?.translation() + Vec3::Y * FLIGHT)
+        let at = self.drawn(id)?;
+        let height = self.flight_height(id);
+        let height = if height > 0.0 { height } else { FLIGHT };
+        Some(Vec3::new(at.x, self.ground.at(at.x, at.y) + height, -at.y))
     }
 }
 

@@ -64,6 +64,24 @@ pub struct Unit {
     pub attack: Option<String>,
 }
 
+/// A model selected by a replicated state, with its world elevation.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ModelVariant {
+    pub base: String,
+    pub model: String,
+    pub when: ModelCondition,
+    pub height: f32,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ModelCondition {
+    Modifier(String),
+    Pool {
+        tier: bota_proto::LotusTier,
+        map_skin: u8,
+    },
+}
+
 /// Which converter reads a plain `<kind> <logical> <src> <out>` line.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FileKind {
@@ -133,6 +151,7 @@ pub struct Shop {
 #[derive(Clone, Debug, PartialEq)]
 pub enum Line {
     Model(Model),
+    ModelVariant(ModelVariant),
     Clip(Clip),
     Unit(Unit),
     File(File),
@@ -552,8 +571,48 @@ fn manifest_line(words: &[&str]) -> Result<Line, String> {
         }
         "fx" => Ok(Line::Fx(rest.iter().map(|w| own(w)).collect())),
         "state" => state_line(rest).map(Line::State),
+        "model_variant" => model_variant(rest).map(Line::ModelVariant),
         other => Err(format!("no line kind '{other}'")),
     }
+}
+
+fn model_variant(words: &[&str]) -> Result<ModelVariant, String> {
+    let fields = Fields::of(words, &["modifier", "pool_tier", "map_skin", "height"])?;
+    let [base, model] = fields.exactly::<2>("model_variant")?;
+    let when = match (
+        fields.get("modifier"),
+        fields.get("pool_tier"),
+        fields.get("map_skin"),
+    ) {
+        (Some(modifier), None, None) => ModelCondition::Modifier(modifier.to_owned()),
+        (None, Some(tier), Some(skin)) => {
+            let tier = match tier {
+                "healing" => bota_proto::LotusTier::Healing,
+                "great" => bota_proto::LotusTier::Great,
+                "greater" => bota_proto::LotusTier::Greater,
+                _ => return Err(format!("model_variant: unknown pool_tier={tier}")),
+            };
+            let map_skin = skin
+                .parse::<u8>()
+                .map_err(|_| "model_variant: map_skin is no byte")?;
+            ModelCondition::Pool { tier, map_skin }
+        }
+        _ => {
+            return Err(
+                "model_variant requires modifier= or both pool_tier= and map_skin=".to_owned(),
+            );
+        }
+    };
+    let height = fields.float("height")?.unwrap_or(0.0);
+    if !height.is_finite() || !(0.0..=1024.0).contains(&height) {
+        return Err("model_variant: height must be within 0..=1024".to_owned());
+    }
+    Ok(ModelVariant {
+        base: base.to_owned(),
+        model: model.to_owned(),
+        when,
+        height,
+    })
 }
 
 fn id_line(words: &[&str]) -> Result<Id, String> {
@@ -600,9 +659,51 @@ fn id_line(words: &[&str]) -> Result<Id, String> {
     }
 }
 
-/// What no single line shows: a clip of a model nobody lists, a unit drawn with a model that is
-/// not there, an attached model whose parent is not listed, a state drawn with a texture or
-/// told in a label that is not listed or of an item ids.txt does not name, an id named twice.
+/// State rows must reference known facts and give one elevation to each model.
+fn model_variant_errors(
+    variant: &ModelVariant,
+    catalog: &Catalog,
+    models: &BTreeSet<&str>,
+) -> Vec<String> {
+    let mut errors = Vec::new();
+    for model in [&variant.base, &variant.model] {
+        if !models.contains(model.as_str()) {
+            errors.push(format!("model_variant: no model {model}"));
+        }
+    }
+    if let ModelCondition::Modifier(name) = &variant.when
+        && !bota_core::EFFECTS
+            .iter()
+            .any(|effect| !effect.retired && effect.key == name)
+    {
+        errors.push(format!("model_variant: no modifier {name}"));
+    }
+    let variants = || {
+        catalog.lines.iter().filter_map(|line| match line {
+            Line::ModelVariant(other) => Some(other),
+            _ => None,
+        })
+    };
+    if variants()
+        .filter(|other| other.base == variant.base && other.when == variant.when)
+        .count()
+        > 1
+    {
+        errors.push(format!(
+            "model_variant: duplicate condition for {}",
+            variant.base
+        ));
+    }
+    if variants().any(|other| other.model == variant.model && other.height != variant.height) {
+        errors.push(format!(
+            "model_variant: conflicting heights for {}",
+            variant.model
+        ));
+    }
+    errors
+}
+
+/// Validate references between rows, including ids, models, labels and textures.
 fn cross_checks(catalog: &Catalog) -> Vec<LineError> {
     let textures: BTreeSet<&str> = catalog
         .lines
@@ -646,6 +747,11 @@ fn cross_checks(catalog: &Catalog) -> Vec<LineError> {
     };
     for line in &catalog.lines {
         match line {
+            Line::ModelVariant(variant) => {
+                for why in model_variant_errors(variant, catalog, &models) {
+                    fail(why);
+                }
+            }
             Line::Clip(c) if !models.contains(c.model.as_str()) => {
                 fail(format!("clip {}: no model {}", c.logical, c.model));
             }
