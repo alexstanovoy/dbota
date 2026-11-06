@@ -272,3 +272,47 @@ fn every_posed_model_fits_the_box_it_is_posed_by() {
         "the cache's posed models were measured: {measured}"
     );
 }
+
+/// Starting a run during the rare-idle fade leaves three clips contributing. The remaining
+/// weight belongs to all outgoing clips together.
+#[test]
+fn interrupting_a_rare_idle_fade_keeps_the_drawn_animation_weights_whole() {
+    use super::creep_walk::{ControlledFrames, tell};
+    let server = Server::start(1, &[]);
+    let mut client = Client::join(&server, HeroId::SHADOW_FIEND, &[]);
+    client.follow_me();
+    client
+        .world_mut()
+        .insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_secs_f32(
+            FRAME,
+        )));
+    client.until("a rare idle beginning to blend", |c| {
+        pose(c).is_some_and(|p| p.clip() == RARE_IDLE && p.blending())
+    });
+    let mut three_clips = false;
+    server.frozen(|| {
+        let _live = std::mem::replace(
+            &mut client.core_mut().source,
+            bota_client_core::Source::Live(Box::new(ControlledFrames)),
+        );
+        let mut hero = client.me().clone();
+        for frame in 0..20 {
+            hero.pos.x += bota_proto::Fixed::from_int(10);
+            tell(&mut client, hero.clone());
+            client.frames(1);
+            let drawn = weights(&client);
+            three_clips |= drawn.len() == 3;
+            assert!(
+                (drawn.iter().sum::<f32>() - 1.0).abs() < 1e-4,
+                "interrupted fade loses drawn weight at frame {frame}, clip {:?}: {drawn:?}",
+                pose(&client).map(Pose::clip)
+            );
+        }
+    });
+    assert!(
+        three_clips,
+        "the run interrupts an actual idle/rare-idle blend"
+    );
+    assert_eq!(pose(&client).map(Pose::clip), Some("run"));
+    assert_eq!(weights(&client), [1.0], "the run finishes fully weighted");
+}

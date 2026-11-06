@@ -496,8 +496,16 @@ fn cross_fade(
 fn weigh(pose: &mut Pose, player: &mut AnimationPlayer, node: AnimationNodeIndex, dt: f32) {
     let step = dt / FADE_SECONDS;
     pose.share = (pose.share + step).min(1.0);
+    // An interrupted fade leaves several clips under the incoming one. They represent
+    // one outgoing pose: share the remaining weight without fading each by a full step.
+    let outgoing: f32 = pose.fading.iter().map(|f| f.weight).sum();
+    let scale = if outgoing > 0.0 {
+        (1.0 - pose.share) / outgoing
+    } else {
+        0.0
+    };
     for fading in &mut pose.fading {
-        fading.weight -= step;
+        fading.weight *= scale;
         if fading.weight <= 0.0 {
             player.stop(fading.node);
         }
