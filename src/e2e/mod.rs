@@ -28,6 +28,7 @@ mod icons;
 mod item_drop_range;
 mod item_states;
 mod items;
+mod loot_names;
 mod lotus;
 mod menu;
 mod minimap;

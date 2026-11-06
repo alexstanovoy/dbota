@@ -9,7 +9,6 @@ use bevy::{
     prelude::*,
     world_serialization::{WorldAsset, WorldAssetRoot, WorldInstanceReady},
 };
-use bota_client_core::loot_under_cursor;
 use bota_proto::{EntityId, LootView};
 
 use crate::camera::CursorGround;
@@ -47,7 +46,7 @@ struct LootIndex(HashMap<EntityId, Entity>);
 
 /// The name over the hovered item.
 #[derive(Component)]
-struct ItemName;
+pub struct ItemName;
 
 pub fn plugin(app: &mut App) {
     app.init_resource::<LootIndex>()
@@ -217,14 +216,12 @@ fn name_hovered(
     manifest: Res<Manifest>,
     mut label: Single<(&mut Node, &mut Text, &mut Visibility), With<ItemName>>,
 ) {
-    let view = session.0.view();
-    let hovered = view
-        .zip(cursor.0)
-        .filter(|_| !over.0)
-        .and_then(|(view, at)| {
-            let id = loot_under_cursor(view, (at.x, -at.z))?;
-            view.loot.iter().find(|l| l.id == id)
-        });
+    let core = &session.0;
+    let hovered = cursor.0.filter(|_| !over.0).and_then(|at| {
+        // An item the viewing side does not see (a replay's view holds all) is not named.
+        let id = core.loot_at((at.x, -at.z))?.id;
+        core.view()?.loot.iter().find(|l| l.id == id)
+    });
     let look = Lookup {
         texts: &texts,
         manifest: &manifest,

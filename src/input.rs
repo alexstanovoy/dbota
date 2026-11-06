@@ -469,8 +469,7 @@ fn mouse(
         if commands && live && core.attack_move_armed {
             core.attack_move_armed = false;
             // With no unit there, a rune under the cursor is attacked: destroyed, as Dota's.
-            let unit = unit_of(hover.attack)
-                .or_else(|| bota_client_core::rune_under_cursor(core.view()?, ground));
+            let unit = unit_of(hover.attack).or_else(|| core.rune_at(ground).map(|rune| rune.id));
             core.act(Intent::AttackAt { at: ground, unit });
             return;
         }
