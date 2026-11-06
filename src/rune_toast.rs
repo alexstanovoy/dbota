@@ -1,4 +1,4 @@
-//! Dota's toast of a rune appearing at the river (`dota_hud_rune_spawn_toast`): for five
+//! Dota's spectator toast of a rune appearing at the river (`dota_hud_rune_spawn_toast`): for five
 //! seconds, at the right of the screen, the arrow pointing to the top spot or the bottom one, the
 //! rune's icon and "Rune Spawned Top" or "Rune Spawned Bottom" in the install's words, on the
 //! backdrop of Dota's purchase toast. A Bounty Rune appearing in the jungle has none.
@@ -127,13 +127,24 @@ fn spawn(
     }
 }
 
-/// Starts a toast for each water or power rune the last pump told appeared, and ages the
-/// toasts shown.
+/// Spectators get the spawn popup; player seats learn about runes from the world.
+/// Replay seat POVs carry a player slot and use that player's HUD; an
+/// everything POV has no slot and uses the spectator popup.
+/// Source: https://liquipedia.net/dota2/September_16,_2021_Patch
 fn toast(
     sight: crate::fog::EventSight,
     time: Res<Time>,
     mut toasts: Query<(&mut RuneToast, &mut Visibility)>,
 ) {
+    if sight.core().my_slot.is_some() {
+        for (mut toast, mut shown) in &mut toasts {
+            if toast.0.is_some() {
+                toast.0 = None;
+            }
+            shown.set_if_neq(Visibility::Hidden);
+        }
+        return;
+    }
     for (mut toast, mut shown) in &mut toasts {
         if let Some((_, _, age)) = &mut toast.0 {
             *age += time.delta_secs();

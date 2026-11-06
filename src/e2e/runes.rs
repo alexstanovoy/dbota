@@ -1,6 +1,6 @@
 //! Runes and the Bottle as Dota shows them, in a match whose server spawns runes (`--runes all`)
 //! and puts one where a test asks (`dota_spawn_rune`): the rune's model and glow where it lies,
-//! the minimap's icon of it kept out of sight, the toast of a river rune, a rune taken by a click
+//! the minimap's icon of it kept out of sight, a rune taken by a click
 //! with its sound, its hero's line, its buff and its lines in the chat and the feed, the Bottle's
 //! icon by its charges and by the rune it keeps, and an invisible hero drawn see-through.
 
@@ -158,8 +158,13 @@ fn fog_hidden_water_rune_spawn_does_not_announce_its_spot() {
         world
             .query::<&crate::rune_toast::RuneToast>()
             .iter(world)
-            .any(|toast| toast.0.is_some_and(|(kind, ..)| kind == RuneKind::Water)),
-        "a visible spawn still announces its spot"
+            .all(|toast| toast.0.is_none()),
+        "a player gets no spawn announcement after the spot is revealed either"
+    );
+    client.within(
+        SOON,
+        "visible Water still plays its particle for the player",
+        |c| started(c, "rune.water.glow") > 0,
     );
 }
 
@@ -206,7 +211,9 @@ fn recorded_spawns(visible: bool) -> super::fog_pov::ReplayFile {
             client.view().runes.iter().any(|rune| {
                 rune.pos == at
                     && rune.kind == kind
-                    && rune.seen_by.is_some_and(|seen| seen.radiant == visible)
+                    && rune
+                        .seen_by
+                        .is_some_and(|seen| seen.radiant == visible && (visible || !seen.dire))
             })
         });
     }
@@ -216,8 +223,8 @@ fn recorded_spawns(visible: bool) -> super::fog_pov::ReplayFile {
 #[test]
 fn replay_hidden_water_spawn_does_not_announce_its_spot() {
     let file = recorded_spawns(false);
-    for slot in [0, 1] {
-        let mut client = super::fog_pov::replay_from_side(&file, slot);
+    for slot in [Some(0), Some(1), None] {
+        let mut client = super::fog_pov::replay_observed(&file, slot, &[], |_| {});
         client.frames(2);
         let world = client.world_mut();
         assert!(
@@ -225,7 +232,12 @@ fn replay_hidden_water_spawn_does_not_announce_its_spot() {
                 .query::<&crate::rune_toast::RuneToast>()
                 .iter(world)
                 .all(|toast| toast.0.is_none()),
-            "a fogged replay POV must not announce hidden rune coordinates"
+            "neither a player POV nor the spectator HUD announces a hidden spawn"
+        );
+        assert_eq!(
+            started(&client, "rune.water.glow"),
+            0,
+            "a hidden Water Rune must not play its particle in any replay POV"
         );
     }
 }
@@ -245,22 +257,39 @@ fn replay_hidden_bounty_spawn_does_not_start_its_particle() {
 }
 
 #[test]
-fn replay_visible_rune_spawns_still_show_their_fx_and_hud() {
+fn replay_visible_rune_spawns_keep_fx_and_announce_only_in_the_spectator_hud() {
     let file = recorded_spawns(true);
-    let mut client = super::fog_pov::replay_from_side(&file, 0);
-    client.frames(2);
-    assert!(
-        started(&client, "rune.bounty.prespawn") > 0,
-        "a visible replay spawn still plays its particle"
-    );
-    let world = client.world_mut();
-    assert!(
-        world
-            .query::<&crate::rune_toast::RuneToast>()
+    for slot in [Some(0), None] {
+        let mut client = super::fog_pov::replay_observed(&file, slot, &[], |_| {});
+        client.frames(2);
+        assert!(
+            started(&client, "rune.bounty.prespawn") > 0,
+            "a visible replay spawn still plays its particle for either HUD"
+        );
+        assert!(
+            started(&client, "rune.water.glow") > 0,
+            "visible Water keeps its particle for either HUD"
+        );
+        let world = client.world_mut();
+        let announced = world
+            .query::<(&crate::rune_toast::RuneToast, &Visibility)>()
             .iter(world)
-            .any(|toast| toast.0.is_some_and(|(kind, ..)| kind == RuneKind::Water)),
-        "a visible replay spawn still announces its spot"
-    );
+            .any(|(toast, shown)| {
+                *shown != Visibility::Hidden
+                    && toast.0.is_some_and(|(kind, ..)| kind == RuneKind::Water)
+            });
+        assert_eq!(
+            announced,
+            slot.is_none(),
+            "only the everything replay uses the spectator spawn popup"
+        );
+        let top = label(&client, "DOTA_HUD_rune_spawned_top", &[]);
+        assert_eq!(
+            client.shown_texts().contains(&top),
+            slot.is_none(),
+            "the rendered popup text follows the same role rule"
+        );
+    }
 }
 
 #[test]
@@ -710,7 +739,7 @@ fn opening_river_bounties_and_unseen_water_expire_at_their_server_deadlines() {
     forget_unseen_water_at_four(&mut client, water, jungle);
 }
 
-/// A Haste Rune appearing at the river shows Dota's toast; a right click on it walks the hero
+/// A right click on a Haste Rune at the river walks the hero
 /// there and takes it: its sound, the hero's line, the buff's loop on the hero, its chip on the
 /// buff bar and the chat line in Dota's words.
 #[test]
@@ -719,17 +748,6 @@ fn a_rune_clicked_is_taken_with_its_sound_line_buff_and_chat() {
     let spot = top_spot();
     client.stand_at((spot.0 + 400, spot.1));
     spawn_rune(&mut client, RuneKind::Haste, spot);
-    let top = label(&client, "DOTA_HUD_rune_spawned_top", &[]);
-    client.within(SOON, "the toast", |c| {
-        let world = c.world_mut();
-        let toasted = world
-            .query::<(&crate::rune_toast::RuneToast, &Visibility)>()
-            .iter(world)
-            .any(|(t, shown)| {
-                *shown != Visibility::Hidden && matches!(t.0, Some((RuneKind::Haste, false, _)))
-            });
-        toasted && c.shown_texts().contains(&top)
-    });
     client.within(SOON, "the Haste Rune drawn", |c| {
         drawn(c, RuneKind::Haste).is_some()
     });
@@ -758,6 +776,139 @@ fn a_rune_clicked_is_taken_with_its_sound_line_buff_and_chat() {
     let name = crate::seat_name::seat_name(client.core(), client.core().my_slot.expect("a seat"));
     let line = label(&client, "DOTA_Chat_Rune_Haste", &[]).replace("%s1", &name);
     client.within(SOON, "the chat line", |c| shown_spans(c).contains(&line));
+}
+
+/// Dota's rune-spawn toast is for spectators (16 September 2021 update),
+/// while a player learns about a spawn by seeing the rune in the world.
+#[test]
+fn a_player_sees_visible_water_and_power_spawns_without_an_announcement() {
+    let (_server, mut client) = rune_match();
+    let spot = top_spot();
+    client.stand_at((spot.0 + 400, spot.1));
+    client.until("the game is ready", |c| {
+        c.world().resource::<crate::loading::Loading>().done()
+    });
+    // A buggy toast must not expire before the absence checks below.
+    client
+        .world_mut()
+        .insert_resource(bevy::time::TimeUpdateStrategy::ManualDuration(
+            Duration::ZERO,
+        ));
+    for kind in [RuneKind::Water, RuneKind::Haste] {
+        spawn_rune(&mut client, kind, spot);
+        client.within(SOON, "the player was told this RuneSpawned event", |c| {
+            c.core()
+                .session()
+                .expect("a session")
+                .recent_events()
+                .iter()
+                .any(|event| {
+                    matches!(event.kind, bota_proto::EventKind::RuneSpawned { kind: got, at }
+                    if got == kind && at == Spot::from_ints(spot.0, spot.1))
+                })
+        });
+        client.within(SOON, "the visible spawned rune is drawn", |c| {
+            drawn(c, kind).is_some()
+        });
+        let world = client.world_mut();
+        assert!(
+            world
+                .query::<(&crate::rune_toast::RuneToast, &Visibility)>()
+                .iter(world)
+                .all(|(toast, shown)| toast.0.is_none() && *shown == Visibility::Hidden),
+            "a player gets no rune-spawn toast"
+        );
+        for key in ["DOTA_HUD_rune_spawned_top", "DOTA_HUD_rune_spawned_bottom"] {
+            let announcement = label(&client, key, &[]);
+            assert!(
+                !client.shown_texts().contains(&announcement),
+                "no spawn message is drawn"
+            );
+        }
+    }
+}
+
+#[test]
+fn a_spectator_popup_is_hidden_on_the_next_frame_after_taking_a_player_seat() {
+    use std::sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    };
+    let server = Server::start(
+        1,
+        &[
+            "--runes",
+            "all",
+            "--spectators",
+            "open",
+            "--mode",
+            "realtime",
+        ],
+    );
+    let trigger = Arc::new(AtomicBool::new(false));
+    let player_trigger = trigger.clone();
+    let spot = top_spot();
+    let mut spawn_next = false;
+    super::harness::scripted_seat(&server, HeroId::SHADOW_FIEND, move |_| {
+        let issue = |cheat| {
+            vec![bota_client_core::IssuedOrder::hero(
+                bota_proto::Order::Cheat { cheat },
+            )]
+        };
+        if player_trigger.swap(false, Ordering::SeqCst) {
+            spawn_next = true;
+            issue(Cheat::Teleport {
+                at: Spot::from_ints(spot.0 + 400, spot.1),
+            })
+        } else if spawn_next {
+            spawn_next = false;
+            issue(Cheat::SpawnRune {
+                kind: RuneKind::Haste,
+                at: Spot::from_ints(spot.0, spot.1),
+            })
+        } else {
+            Vec::new()
+        }
+    });
+    let mut watcher = Client::run(&["--addr", &server.address, "--spectate"]);
+    watcher.until("the spectator's match is ready", |c| {
+        c.core().view().is_some() && c.world().resource::<crate::loading::Loading>().done()
+    });
+    assert!(
+        watcher.core().my_slot.is_none(),
+        "this client has no player seat"
+    );
+    watcher
+        .world_mut()
+        .insert_resource(bevy::time::TimeUpdateStrategy::ManualDuration(
+            Duration::ZERO,
+        ));
+    trigger.store(true, Ordering::SeqCst);
+    let top = label(&watcher, "DOTA_HUD_rune_spawned_top", &[]);
+    watcher.within(SOON, "the spectator's rune popup is drawn", |c| {
+        let world = c.world_mut();
+        let toasted = world
+            .query::<(&crate::rune_toast::RuneToast, &Visibility)>()
+            .iter(world)
+            .any(|(toast, shown)| {
+                *shown != Visibility::Hidden && matches!(toast.0, Some((RuneKind::Haste, false, _)))
+            });
+        toasted && c.shown_texts().contains(&top)
+    });
+    watcher.core_mut().my_slot = Some(bota_proto::SlotId(0));
+    watcher.frames(1);
+    let world = watcher.world_mut();
+    assert!(
+        world
+            .query::<(&crate::rune_toast::RuneToast, &Visibility)>()
+            .iter(world)
+            .all(|(toast, shown)| toast.0.is_none() && *shown == Visibility::Hidden),
+        "taking a player seat clears and hides the existing spectator popup on the next frame"
+    );
+    assert!(
+        !watcher.shown_texts().contains(&top),
+        "the old popup text is hidden too"
+    );
 }
 
 /// The icon and the two counts of an item slot of one's hero, as drawn.
