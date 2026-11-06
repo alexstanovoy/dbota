@@ -402,21 +402,32 @@ fn a_broken_off_swing_is_a_cancel_and_clips_fade_and_melee_creeps_sound() {
         }
     }
     assert!(fades > 0, "no clip change was seen to fade from the start");
-    // Sound: melee creeps whoosh as a swing begins and hit as it lands.
+    // Sound: melee creeps whoosh as a swing begins; the blow as it lands sounds only on the
+    // hero one plays, which this lane fight has none of.
     let heard = |kind: &str| {
         lines
             .iter()
             .filter(|l| l.starts_with("sound ") && l.contains(&format!("name={kind} ")))
             .collect::<Vec<_>>()
     };
-    for kind in ["sound.creep.melee.preattack", "sound.creep.melee.attack"] {
-        let said = heard(kind);
-        assert!(!said.is_empty(), "no {kind} was decided");
-        assert!(
-            said.iter().all(|l| !l.ends_with("sources=0")),
-            "{kind} has no sound in the cache"
-        );
-    }
+    let kind = "sound.creep.melee.preattack";
+    let said = heard(kind);
+    assert!(!said.is_empty(), "no {kind} was decided");
+    assert!(
+        said.iter().all(|l| !l.ends_with("sources=0")),
+        "{kind} has no sound in the cache"
+    );
+    // The blows landed (they are decided) and none was heard: a lane fight watched has no hero
+    // of the player's.
+    let blows = heard("sound.creep.melee.attack");
+    assert!(
+        !blows.is_empty(),
+        "no melee blow was decided in the lane fight"
+    );
+    assert!(
+        blows.iter().all(|l| l.contains(" heard=false ")),
+        "a blow on no hero of the player's was sounded: {blows:?}"
+    );
     keep(&replay, "lane", &shots);
     let _ = std::fs::remove_dir_all(&dir);
 }

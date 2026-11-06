@@ -70,6 +70,8 @@ pub struct Manifest {
     /// The Dota sound event each sound file plays, by its cache path, for those whose files
     /// are present.
     pub sound_events: Vec<(String, String)>,
+    /// The logical names of the sounds heard on the player's own hero only (`heard=own_hero`).
+    pub own_hero_sounds: std::collections::HashSet<String>,
     /// The particle effects whose files are present: logical name and path.
     pub particles: Vec<(String, String)>,
     /// The map file, when present.
@@ -155,6 +157,9 @@ impl Manifest {
                 CatalogLine::Sound(s) if present(&s.out) => {
                     manifest.files.push((s.logical.clone(), s.out.clone()));
                     manifest.sound_events.push((s.out.clone(), s.event.clone()));
+                    if s.own_hero_only {
+                        manifest.own_hero_sounds.insert(s.logical.clone());
+                    }
                 }
                 CatalogLine::World(w) if present(&w.out) => {
                     manifest.map = Some(cache_path(&w.out));

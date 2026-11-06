@@ -15,6 +15,7 @@ mod catalogue;
 mod controls;
 mod courier;
 mod courier_spinner;
+mod creep_blows;
 mod cursors;
 mod death;
 mod event_visibility;

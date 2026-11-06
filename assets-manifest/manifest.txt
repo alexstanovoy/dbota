@@ -36,7 +36,9 @@
 #           a particle system and every child under it, read into typed definitions, as one JSON file
 #           (dbota_import's particle_json); their textures as KTX2 under textures/ beside it, with their
 #           sprite sheets in the JSON. The client simulates and draws them (src/particles/).
-#   sound   <logical> <vpk .vsnd_c> <out .wav|.mp3> event=<Dota sound event that plays it>
+#   sound   <logical> <vpk .vsnd_c> <out .wav|.mp3> event=<Dota sound event that plays it> [heard=own_hero]
+#           heard=own_hero: the sound of a blow taken as damage, played for the hero the player plays alone
+#           (no one else's, and none while watching or in a replay).
 #           PCM WAV as Valve ships it (16-bit 44.1 kHz, a few 8-bit or 22.05 kHz); voice lines are MP3
 #           in the game and stay MP3 (out .mp3). Events with several variants list one line per variant;
 #           variants of one random pick (a hero's move acknowledgements) share the logical name.
@@ -875,19 +877,19 @@ sound sound.nevermore.frenzy sounds/weapons/hero/nevermore/frenzy.vsnd_c sounds/
 sound sound.hero.nevermore.death sounds/physics/deaths/specials/shadowfiend_death.vsnd_c sounds/physics/deaths/specials/shadowfiend_death.wav event=Hero_Nevermore.Death
 sound sound.last_hit sounds/ui/coins.vsnd_c sounds/ui/coins.wav event=General.Coins
 sound sound.deny sounds/ui/last_hit.vsnd_c sounds/ui/last_hit.wav event=UI.Deny.Melee
-sound sound.creep.melee.attack sounds/weapons/creep/shared/melee_hit01.vsnd_c sounds/weapons/creep/shared/melee_hit01.wav event=Creep_Good_Melee.Attack
-sound sound.creep.melee.attack sounds/weapons/creep/shared/melee_hit02.vsnd_c sounds/weapons/creep/shared/melee_hit02.wav event=Creep_Good_Melee.Attack
-sound sound.creep.melee.attack sounds/weapons/creep/shared/melee_hit03.vsnd_c sounds/weapons/creep/shared/melee_hit03.wav event=Creep_Good_Melee.Attack
+sound sound.creep.melee.attack sounds/weapons/creep/shared/melee_hit01.vsnd_c sounds/weapons/creep/shared/melee_hit01.wav event=Creep_Good_Melee.Attack heard=own_hero
+sound sound.creep.melee.attack sounds/weapons/creep/shared/melee_hit02.vsnd_c sounds/weapons/creep/shared/melee_hit02.wav event=Creep_Good_Melee.Attack heard=own_hero
+sound sound.creep.melee.attack sounds/weapons/creep/shared/melee_hit03.vsnd_c sounds/weapons/creep/shared/melee_hit03.wav event=Creep_Good_Melee.Attack heard=own_hero
 sound sound.creep.melee.preattack sounds/weapons/creep/shared/whoosh01.vsnd_c sounds/weapons/creep/shared/whoosh01.wav event=Creep_Good_Melee.PreAttack
 sound sound.creep.melee.preattack sounds/weapons/creep/shared/whoosh02.vsnd_c sounds/weapons/creep/shared/whoosh02.wav event=Creep_Good_Melee.PreAttack
 sound sound.creep.ranged.attack.radiant sounds/weapons/creep/good/range_projectile_launch.vsnd_c sounds/weapons/creep/good/range_projectile_launch.wav event=Creep_Good_Range.Attack
 sound sound.creep.ranged.attack.radiant sounds/weapons/creep/good/range_projectile_launch2.vsnd_c sounds/weapons/creep/good/range_projectile_launch2.wav event=Creep_Good_Range.Attack
-sound sound.creep.ranged.impact.radiant sounds/weapons/creep/good/range_projectile_impact.vsnd_c sounds/weapons/creep/good/range_projectile_impact.wav event=Creep_Good_Range.ProjectileImpact
-sound sound.creep.ranged.impact.radiant sounds/weapons/creep/good/range_projectile_impact2.vsnd_c sounds/weapons/creep/good/range_projectile_impact2.wav event=Creep_Good_Range.ProjectileImpact
+sound sound.creep.ranged.impact.radiant sounds/weapons/creep/good/range_projectile_impact.vsnd_c sounds/weapons/creep/good/range_projectile_impact.wav event=Creep_Good_Range.ProjectileImpact heard=own_hero
+sound sound.creep.ranged.impact.radiant sounds/weapons/creep/good/range_projectile_impact2.vsnd_c sounds/weapons/creep/good/range_projectile_impact2.wav event=Creep_Good_Range.ProjectileImpact heard=own_hero
 sound sound.creep.ranged.attack.dire sounds/weapons/creep/bad/range_projectile_launch.vsnd_c sounds/weapons/creep/bad/range_projectile_launch.wav event=Creep_Bad_Range.Attack
 sound sound.creep.ranged.attack.dire sounds/weapons/creep/bad/range_projectile_launch2.vsnd_c sounds/weapons/creep/bad/range_projectile_launch2.wav event=Creep_Bad_Range.Attack
-sound sound.creep.ranged.impact.dire sounds/weapons/creep/bad/range_projectile_impact.vsnd_c sounds/weapons/creep/bad/range_projectile_impact.wav event=Creep_Bad_Range.ProjectileImpact
-sound sound.creep.ranged.impact.dire sounds/weapons/creep/bad/range_projectile_impact2.vsnd_c sounds/weapons/creep/bad/range_projectile_impact2.wav event=Creep_Bad_Range.ProjectileImpact
+sound sound.creep.ranged.impact.dire sounds/weapons/creep/bad/range_projectile_impact.vsnd_c sounds/weapons/creep/bad/range_projectile_impact.wav event=Creep_Bad_Range.ProjectileImpact heard=own_hero
+sound sound.creep.ranged.impact.dire sounds/weapons/creep/bad/range_projectile_impact2.vsnd_c sounds/weapons/creep/bad/range_projectile_impact2.wav event=Creep_Bad_Range.ProjectileImpact heard=own_hero
 sound sound.creep.siege.attack.radiant sounds/weapons/creep/good/engine_attack01.vsnd_c sounds/weapons/creep/good/engine_attack01.wav event=Creep_Good_Engine.Attack
 sound sound.creep.siege.attack.radiant sounds/weapons/creep/good/engine_attack02.vsnd_c sounds/weapons/creep/good/engine_attack02.wav event=Creep_Good_Engine.Attack
 sound sound.creep.siege.attack.radiant sounds/weapons/creep/good/engine_attack03.vsnd_c sounds/weapons/creep/good/engine_attack03.wav event=Creep_Good_Engine.Attack

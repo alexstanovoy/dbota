@@ -37,6 +37,8 @@ struct Voice {
     /// The Dota sound event each source plays, which the mixer's limits are of; empty where the
     /// manifest names none.
     events: Vec<String>,
+    /// Heard on the hero the player plays alone (the manifest's `heard=own_hero`).
+    own_hero_only: bool,
     rest: f32,
     next: usize,
 }
@@ -385,6 +387,7 @@ fn load(mut voices: ResMut<Voices>, manifest: Res<Manifest>, server: Res<AssetSe
                 name: names.join("|"),
                 sources: files.iter().map(|(path, _)| server.load(path)).collect(),
                 events: files.into_iter().map(|(_, event)| event).collect(),
+                own_hero_only: names.iter().any(|n| manifest.own_hero_sounds.contains(n)),
                 rest: 0.0,
                 next: 0,
             },
@@ -414,6 +417,8 @@ struct Sounder<'a, 'w, 's> {
     now: Duration,
     focus: Vec2,
     silent: bool,
+    /// The hero the player hears the damage taken of.
+    ears: Option<EntityId>,
     /// The tick to trace the decisions of, when they are traced.
     trace: Option<u32>,
 }
@@ -428,10 +433,16 @@ impl Sounder<'_, '_, '_> {
         };
         if let Some(tick) = self.trace {
             println!(
-                "sound tick={tick} name={} sources={}",
+                "sound tick={tick} name={} heard={} sources={}",
                 voice.name,
+                !voice.own_hero_only || (merge.is_some() && merge == self.ears),
                 voice.sources.len()
             );
+        }
+        // A blow taken as damage is heard on the hero one plays alone, so on no one's while
+        // spectating or watching a replay.
+        if voice.own_hero_only && (merge.is_none() || merge != self.ears) {
+            return;
         }
         if self.silent || voice.rest > 0.0 || voice.sources.is_empty() || fall * gain < 0.03 {
             return;
@@ -535,6 +546,7 @@ fn play(
         now: time.elapsed(),
         focus: Vec2::new(cam.focus.x, -cam.focus.z),
         silent: settings.muted || args.mute,
+        ears: core.ears(),
         trace: args.trace_feel.then(|| core.view().map_or(0, |v| v.tick)),
     };
     // Dota sounds a purchase when it is made: once for each choice in the

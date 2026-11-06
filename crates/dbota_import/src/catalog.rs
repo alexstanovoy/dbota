@@ -100,13 +100,16 @@ pub struct File {
     pub out: String,
 }
 
-/// A sound line (`sound <logical> <vsnd> <out> event=<name>`); variants share the logical name.
+/// A sound line (`sound <logical> <vsnd> <out> event=<name> [heard=own_hero]`); variants share
+/// the logical name. `heard=own_hero` marks the sound of a blow taken as damage, which Dota plays
+/// for the hero the player plays alone.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Sound {
     pub logical: String,
     pub src: String,
     pub out: String,
     pub event: String,
+    pub own_hero_only: bool,
 }
 
 /// The world line: the map cut to a band, its terrain layers, trees and lighting, and the
@@ -495,13 +498,19 @@ fn manifest_line(words: &[&str]) -> Result<Line, String> {
             }))
         }
         "sound" => {
-            let f = Fields::of(rest, &["event"])?;
+            let f = Fields::of(rest, &["event", "heard"])?;
             let [logical, src, out] = f.exactly::<3>("sound")?;
+            let own_hero_only = match f.get("heard") {
+                None => false,
+                Some("own_hero") => true,
+                Some(other) => return Err(format!("no sound audience 'heard={other}'")),
+            };
             Ok(Line::Sound(Sound {
                 logical: own(logical),
                 src: own(src),
                 out: own(out),
                 event: own(f.need("event")?),
+                own_hero_only,
             }))
         }
         "world" => {
@@ -838,6 +847,10 @@ mod tests {
             ("texure a a.vtex_c a.png\n", "no line kind 'texure'"),
             ("model m m.vmdl_c m.glb atach=p\n", "no field 'atach='"),
             ("sound s s.vsnd_c s.wav\n", "no 'event='"),
+            (
+                "sound s s.vsnd_c s.wav event=E heard=everyone\n",
+                "no sound audience 'heard=everyone'",
+            ),
             ("shop s s.txt s.json\n", "no 'strings='"),
             ("clip nobody idle idle 1.0\n", "no model nobody"),
             (
