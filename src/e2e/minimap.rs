@@ -7,7 +7,7 @@ use bevy::prelude::*;
 use bota_client_core::{Intent, Slot, TOWN_PORTAL_SLOT};
 use bota_proto::{Cheat, HeroId, Team, UnitKind};
 
-use super::harness::{Client, Server, quiet_seat};
+use super::harness::{Client, MID, Server, quiet_seat};
 
 /// The image file each shown hero mark wears, by the side of its hero.
 fn hero_marks(client: &mut Client) -> Vec<(Team, Option<String>)> {
@@ -102,4 +102,137 @@ fn a_teleport_shows_on_the_minimap_at_both_ends() {
         before + 2,
         "the landing and the leaving"
     );
+}
+
+/// The ids of the wards of a side in the view.
+fn wards_of(client: &Client, side: Team, own: bool) -> Vec<bota_proto::EntityId> {
+    client
+        .view()
+        .units
+        .iter()
+        .filter(|u| u.kind == UnitKind::Ward && (u.team == side) == own)
+        .map(|u| u.id)
+        .collect()
+}
+
+/// Plants one of one's own wards at a spot beside the hero, and says where the new one stands.
+fn plant(client: &mut Client, item: bota_proto::ItemId, beside: (f32, f32)) -> (f32, f32) {
+    let mine = client.me().team;
+    let before = wards_of(client, mine, true);
+    client.cheat(Cheat::Item { item });
+    let slot = client.slot_of(item).expect("the ward in the bag");
+    client.core_mut().act(Intent::Press {
+        slot: Slot::Item(slot),
+        ctrl: false,
+    });
+    client.core_mut().act(Intent::Aimed {
+        at: beside,
+        unit: None,
+    });
+    client.until("the ward planted", |c| {
+        wards_of(c, mine, true).len() > before.len()
+    });
+    let new = wards_of(client, mine, true)
+        .into_iter()
+        .find(|id| !before.contains(id))
+        .expect("the new ward");
+    let ward = client.view().unit(new).expect("in the view");
+    (ward.pos.x.to_f32(), ward.pos.y.to_f32())
+}
+
+/// Where the first ward of another side stands, as the view tells it.
+fn enemy_ward(client: &Client, mine: Team) -> (f32, f32) {
+    let id = wards_of(client, mine, false)[0];
+    let ward = client.view().unit(id).expect("in the view");
+    (ward.pos.x.to_f32(), ward.pos.y.to_f32())
+}
+
+/// Whether the minimap marks a spot of the world with the image of a logical name.
+fn marked(client: &mut Client, logical: &str, at: (f32, f32)) -> bool {
+    let icon = client
+        .world()
+        .resource::<crate::manifest::Manifest>()
+        .file(logical)
+        .unwrap_or_else(|| panic!("the install's {logical}"));
+    let middle = crate::minimap::on_map(at.0, at.1);
+    crate::minimap::shown_unit_marks(client.world_mut())
+        .iter()
+        .any(|(path, found)| path.as_deref() == Some(icon.as_str()) && found.distance(middle) < 1.0)
+}
+
+/// One's own Observer Ward and Sentry Ward, planted, are marked on the minimap with Dota's icon
+/// of each, where they stand (units' marks left wards out).
+#[test]
+fn planted_wards_are_marked_on_the_minimap_with_dotas_icon_of_each() {
+    let server = Server::start(1, &[]);
+    let mut client = Client::join(&server, HeroId::SHADOW_FIEND, &[]);
+    client.stand_at(MID);
+    let observer = plant(
+        &mut client,
+        bota_proto::ItemId::OBSERVER_WARD,
+        (MID.0 as f32 + 150.0, MID.1 as f32 + 150.0),
+    );
+    client.within(Duration::from_secs(20), "the Observer marked", |c| {
+        marked(c, "icon.minimap.ward_observer", observer)
+    });
+    let sentry = plant(
+        &mut client,
+        bota_proto::ItemId::SENTRY_WARD,
+        (MID.0 as f32 - 150.0, MID.1 as f32 + 150.0),
+    );
+    client.within(Duration::from_secs(20), "the Sentry marked", |c| {
+        marked(c, "icon.minimap.ward_sentry", sentry)
+    });
+    assert!(
+        !marked(&mut client, "icon.minimap.ward_observer", sentry),
+        "the Sentry wears the Observer's icon"
+    );
+}
+
+/// An enemy Observer Ward nobody sees is no mark on the minimap, whoever stands beside it; a
+/// Sentry Ward's true sight shows it, and then it is marked with its icon, as Dota marks the
+/// wards one sees.
+#[test]
+fn an_enemy_ward_is_marked_on_the_minimap_only_when_it_is_seen() {
+    let server = Server::start(2, &[]);
+    let planted = bota_proto::Vec2::from_ints(MID.0 + 300, MID.1);
+    super::harness::ward_planter_seat(
+        &server,
+        HeroId::SHADOW_FIEND,
+        planted,
+        bota_proto::ItemId::OBSERVER_WARD,
+    );
+    let mut client = Client::join(&server, HeroId::SHADOW_FIEND, &[]);
+    client.stand_at(MID);
+    let until = client.tick() + 150;
+    client.until("the enemy's ward long planted", |c| c.tick() >= until);
+    let mine = client.me().team;
+    assert!(
+        !client
+            .view()
+            .units
+            .iter()
+            .any(|u| u.kind == UnitKind::Ward && u.team != mine),
+        "an Observer Ward is seen without true sight"
+    );
+    let spot = (MID.0 as f32 + 300.0, MID.1 as f32);
+    assert!(
+        !marked(&mut client, "icon.minimap.ward_observer", spot),
+        "an enemy ward nobody sees is marked"
+    );
+    plant(
+        &mut client,
+        bota_proto::ItemId::SENTRY_WARD,
+        (MID.0 as f32 + 150.0, MID.1 as f32 + 100.0),
+    );
+    client.until("the enemy's ward seen", |c| {
+        c.view()
+            .units
+            .iter()
+            .any(|u| u.kind == UnitKind::Ward && u.team != mine)
+    });
+    let seen = enemy_ward(&client, mine);
+    client.within(Duration::from_secs(20), "the seen ward marked", |c| {
+        marked(c, "icon.minimap.ward_observer", seen)
+    });
 }

@@ -325,6 +325,7 @@ texture icon.minimap.hero_invisible materials/vgui/hud/minimap_heroinvis_psd_59d
 texture icon.minimap.circle materials/vgui/hud/minimap_circle_psd_da399ad7.vtex_c icons/minimap/circle.png
 texture icon.minimap.death materials/vgui/hud/minimap_death_psd_6987e15d.vtex_c icons/minimap/death.png
 texture icon.minimap.ward_observer materials/vgui/hud/minimap_ward_obs_psd_adc970aa.vtex_c icons/minimap/ward_observer.png
+texture icon.minimap.ward_sentry materials/vgui/hud/minimap_ward_invis_psd_46a724e0.vtex_c icons/minimap/ward_sentry.png
 texture icon.minimap.camera materials/vgui/hud/minimap_camerabounds_psd_85459004.vtex_c icons/minimap/camera.png
 
 # --- Ground textures (also the terrain layers of map.mid, same files)

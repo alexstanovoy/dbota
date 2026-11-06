@@ -71,6 +71,31 @@ impl IconHandles {
     }
 }
 
+/// The unit marks showing, for the end-to-end tests: the file of each mark's image and its
+/// middle on the minimap, in interface pixels from its inner top-left corner.
+#[cfg(test)]
+pub(crate) fn shown_unit_marks(world: &mut World) -> Vec<(Option<String>, Vec2)> {
+    let marks = world.resource::<Minimap>().marks.clone();
+    let server = world.resource::<AssetServer>().clone();
+    marks
+        .into_iter()
+        .filter_map(|mark| {
+            let (node, image, vis) = world
+                .query::<(&Node, &ImageNode, &Visibility)>()
+                .get(world, mark)
+                .ok()?;
+            let (Val::Px(left), Val::Px(top), Val::Px(width)) = (node.left, node.top, node.width)
+            else {
+                return None;
+            };
+            (*vis != Visibility::Hidden).then(|| {
+                let path = server.get_path(image.image.id()).map(|p| p.to_string());
+                (path, Vec2::new(left + width / 2.0, top + width / 2.0))
+            })
+        })
+        .collect()
+}
+
 /// The minimap's frame, the photo, the marks and the camera frame.
 #[derive(Resource)]
 struct Minimap {
@@ -334,7 +359,7 @@ fn photograph(
 
 /// Where a bota world point falls on the minimap, in interface pixels from
 /// its inner top-left corner.
-fn on_map(x: f32, y: f32) -> Vec2 {
+pub(crate) fn on_map(x: f32, y: f32) -> Vec2 {
     let inner = SIDE - 6.0;
     Vec2::new(x / MAP_SIZE * inner, (1.0 - y / MAP_SIZE) * inner)
 }
@@ -365,9 +390,7 @@ fn marks(
         image.image = veil.0.clone();
     }
     let shown = view.units.iter().filter(|u| {
-        !matches!(u.kind, UnitKind::Ward | UnitKind::Hero)
-            && objective_icon(u).is_none()
-            && !grid.hides(u.seen_by)
+        u.kind != UnitKind::Hero && objective_icon(u).is_none() && !grid.hides(u.seen_by)
     });
     let mut used = 0;
     for u in shown.take(MARKS) {
@@ -454,6 +477,11 @@ fn unit_icon(u: &UnitView) -> (Option<&'static str>, f32) {
         UnitKind::Ancient => (Some("icon.minimap.ancient"), 15.0),
         UnitKind::CreepSiege => (Some("icon.minimap.siege"), 8.0),
         UnitKind::Courier => (Some("icon.minimap.courier"), 9.0),
+        // Dota's `MinimapIcon` of the wards (npc_units.txt): the Sentry's detects the invisible.
+        UnitKind::Ward if u.true_sight_radius.to_f32() > 0.0 => {
+            (Some("icon.minimap.ward_sentry"), 9.0)
+        }
+        UnitKind::Ward => (Some("icon.minimap.ward_observer"), 9.0),
         _ => (Some("icon.minimap.creep"), 7.0),
     }
 }

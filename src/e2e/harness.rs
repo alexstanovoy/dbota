@@ -498,6 +498,53 @@ pub fn ward_hunter_seat(server: &Server, hero: bota_proto::HeroId, at: bota_prot
     });
 }
 
+/// A second seat held by a client with no front end that plants one ward: its hero goes to
+/// `at`, is handed an `item` (a ward) and uses it there. Joined first, it takes the first seat.
+pub fn ward_planter_seat(
+    server: &Server,
+    hero: bota_proto::HeroId,
+    at: bota_proto::Vec2,
+    item: bota_proto::ItemId,
+) {
+    use bota_proto::{Cheat, ItemSlot, Order, Target};
+    let (mut link, seated) =
+        bota_client_core::Link::join(&server.address, "planter", hero, None).expect("a seat");
+    let mut stage = 0;
+    std::thread::spawn(move || {
+        let _ = bota_client_core::play(&mut link, seated, &mut (), |session| {
+            let issue = bota_client_core::IssuedOrder::hero;
+            let Some(me) = session.own_hero() else {
+                return Vec::new();
+            };
+            let held = me
+                .items
+                .iter()
+                .position(|held| held.is_some_and(|held| held.id == item));
+            match (stage, held) {
+                (0, _) => {
+                    stage = 1;
+                    vec![
+                        issue(Order::Cheat {
+                            cheat: Cheat::Teleport { at },
+                        }),
+                        issue(Order::Cheat {
+                            cheat: Cheat::Item { item },
+                        }),
+                    ]
+                }
+                (1, Some(slot)) => {
+                    stage = 2;
+                    vec![issue(Order::Use {
+                        slot: ItemSlot(slot as u8),
+                        target: Target::Pos(at),
+                    })]
+                }
+                _ => Vec::new(),
+            }
+        });
+    });
+}
+
 /// A ring's middle on the ground and its radius, in bota's units (x, y).
 pub fn ring_of(points: &[Vec3]) -> (Vec2, f32) {
     let flat: Vec<Vec2> = points.iter().map(|p| Vec2::new(p.x, -p.z)).collect();
