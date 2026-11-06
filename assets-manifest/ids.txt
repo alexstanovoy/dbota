@@ -102,6 +102,7 @@ item 86 orb_of_venom
 item 87 orb_of_frost
 item 91 infused_raindrop
 item 92 ghost
+item 93 chasm_stone
 ability 0 pudge_meat_hook
 ability 1 pudge_rot
 ability 2 pudge_innate_graft_flesh

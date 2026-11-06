@@ -18,9 +18,16 @@ use crate::session::Session;
 use crate::units::{Unit, UnitIndex};
 
 /// How wide a raze burns, in world units.
-const RAZE_RADIUS: f32 = rules::RAZE_RADIUS as f32;
+/// A raze's radius for a caster of `aoe_bonus` (`shadowraze_radius` is `affected_by_aoe_increase`).
+fn raze_radius(aoe_bonus: i32) -> f32 {
+    bota_core::widened(rules::RAZE_RADIUS, aoe_bonus) as f32
+}
 /// How far a requiem's lines fly, in world units.
-const REQUIEM_REACH: f32 = rules::REQUIEM_LINE_DISTANCE as f32;
+/// How far a requiem's lines fly for a caster of `aoe_bonus` (`requiem_radius` is
+/// `affected_by_aoe_increase`).
+fn requiem_reach(aoe_bonus: i32) -> f32 {
+    bota_core::widened(rules::REQUIEM_LINE_DISTANCE, aoe_bonus) as f32
+}
 /// World units past its reach within which an enemy tower's ring shows.
 const TOWER_WARNING: f32 = rules::TOWER_ATTACK_RANGE as f32 - TOWER_WARNING_TRIM;
 /// World units a tower's warning begins inside its attack range.
@@ -291,7 +298,7 @@ fn own_ranges(gizmos: &mut Gizmos, ctx: &Ctx<'_, '_, '_>, me: &UnitView) {
             gizmos,
             ctx,
             spot,
-            RAZE_RADIUS,
+            raze_radius(bota_client_core::carried_of(me).aoe_bonus),
             SOUL_RED.with_alpha(a),
             false,
         );
@@ -453,14 +460,15 @@ fn casts(gizmos: &mut Gizmos, ctx: &Ctx<'_, '_, '_>) {
             Telegraph::Raze { reach } => {
                 let k = (elapsed / point).clamp(0.0, 1.0);
                 let spot = raze_spot(u, body, reach);
-                ring(gizmos, ctx, spot, RAZE_RADIUS, SOUL_RED, false);
+                let radius = raze_radius(bota_client_core::carried_of(u).aoe_bonus);
+                ring(gizmos, ctx, spot, radius, SOUL_RED, false);
                 for f in [0.25, 0.5, 0.75, 1.0] {
                     if f <= k {
                         ring(
                             gizmos,
                             ctx,
                             spot,
-                            RAZE_RADIUS * f * k,
+                            radius * f * k,
                             SOUL_RED.with_alpha(0.5),
                             false,
                         );
@@ -470,12 +478,13 @@ fn casts(gizmos: &mut Gizmos, ctx: &Ctx<'_, '_, '_>) {
             Telegraph::Requiem => {
                 let k = (elapsed / point).clamp(0.0, 1.0);
                 let at = (body.at.x, body.at.y);
-                ring(gizmos, ctx, at, REQUIEM_REACH, SOUL_VIOLET, true);
+                let reach = requiem_reach(bota_client_core::carried_of(u).aoe_bonus);
+                ring(gizmos, ctx, at, reach, SOUL_VIOLET, true);
                 ring(
                     gizmos,
                     ctx,
                     at,
-                    REQUIEM_REACH * (1.0 - k).max(0.05),
+                    reach * (1.0 - k).max(0.05),
                     SOUL_RED,
                     false,
                 );

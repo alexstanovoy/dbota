@@ -272,3 +272,67 @@ fn aiming_a_ward_draws_its_vision_or_true_sight_circle_under_the_cursor() {
         }
     }
 }
+
+/// A Chasm Stone's AoE bonus widens what is drawn as the server widens it: with one carried, the
+/// three raze spots of `--show-ranges` and the circle under the cursor while Blood Grenade is
+/// aimed grow by its 40 (`shadowraze_radius` and the grenade's `radius` are
+/// `affected_by_aoe_increase`).
+#[test]
+fn a_chasm_stone_widens_the_drawn_raze_spots_and_grenade_circle() {
+    let server = Server::start(1, &[]);
+    let mut client = Client::join(&server, HeroId::SHADOW_FIEND, &["--show-ranges"]);
+    client.stand_at(MID);
+    for item in [
+        bota_proto::ItemId::CHASM_STONE,
+        bota_proto::ItemId::BLOOD_GRENADE,
+    ] {
+        client.cheat(bota_proto::Cheat::Item { item });
+    }
+    let bonus = bota_core::item_def(bota_proto::ItemId::CHASM_STONE)
+        .expect("the stone's data")
+        .carried
+        .aoe_bonus;
+    client.until("the stone shown carried", |c| {
+        bota_client_core::carried_of(c.me()).aoe_bonus == bonus
+    });
+    let raze = client
+        .me()
+        .abilities
+        .iter()
+        .position(|a| a.id == bota_proto::AbilityId::RAZE_NEAR)
+        .expect("Shadowraze");
+    client.core_mut().act(Intent::Press {
+        slot: bota_client_core::Slot::Ability(raze as u8),
+        ctrl: true,
+    });
+    client.until("Shadowraze learned", |c| c.me().abilities[raze].level > 0);
+    client.follow_me();
+    client.frames(2);
+    let raze_red = crate::overlay::SOUL_RED.with_alpha(0.7);
+    let widened = (bota_core::rules::RAZE_RADIUS + bonus) as f32;
+    assert_eq!(
+        rings_of(&client, raze_red, widened).len(),
+        3,
+        "three wider raze spots"
+    );
+    let slot = client
+        .slot_of(bota_proto::ItemId::BLOOD_GRENADE)
+        .expect("the grenade in the bag");
+    client.core_mut().act(Intent::Press {
+        slot: bota_client_core::Slot::Item(slot),
+        ctrl: false,
+    });
+    let area = bota_core::item_def(bota_proto::ItemId::BLOOD_GRENADE)
+        .and_then(bota_core::ItemDef::radius)
+        .expect("the grenade takes in an area");
+    let me = client.me().pos;
+    let spot = (me.x.to_f32() + 300.0, me.y.to_f32() + 100.0);
+    let pointer = client.screen_of(spot).expect("the spot on screen");
+    client.mouse(pointer);
+    client.frames(1);
+    assert_eq!(
+        rings_of(&client, crate::overlay::GOOD, (area + bonus) as f32).len(),
+        1,
+        "one wider circle of the grenade's area"
+    );
+}

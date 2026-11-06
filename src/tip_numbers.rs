@@ -160,6 +160,7 @@ fn item_value(def: &ItemDef, key: &str) -> Option<Levels> {
         "bonus_max_mana_percentage" => one(c.mana_pct),
         "lifesteal_percent" => one(c.lifesteal_pct),
         "spell_lifesteal" => one(c.spell_lifesteal_pct),
+        "aoe_bonus" => one(c.aoe_bonus),
         "bonus_magical_armor" | "tooltip_resist" => {
             one(plain(f64::from(c.magic_resist_bp) / 100.0))
         }
@@ -397,6 +398,16 @@ mod tests {
             Some(vec!["-30".to_owned()])
         );
         assert_eq!(shown("bonus_all_stats"), Some(vec!["5".to_owned()]));
+    }
+
+    /// The Chasm Stone's tooltip prints its AoE bonus as the simulator holds it.
+    #[test]
+    fn the_chasm_stone_tooltip_reads_its_aoe_bonus_from_the_simulator() {
+        let stone = item_def(ItemId::CHASM_STONE).expect("a Chasm Stone");
+        assert_eq!(
+            value(Subject::Item(stone), "aoe_bonus"),
+            Some(vec!["40".to_owned()])
+        );
     }
 
     /// A poison that beat twice a second would be told so: the tooltip follows the simulator's
