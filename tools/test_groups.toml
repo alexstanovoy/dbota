@@ -8,8 +8,11 @@
 #   - a `[[route]]` names groups for files several groups read: "*" is every group, "prefix*" every group of that prefix, an
 #     empty list none (documents, things only the gate runs);
 #   - a file nothing names makes `check` fail, and runs every group until it is named.
-# Modules many others use (fan-in of ten or more: session, manifest, ui, units, map, hud, fog, config, camera, ...) are routed
-# to every client group. The groups are a way to run less while working: the gate runs the whole suite.
+# Beyond these, the code routes: a Rust file runs the groups of the test files that import it directly, a script a test file
+# names runs that file's group, and the baselines file runs the groups of the tests it names (tools/test_groups.py header).
+# Modules many others use (session, manifest, ui, units, map, hud, fog, config, camera, ...) are also routed to every client
+# group by hand, since the code depends on them further than one import. The groups are a way to run less while working: the
+# gate runs the whole suite.
 
 profile = "test-release"
 cargo_flags = ["--quiet"]
@@ -67,6 +70,10 @@ tests = [{ unittest = "tools", modules = ["test_test_groups"] }]
 name = "client_menu"
 about = "the menus, settings, replays, controls and the way into a game"
 paths = [
+    "src/config.rs",
+    "src/input.rs",
+    "src/keys.rs",
+    "src/main_menu/**",
     "src/replays/**",
     "src/postgame/**",
     "src/replay_controls.rs",
@@ -125,6 +132,10 @@ tests = [
 name = "client_cache"
 about = "reading the asset cache: files, texts, icons, faces, portraits and the tip texts"
 paths = [
+    "src/cache_path.rs",
+    "src/cachefs.rs",
+    "src/dota_text.rs",
+    "src/manifest.rs",
     "src/cache_text.rs",
     "src/gltf_file.rs",
     "src/texture_file.rs",
@@ -155,6 +166,7 @@ paths = [
 ]
 tests = [
     { package = "dbota", target = "bin:dbota", filters = [
+        "tip_numbers::",
         "cache_text::",
         "cachefs::",
         "gltf_file::",
@@ -204,6 +216,7 @@ paths = [
 ]
 tests = [
     { package = "dbota", target = "bin:dbota", filters = [
+        "soundscape::tests::",
         "sound::",
         "mixer::",
         "audio_output::",
@@ -249,6 +262,7 @@ paths = [
 ]
 tests = [
     { package = "dbota", target = "bin:dbota", filters = [
+        "fx::worn::",
         "particles::",
         "fx::tests::",
         "e2e::fx::",
@@ -334,6 +348,11 @@ tests = [
 name = "client_world"
 about = "units, animation, the camera, picking, runes and the watchers of the match"
 paths = [
+    "src/camera.rs",
+    "src/map.rs",
+    "src/minimap.rs",
+    "src/pick.rs",
+    "src/units.rs",
     "src/anim.rs",
     "src/courier.rs",
     "src/death.rs",
@@ -407,6 +426,9 @@ tests = [
 name = "client_fog"
 about = "the fog of war and what is visible through it, with the minimap"
 paths = [
+    "src/fog.rs",
+    "src/fog/**",
+    "src/fog.wgsl",
     "src/e2e/fog.rs",
     "src/e2e/fog_pov.rs",
     "src/e2e/fog_producers.rs",
@@ -428,6 +450,8 @@ tests = [
 name = "client_hud"
 about = "the in-game interface: bars, the feed, the scoreboard, pings and rings"
 paths = [
+    "src/hud.rs",
+    "src/ui.rs",
     "src/bars.rs",
     "src/channel_bar.rs",
     "src/feed.rs",

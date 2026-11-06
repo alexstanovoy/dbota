@@ -25,7 +25,7 @@ unset DBOTA_SHOW DBOTA_HEADLESS
 full=${PRECHECK_ALL:-0}
 if [ "${1:-}" = --full ]; then full=1; shift; fi
 base=${1:-${PRECHECK_BASE:-main}}
-if [ "$full" = 1 ]; then selection=(--all); else selection=(--base "$base"); fi
+if [ "$full" = 1 ]; then selection=(--all); check_selection=(); else selection=(--base "$base"); check_selection=(--base "$base"); fi
 # the browser check (the one client of tools/gate.sh that is quickest), when a source of the client changed
 wasm_crates="dbota"
 wasm_checks=(
@@ -106,7 +106,7 @@ assets() {
     return 0
 }
 [ -d "$DBOTA_ASSETS" ] || step assets assets
-step test-groups python3 tools/test_groups.py check || exit 1
+step test-groups python3 tools/test_groups.py check "${check_selection[@]}" || exit 1
 step test in_private_environment run_tests || exit 1
 for c in $plan; do
     e=$(extra_test "$c"); [ -z "$e" ] || step "test ($c)" in_private_environment bash -c "$e" || exit 1
