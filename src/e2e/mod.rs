@@ -39,3 +39,4 @@ mod watcher_capture;
 mod watcher_path;
 mod watchers;
 mod window;
+mod wisdom_contest;
