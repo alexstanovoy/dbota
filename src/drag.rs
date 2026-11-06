@@ -136,6 +136,7 @@ fn settled(session: NonSend<Session>, mut settling: ResMut<Settling>) {
 /// Puts the icon of the item taken up at the cursor.
 fn follow(
     session: NonSend<Session>,
+    shop_drag: Res<crate::shop::ShopDrag>,
     bag: Res<TacticalBag>,
     settling: Res<Settling>,
     manifest: Res<Manifest>,
@@ -152,7 +153,10 @@ fn follow(
             .over(core, slot)
             .unwrap_or_else(|| crate::hud::subject_item(core, &bag, unit, kit, slot))
     });
-    let (Some(item), Some(cursor)) = (held, window.cursor_position()) else {
+    let Some(cursor) = window
+        .cursor_position()
+        .filter(|_| held.is_some() || shop_drag.item().is_some())
+    else {
         ghost.2.set_if_neq(Visibility::Hidden);
         return;
     };
@@ -168,7 +172,10 @@ fn follow(
     ghost.0.height = px(size.y);
     ghost.0.left = px(cursor.x / scale - size.x / 2.0);
     ghost.0.top = px(cursor.y / scale - size.y / 2.0);
-    let icon = crate::item_look::icon(&item, &manifest).map(|p| server.load(p));
+    let icon = held
+        .and_then(|item| crate::item_look::icon(&item, &manifest))
+        .or_else(|| shop_drag.item().and_then(|item| manifest.item_icon(item)))
+        .map(|p| server.load(p));
     let handle = icon.clone().unwrap_or_default();
     if ghost.1.image != handle {
         ghost.1.image = handle;

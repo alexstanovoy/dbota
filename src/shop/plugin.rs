@@ -9,5 +9,6 @@ pub fn plugin(app: &mut App) {
         super::tree::plugin,
         super::corner::plugin,
         super::clicks::plugin,
+        super::drag::plugin,
     ));
 }

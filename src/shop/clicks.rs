@@ -65,7 +65,7 @@ fn buttons(
 const DOUBLE_CLICK: f32 = 0.4;
 
 /// Clicks on items, wherever the shop shows them.
-fn cells(
+pub(super) fn cells(
     mut session: NonSendMut<Session>,
     mouse: Res<ButtonInput<MouseButton>>,
     keys: Res<ButtonInput<KeyCode>>,
@@ -74,20 +74,22 @@ fn cells(
     mut chosen: ResMut<Chosen>,
     mut last_left: Local<Option<(u16, f32)>>,
     cells: Query<(&Interaction, &ShopCell, &InheritedVisibility)>,
+    drag: Res<super::drag::ShopDrag>,
 ) {
-    let left = mouse.just_pressed(MouseButton::Left);
+    let left = drag.clicked.is_some();
     let right = mouse.just_pressed(MouseButton::Right);
     if !left && !right {
         return;
     }
-    let Some((_, cell, _)) = cells
-        .iter()
-        .find(|(i, _, seen)| **i != Interaction::None && seen.get())
-    else {
+    let Some(id) = drag.clicked.or_else(|| {
+        cells
+            .iter()
+            .find(|(i, _, seen)| **i != Interaction::None && seen.get())
+            .map(|(_, cell, _)| cell.0)
+    }) else {
         return;
     };
     let core = &mut session.0;
-    let id = cell.0;
     let shift = keys.any_pressed([KeyCode::ShiftLeft, KeyCode::ShiftRight]);
     let now = time.elapsed_secs();
     let again = last_left.is_some_and(|(was, at)| was == id && now - at <= DOUBLE_CLICK);

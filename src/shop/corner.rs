@@ -90,6 +90,10 @@ pub struct GrabAll;
 #[derive(Component)]
 struct QuickRow;
 
+/// A Quickbuy drop surface: the row backdrop (including its empty hint) or an item cell.
+#[derive(Component)]
+pub(super) struct QuickDrop;
+
 /// The quick-buy rows' hint while they are empty.
 #[derive(Component)]
 struct QuickHint;
@@ -253,6 +257,7 @@ fn spawn_quick(
 ) {
     let rows = commands
         .spawn((
+            QuickDrop,
             Node {
                 width: dota(QUICK_WIDTH),
                 min_height: dota(QUICK_HEIGHT),
@@ -545,6 +550,7 @@ fn quick_row(
         );
         commands
             .entity(cell)
+            .insert(QuickDrop)
             .entry::<Node>()
             .and_modify(|mut node| {
                 node.margin.left = dota(QUICK_SPACE);

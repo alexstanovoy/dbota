@@ -422,7 +422,7 @@ fn escape(
 }
 
 /// Clicks on the world.
-fn mouse(
+pub(crate) fn mouse(
     mut session: NonSendMut<Session>,
     buttons: Res<ButtonInput<MouseButton>>,
     cursor: Res<CursorGround>,
@@ -625,7 +625,7 @@ pub fn deny_click(kind: bota_proto::UnitKind, hp: i32, max_hp: i32) -> bool {
 /// In the strategy phase the boxes are the bag the choices fill, and a drop
 /// on another box only moves what is chosen there.
 #[allow(clippy::too_many_arguments)]
-fn boxes(
+pub(crate) fn boxes(
     mut session: NonSendMut<Session>,
     buttons: Res<ButtonInput<MouseButton>>,
     keys: Res<ButtonInput<KeyCode>>,
