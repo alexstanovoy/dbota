@@ -2117,7 +2117,7 @@ particle neutral.roshan_death particles/neutral_fx/roshan_death.vpcf_c particles
 sound sound.neutral.roshan_slam sounds/weapons/creep/roshan/slam.vsnd_c sounds/weapons/creep/roshan/slam.wav event=Roshan.Slam
 sound sound.neutral.roshan_bash sounds/weapons/creep/roshan/bash.vsnd_c sounds/weapons/creep/roshan/bash.wav event=Roshan.Bash
 sound sound.neutral.roshan_roar sounds/weapons/creep/roshan/revenge_roar.vsnd_c sounds/weapons/creep/roshan/revenge_roar.wav event=Roshan.RevengeRoar
-sound sound.neutral.roshan_roar sounds/weapons/creep/roshan/revenge_roar_layer.vsnd_c sounds/weapons/creep/roshan/revenge_roar_layer.wav event=Roshan.RevengeRoar.Layer
+sound sound.neutral.roshan_roar_layer sounds/weapons/creep/roshan/revenge_roar_layer.vsnd_c sounds/weapons/creep/roshan/revenge_roar_layer.wav event=Roshan.RevengeRoar.Layer
 sound sound.announcer.roshan.radiant sounds/vo/announcer/announcer_roshan_fallen_rad.vsnd_c sounds/vo/announcer/announcer_roshan_fallen_rad.mp3 event=announcer_announcer_roshan_fallen_rad
 sound sound.announcer.roshan.dire sounds/vo/announcer/announcer_roshan_fallen_dire.vsnd_c sounds/vo/announcer/announcer_roshan_fallen_dire.mp3 event=announcer_announcer_roshan_fallen_dire
 fx ability.roshan_slam.cast at=caster particle=neutral.roshan_slam sound=sound.neutral.roshan_slam
@@ -2144,3 +2144,12 @@ fx ability.roshan_grab_and_throw.cast at=caster sound=sound.neutral.roshan_grab
 fx modifier.modifier_roshan_grab_thrown.worn at=unit sound=sound.neutral.roshan_throw
 fx ability.roshan_grab_and_throw.land at=point sound=sound.neutral.roshan_throw_impact
 fx modifier.modifier_knockback.worn at=unit attach=overhead particle=status.stunned
+
+# Public boss status and global death cues, imported from the installed labels and sound events.
+label resource/localization/dota_english.txt DOTA_Tooltip_RoshanTimerMessage_RoshanIsAlive
+label resource/localization/dota_english.txt DOTA_Tooltip_RoshanTimerMessage_BaseTime
+label resource/localization/dota_english.txt DOTA_Tooltip_RoshanTimerMessage_VariableTime
+label resource/localization/dota_english.txt DOTA_Roshan_Top
+label resource/localization/dota_english.txt DOTA_Roshan_Bottom
+sound sound.neutral.roshan_death sounds/misc/rosh_death.vsnd_c sounds/misc/rosh_death.wav event=Roshan.Death
+sound sound.global.roshan_stinger sounds/music/valve_dota_001/music/roshan_end.vsnd_c sounds/music/valve_dota_001/music/roshan_end.mp3 event=valve_dota_001.music.roshan_end

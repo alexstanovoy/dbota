@@ -39,6 +39,13 @@ fn slain_roshan() -> (Server, Client) {
 }
 
 fn slain_roshan_with(extra: &[&str]) -> (Server, Client) {
+    slain_roshan_observed(extra, |_| {})
+}
+
+fn slain_roshan_observed(
+    extra: &[&str],
+    before_attack: impl FnOnce(&mut Client),
+) -> (Server, Client) {
     use bota_client_core::Intent;
     use bota_proto::{ModifierSpec, Target};
     let mut args = vec!["--objectives", "roshan"];
@@ -80,6 +87,7 @@ fn slain_roshan_with(extra: &[&str]) -> (Server, Client) {
         },
         ticks: 3000,
     });
+    before_attack(&mut client);
     client.core_mut().act(Intent::AttackAt {
         at: (boss.pos.x.to_f32(), boss.pos.y.to_f32()),
         unit: Some(boss.id),
@@ -546,10 +554,14 @@ fn a_respawned_roshan_roars_with_animation_particles_global_sound_and_message() 
     });
     let mut animation = false;
     let mut sounded = false;
+    let mut both_layers = false;
     client.until(
         "Roar's visible and globally announced player effects",
         |c| {
             sounded |= crate::sound::cues_sounded(c.world(), CueKind::BossRoar) > 0;
+            let mixer = c.world().resource::<crate::mixer::Mixer>();
+            both_layers |= mixer.sounding("Roshan.RevengeRoar") > 0
+                && mixer.sounding("Roshan.RevengeRoar.Layer") > 0;
             animation |= c
                 .body(boss.id)
                 .and_then(|e| c.world().get::<crate::anim::Pose>(e))
@@ -564,6 +576,10 @@ fn a_respawned_roshan_roars_with_animation_particles_global_sound_and_message() 
         },
     );
     assert!(feed_texts(&mut client).iter().any(|s| s.contains("roar")));
+    assert!(
+        both_layers,
+        "the global Roar base and layer sound simultaneously"
+    );
 }
 
 #[test]
@@ -912,4 +928,171 @@ fn pit_placement_previews_mark_wards_banners_and_branches_as_forbidden() {
         });
         client.stand_at((pit.x.to_int() + 120, pit.y.to_int()));
     }
+}
+
+fn public_roshan_message(client: &mut Client, needle: &str) -> bool {
+    let world = client.world_mut();
+    world
+        .query::<&bevy::prelude::Text>()
+        .iter(world)
+        .any(|text| text.0.contains(needle))
+}
+
+#[test]
+fn the_public_roshan_status_shows_dead_then_possible_then_alive_from_the_public_window() {
+    use bota_client_core::Intent;
+    let (_server, mut client) = slain_roshan_with(&["--tick-rate", "1200"]);
+    client.cheat(Cheat::CreepSpawning { on: false });
+    client.core_mut().act(Intent::Hold);
+    client.frames(6);
+    assert!(
+        public_roshan_message(&mut client, "Roshan is dead"),
+        "the public death window is drawn near the minimap"
+    );
+    let fall = client.view().lairs[0].fell_at.expect("public fall");
+    let elapsed =
+        fall.saturating_sub(client.core().pregame_ticks()) / bota_core::rules::TICKS_PER_SECOND;
+    let pit = bota_core::ROSHAN_DAY_PIT;
+    client.stand_at((pit.x.to_int() - 700, pit.y.to_int()));
+    advance_quietly_to(&mut client, elapsed + 8 * 60 + 1);
+    assert!(
+        !client
+            .view()
+            .units
+            .iter()
+            .any(|u| u.kind == UnitKind::Roshan)
+    );
+    assert!(public_roshan_message(&mut client, "Roshan may be alive"));
+    advance_quietly_to(&mut client, elapsed + 11 * 60 + 1);
+    assert!(public_roshan_message(&mut client, "Roshan is alive"));
+    assert!(
+        !client.view().lairs[0].alive_known_by.radiant,
+        "the guaranteed deadline is public inference, not a fabricated sighting"
+    );
+}
+
+#[test]
+fn roshans_death_roar_and_stinger_are_global_even_with_the_camera_across_the_map() {
+    use bevy::prelude::*;
+    let (_server, mut client) = slain_roshan_observed(&[], |c| {
+        c.core_mut().pinned = None;
+        let world = c.world_mut();
+        let mut camera = world
+            .query::<&mut crate::camera::RtsCamera>()
+            .single_mut(world)
+            .expect("camera");
+        camera.focus = Vec3::new(16000., 0., -2000.);
+    });
+    client.frames(2);
+    let mixer = client.world().resource::<crate::mixer::Mixer>();
+    assert!(
+        mixer.sounding("Roshan.Death") > 0,
+        "the non-positional death roar is heard"
+    );
+    assert!(
+        mixer.sounding("valve_dota_001.music.roshan_end") > 0,
+        "the default global stinger is heard"
+    );
+    assert_eq!(
+        mixer.loop_gain("valve_dota_001.music.roshan_end"),
+        None,
+        "the music asset is a one-shot cue, not an owned loop"
+    );
+}
+
+fn banner_instances(client: &Client) -> usize {
+    let library = client.world().resource::<crate::particles::Library>();
+    let effect = library
+        .effect("objective.banner")
+        .expect("imported Banner particle");
+    client
+        .world()
+        .resource::<crate::particles::Playing>()
+        .instances_of(effect)
+        .count()
+}
+
+fn banner_with_its_ambient_effect() -> (Server, Client, bota_proto::EntityId, bota_proto::Vec2, u32)
+{
+    use bota_client_core::{Intent, Slot};
+    use bota_proto::{ItemId, ModifierSpec, Target, Vec2};
+    let server = Server::start(1, &["--tick-rate", "1200"]);
+    let mut client = Client::join(&server, HeroId::SHADOW_FIEND, &[]);
+    client.cheat(Cheat::CreepSpawning { on: false });
+    client.cheat(Cheat::StartGame);
+    client.cheat(Cheat::Invulnerable { on: true });
+    client.cheat(Cheat::ApplyModifier {
+        target: Target::None,
+        spec: ModifierSpec {
+            physical_damage: ModifierSpec::MIN_SCALE,
+            ..ModifierSpec::NOMINAL
+        },
+        ticks: 10000,
+    });
+    client.stand_at(super::harness::MID);
+    client.cheat(Cheat::Item {
+        item: ItemId::ROSHANS_BANNER,
+    });
+    let slot = client.slot_of(ItemId::ROSHANS_BANNER).expect("Banner");
+    let at = client.me().pos + Vec2::from_ints(200, 0);
+    client.core_mut().act(Intent::Press {
+        slot: Slot::Item(slot),
+        ctrl: false,
+    });
+    client.core_mut().act(Intent::Aimed {
+        at: (at.x.to_f32(), at.y.to_f32()),
+        unit: None,
+    });
+    client.until("the Banner model and its owned looping particle", |c| {
+        c.view()
+            .units
+            .iter()
+            .find(|u| u.kind == UnitKind::Banner)
+            .and_then(|u| c.body(u.id))
+            .and_then(|e| c.world().get::<Unit>(e))
+            .is_some_and(|u| u.model.is_some())
+            && banner_instances(c) > 0
+    });
+    let banner = client
+        .view()
+        .units
+        .iter()
+        .find(|u| u.kind == UnitKind::Banner)
+        .expect("Banner")
+        .id;
+    let elapsed = client
+        .view()
+        .game_tick()
+        .saturating_sub(client.core().pregame_ticks())
+        / bota_core::rules::TICKS_PER_SECOND;
+    (server, client, banner, at, elapsed)
+}
+
+#[test]
+fn an_expiring_banner_removes_its_model_and_every_owned_particle_instance() {
+    let (_server, mut client, banner, _at, elapsed) = banner_with_its_ambient_effect();
+    advance_quietly_to(&mut client, elapsed + 121);
+    assert!(client.view().unit(banner).is_none());
+    client.until(
+        "the expired Banner's model and particles have finished",
+        |c| c.body(banner).is_none() && banner_instances(c) == 0,
+    );
+}
+
+#[test]
+fn a_banner_destroyed_by_real_enemy_attacks_removes_its_model_and_every_owned_particle_instance() {
+    let (_server, mut client, banner, at, _elapsed) = banner_with_its_ambient_effect();
+    for offset in [-40, 40] {
+        client.cheat(Cheat::CreateCreeps {
+            enemy: true,
+            at: at + bota_proto::Vec2::from_ints(offset, 50),
+        });
+    }
+    client.until("enemy creep attacks destroy the Banner", |c| {
+        c.view().unit(banner).is_none()
+    });
+    client.until(
+        "the destroyed Banner's model and particles have finished",
+        |c| c.body(banner).is_none() && banner_instances(c) == 0,
+    );
 }

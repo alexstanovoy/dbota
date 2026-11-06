@@ -1445,7 +1445,10 @@ fn sound(bytes: &[u8], dest: &str, out: &mut Out<'_>) -> Result<()> {
 const VOICE_LINES: &str = "sounds/vo/";
 /// Where Dota keeps its sound events and the types that give them their limits.
 const SOUND_EVENTS_DIR: &str = "soundevents/";
-const SOUND_STACKS: &str = "soundstacks/soundstacks_dota_core.vsndstck_c";
+const SOUND_STACKS: &[&str] = &[
+    "soundstacks/soundstacks_dota_core.vsndstck_c",
+    "soundstacks/soundstacks_dota_music.vsndstck_c",
+];
 /// Most sound event files read, and most bytes of them: an install that holds more is not one
 /// this reads, and says so rather than leaving events out.
 const MAX_EVENT_FILES: usize = 2048;
@@ -1462,7 +1465,14 @@ fn sound_events(
     dest: &str,
     out: &mut Out<'_>,
 ) -> Result<()> {
-    let stacks = read_sound_stacks(&Resource::parse(&read_from(src, &[pak], SOUND_STACKS)?)?)?;
+    let mut stacks = Vec::new();
+    for path in SOUND_STACKS {
+        stacks.extend(read_sound_stacks(&Resource::parse(&read_from(
+            src,
+            &[pak],
+            path,
+        )?)?)?);
+    }
     let mixer = match read_from(src, &[pak], SOUND_MIXER_SRC).and_then(|b| read_sound_mixer(&b)) {
         Ok(mixer) => mixer,
         Err(err) => {
@@ -1476,7 +1486,7 @@ fn sound_events(
         .entries()
         .map(|entry| entry.path())
         .filter(|path| path.starts_with(SOUND_EVENTS_DIR) && path.ends_with(".vsndevts_c"))
-        .filter(|path| !path.contains("/voscripts/") && !path.contains("/music/"))
+        .filter(|path| !path.contains("/voscripts/"))
         .collect();
     if paths.len() > MAX_EVENT_FILES {
         return Err(malformed(

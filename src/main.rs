@@ -85,6 +85,7 @@ mod preload;
 mod quality;
 mod replay_controls;
 mod replays;
+mod roshan_status;
 mod rune_toast;
 mod runes;
 mod scoreboard;
@@ -678,6 +679,7 @@ fn client_plugins(app: &mut App) {
             pick::plugin,
             pings::plugin,
             minimap::plugin,
+            roshan_status::plugin,
             portrait::plugin,
             talk::plugin,
             talk_check::plugin,

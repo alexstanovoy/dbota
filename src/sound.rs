@@ -18,17 +18,22 @@ use crate::session::Session;
 /// New missiles a tick looked into at most: each is matched against every
 /// unit, and a snapshot may hold thousands of them.
 const SHOTS_PER_TICK: usize = 32;
+/// Layers of one global cue share a short admission interval; ordinary emitters use the mixer.
+const LAYERED_REST: Duration = Duration::from_millis(50);
 
-/// One kind of sound and the sources it may be played from.
-struct Binding {
-    /// The logical name of its row, for the trace.
-    name: String,
+/// Alternatives for one independently played layer.
+struct Layer {
     sources: Vec<Handle<AudioSource>>,
-    /// The Dota sound event each source plays, which the mixer's limits are of; empty where the
-    /// manifest names none.
     events: Vec<String>,
-    /// Heard on the hero the player plays alone (the manifest's `heard=own_hero`).
+    next: usize,
+}
+
+/// A logical sound and its independent layers; the mixer owns playback and emitter limits.
+struct Binding {
+    name: String,
+    layers: Vec<Layer>,
     own_hero_only: bool,
+    last_layered: Option<Duration>,
     next: usize,
 }
 
@@ -52,7 +57,7 @@ pub(crate) fn deaths_sounded(world: &World, hero: HeroId) -> usize {
 #[cfg(test)]
 pub(crate) fn cues_sounded(world: &World, kind: CueKind) -> usize {
     world
-        .resource::<Voices>()
+        .resource::<Bindings>()
         .0
         .iter()
         .find(|(k, _)| *k == Kind::Cue(kind))
@@ -378,11 +383,24 @@ fn permitted_cue(cue: &mut Cue, sight: &crate::fog::EventSight) -> bool {
 }
 
 /// The logical names of the sounds a kind plays, each with every variant that shares it.
-fn sources_of(kind: Kind, manifest: &Manifest) -> Vec<String> {
-    let named = |names: &[&str]| names.iter().map(|n| (*n).to_owned()).collect::<Vec<_>>();
+fn sources_of(kind: Kind, manifest: &Manifest) -> Vec<Vec<String>> {
+    let named = |names: &[&str]| vec![names.iter().map(|n| (*n).to_owned()).collect::<Vec<_>>()];
+    let layered = |names: &[&str]| {
+        names
+            .iter()
+            .map(|name| vec![(*name).to_owned()])
+            .collect::<Vec<_>>()
+    };
     match kind {
         Kind::Cue(cue) => match cue {
-            CueKind::BossRoar => named(&["sound.neutral.roshan_roar"]),
+            CueKind::BossDeath(bota_proto::ObjectiveKind::Roshan) => {
+                layered(&["sound.neutral.roshan_death", "sound.global.roshan_stinger"])
+            }
+            CueKind::BossDeath(_) => vec![],
+            CueKind::BossRoar => layered(&[
+                "sound.neutral.roshan_roar",
+                "sound.neutral.roshan_roar_layer",
+            ]),
             CueKind::LastHit => named(&["sound.last_hit"]),
             CueKind::Deny => named(&["sound.deny"]),
             CueKind::Raze => named(&["sound.raze"]),
@@ -401,7 +419,7 @@ fn sources_of(kind: Kind, manifest: &Manifest) -> Vec<String> {
             CueKind::Refused(_) | CueKind::Undeniable(_) | CueKind::QuickBuyFull => vec![],
         },
         Kind::Denied(deny) => named(deny.logical()),
-        Kind::Row(row) => row.name(manifest).into_iter().collect(),
+        Kind::Row(row) => vec![row.name(manifest).into_iter().collect()],
         Kind::PortalArriving => named(&["sound.portal.loop_appear"]),
         Kind::PortalLeaving => named(&["sound.portal.loop_disappear"]),
         Kind::HeroArrived => named(&["sound.portal.hero_appear"]),
@@ -417,6 +435,7 @@ fn sources_of(kind: Kind, manifest: &Manifest) -> Vec<String> {
 fn load(mut bindings: ResMut<Bindings>, manifest: Res<Manifest>, server: Res<AssetServer>) {
     let kinds = [
         CueKind::BossRoar,
+        CueKind::BossDeath(bota_proto::ObjectiveKind::Roshan),
         CueKind::LastHit,
         CueKind::Deny,
         CueKind::Raze,
@@ -443,18 +462,35 @@ fn load(mut bindings: ResMut<Bindings>, manifest: Res<Manifest>, server: Res<Ass
     ])
     .chain(Row::all().into_iter().map(Kind::Row));
     for kind in kinds {
-        let names = sources_of(kind, &manifest);
-        let files: Vec<(String, String)> = names
+        let groups = sources_of(kind, &manifest);
+        let own_hero_only = groups.iter().flatten().any(|name| manifest.own_hero_sounds.contains(name));
+        let name = groups
             .iter()
-            .flat_map(|name| manifest.sounds_with_events(name))
+            .flatten()
+            .cloned()
+            .collect::<Vec<_>>()
+            .join("|");
+        let layers = groups
+            .into_iter()
+            .map(|names| {
+                let files: Vec<_> = names
+                    .iter()
+                    .flat_map(|name| manifest.sounds_with_events(name))
+                    .collect();
+                Layer {
+                    sources: files.iter().map(|(path, _)| server.load(path)).collect(),
+                    events: files.into_iter().map(|(_, event)| event).collect(),
+                    next: 0,
+                }
+            })
             .collect();
         bindings.0.push((
             kind,
             Binding {
-                name: names.join("|"),
-                sources: files.iter().map(|(path, _)| server.load(path)).collect(),
-                events: files.into_iter().map(|(_, event)| event).collect(),
-                own_hero_only: names.iter().any(|n| manifest.own_hero_sounds.contains(n)),
+                name,
+                layers,
+                own_hero_only,
+                last_layered: None,
                 next: 0,
             },
         ));
@@ -512,48 +548,43 @@ impl Sounder<'_, '_, '_> {
                 binding.name,
                 merge.map_or("none".to_owned(), |unit| unit.idx.to_string()),
                 !binding.own_hero_only || (merge.is_some() && merge == self.ears),
-                binding.sources.len()
+                binding.layers.iter().map(|layer| layer.sources.len()).sum::<usize>()
             );
         }
-        // A blow taken as damage is heard on the hero one plays alone, so on no one's while
-        // spectating or watching a replay.
-        if binding.own_hero_only && (merge.is_none() || merge != self.ears) {
+        if self.silent || (binding.own_hero_only && (merge.is_none() || merge != self.ears)) {
             return;
         }
-        if self.silent || binding.sources.is_empty() {
+        let layered = binding.layers.len() > 1;
+        if layered && binding.last_layered.is_some_and(|last| self.now.saturating_sub(last) < LAYERED_REST) {
             return;
         }
-        let pick = binding.next % binding.sources.len();
         let factor_source = if matches!(
             kind,
-            Kind::Row(Row {
-                subject: Subject::Hero(_),
-                event: Event::Attack,
-                ..
-            })
-        ) {
-            emitter
-        } else {
-            self.ears
-        };
-        let request = Request {
-            event: if binding.events[pick].is_empty() {
-                &binding.name
-            } else {
-                &binding.events[pick]
-            },
-            owner: Owner::None,
-            emitter,
-            merge,
-            at,
-            listener: Some((self.focus.x, self.focus.y)),
-            gain,
-            speed: speed_of(kind),
-            on_player: sounds_from_the_players_entity(kind, self.own, factor_source),
-            fog: Some(self.fog),
-        };
-        let source = binding.sources[pick].clone();
-        if self.mixer.start(self.commands, self.now, &request, source) != Started::Refused {
+            Kind::Row(Row { subject: Subject::Hero(_), event: Event::Attack, .. })
+        ) { emitter } else { self.ears };
+        let mut started = false;
+        for layer in &mut binding.layers {
+            if layer.sources.is_empty() { continue; }
+            let pick = layer.next % layer.sources.len();
+            let request = Request {
+                event: if layer.events[pick].is_empty() { &binding.name } else { &layer.events[pick] },
+                owner: Owner::None,
+                emitter,
+                merge,
+                at,
+                listener: Some((self.focus.x, self.focus.y)),
+                gain,
+                speed: speed_of(kind),
+                on_player: sounds_from_the_players_entity(kind, self.own, factor_source),
+                fog: Some(self.fog),
+            };
+            if self.mixer.start(self.commands, self.now, &request, layer.sources[pick].clone()) != Started::Refused {
+                layer.next += 1;
+                started = true;
+            }
+        }
+        if started {
+            if layered { binding.last_layered = Some(self.now); }
             binding.next += 1;
         }
     }
@@ -687,10 +718,11 @@ struct PortalAudio<'a> {
 impl PortalAudio<'_> {
     fn hum(&self, commands: &mut Commands, kind: Kind, at: (f32, f32)) -> Option<Entity> {
         let (_, binding) = self.bindings.0.iter().find(|(key, _)| *key == kind)?;
-        let source = binding.sources.first().cloned()?;
+        let layer = binding.layers.first()?;
+        let source = layer.sources.first().cloned()?;
         let gain = self
             .mixer
-            .gain_for(binding.events.first()?, at, (self.focus.x, self.focus.y));
+            .gain_for(layer.events.first()?, at, (self.focus.x, self.focus.y));
         if self.silent || gain < 0.03 {
             return None;
         }
@@ -1044,12 +1076,8 @@ fn swings(core: &bota_client_core::App, fog: &crate::fog::FogGrid, sound: &mut S
 }
 
 /// The sounds' part of the loading.
-fn report(
-    bindings: Res<Bindings>,
-    server: Res<AssetServer>,
-    mut parts: ResMut<crate::loading::Parts>,
-) {
-    let sources = bindings.0.iter().flat_map(|(_, binding)| &binding.sources);
+fn report(bindings: Res<Bindings>, server: Res<AssetServer>, mut parts: ResMut<crate::loading::Parts>) {
+    let sources = bindings.0.iter().flat_map(|(_, binding)| &binding.layers).flat_map(|layer| &layer.sources);
     let (done, total) = sources.fold((0, 0), |(d, t), h| {
         (d + usize::from(crate::loading::settled(&server, h)), t + 1)
     });
@@ -1468,6 +1496,7 @@ mod tests {
         let names = sources_of(kind, manifest);
         names
             .iter()
+            .flatten()
             .flat_map(|n| manifest.sounds_with_events(n))
             .map(|(path, _)| path)
             .collect()
