@@ -33,6 +33,7 @@ mod sound_limits;
 mod soundscape;
 mod start;
 mod strategy;
+mod tower_cadence;
 mod trees;
 mod turning;
 mod watcher_capture;

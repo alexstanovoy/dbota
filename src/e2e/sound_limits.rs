@@ -33,10 +33,10 @@ fn alive(client: &mut Client, part: &str) -> usize {
 }
 
 /// A player that started: the game clock of its start and how it plays.
-type Start = (Duration, PlaybackMode);
+pub(super) type Start = (Duration, PlaybackMode);
 
 /// The players that start from now on whose cache path holds `part`.
-fn listen(client: &mut Client, part: &'static str) -> Arc<Mutex<Vec<Start>>> {
+pub(super) fn listen(client: &mut Client, part: &'static str) -> Arc<Mutex<Vec<Start>>> {
     let starts = Arc::new(Mutex::new(Vec::new()));
     let into = starts.clone();
     client.world_mut().add_observer(
