@@ -30,6 +30,8 @@ fn the_hover_ring_is_yellow_and_round_the_selection_rings_spot() {
     let mut client = Client::join(&server, HeroId::SHADOW_FIEND, &[]);
     client.stand_at(MID);
     let me = client.me().clone();
+    // The hero is picked only once the player picks it: the selection ring is under what is.
+    client.core_mut().act(Intent::SelectUnit(Some(me.id)));
     let selection = crate::overlay::team_color(me.team).with_alpha(0.9);
     client
         .core_mut()

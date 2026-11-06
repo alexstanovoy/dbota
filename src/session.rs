@@ -37,7 +37,12 @@ pub fn open(args: &Args) -> std::io::Result<Session> {
         let mut core = Core::new(Source::Replay(player));
         core.pov = args.pov.map(SlotId);
         core.my_slot = core.pov;
-        core.pinned = args.follow.map(|seat| Pin::Hero(SlotId(seat)));
+        // The camera follows the hero of the seat a replay is watched through, or the one
+        // `--follow` names; a camera placed by `--look` stays where it was put.
+        core.pinned = args
+            .follow
+            .map(|seat| Pin::Hero(SlotId(seat)))
+            .or_else(|| core.pov.filter(|_| args.look.is_empty()).map(Pin::Hero));
         return Ok(Session(core));
     }
     connect(args)

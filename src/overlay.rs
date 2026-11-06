@@ -214,8 +214,8 @@ fn camp_boxes(gizmos: &mut Gizmos, ctx: &Ctx<'_, '_, '_>) {
     }
 }
 
-/// The selection circle at the feet of what is picked (one's own hero when
-/// nothing else is), in its side's colour; with the visual clarity aid on,
+/// The selection circle at the feet of what is picked (nothing is, until the player picks), in its
+/// side's colour; with the visual clarity aid on,
 /// a fainter ring at every other hero's feet too, so a dark model on dark
 /// ground still reads.
 fn picks(gizmos: &mut Gizmos, ctx: &Ctx<'_, '_, '_>, aid: bool) {
@@ -223,7 +223,7 @@ fn picks(gizmos: &mut Gizmos, ctx: &Ctx<'_, '_, '_>, aid: bool) {
     let Some(view) = core.view() else {
         return;
     };
-    let picked = core.commanded();
+    let picked = core.selected;
     for unit in &view.units {
         let selected = Some(unit.id) == picked;
         if !selected && !(aid && unit.kind == UnitKind::Hero) {

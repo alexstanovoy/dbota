@@ -255,7 +255,7 @@ pub fn ray_to_ground(ray: Ray3d, ground: &Ground) -> Option<Vec3> {
 
 /// Carries the camera with the unit it is pinned to, with one's own hero
 /// while the camera is locked or the centre key is held, and puts it on
-/// one's own hero the first time that hero stands (unless `--look` placed it).
+/// one's own hero, free, the first time that hero stands (unless `--look` placed it).
 fn follow(
     mut session: NonSendMut<Session>,
     index: Res<UnitIndex>,
@@ -268,14 +268,17 @@ fn follow(
     mut cam: Single<&mut RtsCamera>,
 ) {
     let core = &mut session.0;
-    // A camera placed by `--look` stays where it was put.
+    // The camera is put on one's own hero the first time that hero stands, and left free there:
+    // the hero is neither selected nor followed until the player says so. (A replay watched
+    // through a seat, `--pov`, is pinned to that seat's hero when it is opened: `session.rs`.) A
+    // camera placed by `--look` stays where it was put.
     if !core.found_my_hero
         && args.look.is_empty()
-        && core.my_standing_hero().is_some()
-        && let Some(slot) = core.my_slot
+        && let Some(hero) = core.my_standing_hero()
+        && let Some(unit) = index.0.get(&hero).and_then(|e| units.get(*e).ok())
     {
         core.found_my_hero = true;
-        core.pinned = Some(bota_client_core::Pin::Hero(slot));
+        cam.focus = Vec3::new(unit.at.x, ground.at(unit.at.x, unit.at.y), -unit.at.y);
     }
     // The bars' check watches the seat's courier, whose health is counted
     // in hits.
