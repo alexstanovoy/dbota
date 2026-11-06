@@ -32,6 +32,7 @@ mod refusals;
 mod rings;
 mod runes;
 mod sentry_ward;
+mod shopkeepers;
 mod slot_looks;
 mod sound_limits;
 mod soundscape;

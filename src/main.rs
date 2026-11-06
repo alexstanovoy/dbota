@@ -66,6 +66,7 @@ mod lotus;
 mod main_menu;
 mod manifest;
 mod map;
+mod map_props;
 mod mapfile;
 mod minimap;
 mod mixer;
@@ -699,6 +700,7 @@ fn client_plugins(app: &mut App) {
         .add_plugins((
             fortified::plugin,
             courier::plugin,
+            map_props::plugin,
             settings::plugin,
             keys::plugin,
             scoreboard::plugin,

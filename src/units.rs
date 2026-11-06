@@ -1048,6 +1048,12 @@ fn spawn_unit(
     root
 }
 
+/// The scale of a model the map places with `scale` on each of Dota's axes (x, y, up), whose
+/// own size is `size` (glTF's x, up and z are Dota's y, up and x).
+pub(crate) fn map_scale([sx, sy, sz]: [f32; 3], size: f32) -> Transform {
+    Transform::from_scale(Vec3::new(sy, sz, sx) * (UNITS_PER_METRE * size))
+}
+
 fn spawn_model_scene(
     p: &mut SyncParams,
     u: &UnitView,
@@ -1063,10 +1069,7 @@ fn spawn_model_scene(
         let size = unit_art(u, &p.manifest)
             .and_then(|art| art.scale)
             .unwrap_or(entry.model.scale);
-        // A building as the map scales it on each axis (glTF's x, up
-        // and z are Dota's y, up and x).
-        let [sx, sy, sz] = p.yaws.placed(u, at).map_or([1.0; 3], |b| b.scale);
-        let scale = Transform::from_scale(Vec3::new(sy, sz, sx) * (UNITS_PER_METRE * size));
+        let scale = map_scale(p.yaws.placed(u, at).map_or([1.0; 3], |b| b.scale), size);
         let scene = p
             .commands
             .spawn((WorldAssetRoot(scenes.body.clone()), scale, ChildOf(pivot)))

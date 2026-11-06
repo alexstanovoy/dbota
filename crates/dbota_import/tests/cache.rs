@@ -443,8 +443,10 @@ fn required(theirs: &BTreeMap<String, PathBuf>) -> BTreeSet<String> {
                     // The textures of the nodes the cache's world leaves out (the client spawns
                     // those as units) are not asked for.
                     let name = uri.rsplit('/').next().unwrap_or(uri);
+                    // The props' textures stay asked for: their models are the cache's.
                     if dbota_import::import::NOT_IN_WORLD
                         .iter()
+                        .filter(|left_out| !dbota_import::import::MAP_PROPS.contains(left_out))
                         .any(|left_out| name.starts_with(left_out))
                     {
                         continue;

@@ -1558,6 +1558,17 @@ clip objective.lantern_of_sight.model capture lantern_idle_capture 7.967
 clip objective.lantern_of_sight.model lit lantern_idle_open 7.967
 clip objective.lantern_of_sight.model lit_night lantern_idle_open_night 7.967
 unit npc_dota_lantern objective.lantern_of_sight.model model_scale=1
+# The map's shop keepers (prop.<the map's model name>.model, skin n as .skin<n>.model: the map places one per entry
+# of buildings.txt, standing at its place and playing idle in a loop). The fountain keeper's skin 1 is the Dire's.
+model prop.shopkeeper.model models/heroes/shopkeeper/shopkeeper.vmdl_c models/prop/shopkeeper/shopkeeper.glb anims=shpkpr_idle_loop_alt
+clip prop.shopkeeper.model idle shpkpr_idle_loop_alt 9.500
+model prop.shopkeeper_dire.model models/heroes/shopkeeper_dire/shopkeeper_dire.vmdl_c models/prop/shopkeeper_dire/shopkeeper_dire.glb anims=idle
+clip prop.shopkeeper_dire.model idle idle 5.967
+model prop.shopkeeper_fountain.model models/props_gameplay/shopkeeper_fountain/shopkeeper_fountain.vmdl_c models/prop/shopkeeper_fountain/shopkeeper_fountain.glb anims=shopkeeper_ftn_idle_loop
+clip prop.shopkeeper_fountain.model idle shopkeeper_ftn_idle_loop 7.867
+model prop.shopkeeper_fountain.skin1.model models/props_gameplay/shopkeeper_fountain/shopkeeper_fountain.vmdl_c models/prop/shopkeeper_fountain_skin1/shopkeeper_fountain.glb anims=shopkeeper_ftn_idle_loop skin=1
+clip prop.shopkeeper_fountain.skin1.model idle shopkeeper_ftn_idle_loop 7.867
+
 # Outposts (npc_dota_watch_tower): idle unowned, captured while a side owns it, transition while captured.
 model objective.outpost.model models/props_structures/outpost.vmdl_c models/objective/outpost/outpost.glb anims=outpost_neutral_idle,outpost_captured_idle,outpost_transition
 clip objective.outpost.model idle outpost_neutral_idle 2.950

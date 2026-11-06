@@ -143,16 +143,17 @@ fn sync_loot(
 
 /// Puts the model `body` under `parent`, a thing on the ground wearing [`Idle`], and has it play
 /// its idle clip once it is ready. The ready event is told on the scene's own entity, so that is
-/// where [`play_idle`] listens.
+/// where [`play_idle`] listens. The model's entity is returned.
 pub(crate) fn spawn_idle_model(
     commands: &mut Commands,
     parent: Entity,
     body: Handle<WorldAsset>,
     scale: Transform,
-) {
+) -> Entity {
     commands
         .spawn((WorldAssetRoot(body), scale, ChildOf(parent)))
-        .observe(play_idle);
+        .observe(play_idle)
+        .id()
 }
 
 /// Gives the model of a thing on the ground (its parent wears [`Idle`]) its idle clip, looping.

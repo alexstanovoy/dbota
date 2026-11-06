@@ -48,7 +48,7 @@ pub const LAST_USE_TEXT: &str = "dbota last use 1\n";
 pub const MAX_STAMP: u64 = 4096;
 
 /// Bumped when the importer's output changes for the same install; part of a cache's stamp.
-pub const IMPORT_REV: u32 = 30;
+pub const IMPORT_REV: u32 = 31;
 
 /// The manifest this build imports and draws, and its ids.
 pub const MANIFEST: &str = include_str!("../../../assets-manifest/manifest.txt");
@@ -144,10 +144,14 @@ const MAX_SYSTEMS: usize = 256;
 pub const GENERATOR: &str = "dbota_assets";
 /// Layer textures the client has no use for.
 const NOT_LAYERS: [&str; 3] = ["refl", "specular", "height"];
+/// The models the map places that the client draws as animated props of their own
+/// (`prop.<name>.model` in the manifest): their nodes are in [`NOT_IN_WORLD`] too.
+pub const MAP_PROPS: [&str; 1] = ["shopkeeper"];
+
 /// The world's nodes the client leaves out of `mid.gltf`: the trees, buildings and map objectives
 /// (Watchers, Outposts, Shrines of Wisdom, Lotus Pools) it spawns itself as units, and the
 /// end-game cameras.
-pub const NOT_IN_WORLD: [&str; 20] = [
+pub const NOT_IN_WORLD: [&str; 21] = [
     "tree_",
     "dire_tree",
     "radiant_tower",
@@ -166,6 +170,7 @@ pub const NOT_IN_WORLD: [&str; 20] = [
     "outpost",
     "xp_shrine",
     "fountain_of_life",
+    "shopkeeper",
     "bad_ancient_destruction_camera",
     "radiant_endcam",
 ];
