@@ -707,3 +707,12 @@ mod tests {
         }
     }
 }
+
+#[cfg(test)]
+pub(crate) fn drawn_gold(world: &mut World) -> Option<String> {
+    let (text, shown) = world
+        .query_filtered::<(&Text, &InheritedVisibility), With<Gold>>()
+        .single(world)
+        .ok()?;
+    shown.get().then(|| text.0.clone())
+}

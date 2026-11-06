@@ -23,6 +23,7 @@ mod death;
 mod event_visibility;
 mod feed;
 mod flagbearer;
+mod flagbearer_gold;
 mod fog;
 mod fog_pov;
 mod fx;

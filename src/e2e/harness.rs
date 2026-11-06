@@ -189,12 +189,20 @@ impl Client {
     /// The client run with `extra` command-line arguments, its settings in a folder of its own,
     /// in a window of 1920 by 1080 unless they say another, as `main` builds it (with no sound device: see `audio_output`).
     pub fn run(extra: &[&str]) -> Client {
-        Client::run_with_settings(extra, None)
+        Self::build(extra, None, None)
     }
 
-    /// [`Client::run`] with a settings file already on disk, as an older version of the client
-    /// left it.
+    /// [`Client::run`] with settings left on disk by an older client.
     pub fn run_with_settings(extra: &[&str], file: Option<&str>) -> Client {
+        Self::build(extra, None, file)
+    }
+
+    /// Independently connected test players do not share the desktop reconnect claim.
+    pub fn run_with_core(extra: &[&str], core: Core) -> Client {
+        Self::build(extra, Some(core), None)
+    }
+
+    fn build(extra: &[&str], core: Option<Core>, file: Option<&str>) -> Client {
         let scratch = Scratch::new();
         let config = scratch.0.join("client.conf");
         if let Some(text) = file {
@@ -219,10 +227,10 @@ impl Client {
             settings.set(name.trim(), value.trim()).expect("a setting");
         }
         let menu_first = args.wants_menu();
-        let session = if menu_first {
-            crate::main_menu::idle()
-        } else {
-            crate::session::open(&args).expect("the game the arguments name")
+        let session = match core {
+            Some(core) => Session(core),
+            None if menu_first => crate::main_menu::idle(),
+            None => crate::session::open(&args).expect("the game the arguments name"),
         };
         roomy_io_threads();
         let mut app = App::new();
