@@ -790,7 +790,7 @@ fn menu(
         };
         main_menu::MenuCore::over_given(store, trust.radovid.clone(), service, kind, library)
     };
-    app.insert_non_send(core)
+    app.insert_non_send(core.with_server_from_environment(args.read_environment))
         .insert_non_send(main_menu::Trusted(trust));
     Ok(())
 }

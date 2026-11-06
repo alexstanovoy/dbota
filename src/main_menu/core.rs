@@ -282,6 +282,8 @@ pub enum Launch {
         /// The server binary, when not looked for (`$BOTA_SERVER`, beside
         /// this client, the `PATH`).
         server: Option<std::path::PathBuf>,
+        /// Whether `$BOTA_SERVER` and the `PATH` are looked in for it.
+        server_environment: bool,
         /// The rules of the lobby; its seats are [`LOCAL_SEATS`] under any.
         rules: LocalRules,
     },
@@ -601,6 +603,8 @@ pub struct MenuCore {
     pub(super) ladder: Vec<LadderRow>,
     /// The game server a local lobby starts, when not looked for.
     pub(super) server_binary: Option<std::path::PathBuf>,
+    /// Whether the server is also looked for in `$BOTA_SERVER` and on the `PATH`.
+    server_environment: bool,
     /// The address others type to join the local lobby this client hosts.
     hosted_at: Option<String>,
     /// The hero of the last Demo Hero started.
@@ -706,6 +710,7 @@ impl MenuCore {
             account_profile: None,
             ladder: Vec::new(),
             server_binary: None,
+            server_environment: false,
             hosted_at: None,
             cancel_leave: false,
             leaving: None,
@@ -776,6 +781,14 @@ impl MenuCore {
             core.last_seat = Some(Launch::Given);
         }
         core
+    }
+
+    /// A menu that looks for the game server of a local lobby in `$BOTA_SERVER` and on the `PATH`
+    /// too, as the client does that takes its configuration from the process environment.
+    #[must_use]
+    pub fn with_server_from_environment(mut self, yes: bool) -> MenuCore {
+        self.server_environment = yes;
+        self
     }
 
     /// Whether the control link to the service is open.
@@ -2180,6 +2193,7 @@ impl MenuCore {
             cheats: self.prefs.host_cheats,
             replay,
             server: self.server_binary.clone(),
+            server_environment: self.server_environment,
             rules: self.prefs.host_rules,
         });
     }

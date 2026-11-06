@@ -1859,7 +1859,7 @@ fn a_server_of_another_wire_is_refused_and_the_matching_one_found() {
     let stale = dir.0.join("bota_server");
     std::fs::write(&stale, "#!/bin/sh\necho 0000000000000001\n").expect("a script");
     std::fs::set_permissions(&stale, std::fs::Permissions::from_mode(0o755)).expect("mode");
-    let error = super::launch::server_binary(Some(&stale)).expect_err("another wire");
+    let error = super::launch::server_binary(Some(&stale), false).expect_err("another wire");
     let said = error.to_string();
     assert!(
         said.contains("no bota_server of this client's wire")
@@ -1868,9 +1868,56 @@ fn a_server_of_another_wire_is_refused_and_the_matching_one_found() {
         "{said}"
     );
     assert_eq!(
-        super::launch::server_binary(Some(server_binary())).expect("the matching server"),
+        super::launch::server_binary(Some(server_binary()), false).expect("the matching server"),
         server_binary()
     );
+}
+
+/// A client that ignores its process environment (the in-process test client) must not start the
+/// server `$BOTA_SERVER` or the `PATH` names, while the client of `main` does.
+#[test]
+fn the_server_is_looked_for_in_the_environment_only_by_a_client_that_reads_it() {
+    const MARK: &str = "DBOTA_SERVER_ENVIRONMENT_CHILD";
+    if let Some(server) = std::env::var_os(MARK) {
+        let error = super::launch::server_binary(None, false)
+            .expect_err("BOTA_SERVER and the PATH are not looked in");
+        assert!(
+            error
+                .to_string()
+                .starts_with("no bota_server of this client's wire"),
+            "{error}"
+        );
+        assert_eq!(
+            super::launch::server_binary(None, true).expect("the environment names a server"),
+            Path::new(&server)
+        );
+        return;
+    }
+    let server = server_binary();
+    let paths = std::env::join_paths(
+        std::iter::once(server.parent().expect("a folder").to_owned()).chain(
+            std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default()),
+        ),
+    )
+    .expect("a PATH");
+    let output = Command::new(std::env::current_exe().expect("the test binary"))
+        .args([
+            "--exact",
+            "main_menu::tests::the_server_is_looked_for_in_the_environment_only_by_a_client_that_reads_it",
+            "--nocapture",
+        ])
+        .env(MARK, server)
+        .env("BOTA_SERVER", server)
+        .env("PATH", paths)
+        .output()
+        .expect("the child test starts");
+    assert!(
+        output.status.success(),
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(String::from_utf8_lossy(&output.stdout).contains("1 passed"));
 }
 
 /// The lobby view of a player sitting in one.

@@ -176,11 +176,14 @@ const SERVER_PATIENCE: std::time::Duration = std::time::Duration::from_secs(30);
 
 /// The game server binary, as this client's own wire: the first of these that is a file and
 /// speaks the wire this client speaks, in this order: `bota_server` beside this client (what
-/// `tools/build.sh` makes), the one named in the settings or `$BOTA_SERVER`, and one on the
-/// `PATH`. A server of another wire is skipped, and said so if no other is found.
+/// `tools/build.sh` makes), the one named in the settings or, when `environment`, `$BOTA_SERVER`,
+/// and, when `environment`, one on the `PATH`. A client that does not take its configuration from
+/// the process environment (the in-process test client) starts only a server it was given or
+/// that lies beside it. A server of another wire is skipped, and said so if no other is found.
 #[cfg(not(target_arch = "wasm32"))]
 pub(super) fn server_binary(
     given: Option<&std::path::Path>,
+    environment: bool,
 ) -> std::io::Result<std::path::PathBuf> {
     let name = format!("bota_server{}", std::env::consts::EXE_SUFFIX);
     let beside = std::env::current_exe()
@@ -188,10 +191,11 @@ pub(super) fn server_binary(
         .and_then(|exe| Some(exe.parent()?.join(&name)));
     let named = given.map(std::path::Path::to_path_buf).or_else(|| {
         std::env::var_os("BOTA_SERVER")
-            .filter(|p| !p.is_empty())
+            .filter(|p| environment && !p.is_empty())
             .map(Into::into)
     });
     let on_path = std::env::var_os("PATH")
+        .filter(|_| environment)
         .into_iter()
         .flat_map(|paths| std::env::split_paths(&paths).collect::<Vec<_>>())
         .map(|dir| dir.join(&name));
@@ -284,10 +288,11 @@ fn start_server(
     args: &[String],
     replay: Option<&std::path::Path>,
     server: Option<&std::path::Path>,
+    environment: bool,
 ) -> std::io::Result<(Hosted, String)> {
     use std::io::BufRead;
     use std::process::{Command, Stdio};
-    let mut command = Command::new(server_binary(server)?);
+    let mut command = Command::new(server_binary(server, environment)?);
     command
         .args(args)
         .env_remove("BOTA_SEATS")
@@ -383,6 +388,7 @@ impl Opening {
                             lan,
                             replay,
                             server,
+                            server_environment,
                             cheats,
                             rules,
                             ..
@@ -390,6 +396,7 @@ impl Opening {
                             &host_args(*port, *rules, *lan, *cheats),
                             replay.as_deref(),
                             server.as_deref(),
+                            *server_environment,
                         )?),
                         _ => None,
                     };
