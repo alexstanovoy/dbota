@@ -400,3 +400,65 @@ fn an_invisible_hero_is_see_through_and_an_attack_click_destroys_a_rune() {
         "destroyed, not taken"
     );
 }
+
+/// `root` and everything under it.
+fn subtree(world: &World, root: Entity) -> Vec<Entity> {
+    let mut found = Vec::new();
+    let mut stack = vec![root];
+    while let Some(entity) = stack.pop() {
+        found.push(entity);
+        if let Some(children) = world.get::<Children>(entity) {
+            stack.extend(children.iter());
+        }
+    }
+    found
+}
+
+/// Every transform under `root`: the pose its model is in.
+fn pose_of(client: &Client, root: Entity) -> Vec<(Entity, Transform)> {
+    let world = client.world();
+    subtree(world, root)
+        .into_iter()
+        .filter_map(|e| Some((e, *world.get::<Transform>(e)?)))
+        .collect()
+}
+
+/// A rune lying on the ground turns in its idle clip, as Dota's runes do (the model was posed
+/// once and then stood still, because the clip was never started on it).
+#[test]
+fn a_rune_lying_on_the_ground_plays_its_idle_animation() {
+    let (_server, mut client) = rune_match();
+    let spot = top_spot();
+    client.stand_at((spot.0 + 400, spot.1));
+    spawn_rune(&mut client, RuneKind::Haste, spot);
+    client.within(SOON, "the Haste Rune drawn", |c| {
+        drawn(c, RuneKind::Haste).is_some()
+    });
+    client
+        .world_mut()
+        .insert_resource(bevy::time::TimeUpdateStrategy::ManualDuration(
+            Duration::from_millis(100),
+        ));
+    let body = {
+        let world = client.world_mut();
+        world
+            .query_filtered::<Entity, With<RuneBody>>()
+            .single(world)
+            .expect("one rune")
+    };
+    client.within(SOON, "its model's animation playing", |c| {
+        let world = c.world();
+        subtree(world, body).into_iter().any(|e| {
+            world
+                .get::<AnimationPlayer>(e)
+                .is_some_and(|player| player.playing_animations().next().is_some())
+        })
+    });
+    let before = pose_of(&client, body);
+    client.frames(5);
+    let after = pose_of(&client, body);
+    assert!(
+        before.iter().zip(&after).any(|(b, a)| b.1 != a.1),
+        "half a second later no part of the rune's model has moved"
+    );
+}

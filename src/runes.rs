@@ -9,7 +9,7 @@ use bevy::prelude::*;
 use bota_proto::{EntityId, EventKind, RuneKind, Team, WorldView};
 
 use crate::fog::FogGrid;
-use crate::loot::{Idle, play_idle};
+use crate::loot::{Idle, spawn_idle_model};
 use crate::map::{Ground, UNITS_PER_METRE};
 use crate::session::Session;
 use crate::units::ModelBank;
@@ -147,13 +147,14 @@ fn sync_runes(
             Transform::from_xyz(x, ground.at(x, y), -y),
             Visibility::default(),
         ));
+        let id = root.id();
         if let Some((body, scale)) = body {
             let scale = Transform::from_scale(Vec3::splat(UNITS_PER_METRE * scale));
-            root.insert(Idle(name))
-                .with_child((WorldAssetRoot(body), scale))
-                .observe(play_idle);
+            root.insert(Idle(name));
+            let id = root.id();
+            spawn_idle_model(&mut commands, id, body, scale);
         }
-        index.0.insert(rune.id, root.id());
+        index.0.insert(rune.id, id);
         spawned += 1;
     }
     index.0.retain(|id, entity| {

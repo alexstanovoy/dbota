@@ -5,7 +5,10 @@
 
 use std::collections::HashMap;
 
-use bevy::{prelude::*, world_serialization::WorldInstanceReady};
+use bevy::{
+    prelude::*,
+    world_serialization::{WorldAsset, WorldAssetRoot, WorldInstanceReady},
+};
 use bota_client_core::loot_under_cursor;
 use bota_proto::{EntityId, LootView};
 
@@ -118,13 +121,13 @@ fn sync_loot(
             Transform::from_translation(place),
             Visibility::default(),
         ));
+        let id = root.id();
         if let Some(body) = model {
             let scale = Transform::from_scale(Vec3::splat(UNITS_PER_METRE * entry.model.scale));
-            root.insert(Idle(name.clone()))
-                .with_child((WorldAssetRoot(body), scale))
-                .observe(play_idle);
+            root.insert(Idle(name.clone()));
+            spawn_idle_model(&mut commands, id, body, scale);
         }
-        index.0.insert(item.id, root.id());
+        index.0.insert(item.id, id);
         spawned += 1;
     }
     let mut here: Vec<EntityId> = view.loot.iter().filter(shown).map(|l| l.id).collect();
@@ -138,8 +141,22 @@ fn sync_loot(
     });
 }
 
+/// Puts the model `body` under `parent`, a thing on the ground wearing [`Idle`], and has it play
+/// its idle clip once it is ready. The ready event is told on the scene's own entity, so that is
+/// where [`play_idle`] listens.
+pub(crate) fn spawn_idle_model(
+    commands: &mut Commands,
+    parent: Entity,
+    body: Handle<WorldAsset>,
+    scale: Transform,
+) {
+    commands
+        .spawn((WorldAssetRoot(body), scale, ChildOf(parent)))
+        .observe(play_idle);
+}
+
 /// Gives the model of a thing on the ground (its parent wears [`Idle`]) its idle clip, looping.
-pub(crate) fn play_idle(
+fn play_idle(
     ready: On<WorldInstanceReady>,
     mut commands: Commands,
     parents: Query<&ChildOf>,
