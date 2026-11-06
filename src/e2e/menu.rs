@@ -1,5 +1,5 @@
-//! The main menu: its buttons of a height one width,
-//! none wrapping; the header naming the player first, with no account number.
+//! The main menu: its buttons of a height one width, none wrapping; a refused lobby join that
+//! moves nothing; Play's rulesets; Demo Hero on the service; the account's game limit.
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -26,8 +26,7 @@ fn buttons(client: &mut Client) -> Vec<(String, f32, f32, bool)> {
     shown
         .into_iter()
         .filter_map(|(button, name, size)| {
-            // A button of words alone: not an icon's, not a box ticked beside its words, not
-            // one of the top bar's tabs (underlined, as wide as their words, as Dota's are).
+            // A button of words: not an icon's, not a box ticked beside its words.
             let node = world.get::<Node>(button)?;
             // A text field's box is a button too (named by its label for scripts), but it holds
             // what is typed, and clips it rather than lets it wrap.
@@ -37,7 +36,9 @@ fn buttons(client: &mut Client) -> Vec<(String, f32, f32, bool)> {
             ) {
                 return None;
             }
-            if node.border.top == Val::Px(0.0) && node.border.bottom != Val::Px(0.0) {
+            // A boxed button: not words alone (LOG OUT, a link), not a tab (underlined, as wide
+            // as its words, as Dota's are).
+            if node.border.left == Val::Px(0.0) {
                 return None;
             }
             let children = world.get::<Children>(button)?;
@@ -53,7 +54,7 @@ fn buttons(client: &mut Client) -> Vec<(String, f32, f32, bool)> {
 }
 
 /// The menu open with no service known: its local pages.
-fn local_menu() -> Client {
+pub(super) fn local_menu() -> Client {
     let mut client = Client::run(&[]);
     client.within(Duration::from_secs(30), "the menu laid out", |c| {
         buttons(c).iter().any(|b| b.1 > 0.0)
@@ -61,7 +62,7 @@ fn local_menu() -> Client {
     client
 }
 
-fn act(client: &mut Client, act: Act) {
+pub(super) fn act(client: &mut Client, act: Act) {
     client.world_mut().non_send_mut::<MenuCore>().act(act);
     client.frames(5);
 }
@@ -234,10 +235,10 @@ fn the_menus_buttons_of_a_height_are_one_width_and_never_wrap() {
     for page in [Page::LocalLobby, Page::Replays] {
         uniform_buttons(&mut client, page);
     }
-    // The Demo Hero page is the service's: an account's.
+    // The lobbies are the service's: an account's.
     let service = crate::main_menu::tests::service();
     let mut client = signed_up(&service, "carol");
-    uniform_buttons(&mut client, Page::DemoHero);
+    uniform_buttons(&mut client, Page::Lobbies);
 }
 
 /// A replay with a long name leaves the buttons of its row their width: the row's words do not
@@ -292,7 +293,7 @@ fn uniform_buttons(client: &mut Client, page: Page) {
 }
 
 /// The menu of a client signed up to a matchmaking service as `login`, on Play.
-fn signed_up(service: &crate::main_menu::tests::Service, login: &str) -> Client {
+pub(super) fn signed_up(service: &crate::main_menu::tests::Service, login: &str) -> Client {
     // One file for each client: the tests of a process run side by side, each with a service
     // (and a certificate) of its own.
     static NEXT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
@@ -319,50 +320,6 @@ fn signed_up(service: &crate::main_menu::tests::Service, login: &str) -> Client 
     client.frames(5);
     let _ = std::fs::remove_file(&pem);
     client
-}
-
-/// Signed in, the top bar names the player first, then its buttons (SETTINGS, LOG OUT), as
-/// Dota's does, and shows no account number (it read "alice #1" after the buttons).
-#[test]
-fn the_header_names_the_player_first_with_no_account_number() {
-    let service = crate::main_menu::tests::service();
-    let mut client = signed_up(&service, "alice");
-    let world = client.world_mut();
-    let named = world
-        .query::<(Entity, &Text, &InheritedVisibility)>()
-        .iter(world)
-        .find(|(_, text, seen)| seen.get() && text.0.contains("alice"))
-        .map(|(e, text, _)| (e, text.0.clone()));
-    let (name, said) = named.expect("the player's name in the top bar");
-    assert_eq!(said, "alice", "the name alone, no account number");
-    let bar = world.get::<ChildOf>(name).expect("in the bar").parent();
-    let order: Vec<String> = world
-        .get::<Children>(bar)
-        .expect("the bar's parts")
-        .iter()
-        .filter_map(|part| {
-            if part == name {
-                return Some("NAME".to_owned());
-            }
-            world.get::<Name>(part).map(|n| n.to_string())
-        })
-        .collect();
-    let at = |what: &str| order.iter().position(|o| o == what);
-    let (named_at, settings, log_out) = (at("NAME"), at("settings"), at("log out"));
-    assert!(
-        named_at.is_some() && named_at < settings && settings < log_out,
-        "the name, then SETTINGS, then LOG OUT: {order:?}"
-    );
-    let numbered = client
-        .shown_texts()
-        .into_iter()
-        .filter(|t| {
-            t.split('#')
-                .skip(1)
-                .any(|n| n.starts_with(|c: char| c.is_ascii_digit()))
-        })
-        .collect::<Vec<_>>();
-    assert!(numbered.is_empty(), "an account number shown: {numbered:?}");
 }
 
 /// The actual physical rectangle of a visible menu button or line, after Bevy's text layout.
@@ -404,7 +361,7 @@ fn click_menu_button(client: &mut Client, name: &str) {
     client.click(MouseButton::Left);
 }
 
-fn resize_menu_window(client: &mut Client, size: UVec2) {
+pub(super) fn resize_menu_window(client: &mut Client, size: UVec2) {
     let world = client.world_mut();
     let (window, width, height) = {
         let (entity, mut window) = world
@@ -565,7 +522,7 @@ fn a_failed_lobby_join_overlays_the_bottom_without_moving_menu_content() {
     client.within(Duration::from_secs(30), "the menu fonts loaded", |c| {
         let fonts = c.world().resource::<crate::ui::Fonts>();
         let loaded = c.world().resource::<Assets<Font>>();
-        loaded.contains(&fonts.regular) && loaded.contains(&fonts.bold)
+        fonts.all().all(|font| loaded.contains(font))
     });
     client.frames(2);
     for (over_game, size) in [

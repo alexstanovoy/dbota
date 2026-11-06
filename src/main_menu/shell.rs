@@ -92,12 +92,13 @@ pub fn plugin(app: &mut App) {
                 drive,
                 demo_start,
                 super::screens::draw,
-                super::screens::focus_ring,
-                super::screens::hover,
+                super::kit::focus_ring,
+                super::kit::hover,
                 scroll,
             )
                 .chain(),
-        );
+        )
+        .add_systems(Update, super::top_bar::animate);
 }
 
 /// The wheel scrolls a long page; the place is kept while the page is

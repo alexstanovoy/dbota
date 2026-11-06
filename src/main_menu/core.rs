@@ -143,6 +143,8 @@ pub enum Act {
     PlainAnyway,
     /// Closes the notice line.
     Dismiss,
+    /// The connection pill's RECONNECTING: opens the lost link to the service again now.
+    RetryService,
     /// The power button: asks whether to quit the client.
     Quit,
     /// OK (`true`) or Cancel on the question asked.
@@ -589,7 +591,7 @@ pub struct MenuCore {
     leave_at: Option<Instant>,
     /// The name this player goes by where there is no account: the
     /// settings' profile name.
-    profile: String,
+    pub(super) profile: String,
     /// The replays this client keeps.
     pub(super) library: Library,
     /// What a kept replay holds, as read, where the library knows no more.
@@ -900,6 +902,11 @@ impl MenuCore {
 
     pub fn logged_in(&self) -> bool {
         self.account
+    }
+
+    /// Whether the signed-in account's lost link to the service is waiting to be opened again.
+    pub(super) fn reconnecting(&self) -> bool {
+        self.account && self.retry_at.is_some()
     }
 
     /// The account's matches not yet over, as far as the menu knows.
@@ -1793,6 +1800,11 @@ impl MenuCore {
             Act::WatchReplay(match_id) => self.watch_replay(match_id),
             Act::PlainAnyway => self.direct(false, true),
             Act::Dismiss => self.status = None,
+            Act::RetryService => {
+                if self.reconnecting() {
+                    self.retry_at = Some(Instant::now());
+                }
+            }
             Act::Quit if !cfg!(target_arch = "wasm32") => self.confirm = Some(Confirm::Quit),
             Act::Quit => {}
             Act::Answer(yes) => match self.confirm.take() {

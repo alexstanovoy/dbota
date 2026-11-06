@@ -110,6 +110,7 @@ mod talk_check;
 mod teleport;
 mod terrain;
 mod texture_file;
+mod theme;
 mod tip_content;
 mod tip_numbers;
 mod tips;

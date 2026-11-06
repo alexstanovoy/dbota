@@ -68,6 +68,7 @@ mod secret_shop;
 mod sentry_ward;
 mod shop_inventory;
 mod shop_queue;
+mod shell;
 mod shop_sound;
 mod shopkeepers;
 mod slot_looks;

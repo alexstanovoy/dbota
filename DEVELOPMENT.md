@@ -109,7 +109,9 @@ cargo test --release -p dbota_import -- --ignored   # DBOTA_DOTA_PATH, DBOTA_REF
 ```
 
 The fonts in `assets/fonts` are made by `tools/subset_fonts.py`; other scripts come from the system's fonts on the
-desktop, and a browser has only the shipped ones.
+desktop, and a browser has only the shipped ones. The menu draws in Dota's own typefaces, which the importer copies from
+the install's `panorama/fonts` (`font` lines of the manifest), and in the shipped ones without them. Its colours, sizes
+and type roles are in `src/theme.rs`, its parts (buttons, panels, the top bar) in `src/main_menu/kit.rs`.
 
 This keeps accidents out; it is not a sandbox against code that means to leave (a process can still resolve the
 system's home from its user id). Nothing that tests, drives or measures the client may touch the user's settings, replays (the replay library prunes the

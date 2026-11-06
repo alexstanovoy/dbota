@@ -9,9 +9,11 @@
 //! drawing; [`view`] is what the screens draw; the rest is Bevy.
 
 mod address;
+mod backdrop;
 mod core;
 mod form;
 mod keep;
+mod kit;
 mod launch;
 #[cfg(not(target_arch = "wasm32"))]
 mod leave;
@@ -26,6 +28,7 @@ mod screens;
 mod shell;
 mod store;
 mod text;
+mod top_bar;
 mod view;
 
 #[cfg(test)]
@@ -39,9 +42,9 @@ pub use core::{Act, DEFAULT_NAME, GameKind, MenuCore};
 pub use launch::Trust;
 pub use prefs::page_service;
 pub use preview::{NAMES as PREVIEWS, view as preview};
-pub use screens::Disabled;
+pub use kit::{Disabled, Wash};
 #[cfg(test)]
-pub(crate) use screens::MenuButton;
+pub(crate) use kit::MenuButton;
 pub use shell::{GameEpoch, Preview, Trusted, idle, plugin};
 pub use store::SettingsStore;
 pub(crate) use text::line;

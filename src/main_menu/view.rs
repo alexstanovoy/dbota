@@ -337,6 +337,25 @@ for everyone, and no result is recorded.  Do you really wish to leave the game?"
 const LEAVE_TITLE: &str = "Confirm Disconnect";
 const LEAVE_TEXT: &str = "Are you sure you'd like to leave the game?";
 
+/// How the menu stands with the matchmaking service, as the top bar's pill says.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Connection {
+    /// Signed in to the service of this name.
+    Online(String),
+    /// Signed in, and the link to the service of this name was lost: it is being opened again.
+    Lost(String),
+    /// No account: the menu plays without the service.
+    Offline,
+}
+
+/// The side of the player's last match, whose main-menu background the menu shows.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Side {
+    #[default]
+    Radiant,
+    Dire,
+}
+
 /// Everything the menu draws.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct MenuView {
@@ -344,6 +363,10 @@ pub struct MenuView {
     pub body: PageView,
     /// `nickname#id` once logged in.
     pub account: Option<String>,
+    /// The name the player goes by: the account's, else the settings' profile name.
+    pub player: String,
+    pub connection: Connection,
+    pub side: Side,
     pub status: Option<Status>,
     pub searches: Vec<SearchRow>,
     pub waits: Vec<WaitRow>,
@@ -393,9 +416,20 @@ impl MenuCore {
             let names = |id: &RulesetId| ruleset_name(c, id);
             (search_rows(c, &names), wait_rows(c), offer_box(c, &names))
         });
+        let service = text::line(service_name(&self.prefs.service), text::NAME);
+        let connection = match (&account, self.reconnecting()) {
+            (None, _) => Connection::Offline,
+            (Some(_), false) => Connection::Online(service),
+            (Some(_), true) => Connection::Lost(service),
+        };
         MenuView {
             page: self.page,
             body: self.body(),
+            player: account
+                .clone()
+                .unwrap_or_else(|| text::line(&self.profile, text::NAME)),
+            connection,
+            side: self.last_side(),
             account,
             status: self.status.clone(),
             searches,
@@ -445,6 +479,21 @@ impl MenuCore {
             can_quit: !cfg!(target_arch = "wasm32"),
             host_cheats: self.prefs.host_cheats,
         }
+    }
+
+    /// The side the player played in the account's last finished match, Radiant without one.
+    fn last_side(&self) -> Side {
+        let me = self.client.as_ref().and_then(|c| c.me()).map(|me| me.id);
+        self.history
+            .iter()
+            .find_map(|r| r.seats.iter().find(|s| Some(s.account) == me))
+            .map_or(Side::Radiant, |seat| {
+                if seat.team == 0 {
+                    Side::Radiant
+                } else {
+                    Side::Dire
+                }
+            })
     }
 
     fn fields(&self) -> Vec<FieldView> {
@@ -693,6 +742,20 @@ impl MenuCore {
             ),
             seats,
         }
+    }
+}
+
+/// What the pill calls a service: its host, without the scheme and the port
+/// (`wss://play.example.org:4460` is `play.example.org`).
+fn service_name(address: &str) -> &str {
+    let rest = address.split_once("://").map_or(address, |(_, rest)| rest);
+    let host = rest.split(['/', '?', '#']).next().unwrap_or(rest);
+    match host.rsplit_once(':') {
+        // An IPv6 address keeps its brackets and colons.
+        Some((name, port)) if !name.is_empty() && port.bytes().all(|b| b.is_ascii_digit()) => {
+            name
+        }
+        _ => host,
     }
 }
 

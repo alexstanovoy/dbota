@@ -5,6 +5,7 @@ use bevy::{prelude::*, text::FontCx, window::PrimaryWindow};
 use parley::fontique::{FallbackKey, Script};
 
 use crate::config::Settings;
+use crate::theme::Face;
 use crate::manifest::Manifest;
 
 /// Logical window height at which the interface scale is one.
@@ -19,7 +20,32 @@ pub struct Fonts {
     pub bold: Handle<Font>,
     /// Body text.
     pub regular: Handle<Font>,
+    /// The menu's faces, in the order of [`FACES`]: Dota's own from the install when the asset
+    /// cache has them, else the shipped ones.
+    faces: [Handle<Font>; 4],
 }
+
+impl Fonts {
+    /// The font of a menu face.
+    pub fn face(&self, face: Face) -> &Handle<Font> {
+        let at = FACES.iter().position(|(of, _)| *of == face);
+        &self.faces[at.expect("every face has its font")]
+    }
+
+    /// Every font the interface draws with.
+    #[cfg(test)]
+    pub fn all(&self) -> impl Iterator<Item = &Handle<Font>> {
+        [&self.bold, &self.regular].into_iter().chain(&self.faces)
+    }
+}
+
+/// The asset cache's typeface of each menu face, by its logical name.
+const FACES: [(Face, &str); 4] = [
+    (Face::Display, "font.display"),
+    (Face::Bold, "font.bold"),
+    (Face::Semibold, "font.semibold"),
+    (Face::Regular, "font.regular"),
+];
 
 /// Dota's dark interface panels.
 pub const PANEL: Color = Color::srgba(0.05, 0.06, 0.08, 0.93);
@@ -61,10 +87,19 @@ pub fn plugin(app: &mut App) {
         );
 }
 
-fn load_fonts(mut commands: Commands, server: Res<AssetServer>) {
+fn load_fonts(mut commands: Commands, server: Res<AssetServer>, manifest: Res<Manifest>) {
+    let bold: Handle<Font> = server.load("fonts/bota-sans-bold.ttf");
+    let regular: Handle<Font> = server.load("fonts/bota-sans-regular.ttf");
+    // Without the install's, the titles and labels are the shipped bold, running text regular.
+    let faces = FACES.map(|(face, logical)| match manifest.file(logical) {
+        Some(path) => server.load(path),
+        None if face == Face::Regular => regular.clone(),
+        None => bold.clone(),
+    });
     commands.insert_resource(Fonts {
-        bold: server.load("fonts/bota-sans-bold.ttf"),
-        regular: server.load("fonts/bota-sans-regular.ttf"),
+        bold,
+        regular,
+        faces,
     });
     commands.insert_resource(FallbackFont(server.load("fonts/bota-sans-cjk.otf")));
 }

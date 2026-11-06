@@ -1,76 +1,32 @@
-//! The pages under the top bar.
+//! The pages: the top bar over the menu's background, the page's column under it, the player's
+//! card at the bottom left and the game's corner at the bottom right; the way in (the service,
+//! signing in, registering) on the background alone, a card in the middle.
 
 use bevy::prelude::*;
 use bota_core::HEROES;
 
+use super::backdrop::{self, Backdrop};
 use super::core::{Act, LocalRules, Page};
 use super::form::FormKind;
-use super::screens::{ERROR, GREEN, Kit, PLAIN, RED, tab_color, tab_of};
+use super::kit::{Kit, MenuButton, Tone};
 use super::view::{
     FieldView, LobbyView, MemberRow, MenuView, PageView, ReplayRow, ReplayShelf, ResultView,
     RulesetRow, SlotRow,
 };
-use crate::ui;
+use crate::theme::{self, Face, Type};
 use bota_radovid::proto::{AccountGameLimit, LOBBY_NO_SLOT};
-
-/// The tabs of the top bar: the service's once logged in, and what is played
-/// without it always.
-///
-/// A browser cannot start a game server, so the local lobby is not in its bar, nor is Demo Hero
-/// (the native client opens it; the browser may one day).
-#[cfg(not(target_arch = "wasm32"))]
-const TABS: [(Page, &str); 7] = [
-    (Page::Home, "PLAY"),
-    (Page::MyGames, "MY GAMES"),
-    (Page::Lobbies, "LOBBIES"),
-    (Page::Profile, "PROFILE"),
-    (Page::LocalLobby, "LOCAL LOBBY"),
-    (Page::DemoHero, "DEMO HERO"),
-    (Page::Replays, "REPLAYS"),
-];
-#[cfg(target_arch = "wasm32")]
-const TABS: [(Page, &str); 5] = [
-    (Page::Home, "PLAY"),
-    (Page::MyGames, "MY GAMES"),
-    (Page::Lobbies, "LOBBIES"),
-    (Page::Profile, "PROFILE"),
-    (Page::Replays, "REPLAYS"),
-];
-
-/// Whether a tab's page is the service's, shown only with an account.
-fn online(page: Page) -> bool {
-    page.needs_account()
-}
-
-/// Dota's quit button (`#DOTAQuitButton`, a `TopBarSmallButton`): 62 by 61
-/// with its 30-pixel icon washed orange, brighter under the cursor.
-const QUIT_WASH: (Color, Color) = (
-    Color::srgb(
-        0xbd as f32 / 255.0,
-        0x5e as f32 / 255.0,
-        0x2d as f32 / 255.0,
-    ),
-    Color::srgb(1.0, 0x6e as f32 / 255.0, 0x41 as f32 / 255.0),
-);
-/// Dota's return-to-game button (`#DOTAReturnToGameButton`): 62 by 57, its
-/// 30-pixel icon washed grey-blue.
-const RETURN_WASH: (Color, Color) = (
-    Color::srgb(
-        0x44 as f32 / 255.0,
-        0x4a as f32 / 255.0,
-        0x55 as f32 / 255.0,
-    ),
-    Color::srgb(
-        0x99 as f32 / 255.0,
-        0x99 as f32 / 255.0,
-        0xaa as f32 / 255.0,
-    ),
-);
 
 /// The pages' column: the forms and the replay list, one width.
 const PAGE_WIDTH: f32 = 760.0;
 /// Where every page starts under the top bar.
 const PAGE_TOP: f32 = 64.0;
+/// Room left under a page for the player's card and the game's corner.
+const PAGE_FOOT: f32 = 96.0;
+/// The way in's card, and where its column starts.
+const WAY_IN_WIDTH: f32 = 480.0;
+const WAY_IN_TOP: f32 = 110.0;
+/// The column of the game's buttons at the bottom right.
+const CORNER_WIDTH: f32 = 300.0;
 
 /// The scrolled part of a page, under the top bar.
 #[derive(Component)]
@@ -78,8 +34,30 @@ pub struct MenuBody;
 
 /// The whole page layer.
 pub fn draw(kit: &mut Kit, root: Entity, view: &MenuView) {
-    top_bar(kit, root, view);
-    play_area(kit, root, view);
+    let way_in = matches!(
+        &view.body,
+        PageView::Form {
+            kind: FormKind::Service | FormKind::Login | FormKind::Register,
+            ..
+        }
+    );
+    if way_in {
+        backdrop::draw(kit, root, Backdrop::of(view.side), 0.0);
+        if let PageView::Form {
+            kind,
+            fields,
+            busy,
+            plain_host,
+            ..
+        } = &view.body
+        {
+            way_in_page(kit, root, *kind, fields, *busy, plain_host.as_deref());
+        }
+        super::top_bar::quit(kit, root, view);
+        return;
+    }
+    backdrop::draw(kit, root, Backdrop::of(view.side), theme::BAR_HEIGHT);
+    super::top_bar::draw(kit, root, view);
     // Every page starts at the same height under the top bar and centres
     // on one column, as Dota's dashboard pages do; a long page scrolls.
     let body = kit.node(
@@ -92,8 +70,8 @@ pub fn draw(kit: &mut Kit, root: Entity, view: &MenuView) {
             padding: UiRect {
                 left: px(24),
                 right: px(24),
-                top: px(PAGE_TOP),
-                bottom: px(24),
+                top: px(PAGE_TOP - theme::BAR_HEIGHT),
+                bottom: px(PAGE_FOOT),
             },
             overflow: Overflow::scroll_y(),
             ..default()
@@ -159,108 +137,84 @@ pub fn draw(kit: &mut Kit, root: Entity, view: &MenuView) {
         #[cfg(not(target_arch = "wasm32"))]
         PageView::DemoHero { heroes, offered } => demo_page(kit, body, heroes, *offered),
         PageView::Joining => {
-            kit.bold(body, "JOINING THE GAME…", 30.0, ui::INK);
+            kit.typed(body, "JOINING THE GAME…", theme::TITLE, theme::INK_1);
         }
         PageView::Settings | PageView::Hidden => {}
     }
+    player_card(kit, root, view);
+    game_corner(kit, root, view);
+    super::top_bar::quit(kit, root, view);
 }
 
-fn top_bar(kit: &mut Kit, root: Entity, view: &MenuView) {
-    let bar = kit
+/// The player at the bottom left: a square with their initial and their name; with an account,
+/// a click opens the profile.
+fn player_card(kit: &mut Kit, root: Entity, view: &MenuView) {
+    let card = kit
         .commands
         .spawn((
             Node {
-                height: px(60),
-                padding: UiRect::axes(px(28), px(0)),
-                column_gap: px(30),
+                position_type: PositionType::Absolute,
+                left: px(24),
+                bottom: px(18),
+                column_gap: px(12),
+                padding: UiRect::new(px(4), px(16), px(4), px(4)),
                 align_items: AlignItems::Center,
-                border: UiRect::bottom(px(1)),
+                border: UiRect::left(px(2)),
                 ..default()
             },
-            BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.55)),
-            BorderColor::all(ui::EDGE),
+            theme::rightward((theme::SELF_ROW, theme::SELF_ROW.with_alpha(0.0))),
+            BorderColor::all(theme::TAB_MARK),
+            Name::new("player"),
             ChildOf(root),
         ))
         .id();
-    // In a game, Dota's top bar starts with the way back to it.
-    if view.game.is_some() {
-        kit.icon_button(
-            bar,
-            "menu.return_to_game",
-            "RETURN TO GAME",
-            Act::ReturnToGame,
-            (62.0, 57.0),
-            30.0,
-            RETURN_WASH,
-        );
-    }
-    kit.bold(bar, "DBOTA", 28.0, Color::srgb(0.85, 0.2, 0.15));
-    let tabs = kit.node(
-        bar,
-        Node {
-            column_gap: px(6),
-            flex_grow: 1.0,
-            ..default()
-        },
-    );
-    let lit = tab_of(view.page);
-    for (page, label) in TABS {
-        if online(page) && view.account.is_none() {
-            continue;
-        }
-        let on = lit == page;
-        let tab = kit
-            .commands
-            .spawn((
-                super::screens::MenuButton(Act::Go(page)),
-                Button,
-                Node {
-                    padding: UiRect::axes(px(14), px(18)),
-                    border: UiRect::bottom(px(3)),
-                    ..default()
-                },
-                BorderColor::all(if on { ui::GOLDEN } else { Color::NONE }),
-                Name::new(label.to_lowercase()),
-                ChildOf(tabs),
-            ))
-            .id();
-        kit.bold(tab, label, 17.0, tab_color(on));
-    }
-    // The name first, as Dota's, then the buttons.
-    if let Some(account) = &view.account {
-        kit.text(bar, account.clone(), 16.0, ui::INK);
-    }
-    kit.button(bar, "SETTINGS", Act::Go(Page::Settings), PLAIN, 30.0);
-    match &view.account {
-        Some(_) => {
-            kit.button(bar, "LOG OUT", Act::Logout, PLAIN, 30.0);
-        }
-        None if view.page == Page::LocalLobby => {
-            kit.button(bar, "SIGN IN", Act::Go(Page::Login), PLAIN, 30.0);
-        }
-        None => {}
-    }
-    // Dota's power button ends the top bar.
-    if view.can_quit {
-        let quit = kit.icon_button(
-            bar,
-            "menu.quit",
-            "QUIT",
-            Act::Quit,
-            (62.0, 61.0),
-            30.0,
-            QUIT_WASH,
-        );
+    if view.account.is_some() {
         kit.commands
-            .entity(quit)
-            .insert((crate::voice::QuitClick, Name::new("quit")));
+            .entity(card)
+            .insert((MenuButton(Act::Go(Page::Profile)), Button));
     }
+    let avatar = kit
+        .commands
+        .spawn((
+            Node {
+                width: px(52),
+                height: px(52),
+                justify_content: JustifyContent::Center,
+                align_items: AlignItems::Center,
+                border: UiRect::all(px(1)),
+                ..default()
+            },
+            theme::downward(theme::AVATAR),
+            BorderColor::all(theme::AVATAR_EDGE),
+            Pickable::IGNORE,
+            ChildOf(card),
+        ))
+        .id();
+    let initial: String = view
+        .player
+        .chars()
+        .next()
+        .map(|c| c.to_uppercase().collect())
+        .unwrap_or_default();
+    let large = Type {
+        face: Face::Bold,
+        size: 20.0,
+        tracking: 0.0,
+        figures: false,
+    };
+    kit.typed(avatar, initial, large, theme::INK_1);
+    let name = Type {
+        face: Face::Semibold,
+        size: 17.0,
+        tracking: 0.0,
+        figures: false,
+    };
+    kit.typed(card, view.player.clone(), name, theme::INK_1);
 }
 
-/// The corner where Dota's play button stands: over a game, RETURN TO GAME
-/// and the way out of it (DISCONNECT); after leaving one's seat, RECONNECT
-/// and LEAVE.
-fn play_area(kit: &mut Kit, root: Entity, view: &MenuView) {
+/// The corner where Dota's play button stands: over a game, LEAVE GAME and DISCONNECT above
+/// RETURN TO GAME; after leaving one's seat, LEAVE above RECONNECT.
+fn game_corner(kit: &mut Kit, root: Entity, view: &MenuView) {
     if view.game.is_none() && !view.reconnect {
         return;
     }
@@ -268,34 +222,87 @@ fn play_area(kit: &mut Kit, root: Entity, view: &MenuView) {
         root,
         Node {
             position_type: PositionType::Absolute,
-            right: px(24),
-            bottom: px(24),
+            right: px(48),
+            bottom: px(18),
+            width: px(CORNER_WIDTH),
             flex_direction: FlexDirection::Column,
-            align_items: AlignItems::Stretch,
             row_gap: px(8),
-            width: px(340),
             ..default()
         },
     );
+    let wide = |kit: &mut Kit, label: &str, act: Act, tone: Tone, height: f32, name: &str| {
+        let button = kit.button(corner, label, act, tone, height);
+        kit.commands.entity(button).insert(Name::new(name.to_owned()));
+        kit.commands
+            .entity(button)
+            .entry::<Node>()
+            .and_modify(|mut node| node.width = percent(100));
+    };
     if view.game.is_some() {
-        let back = kit.button(corner, "RETURN TO GAME", Act::ReturnToGame, GREEN, 64.0);
-        kit.commands.entity(back).insert(Name::new("return"));
         // A replay is left as a game watched is (Dota's popup_confirm_close_replay).
         if view.can_leave_game {
-            let leave_game = kit.button(corner, "LEAVE GAME", Act::LeaveGame, RED, 40.0);
-            kit.commands
-                .entity(leave_game)
-                .insert(Name::new("leave game"));
+            wide(kit, "LEAVE GAME", Act::LeaveGame, Tone::Danger, 44.0, "leave game");
         }
-        let leave = kit.button(corner, "DISCONNECT", Act::Disconnect, RED, 40.0);
-        kit.commands.entity(leave).insert(Name::new("disconnect"));
+        wide(kit, "DISCONNECT", Act::Disconnect, Tone::Danger, 44.0, "disconnect");
+        wide(kit, "RETURN TO GAME", Act::ReturnToGame, Tone::Primary, 52.0, "return");
     } else {
-        let again = kit.button(corner, "RECONNECT", Act::Reconnect, GREEN, 64.0);
-        kit.commands.entity(again).insert(Name::new("reconnect"));
         // Dota's LEAVE: a way to be done with a game that cannot be taken again (its server died).
-        let leave = kit.button(corner, "LEAVE", Act::LeaveSeat, RED, 40.0);
-        kit.commands.entity(leave).insert(Name::new("leave match"));
+        wide(kit, "LEAVE", Act::LeaveSeat, Tone::Danger, 44.0, "leave match");
+        wide(kit, "RECONNECT", Act::Reconnect, Tone::Primary, 52.0, "reconnect");
     }
+}
+
+/// The way in (the service's address, signing in, registering): Dota's logo and DBOTA over a
+/// card of the form's fields and buttons, in the middle of the background.
+fn way_in_page(
+    kit: &mut Kit,
+    root: Entity,
+    kind: FormKind,
+    fields: &[FieldView],
+    busy: bool,
+    plain: Option<&str>,
+) {
+    let column = kit.node(
+        root,
+        Node {
+            position_type: PositionType::Absolute,
+            left: px(0),
+            right: px(0),
+            top: px(WAY_IN_TOP),
+            flex_direction: FlexDirection::Column,
+            align_items: AlignItems::Center,
+            row_gap: px(28),
+            ..default()
+        },
+    );
+    let mark = kit.node(
+        column,
+        Node {
+            column_gap: px(16),
+            align_items: AlignItems::Center,
+            ..default()
+        },
+    );
+    kit.art(
+        mark,
+        "menu.logo",
+        Node {
+            width: px(60),
+            height: px(60),
+            ..default()
+        },
+    );
+    let wordmark = Type {
+        size: 56.0,
+        tracking: 12.0,
+        ..theme::WORDMARK
+    };
+    kit.typed(mark, "DBOTA", wordmark, theme::INK_1);
+    let card = form_page(kit, column, kind, fields, busy, plain, None, None, None);
+    kit.commands
+        .entity(card)
+        .entry::<Node>()
+        .and_modify(|mut node| node.width = px(WAY_IN_WIDTH));
 }
 
 /// A form: a card of fields in the middle of the page.
@@ -342,9 +349,14 @@ fn form_page(
         | FormKind::Replay
         | FormKind::None => ("", ""),
     };
-    kit.bold(card, title, 26.0, ui::INK);
+    let title_role = Type {
+        size: 24.0,
+        tracking: 2.0,
+        ..theme::TITLE
+    };
+    kit.typed(card, title, title_role, theme::INK_1);
     if !hint.is_empty() {
-        kit.text(card, hint, 14.0, ui::INK_DIM);
+        kit.text(card, hint, 14.0, theme::INK_4);
     }
     let hosting = kind == FormKind::Host;
     // The local lobby's address is below the lobby it hosts.
@@ -357,7 +369,7 @@ fn form_page(
         field_box(kit, card, at, field);
     }
     if busy {
-        kit.text(card, "Connecting to the service…", 15.0, ui::GOLDEN);
+        kit.text(card, "Connecting to the service…", 15.0, theme::GOLD);
     }
     if let Some(chosen) = rules.filter(|_| hosting) {
         local_rules(kit, card, chosen);
@@ -367,37 +379,55 @@ fn form_page(
             card,
             format!("Your lobby is open: others join by address at {at}"),
             15.0,
-            ui::GOLDEN,
+            theme::GOLD,
         );
     }
     if let Some(on) = cheats.filter(|_| hosting) {
         checkbox(kit, card, "Enable cheats", Act::ToggleCheats, on);
     }
+    // The way in's card is narrow: its buttons stand one under the other, as wide as the card.
+    let way_in = matches!(
+        kind,
+        FormKind::Service | FormKind::Login | FormKind::Register
+    );
     let row = kit.node(
         card,
         Node {
+            flex_direction: if way_in {
+                FlexDirection::Column
+            } else {
+                FlexDirection::Row
+            },
             column_gap: px(10),
+            row_gap: px(10),
             margin: UiRect::top(px(6)),
             ..default()
         },
     );
-    match kind {
-        FormKind::Service => {
-            kit.button(row, "CONTINUE", Act::Submit, GREEN, 44.0);
+    let answer = |kit: &mut Kit, label: &str, act: Act, tone: Tone| {
+        let button = kit.button(row, label, act, tone, 44.0);
+        if way_in {
+            kit.commands
+                .entity(button)
+                .entry::<Node>()
+                .and_modify(|mut node| node.width = percent(100));
         }
+    };
+    match kind {
+        FormKind::Service => answer(kit, "CONTINUE", Act::Submit, Tone::Primary),
         FormKind::Login => {
-            kit.button(row, "SIGN IN", Act::Submit, GREEN, 44.0);
-            kit.button(row, "CREATE ACCOUNT", Act::Go(Page::Register), PLAIN, 44.0);
+            answer(kit, "SIGN IN", Act::Submit, Tone::Primary);
+            answer(kit, "CREATE ACCOUNT", Act::Go(Page::Register), Tone::Secondary);
         }
         FormKind::Register => {
-            kit.button(row, "CREATE ACCOUNT", Act::Submit, GREEN, 44.0);
-            kit.button(row, "BACK", Act::Go(Page::Login), PLAIN, 44.0);
+            answer(kit, "CREATE ACCOUNT", Act::Submit, Tone::Primary);
+            answer(kit, "BACK", Act::Go(Page::Login), Tone::Secondary);
         }
         // One lobby at a time: while it is up, the card says where it is.
         FormKind::Host if hosted_at.is_some() || !hosting => {}
         FormKind::Host => {
-            kit.button(row, "CREATE", Act::Host(false), GREEN, 44.0);
-            kit.button(row, "CREATE FOR THE LAN", Act::Host(true), PLAIN, 44.0);
+            answer(kit, "CREATE", Act::Host(false), Tone::Primary);
+            answer(kit, "CREATE FOR THE LAN", Act::Host(true), Tone::Secondary);
         }
         FormKind::Lobby
         | FormKind::LobbyPassword
@@ -406,12 +436,12 @@ fn form_page(
         | FormKind::None => {}
     }
     if let Some(address) = fields.get(1).filter(|_| kind == FormKind::Host) {
-        kit.bold(card, "JOIN BY ADDRESS", 20.0, ui::INK);
+        kit.typed(card, "JOIN BY ADDRESS", theme::HEADING, theme::INK_1);
         kit.text(
             card,
             "A game server's address: host:port, tcp://, ws:// or wss://.",
             14.0,
-            ui::INK_DIM,
+            theme::INK_4,
         );
         field_box(kit, card, 1, address);
         let join = kit.node(
@@ -421,8 +451,8 @@ fn form_page(
                 ..default()
             },
         );
-        kit.button(join, "PLAY", Act::Direct(false), GREEN, 44.0);
-        kit.button(join, "WATCH", Act::Direct(true), PLAIN, 44.0);
+        kit.button(join, "PLAY", Act::Direct(false), Tone::Primary, 44.0);
+        kit.button(join, "WATCH", Act::Direct(true), Tone::Secondary, 44.0);
     }
     if let Some(host) = plain {
         let note = kit.node(
@@ -440,14 +470,11 @@ fn form_page(
                  fine on your own network, not across the internet. Use wss:// where the host has a certificate."
             ),
             14.0,
-            ui::GOLDEN,
+            theme::GOLD,
         );
-        kit.button(note, "CONNECT ANYWAY", Act::PlainAnyway, RED, 34.0);
+        kit.button(note, "CONNECT ANYWAY", Act::PlainAnyway, Tone::Danger, 34.0);
     }
-    if matches!(
-        kind,
-        FormKind::Service | FormKind::Login | FormKind::Register
-    ) {
+    if way_in {
         let links = kit.node(
             card,
             Node {
@@ -456,10 +483,10 @@ fn form_page(
             },
         );
         if kind != FormKind::Service {
-            kit.button(links, "CHANGE SERVICE", Act::Go(Page::Service), PLAIN, 28.0);
+            kit.button(links, "CHANGE SERVICE", Act::Go(Page::Service), Tone::Secondary, 28.0);
         }
         #[cfg(not(target_arch = "wasm32"))]
-        kit.button(links, "LOCAL LOBBY", Act::Go(Page::LocalLobby), PLAIN, 28.0);
+        kit.button(links, "LOCAL LOBBY", Act::Go(Page::LocalLobby), Tone::Secondary, 28.0);
     }
     card
 }
@@ -474,23 +501,26 @@ pub fn field_box(kit: &mut Kit, parent: Entity, at: usize, field: &FieldView) {
             ..default()
         },
     );
-    kit.text(column, field.label, 13.0, ui::INK_DIM);
-    let edge = if field.focused { ui::GOLDEN } else { ui::EDGE };
+    kit.text(column, field.label, 13.0, theme::INK_5);
+    let edge = if field.focused {
+        theme::FOCUS
+    } else {
+        theme::FIELD_EDGE
+    };
     let input = kit
         .commands
         .spawn((
-            super::screens::MenuButton(Act::Focus(at)),
+            super::kit::MenuButton(Act::Focus(at)),
             Button,
             Node {
-                height: px(38),
+                height: px(theme::HIT),
                 padding: UiRect::axes(px(10), px(0)),
                 align_items: AlignItems::Center,
                 overflow: Overflow::clip(),
                 border: UiRect::all(px(1)),
-                border_radius: BorderRadius::all(px(3)),
                 ..default()
             },
-            BackgroundColor(ui::PANEL_DEEP),
+            BackgroundColor(theme::FIELD_SUNKEN),
             BorderColor::all(edge),
             // A script clicks a field by its label, as it does a button.
             Name::new(field.label.to_lowercase()),
@@ -498,7 +528,7 @@ pub fn field_box(kit: &mut Kit, parent: Entity, at: usize, field: &FieldView) {
         ))
         .id();
     let caret = if field.focused { "|" } else { "" };
-    kit.text(input, format!("{}{caret}", field.shown), 17.0, ui::INK);
+    kit.text(input, format!("{}{caret}", field.shown), 15.0, theme::INK_1);
 }
 
 /// Play: every ruleset this client can play, with FIND MATCH.
@@ -518,7 +548,7 @@ fn home(
             ..default()
         },
     );
-    kit.bold(column, "PLAY", 30.0, ui::INK);
+    kit.bold(column, "PLAY", 30.0, theme::INK_1);
     checkbox(
         kit,
         column,
@@ -531,7 +561,7 @@ fn home(
             column,
             "The service offers no game this version of dbota can play.",
             16.0,
-            ui::INK_DIM,
+            theme::INK_4,
         );
     }
     for ruleset in rulesets {
@@ -564,13 +594,13 @@ fn home(
                 ..default()
             },
         );
-        kit.bold(about, ruleset.name.clone(), 22.0, ui::INK);
+        kit.bold(about, ruleset.name.clone(), 22.0, theme::INK_1);
         let rated = if ruleset.rated { "ranked" } else { "unranked" };
         kit.text(
             about,
             format!("{} · {rated} · {}", ruleset.teams, ruleset.audience),
             15.0,
-            ui::INK_DIM,
+            theme::INK_4,
         );
         let can = cooldown.is_none()
             && match in_flight.1 {
@@ -578,7 +608,7 @@ fn home(
                 Some(AccountGameLimit::Limited(maximum)) => in_flight.0 < usize::from(maximum),
                 None => false,
             };
-        let look = if can { GREEN } else { PLAIN };
+        let look = if can { Tone::Primary } else { Tone::Secondary };
         kit.button(
             card,
             "FIND MATCH",
@@ -597,10 +627,10 @@ fn home(
         None => None,
     };
     if let Some(count) = count {
-        kit.text(column, count, 14.0, ui::INK_DIM);
+        kit.text(column, count, 14.0, theme::INK_4);
     }
     if let Some(cooldown) = cooldown {
-        kit.text(column, cooldown, 15.0, ERROR);
+        kit.text(column, cooldown, 15.0, theme::ERROR_TEXT);
     }
 }
 
@@ -614,19 +644,19 @@ fn profile_page(kit: &mut Kit, body: Entity, name: &str, ratings: &[String], lad
             ..default()
         },
     );
-    kit.bold(column, "PROFILE", 30.0, ui::INK);
-    kit.bold(column, name.to_owned(), 22.0, ui::INK);
+    kit.bold(column, "PROFILE", 30.0, theme::INK_1);
+    kit.bold(column, name.to_owned(), 22.0, theme::INK_1);
     if ratings.is_empty() {
-        kit.text(column, "No rated games yet.", 16.0, ui::INK_DIM);
+        kit.text(column, "No rated games yet.", 16.0, theme::INK_4);
     }
     for line in ratings {
-        kit.text(column, line.clone(), 16.0, ui::INK);
+        kit.text(column, line.clone(), 16.0, theme::INK_1);
     }
     if !ladder.is_empty() {
-        kit.bold(column, "LADDER", 20.0, ui::INK);
+        kit.bold(column, "LADDER", 20.0, theme::INK_1);
     }
     for line in ladder {
-        kit.text(column, line.clone(), 15.0, ui::INK_DIM);
+        kit.text(column, line.clone(), 15.0, theme::INK_4);
     }
 }
 
@@ -652,14 +682,14 @@ fn lobby_page(kit: &mut Kit, body: Entity, lobby: &LobbyView) {
         },
     );
     let lock = if lobby.locked { " · password" } else { "" };
-    kit.bold(card, format!("LOBBY: {}{lock}", lobby.name), 24.0, ui::INK);
+    kit.bold(card, format!("LOBBY: {}{lock}", lobby.name), 24.0, theme::INK_1);
     if lobby.settings.cheats == Some(true) {
         // Everyone is told before readying: the match will be played with cheats.
         kit.bold(
             card,
             "CHEATS ON: this match is played with the game's cheats",
             16.0,
-            ui::GOLDEN,
+            theme::GOLD,
         );
     }
     if let Some(name) = &lobby.moving {
@@ -667,22 +697,22 @@ fn lobby_page(kit: &mut Kit, body: Entity, lobby: &LobbyView) {
             card,
             format!("Moving {name}: click a free slot, or LOOK ON"),
             14.0,
-            ui::GOLDEN,
+            theme::GOLD,
         );
     }
     for team in &lobby.teams {
-        kit.bold(card, team.name.clone(), 16.0, ui::INK_DIM);
+        kit.bold(card, team.name.clone(), 16.0, theme::INK_4);
         for slot in &team.slots {
             slot_row(kit, card, slot, lobby);
         }
     }
-    kit.bold(card, "LOOKING ON", 16.0, ui::INK_DIM);
+    kit.bold(card, "LOOKING ON", 16.0, theme::INK_4);
     for member in &lobby.spectators {
         member_row(kit, card, member, lobby);
     }
-    kit.button(card, "LOOK ON", Act::LobbySlot(LOBBY_NO_SLOT), PLAIN, 28.0);
+    kit.button(card, "LOOK ON", Act::LobbySlot(LOBBY_NO_SLOT), Tone::Secondary, 28.0);
     if let Some(secs) = lobby.starting_in_secs {
-        kit.bold(card, format!("Starting in {secs}"), 22.0, ui::GOLDEN);
+        kit.bold(card, format!("Starting in {secs}"), 22.0, theme::GOLD);
     }
     let row = kit.node(
         card,
@@ -693,22 +723,22 @@ fn lobby_page(kit: &mut Kit, body: Entity, lobby: &LobbyView) {
     );
     if lobby.starts_short {
         // Below its seats: the empty ones stay empty.
-        kit.button(row, "START NOW", Act::ReadyLobby(true), GREEN, 42.0);
+        kit.button(row, "START NOW", Act::ReadyLobby(true), Tone::Primary, 42.0);
         kit.text(
             card,
             "The empty seats stay empty: nobody plays against you.",
             14.0,
-            ui::INK_DIM,
+            theme::INK_4,
         );
     } else if lobby.me_ready {
-        kit.button(row, "NOT READY", Act::ReadyLobby(false), PLAIN, 42.0);
+        kit.button(row, "NOT READY", Act::ReadyLobby(false), Tone::Secondary, 42.0);
     } else if let Some(why) = lobby.waiting {
         kit.disabled_button(row, "READY", 42.0);
-        kit.text(card, why, 14.0, ui::INK_DIM);
+        kit.text(card, why, 14.0, theme::INK_4);
     } else {
-        kit.button(row, "READY", Act::ReadyLobby(true), GREEN, 42.0);
+        kit.button(row, "READY", Act::ReadyLobby(true), Tone::Primary, 42.0);
     }
-    kit.button(row, "LEAVE", Act::LeaveLobby, RED, 42.0);
+    kit.button(row, "LEAVE", Act::LeaveLobby, Tone::Danger, 42.0);
     settings_card(kit, page, lobby);
 }
 
@@ -724,7 +754,7 @@ fn slot_row(kit: &mut Kit, card: Entity, slot: &SlotRow, lobby: &LobbyView) {
     );
     match &slot.who {
         None => {
-            kit.button(row, "OPEN", Act::LobbySlot(slot.slot), PLAIN, 28.0);
+            kit.button(row, "OPEN", Act::LobbySlot(slot.slot), Tone::Secondary, 28.0);
         }
         Some(member) => member_row(kit, row, member, lobby),
     }
@@ -745,13 +775,13 @@ fn member_row(kit: &mut Kit, parent: Entity, member: &MemberRow, lobby: &LobbyVi
     } else {
         member.name.clone()
     };
-    kit.text(row, format!("{name:24}"), 16.0, ui::INK);
+    kit.text(row, format!("{name:24}"), 16.0, theme::INK_1);
     if member.ready {
-        kit.text(row, "READY", 15.0, ui::HP_MINE);
+        kit.text(row, "READY", 15.0, theme::RADIANT_TEXT);
     }
     if lobby.owner && !member.me {
-        kit.button(row, "MOVE", Act::MoveMember(member.account), PLAIN, 24.0);
-        kit.button(row, "KICK", Act::KickMember(member.account), RED, 24.0);
+        kit.button(row, "MOVE", Act::MoveMember(member.account), Tone::Secondary, 24.0);
+        kit.button(row, "KICK", Act::KickMember(member.account), Tone::Danger, 24.0);
     }
 }
 
@@ -768,13 +798,13 @@ fn settings_card(kit: &mut Kit, page: Entity, lobby: &LobbyView) {
         },
     );
     let settings = &lobby.settings;
-    kit.bold(card, "SETTINGS", 20.0, ui::INK);
-    kit.text(card, format!("Game mode: {}", settings.mode), 15.0, ui::INK);
+    kit.bold(card, "SETTINGS", 20.0, theme::INK_1);
+    kit.text(card, format!("Game mode: {}", settings.mode), 15.0, theme::INK_1);
     kit.text(
         card,
         format!("Open to: {}", settings.audience),
         15.0,
-        ui::INK,
+        theme::INK_1,
     );
     kit.text(
         card,
@@ -784,24 +814,24 @@ fn settings_card(kit: &mut Kit, page: Entity, lobby: &LobbyView) {
             "Password: none"
         },
         15.0,
-        ui::INK,
+        theme::INK_1,
     );
     if let Some(on) = settings.cheats {
         let (said, ink) = if on {
-            ("Cheats: on", ui::GOLDEN)
+            ("Cheats: on", theme::GOLD)
         } else {
-            ("Cheats: off", ui::INK)
+            ("Cheats: off", theme::INK_1)
         };
         kit.text(card, said, 15.0, ink);
     }
     if !settings.editable {
-        kit.text(card, "Only the owner changes these.", 13.0, ui::INK_DIM);
+        kit.text(card, "Only the owner changes these.", 13.0, theme::INK_4);
         return;
     }
     if settings.modes.len() > 1 {
-        kit.text(card, "Game mode", 13.0, ui::INK_DIM);
+        kit.text(card, "Game mode", 13.0, theme::INK_4);
         for mode in &settings.modes {
-            let look = if mode.chosen { GREEN } else { PLAIN };
+            let look = if mode.chosen { Tone::Primary } else { Tone::Secondary };
             kit.button(
                 card,
                 &mode.name,
@@ -817,7 +847,7 @@ fn settings_card(kit: &mut Kit, page: Entity, lobby: &LobbyView) {
                 card,
                 "ENABLE CHEATS",
                 Act::ConfigureCheats(true),
-                PLAIN,
+                Tone::Secondary,
                 30.0,
             );
         }
@@ -826,15 +856,15 @@ fn settings_card(kit: &mut Kit, page: Entity, lobby: &LobbyView) {
                 card,
                 "DISABLE CHEATS",
                 Act::ConfigureCheats(false),
-                PLAIN,
+                Tone::Secondary,
                 30.0,
             );
         }
         None => {}
     }
-    kit.text(card, "Open to", 13.0, ui::INK_DIM);
+    kit.text(card, "Open to", 13.0, theme::INK_4);
     for audience in &settings.audiences {
-        let look = if audience.chosen { GREEN } else { PLAIN };
+        let look = if audience.chosen { Tone::Primary } else { Tone::Secondary };
         kit.button(
             card,
             audience.name,
@@ -846,7 +876,7 @@ fn settings_card(kit: &mut Kit, page: Entity, lobby: &LobbyView) {
     for (at, field) in lobby.fields.iter().enumerate() {
         field_box(kit, card, at, field);
     }
-    kit.button(card, "SET PASSWORD", Act::ConfigurePassword, PLAIN, 30.0);
+    kit.button(card, "SET PASSWORD", Act::ConfigurePassword, Tone::Secondary, 30.0);
 }
 
 fn result_page(kit: &mut Kit, body: Entity, result: &ResultView) {
@@ -860,12 +890,12 @@ fn result_page(kit: &mut Kit, body: Entity, result: &ResultView) {
         },
     );
     let color = match result.won {
-        Some(true) => ui::HP_MINE,
-        Some(false) => ui::HP_FOE,
-        None => ui::INK,
+        Some(true) => theme::RADIANT_TEXT,
+        Some(false) => theme::DIRE_TEXT,
+        None => theme::INK_1,
     };
     kit.bold(column, result.headline.clone(), 56.0, color);
-    kit.text(column, result.detail.clone(), 16.0, ui::INK_DIM);
+    kit.text(column, result.detail.clone(), 16.0, theme::INK_4);
     let table = kit.panel(
         column,
         Node {
@@ -907,12 +937,12 @@ fn result_page(kit: &mut Kit, body: Entity, result: &ResultView) {
             name,
             seat.name.clone(),
             17.0,
-            if seat.mine { ui::GOLDEN } else { ui::INK },
+            if seat.mine { theme::GOLD } else { theme::INK_1 },
         );
-        kit.text(name, seat.hero.clone(), 14.0, ui::INK_DIM);
-        kit.text(row, seat.rating.clone(), 16.0, ui::INK);
+        kit.text(name, seat.hero.clone(), 14.0, theme::INK_4);
+        kit.text(row, seat.rating.clone(), 16.0, theme::INK_1);
     }
-    kit.button(column, "CONTINUE", Act::Go(Page::Home), GREEN, 46.0);
+    kit.button(column, "CONTINUE", Act::Go(Page::Home), Tone::Primary, 46.0);
 }
 
 /// REPLAYS: the replays this client keeps, the newest first, each to watch or delete (and in a
@@ -934,23 +964,23 @@ fn replays_page(
             ..default()
         },
     );
-    kit.bold(column, "REPLAYS", 30.0, ui::INK);
+    kit.bold(column, "REPLAYS", 30.0, theme::INK_1);
     let (note, colour) = if !shelf.store {
         (
             "This browser keeps no replays for the page. A replay file can still be opened below."
                 .to_owned(),
-            ui::GOLDEN,
+            theme::GOLD,
         )
     } else if !shelf.keeping {
         (
             "Saving replays is off (SETTINGS, Options, REPLAYS): the ones below were kept before."
                 .to_owned(),
-            ui::GOLDEN,
+            theme::GOLD,
         )
     } else if shelf.folder.is_empty() {
         (
             "The replays of your matches are kept in this browser, within the limits of SETTINGS, Options, REPLAYS.".to_owned(),
-            ui::INK_DIM,
+            theme::INK_4,
         )
     } else {
         (
@@ -958,7 +988,7 @@ fn replays_page(
                 "The replays of your matches are kept in {}, within the limits of SETTINGS, Options, REPLAYS.",
                 shelf.folder
             ),
-            ui::INK_DIM,
+            theme::INK_4,
         )
     };
     kit.text(column, note, 13.0, colour);
@@ -967,11 +997,11 @@ fn replays_page(
             column,
             "The matchmaking service keeps no replays of its matches, so none of them is saved here; local games still are.",
             13.0,
-            ui::GOLDEN,
+            theme::GOLD,
         );
     }
     if list.is_empty() {
-        kit.text(column, "No replays yet", 16.0, ui::INK_DIM);
+        kit.text(column, "No replays yet", 16.0, theme::INK_4);
     }
     for replay in list {
         replay_row(kit, column, replay);
@@ -991,12 +1021,12 @@ fn replays_page(
         for (at, field) in fields.iter().enumerate() {
             field_box(kit, card, at, field);
         }
-        kit.button(card, "OPEN", Act::Submit, GREEN, 40.0);
+        kit.button(card, "OPEN", Act::Submit, Tone::Primary, 40.0);
     }
     #[cfg(target_arch = "wasm32")]
     {
         let _ = fields;
-        let open = kit.button(card, "OPEN A .BRP FILE", Act::OpenReplayFile, GREEN, 40.0);
+        let open = kit.button(card, "OPEN A .BRP FILE", Act::OpenReplayFile, Tone::Primary, 40.0);
         kit.commands
             .entity(open)
             .insert(Name::new("open replay file"));
@@ -1041,35 +1071,35 @@ fn replay_row(kit: &mut Kit, column: Entity, replay: &ReplayRow) {
     };
     let (headline, line, colour) = match &replay.summary {
         Summary::Read { sides, outcome } if outcome.is_empty() => {
-            (known(sides), replay.when.clone(), ui::INK_DIM)
+            (known(sides), replay.when.clone(), theme::INK_4)
         }
         Summary::Read { sides, outcome } => (
             known(sides),
             format!("{}  ·  {outcome}", replay.when),
-            ui::INK_DIM,
+            theme::INK_4,
         ),
         Summary::Reading => (
             mode_label(&replay.mode),
             format!("{}  ·  reading…", replay.when),
-            ui::INK_DIM,
+            theme::INK_4,
         ),
         Summary::Broken(why) => (
             mode_label(&replay.mode),
             format!("{}  ·  cannot be watched: {why}", replay.when),
-            ERROR,
+            theme::ERROR_TEXT,
         ),
     };
-    kit.bold(label, headline, 16.0, ui::INK);
+    kit.bold(label, headline, 16.0, theme::INK_1);
     kit.text(label, line, 13.0, colour);
     kit.text(
         label,
         format!("{}  ·  {}", replay.name, replay.size),
         12.0,
-        ui::INK_DIM,
+        theme::INK_4,
     );
     let name = &replay.name;
     if !matches!(replay.summary, Summary::Broken(_)) {
-        let watch = kit.button(row, "WATCH", Act::OpenReplay(name.clone()), PLAIN, 34.0);
+        let watch = kit.button(row, "WATCH", Act::OpenReplay(name.clone()), Tone::Secondary, 34.0);
         kit.commands
             .entity(watch)
             .insert(Name::new(format!("watch {name}")));
@@ -1080,14 +1110,14 @@ fn replay_row(kit: &mut Kit, column: Entity, replay: &ReplayRow) {
             row,
             "DOWNLOAD .BRP",
             Act::DownloadReplay(name.clone()),
-            PLAIN,
+            Tone::Secondary,
             34.0,
         );
         kit.commands
             .entity(download)
             .insert(Name::new(format!("download {name}")));
     }
-    let delete = kit.button(row, "DELETE", Act::DeleteReplay(name.clone()), RED, 34.0);
+    let delete = kit.button(row, "DELETE", Act::DeleteReplay(name.clone()), Tone::Danger, 34.0);
     kit.commands
         .entity(delete)
         .insert(Name::new(format!("delete {name}")));
@@ -1096,7 +1126,7 @@ fn replay_row(kit: &mut Kit, column: Entity, replay: &ReplayRow) {
 /// The rules of the lobby about to be hosted. The ten seats are the same under either: it
 /// starts with the players seated, and nothing takes the empty ones.
 fn local_rules(kit: &mut Kit, card: Entity, chosen: LocalRules) {
-    kit.text(card, "Rules", 13.0, ui::INK_DIM);
+    kit.text(card, "Rules", 13.0, theme::INK_4);
     let row = kit.node(
         card,
         Node {
@@ -1105,7 +1135,7 @@ fn local_rules(kit: &mut Kit, card: Entity, chosen: LocalRules) {
         },
     );
     for rules in LocalRules::ALL {
-        let look = if rules == chosen { GREEN } else { PLAIN };
+        let look = if rules == chosen { Tone::Primary } else { Tone::Secondary };
         kit.button(row, rules.label(), Act::Rules(rules), look, 34.0);
     }
     kit.text(
@@ -1113,7 +1143,7 @@ fn local_rules(kit: &mut Kit, card: Entity, chosen: LocalRules) {
         "Ten seats, five a side. Others join by this machine's address, typed under JOIN BY \
          ADDRESS; the match starts with the players ready and nobody fills the empty seats.",
         13.0,
-        ui::INK_DIM,
+        theme::INK_4,
     );
 }
 
@@ -1121,7 +1151,7 @@ fn checkbox(kit: &mut Kit, card: Entity, label: &'static str, action: Act, on: b
     let row = kit
         .commands
         .spawn((
-            super::screens::MenuButton(action),
+            super::kit::MenuButton(action),
             Button,
             Name::new(label.to_ascii_lowercase()),
             Node {
@@ -1141,12 +1171,12 @@ fn checkbox(kit: &mut Kit, card: Entity, label: &'static str, action: Act, on: b
             border_radius: BorderRadius::all(px(3)),
             ..default()
         },
-        BorderColor::all(if on { ui::GOLDEN } else { ui::INK_DIM }),
-        BackgroundColor(if on { ui::GOLDEN } else { Color::NONE }),
+        BorderColor::all(if on { theme::GOLD } else { theme::INK_4 }),
+        BackgroundColor(if on { theme::GOLD } else { Color::NONE }),
         Pickable::IGNORE,
         ChildOf(row),
     ));
-    kit.text(row, label, 16.0, ui::INK);
+    kit.text(row, label, 16.0, theme::INK_1);
 }
 
 /// DEMO HERO: every hero, its portrait and its name; a click starts Dota's
@@ -1162,15 +1192,15 @@ fn demo_page(kit: &mut Kit, body: Entity, heroes: &[(u16, String)], offered: boo
             ..default()
         },
     );
-    kit.bold(column, "DEMO HERO", 30.0, ui::INK);
+    kit.bold(column, "DEMO HERO", 30.0, theme::INK_1);
     kit.text(
         column,
         "Try a hero alone with every cheat: levels, gold, items, free spells, enemies to fight.",
         16.0,
-        ui::INK_DIM,
+        theme::INK_4,
     );
     if !offered {
-        kit.text(column, "This service offers no Demo Hero.", 16.0, ERROR);
+        kit.text(column, "This service offers no Demo Hero.", 16.0, theme::ERROR_TEXT);
         return;
     }
     let grid = kit.node(
@@ -1184,7 +1214,7 @@ fn demo_page(kit: &mut Kit, body: Entity, heroes: &[(u16, String)], offered: boo
         let card = kit
             .commands
             .spawn((
-                super::screens::MenuButton(Act::Demo(*id)),
+                super::kit::MenuButton(Act::Demo(*id)),
                 Button,
                 Name::new(format!("demo {}", name.to_lowercase())),
                 Node {
@@ -1196,12 +1226,12 @@ fn demo_page(kit: &mut Kit, body: Entity, heroes: &[(u16, String)], offered: boo
                     border_radius: BorderRadius::all(px(4)),
                     ..default()
                 },
-                BackgroundColor(ui::PANEL),
-                BorderColor::all(ui::EDGE),
+                BackgroundColor(theme::SURFACE),
+                BorderColor::all(theme::PANEL_EDGE),
                 ChildOf(grid),
             ))
             .id();
         kit.portrait(card, *id, 240.0);
-        kit.bold(card, name.to_uppercase(), 18.0, ui::INK);
+        kit.bold(card, name.to_uppercase(), 18.0, theme::INK_1);
     }
 }

@@ -33,6 +33,8 @@
 #           the shop's categories and the items each lists, in Dota's order, and the shop's words
 #           (category, tab and button names) out of the localization. Written by the Rust importer only.
 #   texture <logical> <vpk .vtex_c> <out .png>
+#   font    <logical> <loose file under game/dota: panorama/fonts/x.otf> <out .otf>
+#           a typeface the install keeps beside its packages, copied whole once it reads as one.
 #   particle <logical> <vpk .vpcf_c> <out .json>
 #           a particle system and every child under it, read into typed definitions, as one JSON file
 #           (dbota_import's particle_json); their textures as KTX2 under textures/ beside it, with their
@@ -896,10 +898,22 @@ texture hud.ult_cooldown panorama/images/hud/reborn/ult_cooldown_psd.vtex_c hud/
 texture hud.ult_no_mana panorama/images/hud/reborn/ult_no_mana_psd.vtex_c hud/ult_no_mana_psd.png
 texture hud.show_items panorama/images/control_icons/brackets_png.vtex_c hud/brackets_png.png
 texture hud.menu_scoreboard panorama/images/control_icons/hamburger_png.vtex_c hud/hamburger_png.png
-# The dashboard's top bar: the power button (#DOTAQuitButton) and the way back to a game
-# (#DOTAReturnToGameButton).
-texture menu.quit panorama/images/control_icons/quit_psd.vtex_c hud/quit_psd.png
+# The dashboard's way back to a game (#DOTAReturnToGameButton), on the HUD's menu.
 texture menu.return_to_game panorama/images/control_icons/return_to_game_png.vtex_c hud/return_to_game_png.png
+# The main menu: the top bar's Dota logo, settings cog and quit button, a window's close cross,
+# and the main menu's background for each side (the Radiant or Dire Ancient's art).
+texture menu.logo panorama/images/topbar/dota_logo_simple_psd.vtex_c menu/dota_logo_simple_psd.png
+texture menu.gear panorama/images/control_icons/gear_png.vtex_c menu/gear_png.png
+texture menu.quit panorama/images/control_icons/quit_png.vtex_c menu/quit_png.png
+texture menu.window_close panorama/images/control_icons/x_close_png.vtex_c menu/x_close_png.png
+texture menu.background.radiant panorama/images/loadingscreens/radiantancient_loadingscreen/loadingscreen_tga.vtex_c menu/radiantancient_loadingscreen.png
+texture menu.background.dire panorama/images/loadingscreens/direancient_loadingscreen/loadingscreen_tga.vtex_c menu/direancient_loadingscreen.png
+# The interface's typefaces, loose files beside the packages: Reaver for titles, Radiance for the
+# rest (its tabular figures for numbers).
+font font.display panorama/fonts/reaver-bold.otf fonts/reaver-bold.otf
+font font.bold panorama/fonts/radiance-bold.otf fonts/radiance-bold.otf
+font font.semibold panorama/fonts/radiance-semibold.otf fonts/radiance-semibold.otf
+font font.regular panorama/fonts/radiance-regular.otf fonts/radiance-regular.otf
 label resource/localization/dota_english.txt DOTA_GoodGuysCaps
 label resource/localization/dota_english.txt DOTA_BadGuysCaps
 label resource/localization/dota_english.txt DOTA_Scoreboard_Header_TalentTree

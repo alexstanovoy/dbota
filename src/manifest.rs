@@ -143,7 +143,9 @@ impl Manifest {
                     }
                 }
                 CatalogLine::File(f) if present(&f.out) => match f.kind {
-                    FileKind::Texture => manifest.files.push((f.logical.clone(), f.out.clone())),
+                    FileKind::Texture | FileKind::Font => {
+                        manifest.files.push((f.logical.clone(), f.out.clone()));
+                    }
                     FileKind::Particle => {
                         manifest.particles.push((f.logical.clone(), f.out.clone()));
                     }

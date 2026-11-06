@@ -5,10 +5,11 @@
 use bevy::prelude::*;
 
 use super::core::Act;
-use super::screens::{ERROR, GREEN, Kit, PLAIN, RED};
+use super::kit::{Kit, Tone};
 use super::view::{
     ConfirmView, FinishedRow, GameRow, MenuView, OfferBox, PasswordView, SearchRow, WaitRow,
 };
+use crate::theme::{self, Type};
 use crate::ui;
 
 /// The overlay layer.
@@ -27,8 +28,8 @@ pub fn draw(kit: &mut Kit, root: Entity, view: &MenuView) {
             // Above the play area when it shows.
             let play_area = view.game.is_some() || view.reconnect;
             Node {
-                right: px(24),
-                bottom: px(if play_area { 24.0 + 128.0 } else { 24.0 }),
+                right: px(48),
+                bottom: px(if play_area { 18.0 + 168.0 } else { 18.0 }),
                 ..default()
             }
         } else {
@@ -42,7 +43,7 @@ pub fn draw(kit: &mut Kit, root: Entity, view: &MenuView) {
             root,
             Node {
                 position_type: PositionType::Absolute,
-                width: px(340),
+                width: px(300),
                 flex_direction: FlexDirection::Column,
                 padding: UiRect::all(px(14)),
                 row_gap: px(10),
@@ -92,9 +93,9 @@ fn status_line(kit: &mut Kit, root: Entity, status: &super::core::Status) {
             ..default()
         },
     );
-    let color = if status.error { ERROR } else { ui::GOLDEN };
+    let color = if status.error { theme::ERROR_TEXT } else { theme::GOLD };
     kit.text(line, status.text.clone(), 15.0, color);
-    let dismiss = kit.button(line, "×", Act::Dismiss, PLAIN, 22.0);
+    let dismiss = kit.button(line, "×", Act::Dismiss, Tone::Secondary, 22.0);
     kit.commands
         .entity(dismiss)
         .entry::<Node>()
@@ -105,13 +106,13 @@ fn status_line(kit: &mut Kit, root: Entity, status: &super::core::Status) {
 /// a dark card with a thin edge, its title, the question, OK and Cancel.
 fn popup(kit: &mut Kit, root: Entity, confirm: &ConfirmView) {
     let card = popup_card(kit, root);
-    let ink = Color::srgb_u8(0xaf, 0xb4, 0xb4);
-    let title = kit.text(card, confirm.title, 30.0, ink);
+    let ink = theme::INK_2;
+    let title = kit.typed(card, confirm.title.to_uppercase(), theme::TITLE, theme::INK_1);
     kit.commands.entity(title).insert(Node {
         margin: UiRect::bottom(px(15)),
         ..default()
     });
-    let text = kit.text(card, confirm.text, 20.0, ink);
+    let text = kit.text(card, confirm.text, 16.0, ink);
     kit.commands
         .entity(text)
         .insert(TextLayout::justify(Justify::Center));
@@ -122,8 +123,8 @@ fn popup(kit: &mut Kit, root: Entity, confirm: &ConfirmView) {
 /// last try was told, OK and Cancel.
 fn password_popup(kit: &mut Kit, root: Entity, password: &PasswordView) {
     let card = popup_card(kit, root);
-    let ink = Color::srgb_u8(0xaf, 0xb4, 0xb4);
-    let title = kit.text(card, "Lobby Password", 30.0, ink);
+    let ink = theme::INK_2;
+    let title = kit.typed(card, "LOBBY PASSWORD", theme::TITLE, theme::INK_1);
     kit.commands.entity(title).insert(Node {
         margin: UiRect::bottom(px(15)),
         ..default()
@@ -145,7 +146,7 @@ fn password_popup(kit: &mut Kit, root: Entity, password: &PasswordView) {
     );
     super::pages::field_box(kit, column, 0, &password.field);
     if let Some(error) = &password.error {
-        let said = kit.text(card, error.clone(), 18.0, ERROR);
+        let said = kit.text(card, error.clone(), 18.0, theme::ERROR_TEXT);
         kit.commands.entity(said).insert(Node {
             margin: UiRect::top(px(10)),
             ..default()
@@ -169,7 +170,7 @@ fn popup_card(kit: &mut Kit, root: Entity) -> Entity {
                 align_items: AlignItems::Center,
                 ..ui::fill()
             },
-            BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.6)),
+            BackgroundColor(theme::scrim()),
             crate::hud::Blocker,
             Interaction::default(),
             GlobalZIndex(90),
@@ -187,12 +188,9 @@ fn popup_card(kit: &mut Kit, root: Entity) -> Entity {
                 border: UiRect::all(px(1)),
                 ..default()
             },
-            BackgroundGradient::from(LinearGradient::to_bottom(vec![
-                Color::srgba_u8(0x27, 0x2d, 0x2e, 0xee).into(),
-                Color::srgba_u8(0x13, 0x16, 0x17, 0xee).into(),
-            ])),
-            BorderColor::all(Color::srgb_u8(0x5e, 0x68, 0x69)),
-            BoxShadow::new(Color::BLACK, px(0), px(0), px(0), px(8)),
+            BackgroundColor(theme::WINDOW),
+            BorderColor::all(theme::WINDOW_EDGE),
+            theme::window_shadow(),
             Name::new("popup"),
             ChildOf(dim),
         ))
@@ -243,10 +241,14 @@ fn search_row(kit: &mut Kit, parent: Entity, search: &SearchRow, which: Option<u
             ..default()
         },
     );
-    kit.bold(left, title, 17.0, ui::INK);
-    kit.text(left, search.ruleset.clone(), 13.0, ui::INK_DIM);
-    kit.bold(head, search.waited.clone(), 22.0, ui::GOLDEN);
-    kit.button(head, "×", Act::Cancel(search.entry), RED, 30.0);
+    kit.bold(left, title, 17.0, theme::INK_1);
+    kit.text(left, search.ruleset.clone(), 13.0, theme::INK_4);
+    let clock = Type {
+        size: 22.0,
+        ..theme::NUMBER
+    };
+    kit.typed(head, search.waited.clone(), clock, theme::INK_1);
+    kit.button(head, "×", Act::Cancel(search.entry), Tone::Danger, 30.0);
     if search.position > 0 {
         kit.text(
             row,
@@ -255,11 +257,11 @@ fn search_row(kit: &mut Kit, parent: Entity, search: &SearchRow, which: Option<u
                 search.position, search.waiting
             ),
             14.0,
-            ui::INK_DIM,
+            theme::INK_4,
         );
     }
     if let Some(hint) = search.hint {
-        kit.text(row, hint, 14.0, ui::INK_DIM);
+        kit.text(row, hint, 14.0, theme::INK_4);
     }
     if search.overloaded {
         kit.text(
@@ -269,7 +271,7 @@ fn search_row(kit: &mut Kit, parent: Entity, search: &SearchRow, which: Option<u
                 search.games_waiting
             ),
             14.0,
-            ERROR,
+            theme::ERROR_TEXT,
         );
     }
 }
@@ -283,7 +285,7 @@ fn wait_row(kit: &mut Kit, parent: Entity, wait: &WaitRow) {
             ..default()
         },
     );
-    kit.bold(row, "WAITING FOR A GAME SERVER", 16.0, ui::INK);
+    kit.bold(row, "WAITING FOR A GAME SERVER", 16.0, theme::INK_1);
     let ahead = match wait.ahead {
         0 => "Starting it now".to_owned(),
         1 => "1 match ahead".to_owned(),
@@ -293,10 +295,10 @@ fn wait_row(kit: &mut Kit, parent: Entity, wait: &WaitRow) {
         row,
         format!("Match {} · {ahead}", wait.match_id.0),
         14.0,
-        ui::INK_DIM,
+        theme::INK_4,
     );
     if wait.overloaded {
-        kit.text(row, "Every game server is busy right now", 14.0, ERROR);
+        kit.text(row, "Every game server is busy right now", 14.0, theme::ERROR_TEXT);
     }
 }
 
@@ -333,12 +335,12 @@ fn match_found(kit: &mut Kit, root: Entity, offer: &OfferBox) {
     kit.commands
         .entity(card)
         .insert(BackgroundColor(Color::srgb(0.06, 0.07, 0.09)));
-    kit.bold(card, "YOUR GAME IS READY", 34.0, ui::INK);
+    kit.bold(card, "YOUR GAME IS READY", 34.0, theme::INK_1);
     let which = offer
         .which
         .as_deref()
         .map_or(String::new(), |w| format!(" · {w}"));
-    kit.text(card, format!("{}{which}", offer.ruleset), 16.0, ui::INK_DIM);
+    kit.text(card, format!("{}{which}", offer.ruleset), 16.0, theme::INK_4);
     let track = kit
         .commands
         .spawn((
@@ -348,7 +350,7 @@ fn match_found(kit: &mut Kit, root: Entity, offer: &OfferBox) {
                 border_radius: BorderRadius::all(px(4)),
                 ..default()
             },
-            BackgroundColor(ui::PANEL_DEEP),
+            BackgroundColor(theme::FIELD),
             ChildOf(card),
         ))
         .id();
@@ -359,10 +361,10 @@ fn match_found(kit: &mut Kit, root: Entity, offer: &OfferBox) {
             border_radius: BorderRadius::all(px(4)),
             ..default()
         },
-        BackgroundColor(if offer.left_secs > 5 { GREEN.1 } else { RED.1 }),
+        BackgroundColor(if offer.left_secs > 5 { theme::GO.0 } else { theme::STOP.0 }),
         ChildOf(track),
     ));
-    kit.bold(card, format!("{}", offer.left_secs), 30.0, ui::GOLDEN);
+    kit.bold(card, format!("{}", offer.left_secs), 30.0, theme::GOLD);
     let dots: String = (0..offer.of)
         .map(|i| if i < offer.accepted { '•' } else { '·' })
         .collect();
@@ -370,7 +372,7 @@ fn match_found(kit: &mut Kit, root: Entity, offer: &OfferBox) {
         card,
         format!("{dots}   {} of {} accepted", offer.accepted, offer.of),
         16.0,
-        ui::INK,
+        theme::INK_1,
     );
     let row = kit.node(
         card,
@@ -385,18 +387,18 @@ fn match_found(kit: &mut Kit, root: Entity, offer: &OfferBox) {
             row,
             "Accepted: waiting for the other players…",
             16.0,
-            ui::HP_MINE,
+            theme::RADIANT_TEXT,
         );
     } else {
-        kit.button(row, "ACCEPT", Act::Accept(offer.proposal), GREEN, 40.0);
-        kit.button(row, "DECLINE", Act::Decline(offer.proposal), RED, 40.0);
+        kit.button(row, "ACCEPT", Act::Accept(offer.proposal), Tone::Primary, 40.0);
+        kit.button(row, "DECLINE", Act::Decline(offer.proposal), Tone::Danger, 40.0);
     }
     if !offer.answered {
         kit.text(
             card,
             "Declining keeps you out of the queue for a while.",
             13.0,
-            ui::INK_DIM,
+            theme::INK_4,
         );
     }
 }
@@ -420,13 +422,13 @@ pub fn my_games(
             ..default()
         },
     );
-    kit.bold(column, "MY GAMES", 30.0, ui::INK);
+    kit.bold(column, "MY GAMES", 30.0, theme::INK_1);
     if games.is_empty() && view.searches.is_empty() && view.waits.is_empty() {
         kit.text(
             column,
             "Nothing going: find a match under PLAY.",
             16.0,
-            ui::INK_DIM,
+            theme::INK_4,
         );
     }
     for game in games {
@@ -447,16 +449,16 @@ pub fn my_games(
                 ..default()
             },
         );
-        kit.bold(label, game.label.clone(), 18.0, ui::INK);
+        kit.bold(label, game.label.clone(), 18.0, theme::INK_1);
         let state = if game.ready {
             "In progress"
         } else {
             "Starting"
         };
-        kit.text(label, state, 14.0, ui::INK_DIM);
+        kit.text(label, state, 14.0, theme::INK_4);
         if game.ready {
-            kit.button(row, "REJOIN", Act::Rejoin(game.match_id), GREEN, 38.0);
-            kit.button(row, "WATCH", Act::Watch(game.match_id), PLAIN, 38.0);
+            kit.button(row, "REJOIN", Act::Rejoin(game.match_id), Tone::Primary, 38.0);
+            kit.button(row, "WATCH", Act::Watch(game.match_id), Tone::Secondary, 38.0);
         }
     }
     for search in &view.searches {
@@ -481,7 +483,7 @@ pub fn my_games(
             label,
             format!("Searching: {}", search.ruleset),
             18.0,
-            ui::INK,
+            theme::INK_1,
         );
         kit.text(
             label,
@@ -490,12 +492,12 @@ pub fn my_games(
                 search.waited, search.position, search.waiting
             ),
             14.0,
-            ui::INK_DIM,
+            theme::INK_4,
         );
-        kit.button(row, "CANCEL", Act::Cancel(search.entry), RED, 38.0);
+        kit.button(row, "CANCEL", Act::Cancel(search.entry), Tone::Danger, 38.0);
     }
     if !finished.is_empty() {
-        kit.bold(column, "FINISHED", 20.0, ui::INK);
+        kit.bold(column, "FINISHED", 20.0, theme::INK_1);
     }
     for game in finished {
         let row = kit.panel(
@@ -516,9 +518,9 @@ pub fn my_games(
             },
         );
         let color = match game.won {
-            Some(true) => ui::HP_MINE,
-            Some(false) => ERROR,
-            None => ui::INK,
+            Some(true) => theme::RADIANT_TEXT,
+            Some(false) => theme::ERROR_TEXT,
+            None => theme::INK_1,
         };
         let title = if game.rating.is_empty() {
             game.headline.clone()
@@ -526,18 +528,18 @@ pub fn my_games(
             format!("{}  {}", game.headline, game.rating)
         };
         kit.bold(label, title, 18.0, color);
-        kit.text(label, game.detail.clone(), 14.0, ui::INK_DIM);
+        kit.text(label, game.detail.clone(), 14.0, theme::INK_4);
         if game.replay {
             kit.button(
                 row,
                 "WATCH REPLAY",
                 Act::WatchReplay(game.match_id),
-                PLAIN,
+                Tone::Secondary,
                 38.0,
             );
         }
     }
     if let Some(cooldown) = cooldown {
-        kit.text(column, cooldown, 15.0, ERROR);
+        kit.text(column, cooldown, 15.0, theme::ERROR_TEXT);
     }
 }

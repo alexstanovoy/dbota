@@ -7,12 +7,12 @@ use super::core::{GameKind, LocalRules, Page, Status};
 use super::form::FormKind;
 use super::view::{
     AudienceRow, ConfirmView, FieldView, FinishedRow, GameRow, LobbyRow, LobbyView, MemberRow,
-    MenuView, ModeRow, OfferBox, PageView, PasswordView, ResultView, RulesetRow, SearchRow,
-    SeatRow, SettingsView, SlotRow, TeamRow, WaitRow,
+    Connection, MenuView, ModeRow, OfferBox, PageView, PasswordView, ResultView, RulesetRow, SearchRow,
+    SeatRow, SettingsView, Side, SlotRow, TeamRow, WaitRow,
 };
 
 /// The names `--menu-preview` takes.
-pub const NAMES: [&str; 20] = [
+pub const NAMES: [&str; 22] = [
     "service",
     "login",
     "register",
@@ -33,6 +33,8 @@ pub const NAMES: [&str; 20] = [
     "dashboard",
     "dashboard-replay",
     "reconnect",
+    "lost",
+    "dire",
 ];
 
 fn field(label: &'static str, shown: &str, focused: bool) -> FieldView {
@@ -55,6 +57,9 @@ fn form(page: Page, kind: FormKind, fields: Vec<FieldView>) -> MenuView {
             hosted_at: None,
         },
         account: None,
+        player: "mira".to_owned(),
+        connection: Connection::Offline,
+        side: Side::Radiant,
         status: None,
         searches: Vec::new(),
         waits: Vec::new(),
@@ -74,6 +79,9 @@ fn logged_in(page: Page, body: PageView) -> MenuView {
         page,
         body,
         account: Some("alice#12".to_owned()),
+        player: "alice#12".to_owned(),
+        connection: Connection::Online("play.example.org".to_owned()),
+        side: Side::Radiant,
         status: None,
         searches: Vec::new(),
         waits: Vec::new(),
@@ -450,11 +458,22 @@ pub fn view(name: &str) -> Option<MenuView> {
             } else {
                 GameKind::Replay
             });
+            view.can_leave_game = name == "dashboard";
             view
         }
         "reconnect" => {
             let mut view = logged_in(Page::Home, home());
             view.reconnect = true;
+            view
+        }
+        "lost" => {
+            let mut view = logged_in(Page::Home, home());
+            view.connection = Connection::Lost("play.example.org".to_owned());
+            view
+        }
+        "dire" => {
+            let mut view = logged_in(Page::Home, home());
+            view.side = Side::Dire;
             view
         }
         _ => return None,
