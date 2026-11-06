@@ -443,14 +443,12 @@ fn mouse(
     // The picker alone says which unit a click is on; with none, the click is
     // for the ground at the cursor.
     let unit_of = |hit: crate::pick::Hit| hit.map(|(id, _)| id);
-    let commands =
-        core.my_standing_hero().is_some() && core.controls_selection() && core.over.is_none();
-    let live = matches!(core.source, Source::Live(_));
+    let commands = core.gives_orders();
     if buttons.just_pressed(MouseButton::Left) {
         if core.held_item.is_some() {
             return;
         }
-        if commands && live && core.aiming.is_some() {
+        if commands && core.aiming.is_some() {
             // At a tree, the click names the very tree the cursor rings.
             let at = tree
                 .0
@@ -461,12 +459,12 @@ fn mouse(
             });
             return;
         }
-        if commands && live && panels.move_armed {
+        if commands && panels.move_armed {
             panels.move_armed = false;
             core.act(Intent::MoveTo(ground));
             return;
         }
-        if commands && live && core.attack_move_armed {
+        if commands && core.attack_move_armed {
             core.attack_move_armed = false;
             // With no unit there, a rune under the cursor is attacked: destroyed, as Dota's.
             let unit = unit_of(hover.attack).or_else(|| core.rune_at(ground).map(|rune| rune.id));
@@ -475,7 +473,7 @@ fn mouse(
         }
         core.act(Intent::SelectUnit(unit_of(hover.select)));
     }
-    if buttons.just_pressed(MouseButton::Right) && commands && live {
+    if buttons.just_pressed(MouseButton::Right) && commands {
         core.attack_move_armed = false;
         panels.move_armed = false;
         core.aiming = None;

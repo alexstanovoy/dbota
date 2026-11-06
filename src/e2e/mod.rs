@@ -22,6 +22,7 @@ mod fog;
 mod fog_pov;
 mod fx;
 mod ground_items;
+mod ground_targets;
 pub(crate) mod harness;
 mod hero_fx;
 mod icons;

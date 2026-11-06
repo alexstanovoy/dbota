@@ -47,6 +47,7 @@ mod framestats;
 mod fx;
 mod gltf_file;
 mod glyph;
+mod ground_targets;
 mod heap;
 mod hud;
 mod icon_mips;
@@ -707,6 +708,7 @@ fn client_plugins(app: &mut App) {
             keys::plugin,
             scoreboard::plugin,
             postgame::plugin,
+            ground_targets::plugin,
             preload::plugin,
             warmup::plugin,
             script::plugin,
