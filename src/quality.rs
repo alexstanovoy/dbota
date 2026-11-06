@@ -34,6 +34,28 @@ pub fn plugin(app: &mut App) {
     #[cfg(not(target_arch = "wasm32"))]
     app.add_systems(Last, cap_frames);
     app.add_systems(Startup, cluster_on_cpu);
+    if !app.world().resource::<Settings>().quality.gpu_batching
+        && let Some(render) = app.get_sub_app_mut(bevy::render::RenderApp)
+    {
+        use bevy::render::{
+            RenderStartup, batching::gpu_preprocessing::GpuPreprocessingSupport, init_gpu_resource,
+        };
+        render.add_systems(
+            RenderStartup,
+            batch_on_cpu.after(init_gpu_resource::<GpuPreprocessingSupport>),
+        );
+    }
+}
+
+/// With GPU batching off the meshes' instances are built on the CPU, and the
+/// render phases must batch them so too. Bevy picks the phases' batching from
+/// what the GPU could do, not from what was asked, and drew nothing of the
+/// batches built on the CPU: the whole scene went black.
+fn batch_on_cpu(
+    mut support: ResMut<bevy::render::batching::gpu_preprocessing::GpuPreprocessingSupport>,
+) {
+    support.max_supported_mode =
+        bevy::render::batching::gpu_preprocessing::GpuPreprocessingMode::None;
 }
 
 /// Clusters the point lights on the CPU, as Bevy does where compute shaders are
