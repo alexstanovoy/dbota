@@ -102,6 +102,95 @@ fn scene(item: ItemId) -> (Server, Client, [i32; 3], [i32; 3]) {
     (server, client, base, full)
 }
 
+fn mouse_on_ground(client: &mut Client, goal: bota_proto::Vec2) {
+    client.until("cursor ray on the requested ground point", |c| {
+        let point = c
+            .screen_of((goal.x.to_f32(), goal.y.to_f32()))
+            .expect("ground on screen");
+        c.mouse(point);
+        c.world()
+            .resource::<crate::camera::CursorGround>()
+            .0
+            .is_some_and(|at| {
+                Vec2::new(at.x, -at.z).distance(Vec2::new(goal.x.to_f32(), goal.y.to_f32())) < 1.0
+            })
+    });
+}
+
+fn drop_from_inventory(client: &mut Client, slot: u8) {
+    let goal = client.me().pos + bota_proto::Vec2::from_ints(80, 0);
+    let source = client
+        .item_box(slot)
+        .and_then(|b| client.centre_of(b))
+        .expect("inventory slot");
+    client.mouse(source);
+    client.button(MouseButton::Left, ButtonState::Pressed);
+    mouse_on_ground(client, goal);
+    client.button(MouseButton::Left, ButtonState::Released);
+}
+
+#[test]
+fn ui_drop_and_pickup_restores_stats_without_creating_backpack_inactivity() {
+    // Valve's six-second inactivity rule describes backpack exits:
+    // https://www.dota2.com/700/gameplay/
+    // https://liquipedia.net/dota2/Head-up_Display#Backpack
+    let (server, mut client, base, full) = scene(ItemId::POWER_TREADS);
+    let slot = client
+        .slot_of(ItemId::POWER_TREADS)
+        .expect("Treads equipped");
+    assert_eq!(
+        slot, 0,
+        "the default Z binding activates inventory slot zero"
+    );
+    let normal_icon = icon(&mut client, slot).expect("Treads icon");
+    drop_from_inventory(&mut client, slot);
+    client.until("dropped Treads remove server and HUD stats", |c| {
+        c.slot_of(ItemId::POWER_TREADS).is_none()
+            && attributes_of(c) == base
+            && displayed_attributes(c) == Some(base.map(|n| n.to_string()))
+    });
+    let ground = client
+        .view()
+        .loot
+        .iter()
+        .find(|i| i.item == ItemId::POWER_TREADS)
+        .expect("dropped Treads")
+        .pos;
+    mouse_on_ground(&mut client, ground);
+    client.click(MouseButton::Right);
+    client.until("Treads picked back into inventory", |c| {
+        c.slot_of(ItemId::POWER_TREADS) == Some(slot)
+    });
+    server.frozen(|| {
+        client.frames(2);
+        let item = client.me().items[usize::from(slot)].expect("picked up Treads");
+        assert_eq!(
+            item.mute_left, 0,
+            "a ground pickup creates no backpack inactivity"
+        );
+        assert_eq!(item.cooldown_left, 0, "the unused active remains ready");
+        assert_eq!(
+            attributes_of(&client),
+            full,
+            "stats return on the pickup snapshot"
+        );
+        assert_eq!(
+            displayed_attributes(&mut client),
+            Some(full.map(|n| n.to_string())),
+            "HUD stats return immediately too"
+        );
+        assert_eq!(icon(&mut client, slot), Some(normal_icon));
+    });
+    let mode = client.me().items[usize::from(slot)].expect("Treads").mode;
+    client.key(KeyCode::KeyZ, ButtonState::Pressed);
+    client.key(KeyCode::KeyZ, ButtonState::Released);
+    client.within(
+        Duration::from_secs(10),
+        "picked up Treads can be used immediately",
+        |c| c.me().items[usize::from(slot)].is_some_and(|i| i.mode != mode),
+    );
+}
+
 fn trace_after_return(client: &mut Client, item: ItemId, slot: u8, expected: [i32; 3]) {
     let returned = client.tick();
     client.within(
