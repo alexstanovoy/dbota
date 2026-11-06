@@ -1353,6 +1353,8 @@ pub(crate) mod tests {
             cast_rates: None,
             lit_for: None,
             gathering: None,
+            forced: None,
+            channel: None,
             seen_by: None,
             attack_range: fixed(150),
             attack_time: 1700,
@@ -1377,7 +1379,7 @@ pub(crate) mod tests {
     }
 
     /// A replay of one snapshot that shows `heroes` heroes of no seat.
-    fn replay_of_heroes(heroes: u32) -> Vec<u8> {
+    pub(crate) fn replay_of_heroes(heroes: u32) -> Vec<u8> {
         replay_of_heroes_on_grid(heroes, 1)
     }
 
@@ -1454,6 +1456,7 @@ pub(crate) mod tests {
             planted_trees: Vec::new(),
             runes: Vec::new(),
             pools: Vec::new(),
+            lairs: Vec::new(),
         };
         [
             ReplayRecord::Header(ReplayHeader::new(bota_core::WIRE_FINGERPRINT)),

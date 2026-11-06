@@ -463,7 +463,10 @@ fn load(mut bindings: ResMut<Bindings>, manifest: Res<Manifest>, server: Res<Ass
     .chain(Row::all().into_iter().map(Kind::Row));
     for kind in kinds {
         let groups = sources_of(kind, &manifest);
-        let own_hero_only = groups.iter().flatten().any(|name| manifest.own_hero_sounds.contains(name));
+        let own_hero_only = groups
+            .iter()
+            .flatten()
+            .any(|name| manifest.own_hero_sounds.contains(name));
         let name = groups
             .iter()
             .flatten()

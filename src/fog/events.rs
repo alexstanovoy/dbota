@@ -306,10 +306,109 @@ impl EventSight<'_> {
                         .is_some_and(|before| before.pos == at && self.allows_unit(before)),
                 }
             }
+            // A global announcement grants no hidden position to particles or spatial sound.
+            EventKind::BossFell { .. }
+            | EventKind::BossRoared { .. }
+            | EventKind::ItemDestroyed { .. }
+            | EventKind::ItemTaken { .. }
+            | EventKind::ItemPlaced { .. } => self.placement(subject, true),
             EventKind::StructureDestroyed { .. }
             | EventKind::Captured { .. }
             | EventKind::ShrineActivated { .. }
             | EventKind::Teleported { .. } => shown(true),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bevy::ecs::system::RunSystemOnce;
+    use bota_client_core::{ReplayPlayer, Source};
+    use bota_proto::{ItemId, ObjectiveKind, ServerMsg, SlotId, Team};
+
+    #[test]
+    fn public_boss_and_loot_announcements_do_not_grant_hidden_positional_effects() {
+        let hidden = Vec2::from_ints(5000, 5000);
+        let visible = Vec2::from_ints(16, 16);
+        for viewer in [None, Some(Team::Radiant)] {
+            let replay = ReplayPlayer::from_reader(std::io::Cursor::new(
+                crate::units::tests::replay_of_heroes(0),
+            ));
+            let mut core = Core::new(Source::Replay(Box::new(replay)));
+            for _ in 0..100 {
+                if core.view().is_some() {
+                    break;
+                }
+                core.pump(0.1);
+            }
+            let mut view = core.view().expect("the real replay snapshot folds").clone();
+            view.tick += 1;
+            view.viewer = viewer;
+            core.handle(ServerMsg::Snapshot { view });
+            assert_eq!(
+                core.view().expect("the perspective snapshot folds").viewer,
+                viewer
+            );
+            let mut app = App::new();
+            app.insert_non_send(Session(core))
+                .insert_resource(FogGrid::with_seen_cells(256, &[0]))
+                .insert_resource(crate::fog::ProjectileSight {
+                    stamp: None,
+                    rows: Vec::new(),
+                })
+                .init_resource::<crate::main_menu::GameEpoch>();
+            let events = [
+                EventKind::BossFell {
+                    objective: ObjectiveKind::Roshan,
+                    team: Some(Team::Dire),
+                },
+                EventKind::BossRoared {
+                    objective: ObjectiveKind::Roshan,
+                    team: Team::Dire,
+                },
+                EventKind::ItemTaken {
+                    item: ItemId::AEGIS,
+                    by: SlotId(0),
+                    team: Team::Radiant,
+                },
+                EventKind::ItemDestroyed {
+                    item: ItemId::AEGIS,
+                    by: Some(SlotId(0)),
+                    team: Team::Radiant,
+                },
+                EventKind::ItemPlaced {
+                    item: ItemId::ROSHANS_BANNER,
+                    team: Team::Dire,
+                    at: hidden,
+                },
+            ];
+            let checks = app
+                .world_mut()
+                .run_system_once(move |sight: EventSight| {
+                    events
+                        .iter()
+                        .map(|event| {
+                            (
+                                sight.allows(event, EventSubject::Event),
+                                sight.allows(event, EventSubject::Point(hidden)),
+                                sight.allows(event, EventSubject::Point(visible)),
+                            )
+                        })
+                        .collect::<Vec<_>>()
+                })
+                .expect("the actual event visibility system runs");
+            for (index, (announcement, hidden, visible)) in checks.into_iter().enumerate() {
+                assert!(
+                    announcement,
+                    "global announcement {index}, viewer={viewer:?}"
+                );
+                assert!(!hidden, "hidden position {index}, viewer={viewer:?}");
+                assert!(
+                    visible,
+                    "visible position control {index}, viewer={viewer:?}"
+                );
+            }
         }
     }
 }

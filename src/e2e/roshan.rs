@@ -1140,9 +1140,9 @@ fn an_illusion_cannot_drop_a_copied_banner_as_real_ground_loot() {
         .view()
         .runes
         .iter()
+        .copied()
         .find(|r| r.kind == RuneKind::Illusion)
-        .expect("visible rune")
-        .clone();
+        .expect("visible rune");
     client.core_mut().send_order(bota_proto::Order::Take {
         target: bota_proto::Target::Unit(rune.id),
     });
