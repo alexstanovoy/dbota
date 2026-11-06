@@ -1082,11 +1082,20 @@ impl MenuCore {
         }
     }
 
-    fn send(&mut self, msg: ClientMsg, asked: Asked) {
+    fn send(&mut self, mut msg: ClientMsg, asked: Asked) {
         let Some(client) = &mut self.client else {
             self.tell("Not connected to the service".to_owned(), true);
             return;
         };
+        // Resolve this after login/resume too: queued requests may outlive a connection.
+        if let ClientMsg::QueueJoinAudiences { audiences, .. } = &mut msg
+            && client
+                .me()
+                .is_some_and(|account| account.kind == AccountKind::Bot)
+        {
+            audiences.clear();
+            audiences.push(Audience::Everyone);
+        }
         match client.request(msg) {
             Ok(seq) => {
                 if self.asked.len() >= MAX_ASKED {

@@ -627,6 +627,79 @@ fn allowing_matchmaking_with_bots_is_a_drawn_switch() {
     accept_matchmaking_with_bot(&mut client, &mut bot, &service);
 }
 
+#[test]
+fn a_bot_account_finds_matches_only_in_everyone_with_either_switch_setting() {
+    let service = crate::main_menu::tests::service();
+    let mut client = signed_up(&service, "viewer");
+    act(&mut client, Act::Logout);
+    client.within(Duration::from_secs(120), "the login page", |client| {
+        client.world().non_send::<MenuCore>().page() == Page::Login
+    });
+    let tls = bota_radovid::Tls::trust_pem(&service.pem).expect("certificate");
+    let mut bot = bota_radovid::Client::open(&service.url, &tls).expect("registration connection");
+    let seq = bot
+        .register(
+            "bot",
+            crate::main_menu::tests::PASSWORD,
+            bota_radovid::AccountKind::Bot,
+            Some("fixture".into()),
+        )
+        .expect("register bot");
+    matchmaking_reply(&mut bot, seq);
+    act(&mut client, Act::Focus(0));
+    for _ in 0.."viewer".chars().count() {
+        act(&mut client, Act::Erase);
+    }
+    act(&mut client, Act::Type("bot".into()));
+    act(&mut client, Act::Focus(1));
+    act(
+        &mut client,
+        Act::Type(crate::main_menu::tests::PASSWORD.into()),
+    );
+    act(&mut client, Act::Submit);
+    client.within(
+        Duration::from_secs(120),
+        "the bot account signed in",
+        |client| client.world().non_send::<MenuCore>().page() == Page::Home,
+    );
+    for allow_bots in [false, true] {
+        if allow_bots {
+            click_menu_button(&mut client, "allow matchmaking with bots");
+        }
+        click_menu_button(&mut client, "find match");
+        client.within(
+            Duration::from_secs(120),
+            "the queue request answered",
+            |client| {
+                let view = client.world().non_send::<MenuCore>().view();
+                !view.searches.is_empty() || view.status.as_ref().is_some_and(|status| status.error)
+            },
+        );
+        let snapshot = matchmaking_snapshot(&service, "bot");
+        assert_eq!(
+            snapshot.queued.len(),
+            1,
+            "bot admission with allow_bots={allow_bots}: {:?}",
+            client.shown_texts()
+        );
+        assert_eq!(
+            snapshot.queued[0].audience,
+            bota_radovid::Audience::Everyone
+        );
+        act(&mut client, Act::Go(Page::MyGames));
+        click_menu_button(&mut client, "cancel");
+        client.within(Duration::from_secs(120), "the search cancelled", |client| {
+            client
+                .world()
+                .non_send::<MenuCore>()
+                .view()
+                .searches
+                .is_empty()
+        });
+        act(&mut client, Act::Go(Page::Home));
+    }
+}
+
 fn waiting_matchmaking_bot(service: &crate::main_menu::tests::Service) -> bota_radovid::Client {
     let tls = bota_radovid::Tls::trust_pem(&service.pem).expect("service certificate");
     let mut bot = bota_radovid::Client::open(&service.url, &tls).expect("bot connection");
