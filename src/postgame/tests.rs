@@ -352,3 +352,52 @@ fn a_game_of_the_service_shows_the_fetched_file_or_the_final_numbers_when_there_
         }
     }
 }
+
+/// A metadata file is someone else's (a replay's tail, or the service's): it is read whole but
+/// says only what a match can. Seats past a match's, a seat named again and samples past the
+/// longest match are left out, so the screen's rows and graph points stay as few as a match has.
+#[test]
+fn a_file_of_more_seats_and_samples_than_a_match_has_is_cut_to_a_match() {
+    use bota_replay::meta::{Meta, MetaHeader, MetaRecord, stat};
+    let header = MetaHeader {
+        magic: MetaHeader::MAGIC,
+        schema: 2,
+        wire_fingerprint: 1,
+        rules_version: 1,
+        match_id: 1,
+        map: 2,
+        tick_rate: 30,
+        pregame_ticks: 900,
+        catalogue_items: 0,
+        catalogue_digest: 0,
+    };
+    let seat = |slot: u8| MetaRecord::Seat {
+        slot,
+        team: slot % 2,
+        hero: 3,
+    };
+    let mut records: Vec<MetaRecord> = (0..=255).chain([0, 0]).map(seat).collect();
+    let sample = |slot: u8, minute: u32| MetaRecord::Sample {
+        tick: 900 + minute * 1800,
+        slot,
+        stats: vec![(stat::NET_WORTH, i64::from(minute))],
+    };
+    records.extend((0..=255).map(|slot| sample(slot, 0)));
+    records.extend((1..100_000).map(|minute| sample(0, minute)));
+    let meta = Meta {
+        header,
+        records,
+        skipped: 0,
+        complete: false,
+    };
+
+    let summary = MatchSummary::from_meta(&meta).expect("a summary");
+
+    let longest = bota_replay::limits::MAX_MINUTES as usize;
+    assert_eq!(summary.rows.len(), bota_proto::limits::MAX_SEATS);
+    assert_eq!(
+        summary.points.len(),
+        longest + 1,
+        "minute 0 to the longest's last"
+    );
+}

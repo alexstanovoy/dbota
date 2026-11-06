@@ -94,19 +94,30 @@ struct Seat<'a> {
     items: Option<&'a [Option<u16>]>,
 }
 
+/// The seats of a file, as many as a match has, each with as many samples as the longest match
+/// has (one a minute from minute 0, and the end): the file is someone else's (a replay's tail,
+/// or the service's), and its records are only bounded by its length.
 fn seats(meta: &Meta) -> Vec<Seat<'_>> {
+    let most_samples = bota_replay::limits::MAX_MINUTES as usize + 2;
     let mut seats: Vec<Seat> = Vec::new();
     for record in &meta.records {
         match record {
-            MetaRecord::Seat { slot, team, hero } => seats.push(Seat {
-                slot: *slot,
-                team: *team,
-                hero: *hero,
-                samples: Vec::new(),
-                items: None,
-            }),
+            MetaRecord::Seat { slot, team, hero }
+                if seats.len() < bota_proto::limits::MAX_SEATS
+                    && seats.iter().all(|s| s.slot != *slot) =>
+            {
+                seats.push(Seat {
+                    slot: *slot,
+                    team: *team,
+                    hero: *hero,
+                    samples: Vec::new(),
+                    items: None,
+                });
+            }
             MetaRecord::Sample { slot, stats, .. } => {
-                if let Some(seat) = seats.iter_mut().find(|s| s.slot == *slot) {
+                if let Some(seat) = seats.iter_mut().find(|s| s.slot == *slot)
+                    && seat.samples.len() < most_samples
+                {
                     seat.samples.push(stats);
                 }
             }
