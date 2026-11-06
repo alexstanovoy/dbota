@@ -527,14 +527,7 @@ fn quick_row(
     mut hint: Single<&mut Visibility, With<QuickHint>>,
 ) {
     let core = &session.0;
-    let items: Vec<u16> = core.quick_buy.map_or_else(Vec::new, |id| {
-        let missing: Vec<u16> = core.missing_for(id).iter().map(|p| p.0).collect();
-        if missing.is_empty() {
-            vec![id]
-        } else {
-            missing
-        }
-    });
+    let items = core.quick_buy_parts().to_vec();
     if last.as_ref() == Some(&items) {
         return;
     }

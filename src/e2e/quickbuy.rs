@@ -31,7 +31,7 @@ fn quickbuy_is_gold_only_when_current_gold_and_stock_allow_purchase_even_away_fr
         !client.core().at_home_shop(),
         "base items can be bought remotely into the stash"
     );
-    client.core_mut().quick_buy = Some(ItemId::BOOTS.0);
+    client.core_mut().set_quick_buy(ItemId::BOOTS.0, false);
     client.cheat(Cheat::Gold { amount: -100000 });
     client.frames(3);
     assert_ne!(
@@ -47,7 +47,9 @@ fn quickbuy_is_gold_only_when_current_gold_and_stock_allow_purchase_even_away_fr
         "affordable base items are gold away from the base"
     );
     client.stand_at((home.x.to_int(), home.y.to_int()));
-    client.core_mut().quick_buy = Some(ItemId::OBSERVER_WARD.0);
+    client
+        .core_mut()
+        .set_quick_buy(ItemId::OBSERVER_WARD.0, false);
     client.frames(3);
     assert_eq!(
         border(&mut client, ItemId::OBSERVER_WARD),
@@ -55,7 +57,9 @@ fn quickbuy_is_gold_only_when_current_gold_and_stock_allow_purchase_even_away_fr
         "a stocked ward can be bought"
     );
     exhaust_ward_stock(&mut client);
-    client.core_mut().quick_buy = Some(ItemId::OBSERVER_WARD.0);
+    client
+        .core_mut()
+        .set_quick_buy(ItemId::OBSERVER_WARD.0, false);
     client.frames(3);
     assert_eq!(
         client
@@ -79,7 +83,7 @@ fn quickbuy_secret_components_turn_gold_only_with_a_hero_or_courier_at_the_shop(
         let mut client = Client::join(&server, HeroId::SHADOW_FIEND, &[]);
         client.cheat(Cheat::Gold { amount: 100000 });
         client.cheat(Cheat::Invulnerable { on: true });
-        client.core_mut().quick_buy = Some(ItemId::DEMON_EDGE.0);
+        client.core_mut().set_quick_buy(ItemId::DEMON_EDGE.0, false);
         client.frames(3);
         if map == "1" {
             assert_eq!(
@@ -148,7 +152,7 @@ fn quickbuy_requires_a_free_berth_for_an_affordable_base_item() {
         });
     }
     assert_eq!(stash_count(&client), 6);
-    client.core_mut().quick_buy = Some(ItemId::BOOTS.0);
+    client.core_mut().set_quick_buy(ItemId::BOOTS.0, false);
     client.frames(3);
     assert_ne!(
         border(&mut client, ItemId::BOOTS),
@@ -181,7 +185,7 @@ fn stash_count(client: &Client) -> usize {
 fn quickbuy_keeps_the_shared_hover_and_chosen_frames() {
     let server = Server::start(1, &[]);
     let mut client = Client::join(&server, HeroId::SHADOW_FIEND, &[]);
-    client.core_mut().quick_buy = Some(ItemId::BOOTS.0);
+    client.core_mut().set_quick_buy(ItemId::BOOTS.0, false);
     client
         .world_mut()
         .resource_mut::<crate::input::Panels>()

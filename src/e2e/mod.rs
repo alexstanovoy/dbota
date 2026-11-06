@@ -43,6 +43,7 @@ mod rune_lifecycle;
 mod runes;
 mod secret_shop;
 mod sentry_ward;
+mod shop_queue;
 mod shopkeepers;
 mod slot_looks;
 mod sound_limits;

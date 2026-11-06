@@ -1,7 +1,7 @@
 //! What clicks in the shop do, as Dota's: a left click on an item chooses it
 //! (its build tree shows at the panel's foot), a second one on it soon after
 //! buys it, and a right click buys it, as does Enter in the search box; a
-//! shift-click makes it the quick-buy item (again: no quick-buy item); an
+//! shift-click replaces Quickbuy and Ctrl+Shift appends; an
 //! item dropped on the panel's foot is sold. In the tactical phase what is
 //! bought is chosen for the match's start.
 
@@ -92,11 +92,8 @@ fn cells(
     let now = time.elapsed_secs();
     let again = last_left.is_some_and(|(was, at)| was == id && now - at <= DOUBLE_CLICK);
     if left && shift {
-        core.quick_buy = if core.quick_buy == Some(id) {
-            None
-        } else {
-            Some(id)
-        };
+        let append = keys.any_pressed([KeyCode::ControlLeft, KeyCode::ControlRight]);
+        core.set_quick_buy(id, append);
         return;
     }
     if left {

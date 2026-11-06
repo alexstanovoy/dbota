@@ -334,7 +334,7 @@ fn sources_of(kind: Kind, manifest: &Manifest) -> Vec<String> {
             // A hero's own, sounded through its rows.
             CueKind::Attack | CueKind::Hit | CueKind::HeroDeath => vec![],
             // Each reason has its own sound (Kind::Denied).
-            CueKind::Refused(_) | CueKind::Undeniable(_) => vec![],
+            CueKind::Refused(_) | CueKind::Undeniable(_) | CueKind::QuickBuyFull => vec![],
         },
         Kind::Denied(deny) => named(deny.logical()),
         Kind::Row(row) => row.name(manifest).into_iter().collect(),
@@ -475,7 +475,7 @@ impl Sounder<'_, '_, '_> {
                         self.sound(Kind::Denied(told.sound), cue.gain, None, None);
                     }
                 }
-                CueKind::Undeniable(_) => {
+                CueKind::Undeniable(_) | CueKind::QuickBuyFull => {
                     self.sound(
                         Kind::Denied(crate::error_msg::Deny::General),
                         cue.gain,

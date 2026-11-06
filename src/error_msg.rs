@@ -104,6 +104,7 @@ pub fn told(reason: RejectReason) -> Option<Told> {
 /// words.
 pub fn line(refused: &Refused, texts: &Texts) -> Option<String> {
     match refused {
+        Refused::QuickBuyFull => Some("Quickbuy is full".to_string()),
         Refused::Rule(reason) => {
             let told = told(*reason)?;
             Some(
@@ -142,6 +143,7 @@ fn undeniable_words(why: Undeniable) -> &'static str {
 /// A refusal in plain words, for the log.
 pub fn plain(refused: &Refused) -> String {
     match refused {
+        Refused::QuickBuyFull => "quickbuy is full".to_string(),
         Refused::Rule(reason) => plain_words(*reason).to_string(),
         Refused::Undeniable(why) => undeniable_words(*why).to_string(),
         Refused::Command(error) => console_words(error),
