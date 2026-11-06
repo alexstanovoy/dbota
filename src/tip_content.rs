@@ -136,6 +136,8 @@ pub enum Rank {
 pub struct Lookup<'a> {
     pub texts: &'a Texts,
     pub manifest: &'a Manifest,
+    /// What the cooldowns and mana costs shown come to for the unit the tooltip is about.
+    pub rates: tip_numbers::Rates,
 }
 
 impl Lookup<'_> {
@@ -257,8 +259,11 @@ impl Lookup<'_> {
         current: Option<usize>,
     ) {
         let rows = [
-            (CostIcon::Cooldown, tip_numbers::cooldown(subject)),
-            (CostIcon::Mana, tip_numbers::mana(subject)),
+            (
+                CostIcon::Cooldown,
+                tip_numbers::cooldown_under(subject, self.rates),
+            ),
+            (CostIcon::Mana, tip_numbers::mana_under(subject, self.rates)),
             (
                 CostIcon::Health,
                 if health > 0 {

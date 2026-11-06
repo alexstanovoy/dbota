@@ -322,6 +322,7 @@ fn draw(
     let look = crate::tip_content::Lookup {
         texts: &texts,
         manifest: &manifest,
+        rates: Default::default(),
     };
     let found: Vec<u16> = catalog
         .search(&look, &panel.search)

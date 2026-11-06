@@ -571,6 +571,7 @@ fn results(
     let look = Lookup {
         texts: &texts,
         manifest: &manifest,
+        rates: Default::default(),
     };
     let found = catalog.search(&look, &panels.search);
     commands.entity(*grid).despawn_children();

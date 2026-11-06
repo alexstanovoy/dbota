@@ -5,6 +5,7 @@
 
 mod ambient;
 mod anim;
+mod arcane_tips;
 mod bars;
 mod buffs;
 mod camera;

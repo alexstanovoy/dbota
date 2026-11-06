@@ -144,6 +144,7 @@ fn typing(
     let look = crate::tip_content::Lookup {
         texts: &texts,
         manifest: &manifest,
+        rates: Default::default(),
     };
     for event in events.read() {
         if event.state != ButtonState::Pressed {

@@ -31,23 +31,73 @@ pub fn value(subject: Subject, key: &str) -> Option<Levels> {
     }
 }
 
-/// The wait after a use, per level.
-pub fn cooldown(subject: Subject) -> Levels {
-    match subject {
-        Subject::Item(def) => collapse(&[secs(def.cooldown)]),
-        Subject::Ability(_, def) => {
-            collapse(&def.cooldown.iter().map(|t| secs(*t)).collect::<Vec<_>>())
+/// How much a unit's cooldowns and mana costs come to, in basis points of the table's, as its
+/// view tells them (`UnitView::cast_rates`); the table's own when it tells none.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Rates {
+    pub cooldown_bp: i32,
+    pub mana_bp: i32,
+}
+
+impl Default for Rates {
+    fn default() -> Rates {
+        Rates {
+            cooldown_bp: rules::NOMINAL_BP,
+            mana_bp: rules::NOMINAL_BP,
         }
     }
 }
 
-/// The mana a use costs, per level.
-pub fn mana(subject: Subject) -> Levels {
+impl Rates {
+    /// The rates a unit's view tells.
+    pub fn of_view(unit: &bota_proto::UnitView) -> Rates {
+        unit.cast_rates
+            .map_or_else(Rates::default, |(cooldown_bp, mana_bp)| Rates {
+                cooldown_bp,
+                mana_bp,
+            })
+    }
+}
+
+/// The wait after a use, per level, as the table has it.
+pub fn cooldown(subject: Subject) -> Levels {
+    cooldown_under(subject, Rates::default())
+}
+
+/// The wait after a use, per level, under `rates`.
+pub fn cooldown_under(subject: Subject, rates: Rates) -> Levels {
     match subject {
-        Subject::Item(def) => collapse(&[def.mana_cost.to_string()]),
-        Subject::Ability(_, def) => {
-            collapse(&def.mana.iter().map(i32::to_string).collect::<Vec<_>>())
+        Subject::Item(def) => collapse(&[secs(bota_core::cooldown_after(
+            def.cooldown,
+            rates.cooldown_bp,
+        ))]),
+        Subject::Ability(_, def) => collapse(
+            &def.cooldown
+                .iter()
+                .map(|t| secs(bota_core::cooldown_after(*t, rates.cooldown_bp)))
+                .collect::<Vec<_>>(),
+        ),
+    }
+}
+
+/// The mana a use costs, per level, as the table has it.
+#[cfg(test)]
+pub fn mana(subject: Subject) -> Levels {
+    mana_under(subject, Rates::default())
+}
+
+/// The mana a use costs, per level, under `rates`.
+pub fn mana_under(subject: Subject, rates: Rates) -> Levels {
+    match subject {
+        Subject::Item(def) => {
+            collapse(&[bota_core::cost_after(def.mana_cost, rates.mana_bp).to_string()])
         }
+        Subject::Ability(_, def) => collapse(
+            &def.mana
+                .iter()
+                .map(|m| bota_core::cost_after(*m, rates.mana_bp).to_string())
+                .collect::<Vec<_>>(),
+        ),
     }
 }
 

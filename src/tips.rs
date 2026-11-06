@@ -169,9 +169,15 @@ fn pick(
 ) {
     let core = &session.0;
     let rate = u32::from(core.tick_rate().max(1));
+    // The numbers of the unit the tooltip is about: what shortens its cooldowns and costs (an Arcane Rune) shortens what it shows.
+    let rates = core
+        .commanded()
+        .and_then(|id| core.view()?.unit(id))
+        .map_or_else(Default::default, crate::tip_numbers::Rates::of_view);
     let look = Lookup {
         texts: &texts,
         manifest: &manifest,
+        rates,
     };
     let buff = buffs
         .iter()

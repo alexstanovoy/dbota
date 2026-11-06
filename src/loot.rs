@@ -225,6 +225,7 @@ fn name_hovered(
     let look = Lookup {
         texts: &texts,
         manifest: &manifest,
+        rates: Default::default(),
     };
     let name = hovered.and_then(|l| look.item_name(l.item.0));
     let (Some(name), Some(at)) = (name, window.cursor_position()) else {

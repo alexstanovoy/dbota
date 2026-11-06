@@ -503,7 +503,7 @@ fn heard(client: &Client, logical: &str) -> u32 {
 }
 
 /// The runs of text shown (a tooltip's lines, the chat log's), a span each.
-fn shown_spans(client: &mut Client) -> Vec<String> {
+pub(super) fn shown_spans(client: &mut Client) -> Vec<String> {
     let world = client.world_mut();
     let shown: Vec<Entity> = world
         .query::<(Entity, &Text, &InheritedVisibility)>()
