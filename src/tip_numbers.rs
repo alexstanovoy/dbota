@@ -158,6 +158,9 @@ fn item_value(def: &ItemDef, key: &str) -> Option<Levels> {
         "movement_speed" => one(c.lace_speed),
         "bonus_evasion" => one(percent(c.evasion)),
         "bonus_max_mana_percentage" => one(c.mana_pct),
+        "bonus_magical_armor" | "tooltip_resist" => {
+            one(plain(f64::from(c.magic_resist_bp) / 100.0))
+        }
         "melee_attack_range" => one(c.melee_range),
         "bonus_stat" => one(def.mode_bonus),
         "bonus_chance" => one(percent(c.pierce)),

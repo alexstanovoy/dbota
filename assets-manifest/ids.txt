@@ -92,6 +92,8 @@ item 76 relic
 item 77 reaver
 item 78 mystic_staff
 item 79 ultimate_orb
+item 80 shawl
+item 81 cloak
 ability 0 pudge_meat_hook
 ability 1 pudge_rot
 ability 2 pudge_innate_graft_flesh
