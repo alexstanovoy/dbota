@@ -79,3 +79,49 @@ fn a_fallen_tower_is_swapped_for_its_destruction_model_and_collapses_before_it_i
         falling(c, tower.id).is_none()
     });
 }
+
+/// A falling tower stays posed with the camera 4000 away, past the reach a standing one is posed
+/// within: its collapse flings debris far past that box (the Dire ancient's 1300 and more).
+#[test]
+fn a_falling_tower_is_posed_with_the_camera_past_a_standing_ones_reach() {
+    let server = Server::start(1, &["--map", "0", "--tick-rate", "600"]);
+    let mut client = Client::join(&server, HeroId::SHADOW_FIEND, &[]);
+    client.cheat(Cheat::StartGame);
+    client.cheat(Cheat::Invulnerable { on: true });
+    client.cheat(Cheat::Levels { count: 24 });
+    let mine = client.me().team;
+    let tower = client
+        .view()
+        .units
+        .iter()
+        .filter(|u| u.kind == UnitKind::Tower && u.team != mine)
+        .min_by_key(|u| (u.pos.x.to_int() - 9740).abs() + (u.pos.y.to_int() - 9868).abs())
+        .expect("an enemy tower")
+        .clone();
+    client.stand_at((tower.pos.x.to_int() - 300, tower.pos.y.to_int()));
+    client.core_mut().send_order_to(
+        None,
+        Order::Attack {
+            target: Target::Unit(tower.id),
+        },
+    );
+    client.until("the tower falling", |c| falling(c, tower.id).is_some());
+    client.core_mut().pinned = None;
+    let world = client.world_mut();
+    let mut camera = world.query::<&mut crate::camera::RtsCamera>();
+    let (x, y) = (tower.pos.x.to_f32(), tower.pos.y.to_f32());
+    camera.single_mut(world).expect("the game's camera").focus = Vec3::new(x - 4000.0, 0.0, -y);
+    client.frames(10);
+    let world = client.world_mut();
+    let rig = world
+        .query::<(&Unit, &crate::units::Rig)>()
+        .iter(world)
+        .find(|(unit, _)| unit.id == tower.id)
+        .map(|(_, rig)| rig.0)
+        .expect("the falling tower's rig");
+    assert!(falling(&mut client, tower.id).is_some(), "still falling");
+    assert!(
+        client.world().get::<AnimationGraphHandle>(rig).is_some(),
+        "its collapse is posed"
+    );
+}

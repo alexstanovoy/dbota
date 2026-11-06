@@ -39,13 +39,19 @@ const LOOPS_BEFORE_RARE: u32 = 4;
 const RUN_PACE: f32 = 300.0;
 /// World units a second above which a unit counts as running.
 const RUNNING: f32 = 25.0;
-/// World units either side of its feet any unit's model may reach, posed: the widest
-/// one's bind pose (a tower falling apart, 564) and room for its clips to swing
-/// wider (`every_posed_model_fits_the_box_it_is_posed_by` measures the cache's).
+/// World units either side of its feet a living unit's model may reach: the
+/// widest bind pose in the cache (a Lotus Pool, 430) and room for its clips to
+/// swing past it. `every_posed_model_fits_the_box_it_is_posed_by` measures the
+/// bind poses; that the clips stay within a quarter more is assumed, not
+/// measured. A dying unit is always posed: the destruction models' clips
+/// fling their debris far past any such box.
 pub(crate) const MODEL_REACH: f32 = 800.0;
-/// World units over its feet any unit's model may reach, posed: the tallest
-/// one's bind pose (an ancient falling, 549) and room for its clips.
+/// World units over its feet a living unit's model may reach: the tallest bind
+/// pose (a Divine Sentinel's cube, 484) and room for its clips.
 pub(crate) const MODEL_HEIGHT: f32 = 800.0;
+/// World units under its feet a living unit's model may reach: the deepest
+/// bind pose (a Divine Sentinel, 199) and room for its clips.
+pub(crate) const MODEL_DEPTH: f32 = 300.0;
 /// World units a posed unit's box is grown by before it is let go: a unit
 /// standing at the edge of what is posed is not posed and let go frame after
 /// frame (each a change of its components).
@@ -274,8 +280,9 @@ fn animate(
         let from = clip(pose.clip).map(|c| c.1);
         // A unit whose model could not be in the view nor throw its shadow
         // into it is not posed. Its clip and time still follow the
-        // simulation, so it is posed right the frame it comes near.
-        let near = in_reach(&frustum, at.translation, posed, shadow);
+        // simulation, so it is posed right the frame it comes near. A dying
+        // one always is: its fall may reach anywhere near.
+        let near = dying.is_some() || in_reach(&frustum, at.translation, posed, shadow);
         let graph = bank.0[model].graph.as_ref();
         if near != posed && (graph.is_some() || !near) {
             let graph = graph.filter(|_| near);
@@ -364,7 +371,7 @@ fn in_reach(
 ) -> bool {
     let grow = if posed { LET_GO_MARGIN } else { 0.0 };
     let feet = Vec3A::from(feet);
-    let low = feet - Vec3A::new(MODEL_REACH + grow, grow, MODEL_REACH + grow);
+    let low = feet - Vec3A::new(MODEL_REACH + grow, MODEL_DEPTH + grow, MODEL_REACH + grow);
     let high = feet + Vec3A::new(MODEL_REACH + grow, MODEL_HEIGHT + grow, MODEL_REACH + grow);
     let model = bevy::camera::primitives::Aabb::from_min_max(low.into(), high.into());
     frustum.intersects_obb_identity(&model)

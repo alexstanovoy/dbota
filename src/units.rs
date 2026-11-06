@@ -1245,7 +1245,7 @@ fn bind_wearables(
 
 /// The model a fallen unit's model is swapped for, by the manifest's naming: `tower.dire.model`
 /// falls apart as `tower.dire.destruction` (Dota's baked destruction models).
-fn destruction_name(model: &str) -> Option<String> {
+pub(crate) fn destruction_name(model: &str) -> Option<String> {
     Some(format!("{}.destruction", model.strip_suffix(".model")?))
 }
 
