@@ -150,7 +150,7 @@ fn item_value(def: &ItemDef, key: &str) -> Option<Levels> {
         "bonus_armor" => one(fixed(c.armor)),
         "bonus_health" => one(c.hp),
         "bonus_mana" => one(c.mana),
-        "bonus_health_regen" | "hp_regen" => one(per_second(c.hp_regen)),
+        "bonus_health_regen" | "bonus_regen" | "hp_regen" => one(per_second(c.hp_regen)),
         "bonus_mana_regen" => one(per_second(c.mana_regen)),
         "bonus_movement_speed" => one(c.move_speed),
         "bonus_movement_speed_melee" => one(def.carried_by(false).move_speed),

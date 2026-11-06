@@ -44,59 +44,49 @@ fn every_fx_line_reads_and_names_what_the_manifest_has() {
     }
 }
 
+/// Whether an item of bota's catalogue is used for nothing and procs nothing: it carries stats
+/// alone (a recipe or a retired id nothing at all), and Dota draws no effect for it.
+fn carries_stats_alone(id: u16) -> bool {
+    bota_core::item_def(bota_proto::ItemId(id)).is_none_or(|def| {
+        let procs_nothing = |carried: &bota_core::Carried| {
+            carried.evasion == bota_core::Odds::NEVER && carried.pierce == bota_core::Odds::NEVER
+        };
+        def.aim.is_none()
+            && matches!(def.effect, bota_core::UseSpec::None)
+            && procs_nothing(&def.carried)
+            && def.ranged.as_ref().is_none_or(procs_nothing)
+    })
+}
+
 /// The items and abilities of ids.txt that have no `fx` line, and why. Everything else of ids.txt
 /// has one (its own, or one for the modifier of the effect it shows on the buff bar).
 const NO_LINE: &[(&str, &str)] = &[
     // Items
-    ("belt_of_strength", "a stat component: no effect in Dota"),
-    ("blade_of_alacrity", "a stat component: no effect in Dota"),
-    ("blades_of_attack", "a stat component: no effect in Dota"),
-    ("blitz_knuckles", "a stat component: no effect in Dota"),
-    ("boots", "a stat item: no effect in Dota"),
-    ("boots_of_elves", "a stat component: no effect in Dota"),
-    ("bracer", "a stat item: no effect in Dota"),
-    ("broadsword", "a stat component: no effect in Dota"),
     (
         "butterfly",
         "Dota draws no effect for the passive; the evasion is a floating word, not a particle",
     ),
-    ("chainmail", "a stat component: no effect in Dota"),
-    ("circlet", "a stat component: no effect in Dota"),
-    ("claymore", "a stat component: no effect in Dota"),
-    ("demon_edge", "a stat component: no effect in Dota"),
-    ("eagle", "a stat component: no effect in Dota"),
-    ("energy_booster", "a stat component: no effect in Dota"),
-    ("gauntlets", "a stat component: no effect in Dota"),
-    ("gloves", "a stat component: no effect in Dota"),
-    ("javelin", "a stat component: no effect in Dota"),
-    ("mantle", "a stat component: no effect in Dota"),
+    (
+        "javelin",
+        "Dota draws no effect for the passive; the server does not tell a proc",
+    ),
     (
         "monkey_king_bar",
         "Dota draws no effect for the passive; the server does not tell a proc",
     ),
-    ("null_talisman", "a stat item: no effect in Dota"),
-    ("ogre_axe", "a stat component: no effect in Dota"),
-    ("quarterstaff", "a stat component: no effect in Dota"),
     (
         "quelling_blade",
         "Dota shows the tree falling and no particle",
     ),
-    ("recipe", "a recipe: no effect in Dota"),
-    ("ring_of_protection", "a stat component: no effect in Dota"),
-    ("ring_of_regen", "a stat component: no effect in Dota"),
-    ("robe", "a stat component: no effect in Dota"),
     (
         "royale_with_cheese",
         "its Savory Shield is not simulated, and the game's code names no particle or sound for it",
     ),
-    ("slippers", "a stat component: no effect in Dota"),
-    ("sobi_mask", "a stat component: no effect in Dota"),
-    ("staff_of_wizardry", "a stat component: no effect in Dota"),
-    ("talisman_of_evasion", "a stat component: no effect in Dota"),
+    (
+        "talisman_of_evasion",
+        "Dota draws no effect for the passive; the evasion is a floating word, not a particle",
+    ),
     ("tpscroll", "its channel is drawn by teleport.rs"),
-    ("vitality_booster", "a stat component: no effect in Dota"),
-    ("wind_lace", "a stat component: no effect in Dota"),
-    ("wraith_band", "a stat item: no effect in Dota"),
     // Abilities
     ("ability_capture", "a channel: the clip is its effect"),
     (
@@ -250,12 +240,20 @@ fn every_item_and_ability_has_an_fx_line_or_a_reason_for_none() {
     };
     let mut unlisted = Vec::new();
     let mut stale = Vec::new();
+    let mut derived = Vec::new();
     for (kind, id, key) in manifest
         .ids
         .iter()
         .filter(|(k, ..)| matches!(k.as_str(), "item" | "ability"))
     {
         let none = NO_LINE.iter().find(|(listed, _)| listed == key);
+        if kind == "item" && carries_stats_alone(*id) {
+            // Dota draws no effect for what is used for nothing and procs nothing.
+            if none.is_some() {
+                derived.push(key.clone());
+            }
+            continue;
+        }
         match (has_line(kind, key), none) {
             (false, None) => unlisted.push(format!("{kind} {id} {key}")),
             (true, Some(_)) => stale.push(key.clone()),
@@ -269,6 +267,10 @@ fn every_item_and_ability_has_an_fx_line_or_a_reason_for_none() {
     assert!(
         stale.is_empty(),
         "listed as having none but has a line: {stale:?}"
+    );
+    assert!(
+        derived.is_empty(),
+        "listed, but bota's data already says it carries stats alone: {derived:?}"
     );
     for (key, why) in NO_LINE {
         assert!(!why.is_empty());
