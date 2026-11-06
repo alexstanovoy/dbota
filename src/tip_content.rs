@@ -529,7 +529,7 @@ fn trim(runs: &mut Vec<Run>) {
 fn plain_item(content: &mut Content, def: &'static ItemDef) {
     let subject = Subject::Item(def);
     let all = tip_numbers::value(subject, "bonus_all_stats").is_some();
-    let stats: [(&str, &str); 15] = [
+    let stats: [(&str, &str); 17] = [
         ("bonus_all_stats", "All Attributes"),
         ("bonus_strength", "Strength"),
         ("bonus_agility", "Agility"),
@@ -545,6 +545,8 @@ fn plain_item(content: &mut Content, def: &'static ItemDef) {
         ("movement_speed", "Movement Speed"),
         ("bonus_evasion", "% Evasion"),
         ("bonus_magical_armor", "% Magic Resistance"),
+        ("lifesteal_percent", "% Lifesteal"),
+        ("spell_lifesteal", "% Spell Lifesteal"),
     ];
     for (key, label) in stats {
         if all && matches!(key, "bonus_strength" | "bonus_agility" | "bonus_intellect") {

@@ -49,7 +49,10 @@ fn every_fx_line_reads_and_names_what_the_manifest_has() {
 fn carries_stats_alone(id: u16) -> bool {
     bota_core::item_def(bota_proto::ItemId(id)).is_none_or(|def| {
         let procs_nothing = |carried: &bota_core::Carried| {
-            carried.evasion == bota_core::Odds::NEVER && carried.pierce == bota_core::Odds::NEVER
+            carried.evasion == bota_core::Odds::NEVER
+                && carried.pierce == bota_core::Odds::NEVER
+                && carried.lifesteal_pct == 0
+                && carried.spell_lifesteal_pct == 0
         };
         def.aim.is_none()
             && matches!(def.effect, bota_core::UseSpec::None)
@@ -71,6 +74,10 @@ const NO_LINE: &[(&str, &str)] = &[
         "Dota draws no effect for the passive; the server does not tell a proc",
     ),
     (
+        "lifesteal",
+        "Dota bursts blood on a lifesteal heal; the server does not tell one",
+    ),
+    (
         "monkey_king_bar",
         "Dota draws no effect for the passive; the server does not tell a proc",
     ),
@@ -87,6 +94,10 @@ const NO_LINE: &[(&str, &str)] = &[
         "Dota draws no effect for the passive; the evasion is a floating word, not a particle",
     ),
     ("tpscroll", "its channel is drawn by teleport.rs"),
+    (
+        "voodoo_mask",
+        "Dota bursts on a spell lifesteal heal; the server does not tell one",
+    ),
     // Abilities
     ("ability_capture", "a channel: the clip is its effect"),
     (
