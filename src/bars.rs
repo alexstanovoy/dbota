@@ -68,14 +68,7 @@ pub struct Bar {
 /// Whether a unit is a creep, whose bar has Dota's frame round a grey well
 /// (`creep_health_bar_*.svg`); the other bars are as they were.
 fn is_creep(kind: UnitKind) -> bool {
-    matches!(
-        kind,
-        UnitKind::CreepMelee
-            | UnitKind::CreepFlagbearer
-            | UnitKind::CreepRanged
-            | UnitKind::CreepSiege
-            | UnitKind::CreepNeutral
-    )
+    bota_core::kind_def(kind).creep
 }
 
 /// The bar of every unit root.

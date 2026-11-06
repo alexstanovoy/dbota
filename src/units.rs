@@ -556,7 +556,7 @@ fn kind_name(map: &MapDef, kind: UnitKind, team: Team, pos: bota_proto::Vec2) ->
 /// The ordinary model name, looked up once when a body appears. Manifest
 /// rows select state variants from its cached index on subsequent frames.
 fn base_model_name(unit: &UnitView, map: &MapDef, manifest: &Manifest) -> Option<String> {
-    if unit.kind == UnitKind::CreepNeutral
+    if kind_def(unit.kind).neutral
         || unit.kind == UnitKind::Ward
         || objective_unit(unit.kind).is_some()
     {
@@ -1157,7 +1157,7 @@ fn on_model_ready(
     // neutrals a one-sided view of a full stream shows through it.
     if units
         .get(unit)
-        .is_ok_and(|u| kind_def(u.kind).structure || u.kind == UnitKind::CreepNeutral)
+        .is_ok_and(|u| kind_def(u.kind).structure || kind_def(u.kind).neutral)
     {
         for part in children.iter_descendants(ready.entity) {
             commands.entity(part).insert(crate::fog::Fogged);

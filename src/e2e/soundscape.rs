@@ -148,3 +148,24 @@ fn an_empty_roshan_pit_is_silent() {
         }
     }
 }
+
+/// Occupancy comes from the unit catalogue's NPC key, on the same real server stream the
+/// model test draws. The other pit stays silent while Roshan stands in this one.
+#[test]
+fn an_occupied_roshan_pit_sounds_and_the_empty_one_does_not() {
+    let server = Server::start(1, &["--objectives", "roshan", "--immortal-heroes"]);
+    let mut client = Client::join(&server, HeroId::SHADOW_FIEND, &[]);
+    client.cheat(Cheat::TimeOfDay { night: false });
+    let pit = bota_core::ROSHAN_DAY_PIT;
+    client.stand_at((pit.x.to_int() + 100, pit.y.to_int()));
+    client.within(Duration::from_secs(60), "the occupied pit loop", |c| {
+        look_at(c, (-3194.28, 2394.62));
+        gain(c, "default_day", "dire_pit_loop_01_l.wav", true) > 0.0
+    });
+    look_at(&mut client, (2859.76, -2764.77));
+    client.frames(4);
+    assert_eq!(
+        gain(&client, "default_day", "dire_pit_loop_01_l.wav", true),
+        0.0
+    );
+}
