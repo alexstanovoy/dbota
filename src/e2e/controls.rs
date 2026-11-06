@@ -223,6 +223,9 @@ fn a_default_right_click_denies_a_worn_creep_and_follows_a_healthy_one() {
     );
 }
 
+/// Right clicks tried at most before a test gives up on getting a unit.
+const CLICK_TRIES: u32 = 24;
+
 /// What the client wrote while Follow was the default (f01f00f to e24efe2): every setting, the
 /// right click's among them, as `follow`.
 const FILE_FROM_WHEN_FOLLOW_WAS_THE_DEFAULT: &str =
@@ -262,17 +265,49 @@ fn a_settings_file_from_when_follow_was_the_default_still_denies_by_default() {
     }
     client.until("a worn allied creep", |c| ally_creep(c, true).is_some());
     let creep = ally_creep(&client, true).expect("there");
-    let (got, _) = loop {
-        if let Some(hit) = right_click(&mut client, creep) {
-            break hit;
-        }
-    };
+    let (got, _) = (0..CLICK_TRIES)
+        .find_map(|_| right_click(&mut client, creep))
+        .unwrap_or_else(|| panic!("no click got a unit in {CLICK_TRIES} tries"));
     assert_eq!(
         last_order(&client),
         Some(Order::Attack {
             target: Target::Unit(got)
         }),
         "the click on a worn ally attacks it"
+    );
+    let migrated = client.settings_file();
+    assert!(
+        migrated.contains("settings_version = 2"),
+        "the migrated file is written with its version: {migrated}"
+    );
+    assert!(
+        !migrated.contains("right_click_allies = follow"),
+        "the migrated file holds no old default: {migrated}"
+    );
+}
+
+/// A file of the current version holds what the player chose, whatever it equals: Follow and the
+/// items on the digits stay as written, and the file is left as it is.
+#[test]
+fn a_settings_file_of_the_current_version_keeps_follow_and_the_digits() {
+    let file = "settings_version = 2\nright_click_allies = follow\nkey.item_1 = 1\n";
+    let server = Server::start(1, &[]);
+    let client = Client::join_with_settings(&server, HeroId::SHADOW_FIEND, file);
+    let settings = client.world().resource::<crate::config::Settings>();
+    assert_eq!(
+        settings.right_click_allies,
+        crate::config::RightClickAllies::Follow,
+        "the chosen Follow"
+    );
+    assert_eq!(
+        settings.key(crate::keys::Action::Item(0)),
+        crate::keys::Chord::parse("1"),
+        "the chosen digit"
+    );
+    assert_eq!(
+        client.settings_file(),
+        file,
+        "a current file is not rewritten"
     );
 }
 

@@ -138,6 +138,13 @@ impl SettingsStore {
         for complaint in complaints {
             eprintln!("dbota settings: {complaint}");
         }
+        // Migrated once: a file left as it was would migrate again at every start, and drop a
+        // value the player writes later that equals a default of old.
+        if Settings::version_of(&text) < crate::config::SETTINGS_VERSION
+            && let Err(why) = self.save_settings(&settings)
+        {
+            eprintln!("dbota settings: the migrated file could not be written: {why}");
+        }
         settings
     }
 

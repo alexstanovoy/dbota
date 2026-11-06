@@ -134,6 +134,7 @@ impl Drop for Scratch {
 pub struct Client {
     pub app: App,
     _scratch: Scratch,
+    config: PathBuf,
 }
 
 /// One match at a time in the process, held by its [`Server`]: each client loads the whole
@@ -246,7 +247,13 @@ impl Client {
         Client {
             app,
             _scratch: scratch,
+            config: config.into(),
         }
+    }
+
+    /// The settings file as it is on disk now.
+    pub fn settings_file(&self) -> String {
+        std::fs::read_to_string(&self.config).expect("the settings file")
     }
 
     /// Runs frames until `done` holds, within [`PATIENCE`].

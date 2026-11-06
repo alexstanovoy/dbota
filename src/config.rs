@@ -484,17 +484,21 @@ impl Settings {
         Action::Ability(slot)
     }
 
+    /// The version of the layout a settings file's text says it has: 0 for a file with none.
+    pub fn version_of(text: &str) -> u32 {
+        text.lines()
+            .take(MAX_LINES)
+            .filter_map(|line| line.trim().strip_prefix("settings_version"))
+            .find_map(|rest| rest.trim().strip_prefix('=')?.trim().parse::<u32>().ok())
+            .unwrap_or(0)
+    }
+
     /// Reads settings from text, keeping the defaults for anything absent.
     /// Returns them with one complaint per line that could not be read.
     pub fn parse(text: &str) -> (Settings, Vec<String>) {
         let mut settings = Settings::default();
         let mut complaints = Vec::new();
-        let version = text
-            .lines()
-            .take(MAX_LINES)
-            .filter_map(|line| line.trim().strip_prefix("settings_version"))
-            .find_map(|rest| rest.trim().strip_prefix('=')?.trim().parse::<u32>().ok())
-            .unwrap_or(0);
+        let version = Settings::version_of(text);
         for (number, line) in text.lines().enumerate().take(MAX_LINES) {
             let line = line.trim();
             if line.is_empty() || line.starts_with('#') {
