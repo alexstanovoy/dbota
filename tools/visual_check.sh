@@ -31,6 +31,9 @@ cargo build --release --quiet --manifest-path "$here/Cargo.toml"
 # A run's checks hold when it said at least one passed check and no failed one: a client that
 # ended before its verdict says neither.
 held() { echo "$1" | grep -q "^visual check: PASS" && ! echo "$1" | grep -q "FAIL"; }
+# An ignored-test run holds when each of its test binaries ran a test and all passed: a filter or
+# a target that matches nothing passes with none run.
+ran() { awk '/^test result:/ { n++; if ($4 + 0 < 1) none = 1 } END { exit !(n > 0 && !none) }' "$1"; }
 status=0
 "$here/tools/test_client.sh" --replay "$replay" --pov 0 --screenshot-at "$tick" \
     --screenshot-dir "$out" --screenshot-prefix check- --distance 6500 \
@@ -38,10 +41,12 @@ status=0
 [ "$status" -eq 0 ] || exit "$status"
 held "$(cat "$out/dbota.out")" || { echo "visual check: FAIL the first seat's checks gave no verdict"; exit 1; }
 # The same seen by the other side, one window more.
+dire_status=0
 dire=$("$here/tools/test_client.sh" --replay "$replay" --pov 1 --screenshot-at "$tick" \
     --screenshot-dir "$out" --screenshot-prefix check-dire- --distance 6500 \
-    --visual-check --mute --no-vsync --display-mode windowed 2>> "$out/dbota.log" || true)
+    --visual-check --mute --no-vsync --display-mode windowed 2>> "$out/dbota.log") || dire_status=$?
 echo "$dire" | sed 's/^visual check: /visual check (Dire): /'
+[ "$dire_status" -eq 0 ] || { echo "visual check: FAIL the Dire seat's client ended with $dire_status"; exit 1; }
 held "$dire" || { echo "visual check: FAIL the Dire seat's checks did not all pass"; exit 1; }
 
 # The cheapest presets are measured as the full one is: their scene drawn below the window's
@@ -80,8 +85,8 @@ if ! echo "$bars" | grep -q "PASS health counted in hits"; then exit 1; fi
 # and its hero-part checks pass.
 runs=${VISUAL_RUNS:-1}
 cache=$DBOTA_ASSETS
-first=$(grep -m1 "hero parts" "$out/dbota.out" 2>/dev/null || true)
-echo "$first" | grep -q "PASS hero parts" || { echo "visual check: FAIL the first run's hero parts: '$first'"; exit 1; }
+grep -q "PASS hero parts" "$out/dbota.out" || { echo "visual check: FAIL the first run's hero parts did not pass"; exit 1; }
+first=$(grep -m1 "visual check: hero parts:" "$out/dbota.out" 2>/dev/null || true)
 for run in $(seq 2 "$runs"); do
     if [ $((run % 2)) -eq 0 ]; then
         python3 -c 'import os,sys
@@ -95,7 +100,7 @@ for d,_,fs in os.walk(sys.argv[1]):
     checks=$("$here/tools/test_client.sh" --replay "$replay" --pov 0 --screenshot-at "$tick" \
         --screenshot-dir "$out" --screenshot-prefix repeat- --distance 6500 \
         --set animate_portrait="$portrait" --visual-check --mute --no-vsync --display-mode windowed 2>/dev/null || true)
-    line=$(echo "$checks" | grep -m1 "hero parts" || true)
+    line=$(echo "$checks" | grep -m1 "visual check: hero parts:" || true)
     if [ "$line" != "$first" ]; then
         echo "visual check: FAIL hero parts differ on run $run: '$line' against '$first'"
         exit 1
@@ -134,7 +139,7 @@ fi
 
 # A replay the client refuses ends it cleanly, never a crash, however early it is refused.
 if in_private_environment cargo test --release --quiet --manifest-path "$here/Cargo.toml" --test refused_replays \
-    -- --ignored > "$out/refused.log" 2>&1; then
+    -- --ignored > "$out/refused.log" 2>&1 && ran "$out/refused.log"; then
     echo "visual check: PASS refused replays end the client cleanly"
 else
     echo "visual check: FAIL a refused replay did not end the client cleanly (see $out/refused.log)"
@@ -144,7 +149,7 @@ fi
 # The models of a match load on one core: Bevy's loaders nest on the few loader threads that
 # machine gets, and overflowed their default stacks (src/io_pool.rs).
 if VISUAL_REPLAY="$(realpath "$replay")" in_private_environment cargo test --release --quiet --manifest-path "$here/Cargo.toml" \
-    --test io_stack -- --ignored > "$out/io_stack.log" 2>&1; then
+    --test io_stack -- --ignored > "$out/io_stack.log" 2>&1 && ran "$out/io_stack.log"; then
     echo "visual check: PASS a match loads on one core"
 else
     echo "visual check: FAIL a match did not load on one core (see $out/io_stack.log)"
@@ -159,7 +164,7 @@ fi
 # (in this check's compositor).
 if VISUAL_REPLAY="$(realpath "$replay")" DBOTA_QUIT_SHOTS="$out/quit" in_private_environment cargo test --release --quiet \
     --manifest-path "$here/Cargo.toml" --test menu_quit -- --ignored --test-threads 1 \
-    > "$out/quit.log" 2>&1; then
+    > "$out/quit.log" 2>&1 && ran "$out/quit.log"; then
     echo "visual check: PASS the menu, a game and a replay are quit and left as Dota's are; Demo Hero cheats"
 else
     echo "visual check: FAIL the way out (see $out/quit.log)"
@@ -170,7 +175,7 @@ fi
 # creeps whoosh and hit, the Ogre Bruiser plays its Smash through its cast point. Each test records a
 # match on a real bota_server and plays its replay with the client's trace.
 if in_private_environment cargo test --release --quiet --manifest-path "$here/Cargo.toml" --test attack_feel \
-    -- --ignored --test-threads 1 > "$out/attack_feel.log" 2>&1; then
+    -- --ignored --test-threads 1 > "$out/attack_feel.log" 2>&1 && ran "$out/attack_feel.log"; then
     echo "visual check: PASS a broken-off swing is a cancel, clips fade, creeps sound, the Smash plays through"
 else
     echo "visual check: FAIL how an attack looks and sounds (see $out/attack_feel.log)"
@@ -180,7 +185,7 @@ fi
 # Selling in the strategy phase: the item menu's Sell takes a chosen item back, so the match begins
 # with the one item left.
 if in_private_environment cargo test --release --quiet --manifest-path "$here/Cargo.toml" --test item_sell \
-    -- --ignored > "$out/sell.log" 2>&1; then
+    -- --ignored > "$out/sell.log" 2>&1 && ran "$out/sell.log"; then
     echo "visual check: PASS an item sold in the strategy phase is not bought"
 else
     echo "visual check: FAIL selling in the strategy phase (see $out/sell.log)"
@@ -192,7 +197,7 @@ fi
 # ambient effect, a dropped item on the ground with its model, a Blink Dagger's two effects and a
 # Blood Grenade's throw, landing and splatter, and a tower's line to a hero in its reach.
 if in_private_environment cargo test --release --quiet --manifest-path "$here/Cargo.toml" --test wards --test ground_items \
-    --test blink --test blood_grenade --test tower_line -- --ignored --test-threads 1 > "$out/effects.log" 2>&1; then
+    --test blink --test blood_grenade --test tower_line -- --ignored --test-threads 1 > "$out/effects.log" 2>&1 && ran "$out/effects.log"; then
     echo "visual check: PASS wards, items on the ground, a blink, a grenade and a tower's line are drawn and sounded"
 else
     echo "visual check: FAIL wards, ground items, a blink or a grenade (see $out/effects.log)"
@@ -201,7 +206,7 @@ fi
 
 # The ping in the corner is the line's: a server behind a delayed line, read off the drawn text.
 if in_private_environment cargo test --release --quiet --manifest-path "$here/Cargo.toml" --test ping \
-    -- --ignored --test-threads 1 > "$out/ping.log" 2>&1; then
+    -- --ignored --test-threads 1 > "$out/ping.log" 2>&1 && ran "$out/ping.log"; then
     echo "visual check: PASS the corner tells the line's ping, not a multiple of the tick"
 else
     echo "visual check: FAIL the ping in the corner (see $out/ping.log)"
@@ -211,7 +216,7 @@ fi
 # The talking portrait in a game: one's hero answers a move and an attack order with a voice line,
 # and the portrait's jaw moves with the line's phonemes and rests once it has ended, for each hero.
 if in_private_environment cargo test --release --quiet --manifest-path "$here/Cargo.toml" --test portrait_talk \
-    -- --ignored --test-threads 1 --nocapture > "$out/talk.log" 2>&1; then
+    -- --ignored --test-threads 1 --nocapture > "$out/talk.log" 2>&1 && ran "$out/talk.log"; then
     echo "visual check: PASS each hero says its move and attack lines with its face"
 else
     echo "visual check: FAIL the talking portrait in a game (see $out/talk.log)"
