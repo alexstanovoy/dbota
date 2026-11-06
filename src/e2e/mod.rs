@@ -43,6 +43,7 @@ mod tower_fall;
 mod trees;
 mod turning;
 mod watcher_capture;
+mod watcher_channel;
 mod watcher_path;
 mod watchers;
 mod window;

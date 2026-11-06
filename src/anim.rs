@@ -5,14 +5,16 @@
 //! clip's own pace. A clip fades in over the one before, as Dota's sequences
 //! do.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use bevy::{
     camera::primitives::{Frustum, Sphere},
     prelude::*,
 };
 use bota_client_core::App as Core;
-use bota_proto::{AbilityId, EffectId, EntityId, EventKind, StatusFlags, Team, UnitKind, UnitView};
+use bota_proto::{
+    AbilityId, EffectId, EntityId, EventKind, StatusFlags, Team, UnitKind, UnitView, WorldView,
+};
 
 use crate::ability_art::art_of;
 use crate::coords::sim_facing_to_rotation;
@@ -93,12 +95,24 @@ impl Pose {
 /// The ability each unit in view is channelling, by the cast that began it:
 /// which loop its model plays meanwhile.
 #[derive(Resource, Default)]
-struct Channels(HashMap<EntityId, AbilityId>);
+pub struct Channels(HashMap<EntityId, AbilityId>);
+
+impl Channels {
+    /// The ability a unit is channelling.
+    pub fn of(&self, unit: EntityId) -> Option<AbilityId> {
+        self.0.get(&unit).copied()
+    }
+}
+
+/// Takes in the casts of the frame and lets go of the channels that ended: [`Channels`] is
+/// current after it.
+#[derive(SystemSet, Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct NoteChannels;
 
 pub fn plugin(app: &mut App) {
     app.init_resource::<Channels>().add_systems(
         PostUpdate,
-        (note_channels, animate)
+        (note_channels.in_set(NoteChannels), animate)
             .chain()
             .before(TransformSystems::Propagate),
     );
@@ -153,6 +167,7 @@ fn animate(
         return;
     };
     let dt = time.delta_secs();
+    let lamps = watchers_channelled(view, &channels);
     for (unit, mut pose, model_of, at, rig, dying) in &mut units {
         if let Ok(mut pivot) = pivots.get_mut(model_of.0) {
             let rotation = sim_facing_to_rotation(unit.facing);
@@ -168,6 +183,8 @@ fn animate(
         let clip = |name: &str| clips.iter().find(|c| c.0 == name);
         let live = view.unit(unit.id);
         let channel = channels.0.get(&unit.id).and_then(|id| art_of(*id).channel);
+        // A Watcher a hero channels at plays its own channel clip meanwhile.
+        let channel = channel.or_else(|| lamps.contains(&unit.id).then_some("channel"));
         let wanted = match (dying, live) {
             (Some(d), _) => Wanted {
                 clip: "death",
@@ -492,6 +509,29 @@ fn looping(pose: &mut Pose, clip: &'static str, duration: f32, dt: f32, pace: f3
         clip,
         t: pose.loop_t,
     }
+}
+
+/// The Watchers heroes channel their lamps at: the wire tells a cast's caster but not its target,
+/// so each channelling hero is taken to be at the Watcher nearest it within the ability's reach,
+/// edge to edge.
+fn watchers_channelled(view: &WorldView, channels: &Channels) -> HashSet<EntityId> {
+    let lamp = bota_core::ability_def(AbilityId::LAMP_USE).map_or(0, |def| def.range) as f32;
+    let place = |u: &UnitView| Vec2::new(u.pos.x.to_f32(), u.pos.y.to_f32());
+    channels
+        .0
+        .iter()
+        .filter(|(_, ability)| **ability == AbilityId::LAMP_USE)
+        .filter_map(|(hero, _)| view.unit(*hero))
+        .filter_map(|hero| {
+            view.units
+                .iter()
+                .filter(|u| u.kind == UnitKind::Watcher)
+                .map(|u| (u, place(u).distance(place(hero))))
+                .filter(|(u, apart)| *apart <= lamp + hero.bound.to_f32() + u.bound.to_f32())
+                .min_by(|a, b| a.1.total_cmp(&b.1))
+                .map(|(u, _)| u.id)
+        })
+        .collect()
 }
 
 /// The loop a unit plays standing: a map objective's shows its state, as

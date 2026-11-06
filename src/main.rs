@@ -22,6 +22,7 @@ mod cache_text;
 mod cachefs;
 mod camera;
 mod capture;
+mod channel_bar;
 mod chat;
 mod cheats;
 mod clarity;
@@ -699,6 +700,7 @@ fn client_plugins(app: &mut App) {
         ))
         .add_plugins((
             fortified::plugin,
+            channel_bar::plugin,
             courier::plugin,
             map_props::plugin,
             settings::plugin,
