@@ -66,8 +66,11 @@ bota_replay = { path = "../bota/crates/bota_replay" }
 # The asset importer: `dbota import` on the desktop, and on every target the asset fingerprint a
 # cache must carry (the browser runs the importer as a module of its own, web/import_worker.js).
 dbota_import = { path = "crates/dbota_import" }
-# The sound device, opened by `audio_output`; the version Bevy's audio already builds.
-rodio = { version = "=0.22.2", default-features = false, features = ["playback"] }
+# The sound device, opened by `audio_output`, and the decoders of the cache's WAV and MP3 files
+# (`sound_file`); the version Bevy's audio already builds.
+rodio = { version = "=0.22.2", default-features = false, features = ["playback", "hound", "mp3"] }
+# A cache WAV file's header, read before rodio is handed the file; the version rodio reads with.
+hound = "=3.5.1"
 # Fallback fonts for the scripts the interface font lacks (bevy_text's font engine).
 parley = { version = "=0.9.0", default-features = false, features = ["std"] }
 clap = { version = "4", features = ["derive", "env"] }
@@ -105,7 +108,7 @@ wasm-bindgen-futures = "0.4"
 web-sys = { version = "0.3", features = ["Document", "Element", "Location", "Response", "Storage", "Window", "XmlHttpRequest"] }
 bota_radovid = { path = "../bota/crates/bota_radovid", default-features = false, features = ["web"] }
 # The Web Audio output of the sound device (see `audio_output`).
-rodio = { version = "=0.22.2", default-features = false, features = ["playback", "wasm-bindgen"] }
+rodio = { version = "=0.22.2", default-features = false, features = ["playback", "hound", "mp3", "wasm-bindgen"] }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
 # The menu's end-to-end tests run the real matchmaking service in-process; its

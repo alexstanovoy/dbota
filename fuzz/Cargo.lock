@@ -824,6 +824,7 @@ dependencies = [
  "bevy_image",
  "dbota_import",
  "heatel",
+ "hound",
  "libfuzzer-sys",
  "rodio",
  "serde",

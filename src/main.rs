@@ -90,6 +90,7 @@ mod session;
 mod settings;
 mod shop;
 mod sound;
+mod sound_file;
 mod soundscape;
 mod stats;
 mod strategy;

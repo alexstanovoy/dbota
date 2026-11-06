@@ -16,7 +16,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use bevy::audio::{
-    AudioLoader, AudioPlayer, AudioSink, AudioSinkPlayback, AudioSource, Decodable, GlobalVolume,
+    AudioLoader, AudioPlayer, AudioSink, AudioSinkPlayback, AudioSource, GlobalVolume,
     PlaybackMode, PlaybackSettings, Source,
 };
 use bevy::prelude::*;
@@ -171,11 +171,21 @@ fn play_queued(
         let Some(source) = sources.get(&player.0) else {
             continue;
         };
+        // The cache's file, decoded only as the importer writes them (Bevy's decoder panics on
+        // any other).
+        let decoder = match crate::sound_file::decoder(source.clone()) {
+            Ok(decoder) => decoder,
+            Err(why) => {
+                warn!("sound {:?} is not played: {why}", player.0.path());
+                commands.entity(entity).despawn();
+                continue;
+            }
+        };
         let player = Player::connect_new(mixer);
         if matches!(settings.mode, PlaybackMode::Loop) {
-            player.append(source.decoder().repeat_infinite());
+            player.append(decoder.repeat_infinite());
         } else {
-            player.append(source.decoder());
+            player.append(decoder);
         }
         let mut sink = AudioSink::new(player);
         if settings.muted {
