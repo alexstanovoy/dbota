@@ -155,12 +155,12 @@ strip = true
 inherits = "release"
 debug = "line-tables-only"
 
-# For the browser: dist's thin LTO in one codegen unit, optimised for size. 12.9 MB of wasm in ~6.5
-# min (opt-level 3 without LTO: 26.2 MB; "z" with fat LTO: 11.0 MB in ~9 min; frames the same).
-# `cargo build --profile web --target wasm32-unknown-unknown`.
+# Browser builds balance transfer size and frame time in one codegen unit.
+# At s, a warm build of both clients + importer took 365 s with thin LTO, 856 s with fat.
+# web/build.sh can also run Binaryen; compare compressed output (web/README.md).
 [profile.web]
 inherits = "dist"
-opt-level = "z"
+opt-level = "s"
 
 # What the tests are built with: release's optimisation (a debug build is too slow to test with) and the checks a debug build
 # has, overflow checks and debug assertions, in this repository's crates. The dependencies stay as release builds them, so the two

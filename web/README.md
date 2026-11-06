@@ -61,7 +61,7 @@ inflated to no more than its stated size and matching its CRC-32. A damaged file
 
 ```sh
 rustup target add wasm32-unknown-unknown; cargo install wasm-bindgen-cli --version <Cargo.lock's>
-DBOTA_WEB_REPLAY=$PWD/match.brp web/build.sh        # PROFILE=release for a quicker build
+WASM_OPT=0 DBOTA_WEB_REPLAY=$PWD/match.brp web/build.sh        # PROFILE=release for a quicker build
 python3 -m http.server --bind 127.0.0.1 --directory web/out 8080   # the page alone, to look at it
 ```
 
@@ -108,6 +108,36 @@ The build requires Python 3. Its output directory must be empty or carry the
 choose a new empty directory. Assets in an owned output carry `.dbota-web-assets` and only
 those owned assets may be replaced. Source directories and symbolic links in an output are
 refused before the build starts.
+
+The `web` profile uses `opt-level = "s"` and thin LTO in one codegen unit to balance
+transfer size and frame time. A warm-dependency build of both clients and the importer
+took 365 s with thin LTO versus 856 s with fat LTO under shared load.
+In the shared-load measurements, versus `z`/thin, the default used 8.5% more Brotli
+bytes on WebGPU while first-frame time (client download excluded) fell from 1.31 to
+0.90 s on WebGPU and from 1.37 to 0.66 s on WebGL2.
+For the speed-first alternative, run
+`CARGO_PROFILE_WEB_OPT_LEVEL=3 WASM_OPT=0 web/build.sh`; its larger modules cost more
+transfer bandwidth. Choose the
+postprocessing policy explicitly: `WASM_OPT=0` keeps compiler output, while
+`WASM_OPT=/path/to/wasm-opt` runs **Binaryen 125** (`-Oz`) on all three modules.
+`web/build.sh` now requires `WASM_OPT` for its default `web` profile; deployment
+builds must pass `WASM_OPT=0` explicitly to keep compiler output.
+The build never searches `PATH` or downloads a tool. Other profiles skip it unless
+`WASM_OPT` is set. An invalid executable or failed optimization ends the build.
+A smaller raw module can still have larger gzip or Brotli output; compare the
+compressed files before enabling this postprocessing.
+
+The browser gate checks a replay scene on both APIs in the shipping `web` profile,
+as well as its broader `release` fixtures. It uses `WASM_OPT=0` by default; pass the
+verified executable path to check postprocessed modules instead.
+
+The official [version 125 release](https://github.com/WebAssembly/binaryen/releases/tag/version_125)
+provides `binaryen-version_125-x86_64-linux.tar.gz`, whose SHA-256 is
+`7c3bc16599c8274a04d34a504fe4be2047884f900e0e2da2f6fb9cd667183be4`.
+Verify the archive before extracting it. Before executing `bin/wasm-opt`, the build
+also verifies its SHA-256:
+`23c1f4106e34eeaf44e888f947671f04d0fec12c232cca19cc5c4b3cf7c96f08`.
+Only that executable is supported; other platforms can select `WASM_OPT=0`.
 
 A cache served with `?cache=http` must include `index.txt` from the same build. Missing,
 malformed, or oversized indexes end startup with an error. The browser uses the same bounded
