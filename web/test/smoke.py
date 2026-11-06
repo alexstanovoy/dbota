@@ -52,7 +52,8 @@ names it) that the pages play on through `?cache=http`, served under /cache besi
 * `--fonts-page` (any build): the page serves the interface fonts out of its own folder (a link out
   of it is not followed, as a service's static directory does not) and the client takes them.
 * `--keys-page` (any page, even `web/` unbuilt): over the canvas the browser keeps its Ctrl and
-  Cmd chords and F12, the game its keys (F5, Tab, Space, letters, right click, wheel).
+  Cmd chords and F12, the game its keys (F5, Tab, Space, letters, right click, wheel); in fullscreen
+  Chromium's canvas locks Esc (and lets it go on leaving), Firefox's page says once that it cannot.
 * `--pixels-page` (a replay build): at a device scale of 1.5, and after the page is resized, the
   canvas's drawing buffer and the client's surface are the canvas's device-pixel size.
 * `--cursor-page` (a replay build, e.g. the `--replay-page` one): in a match a press on the canvas
@@ -535,6 +536,71 @@ def check_fullscreen_page(directory):
         assert not problems, problems
         print("fullscreen: the setting and F11 enter it, leaving it works")
         browser.close()
+    server.shutdown()
+
+
+ESC_LOCK_SPY = """(() => {
+  // Records what the page asks of the Keyboard Lock API and passes it on to the real one.
+  globalThis.keyboardLock = [];
+  const keyboard = navigator.keyboard;
+  if (!keyboard) return;
+  for (const name of ['lock', 'unlock']) {
+    const real = keyboard[name].bind(keyboard);
+    keyboard[name] = (...args) => { keyboardLock.push([name, ...args]); return real(...args); };
+  }
+  globalThis.escapes = [];
+  addEventListener('keydown', (e) => { if (e.key === 'Escape') escapes.push(document.fullscreenElement !== null); }, true);
+})()"""
+
+
+def check_escape_in_fullscreen(directory):
+    """Esc is a game key, which a browser takes for leaving fullscreen. Where the Keyboard Lock API
+    exists (Chromium) the canvas locks Esc when it goes fullscreen and lets it go when it leaves
+    (web/keys.js); where it does not (Firefox) the page says so once and Esc is left to the
+    browser. Needs no client, so any page serves. A press of Esc injected by the test never goes
+    through the browser's own handling of the key (which leaves fullscreen, or with the lock asks
+    for it to be held), so what the player's short press does cannot be seen here: only what the
+    page asks for, and that the page sees the key."""
+    with sync_playwright() as p:
+        server = serve(directory)
+        base = f"http://127.0.0.1:{server.server_address[1]}/"
+        for engine in ("chromium", "firefox"):
+            browser = getattr(p, engine).launch(args=BROWSER_ARGS if engine == "chromium" else [])
+            page = browser.new_context(viewport={"width": 1280, "height": 720}).new_page()
+            console = []
+            page.on("console", lambda m: console.append(m.text))
+            page.add_init_script(ESC_LOCK_SPY)
+            # The load event comes after the page's modules (main.js, which imports keys.js) have run,
+            # so F11 below meets its handler; goto's own timeout bounds the wait.
+            page.goto(base + "?cache=http", wait_until="load")
+            page.wait_for_function("() => document.getElementById('dbota') !== null")
+            fullscreen = lambda: page.evaluate("document.fullscreenElement === document.getElementById('dbota')")
+            page.keyboard.press("F11")
+            page.wait_for_function("() => document.fullscreenElement !== null", timeout=60000)
+            if engine == "chromium":
+                wait_console(page, console, "Esc is locked to the game while fullscreen", 60, "the browser to grant the Esc lock")
+                calls = page.evaluate("keyboardLock")
+                assert calls == [["lock", ["Escape"]]], f"the page locks Esc, and only Esc: {calls}"
+                page.keyboard.press("Escape")
+                assert page.evaluate("escapes") == [True], "the page sees a short Esc in fullscreen"
+                # Only a precondition: an injected Esc never reaches the browser's own handling, so this
+                # holds with or without the lock. The assertions of this check are the lock's grant above
+                # and its release below.
+                assert fullscreen(), "the canvas is still fullscreen after the injected Esc"
+                page.keyboard.press("F11")
+                page.wait_for_function("() => document.fullscreenElement === null", timeout=60000)
+                page.wait_for_function("() => keyboardLock.length === 2", timeout=60000)
+                calls = page.evaluate("keyboardLock")
+                assert calls[1][0] == "unlock", f"the page lets Esc go on leaving fullscreen: {calls}"
+                print("escape: Chromium locks Esc in fullscreen and lets it go on leaving")
+            else:
+                wait_console(page, console, "this browser cannot keep Esc in the game", 60, "the page to say Esc cannot be kept")
+                page.keyboard.press("F11")
+                page.wait_for_function("() => document.fullscreenElement === null", timeout=60000)
+                said = [c for c in console if "cannot keep Esc" in c]
+                assert len(said) == 1, f"the page says it once: {said}"
+                print("escape: Firefox has no Esc lock, the page says so once")
+            browser.close()
     server.shutdown()
 
 
@@ -1744,6 +1810,7 @@ def main():
         check_fonts_page(args.fonts_page)
     if args.keys_page:
         check_browser_keys(args.keys_page)
+        check_escape_in_fullscreen(args.keys_page)
     if args.replay_page:
         check_replay_page(args.replay_page)
     if args.scene_page:

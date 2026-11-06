@@ -80,7 +80,8 @@ pub fn pickable_modes() -> usize {
 
 /// What the display mode of the settings must become, given whether the
 /// canvas is fullscreen. A browser grants fullscreen only on a gesture and
-/// takes it back on Esc, so the page's state is the truth and the setting
+/// takes it back on Esc (with the page's Esc lock, `web/keys.js`, only on a
+/// held Esc, in Chromium), so the page's state is the truth and the setting
 /// follows it, except in the frame the setting itself changed.
 #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
 #[derive(Debug, PartialEq, Eq)]
@@ -134,8 +135,8 @@ mod web {
     /// fullscreen and out of it when they ask for a window. The request is
     /// made in the frame after the click that picked it, which the browser
     /// still counts as that click's gesture (transient user activation); if
-    /// it refuses anyway, or the player leaves with Esc, the setting goes
-    /// back to windowed. The canvas follows the screen by itself (the window
+    /// it refuses anyway, or the player leaves with Esc (a held one under the
+    /// page's Esc lock), the setting goes back to windowed. The canvas follows the screen by itself (the window
     /// observes it), and so does the HUD scale (from the window's height).
     pub fn sync_fullscreen(mut settings: ResMut<Settings>, mut state: NonSendMut<State>) {
         let Some(document) = web_sys::window().and_then(|w| w.document()) else {
