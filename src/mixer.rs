@@ -30,6 +30,9 @@ use crate::manifest::Manifest;
 /// Voices sounding at once at most, fading ones included: the oldest one-shot is stopped for a
 /// new voice, and a voice is refused when only loops remain.
 pub const MAX_VOICES: usize = 64;
+/// Random ambience shares the world budget without crowding out gameplay sounds.
+pub const MAX_AMBIENCE_VOICES: usize = 8;
+const _: () = assert!(MAX_AMBIENCE_VOICES < MAX_VOICES);
 /// How long the blows on one unit merge into one sound: the owner's rule, half a second of a
 /// unit's pain is one sound, not each blow in full.
 pub const MERGE_WINDOW: Duration = Duration::from_millis(500);
@@ -161,6 +164,7 @@ struct Voice {
     entity: Entity,
     event: String,
     looping: bool,
+    class: VoiceClass,
     /// Whose sound it is, for the limits that count an entity's own.
     owner: Owner,
     merge: Option<EntityId>,
@@ -183,6 +187,18 @@ struct Voice {
     fog_share: f32,
     /// `base` as the distance to the listener leaves it.
     gain: f32,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum VoiceClass {
+    World,
+    Ambience,
+}
+
+struct InitialMix {
+    base: f32,
+    gain: f32,
+    group: Option<String>,
 }
 
 impl Voice {
@@ -308,38 +324,47 @@ impl Mixer {
         request: &Request,
         source: Handle<AudioSource>,
     ) -> Started {
+        self.start_as(commands, now, request, source, VoiceClass::World)
+    }
+
+    /// Random ambience may fill spare slots, but never evicts a gameplay sound.
+    pub fn start_ambience(
+        &mut self,
+        commands: &mut Commands,
+        now: Duration,
+        request: &Request,
+        source: Handle<AudioSource>,
+    ) -> Started {
+        self.start_as(commands, now, request, source, VoiceClass::Ambience)
+    }
+
+    fn start_as(
+        &mut self,
+        commands: &mut Commands,
+        now: Duration,
+        request: &Request,
+        source: Handle<AudioSource>,
+        class: VoiceClass,
+    ) -> Started {
         self.drop_ended(commands, now);
         if self.closed {
             return Started::Refused;
         }
-        let rules = self.events.get(request.event).cloned();
-        let (volume, group) = (
-            rules.as_ref().map_or(1.0, |r| r.volume),
-            rules.as_ref().and_then(|r| r.group.clone()),
-        );
-        let player = if request.on_player {
-            rules.as_ref().map_or(1.0, |r| r.player_mult)
-        } else {
-            1.0
-        };
-        let base = request.gain * volume * player;
-        let distance = match (request.at, request.listener) {
-            (Some(at), Some(listener)) => Some(Vec2::from(at).distance(Vec2::from(listener))),
-            _ => None,
-        };
-        let spatial = distance.map_or(1.0, |d| self.spatial(rules.as_ref(), d));
-        if distance.is_some() && request.gain * spatial < QUIETEST_START {
-            return Started::Refused;
-        }
-        // An event that follows the fog of war is heard only where its source is in sight.
-        if let (Some(radius), Some(at), Some(fog)) = (
-            rules.as_ref().and_then(|r| r.fog_radius),
-            request.at,
-            request.fog,
-        ) && !fog.lit_within(at.0, at.1, radius)
+        if class == VoiceClass::Ambience
+            && (self.voices.len() >= MAX_VOICES
+                || self
+                    .voices
+                    .iter()
+                    .filter(|voice| voice.class == class)
+                    .count()
+                    >= MAX_AMBIENCE_VOICES)
         {
             return Started::Refused;
         }
+        let rules = self.events.get(request.event).cloned();
+        let Some(mix) = self.initial_mix(request, rules.as_ref()) else {
+            return Started::Refused;
+        };
         let looping = rules.as_ref().is_some_and(|r| r.looping);
         if looping && request.owner == Owner::None && self.warned.insert(request.event.to_owned()) {
             warn!("{}: a loop with no owner plays once", request.event);
@@ -350,8 +375,52 @@ impl Mixer {
         {
             return Started::Refused;
         }
-        let ends = lifetime(rules.as_ref(), kept);
-        let gain = base * spatial;
+        self.spawn_voice(commands, now, request, source, rules.as_ref(), kept, class, mix)
+    }
+
+    fn initial_mix(&self, request: &Request, rules: Option<&EventLine>) -> Option<InitialMix> {
+        let (volume, group) = (
+            rules.map_or(1.0, |r| r.volume),
+            rules.and_then(|r| r.group.clone()),
+        );
+        let player = if request.on_player {
+            rules.map_or(1.0, |r| r.player_mult)
+        } else {
+            1.0
+        };
+        let base = request.gain * volume * player;
+        let distance = match (request.at, request.listener) {
+            (Some(at), Some(listener)) => Some(Vec2::from(at).distance(Vec2::from(listener))),
+            _ => None,
+        };
+        let spatial = distance.map_or(1.0, |d| self.spatial(rules, d));
+        if distance.is_some() && request.gain * spatial < QUIETEST_START {
+            return None;
+        }
+        // An event that follows the fog of war is heard only where its source is in sight.
+        if let (Some(radius), Some(at), Some(fog)) = (
+            rules.and_then(|r| r.fog_radius),
+            request.at,
+            request.fog,
+        ) && !fog.lit_within(at.0, at.1, radius)
+        {
+            return None;
+        }
+        Some(InitialMix { base, gain: base * spatial, group })
+    }
+
+    fn spawn_voice(
+        &mut self,
+        commands: &mut Commands,
+        now: Duration,
+        request: &Request,
+        source: Handle<AudioSource>,
+        rules: Option<&EventLine>,
+        kept: bool,
+        class: VoiceClass,
+        mix: InitialMix,
+    ) -> Started {
+        let ends = lifetime(rules, kept);
         let playback = if kept {
             PlaybackSettings::LOOP
         } else {
@@ -362,7 +431,7 @@ impl Mixer {
                 GameAudio,
                 AudioPlayer::new(source),
                 playback
-                    .with_volume(Volume::Linear(self.sink_gain(gain, group.as_deref())))
+                    .with_volume(Volume::Linear(self.sink_gain(mix.gain, mix.group.as_deref())))
                     .with_speed(request.speed),
             ))
             .id();
@@ -370,18 +439,19 @@ impl Mixer {
             entity,
             event: request.event.to_owned(),
             looping: kept,
+            class,
             owner: request.owner,
             merge: request.merge,
             at: request.at,
             started: now,
             ends: ends.map(|length| now + length),
             stopped: None,
-            group,
-            base,
+            group: mix.group,
+            base: mix.base,
             listener: request.listener,
-            fog_radius: rules.as_ref().and_then(|r| r.fog_radius),
+            fog_radius: rules.and_then(|r| r.fog_radius),
             fog_share: 1.0,
-            gain,
+            gain: mix.gain,
         });
         if kept {
             Started::Loop(entity)
@@ -440,11 +510,12 @@ impl Mixer {
         if self.voices.len() < MAX_VOICES {
             return true;
         }
-        // A fading voice is the first to go, then the oldest one-shot; a loop is never stolen.
+        // Gameplay displaces ambience first, then a fading voice or the oldest one-shot.
         let stolen = self
             .voices
             .iter()
-            .position(|v| !v.sounding())
+            .position(|v| v.class == VoiceClass::Ambience)
+            .or_else(|| self.voices.iter().position(|v| !v.sounding()))
             .or_else(|| self.voices.iter().position(|v| !v.looping));
         match stolen {
             Some(at) => {
@@ -917,6 +988,49 @@ mod tests {
             world.resource::<Mixer>().sounding("loop"),
             0,
             "the output ended the player but its voice reservation survived"
+        );
+    }
+
+    #[test]
+    fn ambience_at_a_full_world_budget_preserves_every_gameplay_player() {
+        let mut world = World::new();
+        let mut limited = event("shared", false, 120);
+        limited.limit = 1;
+        let mut mixer = mixer(vec![event("world", false, 120), limited]);
+        for _ in 0..MAX_VOICES - 1 {
+            mixer.start(
+                &mut world.commands(),
+                Duration::ZERO,
+                &request("world", Owner::None),
+                Handle::default(),
+            );
+        }
+        mixer.start(
+            &mut world.commands(),
+            Duration::ZERO,
+            &request("shared", Owner::None),
+            Handle::default(),
+        );
+        world.flush();
+        let before: HashSet<_> = world
+            .query_filtered::<Entity, With<AudioPlayer>>()
+            .iter(&world)
+            .collect();
+        let started = mixer.start_ambience(
+            &mut world.commands(),
+            Duration::ZERO,
+            &request("shared", Owner::None),
+            Handle::default(),
+        );
+        world.flush();
+        let after: HashSet<_> = world
+            .query_filtered::<Entity, With<AudioPlayer>>()
+            .iter(&world)
+            .collect();
+        assert_eq!(started, Started::Refused);
+        assert_eq!(
+            after, before,
+            "ambience evicted a gameplay event before refusing admission"
         );
     }
 

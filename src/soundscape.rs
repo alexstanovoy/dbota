@@ -15,6 +15,7 @@ use crate::cache_text::{ScapeLine, ScapeSound};
 use crate::camera::RtsCamera;
 use crate::config::Settings;
 use crate::daylight::Daylight;
+use crate::mixer::{Mixer, Owner, Request};
 use crate::session::Session;
 
 /// Lines of the file read at most.
@@ -224,6 +225,7 @@ fn play(
     mut sinks: Query<&mut AudioSink>,
     mut scapes: ResMut<Scapes>,
     mut ambience: ResMut<Ambience>,
+    mut mixer: ResMut<Mixer>,
 ) {
     let scapes = &mut *scapes;
     let Ok(camera) = camera.single() else {
@@ -249,7 +251,15 @@ fn play(
         settings.volume
     } * global.volume.to_linear();
     loops(&mut commands, scapes, ear, master, &mut sinks);
-    randoms(&mut commands, scapes, ear, time.delta_secs() * pace, master);
+    randoms(
+        &mut commands,
+        &mut mixer,
+        scapes,
+        ear,
+        time.elapsed(),
+        time.delta_secs() * pace,
+        master,
+    );
     tell(scapes, heard, ear, &mut ambience);
 }
 
@@ -303,29 +313,14 @@ fn loops(
     master: f32,
     sinks: &mut Query<&mut AudioSink>,
 ) {
-    let Scapes {
-        sounds,
-        weights,
-        scratch,
-        ..
-    } = scapes;
-    scratch.clear();
-    scratch.extend(
-        sounds
-            .iter()
-            .filter(|p| p.line.looped)
-            .map(|p| loop_gain(p, weights, ear))
-            .filter(|g| *g > QUIETEST_LOOP),
-    );
-    let floor = if scratch.len() > MAX_LOOPS {
-        let at = scratch.len() - MAX_LOOPS;
-        *scratch.select_nth_unstable_by(at, f32::total_cmp).1
-    } else {
-        QUIETEST_LOOP
-    };
-    for p in sounds.iter_mut().filter(|p| p.line.looped) {
-        let gain = loop_gain(p, weights, ear);
-        let on = master > 0.0 && gain > QUIETEST_LOOP && gain >= floor;
+    let (floor, mut ties) = loop_floor(scapes, ear);
+    for p in scapes.sounds.iter_mut().filter(|p| p.line.looped) {
+        let gain = loop_gain(p, &scapes.weights, ear);
+        let on =
+            master > 0.0 && gain > QUIETEST_LOOP && (gain > floor || (gain == floor && ties > 0));
+        if on && gain == floor {
+            ties -= 1;
+        }
         match (p.playing, on) {
             (Some(entity), false) => {
                 commands.entity(entity).despawn();
@@ -353,8 +348,41 @@ fn loops(
     }
 }
 
+fn loop_floor(scapes: &mut Scapes, ear: Vec2) -> (f32, usize) {
+    let Scapes {
+        sounds,
+        weights,
+        scratch,
+        ..
+    } = scapes;
+    scratch.clear();
+    scratch.extend(
+        sounds
+            .iter()
+            .filter(|p| p.line.looped)
+            .map(|p| loop_gain(p, weights, ear))
+            .filter(|g| *g > QUIETEST_LOOP),
+    );
+    let floor = if scratch.len() > MAX_LOOPS {
+        let at = scratch.len() - MAX_LOOPS;
+        *scratch.select_nth_unstable_by(at, f32::total_cmp).1
+    } else {
+        QUIETEST_LOOP
+    };
+    let above = scratch.iter().filter(|gain| **gain > floor).count();
+    (floor, MAX_LOOPS.saturating_sub(above))
+}
+
 /// Plays a wave of each random sound whose time has come, if it is heard.
-fn randoms(commands: &mut Commands, scapes: &mut Scapes, ear: Vec2, dt: f32, master: f32) {
+fn randoms(
+    commands: &mut Commands,
+    mixer: &mut Mixer,
+    scapes: &mut Scapes,
+    ear: Vec2,
+    now: std::time::Duration,
+    dt: f32,
+    master: f32,
+) {
     let Scapes {
         sounds,
         weights,
@@ -380,13 +408,19 @@ fn randoms(commands: &mut Commands, scapes: &mut Scapes, ear: Vec2, dt: f32, mas
             continue;
         }
         let speed = draw(rng, p.line.pitch) / 100.0;
-        commands.spawn((
-            crate::mixer::GameAudio,
-            AudioPlayer::new(wave),
-            PlaybackSettings::DESPAWN
-                .with_volume(Volume::Linear(gain * master))
-                .with_speed(speed),
-        ));
+        let request = Request {
+            event: &p.line.waves[pick.min(p.line.waves.len() - 1)],
+            owner: Owner::None,
+            merge: None,
+            at: p
+                .line
+                .at
+                .map(|[x, y, _]| crate::coords::dota_to_sim(x, y).into()),
+            gain: gain * master,
+            speed,
+            ..Request::default()
+        };
+        mixer.start_ambience(commands, now, &request, wave);
     }
 }
 
@@ -418,5 +452,91 @@ fn tell(scapes: &Scapes, heard: Option<usize>, ear: Vec2, ambience: &mut Ambienc
                 * reach(p.line.at, p.line.db, ear)
         };
         ambience.played[i] = p.played;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn simultaneous_sounds(looped: bool, count: usize) -> Scapes {
+        Scapes {
+            sounds: (0..count)
+                .map(|index| Placed {
+                    line: ScapeSound {
+                        scape: "ambience".to_owned(),
+                        looped,
+                        volume: [1.0, 1.0],
+                        pitch: [1.0, 1.0],
+                        every: [0.05, 0.05],
+                        at: None,
+                        db: NORMAL_DB,
+                        waves: vec![format!("ambient{index}.wav")],
+                    },
+                    scape: 0,
+                    waves: vec![Handle::default()],
+                    playing: None,
+                    next: 0.0,
+                    played: 0,
+                    pit: None,
+                    open: true,
+                })
+                .collect(),
+            weights: vec![1.0],
+            rng: 1,
+            ..Scapes::default()
+        }
+    }
+
+    #[test]
+    fn random_soundscape_players_share_the_world_voice_bound() {
+        let mut world = World::new();
+        let mut scapes = simultaneous_sounds(false, crate::mixer::MAX_VOICES + 1);
+        let mut sources = Assets::<AudioSource>::default();
+        let source = sources.add(crate::mixer::two_minute_source());
+        for placed in &mut scapes.sounds {
+            placed.waves[0] = source.clone();
+        }
+        let mut mixer = Mixer::default();
+        for frame in 0..3 {
+            randoms(
+                &mut world.commands(),
+                &mut mixer,
+                &mut scapes,
+                Vec2::ZERO,
+                std::time::Duration::from_millis(frame * 50),
+                0.05,
+                1.0,
+            );
+            world.flush();
+            let alive = world.query::<&AudioPlayer>().iter(&world).count();
+            assert!(
+                alive <= crate::mixer::MAX_VOICES,
+                "{alive} live players at frame {frame}"
+            );
+            assert_eq!(alive, crate::mixer::MAX_AMBIENCE_VOICES);
+        }
+        mixer.close(&mut world.commands());
+        world.flush();
+        assert_eq!(world.query::<&AudioPlayer>().iter(&world).count(), 0);
+    }
+
+    #[test]
+    fn equal_gain_soundscape_loops_do_not_bypass_the_loop_bound() {
+        use bevy::ecs::system::RunSystemOnce;
+
+        let mut world = World::new();
+        world.insert_resource(simultaneous_sounds(true, MAX_LOOPS + 1));
+        world
+            .run_system_once(
+                |mut commands: Commands,
+                 mut scapes: ResMut<Scapes>,
+                 mut sinks: Query<&mut AudioSink>| {
+                    loops(&mut commands, &mut scapes, Vec2::ZERO, 1.0, &mut sinks);
+                },
+            )
+            .expect("loop system runs");
+        let alive = world.query::<&AudioPlayer>().iter(&world).count();
+        assert_eq!(alive, MAX_LOOPS, "volume ties admitted extra loops");
     }
 }
