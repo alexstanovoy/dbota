@@ -151,6 +151,167 @@ fn sound(fx: &Fx, id: EntityId, at: Vec3, wearing: &mut Wearing, stage: &mut Sta
     }
 }
 
+/// Ends what a wearing played: its particle lives out its life, its loop fades out.
+fn end(wearing: &Wearing, playing: &mut Playing, stage: &mut Stage) {
+    if let Some(instance) = wearing.particle.and_then(|h| playing.get_mut(h)) {
+        instance.end();
+    }
+    if let Some(voice) = wearing.voice {
+        stage.silence(voice);
+    }
+}
+
+/// Starts what each unit that has come to wear a rule's subject wears, and each rune that lies in
+/// sight, keeps its particle at the unit or the rune and fed, and ends it when the unit stops
+/// wearing it, falls or leaves the view, or the rune is taken or leaves the sight. With no match
+/// in view nothing stands: every wearing ends.
+#[allow(clippy::too_many_arguments)]
+fn worn(
+    sight: crate::fog::EventSight,
+    index: Res<UnitIndex>,
+    dying: Query<(), With<Dying>>,
+    ground: Res<Ground>,
+    rules: Res<Rules>,
+    library: Option<Res<Library>>,
+    mut playing: ResMut<Playing>,
+    mut worn: ResMut<Worn>,
+    bodies: Shooters,
+    mut stage: Stage,
+) {
+    let Some(view) = sight.core().view() else {
+        for (_, wearing) in worn.0.drain() {
+            end(&wearing, &mut playing, &mut stage);
+        }
+        stage.silence_loops();
+        return;
+    };
+    let standing = |id: &EntityId| {
+        sight.visible_unit(*id).is_some()
+            && index
+                .0
+                .get(id)
+                .is_some_and(|entity| !dying.contains(*entity))
+    };
+    let wearing = rules
+        .of(Trigger::Worn)
+        .chain(rules.of(Trigger::Held))
+        .chain(rules.of(Trigger::Casting))
+        .collect::<Vec<_>>();
+    if wearing.is_empty() {
+        return;
+    }
+    worn.0.retain(|(id, rule), wearing| {
+        let keep = rules.0.get(*rule).is_some_and(|rule| match rule.subject {
+            Subject::Runes(kind) => {
+                runes::shown(view, sight.fog()).any(|rune| rune.id == *id && rune.kind == kind)
+            }
+            _ => {
+                standing(id)
+                    && view
+                        .unit(*id)
+                        .is_some_and(|unit| holding(rule, unit).is_some())
+            }
+        });
+        if !keep {
+            end(wearing, &mut playing, &mut stage);
+        }
+        keep
+    });
+    let scene = Scene {
+        ground: &ground,
+        bodies: &bodies,
+        library: library.as_deref(),
+    };
+    for unit in view.units.iter().filter(|u| standing(&u.id)) {
+        wear_unit(unit, &wearing, &scene, &mut worn, &mut playing, &mut stage);
+    }
+    wear_runes(
+        view,
+        sight.fog(),
+        &wearing,
+        &scene,
+        &mut worn,
+        &mut playing,
+        &mut stage,
+    );
+}
+
+fn wear_runes(
+    view: &bota_proto::WorldView,
+    fog: &crate::fog::FogGrid,
+    wearing: &[(usize, &Rule)],
+    scene: &Scene,
+    worn: &mut Worn,
+    playing: &mut Playing,
+    stage: &mut Stage,
+) {
+    for rune in runes::shown(view, fog) {
+        let at = on_ground(scene.ground, rune.pos);
+        for (n, rule) in wearing {
+            if rule.subject != Subject::Runes(rune.kind) {
+                continue;
+            }
+            let handle = worn.0.entry((rune.id, *n)).or_insert_with(|| {
+                let with = (scene.library, &mut *playing);
+                begin(&rule.fx, rune.id, at, with, stage, EffectSight::Point)
+            });
+            sound(&rule.fx, rune.id, at, handle, stage);
+            if let Some(instance) = handle.particle.and_then(|h| playing.get_mut(h)) {
+                instance.set_control_point(PLACE, place_of(at), Vec3::ZERO, false);
+            }
+        }
+    }
+}
+
+/// What the effects worn are placed with.
+struct Scene<'a> {
+    ground: &'a Ground,
+    bodies: &'a Shooters<'a, 'a>,
+    library: Option<&'a Library>,
+}
+
+/// Starts and keeps what one unit wears of each rule it holds.
+fn wear_unit(
+    unit: &UnitView,
+    wearing: &[(usize, &Rule)],
+    scene: &Scene,
+    worn: &mut Worn,
+    playing: &mut Playing,
+    stage: &mut Stage,
+) {
+    for (n, rule) in wearing {
+        let Some(held) = holding(rule, unit) else {
+            continue;
+        };
+        let fx = &rule.fx;
+        if !worn.0.contains_key(&(unit.id, *n)) && !nodes_ready(fx, scene.bodies, unit) {
+            continue;
+        }
+        let at = attach_point(scene.ground, scene.bodies, unit, &fx.attach);
+        let handle = worn.0.entry((unit.id, *n)).or_insert_with(|| {
+            begin(
+                fx,
+                unit.id,
+                at,
+                (scene.library, &mut *playing),
+                stage,
+                EffectSight::Unit(unit.id),
+            )
+        });
+        sound(fx, unit.id, at, handle, stage);
+        if let Some(instance) = handle.particle.and_then(|h| playing.get_mut(h)) {
+            instance.bind_control_point(
+                PLACE,
+                place_of(at),
+                attach_basis(scene.bodies, unit, &fx.attach),
+                scene.bodies.object_scale(unit.id),
+            );
+        }
+        let place = |attach: &Attach| attach_point(scene.ground, scene.bodies, unit, attach);
+        feed(fx, handle.particle, playing, &held.feeds, &place);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -348,166 +509,5 @@ mod tests {
             0,
             "the bounded deadline left a physical player"
         );
-    }
-}
-
-/// Ends what a wearing played: its particle lives out its life, its loop fades out.
-fn end(wearing: &Wearing, playing: &mut Playing, stage: &mut Stage) {
-    if let Some(instance) = wearing.particle.and_then(|h| playing.get_mut(h)) {
-        instance.end();
-    }
-    if let Some(voice) = wearing.voice {
-        stage.silence(voice);
-    }
-}
-
-/// Starts what each unit that has come to wear a rule's subject wears, and each rune that lies in
-/// sight, keeps its particle at the unit or the rune and fed, and ends it when the unit stops
-/// wearing it, falls or leaves the view, or the rune is taken or leaves the sight. With no match
-/// in view nothing stands: every wearing ends.
-#[allow(clippy::too_many_arguments)]
-fn worn(
-    sight: crate::fog::EventSight,
-    index: Res<UnitIndex>,
-    dying: Query<(), With<Dying>>,
-    ground: Res<Ground>,
-    rules: Res<Rules>,
-    library: Option<Res<Library>>,
-    mut playing: ResMut<Playing>,
-    mut worn: ResMut<Worn>,
-    bodies: Shooters,
-    mut stage: Stage,
-) {
-    let Some(view) = sight.core().view() else {
-        for (_, wearing) in worn.0.drain() {
-            end(&wearing, &mut playing, &mut stage);
-        }
-        stage.silence_loops();
-        return;
-    };
-    let standing = |id: &EntityId| {
-        sight.visible_unit(*id).is_some()
-            && index
-                .0
-                .get(id)
-                .is_some_and(|entity| !dying.contains(*entity))
-    };
-    let wearing = rules
-        .of(Trigger::Worn)
-        .chain(rules.of(Trigger::Held))
-        .chain(rules.of(Trigger::Casting))
-        .collect::<Vec<_>>();
-    if wearing.is_empty() {
-        return;
-    }
-    worn.0.retain(|(id, rule), wearing| {
-        let keep = rules.0.get(*rule).is_some_and(|rule| match rule.subject {
-            Subject::Runes(kind) => {
-                runes::shown(view, sight.fog()).any(|rune| rune.id == *id && rune.kind == kind)
-            }
-            _ => {
-                standing(id)
-                    && view
-                        .unit(*id)
-                        .is_some_and(|unit| holding(rule, unit).is_some())
-            }
-        });
-        if !keep {
-            end(wearing, &mut playing, &mut stage);
-        }
-        keep
-    });
-    let scene = Scene {
-        ground: &ground,
-        bodies: &bodies,
-        library: library.as_deref(),
-    };
-    for unit in view.units.iter().filter(|u| standing(&u.id)) {
-        wear_unit(unit, &wearing, &scene, &mut worn, &mut playing, &mut stage);
-    }
-    wear_runes(
-        view,
-        sight.fog(),
-        &wearing,
-        &scene,
-        &mut worn,
-        &mut playing,
-        &mut stage,
-    );
-}
-
-fn wear_runes(
-    view: &bota_proto::WorldView,
-    fog: &crate::fog::FogGrid,
-    wearing: &[(usize, &Rule)],
-    scene: &Scene,
-    worn: &mut Worn,
-    playing: &mut Playing,
-    stage: &mut Stage,
-) {
-    for rune in runes::shown(view, fog) {
-        let at = on_ground(scene.ground, rune.pos);
-        for (n, rule) in wearing {
-            if rule.subject != Subject::Runes(rune.kind) {
-                continue;
-            }
-            let handle = worn.0.entry((rune.id, *n)).or_insert_with(|| {
-                let with = (scene.library, &mut *playing);
-                begin(&rule.fx, rune.id, at, with, stage, EffectSight::Point)
-            });
-            sound(&rule.fx, rune.id, at, handle, stage);
-            if let Some(instance) = handle.particle.and_then(|h| playing.get_mut(h)) {
-                instance.set_control_point(PLACE, place_of(at), Vec3::ZERO, false);
-            }
-        }
-    }
-}
-
-/// What the effects worn are placed with.
-struct Scene<'a> {
-    ground: &'a Ground,
-    bodies: &'a Shooters<'a, 'a>,
-    library: Option<&'a Library>,
-}
-
-/// Starts and keeps what one unit wears of each rule it holds.
-fn wear_unit(
-    unit: &UnitView,
-    wearing: &[(usize, &Rule)],
-    scene: &Scene,
-    worn: &mut Worn,
-    playing: &mut Playing,
-    stage: &mut Stage,
-) {
-    for (n, rule) in wearing {
-        let Some(held) = holding(rule, unit) else {
-            continue;
-        };
-        let fx = &rule.fx;
-        if !worn.0.contains_key(&(unit.id, *n)) && !nodes_ready(fx, scene.bodies, unit) {
-            continue;
-        }
-        let at = attach_point(scene.ground, scene.bodies, unit, &fx.attach);
-        let handle = worn.0.entry((unit.id, *n)).or_insert_with(|| {
-            begin(
-                fx,
-                unit.id,
-                at,
-                (scene.library, &mut *playing),
-                stage,
-                EffectSight::Unit(unit.id),
-            )
-        });
-        sound(fx, unit.id, at, handle, stage);
-        if let Some(instance) = handle.particle.and_then(|h| playing.get_mut(h)) {
-            instance.bind_control_point(
-                PLACE,
-                place_of(at),
-                attach_basis(scene.bodies, unit, &fx.attach),
-                scene.bodies.object_scale(unit.id),
-            );
-        }
-        let place = |attach: &Attach| attach_point(scene.ground, scene.bodies, unit, attach);
-        feed(fx, handle.particle, playing, &held.feeds, &place);
     }
 }
