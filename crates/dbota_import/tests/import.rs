@@ -293,12 +293,30 @@ fn sound_install(files: &[(String, Vec<&'static str>)]) -> SliceSource<Vec<u8>> 
             ))
         })
         .collect();
-    let mut all: Vec<(&str, &str, &str, &[u8])> = vec![(
-        "soundstacks",
-        "soundstacks_dota_core",
-        "vsndstck_c",
-        &stacks,
-    )];
+    // Every install has Dota's mixer, which the sound events step reads for their groups; an
+    // install without it is reported (once, by its path) beside what the test looks at.
+    let mixer = br#"<!-- kv3 -->
+{
+  MixGroups = [ { name = "all" path_substring = "" sndlvl_min = 1 priority = 30 } ]
+  SoundMixers = { Default_Mix = [ { mixgroup = "all" vol = 1 lvl = 1 mute = 0 } ] }
+  MixLayers = { }
+}"#;
+    let mut all: Vec<(&str, &str, &str, &[u8])> = vec![
+        (
+            "soundstacks",
+            "soundstacks_dota_core",
+            "vsndstck_c",
+            &stacks,
+        ),
+        // The music's types come from a second file (c6354e3); the same types will do.
+        (
+            "soundstacks",
+            "soundstacks_dota_music",
+            "vsndstck_c",
+            &stacks,
+        ),
+        ("scripts", "soundmixers", "txt", mixer),
+    ];
     for ((name, _), bytes) in files.iter().zip(&events) {
         all.push(("soundevents", name, "vsndevts_c", bytes));
     }
