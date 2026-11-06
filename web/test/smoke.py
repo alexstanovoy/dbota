@@ -1396,6 +1396,7 @@ database = "{directory}/radovid.db"
 tls_cert = "{cert}"
 tls_key = "{key}"
 game_ports = "{game_port}-{game_port}"
+lobby_teams = [5, 5]
 [web]
 static_dir = "{page_dir}"
 [password]
