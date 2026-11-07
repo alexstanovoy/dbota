@@ -1953,6 +1953,95 @@ fn the_harness_gives_up_on_a_server_that_never_answers_its_wire_probe() {
     );
 }
 
+/// A script standing in for a game server, in a scratch folder of its own.
+#[cfg(target_os = "linux")]
+fn stub_server(what: &str, script: &str) -> (Scratch, PathBuf) {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = Scratch::new(what);
+    let stub = dir.0.join("bota_server");
+    std::fs::write(&stub, script).expect("a script");
+    std::fs::set_permissions(&stub, std::fs::Permissions::from_mode(0o755)).expect("mode");
+    (dir, stub)
+}
+
+/// Waits for the process the stub recorded in `pid` to be gone (or a zombie nobody reaped yet).
+#[cfg(target_os = "linux")]
+fn recorded_process_ends(pid: &Path) {
+    let pid = std::fs::read_to_string(pid).expect("the stub recorded its sleeper");
+    let deadline = Instant::now() + Duration::from_secs(PATIENCE);
+    loop {
+        match std::fs::read_to_string(format!("/proc/{}/stat", pid.trim())) {
+            Err(_) => return,
+            Ok(stat)
+                if stat
+                    .rsplit(") ")
+                    .next()
+                    .is_some_and(|rest| rest.starts_with('Z')) =>
+            {
+                return;
+            }
+            Ok(_) => {}
+        }
+        assert!(
+            Instant::now() < deadline,
+            "the stub's sleeper {pid} survived the probe"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
+}
+
+/// A server that exits at once but leaves a background process holding its output open does not
+/// keep the probe waiting past its patience, and the leftover is killed with it.
+#[cfg(target_os = "linux")]
+#[test]
+fn the_wire_probe_does_not_wait_for_a_background_process_holding_the_output() {
+    let (dir, stub) = stub_server(
+        "background_wire",
+        "#!/bin/sh\nsleep 100 &\necho $! > \"$(dirname \"$0\")/pid\"\nexit 0\n",
+    );
+    let said = wire_checked(stub.clone(), 0xabcd, Duration::from_secs(1)).expect_err("no answer");
+    assert_eq!(
+        said,
+        format!(
+            "{} did not answer its wire probe within 1s and was killed",
+            stub.display()
+        )
+    );
+    recorded_process_ends(&dir.0.join("pid"));
+}
+
+/// A server that answers and leaves a background process behind is believed, and the process is
+/// killed: the probe owns everything it started.
+#[cfg(target_os = "linux")]
+#[test]
+fn the_wire_probe_kills_what_an_answering_server_left_running() {
+    let (dir, stub) = stub_server(
+        "leftover_wire",
+        "#!/bin/sh\nsleep 100 &\necho $! > \"$(dirname \"$0\")/pid\"\necho 000000000000abcd\nexit 0\n",
+    );
+    assert_eq!(
+        wire_checked(stub.clone(), 0xabcd, Duration::from_secs(PATIENCE)).expect("the answer"),
+        stub
+    );
+    recorded_process_ends(&dir.0.join("pid"));
+}
+
+/// A server that floods its output is cut off after a few bytes, and the error quotes only a
+/// short prefix of them.
+#[cfg(target_os = "linux")]
+#[test]
+fn the_wire_probe_cuts_off_a_server_that_floods_its_output() {
+    let (_dir, stub) = stub_server("flood_wire", "#!/bin/sh\nexec tr '\\0' a < /dev/zero\n");
+    let said = wire_checked(stub.clone(), 0xabcd, Duration::from_secs(20)).expect_err("flood");
+    assert_eq!(
+        said,
+        format!(
+            "{} did not say its wire in its first 64 bytes: \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"",
+            stub.display()
+        )
+    );
+}
+
 /// A game server of another wire than the client's is not used, and the menu says which it
 /// looked at; the real one, named, is found.
 #[cfg(unix)]
