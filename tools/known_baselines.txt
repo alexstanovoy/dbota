@@ -1,13 +1,5 @@
-# Known failures of main: exact test names, each with its reason. tools/test_groups.py run skips them and reports them as
-# waived; tools/test_groups.py check fails on a name that is no test, so a fixed or renamed test leaves this file.
-# Add a line only for a failure that is confirmed on plain main and has an owner who is fixing it.
-stats::backpack_ui_tests::a_refused_inventory_drag_rolls_its_preview_back_without_waiting_for_a_timeout # flaky on main under machine load: 4 or 5 of these 9 fail in a run, not always the same ones
-stats::backpack_ui_tests::ui_drag_a_dead_heros_items_uses_the_same_owner_for_the_kit_and_preview # flaky on main under machine load: 4 or 5 of these 9 fail in a run, not always the same ones
-stats::backpack_ui_tests::ui_drag_a_selected_couriers_items_uses_its_inventory_for_input_and_drawing # flaky on main under machine load: 4 or 5 of these 9 fail in a run, not always the same ones
-stats::backpack_ui_tests::ui_drag_back_after_one_second_without_an_ack_still_returns_the_displayed_item # flaky on main under machine load: 4 or 5 of these 9 fail in a run, not always the same ones
-stats::backpack_ui_tests::ui_drag_back_before_the_first_swap_ack_does_not_leave_the_item_inactive_forever # flaky on main under machine load: 4 or 5 of these 9 fail in a run, not always the same ones
-stats::backpack_ui_tests::ui_drag_into_a_third_slot_before_acknowledgement_keeps_the_composed_inventory_pickable # flaky on main under machine load: 4 or 5 of these 9 fail in a run, not always the same ones
-stats::backpack_ui_tests::ui_drag_passive_item_into_an_occupied_inventory_slot_restores_server_and_hud_for_twelve_seconds # flaky on main under machine load: 4 or 5 of these 9 fail in a run, not always the same ones
-stats::backpack_ui_tests::ui_drag_power_treads_to_backpack_and_back_restores_server_and_hud_for_twelve_seconds # flaky on main under machine load: 4 or 5 of these 9 fail in a run, not always the same ones
-stats::backpack_ui_tests::ui_drop_and_pickup_restores_stats_without_creating_backpack_inactivity # flaky on main under machine load: 4 or 5 of these 9 fail in a run, not always the same ones
-more_sound_event_files_than_any_install_has_is_an_error # fails on main: the importer reports a missing scripts/soundmixers.txt as well
+# Known failures of main: one `exact::test::name # reason (owner: WHO; remove when: CONDITION)` per line. tools/test_groups.py run
+# skips them and reports them as waived, unless the change reaches the test's group (any file routed to it); check fails on a
+# name that is no test, so a fixed or renamed test leaves this file. Only a failure that is deterministic on main and has an
+# owner who is fixing it belongs here; a flaky test is fixed or fenced, not waived.
+# None now: the importer fixtures are fixed on main.

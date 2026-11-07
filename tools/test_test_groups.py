@@ -55,6 +55,13 @@ class RoutingTests(unittest.TestCase):
         self.assertEqual([g.name for g in chosen], ["alpha", "beta_one", "beta_two"])
         self.assertEqual(unnamed, ["src/new.rs"])
 
+    def test_also_paths_run_a_group_without_naming_the_file(self):
+        reader = group("reader", [], selector("lib"))
+        reader.also_paths = ["**.rs"]
+        router = test_groups.Router([*self.groups, reader], [])
+        self.assertIsNone(router.route("src/new.rs"))
+        self.assertEqual(router.route("src/a.rs"), {"alpha", "reader"})
+
     def test_single_star_does_not_cross_directories(self):
         self.assertIsNone(test_groups.Router([group("g", ["src/*.rs"])], []).route("src/deep/x.rs"))
 
@@ -67,13 +74,13 @@ class RoutingTests(unittest.TestCase):
 class ImportTests(unittest.TestCase):
     def edges(self, sources):
         files = sorted(sources)
-        return test_groups.import_edges(files, sources.__getitem__)
+        return test_groups.import_edges(test_groups.crate_trees(files, sources.__getitem__), sources.__getitem__)
 
     def test_crate_paths_super_paths_and_brace_lists_are_edges(self):
         edges = self.edges({
             "src/main.rs": "mod a; mod b; mod c;",
             "src/a.rs": "pub fn x() {}",
-            "src/b/mod.rs": "pub fn y() {}",
+            "src/b/mod.rs": "mod inner; pub fn y() {}",
             "src/c.rs": "use crate::a::x; use crate::{b::y, a};",
             "src/b/inner.rs": "use super::y; use super::super::a::x;",
         })
@@ -81,12 +88,61 @@ class ImportTests(unittest.TestCase):
         self.assertEqual(edges["src/b/inner.rs"], {"src/b/mod.rs", "src/a.rs"})
 
     def test_a_path_into_an_item_of_a_module_reaches_the_modules_file(self):
-        edges = self.edges({"src/lib.rs": "", "src/a.rs": "", "src/b.rs": "fn f() { crate::a::Thing::new(); }"})
+        edges = self.edges({"src/lib.rs": "mod a; mod b;", "src/a.rs": "", "src/b.rs": "fn f() { crate::a::Thing::new(); }"})
         self.assertEqual(edges["src/b.rs"], {"src/a.rs"})
 
+    def test_a_path_attribute_names_the_file_of_a_module_wherever_it_is(self):
+        edges = self.edges({
+            "src/lib.rs": "mod a;",
+            "src/a.rs": '#[path = "../tests/a_tests.rs"]\nmod a_tests;\n// #[path = "../nowhere.rs"]\n// mod ghost;',
+            "tests/a_tests.rs": "use super::helper;",
+            "src/b.rs": "",
+        })
+        self.assertEqual(edges["tests/a_tests.rs"], {"src/a.rs"})
+
+    def test_a_module_of_a_path_file_is_found_below_that_files_directory(self):
+        files = {"src/lib.rs": '#[path = "x/y.rs"]\nmod y;', "src/x/y.rs": "mod z;", "src/x/z.rs": ""}
+        tree = test_groups.crate_trees(sorted(files), files.__getitem__)["src/lib.rs"]
+        self.assertEqual(tree.walk("src/lib.rs", ["y", "z"]), "src/x/z.rs")
+
+    def test_a_glob_import_is_an_edge_to_the_module_it_globs(self):
+        edges = self.edges({
+            "src/lib.rs": "mod a; mod m;",
+            "src/a.rs": '#[path = "t.rs"]\nmod t;',
+            "src/t.rs": "use super::*;",
+            "src/m.rs": "use crate::a::*;",
+        })
+        self.assertEqual(edges["src/t.rs"], {"src/a.rs"})
+        self.assertEqual(edges["src/m.rs"], {"src/a.rs"})
+
     def test_two_crates_do_not_see_each_others_modules(self):
-        edges = self.edges({"src/main.rs": "", "src/a.rs": "use crate::z::x;", "sub/src/lib.rs": "", "sub/src/z.rs": ""})
-        self.assertEqual(edges["src/a.rs"], set())
+        edges = self.edges({"src/main.rs": "mod a;", "src/a.rs": "use crate::z::x;", "sub/src/lib.rs": "mod z;", "sub/src/z.rs": ""})
+        self.assertEqual(edges["src/a.rs"], {"src/main.rs"})  # the item `z` is not a module here: the path reaches the crate root
+
+
+class ModuleTreeLimitTests(unittest.TestCase):
+    """What the module tree cannot read is not guessed: rustc's file list shows it, and check fails on the difference."""
+
+    def listed(self, sources):
+        return test_groups.Listed([], set(), test_groups.ROOT / "src/lib.rs", set(sources))
+
+    def tree(self, files):
+        return test_groups.crate_trees(sorted(files), files.__getitem__)
+
+    def test_a_module_declared_inside_an_inline_module_is_reported_when_rustc_built_it(self):
+        files = {"src/lib.rs": "mod outer { mod inner; }", "src/outer/inner.rs": ""}
+        errors = test_groups.check_tree(self.tree(files), self.listed({"src/lib.rs", "src/outer/inner.rs"}), "k lib")
+        self.assertEqual(len(errors), 1)
+        self.assertIn("rustc built it from src/outer/inner.rs, which the module tree of src/lib.rs does not reach (an inline module", errors[0])
+
+    def test_an_included_file_is_reported_when_rustc_built_it(self):
+        files = {"src/lib.rs": 'include!("generated.rs");', "src/generated.rs": ""}
+        errors = test_groups.check_tree(self.tree(files), self.listed({"src/lib.rs", "src/generated.rs"}), "k lib")
+        self.assertIn("an include!", errors[0])
+
+    def test_a_tree_that_reaches_every_built_file_has_nothing_to_report(self):
+        files = {"src/lib.rs": "mod a;", "src/a.rs": ""}
+        self.assertEqual(test_groups.check_tree(self.tree(files), self.listed({"src/lib.rs", "src/a.rs"}), "k lib"), [])
 
 
 class CommandTests(unittest.TestCase):
@@ -209,14 +265,21 @@ class BaselineFileTests(unittest.TestCase):
                 test_groups.ROOT = original
 
     def test_names_and_reasons_are_read_and_comments_skipped(self):
-        found = self.read("# a comment\n\nmod::test_one # fails on main since abc\n")
-        self.assertEqual(found, {"mod::test_one": "fails on main since abc"})
+        found = self.read("# a comment\n\nmod::test_one # fails since abc (owner: me; remove when: fixed)\n")
+        self.assertEqual(found, {"mod::test_one": "fails since abc (owner: me; remove when: fixed)"})
 
     def test_a_baseline_without_a_reason_is_refused(self):
         with self.assertRaises(test_groups.Failure) as raised:
             self.read("mod::test_one\n")
-        self.assertIn("expected `exact::test::name # reason`", str(raised.exception))
+        self.assertIn("expected `exact::test::name # reason (owner: WHO; remove when: CONDITION)`", str(raised.exception))
 
+    def test_a_baseline_without_an_owner_and_a_removal_condition_is_refused(self):
+        for line in ("mod::test_one # it fails\n", "mod::test_one # it fails (owner: me)\n", "mod::test_one # it fails (remove when: fixed)\n"):
+            with self.assertRaises(test_groups.Failure, msg=line):
+                self.read(line)
+
+
+TOY_BASELINE = "c::failing # fails on main (owner: nobody; remove when: the toy is fixed)\n"
 
 TOY_TOML = """
 profile = "test-release"
@@ -242,14 +305,21 @@ tests = [{ package = "toy", target = "lib", filters = ["b::"] }]
 
 [[group]]
 name = "third"
-paths = ["src/c.rs"]
-tests = [{ package = "toy", target = "lib", filters = ["c::"] }]
+paths = ["src/c.rs", "src/other/e_tests.rs"]
+tests = [{ package = "toy", target = "lib", filters = ["c::", "e::"] }]
+
+[[group]]
+name = "fourth"
+paths = ["src/d.rs"]
+tests = [{ package = "toy", target = "lib", features = ["extra"], filters = ["d::"] }]
 """
 
 TOY_FILES = {
-    "Cargo.toml": '[package]\nname = "toy"\nversion = "0.1.0"\nedition = "2021"\n[profile.test-release]\ninherits = "release"\n',
+    "Cargo.toml": '[package]\nname = "toy"\nversion = "0.1.0"\nedition = "2021"\n[workspace]\n[features]\nextra = []\n[profile.test-release]\ninherits = "release"\n',
     ".gitignore": "target/\n",
-    "src/lib.rs": "#![allow(dead_code, unused_imports)]\nmod a;\nmod b;\nmod c;\n",
+    "src/lib.rs": "#![allow(dead_code, unused_imports)]\nmod a;\nmod b;\nmod c;\n#[cfg(feature = \"extra\")]\nmod d;\n#[path = \"other/e_tests.rs\"]\nmod e;\n",
+    "src/d.rs": "#[test]\nfn only_with_the_feature() {}\n",
+    "src/other/e_tests.rs": "#[test]\nfn pathed() {}\n",
     "src/a.rs": "pub fn helper() {}\n#[test]\nfn one() {}\n#[test]\n#[ignore]\nfn two() {}\n",
     "src/b.rs": "use crate::a::helper;\n#[test]\nfn uses_a() { helper(); }\n",
     "src/c.rs": "#[test]\nfn failing() { assert_eq!(1, 2, \"toy failure\"); }\n",
@@ -262,7 +332,9 @@ class ToyRepositoryTests(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.directory = Path(tempfile.mkdtemp(prefix="test-groups-toy-"))
+        scratch = Path(os.environ.get("CARGO_TARGET_DIR") or test_groups.ROOT / "target") / "test-groups-toy"
+        scratch.mkdir(parents=True, exist_ok=True)
+        cls.directory = Path(tempfile.mkdtemp(prefix="repo-", dir=scratch))
         cls.original = (test_groups.ROOT, test_groups.CONFIG)
         cls.target = os.environ.get("CARGO_TARGET_DIR")
         os.environ["CARGO_TARGET_DIR"] = str(cls.directory / "target")
@@ -294,21 +366,21 @@ class ToyRepositoryTests(unittest.TestCase):
         subprocess.run(["git", "checkout", "-q", "--", "."], cwd=self.directory, check=True)
         subprocess.run(["git", "clean", "-qfd"], cwd=self.directory, check=True)
 
-    def arguments(self, *change, base=None, record=None, no_waive=False, all_=False):
-        return argparse.Namespace(all=all_, base=base, change=list(change), no_waive=no_waive, record=record)
+    def arguments(self, *change, base=None, record=None, no_waive=False, all_=False, skip_feature=()):
+        return argparse.Namespace(all=all_, base=base, change=list(change), no_waive=no_waive, record=record, skip_feature=list(skip_feature))
 
-    def check(self, toml=None, base=None):
+    def check(self, toml=None, base=None, skip_feature=()):
         if toml is not None:
             self.write("tools/test_groups.toml", toml)
-        errors = io.StringIO()
-        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(errors):
-            status = test_groups.cmd_check(self.arguments(base=base))
-        return status, errors.getvalue()
+        errors, output = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(output), contextlib.redirect_stderr(errors):
+            status = test_groups.cmd_check(self.arguments(base=base, skip_feature=skip_feature))
+        return status, errors.getvalue(), output.getvalue()
 
-    def run_groups(self, *change, record=None, no_waive=False):
+    def run_groups(self, *change, record=None, no_waive=False, all_=False):
         output = io.StringIO()
         with contextlib.redirect_stdout(output):
-            status = test_groups.cmd_run(self.arguments(*change, record=record, no_waive=no_waive))
+            status = test_groups.cmd_run(self.arguments(*change, record=record, no_waive=no_waive, all_=all_))
         return status, output.getvalue()
 
     def select(self, *change):
@@ -318,45 +390,68 @@ class ToyRepositoryTests(unittest.TestCase):
         return output.getvalue().splitlines()[0]
 
     def test_check_passes_when_every_test_is_in_one_group_and_every_file_is_routed(self):
-        status, errors = self.check()
+        status, errors, _ = self.check()
         self.assertEqual((status, errors), (0, ""))
 
     def test_check_names_a_test_in_no_group(self):
-        status, errors = self.check(TOY_TOML.replace('filters = ["b::"]', 'filters = ["b::uses_aa"]'))
+        status, errors, _ = self.check(TOY_TOML.replace('filters = ["b::"]', 'filters = ["b::uses_aa"]'))
         self.assertEqual(status, 1)
         self.assertIn("in no group: toy lib b::uses_a", errors)
 
     def test_check_names_a_test_in_two_groups(self):
-        status, errors = self.check(TOY_TOML.replace('filters = ["b::"]', 'filters = ["b::", "a::one"]'))
+        status, errors, _ = self.check(TOY_TOML.replace('filters = ["b::"]', 'filters = ["b::", "a::one"]'))
         self.assertEqual(status, 1)
         self.assertIn("in 2 groups (first, second) of one build: toy lib a::one", errors)
 
     def test_check_names_a_filter_that_selects_no_test(self):
-        status, errors = self.check(TOY_TOML.replace('filters = ["c::"]', 'filters = ["c::", "gone::"]'))
+        status, errors, _ = self.check(TOY_TOML.replace('"e::"]', '"e::", "gone::"]'))
         self.assertEqual(status, 1)
         self.assertIn("group third: filter 'gone::' selects no test", errors)
 
     def test_check_names_a_file_nothing_routes(self):
         self.write("docs/notes.txt", "x")
-        status, errors = self.check()
+        status, errors, _ = self.check()
         self.assertEqual(status, 1)
         self.assertIn("no group or route names docs/notes.txt", errors)
 
     def test_check_names_a_path_pattern_that_matches_no_file(self):
-        status, errors = self.check(TOY_TOML.replace('paths = ["src/c.rs"]', 'paths = ["src/c.rs", "src/gone.rs"]'))
+        status, errors, _ = self.check(TOY_TOML.replace('"src/other/e_tests.rs"]\ntests = [{ package = "toy", target = "lib", filters = ["c::"', '"src/other/e_tests.rs", "src/gone.rs"]\ntests = [{ package = "toy", target = "lib", filters = ["c::"'))
         self.assertEqual(status, 1)
         self.assertIn("group third: path pattern 'src/gone.rs' matches no file", errors)
 
     def test_check_names_a_test_file_missing_from_its_groups_paths(self):
-        status, errors = self.check(TOY_TOML.replace('paths = ["src/c.rs"]', 'paths = []').replace('"src/lib.rs"]', '"src/lib.rs", "src/c.rs"]'))
+        status, errors, _ = self.check(TOY_TOML.replace('paths = ["src/c.rs", "src/other/e_tests.rs"]', 'paths = ["src/other/e_tests.rs"]').replace('"src/lib.rs"]', '"src/lib.rs", "src/c.rs"]'))
         self.assertEqual(status, 1)
         self.assertIn("src/c.rs, which is not in the `paths` of its group third", errors)
 
     def test_check_names_a_baseline_that_is_no_test(self):
-        self.write("known_baselines.txt", "a::gone # fixed long ago\n")
-        status, errors = self.check()
+        self.write("known_baselines.txt", "a::gone # fixed long ago (owner: nobody; remove when: never)\n")
+        status, errors, _ = self.check()
         self.assertEqual(status, 1)
         self.assertIn("baseline a::gone is no test", errors)
+
+    def test_check_skips_a_feature_build_it_is_told_to_and_says_so(self):
+        status, errors, output = self.check(skip_feature=["extra"])
+        self.assertEqual((status, errors), (0, ""))
+        self.assertIn("SKIPPED the builds with feature(s) extra (extra)", output)
+
+    def test_check_names_a_test_of_the_feature_build_in_no_group(self):
+        status, errors, _ = self.check(TOY_TOML.replace('filters = ["d::"]', 'filters = ["none::"]'))
+        self.assertEqual(status, 1)
+        self.assertIn("in no group: toy lib with extra d::only_with_the_feature", errors)
+
+    def test_a_test_in_a_path_module_is_written_in_the_file_the_path_names(self):
+        status, errors, _ = self.check(TOY_TOML.replace('paths = ["src/c.rs", "src/other/e_tests.rs"]', 'paths = ["src/c.rs"]').replace('"src/lib.rs"]', '"src/lib.rs", "src/other/e_tests.rs"]'))
+        self.assertEqual(status, 1)
+        self.assertIn("src/other/e_tests.rs, which is not in the `paths` of its group third", errors)
+
+    def test_the_module_tree_must_reach_every_file_rustc_built_a_binary_from(self):
+        files = sorted(test_groups.every_file())
+        trees = test_groups.crate_trees(files, lambda path: (self.directory / path).read_text())
+        listed = test_groups.Listed([], set(), self.directory / "src/lib.rs", {"src/lib.rs", "src/other/e_tests.rs", "src/stray.rs"})
+        errors = test_groups.check_tree(trees, listed, "toy lib")
+        self.assertEqual(len(errors), 1)
+        self.assertIn("rustc built it from src/stray.rs, which the module tree of src/lib.rs does not reach", errors[0])
 
     def test_a_change_to_a_file_runs_the_groups_of_the_tests_importing_it(self):
         self.assertEqual(self.select("src/a.rs"), "# groups: first second")
@@ -373,7 +468,7 @@ class ToyRepositoryTests(unittest.TestCase):
     def test_an_edit_of_a_global_key_of_the_toml_runs_every_group(self):
         self.write("tools/test_groups.toml", TOY_TOML.replace('profile = "test-release"', 'profile = "test-release"\ncargo_flags = ["--quiet"]'))
         groups = test_groups.parse_config(__import__("tomllib").loads(TOY_TOML))[0]
-        self.assertEqual(test_groups.config_delta(groups, "HEAD"), {"first", "second", "third"})
+        self.assertEqual(test_groups.config_delta(groups, "HEAD"), {"first", "second", "third", "fourth"})
 
     def test_an_edit_of_one_group_of_the_toml_runs_that_group(self):
         self.write("tools/test_groups.toml", TOY_TOML.replace('filters = ["a::"]', 'filters = ["a::one"]'))
@@ -388,20 +483,30 @@ class ToyRepositoryTests(unittest.TestCase):
         self.assertEqual(record.read_text(), "c::failing\n")
 
     def test_run_goes_green_over_a_waived_baseline_and_reports_it(self):
-        self.write("known_baselines.txt", "c::failing # fails on main\n")
-        status, output = self.run_groups("src/lib.rs")
-        self.assertEqual(status, 0, output)
-        self.assertIn("waived baseline: c::failing -- fails on main", output)
+        self.write("known_baselines.txt", TOY_BASELINE)
+        status, output = self.run_groups(all_=True)
+        self.assertEqual(status, 0, output[-1500:])
+        self.assertIn("waived baseline: c::failing -- fails on main (owner: nobody; remove when: the toy is fixed)", output)
 
-    def test_run_runs_a_waived_baseline_whose_file_changed(self):
-        self.write("known_baselines.txt", "c::failing # fails on main\n")
-        status, output = self.run_groups("src/c.rs")
+    def test_run_skips_a_waived_baseline_when_the_change_does_not_reach_its_group(self):
+        self.write("known_baselines.txt", TOY_BASELINE)
+        status, output = self.run_groups("src/b.rs")
+        self.assertEqual(status, 0, output)
+
+    def test_run_runs_a_waived_baseline_when_a_changed_file_is_routed_to_its_group(self):
+        self.write("known_baselines.txt", TOY_BASELINE)
+        status, output = self.run_groups("src/lib.rs")
         self.assertEqual(status, 1)
-        self.assertIn("a changed file holds 1 waived baseline(s), so they run: c::failing", output)
+        self.assertIn("so they run: c::failing", output)
+
+    def test_editing_the_baselines_file_alone_does_not_unwaive_what_it_waives(self):
+        self.write("known_baselines.txt", TOY_BASELINE)
+        status, output = self.run_groups("known_baselines.txt")
+        self.assertEqual(status, 0, output)
 
     def test_run_runs_a_waived_baseline_when_asked_to(self):
-        self.write("known_baselines.txt", "c::failing # fails on main\n")
-        self.assertEqual(self.run_groups("src/lib.rs", no_waive=True)[0], 1)
+        self.write("known_baselines.txt", TOY_BASELINE)
+        self.assertEqual(self.run_groups(all_=True, no_waive=True)[0], 1)
 
     def test_run_of_the_passing_groups_counts_the_ignored_test_and_succeeds(self):
         status, output = self.run_groups("src/a.rs")

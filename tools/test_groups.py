@@ -15,23 +15,25 @@ a change to the toml runs the groups it edited (every group when a global key mo
 `check` builds the tests (every feature set the groups use when the whole repository is checked; with `--base`, the others
 only when the change can matter to them), asks each test binary for its tests (libtest's `--list`, doc tests and Python
 unittest ids too) and fails on a test in no group or in two, a group without a test, a filter or a path pattern that matches
-nothing, a file nothing routes, and a test file that is not in its group's `paths` or whose imports or scripts would not run
-its group when changed. `run` checks that every command ran exactly the tests its groups select.
+nothing, a file nothing routes, a test file that is not in its group's `paths`, and a file rustc built a test binary from that
+the module tree (which the import routes and the test-to-file mapping rest on) does not reach. `run` checks that every command
+ran exactly the tests its groups select.
 
 Known failures of main (the file `baselines` names: exact test names, each with its reason) are skipped by `run` and listed as
-waived, so one of them does not hide the rest of the suite; `--no-waive` runs them, and a changed file that holds a waived
-test runs it too. Any other failure stops the run. Tests marked `#[ignore]` are grouped like the others and reported as
+waived, so one of them does not hide the rest of the suite; `--no-waive` runs them, and a change to any file routed to a waived
+test's group runs it too. Any other failure stops the run. Tests marked `#[ignore]` are grouped like the others and reported as
 ignored: the gate's own steps run them.
 """
 
 import argparse
 import json
+import posixpath
 import re
 import shlex
 import subprocess
 import sys
 import tomllib
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 ROOT = Path(subprocess.run(["git", "rev-parse", "--show-toplevel"], capture_output=True, text=True, check=True).stdout.strip())
@@ -61,6 +63,7 @@ class Group:
     paths: list[str]
     selectors: list[Selector]
     before: list[list[str]]
+    also_paths: list[str] = field(default_factory=list)  # files the group reads: a change runs it, but they are named elsewhere
 
 
 @dataclass
@@ -70,6 +73,7 @@ class Listed:
     tests: list[str]
     ignored: set[str]
     root: Path
+    sources: set[str] = field(default_factory=set)  # the repository's Rust files rustc built the binary from (its dep-info)
 
 
 @dataclass
@@ -113,7 +117,7 @@ def parse_config(config: dict) -> tuple[list[Group], list[tuple[list[str], list[
             if (selector.package is None) == (selector.unittest is None):
                 raise Failure(f"{CONFIG.name}: group {entry['name']}: a test names either a package or a unittest directory")
             selectors.append(selector)
-        groups.append(Group(entry["name"], entry.get("paths", []), selectors, entry.get("before", [])))
+        groups.append(Group(entry["name"], entry.get("paths", []), selectors, entry.get("before", []), entry.get("also_paths", [])))
     if len({g.name for g in groups}) != len(groups):
         raise Failure(f"{CONFIG.name}: group names must be unique")
     routes = [(route["paths"], route["groups"]) for route in config.get("route", [])]
@@ -127,7 +131,8 @@ def load() -> tuple[dict, list[Group], list[tuple[list[str], list[str]]]]:
 
 
 def baselines(config: dict) -> dict[str, str]:
-    """Known failures of main, `test name # reason` per line (blank lines and lines starting with # are comments)."""
+    """Known failures of main, `test name # reason (owner: WHO; remove when: CONDITION)` per line (blank lines and lines starting
+    with # are comments). Only failures that are deterministic on main belong here."""
     path = config.get("baselines")
     if not path:
         return {}
@@ -136,8 +141,8 @@ def baselines(config: dict) -> dict[str, str]:
         if not line.strip() or line.lstrip().startswith("#"):
             continue
         name, separator, reason = line.partition(" # ")
-        if not separator or not reason.strip() or not name.strip() or " " in name.strip():
-            raise Failure(f"{path}:{number}: expected `exact::test::name # reason`")
+        if not separator or not name.strip() or " " in name.strip() or "owner:" not in reason or "remove when:" not in reason:
+            raise Failure(f"{path}:{number}: expected `exact::test::name # reason (owner: WHO; remove when: CONDITION)`")
         found[name.strip()] = reason.strip()
     return found
 
@@ -163,10 +168,14 @@ def split_top(text: str) -> list[str]:
 
 def paths_in(text: str) -> list[tuple[str, list[str]]]:
     """Every `crate::`, `self::` and `super::` path of a source: its kind (`crate`, `self` or the count of `super` as digits)
-    and its segments; `use crate::{a, b::c}` gives one path per item."""
+    and its segments; `use crate::{a, b::c}` gives one path per item, and a glob (`use super::*;`, `crate::a::*`) names its
+    module (no segments for `super::*`: the parent module itself)."""
     found = []
-    for match in re.finditer(r"\b(crate::|self::|(?:super::)+)(\{[^;]*?\}\s*;|[A-Za-z_]\w*(?:::[A-Za-z_]\w*)*)", text):
+    for match in re.finditer(r"\b(crate::|self::|(?:super::)+)(\{[^;]*?\}\s*;|\*|[A-Za-z_]\w*(?:::[A-Za-z_]\w*)*)", text):
         head, rest = match.groups()
+        if rest == "*":
+            found.append(("crate" if head == "crate::" else "self" if head == "self::" else str(head.count("super")), []))
+            continue
         kind = "crate" if head == "crate::" else "self" if head == "self::" else str(head.count("super"))
         if rest.startswith("{"):
             inner = rest[: rest.rindex("}")][1:]
@@ -180,43 +189,88 @@ def paths_in(text: str) -> list[tuple[str, list[str]]]:
     return found
 
 
-def import_edges(files: list[str], read) -> dict[str, set[str]]:
-    """file -> the Rust files it imports directly, per crate (a directory holding src/main.rs or src/lib.rs)."""
-    roots = sorted({f[: -len("main.rs")].rstrip("/") for f in files if f.endswith("src/main.rs")}
-                   | {f[: -len("lib.rs")].rstrip("/") for f in files if f.endswith("src/lib.rs")})
+def strip_comments(text: str) -> str:
+    return re.sub(r"//[^\n]*|/\*.*?\*/", "", text, flags=re.DOTALL)
+
+
+def declared_modules(text: str) -> list[tuple[str, str | None]]:
+    """The out-of-line modules a source declares (`mod name;`), with the `#[path = "..."]` attribute they carry; the inline
+    ones (`mod name { ... }`) hold no file."""
+    found = []
+    for match in re.finditer(r"((?:#\[[^\]]*\]\s*)*)(?:pub(?:\([^)]*\))?\s+)?\bmod\s+(\w+)\s*;", strip_comments(text)):
+        attributes, name = match.groups()
+        path = re.search(r'#\[path\s*=\s*"([^"]+)"\s*\]', attributes)
+        found.append((name, path.group(1) if path else None))
+    return found
+
+
+class ModuleTree:
+    """The files of one crate by module, from its root file: `mod name;` finds `name.rs` or `name/mod.rs` beside the file (below
+    its stem when the file is not a mod.rs, lib.rs or main.rs), and `#[path = "..."]` names the file from the declaring file's
+    directory. `check` compares the files it reaches with the ones rustc says the crate is built from."""
+
+    def __init__(self, root: str, read, available: set[str]):
+        self.root = root
+        self.children: dict[str, dict[str, str]] = {}
+        self.parent: dict[str, str] = {}
+        self.files = {root}
+        todo = [(root, True)]
+        while todo:
+            file, as_mod_rs = todo.pop()
+            directory = posixpath.dirname(file)
+            base = directory if as_mod_rs else posixpath.join(directory, Path(file).stem)
+            kids: dict[str, str] = {}
+            for name, path in declared_modules(read(file)):
+                if path:
+                    candidates = [(posixpath.normpath(posixpath.join(directory, path)), True)]
+                else:
+                    candidates = [(posixpath.join(base, name + ".rs"), False), (posixpath.join(base, name, "mod.rs"), True)]
+                found = next(((c, mod_rs) for c, mod_rs in candidates if c in available), None)
+                if found is None:
+                    continue
+                kids[name] = found[0]
+                if found[0] not in self.files:
+                    self.files.add(found[0])
+                    self.parent[found[0]] = file
+                    todo.append(found)
+            self.children[file] = kids
+
+    def walk(self, start: str, segments: list[str]) -> str:
+        """The file of the deepest module the path names, from the module of `start`."""
+        current = start
+        for segment in segments:
+            kid = self.children.get(current, {}).get(segment)
+            if kid is None:
+                break
+            current = kid
+        return current
+
+
+def crate_trees(files: list[str], read) -> dict[str, ModuleTree]:
+    """A module tree per crate root: the library and binary roots, and each integration test."""
     available = set(files)
+    roots = [f for f in files if f.endswith(("src/main.rs", "src/lib.rs")) or re.fullmatch(r"(?:.*/)?tests/[^/]+\.rs", f)]
+    return {root: ModuleTree(root, read, available) for root in roots}
+
+
+def import_edges(trees: dict[str, ModuleTree], read) -> dict[str, set[str]]:
+    """file -> the Rust files it imports directly (`crate::`, `self::` and `super::` paths), in each crate it belongs to."""
     edges: dict[str, set[str]] = {}
-    for root in roots:
-        crate = [f for f in files if f.endswith(".rs") and f.startswith(root + "/")]
-
-        def module_of(path: str) -> list[str]:
-            parts = path[len(root) + 1 : -3].split("/")
-            if parts[-1] == "mod":
-                parts = parts[:-1]
-            return [] if parts in (["main"], ["lib"]) else parts
-
-        def file_for(parts: list[str]) -> str | None:
-            for length in range(len(parts), 0, -1):
-                base = "/".join([root, *parts[:length]])
-                for candidate in (base + ".rs", base + "/mod.rs"):
-                    if candidate in available:
-                        return candidate
-            return None
-
-        for path in crate:
-            here = module_of(path)
-            found = set()
+    for tree in trees.values():
+        for path in tree.files:
+            found = edges.setdefault(path, set())
             for kind, segments in paths_in(read(path)):
                 if kind == "crate":
-                    absolute = segments
+                    start = tree.root
                 elif kind == "self":
-                    absolute = here + segments
+                    start = path
                 else:
-                    absolute = here[: max(0, len(here) - int(kind))] + segments
-                target = file_for(absolute)
-                if target and target != path:
+                    start = path
+                    for _ in range(int(kind)):
+                        start = tree.parent.get(start, tree.root)
+                target = tree.walk(start, segments)
+                if target != path:
                     found.add(target)
-            edges[path] = found
     return edges
 
 
@@ -229,6 +283,7 @@ class Router:
     def __init__(self, groups: list[Group], routes: list[tuple[list[str], list[str]]], derived: dict[str, set[str]] | None = None):
         self.names = [group.name for group in groups]
         self.owned = [([glob_regex(p) for p in group.paths], group.name) for group in groups]
+        self.also = [([glob_regex(p) for p in group.also_paths], group.name) for group in groups]
         self.routes = [([glob_regex(p) for p in paths], tokens) for paths, tokens in routes]
         self.derived = derived or {}
 
@@ -254,6 +309,7 @@ class Router:
                     groups |= self.expand(token)
         if not named:
             return None
+        groups |= {name for patterns, name in self.also if any(p.match(path) for p in patterns)}
         return groups | self.derived.get(path, set())
 
 
@@ -261,7 +317,7 @@ def derive(router: Router, files: list[str], read, baseline_names: dict[str, str
     """The routes the code implies: a Rust file runs the groups of the test files that import it, a script a test file names runs
     that file's group, and the baselines file runs the groups of the tests it names."""
     derived: dict[str, set[str]] = {}
-    edges = import_edges(files, read)
+    edges = import_edges(crate_trees(files, read), read)
     sources = {f: read(f) for f in files if f.endswith((".rs", ".py"))}
     for path, imported in edges.items():
         if "#[test]" in sources[path] or "#[cfg(test)]" in sources[path]:
@@ -331,8 +387,8 @@ def selection(arguments: argparse.Namespace, config: dict) -> tuple[list[str] | 
 
 
 def config_delta(groups: list[Group], base_revision: str | None) -> set[str]:
-    """What an edit of the toml runs: every group when a global key moved, else the groups whose definition changed (all of
-    them when the toml did not exist at the revision)."""
+    """What an edit of the toml runs: every group when a global key moved, else the groups whose definition changed, and the
+    tooling group; when the toml did not exist at the revision (it is being introduced), the tooling group only."""
     shown = subprocess.run(["git", "show", f"{base_revision}:{CONFIG.relative_to(ROOT)}"], cwd=ROOT, capture_output=True, text=True) if base_revision else None
     if shown is None or shown.returncode != 0:
         return {"tooling"} & {g.name for g in groups}
@@ -461,6 +517,21 @@ def package_names() -> dict[str, str]:
     return {p["manifest_path"]: p["name"] for p in meta["packages"]}
 
 
+def dep_info(executable: str) -> set[str]:
+    """The repository's Rust files a test binary was built from, as rustc's dep-info (the `.d` beside it) names them: the
+    ground truth the module tree is compared with."""
+    path = Path(executable).with_suffix(".d")
+    try:
+        first = path.read_text().splitlines()[0]
+    except (OSError, IndexError) as error:
+        raise Failure(f"{path}: rustc's dep-info cannot be read ({error!r}), so which files the build holds is unknown") from error
+    if ": " not in first:
+        raise Failure(f"{path}: not rustc's dep-info (no `target: sources` line)")
+    names = first.split(": ", 1)[1].replace("\\ ", "\0").split()
+    found = {(Path(name.replace("\0", " "))).resolve() for name in names}
+    return {str(p.relative_to(ROOT)) for p in found if p.is_relative_to(ROOT) and p.suffix == ".rs"}
+
+
 def tests_of(listing: str) -> list[str]:
     return [line[: -len(": test")] for line in listing.splitlines() if line.endswith(": test")]
 
@@ -507,7 +578,7 @@ def list_cargo(config: dict, sets: list[tuple[str, ...]]) -> dict[tuple[tuple[st
             kind = "lib" if target["kind"][0] in LIBRARY_KINDS else f"{target['kind'][0]}:{target['name']}"
             directory = Path(message["manifest_path"]).parent
             tests, ignored = listing_of(message["executable"], directory)
-            found[(features, package, kind)] = Listed(tests, ignored, Path(target["src_path"]))
+            found[(features, package, kind)] = Listed(tests, ignored, Path(target["src_path"]), dep_info(message["executable"]))
             if kind == "lib" and target.get("doctest", False):
                 doc = cargo_prefix(config, package, features) + ["--doc", "--", "--list", "--format", "terse"]
                 done = subprocess.run(doc, cwd=ROOT, capture_output=True, text=True)
@@ -518,36 +589,37 @@ def list_cargo(config: dict, sets: list[tuple[str, ...]]) -> dict[tuple[tuple[st
     return found
 
 
-def list_unittest(directory: str, modules: list[str]) -> list[str]:
+def list_unittest(directory: str, modules: list[str]) -> list[tuple[str, str]]:
+    """(the module asked for, the test's id) for the tests of the modules; a module that imports another's test classes
+    (`from merge_train.test_repin import RepinTests`) holds them under its own name, as `python -m unittest discover` runs them."""
     walk = (
         "import sys, unittest\n"
         "def walk(suite):\n"
         "    for test in suite:\n"
         "        yield from walk(test) if isinstance(test, unittest.TestSuite) else [test]\n"
         "sys.path.insert(0, sys.argv[1])\n"
-        "for test in walk(unittest.defaultTestLoader.loadTestsFromNames(sys.argv[2:])):\n"
-        "    print(test.id())\n"
+        "for module in sys.argv[2:]:\n"
+        "    for test in walk(unittest.defaultTestLoader.loadTestsFromName(module)):\n"
+        "        print(module, test.id())\n"
     )
     found = subprocess.run([sys.executable, "-B", "-c", walk, directory, *modules], cwd=ROOT, capture_output=True, text=True)
-    names = found.stdout.split()
-    broken = [n for n in names if n.startswith("unittest.loader.")]
+    pairs = [tuple(line.split(" ", 1)) for line in found.stdout.splitlines() if line]
+    broken = [n for _, n in pairs if n.startswith("unittest.loader.")]
     if found.returncode != 0 or broken:
         raise Failure(f"loading the Python tests {modules} of {directory} failed: {broken or found.stderr[-1000:]}")
-    return names
+    return pairs
 
 
-def source_file(listed: Listed, kind: str, name: str) -> Path:
-    """The file a test is written in: its module path walked down from the target's root, as rustc finds module files."""
+def source_file(listed: Listed, kind: str, name: str, trees: dict[str, ModuleTree]) -> Path:
+    """The file a test is written in: its module path walked down the module tree of the target's root file (`#[path]` and
+    out-of-line modules included; an inline module stays in its file)."""
     if kind == "doc":
         return ROOT / name.split(" - ", 1)[0]
-    file = listed.root
-    directory = file.parent
-    for segment in name.split("::")[:-1]:
-        found = next((c for c in (directory / f"{segment}.rs", directory / segment / "mod.rs") if c.is_file()), None)
-        if found is None:
-            break
-        file, directory = found, directory / segment
-    return file
+    root = str(listed.root.relative_to(ROOT)) if listed.root.is_relative_to(ROOT) else None
+    tree = trees.get(root) if root else None
+    if tree is None:
+        return listed.root
+    return ROOT / tree.walk(tree.root, name.split("::")[:-1])
 
 
 def selects(selector: Selector, package: str, kind: str, name: str) -> bool:
@@ -623,17 +695,35 @@ def problem_of(plan: Planned, status: int, log: str, listings: dict, skipped: li
     return None
 
 
-def unwaived(waived: dict[str, str], files: list[str] | None) -> dict[str, str]:
-    """The baselines whose test is written in a changed file: they run, so a change to them is never green by skipping."""
-    if not files:
+def baseline_groups(router: Router, names: list[str]) -> dict[str, set[str]]:
+    """Baseline test name -> the groups of the files that hold the test (found by its function name)."""
+    found: dict[str, set[str]] = {name: set() for name in names}
+    for path in every_file():
+        if not path.endswith(".rs"):
+            continue
+        text = (ROOT / path).read_text(errors="replace")
+        for name in names:
+            if re.search(r"\bfn\s+" + re.escape(name.split("::")[-1]) + r"\b", text):
+                found[name] |= router.owners(path)
+    return found
+
+
+def unwaived(waived: dict[str, str], files: list[str] | None, router: Router, baselines_path: str | None = None) -> dict[str, str]:
+    """The baselines to run after all: those whose group a changed file is routed to (or any file nothing names), so a change
+    that reaches a waived test is never green by skipping it. An edit of the baselines file alone does not: it is how a test
+    is waived."""
+    files = [f for f in files or [] if f != baselines_path]
+    if not files or not waived:
         return {}
-    texts = [(ROOT / f).read_text(errors="replace") for f in files if f.endswith(".rs") and (ROOT / f).is_file()]
-    return {n: r for n, r in waived.items() if any(re.search(r"\bfn\s+" + re.escape(n.split("::")[-1]) + r"\b", t) for t in texts)}
+    owners = baseline_groups(router, list(waived))
+    routed = [router.route(f) for f in files]
+    return {n: r for n, r in waived.items() if any(g is None or g & owners[n] for g in routed)}
 
 
 def check_skips(waived: dict[str, str], names: list[str]) -> list[str]:
     """`--skip NAME` skips every test whose name contains NAME: a baseline must be a test and only that one."""
     errors = []
+    names = sorted(set(names))  # a test of two builds is one test
     for name in waived:
         if name not in names:
             errors.append(f"baseline {name} is no test (a fixed or renamed test leaves the baselines file)")
@@ -650,13 +740,13 @@ def cmd_run(arguments: argparse.Namespace) -> int:
     if unnamed:
         print(f"test groups: no group or route names {unnamed[0]}: every group runs")
     waived = {} if arguments.no_waive else baselines(config)
-    forced = unwaived(waived, files)
+    forced = unwaived(waived, files, router, config.get("baselines"))
     effective = {n: r for n, r in waived.items() if n not in forced}
     before, tests = commands(config, chosen, sorted(effective))
     record = Path(arguments.record) if arguments.record else None
     print("test groups: " + (" ".join(g.name for g in chosen) or "none"))
     if forced:
-        print(f"   a changed file holds {len(forced)} waived baseline(s), so they run: {', '.join(forced)}")
+        print(f"   a changed file is routed to the group of {len(forced)} waived baseline(s), so they run: {', '.join(forced)}")
     cargo = [t for t in tests if t.package]
     listings = list_cargo(config, sorted({t.features for t in cargo})) if cargo else {}
     names = [n for (_, _, _), listed in listings.items() for n in listed.tests]
@@ -726,13 +816,24 @@ def cmd_check(arguments: argparse.Namespace) -> int:
     changed = None
     if arguments.base or arguments.change:
         changed, _ = selection(arguments, config)
+    cache: dict[str, str] = {}
+
+    def read(path: str) -> str:
+        if path not in cache:
+            cache[path] = (ROOT / path).read_text(errors="replace")
+        return cache[path]
+
+    trees = crate_trees(files, read)
     errors: list[str] = check_routing(router, groups, routes, files)
     owners: dict[tuple[str, str, str, str], list[str]] = {}  # (package, target, features, test) -> its groups
     counts = {g.name: 0 for g in groups}
     hits: dict[tuple[str, int], int] = {}
     routed_files: list[tuple[Path, str, str]] = []
-    listings = list_cargo(config, wanted_builds(config, groups, router, changed))
+    skipped = set(arguments.skip_feature)
+    builds = wanted_builds(config, groups, router, changed)
+    listings = list_cargo(config, [b for b in builds if not set(b) & skipped])
     for (features, package, kind), listed in sorted(listings.items()):
+        errors += check_tree(trees, listed, f"{package} {kind}")
         for name in listed.tests:
             who = []
             for group in groups:
@@ -745,7 +846,7 @@ def cmd_check(arguments: argparse.Namespace) -> int:
             for g in who:
                 counts[g] += 1
             if who:
-                routed_files.append((source_file(listed, kind, name), who[0], f"{package} {kind} {name}"))
+                routed_files.append((source_file(listed, kind, name, trees), who[0], f"{package} {kind} {name}"))
     errors += check_python(config, groups, files, owners, counts, routed_files)
     covered = {(package, kind, name) for (package, kind, features, name), who in owners.items() if who}
     for (package, kind, features, name), who in owners.items():
@@ -757,25 +858,41 @@ def cmd_check(arguments: argparse.Namespace) -> int:
     names = [key[3] for key in owners]
     errors += check_skips(baselines(config), names) if changed is None else []
     for group in groups:
-        if counts[group.name] == 0:
+        if counts[group.name] == 0 and not all(set(s.features) & skipped for s in group.selectors if s.package):
             errors.append(f"group {group.name} holds no test")
         for index, selector in enumerate(group.selectors):
+            if set(selector.features) & skipped:
+                continue
             if selector.package and changed is None and not hits.get((group.name, index)):
                 errors.append(f"group {group.name}: {selector.package} {selector.target or '*'} {list(selector.filters)} selects no test")
             for filter_ in selector.filters:
                 single = Selector(selector.package, selector.target, (filter_,), selector.features, (), None, ())
                 if changed is None and not any(selects(single, p, k, n) for (p, k, f, n) in owners if f == ",".join(selector.features)):
                     errors.append(f"group {group.name}: filter {filter_!r} selects no test")
-    errors += check_files(router, routed_files, import_edges(files, lambda path: (ROOT / path).read_text(errors="replace")))
-    errors += check_scripts(router, groups, files)
+    errors += check_files(router, routed_files)
     if errors:
         print("\n".join(errors[:60]), file=sys.stderr)
         if len(errors) > 60:
             print(f"... and {len(errors) - 60} more", file=sys.stderr)
         return 1
     unique = {(p, k, n) for (p, k, _, n) in owners}
+    left_out = [",".join(b) for b in builds if set(b) & skipped]
     print(f"test groups: {len(unique)} tests in {len(groups)} groups, every file routed")
+    if left_out:
+        print(f"test groups: SKIPPED the builds with feature(s) {', '.join(sorted(skipped))} ({'; '.join(left_out)}): tests that exist only there are not checked")
     return 0
+
+
+def check_tree(trees: dict[str, ModuleTree], listed: Listed, label: str) -> list[str]:
+    """The module tree reaches every file rustc built the binary from, or the routing it supports would miss a test's file."""
+    if not listed.sources or not listed.root.is_relative_to(ROOT):
+        return []
+    tree = trees.get(str(listed.root.relative_to(ROOT)))
+    if tree is None:
+        return []
+    return [f"{label}: rustc built it from {f}, which the module tree of {tree.root} does not reach (an inline module that declares modules, an include!, or a "
+            f"module declaration it cannot read)"
+            for f in sorted(listed.sources - tree.files)]
 
 
 def check_python(config: dict, groups: list[Group], files: list[str], owners: dict, counts: dict, routed_files: list) -> list[str]:
@@ -789,19 +906,18 @@ def check_python(config: dict, groups: list[Group], files: list[str], owners: di
         for module in grouped:
             if f"{directory}/{module}.py" not in files:
                 errors.append(f"group names Python tests {directory}/{module}.py, which is no file")
-        for name in list_unittest(directory, [m for m in grouped if f"{directory}/{m}.py" in files]):
-            module = name.split(".")[0]
+        for module, name in list_unittest(directory, [m for m in grouped if f"{directory}/{m}.py" in files]):
             who = sorted({g.name for g in groups for s in g.selectors if s.unittest == directory and module in s.modules})
             owners[("python", directory, "", name)] = who
             for g in who:
                 counts[g] += 1
-            routed_files.append((ROOT / directory / f"{module}.py", who[0], f"python {name}"))
+            if who:
+                routed_files.append((ROOT / directory / f"{module}.py", who[0], f"python {name}"))
     return errors
 
 
-def check_files(router: Router, routed_files: list[tuple[Path, str, str]], edges: dict[str, set[str]]) -> list[str]:
-    """A test's file is in its group's `paths`, so a change to it runs the group; the files it imports directly run that group
-    too (the derived routes make that so, and this proves the derivation reached them)."""
+def check_files(router: Router, routed_files: list[tuple[Path, str, str]]) -> list[str]:
+    """A test's file is in its group's `paths`, so a change to it runs the group."""
     errors = []
     seen = set()
     for file, group, label in routed_files:
@@ -811,22 +927,6 @@ def check_files(router: Router, routed_files: list[tuple[Path, str, str]], edges
         path = str(file.relative_to(ROOT))
         if group not in router.owners(path):
             errors.append(f"{label} is written in {path}, which is not in the `paths` of its group {group}")
-            continue
-        for dependency in sorted(edges.get(path, ())):
-            if group not in (router.route(dependency) or set()):
-                errors.append(f"{path} imports {dependency}, which would not run its group {group} when changed")
-    return errors
-
-
-def check_scripts(router: Router, groups: list[Group], files: list[str]) -> list[str]:
-    """A script a test file names runs that file's group when changed (derived), unless a route sent it nowhere on purpose."""
-    errors = []
-    for script, owners in sorted(router.derived.items()):
-        if script not in files:
-            continue
-        routed = router.route(script)
-        if routed is not None and not owners <= routed:
-            errors.append(f"{script} is named by tests of {sorted(owners - routed)}, which it would not run")
     return errors
 
 
@@ -836,7 +936,7 @@ def check_routing(router: Router, groups: list[Group], routes: list[tuple[list[s
         if router.route(path) is None:
             errors.append(f"no group or route names {path}")
     for group in groups:
-        for pattern in group.paths:
+        for pattern in [*group.paths, *group.also_paths]:
             if not any(glob_regex(pattern).match(f) for f in files):
                 errors.append(f"group {group.name}: path pattern {pattern!r} matches no file")
     for paths, tokens in routes:
@@ -857,6 +957,7 @@ def main() -> int:
         if name == "check":
             sub.add_argument("--all", action="store_true", help="everything (the default)")
             sub.add_argument("--base", help="check as much as the change since the merge-base with this revision can matter to")
+            sub.add_argument("--skip-feature", action="append", default=[], help="leave out the builds with this feature (a machine that cannot build it), and say so")
             sub.set_defaults(change=[], no_waive=False)
             continue
         sub.add_argument("--all", action="store_true", help="every group")

@@ -24,6 +24,10 @@ path = "web/test/test_cache_index.py"
 step = "browser (tools/browser_check.sh builds the page first)"
 
 [[outside]]
+path = "web/test/test_voice_worker.py"
+step = "browser (tools/browser_check.sh builds the page first)"
+
+[[outside]]
 path = "tools/test_groups.py"
 step = "none: the script, not a test (test_test_groups.py tests it)"
 
@@ -39,7 +43,7 @@ paths = [
     "src/fog/**", "src/fog.wgsl", "src/config.rs", "src/camera.rs", "src/dota_text.rs", "src/input.rs", "src/main_menu/**",
     "src/keys.rs", "src/cachefs.rs", "src/loading.rs", "src/loading/**", "src/pick.rs", "src/settings/**", "src/minimap.rs",
     "src/daylight.rs",
-    "src/e2e/mod.rs", "src/e2e/harness.rs", "tests/common/**", "assets/**",
+    "src/e2e/mod.rs", "src/e2e/harness.rs", "src/test_support.rs", "tests/common/**", "assets/**",
 ]
 groups = ["client_*"]
 
@@ -47,6 +51,14 @@ groups = ["client_*"]
 # documents, the licence, the fuzz targets and deny.toml (the gate's own steps)
 paths = ["**.md", "LICENSE", ".gitignore", "deny.toml", "fuzz/**", "tools/*.sh", "tools/inspect_gltf.py", "tools/subset_fonts.py"]
 groups = []
+
+[[group]]
+name = "client_guard"
+about = "whatever starts, drives or measures the client stays behind the isolation wrappers: the guard reads every source of the repository"
+paths = ["tests/client_guard.rs", "tools/client_environment.txt"]
+# it scans every tracked Rust, shell, Python and JavaScript file, and the list of variables it guards
+also_paths = ["**.rs", "**.sh", "**.py", "**.js"]
+tests = [{ package = "dbota", target = "test:client_guard" }]
 
 [[group]]
 name = "import"
@@ -70,6 +82,12 @@ tests = [{ unittest = "tools", modules = ["test_test_groups"] }]
 name = "client_menu"
 about = "the menus, settings, replays, controls and the way into a game"
 paths = [
+    "src/e2e/regame.rs",
+    "src/e2e/shell.rs",
+    "src/theme.rs",
+    "src/session.rs",
+    "src/steering.rs",
+    "src/e2e/harness.rs",
     "src/config.rs",
     "src/input.rs",
     "src/keys.rs",
@@ -106,6 +124,11 @@ paths = [
 ]
 tests = [
     { package = "dbota", target = "bin:dbota", filters = [
+        "e2e::regame::",
+        "e2e::shell::",
+        "quality::tests::",
+        "session::environment_tests::",
+        "e2e::harness::",
         "main_menu::",
         "config::",
         "keys::",
@@ -195,6 +218,10 @@ tests = [
 name = "client_audio"
 about = "sound: the mixer, attenuation, the soundscape, ambient sound, voice lines and what the client sounds"
 paths = [
+    "src/e2e/hero_voice.rs",
+    "src/hero_voice.rs",
+    "src/hero_voice/**",
+    "src/webvoice.rs",
     "src/sound.rs",
     "src/mixer.rs",
     "src/attenuation.rs",
@@ -216,6 +243,7 @@ paths = [
 ]
 tests = [
     { package = "dbota", target = "bin:dbota", filters = [
+        "hero_voice::",
         "soundscape::tests::",
         "sound::",
         "mixer::",
@@ -348,6 +376,12 @@ tests = [
 name = "client_world"
 about = "units, animation, the camera, picking, runes and the watchers of the match"
 paths = [
+    "src/e2e/courier/**",
+    "src/shadow_casters.rs",
+    "src/e2e/memory.rs",
+    "src/e2e/chasm.rs",
+    "src/e2e/outposts.rs",
+    "src/e2e/roshan.rs",
     "src/camera.rs",
     "src/map.rs",
     "src/minimap.rs",
@@ -394,6 +428,13 @@ paths = [
 ]
 tests = [
     { package = "dbota", target = "bin:dbota", filters = [
+        "anim::tests::",
+        "shadow_casters::tests::",
+        "layers::tests::",
+        "e2e::memory::",
+        "e2e::chasm::",
+        "e2e::outposts::",
+        "e2e::roshan::",
         "units::",
         "camera::",
         "coords::",
@@ -426,6 +467,7 @@ tests = [
 name = "client_fog"
 about = "the fog of war and what is visible through it, with the minimap"
 paths = [
+    "src/e2e/watcher_colours.rs",
     "src/fog.rs",
     "src/fog/**",
     "src/fog.wgsl",
@@ -437,6 +479,7 @@ paths = [
 ]
 tests = [
     { package = "dbota", target = "bin:dbota", filters = [
+        "e2e::watcher_colours::",
         "fog::",
         "e2e::fog::",
         "e2e::fog_pov::",
@@ -450,6 +493,9 @@ tests = [
 name = "client_hud"
 about = "the in-game interface: bars, the feed, the scoreboard, pings and rings"
 paths = [
+    "src/e2e/scoreboard.rs",
+    "src/e2e/gathering.rs",
+    "src/roshan_status.rs",
     "src/hud.rs",
     "src/ui.rs",
     "src/bars.rs",
@@ -467,6 +513,8 @@ paths = [
 ]
 tests = [
     { package = "dbota", target = "bin:dbota", filters = [
+        "e2e::scoreboard::",
+        "e2e::gathering::",
         "hud::",
         "ui::",
         "visual::",
