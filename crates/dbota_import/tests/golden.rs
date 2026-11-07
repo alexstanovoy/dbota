@@ -543,7 +543,8 @@ fn textures_exported_with_models_come_from_files_they_reference() {
     common::assert_compared("exported models", compared);
 }
 
-/// Every `vsnd_files*` entry of every sound event, by event name.
+/// Every `vsnd_files*` entry of every sound event, by event name. Some of Valve's paths use
+/// backslashes (the VPK reader takes both), so they are compared with forward slashes.
 fn sound_events(dota: &Install) -> HashMap<String, Vec<String>> {
     let mut events: HashMap<String, Vec<String>> = HashMap::new();
     let scripts = dota
@@ -559,10 +560,12 @@ fn sound_events(dota: &Install) -> HashMap<String, Vec<String>> {
                     continue;
                 }
                 match value {
-                    Value::String(file) => files.push(file.clone()),
-                    Value::Array(list) => {
-                        files.extend(list.iter().filter_map(Value::as_str).map(str::to_owned))
-                    }
+                    Value::String(file) => files.push(file.replace('\\', "/")),
+                    Value::Array(list) => files.extend(
+                        list.iter()
+                            .filter_map(Value::as_str)
+                            .map(|file| file.replace('\\', "/")),
+                    ),
                     _ => {}
                 }
             }
