@@ -73,6 +73,19 @@ pub fn draw(
         server: &server,
     };
     kit.commands.entity(page).despawn_children();
+    if view.play.open
+        && view.page == super::core::Page::Home
+        && view.offer.is_none()
+        && view.confirm.is_none()
+    {
+        kit.commands
+            .entity(page)
+            .insert(bevy::input_focus::tab_navigation::TabGroup::new(0));
+    } else {
+        kit.commands
+            .entity(page)
+            .remove::<bevy::input_focus::tab_navigation::TabGroup>();
+    }
     kit.commands.entity(overlay).despawn_children();
     if view.covers() {
         super::pages::draw(&mut kit, page, &view, *fold);

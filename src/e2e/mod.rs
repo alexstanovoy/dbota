@@ -52,6 +52,7 @@ mod memory;
 mod menu;
 mod minimap;
 mod outposts;
+mod play;
 mod pregame;
 mod preparation_shop;
 mod pudge_attack_sounds;

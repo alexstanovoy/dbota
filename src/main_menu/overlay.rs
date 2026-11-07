@@ -1,5 +1,5 @@
 //! What shows over a game as well as over the menu: the searches under way
-//! with their places in the queue, the matches waiting for a game server,
+//! with their elapsed time, the matches waiting for a game server,
 //! and Dota's MATCH FOUND prompt. Also MY GAMES, which lists the same.
 
 use bevy::prelude::*;
@@ -26,10 +26,11 @@ pub fn draw(kit: &mut Kit, root: Entity, view: &MenuView) {
         // clear of its panels.
         let corner = if view.covers() {
             // Above the play area when it shows.
-            let play_area = view.game.is_some() || view.reconnect;
             Node {
-                right: px(48),
-                bottom: px(if play_area { 18.0 + 168.0 } else { 18.0 }),
+                right: px(theme::CORNER_RIGHT),
+                bottom: px(theme::CORNER_BOTTOM
+                    + super::pages::corner_height(view)
+                    + theme::CORNER_GAP),
                 ..default()
             }
         } else {
@@ -39,28 +40,31 @@ pub fn draw(kit: &mut Kit, root: Entity, view: &MenuView) {
                 ..default()
             }
         };
-        let panel = kit.panel(
+        let panel = kit.node(
             root,
             Node {
                 position_type: PositionType::Absolute,
-                width: px(300),
+                width: px(theme::CORNER_WIDTH),
                 flex_direction: FlexDirection::Column,
-                padding: UiRect::all(px(14)),
-                row_gap: px(10),
+                row_gap: px(8),
                 ..corner
             },
         );
         kit.commands.entity(panel).insert(crate::hud::Blocker);
-        for (at, search) in searching.iter().enumerate() {
-            let which = (searching.len() > 1).then(|| at + 1);
-            search_row(kit, panel, search, which);
+        for search in searching {
+            search_row(kit, panel, search);
         }
         for wait in waiting {
             wait_row(kit, panel, wait);
         }
     }
     if let Some(offer) = &view.offer {
-        match_found(kit, root, offer);
+        match_found(
+            kit,
+            root,
+            offer,
+            view.play.info == Some(super::PlayInfo::Decline),
+        );
     }
     if let Some(confirm) = view.confirm.as_ref().filter(|_| view.covers()) {
         popup(kit, root, confirm);
@@ -222,64 +226,43 @@ fn popup_answers(kit: &mut Kit, card: Entity, ok: Act, cancel: Act) {
     kit.commands.entity(cancel).insert(Name::new("cancel"));
 }
 
-fn search_row(kit: &mut Kit, parent: Entity, search: &SearchRow, which: Option<usize>) {
+fn search_row(kit: &mut Kit, parent: Entity, search: &SearchRow) {
     let row = kit.node(
         parent,
         Node {
-            flex_direction: FlexDirection::Column,
-            row_gap: px(3),
-            ..default()
-        },
-    );
-    let head = kit.node(
-        row,
-        Node {
-            column_gap: px(10),
+            width: percent(100),
+            min_height: px(theme::FINDING_HEIGHT),
             align_items: AlignItems::Center,
+            padding: UiRect::left(px(14)),
+            column_gap: px(10),
+            border: UiRect::axes(px(0), px(1)),
             ..default()
         },
     );
-    let title = match which {
-        Some(n) => format!("FINDING MATCH {n}"),
-        None => "FINDING MATCH".to_owned(),
-    };
-    let left = kit.node(
-        head,
-        Node {
-            flex_grow: 1.0,
-            flex_direction: FlexDirection::Column,
-            ..default()
-        },
+    kit.commands.entity(row).insert((
+        Name::new("finding match"),
+        BackgroundColor(theme::FINDING),
+        BorderColor::all(theme::SECONDARY_EDGE),
+    ));
+    search_title(kit, row, search);
+    kit.typed(row, &search.waited, theme::FINDING_CLOCK, theme::INK_1);
+    let cancel = kit.quiet(
+        row,
+        "×",
+        Act::Cancel(search.entry),
+        theme::CLOSE_GLYPH,
+        (theme::INK_1, theme::INK_3),
     );
-    kit.bold(left, title, 17.0, theme::INK_1);
-    kit.text(left, search.ruleset.clone(), 13.0, theme::INK_4);
-    kit.typed(head, search.waited.clone(), theme::CLOCK, theme::INK_1);
-    kit.button(head, "×", Act::Cancel(search.entry), Tone::Danger, 30.0);
-    if search.position > 0 {
-        kit.text(
-            row,
-            format!(
-                "Place in the queue: {} of {}",
-                search.position, search.waiting
-            ),
-            14.0,
-            theme::INK_4,
-        );
-    }
-    if let Some(hint) = search.hint {
-        kit.text(row, hint, 14.0, theme::INK_4);
-    }
-    if search.overloaded {
-        kit.text(
-            row,
-            format!(
-                "Game servers are full: {} matches wait for a slot",
-                search.games_waiting
-            ),
-            14.0,
-            theme::ERROR_TEXT,
-        );
-    }
+    kit.commands
+        .entity(cancel)
+        .insert(Name::new("cancel search"));
+    kit.commands
+        .entity(cancel)
+        .entry::<Node>()
+        .and_modify(|mut n| {
+            n.width = px(44);
+            n.justify_content = JustifyContent::Center;
+        });
 }
 
 fn wait_row(kit: &mut Kit, parent: Entity, wait: &WaitRow) {
@@ -292,17 +275,7 @@ fn wait_row(kit: &mut Kit, parent: Entity, wait: &WaitRow) {
         },
     );
     kit.bold(row, "WAITING FOR A GAME SERVER", 16.0, theme::INK_1);
-    let ahead = match wait.ahead {
-        0 => "Starting it now".to_owned(),
-        1 => "1 match ahead".to_owned(),
-        n => format!("{n} matches ahead"),
-    };
-    kit.text(
-        row,
-        format!("Match {} · {ahead}", wait.match_id.0),
-        14.0,
-        theme::INK_4,
-    );
+    kit.text(row, "Starting your game", 14.0, theme::INK_4);
     if wait.overloaded {
         kit.text(
             row,
@@ -315,123 +288,36 @@ fn wait_row(kit: &mut Kit, parent: Entity, wait: &WaitRow) {
 
 /// Dota's prompt: YOUR GAME IS READY, the time to answer running down, how
 /// many accepted, and Accept / Decline.
-fn match_found(kit: &mut Kit, root: Entity, offer: &OfferBox) {
-    let shade = kit
-        .commands
-        .spawn((
-            Node {
-                justify_content: JustifyContent::Center,
-                align_items: AlignItems::Center,
-                ..ui::fill()
-            },
-            BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.55)),
-            crate::hud::Blocker,
-            Interaction::default(),
-            GlobalZIndex(80),
-            ChildOf(root),
-        ))
-        .id();
-    let card = kit.panel(
-        shade,
-        Node {
-            width: px(560),
-            flex_direction: FlexDirection::Column,
-            align_items: AlignItems::Center,
-            padding: UiRect::all(px(28)),
-            row_gap: px(14),
-            ..default()
-        },
-    );
-    // Opaque: nothing of the page may read through the prompt.
-    kit.commands
-        .entity(card)
-        .insert(BackgroundColor(Color::srgb(0.06, 0.07, 0.09)));
-    kit.bold(card, "YOUR GAME IS READY", 34.0, theme::INK_1);
-    let which = offer
-        .which
-        .as_deref()
-        .map_or(String::new(), |w| format!(" · {w}"));
-    kit.text(
-        card,
-        format!("{}{which}", offer.ruleset),
-        16.0,
-        theme::INK_4,
-    );
-    let track = kit
-        .commands
-        .spawn((
-            Node {
-                width: px(480),
-                height: px(8),
-                border_radius: BorderRadius::all(px(4)),
-                ..default()
-            },
-            BackgroundColor(theme::FIELD),
-            ChildOf(card),
-        ))
-        .id();
-    kit.commands.spawn((
-        Node {
-            width: percent(offer.left_permille as f32 / 10.0),
-            height: percent(100),
-            border_radius: BorderRadius::all(px(4)),
-            ..default()
-        },
-        BackgroundColor(if offer.left_secs > 5 {
-            theme::GO.0
-        } else {
-            theme::STOP.0
-        }),
-        ChildOf(track),
-    ));
-    kit.bold(card, format!("{}", offer.left_secs), 30.0, theme::GOLD);
-    let dots: String = (0..offer.of)
-        .map(|i| if i < offer.accepted { '•' } else { '·' })
-        .collect();
-    kit.text(
-        card,
-        format!("{dots}   {} of {} accepted", offer.accepted, offer.of),
-        16.0,
-        theme::INK_1,
-    );
+fn match_found(kit: &mut Kit, root: Entity, offer: &OfferBox, tip: bool) {
+    let card = offer_card(kit, root);
+    offer_time(kit, card, offer);
+    offer_title(kit, card, offer);
     let row = kit.node(
         card,
         Node {
-            column_gap: px(16),
-            margin: UiRect::top(px(6)),
+            height: px(64),
+            margin: UiRect::top(px(8)),
+            align_items: AlignItems::Center,
+            justify_content: JustifyContent::Center,
+            column_gap: px(8),
             ..default()
         },
     );
     if offer.answered {
-        kit.text(
-            row,
-            "Accepted: waiting for the other players…",
-            16.0,
-            theme::RADIANT_TEXT,
-        );
+        accept_squares(kit, row, offer);
     } else {
-        kit.button(
+        let button = kit.button(
             row,
             "ACCEPT",
             Act::Accept(offer.proposal),
             Tone::Primary,
-            40.0,
+            64.0,
         );
-        kit.button(
-            row,
-            "DECLINE",
-            Act::Decline(offer.proposal),
-            Tone::Danger,
-            40.0,
-        );
-    }
-    if !offer.answered {
-        kit.text(
-            card,
-            "Declining keeps you out of the queue for a while.",
-            13.0,
-            theme::INK_4,
-        );
+        kit.commands
+            .entity(button)
+            .entry::<Node>()
+            .and_modify(|mut n| n.width = px(320));
+        decline(kit, card, offer, tip);
     }
 }
 
@@ -529,15 +415,7 @@ pub fn my_games(
             18.0,
             theme::INK_1,
         );
-        kit.text(
-            label,
-            format!(
-                "{} · place {} of {}",
-                search.waited, search.position, search.waiting
-            ),
-            14.0,
-            theme::INK_4,
-        );
+        kit.text(label, search.waited.clone(), 14.0, theme::INK_4);
         kit.button(row, "CANCEL", Act::Cancel(search.entry), Tone::Danger, 38.0);
     }
     if !finished.is_empty() {
@@ -585,5 +463,203 @@ pub fn my_games(
     }
     if let Some(cooldown) = cooldown {
         kit.text(column, cooldown, 15.0, theme::ERROR_TEXT);
+    }
+}
+
+fn offer_card(kit: &mut Kit, root: Entity) -> Entity {
+    let shade = kit.node(root, crate::ui::fill());
+    kit.commands.entity(shade).insert((
+        BackgroundColor(Color::BLACK.with_alpha(theme::dim(0.45))),
+        crate::hud::Blocker,
+        Interaction::default(),
+        GlobalZIndex(80),
+    ));
+    let card = kit.node(
+        shade,
+        Node {
+            position_type: PositionType::Absolute,
+            left: percent(50),
+            top: percent(100.0 / 3.0),
+            margin: UiRect::left(px(-280)),
+            width: px(560),
+            height: px(248),
+            flex_direction: FlexDirection::Column,
+            align_items: AlignItems::Center,
+            padding: UiRect::new(px(32), px(32), px(30), px(12)),
+            row_gap: px(18),
+            border: UiRect::all(px(1)),
+            ..default()
+        },
+    );
+    kit.commands.entity(card).insert((
+        Name::new("match found"),
+        theme::downward(theme::ACCEPT_PANEL),
+        BorderColor::all(theme::SECONDARY_EDGE),
+        theme::window_shadow(),
+    ));
+    card
+}
+
+fn offer_time(kit: &mut Kit, card: Entity, offer: &OfferBox) {
+    let Some(left) = offer.left_permille else {
+        return;
+    };
+    let track = kit.node(
+        card,
+        Node {
+            position_type: PositionType::Absolute,
+            left: px(0),
+            right: px(0),
+            top: px(-1),
+            height: px(3),
+            justify_content: JustifyContent::Center,
+            ..default()
+        },
+    );
+    let line = kit.node(
+        track,
+        Node {
+            width: percent(left.min(1000) as f32 / 10.0),
+            height: percent(100),
+            ..default()
+        },
+    );
+    let ratio = left.min(1000) as f32 / 1000.0;
+    let color = theme::ACCEPT_TIME
+        .1
+        .to_srgba()
+        .mix(&theme::ACCEPT_TIME.0.to_srgba(), ratio);
+    kit.commands
+        .entity(line)
+        .insert((Name::new("accept time"), BackgroundColor(color.into())));
+}
+
+fn offer_title(kit: &mut Kit, card: Entity, offer: &OfferBox) {
+    kit.typed(card, "YOUR GAME IS READY", theme::OFFER_TITLE, theme::INK_1);
+    let mode = kit.typed(card, &offer.ruleset, theme::LARGE_BODY, theme::INK_3);
+    kit.commands.entity(mode).insert(Node {
+        margin: UiRect::top(px(-10)),
+        ..default()
+    });
+}
+
+fn decline(kit: &mut Kit, card: Entity, offer: &OfferBox, tip: bool) {
+    let decline = kit.node(
+        card,
+        Node {
+            position_type: PositionType::Absolute,
+            right: px(8),
+            bottom: px(4),
+            align_items: AlignItems::Center,
+            column_gap: px(6),
+            ..default()
+        },
+    );
+    let link = kit.quiet(
+        decline,
+        "Decline",
+        Act::Decline(offer.proposal),
+        theme::SMALL_BODY,
+        (theme::DECLINE, theme::DIRE_TEXT),
+    );
+    kit.commands
+        .entity(link)
+        .entry::<Node>()
+        .and_modify(|mut node| node.min_height = px(32));
+    super::play::info(kit, decline, super::PlayInfo::Decline, "About declining");
+    if let Some(cooldown) = offer
+        .decline_cooldown_ms
+        .filter(|cooldown| tip && *cooldown > 0)
+    {
+        let duration = if cooldown >= 60_000 {
+            format!("{} min", cooldown.div_ceil(60_000))
+        } else {
+            format!("{} sec", cooldown.div_ceil(1000))
+        };
+        super::play::tooltip(
+            kit,
+            decline,
+            &format!("Declining bans you from matchmaking for {duration}."),
+            true,
+        );
+    }
+}
+
+fn accept_squares(kit: &mut Kit, row: Entity, offer: &OfferBox) {
+    for i in 0..offer.of.min(10) {
+        let square = kit.node(
+            row,
+            Node {
+                width: px(34),
+                height: px(34),
+                border: UiRect::all(px(1)),
+                ..default()
+            },
+        );
+        kit.commands.entity(square).insert((
+            Name::new(format!("accept-player-{i}")),
+            BackgroundColor(if i < offer.accepted {
+                theme::GO.0
+            } else {
+                theme::ACCEPT_EMPTY
+            }),
+            BorderColor::all(if i < offer.accepted {
+                theme::RADIANT
+            } else {
+                theme::TOOLTIP_EDGE
+            }),
+        ));
+        if i < offer.accepted {
+            kit.commands
+                .entity(square)
+                .insert(theme::downward(theme::GO));
+        }
+    }
+}
+
+fn search_title(kit: &mut Kit, row: Entity, search: &SearchRow) {
+    let words = kit.node(
+        row,
+        Node {
+            flex_grow: 1.0,
+            min_width: px(0),
+            flex_direction: FlexDirection::Column,
+            ..default()
+        },
+    );
+    let title = kit.typed(
+        words,
+        if search.overloaded {
+            "SERVERS FULL"
+        } else {
+            "FINDING MATCH"
+        },
+        theme::FINDING_TITLE,
+        theme::INK_1,
+    );
+    kit.commands
+        .entity(title)
+        .insert(TextColor(if search.overloaded {
+            theme::GOLD
+        } else {
+            theme::INK_1
+        }));
+    kit.commands.entity(title).insert(TextLayout {
+        linebreak: LineBreak::NoWrap,
+        ..default()
+    });
+    let caption = kit.typed(words, &search.ruleset, theme::SMALL_BODY, theme::INK_2);
+    kit.commands.entity(caption).insert((
+        Node {
+            overflow: Overflow::clip(),
+            ..default()
+        },
+        TextLayout {
+            linebreak: LineBreak::NoWrap,
+            ..default()
+        },
+    ));
+    if let Some(hint) = search.hint {
+        kit.typed(words, hint, theme::BODY, theme::INK_3);
     }
 }

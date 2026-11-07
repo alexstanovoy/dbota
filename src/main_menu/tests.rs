@@ -312,7 +312,7 @@ fn service_saving(save_replays: bool) -> Service {
 }
 
 /// [`service`] with its configuration changed by `change`.
-fn service_with(change: impl FnOnce(String) -> String) -> Service {
+pub(crate) fn service_with(change: impl FnOnce(String) -> String) -> Service {
     start_service(true, change)
 }
 
@@ -484,7 +484,17 @@ fn two_players_register_find_accept_play_and_see_their_result() {
 
     alice.menu.act(Act::Find(solo()));
     settle(&mut [&mut alice], |p| p.menu.view().searches.len() == 1);
-    assert_eq!(alice.menu.view().searches[0].position, 1);
+    assert_eq!(
+        alice
+            .menu
+            .client
+            .as_ref()
+            .expect("client")
+            .searches()
+            .entries()[0]
+            .position,
+        1
+    );
     assert_eq!(
         alice.menu.view().finding().0.len(),
         1,
@@ -791,7 +801,14 @@ fn a_decline_puts_the_other_back_in_place_and_cools_the_decliner_down() {
     settle(&mut [&mut alice], |p| p.menu.view().searches.len() == 1);
     settle(&mut [&mut bob], |p| p.menu.view().searches.is_empty());
     assert_eq!(
-        alice.menu.view().searches[0].position,
+        alice
+            .menu
+            .client
+            .as_ref()
+            .expect("client")
+            .searches()
+            .entries()[0]
+            .position,
         1,
         "back at its place"
     );
@@ -1590,7 +1607,17 @@ fn a_link_let_go_when_idle_opens_again_for_the_next_search() {
     assert_eq!(alice.menu.page(), Page::Home);
     alice.menu.act(Act::Find(solo()));
     settle(&mut [&mut alice], |p| p.menu.view().searches.len() == 1);
-    assert_eq!(alice.menu.view().searches[0].position, 1);
+    assert_eq!(
+        alice
+            .menu
+            .client
+            .as_ref()
+            .expect("client")
+            .searches()
+            .entries()[0]
+            .position,
+        1
+    );
     assert_eq!(alice.menu.page(), Page::Home, "no page jumped meanwhile");
 }
 
@@ -1681,11 +1708,8 @@ fn a_ruleset_for_bots_is_not_listed_to_humans() {
         panic!("Play after registering");
     };
     assert_eq!(
-        rulesets
-            .iter()
-            .map(|r| (r.name.as_str(), r.audience))
-            .collect::<Vec<_>>(),
-        [("1x1 Mid Only", "Humans and Bots")]
+        rulesets.iter().map(|r| r.name.as_str()).collect::<Vec<_>>(),
+        ["1x1 Mid Only"]
     );
 }
 
@@ -2639,4 +2663,115 @@ fn a_lost_idle_link_shows_in_the_pill_not_as_online() {
         view.connection,
         view.status
     );
+}
+
+#[test]
+fn an_unknown_proposal_refusal_explains_that_the_offer_is_no_longer_available() {
+    assert_eq!(
+        super::core::error_text(&bota_radovid::proto::Error::UnknownProposal),
+        "This match offer is no longer available"
+    );
+}
+
+#[test]
+fn menu_hosted_loading_draws_the_elapsed_launch_clock() {
+    let dir = Scratch::new("loading-clock");
+    let (mut menu, _) = offline("alice", &dir);
+    let now = bevy::platform::time::Instant::now();
+    menu.page = Page::Game;
+    menu.launching = true;
+    menu.opening_since = Some(now - Duration::from_secs(3));
+    let mut view = menu.view();
+    view.body = menu.body_at(now);
+    let mut client = crate::e2e::harness::Client::run(&["--menu-preview", "home"]);
+    client.world_mut().resource_mut::<super::Preview>().0 = view;
+    client.frames(4);
+    assert!(client.shown_texts().iter().any(|text| text == "0:03"));
+}
+
+pub(crate) fn lose_menu_control(menu: &mut MenuCore) {
+    menu.lost(bota_radovid::ClientError::Closed);
+}
+
+pub(crate) fn keep_menu_session_alive(menu: &MenuCore, service: &Service) -> bota_radovid::Client {
+    use bota_radovid::proto::{ClientMsg, Reply};
+    let token = menu
+        .client
+        .as_ref()
+        .expect("menu client")
+        .session()
+        .expect("session");
+    let trust = bota_radovid::Tls::trust_pem(&service.pem).expect("trust");
+    let mut client =
+        bota_radovid::Client::open(&service.url, &trust).expect("open another control link");
+    let until = Instant::now() + Duration::from_secs(PATIENCE);
+    loop {
+        assert!(
+            Instant::now() < until,
+            "the second control session did not sign in"
+        );
+        match client.poll().expect("control reply") {
+            Some(bota_radovid::Incoming::Reply {
+                result: Ok(Reply::Welcome { .. }),
+                ..
+            }) => {
+                client
+                    .request(ClientMsg::Resume {
+                        session: token,
+                        client: Default::default(),
+                    })
+                    .expect("resume sent");
+            }
+            Some(bota_radovid::Incoming::Reply {
+                result: Ok(Reply::LoggedIn { .. }),
+                ..
+            }) => return client,
+            _ => std::thread::sleep(Duration::from_millis(1)),
+        }
+    }
+}
+
+pub(crate) fn menu_control_ready(menu: &MenuCore) -> bool {
+    menu.link_ready()
+}
+
+#[test]
+fn queue_shortcut_and_drawer_send_the_same_selected_audiences() {
+    use bota_radovid::proto::Audience;
+    let service = service();
+    for (index, (drawer, bots)) in [(false, false), (false, true), (true, false), (true, true)]
+        .into_iter()
+        .enumerate()
+    {
+        let mut player = Player::new(Some(&service));
+        player.register(&format!("audience_{index}"));
+        if bots {
+            player.menu.act(Act::Play(super::PlayAction::Bots));
+        }
+        player.menu.act(if drawer {
+            Act::Play(super::PlayAction::Find)
+        } else {
+            Act::Find(solo())
+        });
+        settle(&mut [&mut player], |p| !p.menu.view().searches.is_empty());
+        let audiences: Vec<_> = player
+            .menu
+            .client
+            .as_ref()
+            .expect("connected")
+            .searches()
+            .entries()
+            .iter()
+            .map(|entry| entry.audience)
+            .collect();
+        let expected = if bots {
+            vec![Audience::HumansOnly, Audience::Everyone]
+        } else {
+            vec![Audience::HumansOnly]
+        };
+        assert_eq!(audiences, expected, "drawer={drawer}, bots={bots}");
+        let entry = player.menu.view().searches[0].entry;
+        player.menu.act(Act::Cancel(entry));
+        settle(&mut [&mut player], |p| p.menu.view().searches.is_empty());
+    }
 }

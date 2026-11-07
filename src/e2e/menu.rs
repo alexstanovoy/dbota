@@ -9,7 +9,7 @@ use bevy::prelude::*;
 use bevy::text::{ComputedTextBlock, LineBreak};
 use bevy::window::{PrimaryWindow, WindowResized};
 
-use crate::main_menu::{Act, MenuButton, MenuCore, Page};
+use crate::main_menu::{Act, MenuButton, MenuCore, Page, PlayAction};
 
 use super::harness::{Client, Server};
 
@@ -555,27 +555,36 @@ fn a_failed_lobby_join_overlays_the_bottom_without_moving_menu_content() {
     });
 }
 
-/// Play shows only what Find Match queues for, each card's subtitle naming who it is for: a human sees the rated 1x1 Mid Only "for Humans and Bots"; the bots'
-/// arena, Squad, Practice (lobbies only) and the Demo Hero (its own page) are not on it.
+/// Play draws queueable modes and the bot toggle; lobby-only modes and Demo Hero live elsewhere.
 #[test]
-fn play_shows_the_queued_rulesets_with_their_audience() {
+fn play_draws_queueable_rulesets_and_the_bot_toggle() {
     let service = crate::main_menu::tests::service();
     let mut client = signed_up(&service, "bob");
+    click_menu_button(&mut client, "play");
     let shown = client.shown_texts();
     assert!(
-        shown.iter().any(|t| t == "1x1 Mid Only"),
+        shown.iter().any(|t| t == "1X1 MID ONLY"),
         "the queue's card: {shown:?}"
     );
     assert!(
-        shown.iter().any(|t| t.ends_with("· Humans and Bots")),
-        "its audience in its subtitle: {shown:?}"
+        shown.iter().any(|t| t == "Allow matchmaking with bots"),
+        "the audience control: {shown:?}"
     );
-    for elsewhere in ["Bots Arena", "Squad", "Practice", "Demo Hero"] {
-        assert!(
-            !shown.iter().any(|t| t == elsewhere),
-            "{elsewhere} on Play: {shown:?}"
-        );
-    }
+    let world = client.world_mut();
+    let queues: Vec<_> = world
+        .query::<(&MenuButton, &InheritedVisibility)>()
+        .iter(world)
+        .filter(|(_, shown)| shown.get())
+        .filter_map(|(button, _)| match &button.0 {
+            Act::Play(crate::main_menu::PlayAction::Select(id)) => Some(id.0.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        queues,
+        ["solo_mid"],
+        "only queueable modes appear as drawer rows"
+    );
 }
 
 /// Dota's Demo Hero runs on the service like any game: the signed-in client asks for it from the
@@ -646,32 +655,28 @@ fn demo_hero_runs_on_the_service_and_its_cheats_take_effect() {
 }
 
 #[test]
-fn unlimited_account_limits_are_drawn_and_find_match_still_queues() {
+fn unlimited_account_limits_allow_find_match_to_queue_from_the_play_drawer() {
     let service = crate::main_menu::tests::service();
     let mut client = signed_up(&service, "alice");
-    client.within(
-        Duration::from_secs(30),
-        "the explicit unlimited label",
-        |client| {
-            client
-                .shown_texts()
-                .iter()
-                .any(|text| text == "Games going: 0 · no account limit")
-        },
-    );
+    click_menu_button(&mut client, "play");
+    act(&mut client, Act::Play(PlayAction::Bots));
     click_menu_button(&mut client, "find match");
     client.within(Duration::from_secs(30), "a real queue entry", |client| {
         client.world().non_send::<MenuCore>().view().searches.len() == 1
-            && client
-                .shown_texts()
-                .iter()
-                .any(|text| text == "Games going: 1 · no account limit")
     });
+    let view = client.world().non_send::<MenuCore>().view();
+    assert!(matches!(
+        view.body,
+        crate::main_menu::PageView::Home {
+            in_flight: (1, Some(bota_radovid::proto::AccountGameLimit::Unlimited)),
+            ..
+        }
+    ));
     assert!(
         client
             .shown_texts()
             .iter()
-            .any(|text| text == "Games going: 1 · no account limit")
+            .any(|text| text == "FINDING MATCH")
     );
 }
 
@@ -680,6 +685,7 @@ fn allowing_matchmaking_with_bots_is_a_drawn_switch() {
     use bota_radovid::Audience;
     let service = crate::main_menu::tests::service();
     let mut client = signed_up(&service, "alice");
+    click_menu_button(&mut client, "play");
     assert!(
         client
             .shown_texts()
@@ -687,11 +693,12 @@ fn allowing_matchmaking_with_bots_is_a_drawn_switch() {
             .any(|text| text == "Allow matchmaking with bots"),
         "Play must offer the matchmaking audience switch"
     );
-    assert!(!matchmaking_checkbox_is_checked(&mut client));
+    assert!(!matchmaking_switch_is_on(&mut client));
     let mut bot = waiting_matchmaking_bot(&service);
     search_without_bots_and_cancel(&mut client, &service);
+    click_menu_button(&mut client, "play");
     click_menu_button(&mut client, "allow matchmaking with bots");
-    assert!(matchmaking_checkbox_is_checked(&mut client));
+    assert!(matchmaking_switch_is_on(&mut client));
     assert_matchmaking_preference_survives_reload(&client, &service);
     click_menu_button(&mut client, "find match");
     client.within(
@@ -766,6 +773,7 @@ fn a_bot_account_finds_matches_only_in_everyone_with_either_switch_setting() {
         |client| client.world().non_send::<MenuCore>().page() == Page::Home,
     );
     for allow_bots in [false, true] {
+        click_menu_button(&mut client, "play");
         if allow_bots {
             click_menu_button(&mut client, "allow matchmaking with bots");
         }
@@ -920,19 +928,26 @@ fn matchmaking_snapshot(
     }
 }
 
-fn matchmaking_checkbox_is_checked(client: &mut Client) -> bool {
+fn matchmaking_switch_is_on(client: &mut Client) -> bool {
     let world = client.world_mut();
-    let checkbox = world
+    let track = world
         .query_filtered::<(&Name, &Children), With<Button>>()
         .iter(world)
         .find(|(name, _)| name.as_str() == "allow matchmaking with bots")
         .and_then(|(_, children)| children.first().copied())
-        .expect("the drawn checkbox");
-    world
-        .get::<BackgroundColor>(checkbox)
-        .expect("checkbox fill")
-        .0
-        != Color::NONE
+        .expect("the drawn switch track");
+    let knob = world
+        .get::<Children>(track)
+        .and_then(|children| children.first().copied())
+        .expect("the drawn knob");
+    let centre = |entity| {
+        world
+            .get::<UiGlobalTransform>(entity)
+            .expect("the switch is laid out")
+            .translation
+            .x
+    };
+    centre(knob) > centre(track)
 }
 
 fn assert_matchmaking_preference_survives_reload(
@@ -964,8 +979,9 @@ fn assert_matchmaking_preference_survives_reload(
         |client| client.world().non_send::<MenuCore>().page() == Page::Home,
     );
     resumed.frames(5);
+    click_menu_button(&mut resumed, "play");
     assert!(
-        matchmaking_checkbox_is_checked(&mut resumed),
+        matchmaking_switch_is_on(&mut resumed),
         "the saved switch is checked after reload"
     );
 }
@@ -974,6 +990,7 @@ fn assert_matchmaking_preference_survives_reload(
 fn a_capped_ranked_search_draws_the_configured_unranked_alternative() {
     let service = crate::main_menu::tests::service_with_unranked();
     let mut client = signed_up(&service, "capped_player");
+    click_menu_button(&mut client, "play");
     click_menu_button(&mut client, "find match");
     client.within(Duration::from_secs(120), "the capped search", |client| {
         !client
@@ -1006,35 +1023,22 @@ fn a_capped_ranked_search_draws_the_configured_unranked_alternative() {
 fn an_unranked_mode_is_drawn_and_its_find_button_joins_that_queue() {
     let service = crate::main_menu::tests::service_with_unranked();
     let mut client = signed_up(&service, "casual_player");
+    click_menu_button(&mut client, "play");
+    act(&mut client, Act::Play(PlayAction::Ranked(false)));
     assert!(
         client
             .shown_texts()
             .iter()
-            .any(|text| text == "Unranked Mid"),
+            .any(|text| text == "UNRANKED MID"),
         "the unrated sibling is on Play"
     );
     assert!(
-        client
-            .shown_texts()
-            .iter()
-            .any(|text| text.contains("unranked")),
+        client.shown_texts().iter().any(|text| text == "UNRANKED"),
         "the card says the game is unranked"
     );
     let casual = bota_radovid::RulesetId("casual_mid".into());
     click_menu_button(&mut client, "allow matchmaking with bots");
-    let world = client.world_mut();
-    let button = world
-        .query::<(Entity, &MenuButton)>()
-        .iter(world)
-        .find(|(_, button)| matches!(&button.0, Act::Find(id) if *id == casual))
-        .map(|(entity, _)| entity)
-        .expect("the unranked card's Find Match button");
-    let position = world
-        .get::<UiGlobalTransform>(button)
-        .expect("button transform")
-        .translation;
-    client.mouse(position);
-    client.click(MouseButton::Left);
+    click_menu_button(&mut client, "find match");
     client.within(
         Duration::from_secs(30),
         "the unranked queue entry",
@@ -1045,7 +1049,7 @@ fn an_unranked_mode_is_drawn_and_its_find_button_joins_that_queue() {
                 .view()
                 .searches
                 .iter()
-                .any(|search| search.ruleset == "Unranked Mid")
+                .any(|search| search.ruleset.starts_with("Unranked Mid · unranked"))
         },
     );
     let menu = client.world().non_send::<MenuCore>();

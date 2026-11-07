@@ -75,14 +75,8 @@ pub fn draw(kit: &mut Kit, root: Entity, view: &MenuView, fold: TabFold) {
         ChildOf(bar),
     ));
     logo(kit, bar);
-    if view.game.is_some() {
-        let back = kit.button(
-            bar,
-            "RETURN TO GAME",
-            Act::ReturnToGame,
-            Tone::Primary,
-            38.0,
-        );
+    if let Some(action) = super::availability::return_action(view) {
+        let back = kit.button(bar, "RETURN TO GAME", action, Tone::Primary, 38.0);
         kit.commands
             .entity(back)
             .entry::<Node>()
@@ -201,7 +195,7 @@ fn tabs(kit: &mut Kit, bar: Entity, view: &MenuView, fold: TabFold) {
     let (kept, folded) = shown.split_at(shown.len().saturating_sub(fold.folded));
     for &(page, label) in kept {
         let tab = tab(kit, row, label, lit == page);
-        kit.commands.entity(tab).insert(MenuButton(Act::Go(page)));
+        tab_action(kit, tab, page);
     }
     if folded.is_empty() {
         return;
@@ -233,7 +227,7 @@ fn tabs(kit: &mut Kit, bar: Entity, view: &MenuView, fold: TabFold) {
         .id();
     for &(page, label) in folded {
         let entry = tab(kit, list, label, lit == page);
-        kit.commands.entity(entry).insert(MenuButton(Act::Go(page)));
+        tab_action(kit, entry, page);
         kit.commands
             .entity(entry)
             .entry::<Node>()
@@ -242,6 +236,18 @@ fn tabs(kit: &mut Kit, bar: Entity, view: &MenuView, fold: TabFold) {
                 node.padding = UiRect::axes(px(16), px(0));
             });
     }
+}
+
+/// PLAY also opens its drawer when the game owns the corner. Its script name stays distinct
+/// from the direct-connect form's PLAY action.
+fn tab_action(kit: &mut Kit, tab: Entity, page: Page) {
+    let action = if page == Page::Home {
+        kit.commands.entity(tab).insert(Name::new("play tab"));
+        Act::Play(super::PlayAction::Open(true))
+    } else {
+        Act::Go(page)
+    };
+    kit.commands.entity(tab).insert(MenuButton(action));
 }
 
 /// A tab of `label`, underlined when it is the current page's.

@@ -8,12 +8,14 @@
 //! [`core::MenuCore`] holds the state and the logic and is tested without
 //! drawing; [`view`] is what the screens draw; the rest is Bevy.
 
+mod accepted;
 mod address;
+mod availability;
 mod backdrop;
 mod core;
 mod form;
 mod keep;
-mod kit;
+pub(crate) mod kit;
 mod launch;
 #[cfg(not(target_arch = "wasm32"))]
 mod leave;
@@ -21,13 +23,14 @@ mod lobbies;
 mod meta_fetch;
 mod overlay;
 mod pages;
+mod play;
 mod prefs;
 mod preview;
 mod replay_info;
 mod screens;
 mod shell;
 mod store;
-mod text;
+pub(crate) mod text;
 mod top_bar;
 mod view;
 #[cfg(not(target_arch = "wasm32"))]
@@ -45,10 +48,12 @@ pub use kit::{Disabled, Wash};
 #[cfg(test)]
 pub(crate) use kit::{MenuButton, Shade};
 pub use launch::Trust;
+pub use play::{PlayAction, PlayInfo};
 pub use prefs::page_service;
+pub(crate) use preview::loading_chat;
 pub use preview::{NAMES as PREVIEWS, view as preview};
 pub use shell::{GameEpoch, Preview, Trusted, idle, plugin};
 pub use store::SettingsStore;
 pub(crate) use text::line;
 #[cfg(test)]
-pub use view::Connection;
+pub use view::{Connection, PageView};

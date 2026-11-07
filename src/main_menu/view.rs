@@ -38,18 +38,15 @@ pub struct RulesetRow {
     /// Team sizes, `1v1`.
     pub teams: String,
     pub rated: bool,
-    /// Who may play it: `Humans and Bots`, `Humans` or `Bots`.
-    pub audience: &'static str,
+    pub description: String,
 }
 
-/// A queue entry and where it stands.
+/// A live search; queue position and size stay out of the drawing model.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SearchRow {
     pub entry: QueueEntryId,
     pub ruleset: String,
     pub waited: String,
-    pub position: u32,
-    pub waiting: u32,
     /// Every game server busy: nobody is paired until one frees.
     pub overloaded: bool,
     pub games_waiting: u32,
@@ -63,15 +60,14 @@ pub struct SearchRow {
 pub struct OfferBox {
     pub proposal: ProposalId,
     pub ruleset: String,
-    pub left_secs: u32,
+    pub left_ms: u32,
     /// The share of the time to answer that is left, 0 to 1000.
-    pub left_permille: u32,
+    pub left_permille: Option<u32>,
     pub accepted: u8,
     pub of: u8,
     /// This player accepted; the others have yet to.
     pub answered: bool,
-    /// Which search it is, when there are several: `Search 2 of 3`.
-    pub which: Option<String>,
+    pub decline_cooldown_ms: Option<u32>,
 }
 
 /// An accepted match waiting for a game server.
@@ -257,7 +253,6 @@ pub enum PageView {
     },
     Home {
         rulesets: Vec<RulesetRow>,
-        allow_matchmaking_bots: bool,
         /// Games in flight and the account's limit.
         in_flight: (usize, Option<AccountGameLimit>),
         cooldown: Option<String>,
@@ -297,6 +292,11 @@ pub enum PageView {
     },
     /// A game is being opened.
     Joining,
+    Loading {
+        details: crate::loading::Details,
+        progress_permille: u16,
+        elapsed_secs: u32,
+    },
     /// A game is on screen: only the overlays show.
     Hidden,
 }
@@ -361,6 +361,9 @@ pub struct MenuView {
     /// The page drawn: the one the settings were opened from while they are open over it.
     pub beneath: Page,
     pub body: PageView,
+    pub play: super::play::PlayState,
+    pub queue_full: bool,
+    pub cooldown_left: Option<String>,
     /// The account's nickname once logged in: no account number (the owner's rule).
     pub account: Option<String>,
     /// The name the player goes by: the account's, else the settings' profile name.
@@ -381,15 +384,24 @@ pub struct MenuView {
     pub password: Option<PasswordView>,
     /// Whether there is a client to quit: a browser's page has none.
     pub can_quit: bool,
+    /// The platform can start a game server on this machine.
+    pub can_host: bool,
     /// Whether the local lobby's host enables cheats.
     pub host_cheats: bool,
 }
 
 impl MenuView {
+    pub fn loading(&self) -> bool {
+        matches!(self.body, PageView::Loading { .. })
+    }
+
     /// What the FINDING MATCH box shows: the searches no match was found for yet, and the
     /// matches kept waiting for a game server behind others. Dota swaps the box for the accept
     /// prompt as soon as a match is found, and for the game once it starts.
     pub fn finding(&self) -> (Vec<&SearchRow>, Vec<&WaitRow>) {
+        if self.offer.is_some() {
+            return (Vec::new(), Vec::new());
+        }
         (
             self.searches.iter().filter(|s| !s.offered).collect(),
             self.waits
@@ -414,7 +426,11 @@ impl MenuCore {
             .map(|me| text::line(&me.nickname, text::NAME));
         let (searches, waits, offer) = client.map_or_else(Default::default, |c| {
             let names = |id: &RulesetId| ruleset_name(c, id);
-            (search_rows(c, &names), wait_rows(c), offer_box(c, &names))
+            (
+                search_rows(c, &names),
+                wait_rows(c),
+                offer_box(c, &names, &self.accepted),
+            )
         });
         let service = text::line(service_name(&self.prefs.service), text::NAME);
         let connection = match (&account, self.reconnecting()) {
@@ -425,7 +441,15 @@ impl MenuCore {
         MenuView {
             page: self.page,
             beneath: self.page_beneath(),
-            body: self.body(),
+            body: self.body_at(Instant::now()),
+            play: self.play.clone(),
+            queue_full: self
+                .queue_full_until
+                .is_some_and(|until| until > Instant::now()),
+            cooldown_left: client.and_then(|c| {
+                let left = c.searches().cooldown_left_ms();
+                (left > 0).then(|| clock(left.div_ceil(1000)))
+            }),
             player: account
                 .clone()
                 .unwrap_or_else(|| text::line(&self.name(), text::NAME)),
@@ -478,6 +502,7 @@ impl MenuCore {
                 error: prompt.error.clone(),
             }),
             can_quit: !cfg!(target_arch = "wasm32"),
+            can_host: !cfg!(target_arch = "wasm32"),
             host_cheats: self.prefs.host_cheats,
         }
     }
@@ -507,7 +532,7 @@ impl MenuCore {
     }
 
     /// What the page under the top bar shows: under the settings, the page they were opened from.
-    fn body(&self) -> PageView {
+    pub(super) fn body_at(&self, now: Instant) -> PageView {
         let page = self.page_beneath();
         match page {
             Page::Service | Page::Login | Page::Register | Page::LocalLobby => PageView::Form {
@@ -595,19 +620,28 @@ impl MenuCore {
             },
             // Never beneath: the settings open over another page.
             Page::Settings => PageView::Hidden,
-            Page::Game if self.launching => PageView::Joining,
+            Page::Game if self.launching => PageView::Loading {
+                details: self.loading_details(),
+                progress_permille: 0,
+                elapsed_secs: self.opening_since.map_or(0, |at| {
+                    u32::try_from(now.saturating_duration_since(at).as_secs()).unwrap_or(u32::MAX)
+                }),
+            },
             Page::Game => PageView::Hidden,
         }
     }
 
     fn home(&self) -> PageView {
         let Some(client) = &self.client else {
-            return PageView::Joining;
+            return PageView::Home {
+                rulesets: Vec::new(),
+                in_flight: (0, None),
+                cooldown: None,
+            };
         };
         let searches = client.searches();
         let in_flight = searches.groups().len() + searches.slot_waits().len() + self.games.len();
         PageView::Home {
-            allow_matchmaking_bots: self.prefs.allow_matchmaking_bots,
             rulesets: client
                 .rulesets()
                 // Lobbies and solo starts without a queue have no matchmaking policy.
@@ -618,11 +652,12 @@ impl MenuCore {
                     teams: r
                         .teams
                         .iter()
+                        .take(2)
                         .map(u8::to_string)
                         .collect::<Vec<_>>()
                         .join("v"),
                     rated: r.rated,
-                    audience: audience_name(r.audience),
+                    description: super::play::description(&r.id),
                 })
                 .collect(),
             in_flight: (
@@ -761,16 +796,6 @@ fn service_name(address: &str) -> &str {
     }
 }
 
-/// Who a ruleset is for, as a subtitle says.
-fn audience_name(audience: bota_radovid::proto::Audience) -> &'static str {
-    use bota_radovid::proto::Audience;
-    match audience {
-        Audience::Everyone => "Humans and Bots",
-        Audience::HumansOnly => "Humans",
-        Audience::BotsOnly => "Bots",
-    }
-}
-
 fn ruleset_name(client: &bota_radovid::Client, id: &RulesetId) -> String {
     client.rulesets().find(|r| &r.id == id).map_or_else(
         || text::line(&id.0, text::NAME),
@@ -788,10 +813,25 @@ fn search_rows(
         .into_iter()
         .map(|s| SearchRow {
             entry: s.entry,
-            ruleset: names(&s.ruleset),
+            ruleset: client.rulesets().find(|r| r.id == s.ruleset).map_or_else(
+                || names(&s.ruleset),
+                |r| {
+                    format!(
+                        "{} · {}{}",
+                        names(&s.ruleset),
+                        if r.rated { "ranked" } else { "unranked" },
+                        if client.searches().entries().iter().any(|entry| {
+                            entry.search == s.search
+                                && entry.audience == bota_radovid::proto::Audience::Everyone
+                        }) {
+                            " · with bots"
+                        } else {
+                            ""
+                        }
+                    )
+                },
+            ),
             waited: clock(s.waited_ms() / 1000),
-            position: s.position,
-            waiting: s.waiting,
             overloaded: s.overloaded,
             games_waiting: s.games_waiting,
             hint: (s.window_capped
@@ -822,34 +862,61 @@ fn wait_rows(client: &bota_radovid::Client) -> Vec<WaitRow> {
         .collect()
 }
 
-/// The oldest open proposal: unanswered ones first.
+/// Unanswered proposals first, ordered by the time left to answer.
 fn offer_box(
     client: &bota_radovid::Client,
     names: &dyn Fn(&RulesetId) -> String,
+    accepted: &super::accepted::Accepted,
 ) -> Option<OfferBox> {
     let searches = client.searches();
-    let count = searches.entries().len();
-    let (at, search, offer) = searches
-        .entries()
-        .iter()
-        .enumerate()
-        .filter_map(|(at, s)| Some((at, s, s.offer.as_ref()?)))
-        .min_by_key(|(_, _, o)| o.answered)?;
+    choose_offer(searches.entries().iter().filter_map(|search| {
+        let offer = search.offer.as_ref()?;
+        let mut projected = project_offer(client, names, search, offer);
+        projected.answered |= accepted.contains(search.entry, offer.proposal);
+        Some(projected)
+    }))
+}
+
+fn choose_offer(offers: impl Iterator<Item = OfferBox>) -> Option<OfferBox> {
+    offers
+        .filter(|offer| offer.left_ms > 0)
+        .min_by_key(|offer| (offer.answered, offer.left_ms))
+}
+
+fn project_offer(
+    client: &bota_radovid::Client,
+    names: &dyn Fn(&RulesetId) -> String,
+    search: &bota_radovid::Search,
+    offer: &bota_radovid::Offer,
+) -> OfferBox {
     let total = client
         .limits(None)
-        .map_or(30_000, |l| l.accept_timeout_ms)
-        .max(1);
+        .map(|l| l.accept_timeout_ms)
+        .filter(|total| *total > 0);
     let left = offer.left_ms();
-    Some(OfferBox {
+    OfferBox {
         proposal: offer.proposal,
-        ruleset: names(&search.ruleset),
-        left_secs: left.div_ceil(1000),
-        left_permille: (u64::from(left.min(total)) * 1000 / u64::from(total)) as u32,
+        ruleset: format!(
+            "{} · {}",
+            names(&search.ruleset),
+            if client
+                .rulesets()
+                .find(|r| r.id == search.ruleset)
+                .is_some_and(|r| r.rated)
+            {
+                "Ranked"
+            } else {
+                "Unranked"
+            }
+        ),
+        left_ms: left,
+        left_permille: total
+            .map(|total| (u64::from(left.min(total)) * 1000 / u64::from(total)) as u32),
         accepted: offer.accepted,
         of: offer.of,
         answered: offer.answered,
-        which: (count > 1).then(|| format!("Search {} of {count}", at + 1)),
-    })
+        decline_cooldown_ms: client.limits(None).map(|l| l.decline_cooldown_ms),
+    }
 }
 
 fn game_row(match_id: MatchId, ready: bool) -> GameRow {
@@ -1021,5 +1088,66 @@ fn rating_change(
             format!("{a} ({:+})", a - b)
         }
         _ => String::new(),
+    }
+}
+
+#[cfg(test)]
+mod proposal_selection_tests {
+    use super::*;
+    #[test]
+    fn the_prompt_uses_the_earliest_live_unanswered_deadline() {
+        let sample = super::super::preview::view("match-found")
+            .expect("preview")
+            .offer
+            .expect("offer");
+        let later = OfferBox {
+            proposal: ProposalId(1),
+            left_ms: 20_000,
+            ..sample.clone()
+        };
+        let urgent = OfferBox {
+            proposal: ProposalId(2),
+            left_ms: 2_000,
+            ..sample.clone()
+        };
+        let answered = OfferBox {
+            proposal: ProposalId(3),
+            left_ms: 1_000,
+            answered: true,
+            ..sample
+        };
+        assert_eq!(
+            choose_offer([later, answered, urgent].into_iter())
+                .expect("prompt")
+                .proposal,
+            ProposalId(2)
+        );
+    }
+    #[test]
+    fn expired_unanswered_offer_never_takes_the_prompt_from_a_live_one() {
+        let sample = super::super::preview::view("match-found")
+            .expect("preview")
+            .offer
+            .expect("offer");
+        let expired = OfferBox {
+            proposal: ProposalId(1),
+            left_ms: 0,
+            left_permille: Some(0),
+            answered: false,
+            ..sample.clone()
+        };
+        let live = OfferBox {
+            proposal: ProposalId(2),
+            left_ms: 9_000,
+            left_permille: Some(300),
+            answered: false,
+            ..sample
+        };
+        assert_eq!(
+            choose_offer([expired, live].into_iter())
+                .expect("prompt")
+                .proposal,
+            ProposalId(2)
+        );
     }
 }

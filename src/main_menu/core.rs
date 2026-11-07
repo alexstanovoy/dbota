@@ -74,7 +74,7 @@ impl Page {
     /// Whether the page is the service's, shown only with an account.
     pub fn needs_account(self) -> bool {
         match self {
-            Page::Home | Page::MyGames | Page::Lobbies | Page::Lobby | Page::Profile => true,
+            Page::MyGames | Page::Lobbies | Page::Lobby | Page::Profile => true,
             #[cfg(not(target_arch = "wasm32"))]
             Page::DemoHero => true,
             _ => false,
@@ -86,6 +86,7 @@ impl Page {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Act {
     Go(Page),
+    Play(super::PlayAction),
     /// Puts the keyboard in a field of the page's form.
     Focus(usize),
     Type(String),
@@ -98,8 +99,8 @@ pub enum Act {
     Submit,
     Logout,
     /// Searches a game of a ruleset.
+    #[cfg(test)]
     Find(RulesetId),
-    ToggleMatchmakingBots,
     Cancel(QueueEntryId),
     Accept(ProposalId),
     Decline(ProposalId),
@@ -457,7 +458,7 @@ pub(super) enum Asked {
     Resume,
     Logout,
     Queue,
-    Accept,
+    Accept(ProposalId),
     Rejoin(MatchId),
     Watch(MatchId),
     Lobby,
@@ -531,6 +532,9 @@ pub struct MenuCore {
     /// purpose, and is no loss): until it is open again the pill says so.
     link_lost: bool,
     pub(super) page: Page,
+    pub(super) play: super::play::PlayState,
+    pub(super) accepted: super::accepted::Accepted,
+    loading: crate::loading::Details,
     pub(super) form: Form,
     pub(super) status: Option<Status>,
     asked: Vec<(u32, Asked)>,
@@ -551,6 +555,8 @@ pub struct MenuCore {
     pub(super) on_screen: Option<OnScreen>,
     launch: Option<Launch>,
     pub(super) launching: bool,
+    pub(super) opening_since: Option<Instant>,
+    pub(super) queue_full_until: Option<Instant>,
     /// A host waiting for the player's word on plain TCP.
     pub(super) plain_host: Option<String>,
     /// The page the settings were opened from.
@@ -669,6 +675,10 @@ impl MenuCore {
             prefs.service = service;
         }
         let local_first = !cfg!(target_arch = "wasm32") && prefs.service.is_empty();
+        let play = super::play::PlayState {
+            bots: prefs.allow_matchmaking_bots,
+            ..Default::default()
+        };
         let mut core = MenuCore {
             store,
             form: Form::new(FormKind::Service, &prefs),
@@ -684,6 +694,9 @@ impl MenuCore {
             retry: true,
             link_lost: false,
             page: Page::Service,
+            play,
+            accepted: Default::default(),
+            loading: Default::default(),
             settings_from: Page::Service,
             status: None,
             asked: Vec::new(),
@@ -698,6 +711,8 @@ impl MenuCore {
             on_screen: None,
             launch: None,
             launching: false,
+            opening_since: None,
+            queue_full_until: None,
             plain_host: None,
             kind: GameKind::Play,
             confirm: None,
@@ -1096,6 +1111,7 @@ impl MenuCore {
     /// Sends a login or registration: the link opens for it now, the typed values stay in the
     /// form, and nothing is held open before.
     fn sign_in(&mut self, msg: ClientMsg, asked: Asked) {
+        self.accepted.clear();
         self.status = None;
         self.credentials = Some((msg, asked));
         if self.conn == Conn::Offline {
@@ -1175,6 +1191,11 @@ impl MenuCore {
 
     /// Takes in what the service said since the last frame.
     pub fn update(&mut self) {
+        if self.link_ready()
+            && let Some(client) = &self.client
+        {
+            self.accepted.update(client);
+        }
         self.shelf.take();
         if let Some(leaving) = self
             .leaving
@@ -1204,7 +1225,7 @@ impl MenuCore {
         }
     }
 
-    fn lost(&mut self, err: ClientError) {
+    pub(super) fn lost(&mut self, err: ClientError) {
         let was_signed_in = self.conn == Conn::LoggedIn;
         self.keep_link_lost();
         self.meta_link_lost();
@@ -1259,7 +1280,9 @@ impl MenuCore {
                     }
                     (Ok(Reply::Welcome { .. }), _) => self.welcomed(),
                     (Ok(reply), asked) => self.replied(reply, asked.unwrap_or(Asked::Other)),
-                    (Err(error), asked) => self.refused(&error, asked.unwrap_or(Asked::Other)),
+                    (Err(error), asked) => {
+                        self.refused_request(&error, asked.unwrap_or(Asked::Other))
+                    }
                 }
             }
             Incoming::Event(event) => self.event(event),
@@ -1286,11 +1309,19 @@ impl MenuCore {
 
     fn replied(&mut self, reply: Reply, asked: Asked) {
         match reply {
+            Reply::Done if matches!(asked, Asked::Accept(_)) => {
+                if let Asked::Accept(proposal) = asked
+                    && let Some(client) = &self.client
+                {
+                    self.accepted.remember(client, proposal);
+                }
+            }
             Reply::LoggedIn {
                 session,
                 activities,
                 ..
             } => {
+                self.accepted.resumed(&activities);
                 self.conn = Conn::LoggedIn;
                 let first = !self.account;
                 self.account = true;
@@ -1369,6 +1400,20 @@ impl MenuCore {
         }
     }
 
+    fn refused_request(&mut self, error: &Error, asked: Asked) {
+        if let (Asked::Accept(proposal), Error::UnknownProposal) = (asked, error) {
+            self.accepted.remove(proposal);
+        }
+        if let Error::QueueFull { retry_after_ms } = error {
+            self.play.open = true;
+            self.queue_full_until =
+                Some(Instant::now() + std::time::Duration::from_millis(u64::from(*retry_after_ms)));
+            self.status = None;
+        } else {
+            self.refused(error, asked);
+        }
+    }
+
     fn refused(&mut self, error: &Error, asked: Asked) {
         // A join refused for whatever reason may be a list out of date (the lobby full, locked,
         // started or gone since): the list is asked again, as the search typed asks it.
@@ -1377,6 +1422,7 @@ impl MenuCore {
         }
         match (asked, error) {
             (Asked::Resume, _) => {
+                self.accepted.clear();
                 self.store.remove(Entry::Session);
                 self.account = false;
                 self.outbox.clear();
@@ -1435,6 +1481,7 @@ impl MenuCore {
     }
 
     fn event(&mut self, event: Event) {
+        self.accepted.event(&event);
         match event {
             Event::MatchFound { handoff } => {
                 self.note_game(handoff.clone());
@@ -1472,20 +1519,22 @@ impl MenuCore {
                 back_in_queue: true,
                 ..
             } => self.tell(
-                "Someone did not accept: you are back in the queue at your place".to_owned(),
+                "The match did not start: you are back in the queue".to_owned(),
                 false,
             ),
-            Event::QueueLeft { reason, .. }
-                if !matches!(
-                    reason,
-                    QueueLeftReason::Cancelled | QueueLeftReason::Matched
-                ) =>
-            {
-                let why = match reason {
-                    QueueLeftReason::TimedOut => "The match was not accepted in time",
-                    _ => "You declined the match",
+            Event::QueueLeft { reason, .. } => {
+                let (message, error) = match reason {
+                    QueueLeftReason::Matched => return,
+                    QueueLeftReason::Cancelled => ("Search cancelled", false),
+                    QueueLeftReason::TimedOut => (
+                        "The match was not accepted in time: the search stopped",
+                        true,
+                    ),
+                    QueueLeftReason::Declined => {
+                        ("You declined the match: the search stopped", true)
+                    }
                 };
-                self.tell(format!("{why}: the search stopped"), true);
+                self.tell(message.into(), error);
             }
             Event::Bye { error } => self.tell(error_text(&error), true),
             _ => {}
@@ -1638,6 +1687,7 @@ impl MenuCore {
             self.tell("Disconnect from the game you are in first".to_owned(), true);
             return;
         }
+        self.loading = self.details_of(&launch);
         self.on_screen = Some(match &launch {
             Launch::Seat(h) | Launch::Watch(h) => OnScreen::Match(h.match_id),
             Launch::Direct { .. } => OnScreen::Direct,
@@ -1683,14 +1733,20 @@ impl MenuCore {
         }
         self.reconnect = None;
         self.confirm = None;
+        self.play.open = false;
         self.launch = Some(launch);
         self.launching = true;
+        self.opening_since = Some(Instant::now());
         self.page = Page::Game;
         self.status = None;
     }
 
     /// Moves to `page` with its form fresh.
     fn go_form(&mut self, page: Page) {
+        if page != Page::Home && page != Page::Settings {
+            self.play.open = false;
+            self.play.info = None;
+        }
         self.page = page;
         self.join_prompt = None;
         self.form = Form::new(self.form_kind(), &self.prefs);
@@ -1735,7 +1791,13 @@ impl MenuCore {
     /// Acts on what the player did.
     pub fn act(&mut self, act: Act) {
         match act {
+            Act::Go(Page::Home) => {
+                self.play.open = false;
+                self.play.info = None;
+                self.go(Page::Home);
+            }
             Act::Go(page) => self.go(page),
+            Act::Play(action) => self.play_action(action),
             Act::Focus(at) => self.keyboard().focus(at),
             Act::Type(typed) => self.keyboard().type_in(&typed),
             Act::Erase => self.keyboard().erase(),
@@ -1743,22 +1805,12 @@ impl MenuCore {
             Act::PreviousField => self.keyboard().previous(),
             Act::Submit => self.press(),
             Act::Logout => self.logout(),
-            Act::Find(ruleset) => {
-                let mut audiences = vec![Audience::HumansOnly];
-                if self.prefs.allow_matchmaking_bots {
-                    audiences.push(Audience::Everyone);
-                }
-                self.ask(
-                    ClientMsg::QueueJoinAudiences { ruleset, audiences },
-                    Asked::Queue,
-                );
-            }
-            Act::ToggleMatchmakingBots => {
-                self.prefs.allow_matchmaking_bots = !self.prefs.allow_matchmaking_bots;
-                self.save_prefs();
-            }
+            #[cfg(test)]
+            Act::Find(ruleset) => self.queue(ruleset),
             Act::Cancel(entry) => self.ask(ClientMsg::QueueLeave { entry }, Asked::Other),
-            Act::Accept(proposal) => self.ask(ClientMsg::MatchAccept { proposal }, Asked::Accept),
+            Act::Accept(proposal) => {
+                self.ask(ClientMsg::MatchAccept { proposal }, Asked::Accept(proposal))
+            }
             Act::Decline(proposal) => self.ask(ClientMsg::MatchDecline { proposal }, Asked::Other),
             Act::Rejoin(id) => self.enter(id, false),
             Act::Watch(id) => self.enter(id, true),
@@ -1880,6 +1932,13 @@ impl MenuCore {
     /// back to the top one, then the game under the dashboard, and on the
     /// top page with nothing under it, whether to quit.
     fn back(&mut self) {
+        if self.play.info.take().is_some() {
+            return;
+        }
+        if self.play.open {
+            self.play.open = false;
+            return;
+        }
         if self.confirm.take().is_some()
             || self.plain_host.take().is_some()
             || self.join_prompt.take().is_some()
@@ -1996,6 +2055,7 @@ impl MenuCore {
     }
 
     fn logout(&mut self) {
+        self.accepted.clear();
         // The session is forgotten here at once; the service is told when a link is open (one
         // is not opened for it: a session left there expires by itself).
         let live = self.link_ready();
@@ -2298,12 +2358,8 @@ pub fn error_text(error: &Error) -> String {
                 text::line(reason, text::MESSAGE)
             )
         }
-        Error::TooManyGames { limit } => {
-            format!("You already have {limit} games going: that is the limit")
-        }
-        Error::TooManyGamesFromSource { limit } => {
-            format!("Your network already has {limit} games going: that is the limit")
-        }
+        Error::TooManyGames { .. } => "You are in a game already".into(),
+        Error::TooManyGamesFromSource { .. } => "Matchmaking is full".into(),
         Error::QueueFull { retry_after_ms } => format!(
             "The queues are full right now: try again in {} s",
             secs(retry_after_ms)
@@ -2312,6 +2368,8 @@ pub fn error_text(error: &Error) -> String {
             "After a declined match you can search again in {}",
             clock(secs(retry_after_ms))
         ),
+        Error::UnknownProposal => "This match offer is no longer available".to_owned(),
+        Error::NotInQueue => "This search has already stopped".to_owned(),
         Error::ProposalExpired => "Too late: the match was not accepted in time".to_owned(),
         Error::GameVersionMismatch { .. } => {
             "The service's game servers run another version of the game".to_owned()
@@ -2358,5 +2416,214 @@ fn service_address(service: &str) -> Result<(), String> {
         None => Err(format!(
             "'{service}' is not a service address: it starts with wss:// (ws:// on your own network). A game server's address goes under LOCAL LOBBY"
         )),
+    }
+}
+
+impl MenuCore {
+    fn queue(&mut self, ruleset: RulesetId) {
+        let mut audiences = vec![Audience::HumansOnly];
+        if self.play.bots {
+            audiences.push(Audience::Everyone);
+        }
+        self.ask(
+            ClientMsg::QueueJoinAudiences { ruleset, audiences },
+            Asked::Queue,
+        );
+    }
+
+    fn play_action(&mut self, action: super::play::PlayAction) {
+        use super::play::PlayAction;
+        match action {
+            PlayAction::Open(open) => {
+                self.play.open = open;
+                self.play.info = None;
+                if open {
+                    self.go(Page::Home);
+                }
+            }
+            PlayAction::Ranked(ranked) => {
+                self.play.ranked = ranked;
+                self.play.selected = None;
+                self.play.info = None;
+            }
+            PlayAction::Bots => {
+                self.play.bots = !self.play.bots;
+                self.prefs.allow_matchmaking_bots = self.play.bots;
+                self.save_prefs();
+            }
+            PlayAction::Lobbies(lobbies) => self.play.lobbies = lobbies,
+            PlayAction::Info(info) => {
+                self.play.info = (self.play.info.as_ref() != Some(&info)).then_some(info)
+            }
+            PlayAction::Select(id) => self.select_queue(id),
+            PlayAction::Find => self.find_selected(),
+            PlayAction::LobbyLink(create) => {
+                let online = self.logged_in();
+                self.go(if online {
+                    Page::Lobbies
+                } else {
+                    Page::LocalLobby
+                });
+                self.form.focus(if !online && !create { 1 } else { 0 });
+            }
+        }
+    }
+
+    fn select_queue(&mut self, id: RulesetId) {
+        let Some(client) = &self.client else {
+            return;
+        };
+        let available: Vec<_> = client
+            .rulesets()
+            .filter(|r| r.rated == self.play.ranked && r.rating_window.is_some())
+            .map(|r| r.id.clone())
+            .collect();
+        if !available.contains(&id) {
+            return;
+        }
+        let selected = self
+            .play
+            .selected
+            .get_or_insert_with(|| available.into_iter().take(1).collect());
+        if selected.contains(&id) {
+            selected.retain(|r| *r != id);
+        } else {
+            selected.push(id);
+        }
+    }
+
+    fn find_selected(&mut self) {
+        let Some(client) = &self.client else {
+            return;
+        };
+        let available: Vec<_> = client
+            .rulesets()
+            .filter(|r| r.rated == self.play.ranked && r.rating_window.is_some())
+            .collect();
+        let chosen: Vec<_> = available
+            .iter()
+            .enumerate()
+            .filter(|(at, r)| {
+                self.play
+                    .selected
+                    .as_ref()
+                    .map_or(*at == 0, |ids| ids.contains(&r.id))
+            })
+            .map(|(_, row)| *row)
+            .collect();
+        if chosen.is_empty() {
+            self.tell("Select at least one queue.".to_owned(), false);
+            return;
+        }
+        let in_flight = client.searches().groups().len()
+            + client.searches().slot_waits().len()
+            + self.games.len();
+        let cooldown = client.searches().cooldown_left_ms();
+        if cooldown > 0 {
+            self.tell(
+                format!("You can search again in {}", clock(cooldown.div_ceil(1000))),
+                false,
+            );
+            return;
+        }
+        if !super::play::can_search(
+            (in_flight, client.limits(None).map(|l| l.games_per_account)),
+            chosen.len(),
+            false,
+        ) {
+            self.tell(
+                "Not enough game slots for the selected queues.".to_owned(),
+                true,
+            );
+            return;
+        }
+        let ids: Vec<_> = chosen.iter().map(|r| r.id.clone()).collect();
+        for ruleset in ids {
+            self.queue(ruleset);
+        }
+        self.play.open = false;
+        self.play.info = None;
+    }
+}
+
+impl MenuCore {
+    pub(crate) fn loading_details(&self) -> crate::loading::Details {
+        self.loading.clone()
+    }
+
+    fn details_of(&self, launch: &Launch) -> crate::loading::Details {
+        let handoff = match launch {
+            Launch::Seat(h) | Launch::Watch(h) | Launch::Demo { handoff: h, .. } => h,
+            _ => return crate::loading::Details::default(),
+        };
+        let name = self
+            .client
+            .as_ref()
+            .and_then(|c| c.rulesets().find(|r| r.id == handoff.ruleset))
+            .map_or(&handoff.ruleset.0, |r| &r.name);
+        crate::loading::Details {
+            match_id: Some(handoff.match_id.0),
+            mode: format!(
+                "{} · {}",
+                text::line(name, text::NAME),
+                if handoff.rated { "Ranked" } else { "Unranked" }
+            ),
+            seats: handoff
+                .seats
+                .iter()
+                .take(10)
+                .map(|seat| crate::loading::Row {
+                    slot: seat.slot,
+                    team: if seat.team == 0 {
+                        bota_proto::Team::Radiant
+                    } else {
+                        bota_proto::Team::Dire
+                    },
+                    name: text::line(&seat.nickname, text::NAME),
+                    bot: seat.kind == AccountKind::Bot,
+                    connected: false,
+                    me: seat.slot == handoff.slot,
+                })
+                .collect(),
+        }
+    }
+}
+
+#[cfg(test)]
+mod admission_tests {
+    use super::*;
+    #[test]
+    fn a_matched_search_preserves_the_notice_without_reporting_cancellation() {
+        let mut client = crate::e2e::harness::Client::run(&[]);
+        client.frames(8);
+        {
+            let mut menu = client.world_mut().non_send_mut::<MenuCore>();
+            menu.tell("Another game is ready".into(), false);
+            menu.event(Event::QueueLeft {
+                entry: QueueEntryId(1),
+                reason: QueueLeftReason::Matched,
+                cooldown_ms: 0,
+            });
+        }
+        client.frames(4);
+        let shown = client.shown_texts();
+        assert!(shown.iter().any(|text| text == "Another game is ready"));
+        assert!(!shown.iter().any(|text| text == "Search cancelled"));
+    }
+
+    #[test]
+    fn queue_capacity_refusal_reopens_play_and_expires_at_the_retry_advice() {
+        let mut player = super::super::tests::Player::new(None);
+        player.menu.refused_request(
+            &Error::QueueFull {
+                retry_after_ms: 1_000,
+            },
+            Asked::Queue,
+        );
+        assert!(player.menu.view().queue_full);
+        assert!(player.menu.play.open);
+        assert!(player.menu.status.is_none());
+        player.menu.queue_full_until = Some(Instant::now() - std::time::Duration::from_secs(1));
+        assert!(!player.menu.view().queue_full);
     }
 }

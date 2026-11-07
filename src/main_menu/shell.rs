@@ -70,6 +70,9 @@ pub struct Trusted(pub Trust);
 
 pub fn plugin(app: &mut App) {
     app.init_resource::<GameEpoch>()
+        .init_resource::<super::availability::FocusKey>()
+        .init_resource::<super::availability::MenuKeys>()
+        .init_resource::<bevy::input_focus::InputFocus>()
         .init_resource::<super::top_bar::TabFold>()
         .insert_non_send(Pending::default())
         .insert_non_send(Host::default())
@@ -83,6 +86,13 @@ pub fn plugin(app: &mut App) {
                 .after(crate::settings::escape)
                 .before(crate::session::pump),
         )
+        .add_systems(First, super::availability::remember_typing)
+        .add_systems(
+            PreUpdate,
+            super::availability::capture_keys
+                .after(InputSystems)
+                .before(guard),
+        )
         .add_systems(Startup, super::screens::spawn_roots)
         .add_systems(
             Update,
@@ -90,12 +100,15 @@ pub fn plugin(app: &mut App) {
                 keyboard,
                 settings_screen,
                 super::top_bar::more_clicks,
+                super::availability::remember_focus,
                 super::screens::clicks,
                 drive,
                 demo_start,
                 super::screens::draw,
                 super::kit::focus_ring,
                 super::kit::hover,
+                super::availability::navigate,
+                super::availability::tips,
                 scroll,
             )
                 .chain(),
@@ -405,10 +418,17 @@ fn guard(
 }
 
 /// Tells the interface's scale whether the game's HUD is on screen or the menu covers it.
-fn hud_shown(core: Option<NonSend<MenuCore>>, mut hud: ResMut<crate::ui::HudShown>) {
-    if let Some(core) = core {
-        hud.set_if_neq(crate::ui::HudShown(core.shows_game()));
-    }
+fn hud_shown(
+    core: Option<NonSend<MenuCore>>,
+    preview: Option<Res<Preview>>,
+    loading: Res<crate::loading::Loading>,
+    mut hud: ResMut<crate::ui::HudShown>,
+) {
+    let shown = preview.map_or_else(
+        || core.is_none_or(|c| c.shows_game()) && !loading.shown,
+        |p| !p.0.covers(),
+    );
+    hud.set_if_neq(crate::ui::HudShown(shown));
 }
 
 /// Opens the settings screen when the menu goes to its page, and goes back

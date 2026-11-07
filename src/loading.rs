@@ -17,7 +17,10 @@ use bevy::prelude::*;
 
 use crate::session::Session;
 
+mod roster;
 mod screen;
+pub(crate) use roster::{Details, Row};
+pub(crate) use screen::draw;
 
 /// Where the loading stands.
 #[derive(Resource, Default)]

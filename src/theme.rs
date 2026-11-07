@@ -174,7 +174,9 @@ pub const BODY: Type = role(Face::Regular, 14.0, 0.0);
 pub const CAPTION: Type = role(Face::Semibold, 12.0, 1.0);
 /// A button's label, for a button of this height: PLAY's large one, the others plain.
 pub const fn button(height: f32) -> Type {
-    if height >= 52.0 {
+    if height >= 64.0 {
+        role(Face::Bold, 32.0, 4.0)
+    } else if height >= 52.0 {
         role(Face::Bold, 24.0, 3.0)
     } else if height >= 40.0 {
         role(Face::Bold, 15.0, 2.0)
@@ -194,6 +196,38 @@ pub const NUMBER: Type = Type {
 /// A running clock (the search's time).
 pub const CLOCK: Type = Type {
     size: 22.0,
+    ..NUMBER
+};
+/// The compact finding board's running clock.
+pub const FINDING_CLOCK: Type = Type {
+    size: 17.0,
+    ..CLOCK
+};
+/// The Play drawer’s section heading.
+pub const PLAY_SECTION: Type = role(Face::Semibold, 18.0, 2.0);
+/// A selectable queue’s name.
+pub const QUEUE_NAME: Type = role(Face::Bold, 16.0, 1.0);
+/// The question mark in a help control.
+pub const HELP_GLYPH: Type = role(Face::Regular, 10.0, 0.0);
+/// Compact running text: a tooltip, sub-line or link.
+pub const SMALL_BODY: Type = role(Face::Regular, 13.0, 0.0);
+/// The mode beneath the accept heading.
+pub const LARGE_BODY: Type = role(Face::Regular, 16.0, 0.0);
+/// A player’s connection status in loading.
+pub const STATUS_TEXT: Type = role(Face::Regular, 12.0, 0.0);
+/// A loading roster’s team heading.
+pub const LOADING_TEAM: Type = role(Face::Semibold, 17.0, 2.0);
+/// The loading sidebar’s player count.
+pub const LOADING_SUMMARY: Type = role(Face::Semibold, 16.0, 1.0);
+/// The match offer’s heading.
+pub const OFFER_TITLE: Type = role(Face::Bold, 32.0, 3.0);
+/// The finding board’s title.
+pub const FINDING_TITLE: Type = role(Face::Regular, 20.0, 1.5);
+/// The finding board’s cancel cross.
+pub const CLOSE_GLYPH: Type = role(Face::Regular, 24.0, 0.0);
+/// Compact tabular numbers, such as a queue’s team sizes.
+pub const SMALL_NUMBER: Type = Type {
+    size: 13.0,
     ..NUMBER
 };
 /// The top bar's tabs while today's pages are more than its two tabs of the design: smaller.
@@ -250,3 +284,37 @@ pub fn rightward(colors: (Color, Color)) -> BackgroundGradient {
         colors.1.into(),
     ]))
 }
+
+/// Play's drawer, open section header, queue body and idle row.
+pub const PLAY_PANEL: (Color, Color) = (hex(0x1C2229), hex(0x020304));
+pub const PLAY_HEADING: (Color, Color) = (hex(0x525E64), hex(0x3A4348));
+pub const PLAY_BODY: Color = hex(0x111519);
+pub const PLAY_ROW: Color = hex(0x1A1F24);
+pub const PLAY_SELECTION: (Color, Color) = (hex(0x1E3E70), hex(0x142035));
+/// The flat finding band, the accept window and its unfilled player squares.
+pub const FINDING: Color = hex(0x10181F);
+pub const ACCEPT_PANEL: (Color, Color) = (hex(0x161B21), GROUND);
+pub const ACCEPT_EMPTY: Color = hex(0x141A20);
+/// Time to accept moves from green to yellow as the deadline approaches.
+pub const ACCEPT_TIME: (Color, Color) = (RADIANT, GOLD);
+/// A quiet decline link.
+pub const DECLINE: Color = hex(0xC9705F);
+/// The loading sidebar and its local progress bar.
+pub const LOADING_PANEL: Color = hex(0x080A0C);
+pub const LOADING_TRACK: Color = hex(0x222629);
+
+/// Loading rows are opaque sRGB blends over their dark sidebar.
+pub const LOADING_SELF: Color = hex(0x14252C);
+pub const LOADING_ROW: Color = hex(0x0F1113);
+
+/// Shared dashboard dock geometry, in interface pixels.
+pub const CORNER_WIDTH: f32 = 300.0;
+pub const CORNER_RIGHT: f32 = 48.0;
+pub const CORNER_BOTTOM: f32 = 18.0;
+pub const CORNER_GAP: f32 = 8.0;
+pub const ACTION_HEIGHT: f32 = 52.0;
+pub const PLAY_DRAWER_WIDTH: f32 = 380.0;
+pub const FINDING_HEIGHT: f32 = 56.0;
+
+/// Disabled queue admission action, kept readable with its reason strip.
+pub const QUEUE_DISABLED: (Color, Color) = (hex(0x3A3F44), hex(0x24282C));

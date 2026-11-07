@@ -64,6 +64,9 @@ pub struct ToastColumn;
 #[derive(Component)]
 struct Log;
 
+#[derive(Component)]
+struct ChatRoot;
+
 /// One line of the log, from the top.
 #[derive(Component)]
 struct Row(usize);
@@ -103,6 +106,9 @@ pub fn plugin(app: &mut App) {
                 show_log,
                 show_input,
                 ime,
+                loading_layout.after(show_input),
+                loading_faces.after(loading_layout),
+                click_loading_prompt.before(show_input),
             ),
         );
     if app.world().resource::<crate::Args>().chat.is_some() {
@@ -322,11 +328,12 @@ fn prompt(to: Audience) -> &'static str {
 
 fn spawn(mut commands: Commands, fonts: Res<Fonts>) {
     let root = commands
-        .spawn((ui::fill(), Pickable::IGNORE, GlobalZIndex(50)))
+        .spawn((ChatRoot, ui::fill(), Pickable::IGNORE, GlobalZIndex(50)))
         .id();
     let log = commands
         .spawn((
             Log,
+            Name::new("chat log"),
             Node {
                 position_type: PositionType::Absolute,
                 left: px(8),
@@ -339,6 +346,7 @@ fn spawn(mut commands: Commands, fonts: Res<Fonts>) {
                 ..default()
             },
             BackgroundColor(Color::NONE),
+            BorderColor::all(crate::theme::PANEL_EDGE),
             Pickable::IGNORE,
             ChildOf(root),
         ))
@@ -369,18 +377,7 @@ fn spawn(mut commands: Commands, fonts: Res<Fonts>) {
         },
         ChildOf(log),
     ));
-    commands.spawn((
-        Prompt,
-        ui::text("", &fonts.regular, SIZE, ui::INK),
-        Node {
-            display: Display::None,
-            margin: UiRect::top(px(4)),
-            padding: UiRect::axes(px(6), px(3)),
-            ..default()
-        },
-        BackgroundColor(ui::PANEL_DEEP),
-        ChildOf(log),
-    ));
+    spawn_prompt(&mut commands, &fonts, log);
 }
 
 /// A row: the tag as its own text, then the speaker's name and the words as
@@ -542,6 +539,7 @@ fn notice_text(core: &Core, texts: Option<&Texts>, event: &EventKind) -> Option<
 enum Shown<'a> {
     Heard(&'a ChatLine, &'a str),
     Notice(&'a Notice),
+    Preview(&'static str, Color, &'static str),
 }
 
 impl Shown<'_> {
@@ -549,6 +547,7 @@ impl Shown<'_> {
         match self {
             Shown::Heard(line, _) => line.age,
             Shown::Notice(notice) => notice.age,
+            Shown::Preview(..) => 0.0,
         }
     }
 }
@@ -559,41 +558,30 @@ fn show_log(
     sight: crate::fog::EventSight,
     typing: Res<Typing>,
     notices: Res<Notices>,
+    preview: Option<Res<crate::main_menu::Preview>>,
     mut rows: Query<(&Row, &mut Text, &mut TextColor, &mut Node, &Children)>,
     mut pieces: Query<(&Piece, &mut TextSpan, &mut TextColor), Without<Row>>,
 ) {
     let core = sight.core();
-    let reading = *typing == Typing::Chat;
     // A ping marks the map and says nothing in the log.
-    let shown = log_lines(core, &notices, &sight);
+    let shown = if preview.is_some_and(|p| p.0.loading()) {
+        crate::main_menu::loading_chat()
+            .into_iter()
+            .map(|(name, tint, text)| Shown::Preview(name, tint, text))
+            .collect()
+    } else {
+        log_lines(core, &notices, &sight)
+    };
     let shown = &shown[shown.len().saturating_sub(ROWS)..];
-    let first = ROWS - shown.len();
     for (Row(row), mut text, mut color, mut node, children) in &mut rows {
-        let line = row.checked_sub(first).and_then(|i| shown.get(i));
-        let alpha = line.map_or(0.0, |l| if reading { 1.0 } else { opacity(l.age()) });
-        let display = if alpha > 0.0 {
-            Display::Flex
-        } else {
-            Display::None
-        };
-        if node.display != display {
-            node.display = display;
-        }
+        let line = row
+            .checked_sub(ROWS - shown.len())
+            .and_then(|i| shown.get(i));
+        let alpha = row_visibility(line, *typing == Typing::Chat, &mut node);
         let Some(line) = line.filter(|_| alpha > 0.0) else {
             continue;
         };
-        let (tag, name, name_tint, words) = match line {
-            Shown::Heard(line, words) => (
-                tag(line),
-                format!(
-                    "{}: ",
-                    crate::seat_name::speaker_name(core, &line.heard.from)
-                ),
-                name_color(core, line),
-                *words,
-            ),
-            Shown::Notice(notice) => (String::new(), String::new(), ui::INK, notice.text.as_str()),
-        };
+        let (tag, name, name_tint, words) = chat_words(core, line);
         text.set_if_neq(Text(tag));
         color.set_if_neq(TextColor(ui::INK_DIM.with_alpha(alpha)));
         for child in children {
@@ -705,4 +693,170 @@ fn ime(
     if window.ime_enabled != want {
         window.ime_enabled = want;
     }
+}
+
+/// Keep the same game chat and input while loading, at the loading screen's lower-left corner.
+fn loading_layout(
+    loading: Res<crate::loading::Loading>,
+    preview: Option<Res<crate::main_menu::Preview>>,
+    typing: Res<Typing>,
+    fonts: Res<Fonts>,
+    mut root: Single<&mut GlobalZIndex, With<ChatRoot>>,
+    mut log: Single<(&mut Node, &mut BackgroundColor), (With<Log>, Without<Prompt>)>,
+    mut prompt: Single<
+        (&mut Node, &mut Text, &mut TextFont, &mut TextColor),
+        (With<Prompt>, Without<Log>),
+    >,
+) {
+    let preview = preview.is_some_and(|p| p.0.loading());
+    let shown = loading.shown || preview;
+    root.0 = if preview {
+        65
+    } else if shown {
+        55
+    } else {
+        50
+    };
+    let (node, color) = &mut *log;
+    loading_log(node, color, shown, *typing);
+    let (node, text, font, ink) = &mut *prompt;
+    loading_prompt(node, text, font, ink, shown, *typing, &fonts);
+}
+
+fn click_loading_prompt(
+    loading: Res<crate::loading::Loading>,
+    session: NonSend<Session>,
+    pressed: Query<&Interaction, (With<Prompt>, Changed<Interaction>)>,
+    mut input: ResMut<ChatInput>,
+    mut typing: ResMut<Typing>,
+) {
+    if loading.shown
+        && pressed.iter().any(|i| *i == Interaction::Pressed)
+        && open(&session.0, &mut input, true)
+    {
+        *typing = Typing::Chat;
+    }
+}
+
+/// Loading shares the dashboard faces; ordinary game chat retains its existing faces.
+fn loading_faces(
+    loading: Res<crate::loading::Loading>,
+    preview: Option<Res<crate::main_menu::Preview>>,
+    fonts: Res<Fonts>,
+    mut faces: Query<(&mut TextFont, Option<&Piece>), Or<(With<Row>, With<Piece>)>>,
+) {
+    let shown = loading.shown || preview.is_some_and(|p| p.0.loading());
+    for (mut face, piece) in &mut faces {
+        let bold = piece == Some(&Piece::Name);
+        let handle = if shown {
+            fonts.face(if bold {
+                crate::theme::Face::Bold
+            } else {
+                crate::theme::Face::Regular
+            })
+        } else if bold {
+            &fonts.bold
+        } else {
+            &fonts.regular
+        };
+        let desired = handle.clone().into();
+        if face.font != desired {
+            face.font = desired;
+        }
+    }
+}
+
+fn loading_log(node: &mut Node, color: &mut BackgroundColor, shown: bool, typing: Typing) {
+    node.left = px(if shown { 24.0 } else { 8.0 });
+    node.bottom = px(if shown {
+        24.0
+    } else {
+        crate::minimap::SIDE + 14.0
+    });
+    node.width = px(if shown { 520.0 } else { WIDTH });
+    node.padding = if shown {
+        UiRect::axes(px(12), px(8))
+    } else {
+        UiRect::all(px(4))
+    };
+    node.border = UiRect::all(px(if shown { 1.0 } else { 0.0 }));
+    if shown {
+        color.0 = Color::BLACK.with_alpha(crate::theme::dim(0.65));
+    } else if typing != Typing::Chat {
+        color.0 = Color::NONE;
+    }
+}
+fn loading_prompt(
+    node: &mut Node,
+    text: &mut Text,
+    font: &mut TextFont,
+    ink: &mut TextColor,
+    shown: bool,
+    typing: Typing,
+    fonts: &Fonts,
+) {
+    node.height = if shown { px(36) } else { Val::Auto };
+    node.border = UiRect::all(px(if shown { 1.0 } else { 0.0 }));
+    if shown {
+        font.font = fonts.face(crate::theme::Face::Regular).clone().into();
+        if typing != Typing::Chat {
+            node.display = Display::Flex;
+            text.0 = "To all: message".into();
+            *ink = TextColor(crate::theme::INK_5);
+        }
+        if typing == Typing::Chat {
+            *ink = TextColor(ui::INK);
+        }
+    } else {
+        font.font = fonts.regular.clone().into();
+        *ink = TextColor(ui::INK);
+    }
+}
+
+fn chat_words<'a>(core: &Core, line: &'a Shown<'a>) -> (String, String, Color, &'a str) {
+    match line {
+        Shown::Heard(line, words) => (
+            tag(line),
+            format!(
+                "{}: ",
+                crate::seat_name::speaker_name(core, &line.heard.from)
+            ),
+            name_color(core, line),
+            *words,
+        ),
+        Shown::Notice(notice) => (String::new(), String::new(), ui::INK, notice.text.as_str()),
+        Shown::Preview(name, tint, words) => (String::new(), format!("{name}: "), *tint, *words),
+    }
+}
+
+fn spawn_prompt(commands: &mut Commands, fonts: &Fonts, log: Entity) {
+    commands.spawn((
+        Prompt,
+        Button,
+        Name::new("chat input"),
+        crate::hud::Blocker,
+        BorderColor::all(crate::theme::SECONDARY_EDGE),
+        ui::text("", &fonts.regular, SIZE, ui::INK),
+        Node {
+            display: Display::None,
+            margin: UiRect::top(px(4)),
+            padding: UiRect::axes(px(6), px(3)),
+            ..default()
+        },
+        BackgroundColor(ui::PANEL_DEEP),
+        ChildOf(log),
+    ));
+}
+
+fn row_visibility(line: Option<&Shown<'_>>, reading: bool, node: &mut Node) -> f32 {
+    let alpha = line.map_or(0.0, |l| if reading { 1.0 } else { opacity(l.age()) });
+    let display = if alpha > 0.0 {
+        Display::Flex
+    } else {
+        Display::None
+    };
+    if node.display != display {
+        node.display = display;
+    }
+    alpha
 }

@@ -11,10 +11,10 @@ use super::form::FormKind;
 use super::kit::{Kit, MenuButton, Tone};
 use super::view::{
     FieldView, LobbyView, MemberRow, MenuView, PageView, ReplayRow, ReplayShelf, ResultView,
-    RulesetRow, SlotRow,
+    SlotRow,
 };
 use crate::theme;
-use bota_radovid::proto::{AccountGameLimit, LOBBY_NO_SLOT};
+use bota_radovid::proto::LOBBY_NO_SLOT;
 
 /// The pages' column: the forms and the replay list, one width.
 const PAGE_WIDTH: f32 = 760.0;
@@ -25,8 +25,6 @@ const PAGE_FOOT: f32 = 96.0;
 /// The way in's card, and where its column starts.
 const WAY_IN_WIDTH: f32 = 480.0;
 const WAY_IN_TOP: f32 = 110.0;
-/// The column of the game's buttons at the bottom right.
-const CORNER_WIDTH: f32 = 300.0;
 
 /// The scrolled part of a page, under the top bar.
 #[derive(Component)]
@@ -34,6 +32,21 @@ pub struct MenuBody;
 
 /// The whole page layer.
 pub fn draw(kit: &mut Kit, root: Entity, view: &MenuView, fold: super::top_bar::TabFold) {
+    if let PageView::Loading {
+        details,
+        progress_permille,
+        elapsed_secs,
+    } = &view.body
+    {
+        crate::loading::draw(
+            kit,
+            root,
+            details,
+            f32::from(*progress_permille) / 1000.0,
+            *elapsed_secs,
+        );
+        return;
+    }
     let way_in = matches!(
         &view.body,
         PageView::Form {
@@ -101,21 +114,7 @@ pub fn draw(kit: &mut Kit, root: Entity, view: &MenuView, fold: super::top_bar::
                 (*kind == FormKind::Host).then_some(view.host_cheats),
             );
         }
-        PageView::Home {
-            rulesets,
-            allow_matchmaking_bots,
-            in_flight,
-            cooldown,
-        } => {
-            home(
-                kit,
-                body,
-                rulesets,
-                *in_flight,
-                *allow_matchmaking_bots,
-                cooldown.as_deref(),
-            );
-        }
+        PageView::Home { .. } => {}
         PageView::MyGames {
             games,
             finished,
@@ -140,9 +139,18 @@ pub fn draw(kit: &mut Kit, root: Entity, view: &MenuView, fold: super::top_bar::
             kit.typed(body, "JOINING THE GAME…", theme::TITLE, theme::INK_1);
         }
         PageView::Hidden => {}
+        PageView::Loading { .. } => {}
     }
     player_card(kit, root, view);
     game_corner(kit, root, view);
+    if let PageView::Home {
+        rulesets,
+        in_flight,
+        cooldown,
+    } = &view.body
+    {
+        super::play::draw(kit, root, view, rulesets, *in_flight, cooldown.as_deref());
+    }
     super::top_bar::quit(kit, root, view);
 }
 
@@ -155,7 +163,7 @@ fn player_card(kit: &mut Kit, root: Entity, view: &MenuView) {
             Node {
                 position_type: PositionType::Absolute,
                 left: px(24),
-                bottom: px(18),
+                bottom: px(theme::CORNER_BOTTOM),
                 column_gap: px(12),
                 padding: UiRect::new(px(4), px(16), px(4), px(4)),
                 align_items: AlignItems::Center,
@@ -204,17 +212,20 @@ fn player_card(kit: &mut Kit, root: Entity, view: &MenuView) {
 /// RETURN TO GAME; after leaving one's seat, LEAVE above RECONNECT.
 fn game_corner(kit: &mut Kit, root: Entity, view: &MenuView) {
     if view.game.is_none() && !view.reconnect {
+        if !view.play.open || view.offer.is_some() {
+            super::play::corner(kit, root, matches!(view.body, PageView::Home { .. }));
+        }
         return;
     }
     let corner = kit.node(
         root,
         Node {
             position_type: PositionType::Absolute,
-            right: px(48),
-            bottom: px(18),
-            width: px(CORNER_WIDTH),
+            right: px(theme::CORNER_RIGHT),
+            bottom: px(theme::CORNER_BOTTOM),
+            width: px(theme::CORNER_WIDTH),
             flex_direction: FlexDirection::Column,
-            row_gap: px(8),
+            row_gap: px(theme::CORNER_GAP),
             ..default()
         },
     );
@@ -236,7 +247,7 @@ fn game_corner(kit: &mut Kit, root: Entity, view: &MenuView) {
                 "LEAVE GAME",
                 Act::LeaveGame,
                 Tone::Danger,
-                44.0,
+                theme::HIT,
                 "leave game",
             );
         }
@@ -245,7 +256,7 @@ fn game_corner(kit: &mut Kit, root: Entity, view: &MenuView) {
             "DISCONNECT",
             Act::Disconnect,
             Tone::Danger,
-            44.0,
+            theme::HIT,
             "disconnect",
         );
         wide(
@@ -253,7 +264,7 @@ fn game_corner(kit: &mut Kit, root: Entity, view: &MenuView) {
             "RETURN TO GAME",
             Act::ReturnToGame,
             Tone::Primary,
-            52.0,
+            theme::ACTION_HEIGHT,
             "return",
         );
     } else {
@@ -263,7 +274,7 @@ fn game_corner(kit: &mut Kit, root: Entity, view: &MenuView) {
             "LEAVE",
             Act::LeaveSeat,
             Tone::Danger,
-            44.0,
+            theme::HIT,
             "leave match",
         );
         wide(
@@ -271,7 +282,7 @@ fn game_corner(kit: &mut Kit, root: Entity, view: &MenuView) {
             "RECONNECT",
             Act::Reconnect,
             Tone::Primary,
-            52.0,
+            theme::ACTION_HEIGHT,
             "reconnect",
         );
     }
@@ -560,109 +571,6 @@ pub fn field_box(kit: &mut Kit, parent: Entity, at: usize, field: &FieldView) {
         .id();
     let caret = if field.focused { "|" } else { "" };
     kit.text(input, format!("{}{caret}", field.shown), 15.0, theme::INK_1);
-}
-
-/// Play: every ruleset this client can play, with FIND MATCH.
-fn home(
-    kit: &mut Kit,
-    body: Entity,
-    rulesets: &[RulesetRow],
-    in_flight: (usize, Option<AccountGameLimit>),
-    allow_matchmaking_bots: bool,
-    cooldown: Option<&str>,
-) {
-    let column = kit.node(
-        body,
-        Node {
-            flex_direction: FlexDirection::Column,
-            row_gap: px(16),
-            ..default()
-        },
-    );
-    kit.bold(column, "PLAY", 30.0, theme::INK_1);
-    checkbox(
-        kit,
-        column,
-        "Allow matchmaking with bots",
-        Act::ToggleMatchmakingBots,
-        allow_matchmaking_bots,
-    );
-    if rulesets.is_empty() {
-        kit.text(
-            column,
-            "The service offers no game this version of dbota can play.",
-            16.0,
-            theme::INK_4,
-        );
-    }
-    for ruleset in rulesets {
-        let card = kit.panel(
-            column,
-            Node {
-                width: px(900),
-                padding: UiRect::all(px(18)),
-                column_gap: px(18),
-                align_items: AlignItems::Center,
-                ..default()
-            },
-        );
-        let heroes = kit.node(
-            card,
-            Node {
-                column_gap: px(6),
-                ..default()
-            },
-        );
-        for hero in 0..HEROES.len() as u16 {
-            kit.portrait(heroes, hero, 96.0);
-        }
-        let about = kit.node(
-            card,
-            Node {
-                flex_direction: FlexDirection::Column,
-                row_gap: px(4),
-                flex_grow: 1.0,
-                ..default()
-            },
-        );
-        kit.bold(about, ruleset.name.clone(), 22.0, theme::INK_1);
-        let rated = if ruleset.rated { "ranked" } else { "unranked" };
-        kit.text(
-            about,
-            format!("{} · {rated} · {}", ruleset.teams, ruleset.audience),
-            15.0,
-            theme::INK_4,
-        );
-        let can = cooldown.is_none()
-            && match in_flight.1 {
-                Some(AccountGameLimit::Unlimited) => true,
-                Some(AccountGameLimit::Limited(maximum)) => in_flight.0 < usize::from(maximum),
-                None => false,
-            };
-        let look = if can { Tone::Primary } else { Tone::Secondary };
-        kit.button(
-            card,
-            "FIND MATCH",
-            Act::Find(ruleset.id.clone()),
-            look,
-            52.0,
-        );
-    }
-    let count = match in_flight.1 {
-        Some(AccountGameLimit::Limited(maximum)) => {
-            Some(format!("Games going: {} of {maximum} at once", in_flight.0))
-        }
-        Some(AccountGameLimit::Unlimited) => {
-            Some(format!("Games going: {} · no account limit", in_flight.0))
-        }
-        None => None,
-    };
-    if let Some(count) = count {
-        kit.text(column, count, 14.0, theme::INK_4);
-    }
-    if let Some(cooldown) = cooldown {
-        kit.text(column, cooldown, 15.0, theme::ERROR_TEXT);
-    }
 }
 
 fn profile_page(kit: &mut Kit, body: Entity, name: &str, ratings: &[String], ladder: &[String]) {
@@ -1345,4 +1253,15 @@ fn demo_page(kit: &mut Kit, body: Entity, heroes: &[(u16, String)], offered: boo
         kit.portrait(card, *id, 240.0);
         kit.bold(card, name.to_uppercase(), 18.0, theme::INK_1);
     }
+}
+
+pub(super) fn corner_height(view: &MenuView) -> f32 {
+    let secondary = if view.game.is_some() && view.can_leave_game {
+        2
+    } else if view.game.is_some() || view.reconnect {
+        1
+    } else {
+        0
+    };
+    theme::ACTION_HEIGHT + secondary as f32 * (theme::HIT + theme::CORNER_GAP)
 }

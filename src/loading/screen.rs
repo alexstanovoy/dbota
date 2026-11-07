@@ -1,343 +1,401 @@
-//! The loading screen, laid out as Dota's (`loading_screen.vcss` and
-//! `loading_screen_default.vcss` of the install): black, Dota's logo in the
-//! middle, a sidebar on the right with each side's players (Radiant's green
-//! and Dire's red gradients, the hero's portrait as the avatar once picked),
-//! and at the bottom right the turning throbber with how far the loading is.
-
+//! Loading: the install's default art and a quiet sidebar of the game's connection facts.
+use super::{Details, Loading, Row};
+use crate::main_menu::kit::Kit;
+use crate::{
+    manifest::Manifest,
+    session::Session,
+    theme,
+    ui::{self, Fonts},
+};
 use bevy::prelude::*;
-use bota_client_core::App as Core;
-use bota_proto::{SlotId, Team};
+use bota_proto::Team;
 
-use super::Loading;
-use crate::manifest::Manifest;
-use crate::session::Session;
-use crate::ui::{self, Fonts};
-
-/// Over the game and its pick and strategy screens, under the menu.
-const Z: i32 = 50;
-/// Dota's sidebar width and the side of its logo, in interface pixels.
-const SIDEBAR: f32 = 400.0;
-const LOGO: f32 = 253.0;
-const AVATAR: f32 = 36.0;
-const THROBBER: f32 = 29.0;
-/// The bar's width at the bottom right.
-const BAR: f32 = 300.0;
-
+const SIDEBAR: f32 = 336.0;
 #[derive(Component)]
 struct Root;
-
-/// The sidebar's list of a side, rebuilt when its players change.
-#[derive(Component)]
-struct TeamList(Team);
-
 #[derive(Component)]
 struct Throbber;
-
 #[derive(Component)]
 struct BarFill;
-
 #[derive(Component)]
-struct Percent;
-
-/// One player of the loading screen: side, name, hero once picked.
-#[derive(Clone, PartialEq, Debug)]
-pub struct Row {
-    pub team: Team,
-    pub name: String,
-    pub hero: Option<u16>,
-}
+struct Elapsed;
 
 pub fn plugin(app: &mut App) {
-    app.add_systems(Startup, spawn).add_systems(
-        PostUpdate,
-        (show, rosters, progress, turn).after(super::track),
-    );
-}
-
-fn spawn(
-    mut commands: Commands,
-    fonts: Res<Fonts>,
-    manifest: Res<Manifest>,
-    server: Res<AssetServer>,
-) {
-    let root = commands
-        .spawn((
+    app.add_systems(Startup, |mut commands: Commands| {
+        commands.spawn((
             Root,
             ui::fill(),
             BackgroundColor(Color::BLACK),
-            GlobalZIndex(Z),
+            GlobalZIndex(50),
             Visibility::Hidden,
-        ))
-        .id();
-    commands.spawn((
-        Node {
-            position_type: PositionType::Absolute,
-            left: percent(50),
-            top: percent(50),
-            width: px(LOGO),
-            height: px(LOGO),
-            margin: UiRect::new(px(-LOGO / 2.0), px(0), px(-LOGO / 2.0), px(0)),
-            ..default()
-        },
-        ui::art(&manifest, &server, "loading.logo"),
-        ChildOf(root),
-    ));
-    sidebar(&mut commands, root, &fonts);
-    loading_panel(&mut commands, root, &fonts, &manifest, &server);
-}
-
-/// The players of both sides, Dota's sidebar.
-fn sidebar(commands: &mut Commands, root: Entity, fonts: &Fonts) {
-    let bar = commands
-        .spawn((
-            Node {
-                position_type: PositionType::Absolute,
-                right: px(0),
-                top: px(0),
-                bottom: px(0),
-                width: px(SIDEBAR),
-                flex_direction: FlexDirection::Column,
-                padding: UiRect::all(px(15)),
-                ..default()
-            },
-            BackgroundGradient::from(LinearGradient::to_bottom(vec![
-                Color::srgb_u8(0x26, 0x2a, 0x2f).into(),
-                Color::srgb_u8(0x13, 0x15, 0x18).into(),
-            ])),
-            ChildOf(root),
-        ))
-        .id();
-    for (team, name, tint) in [
-        (Team::Radiant, "Radiant", Color::srgb_u8(0x0e, 0x3b, 0x1a)),
-        (Team::Dire, "Dire", Color::srgb_u8(0x3c, 0x0f, 0x16)),
-    ] {
-        let side = commands
-            .spawn((
-                Node {
-                    flex_direction: FlexDirection::Column,
-                    padding: UiRect::new(px(15), px(10), px(10), px(10)),
-                    min_height: px(260),
-                    border: UiRect::top(px(1)),
-                    ..default()
-                },
-                BorderColor::all(Color::srgb_u8(0x36, 0x3d, 0x3b)),
-                BackgroundGradient::from(LinearGradient::to_bottom_right(vec![
-                    tint.into(),
-                    Color::srgb_u8(0x15, 0x17, 0x19).into(),
-                ])),
-                ChildOf(bar),
-            ))
-            .id();
-        commands.spawn((
-            ui::text(name.to_uppercase(), &fonts.bold, 18.0, Color::WHITE),
-            ChildOf(side),
         ));
-        commands.spawn((
-            TeamList(team),
-            Node {
-                flex_direction: FlexDirection::Column,
-                ..default()
-            },
-            ChildOf(side),
-        ));
-    }
+    })
+    .add_systems(
+        PostUpdate,
+        (show, progress, turn).chain().after(super::track),
+    );
 }
 
-/// The throbber, the bar and the share, at the bottom right left of the
-/// sidebar.
-fn loading_panel(
-    commands: &mut Commands,
-    root: Entity,
-    fonts: &Fonts,
-    manifest: &Manifest,
-    server: &AssetServer,
-) {
-    let panel = commands
-        .spawn((
-            Node {
-                position_type: PositionType::Absolute,
-                right: px(SIDEBAR + 40.0),
-                bottom: px(40),
-                align_items: AlignItems::Center,
-                column_gap: px(10),
-                ..default()
-            },
-            ChildOf(root),
-        ))
-        .id();
-    commands.spawn((
-        Throbber,
-        Node {
-            width: px(THROBBER),
-            height: px(THROBBER),
-            ..default()
-        },
-        ui::art(manifest, server, "loading.throbber"),
-        ChildOf(panel),
-    ));
-    let well = commands
-        .spawn((
-            Node {
-                width: px(BAR),
-                height: px(6),
-                ..default()
-            },
-            BackgroundColor(Color::srgb_u8(0x15, 0x17, 0x19)),
-            ChildOf(panel),
-        ))
-        .id();
-    commands.spawn((
-        BarFill,
-        Node {
-            width: percent(0),
-            height: percent(100),
-            ..default()
-        },
-        BackgroundColor(Color::srgb_u8(0x32, 0x80, 0x22)),
-        ChildOf(well),
-    ));
-    commands.spawn((
-        Percent,
-        ui::text("0%", &fonts.regular, 18.0, Color::srgb_u8(0xb4, 0xb4, 0xb4)),
-        ChildOf(panel),
-    ));
-}
-
-fn show(loading: Res<Loading>, mut root: Single<&mut Visibility, With<Root>>) {
-    root.set_if_neq(ui::visible(loading.shown));
-}
-
-/// The players of the match: the lobby's seats while it lasts, else the
-/// match's roster (a replay's).
-pub fn rows(core: &Core) -> Vec<Row> {
-    let name = |slot: SlotId, given: &str| {
-        if given.is_empty() {
-            crate::seat_name::seat_name(core, slot)
-        } else {
-            given.to_owned()
-        }
-    };
-    if let Some(statics) = core.statics() {
-        return statics
-            .roster()
-            .iter()
-            .map(|pick| Row {
-                team: pick.team,
-                name: name(pick.slot, ""),
-                hero: Some(pick.hero.0),
-            })
-            .collect();
-    }
-    core.lobby
-        .slots
-        .iter()
-        .filter(|seat| seat.role.is_some())
-        .map(|seat| Row {
-            team: seat.team,
-            name: name(seat.slot, &seat.name),
-            hero: seat.hero.map(|h| h.0),
-        })
-        .collect()
-}
-
-/// Lays each side's players out again when they change.
-fn rosters(
-    mut commands: Commands,
-    session: NonSend<Session>,
+#[allow(clippy::too_many_arguments)]
+fn show(
+    commands: Commands,
     loading: Res<Loading>,
+    session: NonSend<Session>,
+    core: Option<NonSend<crate::main_menu::MenuCore>>,
     fonts: Res<Fonts>,
     manifest: Res<Manifest>,
     server: Res<AssetServer>,
-    lists: Query<(Entity, &TeamList)>,
-    mut laid: Local<Vec<Row>>,
+    mut root: Single<(Entity, &mut Visibility), With<Root>>,
+    mut drawn: Local<Option<Details>>,
 ) {
+    root.1.set_if_neq(ui::visible(loading.shown));
     if !loading.shown {
         return;
     }
-    let now = rows(&session.0);
-    if *laid == now {
+    let details = core
+        .map_or_else(Details::default, |c| c.loading_details())
+        .with_connections(&session.0);
+    if drawn.as_ref() == Some(&details) {
         return;
     }
-    for (list, team) in &lists {
-        commands.entity(list).despawn_related::<Children>();
-        for row in now.iter().filter(|r| r.team == team.0) {
-            player(&mut commands, list, row, &fonts, &manifest, &server);
-        }
-    }
-    *laid = now;
+    let mut kit = Kit {
+        commands,
+        fonts: &fonts,
+        manifest: &manifest,
+        server: &server,
+    };
+    kit.commands.entity(root.0).despawn_children();
+    draw(&mut kit, root.0, &details, loading.progress, 0);
+    *drawn = Some(details);
 }
 
-/// One player's row: the hero's portrait as the avatar, the name.
-fn player(
-    commands: &mut Commands,
-    list: Entity,
-    row: &Row,
-    fonts: &Fonts,
-    manifest: &Manifest,
-    server: &AssetServer,
-) {
-    let line = commands
-        .spawn((
-            Node {
-                margin: UiRect::all(px(5)),
-                align_items: AlignItems::Center,
-                column_gap: px(5),
-                ..default()
-            },
-            ChildOf(list),
-        ))
-        .id();
-    let avatar = row.hero.and_then(|hero| manifest.portrait(hero));
-    commands.spawn((
+/// Also used by the menu while the connection is opening, and by its loading preview.
+pub fn draw(kit: &mut Kit, root: Entity, details: &Details, progress: f32, seconds: u32) {
+    art(kit, root);
+    let sidebar = kit.node(
+        root,
         Node {
-            width: px(AVATAR),
-            height: px(AVATAR),
+            position_type: PositionType::Absolute,
+            right: px(0),
+            top: px(0),
+            bottom: px(0),
+            width: px(SIDEBAR),
+            padding: UiRect::axes(px(16), px(20)),
+            flex_direction: FlexDirection::Column,
+            row_gap: px(14),
+            border: UiRect::left(px(1)),
             ..default()
         },
-        match avatar {
-            Some(path) => (
-                ImageNode::new(server.load(path)),
-                BackgroundColor(Color::NONE),
-            ),
-            None => (
-                ImageNode::default().with_color(Color::NONE),
-                BackgroundColor(Color::srgb_u8(0x26, 0x2a, 0x2f)),
-            ),
+    );
+    kit.commands.entity(sidebar).insert((
+        Name::new("loading sidebar"),
+        BackgroundColor(theme::LOADING_PANEL),
+        BorderColor::all(theme::DIVIDER),
+    ));
+    identity(kit, sidebar, details, seconds);
+    for team in [Team::Radiant, Team::Dire] {
+        team_list(kit, sidebar, details, team);
+    }
+    kit.node(
+        sidebar,
+        Node {
+            flex_grow: 1.0,
+            ..default()
         },
-        ui::Cover,
-        ChildOf(line),
+    );
+    loading_panel(kit, sidebar, progress);
+}
+
+fn team_list(kit: &mut Kit, parent: Entity, details: &Details, team: Team) {
+    let side = kit.node(
+        parent,
+        Node {
+            flex_direction: FlexDirection::Column,
+            row_gap: px(4),
+            ..default()
+        },
+    );
+    let ink = if team == Team::Radiant {
+        theme::RADIANT
+    } else {
+        theme::DIRE
+    };
+    let head = kit.node(
+        side,
+        Node {
+            padding: UiRect::axes(px(8), px(4)),
+            margin: UiRect::bottom(px(4)),
+            ..default()
+        },
+    );
+    kit.commands.entity(head).insert(theme::rightward((
+        theme::LOADING_PANEL
+            .to_srgba()
+            .mix(&ink.to_srgba(), 0.28)
+            .into(),
+        theme::LOADING_PANEL,
+    )));
+    kit.typed(
+        head,
+        if team == Team::Radiant {
+            "RADIANT"
+        } else {
+            "DIRE"
+        },
+        theme::LOADING_TEAM,
+        ink,
+    );
+    for row in details.seats.iter().filter(|r| r.team == team).take(10) {
+        player(kit, side, row);
+    }
+}
+
+fn player(kit: &mut Kit, parent: Entity, row: &Row) {
+    let line = kit.node(
+        parent,
+        Node {
+            height: px(46),
+            align_items: AlignItems::Center,
+            column_gap: px(10),
+            padding: UiRect::axes(px(8), px(0)),
+            border: UiRect::left(px(if row.me { 3 } else { 0 })),
+            ..default()
+        },
+    );
+    kit.commands.entity(line).insert((
+        Name::new(format!("loading player {}", row.slot)),
+        BackgroundColor(if row.me {
+            theme::LOADING_SELF
+        } else {
+            theme::LOADING_ROW
+        }),
+        BorderColor::all(theme::SELECT),
     ));
-    commands.spawn((
-        ui::text(
-            &row.name,
-            &fonts.regular,
-            18.0,
-            Color::srgb_u8(0xb4, 0xb4, 0xb4),
-        ),
-        ChildOf(line),
+    avatar(kit, line, row);
+    let words = kit.node(
+        line,
+        Node {
+            min_width: px(0),
+            flex_grow: 1.0,
+            flex_direction: FlexDirection::Column,
+            row_gap: px(4),
+            ..default()
+        },
+    );
+    player_words(kit, words, row);
+}
+
+fn loading_panel(kit: &mut Kit, parent: Entity, progress: f32) {
+    let panel = kit.node(
+        parent,
+        Node {
+            align_items: AlignItems::Center,
+            justify_content: JustifyContent::FlexEnd,
+            column_gap: px(10),
+            ..default()
+        },
+    );
+    let track = kit.node(
+        panel,
+        Node {
+            width: px(220),
+            height: px(4),
+            ..default()
+        },
+    );
+    kit.commands
+        .entity(track)
+        .insert(BackgroundColor(theme::LOADING_TRACK));
+    let fill = kit.node(
+        track,
+        Node {
+            width: percent(progress.clamp(0.0, 1.0) * 100.0),
+            height: percent(100),
+            ..default()
+        },
+    );
+    kit.commands.entity(fill).insert((
+        BarFill,
+        Name::new("loading progress"),
+        BackgroundColor(theme::INK_1),
     ));
+    let spinner = kit.art(
+        panel,
+        "loading.throbber",
+        Node {
+            width: px(28),
+            height: px(28),
+            ..default()
+        },
+    );
+    kit.commands.entity(spinner).insert(Throbber);
 }
 
 fn progress(
     loading: Res<Loading>,
-    mut fill: Single<&mut Node, With<BarFill>>,
-    mut share: Single<&mut Text, With<Percent>>,
+    mut fills: Query<&mut Node, With<BarFill>>,
+    mut elapsed: Query<&mut Text, With<Elapsed>>,
 ) {
-    if !loading.is_changed() {
+    if !loading.shown {
         return;
     }
-    let p = (loading.progress * 100.0).round();
-    fill.width = percent(p);
-    share.set_if_neq(Text(format!("{p}%")));
+    for mut fill in &mut fills {
+        fill.width = percent(loading.progress.clamp(0.0, 1.0) * 100.0);
+    }
+    let seconds = (crate::since_start() - loading.began).max(0.0) as u32;
+    for mut text in &mut elapsed {
+        text.set_if_neq(Text(format!("{}:{:02}", seconds / 60, seconds % 60)));
+    }
 }
 
-/// Dota's throbber turns once a second.
-fn turn(
-    loading: Res<Loading>,
-    time: Res<Time>,
-    mut throbber: Single<&mut UiTransform, With<Throbber>>,
-) {
-    if loading.shown {
-        throbber.rotation = Rot2::radians(-time.elapsed_secs() * std::f32::consts::TAU);
+fn turn(time: Res<Time>, mut throbbers: Query<&mut UiTransform, With<Throbber>>) {
+    for mut transform in &mut throbbers {
+        transform.rotation = Rot2::radians(-time.elapsed_secs() * std::f32::consts::TAU);
     }
+}
+
+fn art(kit: &mut Kit, root: Entity) {
+    let art = kit.node(
+        root,
+        Node {
+            position_type: PositionType::Absolute,
+            left: px(0),
+            right: px(SIDEBAR),
+            top: px(0),
+            bottom: px(0),
+            align_items: AlignItems::Center,
+            justify_content: JustifyContent::Center,
+            ..default()
+        },
+    );
+    kit.commands
+        .entity(art)
+        .insert(BackgroundColor(Color::BLACK));
+    // The install's default loading screen is black with this logo, not a replacement art pack.
+    kit.art(
+        art,
+        "loading.logo",
+        Node {
+            width: px(253),
+            height: px(253),
+            ..default()
+        },
+    );
+}
+
+fn identity(kit: &mut Kit, sidebar: Entity, details: &Details, seconds: u32) {
+    let head = kit.node(
+        sidebar,
+        Node {
+            justify_content: JustifyContent::SpaceBetween,
+            ..default()
+        },
+    );
+    let label = details
+        .match_id
+        .map_or_else(|| "Local game".to_owned(), |id| format!("Match {id}"));
+    kit.typed(head, label, theme::BODY, theme::INK_3);
+    kit.typed(head, &details.mode, theme::BODY, theme::INK_3);
+    let players = kit.node(
+        sidebar,
+        Node {
+            align_items: AlignItems::Baseline,
+            justify_content: JustifyContent::SpaceBetween,
+            padding: UiRect::bottom(px(8)),
+            border: UiRect::bottom(px(1)),
+            ..default()
+        },
+    );
+    kit.commands
+        .entity(players)
+        .insert(BorderColor::all(theme::DIVIDER));
+    let connected = details.seats.iter().filter(|r| r.connected).count();
+    kit.typed(
+        players,
+        format!("PLAYERS · {connected} OF {} CONNECTED", details.seats.len()),
+        theme::LOADING_SUMMARY,
+        theme::INK_1,
+    );
+    let elapsed = kit.typed(
+        players,
+        format!("{}:{:02}", seconds / 60, seconds % 60),
+        theme::NUMBER,
+        theme::INK_5,
+    );
+    kit.commands.entity(elapsed).insert(Elapsed);
+}
+
+fn avatar(kit: &mut Kit, line: Entity, row: &Row) {
+    let avatar = kit.node(
+        line,
+        Node {
+            width: px(38),
+            height: px(38),
+            flex_shrink: 0.0,
+            border: UiRect::all(px(1)),
+            align_items: AlignItems::Center,
+            justify_content: JustifyContent::Center,
+            ..default()
+        },
+    );
+    kit.commands.entity(avatar).insert((
+        BackgroundColor(theme::FIELD),
+        BorderColor::all(theme::FIELD_EDGE),
+    ));
+    let initial: String = row
+        .name
+        .chars()
+        .take(1)
+        .flat_map(char::to_uppercase)
+        .collect();
+    kit.typed(avatar, initial, theme::LABEL, theme::INK_3);
+}
+
+fn player_words(kit: &mut Kit, words: Entity, row: &Row) {
+    let name_row = kit.node(
+        words,
+        Node {
+            align_items: AlignItems::Center,
+            column_gap: px(5),
+            ..default()
+        },
+    );
+    let name = kit.typed(
+        name_row,
+        &row.name,
+        theme::LABEL,
+        if row.connected {
+            theme::INK_1
+        } else {
+            theme::INK_3
+        },
+    );
+    kit.commands.entity(name).insert((
+        Node {
+            max_width: px(180),
+            overflow: Overflow::clip(),
+            ..default()
+        },
+        TextLayout {
+            linebreak: LineBreak::NoWrap,
+            ..default()
+        },
+    ));
+    if row.bot {
+        kit.typed(name_row, "BOT", theme::CAPTION, theme::INK_4);
+    }
+    kit.typed(
+        words,
+        if row.connected {
+            "Connected"
+        } else {
+            "Connecting…"
+        },
+        theme::STATUS_TEXT,
+        if row.connected {
+            theme::RADIANT_TEXT
+        } else {
+            theme::INK_3
+        },
+    );
 }
