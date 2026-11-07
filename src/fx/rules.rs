@@ -2,9 +2,7 @@
 //! line about a fact by comparing numbers.
 
 use bevy::prelude::*;
-use bota_proto::{
-    AbilityId, EffectId, HeroId, Inflictor, ItemId, RuneKind, Team, UnitKind, UnitView,
-};
+use bota_proto::{AbilityId, EffectId, HeroId, Inflictor, ItemId, RuneKind, UnitView};
 
 use super::line::{Fx, Trigger};
 use crate::manifest::Manifest;
@@ -14,10 +12,7 @@ use crate::manifest::Manifest;
 pub enum Units {
     /// A hero: `npc_dota_hero_<name>`.
     Hero(HeroId),
-    /// A lane creep of a side: `npc_dota_creep_goodguys_melee`.
-    Lane(UnitKind, Team),
-    /// A ward, a map objective or a neutral creep, by the name its `unit` line of the manifest
-    /// gives.
+    /// A lane creep, ward, map objective or neutral creep, by its manifest `unit` name.
     Npc(String),
 }
 
@@ -26,7 +21,6 @@ impl Units {
     pub fn is(&self, unit: &UnitView) -> bool {
         match self {
             Units::Hero(hero) => unit.hero == Some(*hero),
-            Units::Lane(kind, team) => unit.kind == *kind && unit.team == *team,
             Units::Npc(name) => crate::units::npc_unit(unit) == Some(name.as_str()),
         }
     }
@@ -39,22 +33,6 @@ impl Units {
                 .find(|(kind, _, name)| kind == "hero" && name == hero)?
                 .1;
             return Some(Units::Hero(HeroId(id)));
-        }
-        let lane = match npc {
-            "npc_dota_creep_goodguys_flagbearer" => {
-                Some((UnitKind::CreepFlagbearer, Team::Radiant))
-            }
-            "npc_dota_creep_badguys_flagbearer" => Some((UnitKind::CreepFlagbearer, Team::Dire)),
-            "npc_dota_creep_goodguys_melee" => Some((UnitKind::CreepMelee, Team::Radiant)),
-            "npc_dota_creep_goodguys_ranged" => Some((UnitKind::CreepRanged, Team::Radiant)),
-            "npc_dota_goodguys_siege" => Some((UnitKind::CreepSiege, Team::Radiant)),
-            "npc_dota_creep_badguys_melee" => Some((UnitKind::CreepMelee, Team::Dire)),
-            "npc_dota_creep_badguys_ranged" => Some((UnitKind::CreepRanged, Team::Dire)),
-            "npc_dota_badguys_siege" => Some((UnitKind::CreepSiege, Team::Dire)),
-            _ => None,
-        };
-        if let Some((kind, team)) = lane {
-            return Some(Units::Lane(kind, team));
         }
         manifest.unit_art(npc).map(|_| Units::Npc(npc.to_owned()))
     }

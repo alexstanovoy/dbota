@@ -89,6 +89,7 @@ fn assert_creep_model(
     let bank = world.resource::<ModelBank>();
     let model = &bank.0[unit.model.expect("model")].model;
     assert_eq!(model.logical, case.logical);
+    assert_creep_fx(client, case, id);
     let entry = catalog
         .lines
         .iter()
@@ -262,4 +263,24 @@ fn assert_public_horn_anchor(client: &mut Client, ancient: Spot) {
             assert!(!sight.allows(&event, crate::fog::EventSubject::Unit(&hero)));
         })
         .expect("public horn anchor validation");
+}
+
+fn assert_creep_fx(client: &Client, case: &CreepCase, id: EntityId) {
+    let manifest = client.world().resource::<crate::manifest::Manifest>();
+    let unit = client.view().unit(id).expect("shown creep");
+    let normal = case
+        .npc
+        .replace("_upgraded_mega", "")
+        .replace("_upgraded", "");
+    for (npc, expected) in [(case.npc.as_str(), true), (normal.as_str(), false)] {
+        let subject = format!("unit.{npc}.worn");
+        let fx =
+            crate::fx::line::Fx::parse(&[&subject, "at=unit", "particle=ward.observer.ambient"])
+                .expect("unit effect");
+        let rule = crate::fx::rules::Rule::resolve(&fx, manifest).expect("NPC effect rule");
+        let crate::fx::rules::Subject::Units(units) = rule.subject else {
+            panic!("unit rule")
+        };
+        assert_eq!(units.is(unit), expected, "{npc} against {}", case.npc);
+    }
 }
