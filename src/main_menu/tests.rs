@@ -301,7 +301,10 @@ pub(crate) fn service_with_unranked() -> Service {
                 "rated = true",
                 "rated = false\nrating_ruleset = \"solo_mid\"",
             );
-        format!("{text}\n[[ruleset]]\n{casual}").replace("rated = true", "rated = true\nrating_window = { initial = 100, widen_per_minute = 0, maximum = 100 }")
+        format!("{text}\n[[ruleset]]\n{casual}").replace(
+            "rated = true",
+            "rated = true\nrating_window = { initial = 100, widen_per_minute = 0, maximum = 100 }",
+        )
     })
 }
 

@@ -730,9 +730,15 @@ fn search_rows(
             overloaded: s.overloaded,
             games_waiting: s.games_waiting,
             hint: (s.window_capped
-                && client.rulesets().any(|rule| rule.id == s.ruleset && rule.rated)
-                && client.rulesets().any(|rule| !rule.rated && rule.rating_window.is_some() && rule.rating_ruleset.as_ref() == Some(&s.ruleset)))
-                .then_some("Rating window at its maximum. You can also search in Unranked."),
+                && client
+                    .rulesets()
+                    .any(|rule| rule.id == s.ruleset && rule.rated)
+                && client.rulesets().any(|rule| {
+                    !rule.rated
+                        && rule.rating_window.is_some()
+                        && rule.rating_ruleset.as_ref() == Some(&s.ruleset)
+                }))
+            .then_some("Rating window at its maximum. You can also search in Unranked."),
             offered: s.offer.is_some(),
         })
         .collect()

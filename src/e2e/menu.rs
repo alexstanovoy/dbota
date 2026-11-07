@@ -873,12 +873,30 @@ fn a_capped_ranked_search_draws_the_configured_unranked_alternative() {
     let mut client = signed_up(&service, "capped_player");
     click_menu_button(&mut client, "find match");
     client.within(Duration::from_secs(120), "the capped search", |client| {
-        !client.world().non_send::<MenuCore>().view().searches.is_empty()
+        !client
+            .world()
+            .non_send::<MenuCore>()
+            .view()
+            .searches
+            .is_empty()
     });
     client.frames(3);
-    assert!(client.shown_texts().iter().any(|text| text == "Rating window at its maximum. You can also search in Unranked."), "the capped ranked search offers the alternative without promising a wider window: {:?}", client.shown_texts());
+    assert!(
+        client
+            .shown_texts()
+            .iter()
+            .any(|text| text == "Rating window at its maximum. You can also search in Unranked."),
+        "the capped ranked search offers the alternative without promising a wider window: {:?}",
+        client.shown_texts()
+    );
     let snapshot = matchmaking_snapshot(&service, "capped_player");
-    assert!(snapshot.queued.iter().all(|entry| entry.ruleset.0 == "solo_mid"), "the hint never silently changes the player's mode");
+    assert!(
+        snapshot
+            .queued
+            .iter()
+            .all(|entry| entry.ruleset.0 == "solo_mid"),
+        "the hint never silently changes the player's mode"
+    );
 }
 
 #[test]
@@ -930,7 +948,11 @@ fn an_unranked_mode_is_drawn_and_its_find_button_joins_that_queue() {
     let menu = client.world().non_send::<MenuCore>();
     assert_eq!(menu.view().searches.len(), 1);
     let snapshot = matchmaking_snapshot(&service, "casual_player");
-    assert_eq!(snapshot.queued.len(), 2, "the unranked switch holds both places");
+    assert_eq!(
+        snapshot.queued.len(),
+        2,
+        "the unranked switch holds both places"
+    );
     assert_eq!(snapshot.queued[0].search, snapshot.queued[1].search);
     assert!(snapshot.queued.iter().all(|entry| entry.ruleset == casual));
 }
