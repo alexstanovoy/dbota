@@ -124,7 +124,7 @@ fn the_manifests_effects_leave_out_only_the_listed_classes() {
 #[test]
 #[ignore = "needs a local Dota 2 install"]
 fn particle_models_import_the_skin_selected_by_the_installed_renderer() {
-    let game = find_game_dir(None).expect("local install");
+    let game = local_install();
     let source = DirSource::new(&game);
     let pak = Vpk::open(&source, "pak01_dir.vpk").expect("VPK");
     let bytes = pak
@@ -179,7 +179,7 @@ fn particle_models_import_the_skin_selected_by_the_installed_renderer() {
 #[test]
 #[ignore = "needs a local Dota 2 install"]
 fn installed_particle_models_fit_the_skin_and_geometry_budget() {
-    let source = DirSource::new(find_game_dir(None).expect("local install"));
+    let source = DirSource::new(local_install());
     let pak = Vpk::open(&source, "pak01_dir.vpk").expect("VPK");
     let requests = installed_model_requests(&source, &pak);
     assert!(
@@ -329,4 +329,9 @@ fn installed_model_requests(source: &DirSource, pak: &Vpk) -> ModelRequests {
         }
     }
     requests
+}
+
+fn local_install() -> PathBuf {
+    let provided = std::env::var_os("DBOTA_DOTA_PATH").map(PathBuf::from);
+    find_game_dir(provided.as_deref()).expect("local install; set DBOTA_DOTA_PATH")
 }
