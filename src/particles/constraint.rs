@@ -85,10 +85,12 @@ fn distance(d: &Distance, scene: &Scene<'_>, parts: &mut Particles, salt: u32) -
     };
     let least = float(&d.min_distance, scene, parts, None, salt);
     let most = float(&d.max_distance, scene, parts, None, salt + 1);
-    let limits = [least, if most < 0.0 { f32::MAX } else { most }];
+    // A disabled surface is not a radius. In particular it cannot be the projection
+    // target of Source's negative-minimum (project-to-outer) mode.
+    let most = (most >= 0.0).then(|| most.max(least.abs()));
     let mut moved = false;
     for block in (0..parts.len()).step_by(4) {
-        moved |= distance_block(center, limits, block, scene, parts, salt + 3);
+        moved |= distance_block(center, (least, most), block, scene, parts, salt + 3);
     }
     moved
 }
@@ -97,7 +99,7 @@ fn distance(d: &Distance, scene: &Scene<'_>, parts: &mut Particles, salt: u32) -
 /// VRF 2d13e415, Particles/Constraints/ConstrainDistance.cs:63-139 documents that quirk.
 fn distance_block(
     center: Vec3,
-    [least, most]: [f32; 2],
+    (least, most): (f32, Option<f32>),
     block: usize,
     scene: &Scene<'_>,
     parts: &mut Particles,
@@ -110,7 +112,8 @@ fn distance_block(
             .map_or(Vec3::ZERO, |position| *position - center)
     });
     let outside = |delta: Vec3| {
-        delta.length_squared() < least * least || delta.length_squared() > most * most
+        ((least > 0.0 || most.is_some()) && delta.length_squared() < least * least)
+            || most.is_some_and(|radius| delta.length_squared() > radius * radius)
     };
     if !deltas[..end - block].iter().copied().any(outside) {
         return false;
@@ -146,7 +149,7 @@ fn distance_block(
                     * if least > 0.0 && squared < least * least {
                         least
                     } else {
-                        most
+                        most.unwrap_or(least.abs())
                     }
         } else {
             center + delta

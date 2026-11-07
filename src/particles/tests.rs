@@ -590,6 +590,45 @@ fn distance_constraints_keep_sources_negative_limit_semantics() {
 }
 
 #[test]
+fn a_disabled_outer_shell_never_projects_held_particles_to_a_float_sentinel() {
+    // The independent review's negative-minimum/negative-maximum reproducer.
+    let positions = [Vec3::X * 2.0, Vec3::Y * 100.0, Vec3::Z * 30.0, Vec3::ZERO];
+    let constrained = constrained_positions(-5.0, -1.0, &positions);
+    for position in &constrained {
+        assert!(position.is_finite());
+        assert!(
+            position.length() < 1.0e6,
+            "held particle flung to {position:?}"
+        );
+    }
+    assert_eq!(
+        constrained, positions,
+        "a negative minimum requests outer projection, which is inactive with no outer surface"
+    );
+    let inner_only = constrained_positions(5.0, -1.0, &positions[..3]);
+    assert!((inner_only[0].length() - 5.0).abs() < 0.001);
+    assert_eq!(inner_only[1..], positions[1..3]);
+}
+
+#[test]
+fn distance_shell_outer_limit_is_never_inside_the_inner_cutoff() {
+    let positions = [
+        Vec3::X * 2.0,
+        Vec3::Y * 7.0,
+        Vec3::Z * 100.0,
+        Vec3::X * 30.0,
+    ];
+    for minimum in [10.0, -10.0] {
+        for position in constrained_positions(minimum, 5.0, &positions) {
+            assert!(
+                (position.length() - 10.0).abs() < 0.001,
+                "inverted shell produced {position:?}"
+            );
+        }
+    }
+}
+
+#[test]
 fn distance_constraints_reseed_the_center_and_keep_sources_four_lane_offset_rule() {
     let positions = [
         Vec3::ZERO,
