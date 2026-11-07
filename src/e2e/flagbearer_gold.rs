@@ -14,7 +14,7 @@ struct Allies {
     second: Client,
     opponent: Core,
     // Last: retain the harness's turn until both large client apps have been dropped.
-    server: Server,
+    _server: Server,
 }
 
 impl Allies {
@@ -57,7 +57,7 @@ impl Allies {
             first,
             second,
             opponent,
-            server,
+            _server: server,
         };
         game.wait("both allied heroes in the match", |game| {
             game.first.core().view().is_some() && game.second.core().view().is_some()
@@ -100,6 +100,23 @@ impl Allies {
             "cheat refused: {:?}",
             client.core().reject
         );
+    }
+
+    fn with_views_held<R>(&mut self, then: impl FnOnce(&mut Self) -> R) -> R {
+        // Keep the real sockets answering pings while the UI reads a stable pair of views.
+        // Stopping the server also stops its heartbeat and can disconnect a slow UI.
+        let first = std::mem::replace(
+            &mut self.first.core_mut().source,
+            crate::main_menu::idle().0.source,
+        );
+        let second = std::mem::replace(
+            &mut self.second.core_mut().source,
+            crate::main_menu::idle().0.source,
+        );
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| then(self)));
+        self.first.core_mut().source = first;
+        self.second.core_mut().source = second;
+        result.unwrap_or_else(|panic| std::panic::resume_unwind(panic))
     }
 }
 
@@ -168,7 +185,7 @@ fn both_allied_heroes_receive_the_flagbearer_bonus_and_only_the_last_hitter_gets
     let mut game = Allies::start();
     let flag = enemy_flagbearer(&mut game);
     approach_and_prepare(&mut game, &flag);
-    let feed_before = game.server.frozen(|| {
+    let feed_before = game.with_views_held(|game| {
         game.first.follow_me();
         game.second.follow_me();
         check_wallet_hud(&mut game.first);
@@ -178,6 +195,15 @@ fn both_allied_heroes_receive_the_flagbearer_bonus_and_only_the_last_hitter_gets
             crate::feed::shown(game.second.world_mut()),
         ]
     });
+    // Both cameras have settled. Keep the short-lived receipts alive for however many frames
+    // it takes each client's fonts and caption layout to become ready.
+    for client in [&mut game.first, &mut game.second] {
+        client
+            .world_mut()
+            .insert_resource(bevy::time::TimeUpdateStrategy::ManualDuration(
+                Duration::ZERO,
+            ));
+    }
     let before = [purse(&game.first), purse(&game.second)];
     game.first.core_mut().send_order_to(
         None,
@@ -185,12 +211,27 @@ fn both_allied_heroes_receive_the_flagbearer_bonus_and_only_the_last_hitter_gets
             target: Target::Unit(flag.id),
         },
     );
-    game.wait("both clients see the ordered flagbearer kill", |game| {
-        game.first.view().unit(flag.id).is_none()
-            && game.second.view().unit(flag.id).is_none()
-            && purse(&game.first).last_hits > before[0].last_hits
-    });
-    game.server.frozen(|| {
+    let mut kill_ticks = [None; 2];
+    game.wait(
+        "both clients receive the flagbearer kill and its events",
+        |game| {
+            let mut complete = true;
+            for (index, client) in [&game.first, &game.second].into_iter().enumerate() {
+                if client.view().unit(flag.id).is_some() {
+                    complete = false;
+                    continue;
+                }
+                let tick = *kill_ticks[index].get_or_insert(client.tick());
+                complete &= client.core().session().is_some_and(|session| {
+                    session
+                        .last_event_tick()
+                        .is_some_and(|events| events >= tick)
+                });
+            }
+            complete && purse(&game.first).last_hits > before[0].last_hits
+        },
+    );
+    game.with_views_held(|game| {
         check_wallet_hud(&mut game.first);
         check_wallet_hud(&mut game.second);
         let bonus = received(before[1], &game.second);
