@@ -1278,9 +1278,8 @@ fn make(
 /// The largest typeface read: Dota's are under 0.2 MB, a full CJK one is 16 MB.
 const FONT_LIMIT: usize = 8 << 20;
 
-/// The typeface the install keeps loose at `path` (under `game/dota`), when it is one: an
-/// OpenType (CFF) or TrueType font of at most [`FONT_LIMIT`] bytes. The client's font engine
-/// reads the rest of it as the untrusted file it is.
+/// The typeface the install keeps loose at `path` (under `game/dota`), when it is one: a font of
+/// at most [`FONT_LIMIT`] bytes that [`check_font`] reads.
 fn font(src: &impl Source, path: &str) -> Result<Vec<u8>> {
     let size = src.size(path)?;
     let size = usize::try_from(size)
@@ -1288,13 +1287,63 @@ fn font(src: &impl Source, path: &str) -> Result<Vec<u8>> {
         .filter(|size| *size <= FONT_LIMIT)
         .ok_or_else(|| malformed("font", format!("{path} is larger than {FONT_LIMIT} bytes")))?;
     let bytes = src.read_at(path, 0, size)?;
-    match bytes.get(..4) {
-        Some(b"OTTO" | b"\0\x01\0\0" | b"true") => Ok(bytes),
-        _ => Err(malformed(
+    check_font(&bytes).map_err(|why| {
+        malformed(
             "font",
-            format!("{path} is not an OpenType or TrueType font"),
-        )),
+            format!("{path} is not an OpenType or TrueType font: {why}"),
+        )
+    })?;
+    Ok(bytes)
+}
+
+/// Why `bytes` is not a font the client's text engine reads (skrifa, under parley), if it is
+/// not: one font whose tables all lie inside the file, with its header, metrics, glyph count and
+/// character map, and the outline of a glyph it maps drawn. Each read is bounded by the file.
+pub fn check_font(bytes: &[u8]) -> std::result::Result<(), String> {
+    use skrifa::outline::{DrawSettings, OutlinePen};
+    use skrifa::prelude::{LocationRef, Size};
+    use skrifa::raw::TableProvider;
+    use skrifa::{FontRef, MetadataProvider};
+
+    /// A pen that draws nowhere: the outline is read for its errors.
+    struct Nowhere;
+    impl OutlinePen for Nowhere {
+        fn move_to(&mut self, _: f32, _: f32) {}
+        fn line_to(&mut self, _: f32, _: f32) {}
+        fn quad_to(&mut self, _: f32, _: f32, _: f32, _: f32) {}
+        fn curve_to(&mut self, _: f32, _: f32, _: f32, _: f32, _: f32, _: f32) {}
+        fn close(&mut self) {}
     }
+
+    let font = FontRef::new(bytes).map_err(|e| e.to_string())?;
+    for table in font.table_directory.table_records() {
+        let end = u64::from(table.offset()) + u64::from(table.length());
+        if end > bytes.len() as u64 {
+            return Err(format!("its {} table runs past its end", table.tag()));
+        }
+    }
+    let read = |e: skrifa::raw::ReadError| e.to_string();
+    font.head().map_err(read)?;
+    font.hhea().map_err(read)?;
+    font.hmtx().map_err(read)?;
+    font.cmap().map_err(read)?;
+    if font.maxp().map_err(read)?.num_glyphs() == 0 {
+        return Err("it has no glyphs".to_owned());
+    }
+    let (_, glyph) = font
+        .charmap()
+        .mappings()
+        .next()
+        .ok_or("it maps no character")?;
+    let outline = font
+        .outline_glyphs()
+        .get(glyph)
+        .ok_or("its first character has no outline")?;
+    let settings = DrawSettings::unhinted(Size::unscaled(), LocationRef::default());
+    outline
+        .draw(settings, &mut Nowhere)
+        .map_err(|e| format!("its first character's outline: {e}"))?;
+    Ok(())
 }
 
 /// The particle system `path` (`x.vpcf_c`) with its children, after the textures they draw

@@ -513,31 +513,42 @@ fn a_hostile_asset_is_a_failure_in_the_report_not_a_panic() {
 }
 
 /// A typeface is copied whole from the loose file beside the packages when it reads as an
-/// OpenType or TrueType font; a file that is not one, or is larger than any typeface, is a
-/// failure in the report and writes nothing.
+/// OpenType (CFF) or TrueType font; a file that only starts like one, a cut one, or one larger
+/// than any typeface is a failure in the report and writes nothing.
 #[test]
 fn a_loose_typeface_is_copied_and_a_file_that_is_no_font_is_refused() {
-    let otf = [b"OTTO".as_slice(), &[7u8; 60]].concat();
-    let ttf = [[0u8, 1, 0, 0].as_slice(), &[9u8; 60]].concat();
-    let src = install(&[
-        ("pak01_dir.vpk", package("x", "y", "txt", b"z")),
-        ("panorama/fonts/title.otf", otf.clone()),
-        ("panorama/fonts/body.otf", ttf.clone()),
-        ("panorama/fonts/script.otf", b"<script>".repeat(8)),
-        (
-            "panorama/fonts/huge.otf",
-            [b"OTTO".as_slice(), &vec![0; 9 << 20]].concat(),
-        ),
-    ]);
-    let plan = Plan::parse(
-        "font a panorama/fonts/title.otf fonts/title.otf\n\
-         font b panorama/fonts/body.otf fonts/body.otf\n\
-         font c panorama/fonts/script.otf fonts/script.otf\n\
-         font d panorama/fonts/huge.otf fonts/huge.otf\n\
-         font e panorama/fonts/gone.otf fonts/gone.otf\n",
-        "",
-    )
-    .expect("a plan");
+    let shipped = |name: &str| {
+        std::fs::read(format!(
+            "{}/../../assets/fonts/{name}",
+            env!("CARGO_MANIFEST_DIR")
+        ))
+        .expect("a shipped font")
+    };
+    let (otf, ttf) = (
+        shipped("bota-sans-cjk.otf"),
+        shipped("bota-sans-regular.ttf"),
+    );
+    let fonts = [
+        ("title", otf.clone()),
+        ("body", ttf.clone()),
+        ("signature", b"OTTO".to_vec()),
+        ("header", [b"OTTO".as_slice(), &[0u8; 60]].concat()),
+        ("cut", ttf[..ttf.len() / 2].to_vec()),
+        ("script", b"<script>".repeat(8)),
+        ("huge", [b"OTTO".as_slice(), &vec![0; 9 << 20]].concat()),
+    ];
+    let mut files = vec![("pak01_dir.vpk".to_owned(), package("x", "y", "txt", b"z"))];
+    let mut manifest = String::new();
+    for (name, bytes) in &fonts {
+        files.push((format!("panorama/fonts/{name}.otf"), bytes.clone()));
+        manifest.push_str(&format!(
+            "font {name} panorama/fonts/{name}.otf fonts/{name}.otf\n"
+        ));
+    }
+    manifest.push_str("font gone panorama/fonts/gone.otf fonts/gone.otf\n");
+    let files: Vec<(&str, Vec<u8>)> = files.iter().map(|(p, b)| (p.as_str(), b.clone())).collect();
+    let src = install(&files);
+    let plan = Plan::parse(&manifest, "").expect("a plan");
     let plan = Plan {
         items: plan
             .items
@@ -549,20 +560,24 @@ fn a_loose_typeface_is_copied_and_a_file_that_is_no_font_is_refused() {
     let report = run(&src, &plan, &mut sink, &mut |_| Flow::Continue).unwrap();
     assert_eq!(sink.0.get("fonts/title.otf"), Some(&otf));
     assert_eq!(sink.0.get("fonts/body.otf"), Some(&ttf));
+    assert_eq!(sink.0.len(), 2, "{:?}", sink.0.keys());
     let failed: Vec<&str> = report
         .failed
         .iter()
         .map(|(item, _)| item.as_str())
         .collect();
-    assert_eq!(failed, ["c", "d", "e"], "{report:?}");
-    assert!(
-        report.failed[0]
-            .1
-            .contains("not an OpenType or TrueType font"),
+    assert_eq!(
+        failed,
+        ["signature", "header", "cut", "script", "huge", "gone"],
         "{report:?}"
     );
-    assert!(report.failed[1].1.contains("larger than"), "{report:?}");
-    assert_eq!(sink.0.len(), 2);
+    for (item, why) in &report.failed[..4] {
+        assert!(
+            why.contains("not an OpenType or TrueType font"),
+            "{item}: {why}"
+        );
+    }
+    assert!(report.failed[4].1.contains("larger than"), "{report:?}");
 }
 
 #[test]
