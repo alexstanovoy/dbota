@@ -9,6 +9,7 @@ use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
 
 use crate::main_menu::{Act, MenuCore, Page};
+use crate::theme;
 
 use super::harness::Client;
 use super::menu::{act, local_menu, signed_up};
@@ -164,20 +165,22 @@ fn the_pill_and_the_players_card_say_how_the_menu_stands_and_who_plays() {
         "the service's name {host}: {shown:?}"
     );
     assert!(shown.iter().any(|t| t == "LOG OUT"), "{shown:?}");
-    // Every tab of an account and the bar's right end fit side by side, a 5:4 window too.
+    // Every part of the bar (the logo, the tabs, LOG OUT, the pill, the cog) and the quit button
+    // stand side by side, within the window, a 5:4 window too.
     for size in [UVec2::new(1920, 1080), UVec2::new(1280, 1024)] {
         super::menu::resize_menu_window(&mut client, size);
-        let (tabs, gear) = (
-            interface_rect(&mut client, "replays"),
-            interface_rect(&mut client, "log out"),
-        );
-        let quit = interface_rect(&mut client, "quit");
-        let settings = interface_rect(&mut client, "settings");
-        assert!(
-            tabs.max.x <= gear.min.x && settings.max.x <= quit.min.x,
-            "{size}: the bar's parts overlap: REPLAYS {tabs:?}, LOG OUT {gear:?}, the cog \
-             {settings:?}, quit {quit:?}"
-        );
+        let mut parts = bar_parts(&mut client);
+        parts.push(("quit".to_owned(), interface_rect(&mut client, "quit")));
+        let width = interface_size(&mut client).x;
+        for pair in parts.windows(2) {
+            let ((left, a), (right, b)) = (&pair[0], &pair[1]);
+            assert!(
+                a.max.x <= b.min.x + 0.5,
+                "{size}: {left} {a:?} runs into {right} {b:?}"
+            );
+        }
+        let last = parts.last().expect("the quit button").1;
+        assert!(last.max.x <= width, "{size}: past the window's {width}");
     }
     let card = interface_rect(&mut client, "player");
     assert_eq!(
@@ -236,6 +239,96 @@ fn the_menu_draws_with_dotas_typefaces_from_the_install() {
             c.world().resource::<Assets<Font>>().contains(&handle)
         });
     }
+    // The word is laid out with the face's own glyphs, not a fallback's: its width is the sum of
+    // its letters' advances in Reaver and the tracking between them (24 px, 4 px), far from the
+    // shipped bold's.
+    client.within(Duration::from_secs(30), "DBOTA laid out", |c| {
+        drawn_width(c, "DBOTA").is_some()
+    });
+    let width = drawn_width(&mut client, "DBOTA").expect("laid out");
+    let cache = client
+        .world()
+        .resource::<crate::manifest::Manifest>()
+        .root
+        .clone();
+    let reaver = std::fs::read(cache.join("fonts/reaver-bold.otf")).expect("the cached face");
+    let shipped = std::fs::read(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/assets/fonts/bota-sans-bold.ttf"
+    ))
+    .expect("the shipped face");
+    let (install, fallback) = (
+        advances(&reaver, "DBOTA", theme::WORDMARK.size),
+        advances(&shipped, "DBOTA", theme::WORDMARK.size),
+    );
+    let tracking = theme::WORDMARK.tracking * 4.0;
+    let off = |face: f32| (width - face - tracking).abs();
+    assert!(
+        off(install) <= theme::WORDMARK.tracking && off(install) < off(fallback),
+        "DBOTA {width} wide: Reaver's letters make {install} + {tracking}, the shipped bold's \
+         {fallback} + {tracking}"
+    );
+}
+
+/// The laid-out width of the shown text `words` in interface pixels, once it has glyphs.
+fn drawn_width(client: &mut Client, words: &str) -> Option<f32> {
+    let world = client.world_mut();
+    world
+        .query::<(&Text, &bevy::text::TextLayoutInfo, &ComputedNode)>()
+        .iter(world)
+        .find(|(text, layout, _)| text.0 == words && !layout.glyphs.is_empty())
+        .map(|(_, _, node)| node.size().x * node.inverse_scale_factor())
+}
+
+/// The sum of the advances of `words`' letters in the font file `bytes` at `size` pixels.
+fn advances(bytes: &[u8], words: &str, size: f32) -> f32 {
+    use skrifa::MetadataProvider;
+    use skrifa::prelude::{LocationRef, Size};
+    let font = skrifa::FontRef::new(bytes).expect("a font");
+    let metrics = font.glyph_metrics(Size::new(size), LocationRef::default());
+    let charmap = font.charmap();
+    words
+        .chars()
+        .map(|c| {
+            let glyph = charmap.map(c).expect("the font maps the letter");
+            metrics.advance_width(glyph).expect("an advance")
+        })
+        .sum()
+}
+
+/// The top bar's parts left to right, by name (the tab row as `tabs`), with their rectangles in
+/// interface pixels; the spacer and the quit button's slot left out.
+fn bar_parts(client: &mut Client) -> Vec<(String, Rect)> {
+    let world = client.world_mut();
+    let logo = world
+        .query::<(Entity, &Name)>()
+        .iter(world)
+        .find(|(_, name)| name.as_str() == "dbota")
+        .map(|(e, _)| e)
+        .expect("the logo");
+    let bar = world.get::<ChildOf>(logo).expect("in the bar").parent();
+    let parts: Vec<Entity> = world
+        .get::<Children>(bar)
+        .expect("the bar's parts")
+        .iter()
+        .collect();
+    parts
+        .into_iter()
+        .filter_map(|part| {
+            let node = world.get::<ComputedNode>(part)?;
+            let at = world.get::<UiGlobalTransform>(part)?;
+            let named = world.get::<Name>(part).map(|n| n.to_string());
+            // The tab row holds tabs; the spacer and the quit button's slot hold nothing.
+            let name = match (named, world.get::<Children>(part)) {
+                (Some(name), _) => name,
+                (None, Some(_)) => "tabs".to_owned(),
+                (None, None) => return None,
+            };
+            let scale = node.inverse_scale_factor();
+            let rect = Rect::from_center_size(at.translation * scale, node.size() * scale);
+            (rect.width() > 0.0).then_some((name, rect))
+        })
+        .collect()
 }
 
 /// The words on the player's card, its initial left out.
@@ -269,6 +362,7 @@ fn ui_scale(client: &Client) -> f32 {
 fn the_menu_keeps_the_windows_scale_and_a_game_shrinks_to_fit_its_hud() {
     for (window, scale) in [
         ("1440x900", 1.0),
+        ("1280x800", 800.0 / 900.0),
         ("1920x1080", 1.2),
         ("1280x1024", 1280.0 / 1440.0),
     ] {

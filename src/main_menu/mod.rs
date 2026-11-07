@@ -39,9 +39,9 @@ pub use core::Claim;
 #[cfg(test)]
 pub use core::Page;
 pub use core::{Act, DEFAULT_NAME, GameKind, MenuCore};
-#[cfg(test)]
-pub(crate) use kit::MenuButton;
 pub use kit::{Disabled, Wash};
+#[cfg(test)]
+pub(crate) use kit::{MenuButton, Shade};
 pub use launch::Trust;
 pub use prefs::page_service;
 pub use preview::{NAMES as PREVIEWS, view as preview};

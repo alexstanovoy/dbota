@@ -115,6 +115,9 @@ rodio = { version = "=0.22.2", default-features = false, features = ["playback",
 # launcher starts the real bota_server.
 radovid = { path = "../radovid/crates/radovid" }
 tokio = { version = "1", features = ["rt-multi-thread"] }
+# The menu's typeface test lays out a word from the font file's own advances (the reader parley
+# draws with) to tell the install's face from the shipped one.
+skrifa = { version = "=0.42.1", default-features = false, features = ["std"] }
 
 [features]
 # A browser build that plays the replay named by DBOTA_WEB_REPLAY at build

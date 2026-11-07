@@ -2565,6 +2565,7 @@ dependencies = [
  "rodio",
  "serde",
  "serde_json",
+ "skrifa 0.42.1",
  "tokio",
  "wasm-bindgen",
  "wasm-bindgen-futures",

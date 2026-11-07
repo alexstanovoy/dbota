@@ -26,8 +26,6 @@ fn buttons(client: &mut Client) -> Vec<(String, f32, f32, bool)> {
     shown
         .into_iter()
         .filter_map(|(button, name, size)| {
-            // A button of words: not an icon's, not a box ticked beside its words.
-            let node = world.get::<Node>(button)?;
             // A text field's box is a button too (named by its label for scripts), but it holds
             // what is typed, and clips it rather than lets it wrap.
             if matches!(
@@ -36,11 +34,9 @@ fn buttons(client: &mut Client) -> Vec<(String, f32, f32, bool)> {
             ) {
                 return None;
             }
-            // A boxed button: not words alone (LOG OUT, a link), not a tab (underlined, as wide
-            // as its words, as Dota's are).
-            if node.border.left == Val::Px(0.0) {
-                return None;
-            }
+            // A button of the kit's tones (its `Shade`): the rule is theirs. Words alone (LOG OUT,
+            // a link), tabs and icons are as wide as what they hold, as Dota's are.
+            world.get::<crate::main_menu::Shade>(button)?;
             let children = world.get::<Children>(button)?;
             let words = children.first().copied().filter(|_| children.len() == 1)?;
             world.get::<Text>(words)?;
@@ -276,7 +272,13 @@ fn uniform_buttons(client: &mut Client, page: Page) {
     let mut widths: BTreeMap<i32, Vec<(String, f32)>> = BTreeMap::new();
     for (name, w, h, one_line) in &shown {
         assert!(one_line, "{page:?}: '{name}' may wrap");
-        if name.chars().count() > 2 {
+        // A lone glyph (the close cross) is a square of its own; words share their height's width.
+        if name.chars().count() <= 2 {
+            assert!(
+                (w - h).abs() < 0.5,
+                "{page:?}: '{name}' {w} by {h}, not square"
+            );
+        } else {
             widths
                 .entry(h.round() as i32)
                 .or_default()
