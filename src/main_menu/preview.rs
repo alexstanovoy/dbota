@@ -121,6 +121,7 @@ fn search(overloaded: bool) -> SearchRow {
         waiting: 5,
         overloaded,
         games_waiting: if overloaded { 3 } else { 0 },
+        hint: None,
         offered: false,
     }
 }

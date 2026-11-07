@@ -868,6 +868,20 @@ fn assert_matchmaking_preference_survives_reload(
 }
 
 #[test]
+fn a_capped_ranked_search_draws_the_configured_unranked_alternative() {
+    let service = crate::main_menu::tests::service_with_unranked();
+    let mut client = signed_up(&service, "capped_player");
+    click_menu_button(&mut client, "find match");
+    client.within(Duration::from_secs(120), "the capped search", |client| {
+        !client.world().non_send::<MenuCore>().view().searches.is_empty()
+    });
+    client.frames(3);
+    assert!(client.shown_texts().iter().any(|text| text == "Rating window at its maximum. Try Unranked for a wider search."), "the capped ranked search draws its unranked alternative: {:?}", client.shown_texts());
+    let snapshot = matchmaking_snapshot(&service, "capped_player");
+    assert!(snapshot.queued.iter().all(|entry| entry.ruleset.0 == "solo_mid"), "the hint never silently changes the player's mode");
+}
+
+#[test]
 fn an_unranked_mode_is_drawn_and_its_find_button_joins_that_queue() {
     let service = crate::main_menu::tests::service_with_unranked();
     let mut client = signed_up(&service, "casual_player");
@@ -886,6 +900,7 @@ fn an_unranked_mode_is_drawn_and_its_find_button_joins_that_queue() {
         "the card says the game is unranked"
     );
     let casual = bota_radovid::RulesetId("casual_mid".into());
+    click_menu_button(&mut client, "allow matchmaking with bots");
     let world = client.world_mut();
     let button = world
         .query::<(Entity, &MenuButton)>()
@@ -914,4 +929,8 @@ fn an_unranked_mode_is_drawn_and_its_find_button_joins_that_queue() {
     );
     let menu = client.world().non_send::<MenuCore>();
     assert_eq!(menu.view().searches.len(), 1);
+    let snapshot = matchmaking_snapshot(&service, "casual_player");
+    assert_eq!(snapshot.queued.len(), 2, "the unranked switch holds both places");
+    assert_eq!(snapshot.queued[0].search, snapshot.queued[1].search);
+    assert!(snapshot.queued.iter().all(|entry| entry.ruleset == casual));
 }

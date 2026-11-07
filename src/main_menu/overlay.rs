@@ -258,6 +258,9 @@ fn search_row(kit: &mut Kit, parent: Entity, search: &SearchRow, which: Option<u
             ui::INK_DIM,
         );
     }
+    if let Some(hint) = search.hint {
+        kit.text(row, hint, 14.0, ui::INK_DIM);
+    }
     if search.overloaded {
         kit.text(
             row,

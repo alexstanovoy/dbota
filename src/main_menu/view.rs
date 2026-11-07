@@ -53,6 +53,7 @@ pub struct SearchRow {
     /// Every game server busy: nobody is paired until one frees.
     pub overloaded: bool,
     pub games_waiting: u32,
+    pub hint: Option<&'static str>,
     /// A match was found for it: the MATCH FOUND prompt has it, not the search box.
     pub offered: bool,
 }
@@ -728,6 +729,10 @@ fn search_rows(
             waiting: s.waiting,
             overloaded: s.overloaded,
             games_waiting: s.games_waiting,
+            hint: (s.window_capped
+                && client.rulesets().any(|rule| rule.id == s.ruleset && rule.rated)
+                && client.rulesets().any(|rule| rule.rating_ruleset.as_ref() == Some(&s.ruleset)))
+                .then_some("Rating window at its maximum. Try Unranked for a wider search."),
             offered: s.offer.is_some(),
         })
         .collect()
