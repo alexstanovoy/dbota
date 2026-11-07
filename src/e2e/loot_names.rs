@@ -7,9 +7,11 @@ use bevy::prelude::*;
 use bota_client_core::Intent;
 use bota_proto::{Cheat, HeroId, ItemId};
 
-use super::harness::{Client, MID, Server, quiet_seat};
+use super::harness::{Client, Server, quiet_seat};
 
 const SOON: Duration = Duration::from_secs(30);
+// Outside enemy tower sight and the mid lane, even if loading carries the match into daytime.
+const DROP_AT: (i32, i32) = (12000, 4000);
 
 /// Whether the name over the hovered item shows.
 fn name_shown(client: &mut Client) -> bool {
@@ -20,8 +22,8 @@ fn name_shown(client: &mut Client) -> bool {
         .any(|shown| *shown != Visibility::Hidden)
 }
 
-/// A replay of a match in which seat 1 dropped a tango at the middle of the map, far from seat 0's
-/// fountain; where it lies, and the tick it lay at.
+/// A replay of a match in which seat 1 dropped a tango away from seat 0's fountain and lane;
+/// where it lies, and the tick it lay at.
 fn record_a_drop() -> (std::path::PathBuf, (f32, f32), u32) {
     let replay =
         crate::test_support::scratch_path(&format!("loot-names-{}.brp", std::process::id()));
@@ -36,12 +38,14 @@ fn record_a_drop() -> (std::path::PathBuf, (f32, f32), u32) {
     );
     quiet_seat(&server, HeroId::PUDGE);
     let mut client = Client::join(&server, HeroId::SHADOW_FIEND, &[]);
-    client.stand_at(MID);
+    client.stand_at(DROP_AT);
     client.cheat(Cheat::Item {
         item: ItemId::TANGO,
     });
     let slot = client.slot_of(ItemId::TANGO).expect("the tango in the bag");
-    let spot = (MID.0 as f32 + 300.0, MID.1 as f32);
+    // Drop within reach instead of depending on a path through the surrounding trees.
+    let at = client.me().pos;
+    let spot = (at.x.to_f32(), at.y.to_f32());
     client.core_mut().act(Intent::PutAt {
         slot,
         at: spot,
@@ -50,7 +54,14 @@ fn record_a_drop() -> (std::path::PathBuf, (f32, f32), u32) {
     client.within(SOON, "the tango on the ground", |c| {
         c.view().loot.iter().any(|l| l.item == ItemId::TANGO)
     });
-    client.frames(30);
+    let dropped = client
+        .view()
+        .loot
+        .iter()
+        .find(|loot| loot.item == ItemId::TANGO)
+        .expect("the dropped tango")
+        .pos;
+    let spot = (dropped.x.to_f32(), dropped.y.to_f32());
     let tick = client.tick();
     drop(client);
     server.wait();
@@ -60,30 +71,74 @@ fn record_a_drop() -> (std::path::PathBuf, (f32, f32), u32) {
 /// Plays the replay watched through seat `pov` to `tick`, the camera free over `spot`, the pointer
 /// on it.
 fn watch(replay: &std::path::Path, pov: &str, spot: (f32, f32), tick: u32) -> Client {
-    let mut client = Client::run(&["--replay", replay.to_str().expect("UTF-8"), "--pov", pov]);
-    client.until("the replay at the dropped item", |c| {
-        let now = c.tick();
-        if let bota_client_core::Source::Replay(player) = &mut c.core_mut().source {
-            if now < tick {
-                player.advance_ticks(f64::from(tick - now));
-            }
-            player.paused = now >= tick;
-        }
-        now >= tick && !c.view().loot.is_empty()
-    });
+    // A fixed look suppresses late initial hero placement while its model is loading.
+    let look = format!("{},{}", spot.0, spot.1);
+    let mut client = Client::run(&[
+        "--replay",
+        replay.to_str().expect("UTF-8"),
+        "--pov",
+        pov,
+        "--look",
+        &look,
+    ]);
+    client
+        .world_mut()
+        .insert_resource(bevy::time::TimeUpdateStrategy::ManualDuration(
+            Duration::ZERO,
+        ));
     client.core_mut().pinned = None;
-    {
-        let world = client.world_mut();
-        let ground = world.resource::<crate::map::Ground>().at(spot.0, spot.1);
-        world
-            .query::<&mut crate::camera::RtsCamera>()
-            .single_mut(world)
-            .expect("the game's camera")
-            .focus = Vec3::new(spot.0, ground, -spot.1);
+    let bota_client_core::Source::Replay(player) = &mut client.core_mut().source else {
+        panic!("a replay");
+    };
+    player.paused = true;
+    client.until("the replay's first snapshot", |c| c.core().view().is_some());
+    // Retain the replay, including its decoder state, while the UI loads. Loading can unpause
+    // playback; an idle source lets presentation time run without consuming replay time or data.
+    let source = std::mem::replace(
+        &mut client.core_mut().source,
+        crate::main_menu::idle().0.source,
+    );
+    client
+        .world_mut()
+        .insert_resource(bevy::time::TimeUpdateStrategy::ManualDuration(
+            Duration::from_millis(100),
+        ));
+    client.until("the replay scenery and loading screen ready", |c| {
+        c.world().resource::<crate::loading::Loading>().done()
+            && c.world().resource::<crate::minimap::PhotoTaken>().0
+    });
+    client
+        .world_mut()
+        .insert_resource(bevy::time::TimeUpdateStrategy::ManualDuration(
+            Duration::ZERO,
+        ));
+    client.core_mut().source = source;
+    let advance = tick
+        .checked_sub(client.tick())
+        .expect("the item tick follows the first snapshot");
+    if let bota_client_core::Source::Replay(player) = &mut client.core_mut().source {
+        // This queues an additive clock jump. Queue it once, even if decoding needs many frames.
+        player.advance_ticks(f64::from(advance));
     }
-    client.frames(5);
-    let pixel = client.screen_of(spot).expect("on screen");
-    client.mouse(pixel);
+    client.until("the replay at exactly the dropped item tick", |c| {
+        c.tick() == tick && !c.view().loot.is_empty()
+    });
+    client.within(SOON, "the cursor at the item with its POV fog ready", |c| {
+        let Some(pixel) = c.screen_of(spot) else {
+            return false;
+        };
+        c.mouse(pixel);
+        c.world()
+            .resource::<crate::camera::CursorGround>()
+            .0
+            .is_some_and(|at| Vec2::new(at.x, -at.z).distance(Vec2::new(spot.0, spot.1)) < 1.0)
+            && c.world().resource::<crate::fog::FogGrid>().worked_out_at() == Some(c.tick())
+    });
+    assert_eq!(
+        client.tick(),
+        tick,
+        "loading and aiming must not advance the replay"
+    );
     client
 }
 
@@ -99,5 +154,7 @@ fn an_item_named_in_a_replay_is_one_the_watched_side_sees() {
     );
     drop(blind);
     let mut seeing = watch(&replay, "1", spot, tick);
+    seeing.within(SOON, "the visible item's name laid out", name_shown);
+    assert_eq!(seeing.tick(), tick, "naming must not advance the replay");
     assert!(name_shown(&mut seeing), "seat 1's side dropped it");
 }
