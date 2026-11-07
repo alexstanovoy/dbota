@@ -17,8 +17,9 @@ use heatel::find_game_dir;
 pub enum Need {
     /// No finished import is there.
     Import,
-    /// An import of another build's manifest is: its files may lack what the client now asks
-    /// for.
+    /// An import another build made is (its files may lack what the client now asks for), or
+    /// one of this build's stamp whose files are of a layout older than this build reads
+    /// ([`layouts_current`](dbota_import::import::layouts_current)).
     Reimport,
 }
 
@@ -29,7 +30,8 @@ pub fn need(cache: &Path) -> Option<Need> {
         return Some(Need::Import);
     }
     let made_here = read_stamp(cache).is_some_and(|stamp| stamped_here(&stamp));
-    (!made_here).then_some(Need::Reimport)
+    let current = made_here && dbota_import::import::layouts_current(cache);
+    (!current).then_some(Need::Reimport)
 }
 
 /// Why a run that cannot show the asset screen (a capture, a check) ends: what the cache at `cache`
@@ -163,7 +165,7 @@ fn run_with_in(
     let plan = plan()?;
     let stamp = stamp(&game, &plan_id(plan)).map_err(|e| e.to_string())?;
     let _lease = managed_import(root, cache)?;
-    if !force && is_current(cache, &stamp) {
+    if !force && is_current(cache, &stamp) && dbota_import::import::layouts_current(cache) {
         println!("dbota import: {} is up to date", cache.display());
         report_maintenance(root, cache);
         return Ok(true);
@@ -346,6 +348,24 @@ mod tests {
         fn drop(&mut self) {
             let _ = fs::remove_dir_all(&self.scratch);
         }
+    }
+
+    /// A cache stamped by this build whose portrait framings are of another layout (another
+    /// build's under the same importer revision) needs importing again; one of this layout does
+    /// not.
+    #[test]
+    fn a_cache_with_framings_of_another_layout_needs_a_reimport() {
+        let caches = Caches::new();
+        let cache = &caches.current;
+        let file = dbota_import::import::PORTRAITS_FILE;
+        fs::create_dir_all(cache.join("models")).unwrap();
+        let index = format!("{}\nfile 1 {file} small\n", CacheIndex::header());
+        fs::write(cache.join(INDEX), index).unwrap();
+        fs::write(cache.join(file), "# logical, camera position (3) ...\n").unwrap();
+        assert_eq!(need(cache), Some(Need::Reimport));
+        let ours = format!("{}\n", dbota_import::text::PORTRAITS_LAYOUT);
+        fs::write(cache.join(file), ours).unwrap();
+        assert_eq!(need(cache), None);
     }
 
     #[test]

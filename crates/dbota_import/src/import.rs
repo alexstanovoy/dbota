@@ -52,7 +52,7 @@ pub const LAST_USE_TEXT: &str = "dbota last use 1\n";
 pub const MAX_STAMP: u64 = 4096;
 
 /// Bumped when the importer's output changes for the same install; part of a cache's stamp.
-pub const IMPORT_REV: u32 = 46;
+pub const IMPORT_REV: u32 = 47;
 
 /// The manifest this build imports and draws, and its ids.
 pub const MANIFEST: &str = include_str!("../../../assets-manifest/manifest.txt");
@@ -109,6 +109,54 @@ pub fn stamped_here(stamp: &str) -> bool {
 
 /// Where the portrait framings are in a cache.
 pub const PORTRAITS_FILE: &str = "models/portraits.txt";
+/// Most bytes of a cache's index read to look a file up; this build's is some 200 KB.
+const MAX_INDEX: u64 = 16 << 20;
+
+/// The cache files this build reads by a layout of its own, each with the first line that names
+/// it. A file whose lines change layout gets a new first line, and a line here if it is new.
+const LAYOUTS: [(&str, &str); 1] = [(PORTRAITS_FILE, crate::text::PORTRAITS_LAYOUT)];
+
+/// Whether the files of the cache at `cache` whose lines this build reads by a layout of its own
+/// ([`LAYOUTS`]) are of this build's layout: a cache another build made under the same importer
+/// revision (and so the same stamp) may hold an older one, which is then imported again rather
+/// than misread. Each must start with its layout line and read as text; one the index lists and
+/// the cache lacks is not current either. One the index does not list was never written (its
+/// import reported why).
+pub fn layouts_current(cache: &std::path::Path) -> bool {
+    LAYOUTS
+        .iter()
+        .all(|&(file, layout)| layout_current(cache, file, layout))
+}
+
+/// Whether the cache's `file` starts with the line `layout`, or is not there and not listed.
+fn layout_current(cache: &std::path::Path, file: &str, layout: &str) -> bool {
+    use std::io::Read;
+    let mut first = Vec::new();
+    match std::fs::File::open(cache.join(file)) {
+        Ok(opened) => {
+            let limit = layout.len() as u64 + 1;
+            if opened.take(limit).read_to_end(&mut first).is_err() {
+                return false;
+            }
+            let line = std::str::from_utf8(&first)
+                .ok()
+                .and_then(|t| t.lines().next());
+            line == Some(layout)
+        }
+        Err(_) => {
+            let mut index = String::new();
+            let listed = std::fs::File::open(cache.join(crate::cache_dir::INDEX))
+                .and_then(|f| f.take(MAX_INDEX).read_to_string(&mut index))
+                .is_ok_and(|_| {
+                    index
+                        .lines()
+                        .any(|l| l.split_whitespace().nth(2) == Some(file))
+                });
+            !listed
+        }
+    }
+}
+
 /// Names what an import of this plan makes (FNV-1a 64 of the plan's typed items): part of a
 /// cache's stamp, so a cache made from another plan is stale even from the same install.
 pub fn plan_id(plan: &Plan) -> String {
@@ -2395,3 +2443,53 @@ mod particle_model_tests {
     }
 }
 
+#[cfg(test)]
+mod layout_tests {
+    use super::{PORTRAITS_FILE, layouts_current};
+    use crate::cache_dir::INDEX;
+    use crate::text::PORTRAITS_LAYOUT;
+
+    /// A cache folder of the given index and portrait framings (none: no file).
+    fn cache(name: &str, listed: bool, framings: Option<&[u8]>) -> std::path::PathBuf {
+        let dir = std::path::Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../.."))
+            .join("target/tmp")
+            .join(format!("dbota_layout_{}_{name}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("models")).unwrap();
+        let line = if listed {
+            format!("file 1 {PORTRAITS_FILE} small\n")
+        } else {
+            String::new()
+        };
+        std::fs::write(dir.join(INDEX), format!("dbota-cache 1 rev 35\n{line}")).unwrap();
+        if let Some(bytes) = framings {
+            std::fs::write(dir.join(PORTRAITS_FILE), bytes).unwrap();
+        }
+        dir
+    }
+
+    #[test]
+    fn a_cache_of_another_portrait_layout_is_not_current() {
+        let ours = format!("{PORTRAITS_LAYOUT}\n# logical ...\n");
+        // The layout before refused entries were written: a cache of it gains no warnings.
+        let unrefused = b"dbota-portraits 2\n# logical ...\n";
+        let cases: [(&str, bool, Option<&[u8]>, bool); 6] = [
+            ("ours", true, Some(ours.as_bytes()), true),
+            ("unrefused", true, Some(unrefused), false),
+            (
+                "older",
+                true,
+                Some(b"# logical, camera position (3) ...\nhero.x.model 1 2 3\n"),
+                false,
+            ),
+            ("binary", true, Some(b"\xff\xfe\x00 not text"), false),
+            ("lost", true, None, false),
+            ("never", false, None, true),
+        ];
+        for (name, listed, framings, current) in cases {
+            let dir = cache(name, listed, framings);
+            assert_eq!(layouts_current(&dir), current, "{name}");
+            std::fs::remove_dir_all(dir).unwrap();
+        }
+    }
+}
