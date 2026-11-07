@@ -337,7 +337,11 @@ pub fn server_binary() -> PathBuf {
 /// match then fails minutes in, on the first Hello.
 #[allow(dead_code)] // each test file uses the helpers it needs
 pub fn check_wire(binary: &Path, ours: u64) -> Result<(), String> {
-    let theirs = wire_probe::wire_of(Command::new(binary), wire_probe::WIRE_PROBE_PATIENCE)?;
+    let theirs = wire_probe::wire_of(
+        server_command(binary),
+        binary,
+        wire_probe::WIRE_PROBE_PATIENCE,
+    )?;
     if theirs == ours {
         return Ok(());
     }

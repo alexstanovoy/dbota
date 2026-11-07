@@ -91,7 +91,11 @@ pub(crate) fn server_binary() -> &'static Path {
 /// `binary`, if it speaks the wire `ours`. Why here: bota moving under a built client makes a
 /// server of another wire, and every match then fails minutes in, on the first Hello.
 fn wire_checked(binary: PathBuf, ours: u64, patience: Duration) -> Result<PathBuf, String> {
-    let theirs = super::wire_probe::wire_of(crate::steering::scrubbed_command(&binary), patience)?;
+    let theirs = super::wire_probe::wire_of(
+        crate::steering::scrubbed_command(&binary),
+        &binary,
+        patience,
+    )?;
     if theirs != ours {
         return Err(format!(
             "{} speaks wire {theirs:016x} but this client was compiled for wire {ours:016x}: \

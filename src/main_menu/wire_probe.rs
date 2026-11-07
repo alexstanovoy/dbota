@@ -2,6 +2,7 @@
 //!
 //! Std only: the integration tests include this file as their own module too.
 
+use std::path::Path;
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
@@ -9,10 +10,12 @@ use std::time::{Duration, Instant};
 /// answers at once, under any load.
 pub const WIRE_PROBE_PATIENCE: Duration = Duration::from_secs(10);
 
-/// The wire `server` speaks, from its own `--wire-fingerprint` (given as a command so that the
-/// caller picks its environment). A server that has not answered within `patience` is killed.
-pub fn wire_of(mut server: Command, patience: Duration) -> Result<u64, String> {
-    let name = server.get_program().to_string_lossy().into_owned();
+/// The wire the server `name` speaks, from its own `--wire-fingerprint`. The caller gives the
+/// command that starts it, so that the server is launched through the isolation wrappers
+/// (scrubbed environment) like every other one. A server that has not answered within `patience`
+/// is killed.
+pub fn wire_of(mut server: Command, name: &Path, patience: Duration) -> Result<u64, String> {
+    let name = name.display();
     let mut child = server
         .arg("--wire-fingerprint")
         .stdin(Stdio::null())

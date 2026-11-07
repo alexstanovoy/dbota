@@ -607,17 +607,21 @@ fn a_spawned_game_server_does_not_inherit_the_variables_that_steer_it() {
     const MARK: &str = "DBOTA_SERVER_SCRUB_CHILD";
     if let Some(seen) = std::env::var_os(MARK) {
         let _server = common::serve(&[]);
-        let seen = std::fs::read_to_string(seen).expect("the stub ran");
-        let lines: Vec<_> = seen.lines().collect();
-        assert_eq!(
-            lines.len(),
-            common::client_environment().count(),
-            "{lines:?}"
-        );
-        assert!(
-            lines.iter().all(|line| *line == "unset"),
-            "a server inherited {lines:?}"
-        );
+        // The wire probe and the real launch are two runs of the stub, each leaving its own view.
+        let probe_view = std::path::PathBuf::from(&seen).with_extension("probe");
+        for (launch, view) in [("launch", seen), ("wire probe", probe_view.into())] {
+            let seen = std::fs::read_to_string(view).expect("the stub ran");
+            let lines: Vec<_> = seen.lines().collect();
+            assert_eq!(
+                lines.len(),
+                common::client_environment().count(),
+                "{launch}: {lines:?}"
+            );
+            assert!(
+                lines.iter().all(|line| *line == "unset"),
+                "the {launch} of a server inherited {lines:?}"
+            );
+        }
         return;
     }
     let scratch = common::prepared::Scratch::new("server-scrub");
@@ -629,7 +633,13 @@ fn a_spawned_game_server_does_not_inherit_the_variables_that_steer_it() {
     executable(
         &stub,
         &format!(
-            "#!/bin/sh\nprintf '%s\\n'{probe} > '{}'\necho 'bota_server listening on 127.0.0.1:1'\nsleep 5\n",
+            "#!/bin/sh\n\
+             if [ \"$1\" = --wire-fingerprint ]; then\n\
+             printf '%s\\n'{probe} > '{}'\necho {}\nexit 0\nfi\n\
+             printf '%s\\n'{probe} > '{}'\n\
+             echo 'bota_server listening on 127.0.0.1:1'\nsleep 5\n",
+            seen.with_extension("probe").display(),
+            bota_proto::fingerprint_to_hex(bota_core::WIRE_FINGERPRINT),
             seen.display()
         ),
     );

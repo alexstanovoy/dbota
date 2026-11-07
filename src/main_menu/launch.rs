@@ -236,6 +236,7 @@ pub(super) fn server_binary(
 fn wire_of(server: &std::path::Path) -> Option<u64> {
     super::wire_probe::wire_of(
         crate::steering::scrubbed_command(server),
+        server,
         super::wire_probe::WIRE_PROBE_PATIENCE,
     )
     .ok()
