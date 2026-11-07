@@ -111,7 +111,7 @@ fn button_width(label: &str, height: f32) -> f32 {
     }
 }
 /// A popup's OK and Cancel, one width.
-const POPUP_ANSWER_WIDTH: f32 = 160.0;
+pub(super) const POPUP_ANSWER_WIDTH: f32 = 160.0;
 
 impl Kit<'_, '_, '_> {
     /// Text of a role.

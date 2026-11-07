@@ -1,108 +1,382 @@
-//! LOBBIES: making a lobby, and the open ones, searched by name or owner and
-//! joined from the list (a locked one through the password dialog).
-
-use bevy::prelude::*;
-
-use super::core::Act;
-use super::kit::{Kit, Tone};
-use super::pages::field_box;
-use super::view::{FieldView, LobbyRow};
+//! The service's lobby browser and the entry to local hosting.
+use super::{
+    core::{Act, Page},
+    kit::{Kit, MenuButton, Tone},
+    lobby_controls::{Action, Choice, ControlsView, Server},
+    lobby_widgets::{self as w, OptionRow},
+    view::{FieldView, LobbyRow, MenuView, PageView},
+};
 use crate::theme;
+use bevy::prelude::*;
+use bevy::ui_widgets::Button;
 
-pub fn list(kit: &mut Kit, body: Entity, lobbies: &[LobbyRow], fields: &[FieldView]) {
-    let page = kit.node(
-        body,
-        Node {
-            column_gap: px(24),
-            align_items: AlignItems::FlexStart,
-            ..default()
-        },
-    );
-    let card = kit.panel(
-        page,
-        Node {
-            width: px(360),
-            flex_direction: FlexDirection::Column,
-            padding: UiRect::all(px(20)),
-            row_gap: px(12),
-            ..default()
-        },
-    );
-    kit.bold(card, "CREATE A LOBBY", 22.0, theme::INK_1);
-    kit.text(
-        card,
-        "It begins with the standard rules: you choose the game mode in the lobby. A password \
-         keeps out whoever does not know it.",
-        13.0,
-        theme::INK_4,
-    );
-    let (create, search) = fields.split_at(fields.len().min(2));
-    for (at, field) in create.iter().enumerate() {
-        field_box(kit, card, at, field);
+pub fn draw(kit: &mut Kit, root: Entity, view: &MenuView) -> bool {
+    match &view.body {
+        PageView::Lobbies { list, fields } => browser(kit, root, list, fields, &view.lobby_ui),
+        PageView::Lobby(lobby) => super::lobby_room::draw(kit, root, lobby, &view.lobby_ui),
+        _ => return false,
     }
-    kit.button(card, "CREATE", Act::CreateLobby, Tone::Primary, 40.0);
+    true
+}
 
-    let column = kit.node(
-        page,
+fn browser(
+    kit: &mut Kit,
+    root: Entity,
+    rows: &[LobbyRow],
+    fields: &[FieldView],
+    controls: &ControlsView,
+) {
+    let panel = w::panel(kit, root, "lobby browser");
+    let visible: Vec<_> = rows
+        .iter()
+        .filter(|row| {
+            (!controls.no_password || !row.locked)
+                && controls
+                    .filter
+                    .as_ref()
+                    .is_none_or(|mode| &row.ruleset == mode)
+        })
+        .collect();
+    heading(kit, panel, visible.len(), rows.len());
+    table(kit, panel, &visible, controls);
+    kit.node(
+        panel,
         Node {
-            width: px(520),
-            flex_direction: FlexDirection::Column,
-            row_gap: px(8),
+            flex_grow: 1.0,
             ..default()
         },
     );
-    let head = kit.node(
-        column,
+    filters(kit, panel, fields.first(), controls);
+    creation(kit, panel, controls);
+}
+
+fn heading(kit: &mut Kit, parent: Entity, shown: usize, total: usize) {
+    let row = kit.node(
+        parent,
         Node {
-            column_gap: px(12),
+            height: px(42),
+            align_items: AlignItems::Center,
+            column_gap: px(16),
+            ..default()
+        },
+    );
+    w::quiet(kit, row, "‹ BACK", Act::Go(Page::Home), theme::INK_2);
+    kit.typed(
+        row,
+        "LOBBIES",
+        theme::Type {
+            size: 26.0,
+            ..theme::HEADING
+        },
+        theme::INK_1,
+    );
+    kit.text(row, format!("{shown} of {total} open"), 15.0, theme::INK_4);
+    kit.node(
+        row,
+        Node {
+            flex_grow: 1.0,
+            ..default()
+        },
+    );
+    w::quiet(kit, row, "REFRESH  ⟳", Act::SearchLobbies, theme::INK_2);
+}
+
+fn table(kit: &mut Kit, parent: Entity, rows: &[&LobbyRow], controls: &ControlsView) {
+    let table = w::column(kit, parent, 2.0);
+    kit.commands.entity(table).insert(Node {
+        max_height: px(450),
+        overflow: Overflow::scroll_y(),
+        flex_direction: FlexDirection::Column,
+        row_gap: px(2),
+        ..default()
+    });
+    let header = table_row(kit, table, 30.0);
+    for (index, label) in ["", "NAME", "HOST", "SLOTS", "MODE"]
+        .into_iter()
+        .enumerate()
+    {
+        let cell = cell(kit, header, index);
+        kit.typed(cell, label, theme::CAPTION, theme::INK_4);
+    }
+    w::rule(kit, table);
+    if rows.is_empty() {
+        kit.text(table, "No open lobbies", 15.0, theme::INK_4);
+    }
+    for lobby in rows.iter().take(128) {
+        lobby_row(kit, table, lobby, controls.selected == Some(lobby.id));
+    }
+}
+
+fn table_row(kit: &mut Kit, parent: Entity, height: f32) -> Entity {
+    kit.node(
+        parent,
+        Node {
+            height: px(height),
+            flex_shrink: 0.0,
+            align_items: AlignItems::Center,
+            padding: UiRect::axes(px(8), px(0)),
+            column_gap: px(10),
+            ..default()
+        },
+    )
+}
+
+fn cell(kit: &mut Kit, parent: Entity, index: usize) -> Entity {
+    let (width, grow) = match index {
+        0 => (18.0, 0.0),
+        1 => (190.0, 1.0),
+        2 => (138.0, 0.0),
+        3 => (68.0, 0.0),
+        _ => (100.0, 0.0),
+    };
+    kit.node(
+        parent,
+        Node {
+            width: px(width),
+            min_width: px(0),
+            flex_shrink: 1.0,
+            flex_grow: grow,
+            overflow: Overflow::clip(),
             align_items: AlignItems::Center,
             ..default()
         },
-    );
-    kit.bold(head, "OPEN LOBBIES", 22.0, theme::INK_1);
-    // The list again, as the search typed asks it: a refresh keeps the search.
-    kit.button(head, "REFRESH", Act::SearchLobbies, Tone::Secondary, 28.0);
-    for (at, field) in search.iter().enumerate() {
-        field_box(kit, column, create.len() + at, field);
-    }
-    let row = kit.node(column, Node::default());
-    kit.button(row, "SEARCH", Act::SearchLobbies, Tone::Secondary, 34.0);
-    if lobbies.is_empty() {
-        kit.text(column, "No open lobby.", 15.0, theme::INK_4);
-    }
-    for lobby in lobbies {
-        let row = kit.panel(
-            column,
-            Node {
-                padding: UiRect::all(px(10)),
-                column_gap: px(12),
-                align_items: AlignItems::Center,
-                ..default()
-            },
-        );
-        let label = kit.node(
-            row,
-            Node {
-                flex_grow: 1.0,
-                flex_direction: FlexDirection::Column,
-                ..default()
-            },
-        );
-        let lock = if lobby.locked { "  [password]" } else { "" };
-        kit.bold(label, format!("{}{lock}", lobby.name), 17.0, theme::INK_1);
-        kit.text(
-            label,
-            format!(
-                "{} · {} of {} seats",
-                lobby.owner, lobby.members, lobby.seats
-            ),
-            13.0,
-            theme::INK_4,
-        );
-        let join = kit.button(row, "JOIN", Act::JoinLobby(lobby.id), Tone::Primary, 34.0);
-        // A script clicks it by the lobby's name.
+    )
+}
+
+fn lobby_row(kit: &mut Kit, parent: Entity, lobby: &LobbyRow, selected: bool) {
+    let row = table_row(kit, parent, 48.0);
+    kit.commands.entity(row).insert((
+        Button,
+        Pickable::default(),
+        MenuButton(Act::JoinLobby(lobby.id)),
+        Name::new(format!("join {}", lobby.name.to_lowercase())),
+    ));
+    if selected {
         kit.commands
-            .entity(join)
-            .insert(Name::new(format!("join {}", lobby.name.to_lowercase())));
+            .entity(row)
+            .insert(theme::rightward(theme::SELECT_FILL));
+    } else {
+        kit.commands
+            .entity(row)
+            .insert(BackgroundColor(Color::WHITE.with_alpha(0.025)));
     }
+    let lock = cell(kit, row, 0);
+    if lobby.locked {
+        w::lock(kit, lock);
+    }
+    for (index, text) in [
+        &lobby.name,
+        &lobby.owner,
+        &format!("{} / {}", lobby.members, lobby.seats),
+        &lobby.mode,
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let cell = cell(kit, row, index + 1);
+        kit.text(
+            cell,
+            text,
+            14.0,
+            if index == 0 {
+                theme::INK_1
+            } else {
+                theme::INK_2
+            },
+        );
+    }
+}
+
+fn filters(kit: &mut Kit, parent: Entity, field: Option<&FieldView>, controls: &ControlsView) {
+    let parent = w::column(kit, parent, 8.0);
+    w::rule(kit, parent);
+    kit.typed(parent, "FILTER LOBBIES", theme::LABEL, theme::INK_2);
+    let row = kit.node(
+        parent,
+        Node {
+            column_gap: px(8),
+            align_items: AlignItems::FlexEnd,
+            ..default()
+        },
+    );
+    let mode = kit.node(
+        row,
+        Node {
+            width: px(150),
+            flex_shrink: 0.0,
+            ..default()
+        },
+    );
+    let options = (controls.open == Some(Choice::Filter)).then(|| {
+        std::iter::once(OptionRow {
+            name: "Any".into(),
+            selected: controls.filter.is_none(),
+            act: w::action(Action::Filter(None)),
+        })
+        .chain(controls.modes.iter().map(|mode| OptionRow {
+            name: mode.name.clone(),
+            selected: controls.filter.as_ref() == Some(&mode.id),
+            act: w::action(Action::Filter(Some(mode.id.clone()))),
+        }))
+        .collect()
+    });
+    w::select(
+        kit,
+        mode,
+        "Game mode",
+        controls.mode_name(controls.filter.as_ref()),
+        Choice::Filter,
+        options,
+        true,
+        false,
+    );
+    let search = kit.node(
+        row,
+        Node {
+            flex_grow: 1.0,
+            flex_basis: px(0),
+            min_width: px(0),
+            ..default()
+        },
+    );
+    if let Some(field) = field {
+        let field = FieldView {
+            label: "Lobby or host name",
+            ..field.clone()
+        };
+        w::field(kit, search, 0, &field, false, false);
+    }
+    let check = kit.node(
+        row,
+        Node {
+            width: px(136),
+            height: px(44),
+            align_items: AlignItems::Center,
+            flex_shrink: 0.0,
+            ..default()
+        },
+    );
+    w::check(
+        kit,
+        check,
+        "No password",
+        controls.no_password,
+        w::action(Action::NoPassword),
+    );
+}
+
+fn creation(kit: &mut Kit, parent: Entity, controls: &ControlsView) {
+    let parent = w::column(kit, parent, 8.0);
+    w::rule(kit, parent);
+    kit.typed(parent, "CREATE A LOBBY", theme::LABEL, theme::INK_2);
+    let row = kit.node(
+        parent,
+        Node {
+            column_gap: px(8),
+            ..default()
+        },
+    );
+    let server = kit.node(
+        row,
+        Node {
+            width: percent(50),
+            flex_direction: FlexDirection::Column,
+            min_width: px(0),
+            ..default()
+        },
+    );
+    let options = (controls.open == Some(Choice::Server)).then(|| {
+        [Server::Local, Server::Service]
+            .into_iter()
+            .map(|server| OptionRow {
+                name: if server == Server::Local {
+                    "Local".into()
+                } else {
+                    controls.service.clone()
+                },
+                selected: controls.server == server,
+                act: w::action(Action::Server(server)),
+            })
+            .collect()
+    });
+    w::select(
+        kit,
+        server,
+        "Server",
+        controls.server_name(),
+        Choice::Server,
+        options,
+        true,
+        false,
+    );
+    let mode = kit.node(
+        row,
+        Node {
+            flex_grow: 1.0,
+            flex_basis: px(0),
+            min_width: px(0),
+            ..default()
+        },
+    );
+    let options = (controls.open == Some(Choice::Mode)).then(|| {
+        controls
+            .modes
+            .iter()
+            .map(|mode| OptionRow {
+                name: mode.name.clone(),
+                selected: controls.mode.as_ref() == Some(&mode.id),
+                act: w::action(Action::Mode(mode.id.clone())),
+            })
+            .collect()
+    });
+    w::select(
+        kit,
+        mode,
+        "Game mode",
+        controls.mode_name(controls.mode.as_ref()),
+        Choice::Mode,
+        options,
+        true,
+        false,
+    );
+    let actions = kit.node(
+        parent,
+        Node {
+            column_gap: px(8),
+            ..default()
+        },
+    );
+    let create = kit.node(
+        actions,
+        Node {
+            flex_grow: 1.0,
+            flex_basis: px(0),
+            min_width: px(0),
+            ..default()
+        },
+    );
+    w::full_button(
+        kit,
+        create,
+        "CREATE LOBBY",
+        w::action(Action::Create),
+        Tone::Primary,
+        52.0,
+    );
+    let direct = kit.node(
+        actions,
+        Node {
+            width: px(180),
+            flex_shrink: 0.0,
+            ..default()
+        },
+    );
+    w::full_button(
+        kit,
+        direct,
+        "JOIN BY ADDRESS",
+        Act::Go(Page::LocalLobby),
+        Tone::Secondary,
+        52.0,
+    );
 }

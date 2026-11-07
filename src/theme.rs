@@ -470,3 +470,27 @@ pub const RESULT_GRID_MINOR: Color = Color::srgb_u8(0x22, 0x2b, 0x34);
 pub const RESULT_GRID_MAJOR: Color = Color::srgb_u8(0x3a, 0x46, 0x51);
 pub const RESULT_GRID_HORIZONTAL: Color = Color::srgb_u8(0x2c, 0x36, 0x40);
 pub const RESULT_GRID_ZERO: Color = Color::srgb_u8(0x6b, 0x74, 0x7d);
+/// Lobby boards: room, browser, conversation and settings popup.
+pub mod lobby {
+    use super::{Color, hex};
+    pub const WIDTH: f32 = 620.0;
+    pub const RIGHT: f32 = 38.0;
+    pub const CHAT_WIDTH: f32 = 640.0;
+    pub const EDITOR_WIDTH: f32 = 640.0;
+    pub const PASSWORD_WIDTH: f32 = 460.0;
+    pub const SCENE: (Color, Color) = (hex(0x1A4670), hex(0x3A2563));
+    pub const RULE: Color = hex(0x2D3236);
+    pub const PANEL: [(Color, f32); 4] = [
+        (hex(0x11161C), 0.0),
+        (hex(0x1C2229), 2.0),
+        (hex(0x12161A), 22.0),
+        (hex(0x020304), 100.0),
+    ];
+    pub const POPUP: (Color, Color) = (hex(0x1C2229), hex(0x020304));
+    pub const SPECTATORS: (Color, Color) = (hex(0x181A1E), hex(0x111111));
+    pub const CHAT: Color = hex(0x05080B);
+    pub const CHAT_EDGE: Color = hex(0x24303A);
+    pub const CHOICES: Color = hex(0x12171C);
+    pub const CHECKED: Color = hex(0x4E9256);
+    pub const CLOCK: Color = hex(0x6B747D);
+}

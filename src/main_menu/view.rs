@@ -107,6 +107,8 @@ pub struct LobbyRow {
     pub id: LobbyId,
     pub name: String,
     pub owner: String,
+    pub mode: String,
+    pub ruleset: RulesetId,
     pub locked: bool,
     pub members: u8,
     pub seats: u8,
@@ -167,6 +169,30 @@ pub struct SettingsView {
     pub editable: bool,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LobbyBlock {
+    Slot,
+    Players(usize),
+    Ready(usize),
+    Mode,
+}
+impl LobbyBlock {
+    pub fn message(&self) -> String {
+        match self {
+            Self::Slot => "Join a slot to start".into(),
+            Self::Players(count) => format!(
+                "Waiting for {count} more {}",
+                if *count == 1 { "player" } else { "players" }
+            ),
+            Self::Ready(count) => format!(
+                "Waiting for {count} {} to be ready",
+                if *count == 1 { "player" } else { "players" }
+            ),
+            Self::Mode => "This game mode is unavailable".into(),
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LobbyView {
     pub name: String,
@@ -178,11 +204,9 @@ pub struct LobbyView {
     /// The member the owner is moving: their next click on a slot puts them there.
     pub moving: Option<String>,
     pub settings: SettingsView,
-    /// The owner's password field.
-    pub fields: Vec<FieldView>,
     pub me_ready: bool,
     /// Why the owner cannot start yet, as Dota's lobby says it.
-    pub waiting: Option<&'static str>,
+    pub waiting: Option<LobbyBlock>,
     /// The owner may start with the lobby below its seats: the empty ones stay empty.
     pub starts_short: bool,
     pub starting_in_secs: Option<u32>,
@@ -370,6 +394,7 @@ pub enum Side {
 /// Everything the menu draws.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct MenuView {
+    pub lobby_ui: super::lobby_controls::ControlsView,
     pub page: Page,
     /// The page drawn: the one the settings were opened from while they are open over it.
     pub beneath: Page,
@@ -452,6 +477,7 @@ impl MenuCore {
             (Some(_), true) => Connection::Lost(service),
         };
         MenuView {
+            lobby_ui: self.lobby_menu_view(&connection),
             page: self.page,
             beneath: self.page_beneath(),
             body: self.body_at(Instant::now()),
@@ -579,7 +605,7 @@ impl MenuCore {
                     .lobbies
                     .iter()
                     .take(bota_radovid::proto::MAX_LOBBY_LIST)
-                    .map(lobby_row)
+                    .map(|row| lobby_row(row, self.client.as_ref()))
                     .collect(),
                 fields: self.fields(),
             },
@@ -587,9 +613,7 @@ impl MenuCore {
                 .lobby
                 .as_ref()
                 .map_or(PageView::Joining, |(state, at)| {
-                    let mut view = lobby_view(state, *at, self.client.as_ref(), self.moving);
-                    view.fields = self.fields();
-                    PageView::Lobby(view)
+                    PageView::Lobby(lobby_view(state, *at, self.client.as_ref(), self.moving))
                 }),
             Page::Result => self
                 .shown
@@ -972,11 +996,21 @@ fn game_row(match_id: MatchId, ready: bool) -> GameRow {
     }
 }
 
-fn lobby_row(l: &bota_radovid::proto::LobbySummary) -> LobbyRow {
+fn lobby_row(
+    l: &bota_radovid::proto::LobbySummary,
+    client: Option<&bota_radovid::Client>,
+) -> LobbyRow {
     LobbyRow {
         id: l.id,
         name: text::line(&l.name, text::NAME),
         owner: text::line(&l.owner_nickname, text::NAME),
+        ruleset: l.ruleset.clone(),
+        mode: client
+            .and_then(|client| client.rulesets().find(|rules| rules.id == l.ruleset))
+            .map_or_else(
+                || text::line(&l.ruleset.0, text::NAME),
+                |rules| text::line(&rules.name, text::NAME),
+            ),
         locked: l.locked,
         members: l.members,
         seats: l.seats,
@@ -994,8 +1028,8 @@ fn lobby_view(
     let me = client.and_then(|c| c.me()).map(|me| me.id);
     let elapsed = u32::try_from(at.elapsed().as_millis()).unwrap_or(u32::MAX);
     let rules = client.and_then(|c| c.rulesets().find(|r| r.id == state.ruleset));
-    let sizes: Vec<u8> = state.teams.clone();
-    let needed = rules.map_or(usize::MAX, |r| usize::from(r.lobby_min_players));
+    let sizes: Vec<u8> = state.teams.iter().copied().take(2).collect();
+    let needed = rules.map(|rules| usize::from(rules.lobby_min_players));
     let owner = Some(state.owner) == me;
     let row = |m: &bota_radovid::proto::LobbyMember| MemberRow {
         account: m.account,
@@ -1036,16 +1070,23 @@ fn lobby_view(
     let others_unready = state
         .members
         .iter()
-        .any(|m| Some(m.account) != me && m.slot != LOBBY_NO_SLOT && !m.ready);
+        .filter(|m| Some(m.account) != me && m.slot != LOBBY_NO_SLOT && !m.ready)
+        .count();
     let i_am_looking = spectators.iter().any(|m| m.me);
     let waiting = if !owner {
         None
-    } else if i_am_looking || seated < needed {
-        Some("Waiting for more players")
-    } else if others_unready {
-        Some("Waiting for the other players to be ready")
+    } else if i_am_looking {
+        Some(LobbyBlock::Slot)
+    } else if let Some(needed) = needed {
+        if seated < needed {
+            Some(LobbyBlock::Players(needed - seated))
+        } else if others_unready > 0 {
+            Some(LobbyBlock::Ready(others_unready))
+        } else {
+            None
+        }
     } else {
-        None
+        Some(LobbyBlock::Mode)
     };
     let audience_name = |audience: Audience| match audience {
         Audience::Everyone => "Humans and Bots",
@@ -1097,7 +1138,6 @@ fn lobby_view(
             .map(|m| text::line(&m.nickname, text::NAME)),
         spectators,
         settings,
-        fields: Vec::new(),
         me_ready: state
             .members
             .iter()
@@ -1111,7 +1151,7 @@ fn lobby_view(
 }
 
 /// A form's fields as drawn.
-fn fields_of(form: &super::form::Form) -> Vec<FieldView> {
+pub(super) fn fields_of(form: &super::form::Form) -> Vec<FieldView> {
     form.fields()
         .iter()
         .enumerate()

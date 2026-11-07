@@ -395,14 +395,22 @@ impl Player {
 
     /// Types into the page's fields, one after another.
     pub(crate) fn fill(&mut self, values: &[&str]) {
-        self.menu.act(Act::Focus(0));
-        for (at, value) in values.iter().enumerate() {
-            self.menu.act(Act::Focus(at));
-            while !self.menu.form.value(at).is_empty() {
-                self.menu.act(Act::Erase);
-            }
-            self.menu.act(Act::Type((*value).to_owned()));
+        if self.menu.page() == Page::Lobbies && self.menu.join_prompt.is_none() {
+            self.menu
+                .act(Act::LobbyUi(super::lobby_controls::Action::Create));
         }
+        for (at, value) in values.iter().enumerate() {
+            self.fill_field(at, value);
+        }
+    }
+
+    pub(crate) fn fill_field(&mut self, at: usize, value: &str) {
+        self.menu.act(Act::Focus(at));
+        assert_eq!(self.menu.active_lobby_form().focused_field(), Some(at));
+        while !self.menu.active_lobby_form().value(at).is_empty() {
+            self.menu.act(Act::Erase);
+        }
+        self.menu.act(Act::Type(value.to_owned()));
     }
 
     pub(crate) fn register(&mut self, login: &str) {
@@ -1789,7 +1797,7 @@ fn a_ruleset_for_bots_is_not_listed_to_humans() {
 fn create_lobby(player: &mut Player, mode: &str, fields: &[&str]) {
     player.menu.act(Act::Go(Page::Lobbies));
     player.fill(fields);
-    player.menu.act(Act::CreateLobby);
+    player.menu.act(Act::LobbyUi(super::LobbyAction::Save));
     settle(&mut [player], |p| p.menu.page() == Page::Lobby);
     let id = lobby_of(player)
         .settings
@@ -1799,7 +1807,11 @@ fn create_lobby(player: &mut Player, mode: &str, fields: &[&str]) {
         .unwrap_or_else(|| panic!("the mode {mode} is offered"))
         .id
         .clone();
-    player.menu.act(Act::ConfigureMode(id));
+    player.menu.act(Act::LobbyUi(super::LobbyAction::Edit));
+    player
+        .menu
+        .act(Act::LobbyUi(super::LobbyAction::EditMode(id)));
+    player.menu.act(Act::LobbyUi(super::LobbyAction::Save));
     settle(&mut [player], |p| lobby_of(p).settings.mode == mode);
 }
 
@@ -1814,7 +1826,7 @@ fn a_new_lobby_is_of_the_services_default_mode_and_its_host_changes_it() {
     alice.register("alice");
     alice.menu.act(Act::Go(Page::Lobbies));
     alice.fill(&["my practice"]);
-    alice.menu.act(Act::CreateLobby);
+    alice.menu.act(Act::LobbyUi(super::LobbyAction::Save));
     settle(&mut [&mut alice], |p| p.menu.page() == Page::Lobby);
     let modes = lobby_of(&alice).settings.modes;
     assert_eq!(
@@ -1834,7 +1846,11 @@ fn a_new_lobby_is_of_the_services_default_mode_and_its_host_changes_it() {
         .iter()
         .find(|m| m.name == "Practice")
         .expect("offered");
-    alice.menu.act(Act::ConfigureMode(practice.id.clone()));
+    alice.menu.act(Act::LobbyUi(super::LobbyAction::Edit));
+    alice.menu.act(Act::LobbyUi(super::LobbyAction::EditMode(
+        practice.id.clone(),
+    )));
+    alice.menu.act(Act::LobbyUi(super::LobbyAction::Save));
     settle(&mut [&mut alice], |p| {
         p.menu
             .lobby
@@ -1949,7 +1965,7 @@ fn a_new_lobby_is_full_rules_with_ten_slots_and_solo_mid_changes_the_rules_only(
     alice.register("alice");
     alice.menu.act(Act::Go(Page::Lobbies));
     alice.fill(&["default"]);
-    alice.menu.act(Act::CreateLobby);
+    alice.menu.act(Act::LobbyUi(super::LobbyAction::Save));
     settle(&mut [&mut alice], |p| p.menu.page() == Page::Lobby);
     let (state, _) = alice.menu.lobby.as_ref().expect("sat in the lobby");
     assert_eq!(
@@ -1974,7 +1990,11 @@ fn a_new_lobby_is_full_rules_with_ten_slots_and_solo_mid_changes_the_rules_only(
         .expect("offered")
         .id
         .clone();
-    alice.menu.act(Act::ConfigureMode(solo));
+    alice.menu.act(Act::LobbyUi(super::LobbyAction::Edit));
+    alice
+        .menu
+        .act(Act::LobbyUi(super::LobbyAction::EditMode(solo)));
+    alice.menu.act(Act::LobbyUi(super::LobbyAction::Save));
     settle(&mut [&mut alice], |p| {
         lobby_of(p).settings.mode == "1x1 Mid Only"
     });
@@ -2342,11 +2362,17 @@ fn the_owner_changes_the_lobbys_settings_and_the_others_only_read_them() {
         .expect("offered")
         .id
         .clone();
-    alice.menu.act(Act::ConfigureMode(practice));
+    alice.menu.act(Act::LobbyUi(super::LobbyAction::Edit));
+    alice
+        .menu
+        .act(Act::LobbyUi(super::LobbyAction::EditMode(practice)));
+    alice.menu.act(Act::LobbyUi(super::LobbyAction::Save));
     settle(&mut [&mut alice, &mut bob], |p| {
         lobby_of(p).settings.mode == "Practice"
     });
-    alice.menu.act(Act::ConfigurePassword);
+    alice.menu.act(Act::LobbyUi(super::LobbyAction::Edit));
+    alice.fill_field(1, "");
+    alice.menu.act(Act::LobbyUi(super::LobbyAction::Save));
     settle(&mut [&mut alice, &mut bob], |p| {
         !lobby_of(p).settings.locked
     });
@@ -2356,15 +2382,33 @@ fn the_owner_changes_the_lobbys_settings_and_the_others_only_read_them() {
         Some((5, "DIRE".to_owned()))
     );
     // The audience the owner sits in cannot shut him out; a member cannot change anything.
-    alice.menu.act(Act::ConfigureAudience(
+    alice.menu.act(Act::LobbyUi(super::LobbyAction::Edit));
+    alice.menu.act(Act::LobbyUi(super::LobbyAction::Audience(
         bota_radovid::proto::Audience::BotsOnly,
-    ));
+    )));
+    alice.menu.act(Act::LobbyUi(super::LobbyAction::Save));
     settle(&mut [&mut alice], |p| {
-        p.menu.view().status.is_some_and(|s| s.error)
+        p.menu
+            .view()
+            .lobby_ui
+            .editor
+            .is_some_and(|editor| editor.error.is_some())
     });
-    bob.menu.act(Act::ConfigureAudience(
-        bota_radovid::proto::Audience::HumansOnly,
-    ));
+    bob.menu.act(Act::LobbyUi(super::LobbyAction::Edit));
+    assert!(
+        bob.menu.view().lobby_ui.editor.is_none(),
+        "a guest cannot edit"
+    );
+    let state = bob.menu.lobby.as_ref().expect("lobby").0.clone();
+    bob.menu.ask(
+        bota_radovid::proto::ClientMsg::LobbyConfigure {
+            lobby: state.id,
+            ruleset: state.ruleset,
+            audience: bota_radovid::proto::Audience::HumansOnly,
+            password: None,
+        },
+        super::core::Asked::Lobby,
+    );
     settle(&mut [&mut bob], |p| {
         p.menu.view().status.is_some_and(|s| s.error)
     });
@@ -2382,12 +2426,12 @@ fn cancelling_or_logging_out_of_a_lobby_password_dialog_clears_its_secret_and_ta
     bob.register("bob");
     alice.menu.act(Act::Go(Page::Lobbies));
     alice.fill(&["protected", PASSWORD]);
-    alice.menu.act(Act::CreateLobby);
+    alice.menu.act(Act::LobbyUi(super::LobbyAction::Save));
     settle(&mut [&mut alice], |p| p.menu.page() == Page::Lobby);
     bob.menu.act(Act::Go(Page::Lobbies));
     settle(&mut [&mut bob], |p| !p.menu.lobbies.is_empty());
     let lobby = bob.menu.lobbies[0].id;
-    bob.menu.act(Act::Focus(2));
+    bob.menu.act(Act::Focus(0));
     bob.menu.act(Act::Type("protect".to_owned()));
     for close in [Act::LobbyPassword(false), Act::Back] {
         bob.menu.act(Act::JoinLobby(lobby));
@@ -2395,7 +2439,7 @@ fn cancelling_or_logging_out_of_a_lobby_password_dialog_clears_its_secret_and_ta
         bob.menu.act(close);
         assert!(bob.menu.join_prompt.is_none());
         assert_eq!(bob.menu.page(), Page::Lobbies, "the dialog's close only");
-        assert_eq!(bob.menu.form.value(2), "protect", "the search stays");
+        assert_eq!(bob.menu.form.value(0), "protect", "the search stays");
         bob.menu.act(Act::JoinLobby(lobby));
         let fresh = bob.menu.view().password.expect("the dialog again");
         assert!(fresh.field.shown.is_empty(), "a fresh password dialog");
@@ -2428,7 +2472,7 @@ fn a_refused_join_says_why_and_lists_the_lobbies_again() {
     bob.register("bob");
     alice.menu.act(Act::Go(Page::Lobbies));
     alice.fill(&["short lived"]);
-    alice.menu.act(Act::CreateLobby);
+    alice.menu.act(Act::LobbyUi(super::LobbyAction::Save));
     settle(&mut [&mut alice], |p| p.menu.page() == Page::Lobby);
     bob.menu.act(Act::Go(Page::Lobbies));
     settle(&mut [&mut bob], |p| !p.menu.lobbies.is_empty());

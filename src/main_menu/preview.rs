@@ -6,13 +6,16 @@ use bota_radovid::proto::{AccountId, LobbyId, MatchId, ProposalId, QueueEntryId,
 use super::core::{GameKind, LocalRules, Page, Status};
 use super::form::FormKind;
 use super::view::{
-    AudienceRow, ConfirmView, Connection, FieldView, FinishedRow, GameRow, LobbyRow, LobbyView,
-    MemberRow, MenuView, ModeRow, OfferBox, PageView, PasswordView, ResultView, RulesetRow,
-    SearchRow, SeatRow, SettingsView, Side, SlotRow, TeamRow, WaitRow,
+    ConfirmView, Connection, FieldView, FinishedRow, GameRow, MemberRow,
+    MenuView, OfferBox, PageView, PasswordView, ResultView, RulesetRow, SearchRow,
+    SeatRow, Side, WaitRow,
 };
 
+#[path = "lobby_preview.rs"]
+mod lobby;
+
 /// The names `--menu-preview` takes.
-pub const NAMES: [&str; 51] = [
+pub const NAMES: [&str; 53] = [
     "service",
     "login",
     "register",
@@ -27,6 +30,8 @@ pub const NAMES: [&str; 51] = [
     "lobby-password",
     "lobby",
     "lobby-owner",
+    "lobby-edit",
+    "lobby-start",
     "result",
     "direct",
     "quit",
@@ -76,6 +81,7 @@ fn field(label: &'static str, shown: &str, focused: bool) -> FieldView {
 
 fn form(page: Page, kind: FormKind, fields: Vec<FieldView>) -> MenuView {
     MenuView {
+        lobby_ui: Default::default(),
         page,
         beneath: page,
         body: PageView::Form {
@@ -110,6 +116,7 @@ fn form(page: Page, kind: FormKind, fields: Vec<FieldView>) -> MenuView {
 
 pub(super) fn logged_in(page: Page, body: PageView) -> MenuView {
     MenuView {
+        lobby_ui: Default::default(),
         page,
         beneath: page,
         body,
@@ -215,10 +222,9 @@ pub fn view(name: &str) -> Option<MenuView> {
         "loading" => preview_loading(),
         "waiting" => preview_waiting(),
         "my-games" => preview_my_games(),
-        "lobbies" => preview_lobbies(),
-        "lobby-password" => preview_lobby_password(),
-        "lobby" => preview_lobby(),
-        "lobby-owner" => preview_lobby_owner(),
+        "lobbies" => lobby::browser(false),
+        "lobby-password" => lobby::browser(true),
+        "lobby" | "lobby-owner" | "lobby-edit" | "lobby-start" => lobby::room(name),
         "result" => preview_result(),
         "direct" => preview_direct(),
         "quit" => preview_quit(),
@@ -426,87 +432,6 @@ fn preview_my_games() -> MenuView {
     view
 }
 
-fn preview_lobbies() -> MenuView {
-    logged_in(
-        Page::Lobbies,
-        PageView::Lobbies {
-            list: vec![
-                LobbyRow {
-                    id: LobbyId(1),
-                    name: "mid practice".to_owned(),
-                    owner: "bob#7".to_owned(),
-                    locked: false,
-                    members: 1,
-                    seats: 2,
-                },
-                LobbyRow {
-                    id: LobbyId(2),
-                    name: "friends only".to_owned(),
-                    owner: "carol#9".to_owned(),
-                    locked: true,
-                    members: 1,
-                    seats: 2,
-                },
-            ],
-            fields: vec![
-                field("Lobby name", "", false),
-                field("Password (optional)", "", false),
-                field("Search lobbies", "friends", true),
-            ],
-        },
-    )
-}
-
-fn preview_lobby_password() -> MenuView {
-    let mut view = preview_lobbies();
-    view.password = Some(PasswordView {
-        lobby: "friends only".to_owned(),
-        field: field("Lobby password", "", true),
-        error: Some("Wrong password: try again".to_owned()),
-    });
-    view
-}
-
-fn preview_lobby() -> MenuView {
-    logged_in(
-        Page::Lobby,
-        PageView::Lobby(LobbyView {
-            name: "friends only".to_owned(),
-            locked: true,
-            teams: vec![preview_lobby_radiant(), preview_lobby_dire()],
-            spectators: Vec::new(),
-            owner: false,
-            moving: None,
-            settings: preview_lobby_settings(),
-            fields: Vec::new(),
-            me_ready: false,
-            waiting: None,
-            starts_short: false,
-            starting_in_secs: Some(3),
-        }),
-    )
-}
-
-fn preview_lobby_owner() -> MenuView {
-    logged_in(
-        Page::Lobby,
-        PageView::Lobby(LobbyView {
-            name: "friends only".to_owned(),
-            locked: true,
-            teams: vec![preview_lobby_owner_radiant(), preview_lobby_owner_dire()],
-            spectators: Vec::new(),
-            owner: true,
-            moving: Some("alice".to_owned()),
-            settings: preview_lobby_owner_settings(),
-            fields: vec![field("Password (empty removes it)", "", false)],
-            me_ready: false,
-            waiting: None,
-            starts_short: false,
-            starting_in_secs: Some(3),
-        }),
-    )
-}
-
 fn preview_result() -> MenuView {
     logged_in(
         Page::Result,
@@ -588,120 +513,3 @@ fn preview_dire() -> MenuView {
     view
 }
 
-fn preview_lobby_owner_dire() -> TeamRow {
-    TeamRow {
-        name: "DIRE".to_owned(),
-        slots: vec![
-            SlotRow {
-                slot: 2,
-                who: Some(MemberRow {
-                    account: AccountId(12),
-                    name: "alice".to_owned(),
-                    ready: false,
-                    me: false,
-                }),
-            },
-            SlotRow { slot: 3, who: None },
-        ],
-    }
-}
-
-fn preview_lobby_owner_radiant() -> TeamRow {
-    TeamRow {
-        name: "RADIANT".to_owned(),
-        slots: vec![
-            SlotRow {
-                slot: 0,
-                who: Some(MemberRow {
-                    account: AccountId(9),
-                    name: "carol".to_owned(),
-                    ready: true,
-                    me: true,
-                }),
-            },
-            SlotRow { slot: 1, who: None },
-        ],
-    }
-}
-
-fn preview_lobby_dire() -> TeamRow {
-    TeamRow {
-        name: "DIRE".to_owned(),
-        slots: vec![
-            SlotRow {
-                slot: 2,
-                who: Some(MemberRow {
-                    account: AccountId(12),
-                    name: "alice".to_owned(),
-                    ready: false,
-                    me: true,
-                }),
-            },
-            SlotRow { slot: 3, who: None },
-        ],
-    }
-}
-
-fn preview_lobby_radiant() -> TeamRow {
-    TeamRow {
-        name: "RADIANT".to_owned(),
-        slots: vec![
-            SlotRow {
-                slot: 0,
-                who: Some(MemberRow {
-                    account: AccountId(9),
-                    name: "carol".to_owned(),
-                    ready: true,
-                    me: false,
-                }),
-            },
-            SlotRow { slot: 1, who: None },
-        ],
-    }
-}
-
-fn preview_lobby_owner_settings() -> SettingsView {
-    SettingsView {
-        mode: "Practice".to_owned(),
-        audience: "Humans and Bots",
-        locked: true,
-        modes: vec![
-            ModeRow {
-                id: RulesetId("squad".to_owned()),
-                name: "Squad".to_owned(),
-                chosen: false,
-            },
-            ModeRow {
-                id: RulesetId("practice".to_owned()),
-                name: "Practice".to_owned(),
-                chosen: true,
-            },
-        ],
-        audiences: vec![
-            AudienceRow {
-                audience: bota_radovid::proto::Audience::Everyone,
-                name: "Humans and Bots",
-                chosen: true,
-            },
-            AudienceRow {
-                audience: bota_radovid::proto::Audience::HumansOnly,
-                name: "Humans",
-                chosen: false,
-            },
-        ],
-        cheats: Some(false),
-        editable: true,
-    }
-}
-
-fn preview_lobby_settings() -> SettingsView {
-    SettingsView {
-        mode: "Practice".to_owned(),
-        audience: "Humans and Bots",
-        locked: true,
-        modes: Vec::new(),
-        audiences: Vec::new(),
-        cheats: Some(true),
-        editable: false,
-    }
-}

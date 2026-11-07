@@ -86,6 +86,8 @@ impl Page {
     }
 }
 
+mod lobby_ui;
+
 /// What the player does in the menu.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Act {
@@ -123,7 +125,7 @@ pub enum Act {
     Rejoin(MatchId),
     /// Watches one's own running match.
     Watch(MatchId),
-    CreateLobby,
+    LobbyUi(super::LobbyAction),
     /// Joins a listed lobby: an open one at once, a locked one through the password dialog.
     JoinLobby(LobbyId),
     /// Lists the open lobbies whose name or owner holds the search typed (all of them without).
@@ -189,13 +191,6 @@ pub enum Act {
     /// The owner picks a member to move with the next slot clicked.
     MoveMember(AccountId),
     KickMember(AccountId),
-    /// The owner's settings of the lobby one sits in.
-    ConfigureMode(RulesetId),
-    ConfigureAudience(Audience),
-    /// Turns the game's cheats on or off, for a mode that has them.
-    ConfigureCheats(bool),
-    /// Sets the password typed (empty removes it).
-    ConfigurePassword,
 }
 
 /// The rules a local lobby plays by. They choose the map and nothing else: the lobby has
@@ -496,6 +491,7 @@ pub(super) enum Asked {
     Rejoin(MatchId),
     Watch(MatchId),
     Lobby,
+    LobbyUi,
     /// A join of a listed lobby.
     Join(LobbyId),
     /// The start of a Demo Hero.
@@ -571,6 +567,7 @@ pub struct MenuCore {
     pub(super) status: Option<Status>,
     asked: Vec<(u32, Asked)>,
     pub(super) lobbies: Vec<LobbySummary>,
+    pub(super) lobby_ui: super::lobby_controls::Controls,
     /// The password dialog of a locked lobby being joined; it has the keyboard while it is up.
     pub(super) join_prompt: Option<JoinPrompt>,
     /// The member the owner is about to move.
@@ -767,6 +764,7 @@ impl MenuCore {
             status: None,
             asked: Vec::new(),
             lobbies: Vec::new(),
+            lobby_ui: Default::default(),
             join_prompt: None,
             moving: None,
             lobby_secret: None,
@@ -878,13 +876,14 @@ impl MenuCore {
 
     /// The button of the page's form that has the keyboard, if one has.
     pub fn button_focus(&self) -> Option<&Act> {
-        self.form.focused_button()
+        self.active_lobby_form().focused_button()
     }
 
     /// Whether the page has a text field the player may type into (an input method is then
     /// wanted).
     pub fn wants_text(&self) -> bool {
-        !matches!(self.page, Page::Game | Page::Settings) && !self.form.fields().is_empty()
+        !matches!(self.page, Page::Game | Page::Settings)
+            && !self.active_lobby_form().fields().is_empty()
     }
 
     /// The player confirmed quitting, once.
@@ -1042,6 +1041,7 @@ impl MenuCore {
         self.reconnect = self.last_seat.take();
         self.page = self.rest_page(left);
         self.form = Form::new(self.form_kind(), &self.prefs);
+        self.lobby_browser_controls();
         self.tell(
             format!(
                 "Could not join the game: {}",
@@ -1084,6 +1084,7 @@ impl MenuCore {
             self.page = page;
         }
         self.form = Form::new(self.form_kind(), &self.prefs);
+        self.lobby_browser_controls();
     }
 
     pub fn return_from_results(&mut self) {
@@ -1124,7 +1125,7 @@ impl MenuCore {
             Page::Login => FormKind::Login,
             Page::Register => FormKind::Register,
             Page::Lobbies => FormKind::Lobby,
-            Page::Lobby => FormKind::Room,
+
             Page::LocalLobby => FormKind::Host,
             Page::Replays => FormKind::Replay,
             Page::Leaderboard => FormKind::Leaderboard,
@@ -1289,6 +1290,7 @@ impl MenuCore {
         {
             self.accepted.update(client);
         }
+        self.poll_lobby_ui();
         self.shelf.take();
         if let Some(leaving) = self
             .leaving
@@ -1462,6 +1464,9 @@ impl MenuCore {
                     self.join_prompt = None;
                 }
                 self.sit(state);
+                if matches!(asked, Asked::LobbyUi) {
+                    self.lobby_editor_saved();
+                }
             }
             Reply::Queued { .. } | Reply::QueuesJoined { .. } => self.status = None,
             _ => {}
@@ -1526,6 +1531,13 @@ impl MenuCore {
     }
 
     fn refused(&mut self, error: &Error, asked: Asked) {
+        if matches!(asked, Asked::LobbyUi) {
+            if let Some(editor) = &mut self.lobby_ui.editor {
+                editor.saving = None;
+                editor.error = Some(error_text(error));
+            }
+            return;
+        }
         // A join refused for whatever reason may be a list out of date (the lobby full, locked,
         // started or gone since): the list is asked again, as the search typed asks it.
         if matches!(asked, Asked::Join(_)) && self.page == Page::Lobbies {
@@ -1577,7 +1589,7 @@ impl MenuCore {
             {
                 // The dialog stays for another try.
                 let why = match error {
-                    Error::BadLobbyPassword => "Wrong password: try again".to_owned(),
+                    Error::BadLobbyPassword => "Wrong password.".to_owned(),
                     other => error_text(other),
                 };
                 if let Some(prompt) = &mut self.join_prompt {
@@ -1811,9 +1823,20 @@ impl MenuCore {
             self.play.open = false;
             self.play.info = None;
         }
+        if self
+            .lobby_ui
+            .editor
+            .as_ref()
+            .is_some_and(|editor| editor.saving != Some(super::lobby_controls::Saving::Create))
+        {
+            self.lobby_ui.editor = None;
+        }
+        self.lobby_ui.open = None;
+        self.lobby_ui.chat.focused = false;
         self.page = page;
         self.join_prompt = None;
         self.form = Form::new(self.form_kind(), &self.prefs);
+        self.lobby_browser_controls();
     }
 
     fn go(&mut self, page: Page) {
@@ -1944,7 +1967,7 @@ impl MenuCore {
             | Act::Decline(_)
             | Act::Rejoin(_)
             | Act::Watch(_)
-            | Act::CreateLobby
+            | Act::LobbyUi(_)
             | Act::JoinLobby(_)
             | Act::SearchLobbies
             | Act::LobbyPassword(_)
@@ -1957,10 +1980,7 @@ impl MenuCore {
             | Act::LobbySlot(_)
             | Act::MoveMember(_)
             | Act::KickMember(_)
-            | Act::ConfigureMode(_)
-            | Act::ConfigureAudience(_)
-            | Act::ConfigureCheats(_)
-            | Act::ConfigurePassword => self.act_lobby(act),
+            => self.act_lobby(act),
             Act::OpenReplay(_)
             | Act::DeleteReplay(_)
             | Act::WatchReplay(_)
@@ -2049,11 +2069,11 @@ impl MenuCore {
         match act {
             Act::Focus(at) => self.keyboard().focus(at),
             Act::Type(typed) => {
-                self.keyboard().type_in(&typed);
+                self.lobby_type(Some(&typed));
                 self.edit_leaderboard();
             }
             Act::Erase => {
-                self.keyboard().erase();
+                self.lobby_type(None);
                 self.edit_leaderboard();
             }
             Act::NextField => self.keyboard().next(),
@@ -2076,7 +2096,7 @@ impl MenuCore {
             Act::Decline(proposal) => self.ask(ClientMsg::MatchDecline { proposal }, Asked::Other),
             Act::Rejoin(id) => self.enter(id, false),
             Act::Watch(id) => self.enter(id, true),
-            Act::CreateLobby => self.create_lobby(),
+            Act::LobbyUi(action) => self.lobby_action(action),
             Act::JoinLobby(lobby) => self.join_lobby(lobby),
             Act::SearchLobbies => self.search_lobbies(),
             Act::LobbyPassword(true) => self.send_lobby_password(),
@@ -2101,15 +2121,6 @@ impl MenuCore {
             Act::MoveMember(id) => self.moving = (self.moving != Some(id)).then_some(id),
             Act::KickMember(account) => {
                 self.lobby_ask(|lobby| ClientMsg::LobbyKick { lobby, account })
-            }
-            Act::ConfigureMode(ruleset) => self.configure(Some(ruleset), None, None),
-            Act::ConfigureAudience(audience) => self.configure(None, Some(audience), None),
-            Act::ConfigureCheats(on) => {
-                self.lobby_ask(|lobby| ClientMsg::LobbyCheats { lobby, on });
-            }
-            Act::ConfigurePassword => {
-                let typed = self.form.take_secret(0);
-                self.configure(None, None, Some((!typed.is_empty()).then_some(typed)));
             }
             Act::Rules(rules) => {
                 self.prefs.host_rules = rules;
@@ -2136,7 +2147,12 @@ impl MenuCore {
             Act::OpenReplayFile => self.library.pick_file(),
             Act::WatchReplay(match_id) => self.watch_replay(match_id),
             Act::PlainAnyway => self.direct(false, true),
-            Act::Dismiss => self.status = None,
+            Act::Dismiss => {
+                self.status = None;
+                if let Some(editor) = &mut self.lobby_ui.editor {
+                    editor.error = None;
+                }
+            }
             Act::RetryService => {
                 if self.reconnecting() {
                     self.retry_at = Some(Instant::now());
@@ -2210,6 +2226,9 @@ impl MenuCore {
     /// back to the top one, then the game under the dashboard, and on the
     /// top page with nothing under it, whether to quit.
     fn back(&mut self) {
+        if self.lobby_ui.dismiss() {
+            return;
+        }
         if self.play.info.take().is_some() {
             return;
         }
@@ -2248,6 +2267,14 @@ impl MenuCore {
     }
 
     fn submit(&mut self) {
+        if self.lobby_ui.editor.is_some() {
+            self.save_lobby_editor();
+            return;
+        }
+        if self.lobby_ui.chat.focused {
+            self.lobby_ui.chat.send();
+            return;
+        }
         if self.join_prompt.is_some() {
             self.send_lobby_password();
             return;
@@ -2280,7 +2307,7 @@ impl MenuCore {
             Page::Lobbies if self.form.focused_field() == Some(SEARCH_FIELD) => {
                 self.search_lobbies();
             }
-            Page::Lobbies => self.create_lobby(),
+            Page::Lobbies => self.lobby_action(super::LobbyAction::Create),
             _ => {}
         }
     }
@@ -2334,6 +2361,8 @@ impl MenuCore {
 
     fn logout(&mut self) {
         self.accepted.clear();
+        self.lobby_ui = Default::default();
+        self.lobby_secret = None;
         // The session is forgotten here at once; the service is told when a link is open (one
         // is not opened for it: a session left there expires by itself).
         let live = self.link_ready();
@@ -2370,59 +2399,18 @@ impl MenuCore {
         }
     }
 
-    fn create_lobby(&mut self) {
-        let name = self.form.value(0).trim().to_owned();
-        let password = self.form.take_secret(1);
-        let Some(ruleset) = self.client.as_ref().and_then(default_lobby_mode) else {
-            self.tell(
-                "The service offers no game this client can play".to_owned(),
-                true,
-            );
-            return;
-        };
-        self.lobby_secret = (!password.is_empty()).then(|| password.clone());
-        let msg = ClientMsg::LobbyCreate {
-            ruleset,
-            name,
-            audience: Audience::Everyone,
-            password: (!password.is_empty()).then_some(Secret(password)),
-        };
-        self.ask(msg, Asked::Lobby);
-    }
-
-    /// The owner's change of the lobby's settings: what is not named stays as it is, the password
-    /// being the one the owner set (the service never tells it back).
-    fn configure(
-        &mut self,
-        ruleset: Option<RulesetId>,
-        audience: Option<Audience>,
-        password: Option<Option<String>>,
-    ) {
-        let Some((state, _)) = &self.lobby else {
-            return;
-        };
-        let (ruleset, audience) = (
-            ruleset.unwrap_or_else(|| state.ruleset.clone()),
-            audience.unwrap_or(state.audience),
-        );
-        if let Some(password) = password {
-            self.lobby_secret = password;
-        }
-        let password = self.lobby_secret.clone().map(Secret);
-        self.lobby_ask(|lobby| ClientMsg::LobbyConfigure {
-            lobby,
-            ruleset,
-            audience,
-            password,
-        });
-    }
-
     /// The form with the keyboard: the password dialog's while it is up, else the page's.
-    fn keyboard(&mut self) -> &mut Form {
-        match &mut self.join_prompt {
-            Some(prompt) => &mut prompt.form,
-            None => &mut self.form,
+    pub(super) fn keyboard(&mut self) -> &mut Form {
+        if let Some(prompt) = &mut self.join_prompt {
+            return &mut prompt.form;
         }
+        if let Some(editor) = &mut self.lobby_ui.editor {
+            return &mut editor.form;
+        }
+        if self.lobby_ui.chat.focused {
+            return &mut self.lobby_ui.chat.input;
+        }
+        &mut self.form
     }
 
     /// Joins a listed lobby: an open one at once, a locked one once its password is typed into
@@ -2442,6 +2430,8 @@ impl MenuCore {
 
     /// Opens the password dialog of a locked lobby.
     fn ask_password(&mut self, lobby: LobbyId, name: String) {
+        self.lobby_ui.hide_join_password = true;
+        self.lobby_ui.selected = Some(lobby);
         self.join_prompt = Some(JoinPrompt {
             lobby,
             name,
@@ -2606,7 +2596,7 @@ impl MenuCore {
 }
 
 /// The search field of the LOBBIES page's form.
-const SEARCH_FIELD: usize = 2;
+const SEARCH_FIELD: usize = 0;
 
 /// The ruleset a new lobby is made for: the one the service names (its standard rules), else the
 /// first it offers. The host changes it in the lobby.

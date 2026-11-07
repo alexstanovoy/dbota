@@ -8,7 +8,7 @@ use bevy::prelude::*;
 use super::core::Act;
 use super::kit::{Kit, Tone};
 use super::view::{
-    ConfirmView, FinishedRow, GameRow, MenuView, OfferBox, PasswordView, SearchRow, WaitRow,
+    ConfirmView, FinishedRow, GameRow, MenuView, OfferBox, SearchRow, WaitRow,
 };
 use crate::theme;
 use crate::ui;
@@ -76,12 +76,15 @@ pub fn draw(kit: &mut Kit, root: Entity, view: &MenuView) {
         popup(kit, root, confirm);
     }
     if let Some(password) = view.password.as_ref().filter(|_| view.covers()) {
-        password_popup(kit, root, password);
+        super::lobby_editor::password(kit, root, password, view.lobby_ui.hide_join_password);
+    }
+    if view.confirm.is_none() && view.password.is_none() && view.offer.is_none() {
+        super::lobby_editor::draw(kit, root, &view.lobby_ui);
     }
 }
 
 /// Status belongs over the page: inserting a flex row under its tabs moves every hit target.
-fn status_line(kit: &mut Kit, root: Entity, status: &super::core::Status) {
+pub(super) fn status_line(kit: &mut Kit, root: Entity, status: &super::core::Status) {
     let row = kit.node(
         root,
         Node {
@@ -140,45 +143,6 @@ fn popup(kit: &mut Kit, root: Entity, confirm: &ConfirmView) {
 
 /// The password of a locked lobby asked in Dota's popup: the lobby's name, the field, what the
 /// last try was told, OK and Cancel.
-fn password_popup(kit: &mut Kit, root: Entity, password: &PasswordView) {
-    let card = popup_card(kit, root);
-    let ink = theme::INK_2;
-    let title = kit.typed(card, "LOBBY PASSWORD", theme::TITLE, theme::INK_1);
-    kit.commands.entity(title).insert(Node {
-        margin: UiRect::bottom(px(15)),
-        ..default()
-    });
-    kit.text(
-        card,
-        format!("{} has a password. Type it to join.", password.lobby),
-        20.0,
-        ink,
-    );
-    let column = kit.node(
-        card,
-        Node {
-            width: px(320),
-            flex_direction: FlexDirection::Column,
-            margin: UiRect::top(px(15)),
-            ..default()
-        },
-    );
-    super::pages::field_box(kit, column, 0, &password.field);
-    if let Some(error) = &password.error {
-        let said = kit.text(card, error.clone(), 18.0, theme::ERROR_TEXT);
-        kit.commands.entity(said).insert(Node {
-            margin: UiRect::top(px(10)),
-            ..default()
-        });
-    }
-    popup_answers(
-        kit,
-        card,
-        Act::LobbyPassword(true),
-        Act::LobbyPassword(false),
-    );
-}
-
 /// The screen dimmed and the popup's card over it.
 fn popup_card(kit: &mut Kit, root: Entity) -> Entity {
     let dim = kit

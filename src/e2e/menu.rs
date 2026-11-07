@@ -305,6 +305,15 @@ fn uniform_buttons(client: &mut Client, page: Page) {
     let shown = buttons(client);
     assert!(!shown.is_empty(), "{page:?}: buttons");
     let mut widths: BTreeMap<i32, Vec<(String, f32)>> = BTreeMap::new();
+    let columns = {
+        let world = client.world_mut();
+        world
+            .query::<(&Name, &Node)>()
+            .iter(world)
+            .filter(|(_, node)| matches!(node.width, Val::Percent(_)))
+            .map(|(name, _)| name.to_string())
+            .collect::<Vec<_>>()
+    };
     for (name, w, h, one_line) in &shown {
         assert!(one_line, "{page:?}: '{name}' may wrap");
         // A lone glyph (the close cross) is a square of its own; words share their height's width.
@@ -313,7 +322,7 @@ fn uniform_buttons(client: &mut Client, page: Page) {
                 (w - h).abs() < 0.5,
                 "{page:?}: '{name}' {w} by {h}, not square"
             );
-        } else {
+        } else if !columns.contains(name) {
             widths
                 .entry(h.round() as i32)
                 .or_default()
@@ -474,10 +483,21 @@ fn menu_rectangle(client: &mut Client, label: &str, button: bool) -> Rect {
 }
 
 fn lobby_rectangles(client: &mut Client) -> [Rect; 3] {
-    ["create", "search", "refresh"].map(|label| menu_rectangle(client, label, true))
+    ["create lobby", "lobby or host name", "refresh  ⟳"]
+        .map(|label| menu_rectangle(client, label, true))
 }
 
-fn click_menu_button(client: &mut Client, name: &str) {
+pub(super) fn visible_menu_button(client: &mut Client, target: &str) -> bool {
+    let world = client.world_mut();
+    world
+        .query_filtered::<(&Name, &InheritedVisibility, &ComputedNode), With<Button>>()
+        .iter(world)
+        .any(|(name, shown, node)| {
+            shown.get() && name.as_str() == target && node.size().cmpgt(Vec2::ZERO).all()
+        })
+}
+
+pub(super) fn click_menu_button(client: &mut Client, name: &str) {
     let at = menu_rectangle(client, name, true).center();
     client.mouse(at);
     client.click(MouseButton::Left);
@@ -510,7 +530,8 @@ fn open_password_dialog(
 ) {
     host.menu.act(Act::Go(Page::Lobbies));
     host.fill(&[name, crate::main_menu::tests::PASSWORD]);
-    host.menu.act(Act::CreateLobby);
+    host.menu
+        .act(Act::LobbyUi(crate::main_menu::LobbyAction::Save));
     client.within(Duration::from_secs(30), "the host's lobby created", |_| {
         host.menu.update();
         host.menu.page() == Page::Lobby
@@ -518,7 +539,7 @@ fn open_password_dialog(
     act(client, Act::Go(Page::Lobbies));
     let join = format!("join {name}");
     client.within(Duration::from_secs(30), "the locked lobby listed", |c| {
-        buttons(c).iter().any(|b| b.0 == join && b.1 > 0.0)
+        visible_menu_button(c, &join)
     });
     click_menu_button(client, &join);
     assert!(

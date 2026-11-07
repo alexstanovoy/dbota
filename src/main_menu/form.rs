@@ -19,8 +19,8 @@ pub enum FormKind {
     Lobby,
     /// The password of a locked lobby being joined, in its dialog.
     LobbyPassword,
-    /// The owner's password field in the lobby one sits in.
-    Room,
+    LobbySettings,
+    LobbyChat,
     /// The local lobby page: a lobby hosted on this machine (port, players) and a game joined by
     /// address.
     Host,
@@ -61,7 +61,7 @@ impl Field {
 
 /// What Tab visits on a page's form, in the order it is drawn.
 #[derive(Clone, Debug, PartialEq, Eq)]
-enum Item {
+pub(super) enum Item {
     /// A field, by its index.
     Field(usize),
     Button(Act),
@@ -96,15 +96,17 @@ fn items_of(kind: FormKind, fields: usize) -> Vec<Item> {
         ),
         FormKind::Lobby => vec![
             Item::Field(0),
-            Item::Field(1),
-            Item::Button(Act::CreateLobby),
-            Item::Field(2),
             Item::Button(Act::SearchLobbies),
+            Item::Button(Act::LobbyUi(super::LobbyAction::Create)),
         ],
         FormKind::LobbyPassword => {
             buttons(vec![Act::LobbyPassword(true), Act::LobbyPassword(false)])
         }
-        FormKind::Room => buttons(vec![Act::ConfigurePassword]),
+        FormKind::LobbySettings => buttons(vec![
+            Act::LobbyUi(super::lobby_controls::Action::Save),
+            Act::LobbyUi(super::lobby_controls::Action::Cancel),
+        ]),
+        FormKind::LobbyChat => buttons(vec![Act::LobbyUi(super::lobby_controls::Action::SendChat)]),
         FormKind::Host => vec![
             Item::Field(0),
             Item::Button(Act::Host(false)),
@@ -150,17 +152,22 @@ impl Form {
                 Field::new("Password", "", true, PASSWORD),
                 Field::new("Password again", "", true, PASSWORD),
             ],
-            FormKind::Room => vec![Field::new(
-                "Password (empty removes it)",
-                "",
-                true,
-                MAX_LOBBY_PASSWORD_LEN,
-            )],
-            FormKind::Lobby => vec![
+            FormKind::LobbySettings => vec![
                 Field::new("Lobby name", "", false, MAX_LOBBY_NAME_LEN),
-                Field::new("Password (optional)", "", true, MAX_LOBBY_PASSWORD_LEN),
-                Field::new("Search lobbies", "", false, MAX_LOBBY_NAME_LEN),
+                Field::new("Password", "", true, MAX_LOBBY_PASSWORD_LEN),
             ],
+            FormKind::LobbyChat => vec![Field::new(
+                "Message",
+                "",
+                false,
+                super::lobby_chat::MAX_MESSAGE,
+            )],
+            FormKind::Lobby => vec![Field::new(
+                "Lobby or host name",
+                "",
+                false,
+                MAX_LOBBY_NAME_LEN,
+            )],
             FormKind::LobbyPassword => vec![Field::new(
                 "Lobby password",
                 "",
@@ -224,6 +231,30 @@ impl Form {
             .unwrap_or(0);
         self.items = items;
         self.rows = names.to_vec();
+    }
+
+    pub(super) fn set_controls(&mut self, items: Vec<Item>) {
+        let was = self.items.get(self.focus);
+        self.focus = was
+            .and_then(|old| items.iter().position(|item| item == old))
+            .unwrap_or(0);
+        self.items = items;
+    }
+
+    pub(super) fn put(&mut self, at: usize, value: &str) {
+        if let Some(field) = self.fields.get_mut(at) {
+            field.value = value
+                .chars()
+                .filter(|c| !c.is_control())
+                .take(field.max)
+                .collect();
+        }
+    }
+
+    pub(super) fn secret(&mut self, at: usize, secret: bool) {
+        if let Some(field) = self.fields.get_mut(at) {
+            field.secret = secret;
+        }
     }
 
     pub fn fields(&self) -> &[Field] {
