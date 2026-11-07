@@ -265,6 +265,9 @@ impl EventSight<'_> {
             | EventKind::Missed { target, .. }
             | EventKind::Healed { target, .. } => shown(self.sees_unit(target)),
             EventKind::AbilityCast { caster, .. } => shown(self.sees_unit(caster)),
+            EventKind::AttackLaunched { attacker, .. } => {
+                (told || self.sees_unit(attacker)) && self.placement(subject, true)
+            }
             EventKind::ItemUsed {
                 caster, at: None, ..
             } => shown(caster.is_some_and(|id| self.sees_unit(id))),
@@ -326,6 +329,127 @@ mod tests {
     use bevy::ecs::system::RunSystemOnce;
     use bota_client_core::{ReplayPlayer, Source};
     use bota_proto::{ItemId, ObjectiveKind, ServerMsg, SlotId, Team};
+
+    fn attack_app(viewer: Option<Team>, side_stream: bool) -> (App, EntityId, EntityId) {
+        let replay = ReplayPlayer::from_reader(std::io::Cursor::new(
+            crate::units::tests::replay_of_heroes(2),
+        ));
+        let mut core = Core::new(Source::Replay(Box::new(replay)));
+        for _ in 0..100 {
+            if core.view().is_some() {
+                break;
+            }
+            core.pump(0.1);
+        }
+        let mut view = core.view().expect("snapshot").clone();
+        view.tick += 1;
+        view.viewer = if side_stream { viewer } else { None };
+        view.units[0].seen_by = Some(bota_proto::SeenBy {
+            radiant: true,
+            dire: false,
+        });
+        view.units[1].seen_by = Some(bota_proto::SeenBy {
+            radiant: false,
+            dire: true,
+        });
+        view.units[1].team = Team::Dire;
+        let (first, second) = (view.units[0].id, view.units[1].id);
+        if side_stream {
+            view.units.retain(|unit| unit.id == first);
+            for unit in &mut view.units {
+                unit.seen_by = None;
+            }
+        }
+        core.handle(ServerMsg::Snapshot { view });
+        assert_eq!(
+            core.view().expect("perspective snapshot").viewer,
+            if side_stream { viewer } else { None }
+        );
+        let mut fog = FogGrid::with_seen_cells(256, &[]);
+        fog.team = viewer;
+        fog.on = viewer.is_some();
+        let mut app = App::new();
+        app.insert_non_send(Session(core))
+            .insert_resource(fog)
+            .insert_resource(crate::fog::ProjectileSight {
+                stamp: None,
+                rows: Vec::new(),
+            })
+            .init_resource::<crate::main_menu::GameEpoch>();
+        (app, first, second)
+    }
+
+    #[test]
+    fn attack_launches_require_a_seen_attacker_and_do_not_require_a_seen_target() {
+        for viewer in [Some(Team::Radiant), Some(Team::Dire), None] {
+            let (mut app, first, second) = attack_app(viewer, false);
+            let (facts, placements) = app
+                .world_mut()
+                .run_system_once(move |sight: EventSight| {
+                    let events = [
+                        EventKind::AttackLaunched {
+                            attacker: first,
+                            target: Some(second),
+                        },
+                        EventKind::AttackLaunched {
+                            attacker: second,
+                            target: Some(first),
+                        },
+                        EventKind::AttackLaunched {
+                            attacker: first,
+                            target: None,
+                        },
+                    ];
+                    let facts = events
+                        .iter()
+                        .map(|event| sight.allows(event, EventSubject::Event))
+                        .collect::<Vec<_>>();
+                    let placements = [
+                        sight.allows(
+                            &events[0],
+                            EventSubject::Unit(sight.unit(second).expect("target")),
+                        ),
+                        sight.allows(
+                            &events[1],
+                            EventSubject::Unit(sight.unit(first).expect("target")),
+                        ),
+                    ];
+                    (facts, placements)
+                })
+                .expect("event visibility system");
+            let expected = match viewer {
+                Some(Team::Radiant) => vec![true, false, true],
+                Some(Team::Dire) => vec![false, true, false],
+                _ => vec![true, true, true],
+            };
+            assert_eq!(facts, expected, "viewer={viewer:?}");
+            assert_eq!(
+                placements,
+                [viewer.is_none(); 2],
+                "an unseen attacker or target grants no placement"
+            );
+        }
+    }
+
+    #[test]
+    fn a_side_stream_launch_grants_no_effect_at_an_unseen_point() {
+        let (mut app, attacker, _) = attack_app(Some(Team::Radiant), true);
+        let (fact, point) = app
+            .world_mut()
+            .run_system_once(move |sight: EventSight| {
+                let event = EventKind::AttackLaunched {
+                    attacker,
+                    target: None,
+                };
+                (
+                    sight.allows(&event, EventSubject::Event),
+                    sight.allows(&event, EventSubject::Point(Vec2::from_ints(5000, 5000))),
+                )
+            })
+            .expect("side event visibility");
+        assert!(fact, "the server disclosed the attack");
+        assert!(!point, "the fact disclosed no hidden placement");
+    }
 
     #[test]
     fn public_boss_and_loot_announcements_do_not_grant_hidden_positional_effects() {
