@@ -702,15 +702,41 @@ fn kills_and_last_hits() -> (super::fog_pov::ReplayFile, bota_proto::SlotId) {
         enemy: true,
         at: bota_proto::Vec2::from_ints(camp.0, camp.1),
     });
-    game.driver.act(Intent::AttackAt {
-        at: (camp.0 as f32, camp.1 as f32),
-        unit: None,
+    // Two of the camp's creeps, each struck until it falls: an attack-move may leave the
+    // camp to walk off.
+    let camp_creeps = |driver: &bota_client_core::App| {
+        let view = driver.view()?;
+        let mine = view.player(slot)?.team;
+        let creeps: Vec<_> = view
+            .units
+            .iter()
+            .filter(|u| u.team != mine && u.kind == bota_proto::UnitKind::CreepMelee)
+            .map(|u| (u.id, u.pos))
+            .take(2)
+            .collect();
+        (creeps.len() == 2).then_some(creeps)
+    };
+    game.wait("the camp standing", |driver, _| {
+        camp_creeps(driver).is_some()
     });
+    for (creep, at) in camp_creeps(&game.driver).expect("the camp") {
+        game.driver.act(Intent::AttackAt {
+            at: (at.x.to_f32(), at.y.to_f32()),
+            unit: Some(creep),
+        });
+        game.wait("the creep struck down", |driver, _| {
+            driver.view().is_some_and(|view| view.unit(creep).is_none())
+        });
+    }
     game.wait("two creeps last-hit", |driver, _| {
         driver
             .view()
             .and_then(|view| view.player(slot)?.creep_score)
             .is_some_and(|score| score.last_hits >= 2)
+    });
+    // Back to the river the creeps were chased from, to see the other hero come.
+    game.cheat(Cheat::Teleport {
+        at: bota_proto::Vec2::from_ints(MID.0, MID.1),
     });
     let other = |driver: &bota_client_core::App| {
         let view = driver.view()?;
