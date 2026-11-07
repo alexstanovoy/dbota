@@ -19,8 +19,6 @@ CHUNK = 1 << 20
 
 
 class Handler(http.server.SimpleHTTPRequestHandler):
-    sent = 0
-
     def do_GET(self):
         if self.path != "/endless.bin":
             return super().do_GET()
@@ -29,9 +27,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         self.end_headers()
         chunk = b"\0" * CHUNK
         try:
-            while Handler.sent < ENDLESS_BYTES:
+            for _ in range(ENDLESS_BYTES // CHUNK):
                 self.wfile.write(chunk)
-                Handler.sent += CHUNK
         except (BrokenPipeError, ConnectionResetError):
             pass
 
@@ -60,8 +57,9 @@ class VoiceWorkerTests(unittest.TestCase):
         cls.server.server_close()
         cls.thread.join(timeout=5)
 
-    def test_a_served_pack_past_its_bound_is_given_up_at_the_bound(self):
-        Handler.sent = 0
+    def test_a_served_pack_past_its_bound_is_refused_by_the_worker(self):
+        # What the worker ends with, not what the server managed to push into socket buffers before
+        # the abort arrived: that count depends on the machine's load, the bound does not.
         result = self.page.evaluate("""async () => {
           const module = await import('./import/dbota_import.js');
           await module.default();
@@ -75,10 +73,37 @@ class VoiceWorkerTests(unittest.TestCase):
           return {limit, error: answer.error || null, records: !!answer.records};
         }""")
         self.assertFalse(result["records"], result)
-        self.assertIn(f"exceeds {result['limit']} bytes", result["error"] or "", result)
-        # Given up at the bound: what the server could still push into the connection's buffers
-        # besides, not the whole endless pack.
-        self.assertLess(Handler.sent, result["limit"] + (32 << 20), result)
+        self.assertEqual(result["error"], f"endless.bin exceeds {result['limit']} bytes", result)
+
+    def test_a_pack_past_its_bound_is_read_no_further_than_the_chunk_that_crosses_it(self):
+        # The worker reads a served pack with `responseBytes`. A stream that serves a chunk only when
+        # asked for one counts exactly what the reader took, with no network in between.
+        result = self.page.evaluate("""async (chunk) => {
+          const module = await import('./import/dbota_import.js');
+          await module.default();
+          const limit = module.voice_pack_limit();
+          const { responseBytes } = await import('./cache.js');
+          let taken = 0;
+          let cancelled = false;
+          const body = new ReadableStream(
+            {
+              pull(controller) { taken += chunk; controller.enqueue(new Uint8Array(chunk)); },
+              cancel() { cancelled = true; },
+            },
+            { highWaterMark: 0 },
+          );
+          let error = null;
+          try {
+            await responseBytes(new Response(body), limit, 'endless.bin');
+          } catch (e) {
+            error = e.message;
+          }
+          return {limit, taken, cancelled, error};
+        }""", CHUNK)
+        self.assertEqual(result["error"], f"endless.bin exceeds {result['limit']} bytes", result)
+        self.assertEqual(result["limit"] % CHUNK, 0, result)
+        self.assertEqual(result["taken"], result["limit"] + CHUNK, result)
+        self.assertTrue(result["cancelled"], result)
 
 
 if __name__ == "__main__":
