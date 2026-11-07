@@ -239,9 +239,12 @@ impl Spectated {
             .insert_resource(bevy::time::TimeUpdateStrategy::ManualDuration(
                 Duration::from_millis(100),
             ));
-        game.wait("the spectator minimap ready", |_, client| {
-            client.world().resource::<crate::minimap::PhotoTaken>().0
-        });
+        // Asset readiness needs UI frames, not ACK-driven game progress. Leave the driver
+        // unpumped here so loading does not drive a recorded tick on every UI frame.
+        game.client
+            .within(SOON, "the spectator minimap ready", |client| {
+                client.world().resource::<crate::minimap::PhotoTaken>().0
+            });
         game
     }
 
