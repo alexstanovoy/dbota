@@ -20,22 +20,22 @@ fn trim_once(
         return;
     }
     *done = true;
-    trim();
+    let released = give_back_free_memory();
+    info!("heap: free memory given back after loading: {released}");
 }
 
+/// Returns the free pages of the heap to the system; true when there were any.
 #[cfg(all(target_os = "linux", target_env = "gnu"))]
-fn trim() {
+pub fn give_back_free_memory() -> bool {
     unsafe extern "C" {
         fn malloc_trim(pad: usize) -> std::ffi::c_int;
     }
     // SAFETY: malloc_trim only returns free pages of glibc's own heap to the
     // system; it takes no pointers and leaves every allocation in place.
-    let released = unsafe { malloc_trim(0) };
-    info!(
-        "heap: free memory given back after loading: {}",
-        released != 0
-    );
+    unsafe { malloc_trim(0) != 0 }
 }
 
 #[cfg(not(all(target_os = "linux", target_env = "gnu")))]
-fn trim() {}
+pub fn give_back_free_memory() -> bool {
+    false
+}

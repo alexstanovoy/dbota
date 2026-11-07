@@ -45,6 +45,9 @@ mod items;
 mod kill_credit;
 mod loot_names;
 mod lotus;
+// Measures the heap through glibc.
+#[cfg(all(target_os = "linux", target_env = "gnu"))]
+mod memory;
 mod menu;
 mod minimap;
 mod outposts;

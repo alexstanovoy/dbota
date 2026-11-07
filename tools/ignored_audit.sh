@@ -12,6 +12,7 @@ while IFS= read -r file; do
     case "$file" in
         crates/dbota_import/tests/*) ;; # gate step install-tests: cargo test -p dbota_import -- --ignored
         src/tip_content.rs) ;;          # gate step tip-content
+        src/e2e/memory.rs) ;;           # run in a process of its own by its test clients_one_after_another_leave_no_memory_behind
         tests/*.rs)                     # tools/visual_check.sh, one `--test NAME` per file
             name=$(basename "$file" .rs)
             grep -q -- "--test $name\b" tools/visual_check.sh || { echo "ignored_audit: $file has ignored tests that tools/visual_check.sh does not run"; bad=1; } ;;

@@ -826,7 +826,7 @@ fn parse_size(text: &str) -> Result<(u32, u32), String> {
 fn cache_source(app: &mut App, root: &std::path::Path) -> AssetSourceBuilder {
     let budget = cachefs::DecodeBudget::default();
     let block = cachefs::BlockTextures::default();
-    app.insert_resource(budget.clone())
+    app.insert_resource(cachefs::Settler::new(budget.clone()))
         .insert_resource(block.clone())
         .add_plugins(cachefs::plugin);
     let root = root.to_path_buf();

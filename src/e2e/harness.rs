@@ -4,6 +4,7 @@
 use std::io::{BufRead, BufReader};
 use std::path::PathBuf;
 use std::process::{Child, ChildStdout, Command, Stdio};
+use std::rc::{Rc, Weak};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::{Duration, Instant};
 
@@ -96,15 +97,13 @@ pub struct Server {
     _output: BufReader<ChildStdout>,
     pub address: String,
     // Last: the server is gone before the next test's may start.
-    _turn: std::sync::MutexGuard<'static, ()>,
+    _turn: Rc<Turn>,
 }
 
 impl Server {
     /// The server with `extra` options besides the defaults above, which they may set.
     pub fn start(seats: u8, extra: &[&str]) -> Server {
-        let turn = TURN
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let turn = turn();
         let seats = seats.to_string();
         let mut args = vec!["--players", &seats];
         args.extend(["--bind", "127.0.0.1", "--port", "0", "--cheats"]);
@@ -206,14 +205,89 @@ impl Drop for Scratch {
 /// The client, all of it but the window and the GPU.
 pub struct Client {
     pub app: App,
+    /// Disconnected once the asset server and every load it started have ended (see
+    /// [`LastLoad`]).
+    loads: std::sync::mpsc::Receiver<()>,
     scratch: Scratch,
+    // Last: the next test's clients may start once this one's loads have ended.
+    _turn: Rc<Turn>,
 }
 
-/// One match at a time in the process, held by its [`Server`]: each client loads the whole
-/// asset cache on the process's few IO threads, and a dozen at once starve one another (models
-/// not drawn for many seconds). A test holds one server at a time. One that failed holding the
-/// turn poisons it; the next is no worse for that.
+/// A loader for no file, registered with each client's asset server only to be dropped with it.
+///
+/// Bevy cancels a load when its asset's handles are dropped, but only in a frame of the app. A
+/// test that drops its client mid-load (most do: they end once what they look at is there) leaves
+/// the loads running on the process's IO threads, each holding the asset server and what it has
+/// decoded until it ends. The next tests' clients then load beside them, and the process held
+/// gigabytes no client used. The server, and so this loader, lives as long as its last load.
+#[derive(TypePath)]
+struct LastLoad(#[expect(dead_code, reason = "held to be dropped")] std::sync::mpsc::Sender<()>);
+
+impl bevy::asset::AssetLoader for LastLoad {
+    type Asset = bevy::asset::LoadedFolder;
+    type Settings = ();
+    type Error = std::io::Error;
+
+    async fn load(
+        &self,
+        _: &mut dyn bevy::asset::io::Reader,
+        _: &(),
+        _: &mut bevy::asset::LoadContext<'_>,
+    ) -> Result<Self::Asset, Self::Error> {
+        Err(std::io::Error::other(
+            "no file is loaded by the test harness's marker",
+        ))
+    }
+}
+
+impl Drop for Client {
+    /// Ends the app and waits for the loads it started, then gives the heap they freed back to
+    /// the system, as the process of a client that ends would: the next test starts with what
+    /// this one loaded gone.
+    fn drop(&mut self) {
+        drop(std::mem::replace(&mut self.app, App::empty()));
+        // A failed test is told at once; its loads end by themselves.
+        if std::thread::panicking() {
+            return;
+        }
+        let ended = self.loads.recv_timeout(PATIENCE);
+        assert!(
+            matches!(ended, Err(std::sync::mpsc::RecvTimeoutError::Disconnected)),
+            "the ended client's asset server still lives after {PATIENCE:?}: a load of it never ends"
+        );
+        crate::heap::give_back_free_memory();
+    }
+}
+
+/// One test with clients or servers at a time in the process: each client loads the whole asset
+/// cache on the process's few IO threads, and a dozen at once starve one another (models not
+/// drawn for many seconds) and hold gigabytes together. The first client or server of a test
+/// takes the turn, on the thread the test runs on, and its last one gives it back. One that failed
+/// holding the turn poisons it; the next is no worse for that.
 static TURN: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// A hold on [`TURN`], shared by the clients and servers of the test that took it.
+struct Turn(#[expect(dead_code, reason = "held to be dropped")] std::sync::MutexGuard<'static, ()>);
+
+thread_local! {
+    /// The turn this thread's test holds, while any of its clients or servers lives.
+    static HELD: std::cell::RefCell<Weak<Turn>> = const { std::cell::RefCell::new(Weak::new()) };
+}
+
+/// This test's hold on [`TURN`]: the one it has, or a new one once the other tests' end.
+fn turn() -> Rc<Turn> {
+    HELD.with(|held| {
+        if let Some(turn) = held.borrow().upgrade() {
+            return turn;
+        }
+        let turn = Rc::new(Turn(
+            TURN.lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner),
+        ));
+        *held.borrow_mut() = Rc::downgrade(&turn);
+        turn
+    })
+}
 
 impl Client {
     pub fn replay_dir(&self) -> PathBuf {
@@ -283,6 +357,7 @@ impl Client {
     }
 
     fn build(extra: &[&str], core: Option<Core>, files: &[(&str, &str)]) -> Client {
+        let turn = turn();
         let scratch = Scratch::new();
         let config = scratch.0.join(crate::config::FILE_NAME);
         for (name, text) in files {
@@ -356,7 +431,16 @@ impl Client {
         }
         app.finish();
         app.cleanup();
-        Client { app, scratch }
+        let (last_load, loads) = std::sync::mpsc::channel();
+        app.world()
+            .resource::<AssetServer>()
+            .register_loader(LastLoad(last_load));
+        Client {
+            app,
+            loads,
+            scratch,
+            _turn: turn,
+        }
     }
 
     /// A file of the folder of the client's settings, as it is on disk now.

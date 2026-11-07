@@ -68,6 +68,8 @@ struct InFlight {
     waiting: Vec<Waker>,
     /// Frames since a texture last arrived while some were in flight.
     idle: u32,
+    /// The app that settles the budget has ended: no frame will make room again.
+    ended: bool,
 }
 
 #[derive(Default)]
@@ -77,10 +79,39 @@ struct ResidentImages {
 }
 
 /// Decode allowances shared by the reader and the systems that settle uploads.
-#[derive(Resource, Clone, Default)]
+#[derive(Clone, Default)]
 pub struct DecodeBudget {
     in_flight: Arc<Mutex<InFlight>>,
     resident: Arc<Mutex<ResidentImages>>,
+}
+
+/// The app's hold on the decode budget, through which its frames settle it.
+///
+/// The reader outlives the app: the asset server it is part of lives as long as its last load.
+/// When the app ends, a read waiting for room would wait for a frame that never comes, and its
+/// load would keep the asset server, and all it loaded, for the rest of the process. So the reads
+/// waiting then, and those after, end refused.
+#[derive(Resource)]
+pub struct Settler(DecodeBudget);
+
+impl Settler {
+    pub fn new(budget: DecodeBudget) -> Settler {
+        Settler(budget)
+    }
+}
+
+impl Drop for Settler {
+    fn drop(&mut self) {
+        let mut flight = self
+            .0
+            .in_flight
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        flight.ended = true;
+        flight.textures.clear();
+        flight.bytes = 0;
+        DecodeBudget::wake(&mut flight);
+    }
 }
 
 impl DecodeBudget {
@@ -177,12 +208,19 @@ struct Take<'a> {
 }
 
 impl Future for Take<'_> {
-    type Output = ();
+    type Output = Result<(), AssetReaderError>;
 
-    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<()> {
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let Ok(mut flight) = self.budget.in_flight.lock() else {
-            return Poll::Ready(());
+            return Poll::Ready(Ok(()));
         };
+        if flight.ended {
+            let why = format!(
+                "{}: the client that takes textures in has ended",
+                self.path.display()
+            );
+            return Poll::Ready(Err(AssetReaderError::Io(std::io::Error::other(why).into())));
+        }
         if flight.bytes > 0 && flight.bytes + self.bytes > DECODE_BUDGET {
             flight.waiting.push(cx.waker().clone());
             return Poll::Pending;
@@ -191,7 +229,7 @@ impl Future for Take<'_> {
         if let Some(old) = flight.textures.insert(self.path.to_path_buf(), self.bytes) {
             flight.bytes -= old;
         }
-        Poll::Ready(())
+        Poll::Ready(Ok(()))
     }
 }
 
@@ -246,9 +284,10 @@ fn arrived(
     mut added: MessageReader<AssetEvent<Image>>,
     mut failed: MessageReader<bevy::asset::AssetLoadFailedEvent<Image>>,
     server: Res<AssetServer>,
-    budget: Res<DecodeBudget>,
+    settler: Res<Settler>,
     mut due: ResMut<DueTextures>,
 ) {
+    let budget = &settler.0;
     for event in added.read() {
         if let AssetEvent::Added { id } = event
             && let Some(path) = server.get_path(*id)
@@ -270,7 +309,8 @@ fn arrived(
     }
 }
 
-fn settle(mut due: ResMut<DueTextures>, budget: Res<DecodeBudget>) {
+fn settle(mut due: ResMut<DueTextures>, settler: Res<Settler>) {
+    let budget = &settler.0;
     for path in due.0.drain(..) {
         budget.settle(&path);
     }
@@ -362,8 +402,7 @@ impl CacheReader {
         if png {
             self.budget.retain(path, bytes).map_err(failed)?;
         }
-        self.budget.take(path, bytes).await;
-        Ok(())
+        self.budget.take(path, bytes).await
     }
 }
 
