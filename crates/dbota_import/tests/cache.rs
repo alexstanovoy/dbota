@@ -406,6 +406,8 @@ fn made_by_the_importer(rel: &str, manifest: &str) -> bool {
     rel.starts_with("icons/abilities/")
         || rel.starts_with("icons/items/")
         || rel.starts_with("sounds/vo/")
+        // Each hero's voice pack, made from the install's response rules.
+        || rel.starts_with("sounds/voice/")
         || rel.starts_with("models/tree")
         || rel == "text/styles.json"
         // The limits of the install's sound events, which the manifest-only export never wrote.
