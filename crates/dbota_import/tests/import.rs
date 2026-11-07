@@ -118,7 +118,8 @@ fn the_plan_takes_every_line_and_the_tooltips() {
          text ability 3 pudge_innate_graft_flesh\n",
     )
     .expect("a plan");
-    assert_eq!(plan.items.len(), 13);
+    // The 13 items the lines and ids name, and the voice pack of the one hero of the ids.
+    assert_eq!(plan.items.len(), 14);
     assert!(matches!(
         &plan.items[0],
         Item::Model { anims, skeleton: true, .. } if anims == &["idle"]
@@ -158,8 +159,13 @@ fn the_plan_takes_every_line_and_the_tooltips() {
             if wanted.names == ["item_boots", "nevermore_requiem", "pudge_innate_graft_flesh"]
                 && wanted.heroes == ["nevermore"] && out == "text/tooltips.json"
     ));
+    // The hero's voice pack comes after the labels, before the icons.
     assert!(matches!(
         &plan.items[11],
+        Item::Voice { hero, out, .. } if hero == "nevermore" && out == "sounds/voice/nevermore.bin"
+    ));
+    assert!(matches!(
+        &plan.items[12],
         Item::Icons {
             abilities: false,
             ..
@@ -599,4 +605,71 @@ fn shop_categories_keep_their_order_and_hostile_files_are_texts_or_errors() {
             .collect();
         let _ = shop_json(&text, &text);
     }
+}
+
+/// A hero's response rules that include files of one long text repeated many times (cheap in
+/// the file, which names a text once, and large decoded) are refused by an aggregate budget as
+/// they are read, not after they all sit decoded in memory.
+#[test]
+fn response_rules_past_the_aggregate_text_budget_are_refused_while_read() {
+    let long: &'static str = Box::leak("a".repeat(8 << 10).into_boxed_str());
+    let names: Vec<&'static str> = (0..3)
+        .map(|i| &*Box::leak(format!("scripts/talker/response_rules_big{i}.vrr").into_boxed_str()))
+        .collect();
+    let hero = kv3_resource(&Kv3::Object(vec![(
+        "m_Includes",
+        Kv3::List(names.iter().map(|n| Kv3::Text(n)).collect()),
+    )]));
+    let big = kv3_resource(&Kv3::Object(vec![(
+        "m_ResponseGroups",
+        Kv3::List(vec![Kv3::Object(vec![
+            ("m_name", Kv3::Text("g")),
+            (
+                "m_responses",
+                Kv3::List(
+                    (0..400)
+                        .map(|_| {
+                            Kv3::Object(vec![
+                                ("m_type", Kv3::Text("SPEAK")),
+                                ("m_value", Kv3::Text(long)),
+                            ])
+                        })
+                        .collect(),
+                ),
+            ),
+            (
+                "m_pEmbeddedRule",
+                Kv3::Object(vec![
+                    ("m_name", Kv3::Text("g")),
+                    ("m_Requirements", Kv3::List(vec![Kv3::Text("Move")])),
+                ]),
+            ),
+        ])]),
+    )]));
+    let script = br#""DOTAHeroes" { "npc_dota_hero_pudge" { "VoiceFile" "soundevents/voscripts/game_sounds_vo_pudge.vsndevts" } }"#;
+    let mut files: Vec<(&str, &str, &str, &[u8])> = vec![
+        ("scripts/npc/heroes", "npc_dota_hero_pudge", "txt", script),
+        ("scripts/talker", "response_rules_pudge", "vrr_c", &hero),
+    ];
+    for i in 0..3 {
+        let name: &'static str = Box::leak(format!("response_rules_big{i}").into_boxed_str());
+        files.push(("scripts/talker", name, "vrr_c", &big));
+    }
+    let src = install(&[("pak01_dir.vpk", package_of(&files))]);
+    let plan = Plan {
+        items: vec![Item::Voice {
+            logical: "voice.pudge".to_owned(),
+            hero: "pudge".to_owned(),
+            out: "sounds/voice/pudge.bin".to_owned(),
+        }],
+    };
+    let mut sink = Memory::default();
+    let report = run(&src, &plan, &mut sink, &mut |_| Flow::Continue).expect("a report");
+    assert!(sink.0.is_empty(), "nothing written");
+    let why: Vec<&str> = report.failed.iter().map(|(_, why)| why.as_str()).collect();
+    assert!(
+        why.iter()
+            .any(|w| w.contains("more response rule text than any hero's")),
+        "{why:?}"
+    );
 }

@@ -11,7 +11,7 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
 
 use heatel::sound::{Lipsync, SoundEvent, read_sound_events, read_sound_mixer};
-use heatel::talker::{Criterion, ResponseGroup, ResponseKind, read_response_rules};
+use heatel::talker::{Criterion, ResponseGroup, ResponseKind, ResponseRules, read_response_rules};
 use heatel::{Resource, Result, Sound, Source, Vpk};
 
 use super::{Out, SOUND_MIXER_SRC, malformed, read_from, resolve_event, safe_path, sound_stacks};
@@ -27,7 +27,20 @@ const MAX_RULE_FILES: usize = 256;
 /// Most sound event scripts read for one hero: its voice file and those its rules name.
 const MAX_EVENT_SCRIPTS: usize = 16;
 /// Most bytes of one sound: the install's largest voice line is 2,118,182.
-const MAX_SOUND_BYTES: usize = 4 << 20;
+const MAX_SOUND_BYTES: u64 = 4 << 20;
+/// Most bytes of one rule file: the install's largest (Snapfire's) is 72,627.
+const MAX_RULE_FILE_BYTES: u64 = 1 << 20;
+/// Most bytes of one sound event script or hero script: the install's largest voice script
+/// (Snapfire's) is 120,888, its largest hero script (Invoker's) 60,111.
+const MAX_SCRIPT_BYTES: u64 = 2 << 20;
+/// Most text all of a hero's rule files hold together, as decoded: its own file and those it
+/// includes hold 241,851 bytes for Pudge, the most of the installed heroes (Snapfire's own file
+/// alone, the largest, 229,328). A file names a text once and may use it any number of times:
+/// the budget is charged as each file is read, before the next one is.
+const MAX_RULE_TEXT: usize = 4 << 20;
+/// Most entries (criteria, groups, their requirements and responses) a hero's rule files hold
+/// together: 8,247 for Pudge's two.
+const MAX_RULE_ENTRIES: usize = 1 << 17;
 
 /// Why a line can never be said here.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -70,7 +83,7 @@ fn domain(fact: Fact, concept: Concept, class: &str) -> Option<Vec<String>> {
     Some(match fact {
         Fact::Concept => vec![concept.dota_name().to_owned()],
         Fact::ClassName => vec![class.to_owned()],
-        Fact::RandomNum => (0..100).map(|n: u32| n.to_string()).collect(),
+        Fact::RandomNum => (1..=100).map(|n: u32| n.to_string()).collect(),
         Fact::AbilityName => keys(&mut bota_core::ABILITIES.iter().map(|a| a.key)),
         Fact::TargetClassName => keys(&mut bota_core::HEROES.iter().map(|h| h.key)),
         Fact::ItemName => keys(&mut bota_core::ITEMS.iter().map(|i| i.key)),
@@ -135,7 +148,7 @@ struct RuleFiles {
     criteria: Vec<Criterion>,
     groups: Vec<ResponseGroup>,
     /// The sound event scripts the files name, as `.vsndevts_c` paths.
-    scripts: Vec<String>,
+    scripts: BTreeSet<String>,
 }
 
 fn rule_path(path: &str) -> Result<String> {
@@ -154,15 +167,67 @@ fn script_path(path: &str) -> Result<String> {
     Ok(format!("{plain}_c"))
 }
 
+/// The bytes of `path`, refused before they are read when the package holds more than `max`.
+fn read_bounded(src: &impl Source, pak: &Vpk, path: &str, max: u64) -> Result<Vec<u8>> {
+    let size = pak
+        .get(path)
+        .ok_or_else(|| heatel::Error::NotFound(path.to_owned()))?
+        .size();
+    if size > max {
+        return Err(malformed(
+            "voice",
+            format!("{path}: {size} bytes, at most {max}"),
+        ));
+    }
+    read_from(src, &[pak], path)
+}
+
+/// The text bytes and the entries one rule file holds, as decoded.
+fn rule_data(rules: &ResponseRules) -> (usize, usize) {
+    let all = |texts: &[String]| texts.iter().map(String::len).sum::<usize>();
+    let optional = |text: &Option<String>| text.as_ref().map_or(0, String::len);
+    let criteria: usize = rules
+        .criteria
+        .iter()
+        .map(|c| c.name.len() + optional(&c.match_key) + optional(&c.match_expr))
+        .sum();
+    let responses = |g: &ResponseGroup| -> usize {
+        g.responses
+            .iter()
+            .map(|r| {
+                let followup = r
+                    .followup
+                    .as_ref()
+                    .map_or(0, |f| f.target.len() + f.concept.len() + f.contexts.len());
+                optional(&r.value) + followup
+            })
+            .sum()
+    };
+    let groups: usize = rules
+        .groups
+        .iter()
+        .map(|g| g.name.len() + g.rule.len() + all(&g.requirements) + responses(g))
+        .sum();
+    let text = all(&rules.includes) + all(&rules.sound_event_scripts) + criteria + groups;
+    let entries = rules.criteria.len()
+        + rules
+            .groups
+            .iter()
+            .map(|g| 1 + g.requirements.len() + g.responses.len())
+            .sum::<usize>();
+    (text, entries)
+}
+
 fn read_rule_files(src: &impl Source, pak: &Vpk, hero: &str) -> Result<RuleFiles> {
     let mut queue = VecDeque::from([rule_path(&format!(
         "scripts/talker/response_rules_{hero}.vrr"
     ))?]);
     let mut seen = BTreeSet::new();
+    let (mut text, mut entries) = (0usize, 0usize);
     let mut files = RuleFiles {
         criteria: Vec::new(),
         groups: Vec::new(),
-        scripts: Vec::new(),
+        scripts: BTreeSet::new(),
     };
     while let Some(path) = queue.pop_front() {
         if !seen.insert(path.clone()) {
@@ -174,12 +239,37 @@ fn read_rule_files(src: &impl Source, pak: &Vpk, hero: &str) -> Result<RuleFiles
                 "more included rule files than any hero has",
             ));
         }
-        let read = read_response_rules(&Resource::parse(&read_from(src, &[pak], &path)?)?)?;
+        let bytes = read_bounded(src, pak, &path, MAX_RULE_FILE_BYTES)?;
+        let read = read_response_rules(&Resource::parse(&bytes)?)?;
+        let (more_text, more_entries) = rule_data(&read);
+        text = text.saturating_add(more_text);
+        entries = entries.saturating_add(more_entries);
+        if text > MAX_RULE_TEXT || entries > MAX_RULE_ENTRIES {
+            return Err(malformed(
+                "voice",
+                format!(
+                    "more response rule text than any hero's: {text} bytes and {entries} \
+                     entries by {path}, at most {MAX_RULE_TEXT} and {MAX_RULE_ENTRIES}"
+                ),
+            ));
+        }
         for include in &read.includes {
             queue.push_back(rule_path(include)?);
         }
+        if queue.len() > MAX_RULE_FILES {
+            return Err(malformed(
+                "voice",
+                "more included rule files than any hero has",
+            ));
+        }
         for script in &read.sound_event_scripts {
-            files.scripts.push(script_path(script)?);
+            files.scripts.insert(script_path(script)?);
+        }
+        if files.scripts.len() > MAX_EVENT_SCRIPTS {
+            return Err(malformed(
+                "voice",
+                "more sound event scripts than any hero has",
+            ));
         }
         files.criteria.extend(read.criteria);
         files.groups.extend(read.groups);
@@ -264,7 +354,12 @@ fn prune(files: &RuleFiles, class: &str) -> Pruned {
 /// The hero's class and its voice file, from its script (`scripts/npc/heroes/`).
 fn hero_script(src: &impl Source, pak: &Vpk, hero: &str) -> Result<(String, String)> {
     let class = format!("npc_dota_hero_{hero}");
-    let bytes = read_from(src, &[pak], &format!("scripts/npc/heroes/{class}.txt"))?;
+    let bytes = read_bounded(
+        src,
+        pak,
+        &format!("scripts/npc/heroes/{class}.txt"),
+        MAX_SCRIPT_BYTES,
+    )?;
     let tree = heatel::keyvalues::parse_kv(heatel::keyvalues::text(&bytes)?)?;
     let voice = tree
         .get("DOTAHeroes")
@@ -292,7 +387,8 @@ fn voice_events(
         ));
     }
     for script in scripts {
-        let events = read_sound_events(&Resource::parse(&read_from(src, &[pak], script)?)?)?;
+        let bytes = read_bounded(src, pak, script, MAX_SCRIPT_BYTES)?;
+        let events = read_sound_events(&Resource::parse(&bytes)?)?;
         for event in events {
             if wanted.contains(event.name.as_str()) && !found.contains_key(&event.name) {
                 found.insert(event.name.clone(), event);
@@ -325,10 +421,7 @@ impl Sounds {
         if !path.starts_with("sounds/") || !path.ends_with(".vsnd") || !safe_path(path) {
             return Err(malformed("voice", format!("sound path {path:?}")));
         }
-        let bytes = read_from(src, &[pak], &format!("{path}_c"))?;
-        if bytes.len() > MAX_SOUND_BYTES {
-            return Err(malformed("voice", format!("{path}: {} bytes", bytes.len())));
-        }
+        let bytes = read_bounded(src, pak, &format!("{path}_c"), MAX_SOUND_BYTES)?;
         let sound = Sound::parse(&bytes)?;
         let lipsync = match Lipsync::parse(&bytes) {
             Ok(lipsync) if !lipsync.is_empty() => Some(lipsync_txt(&lipsync)),
@@ -538,7 +631,10 @@ fn lines_of(kept: &Kept, events: &HashMap<String, usize>) -> Vec<Line> {
 }
 
 /// A criterion as the pack keeps it: its key is its name when it names none, its weight 1 when
-/// it states none (Source's default).
+/// it states none (Source's default). Its `m_bRequired` is not kept: the client requires every
+/// criterion of a rule, as Dota plays a response only when all its rule's criteria are met
+/// ([`crate::voice::speaker`]); of the install's 3,080 criteria only the 36 of
+/// `response_rules_survivors` (an event mode's) state it, all as true.
 fn criterion_of(c: &Criterion) -> rules::Criterion {
     let expr = c.match_expr.clone().unwrap_or_default();
     rules::Criterion {
@@ -642,7 +738,7 @@ mod tests {
                 group("pudge_KillIsMeepo", &["Kill", "Ispudge", "IsMeepo"], 7),
                 group("pudge_Unknown", &["Move", "Nowhere"], 8),
             ],
-            scripts: Vec::new(),
+            scripts: BTreeSet::new(),
         }
     }
 

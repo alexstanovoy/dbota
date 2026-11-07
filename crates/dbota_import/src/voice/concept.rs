@@ -53,8 +53,9 @@ pub enum Fact {
     Concept,
     /// The speaker's class (`npc_dota_hero_pudge`).
     ClassName,
-    /// A random whole number from 0 to 99, drawn for each query: the install's `Chance_N%`
-    /// criteria split exactly that range (`Chance_1%` is `99`, `Chance_2%` `>=97,<=98`, ...).
+    /// A random whole number from 1 to 100 rolled for each query, as Valve documents the roll
+    /// its rules read (https://www.dota2.com/workshop/requirements/announcers?l=english):
+    /// `Chance_25%` is `<=25`, a quarter of the rolls.
     RandomNum,
     /// Seconds of game time since the battle began (negative before).
     GameTime,
@@ -232,13 +233,14 @@ pub struct Query {
 }
 
 impl Query {
-    /// A query of `concept` by the hero of class `class`, with its random number and the game
-    /// time; the concept's own facts are added with [`Query::with`].
+    /// A query of `concept` by the hero of class `class`, with the roll `random` makes
+    /// (`random % 100 + 1`) and the game time; the concept's own facts are added with
+    /// [`Query::with`].
     pub fn new(concept: Concept, class: &str, random: u32, game_time: f32) -> Query {
         let mut values = vec![
             (Fact::Concept, concept.dota_name().to_owned()),
             (Fact::ClassName, class.to_owned()),
-            (Fact::RandomNum, (random % 100).to_string()),
+            (Fact::RandomNum, (random % 100 + 1).to_string()),
             (Fact::GameTime, format!("{game_time:.3}")),
         ];
         if concept == Concept::GameStart {
@@ -280,9 +282,21 @@ mod tests {
         let query = Query::new(Concept::Move, "npc_dota_hero_pudge", 107, 12.0)
             .with(Fact::AbilityName, "pudge_rot");
         assert_eq!(query.value("Concept"), Some("TLK_DOTA_MOVE"));
-        assert_eq!(query.value("randomnum"), Some("7"));
+        assert_eq!(query.value("randomnum"), Some("8"));
         assert_eq!(query.value("abilityname"), None);
         assert_eq!(query.value("customresponse"), None);
+    }
+
+    /// Valve's roll is a whole number from 1 to 100: `<=25` is a quarter of the rolls.
+    #[test]
+    fn a_random_number_is_one_to_a_hundred() {
+        let roll = |random| {
+            let query = Query::new(Concept::Move, "npc_dota_hero_pudge", random, 0.0);
+            query.value("randomnum").map(str::to_owned)
+        };
+        assert_eq!(roll(0).as_deref(), Some("1"));
+        assert_eq!(roll(99).as_deref(), Some("100"));
+        assert_eq!(roll(124).as_deref(), Some("25"));
     }
 
     #[test]

@@ -100,8 +100,15 @@ impl Speaker {
         (self.rng % n.max(1) as u64) as usize
     }
 
-    /// What the hero says to `query` at `now` (seconds of the match's clock), remembering it.
-    pub fn respond(
+    /// Starts the stream of randomness afresh from `seed`.
+    pub fn reseed(&mut self, seed: u64) {
+        // xorshift has no zero state.
+        self.rng = seed | 1;
+    }
+
+    /// What the hero would say to `query` at `now` (seconds of the match's clock); nothing is
+    /// remembered of it until it is [accepted](Self::accept).
+    pub fn choose(
         &mut self,
         rules: &HeroRules,
         query: &Query,
@@ -122,18 +129,6 @@ impl Speaker {
         let said = &rules.rules[rule].lines[line];
         let event = &rules.events[said.event];
         let sound = event.sounds[self.draw(event.sounds.len())];
-        self.used[rule][line] = true;
-        self.ready[rule][line] = if said.once {
-            f64::INFINITY
-        } else {
-            now + f64::from(said.respeak)
-        };
-        self.busy_until = now + f64::from(said.predelay) + f64::from(event.seconds);
-        let cooldown = query.concept.cooldown_secs();
-        if cooldown > 0.0 {
-            self.concept_ready
-                .insert(query.concept, now + f64::from(cooldown));
-        }
         Ok(Choice {
             rule,
             line,
@@ -142,6 +137,47 @@ impl Speaker {
             score,
             delay: said.predelay,
         })
+    }
+
+    /// Remembers that the hero says `choice` to a query of `concept` from `now` on (its sound
+    /// started): the line is used, waits its respeak (forever when `speakonce`), the concept its
+    /// cooldown, and the hero says nothing else until the line ends.
+    pub fn accept(&mut self, rules: &HeroRules, concept: Concept, choice: &Choice, now: f64) {
+        let said = &rules.rules[choice.rule].lines[choice.line];
+        let fresh_left = (0..self.used[choice.rule].len()).any(|l| {
+            l != choice.line && !self.used[choice.rule][l] && now >= self.ready[choice.rule][l]
+        });
+        if !fresh_left && self.used[choice.rule][choice.line] {
+            // The rule had gone through every line it may say: it goes round again.
+            self.used[choice.rule]
+                .iter_mut()
+                .for_each(|used| *used = false);
+        }
+        self.used[choice.rule][choice.line] = true;
+        self.ready[choice.rule][choice.line] = if said.once {
+            f64::INFINITY
+        } else {
+            now + f64::from(said.respeak)
+        };
+        let seconds = rules.events[said.event].seconds;
+        self.busy_until = now + f64::from(said.predelay) + f64::from(seconds);
+        let cooldown = concept.cooldown_secs();
+        if cooldown > 0.0 {
+            self.concept_ready
+                .insert(concept, now + f64::from(cooldown));
+        }
+    }
+
+    /// [`choose`](Self::choose), then [`accept`](Self::accept) what is chosen.
+    pub fn respond(
+        &mut self,
+        rules: &HeroRules,
+        query: &Query,
+        now: f64,
+    ) -> Result<Choice, Silence> {
+        let choice = self.choose(rules, query, now)?;
+        self.accept(rules, query.concept, &choice, now);
+        Ok(choice)
     }
 
     /// The best-scoring rule every criterion of which matches, ties drawn; none scoring above
@@ -178,16 +214,124 @@ impl Speaker {
         if ready.is_empty() {
             return None;
         }
-        let mut fresh: Vec<usize> = ready
+        let fresh: Vec<usize> = ready
             .iter()
             .copied()
             .filter(|&l| !self.used[rule][l])
             .collect();
-        if fresh.is_empty() {
-            self.used[rule].iter_mut().for_each(|used| *used = false);
-            fresh = ready;
+        let pool = if fresh.is_empty() { ready } else { fresh };
+        Some(pool[self.draw(pool.len())])
+    }
+}
+
+/// Most steps (queries and lines accepted) a [`History`] keeps to rewind by: a match of two
+/// hours asking a query a second, and accepting each.
+pub const MAX_STEPS: usize = 1 << 14;
+
+/// One step of a [`History`].
+#[derive(Clone, Debug)]
+enum Step {
+    /// A query asked at a time.
+    Ask(f64, Query),
+    /// The answer to query `n`, of a concept, accepted at a time.
+    Accept(usize, Concept, f64),
+}
+
+/// What a hero was asked in one match and what it said: the answers are a function of the
+/// match's seed and of the steps before, every query drawing its randomness afresh from the seed
+/// and its own number, so a replay sought back to a time ([`History::rewind`]) answers again as
+/// it did. A match of more steps than [`MAX_STEPS`] keeps answering, but a rewind past then
+/// starts afresh from the seed.
+#[derive(Clone, Debug)]
+pub struct History {
+    seed: u64,
+    speaker: Speaker,
+    steps: Vec<Step>,
+    /// The asks of `steps`, each with the choice it got.
+    choices: Vec<Result<Choice, Silence>>,
+    whole: bool,
+}
+
+/// The seed of the `n`th query of a history of `seed` (SplitMix64's finalizer).
+fn query_seed(seed: u64, n: usize) -> u64 {
+    let mut z = seed ^ (n as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15);
+    z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+    z ^ (z >> 31)
+}
+
+impl History {
+    /// A history of nothing asked yet, of the match whose seed is `seed`.
+    pub fn new(rules: &HeroRules, seed: u64) -> History {
+        History {
+            seed,
+            speaker: Speaker::new(rules, seed),
+            steps: Vec::new(),
+            choices: Vec::new(),
+            whole: true,
         }
-        Some(fresh[self.draw(fresh.len())])
+    }
+
+    pub fn seed(&self) -> u64 {
+        self.seed
+    }
+
+    /// The match clock up to which the hero is saying its last line.
+    pub fn speaking_until(&self) -> f64 {
+        self.speaker.speaking_until()
+    }
+
+    fn record(&mut self, step: Step) {
+        if self.steps.len() < MAX_STEPS {
+            self.steps.push(step);
+        } else {
+            self.whole = false;
+        }
+    }
+
+    /// Asks the query `query` makes of the random number (0 to 99) drawn for it, at `now`: the
+    /// query, its number (for [`History::accept`]) and what the hero would say.
+    pub fn ask(
+        &mut self,
+        rules: &HeroRules,
+        now: f64,
+        query: impl FnOnce(u32) -> Query,
+    ) -> (usize, Query, Result<Choice, Silence>) {
+        let n = self.choices.len();
+        self.speaker.reseed(query_seed(self.seed, n));
+        let query = query(self.speaker.draw(100) as u32);
+        let choice = self.speaker.choose(rules, &query, now);
+        self.record(Step::Ask(now, query.clone()));
+        self.choices.push(choice.clone());
+        (n, query, choice)
+    }
+
+    /// Accepts at `now` the answer of query `n`: its line sounds.
+    pub fn accept(&mut self, rules: &HeroRules, n: usize, concept: Concept, now: f64) {
+        if let Some(Ok(choice)) = self.choices.get(n).cloned() {
+            self.speaker.accept(rules, concept, &choice, now);
+            self.record(Step::Accept(n, concept, now));
+        }
+    }
+
+    /// The history as it stood at `now`: every step after it forgotten, the speaker as those
+    /// before left it.
+    pub fn rewind(&mut self, rules: &HeroRules, now: f64) {
+        let steps = std::mem::take(&mut self.steps);
+        let whole = self.whole;
+        *self = History::new(rules, self.seed);
+        if !whole {
+            return;
+        }
+        for step in steps {
+            match step {
+                Step::Ask(at, query) if at <= now => {
+                    let _ = self.ask(rules, at, |_| query);
+                }
+                Step::Accept(n, concept, at) if at <= now => self.accept(rules, n, concept, at),
+                _ => break,
+            }
+        }
     }
 }
 
@@ -328,6 +472,46 @@ mod tests {
         assert!(speaker.respond(&rules, &query, 0.0).is_ok());
         assert_eq!(speaker.respond(&rules, &query, 5.9), Err(Silence::Cooldown));
         assert!(speaker.respond(&rules, &query, 6.0).is_ok());
+    }
+
+    /// A line whose sound the mixer refused was not said: the hero may choose it again.
+    #[test]
+    fn a_line_chosen_but_not_accepted_is_not_remembered() {
+        let rules = kills();
+        let mut speaker = Speaker::new(&rules, 7);
+        let chosen = speaker.choose(&rules, &kill(true), 0.0).expect("a line");
+        let again = speaker.choose(&rules, &kill(true), 0.1).expect("a line");
+        assert_eq!((again.rule, again.line), (chosen.rule, chosen.line));
+    }
+
+    /// What a fresh history answers to kills at `times`, by line.
+    fn kills_at(history: &mut History, rules: &HeroRules, times: &[f64]) -> Vec<Option<usize>> {
+        times
+            .iter()
+            .map(|&now| {
+                let (n, query, said) = history.ask(rules, now, |_| kill(false));
+                if said.is_ok() {
+                    history.accept(rules, n, query.concept, now);
+                }
+                said.ok().map(|c| c.line)
+            })
+            .collect()
+    }
+
+    /// A replay sought back answers again as it did: answers are the match's seed and what
+    /// was asked before, and a history rewound to a time is the one it had then.
+    #[test]
+    fn a_history_rewound_answers_again_as_it_did() {
+        let mut rules = kills();
+        rules.rules[0].lines = (0..8).map(|i| line(i % 2, false, 0.0)).collect();
+        let times = [0.0, 10.0, 20.0, 30.0, 40.0, 50.0];
+        let mut first = History::new(&rules, 11);
+        let once = kills_at(&mut first, &rules, &times);
+        let mut sought = History::new(&rules, 11);
+        kills_at(&mut sought, &rules, &times[..4]);
+        sought.rewind(&rules, 15.0);
+        let again = kills_at(&mut sought, &rules, &times[2..]);
+        assert_eq!(again, once[2..]);
     }
 
     #[test]
