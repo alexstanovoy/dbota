@@ -295,8 +295,6 @@ pub enum PageView {
         fields: Vec<FieldView>,
         shelf: ReplayShelf,
     },
-    /// The settings screen, which draws itself over the menu.
-    Settings,
     /// A game is being opened.
     Joining,
     /// A game is on screen: only the overlays show.
@@ -360,6 +358,8 @@ pub enum Side {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct MenuView {
     pub page: Page,
+    /// The page drawn: the one the settings were opened from while they are open over it.
+    pub beneath: Page,
     pub body: PageView,
     /// `nickname#id` once logged in.
     pub account: Option<String>,
@@ -424,10 +424,11 @@ impl MenuCore {
         };
         MenuView {
             page: self.page,
+            beneath: self.page_beneath(),
             body: self.body(),
             player: account
                 .clone()
-                .unwrap_or_else(|| text::line(&self.profile, text::NAME)),
+                .unwrap_or_else(|| text::line(&self.name(), text::NAME)),
             connection,
             side: self.last_side(),
             account,
@@ -505,14 +506,16 @@ impl MenuCore {
         (left > 0).then(|| format!("You can search again in {}", clock(left.div_ceil(1000))))
     }
 
+    /// What the page under the top bar shows: under the settings, the page they were opened from.
     fn body(&self) -> PageView {
-        match self.page {
+        let page = self.page_beneath();
+        match page {
             Page::Service | Page::Login | Page::Register | Page::LocalLobby => PageView::Form {
                 kind: self.form.kind,
                 fields: self.fields(),
-                busy: self.connecting() && self.page != Page::LocalLobby,
+                busy: self.connecting() && page != Page::LocalLobby,
                 plain_host: self.plain_host.as_ref().map(|h| text::line(h, text::NAME)),
-                rules: (self.page == Page::LocalLobby).then(|| self.rules_choice()),
+                rules: (page == Page::LocalLobby).then(|| self.rules_choice()),
                 hosted_at: self.hosted_at().map(str::to_owned),
             },
             Page::Home => self.home(),
@@ -590,7 +593,8 @@ impl MenuCore {
                     .filter_map(|(id, hero)| Some((u16::try_from(id).ok()?, hero.name.to_owned())))
                     .collect(),
             },
-            Page::Settings => PageView::Settings,
+            // Never beneath: the settings open over another page.
+            Page::Settings => PageView::Hidden,
             Page::Game if self.launching => PageView::Joining,
             Page::Game => PageView::Hidden,
         }

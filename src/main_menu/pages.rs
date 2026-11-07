@@ -33,7 +33,7 @@ const CORNER_WIDTH: f32 = 300.0;
 pub struct MenuBody;
 
 /// The whole page layer.
-pub fn draw(kit: &mut Kit, root: Entity, view: &MenuView) {
+pub fn draw(kit: &mut Kit, root: Entity, view: &MenuView, fold: super::top_bar::TabFold) {
     let way_in = matches!(
         &view.body,
         PageView::Form {
@@ -57,7 +57,7 @@ pub fn draw(kit: &mut Kit, root: Entity, view: &MenuView) {
         return;
     }
     backdrop::draw(kit, root, Backdrop::of(view.side), theme::BAR_HEIGHT);
-    super::top_bar::draw(kit, root, view);
+    super::top_bar::draw(kit, root, view, fold);
     // Every page starts at the same height under the top bar and centres
     // on one column, as Dota's dashboard pages do; a long page scrolls.
     let body = kit.node(
@@ -139,7 +139,7 @@ pub fn draw(kit: &mut Kit, root: Entity, view: &MenuView) {
         PageView::Joining => {
             kit.typed(body, "JOINING THE GAME…", theme::TITLE, theme::INK_1);
         }
-        PageView::Settings | PageView::Hidden => {}
+        PageView::Hidden => {}
     }
     player_card(kit, root, view);
     game_corner(kit, root, view);
@@ -340,7 +340,25 @@ fn way_in_page(
         .entity(card)
         .entry::<Node>()
         .and_modify(|mut node| node.width = px(WAY_IN_WIDTH));
+    let link = Type {
+        face: Face::Semibold,
+        ..theme::BODY
+    };
+    kit.quiet(
+        column,
+        "Play without an account",
+        Act::Go(WITHOUT_ACCOUNT),
+        link,
+        theme::LINK,
+    );
 }
+
+/// Where a player without an account plays: the local lobby; in a browser, which hosts no game,
+/// the replays.
+#[cfg(not(target_arch = "wasm32"))]
+const WITHOUT_ACCOUNT: Page = Page::LocalLobby;
+#[cfg(target_arch = "wasm32")]
+const WITHOUT_ACCOUNT: Page = Page::Replays;
 
 /// A form: a card of fields in the middle of the page.
 #[allow(clippy::too_many_arguments)]
@@ -516,28 +534,13 @@ fn form_page(
         );
         kit.button(note, "CONNECT ANYWAY", Act::PlainAnyway, Tone::Danger, 34.0);
     }
-    if way_in {
-        let links = kit.node(
-            card,
-            Node {
-                column_gap: px(10),
-                ..default()
-            },
-        );
-        if kind != FormKind::Service {
-            kit.button(
-                links,
-                "CHANGE SERVICE",
-                Act::Go(Page::Service),
-                Tone::Secondary,
-                28.0,
-            );
-        }
-        #[cfg(not(target_arch = "wasm32"))]
+    // The way in's other ways: to another service (the way out without an account is under
+    // the card).
+    if matches!(kind, FormKind::Login | FormKind::Register) {
         kit.button(
-            links,
-            "LOCAL LOBBY",
-            Act::Go(Page::LocalLobby),
+            card,
+            "CHANGE SERVICE",
+            Act::Go(Page::Service),
             Tone::Secondary,
             28.0,
         );

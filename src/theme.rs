@@ -55,6 +55,10 @@ pub const FIELD: Color = hex(0x222629);
 pub const FIELD_SUNKEN: Color = hex(0x0B0C0E);
 pub const FIELD_EDGE: Color = hex(0x495255);
 
+/// A tooltip or an open list, and its edge.
+pub const TOOLTIP: Color = hex(0x0E1216);
+pub const TOOLTIP_EDGE: Color = hex(0x3A4650);
+
 /// Values and titles.
 pub const INK_1: Color = hex(0xFFFFFF);
 /// Labels.
@@ -96,6 +100,9 @@ pub const STOP: (Color, Color) = (hex(0xA3372D), hex(0x6E1F19));
 pub const STOP_EDGE: Color = Color::srgba(0.0, 0.0, 0.0, 0.5);
 pub const DISABLED: (Color, Color) = (hex(0x3A4148), hex(0x2A2F33));
 pub const DISABLED_EDGE: Color = hex(0x30363B);
+
+/// A link, at rest and under the cursor.
+pub const LINK: (Color, Color) = (hex(0x59B0D2), hex(0x8FCDE6));
 
 /// Best values, gold.
 pub const GOLD: Color = hex(0xF2C14E);

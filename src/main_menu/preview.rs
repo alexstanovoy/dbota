@@ -48,6 +48,7 @@ fn field(label: &'static str, shown: &str, focused: bool) -> FieldView {
 fn form(page: Page, kind: FormKind, fields: Vec<FieldView>) -> MenuView {
     MenuView {
         page,
+        beneath: page,
         body: PageView::Form {
             kind,
             fields,
@@ -77,6 +78,7 @@ fn form(page: Page, kind: FormKind, fields: Vec<FieldView>) -> MenuView {
 fn logged_in(page: Page, body: PageView) -> MenuView {
     MenuView {
         page,
+        beneath: page,
         body,
         account: Some("alice#12".to_owned()),
         player: "alice#12".to_owned(),

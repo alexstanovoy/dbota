@@ -70,6 +70,7 @@ pub struct Trusted(pub Trust);
 
 pub fn plugin(app: &mut App) {
     app.init_resource::<GameEpoch>()
+        .init_resource::<super::top_bar::TabFold>()
         .insert_non_send(Pending::default())
         .insert_non_send(Host::default())
         .insert_non_send(Leaver::default())
@@ -88,6 +89,7 @@ pub fn plugin(app: &mut App) {
             (
                 keyboard,
                 settings_screen,
+                super::top_bar::more_clicks,
                 super::screens::clicks,
                 drive,
                 demo_start,
@@ -98,7 +100,11 @@ pub fn plugin(app: &mut App) {
             )
                 .chain(),
         )
-        .add_systems(Update, (super::top_bar::animate, hud_shown));
+        .add_systems(Update, (super::top_bar::animate, hud_shown))
+        .add_systems(
+            PostUpdate,
+            super::top_bar::fit_tabs.after(bevy::ui::UiSystems::Layout),
+        );
 }
 
 /// The wheel scrolls a long page; the place is kept while the page is

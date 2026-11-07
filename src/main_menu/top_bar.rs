@@ -50,7 +50,7 @@ const QUIT_ICON: f32 = 24.0;
 const GEAR_ICON: f32 = 26.0;
 
 /// The bar over the page: the first child of the page layer.
-pub fn draw(kit: &mut Kit, root: Entity, view: &MenuView) {
+pub fn draw(kit: &mut Kit, root: Entity, view: &MenuView, fold: TabFold) {
     let bar = kit
         .commands
         .spawn((
@@ -96,7 +96,7 @@ pub fn draw(kit: &mut Kit, root: Entity, view: &MenuView) {
             .entry::<Node>()
             .and_modify(|mut node| node.margin.right = px(8));
     }
-    tabs(kit, bar, view);
+    tabs(kit, bar, view, fold);
     kit.node(
         bar,
         Node {
@@ -109,10 +109,9 @@ pub fn draw(kit: &mut Kit, root: Entity, view: &MenuView) {
         Some(_) => {
             kit.quiet(bar, "LOG OUT", Act::Logout, theme::PILL, quiet);
         }
-        None if view.page == Page::LocalLobby => {
+        None => {
             kit.quiet(bar, "SIGN IN", Act::Go(Page::Login), theme::PILL, quiet);
         }
-        None => {}
     }
     pill(kit, bar, &view.connection);
     let gear = kit.icon_button(
@@ -171,30 +170,93 @@ fn logo(kit: &mut Kit, bar: Entity) {
     kit.typed(home, "DBOTA", theme::WORDMARK, theme::INK_1);
 }
 
-/// One tab per page there is now, the current one underlined.
-fn tabs(kit: &mut Kit, bar: Entity, view: &MenuView) {
+/// The tabs the bar has no room for: the last `folded` of them stand in MORE's list, open or
+/// not. The bar folds one more on each frame its tabs overflow it, and unfolds them all when the
+/// window or the interface's scale changes.
+#[derive(Resource, Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct TabFold {
+    pub folded: usize,
+    pub open: bool,
+}
+
+/// The row of the tabs, which overflows when the bar has no room for them.
+#[derive(Component)]
+pub struct TabRow;
+
+/// MORE ▾, which opens and closes the list of the folded tabs.
+#[derive(Component)]
+pub struct MoreButton;
+
+/// One tab per page there is now, the current one underlined; those the bar has no room for
+/// under MORE.
+fn tabs(kit: &mut Kit, bar: Entity, view: &MenuView, fold: TabFold) {
     let row = kit.node(
         bar,
         Node {
             align_self: AlignSelf::Stretch,
+            // It shrinks below its tabs when the bar has no room: they overflow it then, for
+            // the frame until [`fit_tabs`] folds one.
+            min_width: px(0),
             ..default()
         },
     );
-    let lit = tab_of(view.page);
-    for (page, label) in TABS {
-        if page.needs_account() && view.account.is_none() {
-            continue;
-        }
-        tab(kit, row, label, page, lit == page);
+    kit.commands.entity(row).insert(TabRow);
+    let lit = tab_of(view.beneath);
+    let shown: Vec<(Page, &str)> = TABS
+        .into_iter()
+        .filter(|(page, _)| !page.needs_account() || view.account.is_some())
+        .collect();
+    let (kept, folded) = shown.split_at(shown.len().saturating_sub(fold.folded));
+    for &(page, label) in kept {
+        let tab = tab(kit, row, label, lit == page);
+        kit.commands.entity(tab).insert(MenuButton(Act::Go(page)));
+    }
+    if folded.is_empty() {
+        return;
+    }
+    let more_lit = folded.iter().any(|(page, _)| *page == lit);
+    let more = tab(kit, row, "MORE ▾", more_lit);
+    kit.commands
+        .entity(more)
+        .insert((MoreButton, Name::new("more")));
+    if !fold.open {
+        return;
+    }
+    // The list hangs from the bar's foot under MORE, over the page.
+    let list = kit
+        .commands
+        .spawn((
+            Node {
+                position_type: PositionType::Absolute,
+                top: px(theme::BAR_HEIGHT),
+                min_width: px(220),
+                flex_direction: FlexDirection::Column,
+                border: UiRect::all(px(1)),
+                ..default()
+            },
+            BackgroundColor(theme::TOOLTIP),
+            BorderColor::all(theme::TOOLTIP_EDGE),
+            ChildOf(more),
+        ))
+        .id();
+    for &(page, label) in folded {
+        let entry = tab(kit, list, label, lit == page);
+        kit.commands.entity(entry).insert(MenuButton(Act::Go(page)));
+        kit.commands
+            .entity(entry)
+            .entry::<Node>()
+            .and_modify(|mut node| {
+                node.height = px(theme::HIT);
+                node.padding = UiRect::axes(px(16), px(0));
+            });
     }
 }
 
-/// The tab of `page`, underlined when it is the current one.
-fn tab(kit: &mut Kit, row: Entity, label: &str, page: Page, on: bool) {
+/// A tab of `label`, underlined when it is the current page's.
+fn tab(kit: &mut Kit, row: Entity, label: &str, on: bool) -> Entity {
     let tab = kit
         .commands
         .spawn((
-            MenuButton(Act::Go(page)),
             Button,
             Node {
                 padding: UiRect::axes(px(12), px(0)),
@@ -219,6 +281,45 @@ fn tab(kit: &mut Kit, row: Entity, label: &str, page: Page, on: bool) {
         rest,
         hover: theme::INK_1,
     });
+    tab
+}
+
+/// Folds one more tab under MORE while the tabs overflow the bar, and unfolds them all when the
+/// window or the interface's scale changes: at most one fold a frame, so the bar settles within
+/// as many frames as it has tabs.
+pub fn fit_tabs(
+    rows: Query<&ComputedNode, With<TabRow>>,
+    mut resized: MessageReader<bevy::window::WindowResized>,
+    ui_scale: Res<UiScale>,
+    mut fold: ResMut<TabFold>,
+) {
+    if !resized.is_empty() || ui_scale.is_changed() {
+        resized.clear();
+        if fold.folded != 0 {
+            *fold = TabFold::default();
+        }
+        return;
+    }
+    let Ok(row) = rows.single() else {
+        return;
+    };
+    if row.content_size().x > row.size().x + 0.5 && fold.folded < TABS.len() {
+        fold.folded += 1;
+    }
+}
+
+/// MORE opens and closes its list; any other button of the menu closes it.
+pub fn more_clicks(
+    more: Query<&Interaction, (Changed<Interaction>, With<MoreButton>)>,
+    others: Query<&Interaction, (Changed<Interaction>, With<MenuButton>)>,
+    mut fold: ResMut<TabFold>,
+) {
+    let pressed = |i: &Interaction| *i == Interaction::Pressed;
+    if more.iter().any(pressed) {
+        fold.open = !fold.open;
+    } else if fold.open && others.iter().any(pressed) {
+        fold.open = false;
+    }
 }
 
 /// The pill that says how the menu stands with the service: its name while connected, OFFLINE
@@ -266,17 +367,17 @@ fn pill(kit: &mut Kit, bar: Entity, connection: &Connection) {
                 tracking: 0.0,
                 ..theme::PILL
             };
-            kit.typed(pill, service.clone(), words, theme::INK_3);
+            kit.typed(pill, shortened(service), words, theme::INK_3);
         }
         Connection::Offline => {
             kit.typed(pill, "OFFLINE", theme::PILL, theme::INK_4);
         }
-        Connection::Lost(service) => {
+        Connection::Lost(_) => {
             kit.commands.entity(pill).insert((
                 MenuButton(Act::RetryService),
                 Button,
                 Breathe,
-                Name::new(format!("reconnecting to {service}")),
+                Name::new("reconnecting"),
             ));
             kit.commands.spawn((
                 Node {
@@ -302,6 +403,19 @@ fn pill(kit: &mut Kit, bar: Entity, connection: &Connection) {
             kit.typed(pill, "RECONNECTING", words, theme::INK_1);
         }
     }
+}
+
+/// The most characters of a service's name the pill shows: as wide as a common host name
+/// (`play.example.org`), so the fullest bar fits the menu's frame whatever the name.
+const PILL_NAME: usize = 20;
+
+/// A service's name as the pill shows it: cut to [`PILL_NAME`] characters, an ellipsis last.
+fn shortened(name: &str) -> String {
+    if name.chars().count() <= PILL_NAME {
+        return name.to_owned();
+    }
+    let kept: String = name.chars().take(PILL_NAME - 1).collect();
+    format!("{kept}…")
 }
 
 /// The quit button, at the same point of the screen on every screen: [`theme::EDGE_GAP`] from

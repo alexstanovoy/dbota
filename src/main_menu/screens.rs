@@ -47,14 +47,18 @@ pub fn draw(
     server: Res<AssetServer>,
     mut page_root: Query<(Entity, &mut Visibility), With<PageRoot>>,
     overlay_root: Query<Entity, With<OverlayRoot>>,
-    mut drawn: Local<Option<MenuView>>,
+    fold: Res<super::top_bar::TabFold>,
+    mut drawn: Local<Option<(MenuView, super::top_bar::TabFold)>>,
 ) {
     let view = match (&preview, &core) {
         (Some(preview), _) => preview.0.clone(),
         (None, Some(core)) => core.view(),
         (None, None) => return,
     };
-    if drawn.as_ref() == Some(&view) {
+    if drawn
+        .as_ref()
+        .is_some_and(|(shown, folded)| *shown == view && folded == &*fold)
+    {
         return;
     }
     let (Ok((page, mut shown)), Ok(overlay)) = (page_root.single_mut(), overlay_root.single())
@@ -71,10 +75,10 @@ pub fn draw(
     kit.commands.entity(page).despawn_children();
     kit.commands.entity(overlay).despawn_children();
     if view.covers() {
-        super::pages::draw(&mut kit, page, &view);
+        super::pages::draw(&mut kit, page, &view, *fold);
     }
     super::overlay::draw(&mut kit, overlay, &view);
-    *drawn = Some(view);
+    *drawn = Some((view, *fold));
 }
 
 /// A click on a menu button does what it says.

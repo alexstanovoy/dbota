@@ -760,7 +760,7 @@ impl MenuCore {
     }
 
     /// The name announced where there is no account.
-    fn name(&self) -> String {
+    pub(super) fn name(&self) -> String {
         match self.profile.trim() {
             "" => DEFAULT_NAME.to_owned(),
             name => name.to_owned(),
@@ -902,6 +902,15 @@ impl MenuCore {
 
     pub fn logged_in(&self) -> bool {
         self.account
+    }
+
+    /// The page drawn under the settings while they are open, else the page itself.
+    pub(super) fn page_beneath(&self) -> Page {
+        if self.page == Page::Settings {
+            self.settings_from
+        } else {
+            self.page
+        }
     }
 
     /// Whether the signed-in account's lost link to the service is waiting to be opened again.

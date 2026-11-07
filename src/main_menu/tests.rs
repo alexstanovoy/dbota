@@ -966,9 +966,14 @@ fn the_scoreboard_tells_a_player_only_what_its_side_may_know() {
 fn the_settings_open_from_the_menu_and_last_past_a_restart() {
     let mut player = Player::new(None);
     let before = player.menu.page();
+    let page_before = player.menu.view().body;
     player.menu.act(Act::Go(Page::Settings));
     assert_eq!(player.menu.page(), Page::Settings);
-    assert_eq!(player.menu.view().body, PageView::Settings);
+    assert_eq!(
+        player.menu.view().body,
+        page_before,
+        "the page stays drawn under the settings"
+    );
     assert!(player.menu.view().covers());
     player.menu.leave_settings();
     assert_eq!(player.menu.page(), before, "back where it was opened");

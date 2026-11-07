@@ -120,8 +120,13 @@ fn the_settings_window_opens_from_the_cog_over_the_dimmed_menu_and_its_cross_clo
         (window.width() - 1100.0).abs() < 0.5 && (window.center().x - size.x / 2.0).abs() < 0.5,
         "1100 wide, in the middle of {size:?}: {window:?}"
     );
-    // The menu stays drawn under the dim.
+    // The menu stays drawn under the dim: its bar, and the page the settings were opened from.
     interface_rect(&mut client, "dbota");
+    let shown = client.shown_texts();
+    assert!(
+        shown.iter().any(|t| t == "No replays yet"),
+        "the replays under the settings: {shown:?}"
+    );
     click(&mut client, "close");
     client.until("the settings window closed", |c| !settings_open(c));
     client.frames(5);
@@ -139,6 +144,11 @@ fn the_pill_and_the_players_card_say_how_the_menu_stands_and_who_plays() {
     });
     let shown = client.shown_texts();
     assert!(!shown.iter().any(|t| t == "LOG OUT"), "{shown:?}");
+    assert_eq!(
+        card_names(&mut client),
+        [crate::main_menu::DEFAULT_NAME],
+        "a profile with no name plays as the default one"
+    );
     let service = crate::main_menu::tests::service();
     let mut client = signed_up(&service, "alice");
     let shown = client.shown_texts();
@@ -170,18 +180,11 @@ fn the_pill_and_the_players_card_say_how_the_menu_stands_and_who_plays() {
         );
     }
     let card = interface_rect(&mut client, "player");
-    let world = client.world_mut();
-    let named: Vec<String> = world
-        .query::<(&Text, &ChildOf)>()
-        .iter(world)
-        .filter(|(_, parent)| {
-            world
-                .get::<Name>(parent.parent())
-                .is_some_and(|n| n.as_str() == "player")
-        })
-        .map(|(text, _)| text.0.clone())
-        .collect();
-    assert_eq!(named, ["alice"], "the card names the player alone");
+    assert_eq!(
+        card_names(&mut client),
+        ["alice"],
+        "the card names the player alone"
+    );
     let size = interface_size(&mut client);
     assert!(
         card.min.x < size.x / 4.0 && card.max.y > size.y * 0.9,
@@ -235,6 +238,25 @@ fn the_menu_draws_with_dotas_typefaces_from_the_install() {
     }
 }
 
+/// The words on the player's card, its initial left out.
+fn card_names(client: &mut Client) -> Vec<String> {
+    let world = client.world_mut();
+    let parts: Vec<(String, Entity)> = world
+        .query::<(&Text, &ChildOf)>()
+        .iter(world)
+        .map(|(text, parent)| (text.0.clone(), parent.parent()))
+        .collect();
+    parts
+        .into_iter()
+        .filter(|(_, parent)| {
+            world
+                .get::<Name>(*parent)
+                .is_some_and(|n| n.as_str() == "player")
+        })
+        .map(|(text, _)| text)
+        .collect()
+}
+
 fn ui_scale(client: &Client) -> f32 {
     client.world().resource::<UiScale>().0
 }
@@ -269,5 +291,66 @@ fn the_menu_keeps_the_windows_scale_and_a_game_shrinks_to_fit_its_hud() {
     );
     client.within(Duration::from_secs(60), "the HUD fitted", |c| {
         ui_scale(c) < 0.99
+    });
+}
+
+/// The way in (the service, signing in) has no top bar, but a player without an account can
+/// always leave it for the pages played without one, whose bar has the settings and SIGN IN.
+#[test]
+fn the_way_in_lets_a_player_without_an_account_play_and_come_back() {
+    let mut client = local_menu();
+    act(&mut client, Act::Go(Page::Login));
+    assert_eq!(page(&client), Page::Service, "no service known yet");
+    click(&mut client, "play without an account");
+    client.until("a page played without an account", |c| {
+        !matches!(page(c), Page::Service | Page::Login | Page::Register)
+    });
+    client.frames(5);
+    for part in ["settings", "replays", "sign in"] {
+        interface_rect(&mut client, part);
+    }
+    click(&mut client, "sign in");
+    client.until("back on the way in", |c| page(c) == Page::Service);
+}
+
+/// The fullest bar (signed in, over a game, the longest service name the pill shows: a
+/// 32-character host) stays whole in the narrowest window the menu fits, the cog left of quit:
+/// the tabs it has no room for fold under MORE, whose list shows them; a wide window unfolds them.
+#[test]
+fn the_fullest_bar_folds_its_last_tabs_under_more_and_stays_whole() {
+    let mut client = Client::run(&["--window", "1280x1024"]);
+    let mut view = crate::main_menu::preview("dashboard").expect("a preview");
+    view.connection = crate::main_menu::Connection::Online("a".repeat(32));
+    client
+        .world_mut()
+        .insert_resource(crate::main_menu::Preview(view));
+    client.within(Duration::from_secs(30), "the preview drawn", |c| {
+        c.shown_texts().iter().any(|t| t.starts_with("aaaa"))
+    });
+    client.frames(5);
+    let (pill, settings, quit) = (
+        interface_rect(&mut client, "connection"),
+        interface_rect(&mut client, "settings"),
+        interface_rect(&mut client, "quit"),
+    );
+    let width = interface_size(&mut client).x;
+    assert!(
+        pill.max.x <= settings.min.x && settings.max.x <= quit.min.x && quit.max.x <= width,
+        "the pill {pill:?}, the cog {settings:?}, quit {quit:?} in {width}"
+    );
+    let shown = |c: &mut Client, name: &str| {
+        let world = c.world_mut();
+        world
+            .query::<(&Name, &InheritedVisibility)>()
+            .iter(world)
+            .any(|(named, seen)| seen.get() && named.as_str() == name)
+    };
+    assert!(shown(&mut client, "more"), "MORE holds the tabs folded");
+    assert!(!shown(&mut client, "replays"), "REPLAYS, the last, folded");
+    click(&mut client, "more");
+    client.until("MORE's list open", |c| shown(c, "replays"));
+    super::menu::resize_menu_window(&mut client, UVec2::new(1920, 1080));
+    client.until("every tab back in the bar", |c| {
+        shown(c, "replays") && !shown(c, "more")
     });
 }
