@@ -750,7 +750,13 @@ impl MenuCore {
             EndReason::Stopped => " · stopped by the service",
             EndReason::Left => " · a player left",
         };
-        let report = bota_radovid::decode_report(result);
+        let (report, report_note) = match bota_radovid::decode_report(result) {
+            Ok(report) => (report, ""),
+            Err(bota_proto::MatchReportError::UnsupportedVersion(_)) => {
+                (None, " · match details need a newer client")
+            }
+            Err(_) => (None, " · match details could not be read"),
+        };
         let hero = |slot: u8| {
             report
                 .as_ref()
@@ -774,7 +780,7 @@ impl MenuCore {
             headline: headline.to_owned(),
             won,
             detail: format!(
-                "Match {} · {}{}{reason}",
+                "Match {} · {}{}{reason}{report_note}",
                 result.match_id.0,
                 clock(result.duration_ms / 1000),
                 if result.rated { " · rated" } else { "" },
@@ -1148,6 +1154,34 @@ mod proposal_selection_tests {
                 .expect("prompt")
                 .proposal,
             ProposalId(2)
+        );
+    }
+}
+
+#[cfg(test)]
+mod report_tests {
+    use super::*;
+
+    #[test]
+    fn a_future_report_keeps_the_match_result_and_explains_why_details_are_missing() {
+        let player = crate::main_menu::tests::Player::new(None);
+        let result = MatchResult {
+            match_id: MatchId(99),
+            ruleset: RulesetId("solo_mid".to_owned()),
+            rated: false,
+            outcome: Outcome::Draw,
+            reason: EndReason::Draw,
+            duration_ms: 1000,
+            game_report: b"BMRP\x02".to_vec(),
+            seats: Vec::new(),
+            finished_at: bota_radovid::proto::UnixMs(0),
+        };
+        let view = player.menu.result_view(&result);
+        assert_eq!(view.headline, "DRAW");
+        assert!(
+            view.detail.contains("match details need a newer client"),
+            "the result must explain an unsupported report: {}",
+            view.detail
         );
     }
 }
