@@ -1,8 +1,9 @@
 //! The talking portrait, end to end in the real client: one's hero answers a move order and an
 //! attack order with a voice line of its rules, and the bottom panel's portrait says it. The
-//! face's morph weights as drawn (`--face-trace`, the idle expression held) open the jaw in step
-//! with the line's phonemes (the lip sync the importer packed with the line in the hero's voice
-//! pack, and Valve's phoneme table, through Source's box filter), and come back to the rest face,
+//! face's morph weights as drawn (`--face-trace`, the idle expression held) follow the line's
+//! phonemes (the lip sync the importer packed with the line in the hero's voice pack, and
+//! Valve's phoneme table, through Source's box filter): the jaw opens in step with them, or, for
+//! a line whose phonemes never open it ("Hm"), the target they ask most of moves. The face comes back to the rest face,
 //! still, once the line has ended. For each hero the game has. Drawn on the GPU in a headless
 //! compositor, so it is left out of a plain `cargo test`; `tools/visual_check.sh` runs it.
 
@@ -16,12 +17,18 @@ use std::time::{Duration, Instant};
 
 /// Seconds a run may take.
 const PATIENCE: Duration = Duration::from_secs(240);
-/// The least correlation of the drawn jaw with the jaw the phonemes ask for, along a line.
-const MIN_CORRELATION: f32 = 0.6;
-/// Seconds of Source's box filter over the phonemes (`phonemefilter`), ahead of the time.
+/// The least correlation of the drawn driving target (the jaw when the line's phonemes open it)
+/// with what the phonemes ask of it, along a line.
+const MIN_CORRELATION: f32 = 0.8;
+/// Seconds of Source's box filter over the phonemes (`phonemefilter`), ahead of the time, at least.
 const FILTER: f32 = 0.08;
-/// How far at least the jaw opens past its rest along a line.
+/// How far at least the driving target moves past its rest along a line.
 const MIN_OPENING: f32 = 0.1;
+/// Frames a line needs per second of its lip sync to be told from a face that was not drawn: a
+/// floor, not a rate (the portrait is drawn at about 30 a second, fewer under load).
+const MIN_FRAMES_PER_SECOND: f32 = 10.0;
+/// Frames before any line, or after it, that must still be drawn.
+const MIN_FRAMES_AT_REST: usize = 10;
 /// Seconds past the end of its lip sync data a line may still be drawn: a frame at 30 a second,
 /// and one of the game's.
 const LATE: f32 = 0.1;
@@ -127,8 +134,9 @@ fn lipsync(file: &std::path::Path) -> (Vec<(f32, f32, u32)>, f32) {
     (phonemes, end)
 }
 
-/// Each phoneme's setting of `key` in Valve's phoneme table (as the importer writes it).
-fn table_column(table: &PathBuf, key: &str) -> HashMap<u32, f32> {
+/// Each phoneme's setting of `key` in Valve's phoneme table (as the importer writes it), none when
+/// the table has no such column.
+fn table_column(table: &PathBuf, key: &str) -> Option<HashMap<u32, f32>> {
     let text = std::fs::read_to_string(table).expect("the phoneme table");
     let mut column = None;
     let mut settings = HashMap::new();
@@ -139,7 +147,7 @@ fn table_column(table: &PathBuf, key: &str) -> HashMap<u32, f32> {
         match words.as_slice() {
             ["keys", keys @ ..] => column = keys.iter().position(|k| *k == key),
             ["phoneme", code, values @ ..] => {
-                let at = column.expect("the table's keys first");
+                let at = column?;
                 settings.insert(
                     code.parse().expect("a code"),
                     values[at].parse().expect("a setting"),
@@ -148,7 +156,63 @@ fn table_column(table: &PathBuf, key: &str) -> HashMap<u32, f32> {
             _ => {}
         }
     }
-    settings
+    Some(settings)
+}
+
+/// What the phonemes of a line ask of each target of the face, by the target's index in the rig,
+/// the most any phoneme asks of it. The target a line is held to is the jaw when its phonemes
+/// open it, else the one they ask most of: a closed-mouth "Hm" asks the lips to meet and the jaw
+/// for nothing, and the face is right to leave the jaw be.
+fn driving_target(
+    trace: &Trace,
+    said: &Said,
+    phonemes: &[(f32, f32, u32)],
+) -> Option<(usize, HashMap<u32, f32>)> {
+    let mut best: Option<(usize, f32, HashMap<u32, f32>)> = None;
+    for (at, name) in trace.targets.iter().enumerate() {
+        let Some(asked) = table_column(&said.table, name) else {
+            continue;
+        };
+        let peak = phonemes
+            .iter()
+            .map(|&(_, _, code)| asked.get(&code).copied().unwrap_or(0.0))
+            .fold(0.0f32, f32::max);
+        if name == "jawOpen" && peak >= MIN_OPENING {
+            return Some((at, asked));
+        }
+        if best.as_ref().is_none_or(|(_, most, _)| peak > *most) {
+            best = Some((at, peak, asked));
+        }
+    }
+    best.map(|(at, _, asked)| (at, asked))
+}
+
+/// What the phonemes of a line ask of one target `t` seconds into it: Source's box filter
+/// (`AddVisemesForSentence`). Each phoneme counts for the part of the window ahead of `t` that it
+/// covers. Inside a phoneme the window widens up to the next phoneme (its end when they touch),
+/// never past the phoneme's own length, so a long phoneme starts to bring in the next one early.
+fn wanted_at(phonemes: &[(f32, f32, u32)], asked: &HashMap<u32, f32>, t: f32) -> f32 {
+    let mut window = FILTER;
+    let mut wanted = 0.0;
+    for (k, &(start, stop, code)) in phonemes.iter().enumerate() {
+        if t > start
+            && t < stop
+            && let Some(&(next_start, next_stop, _)) = phonemes.get(k + 1)
+        {
+            let until = if next_start == stop {
+                next_stop
+            } else {
+                next_start
+            };
+            window = window.max((until - t).min(stop - start));
+        }
+        let from = ((start - t) / window).max(0.0);
+        let to = ((stop - t) / window).min(1.0);
+        if from < 1.0 && to > 0.0 {
+            wanted += (to - from) * asked.get(&code).copied().unwrap_or(0.0);
+        }
+    }
+    wanted
 }
 
 fn correlation(a: &[f32], b: &[f32]) -> f32 {
@@ -160,34 +224,25 @@ fn correlation(a: &[f32], b: &[f32]) -> f32 {
     cov / (va * vb).sqrt().max(f32::MIN_POSITIVE)
 }
 
-/// Checks one line: along it the jaw follows its phonemes, after it the face is at rest.
+/// Checks one line: along it the face follows its phonemes, after it the face is at rest.
 fn check_line(trace: &Trace, said: &Said) -> Result<String, String> {
-    let jaw = trace
-        .targets
-        .iter()
-        .position(|n| n == "jawOpen")
-        .expect("a jaw");
     let (phonemes, end) = lipsync(&said.file);
-    let asked = table_column(&said.table, "jawOpen");
+    let (driver, asked) = driving_target(trace, said, &phonemes)
+        .expect("the phoneme table has a column for a target of the face");
     let along: Vec<&Frame> = said.frames.iter().filter(|f| f.t.is_some()).collect();
     let (drawn, wanted): (Vec<f32>, Vec<f32>) = along
         .iter()
         .filter(|f| f.t.is_some_and(|t| t <= end))
         .map(|f| {
             let t = f.t.expect("along the line");
-            // Each phoneme's share of the filter's window ahead of `t`.
-            let wanted = phonemes
-                .iter()
-                .map(|&(start, stop, code)| {
-                    let covered = (stop.min(t + FILTER) - start.max(t)).max(0.0) / FILTER;
-                    covered * asked.get(&code).copied().unwrap_or(0.0)
-                })
-                .sum::<f32>();
-            (f.weights[jaw], wanted.min(1.0))
+            let wanted = wanted_at(&phonemes, &asked, t);
+            (f.weights[driver], wanted.min(1.0))
         })
         .unzip();
     let r = correlation(&drawn, &wanted);
-    let opening = drawn.iter().fold(0.0f32, |m, w| m.max(w - trace.rest[jaw]));
+    let opening = drawn
+        .iter()
+        .fold(0.0f32, |m, w| m.max(w - trace.rest[driver]));
     let last = along.iter().filter_map(|f| f.t).fold(0.0f32, f32::max);
     let after: Vec<&Frame> = said
         .frames
@@ -205,19 +260,20 @@ fn check_line(trace: &Trace, said: &Said) -> Result<String, String> {
         })
         .fold(0.0f32, f32::max);
     let report = format!(
-        "{}: {} frames along {end:.2} s, jaw r = {r:.2} (>= {MIN_CORRELATION}), opens {opening:.2} \
+        "{}: {} frames along {end:.2} s, {} r = {r:.2} (>= {MIN_CORRELATION}), opens {opening:.2} \
          (>= {MIN_OPENING}), last drawn {last:.2} s in (<= {:.2}), {} frames after it {off_rest:.4} \
          off the rest face (0)",
         said.file.display(),
         drawn.len(),
+        trace.targets[driver],
         end + LATE,
         after.len(),
     );
-    let pass = drawn.len() >= 10
+    let pass = drawn.len() as f32 >= MIN_FRAMES_PER_SECOND * end
         && r >= MIN_CORRELATION
         && opening >= MIN_OPENING
         && last <= end + LATE
-        && after.len() >= 10
+        && after.len() >= MIN_FRAMES_AT_REST
         && off_rest <= 1e-3;
     if pass { Ok(report) } else { Err(report) }
 }
