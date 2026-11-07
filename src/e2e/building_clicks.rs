@@ -25,8 +25,16 @@ fn own_building(client: &Client, kind: UnitKind) -> UnitView {
 /// What the pointer on a ground point of bota's plane would pick: the left click's and the
 /// right click's.
 fn picked_at(client: &mut Client, at: (f32, f32)) -> (Option<EntityId>, Option<EntityId>) {
-    let pixel = client.screen_of(at).expect("on screen");
-    client.mouse(pixel);
+    // The camera is still settling after the hero's teleport-follow: reproject the point until
+    // the cursor's ray reaches it, or the pointer lands beside where the test means it.
+    client.until("the cursor on the requested ground point", |c| {
+        let pixel = c.screen_of(at).expect("on screen");
+        c.mouse(pixel);
+        c.world()
+            .resource::<crate::camera::CursorGround>()
+            .0
+            .is_some_and(|p| Vec2::new(p.x, -p.z).distance(Vec2::new(at.0, at.1)) < 1.0)
+    });
     let hover = client.world().resource::<crate::pick::Hover>();
     (
         hover.select.map(|(id, _)| id),
