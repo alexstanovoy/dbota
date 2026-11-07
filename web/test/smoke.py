@@ -186,6 +186,11 @@ GRANT_LOGIC = """async () => {
     fake('dota 2 beta/game/dota/maps/dota.vpk'), fake('dota 2 beta/game/dota/maps/deep/x.vpk'),
     fake('dota 2 beta/game/dota/addons/pak01_dir.vpk'), fake('dota 2 beta/game/dota/cfg.txt'),
     fake('dota 2 beta/game/bin/pak01_001.vpk'), fake('dota 2 beta/game/dota/../x.vpk'),
+    // The interface's typefaces, and what lies beside them.
+    fake('dota 2 beta/game/dota/panorama/fonts/reaver-bold.otf'),
+    fake('dota 2 beta/game/dota/panorama/fonts/thai.uifont'),
+    fake('dota 2 beta/game/dota/panorama/fonts/deep/x.otf'),
+    fake('dota 2 beta/game/dota/panorama/x.otf'),
   ]));
   out.none = keys(grant.filesFromList([fake('dota 2 beta/readme.txt')]));
   out.direct = keys(grant.filesFromList([fake('dota/pak01_dir.vpk'), fake('dota/pak01_002.vpk')]));
@@ -197,6 +202,11 @@ GRANT_LOGIC = """async () => {
   const put = async (dir, name) => (await dir.getFileHandle(name, { create: true }));
   for (const name of ['pak01_dir.vpk', 'pak01_000.vpk', 'notes.txt']) await put(dota, name);
   await put(await dota.getDirectoryHandle('maps', { create: true }), 'dota.vpk');
+  const panorama = await dota.getDirectoryHandle('panorama', { create: true });
+  const fonts = await panorama.getDirectoryHandle('fonts', { create: true });
+  for (const name of ['radiance-bold.otf', 'thai.uifont']) await put(fonts, name);
+  await put(panorama, 'x.otf');
+  await put(await fonts.getDirectoryHandle('deep', { create: true }), 'y.otf');
   out.fromRoot = keys(await grant.filesOf(await base.getDirectoryHandle('dota 2 beta')));
   out.fromGame = keys(await grant.filesOf(await (await base.getDirectoryHandle('dota 2 beta')).getDirectoryHandle('game')));
   out.fromDota = keys(await grant.filesOf(dota));
@@ -208,9 +218,9 @@ GRANT_LOGIC = """async () => {
 
 def check_grant_logic(page):
     got = page.evaluate(GRANT_LOGIC)
-    packages = "maps/dota.vpk,pak01_000.vpk,pak01_dir.vpk"
+    packages = "maps/dota.vpk,pak01_000.vpk,pak01_dir.vpk,panorama/fonts/radiance-bold.otf"
     want = {
-        "list": "maps/dota.vpk,pak01_000.vpk,pak01_dir.vpk",
+        "list": "maps/dota.vpk,pak01_000.vpk,pak01_dir.vpk,panorama/fonts/reaver-bold.otf",
         "none": "",
         "direct": "pak01_002.vpk,pak01_dir.vpk",
         "fromRoot": packages,
