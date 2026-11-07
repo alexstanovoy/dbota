@@ -14,12 +14,13 @@ use bevy::{
 
 use super::draw::{
     Body, CardAnchor, ChoiceButton, ChoiceOption, CloseButton, KeyField, NameField, NavLink,
-    ResetButton, Root, RowReset, ScrollRail, ScrollThumb, SearchClear, SearchField, SliderTrack,
-    TabButton, ToggleRow,
+    ResetButton, Root, RowKey, RowReset, ScrollRail, ScrollThumb, SearchClear, SearchField,
+    SliderTrack, TabButton, ToggleBox, ToggleRow,
 };
 use super::model::{Choice, Row, Tab, TextSetting};
 use crate::config::Settings;
 use crate::keys::{self, Chord, Input};
+use crate::theme;
 use crate::window::Displays;
 
 /// The screen: whether it is open, its tab, the key field taking the next
@@ -82,6 +83,11 @@ pub struct Scroll {
     pub jump: Option<usize>,
 }
 
+/// The control the keyboard stands on, by its place in the reading order of the window's controls;
+/// none until Tab is pressed, and none again after a click.
+#[derive(Resource, Default)]
+pub struct Focus(pub Option<usize>);
+
 /// The card in view, by its place in the open view: the navigation marks its link.
 #[derive(Resource, Default)]
 pub struct InView(pub usize);
@@ -95,6 +101,7 @@ pub fn plugin(app: &mut App) {
     app.init_resource::<Screen>()
         .init_resource::<Scroll>()
         .init_resource::<InView>()
+        .init_resource::<Focus>()
         .add_systems(Startup, (super::draw::spawn_root, open_at_start))
         .add_systems(
             PreUpdate,
@@ -104,7 +111,16 @@ pub fn plugin(app: &mut App) {
         )
         .add_systems(
             Update,
-            (capture, clicks, drag, scroll, save, super::draw::layout).chain(),
+            (
+                capture,
+                focus,
+                clicks,
+                drag,
+                scroll,
+                save,
+                super::draw::layout,
+            )
+                .chain(),
         )
         .add_systems(
             Update,
@@ -117,6 +133,7 @@ pub fn plugin(app: &mut App) {
                 super::look::names,
                 super::look::nav,
                 super::look::help,
+                super::screen::focus_ring,
             )
                 .after(super::draw::layout),
         );
@@ -598,5 +615,149 @@ fn save(
     }
     for mut visibility in &mut root {
         visibility.set_if_neq(crate::ui::visible(screen.open));
+    }
+}
+
+/// The controls the keyboard can stand on, in reading order (top to bottom, then left to right).
+#[derive(bevy::ecs::system::SystemParam)]
+pub struct Focusable<'w, 's> {
+    nodes: Query<
+        'w,
+        's,
+        (
+            Entity,
+            &'static ComputedNode,
+            &'static UiGlobalTransform,
+            &'static InheritedVisibility,
+        ),
+        Or<(
+            With<ToggleBox>,
+            With<ChoiceButton>,
+            With<RowKey>,
+            With<NameField>,
+            With<SliderTrack>,
+        )>,
+    >,
+}
+
+impl Focusable<'_, '_> {
+    /// The controls that show, in reading order.
+    pub fn in_order(&self) -> Vec<Entity> {
+        let mut found: Vec<(Entity, Vec2)> = self
+            .nodes
+            .iter()
+            .filter(|(_, node, _, seen)| seen.get() && node.size() != Vec2::ZERO)
+            .map(|(entity, _, at, _)| (entity, at.translation))
+            .collect();
+        found.sort_by(|a, b| {
+            // A row's controls share a line to within a pixel or two.
+            let (ay, by) = ((a.1.y / 8.0).round(), (b.1.y / 8.0).round());
+            ay.total_cmp(&by).then(a.1.x.total_cmp(&b.1.x))
+        });
+        found.into_iter().map(|(entity, _)| entity).collect()
+    }
+}
+
+/// Tab and Shift+Tab move the keyboard along the controls; Space or Enter does what a click
+/// does; Left and Right move a slider. A click gives the focus up.
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
+fn focus(
+    mut screen: ResMut<Screen>,
+    mut settings: ResMut<Settings>,
+    mut at: ResMut<Focus>,
+    mut keyboard: MessageReader<KeyboardInput>,
+    held: Res<ButtonInput<KeyCode>>,
+    mouse: Res<ButtonInput<MouseButton>>,
+    order: Focusable,
+    toggles: Query<&ToggleBox>,
+    choices: Query<&ChoiceButton>,
+    keyfields: Query<&KeyField, With<RowKey>>,
+    names: Query<&NameField>,
+    sliders: Query<&SliderTrack>,
+) {
+    use bevy::input::keyboard::Key;
+    if !screen.open || screen.capturing.is_some() || screen.naming.is_some() || screen.searching {
+        keyboard.clear();
+        at.0 = None;
+        return;
+    }
+    if mouse.just_pressed(MouseButton::Left) && at.0.is_some() {
+        at.0 = None;
+    }
+    let controls = order.in_order();
+    let shift = held.any_pressed([KeyCode::ShiftLeft, KeyCode::ShiftRight]);
+    for event in keyboard.read().filter(|e| e.state == ButtonState::Pressed) {
+        if controls.is_empty() {
+            return;
+        }
+        let last = controls.len() - 1;
+        let here = at.0.map(|i| i.min(last));
+        match &event.logical_key {
+            Key::Tab if shift => {
+                at.0 = Some(here.map_or(last, |i| i.checked_sub(1).unwrap_or(last)))
+            }
+            Key::Tab => at.0 = Some(here.map_or(0, |i| if i == last { 0 } else { i + 1 })),
+            Key::Enter | Key::Space => {
+                let Some(control) = here.map(|i| controls[i]) else {
+                    continue;
+                };
+                if let Ok(tick) = toggles.get(control)
+                    && Row::Toggle(tick.0).enabled(&settings)
+                {
+                    let state = tick.0.get(&settings);
+                    tick.0.set(&mut settings, !state);
+                } else if let Ok(choice) = choices.get(control)
+                    && Row::Choice(choice.0).enabled(&settings)
+                {
+                    screen.dropdown = (screen.dropdown != Some(choice.0)).then_some(choice.0);
+                } else if let Ok(field) = keyfields.get(control) {
+                    screen.capturing = Some(field.0);
+                    screen.held_modifier = None;
+                } else if let Ok(field) = names.get(control) {
+                    screen.naming = Some(field.0);
+                }
+            }
+            Key::ArrowLeft | Key::ArrowRight => {
+                let Some(control) = here.map(|i| controls[i]) else {
+                    continue;
+                };
+                if let Ok(track) = sliders.get(control)
+                    && Row::Slider(track.0).enabled(&settings)
+                {
+                    let (lo, hi, step) = track.0.range();
+                    let sign = if event.logical_key == Key::ArrowLeft {
+                        -1.0
+                    } else {
+                        1.0
+                    };
+                    let share = track.0.share(&settings) + sign * step / (hi - lo);
+                    track.0.set_share(&mut settings, share);
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+/// The ring round the control the keyboard stands on: 2 px of the focus colour.
+pub fn focus_ring(
+    screen: Res<Screen>,
+    at: Res<Focus>,
+    order: Focusable,
+    mut rings: Query<(Entity, &mut Outline)>,
+) {
+    if !screen.open {
+        return;
+    }
+    let focused = at.0.and_then(|i| order.in_order().get(i).copied());
+    for (entity, mut outline) in &mut rings {
+        let color = if Some(entity) == focused {
+            theme::FOCUS
+        } else {
+            Color::NONE
+        };
+        if outline.color != color {
+            outline.color = color;
+        }
     }
 }

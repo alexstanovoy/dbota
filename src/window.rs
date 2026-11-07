@@ -54,14 +54,72 @@ impl Displays {
         Displays { native, sizes }
     }
 
+    #[cfg(test)]
     pub fn sizes(&self) -> &[(u32, u32)] {
         &self.sizes
     }
 
-    /// The size the settings ask for.
-    pub fn chosen(&self, settings: &crate::config::Settings) -> (u32, u32) {
-        settings.resolution.unwrap_or(self.native)
+    /// The size the game runs at under `settings`: the monitor's own in windowed fullscreen; in a
+    /// window the saved size as it is, any size being a valid window; in exclusive fullscreen the
+    /// saved size when the monitor lists it, else the largest listed size at or below it (the
+    /// monitor's own when none is).
+    pub fn in_use(&self, settings: &crate::config::Settings) -> (u32, u32) {
+        let Some(saved) = settings.resolution else {
+            return self.native;
+        };
+        match settings.display {
+            DisplayMode::Borderless => self.native,
+            DisplayMode::Windowed => saved,
+            DisplayMode::Exclusive => self
+                .sizes
+                .iter()
+                .rev()
+                .find(|(w, h)| *w <= saved.0 && *h <= saved.1)
+                .copied()
+                .unwrap_or(self.native),
+        }
     }
+
+    /// What the open list of resolutions holds, in order: the monitor's sizes, and the saved size
+    /// in its sorted place when the monitor does not list it.
+    pub fn entries(&self, settings: &crate::config::Settings) -> Vec<SizeEntry> {
+        let mut entries: Vec<SizeEntry> = self
+            .sizes
+            .iter()
+            .map(|size| SizeEntry {
+                size: *size,
+                note: SizeNote::Listed,
+            })
+            .collect();
+        if let Some(saved) = settings.resolution
+            && !self.sizes.contains(&saved)
+        {
+            let note = match settings.display {
+                DisplayMode::Exclusive => SizeNote::Unsupported,
+                _ => SizeNote::Saved,
+            };
+            let at = entries.partition_point(|entry| entry.size < saved);
+            entries.insert(at, SizeEntry { size: saved, note });
+        }
+        entries
+    }
+}
+
+/// A size of the list of resolutions and what is to be said of it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SizeEntry {
+    pub size: (u32, u32),
+    pub note: SizeNote,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SizeNote {
+    /// A mode of the monitor.
+    Listed,
+    /// The player's saved size, which the monitor does not list: fine for a window.
+    Saved,
+    /// The saved size in exclusive fullscreen, which the monitor cannot do.
+    Unsupported,
 }
 
 impl Default for Displays {
@@ -324,6 +382,7 @@ mod native {
     pub fn apply_mode(
         settings: Res<Settings>,
         args: Res<crate::Args>,
+        displays: Res<super::Displays>,
         monitors: Query<(&Monitor, Has<PrimaryMonitor>)>,
         mut window: Single<&mut Window, With<PrimaryWindow>>,
         mut resized: MessageReader<WindowResized>,
@@ -342,7 +401,8 @@ mod native {
             sizes.resolution = Some(settings.resolution);
         }
         let monitor = monitors.iter().max_by_key(|(_, primary)| *primary);
-        let video = match (settings.resolution, monitor) {
+        let wanted = settings.resolution.map(|_| displays.in_use(&settings));
+        let video = match (wanted, monitor) {
             (Some(size), Some((monitor, _))) => video_mode(monitor, size)
                 .map_or(VideoModeSelection::Current, VideoModeSelection::Specific),
             _ => VideoModeSelection::Current,
@@ -430,7 +490,7 @@ mod native {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use DisplayMode::{Borderless, Windowed};
+    use DisplayMode::{Borderless, Exclusive, Windowed};
 
     /// The browser's state is the truth: Esc turns the setting back, a
     /// refused request does too, and a setting picked this frame is asked
@@ -480,5 +540,75 @@ mod tests {
             displays.sizes(),
             [(800, 600), (1280, 720), (1920, 1080), (2560, 1440)]
         );
+    }
+
+    /// The size in use: the monitor's own in windowed fullscreen, the saved size as it is in a
+    /// window, the nearest listed size at or below it in exclusive fullscreen (native if none),
+    /// and the saved size kept for the other modes.
+    #[test]
+    fn the_size_in_use_follows_the_display_mode_and_a_saved_size_the_monitor_lacks() {
+        use crate::config::Settings;
+        let displays = Displays::new((2560, 1440), [(1280, 720), (1920, 1080), (2560, 1440)]);
+        let with = |display, resolution| Settings {
+            display,
+            resolution,
+            ..Settings::default()
+        };
+        assert_eq!(
+            displays.in_use(&with(Borderless, Some((1600, 900)))),
+            (2560, 1440)
+        );
+        assert_eq!(
+            displays.in_use(&with(Windowed, Some((1600, 900)))),
+            (1600, 900)
+        );
+        assert_eq!(
+            displays.in_use(&with(Exclusive, Some((1600, 900)))),
+            (1280, 720)
+        );
+        assert_eq!(
+            displays.in_use(&with(Exclusive, Some((1920, 1080)))),
+            (1920, 1080)
+        );
+        assert_eq!(
+            displays.in_use(&with(Exclusive, Some((640, 480)))),
+            (2560, 1440)
+        );
+        assert_eq!(displays.in_use(&with(Windowed, None)), (2560, 1440));
+    }
+
+    /// The list holds a saved size the monitor lacks in its sorted place: usable in a window,
+    /// not in exclusive fullscreen; a listed saved size is not doubled.
+    #[test]
+    fn the_list_of_sizes_holds_a_saved_size_the_monitor_lacks_in_its_sorted_place() {
+        use crate::config::Settings;
+        let displays = Displays::new((2560, 1440), [(1280, 720), (1920, 1080)]);
+        let with = |display, resolution| Settings {
+            display,
+            resolution,
+            ..Settings::default()
+        };
+        let sizes = |s: &Settings| -> Vec<((u32, u32), SizeNote)> {
+            displays
+                .entries(s)
+                .iter()
+                .map(|e| (e.size, e.note))
+                .collect()
+        };
+        assert_eq!(
+            sizes(&with(Windowed, Some((1600, 900)))),
+            [
+                ((1280, 720), SizeNote::Listed),
+                ((1600, 900), SizeNote::Saved),
+                ((1920, 1080), SizeNote::Listed),
+                ((2560, 1440), SizeNote::Listed)
+            ]
+        );
+        assert_eq!(
+            sizes(&with(Exclusive, Some((1600, 900))))[1],
+            ((1600, 900), SizeNote::Unsupported)
+        );
+        assert_eq!(sizes(&with(Windowed, Some((1920, 1080)))).len(), 3);
+        assert_eq!(sizes(&with(Windowed, None)).len(), 3);
     }
 }

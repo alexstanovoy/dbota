@@ -701,6 +701,26 @@ impl Client {
         self.frames(1);
     }
 
+    /// Presses and lets go of a key the window names in words (Tab, Space, Enter, an arrow).
+    pub fn tap_named(&mut self, key_code: KeyCode, logical_key: Key) {
+        for state in [ButtonState::Pressed, ButtonState::Released] {
+            let world = self.world_mut();
+            let window = world
+                .query_filtered::<Entity, With<PrimaryWindow>>()
+                .single(world)
+                .expect("the primary window");
+            world.write_message(KeyboardInput {
+                key_code,
+                logical_key: logical_key.clone(),
+                state,
+                text: None,
+                repeat: false,
+                window,
+            });
+            self.frames(1);
+        }
+    }
+
     /// Presses or lets go of a key, as the window reports it, and runs a frame.
     pub fn key(&mut self, key_code: KeyCode, state: ButtonState) {
         let world = self.world_mut();

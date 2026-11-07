@@ -10,5 +10,7 @@ mod model;
 mod screen;
 
 #[cfg(test)]
+pub use model::Choice;
+#[cfg(test)]
 pub use screen::{InView, Scroll};
 pub use screen::{Screen, escape, plugin};

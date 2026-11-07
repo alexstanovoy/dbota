@@ -18,8 +18,11 @@ use crate::keys;
 use crate::theme;
 use crate::window::Displays;
 
-/// What dims a control that cannot be used now.
-const OFF_ALPHA: f32 = 0.4;
+/// What dims a control that cannot be used now: the mockups' 40 % opacity, as the same dimming
+/// looks in Bevy's linear blending (see `theme::dim`: a browser blends in sRGB).
+fn off_alpha() -> f32 {
+    0.4_f32.powf(2.2)
+}
 /// The ink on the setting key's badge, over the blue.
 const BADGE_SETTING_INK: Color = Color::srgb(0.043, 0.055, 0.067);
 
@@ -28,7 +31,7 @@ fn dimmed(color: Color, enabled: bool) -> Color {
     if enabled {
         color
     } else {
-        color.with_alpha(color.alpha() * OFF_ALPHA)
+        color.with_alpha(color.alpha() * off_alpha())
     }
 }
 
@@ -143,7 +146,7 @@ pub fn toggles(
         let alpha = match (on, enabled) {
             (false, _) => 0.0,
             (true, true) => 1.0,
-            (true, false) => OFF_ALPHA,
+            (true, false) => off_alpha(),
         };
         let color = theme::INK_1.with_alpha(alpha);
         if image.color != color {
@@ -270,9 +273,10 @@ pub fn choices(
     }
     for (option, interaction, mut ground) in &mut options {
         let picked = option.0.current(&settings, &displays) == Some(option.1);
-        let color = match (*interaction, picked) {
-            (Interaction::None, true) => theme::LIST_PICKED,
-            (Interaction::None, false) => Color::NONE,
+        let enabled = option.0.option_enabled(&settings, &displays, option.1);
+        let color = match (*interaction, picked, enabled) {
+            (Interaction::None, true, _) => theme::LIST_PICKED,
+            (Interaction::None, false, _) | (_, _, false) => Color::NONE,
             _ => theme::LIST_HOVER,
         };
         ground.set_if_neq(BackgroundColor(color));

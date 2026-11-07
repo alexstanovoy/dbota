@@ -286,3 +286,93 @@ fn a_navigation_link_scrolls_to_its_section_and_is_marked() {
     client.frames(5);
     assert_eq!(client.world().resource::<crate::settings::Scroll>().y, 0.0);
 }
+
+/// The monitor of the tests, which lacks 1600 x 900, and a saved 1600 x 900 under `display`.
+fn saved_size_the_monitor_lacks(client: &mut Client, display: DisplayMode) {
+    client
+        .world_mut()
+        .insert_resource(Displays::new((2560, 1440), [(1280, 720), (2560, 1440)]));
+    let mut settings = client.world_mut().resource_mut::<Settings>();
+    settings.display = display;
+    settings.resolution = Some((1600, 900));
+    client.frames(5);
+}
+
+/// A saved size the monitor does not list: a window takes it as it is and lists it as saved;
+/// exclusive fullscreen falls back to the nearest listed size below and lists it unsupported,
+/// not to be picked; windowed fullscreen shows the monitor's size and keeps the saved one. The
+/// field is never "Custom".
+#[test]
+fn a_saved_resolution_the_monitor_lacks_is_shown_by_mode_and_never_as_custom() {
+    let mut client = open_settings("video");
+    saved_size_the_monitor_lacks(&mut client, DisplayMode::Windowed);
+    assert!(
+        has_text(&mut client, "1600 × 900"),
+        "a window takes the saved size"
+    );
+    click(&mut client, "resolution choice");
+    assert!(
+        has_text(&mut client, "1600 × 900 · saved"),
+        "{:?}",
+        client.shown_texts()
+    );
+    click(&mut client, "resolution choice");
+
+    saved_size_the_monitor_lacks(&mut client, DisplayMode::Exclusive);
+    assert!(
+        has_text(&mut client, "1280 × 720"),
+        "the nearest size below: {:?}",
+        client.shown_texts()
+    );
+    click(&mut client, "resolution choice");
+    let unsupported = "1600 × 900 · not supported by this monitor";
+    assert!(has_text(&mut client, unsupported));
+    click(&mut client, unsupported);
+    assert_eq!(
+        settings(&client).resolution,
+        Some((1600, 900)),
+        "it cannot be picked"
+    );
+
+    saved_size_the_monitor_lacks(&mut client, DisplayMode::Borderless);
+    assert!(
+        has_text(&mut client, "2560 × 1440"),
+        "windowed fullscreen shows the monitor's"
+    );
+    assert_eq!(
+        settings(&client).resolution,
+        Some((1600, 900)),
+        "the saved size is kept"
+    );
+    assert!(!has_text(&mut client, "Custom"));
+}
+
+/// Tab puts a ring on the first control, Space does what a click does, and a click gives the
+/// focus up.
+#[test]
+fn tab_puts_the_focus_ring_on_a_control_and_space_opens_it() {
+    use bevy::input::keyboard::Key;
+    let mut client = open_settings("video");
+    let ring = |c: &mut Client| -> Vec<String> {
+        let world = c.world_mut();
+        world
+            .query::<(&Name, &Outline)>()
+            .iter(world)
+            .filter(|(_, outline)| outline.color != Color::NONE)
+            .map(|(name, _)| name.to_string())
+            .collect()
+    };
+    assert!(
+        ring(&mut client).is_empty(),
+        "no ring before the keyboard is used"
+    );
+    client.tap_named(KeyCode::Tab, Key::Tab);
+    assert_eq!(ring(&mut client), ["display mode choice"]);
+    client.tap_named(KeyCode::Space, Key::Space);
+    assert_eq!(
+        screen(&client, |s| s.dropdown),
+        Some(crate::settings::Choice::DisplayMode)
+    );
+    click(&mut client, "audio");
+    assert!(ring(&mut client).is_empty(), "a click gives the focus up");
+}

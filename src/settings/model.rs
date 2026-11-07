@@ -3,10 +3,10 @@
 //! each reading and writing one field of [`Settings`].
 
 use crate::config::{
-    AntiAlias, Clarity, DISPLAY_MODES, DisplayMode, PRESETS, Quality, RightClickAllies, Settings,
+    AntiAlias, DISPLAY_MODES, DisplayMode, PRESETS, Quality, RightClickAllies, Settings,
 };
 use crate::keys::{self, Action, Group};
-use crate::window::Displays;
+use crate::window::{Displays, SizeNote};
 
 /// The screen's tabs, as Dota's settings have them.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -167,7 +167,6 @@ pub enum Choice {
     Quality,
     Shadows,
     AntiAliasing,
-    VisualClarity,
     FrameCap,
     TextureSize,
     RightClickAllies,
@@ -192,7 +191,6 @@ impl Choice {
             Choice::Quality => "Quality preset",
             Choice::Shadows => "Shadows",
             Choice::AntiAliasing => "Anti-aliasing",
-            Choice::VisualClarity => "Visual clarity",
             Choice::FrameCap => "Frame rate cap",
             Choice::TextureSize => "Largest texture size",
             Choice::RightClickAllies => "Right-Click Allies",
@@ -202,12 +200,18 @@ impl Choice {
     }
 
     /// What may be picked, as shown.
-    pub fn options(self, displays: &Displays) -> Vec<String> {
+    pub fn options(self, s: &Settings, displays: &Displays) -> Vec<String> {
         match self {
             Choice::Resolution => displays
-                .sizes()
+                .entries(s)
                 .iter()
-                .map(|size| size_text(*size))
+                .map(|entry| match entry.note {
+                    SizeNote::Listed => size_text(entry.size),
+                    SizeNote::Saved => format!("{} · saved", size_text(entry.size)),
+                    SizeNote::Unsupported => {
+                        format!("{} · not supported by this monitor", size_text(entry.size))
+                    }
+                })
                 .collect(),
             Choice::DisplayMode => ["Windowed", "Windowed fullscreen", "Fullscreen"]
                 .iter()
@@ -217,7 +221,6 @@ impl Choice {
             Choice::Quality => PRESETS.iter().map(|p| title(p)).collect(),
             Choice::Shadows => vec!["Off".into(), "Low".into(), "High".into()],
             Choice::AntiAliasing => AntiAlias::ALL.iter().map(|a| anti_alias_name(*a)).collect(),
-            Choice::VisualClarity => Clarity::ALL.iter().map(|c| title(c.name())).collect(),
             Choice::FrameCap => FRAME_CAPS
                 .iter()
                 .map(|c| {
@@ -242,17 +245,19 @@ impl Choice {
     pub fn current(self, s: &Settings, displays: &Displays) -> Option<usize> {
         let q = &s.quality;
         match self {
-            Choice::Resolution => displays
-                .sizes()
-                .iter()
-                .position(|size| *size == displays.chosen(s)),
+            Choice::Resolution => {
+                let used = displays.in_use(s);
+                displays
+                    .entries(s)
+                    .iter()
+                    .position(|entry| entry.size == used && entry.note != SizeNote::Unsupported)
+            }
             Choice::DisplayMode => DISPLAY_MODES.iter().position(|(m, _)| *m == s.display),
             Choice::Quality => q
                 .preset_name()
                 .and_then(|n| PRESETS.iter().position(|p| *p == n)),
             Choice::Shadows => Some(usize::from(q.shadows.min(2))),
             Choice::AntiAliasing => AntiAlias::ALL.iter().position(|a| *a == q.anti_alias),
-            Choice::VisualClarity => Clarity::ALL.iter().position(|c| *c == s.clarity),
             Choice::FrameCap => FRAME_CAPS.iter().position(|c| *c == q.fps_cap),
             Choice::TextureSize => TEXTURE_SIZES.iter().position(|t| *t == q.texture_size),
             Choice::RightClickAllies => RightClickAllies::ALL
@@ -270,8 +275,10 @@ impl Choice {
         let q = &mut s.quality;
         match self {
             Choice::Resolution => {
-                if let Some(size) = displays.sizes().get(at) {
-                    s.resolution = (*size != displays.native).then_some(*size);
+                if self.option_enabled(s, displays, at)
+                    && let Some(entry) = displays.entries(s).get(at)
+                {
+                    s.resolution = (entry.size != displays.native).then_some(entry.size);
                 }
             }
             Choice::DisplayMode => {
@@ -292,7 +299,6 @@ impl Choice {
             Choice::AntiAliasing => {
                 q.anti_alias = AntiAlias::ALL.get(at).copied().unwrap_or(q.anti_alias)
             }
-            Choice::VisualClarity => s.clarity = Clarity::ALL.get(at).copied().unwrap_or(s.clarity),
             Choice::FrameCap => q.fps_cap = FRAME_CAPS.get(at).copied().unwrap_or(q.fps_cap),
             Choice::TextureSize => {
                 q.texture_size = TEXTURE_SIZES.get(at).copied().unwrap_or(q.texture_size);
@@ -317,14 +323,25 @@ impl Choice {
         }
     }
 
+    /// Whether option `at` can be picked: not a size the monitor cannot do in exclusive fullscreen.
+    pub fn option_enabled(self, s: &Settings, displays: &Displays, at: usize) -> bool {
+        match self {
+            Choice::Resolution => displays
+                .entries(s)
+                .get(at)
+                .is_some_and(|entry| entry.note != SizeNote::Unsupported),
+            _ => true,
+        }
+    }
+
     /// What the choice shows now.
     pub fn shown(self, s: &Settings, displays: &Displays) -> String {
-        // A size the file names that the monitor does not list is still the size.
+        // Always a real size, the one in use, whether or not the monitor lists it.
         if self == Choice::Resolution {
-            return size_text(displays.chosen(s));
+            return size_text(displays.in_use(s));
         }
         self.current(s, displays)
-            .and_then(|at| self.options(displays).get(at).cloned())
+            .and_then(|at| self.options(s, displays).get(at).cloned())
             .unwrap_or_else(|| "Custom".into())
     }
 }
@@ -450,6 +467,7 @@ impl Row {
             Row::Text(setting) => setting.get(s) != setting.get(&fresh),
             Row::Toggle(toggle) => toggle.get(s) != toggle.get(&fresh),
             Row::Slider(slider) => (slider.get(s) - slider.get(&fresh)).abs() > 1e-4,
+            Row::Choice(Choice::Resolution) => displays.in_use(s) != displays.native,
             Row::Choice(choice) => choice.current(s, displays) != choice.current(&fresh, displays),
             Row::Key(at) => s.keys[at] != fresh.keys[at],
             Row::Census => false,
@@ -463,6 +481,7 @@ impl Row {
             Row::Text(setting) => setting.get_mut(s).clone_from(setting.get(&fresh)),
             Row::Toggle(toggle) => toggle.set(s, toggle.get(&fresh)),
             Row::Slider(slider) => slider.set_share(s, slider.share(&fresh)),
+            Row::Choice(Choice::Resolution) => s.resolution = None,
             Row::Choice(choice) => {
                 if let Some(at) = choice.current(&fresh, displays) {
                     choice.pick(s, at, displays);
@@ -583,7 +602,6 @@ pub fn sections(tab: Tab, every_row: bool) -> Vec<Section> {
                         C(Choice::Quality),
                         C(Choice::Shadows),
                         C(Choice::AntiAliasing),
-                        C(Choice::VisualClarity),
                         T(Toggle::AutoQuality),
                     ],
                 ),

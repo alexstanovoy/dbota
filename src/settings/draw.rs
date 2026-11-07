@@ -993,6 +993,7 @@ fn name_field(kit: &mut Kit, root: Entity, setting: TextSetting) {
         .spawn((
             NameField(setting),
             Button,
+            Outline::new(px(2), px(2), Color::NONE),
             Name::new(format!("{} field", setting.label().to_lowercase())),
             Node {
                 width: px(FIELD_WIDTH),
@@ -1048,6 +1049,7 @@ fn tick_box(kit: &mut Kit, root: Entity, toggle: Toggle) {
         .commands
         .spawn((
             ToggleBox(toggle),
+            Outline::new(px(2), px(3), Color::NONE),
             Node {
                 width: px(24),
                 height: px(24),
@@ -1075,6 +1077,7 @@ fn slider_view(kit: &mut Kit, root: Entity, slider: Slider) {
         .spawn((
             SliderTrack(slider),
             Button,
+            Outline::new(px(2), px(2), Color::NONE),
             RelativeCursorPosition::default(),
             Node {
                 width: px(SLIDER_WIDTH),
@@ -1164,6 +1167,7 @@ fn choice_view(kit: &mut Kit, root: Entity, choice: Choice, ctx: &RowCtx) {
         .spawn((
             ChoiceButton(choice),
             Button,
+            Outline::new(px(2), px(2), Color::NONE),
             Node {
                 width: px(FIELD_WIDTH),
                 height: px(FIELD_HEIGHT),
@@ -1211,7 +1215,12 @@ fn options_list(kit: &mut Kit, anchor: Entity, choice: Choice, ctx: &RowCtx) {
         ))
         .id();
     let picked = choice.current(ctx.settings, ctx.displays);
-    for (at, option) in choice.options(ctx.displays).into_iter().enumerate() {
+    for (at, option) in choice
+        .options(ctx.settings, ctx.displays)
+        .into_iter()
+        .enumerate()
+    {
+        let enabled = choice.option_enabled(ctx.settings, ctx.displays, at);
         let item = kit
             .commands
             .spawn((
@@ -1229,7 +1238,12 @@ fn options_list(kit: &mut Kit, anchor: Entity, choice: Choice, ctx: &RowCtx) {
                 ChildOf(list),
             ))
             .id();
-        kit.typed(item, option, theme::BODY, theme::INK_1);
+        let ink = if enabled {
+            theme::INK_1
+        } else {
+            theme::INK_OFF
+        };
+        kit.typed(item, option, theme::BODY, ink);
         if picked == Some(at) {
             kit.commands
                 .entity(item)
@@ -1260,6 +1274,7 @@ fn key_field(kit: &mut Kit, root: Entity, at: usize) {
             KeyField(at),
             RowKey,
             Button,
+            Outline::new(px(2), px(2), Color::NONE),
             Node {
                 width: px(130),
                 height: px(32),
