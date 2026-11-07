@@ -556,9 +556,8 @@ impl MenuCore {
             allow_matchmaking_bots: self.prefs.allow_matchmaking_bots,
             rulesets: client
                 .rulesets()
-                // Play lists what Find Match queues (radovid: a ruleset with a queue is rated);
-                // the others are for lobbies, picked where one is made.
-                .filter(|r| r.rated)
+                // Lobbies and solo starts without a queue have no matchmaking policy.
+                .filter(|r| r.rating_window.is_some())
                 .map(|r| RulesetRow {
                     id: r.id.clone(),
                     name: text::line(&r.name, text::NAME),

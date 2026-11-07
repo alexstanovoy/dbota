@@ -866,3 +866,52 @@ fn assert_matchmaking_preference_survives_reload(
         "the saved switch is checked after reload"
     );
 }
+
+#[test]
+fn an_unranked_mode_is_drawn_and_its_find_button_joins_that_queue() {
+    let service = crate::main_menu::tests::service_with_unranked();
+    let mut client = signed_up(&service, "casual_player");
+    assert!(
+        client
+            .shown_texts()
+            .iter()
+            .any(|text| text == "Unranked Mid"),
+        "the unrated sibling is on Play"
+    );
+    assert!(
+        client
+            .shown_texts()
+            .iter()
+            .any(|text| text.contains("unranked")),
+        "the card says the game is unranked"
+    );
+    let casual = bota_radovid::RulesetId("casual_mid".into());
+    let world = client.world_mut();
+    let button = world
+        .query::<(Entity, &MenuButton)>()
+        .iter(world)
+        .find(|(_, button)| matches!(&button.0, Act::Find(id) if *id == casual))
+        .map(|(entity, _)| entity)
+        .expect("the unranked card's Find Match button");
+    let position = world
+        .get::<UiGlobalTransform>(button)
+        .expect("button transform")
+        .translation;
+    client.mouse(position);
+    client.click(MouseButton::Left);
+    client.within(
+        Duration::from_secs(30),
+        "the unranked queue entry",
+        |client| {
+            client
+                .world()
+                .non_send::<MenuCore>()
+                .view()
+                .searches
+                .iter()
+                .any(|search| search.ruleset == "Unranked Mid")
+        },
+    );
+    let menu = client.world().non_send::<MenuCore>();
+    assert_eq!(menu.view().searches.len(), 1);
+}

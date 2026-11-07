@@ -288,6 +288,23 @@ fn service_with(change: impl FnOnce(String) -> String) -> Service {
     start_service(true, change)
 }
 
+pub(crate) fn service_with_unranked() -> Service {
+    service_with(|text| {
+        let ranked = text
+            .split("[[ruleset]]")
+            .find(|rule| rule.contains("id = \"solo_mid\""))
+            .expect("ranked fixture");
+        let casual = ranked
+            .replace("id = \"solo_mid\"", "id = \"casual_mid\"")
+            .replace("name = \"1x1 Mid Only\"", "name = \"Unranked Mid\"")
+            .replace(
+                "rated = true",
+                "rated = false\nrating_ruleset = \"solo_mid\"",
+            );
+        format!("{text}\n[[ruleset]]\n{casual}")
+    })
+}
+
 fn start_service(save_replays: bool, change: impl FnOnce(String) -> String) -> Service {
     let binary = server_binary().to_owned();
     let dir = Scratch::new("service");
