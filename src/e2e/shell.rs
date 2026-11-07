@@ -347,8 +347,20 @@ fn the_fullest_bar_folds_its_last_tabs_under_more_and_stays_whole() {
     };
     assert!(shown(&mut client, "more"), "MORE holds the tabs folded");
     assert!(!shown(&mut client, "replays"), "REPLAYS, the last, folded");
+    let more = interface_rect(&mut client, "more");
+    let kept: Vec<String> = ["play", "my games", "lobbies", "profile"]
+        .into_iter()
+        .filter(|tab| shown(&mut client, tab))
+        .map(str::to_owned)
+        .collect();
     click(&mut client, "more");
     client.until("MORE's list open", |c| shown(c, "replays"));
+    // Open, the list folds nothing more: MORE and the tabs before it stay where they were.
+    client.frames(20);
+    assert_eq!(interface_rect(&mut client, "more"), more, "MORE stays put");
+    for tab in &kept {
+        assert!(shown(&mut client, tab), "{tab} still in the bar");
+    }
     super::menu::resize_menu_window(&mut client, UVec2::new(1920, 1080));
     client.until("every tab back in the bar", |c| {
         shown(c, "replays") && !shown(c, "more")

@@ -288,7 +288,8 @@ fn tab(kit: &mut Kit, row: Entity, label: &str, on: bool) -> Entity {
 /// window or the interface's scale changes: at most one fold a frame, so the bar settles within
 /// as many frames as it has tabs.
 pub fn fit_tabs(
-    rows: Query<&ComputedNode, With<TabRow>>,
+    rows: Query<(&ComputedNode, &Children), With<TabRow>>,
+    tabs: Query<&ComputedNode>,
     mut resized: MessageReader<bevy::window::WindowResized>,
     ui_scale: Res<UiScale>,
     mut fold: ResMut<TabFold>,
@@ -300,10 +301,12 @@ pub fn fit_tabs(
         }
         return;
     }
-    let Ok(row) = rows.single() else {
+    let Ok((row, children)) = rows.single() else {
         return;
     };
-    if row.content_size().x > row.size().x + 0.5 && fold.folded < TABS.len() {
+    // The tabs' own widths: MORE's open list hangs from it, wider than it, and is no tab.
+    let needed: f32 = tabs.iter_many(children).map(|tab| tab.size().x).sum();
+    if needed > row.size().x + 0.5 && fold.folded < TABS.len() {
         fold.folded += 1;
     }
 }
