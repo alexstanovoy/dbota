@@ -1392,7 +1392,7 @@ def assert_in(text, part):
 # drawn at the viewport's size with the interface at its default scale, so they stay put.
 CLICK_LOBBIES = (329, 22)
 CLICK_REPLAYS = (505, 22)
-CLICK_START = (310, 567)
+CLICK_START = (310, 520)
 
 
 def wait_port(port, seconds=60):
