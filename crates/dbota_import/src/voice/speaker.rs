@@ -247,8 +247,11 @@ pub struct History {
     seed: u64,
     speaker: Speaker,
     steps: Vec<Step>,
-    /// The asks of `steps`, each with the choice it got.
-    choices: Vec<Result<Choice, Silence>>,
+    /// Queries asked so far: the next one's number.
+    asked: usize,
+    /// The line the last query chose, by its number, until it is accepted or another query is
+    /// asked: a line is accepted before the hero is asked anything else.
+    pending: Option<(usize, Choice)>,
     whole: bool,
 }
 
@@ -267,7 +270,8 @@ impl History {
             seed,
             speaker: Speaker::new(rules, seed),
             steps: Vec::new(),
-            choices: Vec::new(),
+            asked: 0,
+            pending: None,
             whole: true,
         }
     }
@@ -297,18 +301,20 @@ impl History {
         now: f64,
         query: impl FnOnce(u32) -> Query,
     ) -> (usize, Query, Result<Choice, Silence>) {
-        let n = self.choices.len();
+        let n = self.asked;
+        self.asked += 1;
         self.speaker.reseed(query_seed(self.seed, n));
         let query = query(self.speaker.draw(100) as u32);
         let choice = self.speaker.choose(rules, &query, now);
         self.record(Step::Ask(now, query.clone()));
-        self.choices.push(choice.clone());
+        self.pending = choice.as_ref().ok().map(|choice| (n, choice.clone()));
         (n, query, choice)
     }
 
-    /// Accepts at `now` the answer of query `n`: its line sounds.
+    /// Accepts at `now` the answer of query `n`, the last asked: its line sounds. The answer
+    /// of a query asked before the last is not accepted.
     pub fn accept(&mut self, rules: &HeroRules, n: usize, concept: Concept, now: f64) {
-        if let Some(Ok(choice)) = self.choices.get(n).cloned() {
+        if let Some((_, choice)) = self.pending.take_if(|(asked, _)| *asked == n) {
             self.speaker.accept(rules, concept, &choice, now);
             self.record(Step::Accept(n, concept, now));
         }
@@ -512,6 +518,27 @@ mod tests {
         sought.rewind(&rules, 15.0);
         let again = kills_at(&mut sought, &rules, &times[2..]);
         assert_eq!(again, once[2..]);
+    }
+
+    /// A match asked more than [`MAX_STEPS`] times keeps no more than that of what it asked.
+    #[test]
+    fn a_long_match_keeps_a_bounded_history() {
+        let rules = kills();
+        let mut history = History::new(&rules, 3);
+        for n in 0..2 * MAX_STEPS {
+            let _ = history.ask(&rules, n as f64, |_| kill(false));
+        }
+        assert!(
+            history.steps.len() <= MAX_STEPS,
+            "{} steps",
+            history.steps.len()
+        );
+        // Of the choices, only the last one's waits to be accepted.
+        let (n, query, said) = history.ask(&rules, 1e6, |_| kill(true));
+        assert_eq!(history.pending.as_ref().map(|(asked, _)| *asked), Some(n));
+        history.accept(&rules, n, query.concept, 1e6);
+        assert!(said.is_ok());
+        assert!(history.pending.is_none());
     }
 
     #[test]

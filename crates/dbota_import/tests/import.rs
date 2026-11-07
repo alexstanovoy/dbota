@@ -607,11 +607,10 @@ fn shop_categories_keep_their_order_and_hostile_files_are_texts_or_errors() {
     }
 }
 
-/// A hero's response rules that include files of one long text repeated many times (cheap in
-/// the file, which names a text once, and large decoded) are refused by an aggregate budget as
-/// they are read, not after they all sit decoded in memory.
-#[test]
-fn response_rules_past_the_aggregate_text_budget_are_refused_while_read() {
+/// What importing Pudge's voice reports failed, when his rules include three files whose 400
+/// responses each are `response` of one long text (cheap in the file, which names a text once,
+/// and large decoded).
+fn failures_of_long_rule_texts(response: fn(&'static str) -> Kv3) -> Vec<String> {
     let long: &'static str = Box::leak("a".repeat(8 << 10).into_boxed_str());
     let names: Vec<&'static str> = (0..3)
         .map(|i| &*Box::leak(format!("scripts/talker/response_rules_big{i}.vrr").into_boxed_str()))
@@ -626,16 +625,7 @@ fn response_rules_past_the_aggregate_text_budget_are_refused_while_read() {
             ("m_name", Kv3::Text("g")),
             (
                 "m_responses",
-                Kv3::List(
-                    (0..400)
-                        .map(|_| {
-                            Kv3::Object(vec![
-                                ("m_type", Kv3::Text("SPEAK")),
-                                ("m_value", Kv3::Text(long)),
-                            ])
-                        })
-                        .collect(),
-                ),
+                Kv3::List((0..400).map(|_| response(long)).collect()),
             ),
             (
                 "m_pEmbeddedRule",
@@ -666,7 +656,36 @@ fn response_rules_past_the_aggregate_text_budget_are_refused_while_read() {
     let mut sink = Memory::default();
     let report = run(&src, &plan, &mut sink, &mut |_| Flow::Continue).expect("a report");
     assert!(sink.0.is_empty(), "nothing written");
-    let why: Vec<&str> = report.failed.iter().map(|(_, why)| why.as_str()).collect();
+    report.failed.into_iter().map(|(_, why)| why).collect()
+}
+
+/// Rule files of one long line text repeated are refused by the hero's budget as they are
+/// read, not after they all sit decoded in memory.
+#[test]
+fn response_rules_past_the_aggregate_text_budget_are_refused_while_read() {
+    let why = failures_of_long_rule_texts(|long| {
+        Kv3::Object(vec![
+            ("m_type", Kv3::Text("SPEAK")),
+            ("m_value", Kv3::Text(long)),
+        ])
+    });
+    assert!(
+        why.iter()
+            .any(|w| w.contains("more response rule text than any hero's")),
+        "{why:?}"
+    );
+}
+
+/// A response kind no rule of the install has, of one long text repeated, counts against
+/// the same budget as everything else the rules keep.
+#[test]
+fn response_rules_of_long_unknown_kinds_are_refused_by_the_same_budget() {
+    let why = failures_of_long_rule_texts(|long| {
+        Kv3::Object(vec![
+            ("m_type", Kv3::Text(long)),
+            ("m_value", Kv3::Text("x")),
+        ])
+    });
     assert!(
         why.iter()
             .any(|w| w.contains("more response rule text than any hero's")),

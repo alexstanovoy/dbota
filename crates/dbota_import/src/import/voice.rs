@@ -33,14 +33,11 @@ const MAX_RULE_FILE_BYTES: u64 = 1 << 20;
 /// Most bytes of one sound event script or hero script: the install's largest voice script
 /// (Snapfire's) is 120,888, its largest hero script (Invoker's) 60,111.
 const MAX_SCRIPT_BYTES: u64 = 2 << 20;
-/// Most text all of a hero's rule files hold together, as decoded: its own file and those it
-/// includes hold 241,851 bytes for Pudge, the most of the installed heroes (Snapfire's own file
-/// alone, the largest, 229,328). A file names a text once and may use it any number of times:
-/// the budget is charged as each file is read, before the next one is.
+/// Most a hero's rule files keep together as decoded, counted by [`retained`]: Pudge's own
+/// file and the shared one it includes count 702,494 (241,851 bytes of text; Snapfire's own
+/// file, the largest, holds 229,328). A file names a text once and may use it any number of
+/// times: the budget is charged as each file is read, before the next one is.
 const MAX_RULE_TEXT: usize = 4 << 20;
-/// Most entries (criteria, groups, their requirements and responses) a hero's rule files hold
-/// together: 8,247 for Pudge's two.
-const MAX_RULE_ENTRIES: usize = 1 << 17;
 
 /// Why a line can never be said here.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -182,40 +179,27 @@ fn read_bounded(src: &impl Source, pak: &Vpk, path: &str, max: u64) -> Result<Ve
     read_from(src, &[pak], path)
 }
 
-/// The text bytes and the entries one rule file holds, as decoded.
-fn rule_data(rules: &ResponseRules) -> (usize, usize) {
-    let all = |texts: &[String]| texts.iter().map(String::len).sum::<usize>();
-    let optional = |text: &Option<String>| text.as_ref().map_or(0, String::len);
-    let criteria: usize = rules
-        .criteria
-        .iter()
-        .map(|c| c.name.len() + optional(&c.match_key) + optional(&c.match_expr))
-        .sum();
-    let responses = |g: &ResponseGroup| -> usize {
-        g.responses
-            .iter()
-            .map(|r| {
-                let followup = r
-                    .followup
-                    .as_ref()
-                    .map_or(0, |f| f.target.len() + f.concept.len() + f.contexts.len());
-                optional(&r.value) + followup
-            })
-            .sum()
-    };
-    let groups: usize = rules
-        .groups
-        .iter()
-        .map(|g| g.name.len() + g.rule.len() + all(&g.requirements) + responses(g))
-        .sum();
-    let text = all(&rules.includes) + all(&rules.sound_event_scripts) + criteria + groups;
-    let entries = rules.criteria.len()
-        + rules
-            .groups
-            .iter()
-            .map(|g| 1 + g.requirements.len() + g.responses.len())
-            .sum::<usize>();
-    (text, entries)
+/// The length of the `Debug` text of `rules`, if it is no more than `limit`. Every text the
+/// rules keep is in it whole (quoted, so never shorter), whatever field or kind keeps it, and
+/// every entry adds at least its punctuation, so it charges all the rules keep in one count,
+/// a field heatel adds included. It stops at the limit.
+fn retained(rules: &ResponseRules, limit: usize) -> Option<usize> {
+    struct Counter {
+        len: usize,
+        limit: usize,
+    }
+    impl std::fmt::Write for Counter {
+        fn write_str(&mut self, text: &str) -> std::fmt::Result {
+            self.len = self.len.saturating_add(text.len());
+            if self.len > self.limit {
+                return Err(std::fmt::Error);
+            }
+            Ok(())
+        }
+    }
+    let mut counter = Counter { len: 0, limit };
+    std::fmt::Write::write_fmt(&mut counter, format_args!("{rules:?}")).ok()?;
+    Some(counter.len)
 }
 
 fn read_rule_files(src: &impl Source, pak: &Vpk, hero: &str) -> Result<RuleFiles> {
@@ -223,7 +207,7 @@ fn read_rule_files(src: &impl Source, pak: &Vpk, hero: &str) -> Result<RuleFiles
         "scripts/talker/response_rules_{hero}.vrr"
     ))?]);
     let mut seen = BTreeSet::new();
-    let (mut text, mut entries) = (0usize, 0usize);
+    let mut kept = 0usize;
     let mut files = RuleFiles {
         criteria: Vec::new(),
         groups: Vec::new(),
@@ -241,18 +225,16 @@ fn read_rule_files(src: &impl Source, pak: &Vpk, hero: &str) -> Result<RuleFiles
         }
         let bytes = read_bounded(src, pak, &path, MAX_RULE_FILE_BYTES)?;
         let read = read_response_rules(&Resource::parse(&bytes)?)?;
-        let (more_text, more_entries) = rule_data(&read);
-        text = text.saturating_add(more_text);
-        entries = entries.saturating_add(more_entries);
-        if text > MAX_RULE_TEXT || entries > MAX_RULE_ENTRIES {
+        let Some(more) = retained(&read, MAX_RULE_TEXT - kept) else {
             return Err(malformed(
                 "voice",
                 format!(
-                    "more response rule text than any hero's: {text} bytes and {entries} \
-                     entries by {path}, at most {MAX_RULE_TEXT} and {MAX_RULE_ENTRIES}"
+                    "more response rule text than any hero's: past {MAX_RULE_TEXT} bytes by \
+                     {path}"
                 ),
             ));
-        }
+        };
+        kept += more;
         for include in &read.includes {
             queue.push_back(rule_path(include)?);
         }
@@ -398,15 +380,56 @@ fn voice_events(
     Ok(found)
 }
 
-/// The sounds of a pack as it is being made: each sound file once, by its path.
-#[derive(Default)]
+/// One sound of a pack: its audio, its kind, its lip sync, its seconds.
+type SoundFile = (Vec<u8>, &'static str, Option<String>, f32);
+
+/// The sounds of a pack as it is being made: each sound file once, by its path, the bytes of
+/// all of them within the pack's bound.
 struct Sounds {
     index: HashMap<String, usize>,
-    /// Per sound: its audio, its kind, its lip sync, its seconds.
-    files: Vec<(Vec<u8>, &'static str, Option<String>, f32)>,
+    files: Vec<SoundFile>,
+    /// Bytes the pack may still take: what [`Sounds::keep`] keeps is charged before it is kept.
+    left: usize,
+    /// Whether a sound was refused for want of room: the pack would not hold them all.
+    full: bool,
+}
+
+impl Default for Sounds {
+    fn default() -> Self {
+        Self {
+            index: HashMap::new(),
+            files: Vec::new(),
+            left: pack::MAX_PACK_BYTES,
+            full: false,
+        }
+    }
 }
 
 impl Sounds {
+    fn no_room(&mut self, path: &str) -> heatel::Error {
+        self.full = true;
+        malformed(
+            "voice",
+            format!(
+                "{path}: more sound than a pack holds ({} of {} bytes left)",
+                self.left,
+                pack::MAX_PACK_BYTES
+            ),
+        )
+    }
+
+    /// Keeps `file` as the sound at `path`, charged with every byte it keeps.
+    fn keep(&mut self, path: &str, file: SoundFile) -> Result<usize> {
+        let size = file.0.len() + file.2.as_ref().map_or(0, String::len);
+        self.left = match self.left.checked_sub(size) {
+            Some(left) => left,
+            None => return Err(self.no_room(path)),
+        };
+        self.files.push(file);
+        self.index.insert(path.to_owned(), self.files.len() - 1);
+        Ok(self.files.len() - 1)
+    }
+
     /// The pack's index of the sound at `path` (a `.vsnd`), read the first time it is asked.
     fn add(
         &mut self,
@@ -421,7 +444,15 @@ impl Sounds {
         if !path.starts_with("sounds/") || !path.ends_with(".vsnd") || !safe_path(path) {
             return Err(malformed("voice", format!("sound path {path:?}")));
         }
-        let bytes = read_bounded(src, pak, &format!("{path}_c"), MAX_SOUND_BYTES)?;
+        let stored = format!("{path}_c");
+        // The audio kept is a part of the file: a file larger than the room left is not read.
+        if pak
+            .get(&stored)
+            .is_some_and(|entry| entry.size() > self.left as u64)
+        {
+            return Err(self.no_room(path));
+        }
+        let bytes = read_bounded(src, pak, &stored, MAX_SOUND_BYTES)?;
         let sound = Sound::parse(&bytes)?;
         let lipsync = match Lipsync::parse(&bytes) {
             Ok(lipsync) if !lipsync.is_empty() => Some(lipsync_txt(&lipsync)),
@@ -435,14 +466,15 @@ impl Sounds {
             }
         };
         let seconds = sound.duration();
-        self.files.push((
-            sound.file().into_owned(),
-            sound.extension(),
-            lipsync,
-            seconds,
-        ));
-        self.index.insert(path.to_owned(), self.files.len() - 1);
-        Ok(self.files.len() - 1)
+        self.keep(
+            path,
+            (
+                sound.file().into_owned(),
+                sound.extension(),
+                lipsync,
+                seconds,
+            ),
+        )
     }
 }
 
@@ -469,13 +501,21 @@ fn pack_events(
         resolved: Vec::new(),
     };
     for (name, event) in found {
+        // An event of more sounds than any is refused before any of them is read.
+        if event.files.is_empty() || event.files.len() > rules::MAX_EVENT_SOUNDS {
+            out.report.failed.push((
+                name,
+                "a voice event of no sound, or of more sounds than any".to_owned(),
+            ));
+            continue;
+        }
         let indices: Result<Vec<usize>> = event
             .files
             .iter()
             .map(|file| sounds.add(src, pak, file, out))
             .collect();
         match indices {
-            Ok(indices) if !indices.is_empty() && indices.len() <= rules::MAX_EVENT_SOUNDS => {
+            Ok(indices) => {
                 let seconds = indices
                     .iter()
                     .map(|&i| sounds.files[i].3)
@@ -489,12 +529,14 @@ fn pack_events(
                 made.resolved
                     .push(resolve_event(event, false, &stacks, &mixer));
             }
-            Ok(_) => out.report.failed.push((
-                name,
-                "a voice event of no sound, or of more sounds than any".to_owned(),
-            )),
             Err(err) => out.report.failed.push((name, err.to_string())),
         }
+    }
+    if sounds.full {
+        return Err(malformed(
+            "voice",
+            "more sound than a pack holds: its events are not all kept",
+        ));
     }
     Ok(made)
 }
@@ -770,5 +812,104 @@ mod tests {
             ]
         );
         assert_eq!(pruned.total, 36);
+    }
+
+    /// A `vsnd_c` of `audio` as Dota stores a voice line: the older binary `DATA` block, an
+    /// MP3 of one channel at 22,050 Hz.
+    fn vsnd(audio: &[u8]) -> Vec<u8> {
+        let packed = 1 | (8 << 2) | (1 << 7) | (22_050 << 14);
+        let mut data = Vec::new();
+        for word in [packed, u32::MAX, 22_050, 1.0f32.to_bits(), 0, 0, 0] {
+            data.extend_from_slice(&u32::to_le_bytes(word));
+        }
+        data.extend_from_slice(&u32::to_le_bytes(audio.len() as u32));
+        data.extend_from_slice(&[0; 8]);
+        let mut out = u32::to_le_bytes(28 + data.len() as u32).to_vec();
+        out.extend_from_slice(&12u16.to_le_bytes());
+        out.extend_from_slice(&1u16.to_le_bytes());
+        for word in [8, 1] {
+            out.extend_from_slice(&u32::to_le_bytes(word));
+        }
+        out.extend_from_slice(b"DATA");
+        out.extend_from_slice(&8u32.to_le_bytes());
+        out.extend_from_slice(&u32::to_le_bytes(data.len() as u32));
+        out.extend_from_slice(&data);
+        out.extend_from_slice(audio);
+        out
+    }
+
+    /// A package directory of `count` sounds `sounds/many/<n>.vsnd_c`, all the one stored
+    /// `file` in the directory's own data section.
+    fn same_sounds(count: usize, file: &[u8]) -> heatel::SliceSource<Vec<u8>> {
+        let mut tree = b"vsnd_c\0sounds/many\0".to_vec();
+        for n in 0..count {
+            tree.extend_from_slice(format!("{n}\0").as_bytes());
+            tree.extend_from_slice(&crc32fast::hash(file).to_le_bytes());
+            tree.extend_from_slice(&0u16.to_le_bytes());
+            tree.extend_from_slice(&0x7FFFu16.to_le_bytes());
+            tree.extend_from_slice(&0u32.to_le_bytes());
+            tree.extend_from_slice(&u32::to_le_bytes(file.len() as u32));
+            tree.extend_from_slice(&0xFFFFu16.to_le_bytes());
+        }
+        tree.extend_from_slice(&[0, 0, 0]);
+        let mut bytes = Vec::new();
+        for word in [
+            0x55AA_1234,
+            2,
+            tree.len() as u32,
+            file.len() as u32,
+            0,
+            48,
+            0,
+        ] {
+            bytes.extend_from_slice(&u32::to_le_bytes(word));
+        }
+        bytes.extend(tree);
+        bytes.extend_from_slice(file);
+        let mut src = heatel::SliceSource::default();
+        src.insert("pak01_dir.vpk", bytes);
+        src
+    }
+
+    struct Discard;
+
+    impl crate::import::Sink for Discard {
+        fn write(&mut self, _: &str, _: &[u8]) -> Result<()> {
+            Ok(())
+        }
+    }
+
+    /// The sounds kept for a pack stop at the pack's bound: each is charged before it is
+    /// kept, and the one that would pass the bound is refused unread.
+    #[test]
+    fn sounds_past_the_packs_bound_are_refused_before_they_are_kept() {
+        let src = same_sounds(12, &vsnd(&vec![7; 3 << 20]));
+        let pak = Vpk::open(&src, "pak01_dir.vpk").expect("a package");
+        let mut report = crate::import::Report::default();
+        let (mut written, mut pending) = (0, VecDeque::new());
+        let mut out = Out {
+            sink: &mut Discard,
+            report: &mut report,
+            written: &mut written,
+            pending: &mut pending,
+        };
+        let mut sounds = Sounds::default();
+        let added: Vec<Result<usize>> = (0..12)
+            .map(|n| sounds.add(&src, &pak, &format!("sounds/many/{n}.vsnd"), &mut out))
+            .collect();
+        let kept: usize = sounds
+            .files
+            .iter()
+            .map(|(audio, _, lipsync, _)| audio.len() + lipsync.as_ref().map_or(0, String::len))
+            .sum();
+        assert!(kept <= pack::MAX_PACK_BYTES, "{kept} bytes kept");
+        let refused = added
+            .iter()
+            .find_map(|added| added.as_ref().err())
+            .expect("a sound refused");
+        assert!(
+            refused.to_string().contains("more sound than a pack holds"),
+            "{refused}"
+        );
     }
 }
