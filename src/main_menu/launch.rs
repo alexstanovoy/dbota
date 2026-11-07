@@ -233,7 +233,7 @@ pub(super) fn server_binary(
 
 /// The wire a game server binary speaks, from its own `--wire-fingerprint`.
 #[cfg(not(target_arch = "wasm32"))]
-fn wire_of(server: &std::path::Path) -> Option<u64> {
+pub(super) fn wire_of(server: &std::path::Path) -> Option<u64> {
     let output = crate::steering::scrubbed_command(server)
         .arg("--wire-fingerprint")
         .stdin(std::process::Stdio::null())

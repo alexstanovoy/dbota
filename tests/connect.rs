@@ -58,3 +58,25 @@ fn the_seat_key_comes_from_the_environment_only() {
         String::from_utf8_lossy(&bad.stderr)
     );
 }
+
+/// The match tests stop at once, naming both wires, when their server is of another wire than the
+/// client (bota moved after the client was compiled).
+#[cfg(unix)]
+#[test]
+fn a_server_of_another_wire_is_refused_before_any_match() {
+    use std::os::unix::fs::PermissionsExt;
+    let scratch = common::prepared::Scratch::new("stale-server");
+    let stale = scratch.path("bota_server");
+    std::fs::write(&stale, "#!/bin/sh\necho 0000000000000001\n").expect("a script");
+    std::fs::set_permissions(&stale, std::fs::Permissions::from_mode(0o755)).expect("mode");
+    let said = common::check_wire(&stale, 0xabcd).expect_err("another wire");
+    assert_eq!(
+        said,
+        format!(
+            "{} speaks wire 0000000000000001 but this client was compiled for wire \
+             000000000000abcd: rebuild the client against the current bota, or check out the \
+             bota it was compiled with",
+            stale.display()
+        )
+    );
+}

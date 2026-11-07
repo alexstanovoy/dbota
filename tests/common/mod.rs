@@ -322,9 +322,37 @@ pub fn serve(args: &[&str]) -> Server {
 /// The game server: `BOTA_SERVER_BIN`, else built from the bota workspace dbota builds against.
 #[allow(dead_code)] // each test file uses the helpers it needs
 pub fn server_binary() -> PathBuf {
-    if let Some(path) = std::env::var_os("BOTA_SERVER_BIN") {
-        return PathBuf::from(path);
+    let binary = std::env::var_os("BOTA_SERVER_BIN").map_or_else(build_server, PathBuf::from);
+    if let Err(said) = check_wire(&binary, bota_core::WIRE_FINGERPRINT) {
+        panic!("{said}");
     }
+    binary
+}
+
+/// Why the check: bota moving under a built client makes a server of another wire, and every
+/// match then fails minutes in, on the first Hello.
+#[allow(dead_code)] // each test file uses the helpers it needs
+pub fn check_wire(binary: &Path, ours: u64) -> Result<(), String> {
+    let output = Command::new(binary)
+        .arg("--wire-fingerprint")
+        .stdin(Stdio::null())
+        .stderr(Stdio::null())
+        .output()
+        .map_err(|error| format!("{} does not start: {error}", binary.display()))?;
+    let said = String::from_utf8_lossy(&output.stdout);
+    let theirs = u64::from_str_radix(said.trim(), 16)
+        .map_err(|_| format!("{} did not say its wire", binary.display()))?;
+    if theirs == ours {
+        return Ok(());
+    }
+    Err(format!(
+        "{} speaks wire {theirs:016x} but this client was compiled for wire {ours:016x}: \
+         rebuild the client against the current bota, or check out the bota it was compiled with",
+        binary.display()
+    ))
+}
+
+fn build_server() -> PathBuf {
     let cargo = std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into());
     let out = Command::new(&cargo)
         .args(["metadata", "--format-version", "1"])

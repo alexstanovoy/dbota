@@ -77,29 +77,52 @@ fn bota_root() -> PathBuf {
 pub(crate) fn server_binary() -> &'static Path {
     static BINARY: OnceLock<PathBuf> = OnceLock::new();
     BINARY.get_or_init(|| {
-        if let Some(path) = std::env::var_os("BOTA_SERVER_BIN") {
-            return PathBuf::from(path);
-        }
-        let target = crate::test_support::target_dir().join("bota");
-        let cargo = std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into());
-        let status = Command::new(cargo)
-            .args([
-                "build",
-                "--quiet",
-                "--release",
-                "-p",
-                "bota_server",
-                "--features",
-                "websocket",
-            ])
-            .arg("--target-dir")
-            .arg(&target)
-            .current_dir(bota_root())
-            .status()
-            .expect("cargo runs");
-        assert!(status.success(), "bota_server builds");
-        target.join("release/bota_server")
+        let binary = if let Some(path) = std::env::var_os("BOTA_SERVER_BIN") {
+            PathBuf::from(path)
+        } else {
+            build_server()
+        };
+        wire_checked(binary, bota_radovid::fingerprint()).unwrap_or_else(|said| panic!("{said}"))
     })
+}
+
+/// `binary`, if it speaks the wire `ours`. Why here: bota moving under a built client makes a
+/// server of another wire, and every match then fails minutes in, on the first Hello.
+fn wire_checked(binary: PathBuf, ours: u64) -> Result<PathBuf, String> {
+    let theirs = super::launch::wire_of(&binary)
+        .ok_or_else(|| format!("{} did not say its wire", binary.display()))?;
+    if theirs != ours {
+        return Err(format!(
+            "{} speaks wire {theirs:016x} but this client was compiled for wire {ours:016x}: \
+             rebuild the client against the current bota, or check out the bota it was compiled \
+             with",
+            binary.display()
+        ));
+    }
+    Ok(binary)
+}
+
+/// Builds the game server from the bota workspace dbota builds against.
+fn build_server() -> PathBuf {
+    let target = crate::test_support::target_dir().join("bota");
+    let cargo = std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into());
+    let status = Command::new(cargo)
+        .args([
+            "build",
+            "--quiet",
+            "--release",
+            "-p",
+            "bota_server",
+            "--features",
+            "websocket",
+        ])
+        .arg("--target-dir")
+        .arg(&target)
+        .current_dir(bota_root())
+        .status()
+        .expect("cargo runs");
+    assert!(status.success(), "bota_server builds");
+    target.join("release/bota_server")
 }
 
 /// The service, running until dropped.
@@ -1872,6 +1895,32 @@ fn a_new_lobby_is_full_rules_with_ten_slots_and_solo_mid_changes_the_rules_only(
     }
     let view = game.view().expect("the match runs");
     assert_eq!(view.players.len(), 1, "the host alone: no bot, no dummy");
+}
+
+/// The harness stops at once, naming both wires and the way out, when its server is of another
+/// wire than the client it tests (bota moved after the client was compiled).
+#[cfg(unix)]
+#[test]
+fn the_harness_refuses_a_server_of_another_wire_at_once() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = Scratch::new("harness_wire");
+    let stale = dir.0.join("bota_server");
+    std::fs::write(&stale, "#!/bin/sh\necho 0000000000000001\n").expect("a script");
+    std::fs::set_permissions(&stale, std::fs::Permissions::from_mode(0o755)).expect("mode");
+    let said = wire_checked(stale.clone(), 0xabcd).expect_err("another wire");
+    assert_eq!(
+        said,
+        format!(
+            "{} speaks wire 0000000000000001 but this client was compiled for wire \
+             000000000000abcd: rebuild the client against the current bota, or check out the \
+             bota it was compiled with",
+            stale.display()
+        )
+    );
+    assert_eq!(
+        wire_checked(server_binary().to_owned(), bota_radovid::fingerprint()).expect("the same"),
+        server_binary()
+    );
 }
 
 /// A game server of another wire than the client's is not used, and the menu says which it
