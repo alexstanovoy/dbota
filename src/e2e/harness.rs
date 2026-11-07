@@ -409,6 +409,18 @@ impl Client {
         client
     }
 
+    /// Joins with the clock configured before the first update, including asynchronous loading.
+    pub fn join_with_clock(
+        server: &Server,
+        hero: bota_proto::HeroId,
+        extra: &[&str],
+        frame: Duration,
+    ) -> Client {
+        let mut client = Client::pick_configured(server, hero, extra, &[], Some(frame));
+        client.until("the hero on the map", |c| c.core().ears().is_some());
+        client
+    }
+
     /// The client joined to `server`'s seat, run with `extra` command-line arguments, its hero
     /// picked: it returns once the pick is past (in the strategy phase, where the server has
     /// one).
@@ -433,9 +445,24 @@ impl Client {
         extra: &[&str],
         files: &[(&str, &str)],
     ) -> Client {
+        Self::pick_configured(server, hero, extra, files, None)
+    }
+
+    fn pick_configured(
+        server: &Server,
+        hero: bota_proto::HeroId,
+        extra: &[&str],
+        files: &[(&str, &str)],
+        frame: Option<Duration>,
+    ) -> Client {
         let mut args = vec!["--addr", server.address.as_str()];
         args.extend_from_slice(extra);
         let mut client = Client::run_with_files(&args, files);
+        if let Some(frame) = frame {
+            client
+                .world_mut()
+                .insert_resource(bevy::time::TimeUpdateStrategy::ManualDuration(frame));
+        }
         client.until("the hero picked", |c| {
             let core = c.core_mut();
             if core.view().is_none() && core.my_slot.is_some() && !core.ready {
