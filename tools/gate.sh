@@ -74,6 +74,7 @@ export DBOTA_REFERENCE=${DBOTA_REFERENCE:-${XDG_CACHE_HOME:-$HOME/.cache}/dbota-
 export DBOTA_ASSETS=${DBOTA_ASSETS:-${DBOTA_GATE_ASSETS:-${XDG_CACHE_HOME:-$HOME/.cache}/dbota-gate}/$key}
 
 refuse_managed_asset_cache || exit 1
+refuse_managed_path DBOTA_REFERENCE || exit 1
 
 step() { # name command...
     local name=$1

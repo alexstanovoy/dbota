@@ -309,29 +309,88 @@ fn a_client_built_on_a_managed_cache_is_refused() {
 fn import_assets_refuses_the_managed_cache_before_it_touches_it() {
     let scratch = common::prepared::Scratch::new("import-managed-cache");
     let tools = copy_tools(&scratch, &[]);
-    let managed = scratch.path("home/.cache/dbota/v9");
+    for spelling in [
+        "home/.cache/dbota/v9",
+        "home/.cache/nonexistent/../dbota/v9",
+    ] {
+        let output = std::process::Command::new("bash")
+            .args([
+                "-c",
+                &format!(
+                    ". '{}'; import_assets",
+                    tools.join("client_env.sh").display()
+                ),
+            ])
+            .env("DBOTA_ASSETS", scratch.path(spelling))
+            .env("CARGO_TARGET_DIR", scratch.path("target"))
+            .output()
+            .expect("bash starts");
+        assert!(!output.status.success(), "{spelling}");
+        assert!(
+            String::from_utf8_lossy(&output.stderr)
+                .contains("DBOTA_ASSETS names the managed asset cache"),
+            "{spelling}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(
+            !scratch.path("home/.cache").exists(),
+            "{spelling}: the refused import still made the managed folder"
+        );
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn the_gate_refuses_a_managed_reference_cache() {
+    let scratch = common::prepared::Scratch::new("reference-managed-cache");
+    let tools = copy_tools(&scratch, &[]);
     let output = std::process::Command::new("bash")
         .args([
             "-c",
             &format!(
-                ". '{}'; import_assets",
+                ". '{}'; refuse_managed_path DBOTA_REFERENCE",
                 tools.join("client_env.sh").display()
             ),
         ])
-        .env("DBOTA_ASSETS", &managed)
-        .env("CARGO_TARGET_DIR", scratch.path("target"))
+        .env(
+            "DBOTA_REFERENCE",
+            scratch.path("home/.cache/dbota/reference"),
+        )
         .output()
         .expect("bash starts");
     assert!(!output.status.success());
     assert!(
         String::from_utf8_lossy(&output.stderr)
-            .contains("DBOTA_ASSETS names the managed asset cache"),
+            .contains("DBOTA_REFERENCE names the managed asset cache"),
         "{}",
         String::from_utf8_lossy(&output.stderr)
     );
-    assert!(
-        !managed.exists(),
-        "the refused import still made the managed folder"
+}
+
+#[cfg(unix)]
+#[test]
+fn a_server_started_in_the_background_without_the_steering_variables_is_the_pid_the_shell_holds() {
+    let scratch = common::prepared::Scratch::new("background-scrubbed");
+    let tools = copy_tools(&scratch, &[]);
+    let seen = scratch.path("seen.txt");
+    let script = format!(
+        ". '{tools}'; steering_unset_arguments; \
+         env \"${{STEERING_UNSET[@]}}\" sh -c 'echo \"${{BOTA_SEATS-unset}}\" > \"$1\"; exec sleep 30' sh '{seen}' & pid=$!; \
+         for _ in $(seq 100); do [ \"$(cat /proc/$pid/comm)\" = sleep ] && [ -s '{seen}' ] && break; sleep 0.05; done; \
+         cat '{seen}'; cat /proc/$pid/comm; kill $pid",
+        tools = tools.join("client_env.sh").display(),
+        seen = seen.display()
+    );
+    let mut command = std::process::Command::new("bash");
+    command.args(["-c", &script]);
+    untrusted_environment(&mut command);
+    let output = command.output().expect("bash starts");
+    let text = String::from_utf8_lossy(&output.stdout);
+    assert_eq!(
+        text.lines().collect::<Vec<_>>(),
+        ["unset", "sleep"],
+        "the variables are removed and `$!` is the server itself: {}",
+        String::from_utf8_lossy(&output.stderr)
     );
 }
 
@@ -528,7 +587,8 @@ fn precheck_and_gate_run_the_tests_on_a_private_home() {
         "browser_check.sh",
         "python3 web/test/smoke.py --import-page",
     );
-    assert!(read("browser_check.sh").contains("\nrun_scrubbed \"$server\""));
+    assert!(read("browser_check.sh").contains("\nenv \"${STEERING_UNSET[@]}\" \"$server\""));
+    assert!(gate.contains("refuse_managed_path DBOTA_REFERENCE || exit 1"));
     let smoke = std::fs::read_to_string(manifest().join("web/test/smoke.py")).expect("smoke test");
     assert!(smoke.contains("env=without_steering_variables()"));
     for step in [

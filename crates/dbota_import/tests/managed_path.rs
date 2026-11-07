@@ -22,6 +22,24 @@ fn the_managed_root_and_what_is_inside_it_are_managed_whether_or_not_they_exist(
 }
 
 #[test]
+fn dots_do_not_hide_the_managed_cache_even_below_a_folder_that_does_not_exist() {
+    for path in [
+        "/home/a/.cache/nonexistent/../dbota/v9",
+        "/home/a/./.cache/./dbota",
+        "/home/a/x/../.cache/dbota/v9/y",
+        "/home/a/.cache/dbota/v9/../../elsewhere/../dbota",
+    ] {
+        assert!(inside_managed_cache(path.as_ref()), "{path}");
+    }
+    for path in [
+        "/home/a/.cache/dbota/../other",
+        "/home/a/.cache/x/../dbota-gate",
+    ] {
+        assert!(!inside_managed_cache(path.as_ref()), "{path}");
+    }
+}
+
+#[test]
 fn the_gates_and_other_caches_are_not_managed() {
     for path in [
         "/home/a/.cache/dbota-gate/k",

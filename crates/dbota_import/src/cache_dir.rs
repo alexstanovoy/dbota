@@ -68,13 +68,24 @@ pub fn stamp_prefix(plan_id: &str) -> String {
     crate::import::fingerprint_of(plan_id)
 }
 
-/// Retention protects caches used within this window, up to the managed capacity.
 /// Whether `path` is the managed cache root (`~/.cache/dbota`) or inside it, by its names or, as
-/// far as it exists, by where its symbolic links lead: the folder whose maintenance owns and
-/// prunes caches, which a test or tool must not name as its own.
+/// far as it exists, by where its symbolic links lead, and with `..` and `.` taken out (also
+/// below a folder that does not exist yet, which creating the path would make): the folder whose
+/// maintenance owns and prunes caches, which a test or tool must not name as its own.
 pub fn inside_managed_cache(path: &Path) -> bool {
     fn named(path: &Path) -> bool {
-        let parts: Vec<_> = path.components().collect();
+        let mut parts: Vec<std::path::Component> = Vec::new();
+        for part in path.components() {
+            match part {
+                std::path::Component::CurDir => {}
+                std::path::Component::ParentDir
+                    if matches!(parts.last(), Some(std::path::Component::Normal(_))) =>
+                {
+                    parts.pop();
+                }
+                part => parts.push(part),
+            }
+        }
         parts
             .windows(2)
             .any(|pair| pair[0].as_os_str() == ".cache" && pair[1].as_os_str() == "dbota")
@@ -96,6 +107,7 @@ pub fn inside_managed_cache(path: &Path) -> bool {
     }
 }
 
+/// Retention protects caches used within this window, up to the managed capacity.
 pub const CACHE_USE_WINDOW: Duration = Duration::from_secs(24 * 60 * 60);
 pub const MAX_CACHES: usize = 8;
 

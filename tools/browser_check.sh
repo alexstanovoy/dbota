@@ -38,7 +38,8 @@ radovid_bin=$(target_of "$radovid")/release/radovid
 chat=$work/chat.brp
 rm -f "$chat" "$work/server.out"
 cargo build --release --quiet
-run_scrubbed "$server" --port 0 --bind 127.0.0.1 --mode realtime --tick-rate 120 --map 2 --players 2 --dummy-seat --pick-secs 1 \
+steering_unset_arguments
+env "${STEERING_UNSET[@]}" "$server" --port 0 --bind 127.0.0.1 --mode realtime --tick-rate 120 --map 2 --players 2 --dummy-seat --pick-secs 1 \
     --tactical-secs 0 --seed 7 --empty-after-secs 4 --replay "$chat" > "$work/server.out" 2>&1 &
 srv=$!
 addr=
