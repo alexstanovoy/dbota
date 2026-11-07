@@ -241,19 +241,43 @@ fn flag_art(
         .effect(&format!("creep.{side}.inspiration"))
         .expect("the team's Inspiration particle is imported")
         .clone();
-    let model = library
-        .models
-        .iter()
-        .find(|model| model.file.ends_with(&format!("creep_banner_{side}.glb")))
-        .expect("the authored banner model")
-        .gltf
-        .clone();
+    let model = banner_model(library, &banner, side);
     let looks: Vec<_> = aura
         .defs
         .iter()
         .flat_map(|def| def.draws.iter().map(|draw| draw.look))
         .collect();
     (banner, model, looks)
+}
+
+fn banner_model(
+    library: &crate::particles::Library,
+    effect: &crate::particles::Effect,
+    side: &str,
+) -> Handle<Gltf> {
+    let source = format!("models/props/creep_banners/creep_banner_{side}.vmdl");
+    assert!(
+        effect
+            .defs
+            .iter()
+            .any(|def| def.system.renderers.iter().any(|renderer| {
+                matches!(&renderer.class, heatel::particle::Renderer::Models(models)
+            if models.models.iter().any(|(path, _)| path == &source))
+            })),
+        "the authored banner belongs to {side}"
+    );
+    let mut models: Vec<_> = effect
+        .defs
+        .iter()
+        .flat_map(|def| &def.model_draws)
+        .flat_map(|draw| &draw.skins)
+        .flat_map(|skin| &skin.models)
+        .filter_map(|(model, _)| *model)
+        .collect();
+    models.sort_unstable();
+    models.dedup();
+    assert_eq!(models.len(), 1, "one imported model for this team's banner");
+    library.models[usize::from(models[0])].gltf.clone()
 }
 
 fn centre_camera_on(client: &mut Client, id: EntityId) {

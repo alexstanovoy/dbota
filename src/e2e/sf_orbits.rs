@@ -123,7 +123,11 @@ fn the_rock_orbit_sets_its_declared_force_center_from_its_previous_bounds() {
 }
 
 fn authored_source() -> Value {
-    let source = DirSource::new(find_game_dir(None).expect("install"));
+    let provided = std::env::var_os("DBOTA_DOTA_PATH")
+        .or_else(|| std::env::var_os("HEATEL_DOTA_PATH"))
+        .map(std::path::PathBuf::from);
+    let source =
+        DirSource::new(find_game_dir(provided.as_deref()).expect("explicit local install"));
     let pak = Vpk::open(&source, "pak01_dir.vpk").expect("VPK");
     let bytes = pak
         .read_file(
@@ -160,15 +164,7 @@ fn authored_sphere() -> (Vec3, f32) {
 }
 
 fn authored_limits(client: &Client) -> (usize, usize) {
-    let source = DirSource::new(find_game_dir(None).expect("install"));
-    let pak = Vpk::open(&source, "pak01_dir.vpk").expect("VPK");
-    let path = "particles/units/heroes/hero_nevermore/nevermore_trail_rocks.vpcf_c";
-    let bytes = pak.read_file(&source, path).expect("rock definition");
-    let data = Resource::parse(&bytes)
-        .expect("resource")
-        .data()
-        .expect("DATA")
-        .expect("KV3");
+    let data = authored_source();
     let list = |key: &str| {
         data.get(key)
             .and_then(Value::as_array)
