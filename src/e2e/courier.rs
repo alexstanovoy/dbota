@@ -1,5 +1,7 @@
 //! A courier's owner reaching level four changes the model drawn in the match.
 
+mod return_locked;
+
 use bevy::{ecs::system::SystemState, prelude::*};
 use bota_client_core::{Intent, LiveLink, ReplayPlayer, Source};
 use bota_proto::{
