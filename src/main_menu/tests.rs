@@ -2443,3 +2443,32 @@ fn quitting_or_hosting_again_says_it_ends_the_hosted_game() {
         "the new lobby, once answered"
     );
 }
+
+/// Signed in with nothing in flight, the service goes away: the menu says it was disconnected and
+/// the pill says the link is lost (RECONNECTING, a click retries), not the service's name in green
+/// as if still connected (it stayed green: no retry was due, as nothing live was on the link).
+#[test]
+fn a_lost_idle_link_shows_in_the_pill_not_as_online() {
+    let service = service();
+    let mut alice = Player::new(Some(&service));
+    alice.register("alice");
+    settle(&mut [&mut alice], |p| p.menu.idle());
+    assert!(matches!(
+        alice.menu.view().connection,
+        super::view::Connection::Online(_)
+    ));
+    drop(service);
+    settle(&mut [&mut alice], |p| {
+        p.menu
+            .view()
+            .status
+            .is_some_and(|status| status.text.starts_with("Disconnected from the service"))
+    });
+    let view = alice.menu.view();
+    assert!(
+        matches!(view.connection, super::view::Connection::Lost(_)),
+        "{:?} while {:?}",
+        view.connection,
+        view.status
+    );
+}

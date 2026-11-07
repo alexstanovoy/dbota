@@ -527,6 +527,9 @@ pub struct MenuCore {
     retry_at: Option<Instant>,
     /// Whether a lost link is reconnected once, silently.
     retry: bool,
+    /// The signed-in account's link ended without the menu hanging up (an idle link is hung up on
+    /// purpose, and is no loss): until it is open again the pill says so.
+    link_lost: bool,
     pub(super) page: Page,
     pub(super) form: Form,
     pub(super) status: Option<Status>,
@@ -679,6 +682,7 @@ impl MenuCore {
             idle_since: None,
             retry_at: None,
             retry: true,
+            link_lost: false,
             page: Page::Service,
             settings_from: Page::Service,
             status: None,
@@ -913,9 +917,10 @@ impl MenuCore {
         }
     }
 
-    /// Whether the signed-in account's lost link to the service is waiting to be opened again.
+    /// Whether the signed-in account's link to the service was lost and is not open again yet,
+    /// whether or not a reconnection is due.
     pub(super) fn reconnecting(&self) -> bool {
-        self.account && self.retry_at.is_some()
+        self.account && (self.link_lost || self.retry_at.is_some())
     }
 
     /// The account's matches not yet over, as far as the menu knows.
@@ -1136,7 +1141,7 @@ impl MenuCore {
 
     /// Whether nothing live is on the link: no search or proposal, no lobby, no request or
     /// download in flight, no match of the account on screen or waited for.
-    fn idle(&self) -> bool {
+    pub(super) fn idle(&self) -> bool {
         let quiet = self.client.as_ref().is_some_and(|c| {
             c.searches().entries().is_empty() && c.searches().slot_waits().is_empty()
         });
@@ -1204,6 +1209,7 @@ impl MenuCore {
         self.keep_link_lost();
         self.meta_link_lost();
         let live = was_signed_in && !self.idle();
+        self.link_lost = self.account;
         self.credentials = None;
         self.outbox.clear();
         self.lobby = None;
@@ -1289,6 +1295,7 @@ impl MenuCore {
                 let first = !self.account;
                 self.account = true;
                 self.retry = true;
+                self.link_lost = false;
                 let saved = Saved {
                     service: self.prefs.service.clone(),
                     token: session,
@@ -1999,6 +2006,7 @@ impl MenuCore {
         self.outbox.clear();
         self.credentials = None;
         self.retry_at = None;
+        self.link_lost = false;
         if live {
             self.send(ClientMsg::Logout, Asked::Logout);
         } else {
