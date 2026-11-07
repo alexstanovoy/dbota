@@ -92,13 +92,15 @@ export async function readState(onBusy) {
   return { stamp, ...(await parseIndex(index)) };
 }
 
-async function responseBytes(response, limit) {
+// A response's bytes, read as they arrive and given up past `limit` (a served file is no larger
+// than the cache says only if its server is honest); `name` is what the errors call it.
+export async function responseBytes(response, limit, name = "index.txt") {
   const length = response.headers.get("content-length");
   if (length !== null && Number(length) > limit) {
     await response.body?.cancel();
-    throw new Error(`index.txt is ${length} bytes, at most ${limit}`);
+    throw new Error(`${name} is ${length} bytes, at most ${limit}`);
   }
-  if (!response.body) throw new Error("index.txt has no response body");
+  if (!response.body) throw new Error(`${name} has no response body`);
   const reader = response.body.getReader();
   const bytes = new Uint8Array(limit);
   let used = 0;
@@ -106,7 +108,7 @@ async function responseBytes(response, limit) {
     for (;;) {
       const { done, value } = await reader.read();
       if (done) return bytes.subarray(0, used);
-      if (value.byteLength > limit - used) throw new Error(`index.txt exceeds ${limit} bytes`);
+      if (value.byteLength > limit - used) throw new Error(`${name} exceeds ${limit} bytes`);
       bytes.set(value, used);
       used += value.byteLength;
     }

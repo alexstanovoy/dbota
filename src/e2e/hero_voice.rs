@@ -10,13 +10,17 @@ use std::time::{Duration, Instant};
 
 use bevy::prelude::*;
 use bota_client_core::{Intent, IssuedOrder};
-use bota_proto::{Cheat, CreepSide, HeroId, ModifierSpec, Order, RuneKind, Target};
+use bota_proto::{Cheat, CreepSide, HeroId, Order, RuneKind, Target};
 use dbota_import::voice::concept::{Concept, Fact};
 use dbota_import::voice::speaker::Silence;
 
 use super::harness::{Client, MID, Server, scripted_seat};
-use super::runes::{SOON, drawn, point_at, spawn_rune, top_spot};
+use super::runes::{drawn, point_at, spawn_rune, top_spot};
 use crate::hero_voice::{Answer, HeroVoice, Line, Said};
+
+/// How long a wait on the match may take before the test calls it stuck: a hang guard only, the
+/// waits are on the match's own state (a loaded machine runs it slowly).
+const HANG: Duration = Duration::from_secs(240);
 
 fn answers(client: &Client) -> Vec<Answer> {
     client
@@ -76,7 +80,7 @@ fn players(client: &mut Client) -> Players {
 /// Waits for the hero to say a line to `concept` ([`spoke`]); a timeout names what it was asked
 /// and answered meanwhile.
 pub(super) fn wait_spoken(client: &mut Client, concept: Concept, value: &str) {
-    let deadline = Instant::now() + SOON;
+    let deadline = Instant::now() + HANG;
     while !spoke(client, concept, value) {
         let asked: Vec<_> = answers(client)
             .iter()
@@ -92,7 +96,7 @@ pub(super) fn wait_spoken(client: &mut Client, concept: Concept, value: &str) {
         let shown = client.world().resource::<crate::loading::Loading>().done();
         assert!(
             Instant::now() < deadline,
-            "no line to {concept:?} {value:?} within {SOON:?}; answers: {asked:?}; pack {state}, \
+            "no line to {concept:?} {value:?} within {HANG:?}; answers: {asked:?}; pack {state}, \
              shown {shown}, voice setting {}",
             client.world().resource::<crate::config::Settings>().voice
         );
@@ -164,7 +168,7 @@ fn begun(client: &mut Client) {
 /// Waits until the hero says nothing: its last line is over on the match's clock, which its
 /// speaker counts by (the sound itself plays on the wall's).
 pub(super) fn quiet(client: &mut Client) {
-    client.within(SOON, "the hero quiet", |c| {
+    client.within(HANG, "the hero quiet", |c| {
         let rate = f64::from(c.core().tick_rate().max(1));
         let now = f64::from(c.tick()) / rate;
         let voice = c.world().resource::<HeroVoice>();
@@ -182,7 +186,7 @@ fn first_line(
     quiet(client);
     let mut frames = 0u32;
     let mut said = None;
-    client.within(SOON, "a line answering the order", |c| {
+    client.within(HANG, "a line answering the order", |c| {
         said = answers_to(c, concept).into_iter().find_map(|a| a.said.ok());
         if said.as_ref().is_some_and(|l| l.player.is_some()) {
             return true;
@@ -255,53 +259,86 @@ fn shadow_fiend_answers_a_move_order_from_his_own_move_rule() {
     );
 }
 
-/// An enemy Pudge, held by a seat with no front end, that comes to `at` and is made frail (its
-/// health cut to the least) once the flag returned is set.
-fn frail_foe(server: &Server, at: bota_proto::Vec2) -> Arc<std::sync::atomic::AtomicBool> {
-    use std::sync::atomic::{AtomicBool, Ordering};
-    let come = Arc::new(AtomicBool::new(false));
-    let called = come.clone();
-    let mut came = false;
-    scripted_seat(server, HeroId::PUDGE, move |session| {
-        if came || !called.load(Ordering::SeqCst) || session.own_hero().is_none() {
-            return Vec::new();
-        }
-        came = true;
-        let frail = ModifierSpec {
-            max_hp: ModifierSpec::MIN_SCALE,
-            ..ModifierSpec::NOMINAL
-        };
-        [
-            Order::Cheat {
-                cheat: Cheat::Teleport { at },
-            },
-            Order::Cheat {
-                cheat: Cheat::ApplyModifier {
-                    target: Target::None,
-                    spec: frail,
-                    ticks: 100_000,
-                },
-            },
-            Order::Move {
-                target: Target::None,
-            },
-        ]
-        .into_iter()
-        .map(IssuedOrder::hero)
-        .collect()
-    });
-    come
+/// What the enemy Pudge of [`foe_seat`] is told next.
+enum Send {
+    /// Stand up at its fountain (`-respawn`).
+    Respawn,
+    /// Stand at a spot.
+    To(bota_proto::Vec2),
 }
 
-/// Shadow Fiend kills an enemy Pudge, the match's first hero kill: his first-blood rule answers
-/// (its weight outscores his plain kill rule's), and the query names the hero killed. The first
-/// attack order, at the foe far off, is answered first, so that the killing one falls in the
-/// attack's own cooldown and the hero is quiet when the kill comes.
-#[test]
-fn a_first_kill_is_answered_by_the_first_blood_rule() {
-    let server = Server::start(2, &["--runes", "none"]);
-    let victim_at = bota_proto::Vec2::from_ints(MID.0 + 250, MID.1);
-    let come = frail_foe(&server, victim_at);
+/// The queue of what [`foe_seat`]'s Pudge does next.
+type Sends = Arc<Mutex<std::collections::VecDeque<Send>>>;
+
+/// An enemy Pudge, held by a seat with no front end, doing what is pushed to the queue returned,
+/// one thing a view, standing still between.
+fn foe_seat(server: &Server) -> Sends {
+    let sends: Sends = Arc::default();
+    let queue = sends.clone();
+    scripted_seat(server, HeroId::PUDGE, move |session| {
+        if session.own_hero().is_none() {
+            return Vec::new();
+        }
+        let next = queue.lock().expect("the foe's queue").pop_front();
+        let orders = match next {
+            None => return Vec::new(),
+            Some(Send::Respawn) => vec![Order::Cheat {
+                cheat: Cheat::Respawn,
+            }],
+            Some(Send::To(at)) => vec![
+                Order::Cheat {
+                    cheat: Cheat::Teleport { at },
+                },
+                Order::Move {
+                    target: Target::None,
+                },
+            ],
+        };
+        orders.into_iter().map(IssuedOrder::hero).collect()
+    });
+    sends
+}
+
+/// The enemy seat's scoreboard row.
+fn foe_player(c: &Client) -> Option<&bota_proto::PlayerView> {
+    let view = c.core().view()?;
+    let mine = view.player(c.core().my_slot?)?.team;
+    view.players.iter().find(|p| p.team != mine)
+}
+
+/// The enemy hero, as the view shows it.
+fn foe(c: &Client) -> Option<&bota_proto::UnitView> {
+    c.core().view()?.unit(foe_player(c)?.unit?)
+}
+
+/// Sends the foe to `at` (standing it up first when it lies dead) and waits until it stands
+/// there.
+fn send_foe(client: &mut Client, sends: &Sends, at: bota_proto::Vec2) {
+    if foe_player(client).is_none_or(|p| p.respawn_left > 0) {
+        sends
+            .lock()
+            .expect("the foe's queue")
+            .push_back(Send::Respawn);
+        client.until("the foe standing", |c| {
+            foe_player(c).is_some_and(|p| p.respawn_left == 0) && foe(c).is_some()
+        });
+    }
+    sends
+        .lock()
+        .expect("the foe's queue")
+        .push_back(Send::To(at));
+    client.until("the foe at its spot", |c| {
+        foe(c).is_some_and(|u| u.pos.within(at, bota_proto::Fixed::from_int(100)))
+    });
+}
+
+/// Shadow Fiend (Dire) and an enemy Pudge on the map without creeps, everything in sight, the
+/// battle begun; `before` runs first. Shadow Fiend then kills Pudge: the first attack order, at
+/// the foe far off, is answered first, so that the killing one falls in the attack's own
+/// cooldown and the hero is quiet when the kill comes. The answer to the kill, and the players.
+fn kill_scene(before: impl FnOnce(&mut Client, &Sends)) -> (Client, Players, Answer) {
+    let server = Server::start(2, &["--map", "0", "--runes", "none"]);
+    let sends = foe_seat(&server);
     let mut client = Client::join(&server, HeroId::SHADOW_FIEND, &[]);
     let players = players(&mut client);
     client.cheat(Cheat::CreepSpawning { on: false });
@@ -310,14 +347,15 @@ fn a_first_kill_is_answered_by_the_first_blood_rule() {
     });
     client.cheat(Cheat::AllVision { on: true });
     begun(&mut client);
+    // Strong enough to kill the foe in a few blows.
+    client.cheat(Cheat::Levels { count: 24 });
     client.stand_at(MID);
-    fn foe(c: &Client) -> Option<&bota_proto::UnitView> {
-        let view = c.core().view()?;
-        let mine = view.player(c.core().my_slot?)?.team;
-        let player = view.players.iter().find(|p| p.team != mine)?;
-        view.unit(player.unit?)
-    }
-    client.until("the foe in sight", |c| foe(c).is_some());
+    before(&mut client, &sends);
+    send_foe(
+        &mut client,
+        &sends,
+        bota_proto::Vec2::from_ints(MID.0 - 2000, MID.1),
+    );
     let attack = |c: &mut Client| {
         let foe = foe(c).expect("the foe");
         let (at, unit) = ((foe.pos.x.to_f32(), foe.pos.y.to_f32()), Some(foe.id));
@@ -326,18 +364,24 @@ fn a_first_kill_is_answered_by_the_first_blood_rule() {
     first_line(&mut client, Concept::Attack, |c, _| attack(c));
     client.core_mut().act(Intent::Stop);
     quiet(&mut client);
-    come.store(true, std::sync::atomic::Ordering::SeqCst);
-    client.until("the foe beside the hero", |c| {
-        foe(c).is_some_and(|u| u.pos.within(victim_at, bota_proto::Fixed::from_int(100)))
-    });
+    send_foe(
+        &mut client,
+        &sends,
+        bota_proto::Vec2::from_ints(MID.0 + 250, MID.1),
+    );
     attack(&mut client);
     let mut kill = None;
-    client.within(SOON, "the kill answered", |c| {
+    client.within(HANG, "the kill answered", |c| {
         kill = answers_to(c, Concept::Kill).into_iter().next();
         kill.as_ref()
             .is_some_and(|a| a.said.as_ref().map_or(true, |l| l.player.is_some()))
     });
-    let kill = kill.expect("an answer");
+    (client, players, kill.expect("an answer"))
+}
+
+/// The kill was answered by Shadow Fiend's first-blood rule, which outscores his plain kill
+/// rule, with the line it played.
+fn first_blood_answered(client: &mut Client, players: &Players, kill: Answer) {
     assert_eq!(
         kill.query.value("targetclassname"),
         Some("npc_dota_hero_pudge")
@@ -354,7 +398,94 @@ fn a_first_kill_is_answered_by_the_first_blood_rule() {
         "{:?}",
         line.criteria
     );
-    checked_line(&mut client, &players, &line);
+    checked_line(client, players, &line);
+}
+
+/// Shadow Fiend kills an enemy Pudge, the match's first hero kill.
+#[test]
+fn a_first_kill_is_answered_by_the_first_blood_rule() {
+    let (mut client, players, kill) = kill_scene(|_, _| {});
+    first_blood_answered(&mut client, &players, kill);
+}
+
+/// A hero that fell to a tower alone was no one's kill: the server keeps First Blood for the
+/// first kill a hero is credited with, and so does the hero's line.
+#[test]
+fn a_death_to_a_tower_leaves_first_blood_to_the_first_kill() {
+    let (mut client, players, kill) = kill_scene(|client, sends| {
+        let tower = bota_core::rules::DIRE_TOWERS
+            .iter()
+            .find(|(lane, tier, _)| *lane == bota_core::rules::LANE_MID && *tier == 1)
+            .expect("Dire's middle tower")
+            .2;
+        let deaths = |c: &Client| {
+            let mine = c
+                .view()
+                .player(c.core().my_slot.expect("a seat"))
+                .map(|p| p.team);
+            c.view()
+                .players
+                .iter()
+                .filter(|p| Some(p.team) != mine)
+                .map(|p| p.deaths)
+                .sum::<u16>()
+        };
+        sends
+            .lock()
+            .expect("the foe's queue")
+            .push_back(Send::To(tower + bota_proto::Vec2::from_ints(-400, 0)));
+        client.until("the foe fallen to the tower", |c| deaths(c) > 0);
+    });
+    first_blood_answered(&mut client, &players, kill);
+}
+
+/// Pudge last-hits an enemy creep: the line's query counts his last hits as the scoreboard
+/// does (his creep score), the one count his thirteenth's rule (`ButchersDozen`) reads.
+///
+/// Nothing else takes the creeps: no lane spawns, no creep of his own, the river away from every
+/// tower; and nothing takes him (invulnerable). One attack-move, so that the order's own line is
+/// long said when a creep of full health falls.
+#[test]
+fn a_last_hit_counts_the_heros_creep_score() {
+    let server = Server::start(1, &["--map", "0", "--runes", "none"]);
+    let mut client = Client::join(&server, HeroId::PUDGE, &[]);
+    begun(&mut client);
+    client.cheat(Cheat::CreepSpawning { on: false });
+    client.cheat(Cheat::KillCreeps {
+        which: CreepSide::All,
+    });
+    client.cheat(Cheat::Invulnerable { on: true });
+    client.stand_at(MID);
+    quiet(&mut client);
+    let last_hits = |c: &Client| {
+        c.core()
+            .my_slot
+            .and_then(|slot| c.view().player(slot)?.creep_score)
+            .map_or(0, |score| score.last_hits)
+    };
+    let before = last_hits(&client);
+    let since = client.tick();
+    let camp = (MID.0 + 300, MID.1);
+    client.cheat(Cheat::CreateCreeps {
+        enemy: true,
+        at: bota_proto::Vec2::from_ints(camp.0, camp.1),
+    });
+    client.core_mut().act(Intent::AttackAt {
+        at: (camp.0 as f32, camp.1 as f32),
+        unit: None,
+    });
+    client.within(HANG, "a creep last-hit", |c| last_hits(c) > before);
+    let own = |c: &Client| {
+        answers_to(c, Concept::LastHit)
+            .into_iter()
+            .find(|a| a.tick >= since)
+    };
+    client.until("the last hit asked", |c| own(c).is_some());
+    let hit = own(&client).expect("the last hit's query");
+    assert_eq!(
+        hit.query.value("lasthitcount"),
+        Some((before + 1).to_string().as_str())
+    );
 }
 
 /// Takes a Bounty Rune spawned at the top river spot: the hero stands beside it, and a right
@@ -364,7 +495,7 @@ fn take_bounty(client: &mut Client) {
     let spot = top_spot();
     client.stand_at((spot.0 + 400, spot.1));
     spawn_rune(client, RuneKind::Bounty, spot);
-    client.within(SOON, "the Bounty Rune drawn", |c| {
+    client.within(HANG, "the Bounty Rune drawn", |c| {
         drawn(c, RuneKind::Bounty).is_some()
     });
     point_at(client, (spot.0 as f32, spot.1 as f32));
@@ -379,7 +510,7 @@ fn bounty_answer(client: &mut Client, n: usize) -> Answer {
             .filter(|a| a.query.value("poweruptype") == Some("DOTA_RUNE_BOUNTY"))
             .collect()
     };
-    let deadline = Instant::now() + SOON;
+    let deadline = Instant::now() + HANG;
     while bounty(client).len() < n {
         let asked: Vec<_> = answers(client)
             .iter()
@@ -390,7 +521,7 @@ fn bounty_answer(client: &mut Client, n: usize) -> Answer {
         let done = client.world().resource::<crate::loading::Loading>().done();
         assert!(
             Instant::now() < deadline,
-            "bounty answer {n} not within {SOON:?}; answers: {asked:?}, voice {state:?}, shown {done}"
+            "bounty answer {n} not within {HANG:?}; answers: {asked:?}, voice {state:?}, shown {done}"
         );
         client.frames(1);
     }
@@ -462,11 +593,16 @@ fn the_pack_is_resident_from_the_pick_and_the_first_line_costs_no_frame() {
             .iter()
             .any(|a| matches!(&a.said, Ok(l) if l.player.is_some()))
     };
-    let deadline = Instant::now() + SOON;
+    // Frames the first line may take to come: the spawn line comes on the first frames of the
+    // game, a walk's within a few hundred.
+    const FRAME_BUDGET: usize = 3000;
     let mut frames = Vec::new();
     let mut line_at = None;
     while line_at.is_none_or(|at| frames.len() < at + 120) {
-        assert!(Instant::now() < deadline, "no line said within {SOON:?}");
+        assert!(
+            frames.len() < FRAME_BUDGET,
+            "no line said in {FRAME_BUDGET} frames"
+        );
         // The spawn line, else a walk's.
         if line_at.is_none() && frames.len() >= 120 && frames.len().is_multiple_of(20) {
             walk(&mut client, frames.len() as u32 / 20);
@@ -501,5 +637,43 @@ fn the_pack_is_resident_from_the_pick_and_the_first_line_costs_no_frame() {
     println!(
         "first line frames {line_frames:?}, median {median:?}, {} frames",
         frames.len()
+    );
+}
+
+/// Only the watched seat's hero is asked anything, of what happens to it: a spectator watching
+/// no seat asks nobody, a replay watched as the seat whose hero gained levels asks that hero of
+/// them, and the replay watched as the other seat, or as no seat, asks nothing of them.
+#[test]
+fn only_the_watched_seats_hero_is_asked_of_its_levels() {
+    let mut game = super::fog_pov::Spectated::start("0");
+    game.cheat(Cheat::Levels { count: 3 });
+    let spectator = game.client.world().resource::<HeroVoice>();
+    assert_eq!(
+        spectator.hero(),
+        None,
+        "a spectator watching no seat speaks for no hero"
+    );
+    assert!(answers(&game.client).is_empty(), "nor is anything asked");
+    let leveled = game.driver.my_slot.expect("the driving seat").0;
+    let file = game.save();
+    let asked_of_levels = |slot: Option<u8>| {
+        let client = super::fog_pov::replay_observed(&file, slot, &[], |_| {});
+        let hero = client
+            .world()
+            .resource::<HeroVoice>()
+            .hero()
+            .map(str::to_owned);
+        (hero, answers_to(&client, Concept::LevelUp).len())
+    };
+    let (hero, levels) = asked_of_levels(Some(leveled));
+    assert_eq!(hero.as_deref(), Some("nevermore"));
+    assert!(levels > 0, "the watched seat's hero is asked of its levels");
+    let (_, levels) = asked_of_levels(Some(1 - leveled));
+    assert_eq!(levels, 0, "the other seat's hero is asked nothing of them");
+    let (hero, levels) = asked_of_levels(None);
+    assert_eq!(
+        (hero, levels),
+        (None, 0),
+        "a replay watched as no seat asks nobody"
     );
 }

@@ -9,7 +9,6 @@ use std::sync::Arc;
 use bevy::audio::AudioSource;
 use bevy::prelude::*;
 use dbota_import::voice::rules::HeroRules;
-use dbota_import::voice::speaker::Speaker;
 use dbota_import::voice::{Voice, pack_path};
 
 use super::{HeroVoice, Pack, Resident};
@@ -34,32 +33,15 @@ pub enum Job {
     Worker,
 }
 
-/// A seed for a speaker's randomness.
-pub fn seed() -> u64 {
-    #[cfg(not(target_arch = "wasm32"))]
-    {
-        let mut bytes = [0u8; 8];
-        // No randomness to be had: the lines still vary, in a fixed order.
-        if getrandom::fill(&mut bytes).is_err() {
-            return 0x9E37_79B9_7F4A_7C15;
-        }
-        u64::from_le_bytes(bytes)
-    }
-    #[cfg(target_arch = "wasm32")]
-    {
-        // The page's own randomness: 53 bits of it, which a speaker's lines need far less of.
-        (js_sys::Math::random() * (1u64 << 53) as f64) as u64
-    }
-}
-
-/// The sounds and faces of a pack's contents. A lip sync that does not read leaves its line's
-/// face still and is told.
-pub fn loaded<T: AsRef<[u8]>>(voice: Voice<T>, file: &str) -> Loaded {
+/// The sounds and faces of a pack's contents, each sound's bytes taken as they are when they
+/// are a buffer of their own already (a browser's record) and copied once out of the pack
+/// otherwise. A lip sync that does not read leaves its line's face still and is told.
+pub fn loaded<T: AsRef<[u8]> + Into<Arc<[u8]>>>(voice: Voice<T>, file: &str) -> Loaded {
     let mut bytes = 0;
     let mut broken = 0;
     let sounds = voice
         .sounds
-        .iter()
+        .into_iter()
         .enumerate()
         .map(|(i, sound)| {
             bytes += sound.audio.as_ref().len();
@@ -76,7 +58,7 @@ pub fn loaded<T: AsRef<[u8]>>(voice: Voice<T>, file: &str) -> Loaded {
                     })
                 })
             });
-            (Arc::from(sound.audio.as_ref()), face)
+            (sound.audio.into(), face)
         })
         .collect();
     if broken > 0 {
@@ -122,7 +104,8 @@ fn read(path: &std::path::Path, hero: &str, rel: &str) -> Result<Loaded, String>
         // Every cache of this build has every hero's pack.
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
             return Err(format!(
-                "{rel} is not in the asset cache: the cache was made by another dbota build of                  import revision {}; import the assets again",
+                "{rel} is not in the asset cache: the cache was made by another dbota build of \
+                 import revision {}; import the assets again",
                 dbota_import::import::IMPORT_REV
             ));
         }
@@ -156,7 +139,7 @@ fn poll(job: &mut Job, hero: &str) -> Option<Result<Loaded, String>> {
 }
 
 /// Takes a finished read: the sounds become assets, the mixer takes the lines' events, the
-/// hero starts with a speaker that has said nothing.
+/// hero starts with nothing asked.
 pub fn receive(
     mut voice: ResMut<HeroVoice>,
     mut audio: ResMut<Assets<AudioSource>>,
@@ -186,15 +169,7 @@ pub fn receive(
                 .into_iter()
                 .map(|(bytes, face)| (audio.add(AudioSource { bytes }), face))
                 .unzip();
-            Pack::Resident(Box::new(Resident {
-                speaker: Speaker::new(&loaded.rules, seed()),
-                hero,
-                rules: loaded.rules,
-                sounds,
-                faces,
-                last: f64::NEG_INFINITY,
-                waiting: None,
-            }))
+            Pack::Resident(Box::new(Resident::new(hero, loaded.rules, sounds, faces)))
         }
         Err(why) => {
             error!("voice: {hero} stays silent: {why}");

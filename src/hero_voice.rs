@@ -28,7 +28,7 @@ use bevy::prelude::*;
 use bota_proto::{EntityId, SlotId};
 use dbota_import::voice::concept::{Concept, Fact, Query};
 use dbota_import::voice::rules::HeroRules;
-use dbota_import::voice::speaker::{Choice, Silence, Speaker};
+use dbota_import::voice::speaker::{Choice, History, Silence};
 
 use crate::manifest::Manifest;
 use crate::mixer::{Mixer, Request};
@@ -41,17 +41,46 @@ pub use load::loaded;
 #[cfg(test)]
 const MAX_SAID: usize = 256;
 
-/// A hero's pack, resident: its rules, what it remembers having said and its sounds.
+/// A hero's pack, resident: its rules, what it was asked and said this match, and its sounds.
 pub struct Resident {
     pub hero: String,
     pub rules: HeroRules,
-    speaker: Speaker,
+    history: History,
     pub sounds: Vec<Handle<AudioSource>>,
     faces: Vec<Option<Arc<LineFace>>>,
-    /// The match clock the speaker last answered at: a replay sought back starts it afresh.
+    /// The match clock the hero was last asked at: a replay sought back rewinds the history.
     last: f64,
-    /// The line chosen and waiting for its time to start.
-    waiting: Option<(f64, Choice)>,
+    /// The line chosen and waiting out its `predelay`: when it starts, the query it answers
+    /// and of which concept.
+    waiting: Option<Waiting>,
+}
+
+/// A line chosen and waiting for its time to start.
+struct Waiting {
+    at: f64,
+    query: usize,
+    concept: Concept,
+    choice: Choice,
+}
+
+impl Resident {
+    /// Speaks with `rules`, nothing asked yet.
+    fn new(
+        hero: String,
+        rules: HeroRules,
+        sounds: Vec<Handle<AudioSource>>,
+        faces: Vec<Option<Arc<LineFace>>>,
+    ) -> Resident {
+        Resident {
+            history: History::new(&rules, 0),
+            hero,
+            rules,
+            sounds,
+            faces,
+            last: f64::NEG_INFINITY,
+            waiting: None,
+        }
+    }
 }
 
 /// Where the voice of the hero spoken for stands.
@@ -82,7 +111,7 @@ impl Resident {
     /// The match clock (seconds) up to which the hero is still saying its last line.
     #[cfg(test)]
     pub fn speaking_until(&self) -> f64 {
-        self.speaker.speaking_until()
+        self.history.speaking_until()
     }
 }
 
@@ -193,6 +222,23 @@ fn report(voice: Res<HeroVoice>, mut parts: ResMut<crate::loading::Parts>) {
     parts.set("hero voice", usize::from(!loading), 1);
 }
 
+/// The seed of the hero's randomness in a match: the match's own (its seats and picks, its
+/// clock) and the seat spoken for, so a match and each viewing of its replay answer alike.
+fn match_seed(core: &bota_client_core::App, seat: Option<SlotId>) -> u64 {
+    let roster = core
+        .statics()
+        .map(|s| format!("{:?}", s.roster()))
+        .unwrap_or_default();
+    let identity = format!(
+        "{roster}/{}/{}/{seat:?}",
+        core.tick_rate(),
+        core.pregame_ticks()
+    );
+    identity.bytes().fold(0xcbf2_9ce4_8422_2325, |hash, byte| {
+        (hash ^ u64::from(byte)).wrapping_mul(0x0100_0000_01b3)
+    })
+}
+
 /// Asks the hero what the match told it this frame, and says what it answers. Nothing is
 /// asked before the game shows, and the match's loading waits for the pack.
 #[allow(clippy::too_many_arguments)]
@@ -218,58 +264,80 @@ fn speak(
         return;
     };
     let queries = memory.queries(core, seat(core), &fog);
-    let rate = f64::from(core.tick_rate().max(1));
-    let now = f64::from(view.tick) / rate;
-    if now < resident.last {
-        resident.speaker = Speaker::new(&resident.rules, load::seed());
+    let now = f64::from(view.tick) / f64::from(core.tick_rate().max(1));
+    let seed = match_seed(core, seat(core));
+    if resident.history.seed() != seed {
+        resident.history = History::new(&resident.rules, seed);
+        resident.waiting = None;
+    } else if now < resident.last {
+        resident.history.rewind(&resident.rules, now);
         resident.waiting = None;
     }
     resident.last = now;
     let hero = seat(core).and_then(|s| view.player(s)).and_then(|p| p.unit);
-    if settings.voice {
-        for (concept, facts) in queries {
-            let random = resident.speaker.draw(100) as u32;
-            let query = facts.into_iter().fold(
-                Query::new(
-                    concept,
-                    &resident.rules.class,
-                    random,
-                    listen::game_time(core),
-                ),
-                |query, (fact, value)| query.with(fact, value),
-            );
-            let answer = resident.speaker.respond(&resident.rules, &query, now);
-            log(resident, view.tick, &query, &answer);
-            if let Ok(choice) = &answer {
-                resident.waiting = Some((now + f64::from(choice.delay), choice.clone()));
-            }
-            #[cfg(test)]
-            keep(&mut said, resident, view.tick, query, &answer);
+    let mut sound = |resident: &mut Resident, waiting: Waiting| {
+        let player = play(
+            &mut commands,
+            &mut mixer,
+            time.elapsed(),
+            resident,
+            &waiting.choice,
+        );
+        // A line the mixer refused was not said: nothing of it is remembered.
+        if player.is_some() {
+            resident
+                .history
+                .accept(&resident.rules, waiting.query, waiting.concept, now);
         }
-    }
-    // A line waits out its `predelay` on the match's clock; the speaker says nothing else
-    // meanwhile.
-    if let Some((_, choice)) = resident.waiting.take_if(|(at, _)| now >= *at) {
-        let player = play(&mut commands, &mut mixer, time.elapsed(), resident, &choice);
-        if let (Some(face), Some(_)) = (resident.faces[choice.sound].clone(), player) {
+        if let (Some(face), Some(_)) = (resident.faces[waiting.choice.sound].clone(), player) {
             speech.say(hero, face, player, real.elapsed_secs());
         }
+        player
+    };
+    for (concept, facts) in queries.into_iter().filter(|_| settings.voice) {
+        // The hero says nothing over a line waiting out its `predelay`.
+        if resident.waiting.is_some() {
+            continue;
+        }
+        let Resident { rules, history, .. } = &mut **resident;
+        let (n, query, answer) = history.ask(rules, now, |random| {
+            facts.into_iter().fold(
+                Query::new(concept, &rules.class, random, listen::game_time(core)),
+                |query, (fact, value)| query.with(fact, value),
+            )
+        });
+        log(resident, view.tick, &query, &answer);
         #[cfg(test)]
-        started(&mut said, &choice, player);
+        keep(&mut said, resident, view.tick, query, &answer);
+        if let Ok(choice) = answer {
+            resident.waiting = Some(Waiting {
+                at: now + f64::from(choice.delay),
+                query: n,
+                concept,
+                choice,
+            });
+        }
+        if let Some(due) = resident.waiting.take_if(|w| now >= w.at) {
+            let _player = sound(resident, due);
+            #[cfg(test)]
+            started(&mut said, _player);
+        }
+    }
+    if let Some(due) = resident.waiting.take_if(|w| now >= w.at) {
+        let _player = sound(resident, due);
+        #[cfg(test)]
+        started(&mut said, _player);
     }
 }
 
-/// Tells the tests' record of the line that it started, and on which voice.
+/// Tells the tests' record of the line that started last, and on which voice.
 #[cfg(test)]
-fn started(said: &mut Said, choice: &Choice, player: Option<Entity>) {
+fn started(said: &mut Said, player: Option<Entity>) {
     let waited = said
         .0
         .iter_mut()
         .rev()
-        .find_map(|answer| match &mut answer.said {
-            Ok(line) if line.player.is_none() && line.sound == choice.sound => Some(line),
-            _ => None,
-        });
+        .find_map(|answer| answer.said.as_mut().ok());
     if let Some(line) = waited {
         line.player = player;
     }

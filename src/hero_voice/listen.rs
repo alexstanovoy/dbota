@@ -26,6 +26,13 @@ pub struct Memory {
     spawned: bool,
     begun: Option<bool>,
     ended: bool,
+    /// Whether First Blood has been claimed: by a kill a hero was credited with, or one its
+    /// assisting heroes shared (the server's rule, bota_server's `price_of_fall`); a hero that
+    /// fell to a tower or a creep alone claims nothing.
+    blooded: bool,
+    /// The hero's last hits so far: its creep score when the listening began, and one for each
+    /// it was told of since.
+    last_hits: u16,
 }
 
 /// Seconds of game time: since the battle began, negative before.
@@ -57,18 +64,24 @@ impl Memory {
             // answered, and a hero that entered battle before the battle began is not entering
             // it now.
             let begun = game_time(core) >= 0.0;
+            let players = core.view().map_or(&[][..], |v| v.players.as_slice());
+            let player = players.iter().find(|p| p.slot == slot);
             *self = Memory {
                 seat: Some((slot, hero)),
                 order: last_order(core, slot, hero),
                 spawned: begun,
                 begun: Some(begun),
+                blooded: players.iter().any(|p| p.kills > 0),
+                last_hits: player
+                    .and_then(|p| p.creep_score)
+                    .map_or(0, |c| c.last_hits),
                 ..Memory::default()
             };
         }
         let mut raised = Vec::new();
         self.orders(core, slot, hero, &mut raised);
         self.views(core, slot, hero, &mut raised);
-        events(core, slot, hero, fog, &mut raised);
+        self.events(core, slot, hero, fog, &mut raised);
         raised
     }
 
@@ -131,128 +144,94 @@ fn last_order(core: &Core, slot: SlotId, hero: EntityId) -> Option<(u32, Order)>
         .map(|s| (s.tick, s.order))
 }
 
-/// The concepts the last pump's events raise for the hero.
-fn events(
-    core: &Core,
-    slot: SlotId,
-    hero: EntityId,
-    fog: &crate::fog::FogGrid,
-    raised: &mut Vec<Raised>,
-) {
-    let told = &core.told;
-    for (at, event) in told.iter().enumerate() {
-        let concept = match event {
-            EventKind::AbilityCast { caster, ability } if *caster == hero => {
-                bota_core::ability_def(*ability).map(|a| {
-                    (
-                        Concept::CastExecute,
-                        vec![(Fact::AbilityName, a.key.to_owned())],
-                    )
-                })
-            }
-            EventKind::LevelUp { unit, level } if *unit == hero => {
-                Some((Concept::LevelUp, vec![(Fact::Level, level.to_string())]))
-            }
-            EventKind::ItemBought { slot: buyer, item } if *buyer == slot => {
-                bota_core::item_def(*item)
-                    .map(|i| (Concept::Purchase, vec![(Fact::ItemName, i.key.to_owned())]))
-            }
-            EventKind::RuneActivated { unit, kind, .. } if *unit == hero => Some((
-                Concept::Powerup,
-                vec![(Fact::PowerupType, powerup_type(*kind))],
-            )),
-            EventKind::RuneBottled { unit, .. } if *unit == hero => {
-                Some((Concept::Bottling, Vec::new()))
-            }
-            EventKind::Died { unit, .. } if *unit == hero => Some((Concept::Death, Vec::new())),
-            EventKind::Died { .. } => died(core, slot, hero, fog, told, at),
-            _ => None,
+impl Memory {
+    /// The concepts the last pump's events raise for the hero.
+    fn events(
+        &mut self,
+        core: &Core,
+        slot: SlotId,
+        hero: EntityId,
+        fog: &crate::fog::FogGrid,
+        raised: &mut Vec<Raised>,
+    ) {
+        for event in &core.told {
+            let concept = match event {
+                EventKind::AbilityCast { caster, ability } if *caster == hero => {
+                    bota_core::ability_def(*ability).map(|a| {
+                        (
+                            Concept::CastExecute,
+                            vec![(Fact::AbilityName, a.key.to_owned())],
+                        )
+                    })
+                }
+                EventKind::LevelUp { unit, level } if *unit == hero => {
+                    Some((Concept::LevelUp, vec![(Fact::Level, level.to_string())]))
+                }
+                EventKind::ItemBought { slot: buyer, item } if *buyer == slot => {
+                    bota_core::item_def(*item)
+                        .map(|i| (Concept::Purchase, vec![(Fact::ItemName, i.key.to_owned())]))
+                }
+                EventKind::RuneActivated { unit, kind, .. } if *unit == hero => Some((
+                    Concept::Powerup,
+                    vec![(Fact::PowerupType, powerup_type(*kind))],
+                )),
+                EventKind::RuneBottled { unit, .. } if *unit == hero => {
+                    Some((Concept::Bottling, Vec::new()))
+                }
+                EventKind::Died { .. } => self.died(core, hero, fog, event),
+                _ => None,
+            };
+            raised.extend(concept);
+        }
+    }
+
+    /// The concept a death raises: the hero's own death; a kill of an enemy hero it struck or
+    /// was credited with (First Blood when no kill had claimed it); a last hit or a deny of
+    /// anything else it struck.
+    fn died(
+        &mut self,
+        core: &Core,
+        hero: EntityId,
+        fog: &crate::fog::FogGrid,
+        event: &EventKind,
+    ) -> Option<Raised> {
+        let EventKind::Died {
+            unit,
+            killer,
+            denied,
+            assists,
+            credited_hero,
+            ..
+        } = event
+        else {
+            return None;
         };
-        raised.extend(concept);
+        if *unit == hero {
+            self.blooded |= credited_hero.is_some() || *assists != 0;
+            return Some((Concept::Death, Vec::new()));
+        }
+        let by_hero = *killer == Some(hero) || credited_hero.as_deref() == Some(&hero);
+        if let Some(class) = hero_class(core, *unit) {
+            let first = !self.blooded;
+            self.blooded |= credited_hero.is_some() || *assists != 0;
+            let facts: Facts = vec![
+                (Fact::TargetClassName, class.to_owned()),
+                (Fact::FirstBlood, u8::from(first).to_string()),
+            ];
+            return (by_hero && !denied).then_some((Concept::Kill, facts));
+        }
+        if *killer != Some(hero) {
+            return None;
+        }
+        if *denied {
+            return witnessed(core, hero, fog).then_some((Concept::Deny, Vec::new()));
+        }
+        self.last_hits = self.last_hits.saturating_add(1);
+        Some((
+            Concept::LastHit,
+            vec![(Fact::LastHitCount, self.last_hits.to_string())],
+        ))
     }
-}
-
-/// The concept a death raises for the hero that struck it: a kill of an enemy hero, a last hit
-/// or a deny of anything else.
-fn died(
-    core: &Core,
-    slot: SlotId,
-    hero: EntityId,
-    fog: &crate::fog::FogGrid,
-    told: &[EventKind],
-    at: usize,
-) -> Option<Raised> {
-    let EventKind::Died {
-        unit,
-        killer,
-        denied,
-        credited_hero,
-        ..
-    } = &told[at]
-    else {
-        return None;
-    };
-    let by_hero = *killer == Some(hero) || credited_hero.as_deref() == Some(&hero);
-    if !by_hero {
-        return None;
-    }
-    if let Some(class) = hero_class(core, *unit) {
-        let first = u8::from(first_blood(core, told, at));
-        let facts: Facts = vec![
-            (Fact::TargetClassName, class.to_owned()),
-            (Fact::FirstBlood, first.to_string()),
-        ];
-        return (!denied).then_some((Concept::Kill, facts));
-    }
-    if *killer != Some(hero) {
-        return None;
-    }
-    if *denied {
-        return witnessed(core, hero, fog).then_some((Concept::Deny, Vec::new()));
-    }
-    let count = last_hits(core, slot, hero, told, at)?;
-    Some((
-        Concept::LastHit,
-        vec![(Fact::LastHitCount, count.to_string())],
-    ))
-}
-
-/// Whether the hero death at `at` is the match's first: no hero had died before it.
-fn first_blood(core: &Core, told: &[EventKind], at: usize) -> bool {
-    let Some(view) = core.view() else {
-        return false;
-    };
-    let deaths: u32 = view.players.iter().map(|p| u32::from(p.deaths)).sum();
-    let is_hero = |e: &EventKind| match e {
-        EventKind::Died { unit, .. } => hero_class(core, *unit).is_some(),
-        _ => false,
-    };
-    // The view's deaths count this one and those told after it.
-    let this_and_after = told[at..].iter().filter(|e| is_hero(e)).count();
-    deaths as usize <= this_and_after
-}
-
-/// The hero's last hits counting the one at `at`: the view's, less those told after it.
-fn last_hits(
-    core: &Core,
-    slot: SlotId,
-    hero: EntityId,
-    told: &[EventKind],
-    at: usize,
-) -> Option<u16> {
-    let player = core.view()?.player(slot)?;
-    let after = told[at + 1..]
-        .iter()
-        .filter(|e| {
-            matches!(e, EventKind::Died { killer: Some(k), denied: false, unit, .. }
-                if *k == hero && hero_class(core, *unit).is_none())
-        })
-        .count();
-    Some(
-        player
-            .last_hits
-            .saturating_sub(u16::try_from(after).unwrap_or(u16::MAX)),
-    )
 }
 
 /// Whether an enemy hero stands in sight within [`DENY_WITNESS_RANGE`] of the hero.
