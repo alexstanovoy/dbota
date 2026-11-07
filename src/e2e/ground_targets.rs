@@ -22,8 +22,16 @@ fn lit(client: &Client) -> Option<EntityId> {
 
 /// Puts the pointer over a point of the ground.
 fn point_at(client: &mut Client, at: (f32, f32)) {
-    let pixel = client.screen_of(at).expect("on screen");
-    client.mouse(pixel);
+    client.within(SOON, "the cursor on the requested ground point", |c| {
+        let Some(pixel) = c.screen_of(at) else {
+            return false;
+        };
+        c.mouse(pixel);
+        c.world()
+            .resource::<crate::camera::CursorGround>()
+            .0
+            .is_some_and(|ground| (ground.x - at.0).hypot(-ground.z - at.1) < 1.0)
+    });
 }
 
 /// A tango dropped on the ground beside one's hero is ringed under the pointer and not away from
@@ -160,10 +168,30 @@ fn nothing_is_ringed_while_an_enemy_is_picked() {
         .find(|u| u.kind == bota_proto::UnitKind::Hero && u.team != mine)
         .map(|u| u.id)
         .expect("there");
-    point_at(&mut client, spot);
-    assert!(lit(&client).is_some(), "ringed before the enemy is picked");
+    let tango = client
+        .view()
+        .loot
+        .iter()
+        .find(|loot| loot.item == ItemId::TANGO)
+        .expect("the dropped tango")
+        .id;
+    client.within(
+        SOON,
+        "the dropped tango ringed before selecting the enemy",
+        |c| {
+            point_at(c, spot);
+            lit(c) == Some(tango)
+        },
+    );
+    assert_eq!(
+        lit(&client),
+        Some(tango),
+        "ringed before the enemy is picked"
+    );
     client.core_mut().act(Intent::SelectUnit(Some(enemy)));
-    client.frames(3);
+    client.until("the enemy selection removes the ground ring", |c| {
+        c.core().selected == Some(enemy) && !c.core().gives_orders() && lit(c).is_none()
+    });
     assert_eq!(lit(&client), None, "nothing is ringed with an enemy picked");
 }
 
