@@ -21,7 +21,7 @@ work=${GATE_LOGS:-$here/temp/gate}/browser
 mkdir -p "$work"
 pwlib=${DBOTA_GATE_PWLIB:-${XDG_CACHE_HOME:-$HOME/.cache}/dbota-gate/pwlib}
 export PYTHONPATH=$pwlib PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
-python3 -m unittest discover -s web/test -p test_optimize.py
+in_private_environment python3 -m unittest discover -s web/test -p test_optimize.py
 if ! python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); import playwright' "$pwlib" 2> /dev/null; then
     python3 -m pip install --quiet --target "$pwlib" playwright
 fi
