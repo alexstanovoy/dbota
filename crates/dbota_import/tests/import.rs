@@ -23,12 +23,13 @@ fn package(dir: &str, name: &str, ext: &str, data: &[u8]) -> Vec<u8> {
     package_of(&[(dir, name, ext, data)])
 }
 
-/// A package directory (VPK v2) of several files `(dir, name, ext, bytes)`, all in the
-/// directory's preload.
+/// A package directory (VPK v2) of several files `(dir, name, ext, bytes)`, in the directory's
+/// preload, or in its data section when larger than a preload holds.
 fn package_of(files: &[(&str, &str, &str, &[u8])]) -> Vec<u8> {
     let mut sorted = files.to_vec();
     sorted.sort_by_key(|(dir, name, ext, _)| (*ext, *dir, *name));
     let mut tree = Vec::new();
+    let mut section = Vec::new();
     let text = |tree: &mut Vec<u8>, part: &str| {
         tree.extend_from_slice(part.as_bytes());
         tree.push(0);
@@ -43,12 +44,22 @@ fn package_of(files: &[(&str, &str, &str, &[u8])]) -> Vec<u8> {
         }
         text(&mut tree, name);
         tree.extend_from_slice(&crc32fast::hash(data).to_le_bytes());
-        tree.extend_from_slice(&(data.len() as u16).to_le_bytes());
+        let preload = u16::try_from(data.len()).is_ok();
+        let (preloaded, stored) = if preload {
+            (data.len(), 0)
+        } else {
+            (0, data.len())
+        };
+        tree.extend_from_slice(&(preloaded as u16).to_le_bytes());
         tree.extend_from_slice(&0x7FFFu16.to_le_bytes());
-        tree.extend_from_slice(&0u32.to_le_bytes());
-        tree.extend_from_slice(&0u32.to_le_bytes());
+        tree.extend_from_slice(&(section.len() as u32).to_le_bytes());
+        tree.extend_from_slice(&(stored as u32).to_le_bytes());
         tree.extend_from_slice(&0xFFFFu16.to_le_bytes());
-        tree.extend_from_slice(data);
+        if preload {
+            tree.extend_from_slice(data);
+        } else {
+            section.extend_from_slice(data);
+        }
         let after = sorted.get(n + 1);
         // The end of a folder's files, then of a type's folders, then of the types.
         let same_folder = after.is_some_and(|(d, _, e, _)| e == ext && d == dir);
@@ -64,10 +75,19 @@ fn package_of(files: &[(&str, &str, &str, &[u8])]) -> Vec<u8> {
         }
     }
     let mut out = Vec::new();
-    for word in [0x55AA_1234, 2, tree.len() as u32, 0, 0, 48, 0] {
+    for word in [
+        0x55AA_1234,
+        2,
+        tree.len() as u32,
+        section.len() as u32,
+        0,
+        48,
+        0,
+    ] {
         out.extend_from_slice(&u32::to_le_bytes(word));
     }
     out.extend_from_slice(&tree);
+    out.extend_from_slice(&section);
     out
 }
 
@@ -642,9 +662,9 @@ fn shop_categories_keep_their_order_and_hostile_files_are_texts_or_errors() {
 
 /// What importing Pudge's voice reports failed, when his rules include three files whose 800
 /// responses each are `response` of one long text (cheap in the file, which names a text once,
-/// and large decoded: 19 MiB in all).
+/// and large decoded: 38 MiB in all).
 fn failures_of_long_rule_texts(response: fn(&'static str) -> Kv3) -> Vec<String> {
-    let long: &'static str = Box::leak("a".repeat(8 << 10).into_boxed_str());
+    let long: &'static str = Box::leak("a".repeat(16 << 10).into_boxed_str());
     let names: Vec<&'static str> = (0..3)
         .map(|i| &*Box::leak(format!("scripts/talker/response_rules_big{i}.vrr").into_boxed_str()))
         .collect();
@@ -717,6 +737,101 @@ fn a_rule_file_of_a_huge_string_table_is_refused_before_it_is_allocated() {
     assert!(
         why.iter().any(|w| w.contains("bytes more than it may")),
         "{why:?}"
+    );
+}
+
+/// Event scripts whose wanted events share one long type text (cheap in the file, which names
+/// a text once, and large read: 600 events of 200 KiB) are refused by the hero's budget as
+/// they are read, not after their events all sit in memory.
+#[test]
+fn event_scripts_past_the_heros_budget_are_refused_while_read() {
+    let long: &'static str = Box::leak("t".repeat(200 << 10).into_boxed_str());
+    let name = |n: usize| -> &'static str { Box::leak(format!("e{n}").into_boxed_str()) };
+    let scripts: Vec<Vec<u8>> = (0..3)
+        .map(|k| {
+            kv3_resource(&Kv3::Object(
+                (0..200)
+                    .map(|i| {
+                        (
+                            name(k * 200 + i),
+                            Kv3::Object(vec![
+                                ("type", Kv3::Text(long)),
+                                ("vsnd_files", Kv3::Text("sounds/vo/pudge/x.vsnd")),
+                            ]),
+                        )
+                    })
+                    .collect(),
+            ))
+        })
+        .collect();
+    let rules = kv3_resource(&Kv3::Object(vec![
+        (
+            "m_SoundEventScripts",
+            Kv3::List(vec![
+                Kv3::Text("soundevents/voscripts/more_1.vsndevts"),
+                Kv3::Text("soundevents/voscripts/more_2.vsndevts"),
+            ]),
+        ),
+        (
+            "m_Requirements",
+            Kv3::List(vec![Kv3::Object(vec![
+                ("m_name", Kv3::Text("Move")),
+                ("m_matchKey", Kv3::Text("Concept")),
+                ("m_matchExpr", Kv3::Text("TLK_DOTA_MOVE")),
+            ])]),
+        ),
+        (
+            "m_ResponseGroups",
+            Kv3::List(vec![Kv3::Object(vec![
+                ("m_name", Kv3::Text("g")),
+                (
+                    "m_responses",
+                    Kv3::List(
+                        (0..600)
+                            .map(|n| {
+                                Kv3::Object(vec![
+                                    ("m_type", Kv3::Text("SPEAK")),
+                                    ("m_value", Kv3::Text(name(n))),
+                                ])
+                            })
+                            .collect(),
+                    ),
+                ),
+                (
+                    "m_pEmbeddedRule",
+                    Kv3::Object(vec![
+                        ("m_name", Kv3::Text("g")),
+                        ("m_Requirements", Kv3::List(vec![Kv3::Text("Move")])),
+                    ]),
+                ),
+            ])]),
+        ),
+    ]));
+    let script = br#""DOTAHeroes" { "npc_dota_hero_pudge" { "VoiceFile" "soundevents/voscripts/more_0.vsndevts" } }"#;
+    let mut files: Vec<(&str, &str, &str, &[u8])> = vec![
+        ("scripts/npc/heroes", "npc_dota_hero_pudge", "txt", script),
+        ("scripts/talker", "response_rules_pudge", "vrr_c", &rules),
+    ];
+    for (k, bytes) in scripts.iter().enumerate() {
+        let name: &'static str = Box::leak(format!("more_{k}").into_boxed_str());
+        files.push(("soundevents/voscripts", name, "vsndevts_c", bytes));
+    }
+    let src = install(&[("pak01_dir.vpk", package_of(&files))]);
+    let plan = Plan {
+        items: vec![Item::Voice {
+            logical: "voice.pudge".to_owned(),
+            hero: "pudge".to_owned(),
+            out: "sounds/voice/pudge.bin".to_owned(),
+        }],
+    };
+    let mut sink = Memory::default();
+    let report = run(&src, &plan, &mut sink, &mut |_| Flow::Continue).expect("a report");
+    assert!(sink.0.is_empty(), "nothing written");
+    let why: Vec<&str> = report.failed.iter().map(|(_, why)| why.as_str()).collect();
+    assert!(
+        why.iter().any(|w| w.contains("bytes more than it may")),
+        "{:?}",
+        &why[..why.len().min(3)]
     );
 }
 

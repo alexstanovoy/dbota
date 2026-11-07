@@ -10,7 +10,7 @@
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
 
-use heatel::sound::{Lipsync, SoundEvent, read_sound_events, read_sound_mixer};
+use heatel::sound::{Lipsync, SoundEvent, read_sound_events_within, read_sound_mixer};
 use heatel::talker::{Criterion, ResponseGroup, ResponseKind, read_response_rules_within};
 use heatel::{Resource, Result, Sound, Source, Vpk};
 
@@ -33,12 +33,34 @@ const MAX_RULE_FILE_BYTES: u64 = 1 << 20;
 /// Most bytes of one sound event script or hero script: the install's largest voice script
 /// (Snapfire's) is 120,888, its largest hero script (Invoker's) 60,111.
 const MAX_SCRIPT_BYTES: u64 = 2 << 20;
-/// Most bytes decoding all of a hero's rule files may take, as heatel charges them (every
-/// buffer, string and value, before it is allocated; the rules kept are copies of what it
-/// charged): Pudge's own file and the shared one it includes take 3,921,053. A file names a
-/// text once and may use it any number of times: each file is decoded within what the files
-/// before it left.
-const MAX_RULE_BYTES: usize = 16 << 20;
+/// Most bytes reading all of a hero's rule files and sound event scripts may take, as heatel
+/// charges them (every buffer, string, value and kept text, before it is allocated; what the
+/// importer keeps of them are copies of what was charged): Pudge's take 7,327,424. A file names
+/// a text once and may use it any number of times: each file is read within what the files
+/// before it left ([`Allowance`]).
+const MAX_HERO_READ_BYTES: usize = 32 << 20;
+
+/// What reading a hero's files may still take: every rule file and event script draws on it.
+struct Allowance {
+    left: usize,
+}
+
+impl Allowance {
+    fn new() -> Self {
+        Self {
+            left: MAX_HERO_READ_BYTES,
+        }
+    }
+
+    /// What `read` gives, read within what is left and charged with what it took; its error
+    /// names `what`.
+    fn read<T>(&mut self, what: &str, read: impl FnOnce(usize) -> Result<(T, usize)>) -> Result<T> {
+        let (value, took) =
+            read(self.left).map_err(|e| malformed("voice", format!("{what}: {e}")))?;
+        self.left -= took;
+        Ok(value)
+    }
+}
 
 /// Why a line can never be said here.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -180,12 +202,16 @@ fn read_bounded(src: &impl Source, pak: &Vpk, path: &str, max: u64) -> Result<Ve
     read_from(src, &[pak], path)
 }
 
-fn read_rule_files(src: &impl Source, pak: &Vpk, hero: &str) -> Result<RuleFiles> {
+fn read_rule_files(
+    src: &impl Source,
+    pak: &Vpk,
+    hero: &str,
+    allowance: &mut Allowance,
+) -> Result<RuleFiles> {
     let mut queue = VecDeque::from([rule_path(&format!(
         "scripts/talker/response_rules_{hero}.vrr"
     ))?]);
     let mut seen = BTreeSet::new();
-    let mut kept = 0usize;
     let mut files = RuleFiles {
         criteria: Vec::new(),
         groups: Vec::new(),
@@ -202,10 +228,10 @@ fn read_rule_files(src: &impl Source, pak: &Vpk, hero: &str) -> Result<RuleFiles
             ));
         }
         let bytes = read_bounded(src, pak, &path, MAX_RULE_FILE_BYTES)?;
-        let (read, took) =
-            read_response_rules_within(&Resource::parse(&bytes)?, MAX_RULE_BYTES - kept)
-                .map_err(|e| malformed("voice", format!("rule file {path}: {e}")))?;
-        kept += took;
+        let resource = Resource::parse(&bytes)?;
+        let read = allowance.read(&format!("rule file {path}"), |left| {
+            read_response_rules_within(&resource, left)
+        })?;
         for include in &read.includes {
             queue.push_back(rule_path(include)?);
         }
@@ -330,6 +356,7 @@ fn voice_events(
     pak: &Vpk,
     scripts: &[String],
     wanted: &BTreeSet<&str>,
+    allowance: &mut Allowance,
 ) -> Result<BTreeMap<String, SoundEvent>> {
     let mut found = BTreeMap::new();
     let scripts: BTreeSet<&String> = scripts.iter().collect();
@@ -341,7 +368,10 @@ fn voice_events(
     }
     for script in scripts {
         let bytes = read_bounded(src, pak, script, MAX_SCRIPT_BYTES)?;
-        let events = read_sound_events(&Resource::parse(&bytes)?)?;
+        let resource = Resource::parse(&bytes)?;
+        let events = allowance.read(&format!("sound event script {script}"), |left| {
+            read_sound_events_within(&resource, left)
+        })?;
         for event in events {
             if wanted.contains(event.name.as_str()) && !found.contains_key(&event.name) {
                 found.insert(event.name.clone(), event);
@@ -544,7 +574,8 @@ pub(super) fn voice(
     out: &mut Out<'_>,
 ) -> Result<()> {
     let (class, voice_file) = hero_script(src, pak, hero)?;
-    let files = read_rule_files(src, pak, hero)?;
+    let mut allowance = Allowance::new();
+    let files = read_rule_files(src, pak, hero, &mut allowance)?;
     let mut pruned = prune(&files, &class);
     let wanted: BTreeSet<&str> = pruned
         .rules
@@ -553,7 +584,7 @@ pub(super) fn voice(
         .collect();
     let mut scripts = vec![voice_file];
     scripts.extend(files.scripts.iter().cloned());
-    let found = voice_events(src, pak, &scripts, &wanted)?;
+    let found = voice_events(src, pak, &scripts, &wanted, &mut allowance)?;
     let mut sounds = Sounds::default();
     let events = pack_events(src, pak, found, &mut sounds, out)?;
     let rules = hero_rules(
