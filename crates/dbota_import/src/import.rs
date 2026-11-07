@@ -2190,6 +2190,13 @@ fn image(
 mod particle_model_tests {
     use super::*;
 
+    fn game_dir() -> std::path::PathBuf {
+        let provided = std::env::var_os("DBOTA_DOTA_PATH")
+            .or_else(|| std::env::var_os("HEATEL_DOTA_PATH"))
+            .map(std::path::PathBuf::from);
+        heatel::find_game_dir(provided.as_deref()).expect("explicit local install")
+    }
+
     struct Discard;
     impl Sink for Discard {
         fn write(&mut self, _: &str, _: &[u8]) -> Result<()> {
@@ -2204,7 +2211,7 @@ mod particle_model_tests {
             .name("particle_import".to_owned())
             .stack_size(2 << 20)
             .spawn(|| {
-                let game = heatel::find_game_dir(None).expect("install");
+                let game = game_dir();
                 let mut plan = plan().expect("plan").clone();
                 plan.items
                     .retain(|item| matches!(item, Item::Particle { .. }));
@@ -2234,7 +2241,7 @@ mod particle_model_tests {
     fn repeated_model_renderers_do_not_repeat_source_reads_or_exports() {
         let read = |count| {
             let src = Metered {
-                inner: heatel::DirSource::new(heatel::find_game_dir(None).expect("install")),
+                inner: heatel::DirSource::new(game_dir()),
                 read: Cell::new(0),
                 limit: READ_LIMIT,
                 over: Cell::new(false),
@@ -2323,7 +2330,7 @@ mod particle_model_tests {
     #[test]
     #[ignore = "needs a local Dota 2 install"]
     fn invalid_particle_skin_selectors_report_the_default_material_fallback() {
-        let source = heatel::DirSource::new(heatel::find_game_dir(None).expect("install"));
+        let source = heatel::DirSource::new(game_dir());
         let pak = Vpk::open(&source, DIR_VPK).expect("VPK");
         let bytes = pak
             .read_file(&source, "particles/neutral_fx/frogmen_water_bubble.vpcf_c")
