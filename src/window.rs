@@ -320,7 +320,24 @@ mod native {
         /// it out of fullscreen, unless a resolution is chosen by then.
         restore: Option<Vec2>,
         /// The resolution a window was last given.
-        resolution: Option<Option<(u32, u32)>>,
+        applied: Option<Applied>,
+    }
+
+    /// What a window was last sized for: the resolution of the settings and the size in use under
+    /// it, which moves with the monitor the window is on.
+    #[derive(Clone, Copy, PartialEq, Eq)]
+    struct Applied {
+        resolution: Option<(u32, u32)>,
+        in_use: Option<(u32, u32)>,
+    }
+
+    impl Applied {
+        fn of(settings: &Settings, displays: &super::Displays) -> Applied {
+            Applied {
+                resolution: settings.resolution,
+                in_use: settings.resolution.map(|_| displays.in_use(settings)),
+            }
+        }
     }
 
     /// A size to give the window: the monitor's physical pixels for a resolution of the
@@ -422,7 +439,7 @@ mod native {
                 None => Restore::Logical(previous),
             }
             .give(&mut window);
-            sizes.resolution = Some(settings.resolution);
+            sizes.applied = Some(Applied::of(&settings, &displays));
         }
         let monitor = current_monitor(on_monitor, &monitors);
         let wanted = settings.resolution.map(|_| displays.in_use(&settings));
@@ -447,13 +464,11 @@ mod native {
         // Already a window: a resolution newly chosen resizes it, and choosing the monitor's own
         // (reset) gives the window the monitor's size. A window that opened with no choice keeps
         // the size it opened with.
-        let wanted = Some(settings.resolution);
-        if window.mode == WindowMode::Windowed
-            && sizes.restore.is_none()
-            && sizes.resolution != wanted
+        let wanted = Some(Applied::of(&settings, &displays));
+        if window.mode == WindowMode::Windowed && sizes.restore.is_none() && sizes.applied != wanted
         {
-            let first = sizes.resolution.is_none();
-            sizes.resolution = wanted;
+            let first = sizes.applied.is_none();
+            sizes.applied = wanted;
             if settings.resolution.is_some() || !first {
                 Restore::of(displays.in_use(&settings)).give(&mut window);
             }

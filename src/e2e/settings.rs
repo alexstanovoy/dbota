@@ -510,3 +510,115 @@ fn the_resolution_list_follows_the_monitor_the_window_is_on() {
     client.frames(5);
     assert_eq!(client.world().resource::<Displays>().native, (1280, 720));
 }
+
+/// The names of the controls that wear the focus ring.
+fn ringed(client: &mut Client) -> Vec<String> {
+    let world = client.world_mut();
+    world
+        .query::<(&Name, &Outline)>()
+        .iter(world)
+        .filter(|(_, outline)| outline.color != Color::NONE)
+        .map(|(name, _)| name.to_string())
+        .collect()
+}
+
+/// After a field is edited, Tab goes on to the next control, not back to the field.
+#[test]
+fn tab_after_editing_the_profile_name_goes_on_to_the_next_control() {
+    use bevy::input::keyboard::Key;
+    let mut client = open_settings("options");
+    client.tap_named(KeyCode::Tab, Key::Tab);
+    assert_eq!(
+        ringed(&mut client),
+        ["name in local and direct games field"]
+    );
+    client.tap_named(KeyCode::Enter, Key::Enter);
+    assert!(
+        screen(&client, |s| s.naming.is_some()),
+        "Enter starts editing"
+    );
+    client.type_text("mira");
+    client.tap_named(KeyCode::Tab, Key::Tab);
+    assert!(screen(&client, |s| s.naming.is_none()));
+    assert_eq!(ringed(&mut client), ["interface size slider"]);
+    assert_eq!(settings(&client).name, "mira");
+}
+
+/// A list the keyboard opened is walked with Up and Down, picked from with Enter, and closed with
+/// Escape without a change; options that cannot be picked are passed over.
+#[test]
+fn the_keyboard_walks_an_open_list_and_picks_from_it() {
+    use bevy::input::keyboard::Key;
+    let mut client = open_settings("video");
+    client.tap_named(KeyCode::Tab, Key::Tab);
+    client.tap_named(KeyCode::Enter, Key::Enter);
+    assert_eq!(
+        screen(&client, |s| s.dropdown),
+        Some(crate::settings::Choice::DisplayMode)
+    );
+    client.tap_named(KeyCode::ArrowDown, Key::ArrowDown);
+    client.tap_named(KeyCode::Escape, Key::Escape);
+    assert_eq!(
+        settings(&client).display,
+        DisplayMode::Borderless,
+        "Escape changes nothing"
+    );
+    assert!(screen(&client, |s| s.dropdown.is_none()));
+    client.tap_named(KeyCode::Enter, Key::Enter);
+    client.tap_named(KeyCode::ArrowUp, Key::ArrowUp);
+    client.tap_named(KeyCode::Enter, Key::Enter);
+    assert_eq!(
+        settings(&client).display,
+        DisplayMode::Windowed,
+        "Up then Enter picks the option above"
+    );
+    assert!(screen(&client, |s| s.dropdown.is_none()));
+}
+
+/// An option the monitor cannot do is passed over by the arrow keys.
+#[test]
+fn the_arrow_keys_pass_over_an_option_that_cannot_be_picked() {
+    use bevy::input::keyboard::Key;
+    let mut client = open_settings("video");
+    saved_size_the_monitor_lacks(&mut client, DisplayMode::Exclusive);
+    // Display mode, then Resolution.
+    client.tap_named(KeyCode::Tab, Key::Tab);
+    client.tap_named(KeyCode::Tab, Key::Tab);
+    client.tap_named(KeyCode::Enter, Key::Enter);
+    assert_eq!(
+        screen(&client, |s| s.dropdown),
+        Some(crate::settings::Choice::Resolution)
+    );
+    client.tap_named(KeyCode::ArrowDown, Key::ArrowDown);
+    client.tap_named(KeyCode::Enter, Key::Enter);
+    assert_eq!(
+        settings(&client).resolution,
+        None,
+        "1600 x 900 was passed over for the native size"
+    );
+}
+
+/// A window moved to a smaller monitor is cut to it.
+#[test]
+fn a_saved_window_size_is_cut_again_when_the_window_moves_to_a_smaller_monitor() {
+    let mut client = open_settings("video");
+    client
+        .world_mut()
+        .insert_resource(Displays::new((3840, 2160), [(2560, 1440)]));
+    {
+        let mut settings = client.world_mut().resource_mut::<Settings>();
+        settings.display = DisplayMode::Windowed;
+        settings.resolution = Some((2560, 1440));
+    }
+    client.frames(3);
+    resized(&mut client);
+    client.until("the window at 2560 x 1440", |c| {
+        window_size(c) == (2560, 1440)
+    });
+    client
+        .world_mut()
+        .insert_resource(Displays::new((1280, 720), [(1280, 720)]));
+    client.until("the window cut to the new monitor", |c| {
+        window_size(c) == (1280, 720)
+    });
+}

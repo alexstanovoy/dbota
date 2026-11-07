@@ -91,7 +91,11 @@ pub struct Scroll {
 /// The control the keyboard stands on, by its place in the reading order of the window's controls;
 /// none until Tab is pressed, and none again after a click.
 #[derive(Resource, Default)]
-pub struct Focus(pub Option<usize>);
+pub struct Focus {
+    pub control: Option<usize>,
+    /// The option of an open list the keyboard stands on.
+    pub option: Option<usize>,
+}
 
 /// The card in view, by its place in the open view: the navigation marks its link.
 #[derive(Resource, Default)]
@@ -767,6 +771,8 @@ impl Controls<'_, '_> {
         control: Entity,
         screen: &mut ResMut<Screen>,
         settings: &mut ResMut<Settings>,
+        at: &mut Focus,
+        displays: &Displays,
     ) {
         if let Ok(tick) = self.toggles.get(control)
             && Row::Toggle(tick.0).enabled(settings)
@@ -777,6 +783,8 @@ impl Controls<'_, '_> {
             && Row::Choice(choice.0).enabled(settings)
         {
             screen.dropdown = (screen.dropdown != Some(choice.0)).then_some(choice.0);
+            // The list opens with the picked option highlighted.
+            at.option = choice.0.current(settings, displays);
         } else if let Ok(field) = self.keyfields.get(control) {
             screen.capturing = Some(field.0);
             screen.held_modifier = None;
@@ -798,48 +806,111 @@ impl Controls<'_, '_> {
 }
 
 /// Tab and Shift+Tab move the keyboard along the controls; Space or Enter does what a click
-/// does; Left and Right move a slider. A click gives the focus up.
+/// does; Left and Right move a slider; while a list is open, Up and Down move along its options
+/// and Space or Enter picks one. A click gives the focus up; a field edited (or a key set) hands
+/// the focus on from where it was.
 #[allow(clippy::too_many_arguments)]
 fn focus(
     mut screen: ResMut<Screen>,
     mut settings: ResMut<Settings>,
     mut at: ResMut<Focus>,
+    displays: Res<Displays>,
     mut keyboard: MessageReader<KeyboardInput>,
     held: Res<ButtonInput<KeyCode>>,
     mouse: Res<ButtonInput<MouseButton>>,
     order: Focusable,
     on: Controls,
+    mut was_editing: Local<bool>,
 ) {
     use bevy::input::keyboard::Key;
-    if !screen.open || screen.capturing.is_some() || screen.naming.is_some() || screen.searching {
+    if mouse.just_pressed(MouseButton::Left) && at.control.is_some() {
+        at.control = None;
+    }
+    if !screen.open {
         keyboard.clear();
-        at.0 = None;
+        at.control = None;
         return;
     }
-    if mouse.just_pressed(MouseButton::Left) && at.0.is_some() {
-        at.0 = None;
+    if screen.dropdown.is_none() && at.option.is_some() {
+        at.option = None;
     }
+    let editing = screen.capturing.is_some() || screen.naming.is_some() || screen.searching;
+    if editing {
+        keyboard.clear();
+        *was_editing = true;
+        return;
+    }
+    // The key that ended an edit already did its work there: only Tab goes on from the field.
+    let after_edit = std::mem::take(&mut *was_editing);
     let controls = order.in_order();
     let shift = held.any_pressed([KeyCode::ShiftLeft, KeyCode::ShiftRight]);
     for event in keyboard.read().filter(|e| e.state == ButtonState::Pressed) {
+        if let Some(choice) = screen.dropdown {
+            pick_option(
+                choice,
+                &event.logical_key,
+                &mut screen,
+                &mut settings,
+                &mut at,
+                &displays,
+            );
+            continue;
+        }
         if controls.is_empty() {
             return;
         }
         let last = controls.len() - 1;
-        let here = at.0.map(|i| i.min(last));
+        let here = at.control.map(|i| i.min(last));
         let control = here.map(|i| controls[i]);
         match (&event.logical_key, control) {
             (Key::Tab, _) if shift => {
-                at.0 = Some(here.map_or(last, |i| i.checked_sub(1).unwrap_or(last)));
+                at.control = Some(here.map_or(last, |i| i.checked_sub(1).unwrap_or(last)));
             }
-            (Key::Tab, _) => at.0 = Some(here.map_or(0, |i| if i == last { 0 } else { i + 1 })),
+            (Key::Tab, _) => {
+                at.control = Some(here.map_or(0, |i| if i == last { 0 } else { i + 1 }));
+            }
+            _ if after_edit => {}
             (Key::Enter | Key::Space, Some(control)) => {
-                on.activate(control, &mut screen, &mut settings);
+                on.activate(control, &mut screen, &mut settings, &mut at, &displays);
             }
             (Key::ArrowLeft, Some(control)) => on.nudge(control, &mut settings, -1.0),
             (Key::ArrowRight, Some(control)) => on.nudge(control, &mut settings, 1.0),
             _ => {}
         }
+    }
+}
+
+/// A key while a list is open: Up and Down move along the options that can be picked, Space or
+/// Enter picks the one the keyboard stands on. (Escape closes the list, in [`escape`].)
+fn pick_option(
+    choice: Choice,
+    key: &bevy::input::keyboard::Key,
+    screen: &mut ResMut<Screen>,
+    settings: &mut ResMut<Settings>,
+    at: &mut Focus,
+    displays: &Displays,
+) {
+    use bevy::input::keyboard::Key;
+    let count = choice.options(settings, displays).len();
+    let pickable = |i: &usize| choice.option_enabled(settings, displays, *i);
+    let from = at.option.or_else(|| choice.current(settings, displays));
+    match key {
+        Key::ArrowDown => {
+            let after = from.map_or(0, |i| i + 1);
+            at.option = (after..count).find(pickable).or(from);
+        }
+        Key::ArrowUp => {
+            let before = from.unwrap_or(count);
+            at.option = (0..before).rev().find(pickable).or(from);
+        }
+        Key::Enter | Key::Space => {
+            if let Some(i) = from {
+                choice.pick(settings, i, displays);
+            }
+            screen.dropdown = None;
+            at.option = None;
+        }
+        _ => {}
     }
 }
 
@@ -850,10 +921,10 @@ pub fn focus_ring(
     order: Focusable,
     mut rings: Query<(Entity, &mut Outline)>,
 ) {
-    if !screen.open {
-        return;
-    }
-    let focused = at.0.and_then(|i| order.in_order().get(i).copied());
+    let focused = at
+        .control
+        .filter(|_| screen.open)
+        .and_then(|i| order.in_order().get(i).copied());
     for (entity, mut outline) in &mut rings {
         let color = if Some(entity) == focused {
             theme::FOCUS

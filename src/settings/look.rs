@@ -12,7 +12,7 @@ use super::draw::{
     THUMB_HELD, ToggleBox, ToggleMark,
 };
 use super::model::{Row, Toggle};
-use super::screen::{InView, Screen};
+use super::screen::{Focus, InView, Screen};
 use crate::config::Settings;
 use crate::keys;
 use crate::theme;
@@ -260,6 +260,7 @@ pub fn choices(
     )>,
     mut values: Query<(&ChoiceValue, &mut Text, &mut TextColor)>,
     mut options: Query<(&ChoiceOption, &Interaction, &mut BackgroundColor), Without<ChoiceButton>>,
+    focus: Res<Focus>,
 ) {
     if !screen.open {
         return;
@@ -290,9 +291,10 @@ pub fn choices(
     for (option, interaction, mut ground) in &mut options {
         let picked = option.0.current(&settings, &displays) == Some(option.1);
         let enabled = option.0.option_enabled(&settings, &displays, option.1);
-        let color = match (*interaction, picked, enabled) {
-            (Interaction::None, true, _) => theme::LIST_PICKED,
-            (Interaction::None, false, _) | (_, _, false) => Color::NONE,
+        let on_it = *interaction != Interaction::None || focus.option == Some(option.1);
+        let color = match (on_it, picked, enabled) {
+            (false, true, _) => theme::LIST_PICKED,
+            (false, false, _) | (_, _, false) => Color::NONE,
             _ => theme::LIST_HOVER,
         };
         ground.set_if_neq(BackgroundColor(color));
