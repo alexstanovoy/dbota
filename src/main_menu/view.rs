@@ -361,7 +361,7 @@ pub struct MenuView {
     /// The page drawn: the one the settings were opened from while they are open over it.
     pub beneath: Page,
     pub body: PageView,
-    /// `nickname#id` once logged in.
+    /// The account's nickname once logged in: no account number (the owner's rule).
     pub account: Option<String>,
     /// The name the player goes by: the account's, else the settings' profile name.
     pub player: String,
