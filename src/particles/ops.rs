@@ -552,7 +552,11 @@ fn movement(
     for i in 0..parts.len() {
         let position = parts.vectors[store::POSITION][i];
         let acceleration = gravity + parts.force[i];
-        let before = if parts.span[i] > 0.0 { parts.span[i] } else { dt };
+        let before = if parts.span[i] > 0.0 {
+            parts.span[i]
+        } else {
+            dt
+        };
         let step = (position - parts.vectors[store::PREVIOUS][i]) * (factor * (dt / before))
             + parts.scalars[store::FORCE_SCALE][i] * dt * ((dt + before) * 0.5) * acceleration;
         parts.force[i] = Vec3::ZERO;

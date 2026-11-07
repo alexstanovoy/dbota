@@ -154,6 +154,14 @@ fn walk(client: &mut Client, looks: &HashSet<u16>) {
         };
         hero.pos = origin + bota_proto::Vec2::from_ints(walked * hero.move_speed.to_int() / 30, 0);
         tell(client, hero.clone());
+        let frame = match step {
+            0 => Duration::from_millis(1),
+            1 | 2 => Duration::from_millis(200),
+            _ => FRAME,
+        };
+        client
+            .world_mut()
+            .insert_resource(TimeUpdateStrategy::ManualDuration(frame));
         client.frames(1);
         assert_attribution(client, looks);
         let body = client.body(hero.id).expect("hero drawn");
@@ -190,6 +198,6 @@ fn walk(client: &mut Client, looks: &HashSet<u16>) {
     }
     assert_eq!(&seen, looks, "ribbons were actually submitted");
     eprintln!(
-        "SF detector: startup=0, seed=1, cadence=1ms->30Hz, 60s idle/walk, excursion={worst}"
+        "SF detector: startup=0, seed=1, cadence=1ms->200ms->30Hz, 1800 idle/walk frames, excursion={worst}"
     );
 }
