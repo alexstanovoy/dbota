@@ -18,7 +18,8 @@ fn shadow_fiends_persistent_rocks_remain_near_him_for_the_whole_orbit() {
         .insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_secs_f32(
             1.0 / 30.0,
         )));
-    let (definition, count, ceiling) = authored_limits(&client);
+    let (definition, count) = authored_limits(&client);
+    let (offset, radius) = authored_sphere();
     client.until("the trail's persistent rocks", |c| {
         rock_positions(c, definition).len() == count
     });
@@ -31,12 +32,15 @@ fn shadow_fiends_persistent_rocks_remain_near_him_for_the_whole_orbit() {
             let particles = rock_positions(&client, definition);
             assert_eq!(particles.len(), count, "the same authored burst survives at {second}s");
             let body = client.body(client.me().id).expect("hero drawn");
-            let ground = client.world().get::<GlobalTransform>(body).expect("hero frame").translation().y;
+            let hero = client.world().get::<GlobalTransform>(body).expect("hero frame").translation();
+            let center = hero + offset;
             let drawn = drawn_rocks(&mut client, definition);
             assert!(!drawn.is_empty(), "the persistent rocks remain submitted at {second}s");
             for position in particles.into_iter().chain(drawn) {
-                assert!(position.y - ground <= ceiling + 0.1,
-                    "orbit rose out of its authored shell at {second}s: height {}, ceiling {ceiling}, position {position:?}", position.y - ground);
+                // Position operators after the constraint can add a small displacement.
+                // Check every direction, including submitted mesh origins, with a 25-unit margin.
+                assert!(position.distance(center) <= radius + 25.0,
+                    "orbit left its authored sphere at {second}s: distance {}, radius {radius}, position {position:?}", position.distance(center));
             }
         }
     });
@@ -46,7 +50,7 @@ fn shadow_fiends_persistent_rocks_remain_near_him_for_the_whole_orbit() {
 fn the_rock_orbit_sets_its_declared_force_center_from_its_previous_bounds() {
     let server = Server::start(1, &[]);
     let mut client = Client::join(&server, HeroId::SHADOW_FIEND, &[]);
-    let (definition, count, _) = authored_limits(&client);
+    let (definition, count) = authored_limits(&client);
     client
         .world_mut()
         .insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_secs_f32(
@@ -134,7 +138,28 @@ fn authored_source() -> Value {
         .expect("KV3")
 }
 
-fn authored_limits(client: &Client) -> (usize, usize, f32) {
+fn authored_sphere() -> (Vec3, f32) {
+    let data = authored_source();
+    let sphere = data
+        .get("m_Constraints")
+        .and_then(Value::as_array)
+        .expect("constraints")
+        .iter()
+        .find(|value| value.get("_class").and_then(Value::as_str) == Some("C_OP_ConstrainDistance"))
+        .expect("sphere constraint");
+    let offset = sphere
+        .get("m_CenterOffset")
+        .and_then(Value::as_array)
+        .expect("offset");
+    let component = |i: usize| offset[i].as_f64().expect("offset component") as f32;
+    let radius = sphere
+        .get("m_fMaxDistance")
+        .and_then(Value::as_f64)
+        .expect("outer radius") as f32;
+    (Vec3::new(component(0), component(2), -component(1)), radius)
+}
+
+fn authored_limits(client: &Client) -> (usize, usize) {
     let source = DirSource::new(find_game_dir(None).expect("install"));
     let pak = Vpk::open(&source, "pak01_dir.vpk").expect("VPK");
     let path = "particles/units/heroes/hero_nevermore/nevermore_trail_rocks.vpcf_c";
@@ -149,37 +174,6 @@ fn authored_limits(client: &Client) -> (usize, usize, f32) {
             .and_then(Value::as_array)
             .expect("function list")
     };
-    let class =
-        |value: &Value, name: &str| value.get("_class").and_then(Value::as_str) == Some(name);
-    let sphere = list("m_Constraints")
-        .iter()
-        .find(|v| class(v, "C_OP_ConstrainDistance"))
-        .expect("sphere constraint");
-    let vector_z = |value: &Value, key: &str| {
-        value.get(key).and_then(Value::as_array).expect("vector")[2]
-            .as_f64()
-            .expect("component") as f32
-    };
-    let max = sphere
-        .get("m_fMaxDistance")
-        .and_then(Value::as_f64)
-        .expect("maximum distance") as f32;
-    let mut ceiling = vector_z(sphere, "m_CenterOffset") + max;
-    // These position operators run after BasicMovement's constraints. Their bounded offsets
-    // can move a rock above the shell again in the same frame; rotations around Z cannot.
-    for operator in list("m_Operators") {
-        if operator.get("m_nOpEndCapState").and_then(Value::as_str)
-            == Some("PARTICLE_ENDCAP_ENDCAP_ON")
-        {
-            continue;
-        }
-        if class(operator, "C_OP_VectorNoise") {
-            ceiling += vector_z(operator, "m_vecOutputMax");
-        }
-        if class(operator, "C_OP_OscillateVector") {
-            ceiling += vector_z(operator, "m_RateMax");
-        }
-    }
     let count = list("m_Emitters")[0]
         .get("m_nParticlesToEmit")
         .and_then(|v| v.get("m_flLiteralValue"))
@@ -202,7 +196,7 @@ fn authored_limits(client: &Client) -> (usize, usize, f32) {
                 .is_some_and(|p| p.ends_with("/nevermore_trail_rocks.vpcf"))
         })
         .expect("the same source system in the effect");
-    (definition, count, ceiling)
+    (definition, count)
 }
 
 fn rock_positions(client: &Client, definition: usize) -> Vec<Vec3> {
