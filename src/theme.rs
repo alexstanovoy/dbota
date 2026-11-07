@@ -55,6 +55,45 @@ pub const FIELD: Color = hex(0x222629);
 pub const FIELD_SUNKEN: Color = hex(0x0B0C0E);
 pub const FIELD_EDGE: Color = hex(0x495255);
 
+/// A card of rows on a window's ground, its edge and the rule under its title; the rule between rows.
+pub const CARD: Color = hex(0x15181B);
+pub const CARD_EDGE: Color = hex(0x2A2E32);
+pub const CARD_RULE: Color = hex(0x2D3236);
+pub const ROW_RULE: Color = Color::srgba(45.0 / 255.0, 50.0 / 255.0, 54.0 / 255.0, 0.6);
+/// A field under the cursor: its ground and edge.
+pub const FIELD_HOVER: (Color, Color) = (hex(0x2A2F33), hex(0x6B747D));
+/// A field that cannot be used now: its ground and edge.
+pub const FIELD_OFF: (Color, Color) = (hex(0x191C1F), hex(0x30363B));
+/// A box ticked: its ground and edge; unticked, only the edge.
+pub const TICK: (Color, Color) = (hex(0x3D7F46), hex(0x6FBF73));
+pub const TICK_EDGE_OFF: Color = hex(0x8B939C);
+/// A slider's rail, and what it fills.
+pub const RAIL: Color = hex(0x3A4148);
+/// An open list: its ground, its picked option and the option under the cursor.
+pub const LIST: Color = hex(0x161B20);
+pub const LIST_PICKED: Color = hex(0x1D252C);
+pub const LIST_HOVER: Color = hex(0x2A3A47);
+/// Small text of the lowest rank: counters, keys of an unbound slot.
+pub const INK_6: Color = hex(0x6B747D);
+/// The ground of a tooltip's neighbour, a text field, and an unbound key's.
+pub const FIELD_TYPED: Color = hex(0x0F1215);
+pub const KEY_UNBOUND: (Color, Color) = (hex(0x1E2124), hex(0x3A4148));
+/// A key field being set, and one that clashes (ground, edge, ink).
+pub const KEY_SETTING: (Color, Color, Color) = (
+    Color::srgba(89.0 / 255.0, 176.0 / 255.0, 210.0 / 255.0, 0.16),
+    FOCUS,
+    SELECT,
+);
+pub const KEY_CLASH: (Color, Color, Color) = (hex(0x2A1714), hex(0xA3372D), ERROR_TEXT);
+
+/// The links under an open tab that are not the one in view.
+pub const NAV_RULE: Color = hex(0x2A3036);
+/// A scroll bar's rail and thumb.
+pub const SCROLL_RAIL: Color = hex(0x24292D);
+pub const SCROLL_THUMB: Color = hex(0x5A6670);
+/// A row's label.
+pub const ROW_INK: Color = hex(0xE8EBEE);
+
 /// A tooltip or an open list, and its edge.
 pub const TOOLTIP: Color = hex(0x0E1216);
 pub const TOOLTIP_EDGE: Color = hex(0x3A4650);
