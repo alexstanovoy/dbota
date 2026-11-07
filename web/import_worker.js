@@ -79,6 +79,7 @@ async function run(made, stamp) {
   // The index and the stamp last: a cache without them is not a finished one.
   await writeFile("index.txt", new TextEncoder().encode(report.index()));
   await writeFile("stamp.txt", new TextEncoder().encode(stamp));
+  for (const warning of report.warnings()) console.warn(`Asset import: ${warning}`);
   post({ type: "done", stopped: false, files: report.files(), failures: report.failures() });
 }
 

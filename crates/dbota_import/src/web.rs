@@ -217,6 +217,15 @@ impl Report {
             .collect()
     }
 
+    /// One line per asset converted with a usable fallback: `logical: why`.
+    pub fn warnings(&self) -> Vec<String> {
+        self.0
+            .warnings
+            .iter()
+            .map(|(item, why)| format!("{item}: {why}"))
+            .collect()
+    }
+
     pub fn files(&self) -> usize {
         self.0.files.len()
     }

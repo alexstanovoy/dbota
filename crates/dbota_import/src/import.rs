@@ -667,6 +667,8 @@ pub struct Report {
     pub failed: Vec<(String, String)>,
     /// What converted items left out on purpose, told for the log (a voice pack's pruning).
     pub notes: Vec<String>,
+    /// Assets converted with an explicit fallback, with why. These remain usable.
+    pub warnings: BTreeSet<(String, String)>,
     pub stopped: bool,
     /// Why the import was cut short by the install, when it was: it asked for more than the
     /// importer reads. Nothing of such an import is a cache.
@@ -1451,7 +1453,13 @@ fn export_particle_skins(
     let count = source.material_groups.len().max(1);
     let skins: BTreeSet<_> = selectors
         .iter()
-        .flat_map(|selector| particle_skin_indices(selector, count))
+        .flat_map(|selector| {
+            particle_skin_indices(selector, count, &mut |reason| {
+                out.report
+                    .warnings
+                    .insert((vmdl.to_owned(), reason.to_owned()));
+            })
+        })
         .collect();
     for skin in skins {
         if models
@@ -1463,6 +1471,14 @@ fn export_particle_skins(
         // Some shipped renderers select a group the model lacks (break_effect: 2 with
         // only its default group). Without a material remap, its default materials remain.
         let group_index = if skin < count { skin } else { 0 };
+        if skin >= count {
+            out.report.warnings.insert((
+                vmdl.to_owned(),
+                format!(
+                    "particle skin selector {skin} exceeds {count} installed groups; using skin 0"
+                ),
+            ));
+        }
         let file = particle_model_path(dir, vmdl, group_index);
         if !out.report.files.contains_key(&file) {
             let group = (group_index != 0).then(|| source.material_groups[group_index].0.as_str());
@@ -1495,7 +1511,11 @@ fn particle_model_path(dir: &str, vmdl: &str, skin: usize) -> String {
     join(dir, &format!("{vmdl}.skin{skin}.glb"))
 }
 
-fn particle_skin_indices(selector: &FloatInput, count: usize) -> std::ops::Range<usize> {
+fn particle_skin_indices(
+    selector: &FloatInput,
+    count: usize,
+    warn: &mut dyn FnMut(&str),
+) -> std::ops::Range<usize> {
     const MAX_SKINS: usize = 64;
     // Unsupported selectors retain the default material rather than dropping the renderer.
     // The install guard checks every imported table against this work bound.
@@ -1505,9 +1525,19 @@ fn particle_skin_indices(selector: &FloatInput, count: usize) -> std::ops::Range
         {
             (*value as usize)..(*value as usize + 1)
         }
-        FloatInput::Literal(_) => 0..1,
+        FloatInput::Literal(value) => {
+            warn(&format!(
+                "invalid particle skin selector {value}; using skin 0"
+            ));
+            0..1
+        }
         _ if count <= MAX_SKINS => 0..count,
-        _ => 0..1,
+        _ => {
+            warn(&format!(
+                "particle skin selector needs {count} groups, above the {MAX_SKINS}-group limit; using skin 0"
+            ));
+            0..1
+        }
     }
 }
 
@@ -2276,7 +2306,7 @@ mod particle_model_tests {
             (-1.0, 0..1),
         ] {
             assert_eq!(
-                particle_skin_indices(&FloatInput::Literal(value), 1),
+                particle_skin_indices(&FloatInput::Literal(value), 1, &mut |_| {}),
                 expected,
                 "skin {value}"
             );
@@ -2286,7 +2316,60 @@ mod particle_model_tests {
             component: 0,
             mapping: heatel::particle::Mapping::Direct,
         };
-        assert_eq!(particle_skin_indices(&computed, 20), 0..20);
-        assert_eq!(particle_skin_indices(&computed, 65), 0..1);
+        assert_eq!(particle_skin_indices(&computed, 20, &mut |_| {}), 0..20);
+        assert_eq!(particle_skin_indices(&computed, 65, &mut |_| {}), 0..1);
+    }
+
+    #[test]
+    #[ignore = "needs a local Dota 2 install"]
+    fn invalid_particle_skin_selectors_report_the_default_material_fallback() {
+        let source = heatel::DirSource::new(heatel::find_game_dir(None).expect("install"));
+        let pak = Vpk::open(&source, DIR_VPK).expect("VPK");
+        let bytes = pak
+            .read_file(&source, "particles/neutral_fx/frogmen_water_bubble.vpcf_c")
+            .expect("bubble");
+        let mut system = System::read(&Resource::parse(&bytes).expect("resource")).expect("system");
+        let mut checked = 0;
+        for renderer in &mut system.renderers {
+            if let Renderer::Models(model) = &mut renderer.class {
+                model.skin = FloatInput::Literal(-1.0);
+                checked += 1;
+            }
+        }
+        assert!(checked > 0, "the real bubble has model renderers");
+        let (mut sink, mut report, mut written, mut pending) =
+            (Discard, Report::default(), 0, VecDeque::new());
+        let mut out = Out {
+            sink: &mut sink,
+            report: &mut report,
+            written: &mut written,
+            pending: &mut pending,
+        };
+        let models = particle_models(
+            &source,
+            &pak,
+            &[("bubble".to_owned(), system)],
+            "particles",
+            &mut out,
+        );
+        assert!(
+            !models.is_empty(),
+            "invalid selectors must retain their renderer"
+        );
+        assert!(models.iter().all(|model| model.skin == 0));
+        assert!(
+            report.failed.is_empty(),
+            "a fallback is not an import failure: {:?}",
+            report.failed
+        );
+        assert!(
+            report
+                .warnings
+                .iter()
+                .any(|(_, message)| message.contains("skin selector")
+                    && message.contains("using skin 0")),
+            "the fallback must be diagnosed: {:?}",
+            report.warnings
+        );
     }
 }

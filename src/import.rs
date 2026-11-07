@@ -187,6 +187,9 @@ fn run_with_in(
     for note in &report.notes {
         println!("dbota import: {note}");
     }
+    for (asset, why) in &report.warnings {
+        eprintln!("dbota import: warning: {asset}: {why}");
+    }
     for (asset, why) in &report.failed {
         eprintln!("dbota import: {asset} did not convert: {why}");
     }
