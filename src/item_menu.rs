@@ -128,7 +128,11 @@ fn choices(
         return Vec::new();
     };
     let mut out = vec![Choice::ShowInShop { item: shown.id.0 }];
-    if !core.controls_selection() || !matches!(core.source, Source::Live(_)) {
+    let own_dead_kit = core
+        .my_slot
+        .and_then(|slot| core.view()?.player(slot))
+        .is_some_and(|player| player.respawn_left > 0 && player.unit == core.commanded());
+    if !(core.controls_selection() || own_dead_kit) || !matches!(core.source, Source::Live(_)) {
         return out;
     }
     let Some(item) = core.item_in(slot) else {
@@ -137,17 +141,22 @@ fn choices(
     let base_shop = core
         .slot_unit()
         .is_some_and(|unit| core.unit_at_base_shop(unit.id));
-    if slot != TOWN_PORTAL_SLOT
-        && bota_core::item_def(item.id).is_some_and(|def| def.limits.sellable)
+    if bota_core::item_def(item.id).is_some_and(|def| def.limits.sellable)
+        && if own_dead_kit {
+            core.dead_sale_allowed(slot) == Some(true)
+        } else {
+            slot != TOWN_PORTAL_SLOT
+        }
     {
-        let at_shop = base_shop
+        let direct_sale = own_dead_kit
+            || base_shop
             || slot >= BAG_SLOTS
             || core
                 .slot_unit()
                 .is_some_and(|unit| core.unit_at_secret_shop(unit.id));
         out.push(Choice::Sell {
             slot,
-            mark: (!at_shop).then(|| item.selling == Some(true)),
+            mark: (!direct_sale).then(|| item.selling == Some(true)),
         });
     }
     if core.can_disassemble(slot) {

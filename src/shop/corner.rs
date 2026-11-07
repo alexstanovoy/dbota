@@ -541,9 +541,8 @@ fn shop_button(
 }
 
 /// The stash while the shop is open, at either base, while an item is held for
-/// moving, or while one's own hero lies dead, as Dota shows it then (its
-/// HUD's `StashVisible` without `StashActive`: what was bought is seen, and
-/// nothing is taken out); GRAB ALL while what is in it can be taken.
+/// moving, or during the hero's normal respawn. GRAB ALL is available at a
+/// base or during normal respawn while an item can move into its inventory.
 fn stash(
     session: NonSend<Session>,
     panels: Res<Panels>,
@@ -612,21 +611,21 @@ fn quick_row(
 /// backpack, and a scroll onto the scrolls the hero already carries.
 pub fn grab_moves(core: &bota_client_core::App) -> Vec<(u8, u8)> {
     let plan = || {
-        if !matches!(core.source, Source::Live(_)) {
+        if !matches!(core.source, Source::Live(_)) || !core.stash_accessible() {
             return None;
         }
         let view = core.view()?;
         let player = view.player(core.my_slot?)?;
-        let hero = view.unit(player.unit?)?;
-        if !core.unit_at_base_shop(hero.id) {
-            return None;
-        }
+        let hero = view.unit(player.unit?).filter(|unit| unit.hp > 0);
+        let (items, town_portal) = match hero {
+            Some(hero) => (&hero.items, hero.town_portal),
+            None => {
+                let kit = player.kit.as_ref()?;
+                (&kit.items, kit.town_portal)
+            }
+        };
         let mut free: VecDeque<u8> = (0..BAG_SLOTS)
-            .filter(|slot| {
-                hero.items
-                    .get(usize::from(*slot))
-                    .is_some_and(Option::is_none)
-            })
+            .filter(|slot| items.get(usize::from(*slot)).is_some_and(Option::is_none))
             .collect();
         let mut moves = Vec::new();
         for (at, item) in player
@@ -640,7 +639,7 @@ pub fn grab_moves(core: &bota_client_core::App) -> Vec<(u8, u8)> {
                 continue;
             };
             let from = BAG_SLOTS + at as u8;
-            if item.id == ItemId::TOWN_PORTAL_SCROLL && hero.town_portal.is_some() {
+            if item.id == ItemId::TOWN_PORTAL_SCROLL && town_portal.is_some() {
                 moves.push((from, TOWN_PORTAL_SLOT));
             } else if let Some(to) = free.pop_front() {
                 moves.push((from, to));
@@ -661,10 +660,7 @@ fn grab_step(mut session: NonSendMut<Session>, mut grab: ResMut<Grab>) {
     let Some(tick) = core.view().map(|v| v.tick) else {
         return;
     };
-    if !core
-        .my_standing_hero()
-        .is_some_and(|hero| core.unit_at_base_shop(hero))
-    {
+    if !core.stash_accessible() {
         grab.moves.clear();
         return;
     }

@@ -44,7 +44,7 @@ fn marker<T: Component>(client: &mut Client) -> Entity {
         .expect("HUD node")
 }
 
-fn click_node(client: &mut Client, node: Entity) {
+pub(super) fn click_node(client: &mut Client, node: Entity) {
     client.until("the button laid out", |c| {
         c.centre_of(node).is_some_and(|at| at != Vec2::ZERO)
     });

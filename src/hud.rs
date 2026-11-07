@@ -1518,6 +1518,8 @@ fn starting_kit(hero: HeroId) -> Option<&'static Kit> {
                 abilities: hero.abilities.iter().map(|id| unlearned(*id)).collect(),
                 items: vec![None; usize::from(BAG_SLOTS)],
                 town_portal: None,
+                sellable_slots: 0,
+                reincarnating: false,
             })
             .collect()
     });

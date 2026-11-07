@@ -5,7 +5,7 @@ use bevy::prelude::*;
 use bota_client_core::Intent;
 use bota_proto::{Cheat, HeroId, ItemId, ItemSlot, Order, Target};
 
-fn border(client: &mut Client, item: ItemId) -> Color {
+pub(super) fn border(client: &mut Client, item: ItemId) -> Color {
     let find = |client: &mut Client| {
         let world = client.world_mut();
         world

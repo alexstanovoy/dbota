@@ -96,3 +96,5 @@ mod watcher_path;
 mod watchers;
 mod window;
 mod wisdom_contest;
+
+mod dead_purchases;
