@@ -919,7 +919,17 @@ pub fn focus_ring(
     screen: Res<Screen>,
     at: Res<Focus>,
     order: Focusable,
-    mut rings: Query<(Entity, &mut Outline)>,
+    mut rings: Query<
+        (Entity, &mut Outline),
+        // Only the window's own controls: other outlines (the health bars' frames) are not ours.
+        Or<(
+            With<ToggleBox>,
+            With<ChoiceButton>,
+            With<RowKey>,
+            With<NameField>,
+            With<SliderTrack>,
+        )>,
+    >,
 ) {
     let focused = at
         .control

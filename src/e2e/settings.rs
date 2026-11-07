@@ -622,3 +622,26 @@ fn a_saved_window_size_is_cut_again_when_the_window_moves_to_a_smaller_monitor()
         window_size(c) == (1280, 720)
     });
 }
+
+/// The focus ring touches only the window's own controls: an outline of anything else (a health
+/// bar's frame) keeps its colour, with the window open or closed.
+#[test]
+fn the_focus_ring_leaves_every_other_outline_alone() {
+    let mut client = open_settings("video");
+    let frame = Color::srgb(1.0, 0.0, 0.0);
+    let other = client
+        .world_mut()
+        .spawn(Outline::new(px(1), px(0), frame))
+        .id();
+    client.frames(5);
+    click(&mut client, "close");
+    client.frames(5);
+    assert_eq!(
+        client
+            .world()
+            .get::<Outline>(other)
+            .expect("an outline")
+            .color,
+        frame
+    );
+}
