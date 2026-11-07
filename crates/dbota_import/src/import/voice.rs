@@ -10,58 +10,26 @@
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
 
-use heatel::sound::{Lipsync, SoundEvent, read_sound_events_within, read_sound_mixer};
-use heatel::talker::{Criterion, ResponseGroup, ResponseKind, read_response_rules_within};
-use heatel::{Resource, Result, Sound, Source, Vpk};
+use heatel::sound::SoundEvent;
+use heatel::talker::{Criterion, ResponseGroup, ResponseKind};
+use heatel::{Result, Source};
 
-use super::{Out, SOUND_MIXER_SRC, malformed, read_from, resolve_event, safe_path, sound_stacks};
+use super::{Out, malformed, resolve_event, safe_path};
 use crate::text::{lipsync_txt, sound_events_txt};
 use crate::voice::concept::{Concept, Fact, GAME_START, powerup_type};
 use crate::voice::expr::Matcher;
 use crate::voice::rules::{self, Event, HeroRules, Line, Rule};
 use crate::voice::{EVENTS, RULES, lipsync_record, pack, sound_record};
 
+mod files;
+pub(super) use files::HeroFiles;
+use files::MAX_SCRIPT_BYTES;
+
 /// Most rule files one hero's rules read, its own and those included: the install's largest
 /// include list (an announcer's aggregator) names 134.
 const MAX_RULE_FILES: usize = 256;
 /// Most sound event scripts read for one hero: its voice file and those its rules name.
 const MAX_EVENT_SCRIPTS: usize = 16;
-/// Most bytes of one sound: the install's largest voice line is 2,118,182.
-const MAX_SOUND_BYTES: u64 = 4 << 20;
-/// Most bytes of one rule file: the install's largest (Snapfire's) is 72,627.
-const MAX_RULE_FILE_BYTES: u64 = 1 << 20;
-/// Most bytes of one sound event script or hero script: the install's largest voice script
-/// (Snapfire's) is 120,888, its largest hero script (Invoker's) 60,111.
-const MAX_SCRIPT_BYTES: u64 = 2 << 20;
-/// Most bytes reading all of a hero's rule files and sound event scripts may take, as heatel
-/// charges them (every buffer, string, value and kept text, before it is allocated; what the
-/// importer keeps of them are copies of what was charged): Pudge's take 7,327,424. A file names
-/// a text once and may use it any number of times: each file is read within what the files
-/// before it left ([`Allowance`]).
-const MAX_HERO_READ_BYTES: usize = 32 << 20;
-
-/// What reading a hero's files may still take: every rule file and event script draws on it.
-struct Allowance {
-    left: usize,
-}
-
-impl Allowance {
-    fn new() -> Self {
-        Self {
-            left: MAX_HERO_READ_BYTES,
-        }
-    }
-
-    /// What `read` gives, read within what is left and charged with what it took; its error
-    /// names `what`.
-    fn read<T>(&mut self, what: &str, read: impl FnOnce(usize) -> Result<(T, usize)>) -> Result<T> {
-        let (value, took) =
-            read(self.left).map_err(|e| malformed("voice", format!("{what}: {e}")))?;
-        self.left -= took;
-        Ok(value)
-    }
-}
-
 /// Why a line can never be said here.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) enum Prune {
@@ -187,32 +155,12 @@ fn script_path(path: &str) -> Result<String> {
     Ok(format!("{plain}_c"))
 }
 
-/// The bytes of `path`, refused before they are read when the package holds more than `max`.
-fn read_bounded(src: &impl Source, pak: &Vpk, path: &str, max: u64) -> Result<Vec<u8>> {
-    let size = pak
-        .get(path)
-        .ok_or_else(|| heatel::Error::NotFound(path.to_owned()))?
-        .size();
-    if size > max {
-        return Err(malformed(
-            "voice",
-            format!("{path}: {size} bytes, at most {max}"),
-        ));
-    }
-    read_from(src, &[pak], path)
-}
-
-fn read_rule_files(
-    src: &impl Source,
-    pak: &Vpk,
-    hero: &str,
-    allowance: &mut Allowance,
-) -> Result<RuleFiles> {
+fn read_rule_files(files: &mut HeroFiles<'_, impl Source>, hero: &str) -> Result<RuleFiles> {
     let mut queue = VecDeque::from([rule_path(&format!(
         "scripts/talker/response_rules_{hero}.vrr"
     ))?]);
     let mut seen = BTreeSet::new();
-    let mut files = RuleFiles {
+    let mut rules = RuleFiles {
         criteria: Vec::new(),
         groups: Vec::new(),
         scripts: BTreeSet::new(),
@@ -227,11 +175,7 @@ fn read_rule_files(
                 "more included rule files than any hero has",
             ));
         }
-        let bytes = read_bounded(src, pak, &path, MAX_RULE_FILE_BYTES)?;
-        let resource = Resource::parse(&bytes)?;
-        let read = allowance.read(&format!("rule file {path}"), |left| {
-            read_response_rules_within(&resource, left)
-        })?;
+        let read = files.rules(&path)?;
         for include in &read.includes {
             queue.push_back(rule_path(include)?);
         }
@@ -242,18 +186,18 @@ fn read_rule_files(
             ));
         }
         for script in &read.sound_event_scripts {
-            files.scripts.insert(script_path(script)?);
+            rules.scripts.insert(script_path(script)?);
         }
-        if files.scripts.len() > MAX_EVENT_SCRIPTS {
+        if rules.scripts.len() > MAX_EVENT_SCRIPTS {
             return Err(malformed(
                 "voice",
                 "more sound event scripts than any hero has",
             ));
         }
-        files.criteria.extend(read.criteria);
-        files.groups.extend(read.groups);
+        rules.criteria.extend(read.criteria);
+        rules.groups.extend(read.groups);
     }
-    Ok(files)
+    Ok(rules)
 }
 
 /// A rule kept, its criteria by name, and the lines it may say by voice event name.
@@ -331,14 +275,9 @@ fn prune(files: &RuleFiles, class: &str) -> Pruned {
 }
 
 /// The hero's class and its voice file, from its script (`scripts/npc/heroes/`).
-fn hero_script(src: &impl Source, pak: &Vpk, hero: &str) -> Result<(String, String)> {
+fn hero_script(files: &mut HeroFiles<'_, impl Source>, hero: &str) -> Result<(String, String)> {
     let class = format!("npc_dota_hero_{hero}");
-    let bytes = read_bounded(
-        src,
-        pak,
-        &format!("scripts/npc/heroes/{class}.txt"),
-        MAX_SCRIPT_BYTES,
-    )?;
+    let bytes = files.bytes(&format!("scripts/npc/heroes/{class}.txt"), MAX_SCRIPT_BYTES)?;
     let tree = heatel::keyvalues::parse_kv(heatel::keyvalues::text(&bytes)?)?;
     let voice = tree
         .get("DOTAHeroes")
@@ -352,11 +291,9 @@ fn hero_script(src: &impl Source, pak: &Vpk, hero: &str) -> Result<(String, Stri
 
 /// The voice events `wanted` as the hero's scripts state them; one no script has is left out.
 fn voice_events(
-    src: &impl Source,
-    pak: &Vpk,
+    files: &mut HeroFiles<'_, impl Source>,
     scripts: &[String],
     wanted: &BTreeSet<&str>,
-    allowance: &mut Allowance,
 ) -> Result<BTreeMap<String, SoundEvent>> {
     let mut found = BTreeMap::new();
     let scripts: BTreeSet<&String> = scripts.iter().collect();
@@ -367,12 +304,7 @@ fn voice_events(
         ));
     }
     for script in scripts {
-        let bytes = read_bounded(src, pak, script, MAX_SCRIPT_BYTES)?;
-        let resource = Resource::parse(&bytes)?;
-        let events = allowance.read(&format!("sound event script {script}"), |left| {
-            read_sound_events_within(&resource, left)
-        })?;
-        for event in events {
+        for event in files.events(script)? {
             if wanted.contains(event.name.as_str()) && !found.contains_key(&event.name) {
                 found.insert(event.name.clone(), event);
             }
@@ -434,8 +366,7 @@ impl Sounds {
     /// The pack's index of the sound at `path` (a `.vsnd`), read the first time it is asked.
     fn add(
         &mut self,
-        src: &impl Source,
-        pak: &Vpk,
+        files: &mut HeroFiles<'_, impl Source>,
         path: &str,
         out: &mut Out<'_>,
     ) -> Result<usize> {
@@ -447,16 +378,20 @@ impl Sounds {
         }
         let stored = format!("{path}_c");
         // The audio kept is a part of the file: a file larger than the room left is not read.
-        if pak
-            .get(&stored)
-            .is_some_and(|entry| entry.size() > self.left as u64)
+        if files
+            .size(&stored)
+            .is_some_and(|size| size > self.left as u64)
         {
             return Err(self.no_room(path));
         }
-        let bytes = read_bounded(src, pak, &stored, MAX_SOUND_BYTES)?;
-        let sound = Sound::parse(&bytes)?;
-        let lipsync = match Lipsync::parse(&bytes) {
-            Ok(lipsync) if !lipsync.is_empty() => Some(lipsync_txt(&lipsync)),
+        let sound = files.sound(&stored)?;
+        let lipsync = match sound.lipsync {
+            Ok(lipsync) if !lipsync.is_empty() => {
+                // Its text is of the phonemes and keys charged with the sound.
+                let text = lipsync_txt(&lipsync);
+                files.budget().charge(text.len())?;
+                Some(text)
+            }
             Ok(_) => None,
             // Heard with a still face; told as a failure of its own.
             Err(err) => {
@@ -466,16 +401,7 @@ impl Sounds {
                 None
             }
         };
-        let seconds = sound.duration();
-        self.keep(
-            path,
-            (
-                sound.file().into_owned(),
-                sound.extension(),
-                lipsync,
-                seconds,
-            ),
-        )
+        self.keep(path, (sound.audio, sound.kind, lipsync, sound.seconds))
     }
 }
 
@@ -488,14 +414,13 @@ struct PackEvents {
 }
 
 fn pack_events(
-    src: &impl Source,
-    pak: &Vpk,
+    files: &mut HeroFiles<'_, impl Source>,
     found: BTreeMap<String, SoundEvent>,
     sounds: &mut Sounds,
     out: &mut Out<'_>,
 ) -> Result<PackEvents> {
-    let mixer = read_sound_mixer(&read_from(src, &[pak], SOUND_MIXER_SRC)?)?;
-    let stacks = sound_stacks(src, pak)?;
+    let mixer = files.mixer()?;
+    let stacks = files.stacks()?;
     let mut made = PackEvents {
         events: Vec::new(),
         index: HashMap::new(),
@@ -513,7 +438,7 @@ fn pack_events(
         let indices: Result<Vec<usize>> = event
             .files
             .iter()
-            .map(|file| sounds.add(src, pak, file, out))
+            .map(|file| sounds.add(files, file, out))
             .collect();
         match indices {
             Ok(indices) => {
@@ -527,8 +452,8 @@ fn pack_events(
                     sounds: indices,
                     seconds: seconds.min(rules::MAX_SECONDS),
                 });
-                made.resolved
-                    .push(resolve_event(event, false, &stacks, &mixer));
+                let resolved = resolve_event(event, false, &stacks, &mixer, files.budget())?;
+                made.resolved.push(resolved);
             }
             Err(err) => out.report.failed.push((name, err.to_string())),
         }
@@ -567,30 +492,28 @@ fn pack_bytes(json: &[u8], events_txt: &str, sounds: &Sounds) -> Result<Vec<u8>>
 
 /// Writes `hero`'s voice pack at `dest`.
 pub(super) fn voice(
-    src: &impl Source,
-    pak: &Vpk,
+    files: &mut HeroFiles<'_, impl Source>,
     hero: &str,
     dest: &str,
     out: &mut Out<'_>,
 ) -> Result<()> {
-    let (class, voice_file) = hero_script(src, pak, hero)?;
-    let mut allowance = Allowance::new();
-    let files = read_rule_files(src, pak, hero, &mut allowance)?;
-    let mut pruned = prune(&files, &class);
+    let (class, voice_file) = hero_script(files, hero)?;
+    let rules_read = read_rule_files(files, hero)?;
+    let mut pruned = prune(&rules_read, &class);
     let wanted: BTreeSet<&str> = pruned
         .rules
         .iter()
         .flat_map(|r| r.lines.iter().map(|(event, _)| event.as_str()))
         .collect();
     let mut scripts = vec![voice_file];
-    scripts.extend(files.scripts.iter().cloned());
-    let found = voice_events(src, pak, &scripts, &wanted, &mut allowance)?;
+    scripts.extend(rules_read.scripts.iter().cloned());
+    let found = voice_events(files, &scripts, &wanted)?;
     let mut sounds = Sounds::default();
-    let events = pack_events(src, pak, found, &mut sounds, out)?;
+    let events = pack_events(files, found, &mut sounds, out)?;
     let rules = hero_rules(
         hero,
         &class,
-        &files,
+        &rules_read,
         &mut pruned,
         &events.index,
         events.events,
@@ -886,7 +809,8 @@ mod tests {
     #[test]
     fn sounds_past_the_packs_bound_are_refused_before_they_are_kept() {
         let src = same_sounds(12, &vsnd(&vec![7; 3 << 20]));
-        let pak = Vpk::open(&src, "pak01_dir.vpk").expect("a package");
+        let pak = heatel::Vpk::open(&src, "pak01_dir.vpk").expect("a package");
+        let mut files = HeroFiles::new(&src, &pak);
         let mut report = crate::import::Report::default();
         let (mut written, mut pending) = (0, VecDeque::new());
         let mut out = Out {
@@ -897,7 +821,7 @@ mod tests {
         };
         let mut sounds = Sounds::default();
         let added: Vec<Result<usize>> = (0..12)
-            .map(|n| sounds.add(&src, &pak, &format!("sounds/many/{n}.vsnd"), &mut out))
+            .map(|n| sounds.add(&mut files, &format!("sounds/many/{n}.vsnd"), &mut out))
             .collect();
         let kept: usize = sounds
             .files
@@ -913,5 +837,293 @@ mod tests {
             refused.to_string().contains("more sound than a pack holds"),
             "{refused}"
         );
+    }
+
+    /// A KV3 value for the files these tests make.
+    enum Kv {
+        Text(String),
+        List(Vec<Kv>),
+        Object(Vec<(String, Kv)>),
+    }
+
+    fn text(text: &str) -> Kv {
+        Kv::Text(text.to_owned())
+    }
+
+    fn object(members: Vec<(&str, Kv)>) -> Kv {
+        Kv::Object(
+            members
+                .into_iter()
+                .map(|(k, v)| (k.to_owned(), v))
+                .collect(),
+        )
+    }
+
+    /// A compiled resource whose `DATA` block is `root` as a legacy KV3 document, stored, each
+    /// text once in its table.
+    fn kv3_resource(root: &Kv) -> Vec<u8> {
+        fn id(table: &mut Vec<String>, text: &str) -> i32 {
+            let at = table.iter().position(|t| t == text).unwrap_or_else(|| {
+                table.push(text.to_owned());
+                table.len() - 1
+            });
+            at as i32
+        }
+        fn write(v: &Kv, table: &mut Vec<String>, out: &mut Vec<u8>) {
+            match v {
+                Kv::Text(text) => {
+                    out.push(6);
+                    out.extend(id(table, text).to_le_bytes());
+                }
+                Kv::List(items) => {
+                    out.push(8);
+                    out.extend((items.len() as u32).to_le_bytes());
+                    items.iter().for_each(|item| write(item, table, out));
+                }
+                Kv::Object(members) => {
+                    out.push(9);
+                    out.extend((members.len() as u32).to_le_bytes());
+                    for (key, value) in members {
+                        out.extend(id(table, key).to_le_bytes());
+                        write(value, table, out);
+                    }
+                }
+            }
+        }
+        let (mut table, mut body) = (Vec::new(), Vec::new());
+        write(root, &mut table, &mut body);
+        let mut data = 0x0356_4B56u32.to_le_bytes().to_vec();
+        data.extend([
+            0x00, 0x05, 0x86, 0x1B, 0xD8, 0xF7, 0xC1, 0x40, 0xAD, 0x82, 0x75, 0xA4, 0x82, 0x67,
+            0xE7, 0x14,
+        ]);
+        data.extend([0; 16]);
+        data.extend((table.len() as u32).to_le_bytes());
+        for text in &table {
+            data.extend(text.as_bytes());
+            data.push(0);
+        }
+        data.extend(body);
+        data.extend(u32::MAX.to_le_bytes());
+        resource_of(b"DATA", &data)
+    }
+
+    /// A compiled resource of one block `kind` holding `data`.
+    fn resource_of(kind: &[u8; 4], data: &[u8]) -> Vec<u8> {
+        let mut out = u32::to_le_bytes(28 + data.len() as u32).to_vec();
+        out.extend(12u16.to_le_bytes());
+        out.extend(0u16.to_le_bytes());
+        out.extend(8u32.to_le_bytes());
+        out.extend(1u32.to_le_bytes());
+        out.extend(kind);
+        out.extend(8u32.to_le_bytes());
+        out.extend((data.len() as u32).to_le_bytes());
+        out.extend(data);
+        out
+    }
+
+    /// A package directory of `files` (`path` without its extension, extension, bytes), each in
+    /// the directory's data section.
+    fn package(files: &[(&str, &str, Vec<u8>)]) -> heatel::SliceSource<Vec<u8>> {
+        let mut sorted: Vec<_> = files.iter().collect();
+        sorted.sort_by_key(|(path, ext, _)| (*ext, path.rsplit_once('/').map(|p| p.0)));
+        let (mut tree, mut section) = (Vec::<u8>::new(), Vec::<u8>::new());
+        let mut last: Option<(&str, &str)> = None;
+        for (path, ext, data) in sorted {
+            let (dir, name) = path.rsplit_once('/').expect("a folder");
+            if last.is_some_and(|(e, d)| (e, d) != (*ext, dir)) {
+                tree.push(0);
+                if last.is_some_and(|(e, _)| e != *ext) {
+                    tree.push(0);
+                }
+            }
+            if last.is_none_or(|(e, _)| e != *ext) {
+                tree.extend(ext.as_bytes());
+                tree.push(0);
+            }
+            if last.is_none_or(|(e, d)| (e, d) != (*ext, dir)) {
+                tree.extend(dir.as_bytes());
+                tree.push(0);
+            }
+            last = Some((ext, dir));
+            tree.extend(name.as_bytes());
+            tree.push(0);
+            tree.extend(crc32fast::hash(data).to_le_bytes());
+            tree.extend(0u16.to_le_bytes());
+            tree.extend(0x7FFFu16.to_le_bytes());
+            tree.extend((section.len() as u32).to_le_bytes());
+            tree.extend((data.len() as u32).to_le_bytes());
+            tree.extend(0xFFFFu16.to_le_bytes());
+            section.extend(data);
+        }
+        tree.extend([0, 0, 0]);
+        let mut bytes = Vec::new();
+        for word in [
+            0x55AA_1234,
+            2,
+            tree.len() as u32,
+            section.len() as u32,
+            0,
+            48,
+            0,
+        ] {
+            bytes.extend(u32::to_le_bytes(word));
+        }
+        bytes.extend(tree);
+        bytes.extend(section);
+        let mut src = heatel::SliceSource::default();
+        src.insert("pak01_dir.vpk", bytes);
+        src
+    }
+
+    /// The install's shared sound files: a mixer of one group, and stacks of one type whose
+    /// limiter names `limiter` by default.
+    fn shared_files(limiter: &str) -> Vec<(&'static str, &'static str, Vec<u8>)> {
+        let stacks = kv3_resource(&object(vec![(
+            "dota_src1_3d",
+            object(vec![(
+                "operators",
+                Kv::List(vec![object(vec![
+                    ("name", text("public")),
+                    (
+                        "operator_variables",
+                        object(vec![(
+                            "limiter_event_name",
+                            object(vec![("value", text(limiter))]),
+                        )]),
+                    ),
+                ])]),
+            )]),
+        )]));
+        let mixer = b"<!-- kv3 -->\n{\n  MixGroups = [ { name = \"all\" path_substring = \"\" sndlvl_min = 1 priority = 30 } ]\n  SoundMixers = { Default_Mix = [ { mixgroup = \"all\" vol = 1 lvl = 1 mute = 0 } ] }\n  MixLayers = { }\n}".to_vec();
+        vec![
+            (
+                "soundstacks/soundstacks_dota_core",
+                "vsndstck_c",
+                stacks.clone(),
+            ),
+            ("soundstacks/soundstacks_dota_music", "vsndstck_c", stacks),
+            ("scripts/soundmixers", "txt", mixer),
+        ]
+    }
+
+    /// Events of a stack whose limiter name is long resolve to that one name, not to a copy of
+    /// it each: 64 events of a 1 MiB default keep it once.
+    #[test]
+    fn stack_defaults_are_shared_by_the_events_not_copied() {
+        let limiter = "l".repeat(1 << 20);
+        let names: Vec<String> = (0..64).map(|n| format!("e{n}")).collect();
+        let script = kv3_resource(&Kv::Object(
+            names
+                .iter()
+                .map(|name| {
+                    (
+                        name.clone(),
+                        object(vec![
+                            ("type", text("dota_src1_3d")),
+                            ("vsnd_files", text("sounds/many/0.vsnd")),
+                        ]),
+                    )
+                })
+                .collect(),
+        ));
+        let mut files = shared_files(&limiter);
+        files.push(("soundevents/voscripts/lines", "vsndevts_c", script));
+        files.push(("sounds/many/0", "vsnd_c", vsnd(&[7; 64])));
+        let src = package(&files);
+        let pak = heatel::Vpk::open(&src, "pak01_dir.vpk").expect("a package");
+        let mut hero = HeroFiles::new(&src, &pak);
+        let wanted: BTreeSet<&str> = names.iter().map(String::as_str).collect();
+        let scripts = ["soundevents/voscripts/lines.vsndevts_c".to_owned()];
+        let found = voice_events(&mut hero, &scripts, &wanted).expect("the events");
+        let mut report = crate::import::Report::default();
+        let (mut written, mut pending) = (0, VecDeque::new());
+        let mut out = Out {
+            sink: &mut Discard,
+            report: &mut report,
+            written: &mut written,
+            pending: &mut pending,
+        };
+        let made = pack_events(&mut hero, found, &mut Sounds::default(), &mut out).expect("made");
+        assert_eq!(made.resolved.len(), 64);
+        let kept: BTreeSet<(usize, usize)> = made
+            .resolved
+            .iter()
+            .filter_map(|r| r.limits.limiter_event_name.as_deref())
+            .map(|name| (name.as_ptr() as usize, name.len()))
+            .collect();
+        let bytes: usize = kept.iter().map(|(_, len)| len).sum();
+        assert!(bytes <= 2 << 20, "{bytes} bytes of limiter names kept");
+    }
+
+    /// A sound whose `CTRL` block would take more than the hero has left (a table of millions
+    /// of strings) is refused by the hero's budget, not decoded within a budget of its own.
+    #[test]
+    fn a_sounds_ctrl_block_past_the_heros_budget_is_refused() {
+        // A legacy KV3 compressed with LZ4: the table's count, its 8M empty strings (one match
+        // of the zero before them), an empty object.
+        let count: u32 = 8 << 20;
+        let tail = [9, 0, 0, 0, 0, 0xFF, 0xFF, 0xFF, 0xFF];
+        let mut block = vec![(5 << 4) | 15];
+        block.extend(count.to_le_bytes());
+        block.push(0);
+        block.extend(1u16.to_le_bytes());
+        let mut more = count as usize - 1 - 4 - 15;
+        while more >= 255 {
+            block.push(255);
+            more -= 255;
+        }
+        block.push(more as u8);
+        block.push((tail.len() as u8) << 4);
+        block.extend(tail);
+        let mut ctrl = 0x0356_4B56u32.to_le_bytes().to_vec();
+        ctrl.extend([
+            0x8A, 0x34, 0x47, 0x68, 0xA1, 0x63, 0x5C, 0x4F, 0xA1, 0x97, 0x53, 0x80, 0x6F, 0xD9,
+            0xB1, 0x19,
+        ]);
+        ctrl.extend([0; 16]);
+        ctrl.extend((4 + count + tail.len() as u32).to_le_bytes());
+        ctrl.extend(block);
+        let src = package(&[("sounds/many/0", "vsnd_c", resource_of(b"CTRL", &ctrl))]);
+        let pak = heatel::Vpk::open(&src, "pak01_dir.vpk").expect("a package");
+        let mut hero = HeroFiles::new(&src, &pak);
+        let mut report = crate::import::Report::default();
+        let (mut written, mut pending) = (0, VecDeque::new());
+        let mut out = Out {
+            sink: &mut Discard,
+            report: &mut report,
+            written: &mut written,
+            pending: &mut pending,
+        };
+        let error = Sounds::default()
+            .add(&mut hero, "sounds/many/0.vsnd", &mut out)
+            .unwrap_err();
+        assert!(error.to_string().contains("more than it may"), "{error}");
+    }
+
+    /// The voice importer reads through [`HeroFiles`] alone, and it holds one budget, the
+    /// hero's: outside its tests the importer names no package, no reader of heatel's and no
+    /// budget, and `HeroFiles` makes one.
+    #[test]
+    fn the_voice_importer_reads_within_the_heros_budget_alone() {
+        let code = |text: &'static str| text.split("#[cfg(test)]").next().unwrap_or(text);
+        let importer = code(include_str!("voice.rs"));
+        let files = code(include_str!("voice/files.rs"));
+        let budget = ["Budget", "::"].concat();
+        let readers = [
+            budget.as_str(),
+            "Vpk",
+            "read_from",
+            "Resource::",
+            "Sound::",
+            "Lipsync::",
+            "read_sound_",
+            "read_response_rules",
+            "kv3::",
+        ];
+        for name in readers {
+            assert!(!importer.contains(name), "the importer names {name}");
+        }
+        assert_eq!(files.matches(budget.as_str()).count(), 1, "one budget");
     }
 }

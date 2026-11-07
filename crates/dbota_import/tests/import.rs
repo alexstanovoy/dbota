@@ -662,9 +662,9 @@ fn shop_categories_keep_their_order_and_hostile_files_are_texts_or_errors() {
 
 /// What importing Pudge's voice reports failed, when his rules include three files whose 800
 /// responses each are `response` of one long text (cheap in the file, which names a text once,
-/// and large decoded: 38 MiB in all).
+/// and large decoded: 150 MiB in all).
 fn failures_of_long_rule_texts(response: fn(&'static str) -> Kv3) -> Vec<String> {
-    let long: &'static str = Box::leak("a".repeat(16 << 10).into_boxed_str());
+    let long: &'static str = Box::leak("a".repeat(64 << 10).into_boxed_str());
     let names: Vec<&'static str> = (0..3)
         .map(|i| &*Box::leak(format!("scripts/talker/response_rules_big{i}.vrr").into_boxed_str()))
         .collect();
@@ -716,7 +716,7 @@ fn failures_of_long_rule_texts(response: fn(&'static str) -> Kv3) -> Vec<String>
 /// each of millions of empty strings) is refused before its table is allocated.
 #[test]
 fn a_rule_file_of_a_huge_string_table_is_refused_before_it_is_allocated() {
-    let big = empty_strings_rule_file(4 << 20);
+    let big = empty_strings_rule_file(8 << 20);
     assert!(big.len() < 1 << 16, "{} bytes", big.len());
     let script = br#""DOTAHeroes" { "npc_dota_hero_pudge" { "VoiceFile" "soundevents/voscripts/game_sounds_vo_pudge.vsndevts" } }"#;
     let files: Vec<(&str, &str, &str, &[u8])> = vec![
@@ -741,11 +741,11 @@ fn a_rule_file_of_a_huge_string_table_is_refused_before_it_is_allocated() {
 }
 
 /// Event scripts whose wanted events share one long type text (cheap in the file, which names
-/// a text once, and large read: 600 events of 200 KiB) are refused by the hero's budget as
+/// a text once, and large read: 600 events of 300 KiB) are refused by the hero's budget as
 /// they are read, not after their events all sit in memory.
 #[test]
 fn event_scripts_past_the_heros_budget_are_refused_while_read() {
-    let long: &'static str = Box::leak("t".repeat(200 << 10).into_boxed_str());
+    let long: &'static str = Box::leak("t".repeat(300 << 10).into_boxed_str());
     let name = |n: usize| -> &'static str { Box::leak(format!("e{n}").into_boxed_str()) };
     let scripts: Vec<Vec<u8>> = (0..3)
         .map(|k| {

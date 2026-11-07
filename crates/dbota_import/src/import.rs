@@ -1226,9 +1226,12 @@ fn make(
         } => sound_events(src, pak, events, dest, out),
         Item::Voice {
             hero, out: dest, ..
-        } => voice::voice(src, pak, hero, dest, out),
+        } => voice::voice(&mut voice::HeroFiles::new(src, pak), hero, dest, out),
         Item::SoundMixer { out: dest, .. } => {
-            let mixer = read_sound_mixer(&read_from(src, &[pak], SOUND_MIXER_SRC)?)?;
+            let mixer = read_sound_mixer(
+                &read_from(src, &[pak], SOUND_MIXER_SRC)?,
+                &mut heatel::Budget::default(),
+            )?;
             out.put(dest, sound_mixer_txt(&mixer).as_bytes())
         }
         Item::Expression {
@@ -1452,8 +1455,8 @@ fn face_text(item: &Item, bytes: &[u8]) -> Result<String> {
 /// A sound's audio file at `dest`, and a voice line's lip sync beside it. A line whose lip sync
 /// does not read is still heard (its face stays still); the failure is reported.
 fn sound(bytes: &[u8], dest: &str, out: &mut Out<'_>) -> Result<()> {
-    let sound = Sound::parse(bytes)?;
-    match Lipsync::parse(bytes) {
+    let sound = Sound::parse(bytes, &mut heatel::Budget::default())?;
+    match Lipsync::parse(bytes, &mut heatel::Budget::default()) {
         Ok(lipsync) if !lipsync.is_empty() => {
             out.put(&lipsync_path(dest), lipsync_txt(&lipsync).as_bytes())?;
         }
@@ -1483,11 +1486,10 @@ const MAX_EVENT_BYTES: usize = 128 << 20;
 fn sound_stacks(src: &impl Source, pak: &Vpk) -> Result<Vec<heatel::sound::SoundStack>> {
     let mut stacks = Vec::new();
     for path in SOUND_STACKS {
-        stacks.extend(read_sound_stacks(&Resource::parse(&read_from(
-            src,
-            &[pak],
-            path,
-        )?)?)?);
+        stacks.extend(read_sound_stacks(
+            &Resource::parse(&read_from(src, &[pak], path)?)?,
+            &mut heatel::Budget::default(),
+        )?);
     }
     Ok(stacks)
 }
@@ -1504,7 +1506,9 @@ fn sound_events(
     out: &mut Out<'_>,
 ) -> Result<()> {
     let stacks = sound_stacks(src, pak)?;
-    let mixer = match read_from(src, &[pak], SOUND_MIXER_SRC).and_then(|b| read_sound_mixer(&b)) {
+    let mixer = match read_from(src, &[pak], SOUND_MIXER_SRC)
+        .and_then(|b| read_sound_mixer(&b, &mut heatel::Budget::default()))
+    {
         Ok(mixer) => mixer,
         Err(err) => {
             out.report
@@ -1546,7 +1550,9 @@ fn sound_events(
                 "more event data than any install has",
             ));
         }
-        match Resource::parse(&bytes).and_then(|r| read_sound_events(&r)) {
+        match Resource::parse(&bytes)
+            .and_then(|r| read_sound_events(&r, &mut heatel::Budget::default()))
+        {
             Ok(events) => {
                 for event in events.into_iter().filter(|e| wanted.contains(&e.name)) {
                     found.entry(event.name.clone()).or_insert(event);
@@ -1564,14 +1570,21 @@ fn sound_events(
     let mut resolved = Vec::with_capacity(found.len());
     for event in found.into_values() {
         let looping = event.files.first().is_some_and(|file| {
-            let sound = read_from(src, &[pak], &format!("{file}_c"))
-                .and_then(|bytes| Ok(Sound::parse(&bytes)?.looping()));
+            let sound = read_from(src, &[pak], &format!("{file}_c")).and_then(|bytes| {
+                Ok(Sound::parse(&bytes, &mut heatel::Budget::default())?.looping())
+            });
             sound.unwrap_or_else(|err| {
                 out.report.failed.push((file.clone(), err.to_string()));
                 false
             })
         });
-        resolved.push(resolve_event(event, looping, &stacks, &mixer));
+        resolved.push(resolve_event(
+            event,
+            looping,
+            &stacks,
+            &mixer,
+            &mut heatel::Budget::default(),
+        )?);
     }
     out.put(dest, sound_events_txt(&resolved).as_bytes())
 }
@@ -1583,7 +1596,8 @@ fn resolve_event(
     looping: bool,
     stacks: &[heatel::sound::SoundStack],
     mixer: &SoundMixer,
-) -> ResolvedEvent {
+    budget: &mut heatel::Budget,
+) -> Result<ResolvedEvent> {
     let stack = stacks.iter().find(|s| s.name == event.kind);
     let defaults = stack.map(|s| s.defaults.clone()).unwrap_or_default();
     let level = event
@@ -1595,11 +1609,17 @@ fn resolve_event(
         .mix_group
         .clone()
         .filter(|name| !name.is_empty() && name != "USEPATHMATCH")
+        .map(Ok)
         .or_else(|| {
             let file = event.files.first()?;
-            mixer.group_of(file, "", level).map(|g| g.name.clone())
-        });
-    ResolvedEvent {
+            // A group's name is copied for each event of it: charged before it is.
+            let group = mixer.group_of(file, "", level)?;
+            Some(budget.charge(group.name.len()).map(|()| group.name.clone()))
+        })
+        .transpose()?;
+    // The stack's limits are shared, not copied (a limiter name is one text however many
+    // events name it).
+    Ok(ResolvedEvent {
         limits: match stack {
             Some(stack) => event.limits.or(&stack.limits),
             None => event.limits.clone(),
@@ -1608,7 +1628,7 @@ fn resolve_event(
         group,
         looping,
         event,
-    }
+    })
 }
 
 /// Where the lip sync of the sound written at `sound` goes: beside it, `<stem>.lipsync.txt`.
@@ -1743,7 +1763,7 @@ fn later(src: &impl Source, packages: &[&Vpk], job: &Pending, out: &mut Out<'_>)
         }
         Later::Sound(vsnd) => {
             let bytes = read_from(src, packages, vsnd)?;
-            let sound = Sound::parse(&bytes)?;
+            let sound = Sound::parse(&bytes, &mut heatel::Budget::default())?;
             if !job.path.ends_with(sound.extension()) {
                 return Err(malformed(
                     "sound",
