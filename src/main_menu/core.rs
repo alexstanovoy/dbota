@@ -1798,7 +1798,10 @@ impl MenuCore {
             Act::Answer(yes) => match self.confirm.take() {
                 Some(Confirm::Quit) if yes => self.quit = true,
                 Some(Confirm::Leave) if yes => self.leave = true,
-                Some(Confirm::LeaveGame) if yes => self.leave_game = true,
+                Some(Confirm::LeaveGame) if yes => {
+                    self.last_seat = None;
+                    self.leave_game = true;
+                }
                 Some(Confirm::LeaveSeat) if yes => self.leave_seat(),
                 Some(Confirm::Rehost(lan)) if yes => self.host(lan),
                 _ => {}

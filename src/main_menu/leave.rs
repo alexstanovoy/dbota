@@ -20,8 +20,8 @@ use bota_proto::{ClientMsg, RejectReason, ServerMsg};
 /// How telling the game ended.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Outcome {
-    /// The server has the surrender: it echoed the probe sent behind it, or it closed the
-    /// connection after it and was gone by the next try.
+    /// This leave is complete: its probe was echoed, or the seat/server no longer admits the
+    /// client after its surrender was sent. This says nothing about the match's result.
     Left,
     /// The server says the seat is not this client's (any more): nothing to leave.
     Refused(String),
@@ -116,11 +116,12 @@ pub fn tell(
 ) -> Outcome {
     let mut wait = Duration::from_millis(100);
     let mut closed_after_surrender = false;
+    let mut surrender_sent = false;
     loop {
         if cancelled.load(Ordering::SeqCst) {
             return Outcome::Cancelled;
         }
-        let why = match one_try(&mut connect, hello, until, cancelled) {
+        let why = match one_try(&mut connect, hello, until, cancelled, &mut surrender_sent) {
             Try::Done(outcome) => return outcome,
             Try::Again(why) => why,
             Try::ClosedAfterSurrender => {
@@ -151,6 +152,7 @@ fn one_try(
     hello: &ClientMsg,
     until: Instant,
     cancelled: &AtomicBool,
+    surrender_sent: &mut bool,
 ) -> Try {
     let Some(io) = io_time(until) else {
         return Try::Again("out of time".to_owned());
@@ -175,6 +177,9 @@ fn one_try(
             Ok(Some(ServerMsg::Refused {
                 reason: RejectReason::SeatHeld,
             })) => return Try::Again("the seat is still held".to_owned()),
+            Ok(Some(ServerMsg::Refused {
+                reason: RejectReason::NotAdmitted,
+            })) if *surrender_sent => return Try::Done(Outcome::Left),
             Ok(Some(ServerMsg::Refused { reason })) => {
                 return Try::Done(Outcome::Refused(format!("{reason:?}")));
             }
@@ -195,9 +200,10 @@ fn one_try(
         return Try::Done(Outcome::Cancelled);
     }
     // The surrender, then a probe behind it: its echo says the server has read both.
-    let said = link
-        .send(&ClientMsg::LeaveGame)
-        .and_then(|()| link.send(&ClientMsg::Probe { id: PROBE }));
+    let said = link.send(&ClientMsg::LeaveGame).and_then(|()| {
+        *surrender_sent = true;
+        link.send(&ClientMsg::Probe { id: PROBE })
+    });
     if let Err(error) = said {
         return Try::Again(format!("the surrender was not sent: {error}"));
     }

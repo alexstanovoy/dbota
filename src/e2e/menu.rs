@@ -11,7 +11,7 @@ use bevy::window::{PrimaryWindow, WindowResized};
 
 use crate::main_menu::{Act, MenuButton, MenuCore, Page};
 
-use super::harness::Client;
+use super::harness::{Client, Server};
 
 /// The menu's buttons of words on screen, laid out: name, width, height, and whether their words
 /// stay on one line.
@@ -64,6 +64,150 @@ fn local_menu() -> Client {
 fn act(client: &mut Client, act: Act) {
     client.world_mut().non_send_mut::<MenuCore>().act(act);
     client.frames(5);
+}
+
+#[test]
+fn leaving_game_permanently_removes_reconnect_but_cancelling_keeps_it() {
+    for confirmed in [false, true] {
+        let server = Server::start(1, &[]);
+        let mut client = Client::join(&server, bota_proto::HeroId::SHADOW_FIEND, &[]);
+        act(&mut client, Act::Dashboard);
+        server.frozen(|| {
+            act(&mut client, Act::LeaveGame);
+            assert!(
+                client
+                    .world()
+                    .non_send::<MenuCore>()
+                    .view()
+                    .confirm
+                    .is_some()
+            );
+            act(&mut client, Act::Answer(confirmed));
+            if !confirmed {
+                act(&mut client, Act::Disconnect);
+            }
+            client.until("back in the menu", |c| {
+                !c.world().non_send::<MenuCore>().in_game()
+            });
+            client.frames(5);
+            let reconnect = buttons(&mut client)
+                .iter()
+                .any(|button| button.0 == "reconnect");
+            assert_eq!(reconnect, !confirmed, "only a disconnect offers RECONNECT");
+        });
+    }
+}
+
+/// A leave reached the server, but its echo was lost: the next Hello is refused permanently.
+fn lost_leave_echo() -> (
+    String,
+    std::sync::mpsc::Receiver<()>,
+    std::thread::JoinHandle<()>,
+) {
+    use bota_proto::{
+        ClientMsg, FrameReader, PlayerId, RejectReason, ServerMsg, SlotId, TickMode,
+        encode_frame_to_vec,
+    };
+    use std::io::Write;
+    use std::net::{Shutdown, TcpListener};
+    let listener = TcpListener::bind("127.0.0.1:0").expect("a port");
+    let address = listener.local_addr().expect("bound").to_string();
+    let (finished, ended) = std::sync::mpsc::channel();
+    let thread = std::thread::spawn(move || {
+        for attempt in 0..2 {
+            let (mut peer, _) = listener.accept().expect("leave connects");
+            peer.set_read_timeout(Some(Duration::from_secs(60)))
+                .expect("hang guard");
+            let mut reader = FrameReader::new();
+            assert!(matches!(
+                leave_message(&mut peer, &mut reader),
+                ClientMsg::Hello { .. }
+            ));
+            let reply = if attempt == 0 {
+                ServerMsg::Welcome {
+                    player_id: PlayerId(1),
+                    slot: Some(SlotId(0)),
+                    tick_rate: 30,
+                    mode: TickMode::Lockstep,
+                }
+            } else {
+                ServerMsg::Refused {
+                    reason: RejectReason::NotAdmitted,
+                }
+            };
+            peer.write_all(&encode_frame_to_vec(&reply).expect("reply frame"))
+                .expect("reply sent");
+            if attempt == 0 {
+                assert_eq!(leave_message(&mut peer, &mut reader), ClientMsg::LeaveGame);
+                assert!(matches!(
+                    leave_message(&mut peer, &mut reader),
+                    ClientMsg::Probe { .. }
+                ));
+                peer.shutdown(Shutdown::Write).expect("close without echo");
+            }
+        }
+        let _ = finished.send(());
+    });
+    (address, ended, thread)
+}
+
+fn leave_message(
+    stream: &mut std::net::TcpStream,
+    reader: &mut bota_proto::FrameReader,
+) -> bota_proto::ClientMsg {
+    use std::io::Read;
+    loop {
+        if let Some(msg) = reader.next_message().expect("valid client message") {
+            return msg;
+        }
+        let mut bytes = [0; 4096];
+        let read = stream.read(&mut bytes).expect("client speaks");
+        assert!(read > 0, "client closed before its message");
+        reader.push(&bytes[..read]);
+    }
+}
+
+#[test]
+fn leaving_game_with_a_lost_echo_shows_that_the_player_left() {
+    let (address, ended, server) = lost_leave_echo();
+    let mut client = local_menu();
+    {
+        // Restore a disconnected direct seat; the leave itself goes through the real shell,
+        // network worker and rendered menu rather than launching another game on screen.
+        let mut menu = client.world_mut().non_send_mut::<MenuCore>();
+        menu.act(Act::Go(Page::LocalLobby));
+        menu.act(Act::Focus(1));
+        menu.act(Act::Type(address));
+        menu.act(Act::Direct(false));
+        menu.take_launch().expect("the disconnected seat's launch");
+        menu.game_started();
+        menu.left_game(None, false);
+    }
+    client.frames(5);
+    act(&mut client, Act::LeaveSeat);
+    act(&mut client, Act::Answer(true));
+    client.until("leave result rendered", |c| {
+        c.shown_texts().iter().any(|line| {
+            line == "You left the game" || line == "The game holds no seat of yours any more"
+        })
+    });
+    ended
+        .recv_timeout(Duration::from_secs(60))
+        .expect("the server completed both attempts");
+    server.join().expect("the leave server ran");
+    assert!(
+        client
+            .shown_texts()
+            .iter()
+            .any(|line| line == "You left the game"),
+        "a refusal after the surrender confirms the leave: {:?}",
+        client.shown_texts()
+    );
+    assert!(
+        !buttons(&mut client)
+            .iter()
+            .any(|button| button.0 == "reconnect")
+    );
 }
 
 /// The in-process client lists and keeps replays in a folder of its own, never the user's.
