@@ -56,6 +56,8 @@ fn carries_stats_alone(id: u16) -> bool {
         };
         def.aim.is_none()
             && def.on_attack.is_none()
+            && def.reincarnation.is_none()
+            && def.expiry_recovery.is_none()
             && matches!(def.effect, bota_core::UseSpec::None)
             && procs_nothing(&def.carried)
             && def.ranged.as_ref().is_none_or(procs_nothing)
