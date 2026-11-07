@@ -95,7 +95,7 @@ import sys
 import threading
 import time
 
-from playwright.sync_api import sync_playwright
+from playwright.sync_api import Error as PlaywrightError, sync_playwright
 
 HERE = pathlib.Path(__file__).resolve().parent
 OUT = HERE.parent / "out"
@@ -1458,10 +1458,54 @@ OPFS_REPLAYS = """async () => {
   try { dir = await root.getDirectoryHandle('dbota-replays'); } catch (e) { return []; }
   const out = [];
   for await (const [name, handle] of dir.entries()) {
-    if (handle.kind === 'file') out.push([name, (await handle.getFile()).size]);
+    if (handle.kind !== 'file') continue;
+    try {
+      out.push([name, (await handle.getFile()).size]);
+    } catch (e) {
+      // The client can remove an entry after this independent probe lists it.
+      if (!e || e.name !== 'NotFoundError') throw e;
+    }
   }
   return out;
 }"""
+
+
+def check_replay_probe(directory):
+    """An OPFS inspection survives concurrent deletion and still reports unrelated read errors."""
+    server = serve(directory)
+    try:
+        with sync_playwright() as p:
+            browser = p.chromium.launch(args=BROWSER_ARGS)
+            page = browser.new_page()
+            page.route("**/*", lambda route: route.fulfill(content_type="text/html", body="<html></html>"))
+            page.goto(f"http://127.0.0.1:{server.server_address[1]}/probe")
+            page.evaluate("""async () => {
+              const root = await navigator.storage.getDirectory();
+              const dir = await root.getDirectoryHandle('dbota-replays', {create: true});
+              await dir.getFileHandle('kept.brp', {create: true});
+              await dir.getFileHandle('removed.tmp', {create: true});
+              const read = FileSystemFileHandle.prototype.getFile;
+              FileSystemFileHandle.prototype.getFile = async function() {
+                if (this.name === 'removed.tmp') await dir.removeEntry(this.name);
+                return read.call(this);
+              };
+            }""")
+            assert page.evaluate(OPFS_REPLAYS) == [["kept.brp", 0]], "the surviving file is still inspected"
+            page.evaluate("""() => {
+              FileSystemFileHandle.prototype.getFile = async function() {
+                throw new DOMException('probe read refused', 'NotReadableError');
+              };
+            }""")
+            try:
+                page.evaluate(OPFS_REPLAYS)
+            except PlaywrightError as error:
+                assert "NotReadableError: probe read refused" in str(error), error
+            else:
+                raise AssertionError("the probe must report unexpected I/O errors")
+            browser.close()
+    finally:
+        server.shutdown()
+    print("replay probe: concurrent deletion is harmless, unexpected read errors are reported")
 
 
 def check_replays_page(directory, server_bin, radovid_bin, shots=False):
@@ -1471,6 +1515,7 @@ def check_replays_page(directory, server_bin, radovid_bin, shots=False):
     for and stores it in OPFS. The REPLAYS tab lists it and plays it; DOWNLOAD .BRP hands over the
     same bytes, OPEN A .BRP FILE plays that file, a new visit plays the stored one with WATCH and DELETE
     removes it."""
+    check_replay_probe(directory)
     work = HERE.parent.parent / "temp/smoke-replays"
     work.mkdir(parents=True, exist_ok=True)
     cert, key = work / "cert.pem", work / "key.pem"
