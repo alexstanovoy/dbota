@@ -214,6 +214,52 @@ pub struct Client {
     _turn: Rc<Turn>,
 }
 
+struct HeldIncoming<P> {
+    link: Box<dyn bota_client_core::LiveLink>,
+    stop: P,
+    held: bool,
+}
+
+impl<P: FnMut(&bota_proto::ServerMsg) -> bool> bota_client_core::LiveLink for HeldIncoming<P> {
+    fn poll(&mut self) -> Vec<bota_proto::ServerMsg> {
+        // Drain the socket even after holding the displayed state, so its reader can keep
+        // answering pings without filling its bounded inbox.
+        let mut messages = self.link.poll();
+        if self.held {
+            return Vec::new();
+        }
+        if let Some(index) = messages.iter().position(&mut self.stop) {
+            messages.truncate(index + 1);
+            self.held = true;
+        }
+        messages
+    }
+
+    fn send(&mut self, message: &bota_proto::ClientMsg) -> std::io::Result<()> {
+        self.link.send(message)
+    }
+
+    fn is_closed(&self) -> bool {
+        !self.held && self.link.is_closed()
+    }
+
+    fn is_redialing(&self) -> bool {
+        !self.held && self.link.is_redialing()
+    }
+
+    fn ping(&self) -> Option<Duration> {
+        self.link.ping()
+    }
+
+    fn pending_orders(&self) -> usize {
+        self.link.pending_orders()
+    }
+
+    fn order_latency(&self) -> Option<Duration> {
+        self.link.order_latency()
+    }
+}
+
 /// Held by a client's asset server, through an asset source of its own that reads no file, to
 /// tell when the server has ended.
 ///
@@ -317,6 +363,26 @@ fn turn() -> Rc<Turn> {
 impl Client {
     pub fn replay_dir(&self) -> PathBuf {
         self.scratch.0.join("replays")
+    }
+
+    /// Holds a presentation fixture after a real protocol message. Snapshot predicates must
+    /// hold through that tick's Events, so the displayed state contains its complete events.
+    pub fn hold_incoming_after(
+        &mut self,
+        stop: impl FnMut(&bota_proto::ServerMsg) -> bool + 'static,
+    ) {
+        let source = std::mem::replace(
+            &mut self.core_mut().source,
+            crate::main_menu::idle().0.source,
+        );
+        let bota_client_core::Source::Live(link) = source else {
+            panic!("a live presentation fixture");
+        };
+        self.core_mut().source = bota_client_core::Source::Live(Box::new(HeldIncoming {
+            link,
+            stop,
+            held: false,
+        }));
     }
 
     /// The client joined to `server`'s seat, run with `extra` command-line arguments, its hero

@@ -190,6 +190,23 @@ fn an_enemys_channel_at_a_watcher_shows_no_bar() {
         .expect("the watcher")
         .id;
     let mine = client.core().my_hero().expect("one's hero");
+    // Asset loading can outlast the whole short channel. Keep the first complete channel
+    // tick on screen while the model loads, rather than racing its next snapshots.
+    let mut channel_tick = None;
+    client.hold_incoming_after(move |message| match message {
+        bota_proto::ServerMsg::Snapshot { view } => {
+            if view.units.iter().any(|unit| {
+                unit.kind == UnitKind::Hero
+                    && unit.id != mine
+                    && unit.statuses.bits & StatusFlags::CHANNELLING != 0
+            }) {
+                channel_tick.get_or_insert(view.tick);
+            }
+            false
+        }
+        bota_proto::ServerMsg::Events { tick, .. } => channel_tick == Some(*tick),
+        _ => false,
+    });
     go.store(true, std::sync::atomic::Ordering::SeqCst);
     let enemy_channels = |c: &Client| {
         c.view().units.iter().any(|u| {
