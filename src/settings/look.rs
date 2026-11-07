@@ -155,32 +155,15 @@ pub fn toggles(
     }
 }
 
-/// Sliders: the fill to the value, the thumb (larger, ringed while held), the value beside.
-#[allow(clippy::type_complexity)]
-pub fn sliders(
+/// Slider fills: to the value, grey when the slider is disabled.
+pub fn slider_fills(
     screen: Res<Screen>,
     settings: Res<Settings>,
-    tracks: Query<(&SliderTrack, &Interaction)>,
-    mut fills: Query<(&SliderFill, &mut Node, &mut BackgroundColor), Without<SliderThumb>>,
-    mut thumbs: Query<
-        (
-            &SliderThumb,
-            &mut Node,
-            &mut BackgroundColor,
-            &mut BorderColor,
-        ),
-        Without<SliderFill>,
-    >,
-    mut values: Query<(&SliderValue, &mut Text, &mut TextColor)>,
+    mut fills: Query<(&SliderFill, &mut Node, &mut BackgroundColor)>,
 ) {
     if !screen.open {
         return;
     }
-    let held = |slider| {
-        tracks
-            .iter()
-            .any(|(track, i)| track.0 == slider && *i == Interaction::Pressed)
-    };
     for (fill, mut node, mut ground) in &mut fills {
         let enabled = Row::Slider(fill.0).enabled(&settings);
         let width = percent(fill.0.share(&settings) * 100.0);
@@ -190,6 +173,28 @@ pub fn sliders(
         let color = if enabled { theme::FOCUS } else { theme::INK_6 };
         ground.set_if_neq(BackgroundColor(color));
     }
+}
+
+/// Slider thumbs: on the value, larger and ringed while held.
+pub fn slider_thumbs(
+    screen: Res<Screen>,
+    settings: Res<Settings>,
+    tracks: Query<(&SliderTrack, &Interaction)>,
+    mut thumbs: Query<(
+        &SliderThumb,
+        &mut Node,
+        &mut BackgroundColor,
+        &mut BorderColor,
+    )>,
+) {
+    if !screen.open {
+        return;
+    }
+    let held = |slider| {
+        tracks
+            .iter()
+            .any(|(track, i)| track.0 == slider && *i == Interaction::Pressed)
+    };
     for (thumb, mut node, mut ground, mut edge) in &mut thumbs {
         let slider = thumb.0;
         let enabled = Row::Slider(slider).enabled(&settings);
@@ -218,6 +223,17 @@ pub fn sliders(
         let ink = if enabled { theme::INK_1 } else { theme::INK_5 };
         ground.set_if_neq(BackgroundColor(dimmed(ink, enabled)));
         edge.set_if_neq(BorderColor::all(theme::FOCUS));
+    }
+}
+
+/// The value beside a slider.
+pub fn slider_values(
+    screen: Res<Screen>,
+    settings: Res<Settings>,
+    mut values: Query<(&SliderValue, &mut Text, &mut TextColor)>,
+) {
+    if !screen.open {
+        return;
     }
     for (value, mut text, mut ink) in &mut values {
         text.set_if_neq(Text(value.0.shown(&settings)));
@@ -283,27 +299,19 @@ pub fn choices(
     }
 }
 
-/// Key fields and HUD slots: the chord, and whether it is being set or clashes; the bar of
-/// clashes.
-#[allow(clippy::type_complexity, clippy::too_many_arguments)]
+/// Key fields and HUD slots: a field's ground and edge, a slot's edge, for a key being set, a
+/// clash, an unbound key.
+#[allow(clippy::type_complexity)]
 pub fn key_fields(
     screen: Res<Screen>,
     settings: Res<Settings>,
-    mut fields: Query<
-        (
-            &KeyField,
-            &mut BackgroundColor,
-            &mut BorderColor,
-            &mut Node,
-            Has<RowKey>,
-        ),
-        (Without<SlotBadge>, Without<ClashBar>),
-    >,
-    mut texts: Query<(&KeyText, &mut Text, &mut TextColor), Without<SlotKey>>,
-    mut badges: Query<(&SlotBadge, &mut BackgroundColor), Without<KeyField>>,
-    mut slot_texts: Query<(&SlotKey, &mut Text, &mut TextColor), Without<KeyText>>,
-    mut bar: Query<&mut Node, (With<ClashBar>, Without<KeyField>, Without<SlotBadge>)>,
-    mut bar_text: Query<&mut Text, (With<ClashText>, Without<KeyText>, Without<SlotKey>)>,
+    mut fields: Query<(
+        &KeyField,
+        &mut BackgroundColor,
+        &mut BorderColor,
+        &mut Node,
+        Has<RowKey>,
+    )>,
 ) {
     if !screen.open {
         return;
@@ -331,6 +339,20 @@ pub fn key_fields(
         if node.border != border {
             node.border = border;
         }
+    }
+}
+
+/// What a field and a slot's badge say of their binding, and in which ink.
+#[allow(clippy::type_complexity)]
+pub fn key_texts(
+    screen: Res<Screen>,
+    settings: Res<Settings>,
+    mut texts: Query<(&KeyText, &mut Text, &mut TextColor), Without<SlotKey>>,
+    mut badges: Query<(&SlotBadge, &mut BackgroundColor)>,
+    mut slot_texts: Query<(&SlotKey, &mut Text, &mut TextColor), Without<KeyText>>,
+) {
+    if !screen.open {
+        return;
     }
     for (key, mut text, mut ink) in &mut texts {
         let state = key_state(&screen, &settings, key.0);
@@ -361,6 +383,19 @@ pub fn key_fields(
         };
         text.set_if_neq(Text(words));
         ink.set_if_neq(TextColor(color));
+    }
+}
+
+/// The bar of clashes: shown, with what clashes, while some bindings share a key.
+#[allow(clippy::type_complexity)]
+pub fn clash_bar(
+    screen: Res<Screen>,
+    settings: Res<Settings>,
+    mut bar: Query<&mut Node, With<ClashBar>>,
+    mut bar_text: Query<&mut Text, With<ClashText>>,
+) {
+    if !screen.open {
+        return;
     }
     let line = clash_line(&settings);
     for mut node in &mut bar {

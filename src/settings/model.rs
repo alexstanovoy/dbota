@@ -531,101 +531,118 @@ fn group_link(group: Group) -> &'static str {
 /// The sections of a tab, as Dota's tabs group them. The hotkeys leave out the bindings the
 /// slots show, unless `every_row`: a search looks in them all.
 pub fn sections(tab: Tab, every_row: bool) -> Vec<Section> {
-    use Row::{Choice as C, Slider as S, Toggle as T};
     match tab {
-        Tab::Hotkeys => [
-            Group::Abilities,
-            Group::Items,
-            Group::Units,
-            Group::Shop,
-            Group::Camera,
-            Group::Interface,
-            Group::Watching,
-        ]
-        .into_iter()
-        .map(|group| {
-            let rows: Vec<Row> = keys::all()
-                .enumerate()
-                .filter(|(_, b)| b.group == group && (every_row || !is_slot(b.action)))
-                .map(|(at, _)| Row::Key(at))
-                .collect();
-            section(group.title(), group_link(group), rows)
-        })
-        .filter(|section| !section.rows.is_empty())
-        .collect(),
-        Tab::Options => vec![
-            section("PROFILE", "Profile", vec![Row::Text(TextSetting::Name)]),
-            section(
-                "INTERFACE",
-                "Interface",
-                vec![
-                    S(Slider::InterfaceScale),
-                    T(Toggle::DamageNumbers),
-                    T(Toggle::AnimatePortrait),
-                    T(Toggle::ScoreboardItems),
-                ],
-            ),
-            section(
-                "CONTROLS",
-                "Controls",
-                vec![
-                    C(Choice::RightClickAllies),
-                    T(Toggle::TeleportRequiresHalt),
-                    T(Toggle::ChannelsRequireStop),
-                ],
-            ),
-            section("CAMERA", "Camera", vec![T(Toggle::EdgePan)]),
-            section(
-                "REPLAYS",
-                "Replays",
-                vec![
-                    T(Toggle::SaveReplays),
-                    C(Choice::ReplayCount),
-                    C(Choice::ReplaySize),
-                ],
-            ),
-            section("ASSETS", "Assets", vec![Row::Census]),
-        ],
-        Tab::Video => {
-            // A browser's canvas follows the page: no monitor mode to pick.
-            let mut display = vec![C(Choice::DisplayMode)];
-            if !cfg!(target_arch = "wasm32") {
-                display.push(C(Choice::Resolution));
-            }
-            display.extend([C(Choice::FrameCap), S(Slider::RenderScale)]);
-            vec![
-                section("DISPLAY", "Display", display),
-                section(
-                    "QUALITY",
-                    "Quality",
-                    vec![
-                        C(Choice::Quality),
-                        C(Choice::Shadows),
-                        C(Choice::AntiAliasing),
-                        T(Toggle::AutoQuality),
-                    ],
-                ),
-                section(
-                    "ON THE NEXT START",
-                    "On the next start",
-                    vec![
-                        C(Choice::TextureSize),
-                        T(Toggle::Props),
-                        T(Toggle::GpuBatching),
-                    ],
-                ),
-            ]
-        }
-        Tab::Audio => vec![section(
-            "SOUND",
-            "Sound",
-            vec![
-                S(Slider::Volume),
-                T(Toggle::Muted),
-                T(Toggle::VoiceResponses),
-            ],
-        )],
+        Tab::Hotkeys => hotkey_sections(every_row),
+        Tab::Options => option_sections(),
+        Tab::Video => video_sections(),
+        Tab::Audio => audio_sections(),
     }
+}
+
+/// A section per group of bindings.
+fn hotkey_sections(every_row: bool) -> Vec<Section> {
+    [
+        Group::Abilities,
+        Group::Items,
+        Group::Units,
+        Group::Shop,
+        Group::Camera,
+        Group::Interface,
+        Group::Watching,
+    ]
+    .into_iter()
+    .map(|group| {
+        let rows: Vec<Row> = keys::all()
+            .enumerate()
+            .filter(|(_, b)| b.group == group && (every_row || !is_slot(b.action)))
+            .map(|(at, _)| Row::Key(at))
+            .collect();
+        section(group.title(), group_link(group), rows)
+    })
+    .filter(|section| !section.rows.is_empty())
+    .collect()
+}
+
+fn option_sections() -> Vec<Section> {
+    use Row::{Choice as C, Slider as S, Toggle as T};
+    vec![
+        section("PROFILE", "Profile", vec![Row::Text(TextSetting::Name)]),
+        section(
+            "INTERFACE",
+            "Interface",
+            vec![
+                S(Slider::InterfaceScale),
+                T(Toggle::DamageNumbers),
+                T(Toggle::AnimatePortrait),
+                T(Toggle::ScoreboardItems),
+            ],
+        ),
+        section(
+            "CONTROLS",
+            "Controls",
+            vec![
+                C(Choice::RightClickAllies),
+                T(Toggle::TeleportRequiresHalt),
+                T(Toggle::ChannelsRequireStop),
+            ],
+        ),
+        section("CAMERA", "Camera", vec![T(Toggle::EdgePan)]),
+        section(
+            "REPLAYS",
+            "Replays",
+            vec![
+                T(Toggle::SaveReplays),
+                C(Choice::ReplayCount),
+                C(Choice::ReplaySize),
+            ],
+        ),
+        section("ASSETS", "Assets", vec![Row::Census]),
+    ]
+}
+
+fn video_sections() -> Vec<Section> {
+    use Row::{Choice as C, Slider as S, Toggle as T};
+    // A browser's canvas follows the page: no monitor mode to pick.
+    let mut display = vec![C(Choice::DisplayMode)];
+    if !cfg!(target_arch = "wasm32") {
+        display.push(C(Choice::Resolution));
+    }
+    display.extend([C(Choice::FrameCap), S(Slider::RenderScale)]);
+    vec![
+        section("DISPLAY", "Display", display),
+        section(
+            "QUALITY",
+            "Quality",
+            vec![
+                C(Choice::Quality),
+                C(Choice::Shadows),
+                C(Choice::AntiAliasing),
+                T(Toggle::AutoQuality),
+            ],
+        ),
+        section(
+            "ON THE NEXT START",
+            "On the next start",
+            vec![
+                C(Choice::TextureSize),
+                T(Toggle::Props),
+                T(Toggle::GpuBatching),
+            ],
+        ),
+    ]
+}
+
+fn audio_sections() -> Vec<Section> {
+    use Row::{Slider as S, Toggle as T};
+    vec![section(
+        "SOUND",
+        "Sound",
+        vec![
+            S(Slider::Volume),
+            T(Toggle::Muted),
+            T(Toggle::VoiceResponses),
+        ],
+    )]
 }
 
 /// Where in a label a search matches: the text before, the match, the text after.

@@ -315,6 +315,11 @@ pub fn layout(
         return;
     }
     commands.entity(*root).despawn_children();
+    let icons = if screen.tab == Tab::Hotkeys && !screen.is_searching() {
+        crate::hud::slot_icons(&session.0, &bag, &manifest)
+    } else {
+        Vec::new()
+    };
     let mut kit = Kit {
         commands: &mut commands,
         fonts: &fonts,
@@ -322,8 +327,35 @@ pub fn layout(
         server: &server,
     };
     let view = cards(&screen);
-    let window = kit
-        .commands
+    let window = window_frame(&mut kit, *root);
+    navigation(&mut kit, window, &screen, &view);
+    let content = kit.node(
+        window,
+        Node {
+            flex_grow: 1.0,
+            min_width: px(0),
+            flex_direction: FlexDirection::Column,
+            ..default()
+        },
+    );
+    header(&mut kit, content, &screen, view.title);
+    let (area, body) = scroll_area(&mut kit, content, scroll.y);
+    scroll_bar(&mut kit, area);
+    let on = Shown {
+        screen: &screen,
+        settings: &settings,
+        displays: &displays,
+        icons: &icons,
+    };
+    fill_body(&mut kit, body, &view, &on);
+    if screen.tab == Tab::Hotkeys || screen.is_searching() {
+        clash_bar(&mut kit, content);
+    }
+}
+
+/// The window itself: its frame and ground over the dimmed screen.
+fn window_frame(kit: &mut Kit, root: Entity) -> Entity {
+    kit.commands
         .spawn((
             Node {
                 width: px(WINDOW_WIDTH),
@@ -336,20 +368,13 @@ pub fn layout(
             BorderColor::all(theme::WINDOW_EDGE),
             theme::window_shadow(),
             Name::new("settings window"),
-            ChildOf(*root),
+            ChildOf(root),
         ))
-        .id();
-    navigation(&mut kit, window, &screen, &view);
-    let content = kit.node(
-        window,
-        Node {
-            flex_grow: 1.0,
-            min_width: px(0),
-            flex_direction: FlexDirection::Column,
-            ..default()
-        },
-    );
-    header(&mut kit, content, &screen, view.title);
+        .id()
+}
+
+/// The room under the header: the scrolling body, kept at `scrolled`, and the area it fills.
+fn scroll_area(kit: &mut Kit, content: Entity, scrolled: f32) -> (Entity, Entity) {
     let area = kit.node(
         content,
         Node {
@@ -374,34 +399,43 @@ pub fn layout(
                 overflow: Overflow::scroll_y(),
                 ..default()
             },
-            ScrollPosition(Vec2::new(0.0, scroll.y)),
+            ScrollPosition(Vec2::new(0.0, scrolled)),
             ChildOf(area),
         ))
         .id();
-    scroll_bar(&mut kit, area);
-    if screen.tab == Tab::Hotkeys && !screen.is_searching() {
-        let icons = crate::hud::slot_icons(&session.0, &bag, &manifest);
-        hud_panel(&mut kit, body, &icons);
+    (area, body)
+}
+
+/// What the screen is drawn from, apart from its view of cards.
+struct Shown<'a> {
+    screen: &'a Screen,
+    settings: &'a Settings,
+    displays: &'a Displays,
+    /// The art of the slots at the top of the hotkeys.
+    icons: &'a [(keys::Action, String)],
+}
+
+/// The body: the hotkeys' slots, the cards (or why a search found none) and the hotkeys' reset.
+fn fill_body(kit: &mut Kit, body: Entity, view: &Cards, on: &Shown) {
+    let hotkeys = on.screen.tab == Tab::Hotkeys && !on.screen.is_searching();
+    if hotkeys {
+        hud_panel(kit, body, on.icons);
     }
-    if screen.is_searching() && view.cards.is_empty() {
-        let line = format!("No setting is called “{}”", screen.query.trim());
+    if on.screen.is_searching() && view.cards.is_empty() {
+        let line = format!("No setting is called “{}”", on.screen.query.trim());
         kit.typed(body, line, theme::BODY, theme::INK_4);
     }
-    let dense = screen.tab == Tab::Hotkeys;
     for (at, card) in view.cards.iter().enumerate() {
         let ctx = RowCtx {
-            screen: &screen,
-            settings: &settings,
-            displays: &displays,
-            dense: dense || card.tab == Tab::Hotkeys,
+            screen: on.screen,
+            settings: on.settings,
+            displays: on.displays,
+            dense: on.screen.tab == Tab::Hotkeys || card.tab == Tab::Hotkeys,
         };
-        card_view(&mut kit, body, at, card, &ctx);
+        card_view(kit, body, at, card, &ctx);
     }
-    if screen.tab == Tab::Hotkeys && !screen.is_searching() {
-        reset_all(&mut kit, body);
-    }
-    if screen.tab == Tab::Hotkeys || screen.is_searching() {
-        clash_bar(&mut kit, content);
+    if hotkeys {
+        reset_all(kit, body);
     }
 }
 
@@ -444,55 +478,8 @@ fn navigation(kit: &mut Kit, window: Entity, screen: &Screen, view: &Cards) {
         ..default()
     });
     search_field(kit, nav, screen);
-    let searching = screen.is_searching();
     for tab in Tab::ALL {
-        let hits: Vec<(usize, &Card)> = view
-            .cards
-            .iter()
-            .enumerate()
-            .filter(|(_, card)| card.tab == tab)
-            .collect();
-        let lit = !searching && tab == screen.tab;
-        let tab_box = kit.node(
-            nav,
-            Node {
-                flex_direction: FlexDirection::Column,
-                ..default()
-            },
-        );
-        nav_tab(kit, tab_box, tab, lit, searching && hits.is_empty());
-        let links: Vec<(usize, String)> = if searching {
-            hits.iter()
-                .map(|(at, card)| {
-                    (
-                        *at,
-                        format!("{} · {}", card.section.link, card.section.rows.len()),
-                    )
-                })
-                .collect()
-        } else if lit {
-            view.cards
-                .iter()
-                .enumerate()
-                .map(|(at, card)| (at, card.section.link.to_owned()))
-                .collect()
-        } else {
-            Vec::new()
-        };
-        if links.is_empty() {
-            continue;
-        }
-        let list = kit.node(
-            tab_box,
-            Node {
-                flex_direction: FlexDirection::Column,
-                padding: UiRect::new(px(26), px(0), px(0), px(4)),
-                ..default()
-            },
-        );
-        for (at, label) in links {
-            nav_link(kit, list, at, &label, searching);
-        }
+        nav_section(kit, nav, tab, screen, view);
     }
     kit.node(
         nav,
@@ -502,6 +489,57 @@ fn navigation(kit: &mut Kit, window: Entity, screen: &Screen, view: &Cards) {
         },
     );
     version_line(kit, nav);
+}
+
+/// A tab of the navigation and the links under it: its sections when it is open, its hits (with
+/// their counts) while a search runs, none otherwise.
+fn nav_section(kit: &mut Kit, nav: Entity, tab: Tab, screen: &Screen, view: &Cards) {
+    let searching = screen.is_searching();
+    let hits: Vec<(usize, &Card)> = view
+        .cards
+        .iter()
+        .enumerate()
+        .filter(|(_, card)| card.tab == tab)
+        .collect();
+    let lit = !searching && tab == screen.tab;
+    let tab_box = kit.node(
+        nav,
+        Node {
+            flex_direction: FlexDirection::Column,
+            ..default()
+        },
+    );
+    nav_tab(kit, tab_box, tab, lit, searching && hits.is_empty());
+    let links: Vec<(usize, String)> = if searching {
+        hits.iter()
+            .map(|(at, card)| {
+                let count = card.section.rows.len();
+                (*at, format!("{} · {count}", card.section.link))
+            })
+            .collect()
+    } else if lit {
+        view.cards
+            .iter()
+            .enumerate()
+            .map(|(at, card)| (at, card.section.link.to_owned()))
+            .collect()
+    } else {
+        Vec::new()
+    };
+    if links.is_empty() {
+        return;
+    }
+    let list = kit.node(
+        tab_box,
+        Node {
+            flex_direction: FlexDirection::Column,
+            padding: UiRect::new(px(26), px(0), px(0), px(4)),
+            ..default()
+        },
+    );
+    for (at, label) in links {
+        nav_link(kit, list, at, &label, searching);
+    }
 }
 
 /// Which client runs and which assets it reads, small at the foot of the navigation: the build's
@@ -873,67 +911,9 @@ fn card_view(kit: &mut Kit, body: Entity, at: usize, card: &Card, ctx: &RowCtx) 
 
 /// One row: its label, the arrow that puts it back when it changed, and its control.
 fn row_view(kit: &mut Kit, card: Entity, row: Row, ctx: &RowCtx) {
-    let height = if ctx.dense {
-        KEY_ROW_HEIGHT
-    } else {
-        ROW_HEIGHT
-    };
-    let mut node = Node {
-        position_type: PositionType::Relative,
-        min_height: px(height),
-        flex_shrink: 0.0,
-        column_gap: px(10),
-        padding: UiRect::axes(px(14), px(2)),
-        align_items: AlignItems::Center,
-        border: UiRect::bottom(px(1)),
-        ..default()
-    };
-    let name = Name::new(row.label().to_lowercase());
-    let root = match row {
-        Row::Toggle(toggle) => kit
-            .commands
-            .spawn((ToggleRow(toggle), Button, name, ChildOf(card)))
-            .id(),
-        _ => kit
-            .commands
-            .spawn((name, Pickable::IGNORE, ChildOf(card)))
-            .id(),
-    };
+    let root = row_frame(kit, card, row, ctx);
     if row == Row::Census {
-        node.padding = UiRect::axes(px(14), px(14));
-    }
-    kit.commands
-        .entity(root)
-        .insert((node, BorderColor::all(theme::ROW_RULE)));
-    let bar = kit
-        .commands
-        .spawn((
-            RowBar(row),
-            Node {
-                position_type: PositionType::Absolute,
-                left: px(0),
-                top: px(8),
-                bottom: px(8),
-                width: px(3),
-                ..default()
-            },
-            BackgroundColor(theme::FOCUS),
-            Pickable::IGNORE,
-            ChildOf(root),
-        ))
-        .id();
-    let _ = bar;
-    if row == Row::Census {
-        let role = Type {
-            size: 14.0,
-            ..theme::BODY
-        };
-        let text = kit.typed(root, kit.manifest.census(), role, theme::INK_4);
-        kit.commands.entity(text).insert(Node {
-            flex_grow: 1.0,
-            flex_basis: px(0),
-            ..default()
-        });
+        census_line(kit, root);
         return;
     }
     let role = Type {
@@ -955,6 +935,70 @@ fn row_view(kit: &mut Kit, card: Entity, row: Row, ctx: &RowCtx) {
         Row::Key(at) => key_field(kit, root, at),
         Row::Census => {}
     }
+}
+
+/// A row's box in its card with the bar that marks it changed; a toggle's is a button, a click
+/// anywhere on it turns it.
+fn row_frame(kit: &mut Kit, card: Entity, row: Row, ctx: &RowCtx) -> Entity {
+    let height = if ctx.dense {
+        KEY_ROW_HEIGHT
+    } else {
+        ROW_HEIGHT
+    };
+    let vertical = if row == Row::Census { 14 } else { 2 };
+    let node = Node {
+        position_type: PositionType::Relative,
+        min_height: px(height),
+        flex_shrink: 0.0,
+        column_gap: px(10),
+        padding: UiRect::axes(px(14), px(vertical)),
+        align_items: AlignItems::Center,
+        border: UiRect::bottom(px(1)),
+        ..default()
+    };
+    let name = Name::new(row.label().to_lowercase());
+    let root = match row {
+        Row::Toggle(toggle) => kit
+            .commands
+            .spawn((ToggleRow(toggle), Button, name, ChildOf(card)))
+            .id(),
+        _ => kit
+            .commands
+            .spawn((name, Pickable::IGNORE, ChildOf(card)))
+            .id(),
+    };
+    kit.commands
+        .entity(root)
+        .insert((node, BorderColor::all(theme::ROW_RULE)));
+    kit.commands.spawn((
+        RowBar(row),
+        Node {
+            position_type: PositionType::Absolute,
+            left: px(0),
+            top: px(8),
+            bottom: px(8),
+            width: px(3),
+            ..default()
+        },
+        BackgroundColor(theme::FOCUS),
+        Pickable::IGNORE,
+        ChildOf(root),
+    ));
+    root
+}
+
+/// The line telling where the art and the sound come from.
+fn census_line(kit: &mut Kit, root: Entity) {
+    let role = Type {
+        size: 14.0,
+        ..theme::BODY
+    };
+    let text = kit.typed(root, kit.manifest.census(), role, theme::INK_4);
+    kit.commands.entity(text).insert(Node {
+        flex_grow: 1.0,
+        flex_basis: px(0),
+        ..default()
+    });
 }
 
 /// The arrow that puts a changed row back to its default.
@@ -1089,35 +1133,7 @@ fn slider_view(kit: &mut Kit, root: Entity, slider: Slider) {
             ChildOf(root),
         ))
         .id();
-    kit.commands.spawn((
-        Node {
-            position_type: PositionType::Absolute,
-            left: px(0),
-            right: px(0),
-            top: px(10),
-            height: px(4),
-            border_radius: BorderRadius::all(px(2)),
-            ..default()
-        },
-        BackgroundColor(theme::RAIL),
-        Pickable::IGNORE,
-        ChildOf(track),
-    ));
-    kit.commands.spawn((
-        SliderFill(slider),
-        Node {
-            position_type: PositionType::Absolute,
-            left: px(0),
-            top: px(10),
-            height: px(4),
-            width: percent(0),
-            border_radius: BorderRadius::all(px(2)),
-            ..default()
-        },
-        BackgroundColor(theme::FOCUS),
-        Pickable::IGNORE,
-        ChildOf(track),
-    ));
+    slider_rail(kit, track, slider);
     kit.commands.spawn((
         SliderThumb(slider),
         Node {
@@ -1149,6 +1165,32 @@ fn slider_view(kit: &mut Kit, root: Entity, slider: Slider) {
             ..default()
         },
         TextLayout::justify(Justify::Right),
+    ));
+}
+
+/// A slider's rail and the part of it the value fills.
+fn slider_rail(kit: &mut Kit, track: Entity, slider: Slider) {
+    let rail = |width: Val| Node {
+        position_type: PositionType::Absolute,
+        left: px(0),
+        top: px(10),
+        height: px(4),
+        width,
+        border_radius: BorderRadius::all(px(2)),
+        ..default()
+    };
+    kit.commands.spawn((
+        rail(percent(100)),
+        BackgroundColor(theme::RAIL),
+        Pickable::IGNORE,
+        ChildOf(track),
+    ));
+    kit.commands.spawn((
+        SliderFill(slider),
+        rail(percent(0)),
+        BackgroundColor(theme::FOCUS),
+        Pickable::IGNORE,
+        ChildOf(track),
     ));
 }
 
@@ -1215,55 +1257,72 @@ fn options_list(kit: &mut Kit, anchor: Entity, choice: Choice, ctx: &RowCtx) {
         ))
         .id();
     let picked = choice.current(ctx.settings, ctx.displays);
-    for (at, option) in choice
-        .options(ctx.settings, ctx.displays)
-        .into_iter()
-        .enumerate()
-    {
+    let options = choice.options(ctx.settings, ctx.displays);
+    for (at, option) in options.into_iter().enumerate() {
         let enabled = choice.option_enabled(ctx.settings, ctx.displays, at);
-        let item = kit
-            .commands
-            .spawn((
-                ChoiceOption(choice, at),
-                Button,
-                Node {
-                    height: px(34),
-                    padding: UiRect::horizontal(px(12)),
-                    justify_content: JustifyContent::SpaceBetween,
-                    align_items: AlignItems::Center,
-                    ..default()
-                },
-                BackgroundColor(Color::NONE),
-                Name::new(option.to_lowercase()),
-                ChildOf(list),
-            ))
-            .id();
-        let ink = if enabled {
-            theme::INK_1
-        } else {
-            theme::INK_OFF
-        };
-        kit.typed(item, option, theme::BODY, ink);
-        if picked == Some(at) {
-            kit.commands
-                .entity(item)
-                .insert(BackgroundColor(theme::LIST_PICKED));
-            kit.commands.spawn((
-                Node {
-                    position_type: PositionType::Absolute,
-                    left: px(0),
-                    top: px(0),
-                    bottom: px(0),
-                    width: px(3),
-                    ..default()
-                },
-                BackgroundColor(theme::SELECT),
-                Pickable::IGNORE,
-                ChildOf(item),
-            ));
-            kit.icon(item, "menu.check", 14.0, theme::SELECT);
-        }
+        option_item(
+            kit,
+            list,
+            ChoiceOption(choice, at),
+            option,
+            enabled,
+            picked == Some(at),
+        );
     }
+}
+
+/// An option of an open list: greyed when it cannot be picked, marked when it is the one picked.
+fn option_item(
+    kit: &mut Kit,
+    list: Entity,
+    which: ChoiceOption,
+    words: String,
+    enabled: bool,
+    picked: bool,
+) {
+    let item = kit
+        .commands
+        .spawn((
+            which,
+            Button,
+            Node {
+                height: px(34),
+                padding: UiRect::horizontal(px(12)),
+                justify_content: JustifyContent::SpaceBetween,
+                align_items: AlignItems::Center,
+                ..default()
+            },
+            BackgroundColor(Color::NONE),
+            Name::new(words.to_lowercase()),
+            ChildOf(list),
+        ))
+        .id();
+    let ink = if enabled {
+        theme::INK_1
+    } else {
+        theme::INK_OFF
+    };
+    kit.typed(item, words, theme::BODY, ink);
+    if !picked {
+        return;
+    }
+    kit.commands
+        .entity(item)
+        .insert(BackgroundColor(theme::LIST_PICKED));
+    kit.commands.spawn((
+        Node {
+            position_type: PositionType::Absolute,
+            left: px(0),
+            top: px(0),
+            bottom: px(0),
+            width: px(3),
+            ..default()
+        },
+        BackgroundColor(theme::SELECT),
+        Pickable::IGNORE,
+        ChildOf(item),
+    ));
+    kit.icon(item, "menu.check", 14.0, theme::SELECT);
 }
 
 /// A binding's key field.

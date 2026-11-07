@@ -123,6 +123,7 @@ pub fn plugin(app: &mut App) {
                 clicks,
                 drag,
                 scroll,
+                scroll_marks,
                 save,
                 super::draw::layout,
             )
@@ -133,9 +134,13 @@ pub fn plugin(app: &mut App) {
             (
                 super::look::rows,
                 super::look::toggles,
-                super::look::sliders,
+                super::look::slider_fills,
+                super::look::slider_thumbs,
+                super::look::slider_values,
                 super::look::choices,
                 super::look::key_fields,
+                super::look::key_texts,
+                super::look::clash_bar,
                 super::look::names,
                 super::look::nav,
                 super::look::help,
@@ -197,7 +202,16 @@ fn clicks(
         screen.bypass_change_detection().searching = false;
         return;
     }
-    // The search field keeps the keyboard until the player clicks something else.
+    // The helpers take the resources whole, so a change is marked only where one is made.
+    click_search(&mut screen, &mut scroll, &on);
+    click_navigation(&mut screen, &mut scroll, &on);
+    click_resets(&mut settings, &displays, &on);
+    click_controls(&mut screen, &mut settings, &displays, &on);
+}
+
+/// The search field, which keeps the keyboard until the player clicks something else, and its
+/// clear button.
+fn click_search(screen: &mut ResMut<Screen>, scroll: &mut ResMut<Scroll>, on: &Pressed) {
     let anything_else = on.name.iter().any(|(i, _)| pressed(i))
         || on.tabs.iter().any(|(i, _)| pressed(i))
         || on.choices.iter().any(|(i, _)| pressed(i))
@@ -208,22 +222,20 @@ fn clicks(
         screen.searching = false;
     }
     if on.search.iter().any(pressed) && !screen.searching {
-        let screen = &mut *screen;
         screen.searching = true;
         screen.naming = None;
         screen.capturing = None;
         screen.dropdown = None;
     }
     if on.clear.iter().any(pressed) {
-        let screen = &mut *screen;
         screen.query.clear();
         screen.searching = true;
         scroll.y = 0.0;
     }
-    if let Some((_, field)) = on.name.iter().find(|(i, _)| pressed(i)) {
-        screen.naming = Some(field.0);
-        screen.capturing = None;
-    }
+}
+
+/// The tabs, the links under them and the close cross.
+fn click_navigation(screen: &mut ResMut<Screen>, scroll: &mut ResMut<Scroll>, on: &Pressed) {
     if let Some((_, tab)) = on.tabs.iter().find(|(i, _)| pressed(i)) {
         screen.show(tab.0);
         scroll.y = 0.0;
@@ -234,23 +246,40 @@ fn clicks(
     if on.close.iter().any(pressed) {
         screen.open = false;
     }
+}
+
+/// The reset of every hotkey and the arrow of a changed row.
+fn click_resets(settings: &mut ResMut<Settings>, displays: &Displays, on: &Pressed) {
     if on.reset_all.iter().any(pressed) {
         settings.keys = keys::BINDINGS.map(|b| b.default);
     }
     if let Some((_, reset)) = on.resets.iter().find(|(i, _)| pressed(i)) {
-        reset.0.reset(&mut settings, &displays);
+        reset.0.reset(settings, displays);
+    }
+}
+
+/// The toggles, the choices and their lists, the typed line and the key fields and slots.
+fn click_controls(
+    screen: &mut ResMut<Screen>,
+    settings: &mut ResMut<Settings>,
+    displays: &Displays,
+    on: &Pressed,
+) {
+    if let Some((_, field)) = on.name.iter().find(|(i, _)| pressed(i)) {
+        screen.naming = Some(field.0);
+        screen.capturing = None;
     }
     for (_, row) in on.toggles.iter().filter(|(i, _)| pressed(i)) {
-        if Row::Toggle(row.0).enabled(&settings) {
-            let state = row.0.get(&settings);
-            row.0.set(&mut settings, !state);
+        if Row::Toggle(row.0).enabled(settings) {
+            let state = row.0.get(settings);
+            row.0.set(settings, !state);
         }
     }
     if let Some((_, option)) = on.options.iter().find(|(i, _)| pressed(i)) {
-        option.0.pick(&mut settings, option.1, &displays);
+        option.0.pick(settings, option.1, displays);
         screen.dropdown = None;
     } else if let Some((_, choice)) = on.choices.iter().find(|(i, _)| pressed(i))
-        && Row::Choice(choice.0).enabled(&settings)
+        && Row::Choice(choice.0).enabled(settings)
     {
         screen.dropdown = (screen.dropdown != Some(choice.0)).then_some(choice.0);
     }
@@ -349,6 +378,22 @@ fn capture(
         return;
     };
     composing.clear();
+    let bound = next_chord(&mut screen, keyboard.read(), mouse.read(), &held);
+    if let Some(chord) = bound {
+        settings.keys[at] = chord;
+        screen.capturing = None;
+        screen.held_modifier = None;
+    }
+}
+
+/// The chord the events bind, if they do: `Some(None)` unbinds. Escape lets go of the capture
+/// unchanged.
+fn next_chord<'a>(
+    screen: &mut ResMut<Screen>,
+    keyboard: impl Iterator<Item = &'a KeyboardInput>,
+    mouse: impl Iterator<Item = &'a MouseButtonInput>,
+    held: &ButtonInput<KeyCode>,
+) -> Option<Option<Chord>> {
     let mods = |chord: Chord| Chord {
         shift: chord.shift || held.any_pressed([KeyCode::ShiftLeft, KeyCode::ShiftRight]),
         ctrl: chord.ctrl || held.any_pressed([KeyCode::ControlLeft, KeyCode::ControlRight]),
@@ -356,11 +401,11 @@ fn capture(
         ..chord
     };
     let mut bound: Option<Option<Chord>> = None;
-    for event in keyboard.read() {
+    for event in keyboard {
         match (event.state, event.key_code) {
             (ButtonState::Pressed, KeyCode::Escape) => {
                 screen.capturing = None;
-                return;
+                return None;
             }
             (ButtonState::Pressed, KeyCode::Backspace | KeyCode::Delete) => bound = Some(None),
             (ButtonState::Pressed, key) if is_modifier(key) => screen.held_modifier = Some(key),
@@ -373,15 +418,15 @@ fn capture(
             _ => {}
         }
     }
-    for event in mouse.read() {
-        let modified = held.any_pressed([
-            KeyCode::ShiftLeft,
-            KeyCode::ShiftRight,
-            KeyCode::ControlLeft,
-            KeyCode::ControlRight,
-            KeyCode::AltLeft,
-            KeyCode::AltRight,
-        ]);
+    let modified = held.any_pressed([
+        KeyCode::ShiftLeft,
+        KeyCode::ShiftRight,
+        KeyCode::ControlLeft,
+        KeyCode::ControlRight,
+        KeyCode::AltLeft,
+        KeyCode::AltRight,
+    ]);
+    for event in mouse {
         if event.state == ButtonState::Pressed && keys::bindable_mouse(event.button, modified) {
             bound = Some(Some(mods(Chord {
                 input: Input::Mouse(event.button),
@@ -391,17 +436,13 @@ fn capture(
             })));
         }
     }
-    if let Some(chord) = bound {
-        settings.keys[at] = chord;
-        screen.capturing = None;
-        screen.held_modifier = None;
-    }
+    bound
 }
 
 /// Types into the search field: Enter or Escape is done with it. Typing changes only what is
 /// asked, so the screen is marked changed only then.
 fn search<'a>(
-    screen: &mut Screen,
+    screen: &mut ResMut<Screen>,
     keyboard: impl Iterator<Item = &'a KeyboardInput>,
     composing: impl Iterator<Item = &'a bevy::window::Ime>,
 ) {
@@ -435,8 +476,8 @@ fn search<'a>(
 /// Types into a line (the profile name); Enter or Escape
 /// is done with it.
 fn name<'a>(
-    screen: &mut Screen,
-    settings: &mut Settings,
+    screen: &mut ResMut<Screen>,
+    settings: &mut ResMut<Settings>,
     field: TextSetting,
     keyboard: impl Iterator<Item = &'a KeyboardInput>,
     composing: impl Iterator<Item = &'a bevy::window::Ime>,
@@ -483,18 +524,57 @@ fn is_modifier(key: KeyCode) -> bool {
     )
 }
 
-/// The wheel scrolls the screen's body, the navigation's links scroll it to a card, the card in
-/// view is the one whose link is marked, and the scroll bar follows.
+/// Where the body and its cards stand, as the last layout put them, in interface pixels.
+struct Geometry {
+    scale: f32,
+    /// How tall the body shows, and how tall its content is.
+    view: f32,
+    total: f32,
+    /// The farthest the body scrolls; unbounded before the first layout.
+    reach: f32,
+    /// The body's top edge and the scroll that layout shows, in the layout's pixels.
+    top: f32,
+    applied: f32,
+}
+
+impl Geometry {
+    fn of(node: &ComputedNode, place: &UiGlobalTransform, applied: f32) -> Geometry {
+        let scale = node.inverse_scale_factor();
+        let (view, total) = (node.size().y * scale, node.content_size().y * scale);
+        Geometry {
+            scale,
+            view,
+            total,
+            reach: if view > 0.0 {
+                (total - view).max(0.0)
+            } else {
+                f32::MAX
+            },
+            top: place.translation.y - node.size().y / 2.0,
+            applied,
+        }
+    }
+
+    /// Whether the body has been laid out; before, it has no size.
+    fn laid_out(&self) -> bool {
+        self.view > 0.0
+    }
+
+    /// Where a card's top stands in the content: what to scroll to to put it at the top.
+    fn place_of(&self, card: &ComputedNode, at: &UiGlobalTransform) -> f32 {
+        let card_top = at.translation.y - card.size().y / 2.0;
+        (card_top - self.top) * self.scale + self.applied - CARD_MARGIN
+    }
+}
+
+/// The wheel scrolls the screen's body, and the navigation's links scroll it to a card.
 #[allow(clippy::type_complexity)]
 fn scroll(
     screen: Res<Screen>,
     wheel: Res<AccumulatedMouseScroll>,
     mut scrolled: ResMut<Scroll>,
-    mut in_view: ResMut<InView>,
     mut body: Query<(&mut ScrollPosition, &ComputedNode, &UiGlobalTransform), With<Body>>,
     anchors: Query<(&CardAnchor, &ComputedNode, &UiGlobalTransform)>,
-    mut rail: Query<&mut Node, (With<ScrollRail>, Without<ScrollThumb>)>,
-    mut thumb: Query<&mut Node, (With<ScrollThumb>, Without<ScrollRail>)>,
 ) {
     if !screen.open {
         return;
@@ -502,22 +582,7 @@ fn scroll(
     let Ok((mut at, node, place)) = body.single_mut() else {
         return;
     };
-    let scale = node.inverse_scale_factor();
-    let (view, total) = (node.size().y * scale, node.content_size().y * scale);
-    // Before the first layout the body has no size: keep what was asked.
-    let laid_out = view > 0.0;
-    let reach = if laid_out {
-        (total - view).max(0.0)
-    } else {
-        f32::MAX
-    };
-    let top = place.translation.y - node.size().y / 2.0;
-    // The cards stand where the layout put them, which shows the scroll applied so far.
-    let applied = at.y;
-    let place_of = move |anchor: &ComputedNode, at_anchor: &UiGlobalTransform| {
-        let anchor_top = at_anchor.translation.y - anchor.size().y / 2.0;
-        (anchor_top - top) * scale + applied
-    };
+    let geometry = Geometry::of(node, place, at.y);
     if wheel.delta.y != 0.0 {
         let step = match wheel.unit {
             MouseScrollUnit::Line => wheel.delta.y * 40.0,
@@ -529,7 +594,7 @@ fn scroll(
         let wanted = anchors
             .iter()
             .find(|(anchor, ..)| anchor.0 == card)
-            .map(|(_, anchor, at_anchor)| place_of(anchor, at_anchor) - CARD_MARGIN);
+            .map(|(_, anchor, at_anchor)| geometry.place_of(anchor, at_anchor));
         // The first section of a tab is the top of it, the slots above it included.
         scrolled.y = if card == 0 && !screen.is_searching() {
             0.0
@@ -537,14 +602,35 @@ fn scroll(
             wanted.unwrap_or(scrolled.y)
         };
     }
-    scrolled.y = scrolled.y.clamp(0.0, reach);
+    scrolled.y = scrolled.y.clamp(0.0, geometry.reach);
     if at.y != scrolled.y {
         at.y = scrolled.y;
     }
-    if !laid_out {
+}
+
+/// The card in view, whose link the navigation marks, and the scroll bar: shown while the body
+/// scrolls, its thumb as long and as far along as the body shows and has scrolled.
+#[allow(clippy::type_complexity)]
+fn scroll_marks(
+    screen: Res<Screen>,
+    scrolled: Res<Scroll>,
+    mut in_view: ResMut<InView>,
+    body: Query<(&ScrollPosition, &ComputedNode, &UiGlobalTransform), With<Body>>,
+    anchors: Query<(&CardAnchor, &ComputedNode, &UiGlobalTransform)>,
+    mut rail: Query<&mut Node, (With<ScrollRail>, Without<ScrollThumb>)>,
+    mut thumb: Query<&mut Node, (With<ScrollThumb>, Without<ScrollRail>)>,
+) {
+    if !screen.open {
         return;
     }
-    let seen = if scrolled.y >= reach - 1.0 && reach > 0.0 {
+    let Ok((at, node, place)) = body.single() else {
+        return;
+    };
+    let geometry = Geometry::of(node, place, at.y);
+    if !geometry.laid_out() {
+        return;
+    }
+    let seen = if scrolled.y >= geometry.reach - 1.0 && geometry.reach > 0.0 {
         anchors
             .iter()
             .map(|(anchor, ..)| anchor.0)
@@ -554,7 +640,7 @@ fn scroll(
         anchors
             .iter()
             .filter(|(_, anchor, at_anchor)| {
-                place_of(anchor, at_anchor) - CARD_MARGIN <= scrolled.y + 1.0
+                geometry.place_of(anchor, at_anchor) <= scrolled.y + 1.0
             })
             .map(|(anchor, ..)| anchor.0)
             .max()
@@ -563,7 +649,7 @@ fn scroll(
     if in_view.0 != seen {
         in_view.0 = seen;
     }
-    let scrolls = reach > 0.0;
+    let scrolls = geometry.reach > 0.0;
     for mut node in &mut rail {
         let display = if scrolls {
             Display::Flex
@@ -576,8 +662,8 @@ fn scroll(
     }
     for mut node in &mut thumb {
         let (top, height) = (
-            percent(scrolled.y / total * 100.0),
-            percent(view / total * 100.0),
+            percent(scrolled.y / geometry.total * 100.0),
+            percent(geometry.view / geometry.total * 100.0),
         );
         if node.top != top || node.height != height {
             node.top = top;
@@ -664,9 +750,56 @@ impl Focusable<'_, '_> {
     }
 }
 
+/// What the keyboard does to the control it stands on.
+#[derive(bevy::ecs::system::SystemParam)]
+struct Controls<'w, 's> {
+    toggles: Query<'w, 's, &'static ToggleBox>,
+    choices: Query<'w, 's, &'static ChoiceButton>,
+    keyfields: Query<'w, 's, &'static KeyField, With<RowKey>>,
+    names: Query<'w, 's, &'static NameField>,
+    sliders: Query<'w, 's, &'static SliderTrack>,
+}
+
+impl Controls<'_, '_> {
+    /// What a click on `control` does: turns a toggle, opens a list, takes the next key, types.
+    fn activate(
+        &self,
+        control: Entity,
+        screen: &mut ResMut<Screen>,
+        settings: &mut ResMut<Settings>,
+    ) {
+        if let Ok(tick) = self.toggles.get(control)
+            && Row::Toggle(tick.0).enabled(settings)
+        {
+            let state = tick.0.get(settings);
+            tick.0.set(settings, !state);
+        } else if let Ok(choice) = self.choices.get(control)
+            && Row::Choice(choice.0).enabled(settings)
+        {
+            screen.dropdown = (screen.dropdown != Some(choice.0)).then_some(choice.0);
+        } else if let Ok(field) = self.keyfields.get(control) {
+            screen.capturing = Some(field.0);
+            screen.held_modifier = None;
+        } else if let Ok(field) = self.names.get(control) {
+            screen.naming = Some(field.0);
+        }
+    }
+
+    /// Moves a slider one step, left (`-1.0`) or right (`1.0`).
+    fn nudge(&self, control: Entity, settings: &mut ResMut<Settings>, sign: f32) {
+        if let Ok(track) = self.sliders.get(control)
+            && Row::Slider(track.0).enabled(settings)
+        {
+            let (lo, hi, step) = track.0.range();
+            let share = track.0.share(settings) + sign * step / (hi - lo);
+            track.0.set_share(settings, share);
+        }
+    }
+}
+
 /// Tab and Shift+Tab move the keyboard along the controls; Space or Enter does what a click
 /// does; Left and Right move a slider. A click gives the focus up.
-#[allow(clippy::too_many_arguments, clippy::type_complexity)]
+#[allow(clippy::too_many_arguments)]
 fn focus(
     mut screen: ResMut<Screen>,
     mut settings: ResMut<Settings>,
@@ -675,11 +808,7 @@ fn focus(
     held: Res<ButtonInput<KeyCode>>,
     mouse: Res<ButtonInput<MouseButton>>,
     order: Focusable,
-    toggles: Query<&ToggleBox>,
-    choices: Query<&ChoiceButton>,
-    keyfields: Query<&KeyField, With<RowKey>>,
-    names: Query<&NameField>,
-    sliders: Query<&SliderTrack>,
+    on: Controls,
 ) {
     use bevy::input::keyboard::Key;
     if !screen.open || screen.capturing.is_some() || screen.naming.is_some() || screen.searching {
@@ -698,48 +827,17 @@ fn focus(
         }
         let last = controls.len() - 1;
         let here = at.0.map(|i| i.min(last));
-        match &event.logical_key {
-            Key::Tab if shift => {
-                at.0 = Some(here.map_or(last, |i| i.checked_sub(1).unwrap_or(last)))
+        let control = here.map(|i| controls[i]);
+        match (&event.logical_key, control) {
+            (Key::Tab, _) if shift => {
+                at.0 = Some(here.map_or(last, |i| i.checked_sub(1).unwrap_or(last)));
             }
-            Key::Tab => at.0 = Some(here.map_or(0, |i| if i == last { 0 } else { i + 1 })),
-            Key::Enter | Key::Space => {
-                let Some(control) = here.map(|i| controls[i]) else {
-                    continue;
-                };
-                if let Ok(tick) = toggles.get(control)
-                    && Row::Toggle(tick.0).enabled(&settings)
-                {
-                    let state = tick.0.get(&settings);
-                    tick.0.set(&mut settings, !state);
-                } else if let Ok(choice) = choices.get(control)
-                    && Row::Choice(choice.0).enabled(&settings)
-                {
-                    screen.dropdown = (screen.dropdown != Some(choice.0)).then_some(choice.0);
-                } else if let Ok(field) = keyfields.get(control) {
-                    screen.capturing = Some(field.0);
-                    screen.held_modifier = None;
-                } else if let Ok(field) = names.get(control) {
-                    screen.naming = Some(field.0);
-                }
+            (Key::Tab, _) => at.0 = Some(here.map_or(0, |i| if i == last { 0 } else { i + 1 })),
+            (Key::Enter | Key::Space, Some(control)) => {
+                on.activate(control, &mut screen, &mut settings);
             }
-            Key::ArrowLeft | Key::ArrowRight => {
-                let Some(control) = here.map(|i| controls[i]) else {
-                    continue;
-                };
-                if let Ok(track) = sliders.get(control)
-                    && Row::Slider(track.0).enabled(&settings)
-                {
-                    let (lo, hi, step) = track.0.range();
-                    let sign = if event.logical_key == Key::ArrowLeft {
-                        -1.0
-                    } else {
-                        1.0
-                    };
-                    let share = track.0.share(&settings) + sign * step / (hi - lo);
-                    track.0.set_share(&mut settings, share);
-                }
-            }
+            (Key::ArrowLeft, Some(control)) => on.nudge(control, &mut settings, -1.0),
+            (Key::ArrowRight, Some(control)) => on.nudge(control, &mut settings, 1.0),
             _ => {}
         }
     }
