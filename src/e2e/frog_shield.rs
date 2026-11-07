@@ -85,12 +85,11 @@ fn a_bubble_with_unavailable_bounds_uses_a_visible_selection_volume_fallback() {
             before + 1,
             "missing imported bounds must not silently prevent the effect from starting"
         );
-        let unit = client.view().unit(frog).expect("recipient");
-        let (radius, height) = crate::units::unit_size(unit.kind, unit.bound.to_f32());
-        let expected = Vec3::new(radius, radius, height * 0.5).length();
+        // Froglet's fallback box is 48 x 48 x 90 units: its half-diagonal is sqrt(3177).
+        const EXPECTED: f32 = 56.364_883;
         assert!(
-            (bubble_radius(client) - expected).abs() < 0.001,
-            "missing metadata uses the selection box's half-diagonal {expected}"
+            (bubble_radius(client) - EXPECTED).abs() < 0.001,
+            "missing metadata uses the Froglet selection box's half-diagonal {EXPECTED}"
         );
         assert_eq!(visible_bubbles(client).len(), 2);
     });
