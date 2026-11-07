@@ -70,7 +70,7 @@ tests = [{ package = "dbota_import" }]
 name = "web"
 about = "the browser build's output (Python unittest)"
 paths = ["web/**"]
-tests = [{ unittest = "web/test", modules = ["test_build_output"] }]
+tests = [{ unittest = "web/test", modules = ["test_build_output", "test_optimize"] }]
 
 [[group]]
 name = "tooling"
@@ -117,6 +117,11 @@ paths = [
     "src/e2e/start.rs",
     "src/e2e/window.rs",
     "src/e2e/refusals.rs",
+    "src/e2e/play.rs",
+    "src/e2e/home_hero.rs",
+    "src/e2e/menu_pages.rs",
+    "src/e2e/settings.rs",
+    "src/settings/**",
     "tests/connect.rs",
     "tests/menu_quit.rs",
     "tests/ping.rs",
@@ -144,6 +149,10 @@ tests = [
         "e2e::start::",
         "e2e::window::",
         "e2e::refusals::",
+        "e2e::play::",
+        "e2e::home_hero::",
+        "e2e::menu_pages::",
+        "settings::",
     ] },
     { package = "dbota", target = "test:connect" },
     { package = "dbota", target = "test:menu_quit" },
@@ -285,6 +294,9 @@ paths = [
     "src/e2e/tower_fall.rs",
     "src/e2e/tower_cadence.rs",
     "src/e2e/building_fall.rs",
+    "src/e2e/frog_shield.rs",
+    "src/e2e/sf_orbits.rs",
+    "src/e2e/sf_threads.rs",
     "tests/blink.rs",
     "tests/blood_grenade.rs",
 ]
@@ -299,6 +311,9 @@ tests = [
         "e2e::tower_fall::",
         "e2e::tower_cadence::",
         "e2e::building_fall::",
+        "e2e::frog_shield::",
+        "e2e::sf_orbits::",
+        "e2e::sf_threads::",
     ] },
     { package = "dbota", target = "test:blink" },
     { package = "dbota", target = "test:blood_grenade" },
@@ -338,6 +353,9 @@ paths = [
     "src/e2e/buffs.rs",
     "src/e2e/sentry_ward.rs",
     "src/e2e/wisdom_contest.rs",
+    "src/e2e/backpack_rules.rs",
+    "src/e2e/dead_purchases.rs",
+    "src/e2e/enemy_base_shop.rs",
     "tests/item_sell.rs",
     "tests/ground_items.rs",
     "tests/wards.rs",
@@ -366,6 +384,9 @@ tests = [
         "e2e::buffs::",
         "e2e::sentry_ward::",
         "e2e::wisdom_contest::",
+        "e2e::backpack_rules::",
+        "e2e::dead_purchases::",
+        "e2e::enemy_base_shop::",
     ] },
     { package = "dbota", target = "test:item_sell" },
     { package = "dbota", target = "test:ground_items" },
@@ -414,6 +435,10 @@ paths = [
     "src/e2e/kill_credit.rs",
     "src/e2e/trees.rs",
     "src/e2e/turning.rs",
+    "src/e2e/turning/**",
+    "src/e2e/mega_creeps.rs",
+    "src/e2e/twin_gates.rs",
+    "src/e2e/visual_clarity_state.rs",
     "src/e2e/runes.rs",
     "src/e2e/rune_lifecycle.rs",
     "src/e2e/flagbearer.rs",
@@ -429,6 +454,7 @@ paths = [
 tests = [
     { package = "dbota", target = "bin:dbota", filters = [
         "anim::tests::",
+        "anim::turn_tests::",
         "shadow_casters::tests::",
         "layers::tests::",
         "e2e::memory::",
@@ -459,6 +485,9 @@ tests = [
         "e2e::watcher_path::",
         "e2e::watchers::",
         "e2e::building_clicks::",
+        "e2e::mega_creeps::",
+        "e2e::twin_gates::",
+        "e2e::visual_clarity_state::",
     ] },
     { package = "dbota", target = "test:attack_feel" },
 ]
