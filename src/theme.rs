@@ -392,7 +392,19 @@ pub const PODIUM_RANK: Type = Type {
     ..NUMBER
 };
 
-/// Catalogue light fields: geometry-only UI gradients, never substitute art assets.
+/// Geometry-only menu fields and shadows, never substitute art assets.
+pub fn hero_contact_shadow() -> BackgroundGradient {
+    BackgroundGradient::from(RadialGradient::new(
+        UiPosition::CENTER,
+        RadialGradientShape::Ellipse(percent(50), percent(50)),
+        vec![
+            ColorStop::new(Color::BLACK.with_alpha(dim(0.45)), percent(0)),
+            ColorStop::new(Color::BLACK.with_alpha(dim(0.25)), percent(45)),
+            ColorStop::new(Color::NONE, percent(100)),
+        ],
+    ))
+}
+
 pub fn catalogue_ground() -> BackgroundGradient {
     downward((hex(0x14222A), hex(0x0B1217)))
 }

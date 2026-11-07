@@ -193,6 +193,7 @@ pub struct Actor {
     size: f32,
     /// Whether its idle clip is playing (or posed, for a still).
     pub(crate) posed: bool,
+    pub(crate) idle: Option<(Entity, AnimationNodeIndex, f32)>,
     /// Whether it is drawn as a still, and the image the still goes to.
     still: Option<Handle<Image>>,
     /// Renders of a still left once the pipelines are ready.
@@ -421,7 +422,14 @@ fn stage(
             && let Some(scenes) = &bank.0[model].scenes
         {
             let still = (!animate).then(|| target_image(&mut images));
-            stage.actor = Some(spawn_actor(&mut commands, scenes, model, size, still, LAYER));
+            stage.actor = Some(spawn_actor(
+                &mut commands,
+                scenes,
+                model,
+                size,
+                still,
+                LAYER,
+            ));
         }
     }
     let backdrop = stage
@@ -457,7 +465,10 @@ pub(crate) fn spawn_actor(
             WorldAssetRoot(scenes.body.clone()),
             scale,
             ChildOf(pivot),
-            ActorPart { ready: false, layer },
+            ActorPart {
+                ready: false,
+                layer,
+            },
         ))
         .observe(on_part_ready)
         .id();
@@ -467,7 +478,10 @@ pub(crate) fn spawn_actor(
                 WorldAssetRoot(wearable.clone()),
                 scale,
                 ChildOf(pivot),
-                ActorPart { ready: false, layer },
+                ActorPart {
+                    ready: false,
+                    layer,
+                },
                 Wearable::on(body),
             ))
             .observe(on_part_ready);
@@ -477,6 +491,7 @@ pub(crate) fn spawn_actor(
         pivot,
         size,
         posed: false,
+        idle: None,
         still,
         settle: SETTLE,
         face: None,
@@ -492,7 +507,9 @@ fn on_part_ready(
     mut wearables: Query<&mut Wearable>,
 ) {
     let root = ready.entity;
-    let Ok(mut part) = parts.get_mut(root) else { return; };
+    let Ok(mut part) = parts.get_mut(root) else {
+        return;
+    };
     let layer = part.layer;
     part.ready = true;
     for part in children.iter_descendants(root) {
@@ -515,6 +532,7 @@ fn on_part_ready(
 fn pose(
     mut stage: ResMut<Stage>,
     bank: Res<ModelBank>,
+    manifest: Res<Manifest>,
     args: Res<crate::Args>,
     mut faces: ResMut<Faces>,
     time: Res<Time<bevy::time::Real>>,
@@ -528,14 +546,27 @@ fn pose(
     let Some(actor) = stage.actor.as_mut().filter(|a| !a.posed) else {
         return;
     };
-    pose_actor(actor, &bank, &args, &mut faces, &time, &children, &parts, &wearing,
-        &meshes, &mut players, &mut commands);
+    pose_actor(
+        actor,
+        &bank,
+        &manifest,
+        &args,
+        &mut faces,
+        &time,
+        &children,
+        &parts,
+        &wearing,
+        &meshes,
+        &mut players,
+        &mut commands,
+    );
 }
 
 /// The game's model and wearable binding, shared by portrait and menu stages.
 pub(crate) fn pose_actor(
     actor: &mut Actor,
     bank: &ModelBank,
+    manifest: &Manifest,
     args: &crate::Args,
     faces: &mut Faces,
     time: &Time<bevy::time::Real>,
@@ -561,7 +592,8 @@ pub(crate) fn pose_actor(
         .iter_descendants(actor.pivot)
         .find(|e| players.contains(*e));
     let idle = entry.clips.iter().find(|(name, ..)| name == "idle");
-    if let (Some(player), Some(graph), Some((_, node, ..))) = (player, &entry.graph, idle) {
+    if let (Some(player), Some(graph), Some((_, node, duration, ..))) = (player, &entry.graph, idle)
+    {
         commands
             .entity(player)
             .insert(AnimationGraphHandle(graph.clone()));
@@ -571,9 +603,10 @@ pub(crate) fn pose_actor(
                 active.pause();
             }
         }
+        actor.idle = Some((player, *node, *duration));
     }
     if actor.still.is_none() {
-        let expression = faces.expression(&entry.model.logical);
+        let expression = faces.expression(&entry.model.logical, manifest);
         actor.face = Face::of(
             actor.pivot,
             expression,
@@ -784,16 +817,16 @@ fn on_stage(
     let Some(actor) = stage.actor.as_ref().filter(|a| a.posed && stage.render) else {
         return;
     };
-    show_actor(actor.pivot, *light, &tree, &mut seen);
+    show_actor(actor.pivot, [*light], &tree, &mut seen);
 }
 
 pub(crate) fn show_actor(
     pivot: Entity,
-    light: Entity,
+    lights: impl IntoIterator<Item = Entity>,
     tree: &Query<&Children>,
     seen: &mut Query<(&InheritedVisibility, &mut ViewVisibility)>,
 ) {
-    let parts = tree.iter_descendants(pivot).chain([light]);
+    let parts = tree.iter_descendants(pivot).chain(lights);
     for e in parts {
         if let Ok((inherited, mut view)) = seen.get_mut(e)
             && inherited.get()
@@ -813,13 +846,23 @@ fn activate(
     mut camera: Single<(&mut Camera, &mut VisibleEntities), With<PortraitCamera>>,
 ) {
     let (camera, seen) = &mut *camera;
-    camera_actor(stage.actor.as_ref().filter(|_| stage.render).map(|a| a.pivot), *light,
-        &tree, &classes, camera, seen);
+    camera_actor(
+        stage
+            .actor
+            .as_ref()
+            .filter(|_| stage.render)
+            .map(|a| a.pivot),
+        [*light],
+        &tree,
+        &classes,
+        camera,
+        seen,
+    );
 }
 
 pub(crate) fn camera_actor(
     pivot: Option<Entity>,
-    light: Entity,
+    lights: impl IntoIterator<Item = Entity>,
     tree: &Query<&Children>,
     classes: &Query<(&VisibilityClass, &InheritedVisibility)>,
     camera: &mut Camera,
@@ -832,7 +875,7 @@ pub(crate) fn camera_actor(
         return;
     };
     seen.clear_all();
-    for e in tree.iter_descendants(pivot).chain([light]) {
+    for e in tree.iter_descendants(pivot).chain(lights) {
         if let Ok((class, inherited)) = classes.get(e)
             && inherited.get()
         {

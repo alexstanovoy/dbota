@@ -408,8 +408,9 @@ impl Archive {
 }
 
 impl super::core::MenuCore {
-    /// The last hero explicitly played from this machine, from its local recording only.
-    /// Unattributed imports and sandbox sessions never supply a fallback.
+    /// The newest readable local match with an explicitly owned hero. Spectated and
+    /// unattributed entries are skipped; unreadable recordings never enter the archive.
+    /// Sandbox sessions never supply a fallback.
     pub fn last_played_hero(&self) -> Option<bota_proto::HeroId> {
         self.local_history
             .entries

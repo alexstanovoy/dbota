@@ -22,15 +22,32 @@ use crate::manifest::Manifest;
 pub struct Faces {
     phonemes: Phonemes,
     /// Idle expressions by the logical name of their model.
-    expressions: HashMap<String, Arc<Expression>>,
+    expressions: HashMap<String, Option<Arc<Expression>>>,
     /// Rigs by glTF mesh name (none: the mesh's extras do not read).
     rigs: HashMap<String, Option<Arc<Rig>>>,
 }
 
 impl Faces {
     /// The idle expression a model's portrait plays, if it has one.
-    pub fn expression(&self, model: &str) -> Option<Arc<Expression>> {
-        self.expressions.get(model).cloned()
+    pub fn expression(&mut self, model: &str, manifest: &Manifest) -> Option<Arc<Expression>> {
+        self.expressions
+            .entry(model.to_owned())
+            .or_insert_with(|| {
+                let (_, rel) = manifest
+                    .expressions
+                    .iter()
+                    .find(|(name, _)| name == model)?;
+                let expression = crate::cachefs::read_small(&manifest.root, rel)
+                    .and_then(|bytes| String::from_utf8(bytes).ok())
+                    .as_deref()
+                    .and_then(Expression::parse)
+                    .map(Arc::new);
+                if expression.is_none() {
+                    warn!("{rel}: the expression does not read");
+                }
+                expression
+            })
+            .clone()
     }
 }
 
@@ -116,13 +133,8 @@ fn load(manifest: Res<Manifest>, mut faces: ResMut<Faces>) {
             None => warn!("the phoneme table does not read; faces say nothing"),
         }
     }
-    for (model, rel) in &manifest.expressions {
-        match text(rel).as_deref().and_then(Expression::parse) {
-            Some(scene) => {
-                faces.expressions.insert(model.clone(), Arc::new(scene));
-            }
-            None => warn!("{rel}: the expression does not read"),
-        }
+    for (model, _) in &manifest.expressions {
+        faces.expression(model, &manifest);
     }
 }
 

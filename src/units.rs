@@ -218,10 +218,60 @@ impl BankModel {
 #[derive(Resource, Default)]
 pub struct ModelBank(pub Vec<BankModel>);
 
+/// The vertices needed to frame a model, independent of its GPU mesh's residency.
+pub(crate) struct MeshGeometry {
+    pub positions: Vec<[f32; 3]>,
+    pub skin: Option<(Vec<[u16; 4]>, Vec<[f32; 4]>)>,
+}
+
+/// A bounded CPU copy for stage framing only. The game keeps its meshes on the GPU.
+#[derive(Resource, Default)]
+pub(crate) struct GeometryBank {
+    pub meshes: HashMap<AssetId<Mesh>, Option<MeshGeometry>>,
+    vertices: usize,
+}
+
+impl MeshGeometry {
+    fn read(mesh: &Mesh) -> Option<Self> {
+        use bevy::mesh::VertexAttributeValues;
+        let VertexAttributeValues::Float32x3(positions) =
+            mesh.attribute(Mesh::ATTRIBUTE_POSITION)?
+        else {
+            return None;
+        };
+        let skin = match (
+            mesh.attribute(Mesh::ATTRIBUTE_JOINT_INDEX),
+            mesh.attribute(Mesh::ATTRIBUTE_JOINT_WEIGHT),
+        ) {
+            (None, None) => None,
+            (
+                Some(VertexAttributeValues::Uint16x4(indices)),
+                Some(VertexAttributeValues::Float32x4(weights)),
+            ) if indices.len() == positions.len() && weights.len() == positions.len() => {
+                Some((indices.clone(), weights.clone()))
+            }
+            _ => return None,
+        };
+        Some(Self {
+            positions: positions.clone(),
+            skin,
+        })
+    }
+}
+
 impl ModelBank {
     /// Load one model with the same wearables and graph used in a match.
-    pub(crate) fn request(&mut self, logical: &str, server: &AssetServer, manifest: &Manifest) -> Option<usize> {
-        if let Some(index) = self.0.iter().position(|entry| entry.model.logical == logical) {
+    pub(crate) fn request(
+        &mut self,
+        logical: &str,
+        server: &AssetServer,
+        manifest: &Manifest,
+    ) -> Option<usize> {
+        if let Some(index) = self
+            .0
+            .iter()
+            .position(|entry| entry.model.logical == logical)
+        {
             return Some(index);
         }
         let model = manifest.model(logical)?;
@@ -258,12 +308,14 @@ pub fn plugin(app: &mut App) {
             },
         )
         .init_resource::<ModelBank>()
+        .init_resource::<GeometryBank>()
         .add_systems(Update, load_models.run_if(crate::loading::requested))
         .add_systems(PostUpdate, report.in_set(crate::loading::Report))
         .add_systems(
             Update,
             (
                 build_graphs,
+                cache_geometry,
                 count_replaced_scenes,
                 sync_units.in_set(Placed),
                 collapse,
@@ -319,7 +371,10 @@ pub(crate) fn mark_figures(
 }
 
 /// A hero's own colours read the same on a stage as on the map.
-pub(crate) fn lift_hero_material(handle: &Handle<StandardMaterial>, materials: &mut Assets<StandardMaterial>) {
+pub(crate) fn lift_hero_material(
+    handle: &Handle<StandardMaterial>,
+    materials: &mut Assets<StandardMaterial>,
+) {
     if let Some(mut material) = materials.get_mut(handle)
         && material.emissive_texture.is_none()
     {
@@ -388,15 +443,22 @@ const TREE_MODELS: &str = "tree.";
 /// A model of the manifest, its files asked of the asset server: each
 /// file once, as a whole.
 fn bank_entry(server: &AssetServer, manifest: &Manifest, model: &Model) -> BankModel {
+    let load = |path: String| {
+        if model.logical.starts_with("hero.") {
+            crate::manifest::load_hero_model(server, path)
+        } else {
+            load_unit_model(server, path)
+        }
+    };
     let wearing = manifest
         .models
         .iter()
         .filter(|w| w.attach.as_deref() == Some(model.logical.as_str()))
-        .map(|w| load_unit_model(server, w.path.clone()))
+        .map(|w| load(w.path.clone()))
         .collect();
     BankModel {
         model: model.clone(),
-        gltf: load_unit_model(server, model.path.clone()),
+        gltf: load(model.path.clone()),
         wearing,
         scenes: None,
         clips: Vec::new(),
@@ -405,6 +467,59 @@ fn bank_entry(server: &AssetServer, manifest: &Manifest, model: &Model) -> BankM
         variants: Vec::new(),
         elevation: 0.0,
         render_radius: None,
+    }
+}
+
+fn cache_geometry(
+    mut events: MessageReader<AssetEvent<Gltf>>,
+    bank: Res<ModelBank>,
+    files: Res<Assets<Gltf>>,
+    parts: Res<Assets<bevy::gltf::GltfMesh>>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut geometry: ResMut<GeometryBank>,
+) {
+    for event in events.read() {
+        let (AssetEvent::Added { id } | AssetEvent::LoadedWithDependencies { id }) = event else {
+            continue;
+        };
+        if !bank
+            .0
+            .iter()
+            .filter(|entry| entry.model.logical.starts_with("hero."))
+            .any(|entry| {
+                entry.gltf.id() == *id || entry.wearing.iter().any(|file| file.id() == *id)
+            })
+        {
+            continue;
+        }
+        let Some(file) = files.get(*id) else {
+            continue;
+        };
+        for handle in &file.meshes {
+            let Some(part) = parts.get(handle) else {
+                continue;
+            };
+            for primitive in &part.primitives {
+                let id = primitive.mesh.id();
+                if geometry.meshes.contains_key(&id) {
+                    continue;
+                }
+                let Some(mut mesh) = meshes.get_mut(id) else {
+                    continue;
+                };
+                let count = mesh.count_vertices();
+                let data = geometry
+                    .vertices
+                    .checked_add(count)
+                    .filter(|total| *total <= 1 << 20)
+                    .and_then(|_| MeshGeometry::read(&mesh));
+                if data.is_some() {
+                    geometry.vertices += count;
+                }
+                geometry.meshes.insert(id, data);
+                mesh.asset_usage = bevy::asset::RenderAssetUsages::RENDER_WORLD;
+            }
+        }
     }
 }
 

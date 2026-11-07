@@ -2845,6 +2845,13 @@ pub(crate) fn library_titles_ready(core: &MenuCore) -> bool {
         })
 }
 
+pub(crate) fn local_library_scan_complete(core: &MenuCore) -> bool {
+    core.library.standing() == crate::replays::Standing::Ready
+        && core
+            .local_meta
+            .initial_scan_complete(core.library.records())
+}
+
 /// Text owned by the menu page, excluding the game HUD that may remain behind an opaque menu.
 pub(crate) fn page_words(world: &mut bevy::prelude::World) -> Vec<String> {
     use bevy::prelude::*;

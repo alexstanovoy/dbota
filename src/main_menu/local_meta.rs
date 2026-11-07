@@ -14,6 +14,8 @@ struct Seen {
     attempts: u8,
     retry: Instant,
     ready: bool,
+    #[cfg(test)]
+    answered: bool,
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -38,6 +40,15 @@ pub struct Reader {
 }
 
 impl Reader {
+    #[cfg(all(test, not(target_arch = "wasm32")))]
+    pub fn initial_scan_complete(&self, records: &[crate::replays::Record]) -> bool {
+        records.iter().all(|record| {
+            self.seen
+                .get(&record.name)
+                .is_some_and(|seen| seen.answered)
+        })
+    }
+
     pub fn retain(&mut self, records: &[crate::replays::Record]) {
         #[cfg(not(target_arch = "wasm32"))]
         {
@@ -86,11 +97,17 @@ impl Reader {
                 attempts: 0,
                 retry: now,
                 ready: false,
+                #[cfg(test)]
+                answered: false,
             });
             if seen.bytes != record.bytes {
                 seen.bytes = record.bytes;
                 seen.attempts = 0;
                 seen.ready = false;
+                #[cfg(test)]
+                {
+                    seen.answered = false;
+                }
             }
             seen.attempts += 1;
             seen.retry = now + Duration::from_millis(500);
@@ -202,6 +219,10 @@ impl Reader {
                 else {
                     continue;
                 };
+                #[cfg(test)]
+                {
+                    seen.answered = true;
+                }
                 if let Some(answer) = answer {
                     seen.ready = answer
                         .summary

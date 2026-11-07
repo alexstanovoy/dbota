@@ -409,13 +409,34 @@ pub fn load_unit_model(
     server: &AssetServer,
     path: impl Into<bevy::asset::AssetPath<'static>>,
 ) -> Handle<bevy::gltf::Gltf> {
+    unit_model(server, path, false)
+}
+
+/// Hero vertices are kept until the model bank copies its small framing data; the meshes then
+/// return to GPU-only residency, with the game's usual culling policy.
+pub fn load_hero_model(
+    server: &AssetServer,
+    path: impl Into<bevy::asset::AssetPath<'static>>,
+) -> Handle<bevy::gltf::Gltf> {
+    unit_model(server, path, true)
+}
+
+fn unit_model(
+    server: &AssetServer,
+    path: impl Into<bevy::asset::AssetPath<'static>>,
+    geometry: bool,
+) -> Handle<bevy::gltf::Gltf> {
     let path = path.into();
     assert!(path.label().is_none(), "{path}: a labelled part");
     server
         .load_builder()
-        .with_settings(|settings: &mut bevy::gltf::GltfLoaderSettings| {
+        .with_settings(move |settings: &mut bevy::gltf::GltfLoaderSettings| {
             gpu_textures(settings);
-            settings.load_meshes = bevy::asset::RenderAssetUsages::RENDER_WORLD;
+            if geometry {
+                settings.load_meshes = bevy::asset::RenderAssetUsages::default();
+            } else {
+                settings.load_meshes = bevy::asset::RenderAssetUsages::RENDER_WORLD;
+            }
         })
         .load(path)
 }
