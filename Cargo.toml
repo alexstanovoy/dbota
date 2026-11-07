@@ -1,10 +1,23 @@
 [workspace]
-members = [".", "crates/dbota_import"]
-# `cargo test`, `cargo clippy` and `cargo build` at the root cover the importer too.
-default-members = [".", "crates/dbota_import"]
+members = [".", "crates/dbota_import", "crates/dbota_import_web", "crates/dbota_particles"]
+# Root builds and checks cover every client crate except the browser-only importer module.
+default-members = [".", "crates/dbota_import", "crates/dbota_particles"]
 
 [workspace.dependencies]
 image = { version = "0.25.10", default-features = false, features = ["png", "jpeg"] }
+skrifa = { version = "=0.42.1", default-features = false, features = ["std"] }
+bytemuck = { version = "1.24", default-features = false, features = ["derive"] }
+heatel = { path = "../heatel", default-features = false, features = ["serde"] }
+serde_json = { version = "1", default-features = false, features = ["std"] }
+bevy = { version = "=0.20.0", default-features = false }
+bevy_image = { version = "=0.20.0", default-features = false }
+dbota_particles = { path = "crates/dbota_particles", default-features = false }
+dbota_import = { path = "crates/dbota_import", default-features = false }
+js-sys = { version = "0.3", default-features = false, features = ["std", "unsafe-eval"] }
+wasm-bindgen = { version = "0.2", default-features = false, features = ["std"] }
+web-sys = { version = "0.3", default-features = false, features = ["std"] }
+fontique = { version = "=0.11.0", default-features = false }
+
 
 [package]
 name = "dbota"
@@ -17,7 +30,7 @@ publish = false
 # Bevy's parts dbota draws and plays with, nothing more: no gamepads, no
 # system-info polling, no mesh or sprite picking, no post
 # processing besides anti-aliasing, no built-in font.
-bevy = { version = "=0.19.1", default-features = false, features = [
+bevy = { workspace = true, features = [
     # The app, its window and its threads.
     "std",
     "async_executor",
@@ -55,6 +68,7 @@ bevy = { version = "=0.19.1", default-features = false, features = [
     "bevy_ui",
     "bevy_input_focus",
     "bevy_ui_render",
+    "bevy_ui_widgets",
     "bevy_text",
     "bevy_picking",
     "ui_picking",
@@ -69,17 +83,17 @@ bota_proto = { path = "../bota/crates/bota_proto" }
 bota_replay = { path = "../bota/crates/bota_replay" }
 # The asset importer: `dbota import` on the desktop, and on every target the asset fingerprint a
 # cache must carry (the browser runs the importer as a module of its own, web/import_worker.js).
-dbota_import = { path = "crates/dbota_import" }
+dbota_import.workspace = true
 # The sound device, opened by `audio_output`, and the decoders of the cache's WAV and MP3 files
 # (`sound_file`); the version Bevy's audio already builds.
 rodio = { version = "=0.22.2", default-features = false, features = ["playback", "hound", "mp3"] }
 # A cache WAV file's header, read before rodio is handed the file; the version rodio reads with.
 hound = "=3.5.1"
-# Fallback fonts for the scripts the interface font lacks (bevy_text's font engine).
-parley = { version = "=0.9.0", default-features = false, features = ["std"] }
+# Fallback fonts for the scripts the interface font lacks (bevy_text's font collection).
+fontique = { workspace = true, features = ["std"] }
 clap = { version = "4", features = ["derive", "env"] }
 serde = { version = "1", default-features = false, features = ["derive", "std"] }
-serde_json = "1"
+serde_json.workspace = true
 # Content-addressed local metadata; already used by the asset pipeline.
 blake3 = { version = "1", default-features = false, features = ["std"] }
 # Civil dates for local replay history; desktop timezone lookup and browser-local rendering.
@@ -88,9 +102,9 @@ jiff = "0.2"
 half = { version = "2.7.1", default-features = false }
 # Decoding the cache's block-compressed textures for a GPU that samples none, and its particle
 # effects (heatel's definitions, read back from JSON).
-heatel = { path = "../heatel", features = ["serde"] }
-# The particle cards' instance data, written to the GPU as bytes.
-bytemuck = { version = "1.24", default-features = false, features = ["derive"] }
+heatel.workspace = true
+# Particle simulation and rendering compile independently of the client's game systems.
+dbota_particles.workspace = true
 
 # wss:// and the matchmaking menu (radovid and the way into a game it hands out) on the desktop: threads and
 # sockets; a browser build has the browser's own WebSocket.
@@ -98,8 +112,8 @@ bytemuck = { version = "1.24", default-features = false, features = ["derive"] }
 bota_client_core = { path = "../bota/crates/bota_client_core", features = ["ui", "websocket"] }
 # The system's fonts stand behind the shipped ones for scripts they lack; fontconfig is opened at
 # run time, so building needs no development package and a machine without it just has no system fonts.
-bevy = { version = "=0.19.1", default-features = false, features = ["system_font_discovery"] }
-fontique = { version = "=0.9.0", default-features = false, features = ["fontconfig-dlopen"] }
+bevy = { workspace = true, features = ["system_font_discovery"] }
+fontique = { workspace = true, features = ["fontconfig-dlopen"] }
 bota_radovid = { path = "../bota/crates/bota_radovid", features = ["native"] }
 # A seat claimed in a direct or local game is claimed with a key of the system's randomness.
 getrandom = "0.4"
@@ -109,10 +123,10 @@ getrandom = "0.4"
 # The cache fetched next to the page (whole files moved, not copied, into the
 # client), and the small files it reads at once (the map's trees and buildings).
 base64 = { version = "0.23", default-features = false, features = ["alloc"] }
-js-sys = "0.3"
-wasm-bindgen = "0.2"
+js-sys.workspace = true
+wasm-bindgen.workspace = true
 wasm-bindgen-futures = "0.4"
-web-sys = { version = "0.3", features = ["Document", "Element", "Location", "Response", "Storage", "Window", "XmlHttpRequest"] }
+web-sys = { workspace = true, features = ["Document", "Element", "Location", "Response", "Storage", "Window", "XmlHttpRequest"] }
 bota_radovid = { path = "../bota/crates/bota_radovid", default-features = false, features = ["web"] }
 # The Web Audio output of the sound device (see `audio_output`).
 rodio = { version = "=0.22.2", default-features = false, features = ["playback", "hound", "mp3", "wasm-bindgen"] }
@@ -126,9 +140,12 @@ tokio = { version = "1", features = ["rt-multi-thread"] }
 # draws with) to tell the install's face from the shipped one.
 skrifa = { version = "=0.42.1", default-features = false, features = ["std"] }
 
+[dev-dependencies]
+# Game E2E contracts inspect the particles drawn by the separately compiled renderer.
+dbota_particles = { workspace = true, features = ["test-support"] }
+
 [features]
-# A browser build that plays the replay named by DBOTA_WEB_REPLAY at build
-# time (see web/README.md).
+# A browser build embeds DBOTA_WEB_REPLAY and takes DBOTA_WEB_ARGS at build time.
 web-replay = []
 # The graphics API of a browser build, exactly one of the two (no effect on the desktop). Bevy
 # fixes its render paths when it is compiled (storage buffers, compute, limits, shader defs), not
@@ -144,7 +161,14 @@ opt-level = 3
 # Dependency debuginfo is ~5 GB of target/ for bevy and rarely used; the crate keeps its own.
 debug = false
 
-# `release` stays Cargo's default, for a short rebuild in checks and play. `--profile dist` is what
+# Opt into app-only incremental rebuilding; plain release keeps Cargo's defaults.
+[profile.dev_release]
+inherits = "release"
+
+[profile.dev_release.package.dbota]
+incremental = true
+
+# `--profile dist` is what
 # ships and what the size reports measure: thin link-time optimisation in one codegen unit, symbols
 # stripped. 70.6 MiB against release's 160 (93 stripped); a full build takes ~6 min, a rebuild after
 # one changed file ~3.6 (fat LTO: 64.5 MiB for ~13 and ~8.6 min; nearly all of it LLVM optimising
@@ -152,6 +176,7 @@ debug = false
 # dbota's own types).
 [profile.dist]
 inherits = "release"
+incremental = false
 lto = "thin"
 codegen-units = 1
 strip = true
@@ -168,19 +193,17 @@ debug = "line-tables-only"
 inherits = "dist"
 opt-level = "s"
 
-# What the tests are built with: release's optimisation (a debug build is too slow to test with) and the checks a debug build
-# has, overflow checks and debug assertions, in this repository's crates. The dependencies stay as release builds them, so the two
-# profiles share their artifacts. The product (`cargo build --release`, `--profile dist`) has no checks.
+# Tests keep overflow checks and debug assertions in this repository's crates. Optimization level
+# one and many codegen units keep their rebuilds quick. The product profiles use full optimization.
 [profile.test-release]
 inherits = "release"
 debug-assertions = true
 overflow-checks = true
-# The client's own code is a big crate: the tests need it quick to rebuild, not fast to run (the dependencies, the heavy part to
-# run, stay as release builds them).
 opt-level = 1
 codegen-units = 256
 incremental = true
 
 [profile.test-release.package."*"]
+# Dependencies use the same test optimization settings, without application assertions.
 debug-assertions = false
 overflow-checks = false

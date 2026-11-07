@@ -17,6 +17,7 @@ if [ "$profile" = web ] || [ -n "${WASM_OPT:-}" ]; then
     python3 web/optimize.py
 fi
 out=$(python3 web/output.py prepare "${OUT:-web/out}")
+target=${CARGO_TARGET_DIR:-$here/target}
 features=()
 [ -n "${DBOTA_WEB_REPLAY:-}" ] && features=(--features web-replay)
 export DBOTA_WEB_ARGS=${DBOTA_WEB_ARGS:---replay built-in --follow 0}
@@ -36,14 +37,15 @@ optimize() {
 # One client per graphics API (Bevy fixes its render paths when it is compiled); the page loads the
 # one the browser can draw with: dbota.js (WebGPU) or dbota_webgl2.js.
 for api in ${APIS:-webgpu webgl2}; do
-    cargo build --profile "$profile" --target wasm32-unknown-unknown --features "$api" "${features[@]}" -p dbota
+    cargo build --locked --profile "$profile" --target-dir "$target" --target wasm32-unknown-unknown --features "$api" "${features[@]}" -p dbota
     name=dbota; [ "$api" = webgpu ] || name=dbota_$api
     wasm-bindgen --target web --no-typescript --out-dir "$out" --out-name "$name" \
-        "target/wasm32-unknown-unknown/$profile/dbota.wasm"
+        "$target/wasm32-unknown-unknown/$profile/dbota.wasm"
     optimize "$out/${name}_bg.wasm"
 done
-cargo build --profile "$profile" --target wasm32-unknown-unknown -p dbota_import --features web
-wasm-bindgen --target web --no-typescript --out-dir "$out/import" "target/wasm32-unknown-unknown/$profile/dbota_import.wasm"
+cargo build --locked --profile "$profile" --target-dir "$target" --target wasm32-unknown-unknown -p dbota_import_web
+wasm-bindgen --target web --no-typescript --out-dir "$out/import" --out-name dbota_import \
+    "$target/wasm32-unknown-unknown/$profile/dbota_import_web.wasm"
 optimize "$out/import/dbota_import_bg.wasm"
 cp web/index.html web/page.css web/boot.js web/busy.js web/main.js web/native.js web/grant.js web/keys.js web/pointer.js web/cache.js web/import_worker.js web/replays.js web/report.js web/voice.js web/voice_worker.js "$out/"
 # The icons' licence asks for the credit to travel with them: the page links this file.

@@ -81,11 +81,12 @@ fn the_rock_orbit_sets_its_declared_force_center_from_its_previous_bounds() {
                 .resource::<Library>()
                 .effect("hero.nevermore.trail")
                 .expect("trail");
-            let node = &world
+            let instance = world
                 .resource::<Playing>()
                 .instances_of(effect)
                 .next()
-                .expect("playing")
+                .expect("playing");
+            let node = instance
                 .nodes
                 .iter()
                 .find(|n| n.def == definition)
@@ -104,11 +105,12 @@ fn the_rock_orbit_sets_its_declared_force_center_from_its_previous_bounds() {
                 .resource::<Library>()
                 .effect("hero.nevermore.trail")
                 .expect("trail");
-            let node = world
+            let instance = world
                 .resource::<Playing>()
                 .instances_of(effect)
                 .next()
-                .expect("playing")
+                .expect("playing");
+            let node = instance
                 .nodes
                 .iter()
                 .find(|n| n.def == definition)

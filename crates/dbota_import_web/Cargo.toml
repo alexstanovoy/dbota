@@ -1,0 +1,19 @@
+[package]
+name = "dbota_import_web"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+publish = false
+description = "The asset importer as a browser Web Worker module."
+
+[lib]
+crate-type = ["cdylib"]
+test = false
+doctest = false
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+dbota_import.workspace = true
+heatel.workspace = true
+js-sys.workspace = true
+wasm-bindgen.workspace = true
+web-sys = { workspace = true, features = ["Blob", "File", "FileReaderSync"] }

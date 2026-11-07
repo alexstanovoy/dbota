@@ -42,7 +42,7 @@ pub(super) fn listen(client: &mut Client, part: &'static str) -> Arc<Mutex<Vec<S
     let starts = Arc::new(Mutex::new(Vec::new()));
     let into = starts.clone();
     client.world_mut().add_observer(
-        move |add: On<Add, AudioPlayer>,
+        move |add: On<Add<AudioPlayer>>,
               players: Query<(&AudioPlayer, &PlaybackSettings)>,
               server: Res<AssetServer>,
               time: Res<Time>| {

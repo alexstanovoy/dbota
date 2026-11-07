@@ -3,7 +3,7 @@
 //! layers of dirt and paving stones; baked into one vertex colour under one
 //! grass texture they all but vanish. Each layer is sorted into a family
 //! (ground, dirt or stone); every terrain vertex carries its dirt and stone
-//! weights, the shader (`fog.wgsl`) sharpens them per pixel against the
+//! weights, the shader (`fog.wesl`) sharpens them per pixel against the
 //! layer's texture, as Dota's height blend does, and draws the paths with
 //! their own texture, tinted from a map-wide field of the paths' colours.
 //! The field's alpha is the shade the forest casts on the ground around it.

@@ -45,3 +45,37 @@ fn no_test_looks_the_install_up_under_the_callers_home() {
          use common::game_dir(), which honours DBOTA_DOTA_PATH"
     );
 }
+
+/// Converter tests still find the explicit install when their HOME is private.
+#[test]
+fn the_explicit_install_is_found_on_a_private_home() {
+    if std::env::var_os("DBOTA_REFERENCE_TEST_CHILD").is_some() {
+        let install =
+            std::path::PathBuf::from(std::env::var_os("DBOTA_DOTA_PATH").expect("install"));
+        assert_eq!(common::game_dir(), install.join("game/dota"));
+        return;
+    }
+    let root = std::path::Path::new(env!("CARGO_TARGET_TMPDIR"))
+        .join(format!("explicit-install-{}", std::process::id()));
+    let install = root.join("dota");
+    std::fs::create_dir_all(install.join("game/dota")).expect("install directory");
+    std::fs::write(install.join("game/dota/pak01_dir.vpk"), []).expect("install marker");
+    let output = std::process::Command::new(std::env::current_exe().expect("test binary"))
+        .args([
+            "--exact",
+            "the_explicit_install_is_found_on_a_private_home",
+            "--nocapture",
+        ])
+        .env("DBOTA_REFERENCE_TEST_CHILD", "1")
+        .env("DBOTA_DOTA_PATH", &install)
+        .env("HOME", root.join("private-home"))
+        .output()
+        .expect("child test starts");
+    std::fs::remove_dir_all(&root).expect("remove test directory");
+    assert!(
+        output.status.success(),
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+}

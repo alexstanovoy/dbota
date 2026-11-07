@@ -118,7 +118,7 @@ fn preparation_slot(client: &mut Client, item: ItemId) -> (u8, Vec2) {
         })
         .expect("prepared item");
     let world = client.world_mut();
-    let at = world
+    let entity = world
         .query::<(
             Entity,
             &crate::hud::ItemBox,
@@ -140,8 +140,12 @@ fn preparation_slot(client: &mut Client, item: ItemId) -> (u8, Vec2) {
             }
             false
         })
-        .map(|(_, _, at, _)| at.translation)
+        .map(|(entity, ..)| entity)
         .expect("the preparation slot laid out");
+    client.hover_ui(entity, std::time::Duration::from_secs(20));
+    let at = client
+        .centre_of(entity)
+        .expect("the preparation slot under the pointer");
     (slot, at)
 }
 
@@ -216,7 +220,7 @@ fn live_inventory_right_click_keeps_the_context_menu_instead_of_selling() {
     client.until("slippers bought", |c| c.slot_of(ItemId::SLIPPERS).is_some());
     let slot = client.slot_of(ItemId::SLIPPERS).expect("slippers");
     let entity = client.item_box(slot).expect("slot");
-    client.mouse(client.centre_of(entity).expect("laid out"));
+    client.hover_ui(entity, std::time::Duration::from_secs(20));
     let before = client.core().seq();
     let gold = client.core().spendable_gold();
     client.click(MouseButton::Right);

@@ -3,6 +3,8 @@
 //! tab's sections as cards of rows. The layout is built again when the screen's state changes; the
 //! values in it are kept up to date in place (`looks`), so a slider stays held while it is dragged.
 
+use bevy::picking::hover::{DirectlyHovered, Hovered};
+use bevy::ui_widgets::Button;
 use bevy::{prelude::*, ui::RelativeCursorPosition};
 
 use super::model::{self, Choice, Row, Section, Slider, Tab, TextSetting, Toggle};
@@ -30,10 +32,12 @@ pub struct ScrollRail;
 pub struct ScrollThumb;
 
 #[derive(Component)]
+#[require(bevy::ui_widgets::Button, DirectlyHovered, Hovered)]
 pub struct TabButton(pub Tab);
 
 /// A link of the navigation to the card at this place of the open view.
 #[derive(Component)]
+#[require(bevy::ui_widgets::Button, DirectlyHovered, Hovered)]
 pub struct NavLink(pub usize);
 
 /// A card of the open view, by its place; the navigation scrolls to it.
@@ -41,20 +45,25 @@ pub struct NavLink(pub usize);
 pub struct CardAnchor(pub usize);
 
 #[derive(Component)]
+#[require(bevy::ui_widgets::Button, DirectlyHovered, Hovered)]
 pub struct CloseButton;
 
 /// The search field, its text and its clear button.
 #[derive(Component)]
+#[require(bevy::ui_widgets::Button, DirectlyHovered, Hovered)]
 pub struct SearchField;
 #[derive(Component)]
+#[require(bevy::ui_widgets::Button, DirectlyHovered, Hovered)]
 pub struct SearchClear;
 
 /// The hotkeys' reset button.
 #[derive(Component)]
+#[require(bevy::ui_widgets::Button, DirectlyHovered, Hovered)]
 pub struct ResetButton;
 
 /// A row's reset arrow and the mark of a changed row.
 #[derive(Component)]
+#[require(bevy::ui_widgets::Button, DirectlyHovered, Hovered)]
 pub struct RowReset(pub Row);
 #[derive(Component)]
 pub struct RowBar(pub Row);
@@ -65,6 +74,7 @@ pub struct LabelPart(pub Row, pub bool);
 
 /// A toggle's row, the box that shows it on or off and the tick in it.
 #[derive(Component)]
+#[require(bevy::ui_widgets::Button, DirectlyHovered, Hovered)]
 pub struct ToggleRow(pub Toggle);
 #[derive(Component)]
 pub struct ToggleBox(pub Toggle);
@@ -73,6 +83,7 @@ pub struct ToggleMark(pub Toggle);
 
 /// A slider's track, its filled part, its thumb and its value.
 #[derive(Component)]
+#[require(bevy::ui_widgets::Button, DirectlyHovered, Hovered)]
 pub struct SliderTrack(pub Slider);
 #[derive(Component)]
 pub struct SliderFill(pub Slider);
@@ -83,14 +94,17 @@ pub struct SliderValue(pub Slider);
 
 /// A choice's button, its value, and an option of its open list.
 #[derive(Component)]
+#[require(bevy::ui_widgets::Button, DirectlyHovered, Hovered)]
 pub struct ChoiceButton(pub Choice);
 #[derive(Component)]
 pub struct ChoiceValue(pub Choice);
 #[derive(Component)]
+#[require(bevy::ui_widgets::Button, DirectlyHovered, Hovered)]
 pub struct ChoiceOption(pub Choice, pub usize);
 
 /// A binding's key field or HUD slot, by its place in [`keys::BINDINGS`]; a click captures its key.
 #[derive(Component)]
+#[require(bevy::ui_widgets::Button, DirectlyHovered, Hovered)]
 pub struct KeyField(pub usize);
 /// The field of a row, as against a slot.
 #[derive(Component)]
@@ -105,6 +119,7 @@ pub struct SlotKey(pub usize);
 
 /// A typed line's field, its text, its caret and its counter.
 #[derive(Component)]
+#[require(bevy::ui_widgets::Button, DirectlyHovered, Hovered)]
 pub struct NameField(pub TextSetting);
 #[derive(Component)]
 pub struct NameText(pub TextSetting);
@@ -115,6 +130,7 @@ pub struct NameCount(pub TextSetting);
 
 /// The hotkeys' help circle and the tip it shows under the cursor.
 #[derive(Component)]
+#[require(bevy::ui_widgets::Button, DirectlyHovered, Hovered)]
 pub struct HelpButton;
 #[derive(Component)]
 pub struct HelpTip;
@@ -161,7 +177,8 @@ pub fn spawn_root(mut commands: Commands) {
     commands.spawn((
         Root,
         Blocker,
-        Interaction::default(),
+        Hovered::default(),
+        DirectlyHovered::default(),
         Node {
             justify_content: JustifyContent::Center,
             align_items: AlignItems::Stretch,

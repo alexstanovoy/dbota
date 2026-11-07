@@ -112,14 +112,14 @@ fn shadow_volume((low, high): (Vec3A, Vec3A), light: Vec3, floor: f32) -> Aabb {
 
 #[cfg(test)]
 mod tests {
-    use bevy::math::primitives::ViewFrustum;
+    use bevy::shape::ViewFrustum;
 
     use super::*;
 
     /// A camera 3000 units over the origin looking straight down with the RTS
     /// camera's 25-degree lens: it sees the ground within ~665 units of it.
     fn view() -> Frustum {
-        let projection = Mat4::perspective_rh(25f32.to_radians(), 1.0, 10.0, 10_000.0);
+        let projection = bevy::math::proj::perspective(25f32.to_radians(), 1.0, 10.0, 10_000.0);
         let camera = Transform::from_xyz(0.0, 3000.0, 0.0).looking_at(Vec3::ZERO, Vec3::NEG_Z);
         let clip_from_world = projection * camera.to_matrix().inverse();
         Frustum(ViewFrustum::from_clip_from_world(&clip_from_world))

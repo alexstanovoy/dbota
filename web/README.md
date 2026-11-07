@@ -24,8 +24,8 @@ game servers. Without a copy the page offers two buttons, "Use Dota 2 folder" an
 | `test/smoke.py` | the Playwright smoke tests (below) |
 | `build.sh` | builds `web/out`: both clients, the importer, the page |
 
-The Rust side: `crates/dbota_import` (`import.rs` the importer, `web.rs` the wasm module over picked `File`s,
-`pack.rs` the prepared-cache checks) and in the client `src/webcache.rs`, `src/cachefs.rs` and `src/manifest.rs`.
+The Rust side: `crates/dbota_import` (`import.rs` the importer, `pack.rs` the prepared-cache checks),
+`crates/dbota_import_web` (the wasm module over picked `File`s) and in the client `src/webcache.rs`, `src/cachefs.rs` and `src/manifest.rs`.
 
 ## Graphics
 
@@ -73,6 +73,9 @@ program's memory, so keep it short; `DBOTA_WEB_ARGS` stand in for a command line
 served under `/cache` beside the page. `OUT=dir` builds elsewhere; `APIS=webgpu` builds one client only.
 
 ## Tests
+
+Chromium checks use software Vulkan (SwiftShader) by default. Set `DBOTA_BROWSER_GPU=hardware`
+to request the local GPU; both modes run the same checks.
 
 `web/test/smoke.py` drives headless Chromium and Firefox with Playwright (`pip install --target temp/pwlib playwright &&
 PYTHONPATH=temp/pwlib python3 -m playwright install chromium`); its docstring has the build commands of each check.

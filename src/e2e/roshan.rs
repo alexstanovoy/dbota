@@ -19,7 +19,7 @@ impl BossSounds {
         use bevy::{audio::AudioPlayer, prelude::*};
         let heard = self.clone();
         client.world_mut().add_observer(
-            move |add: On<Add, AudioPlayer>,
+            move |add: On<Add<AudioPlayer>>,
                   mixer: Res<crate::mixer::Mixer>,
                   settings: Query<&bevy::audio::PlaybackSettings>,
                   time: Res<Time>| {

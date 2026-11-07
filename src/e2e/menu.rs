@@ -7,6 +7,7 @@ use std::time::Duration;
 
 use bevy::prelude::*;
 use bevy::text::{ComputedTextBlock, LineBreak};
+use bevy::ui_widgets::Button;
 use bevy::window::{PrimaryWindow, WindowResized};
 
 use crate::main_menu::{Act, MenuButton, MenuCore, Page, PlayAction};
@@ -56,6 +57,40 @@ pub(super) fn local_menu() -> Client {
         buttons(c).iter().any(|b| b.1 > 0.0)
     });
     client
+}
+
+/// Initial font loading may move a row after its first layout; aim at its settled drawn box.
+fn hover_button(client: &mut Client, button: Entity) {
+    client.within(
+        Duration::from_secs(30),
+        "the interface fonts loaded",
+        |client| {
+            let world = client.world();
+            let Some(fonts) = world.get_resource::<crate::ui::Fonts>() else {
+                return false;
+            };
+            let server = world.resource::<AssetServer>();
+            server.is_loaded_with_dependencies(&fonts.bold)
+                && server.is_loaded_with_dependencies(&fonts.regular)
+        },
+    );
+    client.within(
+        Duration::from_secs(30),
+        "the pointer on the intended button",
+        |client| {
+            let Some(at) = client.centre_of(button) else {
+                return false;
+            };
+            client.mouse(at);
+            client
+                .centre_of(button)
+                .is_some_and(|now| now.distance(at) < 0.01)
+                && client
+                    .world()
+                    .get::<bevy::picking::hover::Hovered>(button)
+                    .is_some_and(|hover| hover.get())
+        },
+    );
 }
 
 pub(super) fn act(client: &mut Client, act: Act) {
@@ -322,6 +357,91 @@ pub(super) fn signed_up(service: &crate::main_menu::tests::Service, login: &str)
     client.frames(5);
     let _ = std::fs::remove_file(&pem);
     client
+}
+
+/// The redesigned dashboard names the player in its profile card and keeps account controls in the top bar.
+#[test]
+fn the_dashboard_names_the_player_without_an_account_number() {
+    let service = crate::main_menu::tests::service();
+    let mut client = signed_up(&service, "alice");
+    let name = menu_rectangle(&mut client, "alice", false);
+    let settings = menu_rectangle(&mut client, "settings", true);
+    let log_out = menu_rectangle(&mut client, "log out", true);
+    assert!(
+        name.min.y > settings.max.y,
+        "the player is in the lower profile card"
+    );
+    assert!(
+        log_out.max.x < settings.min.x,
+        "LOG OUT precedes the settings cog on the redesigned bar"
+    );
+    let shown = client.shown_texts();
+    assert!(
+        shown.iter().any(|text| text == "alice"),
+        "the player name alone"
+    );
+    assert!(
+        shown.iter().all(|text| !text
+            .split('#')
+            .skip(1)
+            .any(|part| part.starts_with(|c: char| c.is_ascii_digit()))),
+        "no account number is shown: {shown:?}"
+    );
+}
+
+/// The drawer shows queueable rulesets and an explicit audience switch in place of the old card subtitle.
+#[test]
+fn play_shows_the_queued_rulesets_with_their_audience() {
+    let service = crate::main_menu::tests::service();
+    let mut client = signed_up(&service, "bob");
+    click_menu_button(&mut client, "play");
+    let shown: Vec<String> = {
+        let world = client.world_mut();
+        let drawer = world
+            .query::<(Entity, &Name)>()
+            .iter(world)
+            .find(|(_, name)| name.as_str() == "play drawer")
+            .map(|(entity, _)| entity)
+            .expect("the Play drawer");
+        super::harness::subtree(world, drawer)
+            .into_iter()
+            .filter_map(|entity| world.get::<Text>(entity).map(|text| text.0.clone()))
+            .collect()
+    };
+    assert!(
+        shown.iter().any(|text| text == "1X1 MID ONLY"),
+        "the queue's row: {shown:?}"
+    );
+    assert!(
+        shown
+            .iter()
+            .any(|text| text == "Allow matchmaking with bots"),
+        "the drawn audience control: {shown:?}"
+    );
+    assert!(
+        !matchmaking_switch_is_on(&mut client),
+        "human-only by default"
+    );
+    client.hover_ui_with(Duration::from_secs(30), |client| {
+        let world = client.world_mut();
+        world
+            .query_filtered::<(Entity, &Name), With<Button>>()
+            .iter(world)
+            .find(|(_, name)| name.as_str() == "allow matchmaking with bots")
+            .map(|(entity, _)| entity)
+    });
+    client.click(MouseButton::Left);
+    client.within(
+        Duration::from_secs(30),
+        "the audience switch includes bots",
+        matchmaking_switch_is_on,
+    );
+    for elsewhere in ["BOTS ARENA", "SQUAD", "PRACTICE", "DEMO HERO"] {
+        assert!(
+            !shown.iter().any(|text| text == elsewhere),
+            "{elsewhere} is not a queue row: {shown:?}"
+        );
+    }
 }
 
 /// The actual physical rectangle of a visible menu button or line, after Bevy's text layout.
@@ -618,15 +738,14 @@ fn demo_hero_runs_on_the_service_and_its_cheats_take_effect() {
         Some(bota_proto::HeroId::PUDGE.0)
     );
     // The panel's own button, pressed as a person presses it.
-    let world = client.world_mut();
-    let level_max = world
-        .query_filtered::<(Entity, &Name, &InheritedVisibility), With<Button>>()
-        .iter(world)
-        .find(|(_, name, seen)| seen.get() && name.as_str() == "demo levelmax")
-        .map(|(e, ..)| e)
-        .expect("the demo panel's Level Max button");
-    let at = client.centre_of(level_max).expect("laid out");
-    client.mouse(at);
+    client.hover_ui_with(Duration::from_secs(30), |client| {
+        let world = client.world_mut();
+        world
+            .query_filtered::<(Entity, &Name, &InheritedVisibility), With<Button>>()
+            .iter(world)
+            .find(|(_, name, seen)| seen.get() && name.as_str() == "demo levelmax")
+            .map(|(e, ..)| e)
+    });
     client.click(MouseButton::Left);
     client.until("level 30", |c| c.me().level >= 30);
     let own_gold = |c: &Client| {
@@ -652,6 +771,392 @@ fn demo_hero_runs_on_the_service_and_its_cheats_take_effect() {
     });
     let menu = client.world().non_send::<MenuCore>();
     assert_eq!(menu.page(), Page::DemoHero, "no result page for a Demo");
+}
+
+/// Settings use only left presses, one change per press, even when the pointer leaves while held.
+#[test]
+fn a_settings_toggle_ignores_right_clicks_and_changes_once_per_left_press() {
+    use bevy::input::ButtonState;
+
+    let mut client = Client::run(&["--settings", "options"]);
+    let row = |client: &mut Client| {
+        let world = client.world_mut();
+        world
+            .query::<(&Text, &ChildOf, &InheritedVisibility)>()
+            .iter(world)
+            .find(|(text, _, shown)| text.0 == "Damage numbers" && shown.get())
+            .map(|(_, parent, _)| parent.parent())
+    };
+    client.within(
+        Duration::from_secs(30),
+        "the damage-numbers toggle laid out",
+        |c| {
+            row(c)
+                .and_then(|entity| c.centre_of(entity))
+                .is_some_and(|at| at != Vec2::ZERO)
+        },
+    );
+    let toggle = row(&mut client).expect("the damage-numbers toggle");
+    let enabled = |client: &Client| {
+        client
+            .world()
+            .resource::<crate::config::Settings>()
+            .aids
+            .numbers
+    };
+    let initial = enabled(&client);
+    hover_button(&mut client, toggle);
+    client.click(MouseButton::Right);
+    assert_eq!(
+        enabled(&client),
+        initial,
+        "a right click leaves the setting alone"
+    );
+
+    client.button(MouseButton::Left, ButtonState::Pressed);
+    assert_eq!(
+        enabled(&client),
+        !initial,
+        "the setting changes on the left press"
+    );
+    client.frames(3);
+    assert_eq!(
+        enabled(&client),
+        !initial,
+        "holding does not activate repeatedly"
+    );
+    client.mouse(Vec2::ZERO);
+    assert!(
+        client.world().get::<bevy::ui::Pressed>(toggle).is_some(),
+        "a held press survives leaving its row"
+    );
+    client.button(MouseButton::Left, ButtonState::Released);
+    assert!(
+        client.world().get::<bevy::ui::Pressed>(toggle).is_none(),
+        "release outside clears the press"
+    );
+    assert_eq!(enabled(&client), !initial, "release does not activate");
+
+    hover_button(&mut client, toggle);
+    client.click(MouseButton::Left);
+    assert_eq!(enabled(&client), initial, "a fresh press activates again");
+    client.mouse(Vec2::ZERO);
+    assert!(
+        !client
+            .world()
+            .get::<bevy::picking::hover::Hovered>(toggle)
+            .expect("the toggle tracks hover")
+            .get(),
+        "leaving clears hover"
+    );
+}
+
+/// A modified click opens hotkey capture; only the next input becomes the binding.
+#[test]
+fn clicking_a_hotkey_with_control_does_not_bind_the_opening_click() {
+    use bevy::input::ButtonState;
+
+    let mut client = Client::run(&["--settings", "hotkeys"]);
+    let at = crate::keys::index_of(crate::keys::Action::Stop).expect("the Stop binding");
+    let field = |client: &mut Client| {
+        let world = client.world_mut();
+        world
+            .query_filtered::<(Entity, &Name), With<Button>>()
+            .iter(world)
+            .find(|(_, name)| {
+                name.as_str() == format!("key {}", crate::keys::BINDINGS[at].label.to_lowercase())
+            })
+            .map(|(entity, _)| entity)
+    };
+    client.within(
+        Duration::from_secs(30),
+        "the Stop hotkey laid out",
+        |client| {
+            field(client)
+                .and_then(|entity| client.centre_of(entity))
+                .is_some_and(|at| at != Vec2::ZERO)
+        },
+    );
+    let before = client.world().resource::<crate::config::Settings>().keys[at];
+    let target = field(&mut client).expect("the Stop hotkey");
+    client.key(KeyCode::ControlLeft, ButtonState::Pressed);
+    hover_button(&mut client, target);
+    client.button(MouseButton::Left, ButtonState::Pressed);
+    assert_eq!(
+        client
+            .world()
+            .resource::<crate::settings::Screen>()
+            .capturing,
+        Some(at)
+    );
+    assert_eq!(
+        client.world().resource::<crate::config::Settings>().keys[at],
+        before,
+        "the modified click opens capture without binding itself"
+    );
+    client.button(MouseButton::Left, ButtonState::Released);
+    client.key(KeyCode::KeyK, ButtonState::Pressed);
+    assert_eq!(
+        client.world().resource::<crate::config::Settings>().keys[at],
+        crate::keys::Chord::parse("Ctrl+K")
+    );
+    assert_eq!(
+        client
+            .world()
+            .resource::<crate::settings::Screen>()
+            .capturing,
+        None
+    );
+    client.key(KeyCode::KeyK, ButtonState::Released);
+    client.key(KeyCode::ControlLeft, ButtonState::Released);
+}
+
+/// Named clicks use the pointer observers even when a control is clicked again after its redraw.
+#[test]
+fn a_script_can_press_the_same_named_menu_toggle_twice() {
+    let mut client = Client::run(&[
+        "--script",
+        "click:local lobby;click:enable cheats;click:enable cheats",
+    ]);
+    let initial = client.world().non_send::<MenuCore>().view().host_cheats;
+    let mut previous = initial;
+    let mut changes = 0;
+    client.within(
+        Duration::from_secs(30),
+        "both scripted clicks on Enable cheats",
+        |client| {
+            let now = client.world().non_send::<MenuCore>().view().host_cheats;
+            if now != previous {
+                changes += 1;
+                previous = now;
+            }
+            changes == 2
+        },
+    );
+    assert_eq!(
+        client.world().non_send::<MenuCore>().view().host_cheats,
+        initial,
+        "two named presses toggle the real menu option twice"
+    );
+    client.frames(3);
+    let world = client.world_mut();
+    assert!(
+        world
+            .query_filtered::<&Name, With<bevy::ui::Pressed>>()
+            .iter(world)
+            .all(|name| name.as_str() != "enable cheats"),
+        "the scripted press is released"
+    );
+}
+
+/// A secondary press leaves a button's ordinary hover style when its pointer leaves.
+#[test]
+fn a_right_hold_does_not_keep_a_menu_button_lit_after_the_pointer_leaves() {
+    use bevy::input::ButtonState;
+
+    let mut client = local_menu();
+    act(&mut client, Act::Go(Page::LocalLobby));
+    let world = client.world_mut();
+    let button = world
+        .query_filtered::<(Entity, &Name, &InheritedVisibility), With<Button>>()
+        .iter(world)
+        .find(|(_, name, shown)| name.as_str() == "create" && shown.get())
+        .map(|(entity, ..)| entity)
+        .expect("the Create button");
+    let rest = world
+        .get::<BackgroundGradient>(button)
+        .expect("the button's rest style")
+        .clone();
+    hover_button(&mut client, button);
+    assert_ne!(
+        client
+            .world()
+            .get::<BackgroundGradient>(button)
+            .expect("the hovered style")
+            .clone(),
+        rest
+    );
+    client.button(MouseButton::Right, ButtonState::Pressed);
+    client.mouse(Vec2::ZERO);
+    assert!(
+        client.world().get::<bevy::ui::Pressed>(button).is_some(),
+        "the native widget still records the held secondary press"
+    );
+    assert_eq!(
+        client
+            .world()
+            .get::<BackgroundGradient>(button)
+            .expect("the rest style")
+            .clone(),
+        rest,
+        "a secondary hold does not retain the primary pressed highlight"
+    );
+    client.button(MouseButton::Right, ButtonState::Released);
+}
+
+/// A real press on a pickable label bubbles to its owning button exactly once.
+#[test]
+fn a_primary_press_on_a_pickable_text_child_activates_its_button_once() {
+    use bevy::picking::{events::PointerPress, pointer::PointerButton};
+
+    #[derive(Resource, Default)]
+    struct Trace(Vec<(Entity, Entity, PointerButton)>, usize);
+
+    let mut client = local_menu();
+    act(&mut client, Act::Go(Page::LocalLobby));
+    let world = client.world_mut();
+    let button = world
+        .query_filtered::<(Entity, &Name), With<Button>>()
+        .iter(world)
+        .find(|(_, name)| name.as_str() == "enable cheats")
+        .map(|(entity, _)| entity)
+        .expect("the Enable cheats button");
+    let ancestor = world
+        .get::<ChildOf>(button)
+        .expect("the button container")
+        .parent();
+    world.entity_mut(ancestor).insert(Button);
+    let label = world
+        .get::<Children>(button)
+        .expect("its children")
+        .iter()
+        .find(|entity| {
+            world
+                .get::<Text>(*entity)
+                .is_some_and(|text| text.0 == "Enable cheats")
+        })
+        .expect("the button's text child");
+    world.entity_mut(label).insert((
+        Pickable::default(),
+        bevy::picking::hover::Hovered::default(),
+    ));
+    client.app.init_resource::<Trace>().add_observer(
+        |event: On<PointerPress>, mut trace: ResMut<Trace>| {
+            trace
+                .0
+                .push((event.original_event_target(), event.entity, event.button));
+        },
+    );
+    client.world_mut().entity_mut(button).observe(
+        |_: On<PointerPress>, mut trace: ResMut<Trace>| {
+            trace.1 += 1;
+        },
+    );
+    hover_button(&mut client, label);
+    let initial = client.world().non_send::<MenuCore>().view().host_cheats;
+    client.click(MouseButton::Left);
+    assert_eq!(
+        client.world().non_send::<MenuCore>().view().host_cheats,
+        !initial,
+        "the descendant's primary press changes the real menu option once"
+    );
+    let trace = &client.world().resource::<Trace>().0;
+    assert!(
+        trace
+            .iter()
+            .any(|&(original, target, button)| original == label
+                && target == label
+                && button == PointerButton::Primary),
+        "the actual picking target was the text child: {trace:?}"
+    );
+    assert_eq!(
+        trace
+            .iter()
+            .filter(|&&(original, target, kind)| original == label
+                && target == button
+                && kind == PointerButton::Primary)
+            .count(),
+        1,
+        "the owning button sees the bubbled press once: {trace:?}"
+    );
+    assert_eq!(
+        client.world().resource::<Trace>().1,
+        1,
+        "a separate observer on the owning button receives the child's press"
+    );
+}
+
+/// A press hidden by the dashboard stays muted when it closes, while raw physical state is retained.
+#[test]
+fn a_gameplay_key_held_over_the_dashboard_does_not_leak_a_stop_order() {
+    use super::harness::Server;
+    use bevy::input::ButtonState;
+    use bota_client_core::Intent;
+    use bota_proto::{HeroId, Order, Target};
+
+    let server = Server::start(1, &[]);
+    let mut client = Client::join(&server, HeroId::SHADOW_FIEND, &[]);
+    let sent = client.record_sent_orders();
+    let last = |client: &Client| {
+        client
+            .core()
+            .shown_orders
+            .iter()
+            .rev()
+            .find(|order| Some(order.slot) == client.core().my_slot)
+            .map(|order| order.order)
+    };
+    client.core_mut().act(Intent::Hold);
+    assert_eq!(
+        last(&client),
+        Some(Order::Attack {
+            target: Target::None
+        }),
+        "the setup Hold order sent"
+    );
+    let before = sent.get();
+    assert_eq!(before, 1, "one setup order sent to the live socket");
+    client.key(KeyCode::Escape, ButtonState::Pressed);
+    client.key(KeyCode::Escape, ButtonState::Released);
+    assert!(
+        !client.world().non_send::<MenuCore>().shows_game(),
+        "the dashboard covers the game"
+    );
+    client.key(KeyCode::KeyS, ButtonState::Pressed);
+    client.frames(3);
+    assert!(
+        client
+            .world()
+            .resource::<ButtonInput<KeyCode>>()
+            .pressed(KeyCode::KeyS),
+        "the raw physical key remains held for interface use"
+    );
+    assert_eq!(
+        sent.get(),
+        before,
+        "no Stop order while the dashboard covers the game"
+    );
+    assert!(
+        !client
+            .world()
+            .resource::<crate::keys::Fired>()
+            .pressed(crate::keys::Action::Stop)
+    );
+
+    client.key(KeyCode::Escape, ButtonState::Pressed);
+    client.key(KeyCode::Escape, ButtonState::Released);
+    client.frames(3);
+    assert!(
+        client.world().non_send::<MenuCore>().shows_game(),
+        "the dashboard closed"
+    );
+    assert_eq!(
+        sent.get(),
+        before,
+        "closing does not turn an old held key into a fresh press"
+    );
+    client.key(KeyCode::KeyS, ButtonState::Released);
+    assert_eq!(sent.get(), before, "release alone sends no Stop order");
+    client.key(KeyCode::KeyS, ButtonState::Pressed);
+
+    assert_eq!(sent.get(), before + 1, "one order for the fresh press");
+    assert_eq!(
+        last(&client),
+        Some(Order::Move {
+            target: Target::None
+        })
+    );
+    client.key(KeyCode::KeyS, ButtonState::Released);
 }
 
 #[test]
@@ -1062,4 +1567,93 @@ fn an_unranked_mode_is_drawn_and_its_find_button_joins_that_queue() {
     );
     assert_eq!(snapshot.queued[0].search, snapshot.queued[1].search);
     assert!(snapshot.queued.iter().all(|entry| entry.ruleset == casual));
+}
+
+/// A match-found prompt blocks the whole screen, including outside its card.
+#[test]
+fn the_match_found_scrim_takes_the_pointer_instead_of_underlying_controls() {
+    let mut client = Client::run(&["--menu-preview", "match-found"]);
+    let find = |client: &mut Client| {
+        let world = client.world_mut();
+        world
+            .query_filtered::<(Entity, &GlobalZIndex), With<crate::hud::Blocker>>()
+            .iter(world)
+            .find(|(_, layer)| layer.0 == 80)
+            .map(|(entity, _)| entity)
+    };
+    client.within(
+        Duration::from_secs(20),
+        "the match-found scrim laid out",
+        |client| {
+            find(client)
+                .and_then(|entity| client.centre_of(entity))
+                .is_some_and(|at| at != Vec2::ZERO)
+        },
+    );
+    let shade = find(&mut client).expect("the match-found scrim");
+    client.mouse(Vec2::new(25.0, 25.0));
+    assert!(
+        client
+            .world()
+            .get::<bevy::picking::hover::DirectlyHovered>(shade)
+            .is_some_and(|hover| hover.get()),
+        "the scrim takes the pointer outside its card"
+    );
+    assert!(
+        client.world().resource::<crate::input::OverHud>().0,
+        "the scrim prevents world input"
+    );
+    let world = client.world_mut();
+    assert!(
+        world
+            .query_filtered::<&bevy::picking::hover::Hovered, With<Button>>()
+            .iter(world)
+            .all(|hover| !hover.get()),
+        "underlying controls receive no hover"
+    );
+}
+
+/// Menu panels keep clicks in their empty edges out of the world underneath.
+#[test]
+fn menu_panels_take_the_pointer_at_their_empty_edges() {
+    for (preview, name) in [
+        ("play", "play backdrop"),
+        ("play", "play drawer"),
+        ("searching", "search overlay"),
+    ] {
+        let mut client = Client::run(&["--menu-preview", preview]);
+        let mut target = None;
+        client.within(
+            Duration::from_secs(20),
+            "the menu panel laid out",
+            |client| {
+                let world = client.world_mut();
+                target = world
+                    .query::<(Entity, &Name, &ComputedNode)>()
+                    .iter(world)
+                    .find(|(_, label, node)| {
+                        label.as_str() == name && node.size().min_element() > 0.0
+                    })
+                    .map(|(entity, ..)| entity);
+                target.is_some()
+            },
+        );
+        let target = target.expect("the panel");
+        let world = client.world();
+        let size = world.get::<ComputedNode>(target).expect("laid out").size();
+        let centre = client.centre_of(target).expect("on screen");
+        client.mouse(centre - size / 2.0 + Vec2::splat(2.0));
+        assert!(
+            client
+                .world()
+                .resource::<bevy::picking::hover::HoverMap>()
+                .values()
+                .any(|hits| hits.contains_key(&target)),
+            "{name} captures its empty edge"
+        );
+        assert!(
+            client.world().resource::<crate::input::OverHud>().0,
+            "{name} prevents world input"
+        );
+    }
 }

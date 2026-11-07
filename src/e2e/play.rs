@@ -4,6 +4,7 @@ use super::menu::{act, signed_up};
 use crate::main_menu::{Act, MenuCore, PlayAction, Preview};
 use bevy::prelude::*;
 
+use bevy::ui_widgets::Button;
 fn named(client: &mut Client, prefix: &str) -> Vec<(String, Color)> {
     let world = client.world_mut();
     world

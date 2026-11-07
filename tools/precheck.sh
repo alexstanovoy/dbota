@@ -27,9 +27,10 @@ if [ "${1:-}" = --full ]; then full=1; shift; fi
 base=${1:-${PRECHECK_BASE:-main}}
 if [ "$full" = 1 ]; then selection=(--all); check_selection=(); else selection=(--base "$base"); check_selection=(--base "$base"); fi
 # the browser check (the one client of tools/gate.sh that is quickest), when a source of the client changed
-wasm_crates="dbota"
+wasm_crates="dbota dbota_import_web"
 wasm_checks=(
-    "DBOTA_WEB_REPLAY=$PWD/Cargo.toml cargo check --target wasm32-unknown-unknown --profile web -p dbota --features web-replay,webgpu"
+    "DBOTA_WEB_REPLAY=$PWD/Cargo.toml cargo check --locked --target wasm32-unknown-unknown --profile web -p dbota --features web-replay,webgpu"
+    "cargo check --locked --target wasm32-unknown-unknown --profile web -p dbota_import_web"
 )
 extra_clippy() { :; }
 extra_test() { :; }

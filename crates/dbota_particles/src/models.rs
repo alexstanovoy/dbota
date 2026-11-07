@@ -11,11 +11,10 @@ use heatel::particle::{Models, Renderer};
 
 use super::eval::{Scene, draw as random, float, vector};
 use super::library::{Library, ModelDraw};
-use super::plugin::{Playing, tick};
+use super::render::ParticleFrame;
 use super::sim::{Instance, Node};
 use super::store;
-use crate::map::UNITS_PER_METRE;
-use crate::warmup::Warmup;
+use crate::{ModelProgress, ModelReady, Report, Step};
 
 /// Entities in each model's pool: the particles drawn as one model at once.
 const POOL: usize = 32;
@@ -40,8 +39,10 @@ struct Pool(Vec<Option<Vec<Entity>>>);
 
 pub fn plugin(app: &mut App) {
     app.init_resource::<Pool>()
-        .add_systems(Update, spawn)
-        .add_systems(PostUpdate, report.in_set(crate::loading::Report))
+        .init_resource::<ModelProgress>()
+        .add_message::<ModelReady>()
+        .add_systems(Update, spawn.in_set(crate::LoadModels))
+        .add_systems(PostUpdate, report.in_set(Report))
         .add_systems(
             PostUpdate,
             // The pools' scenes moved after the frame's transforms were propagated: the trees
@@ -49,19 +50,19 @@ pub fn plugin(app: &mut App) {
             // this frame, not the next.
             (place, propagate_placed)
                 .chain()
-                .after(tick)
+                .after(Step)
                 .before(VisibilitySystems::VisibilityPropagate)
                 .before(VisibilitySystems::CheckVisibility),
         );
 }
 
-/// Spawns the pool of each model whose file has loaded: its scene, hidden, many times, and once
-/// more as a warm-up piece, so its pipelines compile while the game loads.
+/// Spawns each loaded model's pool and tells the host which scene is available.
 fn spawn(
     mut commands: Commands,
     library: Option<Res<Library>>,
     gltfs: Res<Assets<Gltf>>,
     mut pool: ResMut<Pool>,
+    mut ready: MessageWriter<ModelReady>,
 ) {
     let Some(library) = library else {
         return;
@@ -74,7 +75,7 @@ fn spawn(
         let Some(scene) = gltfs.get(&model.gltf).and_then(|g| g.scenes.first()) else {
             continue;
         };
-        commands.spawn((WorldAssetRoot(scene.clone()), Warmup));
+        ready.write(ModelReady(scene.clone()));
         let entities = (0..POOL)
             .map(|_| {
                 commands
@@ -93,7 +94,7 @@ fn spawn(
 
 /// Gives each pool the frame's placements of its model; the rest of the pool hides.
 fn place(
-    playing: Res<Playing>,
+    frame: Res<ParticleFrame>,
     pool: Res<Pool>,
     mut roots: Query<(&mut Transform, &mut Visibility), With<Piece>>,
 ) {
@@ -101,7 +102,7 @@ fn place(
         let Some(entities) = entities else {
             continue;
         };
-        let mut placed = playing
+        let mut placed = frame
             .placed
             .iter()
             .filter(|p| usize::from(p.model) == model);
@@ -150,7 +151,7 @@ fn propagate_placed(
 }
 
 /// Appends the models every drawn model renderer of `instance` places this frame.
-pub fn gather(instance: &Instance, out: &mut Vec<Placed>) {
+pub fn gather(instance: &Instance, out: &mut Vec<Placed>, units_per_metre: f32) {
     for node in &instance.nodes {
         if node.parts.is_empty() {
             continue;
@@ -162,7 +163,7 @@ pub fn gather(instance: &Instance, out: &mut Vec<Placed>) {
                 continue;
             };
             if node.strength_now(&renderer.timing) > 0.0 {
-                place_particles(models, d, node, out);
+                place_particles(models, d, node, out, units_per_metre);
             }
         }
     }
@@ -170,7 +171,13 @@ pub fn gather(instance: &Instance, out: &mut Vec<Placed>) {
 
 /// The models of one renderer's particles: each particle's model picked once for its life
 /// (by the manual selection, or by chance), placed, turned and scaled by it.
-fn place_particles(models: &Models, d: &ModelDraw, node: &Node, out: &mut Vec<Placed>) {
+fn place_particles(
+    models: &Models,
+    d: &ModelDraw,
+    node: &Node,
+    out: &mut Vec<Placed>,
+    units_per_metre: f32,
+) {
     let (scene, parts) = (node.scene_now(), &node.parts);
     let radius_scale = float(&models.radius_scale, &scene, parts, None, 1);
     let roll_scale = float(&models.roll_scale, &scene, parts, None, 2);
@@ -208,7 +215,7 @@ fn place_particles(models: &Models, d: &ModelDraw, node: &Node, out: &mut Vec<Pl
         let matrix = source_matrix(models, &scene, node, i, (radius_scale, roll_scale));
         out.push(Placed {
             model,
-            transform: Transform::from_matrix(to_bevy(matrix)),
+            transform: Transform::from_matrix(to_bevy(matrix, units_per_metre)),
         });
     }
 }
@@ -306,10 +313,10 @@ fn normal_basis(normal: Vec3, orient_z: bool) -> Mat4 {
 /// A placement in Source's frame as the transform of a model's scene in Bevy's: the world's
 /// axes to Bevy's (`draw::to_world`), and the scene's own, which holds the model in metres
 /// with its front (Source's X) along Bevy's -Z and its up along Y.
-fn to_bevy(source: Mat4) -> Mat4 {
+fn to_bevy(source: Mat4, units_per_metre: f32) -> Mat4 {
     let world = Mat4::from_cols(Vec4::X, Vec4::NEG_Z, Vec4::Y, Vec4::W);
     let scene = Mat4::from_cols(Vec4::NEG_Y, Vec4::Z, Vec4::NEG_X, Vec4::W);
-    world * source * scene * Mat4::from_scale(Vec3::splat(UNITS_PER_METRE))
+    world * source * scene * Mat4::from_scale(Vec3::splat(units_per_metre))
 }
 
 /// The particle models' part of the loading: each model's pool spawned (or
@@ -318,7 +325,7 @@ fn report(
     library: Option<Res<Library>>,
     pool: Res<Pool>,
     server: Res<AssetServer>,
-    mut parts: ResMut<crate::loading::Parts>,
+    mut progress: ResMut<ModelProgress>,
 ) {
     let Some(library) = library else {
         return;
@@ -334,5 +341,5 @@ fn report(
                     .is_some_and(|s| s.is_failed())
         })
         .count();
-    parts.set("particles", done, library.models.len());
+    progress.0 = Some((done, library.models.len()));
 }

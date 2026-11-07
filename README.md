@@ -110,6 +110,7 @@ and left as it is: its settings are dropped.
 [DEVELOPMENT.md](DEVELOPMENT.md) covers building, the command line for automation, the picture checks, the merge
 gate and headless runs. [tools/README.md](tools/README.md) is the asset import and cache;
 [web/README.md](web/README.md) is the browser build.
+[Compile speed](docs/compile_speed.md) documents the particle crate boundary and measured rebuild commands.
 
 ## License
 

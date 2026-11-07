@@ -10,6 +10,7 @@ use bevy::{
     prelude::*,
     window::{Ime, PrimaryWindow},
 };
+use bevy::{picking::hover::DirectlyHovered, ui_widgets::Button};
 use bota_client_core::{App as Core, ChatLine};
 use bota_core::{TextFault, rules};
 use bota_proto::{Audience, Body, EventKind, SayRefusal, Speaker};
@@ -80,6 +81,7 @@ enum Piece {
 
 /// The line being typed.
 #[derive(Component)]
+#[require(DirectlyHovered)]
 struct Prompt;
 
 /// What was wrong with the last line sent.
@@ -733,12 +735,14 @@ fn loading_layout(
 fn click_loading_prompt(
     loading: Res<crate::loading::Loading>,
     session: NonSend<Session>,
-    pressed: Query<&Interaction, (With<Prompt>, Changed<Interaction>)>,
+    pressed: Query<&DirectlyHovered, With<Prompt>>,
+    mouse: Res<ButtonInput<MouseButton>>,
     mut input: ResMut<ChatInput>,
     mut typing: ResMut<Typing>,
 ) {
     if loading.shown
-        && pressed.iter().any(|i| *i == Interaction::Pressed)
+        && mouse.just_pressed(MouseButton::Left)
+        && pressed.iter().any(DirectlyHovered::get)
         && open(&session.0, &mut input, true)
     {
         *typing = Typing::Chat;

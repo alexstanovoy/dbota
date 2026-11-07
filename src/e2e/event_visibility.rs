@@ -353,7 +353,7 @@ fn driving_hero(client: &Client) -> Option<&bota_proto::UnitView> {
 
 fn listen(client: &mut Client, event: &'static str, heard: Heard) {
     client.world_mut().add_observer(
-        move |add: On<Add, AudioPlayer>, mixer: Res<crate::mixer::Mixer>| {
+        move |add: On<Add<AudioPlayer>>, mixer: Res<crate::mixer::Mixer>| {
             if let Some((name, at)) = mixer.event_at(add.entity)
                 && name == event
             {

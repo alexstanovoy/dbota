@@ -1,7 +1,7 @@
 //! Real shop gestures and purchases across a queue containing repeated builds.
 use super::harness::{Client, Server};
 use crate::shop::{Place, ShopCell};
-use bevy::{input::ButtonState, prelude::*};
+use bevy::{input::ButtonState, picking::hover::Hovered, prelude::*};
 use bota_client_core::Intent;
 use bota_proto::{Cheat, HeroId, ItemId};
 
@@ -82,9 +82,9 @@ pub(super) fn point_item(client: &mut Client, item: ItemId, place: Place) {
         }
         let world = c.world_mut();
         world
-            .query::<(&ShopCell, &Place, &Interaction)>()
+            .query::<(&ShopCell, &Place, &Hovered)>()
             .iter(world)
-            .any(|(cell, at, over)| cell.0 == item.0 && *at == place && *over != Interaction::None)
+            .any(|(cell, at, over)| cell.0 == item.0 && *at == place && over.get())
     });
 }
 
@@ -419,9 +419,10 @@ fn inventory_items_drag_into_quickbuy_without_moving_the_owned_item() {
     client.core_mut().act(Intent::Buy(ItemId::BOOTS.0));
     client.until("owned boots", |c| c.slot_of(ItemId::BOOTS).is_some());
     let slot = client.slot_of(ItemId::BOOTS).expect("owned boots");
-    let end = quick_drop(&mut client);
     let entity = client.item_box(slot).expect("inventory slot");
+    client.hover_ui(entity, std::time::Duration::from_secs(20));
     let start = client.centre_of(entity).expect("laid out");
+    let end = quick_drop(&mut client);
     client.mouse(start);
     client.button(MouseButton::Left, ButtonState::Pressed);
     client.mouse(end);
@@ -453,7 +454,6 @@ fn an_inventory_quickbuy_drop_is_consumed_before_world_release_with_a_stale_hud_
         item: ItemId::BOOTS,
     });
     let slot = client.slot_of(ItemId::BOOTS).expect("owned boots");
-    let end = quick_drop(&mut client);
     client.app.add_systems(
         Update,
         (|mouse: Res<ButtonInput<MouseButton>>, mut over: ResMut<crate::input::OverHud>| {
@@ -466,7 +466,9 @@ fn an_inventory_quickbuy_drop_is_consumed_before_world_release_with_a_stale_hud_
         .before(crate::input::mouse),
     );
     let entity = client.item_box(slot).expect("slot");
+    client.hover_ui(entity, std::time::Duration::from_secs(20));
     let start = client.centre_of(entity).expect("laid out");
+    let end = quick_drop(&mut client);
     client.mouse(start);
     client.button(MouseButton::Left, ButtonState::Pressed);
     client.mouse(end);
@@ -629,13 +631,14 @@ fn an_inventory_drop_queues_the_item_shown_by_a_pending_swap_preview() {
     });
     let from = client.slot_of(ItemId::BOOTS).expect("boots");
     let to = client.slot_of(ItemId::CLARITY).expect("clarity");
-    let end = quick_drop(&mut client);
     let slot_at = |c: &mut Client, slot| {
         let e = c.item_box(slot).expect("slot");
+        c.hover_ui(e, std::time::Duration::from_secs(20));
         c.centre_of(e).expect("laid out")
     };
     let a = slot_at(&mut client, from);
     let b = slot_at(&mut client, to);
+    let end = quick_drop(&mut client);
     server.frozen(|| {
         client.mouse(a);
         client.button(MouseButton::Left, ButtonState::Pressed);

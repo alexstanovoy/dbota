@@ -120,7 +120,11 @@ fn load(
         let Some(bytes) = crate::cachefs::read_small(root, &path) else {
             continue;
         };
-        match library.add(&format!("map.{stem}"), &bytes, &server) {
+        match library.add(
+            &format!("map.{stem}"),
+            &bytes,
+            &crate::particles::CacheAssets(&server),
+        ) {
             Ok(classes) => unsupported.extend(classes),
             Err(why) => error!("map effect {stem} ({path}): {why}; drawn without it"),
         }
@@ -209,7 +213,7 @@ fn play(
             continue;
         };
         if let Some(instance) = playing.get_mut(handle) {
-            instance.presentation_opacity = DECORATION_OPACITY;
+            instance.set_presentation_opacity(DECORATION_OPACITY);
             instance.set_control_point(0, e.place, e.forward, true);
             if let Some((cp, value)) = e.data {
                 instance.set_control_point(cp, value, Vec3::ZERO, true);

@@ -156,7 +156,7 @@ type Sounds = Arc<Mutex<Vec<PathBuf>>>;
 
 fn listen(client: &mut Client, heard: Sounds) {
     client.world_mut().add_observer(
-        move |add: On<Add, AudioPlayer>, players: Query<&AudioPlayer>, server: Res<AssetServer>| {
+        move |add: On<Add<AudioPlayer>>, players: Query<&AudioPlayer>, server: Res<AssetServer>| {
             if let Ok(player) = players.get(add.entity)
                 && let Some(path) = server.get_path(player.0.id())
             {

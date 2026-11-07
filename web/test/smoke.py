@@ -97,6 +97,8 @@ import time
 
 from playwright.sync_api import Error as PlaywrightError, sync_playwright
 
+from render_errors import RENDERER_ERROR
+
 HERE = pathlib.Path(__file__).resolve().parent
 OUT = HERE.parent / "out"
 STEAM = [
@@ -298,10 +300,7 @@ def import_smoke(args, install):
         print("errors:", failures, file=sys.stderr)
 
     with sync_playwright() as p:
-        browser = p.chromium.launch(
-            # a software WebGPU adapter (SwiftShader's Vulkan) for the client
-            args=["--enable-unsafe-webgpu", "--use-angle=swiftshader", "--enable-unsafe-swiftshader", "--enable-features=Vulkan"]
-        )
+        browser = p.chromium.launch(args=BROWSER_ARGS)
         page = browser.new_context(viewport={"width": 1280, "height": 720}).new_page()
         page.on("request", lambda r: requests.append((r.method, r.url, r.post_data)))
         page.on("console", lambda m: console.append(m.text))
@@ -432,13 +431,22 @@ def import_smoke(args, install):
     print("smoke test passed:", len(requests), "requests, all to", base)
 
 
-BROWSER_ARGS = [
-    # a software WebGPU adapter (SwiftShader's Vulkan) for the client
-    "--enable-unsafe-webgpu", "--use-angle=swiftshader", "--enable-unsafe-swiftshader", "--enable-features=Vulkan",
-    # The test server and the page are both on this machine, which a recent Chromium treats as a
-    # local-network request needing a permission nobody is there to give.
-    "--disable-features=LocalNetworkAccessChecks,BlockInsecurePrivateNetworkRequests",
-]
+def browser_arguments():
+    graphics = {
+        "software": ["--use-angle=swiftshader", "--enable-unsafe-swiftshader"],
+        "hardware": ["--enable-gpu", "--use-angle=vulkan"],
+    }
+    selected = os.environ.get("DBOTA_BROWSER_GPU", "software")
+    if selected not in graphics:
+        sys.exit(f"DBOTA_BROWSER_GPU must be software or hardware, got {selected!r}")
+    return [
+        "--enable-unsafe-webgpu", *graphics[selected], "--enable-features=Vulkan",
+        # Local test servers must not open a browser permission prompt.
+        "--disable-features=LocalNetworkAccessChecks,BlockInsecurePrivateNetworkRequests",
+    ]
+
+
+BROWSER_ARGS = browser_arguments()
 # The dashboard button's middle in a replay page of 1280x720 (logical pixels).
 DASHBOARD = (15, 15)
 
@@ -458,6 +466,13 @@ def wait_console(page, console, pattern, timeout, what):
     except Exception as e:  # the page may be gone or too busy to draw
         print("no screenshot:", e, file=sys.stderr)
     sys.exit(f"timed out waiting for {what}")
+
+
+def wait_loading_cover(page, console):
+    """Wait until the loading cover no longer blocks the cursor tests' HUD buttons."""
+    wait_console(page, console, r"loading: done in [\d.]+ s", 300, "the loading cover to be removed")
+    fallback = any("loading: still waiting" in line for line in console)
+    print("cursor: loading cover removed" + (" (fallback)" if fallback else ""))
 
 
 def opened(p, directory, args=()):
@@ -498,6 +513,7 @@ def check_scene_page(directory):
     with sync_playwright() as p:
         for api in ("webgpu", "webgl2"):
             server, base, browser, page, console, problems = opened(p, directory)
+            page.on("console", lambda message: problems.append(message.text) if message.type == "error" and RENDERER_ERROR.search(message.text) else None)
             try:
                 page.add_init_script("""globalThis.dbota_scene_drawn = false;
                   const log = console.log.bind(console);
@@ -518,6 +534,8 @@ def check_scene_page(directory):
                 assert any(f"dbota: drawing with {api}" in c for c in console), f"the {api} client was selected"
                 assert page.locator("#dbota").is_visible(), "the game's canvas is visible"
                 assert page.locator("#dbota").evaluate("c => c.width > 0 && c.height > 0"), "the canvas has pixels"
+                page.wait_for_timeout(2000)
+                assert not [line for line in console if "ERROR" in line and RENDERER_ERROR.search(line)], console
                 assert not problems, problems
                 print(f"scene: {api} draws the forest and heroes")
             finally:
@@ -731,6 +749,7 @@ def check_cursor_page(directory):
         page.add_init_script(HANDED)
         page.goto(base + "?cache=http")
         wait_console(page, console, r"match known: tick \d+", 600, "the client to know the match")
+        wait_loading_cover(page, console)
         page.wait_for_timeout(4000)
         locked = lambda: page.evaluate("document.pointerLockElement === document.getElementById('dbota')")
         size = page.evaluate("[innerWidth, innerHeight, devicePixelRatio]")
@@ -869,6 +888,7 @@ def check_cursor_input(directory):
         page.add_init_script(HANDED_ALL)
         page.goto(base + "?cache=http")
         wait_console(page, console, r"match known: tick \d+", 600, "the client to know the match")
+        wait_loading_cover(page, console)
         page.wait_for_timeout(4000)
         assert page.evaluate("devicePixelRatio") == scale, page.evaluate("devicePixelRatio")
         locked = lambda: page.evaluate("document.pointerLockElement === document.getElementById('dbota')")
@@ -887,13 +907,19 @@ def check_cursor_input(directory):
 
         # The game's cursor goes as far as the mouse: 30 device pixels right and 15 down are 20 and 10 of the
         # page's (CSS) pixels at a scale of 1.5.
-        mouse.by(1, 1)
-        page.wait_for_timeout(300)
+        # A single device pixel can round away at this scale. Wait for a genuine handed move
+        # before taking the starting position; pointer lock alone does not acknowledge input.
+        mouse.by(3, 3)
+        page.wait_for_function("() => handed.some(([type]) => type === 'pointermove')", timeout=60000)
         start = last()
         for _ in range(3):
             mouse.by(10, 5)
             page.wait_for_timeout(100)
-        page.wait_for_timeout(500)
+        # Xwayland and the browser can coalesce several moves; await their delivery.
+        page.wait_for_function("""([x, y]) => {
+          const at = handed.at(-1);
+          return at && at[1] - x >= 19 && at[2] - y >= 9;
+        }""", arg=start[1:], timeout=60000)
         end = last()
         moved = [end[1] - start[1], end[2] - start[2]]
         failures = []

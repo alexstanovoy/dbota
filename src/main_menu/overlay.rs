@@ -2,6 +2,7 @@
 //! with their elapsed time, the matches waiting for a game server,
 //! and Dota's MATCH FOUND prompt. Also MY GAMES, which lists the same.
 
+use bevy::picking::hover::{DirectlyHovered, Hovered};
 use bevy::prelude::*;
 
 use super::core::Act;
@@ -50,7 +51,12 @@ pub fn draw(kit: &mut Kit, root: Entity, view: &MenuView) {
                 ..corner
             },
         );
-        kit.commands.entity(panel).insert(crate::hud::Blocker);
+        kit.commands.entity(panel).insert((
+            crate::hud::Blocker,
+            Hovered::default(),
+            Pickable::default(),
+            Name::new("search overlay"),
+        ));
         for search in searching {
             search_row(kit, panel, search);
         }
@@ -185,7 +191,8 @@ fn popup_card(kit: &mut Kit, root: Entity) -> Entity {
             },
             BackgroundColor(theme::scrim()),
             crate::hud::Blocker,
-            Interaction::default(),
+            Hovered::default(),
+            DirectlyHovered::default(),
             GlobalZIndex(90),
             ChildOf(root),
         ))
@@ -471,7 +478,9 @@ fn offer_card(kit: &mut Kit, root: Entity) -> Entity {
     kit.commands.entity(shade).insert((
         BackgroundColor(Color::BLACK.with_alpha(theme::dim(0.45))),
         crate::hud::Blocker,
-        Interaction::default(),
+        Pickable::default(),
+        Hovered::default(),
+        DirectlyHovered::default(),
         GlobalZIndex(80),
     ));
     let card = kit.node(

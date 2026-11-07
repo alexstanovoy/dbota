@@ -47,7 +47,7 @@ pub(super) fn plugin(app: &mut App) {
         .add_systems(
             PostUpdate,
             worn.after(TransformSystems::Propagate)
-                .before(crate::particles::Simulation),
+                .before(dbota_particles::Step),
         );
 }
 

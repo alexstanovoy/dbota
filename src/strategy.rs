@@ -8,6 +8,7 @@
 //! uses the bottom panel's slots: drag moves an item and a right click
 //! takes its pending purchase back at full price.
 
+use bevy::picking::hover::Hovered;
 use bevy::prelude::*;
 use bota_proto::Team;
 
@@ -57,6 +58,7 @@ pub(crate) struct Screen;
 /// The ability of the hero one enters battle as, by id: hovered, it opens
 /// the ability's tooltip as in the game.
 #[derive(Component)]
+#[require(bevy::picking::hover::DirectlyHovered)]
 pub struct StrategyAbility(pub u16);
 
 /// The clock.
@@ -121,7 +123,7 @@ fn build(
         .spawn((
             Screen,
             crate::hud::Blocker,
-            Interaction::default(),
+            Hovered::default(),
             ui::fill(),
             BackgroundColor(Color::srgba(0.01, 0.012, 0.018, 0.97)),
             GlobalZIndex(25),
@@ -358,7 +360,7 @@ fn details(commands: &mut Commands, kit: &Kit, hero: u16, root: Entity) {
         let art = kit.image(kit.manifest.ability_icon(id.0));
         commands.spawn((
             StrategyAbility(id.0),
-            Interaction::default(),
+            Hovered::default(),
             icon,
             art,
             ChildOf(abilities),

@@ -9,12 +9,12 @@ use bevy::light::PointLight;
 use bevy::prelude::*;
 use heatel::particle::{ColorBlend, DeferredLight, Renderer};
 
-use super::draw::{from_world, to_world};
+use super::draw::to_world;
 use super::eval::{float, vector};
-use super::plugin::{Playing, tick};
+use super::render::ParticleFrame;
 use super::sim::{Instance, Node};
 use super::store;
-use crate::camera::RtsCamera;
+use crate::Step;
 
 /// Point lights in the pool: the lights shining at once.
 const POOL: usize = 16;
@@ -46,7 +46,7 @@ struct Pooled;
 
 pub fn plugin(app: &mut App) {
     app.add_systems(Startup, spawn)
-        .add_systems(PostUpdate, shine.after(tick));
+        .add_systems(PostUpdate, shine.after(Step));
 }
 
 /// Spawns the pool once, dark and parked: the views count the same lights from the start.
@@ -212,15 +212,14 @@ fn blend(kind: ColorBlend, color: Vec3, scale: Vec3) -> Vec3 {
 /// propagated, so each light's global transform is set with its transform: it shines where its
 /// particle is this frame, not the next.
 fn shine(
-    mut playing: ResMut<Playing>,
-    camera: Query<&GlobalTransform, (With<RtsCamera>, Without<Pooled>)>,
+    mut frame: ResMut<ParticleFrame>,
     mut pool: Query<(&mut PointLight, &mut Transform, &mut GlobalTransform), With<Pooled>>,
 ) {
-    let lights = &mut playing.lights[..];
-    if let Ok(camera) = camera.single()
+    let eye = frame.eye;
+    let lights = &mut frame.lights[..];
+    if let Some(eye) = eye
         && lights.len() > POOL
     {
-        let eye = from_world(camera.translation());
         let strength = |l: &Light| l.lumens.abs() / l.position.distance_squared(eye).max(1.0);
         lights.select_nth_unstable_by(POOL, |a, b| strength(b).total_cmp(&strength(a)));
     }

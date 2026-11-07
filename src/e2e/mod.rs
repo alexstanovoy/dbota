@@ -92,6 +92,7 @@ mod tower_fall;
 mod trees;
 mod turning;
 mod twin_gates;
+mod ui_phase;
 mod visual_clarity_state;
 mod watcher_capture;
 mod watcher_channel;

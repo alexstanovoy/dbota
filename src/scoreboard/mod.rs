@@ -12,6 +12,9 @@ mod draw;
 mod model;
 mod row;
 
+use bevy::picking::{events::PointerPress, pointer::PointerButton};
+use bevy::{picking::hover::Hovered, ui::Pressed};
+
 use bevy::prelude::*;
 use bota_proto::TalentSlot;
 
@@ -33,7 +36,8 @@ const PIP_LIT: Color = Color::srgb(0.95, 0.75, 0.3);
 struct Rows(Vec<Line>);
 
 pub fn plugin(app: &mut App) {
-    app.init_resource::<Rows>()
+    app.add_observer(toggle_items)
+        .init_resource::<Rows>()
         .add_systems(Startup, (spawn, open_at_start))
         .add_systems(Update, seat_rows.run_if(|known: Res<MatchKnown>| known.0))
         .add_systems(Update, (show, show_items).chain())
@@ -146,22 +150,20 @@ fn show(
 /// The Show Items button turns the items beside the rows on and off, and
 /// the settings file keeps the choice.
 fn show_items(
-    mut settings: ResMut<crate::config::Settings>,
-    store: Res<crate::main_menu::SettingsStore>,
-    mut button: Query<(Ref<Interaction>, &mut ImageNode), With<ShowItems>>,
+    settings: Res<crate::config::Settings>,
+    mut button: Query<(&Hovered, Has<Pressed>, &mut ImageNode), With<ShowItems>>,
     mut panel: Single<&mut Visibility, With<Inventories>>,
+    mouse: Res<ButtonInput<MouseButton>>,
 ) {
-    for (interaction, mut image) in &mut button {
-        if interaction.is_changed() && *interaction == Interaction::Pressed {
-            settings.scoreboard_items = !settings.scoreboard_items;
-            if let Err(err) = store.save_settings(&settings) {
-                warn!("settings not saved: {err}");
-            }
-        }
+    let primary_held = mouse.pressed(MouseButton::Left);
+    for (hovered, pressed, mut image) in &mut button {
         // Dota's buttons there are faint until hovered, bright while on.
-        let alpha = match (*interaction, settings.scoreboard_items) {
-            (Interaction::None, false) => 0.2,
-            (Interaction::None, true) => 0.6,
+        let alpha = match (
+            hovered.get() || (pressed && primary_held),
+            settings.scoreboard_items,
+        ) {
+            (false, false) => 0.2,
+            (false, true) => 0.6,
             _ => 1.0,
         };
         if image.color.alpha() != alpha {
@@ -169,6 +171,21 @@ fn show_items(
         }
     }
     panel.set_if_neq(crate::ui::visible(settings.scoreboard_items));
+}
+
+fn toggle_items(
+    event: On<PointerPress>,
+    buttons: Query<(), With<ShowItems>>,
+    mut settings: ResMut<crate::config::Settings>,
+    store: Res<crate::main_menu::SettingsStore>,
+) {
+    if event.button != PointerButton::Primary || !buttons.contains(event.entity) {
+        return;
+    }
+    settings.scoreboard_items = !settings.scoreboard_items;
+    if let Err(err) = store.save_settings(&settings) {
+        warn!("settings not saved: {err}");
+    }
 }
 
 /// The row of a part: the side's `rank`-th seat, in seat order.

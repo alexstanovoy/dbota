@@ -4,14 +4,14 @@
 // units apart from the scenery: the scenery a little duller and darker (the
 // ground more so in the forest's shade), the units a little more vivid.
 
-#import bevy_pbr::{
+import bevy_pbr::render::{
     pbr_fragment::pbr_input_from_standard_material,
     pbr_functions::{alpha_discard, apply_pbr_lighting, main_pass_post_lighting_processing},
     forward_io::{VertexOutput, FragmentOutput},
     mesh_view_bindings::globals,
     pbr_bindings,
     pbr_types::STANDARD_MATERIAL_FLAGS_UNLIT_BIT,
-}
+};
 
 // fog.rs, FogExt. The veil's alpha is how fogged a cell is; row 0 is the
 // north edge of the map. params x: world units the veil spans; y: the alpha
@@ -22,9 +22,12 @@
 // field's left half is the dirt's colour, its right half the stone's, a cell
 // of FIELD_CELL world units a texel, row 0 the south edge; the left half's
 // alpha is the forest's shade, the right half's which stone.
-#ifdef BINDLESS
-#import bevy_pbr::mesh_bindings::mesh
-#import bevy_render::bindless::{bindless_samplers_filtering, bindless_textures_2d}
+@if(BINDLESS)
+import bevy_pbr::render::mesh_bindings::mesh;
+@if(BINDLESS)
+import bevy_render::bindless::{bindless_samplers_filtering, bindless_textures_2d};
+
+@if(BINDLESS) {
 
 // Where each material's resources lie in the bindless arrays.
 struct FogIndices {
@@ -39,8 +42,8 @@ struct FogIndices {
 struct FogUniform {
     params: vec4<f32>,
 }
-@group(#{MATERIAL_BIND_GROUP}) @binding(110) var<storage> fog_uniforms: array<FogUniform>;
-@group(#{MATERIAL_BIND_GROUP}) @binding(111) var<storage> fog_indices: array<FogIndices>;
+@group(constants::MATERIAL_BIND_GROUP) @binding(110) var<storage> fog_uniforms: array<FogUniform>;
+@group(constants::MATERIAL_BIND_GROUP) @binding(111) var<storage> fog_indices: array<FogIndices>;
 
 // The drawn mesh's material, set by the fragment from its instance.
 var<private> fog_material: FogIndices;
@@ -68,17 +71,17 @@ fn field_at(uv: vec2<f32>) -> vec4<f32> {
 fn field_size() -> vec2<f32> {
     return vec2<f32>(textureDimensions(bindless_textures_2d[fog_material.field_texture]));
 }
-#else
+} @else {
 struct FogUniform {
     params: vec4<f32>,
 }
-@group(#{MATERIAL_BIND_GROUP}) @binding(100) var<uniform> fog_uniform: FogUniform;
-@group(#{MATERIAL_BIND_GROUP}) @binding(101) var veil_texture: texture_2d<f32>;
-@group(#{MATERIAL_BIND_GROUP}) @binding(102) var veil_sampler: sampler;
-@group(#{MATERIAL_BIND_GROUP}) @binding(103) var cast_texture: texture_2d<f32>;
-@group(#{MATERIAL_BIND_GROUP}) @binding(104) var paths_texture: texture_2d<f32>;
-@group(#{MATERIAL_BIND_GROUP}) @binding(105) var paths_sampler: sampler;
-@group(#{MATERIAL_BIND_GROUP}) @binding(106) var field_texture: texture_2d<f32>;
+@group(constants::MATERIAL_BIND_GROUP) @binding(100) var<uniform> fog_uniform: FogUniform;
+@group(constants::MATERIAL_BIND_GROUP) @binding(101) var veil_texture: texture_2d<f32>;
+@group(constants::MATERIAL_BIND_GROUP) @binding(102) var veil_sampler: sampler;
+@group(constants::MATERIAL_BIND_GROUP) @binding(103) var cast_texture: texture_2d<f32>;
+@group(constants::MATERIAL_BIND_GROUP) @binding(104) var paths_texture: texture_2d<f32>;
+@group(constants::MATERIAL_BIND_GROUP) @binding(105) var paths_sampler: sampler;
+@group(constants::MATERIAL_BIND_GROUP) @binding(106) var field_texture: texture_2d<f32>;
 
 fn fog_params() -> vec4<f32> {
     return fog_uniform.params;
@@ -101,7 +104,7 @@ fn field_at(uv: vec2<f32>) -> vec4<f32> {
 fn field_size() -> vec2<f32> {
     return vec2<f32>(textureDimensions(field_texture));
 }
-#endif
+}
 
 // layers.rs: FIELD_CELL, FIELD_RANGE.
 const FIELD_CELL: f32 = 32.0;
@@ -131,7 +134,7 @@ fn field_uv(p: vec2<f32>) -> vec2<f32> {
 // The terrain's colour with its dirt and stone drawn over the grass, given
 // the field's dirt texel there.
 fn with_paths(base: vec3<f32>, in: VertexOutput, dirt_field: vec4<f32>) -> vec3<f32> {
-#ifdef VERTEX_UVS_B
+@if(VERTEX_UVS_B) {
     let p = vec2(in.world_position.x, -in.world_position.z);
     let dirt_h = paths_at(p / DIRT_TILE).r;
     let stones = paths_at(p / STONE_TILE).gb;
@@ -143,9 +146,9 @@ fn with_paths(base: vec3<f32>, in: VertexOutput, dirt_field: vec4<f32>) -> vec3<
     let noise = paths_at(p / EDGE_TILE + 0.37).r;
     let with_dirt = mix(base, dirt * dirt_h * 2.0, sharpen(in.uv_b.x, dirt_h, noise));
     return mix(with_dirt, stone * stone_h * 2.0, sharpen(in.uv_b.y, stone_h, 1.0 - noise));
-#else
+} @else {
     return base;
-#endif
+}
 }
 
 // fog.rs, SURFACE_*.
@@ -176,32 +179,32 @@ fn set_back(color: vec3<f32>, shade: f32) -> vec3<f32> {
 // thousandths.
 fn flowing(in: VertexOutput) -> VertexOutput {
     var out = in;
-#ifdef VERTEX_UVS_A
+@if(VERTEX_UVS_A) {
     let t = globals.time;
     let sway = vec2(sin(t * WATER_SWAY_RATE), cos(t * WATER_SWAY_RATE * 0.7 + 1.3)) * WATER_SWAY;
     let scale = water_uv_scale();
     out.uv = vec2(in.world_position.x, -in.world_position.z) + fract(WATER_FLOW * t + sway) / scale;
-#endif
-#ifdef VERTEX_TANGENTS
+}
+@if(VERTEX_TANGENTS) {
     // u along the map's x, v along its north (-z).
     out.world_tangent = vec4(1.0, 0.0, 0.0, 1.0);
-#endif
+}
     return out;
 }
 
 @fragment
 fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> FragmentOutput {
-#ifdef BINDLESS
+@if(BINDLESS) {
     material_slot = mesh[in.instance_index].material_and_lightmap_bind_group_slot & 0xffffu;
     fog_material = fog_indices[material_slot];
-#endif
+}
     let params = fog_params();
     var surface = in;
     if params.z == SURFACE_WATER {
         surface = flowing(in);
     }
     var pbr_input = pbr_input_from_standard_material(surface, is_front);
-    pbr_input.material.base_color = alpha_discard(pbr_input.material, pbr_input.material.base_color);
+    pbr_input.material.base_color = alpha_discard(pbr_input.material.flags, pbr_input.material.alpha_cutoff, pbr_input.material.base_color);
     let figure = params.z == SURFACE_FOGGED_FIGURE || params.z == SURFACE_FIGURE;
     // The forest's shade, on the ground that has the field.
     var shade = 0.0;

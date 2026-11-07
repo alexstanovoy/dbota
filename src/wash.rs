@@ -27,7 +27,7 @@ pub struct Washed {
 
 impl UiMaterial for Washed {
     fn fragment_shader() -> ShaderRef {
-        "embedded://dbota/wash.wgsl".into()
+        "embedded://dbota/wash.wesl".into()
     }
 }
 
@@ -47,6 +47,6 @@ impl Washed {
 }
 
 pub fn plugin(app: &mut App) {
-    embedded_asset!(app, "wash.wgsl");
+    embedded_asset!(app, "wash.wesl");
     app.add_plugins(UiMaterialPlugin::<Washed>::default());
 }

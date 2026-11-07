@@ -7,6 +7,10 @@
 //! move gives by drag or key. Dota's Alert Allies is not here: the simulator has no
 //! order for it.
 
+use bevy::{
+    picking::hover::{DirectlyHovered, Hovered},
+    ui_widgets::Button,
+};
 use bevy::{prelude::*, window::PrimaryWindow};
 use bota_client_core::{BAG_SLOTS, Intent, Source, TOWN_PORTAL_SLOT};
 use bota_core::rules::STASH_SLOTS;
@@ -183,8 +187,8 @@ fn open(
     mut bag: ResMut<TacticalBag>,
     settling: Res<crate::drag::Settling>,
     mouse: Res<ButtonInput<MouseButton>>,
-    items: Query<(&Interaction, &ItemBox)>,
-    roots: Query<&Interaction, Or<(With<Root>, With<Choice>)>>,
+    items: Query<(&DirectlyHovered, &ItemBox)>,
+    roots: Query<&Hovered, Or<(With<Root>, With<Choice>)>>,
     window: Single<&Window, With<PrimaryWindow>>,
     ui_scale: Res<UiScale>,
     mut menu: ResMut<Menu>,
@@ -194,11 +198,8 @@ fn open(
         return;
     }
     let core = &mut session.0;
-    let on_menu = roots.iter().any(|i| *i != Interaction::None);
-    let hovered = items
-        .iter()
-        .find(|(i, _)| **i != Interaction::None)
-        .map(|(_, b)| b.0);
+    let on_menu = roots.iter().any(|i| i.get());
+    let hovered = items.iter().find(|(i, _)| i.get()).map(|(_, b)| b.0);
     let at = window.cursor_position();
     if let (true, Some(slot), Some(at)) = (mouse.just_pressed(MouseButton::Right), hovered, at) {
         if core.in_tactical_phase() {
@@ -247,7 +248,7 @@ fn draw(
         .spawn((
             Root,
             Blocker,
-            Interaction::default(),
+            Hovered::default(),
             Node {
                 position_type: PositionType::Absolute,
                 left: px(left),
@@ -266,6 +267,7 @@ fn draw(
             .spawn((
                 *choice,
                 Button,
+                Hovered::default(),
                 Node {
                     min_height: px(CHOICE_HEIGHT),
                     padding: UiRect::new(
@@ -290,7 +292,7 @@ fn draw(
 fn choose(
     mut session: NonSendMut<Session>,
     mut menu: ResMut<Menu>,
-    mut choices: Query<(&Interaction, &Choice, &mut BackgroundColor, &Children)>,
+    mut choices: Query<(&Hovered, &Choice, &mut BackgroundColor, &Children)>,
     mut inks: Query<&mut TextColor>,
     mouse: Res<ButtonInput<MouseButton>>,
     mut panels: ResMut<crate::input::Panels>,
@@ -299,7 +301,7 @@ fn choose(
     let core = &mut session.0;
     let mut done = false;
     for (interaction, choice, mut ground, children) in &mut choices {
-        let lit = *interaction != Interaction::None;
+        let lit = interaction.get();
         let (g, ink) = if lit {
             (HOVERED, INK_HOVERED)
         } else {

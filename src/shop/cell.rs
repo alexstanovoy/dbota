@@ -3,6 +3,7 @@
 //! wait for the next one over a darkened picture when none is left.
 
 use bevy::prelude::*;
+use bevy::{picking::hover::Hovered, ui_widgets::Button};
 use bota_client_core::PurchaseAvailability;
 use bota_core::item_def;
 use bota_proto::ItemId;
@@ -24,6 +25,7 @@ const EDGE_CHOSEN: Color = Color::srgb(0.92, 0.93, 0.95);
 
 /// An item's icon in the shop, by item id: a right click on it buys it.
 #[derive(Component, Clone, Copy)]
+#[require(bevy::picking::hover::DirectlyHovered)]
 pub struct ShopCell(pub u16);
 
 /// A secret-shop component which is out of reach of both physical carriers.
@@ -102,6 +104,7 @@ pub fn spawn(
             ShopCell(id),
             place,
             Button,
+            Hovered::default(),
             Node {
                 width: px(width),
                 height: px(height),
@@ -223,10 +226,10 @@ fn stock(
 fn edges(
     session: NonSend<Session>,
     chosen: Res<Chosen>,
-    mut cells: Query<(&ShopCell, &Place, &Interaction, &mut BorderColor)>,
+    mut cells: Query<(&ShopCell, &Place, &Hovered, &mut BorderColor)>,
 ) {
     for (cell, place, interaction, mut border) in &mut cells {
-        let edge = if *interaction != Interaction::None {
+        let edge = if interaction.get() {
             EDGE_HOVER
         } else if chosen.0 == Some(cell.0) && *place != Place::Tree {
             EDGE_CHOSEN

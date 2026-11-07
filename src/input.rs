@@ -13,6 +13,14 @@ use bevy::{
     prelude::*,
     window::PrimaryWindow,
 };
+use bevy::{
+    picking::{
+        events::PointerPress,
+        hover::{DirectlyHovered, Hovered},
+        pointer::PointerButton,
+    },
+    ui_widgets::Button,
+};
 use bota_client_core::{BAG_SLOTS, Intent, Slot, Source, TOWN_PORTAL_SLOT, Undeniable};
 use bota_proto::Order;
 
@@ -82,12 +90,14 @@ pub fn plugin(app: &mut App) {
                 .in_set(crate::loading::Begin),
         )
         .add_systems(PreUpdate, mute.before(crate::keys::fire))
+        .add_observer(ability_press)
         .add_systems(
             PreUpdate,
             (over_hud, typing, crate::chat::typing, keys)
                 .chain()
                 .after(crate::session::pump)
                 .after(bevy::ui::UiSystems::Focus)
+                .after(bevy::picking::PickingSystems::PostHover)
                 .after(crate::keys::fire),
         )
         .add_systems(
@@ -131,10 +141,10 @@ fn mute(
 
 /// Notes whether the cursor is over any part of the HUD that swallows clicks.
 fn over_hud(
-    blockers: Query<&Interaction, Or<(With<Blocker>, With<Button>)>>,
+    blockers: Query<&Hovered, Or<(With<Blocker>, With<Button>)>>,
     mut over: ResMut<OverHud>,
 ) {
-    let now = blockers.iter().any(|i| *i != Interaction::None);
+    let now = blockers.iter().any(|i| i.get());
     if over.0 != now {
         over.0 = now;
     }
@@ -633,6 +643,26 @@ pub fn deny_click(kind: bota_proto::UnitKind, hp: i32, max_hp: i32) -> bool {
     hp > 0 && bota_core::deniable(kind, Fixed::from_int(hp + 1), Fixed::from_int(max_hp))
 }
 
+fn ability_press(
+    event: On<PointerPress>,
+    mut session: NonSendMut<Session>,
+    keys: Res<ButtonInput<KeyCode>>,
+    abilities: Query<&AbilityBox>,
+) {
+    let core = &mut session.0;
+    if event.button != PointerButton::Primary
+        || core.in_tactical_phase()
+        || !core.controls_selection()
+        || !matches!(core.source, Source::Live(_))
+    {
+        return;
+    }
+    if let Ok(ability) = abilities.get(event.entity) {
+        let ctrl = keys.any_pressed([KeyCode::ControlLeft, KeyCode::ControlRight]);
+        press(core, Slot::Ability(ability.0), ctrl);
+    }
+}
+
 /// Clicks and drags on the HUD's boxes: an ability box presses its slot, an
 /// item box is picked up and dropped on another box, a seat, or the world.
 /// In the strategy phase the boxes are the bag the choices fill, and a drop
@@ -641,32 +671,21 @@ pub fn deny_click(kind: bota_proto::UnitKind, hp: i32, max_hp: i32) -> bool {
 pub(crate) fn boxes(
     mut session: NonSendMut<Session>,
     buttons: Res<ButtonInput<MouseButton>>,
-    keys: Res<ButtonInput<KeyCode>>,
-    abilities: Query<(&Interaction, &AbilityBox), Changed<Interaction>>,
-    items: Query<(&Interaction, &ItemBox)>,
-    seats: Query<(&Interaction, &SeatBox)>,
+    items: Query<(&DirectlyHovered, &ItemBox)>,
+    seats: Query<(&DirectlyHovered, &SeatBox)>,
     over: Res<OverHud>,
     mut bag: ResMut<crate::bag::TacticalBag>,
     mut settling: ResMut<crate::drag::Settling>,
 ) {
     let over_hud = over.0;
     let core = &mut session.0;
-    let ctrl = keys.pressed(KeyCode::ControlLeft) || keys.pressed(KeyCode::ControlRight);
     let tactical = core.in_tactical_phase();
     let controls =
         tactical || (core.controls_selection() && matches!(core.source, Source::Live(_)));
-    for (interaction, AbilityBox(slot)) in &abilities {
-        if *interaction == Interaction::Pressed && controls && !tactical {
-            press(core, Slot::Ability(*slot), ctrl);
-        }
-    }
-    let hovered_item = items
-        .iter()
-        .find(|(i, _)| **i != Interaction::None)
-        .map(|(_, b)| b.0);
+    let hovered_item = items.iter().find(|(i, _)| i.get()).map(|(_, b)| b.0);
     let hovered_seat = seats
         .iter()
-        .find(|(i, _)| **i != Interaction::None)
+        .find(|(i, _)| i.get())
         .and_then(|(_, b)| crate::hud::seat_of(core.view()?, b.0))
         .map(|p| p.slot);
     if buttons.just_pressed(MouseButton::Left) {

@@ -587,7 +587,7 @@ fn sound_events_play_the_manifest_sounds() {
             .unwrap_or_else(|| panic!("{}: no event {event}", line.name));
         let file = line.src.trim_end_matches("_c");
         assert!(
-            files.iter().any(|f| f == file),
+            files.iter().any(|f| f.replace('\\', "/") == file),
             "{}: {event} plays {files:?}, not {file}",
             line.name
         );

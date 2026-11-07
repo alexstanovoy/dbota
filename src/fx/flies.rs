@@ -129,10 +129,11 @@ fn flies(
                 &flight.missile,
                 sight.knowledge(flight.missile.seen_by),
             );
-            let Some(instance) = playing.get_mut(handle) else {
+            let Some(instance) =
+                playing.get_mut_with_sight(handle, EffectSight::Projectile(flight.missile.id))
+            else {
                 continue;
             };
-            instance.sight = EffectSight::Projectile(flight.missile.id);
             instance.set_control_point(LAUNCH, place_of(hand), Vec3::ZERO, false);
             if fx.at == At::Chain {
                 instance.set_control_point(TIP, place_of(tip), Vec3::ZERO, false);

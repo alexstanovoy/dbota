@@ -1,6 +1,7 @@
 //! Local profile and catalogue navigation remain usable without a service account.
 use super::menu::{act, local_menu};
 use crate::main_menu::{Act, MenuCore, Page};
+use bevy::ui_widgets::Button as NativeButton;
 
 #[test]
 fn the_local_player_can_open_their_profile_without_a_service_account() {
@@ -16,7 +17,7 @@ fn the_heroes_tab_opens_the_catalogue_and_a_hero_page_without_an_account() {
     act(&mut client, Act::Go(Page::LocalLobby));
     let world = client.world_mut();
     let button = world
-        .query_filtered::<(Entity, &Name), With<Button>>()
+        .query_filtered::<(Entity, &Name), With<NativeButton>>()
         .iter(world)
         .find(|(_, name)| name.as_str() == "heroes")
         .map(|(entity, _)| entity)
@@ -29,7 +30,7 @@ fn the_heroes_tab_opens_the_catalogue_and_a_hero_page_without_an_account() {
     client.frames(5);
     let world = client.world_mut();
     let hero = world
-        .query_filtered::<(Entity, &Name), With<Button>>()
+        .query_filtered::<(Entity, &Name), With<NativeButton>>()
         .iter(world)
         .find(|(_, name)| name.as_str() == "Shadow Fiend")
         .map(|(entity, _)| entity)
@@ -99,7 +100,7 @@ fn the_profile_avatar_editor_is_honest_when_the_service_has_no_avatar_backend() 
     let world = client.world_mut();
     assert!(
         !world
-            .query_filtered::<&Name, With<Button>>()
+            .query_filtered::<&Name, With<NativeButton>>()
             .iter(world)
             .any(|name| name.as_str() == "edit avatar"),
         "no pencil offers an unavailable feature"
@@ -295,7 +296,7 @@ fn the_hero_pages_demo_button_opens_the_chosen_hero_in_a_local_sandbox() {
     act(&mut client, Act::InspectHero(bota_proto::HeroId::PUDGE));
     let world = client.world_mut();
     let button = world
-        .query_filtered::<(Entity, &Name), With<Button>>()
+        .query_filtered::<(Entity, &Name), With<NativeButton>>()
         .iter(world)
         .find(|(_, name)| name.as_str() == "demo")
         .map(|(entity, _)| entity)
@@ -343,7 +344,7 @@ fn the_avatar_dialog_blocks_clicks_on_navigation_beneath_its_scrim() {
     );
     let world = client.world_mut();
     let heroes = world
-        .query_filtered::<(Entity, &Name), With<Button>>()
+        .query_filtered::<(Entity, &Name), With<NativeButton>>()
         .iter(world)
         .find(|(_, name)| name.as_str() == "heroes")
         .map(|(entity, _)| entity)
@@ -480,7 +481,7 @@ fn catalogue_portraits_cover_their_cards_without_stretching_or_letterboxing() {
     act(&mut client, Act::Go(Page::Heroes));
     let world = client.world_mut();
     let cards: Vec<_> = world
-        .query_filtered::<(Entity, &Name), With<Button>>()
+        .query_filtered::<(Entity, &Name), With<NativeButton>>()
         .iter(world)
         .filter(|(_, name)| matches!(name.as_str(), "Pudge" | "Shadow Fiend"))
         .map(|(entity, _)| entity)
@@ -1010,4 +1011,56 @@ fn a_browser_history_card_survives_blob_failure_with_details_unavailable() {
     );
     act(&mut client, Act::MatchDetails("quota-history".to_owned()));
     assert_eq!(client.world().non_send::<MenuCore>().page(), Page::Profile);
+}
+
+#[test]
+fn the_avatar_edit_button_opens_its_editor_through_the_pointer() {
+    use bevy::prelude::*;
+    let service = crate::main_menu::tests::service();
+    let mut client = super::menu::signed_up(&service, "avatar_pointer");
+    client
+        .world_mut()
+        .non_send_mut::<MenuCore>()
+        .avatar_backend(true);
+    act(&mut client, Act::Go(Page::Profile));
+    client.hover_ui_with(std::time::Duration::from_secs(20), |client| {
+        let world = client.world_mut();
+        world
+            .query_filtered::<(Entity, &Name), With<NativeButton>>()
+            .iter(world)
+            .find(|(_, name)| name.as_str() == "edit avatar")
+            .map(|(entity, _)| entity)
+    });
+    client.click(MouseButton::Left);
+    client.within(
+        std::time::Duration::from_secs(20),
+        "the avatar editor opened",
+        |client| {
+            client
+                .shown_texts()
+                .iter()
+                .any(|text| text == "CHANGE AVATAR")
+        },
+    );
+}
+
+#[test]
+fn recent_match_cards_receive_the_pointer() {
+    use bevy::prelude::*;
+    let mut client = design_preview("home-local");
+    let row = client.hover_ui_with(std::time::Duration::from_secs(20), |client| {
+        let world = client.world_mut();
+        world
+            .query_filtered::<(Entity, &Name), With<NativeButton>>()
+            .iter(world)
+            .find(|(_, name)| name.as_str().starts_with("recent "))
+            .map(|(entity, _)| entity)
+    });
+    assert!(
+        client
+            .world()
+            .get::<bevy::picking::hover::DirectlyHovered>(row)
+            .is_some_and(|hover| hover.get()),
+        "the match row is the actual pointer target"
+    );
 }

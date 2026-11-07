@@ -572,7 +572,7 @@ fn precheck_and_gate_run_the_tests_on_a_private_home() {
             "an import on the caller's home"
         );
     }
-    assert!(gate.contains("run_scrubbed cargo run --release -q --manifest-path"));
+    assert!(gate.contains("run_scrubbed cargo run --locked --release -q --manifest-path"));
     let wrapped = |name: &str, what: &str| {
         for line in read(name).lines().filter(|line| line.contains(what)) {
             assert!(
@@ -591,10 +591,13 @@ fn precheck_and_gate_run_the_tests_on_a_private_home() {
     assert!(gate.contains("refuse_managed_path DBOTA_REFERENCE || exit 1"));
     let smoke = std::fs::read_to_string(manifest().join("web/test/smoke.py")).expect("smoke test");
     assert!(smoke.contains("env=without_steering_variables()"));
+    assert!(read("test.sh").contains("exec python3 tools/test_runner.py"));
+    let runner = read("test_runner.py");
+    assert!(runner.contains("PROFILE = [\"--locked\", \"--profile\", \"test-release\"]"));
     for step in [
-        "step test in_private_environment cargo test --profile test-release",
-        "step install-tests in_private_environment cargo test --release -p dbota_import -- --ignored",
-        "step tip-content in_private_environment cargo test --release -p dbota tip_content -- --ignored",
+        "step test in_private_environment tools/test.sh",
+        "step install-tests in_private_environment cargo test --profile test-release -p dbota_import -- --ignored",
+        "step tip-content in_private_environment cargo test --profile test-release -p dbota --bin dbota tip_content -- --ignored",
     ] {
         assert!(gate.contains(step), "tools/gate.sh does not run `{step}`");
     }
@@ -734,6 +737,16 @@ fn repository_sources() -> Vec<(String, String)> {
 /// squeezed reading, or it needs the user's real home and writes only an explicit folder.
 const APPROVED_LAUNCH_LINES: &[(&str, &str, &str)] = &[
     (
+        "tools/browser_check.sh",
+        "export PROFILE=${DBOTA_WEB_TEST_PROFILE:-release}",
+        "a profile assignment, not a process launch",
+    ),
+    (
+        "tools/gate.sh",
+        "APIS=$1 PROFILE=${DBOTA_WEB_TEST_PROFILE:-release} OUT=$DBOTA_GATE_WEB_PAGE web/build.sh",
+        "builds the web page; it does not start a native client",
+    ),
+    (
         "tests/common/mod.rs",
         "prefix.arg(env!(\"CARGO_BIN_EXE_dbota\"));",
         "the isolated client: private HOME and XDG folders, scrubbed variables",
@@ -760,7 +773,7 @@ const APPROVED_LAUNCH_LINES: &[(&str, &str, &str)] = &[
     ),
     (
         "tools/gate.sh",
-        "if ! run_scrubbed cargo run --release -q --manifest-path \"$here/../bota/Cargo.toml\" -p bota_server --example local_match \\",
+        r#"(cd -- "$bota" && run_scrubbed cargo run --locked --release -q --manifest-path Cargo.toml -p bota_server --example local_match \"#,
         "bota's local_match example, not the client, without the variables that steer a server",
     ),
     (
@@ -770,18 +783,20 @@ const APPROVED_LAUNCH_LINES: &[(&str, &str, &str)] = &[
     ),
     (
         "web/build.sh",
-        "\"target/wasm32-unknown-unknown/$profile/dbota.wasm\"",
+        r#""$target/wasm32-unknown-unknown/$profile/dbota.wasm""#,
         "dbota.wasm, not the native client",
     ),
     (
         "web/build.sh",
-        "wasm-bindgen --target web --no-typescript --out-dir \"$out/import\" \"target/wasm32-unknown-unknown/$profile/dbota_import.wasm\"",
+        r#""$target/wasm32-unknown-unknown/$profile/dbota_import_web.wasm""#,
         "dbota_import.wasm, not the native client",
     ),
 ];
 
 #[test]
 fn client_and_server_launches_use_the_isolation_wrappers() {
+    let mut unapproved = Vec::new();
+    let mut stale = Vec::new();
     for (path, text) in repository_sources() {
         if path == "tests/client_guard.rs" || path == "tests/common/source_scan.rs" {
             continue; // they list the forms they look for
@@ -793,16 +808,14 @@ fn client_and_server_launches_use_the_isolation_wrappers() {
             .map(|(_, line, _)| (*line).to_owned())
             .collect();
         for line in &found {
-            assert!(
-                approved.contains(line),
-                "{path} starts the client or a game server outside the isolation wrappers: `{line}`"
-            );
+            if !approved.contains(line) {
+                unapproved.push(format!("{path}: `{line}`"));
+            }
         }
         for line in &approved {
-            assert!(
-                found.contains(line),
-                "{path}: the approved line `{line}` is gone (APPROVED_LAUNCH_LINES is stale)"
-            );
+            if !found.contains(line) {
+                stale.push(format!("{path}: `{line}`"));
+            }
         }
         // These spell the managed cache to refuse it or to test the refusal.
         let spells_it = [
@@ -816,6 +829,11 @@ fn client_and_server_launches_use_the_isolation_wrappers() {
             );
         }
     }
+    assert!(
+        unapproved.is_empty(),
+        "launches outside isolation wrappers: {unapproved:#?}"
+    );
+    assert!(stale.is_empty(), "stale approved launch lines: {stale:#?}");
 }
 
 #[test]

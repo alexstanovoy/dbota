@@ -31,12 +31,20 @@ use bevy::{
 
 use super::draw::Quad;
 use super::library::{Library, MAX_LOOKS};
+use super::lights::Light;
+use super::models::Placed;
 
-/// A frame's cards, grouped by look, as the main world made them.
+/// A view's gathered cards, lights and model placements, independent of simulation ownership.
 #[derive(Resource, Default)]
 pub struct ParticleFrame {
     pub quads: Vec<Quad>,
     pub batches: Vec<Batch>,
+    /// The camera in particle coordinates, used to select the strongest lights.
+    pub(super) eye: Option<Vec3>,
+    /// Lights gathered this frame, retained for their allocation capacity.
+    pub(super) lights: Vec<Light>,
+    /// Model placements in Bevy coordinates, retained for their allocation capacity.
+    pub(super) placed: Vec<Placed>,
 }
 
 /// One look's cards: their range in the frame's buffer and their centre, by which the batch
@@ -92,7 +100,7 @@ struct Key {
 }
 
 pub fn plugin(app: &mut App) {
-    embedded_asset!(app, "particles.wgsl");
+    embedded_asset!(app, "particles.wesl");
     app.init_resource::<ParticleFrame>();
     let Some(render) = app.get_sub_app_mut(RenderApp) else {
         return;
@@ -118,7 +126,7 @@ fn init(
     server: Res<AssetServer>,
     device: Res<RenderDevice>,
 ) {
-    let shader = load_embedded_asset!(server.as_ref(), "particles.wgsl");
+    let shader = load_embedded_asset!(server.as_ref(), "particles.wesl");
     let texture_layout = BindGroupLayoutDescriptor::new(
         "particle look",
         &BindGroupLayoutEntries::sequential(

@@ -3,7 +3,7 @@
 //! retain the previous box (VRF 2d13e415, ParticleSystemSimulation.Simulation.cs:1157-1229).
 
 use super::{Effect, Node};
-use crate::particles::store;
+use crate::store;
 use bevy::math::Vec3;
 use heatel::particle::{Renderer, System};
 

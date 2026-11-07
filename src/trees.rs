@@ -555,7 +555,7 @@ fn build(
             };
             // Drawn only: its vertices leave the CPU once on the GPU, its
             // bounds taken first.
-            let aabb = bevy::camera::primitives::MeshAabb::compute_aabb(&merged);
+            let aabb = bevy::camera::primitives::MeshAabb::get_aabb(&merged);
             merged.asset_usage = bevy::asset::RenderAssetUsages::RENDER_WORLD;
             let mut chunk = commands.spawn((
                 Mesh3d(meshes.add(merged)),
@@ -625,7 +625,7 @@ fn animate_tree(
             return;
         };
         let mut plain = plain(source);
-        let aabb = bevy::camera::primitives::MeshAabb::compute_aabb(&plain);
+        let aabb = bevy::camera::primitives::MeshAabb::get_aabb(&plain);
         plain.asset_usage = bevy::asset::RenderAssetUsages::RENDER_WORLD;
         entry.plain = Some((meshes.add(plain), aabb));
     }
@@ -784,7 +784,7 @@ fn ready_planted(
         return;
     };
     let mut mesh = plain(source);
-    let aabb = bevy::camera::primitives::MeshAabb::compute_aabb(&mesh);
+    let aabb = bevy::camera::primitives::MeshAabb::get_aabb(&mesh);
     mesh.asset_usage = bevy::asset::RenderAssetUsages::RENDER_WORLD;
     let mesh = meshes.add(mesh);
     commands.spawn((

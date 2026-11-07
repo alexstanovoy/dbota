@@ -3,7 +3,7 @@
 #
 #   tools/gate.sh [REPLAY.brp]
 #
-# Steps: build-output (hostile web build destinations), ignored-audit (every #[ignore]d test has a step that runs it), test-groups (every test in exactly one group, tools/test_groups.py check) and tooling-tests (that script's own tests), fuzz-check (the fuzz targets compile), clippy, web-webgpu and web-webgl2 (the browser clients compile), assets (the asset cache of this build, imported
+# Steps: script-tests (launcher failure handling and test orchestration), build-output (hostile web build destinations), ignored-audit (every #[ignore]d test has a step that runs it), test-groups (every test in exactly one group, tools/test_groups.py check) and tooling-tests (that script's own tests), fuzz-check (the fuzz targets compile), clippy, web-webgpu and web-webgl2 (the browser clients compile), assets (the asset cache of this build, imported
 # once per stamp from a Dota 2 install), test, build (release), deny, then, with the cache: reference (the importer's golden
 # reference cache, exported once from the install by tools/reference_cache.sh), install-tests (the ignored importer tests),
 # visual (tools/visual_check.sh on a replay) and browser (tools/browser_check.sh: the pages built, every check of
@@ -20,6 +20,9 @@
 #                            ~/.cache/dbota-gate>/<stamp of this build's manifest, ids and importer>, imported once and
 #                            reused; never the shared ~/.cache/dbota, whose stamp another build may have changed)
 #   DBOTA_REFERENCE=DIR      the importer's golden reference cache (default ~/.cache/dbota-gate/reference-v6, made by tools/reference_cache.sh; never the shared ~/.cache/dbota)
+#   DBOTA_WEB_TEST_PROFILE   browser test build profile (default release; product pages use web)
+#   DBOTA_BROWSER_GPU=software|hardware   Chromium rendering for browser tests (default software)
+#   DBOTA_GATE_HEATEL       the asset format crate used for the cache fingerprint (default ../heatel)
 #   DBOTA_GATE_BOTA, DBOTA_GATE_RADOVID   the bota and radovid checkouts the browser step builds servers from (default ../bota, ../radovid)
 #   GATE_FPS_CMD / GATE_FPS_BASE   the FPS gate: runs `$GATE_FPS_CMD $GATE_FPS_BASE HEAD` (a command taking a base and a
 #                            candidate git revision of this repository and exiting non-zero on a regression)
@@ -32,8 +35,11 @@
 set -uo pipefail
 here=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)
 cd "$here" || exit 2
+bota=${DBOTA_GATE_BOTA:-$here/../bota}
+heatel=${DBOTA_GATE_HEATEL:-$here/../heatel}
 logs=${GATE_LOGS:-$here/temp/gate}
 mkdir -p "$logs"
+logs=$(cd -- "$logs" && pwd -P) || exit 2
 # shellcheck source=tools/stamp.sh
 . "$here/tools/stamp.sh"
 # shellcheck source=tools/client_env.sh
@@ -67,7 +73,7 @@ skipped=0
 key=$(
     cat assets-manifest/manifest.txt assets-manifest/ids.txt
     grep -h 'pub const IMPORT_REV' crates/dbota_import/src/import.rs
-    grep -h 'pub const OUTPUT_REV' "$here/../heatel/src/lib.rs" 2>/dev/null || true
+    grep -h 'pub const OUTPUT_REV' "$heatel/src/lib.rs" 2>/dev/null || true
 )
 key=$(printf '%s' "$key" | sha256sum | cut -c1-16)
 export DBOTA_REFERENCE=${DBOTA_REFERENCE:-${XDG_CACHE_HOME:-$HOME/.cache}/dbota-gate/reference-v6}
@@ -94,10 +100,19 @@ step() { # name command...
     grep -E '^test result' "$logs/$name.log" | awk '{p += $4; f += $6; i += $8} END {if (NR) print "   " p " passed, " f " failed, " i " ignored"}'
 }
 
-# The browser clients, one per graphics API; the build embeds a replay, any file does for a check.
-web() { DBOTA_WEB_REPLAY="$here/Cargo.toml" cargo check --target wasm32-unknown-unknown --profile web -p dbota --features "web-replay,$1"; }
+# Compile the same clients the browser checks run, rather than checking a different feature and
+# flag set before building them again. A lean gate only checks the browser-facing Rust code.
+export DBOTA_GATE_WEB_PAGE=$logs/web-page
+web() {
+    if [ "${GATE_LEAN:-0}" = 1 ]; then
+        cargo check --locked --target wasm32-unknown-unknown --profile web -p dbota --features "$1"
+    else
+        APIS=$1 PROFILE=${DBOTA_WEB_TEST_PROFILE:-release} OUT=$DBOTA_GATE_WEB_PAGE web/build.sh
+    fi
+}
 
 step build-output python3 -m unittest discover -s web/test -p test_build_output.py -v
+step script-tests python3 -m unittest discover -s tools/test -p '*_test.py'
 step ignored-audit tools/ignored_audit.sh
 step test-groups python3 tools/test_groups.py check
 step tooling-tests python3 -m unittest discover -s tools -p test_test_groups.py -v
@@ -107,21 +122,23 @@ step web-webgpu web webgpu
 [ "${GATE_LEAN:-0}" = 1 ] || step web-webgl2 web webgl2
 
 # The asset cache: `dbota import` finds the Dota 2 install and does nothing when the cache already has this stamp.
-echo "== assets"
 have_install=0
-mkdir -p "$(dirname -- "$DBOTA_ASSETS")"
-if (flock 9 && import_assets) 9> "$DBOTA_ASSETS.lock" > "$logs/import.log" 2>&1; then
-    have_install=1
-else
+assets() {
+    mkdir -p "$(dirname -- "$DBOTA_ASSETS")"
+    if (flock 9 && import_assets) 9> "$DBOTA_ASSETS.lock" > "$logs/import.log" 2>&1; then
+        have_install=1
+        return 0
+    fi
     tail -n 5 "$logs/import.log"
     if [ "${GATE_LEAN:-0}" != 1 ]; then
-        echo "GATE-FAIL assets (no usable Dota 2 install: the install tests, the visual check and the browser checks cannot run; full output: $logs/import.log)"
-        exit 1
+        echo "no usable Dota 2 install: the install tests, the visual check and the browser checks cannot run (full output: $logs/import.log)"
+        return 1
     fi
-    echo "   no usable Dota 2 install: the tests that need the cache fail"
+    echo "no usable Dota 2 install: the tests that need the cache fail"
     skipped=1
-fi
-step test in_private_environment cargo test --profile test-release
+}
+step assets assets
+step test in_private_environment tools/test.sh
 # Formatting changes no code, so it is the last step: a gate that fails only here needs `cargo fmt` and an amend, not a rerun.
 if [ "${GATE_LEAN:-0}" = 1 ]; then
     step fmt cargo fmt --check
@@ -137,18 +154,17 @@ if [ "$have_install" = 1 ]; then
     # The importer's golden tests also compare with a reference cache (see crates/dbota_import/tests/common): made once from
     # the install, kept beside the asset caches.
     step reference flock "$DBOTA_REFERENCE.lock" tools/reference_cache.sh
-    step install-tests in_private_environment cargo test --release -p dbota_import -- --ignored
-    step tip-content in_private_environment cargo test --release -p dbota tip_content -- --ignored
+    step install-tests in_private_environment cargo test --profile test-release -p dbota_import -- --ignored
+    step tip-content in_private_environment cargo test --profile test-release -p dbota --bin dbota tip_content -- --ignored
     replay=${1:-${GATE_REPLAY:-}}
     if [ -z "$replay" ]; then
-        echo "== replay (recorded by ../bota)"
         replay=$logs/replay.brp
-        if ! run_scrubbed cargo run --release -q --manifest-path "$here/../bota/Cargo.toml" -p bota_server --example local_match \
-            -- --replay "$replay" > "$logs/replay.log" 2>&1; then
-            tail -n 40 "$logs/replay.log"
-            echo "GATE-FAIL replay (full output: $logs/replay.log)"
-            exit 1
-        fi
+        record_replay() {
+            (cd -- "$bota" && run_scrubbed cargo run --locked --release -q --manifest-path Cargo.toml -p bota_server --example local_match \
+                --target-dir "$here/target/browser-servers/bota" \
+                -- --replay "$replay") > "$logs/replay.log" 2>&1 || { tail -n 40 "$logs/replay.log"; return 1; }
+        }
+        step replay record_replay
     fi
     step visual tools/visual_check.sh "$replay"
     step browser tools/browser_check.sh

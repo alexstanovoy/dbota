@@ -29,16 +29,17 @@ python3 -m playwright install chromium firefox > "$work/playwright-install.log" 
     || { tail -n 20 "$work/playwright-install.log"; echo "browser_check: the browsers cannot be installed" >&2; exit 1; }
 
 # The servers: bota's (a match with a replay) and radovid's (the replays page).
-cargo build --release --quiet --manifest-path "$bota/Cargo.toml" -p bota_server
-cargo build --release --quiet --manifest-path "$radovid/Cargo.toml" -p radovid
-target_of() { cargo metadata --format-version 1 --no-deps --manifest-path "$1/Cargo.toml" | python3 -c 'import json,sys; print(json.load(sys.stdin)["target_directory"])'; }
-server=$(target_of "$bota")/release/bota_server
-radovid_bin=$(target_of "$radovid")/release/radovid
+server_target=$here/target/browser-servers/bota
+radovid_target=$here/target/browser-servers/radovid
+(cd -- "$bota" && cargo build --locked --release --quiet --manifest-path Cargo.toml -p bota_server --target-dir "$server_target")
+(cd -- "$radovid" && cargo build --locked --release --quiet --manifest-path Cargo.toml -p radovid --target-dir "$radovid_target")
+server=$server_target/release/bota_server
+radovid_bin=$radovid_target/release/radovid
 
 # A replay with chat lines (the replay page checks that they are heard): a fast match, one headless client that says six lines.
 chat=$work/chat.brp
 rm -f "$chat" "$work/server.out"
-cargo build --release --quiet
+cargo build --locked --release --quiet
 steering_unset_arguments
 env "${STEERING_UNSET[@]}" "$server" --port 0 --bind 127.0.0.1 --mode realtime --tick-rate 120 --map 2 --players 2 --dummy-seat --pick-secs 1 \
     --tactical-secs 0 --seed 7 --empty-after-secs 4 --replay "$chat" > "$work/server.out" 2>&1 &
@@ -56,16 +57,22 @@ done
 wait "$srv" || true
 [ -s "$chat" ] || { echo "browser_check: no replay was recorded"; exit 1; }
 
-# The pages: one without a replay (the boot, startup, served-cache and key checks, the radovid replays page),
-# one that plays the chat replay (the import test, replay, cursor, real-input cursor, pixels, prepared cache) and one that opens on the Video settings.
-export PROFILE=release
+# Reuse the identical plain clients built by the gate. Replays and startup arguments remain
+# compile-time inputs, so their page variants are built with the original interface.
+export PROFILE=${DBOTA_WEB_TEST_PROFILE:-release}
 export WASM_OPT=${WASM_OPT:-0}
-pages=temp/gate-pages
+pages=$here/temp/gate-pages
 rm -rf "$pages"
-OUT=$pages/plain web/build.sh
-DBOTA_INDEX_PAGE="$here/$pages/plain" in_private_environment python3 -m unittest discover -s web/test -p test_cache_index.py -v
-DBOTA_INDEX_PAGE="$here/$pages/plain" in_private_environment python3 -m unittest discover -s web/test -p test_voice_worker.py -v
-# (both clients: the real-input cursor check runs the page on the WebGL2 and the WebGPU one)
+mkdir -p "$pages"
+if [ -n "${DBOTA_GATE_WEB_PAGE:-}" ]; then
+    mkdir "$pages/plain"
+    # Owned build outputs require nlink=1; reflinks preserve that and work across filesystems.
+    cp -a --reflink=auto -- "$DBOTA_GATE_WEB_PAGE/." "$pages/plain/"
+else
+    OUT=$pages/plain web/build.sh
+fi
+DBOTA_INDEX_PAGE="$pages/plain" in_private_environment python3 -m unittest discover -s web/test -p test_cache_index.py -v
+DBOTA_INDEX_PAGE="$pages/plain" in_private_environment python3 -m unittest discover -s web/test -p test_voice_worker.py -v
 DBOTA_WEB_REPLAY=$chat DBOTA_WEB_ARGS="--replay built-in --pov 0 --seek 4600" OUT=$pages/replay web/build.sh
 DBOTA_WEB_REPLAY=$chat DBOTA_WEB_ARGS="--replay built-in --pov 0 --settings video" APIS=webgpu OUT=$pages/video web/build.sh
 PROFILE=web DBOTA_WEB_REPLAY=$chat DBOTA_WEB_ARGS="--replay built-in --pov 0 --seek 4600" OUT=$pages/web web/build.sh
@@ -75,6 +82,7 @@ rm -f "$work/cache.zip"
 in_private_environment python3 web/test/smoke.py --import-page "$pages/replay" --reference-cache "$DBOTA_ASSETS" --start-page "$pages/plain" \
     --prepared-page "$pages/replay" --cache-zip "$work/cache.zip" --cache-folder "$DBOTA_ASSETS" \
     --served-page "$pages/plain" --startup-page "$pages/plain" --keys-page "$pages/plain" --boot-page "$pages/plain" --busy-page "$pages/plain" \
+    --fonts-page "$pages/plain" \
     --replay-page "$pages/replay" --scene-page "$pages/web" --cursor-page "$pages/replay" --pixels-page "$pages/replay" \
     --fullscreen-page "$pages/video" \
     --replays-page "$pages/plain" --server "$server" --radovid "$radovid_bin"

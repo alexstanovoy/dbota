@@ -22,8 +22,8 @@ ignored = ["hound", "rodio", "serde", "serde_json"]
 # The pack_folder target's structured input.
 arbitrary = { version = "1", features = ["derive"] }
 # The versions and decoders the client loads its cache with.
-bevy_asset = { version = "=0.19.1", default-features = false }
-bevy_image = { version = "=0.19.1", default-features = false, features = ["png", "ktx2", "zstd_rust"] }
+bevy_asset = { version = "=0.20.1", default-features = false }
+bevy_image = { version = "=0.20.0", default-features = false, features = ["png", "ktx2", "zstd_rust"] }
 dbota_import = { path = "../crates/dbota_import" }
 # The importer's install made of the fuzzer's input (`heatel::fuzzing::files`).
 heatel = { path = "../../heatel" }

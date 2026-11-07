@@ -111,6 +111,12 @@ pub fn plugin(app: &mut App) {
         .init_resource::<Scroll>()
         .init_resource::<InView>()
         .init_resource::<Focus>()
+        .add_systems(
+            PreUpdate,
+            capture
+                .after(bevy::input::InputSystems)
+                .before(bevy::picking::PickingSystems::Hover),
+        )
         .add_systems(Startup, (super::draw::spawn_root, open_at_start))
         .add_systems(
             PreUpdate,
@@ -121,7 +127,6 @@ pub fn plugin(app: &mut App) {
         .add_systems(
             Update,
             (
-                capture,
                 focus,
                 ime_position,
                 clicks,
@@ -171,123 +176,131 @@ fn open_at_start(args: Res<crate::Args>, mut screen: ResMut<Screen>) {
     }
 }
 
-/// The buttons the player pressed this frame, for [`clicks`].
+/// Controls addressed by the native owning-widget press, consumed by the batched helpers.
 #[derive(bevy::ecs::system::SystemParam)]
-struct Pressed<'w, 's> {
-    tabs: Query<'w, 's, (&'static Interaction, &'static TabButton), Changed<Interaction>>,
-    links: Query<'w, 's, (&'static Interaction, &'static NavLink), Changed<Interaction>>,
-    close: Query<'w, 's, &'static Interaction, (Changed<Interaction>, With<CloseButton>)>,
-    reset_all: Query<'w, 's, &'static Interaction, (Changed<Interaction>, With<ResetButton>)>,
-    resets: Query<'w, 's, (&'static Interaction, &'static RowReset), Changed<Interaction>>,
-    toggles: Query<'w, 's, (&'static Interaction, &'static ToggleRow), Changed<Interaction>>,
-    choices: Query<'w, 's, (&'static Interaction, &'static ChoiceButton), Changed<Interaction>>,
-    options: Query<'w, 's, (&'static Interaction, &'static ChoiceOption), Changed<Interaction>>,
-    fields: Query<'w, 's, (&'static Interaction, &'static KeyField), Changed<Interaction>>,
-    name: Query<'w, 's, (&'static Interaction, &'static NameField), Changed<Interaction>>,
-    search: Query<'w, 's, &'static Interaction, (Changed<Interaction>, With<SearchField>)>,
-    clear: Query<'w, 's, &'static Interaction, (Changed<Interaction>, With<SearchClear>)>,
+struct ClickTargets<'w, 's> {
+    tabs: Query<'w, 's, &'static TabButton>,
+    links: Query<'w, 's, &'static NavLink>,
+    close: Query<'w, 's, (), With<CloseButton>>,
+    reset_all: Query<'w, 's, (), With<ResetButton>>,
+    resets: Query<'w, 's, &'static RowReset>,
+    toggles: Query<'w, 's, &'static ToggleRow>,
+    choices: Query<'w, 's, &'static ChoiceButton>,
+    options: Query<'w, 's, &'static ChoiceOption>,
+    fields: Query<'w, 's, &'static KeyField>,
+    name: Query<'w, 's, &'static NameField>,
+    search: Query<'w, 's, (), With<SearchField>>,
+    clear: Query<'w, 's, (), With<SearchClear>>,
 }
 
-fn pressed(interaction: &Interaction) -> bool {
-    *interaction == Interaction::Pressed
-}
-
-/// Clicks on the tabs and the navigation's links, the search field, the close and reset buttons,
-/// the toggles, the choices and their lists, and the key fields and slots.
 fn clicks(
     mut screen: ResMut<Screen>,
     mut scroll: ResMut<Scroll>,
     mut settings: ResMut<Settings>,
     displays: Res<Displays>,
-    on: Pressed,
+    on: ClickTargets,
+    press: Res<crate::ui::PrimaryPress>,
 ) {
     if !screen.open {
         screen.bypass_change_detection().naming = None;
         screen.bypass_change_detection().searching = false;
         return;
     }
-    // The helpers take the resources whole, so a change is marked only where one is made.
-    click_search(&mut screen, &mut scroll, &on);
-    click_navigation(&mut screen, &mut scroll, &on);
-    click_resets(&mut settings, &displays, &on);
-    click_controls(&mut screen, &mut settings, &displays, &on);
+    let Some(target) = press.0 else {
+        return;
+    };
+    click_search(&mut screen, &mut scroll, &on, target);
+    click_navigation(&mut screen, &mut scroll, &on, target);
+    click_resets(&mut settings, &displays, &on, target);
+    click_controls(&mut screen, &mut settings, &displays, &on, target);
 }
 
-/// The search field, which keeps the keyboard until the player clicks something else, and its
-/// clear button.
-fn click_search(screen: &mut ResMut<Screen>, scroll: &mut ResMut<Scroll>, on: &Pressed) {
-    let anything_else = on.name.iter().any(|(i, _)| pressed(i))
-        || on.tabs.iter().any(|(i, _)| pressed(i))
-        || on.choices.iter().any(|(i, _)| pressed(i))
-        || on.toggles.iter().any(|(i, _)| pressed(i))
-        || on.fields.iter().any(|(i, _)| pressed(i))
-        || on.clear.iter().any(pressed);
+fn click_search(
+    screen: &mut ResMut<Screen>,
+    scroll: &mut ResMut<Scroll>,
+    on: &ClickTargets,
+    target: Entity,
+) {
+    let anything_else = on.name.contains(target)
+        || on.tabs.contains(target)
+        || on.choices.contains(target)
+        || on.toggles.contains(target)
+        || on.fields.contains(target)
+        || on.clear.contains(target);
     if anything_else && screen.searching {
         screen.searching = false;
     }
-    if on.search.iter().any(pressed) && !screen.searching {
+    if on.search.contains(target) && !screen.searching {
         screen.searching = true;
         screen.naming = None;
         screen.capturing = None;
         screen.dropdown = None;
     }
-    if on.clear.iter().any(pressed) {
+    if on.clear.contains(target) {
         screen.query.clear();
         screen.searching = true;
         scroll.y = 0.0;
     }
 }
 
-/// The tabs, the links under them and the close cross.
-fn click_navigation(screen: &mut ResMut<Screen>, scroll: &mut ResMut<Scroll>, on: &Pressed) {
-    if let Some((_, tab)) = on.tabs.iter().find(|(i, _)| pressed(i)) {
+fn click_navigation(
+    screen: &mut ResMut<Screen>,
+    scroll: &mut ResMut<Scroll>,
+    on: &ClickTargets,
+    target: Entity,
+) {
+    if let Ok(tab) = on.tabs.get(target) {
         screen.show(tab.0);
         scroll.y = 0.0;
     }
-    if let Some((_, link)) = on.links.iter().find(|(i, _)| pressed(i)) {
+    if let Ok(link) = on.links.get(target) {
         scroll.jump = Some(link.0);
     }
-    if on.close.iter().any(pressed) {
+    if on.close.contains(target) {
         screen.open = false;
     }
 }
 
-/// The reset of every hotkey and the arrow of a changed row.
-fn click_resets(settings: &mut ResMut<Settings>, displays: &Displays, on: &Pressed) {
-    if on.reset_all.iter().any(pressed) {
-        settings.keys = keys::BINDINGS.map(|b| b.default);
+fn click_resets(
+    settings: &mut ResMut<Settings>,
+    displays: &Displays,
+    on: &ClickTargets,
+    target: Entity,
+) {
+    if on.reset_all.contains(target) {
+        settings.keys = keys::BINDINGS.map(|binding| binding.default);
     }
-    if let Some((_, reset)) = on.resets.iter().find(|(i, _)| pressed(i)) {
+    if let Ok(reset) = on.resets.get(target) {
         reset.0.reset(settings, displays);
     }
 }
 
-/// The toggles, the choices and their lists, the typed line and the key fields and slots.
 fn click_controls(
     screen: &mut ResMut<Screen>,
     settings: &mut ResMut<Settings>,
     displays: &Displays,
-    on: &Pressed,
+    on: &ClickTargets,
+    target: Entity,
 ) {
-    if let Some((_, field)) = on.name.iter().find(|(i, _)| pressed(i)) {
+    if let Ok(field) = on.name.get(target) {
         screen.naming = Some(field.0);
         screen.capturing = None;
     }
-    for (_, row) in on.toggles.iter().filter(|(i, _)| pressed(i)) {
-        if Row::Toggle(row.0).enabled(settings) {
-            let state = row.0.get(settings);
-            row.0.set(settings, !state);
-        }
+    if let Ok(row) = on.toggles.get(target)
+        && Row::Toggle(row.0).enabled(settings)
+    {
+        let state = row.0.get(settings);
+        row.0.set(settings, !state);
     }
-    if let Some((_, option)) = on.options.iter().find(|(i, _)| pressed(i)) {
+    if let Ok(option) = on.options.get(target) {
         option.0.pick(settings, option.1, displays);
         screen.dropdown = None;
-    } else if let Some((_, choice)) = on.choices.iter().find(|(i, _)| pressed(i))
+    } else if let Ok(choice) = on.choices.get(target)
         && Row::Choice(choice.0).enabled(settings)
     {
         screen.dropdown = (screen.dropdown != Some(choice.0)).then_some(choice.0);
     }
-    if let Some((_, field)) = on.fields.iter().find(|(i, _)| pressed(i)) {
+    if let Ok(field) = on.fields.get(target) {
         screen.capturing = Some(field.0);
         screen.held_modifier = None;
         screen.naming = None;
@@ -298,13 +311,18 @@ fn click_controls(
 fn drag(
     screen: Res<Screen>,
     mut settings: ResMut<Settings>,
-    tracks: Query<(&Interaction, &SliderTrack, &RelativeCursorPosition)>,
+    tracks: Query<(
+        Has<bevy::ui::Pressed>,
+        &SliderTrack,
+        &RelativeCursorPosition,
+    )>,
+    mouse: Res<ButtonInput<MouseButton>>,
 ) {
     if !screen.open {
         return;
     }
     for (interaction, track, at) in &tracks {
-        if *interaction != Interaction::Pressed {
+        if !interaction || !mouse.pressed(MouseButton::Left) {
             continue;
         }
         let Some(at) = at.normalized else {

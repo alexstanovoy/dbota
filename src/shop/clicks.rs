@@ -5,6 +5,7 @@
 //! item dropped on the panel's foot is sold. In the tactical phase what is
 //! bought is chosen for the match's start.
 
+use bevy::picking::hover::DirectlyHovered;
 use bevy::prelude::*;
 use bota_client_core::{Intent, Source};
 
@@ -41,7 +42,7 @@ fn inventory(
     menu: Res<crate::item_menu::Menu>,
     mut chosen: ResMut<Chosen>,
     mut pressed: Local<Option<u8>>,
-    items: Query<(&Interaction, &crate::hud::ItemBox, &InheritedVisibility)>,
+    items: Query<(&DirectlyHovered, &crate::hud::ItemBox, &InheritedVisibility)>,
 ) {
     if menu.is_open() {
         *pressed = None;
@@ -49,7 +50,7 @@ fn inventory(
     }
     let hovered = items
         .iter()
-        .find(|(over, _, seen)| **over != Interaction::None && seen.get())
+        .find(|(over, _, seen)| over.get() && seen.get())
         .map(|(_, item, _)| item.0);
     if mouse.just_pressed(MouseButton::Left) {
         *pressed = hovered
@@ -75,31 +76,31 @@ fn buttons(
     mut typing: ResMut<Typing>,
     mut shown: ResMut<Shown>,
     mut grab: ResMut<Grab>,
-    shop: Single<&Interaction, With<ShopButton>>,
-    search: Single<&Interaction, With<SearchBox>>,
-    tabs: Query<(&Interaction, &TabButton)>,
-    grab_all: Query<&Interaction, With<GrabAll>>,
+    shop: Single<&DirectlyHovered, With<ShopButton>>,
+    search: Single<&DirectlyHovered, With<SearchBox>>,
+    tabs: Query<(&DirectlyHovered, &TabButton)>,
+    grab_all: Query<&DirectlyHovered, With<GrabAll>>,
 ) {
     if !mouse.just_pressed(MouseButton::Left) {
         return;
     }
     let core = &mut session.0;
-    if **shop != Interaction::None {
+    if shop.get() {
         panels.shop = !panels.shop;
     }
-    if **search != Interaction::None && panels.shop {
+    if search.get() && panels.shop {
         *typing = Typing::Search;
     } else if *typing == Typing::Search {
         *typing = Typing::No;
     }
-    if let Some((_, TabButton(tab))) = tabs.iter().find(|(i, _)| **i != Interaction::None)
+    if let Some((_, TabButton(tab))) = tabs.iter().find(|(i, _)| i.get())
         && panels.shop
     {
         shown.0 = *tab;
         panels.search.clear();
     }
     let live = matches!(core.source, Source::Live(_));
-    if live && grab_all.iter().any(|i| *i != Interaction::None) {
+    if live && grab_all.iter().any(|i| i.get()) {
         grab.start(core);
     }
 }
@@ -117,7 +118,7 @@ pub(super) fn cells(
     panels: Res<Panels>,
     mut chosen: ResMut<Chosen>,
     mut last_left: Local<Option<(u16, f32)>>,
-    cells: Query<(&Interaction, &ShopCell, &InheritedVisibility)>,
+    cells: Query<(&DirectlyHovered, &ShopCell, &InheritedVisibility)>,
     drag: Res<super::drag::ShopDrag>,
 ) {
     let left = drag.clicked.is_some();
@@ -128,7 +129,7 @@ pub(super) fn cells(
     let Some(id) = drag.clicked.or_else(|| {
         cells
             .iter()
-            .find(|(i, _, seen)| **i != Interaction::None && seen.get())
+            .find(|(i, _, seen)| i.get() && seen.get())
             .map(|(_, cell, _)| cell.0)
     }) else {
         return;
@@ -158,12 +159,12 @@ fn sell(
     mut session: NonSendMut<Session>,
     mouse: Res<ButtonInput<MouseButton>>,
     panels: Res<Panels>,
-    strip: Single<&Interaction, With<SellStrip>>,
+    strip: Single<&DirectlyHovered, With<SellStrip>>,
 ) {
     let core = &mut session.0;
     if panels.shop
         && mouse.just_released(MouseButton::Left)
-        && **strip != Interaction::None
+        && strip.get()
         && matches!(core.source, Source::Live(_))
         && let Some(slot) = core.held_item.take()
     {

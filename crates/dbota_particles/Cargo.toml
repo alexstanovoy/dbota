@@ -1,0 +1,19 @@
+[package]
+name = "dbota_particles"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+publish = false
+
+[dependencies]
+bevy = { workspace = true, features = [
+    "std", "bevy_log", "async_executor", "multi_threaded", "bevy_asset", "bevy_render",
+    "bevy_core_pipeline", "bevy_pbr", "bevy_light", "bevy_gltf",
+] }
+bytemuck.workspace = true
+heatel.workspace = true
+serde_json.workspace = true
+
+[features]
+# Introspection for the application's real-game E2E contracts.
+test-support = []

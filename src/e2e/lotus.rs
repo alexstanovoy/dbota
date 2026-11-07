@@ -140,6 +140,17 @@ fn a_pool_shows_its_lotuses_and_one_plucked_and_eaten_plays_its_effects() {
         });
     }
     let (pool, at, _) = pools(&client)[0];
+    // The grant is a one-shot: put its listener here before teleporting the hero.
+    client.core_mut().pinned = Some(bota_client_core::Pin::Unit(pool));
+    client.within(SOON, "the camera at the pool", |c| {
+        let world = c.world_mut();
+        let focus = world
+            .query::<&crate::camera::RtsCamera>()
+            .single(world)
+            .expect("the camera")
+            .focus;
+        Vec2::new(focus.x, -focus.z).distance(Vec2::new(at.0 as f32, at.1 as f32)) < 50.0
+    });
     let before = heard(&client, "sound.lotus_pool.grant");
     client.stand_at(at);
     client.within(SOON, "a lotus plucked", |c| {

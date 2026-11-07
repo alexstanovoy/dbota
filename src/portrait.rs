@@ -334,7 +334,7 @@ fn spawn(mut commands: Commands, mut images: ResMut<Assets<Image>>) {
             scale_factor: 1.0,
         }),
         Projection::Perspective(PerspectiveProjection::default()),
-        bevy::core_pipeline::tonemapping::Tonemapping::TonyMcMapface,
+        bevy::render::view::Tonemapping::TonyMcMapface,
         AmbientLight::default(),
         Msaa::Sample4,
         RenderLayers::layer(LAYER),

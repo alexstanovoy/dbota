@@ -8,6 +8,7 @@
 use std::collections::VecDeque;
 
 use bevy::prelude::*;
+use bevy::{picking::hover::Hovered, ui_widgets::Button};
 use bota_client_core::{BAG_SLOTS, Source, TOWN_PORTAL_SLOT};
 use bota_proto::{ItemId, ItemSlot, Order};
 
@@ -79,6 +80,7 @@ pub const STICKY: ItemId = ItemId::TOWN_PORTAL_SCROLL;
 
 /// The shop button: it holds the gold, and a click on it opens the shop.
 #[derive(Component)]
+#[require(bevy::picking::hover::DirectlyHovered)]
 pub struct ShopButton;
 
 /// The gold's figure.
@@ -89,6 +91,7 @@ struct Gold;
 #[derive(Component)]
 struct StashBlock;
 #[derive(Component)]
+#[require(bevy::picking::hover::DirectlyHovered)]
 pub struct GrabAll;
 
 /// Where the quick-buy rows' icons go.
@@ -187,7 +190,7 @@ fn spawn_stash(
                 ..default()
             },
             backdrop((manifest, server), "shop.stash", ui::PANEL_DEEP),
-            Interaction::default(),
+            Hovered::default(),
             Blocker,
             ChildOf(corner),
         ))
@@ -233,6 +236,7 @@ fn spawn_grab_all(
         .spawn((
             GrabAll,
             Button,
+            Hovered::default(),
             Node {
                 position_type: PositionType::Absolute,
                 right: dota(GRAB_RIGHT),
@@ -278,7 +282,7 @@ fn spawn_quick(
                 ..default()
             },
             backdrop((manifest, server), "shop.quickbuy", QUICK_GROUND),
-            Interaction::default(),
+            Hovered::default(),
             Blocker,
             ChildOf(corner),
         ))
@@ -380,7 +384,7 @@ fn spawn_launcher(
                 ..default()
             },
             backdrop((manifest, server), "shop.launcher", ui::PANEL),
-            Interaction::default(),
+            Hovered::default(),
             Blocker,
             ChildOf(corner),
         ))
@@ -423,6 +427,7 @@ fn spawn_shop_button(
         .spawn((
             ShopButton,
             Button,
+            Hovered::default(),
             Blocker,
             Node {
                 position_type: PositionType::Absolute,
@@ -518,10 +523,10 @@ fn shop_button(
     session: NonSend<Session>,
     manifest: Res<Manifest>,
     server: Res<AssetServer>,
-    mut button: Single<(&Interaction, &mut ImageNode), With<ShopButton>>,
+    mut button: Single<(&Hovered, &mut ImageNode), With<ShopButton>>,
     mut shown: Local<&'static str>,
 ) {
-    let hovered = *button.0 != Interaction::None;
+    let hovered = button.0.get();
     let logical = match (
         session.0.at_base_shop() || session.0.at_secret_shop(),
         hovered,

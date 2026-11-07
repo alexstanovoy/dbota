@@ -3,6 +3,7 @@
 
 use bevy::input::ButtonState;
 use bevy::prelude::*;
+use bevy::ui_widgets::Button;
 use bota_client_core::BAG_SLOTS;
 use bota_proto::{Cheat, HeroId, ItemId};
 
@@ -49,19 +50,12 @@ fn the_item_menu_offers_sell_and_moves_an_item_to_the_stash() {
         label("DOTA_InventoryMenu_Sell"),
         label("DOTA_InventoryMenu_MoveToStash"),
     );
-    let item_box = client.item_box(slot).expect("its box");
-    let on = client.centre_of(item_box).expect("laid out");
-    client.mouse(on);
-    client.click(MouseButton::Right);
+    open_menu(&mut client, slot);
     let patience = std::time::Duration::from_secs(10);
     client.within(patience, "the item menu", |c| {
         button_saying(c, &sell).is_some() && button_saying(c, &to_stash).is_some()
     });
-    let choice = button_saying(&mut client, &to_stash).expect("Move to Stash");
-    client.frames(2);
-    let on = client.centre_of(choice).expect("laid out");
-    client.mouse(on);
-    client.click(MouseButton::Left);
+    choose(&mut client, &to_stash);
     client.within(patience, "the tango in the stash", |c| {
         c.slot_of(ItemId::TANGO).is_some_and(|s| s >= BAG_SLOTS)
     });
@@ -84,10 +78,7 @@ fn the_item_menu_does_not_use_the_couriers_home_access_for_the_hero() {
     let to_stash = texts
         .label("DOTA_InventoryMenu_MoveToStash", &[])
         .expect("Move to Stash");
-    let item_box = client.item_box(slot).expect("the hero's item");
-    let at = client.centre_of(item_box).expect("the slot laid out");
-    client.mouse(at);
-    client.click(MouseButton::Right);
+    open_menu(&mut client, slot);
     client.until("the item menu", |client| {
         button_saying(client, &sell).is_some() || button_saying(client, &mark).is_some()
     });
@@ -135,6 +126,7 @@ fn a_dragged_item_follows_the_cursor_and_lands_where_dropped() {
         .find(|s| client.core().item_in(*s).is_none())
         .expect("a free slot");
     let from_box = client.item_box(slot).expect("its box");
+    client.hover_ui(from_box, std::time::Duration::from_secs(20));
     let from = client.centre_of(from_box).expect("laid out");
     let to_box = client.item_box(to).expect("its box");
     let onto = client.centre_of(to_box).expect("laid out");
@@ -162,6 +154,8 @@ fn a_dragged_item_follows_the_cursor_and_lands_where_dropped() {
 fn with_items(items: &[ItemId]) -> (Server, Client) {
     let server = Server::start(1, &[]);
     let mut client = Client::join(&server, HeroId::SHADOW_FIEND, &[]);
+    // A fresh recipe's disassembly window must start after its input is ready.
+    client.hover_ui_with(std::time::Duration::from_secs(20), |c| c.item_box(0));
     for item in items {
         client.cheat(Cheat::Item { item: *item });
     }
@@ -177,8 +171,7 @@ fn open_menu(client: &mut Client, slot: u8) {
             .is_some_and(|at| at != Vec2::ZERO)
     });
     let item_box = client.item_box(slot).expect("its box");
-    let on = client.centre_of(item_box).expect("laid out");
-    client.mouse(on);
+    client.hover_ui(item_box, patience);
     client.click(MouseButton::Right);
 }
 
@@ -198,9 +191,7 @@ fn choose(client: &mut Client, word: &str) {
         button_saying(c, word).is_some()
     });
     let choice = button_saying(client, word).expect("the choice");
-    client.frames(2);
-    let on = client.centre_of(choice).expect("laid out");
-    client.mouse(on);
+    client.hover_ui(choice, patience);
     client.click(MouseButton::Left);
 }
 
@@ -276,4 +267,62 @@ fn the_item_menu_locks_and_unlocks_combining() {
     assert!(button_saying(&mut client, &lock).is_none());
     choose(&mut client, &unlock);
     client.within(patience, "the padlock gone", |c| !padlock(c, slot));
+}
+
+/// The picked inventory box wins over a marked ancestor, including when both are hovered.
+#[test]
+fn a_nested_inventory_box_takes_the_press_instead_of_its_ancestor() {
+    let (_server, mut client, parent_slot) = with_a_tango();
+    client.cheat(Cheat::Item {
+        item: ItemId::MAGIC_STICK,
+    });
+    let slot = client
+        .slot_of(ItemId::MAGIC_STICK)
+        .expect("the second item");
+    let container = client.item_box(parent_slot).expect("the drawn box");
+    let node = Node {
+        position_type: PositionType::Absolute,
+        width: percent(100),
+        height: percent(100),
+        ..default()
+    };
+    let parent = client
+        .world_mut()
+        .spawn((
+            node.clone(),
+            crate::hud::ItemBox(parent_slot),
+            bevy::picking::hover::Hovered::default(),
+            GlobalZIndex(1000),
+            ChildOf(container),
+        ))
+        .id();
+    let child = client
+        .world_mut()
+        .spawn((
+            node,
+            crate::hud::ItemBox(slot),
+            bevy::picking::hover::Hovered::default(),
+            GlobalZIndex(1001),
+            ChildOf(parent),
+        ))
+        .with_children(|children| {
+            // The slot's decoration does not intercept the pointer.
+            children.spawn((Node::default(), Pickable::IGNORE));
+        })
+        .id();
+    client.hover_ui(child, std::time::Duration::from_secs(30));
+    assert!(
+        client
+            .world()
+            .get::<bevy::picking::hover::Hovered>(parent)
+            .expect("the ancestor hover")
+            .get()
+    );
+    client.button(MouseButton::Left, ButtonState::Pressed);
+    assert_eq!(
+        client.core().held_item,
+        Some(slot),
+        "the pointer picked the child item, not its ancestor"
+    );
+    client.button(MouseButton::Left, ButtonState::Released);
 }

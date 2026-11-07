@@ -135,7 +135,7 @@ fn attack_sounds(client: &mut Client, hero: HeroId) -> (Arc<Mutex<Sounds>>, Vec<
     let into = sounds.clone();
     let names = events.clone();
     client.world_mut().add_observer(
-        move |add: On<Add, bevy::audio::AudioPlayer>,
+        move |add: On<Add<bevy::audio::AudioPlayer>>,
               mixer: Res<crate::mixer::Mixer>,
               session: NonSend<crate::session::Session>| {
             if let Some((name, _)) = mixer.event_at(add.entity)

@@ -4,6 +4,7 @@
 //! and the build tree of the item last clicked.
 
 use bevy::{input::mouse::AccumulatedMouseScroll, prelude::*};
+use bevy::{picking::hover::Hovered, ui_widgets::Button};
 
 use super::catalog::{Catalog, Tab};
 use super::cell::{self, CELL, Chosen, GAP, Place};
@@ -45,6 +46,7 @@ struct Page;
 
 /// A tab's button.
 #[derive(Component, Clone, Copy)]
+#[require(bevy::picking::hover::DirectlyHovered)]
 pub struct TabButton(pub Tab);
 
 /// A tab's page of categories.
@@ -63,12 +65,14 @@ struct ResultTitle;
 
 /// The search box, and its text.
 #[derive(Component)]
+#[require(bevy::picking::hover::DirectlyHovered)]
 pub struct SearchBox;
 #[derive(Component)]
 struct SearchText;
 
 /// The panel's foot, where an item dropped is sold.
 #[derive(Component)]
+#[require(bevy::picking::hover::DirectlyHovered)]
 pub struct SellStrip;
 
 /// The tab shown.
@@ -140,7 +144,7 @@ fn spawn(
         .spawn((
             ShopPanel,
             Blocker,
-            Interaction::default(),
+            Hovered::default(),
             Node {
                 position_type: PositionType::Absolute,
                 right: px(ui::CORNER_MARGIN),
@@ -207,6 +211,7 @@ fn spawn_search(commands: &mut Commands, fonts: &Fonts, catalog: &Catalog, panel
         .spawn((
             SearchBox,
             Button,
+            Hovered::default(),
             Node {
                 flex_grow: 1.0,
                 height: px(28),
@@ -288,6 +293,7 @@ fn spawn_tabs(commands: &mut Commands, fonts: &Fonts, catalog: &Catalog, panel: 
             .spawn((
                 TabButton(tab),
                 Button,
+                Hovered::default(),
                 Node {
                     flex_grow: 1.0,
                     height: px(26),
@@ -425,6 +431,7 @@ fn spawn_foot(commands: &mut Commands, fonts: &Fonts, panel: Entity) {
         .spawn((
             SellStrip,
             Button,
+            Hovered::default(),
             Node {
                 padding: UiRect::axes(px(PAD), px(6)),
                 column_gap: px(6),
@@ -515,7 +522,7 @@ fn above_bottom_row(
 fn tabs(
     shown: Res<Shown>,
     panels: Res<Panels>,
-    mut buttons: Query<(&TabButton, &Interaction, &mut BackgroundColor, &Children)>,
+    mut buttons: Query<(&TabButton, &Hovered, &mut BackgroundColor, &Children)>,
     mut labels: Query<&mut TextColor>,
     mut pages: Query<(&TabPage, &mut Node), Without<Results>>,
     mut results: Single<&mut Node, With<Results>>,
@@ -523,7 +530,7 @@ fn tabs(
     let searching = !panels.search.trim().is_empty();
     for (TabButton(tab), interaction, mut ground, children) in &mut buttons {
         let on = *tab == shown.0 && !searching;
-        let lit = on || *interaction != Interaction::None;
+        let lit = on || interaction.get();
         ground.set_if_neq(BackgroundColor(if on { TAB_ON } else { TAB_OFF }));
         for child in children {
             if let Ok(mut color) = labels.get_mut(*child) {
@@ -617,10 +624,10 @@ fn search_text(
 /// The wheel scrolls the page while the cursor is over the panel.
 fn scroll(
     wheel: Res<AccumulatedMouseScroll>,
-    panel: Single<&Interaction, With<ShopPanel>>,
+    panel: Single<&Hovered, With<ShopPanel>>,
     mut page: Single<&mut ScrollPosition, With<Page>>,
 ) {
-    if **panel == Interaction::None || wheel.delta.y == 0.0 {
+    if !panel.get() || wheel.delta.y == 0.0 {
         return;
     }
     let step = match wheel.unit {

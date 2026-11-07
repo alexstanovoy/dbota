@@ -6,6 +6,9 @@
 use std::f32::consts::TAU;
 use std::sync::LazyLock;
 
+use bevy::picking::{events::PointerPress, pointer::PointerButton};
+use bevy::{picking::hover::Hovered, ui::Pressed, ui_widgets::Button};
+
 use bevy::prelude::*;
 use bota_client_core::{
     App as Core, BAG_SLOTS, ClientSession, INVENTORY_SLOTS, Look, TOWN_PORTAL_SLOT, ability_look,
@@ -69,11 +72,13 @@ const NAME_GOLD: Color = Color::srgb(0.93, 0.74, 0.4);
 
 /// An ability box of the bottom panel, by slot.
 #[derive(Component, Clone, Copy)]
+#[require(bevy::picking::hover::DirectlyHovered)]
 pub struct AbilityBox(pub u8);
 
 /// An item box of the bottom panel or the stash, by slot: bag below
 /// [`BAG_SLOTS`], stash from it, then the town portal slot.
 #[derive(Component, Clone, Copy)]
+#[require(bevy::picking::hover::DirectlyHovered)]
 pub struct ItemBox(pub u8);
 
 /// Dota's team size: the places each side's half of the top bar holds.
@@ -105,6 +110,7 @@ pub(crate) fn seats_shown(columns: &Query<(&SeatColumn, &Node)>) -> (u8, u8) {
 
 /// A seat's portrait in the top bar, by place.
 #[derive(Component, Clone, Copy)]
+#[require(bevy::picking::hover::DirectlyHovered)]
 pub struct SeatBox(pub Place);
 
 /// Dota's player-colour strip along the top of a seat's portrait
@@ -125,6 +131,7 @@ struct LevelUp(u8);
 
 /// The innate ability's round mark beside the abilities.
 #[derive(Component)]
+#[require(bevy::picking::hover::DirectlyHovered)]
 pub struct InnateButton;
 
 /// The neutral item's round slot, empty as the simulator has no neutral
@@ -262,24 +269,37 @@ enum MenuButton {
 /// there), the scoreboard's pins the scoreboard open or lets it go. Faint
 /// and bluish until hovered, as Dota's.
 fn menu_buttons(
+    mut buttons: Query<(&Hovered, Has<Pressed>, &mut ImageNode), With<MenuButton>>,
+    mouse: Res<ButtonInput<MouseButton>>,
+) {
+    let primary_held = mouse.pressed(MouseButton::Left);
+    for (hovered, pressed, mut image) in &mut buttons {
+        image.color = if hovered.get() || (pressed && primary_held) {
+            Color::WHITE
+        } else {
+            Color::srgba(0.8, 0.87, 1.0, 0.5)
+        };
+    }
+}
+
+fn menu_press(
+    event: On<PointerPress>,
+    buttons: Query<&MenuButton>,
+    known: Res<crate::session::MatchKnown>,
     mut panels: ResMut<crate::input::Panels>,
     mut screen: ResMut<crate::settings::Screen>,
     menu: Option<NonSendMut<crate::main_menu::MenuCore>>,
-    mut buttons: Query<(&MenuButton, &Interaction, &mut ImageNode), Changed<Interaction>>,
 ) {
-    let mut menu = menu;
-    for (button, interaction, mut image) in &mut buttons {
-        if *interaction == Interaction::Pressed {
-            match (button, menu.as_mut()) {
-                (MenuButton::Dashboard, Some(menu)) => menu.act(crate::main_menu::Act::Dashboard),
-                (MenuButton::Dashboard, None) => screen.open = true,
-                (MenuButton::Scoreboard, _) => panels.scoreboard = !panels.scoreboard,
-            }
-        }
-        image.color = match interaction {
-            Interaction::None => Color::srgba(0.8, 0.87, 1.0, 0.5),
-            _ => Color::WHITE,
-        };
+    if event.button != PointerButton::Primary || !known.0 {
+        return;
+    }
+    let Ok(button) = buttons.get(event.entity) else {
+        return;
+    };
+    match (button, menu) {
+        (MenuButton::Dashboard, Some(mut menu)) => menu.act(crate::main_menu::Act::Dashboard),
+        (MenuButton::Dashboard, None) => screen.open = true,
+        (MenuButton::Scoreboard, _) => panels.scoreboard = !panels.scoreboard,
     }
 }
 
@@ -309,7 +329,9 @@ pub struct Docks {
 }
 
 pub fn plugin(app: &mut App) {
-    app.add_systems(PreStartup, spawn_docks)
+    app.add_observer(menu_press)
+        .add_observer(level_up_press)
+        .add_systems(PreStartup, spawn_docks)
         .add_systems(Startup, spawn_hud)
         .add_systems(
             Update,
@@ -466,7 +488,7 @@ fn panel(node: Node) -> impl Bundle {
         node,
         BackgroundColor(ui::PANEL),
         BorderColor::all(ui::EDGE),
-        Interaction::default(),
+        Hovered::default(),
         Blocker,
     )
 }
@@ -654,6 +676,7 @@ fn spawn_innate(kit: &mut Spawner, row: Entity) {
         .spawn((
             InnateButton,
             Button,
+            Hovered::default(),
             Node {
                 width: px(INNATE),
                 height: px(INNATE),
@@ -745,6 +768,7 @@ fn spawn_level_up(kit: &mut Spawner, cell: Entity, slot: u8) {
         .spawn((
             LevelUp(slot),
             Button,
+            Hovered::default(),
             Blocker,
             Node {
                 position_type: PositionType::Absolute,
@@ -905,7 +929,7 @@ fn spawn_round_slots(kit: &mut Spawner, bar: Entity) {
         .commands
         .spawn((
             NeutralSlot,
-            Interaction::default(),
+            Hovered::default(),
             Blocker,
             Node {
                 width: px(ROUND_SLOT),
@@ -972,6 +996,7 @@ pub(crate) fn spawn_slot_box(
         .spawn((
             tag,
             Button,
+            Hovered::default(),
             Node {
                 width: px(w),
                 height: px(h),
@@ -1248,6 +1273,7 @@ fn spawn_seat(kit: &mut Spawner, parent: Entity, seat: Place) {
         .spawn((
             SeatBox(seat),
             Button,
+            Hovered::default(),
             Node {
                 width: px(SEAT.0),
                 height: px(SEAT.1),
@@ -1387,6 +1413,7 @@ fn spawn_menu(commands: &mut Commands, manifest: &Manifest, server: &AssetServer
         let spawned = commands.spawn((
             button,
             Button,
+            Hovered::default(),
             Blocker,
             Node {
                 width: px(25),
@@ -1841,30 +1868,42 @@ fn owns_panel(core: &Core, unit: Option<&UnitView>, kit: Option<&Kit>) -> bool {
 
 /// Shows Dota's level-up plate over each ability one's own hero could put a
 /// point into; a click on it learns a level.
-fn level_ups(
-    mut session: NonSendMut<Session>,
-    mut plates: Query<(&LevelUp, &mut Visibility)>,
-    clicks: Query<(&LevelUp, &Interaction), Changed<Interaction>>,
-) {
-    let core = &mut session.0;
+fn level_ups(session: NonSend<Session>, mut plates: Query<(&LevelUp, &mut Visibility)>) {
+    let core = &session.0;
     let (_, unit, kit) = subject(core);
     let own = owns_panel(core, unit, kit);
-    let live = matches!(core.source, bota_client_core::Source::Live(_));
     let abilities = subject_abilities(unit, kit);
-    let can = |slot: u8| {
-        own && abilities
-            .get(usize::from(slot))
-            .is_some_and(|a| a.learnable == Some(true))
-    };
     for (plate, mut visibility) in &mut plates {
-        visibility.set_if_neq(ui::visible(can(plate.0)));
+        let learnable = own
+            && abilities
+                .get(usize::from(plate.0))
+                .is_some_and(|ability| ability.learnable == Some(true));
+        visibility.set_if_neq(ui::visible(learnable));
     }
-    let learn = clicks
-        .iter()
-        .find(|(plate, i)| live && **i == Interaction::Pressed && can(plate.0))
-        .map(|(plate, _)| plate.0);
-    if let Some(slot) = learn {
-        crate::input::press(core, bota_client_core::Slot::Ability(slot), true);
+}
+
+fn level_up_press(
+    event: On<PointerPress>,
+    plates: Query<&LevelUp>,
+    mut session: NonSendMut<Session>,
+) {
+    if event.button != PointerButton::Primary {
+        return;
+    }
+    let Ok(plate) = plates.get(event.entity) else {
+        return;
+    };
+    let core = &mut session.0;
+    if !matches!(core.source, bota_client_core::Source::Live(_)) {
+        return;
+    }
+    let (_, unit, kit) = subject(core);
+    let learnable = owns_panel(core, unit, kit)
+        && subject_abilities(unit, kit)
+            .get(usize::from(plate.0))
+            .is_some_and(|ability| ability.learnable == Some(true));
+    if learnable {
+        crate::input::press(core, bota_client_core::Slot::Ability(plate.0), true);
     }
 }
 

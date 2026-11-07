@@ -328,9 +328,11 @@ fn selection_survives_the_minimap(client: &mut Client, mine: Team) {
                 client.mouse(away);
                 client.point(at);
                 client.click(button);
-                assert_ne!(
-                    client.world().get::<Interaction>(frame),
-                    Some(&Interaction::None),
+                assert!(
+                    client
+                        .world()
+                        .get::<bevy::picking::hover::DirectlyHovered>(frame)
+                        .is_some_and(|hover| hover.get()),
                     "the click must reach the minimap itself"
                 );
                 assert_eq!(

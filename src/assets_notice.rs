@@ -22,6 +22,10 @@ use bevy::{
     prelude::*,
     window::Ime,
 };
+use bevy::{
+    picking::{events::PointerPress, hover::Hovered, pointer::PointerButton},
+    ui_widgets::Button,
+};
 
 use crate::import::Need;
 use crate::ui::{self, Fonts};
@@ -88,7 +92,8 @@ pub fn plugin(app: &mut App) {
         told: None,
         entering: None,
     })
-    .add_systems(Update, (typing, listen, presses, draw).chain());
+    .add_observer(presses)
+    .add_systems(Update, (typing, listen, draw).chain());
 }
 
 /// Takes in what the import thread said since the last frame.
@@ -163,15 +168,16 @@ fn expand(path: &str) -> std::path::PathBuf {
 }
 
 fn presses(
+    event: On<PointerPress>,
     mut notice: ResMut<Notice>,
-    buttons: Query<(&Interaction, &Press), Changed<Interaction>>,
+    buttons: Query<&Press>,
     args: Res<crate::Args>,
     mut exit: MessageWriter<AppExit>,
 ) {
-    for (interaction, press) in &buttons {
-        if *interaction != Interaction::Pressed {
-            continue;
-        }
+    if event.button != PointerButton::Primary {
+        return;
+    }
+    if let Ok(press) = buttons.get(event.entity) {
         let busy = notice.told.is_some();
         match press {
             Press::Import if !busy => {
@@ -361,6 +367,7 @@ fn button(commands: &mut Commands, fonts: &Fonts, parent: Entity, label: &str, p
         .spawn((
             press,
             Button,
+            Hovered::default(),
             Node {
                 height: px(40),
                 padding: UiRect::axes(px(18), px(0)),
@@ -432,7 +439,7 @@ fn draw_held(commands: &mut Commands, fonts: &Fonts, notice: &Notice) {
         .spawn((
             Root,
             crate::hud::Blocker,
-            Interaction::default(),
+            Hovered::default(),
             Node {
                 flex_direction: FlexDirection::Column,
                 justify_content: JustifyContent::Center,

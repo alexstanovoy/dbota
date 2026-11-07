@@ -100,6 +100,9 @@ fn scene(item: ItemId) -> (Server, Client, [i32; 3], [i32; 3]) {
     client.until("the HUD shows the equipped attributes", |c| {
         displayed_attributes(c) == Some(full.map(|n| n.to_string()))
     });
+    let slot = client.slot_of(item).expect("the equipped item");
+    let source = client.item_box(slot).expect("the equipped inventory slot");
+    client.hover_ui(source, Duration::from_secs(20));
     (server, client, base, full)
 }
 

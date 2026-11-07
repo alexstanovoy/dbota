@@ -5,6 +5,7 @@
 
 use bevy::input::ButtonState;
 use bevy::prelude::*;
+use bevy::ui_widgets::Button;
 use bevy::window::PrimaryWindow;
 
 use crate::config::{DisplayMode, Settings};

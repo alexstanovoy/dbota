@@ -31,6 +31,7 @@ fn carrying_boots() -> (Server, Client, u8) {
 
 fn drag_to_ground(client: &mut Client, slot: u8, at: At) {
     let item_box = client.item_box(slot).expect("the boots slot");
+    client.hover_ui(item_box, std::time::Duration::from_secs(30));
     let from = client
         .centre_of(item_box)
         .expect("the inventory slot laid out");
@@ -39,6 +40,16 @@ fn drag_to_ground(client: &mut Client, slot: u8, at: At) {
         .expect("the drop point on screen");
     client.mouse(from);
     client.button(MouseButton::Left, ButtonState::Pressed);
+    assert_eq!(
+        client.core().held_item,
+        Some(slot),
+        "the physical press picks the drawn inventory slot; hovered={:?}, loading={}",
+        client
+            .world()
+            .get::<bevy::picking::hover::Hovered>(item_box)
+            .map(|hover| hover.get()),
+        client.world().resource::<crate::loading::Loading>().shown
+    );
     for step in 1..=4 {
         client.mouse(from.lerp(to, step as f32 / 4.0));
     }

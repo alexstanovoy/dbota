@@ -9,6 +9,7 @@ use std::collections::HashMap;
 use std::f32::consts::TAU;
 
 use bevy::prelude::*;
+use bevy::{picking::hover::Hovered, ui_widgets::Button};
 use bota_client_core::effect_listed;
 use bota_proto::{EffectId, Inflictor};
 
@@ -38,6 +39,7 @@ const SWEEP: Color = Color::srgba(0.0, 0.0, 0.0, 0.93);
 
 /// One chip of the row and the effect it shows, for the hover popup.
 #[derive(Component, Default)]
+#[require(bevy::picking::hover::DirectlyHovered)]
 pub struct BuffChip {
     pub shown: Option<Shown>,
 }
@@ -102,6 +104,7 @@ fn spawn_chip(
         .spawn((
             BuffChip::default(),
             Button,
+            Hovered::default(),
             Node {
                 width: px(CHIP),
                 height: px(CHIP),

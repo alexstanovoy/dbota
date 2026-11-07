@@ -9,6 +9,10 @@
 //! about, an enemy's too.
 
 use bevy::prelude::*;
+use bevy::{
+    picking::{events::PointerPress, hover::Hovered, pointer::PointerButton},
+    ui_widgets::Button,
+};
 use bota_client_core::talent_levels;
 use bota_proto::TalentSlot;
 
@@ -32,6 +36,7 @@ struct TalentPanel;
 
 /// One choice of the tree, by talent slot.
 #[derive(Component)]
+#[require(bevy::picking::hover::DirectlyHovered)]
 pub struct TalentCell(pub u8);
 
 /// The text of a choice.
@@ -64,6 +69,7 @@ struct TreeBody;
 /// The Attribute Bonus row under the tiers: a click spends a skill point on
 /// it.
 #[derive(Component)]
+#[require(bevy::picking::hover::DirectlyHovered)]
 pub struct AttributeRow;
 
 /// One level pip of the Attribute Bonus row.
@@ -92,7 +98,7 @@ const OPEN: Color = Color::srgb(0.75, 0.78, 0.84);
 const SHUT: Color = Color::srgb(0.38, 0.4, 0.45);
 
 pub fn plugin(app: &mut App) {
-    app.add_systems(
+    app.add_observer(click).add_systems(
         Update,
         (toggle, show_button, show, show_attribute, light).run_if(crate::select::match_or_tactical),
     );
@@ -106,6 +112,7 @@ pub fn spawn_button(kit: &mut Spawner, row: Entity, column: Entity) {
         .spawn((
             TalentButton,
             Button,
+            Hovered::default(),
             Node {
                 width: px(BUTTON),
                 height: px(BUTTON),
@@ -200,7 +207,7 @@ fn spawn_panel(kit: &mut Spawner, column: Entity) {
     let panel = commands
         .spawn((
             TalentPanel,
-            Interaction::default(),
+            Hovered::default(),
             crate::hud::Blocker,
             Node {
                 position_type: PositionType::Absolute,
@@ -327,6 +334,7 @@ fn spawn_tier(commands: &mut Commands, fonts: &crate::ui::Fonts, panel: Entity, 
             .spawn((
                 TalentCell(slot),
                 Button,
+                Hovered::default(),
                 Node {
                     width: px(220),
                     min_height: px(34),
@@ -380,6 +388,7 @@ fn spawn_attribute_row(
         .spawn((
             AttributeRow,
             Button,
+            Hovered::default(),
             Node {
                 margin: UiRect::top(px(6)),
                 padding: UiRect::axes(px(12), px(6)),
@@ -428,10 +437,9 @@ fn spawn_attribute_row(
 /// The Attribute Bonus row's pips lit to its level, its rim glowing while a
 /// skill point could go into it; a click on it learns a level.
 fn show_attribute(
-    mut session: NonSendMut<Session>,
+    session: NonSend<Session>,
     time: Res<Time>,
-    mut row: Query<(&Interaction, &mut BorderColor), With<AttributeRow>>,
-    clicked: Query<&Interaction, (Changed<Interaction>, With<AttributeRow>)>,
+    mut row: Query<(&Hovered, &mut BorderColor), With<AttributeRow>>,
     mut pips: Query<(&AttributePip, &mut BackgroundColor)>,
 ) {
     let (seat, _, _) = crate::hud::subject(&session.0);
@@ -456,9 +464,6 @@ fn show_attribute(
         } else {
             SHUT
         }));
-    }
-    if learnable && clicked.iter().any(|i| *i == Interaction::Pressed) {
-        session.0.learn_attribute_bonus();
     }
 }
 
@@ -489,14 +494,12 @@ fn light(session: NonSend<Session>, mut art: Query<(&TalentArt, &mut ImageNode)>
 /// it go (`--tip talents` keeps it open, for screenshots); a click on a
 /// choice asks for it.
 fn toggle(
-    mut session: NonSendMut<Session>,
+    session: NonSend<Session>,
     args: Res<crate::Args>,
-    button: Query<&Interaction, (Changed<Interaction>, With<TalentButton>)>,
-    cells: Query<(&Interaction, &TalentCell), Changed<Interaction>>,
-    mut panels: ResMut<crate::input::Panels>,
+    panels: Res<crate::input::Panels>,
     mut panel: Query<&mut Visibility, With<TalentPanel>>,
     hovered: Query<
-        &Interaction,
+        &Hovered,
         Or<(
             With<TalentButton>,
             With<TalentPanel>,
@@ -505,22 +508,46 @@ fn toggle(
         )>,
     >,
 ) {
-    if button.iter().any(|i| *i == Interaction::Pressed) {
-        panels.talents = !panels.talents;
-    }
-    for (interaction, cell) in &cells {
-        if *interaction == Interaction::Pressed {
-            learn(&mut session.0, cell.0);
-        }
-    }
     // Every hero has the Attribute Bonus to learn, whether or not it has
     // talents.
     let hero = crate::hud::subject_hero(&session.0).is_some();
     let forced = args.tip.as_deref() == Some("talents");
-    let open =
-        hero && (forced || panels.talents || hovered.iter().any(|i| *i != Interaction::None));
+    let open = hero && (forced || panels.talents || hovered.iter().any(|i| i.get()));
     for mut v in &mut panel {
         v.set_if_neq(ui::visible(open));
+    }
+}
+
+fn click(
+    event: On<PointerPress>,
+    known: Res<crate::session::MatchKnown>,
+    tactical: Res<crate::select::TacticalPhase>,
+    mut session: NonSendMut<Session>,
+    mut panels: ResMut<crate::input::Panels>,
+    button: Query<(), With<TalentButton>>,
+    cells: Query<&TalentCell>,
+    attribute: Query<(), With<AttributeRow>>,
+) {
+    if event.button != PointerButton::Primary || !crate::select::match_or_tactical(known, tactical)
+    {
+        return;
+    }
+    if button.contains(event.entity) {
+        panels.talents = !panels.talents;
+    }
+    if let Ok(cell) = cells.get(event.entity) {
+        learn(&mut session.0, cell.0);
+    }
+    if attribute.contains(event.entity) {
+        let core = &mut session.0;
+        let seat = crate::hud::subject(core).0.map(|p| p.slot);
+        let mine = seat.is_some() && seat == core.my_slot;
+        let learnable = seat
+            .and_then(|seat| core.talents_of(seat))
+            .is_some_and(|state| state.may_learn_attribute_bonus == Some(true));
+        if mine && learnable {
+            core.learn_attribute_bonus();
+        }
     }
 }
 

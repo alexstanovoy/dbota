@@ -922,7 +922,7 @@ fn lifetime(rules: Option<&EventLine>, kept: bool) -> Option<Duration> {
     }
 }
 
-fn retire_player(removed: On<Remove, AudioPlayer>, mut mixer: ResMut<Mixer>) {
+fn retire_player(removed: On<Remove<AudioPlayer>>, mut mixer: ResMut<Mixer>) {
     mixer.voices.retain(|voice| voice.entity != removed.entity);
 }
 

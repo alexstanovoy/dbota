@@ -55,6 +55,8 @@ fn an_item_lying_on_the_ground_is_ringed_under_the_pointer() {
         c.view().loot.iter().any(|l| l.item == ItemId::TANGO)
     });
     let tango = client.view().loot[0].id;
+    // Dropping at this range walks the hero closer; settle its camera before aiming.
+    client.follow_me();
     point_at(&mut client, spot);
     assert_eq!(lit(&client), Some(tango), "ringed under the pointer");
     point_at(&mut client, (spot.0 + 400.0, spot.1 + 400.0));

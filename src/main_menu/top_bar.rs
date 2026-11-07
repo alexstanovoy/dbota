@@ -2,6 +2,8 @@
 //! pages' tabs, then LOG OUT, the connection pill and the settings cog; and the quit button, at
 //! one point of the screen whatever is drawn, the sign-in screen without a bar included.
 
+use bevy::picking::hover::DirectlyHovered;
+use bevy::ui_widgets::Button;
 use std::time::Duration;
 
 use bevy::prelude::*;
@@ -172,6 +174,11 @@ pub struct TabRow;
 
 /// MORE ▾, which opens and closes the list of the folded tabs.
 #[derive(Component)]
+#[require(
+    bevy::ui_widgets::Button,
+    bevy::picking::hover::Hovered,
+    DirectlyHovered
+)]
 pub struct MoreButton;
 
 /// One tab per page there is now, the current one underlined; those the bar has no room for
@@ -308,7 +315,11 @@ pub fn fit_tabs(
         return;
     };
     // The tabs' own widths: MORE's open list hangs from it, wider than it, and is no tab.
-    let needed: f32 = tabs.iter_many(children).map(|tab| tab.size().x).sum();
+    let needed: f32 = tabs
+        .iter_many(children)
+        .filter_map(Result::ok)
+        .map(|tab| tab.size().x)
+        .sum();
     if needed > row.size().x + 0.5 && fold.folded < TABS.len() {
         fold.folded += 1;
     }
@@ -316,14 +327,17 @@ pub fn fit_tabs(
 
 /// MORE opens and closes its list; any other button of the menu closes it.
 pub fn more_clicks(
-    more: Query<&Interaction, (Changed<Interaction>, With<MoreButton>)>,
-    others: Query<&Interaction, (Changed<Interaction>, With<MenuButton>)>,
+    more: Query<(), With<MoreButton>>,
+    others: Query<(), With<MenuButton>>,
     mut fold: ResMut<TabFold>,
+    press: Res<crate::ui::PrimaryPress>,
 ) {
-    let pressed = |i: &Interaction| *i == Interaction::Pressed;
-    if more.iter().any(pressed) {
+    let Some(target) = press.0 else {
+        return;
+    };
+    if more.contains(target) {
         fold.open = !fold.open;
-    } else if fold.open && others.iter().any(pressed) {
+    } else if fold.open && others.contains(target) {
         fold.open = false;
     }
 }

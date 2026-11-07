@@ -4,7 +4,7 @@
 // what is behind: a card's texture times its overbright, weighed away from grey by its colour
 // (Source's spritecards), or a decal's texture times its tint (Source's projected decals).
 
-#import bevy_render::view::View
+import bevy_render::view::View;
 
 @group(0) @binding(0) var<uniform> view: View;
 @group(1) @binding(0) var card_texture: texture_2d<f32>;
@@ -120,17 +120,17 @@ fn fragment(in: Fragment) -> @location(0) vec4<f32> {
     }
     texel = max(texel, vec4<f32>(0.0));
     let alpha = in.color.a * texel.a;
-#ifdef MODULATE
+@if(MODULATE) {
     var weighed = in.color.rgb * texel.rgb;
     if in.extra.w >= 0.0 {
         weighed = mix(vec3<f32>(0.5), texel.rgb * in.extra.w, in.color.rgb);
     }
     return vec4<f32>(clamp(mix(vec3<f32>(0.5), weighed, alpha), vec3<f32>(0.0), vec3<f32>(1.0)), alpha);
-#else
+} @else {
     var color = in.color.rgb * texel.rgb;
     if in.extra.y > 0.5 {
         color = clamp(color, vec3<f32>(0.0), vec3<f32>(1.0));
     }
     return vec4<f32>(color * alpha, alpha * in.extra.z);
-#endif
+}
 }

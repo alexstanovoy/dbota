@@ -265,7 +265,7 @@ const SURFACE_WATER: u8 = 5;
 
 impl MaterialExtension for FogExt {
     fn fragment_shader() -> ShaderRef {
-        "embedded://dbota/fog.wgsl".into()
+        "embedded://dbota/fog.wesl".into()
     }
 }
 
@@ -311,7 +311,7 @@ fn index_projectiles(
 }
 
 fn register_shader(app: &mut App) {
-    embedded_asset!(app, "fog.wgsl");
+    embedded_asset!(app, "fog.wesl");
 }
 
 pub fn plugin(app: &mut App) {

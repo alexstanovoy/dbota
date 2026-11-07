@@ -1,6 +1,7 @@
 //! A real game server and the whole client against it, as `main` builds the client, Bevy's
 //! window and GPU left out: the app's frames run when a test asks for them.
 
+use std::cell::Cell;
 use std::io::{BufRead, BufReader};
 use std::path::PathBuf;
 use std::process::{Child, ChildStdout, Command, Stdio};
@@ -13,7 +14,7 @@ use bevy::input::ButtonState;
 use bevy::input::keyboard::{Key, KeyboardInput, NativeKey};
 use bevy::input::mouse::MouseButtonInput;
 use bevy::prelude::*;
-use bevy::window::{CursorMoved, PrimaryWindow};
+use bevy::window::{CursorMoved, PrimaryWindow, WindowEvent};
 use bota_client_core::{App as Core, Intent};
 use clap::{CommandFactory, FromArgMatches};
 
@@ -330,6 +331,45 @@ impl Drop for Client {
     }
 }
 
+/// Observes the real outbound order boundary while forwarding the socket unchanged.
+struct RecordedLink {
+    link: Box<dyn bota_client_core::LiveLink>,
+    orders: Rc<Cell<u64>>,
+}
+
+impl bota_client_core::LiveLink for RecordedLink {
+    fn poll(&mut self) -> Vec<bota_proto::ServerMsg> {
+        self.link.poll()
+    }
+    fn send(&mut self, message: &bota_proto::ClientMsg) -> std::io::Result<()> {
+        let result = self.link.send(message);
+        if result.is_ok() && matches!(message, bota_proto::ClientMsg::Order { .. }) {
+            self.orders.set(
+                self.orders
+                    .get()
+                    .checked_add(1)
+                    .expect("the test's order count"),
+            );
+        }
+        result
+    }
+    fn is_closed(&self) -> bool {
+        self.link.is_closed()
+    }
+    fn is_redialing(&self) -> bool {
+        self.link.is_redialing()
+    }
+    fn ping(&self) -> Option<Duration> {
+        self.link.ping()
+    }
+    fn pending_orders(&self) -> usize {
+        self.link.pending_orders()
+    }
+    fn order_latency(&self) -> Option<Duration> {
+        self.link.order_latency()
+    }
+}
+
 /// One test with clients or servers at a time in the process: each client loads the whole asset
 /// cache on the process's few IO threads, and a dozen at once starve one another (models not
 /// drawn for many seconds) and hold gigabytes together. The first client or server of a test
@@ -569,7 +609,9 @@ impl Client {
         crate::client_plugins(&mut app, args.read_environment);
         crate::menu(&mut app, &args, store, menu_first).expect("the menu");
         // What the renderer would take of the entities drawn: kept, as no render world takes it.
-        app.add_plugins(bevy::render::sync_world::SyncWorldPlugin);
+        app.add_plugins(bevy::extract::sync_world::SyncWorldPlugin::<
+            bevy::render::RenderApp,
+        >::default());
         while app.plugins_state() == PluginsState::Adding {
             bevy::tasks::tick_global_task_pools_on_main_thread();
         }
@@ -592,6 +634,24 @@ impl Client {
     /// A file of the folder of the client's settings, as it is on disk now.
     pub fn settings_folder_file(&self, name: &str) -> String {
         std::fs::read_to_string(self.scratch.0.join(name)).expect("the file")
+    }
+
+    /// Counts successful sends to this live server, independently of its latest-order overlay.
+    pub fn record_sent_orders(&mut self) -> Rc<Cell<u64>> {
+        let orders = Rc::new(Cell::new(0));
+        let mut session = self
+            .world_mut()
+            .remove_non_send::<Session>()
+            .expect("the client session");
+        let bota_client_core::Source::Live(link) = session.0.source else {
+            panic!("a live client records sent orders");
+        };
+        session.0.source = bota_client_core::Source::Live(Box::new(RecordedLink {
+            link,
+            orders: Rc::clone(&orders),
+        }));
+        self.world_mut().insert_non_send(session);
+        orders
     }
 
     /// Runs frames until `done` holds, within [`PATIENCE`].
@@ -700,11 +760,84 @@ impl Client {
             .single_mut(world)
             .expect("the primary window");
         win.set_cursor_position(Some(at));
-        world.write_message(CursorMoved {
+        let event = CursorMoved {
             window,
             position: at,
             delta: None,
-        });
+        };
+        world.write_message(WindowEvent::CursorMoved(event.clone()));
+        world.write_message(event);
+    }
+
+    /// Aims at the node as drawn, once the interface is ready and picking reaches it.
+    pub fn hover_ui(&mut self, node: Entity, patience: Duration) {
+        self.hover_ui_with(patience, |_| Some(node));
+    }
+
+    /// Reacquires a target when a screen rebuilds its nodes while becoming ready.
+    pub fn hover_ui_with(
+        &mut self,
+        patience: Duration,
+        mut find: impl FnMut(&mut Self) -> Option<Entity>,
+    ) -> Entity {
+        let mut waiting = Patience::of(patience);
+        loop {
+            let target = find(self);
+            let world = self.world();
+            let fonts_ready = world
+                .get_resource::<crate::ui::Fonts>()
+                .is_some_and(|fonts| {
+                    let server = world.resource::<AssetServer>();
+                    server.is_loaded_with_dependencies(&fonts.bold)
+                        && server.is_loaded_with_dependencies(&fonts.regular)
+                });
+            let visible = target.is_some_and(|node| {
+                world
+                    .get::<InheritedVisibility>(node)
+                    .is_some_and(|seen| seen.get())
+            });
+            let sized = target.is_some_and(|node| {
+                world
+                    .get::<ComputedNode>(node)
+                    .is_some_and(|laid| laid.size().min_element() > 0.0)
+            });
+            if fonts_ready
+                && visible
+                && sized
+                && let Some(node) = target
+                && let Some(at) = self.centre_of(node)
+            {
+                self.mouse(at);
+                if self
+                    .centre_of(node)
+                    .is_some_and(|now| now.distance(at) < 0.01)
+                    && self
+                        .world()
+                        .get::<bevy::picking::hover::Hovered>(node)
+                        .is_some_and(|hover| hover.get())
+                {
+                    return node;
+                }
+            } else {
+                self.frames(1);
+            }
+            waiting.pass(&format!(
+                "UI target {target:?} not ready within {patience:?}: loading={}, fonts={fonts_ready}, visible={visible}, sized={sized}, position={:?}, hovered={:?}, pipelines={}, render_app={}, render_device={}, parts={:?}",
+                self.world().resource::<crate::loading::Loading>().shown,
+                target.and_then(|node| self.centre_of(node)),
+                target.and_then(|node| self
+                    .world()
+                    .get::<bevy::picking::hover::Hovered>(node)
+                    .map(|hover| hover.get())),
+                self.world()
+                    .resource::<crate::warmup::PipelinesReady>()
+                    .get(),
+                self.app.get_sub_app(bevy::render::RenderApp).is_some(),
+                self.world()
+                    .contains_resource::<bevy::render::renderer::RenderDevice>(),
+                self.world().resource::<crate::loading::Parts>().0
+            ));
+        }
     }
 
     /// Presses and lets go of a mouse button where the pointer is, a frame apart.
@@ -720,11 +853,13 @@ impl Client {
             .query_filtered::<Entity, With<PrimaryWindow>>()
             .single(world)
             .expect("the primary window");
-        world.write_message(MouseButtonInput {
+        let event = MouseButtonInput {
             button,
             state,
             window,
-        });
+        };
+        world.write_message(WindowEvent::MouseButtonInput(event));
+        world.write_message(event);
         self.frames(1);
     }
 

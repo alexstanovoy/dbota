@@ -60,7 +60,7 @@ fn players(client: &mut Client) -> Players {
     let players: Players = Arc::default();
     let into = players.clone();
     client.world_mut().add_observer(
-        move |add: On<Add, AudioPlayer>,
+        move |add: On<Add<AudioPlayer>>,
               playing: Query<&AudioPlayer>,
               mixer: Res<crate::mixer::Mixer>| {
             let Ok(player) = playing.get(add.entity) else {

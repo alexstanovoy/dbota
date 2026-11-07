@@ -7,6 +7,10 @@
 use std::f32::consts::TAU;
 
 use bevy::prelude::*;
+use bevy::{
+    picking::{events::PointerPress, hover::Hovered, pointer::PointerButton},
+    ui_widgets::Button,
+};
 use bota_core::rules::GLYPH_COOLDOWN_TICKS;
 
 use crate::hud::{Blocker, Docks};
@@ -43,7 +47,8 @@ const PAD: f32 = 7.0;
 
 pub fn plugin(app: &mut App) {
     app.add_systems(Startup, spawn)
-        .add_systems(Update, (show, click).run_if(|k: Res<MatchKnown>| k.0));
+        .add_observer(click)
+        .add_systems(Update, show.run_if(|k: Res<MatchKnown>| k.0));
 }
 
 fn spawn(
@@ -64,7 +69,7 @@ fn spawn(
             },
             BackgroundColor(ui::PANEL),
             BorderColor::all(ui::EDGE),
-            Interaction::default(),
+            Hovered::default(),
             Blocker,
             Visibility::Hidden,
             ChildOf(docks.minimap_buttons),
@@ -74,6 +79,7 @@ fn spawn(
         .spawn((
             GlyphButton,
             Button,
+            Hovered::default(),
             Node {
                 width: px(BUTTON),
                 height: px(BUTTON),
@@ -170,10 +176,11 @@ fn show(
 
 /// A click on the button activates the Glyph.
 fn click(
+    event: On<PointerPress>,
     mut session: NonSendMut<Session>,
-    button: Query<&Interaction, (With<GlyphButton>, Changed<Interaction>)>,
+    button: Query<(), With<GlyphButton>>,
 ) {
-    if button.iter().any(|i| *i == Interaction::Pressed) {
+    if event.button == PointerButton::Primary && button.contains(event.entity) {
         session.0.activate_glyph();
     }
 }

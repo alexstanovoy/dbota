@@ -214,13 +214,17 @@ fn quickbuy_keeps_the_shared_hover_and_chosen_frames() {
         .find(|(_, item, place)| item.0 == ItemId::BOOTS.0 && **place == Place::Quick)
         .map(|(entity, _, _)| entity)
         .expect("the Quickbuy boots");
-    let at = client.centre_of(cell).expect("the Quickbuy cell laid out");
-    client.mouse(at);
-    client.frames(3);
+    client.hover_ui(cell, std::time::Duration::from_secs(30));
     assert_eq!(
         border(&mut client, ItemId::BOOTS),
         Color::srgb(0.86, 0.72, 0.36),
-        "Quickbuy keeps the shop's hover frame"
+        "Quickbuy keeps the shop's hover frame; hovered={:?}, loading={}, position={:?}",
+        client
+            .world()
+            .get::<bevy::picking::hover::Hovered>(cell)
+            .map(|hover| hover.get()),
+        client.world().resource::<crate::loading::Loading>().shown,
+        client.centre_of(cell)
     );
     client.click(MouseButton::Left);
     client.mouse(Vec2::new(900.0, 450.0));

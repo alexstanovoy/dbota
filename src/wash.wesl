@@ -2,7 +2,7 @@
 // kept; y: the brightness factor. The wash multiplies the result; the cut is
 // the part of the picture drawn (corner, then size, in texture coordinates).
 
-#import bevy_ui::ui_vertex_output::UiVertexOutput
+import bevy_ui_render::ui_vertex_output::UiVertexOutput;
 
 struct Washed {
     levels: vec4<f32>,

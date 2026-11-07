@@ -22,7 +22,7 @@ fn listen(client: &mut Client) -> Arc<Mutex<Vec<SoundStart>>> {
     let starts = Arc::new(Mutex::new(Vec::new()));
     let into = starts.clone();
     client.world_mut().add_observer(
-        move |add: On<Add, AudioPlayer>,
+        move |add: On<Add<AudioPlayer>>,
               players: Query<(&AudioPlayer, &PlaybackSettings)>,
               mixer: Res<crate::mixer::Mixer>,
               session: NonSend<crate::session::Session>| {

@@ -10,9 +10,9 @@ use js_sys::{Array, Uint8Array};
 use wasm_bindgen::prelude::*;
 use web_sys::{File, FileReaderSync};
 
-use crate::import::{self, IDS, Importer, MANIFEST, Plan, Sink};
-use crate::pack::{Container, MAX_FILES, Pack, SliceFolder};
-use crate::zip::ZipContainer;
+use dbota_import::import::{self, IDS, Importer, MANIFEST, Plan, Sink};
+use dbota_import::pack::{Container, MAX_FILES, Pack, SliceFolder};
+use dbota_import::zip::ZipContainer;
 
 /// Most files an install may hold: Dota's has ~700 packages; a folder of more is not one.
 const MAX_PACKAGES: usize = 4096;
@@ -239,7 +239,7 @@ pub fn cache_version() -> String {
 }
 
 /// A prepared cache the player picked, a zip or a folder of one, checked whole before anything
-/// of it is read (see [`crate::pack`]): the worker copies its files into the page's cache one by
+/// of it is read (see [`dbota_import::pack`]): the worker copies its files into the page's cache one by
 /// one with [`read`](Prepared::read).
 #[wasm_bindgen]
 pub struct Prepared(Pack<Box<dyn Container>>);
@@ -258,7 +258,7 @@ impl Prepared {
     /// The cache in the files of a picked folder: an array of `[path, File]` pairs, the paths
     /// as the picker names them (`webkitRelativePath`).
     pub fn from_folder(files: Array) -> Result<Prepared, JsError> {
-        if files.length() as usize > crate::pack::MAX_ENTRIES {
+        if files.length() as usize > dbota_import::pack::MAX_ENTRIES {
             return Err(JsError::new(&format!(
                 "This folder has {} files, an asset cache has at most {MAX_FILES}.",
                 files.length()
@@ -326,15 +326,15 @@ impl Prepared {
 
 /// The same index parser used by native runtime discovery and prepared-cache validation.
 #[wasm_bindgen]
-pub struct CacheIndex(crate::index::CacheIndex);
+pub struct CacheIndex(dbota_import::index::CacheIndex);
 
 #[wasm_bindgen]
 impl CacheIndex {
     #[wasm_bindgen(constructor)]
     pub fn new(bytes: Uint8Array) -> Result<CacheIndex, JsError> {
-        let error = |why: crate::pack::PackError| JsError::new(&why.to_string());
-        crate::index::CacheIndex::check_length(u64::from(bytes.length())).map_err(error)?;
-        crate::index::CacheIndex::parse(&bytes.to_vec())
+        let error = |why: dbota_import::pack::PackError| JsError::new(&why.to_string());
+        dbota_import::index::CacheIndex::check_length(u64::from(bytes.length())).map_err(error)?;
+        dbota_import::index::CacheIndex::parse(&bytes.to_vec())
             .map(CacheIndex)
             .map_err(error)
     }
@@ -358,13 +358,13 @@ impl CacheIndex {
 pub fn cache_metadata_limits() -> Array {
     Array::of2(
         &JsValue::from_f64(import::MAX_STAMP as f64),
-        &JsValue::from_f64(crate::index::MAX_INDEX as f64),
+        &JsValue::from_f64(dbota_import::index::MAX_INDEX as f64),
     )
 }
 
 #[wasm_bindgen]
 pub fn cache_index_header() -> String {
-    crate::index::CacheIndex::header()
+    dbota_import::index::CacheIndex::header()
 }
 
 /// The most bytes of a hero's voice pack: what the voice worker reads at most.

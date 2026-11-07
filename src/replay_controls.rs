@@ -5,6 +5,10 @@
 //! what they did.
 
 use bevy::prelude::*;
+use bevy::{
+    picking::{events::PointerPress, hover::Hovered, pointer::PointerButton},
+    ui_widgets::Button,
+};
 use bota_client_core::{Intent, Source};
 
 use crate::keys::Action;
@@ -29,7 +33,8 @@ struct Speed;
 
 pub fn plugin(app: &mut App) {
     app.add_systems(Startup, spawn)
-        .add_systems(Update, (presses, show).chain());
+        .add_observer(presses)
+        .add_systems(Update, show);
 }
 
 /// Below the kill and last-hit box at the top left.
@@ -60,6 +65,7 @@ fn spawn(mut commands: Commands, fonts: Res<Fonts>) {
             .spawn((
                 Control(action),
                 Button,
+                Hovered::default(),
                 Node {
                     height: px(28),
                     padding: UiRect::axes(px(10), px(0)),
@@ -98,14 +104,11 @@ fn spawn(mut commands: Commands, fonts: Res<Fonts>) {
 }
 
 /// A click does what the button's key does.
-fn presses(
-    mut session: NonSendMut<Session>,
-    buttons: Query<(&Interaction, &Control), Changed<Interaction>>,
-) {
-    for (interaction, control) in &buttons {
-        if *interaction != Interaction::Pressed {
-            continue;
-        }
+fn presses(event: On<PointerPress>, mut session: NonSendMut<Session>, buttons: Query<&Control>) {
+    if event.button != PointerButton::Primary {
+        return;
+    }
+    if let Ok(control) = buttons.get(event.entity) {
         let intent = match control.0 {
             Action::Pause => Intent::TogglePause,
             Action::Slower => Intent::Slower,

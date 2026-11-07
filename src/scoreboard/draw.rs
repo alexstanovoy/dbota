@@ -3,6 +3,7 @@
 //! of a 900-line one, hence [`DOTA`].
 
 use bevy::prelude::*;
+use bevy::{picking::hover::Hovered, ui_widgets::Button};
 use bota_proto::Team;
 
 use crate::dota_text::Texts;
@@ -169,7 +170,7 @@ pub fn spawn(kit: &mut Kit, root: Entity) {
             },
             GlobalZIndex(BOARD_Z),
             Visibility::Hidden,
-            Interaction::default(),
+            Hovered::default(),
             crate::hud::Blocker,
             ChildOf(root),
         ))
@@ -315,6 +316,7 @@ fn buttons(kit: &mut Kit, parent: Entity) {
     kit.commands.spawn((
         ShowItems,
         Button,
+        Hovered::default(),
         Node {
             width: d(32.0),
             height: d(32.0),

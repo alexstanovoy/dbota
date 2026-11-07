@@ -2,15 +2,12 @@
 //! heatel's definitions and checked, their textures loaded once and shared as looks.
 
 use std::collections::{HashMap, HashSet};
-use std::path::Path;
 use std::sync::Arc;
 
 use bevy::math::Vec3;
 use bevy::prelude::*;
 use heatel::particle::{Blend, Renderer, System};
 use serde_json::Value;
-
-use crate::cache_path;
 
 use super::store::{self, Defaults};
 
@@ -150,7 +147,7 @@ impl Library {
         &mut self,
         name: &str,
         bytes: &[u8],
-        server: &AssetServer,
+        assets: &dyn crate::AssetSource,
     ) -> Result<Vec<String>, String> {
         let root: Value = serde_json::from_slice(bytes).map_err(|e| e.to_string())?;
         if root.get("version").and_then(Value::as_u64) != Some(VERSION) {
@@ -163,9 +160,9 @@ impl Library {
         if systems.is_empty() || systems.len() > MAX_SYSTEMS {
             return Err(format!("{} systems", systems.len()));
         }
-        let textures = self.textures(&root, server)?;
+        let textures = self.textures(&root, assets)?;
         let materials = materials(&root)?;
-        let models = self.models(&root, server)?;
+        let models = self.models(&root, assets)?;
         let mut parsed = Vec::with_capacity(systems.len());
         for entry in systems {
             let path = entry
@@ -199,7 +196,7 @@ impl Library {
     fn textures(
         &mut self,
         root: &Value,
-        server: &AssetServer,
+        assets: &dyn crate::AssetSource,
     ) -> Result<HashMap<String, Texture>, String> {
         let mut out = HashMap::new();
         for texture in root
@@ -216,7 +213,7 @@ impl Library {
                 .get("file")
                 .and_then(Value::as_str)
                 .ok_or("a texture without a file")?;
-            if cache_path::image_format(Path::new(file)).is_none() {
+            if !assets.accepts_image(file) {
                 return Err(format!("texture file {file:?}"));
             }
             let sheet = texture
@@ -227,7 +224,7 @@ impl Library {
             out.insert(
                 vtex.to_owned(),
                 Texture {
-                    image: server.load(crate::manifest::cache_path(file)),
+                    image: assets.image(file),
                     sheet: sheet.map(Arc::new),
                 },
             );
@@ -321,7 +318,7 @@ impl Library {
     fn models(
         &mut self,
         root: &Value,
-        server: &AssetServer,
+        assets: &dyn crate::AssetSource,
     ) -> Result<HashMap<(String, u16), u16>, String> {
         let mut out = HashMap::new();
         for model in root
@@ -337,7 +334,7 @@ impl Library {
                     .ok_or_else(|| format!("a model without {key}"))
             };
             let (vmdl, file) = (text("vmdl")?, text("file")?);
-            if !cache_path::is_model(Path::new(file)) {
+            if !assets.accepts_model(file) {
                 return Err(format!("model file {file:?}"));
             }
             let skin = match model.get("skin") {
@@ -354,10 +351,7 @@ impl Library {
                 None if self.models.len() < MAX_MODELS => {
                     self.models.push(ParticleModel {
                         file: file.to_owned(),
-                        gltf: crate::manifest::load_unit_model(
-                            server,
-                            crate::manifest::cache_path(file),
-                        ),
+                        gltf: assets.model(file),
                     });
                     self.models.len() - 1
                 }
@@ -545,110 +539,4 @@ fn defaults(system: &System) -> Defaults {
 /// Whether a blend multiplies what is behind.
 fn modulates(blend: Blend) -> bool {
     blend == Blend::Mod2x
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn asset_app() -> App {
-        crate::io_pool::make_for_tests();
-        let mut app = App::new();
-        app.add_plugins(MinimalPlugins);
-        let source = crate::cache_source(&mut app, std::path::Path::new("temp/typed_intake"));
-        app.register_asset_source(crate::CACHE_SOURCE, source)
-            .add_plugins(bevy::asset::AssetPlugin::default())
-            .init_asset::<Image>()
-            .init_asset::<bevy::gltf::Gltf>();
-        app
-    }
-
-    fn particle_file(kind: &str, path: &str) -> Vec<u8> {
-        let system = System::from_document(&heatel::kv3::Document {
-            format: [0; 16],
-            root: heatel::kv3::Value::Object(Default::default()),
-        })
-        .expect("an empty definition has the schema defaults");
-        let mut file = serde_json::json!({
-            "version": VERSION,
-            "systems": [{ "path": "root", "system": system }],
-        });
-        file[kind] = match kind {
-            "textures" => serde_json::json!([{ "vtex": "texture.vtex", "file": path }]),
-            "models" => serde_json::json!([{ "vmdl": "model.vmdl", "file": path }]),
-            _ => panic!("the test asks for a texture or model"),
-        };
-        serde_json::to_vec(&file).unwrap()
-    }
-
-    #[test]
-    fn typed_asset_intake_rejects_particle_images_before_requesting_them() {
-        let app = asset_app();
-        let server = app.world().resource::<AssetServer>();
-        for path in [
-            "effects/image.png",
-            "effects/image.PNG",
-            "effects/image.ktx2",
-        ] {
-            let mut library = Library::default();
-            assert!(
-                library
-                    .add("allowed", &particle_file("textures", path), server)
-                    .is_ok()
-            );
-        }
-        for path in [
-            "effects/image",
-            "effects/image.",
-            "effects/image.glb",
-            "effects/image.bin",
-        ] {
-            let mut library = Library::default();
-            let why = library
-                .add("refused", &particle_file("textures", path), server)
-                .expect_err("a typed image load needs a supported cache image path");
-            assert_eq!(why, format!("texture file {path:?}"));
-            assert!(
-                server
-                    .get_path_ids(crate::manifest::cache_path(path))
-                    .is_empty()
-            );
-        }
-    }
-
-    #[test]
-    fn typed_asset_intake_rejects_particle_models_before_requesting_them() {
-        let app = asset_app();
-        let server = app.world().resource::<AssetServer>();
-        for path in [
-            "effects/model.glb",
-            "effects/model.GLB",
-            "effects/model.gltf",
-        ] {
-            let mut library = Library::default();
-            assert!(
-                library
-                    .add("allowed", &particle_file("models", path), server)
-                    .is_ok()
-            );
-        }
-        for path in [
-            "effects/model",
-            "effects/model.",
-            "effects/model.png",
-            "effects/model.bin",
-        ] {
-            let mut library = Library::default();
-            let why = library
-                .add("refused", &particle_file("models", path), server)
-                .expect_err("a typed model load must keep the model-vetting boundary");
-            assert_eq!(why, format!("model file {path:?}"));
-            assert!(library.models.is_empty());
-            assert!(
-                server
-                    .get_path_ids(crate::manifest::cache_path(path))
-                    .is_empty()
-            );
-        }
-    }
 }

@@ -229,7 +229,7 @@ fn assert_framing(world: &mut World, pivot: Entity, resting: bool) {
         panic!("a narrow perspective lens");
     };
     assert!((projection.fov.to_degrees() - 25.0).abs() < 0.01);
-    let matrix = Mat4::perspective_rh(
+    let matrix = bevy::math::proj::perspective(
         projection.fov,
         projection.aspect_ratio,
         projection.near,

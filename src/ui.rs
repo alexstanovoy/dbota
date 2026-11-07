@@ -2,7 +2,7 @@
 //! interface scale, and small builders for text and boxes.
 
 use bevy::{prelude::*, text::FontCx, window::PrimaryWindow};
-use parley::fontique::{FallbackKey, Script};
+use fontique::{FallbackKey, Script};
 
 use crate::config::Settings;
 use crate::manifest::Manifest;
@@ -96,8 +96,39 @@ const CJK_SCRIPTS: [&str; 5] = ["Hani", "Hira", "Kana", "Hang", "Bopo"];
 #[derive(Resource)]
 struct FallbackFont(#[expect(dead_code, reason = "only keeps the font loaded")] Handle<Font>);
 
+/// The owning widget of this frame's primary press, including a press on its text child.
+#[derive(Resource, Default)]
+pub(crate) struct PrimaryPress(pub Option<Entity>);
+
+fn clear_primary_press(mut press: ResMut<PrimaryPress>) {
+    press.0 = None;
+}
+
+fn primary_press(
+    event: On<bevy::picking::events::PointerPress>,
+    buttons: Query<(), With<bevy::ui_widgets::Button>>,
+    mut press: ResMut<PrimaryPress>,
+) {
+    if event.button == bevy::picking::pointer::PointerButton::Primary
+        && press.0.is_none()
+        && buttons.contains(event.entity)
+    {
+        // Capture the nearest widget while leaving the event available to ancestor observers.
+        press.0 = Some(event.entity);
+    }
+}
+
 pub fn plugin(app: &mut App) {
     app.init_resource::<HudShown>()
+        .init_resource::<PrimaryPress>()
+        .add_observer(primary_press)
+        .add_systems(First, clear_primary_press)
+        .configure_sets(
+            PreUpdate,
+            bevy::picking::PickingSystems::Hover
+                .after(bevy::input::InputSystems)
+                .after(crate::session::pump),
+        )
         .add_systems(PreStartup, load_fonts)
         .add_systems(Update, (scale_ui, register_fallback))
         .add_systems(

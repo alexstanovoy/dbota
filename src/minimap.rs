@@ -6,6 +6,7 @@
 //! icons, tinted by side. A left click or a
 //! drag moves the camera; a right click walks there.
 
+use bevy::picking::hover::{DirectlyHovered, Hovered};
 use bevy::{
     camera::{ImageRenderTarget, RenderTarget, ScalingMode, visibility::RenderLayers},
     prelude::*,
@@ -211,7 +212,8 @@ fn spawn(mut commands: Commands, mut images: ResMut<Assets<Image>>, docks: Res<D
             },
             BackgroundColor(Color::srgb(0.08, 0.11, 0.07)),
             BorderColor::all(Color::srgb(0.18, 0.2, 0.24)),
-            Interaction::default(),
+            Hovered::default(),
+            DirectlyHovered::default(),
             Blocker,
             ChildOf(docks.minimap),
         ))
@@ -977,7 +979,7 @@ fn pings(
 fn clicks(
     mut session: NonSendMut<Session>,
     minimap: Res<Minimap>,
-    frames: Query<(&Interaction, &ComputedNode, &UiGlobalTransform)>,
+    frames: Query<(&DirectlyHovered, &ComputedNode, &UiGlobalTransform)>,
     buttons: Res<ButtonInput<MouseButton>>,
     window: Single<&Window, With<PrimaryWindow>>,
     mut cam: Single<&mut RtsCamera>,
@@ -992,7 +994,7 @@ fn clicks(
     let Ok((interaction, computed, transform)) = frames.get(minimap.frame) else {
         return;
     };
-    if *interaction == Interaction::None {
+    if !interaction.get() {
         return;
     }
     let Some(cursor) = window.cursor_position() else {

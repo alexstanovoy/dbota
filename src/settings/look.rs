@@ -3,6 +3,7 @@
 //! slider stays held while it is dragged): texts, marks, fills, and the colours that say changed,
 //! disabled, held, hovered, open, capturing and clashing.
 
+use bevy::picking::hover::Hovered;
 use bevy::prelude::*;
 
 use super::draw::{
@@ -179,7 +180,8 @@ pub fn slider_fills(
 pub fn slider_thumbs(
     screen: Res<Screen>,
     settings: Res<Settings>,
-    tracks: Query<(&SliderTrack, &Interaction)>,
+    tracks: Query<(&SliderTrack, Has<bevy::ui::Pressed>)>,
+    mouse: Res<ButtonInput<MouseButton>>,
     mut thumbs: Query<(
         &SliderThumb,
         &mut Node,
@@ -193,7 +195,7 @@ pub fn slider_thumbs(
     let held = |slider| {
         tracks
             .iter()
-            .any(|(track, i)| track.0 == slider && *i == Interaction::Pressed)
+            .any(|(track, i)| track.0 == slider && i && mouse.pressed(MouseButton::Left))
     };
     for (thumb, mut node, mut ground, mut edge) in &mut thumbs {
         let slider = thumb.0;
@@ -254,12 +256,12 @@ pub fn choices(
     displays: Res<Displays>,
     mut buttons: Query<(
         &ChoiceButton,
-        &Interaction,
+        &Hovered,
         &mut BackgroundColor,
         &mut BorderColor,
     )>,
     mut values: Query<(&ChoiceValue, &mut Text, &mut TextColor)>,
-    mut options: Query<(&ChoiceOption, &Interaction, &mut BackgroundColor), Without<ChoiceButton>>,
+    mut options: Query<(&ChoiceOption, &Hovered, &mut BackgroundColor), Without<ChoiceButton>>,
     focus: Res<Focus>,
 ) {
     if !screen.open {
@@ -271,7 +273,7 @@ pub fn choices(
             theme::FIELD_OFF
         } else if screen.dropdown == Some(choice) {
             (theme::FIELD, theme::FOCUS)
-        } else if *interaction != Interaction::None {
+        } else if interaction.get() {
             theme::FIELD_HOVER
         } else {
             (theme::FIELD, theme::FIELD_EDGE)
@@ -291,7 +293,7 @@ pub fn choices(
     for (option, interaction, mut ground) in &mut options {
         let picked = option.0.current(&settings, &displays) == Some(option.1);
         let enabled = option.0.option_enabled(&settings, &displays, option.1);
-        let on_it = *interaction != Interaction::None || focus.option == Some(option.1);
+        let on_it = interaction.get() || focus.option == Some(option.1);
         let color = match (on_it, picked, enabled) {
             (false, true, _) => theme::LIST_PICKED,
             (false, false, _) | (_, _, false) => Color::NONE,
@@ -474,11 +476,8 @@ pub fn names(
 }
 
 /// The help circle's tip, shown while the cursor is on the circle.
-pub fn help(
-    circle: Query<&Interaction, With<HelpButton>>,
-    mut tip: Query<&mut Node, With<HelpTip>>,
-) {
-    let shown = circle.iter().any(|i| *i != Interaction::None);
+pub fn help(circle: Query<&Hovered, With<HelpButton>>, mut tip: Query<&mut Node, With<HelpTip>>) {
+    let shown = circle.iter().any(|i| i.get());
     for mut node in &mut tip {
         let display = if shown { Display::Flex } else { Display::None };
         if node.display != display {

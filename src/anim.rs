@@ -805,14 +805,14 @@ fn standing(core: &Core, u: &UnitView) -> &'static str {
 #[cfg(test)]
 mod tests {
     use bevy::camera::primitives::Frustum;
-    use bevy::math::primitives::ViewFrustum;
+    use bevy::shape::ViewFrustum;
 
     use super::*;
 
     /// A camera 3000 units over the origin looking straight down with a 25-degree lens: it sees
     /// the ground within ~665 units of it.
     fn view() -> Frustum {
-        let projection = Mat4::perspective_rh(25f32.to_radians(), 1.0, 10.0, 10_000.0);
+        let projection = bevy::math::proj::perspective(25f32.to_radians(), 1.0, 10.0, 10_000.0);
         let camera = Transform::from_xyz(0.0, 3000.0, 0.0).looking_at(Vec3::ZERO, Vec3::NEG_Z);
         Frustum(ViewFrustum::from_clip_from_world(
             &(projection * camera.to_matrix().inverse()),

@@ -55,7 +55,7 @@ pub fn from_world(v: Vec3) -> Vec3 {
 /// How far above the ground a projected decal's card lies, so the ground does not hide it.
 const DECAL_LIFT: f32 = 2.0;
 /// What a decal's card carries where a modulating card carries its overbright: its tint
-/// multiplies its texture instead (see `particles.wgsl`).
+/// multiplies its texture instead (see `particles.wesl`).
 const DECAL_TINT: f32 = -1.0;
 
 /// Appends the cards of every drawn renderer of `instance`, each to its look's list; projected

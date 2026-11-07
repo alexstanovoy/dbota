@@ -5,6 +5,10 @@
 //! stash. A button that cannot be used now fades, and counts down its wait.
 
 use bevy::prelude::*;
+use bevy::{
+    picking::{events::PointerPress, hover::Hovered, pointer::PointerButton},
+    ui_widgets::Button,
+};
 use bota_client_core::Intent;
 use bota_proto::{AbilityId, AbilitySlot, Order, Target};
 
@@ -121,10 +125,9 @@ struct CourierLoad;
 struct CourierLoadCount;
 
 pub fn plugin(app: &mut App) {
-    app.add_systems(Startup, spawn).add_systems(
-        Update,
-        (show, load, click, spin).run_if(|k: Res<MatchKnown>| k.0),
-    );
+    app.add_systems(Startup, spawn)
+        .add_observer(click)
+        .add_systems(Update, (show, load, spin).run_if(|k: Res<MatchKnown>| k.0));
 }
 
 /// `#Spinner`: its size, the turn it makes in `SpinnerRotate`'s time (against the clock) and
@@ -160,6 +163,7 @@ fn spawn(
             .spawn((
                 which,
                 Button,
+                Hovered::default(),
                 Blocker,
                 Node {
                     width: dota(outer),
@@ -599,15 +603,19 @@ fn load(
 
 /// A click selects the courier, or sends it the button's order.
 fn click(
+    event: On<PointerPress>,
+    known: Res<MatchKnown>,
     mut session: NonSendMut<Session>,
-    buttons: Query<(&CourierButton, &Interaction), Changed<Interaction>>,
+    buttons: Query<&CourierButton>,
 ) {
+    if !known.0 || event.button != PointerButton::Primary {
+        return;
+    }
     let core = &mut session.0;
-    let live = matches!(core.source, bota_client_core::Source::Live(_));
-    let Some((which, _)) = buttons
-        .iter()
-        .find(|(_, i)| live && **i == Interaction::Pressed)
-    else {
+    if !matches!(core.source, bota_client_core::Source::Live(_)) {
+        return;
+    }
+    let Ok(which) = buttons.get(event.entity) else {
         return;
     };
     match which {

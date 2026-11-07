@@ -23,6 +23,7 @@
 //!   the screen holds TEXT, or `file:PATH` once that file exists (a barrier
 //!   a test lifts when it has done its part);
 //! - `await:seats:R,D`: the top bar holds R places of Radiant and D of Dire;
+//! - `await:loaded`: no loading screen blocks the interface;
 //! - `await:horn`: the game clock past the horn;
 //! - `await:tick:N`: the current view has reached simulation tick N;
 //! - `await:model:NAME`: a unit drawn with the cache model of that logical name;
@@ -57,6 +58,14 @@
 //!   script's text comes in), into the focused field of the menu or the chat
 //!   line (`key:Tab` moves between fields).
 
+use bevy::picking::{
+    PickingSystems,
+    backend::HitData,
+    events::{Pointer, PointerPress, PointerRelease},
+    pointer::{Location, PointerButton, PointerId},
+};
+use bevy::ui_widgets::Button;
+
 use bevy::{
     input::{
         ButtonState, InputSystems,
@@ -65,7 +74,7 @@ use bevy::{
     },
     prelude::*,
     render::view::screenshot::{Screenshot, save_to_disk},
-    window::{CursorMoved, Ime, PrimaryWindow},
+    window::{CursorMoved, Ime, PrimaryWindow, WindowEvent},
 };
 
 use crate::main_menu::MenuCore;
@@ -112,6 +121,7 @@ enum Held {
 enum Awaited {
     Menu,
     Game,
+    Loaded,
     Popup,
     NoPopup,
     Button(String),
@@ -183,11 +193,23 @@ struct Script {
     shot: Option<std::path::PathBuf>,
 }
 
+impl Script {
+    fn finish_step(&mut self) {
+        let (line, _) = self.steps.get(self.at).expect("the running script step");
+        println!("script: {line}");
+        self.at += 1;
+        self.began = None;
+        self.shot = None;
+        self.click = None;
+    }
+}
+
 /// What an `await:` or `expect:` step names, or what is wrong with it.
 fn awaited(arg: &str) -> Result<Awaited, String> {
     Ok(match arg {
         "menu" => Awaited::Menu,
         "game" => Awaited::Game,
+        "loaded" => Awaited::Loaded,
         "popup" => Awaited::Popup,
         "nopopup" => Awaited::NoPopup,
         "horn" => Awaited::Horn,
@@ -315,12 +337,13 @@ pub fn plugin(app: &mut App) {
     };
     app.insert_resource(Script { steps, ..default() })
         .add_systems(PreUpdate, play.before(InputSystems))
-        .add_systems(PreUpdate, press.after(bevy::ui::UiSystems::Focus));
+        .add_systems(PreUpdate, press.after(PickingSystems::Last));
 }
 
 /// What the awaited steps look at on the screen: the buttons that are there and the top bar's places.
 #[derive(bevy::ecs::system::SystemParam)]
 struct Screen<'w, 's> {
+    loading: Res<'w, crate::loading::Loading>,
     buttons:
         Query<'w, 's, (&'static Name, &'static Node, &'static InheritedVisibility), With<Button>>,
     columns: Query<'w, 's, (&'static crate::hud::SeatColumn, &'static Node)>,
@@ -344,6 +367,7 @@ fn holds(
             menu.is_none_or(MenuCore::shows_game)
                 && (core.view().is_some() || core.my_slot.is_some())
         }
+        Awaited::Loaded => !screen.loading.shown,
         Awaited::Popup => view
             .as_ref()
             .is_some_and(|v| v.confirm.is_some() || v.offer.is_some() || v.password.is_some()),
@@ -443,6 +467,26 @@ struct Scene<'w, 's> {
     drawn: Drawn<'w, 's>,
 }
 
+/// Winit supplies both the typed input stream and the ordered window stream picking reads.
+#[derive(bevy::ecs::system::SystemParam)]
+struct PointerEvents<'w> {
+    mouse: MessageWriter<'w, MouseButtonInput>,
+    moved: MessageWriter<'w, CursorMoved>,
+    window: MessageWriter<'w, WindowEvent>,
+}
+
+impl PointerEvents<'_> {
+    fn button(&mut self, event: MouseButtonInput) {
+        self.window.write(WindowEvent::MouseButtonInput(event));
+        self.mouse.write(event);
+    }
+
+    fn moved(&mut self, event: CursorMoved) {
+        self.window.write(WindowEvent::CursorMoved(event.clone()));
+        self.moved.write(event);
+    }
+}
+
 /// Plays the step due: keys before Bevy reads the keyboard this frame.
 #[allow(clippy::too_many_arguments)]
 fn play(
@@ -454,8 +498,7 @@ fn play(
     disabled: Query<&Name, With<crate::main_menu::Disabled>>,
     mut window: Query<(Entity, &mut Window), With<PrimaryWindow>>,
     mut keys: MessageWriter<KeyboardInput>,
-    mut mouse: MessageWriter<MouseButtonInput>,
-    mut moved: MessageWriter<CursorMoved>,
+    mut pointer: PointerEvents,
     mut ime: MessageWriter<Ime>,
     mut commands: Commands,
     args: Res<crate::Args>,
@@ -486,7 +529,7 @@ fn play(
             return;
         }
         Some(Held::Mouse(button)) => {
-            mouse.write(MouseButtonInput {
+            pointer.button(MouseButtonInput {
                 button,
                 state: ButtonState::Released,
                 window,
@@ -517,7 +560,7 @@ fn play(
         Step::Mouse(share) => {
             let position = *share * win.size();
             win.set_cursor_position(Some(position));
-            moved.write(CursorMoved {
+            pointer.moved(CursorMoved {
                 window,
                 position,
                 delta: None,
@@ -525,7 +568,7 @@ fn play(
             true
         }
         Step::Button(button) => {
-            mouse.write(MouseButtonInput {
+            pointer.button(MouseButtonInput {
                 button: *button,
                 state: ButtonState::Pressed,
                 window,
@@ -538,7 +581,7 @@ fn play(
             true
         }
         Step::Drag(state) => {
-            mouse.write(MouseButtonInput {
+            pointer.button(MouseButtonInput {
                 button: MouseButton::Left,
                 state: *state,
                 window,
@@ -555,7 +598,7 @@ fn play(
         // Once the button shows.
         Step::Click(name) if screen.buttons.iter().any(|(n, ..)| n.as_str() == name) => {
             script.click = Some(name.clone());
-            true
+            false
         }
         Step::Click(name) if disabled.iter().any(|n| n.as_str() == name) => {
             println!("script: {line} is disabled");
@@ -625,10 +668,7 @@ fn play(
         }
     };
     if done {
-        println!("script: {line}");
-        script.at += 1;
-        script.began = None;
-        script.shot = None;
+        script.finish_step();
     } else if now - began > PATIENCE {
         println!("script: timed out at {line}");
         exit.write(AppExit::from_code(2));
@@ -637,11 +677,60 @@ fn play(
 
 /// Presses the button the step names, after the pointer's own pass, as a
 /// click on it would.
-fn press(mut script: ResMut<Script>, mut buttons: Query<(&Name, &mut Interaction), With<Button>>) {
-    let Some(name) = script.click.take() else {
+fn press(
+    mut commands: Commands,
+    mut script: ResMut<Script>,
+    buttons: Query<
+        (
+            Entity,
+            &Name,
+            &bevy::ui::UiGlobalTransform,
+            &ComputedUiTargetCamera,
+        ),
+        With<Button>,
+    >,
+    window: Query<(Entity, &Window), With<PrimaryWindow>>,
+    mut previous: Local<Option<PointerPress>>,
+) {
+    if let Some(press) = previous.take()
+        && buttons.contains(press.entity)
+    {
+        commands.trigger(PointerRelease {
+            entity: press.entity,
+            pointer: press.pointer,
+            button: press.button,
+            hit: press.hit,
+        });
+    }
+    let Some(name) = script.click.as_ref().cloned() else {
         return;
     };
-    if let Some((_, mut interaction)) = buttons.iter_mut().find(|(n, _)| n.as_str() == name) {
-        *interaction = Interaction::Pressed;
-    }
+    let Some((entity, _, transform, camera)) = buttons
+        .iter()
+        .find(|(_, name_here, ..)| name_here.as_str() == name)
+    else {
+        return;
+    };
+    let (Ok((window, _)), Some(camera)) = (window.single(), camera.get()) else {
+        return;
+    };
+    let Some(target) = bevy::window::WindowRef::Entity(window).normalize(None) else {
+        return;
+    };
+    let event = PointerPress {
+        entity,
+        pointer: Pointer::new(
+            PointerId::Mouse,
+            Location {
+                target: bevy::camera::NormalizedRenderTarget::Window(target),
+                position: transform.translation,
+            },
+        ),
+        button: PointerButton::Primary,
+        hit: HitData::new(camera, 0.0, None, None),
+        count: 1,
+    };
+    commands.trigger(event.clone());
+    *previous = Some(event);
+    script.finish_step();
 }

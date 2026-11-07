@@ -148,7 +148,12 @@ fn threads(app: &mut App) {
         render
             .insert_resource(times)
             .add_systems(Render, mark.before(RenderSystems::ExtractCommands))
-            .add_systems(Render, render_done.after(RenderSystems::PostCleanup));
+            .add_systems(
+                Render,
+                render_done
+                    .after(RenderSystems::PostCleanup)
+                    .after(RenderSystems::Render),
+            );
     }
 }
 

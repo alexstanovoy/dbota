@@ -128,8 +128,7 @@ fn portals(
                 handle
             }
         };
-        if let Some(instance) = playing.get_mut(handle) {
-            instance.sight = permission;
+        if let Some(instance) = playing.get_mut_with_sight(handle, permission) {
             // The start's place is the hero's; the landing's, Dota's CP1, is where it lands.
             instance.set_control_point(HERO, at, Vec3::ZERO, false);
             if landing {

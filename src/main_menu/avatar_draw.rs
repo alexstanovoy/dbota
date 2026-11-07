@@ -5,6 +5,7 @@ use super::{
     kit::{Kit, MenuButton, Tone},
 };
 use crate::theme;
+use bevy::ui_widgets::Button;
 use bevy::{
     asset::RenderAssetUsages,
     prelude::*,
@@ -64,6 +65,7 @@ pub fn header(kit: &mut Kit, parent: Entity, name: &str, view: &View) {
     );
     kit.commands.entity(edit).insert((
         Button,
+        Pickable::default(),
         MenuButton(Act::Avatar(Action::Open)),
         Name::new("edit avatar"),
         BackgroundColor(theme::AVATAR.0),
@@ -88,7 +90,7 @@ pub fn dialog(kit: &mut Kit, root: Entity, view: &View) {
     kit.commands.entity(scrim).insert((
         Pickable::default(),
         crate::hud::Blocker,
-        Interaction::default(),
+        bevy::picking::hover::Hovered::default(),
         BackgroundColor(theme::scrim()),
         GlobalZIndex(80),
     ));

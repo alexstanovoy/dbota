@@ -46,6 +46,18 @@ fn the_strategy_screens_abilities_show_their_tooltips() {
     client.until("the real strategy state received", |c| {
         c.core().in_tactical_phase()
     });
+    // Visible icons still sit behind loading; the hover deadline starts only once input can reach them.
+    client.until("the strategy screen finishes loading", |client| {
+        let world = client.world();
+        world.resource::<crate::loading::Loading>().done()
+            && world.resource::<crate::trees::SceneryReady>().0
+            && world.resource::<crate::minimap::PhotoTaken>().0
+            && world
+                .resource::<crate::loading::Parts>()
+                .0
+                .values()
+                .all(|(done, total)| done == total)
+    });
     let shown = |c: &mut Client| {
         let world = c.world_mut();
         world
@@ -59,11 +71,7 @@ fn the_strategy_screens_abilities_show_their_tooltips() {
             .map(|(e, ability, _)| (e, ability.0))
     };
     let patience = Duration::from_secs(20);
-    client.within(patience, "the abilities laid out", |c| {
-        shown(c)
-            .and_then(|(e, _)| c.centre_of(e))
-            .is_some_and(|at| at != Vec2::ZERO)
-    });
+    client.hover_ui_with(patience, |client| shown(client).map(|(entity, _)| entity));
     let (_, ability) = shown(&mut client).expect("an ability");
     let name = {
         let manifest = client.world().resource::<crate::manifest::Manifest>();
@@ -84,7 +92,9 @@ fn the_strategy_screens_abilities_show_their_tooltips() {
         };
         c.mouse(on);
         c.core().in_tactical_phase()
-            && c.world().get::<Interaction>(icon) == Some(&Interaction::Hovered)
+            && c.world()
+                .get::<bevy::picking::hover::DirectlyHovered>(icon)
+                .is_some_and(|hover| hover.get())
             && c.shown_texts()
                 .iter()
                 .any(|t| t.eq_ignore_ascii_case(&name))
@@ -96,7 +106,7 @@ fn listen(client: &mut Client) -> Arc<Mutex<Vec<String>>> {
     let heard = Arc::new(Mutex::new(Vec::new()));
     let into = heard.clone();
     client.world_mut().add_observer(
-        move |add: On<Add, AudioPlayer>, players: Query<&AudioPlayer>, server: Res<AssetServer>| {
+        move |add: On<Add<AudioPlayer>>, players: Query<&AudioPlayer>, server: Res<AssetServer>| {
             let path = players
                 .get(add.entity)
                 .ok()
@@ -177,6 +187,8 @@ fn an_item_moved_in_the_strategy_inventory_is_bought_into_that_slot() {
     client.within(patience, "the inventory laid out", |c| {
         at(c, from).is_some_and(|p| p != Vec2::ZERO) && at(c, to).is_some_and(|p| p != Vec2::ZERO)
     });
+    let source = client.item_box(from).expect("the chosen item's slot");
+    client.hover_ui(source, patience);
     let (start, end) = (
         at(&mut client, from).expect("laid"),
         at(&mut client, to).expect("laid"),

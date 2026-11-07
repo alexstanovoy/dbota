@@ -2,9 +2,10 @@
 //! background, the search box in a corner and the MATCH FOUND prompt over everything), redrawn
 //! whenever its view changes. Dota's art comes from the asset cache when it has it.
 
+use bevy::picking::hover::{DirectlyHovered, Hovered};
 use bevy::prelude::*;
 
-use super::core::{Act, MenuCore, Page};
+use super::core::{MenuCore, Page};
 use super::kit::{Kit, MenuButton};
 use super::shell::Preview;
 use super::view::MenuView;
@@ -25,7 +26,8 @@ pub fn spawn_roots(mut commands: Commands) {
     commands.spawn((
         PageRoot,
         Blocker,
-        Interaction::default(),
+        Hovered::default(),
+        DirectlyHovered::default(),
         Node {
             flex_direction: FlexDirection::Column,
             ..ui::fill()
@@ -98,18 +100,14 @@ pub fn draw(
 /// A click on a menu button does what it says.
 pub fn clicks(
     core: Option<NonSendMut<MenuCore>>,
-    buttons: Query<(&Interaction, &MenuButton), Changed<Interaction>>,
+    buttons: Query<&MenuButton>,
+    press: Res<ui::PrimaryPress>,
 ) {
-    let Some(mut core) = core else {
+    let (Some(mut core), Some(target)) = (core, press.0) else {
         return;
     };
-    let pressed: Vec<Act> = buttons
-        .iter()
-        .filter(|(i, _)| **i == Interaction::Pressed)
-        .map(|(_, b)| b.0.clone())
-        .collect();
-    for act in pressed {
-        core.act(act);
+    if let Ok(button) = buttons.get(target) {
+        core.act(button.0.clone());
     }
 }
 

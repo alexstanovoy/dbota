@@ -4,6 +4,10 @@
 //! Silent where the cache has no such sound.
 
 use bevy::{audio::Volume, prelude::*};
+use bevy::{
+    picking::{events::PointerPress, pointer::PointerButton},
+    ui_widgets::Button,
+};
 use bota_client_core::Phase;
 use bota_proto::{EventKind, Team, UnitKind};
 
@@ -168,17 +172,10 @@ pub fn plugin(app: &mut App) {
         .add_systems(Startup, load_menu)
         .add_systems(Update, load.run_if(crate::loading::requested))
         .add_systems(PostUpdate, report.in_set(crate::loading::Report))
+        .add_observer(click)
         .add_systems(
             Update,
-            (
-                announce,
-                fortified,
-                building_fell,
-                boss_fell,
-                herald,
-                click,
-                speak,
-            ),
+            (announce, fortified, building_fell, boss_fell, herald, speak),
         );
     #[cfg(test)]
     app.init_resource::<BuildingsHeard>();
@@ -540,16 +537,17 @@ pub struct QuitClick;
 
 /// The click of any button of the interface.
 fn click(
+    event: On<PointerPress>,
     mut commands: Commands,
     mut voices: ResMut<Voices>,
-    buttons: Query<(&Interaction, Has<QuitClick>), (Changed<Interaction>, With<Button>)>,
+    buttons: Query<Has<QuitClick>, With<Button>>,
     settings: Res<Settings>,
     args: Res<crate::Args>,
 ) {
-    if settings.muted || args.mute {
+    if event.button != PointerButton::Primary || settings.muted || args.mute {
         return;
     }
-    let Some((_, quit)) = buttons.iter().find(|(i, _)| **i == Interaction::Pressed) else {
+    let Ok(quit) = buttons.get(event.entity) else {
         return;
     };
     let source = if quit {

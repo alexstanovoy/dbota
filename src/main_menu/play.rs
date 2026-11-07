@@ -6,6 +6,7 @@ use super::core::{Act, Page};
 use super::kit::{Kit, MenuButton, Tone};
 use super::view::{MenuView, RulesetRow};
 use crate::theme;
+use bevy::ui_widgets::Button;
 
 /// Local choices, independent of the service's queue request shape.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -251,6 +252,7 @@ fn bots(kit: &mut Kit, parent: Entity, on: bool) {
     );
     kit.commands.entity(button).insert((
         Button,
+        Pickable::default(),
         MenuButton(Act::Play(PlayAction::Bots)),
         Name::new("allow matchmaking with bots"),
         BorderColor::all(theme::DIVIDER),
@@ -346,6 +348,7 @@ pub fn info(kit: &mut Kit, parent: Entity, tip: PlayInfo, label: &str) {
     );
     kit.commands.entity(button).insert((
         Button,
+        Pickable::default(),
         MenuButton(Act::Play(PlayAction::Info(tip))),
         Name::new(label.to_lowercase()),
     ));
@@ -443,8 +446,11 @@ fn drawer(kit: &mut Kit, root: Entity) -> Entity {
         },
     );
     kit.commands.entity(shade).insert((
+        Name::new("play backdrop"),
         BackgroundColor(Color::BLACK.with_alpha(theme::dim(0.35))),
         crate::hud::Blocker,
+        bevy::picking::hover::Hovered::default(),
+        Pickable::default(),
     ));
     let drawer = kit.node(
         root,
@@ -469,6 +475,8 @@ fn drawer(kit: &mut Kit, root: Entity) -> Entity {
     kit.commands.entity(drawer).insert((
         Name::new("play drawer"),
         crate::hud::Blocker,
+        bevy::picking::hover::Hovered::default(),
+        Pickable::default(),
         theme::downward(theme::PLAY_PANEL),
         BorderColor::all(theme::PANEL_GLINT),
     ));
@@ -626,6 +634,7 @@ fn queue_frame(kit: &mut Kit, parent: Entity, row: &RulesetRow, chosen: bool) ->
     );
     kit.commands.entity(line).insert((
         Button,
+        Pickable::default(),
         MenuButton(Act::Play(PlayAction::Select(row.id.clone()))),
         Name::new(format!("queue {}", row.id.0)),
         BorderColor::all(if chosen { theme::SELECT } else { Color::NONE }),

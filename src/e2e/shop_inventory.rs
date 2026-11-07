@@ -4,7 +4,7 @@ use super::{
     shop_queue::{cells, point_item},
 };
 use crate::shop::Place;
-use bevy::prelude::*;
+use bevy::{prelude::*, ui_widgets::Button};
 use bota_client_core::{Intent, IssuedOrder, Slot};
 use bota_proto::{Cheat, HeroId, ItemId, Order, Vec2 as Spot};
 
@@ -15,7 +15,7 @@ fn point_slot(client: &mut Client, slot: u8) {
             .is_some_and(|at| at != Vec2::ZERO)
     });
     let entity = client.item_box(slot).expect("slot");
-    client.mouse(client.centre_of(entity).expect("laid out"));
+    client.hover_ui(entity, std::time::Duration::from_secs(20));
 }
 
 fn button_saying(client: &mut Client, word: &str) -> Option<Entity> {
@@ -112,7 +112,7 @@ fn show_from_menu(client: &mut Client, slot: u8, item: ItemId) {
             );
         }
     }
-    client.mouse(client.centre_of(button).expect("laid out"));
+    client.hover_ui(button, std::time::Duration::from_secs(20));
     client.click(MouseButton::Left);
     client.until("the item's shop tree shown", |c| {
         cells(c, Place::Tree).iter().any(|(id, _)| *id == item)

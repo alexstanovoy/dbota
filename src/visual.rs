@@ -35,6 +35,7 @@
 //!   made on the first frame within [`CLICK_WINDOW_TICKS`] that has one; a
 //!   window without any fails.
 
+use bevy::ui_widgets::Button;
 use bevy::{ecs::system::SystemParam, prelude::*, window::PrimaryWindow};
 use bota_proto::UnitKind;
 

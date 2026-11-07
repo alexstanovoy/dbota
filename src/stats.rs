@@ -7,6 +7,7 @@
 //! resistance and evasion, and what each attribute gives. The labels are
 //! Dota's own where the cache has them; every number is the simulator's.
 
+use bevy::picking::hover::{DirectlyHovered, Hovered};
 use bevy::prelude::*;
 use bota_core::rules;
 use bota_proto::{Attribute, Fixed, UnitView};
@@ -23,6 +24,7 @@ mod backpack_ui_tests;
 
 /// The region over the portrait the tooltip opens for.
 #[derive(Component)]
+#[require(DirectlyHovered)]
 struct StatsZone;
 
 /// The tooltip.
@@ -183,7 +185,7 @@ pub fn spawn(
     let zone = commands
         .spawn((
             StatsZone,
-            Interaction::default(),
+            Hovered::default(),
             Blocker,
             Node {
                 flex_direction: FlexDirection::Column,
@@ -725,12 +727,12 @@ fn tooltip(
     session: NonSend<Session>,
     texts: Res<Texts>,
     args: Res<crate::Args>,
-    zone: Query<&Interaction, With<StatsZone>>,
+    zone: Query<&DirectlyHovered, With<StatsZone>>,
     mut tip: Single<&mut Visibility, With<StatsTip>>,
     mut lines: Query<(&Line, &mut Text, &mut TextColor)>,
 ) {
     let forced = args.tip.as_deref() == Some("stats");
-    let hovered = forced || zone.iter().any(|i| *i != Interaction::None);
+    let hovered = forced || zone.iter().any(|i| i.get());
     let unit = crate::hud::subject(&session.0).1.filter(|_| hovered);
     tip.set_if_neq(ui::visible(unit.is_some()));
     let Some(u) = unit else {

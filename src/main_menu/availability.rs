@@ -8,6 +8,8 @@ use crate::theme;
 use bevy::prelude::*;
 use bota_radovid::proto::AccountGameLimit;
 
+use bevy::picking::hover::{DirectlyHovered, Hovered};
+use bevy::ui_widgets::Button;
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Reason {
     Full,
@@ -133,7 +135,8 @@ pub fn explain(kit: &mut Kit, button: Entity, reason: Reason) {
     kit.commands.entity(tip).insert(Visibility::Hidden);
     kit.commands.entity(button).insert((
         Button,
-        Interaction::default(),
+        Hovered::default(),
+        DirectlyHovered::default(),
         ReasonTip(tip),
         accessible,
         bevy::input_focus::tab_navigation::TabIndex(0),
@@ -144,7 +147,7 @@ pub fn explain(kit: &mut Kit, button: Entity, reason: Reason) {
 /// The same reason is available by pointer, Tab and the accessibility description.
 pub fn tips(
     focus: Res<bevy::input_focus::InputFocus>,
-    buttons: Query<(Entity, &Interaction, &ReasonTip, &Children)>,
+    buttons: Query<(Entity, &Hovered, &ReasonTip, &Children)>,
     mut tips: Query<&mut Visibility>,
     mut labels: Query<&mut TextColor>,
 ) {
@@ -156,7 +159,7 @@ pub fn tips(
         }
         if let Ok(mut shown) = tips.get_mut(tip.0) {
             shown.set_if_neq(crate::ui::visible(
-                focus.get() == Some(entity) || *interaction == Interaction::Hovered,
+                focus.get() == Some(entity) || interaction.get(),
             ));
         }
     }
@@ -169,23 +172,18 @@ pub struct FocusKey(Option<String>);
 pub fn remember_focus(
     mut focus: ResMut<bevy::input_focus::InputFocus>,
     mut key: ResMut<FocusKey>,
-    nodes: Query<
-        (Entity, &Name, Option<&Interaction>),
-        With<bevy::input_focus::tab_navigation::TabIndex>,
-    >,
+    press: Res<crate::ui::PrimaryPress>,
+    nodes: Query<(Entity, &Name), With<bevy::input_focus::tab_navigation::TabIndex>>,
     groups: Query<Entity, With<bevy::input_focus::tab_navigation::TabGroup>>,
 ) {
     if groups.is_empty() {
         return;
     }
-    if let Some((entity, name, _)) = nodes
-        .iter()
-        .find(|(_, _, pressed)| pressed.is_some_and(|pressed| *pressed == Interaction::Pressed))
-    {
+    if let Some((entity, name)) = press.0.and_then(|target| nodes.get(target).ok()) {
         focus.set(entity, bevy::input_focus::FocusCause::Pressed);
         key.0 = Some(name.to_string());
     } else if let Some(entity) = focus.get()
-        && let Ok((_, name, _)) = nodes.get(entity)
+        && let Ok((_, name)) = nodes.get(entity)
     {
         key.0 = Some(name.to_string());
     }

@@ -509,8 +509,9 @@ fn framing(center: Vec3, half: Vec3, reference: &[Vec3], points: &[Vec3], hover:
             rotation,
             ..default()
         };
-        let matrix = Mat4::perspective_rh(FOV, aspect, 0.1, distance + half.length() * 4.0)
-            * Mat4::from(camera.compute_affine().inverse());
+        let matrix =
+            bevy::math::proj::perspective(FOV, aspect, 0.1, distance + half.length() * 4.0)
+                * Mat4::from(camera.compute_affine().inverse());
         let (lo, hi) = projected_bounds(matrix, points);
         let (reference_lo, reference_hi) = projected_bounds(matrix, reference);
         let height = (reference_hi.y - reference_lo.y) * SIZE.1 as f32 / 2.0;
@@ -523,8 +524,9 @@ fn framing(center: Vec3, half: Vec3, reference: &[Vec3], points: &[Vec3], hover:
     }
     #[cfg(test)]
     {
-        let matrix = Mat4::perspective_rh(FOV, aspect, 0.1, distance + half.length() * 4.0)
-            * Mat4::from(camera.compute_affine().inverse());
+        let matrix =
+            bevy::math::proj::perspective(FOV, aspect, 0.1, distance + half.length() * 4.0)
+                * Mat4::from(camera.compute_affine().inverse());
         let (lo, hi) = projected_bounds(matrix, points);
         let (a, b) = projected_bounds(matrix, reference);
         println!(
@@ -563,7 +565,7 @@ fn stance_width(camera: &Transform, points: &[Vec3]) -> f32 {
     let cutoff = center.y - half.y + half.y * 0.16;
     let mut camera = *camera;
     camera.translation -= portrait::STAGE;
-    let matrix = Mat4::perspective_rh(
+    let matrix = bevy::math::proj::perspective(
         FOV,
         SIZE.0 as f32 / SIZE.1 as f32,
         0.1,

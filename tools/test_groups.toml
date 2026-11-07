@@ -40,7 +40,7 @@ groups = ["*"]
 # the client's shared modules and the harness every end-to-end test runs through
 paths = [
     "src/main.rs", "src/session.rs", "src/manifest.rs", "src/ui.rs", "src/units.rs", "src/map.rs", "src/hud.rs", "src/fog.rs",
-    "src/fog/**", "src/fog.wgsl", "src/config.rs", "src/camera.rs", "src/dota_text.rs", "src/input.rs", "src/main_menu/**",
+    "src/fog/**", "src/fog.wesl", "src/config.rs", "src/camera.rs", "src/dota_text.rs", "src/input.rs", "src/main_menu/**",
     "src/keys.rs", "src/cachefs.rs", "src/loading.rs", "src/loading/**", "src/pick.rs", "src/settings/**", "src/minimap.rs",
     "src/daylight.rs",
     "src/e2e/mod.rs", "src/e2e/harness.rs", "src/test_support.rs", "tests/common/**", "assets/**",
@@ -75,13 +75,14 @@ tests = [{ unittest = "web/test", modules = ["test_build_output", "test_optimize
 [[group]]
 name = "tooling"
 about = "the test groups' own machinery (Python unittest)"
-paths = ["tools/test_groups.py", "tools/test_groups.toml", "tools/known_baselines.txt", "tools/test_test_groups.py"]
-tests = [{ unittest = "tools", modules = ["test_test_groups"] }]
+paths = ["tools/test_groups.py", "tools/test_groups.toml", "tools/known_baselines.txt", "tools/test_test_groups.py", "tools/test/**", "tools/test_runner.py", "tools/test.sh"]
+tests = [{ unittest = "tools", modules = ["test_test_groups"] }, { unittest = "tools/test", modules = ["test_runner_test"] }]
 
 [[group]]
 name = "client_menu"
 about = "the menus, settings, replays, controls and the way into a game"
 paths = [
+    "src/main.rs",
     "src/e2e/regame.rs",
     "src/e2e/shell.rs",
     "src/theme.rs",
@@ -111,6 +112,7 @@ paths = [
     "src/cheats.rs",
     "src/preload.rs",
     "src/e2e/menu.rs",
+    "src/e2e/ui_phase.rs",
     "src/e2e/controls.rs",
     "src/e2e/cursors.rs",
     "src/e2e/pregame.rs",
@@ -135,6 +137,7 @@ tests = [
         "session::environment_tests::",
         "e2e::harness::",
         "main_menu::",
+        "an_empty_native_command_line_opens_the_menu_when_the_environment_is_ignored",
         "config::",
         "keys::",
         "input::",
@@ -143,6 +146,7 @@ tests = [
         "postgame::",
         "replays::",
         "e2e::menu::",
+        "e2e::ui_phase::",
         "e2e::controls::",
         "e2e::cursors::",
         "e2e::pregame::",
@@ -280,11 +284,12 @@ paths = [
     "src/fx/**",
     "src/fx.rs",
     "src/particles/**",
+    "crates/dbota_particles/**",
     "src/effects.rs",
     "src/glyph.rs",
     "src/lotus.rs",
     "src/wash.rs",
-    "src/wash.wgsl",
+    "src/wash.wesl",
     "src/water.rs",
     "src/terrain.rs",
     "src/fortified.rs",
@@ -301,6 +306,7 @@ paths = [
     "tests/blood_grenade.rs",
 ]
 tests = [
+    { package = "dbota_particles", target = "lib" },
     { package = "dbota", target = "bin:dbota", filters = [
         "fx::worn::",
         "particles::",
@@ -499,7 +505,7 @@ paths = [
     "src/e2e/watcher_colours.rs",
     "src/fog.rs",
     "src/fog/**",
-    "src/fog.wgsl",
+    "src/fog.wesl",
     "src/e2e/fog.rs",
     "src/e2e/fog_pov.rs",
     "src/e2e/fog_producers.rs",
@@ -554,3 +560,11 @@ tests = [
     ] },
     { package = "dbota", target = "test:tower_line" },
 ]
+
+[[route]]
+paths = ["crates/dbota_import_web/**"]
+groups = ["web", "import"]
+
+[[outside]]
+path = "tools/test_runner.py"
+step = "none: runner implementation, exercised by tools/test/test_runner_test.py"

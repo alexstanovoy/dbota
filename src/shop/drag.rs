@@ -1,5 +1,9 @@
 //! Shop and inventory items share Quickbuy's drop receiver; planning never moves an item.
-use bevy::{prelude::*, window::PrimaryWindow};
+use bevy::{
+    picking::hover::{DirectlyHovered, Hovered},
+    prelude::*,
+    window::PrimaryWindow,
+};
 
 use super::{Place, ShopCell, corner::QuickDrop};
 use crate::{bag::TacticalBag, session::Session};
@@ -50,8 +54,8 @@ fn track(
     mouse: Res<ButtonInput<MouseButton>>,
     keys: Res<ButtonInput<KeyCode>>,
     window: Single<&Window, With<PrimaryWindow>>,
-    cells: Query<(&Interaction, &ShopCell, &Place, &InheritedVisibility)>,
-    drop: Query<(&Interaction, &InheritedVisibility), With<QuickDrop>>,
+    cells: Query<(&DirectlyHovered, &ShopCell, &Place, &InheritedVisibility)>,
+    drop: Query<(&Hovered, &InheritedVisibility), With<QuickDrop>>,
     bag: Res<TacticalBag>,
     settling: Res<crate::drag::Settling>,
 ) {
@@ -62,7 +66,7 @@ fn track(
     };
     let hovered = cells
         .iter()
-        .find(|(over, _, _, seen)| **over != Interaction::None && seen.get());
+        .find(|(over, _, _, seen)| over.get() && seen.get());
     if mouse.just_pressed(MouseButton::Left) {
         drag.held = hovered.map(|(_, item, place, _)| Held {
             item: item.0,
@@ -79,9 +83,7 @@ fn track(
     }
     let held = drag.held.take();
     let core = &mut session.0;
-    let inside = drop
-        .iter()
-        .any(|(over, seen)| *over != Interaction::None && seen.get());
+    let inside = drop.iter().any(|(over, seen)| over.get() && seen.get());
     let inventory = core
         .held_item
         .and_then(|slot| super::displayed_item(core, &bag, &settling, slot).map(|item| item.id.0));

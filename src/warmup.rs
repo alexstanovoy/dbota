@@ -29,10 +29,17 @@ const SPOT: Vec3 = Vec3::new(0.0, -100_000.0, 0.0);
 /// first frames (anti-aliasing) specialise them again.
 const FRAMES: u8 = 8;
 
-/// A piece of art shown while loading so its pipelines are compiled then.
+/// A piece of art whose pipelines the client prepares while loading.
 #[derive(Component, Default)]
 #[require(Transform = Transform::from_translation(SPOT), Visibility, NoFrustumCulling)]
 pub struct Warmup;
+
+impl Warmup {
+    /// Supply this explicitly when the art's root also requires its own default transform.
+    pub fn transform() -> Transform {
+        Transform::from_translation(SPOT)
+    }
+}
 
 /// Whether the render world had no pipeline still waiting to compile last
 /// frame.
@@ -62,9 +69,13 @@ pub fn plugin(app: &mut App) {
     app.add_systems(PostUpdate, report.in_set(crate::loading::Report));
     match app.get_sub_app_mut(RenderApp) {
         Some(render) => {
-            render
-                .insert_resource(ready)
-                .add_systems(Render, pipelines_ready.in_set(RenderSystems::Cleanup));
+            render.insert_resource(ready).add_systems(
+                Render,
+                pipelines_ready
+                    .in_set(RenderSystems::Cleanup)
+                    .after(RenderSystems::Queue)
+                    .after(RenderSystems::Render),
+            );
         }
         // Nothing compiles without a renderer (the headless tests).
         None => ready.0.store(true, Ordering::Relaxed),

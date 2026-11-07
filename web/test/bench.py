@@ -37,10 +37,7 @@ FAILED = re.compile(r"panicked|RuntimeError")
 # What makes a run no measure: any error the renderer logs (wgpu, naga, Bevy's render crates: a
 # shader that does not compile or process, a pipeline or module it cannot make, a validation
 # error). What it failed to make draws nothing, and a frame that draws less is faster for it.
-UNDRAWN = re.compile(
-    r"wgpu|naga|bevy_render|bevy_pbr|bevy_core_pipeline|bevy_shader|bevy_ui_render"
-    r"|[Ss]hader|[Pp]ipeline|Validation Error"
-)
+from render_errors import RENDERER_ERROR as UNDRAWN
 
 
 def platform():

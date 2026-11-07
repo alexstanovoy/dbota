@@ -363,7 +363,6 @@ fn open_blob(blob: &super::core::Blob) -> std::io::Result<Session> {
 fn guard(
     core: Option<NonSendMut<MenuCore>>,
     mut session: NonSendMut<Session>,
-    mut keys: ResMut<ButtonInput<KeyCode>>,
     mut fired: ResMut<crate::keys::Fired>,
     panels: Res<crate::input::Panels>,
     screen: Res<crate::settings::Screen>,
@@ -386,9 +385,6 @@ fn guard(
     core.set_game_in_picks(seated && game.phase == bota_client_core::Phase::Lobby);
     let disconnect = core.take_leave();
     let shown = core.shows_game();
-    if !shown {
-        keys.reset_all();
-    }
     // A game under the dashboard is let go when lost too.
     if !core.in_game() {
         return;

@@ -398,7 +398,7 @@ impl Args {
 
     /// Whether the main menu opens: nothing on the command line names a game.
     pub fn wants_menu(&self) -> bool {
-        !cfg!(feature = "web-replay")
+        !cfg!(all(target_arch = "wasm32", feature = "web-replay"))
             && self.replay.is_none()
             && self.addr.is_none()
             && !self.spectate
@@ -774,7 +774,7 @@ fn menu(
         return Ok(());
     }
     // A browser's replay page has no menu to go back to.
-    if cfg!(feature = "web-replay") {
+    if cfg!(all(target_arch = "wasm32", feature = "web-replay")) {
         return Ok(());
     }
     #[cfg(not(target_arch = "wasm32"))]
@@ -930,4 +930,12 @@ fn render_creation(args: &Args) -> bevy::render::settings::RenderCreation {
         settings.disabled_features = Some(WgpuFeatures::TEXTURE_COMPRESSION_BC);
     }
     settings.into()
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+#[test]
+fn an_empty_native_command_line_opens_the_menu_when_the_environment_is_ignored() {
+    let mut args = Args::parse_from(["dbota"]);
+    args.read_environment = false;
+    assert!(args.wants_menu(), "no explicit argument names a game");
 }

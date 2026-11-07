@@ -458,9 +458,8 @@ fn grenades(
         });
         if let Some(handle) =
             held.or_else(|| play_once(library, playing, GRENADE, at, n as u32, EffectSight::Point))
-            && let Some(instance) = playing.get_mut(handle)
+            && let Some(instance) = playing.get_mut_with_sight(handle, EffectSight::Point)
         {
-            instance.sight = EffectSight::Point;
             instance.set_control_point(0, from_world(at), Vec3::ZERO, true);
             instance.set_control_point(TARGET, from_world(at), Vec3::ZERO, true);
             instance.end();

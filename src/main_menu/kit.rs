@@ -2,7 +2,9 @@
 //! buttons of each tone, icon buttons, and how they answer the cursor and the keyboard. Every
 //! screen builds from these, so a screen never picks a colour or a size of its own for them.
 
+use bevy::picking::hover::{DirectlyHovered, Hovered};
 use bevy::prelude::*;
+use bevy::ui_widgets::Button;
 
 use super::core::Act;
 use crate::manifest::Manifest;
@@ -15,7 +17,12 @@ pub struct Disabled;
 
 /// A button and what it does.
 #[derive(Component, Clone)]
-#[require(bevy::input_focus::tab_navigation::TabIndex)]
+#[require(
+    bevy::input_focus::tab_navigation::TabIndex,
+    Button,
+    Hovered,
+    DirectlyHovered
+)]
 pub struct MenuButton(pub Act);
 
 /// What a button is for, which its look says.
@@ -446,23 +453,32 @@ pub fn focus_ring(
 
 /// Buttons brighten under the cursor and darken pressed; washed icons and words brighten.
 pub fn hover(
-    mut shaded: Query<(&Interaction, &Shade, &mut BackgroundGradient), Changed<Interaction>>,
-    washed: Query<(&Interaction, &Wash), Changed<Interaction>>,
+    mut shaded: Query<(
+        &Hovered,
+        Has<bevy::ui::Pressed>,
+        &Shade,
+        &mut BackgroundGradient,
+    )>,
+    washed: Query<(&Hovered, Has<bevy::ui::Pressed>, &Wash)>,
+    mouse: Res<ButtonInput<MouseButton>>,
     mut images: Query<&mut ImageNode>,
     mut words: Query<&mut TextColor>,
 ) {
-    for (interaction, shade, mut gradient) in &mut shaded {
-        let colors = match interaction {
-            Interaction::None => shade.rest,
-            Interaction::Hovered => shade.hover,
-            Interaction::Pressed => shade.pressed,
+    for (hovered, pressed, shade, mut gradient) in &mut shaded {
+        let colors = if pressed && mouse.pressed(MouseButton::Left) {
+            shade.pressed
+        } else if hovered.get() {
+            shade.hover
+        } else {
+            shade.rest
         };
         *gradient = theme::downward(colors);
     }
-    for (interaction, wash) in &washed {
-        let color = match interaction {
-            Interaction::None => wash.rest,
-            _ => wash.hover,
+    for (hovered, pressed, wash) in &washed {
+        let color = if hovered.get() || (pressed && mouse.pressed(MouseButton::Left)) {
+            wash.hover
+        } else {
+            wash.rest
         };
         if let Ok(mut image) = images.get_mut(wash.target) {
             image.color = color;

@@ -5,6 +5,10 @@
 //! when the match begins. Mouse only. A spectator sees the seats and waits.
 
 use bevy::prelude::*;
+use bevy::{
+    picking::{events::PointerPress, hover::Hovered, pointer::PointerButton},
+    ui_widgets::Button,
+};
 use bota_client_core::{Intent, Phase};
 use bota_core::HEROES;
 use bota_proto::{PickPhase, Role};
@@ -86,8 +90,14 @@ pub fn plugin(app: &mut App) {
     app.init_resource::<ClockSeen>()
         .init_resource::<TacticalPhase>()
         .add_systems(Startup, spawn)
-        .add_systems(Update, (note_clock, show, clicks, looks).chain())
-        .add_systems(PreUpdate, tactical.after(crate::session::pump));
+        .add_observer(clicks)
+        .add_systems(Update, (note_clock, show, looks).chain())
+        .add_systems(
+            PreUpdate,
+            tactical
+                .after(crate::session::pump)
+                .before(bevy::picking::PickingSystems::Hover),
+        );
 }
 
 fn spawn(
@@ -100,7 +110,7 @@ fn spawn(
         .spawn((
             Screen,
             Blocker,
-            Interaction::default(),
+            Hovered::default(),
             Node {
                 flex_direction: FlexDirection::Column,
                 align_items: AlignItems::Center,
@@ -134,6 +144,7 @@ fn spawn(
             .spawn((
                 Card(id),
                 Button,
+                Hovered::default(),
                 Name::new(format!("pick {}", hero.name.to_lowercase())),
                 Node {
                     width: px(CARD.0),
@@ -169,6 +180,7 @@ fn spawn(
         .spawn((
             ReadyButton,
             Button,
+            Hovered::default(),
             Name::new("pick ready"),
             Node {
                 width: px(220),
@@ -226,25 +238,27 @@ fn tactical(session: NonSend<Session>, mut phase: ResMut<TacticalPhase>) {
 /// A click on a portrait picks that hero; on Ready, readies or unreadies.
 #[allow(clippy::type_complexity)]
 fn clicks(
+    event: On<PointerPress>,
     mut session: NonSendMut<Session>,
-    cards: Query<(&Interaction, &Card), Changed<Interaction>>,
-    ready: Query<&Interaction, (Changed<Interaction>, With<ReadyButton>)>,
+    cards: Query<&Card>,
+    ready: Query<(), With<ReadyButton>>,
 ) {
     let core = &mut session.0;
-    if core.phase != Phase::Lobby || core.my_slot.is_none() {
+    if event.button != PointerButton::Primary
+        || core.phase != Phase::Lobby
+        || core.my_slot.is_none()
+    {
         return;
     }
-    for (interaction, card) in &cards {
-        if *interaction == Interaction::Pressed
-            && !core.ready
-            && offered(core, card.0)
-            && !taken(core, card.0)
-        {
-            core.act(Intent::PickHero(card.0));
-        }
+    if let Ok(card) = cards.get(event.entity)
+        && !core.ready
+        && offered(core, card.0)
+        && !taken(core, card.0)
+    {
+        core.act(Intent::PickHero(card.0));
     }
     let picked = my_pick(core).is_some();
-    if ready.iter().any(|i| *i == Interaction::Pressed) && (picked || core.ready) {
+    if ready.contains(event.entity) && (picked || core.ready) {
         core.act(Intent::ToggleReady);
     }
 }
@@ -294,7 +308,7 @@ fn looks(
     menu: Option<NonSend<crate::main_menu::MenuCore>>,
     seen: Res<ClockSeen>,
     time: Res<Time>,
-    mut cards: Query<(&Card, &Interaction, &mut BorderColor, &mut Node), Without<ReadyButton>>,
+    mut cards: Query<(&Card, &Hovered, &mut BorderColor, &mut Node), Without<ReadyButton>>,
     mut button: Query<(&mut BackgroundColor, &mut Visibility), With<ReadyButton>>,
     mut texts: Query<(
         &mut Text,
@@ -327,7 +341,7 @@ fn looks(
             PICKED
         } else if !pickable || taken(core, card.0) {
             DEAD
-        } else if *interaction == Interaction::Hovered && playing && !core.ready {
+        } else if interaction.get() && playing && !core.ready {
             ui::INK
         } else {
             ui::EDGE

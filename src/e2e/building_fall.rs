@@ -52,7 +52,7 @@ impl Heard {
         let heard = Heard::default();
         let into = heard.clone();
         client.world_mut().add_observer(
-            move |add: On<Add, AudioPlayer>, mixer: Res<crate::mixer::Mixer>| {
+            move |add: On<Add<AudioPlayer>>, mixer: Res<crate::mixer::Mixer>| {
                 if let Some((name, _)) = mixer.event_at(add.entity) {
                     into.0.lock().unwrap().push(name.to_owned());
                 }

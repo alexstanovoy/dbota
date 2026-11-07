@@ -41,7 +41,7 @@ fn spawn(
             },
             BackgroundColor(ui::PANEL),
             Visibility::Hidden,
-            Interaction::default(),
+            bevy::picking::hover::Hovered::default(),
             Blocker,
             ChildOf(docks.minimap),
         ))

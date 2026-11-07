@@ -8,6 +8,10 @@
 //! the ground; a right click lets it go.
 
 use bevy::prelude::*;
+use bevy::{
+    picking::{events::PointerPress, hover::Hovered, pointer::PointerButton},
+    ui_widgets::Button,
+};
 use bota_client_core::{App as Core, Intent, world_vec};
 use bota_proto::{Cheat, HeroId, Vec2};
 
@@ -113,7 +117,8 @@ pub fn plugin(app: &mut App) {
     app.init_resource::<DemoPanel>()
         .add_systems(Startup, spawn_root)
         .add_systems(PreUpdate, place.after(bevy::input::InputSystems))
-        .add_systems(Update, (presses, draw).chain());
+        .add_observer(presses)
+        .add_systems(Update, draw);
 }
 
 fn spawn_root(mut commands: Commands) {
@@ -166,22 +171,18 @@ fn night(core: &Core) -> bool {
 
 /// The panel's buttons, pressed.
 fn presses(
+    event: On<PointerPress>,
     mut session: NonSendMut<Session>,
     mut menu: Option<NonSendMut<MenuCore>>,
     mut panel: ResMut<DemoPanel>,
-    buttons: Query<(&Interaction, &Press), Changed<Interaction>>,
+    buttons: Query<&Press>,
     mut typing: ResMut<crate::input::Typing>,
 ) {
-    if !demo_on_screen(menu.as_deref()) {
+    if event.button != PointerButton::Primary || !demo_on_screen(menu.as_deref()) {
         return;
     }
     let core = &mut session.0;
-    let pressed: Vec<Press> = buttons
-        .iter()
-        .filter(|(i, _)| **i == Interaction::Pressed)
-        .map(|(_, p)| *p)
-        .collect();
-    for press in pressed {
+    if let Ok(&press) = buttons.get(event.entity) {
         match press {
             Press::Fold => panel.open = !panel.open,
             Press::SpawnHero(hero) => panel.spawn_hero = hero,
@@ -458,6 +459,7 @@ impl Kit<'_, '_, '_> {
             .spawn((
                 press,
                 Button,
+                Hovered::default(),
                 Blocker,
                 Name::new(press.name()),
                 Node {
@@ -523,7 +525,7 @@ fn build(kit: &mut Kit, root: Entity, shown: &Shown) {
             .commands
             .spawn((
                 Blocker,
-                Interaction::default(),
+                Hovered::default(),
                 Node {
                     width: px(WIDTH),
                     height: percent(100),
@@ -550,6 +552,7 @@ fn build(kit: &mut Kit, root: Entity, shown: &Shown) {
         .spawn((
             Press::Fold,
             Button,
+            Hovered::default(),
             Blocker,
             Name::new("demo fold"),
             Node {
@@ -605,6 +608,7 @@ fn contents(kit: &mut Kit, body: Entity, shown: &Shown) {
             .spawn((
                 Press::SpawnHero(id),
                 Button,
+                Hovered::default(),
                 Blocker,
                 Name::new(format!("demo hero {}", hero.name.to_lowercase())),
                 Node {
@@ -689,6 +693,7 @@ fn contents(kit: &mut Kit, body: Entity, shown: &Shown) {
         .spawn((
             Press::Search,
             Button,
+            Hovered::default(),
             Blocker,
             Name::new("demo items"),
             Node {
@@ -724,6 +729,7 @@ fn contents(kit: &mut Kit, body: Entity, shown: &Shown) {
         let mut cell = kit.commands.spawn((
             Press::Grant(item),
             Button,
+            Hovered::default(),
             Blocker,
             Name::new(format!("demo item {item}")),
             Node {

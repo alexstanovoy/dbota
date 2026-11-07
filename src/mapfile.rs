@@ -501,7 +501,7 @@ fn pieces(jobs: &[Job], bin: &[u8], materials: &Materials) -> Vec<Piece> {
                     mesh.remove_attribute(attr.id);
                 }
                 let mesh = bake_transform(mesh, &job.global);
-                let aabb = mesh.compute_aabb()?;
+                let aabb = mesh.get_aabb()?;
                 Some(Piece {
                     mesh,
                     aabb,

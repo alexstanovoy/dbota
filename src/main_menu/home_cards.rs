@@ -6,6 +6,7 @@ use super::{
 };
 use crate::theme;
 use bevy::prelude::*;
+use bevy::ui_widgets::Button;
 use bota_proto::HeroId;
 
 pub fn draw(
@@ -211,9 +212,11 @@ fn recent_row(kit: &mut Kit, recent: Entity, game: &Match) {
         },
     ));
     if game.details_available {
-        kit.commands
-            .entity(row)
-            .insert((Button, MenuButton(Act::MatchDetails(game.file.clone()))));
+        kit.commands.entity(row).insert((
+            Button,
+            Pickable::default(),
+            MenuButton(Act::MatchDetails(game.file.clone())),
+        ));
     } else {
         kit.commands.entity(row).insert(super::kit::Disabled);
     }

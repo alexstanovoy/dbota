@@ -2,6 +2,7 @@
 //! price, the stats an item adds, each section under its bar, the cooldown
 //! and mana, the lore at the foot.
 
+use bevy::picking::hover::DirectlyHovered;
 use bevy::{prelude::*, window::PrimaryWindow};
 use bota_core::item_def;
 use bota_proto::TalentSlot;
@@ -156,15 +157,15 @@ fn pick(
     texts: Res<Texts>,
     manifest: Res<Manifest>,
     args: Res<crate::Args>,
-    abilities: Query<(&Interaction, &AbilityBox)>,
-    items: Query<(&Interaction, &ItemBox)>,
+    abilities: Query<(&DirectlyHovered, &AbilityBox)>,
+    items: Query<(&DirectlyHovered, &ItemBox)>,
     bag: Res<crate::bag::TacticalBag>,
-    entering: Query<(&Interaction, &crate::strategy::StrategyAbility)>,
-    cells: Query<(&Interaction, &ShopCell)>,
-    buffs: Query<(&Interaction, &crate::buffs::BuffChip)>,
-    talent_cells: Query<(&Interaction, &crate::talents::TalentCell)>,
-    attribute: Query<&Interaction, With<crate::talents::AttributeRow>>,
-    innate: Query<&Interaction, With<crate::hud::InnateButton>>,
+    entering: Query<(&DirectlyHovered, &crate::strategy::StrategyAbility)>,
+    cells: Query<(&DirectlyHovered, &ShopCell)>,
+    buffs: Query<(&DirectlyHovered, &crate::buffs::BuffChip)>,
+    talent_cells: Query<(&DirectlyHovered, &crate::talents::TalentCell)>,
+    attribute: Query<&DirectlyHovered, With<crate::talents::AttributeRow>>,
+    innate: Query<&DirectlyHovered, With<crate::hud::InnateButton>>,
     mut shown: ResMut<Shown>,
 ) {
     let core = &session.0;
@@ -181,13 +182,13 @@ fn pick(
     };
     let buff = buffs
         .iter()
-        .find(|(i, _)| **i != Interaction::None)
+        .find(|(i, _)| i.get())
         .and_then(|(_, b)| b.shown);
     let content = if let Some(spec) = args.tip.as_deref() {
         forced_tip(&look, spec)
-    } else if attribute.iter().any(|i| *i != Interaction::None) {
+    } else if attribute.iter().any(|i| i.get()) {
         Some(note_tip(attribute_tip(&texts, core)))
-    } else if innate.iter().any(|i| *i != Interaction::None) {
+    } else if innate.iter().any(|i| i.get()) {
         innate_tip(&look, core)
     } else if let Some(shown) = buff {
         Some(buff_tip(&look, shown.id, shown.ticks_left, rate))
@@ -235,11 +236,8 @@ fn forced_tip(look: &Lookup, spec: &str) -> Option<Content> {
 }
 
 /// What of a query's boxes the cursor is over, if any.
-fn hovered<'a, T: Component>(boxes: &'a Query<(&Interaction, &T)>) -> Option<&'a T> {
-    boxes
-        .iter()
-        .find(|(i, _)| **i != Interaction::None)
-        .map(|(_, b)| b)
+fn hovered<'a, T: Component>(boxes: &'a Query<(&DirectlyHovered, &T)>) -> Option<&'a T> {
+    boxes.iter().find(|(i, _)| i.get()).map(|(_, b)| b)
 }
 
 /// A popup of the client's own words: a title and lines under it.

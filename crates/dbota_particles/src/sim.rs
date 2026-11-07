@@ -101,9 +101,6 @@ struct Frame {
 pub struct Instance {
     pub effect: Arc<Effect>,
     pub nodes: Vec<Node>,
-    /// Presentation permission is supplied by the producer, never by the imported effect.
-    pub(crate) sight: super::EffectSight,
-    pub(super) flight: Option<super::plugin::FlightRecord>,
     /// Presentation opacity, independent of the imported particle simulation.
     pub(crate) presentation_opacity: f32,
     life: f32,
@@ -138,6 +135,11 @@ impl EmitterState {
 }
 
 impl Instance {
+    /// Multiplies cards and lights without changing the imported particle simulation.
+    pub fn set_presentation_opacity(&mut self, opacity: f32) {
+        self.presentation_opacity = opacity;
+    }
+
     pub fn new(effect: Arc<Effect>, seed: u32) -> Self {
         let mut nodes = Vec::new();
         // Depth first, children in their definition's order.
@@ -172,8 +174,6 @@ impl Instance {
         Self {
             effect,
             nodes,
-            sight: super::EffectSight::Public,
-            flight: None,
             presentation_opacity: 1.0,
             life: 0.0,
             held: false,
@@ -188,8 +188,6 @@ impl Instance {
     /// Plays the effect again from its start, its draws keyed by `seed`, keeping what its
     /// particles' columns hold.
     pub fn restart(&mut self, seed: u32) {
-        self.sight = super::EffectSight::Public;
-        self.flight = None;
         self.presentation_opacity = 1.0;
         self.life = 0.0;
         self.held = false;
@@ -255,13 +253,8 @@ impl Instance {
         );
     }
 
-    #[cfg(test)]
-    pub fn flight_id(&self) -> Option<bota_proto::EntityId> {
-        self.flight.map(|flight| flight.id)
-    }
-
-    /// Whether it was ended: for the end-to-end tests to ask what still plays.
-    #[cfg(test)]
+    /// Whether the emitter ended while any remaining particles finish their tails.
+    #[cfg(any(test, feature = "test-support"))]
     pub fn ending(&self) -> bool {
         self.ending
     }

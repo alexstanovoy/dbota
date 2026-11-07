@@ -1,6 +1,6 @@
 """The actual browser cache transport rejects bad indexes before publishing any assets.
 
-Build the release importer with its web feature and wasm-bindgen into
+Build dbota_import_web with the release profile and wasm-bindgen into
 DBOTA_INDEX_PAGE/import, and copy web/cache.js beside it. No game or install is needed.
 """
 import functools
