@@ -576,8 +576,15 @@ impl Client {
             .ok()
     }
 
-    /// Moves the pointer to a pixel of the window, as the window reports it.
+    /// Moves the pointer to a pixel of the window, as the window reports it, and runs two frames.
     pub fn mouse(&mut self, at: Vec2) {
+        self.point(at);
+        self.frames(2);
+    }
+
+    /// Moves the pointer to a pixel of the window without running a frame: whatever comes next
+    /// reaches the app in the same frame, as a click right after a quick move does.
+    pub fn point(&mut self, at: Vec2) {
         let world = self.world_mut();
         let (window, mut win) = world
             .query_filtered::<(Entity, &mut Window), With<PrimaryWindow>>()
@@ -589,7 +596,6 @@ impl Client {
             position: at,
             delta: None,
         });
-        self.frames(2);
     }
 
     /// Presses and lets go of a mouse button where the pointer is, a frame apart.

@@ -142,6 +142,12 @@ struct Minimap {
     view: Entity,
 }
 
+/// The minimap's frame, which end-to-end tests click.
+#[cfg(test)]
+pub fn frame(world: &World) -> Entity {
+    world.resource::<Minimap>().frame
+}
+
 /// A hero's mark on the minimap: the side and seat of the hero it marks
 /// now, none while it marks none.
 #[derive(Component, Default)]

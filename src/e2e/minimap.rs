@@ -273,3 +273,226 @@ fn ones_courier_is_marked_on_the_minimap_in_its_owners_player_colour() {
         .0;
     assert_eq!(tint, own, "the courier's mark wears its owner's colour");
 }
+
+/// A unit of `kind` on the side asked for (`enemy`), if the view has one.
+fn unit_of(
+    client: &Client,
+    mine: Team,
+    kind: UnitKind,
+    enemy: Option<bool>,
+) -> Option<bota_proto::EntityId> {
+    client
+        .view()
+        .units
+        .iter()
+        .filter(|u| u.kind == kind && u.hp > 0)
+        .find(|u| enemy.is_none_or(|enemy| (u.team != mine) == enemy))
+        .map(|u| u.id)
+}
+
+/// What a test selects and clicks the minimap with: the name, the unit kind and whose it is.
+const TARGETS: [(&str, UnitKind, Option<bool>); 7] = [
+    ("an enemy hero", UnitKind::Hero, Some(true)),
+    ("an own creep", UnitKind::CreepMelee, Some(false)),
+    ("an enemy creep", UnitKind::CreepMelee, Some(true)),
+    ("an own tower", UnitKind::Tower, Some(false)),
+    ("an enemy tower", UnitKind::Tower, Some(true)),
+    ("the courier", UnitKind::Courier, Some(false)),
+    ("a ward", UnitKind::Ward, Some(false)),
+];
+
+/// Selects each of [`TARGETS`] in turn and clicks the minimap, left and right, over its middle
+/// and two corners with the pointer coming from the world; the unit stays selected.
+fn selection_survives_the_minimap(client: &mut Client, mine: Team) {
+    let frame = crate::minimap::frame(client.world());
+    let world = client.world_mut();
+    let scale = world
+        .query_filtered::<&Window, With<bevy::window::PrimaryWindow>>()
+        .single(world)
+        .expect("the window")
+        .scale_factor();
+    let centre = client.centre_of(frame).expect("laid out") / scale;
+    let half = client
+        .world()
+        .get::<bevy::ui::ComputedNode>(frame)
+        .expect("laid out")
+        .size()
+        / (2.0 * scale);
+    let away = centre + Vec2::new(0.0, -400.0);
+    for (what, kind, enemy) in TARGETS {
+        let unit = unit_of(client, mine, kind, enemy).unwrap_or_else(|| panic!("{what} in view"));
+        for (dx, dy) in [(0.0, 0.0), (-0.95, -0.95), (0.95, 0.95)] {
+            let at = centre + Vec2::new(dx, dy) * half;
+            for button in [MouseButton::Left, MouseButton::Right] {
+                client.core_mut().act(Intent::SelectUnit(Some(unit)));
+                client.mouse(away);
+                client.point(at);
+                client.click(button);
+                assert_ne!(
+                    client.world().get::<Interaction>(frame),
+                    Some(&Interaction::None),
+                    "the click must reach the minimap itself"
+                );
+                assert_eq!(
+                    client.core().selected,
+                    Some(unit),
+                    "{what}: {button:?} on the minimap at {at}: still selected"
+                );
+            }
+        }
+    }
+}
+
+/// Every kind of unit in a scene, around the seat's hero at the middle of the lane, as a
+/// match shows them: both sides' heroes and creeps, their towers, the courier, a ward.
+fn stage_every_kind(client: &mut Client) {
+    use super::harness::MID;
+    client.stand_at(MID);
+    client.cheat(Cheat::Invulnerable { on: true });
+    client.cheat(Cheat::AllVision { on: true });
+    for (enemy, dx) in [(false, 250), (true, -250)] {
+        client.cheat(Cheat::CreateCreeps {
+            enemy,
+            at: bota_proto::Vec2::from_ints(MID.0 + dx, MID.1 + 200),
+        });
+    }
+    client.cheat(Cheat::CreateHero {
+        hero: HeroId::PUDGE,
+        enemy: true,
+        at: bota_proto::Vec2::from_ints(MID.0 + 450, MID.1),
+    });
+    client.cheat(Cheat::Item {
+        item: bota_proto::ItemId::OBSERVER_WARD,
+    });
+    client.until("the ward in the bag", |c| {
+        c.slot_of(bota_proto::ItemId::OBSERVER_WARD).is_some()
+    });
+    let slot = client
+        .slot_of(bota_proto::ItemId::OBSERVER_WARD)
+        .expect("there");
+    let core = client.core_mut();
+    core.act(Intent::Press {
+        slot: Slot::Item(slot),
+        ctrl: false,
+    });
+    core.act(Intent::Aimed {
+        at: (MID.0 as f32 + 100.0, MID.1 as f32 + 100.0),
+        unit: None,
+    });
+    let mine = client.me().team;
+    client.until("every kind of unit in view", |c| {
+        TARGETS
+            .iter()
+            .all(|(_, kind, enemy)| unit_of(c, mine, *kind, *enemy).is_some())
+    });
+}
+
+/// Dota's minimap takes its clicks itself: a left click moves the camera and a right click
+/// orders the selection, and the unit selected stays selected, whatever it is (a hero or a
+/// creep of either side, a building, the courier, a ward). Neutrals are left out: the map
+/// holds no camps in a match of this size.
+#[test]
+fn a_click_on_the_minimap_keeps_the_selection() {
+    let server = Server::start(1, &[]);
+    let mut client = Client::join(&server, HeroId::SHADOW_FIEND, &[]);
+    stage_every_kind(&mut client);
+    let mine = client.me().team;
+    server.frozen(|| {
+        for scale in [1.0, 1.5] {
+            display_scale(&mut client, scale);
+            selection_survives_the_minimap(&mut client, mine);
+        }
+    });
+}
+
+/// The same in a replay, where any unit may be selected and none is commanded.
+#[test]
+fn a_click_on_the_minimap_keeps_the_selection_in_a_replay() {
+    let directory = ReplayDirectory::new();
+    let replay = directory.0.join("match.brp");
+    let (mine, tick) = {
+        let mut server = Server::start(
+            1,
+            &[
+                "--replay",
+                replay.to_str().expect("UTF-8"),
+                "--empty-after-secs",
+                "1",
+            ],
+        );
+        let mut client = Client::join(&server, HeroId::SHADOW_FIEND, &[]);
+        stage_every_kind(&mut client);
+        client.frames(30);
+        let (mine, tick) = (client.me().team, client.tick());
+        drop(client);
+        server.wait();
+        (mine, tick)
+    };
+    let mut client = Client::run(&["--replay", replay.to_str().expect("UTF-8")]);
+    client.until("the replay at the staged scene", |c| {
+        let now = c.tick();
+        if let bota_client_core::Source::Replay(player) = &mut c.core_mut().source {
+            if now < tick {
+                player.advance_ticks(f64::from(tick - now));
+            }
+            player.paused = now >= tick;
+        }
+        now >= tick
+    });
+    client.until("every kind of unit in view", |c| {
+        TARGETS
+            .iter()
+            .all(|(_, kind, enemy)| unit_of(c, mine, *kind, *enemy).is_some())
+    });
+    selection_survives_the_minimap(&mut client, mine);
+}
+
+fn display_scale(client: &mut Client, scale: f32) {
+    let world = client.world_mut();
+    let window = {
+        let (id, mut window) = world
+            .query_filtered::<(Entity, &mut Window), With<bevy::window::PrimaryWindow>>()
+            .single_mut(world)
+            .expect("the window");
+        window.resolution.set_scale_factor_override(Some(scale));
+        window
+            .resolution
+            .set_physical_resolution((1920.0 * scale) as u32, (1080.0 * scale) as u32);
+        id
+    };
+    world.write_message(bevy::window::WindowScaleFactorChanged {
+        window,
+        scale_factor: f64::from(scale),
+    });
+    world.write_message(bevy::window::WindowResized {
+        window,
+        width: 1920.0,
+        height: 1080.0,
+    });
+    client.frames(2);
+}
+
+struct ReplayDirectory(std::path::PathBuf);
+
+impl ReplayDirectory {
+    fn new() -> Self {
+        for attempt in 0..32 {
+            let path = crate::test_support::scratch_path(&format!(
+                "minimap_{}_{attempt}",
+                std::process::id()
+            ));
+            match std::fs::create_dir(&path) {
+                Ok(()) => return Self(path),
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+                Err(error) => panic!("create a private replay folder: {error}"),
+            }
+        }
+        panic!("no unused replay folder among 32 candidates");
+    }
+}
+
+impl Drop for ReplayDirectory {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
