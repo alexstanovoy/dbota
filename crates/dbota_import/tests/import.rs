@@ -245,6 +245,11 @@ fn kv3_resource(root: &Kv3) -> Vec<u8> {
     }
     data.extend_from_slice(&body);
     data.extend_from_slice(&u32::MAX.to_le_bytes());
+    resource_of(&data)
+}
+
+/// A compiled resource whose only block is `DATA`, holding `data`.
+fn resource_of(data: &[u8]) -> Vec<u8> {
     let words =
         |values: &[u32]| -> Vec<u8> { values.iter().flat_map(|v| v.to_le_bytes()).collect() };
     let table_end = 16 + 12;
@@ -255,8 +260,36 @@ fn kv3_resource(root: &Kv3) -> Vec<u8> {
     let field = out.len() + 4;
     out.extend_from_slice(b"DATA");
     out.extend_from_slice(&words(&[(table_end - field) as u32, data.len() as u32]));
-    out.extend_from_slice(&data);
+    out.extend_from_slice(data);
     out
+}
+
+/// A rule file of a KV3 document compressed with LZ4 (`VKV\x03`): a string table of `count`
+/// empty strings, then an empty object. A byte of the file for every 255 strings: two LZ4
+/// sequences, the table's zeros one match of the zero before them.
+fn empty_strings_rule_file(count: u32) -> Vec<u8> {
+    let tail = [9, 0, 0, 0, 0, 0xFF, 0xFF, 0xFF, 0xFF];
+    let mut block = vec![(5 << 4) | 15];
+    block.extend_from_slice(&count.to_le_bytes());
+    block.push(0);
+    block.extend_from_slice(&1u16.to_le_bytes());
+    let mut more = count as usize - 1 - 4 - 15;
+    while more >= 255 {
+        block.push(255);
+        more -= 255;
+    }
+    block.push(more as u8);
+    block.push((tail.len() as u8) << 4);
+    block.extend_from_slice(&tail);
+    let mut data = 0x0356_4B56u32.to_le_bytes().to_vec();
+    data.extend_from_slice(&[
+        0x8A, 0x34, 0x47, 0x68, 0xA1, 0x63, 0x5C, 0x4F, 0xA1, 0x97, 0x53, 0x80, 0x6F, 0xD9, 0xB1,
+        0x19,
+    ]);
+    data.extend_from_slice(&[0; 16]);
+    data.extend_from_slice(&(4 + count + tail.len() as u32).to_le_bytes());
+    data.extend_from_slice(&block);
+    resource_of(&data)
 }
 
 /// An install holding the event types and sound event files `(file, event names)`.
@@ -607,9 +640,9 @@ fn shop_categories_keep_their_order_and_hostile_files_are_texts_or_errors() {
     }
 }
 
-/// What importing Pudge's voice reports failed, when his rules include three files whose 400
+/// What importing Pudge's voice reports failed, when his rules include three files whose 800
 /// responses each are `response` of one long text (cheap in the file, which names a text once,
-/// and large decoded).
+/// and large decoded: 19 MiB in all).
 fn failures_of_long_rule_texts(response: fn(&'static str) -> Kv3) -> Vec<String> {
     let long: &'static str = Box::leak("a".repeat(8 << 10).into_boxed_str());
     let names: Vec<&'static str> = (0..3)
@@ -625,7 +658,7 @@ fn failures_of_long_rule_texts(response: fn(&'static str) -> Kv3) -> Vec<String>
             ("m_name", Kv3::Text("g")),
             (
                 "m_responses",
-                Kv3::List((0..400).map(|_| response(long)).collect()),
+                Kv3::List((0..800).map(|_| response(long)).collect()),
             ),
             (
                 "m_pEmbeddedRule",
@@ -659,6 +692,34 @@ fn failures_of_long_rule_texts(response: fn(&'static str) -> Kv3) -> Vec<String>
     report.failed.into_iter().map(|(_, why)| why).collect()
 }
 
+/// A small rule file whose string table would take far more than any hero's rules (a slot for
+/// each of millions of empty strings) is refused before its table is allocated.
+#[test]
+fn a_rule_file_of_a_huge_string_table_is_refused_before_it_is_allocated() {
+    let big = empty_strings_rule_file(4 << 20);
+    assert!(big.len() < 1 << 16, "{} bytes", big.len());
+    let script = br#""DOTAHeroes" { "npc_dota_hero_pudge" { "VoiceFile" "soundevents/voscripts/game_sounds_vo_pudge.vsndevts" } }"#;
+    let files: Vec<(&str, &str, &str, &[u8])> = vec![
+        ("scripts/npc/heroes", "npc_dota_hero_pudge", "txt", script),
+        ("scripts/talker", "response_rules_pudge", "vrr_c", &big),
+    ];
+    let src = install(&[("pak01_dir.vpk", package_of(&files))]);
+    let plan = Plan {
+        items: vec![Item::Voice {
+            logical: "voice.pudge".to_owned(),
+            hero: "pudge".to_owned(),
+            out: "sounds/voice/pudge.bin".to_owned(),
+        }],
+    };
+    let mut sink = Memory::default();
+    let report = run(&src, &plan, &mut sink, &mut |_| Flow::Continue).expect("a report");
+    let why: Vec<&str> = report.failed.iter().map(|(_, why)| why.as_str()).collect();
+    assert!(
+        why.iter().any(|w| w.contains("bytes more than it may")),
+        "{why:?}"
+    );
+}
+
 /// Rule files of one long line text repeated are refused by the hero's budget as they are
 /// read, not after they all sit decoded in memory.
 #[test]
@@ -670,8 +731,7 @@ fn response_rules_past_the_aggregate_text_budget_are_refused_while_read() {
         ])
     });
     assert!(
-        why.iter()
-            .any(|w| w.contains("more response rule text than any hero's")),
+        why.iter().any(|w| w.contains("bytes more than it may")),
         "{why:?}"
     );
 }
@@ -687,8 +747,7 @@ fn response_rules_of_long_unknown_kinds_are_refused_by_the_same_budget() {
         ])
     });
     assert!(
-        why.iter()
-            .any(|w| w.contains("more response rule text than any hero's")),
+        why.iter().any(|w| w.contains("bytes more than it may")),
         "{why:?}"
     );
 }

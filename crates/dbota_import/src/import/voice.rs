@@ -11,7 +11,7 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
 
 use heatel::sound::{Lipsync, SoundEvent, read_sound_events, read_sound_mixer};
-use heatel::talker::{Criterion, ResponseGroup, ResponseKind, ResponseRules, read_response_rules};
+use heatel::talker::{Criterion, ResponseGroup, ResponseKind, read_response_rules_within};
 use heatel::{Resource, Result, Sound, Source, Vpk};
 
 use super::{Out, SOUND_MIXER_SRC, malformed, read_from, resolve_event, safe_path, sound_stacks};
@@ -33,11 +33,12 @@ const MAX_RULE_FILE_BYTES: u64 = 1 << 20;
 /// Most bytes of one sound event script or hero script: the install's largest voice script
 /// (Snapfire's) is 120,888, its largest hero script (Invoker's) 60,111.
 const MAX_SCRIPT_BYTES: u64 = 2 << 20;
-/// Most a hero's rule files keep together as decoded, counted by [`retained`]: Pudge's own
-/// file and the shared one it includes count 702,494 (241,851 bytes of text; Snapfire's own
-/// file, the largest, holds 229,328). A file names a text once and may use it any number of
-/// times: the budget is charged as each file is read, before the next one is.
-const MAX_RULE_TEXT: usize = 4 << 20;
+/// Most bytes decoding all of a hero's rule files may take, as heatel charges them (every
+/// buffer, string and value, before it is allocated; the rules kept are copies of what it
+/// charged): Pudge's own file and the shared one it includes take 3,921,053. A file names a
+/// text once and may use it any number of times: each file is decoded within what the files
+/// before it left.
+const MAX_RULE_BYTES: usize = 16 << 20;
 
 /// Why a line can never be said here.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -179,29 +180,6 @@ fn read_bounded(src: &impl Source, pak: &Vpk, path: &str, max: u64) -> Result<Ve
     read_from(src, &[pak], path)
 }
 
-/// The length of the `Debug` text of `rules`, if it is no more than `limit`. Every text the
-/// rules keep is in it whole (quoted, so never shorter), whatever field or kind keeps it, and
-/// every entry adds at least its punctuation, so it charges all the rules keep in one count,
-/// a field heatel adds included. It stops at the limit.
-fn retained(rules: &ResponseRules, limit: usize) -> Option<usize> {
-    struct Counter {
-        len: usize,
-        limit: usize,
-    }
-    impl std::fmt::Write for Counter {
-        fn write_str(&mut self, text: &str) -> std::fmt::Result {
-            self.len = self.len.saturating_add(text.len());
-            if self.len > self.limit {
-                return Err(std::fmt::Error);
-            }
-            Ok(())
-        }
-    }
-    let mut counter = Counter { len: 0, limit };
-    std::fmt::Write::write_fmt(&mut counter, format_args!("{rules:?}")).ok()?;
-    Some(counter.len)
-}
-
 fn read_rule_files(src: &impl Source, pak: &Vpk, hero: &str) -> Result<RuleFiles> {
     let mut queue = VecDeque::from([rule_path(&format!(
         "scripts/talker/response_rules_{hero}.vrr"
@@ -224,17 +202,10 @@ fn read_rule_files(src: &impl Source, pak: &Vpk, hero: &str) -> Result<RuleFiles
             ));
         }
         let bytes = read_bounded(src, pak, &path, MAX_RULE_FILE_BYTES)?;
-        let read = read_response_rules(&Resource::parse(&bytes)?)?;
-        let Some(more) = retained(&read, MAX_RULE_TEXT - kept) else {
-            return Err(malformed(
-                "voice",
-                format!(
-                    "more response rule text than any hero's: past {MAX_RULE_TEXT} bytes by \
-                     {path}"
-                ),
-            ));
-        };
-        kept += more;
+        let (read, took) =
+            read_response_rules_within(&Resource::parse(&bytes)?, MAX_RULE_BYTES - kept)
+                .map_err(|e| malformed("voice", format!("rule file {path}: {e}")))?;
+        kept += took;
         for include in &read.includes {
             queue.push_back(rule_path(include)?);
         }
