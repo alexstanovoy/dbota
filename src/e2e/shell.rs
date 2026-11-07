@@ -18,7 +18,12 @@ use super::menu::{act, local_menu, signed_up};
 fn interface_rect(client: &mut Client, name: &str) -> Rect {
     let world = client.world_mut();
     let (node, at) = world
-        .query::<(&Name, &ComputedNode, &UiGlobalTransform, &InheritedVisibility)>()
+        .query::<(
+            &Name,
+            &ComputedNode,
+            &UiGlobalTransform,
+            &InheritedVisibility,
+        )>()
         .iter(world)
         .find(|(named, _, _, shown)| shown.get() && named.as_str() == name)
         .map(|(_, node, at, _)| (*node, *at))
@@ -142,7 +147,10 @@ fn the_pill_and_the_players_card_say_how_the_menu_stands_and_who_plays() {
         .and_then(|(_, rest)| rest.rsplit_once(':'))
         .map(|(host, _)| host.to_owned())
         .expect("a service address with a port");
-    assert!(shown.contains(&host), "the service's name {host}: {shown:?}");
+    assert!(
+        shown.contains(&host),
+        "the service's name {host}: {shown:?}"
+    );
     assert!(shown.iter().any(|t| t == "LOG OUT"), "{shown:?}");
     // Every tab of an account and the bar's right end fit side by side, a 5:4 window too.
     for size in [UVec2::new(1920, 1080), UVec2::new(1280, 1024)] {
@@ -164,7 +172,11 @@ fn the_pill_and_the_players_card_say_how_the_menu_stands_and_who_plays() {
     let named: Vec<String> = world
         .query::<(&Text, &ChildOf)>()
         .iter(world)
-        .filter(|(_, parent)| world.get::<Name>(parent.parent()).is_some_and(|n| n.as_str() == "player"))
+        .filter(|(_, parent)| {
+            world
+                .get::<Name>(parent.parent())
+                .is_some_and(|n| n.as_str() == "player")
+        })
         .map(|(text, _)| text.0.clone())
         .collect();
     assert_eq!(named, ["alice"], "the card names the player alone");

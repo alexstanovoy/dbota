@@ -92,10 +92,18 @@ pub struct Kit<'w, 's, 'a> {
 /// A button is this many times as wide as it is tall: wide enough for the longest label of its
 /// height (CREATE FOR THE LAN, WAITING…), so every button of a height is as wide as the next.
 const BUTTON_WIDTH_PER_HEIGHT: f32 = 5.0;
+/// A popup's OK and Cancel, one width.
+const POPUP_ANSWER_WIDTH: f32 = 160.0;
 
 impl Kit<'_, '_, '_> {
     /// Text of a role.
-    pub fn typed(&mut self, parent: Entity, s: impl Into<String>, role: Type, color: Color) -> Entity {
+    pub fn typed(
+        &mut self,
+        parent: Entity,
+        s: impl Into<String>,
+        role: Type,
+        color: Color,
+    ) -> Entity {
         self.commands
             .spawn((
                 theme::text(s, self.fonts, role, color),
@@ -339,9 +347,14 @@ impl Kit<'_, '_, '_> {
             .id()
     }
 
-    /// A popup's answer (OK, Cancel): a secondary button of its words.
+    /// A popup's answer (OK, Cancel): a secondary button of its words, as wide as the other's.
     pub fn popup_button(&mut self, parent: Entity, label: &str, act: Act) -> Entity {
-        self.button(parent, &label.to_uppercase(), act, Tone::Secondary, 44.0)
+        let button = self.button(parent, &label.to_uppercase(), act, Tone::Secondary, 44.0);
+        self.commands
+            .entity(button)
+            .entry::<Node>()
+            .and_modify(|mut node| node.width = px(POPUP_ANSWER_WIDTH));
+        button
     }
 
     /// A hero's portrait from the cache, `width` wide; nothing without it.

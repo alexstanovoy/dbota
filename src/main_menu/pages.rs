@@ -232,7 +232,9 @@ fn game_corner(kit: &mut Kit, root: Entity, view: &MenuView) {
     );
     let wide = |kit: &mut Kit, label: &str, act: Act, tone: Tone, height: f32, name: &str| {
         let button = kit.button(corner, label, act, tone, height);
-        kit.commands.entity(button).insert(Name::new(name.to_owned()));
+        kit.commands
+            .entity(button)
+            .insert(Name::new(name.to_owned()));
         kit.commands
             .entity(button)
             .entry::<Node>()
@@ -241,14 +243,49 @@ fn game_corner(kit: &mut Kit, root: Entity, view: &MenuView) {
     if view.game.is_some() {
         // A replay is left as a game watched is (Dota's popup_confirm_close_replay).
         if view.can_leave_game {
-            wide(kit, "LEAVE GAME", Act::LeaveGame, Tone::Danger, 44.0, "leave game");
+            wide(
+                kit,
+                "LEAVE GAME",
+                Act::LeaveGame,
+                Tone::Danger,
+                44.0,
+                "leave game",
+            );
         }
-        wide(kit, "DISCONNECT", Act::Disconnect, Tone::Danger, 44.0, "disconnect");
-        wide(kit, "RETURN TO GAME", Act::ReturnToGame, Tone::Primary, 52.0, "return");
+        wide(
+            kit,
+            "DISCONNECT",
+            Act::Disconnect,
+            Tone::Danger,
+            44.0,
+            "disconnect",
+        );
+        wide(
+            kit,
+            "RETURN TO GAME",
+            Act::ReturnToGame,
+            Tone::Primary,
+            52.0,
+            "return",
+        );
     } else {
         // Dota's LEAVE: a way to be done with a game that cannot be taken again (its server died).
-        wide(kit, "LEAVE", Act::LeaveSeat, Tone::Danger, 44.0, "leave match");
-        wide(kit, "RECONNECT", Act::Reconnect, Tone::Primary, 52.0, "reconnect");
+        wide(
+            kit,
+            "LEAVE",
+            Act::LeaveSeat,
+            Tone::Danger,
+            44.0,
+            "leave match",
+        );
+        wide(
+            kit,
+            "RECONNECT",
+            Act::Reconnect,
+            Tone::Primary,
+            52.0,
+            "reconnect",
+        );
     }
 }
 
@@ -417,7 +454,12 @@ fn form_page(
         FormKind::Service => answer(kit, "CONTINUE", Act::Submit, Tone::Primary),
         FormKind::Login => {
             answer(kit, "SIGN IN", Act::Submit, Tone::Primary);
-            answer(kit, "CREATE ACCOUNT", Act::Go(Page::Register), Tone::Secondary);
+            answer(
+                kit,
+                "CREATE ACCOUNT",
+                Act::Go(Page::Register),
+                Tone::Secondary,
+            );
         }
         FormKind::Register => {
             answer(kit, "CREATE ACCOUNT", Act::Submit, Tone::Primary);
@@ -483,10 +525,22 @@ fn form_page(
             },
         );
         if kind != FormKind::Service {
-            kit.button(links, "CHANGE SERVICE", Act::Go(Page::Service), Tone::Secondary, 28.0);
+            kit.button(
+                links,
+                "CHANGE SERVICE",
+                Act::Go(Page::Service),
+                Tone::Secondary,
+                28.0,
+            );
         }
         #[cfg(not(target_arch = "wasm32"))]
-        kit.button(links, "LOCAL LOBBY", Act::Go(Page::LocalLobby), Tone::Secondary, 28.0);
+        kit.button(
+            links,
+            "LOCAL LOBBY",
+            Act::Go(Page::LocalLobby),
+            Tone::Secondary,
+            28.0,
+        );
     }
     card
 }
@@ -682,7 +736,12 @@ fn lobby_page(kit: &mut Kit, body: Entity, lobby: &LobbyView) {
         },
     );
     let lock = if lobby.locked { " · password" } else { "" };
-    kit.bold(card, format!("LOBBY: {}{lock}", lobby.name), 24.0, theme::INK_1);
+    kit.bold(
+        card,
+        format!("LOBBY: {}{lock}", lobby.name),
+        24.0,
+        theme::INK_1,
+    );
     if lobby.settings.cheats == Some(true) {
         // Everyone is told before readying: the match will be played with cheats.
         kit.bold(
@@ -710,7 +769,13 @@ fn lobby_page(kit: &mut Kit, body: Entity, lobby: &LobbyView) {
     for member in &lobby.spectators {
         member_row(kit, card, member, lobby);
     }
-    kit.button(card, "LOOK ON", Act::LobbySlot(LOBBY_NO_SLOT), Tone::Secondary, 28.0);
+    kit.button(
+        card,
+        "LOOK ON",
+        Act::LobbySlot(LOBBY_NO_SLOT),
+        Tone::Secondary,
+        28.0,
+    );
     if let Some(secs) = lobby.starting_in_secs {
         kit.bold(card, format!("Starting in {secs}"), 22.0, theme::GOLD);
     }
@@ -731,7 +796,13 @@ fn lobby_page(kit: &mut Kit, body: Entity, lobby: &LobbyView) {
             theme::INK_4,
         );
     } else if lobby.me_ready {
-        kit.button(row, "NOT READY", Act::ReadyLobby(false), Tone::Secondary, 42.0);
+        kit.button(
+            row,
+            "NOT READY",
+            Act::ReadyLobby(false),
+            Tone::Secondary,
+            42.0,
+        );
     } else if let Some(why) = lobby.waiting {
         kit.disabled_button(row, "READY", 42.0);
         kit.text(card, why, 14.0, theme::INK_4);
@@ -754,7 +825,13 @@ fn slot_row(kit: &mut Kit, card: Entity, slot: &SlotRow, lobby: &LobbyView) {
     );
     match &slot.who {
         None => {
-            kit.button(row, "OPEN", Act::LobbySlot(slot.slot), Tone::Secondary, 28.0);
+            kit.button(
+                row,
+                "OPEN",
+                Act::LobbySlot(slot.slot),
+                Tone::Secondary,
+                28.0,
+            );
         }
         Some(member) => member_row(kit, row, member, lobby),
     }
@@ -780,8 +857,20 @@ fn member_row(kit: &mut Kit, parent: Entity, member: &MemberRow, lobby: &LobbyVi
         kit.text(row, "READY", 15.0, theme::RADIANT_TEXT);
     }
     if lobby.owner && !member.me {
-        kit.button(row, "MOVE", Act::MoveMember(member.account), Tone::Secondary, 24.0);
-        kit.button(row, "KICK", Act::KickMember(member.account), Tone::Danger, 24.0);
+        kit.button(
+            row,
+            "MOVE",
+            Act::MoveMember(member.account),
+            Tone::Secondary,
+            24.0,
+        );
+        kit.button(
+            row,
+            "KICK",
+            Act::KickMember(member.account),
+            Tone::Danger,
+            24.0,
+        );
     }
 }
 
@@ -799,7 +888,12 @@ fn settings_card(kit: &mut Kit, page: Entity, lobby: &LobbyView) {
     );
     let settings = &lobby.settings;
     kit.bold(card, "SETTINGS", 20.0, theme::INK_1);
-    kit.text(card, format!("Game mode: {}", settings.mode), 15.0, theme::INK_1);
+    kit.text(
+        card,
+        format!("Game mode: {}", settings.mode),
+        15.0,
+        theme::INK_1,
+    );
     kit.text(
         card,
         format!("Open to: {}", settings.audience),
@@ -831,7 +925,11 @@ fn settings_card(kit: &mut Kit, page: Entity, lobby: &LobbyView) {
     if settings.modes.len() > 1 {
         kit.text(card, "Game mode", 13.0, theme::INK_4);
         for mode in &settings.modes {
-            let look = if mode.chosen { Tone::Primary } else { Tone::Secondary };
+            let look = if mode.chosen {
+                Tone::Primary
+            } else {
+                Tone::Secondary
+            };
             kit.button(
                 card,
                 &mode.name,
@@ -864,7 +962,11 @@ fn settings_card(kit: &mut Kit, page: Entity, lobby: &LobbyView) {
     }
     kit.text(card, "Open to", 13.0, theme::INK_4);
     for audience in &settings.audiences {
-        let look = if audience.chosen { Tone::Primary } else { Tone::Secondary };
+        let look = if audience.chosen {
+            Tone::Primary
+        } else {
+            Tone::Secondary
+        };
         kit.button(
             card,
             audience.name,
@@ -876,7 +978,13 @@ fn settings_card(kit: &mut Kit, page: Entity, lobby: &LobbyView) {
     for (at, field) in lobby.fields.iter().enumerate() {
         field_box(kit, card, at, field);
     }
-    kit.button(card, "SET PASSWORD", Act::ConfigurePassword, Tone::Secondary, 30.0);
+    kit.button(
+        card,
+        "SET PASSWORD",
+        Act::ConfigurePassword,
+        Tone::Secondary,
+        30.0,
+    );
 }
 
 fn result_page(kit: &mut Kit, body: Entity, result: &ResultView) {
@@ -1026,7 +1134,13 @@ fn replays_page(
     #[cfg(target_arch = "wasm32")]
     {
         let _ = fields;
-        let open = kit.button(card, "OPEN A .BRP FILE", Act::OpenReplayFile, Tone::Primary, 40.0);
+        let open = kit.button(
+            card,
+            "OPEN A .BRP FILE",
+            Act::OpenReplayFile,
+            Tone::Primary,
+            40.0,
+        );
         kit.commands
             .entity(open)
             .insert(Name::new("open replay file"));
@@ -1099,7 +1213,13 @@ fn replay_row(kit: &mut Kit, column: Entity, replay: &ReplayRow) {
     );
     let name = &replay.name;
     if !matches!(replay.summary, Summary::Broken(_)) {
-        let watch = kit.button(row, "WATCH", Act::OpenReplay(name.clone()), Tone::Secondary, 34.0);
+        let watch = kit.button(
+            row,
+            "WATCH",
+            Act::OpenReplay(name.clone()),
+            Tone::Secondary,
+            34.0,
+        );
         kit.commands
             .entity(watch)
             .insert(Name::new(format!("watch {name}")));
@@ -1117,7 +1237,13 @@ fn replay_row(kit: &mut Kit, column: Entity, replay: &ReplayRow) {
             .entity(download)
             .insert(Name::new(format!("download {name}")));
     }
-    let delete = kit.button(row, "DELETE", Act::DeleteReplay(name.clone()), Tone::Danger, 34.0);
+    let delete = kit.button(
+        row,
+        "DELETE",
+        Act::DeleteReplay(name.clone()),
+        Tone::Danger,
+        34.0,
+    );
     kit.commands
         .entity(delete)
         .insert(Name::new(format!("delete {name}")));
@@ -1135,7 +1261,11 @@ fn local_rules(kit: &mut Kit, card: Entity, chosen: LocalRules) {
         },
     );
     for rules in LocalRules::ALL {
-        let look = if rules == chosen { Tone::Primary } else { Tone::Secondary };
+        let look = if rules == chosen {
+            Tone::Primary
+        } else {
+            Tone::Secondary
+        };
         kit.button(row, rules.label(), Act::Rules(rules), look, 34.0);
     }
     kit.text(
@@ -1200,7 +1330,12 @@ fn demo_page(kit: &mut Kit, body: Entity, heroes: &[(u16, String)], offered: boo
         theme::INK_4,
     );
     if !offered {
-        kit.text(column, "This service offers no Demo Hero.", 16.0, theme::ERROR_TEXT);
+        kit.text(
+            column,
+            "This service offers no Demo Hero.",
+            16.0,
+            theme::ERROR_TEXT,
+        );
         return;
     }
     let grid = kit.node(
@@ -1223,10 +1358,9 @@ fn demo_page(kit: &mut Kit, body: Entity, heroes: &[(u16, String)], offered: boo
                     row_gap: px(6),
                     padding: UiRect::all(px(8)),
                     border: UiRect::all(px(1)),
-                    border_radius: BorderRadius::all(px(4)),
                     ..default()
                 },
-                BackgroundColor(theme::SURFACE),
+                theme::downward(theme::PANEL),
                 BorderColor::all(theme::PANEL_EDGE),
                 ChildOf(grid),
             ))

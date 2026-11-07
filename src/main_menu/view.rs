@@ -752,9 +752,7 @@ fn service_name(address: &str) -> &str {
     let host = rest.split(['/', '?', '#']).next().unwrap_or(rest);
     match host.rsplit_once(':') {
         // An IPv6 address keeps its brackets and colons.
-        Some((name, port)) if !name.is_empty() && port.bytes().all(|b| b.is_ascii_digit()) => {
-            name
-        }
+        Some((name, port)) if !name.is_empty() && port.bytes().all(|b| b.is_ascii_digit()) => name,
         _ => host,
     }
 }

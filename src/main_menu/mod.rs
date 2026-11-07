@@ -39,12 +39,12 @@ pub use core::Claim;
 #[cfg(test)]
 pub use core::Page;
 pub use core::{Act, DEFAULT_NAME, GameKind, MenuCore};
+#[cfg(test)]
+pub(crate) use kit::MenuButton;
+pub use kit::{Disabled, Wash};
 pub use launch::Trust;
 pub use prefs::page_service;
 pub use preview::{NAMES as PREVIEWS, view as preview};
-pub use kit::{Disabled, Wash};
-#[cfg(test)]
-pub(crate) use kit::MenuButton;
 pub use shell::{GameEpoch, Preview, Trusted, idle, plugin};
 pub use store::SettingsStore;
 pub(crate) use text::line;

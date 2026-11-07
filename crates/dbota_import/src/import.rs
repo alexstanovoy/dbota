@@ -1290,7 +1290,10 @@ fn font(src: &impl Source, path: &str) -> Result<Vec<u8>> {
     let bytes = src.read_at(path, 0, size)?;
     match bytes.get(..4) {
         Some(b"OTTO" | b"\0\x01\0\0" | b"true") => Ok(bytes),
-        _ => Err(malformed("font", format!("{path} is not an OpenType or TrueType font"))),
+        _ => Err(malformed(
+            "font",
+            format!("{path} is not an OpenType or TrueType font"),
+        )),
     }
 }
 

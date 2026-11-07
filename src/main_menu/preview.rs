@@ -6,9 +6,9 @@ use bota_radovid::proto::{AccountId, LobbyId, MatchId, ProposalId, QueueEntryId,
 use super::core::{GameKind, LocalRules, Page, Status};
 use super::form::FormKind;
 use super::view::{
-    AudienceRow, ConfirmView, FieldView, FinishedRow, GameRow, LobbyRow, LobbyView, MemberRow,
-    Connection, MenuView, ModeRow, OfferBox, PageView, PasswordView, ResultView, RulesetRow, SearchRow,
-    SeatRow, SettingsView, Side, SlotRow, TeamRow, WaitRow,
+    AudienceRow, ConfirmView, Connection, FieldView, FinishedRow, GameRow, LobbyRow, LobbyView,
+    MemberRow, MenuView, ModeRow, OfferBox, PageView, PasswordView, ResultView, RulesetRow,
+    SearchRow, SeatRow, SettingsView, Side, SlotRow, TeamRow, WaitRow,
 };
 
 /// The names `--menu-preview` takes.

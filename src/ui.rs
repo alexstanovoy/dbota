@@ -5,8 +5,8 @@ use bevy::{prelude::*, text::FontCx, window::PrimaryWindow};
 use parley::fontique::{FallbackKey, Script};
 
 use crate::config::Settings;
-use crate::theme::Face;
 use crate::manifest::Manifest;
+use crate::theme::Face;
 
 /// Logical window height at which the interface scale is one.
 const REFERENCE_HEIGHT: f32 = 900.0;

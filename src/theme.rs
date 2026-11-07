@@ -50,8 +50,6 @@ pub const WINDOW_EDGE: Color = hex(0x2E3B47);
 /// The rule under a window's header.
 pub const DIVIDER: Color = hex(0x222C35);
 
-/// A quiet surface: secondary controls.
-pub const SURFACE: Color = hex(0x161B20);
 /// A field to pick from, one to type in, and their edge.
 pub const FIELD: Color = hex(0x222629);
 pub const FIELD_SUNKEN: Color = hex(0x0B0C0E);

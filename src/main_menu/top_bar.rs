@@ -84,7 +84,13 @@ pub fn draw(kit: &mut Kit, root: Entity, view: &MenuView) {
     ));
     logo(kit, bar);
     if view.game.is_some() {
-        let back = kit.button(bar, "RETURN TO GAME", Act::ReturnToGame, Tone::Primary, 38.0);
+        let back = kit.button(
+            bar,
+            "RETURN TO GAME",
+            Act::ReturnToGame,
+            Tone::Primary,
+            38.0,
+        );
         kit.commands
             .entity(back)
             .entry::<Node>()
@@ -179,16 +185,16 @@ fn tabs(kit: &mut Kit, bar: Entity, view: &MenuView) {
         if page.needs_account() && view.account.is_none() {
             continue;
         }
-        let tab = tab(kit, row, label, lit == page);
-        kit.commands.entity(tab).insert(MenuButton(Act::Go(page)));
+        tab(kit, row, label, page, lit == page);
     }
 }
 
-/// A tab of `label`, underlined when it is the current page's.
-fn tab(kit: &mut Kit, parent: Entity, label: &str, on: bool) -> Entity {
+/// The tab of `page`, underlined when it is the current one.
+fn tab(kit: &mut Kit, row: Entity, label: &str, page: Page, on: bool) {
     let tab = kit
         .commands
         .spawn((
+            MenuButton(Act::Go(page)),
             Button,
             Node {
                 padding: UiRect::axes(px(12), px(0)),
@@ -199,7 +205,7 @@ fn tab(kit: &mut Kit, parent: Entity, label: &str, on: bool) -> Entity {
             },
             BorderColor::all(if on { theme::TAB_MARK } else { Color::NONE }),
             Name::new(label.to_lowercase()),
-            ChildOf(parent),
+            ChildOf(row),
         ))
         .id();
     let rest = if on { theme::INK_1 } else { theme::INK_4 };
@@ -213,7 +219,6 @@ fn tab(kit: &mut Kit, parent: Entity, label: &str, on: bool) -> Entity {
         rest,
         hover: theme::INK_1,
     });
-    tab
 }
 
 /// The pill that says how the menu stands with the service: its name while connected, OFFLINE

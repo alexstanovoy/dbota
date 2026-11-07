@@ -93,7 +93,11 @@ fn status_line(kit: &mut Kit, root: Entity, status: &super::core::Status) {
             ..default()
         },
     );
-    let color = if status.error { theme::ERROR_TEXT } else { theme::GOLD };
+    let color = if status.error {
+        theme::ERROR_TEXT
+    } else {
+        theme::GOLD
+    };
     kit.text(line, status.text.clone(), 15.0, color);
     let dismiss = kit.button(line, "×", Act::Dismiss, Tone::Secondary, 22.0);
     kit.commands
@@ -107,7 +111,12 @@ fn status_line(kit: &mut Kit, root: Entity, status: &super::core::Status) {
 fn popup(kit: &mut Kit, root: Entity, confirm: &ConfirmView) {
     let card = popup_card(kit, root);
     let ink = theme::INK_2;
-    let title = kit.typed(card, confirm.title.to_uppercase(), theme::TITLE, theme::INK_1);
+    let title = kit.typed(
+        card,
+        confirm.title.to_uppercase(),
+        theme::TITLE,
+        theme::INK_1,
+    );
     kit.commands.entity(title).insert(Node {
         margin: UiRect::bottom(px(15)),
         ..default()
@@ -202,6 +211,7 @@ fn popup_answers(kit: &mut Kit, card: Entity, ok: Act, cancel: Act) {
     let row = kit.node(
         card,
         Node {
+            column_gap: px(12),
             margin: UiRect::new(px(0), px(0), px(25), px(20)),
             ..default()
         },
@@ -298,7 +308,12 @@ fn wait_row(kit: &mut Kit, parent: Entity, wait: &WaitRow) {
         theme::INK_4,
     );
     if wait.overloaded {
-        kit.text(row, "Every game server is busy right now", 14.0, theme::ERROR_TEXT);
+        kit.text(
+            row,
+            "Every game server is busy right now",
+            14.0,
+            theme::ERROR_TEXT,
+        );
     }
 }
 
@@ -340,7 +355,12 @@ fn match_found(kit: &mut Kit, root: Entity, offer: &OfferBox) {
         .which
         .as_deref()
         .map_or(String::new(), |w| format!(" · {w}"));
-    kit.text(card, format!("{}{which}", offer.ruleset), 16.0, theme::INK_4);
+    kit.text(
+        card,
+        format!("{}{which}", offer.ruleset),
+        16.0,
+        theme::INK_4,
+    );
     let track = kit
         .commands
         .spawn((
@@ -361,7 +381,11 @@ fn match_found(kit: &mut Kit, root: Entity, offer: &OfferBox) {
             border_radius: BorderRadius::all(px(4)),
             ..default()
         },
-        BackgroundColor(if offer.left_secs > 5 { theme::GO.0 } else { theme::STOP.0 }),
+        BackgroundColor(if offer.left_secs > 5 {
+            theme::GO.0
+        } else {
+            theme::STOP.0
+        }),
         ChildOf(track),
     ));
     kit.bold(card, format!("{}", offer.left_secs), 30.0, theme::GOLD);
@@ -390,8 +414,20 @@ fn match_found(kit: &mut Kit, root: Entity, offer: &OfferBox) {
             theme::RADIANT_TEXT,
         );
     } else {
-        kit.button(row, "ACCEPT", Act::Accept(offer.proposal), Tone::Primary, 40.0);
-        kit.button(row, "DECLINE", Act::Decline(offer.proposal), Tone::Danger, 40.0);
+        kit.button(
+            row,
+            "ACCEPT",
+            Act::Accept(offer.proposal),
+            Tone::Primary,
+            40.0,
+        );
+        kit.button(
+            row,
+            "DECLINE",
+            Act::Decline(offer.proposal),
+            Tone::Danger,
+            40.0,
+        );
     }
     if !offer.answered {
         kit.text(
@@ -457,8 +493,20 @@ pub fn my_games(
         };
         kit.text(label, state, 14.0, theme::INK_4);
         if game.ready {
-            kit.button(row, "REJOIN", Act::Rejoin(game.match_id), Tone::Primary, 38.0);
-            kit.button(row, "WATCH", Act::Watch(game.match_id), Tone::Secondary, 38.0);
+            kit.button(
+                row,
+                "REJOIN",
+                Act::Rejoin(game.match_id),
+                Tone::Primary,
+                38.0,
+            );
+            kit.button(
+                row,
+                "WATCH",
+                Act::Watch(game.match_id),
+                Tone::Secondary,
+                38.0,
+            );
         }
     }
     for search in &view.searches {

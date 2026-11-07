@@ -524,7 +524,10 @@ fn a_loose_typeface_is_copied_and_a_file_that_is_no_font_is_refused() {
         ("panorama/fonts/title.otf", otf.clone()),
         ("panorama/fonts/body.otf", ttf.clone()),
         ("panorama/fonts/script.otf", b"<script>".repeat(8)),
-        ("panorama/fonts/huge.otf", [b"OTTO".as_slice(), &vec![0; 9 << 20]].concat()),
+        (
+            "panorama/fonts/huge.otf",
+            [b"OTTO".as_slice(), &vec![0; 9 << 20]].concat(),
+        ),
     ]);
     let plan = Plan::parse(
         "font a panorama/fonts/title.otf fonts/title.otf\n\
@@ -546,10 +549,16 @@ fn a_loose_typeface_is_copied_and_a_file_that_is_no_font_is_refused() {
     let report = run(&src, &plan, &mut sink, &mut |_| Flow::Continue).unwrap();
     assert_eq!(sink.0.get("fonts/title.otf"), Some(&otf));
     assert_eq!(sink.0.get("fonts/body.otf"), Some(&ttf));
-    let failed: Vec<&str> = report.failed.iter().map(|(item, _)| item.as_str()).collect();
+    let failed: Vec<&str> = report
+        .failed
+        .iter()
+        .map(|(item, _)| item.as_str())
+        .collect();
     assert_eq!(failed, ["c", "d", "e"], "{report:?}");
     assert!(
-        report.failed[0].1.contains("not an OpenType or TrueType font"),
+        report.failed[0]
+            .1
+            .contains("not an OpenType or TrueType font"),
         "{report:?}"
     );
     assert!(report.failed[1].1.contains("larger than"), "{report:?}");

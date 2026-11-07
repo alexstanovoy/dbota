@@ -4,8 +4,8 @@
 use bevy::prelude::*;
 
 use super::core::Act;
-use super::pages::field_box;
 use super::kit::{Kit, Tone};
+use super::pages::field_box;
 use super::view::{FieldView, LobbyRow};
 use crate::theme;
 

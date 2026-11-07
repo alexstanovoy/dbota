@@ -63,7 +63,9 @@ pub fn draw(kit: &mut Kit, root: Entity, backdrop: Backdrop, top: f32) {
     for (stops, across) in [(&ACROSS[..], true), (&DOWN[..], false)] {
         let stops = stops
             .iter()
-            .map(|(alpha, at)| ColorStop::new(theme::GROUND.with_alpha(theme::dim(*alpha)), percent(*at)))
+            .map(|(alpha, at)| {
+                ColorStop::new(theme::GROUND.with_alpha(theme::dim(*alpha)), percent(*at))
+            })
             .collect();
         let gradient = if across {
             LinearGradient::to_right(stops)
