@@ -218,6 +218,19 @@ impl BankModel {
 #[derive(Resource, Default)]
 pub struct ModelBank(pub Vec<BankModel>);
 
+impl ModelBank {
+    /// Load one model with the same wearables and graph used in a match.
+    pub(crate) fn request(&mut self, logical: &str, server: &AssetServer, manifest: &Manifest) -> Option<usize> {
+        if let Some(index) = self.0.iter().position(|entry| entry.model.logical == logical) {
+            return Some(index);
+        }
+        let model = manifest.model(logical)?;
+        let index = self.0.len();
+        self.0.push(bank_entry(server, manifest, model));
+        Some(index)
+    }
+}
+
 /// The glow of a hero's own colours, in emissive units.
 const HERO_LIFT: f32 = 1200.0;
 
@@ -330,7 +343,7 @@ fn load_models(mut bank: ResMut<ModelBank>, server: Res<AssetServer>, manifest: 
         .iter()
         .filter(|m| m.attach.is_none() && !m.logical.starts_with(TREE_MODELS))
     {
-        bank.0.push(bank_entry(&server, &manifest, model));
+        bank.request(&model.logical, &server, &manifest);
     }
     load_model_variants(&mut bank, &manifest);
     info!("loading: {} unit models held resident", bank.0.len());

@@ -65,7 +65,7 @@ const BOUNDS_VIEW: Vec3 = Vec3::new(-0.35, 0.3, -0.9);
 /// Renders a second at most of an animated portrait.
 const RATE: f32 = 30.0;
 /// Where the stage stands: far under the map, out of every other view.
-const STAGE: Vec3 = Vec3::new(0.0, -50_000.0, 0.0);
+pub(crate) const STAGE: Vec3 = Vec3::new(0.0, -50_000.0, 0.0);
 /// Renders of a still made after the GPU has every pipeline it asked for:
 /// a pipeline still compiling draws nothing.
 const SETTLE: u8 = 3;
@@ -178,20 +178,21 @@ struct PortraitLight;
 /// A scene of the model on the stage (its body or a wearable), and whether
 /// its instance is ready and on the stage's layer.
 #[derive(Component)]
-struct ActorPart {
+pub(crate) struct ActorPart {
     ready: bool,
+    layer: usize,
 }
 
 /// The model on the stage.
 pub struct Actor {
     /// Its place in the model bank.
-    model: usize,
+    pub(crate) model: usize,
     /// The pivot its scenes hang under.
     pub pivot: Entity,
     /// Its scale as the units draw it.
     size: f32,
     /// Whether its idle clip is playing (or posed, for a still).
-    posed: bool,
+    pub(crate) posed: bool,
     /// Whether it is drawn as a still, and the image the still goes to.
     still: Option<Handle<Image>>,
     /// Renders of a still left once the pipelines are ready.
@@ -280,10 +281,14 @@ pub fn plugin(app: &mut App) {
 
 /// An image a portrait camera can draw into.
 fn target_image(images: &mut Assets<Image>) -> Handle<Image> {
+    stage_image(images, SIZE)
+}
+
+pub(crate) fn stage_image(images: &mut Assets<Image>, size: (u32, u32)) -> Handle<Image> {
     let mut image = Image::new_fill(
         Extent3d {
-            width: SIZE.0,
-            height: SIZE.1,
+            width: size.0,
+            height: size.1,
             depth_or_array_layers: 1,
         },
         TextureDimension::D2,
@@ -416,7 +421,7 @@ fn stage(
             && let Some(scenes) = &bank.0[model].scenes
         {
             let still = (!animate).then(|| target_image(&mut images));
-            stage.actor = Some(spawn_actor(&mut commands, scenes, model, size, still));
+            stage.actor = Some(spawn_actor(&mut commands, scenes, model, size, still, STAGE, LAYER));
         }
     }
     let backdrop = stage
@@ -431,18 +436,20 @@ fn stage(
 
 /// A copy of a model of the bank on the stage, hidden until every part of it
 /// is ready and on the stage's layer.
-fn spawn_actor(
+pub(crate) fn spawn_actor(
     commands: &mut Commands,
     scenes: &Scenes,
     model: usize,
     size: f32,
     still: Option<Handle<Image>>,
+    origin: Vec3,
+    layer: usize,
 ) -> Actor {
     let pivot = commands
         .spawn((
-            Transform::from_translation(STAGE),
+            Transform::from_translation(origin),
             Visibility::Hidden,
-            RenderLayers::layer(LAYER),
+            RenderLayers::layer(layer),
         ))
         .id();
     let scale = Transform::from_scale(Vec3::splat(crate::map::UNITS_PER_METRE * size));
@@ -451,7 +458,7 @@ fn spawn_actor(
             WorldAssetRoot(scenes.body.clone()),
             scale,
             ChildOf(pivot),
-            ActorPart { ready: false },
+            ActorPart { ready: false, layer },
         ))
         .observe(on_part_ready)
         .id();
@@ -461,7 +468,7 @@ fn spawn_actor(
                 WorldAssetRoot(wearable.clone()),
                 scale,
                 ChildOf(pivot),
-                ActorPart { ready: false },
+                ActorPart { ready: false, layer },
                 Wearable::on(body),
             ))
             .observe(on_part_ready);
@@ -486,13 +493,13 @@ fn on_part_ready(
     mut wearables: Query<&mut Wearable>,
 ) {
     let root = ready.entity;
+    let Ok(mut part) = parts.get_mut(root) else { return; };
+    let layer = part.layer;
+    part.ready = true;
     for part in children.iter_descendants(root) {
-        commands.entity(part).insert(RenderLayers::layer(LAYER));
+        commands.entity(part).insert(RenderLayers::layer(layer));
     }
-    commands.entity(root).insert(RenderLayers::layer(LAYER));
-    if let Ok(mut part) = parts.get_mut(root) {
-        part.ready = true;
-    }
+    commands.entity(root).insert(RenderLayers::layer(layer));
     match wearables.get_mut(root) {
         Ok(mut wearable) => wearable.mark_ready(),
         // The body: its wearables bind to its joints once it is posable.
@@ -522,6 +529,24 @@ fn pose(
     let Some(actor) = stage.actor.as_mut().filter(|a| !a.posed) else {
         return;
     };
+    pose_actor(actor, &bank, &args, &mut faces, &time, &children, &parts, &wearing,
+        &meshes, &mut players, &mut commands);
+}
+
+/// The game's model and wearable binding, shared by portrait and menu stages.
+pub(crate) fn pose_actor(
+    actor: &mut Actor,
+    bank: &ModelBank,
+    args: &crate::Args,
+    faces: &mut Faces,
+    time: &Time<bevy::time::Real>,
+    children: &Query<&Children>,
+    parts: &Query<&ActorPart>,
+    wearing: &Query<&Wearable>,
+    meshes: &Query<(&MeshMorphWeights, &GltfMeshName, &GltfMeshExtras)>,
+    players: &mut Query<&mut AnimationPlayer>,
+    commands: &mut Commands,
+) {
     // Each part ready, and each wearable bound to the body's joints.
     let (any, ready) = children
         .iter_descendants(actor.pivot)
@@ -554,9 +579,9 @@ fn pose(
             actor.pivot,
             expression,
             time.elapsed_secs(),
-            &mut faces,
-            &children,
-            &meshes,
+            faces,
+            children,
+            meshes,
         );
         // Traced, the face holds its idle expression: what moves it is the line.
         if let Some(face) = actor.face.as_mut().filter(|_| args.face_trace) {
@@ -760,7 +785,16 @@ fn on_stage(
     let Some(actor) = stage.actor.as_ref().filter(|a| a.posed && stage.render) else {
         return;
     };
-    let parts = tree.iter_descendants(actor.pivot).chain([*light]);
+    show_actor(actor.pivot, *light, &tree, &mut seen);
+}
+
+pub(crate) fn show_actor(
+    pivot: Entity,
+    light: Entity,
+    tree: &Query<&Children>,
+    seen: &mut Query<(&InheritedVisibility, &mut ViewVisibility)>,
+) {
+    let parts = tree.iter_descendants(pivot).chain([light]);
     for e in parts {
         if let Ok((inherited, mut view)) = seen.get_mut(e)
             && inherited.get()
@@ -779,16 +813,27 @@ fn activate(
     light: Single<Entity, With<PortraitLight>>,
     mut camera: Single<(&mut Camera, &mut VisibleEntities), With<PortraitCamera>>,
 ) {
-    let actor = stage.actor.as_ref().filter(|_| stage.render);
-    if camera.0.is_active != actor.is_some() {
-        camera.0.is_active = actor.is_some();
+    let (camera, seen) = &mut *camera;
+    camera_actor(stage.actor.as_ref().filter(|_| stage.render).map(|a| a.pivot), *light,
+        &tree, &classes, camera, seen);
+}
+
+pub(crate) fn camera_actor(
+    pivot: Option<Entity>,
+    light: Entity,
+    tree: &Query<&Children>,
+    classes: &Query<(&VisibilityClass, &InheritedVisibility)>,
+    camera: &mut Camera,
+    seen: &mut VisibleEntities,
+) {
+    if camera.is_active != pivot.is_some() {
+        camera.is_active = pivot.is_some();
     }
-    let Some(actor) = actor else {
+    let Some(pivot) = pivot else {
         return;
     };
-    let seen = &mut camera.1;
     seen.clear_all();
-    for e in tree.iter_descendants(actor.pivot).chain([*light]) {
+    for e in tree.iter_descendants(pivot).chain([light]) {
         if let Ok((class, inherited)) = classes.get(e)
             && inherited.get()
         {
@@ -853,11 +898,19 @@ fn fit(center: Vec3, radius: f32) -> Placed {
 
 /// The sphere round the parts of the model on the stage that have bounds, in
 /// the stage's space.
-fn bounds_in(
+pub(crate) fn bounds_in(
     pivot: Entity,
     children: &Query<&Children>,
     bounds: &Query<(&Aabb, &GlobalTransform)>,
 ) -> Option<(Vec3, f32)> {
+    model_bounds(pivot, children, bounds).map(|(center, half)| (center, half.length().max(8.0)))
+}
+
+pub(crate) fn model_bounds(
+    pivot: Entity,
+    children: &Query<&Children>,
+    bounds: &Query<(&Aabb, &GlobalTransform)>,
+) -> Option<(Vec3, Vec3)> {
     let (mut lo, mut hi) = (Vec3::splat(f32::MAX), Vec3::splat(f32::MIN));
     for part in children.iter_descendants(pivot) {
         let Ok((aabb, at)) = bounds.get(part) else {
@@ -872,7 +925,7 @@ fn bounds_in(
             hi = hi.max(p);
         }
     }
-    (lo.x <= hi.x).then(|| ((lo + hi) / 2.0, ((hi - lo) / 2.0).length().max(8.0)))
+    (lo.x <= hi.x).then(|| ((lo + hi) / 2.0, (hi - lo) / 2.0))
 }
 
 /// Debug: selects the first unit shown that `--select` names, until one is.

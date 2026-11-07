@@ -42,6 +42,7 @@ pub(crate) mod harness;
 mod hero_fx;
 mod hero_voice;
 mod hero_walk;
+mod home_hero;
 mod icons;
 mod item_drop_range;
 mod item_states;

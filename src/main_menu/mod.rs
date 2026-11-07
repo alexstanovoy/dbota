@@ -19,6 +19,7 @@ mod backdrop;
 mod catalogue;
 mod core;
 mod form;
+pub(crate) mod hero_stage;
 mod history;
 mod home_cards;
 mod keep;

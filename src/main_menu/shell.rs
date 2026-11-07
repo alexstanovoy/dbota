@@ -69,6 +69,7 @@ pub struct Preview(pub MenuView);
 pub struct Trusted(pub Trust);
 
 pub fn plugin(app: &mut App) {
+    super::hero_stage::plugin(app);
     app.init_resource::<GameEpoch>()
         .init_resource::<super::availability::FocusKey>()
         .init_resource::<super::availability::MenuKeys>()
