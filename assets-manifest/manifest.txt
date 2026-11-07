@@ -2139,3 +2139,68 @@ texture menu.search panorama/images/control_icons/icon_search_png.vtex_c menu/ic
 texture menu.check panorama/images/control_icons/check_png.vtex_c menu/check_png.png
 texture menu.dropdown panorama/images/control_icons/arrow_dropdown_png.vtex_c menu/arrow_dropdown_png.png
 texture menu.reset panorama/images/control_icons/refresh_psd.vtex_c menu/refresh_psd.png
+
+model creep.radiant.melee_mega.model models/creeps/lane_creeps/creep_radiant_melee/radiant_melee_mega.vmdl_c models/creep/radiant_melee_mega/radiant_melee_mega.glb anims=idle,run,attack,attack2,death,stun model_scale=0.93
+clip creep.radiant.melee_mega.model idle idle 1.433
+clip creep.radiant.melee_mega.model run run 0.800
+clip creep.radiant.melee_mega.model attack attack 1.000 point=0.467
+clip creep.radiant.melee_mega.model attack2 attack2 1.000 point=0.467
+clip creep.radiant.melee_mega.model death death 1.033
+clip creep.radiant.melee_mega.model stun stun 2.150
+model creep.radiant.ranged_mega.model models/creeps/lane_creeps/creep_radiant_ranged/radiant_ranged_mega.vmdl_c models/creep/radiant_ranged_mega/radiant_ranged_mega.glb anims=idle,run,attack,attack2,death,stun model_scale=0.88
+clip creep.radiant.ranged_mega.model idle idle 1.600
+clip creep.radiant.ranged_mega.model run run 0.700
+clip creep.radiant.ranged_mega.model attack attack 1.000 point=0.5
+clip creep.radiant.ranged_mega.model attack2 attack2 1.000 point=0.5
+clip creep.radiant.ranged_mega.model death death 0.867
+clip creep.radiant.ranged_mega.model stun stun 1.400
+model creep.dire.melee_mega.model models/creeps/lane_creeps/creep_bad_melee/creep_bad_melee_mega.vmdl_c models/creep/dire_melee_mega/dire_melee_mega.glb anims=idle,run,attack,attackAlt,die,stun meshes=creep_bad_melee_mega_model model_scale=0.93
+clip creep.dire.melee_mega.model idle idle 1.700
+clip creep.dire.melee_mega.model run run 0.767
+clip creep.dire.melee_mega.model attack attack 0.933 point=0.467
+clip creep.dire.melee_mega.model attack2 attackAlt 0.933 point=0.467
+clip creep.dire.melee_mega.model death die 1.700
+clip creep.dire.melee_mega.model stun stun 1.067
+model creep.dire.ranged_mega.model models/creeps/lane_creeps/creep_bad_ranged/lane_dire_ranged_mega.vmdl_c models/creep/dire_ranged_mega/dire_ranged_mega.glb anims=idle,run,attack,attack2,death,stun model_scale=0.93
+clip creep.dire.ranged_mega.model idle idle 1.967
+clip creep.dire.ranged_mega.model run run 0.633
+clip creep.dire.ranged_mega.model attack attack 0.967 point=0.5
+clip creep.dire.ranged_mega.model attack2 attack2 0.967 point=0.5
+clip creep.dire.ranged_mega.model death death 1.300
+clip creep.dire.ranged_mega.model stun stun 1.967
+
+# Which model and size each lane unit of Dota is drawn with, by tier: the plain creep (npc_units.txt), the super one (`_upgraded`,
+# bigger) and the mega one (`_upgraded_mega`, its own model; the siege creep has none). A flagbearer is never upgraded in play, as
+# in Dota, so it has the one line.
+unit npc_dota_creep_goodguys_melee creep.radiant.melee.model model_scale=0.93
+unit npc_dota_creep_goodguys_melee_upgraded creep.radiant.melee.model model_scale=1.12
+unit npc_dota_creep_goodguys_melee_upgraded_mega creep.radiant.melee_mega.model model_scale=1.12
+unit npc_dota_creep_goodguys_flagbearer creep.radiant.flagbearer.model model_scale=0.93
+unit npc_dota_creep_goodguys_ranged creep.radiant.ranged.model model_scale=.88
+unit npc_dota_creep_goodguys_ranged_upgraded creep.radiant.ranged.model model_scale=1.12
+unit npc_dota_creep_goodguys_ranged_upgraded_mega creep.radiant.ranged_mega.model model_scale=1.12
+unit npc_dota_creep_badguys_melee creep.dire.melee.model model_scale=0.93
+unit npc_dota_creep_badguys_melee_upgraded creep.dire.melee.model model_scale=1.12
+unit npc_dota_creep_badguys_melee_upgraded_mega creep.dire.melee_mega.model model_scale=1.12
+unit npc_dota_creep_badguys_flagbearer creep.dire.flagbearer.model model_scale=0.93
+unit npc_dota_creep_badguys_ranged creep.dire.ranged.model model_scale=0.93
+unit npc_dota_creep_badguys_ranged_upgraded creep.dire.ranged.model model_scale=1.12
+unit npc_dota_creep_badguys_ranged_upgraded_mega creep.dire.ranged_mega.model model_scale=1.12
+unit npc_dota_goodguys_siege creep.radiant.siege.model model_scale=.65
+unit npc_dota_goodguys_siege_upgraded creep.radiant.siege.model model_scale=.65
+unit npc_dota_goodguys_siege_upgraded_mega creep.radiant.siege.model model_scale=.65
+unit npc_dota_badguys_siege creep.dire.siege.model model_scale=.80
+unit npc_dota_badguys_siege_upgraded creep.dire.siege.model model_scale=.80
+unit npc_dota_badguys_siege_upgraded_mega creep.dire.siege.model model_scale=.80
+
+# The four default response_rules_announcer mega-creep announcements, relative to the player or spectator.
+sound sound.announcer.mega.you sounds/vo/announcer/announcer_mega_now_you.vsnd_c sounds/vo/announcer/announcer_mega_now_you.mp3 event=announcer_announcer_mega_now_you
+sound sound.announcer.mega.enemy sounds/vo/announcer/announcer_mega_now_enm.vsnd_c sounds/vo/announcer/announcer_mega_now_enm.mp3 event=announcer_announcer_mega_now_enm
+sound sound.announcer.mega.radiant sounds/vo/announcer/announcer_mega_now_rad.vsnd_c sounds/vo/announcer/announcer_mega_now_rad.mp3 event=announcer_announcer_mega_now_rad
+sound sound.announcer.mega.dire sounds/vo/announcer/announcer_mega_now_dire.vsnd_c sounds/vo/announcer/announcer_mega_now_dire.mp3 event=announcer_announcer_mega_now_dire
+
+# Valve 7.20's mega-creep stinger and its layer at the fallen side's public Ancient.
+sound sound.global.mega.radiant sounds/ambient/mega_horn_dire_2d.vsnd_c sounds/mega/radiant.mp3 event=MegaCreeps.Radiant
+sound sound.global.mega.dire sounds/ambient/mega_horn_radiant_2d.vsnd_c sounds/mega/dire.mp3 event=MegaCreeps.Dire
+sound sound.global.mega_horn.radiant sounds/ambient/mega_horn_radiant.vsnd_c sounds/mega/horn_radiant.mp3 event=MegaCreeps.Radiant.Ancient
+sound sound.global.mega_horn.dire sounds/ambient/mega_horn_dire.vsnd_c sounds/mega/horn_dire.mp3 event=MegaCreeps.Dire.Ancient

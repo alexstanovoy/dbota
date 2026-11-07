@@ -12,7 +12,7 @@ use bevy::{
 use bota_client_core::{ClientSession, bodies};
 use bota_core::{MapDef, NEUTRALS, NeutralKind, barracks_ranged_at, kind_def};
 use bota_proto::{
-    EffectId, EntityId, LotusTier, ProjectileModel, Team, UnitKind, UnitView, WorldView,
+    CreepTier, EffectId, EntityId, LotusTier, ProjectileModel, Team, UnitKind, UnitView, WorldView,
 };
 
 use crate::coords::sim_facing_to_rotation;
@@ -558,12 +558,7 @@ fn take_scenes(
 /// How the manifest says a neutral creep or a map objective is drawn: by
 /// the Dota unit it is.
 fn unit_art<'a>(unit: &UnitView, manifest: &'a Manifest) -> Option<&'a UnitArt> {
-    let npc = match objective_unit(unit.kind) {
-        Some(npc) => npc,
-        None if unit.kind == UnitKind::Ward => ward_unit(unit),
-        None => NeutralKind::of(unit.neutral?)?.neutral().unit,
-    };
-    manifest.unit_art(npc)
+    manifest.unit_art(npc_unit(unit)?)
 }
 
 /// The Dota unit a kind of the map's objectives is (npc_units.txt), whose
@@ -597,11 +592,77 @@ pub fn look(unit: &UnitView) -> Option<Team> {
 
 /// The Dota unit (`npc_units.txt`) a ward, a map objective or a neutral creep is.
 pub fn npc_unit(unit: &UnitView) -> Option<&'static str> {
+    if let Some(npc) = lane_unit(unit) {
+        return Some(npc);
+    }
     match objective_unit(unit.kind) {
         Some(npc) => Some(npc),
         None if unit.kind == UnitKind::Ward => Some(ward_unit(unit)),
         None => Some(NeutralKind::of(unit.neutral?)?.neutral().unit),
     }
+}
+
+/// Dota's lane creeps by side, kind and tier: `npc_units.txt` has a unit for each, the upgraded one
+/// of a super creep and the mega one of a mega creep. A flagbearer is never upgraded in play.
+const LANE_UNITS: [[[&str; 3]; 4]; 2] = [
+    [
+        [
+            "npc_dota_creep_goodguys_melee",
+            "npc_dota_creep_goodguys_melee_upgraded",
+            "npc_dota_creep_goodguys_melee_upgraded_mega",
+        ],
+        ["npc_dota_creep_goodguys_flagbearer"; 3],
+        [
+            "npc_dota_creep_goodguys_ranged",
+            "npc_dota_creep_goodguys_ranged_upgraded",
+            "npc_dota_creep_goodguys_ranged_upgraded_mega",
+        ],
+        [
+            "npc_dota_goodguys_siege",
+            "npc_dota_goodguys_siege_upgraded",
+            "npc_dota_goodguys_siege_upgraded_mega",
+        ],
+    ],
+    [
+        [
+            "npc_dota_creep_badguys_melee",
+            "npc_dota_creep_badguys_melee_upgraded",
+            "npc_dota_creep_badguys_melee_upgraded_mega",
+        ],
+        ["npc_dota_creep_badguys_flagbearer"; 3],
+        [
+            "npc_dota_creep_badguys_ranged",
+            "npc_dota_creep_badguys_ranged_upgraded",
+            "npc_dota_creep_badguys_ranged_upgraded_mega",
+        ],
+        [
+            "npc_dota_badguys_siege",
+            "npc_dota_badguys_siege_upgraded",
+            "npc_dota_badguys_siege_upgraded_mega",
+        ],
+    ],
+];
+
+/// The Dota unit a lane creep is, by its side, kind and tier.
+fn lane_unit(unit: &UnitView) -> Option<&'static str> {
+    let side = match unit.team {
+        Team::Radiant => 0,
+        Team::Dire => 1,
+        Team::Neutral => return None,
+    };
+    let kind = match unit.kind {
+        UnitKind::CreepMelee => 0,
+        UnitKind::CreepFlagbearer => 1,
+        UnitKind::CreepRanged => 2,
+        UnitKind::CreepSiege => 3,
+        _ => return None,
+    };
+    let tier = match unit.creep_tier.unwrap_or(CreepTier::Normal) {
+        CreepTier::Normal => 0,
+        CreepTier::Super => 1,
+        CreepTier::Mega => 2,
+    };
+    Some(LANE_UNITS[side][kind][tier])
 }
 
 /// The Dota unit a ward is: the one that gives true sight is a Sentry Ward.
@@ -640,10 +701,7 @@ fn kind_name(map: &MapDef, kind: UnitKind, team: Team, pos: bota_proto::Vec2) ->
 /// The ordinary model name, looked up once when a body appears. Manifest
 /// rows select state variants from its cached index on subsequent frames.
 fn base_model_name(unit: &UnitView, map: &MapDef, manifest: &Manifest) -> Option<String> {
-    if kind_def(unit.kind).neutral
-        || unit.kind == UnitKind::Ward
-        || objective_unit(unit.kind).is_some()
-    {
+    if npc_unit(unit).is_some() {
         let model = unit_art(unit, manifest)?.model.clone()?;
         return Some(model);
     }
@@ -654,10 +712,6 @@ fn base_model_name(unit: &UnitView, map: &MapDef, manifest: &Manifest) -> Option
     };
     Some(match unit.kind {
         UnitKind::Hero => hero_model(unit.hero?.0, manifest)?,
-        UnitKind::CreepMelee => format!("creep.{side}.melee.model"),
-        UnitKind::CreepSiege => format!("creep.{side}.siege.model"),
-        UnitKind::CreepFlagbearer => format!("creep.{side}.flagbearer.model"),
-        UnitKind::CreepRanged => format!("creep.{side}.ranged.model"),
         UnitKind::Tower => format!("tower.{side}.model"),
         UnitKind::Ancient => format!("ancient.{side}.model"),
         UnitKind::Barracks => {
@@ -855,10 +909,6 @@ fn required_models(manifest: &Manifest) -> Vec<String> {
         .collect();
     for side in ["radiant", "dire"] {
         for kind in [
-            "creep.{}.melee.model",
-            "creep.{}.flagbearer.model",
-            "creep.{}.ranged.model",
-            "creep.{}.siege.model",
             "tower.{}.model",
             "ancient.{}.model",
             "barracks.{}.melee.model",
@@ -873,7 +923,8 @@ fn required_models(manifest: &Manifest) -> Vec<String> {
     let objectives = bota_core::UNIT_KINDS
         .iter()
         .filter_map(|row| row.npc)
-        .chain(["npc_dota_observer_wards", "npc_dota_sentry_wards"]);
+        .chain(["npc_dota_observer_wards", "npc_dota_sentry_wards"])
+        .chain(LANE_UNITS.iter().flatten().flatten().copied());
     for unit in NEUTRALS.iter().map(|n| n.unit).chain(objectives) {
         match manifest.unit_art(unit) {
             Some(art) => names.extend(art.model.clone()),
@@ -1502,6 +1553,7 @@ pub(crate) mod tests {
             gathering: None,
             forced: None,
             channel: None,
+            creep_tier: None,
             seen_by: None,
             attack_range: fixed(150),
             attack_time: 1700,

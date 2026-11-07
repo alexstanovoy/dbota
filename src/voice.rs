@@ -200,6 +200,13 @@ fn load(mut voices: ResMut<Voices>, manifest: Res<Manifest>, server: Res<AssetSe
             }
         }
     }
+    for who in ["you", "enemy", "radiant", "dire"] {
+        let logical = format!("sound.announcer.mega.{who}");
+        let lines = Lines::load(&manifest, &server, &logical);
+        if !lines.sources.is_empty() {
+            voices.buildings.push((logical, lines));
+        }
+    }
     voices.day = Lines::load(&manifest, &server, "sound.day");
     voices.night = Lines::load(&manifest, &server, "sound.night");
     for (i, side) in ["radiant", "dire"].into_iter().enumerate() {
@@ -390,6 +397,18 @@ pub fn building_line(
     Some(format!("sound.announcer.{what}.{who}.{lane}"))
 }
 
+/// The install's response rules distinguish player-relative and spectator mega announcements.
+pub fn mega_line(my_team: Option<Team>, team: Team) -> Option<String> {
+    let who = match (my_team, team) {
+        (_, Team::Neutral) => return None,
+        (Some(mine), side) if mine == side => "you",
+        (Some(_), _) => "enemy",
+        (None, Team::Radiant) => "radiant",
+        (None, Team::Dire) => "dire",
+    };
+    Some(format!("sound.announcer.mega.{who}"))
+}
+
 /// The announcer's line for each tower or barracks that fell in what the last pump told, told
 /// to every seat and spectator as Dota's announcer does.
 fn building_fell(
@@ -404,21 +423,25 @@ fn building_fell(
     let core = &session.0;
     let told = &core.told;
     for event in told {
-        let EventKind::StructureDestroyed {
-            unit,
-            team,
-            kind,
-            lane,
-            ..
-        } = *event
-        else {
-            continue;
+        let name = if let EventKind::MegaCreeps { team } = *event {
+            mega_line(core.my_team(), team)
+        } else {
+            let EventKind::StructureDestroyed {
+                unit,
+                team,
+                kind,
+                lane,
+                ..
+            } = *event
+            else {
+                continue;
+            };
+            let denied = told.iter().any(
+                |e| matches!(e, EventKind::Died { unit: dead, denied: true, .. } if *dead == unit),
+            );
+            building_line(core.my_team(), team, kind, lane, denied)
         };
-        // Its death tells whether its own side struck it.
-        let denied = told.iter().any(
-            |e| matches!(e, EventKind::Died { unit: dead, denied: true, .. } if *dead == unit),
-        );
-        let Some(name) = building_line(core.my_team(), team, kind, lane, denied) else {
+        let Some(name) = name else {
             continue;
         };
         #[cfg(test)]

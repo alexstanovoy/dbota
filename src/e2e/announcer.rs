@@ -60,8 +60,8 @@ fn a_fallen_tower_or_barracks_is_announced_as_dotas_rules_choose_the_line() {
     ];
     let (spoken, loaded) = announce_buildings_once(client.world_mut());
     assert_eq!(
-        loaded, 36,
-        "the 36 lines of Dota's announcer for them are loaded"
+        loaded, 40,
+        "36 building lines and four mega lines from Dota are loaded"
     );
     let heard = &client.world().resource::<BuildingsHeard>().0;
     assert_eq!(

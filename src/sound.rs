@@ -410,6 +410,11 @@ fn sources_of(kind: Kind, manifest: &Manifest) -> Vec<Vec<String>> {
                 layered(&["sound.neutral.roshan_death", "sound.global.roshan_stinger"])
             }
             CueKind::BossDeath(_) => vec![],
+            CueKind::MegaCreeps(Team::Radiant) => named(&["sound.global.mega.radiant"]),
+            CueKind::MegaCreeps(Team::Dire) => named(&["sound.global.mega.dire"]),
+            CueKind::MegaCreepsHorn(Team::Radiant) => named(&["sound.global.mega_horn.radiant"]),
+            CueKind::MegaCreepsHorn(Team::Dire) => named(&["sound.global.mega_horn.dire"]),
+            CueKind::MegaCreeps(Team::Neutral) | CueKind::MegaCreepsHorn(Team::Neutral) => vec![],
             CueKind::BossRoar => layered(&[
                 "sound.neutral.roshan_roar",
                 "sound.neutral.roshan_roar_layer",
@@ -448,6 +453,10 @@ fn sources_of(kind: Kind, manifest: &Manifest) -> Vec<Vec<String>> {
 fn load(mut bindings: ResMut<Bindings>, manifest: Res<Manifest>, server: Res<AssetServer>) {
     let kinds = [
         CueKind::BossRoar,
+        CueKind::MegaCreeps(Team::Radiant),
+        CueKind::MegaCreeps(Team::Dire),
+        CueKind::MegaCreepsHorn(Team::Radiant),
+        CueKind::MegaCreepsHorn(Team::Dire),
         CueKind::BossDeath(bota_proto::ObjectiveKind::Roshan),
         CueKind::LastHit,
         CueKind::Deny,

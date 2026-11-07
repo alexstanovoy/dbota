@@ -101,3 +101,4 @@ mod window;
 mod wisdom_contest;
 
 mod dead_purchases;
+mod mega_creeps;

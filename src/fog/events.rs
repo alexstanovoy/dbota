@@ -322,6 +322,22 @@ impl EventSight<'_> {
             | EventKind::ItemDestroyed { .. }
             | EventKind::ItemTaken { .. }
             | EventKind::ItemPlaced { .. } => self.placement(subject, true),
+            EventKind::MegaCreeps { team } => {
+                let lost = match team {
+                    bota_proto::Team::Radiant => bota_proto::Team::Dire,
+                    bota_proto::Team::Dire => bota_proto::Team::Radiant,
+                    bota_proto::Team::Neutral => return false,
+                };
+                match subject {
+                    EventSubject::Event => true,
+                    EventSubject::Unit(_) => false,
+                    EventSubject::Point(at) => self.core().statics().is_some_and(|statics| {
+                        bota_core::map_of(statics.metadata().map).ancients
+                            [bota_core::team_index(lost)]
+                            == Some(at)
+                    }),
+                }
+            }
             EventKind::StructureDestroyed { .. }
             | EventKind::Captured { .. }
             | EventKind::ShrineActivated { .. }
