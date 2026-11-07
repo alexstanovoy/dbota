@@ -102,6 +102,11 @@ impl Particles {
     pub fn scalar_field(&self, field: Field, index: usize) -> f32 {
         self.scalar(slot(field), index)
     }
+    /// A vector attribute by Source field, for observations of the simulated/drawn state.
+    #[cfg(test)]
+    pub fn vector_field(&self, field: Field, index: usize) -> Vec3 {
+        self.vector(slot(field), index)
+    }
     pub fn len(&self) -> usize {
         self.number.len()
     }

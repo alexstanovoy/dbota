@@ -1,4 +1,4 @@
-//! A deterministic detector for SF trail excursions, including a fast-to-slow frame transition.
+//! Deterministic detectors for SF trail excursions across both directions of frame-time changes.
 use std::{collections::HashSet, time::Duration};
 
 use bevy::{prelude::*, time::TimeUpdateStrategy};
@@ -21,6 +21,19 @@ const EXCURSION: f32 = 750.0;
 
 #[test]
 fn shadow_fiends_ribbons_stay_local_while_idle_and_walking() {
+    with_trail(|client, looks| {
+        client
+            .world_mut()
+            .insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_millis(1)));
+        client.frames(50);
+        client
+            .world_mut()
+            .insert_resource(TimeUpdateStrategy::ManualDuration(FRAME));
+        walk(client, looks);
+    });
+}
+
+fn with_trail(check: impl FnOnce(&mut Client, &HashSet<u16>)) {
     let server = Server::start(1, &["--seed", "1"]);
     let mut client = Client::join_with_clock(&server, HeroId::SHADOW_FIEND, &[], Duration::ZERO);
     client.follow_me();
@@ -54,26 +67,18 @@ fn shadow_fiends_ribbons_stay_local_while_idle_and_walking() {
             "the initial effect age is reproducible"
         );
         let looks = ribbon_looks(&client);
-        // Reproduce a cadence change explicitly instead of inheriting an arbitrary last
-        // loading-frame delta. A 15/s emitter crosses a birth boundary on the first slow step.
-        client
-            .world_mut()
-            .insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_millis(1)));
-        client.frames(50);
-        client
-            .world_mut()
-            .insert_resource(TimeUpdateStrategy::ManualDuration(FRAME));
-        walk(&mut client, &looks);
+        check(&mut client, &looks);
     });
 }
 
 fn ready(client: &mut Client) -> bool {
     let world = client.world();
-    world
-        .resource::<crate::units::ModelBank>()
-        .0
-        .iter()
-        .all(|model| model.loaded)
+    world.contains_resource::<crate::map::TerrainMaterial>()
+        && world
+            .resource::<crate::units::ModelBank>()
+            .0
+            .iter()
+            .all(|model| model.loaded)
         && world
             .resource::<Library>()
             .effect(TRAIL)
@@ -164,6 +169,7 @@ fn walk(client: &mut Client, looks: &HashSet<u16>) {
             .insert_resource(TimeUpdateStrategy::ManualDuration(frame));
         client.frames(1);
         assert_attribution(client, looks);
+        assert_hero_placement(client, hero.id);
         let body = client.body(hero.id).expect("hero drawn");
         let at = client
             .world()
@@ -200,4 +206,178 @@ fn walk(client: &mut Client, looks: &HashSet<u16>) {
     eprintln!(
         "SF detector: startup=0, seed=1, cadence=1ms->200ms->30Hz, 1800 idle/walk frames, excursion={worst}"
     );
+}
+
+#[test]
+fn steady_to_millisecond_frames_keep_sf_heads_and_hero_placement_bounded() {
+    with_trail(|client, looks| {
+        for walking in [false, true] {
+            let mut hero = client.me().clone();
+            let origin = hero.pos;
+            let mut elapsed = 0;
+            client
+                .world_mut()
+                .insert_resource(TimeUpdateStrategy::ManualDuration(FRAME));
+            for _ in 0..50 {
+                move_hero(client, &mut hero, origin, &mut elapsed, FRAME, walking);
+            }
+            let tracked = tracked_heads(client);
+            let mut previous = submitted_heads(client, &tracked);
+            client
+                .world_mut()
+                .insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_millis(1)));
+            for frame in 0..50 {
+                move_hero(
+                    client,
+                    &mut hero,
+                    origin,
+                    &mut elapsed,
+                    Duration::from_millis(1),
+                    walking,
+                );
+                assert_attribution(client, looks);
+                let current = submitted_heads(client, &tracked);
+                for (before, after) in previous.iter().zip(&current) {
+                    // Authored velocities plus gravity stay below 1000 u/s; 1 ms may
+                    // move a submitted head at most 1 unit, including the 150 u/s walk.
+                    assert!(
+                        after.distance(*before) < 1.0,
+                        "1 ms head motion is not rescaled: walking={walking}, frame={frame}, before={before:?}, after={after:?}, distance={}",
+                        after.distance(*before)
+                    );
+                }
+                previous = current;
+            }
+        }
+    });
+}
+
+fn move_hero(
+    client: &mut Client,
+    hero: &mut bota_proto::UnitView,
+    origin: bota_proto::Vec2,
+    elapsed: &mut i32,
+    frame: Duration,
+    walking: bool,
+) {
+    *elapsed += frame.as_micros() as i32;
+    if walking {
+        hero.pos.x = origin.x + bota_proto::Fixed::from_ratio(*elapsed * 150, 1_000_000);
+    }
+    tell(client, hero.clone());
+    client.frames(1);
+    assert_hero_placement(client, hero.id);
+}
+
+fn assert_hero_placement(client: &Client, id: bota_proto::EntityId) {
+    let body = client.body(id).expect("hero drawn");
+    let actual = client
+        .world()
+        .get::<GlobalTransform>(body)
+        .expect("hero transform")
+        .translation();
+    let shown = bota_client_core::bodies(
+        client.view(),
+        client.core().prev_view(),
+        client.core().smooth.alpha(),
+    )
+    .into_iter()
+    .find(|shown| shown.unit.id == id)
+    .expect("hero projection");
+    let expected = Vec3::new(
+        shown.x,
+        client
+            .world()
+            .resource::<crate::map::Ground>()
+            .at(shown.x, shown.y)
+            + shown.height,
+        -shown.y,
+    );
+    assert!(
+        actual.distance(expected) < 0.01,
+        "hero placement: drawn {actual:?}, expected {expected:?}"
+    );
+}
+
+struct TrackedHead {
+    node: usize,
+    particle: u32,
+    look: u16,
+}
+
+fn tracked_heads(client: &Client) -> Vec<TrackedHead> {
+    use heatel::particle::Field;
+    let library = client.world().resource::<Library>();
+    let effect = library.effect(TRAIL).expect("trail");
+    let instance = client
+        .world()
+        .resource::<Playing>()
+        .instances_of(effect)
+        .next()
+        .expect("worn trail");
+    let tracked: Vec<_> = instance
+        .nodes
+        .iter()
+        .enumerate()
+        .filter_map(|(index, node)| {
+            let definition = &effect.defs[node.def];
+            let draw = definition.draws.iter().find(|draw| {
+                matches!(
+                    definition.system.renderers[draw.renderer].class,
+                    Renderer::Ropes(_)
+                )
+            })?;
+            let particle = (0..node.parts.len().saturating_sub(1)).find(|&i| {
+                let age = node.age - node.parts.scalar_field(Field::CREATION_TIME, i);
+                age > 0.05 && node.parts.scalar_field(Field::LIFE_DURATION, i) - age > 0.1
+            })?;
+            Some(TrackedHead {
+                node: index,
+                particle: node.parts.number[particle],
+                look: draw.look,
+            })
+        })
+        .collect();
+    assert_eq!(
+        tracked.len(),
+        3,
+        "one persistent head from each authored ribbon"
+    );
+    tracked
+}
+
+fn submitted_heads(client: &Client, tracked: &[TrackedHead]) -> Vec<Vec3> {
+    use heatel::particle::Field;
+    let world = client.world();
+    let effect = world.resource::<Library>().effect(TRAIL).expect("trail");
+    let instance = world
+        .resource::<Playing>()
+        .instances_of(effect)
+        .next()
+        .expect("worn trail");
+    let frame = world.resource::<ParticleFrame>();
+    tracked
+        .iter()
+        .map(|tracked| {
+            let node = &instance.nodes[tracked.node];
+            let index = node
+                .parts
+                .number
+                .iter()
+                .position(|number| *number == tracked.particle)
+                .expect("tracked head survives the 50 ms interval");
+            let position = node.parts.vector_field(Field::POSITION, index);
+            let expected = Vec3::new(position.x, position.z, -position.y);
+            frame
+                .batches
+                .iter()
+                .filter(|batch| batch.look == tracked.look)
+                .flat_map(|batch| {
+                    &frame.quads[batch.range.start as usize..batch.range.end as usize]
+                })
+                .map(|quad| Vec3::from_array(quad.head))
+                .find(|head| head.distance(expected) < 0.01)
+                .expect("the tracked particle is a submitted rope head")
+        })
+        .collect()
 }
