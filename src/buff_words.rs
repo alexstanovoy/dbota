@@ -182,11 +182,101 @@ fn source_description(look: &Lookup, id: u16) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use bota_proto::{IdSpace, registered};
+    use bota_proto::{EffectId, IdSpace, registered};
 
     use super::{OWN_NAMES, name};
     use crate::dota_text::Texts;
     use crate::manifest::Manifest;
+
+    /// These effects use presentation outside the buff asset catalogue.
+    const NO_BUFF_LINE: &[(EffectId, &str)] = &[
+        (
+            EffectId::TIMED_LIFE,
+            "effect_listed excludes unit lifetimes; the health bar shows time left",
+        ),
+        (
+            EffectId::NEUTRAL_UPGRADE,
+            "hidden server bookkeeping; upgraded unit stats carry its result",
+        ),
+        (
+            EffectId::FLYING,
+            "courier model variants use the core effect key directly; the local Flying name is the fallback",
+        ),
+    ];
+
+    /// These effects deliberately use an icon and source/local words instead
+    /// of a Dota modifier tooltip. Their icon lines remain mandatory.
+    const ICON_ONLY: &[(EffectId, &str)] = &[
+        (
+            EffectId::SLOWED,
+            "generic slow has no single Dota modifier; Rot supplies its icon",
+        ),
+        (
+            EffectId::BURNING,
+            "generic burning has no single Dota modifier; Rot supplies its icon",
+        ),
+        (
+            EffectId(25),
+            "Steal Weapon uses its source ability's icon and description",
+        ),
+        (
+            EffectId::CAPTURE_GUARD,
+            "the capture ability icon and local Capturing words describe this guard",
+        ),
+        (
+            EffectId::SHRINE_READY,
+            "synthetic shrine readiness uses the wisdom HUD icon and local words",
+        ),
+    ];
+
+    /// Check numeric ids, including aliases sharing one modifier name: an icon
+    /// or a local fallback name must not conceal a lost localization mapping.
+    #[test]
+    fn every_live_effect_has_a_modifier_alias_or_an_explicit_reason() {
+        let manifest = Manifest::load(std::path::Path::new("/no/asset/cache"));
+        for &(id, reason) in NO_BUFF_LINE.iter().chain(ICON_ONLY) {
+            assert!(
+                bota_core::effect_def(id).is_some(),
+                "exception for non-live effect {}",
+                id.0
+            );
+            assert!(!reason.trim().is_empty(), "effect {} needs a reason", id.0);
+            assert!(
+                manifest.dota_name("modifier", id.0).is_none(),
+                "effect {} has an alias; remove its stale exception",
+                id.0
+            );
+        }
+        for &(id, _) in NO_BUFF_LINE {
+            assert!(
+                manifest.dota_name("effect", id.0).is_none(),
+                "effect {} has an icon; remove its stale no-line exception",
+                id.0
+            );
+        }
+        for &(id, _) in ICON_ONLY {
+            assert!(
+                manifest.dota_name("effect", id.0).is_some(),
+                "effect {} needs its icon-only buff line",
+                id.0
+            );
+        }
+        let missing: Vec<_> = registered(IdSpace::Effect)
+            .filter(|entry| !entry.retired)
+            .filter(|entry| manifest.dota_name("modifier", entry.id).is_none())
+            .filter(|entry| {
+                !NO_BUFF_LINE
+                    .iter()
+                    .chain(ICON_ONLY)
+                    .any(|(id, _)| id.0 == entry.id)
+            })
+            .map(|entry| format!("{} ({})", entry.id, entry.name))
+            .collect();
+        assert!(
+            missing.is_empty(),
+            "live effects without modifier aliases or reasons: {missing:?}"
+        );
+    }
 
     /// Whether a word runs two words together the way an identifier does
     /// (`TimeWarpAura`), or is shouted in capitals (`MANAAURA`).
