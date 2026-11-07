@@ -12,7 +12,7 @@ use dbota_import::text::{buildings_txt, trees_txt};
 use heatel::material::Pack;
 use heatel::texture::PixelFormat;
 use heatel::world::{Band, EntityLump};
-use heatel::{DirSource, Resource, SliceSource, Source, Texture, Vpk, find_game_dir, read_from};
+use heatel::{DirSource, Resource, SliceSource, Source, Texture, Vpk, read_from};
 
 fn repo() -> &'static Path {
     Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../.."))
@@ -90,7 +90,7 @@ fn same_placements(ours: &str, theirs: &str) -> Result<(), String> {
 #[test]
 #[ignore = "needs a local Dota 2 install and its asset cache"]
 fn trees_and_buildings_match_the_exported_ones() {
-    let src = DirSource::new(find_game_dir(None).expect("Dota 2 not found"));
+    let src = DirSource::new(common::game_dir());
     let map = Vpk::open(&src, "maps/dota.vpk").unwrap();
     let lump = entities(&src, &map);
     let (_, out, fields) = world_line();
@@ -111,7 +111,7 @@ fn trees_and_buildings_match_the_exported_ones() {
 #[test]
 #[ignore = "needs a local Dota 2 install"]
 fn twin_gates_stand_where_the_install_places_them() {
-    let src = DirSource::new(find_game_dir(None).expect("Dota 2 not found"));
+    let src = DirSource::new(common::game_dir());
     let map = Vpk::open(&src, "maps/dota.vpk").unwrap();
     let lump = entities(&src, &map);
     let number = |v: &heatel::kv3::Value| v.as_f64().unwrap();
@@ -188,7 +188,7 @@ fn texture_closure(src: &DirSource, packages: &[&Vpk], roots: &[String]) -> BTre
 #[test]
 #[ignore = "needs a local Dota 2 install and its asset cache"]
 fn world_images_come_from_its_nodes_and_entities() {
-    let src = DirSource::new(find_game_dir(None).expect("Dota 2 not found"));
+    let src = DirSource::new(common::game_dir());
     let pak = Vpk::open(&src, "pak01_dir.vpk").unwrap();
     let map = Vpk::open(&src, "maps/dota.vpk").unwrap();
     let (source, out, _) = world_line();
@@ -528,7 +528,7 @@ fn png_name(vtex: &str) -> String {
 #[test]
 #[ignore = "needs a local Dota 2 install and its asset cache"]
 fn world_matches_the_exported_one() {
-    let src = DirSource::new(find_game_dir(None).expect("Dota 2 not found"));
+    let src = DirSource::new(common::game_dir());
     let pak = Vpk::open(&src, "pak01_dir.vpk").unwrap();
     let map = Vpk::open(&src, "maps/dota.vpk").unwrap();
     let (source, out, fields) = world_line();
@@ -659,7 +659,7 @@ fn compare_image(
 #[test]
 #[ignore = "needs a local Dota 2 install and its asset cache"]
 fn world_images_and_layers_match_the_exported_ones() {
-    let src = DirSource::new(find_game_dir(None).expect("Dota 2 not found"));
+    let src = DirSource::new(common::game_dir());
     let pak = Vpk::open(&src, "pak01_dir.vpk").unwrap();
     let map = Vpk::open(&src, "maps/dota.vpk").unwrap();
     let (source, out, fields) = world_line();
@@ -782,7 +782,7 @@ fn write_world_into_a_cache_copy() {
         cache().canonicalize().unwrap(),
         "DBOTA_WORLD_CACHE must be a copy of the cache"
     );
-    let src = DirSource::new(find_game_dir(None).expect("Dota 2 not found"));
+    let src = DirSource::new(common::game_dir());
     let pak = Vpk::open(&src, "pak01_dir.vpk").unwrap();
     let map = Vpk::open(&src, "maps/dota.vpk").unwrap();
     let (source, out, fields) = world_line();
@@ -909,7 +909,7 @@ impl XorShift {
 #[test]
 #[ignore = "needs a local Dota 2 install and its asset cache"]
 fn a_damaged_world_is_an_error_not_a_panic() {
-    let install = DirSource::new(find_game_dir(None).expect("Dota 2 not found"));
+    let install = DirSource::new(common::game_dir());
     let pak = Vpk::open(&install, "pak01_dir.vpk").unwrap();
     let map = Vpk::open(&install, "maps/dota.vpk").unwrap();
     let (source, _, fields) = world_line();
@@ -944,7 +944,7 @@ fn a_damaged_world_is_an_error_not_a_panic() {
             let mut patch = SliceSource::default();
             patch.insert(PATCH, package(target, &damaged));
             let src = Patched {
-                install: DirSource::new(find_game_dir(None).unwrap()),
+                install: DirSource::new(common::game_dir()),
                 patch,
             };
             let patched = Vpk::open(&src, PATCH).unwrap();

@@ -10,7 +10,7 @@ use dbota_import::import::GENERATOR;
 use heatel::export::{
     ExportedClip, ExportedModel, ExportedTexture, ModelOptions, export_model, read_from,
 };
-use heatel::{DirSource, Texture, Vpk, find_game_dir};
+use heatel::{DirSource, Texture, Vpk};
 use serde_json::Value;
 
 fn repo() -> &'static Path {
@@ -380,7 +380,7 @@ fn summary(doc: &Value) -> Vec<String> {
 #[test]
 #[ignore = "needs a local Dota 2 install and its asset cache"]
 fn models_match_the_exported_ones() {
-    let src = DirSource::new(find_game_dir(None).expect("Dota 2 not found"));
+    let src = DirSource::new(common::game_dir());
     let pak = Vpk::open(&src, "pak01_dir.vpk").unwrap();
     let mut differ = Vec::new();
     let mut data = Vec::new();
@@ -435,7 +435,7 @@ fn write_models_into_a_cache_copy() {
         println!("DBOTA_MODEL_CACHE is not set: nothing to write");
         return;
     };
-    let src = DirSource::new(find_game_dir(None).expect("Dota 2 not found"));
+    let src = DirSource::new(common::game_dir());
     let pak = Vpk::open(&src, "pak01_dir.vpk").unwrap();
     let mut written = 0;
     for line in models() {
@@ -619,7 +619,7 @@ fn compare_clip(
 #[test]
 #[ignore = "needs a local Dota 2 install and its asset cache"]
 fn clips_match_the_exported_ones() {
-    let src = DirSource::new(find_game_dir(None).expect("Dota 2 not found"));
+    let src = DirSource::new(common::game_dir());
     let pak = Vpk::open(&src, "pak01_dir.vpk").unwrap();
     let durations = manifest_durations();
     let mut wrong = Vec::new();

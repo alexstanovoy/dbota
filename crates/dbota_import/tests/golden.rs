@@ -177,7 +177,7 @@ impl Install {
 #[test]
 #[ignore = "needs a local Dota 2 install"]
 fn pak01_directory_parses_fast_and_finds_every_entry_by_its_path() {
-    let src = DirSource::new(find_game_dir(None).expect("Dota 2 not found"));
+    let src = DirSource::new(common::game_dir());
     let start = Instant::now();
     let pak = Vpk::open(&src, "pak01_dir.vpk").unwrap();
     let elapsed = start.elapsed();

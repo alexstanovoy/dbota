@@ -17,7 +17,6 @@ use std::path::{Path, PathBuf};
 use dbota_import::cache_dir::{INDEX, STAMP, import_into};
 use dbota_import::import::{Flow, Plan};
 use dbota_import::text::wanted;
-use heatel::find_game_dir;
 use serde_json::Value;
 
 fn repo() -> &'static Path {
@@ -45,7 +44,7 @@ fn imported(test: &str) -> Imported {
     }
     let dir = format!("cache-{test}-{}", std::process::id());
     let cache = Path::new(env!("CARGO_TARGET_TMPDIR")).join(dir);
-    let game = find_game_dir(None).expect("Dota 2 not found");
+    let game = common::game_dir();
     let plan = Plan::parse(
         &read(&repo().join("assets-manifest/manifest.txt")),
         &read(&repo().join("assets-manifest/ids.txt")),
@@ -621,7 +620,7 @@ fn the_lighting_is_the_maps_blend_of_its_default_lights() {
     assert_eq!(colors.len(), 4, "{text}");
     assert!((1.0..=30.0).contains(&turn), "turn {turn}");
 
-    let src = DirSource::new(find_game_dir(None).expect("Dota 2 not found"));
+    let src = DirSource::new(common::game_dir());
     let map = Vpk::open(&src, "maps/dota.vpk").unwrap();
     let world = read_from(&src, &[&map], "maps/dota/world.vwrld_c").unwrap();
     let world = Resource::parse(&world).unwrap().data().unwrap().unwrap();

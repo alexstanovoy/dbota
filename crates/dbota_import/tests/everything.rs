@@ -7,17 +7,19 @@
 //! DBOTA_IMPORTED=/path/to/cache cargo test ...   # check a cache `dbota import` made
 //! ```
 
+mod common;
+
 use std::path::PathBuf;
 
 use dbota_import::cache_dir::import_into;
 use dbota_import::import::{Flow, plan};
 use heatel::scripts::entries;
-use heatel::{DirSource, Vpk, find_game_dir};
+use heatel::{DirSource, Vpk};
 
 #[test]
 #[ignore = "needs a local Dota 2 install"]
 fn every_item_and_ability_of_the_install_has_its_icon_and_text() {
-    let game = find_game_dir(None).expect("Dota 2 not found");
+    let game = common::game_dir();
     let src = DirSource::new(&game);
     let pak = Vpk::open(&src, "pak01_dir.vpk").unwrap();
     let (cache, scratch) = match std::env::var_os("DBOTA_IMPORTED") {

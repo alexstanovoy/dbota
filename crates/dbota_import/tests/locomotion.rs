@@ -1,9 +1,10 @@
 //! Locomotion-only export leaves the building activities unchanged.
+mod common;
+
 use dbota_import::catalog::{Line, parse};
 use heatel::{
     DirSource, Resource, Vpk,
     anim::{read_clips, read_clips_in_place},
-    find_game_dir,
 };
 
 #[test]
@@ -14,7 +15,7 @@ fn every_listed_building_clip_keeps_its_pose_with_locomotion_export() {
         include_str!("../../../assets-manifest/ids.txt"),
     )
     .expect("manifest");
-    let source = DirSource::new(find_game_dir(None).expect("install"));
+    let source = DirSource::new(common::game_dir());
     let pak = Vpk::open(&source, "pak01_dir.vpk").expect("VPK");
     let mut checked = 0;
     for line in &catalogue.lines {

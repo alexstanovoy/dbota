@@ -2,6 +2,8 @@
 
 use std::path::PathBuf;
 
+use heatel::find_game_dir;
+
 /// The reference cache: the one Source2Viewer 20 exported for version 6 of the manifest, kept
 /// as the converters' golden reference (the client's own cache is made by `dbota import` since
 /// version 7). `DBOTA_REFERENCE` names another.
@@ -49,4 +51,15 @@ pub fn assert_compared(what: &str, count: usize) {
 pub fn exported(out: &str) -> Option<PathBuf> {
     let path = reference().join(out);
     path.is_file().then_some(path)
+}
+
+/// The install's game folder: `DBOTA_DOTA_PATH` (a `dota 2 beta` folder) when it is set, else the
+/// usual Steam places under HOME. The gate runs the install tests on a private HOME, which hides
+/// those places and names the install by the variable instead, so a test must come through here
+/// and never look the install up by itself.
+#[allow(dead_code, reason = "not every test file reads the install")]
+pub fn game_dir() -> PathBuf {
+    let provided = std::env::var_os("DBOTA_DOTA_PATH").map(PathBuf::from);
+    find_game_dir(provided.as_deref())
+        .expect("Dota 2 not found; set DBOTA_DOTA_PATH to its \"dota 2 beta\" folder")
 }
