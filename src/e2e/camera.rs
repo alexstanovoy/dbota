@@ -86,8 +86,8 @@ fn the_hero_is_neither_selected_nor_followed_when_the_match_begins() {
 /// A replay watched through a seat follows that seat's hero: the camera is on it as it walks.
 #[test]
 fn a_replay_watched_through_a_seat_follows_that_seats_hero() {
-    let replay = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join(format!("target/camera-pov-{}.brp", std::process::id()));
+    let replay =
+        crate::test_support::scratch_path(&format!("camera-pov-{}.brp", std::process::id()));
     let end = {
         let mut server = Server::start(
             1,

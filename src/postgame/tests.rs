@@ -22,9 +22,7 @@ struct Played {
 }
 
 fn scratch(name: &str) -> PathBuf {
-    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target/postgame");
-    std::fs::create_dir_all(&dir).expect("a scratch folder");
-    dir.join(format!("{}-{name}", std::process::id()))
+    crate::test_support::scratch_path(&format!("postgame/{}-{name}", std::process::id()))
 }
 
 /// A lone player on Map 2 buys three items, goes to level 30, fells a hero the game created

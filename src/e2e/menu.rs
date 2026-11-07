@@ -74,7 +74,7 @@ fn each_client_uses_its_own_replay_directory() {
     let folder = client.replay_dir().display().to_string();
     let shown = client.shown_texts();
     assert!(shown.iter().any(|text| text.contains(&folder)), "{shown:?}");
-    let root = crate::main_menu::tests::target_dir().join("e2e");
+    let root = crate::test_support::target_dir().join("e2e");
     assert!(client.replay_dir().starts_with(&root));
     let other = local_menu();
     assert!(other.replay_dir().starts_with(root));
@@ -152,12 +152,11 @@ fn signed_up(service: &crate::main_menu::tests::Service, login: &str) -> Client 
     // One file for each client: the tests of a process run side by side, each with a service
     // (and a certificate) of its own.
     static NEXT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
-    let pem = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(format!(
-        "target/e2e/service-{}-{}.pem",
+    let pem = crate::test_support::scratch_path(&format!(
+        "service-{}-{}.pem",
         std::process::id(),
         NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
     ));
-    std::fs::create_dir_all(pem.parent().expect("a folder")).expect("the folder");
     std::fs::write(&pem, &service.pem).expect("the service's certificate");
     let pem_arg = pem.to_str().expect("a UTF-8 path").to_owned();
     let mut client = Client::run(&["--service", &service.url, "--trust-cert", &pem_arg]);

@@ -23,8 +23,8 @@ fn name_shown(client: &mut Client) -> bool {
 /// A replay of a match in which seat 1 dropped a tango at the middle of the map, far from seat 0's
 /// fountain; where it lies, and the tick it lay at.
 fn record_a_drop() -> (std::path::PathBuf, (f32, f32), u32) {
-    let replay = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join(format!("target/loot-names-{}.brp", std::process::id()));
+    let replay =
+        crate::test_support::scratch_path(&format!("loot-names-{}.brp", std::process::id()));
     let mut server = Server::start(
         2,
         &[

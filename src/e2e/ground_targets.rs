@@ -171,8 +171,8 @@ fn nothing_is_ringed_while_an_enemy_is_picked() {
 /// ringed; the ring and the click answer to the same gate.
 #[test]
 fn nothing_is_ringed_in_a_replay_even_in_plain_view() {
-    let replay = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join(format!("target/ground-targets-{}.brp", std::process::id()));
+    let replay =
+        crate::test_support::scratch_path(&format!("ground-targets-{}.brp", std::process::id()));
     let (spot, tick) = {
         let mut server = Server::start(
             1,

@@ -388,8 +388,10 @@ mod tests {
     use crate::replays::Disk;
 
     fn folder(what: &str) -> std::path::PathBuf {
-        let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join(format!("target/replay-tests/{what}-{}", std::process::id()));
+        let dir = crate::test_support::scratch_path(&format!(
+            "replay-tests/{what}-{}",
+            std::process::id()
+        ));
         let _ = std::fs::remove_dir_all(&dir);
         dir
     }

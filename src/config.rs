@@ -843,7 +843,7 @@ mod tests {
     #[test]
     fn the_settings_file_is_not_the_old_clients_and_the_old_one_beside_it_is_found_to_be_ignored() {
         let dir =
-            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target/e2e/config_names");
+            crate::test_support::scratch_path(&format!("config_names-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).expect("a scratch folder");
         let settings = dir.join(FILE_NAME);

@@ -126,8 +126,8 @@ impl Recording {
 
     fn save_until(&self, server: Server, end: usize, tick: u32) -> ReplayFile {
         assert!(end > 0, "a whole tick recorded");
-        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(format!(
-            "target/e2e/fog_replay_{}_{}.brp",
+        let path = crate::test_support::scratch_path(&format!(
+            "fog_replay_{}_{}.brp",
             std::process::id(),
             NEXT_REPLAY.fetch_add(1, Ordering::Relaxed)
         ));
@@ -454,8 +454,8 @@ impl Spectated {
             });
             last = tick;
         }
-        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(format!(
-            "target/e2e/fall_replay_{}_{}.brp",
+        let path = crate::test_support::scratch_path(&format!(
+            "fall_replay_{}_{}.brp",
             std::process::id(),
             NEXT_REPLAY.fetch_add(1, Ordering::Relaxed)
         ));
