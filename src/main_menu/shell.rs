@@ -98,7 +98,7 @@ pub fn plugin(app: &mut App) {
             )
                 .chain(),
         )
-        .add_systems(Update, super::top_bar::animate);
+        .add_systems(Update, (super::top_bar::animate, hud_shown));
 }
 
 /// The wheel scrolls a long page; the place is kept while the page is
@@ -395,6 +395,13 @@ fn guard(
         epoch.0 += 1;
         forget_units(&mut commands, &mut index);
         core.left_game(if leave { None } else { why.as_deref() }, over);
+    }
+}
+
+/// Tells the interface's scale whether the game's HUD is on screen or the menu covers it.
+fn hud_shown(core: Option<NonSend<MenuCore>>, mut hud: ResMut<crate::ui::HudShown>) {
+    if let Some(core) = core {
+        hud.set_if_neq(crate::ui::HudShown(core.shows_game()));
     }
 }
 

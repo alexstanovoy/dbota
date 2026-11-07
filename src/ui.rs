@@ -10,6 +10,9 @@ use crate::theme::Face;
 
 /// Logical window height at which the interface scale is one.
 const REFERENCE_HEIGHT: f32 = 900.0;
+/// The width of the menu's design frame (1440 by 900, 16:10): the menu is never laid out
+/// narrower, so a window of 5:4 or 4:3 shrinks it to fit its width instead.
+const MENU_WIDTH: f32 = 1440.0;
 /// The smallest scale a window may force.
 const MIN_SCALE: f32 = 0.25;
 
@@ -79,7 +82,8 @@ const CJK_SCRIPTS: [&str; 5] = ["Hani", "Hira", "Kana", "Hang", "Bopo"];
 struct FallbackFont(#[expect(dead_code, reason = "only keeps the font loaded")] Handle<Font>);
 
 pub fn plugin(app: &mut App) {
-    app.add_systems(PreStartup, load_fonts)
+    app.init_resource::<HudShown>()
+        .add_systems(PreStartup, load_fonts)
         .add_systems(Update, (scale_ui, register_fallback))
         .add_systems(
             PostUpdate,
@@ -361,11 +365,25 @@ fn fitting_scale(window: Vec2, size: impl Fn(Extent) -> Vec2) -> f32 {
     fit(window.x, width).min(fit(window.y, height))
 }
 
+/// Whether the game's HUD is on screen: false while the menu covers it (or there is no game),
+/// so the menu is laid out at the window's own scale, not shrunk to the HUD's width.
+#[derive(Resource, Clone, Copy, Debug, PartialEq, Eq)]
+pub struct HudShown(pub bool);
+
+impl Default for HudShown {
+    /// A client without the menu shows its game from the start.
+    fn default() -> HudShown {
+        HudShown(true)
+    }
+}
+
 /// Scales the whole interface with the window's logical height and the
-/// player's own factor, down to what fits the window.
+/// player's own factor, down to what fits the window: with the HUD on screen,
+/// down to what leaves room for its parts, else to the menu's frame.
 fn scale_ui(
     window: Single<&Window, With<PrimaryWindow>>,
     settings: Res<Settings>,
+    hud: Res<HudShown>,
     parts: Query<(&Extent, &ComputedNode)>,
     mut ui_scale: ResMut<UiScale>,
 ) {
@@ -377,9 +395,12 @@ fn scale_ui(
             .map(|(_, node)| node.size() * node.inverse_scale_factor())
             .fold(Vec2::ZERO, Vec2::max)
     };
-    let scale = wanted
-        .min(fitting_scale(window.size(), size))
-        .max(MIN_SCALE);
+    let fit = if hud.0 {
+        fitting_scale(window.size(), size)
+    } else {
+        window.width() / MENU_WIDTH
+    };
+    let scale = wanted.min(fit).max(MIN_SCALE);
     if (ui_scale.0 - scale).abs() > 1e-3 {
         ui_scale.0 = scale;
     }

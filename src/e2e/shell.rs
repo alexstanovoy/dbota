@@ -134,8 +134,10 @@ fn the_settings_window_opens_from_the_cog_over_the_dimmed_menu_and_its_cross_clo
 #[test]
 fn the_pill_and_the_players_card_say_how_the_menu_stands_and_who_plays() {
     let mut client = local_menu();
+    client.within(Duration::from_secs(30), "the pill laid out", |c| {
+        c.shown_texts().iter().any(|t| t == "OFFLINE")
+    });
     let shown = client.shown_texts();
-    assert!(shown.iter().any(|t| t == "OFFLINE"), "{shown:?}");
     assert!(!shown.iter().any(|t| t == "LOG OUT"), "{shown:?}");
     let service = crate::main_menu::tests::service();
     let mut client = signed_up(&service, "alice");
@@ -231,4 +233,41 @@ fn the_menu_draws_with_dotas_typefaces_from_the_install() {
             c.world().resource::<Assets<Font>>().contains(&handle)
         });
     }
+}
+
+fn ui_scale(client: &Client) -> f32 {
+    client.world().resource::<UiScale>().0
+}
+
+/// The menu is laid out at the window's own scale (one mockup pixel to one pixel at 900 lines,
+/// 16:10 and 16:9 alike), not shrunk to make room for the HUD, which it covers; a 5:4 window
+/// shrinks it to the 1440 pixels of its frame; a game on screen is still shrunk until its HUD
+/// fits a 16:10 window.
+#[test]
+fn the_menu_keeps_the_windows_scale_and_a_game_shrinks_to_fit_its_hud() {
+    for (window, scale) in [
+        ("1440x900", 1.0),
+        ("1920x1080", 1.2),
+        ("1280x1024", 1280.0 / 1440.0),
+    ] {
+        let mut client = Client::run(&["--window", window]);
+        client.within(Duration::from_secs(30), "the menu laid out", |c| {
+            (ui_scale(c) - scale).abs() < 1e-3
+        });
+        client.frames(10);
+        assert!(
+            (ui_scale(&client) - scale).abs() < 1e-3,
+            "the menu at {window}: scale {} (not {scale})",
+            ui_scale(&client)
+        );
+    }
+    let server = super::harness::Server::start(1, &[]);
+    let mut client = Client::join(
+        &server,
+        bota_proto::HeroId::SHADOW_FIEND,
+        &["--window", "1440x900"],
+    );
+    client.within(Duration::from_secs(60), "the HUD fitted", |c| {
+        ui_scale(c) < 0.99
+    });
 }
