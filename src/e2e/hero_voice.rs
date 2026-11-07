@@ -837,3 +837,104 @@ fn listening_begun_on_a_kill_or_a_last_hit_raises_it_as_from_the_start() {
         assert_eq!(kills_and_last_hits_of(&late).first(), Some(&event));
     }
 }
+
+/// After a kill two heroes shared (a tower finished the foe, the driving seat's hero had hurt
+/// it: no hero credited, the assist counted), the next kill is no First Blood, whether the
+/// listener heard the shared kill or began listening after it.
+#[test]
+fn a_listener_begun_after_a_shared_kill_keeps_first_blood_spent() {
+    use clap::Parser;
+    let game = super::fog_pov::Spectated::pair("0");
+    let slot = game.driver.my_slot.expect("the driving seat");
+    let file = game.save();
+    let path = file.path().to_str().expect("a UTF-8 path");
+    let seat = slot.0.to_string();
+    let args = crate::Args::parse_from(["dbota", "--replay", path, "--pov", &seat]);
+    let mut core = crate::session::open(&args).expect("the replay opens").0;
+    let both = |core: &bota_client_core::App| {
+        core.view()
+            .is_some_and(|view| view.players.iter().all(|p| p.unit.is_some()))
+    };
+    for _ in 0..100_000 {
+        if both(&core) {
+            break;
+        }
+        core.pump(1.0 / 30.0);
+    }
+    let template = core.view().expect("a view of both heroes").clone();
+    let mine = template
+        .player(slot)
+        .and_then(|p| p.unit)
+        .expect("one's hero");
+    let foe = template
+        .players
+        .iter()
+        .find(|p| p.slot != slot)
+        .and_then(|p| p.unit)
+        .expect("the foe");
+    let tower = template
+        .units
+        .iter()
+        .find(|u| {
+            u.kind == bota_proto::UnitKind::Tower
+                && u.team == template.player(slot).expect("seat").team
+        })
+        .expect("a tower of one's own")
+        .id;
+    // The view after each death: its tick on, the driving seat's counts changed.
+    let after = |ticks: u32, kills: u16, assists: u16| {
+        let mut view = template.clone();
+        view.tick += ticks;
+        let me = view
+            .players
+            .iter_mut()
+            .find(|p| p.slot == slot)
+            .expect("the driving seat");
+        me.kills += kills;
+        me.assists += assists;
+        bota_proto::ServerMsg::Snapshot { view }
+    };
+    let death =
+        |killer: bota_proto::EntityId, credited: bool, assists: u16| bota_proto::EventKind::Died {
+            unit: foe,
+            killer: Some(killer),
+            denied: false,
+            gold: 0,
+            bounty: Some(0),
+            assists,
+            awards: None,
+            credited_hero: credited.then(|| Box::new(killer)),
+        };
+    let fog = crate::fog::FogGrid::default();
+    let heard = |core: &mut bota_client_core::App,
+                 memory: &mut crate::hero_voice::listen::Memory,
+                 view,
+                 event| {
+        core.handle(view);
+        core.told = vec![event];
+        memory.queries(core, Some(slot), &fog)
+    };
+    let shared = || (after(1, 0, 1), death(tower, false, 1 << slot.0));
+    let kill = || (after(60, 1, 1), death(mine, true, 0));
+    let mut whole = crate::hero_voice::listen::Memory::default();
+    let (view, event) = shared();
+    heard(&mut core, &mut whole, view, event);
+    let (view, event) = kill();
+    let heard_through = heard(&mut core, &mut whole, view, event);
+    let (view, event) = kill();
+    let begun_after = heard(
+        &mut core,
+        &mut crate::hero_voice::listen::Memory::default(),
+        view,
+        event,
+    );
+    let first_blood = |raised: &[(Concept, Vec<(Fact, String)>)]| {
+        raised
+            .iter()
+            .find(|(c, _)| *c == Concept::Kill)
+            .and_then(|(_, facts)| facts.iter().find(|(f, _)| *f == Fact::FirstBlood))
+            .map(|(_, v)| v.clone())
+    };
+    assert_eq!(first_blood(&heard_through), Some("0".to_owned()));
+    assert_eq!(first_blood(&begun_after), Some("0".to_owned()));
+}

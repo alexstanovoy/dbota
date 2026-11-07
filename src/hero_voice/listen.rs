@@ -31,10 +31,6 @@ pub struct Memory {
     spawned: bool,
     begun: Option<bool>,
     ended: bool,
-    /// Whether First Blood has been claimed: by a kill a hero was credited with, or one its
-    /// assisting heroes shared (the server's rule, bota_server's `price_of_fall`); a hero that
-    /// fell to a tower or a creep alone claims nothing.
-    blooded: bool,
 }
 
 /// Seconds of game time: since the battle began, negative before.
@@ -71,7 +67,6 @@ impl Memory {
                 order: last_order(core, slot, hero),
                 spawned: begun,
                 begun: Some(begun),
-                blooded: blooded_before(core),
                 ..Memory::default()
             };
         }
@@ -153,6 +148,7 @@ impl Memory {
         raised: &mut Vec<Raised>,
     ) {
         let first = raised.len();
+        let mut claims = claims_before(core);
         for event in &core.told {
             let concept = match event {
                 EventKind::AbilityCast { caster, ability } if *caster == hero => {
@@ -177,76 +173,95 @@ impl Memory {
                 EventKind::RuneBottled { unit, .. } if *unit == hero => {
                     Some((Concept::Bottling, Vec::new()))
                 }
-                EventKind::Died { .. } => self.died(core, hero, fog, event),
+                EventKind::Died { .. } => died(core, hero, fog, event, &mut claims),
                 _ => None,
             };
             raised.extend(concept);
         }
         count_last_hits(core, slot, &mut raised[first..]);
     }
+}
 
-    /// The concept a death raises: the hero's own death; a kill of an enemy hero it struck or
-    /// was credited with (First Blood when no kill had claimed it); a last hit or a deny of
-    /// anything else it struck.
-    fn died(
-        &mut self,
-        core: &Core,
-        hero: EntityId,
-        fog: &crate::fog::FogGrid,
-        event: &EventKind,
-    ) -> Option<Raised> {
-        let EventKind::Died {
-            unit,
-            killer,
+/// The concept a death raises: the hero's own death; a kill of an enemy hero it struck or was
+/// credited with (First Blood when no hero death before it claimed anything, `claims` counting
+/// those before it); a last hit or a deny of anything else it struck.
+fn died(
+    core: &Core,
+    hero: EntityId,
+    fog: &crate::fog::FogGrid,
+    event: &EventKind,
+    claims: &mut usize,
+) -> Option<Raised> {
+    let EventKind::Died {
+        unit,
+        killer,
+        denied,
+        credited_hero,
+        ..
+    } = event
+    else {
+        return None;
+    };
+    if *unit == hero {
+        *claims += claims_of(event);
+        return Some((Concept::Death, Vec::new()));
+    }
+    let by_hero = *killer == Some(hero) || credited_hero.as_deref() == Some(&hero);
+    if let Some(class) = hero_class(core, *unit) {
+        let first = *claims == 0;
+        *claims += claims_of(event);
+        let facts: Facts = vec![
+            (Fact::TargetClassName, class.to_owned()),
+            (Fact::FirstBlood, u8::from(first).to_string()),
+        ];
+        return (by_hero && !denied).then_some((Concept::Kill, facts));
+    }
+    if *killer != Some(hero) {
+        return None;
+    }
+    if *denied {
+        return witnessed(core, hero, fog).then_some((Concept::Deny, Vec::new()));
+    }
+    // Its count is the view's ([`count_last_hits`]).
+    Some((Concept::LastHit, Vec::new()))
+}
+
+/// The kills and assists a hero's death adds to the view's counts: a kill for the hero it is
+/// credited to, an assist for each assisting hero. First Blood is the server's to claim and no
+/// view or event tells it; it goes to the first death credited to a hero or shared among
+/// assisting heroes (bota_server's `price_of_fall`), and so to the first that adds to these
+/// counts. A hero only debuffed by an enemy before falling to neutrals is counted an assist
+/// though the server claims nothing by it: the one death this reading takes for a claim.
+fn claims_of(event: &EventKind) -> usize {
+    match event {
+        EventKind::Died {
             denied,
             assists,
             credited_hero,
             ..
-        } = event
-        else {
-            return None;
-        };
-        if *unit == hero {
-            self.blooded |= credited_hero.is_some() || *assists != 0;
-            return Some((Concept::Death, Vec::new()));
-        }
-        let by_hero = *killer == Some(hero) || credited_hero.as_deref() == Some(&hero);
-        if let Some(class) = hero_class(core, *unit) {
-            let first = !self.blooded;
-            self.blooded |= credited_hero.is_some() || *assists != 0;
-            let facts: Facts = vec![
-                (Fact::TargetClassName, class.to_owned()),
-                (Fact::FirstBlood, u8::from(first).to_string()),
-            ];
-            return (by_hero && !denied).then_some((Concept::Kill, facts));
-        }
-        if *killer != Some(hero) {
-            return None;
-        }
-        if *denied {
-            return witnessed(core, hero, fog).then_some((Concept::Deny, Vec::new()));
-        }
-        // Its count is the view's ([`count_last_hits`]).
-        Some((Concept::LastHit, Vec::new()))
+        } => usize::from(credited_hero.is_some() && !denied) + assists.count_ones() as usize,
+        _ => 0,
     }
 }
 
-/// Whether a kill had claimed First Blood before the last pump's events: the view's heroes
-/// hold kills that none of those events credited.
-fn blooded_before(core: &Core) -> bool {
+/// The claims of hero deaths before the last pump's: what the view's kills and assists count,
+/// less what the pump's own deaths add. A listener begun on any frame reads the same.
+fn claims_before(core: &Core) -> usize {
     let Some(view) = core.view() else {
-        return false;
+        return 0;
     };
-    let kills: usize = view.players.iter().map(|p| usize::from(p.kills)).sum();
-    let credited = core
+    let counted: usize = view
+        .players
+        .iter()
+        .map(|p| usize::from(p.kills) + usize::from(p.assists))
+        .sum();
+    let told: usize = core
         .told
         .iter()
-        .filter(|event| {
-            matches!(event, EventKind::Died { unit, credited_hero: Some(_), .. }
-                if hero_class(core, *unit).is_some())
-        })
-        .count();
-    kills > credited
+        .filter(|event| matches!(event, EventKind::Died { unit, .. } if hero_class(core, *unit).is_some()))
+        .map(claims_of)
+        .sum();
+    counted.saturating_sub(told)
 }
 
 /// Gives each last hit of a pump its count: the view's creep score already counts them all,
