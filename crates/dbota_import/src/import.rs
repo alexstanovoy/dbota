@@ -145,7 +145,7 @@ fn layout_current(cache: &std::path::Path, file: &str, layout: &str) -> bool {
         }
         Err(_) => {
             let mut index = String::new();
-            let listed = std::fs::File::open(cache.join(crate::cache_dir::INDEX))
+            let listed = std::fs::File::open(cache.join(INDEX))
                 .and_then(|f| f.take(MAX_INDEX).read_to_string(&mut index))
                 .is_ok_and(|_| {
                     index
