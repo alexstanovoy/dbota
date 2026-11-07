@@ -429,22 +429,55 @@ fn a_click_on_the_minimap_keeps_the_selection_in_a_replay() {
         (mine, tick)
     };
     let mut client = Client::run(&["--replay", replay.to_str().expect("UTF-8")]);
-    client.until("the replay at the staged scene", |c| {
-        let now = c.tick();
-        if let bota_client_core::Source::Replay(player) = &mut c.core_mut().source {
-            if now < tick {
-                player.advance_ticks(f64::from(tick - now));
-            }
-            player.paused = now >= tick;
-        }
-        now >= tick
-    });
+    replay_to(&mut client, tick);
     client.until("every kind of unit in view", |c| {
         TARGETS
             .iter()
             .all(|(_, kind, enemy)| unit_of(c, mine, *kind, *enemy).is_some())
     });
     selection_survives_the_minimap(&mut client, mine);
+}
+
+/// Plays the replay to exactly `tick` and holds it there. The clock jump is additive: queued again
+/// on every frame decoding took, and with the replay let go when its scenery is loaded, the
+/// replay ran on past the staged tick, where the creeps fighting at the middle had died. The jump
+/// is queued once, from the first snapshot, with no presentation time running and the replay
+/// set aside while its scenery loads (as `loot_names` does).
+fn replay_to(client: &mut Client, tick: u32) {
+    let zero = || bevy::time::TimeUpdateStrategy::ManualDuration(Duration::ZERO);
+    client.world_mut().insert_resource(zero());
+    let bota_client_core::Source::Replay(player) = &mut client.core_mut().source else {
+        panic!("a replay");
+    };
+    player.paused = true;
+    client.until("the replay's first snapshot", |c| c.core().view().is_some());
+    let source = std::mem::replace(
+        &mut client.core_mut().source,
+        crate::main_menu::idle().0.source,
+    );
+    client
+        .world_mut()
+        .insert_resource(bevy::time::TimeUpdateStrategy::ManualDuration(
+            Duration::from_millis(100),
+        ));
+    client.until("the replay scenery loaded", |c| {
+        c.world().resource::<crate::loading::Loading>().done()
+    });
+    client.world_mut().insert_resource(zero());
+    client.core_mut().source = source;
+    let advance = tick
+        .checked_sub(client.tick())
+        .expect("the staged tick follows the first snapshot");
+    if let bota_client_core::Source::Replay(player) = &mut client.core_mut().source {
+        player.paused = true;
+        player.advance_ticks(f64::from(advance));
+    }
+    client.until("the replay at exactly the staged tick", |c| {
+        c.tick() == tick
+    });
+    client
+        .world_mut()
+        .insert_resource(bevy::time::TimeUpdateStrategy::Automatic);
 }
 
 fn display_scale(client: &mut Client, scale: f32) {
