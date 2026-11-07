@@ -13,7 +13,7 @@
 //! log: a cache of this build has one for every hero, so a missing one is a cache made by
 //! another build of the same import revision.
 
-mod listen;
+pub(crate) mod listen;
 mod load;
 
 #[cfg(test)]

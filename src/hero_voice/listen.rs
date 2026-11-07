@@ -13,11 +13,16 @@ use super::{Facts, Raised, hero_class};
 /// enemy player within 1000 radius", every hero's response page on Liquipedia).
 const DENY_WITNESS_RANGE: f32 = 1000.0;
 
-/// What the listener remembers between frames.
+/// What the listener remembers between frames. What the view counts (kills, last hits) is
+/// read from the view, not counted here, so that a memory started on any frame says what one
+/// started at the match's beginning says.
 #[derive(Default)]
 pub struct Memory {
     /// The seat and hero listened for: another starts the memory afresh.
     seat: Option<(SlotId, EntityId)>,
+    /// The tick of the last view listened to: a view of an earlier tick (a replay sought back)
+    /// starts the memory afresh too.
+    tick: u32,
     /// The seat's last order seen, by its tick and the order.
     order: Option<(u32, Order)>,
     /// Whether the hero stood in the last view.
@@ -30,9 +35,6 @@ pub struct Memory {
     /// assisting heroes shared (the server's rule, bota_server's `price_of_fall`); a hero that
     /// fell to a tower or a creep alone claims nothing.
     blooded: bool,
-    /// The hero's last hits so far: its creep score when the listening began, and one for each
-    /// it was told of since.
-    last_hits: u16,
 }
 
 /// Seconds of game time: since the battle began, negative before.
@@ -52,32 +54,28 @@ impl Memory {
         seat: Option<SlotId>,
         fog: &crate::fog::FogGrid,
     ) -> Vec<Raised> {
-        let Some((slot, hero)) = seat.and_then(|slot| {
-            let unit = core.view()?.player(slot)?.unit?;
-            Some((slot, unit))
+        let Some((slot, hero, tick)) = seat.and_then(|slot| {
+            let view = core.view()?;
+            Some((slot, view.player(slot)?.unit?, view.tick))
         }) else {
             *self = Memory::default();
             return Vec::new();
         };
-        if self.seat != Some((slot, hero)) {
+        if self.seat != Some((slot, hero)) || tick < self.tick {
             // A seat taken up mid-match is listened for from now: what it did before is not
             // answered, and a hero that entered battle before the battle began is not entering
-            // it now.
+            // it now. What this frame's events tell is still to be answered.
             let begun = game_time(core) >= 0.0;
-            let players = core.view().map_or(&[][..], |v| v.players.as_slice());
-            let player = players.iter().find(|p| p.slot == slot);
             *self = Memory {
                 seat: Some((slot, hero)),
                 order: last_order(core, slot, hero),
                 spawned: begun,
                 begun: Some(begun),
-                blooded: players.iter().any(|p| p.kills > 0),
-                last_hits: player
-                    .and_then(|p| p.creep_score)
-                    .map_or(0, |c| c.last_hits),
+                blooded: blooded_before(core),
                 ..Memory::default()
             };
         }
+        self.tick = tick;
         let mut raised = Vec::new();
         self.orders(core, slot, hero, &mut raised);
         self.views(core, slot, hero, &mut raised);
@@ -154,6 +152,7 @@ impl Memory {
         fog: &crate::fog::FogGrid,
         raised: &mut Vec<Raised>,
     ) {
+        let first = raised.len();
         for event in &core.told {
             let concept = match event {
                 EventKind::AbilityCast { caster, ability } if *caster == hero => {
@@ -183,6 +182,7 @@ impl Memory {
             };
             raised.extend(concept);
         }
+        count_last_hits(core, slot, &mut raised[first..]);
     }
 
     /// The concept a death raises: the hero's own death; a kill of an enemy hero it struck or
@@ -226,11 +226,47 @@ impl Memory {
         if *denied {
             return witnessed(core, hero, fog).then_some((Concept::Deny, Vec::new()));
         }
-        self.last_hits = self.last_hits.saturating_add(1);
-        Some((
-            Concept::LastHit,
-            vec![(Fact::LastHitCount, self.last_hits.to_string())],
-        ))
+        // Its count is the view's ([`count_last_hits`]).
+        Some((Concept::LastHit, Vec::new()))
+    }
+}
+
+/// Whether a kill had claimed First Blood before the last pump's events: the view's heroes
+/// hold kills that none of those events credited.
+fn blooded_before(core: &Core) -> bool {
+    let Some(view) = core.view() else {
+        return false;
+    };
+    let kills: usize = view.players.iter().map(|p| usize::from(p.kills)).sum();
+    let credited = core
+        .told
+        .iter()
+        .filter(|event| {
+            matches!(event, EventKind::Died { unit, credited_hero: Some(_), .. }
+                if hero_class(core, *unit).is_some())
+        })
+        .count();
+    kills > credited
+}
+
+/// Gives each last hit of a pump its count: the view's creep score already counts them all,
+/// the last of them as itself. A seat whose score is not told says no count.
+fn count_last_hits(core: &Core, slot: SlotId, raised: &mut [Raised]) {
+    let Some(score) = core
+        .view()
+        .and_then(|view| view.player(slot)?.creep_score)
+        .map(|score| usize::from(score.last_hits))
+    else {
+        return;
+    };
+    let hits = raised
+        .iter()
+        .filter(|(c, _)| *c == Concept::LastHit)
+        .count();
+    let mut count = score.saturating_sub(hits);
+    for (_, facts) in raised.iter_mut().filter(|(c, _)| *c == Concept::LastHit) {
+        count += 1;
+        facts.push((Fact::LastHitCount, count.to_string()));
     }
 }
 

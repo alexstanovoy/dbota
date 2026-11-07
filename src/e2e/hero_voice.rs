@@ -677,3 +677,163 @@ fn only_the_watched_seats_hero_is_asked_of_its_levels() {
         "a replay watched as no seat asks nobody"
     );
 }
+
+/// The driving seat's Shadow Fiend (levelled, invulnerable, no lane creeps) last-hits a camp of
+/// enemy creeps at the river and then kills the other seat's Shadow Fiend there: the match as a
+/// spectator recorded it, and the seat whose hero did it.
+fn kills_and_last_hits() -> (super::fog_pov::ReplayFile, bota_proto::SlotId) {
+    let mut game = super::fog_pov::Spectated::pair("0");
+    for cheat in [
+        Cheat::CreepSpawning { on: false },
+        Cheat::KillCreeps {
+            which: CreepSide::All,
+        },
+        Cheat::Invulnerable { on: true },
+        Cheat::Levels { count: 24 },
+        Cheat::Teleport {
+            at: bota_proto::Vec2::from_ints(MID.0, MID.1),
+        },
+    ] {
+        game.cheat(cheat);
+    }
+    let slot = game.driver.my_slot.expect("the driving seat");
+    let camp = (MID.0 + 300, MID.1);
+    game.cheat(Cheat::CreateCreeps {
+        enemy: true,
+        at: bota_proto::Vec2::from_ints(camp.0, camp.1),
+    });
+    game.driver.act(Intent::AttackAt {
+        at: (camp.0 as f32, camp.1 as f32),
+        unit: None,
+    });
+    game.wait("two creeps last-hit", |driver, _| {
+        driver
+            .view()
+            .and_then(|view| view.player(slot)?.creep_score)
+            .is_some_and(|score| score.last_hits >= 2)
+    });
+    let other = |driver: &bota_client_core::App| {
+        let view = driver.view()?;
+        view.unit(view.players.iter().find(|p| p.slot != slot)?.unit?)
+            .map(|u| (u.id, u.pos))
+    };
+    // Its own seat's cheat brings it: a walk from its fountain would fill the recording.
+    game.other
+        .as_mut()
+        .expect("the other seat")
+        .act(Intent::Cheat(Cheat::Teleport {
+            at: bota_proto::Vec2::from_ints(MID.0 - 200, MID.1),
+        }));
+    game.wait("the other hero come to the river", |driver, _| {
+        other(driver).is_some_and(|(_, at)| {
+            at.within(
+                bota_proto::Vec2::from_ints(MID.0, MID.1),
+                bota_proto::Fixed::from_int(600),
+            )
+        })
+    });
+    let (foe, at) = other(&game.driver).expect("the other hero");
+    game.driver.act(Intent::AttackAt {
+        at: (at.x.to_f32(), at.y.to_f32()),
+        unit: Some(foe),
+    });
+    // The recording names units as the full stream does, not as the driver's view does.
+    let fallen = game
+        .client
+        .core()
+        .view()
+        .and_then(|view| view.players.iter().find(|p| p.slot != slot)?.unit)
+        .expect("the other hero in the full stream");
+    game.until_death(fallen);
+    (game.save(), slot)
+}
+
+/// What the listener raises for `slot` while `file` plays, from the first frame `from` holds
+/// for on, each with its view's tick; `memory` is what it remembers from before.
+fn heard(
+    file: &super::fog_pov::ReplayFile,
+    slot: bota_proto::SlotId,
+    from: impl Fn(&bota_client_core::App) -> bool,
+    memory: &mut crate::hero_voice::listen::Memory,
+) -> Vec<(u32, Concept, Vec<(Fact, String)>)> {
+    use clap::Parser;
+    let path = file.path().to_str().expect("a UTF-8 path");
+    let seat = slot.0.to_string();
+    let args = crate::Args::parse_from(["dbota", "--replay", path, "--pov", &seat]);
+    let mut core = crate::session::open(&args).expect("the replay opens").0;
+    let fog = crate::fog::FogGrid::default();
+    let mut raised = Vec::new();
+    let mut listening = false;
+    // A frame a tick, and a bound far past any test's match.
+    for _ in 0..1_000_000 {
+        core.pump(1.0 / f32::from(core.tick_rate().max(1)));
+        if let Some(tick) = core.view().map(|view| view.tick) {
+            listening |= from(&core);
+            if listening {
+                let queries = memory.queries(&core, Some(slot), &fog);
+                raised.extend(queries.into_iter().map(|(c, f)| (tick, c, f)));
+            }
+        }
+        if let bota_client_core::Source::Replay(player) = &core.source
+            && (player.finished() || player.error().is_some())
+        {
+            return raised;
+        }
+    }
+    panic!("the replay never ended")
+}
+
+fn kills_and_last_hits_of(
+    raised: &[(u32, Concept, Vec<(Fact, String)>)],
+) -> Vec<&(u32, Concept, Vec<(Fact, String)>)> {
+    raised
+        .iter()
+        .filter(|(_, concept, _)| matches!(concept, Concept::Kill | Concept::LastHit))
+        .collect()
+}
+
+/// A replay heard again from its start (the view's tick going back) raises what it raised
+/// the first time, with the same facts: First Blood and the last hit counts among them.
+#[test]
+fn a_replay_heard_again_from_its_start_raises_what_it_raised() {
+    let (file, slot) = kills_and_last_hits();
+    let mut memory = crate::hero_voice::listen::Memory::default();
+    let first = heard(&file, slot, |_| true, &mut memory);
+    let told = kills_and_last_hits_of(&first);
+    assert!(
+        told.iter().any(|(_, c, facts)| *c == Concept::Kill
+            && facts.contains(&(Fact::FirstBlood, "1".to_owned()))),
+        "{told:?}"
+    );
+    assert!(
+        told.iter().any(|(_, c, facts)| *c == Concept::LastHit
+            && facts.contains(&(Fact::LastHitCount, "2".to_owned()))),
+        "{told:?}"
+    );
+    let again = heard(&file, slot, |_| true, &mut memory);
+    assert_eq!(kills_and_last_hits_of(&again), told);
+}
+
+/// Listening begun on the frame of a kill or a last hit raises it as listening from the start
+/// does: the frame's own snapshot already counts it, and it is not counted twice.
+#[test]
+fn listening_begun_on_a_kill_or_a_last_hit_raises_it_as_from_the_start() {
+    let (file, slot) = kills_and_last_hits();
+    let whole = heard(
+        &file,
+        slot,
+        |_| true,
+        &mut crate::hero_voice::listen::Memory::default(),
+    );
+    let told = kills_and_last_hits_of(&whole);
+    assert!(told.len() >= 3, "{told:?}");
+    for event in told {
+        let late = heard(
+            &file,
+            slot,
+            |core| core.view().is_some_and(|view| view.tick >= event.0),
+            &mut crate::hero_voice::listen::Memory::default(),
+        );
+        assert_eq!(kills_and_last_hits_of(&late).first(), Some(&event));
+    }
+}

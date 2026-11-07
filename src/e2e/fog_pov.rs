@@ -147,6 +147,12 @@ pub(super) struct ReplayFile {
     _server: Server,
 }
 
+impl ReplayFile {
+    pub(super) fn path(&self) -> &std::path::Path {
+        &self.path
+    }
+}
+
 impl Drop for ReplayFile {
     fn drop(&mut self) {
         let _ = std::fs::remove_file(&self.path);
