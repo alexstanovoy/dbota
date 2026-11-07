@@ -13,6 +13,7 @@ use web_sys::{File, FileReaderSync};
 use dbota_import::import::{self, IDS, Importer, MANIFEST, Plan, Sink};
 use dbota_import::pack::{Container, MAX_FILES, Pack, SliceFolder};
 use dbota_import::zip::ZipContainer;
+use dbota_import::{source, voice};
 
 /// Most files an install may hold: Dota's has ~700 packages; a folder of more is not one.
 const MAX_PACKAGES: usize = 4096;
@@ -67,7 +68,7 @@ impl Install {
     /// Adds a file; false when it is not one the importer reads (`*.vpk` at the top or in
     /// `maps/`, the typefaces of `panorama/fonts/`) or the install has too many.
     pub fn add(&mut self, path: String, file: File) -> Result<bool, JsError> {
-        if !crate::source::picked(&path) || self.count >= MAX_PACKAGES {
+        if !source::picked(&path) || self.count >= MAX_PACKAGES {
             return Ok(false);
         }
         let reader = shared_reader(&mut self.reader)?;
@@ -370,16 +371,16 @@ pub fn cache_index_header() -> String {
 /// The most bytes of a hero's voice pack: what the voice worker reads at most.
 #[wasm_bindgen]
 pub fn voice_pack_limit() -> usize {
-    crate::voice::pack::MAX_PACK_BYTES
+    voice::pack::MAX_PACK_BYTES
 }
 
 /// The records of `hero`'s voice pack, checked whole with the reader the native client uses
-/// ([`crate::voice::open`]): `[name, start, end]` each, the record's place in `bytes`. The
+/// ([`voice::open`]): `[name, start, end]` each, the record's place in `bytes`. The
 /// voice worker hands each record to the page by itself.
 #[wasm_bindgen]
 pub fn voice_pack_records(hero: &str, bytes: &[u8]) -> Result<Array, JsError> {
-    crate::voice::open(hero, bytes).map_err(|why| JsError::new(&why))?;
-    let records = crate::voice::pack::read(bytes).map_err(|why| JsError::new(&why.to_string()))?;
+    voice::open(hero, bytes).map_err(|why| JsError::new(&why))?;
+    let records = voice::pack::read(bytes).map_err(|why| JsError::new(&why.to_string()))?;
     Ok(records
         .into_iter()
         .map(|record| {

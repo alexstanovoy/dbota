@@ -1,13 +1,15 @@
 """The voice worker reads a served hero's voice pack within the pack's own bound: a pack served
 larger than that (or without end) is given up at the bound, not read whole into the worker's memory.
 
-Build the release importer with its web feature and wasm-bindgen into DBOTA_INDEX_PAGE/import, and
-copy web/cache.js, web/busy.js and web/voice_worker.js beside it. No game or install is needed.
+Build dbota_import_web and run wasm-bindgen into DBOTA_INDEX_PAGE/import, and copy web/cache.js,
+web/busy.js and web/voice_worker.js beside it. No game or install is needed.
 """
 import functools
 import http.server
+import json
 import os
 import pathlib
+import struct
 import threading
 import unittest
 
@@ -56,6 +58,38 @@ class VoiceWorkerTests(unittest.TestCase):
         cls.server.shutdown()
         cls.server.server_close()
         cls.thread.join(timeout=5)
+
+    def test_browser_voice_records_return_the_checked_records_byte_ranges(self):
+        rules = json.dumps({"hero": "pudge", "class": "npc_dota_hero_pudge", "criteria": [],
+                            "rules": [], "events": [], "pruned": {}}).encode()
+        records = [(b"rules.json", rules), (b"events.txt", b"")]
+        pack = bytearray(b"DBVOICE\x01" + struct.pack("<I", len(records)))
+        expected = []
+        for name, data in records:
+            pack.extend(struct.pack("<H", len(name)) + name + struct.pack("<I", len(data)))
+            start = len(pack)
+            pack.extend(data)
+            expected.append([name.decode(), start, len(pack)])
+        result = self.page.evaluate("""async (bytes) => {
+          const module = await import('./import/dbota_import.js');
+          await module.default();
+          return module.voice_pack_records('pudge', new Uint8Array(bytes));
+        }""", list(pack))
+        self.assertEqual(result, expected)
+
+    def test_browser_voice_records_reject_a_pack_with_the_native_readers_error(self):
+        error = self.page.evaluate("""async () => {
+          const module = await import('./import/dbota_import.js');
+          await module.default();
+          try {
+            module.voice_pack_records('pudge', new Uint8Array([0, 1, 2, 3]));
+          } catch (error) {
+            return error.message;
+          }
+          return null;
+        }""")
+        self.assertEqual(error, "not a voice pack of this build (made by another dbota build of "
+                         "the same import revision?): import the assets again")
 
     def test_a_served_pack_past_its_bound_is_refused_by_the_worker(self):
         # What the worker ends with, not what the server managed to push into socket buffers before
