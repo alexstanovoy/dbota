@@ -905,6 +905,10 @@ const KNOWN_VARIABLES: &[(&str, &str)] = &[
         "a test names a folder for screenshots to keep",
     ),
     (
+        "DBOTA_TEST_ARTIFACTS",
+        "a test names a folder to keep the match records of its runs in",
+    ),
+    (
         "DBOTA_QUIT_SHOTS",
         "a test names a folder for screenshots to keep",
     ),
@@ -929,6 +933,7 @@ const KNOWN_VARIABLES: &[(&str, &str)] = &[
     ("DBOTA_MANAGED_CACHE_CHILD", CHILD_MARKER),
     ("DBOTA_SERVER_SCRUB_CHILD", CHILD_MARKER),
     ("DBOTA_PLAY_SCRIPT_CHILD", CHILD_MARKER),
+    ("DBOTA_TEST_SHIELD_STACK_CHILD", CHILD_MARKER),
     (
         "DBOTA_IMPORTED",
         "the importer's tests name an imported cache to read",
