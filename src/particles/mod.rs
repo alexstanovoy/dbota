@@ -9,7 +9,7 @@ use bevy::{
 
 use crate::{camera::RtsCamera, manifest::Manifest};
 #[cfg(test)]
-pub(crate) use dbota_particles::{Effect, ParticleFrame};
+pub(crate) use dbota_particles::{BODY, Effect, ParticleFrame};
 pub use dbota_particles::{Handle, Library, Step as Simulation};
 pub use playing::{EffectSight, Playing};
 
@@ -38,7 +38,9 @@ pub fn plugin(app: &mut App) {
         .add_systems(Update, warm_models.after(dbota_particles::LoadModels))
         .add_systems(
             PostUpdate,
-            tick.after(TransformSystems::Propagate).in_set(Simulation),
+            tick.after(TransformSystems::Propagate)
+                .after(crate::portrait::Aimed)
+                .in_set(Simulation),
         )
         .add_systems(
             PostUpdate,
@@ -97,6 +99,8 @@ pub(crate) fn tick(
     sight: crate::fog::EventSight,
     ground: Res<crate::map::Ground>,
     camera: Query<(&GlobalTransform, &Frustum), With<RtsCamera>>,
+    portrait: Query<(&GlobalTransform, &Frustum), With<crate::portrait::PortraitCamera>>,
+    stage: Option<Res<crate::portrait::Stage>>,
     mut playing: ResMut<Playing>,
     library: Option<Res<Library>>,
     mut frame: ResMut<dbota_particles::ParticleFrame>,
@@ -113,6 +117,14 @@ pub(crate) fn tick(
         height,
         library.as_deref(),
         camera.single().ok(),
+        portrait
+            .single()
+            .ok()
+            .filter(|_| stage.is_some_and(|stage| stage.drawing()))
+            .map(|camera| dbota_particles::StageView {
+                camera,
+                layer: crate::portrait::LAYER,
+            }),
         &mut frame,
         crate::map::UNITS_PER_METRE,
         &sight,

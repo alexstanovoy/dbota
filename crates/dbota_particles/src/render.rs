@@ -6,6 +6,7 @@ use std::ops::Range;
 
 use bevy::{
     asset::{embedded_asset, load_embedded_asset},
+    camera::visibility::RenderLayers,
     core_pipeline::core_3d::{CORE_3D_DEPTH_FORMAT, Transparent3d, TransparentSortingInfo3d},
     ecs::{
         query::ROQueryItem,
@@ -39,6 +40,7 @@ use super::models::Placed;
 pub struct ParticleFrame {
     pub quads: Vec<Quad>,
     pub batches: Vec<Batch>,
+    pub(super) stage_layer: Option<RenderLayers>,
     /// The camera in particle coordinates, used to select the strongest lights.
     pub(super) eye: Option<Vec3>,
     /// Lights gathered this frame, retained for their allocation capacity.
@@ -54,6 +56,9 @@ pub struct Batch {
     pub look: u16,
     pub range: Range<u32>,
     pub center: Vec3,
+    /// Cards of the portrait's stage: drawn by the views on its layer alone, and those
+    /// views draw no others.
+    pub stage: bool,
 }
 
 /// The looks in the render world: each texture's image and blend.
@@ -71,6 +76,7 @@ struct Looks {
 struct Buffers {
     instances: RawBufferVec<Quad>,
     batches: Vec<Batch>,
+    stage_layer: Option<RenderLayers>,
 }
 
 /// One render entity per batch slot, so a phase item can name its batch.
@@ -180,6 +186,7 @@ fn init(
     commands.insert_resource(Buffers {
         instances: RawBufferVec::new(BufferUsages::VERTEX),
         batches: Vec::new(),
+        stage_layer: None,
     });
     let slots = (0..MAX_LOOKS)
         .map(|i| commands.spawn(Slot(i)).id())
@@ -318,6 +325,7 @@ fn extract(
     }
     buffers.batches.clear();
     buffers.batches.extend_from_slice(&frame.batches);
+    buffers.stage_layer.clone_from(&frame.stage_layer);
     let _ = &mut commands;
 }
 
@@ -368,11 +376,14 @@ fn queue(
     looks: Res<Looks>,
     slots: Res<Slots>,
     mut phases: ResMut<ViewSortedRenderPhases<Transparent3d>>,
-    views: Query<&ExtractedView>,
+    views: Query<(&ExtractedView, Option<&RenderLayers>)>,
     view_keys: Res<ViewKeyCache>,
 ) -> Result<(), BevyError> {
     let draw = draw_functions.read().id::<DrawParticles>();
-    for view in &views {
+    let stage_layer = buffers.stage_layer.as_ref();
+    for (view, layers) in &views {
+        let stage_view =
+            stage_layer.is_some_and(|stage| layers.is_some_and(|layers| layers.intersects(stage)));
         let (Some(phase), Some(&view_key)) = (
             phases.get_mut(&view.retained_view_entity),
             view_keys.get(&view.retained_view_entity),
@@ -392,6 +403,9 @@ fn queue(
             )?;
         }
         for (slot, batch) in buffers.batches.iter().enumerate() {
+            if batch.stage != stage_view {
+                continue;
+            }
             let look = usize::from(batch.look);
             let Some(&(_, _, modulate, depth_test)) = looks.list.get(look) else {
                 continue;

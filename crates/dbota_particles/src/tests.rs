@@ -1185,3 +1185,46 @@ fn resetting_the_simulation_retires_previous_match_handles() {
         "the new match's effect is live"
     );
 }
+
+/// The portrait's effects step on the frames the portrait is drawn, by the time since; a
+/// portrait not drawn for long (another unit shown, or none) owes them no more than
+/// `STAGE_OWED_MAX`, stepped as the world's effects are, by the portrait's frame at most, so
+/// their clock moves no further than their particles do.
+#[test]
+fn a_portrait_effect_long_undrawn_steps_no_more_than_it_may_owe() {
+    bevy::tasks::ComputeTaskPool::get_or_init(bevy::tasks::TaskPool::default);
+    let mut playing = super::Simulation::default();
+    let handle = playing.hold_on_stage(&missile(), 1).expect("started");
+    playing.advance(1.0 / 60.0, Some(5.0), None);
+    let instance = playing.get_mut(handle).expect("still playing");
+    assert!(
+        (instance.world_time - super::plugin::STAGE_OWED_MAX).abs() < 1e-4,
+        "stepped {} s",
+        instance.world_time
+    );
+}
+
+/// An effect played on the portrait's stage and ended goes to the spares; started again in the
+/// world it is the world's, and each start is counted where it was made.
+#[test]
+fn a_spare_of_the_stage_started_in_the_world_plays_in_the_world() {
+    bevy::tasks::ComputeTaskPool::get_or_init(bevy::tasks::TaskPool::default);
+    let effect = missile();
+    let mut playing = super::Simulation::default();
+    let staged = playing.hold_on_stage(&effect, 1).expect("started");
+    playing.get_mut(staged).expect("playing").end();
+    for _ in 0..600 {
+        playing.advance(1.0 / 60.0, Some(1.0 / 60.0), None);
+    }
+    assert!(
+        playing.get_mut(staged).is_none(),
+        "the stage's effect finished"
+    );
+    let world = playing.start(&effect, 2).expect("started");
+    assert!(
+        !playing.get_mut(world).expect("playing").portrait,
+        "the world's"
+    );
+    assert_eq!(playing.started(&effect), 1);
+    assert_eq!(playing.started_on_stage(&effect), 1);
+}

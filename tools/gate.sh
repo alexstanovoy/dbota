@@ -131,10 +131,10 @@ assets() {
     fi
     tail -n 5 "$logs/import.log"
     if [ "${GATE_LEAN:-0}" != 1 ]; then
-        echo "no usable Dota 2 install: the install tests, the visual check and the browser checks cannot run (full output: $logs/import.log)"
+        echo "dbota import failed (no usable Dota 2 install, or its own fault: see above); the install tests, visual check and browser checks cannot run (full output: $logs/import.log)"
         return 1
     fi
-    echo "no usable Dota 2 install: the tests that need the cache fail"
+    echo "dbota import failed (no usable Dota 2 install, or its own fault: see above): the tests that need the cache fail"
     skipped=1
 }
 step assets assets

@@ -313,16 +313,49 @@ fn to_vec(what: &'static str, value: &Json) -> Result<Vec<u8>> {
     })
 }
 
-/// `models/portraits.txt`: a line per framing, `<logical> <numbers...> <background>`: camera
+/// What a refused entry's line of `models/portraits.txt` starts with.
+pub const REFUSED: &str = "# refused ";
+/// What the line of a background left out of a framing starts with.
+pub const LEFT_OUT: &str = "# left out ";
+
+/// The first line of `models/portraits.txt`: the layout of its lines, which the client reads no
+/// other of (a cache of another layout under the same importer revision is refused, not misread).
+/// 3: the refused entries' and left-out backgrounds' lines, which a cache of 2 lacks (and would
+/// never warn of).
+pub const PORTRAITS_LAYOUT: &str = "dbota-portraits 3";
+
+/// `models/portraits.txt`: after [`PORTRAITS_LAYOUT`], a line per framing, `<logical> <numbers...> <background>`: camera
 /// position and angles in the model's own inches and degrees, horizontal field of view, far
 /// plane, the light's position, angles and field of view, light colour and ambient colour as
-/// 0-255, the light's and the ambient colour's scales, the background's four corner tints as
-/// 0-1 (top left, top right, bottom right, bottom left), and the background image's cache path,
+/// 0-255, the light's and the ambient colour's scales, the light's distance, the shadow colour
+/// (0-255) and its scale, the way the ambient light goes, whether the portrait hides the model's
+/// particles (1) or shows them (0), the background's four corner tints (top left, top right,
+/// bottom right, bottom left; what the image is multiplied by, 0-4 a channel, 1 leaving it as it
+/// is), and the background image's cache path,
 /// `-` where there is none. `image` names the cache path a background material's image was
 /// written to, if it was.
-pub fn portraits_txt(framed: &[Framing], image: impl Fn(&str) -> Option<String>) -> String {
-    let mut out = String::from(
-        "# logical, camera position (3), camera angles (3), fov, far, light position (3), light angles (3), light fov, light colour (3), ambient colour (3), light scale, ambient scale, background tints (4x3), background image\n",
+/// The entries refused are written too, each as `# refused <label> <why>`, and the backgrounds
+/// left out as `# left out <label> <why>` (each on one line), so the client says which model it
+/// frames by its bounds, or stands on no background, and why, whenever it loads them.
+pub fn portraits_txt(
+    framed: &[Framing],
+    (refused, left_out): (&[heatel::portraits::Refusal], &[heatel::portraits::Refusal]),
+    image: impl Fn(&str) -> Option<String>,
+) -> String {
+    let mut out = format!("{PORTRAITS_LAYOUT}\n");
+    // Each on its one line, whatever it holds.
+    let one_line = |text: &str| -> String {
+        text.chars()
+            .map(|c| if c.is_control() { ' ' } else { c })
+            .collect()
+    };
+    let lines = refused.iter().map(|r| (REFUSED, r));
+    for (start, r) in lines.chain(left_out.iter().map(|r| (LEFT_OUT, r))) {
+        let (label, why) = (one_line(&r.label), one_line(&r.why));
+        out.push_str(&format!("{start}{label} {why}\n"));
+    }
+    out.push_str(
+        "# logical, camera position (3), camera angles (3), fov, far, light position (3), light angles (3), light fov, light colour (3), ambient colour (3), light scale, ambient scale, light distance, shadow colour (3), shadow scale, ambient direction (3), hide particles, background tints (4x3), background image\n",
     );
     for f in framed {
         out.push_str(&f.label);
@@ -340,7 +373,11 @@ pub fn portraits_txt(framed: &[Framing], image: impl Fn(&str) -> Option<String>)
             &[l.fov],
             &l.color,
             &l.ambient,
-            &[l.scale, l.ambient_scale],
+            &[l.scale, l.ambient_scale, l.distance],
+            &l.shadow,
+            &[l.shadow_scale],
+            &l.ambient_direction,
+            &[f32::from(u8::from(f.hide_particles))],
             tints.as_flattened(),
         ];
         for n in numbers.concat() {
@@ -1295,6 +1332,10 @@ mod tests {
         "PortraitLightPosition" "1 2 3"
         "PortraitLightAngles" "49.61 263.39 0.00"
         "PortraitLightFOV" "90"
+        "PortraitLightDistance" "195"
+        "PortraitShadowColor" "111 97 93"
+        "PortraitShadowScale" "2"
+        "PortraitAmbientDirection" "-80.37 -163.95 25.75"
         "PortraitLightColor" "231 254 187"
         "PortraitAmbientColor" "97 114 0"
         "PortraitLightScale" "2.8"
@@ -1308,16 +1349,35 @@ mod tests {
     /// The line the client's `cache_text::framing` reads: every number in its place.
     #[test]
     fn a_framing_line_lists_the_camera_light_and_background() {
-        let framed = framings(FILE.as_bytes(), &[("a", "models/a.vmdl")]).unwrap();
-        let out = portraits_txt(&framed, |vmat| Some(background_png(vmat)));
-        let line = out.lines().find(|l| !l.starts_with('#')).unwrap();
+        let framed = framings(FILE.as_bytes(), &[("a", "models/a.vmdl")])
+            .unwrap()
+            .framings;
+        let out = portraits_txt(&framed, (&[], &[]), |vmat| Some(background_png(vmat)));
+        assert_eq!(out.lines().next(), Some(super::PORTRAITS_LAYOUT));
+        let line = out.lines().skip(1).find(|l| !l.starts_with('#')).unwrap();
         assert_eq!(
             line,
             "a 162.31 63.73 144.54 2.75 199.94 0 25 10000 1 2 3 49.61 263.39 0 90 231 254 187 97 114 0 \
-             2.8 5 1 1 1 1 1 1 0.8 0.2 0.1 1 1 1 models/portrait_backgrounds/portraitbackground_desert.png"
+             2.8 5 195 111 97 93 2 -80.37 -163.95 25.75 0 \
+             1 1 1 1 1 1 0.8 0.2 0.1 1 1 1 models/portrait_backgrounds/portraitbackground_desert.png"
         );
-        let out = portraits_txt(&framed, |_| None);
+        let out = portraits_txt(&framed, (&[], &[]), |_| None);
         assert!(out.trim_end().ends_with(" -"), "no image, no path: {out}");
+        let refused = [heatel::portraits::Refusal {
+            label: "hero.b\n.model".to_owned(),
+            why: "PortraitFar 8 is not past 8\nand more".to_owned(),
+        }];
+        let out = portraits_txt(&framed, (&refused, &refused), |_| None);
+        assert!(
+            out.lines()
+                .any(|l| l == "# refused hero.b .model PortraitFar 8 is not past 8 and more"),
+            "a refused entry has its line: {out}"
+        );
+        assert!(
+            out.lines()
+                .any(|l| l == "# left out hero.b .model PortraitFar 8 is not past 8 and more"),
+            "a background left out has its line: {out}"
+        );
     }
 
     /// The lines the client's ambient reader takes: a night-only effect, a control point, and

@@ -101,6 +101,8 @@ struct Frame {
 pub struct Instance {
     pub effect: Arc<Effect>,
     pub nodes: Vec<Node>,
+    /// Drawn only by the host's separate stage view, without world ground or lights.
+    pub portrait: bool,
     /// Presentation opacity, independent of the imported particle simulation.
     pub(crate) presentation_opacity: f32,
     life: f32,
@@ -174,6 +176,7 @@ impl Instance {
         Self {
             effect,
             nodes,
+            portrait: false,
             presentation_opacity: 1.0,
             life: 0.0,
             held: false,
@@ -251,6 +254,22 @@ impl Instance {
                 play_end_cap: true,
             },
         );
+    }
+
+    /// Every live particle of every system: its system's index in the effect, where it is (the
+    /// particles' frame, Z up) and its age.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn particles(&self) -> Vec<(usize, Vec3, f32)> {
+        let mut out = Vec::new();
+        for node in &self.nodes {
+            let parts = &node.parts;
+            for i in 0..parts.len() {
+                let at = parts.vectors[super::store::POSITION][i];
+                let age = node.age - parts.scalars[super::store::CREATION][i];
+                out.push((node.def, at, age));
+            }
+        }
+        out
     }
 
     /// Whether the emitter ended while any remaining particles finish their tails.

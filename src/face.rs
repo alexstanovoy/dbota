@@ -4,10 +4,22 @@
 //! by the mesh's flex rules.
 //!
 //! The order is Source's: a scene's flex animation events lay their tracks over the controllers
-//! by their ramp's weight; the line's morph curves are laid over them the same way; its
-//! phonemes are added on top (`C_BaseFlex::AddVisemesForSentence`: a box filter of
+//! by their ramp's weight; the line's morph curves and its phonemes are added on top (the
+//! phonemes as `C_BaseFlex::AddVisemesForSentence` adds them: a box filter of
 //! [`PHONEME_FILTER`] seconds over the phonemes, each adding its table row); the sums are held
 //! within each controller's range and the rules turn them into flex weights.
+//!
+//! A line's morph curves are added, not laid over. Valve's source of how Source 2 blends
+//! `CAudioMorphData` is not public; its data settles it: the class's defaults ease a line in and
+//! out over 0.2 s, yet Dota's lines set both eases to 0, and every one of the 33 lines with curves
+//! in this install starts them at each controller's rest (0 of a one-sided controller, the middle
+//! of a two-sided one; within 0.03 of it at the first key) and 26 end there. Laid over the idle
+//! expression with no ease, every line would snap the face from the expression to that rest as
+//! it starts and back as it ends; added, as Source adds a line's phonemes, it starts and ends on
+//! the speaker's own face. Each line's curves also begin with a key before the sound (at -0.02 s,
+//! every controller at 0 of its range, so shut eyes for the two-sided `eyeClosedAndLidRaiser`):
+//! no moment of the line heard is at that key; the line rises from rest at its start to its first
+//! key heard instead.
 //!
 //! Any program of the user's may write the cache: a file that does not read is no face, lists
 //! are capped, numbers must be finite. Plain types only: the fuzz target takes this file as it is.
@@ -156,7 +168,7 @@ impl Lipsync {
         phonemes.chain(curves).fold(0.0, f32::max)
     }
 
-    /// Lays the line's face `t` seconds into it over `controls`: its curves (denormalized by
+    /// Adds the line's face `t` seconds into it to `controls`: its curves (denormalized by
     /// `ranges`, a controller no mesh has being skipped), then its phonemes.
     pub fn apply(
         &self,
@@ -222,13 +234,25 @@ fn emphasis_amount(e: f32) -> f32 {
 }
 
 impl Curves {
+    /// Adds the curves' values `t` seconds into the line, each in its controller's units, to
+    /// `controls`, weighed by the eases. Keys before the line's start stand for its rest at the
+    /// start (see the module's words): from 0 to its first key heard the line rises from rest.
     fn apply(&self, t: f32, ranges: &HashMap<u32, (f32, f32)>, controls: &mut Controls) {
-        let (Some(&first), Some(&last)) = (self.times.first(), self.times.last()) else {
+        let from = self.times.partition_point(|&k| k < 0.0);
+        let (times, values) = (&self.times[from..], &self.values[from..]);
+        let (Some(&first), Some(&last)) = (times.first(), times.last()) else {
             return;
         };
-        if t < first || t > last {
+        // A line with a key before the sound starts at the sound's start (0), else at its first.
+        let start = if from > 0 { 0.0 } else { first };
+        if t < start || t > last {
             return;
         }
+        let rise = if t < first && first > 0.0 {
+            t / first
+        } else {
+            1.0
+        };
         let ease = |span: f32, into: f32| {
             if span > 0.0 {
                 (into / span).clamp(0.0, 1.0)
@@ -236,15 +260,14 @@ impl Curves {
                 1.0
             }
         };
-        let weight = ease(self.ease_in, t - first) * ease(self.ease_out, last - t);
-        let i = self
-            .times
-            .partition_point(|&k| k <= t)
-            .clamp(1, self.times.len());
-        let (a, b) = (i - 1, i.min(self.times.len() - 1));
-        let span = self.times[b] - self.times[a];
+        // The ease in runs from the line's start, over its rise too.
+        let weight = rise * ease(self.ease_in, t - start) * ease(self.ease_out, last - t);
+        let i = times.partition_point(|&k| k <= t).clamp(1, times.len());
+        let (a, b) = (i - 1, i.min(times.len() - 1));
+        let span = times[b] - times[a];
+        // Before the first key heard (rising), the first key's values.
         let f = if span > 0.0 {
-            (t - self.times[a]) / span
+            ((t - times[a]) / span).max(0.0)
         } else {
             0.0
         };
@@ -252,13 +275,9 @@ impl Curves {
             let Some(&(min, max)) = ranges.get(&name) else {
                 continue;
             };
-            let v = self.values[a][c] + (self.values[b][c] - self.values[a][c]) * f;
-            lay(
-                controls,
-                name,
-                min + v.clamp(0.0, 1.0) * (max - min),
-                weight,
-            );
+            let v = values[a][c] + (values[b][c] - values[a][c]) * f;
+            let value = min + v.clamp(0.0, 1.0) * (max - min);
+            *controls.entry(name).or_insert(0.0) += value * weight;
         }
     }
 }
@@ -603,4 +622,60 @@ fn balanced(ops: &[Op]) -> bool {
         };
     }
     depth == 1
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Controls, Lipsync, Phonemes};
+    use std::collections::HashMap;
+
+    /// A line of one one-sided controller (token 7): a key before the sound at 0, then 1 at
+    /// 0.02 s held to 1 s, easing in over `ease_in`.
+    fn line(ease_in: f32, pre_roll: bool) -> Lipsync {
+        let pre = if pre_roll { "key -0.02 0\n" } else { "" };
+        let text = format!("dbota-lipsync 1\nmorph {ease_in} 0 7\n{pre}key 0.02 1\nkey 1 1\n");
+        Lipsync::parse(&text).expect("a lip sync")
+    }
+
+    fn at(line: &Lipsync, t: f32) -> f32 {
+        let ranges = HashMap::from([(7, (0.0, 1.0))]);
+        let mut controls = Controls::new();
+        line.apply(t, &Phonemes::default(), &ranges, &mut controls);
+        controls.get(&7).copied().unwrap_or(0.0)
+    }
+
+    #[test]
+    fn a_line_rises_from_rest_at_its_start_to_its_first_key_heard() {
+        let rising = line(0.0, true);
+        assert_eq!(at(&rising, -0.01), 0.0, "nothing before the sound");
+        assert_eq!(
+            at(&rising, 0.0),
+            0.0,
+            "rest at the start, not the key before it"
+        );
+        assert!((at(&rising, 0.01) - 0.5).abs() < 1e-6);
+        assert!((at(&rising, 0.02) - 1.0).abs() < 1e-6);
+        let keyed = line(0.0, false);
+        assert_eq!(
+            at(&keyed, 0.01),
+            0.0,
+            "a line with no key before the sound starts at its first"
+        );
+    }
+
+    #[test]
+    fn an_ease_in_eases_the_rise_from_the_lines_start_and_cancels_none_of_it() {
+        let eased = line(0.1, true);
+        assert_eq!(at(&eased, 0.0), 0.0);
+        let early = at(&eased, 0.01);
+        assert!(
+            (early - 0.5 * 0.1).abs() < 1e-6,
+            "half risen, a tenth eased: {early}"
+        );
+        assert!(
+            (at(&eased, 0.05) - 0.5).abs() < 1e-6,
+            "past the first key, half eased"
+        );
+        assert!((at(&eased, 0.2) - 1.0).abs() < 1e-6, "eased in whole");
+    }
 }

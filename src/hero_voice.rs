@@ -113,6 +113,12 @@ impl Resident {
     pub fn speaking_until(&self) -> f64 {
         self.history.speaking_until()
     }
+
+    /// Whether a chosen line still waits for its authored delay, before it reaches Speech.
+    #[cfg(test)]
+    pub fn has_pending_line(&self) -> bool {
+        self.waiting.is_some()
+    }
 }
 
 impl HeroVoice {

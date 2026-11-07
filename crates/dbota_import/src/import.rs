@@ -52,7 +52,7 @@ pub const LAST_USE_TEXT: &str = "dbota last use 1\n";
 pub const MAX_STAMP: u64 = 4096;
 
 /// Bumped when the importer's output changes for the same install; part of a cache's stamp.
-pub const IMPORT_REV: u32 = 45;
+pub const IMPORT_REV: u32 = 46;
 
 /// The manifest this build imports and draws, and its ids.
 pub const MANIFEST: &str = include_str!("../../../assets-manifest/manifest.txt");
@@ -107,6 +107,8 @@ pub fn stamped_here(stamp: &str) -> bool {
         .is_some_and(|rest| rest.starts_with('/'))
 }
 
+/// Where the portrait framings are in a cache.
+pub const PORTRAITS_FILE: &str = "models/portraits.txt";
 /// Names what an import of this plan makes (FNV-1a 64 of the plan's typed items): part of a
 /// cache's stamp, so a cache made from another plan is stale even from the same install.
 pub fn plan_id(plan: &Plan) -> String {
@@ -1815,6 +1817,9 @@ pub fn lipsync_path(sound: &str) -> String {
     format!("{stem}.lipsync.txt")
 }
 
+/// The label of `portraits.txt`'s `default` entry in the cache's framings.
+pub const DEFAULT_FRAMING: &str = "portrait.default";
+
 /// `portraits.txt` from Dota's `portraits.txt`, after the background images it names.
 fn portraits(
     src: &impl Source,
@@ -1824,11 +1829,20 @@ fn portraits(
     models: &[(String, String)],
     out: &mut Out<'_>,
 ) -> Result<()> {
+    // The file's own `default` entry too: the client lights a model Dota has no entry for by
+    // it.
     let wanted: Vec<(&str, &str)> = models
         .iter()
         .map(|(logical, vmdl)| (logical.as_str(), vmdl.as_str()))
+        .chain([(DEFAULT_FRAMING, "default")])
         .collect();
-    let framed = framings(&read_from(src, &[pak], path)?, &wanted)?;
+    let read = framings(&read_from(src, &[pak], path)?, &wanted)?;
+    // An entry that does not read, or a background, is reported by its model and key; the
+    // others are written.
+    for why in read.refused.iter().chain(&read.left_out) {
+        out.report.failed.push((path.to_owned(), why.to_string()));
+    }
+    let framed = &read.framings;
     let mut written = HashSet::new();
     for vmat in framed
         .iter()
@@ -1846,7 +1860,7 @@ fn portraits(
             Err(err) => out.report.failed.push((vmat.clone(), err.to_string())),
         }
     }
-    let text = portraits_txt(&framed, |vmat| {
+    let text = portraits_txt(framed, (&read.refused, &read.left_out), |vmat| {
         written.contains(vmat).then(|| background_png(vmat))
     });
     out.put(dest, text.as_bytes())
@@ -2380,3 +2394,4 @@ mod particle_model_tests {
         );
     }
 }
+

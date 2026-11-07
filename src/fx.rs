@@ -7,6 +7,7 @@
 
 mod flies;
 pub mod line;
+pub mod portrait;
 pub mod rules;
 mod told;
 mod worn;
@@ -41,6 +42,7 @@ pub fn plugin(app: &mut App) {
         rules::plugin,
         told::plugin,
         worn::plugin,
+        portrait::plugin,
         flies::plugin,
     ));
 }

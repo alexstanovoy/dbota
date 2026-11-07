@@ -43,8 +43,9 @@ pub struct Lighting {
 
 /// Numbers of a framing line before its background: camera position and angles, field of
 /// view, far plane, light position, angles and field of view, light colour, ambient colour,
-/// light scale and ambient scale.
-pub const FRAMING_NUMBERS: usize = 23;
+/// light scale and ambient scale, light distance, shadow colour and scale, ambient direction,
+/// whether the particles are hidden.
+pub const FRAMING_NUMBERS: usize = 32;
 
 /// A line of `models/portraits.txt`: a model's framing, and its background's image in the
 /// cache with the background's four corner tints (rgb each), when it has one.
@@ -157,7 +158,8 @@ pub fn framing(line: &str) -> Option<FramingLine> {
     }
     let mut words = line.split_whitespace();
     let logical = words.next()?.to_owned();
-    let words: Vec<&str> = words.collect();
+    // The numbers, twelve tints and a path: no more is read.
+    let words: Vec<&str> = words.take(FRAMING_NUMBERS + 13).collect();
     let numbers_part = words.get(..FRAMING_NUMBERS)?;
     let background = match &words[FRAMING_NUMBERS..] {
         [tints @ .., path]

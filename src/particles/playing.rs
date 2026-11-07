@@ -61,6 +61,18 @@ impl Playing {
         Some(handle)
     }
 
+    pub fn hold_on_stage(&mut self, effect: &Arc<Effect>, seed: u32) -> Option<Handle> {
+        let handle = self.simulation.hold_on_stage(effect, seed)?;
+        self.presentation.insert(
+            handle,
+            Presentation {
+                sight: EffectSight::Public,
+                flight: None,
+            },
+        );
+        Some(handle)
+    }
+
     pub fn get_mut(&mut self, handle: Handle) -> Option<&mut Instance> {
         self.simulation.get_mut(handle)
     }
@@ -141,6 +153,7 @@ impl Playing {
         height: Option<dbota_particles::HeightAt<'_>>,
         library: Option<&Library>,
         camera: Option<(&GlobalTransform, &Frustum)>,
+        stage: Option<dbota_particles::StageView<'_>>,
         frame: &mut ParticleFrame,
         units_per_metre: f32,
         sight: &crate::fog::EventSight,
@@ -154,6 +167,7 @@ impl Playing {
             height,
             library,
             camera,
+            stage,
             frame,
             units_per_metre,
             &|handle, instance| {
@@ -163,6 +177,18 @@ impl Playing {
             },
         );
         presentation.retain(|handle, _| simulation.contains(*handle));
+    }
+
+    #[cfg(test)]
+    pub fn advance(
+        &mut self,
+        dt: f32,
+        stage_dt: Option<f32>,
+        ground: Option<dbota_particles::HeightAt<'_>>,
+    ) {
+        self.simulation.advance_for_test(dt, stage_dt, ground);
+        self.presentation
+            .retain(|handle, _| self.simulation.contains(*handle));
     }
 
     #[cfg(test)]

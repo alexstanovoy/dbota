@@ -7,16 +7,32 @@
 //! once, in its idle pose, and kept.
 //!
 //! Either render is of a copy of the model alone on a stage of its own: a
-//! render layer only the portrait camera and its light see, so the camera
+//! render layer only the portrait camera and its lights see, so the camera
 //! draws neither the world nor its shadows or fog, and the copy is never in
 //! the main camera's view, its queries or its bars. The camera stays off
 //! while the main world works out visibility and the sun's cascades, and is
 //! switched on afterwards (on the frames it draws) with the stage's meshes
 //! as all it sees: no pass over the world's entities is made for it, and no
-//! shadow cascade (its light casts none). The camera is aimed
-//! by the framing the cache holds for the model (or by the model's bounds
+//! shadow cascade (its lights cast none). The camera is aimed and the model
+//! lit by the framing the cache holds for the model (or by the model's bounds
 //! where Dota has none), and the panel lays the render over the model's
 //! background, tinted at its corners as Dota tints it, or a plain dark one.
+//!
+//! Dota lights a portrait with its entry of `portraits.txt`: a spot light (its
+//! place, angles, cone, colour and scale), and an ambient light that comes
+//! from a side (`PortraitAmbientDirection`, the older file's
+//! `PortraitAmbientOrigin` with its signs turned): the side it comes from gets
+//! the ambient colour, the side turned from it the shadow colour, each by its
+//! scale. Here the spot is a light along its angles, its colour times its
+//! scale; every side gets the shadow colour (the ambient light) and the side
+//! the ambient light comes from the rest of the ambient colour (a directional
+//! light along its way), as Source's ambient cube is filled from those two
+//! colours. Both lights are directional: a light only this view sees, drawn
+//! now and then, has no clusters of its own frames before, so a spot (which
+//! is clustered) lights nothing on the frames the portrait is drawn; the
+//! spot's cone (75 to 90 degrees across for a hero) takes in the whole bust
+//! either way. The spot's place and falloff, the specular tint and the ground
+//! shadow are not drawn.
 
 use std::collections::HashMap;
 
@@ -45,6 +61,7 @@ use crate::manifest::Manifest;
 use crate::session::Session;
 use crate::talk::{Face, Faces, Speech};
 use crate::units::{ModelBank, ModelOf, Posable, Scenes, Unit, UnitIndex, Wearable};
+use dbota_import::import::DEFAULT_FRAMING;
 
 /// Pixels of the portrait's image: twice the panel's frame, of its shape,
 /// so a render fills the frame whole.
@@ -52,13 +69,79 @@ const SIZE: (u32, u32) = (
     (crate::hud::PORTRAIT.0 * 2.0) as u32,
     (crate::hud::PORTRAIT.1 * 2.0) as u32,
 );
-/// The layer only the portrait camera, its light and the model on its stage
-/// are on.
-const LAYER: usize = 2;
-/// Lux of the portrait light per unit of Dota's light scale.
-const LIGHT_LUX: f32 = 2_800.0;
-/// Brightness of the ambient colour per unit of Dota's ambient scale.
-const AMBIENT: f32 = 75.0;
+/// The layer only the portrait camera, its lights, the model on its stage and
+/// the cards of its effects are on.
+pub(crate) const LAYER: usize = 2;
+/// The one free number of the portrait's lighting, its exposure: the light a
+/// white matte surface sends back (cd/m²) from one unit of Dota's light, a
+/// colour channel at 255 times its scale. Every light is set from it by
+/// Bevy's own equations (see [`ILLUMINANCE`] and [`AMBIENT_GAIN`]), so the
+/// shares Dota's numbers give each light are the shares drawn.
+const UNIT: f32 = 600.0;
+/// Lux of a directional light that makes a white matte surface facing it
+/// send back [`UNIT`]: Bevy's diffuse term is the base colour times
+/// `Fd_Burley`, 1/π facing the light (`pbr_lighting.wgsl`, bevy_pbr 0.19).
+const ILLUMINANCE: f32 = std::f32::consts::PI * UNIT;
+/// What Bevy's ambient light gives a white matte surface per unit of its
+/// brightness: `EnvBRDFApprox(diffuse, F_AB(1, NdotV))` (`pbr_ambient.wgsl`;
+/// this build has no `dfg_lut` feature, so `F_AB` is the polynomial of
+/// `pbr_lighting.wgsl`: at a roughness of 1 its scale is
+/// `-1.04 * 0.015 + 0.468`, whatever the angle, and its bias 0.00005).
+const AMBIENT_GAIN: f32 = -1.04 * 0.015 + 0.468;
+/// Bounds of a framing line's numbers the portrait takes: places within a
+/// model's world, colours as the importer writes them (0 to 255 times a scale
+/// of at most 64), a field of view inside a half turn.
+const MAX_PLACE: f32 = 100_000.0;
+const MAX_LIGHT: f32 = 255.0 * 64.0;
+/// The portrait camera's near plane; a framing's far plane must lie past twice it, the floor
+/// heatel refuses at too (`heatel::portraits::MIN_FAR`).
+const NEAR: f32 = 4.0;
+const _: () = assert!(heatel::portraits::MIN_FAR == 2.0 * NEAR);
+/// The narrowest field of view taken, degrees: narrower, the projection's
+/// numbers run out of precision (Dota's narrowest is 10).
+const MIN_FOV: f32 = 1.0;
+/// The shortest way of the ambient light taken (Dota's are some 100 long): a
+/// shorter one has no way a renderer can tell.
+const MIN_WAY: f32 = 1e-3;
+/// Most a background's corner tint multiplies its image by (Dota's reach 2).
+const MAX_TINT: f32 = 4.0;
+/// Refused framing lines told one by one; the rest are counted.
+const TOLD_REFUSALS: usize = 4;
+/// What each number of a framing line is, for a refusal to say.
+const FRAMING_KEYS: [&str; crate::cache_text::FRAMING_NUMBERS] = [
+    "PortraitPosition x",
+    "PortraitPosition y",
+    "PortraitPosition z",
+    "PortraitAngles pitch",
+    "PortraitAngles yaw",
+    "PortraitAngles roll",
+    "PortraitFOV",
+    "PortraitFar",
+    "PortraitLightPosition x",
+    "PortraitLightPosition y",
+    "PortraitLightPosition z",
+    "PortraitLightAngles pitch",
+    "PortraitLightAngles yaw",
+    "PortraitLightAngles roll",
+    "PortraitLightFOV",
+    "PortraitLightColor r",
+    "PortraitLightColor g",
+    "PortraitLightColor b",
+    "PortraitAmbientColor r",
+    "PortraitAmbientColor g",
+    "PortraitAmbientColor b",
+    "PortraitLightScale",
+    "PortraitAmbientScale",
+    "PortraitLightDistance",
+    "PortraitShadowColor r",
+    "PortraitShadowColor g",
+    "PortraitShadowColor b",
+    "PortraitShadowScale",
+    "PortraitAmbientDirection x",
+    "PortraitAmbientDirection y",
+    "PortraitAmbientDirection z",
+    "PortraitHideParticles",
+];
 /// Where a camera framed by bounds stands, in the model's own axes (x to its
 /// right, y up, -z ahead): in front, a little to the left and above.
 const BOUNDS_VIEW: Vec3 = Vec3::new(-0.35, 0.3, -0.9);
@@ -86,23 +169,28 @@ struct Framing {
     camera: Vec3,
     /// Source's angles: pitch down, yaw about up.
     angles: Vec3,
-    /// Horizontal field of view in degrees.
+    /// Field of view in degrees across the picture's width (Source's
+    /// `CViewSetup::fov`, "horizontal FOV in degrees").
     fov: f32,
     far: f32,
     light_angles: Vec3,
+    /// Colours as linear light, each times its scale.
     light_color: Vec3,
     ambient: Vec3,
-    /// Dota's brightness of the light and of the ambient colour.
-    light_scale: f32,
-    ambient_scale: f32,
+    shadow: Vec3,
+    /// The way the ambient light goes, in the model's axes.
+    ambient_direction: Vec3,
+    /// Whether the portrait leaves out the particles the model wears.
+    pub(crate) hide_particles: bool,
     /// The background's image in the cache and its corner tints (top left,
     /// top right, bottom right, bottom left), when Dota gives the model one.
     background: Option<(String, [Vec3; 4])>,
 }
 
-/// The cache paths of the backgrounds the portraits stand on, each once.
+/// The cache paths of the backgrounds the portraits stand on, each once (what the framings file
+/// lacks or refuses is said once, when the portraits load it).
 pub fn background_paths(root: &std::path::Path) -> Vec<String> {
-    let mut paths: Vec<String> = Framings::load(root)
+    let mut paths: Vec<String> = Framings::load(root, false)
         .0
         .into_values()
         .filter_map(|f| f.background.map(|(path, _)| path))
@@ -112,31 +200,205 @@ pub fn background_paths(root: &std::path::Path) -> Vec<String> {
     paths
 }
 
+/// What reading the framings file finds wrong with it.
+#[derive(Debug, PartialEq, Eq)]
+enum Said {
+    /// It is of another layout (the error), so nothing of it is read.
+    OtherLayout(String),
+    /// The entries the import refused and the lines that do not read, each a warning.
+    Refused(Vec<String>),
+}
+
 /// Every framing of the cache, by the model's logical name.
 #[derive(Resource, Default)]
-struct Framings(HashMap<String, Framing>);
+pub(crate) struct Framings(HashMap<String, Framing>);
 
 impl Framings {
-    fn load(root: &std::path::Path) -> Self {
-        let text = crate::cachefs::read_small(root, "models/portraits.txt")
-            .and_then(|bytes| String::from_utf8(bytes).ok())
-            .unwrap_or_default();
-        Self(text.lines().filter_map(parse_line).collect())
+    /// The cache's framings. A cache whose framings are of another layout is imported again
+    /// before the client draws (`import::need`); one that has none, or none in text, is said
+    /// as an error, and every portrait framed by its model's bounds. What is wrong with it is
+    /// said when `say` (by the portraits' own load, once a launch).
+    fn load(root: &std::path::Path, say: bool) -> Self {
+        let file = dbota_import::import::PORTRAITS_FILE;
+        let Some(bytes) = crate::cachefs::read_small(root, file) else {
+            if say {
+                error!(
+                    "{file} is not in the asset cache; every portrait is framed by its model's bounds"
+                );
+            }
+            return Self::default();
+        };
+        let Ok(text) = String::from_utf8(bytes) else {
+            if say {
+                error!("{file} is not text; every portrait is framed by its model's bounds");
+            }
+            return Self::default();
+        };
+        let (framings, said) = Self::read(&text);
+        if say {
+            match said {
+                Said::OtherLayout(why) => error!("{file} {why}"),
+                Said::Refused(warnings) => {
+                    for warning in warnings {
+                        warn!("{file}: {warning}");
+                    }
+                }
+            }
+        }
+        framings
+    }
+
+    /// The framings of `models/portraits.txt`: none, said loudly, when the file is of another
+    /// layout than [`PORTRAITS_LAYOUT`](dbota_import::text::PORTRAITS_LAYOUT) (a cache another
+    /// build made under the same importer revision). With them, what to warn of at every load:
+    /// the entries the import refused, the backgrounds it left out and the lines that do not
+    /// read, the first few by name and the rest counted.
+    fn read(text: &str) -> (Self, Said) {
+        let mut lines = text.lines();
+        let layout = dbota_import::text::PORTRAITS_LAYOUT;
+        if lines.next() != Some(layout) {
+            let why = format!("is not of {layout}; every portrait is framed by its model's bounds");
+            return (Self::default(), Said::OtherLayout(why));
+        }
+        let mut framings = HashMap::new();
+        let mut warnings = Vec::new();
+        let mut refused = 0;
+        let mut refused_lines = 0;
+        for line in lines {
+            let told = if let Some(entry) = line.strip_prefix(dbota_import::text::REFUSED) {
+                Some(format!(
+                    "the import refused {entry}; that model is framed by its bounds"
+                ))
+            } else {
+                line.strip_prefix(dbota_import::text::LEFT_OUT)
+                    .map(|entry| {
+                        format!(
+                            "the import left out {entry}; that portrait stands on no background"
+                        )
+                    })
+            };
+            if let Some(told) = told {
+                if refused_lines < TOLD_REFUSALS {
+                    warnings.push(told);
+                }
+                refused_lines += 1;
+                continue;
+            }
+            if line.starts_with('#') {
+                continue;
+            }
+            match parse_line(line) {
+                Ok((logical, framing)) => {
+                    framings.insert(logical, framing);
+                }
+                Err(why) if refused < TOLD_REFUSALS => {
+                    refused += 1;
+                    warnings.push(format!("{why}; that model is framed by its bounds"));
+                }
+                Err(_) => refused += 1,
+            }
+        }
+        if refused_lines > TOLD_REFUSALS {
+            let more = refused_lines - TOLD_REFUSALS;
+            warnings.push(format!("the import refused or left out {more} more"));
+        }
+        if refused > TOLD_REFUSALS {
+            let more = refused - TOLD_REFUSALS;
+            warnings.push(format!(
+                "{more} more lines do not read (framed by their bounds)"
+            ));
+        }
+        (Self(framings), Said::Refused(warnings))
+    }
+
+    /// Whether the portrait of a model leaves out the particles it wears: its entry's flag, or
+    /// the file's `default` entry's for a model Dota has no entry for.
+    pub fn hides_particles(&self, model: &str) -> bool {
+        self.0
+            .get(model)
+            .or_else(|| self.0.get(DEFAULT_FRAMING))
+            .is_some_and(|f| f.hide_particles)
     }
 }
 
-fn parse_line(line: &str) -> Option<(String, Framing)> {
-    let line = crate::cache_text::framing(line)?;
+/// A framing line's numbers, each finite and within its bounds, or which is not and why.
+fn bounded(n: &[f32; crate::cache_text::FRAMING_NUMBERS]) -> Result<(), String> {
+    let bounds: [(std::ops::Range<usize>, f32, f32); 12] = [
+        (0..6, -MAX_PLACE, MAX_PLACE),
+        (6..7, MIN_FOV, 179.0),
+        (7..8, 0.0, MAX_PLACE),
+        (8..14, -MAX_PLACE, MAX_PLACE),
+        (14..15, MIN_FOV, 179.0),
+        (15..21, 0.0, 255.0),
+        (21..23, 0.0, 64.0),
+        (23..24, 0.0, MAX_PLACE),
+        (24..27, 0.0, 255.0),
+        (27..28, 0.0, 64.0),
+        (28..31, -MAX_PLACE, MAX_PLACE),
+        (31..32, 0.0, 1.0),
+    ];
+    for (range, low, high) in bounds {
+        for i in range {
+            if !(low..=high).contains(&n[i]) {
+                return Err(format!(
+                    "its {} {} is outside {low} to {high}",
+                    FRAMING_KEYS[i], n[i]
+                ));
+            }
+        }
+    }
+    if n[7] <= heatel::portraits::MIN_FAR {
+        return Err(format!(
+            "its PortraitFar {} is not past {}",
+            n[7],
+            heatel::portraits::MIN_FAR
+        ));
+    }
+    let way = Vec3::new(n[28], n[29], n[30]).length();
+    if way < MIN_WAY {
+        return Err(format!(
+            "its PortraitAmbientDirection is {way} long: no way"
+        ));
+    }
+    Ok(())
+}
+
+fn parse_line(text: &str) -> Result<(String, Framing), String> {
+    let mut words = text.split_whitespace();
+    let logical = words.next().ok_or("an empty framing line")?;
+    // A number that does not read, or is not finite, is named before the line is read.
+    for (key, word) in FRAMING_KEYS.iter().zip(words.by_ref()) {
+        if !word.parse::<f32>().is_ok_and(f32::is_finite) {
+            return Err(format!(
+                "{logical}: its {key} is {word:?}, no finite number"
+            ));
+        }
+    }
+    let line = crate::cache_text::framing(text)
+        .ok_or_else(|| format!("{logical}: no whole framing line"))?;
     let n = line.numbers;
+    bounded(&n).map_err(|why| format!("{logical}: {why}"))?;
+    if let Some((_, tints)) = &line.background
+        && let Some(t) = tints.iter().find(|t| !(0.0..=MAX_TINT).contains(*t))
+    {
+        return Err(format!(
+            "{logical}: its PortraitBackgroundColor tint {t} is outside 0 to {MAX_TINT}"
+        ));
+    }
     let v = |at: usize| Vec3::new(n[at], n[at + 1], n[at + 2]);
     let background = line.background.map(|(path, t)| {
         let corner = |c: usize| Vec3::new(t[3 * c], t[3 * c + 1], t[3 * c + 2]);
         (path, [0, 1, 2, 3].map(corner))
     });
+    // Dota's colours are sRGB channels of 0 to 255; light adds up linearly.
+    let linear = |c: Vec3, scale: f32| {
+        let l = Color::srgb(c.x / 255.0, c.y / 255.0, c.z / 255.0).to_linear();
+        Vec3::new(l.red, l.green, l.blue) * scale
+    };
     // The angles' roll is always zero in Dota's file and goes unread, as do
-    // the light's place and cone: a light from its direction stands for
-    // Dota's spot on the model.
-    Some((
+    // the light's place, cone and distance (see the module's words).
+    let light = |v: Vec3| v.min(Vec3::splat(MAX_LIGHT));
+    Ok((
         line.logical,
         Framing {
             camera: v(0),
@@ -144,10 +406,11 @@ fn parse_line(line: &str) -> Option<(String, Framing)> {
             fov: n[6],
             far: n[7],
             light_angles: Vec3::new(n[11], n[12], 0.0),
-            light_color: v(15) / 255.0,
-            ambient: v(18) / 255.0,
-            light_scale: n[21],
-            ambient_scale: n[22],
+            light_color: light(linear(v(15), n[21])),
+            ambient: light(linear(v(18), n[22])),
+            shadow: light(linear(v(24), n[27])),
+            ambient_direction: v(28),
+            hide_particles: n[31] != 0.0,
             background,
         },
     ))
@@ -170,10 +433,18 @@ fn look_dir(angles: Vec3) -> Vec3 {
 }
 
 #[derive(Component)]
-struct PortraitCamera;
+pub(crate) struct PortraitCamera;
 
+/// The portrait's lights: its key light (a spot) and its ambient light's
+/// directional part.
 #[derive(Component)]
 struct PortraitLight;
+
+#[derive(Component)]
+struct KeyLight;
+
+#[derive(Component)]
+struct FillLight;
 
 /// A scene of the model on the stage (its body or a wearable), and whether
 /// its instance is ready and on the stage's layer.
@@ -228,6 +499,23 @@ pub struct Stage {
     pub every: bool,
 }
 
+impl Actor {
+    /// Whether all of it is ready and posed on the stage.
+    pub fn posed(&self) -> bool {
+        self.posed
+    }
+
+    /// Its scale as the units draw it (the unit's model scale).
+    pub fn size(&self) -> f32 {
+        self.size
+    }
+
+    /// Its place in the model bank.
+    pub fn model(&self) -> usize {
+        self.model
+    }
+}
+
 impl Stage {
     /// Whether the camera draws the stage this frame.
     pub fn drawing(&self) -> bool {
@@ -250,7 +538,7 @@ pub fn plugin(app: &mut App) {
         .add_systems(
             PreStartup,
             |mut commands: Commands, manifest: Res<Manifest>| {
-                commands.insert_resource(Framings::load(&manifest.root));
+                commands.insert_resource(Framings::load(&manifest.root, true));
             },
         )
         .add_systems(Startup, spawn)
@@ -259,7 +547,7 @@ pub fn plugin(app: &mut App) {
             PostUpdate,
             (
                 (
-                    aim,
+                    aim.in_set(Aimed),
                     speak,
                     crate::talk::trace.run_if(|args: Res<crate::Args>| args.face_trace),
                 )
@@ -279,6 +567,11 @@ pub fn plugin(app: &mut App) {
             ),
         );
 }
+
+/// The portrait's camera and lights aimed, and whether it draws this frame
+/// decided ([`Stage::drawing`]): what plays on the stage steps after it.
+#[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
+pub struct Aimed;
 
 /// An image a portrait camera can draw into.
 fn target_image(images: &mut Assets<Image>) -> Handle<Image> {
@@ -338,13 +631,22 @@ fn spawn(mut commands: Commands, mut images: ResMut<Assets<Image>>) {
         AmbientLight::default(),
         Msaa::Sample4,
         RenderLayers::layer(LAYER),
-        // Its light is directional: nothing to cluster.
+        // One cluster: the stage's lights reach all of it.
         ClusterConfig::Single,
     ));
     commands.spawn((
         PortraitLight,
-        // Directional, as a light only this view sees needs no clustering:
-        // a view drawn now and then has no clusters of its own frames before.
+        FillLight,
+        DirectionalLight {
+            shadow_maps_enabled: false,
+            ..default()
+        },
+        Transform::default(),
+        RenderLayers::layer(LAYER),
+    ));
+    commands.spawn((
+        PortraitLight,
+        KeyLight,
         DirectionalLight {
             shadow_maps_enabled: false,
             ..default()
@@ -710,13 +1012,20 @@ fn aim(
         ),
         (With<PortraitCamera>, Without<PortraitLight>),
     >,
-    mut light: Single<(&mut DirectionalLight, &mut Transform), With<PortraitLight>>,
+    mut fill: Single<
+        (&mut DirectionalLight, &mut Transform),
+        (With<FillLight>, Without<KeyLight>, Without<PortraitCamera>),
+    >,
+    mut key: Single<
+        (&mut DirectionalLight, &mut Transform),
+        (With<KeyLight>, Without<FillLight>, Without<PortraitCamera>),
+    >,
 ) {
     let placed = stage.actor.as_ref().filter(|a| a.posed).and_then(|actor| {
         let framed = framings.0.get(&bank.0[actor.model].model.logical);
         framed.map(|f| place(f, actor.size)).or_else(|| {
             let (center, radius) = bounds_in(actor.pivot, &children, &bounds)?;
-            Some(fit(center, radius))
+            Some(fit(center, radius, framings.0.get(DEFAULT_FRAMING)))
         })
     });
     let live = stage.live.clone();
@@ -734,15 +1043,16 @@ fn aim(
     *camera.3 = Projection::Perspective(PerspectiveProjection {
         fov: placed.vfov,
         aspect_ratio: SIZE.0 as f32 / SIZE.1 as f32,
-        near: 4.0,
+        near: NEAR,
         far: placed.far,
         ..default()
     });
-    camera.4.color = placed.ambient;
-    camera.4.brightness = placed.ambient_brightness;
-    *light.1 = at(&placed.light.0);
-    light.0.color = placed.light.1;
-    light.0.illuminance = placed.lux;
+    camera.4.color = placed.ambient.0;
+    camera.4.brightness = placed.ambient.1;
+    *fill.1 = at(&placed.fill.0);
+    (fill.0.color, fill.0.illuminance) = (placed.fill.1, placed.fill.2);
+    *key.1 = at(&placed.key.0);
+    (key.0.color, key.0.illuminance) = (placed.key.1, placed.key.2);
     let target = actor.still.clone().unwrap_or(live);
     if camera.1.as_image() != Some(&target) {
         *camera.1 = RenderTarget::Image(ImageRenderTarget {
@@ -812,12 +1122,12 @@ fn on_stage(
     stage: Res<Stage>,
     tree: Query<&Children>,
     mut seen: Query<(&InheritedVisibility, &mut ViewVisibility)>,
-    light: Single<Entity, With<PortraitLight>>,
+    lights: Query<Entity, With<PortraitLight>>,
 ) {
     let Some(actor) = stage.actor.as_ref().filter(|a| a.posed && stage.render) else {
         return;
     };
-    show_actor(actor.pivot, [*light], &tree, &mut seen);
+    show_actor(actor.pivot, lights.iter(), &tree, &mut seen);
 }
 
 pub(crate) fn show_actor(
@@ -842,7 +1152,7 @@ fn activate(
     stage: Res<Stage>,
     tree: Query<&Children>,
     classes: Query<(&VisibilityClass, &InheritedVisibility)>,
-    light: Single<Entity, With<PortraitLight>>,
+    lights: Query<Entity, With<PortraitLight>>,
     mut camera: Single<(&mut Camera, &mut VisibleEntities), With<PortraitCamera>>,
 ) {
     let (camera, seen) = &mut *camera;
@@ -852,7 +1162,7 @@ fn activate(
             .as_ref()
             .filter(|_| stage.render)
             .map(|a| a.pivot),
-        [*light],
+        lights.iter(),
         &tree,
         &classes,
         camera,
@@ -886,55 +1196,84 @@ pub(crate) fn camera_actor(
     }
 }
 
-/// Where the camera and the light stand, in the stage's space.
+/// Where the camera and the lights stand, in the stage's space.
 struct Placed {
     camera: Transform,
     vfov: f32,
     far: f32,
-    ambient: Color,
-    ambient_brightness: f32,
-    /// Lux of the light at the model.
-    lux: f32,
-    /// The light's direction and colour.
-    light: (Transform, Color),
+    /// The ambient light every side gets: its colour and brightness.
+    ambient: (Color, f32),
+    /// The ambient light's directional part, and the key light: each its
+    /// way, colour and lux.
+    fill: (Transform, Color, f32),
+    key: (Transform, Color, f32),
 }
 
-/// Dota's framing, scaled with the model as it is drawn. Its field of view is
-/// the picture's height.
+/// A linear colour as Bevy's colour of at most 1 a channel, and its strength.
+fn split(c: Vec3) -> (Color, f32) {
+    let c = c.max(Vec3::ZERO);
+    let most = c.max_element();
+    if most <= 0.0 {
+        return (Color::BLACK, 0.0);
+    }
+    let c = c / most;
+    (Color::linear_rgb(c.x, c.y, c.z), most)
+}
+
+/// The field of view of the picture's height (Bevy's) from one across its width
+/// (Source's), for a picture `aspect` times as wide as tall.
+fn vertical_fov(horizontal_degrees: f32, aspect: f32) -> f32 {
+    2.0 * ((horizontal_degrees.to_radians() / 2.0).tan() / aspect).atan()
+}
+
+/// Dota's framing, scaled with the model as it is drawn.
 fn place(f: &Framing, size: f32) -> Placed {
     let camera = to_scene(f.camera) * size;
     let ahead = to_scene(look_dir(f.angles));
+    let (shadow, shadow_strength) = split(f.shadow);
+    let (fill, fill_strength) = split(f.ambient - f.shadow);
+    let (light, light_strength) = split(f.light_color);
     Placed {
         camera: Transform::from_translation(camera).looking_to(ahead, Vec3::Y),
-        vfov: f.fov.to_radians(),
+        vfov: vertical_fov(f.fov, SIZE.0 as f32 / SIZE.1 as f32),
         far: f.far * size.max(1.0),
-        ambient: Color::srgb(f.ambient.x, f.ambient.y, f.ambient.z),
-        ambient_brightness: AMBIENT * f.ambient_scale,
-        lux: LIGHT_LUX * f.light_scale,
-        light: (
+        ambient: (shadow, UNIT * shadow_strength / AMBIENT_GAIN),
+        fill: (
+            Transform::default().looking_to(to_scene(f.ambient_direction), Vec3::Y),
+            fill,
+            ILLUMINANCE * fill_strength,
+        ),
+        key: (
             Transform::default().looking_to(to_scene(look_dir(f.light_angles)), Vec3::Y),
-            Color::srgb(f.light_color.x, f.light_color.y, f.light_color.z),
+            light,
+            ILLUMINANCE * light_strength,
         ),
     }
 }
 
-/// A framing from the model's bounds: the centre and the radius of its sphere.
-fn fit(center: Vec3, radius: f32) -> Placed {
+/// A framing from the model's bounds (the centre and the radius of its
+/// sphere), lit as Dota lights a model it has no entry for: by its file's
+/// `default` entry, when the cache holds it; else by a plain light.
+fn fit(center: Vec3, radius: f32, default: Option<&Framing>) -> Placed {
     let vfov = 30f32.to_radians();
     let distance = radius / (vfov / 2.0).sin() * 1.1;
     let at = center + BOUNDS_VIEW.normalize() * distance;
+    let lit = default.map_or_else(
+        || Placed {
+            camera: Transform::default(),
+            vfov,
+            far: 0.0,
+            ambient: (Color::WHITE, UNIT / AMBIENT_GAIN),
+            fill: (Transform::default(), Color::BLACK, 0.0),
+            key: (Transform::default(), Color::BLACK, 0.0),
+        },
+        |f| place(f, 1.0),
+    );
     Placed {
         camera: Transform::from_translation(at).looking_at(center, Vec3::Y),
         vfov,
         far: distance + radius * 4.0,
-        ambient: Color::srgb(0.7, 0.75, 0.85),
-        // A creep's light as Dota frames one.
-        ambient_brightness: AMBIENT * 8.0,
-        lux: LIGHT_LUX * 2.5,
-        light: (
-            Transform::default().looking_to(-Vec3::new(-0.6, 1.0, -0.8), Vec3::Y),
-            Color::srgb(1.0, 0.97, 0.92),
-        ),
+        ..lit
     }
 }
 
@@ -993,18 +1332,21 @@ fn select_named(args: Res<crate::Args>, mut session: NonSendMut<Session>, units:
 
 #[cfg(test)]
 mod tests {
-    use super::parse_line;
+    use super::{parse_line, vertical_fov};
 
     /// The importer's line for Shadow Fiend, as `dbota import` writes it.
     const NEVERMORE: &str = "hero.nevermore.model 126.07 -14.4 175.18 1.85 172.19 0 33 10000 85 9.68 296.06 \
-        62.94 185.36 0 75 243 243 243 131 0 25 1 2.5 0 0 0 0 0 0 0.8 0.2 0.1 0 0 0 \
-        models/portrait_backgrounds/portraitbackground_desert.png";
+        62.94 185.36 0 75 243 243 243 131 0 25 1 2.5 249 0 0 0 5 -75.85 -49.88 27.2 0 \
+        0 0 0 0 0 0 0.8 0.2 0.1 0 0 0 models/portrait_backgrounds/portraitbackground_desert.png";
 
     #[test]
     fn the_importers_line_reads_whole() {
         let (logical, f) = parse_line(NEVERMORE).unwrap();
         assert_eq!(logical, "hero.nevermore.model");
-        assert_eq!((f.fov, f.light_scale, f.ambient_scale), (33.0, 1.0, 2.5));
+        assert_eq!(f.fov, 33.0);
+        assert_eq!(f.ambient_direction.to_array(), [-75.85, -49.88, 27.2]);
+        assert_eq!(f.shadow.to_array(), [0.0; 3], "a black shadow");
+        assert!(!f.hide_particles);
         let (path, tints) = f.background.unwrap();
         assert_eq!(
             path,
@@ -1018,8 +1360,113 @@ mod tests {
         assert!(parse_line(&plain).unwrap().1.background.is_none());
         let short: Vec<&str> = NEVERMORE.split_whitespace().take(20).collect();
         assert!(
-            parse_line(&short.join(" ")).is_none(),
+            parse_line(&short.join(" ")).is_err(),
             "a cut line is no framing"
         );
+    }
+
+    /// The cache is any program's to write: a number past its bounds refuses the line, saying
+    /// which model and which number.
+    #[test]
+    fn a_framing_number_out_of_bounds_refuses_the_line_by_name() {
+        let cases = [
+            ("243 243 243", "3e38 243 243", "PortraitLightColor r"),
+            (" 2.5 249 ", " 1e9 249 ", "PortraitAmbientScale"),
+            ("-75.85 -49.88 27.2", "0 0 0", "no way"),
+            ("-75.85 -49.88 27.2", "1e-30 0 0", "no way"),
+            (" 33 10000 ", " 1e-30 10000 ", "PortraitFOV"),
+            (" 33 10000 ", " 33 1 ", "PortraitFar"),
+            (" 33 10000 ", " 33 8 ", "PortraitFar"),
+            (" 0 0 0 5 ", " 0 0 0 9e9 ", "PortraitShadowScale"),
+            ("243 243 243", "NaN 243 243", "PortraitLightColor r"),
+            (" 0.8 0.2 0.1 ", " 5 0.2 0.1 ", "tint"),
+        ];
+        for (from, to, what) in cases {
+            let line = NEVERMORE.replacen(from, to, 1);
+            assert_ne!(line, NEVERMORE, "{to}");
+            let why = parse_line(&line).map(|_| ()).unwrap_err();
+            assert!(
+                why.contains("hero.nevermore.model") && why.contains(what),
+                "{to}: {why}"
+            );
+        }
+    }
+
+    /// A model's entry hides its particles by its own flag, and a model Dota has no entry for by
+    /// the `default` entry's; a file of another layout frames nothing.
+    #[test]
+    fn the_particle_flag_is_the_models_or_the_default_entrys() {
+        let layout = dbota_import::text::PORTRAITS_LAYOUT;
+        let hiding = NEVERMORE.replacen(" 27.2 0 ", " 27.2 1 ", 1);
+        let default = NEVERMORE.replacen(
+            "hero.nevermore.model",
+            dbota_import::import::DEFAULT_FRAMING,
+            1,
+        );
+        let text = format!("{layout}\n# a comment\n{hiding}\n{default}\n");
+        let (framings, _) = super::Framings::read(&text);
+        assert!(framings.hides_particles("hero.nevermore.model"));
+        assert!(
+            !framings.hides_particles("hero.pudge.model"),
+            "the default's 0"
+        );
+        let default = default.replacen(" 27.2 0 ", " 27.2 1 ", 1);
+        let text = format!("{layout}\n{default}\n");
+        assert!(
+            super::Framings::read(&text)
+                .0
+                .hides_particles("hero.pudge.model"),
+            "the default's 1"
+        );
+        let old = format!("{}\n", NEVERMORE);
+        let (framings, said) = super::Framings::read(&old);
+        assert!(framings.0.is_empty(), "no layout line, no framing");
+        assert!(matches!(said, super::Said::OtherLayout(_)), "{said:?}");
+    }
+
+    /// An entry the import refused is said at every load, not only by the import that refused
+    /// it: a later import finds the cache current and says nothing.
+    #[test]
+    fn every_load_warns_of_each_entry_the_import_refused() {
+        let layout = dbota_import::text::PORTRAITS_LAYOUT;
+        let refused = dbota_import::text::REFUSED;
+        let text = format!(
+            "{layout}\n{refused}hero.pudge.model PortraitFar 8 is not past 8\n{NEVERMORE}\n"
+        );
+        let (framings, said) = super::Framings::read(&text);
+        assert!(framings.0.contains_key("hero.nevermore.model"));
+        let refused_one = vec![
+            "the import refused hero.pudge.model PortraitFar 8 is not past 8; that model is framed by its bounds".to_owned(),
+        ];
+        assert_eq!(said, super::Said::Refused(refused_one));
+        let left_out = dbota_import::text::LEFT_OUT;
+        let text = format!(
+            "{layout}\n{left_out}hero.nevermore.model PortraitBackgroundColor1 5 is outside 0 to 4\n{NEVERMORE}\n"
+        );
+        let (framings, said) = super::Framings::read(&text);
+        let left_one = vec![
+            "the import left out hero.nevermore.model PortraitBackgroundColor1 5 is outside 0 to 4; that portrait stands on no background".to_owned(),
+        ];
+        assert_eq!(said, super::Said::Refused(left_one));
+        assert!(framings.0.contains_key("hero.nevermore.model"));
+        let many: String = (0..super::TOLD_REFUSALS + 3)
+            .map(|i| format!("{refused}hero.{i}.model why\n"))
+            .collect();
+        let (_, said) = super::Framings::read(&format!("{layout}\n{many}"));
+        let super::Said::Refused(warnings) = said else {
+            panic!("{said:?}");
+        };
+        assert_eq!(warnings.len(), super::TOLD_REFUSALS + 1, "{warnings:?}");
+        assert_eq!(
+            warnings.last().map(String::as_str),
+            Some("the import refused or left out 3 more")
+        );
+    }
+
+    /// Source's field of view is across the picture's width; Bevy's is of its height.
+    #[test]
+    fn a_horizontal_field_of_view_narrows_with_a_wide_picture() {
+        assert!((vertical_fov(90.0, 1.0) - 90f32.to_radians()).abs() < 1e-6);
+        assert!((vertical_fov(90.0, 2.0) - 2.0 * 0.5f32.atan()).abs() < 1e-6);
     }
 }

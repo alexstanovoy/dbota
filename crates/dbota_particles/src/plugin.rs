@@ -17,6 +17,19 @@ use super::render::{Batch, ParticleFrame};
 use super::sim::Instance;
 use super::store;
 
+/// Most seconds the portrait's effects are owed: a portrait not drawn for longer holds them
+/// where they were, as an effect out of view sleeps.
+pub(super) const STAGE_OWED_MAX: f32 = 0.25;
+/// Most seconds of one step of a portrait's effect: the portrait's frame.
+const STAGE_STEP: f32 = 1.0 / 30.0;
+/// How many times `effect` is counted in `counts`.
+fn count_of(counts: &[(Arc<Effect>, u32)], effect: &Arc<Effect>) -> u32 {
+    counts
+        .iter()
+        .find(|(e, _)| Arc::ptr_eq(e, effect))
+        .map_or(0, |(_, n)| *n)
+}
+
 /// Most effects playing at once; past it a new one is not started.
 const MAX_PLAYING: usize = 2048;
 /// Ended effects kept to be played again without allocating.
@@ -32,6 +45,12 @@ pub struct Handle {
     generation: u32,
 }
 
+/// A separate host view, advanced and drawn only on the frames the host supplies it.
+pub struct StageView<'a> {
+    pub camera: (&'a GlobalTransform, &'a Frustum),
+    pub layer: usize,
+}
+
 /// The effects playing.
 #[derive(Resource, Default)]
 pub struct Simulation {
@@ -40,11 +59,14 @@ pub struct Simulation {
     spare: Vec<Instance>,
     /// Each look's cards this frame, kept for their capacity.
     lists: Vec<Vec<Quad>>,
+    stage_lists: Vec<Vec<Quad>>,
+    stage_owed: f32,
     /// The world's clock, in seconds of the game's pace: what noise over the world's time reads.
     clock: f32,
     /// How many times each effect was started, for the end-to-end tests to ask what the game
     /// drew.
     started: Vec<(Arc<Effect>, u32)>,
+    stage_started: Vec<(Arc<Effect>, u32)>,
     /// Actual instance contributions to frames, including retained ending tails.
     #[cfg(any(test, feature = "test-support"))]
     drawn: Vec<(Arc<Effect>, u32)>,
@@ -62,6 +84,7 @@ impl Simulation {
             self.cancel(handle);
         }
         self.clock = 0.0;
+        self.stage_owed = 0.0;
     }
 
     /// How many instance frames actually contributed cards, lights or models.
@@ -84,10 +107,12 @@ impl Simulation {
 
     /// How many times `effect` was started.
     pub fn started(&self, effect: &Arc<Effect>) -> u32 {
-        self.started
-            .iter()
-            .find(|(e, _)| Arc::ptr_eq(e, effect))
-            .map_or(0, |(_, n)| *n)
+        count_of(&self.started, effect)
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn started_on_stage(&self, effect: &Arc<Effect>) -> u32 {
+        count_of(&self.stage_started, effect)
     }
 
     /// The playing instances of `effect`.
@@ -123,6 +148,17 @@ impl Simulation {
 
     /// Starts `effect`, its draws keyed by `seed`.
     pub fn start(&mut self, effect: &Arc<Effect>, seed: u32) -> Option<Handle> {
+        self.start_in(effect, seed, false)
+    }
+
+    /// Starts a held effect in the host's separate stage view.
+    pub fn hold_on_stage(&mut self, effect: &Arc<Effect>, seed: u32) -> Option<Handle> {
+        let handle = self.start_in(effect, seed, true)?;
+        self.get_mut(handle)?.hold();
+        Some(handle)
+    }
+
+    fn start_in(&mut self, effect: &Arc<Effect>, seed: u32, portrait: bool) -> Option<Handle> {
         let mut instance = match self
             .spare
             .iter()
@@ -136,13 +172,15 @@ impl Simulation {
             None => Instance::new(Arc::clone(effect), seed),
         };
         instance.world_time = self.clock;
-        match self
-            .started
-            .iter_mut()
-            .find(|(e, _)| Arc::ptr_eq(e, effect))
-        {
+        instance.portrait = portrait;
+        let counts = if portrait {
+            &mut self.stage_started
+        } else {
+            &mut self.started
+        };
+        match counts.iter_mut().find(|(e, _)| Arc::ptr_eq(e, effect)) {
             Some((_, n)) => *n = n.saturating_add(1),
-            None => self.started.push((Arc::clone(effect), 1)),
+            None => counts.push((Arc::clone(effect), 1)),
         }
         let slot = match self.free.pop() {
             Some(slot) => slot,
@@ -203,11 +241,39 @@ impl Simulation {
         }
     }
 
+    /// Steps authored-effect fixtures without gathering a render frame.
+    #[cfg(feature = "test-support")]
+    pub fn advance_for_test(
+        &mut self,
+        dt: f32,
+        stage_dt: Option<f32>,
+        ground: Option<HeightAt<'_>>,
+    ) {
+        self.advance(dt, stage_dt, ground);
+    }
+
     /// Steps every effect by `dt`, on the compute threads when there are enough of them that
     /// the effects take turns on no single thread (each effect steps alone: the order they step
     /// in changes nothing), and retires the ones that are finished.
-    fn advance(&mut self, dt: f32, ground: Option<HeightAt<'_>>) {
+    pub(crate) fn advance(&mut self, dt: f32, stage_dt: Option<f32>, ground: Option<HeightAt<'_>>) {
         self.clock += dt;
+        // The portrait's effects: what they are owed, at most STAGE_OWED_MAX, in steps of the
+        // portrait's frame, so no step outruns what the simulation steps in one; on no ground,
+        // as the stage has none (the map's would pull their particles down to it).
+        let stage_dt = stage_dt.map(|owed| owed.clamp(0.0, STAGE_OWED_MAX));
+        let advance = move |instance: &mut Instance| match (instance.portrait, stage_dt) {
+            (false, _) => instance.advance(dt, ground),
+            (true, Some(owed)) if owed > 0.0 => {
+                // Steps of one length: movement rescales a displacement by the ratio of the steps,
+                // and a remainder far shorter than the step after it (a displacement of a few
+                // rounding errors) would have its rounding scaled up by that ratio.
+                let steps = (owed / STAGE_STEP).ceil();
+                for _ in 0..steps as u32 {
+                    instance.advance(owed / steps, None);
+                }
+            }
+            (true, _) => {}
+        };
         let pool = ComputeTaskPool::get();
         let playing = self.slots.iter().filter(|(_, i)| i.is_some()).count();
         if playing >= PARALLEL_FROM && pool.thread_num() > 1 {
@@ -217,14 +283,14 @@ impl Simulation {
                 for slots in self.slots.chunks_mut(piece) {
                     scope.spawn(async move {
                         for instance in slots.iter_mut().filter_map(|(_, i)| i.as_mut()) {
-                            instance.advance(dt, ground);
+                            advance(instance);
                         }
                     });
                 }
             });
         } else {
             for instance in self.slots.iter_mut().filter_map(|(_, i)| i.as_mut()) {
-                instance.advance(dt, ground);
+                advance(instance);
             }
         }
         for slot in 0..self.slots.len() {
@@ -286,13 +352,21 @@ impl Simulation {
         height: Option<HeightAt<'_>>,
         library: Option<&Library>,
         camera: Option<(&GlobalTransform, &Frustum)>,
+        stage: Option<StageView<'_>>,
         frame: &mut ParticleFrame,
         units_per_metre: f32,
         permitted: &dyn Fn(Handle, &Instance) -> bool,
     ) {
         let playing = self;
         frame.eye = camera.map(|(camera, _)| from_world(camera.translation()));
-        playing.advance(dt, height);
+        playing.stage_owed = (playing.stage_owed + dt).min(STAGE_OWED_MAX);
+        let stage_dt = stage
+            .as_ref()
+            .map(|_| std::mem::take(&mut playing.stage_owed));
+        playing.advance(dt, stage_dt, height);
+        frame.stage_layer = stage
+            .as_ref()
+            .map(|view| bevy::camera::visibility::RenderLayers::layer(view.layer));
         frame.lights.clear();
         frame.placed.clear();
         frame.quads.clear();
@@ -300,13 +374,22 @@ impl Simulation {
         let (Some(library), Some((camera, frustum))) = (library, camera) else {
             return;
         };
-        let eye = Eye {
+        let eye_of = |camera: &GlobalTransform| Eye {
             position: from_world(camera.translation()),
             right: from_world(camera.right().as_vec3()),
             up: from_world(camera.up().as_vec3()),
         };
+        let world = (eye_of(camera), frustum);
+        let stage = stage.map(|view| (eye_of(view.camera.0), view.camera.1));
+        let view_of = |instance: &Instance| match (instance.portrait, stage) {
+            (false, _) => Some(world),
+            (true, stage) => stage,
+        };
         playing.lists.resize_with(library.looks.len(), Vec::new);
-        for list in &mut playing.lists {
+        playing
+            .stage_lists
+            .resize_with(library.looks.len(), Vec::new);
+        for list in playing.lists.iter_mut().chain(&mut playing.stage_lists) {
             list.clear();
         }
         for (slot, (generation, entry)) in playing.slots.iter_mut().enumerate() {
@@ -316,6 +399,9 @@ impl Simulation {
             let handle = Handle {
                 slot,
                 generation: *generation,
+            };
+            let Some((eye, frustum)) = view_of(instance) else {
+                continue;
             };
             instance.seen(
                 permitted(handle, instance) && in_view(instance, frustum),
@@ -332,25 +418,43 @@ impl Simulation {
                 generation: *generation,
             };
             // A host visibility rule also hides ended emitters' live tails, lights and models.
-            if !permitted(handle, instance) {
+            let Some((eye, _)) = view_of(instance).filter(|_| permitted(handle, instance)) else {
                 continue;
-            }
+            };
             #[cfg(any(test, feature = "test-support"))]
             let before = (
-                playing.lists.iter().map(Vec::len).sum::<usize>(),
+                playing
+                    .lists
+                    .iter()
+                    .chain(&playing.stage_lists)
+                    .map(Vec::len)
+                    .sum::<usize>(),
                 frame.lights.len(),
                 frame.placed.len(),
             );
             // Out of view an effect draws no cards; its lights may still reach into it.
             if !instance.out_of_view() {
-                draw(instance, &eye, height, &mut playing.lists);
+                let lists = if instance.portrait {
+                    &mut playing.stage_lists
+                } else {
+                    &mut playing.lists
+                };
+                let ground = if instance.portrait { None } else { height };
+                draw(instance, &eye, ground, lists);
             }
-            gather(instance, &mut frame.lights);
-            models::gather(instance, &mut frame.placed, units_per_metre);
+            if !instance.portrait {
+                gather(instance, &mut frame.lights);
+                models::gather(instance, &mut frame.placed, units_per_metre);
+            }
             #[cfg(any(test, feature = "test-support"))]
             if before
                 != (
-                    playing.lists.iter().map(Vec::len).sum::<usize>(),
+                    playing
+                        .lists
+                        .iter()
+                        .chain(&playing.stage_lists)
+                        .map(Vec::len)
+                        .sum::<usize>(),
                     frame.lights.len(),
                     frame.placed.len(),
                 )
@@ -361,7 +465,9 @@ impl Simulation {
                 count_contribution(&mut playing.drawn, &instance.effect);
             }
         }
-        for (look, list) in playing.lists.iter().enumerate() {
+        let world_lists = playing.lists.iter().map(|list| (list, false));
+        let stage_lists = playing.stage_lists.iter().map(|list| (list, true));
+        for (look, (list, on_stage)) in world_lists.enumerate().chain(stage_lists.enumerate()) {
             if list.is_empty() {
                 continue;
             }
@@ -372,6 +478,7 @@ impl Simulation {
                 look: look as u16,
                 range: start..frame.quads.len() as u32,
                 center: sum / list.len() as f32,
+                stage: on_stage,
             });
         }
     }
