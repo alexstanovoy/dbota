@@ -16,7 +16,7 @@ pub fn draw(
     clock: super::page_time::Clock,
 ) {
     if let Some(hero) = hero {
-        hero_art(kit, root, hero);
+        super::hero_stage::draw(kit, root, hero);
     }
     let cards = kit.node(
         root,
@@ -32,32 +32,6 @@ pub fn draw(
     );
     last_match(kit, cards, matches.first(), clock);
     recent_matches(kit, cards, matches);
-}
-
-fn hero_art(kit: &mut Kit, root: Entity, hero: HeroId) {
-    let art = kit.node(
-        root,
-        Node {
-            position_type: PositionType::Absolute,
-            left: percent(50),
-            margin: UiRect::left(px(-264)),
-            top: px(230),
-            width: px(300),
-            height: px(400),
-            ..default()
-        },
-    );
-    kit.commands.entity(art).insert(Name::new("home hero"));
-    super::catalogue::tall(
-        kit,
-        art,
-        hero,
-        Node {
-            width: percent(100),
-            height: percent(100),
-            ..default()
-        },
-    );
 }
 
 fn last_match(kit: &mut Kit, cards: Entity, game: Option<&Match>, clock: super::page_time::Clock) {

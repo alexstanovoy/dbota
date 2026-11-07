@@ -421,7 +421,7 @@ fn stage(
             && let Some(scenes) = &bank.0[model].scenes
         {
             let still = (!animate).then(|| target_image(&mut images));
-            stage.actor = Some(spawn_actor(&mut commands, scenes, model, size, still, STAGE, LAYER));
+            stage.actor = Some(spawn_actor(&mut commands, scenes, model, size, still, LAYER));
         }
     }
     let backdrop = stage
@@ -442,12 +442,11 @@ pub(crate) fn spawn_actor(
     model: usize,
     size: f32,
     still: Option<Handle<Image>>,
-    origin: Vec3,
     layer: usize,
 ) -> Actor {
     let pivot = commands
         .spawn((
-            Transform::from_translation(origin),
+            Transform::from_translation(STAGE),
             Visibility::Hidden,
             RenderLayers::layer(layer),
         ))

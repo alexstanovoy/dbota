@@ -312,17 +312,19 @@ pub(crate) fn mark_figures(
             commands.entity(entity).insert(crate::fog::HeroPart(unit.0));
         }
         // Materials are shared by every instance of a model: lift once.
-        if kind != UnitKind::Hero
-            || materials
-                .get(&material.0)
-                .is_none_or(|m| m.emissive_texture.is_some())
-        {
-            continue;
+        if kind == UnitKind::Hero {
+            lift_hero_material(&material.0, &mut materials);
         }
-        if let Some(mut m) = materials.get_mut(&material.0) {
-            m.emissive_texture = m.base_color_texture.clone();
-            m.emissive = LinearRgba::rgb(HERO_LIFT, HERO_LIFT, HERO_LIFT);
-        }
+    }
+}
+
+/// A hero's own colours read the same on a stage as on the map.
+pub(crate) fn lift_hero_material(handle: &Handle<StandardMaterial>, materials: &mut Assets<StandardMaterial>) {
+    if let Some(mut material) = materials.get_mut(handle)
+        && material.emissive_texture.is_none()
+    {
+        material.emissive_texture = material.base_color_texture.clone();
+        material.emissive = LinearRgba::rgb(HERO_LIFT, HERO_LIFT, HERO_LIFT);
     }
 }
 

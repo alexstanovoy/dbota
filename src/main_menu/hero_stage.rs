@@ -14,18 +14,14 @@ const LAYER: usize = 3;
 const SIZE: (u32, u32) = (300, 400);
 const RATE: f32 = 30.0;
 
-/// The newest local match with a known player. A fresh profile has no subject.
-#[derive(Resource, Default)]
-pub(crate) struct LastPlayedHero(pub Option<bota_proto::HeroId>);
-
 #[derive(Component)]
-pub(crate) struct HeroImage;
+pub(crate) struct HeroImage(bota_proto::HeroId);
 #[derive(Component)]
 struct HeroCamera;
 #[derive(Component)]
 struct HeroLight;
 #[derive(Component)]
-struct StageEntity;
+pub(crate) struct StageEntity;
 
 #[derive(Resource, Default)]
 pub(crate) struct HeroStage {
@@ -37,11 +33,11 @@ pub(crate) struct HeroStage {
     render: bool,
 }
 
-pub(super) fn draw(kit: &mut super::kit::Kit, root: Entity) {
+pub(super) fn draw(kit: &mut super::kit::Kit, root: Entity, hero: bota_proto::HeroId) {
     kit.commands.spawn((
-        HeroImage,
+        HeroImage(hero),
         ImageNode::default(),
-        Node { position_type: PositionType::Absolute, left: px(456), top: px(230),
+        Node { position_type: PositionType::Absolute, left: percent(50), margin: UiRect::left(px(-264)), top: px(230),
             width: px(300), height: px(400), ..default() },
         Pickable::IGNORE,
         Visibility::Hidden,
@@ -51,32 +47,35 @@ pub(super) fn draw(kit: &mut super::kit::Kit, root: Entity) {
 }
 
 pub(super) fn plugin(app: &mut App) {
-    app.init_resource::<HeroStage>().init_resource::<LastPlayedHero>()
-        .add_systems(Update, (select, pose).chain().after(super::screens::draw))
+    app.init_resource::<HeroStage>()
+        .add_systems(Update, (select.run_if(has_home_or_actor), pose.run_if(has_actor)).chain().after(super::screens::draw))
         .add_systems(PostUpdate, (
-            frame.after(bevy::transform::TransformSystems::Propagate).before(bevy::camera::CameraUpdateSystems),
+            frame.after(bevy::transform::TransformSystems::Propagate).after(VisibilitySystems::CalculateBounds)
+                .before(bevy::camera::CameraUpdateSystems),
             visible.in_set(VisibilitySystems::CheckVisibility).after(check_visibility_cpu_culling),
             activate.after(VisibilitySystems::CheckVisibility)
                 .after(SimulationLightSystems::UpdateDirectionalLightCascades)
                 .before(SimulationLightSystems::AssignLightsToClusters)
                 .before(SimulationLightSystems::UpdateLightFrusta),
-        ));
+        ).run_if(has_actor));
+}
+
+fn has_actor(stage: Res<HeroStage>) -> bool { stage.actor.is_some() }
+fn has_home_or_actor(stage: Res<HeroStage>, nodes: Query<(), With<HeroImage>>) -> bool {
+    stage.actor.is_some() || !nodes.is_empty()
 }
 
 fn select(
     mut commands: Commands,
-    core: Option<NonSend<super::MenuCore>>,
-    last: Res<LastPlayedHero>,
     mut stage: ResMut<HeroStage>,
     mut images: ResMut<Assets<Image>>,
-    mut nodes: Query<(&mut ImageNode, &mut Visibility), With<HeroImage>>,
+    mut nodes: Query<(&HeroImage, &mut ImageNode, &mut Visibility)>,
     mut bank: ResMut<ModelBank>,
     manifest: Res<Manifest>,
     server: Res<AssetServer>,
     cameras: Query<Entity, With<StageEntity>>,
 ) {
-    let hero = last.0.filter(|_| core.as_ref().is_none_or(|c| !c.shows_game()))
-        .filter(|_| !nodes.is_empty());
+    let hero = nodes.iter().next().map(|(hero, ..)| hero.0);
     if hero != stage.hero || hero.is_none() {
         if let Some(actor) = stage.actor.take() { commands.entity(actor.pivot).despawn(); }
         for camera in &cameras { commands.entity(camera).despawn(); }
@@ -84,7 +83,7 @@ fn select(
         stage.framed = false;
         stage.hero = hero;
     }
-    for (mut node, mut shown) in &mut nodes {
+    for (_, mut node, mut shown) in &mut nodes {
         shown.set_if_neq(crate::ui::visible(stage.actor.as_ref().is_some_and(|a| a.posed)));
         if node.image != stage.image { node.image = stage.image.clone(); }
     }
@@ -95,7 +94,7 @@ fn select(
     if stage.actor.is_none() && entry.ready() && let Some(scenes) = &entry.scenes {
         stage.image = portrait::stage_image(&mut images, SIZE);
         stage.actor = Some(portrait::spawn_actor(&mut commands, scenes, model, entry.model.scale,
-            None, portrait::STAGE, LAYER));
+            None, LAYER));
         commands.spawn((StageEntity, HeroCamera, Camera3d::default(), Camera {
             order: -3, is_active: false, clear_color: ClearColorConfig::Custom(Color::NONE), ..default()
         }, RenderTarget::Image(ImageRenderTarget { handle: stage.image.clone(), scale_factor: 1.0 }),
@@ -114,11 +113,20 @@ fn pose(
     mut faces: ResMut<Faces>, time: Res<Time<bevy::time::Real>>,
     children: Query<&Children>, parts: Query<&ActorPart>, wearing: Query<&Wearable>,
     meshes: Query<(&MeshMorphWeights, &GltfMeshName, &GltfMeshExtras)>,
+    materials: Query<&MeshMaterial3d<StandardMaterial>>,
+    mut standard: ResMut<Assets<StandardMaterial>>,
     mut players: Query<&mut AnimationPlayer>, mut commands: Commands,
 ) {
     if let Some(actor) = stage.actor.as_mut().filter(|a| !a.posed) {
         portrait::pose_actor(actor, &bank, &args, &mut faces, &time, &children, &parts,
             &wearing, &meshes, &mut players, &mut commands);
+        if actor.posed {
+            for part in children.iter_descendants(actor.pivot) {
+                if let Ok(material) = materials.get(part) {
+                    crate::units::lift_hero_material(&material.0, &mut standard);
+                }
+            }
+        }
     }
 }
 
@@ -128,15 +136,12 @@ fn frame(
     mut cameras: Query<(&mut Camera, &mut Transform, &mut Projection), With<HeroCamera>>,
     faces: Res<Faces>, mut weights: Query<&mut MorphWeights>,
 ) {
-    let now = time.elapsed_secs();
-    let render = stage.actor.as_ref().is_some_and(|a| a.posed) && now >= stage.next_render;
-    if render { stage.next_render = now + 1.0 / RATE; }
-    let framed = stage.framed;
+    stage.render = false;
     for (mut camera, mut at, mut projection) in &mut cameras {
         camera.is_active = false;
-        if !render { continue; }
-        let Some(actor) = &stage.actor else { continue; };
-        if !framed && let Some((center, half)) = portrait::model_bounds(actor.pivot, &children, &bounds) {
+        let Some(actor) = stage.actor.as_ref().filter(|a| a.posed) else { continue; };
+        if !stage.framed {
+            let Some((center, half)) = portrait::model_bounds(actor.pivot, &children, &bounds) else { continue; };
             let center = portrait::STAGE + center;
             *at = Transform::from_translation(center + Vec3::NEG_Z * half.length().max(8.0) * 4.0)
                 .looking_at(center, Vec3::Y);
@@ -144,11 +149,16 @@ fn frame(
                 p.scaling_mode = bevy::camera::ScalingMode::FixedVertical {
                     viewport_height: (half.y.max(half.x * SIZE.1 as f32 / SIZE.0 as f32) * 2.2).max(16.0) };
             }
+            stage.framed = true;
         }
-        if let Some(face) = actor.face.as_ref() { face.pose(now, None, &faces, &mut weights); }
+        let now = time.elapsed_secs();
+        if now < stage.next_render { continue; }
+        stage.next_render = now + 1.0 / RATE;
+        stage.render = true;
+        if let Some(face) = stage.actor.as_ref().and_then(|a| a.face.as_ref()) {
+            face.pose(now, None, &faces, &mut weights);
+        }
     }
-    if render { stage.framed = true; }
-    stage.render = render;
 }
 
 fn visible(stage: Res<HeroStage>, children: Query<&Children>,
