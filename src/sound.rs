@@ -551,26 +551,48 @@ impl Sounder<'_, '_, '_> {
                 binding.name,
                 merge.map_or("none".to_owned(), |unit| unit.idx.to_string()),
                 !binding.own_hero_only || (merge.is_some() && merge == self.ears),
-                binding.layers.iter().map(|layer| layer.sources.len()).sum::<usize>()
+                binding
+                    .layers
+                    .iter()
+                    .map(|layer| layer.sources.len())
+                    .sum::<usize>()
             );
         }
         if self.silent || (binding.own_hero_only && (merge.is_none() || merge != self.ears)) {
             return;
         }
         let layered = binding.layers.len() > 1;
-        if layered && binding.last_layered.is_some_and(|last| self.now.saturating_sub(last) < LAYERED_REST) {
+        if layered
+            && binding
+                .last_layered
+                .is_some_and(|last| self.now.saturating_sub(last) < LAYERED_REST)
+        {
             return;
         }
         let factor_source = if matches!(
             kind,
-            Kind::Row(Row { subject: Subject::Hero(_), event: Event::Attack, .. })
-        ) { emitter } else { self.ears };
+            Kind::Row(Row {
+                subject: Subject::Hero(_),
+                event: Event::Attack,
+                ..
+            })
+        ) {
+            emitter
+        } else {
+            self.ears
+        };
         let mut started = false;
         for layer in &mut binding.layers {
-            if layer.sources.is_empty() { continue; }
+            if layer.sources.is_empty() {
+                continue;
+            }
             let pick = layer.next % layer.sources.len();
             let request = Request {
-                event: if layer.events[pick].is_empty() { &binding.name } else { &layer.events[pick] },
+                event: if layer.events[pick].is_empty() {
+                    &binding.name
+                } else {
+                    &layer.events[pick]
+                },
                 owner: Owner::None,
                 emitter,
                 merge,
@@ -581,13 +603,21 @@ impl Sounder<'_, '_, '_> {
                 on_player: sounds_from_the_players_entity(kind, self.own, factor_source),
                 fog: Some(self.fog),
             };
-            if self.mixer.start(self.commands, self.now, &request, layer.sources[pick].clone()) != Started::Refused {
+            if self.mixer.start(
+                self.commands,
+                self.now,
+                &request,
+                layer.sources[pick].clone(),
+            ) != Started::Refused
+            {
                 layer.next += 1;
                 started = true;
             }
         }
         if started {
-            if layered { binding.last_layered = Some(self.now); }
+            if layered {
+                binding.last_layered = Some(self.now);
+            }
             binding.next += 1;
         }
     }
@@ -1079,8 +1109,16 @@ fn swings(core: &bota_client_core::App, fog: &crate::fog::FogGrid, sound: &mut S
 }
 
 /// The sounds' part of the loading.
-fn report(bindings: Res<Bindings>, server: Res<AssetServer>, mut parts: ResMut<crate::loading::Parts>) {
-    let sources = bindings.0.iter().flat_map(|(_, binding)| &binding.layers).flat_map(|layer| &layer.sources);
+fn report(
+    bindings: Res<Bindings>,
+    server: Res<AssetServer>,
+    mut parts: ResMut<crate::loading::Parts>,
+) {
+    let sources = bindings
+        .0
+        .iter()
+        .flat_map(|(_, binding)| &binding.layers)
+        .flat_map(|layer| &layer.sources);
     let (done, total) = sources.fold((0, 0), |(d, t), h| {
         (d + usize::from(crate::loading::settled(&server, h)), t + 1)
     });
@@ -1130,8 +1168,12 @@ mod tests {
                 row(Subject::Hero(HeroId::SHADOW_FIEND), Event::Attack, None),
                 Binding {
                     name: "synthetic".to_owned(),
-                    sources: vec![Handle::default()],
-                    events: vec!["Synthetic.Attack".to_owned()],
+                    layers: vec![Layer {
+                        sources: vec![Handle::default()],
+                        events: vec!["Synthetic.Attack".to_owned()],
+                        next: 0,
+                    }],
+                    last_layered: None,
                     own_hero_only: false,
                     next: 0,
                 },
@@ -1228,8 +1270,12 @@ mod tests {
             Kind::HeroArrived,
             Binding {
                 name: "landing".to_owned(),
-                sources: vec![source],
-                events: vec!["Synthetic.Landing".to_owned()],
+                layers: vec![Layer {
+                    sources: vec![source],
+                    events: vec!["Synthetic.Landing".to_owned()],
+                    next: 0,
+                }],
+                last_layered: None,
                 own_hero_only: false,
                 next: 0,
             },

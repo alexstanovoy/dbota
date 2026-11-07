@@ -13,18 +13,27 @@ use blurb::fill;
 
 /// Installed announcement labels for taking and denying notable ground loot.
 pub fn loot_labels(id: ItemId) -> Option<[&'static str; 2]> {
-    const LABELS: &[(ItemId, [&str; 2])] = &[
-        (ItemId::AEGIS, ["DOTA_HUD_PickedUpAegis", "DOTA_HUD_DeniedAegis"]),
-    ];
-    LABELS.iter().find_map(|(item, labels)| (*item == id).then_some(*labels))
+    const LABELS: &[(ItemId, [&str; 2])] = &[(
+        ItemId::AEGIS,
+        ["DOTA_HUD_PickedUpAegis", "DOTA_HUD_DeniedAegis"],
+    )];
+    LABELS
+        .iter()
+        .find_map(|(item, labels)| (*item == id).then_some(*labels))
 }
 
 /// Installed team labels for planting notable ground items.
 pub fn placed_labels(id: ItemId) -> Option<[&'static str; 2]> {
-    const LABELS: &[(ItemId, [&str; 2])] = &[
-        (ItemId::ROSHANS_BANNER, ["DOTA_HUD_RadiantBannerPlanted", "DOTA_HUD_DireBannerPlanted"]),
-    ];
-    LABELS.iter().find_map(|(item, labels)| (*item == id).then_some(*labels))
+    const LABELS: &[(ItemId, [&str; 2])] = &[(
+        ItemId::ROSHANS_BANNER,
+        [
+            "DOTA_HUD_RadiantBannerPlanted",
+            "DOTA_HUD_DireBannerPlanted",
+        ],
+    )];
+    LABELS
+        .iter()
+        .find_map(|(item, labels)| (*item == id).then_some(*labels))
 }
 
 /// One timed effect, as the client shows it.

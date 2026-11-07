@@ -704,9 +704,7 @@ fn dota_parts(core: &Core, texts: &Texts, kind: &FeedKind) -> Option<Vec<Part>> 
     match *kind {
         FeedKind::StructureFell { .. } => building_parts(texts, kind),
         FeedKind::ItemPlaced { item, team } => {
-            let keys = crate::faces::ITEMS
-                .get(usize::from(item.0))?
-                .placed_labels?;
+            let keys = crate::faces::placed_labels(item)?;
             texts.label_parts(keys[usize::from(team == Team::Dire)], &[])
         }
         FeedKind::Loot {
@@ -844,9 +842,7 @@ pub fn text(core: &Core, kind: &FeedKind) -> String {
         FeedKind::ItemPlaced { item, team } => format!(
             "{} placed {}",
             side_name(team),
-            crate::faces::ITEMS
-                .get(usize::from(item.0))
-                .map_or("an item", |i| i.name)
+            bota_core::item_def(item).map_or("an item", |def| def.name)
         ),
         FeedKind::Loot {
             item,
@@ -857,9 +853,7 @@ pub fn text(core: &Core, kind: &FeedKind) -> String {
             "{} {} {}",
             activator(core, by, team),
             if destroyed { "denied" } else { "picked up" },
-            crate::faces::ITEMS
-                .get(usize::from(item.0))
-                .map_or("the item", |item| item.name)
+            bota_core::item_def(item).map_or("the item", |def| def.name)
         ),
         FeedKind::BossRoared { objective: _, team } => {
             format!("Roshan roars at {}", side_name(team))

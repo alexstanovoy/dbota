@@ -3,6 +3,68 @@ use super::harness::{Client, Server};
 use crate::units::{ModelBank, Unit};
 use bota_proto::{Cheat, HeroId, UnitKind};
 
+/// Actual audio players created before no-device playback retires one-shots.
+#[derive(Clone, Default)]
+struct BossSounds(std::sync::Arc<std::sync::Mutex<Vec<BossSound>>>);
+
+struct BossSound {
+    event: String,
+    at: Option<(f32, f32)>,
+    started: std::time::Duration,
+    mode: bevy::audio::PlaybackMode,
+}
+
+impl BossSounds {
+    fn listen(&self, client: &mut Client) {
+        use bevy::{audio::AudioPlayer, prelude::*};
+        let heard = self.clone();
+        client.world_mut().add_observer(
+            move |add: On<Add, AudioPlayer>,
+                  mixer: Res<crate::mixer::Mixer>,
+                  settings: Query<&bevy::audio::PlaybackSettings>,
+                  time: Res<Time>| {
+                let Some((event, at)) = mixer.event_at(add.entity) else {
+                    return;
+                };
+                if !matches!(
+                    event,
+                    "Roshan.RevengeRoar"
+                        | "Roshan.RevengeRoar.Layer"
+                        | "Roshan.Death"
+                        | "valve_dota_001.music.roshan_end"
+                ) {
+                    return;
+                }
+                let settings = settings
+                    .get(add.entity)
+                    .expect("audio player's playback settings");
+                let mut heard = heard.0.lock().expect("audio observations");
+                assert!(heard.len() < 32, "bounded boss audio observations");
+                heard.push(BossSound {
+                    event: event.to_owned(),
+                    at,
+                    started: time.elapsed(),
+                    mode: settings.mode,
+                });
+            },
+        );
+    }
+
+    fn together_globally(&self, first: &str, second: &str) -> bool {
+        let heard = self.0.lock().expect("audio observations");
+        let global_once = |sound: &BossSound| {
+            sound.at.is_none() && matches!(sound.mode, bevy::audio::PlaybackMode::Despawn)
+        };
+        heard.iter().any(|a| {
+            a.event == first
+                && global_once(a)
+                && heard
+                    .iter()
+                    .any(|b| b.event == second && global_once(b) && b.started == a.started)
+        })
+    }
+}
+
 #[test]
 fn roshan_stands_in_the_pit_as_his_imported_model_with_a_health_bar() {
     let server = Server::start(1, &["--objectives", "roshan", "--immortal-heroes"]);
@@ -516,7 +578,7 @@ fn roshans_slam_draws_its_cast_animation_particle_and_slow_on_the_player() {
                 .me()
                 .effects
                 .iter()
-                .any(|e| e.id == bota_proto::EffectId(83));
+                .any(|e| e.id == bota_proto::EffectId(86));
             casting && slowed && particle_started(c, "neutral.roshan_slam") > 0
         },
     );
@@ -548,6 +610,8 @@ fn a_respawned_roshan_roars_with_animation_particles_global_sound_and_message() 
         .find(|u| u.kind == UnitKind::Roshan)
         .expect("respawned boss")
         .clone();
+    let heard = BossSounds::default();
+    heard.listen(&mut client);
     client.core_mut().act(Intent::AttackAt {
         at: (boss.pos.x.to_f32(), boss.pos.y.to_f32()),
         unit: Some(boss.id),
@@ -559,14 +623,14 @@ fn a_respawned_roshan_roars_with_animation_particles_global_sound_and_message() 
         "Roar's visible and globally announced player effects",
         |c| {
             sounded |= crate::sound::cues_sounded(c.world(), CueKind::BossRoar) > 0;
-            let mixer = c.world().resource::<crate::mixer::Mixer>();
-            both_layers |= mixer.sounding("Roshan.RevengeRoar") > 0
-                && mixer.sounding("Roshan.RevengeRoar.Layer") > 0;
+            both_layers |=
+                heard.together_globally("Roshan.RevengeRoar", "Roshan.RevengeRoar.Layer");
             animation |= c
                 .body(boss.id)
                 .and_then(|e| c.world().get::<crate::anim::Pose>(e))
                 .is_some_and(|p| p.clip() == "cast1");
             sounded
+                && both_layers
                 && animation
                 && particle_started(c, "neutral.roshan_roar") > 0
                 && c.core()
@@ -655,7 +719,7 @@ fn roshans_bash_uses_its_unique_attack_animation_and_stuns_the_player() {
                 .me()
                 .effects
                 .iter()
-                .any(|e| e.id == bota_proto::EffectId(84));
+                .any(|e| e.id == bota_proto::EffectId(87));
             stunned
                 && c.view()
                     .units
@@ -974,7 +1038,9 @@ fn the_public_roshan_status_shows_dead_then_possible_then_alive_from_the_public_
 #[test]
 fn roshans_death_roar_and_stinger_are_global_even_with_the_camera_across_the_map() {
     use bevy::prelude::*;
+    let heard = BossSounds::default();
     let (_server, mut client) = slain_roshan_observed(&[], |c| {
+        heard.listen(c);
         c.core_mut().pinned = None;
         let world = c.world_mut();
         let mut camera = world
@@ -983,20 +1049,9 @@ fn roshans_death_roar_and_stinger_are_global_even_with_the_camera_across_the_map
             .expect("camera");
         camera.focus = Vec3::new(16000., 0., -2000.);
     });
-    client.frames(2);
-    let mixer = client.world().resource::<crate::mixer::Mixer>();
-    assert!(
-        mixer.sounding("Roshan.Death") > 0,
-        "the non-positional death roar is heard"
-    );
-    assert!(
-        mixer.sounding("valve_dota_001.music.roshan_end") > 0,
-        "the default global stinger is heard"
-    );
-    assert_eq!(
-        mixer.loop_gain("valve_dota_001.music.roshan_end"),
-        None,
-        "the music asset is a one-shot cue, not an owned loop"
+    client.until(
+        "the death roar and stinger start together, globally and once",
+        |_| heard.together_globally("Roshan.Death", "valve_dota_001.music.roshan_end"),
     );
 }
 
