@@ -78,6 +78,10 @@ pub struct Chosen(pub Option<u16>);
 
 pub fn plugin(app: &mut App) {
     app.init_resource::<Chosen>()
+        .add_systems(
+            First,
+            crate::loading::reset::<Chosen>.in_set(crate::loading::Begin),
+        )
         .add_systems(Update, (stock, edges, shop_access));
 }
 

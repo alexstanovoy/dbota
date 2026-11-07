@@ -165,6 +165,7 @@ struct Layer(Entity);
 pub fn plugin(app: &mut App) {
     app.init_resource::<Bars>()
         .init_resource::<Floaters>()
+        .add_systems(First, reset.in_set(crate::loading::Begin))
         .add_systems(Startup, spawn_layer)
         // Placed from the camera's own transform, not its propagated one,
         // so the bars and the interface's layout run beside the transform
@@ -846,4 +847,10 @@ pub(crate) fn drawn_gold_popups(world: &mut World) -> Vec<i32> {
         .collect();
     amounts.sort_unstable();
     amounts
+}
+
+fn reset(mut commands: Commands, mut bars: ResMut<Bars>) {
+    for (_, bar) in bars.0.drain() {
+        commands.entity(bar.root).despawn();
+    }
 }

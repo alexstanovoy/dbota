@@ -18,6 +18,8 @@ pub(crate) use cell::Chosen;
 #[cfg(test)]
 pub(crate) use cell::ShopAccessShade;
 pub use cell::{Place, ShopCell, spawn as spawn_cell};
+#[cfg(test)]
+pub(crate) use corner::Grab;
 pub use corner::STICKY;
 #[cfg(test)]
 pub(crate) use corner::{GrabAll, drawn_gold};

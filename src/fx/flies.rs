@@ -26,6 +26,10 @@ struct Flying(HashMap<(usize, EntityId), Handle>);
 
 pub(super) fn plugin(app: &mut App) {
     app.init_resource::<Flying>()
+        .add_systems(
+            First,
+            crate::loading::reset::<Flying>.in_set(crate::loading::Begin),
+        )
         .add_systems(Update, flies.after(crate::units::Placed));
 }
 

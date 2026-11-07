@@ -72,6 +72,15 @@ pub fn plugin(app: &mut App) {
         .init_resource::<Typing>()
         .init_resource::<Panels>()
         .init_resource::<ControlGroups>()
+        .add_systems(
+            First,
+            (
+                crate::loading::reset::<ControlGroups>,
+                crate::loading::reset::<Panels>,
+                crate::loading::reset::<Typing>,
+            )
+                .in_set(crate::loading::Begin),
+        )
         .add_systems(PreUpdate, mute.before(crate::keys::fire))
         .add_systems(
             PreUpdate,

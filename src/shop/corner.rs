@@ -117,6 +117,10 @@ pub struct Grab {
 
 pub fn plugin(app: &mut App) {
     app.init_resource::<Grab>()
+        .add_systems(
+            First,
+            crate::loading::reset::<Grab>.in_set(crate::loading::Begin),
+        )
         .add_systems(Startup, spawn)
         .add_systems(
             Update,
@@ -685,6 +689,11 @@ fn grab_step(mut session: NonSendMut<Session>, mut grab: ResMut<Grab>) {
 }
 
 impl Grab {
+    #[cfg(test)]
+    pub(crate) fn has_session_state(&self) -> bool {
+        !self.moves.is_empty() || self.sent.is_some()
+    }
+
     /// Starts taking everything out of the stash.
     pub fn start(&mut self, core: &bota_client_core::App) {
         self.moves = grab_moves(core).into();

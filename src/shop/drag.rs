@@ -29,14 +29,19 @@ impl ShopDrag {
 }
 
 pub fn plugin(app: &mut App) {
-    app.init_resource::<ShopDrag>().add_systems(
-        Update,
-        track
-            .before(super::clicks::cells)
-            .before(crate::input::mouse)
-            .before(crate::input::boxes)
-            .run_if(super::match_or_tactical),
-    );
+    app.init_resource::<ShopDrag>()
+        .add_systems(
+            First,
+            crate::loading::reset::<ShopDrag>.in_set(crate::loading::Begin),
+        )
+        .add_systems(
+            Update,
+            track
+                .before(super::clicks::cells)
+                .before(crate::input::mouse)
+                .before(crate::input::boxes)
+                .run_if(super::match_or_tactical),
+        );
 }
 
 fn track(

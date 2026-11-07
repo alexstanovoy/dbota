@@ -50,6 +50,7 @@ pub struct ItemName;
 
 pub fn plugin(app: &mut App) {
     app.init_resource::<LootIndex>()
+        .add_systems(First, reset.in_set(crate::loading::Begin))
         .add_systems(Startup, make_name)
         .add_systems(Update, (sync_loot, name_hovered));
 }
@@ -239,4 +240,11 @@ fn name_hovered(
         label.1.0 = name;
     }
     label.2.set_if_neq(Visibility::Inherited);
+}
+
+fn reset(mut commands: Commands, mut index: ResMut<LootIndex>, bodies: Query<Entity, With<Loot>>) {
+    for body in &bodies {
+        commands.entity(body).despawn();
+    }
+    index.0.clear();
 }

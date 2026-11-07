@@ -163,6 +163,7 @@ pub fn plugin(app: &mut App) {
     app.init_resource::<Forest>()
         .init_resource::<SceneryReady>()
         .init_resource::<TreeTarget>()
+        .add_systems(First, reset.in_set(crate::loading::Begin))
         .add_systems(
             Update,
             preload.run_if(crate::loading::requested).before(plant),
@@ -181,6 +182,36 @@ pub fn plugin(app: &mut App) {
             )
                 .chain(),
         );
+}
+
+/// Keeps the imported models, but none of the previous match's placements or animations.
+fn reset(
+    mut commands: Commands,
+    mut forest: ResMut<Forest>,
+    mut ready: ResMut<SceneryReady>,
+    mut target: ResMut<TreeTarget>,
+    animated: Query<Entity, With<TreeFx>>,
+) {
+    let forest = &mut *forest;
+    for entity in forest
+        .chunks
+        .drain()
+        .flat_map(|(_, entities)| entities)
+        .chain(forest.planted.drain().map(|(_, entity)| entity))
+        .chain(animated.iter())
+    {
+        commands.entity(entity).despawn();
+    }
+    forest.trees.clear();
+    forest.felled.clear();
+    forest.told.clear();
+    forest.growing.clear();
+    forest.used.clear();
+    forest.built = false;
+    forest.planted_all = false;
+    forest.viewed = false;
+    ready.0 = false;
+    target.0 = None;
 }
 
 /// Reads the real map's trees, if the cache has them.
@@ -868,4 +899,15 @@ fn report(forest: Res<Forest>, server: Res<AssetServer>, mut parts: ResMut<crate
         })
         .count();
     parts.set("trees", ready, forest.kinds.len());
+}
+
+#[cfg(test)]
+pub(crate) fn chunk_entities(world: &World) -> Vec<Entity> {
+    world
+        .resource::<Forest>()
+        .chunks
+        .values()
+        .flatten()
+        .copied()
+        .collect()
 }

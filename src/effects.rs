@@ -61,17 +61,22 @@ struct Flying {
 pub(crate) struct Flights;
 
 pub fn plugin(app: &mut App) {
-    app.init_resource::<Flying>().add_systems(
-        Update,
-        (
-            missiles.in_set(Flights),
-            bursts,
-            casts.after(crate::units::Placed),
-            souls,
-            level_ups.after(crate::units::Placed),
-            deaths,
-        ),
-    );
+    app.init_resource::<Flying>()
+        .add_systems(
+            First,
+            crate::loading::reset::<Flying>.in_set(crate::loading::Begin),
+        )
+        .add_systems(
+            Update,
+            (
+                missiles.in_set(Flights),
+                bursts,
+                casts.after(crate::units::Placed),
+                souls,
+                level_ups.after(crate::units::Placed),
+                deaths,
+            ),
+        );
 }
 
 /// What a missile's effect reads of the units: their roots, models, poses and attachments.

@@ -295,6 +295,11 @@ pub fn plugin(app: &mut App) {
     app.add_plugins(crate::mixer::plugin)
         .init_resource::<Bindings>()
         .init_resource::<PendingCues>()
+        .init_resource::<History>()
+        .add_systems(
+            First,
+            crate::loading::reset::<History>.in_set(crate::loading::Begin),
+        )
         .add_systems(Update, load.run_if(crate::loading::requested))
         .add_systems(PostUpdate, report.in_set(crate::loading::Report))
         .add_systems(Update, (volume, (collect_cues, play).chain(), portals));
@@ -302,6 +307,14 @@ pub fn plugin(app: &mut App) {
 
 #[derive(Resource, Default)]
 struct PendingCues(Vec<Cue>);
+
+#[derive(Resource, Default)]
+struct History {
+    queued: QueuedBuys,
+    shops: ShopWatch,
+    last_ping: Option<bota_proto::Heard>,
+    humming: HashMap<SlotId, Humming>,
+}
 
 fn collect_cues(mut session: NonSendMut<Session>, mut pending: ResMut<PendingCues>) {
     pending.0.clear();
@@ -698,10 +711,14 @@ fn play(
     cam: Single<&RtsCamera>,
     settings: Res<Settings>,
     args: Res<crate::Args>,
-    mut last_ping: Local<Option<bota_proto::Heard>>,
-    mut queued: Local<QueuedBuys>,
-    mut shops: Local<ShopWatch>,
+    mut history: ResMut<History>,
 ) {
+    let History {
+        queued,
+        shops,
+        last_ping,
+        ..
+    } = &mut *history;
     let core = sight.core();
     let (chosen, spoken) = queued.watch(core, time.elapsed_secs());
     let mut sounder = Sounder {
@@ -722,7 +739,7 @@ fn play(
         sounder.sound(Kind::Cue(CueKind::Buy), BUY_GAIN, None, None, None);
     }
     queued.spoken = sounder.cues(pending.0.drain(..), spoken, &sight);
-    match shop_change(core, &mut shops, time.elapsed_secs()) {
+    match shop_change(core, shops, time.elapsed_secs()) {
         Some(true) => sounder.sound(Kind::ShopAvailable, 1.0, None, None, None),
         Some(false) => sounder.sound(Kind::ShopUnavailable, 1.0, None, None, None),
         None => {}
@@ -730,7 +747,7 @@ fn play(
     shots(core, sight.fog(), &mut sounder);
     swings(core, sight.fog(), &mut sounder);
     // A ping is heard by its side wherever the camera is, as Dota's are.
-    for kind in crate::pings::fresh(&sight, &mut last_ping) {
+    for kind in crate::pings::fresh(&sight, last_ping) {
         match kind {
             bota_proto::PingKind::Regular => sounder.sound(Kind::Ping, 1.0, None, None, None),
             bota_proto::PingKind::Danger => {
@@ -784,8 +801,9 @@ fn portals(
     cam: Single<&RtsCamera>,
     settings: Res<Settings>,
     args: Res<crate::Args>,
-    mut humming: Local<HashMap<SlotId, Humming>>,
+    mut history: ResMut<History>,
 ) {
+    let humming = &mut history.humming;
     let ends: Vec<(SlotId, bool)> = sight
         .core()
         .told
@@ -814,7 +832,7 @@ fn portals(
             fog: sight.fog(),
             trace: None,
         };
-        finish_portals(&mut sounder, core, &mut humming, &view.teleports, &ends);
+        finish_portals(&mut sounder, core, humming, &view.teleports, &ends);
     }
     let audio = PortalAudio {
         bindings: &bindings,
@@ -822,7 +840,7 @@ fn portals(
         focus,
         silent,
     };
-    follow_portals(&mut commands, &audio, &mut humming, view, &sight);
+    follow_portals(&mut commands, &audio, humming, view, &sight);
 }
 
 fn finish_portals(
@@ -1161,6 +1179,7 @@ mod tests {
             .init_resource::<crate::fog::FogGrid>()
             .init_resource::<crate::main_menu::GameEpoch>()
             .init_resource::<PendingCues>()
+            .init_resource::<History>()
             .insert_resource(Settings::default())
             .insert_resource(crate::Args::parse_from(["dbota"]))
             .insert_resource(mixer)

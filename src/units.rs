@@ -225,6 +225,10 @@ pub struct Placed;
 pub fn plugin(app: &mut App) {
     app.init_resource::<UnitIndex>()
         .init_resource::<JumpedOver>()
+        .add_systems(
+            First,
+            crate::loading::reset::<JumpedOver>.in_set(crate::loading::Begin),
+        )
         .init_resource::<ReplacedScenes>()
         .add_systems(
             PreStartup,

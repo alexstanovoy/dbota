@@ -57,6 +57,7 @@ mod pudge_attack_sounds;
 mod purchase_destination;
 mod quickbuy;
 mod refusals;
+mod regame;
 mod rings;
 mod roshan;
 mod rune_lifecycle;

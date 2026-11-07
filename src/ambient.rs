@@ -67,12 +67,18 @@ impl Ambient {
 
 pub fn plugin(app: &mut App) {
     app.init_resource::<Ambient>()
+        .add_systems(First, reset.in_set(crate::loading::Begin))
         .add_systems(
             Update,
             load.after(crate::particles::Loaded)
                 .run_if(resource_added::<crate::particles::Library>),
         )
         .add_systems(Update, play);
+}
+
+fn reset(mut ambient: ResMut<Ambient>) {
+    ambient.active.clear();
+    ambient.wanted.clear();
 }
 
 /// Where Source's angles (pitch, yaw, roll in degrees) turn a system's forward, in the

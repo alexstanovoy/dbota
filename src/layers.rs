@@ -344,18 +344,22 @@ fn shade_forest(
     session: NonSend<Session>,
     layers: Option<Res<GroundLayers>>,
     mut images: ResMut<Assets<Image>>,
-    mut drawn: Local<Option<Vec<u32>>>,
+    epoch: Res<crate::main_menu::GameEpoch>,
+    mut drawn: Local<Option<(u32, Vec<u32>)>>,
 ) {
-    let (Some(layers), Some(view)) = (layers, session.0.view()) else {
+    let Some(layers) = layers.filter(|_| session.0.trees_known()) else {
         return;
     };
     let trees = session.0.trees();
-    if trees.is_empty() {
-        return;
-    }
-    let mut felled = view.felled_trees.clone();
+    let mut felled = session
+        .0
+        .view()
+        .map_or_else(Vec::new, |view| view.felled_trees.clone());
     felled.sort_unstable();
-    if drawn.as_ref() == Some(&felled) {
+    if drawn
+        .as_ref()
+        .is_some_and(|(game, trees)| *game == epoch.0 && *trees == felled)
+    {
         return;
     }
     let Some(mut image) = images.get_mut(&layers.field) else {
@@ -369,7 +373,7 @@ fn shade_forest(
     if !lay_forest_shade(&mut image, standing) {
         warn!("the ground's field is not two cells wide for one tall, in RGBA: no forest shade");
     }
-    *drawn = Some(felled);
+    *drawn = Some((epoch.0, felled));
 }
 
 #[cfg(test)]

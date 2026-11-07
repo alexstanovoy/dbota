@@ -4,6 +4,7 @@
 use bevy::prelude::*;
 use bota_client_core::{App as Core, Pin, ReplayPlayer, Source};
 use bota_proto::SlotId;
+use std::time::Duration;
 
 use crate::Args;
 
@@ -15,8 +16,21 @@ pub struct Session(pub Core);
 #[derive(Resource, Default, Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MatchKnown(pub bool);
 
+/// Playback bookkeeping belongs to the opened session, like its loading screen.
+#[derive(Resource, Default)]
+pub(crate) struct ReplayState {
+    began: Option<Duration>,
+    held: bool,
+    failed: bool,
+}
+
 pub fn plugin(app: &mut App) {
     app.init_resource::<MatchKnown>()
+        .init_resource::<ReplayState>()
+        .add_systems(
+            First,
+            crate::loading::reset::<ReplayState>.in_set(crate::loading::Begin),
+        )
         .add_systems(PreUpdate, (hold_replay, pump).chain());
 }
 
@@ -162,31 +176,32 @@ fn connect(_args: &Args) -> std::io::Result<Session> {
 fn hold_replay(
     mut session: NonSendMut<Session>,
     loading: Res<crate::loading::Loading>,
-    mut held: Local<bool>,
+    mut state: ResMut<ReplayState>,
     time: Res<Time>,
 ) {
     let started = session.0.view().is_some();
     let bota_client_core::Source::Replay(player) = &mut session.0.source else {
         return;
     };
+    let began = *state.began.get_or_insert(time.elapsed());
     // A replay without a match start never gets scenery; give up after a while.
-    let waiting = !loading.done() && time.elapsed_secs() < 60.0;
-    if waiting && !*held && started {
-        *held = true;
+    let waiting = !loading.done() && time.elapsed().saturating_sub(began) < Duration::from_secs(60);
+    if waiting && !state.held && started {
+        state.held = true;
         player.paused = true;
-    } else if !waiting && *held {
-        *held = false;
+    } else if !waiting && state.held {
+        state.held = false;
         player.paused = false;
     }
 }
 
 /// Takes in whatever arrived and moves the client's clocks on.
-pub fn pump(
+pub(crate) fn pump(
     mut session: NonSendMut<Session>,
     time: Res<Time>,
     mut known: ResMut<MatchKnown>,
     mut exit: MessageWriter<AppExit>,
-    mut failed: Local<bool>,
+    mut state: ResMut<ReplayState>,
 ) {
     let core = &mut session.0;
     core.pump(time.delta_secs());
@@ -205,10 +220,10 @@ pub fn pump(
     // A replay that fails to read says so at once, whatever shows on screen.
     if let Source::Replay(player) = &core.source
         && let Some(err) = player.error()
-        && !*failed
+        && !state.failed
     {
         error!("the replay cannot be read: {err}");
-        *failed = true;
+        state.failed = true;
     }
     let ready = core.terrain_cells() > 0 && core.view().is_some();
     if known.0 != ready {

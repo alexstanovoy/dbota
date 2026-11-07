@@ -188,6 +188,7 @@ struct Voices {
 /// What the voices remember between frames.
 #[derive(Default)]
 struct Heard {
+    epoch: u32,
     /// The last order sent that was looked at.
     seq: u32,
     /// Seconds before the hero may answer again.
@@ -313,7 +314,14 @@ fn answer(
     time: Res<Time>,
     real: Res<Time<bevy::time::Real>>,
     mut heard: Local<Heard>,
+    epoch: Res<crate::main_menu::GameEpoch>,
 ) {
+    if heard.epoch != epoch.0 {
+        *heard = Heard {
+            epoch: epoch.0,
+            ..default()
+        };
+    }
     let core = &session.0;
     heard.rest = (heard.rest - time.delta_secs()).max(0.0);
     if core.seq() == heard.seq {
@@ -417,7 +425,14 @@ fn announce(
     settings: Res<Settings>,
     args: Res<crate::Args>,
     mut heard: Local<Heard>,
+    epoch: Res<crate::main_menu::GameEpoch>,
 ) {
+    if heard.epoch != epoch.0 {
+        *heard = Heard {
+            epoch: epoch.0,
+            ..default()
+        };
+    }
     let core = &session.0;
     let silent = settings.muted || args.mute;
     if core.phase == Phase::Lobby && core.my_slot.is_some() && !heard.asked {
@@ -480,6 +495,7 @@ fn fortified(
     mut was: Local<Option<[bool; 2]>>,
 ) {
     let Some(view) = session.0.view() else {
+        *was = None;
         return;
     };
     let now = [Team::Radiant, Team::Dire].map(|team| {

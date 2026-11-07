@@ -92,6 +92,10 @@ impl Settling {
 
 pub fn plugin(app: &mut App) {
     app.init_resource::<Settling>()
+        .add_systems(
+            First,
+            crate::loading::reset::<Settling>.in_set(crate::loading::Begin),
+        )
         .add_systems(Startup, spawn)
         .add_systems(Update, (settled, follow));
 }

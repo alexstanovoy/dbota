@@ -95,15 +95,17 @@ impl Menu {
 struct Root;
 
 pub fn plugin(app: &mut App) {
-    app.init_resource::<Menu>().add_systems(
-        Update,
-        (
-            open.in_set(MenuSystems::Open),
-            draw,
-            choose.in_set(MenuSystems::Choose),
-        )
-            .chain(),
-    );
+    app.init_resource::<Menu>()
+        .add_systems(First, reset.in_set(crate::loading::Begin))
+        .add_systems(
+            Update,
+            (
+                open.in_set(MenuSystems::Open),
+                draw,
+                choose.in_set(MenuSystems::Choose),
+            )
+                .chain(),
+        );
 }
 
 #[derive(SystemSet, Debug, Hash, PartialEq, Eq, Clone, Copy)]
@@ -320,4 +322,11 @@ fn choose(
         menu.open = None;
         menu.stale = true;
     }
+}
+
+fn reset(mut menu: ResMut<Menu>) {
+    *menu = Menu {
+        stale: true,
+        ..default()
+    };
 }

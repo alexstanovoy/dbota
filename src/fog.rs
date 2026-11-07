@@ -313,6 +313,7 @@ pub fn plugin(app: &mut App) {
     embedded_asset!(app, "fog.wgsl");
     app.init_resource::<FogGrid>()
         .init_resource::<ProjectileSight>()
+        .add_systems(First, reset.in_set(crate::loading::Begin))
         .add_plugins(MaterialPlugin::<FoggedMaterial>::default())
         // Both snapshot ingestion and keyboard intents choose the viewer before its fog is read.
         .add_systems(
@@ -332,6 +333,17 @@ pub fn plugin(app: &mut App) {
             Update,
             clarity.run_if(resource_changed::<crate::config::Settings>),
         );
+}
+
+/// The next minimap photograph sees unfogged ground, including before its first view.
+fn reset(mut grid: ResMut<FogGrid>, veil: Option<Res<Veil>>, mut images: ResMut<Assets<Image>>) {
+    *grid = FogGrid::default();
+    if let Some(veil) = veil
+        && let Some(mut image) = images.get_mut(&veil.image)
+        && let Some(data) = image.data.as_mut()
+    {
+        data.fill(0);
+    }
 }
 
 /// Works out the lit cells when a new tick or a new side comes.
@@ -705,9 +717,13 @@ fn shade_veil(
     let Some(mut image) = images.get_mut(&veil.image) else {
         return;
     };
-    let Some(data) = image.data.as_mut().filter(|data| data.len() == n * n * 4) else {
-        return;
-    };
+    assert_eq!(
+        image.size(),
+        UVec2::splat(n as u32),
+        "veil fits the current grid"
+    );
+    let data = image.data.as_mut().expect("the veil keeps CPU texels");
+    assert_eq!(data.len(), n * n * 4, "one RGBA texel per fog cell");
     grid.clear_veil = false;
     // A tent blur over a cell either way rounds the border's cell steps:
     // 1-2-1 along each row, then along each column, the edges repeated.

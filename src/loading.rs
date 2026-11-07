@@ -24,6 +24,7 @@ mod screen;
 pub struct Loading {
     /// The game the loading is for (`GameEpoch`), once one connected.
     game: Option<u32>,
+    beginning: bool,
     /// Whether the asset loaders run this frame: the frame the first match
     /// connected.
     requested: bool,
@@ -82,6 +83,20 @@ impl Parts {
 #[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Report;
 
+/// Clears match state on opening or leaving a game, before the frame consumes it.
+#[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
+pub(crate) struct Begin;
+
+fn beginning(loading: Res<Loading>) -> bool {
+    loading.beginning
+}
+
+pub(crate) fn reset<T: Resource<Mutability = bevy::ecs::component::Mutable> + Default>(
+    mut state: ResMut<T>,
+) {
+    *state = T::default();
+}
+
 /// Seconds the loading screen waits at most: a part that never finishes (a
 /// file the cache lacks that never fails either) is named on the log and the
 /// game goes on without it, as it would have drawn without it before.
@@ -108,6 +123,7 @@ pub fn plugin(app: &mut App) {
     app.init_resource::<Loading>()
         .init_resource::<Parts>()
         .add_systems(First, begin)
+        .configure_sets(First, Begin.after(begin).run_if(beginning))
         .add_systems(PostUpdate, track.after(Report))
         .add_systems(Update, slow_load.run_if(requested))
         .add_systems(Last, |mut loading: ResMut<Loading>| {
@@ -133,20 +149,28 @@ fn begin(
     args: Res<crate::Args>,
     epoch: Res<crate::main_menu::GameEpoch>,
     mut loading: ResMut<Loading>,
+    menu: Option<NonSend<crate::main_menu::MenuCore>>,
 ) {
-    let connected = epoch.0 > 0 || !args.wants_menu();
-    if !connected || loading.game == Some(epoch.0) {
+    loading.beginning = false;
+    let connected = menu
+        .as_ref()
+        .map_or(!args.wants_menu(), |menu| menu.in_game());
+    if loading.game == Some(epoch.0) || (!connected && loading.game.is_none()) {
         return;
     }
     loading.game = Some(epoch.0);
-    loading.shown = true;
+    loading.beginning = true;
+    loading.progress = 0.0;
+    loading.shown = connected;
     loading.began = crate::since_start();
-    loading.ended = None;
-    if !loading.asked {
+    loading.ended = (!connected).then_some(loading.began);
+    if connected && !loading.asked {
         loading.asked = true;
         loading.requested = true;
     }
-    info!("loading: began for game {}", epoch.0);
+    if connected {
+        info!("loading: began for game {}", epoch.0);
+    }
 }
 
 /// Works out how far the loading is and lifts the screen once every part is

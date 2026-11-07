@@ -171,6 +171,7 @@ pub(crate) struct PingRing;
 pub fn plugin(app: &mut App) {
     app.init_resource::<PhotoTaken>()
         .add_systems(Startup, spawn)
+        .add_systems(First, reset.in_set(crate::loading::Begin))
         .add_systems(
             Update,
             (
@@ -350,6 +351,21 @@ fn spawn(mut commands: Commands, mut images: ResMut<Assets<Image>>, docks: Res<D
     });
 }
 
+fn reset(
+    mut commands: Commands,
+    mut taken: ResMut<PhotoTaken>,
+    cameras: Query<Entity, With<PhotoCamera>>,
+    mut photos: Query<&mut Visibility, With<Photo>>,
+) {
+    *taken = PhotoTaken::default();
+    for camera in &cameras {
+        commands.entity(camera).despawn();
+    }
+    for mut photo in &mut photos {
+        *photo = Visibility::Hidden;
+    }
+}
+
 /// Photographs the map from straight above once the ground and the forest
 /// are there, then puts the camera away.
 fn photograph(
@@ -358,19 +374,19 @@ fn photograph(
     minimap: Res<Minimap>,
     mut cameras: Query<(Entity, &mut PhotoCamera, &mut Camera)>,
     mut shown: Single<&mut Visibility, With<Photo>>,
-    mut started: Local<f32>,
+    mut started: Local<Option<f32>>,
     time: Res<Time>,
     mut taken: ResMut<PhotoTaken>,
 ) {
-    if !ready.0 {
+    if taken.is_changed() && !taken.0 {
+        *started = None;
+    }
+    if !ready.0 || taken.0 {
         return;
     }
-    if *started == 0.0 {
-        *started = time.elapsed_secs();
-        return;
-    }
+    let began = *started.get_or_insert(time.elapsed_secs());
     // Leave the forest a moment to appear.
-    if time.elapsed_secs() - *started < 0.5 {
+    if time.elapsed_secs() - began < 0.5 {
         return;
     }
     match cameras.single_mut() {
@@ -384,7 +400,7 @@ fn photograph(
                 frames.0 -= 1;
             }
         }
-        Err(_) if *started > 0.0 && time.elapsed_secs() - *started < 1.0 => {
+        Err(_) => {
             commands.spawn((
                 Camera3d::default(),
                 Camera {
@@ -411,7 +427,6 @@ fn photograph(
                 PhotoCamera(3),
             ));
         }
-        Err(_) => {}
     }
 }
 
@@ -997,6 +1012,14 @@ fn clicks(
     {
         core.act(Intent::MoveTo((x, y)));
     }
+}
+
+#[cfg(test)]
+pub(crate) fn photographing(world: &mut World) -> bool {
+    world
+        .query_filtered::<&Camera, With<PhotoCamera>>()
+        .iter(world)
+        .any(|camera| camera.is_active)
 }
 
 #[cfg(test)]

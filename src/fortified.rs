@@ -29,6 +29,10 @@ struct Worn(HashMap<EntityId, Handle>);
 
 pub fn plugin(app: &mut App) {
     app.init_resource::<Worn>()
+        .add_systems(
+            First,
+            crate::loading::reset::<Worn>.in_set(crate::loading::Begin),
+        )
         .add_systems(Update, wear.after(crate::units::Placed));
 }
 

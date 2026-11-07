@@ -39,11 +39,16 @@ struct Wearing {
 }
 
 pub(super) fn plugin(app: &mut App) {
-    app.init_resource::<Worn>().add_systems(
-        PostUpdate,
-        worn.after(TransformSystems::Propagate)
-            .before(crate::particles::Simulation),
-    );
+    app.init_resource::<Worn>()
+        .add_systems(
+            First,
+            crate::loading::reset::<Worn>.in_set(crate::loading::Begin),
+        )
+        .add_systems(
+            PostUpdate,
+            worn.after(TransformSystems::Propagate)
+                .before(crate::particles::Simulation),
+        );
 }
 
 /// What a unit holds of a rule's subject.

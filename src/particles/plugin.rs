@@ -293,6 +293,7 @@ pub struct Simulation;
 
 pub fn plugin(app: &mut App) {
     app.init_resource::<Playing>()
+        .add_systems(First, reset.in_set(crate::loading::Begin))
         .add_systems(
             Update,
             load.run_if(crate::loading::requested).in_set(Loaded),
@@ -301,6 +302,17 @@ pub fn plugin(app: &mut App) {
             PostUpdate,
             tick.after(TransformSystems::Propagate).in_set(Simulation),
         );
+}
+
+fn reset(mut playing: ResMut<Playing>) {
+    for slot in 0..playing.slots.len() {
+        let handle = Handle {
+            slot,
+            generation: playing.slots[slot].0,
+        };
+        playing.cancel(handle);
+    }
+    playing.clock = 0.0;
 }
 
 /// Reads every particle file the manifest lists; what does not read is left out, said once.

@@ -86,6 +86,14 @@ struct Complaint;
 pub fn plugin(app: &mut App) {
     app.init_resource::<ChatInput>()
         .init_resource::<Notices>()
+        .add_systems(
+            First,
+            (
+                crate::loading::reset::<ChatInput>,
+                crate::loading::reset::<Notices>,
+            )
+                .in_set(crate::loading::Begin),
+        )
         .add_systems(Startup, spawn)
         .add_systems(
             Update,

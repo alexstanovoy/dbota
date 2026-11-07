@@ -147,6 +147,7 @@ fn refund_charges(core: &mut bota_client_core::App, id: ItemId, charges: u8) {
 /// Where the match is to put the items once it has bought them.
 #[derive(Resource, Default)]
 struct Arrange {
+    was_tactical: bool,
     wanted: Option<[Option<u16>; SLOTS]>,
     /// When it began, and the tick of the last move ordered.
     since: f32,
@@ -156,6 +157,14 @@ struct Arrange {
 pub fn plugin(app: &mut App) {
     app.init_resource::<TacticalBag>()
         .init_resource::<Arrange>()
+        .add_systems(
+            First,
+            (
+                crate::loading::reset::<TacticalBag>,
+                crate::loading::reset::<Arrange>,
+            )
+                .in_set(crate::loading::Begin),
+        )
         .add_systems(Update, (follow_queue, arrange).chain());
 }
 
@@ -182,11 +191,10 @@ fn arrange(
     time: Res<Time>,
     bag: Res<TacticalBag>,
     mut plan: ResMut<Arrange>,
-    mut was_tactical: Local<bool>,
 ) {
     let now = time.elapsed_secs();
     let core = &mut session.into_inner().0;
-    if *was_tactical && !phase.0 {
+    if plan.was_tactical && !phase.0 {
         let ids = bag.ids();
         let in_order =
             ids.iter().flatten().count() == ids.iter().take_while(|s| s.is_some()).count();
@@ -194,7 +202,7 @@ fn arrange(
         plan.wanted = (!in_order).then_some(ids);
         plan.since = now;
     }
-    *was_tactical = phase.0;
+    plan.was_tactical = phase.0;
     let Some(wanted) = plan.wanted else { return };
     let Some(tick) = core.view().map(|v| v.tick) else {
         return;

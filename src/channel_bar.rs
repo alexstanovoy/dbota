@@ -28,15 +28,25 @@ const WELL_BORDER: f32 = 2.0;
 const WELL_COLOUR: Color = Color::srgba(0.0, 0.0, 0.0, 0.933);
 
 /// The channel in the bar: the ability and the tick it began on.
-#[derive(Default)]
+#[derive(Resource, Default)]
 struct Running(Option<(AbilityId, u32)>);
 
 pub fn plugin(app: &mut App) {
-    app.add_systems(Startup, spawn).add_systems(
-        PostUpdate,
-        show.after(crate::anim::NoteChannels)
-            .run_if(|known: Res<MatchKnown>| known.0),
-    );
+    app.init_resource::<Running>()
+        .add_systems(First, reset.in_set(crate::loading::Begin))
+        .add_systems(Startup, spawn)
+        .add_systems(
+            PostUpdate,
+            show.after(crate::anim::NoteChannels)
+                .run_if(|known: Res<MatchKnown>| known.0),
+        );
+}
+
+fn reset(mut running: ResMut<Running>, mut bars: Query<&mut Visibility, With<ChannelBar>>) {
+    *running = Running::default();
+    for mut bar in &mut bars {
+        *bar = Visibility::Hidden;
+    }
 }
 
 /// The whole bar.
@@ -154,7 +164,7 @@ fn show(
     channels: Res<Channels>,
     manifest: Res<Manifest>,
     server: Res<AssetServer>,
-    mut running: Local<Running>,
+    mut running: ResMut<Running>,
     mut icon_of: Local<Option<AbilityId>>,
     mut bar: Single<&mut Visibility, With<ChannelBar>>,
     mut fill: Single<&mut Node, With<ChannelFill>>,

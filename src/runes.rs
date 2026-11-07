@@ -104,6 +104,11 @@ pub struct RuneMemory {
 pub fn plugin(app: &mut App) {
     app.init_resource::<RuneIndex>()
         .init_resource::<RuneMemory>()
+        .add_systems(
+            First,
+            crate::loading::reset::<RuneMemory>.in_set(crate::loading::Begin),
+        )
+        .add_systems(First, reset.in_set(crate::loading::Begin))
         .add_systems(Update, (sync_runes, remember));
 }
 
@@ -217,4 +222,15 @@ pub fn remember(sight: crate::fog::EventSight, mut memory: ResMut<RuneMemory>) {
         let expired = rune.expires_at.is_some_and(|at| view.game_tick() >= at);
         !expired && (rune.seen || !sighted(rune))
     });
+}
+
+fn reset(
+    mut commands: Commands,
+    mut index: ResMut<RuneIndex>,
+    bodies: Query<Entity, With<RuneBody>>,
+) {
+    for body in &bodies {
+        commands.entity(body).despawn();
+    }
+    index.0.clear();
 }

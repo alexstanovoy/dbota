@@ -26,7 +26,12 @@ pub struct Origin {
 struct Portals(HashMap<(SlotId, bool), Handle>);
 
 pub fn plugin(app: &mut App) {
-    app.init_resource::<Portals>().add_systems(Update, portals);
+    app.init_resource::<Portals>()
+        .add_systems(
+            First,
+            crate::loading::reset::<Portals>.in_set(crate::loading::Begin),
+        )
+        .add_systems(Update, portals);
 }
 
 /// How much of a hero's channel has run, 0 to 1, when it channels a teleport.
