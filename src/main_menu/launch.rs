@@ -231,16 +231,14 @@ pub(super) fn server_binary(
     ))
 }
 
-/// The wire a game server binary speaks, from its own `--wire-fingerprint`.
+/// The wire a game server binary speaks, if it says within the probe's patience.
 #[cfg(not(target_arch = "wasm32"))]
-pub(super) fn wire_of(server: &std::path::Path) -> Option<u64> {
-    let output = crate::steering::scrubbed_command(server)
-        .arg("--wire-fingerprint")
-        .stdin(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .output()
-        .ok()?;
-    u64::from_str_radix(String::from_utf8_lossy(&output.stdout).trim(), 16).ok()
+fn wire_of(server: &std::path::Path) -> Option<u64> {
+    super::wire_probe::wire_of(
+        crate::steering::scrubbed_command(server),
+        super::wire_probe::WIRE_PROBE_PATIENCE,
+    )
+    .ok()
 }
 
 /// How long the server of a lobby this client hosts plays on with every seat empty before it

@@ -30,6 +30,8 @@ mod store;
 mod text;
 mod top_bar;
 mod view;
+#[cfg(not(target_arch = "wasm32"))]
+mod wire_probe;
 
 #[cfg(test)]
 pub(crate) mod tests;

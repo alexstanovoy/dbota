@@ -3,7 +3,11 @@
 #![allow(dead_code)] // each test binary uses a part of this shared module
 
 pub mod prepared;
+// The client's own probe, so that harness and client ask a server for its wire the same way.
 pub mod source_scan;
+#[allow(dead_code)]
+#[path = "../../src/main_menu/wire_probe.rs"]
+mod wire_probe;
 
 use std::ffi::OsStr;
 use std::io::{BufRead, BufReader, Read, Write};
@@ -333,23 +337,21 @@ pub fn server_binary() -> PathBuf {
 /// match then fails minutes in, on the first Hello.
 #[allow(dead_code)] // each test file uses the helpers it needs
 pub fn check_wire(binary: &Path, ours: u64) -> Result<(), String> {
-    let output = Command::new(binary)
-        .arg("--wire-fingerprint")
-        .stdin(Stdio::null())
-        .stderr(Stdio::null())
-        .output()
-        .map_err(|error| format!("{} does not start: {error}", binary.display()))?;
-    let said = String::from_utf8_lossy(&output.stdout);
-    let theirs = u64::from_str_radix(said.trim(), 16)
-        .map_err(|_| format!("{} did not say its wire", binary.display()))?;
+    let theirs = wire_probe::wire_of(Command::new(binary), wire_probe::WIRE_PROBE_PATIENCE)?;
     if theirs == ours {
         return Ok(());
     }
-    Err(format!(
+    Err(wire_mismatch(binary, theirs, ours))
+}
+
+/// The line that names both wires and the way out.
+#[allow(dead_code)] // each test file uses the helpers it needs
+pub fn wire_mismatch(binary: &Path, theirs: u64, ours: u64) -> String {
+    format!(
         "{} speaks wire {theirs:016x} but this client was compiled for wire {ours:016x}: \
          rebuild the client against the current bota, or check out the bota it was compiled with",
         binary.display()
-    ))
+    )
 }
 
 fn build_server() -> PathBuf {

@@ -19,6 +19,7 @@ use super::core::{Act, Confirm, GameKind, LOCAL_SEATS, Launch, LocalRules, MenuC
 use super::launch::{Hosted, Opening, Trust};
 use super::store::{Entry, SettingsStore};
 use super::view::PageView;
+use super::wire_probe::WIRE_PROBE_PATIENCE;
 use crate::replays::{Disk, Library};
 
 pub(crate) const PASSWORD: &str = "correct horse battery";
@@ -82,15 +83,15 @@ pub(crate) fn server_binary() -> &'static Path {
         } else {
             build_server()
         };
-        wire_checked(binary, bota_radovid::fingerprint()).unwrap_or_else(|said| panic!("{said}"))
+        wire_checked(binary, bota_radovid::fingerprint(), WIRE_PROBE_PATIENCE)
+            .unwrap_or_else(|said| panic!("{said}"))
     })
 }
 
 /// `binary`, if it speaks the wire `ours`. Why here: bota moving under a built client makes a
 /// server of another wire, and every match then fails minutes in, on the first Hello.
-fn wire_checked(binary: PathBuf, ours: u64) -> Result<PathBuf, String> {
-    let theirs = super::launch::wire_of(&binary)
-        .ok_or_else(|| format!("{} did not say its wire", binary.display()))?;
+fn wire_checked(binary: PathBuf, ours: u64, patience: Duration) -> Result<PathBuf, String> {
+    let theirs = super::wire_probe::wire_of(crate::steering::scrubbed_command(&binary), patience)?;
     if theirs != ours {
         return Err(format!(
             "{} speaks wire {theirs:016x} but this client was compiled for wire {ours:016x}: \
@@ -1907,7 +1908,7 @@ fn the_harness_refuses_a_server_of_another_wire_at_once() {
     let stale = dir.0.join("bota_server");
     std::fs::write(&stale, "#!/bin/sh\necho 0000000000000001\n").expect("a script");
     std::fs::set_permissions(&stale, std::fs::Permissions::from_mode(0o755)).expect("mode");
-    let said = wire_checked(stale.clone(), 0xabcd).expect_err("another wire");
+    let said = wire_checked(stale.clone(), 0xabcd, WIRE_PROBE_PATIENCE).expect_err("another wire");
     assert_eq!(
         said,
         format!(
@@ -1918,8 +1919,33 @@ fn the_harness_refuses_a_server_of_another_wire_at_once() {
         )
     );
     assert_eq!(
-        wire_checked(server_binary().to_owned(), bota_radovid::fingerprint()).expect("the same"),
+        wire_checked(
+            server_binary().to_owned(),
+            bota_radovid::fingerprint(),
+            WIRE_PROBE_PATIENCE,
+        )
+        .expect("the same"),
         server_binary()
+    );
+}
+
+/// A server that never answers its wire probe is killed after the patience given, and the harness
+/// says which binary hung.
+#[cfg(unix)]
+#[test]
+fn the_harness_gives_up_on_a_server_that_never_answers_its_wire_probe() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = Scratch::new("hanging_wire");
+    let hanging = dir.0.join("bota_server");
+    std::fs::write(&hanging, "#!/bin/sh\nexec sleep 60\n").expect("a script");
+    std::fs::set_permissions(&hanging, std::fs::Permissions::from_mode(0o755)).expect("mode");
+    let said = wire_checked(hanging.clone(), 0xabcd, Duration::from_secs(1)).expect_err("a hang");
+    assert_eq!(
+        said,
+        format!(
+            "{} did not answer its wire probe within 1s and was killed",
+            hanging.display()
+        )
     );
 }
 
