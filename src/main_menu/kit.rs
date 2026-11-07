@@ -15,6 +15,7 @@ pub struct Disabled;
 
 /// A button and what it does.
 #[derive(Component, Clone)]
+#[require(bevy::input_focus::tab_navigation::TabIndex)]
 pub struct MenuButton(pub Act);
 
 /// What a button is for, which its look says.

@@ -50,6 +50,7 @@ bevy = { version = "=0.19.1", default-features = false, features = [
     "zstd_rust",
     # The interface, and clicks on it.
     "bevy_ui",
+    "bevy_input_focus",
     "bevy_ui_render",
     "bevy_text",
     "bevy_picking",
