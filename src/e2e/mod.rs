@@ -85,6 +85,7 @@ mod tower_cadence;
 mod tower_fall;
 mod trees;
 mod turning;
+mod visual_clarity_state;
 mod watcher_capture;
 mod watcher_channel;
 mod watcher_colours;

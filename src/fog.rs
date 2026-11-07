@@ -21,6 +21,8 @@ use bota_proto::{SeenBy, Team, UnitKind, UnitView, WorldView};
 use crate::session::Session;
 use crate::terrain::CELL;
 
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod clarity_render;
 mod events;
 pub(crate) use events::{EventSight, EventSubject};
 
@@ -222,8 +224,7 @@ pub type FoggedMaterial = ExtendedMaterial<StandardMaterial, FogExt>;
 #[bindless(index_table(range(100..107), binding(111)))]
 pub struct FogExt {
     /// x: world units the veil spans; y: its alpha of a fully fogged cell;
-    /// z: what the surface is ([`SURFACE_PROP`] and on); w: how strongly the
-    /// visual clarity aid is drawn, 0 to 1.
+    /// z: what the surface is ([`SURFACE_PROP`] and on); w: padding.
     params: Vec4,
     #[texture(101)]
     #[sampler(102)]
@@ -309,8 +310,12 @@ fn index_projectiles(
     }
 }
 
-pub fn plugin(app: &mut App) {
+fn register_shader(app: &mut App) {
     embedded_asset!(app, "fog.wgsl");
+}
+
+pub fn plugin(app: &mut App) {
+    register_shader(app);
     app.init_resource::<FogGrid>()
         .init_resource::<ProjectileSight>()
         .add_systems(First, reset.in_set(crate::loading::Begin))
@@ -328,10 +333,6 @@ pub fn plugin(app: &mut App) {
             (wrap, shade_heroes)
                 .chain()
                 .after(crate::units::mark_figures),
-        )
-        .add_systems(
-            Update,
-            clarity.run_if(resource_changed::<crate::config::Settings>),
         );
 }
 
@@ -503,7 +504,6 @@ fn wrap(
     mut fogged: ResMut<Assets<FoggedMaterial>>,
     layers: Option<Res<crate::layers::GroundLayers>>,
     terrain: Option<Res<crate::map::TerrainMaterial>>,
-    settings: Res<crate::config::Settings>,
 ) {
     let Some(mut veil) = veil else {
         return;
@@ -523,7 +523,6 @@ fn wrap(
         let made = Made {
             standard: &standard,
             fogged: &mut fogged,
-            clarity: settings.clarity.strength(),
         };
         let Some(handle) = veil.copy(
             made,
@@ -545,7 +544,6 @@ fn wrap(
 struct Made<'a> {
     standard: &'a Assets<StandardMaterial>,
     fogged: &'a mut Assets<FoggedMaterial>,
-    clarity: f32,
 }
 
 impl Veil {
@@ -595,7 +593,7 @@ impl Veil {
             base,
             extension: FogExt {
                 veil: self.image.clone(),
-                params: Vec4::new(self.span, VEIL, f32::from(surface), made.clarity),
+                params: Vec4::new(self.span, VEIL, f32::from(surface), 0.0),
                 cast: self.cast.clone(),
                 paths: paths.map(|l| l.detail.clone()).unwrap_or_default(),
                 field: paths.map(|l| l.field.clone()).unwrap_or_default(),
@@ -620,7 +618,6 @@ fn shade_heroes(
     units: Query<&crate::units::Unit>,
     standard: Res<Assets<StandardMaterial>>,
     mut fogged: ResMut<Assets<FoggedMaterial>>,
-    settings: Res<crate::config::Settings>,
 ) {
     let (Some(mut veil), Some(view)) = (veil, session.0.view()) else {
         return;
@@ -642,7 +639,6 @@ fn shade_heroes(
         let made = Made {
             standard: &standard,
             fogged: &mut fogged,
-            clarity: settings.clarity.strength(),
         };
         if let Some(handle) = veil.copy(made, material, *surface, shade, None)
             && now.0 != handle
@@ -840,28 +836,6 @@ fn fit_veil(
     for handle in veil.made.values() {
         if let Some(mut material) = fogged.get_mut(handle) {
             material.extension.params.x = span;
-        }
-    }
-}
-
-/// Sets the visual clarity aid's strength on every fogged material when the
-/// settings change it.
-fn clarity(
-    settings: Res<crate::config::Settings>,
-    veil: Option<Res<Veil>>,
-    mut fogged: ResMut<Assets<FoggedMaterial>>,
-) {
-    let Some(veil) = veil else {
-        return;
-    };
-    let strength = settings.clarity.strength();
-    for handle in veil.made.values() {
-        if fogged
-            .get(handle)
-            .is_some_and(|m| m.extension.params.w != strength)
-            && let Some(mut m) = fogged.get_mut(handle)
-        {
-            m.extension.params.w = strength;
         }
     }
 }

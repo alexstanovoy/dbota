@@ -111,47 +111,6 @@ impl AntiAlias {
     }
 }
 
-/// How strongly units and paths are set apart from the ground they stand
-/// on: the scenery a little duller and darker, shade around the forest, the
-/// units a little more vivid, a dark disc under every unit's feet and a ring
-/// at every hero's; see `clarity.rs`, `fog.wgsl` and `overlay.rs`. Off by
-/// default, as Dota draws units: no outline, the side's ring under what is
-/// selected and a closing ring on what the cursor comes onto (`pick.rs`).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Clarity {
-    Off,
-    Low,
-    High,
-}
-
-impl Clarity {
-    /// Weakest to strongest, as the settings list them.
-    pub const ALL: [Clarity; 3] = [Clarity::Off, Clarity::Low, Clarity::High];
-
-    /// The name settings files and `--set` use.
-    pub fn name(self) -> &'static str {
-        match self {
-            Clarity::Off => "off",
-            Clarity::Low => "low",
-            Clarity::High => "high",
-        }
-    }
-
-    pub fn named(name: &str) -> Option<Clarity> {
-        let name = name.to_ascii_lowercase();
-        Clarity::ALL.into_iter().find(|c| c.name() == name)
-    }
-
-    /// How strongly the aid is drawn, 0 to 1.
-    pub fn strength(self) -> f32 {
-        match self {
-            Clarity::Off => 0.0,
-            Clarity::Low => 0.5,
-            Clarity::High => 1.0,
-        }
-    }
-}
-
 /// What a right click on an allied unit does (Dota's "Right-Click Allies",
 /// `dota_force_right_click_attack`; "To Deny" by default: a worn creep is attacked without the attack key, anything else followed).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -380,8 +339,6 @@ pub struct Settings {
     /// The size of the window, or of the monitor's mode in exclusive fullscreen; none keeps the
     /// monitor's own (a window without a choice opens at the size the command line gives it).
     pub resolution: Option<(u32, u32)>,
-    /// How strongly units and paths are set apart from the ground.
-    pub clarity: Clarity,
     /// The game camera.
     pub camera: CameraSettings,
     /// The profile name, which games without an account (local lobbies,
@@ -408,6 +365,7 @@ pub struct Settings {
 pub const RETIRED_KEYS: &[&str] = &[
     "bot_command",
     "bloom",
+    "visual_clarity",
     "deny_on_right_click_pct",
     "attack_range",
     "raze_marks",
@@ -435,7 +393,6 @@ impl Default for Settings {
             quality: Quality::default(),
             display: DisplayMode::default(),
             resolution: None,
-            clarity: Clarity::Off,
             camera: CameraSettings::default(),
             name: String::new(),
             teleport_requires_halt: false,
@@ -566,15 +523,6 @@ impl Settings {
             "fps_cap" => self.quality.fps_cap = parse_unit(value, 0.0, 1000.0)? as u32,
             "gpu_batching" => self.quality.gpu_batching = flag()?,
             "auto_quality" => self.quality.auto = flag()?,
-            "visual_clarity" => {
-                self.clarity = Clarity::named(value).ok_or_else(|| {
-                    let names: Vec<&str> = Clarity::ALL.iter().map(|c| c.name()).collect();
-                    format!(
-                        "no visual clarity called '{value}'; one of {}",
-                        names.join(", ")
-                    )
-                })?
-            }
             "camera_pitch" => self.camera.pitch = parse_unit(value, 10.0, 89.0)?,
             "camera_fov" => self.camera.fov = parse_unit(value, 5.0, 120.0)?,
             "camera_distance" => self.camera.distance = parse_unit(value, 100.0, 20_000.0)?,
@@ -688,7 +636,6 @@ impl Settings {
             ("fps_cap".into(), q.fps_cap.to_string()),
             ("gpu_batching".into(), flag(q.gpu_batching)),
             ("auto_quality".into(), flag(q.auto)),
-            ("visual_clarity".into(), self.clarity.name().into()),
         ];
         for (name, value) in [
             ("camera_pitch", c.pitch),
@@ -842,7 +789,6 @@ mod tests {
             ("fps_cap", "144"),
             ("gpu_batching", "true"),
             ("auto_quality", "false"),
-            ("visual_clarity", "low"),
             ("render_scale", "1.00"),
             ("camera_distance", "1134"),
             ("save_replays", "true"),
@@ -852,6 +798,7 @@ mod tests {
         let retired = [
             ("bot_command", "/path/to/mybot --server {address}"),
             ("bloom", "true"),
+            ("visual_clarity", "low"),
             ("deny_on_right_click_pct", "50"),
             ("attack_range", "true"),
             ("raze_marks", "true"),
@@ -922,7 +869,6 @@ mod tests {
             },
             display: DisplayMode::Windowed,
             resolution: Some((1280, 720)),
-            clarity: Clarity::High,
             camera: CameraSettings {
                 pitch: default.camera.pitch + 1.0,
                 fov: default.camera.fov + 1.0,
@@ -998,6 +944,23 @@ mod tests {
             (read.volume - 0.3).abs() < 1e-6,
             "what the player changed stays"
         );
+    }
+
+    #[test]
+    fn retired_visual_clarity_values_load_without_changing_settings_or_being_saved() {
+        for value in ["off", "low", "high", "unknown", ""] {
+            let (settings, complaints) = Settings::parse(&format!("visual_clarity = {value}\n"));
+            assert!(complaints.is_empty(), "{value}: {complaints:?}");
+            assert_eq!(
+                settings,
+                Settings::default(),
+                "the retired value is ignored"
+            );
+            assert!(
+                !settings.render().contains("visual_clarity"),
+                "the retired key is not saved"
+            );
+        }
     }
 
     /// Settings written to the file read back the same, whatever quality

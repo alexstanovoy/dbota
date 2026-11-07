@@ -15,8 +15,8 @@
 
 // fog.rs, FogExt. The veil's alpha is how fogged a cell is; row 0 is the
 // north edge of the map. params x: world units the veil spans; y: the alpha
-// of a fully fogged cell; z: the surface (fog.rs, SURFACE_*); w: the visual
-// clarity aid's strength. The cast is one texel: what the dulled colour is
+// of a fully fogged cell; z: the surface (fog.rs, SURFACE_*); w is padding.
+// The cast is one texel: what the dulled colour is
 // multiplied by, for the time of day. The paths texture's red is the dirt
 // texture's brightness, green and blue the two stones'; 0.5 is the mean. The
 // field's left half is the dirt's colour, its right half the stone's, a cell
@@ -163,10 +163,9 @@ const WATER_SWAY_RATE: f32 = 0.5;
 // The lit scenery set back behind what stands on it: a little duller and
 // darker, darker still by the forest's shade, 0 to 1.
 fn set_back(color: vec3<f32>, shade: f32) -> vec3<f32> {
-    let strength = fog_params().w;
     let grey = dot(color, vec3(0.2126, 0.7152, 0.0722));
-    let dull = mix(color, vec3(grey), 0.2 * strength);
-    return dull * (1.0 - 0.16 * strength) * (1.0 - 0.3 * strength * shade);
+    let dull = mix(color, vec3(grey), 0.2);
+    return dull * 0.84 * (1.0 - 0.3 * shade);
 }
 
 // The river read by world position, as Dota's water is: its texture
@@ -226,14 +225,12 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
     } else {
         out.color = pbr_input.material.base_color;
     }
-    if params.w > 0.0 {
-        if figure {
-            let grey = dot(out.color.rgb, vec3(0.2126, 0.7152, 0.0722));
-            let vivid = max(mix(vec3(grey), out.color.rgb, 1.0 + 0.2 * params.w), vec3(0.0));
-            out.color = vec4(vivid, out.color.a);
-        } else {
-            out.color = vec4(set_back(out.color.rgb, shade), out.color.a);
-        }
+    if figure {
+        let grey = dot(out.color.rgb, vec3(0.2126, 0.7152, 0.0722));
+        let vivid = max(mix(vec3(grey), out.color.rgb, 1.2), vec3(0.0));
+        out.color = vec4(vivid, out.color.a);
+    } else {
+        out.color = vec4(set_back(out.color.rgb, shade), out.color.a);
     }
     let grey = dot(out.color.rgb, vec3(0.2126, 0.7152, 0.0722));
     // Most of its colour gone, then darkened and cast (fog.rs, `cast`).

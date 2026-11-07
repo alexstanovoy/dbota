@@ -90,13 +90,14 @@ The VIDEO tab, `settings.conf` or `--set NAME=VALUE` set what the picture may co
 | `fps_cap` | frames a second at most, `0` for none | `0` |
 | `gpu_batching` | GPU culling and batching; off for a software renderer | `true` |
 | `auto_quality` | lower settings while frames run slower than the cap (or 30 fps) | `false` |
-| `visual_clarity` | set units apart from the ground: `off`, `low`, `high` | `off` |
 | `animate_portrait` | the portrait plays the unit's idle and talks with its lines | `true` |
 | `display_mode` | `windowed`, `borderless`, `fullscreen` | `borderless` |
 | `resolution` | `native`, or a monitor size such as `1920x1080`: the window's size, or the mode of `fullscreen`; `borderless` keeps the desktop's | `native` |
 | `camera_pitch`, `camera_fov` | camera angle and field of view, degrees | `58`, `25` |
 | `camera_distance`, `camera_distance_min`, `camera_distance_max` | camera distance and zoom limits | `4400`, `1600`, `6500` |
 | `camera_pan_speed` | pan speed at the starting distance | `3031` |
+
+Visual readability (terrain/unit contrast, contact discs and hero rings) is always enabled at full strength.
 
 `texture_size`, `props` and `gpu_batching` apply on the next start, the rest at once. Without a GPU, Mesa's lavapipe
 (`VK_ICD_FILENAMES=.../lvp_icd.json`) draws it at `--set quality=potato`. Hotkeys are `key.<action> = <chord>` lines in

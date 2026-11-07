@@ -150,7 +150,6 @@ fn draw(
     hover: Res<crate::pick::Hover>,
     tree: Res<crate::trees::TreeTarget>,
     args: Res<crate::Args>,
-    settings: Res<crate::config::Settings>,
     mut rings: ResMut<RangeRings>,
     mut shots: ResMut<TowerShots>,
 ) {
@@ -165,7 +164,7 @@ fn draw(
         units: &units,
     };
     let show_all = args.show_ranges || fired.held(Action::ShowRanges);
-    picks(&mut gizmos, &ctx, settings.clarity.strength() > 0.0);
+    picks(&mut gizmos, &ctx);
     hovered(&mut gizmos, &ctx, &hover);
     // Ranges and radii only while the show-ranges key is held, as Dota
     // keeps the ground clean.
@@ -221,11 +220,9 @@ fn camp_boxes(gizmos: &mut Gizmos, ctx: &Ctx<'_, '_, '_>) {
     }
 }
 
-/// The selection circle at the feet of what is picked (nothing is, until the player picks), in its
-/// side's colour; with the visual clarity aid on,
-/// a fainter ring at every other hero's feet too, so a dark model on dark
-/// ground still reads.
-fn picks(gizmos: &mut Gizmos, ctx: &Ctx<'_, '_, '_>, aid: bool) {
+/// The selected unit's circle and fainter circles under the other heroes
+/// keep dark models distinct from the ground.
+fn picks(gizmos: &mut Gizmos, ctx: &Ctx<'_, '_, '_>) {
     let core = ctx.core;
     let Some(view) = core.view() else {
         return;
@@ -233,7 +230,7 @@ fn picks(gizmos: &mut Gizmos, ctx: &Ctx<'_, '_, '_>, aid: bool) {
     let picked = core.selected;
     for unit in &view.units {
         let selected = Some(unit.id) == picked;
-        if !selected && !(aid && unit.kind == UnitKind::Hero) {
+        if !selected && unit.kind != UnitKind::Hero {
             continue;
         }
         let Some(body) = ctx.at(unit.id) else {

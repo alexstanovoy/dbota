@@ -13,6 +13,18 @@ while IFS= read -r file; do
         crates/dbota_import/tests/*) ;; # gate step install-tests: cargo test -p dbota_import -- --ignored
         src/tip_content.rs) ;;          # gate step tip-content
         src/e2e/memory.rs) ;;           # run in a process of its own by its test clients_one_after_another_leave_no_memory_behind
+        src/fog/clarity_render.rs)
+            test_name=fog::clarity_render::full_visual_clarity_reaches_the_ground_and_figure_pixels
+            ignored=$(awk '
+                /^[[:space:]]*#\[ignore/ { count++; pending=1 }
+                pending && /^[[:space:]]*fn / { name=$2; sub(/\(.*/, "", name); print name; pending=0 }
+                END { if (count != 1) print "unexpected ignored count: " count }
+            ' "$file")
+            if [ "$ignored" != "${test_name##*::}" ] || ! grep -Fq -- "--bin dbota $test_name" tools/visual_check.sh; then
+                echo "ignored_audit: $file must route exactly its named material contract"
+                bad=1
+            fi
+            ;;
         tests/*.rs)                     # tools/visual_check.sh, one `--test NAME` per file
             name=$(basename "$file" .rs)
             grep -q -- "--test $name\b" tools/visual_check.sh || { echo "ignored_audit: $file has ignored tests that tools/visual_check.sh does not run"; bad=1; } ;;

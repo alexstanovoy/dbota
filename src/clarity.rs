@@ -1,8 +1,5 @@
-//! The visual clarity aid on the units (the ground's half is in
-//! `fog.wgsl`): a soft dark disc under every unit's feet, so a unit stands
-//! out of the ground it walks on, whatever the ground's colour and wherever
-//! the sun's shadow falls. Its strength follows the `visual_clarity`
-//! setting; off, the discs are hidden.
+//! Soft dark discs under mobile units keep their silhouettes distinct from
+//! the ground, independent of scenery colors and the sun's shadows.
 
 use std::f32::consts::TAU;
 
@@ -15,7 +12,6 @@ use bevy::{
 };
 use bota_core::kind_def;
 
-use crate::config::Settings;
 use crate::units::{Unit, unit_size};
 
 /// The disc's darkness at its middle at full strength.
@@ -37,25 +33,18 @@ struct Disc {
     material: Handle<StandardMaterial>,
 }
 
-/// Marks a unit's disc.
-#[derive(Component)]
-struct UnderFoot;
-
 pub fn plugin(app: &mut App) {
-    app.add_systems(Startup, make_disc).add_systems(
-        Update,
-        (lay_discs, strength.run_if(resource_changed::<Settings>)),
-    );
+    app.add_systems(Startup, make_disc)
+        .add_systems(Update, lay_discs);
 }
 
 fn make_disc(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
-    settings: Res<Settings>,
 ) {
     let material = materials.add(StandardMaterial {
-        base_color: Color::BLACK.with_alpha(DISC_ALPHA * settings.clarity.strength()),
+        base_color: Color::BLACK.with_alpha(DISC_ALPHA),
         alpha_mode: AlphaMode::Blend,
         unlit: true,
         ..default()
@@ -104,56 +93,22 @@ fn disc_mesh() -> Mesh {
 }
 
 /// Lays a disc under every new unit but the buildings.
-fn lay_discs(
-    mut commands: Commands,
-    disc: Res<Disc>,
-    settings: Res<Settings>,
-    units: Query<(Entity, &Unit), Added<Unit>>,
-) {
+fn lay_discs(mut commands: Commands, disc: Res<Disc>, units: Query<(Entity, &Unit), Added<Unit>>) {
     for (entity, unit) in &units {
         if kind_def(unit.kind).structure {
             continue;
         }
         let size = 2.0 * DISC_SPREAD * unit_size(unit.kind, 0.0).0;
         commands.spawn((
-            UnderFoot,
             Mesh3d(disc.mesh.clone()),
             MeshMaterial3d(disc.material.clone()),
             Transform::from_xyz(0.0, DISC_LIFT, 0.0).with_scale(Vec3::new(size, 1.0, size)),
-            visibility(&settings),
+            Visibility::Inherited,
             NotShadowCaster,
             NotShadowReceiver,
             // Left out of the minimap's photograph, as the other ground aids.
             RenderLayers::layer(1),
             ChildOf(entity),
         ));
-    }
-}
-
-fn visibility(settings: &Settings) -> Visibility {
-    if settings.clarity.strength() > 0.0 {
-        Visibility::Inherited
-    } else {
-        Visibility::Hidden
-    }
-}
-
-/// Follows the setting: the discs' darkness, or none at all.
-fn strength(
-    settings: Res<Settings>,
-    disc: Res<Disc>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
-    mut discs: Query<&mut Visibility, With<UnderFoot>>,
-) {
-    let alpha = DISC_ALPHA * settings.clarity.strength();
-    if materials
-        .get(&disc.material)
-        .is_some_and(|m| m.base_color.alpha() != alpha)
-        && let Some(mut m) = materials.get_mut(&disc.material)
-    {
-        m.base_color.set_alpha(alpha);
-    }
-    for mut v in &mut discs {
-        v.set_if_neq(visibility(&settings));
     }
 }

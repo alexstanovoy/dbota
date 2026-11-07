@@ -1027,7 +1027,6 @@ fn the_settings_open_from_the_menu_and_last_past_a_restart() {
     let at = crate::keys::index_of(crate::keys::Action::Stop).expect("bound");
     settings.keys[at] = crate::keys::Chord::parse("Ctrl+K");
     settings.volume = 0.25;
-    settings.clarity = crate::config::Clarity::Off;
     player.store.save_settings(&settings).expect("saved");
     let restarted = SettingsStore::new(Some(player._dir.0.join(crate::config::FILE_NAME)));
     assert_eq!(restarted.load_settings(), settings);

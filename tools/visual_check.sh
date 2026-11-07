@@ -34,6 +34,16 @@ held() { echo "$1" | grep -q "^visual check: PASS" && ! echo "$1" | grep -q "FAI
 # An ignored-test run holds when each of its test binaries ran a test and all passed: a filter or
 # a target that matches nothing passes with none run.
 ran() { awk '/^test result:/ { n++; if ($4 + 0 < 1) none = 1 } END { exit !(n > 0 && !none) }' "$1"; }
+# Full readability is baked into the production material, including with its retired uniform at zero.
+if in_private_environment cargo test --profile test-release --quiet --manifest-path "$here/Cargo.toml" \
+    --bin dbota fog::clarity_render::full_visual_clarity_reaches_the_ground_and_figure_pixels \
+    -- --ignored --exact --nocapture > "$out/clarity.log" 2>&1 \
+    && grep -Fq 'test result: ok. 1 passed; 0 failed; 0 ignored;' "$out/clarity.log"; then
+    echo "visual check: PASS full readability reaches ground and figure pixels"
+else
+    echo "visual check: FAIL full readability material (see $out/clarity.log)"
+    exit 1
+fi
 status=0
 "$here/tools/test_client.sh" --replay "$replay" --pov 0 --screenshot-at "$tick" \
     --screenshot-dir "$out" --screenshot-prefix check- --distance 6500 \
