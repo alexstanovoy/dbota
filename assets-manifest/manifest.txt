@@ -1038,7 +1038,7 @@ sound sound.item.blink sounds/weapons/hero/antimage/blink_out.vsnd_c sounds/weap
 # Sounds of the abilities of Pudge and of the neutral creeps, and of the neutral creeps dying
 sound sound.item.mango sounds/items/mango.vsnd_c sounds/items/mango.wav event=DOTA_Item.Mango.Activate
 sound sound.item.faerie_fire sounds/items/faerie_spark.vsnd_c sounds/items/faerie_spark.wav event=DOTA_Item.FaerieSpark.Activate
-sound sound.item.ghost sounds/items/ghost_activate.vsnd_c sounds/items/ghost_activate.wav event=DOTA_Item.GhostScepter.Activate
+sound sound.item.ghost sounds/items/item_ghost_sceptre.vsnd_c sounds/items/item_ghost_sceptre.wav event=DOTA_Item.GhostScepter.Activate
 sound sound.pudge.hook_throw sounds/weapons/hero/pudge/hook_throw.vsnd_c sounds/weapons/hero/pudge/hook_throw.wav event=Hero_Pudge.AttackHookExtend
 sound sound.pudge.hook_impact sounds/weapons/hero/pudge/hook_impact.vsnd_c sounds/weapons/hero/pudge/hook_impact.wav event=Hero_Pudge.AttackHookImpact
 sound sound.pudge.rot sounds/weapons/hero/pudge/rot.vsnd_c sounds/weapons/hero/pudge/rot.wav event=Hero_Pudge.Rot
