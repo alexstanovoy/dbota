@@ -59,6 +59,12 @@ impl Displays {
         &self.sizes
     }
 
+    /// `size` cut down to the monitor's own: no window is made larger than the screen it opens on
+    /// (a garbled file must not ask the renderer for a 16K surface).
+    pub fn fit(&self, (width, height): (u32, u32)) -> (u32, u32) {
+        (width.min(self.native.0), height.min(self.native.1))
+    }
+
     /// The size the game runs at under `settings`: the monitor's own in windowed fullscreen; in a
     /// window the saved size as it is, any size being a valid window; in exclusive fullscreen the
     /// saved size when the monitor lists it, else the largest listed size at or below it (the
@@ -69,7 +75,7 @@ impl Displays {
         };
         match settings.display {
             DisplayMode::Borderless => self.native,
-            DisplayMode::Windowed => saved,
+            DisplayMode::Windowed => self.fit(saved),
             DisplayMode::Exclusive => self
                 .sizes
                 .iter()
@@ -81,7 +87,7 @@ impl Displays {
     }
 
     /// What the open list of resolutions holds, in order: the monitor's sizes, and the saved size
-    /// in its sorted place when the monitor does not list it.
+    /// in its sorted place when the monitor does not list it (a window's, cut to the monitor's).
     pub fn entries(&self, settings: &crate::config::Settings) -> Vec<SizeEntry> {
         let mut entries: Vec<SizeEntry> = self
             .sizes
@@ -91,8 +97,10 @@ impl Displays {
                 note: SizeNote::Listed,
             })
             .collect();
-        if let Some(saved) = settings.resolution
-            && !self.sizes.contains(&saved)
+        if let Some(saved) = settings.resolution.map(|saved| match settings.display {
+            DisplayMode::Windowed => self.fit(saved),
+            _ => saved,
+        }) && !self.sizes.contains(&saved)
         {
             let note = match settings.display {
                 DisplayMode::Exclusive => SizeNote::Unsupported,
@@ -295,8 +303,8 @@ mod native {
     use bevy::{
         prelude::*,
         window::{
-            CursorGrabMode, CursorOptions, Monitor, PrimaryMonitor, PrimaryWindow, VideoMode,
-            VideoModeSelection, WindowMode, WindowResized,
+            CursorGrabMode, CursorOptions, Monitor, OnMonitor, PrimaryMonitor, PrimaryWindow,
+            VideoMode, VideoModeSelection, WindowMode, WindowResized,
         },
     };
 
@@ -324,6 +332,10 @@ mod native {
     }
 
     impl Restore {
+        fn of((width, height): (u32, u32)) -> Restore {
+            Restore::Physical(UVec2::new(width, height))
+        }
+
         fn give(self, window: &mut Window) {
             match self {
                 Restore::Logical(size) => window.resolution.set(size.x, size.y),
@@ -334,12 +346,23 @@ mod native {
         }
     }
 
-    /// The primary monitor's size and modes, for the Resolution setting.
+    /// The monitor the window is on, else (before it is on one) the primary, else any.
+    fn current_monitor<'a>(
+        on: Option<&OnMonitor>,
+        monitors: &'a Query<(Entity, &Monitor, Has<PrimaryMonitor>)>,
+    ) -> Option<&'a Monitor> {
+        on.and_then(|on| monitors.get(on.0).ok())
+            .or_else(|| monitors.iter().max_by_key(|(_, _, primary)| *primary))
+            .map(|(_, monitor, _)| monitor)
+    }
+
+    /// The size and modes of the monitor the window is on, for the Resolution setting.
     pub fn watch_monitor(
-        monitors: Query<(&Monitor, Has<PrimaryMonitor>)>,
+        monitors: Query<(Entity, &Monitor, Has<PrimaryMonitor>)>,
+        window: Single<Option<&OnMonitor>, With<PrimaryWindow>>,
         mut displays: ResMut<super::Displays>,
     ) {
-        let Some((monitor, _)) = monitors.iter().max_by_key(|(_, primary)| *primary) else {
+        let Some(monitor) = current_monitor(*window, &monitors) else {
             return;
         };
         let native = (monitor.physical_width, monitor.physical_height);
@@ -383,27 +406,28 @@ mod native {
         settings: Res<Settings>,
         args: Res<crate::Args>,
         displays: Res<super::Displays>,
-        monitors: Query<(&Monitor, Has<PrimaryMonitor>)>,
-        mut window: Single<&mut Window, With<PrimaryWindow>>,
+        monitors: Query<(Entity, &Monitor, Has<PrimaryMonitor>)>,
+        window: Single<(&mut Window, Option<&OnMonitor>), With<PrimaryWindow>>,
         mut resized: MessageReader<WindowResized>,
         mut sizes: Local<Sizes>,
     ) {
+        let (mut window, on_monitor) = window.into_inner();
         let answered = resized.read().count() > 0;
         if answered
             && window.mode == WindowMode::Windowed
             && let Some(previous) = sizes.restore.take()
         {
             match settings.resolution {
-                Some((w, h)) => Restore::Physical(UVec2::new(w, h)),
+                Some(_) => Restore::of(displays.in_use(&settings)),
                 None => Restore::Logical(previous),
             }
             .give(&mut window);
             sizes.resolution = Some(settings.resolution);
         }
-        let monitor = monitors.iter().max_by_key(|(_, primary)| *primary);
+        let monitor = current_monitor(on_monitor, &monitors);
         let wanted = settings.resolution.map(|_| displays.in_use(&settings));
         let video = match (wanted, monitor) {
-            (Some(size), Some((monitor, _))) => video_mode(monitor, size)
+            (Some(size), Some(monitor)) => video_mode(monitor, size)
                 .map_or(VideoModeSelection::Current, VideoModeSelection::Specific),
             _ => VideoModeSelection::Current,
         };
@@ -420,15 +444,18 @@ mod native {
             });
             return;
         }
-        // Already a window: a resolution newly chosen resizes it.
+        // Already a window: a resolution newly chosen resizes it, and choosing the monitor's own
+        // (reset) gives the window the monitor's size. A window that opened with no choice keeps
+        // the size it opened with.
         let wanted = Some(settings.resolution);
         if window.mode == WindowMode::Windowed
             && sizes.restore.is_none()
             && sizes.resolution != wanted
         {
+            let first = sizes.resolution.is_none();
             sizes.resolution = wanted;
-            if let Some((w, h)) = settings.resolution {
-                Restore::Physical(UVec2::new(w, h)).give(&mut window);
+            if settings.resolution.is_some() || !first {
+                Restore::of(displays.in_use(&settings)).give(&mut window);
             }
         }
     }

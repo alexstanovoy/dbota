@@ -65,6 +65,11 @@ impl Screen {
         !self.query.trim().is_empty()
     }
 
+    /// Whether a text field (the search, the profile name) has the keyboard.
+    pub fn is_typing(&self) -> bool {
+        self.searching || self.naming.is_some()
+    }
+
     /// Opens `tab`, leaving a search and whatever was half done.
     fn show(&mut self, tab: Tab) {
         self.tab = tab;
@@ -114,6 +119,7 @@ pub fn plugin(app: &mut App) {
             (
                 capture,
                 focus,
+                ime_position,
                 clicks,
                 drag,
                 scroll,
@@ -759,5 +765,28 @@ pub fn focus_ring(
         if outline.color != color {
             outline.color = color;
         }
+    }
+}
+
+/// Where the input method's candidate window stands while a text field has the keyboard: at the
+/// field. Whether it composes at all is `chat::ime`'s, which sees every field of the client.
+fn ime_position(
+    screen: Res<Screen>,
+    mut window: Single<&mut Window, With<bevy::window::PrimaryWindow>>,
+    search: Query<&UiGlobalTransform, With<SearchField>>,
+    names: Query<&UiGlobalTransform, With<NameField>>,
+) {
+    if !screen.open || !screen.is_typing() {
+        return;
+    }
+    let field = if screen.searching {
+        search.iter().next()
+    } else {
+        names.iter().next()
+    };
+    if let Some(at) = field
+        && window.ime_position != at.translation
+    {
+        window.ime_position = at.translation;
     }
 }

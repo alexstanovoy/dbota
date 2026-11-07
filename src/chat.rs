@@ -686,10 +686,17 @@ fn show_input(
 fn ime(
     typing: Res<Typing>,
     menu: Option<NonSend<crate::main_menu::MenuCore>>,
+    screen: Res<crate::settings::Screen>,
     mut window: Single<&mut Window, With<PrimaryWindow>>,
 ) {
-    // The menu's own fields want an input method too while it covers the game.
-    let want = *typing == Typing::Chat || menu.is_some_and(|menu| menu.wants_text());
+    // The settings window has the keyboard while it is open: its text fields want an input
+    // method, nothing else does (a hotkey waiting for its key must not be composed into).
+    // The menu's own fields want one too while it covers the game.
+    let want = if screen.open {
+        screen.is_typing()
+    } else {
+        *typing == Typing::Chat || menu.is_some_and(|menu| menu.wants_text())
+    };
     if window.ime_enabled != want {
         window.ime_enabled = want;
     }

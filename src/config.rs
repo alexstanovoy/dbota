@@ -758,7 +758,7 @@ fn parse_unit(value: &str, lo: f32, hi: f32) -> Result<f32, String> {
 }
 
 /// The smallest and the largest side of a resolution a file may name.
-const RESOLUTION_SIDES: std::ops::RangeInclusive<u32> = 320..=16_384;
+const RESOLUTION_SIDES: std::ops::RangeInclusive<u32> = 320..=7_680;
 
 /// `native`, or a size as `1920x1080`.
 fn parse_resolution(value: &str) -> Result<Option<(u32, u32)>, String> {
@@ -1073,8 +1073,10 @@ mod tests {
             complaints[0].contains("neither native nor a size"),
             "{complaints:?}"
         );
-        let (_, complaints) = Settings::parse("resolution = 10x99999");
-        assert!(complaints[0].contains("outside"), "{complaints:?}");
+        for huge in ["10x99999", "16384x16384", "7681x1080"] {
+            let (_, complaints) = Settings::parse(&format!("resolution = {huge}"));
+            assert!(complaints[0].contains("outside"), "{huge}: {complaints:?}");
+        }
     }
 
     /// Replays are kept by default, within caps, and the caps survive the file.

@@ -1301,6 +1301,25 @@ fn key_field(kit: &mut Kit, root: Entity, at: usize) {
     kit.commands.entity(text).insert(KeyText(at));
 }
 
+/// A column of the slots' panel: a caption over what it holds.
+fn slot_column(kit: &mut Kit, panel: Entity, caption: &str) -> Entity {
+    let column = kit.node(
+        panel,
+        Node {
+            flex_direction: FlexDirection::Column,
+            row_gap: px(6),
+            ..default()
+        },
+    );
+    let role = Type {
+        size: 12.0,
+        tracking: 2.0,
+        ..theme::CAPTION
+    };
+    kit.typed(column, caption, role, theme::INK_4);
+    column
+}
+
 /// The HUD's slots at the top of the hotkeys: the ability bar, the six item slots, the town
 /// portal and the neutral item's slot, each with its key in its corner; a click on one captures
 /// its key as the row's field does.
@@ -1324,34 +1343,53 @@ fn hud_panel(kit: &mut Kit, body: Entity, icons: &[(keys::Action, String)]) {
             ChildOf(body),
         ))
         .id();
-    let caption = Type {
-        size: 12.0,
-        tracking: 2.0,
-        ..theme::CAPTION
-    };
-    let abilities = kit.node(
-        panel,
-        Node {
-            flex_direction: FlexDirection::Column,
-            row_gap: px(6),
-            ..default()
-        },
-    );
-    kit.typed(abilities, "ABILITIES", caption, theme::INK_4);
-    let bar = kit.node(
-        abilities,
-        Node {
-            column_gap: px(6),
-            ..default()
-        },
-    );
-    let slots = |action: keys::Action| keys::index_of(action).expect("a bound slot");
     let art_of = |action: keys::Action| {
         icons
             .iter()
             .find(|(of, _)| *of == action)
             .map(|(_, path)| path.as_str())
     };
+    ability_bar(kit, panel, &art_of);
+    item_slots(kit, panel, &art_of);
+}
+
+/// What a slot is: the binding its key is (none for a slot no key reaches), the art in it, its
+/// size, whether it is round, and the word under its badge.
+struct Slot<'a> {
+    at: Option<usize>,
+    art: Option<&'a str>,
+    size: (f32, f32),
+    round: bool,
+    tag: &'a str,
+}
+
+impl<'a> Slot<'a> {
+    /// The slot of `action`, a square of `size`.
+    fn of(action: keys::Action, art: Option<&'a str>, size: (f32, f32)) -> Slot<'a> {
+        Slot {
+            at: Some(keys::index_of(action).expect("a bound slot")),
+            art,
+            size,
+            round: false,
+            tag: "",
+        }
+    }
+}
+
+/// The ability bar: Q W E D F R.
+fn ability_bar<'a>(
+    kit: &mut Kit,
+    panel: Entity,
+    art_of: &impl Fn(keys::Action) -> Option<&'a str>,
+) {
+    let column = slot_column(kit, panel, "ABILITIES");
+    let bar = kit.node(
+        column,
+        Node {
+            column_gap: px(6),
+            ..default()
+        },
+    );
     for action in [
         keys::Action::Ability(0),
         keys::Action::Ability(1),
@@ -1360,20 +1398,15 @@ fn hud_panel(kit: &mut Kit, body: Entity, icons: &[(keys::Action, String)]) {
         keys::Action::Ability(4),
         keys::Action::Ultimate,
     ] {
-        let art = art_of(action);
-        slot(kit, bar, Some(slots(action)), art, ABILITY_SLOT, false, "");
+        slot(kit, bar, Slot::of(action, art_of(action), ABILITY_SLOT));
     }
-    let items = kit.node(
-        panel,
-        Node {
-            flex_direction: FlexDirection::Column,
-            row_gap: px(6),
-            ..default()
-        },
-    );
-    kit.typed(items, "ITEMS", caption, theme::INK_4);
+}
+
+/// The inventory in three by two, the town portal and the neutral item's round slot.
+fn item_slots<'a>(kit: &mut Kit, panel: Entity, art_of: &impl Fn(keys::Action) -> Option<&'a str>) {
+    let column = slot_column(kit, panel, "ITEMS");
     let line = kit.node(
-        items,
+        column,
         Node {
             column_gap: px(10),
             align_items: AlignItems::FlexEnd,
@@ -1392,15 +1425,7 @@ fn hud_panel(kit: &mut Kit, body: Entity, icons: &[(keys::Action, String)]) {
     );
     for number in 0..6 {
         let action = keys::Action::Item(number);
-        slot(
-            kit,
-            grid,
-            Some(slots(action)),
-            art_of(action),
-            ITEM_SLOT,
-            false,
-            "",
-        );
+        slot(kit, grid, Slot::of(action, art_of(action), ITEM_SLOT));
     }
     let side = kit.node(
         line,
@@ -1412,44 +1437,32 @@ fn hud_panel(kit: &mut Kit, body: Entity, icons: &[(keys::Action, String)]) {
         },
     );
     let portal = keys::Action::TownPortal;
-    slot(
-        kit,
-        side,
-        Some(slots(portal)),
-        art_of(portal),
-        PORTAL_SLOT,
-        false,
-        "TP",
-    );
+    let town_portal = Slot {
+        tag: "TP",
+        ..Slot::of(portal, art_of(portal), PORTAL_SLOT)
+    };
+    slot(kit, side, town_portal);
     // Neutral items have no binding yet: their slot shows unbound.
-    slot(
-        kit,
-        side,
-        None,
-        None,
-        (NEUTRAL_SLOT, NEUTRAL_SLOT),
-        true,
-        "",
-    );
+    let neutral = Slot {
+        at: None,
+        art: None,
+        size: (NEUTRAL_SLOT, NEUTRAL_SLOT),
+        round: true,
+        tag: "",
+    };
+    slot(kit, side, neutral);
 }
 
-/// One slot; `at` the binding its key is, none for a slot no key reaches.
-fn slot(
-    kit: &mut Kit,
-    parent: Entity,
-    at: Option<usize>,
-    art: Option<&str>,
-    (width, height): (f32, f32),
-    round: bool,
-    tag: &str,
-) {
+/// One slot: its square with the art in it, its key badge and its word.
+fn slot(kit: &mut Kit, parent: Entity, slot: Slot) {
+    let (width, height) = slot.size;
     let mut square = kit.commands.spawn((
         Node {
             width: px(width),
             height: px(height),
             flex_shrink: 0.0,
             border: UiRect::all(px(1)),
-            border_radius: if round {
+            border_radius: if slot.round {
                 BorderRadius::MAX
             } else {
                 BorderRadius::all(px(2))
@@ -1460,15 +1473,17 @@ fn slot(
         BorderColor::all(theme::TOOLTIP_EDGE),
         ChildOf(parent),
     ));
-    let label = at.map_or("neutral item", |at| keys::BINDINGS[at].label);
+    let label = slot
+        .at
+        .map_or("neutral item", |at| keys::BINDINGS[at].label);
     square.insert(Name::new(format!("slot {}", label.to_lowercase())));
-    if let Some(at) = at {
+    if let Some(at) = slot.at {
         square.insert((KeyField(at), Button));
     } else {
         square.insert(Pickable::IGNORE);
     }
     let square = square.id();
-    if let Some(path) = art {
+    if let Some(path) = slot.art {
         kit.commands.spawn((
             Node {
                 position_type: PositionType::Absolute,
@@ -1483,6 +1498,42 @@ fn slot(
             ChildOf(square),
         ));
     }
+    key_badge(kit, square, slot.at, slot.round);
+    if !slot.tag.is_empty() {
+        let caption = Type {
+            face: Face::Bold,
+            size: 9.0,
+            tracking: 1.0,
+            figures: false,
+        };
+        let words = kit.typed(square, slot.tag, caption, theme::INK_5);
+        kit.commands.entity(words).insert(Node {
+            position_type: PositionType::Absolute,
+            left: px(0),
+            right: px(0),
+            bottom: px(2),
+            justify_content: JustifyContent::Center,
+            ..default()
+        });
+    }
+}
+
+/// The key in a slot's corner (a round slot's, in its middle).
+fn key_badge(kit: &mut Kit, square: Entity, at: Option<usize>, round: bool) {
+    let place = if round {
+        Node {
+            left: percent(50),
+            top: percent(50),
+            margin: UiRect::new(px(-9), px(0), px(-14), px(0)),
+            ..default()
+        }
+    } else {
+        Node {
+            left: px(1),
+            top: px(1),
+            ..default()
+        }
+    };
     let badge = kit
         .commands
         .spawn((
@@ -1493,29 +1544,13 @@ fn slot(
                 padding: UiRect::horizontal(px(4)),
                 justify_content: JustifyContent::Center,
                 align_items: AlignItems::Center,
-                ..if round {
-                    Node {
-                        left: percent(50),
-                        top: percent(50),
-                        margin: UiRect::new(px(-9), px(0), px(-14), px(0)),
-                        ..default()
-                    }
-                } else {
-                    Node {
-                        left: px(1),
-                        top: px(1),
-                        ..default()
-                    }
-                }
+                ..place
             },
             BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.8)),
             Pickable::IGNORE,
             ChildOf(square),
         ))
         .id();
-    if let Some(at) = at {
-        kit.commands.entity(badge).insert(SlotBadge(at));
-    }
     let role = Type {
         face: Face::Bold,
         size: 11.0,
@@ -1529,24 +1564,8 @@ fn slot(
         theme::INK_6,
     );
     if let Some(at) = at {
+        kit.commands.entity(badge).insert(SlotBadge(at));
         kit.commands.entity(key).insert(SlotKey(at));
-    }
-    if !tag.is_empty() {
-        let caption = Type {
-            face: Face::Bold,
-            size: 9.0,
-            tracking: 1.0,
-            figures: false,
-        };
-        let words = kit.typed(square, tag, caption, theme::INK_5);
-        kit.commands.entity(words).insert(Node {
-            position_type: PositionType::Absolute,
-            left: px(0),
-            right: px(0),
-            bottom: px(2),
-            justify_content: JustifyContent::Center,
-            ..default()
-        });
     }
 }
 

@@ -376,3 +376,137 @@ fn tab_puts_the_focus_ring_on_a_control_and_space_opens_it() {
     click(&mut client, "audio");
     assert!(ring(&mut client).is_empty(), "a click gives the focus up");
 }
+
+fn ime_enabled(client: &mut Client) -> bool {
+    let world = client.world_mut();
+    world
+        .query_filtered::<&Window, With<PrimaryWindow>>()
+        .single(world)
+        .expect("the primary window")
+        .ime_enabled
+}
+
+/// The input method composes while the search field or the name has the keyboard, and not
+/// otherwise: not at rest, not while a hotkey waits for its key.
+#[test]
+fn the_input_method_is_on_only_while_a_text_field_has_the_keyboard() {
+    let mut client = open_settings("options");
+    assert!(!ime_enabled(&mut client));
+    click(&mut client, "search settings");
+    assert!(
+        ime_enabled(&mut client),
+        "the search field has the keyboard"
+    );
+    click(&mut client, "name in local and direct games field");
+    assert!(ime_enabled(&mut client), "the name has it");
+    click(&mut client, "hotkeys");
+    click(&mut client, "slot ability 1");
+    assert!(!ime_enabled(&mut client), "a hotkey waits for a key");
+    client.key(KeyCode::Escape, ButtonState::Pressed);
+    client.key(KeyCode::Escape, ButtonState::Released);
+    click(&mut client, "search settings");
+    assert!(ime_enabled(&mut client));
+    click(&mut client, "close");
+    let menu_wants = client
+        .world()
+        .non_send::<crate::main_menu::MenuCore>()
+        .wants_text();
+    assert_eq!(
+        ime_enabled(&mut client),
+        menu_wants,
+        "closing the window leaves it to the menu"
+    );
+}
+
+/// A garbled file's huge size is cut to the monitor's: the window is never larger than its screen.
+#[test]
+fn a_saved_resolution_is_never_applied_larger_than_the_monitor() {
+    let mut client = open_settings("video");
+    monitor(&mut client);
+    {
+        let mut settings = client.world_mut().resource_mut::<Settings>();
+        settings.display = DisplayMode::Windowed;
+        settings.resolution = Some((7680, 4320));
+    }
+    client.frames(3);
+    resized(&mut client);
+    client.until("the window cut to the monitor", |c| {
+        window_size(c) == (2560, 1440)
+    });
+    assert!(
+        has_text(&mut client, "2560 × 1440"),
+        "the field says what is used"
+    );
+}
+
+fn window_size(client: &mut Client) -> (u32, u32) {
+    let world = client.world_mut();
+    let window = world
+        .query_filtered::<&Window, With<PrimaryWindow>>()
+        .single(world)
+        .expect("the primary window");
+    (
+        window.resolution.physical_width(),
+        window.resolution.physical_height(),
+    )
+}
+
+/// The compositor's answer to a change of mode, which the window then follows.
+fn resized(client: &mut Client) {
+    let world = client.world_mut();
+    let window = world
+        .query_filtered::<Entity, With<PrimaryWindow>>()
+        .single(world)
+        .expect("the primary window");
+    world.write_message(bevy::window::WindowResized {
+        window,
+        width: 1920.0,
+        height: 1080.0,
+    });
+}
+
+/// Resetting the resolution (the monitor's own size again) resizes the window to it.
+#[test]
+fn resetting_the_resolution_gives_the_window_the_monitors_size() {
+    let mut client = open_settings("video");
+    monitor(&mut client);
+    click(&mut client, "display mode choice");
+    click(&mut client, "windowed");
+    click(&mut client, "resolution choice");
+    click(&mut client, "1280 × 720");
+    resized(&mut client);
+    client.until("the window at 1280 x 720", |c| {
+        window_size(c) == (1280, 720)
+    });
+    client.frames(10);
+    click(&mut client, "reset resolution");
+    client.until("the window at the monitor's size", |c| {
+        window_size(c) == (2560, 1440)
+    });
+}
+
+/// The sizes the list offers are those of the monitor the window is on, not the primary one.
+#[test]
+fn the_resolution_list_follows_the_monitor_the_window_is_on() {
+    use bevy::window::{Monitor, OnMonitor, PrimaryMonitor};
+    let mut client = open_settings("video");
+    let monitor = |width, height| Monitor {
+        name: None,
+        physical_width: width,
+        physical_height: height,
+        physical_position: IVec2::ZERO,
+        refresh_rate_millihertz: Some(60_000),
+        scale_factor: 1.0,
+        video_modes: Vec::new(),
+    };
+    let world = client.world_mut();
+    world.spawn((monitor(3840, 2160), PrimaryMonitor));
+    let secondary = world.spawn(monitor(1280, 720)).id();
+    let window = world
+        .query_filtered::<Entity, With<PrimaryWindow>>()
+        .single(world)
+        .expect("the primary window");
+    world.entity_mut(window).insert(OnMonitor(secondary));
+    client.frames(5);
+    assert_eq!(client.world().resource::<Displays>().native, (1280, 720));
+}
