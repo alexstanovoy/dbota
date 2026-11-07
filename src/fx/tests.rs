@@ -356,3 +356,34 @@ fn every_item_and_ability_has_an_fx_line_or_a_reason_for_none() {
         );
     }
 }
+
+#[test]
+fn gate_warp_and_look_keys_coexist_with_worn_model_radius_feeds() {
+    use super::line::{Feed, Trigger};
+    let warp = Fx::parse(&["unit.twin_gate.warp", "at=unit", "particle=example"])
+        .expect("the gate warp trigger remains available");
+    assert_eq!(warp.trigger, Trigger::Warp);
+    for (name, team) in [
+        ("radiant", bota_proto::Team::Radiant),
+        ("dire", bota_proto::Team::Dire),
+    ] {
+        let look = format!("look={name}");
+        let worn = Fx::parse(&[
+            "unit.twin_gate.worn",
+            "at=unit",
+            "particle=example",
+            &look,
+            "cp1=model_radius",
+        ])
+        .expect("a gate's look-bound worn effect can use its imported model radius");
+        assert_eq!(worn.look, Some(team));
+        assert!(
+            worn.feeds
+                .iter()
+                .any(|(_, feed)| matches!(feed, Feed::ModelRadius))
+        );
+        let error = Fx::parse(&["unit.twin_gate.warp", "at=unit", "particle=example", &look])
+            .expect_err("a one-shot warp must not accept a worn-only look selector");
+        assert_eq!(error, "only a worn line asks whose, how many or whose look");
+    }
+}

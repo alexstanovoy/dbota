@@ -249,7 +249,10 @@ impl Fx {
         }
         let worn = self.trigger == Trigger::Worn;
         if !worn
-            && self.feeds.iter().any(|(_, feed)| matches!(feed, Feed::ModelRadius))
+            && self
+                .feeds
+                .iter()
+                .any(|(_, feed)| matches!(feed, Feed::ModelRadius))
         {
             return Err("model_radius requires a worn line".to_owned());
         }
