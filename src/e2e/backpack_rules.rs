@@ -212,8 +212,20 @@ fn entering_the_enemy_base_shop_clears_inactivity_before_the_normal_deadline() {
         client.core().session().expect("session").map(),
         bota_proto::Team::Dire,
     );
-    client.stand_at((shop.x.to_int(), shop.y.to_int()));
-    assert!(client.tick() < natural_expiry);
+    // Only the teleport, not `stand_at`: that also waits for the camera to glide to the hero, a
+    // glide smoothed over wall time, so the ticks it lets pass vary with the machine's load (up to
+    // nearly the whole six seconds). Lockstep ticks follow the client's frames, not the clock.
+    client.cheat(Cheat::Teleport {
+        at: bota_proto::Vec2::from_ints(shop.x.to_int(), shop.y.to_int()),
+    });
+    client.until(
+        "the inactivity is cleared or its natural deadline passes",
+        |c| c.tick() >= natural_expiry || c.me().items[0].expect("Treads").mute_left == 0,
+    );
+    assert!(
+        client.tick() < natural_expiry,
+        "the shop should clear the inactivity before its natural expiry at tick {natural_expiry}"
+    );
     assert!(client.core().at_any_shop());
     assert!(!hero_at_own_home_shop(&client));
     assert_eq!(
