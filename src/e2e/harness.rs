@@ -335,7 +335,7 @@ impl Drop for Client {
 /// drawn for many seconds) and hold gigabytes together. The first client or server of a test
 /// takes the turn, on the thread the test runs on, and its last one gives it back. One that failed
 /// holding the turn poisons it; the next is no worse for that.
-static TURN: std::sync::Mutex<()> = std::sync::Mutex::new(());
+pub(super) static TURN: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 /// A hold on [`TURN`], shared by the clients and servers of the test that took it.
 struct Turn(#[expect(dead_code, reason = "held to be dropped")] std::sync::MutexGuard<'static, ()>);

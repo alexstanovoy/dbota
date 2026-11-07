@@ -6,6 +6,44 @@ use bota_proto::{Cheat, EffectId, EntityId, HeroId, ModifierSpec};
 use super::harness::{Client, Server};
 
 #[test]
+fn shield_models_load_with_the_production_io_pool() {
+    const CHILD: &str = "DBOTA_TEST_SHIELD_STACK_CHILD";
+    if std::env::var_os(CHILD).is_some() {
+        crate::io_pool::make_for_tests();
+        // A unit fixture may initialize Bevy before a client fixture. Simulate the
+        // one-worker case: without the shared helper first, this installs 2 MiB IO stacks.
+        let mut first = App::new();
+        first.add_plugins(MinimalPlugins.set(bevy::app::TaskPoolPlugin {
+            task_pool_options: bevy::app::TaskPoolOptions::with_num_threads(1),
+        }));
+        with_bubble(assert_drawn_bubbles);
+        return;
+    }
+    // The pool is process-global. Isolate it from unit tests that already initialized it,
+    // while retaining the same one-match-at-a-time contract as the other app tests.
+    let _turn = super::harness::TURN
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let output = std::process::Command::new(std::env::current_exe().expect("test executable"))
+        .args([
+            "--exact",
+            "e2e::frog_shield::shield_models_load_with_the_production_io_pool",
+            "--nocapture",
+        ])
+        .env(CHILD, "1")
+        .env_remove("RUST_MIN_STACK")
+        .output()
+        .expect("isolated client");
+    assert!(
+        output.status.success(),
+        "isolated production-pool client {:?}:\n{}\n{}",
+        output.status,
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
 fn a_marshmages_water_bubble_draws_its_shield_around_the_hurt_ally() {
     with_bubble(assert_drawn_bubbles);
 }

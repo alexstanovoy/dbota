@@ -183,6 +183,7 @@ fn model_draws_map_heatel_groups_to_loaded_geometry_and_cache_their_weights() {
 fn a_full_model_budget_drops_only_the_new_model_and_keeps_the_effect() {
     use super::library::{Library, MAX_MODELS, ParticleModel};
     use bevy::prelude::*;
+    crate::io_pool::make_for_tests();
     let mut app = App::new();
     app.add_plugins((MinimalPlugins, AssetPlugin::default()));
     let server = app.world().resource::<AssetServer>();
@@ -761,8 +762,14 @@ fn a_particle_born_at_a_steps_end_keeps_its_speed_through_a_hitch() {
     let [Some(born), Some(short), Some(long)] = flown[..] else {
         panic!("one particle each frame: {flown:?}");
     };
-    assert!((short - born - 0.2).abs() < 0.01, "the 1 ms step: {flown:?}");
-    assert!((long - short - 40.0).abs() < 0.5, "the 0.2 s step: {flown:?}");
+    assert!(
+        (short - born - 0.2).abs() < 0.01,
+        "the 1 ms step: {flown:?}"
+    );
+    assert!(
+        (long - short - 40.0).abs() < 0.5,
+        "the 0.2 s step: {flown:?}"
+    );
 }
 
 /// Souls and sparks: a child's particles made where its parent's are, which keep taking their
