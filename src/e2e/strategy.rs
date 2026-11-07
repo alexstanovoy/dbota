@@ -7,7 +7,7 @@ use std::time::Duration;
 use bevy::input::ButtonState;
 use bevy::prelude::*;
 use bota_client_core::Intent;
-use bota_proto::{HeroId, ItemId};
+use bota_proto::{HeroId, ItemId, PickPhase, ServerMsg};
 
 use super::harness::{Client, Server};
 
@@ -24,7 +24,28 @@ fn strategy() -> (Server, Client) {
 /// opened there).
 #[test]
 fn the_strategy_screens_abilities_show_their_tooltips() {
-    let (_server, mut client) = strategy();
+    let hero = HeroId::SHADOW_FIEND.0.to_string();
+    let server = Server::start(1, &["--tactical-secs", "1", "--heroes", &hero]);
+    let mut client = Client::run(&["--addr", &server.address]);
+    // This checks presentation of a real tactical state, independent of how
+    // long loading takes. Other strategy tests exercise the live transition.
+    client.hold_incoming_after(|message| {
+        matches!(
+            message,
+            ServerMsg::LobbyState {
+                pick: PickPhase::Tactical { .. },
+                ..
+            }
+        )
+    });
+    client
+        .world_mut()
+        .insert_resource(bevy::time::TimeUpdateStrategy::ManualDuration(
+            Duration::from_millis(16),
+        ));
+    client.until("the real strategy state received", |c| {
+        c.core().in_tactical_phase()
+    });
     let shown = |c: &mut Client| {
         let world = c.world_mut();
         world
@@ -43,7 +64,7 @@ fn the_strategy_screens_abilities_show_their_tooltips() {
             .and_then(|(e, _)| c.centre_of(e))
             .is_some_and(|at| at != Vec2::ZERO)
     });
-    let (icon, ability) = shown(&mut client).expect("an ability");
+    let (_, ability) = shown(&mut client).expect("an ability");
     let name = {
         let manifest = client.world().resource::<crate::manifest::Manifest>();
         let key = manifest.text_key("ability", ability).expect("its text key");
@@ -54,12 +75,19 @@ fn the_strategy_screens_abilities_show_their_tooltips() {
             .name
             .clone()
     };
-    let on = client.centre_of(icon).expect("laid out");
-    client.mouse(on);
     client.within(patience, "the ability's tooltip", |c| {
-        c.shown_texts()
-            .iter()
-            .any(|t| t.eq_ignore_ascii_case(&name))
+        let Some((icon, _)) = shown(c).filter(|(_, id)| *id == ability) else {
+            return false;
+        };
+        let Some(on) = c.centre_of(icon) else {
+            return false;
+        };
+        c.mouse(on);
+        c.core().in_tactical_phase()
+            && c.world().get::<Interaction>(icon) == Some(&Interaction::Hovered)
+            && c.shown_texts()
+                .iter()
+                .any(|t| t.eq_ignore_ascii_case(&name))
     });
 }
 

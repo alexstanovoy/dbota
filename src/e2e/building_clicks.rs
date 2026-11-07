@@ -5,6 +5,7 @@
 use std::time::Duration;
 
 use bevy::prelude::*;
+use bevy::time::TimeUpdateStrategy;
 use bota_proto::{EntityId, HeroId, UnitKind, UnitView};
 
 use super::harness::{Client, Server};
@@ -83,13 +84,33 @@ fn a_hero_walks_round_a_tower_by_right_clicks_beside_it() {
     let tower = own_building(&client, UnitKind::Tower);
     let (x, y) = (tower.pos.x.to_f32(), tower.pos.y.to_f32());
     let reach = tower.bound.to_f32() + 90.0;
+    client
+        .world_mut()
+        .insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_millis(
+            16,
+        )));
     client.stand_at((x as i32 - reach as i32, y as i32));
     let me = client.me().id;
     for (dx, dy) in [(0.0, -reach), (reach, 0.0)] {
         let goal = (x + dx, y + dy);
-        let pixel = client.screen_of(goal).expect("on screen");
-        client.mouse(pixel);
+        // Exercise a long presentation frame while the follow camera settles.
+        // The ray must reach the goal before the real click is sent.
+        client
+            .world_mut()
+            .insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_millis(
+                250,
+            )));
+        assert_eq!(
+            picked_at(&mut client, goal),
+            (None, None),
+            "the intended ground beside the tower is picked"
+        );
         client.click(MouseButton::Right);
+        client
+            .world_mut()
+            .insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_millis(
+                16,
+            )));
         client.within(
             Duration::from_secs(20),
             "the hero at the clicked ground",
