@@ -191,7 +191,8 @@ fn an_enemys_channel_at_a_watcher_shows_no_bar() {
         .id;
     let mine = client.core().my_hero().expect("one's hero");
     // Asset loading can outlast the whole short channel. Keep the first complete channel
-    // tick on screen while the model loads, rather than racing its next snapshots.
+    // tick on screen while the model loads, rather than racing its next snapshots. A held
+    // link also hides a real disconnect, so this fixture checks presentation, not liveness.
     let mut channel_tick = None;
     client.hold_incoming_after(move |message| match message {
         bota_proto::ServerMsg::Snapshot { view } => {

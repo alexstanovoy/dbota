@@ -385,6 +385,22 @@ impl Client {
         }));
     }
 
+    /// Holds presentation state permanently, draining later traffic and hiding disconnects.
+    pub fn hold_incoming(&mut self) {
+        let source = std::mem::replace(
+            &mut self.core_mut().source,
+            crate::main_menu::idle().0.source,
+        );
+        let bota_client_core::Source::Live(link) = source else {
+            panic!("a live presentation fixture");
+        };
+        self.core_mut().source = bota_client_core::Source::Live(Box::new(HeldIncoming {
+            link,
+            stop: |_: &bota_proto::ServerMsg| false,
+            held: true,
+        }));
+    }
+
     /// The client joined to `server`'s seat, run with `extra` command-line arguments, its hero
     /// picked: the match is under way and the hero on the map when it returns.
     pub fn join(server: &Server, hero: bota_proto::HeroId, extra: &[&str]) -> Client {

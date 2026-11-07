@@ -101,23 +101,6 @@ impl Allies {
             client.core().reject
         );
     }
-
-    fn with_views_held<R>(&mut self, then: impl FnOnce(&mut Self) -> R) -> R {
-        // Keep the real sockets answering pings while the UI reads a stable pair of views.
-        // Stopping the server also stops its heartbeat and can disconnect a slow UI.
-        let first = std::mem::replace(
-            &mut self.first.core_mut().source,
-            crate::main_menu::idle().0.source,
-        );
-        let second = std::mem::replace(
-            &mut self.second.core_mut().source,
-            crate::main_menu::idle().0.source,
-        );
-        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| then(self)));
-        self.first.core_mut().source = first;
-        self.second.core_mut().source = second;
-        result.unwrap_or_else(|panic| std::panic::resume_unwind(panic))
-    }
 }
 
 fn player_core(server: &Server, name: &str) -> Core {
@@ -185,7 +168,7 @@ fn both_allied_heroes_receive_the_flagbearer_bonus_and_only_the_last_hitter_gets
     let mut game = Allies::start();
     let flag = enemy_flagbearer(&mut game);
     approach_and_prepare(&mut game, &flag);
-    let feed_before = game.with_views_held(|game| {
+    let feed_before = {
         game.first.follow_me();
         game.second.follow_me();
         check_wallet_hud(&mut game.first);
@@ -194,9 +177,9 @@ fn both_allied_heroes_receive_the_flagbearer_bonus_and_only_the_last_hitter_gets
             crate::feed::shown(game.first.world_mut()),
             crate::feed::shown(game.second.world_mut()),
         ]
-    });
-    // Both cameras have settled. Keep the short-lived receipts alive for however many frames
-    // it takes each client's fonts and caption layout to become ready.
+    };
+    // Camera following has reached the fixture's tolerance. Freeze its remaining easing and
+    // keep receipts alive while each client's fonts and caption layout become ready.
     for client in [&mut game.first, &mut game.second] {
         client
             .world_mut()
@@ -231,7 +214,11 @@ fn both_allied_heroes_receive_the_flagbearer_bonus_and_only_the_last_hitter_gets
             complete && purse(&game.first).last_hits > before[0].last_hits
         },
     );
-    game.with_views_held(|game| {
+    // The assertions below need no further live progress. Drain later traffic while holding
+    // these complete views; a discarded tick must never be resumed without its ACK.
+    game.first.hold_incoming();
+    game.second.hold_incoming();
+    {
         check_wallet_hud(&mut game.first);
         check_wallet_hud(&mut game.second);
         let bonus = received(before[1], &game.second);
@@ -288,7 +275,7 @@ fn both_allied_heroes_receive_the_flagbearer_bonus_and_only_the_last_hitter_gets
             feed_before[1],
             "the ally's bonus adds no kill-feed row"
         );
-    });
+    }
 }
 
 fn enemy_flagbearer(game: &mut Allies) -> bota_proto::UnitView {
