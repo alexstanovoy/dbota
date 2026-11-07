@@ -48,7 +48,9 @@ struct Fetch {
 /// The file a local game's server writes its replay into.
 #[cfg(not(target_arch = "wasm32"))]
 struct Recording {
+    owner: Option<bota_proto::SlotId>,
     path: std::path::PathBuf,
+    metadata_only: bool,
     mode: &'static str,
 }
 
@@ -94,7 +96,9 @@ impl MenuCore {
                 mode: handoff.ruleset.0.clone(),
             }),
             #[cfg(not(target_arch = "wasm32"))]
-            Launch::Host { replay, .. } => self.record(replay, "local"),
+            Launch::Host {
+                replay, metadata, ..
+            } => self.record(replay, metadata, "local"),
             _ => {}
         }
     }
@@ -105,15 +109,38 @@ impl MenuCore {
     }
 
     #[cfg(not(target_arch = "wasm32"))]
-    fn record(&mut self, replay: &Option<std::path::PathBuf>, mode: &'static str) {
-        self.keeper.recording = replay.clone().map(|path| Recording { path, mode });
+    fn record(
+        &mut self,
+        replay: &Option<std::path::PathBuf>,
+        metadata: &Option<std::path::PathBuf>,
+        mode: &'static str,
+    ) {
+        self.keeper.recording = replay
+            .clone()
+            .or_else(|| metadata.clone())
+            .map(|path| Recording {
+                path,
+                metadata_only: replay.is_none(),
+                mode,
+                owner: None,
+            });
     }
 
-    /// Where a local game's server is to write its replay, if replays are kept.
+    /// Only a live session identifies the local owner; observer and imported files remain unknown.
+    pub fn set_local_recording_owner(&mut self, owner: bota_proto::SlotId) {
+        #[cfg(not(target_arch = "wasm32"))]
+        if let Some(recording) = &mut self.keeper.recording {
+            recording.owner = Some(owner);
+        }
+        #[cfg(target_arch = "wasm32")]
+        let _ = owner;
+    }
+
+    /// A local recording location. Metadata is recorded even when replay retention is off.
     pub(super) fn recording_path(&self, mode: &str) -> Option<std::path::PathBuf> {
         #[cfg(not(target_arch = "wasm32"))]
         {
-            let dir = self.library.dir().filter(|_| self.library.keeping())?;
+            let dir = self.library.dir()?;
             Some(replays::recording_path(&dir, mode, replays::now()))
         }
         #[cfg(target_arch = "wasm32")]
@@ -129,7 +156,13 @@ impl MenuCore {
         if matches!(left, Some(OnScreen::Local))
             && let Some(recording) = self.keeper.recording.take()
         {
-            self.library.adopt(recording.path, recording.mode);
+            if recording.metadata_only || !self.library.keeping() {
+                self.local_meta
+                    .request_temporary(recording.path, recording.mode, recording.owner);
+            } else {
+                self.library
+                    .adopt(recording.path, recording.mode, recording.owner);
+            }
         }
         #[cfg(target_arch = "wasm32")]
         let _ = left;
@@ -325,6 +358,11 @@ impl MenuCore {
             self.request_chunk(match_id, end);
             return;
         }
+        self.keep_complete(fetch);
+    }
+
+    fn keep_complete(&mut self, fetch: Fetch) {
+        let match_id = fetch.want.match_id;
         if fetch.want.open {
             self.status = None;
         }
@@ -333,7 +371,17 @@ impl MenuCore {
         if want.open {
             self.keeper.open_match = Some(match_id.0);
         }
-        self.library.save(Saving {
+        let owner = want
+            .result
+            .as_ref()
+            .and_then(|result| self.owner_in_result(result));
+        let metadata = bota_client_core::meta_in_replay(&mut std::io::Cursor::new(&bytes))
+            .ok()
+            .flatten();
+        let result = want.result.clone();
+        let mode = want.mode.clone();
+        let saved = self.library.save(Saving {
+            owner,
             mode: want.mode,
             match_id: Some(match_id.0),
             players,
@@ -341,6 +389,26 @@ impl MenuCore {
             bytes,
             explicit: want.open,
         });
+        if let Some(metadata) = metadata {
+            self.local_history.insert(
+                super::local_matches::Saved {
+                    key: super::local_matches::service_key(&self.prefs.service, match_id.0),
+                    file: saved.as_ref().map(|record| record.name.clone()),
+                    when: saved
+                        .as_ref()
+                        .map_or_else(replays::now, |record| record.when),
+                    mode,
+                    owner,
+                    metadata,
+                    metadata_key: None,
+                    cached: None,
+                    result,
+                    summary: None,
+                    temporary: None,
+                },
+                self.library.policy().max_count,
+            );
+        }
     }
 
     /// The service has no replay of the match, or refused to give it now.
@@ -513,4 +581,21 @@ fn sum_up(result: &MatchResult) -> (String, String) {
         Outcome::Null => "no result".to_owned(),
     };
     (players, outcome)
+}
+
+#[cfg(test)]
+pub(crate) fn deliver_replay_for_menu(core: &mut MenuCore, bytes: &[u8]) {
+    let match_id = MatchId(987);
+    core.keeper.current = Some(Fetch {
+        want: Want {
+            match_id,
+            mode: "solo_mid".to_owned(),
+            result: None,
+            open: false,
+            tries: 0,
+            due: Instant::now(),
+        },
+        bytes: Vec::new(),
+    });
+    core.keep_chunk(match_id, 0, bytes.len() as u64, bytes);
 }

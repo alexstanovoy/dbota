@@ -16,6 +16,7 @@ pub use browser::open as open_browser;
 pub use disk::keep_in_for_tests;
 #[cfg(not(target_arch = "wasm32"))]
 pub use disk::{Disk, default_dir, recording_path};
-pub use index::{MAX_BYTES, Policy, Record, Wanted};
+pub(crate) use index::valid_name;
+pub use index::{MAX_BYTES, MIN_BYTES, Policy, Record, Wanted};
 pub use library::{Library, Notice, Saving, Standing};
 pub use name::now;

@@ -113,3 +113,10 @@ path = "fuzz_targets/voice_pack.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "thumbnail"
+path = "fuzz_targets/thumbnail.rs"
+test = false
+doc = false
+bench = false

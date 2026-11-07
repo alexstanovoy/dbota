@@ -11,6 +11,7 @@ pub const DEFAULT_PORT: &str = "4455";
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FormKind {
     None,
+    Leaderboard,
     Service,
     Login,
     Register,
@@ -78,6 +79,7 @@ fn items_of(kind: FormKind, fields: usize) -> Vec<Item> {
     };
     match kind {
         FormKind::None => Vec::new(),
+        FormKind::Leaderboard => buttons(vec![Act::Submit]),
         FormKind::Service if cfg!(target_arch = "wasm32") => buttons(vec![Act::Submit]),
         FormKind::Service => buttons(vec![Act::Submit, Act::Go(Page::LocalLobby)]),
         FormKind::Login => buttons(
@@ -137,6 +139,7 @@ impl Form {
         const PASSWORD: usize = bota_radovid::proto::MAX_PASSWORD_LEN;
         let fields = match kind {
             FormKind::None => Vec::new(),
+            FormKind::Leaderboard => vec![Field::new("Find a nickname", "", false, 20)],
             FormKind::Service => vec![Field::new("Service", &prefs.service, false, 200)],
             FormKind::Login => vec![
                 Field::new("Login", &prefs.login, false, MAX_LOGIN_LEN),

@@ -592,6 +592,16 @@ fn two_players_register_find_accept_play_and_see_their_result() {
         assert_eq!(meta.header.match_id, fetched.match_id.0);
         let summary = crate::postgame::summary::MatchSummary::from_meta(&meta).expect("a summary");
         assert_eq!(summary.rows.len(), 2);
+        let cards = player
+            .menu
+            .local_history
+            .cards(player.menu.library.records());
+        assert!(
+            cards
+                .iter()
+                .any(|card| card.hero == Some(HeroId::SHADOW_FIEND)),
+            "the once-received metadata is retained on this machine, even when replay retention is off"
+        );
     }
     let headlines: Vec<String> = [&alice, &bob]
         .iter()
@@ -1375,7 +1385,7 @@ fn demo_hero_starts_a_cheat_match_of_the_service_with_the_hero_chosen() {
 /// The Demo Hero is the service's to offer: a menu without one says so, and the Demo ruleset is
 /// no game mode of a lobby.
 #[test]
-fn a_service_without_a_demo_offers_none() {
+fn a_service_without_a_demo_falls_back_to_the_local_sandbox() {
     let service = service_with(|config| config.replace("info = \"01\"", ""));
     let mut alice = Player::new(Some(&service));
     alice.register("alice");
@@ -1385,7 +1395,14 @@ fn a_service_without_a_demo_offers_none() {
         PageView::DemoHero { offered: false, .. }
     ));
     alice.menu.act(Act::Demo(HeroId::PUDGE.0));
-    assert!(alice.menu.take_launch().is_none());
+    // Its own catalogue still offers none; the hero action can use the local sandbox.
+    assert!(matches!(
+        alice.menu.take_launch(),
+        Some(Launch::LocalDemo {
+            hero: HeroId::PUDGE,
+            ..
+        })
+    ));
 }
 
 /// A local game the host leaves for good (the match ends: the leaver's side loses) leaves its
@@ -1417,28 +1434,29 @@ fn a_local_game_left_for_good_leaves_its_replay() {
     let (mut game, server) = open_hosted(launch, &trust);
     menu.game_started();
     pump_until("seated", &mut [&mut game], |c| c.my_slot.is_some());
+    menu.set_local_recording_owner(game.my_slot.expect("the local session's seat"));
     game.act(bota_client_core::Intent::PickHero(HeroId::SHADOW_FIEND.0));
     game.act(bota_client_core::Intent::ToggleReady);
     pump_until("the match runs", &mut [&mut game], |c| {
         c.view().is_some_and(|v| v.tick > 5)
     });
     game.leave_game();
-    // The server ends the match, finishes its file and exits.
-    let deadline = Instant::now() + Duration::from_secs(PATIENCE);
-    while std::fs::metadata(&recording).map_or(0, |m| m.len()) < 1024 {
-        assert!(
-            Instant::now() < deadline,
-            "the server never finished its replay"
-        );
-        game.pump(1.0 / 30.0);
-        std::thread::sleep(Duration::from_millis(5));
-    }
+    wait_for_recording(&recording, &mut game);
     drop(server);
     menu.left_game(None, true);
     settle_menu(&mut menu, |m| m.library.records().len() == 1);
     let record = menu.library.records()[0].clone();
     assert_eq!(record.mode, "local");
+    assert_eq!(record.owner, game.my_slot);
+    let mut file = std::fs::File::open(menu.library.path(&record.name).unwrap()).unwrap();
+    assert!(
+        bota_client_core::meta_in_replay(&mut file)
+            .unwrap()
+            .is_some(),
+        "local recordings carry the metadata Profile reads"
+    );
     assert!(!recording.exists(), "the recording became the kept replay");
+    wait_for_recorded_hero(&mut menu, HeroId::SHADOW_FIEND);
     menu.act(Act::Go(Page::Replays));
     let PageView::Replays { list, .. } = menu.view().body else {
         panic!("the replays page");
@@ -1446,6 +1464,41 @@ fn a_local_game_left_for_good_leaves_its_replay() {
     assert_eq!(list.len(), 1);
     menu.act(Act::OpenReplay(record.name.clone()));
     assert!(matches!(menu.take_launch(), Some(Launch::Replay(_))));
+}
+
+fn wait_for_recording(recording: &Path, game: &mut Core) {
+    // The server ends the match, finishes its file and exits.
+    let deadline = Instant::now() + Duration::from_secs(15);
+    while std::fs::metadata(recording).map_or(0, |m| m.len()) < 1024
+        || std::fs::File::open(recording)
+            .ok()
+            .and_then(|mut file| bota_client_core::meta_in_replay(&mut file).ok().flatten())
+            .is_none()
+    {
+        assert!(
+            Instant::now() < deadline,
+            "the server never finished its replay"
+        );
+        game.pump(1.0 / 30.0);
+        std::thread::sleep(Duration::from_millis(5));
+    }
+}
+
+fn wait_for_recorded_hero(menu: &mut MenuCore, hero: HeroId) {
+    let deadline = Instant::now() + Duration::from_secs(15);
+    while menu
+        .local_history
+        .cards(menu.library.records())
+        .iter()
+        .all(|card| card.hero != Some(hero))
+    {
+        assert!(
+            Instant::now() < deadline,
+            "the local recording never reached Profile"
+        );
+        menu.update();
+        std::thread::sleep(Duration::from_millis(5));
+    }
 }
 
 /// Pumps one menu until `done` holds, within [`PATIENCE`].
@@ -2772,5 +2825,218 @@ fn queue_shortcut_and_drawer_send_the_same_selected_audiences() {
         let entry = player.menu.view().searches[0].entry;
         player.menu.act(Act::Cancel(entry));
         settle(&mut [&mut player], |p| p.menu.view().searches.is_empty());
+    }
+}
+
+pub(crate) fn install_local_library(core: &mut MenuCore, directory: &Path) {
+    core.library = Library::new(Box::new(crate::replays::Disk::new(directory.to_owned())));
+    core.store = SettingsStore::new(Some(directory.join("settings.conf")));
+    core.local_history =
+        super::local_matches::Archive::load(&core.store, core.library.policy().max_count);
+}
+
+pub(crate) fn library_titles_ready(core: &MenuCore) -> bool {
+    !core.library.records().is_empty()
+        && core.library.records().iter().all(|record| {
+            !matches!(
+                core.summary_of(record),
+                super::replay_info::Summary::Reading
+            )
+        })
+}
+
+/// Text owned by the menu page, excluding the game HUD that may remain behind an opaque menu.
+pub(crate) fn page_words(world: &mut bevy::prelude::World) -> Vec<String> {
+    use bevy::prelude::*;
+    let texts: Vec<_> = world
+        .query::<(Entity, &Text, &InheritedVisibility)>()
+        .iter(world)
+        .filter(|(_, _, visible)| visible.get())
+        .map(|(entity, text, _)| (entity, text.0.clone()))
+        .collect();
+    texts
+        .into_iter()
+        .filter_map(|(mut entity, text)| {
+            for _ in 0..32 {
+                if world.get::<super::screens::PageRoot>(entity).is_some() {
+                    return Some(text);
+                }
+                entity = world.get::<ChildOf>(entity)?.parent();
+            }
+            None
+        })
+        .collect()
+}
+
+#[test]
+fn demo_from_the_catalogue_can_launch_a_local_sandbox_without_an_account() {
+    let mut player = Player::new(None);
+    player.menu.act(Act::Demo(HeroId::SHADOW_FIEND.0));
+    assert!(
+        player.menu.take_launch().is_some(),
+        "DEMO must not require a service account"
+    );
+}
+
+pub(crate) fn avatar_crop_ready(core: &MenuCore) -> bool {
+    !core.avatar.view.busy && core.avatar.view.preview.is_some()
+}
+
+pub(crate) fn use_matching_local_server(core: &mut MenuCore) {
+    core.server_binary = Some(server_binary().to_owned());
+}
+
+pub(crate) fn lost_result() -> super::history::ResultKind {
+    super::history::ResultKind::Lost
+}
+
+pub(crate) fn service_with_two_rated_modes() -> Service {
+    start_service(true, |config| {
+        config.replacen("rated = false", "rated = true", 1)
+    })
+}
+
+pub(crate) fn profile_with_only_one_mode(core: &mut MenuCore) {
+    use bota_radovid::proto::{AccountId, AccountKind, PublicAccount, Rating, RatingSummary};
+    core.account_profile = Some(PublicAccount {
+        id: AccountId(1),
+        nickname: "rated_player".to_owned(),
+        kind: AccountKind::Human,
+        online: false,
+        bot_version: None,
+        avatar: None,
+        ratings: vec![(
+            RulesetId("solo_mid".to_owned()),
+            RatingSummary {
+                rating: Rating {
+                    rating: 1524.0,
+                    deviation: 100.0,
+                },
+                games: 41,
+                wins: 20,
+                draws: 0,
+                losses: 21,
+                rank: Some(12),
+            },
+        )],
+    });
+}
+
+#[test]
+fn a_local_game_keeps_its_metadata_with_replay_saving_off() {
+    local_history_without_replay(false);
+}
+
+#[test]
+fn a_local_game_keeps_metadata_when_saving_is_turned_off_during_play() {
+    local_history_without_replay(true);
+}
+
+fn local_history_without_replay(during_play: bool) {
+    let dir = Scratch::new("local-history-without-replay");
+    let (mut menu, trust) = offline("local_owner", &dir);
+    if !during_play {
+        menu.set_replay_policy(crate::replays::Policy {
+            keep: false,
+            ..Default::default()
+        });
+    }
+    menu.act(Act::Go(Page::LocalLobby));
+    for (at, value) in [(0, free_port().to_string()), (1, "1".to_owned())] {
+        menu.act(Act::Focus(at));
+        while !menu.form.value(at).is_empty() {
+            menu.act(Act::Erase);
+        }
+        menu.act(Act::Type(value));
+    }
+    menu.act(Act::Host(false));
+    let (mut game, mut server) = open_hosted(menu.take_launch().unwrap(), &trust);
+    menu.game_started();
+    pump_until("seated", &mut [&mut game], |core| core.my_slot.is_some());
+    menu.set_local_recording_owner(game.my_slot.unwrap());
+    game.act(bota_client_core::Intent::PickHero(HeroId::SHADOW_FIEND.0));
+    game.act(bota_client_core::Intent::ToggleReady);
+    pump_until("the match runs", &mut [&mut game], |core| {
+        core.view().is_some_and(|view| view.tick > 5)
+    });
+    if during_play {
+        menu.set_replay_policy(crate::replays::Policy {
+            keep: false,
+            ..Default::default()
+        });
+    }
+    game.leave_game();
+    let deadline = Instant::now() + Duration::from_secs(15);
+    while server.as_mut().is_some_and(Hosted::running) {
+        assert!(
+            Instant::now() < deadline,
+            "the hosted server finishes its files and exits"
+        );
+        game.pump(1.0 / 30.0);
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    drop(server);
+    menu.left_game(None, true);
+    let deadline = Instant::now() + Duration::from_secs(15);
+    while menu.last_played_hero().is_none() && Instant::now() < deadline {
+        menu.update();
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert_eq!(menu.last_played_hero(), Some(HeroId::SHADOW_FIEND));
+    assert!(
+        menu.library.records().is_empty(),
+        "metadata retention is independent of replay files"
+    );
+}
+
+pub(crate) fn persist_browser_history_with_a_failed_blob(directory: &Path) {
+    let (_, metadata) = crate::postgame::recorded_match_for_menu();
+    let store = SettingsStore::new(Some(directory.join("settings.conf")));
+    let mut archive = super::local_matches::Archive::default();
+    archive.insert(
+        super::local_matches::Saved {
+            key: "quota-history".to_owned(),
+            file: None,
+            when: 100,
+            mode: "local".to_owned(),
+            owner: Some(bota_proto::SlotId(0)),
+            metadata: std::fs::read(metadata).unwrap(),
+            metadata_key: None,
+            cached: None,
+            result: None,
+            summary: None,
+            temporary: None,
+        },
+        25,
+    );
+    super::archive_storage::write_snapshot(
+        archive.entries(),
+        true,
+        |_, _| Err(std::io::Error::other("browser metadata quota exceeded")),
+        |text| store.write(Entry::MatchHistory, text),
+    )
+    .expect("the small index still fits");
+}
+
+#[test]
+fn local_hero_demo_preserves_the_clients_server_lookup_policy() {
+    let dir = Scratch::new("demo-server-policy");
+    for allowed in [false, true] {
+        let (menu, _) = offline("alice", &dir);
+        let mut menu = menu.with_server_from_environment(allowed);
+        menu.act(Act::Demo(HeroId::PUDGE.0));
+        let Some(Launch::LocalDemo {
+            hero,
+            server_environment,
+            ..
+        }) = menu.take_launch()
+        else {
+            panic!("the hero action must open a local sandbox without a service");
+        };
+        assert_eq!(hero, HeroId::PUDGE);
+        assert_eq!(
+            server_environment, allowed,
+            "a local demo uses the client's lookup policy"
+        );
     }
 }

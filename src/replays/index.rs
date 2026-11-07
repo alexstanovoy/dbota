@@ -41,6 +41,8 @@ pub struct Record {
     pub players: String,
     /// How it ended, as the result told it.
     pub outcome: String,
+    /// The local player, recorded explicitly; imported and observer files have none.
+    pub owner: Option<bota_proto::SlotId>,
 }
 
 /// A match played whose replay is to be fetched from the service: kept in the index so a
@@ -120,7 +122,17 @@ impl Index {
             }
             let cols: Vec<&str> = line.split('\t').collect();
             match cols.as_slice() {
-                ["r", when, bytes, match_id, mode, name, players, outcome] => {
+                [
+                    "r",
+                    when,
+                    bytes,
+                    match_id,
+                    mode,
+                    name,
+                    players,
+                    outcome,
+                    owner @ ..,
+                ] if owner.len() <= 1 => {
                     let (Ok(when), Ok(bytes)) = (when.parse(), bytes.parse()) else {
                         continue;
                     };
@@ -135,6 +147,11 @@ impl Index {
                         match_id: match_id.parse().ok(),
                         players: clean(players, MAX_TEXT),
                         outcome: clean(outcome, MAX_TEXT),
+                        owner: owner
+                            .first()
+                            .and_then(|s| s.parse::<u8>().ok())
+                            .filter(|slot| usize::from(*slot) < bota_proto::limits::MAX_SEATS)
+                            .map(bota_proto::SlotId),
                     });
                 }
                 ["w", match_id, since, mode] => {
@@ -159,8 +176,11 @@ impl Index {
             let id = r
                 .match_id
                 .map_or_else(|| "-".to_owned(), |id| id.to_string());
+            let owner = r
+                .owner
+                .map_or_else(String::new, |slot| format!("\t{}", slot.0));
             out.push_str(&format!(
-                "r\t{}\t{}\t{id}\t{}\t{}\t{}\t{}\n",
+                "r\t{}\t{}\t{id}\t{}\t{}\t{}\t{}{owner}\n",
                 r.when,
                 r.bytes,
                 r.mode,
@@ -273,6 +293,7 @@ impl Index {
                     match_id: None,
                     players: String::new(),
                     outcome: String::new(),
+                    owner: None,
                 }),
             }
         }
@@ -309,6 +330,7 @@ mod tests {
             match_id: Some(when),
             players: "a vs b".to_owned(),
             outcome: "a won, 1:00".to_owned(),
+            owner: None,
         }
     }
 
@@ -372,5 +394,25 @@ mod tests {
             ("y.brp", 100)
         );
         assert!(!index.reconcile(&[("y.brp".to_owned(), 9, 100)]));
+    }
+}
+
+#[cfg(test)]
+mod owner_contract {
+    use super::Index;
+    #[test]
+    fn a_local_replay_keeps_its_recorded_player_slot_without_guessing_from_names() {
+        let text = "dbota-replays 1\nr\t100\t4096\t-\tlocal\tlocal.brp\tSame name vs Same name\tRadiant victory\t1\n";
+        let index = Index::parse(text);
+        assert_eq!(
+            index.records.len(),
+            1,
+            "the locally attributed match remains in the library"
+        );
+        assert_eq!(
+            index.render(),
+            text,
+            "owner slot is kept separately from ambiguous display names"
+        );
     }
 }

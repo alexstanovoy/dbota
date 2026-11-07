@@ -9,19 +9,32 @@
 //! drawing; [`view`] is what the screens draw; the rest is Bevy.
 
 mod accepted;
+mod account_page;
 mod address;
+mod archive_storage;
 mod availability;
+mod avatar;
+mod avatar_draw;
 mod backdrop;
+mod catalogue;
 mod core;
 mod form;
+mod history;
+mod home_cards;
 mod keep;
 pub(crate) mod kit;
+mod ladder_page;
 mod launch;
+mod leaderboard;
 #[cfg(not(target_arch = "wasm32"))]
 mod leave;
 mod lobbies;
+mod local_matches;
+mod local_meta;
 mod meta_fetch;
 mod overlay;
+mod page_previews;
+mod page_time;
 mod pages;
 mod play;
 mod prefs;
@@ -57,3 +70,21 @@ pub use store::SettingsStore;
 pub(crate) use text::line;
 #[cfg(test)]
 pub use view::{Connection, PageView};
+
+#[cfg_attr(
+    not(test),
+    expect(
+        unused_imports,
+        reason = "Avatar transport is capability-gated until its SDK endpoint exists"
+    )
+)]
+pub use avatar::Request as AvatarRequest;
+
+#[cfg(test)]
+pub(crate) use leaderboard::Players as LeaderboardPlayers;
+
+#[cfg(test)]
+pub(crate) use avatar::{Action as AvatarAction, tests::TEST_PNG as AVATAR_TEST_PNG};
+
+#[cfg(test)]
+pub(crate) use keep::deliver_replay_for_menu;

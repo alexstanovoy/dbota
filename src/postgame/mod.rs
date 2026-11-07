@@ -8,11 +8,13 @@
 //! game, a watched one) tells what every client is sent, the final numbers. Demo Hero, a
 //! sandbox with no end, shows nothing.
 
-mod draw;
+pub(crate) mod draw;
 mod recording;
 pub mod summary;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+pub(crate) use tests::recorded_match_for_menu;
 
 use std::sync::Arc;
 use std::time::Duration;

@@ -50,7 +50,7 @@ impl Leaver {
     /// old lobby's, stopped by the menu), and comes back once it has ended.
     fn hold_host(&mut self, core: &mut MenuCore, launch: Option<Launch>) -> Option<Launch> {
         match launch {
-            Some(host @ Launch::Host { .. }) if self.op.is_some() => {
+            Some(host @ (Launch::Host { .. } | Launch::LocalDemo { .. })) if self.op.is_some() => {
                 core.waiting_for_leave();
                 self.waiting_host = Some(host);
                 None
@@ -116,7 +116,8 @@ pub fn plugin(app: &mut App) {
         .add_systems(Update, (super::top_bar::animate, hud_shown))
         .add_systems(
             PostUpdate,
-            super::top_bar::fit_tabs.after(bevy::ui::UiSystems::Layout),
+            (super::top_bar::fit_tabs, super::ladder_page::visible_range)
+                .after(bevy::ui::UiSystems::Layout),
         );
 }
 
@@ -239,7 +240,7 @@ fn drive(
         Some(Launch::Replay(path)) => opener.opened(&mut core, open_replay(&path)),
         Some(Launch::Blob(blob)) => opener.opened(&mut core, open_blob(&blob)),
         Some(launch) => {
-            if matches!(launch, Launch::Host { .. }) {
+            if matches!(launch, Launch::Host { .. } | Launch::LocalDemo { .. }) {
                 // One lobby hosted at a time: the last one's server ends.
                 host.0 = None;
             }
@@ -327,7 +328,7 @@ fn origin_of(launch: &Launch, args: &crate::Args) -> crate::postgame::Origin {
         Launch::Host {
             replay: Some(path), ..
         } => Origin::File(path.clone()),
-        Launch::Demo { .. } => Origin::Hidden,
+        Launch::Demo { .. } | Launch::LocalDemo { .. } => Origin::Hidden,
         // The service's artifact of the match, which the menu fetches.
         Launch::Seat(handoff) => Origin::Service(handoff.match_id),
         Launch::Host { .. } | Launch::Watch(_) | Launch::Direct { .. } => Origin::Nothing,
@@ -377,6 +378,9 @@ fn guard(
     }
     let game = &session.0;
     let seated = game.my_slot.is_some() && matches!(game.source, Source::Live(_));
+    if seated && let Some(slot) = game.my_slot {
+        core.set_local_recording_owner(slot);
+    }
     core.set_game_unsafe(seated && game.over.is_none() && !game.lost);
     core.set_game_in_picks(seated && game.phase == bota_client_core::Phase::Lobby);
     let disconnect = core.take_leave();

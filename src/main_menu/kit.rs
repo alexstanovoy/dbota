@@ -192,6 +192,19 @@ impl Kit<'_, '_, '_> {
         tone: Tone,
         height: f32,
     ) -> Entity {
+        self.button_role(parent, label, act, tone, height, theme::button(height))
+    }
+
+    /// A control whose approved layout assigns a different text role from its height.
+    pub fn button_role(
+        &mut self,
+        parent: Entity,
+        label: &str,
+        act: Act,
+        tone: Tone,
+        height: f32,
+        role: Type,
+    ) -> Entity {
         let shade = Shade::of(tone);
         let button = self
             .commands
@@ -217,7 +230,7 @@ impl Kit<'_, '_, '_> {
                 ChildOf(parent),
             ))
             .id();
-        let text = self.typed(button, label, theme::button(height), theme::INK_1);
+        let text = self.typed(button, label, role, theme::INK_1);
         self.commands.entity(text).insert(TextLayout {
             linebreak: LineBreak::NoWrap,
             ..default()
@@ -227,6 +240,15 @@ impl Kit<'_, '_, '_> {
 
     /// A button that does nothing now, greyed: the script names it `Disabled`.
     pub fn disabled_button(&mut self, parent: Entity, label: &str, height: f32) -> Entity {
+        self.disabled_button_role(parent, label, height, theme::button(height))
+    }
+    pub fn disabled_button_role(
+        &mut self,
+        parent: Entity,
+        label: &str,
+        height: f32,
+        role: Type,
+    ) -> Entity {
         let button = self
             .commands
             .spawn((
@@ -246,7 +268,7 @@ impl Kit<'_, '_, '_> {
                 ChildOf(parent),
             ))
             .id();
-        let text = self.typed(button, label, theme::button(height), theme::INK_OFF);
+        let text = self.typed(button, label, role, theme::INK_OFF);
         self.commands.entity(text).insert(TextLayout {
             linebreak: LineBreak::NoWrap,
             ..default()
@@ -364,6 +386,23 @@ impl Kit<'_, '_, '_> {
             .entry::<Node>()
             .and_modify(|mut node| node.width = px(POPUP_ANSWER_WIDTH));
         button
+    }
+
+    /// The wide hero art used by match cards and scoreboards.
+    pub fn hero_icon(&mut self, parent: Entity, hero: u16, width: f32) {
+        if let Some(path) = self.manifest.hero_icon(hero) {
+            self.commands.spawn((
+                Node {
+                    width: px(width),
+                    height: px(width * 9.0 / 16.0),
+                    flex_shrink: 0.0,
+                    ..default()
+                },
+                ImageNode::new(self.server.load(path)),
+                Pickable::IGNORE,
+                ChildOf(parent),
+            ));
+        }
     }
 
     /// A hero's portrait from the cache, `width` wide; nothing without it.

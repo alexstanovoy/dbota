@@ -7,9 +7,9 @@ use std::collections::VecDeque;
 
 use bevy::platform::time::Instant;
 use bota_radovid::proto::{
-    AccountId, AccountKind, Audience, ClientMsg, Error, Event, Handoff, LadderRow, LobbyId,
-    LobbyState, LobbySummary, MatchId, MatchResult, ProposalId, PublicAccount, QueueEntryId,
-    QueueLeftReason, Reply, RulesetId, Secret, valid_login, valid_password,
+    AccountId, AccountKind, Audience, ClientMsg, Error, Event, Handoff, LobbyId, LobbyState,
+    LobbySummary, MatchId, MatchResult, ProposalId, PublicAccount, QueueEntryId, QueueLeftReason,
+    Reply, RulesetId, Secret, valid_login, valid_password,
 };
 use bota_radovid::{Client, ClientError, Incoming, Tls};
 
@@ -58,6 +58,10 @@ pub enum Page {
     Replays,
     /// The account's rating per ruleset and the ladder.
     Profile,
+    Heroes,
+    Hero(bota_proto::HeroId),
+    Leaderboard,
+    LocalResult,
     /// Dota's Demo Hero: a hero to try out alone, with every cheat.
     #[cfg(not(target_arch = "wasm32"))]
     DemoHero,
@@ -74,7 +78,7 @@ impl Page {
     /// Whether the page is the service's, shown only with an account.
     pub fn needs_account(self) -> bool {
         match self {
-            Page::MyGames | Page::Lobbies | Page::Lobby | Page::Profile => true,
+            Page::MyGames | Page::Lobbies | Page::Lobby | Page::Leaderboard => true,
             #[cfg(not(target_arch = "wasm32"))]
             Page::DemoHero => true,
             _ => false,
@@ -87,6 +91,12 @@ impl Page {
 pub enum Act {
     Go(Page),
     Play(super::PlayAction),
+    Avatar(super::avatar::Action),
+    InspectHero(bota_proto::HeroId),
+    MatchDetails(String),
+    WatchHistory(String),
+    LeaderboardMode(String),
+    LeaderboardPlayers(super::leaderboard::Players),
     /// Puts the keyboard in a field of the page's form.
     Focus(usize),
     Type(String),
@@ -283,6 +293,8 @@ pub enum Launch {
         cheats: bool,
         /// Where the server writes the replay.
         replay: Option<std::path::PathBuf>,
+        /// A metadata-only recording when replay saving is off.
+        metadata: Option<std::path::PathBuf>,
         /// The server binary, when not looked for (`$BOTA_SERVER`, beside
         /// this client, the `PATH`).
         server: Option<std::path::PathBuf>,
@@ -290,6 +302,18 @@ pub enum Launch {
         server_environment: bool,
         /// The rules of the lobby; its seats are [`LOCAL_SEATS`] under any.
         rules: LocalRules,
+    },
+    /// An account-free, loopback-only sandbox. It has no replay or reconnectable seat.
+    #[cfg_attr(
+        target_arch = "wasm32",
+        expect(dead_code, reason = "A browser cannot start its own game server")
+    )]
+    LocalDemo {
+        hero: bota_proto::HeroId,
+        name: String,
+        key: Option<Claim>,
+        server: Option<std::path::PathBuf>,
+        server_environment: bool,
     },
     /// Dota's Demo Hero: the seat of a match of the service's Demo ruleset (cheats on, this
     /// player alone), with the hero chosen to pick.
@@ -361,9 +385,11 @@ impl Launch {
     /// How the game it opens is had.
     pub fn kind(&self) -> GameKind {
         match self {
-            Launch::Seat(_) | Launch::Given | Launch::Host { .. } | Launch::Demo { .. } => {
-                GameKind::Play
-            }
+            Launch::Seat(_)
+            | Launch::Given
+            | Launch::Host { .. }
+            | Launch::LocalDemo { .. }
+            | Launch::Demo { .. } => GameKind::Play,
             Launch::Watch(_) => GameKind::Watch,
             Launch::Replay(_) | Launch::Blob(_) => GameKind::Replay,
             Launch::Direct { spectate, .. } => {
@@ -430,7 +456,10 @@ impl SeatOf {
             }
             Launch::Direct { address, .. } => Some(SeatOf::Address(same_address(address))),
             Launch::Given => Some(SeatOf::Given),
-            Launch::Host { .. } | Launch::Replay(_) | Launch::Blob(_) => None,
+            Launch::Host { .. }
+            | Launch::LocalDemo { .. }
+            | Launch::Replay(_)
+            | Launch::Blob(_) => None,
         }
     }
 }
@@ -468,7 +497,7 @@ pub(super) enum Asked {
     Demo,
     History,
     Profile,
-    Ladder,
+    Leaderboard(u64),
     Artifact(MatchId),
     Meta(MatchId),
     Other,
@@ -483,8 +512,6 @@ const LEAVE_REACH: std::time::Duration = std::time::Duration::from_secs(10);
 const UNTOLD: &str = "The game could not be told you left it: it is forgotten here";
 /// Finished matches listed under MY GAMES.
 const HISTORY_LEN: u8 = 20;
-/// Ladder rows shown on the profile.
-const LADDER_LEN: u8 = 10;
 
 /// An unfinished match of the account.
 #[derive(Clone, Debug, PartialEq)]
@@ -601,6 +628,11 @@ pub struct MenuCore {
     /// The name this player goes by where there is no account: the
     /// settings' profile name.
     pub(super) profile: String,
+    pub(super) board: super::leaderboard::Board,
+    pub(super) avatar: super::avatar::Editor,
+    pub(super) local_history: super::local_matches::Archive,
+    pub(super) local_meta: super::local_meta::Reader,
+    pub(super) local_result: Option<String>,
     /// The replays this client keeps.
     pub(super) library: Library,
     /// What a kept replay holds, as read, where the library knows no more.
@@ -612,7 +644,6 @@ pub struct MenuCore {
     /// The account's latest finished matches, from the service.
     pub(super) history: Vec<MatchResult>,
     pub(super) account_profile: Option<PublicAccount>,
-    pub(super) ladder: Vec<LadderRow>,
     /// The game server a local lobby starts, when not looked for.
     pub(super) server_binary: Option<std::path::PathBuf>,
     /// Whether the server is also looked for in `$BOTA_SERVER` and on the `PATH`.
@@ -675,11 +706,29 @@ impl MenuCore {
             prefs.service = service;
         }
         let local_first = !cfg!(target_arch = "wasm32") && prefs.service.is_empty();
+        let mut core = Self::initial(store, tls, prefs, library);
+        // No service to reach: the menu opens on what needs none, and the sign-in shows when
+        // the player goes to the online pages.
+        if local_first {
+            core.settings_from = Page::LocalLobby;
+            core.go_form(Page::LocalLobby);
+        } else {
+            core.settings_from = Page::Login;
+            core.go_form(Page::Login);
+        }
+        core
+    }
+
+    fn initial(store: SettingsStore, tls: Tls, prefs: Prefs, library: Library) -> Self {
         let play = super::play::PlayState {
             bots: prefs.allow_matchmaking_bots,
             ..Default::default()
         };
-        let mut core = MenuCore {
+        let local_history = super::local_matches::Archive::load(&store, library.policy().max_count);
+        MenuCore {
+            local_history,
+            local_meta: Default::default(),
+            local_result: None,
             store,
             form: Form::new(FormKind::Service, &prefs),
             prefs,
@@ -724,13 +773,14 @@ impl MenuCore {
             leave_game: false,
             leave_at: None,
             profile: String::new(),
+            board: Default::default(),
+            avatar: Default::default(),
             library,
             shelf: Default::default(),
             keeper: Keeper::default(),
             meta: Default::default(),
             history: Vec::new(),
             account_profile: None,
-            ladder: Vec::new(),
             server_binary: None,
             server_environment: false,
             hosted_at: None,
@@ -745,17 +795,7 @@ impl MenuCore {
             demo_asked: None,
             demo_match: None,
             tried_service: false,
-        };
-        // No service to reach: the menu opens on what needs none, and the sign-in shows when
-        // the player goes to the online pages.
-        if local_first {
-            core.settings_from = Page::LocalLobby;
-            core.go_form(Page::LocalLobby);
-        } else {
-            core.settings_from = Page::Login;
-            core.go_form(Page::Login);
         }
-        core
     }
 
     /// The address others type under LOCAL LOBBY to join the local
@@ -890,7 +930,7 @@ impl MenuCore {
     /// The hero of the Demo Hero on screen, if one is.
     pub fn demo_hero(&self) -> Option<bota_proto::HeroId> {
         self.demo
-            .filter(|_| matches!(self.on_screen, Some(OnScreen::Demo(_))))
+            .filter(|_| matches!(self.on_screen, Some(OnScreen::Demo(_) | OnScreen::Local)))
     }
 
     /// Whether the game on screen is a replay opened from the menu.
@@ -1052,6 +1092,7 @@ impl MenuCore {
             Page::Lobby => FormKind::Room,
             Page::LocalLobby => FormKind::Host,
             Page::Replays => FormKind::Replay,
+            Page::Leaderboard => FormKind::Leaderboard,
             _ => FormKind::None,
         }
     }
@@ -1162,6 +1203,7 @@ impl MenuCore {
             c.searches().entries().is_empty() && c.searches().slot_waits().is_empty()
         });
         quiet
+            && !self.avatar.view.busy
             && self.asked.is_empty()
             && self.outbox.is_empty()
             && self.credentials.is_none()
@@ -1189,6 +1231,22 @@ impl MenuCore {
         }
     }
 
+    pub(super) fn ensure_service_link(&mut self) -> bool {
+        if self.link_ready() {
+            return true;
+        }
+        if self.account && !self.connecting() {
+            self.connect();
+        }
+        false
+    }
+    pub(super) fn track_request(&mut self, sequence: u32, asked: Asked) {
+        if self.asked.len() >= MAX_ASKED {
+            self.asked.remove(0);
+        }
+        self.asked.push((sequence, asked));
+    }
+
     /// Takes in what the service said since the last frame.
     pub fn update(&mut self) {
         if self.link_ready()
@@ -1206,6 +1264,9 @@ impl MenuCore {
             self.leave_finished(&leaving, UNTOLD);
         }
         self.keep_update();
+        self.update_local_history();
+        self.update_avatar();
+        self.drive_leaderboard();
         if self.page == Page::Replays {
             self.read_summaries();
         }
@@ -1228,6 +1289,7 @@ impl MenuCore {
     pub(super) fn lost(&mut self, err: ClientError) {
         let was_signed_in = self.conn == Conn::LoggedIn;
         self.keep_link_lost();
+        self.board.disconnected();
         self.meta_link_lost();
         let live = was_signed_in && !self.idle();
         self.link_lost = self.account;
@@ -1321,39 +1383,7 @@ impl MenuCore {
                 activities,
                 ..
             } => {
-                self.accepted.resumed(&activities);
-                self.conn = Conn::LoggedIn;
-                let first = !self.account;
-                self.account = true;
-                self.retry = true;
-                self.link_lost = false;
-                let saved = Saved {
-                    service: self.prefs.service.clone(),
-                    token: session,
-                };
-                if let Err(err) = self.store.write(Entry::Session, &saved.render()) {
-                    bevy::log::warn!("login not kept for the next run: {err}");
-                }
-                self.games = activities
-                    .matches
-                    .iter()
-                    .take(MAX_GAMES)
-                    .map(|&match_id| Game {
-                        match_id,
-                        handoff: None,
-                    })
-                    .collect();
-                self.send(ClientMsg::MyMatches, Asked::Other);
-                self.keep_signed_in();
-                for (msg, asked) in std::mem::take(&mut self.outbox) {
-                    self.send(msg, asked);
-                }
-                if first {
-                    self.status = None;
-                    if !matches!(self.page, Page::Game) {
-                        self.go(Page::Home);
-                    }
-                }
+                self.received_login(session, activities);
             }
             Reply::Handoffs { list } => {
                 for handoff in list.into_iter().take(MAX_GAMES) {
@@ -1372,8 +1402,10 @@ impl MenuCore {
                 self.history = list.into_iter().take(usize::from(HISTORY_LEN)).collect();
             }
             Reply::Account { account } => self.account_profile = Some(account),
-            Reply::LadderPage { rows, .. } => {
-                self.ladder = rows.into_iter().take(usize::from(LADDER_LEN)).collect();
+            Reply::LeaderboardPage { page } => {
+                if let Asked::Leaderboard(generation) = asked {
+                    self.leaderboard_page(generation, page);
+                }
             }
             Reply::Artifact {
                 match_id,
@@ -1414,6 +1446,49 @@ impl MenuCore {
         }
     }
 
+    fn received_login(
+        &mut self,
+        session: bota_radovid::proto::SessionToken,
+        activities: bota_radovid::proto::Activities,
+    ) {
+        self.accepted.resumed(&activities);
+        self.conn = Conn::LoggedIn;
+        let first = !self.account;
+        self.account = true;
+        if self.page == Page::Leaderboard {
+            self.board.refresh();
+        }
+        self.retry = true;
+        self.link_lost = false;
+        let saved = Saved {
+            service: self.prefs.service.clone(),
+            token: session,
+        };
+        if let Err(err) = self.store.write(Entry::Session, &saved.render()) {
+            bevy::log::warn!("login not kept for the next run: {err}");
+        }
+        self.games = activities
+            .matches
+            .iter()
+            .take(MAX_GAMES)
+            .map(|&match_id| Game {
+                match_id,
+                handoff: None,
+            })
+            .collect();
+        self.send(ClientMsg::MyMatches, Asked::Other);
+        self.keep_signed_in();
+        for (msg, asked) in std::mem::take(&mut self.outbox) {
+            self.send(msg, asked);
+        }
+        if first {
+            self.status = None;
+            if !matches!(self.page, Page::Game) {
+                self.go(Page::Home);
+            }
+        }
+    }
+
     fn refused(&mut self, error: &Error, asked: Asked) {
         // A join refused for whatever reason may be a list out of date (the lobby full, locked,
         // started or gone since): the list is asked again, as the search typed asks it.
@@ -1421,6 +1496,7 @@ impl MenuCore {
             self.search_lobbies();
         }
         match (asked, error) {
+            (Asked::Leaderboard(generation), error) => self.leaderboard_refused(generation, error),
             (Asked::Resume, _) => {
                 self.accepted.clear();
                 self.store.remove(Entry::Session);
@@ -1580,24 +1656,12 @@ impl MenuCore {
         }
     }
 
-    /// The account's ratings, and the ladder of the first ruleset.
+    /// The account's public per-mode ratings and ranks.
     fn ask_profile(&mut self) {
         let Some(account) = self.my_id() else {
             return;
         };
         self.ask(ClientMsg::Account { account }, Asked::Profile);
-        let ruleset = self
-            .client
-            .as_ref()
-            .and_then(|c| c.rulesets().find(|r| r.rated).map(|r| r.id.clone()));
-        if let Some(ruleset) = ruleset {
-            let msg = ClientMsg::Ladder {
-                ruleset,
-                offset: 0,
-                limit: LADDER_LEN,
-            };
-            self.ask(msg, Asked::Ladder);
-        }
     }
 
     /// Whether the service lists `ruleset` as a Demo Hero.
@@ -1622,7 +1686,13 @@ impl MenuCore {
                 .find(|r| bota_radovid::is_demo(r))
                 .map(|r| r.id.clone())
         }) else {
-            self.tell("This service offers no Demo Hero".to_owned(), true);
+            self.start(Launch::LocalDemo {
+                hero,
+                name: self.name(),
+                key: Claim::draw(),
+                server: self.server_binary.clone(),
+                server_environment: self.server_environment,
+            });
             return;
         };
         self.demo_asked = Some(hero);
@@ -1663,7 +1733,7 @@ impl MenuCore {
     }
 
     pub(super) fn start(&mut self, launch: Launch) {
-        if matches!(launch, Launch::Host { .. })
+        if matches!(launch, Launch::Host { .. } | Launch::LocalDemo { .. })
             && self.leaving.as_ref().is_some_and(|leaving| leaving.hosted)
         {
             // The new lobby replaces the server the leave was telling: the leave stops first
@@ -1687,50 +1757,7 @@ impl MenuCore {
             self.tell("Disconnect from the game you are in first".to_owned(), true);
             return;
         }
-        self.loading = self.details_of(&launch);
-        self.on_screen = Some(match &launch {
-            Launch::Seat(h) | Launch::Watch(h) => OnScreen::Match(h.match_id),
-            Launch::Direct { .. } => OnScreen::Direct,
-            Launch::Host { .. } => OnScreen::Local,
-            Launch::Demo { handoff, .. } => OnScreen::Demo(handoff.match_id),
-            Launch::Replay(_) | Launch::Blob(_) => OnScreen::Replay,
-            Launch::Given => OnScreen::Given,
-        });
-        self.keep_start(&launch);
-        self.hosted_at = match &launch {
-            Launch::Host {
-                port, lan: true, ..
-            } => Some(match super::launch::lan_address() {
-                Some(ip) => std::net::SocketAddr::new(ip, *port).to_string(),
-                None => format!("this machine's address, port {port}"),
-            }),
-            Launch::Host { port, .. } => Some(format!("127.0.0.1:{port} (this machine only)")),
-            _ => None,
-        };
-        self.kind = launch.kind();
-        // A seat is taken again on the same server: a local lobby's by its
-        // address, the server already up.
-        self.last_seat = match &launch {
-            Launch::Host {
-                port, name, key, ..
-            } => Some(Launch::Direct {
-                address: format!("127.0.0.1:{port}"),
-                name: name.clone(),
-                spectate: false,
-                key: *key,
-                hosted: true,
-            }),
-            // Leaving a Demo Hero ends it: there is no seat to take again.
-            Launch::Demo { .. } => None,
-            launch => (self.kind == GameKind::Play).then(|| launch.clone()),
-        };
-        self.demo = match &launch {
-            Launch::Demo { hero, .. } => Some(*hero),
-            _ => None,
-        };
-        if let Launch::Demo { handoff, .. } = &launch {
-            self.demo_match = Some(handoff.match_id);
-        }
+        self.launch_context(&launch);
         self.reconnect = None;
         self.confirm = None;
         self.play.open = false;
@@ -1782,14 +1809,143 @@ impl MenuCore {
                 self.ask_history();
             }
             Page::Profile => self.ask_profile(),
+            Page::Leaderboard => self.open_leaderboard(),
             Page::Lobbies => self.ask(ClientMsg::LobbyList, Asked::Other),
             Page::Replays => self.read_summaries(),
             _ => {}
         }
     }
 
+    fn launch_context(&mut self, launch: &Launch) {
+        self.loading = self.details_of(launch);
+        self.on_screen = Some(match launch {
+            Launch::Seat(h) | Launch::Watch(h) => OnScreen::Match(h.match_id),
+            Launch::Direct { .. } => OnScreen::Direct,
+            Launch::Host { .. } | Launch::LocalDemo { .. } => OnScreen::Local,
+            Launch::Demo { handoff, .. } => OnScreen::Demo(handoff.match_id),
+            Launch::Replay(_) | Launch::Blob(_) => OnScreen::Replay,
+            Launch::Given => OnScreen::Given,
+        });
+        self.keep_start(launch);
+        self.hosted_at = match launch {
+            Launch::Host {
+                port, lan: true, ..
+            } => Some(match super::launch::lan_address() {
+                Some(ip) => std::net::SocketAddr::new(ip, *port).to_string(),
+                None => format!("this machine's address, port {port}"),
+            }),
+            Launch::Host { port, .. } => Some(format!("127.0.0.1:{port} (this machine only)")),
+            _ => None,
+        };
+        self.kind = launch.kind();
+        // A seat is taken again on the same server: a local lobby's by its
+        // address, the server already up.
+        self.last_seat = match launch {
+            Launch::Host {
+                port, name, key, ..
+            } => Some(Launch::Direct {
+                address: format!("127.0.0.1:{port}"),
+                name: name.clone(),
+                spectate: false,
+                key: *key,
+                hosted: true,
+            }),
+            // Leaving a Demo Hero ends it: there is no seat to take again.
+            Launch::Demo { .. } | Launch::LocalDemo { .. } => None,
+            launch => (self.kind == GameKind::Play).then(|| launch.clone()),
+        };
+        self.demo = match launch {
+            Launch::Demo { hero, .. } | Launch::LocalDemo { hero, .. } => Some(*hero),
+            _ => None,
+        };
+        if let Launch::Demo { handoff, .. } = launch {
+            self.demo_match = Some(handoff.match_id);
+        }
+    }
+
     /// Acts on what the player did.
     pub fn act(&mut self, act: Act) {
+        // A match offer takes priority over this editor. Otherwise its modal owns menu input,
+        // including keyboard navigation, until cancelled or its save completes.
+        if self.avatar.view.open && self.view().offer.is_none() {
+            match act {
+                Act::Back => {
+                    self.avatar.act(super::avatar::Action::Cancel);
+                    return;
+                }
+                Act::Avatar(_) => {}
+                _ => return,
+            }
+        }
+        assert!(self.dispatch(act).is_none(), "menu action has no handler");
+    }
+
+    fn dispatch(&mut self, act: Act) -> Option<Act> {
+        match act {
+            Act::Go(_)
+            | Act::Play(_)
+            | Act::Avatar(_)
+            | Act::InspectHero(_)
+            | Act::MatchDetails(_)
+            | Act::WatchHistory(_)
+            | Act::LeaderboardMode(_)
+            | Act::LeaderboardPlayers(_) => self.act_pages(act),
+            Act::Focus(_)
+            | Act::Type(_)
+            | Act::Erase
+            | Act::NextField
+            | Act::PreviousField
+            | Act::Submit
+            | Act::Logout => self.act_input(act),
+            Act::Cancel(_)
+            | Act::Accept(_)
+            | Act::Decline(_)
+            | Act::Rejoin(_)
+            | Act::Watch(_)
+            | Act::CreateLobby
+            | Act::JoinLobby(_)
+            | Act::SearchLobbies
+            | Act::LobbyPassword(_)
+            | Act::ReadyLobby(_)
+            | Act::LeaveLobby
+            | Act::Direct(_)
+            | Act::Host(_)
+            | Act::ToggleCheats
+            | Act::Rules(_)
+            | Act::LobbySlot(_)
+            | Act::MoveMember(_)
+            | Act::KickMember(_)
+            | Act::ConfigureMode(_)
+            | Act::ConfigureAudience(_)
+            | Act::ConfigureCheats(_)
+            | Act::ConfigurePassword => self.act_lobby(act),
+            Act::OpenReplay(_)
+            | Act::DeleteReplay(_)
+            | Act::WatchReplay(_)
+            | Act::PlainAnyway
+            | Act::Dismiss
+            | Act::RetryService
+            | Act::Quit
+            | Act::Answer(_)
+            | Act::Back => self.act_library(act),
+            Act::Dashboard
+            | Act::ReturnToGame
+            | Act::Disconnect
+            | Act::LeaveGame
+            | Act::Reconnect
+            | Act::LeaveSeat => self.act_game(act),
+            #[cfg(test)]
+            Act::Find(_) => self.act_lobby(act),
+            #[cfg(not(target_arch = "wasm32"))]
+            Act::Demo(_) => self.act_library(act),
+            #[cfg(target_arch = "wasm32")]
+            Act::DownloadReplay(_) => self.act_library(act),
+            #[cfg(target_arch = "wasm32")]
+            Act::OpenReplayFile => self.act_library(act),
+        }
+    }
+
+    fn act_pages(&mut self, act: Act) -> Option<Act> {
         match act {
             Act::Go(Page::Home) => {
                 self.play.open = false;
@@ -1798,13 +1954,70 @@ impl MenuCore {
             }
             Act::Go(page) => self.go(page),
             Act::Play(action) => self.play_action(action),
+            Act::MatchDetails(key) => {
+                if self
+                    .local_history
+                    .find(&key)
+                    .is_some_and(|entry| entry.summary.is_some())
+                {
+                    self.local_result = Some(key);
+                    self.go(Page::LocalResult);
+                } else {
+                    self.tell("Match details are unavailable.".to_owned(), false);
+                }
+            }
+            Act::WatchHistory(key) => {
+                if let Some(file) = self
+                    .local_history
+                    .find(&key)
+                    .and_then(|entry| entry.file.clone())
+                {
+                    self.open_listed(&file);
+                }
+            }
+            Act::Avatar(action) => self.avatar.act(action),
+            Act::InspectHero(hero) => {
+                if bota_core::hero_def(hero).is_some() {
+                    self.go(Page::Hero(hero));
+                }
+            }
+            Act::LeaderboardMode(mode) => {
+                let mut query = self.board.query.clone();
+                query.mode = mode;
+                self.board.select(query);
+            }
+            Act::LeaderboardPlayers(players) => {
+                let mut query = self.board.query.clone();
+                query.players = players;
+                self.board.select(query);
+            }
+            other => return Some(other),
+        }
+        None
+    }
+
+    fn act_input(&mut self, act: Act) -> Option<Act> {
+        match act {
             Act::Focus(at) => self.keyboard().focus(at),
-            Act::Type(typed) => self.keyboard().type_in(&typed),
-            Act::Erase => self.keyboard().erase(),
+            Act::Type(typed) => {
+                self.keyboard().type_in(&typed);
+                self.edit_leaderboard();
+            }
+            Act::Erase => {
+                self.keyboard().erase();
+                self.edit_leaderboard();
+            }
             Act::NextField => self.keyboard().next(),
             Act::PreviousField => self.keyboard().previous(),
             Act::Submit => self.press(),
             Act::Logout => self.logout(),
+            other => return Some(other),
+        }
+        None
+    }
+
+    fn act_lobby(&mut self, act: Act) -> Option<Act> {
+        match act {
             #[cfg(test)]
             Act::Find(ruleset) => self.queue(ruleset),
             Act::Cancel(entry) => self.ask(ClientMsg::QueueLeave { entry }, Asked::Other),
@@ -1857,6 +2070,13 @@ impl MenuCore {
                 self.prefs.host_cheats = !self.prefs.host_cheats;
                 self.save_prefs();
             }
+            other => return Some(other),
+        }
+        None
+    }
+
+    fn act_library(&mut self, act: Act) -> Option<Act> {
+        match act {
             #[cfg(not(target_arch = "wasm32"))]
             Act::Demo(hero) => self.start_demo(bota_proto::HeroId(hero)),
             Act::OpenReplay(name) => self.open_listed(&name),
@@ -1887,6 +2107,13 @@ impl MenuCore {
                 _ => {}
             },
             Act::Back => self.back(),
+            other => return Some(other),
+        }
+        None
+    }
+
+    fn act_game(&mut self, act: Act) -> Option<Act> {
+        match act {
             Act::Dashboard => {
                 if self.page == Page::Game && self.in_game() {
                     let top = self.rest_page(None);
@@ -1925,7 +2152,9 @@ impl MenuCore {
                     self.confirm = Some(Confirm::LeaveSeat);
                 }
             }
+            other => return Some(other),
         }
+        None
     }
 
     /// Escape over the menu, as Dota's: the question first, then the page
@@ -2061,6 +2290,9 @@ impl MenuCore {
         let live = self.link_ready();
         self.store.remove(Entry::Session);
         self.account = false;
+        self.account_profile = None;
+        self.board.disconnected();
+        self.avatar.backend(None, false);
         self.games.clear();
         self.lobby = None;
         self.outbox.clear();
@@ -2304,7 +2536,11 @@ impl MenuCore {
         };
         self.prefs.host_port = port.to_string();
         self.save_prefs();
-        let replay = self.recording_path("local");
+        let recording = self.recording_path("local");
+        let replay = recording.clone().filter(|_| self.library.keeping());
+        let metadata = recording
+            .filter(|_| replay.is_none())
+            .map(|path| path.with_extension("meta"));
         self.start(Launch::Host {
             port,
             lan,
@@ -2312,6 +2548,7 @@ impl MenuCore {
             key: Claim::draw(),
             cheats: self.prefs.host_cheats,
             replay,
+            metadata,
             server: self.server_binary.clone(),
             server_environment: self.server_environment,
             rules: self.prefs.host_rules,

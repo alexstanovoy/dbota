@@ -124,6 +124,20 @@ pub const SELF_ROW: Color = Color::srgba(51.0 / 255.0, 130.0 / 255.0, 1.0, 0.18)
 /// The square of the player's initial (their avatar later), top to bottom, and its edge.
 pub const AVATAR: (Color, Color) = (hex(0x2D4A6B), hex(0x1A2633));
 pub const AVATAR_EDGE: Color = hex(0x4A6A86);
+/// Account navigation, retained history rows, and unavailable replay actions.
+pub const ACCOUNT_BAND: Color = hex(0x070B0E);
+pub const HISTORY_ROW: Color = hex(0x090E12);
+pub const REPLAY_ACTION_OFF: Color = hex(0x12181C);
+pub const RANK_BADGE: Color = hex(0x76ABED);
+/// Leaderboard selection and placement colours.
+pub const SEGMENT_SELECTED: Color = hex(0x414D53);
+pub const MEDAL_BRONZE: Color = hex(0xCD7F32);
+pub const LADDER_OWN: Color = hex(0x1A2B40);
+pub const LADDER_TOP: Color = hex(0x20272C);
+pub const LADDER_ROW: Color = hex(0x1C2329);
+pub const BOT_AVATAR: Color = hex(0x2A2238);
+pub const BOT_AVATAR_EDGE: Color = hex(0x6E5A9C);
+
 /// A side navigation's tab that is not open.
 pub const NAV_INK: Color = hex(0xB4BBC1);
 /// The underline of the top bar's current tab.
@@ -357,3 +371,75 @@ pub const FINDING_HEIGHT: f32 = 56.0;
 
 /// Disabled queue admission action, kept readable with its reason strip.
 pub const QUEUE_DISABLED: (Color, Color) = (hex(0x3A3F44), hex(0x24282C));
+/// Flat account pages and the local match cards they share.
+pub const ACCOUNT_PAGE: Color = hex(0x0D1115);
+pub const MATCH_ROW: Color = Color::srgba(0.08, 0.10, 0.12, 0.85);
+pub const LOSS: Color = hex(0xFF6A4D);
+
+/// Account-table actions and the plain sans page title from the approved page layouts.
+pub const TABLE_ACTION: Type = role(Face::Bold, 12.0, 1.2);
+pub const PAGE_TITLE: Type = role(Face::Bold, 30.0, 2.4);
+/// Catalogue section labels and the inspected hero's name.
+pub const CATALOGUE_HEADING: Type = role(Face::Semibold, 17.0, 3.0);
+pub const HERO_NAME: Type = role(Face::Bold, 46.0, 2.0);
+/// Local match cards: section label, details action, and result.
+pub const MATCH_CARD_HEADING: Type = role(Face::Semibold, 15.0, 2.0);
+pub const MATCH_DETAILS_ACTION: Type = role(Face::Bold, 15.0, 2.0);
+pub const MATCH_RESULT: Type = role(Face::Display, 22.0, 2.0);
+/// Top-three ranks retain the ladder's tabular figures at a larger size.
+pub const PODIUM_RANK: Type = Type {
+    size: 18.0,
+    ..NUMBER
+};
+
+/// Catalogue light fields: geometry-only UI gradients, never substitute art assets.
+pub fn catalogue_ground() -> BackgroundGradient {
+    downward((hex(0x14222A), hex(0x0B1217)))
+}
+pub fn catalogue_field() -> BackgroundGradient {
+    BackgroundGradient::from(RadialGradient::new(
+        UiPosition {
+            anchor: Vec2::new(-0.5, -0.5),
+            x: percent(50),
+            y: percent(20),
+        },
+        RadialGradientShape::FarthestCorner,
+        vec![
+            ColorStop::new(hex(0x1C2E38), percent(0)),
+            ColorStop::new(hex(0x1C2E38).with_alpha(0.0), percent(70)),
+        ],
+    ))
+}
+pub fn hero_field(warm: bool) -> BackgroundGradient {
+    let (x, y, shape, start, end, stop) = if warm {
+        (
+            36.0,
+            86.0,
+            RadialGradientShape::Ellipse(percent(30), percent(24)),
+            Color::srgba(1.0, 90.0 / 255.0, 40.0 / 255.0, 0.38),
+            Color::NONE,
+            100.0,
+        )
+    } else {
+        (
+            30.0,
+            30.0,
+            RadialGradientShape::FarthestCorner,
+            hex(0x3A1418),
+            hex(0x3A1418).with_alpha(0.0),
+            55.0,
+        )
+    };
+    BackgroundGradient::from(RadialGradient::new(
+        UiPosition {
+            anchor: Vec2::new(-0.5, -0.5),
+            x: percent(x),
+            y: percent(y),
+        },
+        shape,
+        vec![
+            ColorStop::new(start, percent(0)),
+            ColorStop::new(end, percent(stop)),
+        ],
+    ))
+}

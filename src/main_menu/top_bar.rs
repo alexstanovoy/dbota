@@ -22,18 +22,19 @@ const TABS: [(Page, &str); 7] = [
     (Page::Home, "PLAY"),
     (Page::MyGames, "MY GAMES"),
     (Page::Lobbies, "LOBBIES"),
-    (Page::Profile, "PROFILE"),
+    (Page::Leaderboard, "LEADERBOARD"),
     (Page::LocalLobby, "LOCAL LOBBY"),
-    (Page::DemoHero, "DEMO HERO"),
+    (Page::Heroes, "HEROES"),
     (Page::Replays, "REPLAYS"),
 ];
 #[cfg(target_arch = "wasm32")]
-const TABS: [(Page, &str); 5] = [
+const TABS: [(Page, &str); 6] = [
     (Page::Home, "PLAY"),
     (Page::MyGames, "MY GAMES"),
     (Page::Lobbies, "LOBBIES"),
-    (Page::Profile, "PROFILE"),
+    (Page::Leaderboard, "LEADERBOARD"),
     (Page::Replays, "REPLAYS"),
+    (Page::Heroes, "HEROES"),
 ];
 
 /// The quit button's icon, across.
@@ -190,7 +191,11 @@ fn tabs(kit: &mut Kit, bar: Entity, view: &MenuView, fold: TabFold) {
     let lit = tab_of(view.beneath);
     let shown: Vec<(Page, &str)> = TABS
         .into_iter()
-        .filter(|(page, _)| !page.needs_account() || view.account.is_some())
+        .filter(|(page, _)| {
+            (!page.needs_account() || view.account.is_some())
+                && (*page != Page::Leaderboard
+                    || matches!(view.connection, super::view::Connection::Online(_)))
+        })
         .collect();
     let (kept, folded) = shown.split_at(shown.len().saturating_sub(fold.folded));
     for &(page, label) in kept {

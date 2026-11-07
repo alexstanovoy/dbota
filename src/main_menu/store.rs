@@ -19,6 +19,8 @@ pub enum Entry {
     Menu,
     /// The token of the last login and the service it is for.
     Session,
+    /// Local match metadata, independent of playable replay retention.
+    MatchHistory,
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -28,6 +30,7 @@ impl Entry {
             Entry::Settings => "dbota.settings.conf",
             Entry::Menu => "dbota.menu",
             Entry::Session => "dbota.session",
+            Entry::MatchHistory => "dbota.matches",
         }
     }
 }
@@ -47,13 +50,18 @@ impl SettingsStore {
         SettingsStore { settings }
     }
 
-    fn path(&self, entry: Entry) -> Option<std::path::PathBuf> {
+    pub(super) fn path(&self, entry: Entry) -> Option<std::path::PathBuf> {
         let settings = self.settings.as_ref()?;
         Some(match entry {
             Entry::Settings => settings.clone(),
             Entry::Menu => settings.with_file_name("menu.conf"),
             Entry::Session => settings.with_file_name("session"),
+            Entry::MatchHistory => settings.with_file_name("matches.json"),
         })
+    }
+
+    pub(super) fn available(&self) -> bool {
+        self.settings.is_some()
     }
 
     pub fn read(&self, entry: Entry) -> Option<String> {
@@ -61,8 +69,10 @@ impl SettingsStore {
         let path = self.path(entry)?;
         let file = std::fs::File::open(&path).ok()?;
         let mut text = String::new();
-        let read = file.take(MAX_ENTRY as u64 + 1).read_to_string(&mut text);
-        (read.is_ok() && text.len() <= MAX_ENTRY).then_some(text)
+        let read = file
+            .take(entry.limit() as u64 + 1)
+            .read_to_string(&mut text);
+        (read.is_ok() && text.len() <= entry.limit()).then_some(text)
     }
 
     /// Replaces an entry whole. The session token is written readable by
@@ -79,7 +89,7 @@ impl SettingsStore {
         let mut options = std::fs::OpenOptions::new();
         options.write(true).create_new(true);
         #[cfg(unix)]
-        if entry == Entry::Session {
+        if matches!(entry, Entry::Session | Entry::MatchHistory) {
             use std::os::unix::fs::OpenOptionsExt;
             options.mode(0o600);
         }
@@ -105,13 +115,17 @@ impl SettingsStore {
         SettingsStore {}
     }
 
-    fn storage() -> Option<web_sys::Storage> {
+    pub(super) fn storage() -> Option<web_sys::Storage> {
         web_sys::window()?.local_storage().ok().flatten()
+    }
+
+    pub(super) fn available(&self) -> bool {
+        Self::storage().is_some()
     }
 
     pub fn read(&self, entry: Entry) -> Option<String> {
         let text = Self::storage()?.get_item(entry.key()).ok().flatten()?;
-        (text.len() <= MAX_ENTRY).then_some(text)
+        (text.len() <= entry.limit()).then_some(text)
     }
 
     pub fn write(&self, entry: Entry, text: &str) -> std::io::Result<()> {
@@ -124,6 +138,15 @@ impl SettingsStore {
     pub fn remove(&self, entry: Entry) {
         if let Some(storage) = Self::storage() {
             let _ = storage.remove_item(entry.key());
+        }
+    }
+}
+
+impl Entry {
+    fn limit(self) -> usize {
+        match self {
+            Self::MatchHistory => super::local_matches::MAX_HISTORY_BYTES,
+            _ => MAX_ENTRY,
         }
     }
 }

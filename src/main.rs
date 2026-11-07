@@ -109,6 +109,8 @@ mod talk;
 mod talk_check;
 mod teleport;
 mod terrain;
+#[cfg(test)]
+mod test_support;
 mod texture_file;
 mod theme;
 mod tip_content;
@@ -134,8 +136,6 @@ mod window;
 
 #[cfg(test)]
 mod e2e;
-#[cfg(test)]
-mod test_support;
 
 use std::path::PathBuf;
 

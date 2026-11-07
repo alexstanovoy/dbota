@@ -12,7 +12,7 @@ use super::view::{
 };
 
 /// The names `--menu-preview` takes.
-pub const NAMES: [&str; 33] = [
+pub const NAMES: [&str; 51] = [
     "service",
     "login",
     "register",
@@ -46,6 +46,24 @@ pub const NAMES: [&str; 33] = [
     "play-full",
     "play-cooldown",
     "play-searching-bots-overloaded",
+    "profile",
+    "profile-offline",
+    "profile-details-unavailable",
+    "profile-avatar",
+    "profile-avatar-unavailable",
+    "profile-empty",
+    "heroes",
+    "hero",
+    "hero-pudge",
+    "leaderboard",
+    "leaderboard-bots",
+    "leaderboard-allpick",
+    "leaderboard-empty",
+    "leaderboard-unavailable",
+    "home-local",
+    "home-defeat",
+    "home-empty",
+    "home-offline",
 ];
 
 fn field(label: &'static str, shown: &str, focused: bool) -> FieldView {
@@ -90,7 +108,7 @@ fn form(page: Page, kind: FormKind, fields: Vec<FieldView>) -> MenuView {
     }
 }
 
-fn logged_in(page: Page, body: PageView) -> MenuView {
+pub(super) fn logged_in(page: Page, body: PageView) -> MenuView {
     MenuView {
         page,
         beneath: page,
@@ -119,6 +137,8 @@ fn logged_in(page: Page, body: PageView) -> MenuView {
 
 fn home() -> PageView {
     PageView::Home {
+        matches: super::page_previews::matches(false).into(),
+        hero: Some(bota_proto::HeroId::SHADOW_FIEND),
         rulesets: vec![
             RulesetRow {
                 id: RulesetId("solo_mid".to_owned()),
@@ -167,6 +187,9 @@ fn offer(answered: bool) -> OfferBox {
 
 /// The view named `name`, if it is one.
 pub fn view(name: &str) -> Option<MenuView> {
+    if let Some(view) = super::page_previews::view(name) {
+        return Some(view);
+    }
     Some(match name {
         "service" => preview_service(),
         "login" => preview_login(),

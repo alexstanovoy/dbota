@@ -45,6 +45,7 @@ pub struct Saving {
     pub explicit: bool,
     pub mode: String,
     pub match_id: Option<u64>,
+    pub owner: Option<bota_proto::SlotId>,
     pub players: String,
     pub outcome: String,
     pub bytes: Vec<u8>,
@@ -172,14 +173,14 @@ impl Library {
     }
 
     /// Keeps a replay, unless the player turned saving off or it holds no match.
-    pub fn save(&mut self, saving: Saving) {
+    pub fn save(&mut self, saving: Saving) -> Option<Record> {
         let match_id = saving.match_id;
         if self.standing == Standing::Unavailable || (!self.policy.keep && !saving.explicit) {
             self.notices.push(Notice::NotSaved {
                 match_id,
                 why: "saving replays is off".to_owned(),
             });
-            return;
+            return None;
         }
         let len = saving.bytes.len() as u64;
         if let Some(why) = unworthy(len) {
@@ -187,11 +188,11 @@ impl Library {
                 match_id,
                 why: why.to_owned(),
             });
-            return;
+            return None;
         }
         // Replays saved in one second still have an order: the later is the newer.
         let when = name::now().max(self.index.records.first().map_or(0, |r| r.when + 1));
-        let record = self.record(
+        let mut record = self.record(
             &saving.mode,
             match_id,
             when,
@@ -199,6 +200,8 @@ impl Library {
             &saving.players,
             &saving.outcome,
         );
+        record.owner = saving.owner;
+        let saved = record.clone();
         match self.standing {
             Standing::Ready => self.backend.run(
                 Op::Put {
@@ -209,18 +212,25 @@ impl Library {
             ),
             _ => self.waiting.push((record, saving.bytes)),
         }
+        Some(saved)
     }
 
-    /// Keeps the replay a game server wrote into `from`, which becomes the library's.
     #[cfg(not(target_arch = "wasm32"))]
-    pub fn adopt(&mut self, from: std::path::PathBuf, mode: &str) {
+    /// Keeps a locally recorded replay with its explicitly observed owner, when known.
+    pub fn adopt(
+        &mut self,
+        from: std::path::PathBuf,
+        mode: &str,
+        owner: Option<bota_proto::SlotId>,
+    ) {
         let len = std::fs::metadata(&from).map_or(0, |m| m.len());
         if !self.keeping() || len < MIN_BYTES {
             // Nothing worth keeping: the file is a game that never began.
             let _ = std::fs::remove_file(&from);
             return;
         }
-        let record = self.record(mode, None, name::now(), len, "", "");
+        let mut record = self.record(mode, None, name::now(), len, "", "");
+        record.owner = owner;
         self.backend
             .run(Op::Adopt { record, from }, self.reply.clone());
     }
@@ -245,6 +255,7 @@ impl Library {
             match_id,
             players: clean(players, MAX_TEXT),
             outcome: clean(outcome, MAX_TEXT),
+            owner: None,
         }
     }
 
@@ -411,7 +422,8 @@ mod tests {
 
     /// Saves `bytes` and waits for the folder to have it.
     fn keep(library: &mut Library, id: u64, bytes: usize) {
-        library.save(Saving {
+        let _ = library.save(Saving {
+            owner: None,
             explicit: false,
             mode: "solo_mid".to_owned(),
             match_id: Some(id),
@@ -496,7 +508,8 @@ mod tests {
             keep: false,
             ..library.policy()
         });
-        library.save(Saving {
+        let _ = library.save(Saving {
+            owner: None,
             explicit: false,
             mode: "m".to_owned(),
             match_id: Some(7),
@@ -513,7 +526,8 @@ mod tests {
         ));
         // A replay of no match is not kept either.
         library.set_policy(Policy::default());
-        library.save(Saving {
+        let _ = library.save(Saving {
+            owner: None,
             explicit: false,
             mode: "m".to_owned(),
             match_id: Some(8),

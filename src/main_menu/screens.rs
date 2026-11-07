@@ -43,22 +43,23 @@ pub fn draw(
     core: Option<NonSend<MenuCore>>,
     preview: Option<Res<Preview>>,
     fonts: Res<Fonts>,
+    texts: Res<crate::dota_text::Texts>,
     manifest: Res<Manifest>,
     server: Res<AssetServer>,
     mut page_root: Query<(Entity, &mut Visibility), With<PageRoot>>,
     overlay_root: Query<Entity, With<OverlayRoot>>,
     fold: Res<super::top_bar::TabFold>,
-    mut drawn: Local<Option<(MenuView, super::top_bar::TabFold)>>,
+    mut drawn: Local<Option<(MenuView, super::top_bar::TabFold, u64)>>,
 ) {
     let view = match (&preview, &core) {
         (Some(preview), _) => preview.0.clone(),
         (None, Some(core)) => core.view(),
         (None, None) => return,
     };
-    if drawn
-        .as_ref()
-        .is_some_and(|(shown, folded)| *shown == view && folded == &*fold)
-    {
+    let clock = super::page_time::Clock::new(preview.is_some());
+    if drawn.as_ref().is_some_and(|(shown, folded, minute)| {
+        *shown == view && folded == &*fold && *minute == clock.now / 60
+    }) {
         return;
     }
     let (Ok((page, mut shown)), Ok(overlay)) = (page_root.single_mut(), overlay_root.single())
@@ -88,10 +89,10 @@ pub fn draw(
     }
     kit.commands.entity(overlay).despawn_children();
     if view.covers() {
-        super::pages::draw(&mut kit, page, &view, *fold);
+        super::pages::draw(&mut kit, page, &view, *fold, &texts, clock);
     }
     super::overlay::draw(&mut kit, overlay, &view);
-    *drawn = Some((view, *fold));
+    *drawn = Some((view, *fold, clock.now / 60));
 }
 
 /// A click on a menu button does what it says.
@@ -116,6 +117,7 @@ pub fn clicks(
 pub fn tab_of(page: Page) -> Page {
     match page {
         Page::Lobby => Page::Lobbies,
+        Page::Hero(_) => Page::Heroes,
         Page::Result => Page::Home,
         other => other,
     }

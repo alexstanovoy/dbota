@@ -2204,3 +2204,7 @@ sound sound.global.mega.radiant sounds/ambient/mega_horn_dire_2d.vsnd_c sounds/m
 sound sound.global.mega.dire sounds/ambient/mega_horn_radiant_2d.vsnd_c sounds/mega/dire.mp3 event=MegaCreeps.Dire
 sound sound.global.mega_horn.radiant sounds/ambient/mega_horn_radiant.vsnd_c sounds/mega/horn_radiant.mp3 event=MegaCreeps.Radiant.Ancient
 sound sound.global.mega_horn.dire sounds/ambient/mega_horn_dire.vsnd_c sounds/mega/horn_dire.mp3 event=MegaCreeps.Dire.Ancient
+
+# Account/catalogue controls from the player's install.
+texture hud.universal panorama/images/primary_attribute_icons/primary_attribute_icon_all_psd.vtex_c hud/primary_attribute_icon_all_psd.png
+texture menu.edit panorama/images/control_icons/edit_pencil_psd.vtex_c menu/edit_pencil_psd.png

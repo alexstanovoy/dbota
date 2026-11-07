@@ -137,7 +137,7 @@ impl Kit<'_, '_, '_> {
 }
 
 /// The screen for a summary, over the whole window.
-pub fn spawn(kit: &mut Kit, root: Entity, summary: &MatchSummary) {
+pub fn spawn(kit: &mut Kit, root: Entity, summary: &MatchSummary) -> Entity {
     let screen = kit
         .commands
         .spawn((
@@ -161,7 +161,7 @@ pub fn spawn(kit: &mut Kit, root: Entity, summary: &MatchSummary) {
     for team in [Team::Radiant, Team::Dire] {
         table(kit, screen, summary, team);
     }
-    if summary.detail == Detail::Meta {
+    if summary.detail == Detail::Meta && !summary.points.is_empty() {
         graphs(kit, screen, &summary.points);
     } else {
         kit.text(
@@ -172,6 +172,7 @@ pub fn spawn(kit: &mut Kit, root: Entity, summary: &MatchSummary) {
         );
     }
     kit.text(screen, "Escape: back to the menu", 15.0, ui::INK_DIM);
+    screen
 }
 
 fn banner(kit: &mut Kit, parent: Entity, summary: &MatchSummary) {

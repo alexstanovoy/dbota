@@ -23,3 +23,5 @@ pub use source::ADDONS;
 // which links this crate for the fingerprint, exports none of them.
 #[cfg(all(target_arch = "wasm32", feature = "web"))]
 pub mod web;
+
+pub mod thumbnail;

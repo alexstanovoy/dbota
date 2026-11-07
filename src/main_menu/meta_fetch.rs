@@ -29,6 +29,8 @@ pub(super) struct MetaFetch {
     /// The match of the service this client last sat down in: the one whose file it wants.
     played: Option<MatchId>,
     ready: Option<Fetched>,
+    /// Attribution captured when the participant receives its outcome, before a later sign-out.
+    history: Option<(MatchId, super::local_matches::Saved)>,
 }
 
 impl MetaFetch {
@@ -54,8 +56,40 @@ impl MenuCore {
         if self.meta.played != Some(result.match_id) {
             return;
         }
+        let owner = self.owner_in_result(result);
+        self.meta.history = owner.map(|owner| {
+            (
+                result.match_id,
+                super::local_matches::Saved {
+                    key: super::local_matches::service_key(&self.prefs.service, result.match_id.0),
+                    file: None,
+                    when: result.finished_at.0 / 1000,
+                    mode: result.ruleset.0.clone(),
+                    owner: Some(owner),
+                    metadata: Vec::new(),
+                    metadata_key: None,
+                    cached: None,
+                    result: Some(result.clone()),
+                    summary: None,
+                    temporary: None,
+                },
+            )
+        });
         self.meta.asked = Some(result.match_id);
         self.ask_meta(result.match_id, 0);
+    }
+
+    pub(super) fn owner_in_result(&self, result: &MatchResult) -> Option<bota_proto::SlotId> {
+        let account = self
+            .client
+            .as_ref()
+            .and_then(|client| client.me())
+            .map(|me| me.id);
+        result
+            .seats
+            .iter()
+            .find(|seat| Some(seat.account) == account)
+            .map(|seat| bota_proto::SlotId(seat.slot))
     }
 
     fn ask_meta(&mut self, match_id: MatchId, offset: u64) {
@@ -87,7 +121,10 @@ impl MenuCore {
             },
             _ => return,
         };
-        let end = offset + data.len() as u64;
+        let Some(end) = offset.checked_add(data.len() as u64) else {
+            self.meta_none(match_id);
+            return;
+        };
         let sound = total <= MAX_BYTES
             && offset == fetch.bytes.len() as u64
             && end <= total
@@ -102,6 +139,13 @@ impl MenuCore {
             self.ask_meta(match_id, end);
             return;
         }
+        if let Some((id, mut entry)) = self.meta.history.take()
+            && id == match_id
+        {
+            entry.metadata = fetch.bytes.clone();
+            self.local_history
+                .insert(entry, self.library.policy().max_count);
+        }
         self.meta.ready = Some(Fetched {
             match_id,
             bytes: Some(fetch.bytes),
@@ -112,6 +156,7 @@ impl MenuCore {
     pub(super) fn meta_none(&mut self, match_id: MatchId) {
         self.meta.current = None;
         self.meta.asked = None;
+        self.meta.history = None;
         self.meta.ready = Some(Fetched {
             match_id,
             bytes: None,

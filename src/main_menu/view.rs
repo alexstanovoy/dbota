@@ -238,6 +238,16 @@ pub struct ReplayShelf {
 /// The page under the top bar.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum PageView {
+    Heroes,
+    LocalResult(Box<crate::postgame::summary::MatchSummary>),
+    Hero {
+        hero: bota_proto::HeroId,
+        record: String,
+    },
+    Leaderboard {
+        board: super::leaderboard::Board,
+        field: FieldView,
+    },
     /// A page of fields: the service, login, registration, direct connect.
     Form {
         kind: FormKind,
@@ -252,6 +262,8 @@ pub enum PageView {
         hosted_at: Option<String>,
     },
     Home {
+        matches: std::sync::Arc<Vec<super::history::Match>>,
+        hero: Option<bota_proto::HeroId>,
         rulesets: Vec<RulesetRow>,
         /// Games in flight and the account's limit.
         in_flight: (usize, Option<AccountGameLimit>),
@@ -266,8 +278,9 @@ pub enum PageView {
     /// Ratings per ruleset and the ladder's head.
     Profile {
         name: String,
-        ratings: Vec<String>,
-        ladder: Vec<String>,
+        ratings: Vec<super::account_page::Rating>,
+        avatar: super::avatar::View,
+        matches: std::sync::Arc<Vec<super::history::Match>>,
     },
     /// The open lobbies (all, or those the search found), and the fields to make one and to
     /// search.
@@ -463,36 +476,7 @@ impl MenuCore {
             game: self.in_game().then_some(self.kind),
             can_leave_game: self.in_game() && self.kind == GameKind::Play && self.game_unsafe,
             reconnect: self.reconnect.is_some() && !self.in_game() && !self.launching,
-            confirm: self.confirm.map(|c| match c {
-                Confirm::Quit => ConfirmView {
-                    title: QUIT_TITLE,
-                    text: if self.hosting {
-                        QUIT_TEXT_HOSTING
-                    } else if self.game_unsafe {
-                        QUIT_TEXT_UNSAFE
-                    } else {
-                        QUIT_TEXT
-                    },
-                },
-                Confirm::Rehost(_) => ConfirmView {
-                    title: REHOST_TITLE,
-                    text: REHOST_TEXT,
-                },
-                Confirm::LeaveGame | Confirm::LeaveSeat => ConfirmView {
-                    title: LEAVE_GAME_TITLE,
-                    // In the picks the server cancels the match instead of giving it away.
-                    text: match (c, self.game_in_picks, self.left_in_picks) {
-                        (Confirm::LeaveGame, true, _) | (Confirm::LeaveSeat, _, true) => {
-                            LEAVE_PICKS_TEXT
-                        }
-                        _ => LEAVE_GAME_TEXT,
-                    },
-                },
-                Confirm::Leave => ConfirmView {
-                    title: LEAVE_TITLE,
-                    text: LEAVE_TEXT,
-                },
-            }),
+            confirm: self.confirm.map(|choice| self.confirm_view(choice)),
             password: self.join_prompt.as_ref().map(|prompt| PasswordView {
                 lobby: text::line(&prompt.name, text::NAME),
                 field: fields_of(&prompt.form)
@@ -507,17 +491,50 @@ impl MenuCore {
         }
     }
 
-    /// The side the player played in the account's last finished match, Radiant without one.
-    fn last_side(&self) -> Side {
-        let me = self.client.as_ref().and_then(|c| c.me()).map(|me| me.id);
-        self.history
-            .iter()
-            .find_map(|r| r.seats.iter().find(|s| Some(s.account) == me))
-            .map_or(Side::Radiant, |seat| {
-                if seat.team == 0 {
-                    Side::Radiant
+    fn confirm_view(&self, c: Confirm) -> ConfirmView {
+        match c {
+            Confirm::Quit => ConfirmView {
+                title: QUIT_TITLE,
+                text: if self.hosting {
+                    QUIT_TEXT_HOSTING
+                } else if self.game_unsafe {
+                    QUIT_TEXT_UNSAFE
                 } else {
+                    QUIT_TEXT
+                },
+            },
+            Confirm::Rehost(_) => ConfirmView {
+                title: REHOST_TITLE,
+                text: REHOST_TEXT,
+            },
+            Confirm::LeaveGame | Confirm::LeaveSeat => ConfirmView {
+                title: LEAVE_GAME_TITLE,
+                // In the picks the server cancels the match instead of giving it away.
+                text: match (c, self.game_in_picks, self.left_in_picks) {
+                    (Confirm::LeaveGame, true, _) | (Confirm::LeaveSeat, _, true) => {
+                        LEAVE_PICKS_TEXT
+                    }
+                    _ => LEAVE_GAME_TEXT,
+                },
+            },
+            Confirm::Leave => ConfirmView {
+                title: LEAVE_TITLE,
+                text: LEAVE_TEXT,
+            },
+        }
+    }
+
+    /// The latest completed, explicitly owned recording on this machine supplies Home's side.
+    fn last_side(&self) -> Side {
+        self.local_history
+            .entries()
+            .iter()
+            .find_map(|entry| entry.completed_team())
+            .map_or(Side::Radiant, |team| {
+                if team == bota_proto::Team::Dire {
                     Side::Dire
+                } else {
+                    Side::Radiant
                 }
             })
     }
@@ -554,6 +571,10 @@ impl MenuCore {
                 cooldown: self.cooldown(),
             },
             Page::Profile => self.profile_view(),
+            Page::LocalResult => self.local_result_view(),
+            Page::Heroes => PageView::Heroes,
+            Page::Hero(hero) => self.hero_page(hero),
+            Page::Leaderboard => self.leaderboard_view(),
             Page::Lobbies => PageView::Lobbies {
                 list: self
                     .lobbies
@@ -575,37 +596,7 @@ impl MenuCore {
                 .shown
                 .and_then(|id| self.results.iter().find(|r| r.match_id == id))
                 .map_or(PageView::Joining, |r| PageView::Result(self.result_view(r))),
-            Page::Replays => PageView::Replays {
-                list: self
-                    .library
-                    .records()
-                    .iter()
-                    .map(|r| ReplayRow {
-                        name: r.name.clone(),
-                        size: if r.bytes < 1_000_000 {
-                            format!("{} KB", r.bytes.div_ceil(1000))
-                        } else {
-                            format!("{:.1} MB", r.bytes as f64 / 1e6)
-                        },
-                        when: super::replay_info::when(
-                            std::time::UNIX_EPOCH + std::time::Duration::from_secs(r.when),
-                        ),
-                        mode: r.mode.clone(),
-                        summary: self.summary_of(r),
-                    })
-                    .collect(),
-                fields: self.fields(),
-                shelf: ReplayShelf {
-                    folder: self
-                        .library
-                        .dir()
-                        .map(|d| text::line(&d.display().to_string(), text::MESSAGE))
-                        .unwrap_or_default(),
-                    keeping: self.library.keeping(),
-                    store: self.library.standing() != crate::replays::Standing::Unavailable,
-                    service_keeps_none: self.service_keeps_none(),
-                },
-            },
+            Page::Replays => self.replay_page(),
             #[cfg(not(target_arch = "wasm32"))]
             Page::DemoHero => PageView::DemoHero {
                 offered: self
@@ -631,9 +622,76 @@ impl MenuCore {
         }
     }
 
+    fn local_result_view(&self) -> PageView {
+        self.local_result
+            .as_ref()
+            .and_then(|key| self.local_history.find(key))
+            .and_then(|entry| entry.details())
+            .map_or(PageView::Joining, |summary| {
+                PageView::LocalResult(Box::new(summary))
+            })
+    }
+
+    fn hero_page(&self, hero: bota_proto::HeroId) -> PageView {
+        let cards = self.local_history.cards(self.library.records());
+        let records = super::history::heroes(&cards);
+        let record = records.iter().find(|row| row.hero == hero).map_or_else(
+            || "No attributed matches on this machine.".to_owned(),
+            |row| format!("Your matches: {} · {}% won", row.games, row.percentage()),
+        );
+        PageView::Hero { hero, record }
+    }
+
+    fn leaderboard_view(&self) -> PageView {
+        PageView::Leaderboard {
+            board: self.board.clone(),
+            field: FieldView {
+                label: "Find a nickname",
+                shown: self.form.value(0).to_owned(),
+                focused: self.form.focused_field() == Some(0),
+            },
+        }
+    }
+
+    fn replay_page(&self) -> PageView {
+        PageView::Replays {
+            list: self
+                .library
+                .records()
+                .iter()
+                .map(|r| ReplayRow {
+                    name: r.name.clone(),
+                    size: if r.bytes < 1_000_000 {
+                        format!("{} KB", r.bytes.div_ceil(1000))
+                    } else {
+                        format!("{:.1} MB", r.bytes as f64 / 1e6)
+                    },
+                    when: super::replay_info::when(
+                        std::time::UNIX_EPOCH + std::time::Duration::from_secs(r.when),
+                    ),
+                    mode: r.mode.clone(),
+                    summary: self.summary_of(r),
+                })
+                .collect(),
+            fields: self.fields(),
+            shelf: ReplayShelf {
+                folder: self
+                    .library
+                    .dir()
+                    .map(|d| text::line(&d.display().to_string(), text::MESSAGE))
+                    .unwrap_or_default(),
+                keeping: self.library.keeping(),
+                store: self.library.standing() != crate::replays::Standing::Unavailable,
+                service_keeps_none: self.service_keeps_none(),
+            },
+        }
+    }
+
     fn home(&self) -> PageView {
         let Some(client) = &self.client else {
             return PageView::Home {
+                matches: self.local_history.cards(self.library.records()),
+                hero: self.last_played_hero(),
                 rulesets: Vec::new(),
                 in_flight: (0, None),
                 cooldown: None,
@@ -642,6 +700,8 @@ impl MenuCore {
         let searches = client.searches();
         let in_flight = searches.groups().len() + searches.slot_waits().len() + self.games.len();
         PageView::Home {
+            matches: self.local_history.cards(self.library.records()),
+            hero: self.last_played_hero(),
             rulesets: client
                 .rulesets()
                 // Lobbies and solo starts without a queue have no matchmaking policy.
@@ -690,42 +750,31 @@ impl MenuCore {
         let name = self
             .account_profile
             .as_ref()
-            .map_or_else(String::new, |p| text::who(&p.nickname, p.id.0));
+            .map_or_else(|| self.name(), |p| text::who(&p.nickname, p.id.0));
         let ratings = self.client.as_ref().map_or_else(Vec::new, |client| {
-            self.account_profile
-                .iter()
-                .flat_map(|p| &p.ratings)
-                .map(|(id, r)| {
-                    format!(
-                        "{}: {} ± {} · {} games, {} won, {} drawn, {} lost",
-                        ruleset_name(client, id),
-                        r.rating.rating.round() as i64,
-                        r.rating.deviation.round() as i64,
-                        r.games,
-                        r.wins,
-                        r.draws,
-                        r.losses
-                    )
+            client
+                .rulesets()
+                .filter(|mode| mode.rated)
+                .filter_map(|mode| {
+                    let rated = self
+                        .account_profile
+                        .as_ref()
+                        .and_then(|profile| profile.ratings.iter().find(|(id, _)| *id == mode.id))
+                        .map(|(_, rating)| rating)?;
+                    Some(super::account_page::Rating {
+                        mode: ruleset_name(client, &mode.id),
+                        rating: super::leaderboard::rating(rated.rating.rating),
+                        games: rated.games,
+                        rank: rated.rank,
+                    })
                 })
                 .collect()
         });
-        let ladder = self
-            .ladder
-            .iter()
-            .map(|row| {
-                format!(
-                    "{:>3}  {}  {}  ({} games)",
-                    row.rank,
-                    text::who(&row.nickname, row.account.0),
-                    row.rating.rating.round() as i64,
-                    row.games
-                )
-            })
-            .collect();
         PageView::Profile {
             name,
             ratings,
-            ladder,
+            avatar: self.avatar.view.clone(),
+            matches: self.local_history.cards(self.library.records()),
         }
     }
 

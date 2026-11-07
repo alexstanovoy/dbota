@@ -31,7 +31,27 @@ const WAY_IN_TOP: f32 = 110.0;
 pub struct MenuBody;
 
 /// The whole page layer.
-pub fn draw(kit: &mut Kit, root: Entity, view: &MenuView, fold: super::top_bar::TabFold) {
+pub fn draw(
+    kit: &mut Kit,
+    root: Entity,
+    view: &MenuView,
+    fold: super::top_bar::TabFold,
+    texts: &crate::dota_text::Texts,
+    clock: super::page_time::Clock,
+) {
+    if loading_or_login(kit, root, view) {
+        return;
+    }
+    page_background(kit, root, view);
+    super::top_bar::draw(kit, root, view, fold);
+    let body = page_body(kit, root);
+    if !draw_account_page(kit, root, body, view, texts, clock) {
+        draw_body(kit, body, view);
+    }
+    page_corners(kit, root, view, clock);
+}
+
+fn loading_or_login(kit: &mut Kit, root: Entity, view: &MenuView) -> bool {
     if let PageView::Loading {
         details,
         progress_permille,
@@ -45,7 +65,7 @@ pub fn draw(kit: &mut Kit, root: Entity, view: &MenuView, fold: super::top_bar::
             f32::from(*progress_permille) / 1000.0,
             *elapsed_secs,
         );
-        return;
+        return true;
     }
     let way_in = matches!(
         &view.body,
@@ -67,12 +87,74 @@ pub fn draw(kit: &mut Kit, root: Entity, view: &MenuView, fold: super::top_bar::
             way_in_page(kit, root, *kind, fields, *busy, plain_host.as_deref());
         }
         super::top_bar::quit(kit, root, view);
-        return;
+        return true;
     }
-    backdrop::draw(kit, root, Backdrop::of(view.side), theme::BAR_HEIGHT);
-    super::top_bar::draw(kit, root, view, fold);
-    // Every page starts at the same height under the top bar and centres
-    // on one column, as Dota's dashboard pages do; a long page scrolls.
+    false
+}
+
+fn page_background(kit: &mut Kit, root: Entity, view: &MenuView) {
+    let account_page = matches!(
+        view.body,
+        PageView::Profile { .. }
+            | PageView::Heroes
+            | PageView::Hero { .. }
+            | PageView::Leaderboard { .. }
+    );
+    kit.commands
+        .entity(root)
+        .insert(BackgroundColor(if account_page {
+            theme::ACCOUNT_PAGE
+        } else {
+            theme::GROUND
+        }));
+    if !account_page {
+        backdrop::draw(kit, root, Backdrop::of(view.side), theme::BAR_HEIGHT);
+    }
+    hero_backdrop(kit, root, view);
+}
+
+fn hero_backdrop(kit: &mut Kit, root: Entity, view: &MenuView) {
+    if matches!(view.body, PageView::Heroes | PageView::Hero { .. }) {
+        let field = kit.node(
+            root,
+            Node {
+                position_type: PositionType::Absolute,
+                left: px(0),
+                right: px(0),
+                top: px(54),
+                bottom: px(0),
+                ..default()
+            },
+        );
+        kit.commands
+            .entity(field)
+            .insert(if matches!(view.body, PageView::Heroes) {
+                theme::catalogue_ground()
+            } else {
+                theme::hero_field(false)
+            });
+        if matches!(view.body, PageView::Heroes) {
+            let light = kit.node(field, crate::ui::fill());
+            kit.commands.entity(light).insert(theme::catalogue_field());
+        }
+        if matches!(view.body, PageView::Hero { .. }) {
+            let warm = kit.node(
+                root,
+                Node {
+                    position_type: PositionType::Absolute,
+                    left: px(0),
+                    right: px(0),
+                    top: px(54),
+                    bottom: px(0),
+                    ..default()
+                },
+            );
+            kit.commands.entity(warm).insert(theme::hero_field(true));
+        }
+    }
+}
+
+fn page_body(kit: &mut Kit, root: Entity) -> Entity {
     let body = kit.node(
         root,
         Node {
@@ -93,6 +175,53 @@ pub fn draw(kit: &mut Kit, root: Entity, view: &MenuView, fold: super::top_bar::
     kit.commands
         .entity(body)
         .insert((MenuBody, ScrollPosition::default()));
+    body
+}
+
+fn draw_account_page(
+    kit: &mut Kit,
+    root: Entity,
+    body: Entity,
+    view: &MenuView,
+    texts: &crate::dota_text::Texts,
+    clock: super::page_time::Clock,
+) -> bool {
+    match &view.body {
+        PageView::Heroes => super::catalogue::grid(kit, root),
+        PageView::Hero { hero, record } => super::catalogue::hero(kit, body, *hero, texts, record),
+        PageView::Leaderboard { board, field } => {
+            kit.commands.entity(body).remove::<MenuBody>();
+            super::ladder_page::draw(kit, root, board, field);
+        }
+        PageView::Profile {
+            name,
+            ratings,
+            matches,
+            avatar,
+        } => {
+            super::account_page::profile(
+                kit,
+                root,
+                name,
+                matches!(view.connection, super::view::Connection::Online(_)),
+                ratings,
+                matches,
+                avatar,
+                clock,
+            );
+            if view.offer.is_none() {
+                super::avatar_draw::dialog(kit, root, avatar);
+            }
+        }
+        PageView::LocalResult(summary) => {
+            super::account_page::details(kit, root, summary);
+        }
+        _ => return false,
+    }
+    true
+}
+
+fn draw_body(kit: &mut Kit, body: Entity, view: &MenuView) {
     match &view.body {
         PageView::Form {
             kind,
@@ -120,11 +249,6 @@ pub fn draw(kit: &mut Kit, root: Entity, view: &MenuView, fold: super::top_bar::
             finished,
             cooldown,
         } => super::overlay::my_games(kit, body, view, games, finished, cooldown.as_deref()),
-        PageView::Profile {
-            name,
-            ratings,
-            ladder,
-        } => profile_page(kit, body, name, ratings, ladder),
         PageView::Lobbies { list, fields } => super::lobbies::list(kit, body, list, fields),
         PageView::Lobby(lobby) => lobby_page(kit, body, lobby),
         PageView::Result(result) => result_page(kit, body, result),
@@ -140,13 +264,31 @@ pub fn draw(kit: &mut Kit, root: Entity, view: &MenuView, fold: super::top_bar::
         }
         PageView::Hidden => {}
         PageView::Loading { .. } => {}
+        _ => {}
     }
-    player_card(kit, root, view);
-    game_corner(kit, root, view);
+}
+
+fn page_corners(kit: &mut Kit, root: Entity, view: &MenuView, clock: super::page_time::Clock) {
+    if let PageView::Home { hero, matches, .. } = &view.body {
+        super::home_cards::draw(kit, root, *hero, matches, clock);
+    }
+    if !matches!(view.body, PageView::Profile { .. }) {
+        player_card(kit, root, view);
+    }
+    if !matches!(
+        view.body,
+        PageView::Profile { .. }
+            | PageView::Heroes
+            | PageView::Hero { .. }
+            | PageView::Leaderboard { .. }
+    ) {
+        game_corner(kit, root, view);
+    }
     if let PageView::Home {
         rulesets,
         in_flight,
         cooldown,
+        ..
     } = &view.body
     {
         super::play::draw(kit, root, view, rulesets, *in_flight, cooldown.as_deref());
@@ -176,11 +318,9 @@ fn player_card(kit: &mut Kit, root: Entity, view: &MenuView) {
             ChildOf(root),
         ))
         .id();
-    if view.account.is_some() {
-        kit.commands
-            .entity(card)
-            .insert((MenuButton(Act::Go(Page::Profile)), Button));
-    }
+    kit.commands
+        .entity(card)
+        .insert((MenuButton(Act::Go(Page::Profile)), Button));
     let avatar = kit
         .commands
         .spawn((
@@ -373,38 +513,10 @@ fn form_page(
             ..default()
         },
     );
-    let (title, hint) = match kind {
-        FormKind::Service => (
-            "MATCHMAKING SERVICE",
-            "The address of the service to play on: wss://host:port",
-        ),
-        FormKind::Login => ("SIGN IN", ""),
-        FormKind::Register => (
-            "CREATE ACCOUNT",
-            "Logins are 3 to 20 characters of a-z, 0-9 and _. There is no password recovery: keep it safe.",
-        ),
-        FormKind::Host => (
-            "LOCAL LOBBY",
-            "A game hosted on this machine, no account needed, or a game server joined by its \
-             address. You play under your profile name (SETTINGS, Options).",
-        ),
-        FormKind::Lobby
-        | FormKind::LobbyPassword
-        | FormKind::Room
-        | FormKind::Replay
-        | FormKind::None => ("", ""),
-    };
-    kit.typed(card, title, theme::CARD_TITLE, theme::INK_1);
-    if !hint.is_empty() {
-        kit.text(card, hint, 14.0, theme::INK_4);
-    }
+    form_heading(kit, card, kind);
     let hosting = kind == FormKind::Host;
     // The local lobby's address is below the lobby it hosts.
-    let shown = match kind {
-        FormKind::Host if hosting => 1,
-        FormKind::Host => 0,
-        _ => fields.len(),
-    };
+    let shown = if hosting { 1 } else { fields.len() };
     for (at, field) in fields.iter().enumerate().take(shown) {
         field_box(kit, card, at, field);
     }
@@ -425,6 +537,59 @@ fn form_page(
     if let Some(on) = cheats.filter(|_| hosting) {
         checkbox(kit, card, "Enable cheats", Act::ToggleCheats, on);
     }
+    form_actions(kit, card, kind, hosted_at);
+    if kind == FormKind::Host
+        && let Some(address) = fields.get(1)
+    {
+        direct_fields(kit, card, address);
+    }
+    if let Some(host) = plain {
+        plain_notice(kit, card, host);
+    }
+    // The way in's other ways: to another service (the way out without an account is under
+    // the card).
+    if matches!(kind, FormKind::Login | FormKind::Register) {
+        kit.button(
+            card,
+            "CHANGE SERVICE",
+            Act::Go(Page::Service),
+            Tone::Secondary,
+            28.0,
+        );
+    }
+    card
+}
+
+fn form_heading(kit: &mut Kit, card: Entity, kind: FormKind) {
+    let (title, hint) = match kind {
+        FormKind::Service => (
+            "MATCHMAKING SERVICE",
+            "The address of the service to play on: wss://host:port",
+        ),
+        FormKind::Login => ("SIGN IN", ""),
+        FormKind::Register => (
+            "CREATE ACCOUNT",
+            "Logins are 3 to 20 characters of a-z, 0-9 and _. There is no password recovery: keep it safe.",
+        ),
+        FormKind::Host => (
+            "LOCAL LOBBY",
+            "A game hosted on this machine, no account needed, or a game server joined by its \
+             address. You play under your profile name (SETTINGS, Options).",
+        ),
+        FormKind::Lobby
+        | FormKind::LobbyPassword
+        | FormKind::Room
+        | FormKind::Replay
+        | FormKind::None
+        | FormKind::Leaderboard => ("", ""),
+    };
+    kit.typed(card, title, theme::CARD_TITLE, theme::INK_1);
+    if !hint.is_empty() {
+        kit.text(card, hint, 14.0, theme::INK_4);
+    }
+}
+
+fn form_actions(kit: &mut Kit, card: Entity, kind: FormKind, hosted_at: Option<&str>) {
     // The way in's card is narrow: its buttons stand one under the other, as wide as the card.
     let way_in = matches!(
         kind,
@@ -453,62 +618,60 @@ fn form_page(
                 .and_modify(|mut node| node.width = percent(100));
         }
     };
+    for (label, action, tone) in form_answers(kind, hosted_at.is_some()) {
+        answer(kit, label, action, tone);
+    }
+}
+
+fn form_answers(kind: FormKind, hosted: bool) -> Vec<(&'static str, Act, Tone)> {
     match kind {
-        FormKind::Service => answer(kit, "CONTINUE", Act::Submit, Tone::Primary),
-        FormKind::Login => {
-            answer(kit, "SIGN IN", Act::Submit, Tone::Primary);
-            answer(
-                kit,
-                "CREATE ACCOUNT",
-                Act::Go(Page::Register),
-                Tone::Secondary,
-            );
-        }
-        FormKind::Register => {
-            answer(kit, "CREATE ACCOUNT", Act::Submit, Tone::Primary);
-            answer(kit, "BACK", Act::Go(Page::Login), Tone::Secondary);
-        }
-        // One lobby at a time: while it is up, the card says where it is.
-        FormKind::Host if hosted_at.is_some() || !hosting => {}
-        FormKind::Host => {
-            answer(kit, "CREATE", Act::Host(false), Tone::Primary);
-            answer(kit, "CREATE FOR THE LAN", Act::Host(true), Tone::Secondary);
-        }
-        FormKind::Lobby
-        | FormKind::LobbyPassword
-        | FormKind::Room
-        | FormKind::Replay
-        | FormKind::None => {}
+        FormKind::Service => vec![("CONTINUE", Act::Submit, Tone::Primary)],
+        FormKind::Login => vec![
+            ("SIGN IN", Act::Submit, Tone::Primary),
+            ("CREATE ACCOUNT", Act::Go(Page::Register), Tone::Secondary),
+        ],
+        FormKind::Register => vec![
+            ("CREATE ACCOUNT", Act::Submit, Tone::Primary),
+            ("BACK", Act::Go(Page::Login), Tone::Secondary),
+        ],
+        FormKind::Host if !hosted => vec![
+            ("CREATE", Act::Host(false), Tone::Primary),
+            ("CREATE FOR THE LAN", Act::Host(true), Tone::Secondary),
+        ],
+        _ => Vec::new(),
     }
-    if let Some(address) = fields.get(1).filter(|_| kind == FormKind::Host) {
-        kit.typed(card, "JOIN BY ADDRESS", theme::HEADING, theme::INK_1);
-        kit.text(
-            card,
-            "A game server's address: host:port, tcp://, ws:// or wss://.",
-            14.0,
-            theme::INK_4,
-        );
-        field_box(kit, card, 1, address);
-        let join = kit.node(
-            card,
-            Node {
-                column_gap: px(10),
-                ..default()
-            },
-        );
-        kit.button(join, "PLAY", Act::Direct(false), Tone::Primary, 44.0);
-        kit.button(join, "WATCH", Act::Direct(true), Tone::Secondary, 44.0);
-    }
-    if let Some(host) = plain {
-        let note = kit.node(
-            card,
-            Node {
-                flex_direction: FlexDirection::Column,
-                row_gap: px(8),
-                ..default()
-            },
-        );
-        kit.text(
+}
+
+fn direct_fields(kit: &mut Kit, card: Entity, address: &FieldView) {
+    kit.typed(card, "JOIN BY ADDRESS", theme::HEADING, theme::INK_1);
+    kit.text(
+        card,
+        "A game server's address: host:port, tcp://, ws:// or wss://.",
+        14.0,
+        theme::INK_4,
+    );
+    field_box(kit, card, 1, address);
+    let join = kit.node(
+        card,
+        Node {
+            column_gap: px(10),
+            ..default()
+        },
+    );
+    kit.button(join, "PLAY", Act::Direct(false), Tone::Primary, 44.0);
+    kit.button(join, "WATCH", Act::Direct(true), Tone::Secondary, 44.0);
+}
+
+fn plain_notice(kit: &mut Kit, card: Entity, host: &str) {
+    let note = kit.node(
+        card,
+        Node {
+            flex_direction: FlexDirection::Column,
+            row_gap: px(8),
+            ..default()
+        },
+    );
+    kit.text(
             note,
             format!(
                 "Plain TCP to {host} carries everything unprotected, the seat key included: \
@@ -517,24 +680,23 @@ fn form_page(
             14.0,
             theme::GOLD,
         );
-        kit.button(note, "CONNECT ANYWAY", Act::PlainAnyway, Tone::Danger, 34.0);
-    }
-    // The way in's other ways: to another service (the way out without an account is under
-    // the card).
-    if matches!(kind, FormKind::Login | FormKind::Register) {
-        kit.button(
-            card,
-            "CHANGE SERVICE",
-            Act::Go(Page::Service),
-            Tone::Secondary,
-            28.0,
-        );
-    }
-    card
+    kit.button(note, "CONNECT ANYWAY", Act::PlainAnyway, Tone::Danger, 34.0);
 }
 
 /// A labelled text field; a click puts the keyboard in it.
 pub fn field_box(kit: &mut Kit, parent: Entity, at: usize, field: &FieldView) {
+    field_inner(kit, parent, at, field, None);
+}
+pub fn search_field(kit: &mut Kit, parent: Entity, at: usize, field: &FieldView) {
+    field_inner(kit, parent, at, field, Some(("menu.search", "Nickname")));
+}
+fn field_inner(
+    kit: &mut Kit,
+    parent: Entity,
+    at: usize,
+    field: &FieldView,
+    decoration: Option<(&str, &str)>,
+) {
     let column = kit.node(
         parent,
         Node {
@@ -569,33 +731,26 @@ pub fn field_box(kit: &mut Kit, parent: Entity, at: usize, field: &FieldView) {
             ChildOf(column),
         ))
         .id();
+    if let Some((icon, _)) = decoration {
+        kit.art(
+            input,
+            icon,
+            Node {
+                width: px(16),
+                height: px(16),
+                margin: UiRect::right(px(8)),
+                ..default()
+            },
+        );
+    }
     let caret = if field.focused { "|" } else { "" };
-    kit.text(input, format!("{}{caret}", field.shown), 15.0, theme::INK_1);
-}
-
-fn profile_page(kit: &mut Kit, body: Entity, name: &str, ratings: &[String], ladder: &[String]) {
-    let column = kit.node(
-        body,
-        Node {
-            flex_direction: FlexDirection::Column,
-            row_gap: px(10),
-            width: px(700),
-            ..default()
-        },
-    );
-    kit.bold(column, "PROFILE", 30.0, theme::INK_1);
-    kit.bold(column, name.to_owned(), 22.0, theme::INK_1);
-    if ratings.is_empty() {
-        kit.text(column, "No rated games yet.", 16.0, theme::INK_4);
-    }
-    for line in ratings {
-        kit.text(column, line.clone(), 16.0, theme::INK_1);
-    }
-    if !ladder.is_empty() {
-        kit.bold(column, "LADDER", 20.0, theme::INK_1);
-    }
-    for line in ladder {
-        kit.text(column, line.clone(), 15.0, theme::INK_4);
+    if !field.focused
+        && field.shown.is_empty()
+        && let Some((_, placeholder)) = decoration
+    {
+        kit.text(input, placeholder, 15.0, theme::INK_5);
+    } else {
+        kit.text(input, format!("{}{caret}", field.shown), 15.0, theme::INK_1);
     }
 }
 

@@ -72,12 +72,14 @@ fn hello(launch: &Launch) -> std::io::Result<ClientMsg> {
                 bota_core::WIRE_FINGERPRINT,
             ))
         }
-        Launch::Host { name, key, .. } => Ok(ClientMsg::hello(
-            Role::Player,
-            name.as_str(),
-            key.map(|k| k.0),
-            bota_core::WIRE_FINGERPRINT,
-        )),
+        Launch::Host { name, key, .. } | Launch::LocalDemo { name, key, .. } => {
+            Ok(ClientMsg::hello(
+                Role::Player,
+                name.as_str(),
+                key.map(|k| k.0),
+                bota_core::WIRE_FINGERPRINT,
+            ))
+        }
         // The shell opens these as files, or as the command line did.
         Launch::Replay(_) | Launch::Blob(_) | Launch::Given => Err(not_here()),
     }
@@ -280,16 +282,38 @@ pub fn host_args(port: u16, rules: LocalRules, lan: bool, cheats: bool) -> Vec<S
     args
 }
 
+/// The sandbox uses the same server launcher as a local lobby, with exactly one local seat.
+#[cfg(not(target_arch = "wasm32"))]
+fn demo_args() -> Vec<String> {
+    [
+        "--port",
+        "0",
+        "--players",
+        "1",
+        "--seated-start",
+        "--map",
+        &bota_core::DEMO_ID.0.to_string(),
+        "--cheats",
+        "--bind",
+        "127.0.0.1",
+        "--abandon-unjoined",
+        "--empty-after-secs",
+        HOSTED_EMPTY_AFTER_SECS,
+    ]
+    .map(str::to_owned)
+    .into()
+}
+
 /// Starts a game server with `args` and waits until it listens: the server,
 /// and the plain address it said it listens on.
 #[cfg(not(target_arch = "wasm32"))]
 fn start_server(
     args: &[String],
     replay: Option<&std::path::Path>,
+    metadata: Option<&std::path::Path>,
     server: Option<&std::path::Path>,
     environment: bool,
 ) -> std::io::Result<(Hosted, String)> {
-    use std::io::BufRead;
     use std::process::Stdio;
     let mut command = crate::steering::scrubbed_command(server_binary(server, environment)?);
     command
@@ -301,9 +325,24 @@ fn start_server(
         if let Some(dir) = path.parent() {
             std::fs::create_dir_all(dir)?;
         }
-        command.arg("--replay").arg(path);
+        command.arg("--replay").arg(path).arg("--meta-trailer");
+    }
+    if let Some(path) = metadata {
+        if let Some(dir) = path.parent() {
+            std::fs::create_dir_all(dir)?;
+        }
+        command.arg("--meta").arg(path);
     }
     let mut child = command.spawn()?;
+    let heard = server_output(&mut child)?;
+    wait_for_server(Hosted { server: child }, heard)
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn server_output(
+    child: &mut std::process::Child,
+) -> std::io::Result<std::sync::mpsc::Receiver<(bool, String)>> {
+    use std::io::BufRead;
     let (said, heard) = std::sync::mpsc::channel();
     // Both are read to their end, so the server never writes into a closed pipe.
     let out = child.stdout.take().map(std::io::BufReader::new);
@@ -331,7 +370,14 @@ fn start_server(
                 let _ = said.send((false, line));
             }
         })?;
-    let hosted = Hosted { server: child };
+    Ok(heard)
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn wait_for_server(
+    hosted: Hosted,
+    heard: std::sync::mpsc::Receiver<(bool, String)>,
+) -> std::io::Result<(Hosted, String)> {
     let deadline = std::time::Instant::now() + SERVER_PATIENCE;
     let mut complaint = String::new();
     let mut listening = None;
@@ -384,6 +430,7 @@ impl Opening {
                             port,
                             lan,
                             replay,
+                            metadata,
                             server,
                             server_environment,
                             cheats,
@@ -392,6 +439,18 @@ impl Opening {
                         } => Some(start_server(
                             &host_args(*port, *rules, *lan, *cheats),
                             replay.as_deref(),
+                            metadata.as_deref(),
+                            server.as_deref(),
+                            *server_environment,
+                        )?),
+                        Launch::LocalDemo {
+                            server,
+                            server_environment,
+                            ..
+                        } => Some(start_server(
+                            &demo_args(),
+                            None,
+                            None,
                             server.as_deref(),
                             *server_environment,
                         )?),
@@ -409,7 +468,7 @@ impl Opening {
                             Endpoint::parse(address)?.with_tls(trust.direct.clone()),
                             Redial::DEFAULT,
                         )?,
-                        Launch::Host { .. } => Net::open(
+                        Launch::Host { .. } | Launch::LocalDemo { .. } => Net::open(
                             Endpoint::parse(&listening.unwrap_or_default())?,
                             Redial::DEFAULT,
                         )?,
@@ -460,7 +519,7 @@ impl Opening {
                 Launch::Direct { address, .. } => {
                     bota_client_core::WebSocketLink::connect(address)?
                 }
-                Launch::Host { .. } => {
+                Launch::Host { .. } | Launch::LocalDemo { .. } => {
                     return Err(std::io::Error::other(
                         "a local lobby needs the desktop client: a browser cannot start a server",
                     ));

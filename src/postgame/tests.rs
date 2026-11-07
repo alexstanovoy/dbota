@@ -543,3 +543,8 @@ fn a_file_of_more_seats_and_samples_than_a_match_has_is_cut_to_a_match() {
         "minute 0 to the longest's last"
     );
 }
+
+/// Reuse the real recorded match for menu-history contracts instead of fabricating statistics.
+pub(crate) fn recorded_match_for_menu() -> (PathBuf, PathBuf) {
+    (play().replay.clone(), play().meta.clone())
+}
