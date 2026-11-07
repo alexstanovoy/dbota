@@ -80,11 +80,35 @@ fn jungle(client: &mut Client, count: usize, first: EntityId) {
         "one more jungle bounty every four minutes"
     );
     assert!(runes.iter().all(|r| r.kind == RuneKind::Bounty));
+    let positions: std::collections::BTreeSet<_> = runes.iter().map(|r| r.pos).collect();
+    assert_eq!(
+        positions.len(),
+        count,
+        "accumulated bounties occupy distinct positions"
+    );
     assert!(
         runes.iter().any(|r| r.id == first),
         "the original bounty still exists"
     );
     drawn(client, RADIANT, RuneKind::Bounty, count);
+    client.within(
+        PATIENCE,
+        "each bounty body stands at its own snapshot position",
+        |c| {
+            let world = c.world_mut();
+            let bodies: Vec<_> = world
+                .query_filtered::<(&crate::loot::Idle, &Transform), With<crate::runes::RuneBody>>()
+                .iter(world)
+                .filter(|(idle, _)| idle.0 == "rune.bounty.model")
+                .map(|(_, transform)| Vec2::new(transform.translation.x, -transform.translation.z))
+                .collect();
+            runes.iter().all(|r| {
+                bodies
+                    .iter()
+                    .any(|pos| pos.distance(Vec2::new(r.pos.x.to_f32(), r.pos.y.to_f32())) < 1.0)
+            })
+        },
+    );
 }
 
 fn water(client: &mut Client) -> [EntityId; 2] {

@@ -122,8 +122,10 @@ fn hidden_spawn_match() -> (Server, Client, Spot) {
 }
 
 fn reveal_spawn(client: &mut Client, kind: RuneKind, at: Spot) {
+    // Keep outside pickup range of the whole bounty ring, so a newly visible
+    // spawn survives the tick and has a particle to observe.
     client.cheat(Cheat::Teleport {
-        at: at + Spot::from_ints(200, 0),
+        at: at + Spot::from_ints(400, 0),
     });
     client.within(SOON, "the rune now visible in the snapshot", |c| {
         c.view().runes.iter().any(|r| r.pos == at)
@@ -592,6 +594,90 @@ fn a_rune_lies_drawn_and_the_minimap_keeps_it_until_its_spot_is_seen_without_it(
     client.within(SOON, "the feed's line", |c| {
         c.shown_texts().iter().any(|t| t.contains(rune.trim()))
     });
+}
+
+#[test]
+fn stacked_bounties_draw_apart_and_a_clicked_slot_is_reused_after_pickup() {
+    let server = Server::start(1, &["--map", "0", "--runes", "all"]);
+    let mut client = Client::join(&server, HeroId::SHADOW_FIEND, &[]);
+    client.cheat(Cheat::StartGame);
+    let at = bota_core::DOTA_RUNE_SPOTS[3].at;
+    let spot = (at.x.to_int(), at.y.to_int());
+    client.stand_at((spot.0 + 400, spot.1));
+    for _ in 1..bota_proto::MAX_RUNES_AT_SPOT {
+        spawn_rune(&mut client, RuneKind::Bounty, spot);
+    }
+    let nearby = |c: &Client| {
+        c.view()
+            .runes
+            .iter()
+            .copied()
+            .filter(|r| r.pos.within(at, bota_core::rules::units(200)))
+            .collect::<Vec<_>>()
+    };
+    let before = nearby(&client);
+    assert_eq!(before.len(), bota_proto::MAX_RUNES_AT_SPOT);
+    let positions: std::collections::BTreeSet<_> = before.iter().map(|r| r.pos).collect();
+    assert_eq!(
+        positions.len(),
+        before.len(),
+        "every bounty at the cap lies apart"
+    );
+    let east = at + Spot::from_ints(128, 0);
+    let target = before
+        .iter()
+        .find(|r| r.pos == east)
+        .expect("the east slot")
+        .id;
+    client.within(SOON, "each bounty has a body at its own position", |c| {
+        let world = c.world_mut();
+        let bodies: Vec<_> = world
+            .query_filtered::<(&crate::loot::Idle, &Transform), With<RuneBody>>()
+            .iter(world)
+            .filter(|(idle, _)| idle.0 == "rune.bounty.model")
+            .map(|(_, t)| Vec2::new(t.translation.x, -t.translation.z))
+            .collect();
+        before.iter().all(|r| {
+            bodies
+                .iter()
+                .any(|p| p.distance(Vec2::new(r.pos.x.to_f32(), r.pos.y.to_f32())) < 1.0)
+        })
+    });
+    point_at(&mut client, (east.x.to_f32(), east.y.to_f32()));
+    assert_eq!(
+        client
+            .world()
+            .resource::<crate::ground_targets::GroundTarget>()
+            .0
+            .map(|lying| lying.id),
+        Some(target),
+        "the pointer picks the intended bounty in the dense stack"
+    );
+    client.click(MouseButton::Right);
+    client.within(SOON, "the right-clicked bounty is picked up", |c| {
+        !c.view().runes.iter().any(|r| r.id == target)
+    });
+    let survivors = nearby(&client);
+    assert_eq!(
+        survivors.len(),
+        before.len() - 1,
+        "picking the east slot keeps its neighbours"
+    );
+    client.stand_at((spot.0 + 400, spot.1));
+    spawn_rune(&mut client, RuneKind::Bounty, spot);
+    client.within(SOON, "the next bounty reuses the clicked slot", |c| {
+        c.view()
+            .runes
+            .iter()
+            .any(|r| r.pos == east && r.id != target)
+    });
+    for survivor in survivors {
+        assert!(
+            nearby(&client)
+                .iter()
+                .any(|r| r.id == survivor.id && r.pos == survivor.pos)
+        );
+    }
 }
 
 fn reach_rune_minute(client: &mut Client, minute: u32) {
