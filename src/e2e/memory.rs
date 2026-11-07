@@ -6,7 +6,7 @@ use std::process::Command;
 
 use bota_proto::HeroId;
 
-use super::harness::{Client, Server};
+use super::harness::{Client, Server, ServerEnd};
 
 /// Clients of the measured run, one after another.
 const CLIENTS: usize = 4;
@@ -75,6 +75,43 @@ fn measured_alone() {
     assert!(
         drivers.is_empty(),
         "a test client opened a GPU: {drivers:?}"
+    );
+}
+
+/// A loaded asset the client's asset server still holds when the client ends is gone before the
+/// client's end is told: the server goes on an IO thread when a load there held it last, and what
+/// the client loaded is measured after the client ends.
+#[test]
+fn a_client_ends_after_the_assets_its_server_still_held() {
+    use bevy::asset::{AssetApp, AssetServer};
+
+    #[derive(bevy::asset::Asset, bevy::reflect::TypePath)]
+    struct Held {
+        end: std::sync::Weak<ServerEnd>,
+        told: std::sync::mpsc::Sender<bool>,
+    }
+
+    impl Drop for Held {
+        fn drop(&mut self) {
+            let _ = self.told.send(self.end.upgrade().is_some());
+        }
+    }
+
+    let mut client = Client::run(&[]);
+    client.app.init_asset::<Held>();
+    let (told, heard) = std::sync::mpsc::channel();
+    let end = client.server_end();
+    // Added for the app's next frame, which never comes: the server holds it until it ends.
+    let _held = client
+        .app
+        .world()
+        .resource::<AssetServer>()
+        .add(Held { end, told });
+    drop(client);
+    assert_eq!(
+        heard.try_recv(),
+        Ok(true),
+        "the asset the server held was destroyed (true) before the client's end was told"
     );
 }
 

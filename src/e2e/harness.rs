@@ -205,52 +205,77 @@ impl Drop for Scratch {
 /// The client, all of it but the window and the GPU.
 pub struct Client {
     pub app: App,
-    /// Disconnected once the asset server and every load it started have ended (see
-    /// [`LastLoad`]).
-    loads: std::sync::mpsc::Receiver<()>,
+    /// Disconnected once the asset server has ended with all it held (see [`ServerEnd`]).
+    ended: std::sync::mpsc::Receiver<()>,
+    /// The asset server's [`ServerEnd`], for a test to tell whether it has ended yet.
+    end: std::sync::Weak<ServerEnd>,
     scratch: Scratch,
     // Last: the next test's clients may start once this one's loads have ended.
     _turn: Rc<Turn>,
 }
 
-/// A loader for no file, registered with each client's asset server only to be dropped with it.
+/// Held by a client's asset server, through an asset source of its own that reads no file, to
+/// tell when the server has ended.
 ///
 /// Bevy cancels a load when its asset's handles are dropped, but only in a frame of the app. A
 /// test that drops its client mid-load (most do: they end once what they look at is there) leaves
 /// the loads running on the process's IO threads, each holding the asset server and what it has
 /// decoded until it ends. The next tests' clients then load beside them, and the process held
-/// gigabytes no client used. The server, and so this loader, lives as long as its last load.
-#[derive(TypePath)]
-struct LastLoad(#[expect(dead_code, reason = "held to be dropped")] std::sync::mpsc::Sender<()>);
+/// gigabytes no client used. The server's sources are the last of it to go, after the loaded
+/// assets it still holds: when this ends, the server and all it held are gone.
+pub struct ServerEnd(
+    #[expect(dead_code, reason = "held to be dropped")] std::sync::mpsc::Sender<()>,
+);
 
-impl bevy::asset::AssetLoader for LastLoad {
-    type Asset = bevy::asset::LoadedFolder;
-    type Settings = ();
-    type Error = std::io::Error;
+/// The asset source holding a [`ServerEnd`].
+const SERVER_END: &str = "test-harness-server-end";
 
-    async fn load(
-        &self,
-        _: &mut dyn bevy::asset::io::Reader,
-        _: &(),
-        _: &mut bevy::asset::LoadContext<'_>,
-    ) -> Result<Self::Asset, Self::Error> {
-        Err(std::io::Error::other(
-            "no file is loaded by the test harness's marker",
-        ))
+/// The reader of the [`SERVER_END`] source: no file is there.
+struct ServerEndReader(
+    #[expect(dead_code, reason = "held to be dropped")] std::sync::Arc<ServerEnd>,
+);
+
+impl bevy::asset::io::AssetReader for ServerEndReader {
+    async fn read<'a>(
+        &'a self,
+        path: &'a std::path::Path,
+    ) -> Result<bevy::asset::io::VecReader, bevy::asset::io::AssetReaderError> {
+        Err(bevy::asset::io::AssetReaderError::NotFound(path.into()))
+    }
+
+    async fn read_meta<'a>(
+        &'a self,
+        path: &'a std::path::Path,
+    ) -> Result<bevy::asset::io::VecReader, bevy::asset::io::AssetReaderError> {
+        Err(bevy::asset::io::AssetReaderError::NotFound(path.into()))
+    }
+
+    async fn read_directory<'a>(
+        &'a self,
+        path: &'a std::path::Path,
+    ) -> Result<Box<bevy::asset::io::PathStream>, bevy::asset::io::AssetReaderError> {
+        Err(bevy::asset::io::AssetReaderError::NotFound(path.into()))
+    }
+
+    async fn is_directory<'a>(
+        &'a self,
+        _: &'a std::path::Path,
+    ) -> Result<bool, bevy::asset::io::AssetReaderError> {
+        Ok(false)
     }
 }
 
 impl Drop for Client {
-    /// Ends the app and waits for the loads it started, then gives the heap they freed back to
-    /// the system, as the process of a client that ends would: the next test starts with what
-    /// this one loaded gone.
+    /// Ends the app and waits for its asset server to end with the loads it started and all it
+    /// held, then gives the heap they freed back to the system, as the process of a client that
+    /// ends would: the next test starts with what this one loaded gone.
     fn drop(&mut self) {
         drop(std::mem::replace(&mut self.app, App::empty()));
         // A failed test is told at once; its loads end by themselves.
         if std::thread::panicking() {
             return;
         }
-        let ended = self.loads.recv_timeout(PATIENCE);
+        let ended = self.ended.recv_timeout(PATIENCE);
         assert!(
             matches!(ended, Err(std::sync::mpsc::RecvTimeoutError::Disconnected)),
             "the ended client's asset server still lives after {PATIENCE:?}: a load of it never ends"
@@ -421,6 +446,16 @@ impl Client {
             &store,
             session,
         );
+        let (server_ended, ended) = std::sync::mpsc::channel();
+        let end = std::sync::Arc::new(ServerEnd(server_ended));
+        let watch = std::sync::Arc::downgrade(&end);
+        bevy::asset::AssetApp::register_asset_source(
+            &mut app,
+            SERVER_END,
+            bevy::asset::io::AssetSourceBuilder::new(move || {
+                Box::new(ServerEndReader(std::sync::Arc::clone(&end)))
+            }),
+        );
         app.add_plugins(headless(&args, &settings));
         crate::client_plugins(&mut app, args.read_environment);
         crate::menu(&mut app, &args, store, menu_first).expect("the menu");
@@ -431,16 +466,18 @@ impl Client {
         }
         app.finish();
         app.cleanup();
-        let (last_load, loads) = std::sync::mpsc::channel();
-        app.world()
-            .resource::<AssetServer>()
-            .register_loader(LastLoad(last_load));
         Client {
             app,
-            loads,
+            ended,
+            end: watch,
             scratch,
             _turn: turn,
         }
+    }
+
+    /// The [`ServerEnd`] of the client's asset server: there while the server holds anything.
+    pub fn server_end(&self) -> std::sync::Weak<ServerEnd> {
+        self.end.clone()
     }
 
     /// A file of the folder of the client's settings, as it is on disk now.
