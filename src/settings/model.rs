@@ -3,8 +3,10 @@
 //! each reading and writing one field of [`Settings`].
 
 use crate::config::{
-    AntiAlias, Clarity, DISPLAY_MODES, PRESETS, Quality, RightClickAllies, Settings,
+    AntiAlias, Clarity, DISPLAY_MODES, DisplayMode, PRESETS, Quality, RightClickAllies, Settings,
 };
+use crate::keys::{self, Action, Group};
+use crate::window::Displays;
 
 /// The screen's tabs, as Dota's settings have them.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -161,6 +163,7 @@ impl Slider {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Choice {
     DisplayMode,
+    Resolution,
     Quality,
     Shadows,
     AntiAliasing,
@@ -185,6 +188,7 @@ impl Choice {
     pub fn label(self) -> &'static str {
         match self {
             Choice::DisplayMode => "Display mode",
+            Choice::Resolution => "Resolution",
             Choice::Quality => "Quality preset",
             Choice::Shadows => "Shadows",
             Choice::AntiAliasing => "Anti-aliasing",
@@ -198,8 +202,13 @@ impl Choice {
     }
 
     /// What may be picked, as shown.
-    pub fn options(self) -> Vec<String> {
+    pub fn options(self, displays: &Displays) -> Vec<String> {
         match self {
+            Choice::Resolution => displays
+                .sizes()
+                .iter()
+                .map(|size| size_text(*size))
+                .collect(),
             Choice::DisplayMode => ["Windowed", "Windowed fullscreen", "Fullscreen"]
                 .iter()
                 .take(crate::window::pickable_modes())
@@ -230,9 +239,13 @@ impl Choice {
 
     /// The option picked now; none for settings no option stands for (a
     /// mix of presets).
-    pub fn current(self, s: &Settings) -> Option<usize> {
+    pub fn current(self, s: &Settings, displays: &Displays) -> Option<usize> {
         let q = &s.quality;
         match self {
+            Choice::Resolution => displays
+                .sizes()
+                .iter()
+                .position(|size| *size == displays.chosen(s)),
             Choice::DisplayMode => DISPLAY_MODES.iter().position(|(m, _)| *m == s.display),
             Choice::Quality => q
                 .preset_name()
@@ -253,9 +266,14 @@ impl Choice {
     }
 
     /// Picks option `at`; one past the list picks nothing.
-    pub fn pick(self, s: &mut Settings, at: usize) {
+    pub fn pick(self, s: &mut Settings, at: usize, displays: &Displays) {
         let q = &mut s.quality;
         match self {
+            Choice::Resolution => {
+                if let Some(size) = displays.sizes().get(at) {
+                    s.resolution = (*size != displays.native).then_some(*size);
+                }
+            }
             Choice::DisplayMode => {
                 if let Some((mode, _)) = DISPLAY_MODES.get(at) {
                     s.display = *mode;
@@ -300,11 +318,20 @@ impl Choice {
     }
 
     /// What the choice shows now.
-    pub fn shown(self, s: &Settings) -> String {
-        self.current(s)
-            .and_then(|at| self.options().get(at).cloned())
+    pub fn shown(self, s: &Settings, displays: &Displays) -> String {
+        // A size the file names that the monitor does not list is still the size.
+        if self == Choice::Resolution {
+            return size_text(displays.chosen(s));
+        }
+        self.current(s, displays)
+            .and_then(|at| self.options(displays).get(at).cloned())
             .unwrap_or_else(|| "Custom".into())
     }
+}
+
+/// A monitor mode as the list shows it.
+fn size_text((width, height): (u32, u32)) -> String {
+    format!("{width} × {height}")
 }
 
 /// A size in MiB as the list shows it.
@@ -378,65 +405,347 @@ impl TextSetting {
     }
 }
 
-/// One row of a tab other than the hotkeys.
+/// One row of a section.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Control {
-    Heading(&'static str),
+pub enum Row {
     /// A line typed in.
     Text(TextSetting),
     Toggle(Toggle),
     Slider(Slider),
     Choice(Choice),
+    /// A binding, by its place in [`keys::BINDINGS`].
+    Key(usize),
+    /// The line telling where the art and the sound come from.
+    Census,
 }
 
-/// The rows of a tab other than the hotkeys, as Dota's tabs group them. A
-/// browser has no exclusive mode (see `window::pickable_modes`).
-pub fn controls(tab: Tab) -> Vec<Control> {
-    use Control::{Choice as C, Heading as H, Slider as S, Toggle as T};
+impl Row {
+    /// What the row says and what a search looks in.
+    pub fn label(self) -> &'static str {
+        match self {
+            Row::Text(setting) => setting.label(),
+            Row::Toggle(toggle) => toggle.label(),
+            Row::Slider(slider) => slider.label(),
+            Row::Choice(choice) => choice.label(),
+            Row::Key(at) => keys::BINDINGS[at].label,
+            Row::Census => "",
+        }
+    }
+
+    /// Whether the player can change it now: the replay caps wait on saving, the sound on the
+    /// mute, a resolution on a window or exclusive mode (windowed fullscreen keeps the desktop's).
+    pub fn enabled(self, s: &Settings) -> bool {
+        match self {
+            Row::Choice(Choice::ReplayCount | Choice::ReplaySize) => s.replays.keep,
+            Row::Choice(Choice::Resolution) => s.display != DisplayMode::Borderless,
+            Row::Slider(Slider::Volume) | Row::Toggle(Toggle::VoiceResponses) => !s.muted,
+            _ => true,
+        }
+    }
+
+    /// Whether it differs from its default.
+    pub fn changed(self, s: &Settings, displays: &Displays) -> bool {
+        let fresh = Settings::default();
+        match self {
+            Row::Text(setting) => setting.get(s) != setting.get(&fresh),
+            Row::Toggle(toggle) => toggle.get(s) != toggle.get(&fresh),
+            Row::Slider(slider) => (slider.get(s) - slider.get(&fresh)).abs() > 1e-4,
+            Row::Choice(choice) => choice.current(s, displays) != choice.current(&fresh, displays),
+            Row::Key(at) => s.keys[at] != fresh.keys[at],
+            Row::Census => false,
+        }
+    }
+
+    /// Puts it back to its default.
+    pub fn reset(self, s: &mut Settings, displays: &Displays) {
+        let fresh = Settings::default();
+        match self {
+            Row::Text(setting) => setting.get_mut(s).clone_from(setting.get(&fresh)),
+            Row::Toggle(toggle) => toggle.set(s, toggle.get(&fresh)),
+            Row::Slider(slider) => slider.set_share(s, slider.share(&fresh)),
+            Row::Choice(choice) => {
+                if let Some(at) = choice.current(&fresh, displays) {
+                    choice.pick(s, at, displays);
+                }
+            }
+            Row::Key(at) => s.keys[at] = fresh.keys[at],
+            Row::Census => {}
+        }
+    }
+}
+
+/// A titled group of rows: a card of the screen and a link of the navigation.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Section {
+    pub title: &'static str,
+    /// What the navigation calls it.
+    pub link: &'static str,
+    pub rows: Vec<Row>,
+}
+
+fn section(title: &'static str, link: &'static str, rows: Vec<Row>) -> Section {
+    Section { title, link, rows }
+}
+
+/// Whether the HUD slots drawn at the top of the hotkeys stand for the binding (they are not
+/// repeated as rows, but a search still finds them).
+pub fn is_slot(action: Action) -> bool {
+    matches!(
+        action,
+        Action::Ability(_) | Action::Ultimate | Action::Item(_) | Action::TownPortal
+    )
+}
+
+/// The link a binding group has in the navigation.
+fn group_link(group: Group) -> &'static str {
+    match group {
+        Group::Abilities => "Abilities and items",
+        Group::Items => "Items",
+        Group::Units => "Unit actions",
+        Group::Shop => "Shop",
+        Group::Camera => "Camera",
+        Group::Interface => "Interface",
+        Group::Watching => "Replays and spectating",
+    }
+}
+
+/// The sections of a tab, as Dota's tabs group them. The hotkeys leave out the bindings the
+/// slots show, unless `every_row`: a search looks in them all.
+pub fn sections(tab: Tab, every_row: bool) -> Vec<Section> {
+    use Row::{Choice as C, Slider as S, Toggle as T};
     match tab {
-        Tab::Hotkeys => Vec::new(),
+        Tab::Hotkeys => [
+            Group::Abilities,
+            Group::Items,
+            Group::Units,
+            Group::Shop,
+            Group::Camera,
+            Group::Interface,
+            Group::Watching,
+        ]
+        .into_iter()
+        .map(|group| {
+            let rows: Vec<Row> = keys::all()
+                .enumerate()
+                .filter(|(_, b)| b.group == group && (every_row || !is_slot(b.action)))
+                .map(|(at, _)| Row::Key(at))
+                .collect();
+            section(group.title(), group_link(group), rows)
+        })
+        .filter(|section| !section.rows.is_empty())
+        .collect(),
         Tab::Options => vec![
-            H("PROFILE"),
-            Control::Text(TextSetting::Name),
-            H("INTERFACE"),
-            S(Slider::InterfaceScale),
-            T(Toggle::DamageNumbers),
-            T(Toggle::AnimatePortrait),
-            T(Toggle::ScoreboardItems),
-            H("CONTROLS"),
-            C(Choice::RightClickAllies),
-            T(Toggle::TeleportRequiresHalt),
-            T(Toggle::ChannelsRequireStop),
-            H("CAMERA"),
-            T(Toggle::EdgePan),
-            H("REPLAYS"),
-            T(Toggle::SaveReplays),
-            C(Choice::ReplayCount),
-            C(Choice::ReplaySize),
+            section("PROFILE", "Profile", vec![Row::Text(TextSetting::Name)]),
+            section(
+                "INTERFACE",
+                "Interface",
+                vec![
+                    S(Slider::InterfaceScale),
+                    T(Toggle::DamageNumbers),
+                    T(Toggle::AnimatePortrait),
+                    T(Toggle::ScoreboardItems),
+                ],
+            ),
+            section(
+                "CONTROLS",
+                "Controls",
+                vec![
+                    C(Choice::RightClickAllies),
+                    T(Toggle::TeleportRequiresHalt),
+                    T(Toggle::ChannelsRequireStop),
+                ],
+            ),
+            section("CAMERA", "Camera", vec![T(Toggle::EdgePan)]),
+            section(
+                "REPLAYS",
+                "Replays",
+                vec![
+                    T(Toggle::SaveReplays),
+                    C(Choice::ReplayCount),
+                    C(Choice::ReplaySize),
+                ],
+            ),
+            section("ASSETS", "Assets", vec![Row::Census]),
         ],
         Tab::Video => {
-            let mut rows = vec![H("DISPLAY"), C(Choice::DisplayMode)];
-            rows.extend([
-                C(Choice::FrameCap),
-                S(Slider::RenderScale),
-                H("QUALITY"),
-                C(Choice::Quality),
-                C(Choice::Shadows),
-                C(Choice::AntiAliasing),
-                C(Choice::VisualClarity),
-                T(Toggle::AutoQuality),
-                H("ON THE NEXT START"),
-                C(Choice::TextureSize),
-                T(Toggle::Props),
-                T(Toggle::GpuBatching),
-            ]);
-            rows
+            // A browser's canvas follows the page: no monitor mode to pick.
+            let mut display = vec![C(Choice::DisplayMode)];
+            if !cfg!(target_arch = "wasm32") {
+                display.push(C(Choice::Resolution));
+            }
+            display.extend([C(Choice::FrameCap), S(Slider::RenderScale)]);
+            vec![
+                section("DISPLAY", "Display", display),
+                section(
+                    "QUALITY",
+                    "Quality",
+                    vec![
+                        C(Choice::Quality),
+                        C(Choice::Shadows),
+                        C(Choice::AntiAliasing),
+                        C(Choice::VisualClarity),
+                        T(Toggle::AutoQuality),
+                    ],
+                ),
+                section(
+                    "ON THE NEXT START",
+                    "On the next start",
+                    vec![
+                        C(Choice::TextureSize),
+                        T(Toggle::Props),
+                        T(Toggle::GpuBatching),
+                    ],
+                ),
+            ]
         }
-        Tab::Audio => vec![
-            H("SOUND"),
-            S(Slider::Volume),
-            T(Toggle::Muted),
-            T(Toggle::VoiceResponses),
-        ],
+        Tab::Audio => vec![section(
+            "SOUND",
+            "Sound",
+            vec![
+                S(Slider::Volume),
+                T(Toggle::Muted),
+                T(Toggle::VoiceResponses),
+            ],
+        )],
+    }
+}
+
+/// Where in a label a search matches: the text before, the match, the text after.
+pub fn split_match<'a>(label: &'a str, query: &str) -> Option<(&'a str, &'a str, &'a str)> {
+    let query = query.trim();
+    if query.is_empty() {
+        return None;
+    }
+    // ASCII lowercase keeps every byte where it was.
+    let at = label
+        .to_ascii_lowercase()
+        .find(&query.to_ascii_lowercase())?;
+    let end = at + query.len();
+    label
+        .is_char_boundary(end)
+        .then(|| (&label[..at], &label[at..end], &label[end..]))
+}
+
+/// A tab's sections that hold a match of `query`, cut down to the rows that match.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Found {
+    pub tab: Tab,
+    pub section: Section,
+}
+
+/// Every row of every tab whose label holds `query`, under its tab and section, in the order
+/// the tabs and sections have.
+pub fn search(query: &str) -> Vec<Found> {
+    let mut found = Vec::new();
+    for tab in Tab::ALL {
+        for section in sections(tab, true) {
+            let rows: Vec<Row> = section
+                .rows
+                .iter()
+                .copied()
+                .filter(|row| split_match(row.label(), query).is_some())
+                .collect();
+            if !rows.is_empty() {
+                found.push(Found {
+                    tab,
+                    section: Section { rows, ..section },
+                });
+            }
+        }
+    }
+    found
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A search is not case sensitive, finds a word anywhere in a label, and tells where.
+    #[test]
+    fn a_match_is_found_anywhere_in_a_label_whatever_its_case() {
+        assert_eq!(
+            split_match("Save the replays of my matches", "REPLAY"),
+            Some(("Save the ", "replay", "s of my matches"))
+        );
+        assert_eq!(split_match("Shadows", "  "), None, "blank asks for nothing");
+        assert_eq!(split_match("Shadows", "high"), None);
+    }
+
+    /// The hotkeys' tab leaves out the bindings its panel of slots shows; a search finds them.
+    #[test]
+    fn the_hotkeys_list_leaves_out_the_slots_but_a_search_finds_them() {
+        let listed: Vec<&str> = sections(Tab::Hotkeys, false)
+            .iter()
+            .flat_map(|s| s.rows.iter().map(|r| r.label()))
+            .collect();
+        for slot in ["Ability 1", "Ultimate", "Item 6", "Town portal scroll"] {
+            assert!(!listed.contains(&slot), "{slot} is drawn as a slot");
+        }
+        assert!(listed.contains(&"Learn ability"));
+        let found = search("item 6");
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].section.title, "ITEMS");
+    }
+
+    /// Every setting of every tab is reachable by its label, and each row of a tab is once.
+    #[test]
+    fn every_binding_is_a_row_of_the_search_and_no_row_repeats() {
+        let all: Vec<Row> = Tab::ALL
+            .into_iter()
+            .flat_map(|tab| sections(tab, true))
+            .flat_map(|s| s.rows)
+            .collect();
+        for at in 0..keys::COUNT {
+            assert!(all.contains(&Row::Key(at)), "binding {at}");
+        }
+        for (i, row) in all.iter().enumerate() {
+            assert!(!all[..i].contains(row), "{row:?} twice");
+        }
+    }
+
+    /// Changed rows are those that differ from the defaults, and a reset puts each back.
+    #[test]
+    fn a_reset_puts_every_changed_row_back_to_its_default() {
+        let displays = Displays::default();
+        let mut s = Settings {
+            volume: 0.2,
+            muted: true,
+            name: "mira".to_owned(),
+            display: DisplayMode::Windowed,
+            resolution: Some((1280, 720)),
+            ..Settings::default()
+        };
+        s.keys[0] = None;
+        let rows: Vec<Row> = Tab::ALL
+            .into_iter()
+            .flat_map(|tab| sections(tab, true))
+            .flat_map(|section| section.rows)
+            .collect();
+        let changed: Vec<Row> = rows
+            .iter()
+            .copied()
+            .filter(|row| row.changed(&s, &displays))
+            .collect();
+        assert!(changed.contains(&Row::Slider(Slider::Volume)));
+        assert!(changed.contains(&Row::Choice(Choice::Resolution)));
+        assert!(changed.contains(&Row::Key(0)));
+        assert!(!changed.contains(&Row::Toggle(Toggle::EdgePan)));
+        for row in changed {
+            row.reset(&mut s, &displays);
+            assert!(!row.changed(&s, &displays), "{row:?} still changed");
+        }
+    }
+
+    /// The resolution row waits for a window or exclusive fullscreen.
+    #[test]
+    fn the_resolution_is_enabled_everywhere_but_in_windowed_fullscreen() {
+        let row = Row::Choice(Choice::Resolution);
+        let with = |display| Settings {
+            display,
+            ..Settings::default()
+        };
+        assert!(!row.enabled(&with(DisplayMode::Borderless)));
+        assert!(row.enabled(&with(DisplayMode::Windowed)));
+        assert!(row.enabled(&with(DisplayMode::Exclusive)));
     }
 }

@@ -93,6 +93,7 @@ The VIDEO tab, `settings.conf` or `--set NAME=VALUE` set what the picture may co
 | `visual_clarity` | set units apart from the ground: `off`, `low`, `high` | `off` |
 | `animate_portrait` | the portrait plays the unit's idle and talks with its lines | `true` |
 | `display_mode` | `windowed`, `borderless`, `fullscreen` | `borderless` |
+| `resolution` | `native`, or a monitor size such as `1920x1080`: the window's size, or the mode of `fullscreen`; `borderless` keeps the desktop's | `native` |
 | `camera_pitch`, `camera_fov` | camera angle and field of view, degrees | `58`, `25` |
 | `camera_distance`, `camera_distance_min`, `camera_distance_max` | camera distance and zoom limits | `4400`, `1600`, `6500` |
 | `camera_pan_speed` | pan speed at the starting distance | `3031` |

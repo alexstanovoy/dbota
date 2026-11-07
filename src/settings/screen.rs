@@ -13,12 +13,14 @@ use bevy::{
 };
 
 use super::draw::{
-    Body, ChoiceButton, ChoiceOption, CloseButton, KeyField, NameField, ResetButton, Root,
-    SliderTrack, TabButton, ToggleRow,
+    Body, CardAnchor, ChoiceButton, ChoiceOption, CloseButton, KeyField, NameField, NavLink,
+    ResetButton, Root, RowReset, ScrollRail, ScrollThumb, SearchClear, SearchField, SliderTrack,
+    TabButton, ToggleRow,
 };
-use super::model::{Choice, Tab, TextSetting};
+use super::model::{Choice, Row, Tab, TextSetting};
 use crate::config::Settings;
 use crate::keys::{self, Chord, Input};
+use crate::window::Displays;
 
 /// The screen: whether it is open, its tab, the key field taking the next
 /// key, and the list opened from a choice.
@@ -32,6 +34,10 @@ pub struct Screen {
     pub dropdown: Option<Choice>,
     /// The line being typed into (the profile name).
     pub naming: Option<TextSetting>,
+    /// What the search field holds; a search shows the rows whose labels hold it, from every tab.
+    pub query: String,
+    /// Whether the search field is being typed into.
+    pub searching: bool,
     /// A modifier key pressed while capturing and nothing else yet: bound
     /// alone when it is let go first.
     held_modifier: Option<KeyCode>,
@@ -45,13 +51,50 @@ impl Default for Screen {
             capturing: None,
             dropdown: None,
             naming: None,
+            query: String::new(),
+            searching: false,
             held_modifier: None,
         }
     }
 }
 
+impl Screen {
+    /// Whether the screen shows a search's matches instead of a tab.
+    pub fn is_searching(&self) -> bool {
+        !self.query.trim().is_empty()
+    }
+
+    /// Opens `tab`, leaving a search and whatever was half done.
+    fn show(&mut self, tab: Tab) {
+        self.tab = tab;
+        self.query.clear();
+        self.searching = false;
+        self.dropdown = None;
+        self.capturing = None;
+    }
+}
+
+/// How far the body is scrolled, in interface pixels, and the card the navigation asked to scroll
+/// to. Kept apart from the screen, whose every change builds the layout again.
+#[derive(Resource, Default)]
+pub struct Scroll {
+    pub y: f32,
+    pub jump: Option<usize>,
+}
+
+/// The card in view, by its place in the open view: the navigation marks its link.
+#[derive(Resource, Default)]
+pub struct InView(pub usize);
+
+/// The space over a card the body keeps when it scrolls to the card.
+const CARD_MARGIN: f32 = 24.0;
+/// The most characters a search holds.
+const MAX_QUERY: usize = 40;
+
 pub fn plugin(app: &mut App) {
     app.init_resource::<Screen>()
+        .init_resource::<Scroll>()
+        .init_resource::<InView>()
         .add_systems(Startup, (super::draw::spawn_root, open_at_start))
         .add_systems(
             PreUpdate,
@@ -61,16 +104,21 @@ pub fn plugin(app: &mut App) {
         )
         .add_systems(
             Update,
+            (capture, clicks, drag, scroll, save, super::draw::layout).chain(),
+        )
+        .add_systems(
+            Update,
             (
-                capture,
-                clicks,
-                drag,
-                scroll,
-                save,
-                super::draw::layout,
-                super::draw::refresh,
+                super::look::rows,
+                super::look::toggles,
+                super::look::sliders,
+                super::look::choices,
+                super::look::key_fields,
+                super::look::names,
+                super::look::nav,
+                super::look::help,
             )
-                .chain(),
+                .after(super::draw::layout),
         );
 }
 
@@ -91,54 +139,102 @@ fn open_at_start(args: Res<crate::Args>, mut screen: ResMut<Screen>) {
     }
 }
 
-/// Clicks on the tabs, the close and reset buttons, the toggles, the
-/// choices and their lists, and the key fields.
-#[allow(clippy::too_many_arguments, clippy::type_complexity)]
+/// The buttons the player pressed this frame, for [`clicks`].
+#[derive(bevy::ecs::system::SystemParam)]
+struct Pressed<'w, 's> {
+    tabs: Query<'w, 's, (&'static Interaction, &'static TabButton), Changed<Interaction>>,
+    links: Query<'w, 's, (&'static Interaction, &'static NavLink), Changed<Interaction>>,
+    close: Query<'w, 's, &'static Interaction, (Changed<Interaction>, With<CloseButton>)>,
+    reset_all: Query<'w, 's, &'static Interaction, (Changed<Interaction>, With<ResetButton>)>,
+    resets: Query<'w, 's, (&'static Interaction, &'static RowReset), Changed<Interaction>>,
+    toggles: Query<'w, 's, (&'static Interaction, &'static ToggleRow), Changed<Interaction>>,
+    choices: Query<'w, 's, (&'static Interaction, &'static ChoiceButton), Changed<Interaction>>,
+    options: Query<'w, 's, (&'static Interaction, &'static ChoiceOption), Changed<Interaction>>,
+    fields: Query<'w, 's, (&'static Interaction, &'static KeyField), Changed<Interaction>>,
+    name: Query<'w, 's, (&'static Interaction, &'static NameField), Changed<Interaction>>,
+    search: Query<'w, 's, &'static Interaction, (Changed<Interaction>, With<SearchField>)>,
+    clear: Query<'w, 's, &'static Interaction, (Changed<Interaction>, With<SearchClear>)>,
+}
+
+fn pressed(interaction: &Interaction) -> bool {
+    *interaction == Interaction::Pressed
+}
+
+/// Clicks on the tabs and the navigation's links, the search field, the close and reset buttons,
+/// the toggles, the choices and their lists, and the key fields and slots.
 fn clicks(
     mut screen: ResMut<Screen>,
+    mut scroll: ResMut<Scroll>,
     mut settings: ResMut<Settings>,
-    tabs: Query<(&Interaction, &TabButton), Changed<Interaction>>,
-    close: Query<&Interaction, (Changed<Interaction>, With<CloseButton>)>,
-    reset: Query<&Interaction, (Changed<Interaction>, With<ResetButton>)>,
-    toggles: Query<(&Interaction, &ToggleRow), Changed<Interaction>>,
-    choices: Query<(&Interaction, &ChoiceButton), Changed<Interaction>>,
-    options: Query<(&Interaction, &ChoiceOption), Changed<Interaction>>,
-    fields: Query<(&Interaction, &KeyField), Changed<Interaction>>,
-    name: Query<(&Interaction, &NameField), Changed<Interaction>>,
+    displays: Res<Displays>,
+    on: Pressed,
 ) {
     if !screen.open {
         screen.bypass_change_detection().naming = None;
+        screen.bypass_change_detection().searching = false;
         return;
     }
-    let pressed = |i: &Interaction| *i == Interaction::Pressed;
-    if let Some((_, field)) = name.iter().find(|(i, _)| pressed(i)) {
+    // The search field keeps the keyboard until the player clicks something else.
+    let anything_else = on.name.iter().any(|(i, _)| pressed(i))
+        || on.tabs.iter().any(|(i, _)| pressed(i))
+        || on.choices.iter().any(|(i, _)| pressed(i))
+        || on.toggles.iter().any(|(i, _)| pressed(i))
+        || on.fields.iter().any(|(i, _)| pressed(i))
+        || on.clear.iter().any(pressed);
+    if anything_else && screen.searching {
+        screen.searching = false;
+    }
+    if on.search.iter().any(pressed) && !screen.searching {
+        let screen = &mut *screen;
+        screen.searching = true;
+        screen.naming = None;
+        screen.capturing = None;
+        screen.dropdown = None;
+    }
+    if on.clear.iter().any(pressed) {
+        let screen = &mut *screen;
+        screen.query.clear();
+        screen.searching = true;
+        scroll.y = 0.0;
+    }
+    if let Some((_, field)) = on.name.iter().find(|(i, _)| pressed(i)) {
         screen.naming = Some(field.0);
         screen.capturing = None;
     }
-    if let Some((_, tab)) = tabs.iter().find(|(i, _)| pressed(i)) {
-        screen.tab = tab.0;
-        screen.dropdown = None;
-        screen.capturing = None;
+    if let Some((_, tab)) = on.tabs.iter().find(|(i, _)| pressed(i)) {
+        screen.show(tab.0);
+        scroll.y = 0.0;
     }
-    if close.iter().any(pressed) {
+    if let Some((_, link)) = on.links.iter().find(|(i, _)| pressed(i)) {
+        scroll.jump = Some(link.0);
+    }
+    if on.close.iter().any(pressed) {
         screen.open = false;
     }
-    if reset.iter().any(pressed) {
+    if on.reset_all.iter().any(pressed) {
         settings.keys = keys::BINDINGS.map(|b| b.default);
     }
-    for (_, row) in toggles.iter().filter(|(i, _)| pressed(i)) {
-        let on = row.0.get(&settings);
-        row.0.set(&mut settings, !on);
+    if let Some((_, reset)) = on.resets.iter().find(|(i, _)| pressed(i)) {
+        reset.0.reset(&mut settings, &displays);
     }
-    if let Some((_, option)) = options.iter().find(|(i, _)| pressed(i)) {
-        option.0.pick(&mut settings, option.1);
+    for (_, row) in on.toggles.iter().filter(|(i, _)| pressed(i)) {
+        if Row::Toggle(row.0).enabled(&settings) {
+            let state = row.0.get(&settings);
+            row.0.set(&mut settings, !state);
+        }
+    }
+    if let Some((_, option)) = on.options.iter().find(|(i, _)| pressed(i)) {
+        option.0.pick(&mut settings, option.1, &displays);
         screen.dropdown = None;
-    } else if let Some((_, choice)) = choices.iter().find(|(i, _)| pressed(i)) {
+    } else if let Some((_, choice)) = on.choices.iter().find(|(i, _)| pressed(i))
+        && Row::Choice(choice.0).enabled(&settings)
+    {
         screen.dropdown = (screen.dropdown != Some(choice.0)).then_some(choice.0);
     }
-    if let Some((_, field)) = fields.iter().find(|(i, _)| pressed(i)) {
+    if let Some((_, field)) = on.fields.iter().find(|(i, _)| pressed(i)) {
         screen.capturing = Some(field.0);
         screen.held_modifier = None;
+        screen.naming = None;
     }
 }
 
@@ -179,6 +275,8 @@ pub fn escape(mut screen: ResMut<Screen>, mut fired: ResMut<crate::keys::Fired>)
     fired.pressed.retain(|action| *action != escape);
     if screen.dropdown.is_some() {
         screen.dropdown = None;
+    } else if screen.searching {
+        screen.searching = false;
     } else {
         screen.open = false;
     }
@@ -192,6 +290,7 @@ fn capture(
     mut settings: ResMut<Settings>,
     mut keyboard: MessageReader<KeyboardInput>,
     mut mouse: MessageReader<MouseButtonInput>,
+    mut composing: MessageReader<bevy::window::Ime>,
     held: Res<ButtonInput<KeyCode>>,
     mut was_open: Local<bool>,
 ) {
@@ -201,18 +300,32 @@ fn capture(
     if !screen.open || opened_now {
         keyboard.clear();
         mouse.clear();
+        composing.clear();
+        return;
+    }
+    if screen.searching {
+        mouse.clear();
+        search(&mut screen, keyboard.read(), composing.read());
         return;
     }
     if let Some(field) = screen.naming {
         mouse.clear();
-        name(&mut screen, &mut settings, field, keyboard.read());
+        name(
+            &mut screen,
+            &mut settings,
+            field,
+            keyboard.read(),
+            composing.read(),
+        );
         return;
     }
     let Some(at) = screen.capturing else {
         keyboard.clear();
         mouse.clear();
+        composing.clear();
         return;
     };
+    composing.clear();
     let mods = |chord: Chord| Chord {
         shift: chord.shift || held.any_pressed([KeyCode::ShiftLeft, KeyCode::ShiftRight]),
         ctrl: chord.ctrl || held.any_pressed([KeyCode::ControlLeft, KeyCode::ControlRight]),
@@ -262,6 +375,40 @@ fn capture(
     }
 }
 
+/// Types into the search field: Enter or Escape is done with it. Typing changes only what is
+/// asked, so the screen is marked changed only then.
+fn search<'a>(
+    screen: &mut Screen,
+    keyboard: impl Iterator<Item = &'a KeyboardInput>,
+    composing: impl Iterator<Item = &'a bevy::window::Ime>,
+) {
+    use bevy::input::keyboard::Key;
+    let mut query = screen.query.clone();
+    let mut done = false;
+    for event in keyboard.filter(|e| e.state == ButtonState::Pressed) {
+        match &event.logical_key {
+            Key::Enter | Key::Escape | Key::Tab => done = true,
+            Key::Backspace => {
+                query.pop();
+            }
+            Key::Character(typed) => push_name(&mut query, typed, MAX_QUERY),
+            Key::Space => push_name(&mut query, " ", MAX_QUERY),
+            _ => {}
+        }
+    }
+    for event in composing {
+        if let bevy::window::Ime::Commit { value, .. } = event {
+            push_name(&mut query, value, MAX_QUERY);
+        }
+    }
+    if query != screen.query {
+        screen.query = query;
+    }
+    if done {
+        screen.searching = false;
+    }
+}
+
 /// Types into a line (the profile name); Enter or Escape
 /// is done with it.
 fn name<'a>(
@@ -269,6 +416,7 @@ fn name<'a>(
     settings: &mut Settings,
     field: TextSetting,
     keyboard: impl Iterator<Item = &'a KeyboardInput>,
+    composing: impl Iterator<Item = &'a bevy::window::Ime>,
 ) {
     use bevy::input::keyboard::Key;
     for event in keyboard.filter(|e| e.state == ButtonState::Pressed) {
@@ -281,6 +429,11 @@ fn name<'a>(
             Key::Character(typed) => push_name(line, typed, field.max()),
             Key::Space => push_name(line, " ", field.max()),
             _ => {}
+        }
+    }
+    for event in composing {
+        if let bevy::window::Ime::Commit { value, .. } = event {
+            push_name(field.get_mut(settings), value, field.max());
         }
     }
 }
@@ -307,21 +460,106 @@ fn is_modifier(key: KeyCode) -> bool {
     )
 }
 
-/// The wheel scrolls the screen's body.
+/// The wheel scrolls the screen's body, the navigation's links scroll it to a card, the card in
+/// view is the one whose link is marked, and the scroll bar follows.
+#[allow(clippy::type_complexity)]
 fn scroll(
     screen: Res<Screen>,
     wheel: Res<AccumulatedMouseScroll>,
-    mut body: Query<&mut ScrollPosition, With<Body>>,
+    mut scrolled: ResMut<Scroll>,
+    mut in_view: ResMut<InView>,
+    mut body: Query<(&mut ScrollPosition, &ComputedNode, &UiGlobalTransform), With<Body>>,
+    anchors: Query<(&CardAnchor, &ComputedNode, &UiGlobalTransform)>,
+    mut rail: Query<&mut Node, (With<ScrollRail>, Without<ScrollThumb>)>,
+    mut thumb: Query<&mut Node, (With<ScrollThumb>, Without<ScrollRail>)>,
 ) {
-    if !screen.open || wheel.delta.y == 0.0 {
+    if !screen.open {
         return;
     }
-    let step = match wheel.unit {
-        MouseScrollUnit::Line => wheel.delta.y * 40.0,
-        MouseScrollUnit::Pixel => wheel.delta.y,
+    let Ok((mut at, node, place)) = body.single_mut() else {
+        return;
     };
-    for mut at in &mut body {
-        at.y = (at.y - step).max(0.0);
+    let scale = node.inverse_scale_factor();
+    let (view, total) = (node.size().y * scale, node.content_size().y * scale);
+    // Before the first layout the body has no size: keep what was asked.
+    let laid_out = view > 0.0;
+    let reach = if laid_out {
+        (total - view).max(0.0)
+    } else {
+        f32::MAX
+    };
+    let top = place.translation.y - node.size().y / 2.0;
+    // The cards stand where the layout put them, which shows the scroll applied so far.
+    let applied = at.y;
+    let place_of = move |anchor: &ComputedNode, at_anchor: &UiGlobalTransform| {
+        let anchor_top = at_anchor.translation.y - anchor.size().y / 2.0;
+        (anchor_top - top) * scale + applied
+    };
+    if wheel.delta.y != 0.0 {
+        let step = match wheel.unit {
+            MouseScrollUnit::Line => wheel.delta.y * 40.0,
+            MouseScrollUnit::Pixel => wheel.delta.y,
+        };
+        scrolled.y -= step;
+    }
+    if let Some(card) = scrolled.jump.take() {
+        let wanted = anchors
+            .iter()
+            .find(|(anchor, ..)| anchor.0 == card)
+            .map(|(_, anchor, at_anchor)| place_of(anchor, at_anchor) - CARD_MARGIN);
+        // The first section of a tab is the top of it, the slots above it included.
+        scrolled.y = if card == 0 && !screen.is_searching() {
+            0.0
+        } else {
+            wanted.unwrap_or(scrolled.y)
+        };
+    }
+    scrolled.y = scrolled.y.clamp(0.0, reach);
+    if at.y != scrolled.y {
+        at.y = scrolled.y;
+    }
+    if !laid_out {
+        return;
+    }
+    let seen = if scrolled.y >= reach - 1.0 && reach > 0.0 {
+        anchors
+            .iter()
+            .map(|(anchor, ..)| anchor.0)
+            .max()
+            .unwrap_or(0)
+    } else {
+        anchors
+            .iter()
+            .filter(|(_, anchor, at_anchor)| {
+                place_of(anchor, at_anchor) - CARD_MARGIN <= scrolled.y + 1.0
+            })
+            .map(|(anchor, ..)| anchor.0)
+            .max()
+            .unwrap_or(0)
+    };
+    if in_view.0 != seen {
+        in_view.0 = seen;
+    }
+    let scrolls = reach > 0.0;
+    for mut node in &mut rail {
+        let display = if scrolls {
+            Display::Flex
+        } else {
+            Display::None
+        };
+        if node.display != display {
+            node.display = display;
+        }
+    }
+    for mut node in &mut thumb {
+        let (top, height) = (
+            percent(scrolled.y / total * 100.0),
+            percent(view / total * 100.0),
+        );
+        if node.top != top || node.height != height {
+            node.top = top;
+            node.height = height;
+        }
     }
 }
 
@@ -332,6 +570,7 @@ fn save(
     settings: Res<Settings>,
     store: Res<crate::main_menu::SettingsStore>,
     mut opened_with: Local<Option<Settings>>,
+    mut scrolled: ResMut<Scroll>,
     mut root: Query<&mut Visibility, With<Root>>,
 ) {
     match (&*opened_with, screen.open) {
@@ -343,10 +582,17 @@ fn save(
                 warn!("settings not saved: {err}");
             }
             *opened_with = None;
-            if screen.capturing.is_some() || screen.dropdown.is_some() {
+            if screen.capturing.is_some()
+                || screen.dropdown.is_some()
+                || !screen.query.is_empty()
+                || screen.searching
+            {
                 screen.capturing = None;
                 screen.dropdown = None;
+                screen.query.clear();
+                screen.searching = false;
             }
+            scrolled.y = 0.0;
         }
         _ => {}
     }

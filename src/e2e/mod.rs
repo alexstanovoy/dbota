@@ -67,6 +67,7 @@ mod runes;
 mod scoreboard;
 mod secret_shop;
 mod sentry_ward;
+mod settings;
 mod shell;
 mod shop_inventory;
 mod shop_queue;

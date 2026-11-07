@@ -144,7 +144,7 @@ use bevy::{
     diagnostic::FrameTimeDiagnosticsPlugin,
     gltf::{GltfPlugin, convert_coordinates::GltfConvertCoordinates},
     prelude::*,
-    window::{PresentMode, WindowResolution},
+    window::{PresentMode, VideoModeSelection, WindowResolution},
 };
 use clap::Parser;
 
@@ -875,7 +875,7 @@ fn default_plugins(args: &Args, settings: &config::Settings) -> impl PluginGroup
                     PresentMode::AutoVsync
                 },
                 resizable: true,
-                mode: window::window_mode(settings.display, true),
+                mode: window::window_mode(settings.display, VideoModeSelection::Current, true),
                 ..default()
             }),
             ..default()

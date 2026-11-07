@@ -5,7 +5,10 @@
 //! button and Escape open); Escape closes it; whatever it changes is saved when it closes.
 
 mod draw;
+mod look;
 mod model;
 mod screen;
 
+#[cfg(test)]
+pub use screen::{InView, Scroll};
 pub use screen::{Screen, escape, plugin};

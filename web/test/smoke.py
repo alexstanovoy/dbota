@@ -538,10 +538,12 @@ def check_fullscreen_page(directory):
         fullscreen = lambda: page.evaluate("!!document.fullscreenElement")
         shot = lambda name: page.screenshot(path=str(HERE.parent.parent / f"temp/smoke-{name}.png"), timeout=600000)
         # The Video tab is open (--settings video): the display mode's list, its second option. The
-        # settings window is 1100 interface pixels wide under the top bar, at 0.8 of them a pixel.
-        page.mouse.click(880, 180)
+        # settings window is 1100 interface pixels wide under the top bar, at 0.8 of them a pixel: the
+        # Display mode field is at (1045, 231) of the 1440 by 900 frame, its list's second option
+        # at (1040, 310) (the browser has no Resolution row, so Display mode is the first row).
+        page.mouse.click(836, 185)
         page.wait_for_timeout(1500)
-        page.mouse.click(880, 229)
+        page.mouse.click(832, 248)
         page.wait_for_timeout(2500)
         assert fullscreen(), "picking windowed fullscreen puts the canvas fullscreen"
         shot("fullscreen-picked")

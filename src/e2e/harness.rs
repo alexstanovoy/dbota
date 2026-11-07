@@ -719,6 +719,21 @@ impl Client {
         self.frames(1);
     }
 
+    /// Types `text` into the focused field, as the window's input method commits it, and runs a
+    /// couple of frames.
+    pub fn type_text(&mut self, text: &str) {
+        let world = self.world_mut();
+        let window = world
+            .query_filtered::<Entity, With<PrimaryWindow>>()
+            .single(world)
+            .expect("the primary window");
+        world.write_message(bevy::window::Ime::Commit {
+            window,
+            value: text.to_owned(),
+        });
+        self.frames(2);
+    }
+
     /// The lines laid out for the GPU this frame: each line strip of the map's lines (rings,
     /// ranges, order marks), its points and its colour.
     pub fn line_strips(&self) -> Vec<(Vec<Vec3>, LinearRgba)> {

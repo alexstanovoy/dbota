@@ -18,13 +18,56 @@ use bevy::{
 use crate::config::DisplayMode;
 
 pub fn plugin(app: &mut App) {
+    app.init_resource::<Displays>();
     #[cfg(not(target_arch = "wasm32"))]
-    app.add_systems(Update, (native::apply_mode, native::confine));
+    app.add_systems(
+        Update,
+        (native::watch_monitor, native::apply_mode, native::confine).chain(),
+    );
     #[cfg(target_arch = "wasm32")]
     {
         app.init_non_send::<web::State>()
             .add_plugins(crate::web_cursor::plugin);
         app.add_systems(Update, web::sync_fullscreen);
+    }
+}
+
+/// The sizes the monitor offers, which the Resolution setting picks from.
+#[derive(Resource, Clone, Debug, PartialEq, Eq)]
+pub struct Displays {
+    /// The monitor's own size: what windowed fullscreen has, and what no choice means.
+    pub native: (u32, u32),
+    /// Ascending, once each, none larger than the monitor, the monitor's own among them.
+    sizes: Vec<(u32, u32)>,
+}
+
+impl Displays {
+    /// The sizes of `modes` (one of each, whatever their refresh rates) up to `native`.
+    pub fn new(native: (u32, u32), modes: impl IntoIterator<Item = (u32, u32)>) -> Displays {
+        let mut sizes: Vec<(u32, u32)> = modes
+            .into_iter()
+            .chain([native])
+            .filter(|(w, h)| *w <= native.0 && *h <= native.1)
+            .collect();
+        sizes.sort_unstable();
+        sizes.dedup();
+        Displays { native, sizes }
+    }
+
+    pub fn sizes(&self) -> &[(u32, u32)] {
+        &self.sizes
+    }
+
+    /// The size the settings ask for.
+    pub fn chosen(&self, settings: &crate::config::Settings) -> (u32, u32) {
+        settings.resolution.unwrap_or(self.native)
+    }
+}
+
+impl Default for Displays {
+    /// What stands until a monitor reports its modes (and for a browser, which has none).
+    fn default() -> Displays {
+        Displays::new((1920, 1080), [(1280, 720), (1600, 900), (1920, 1080)])
     }
 }
 
@@ -45,7 +88,7 @@ pub fn keeps_cursor(
 ///
 /// A window does not know its monitor before it exists, so at creation
 /// (`on_start`) the primary one is asked for.
-pub fn window_mode(display: DisplayMode, on_start: bool) -> WindowMode {
+pub fn window_mode(display: DisplayMode, video: VideoModeSelection, on_start: bool) -> WindowMode {
     let monitor = if on_start {
         MonitorSelection::Primary
     } else {
@@ -57,7 +100,7 @@ pub fn window_mode(display: DisplayMode, on_start: bool) -> WindowMode {
         DisplayMode::Exclusive if exclusive_unavailable() => {
             WindowMode::BorderlessFullscreen(monitor)
         }
-        DisplayMode::Exclusive => WindowMode::Fullscreen(monitor, VideoModeSelection::Current),
+        DisplayMode::Exclusive => WindowMode::Fullscreen(monitor, video),
     }
 }
 
@@ -193,7 +236,10 @@ mod web {
 mod native {
     use bevy::{
         prelude::*,
-        window::{CursorGrabMode, CursorOptions, PrimaryWindow, WindowMode, WindowResized},
+        window::{
+            CursorGrabMode, CursorOptions, Monitor, PrimaryMonitor, PrimaryWindow, VideoMode,
+            VideoModeSelection, WindowMode, WindowResized,
+        },
     };
 
     use crate::config::Settings;
@@ -204,21 +250,81 @@ mod native {
     pub struct Sizes {
         /// The size the last window had.
         windowed: Option<Vec2>,
-        /// The size to ask for once the compositor has taken the window out
-        /// of fullscreen.
+        /// The size a window had (or was asked for), to give back once the compositor has taken
+        /// it out of fullscreen, unless a resolution is chosen by then.
         restore: Option<Vec2>,
+        /// The resolution a window was last given.
+        resolution: Option<Option<(u32, u32)>>,
     }
 
-    /// Switches the window to the settings' display mode while it runs.
+    /// A size to give the window: the monitor's physical pixels for a resolution of the
+    /// settings, the window's logical ones for the size it had.
+    #[derive(Clone, Copy)]
+    enum Restore {
+        Logical(Vec2),
+        Physical(UVec2),
+    }
+
+    impl Restore {
+        fn give(self, window: &mut Window) {
+            match self {
+                Restore::Logical(size) => window.resolution.set(size.x, size.y),
+                Restore::Physical(size) => {
+                    window.resolution.set_physical_resolution(size.x, size.y)
+                }
+            }
+        }
+    }
+
+    /// The primary monitor's size and modes, for the Resolution setting.
+    pub fn watch_monitor(
+        monitors: Query<(&Monitor, Has<PrimaryMonitor>)>,
+        mut displays: ResMut<super::Displays>,
+    ) {
+        let Some((monitor, _)) = monitors.iter().max_by_key(|(_, primary)| *primary) else {
+            return;
+        };
+        let native = (monitor.physical_width, monitor.physical_height);
+        let modes = monitor
+            .video_modes
+            .iter()
+            .map(|mode| (mode.physical_size.x, mode.physical_size.y));
+        let seen = super::Displays::new(native, modes);
+        if *displays != seen {
+            *displays = seen;
+        }
+    }
+
+    /// The monitor's mode of `size` with the most colours and the highest refresh rate.
+    fn video_mode(monitor: &Monitor, size: (u32, u32)) -> Option<VideoMode> {
+        monitor
+            .video_modes
+            .iter()
+            .filter(|mode| (mode.physical_size.x, mode.physical_size.y) == size)
+            .max_by_key(|mode| (mode.bit_depth, mode.refresh_rate_millihertz))
+            .copied()
+    }
+
+    /// Whether `window` already shows `mode` (the monitor it opened on stays the one it is on).
+    fn shows(window: WindowMode, mode: WindowMode) -> bool {
+        match (window, mode) {
+            (WindowMode::Fullscreen(_, was), WindowMode::Fullscreen(_, now)) => was == now,
+            _ => std::mem::discriminant(&window) == std::mem::discriminant(&mode),
+        }
+    }
+
+    /// Switches the window to the settings' display mode and resolution while it runs.
     ///
-    /// Back in a window it takes the size the last window had, else the
-    /// size asked for at the start: a window made fullscreen never had one
-    /// for the compositor to restore. The size is asked for when the
-    /// compositor has answered the change of mode, as it ignores one asked
-    /// for with it.
+    /// Back in a window it takes the resolution chosen, else the size the
+    /// last window had, else the size asked for at the start: a window made
+    /// fullscreen never had one for the compositor to restore. The size is
+    /// asked for when the compositor has answered the change of mode, as it
+    /// ignores one asked for with it. Windowed fullscreen keeps the desktop's
+    /// mode, so the resolution waits for the other two.
     pub fn apply_mode(
         settings: Res<Settings>,
         args: Res<crate::Args>,
+        monitors: Query<(&Monitor, Has<PrimaryMonitor>)>,
         mut window: Single<&mut Window, With<PrimaryWindow>>,
         mut resized: MessageReader<WindowResized>,
         mut sizes: Local<Sizes>,
@@ -226,24 +332,45 @@ mod native {
         let answered = resized.read().count() > 0;
         if answered
             && window.mode == WindowMode::Windowed
-            && let Some(size) = sizes.restore.take()
+            && let Some(previous) = sizes.restore.take()
         {
-            window.resolution.set(size.x, size.y);
+            match settings.resolution {
+                Some((w, h)) => Restore::Physical(UVec2::new(w, h)),
+                None => Restore::Logical(previous),
+            }
+            .give(&mut window);
+            sizes.resolution = Some(settings.resolution);
         }
-        let mode = super::window_mode(settings.display, false);
-        // The monitor the window opened on stays the one it is on.
-        if std::mem::discriminant(&window.mode) == std::mem::discriminant(&mode) {
+        let monitor = monitors.iter().max_by_key(|(_, primary)| *primary);
+        let video = match (settings.resolution, monitor) {
+            (Some(size), Some((monitor, _))) => video_mode(monitor, size)
+                .map_or(VideoModeSelection::Current, VideoModeSelection::Specific),
+            _ => VideoModeSelection::Current,
+        };
+        let mode = super::window_mode(settings.display, video, false);
+        if !shows(window.mode, mode) {
+            if window.mode == WindowMode::Windowed {
+                sizes.windowed = Some(window.resolution.size());
+            }
+            window.mode = mode;
+            sizes.restore = (mode == WindowMode::Windowed).then(|| {
+                sizes
+                    .windowed
+                    .unwrap_or(Vec2::new(args.window.0 as f32, args.window.1 as f32))
+            });
             return;
         }
-        if window.mode == WindowMode::Windowed {
-            sizes.windowed = Some(window.resolution.size());
+        // Already a window: a resolution newly chosen resizes it.
+        let wanted = Some(settings.resolution);
+        if window.mode == WindowMode::Windowed
+            && sizes.restore.is_none()
+            && sizes.resolution != wanted
+        {
+            sizes.resolution = wanted;
+            if let Some((w, h)) = settings.resolution {
+                Restore::Physical(UVec2::new(w, h)).give(&mut window);
+            }
         }
-        window.mode = mode;
-        sizes.restore = (mode == WindowMode::Windowed).then(|| {
-            sizes
-                .windowed
-                .unwrap_or(Vec2::new(args.window.0 as f32, args.window.1 as f32))
-        });
     }
 
     /// What the confinement did with the last request.
@@ -333,6 +460,25 @@ mod tests {
         assert_eq!(
             fullscreen_step(Borderless, true, false, false),
             Fullscreen::Keep
+        );
+    }
+
+    /// A monitor's modes are listed once each, none over its own size, its own always in.
+    #[test]
+    fn displays_list_each_size_once_up_to_the_monitors_own() {
+        let displays = Displays::new(
+            (2560, 1440),
+            [
+                (1920, 1080),
+                (1920, 1080),
+                (3840, 2160),
+                (1280, 720),
+                (800, 600),
+            ],
+        );
+        assert_eq!(
+            displays.sizes(),
+            [(800, 600), (1280, 720), (1920, 1080), (2560, 1440)]
         );
     }
 }

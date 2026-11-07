@@ -377,6 +377,9 @@ pub struct Settings {
     pub quality: Quality,
     /// How the window sits on the screen.
     pub display: DisplayMode,
+    /// The size of the window, or of the monitor's mode in exclusive fullscreen; none keeps the
+    /// monitor's own (a window without a choice opens at the size the command line gives it).
+    pub resolution: Option<(u32, u32)>,
     /// How strongly units and paths are set apart from the ground.
     pub clarity: Clarity,
     /// The game camera.
@@ -431,6 +434,7 @@ impl Default for Settings {
             scoreboard_items: true,
             quality: Quality::default(),
             display: DisplayMode::default(),
+            resolution: None,
             clarity: Clarity::Off,
             camera: CameraSettings::default(),
             name: String::new(),
@@ -522,6 +526,7 @@ impl Settings {
                     )
                 })?
             }
+            "resolution" => self.resolution = parse_resolution(value)?,
             "quality" => {
                 self.quality = Quality::preset(value).ok_or_else(|| {
                     format!("no quality called '{value}'; one of {}", PRESETS.join(", "))
@@ -668,6 +673,11 @@ impl Settings {
             ),
             ("display_mode".into(), self.display.name().into()),
             (
+                "resolution".into(),
+                self.resolution
+                    .map_or_else(|| "native".to_owned(), |(w, h)| format!("{w}x{h}")),
+            ),
+            (
                 "shadows".into(),
                 ["off", "low", "high"][usize::from(q.shadows.min(2))].into(),
             ),
@@ -747,6 +757,28 @@ fn parse_unit(value: &str, lo: f32, hi: f32) -> Result<f32, String> {
     Ok(v)
 }
 
+/// The smallest and the largest side of a resolution a file may name.
+const RESOLUTION_SIDES: std::ops::RangeInclusive<u32> = 320..=16_384;
+
+/// `native`, or a size as `1920x1080`.
+fn parse_resolution(value: &str) -> Result<Option<(u32, u32)>, String> {
+    if value.eq_ignore_ascii_case("native") {
+        return Ok(None);
+    }
+    let wrong = || format!("'{value}' is neither native nor a size like 1920x1080");
+    let (width, height) = value.split_once(['x', 'X']).ok_or_else(wrong)?;
+    let width: u32 = width.trim().parse().map_err(|_| wrong())?;
+    let height: u32 = height.trim().parse().map_err(|_| wrong())?;
+    if !RESOLUTION_SIDES.contains(&width) || !RESOLUTION_SIDES.contains(&height) {
+        return Err(format!(
+            "{width}x{height} has a side outside {}..{}",
+            RESOLUTION_SIDES.start(),
+            RESOLUTION_SIDES.end()
+        ));
+    }
+    Ok(Some((width, height)))
+}
+
 /// `true` or `false`, also as `on`/`off`, `yes`/`no` and `1`/`0`.
 fn parse_flag(value: &str) -> Option<bool> {
     match value.to_ascii_lowercase().as_str() {
@@ -800,6 +832,7 @@ mod tests {
             ("channels_require_stop", "false"),
             ("right_click_allies", "deny"),
             ("display_mode", "windowed"),
+            ("resolution", "1280x720"),
             ("quality", "high"),
             ("shadows", "high"),
             ("msaa", "4"),
@@ -888,6 +921,7 @@ mod tests {
                 auto: !default.quality.auto,
             },
             display: DisplayMode::Windowed,
+            resolution: Some((1280, 720)),
             clarity: Clarity::High,
             camera: CameraSettings {
                 pitch: default.camera.pitch + 1.0,
@@ -1019,6 +1053,28 @@ mod tests {
         }
         let (_, complaints) = Settings::parse("display_mode = tiny");
         assert!(complaints[0].contains("borderless"), "{complaints:?}");
+    }
+
+    /// A resolution is written as native or WxH and read back; nonsense is refused with what
+    /// is expected.
+    #[test]
+    fn a_resolution_survives_the_file_and_nonsense_is_refused() {
+        for resolution in [None, Some((1920, 1080)), Some((2560, 1440))] {
+            let settings = Settings {
+                resolution,
+                ..Settings::default()
+            };
+            let (read, complaints) = Settings::parse(&settings.render());
+            assert!(complaints.is_empty(), "{resolution:?}: {complaints:?}");
+            assert_eq!(read.resolution, resolution);
+        }
+        let (_, complaints) = Settings::parse("resolution = wide");
+        assert!(
+            complaints[0].contains("neither native nor a size"),
+            "{complaints:?}"
+        );
+        let (_, complaints) = Settings::parse("resolution = 10x99999");
+        assert!(complaints[0].contains("outside"), "{complaints:?}");
     }
 
     /// Replays are kept by default, within caps, and the caps survive the file.

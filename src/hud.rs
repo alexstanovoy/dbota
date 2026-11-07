@@ -1773,6 +1773,37 @@ pub(crate) fn subject_abilities<'a>(
         .unwrap_or_default()
 }
 
+/// The icons of the slots the hotkeys of the settings draw, for the unit the bottom panel is
+/// about: each slot's action and the art of the ability or item in it; none for an empty slot, or
+/// without a match.
+pub(crate) fn slot_icons(
+    core: &Core,
+    bag: &crate::bag::TacticalBag,
+    manifest: &Manifest,
+) -> Vec<(crate::keys::Action, String)> {
+    use crate::keys::Action;
+    let (_, unit, kit) = subject(core);
+    let abilities = subject_abilities(unit, kit);
+    let mut icons: Vec<(Action, String)> = abilities
+        .iter()
+        .enumerate()
+        .filter_map(|(slot, ability)| {
+            let action = Settings::ability_action(slot as u8, abilities.len());
+            Some((action, manifest.ability_icon(ability.id.0)?))
+        })
+        .collect();
+    let items = (0..INVENTORY_SLOTS)
+        .map(|slot| (Action::Item(slot), slot))
+        .chain([(Action::TownPortal, TOWN_PORTAL_SLOT)]);
+    for (action, slot) in items {
+        let item = subject_item(core, bag, unit, kit, slot);
+        if let Some(icon) = item.and_then(|item| crate::item_look::icon(&item, manifest)) {
+            icons.push((action, icon));
+        }
+    }
+    icons
+}
+
 /// The item in a slot of the subject the bottom panel is about: what its tooltip describes too.
 pub(crate) fn subject_item(
     core: &Core,

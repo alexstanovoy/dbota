@@ -2098,4 +2098,4 @@ sound sound.global.roshan_stinger sounds/music/valve_dota_001/music/roshan_end.v
 texture menu.search panorama/images/control_icons/icon_search_png.vtex_c menu/icon_search_png.png
 texture menu.check panorama/images/control_icons/check_png.vtex_c menu/check_png.png
 texture menu.dropdown panorama/images/control_icons/arrow_dropdown_png.vtex_c menu/arrow_dropdown_png.png
-texture menu.reset panorama/images/control_icons/restore_png.vtex_c menu/restore_png.png
+texture menu.reset panorama/images/control_icons/refresh_psd.vtex_c menu/refresh_psd.png

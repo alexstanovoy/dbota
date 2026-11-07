@@ -464,6 +464,7 @@ fn keyboard(
     held: Res<ButtonInput<KeyCode>>,
     mut clipboard: ResMut<Clipboard>,
     mut pasting: Local<Option<ClipboardRead>>,
+    settings_screen: Res<crate::settings::Screen>,
 ) {
     let Some(mut core) = core else {
         events.clear();
@@ -471,7 +472,8 @@ fn keyboard(
         *pasting = None;
         return;
     };
-    if matches!(core.page(), Page::Game | Page::Settings) {
+    // The settings window over a page has the keyboard.
+    if matches!(core.page(), Page::Game | Page::Settings) || settings_screen.open {
         events.clear();
         composing.clear();
         *pasting = None;

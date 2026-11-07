@@ -16,7 +16,7 @@ use super::menu::{act, local_menu, signed_up};
 
 /// The rectangle of the shown node named `name` (a button by its label), in interface pixels:
 /// the mockups' pixels, whatever the window's size.
-fn interface_rect(client: &mut Client, name: &str) -> Rect {
+pub(super) fn interface_rect(client: &mut Client, name: &str) -> Rect {
     let world = client.world_mut();
     let (node, at) = world
         .query::<(
@@ -44,7 +44,7 @@ fn interface_size(client: &mut Client) -> Vec2 {
     size / world.resource::<UiScale>().0
 }
 
-fn click(client: &mut Client, name: &str) {
+pub(super) fn click(client: &mut Client, name: &str) {
     let world = client.world_mut();
     let button = world
         .query_filtered::<(Entity, &Name, &InheritedVisibility), With<Button>>()
@@ -62,7 +62,7 @@ fn page(client: &Client) -> Page {
     client.world().non_send::<MenuCore>().page()
 }
 
-fn settings_open(client: &Client) -> bool {
+pub(super) fn settings_open(client: &Client) -> bool {
     client.world().resource::<crate::settings::Screen>().open
 }
 
