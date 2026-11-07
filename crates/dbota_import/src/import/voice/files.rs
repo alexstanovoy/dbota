@@ -3,6 +3,7 @@
 //! [`HeroFiles`] alone: the voice importer is given no package to read from, and each reader of
 //! heatel it uses takes a budget, the hero's being the only one it holds.
 
+use heatel::keyvalues::{self, Kv};
 use heatel::sound::{
     Lipsync, Sound, SoundEvent, SoundMixer, SoundStack, read_sound_events, read_sound_mixer,
     read_sound_stacks,
@@ -20,7 +21,7 @@ const MAX_HERO_BYTES: usize = 128 << 20;
 const MAX_RULE_FILE_BYTES: u64 = 1 << 20;
 /// Most bytes of one sound event script or hero script: the install's largest voice script
 /// (Snapfire's) is 120,888, its largest hero script (Invoker's) 60,111.
-pub(super) const MAX_SCRIPT_BYTES: u64 = 2 << 20;
+const MAX_SCRIPT_BYTES: u64 = 2 << 20;
 /// Most bytes of the sound stacks or the mixer: the install's are 11,477 and 16,257 (stacks)
 /// and 24,179 (mixer).
 const MAX_SHARED_BYTES: u64 = 4 << 20;
@@ -65,7 +66,7 @@ impl<'a, S: Source> HeroFiles<'a, S> {
 
     /// The bytes of `path`, refused before they are read when the package holds more than
     /// `max`, and charged before they are read.
-    pub(super) fn bytes(&mut self, path: &str, max: u64) -> Result<Vec<u8>> {
+    fn bytes(&mut self, path: &str, max: u64) -> Result<Vec<u8>> {
         let size = self
             .size(path)
             .ok_or_else(|| heatel::Error::NotFound(path.to_owned()))?;
@@ -89,6 +90,13 @@ impl<'a, S: Source> HeroFiles<'a, S> {
         let bytes = self.bytes(path, MAX_RULE_FILE_BYTES)?;
         let resource = Resource::parse(&bytes)?;
         self.within(path, |budget| read_response_rules(&resource, budget))
+    }
+
+    /// The KeyValues of the script at `path` (a hero's), parsed within the budget.
+    pub(super) fn script(&mut self, path: &str) -> Result<Kv> {
+        let bytes = self.bytes(path, MAX_SCRIPT_BYTES)?;
+        let text = keyvalues::text(&bytes)?;
+        self.within(path, |budget| keyvalues::parse_kv_in(text, budget))
     }
 
     /// The events of the sound event script at `path`.

@@ -23,7 +23,6 @@ use crate::voice::{EVENTS, RULES, lipsync_record, pack, sound_record};
 
 mod files;
 pub(super) use files::HeroFiles;
-use files::MAX_SCRIPT_BYTES;
 
 /// Most rule files one hero's rules read, its own and those included: the install's largest
 /// include list (an announcer's aggregator) names 134.
@@ -277,8 +276,7 @@ fn prune(files: &RuleFiles, class: &str) -> Pruned {
 /// The hero's class and its voice file, from its script (`scripts/npc/heroes/`).
 fn hero_script(files: &mut HeroFiles<'_, impl Source>, hero: &str) -> Result<(String, String)> {
     let class = format!("npc_dota_hero_{hero}");
-    let bytes = files.bytes(&format!("scripts/npc/heroes/{class}.txt"), MAX_SCRIPT_BYTES)?;
-    let tree = heatel::keyvalues::parse_kv(heatel::keyvalues::text(&bytes)?)?;
+    let tree = files.script(&format!("scripts/npc/heroes/{class}.txt"))?;
     let voice = tree
         .get("DOTAHeroes")
         .and_then(|heroes| heroes.get(&class))
@@ -1101,29 +1099,111 @@ mod tests {
         assert!(error.to_string().contains("more than it may"), "{error}");
     }
 
-    /// The voice importer reads through [`HeroFiles`] alone, and it holds one budget, the
-    /// hero's: outside its tests the importer names no package, no reader of heatel's and no
-    /// budget, and `HeroFiles` makes one.
+    /// What the importer's own code (its tests left out) names of heatel besides types: every
+    /// function it could read with, a type's function among them (`Sound::parse`,
+    /// `Budget::default`). Reading is [`HeroFiles`]'s, whose readers all take the hero's budget.
+    fn outside_hero_files(code: &str) -> Vec<String> {
+        let mut found = Vec::new();
+        let mut types = Vec::new();
+        let mut rest = code;
+        while let Some(at) = rest.find("use heatel::") {
+            let tail = &rest[at + "use heatel::".len()..];
+            let end = tail.find(';').unwrap_or(tail.len());
+            let items =
+                tail[..end].split(|c: char| matches!(c, ',' | '{' | '}') || c.is_whitespace());
+            for item in items {
+                let name = item.rsplit("::").next().unwrap_or_default();
+                if name.starts_with(|c: char| c.is_ascii_uppercase()) {
+                    types.push(name.to_owned());
+                } else if !name.is_empty() {
+                    found.push(format!("use heatel::{item}"));
+                }
+            }
+            rest = &tail[end..];
+        }
+        let word = |c: char| c.is_alphanumeric() || c == '_';
+        for (at, _) in code.match_indices("heatel::") {
+            if code[..at].ends_with("use ") {
+                continue;
+            }
+            let path: String = code[at..]
+                .chars()
+                .take_while(|&c| word(c) || c == ':')
+                .collect();
+            let last = path
+                .trim_end_matches(':')
+                .rsplit("::")
+                .next()
+                .unwrap_or_default();
+            if !last.starts_with(|c: char| c.is_ascii_uppercase()) {
+                found.push(path);
+            }
+        }
+        for name in &types {
+            for (at, _) in code.match_indices(&format!("{name}::")) {
+                let joined = code[..at].chars().next_back().is_some_and(word);
+                let call = code[at + name.len() + 2..]
+                    .chars()
+                    .next()
+                    .is_some_and(|c| c.is_ascii_lowercase());
+                if !joined && call {
+                    found.push(format!("{name}::"));
+                }
+            }
+        }
+        found
+    }
+
+    /// The importer's own code, its tests left out.
+    fn importer_code() -> &'static str {
+        let text = include_str!("voice.rs");
+        text.split("#[cfg(test)]").next().unwrap_or(text)
+    }
+
+    /// The voice importer reads through [`HeroFiles`] alone: it names nothing of heatel but
+    /// types, so it can call no reader, and make no budget, of its own.
     #[test]
     fn the_voice_importer_reads_within_the_heros_budget_alone() {
-        let code = |text: &'static str| text.split("#[cfg(test)]").next().unwrap_or(text);
-        let importer = code(include_str!("voice.rs"));
-        let files = code(include_str!("voice/files.rs"));
-        let budget = ["Budget", "::"].concat();
-        let readers = [
-            budget.as_str(),
-            "Vpk",
-            "read_from",
-            "Resource::",
-            "Sound::",
-            "Lipsync::",
-            "read_sound_",
-            "read_response_rules",
-            "kv3::",
+        assert_eq!(outside_hero_files(importer_code()), Vec::<String>::new());
+    }
+
+    /// The guard finds a reader the importer would call itself, however it names it.
+    #[test]
+    fn the_guard_finds_a_reader_called_outside_hero_files() {
+        let injected = [
+            "fn x() { let _ = heatel::keyvalues::parse_kv(\"\"); }",
+            "use heatel::keyvalues::parse_kv;",
+            "use heatel::sound::Sound;\nfn x(b: &[u8]) { let _ = Sound::parse(b, todo!()); }",
+            "fn x() { let _ = heatel::Budget::default(); }",
         ];
-        for name in readers {
-            assert!(!importer.contains(name), "the importer names {name}");
+        for code in injected {
+            let code = format!("{}\n{code}\n", importer_code());
+            assert!(!outside_hero_files(&code).is_empty(), "missed: {code}");
         }
-        assert_eq!(files.matches(budget.as_str()).count(), 1, "one budget");
+    }
+
+    /// A hero script whose KeyValues would take more than the hero's budget (thousands of
+    /// nested blocks in 2 MiB) is refused by it as it is parsed.
+    #[test]
+    fn a_hero_script_past_the_heros_budget_is_refused_as_it_is_parsed() {
+        let mut script = String::from(
+            "\"DOTAHeroes\" { \"npc_dota_hero_pudge\" { \"VoiceFile\" \
+             \"soundevents/voscripts/game_sounds_vo_pudge.vsndevts\" } }\n",
+        );
+        let branch = format!("{}{}", "\"k\"{".repeat(60), "}".repeat(60));
+        let mut n = 0;
+        while script.len() + branch.len() + 16 < (2 << 20) {
+            script.push_str(&format!("\"b{n}\"{{{branch}}}\n"));
+            n += 1;
+        }
+        let src = package(&[(
+            "scripts/npc/heroes/npc_dota_hero_pudge",
+            "txt",
+            script.into_bytes(),
+        )]);
+        let pak = heatel::Vpk::open(&src, "pak01_dir.vpk").expect("a package");
+        let mut hero = HeroFiles::new(&src, &pak);
+        let error = hero_script(&mut hero, "pudge").unwrap_err();
+        assert!(error.to_string().contains("more than it may"), "{error}");
     }
 }
