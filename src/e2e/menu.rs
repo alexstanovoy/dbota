@@ -876,7 +876,7 @@ fn a_capped_ranked_search_draws_the_configured_unranked_alternative() {
         !client.world().non_send::<MenuCore>().view().searches.is_empty()
     });
     client.frames(3);
-    assert!(client.shown_texts().iter().any(|text| text == "Rating window at its maximum. Try Unranked for a wider search."), "the capped ranked search draws its unranked alternative: {:?}", client.shown_texts());
+    assert!(client.shown_texts().iter().any(|text| text == "Rating window at its maximum. You can also search in Unranked."), "the capped ranked search offers the alternative without promising a wider window: {:?}", client.shown_texts());
     let snapshot = matchmaking_snapshot(&service, "capped_player");
     assert!(snapshot.queued.iter().all(|entry| entry.ruleset.0 == "solo_mid"), "the hint never silently changes the player's mode");
 }
