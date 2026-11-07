@@ -92,6 +92,16 @@ pub struct Kit<'w, 's, 'a> {
 /// A button is this many times as wide as it is tall: wide enough for the longest label of its
 /// height (CREATE FOR THE LAN, WAITING…), so every button of a height is as wide as the next.
 const BUTTON_WIDTH_PER_HEIGHT: f32 = 5.0;
+
+/// One width for the buttons of a height, pressable or not, whatever they say, so none of them
+/// wraps or differs from its neighbour; a lone glyph (the close cross) is square.
+fn button_width(label: &str, height: f32) -> f32 {
+    if label.chars().count() <= 2 {
+        height
+    } else {
+        height * BUTTON_WIDTH_PER_HEIGHT
+    }
+}
 /// A popup's OK and Cancel, one width.
 const POPUP_ANSWER_WIDTH: f32 = 160.0;
 
@@ -113,7 +123,8 @@ impl Kit<'_, '_, '_> {
             .id()
     }
 
-    /// Running text of a size.
+    /// Running text of a size, for today's pages until their screens are redesigned; new screens
+    /// use [`Kit::typed`] with a role of `theme`.
     pub fn text(
         &mut self,
         parent: Entity,
@@ -128,7 +139,8 @@ impl Kit<'_, '_, '_> {
         self.typed(parent, s, role, color)
     }
 
-    /// Bold text of a size.
+    /// Bold text of a size, for today's pages until their screens are redesigned (see
+    /// [`Kit::text`]).
     pub fn bold(
         &mut self,
         parent: Entity,
@@ -187,14 +199,7 @@ impl Kit<'_, '_, '_> {
                 Button,
                 shade,
                 Node {
-                    // One width for the buttons of a height, whatever they say, so none of them
-                    // wraps or differs from its neighbour; a lone glyph (the close cross) is
-                    // square.
-                    width: px(if label.chars().count() <= 2 {
-                        height
-                    } else {
-                        height * BUTTON_WIDTH_PER_HEIGHT
-                    }),
+                    width: px(button_width(label, height)),
                     height: px(height),
                     padding: UiRect::axes(px(height * 0.2), px(0)),
                     justify_content: JustifyContent::Center,
@@ -226,7 +231,7 @@ impl Kit<'_, '_, '_> {
             .spawn((
                 Disabled,
                 Node {
-                    width: px(height * BUTTON_WIDTH_PER_HEIGHT),
+                    width: px(button_width(label, height)),
                     height: px(height),
                     justify_content: JustifyContent::Center,
                     align_items: AlignItems::Center,
@@ -264,7 +269,9 @@ impl Kit<'_, '_, '_> {
                 MenuButton(act),
                 Button,
                 Node {
+                    min_width: px(theme::HIT),
                     min_height: px(theme::HIT),
+                    justify_content: JustifyContent::Center,
                     padding: UiRect::axes(px(8), px(0)),
                     align_items: AlignItems::Center,
                     flex_shrink: 0.0,
@@ -288,7 +295,8 @@ impl Kit<'_, '_, '_> {
     }
 
     /// A [`theme::HIT`] square button drawn as one of Dota's control icons (`art`), `icon` across,
-    /// secondary ink at rest and white under the cursor; `label` in words without the art.
+    /// secondary ink at rest and white under the cursor; without the art, `label` in words on a
+    /// button at least as large.
     pub fn icon_button(
         &mut self,
         parent: Entity,

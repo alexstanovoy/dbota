@@ -13,7 +13,7 @@ use super::view::{
     FieldView, LobbyView, MemberRow, MenuView, PageView, ReplayRow, ReplayShelf, ResultView,
     RulesetRow, SlotRow,
 };
-use crate::theme::{self, Face, Type};
+use crate::theme;
 use bota_radovid::proto::{AccountGameLimit, LOBBY_NO_SLOT};
 
 /// The pages' column: the forms and the replay list, one width.
@@ -196,20 +196,8 @@ fn player_card(kit: &mut Kit, root: Entity, view: &MenuView) {
         .next()
         .map(|c| c.to_uppercase().collect())
         .unwrap_or_default();
-    let large = Type {
-        face: Face::Bold,
-        size: 20.0,
-        tracking: 0.0,
-        figures: false,
-    };
-    kit.typed(avatar, initial, large, theme::INK_1);
-    let name = Type {
-        face: Face::Semibold,
-        size: 17.0,
-        tracking: 0.0,
-        figures: false,
-    };
-    kit.typed(card, view.player.clone(), name, theme::INK_1);
+    kit.typed(avatar, initial, theme::INITIAL, theme::INK_1);
+    kit.typed(card, view.player.clone(), theme::PLAYER_NAME, theme::INK_1);
 }
 
 /// The corner where Dota's play button stands: over a game, LEAVE GAME and DISCONNECT above
@@ -329,26 +317,17 @@ fn way_in_page(
             ..default()
         },
     );
-    let wordmark = Type {
-        size: 56.0,
-        tracking: 12.0,
-        ..theme::WORDMARK
-    };
-    kit.typed(mark, "DBOTA", wordmark, theme::INK_1);
+    kit.typed(mark, "DBOTA", theme::WAY_IN_WORDMARK, theme::INK_1);
     let card = form_page(kit, column, kind, fields, busy, plain, None, None, None);
     kit.commands
         .entity(card)
         .entry::<Node>()
         .and_modify(|mut node| node.width = px(WAY_IN_WIDTH));
-    let link = Type {
-        face: Face::Semibold,
-        ..theme::BODY
-    };
     kit.quiet(
         column,
         "Play without an account",
         Act::Go(WITHOUT_ACCOUNT),
-        link,
+        theme::LINK_TEXT,
         theme::LINK,
     );
 }
@@ -404,12 +383,7 @@ fn form_page(
         | FormKind::Replay
         | FormKind::None => ("", ""),
     };
-    let title_role = Type {
-        size: 24.0,
-        tracking: 2.0,
-        ..theme::TITLE
-    };
-    kit.typed(card, title, title_role, theme::INK_1);
+    kit.typed(card, title, theme::CARD_TITLE, theme::INK_1);
     if !hint.is_empty() {
         kit.text(card, hint, 14.0, theme::INK_4);
     }

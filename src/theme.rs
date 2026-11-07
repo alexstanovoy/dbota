@@ -191,6 +191,24 @@ pub const NUMBER: Type = Type {
     tracking: 0.0,
     figures: true,
 };
+/// A running clock (the search's time).
+pub const CLOCK: Type = Type {
+    size: 22.0,
+    ..NUMBER
+};
+/// The top bar's tabs while today's pages are more than its two tabs of the design: smaller.
+pub const INTERIM_TAB: Type = role(Face::Semibold, 15.0, 1.5);
+/// The pill's service name, and its RECONNECTING.
+pub const PILL_NAME: Type = role(Face::Regular, 13.0, 0.0);
+pub const PILL_ALERT: Type = role(Face::Bold, 13.0, 0.0);
+/// The player's card: the initial in its square, and the name.
+pub const INITIAL: Type = role(Face::Bold, 20.0, 0.0);
+pub const PLAYER_NAME: Type = role(Face::Semibold, 17.0, 0.0);
+/// DBOTA over the way in's card, and the card's title.
+pub const WAY_IN_WORDMARK: Type = role(Face::Display, 56.0, 12.0);
+pub const CARD_TITLE: Type = role(Face::Display, 24.0, 2.0);
+/// A link in running text.
+pub const LINK_TEXT: Type = role(Face::Semibold, 14.0, 0.0);
 
 /// A text bundle of `role` in `color`.
 pub fn text(s: impl Into<String>, fonts: &Fonts, role: Type, color: Color) -> impl Bundle {

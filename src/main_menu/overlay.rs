@@ -9,7 +9,7 @@ use super::kit::{Kit, Tone};
 use super::view::{
     ConfirmView, FinishedRow, GameRow, MenuView, OfferBox, PasswordView, SearchRow, WaitRow,
 };
-use crate::theme::{self, Type};
+use crate::theme;
 use crate::ui;
 
 /// The overlay layer.
@@ -253,11 +253,7 @@ fn search_row(kit: &mut Kit, parent: Entity, search: &SearchRow, which: Option<u
     );
     kit.bold(left, title, 17.0, theme::INK_1);
     kit.text(left, search.ruleset.clone(), 13.0, theme::INK_4);
-    let clock = Type {
-        size: 22.0,
-        ..theme::NUMBER
-    };
-    kit.typed(head, search.waited.clone(), clock, theme::INK_1);
+    kit.typed(head, search.waited.clone(), theme::CLOCK, theme::INK_1);
     kit.button(head, "×", Act::Cancel(search.entry), Tone::Danger, 30.0);
     if search.position > 0 {
         kit.text(

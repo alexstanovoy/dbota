@@ -10,7 +10,7 @@ use super::core::{Act, Page};
 use super::kit::{Kit, MenuButton, Tone, Wash};
 use super::screens::tab_of;
 use super::view::{Connection, MenuView};
-use crate::theme::{self, Face, Type};
+use crate::theme;
 
 /// The tabs of the pages there are for now, until their screens are redesigned: the service's
 /// once signed in, and what is played without it always.
@@ -35,14 +35,6 @@ const TABS: [(Page, &str); 5] = [
     (Page::Profile, "PROFILE"),
     (Page::Replays, "REPLAYS"),
 ];
-
-/// Today's pages are more than the bar's two tabs of the design: their tabs are smaller.
-const INTERIM_TAB: Type = Type {
-    face: Face::Semibold,
-    size: 15.0,
-    tracking: 1.5,
-    figures: false,
-};
 
 /// The quit button's icon, across.
 const QUIT_ICON: f32 = 24.0;
@@ -271,7 +263,7 @@ fn tab(kit: &mut Kit, row: Entity, label: &str, on: bool) -> Entity {
         ))
         .id();
     let rest = if on { theme::INK_1 } else { theme::INK_4 };
-    let words = kit.typed(tab, label, INTERIM_TAB, rest);
+    let words = kit.typed(tab, label, theme::INTERIM_TAB, rest);
     kit.commands.entity(words).insert(TextLayout {
         linebreak: LineBreak::NoWrap,
         ..default()
@@ -365,12 +357,7 @@ fn pill(kit: &mut Kit, bar: Entity, connection: &Connection) {
                 Pickable::IGNORE,
                 ChildOf(pill),
             ));
-            let words = Type {
-                face: Face::Regular,
-                tracking: 0.0,
-                ..theme::PILL
-            };
-            kit.typed(pill, shortened(service), words, theme::INK_3);
+            kit.typed(pill, shortened(service), theme::PILL_NAME, theme::INK_3);
         }
         Connection::Offline => {
             kit.typed(pill, "OFFLINE", theme::PILL, theme::INK_4);
@@ -398,12 +385,7 @@ fn pill(kit: &mut Kit, bar: Entity, connection: &Connection) {
                 Pickable::IGNORE,
                 ChildOf(pill),
             ));
-            let words = Type {
-                face: Face::Bold,
-                tracking: 0.0,
-                ..theme::PILL
-            };
-            kit.typed(pill, "RECONNECTING", words, theme::INK_1);
+            kit.typed(pill, "RECONNECTING", theme::PILL_ALERT, theme::INK_1);
         }
     }
 }
