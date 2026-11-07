@@ -23,9 +23,73 @@ use crate::session::Session;
 const PATIENCE: Duration = Duration::from_secs(240);
 static NEXT: AtomicU32 = AtomicU32::new(0);
 
+/// The frames a wait is given for each second of its patience. The game moves one tick per frame
+/// (a lockstep match goes as fast as the client takes it in), so what a test waits for takes a
+/// number of frames, and a machine that gives a frame 5 ms or 50 ms makes the same wait 10 times
+/// longer. 100 is a heuristic: a frame of 10 ms, more than the 5 to 20 ms a loaded machine has
+/// given them; if a wait needs more frames than that, its patience in seconds is what to raise.
+const REFERENCE_FRAMES_PER_SECOND: u32 = 100;
+/// A wait is stuck once it has run this many times its patience on the clock, whatever its
+/// frames: the longest a failing wait holds a run up, however slowly the frames go.
+const HARD_BOUND_FACTOR: u32 = 3;
+/// The shortest hard bound, for the waits with a patience of seconds.
+const HARD_BOUND_FLOOR: Duration = Duration::from_secs(180);
+
+/// How long a test waits for what it expects. A wait fails only when both its frames
+/// ([`REFERENCE_FRAMES_PER_SECOND`] for each second of patience, one per [`Patience::pass`]) and
+/// the patience on the clock are spent: a fast machine does not fail a wait for a timer in game
+/// time (a refusal that shows for 2.5 s) early, a slow one is not failed for its load before the
+/// frames are spent. The hard bound ends a wait that has run [`HARD_BOUND_FACTOR`] times its
+/// patience (at least [`HARD_BOUND_FLOOR`]) on the clock, so that a wait for something that never
+/// comes holds the gate up for that long and no longer. The one place that says when a wait for
+/// frames has gone on too long. (A loop that only pumps the connection does not pass once per
+/// tick: it spins until the next one arrives, so those keep their limits in seconds.)
+pub struct Patience {
+    patience: Duration,
+    hard_bound: Duration,
+    started: Instant,
+    passes_left: u32,
+}
+
+impl Patience {
+    pub fn of(patience: Duration) -> Patience {
+        let seconds = u32::try_from(patience.as_secs()).expect("a patience of seconds, not years");
+        assert!(seconds > 0, "a patience of at least a second");
+        Patience {
+            patience,
+            hard_bound: (patience * HARD_BOUND_FACTOR).max(HARD_BOUND_FLOOR),
+            started: Instant::now(),
+            passes_left: seconds * REFERENCE_FRAMES_PER_SECOND,
+        }
+    }
+
+    /// One more pass of a waiting loop (a frame): fails the test naming `what` once the frames
+    /// and the patience are both spent, or the hard bound is.
+    pub fn pass(&mut self, what: &str) {
+        self.pass_after(what, self.started.elapsed());
+    }
+
+    /// [`Patience::pass`] with the time the wait has run on the clock given.
+    fn pass_after(&mut self, what: &str, elapsed: Duration) {
+        assert!(
+            elapsed < self.hard_bound,
+            "{what}: stuck, not within {:?} on the clock (patience {:?})",
+            self.hard_bound,
+            self.patience
+        );
+        if self.passes_left == 0 && elapsed >= self.patience {
+            panic!(
+                "{what}: not within {:?} and {REFERENCE_FRAMES_PER_SECOND} frames a second",
+                self.patience
+            );
+        }
+        self.passes_left = self.passes_left.saturating_sub(1);
+    }
+}
+
 /// A game server of `seats` seats on Map 2, in lockstep (the match moves as fast as the client
 /// takes it in), with cheats for the scenes the tests set up; ended when dropped, when the next
-/// test's may start (see [`TURN`]).
+/// test's may start (see [`Turn`]).
 pub struct Server {
     child: Child,
     // Read to the end by nobody, but open: a server whose pipe is closed fails on its next line.
@@ -284,9 +348,9 @@ impl Client {
         what: &str,
         mut done: impl FnMut(&mut Client) -> bool,
     ) {
-        let deadline = Instant::now() + patience;
+        let mut patience = Patience::of(patience);
         while !done(self) {
-            assert!(Instant::now() < deadline, "{what}: not within {patience:?}");
+            patience.pass(what);
             self.app.update();
             std::thread::sleep(Duration::from_millis(1));
         }
@@ -719,4 +783,52 @@ pub fn descends_from(world: &World, mut entity: Entity, root: Entity) -> bool {
         entity = parent.parent();
     }
     false
+}
+
+#[cfg(test)]
+mod patience_tests {
+    use super::*;
+
+    const SECOND: Duration = Duration::from_secs(1);
+
+    /// A fast machine runs the frames of a patience in a fraction of it: the wait goes on until
+    /// the patience on the clock is spent too (a timer in game time needs its seconds).
+    #[test]
+    fn a_wait_whose_frames_are_spent_early_goes_on_until_its_seconds_are() {
+        let mut patience = Patience::of(10 * SECOND);
+        for _ in 0..1500 {
+            patience.pass_after("the refusal gone", SECOND);
+        }
+    }
+
+    /// A slow machine has spent the patience on the clock with frames to spare: the wait goes on
+    /// until the frames are spent.
+    #[test]
+    fn a_wait_whose_seconds_are_spent_early_goes_on_until_its_frames_are() {
+        let mut patience = Patience::of(10 * SECOND);
+        for _ in 0..1000 {
+            patience.pass_after("the lotuses grown", 11 * SECOND);
+        }
+    }
+
+    #[test]
+    #[should_panic(expected = "the shrine active: not within 10s and 100 frames a second")]
+    fn a_wait_fails_when_its_frames_and_its_seconds_are_both_spent() {
+        let mut patience = Patience::of(10 * SECOND);
+        for _ in 0..=1000 {
+            patience.pass_after("the shrine active", 11 * SECOND);
+        }
+    }
+
+    #[test]
+    #[should_panic(expected = "never: stuck, not within 720s on the clock (patience 240s)")]
+    fn a_wait_is_stuck_at_three_times_its_patience_on_the_clock() {
+        Patience::of(240 * SECOND).pass_after("never", 720 * SECOND);
+    }
+
+    #[test]
+    #[should_panic(expected = "never: stuck, not within 180s on the clock (patience 10s)")]
+    fn a_short_wait_is_stuck_at_the_floor_of_the_hard_bound() {
+        Patience::of(10 * SECOND).pass_after("never", 180 * SECOND);
+    }
 }
