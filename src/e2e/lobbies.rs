@@ -534,3 +534,59 @@ fn saved_settings_close_on_the_real_done_reply_after_the_state_notification() {
             .any(|(name, visible)| visible.get() && name.as_str() == "lobby settings popup")
     );
 }
+
+fn control_reply(client: &mut bota_radovid::Client, sequence: u32) -> bota_radovid::proto::Reply {
+    let until = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    while std::time::Instant::now() < until {
+        if let Some(bota_radovid::Incoming::Reply { seq, result }) = client.wait(std::time::Duration::from_millis(20)).expect("control link")
+            && seq == sequence
+        {
+            return result.expect("request accepted");
+        }
+    }
+    panic!("the control request was not answered");
+}
+
+#[test]
+fn another_owner_session_cannot_leave_a_stale_password_in_an_open_draft() {
+    use bota_radovid::proto::{Audience, ClientMsg, Reply, RulesetId, Secret};
+    let service = crate::main_menu::tests::service();
+    let mut alice = signed_up(&service, "alice");
+    create(&mut alice, "Concurrent settings", "alpha secret");
+    click(&mut alice, "edit  ✎");
+    let mut other = crate::main_menu::tests::keep_menu_session_alive(alice.world().non_send::<MenuCore>(), &service);
+    let sequence = other.request(ClientMsg::LobbyList).expect("list request");
+    let Reply::Lobbies { list } = control_reply(&mut other, sequence) else { panic!("lobby list") };
+    let lobby = list.iter().find(|row| row.name == "Concurrent settings").expect("lobby").id;
+    let sequence = other.request(ClientMsg::LobbyConfigure {
+        lobby, ruleset: RulesetId("full".into()), audience: Audience::Everyone,
+        password: Some(Secret("beta secret".into())),
+    }).expect("configure request");
+    assert!(matches!(control_reply(&mut other, sequence), Reply::Done));
+    // The slot update on the same control link is a barrier after the password notification.
+    let sequence = other.request(ClientMsg::LobbySlot { lobby, account: None, slot: 1 }).expect("slot request");
+    assert!(matches!(control_reply(&mut other, sequence), Reply::Done));
+    alice.until("the later state reached the editor", |c| room(c).teams.iter().flat_map(|t| &t.slots).any(|s| s.slot == 1 && s.who.as_ref().is_some_and(|p| p.me)));
+    let editor = alice.world().non_send::<MenuCore>().view().lobby_ui.editor.expect("editor");
+    assert!(editor.password_unknown, "a second session may have changed the password");
+    assert!(editor.fields[1].shown.is_empty(), "the stale password cannot be silently sent back");
+}
+
+#[test]
+fn a_confirmation_owns_enter_and_escape_above_a_lobby_draft() {
+    let service = crate::main_menu::tests::service();
+    let mut alice = signed_up(&service, "alice");
+    create(&mut alice, "Modal ownership", "");
+    click(&mut alice, "edit  ✎");
+    select_mode(&mut alice, "1x1 Mid Only");
+    act(&mut alice, Act::Focus(1));
+    act(&mut alice, Act::Quit);
+    assert!(alice.world().non_send::<MenuCore>().view().confirm.is_some());
+    act(&mut alice, Act::Submit);
+    let view = alice.world().non_send::<MenuCore>().view();
+    assert!(!view.lobby_ui.editor.expect("the hidden draft remains").saving, "Enter cannot save a draft beneath confirmation");
+    act(&mut alice, Act::Back);
+    let view = alice.world().non_send::<MenuCore>().view();
+    assert!(view.confirm.is_none(), "Escape closes the top confirmation");
+    assert!(view.lobby_ui.editor.is_some(), "Escape preserves the lower editor");
+}

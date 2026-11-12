@@ -491,7 +491,7 @@ pub(super) enum Asked {
     Rejoin(MatchId),
     Watch(MatchId),
     Lobby,
-    LobbyUi,
+    LobbyUi(super::lobby_controls::SaveRequest),
     /// A join of a listed lobby.
     Join(LobbyId),
     /// The start of a Demo Hero.
@@ -574,7 +574,7 @@ pub struct MenuCore {
     pub(super) moving: Option<AccountId>,
     /// The password the owner set, sent again with each change of the settings (the service never
     /// tells it back).
-    lobby_secret: Option<String>,
+    lobby_secret: Option<(LobbyId, String)>,
     /// The lobby sat in, and when it was last told.
     pub(super) lobby: Option<(LobbyState, Instant)>,
     pub(super) games: Vec<Game>,
@@ -1378,6 +1378,7 @@ impl MenuCore {
                             self.connect();
                         }
                     }
+                    (Ok(reply), Some(Asked::LobbyUi(request))) => self.lobby_save_replied(reply, request),
                     (Ok(Reply::Welcome { .. }), _) => self.welcomed(),
                     (Ok(reply), asked) => self.replied(reply, asked.unwrap_or(Asked::Other)),
                     (Err(error), asked) => {
@@ -1464,9 +1465,6 @@ impl MenuCore {
                     self.join_prompt = None;
                 }
                 self.sit(state);
-                if matches!(asked, Asked::LobbyUi) {
-                    self.lobby_editor_saved();
-                }
             }
             Reply::Queued { .. } | Reply::QueuesJoined { .. } => self.status = None,
             _ => {}
@@ -1474,6 +1472,10 @@ impl MenuCore {
     }
 
     fn refused_request(&mut self, error: &Error, asked: Asked) {
+        if let Asked::LobbyUi(request) = asked {
+            self.lobby_save_refused(request, error);
+            return;
+        }
         if let (Asked::Accept(proposal), Error::UnknownProposal) = (asked, error) {
             self.accepted.remove(proposal);
         }
@@ -1531,13 +1533,6 @@ impl MenuCore {
     }
 
     fn refused(&mut self, error: &Error, asked: Asked) {
-        if matches!(asked, Asked::LobbyUi) {
-            if let Some(editor) = &mut self.lobby_ui.editor {
-                editor.saving = None;
-                editor.error = Some(error_text(error));
-            }
-            return;
-        }
         // A join refused for whatever reason may be a list out of date (the lobby full, locked,
         // started or gone since): the list is asked again, as the search typed asks it.
         if matches!(asked, Asked::Join(_)) && self.page == Page::Lobbies {
@@ -1750,6 +1745,7 @@ impl MenuCore {
     }
 
     fn sit(&mut self, state: LobbyState) {
+        self.invalidate_lobby_password(state.locked);
         self.lobby = Some((state, Instant::now()));
         if self.page == Page::Lobbies {
             self.go_form(Page::Lobby);
@@ -1759,6 +1755,8 @@ impl MenuCore {
     fn unseat(&mut self, lobby: LobbyId, why: &str) {
         if self.lobby.as_ref().is_some_and(|(s, _)| s.id == lobby) {
             self.lobby = None;
+            self.lobby_secret = None;
+            self.lobby_ui.editor = None;
             if self.page == Page::Lobby {
                 self.go(Page::Lobbies);
             }
@@ -1925,6 +1923,19 @@ impl MenuCore {
 
     /// Acts on what the player did.
     pub fn act(&mut self, act: Act) {
+        if self.lobby_editor_obscured() {
+            match act {
+                Act::Submit | Act::Focus(_) | Act::Type(_) | Act::Erase
+                | Act::NextField | Act::PreviousField | Act::LobbyUi(_) => return,
+                Act::Back => {
+                    if self.confirm.take().is_none() {
+                        self.join_prompt = None;
+                    }
+                    return;
+                }
+                _ => {}
+            }
+        }
         // A match offer takes priority over this editor. Otherwise its modal owns menu input,
         // including keyboard navigation, until cancelled or its save completes.
         if self.avatar.view.open && self.view().offer.is_none() {

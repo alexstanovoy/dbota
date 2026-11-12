@@ -2,11 +2,79 @@
 use super::*;
 use crate::main_menu::{
     form::Item,
-    lobby_controls::{Action, Choice, ControlsView, Editor, EditorView, Saving, Server},
+    lobby_controls::{Action, Choice, ControlsView, Editor, EditorView, SaveRequest, Saving, Server},
     view::{Connection, ModeRow},
 };
 
 impl MenuCore {
+    fn remembered_lobby_password(&self, lobby: LobbyId) -> Option<&str> {
+        self.lobby_secret.as_ref().filter(|(id, _)| *id == lobby).map(|(_, secret)| secret.as_str())
+    }
+
+    pub(super) fn invalidate_lobby_password(&mut self, locked: bool) {
+        self.lobby_secret = None;
+        if let Some(editor) = &mut self.lobby_ui.editor
+            && !editor.creating && editor.saving.is_none() && !editor.password_changed
+        {
+            editor.form.take_secret(1);
+            editor.password_known = !locked;
+        }
+        self.lobby_editor_controls();
+    }
+
+    pub(super) fn lobby_editor_obscured(&self) -> bool {
+        self.lobby_ui.editor.is_some()
+            && (self.confirm.is_some() || self.join_prompt.is_some() || self.view().offer.is_some())
+    }
+
+    fn mark_lobby_saving(&mut self, step: Saving) -> Option<SaveRequest> {
+        let editor = self.lobby_ui.editor.as_mut()?;
+        editor.saving = Some(step);
+        Some(SaveRequest { editor: editor.id, lobby: editor.lobby, step })
+    }
+
+    fn ask_lobby_save(&mut self, message: ClientMsg, step: Saving) {
+        if let Some(request) = self.mark_lobby_saving(step) {
+            self.ask(message, Asked::LobbyUi(request));
+        }
+    }
+
+    pub(super) fn lobby_save_current(&self, request: SaveRequest) -> bool {
+        self.lobby_ui.editor.as_ref().is_some_and(|editor| {
+            editor.id == request.editor && editor.saving == Some(request.step)
+                && editor.lobby == request.lobby
+                && request.lobby.is_none_or(|id| self.lobby.as_ref().is_some_and(|(state, _)| state.id == id && Some(state.owner) == self.my_id()))
+        })
+    }
+
+    pub(super) fn lobby_save_replied(&mut self, reply: Reply, request: SaveRequest) {
+        if !self.lobby_save_current(request) {
+            return;
+        }
+        match (request.step, reply) {
+            (Saving::Create, Reply::Lobby { state }) => {
+                self.sit(state);
+                self.lobby_editor_saved(request);
+            }
+            (Saving::Settings | Saving::Cheats, Reply::Done) => self.lobby_editor_saved(request),
+            _ => {
+                if let Some(editor) = &mut self.lobby_ui.editor {
+                    editor.saving = None;
+                    editor.error = Some("The service did not confirm the lobby change".into());
+                }
+            }
+        }
+    }
+
+    pub(super) fn lobby_save_refused(&mut self, request: SaveRequest, error: &Error) {
+        if self.lobby_save_current(request)
+            && let Some(editor) = &mut self.lobby_ui.editor
+        {
+            editor.saving = None;
+            editor.error = Some(error_text(error));
+        }
+    }
+
     #[cfg(test)]
     pub(crate) fn set_lobby_chat_port(&mut self, port: Box<dyn crate::main_menu::LobbyChatPort>) {
         self.lobby_ui.chat.port = Some(port);
@@ -150,7 +218,8 @@ impl MenuCore {
             && !self
                 .lobby
                 .as_ref()
-                .is_some_and(|(state, _)| Some(state.owner) == self.my_id())
+                .is_some_and(|(state, _)| Some(state.owner) == self.my_id()
+                    && self.lobby_ui.editor.as_ref().is_some_and(|editor| editor.lobby == Some(state.id)))
         {
             self.lobby_ui.editor = None;
             self.lobby_ui.open = None;
@@ -205,7 +274,10 @@ impl MenuCore {
         } else {
             self.editor_fields(&mut form)
         };
+        self.lobby_ui.next_editor = self.lobby_ui.next_editor.checked_add(1).expect("editor identity exhausted");
         self.lobby_ui.editor = Some(Editor {
+            id: self.lobby_ui.next_editor,
+            lobby: (!creating).then(|| self.lobby.as_ref().expect("an owned lobby").0.id),
             form,
             creating,
             mode,
@@ -226,11 +298,11 @@ impl MenuCore {
             return (Audience::Everyone, false, true);
         };
         form.put(0, &state.name);
-        form.put(1, self.lobby_secret.as_deref().unwrap_or(""));
+        form.put(1, self.remembered_lobby_password(state.id).unwrap_or(""));
         (
             state.audience,
             state.cheats == Some(true),
-            !state.locked || self.lobby_secret.is_some(),
+            !state.locked || self.remembered_lobby_password(state.id).is_some(),
         )
     }
 
@@ -309,8 +381,7 @@ impl MenuCore {
             audience: editor.audience,
             password,
         };
-        editor.saving = Some(Saving::Create);
-        self.ask(msg, Asked::LobbyUi);
+        self.ask_lobby_save(msg, Saving::Create);
     }
 
     fn configure_from_editor(&mut self) {
@@ -318,15 +389,17 @@ impl MenuCore {
         let Some((state, _)) = &self.lobby else {
             return;
         };
-        let Some(editor) = &mut self.lobby_ui.editor else {
+        let Some(editor) = &self.lobby_ui.editor else {
             return;
         };
         if state.ruleset == editor.mode
             && state.audience == editor.audience
             && state.locked == password.is_some()
-            && self.lobby_secret.as_deref() == password.as_ref().map(|password| password.0.as_str())
+            && self.remembered_lobby_password(state.id) == password.as_ref().map(|password| password.0.as_str())
         {
-            self.lobby_editor_saved();
+            if let Some(request) = self.mark_lobby_saving(Saving::Settings) {
+                self.lobby_editor_saved(request);
+            }
             return;
         }
         let msg = ClientMsg::LobbyConfigure {
@@ -335,23 +408,27 @@ impl MenuCore {
             audience: editor.audience,
             password,
         };
-        editor.saving = Some(Saving::Settings);
-        self.ask(msg, Asked::LobbyUi);
+        self.ask_lobby_save(msg, Saving::Settings);
     }
 
-    pub(super) fn lobby_editor_saved(&mut self) {
+    pub(super) fn lobby_editor_saved(&mut self, request: SaveRequest) {
+        if !self.lobby_save_current(request) {
+            return;
+        }
         let password = self.editor_password().map(|password| password.0);
         let Some(editor) = &mut self.lobby_ui.editor else {
             return;
         };
         if matches!(editor.saving, Some(Saving::Create | Saving::Settings)) {
-            self.lobby_secret = password;
+            self.lobby_secret = self.lobby.as_ref().and_then(|(state, _)| password.map(|password| (state.id, password)));
         }
         let Some((state, _)) = &self.lobby else {
             self.lobby_ui.editor = None;
             return;
         };
         editor.creating = false;
+        editor.lobby = Some(state.id);
+        editor.password_known = true;
         if editor.cheats && state.cheats.is_none() {
             editor.cheats = false;
             editor.saving = None;
@@ -366,7 +443,7 @@ impl MenuCore {
                 lobby: state.id,
                 on: editor.cheats,
             };
-            self.ask(msg, Asked::LobbyUi);
+            self.ask_lobby_save(msg, Saving::Cheats);
             return;
         }
         self.lobby_ui.editor = None;
@@ -430,6 +507,40 @@ impl MenuCore {
             remove_password: editor.remove_password,
             error: editor.error.clone(),
             saving: editor.saving.is_some(),
+        }
+    }
+}
+
+#[cfg(test)]
+mod transaction_tests {
+    use super::*;
+
+    fn draft(id: u64) -> Editor {
+        Editor {
+            id, lobby: None, creating: true,
+            form: Form::new(FormKind::LobbySettings, &Prefs::default()),
+            mode: RulesetId("full".into()), audience: Audience::Everyone,
+            cheats: false, hidden: true, password_known: true, password_changed: false,
+            remove_password: false, error: None, saving: None,
+        }
+    }
+
+    // Deliberately delayed answers exercise an untrusted peer, not a claimed server ordering.
+    #[test]
+    fn delayed_lobby_save_answers_do_not_change_a_replacement_draft() {
+        let mut player = crate::main_menu::tests::Player::new(None);
+        let menu = &mut player.menu;
+        menu.lobby_ui.editor = Some(draft(1));
+        let old = menu.mark_lobby_saving(Saving::Create).expect("original request");
+        menu.lobby_ui.editor = Some(draft(2));
+        menu.mark_lobby_saving(Saving::Create).expect("replacement request");
+        for (sequence, result) in [(41, Ok(Reply::Done)), (42, Err(Error::NotLobbyOwner))] {
+            menu.asked.push((sequence, Asked::LobbyUi(old)));
+            menu.take(Incoming::Reply { seq: sequence, result });
+            let editor = menu.lobby_ui.editor.as_ref().expect("replacement survives");
+            assert_eq!(editor.id, 2);
+            assert_eq!(editor.saving, Some(Saving::Create));
+            assert!(editor.error.is_none());
         }
     }
 }

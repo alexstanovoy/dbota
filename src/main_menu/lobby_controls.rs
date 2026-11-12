@@ -43,15 +43,24 @@ pub enum Action {
     SendChat,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Saving {
     Create,
     Settings,
     Cheats,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SaveRequest {
+    pub editor: u64,
+    pub lobby: Option<LobbyId>,
+    pub step: Saving,
+}
+
 // No Debug: the form holds the owner's password.
 pub struct Editor {
+    pub id: u64,
+    pub lobby: Option<LobbyId>,
     pub form: Form,
     pub creating: bool,
     pub mode: RulesetId,
@@ -66,6 +75,7 @@ pub struct Editor {
 }
 
 pub struct Controls {
+    pub next_editor: u64,
     pub server: Server,
     pub mode: Option<RulesetId>,
     pub filter: Option<RulesetId>,
@@ -80,6 +90,7 @@ pub struct Controls {
 impl Default for Controls {
     fn default() -> Self {
         Self {
+            next_editor: 0,
             server: Server::Service,
             mode: None,
             filter: None,
