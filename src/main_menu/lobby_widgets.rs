@@ -57,7 +57,7 @@ pub fn panel(kit: &mut Kit, root: Entity, name: &str) -> Entity {
             bottom: px(0),
             width: px(WIDTH),
             padding: UiRect {
-                left: px(16),
+                left: px(15),
                 right: px(24),
                 top: px(14),
                 bottom: px(16),
@@ -380,7 +380,7 @@ fn choice_row(kit: &mut Kit, list: Entity, option: super::lobby_controls::Choice
         if option.selected {
             kit.commands
                 .entity(row)
-                .insert(theme::rightward(theme::SELECT_FILL));
+                .insert(theme::rightward(theme::lobby::SELECTION));
         }
         kit.typed(row, option.name, theme::BODY, theme::INK_1);
 }

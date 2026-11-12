@@ -472,12 +472,15 @@ pub const RESULT_GRID_HORIZONTAL: Color = Color::srgb_u8(0x2c, 0x36, 0x40);
 pub const RESULT_GRID_ZERO: Color = Color::srgb_u8(0x6b, 0x74, 0x7d);
 /// Lobby boards: room, browser, conversation and settings popup.
 pub mod lobby {
-    use super::{Color, Face, Type, hex, role};
+    use super::{Alpha, BackgroundGradient, Color, ColorStop, Face, InterpolationColorSpace, RadialGradient, RadialGradientShape, Type, UiPosition, Vec2, hex, percent, role};
     pub const TITLE: Type = role(Face::Semibold, 26.0, 2.0);
     pub const TEAM_NAME: Type = role(Face::Bold, 24.0, 3.0);
     pub const SLOT_ACTION: Type = role(Face::Bold, 12.0, 1.5);
     pub const READY: Type = role(Face::Bold, 12.0, 1.0);
-    pub const SETTING_LABEL: Type = role(Face::Semibold, 13.0, 1.0);
+    pub const SETTING_LABEL: Type = role(Face::Regular, 13.0, 1.0);
+    pub const SECTION_HEADING: Type = role(Face::Semibold, 15.0, 2.0);
+    pub const SECTION_LABEL: Type = role(Face::Semibold, 13.0, 2.0);
+    pub const SPECTATOR_LABEL: Type = role(Face::Regular, 13.0, 1.0);
     pub const SETTING_VALUE: Type = role(Face::Semibold, 13.0, 1.0);
     pub const CHAT_TIME: Type = Type { size: 12.0, ..super::NUMBER };
     pub const CHAT_SPEAKER: Type = role(Face::Bold, 14.0, 0.0);
@@ -494,6 +497,28 @@ pub mod lobby {
     pub const EDITOR_WIDTH: f32 = 640.0;
     pub const PASSWORD_WIDTH: f32 = 460.0;
     pub const SCENE: (Color, Color) = (hex(0x1A4670), hex(0x3A2563));
+    pub const ROW_TINT: Color = Color::srgba(1.0, 1.0, 1.0, 0.004);
+    pub const SELECTION: (Color, Color) = (hex(0x213D65), hex(0x17212E));
+    pub const FLOOR: (Color, Color) = (hex(0x0C1A2A), hex(0x07090C));
+
+    pub fn light_pools() -> BackgroundGradient {
+        BackgroundGradient(vec![
+            pool(60.0, 18.0, SCENE.1, 52.0).into(),
+            pool(18.0, 8.0, SCENE.0, 58.0).into(),
+        ])
+    }
+
+    fn pool(x: f32, y: f32, color: Color, fade: f32) -> RadialGradient {
+        RadialGradient::new(
+            UiPosition { anchor: Vec2::new(-0.5, -0.5), x: percent(x), y: percent(y) },
+            RadialGradientShape::Ellipse(
+                percent(x.max(100.0 - x) * std::f32::consts::SQRT_2),
+                percent(y.max(100.0 - y) * std::f32::consts::SQRT_2),
+            ),
+            vec![ColorStop::new(color, percent(0)), ColorStop::new(color.with_alpha(0.0), percent(fade))],
+        ).in_color_space(InterpolationColorSpace::Srgba)
+    }
+
     pub const RULE: Color = hex(0x2D3236);
     pub const PANEL: [(Color, f32); 4] = [
         (hex(0x11161C), 0.0),

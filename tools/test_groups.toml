@@ -561,7 +561,7 @@ tests = [
         "e2e::scoreboard::",
         "e2e::gathering::",
         "hud::",
-        "ui::",
+        "ui::tests::",
         "visual::",
         "e2e::bars::",
         "e2e::feed::",

@@ -13,8 +13,8 @@ pub fn draw(kit: &mut Kit, root: Entity, controls: &ControlsView) {
     let Some(editor) = &controls.editor else {
         return;
     };
-    let card = modal(kit, root, theme::lobby::EDITOR_WIDTH);
-    kit.typed(
+    let card = modal(kit, root, theme::lobby::EDITOR_WIDTH, 12.0);
+    centered_text(kit,
         card,
         if editor.creating {
             "CREATE LOBBY"
@@ -25,7 +25,7 @@ pub fn draw(kit: &mut Kit, root: Entity, controls: &ControlsView) {
         theme::INK_1,
     );
     let general = w::column(kit, card, 2.0);
-    kit.typed(general, "GENERAL", theme::LABEL, theme::INK_2);
+    kit.typed(general, "GENERAL", theme::lobby::SECTION_LABEL, theme::INK_2);
     w::rule(kit, general);
     fields(kit, card, controls, editor);
     toggles(kit, card, editor);
@@ -52,7 +52,12 @@ pub fn draw(kit: &mut Kit, root: Entity, controls: &ControlsView) {
     }
 }
 
-fn modal(kit: &mut Kit, root: Entity, width: f32) -> Entity {
+fn centered_text(kit: &mut Kit, parent: Entity, value: impl Into<String>, role: theme::Type, ink: Color) {
+    let text = kit.typed(parent, value, role, ink);
+    kit.commands.entity(text).insert((Node { width: percent(100), ..default() }, TextLayout::justify(Justify::Center)));
+}
+
+fn modal(kit: &mut Kit, root: Entity, width: f32, gap: f32) -> Entity {
     let dim = kit.node(
         root,
         Node {
@@ -73,7 +78,7 @@ fn modal(kit: &mut Kit, root: Entity, width: f32) -> Entity {
         Node {
             width: px(width),
             padding: UiRect::all(px(28)),
-            row_gap: px(12),
+            row_gap: px(gap),
             flex_direction: FlexDirection::Column,
             align_items: AlignItems::Stretch,
             ..default()
@@ -166,7 +171,7 @@ fn toggles(kit: &mut Kit, parent: Entity, editor: &EditorView) {
     );
     kit.commands
         .entity(panel)
-        .insert(BackgroundColor(Color::WHITE.with_alpha(0.04)));
+        .insert(BackgroundColor(theme::lobby::ROW_TINT));
     let check = w::check(
         kit,
         panel,
@@ -221,17 +226,17 @@ fn answers(kit: &mut Kit, parent: Entity, ok: Act, cancel: Act, saving: bool) {
 }
 
 pub fn password(kit: &mut Kit, root: Entity, password: &PasswordView, hidden: bool) {
-    let card = modal(kit, root, theme::lobby::PASSWORD_WIDTH);
+    let card = modal(kit, root, theme::lobby::PASSWORD_WIDTH, 14.0);
     kit.commands
         .entity(card)
         .insert(Name::new("lobby password popup"));
-    kit.typed(
+    centered_text(kit,
         card,
         "LOBBY PASSWORD",
         theme::lobby::TITLE,
         theme::INK_1,
     );
-    kit.typed(card, format!("{} needs a password.", password.lobby), theme::LABEL, theme::INK_2);
+    centered_text(kit, card, format!("{} needs a password.", password.lobby), theme::LABEL, theme::INK_2);
     let field = super::view::FieldView {
         label: "Password",
         ..password.field.clone()

@@ -815,3 +815,69 @@ fn a_large_mode_catalogue_keeps_bounded_rows_and_scrolls_to_the_last_choice() {
         .find(|(name, _, _)| name.as_str() == "lobby choices").expect("choices");
     assert!(Rect::from_center_size(menu.2.translation, menu.1.size()).contains(last_at), "the final choice is inside the scrolled viewport");
 }
+
+#[test]
+fn the_room_fits_its_two_spectators_and_aligns_the_dire_heading_to_the_right() {
+    let mut client = Client::run(&["--menu-preview", "lobby-owner"]);
+    client.frames(8);
+    let world = client.world_mut();
+    assert_spectator_chips_fit(world);
+    let button = world.query::<(&Name, &ComputedNode)>().iter(world)
+        .find(|(name, _)| name.as_str() == "spectate").map(|(_, node)| node)
+        .expect("spectate action");
+    assert!((button.size().x * button.inverse_scale_factor() - 98.0).abs() <= button.inverse_scale_factor());
+    let dire = world.query::<(&Name, &ComputedNode, &UiGlobalTransform)>().iter(world)
+        .find(|(name, _, _)| name.as_str() == "lobby team DIRE")
+        .map(|(_, node, at)| Rect::from_center_size(at.translation, node.size())).expect("Dire column");
+    let (node, at) = world.query::<(&Text, &ComputedNode, &UiGlobalTransform)>().iter(world)
+        .find(|(text, _, _)| text.0 == "DIRE").map(|(_, node, at)| (node, at)).expect("Dire heading");
+    let heading = Rect::from_center_size(at.translation, node.size());
+    assert!((dire.max.x - heading.max.x) * node.inverse_scale_factor() <= 12.0);
+}
+
+fn assert_spectator_chips_fit(world: &mut World) {
+    let row = world.query::<(&Text, &ChildOf)>().iter(world)
+        .find(|(text, _)| text.0 == "SPECTATING").map(|(_, parent)| parent.parent()).expect("spectator strip");
+    let pane = world.get::<Children>(row).expect("spectator controls").iter()
+        .find(|child| world.get::<Node>(*child).is_some_and(|node| node.flex_basis == px(0))).expect("spectator pane");
+    let node = world.get::<ComputedNode>(pane).expect("pane layout");
+    let at = world.get::<UiGlobalTransform>(pane).expect("pane position");
+    let bounds = Rect::from_center_size(at.translation, node.size());
+    let chips: Vec<_> = world.get::<Children>(pane).expect("the two spectators").iter().collect();
+    assert_eq!(chips.len(), 2);
+    for chip in chips {
+        let node = world.get::<ComputedNode>(chip).expect("chip layout");
+        let at = world.get::<UiGlobalTransform>(chip).expect("chip position");
+        let chip = Rect::from_center_size(at.translation, node.size());
+        assert!(chip.min.x >= bounds.min.x - 1.0 && chip.max.x <= bounds.max.x + 1.0,
+            "the normal two-person spectator roster fits: {chip:?} within {bounds:?}");
+    }
+}
+
+#[test]
+fn the_lobby_room_backdrop_draws_two_light_pools_over_its_dark_floor() {
+    let mut client = Client::run(&["--menu-preview", "lobby-owner"]);
+    client.frames(8);
+    let world = client.world_mut();
+    let pools = world.query::<&BackgroundGradient>().iter(world).filter(|background| {
+        background.0.iter().filter(|gradient| matches!(gradient, Gradient::Radial(_))).count() == 2
+    }).count();
+    assert_eq!(pools, 1, "the room has blue and purple radial light pools, rather than a flat wash");
+}
+
+#[test]
+fn lobby_dialog_headings_are_centered_above_their_fields() {
+    for (preview, title) in [("lobby-edit", "LOBBY SETTINGS"), ("lobby-password", "LOBBY PASSWORD")] {
+        let mut client = Client::run(&["--menu-preview", preview]);
+        client.frames(8);
+        let world = client.world_mut();
+        let popup_name = if preview == "lobby-edit" { "lobby settings popup" } else { "lobby password popup" };
+        let popup = world.query::<(Entity, &Name)>().iter(world)
+            .find(|(_, name)| name.as_str() == popup_name).map(|(entity, _)| entity).expect("dialog");
+        let justify = super::harness::subtree(world, popup).into_iter().find_map(|entity| {
+            (world.get::<Text>(entity)?.0 == title).then(|| world.get::<TextLayout>(entity).expect("heading layout").justify)
+        }).expect("dialog heading");
+        assert_eq!(justify, Justify::Center, "{title} is centered");
+
+    }
+}

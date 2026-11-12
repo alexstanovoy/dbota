@@ -82,17 +82,22 @@ pub fn scroll(
     let cursor = windows.single().ok().and_then(|window| window.cursor_position().map(|at| at * window.scale_factor()));
     let target = if blocked { None } else { pointer_pane(&view, cursor, &mut panes) };
     let step = wheel.delta.y * if wheel.unit == MouseScrollUnit::Line { 40.0 } else { 1.0 };
+    let choice_start = move_panes(&mut positions, &mut panes, target, step);
+    if let Some(start) = choice_start {
+        positions.choice_start = start;
+        if let Some(preview) = preview.as_mut() { preview.0.lobby_ui.choice_start = start; }
+        else if let Some(core) = core.as_mut() { core.lobby_ui.choice_start = start; }
+    }
+}
+
+fn move_panes(positions: &mut Positions, panes: &mut Panes, target: Option<Area>, step: f32) -> Option<usize> {
     let mut choice_start = None;
-    for (area, mut at, node, _) in &mut panes {
+    for (area, mut at, node, _) in panes {
         if node.size().y <= 0.0 { continue; }
         let step = if target == Some(*area) { step } else { 0.0 };
         let position = positions.move_pane(*area, reach(*area, node), step);
         if *area == Area::Spectators { at.x = position; } else { at.y = position; }
         if *area == Area::Choices { choice_start = Some((position / crate::theme::lobby::CHOICE_ROW_HEIGHT) as usize); }
     }
-    if let Some(start) = choice_start {
-        positions.choice_start = start;
-        if let Some(preview) = preview.as_mut() { preview.0.lobby_ui.choice_start = start; }
-        else if let Some(core) = core.as_mut() { core.lobby_ui.choice_start = start; }
-    }
+    choice_start
 }

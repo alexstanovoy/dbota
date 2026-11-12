@@ -94,6 +94,7 @@ fn table(kit: &mut Kit, parent: Entity, rows: &[&LobbyRow], controls: &ControlsV
     });
     kit.commands.entity(table).insert((super::lobby_scroll::Area::Browser, ScrollPosition::default()));
     let header = table_row(kit, table, 30.0);
+    kit.commands.entity(header).entry::<Node>().and_modify(|mut node| node.margin.bottom = px(5));
     for (index, label) in ["", "NAME", "HOST", "SLOTS", "MODE"]
         .into_iter()
         .enumerate()
@@ -118,7 +119,7 @@ fn table_row(kit: &mut Kit, parent: Entity, height: f32) -> Entity {
             flex_shrink: 0.0,
             align_items: AlignItems::Center,
             padding: UiRect::axes(px(8), px(0)),
-            column_gap: px(10),
+            column_gap: px(8),
             ..default()
         },
     )
@@ -126,10 +127,10 @@ fn table_row(kit: &mut Kit, parent: Entity, height: f32) -> Entity {
 
 fn cell(kit: &mut Kit, parent: Entity, index: usize) -> Entity {
     let (width, grow) = match index {
-        0 => (18.0, 0.0),
+        0 => (28.0, 0.0),
         1 => (190.0, 1.0),
-        2 => (138.0, 0.0),
-        3 => (68.0, 0.0),
+        2 => (140.0, 0.0),
+        3 => (70.0, 0.0),
         _ => (100.0, 0.0),
     };
     kit.node(
@@ -158,11 +159,13 @@ fn lobby_row(kit: &mut Kit, parent: Entity, lobby: &LobbyRow, selected: bool) {
     if selected {
         kit.commands
             .entity(row)
-            .insert(theme::rightward(theme::SELECT_FILL));
+            .insert(theme::rightward(theme::lobby::SELECTION));
+        let marker = kit.node(row, Node { position_type: PositionType::Absolute, left: px(0), top: px(0), bottom: px(0), width: px(3), ..default() });
+        kit.commands.entity(marker).insert((Name::new("selected lobby marker"), BackgroundColor(theme::SELECT)));
     } else {
         kit.commands
             .entity(row)
-            .insert(BackgroundColor(Color::WHITE.with_alpha(0.025)));
+            .insert(BackgroundColor(theme::lobby::ROW_TINT));
     }
     let lock = cell(kit, row, 0);
     if lobby.locked {
