@@ -14,6 +14,12 @@ fn lobby_browser_draws_the_four_column_list_in_the_right_drawer() {
         .map(|(_, node)| node.size() * node.inverse_scale_factor)
         .expect("lobby browser drawer");
     assert_eq!(size.x, 620.0);
+    let art = world.query::<(Entity, &Name, &ComputedNode)>().iter(world)
+        .find(|(_, name, _)| name.as_str() == "lobby browser hero");
+    assert!(art.is_some(), "the browser shows the installed tall hero art from the mockup");
+    let (entity, _, node) = art.expect("hero art");
+    assert!(world.get::<Children>(entity).expect("installed art").iter().any(|child| world.get::<ImageNode>(child).is_some_and(|image| image.image != Handle::default())));
+    assert_eq!(node.size() * node.inverse_scale_factor(), Vec2::new(300.0, 400.0));
     let texts = client.shown_texts();
     for text in [
         "NAME",
@@ -71,6 +77,12 @@ fn lobby_room_draws_two_team_columns_and_only_highlights_the_host_in_chat() {
     assert_eq!(teams.len(), 2);
     assert!(dire.x > radiant.x);
     assert!((dire.y - radiant.y).abs() < 1.0);
+    let footer: Vec<_> = world.query::<(&Name, &ComputedNode)>().iter(world)
+        .filter(|(name, _)| name.as_str() == "leave lobby  ×" || name.as_str() == "start game")
+        .map(|(_, node)| (node.size() * node.inverse_scale_factor(), node.inverse_scale_factor())).collect();
+    assert_eq!(footer.len(), 2);
+    assert!((footer[0].0.x - footer[1].0.x).abs() < 1.0, "the footer's two actions have equal width");
+    assert!(footer.iter().all(|(size, pixel)| (size.y - 52.0).abs() <= *pixel), "footer sizes: {footer:?}");
 }
 
 #[test]
@@ -165,7 +177,7 @@ fn join(client: &mut Client, name: &str, password: &str) {
 }
 
 fn select_mode(client: &mut Client, name: &str) {
-    click(client, "game mode");
+    click(client, "lobby game mode");
     click(client, &name.to_lowercase());
 }
 
@@ -275,6 +287,9 @@ fn saved_settings(alice: &mut Client, bob: &mut Client) {
         "existing name is fixed"
     );
     select_mode(alice, "1x1 Mid Only");
+    if alice.world().non_send::<MenuCore>().view().lobby_ui.editor.as_ref().is_some_and(|editor| editor.password_unknown) {
+        replace_password(alice, "open sesame");
+    }
     click(alice, "ok");
     alice.until("settings saved", |client| {
         bob.frames(1);
@@ -383,13 +398,27 @@ fn lobby_chat_uses_the_client_seam_has_no_fake_echo_and_preserves_a_refused_draf
         .push_back(crate::main_menu::LobbyChatMessage {
             lobby,
             account: owner,
-            name: "alice".into(),
             message: "gl hf".into(),
             minute: 1264,
         });
     alice.until("delivered message drawn", |client| {
         client.shown_texts().iter().any(|text| text == "gl hf")
     });
+    {
+        let mut box_ = mailbox.lock().expect("mailbox");
+        for (room, account, message) in [
+            (LobbyId(lobby.0.wrapping_add(1)), owner, "wrong room"),
+            (lobby, bota_radovid::AccountId(u64::MAX), "outsider"),
+            (lobby, owner, "authenticated name"),
+        ] {
+            box_.incoming.push_back(crate::main_menu::LobbyChatMessage { lobby: room, account, message: message.into(), minute: 1264 });
+        }
+    }
+    alice.frames(3);
+    let chat = alice.world().non_send::<MenuCore>().view().lobby_ui.chat;
+    assert!(!chat.lines.iter().any(|line| line.message == "wrong room" || line.message == "outsider"));
+    let delivered = chat.lines.iter().find(|line| line.message == "authenticated name").expect("member message");
+    assert_eq!(delivered.name, "alice", "chat uses the known member identity instead of a spoofed label");
     act(&mut alice, Act::LeaveLobby);
     alice.until("left the lobby", |client| {
         matches!(
@@ -448,7 +477,7 @@ fn replace_password(client: &mut Client, value: &str) {
 }
 
 #[test]
-fn saving_freezes_the_draft_until_acknowledged_and_keeps_the_committed_password() {
+fn saving_freezes_the_draft_and_password_edits_survive_another_settings_save() {
     let service = crate::main_menu::tests::service();
     let mut alice = signed_up(&service, "alice");
     create(&mut alice, "Saved settings", "old password");
@@ -481,15 +510,14 @@ fn saving_freezes_the_draft_until_acknowledged_and_keeps_the_committed_password(
     });
     click(&mut alice, "edit  ✎");
     select_mode(&mut alice, "1x1 Mid Only");
+    replace_password(&mut alice, "new password");
     click(&mut alice, "ok");
     alice.until("a subsequent edit saved", |client| {
-        client
-            .world()
-            .non_send::<MenuCore>()
-            .view()
-            .lobby_ui
-            .editor
-            .is_none()
+        let view = client.world().non_send::<MenuCore>().view();
+        if let Some(editor) = &view.lobby_ui.editor {
+            assert!(editor.error.is_none(), "save refused: {:?}", editor.error);
+        }
+        view.lobby_ui.editor.is_none()
     });
     let mut bob = signed_up(&service, "bob");
     join(&mut bob, "Saved settings", "new password");
@@ -582,11 +610,208 @@ fn a_confirmation_owns_enter_and_escape_above_a_lobby_draft() {
     act(&mut alice, Act::Focus(1));
     act(&mut alice, Act::Quit);
     assert!(alice.world().non_send::<MenuCore>().view().confirm.is_some());
-    act(&mut alice, Act::Submit);
+    alice.tap_named(KeyCode::Enter, bevy::input::keyboard::Key::Enter);
     let view = alice.world().non_send::<MenuCore>().view();
     assert!(!view.lobby_ui.editor.expect("the hidden draft remains").saving, "Enter cannot save a draft beneath confirmation");
-    act(&mut alice, Act::Back);
+    alice.tap_named(KeyCode::Escape, bevy::input::keyboard::Key::Escape);
     let view = alice.world().non_send::<MenuCore>().view();
     assert!(view.confirm.is_none(), "Escape closes the top confirmation");
     assert!(view.lobby_ui.editor.is_some(), "Escape preserves the lower editor");
+}
+
+#[test]
+fn lobby_dropdown_options_can_be_selected_with_tab_and_enter() {
+    use bevy::input::keyboard::Key;
+    let service = crate::main_menu::tests::service();
+    let mut alice = signed_up(&service, "alice");
+    act(&mut alice, Act::Go(Page::Lobbies));
+    act(&mut alice, Act::LobbyUi(LobbyAction::Open(crate::main_menu::LobbyChoice::Mode)));
+    for _ in 0..12 {
+        if matches!(alice.world().non_send::<MenuCore>().button_focus(), Some(Act::LobbyUi(LobbyAction::Mode(mode))) if mode.0 == "solo_mid") {
+            let world = alice.world_mut();
+            assert!(world.query::<(&crate::main_menu::MenuButton, &Outline)>().iter(world).any(|(button, _)| matches!(&button.0, Act::LobbyUi(LobbyAction::Mode(mode)) if mode.0 == "solo_mid")), "keyboard selection has a drawn focus outline");
+            alice.tap_named(KeyCode::Enter, Key::Enter);
+            assert_eq!(alice.world().non_send::<MenuCore>().view().lobby_ui.mode.expect("mode").0, "solo_mid");
+            return;
+        }
+        alice.tap_named(KeyCode::Tab, Key::Tab);
+    }
+    panic!("the dropdown's options must be in the keyboard order");
+}
+
+#[test]
+fn the_lobby_list_scrolls_under_the_pointer_and_keeps_its_position_after_redraw() {
+    use bevy::{input::mouse::{MouseScrollUnit, MouseWheel}, window::PrimaryWindow};
+    let mut client = Client::run(&["--menu-preview", "lobbies"]);
+    {
+        let mut preview = client.world_mut().resource_mut::<crate::main_menu::Preview>();
+        preview.0.lobby_ui.open = None;
+        if let PageView::Lobbies { list, .. } = &mut preview.0.body {
+            let template = list[0].clone();
+            for index in 0..30 {
+                let mut row = template.clone();
+                row.id = LobbyId(100 + index);
+                row.name = format!("Extra room {index}");
+                list.push(row);
+            }
+        }
+    }
+    client.frames(6);
+    let world = client.world_mut();
+    let row = world.query::<(Entity, &Name)>().iter(world).find(|(_, n)| n.as_str() == "join friday stack").expect("first room").0;
+    let table = world.get::<ChildOf>(row).expect("table parent").parent();
+    let centre = world.get::<UiGlobalTransform>(table).expect("table position").translation;
+    let before = world.get::<UiGlobalTransform>(row).expect("row position").translation.y;
+    let window = world.query_filtered::<Entity, With<PrimaryWindow>>().single(world).expect("window");
+    client.mouse(centre);
+    client.world_mut().write_message(MouseWheel { phase: bevy::input::touch::TouchPhase::Moved, unit: MouseScrollUnit::Line, x: 0.0, y: -5.0, window });
+    client.frames(4);
+    let after = client.world().get::<UiGlobalTransform>(row).expect("scrolled row").translation.y;
+    assert!(after < before - 20.0, "the wheel moves the actual list rows");
+    client.world_mut().resource_mut::<crate::main_menu::Preview>().0.lobby_ui.selected = Some(LobbyId(101));
+    client.frames(4);
+    let world = client.world_mut();
+    let scrolled = world.query::<&ScrollPosition>().iter(world).any(|at| at.y > 20.0);
+    assert!(scrolled, "redrawing a filter preserves the list scroll position");
+}
+
+#[test]
+fn the_host_can_move_and_kick_a_spectating_member() {
+    let service = crate::main_menu::tests::service();
+    let mut alice = signed_up(&service, "alice");
+    create(&mut alice, "Spectator controls", "secret");
+    let mut bob = signed_up(&service, "bob");
+    join(&mut bob, "Spectator controls", "secret");
+    click(&mut bob, "spectate");
+    alice.until("the guest spectating", |c| room(c).spectators.iter().any(|p| p.name == "bob"));
+    assert!(named(&mut alice, "move bob"), "spectators retain the owner's move control");
+    click(&mut alice, "move bob");
+    click(&mut alice, "join slot 9");
+    alice.until("the spectator moved into a slot", |c| room(c).teams.iter().flat_map(|t| &t.slots).any(|s| s.slot == 9 && s.who.as_ref().is_some_and(|p| p.name == "bob")));
+    click(&mut alice, "kick bob");
+    bob.until("the guest kicked", |c| matches!(c.world().non_send::<MenuCore>().view().body, PageView::Lobbies { .. }));
+}
+
+#[test]
+fn selecting_local_hosting_preserves_the_selected_game_mode() {
+    let service = crate::main_menu::tests::service();
+    let mut alice = signed_up(&service, "alice");
+    act(&mut alice, Act::Go(Page::Lobbies));
+    click(&mut alice, "server");
+    click(&mut alice, "local");
+    act(&mut alice, Act::LobbyUi(LobbyAction::Mode(bota_radovid::RulesetId("solo_mid".into()))));
+    click(&mut alice, "create lobby");
+    let PageView::Form { rules: Some(rules), .. } = alice.world().non_send::<MenuCore>().view().body else { panic!("the existing local setup") };
+    assert_eq!(rules.name(), "solo_mid", "the selected local mode is applied to hosting");
+}
+
+#[test]
+fn lobby_chat_without_transport_is_drawn_disabled() {
+    let service = crate::main_menu::tests::service();
+    let mut alice = signed_up(&service, "alice");
+    create(&mut alice, "No chat transport", "");
+    let world = alice.world_mut();
+    let input = world.query::<(Entity, &Name)>().iter(world).find(|(_, n)| n.as_str() == "lobby message").expect("input").0;
+    assert!(world.get::<crate::main_menu::MenuButton>(input).is_none(), "an unavailable chat input cannot take focus");
+    assert!(alice.shown_texts().iter().any(|text| text == "Lobby chat is unavailable"));
+}
+
+#[test]
+fn bot_members_are_marked_in_the_drawn_lobby_roster() {
+    use bota_radovid::proto::{AccountKind, ClientMsg, Reply};
+    let service = crate::main_menu::tests::service();
+    let mut alice = signed_up(&service, "alice");
+    create(&mut alice, "Bot roster", "");
+    let trust = bota_radovid::Tls::trust_pem(&service.pem).expect("trust");
+    let mut bot = bota_radovid::Client::open(&service.url, &trust).expect("bot connection");
+    let sequence = bot.register("teammate", crate::main_menu::tests::PASSWORD, AccountKind::Bot, Some("fixture".into())).expect("register");
+    control_reply(&mut bot, sequence);
+    let sequence = bot.request(ClientMsg::LobbyList).expect("list");
+    let Reply::Lobbies { list } = control_reply(&mut bot, sequence) else { panic!("list") };
+    let lobby = list.iter().find(|row| row.name == "Bot roster").expect("room").id;
+    let sequence = bot.request(ClientMsg::LobbyJoin { lobby, password: None }).expect("join");
+    assert!(matches!(control_reply(&mut bot, sequence), Reply::Lobby { .. }));
+    alice.until("the bot in the roster", |c| room(c).teams.iter().flat_map(|t| &t.slots).any(|s| s.who.as_ref().is_some_and(|p| p.name == "teammate")));
+    assert!(alice.shown_texts().iter().any(|text| text == "BOT"), "account kind is drawn, not guessed from the nickname");
+}
+
+#[test]
+fn an_accept_prompt_owns_input_above_a_lobby_settings_draft() {
+    use bota_radovid::proto::{AccountKind, Audience, ClientMsg, RulesetId};
+    let service = crate::main_menu::tests::service();
+    let mut alice = signed_up(&service, "alice");
+    create(&mut alice, "Interrupted draft", "");
+    click(&mut alice, "edit  ✎");
+    select_mode(&mut alice, "1x1 Mid Only");
+    act(&mut alice, Act::Focus(1));
+    act(&mut alice, Act::Find(RulesetId("solo_mid".into())));
+    let trust = bota_radovid::Tls::trust_pem(&service.pem).expect("trust");
+    let mut bob = bota_radovid::Client::open(&service.url, &trust).expect("connection");
+    let sequence = bob.register("opponent", crate::main_menu::tests::PASSWORD, AccountKind::Human, None).expect("register");
+    control_reply(&mut bob, sequence);
+    let sequence = bob.request(ClientMsg::QueueJoinAudiences { ruleset: RulesetId("solo_mid".into()), audiences: vec![Audience::HumansOnly] }).expect("queue");
+    control_reply(&mut bob, sequence);
+    alice.until("the proposal arrived over the draft", |c| c.world().non_send::<MenuCore>().view().offer.is_some());
+    alice.tap_named(KeyCode::Enter, bevy::input::keyboard::Key::Enter);
+    alice.tap_named(KeyCode::Escape, bevy::input::keyboard::Key::Escape);
+    let view = alice.world().non_send::<MenuCore>().view();
+    let draft = view.lobby_ui.editor.expect("the lower draft survives");
+    assert!(!draft.saving);
+    assert_eq!(draft.mode.0, "solo_mid");
+    assert!(view.offer.is_some());
+    assert_eq!(room(&alice).settings.mode, "Full rules", "hidden input never saved the draft");
+}
+
+#[test]
+fn a_lobby_control_reconnect_restores_the_room_without_an_obsolete_draft() {
+    let service = crate::main_menu::tests::service();
+    let mut alice = signed_up(&service, "alice");
+    create(&mut alice, "Reconnect room", "reconnect password");
+    let _peer = crate::main_menu::tests::keep_menu_session_alive(alice.world().non_send::<MenuCore>(), &service);
+    click(&mut alice, "edit  ✎");
+    select_mode(&mut alice, "1x1 Mid Only");
+    crate::main_menu::tests::lose_menu_control(&mut alice.world_mut().non_send_mut::<MenuCore>());
+    act(&mut alice, Act::RetryService);
+    alice.until("the resumed requests completed", |c| c.world().non_send::<MenuCore>().lobby_sync_settled());
+    let view = alice.world().non_send::<MenuCore>().view();
+    assert!(matches!(view.body, PageView::Lobby(_)), "a resumed membership restores the actual room");
+    assert!(view.lobby_ui.editor.is_none(), "the disconnected draft cannot commit later");
+    assert_eq!(room(&alice).settings.mode, "Full rules");
+    click(&mut alice, "edit  ✎");
+    assert!(alice.world().non_send::<MenuCore>().view().lobby_ui.editor.expect("editor").password_unknown);
+}
+
+#[test]
+fn a_large_mode_catalogue_keeps_bounded_rows_and_scrolls_to_the_last_choice() {
+    use bevy::{input::mouse::{MouseScrollUnit, MouseWheel}, window::PrimaryWindow};
+    let mut client = Client::run(&["--menu-preview", "lobbies"]);
+    {
+        let mut preview = client.world_mut().resource_mut::<crate::main_menu::Preview>();
+        let template = preview.0.lobby_ui.modes[0].clone();
+        preview.0.lobby_ui.modes = (0..150).map(|index| {
+            let mut mode = template.clone();
+            mode.id = bota_radovid::RulesetId(format!("catalog_{index}"));
+            mode.name = format!("Catalog mode {index}");
+            mode
+        }).collect();
+        preview.0.lobby_ui.open = Some(crate::main_menu::LobbyChoice::Mode);
+    }
+    client.frames(8);
+    let world = client.world_mut();
+    let count = world.query::<&Name>().iter(world).filter(|name| name.as_str().starts_with("catalog mode ")).count();
+    assert!(count <= 32, "a large untrusted catalogue must not create all its option nodes");
+    let menu = world.query::<(Entity, &Name)>().iter(world).find(|(_, name)| name.as_str() == "lobby choices").expect("choices").0;
+    let cursor = world.get::<UiGlobalTransform>(menu).expect("position").translation;
+    let window = world.query_filtered::<Entity, With<PrimaryWindow>>().single(world).expect("window");
+    client.mouse(cursor);
+    client.world_mut().write_message(MouseWheel { unit: MouseScrollUnit::Line, x: 0.0, y: -500.0, window, phase: bevy::input::touch::TouchPhase::Moved });
+    client.frames(6);
+    let world = client.world_mut();
+    let last = world.query::<(Entity, &Name, &crate::main_menu::MenuButton)>().iter(world)
+        .find(|(_, name, _)| name.as_str() == "catalog mode 149").expect("the final mode is rendered");
+    assert!(matches!(&last.2.0, Act::LobbyUi(LobbyAction::Mode(mode)) if mode.0 == "catalog_149"));
+    let last_at = world.get::<UiGlobalTransform>(last.0).expect("choice position").translation;
+    let menu = world.query::<(&Name, &ComputedNode, &UiGlobalTransform)>().iter(world)
+        .find(|(name, _, _)| name.as_str() == "lobby choices").expect("choices");
+    assert!(Rect::from_center_size(menu.2.translation, menu.1.size()).contains(last_at), "the final choice is inside the scrolled viewport");
 }

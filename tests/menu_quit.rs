@@ -13,6 +13,8 @@
 //! always run.
 
 mod common;
+#[path = "common/lobby_friend.rs"]
+mod lobby_friend;
 
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
@@ -1265,7 +1267,7 @@ fn open_lobby(service: &Service, login: &str, name: &str) -> bota_radovid::Clien
 /// which the service names its default though it lists solo mid first. Alice, the host, changes
 /// the mode in the lobby to solo mid, whose own games are one a side, and the match starts with
 /// the three: each client's top bar holds two of Radiant and one of Dire.
-/// The clients run two at their usual size and carol's smaller and at low quality, for the memory.
+/// Alice and Bob draw; Carol uses the same real matchmaking and game client cores without a renderer.
 #[test]
 #[ignore = "draws on the GPU in a headless compositor: tools/visual_check.sh runs it"]
 fn three_friends_find_a_password_lobby_join_it_and_play_the_mode_the_host_chose() {
@@ -1273,49 +1275,26 @@ fn three_friends_find_a_password_lobby_join_it_and_play_the_mode_the_host_chose(
     let service = Service::start(&scratch, LOBBY_SETTINGS, LOBBY_RULESETS);
     let args = service.args();
     let args: Vec<&str> = args.iter().map(String::as_str).collect();
-    let (alice_dir, bob_dir, carol_dir) = (
-        Scratch::new("lobby-alice"),
-        Scratch::new("lobby-bob"),
-        Scratch::new("lobby-carol"),
-    );
+    let (alice_dir, bob_dir) = (Scratch::new("lobby-alice"), Scratch::new("lobby-bob"));
     let alice_script = format!(
-        "{}click:lobbies;await:button:create;click:lobby name;text:Friday Night;\
-         click:password (optional);text:open sesame;click:create;await:button:leave;\
-         await:text:Game mode: Full rules;await:text:bob;await:text:carol;\
-         click:1x1 mid only;await:text:Game mode: 1x1 Mid Only;await:button:start now;\
-         click:start now;await:game;await:seats:2,1;exit",
-        sign_up("alice")
-    );
+        "{}click:lobbies;await:button:create lobby;click:create lobby;click:lobby name;text:Friday Night;\
+         click:password;text:open sesame;click:ok;await:button:leave lobby  ×;\
+         await:text:FULL RULES;await:text:bob;await:text:carol;click:edit  ✎;\
+         click:lobby game mode;click:1x1 mid only;click:password;text:open sesame;click:ok;\
+         await:nobutton:ok;await:text:1X1 MID ONLY;await:button:start game;\
+         click:start game;await:game;await:loaded;await:seats:2,1;exit", sign_up("alice"));
     let mut alice = Running::start(&alice_dir, &args, &alice_script, common::client());
-    alice.until_played("await:button:leave");
-    // Newer than alice's, so listed first: only a search that leaves it out finds hers.
+    alice.until_played("await:button:leave lobby  ×");
     let _decoy = open_lobby(&service, "dave", "Decoy Room");
-    let joiner = |login: &str, query: &str, tries: &str| {
-        format!(
-            "{}click:lobbies;await:button:join decoy room;await:button:join friday night;\
-             click:search lobbies;text:{query};click:search;await:nobutton:join decoy room;\
-             click:join friday night;await:popup;{tries}await:button:leave;\
-             await:text:Game mode: 1x1 Mid Only;click:ready;await:game;await:seats:2,1;exit",
-            sign_up(login)
-        )
-    };
-    let bob_script = joiner(
-        "bob",
-        "FRIDAY",
-        "text:guess;click:ok;await:text:Wrong password;await:popup;text:open sesame;click:ok;",
-    );
+    let bob_script = format!(
+        "{}click:lobbies;await:button:join decoy room;await:button:join friday night;\
+         click:lobby or host name;text:FRIDAY;await:nobutton:join decoy room;\
+         click:join friday night;await:popup;text:guess;click:ok;await:text:Wrong password;\
+         await:popup;text:open sesame;click:ok;await:button:leave lobby  ×;\
+         await:text:1X1 MID ONLY;click:ready;await:game;await:loaded;await:seats:2,1;exit", sign_up("bob"));
     let bob = Running::start(&bob_dir, &args, &bob_script, common::client());
-    let carol_script = joiner("carol", "ali", "text:open sesame;click:ok;");
-    let mut small = common::client();
-    small.env("DBOTA_HEADLESS_SIZE", "960x540");
-    let carol_args: Vec<&str> = args
-        .iter()
-        .copied()
-        .chain(["--window", "960x540", "--set", "quality=low"])
-        .collect();
-    let carol = Running::start(&carol_dir, &carol_args, &carol_script, small);
+    let _carol = lobby_friend::join(&service);
     played("bob", bob.finish(), &bob_script);
-    played("carol", carol.finish(), &carol_script);
     played("alice", alice.finish(), &alice_script);
 }
 
@@ -1334,20 +1313,16 @@ fn a_lobby_owner_turns_cheats_on_and_everyone_sees_and_plays_with_them() {
     let args: Vec<&str> = args.iter().map(String::as_str).collect();
     let (alice_dir, bob_dir) = (Scratch::new("cheats-alice"), Scratch::new("cheats-bob"));
     let alice_script = format!(
-        "{}click:lobbies;await:button:create;click:lobby name;text:Sandbox;click:create;\
-         await:button:leave;await:text:Cheats: off;click:enable cheats;await:text:Cheats: on;\
-         await:text:bob;await:button:start now;click:start now;await:game;\
-         click:pick shadow fiend;click:pick ready;await:level:1;say:-gold 20000;\
-         await:gold:20000;exit",
-        sign_up("alice")
-    );
+        "{}click:lobbies;await:button:create lobby;click:create lobby;click:lobby name;text:Sandbox;click:ok;\
+         await:button:leave lobby  ×;await:text:OFF;click:edit  ✎;click:enable cheats;click:ok;\
+         await:nobutton:ok;await:text:ON;await:text:bob;await:button:start game;click:start game;\
+         await:game;await:loaded;click:pick shadow fiend;click:pick ready;await:level:1;\
+         say:-gold 20000;await:gold:20000;exit", sign_up("alice"));
     let mut alice = Running::start(&alice_dir, &args, &alice_script, common::client());
-    alice.until_played("await:text:Cheats: on");
+    alice.until_played("await:text:ON");
     let bob_script = format!(
-        "{}click:lobbies;click:join sandbox;await:button:leave;await:text:Cheats: on;\
-         await:nobutton:enable cheats;await:nobutton:disable cheats;click:ready;await:game;exit",
-        sign_up("bob")
-    );
+        "{}click:lobbies;await:button:join sandbox;click:join sandbox;await:button:leave lobby  ×;\
+         await:text:ON;await:nobutton:edit  ✎;click:ready;await:game;await:loaded;exit", sign_up("bob"));
     let bob = Running::start(&bob_dir, &args, &bob_script, common::client());
     played("bob", bob.finish(), &bob_script);
     played("alice", alice.finish(), &alice_script);

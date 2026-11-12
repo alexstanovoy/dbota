@@ -18,8 +18,8 @@ fn modes() -> Vec<ModeRow> {
         .collect()
 }
 
-pub(super) fn browser(password: bool) -> MenuView {
-    let list = [
+fn browser_rows() -> Vec<LobbyRow> {
+    [
         (
             "Friday stack",
             "kestrel#118",
@@ -81,7 +81,11 @@ pub(super) fn browser(password: bool) -> MenuView {
             seats,
         },
     )
-    .collect();
+    .collect()
+}
+
+pub(super) fn browser(password: bool) -> MenuView {
+    let list = browser_rows();
     let mut view = logged_in(
         Page::Lobbies,
         PageView::Lobbies {
@@ -89,6 +93,8 @@ pub(super) fn browser(password: bool) -> MenuView {
             fields: vec![field("Lobby or host name", "", false)],
         },
     );
+    view.player = "mira".into();
+    view.account = Some(view.player.clone());
     view.lobby_ui = ControlsView {
         modes: modes(),
         mode: Some(RulesetId("full".into())),
@@ -108,6 +114,7 @@ pub(super) fn browser(password: bool) -> MenuView {
 
 fn member(account: u64, name: &str, ready: bool, me: bool) -> MemberRow {
     MemberRow {
+        bot: false,
         account: AccountId(account),
         name: name.into(),
         ready,
@@ -128,8 +135,7 @@ fn team(name: &str, first: u8, members: Vec<MemberRow>) -> TeamRow {
     }
 }
 
-pub(super) fn room(name: &str) -> MenuView {
-    let start = name == "lobby-start";
+fn roster(start: bool) -> (Vec<MemberRow>, Vec<MemberRow>) {
     let radiant = vec![
         member(118, "kestrel#118", start, true),
         member(2207, "mira#2207", start, false),
@@ -151,6 +157,12 @@ pub(super) fn room(name: &str) -> MenuView {
             member(40, "juniper#40", true, false),
         ]);
     }
+    (radiant, dire)
+}
+
+pub(super) fn room(name: &str) -> MenuView {
+    let start = name == "lobby-start";
+    let (radiant, dire) = roster(start);
     let owner = name != "lobby";
     let lobby = LobbyView {
         name: "Friday stack".into(),
@@ -180,13 +192,24 @@ pub(super) fn room(name: &str) -> MenuView {
         starts_short: false,
         starting_in_secs: None,
     };
+    let mut lobby = lobby;
+    for member in lobby.teams.iter_mut().flat_map(|team| &mut team.slots).filter_map(|slot| slot.who.as_mut()) {
+        member.me = member.account == AccountId(if owner { 118 } else { 2207 });
+    }
     let mut view = logged_in(Page::Lobby, PageView::Lobby(lobby));
+    view.player = if owner { "kestrel" } else { "mira" }.into();
+    view.account = Some(view.player.clone());
     view.lobby_ui = ControlsView {
         modes: modes(),
         mode: Some(RulesetId("full".into())),
         chat: chat(),
         ..Default::default()
     };
+    edit_preview(name, &mut view);
+    view
+}
+
+fn edit_preview(name: &str, view: &mut MenuView) {
     if name == "lobby-edit" {
         view.lobby_ui.editor = Some(EditorView {
             fields: vec![
@@ -204,7 +227,6 @@ pub(super) fn room(name: &str) -> MenuView {
             saving: false,
         });
     }
-    view
 }
 
 fn chat() -> ChatView {

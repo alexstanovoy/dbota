@@ -2268,7 +2268,7 @@ fn squad_lobby() -> (Service, Player, Player) {
         p.menu.view().password.is_some_and(|d| d.error.is_some())
     });
     let refused = bob.menu.view().password.expect("the dialog stays");
-    assert_eq!(refused.error.as_deref(), Some("Wrong password: try again"));
+    assert_eq!(refused.error.as_deref(), Some("Wrong password."));
     assert!(refused.field.shown.is_empty(), "the wrong password is gone");
     bob.menu.act(Act::Type(PASSWORD.to_owned()));
     bob.menu.act(Act::Submit);
@@ -2366,15 +2366,24 @@ fn the_owner_changes_the_lobbys_settings_and_the_others_only_read_them() {
     alice
         .menu
         .act(Act::LobbyUi(super::LobbyAction::EditMode(practice)));
+    alice.fill_field(1, PASSWORD);
     alice.menu.act(Act::LobbyUi(super::LobbyAction::Save));
     settle(&mut [&mut alice, &mut bob], |p| {
+        if let Some(editor) = p.menu.view().lobby_ui.editor {
+            assert!(editor.error.is_none(), "mode refused: {:?}", editor.error);
+        }
         lobby_of(p).settings.mode == "Practice"
+            && (!lobby_of(p).settings.editable || p.menu.view().lobby_ui.editor.is_none())
     });
     alice.menu.act(Act::LobbyUi(super::LobbyAction::Edit));
-    alice.fill_field(1, "");
+    alice.menu.act(Act::LobbyUi(super::LobbyAction::RemovePassword));
     alice.menu.act(Act::LobbyUi(super::LobbyAction::Save));
     settle(&mut [&mut alice, &mut bob], |p| {
+        if let Some(editor) = p.menu.view().lobby_ui.editor {
+            assert!(editor.error.is_none(), "password removal refused: {:?}", editor.error);
+        }
         !lobby_of(p).settings.locked
+            && (!lobby_of(p).settings.editable || p.menu.view().lobby_ui.editor.is_none())
     });
     // The rules changed and the slots did not: bob keeps his.
     assert_eq!(
@@ -2412,7 +2421,7 @@ fn the_owner_changes_the_lobbys_settings_and_the_others_only_read_them() {
     settle(&mut [&mut bob], |p| {
         p.menu.view().status.is_some_and(|s| s.error)
     });
-    assert_eq!(lobby_of(&bob).settings.audience, "Humans and Bots");
+    assert_eq!(lobby_of(&bob).settings.audience, "Humans and bots");
 }
 
 /// The password dialog keeps nothing it was given once it is gone: Cancel and Escape close it

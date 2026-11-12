@@ -19,7 +19,6 @@ pub trait Port {
 pub struct Incoming {
     pub lobby: LobbyId,
     pub account: AccountId,
-    pub name: String,
     pub message: String,
     pub minute: u16,
 }
@@ -130,6 +129,10 @@ impl Chat {
             if Some(incoming.lobby) != self.lobby {
                 continue;
             }
+            let Some(person) = self.people.iter().find(|person| person.account == incoming.account) else {
+                continue;
+            };
+            let name = person.name.clone();
             let message = text::line(&incoming.message, MAX_MESSAGE);
             if message.is_empty() {
                 continue;
@@ -137,7 +140,7 @@ impl Chat {
             self.push(Line {
                 minute: incoming.minute % (24 * 60),
                 account: Some(incoming.account),
-                name: text::line(&incoming.name, text::NAME),
+                name,
                 message,
             });
         }

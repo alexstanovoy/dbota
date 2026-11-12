@@ -70,7 +70,8 @@ pub struct Trusted(pub Trust);
 
 pub fn plugin(app: &mut App) {
     super::hero_stage::plugin(app);
-    app.init_resource::<GameEpoch>()
+    app.init_resource::<super::lobby_scroll::Positions>()
+        .init_resource::<GameEpoch>()
         .init_resource::<super::availability::FocusKey>()
         .init_resource::<super::availability::MenuKeys>()
         .init_resource::<bevy::input_focus::InputFocus>()
@@ -107,6 +108,7 @@ pub fn plugin(app: &mut App) {
                 demo_start,
                 super::screens::draw,
                 super::kit::focus_ring,
+                super::lobby_widgets::focus_ring,
                 super::kit::hover,
                 super::availability::navigate,
                 super::availability::tips,
@@ -117,7 +119,7 @@ pub fn plugin(app: &mut App) {
         .add_systems(Update, (super::top_bar::animate, hud_shown))
         .add_systems(
             PostUpdate,
-            (super::top_bar::fit_tabs, super::ladder_page::visible_range)
+            (super::top_bar::fit_tabs, super::ladder_page::visible_range, super::lobby_scroll::scroll)
                 .after(bevy::ui::UiSystems::Layout),
         );
 }
@@ -508,6 +510,10 @@ fn keyboard(
             || (shift && event.key_code == KeyCode::Insert);
         if paste {
             *pasting = Some(clipboard.fetch_text());
+            continue;
+        }
+        if let Some(action) = core.lobby_key(&event.logical_key) {
+            core.act(action);
             continue;
         }
         let act = match &event.logical_key {

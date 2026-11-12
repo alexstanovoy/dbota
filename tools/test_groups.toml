@@ -127,6 +127,7 @@ paths = [
     "src/settings/**",
     "tests/connect.rs",
     "tests/menu_quit.rs",
+    "tests/common/lobby_friend.rs",
     "tests/ping.rs",
     "tests/refused_replays.rs",
 ]

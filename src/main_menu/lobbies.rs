@@ -2,8 +2,8 @@
 use super::{
     core::{Act, Page},
     kit::{Kit, MenuButton, Tone},
-    lobby_controls::{Action, Choice, ControlsView, Server},
-    lobby_widgets::{self as w, OptionRow},
+    lobby_controls::{Action, Choice, ControlsView},
+    lobby_widgets::{self as w},
     view::{FieldView, LobbyRow, MenuView, PageView},
 };
 use crate::theme;
@@ -26,6 +26,11 @@ fn browser(
     fields: &[FieldView],
     controls: &ControlsView,
 ) {
+    let hero = kit.node(root, Node {
+        position_type: PositionType::Absolute, left: px(300), top: px(230), width: px(300), height: px(400), ..default()
+    });
+    kit.commands.entity(hero).insert(Name::new("lobby browser hero"));
+    kit.art(hero, "portrait.hero.nevermore.tall", crate::ui::fill());
     let panel = w::panel(kit, root, "lobby browser");
     let visible: Vec<_> = rows
         .iter()
@@ -64,13 +69,10 @@ fn heading(kit: &mut Kit, parent: Entity, shown: usize, total: usize) {
     kit.typed(
         row,
         "LOBBIES",
-        theme::Type {
-            size: 26.0,
-            ..theme::HEADING
-        },
+        theme::lobby::TITLE,
         theme::INK_1,
     );
-    kit.text(row, format!("{shown} of {total} open"), 15.0, theme::INK_4);
+    kit.typed(row, format!("{shown} of {total} open"), theme::LABEL, theme::INK_4);
     kit.node(
         row,
         Node {
@@ -90,6 +92,7 @@ fn table(kit: &mut Kit, parent: Entity, rows: &[&LobbyRow], controls: &ControlsV
         row_gap: px(2),
         ..default()
     });
+    kit.commands.entity(table).insert((super::lobby_scroll::Area::Browser, ScrollPosition::default()));
     let header = table_row(kit, table, 30.0);
     for (index, label) in ["", "NAME", "HOST", "SLOTS", "MODE"]
         .into_iter()
@@ -100,7 +103,7 @@ fn table(kit: &mut Kit, parent: Entity, rows: &[&LobbyRow], controls: &ControlsV
     }
     w::rule(kit, table);
     if rows.is_empty() {
-        kit.text(table, "No open lobbies", 15.0, theme::INK_4);
+        kit.typed(table, "No open lobbies", theme::LABEL, theme::INK_4);
     }
     for lobby in rows.iter().take(128) {
         lobby_row(kit, table, lobby, controls.selected == Some(lobby.id));
@@ -149,6 +152,7 @@ fn lobby_row(kit: &mut Kit, parent: Entity, lobby: &LobbyRow, selected: bool) {
         Button,
         Pickable::default(),
         MenuButton(Act::JoinLobby(lobby.id)),
+        w::Control,
         Name::new(format!("join {}", lobby.name.to_lowercase())),
     ));
     if selected {
@@ -174,16 +178,11 @@ fn lobby_row(kit: &mut Kit, parent: Entity, lobby: &LobbyRow, selected: bool) {
     .enumerate()
     {
         let cell = cell(kit, row, index + 1);
-        kit.text(
-            cell,
-            text,
-            14.0,
-            if index == 0 {
+        kit.typed(cell, text, theme::BODY, if index == 0 {
                 theme::INK_1
             } else {
                 theme::INK_2
-            },
-        );
+            });
     }
 }
 
@@ -199,40 +198,11 @@ fn filters(kit: &mut Kit, parent: Entity, field: Option<&FieldView>, controls: &
             ..default()
         },
     );
-    let mode = kit.node(
-        row,
-        Node {
-            width: px(150),
-            flex_shrink: 0.0,
-            ..default()
-        },
-    );
-    let options = (controls.open == Some(Choice::Filter)).then(|| {
-        std::iter::once(OptionRow {
-            name: "Any".into(),
-            selected: controls.filter.is_none(),
-            act: w::action(Action::Filter(None)),
-        })
-        .chain(controls.modes.iter().map(|mode| OptionRow {
-            name: mode.name.clone(),
-            selected: controls.filter.as_ref() == Some(&mode.id),
-            act: w::action(Action::Filter(Some(mode.id.clone()))),
-        }))
-        .collect()
-    });
-    w::select(
-        kit,
-        mode,
-        "Game mode",
-        controls.mode_name(controls.filter.as_ref()),
-        Choice::Filter,
-        options,
-        true,
-        false,
-    );
+    filter_mode(kit, row, controls);
     let search = kit.node(
         row,
         Node {
+            flex_direction: FlexDirection::Column,
             flex_grow: 1.0,
             flex_basis: px(0),
             min_width: px(0),
@@ -265,6 +235,29 @@ fn filters(kit: &mut Kit, parent: Entity, field: Option<&FieldView>, controls: &
     );
 }
 
+fn filter_mode(kit: &mut Kit, row: Entity, controls: &ControlsView) {
+    let mode = kit.node(
+        row,
+        Node {
+            flex_direction: FlexDirection::Column,
+            width: px(150),
+            flex_shrink: 0.0,
+            ..default()
+        },
+    );
+    let options = (controls.open == Some(Choice::Filter)).then(|| controls.choice_list(Choice::Filter));
+    w::select(
+        kit,
+        mode,
+        "Game mode",
+        controls.mode_name(controls.filter.as_ref()),
+        Choice::Filter,
+        options,
+        true,
+        false,
+    );
+}
+
 fn creation(kit: &mut Kit, parent: Entity, controls: &ControlsView) {
     let parent = w::column(kit, parent, 8.0);
     w::rule(kit, parent);
@@ -279,26 +272,14 @@ fn creation(kit: &mut Kit, parent: Entity, controls: &ControlsView) {
     let server = kit.node(
         row,
         Node {
-            width: percent(50),
+            flex_grow: 1.0,
+            flex_basis: px(0),
             flex_direction: FlexDirection::Column,
             min_width: px(0),
             ..default()
         },
     );
-    let options = (controls.open == Some(Choice::Server)).then(|| {
-        [Server::Local, Server::Service]
-            .into_iter()
-            .map(|server| OptionRow {
-                name: if server == Server::Local {
-                    "Local".into()
-                } else {
-                    controls.service.clone()
-                },
-                selected: controls.server == server,
-                act: w::action(Action::Server(server)),
-            })
-            .collect()
-    });
+    let options = (controls.open == Some(Choice::Server)).then(|| controls.choice_list(Choice::Server));
     w::select(
         kit,
         server,
@@ -312,23 +293,14 @@ fn creation(kit: &mut Kit, parent: Entity, controls: &ControlsView) {
     let mode = kit.node(
         row,
         Node {
+            flex_direction: FlexDirection::Column,
             flex_grow: 1.0,
             flex_basis: px(0),
             min_width: px(0),
             ..default()
         },
     );
-    let options = (controls.open == Some(Choice::Mode)).then(|| {
-        controls
-            .modes
-            .iter()
-            .map(|mode| OptionRow {
-                name: mode.name.clone(),
-                selected: controls.mode.as_ref() == Some(&mode.id),
-                act: w::action(Action::Mode(mode.id.clone())),
-            })
-            .collect()
-    });
+    let options = (controls.open == Some(Choice::Mode)).then(|| controls.choice_list(Choice::Mode));
     w::select(
         kit,
         mode,
@@ -339,6 +311,10 @@ fn creation(kit: &mut Kit, parent: Entity, controls: &ControlsView) {
         true,
         false,
     );
+    creation_actions(kit, parent);
+}
+
+fn creation_actions(kit: &mut Kit, parent: Entity) {
     let actions = kit.node(
         parent,
         Node {
@@ -362,6 +338,7 @@ fn creation(kit: &mut Kit, parent: Entity, controls: &ControlsView) {
         w::action(Action::Create),
         Tone::Primary,
         52.0,
+        theme::button(52.0),
     );
     let direct = kit.node(
         actions,
@@ -378,5 +355,6 @@ fn creation(kit: &mut Kit, parent: Entity, controls: &ControlsView) {
         Act::Go(Page::LocalLobby),
         Tone::Secondary,
         52.0,
+        theme::lobby::DIRECT_ACTION,
     );
 }

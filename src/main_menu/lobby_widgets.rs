@@ -12,6 +12,25 @@ use bevy::ui_widgets::Button;
 use theme::lobby::{RIGHT, WIDTH};
 pub const FIELD_HEIGHT: f32 = 44.0;
 
+#[derive(Component)]
+pub struct Control;
+
+pub fn focus_ring(
+    core: Option<NonSend<crate::main_menu::MenuCore>>, mut commands: Commands,
+    controls: Query<(Entity, &MenuButton, Has<Outline>), With<Control>>,
+) {
+    let focused = core.as_ref().and_then(|core| core.button_focus());
+    for (entity, button, has_outline) in &controls {
+        let wanted = focused == Some(&button.0);
+        if wanted && !has_outline {
+            commands.entity(entity).insert(Outline { width: px(1), offset: px(-1), color: theme::FOCUS });
+        } else if !wanted && has_outline {
+            commands.entity(entity).remove::<Outline>();
+        }
+    }
+}
+
+
 pub fn action(action: Action) -> Act {
     Act::LobbyUi(action)
 }
@@ -69,16 +88,14 @@ pub fn quiet(kit: &mut Kit, parent: Entity, label: &str, act: Act, ink: Color) -
         parent,
         label,
         act,
-        theme::Type {
-            size: 13.0,
-            ..theme::LABEL
-        },
+        theme::SMALL_BODY,
         (ink, theme::INK_1),
     );
     kit.commands
         .entity(button)
         .entry::<Node>()
         .and_modify(|mut node| node.min_height = px(32));
+    kit.commands.entity(button).insert(Control);
     button
 }
 
@@ -98,7 +115,7 @@ pub fn rule(kit: &mut Kit, parent: Entity) {
 }
 
 pub fn full_disabled(kit: &mut Kit, parent: Entity, label: &str, height: f32) -> Entity {
-    let button = kit.disabled_button(parent, label, height);
+    let button = kit.disabled_button_role(parent, label, height, theme::lobby::ROOM_ACTION);
     kit.commands
         .entity(button)
         .entry::<Node>()
@@ -116,8 +133,9 @@ pub fn full_button(
     act: Act,
     tone: Tone,
     height: f32,
+    role: theme::Type,
 ) -> Entity {
-    let button = kit.button(parent, label, act, tone, height);
+    let button = kit.button_role(parent, label, act, tone, height, role);
     kit.commands
         .entity(button)
         .entry::<Node>()
@@ -140,7 +158,7 @@ pub fn check(kit: &mut Kit, parent: Entity, label: &str, checked: bool, act: Act
     );
     kit.commands
         .entity(row)
-        .insert((Button, Pickable::default(), MenuButton(act), Name::new(label.to_lowercase())));
+        .insert((Button, Control, Pickable::default(), MenuButton(act), Name::new(label.to_lowercase())));
     let square = kit.node(
         row,
         Node {
@@ -160,9 +178,9 @@ pub fn check(kit: &mut Kit, parent: Entity, label: &str, checked: bool, act: Act
             Color::WHITE
         }));
     if checked {
-        kit.bold(square, "✓", 18.0, Color::WHITE);
+        kit.typed(square, "✓", theme::lobby::CHECK_MARK, Color::WHITE);
     }
-    kit.text(row, label, 14.0, theme::INK_2);
+    kit.typed(row, label, theme::BODY, theme::INK_2);
     row
 }
 
@@ -175,7 +193,7 @@ pub fn field(
     error: bool,
 ) -> Entity {
     let column = column(kit, parent, 4.0);
-    kit.text(column, field.label, 13.0, theme::INK_4);
+    kit.typed(column, field.label, theme::SMALL_BODY, theme::INK_4);
     let node = input(
         kit,
         column,
@@ -193,7 +211,7 @@ pub fn field(
             theme::SECONDARY_EDGE
         },
     );
-    kit.text(node, &field.shown, 14.0, theme::INK_1);
+    kit.typed(node, &field.shown, theme::BODY, theme::INK_1);
     if readonly {
         let mut accessible = bevy::a11y::AccessibilityNode::default();
         accessible.set_label(field.label);
@@ -224,16 +242,12 @@ pub fn input(kit: &mut Kit, parent: Entity, label: &str, act: Option<Act>, edge:
         BorderColor::all(edge),
     ));
     if let Some(act) = act {
-        kit.commands.entity(node).insert((Button, Pickable::default(), MenuButton(act)));
+        kit.commands.entity(node).insert((Button, Control, Pickable::default(), MenuButton(act)));
     }
     node
 }
 
-pub struct OptionRow {
-    pub name: String,
-    pub selected: bool,
-    pub act: Act,
-}
+use super::lobby_controls::Choices;
 
 pub fn select(
     kit: &mut Kit,
@@ -241,12 +255,12 @@ pub fn select(
     label: &str,
     value: &str,
     choice: Choice,
-    options: Option<Vec<OptionRow>>,
+    options: Option<Choices>,
     above: bool,
     readonly: bool,
 ) {
     let column = column(kit, parent, 4.0);
-    kit.text(column, label, 13.0, theme::INK_4);
+    kit.typed(column, label, theme::SMALL_BODY, theme::INK_4);
     let selector = input(
         kit,
         column,
@@ -254,23 +268,27 @@ pub fn select(
         (!readonly).then(|| action(Action::Open(choice))),
         theme::SECONDARY_EDGE,
     );
-    kit.commands
-        .entity(selector)
-        .insert(BackgroundColor(theme::FIELD));
-    let text = kit.text(selector, value, 14.0, theme::INK_1);
+    kit.commands.entity(selector).insert((BackgroundColor(theme::FIELD), Name::new(match choice {
+        Choice::Filter => "filter game mode",
+        Choice::Mode => "new lobby game mode",
+        Choice::EditMode => "lobby game mode",
+        Choice::Server => "server",
+        Choice::Audience => "open to",
+    })));
+    let text = kit.typed(selector, value, theme::BODY, theme::INK_1);
     kit.commands.entity(text).insert(Node {
         flex_grow: 1.0,
         ..default()
     });
     if !readonly {
-        kit.text(selector, "⌄", 15.0, theme::INK_3);
+        kit.typed(selector, "⌄", theme::LABEL, theme::INK_3);
     }
     if let Some(options) = options {
         choice_list(kit, column, options, above);
     }
 }
 
-fn choice_list(kit: &mut Kit, parent: Entity, options: Vec<OptionRow>, above: bool) {
+fn choice_list(kit: &mut Kit, parent: Entity, options: Choices, above: bool) {
     let list = kit.node(
         parent,
         Node {
@@ -281,7 +299,7 @@ fn choice_list(kit: &mut Kit, parent: Entity, options: Vec<OptionRow>, above: bo
             bottom: if above { px(48) } else { Val::Auto },
             flex_direction: FlexDirection::Column,
             border: UiRect::all(px(1)),
-            max_height: px(264),
+            max_height: px(theme::lobby::CHOICE_HEIGHT),
             overflow: Overflow::scroll_y(),
             ..default()
         },
@@ -291,38 +309,18 @@ fn choice_list(kit: &mut Kit, parent: Entity, options: Vec<OptionRow>, above: bo
         BorderColor::all(theme::SELECT),
         ZIndex(8),
         ScrollPosition::default(),
+        super::lobby_scroll::Area::Choices,
+        Pickable::default(),
+        bevy::picking::hover::Hovered::default(),
+        crate::hud::Blocker,
         Name::new("lobby choices"),
     ));
-    for option in options.into_iter().take(32) {
-        let row = kit.node(
-            list,
-            Node {
-                height: px(44),
-                flex_shrink: 0.0,
-                padding: UiRect::axes(px(10), px(0)),
-                align_items: AlignItems::Center,
-                border: UiRect::left(px(3)),
-                ..default()
-            },
-        );
-        kit.commands.entity(row).insert((
-            Button,
-        Pickable::default(),
-            MenuButton(option.act),
-            Name::new(option.name.to_lowercase()),
-            BorderColor::all(if option.selected {
-                theme::SELECT
-            } else {
-                Color::NONE
-            }),
-        ));
-        if option.selected {
-            kit.commands
-                .entity(row)
-                .insert(theme::rightward(theme::SELECT_FILL));
-        }
-        kit.text(row, option.name, 14.0, theme::INK_1);
-    }
+    let first = options.first.min(options.rows.len());
+    let shown = theme::lobby::CHOICE_RENDER_ROWS.min(options.rows.len() - first);
+    choice_space(kit, list, first);
+    let remaining = options.rows.len() - first - shown;
+    for option in options.rows.into_iter().skip(first).take(shown) { choice_row(kit, list, option); }
+    choice_space(kit, list, remaining);
 }
 
 pub fn lock(kit: &mut Kit, parent: Entity) {
@@ -352,5 +350,43 @@ pub fn lock(kit: &mut Kit, parent: Entity) {
         kit.commands
             .entity(part)
             .insert(BorderColor::all(theme::GOLD));
+    }
+}
+
+fn choice_row(kit: &mut Kit, list: Entity, option: super::lobby_controls::ChoiceRow) {
+        let row = kit.node(
+            list,
+            Node {
+                height: px(theme::lobby::CHOICE_ROW_HEIGHT),
+                flex_shrink: 0.0,
+                padding: UiRect::axes(px(10), px(0)),
+                align_items: AlignItems::Center,
+                border: UiRect::left(px(3)),
+                ..default()
+            },
+        );
+        kit.commands.entity(row).insert((
+            Button,
+        Pickable::default(),
+            MenuButton(action(option.action)),
+            Control,
+            Name::new(option.name.to_lowercase()),
+            BorderColor::all(if option.selected {
+                theme::SELECT
+            } else {
+                Color::NONE
+            }),
+        ));
+        if option.selected {
+            kit.commands
+                .entity(row)
+                .insert(theme::rightward(theme::SELECT_FILL));
+        }
+        kit.typed(row, option.name, theme::BODY, theme::INK_1);
+}
+
+fn choice_space(kit: &mut Kit, parent: Entity, rows: usize) {
+    if rows > 0 {
+        kit.node(parent, Node { height: px(rows as f32 * theme::lobby::CHOICE_ROW_HEIGHT), flex_shrink: 0.0, ..default() });
     }
 }

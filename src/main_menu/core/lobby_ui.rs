@@ -7,6 +7,39 @@ use crate::main_menu::{
 };
 
 impl MenuCore {
+    #[cfg(test)]
+    pub(crate) fn lobby_sync_settled(&self) -> bool {
+        self.link_ready() && self.asked.is_empty()
+    }
+
+    pub(super) fn restore_lobby_membership(&mut self, memberships: &[LobbyId]) {
+        if self.page != Page::Lobby { return; }
+        if let Some(lobby) = self.lobby_ui.active.filter(|id| memberships.contains(id)) {
+            self.send(ClientMsg::LobbyJoin { lobby, password: None }, Asked::RestoreLobby(lobby));
+        } else {
+            self.lobby_ui.active = None;
+            self.go(Page::Lobbies);
+        }
+    }
+
+    pub(super) fn lobby_resumed(&mut self, lobby: LobbyId, reply: Reply) {
+        if self.page != Page::Lobby || self.lobby_ui.active != Some(lobby) { return; }
+        if let Reply::Lobby { state } = reply && state.id == lobby {
+            self.sit(state);
+        } else {
+            self.lobby_resume_failed(lobby, "The service did not restore the lobby".into());
+        }
+    }
+
+    pub(super) fn lobby_resume_failed(&mut self, lobby: LobbyId, reason: String) {
+        if self.page == Page::Lobby && self.lobby_ui.active == Some(lobby) {
+            self.lobby = None;
+            self.lobby_ui.active = None;
+            self.go(Page::Lobbies);
+            self.tell(reason, true);
+        }
+    }
+
     fn remembered_lobby_password(&self, lobby: LobbyId) -> Option<&str> {
         self.lobby_secret.as_ref().filter(|(id, _)| *id == lobby).map(|(_, secret)| secret.as_str())
     }
@@ -128,9 +161,19 @@ impl MenuCore {
         {
             return;
         }
+        if let Some(action) = self.choose_lobby_option(action) {
+            self.edit_lobby_draft(action);
+        }
+        self.lobby_editor_controls();
+        self.lobby_browser_controls();
+        self.lobby_room_controls();
+    }
+
+    fn choose_lobby_option(&mut self, action: Action) -> Option<Action> {
         match action {
             Action::Open(choice) => {
-                self.lobby_ui.open = (self.lobby_ui.open != Some(choice)).then_some(choice)
+                self.lobby_ui.open = (self.lobby_ui.open != Some(choice)).then_some(choice);
+                self.lobby_ui.choice_start = self.lobby_menu_view(&Connection::Offline).choices(choice).iter().position(|row| row.selected).unwrap_or(0).saturating_sub(2);
             }
             Action::Server(server) => {
                 self.lobby_ui.server = server;
@@ -146,6 +189,13 @@ impl MenuCore {
                 self.lobby_ui.open = None;
             }
             Action::NoPassword => self.lobby_ui.no_password = !self.lobby_ui.no_password,
+            other => return Some(other),
+        }
+        None
+    }
+
+    fn edit_lobby_draft(&mut self, action: Action) {
+        match action {
             Action::Create => self.open_lobby_editor(true),
             Action::Edit => self.open_lobby_editor(false),
             Action::Cancel => {
@@ -183,10 +233,10 @@ impl MenuCore {
                     editor.password_changed = true;
                 }
             }
-            Action::FocusChat => self.lobby_ui.chat.focused = true,
+            Action::FocusChat => self.lobby_ui.chat.focused = self.lobby_ui.chat.port.is_some(),
             Action::SendChat => self.lobby_ui.chat.send(),
+                    _ => unreachable!("choice actions are handled before draft actions"),
         }
-        self.lobby_editor_controls();
     }
 
     fn hide_lobby_password(&mut self) {
@@ -210,6 +260,8 @@ impl MenuCore {
             .chat
             .sync(self.lobby.as_ref().map(|(state, _)| state), &mode);
         self.lobby_ui.chat.poll();
+        self.lobby_browser_controls();
+        self.lobby_room_controls();
         if self
             .lobby_ui
             .editor
@@ -226,11 +278,88 @@ impl MenuCore {
         }
     }
 
+    fn lobby_choice_controls(&self) -> Option<Vec<Item>> {
+        let choice = self.lobby_ui.open?;
+        let rows = self.lobby_menu_view(&Connection::Offline).choices(choice);
+        let selected = rows.iter().position(|row| row.selected).unwrap_or(0);
+        let mut items: Vec<_> = rows.into_iter().map(|row| Item::Button(Act::LobbyUi(row.action))).collect();
+        if !items.is_empty() { items.rotate_left(selected); }
+        Some(items)
+    }
+
+    pub(super) fn follow_lobby_choice_focus(&mut self) {
+        let Some(choice) = self.lobby_ui.open else { return; };
+        let focused = self.keyboard().focused_button().cloned();
+        let rows = self.lobby_menu_view(&Connection::Offline).choices(choice);
+        if let Some(index) = rows.iter().position(|row| focused == Some(Act::LobbyUi(row.action.clone()))) {
+            if index < self.lobby_ui.choice_start { self.lobby_ui.choice_start = index; }
+            else if index >= self.lobby_ui.choice_start + 5 { self.lobby_ui.choice_start = index - 4; }
+        }
+    }
+
+    pub(in crate::main_menu) fn lobby_key(&self, key: &bevy::input::keyboard::Key) -> Option<Act> {
+        use bevy::input::keyboard::Key;
+        if !matches!(self.page, Page::Lobby | Page::Lobbies) { return None; }
+        match key {
+            Key::ArrowDown if self.lobby_ui.open.is_some() => Some(Act::NextField),
+            Key::ArrowUp if self.lobby_ui.open.is_some() => Some(Act::PreviousField),
+            Key::Space if self.button_focus().is_some() => Some(Act::Submit),
+            _ => None,
+        }
+    }
+
+    pub(super) fn dismiss_lobby_ui(&mut self) -> bool {
+        if !self.lobby_ui.dismiss() { return false; }
+        self.lobby_editor_controls();
+        self.lobby_browser_controls();
+        self.lobby_room_controls();
+        true
+    }
+
+    fn lobby_room_controls(&mut self) {
+        if self.page != Page::Lobby || self.lobby_ui.editor.is_some() { return; }
+        let crate::main_menu::view::PageView::Lobby(room) = self.view().body else { return; };
+        let mut items = Vec::new();
+        for slot in room.teams.iter().flat_map(|team| &team.slots) {
+            match &slot.who {
+                None => items.push(Item::Button(Act::LobbySlot(slot.slot))),
+                Some(member) if room.owner && !member.me => {
+                    items.push(Item::Button(Act::MoveMember(member.account)));
+                    items.push(Item::Button(Act::KickMember(member.account)));
+                }
+                _ => {}
+            }
+        }
+        if room.owner {
+            for member in room.spectators.iter().filter(|member| !member.me) {
+                items.push(Item::Button(Act::MoveMember(member.account)));
+                items.push(Item::Button(Act::KickMember(member.account)));
+            }
+            items.push(Item::Button(Act::LobbyUi(Action::Edit)));
+        }
+        items.push(Item::Button(Act::LobbySlot(bota_radovid::proto::LOBBY_NO_SLOT)));
+        items.push(Item::Button(Act::LeaveLobby));
+        let seated = room.teams.iter().flat_map(|team| &team.slots).any(|slot| slot.who.as_ref().is_some_and(|member| member.me));
+        if seated && room.starting_in_secs.is_none() && (!room.owner || room.waiting.is_none()) {
+            items.push(Item::Button(Act::ReadyLobby(room.owner || !room.me_ready)));
+        }
+        if self.lobby_ui.chat.port.is_some() { items.push(Item::Button(Act::LobbyUi(Action::FocusChat))); }
+        self.form.set_controls(items);
+    }
+
     pub(super) fn lobby_browser_controls(&mut self) {
         if self.form.kind != FormKind::Lobby {
             return;
         }
-        self.form.set_controls(vec![
+        if let Some(items) = self.lobby_choice_controls() {
+            self.form.set_controls(items);
+            return;
+        }
+        let mut items: Vec<_> = self.lobbies.iter().filter(|lobby| {
+            (!self.lobby_ui.no_password || !lobby.locked)
+                && self.lobby_ui.filter.as_ref().is_none_or(|id| *id == lobby.ruleset)
+        }).map(|lobby| Item::Button(Act::JoinLobby(lobby.id))).collect();
+        items.extend([
             Item::Button(Act::SearchLobbies),
             Item::Button(Act::LobbyUi(Action::Open(Choice::Filter))),
             Item::Field(SEARCH_FIELD),
@@ -238,7 +367,9 @@ impl MenuCore {
             Item::Button(Act::LobbyUi(Action::Open(Choice::Server))),
             Item::Button(Act::LobbyUi(Action::Open(Choice::Mode))),
             Item::Button(Act::LobbyUi(Action::Create)),
+            Item::Button(Act::Go(Page::LocalLobby)),
         ]);
+        self.form.set_controls(items);
     }
 
     fn open_lobby_editor(&mut self, creating: bool) {
@@ -253,6 +384,11 @@ impl MenuCore {
             return;
         }
         if creating && self.lobby_ui.server == Server::Local {
+            if !cfg!(target_arch = "wasm32") {
+                self.prefs.host_rules = self.lobby_ui.mode.as_ref()
+                    .and_then(|id| LocalRules::named(&id.0)).unwrap_or_default();
+                self.save_prefs();
+            }
             self.go(Page::LocalLobby);
             return;
         }
@@ -268,6 +404,11 @@ impl MenuCore {
             self.tell("No game modes are available".into(), true);
             return;
         };
+        self.lobby_ui.editor = Some(self.new_lobby_draft(creating, mode));
+        self.lobby_editor_controls();
+    }
+
+    fn new_lobby_draft(&mut self, creating: bool, mode: RulesetId) -> Editor {
         let mut form = Form::new(FormKind::LobbySettings, &self.prefs);
         let (audience, cheats, password_known) = if creating {
             (Audience::Everyone, false, true)
@@ -275,7 +416,7 @@ impl MenuCore {
             self.editor_fields(&mut form)
         };
         self.lobby_ui.next_editor = self.lobby_ui.next_editor.checked_add(1).expect("editor identity exhausted");
-        self.lobby_ui.editor = Some(Editor {
+        Editor {
             id: self.lobby_ui.next_editor,
             lobby: (!creating).then(|| self.lobby.as_ref().expect("an owned lobby").0.id),
             form,
@@ -289,8 +430,7 @@ impl MenuCore {
             remove_password: false,
             error: None,
             saving: None,
-        });
-        self.lobby_editor_controls();
+        }
     }
 
     fn editor_fields(&self, form: &mut Form) -> (Audience, bool, bool) {
@@ -307,9 +447,15 @@ impl MenuCore {
     }
 
     fn lobby_editor_controls(&mut self) {
+        let choices = self.lobby_choice_controls();
+        let cheats = self.lobby.as_ref().is_some_and(|(state, _)| state.cheats.is_some());
         let Some(editor) = &mut self.lobby_ui.editor else {
             return;
         };
+        if let Some(items) = choices {
+            editor.form.set_controls(items);
+            return;
+        }
         let mut items = Vec::new();
         if editor.creating {
             items.push(Item::Field(0));
@@ -318,9 +464,11 @@ impl MenuCore {
             Item::Button(Act::LobbyUi(Action::Open(Choice::EditMode))),
             Item::Field(1),
             Item::Button(Act::LobbyUi(Action::Open(Choice::Audience))),
-            Item::Button(Act::LobbyUi(Action::Cheats)),
-            Item::Button(Act::LobbyUi(Action::HidePassword)),
         ]);
+        if editor.creating || cheats {
+            items.push(Item::Button(Act::LobbyUi(Action::Cheats)));
+        }
+        items.push(Item::Button(Act::LobbyUi(Action::HidePassword)));
         if !editor.password_known {
             items.push(Item::Button(Act::LobbyUi(Action::RemovePassword)));
         }
@@ -432,7 +580,7 @@ impl MenuCore {
         if editor.cheats && state.cheats.is_none() {
             editor.cheats = false;
             editor.saving = None;
-            editor.error = Some("Cheats are unavailable in this mode.".into());
+            editor.error = Some("The lobby was saved, but this mode does not support cheats.".into());
             return;
         }
         if editor.saving != Some(Saving::Cheats)
@@ -455,17 +603,11 @@ impl MenuCore {
             .lobby_ui
             .mode
             .clone()
-            .or_else(|| client.and_then(default_lobby_mode));
-        let modes = client.map_or_else(Vec::new, |client| {
-            lobby_rulesets(client)
-                .map(|rules| ModeRow {
-                    id: rules.id.clone(),
-                    name: text::line(&rules.name, text::NAME),
-                    chosen: Some(&rules.id) == mode.as_ref(),
-                })
-                .collect()
-        });
+            .or_else(|| if self.lobby_ui.server == Server::Local { Some(RulesetId(LocalRules::default().name().into())) } else { client.and_then(default_lobby_mode) });
+        let modes = self.lobby_mode_rows(mode.as_ref());
         ControlsView {
+            choice_start: self.lobby_ui.choice_start,
+            can_host: !cfg!(target_arch = "wasm32"),
             server: self.lobby_ui.server,
             service: match connection {
                 Connection::Online(name) | Connection::Lost(name) => name.clone(),
@@ -485,6 +627,24 @@ impl MenuCore {
             hide_join_password: self.lobby_ui.hide_join_password,
             chat: self.lobby_ui.chat.view(),
         }
+    }
+
+    fn lobby_mode_rows(&self, mode: Option<&RulesetId>) -> Vec<ModeRow> {
+        let client = self.client.as_ref();
+        if self.lobby_ui.server == Server::Local && self.lobby_ui.editor.is_none() {
+            LocalRules::ALL.into_iter().map(|rules| ModeRow {
+                id: RulesetId(rules.name().into()), name: rules.label().into(),
+                chosen: mode.is_some_and(|id| id.0 == rules.name()),
+            }).collect()
+        } else { client.map_or_else(Vec::new, |client| {
+            lobby_rulesets(client)
+                .map(|rules| ModeRow {
+                    id: rules.id.clone(),
+                    name: text::line(&rules.name, text::NAME),
+                    chosen: Some(&rules.id) == mode,
+                })
+                .collect()
+        }) }
     }
 
     fn editor_view(&self, editor: &Editor) -> EditorView {

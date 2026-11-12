@@ -37,6 +37,7 @@ mod lobby_chat;
 mod lobby_controls;
 mod lobby_editor;
 mod lobby_room;
+mod lobby_scroll;
 mod lobby_widgets;
 mod meta_fetch;
 mod overlay;
@@ -103,3 +104,6 @@ pub(crate) use keep::deliver_replay_for_menu;
 
 #[cfg(test)]
 pub(crate) use view::LobbyView;
+
+#[cfg(test)]
+pub(crate) use lobby_controls::Choice as LobbyChoice;

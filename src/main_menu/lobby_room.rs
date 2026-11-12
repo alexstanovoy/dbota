@@ -90,21 +90,19 @@ fn heading(kit: &mut Kit, parent: Entity, lobby: &LobbyView, chat: &ChatView) {
     if lobby.locked {
         w::lock(kit, row);
     }
-    kit.typed(
+    let title = kit.typed(
         row,
         &lobby.name,
-        theme::Type {
-            size: 26.0,
-            ..theme::HEADING
-        },
+        theme::lobby::TITLE,
         theme::INK_1,
     );
+    kit.commands.entity(title).insert((Node { flex_grow: 1.0, min_width: px(0), overflow: Overflow::clip(), ..default() }, TextLayout { linebreak: bevy::text::LineBreak::NoWrap, ..default() }));
     if let Some(host) = chat
         .people
         .iter()
         .find(|person| Some(person.account) == chat.owner)
     {
-        kit.text(row, format!("hosted by {}", host.name), 15.0, theme::INK_4);
+        kit.typed(row, format!("hosted by {}", host.name), theme::LABEL, theme::INK_4);
     }
 }
 
@@ -131,6 +129,7 @@ fn team_column(kit: &mut Kit, parent: Entity, team: &TeamRow, lobby: &LobbyView,
     );
     kit.commands.entity(card).insert((
         Name::new(format!("lobby team {}", team.name)),
+        if index == 0 { super::lobby_scroll::Area::Radiant } else { super::lobby_scroll::Area::Dire },
         ScrollPosition::default(),
         BorderColor::all(color),
         BackgroundColor(Color::BLACK.with_alpha(0.12)),
@@ -149,14 +148,13 @@ fn team_column(kit: &mut Kit, parent: Entity, team: &TeamRow, lobby: &LobbyView,
     kit.typed(
         heading,
         &team.name,
-        theme::Type {
-            size: 24.0,
-            tracking: 3.0,
-            ..theme::HEADING
-        },
+        theme::lobby::TEAM_NAME,
         color,
     );
-    for slot in &team.slots {
+    for slot in &team.slots { slot_row(kit, card, slot, lobby, color); }
+}
+
+fn slot_row(kit: &mut Kit, card: Entity, slot: &super::view::SlotRow, lobby: &LobbyView, color: Color) {
         let row = kit.node(
             card,
             Node {
@@ -192,15 +190,10 @@ fn team_column(kit: &mut Kit, parent: Entity, team: &TeamRow, lobby: &LobbyView,
             kit.typed(
                 button,
                 "JOIN SLOT",
-                theme::Type {
-                    size: 13.0,
-                    tracking: 1.5,
-                    ..theme::LABEL
-                },
+                theme::lobby::SLOT_ACTION,
                 theme::INK_2,
             );
         }
-    }
 }
 
 fn member(kit: &mut Kit, parent: Entity, member: &MemberRow, lobby: &LobbyView) {
@@ -209,36 +202,34 @@ fn member(kit: &mut Kit, parent: Entity, member: &MemberRow, lobby: &LobbyView) 
     } else {
         member.name.clone()
     };
-    let text = kit.text(
-        parent,
-        name,
-        13.0,
-        if member.me {
+    let text = kit.typed(parent, name, theme::lobby::MEMBER, if member.me {
             theme::SELECT
         } else {
             theme::INK_1
-        },
-    );
+        });
     kit.commands.entity(text).insert(Node {
         flex_grow: 1.0,
         min_width: px(0),
+        overflow: Overflow::clip(),
         ..default()
     });
+    kit.commands.entity(text).insert(TextLayout { linebreak: bevy::text::LineBreak::NoWrap, ..default() });
+    if member.bot { kit.typed(parent, "BOT", theme::CAPTION, theme::INK_3); }
     if member.ready {
         let chip = kit.typed(
             parent,
             "READY",
-            theme::Type {
-                size: 12.0,
-                tracking: 1.0,
-                ..theme::LABEL
-            },
+            theme::lobby::READY,
             theme::RADIANT_TEXT,
         );
         kit.commands
             .entity(chip)
             .insert(Name::new(format!("lobby ready chip {}", member.account.0)));
     }
+    member_controls(kit, parent, member, lobby);
+}
+
+fn member_controls(kit: &mut Kit, parent: Entity, member: &MemberRow, lobby: &LobbyView) {
     if lobby.owner && !member.me {
         let move_button = w::quiet(
             kit,
@@ -280,8 +271,13 @@ fn spectators(kit: &mut Kit, parent: Entity, lobby: &LobbyView) {
         BorderColor::all(Color::BLACK),
     ));
     kit.typed(row, "SPECTATING", theme::LABEL, theme::INK_2);
-    for member in lobby.spectators.iter().take(8) {
-        kit.text(row, &member.name, 13.0, theme::INK_1);
+    let people = w::column(kit, row, 4.0);
+    kit.commands.entity(people).insert((Node { flex_grow: 1.0, flex_basis: px(0), min_width: px(0), height: px(36), overflow: Overflow::scroll_x(), align_items: AlignItems::Center, column_gap: px(6), ..default() }, super::lobby_scroll::Area::Spectators, ScrollPosition::default()));
+    for member in lobby.spectators.iter().take(256) {
+        let person = kit.node(people, Node { column_gap: px(6), align_items: AlignItems::Center, ..default() });
+        kit.commands.entity(person).insert((Node { min_height: px(28), flex_shrink: 0.0, padding: UiRect::axes(px(8), px(0)), column_gap: px(6), align_items: AlignItems::Center, border: UiRect::all(px(1)), ..default() }, BackgroundColor(theme::FIELD), BorderColor::all(theme::SECONDARY_EDGE)));
+        kit.typed(person, &member.name, theme::lobby::MEMBER, theme::INK_1);
+        member_controls(kit, person, member, lobby);
     }
     kit.node(
         row,
@@ -363,23 +359,30 @@ fn setting(kit: &mut Kit, parent: Entity, label: &str, value: &str) {
     kit.typed(
         row,
         label,
-        theme::Type {
-            size: 13.0,
-            tracking: 1.0,
-            ..theme::CAPTION
-        },
+        theme::lobby::SETTING_LABEL,
         theme::INK_5,
     );
     kit.typed(
         row,
         value.to_uppercase(),
-        theme::Type {
-            size: 13.0,
-            tracking: 1.0,
-            ..theme::LABEL
-        },
+        theme::lobby::SETTING_VALUE,
         theme::INK_1,
     );
+}
+
+fn footer_status(kit: &mut Kit, parent: Entity, lobby: &LobbyView, seated: &[&MemberRow]) {
+    let ready = seated.iter().filter(|member| member.ready).count();
+    let status = if let Some(secs) = lobby.starting_in_secs {
+        format!("Starting in {secs}")
+    } else if ready == seated.len() && ready > 0 {
+        format!("All {ready} players are ready.")
+    } else {
+        format!("{ready} of {} seated players are ready.", seated.len())
+    };
+    kit.typed(parent, status, theme::SMALL_BODY, theme::INK_2);
+    if let Some(name) = &lobby.moving {
+        kit.typed(parent, format!("Choose a free slot for {name}, or SPECTATE"), theme::SMALL_BODY, theme::GOLD);
+    }
 }
 
 fn footer(kit: &mut Kit, parent: Entity, lobby: &LobbyView) {
@@ -389,23 +392,7 @@ fn footer(kit: &mut Kit, parent: Entity, lobby: &LobbyView) {
         .flat_map(|team| &team.slots)
         .filter_map(|slot| slot.who.as_ref())
         .collect();
-    let ready = seated.iter().filter(|member| member.ready).count();
-    let status = if let Some(secs) = lobby.starting_in_secs {
-        format!("Starting in {secs}")
-    } else if ready == seated.len() && ready > 0 {
-        format!("All {ready} players are ready.")
-    } else {
-        format!("{ready} of {} seated players are ready.", seated.len())
-    };
-    kit.text(parent, status, 13.0, theme::INK_2);
-    if let Some(name) = &lobby.moving {
-        kit.text(
-            parent,
-            format!("Choose a free slot for {name}, or SPECTATE"),
-            13.0,
-            theme::GOLD,
-        );
-    }
+    footer_status(kit, parent, lobby, &seated);
     let row = kit.node(
         parent,
         Node {
@@ -416,7 +403,8 @@ fn footer(kit: &mut Kit, parent: Entity, lobby: &LobbyView) {
     let leave = kit.node(
         row,
         Node {
-            width: percent(50),
+            flex_grow: 1.0,
+            flex_basis: px(0),
             min_width: px(0),
             ..default()
         },
@@ -428,6 +416,7 @@ fn footer(kit: &mut Kit, parent: Entity, lobby: &LobbyView) {
         Act::LeaveLobby,
         Tone::Danger,
         52.0,
+        theme::lobby::ROOM_ACTION,
     );
     let go = kit.node(
         row,
@@ -438,6 +427,10 @@ fn footer(kit: &mut Kit, parent: Entity, lobby: &LobbyView) {
             ..default()
         },
     );
+    ready_action(kit, parent, go, lobby, &seated);
+}
+
+fn ready_action(kit: &mut Kit, parent: Entity, go: Entity, lobby: &LobbyView, seated: &[&MemberRow]) {
     let reason = if lobby.owner {
         lobby.waiting.as_ref().map(|reason| reason.message())
     } else if !seated.iter().any(|member| member.me) {
@@ -462,10 +455,11 @@ fn footer(kit: &mut Kit, parent: Entity, lobby: &LobbyView) {
             Act::ReadyLobby(if lobby.owner { true } else { !lobby.me_ready }),
             Tone::Primary,
             52.0,
+            theme::lobby::ROOM_ACTION,
         );
     }
     if let Some(reason) = reason {
-        let text = kit.text(parent, reason, 13.0, theme::INK_4);
+        let text = kit.typed(parent, reason, theme::SMALL_BODY, theme::INK_4);
         kit.commands.entity(text).insert(Node {
             position_type: PositionType::Absolute,
             right: px(24),
@@ -517,7 +511,10 @@ fn conversation(kit: &mut Kit, root: Entity, chat: &ChatView) {
             ..default()
         },
     );
-    for line in chat.lines.iter().rev().take(8).rev() {
+    kit.commands.entity(log).insert((super::lobby_scroll::Area::Chat, ScrollPosition::default()));
+    kit.commands.entity(log).entry::<Node>().and_modify(|mut node| { node.overflow = Overflow::scroll_y(); node.justify_content = JustifyContent::FlexStart; });
+    kit.node(log, Node { flex_grow: 1.0, min_height: px(0), ..default() });
+    for line in &chat.lines {
         chat_line(kit, log, line, chat);
     }
     people(kit, content, chat);
@@ -540,7 +537,8 @@ fn people(kit: &mut Kit, parent: Entity, chat: &ChatView) {
     );
     kit.commands
         .entity(people)
-        .insert(BorderColor::all(theme::lobby::CHAT_EDGE));
+        .insert((BorderColor::all(theme::lobby::CHAT_EDGE), super::lobby_scroll::Area::People, ScrollPosition::default()));
+    kit.commands.entity(people).entry::<Node>().and_modify(|mut node| node.overflow = Overflow::scroll_y());
     for person in &chat.people {
         let host = Some(person.account) == chat.owner;
         let name = if host {
@@ -548,12 +546,7 @@ fn people(kit: &mut Kit, parent: Entity, chat: &ChatView) {
         } else {
             person.name.clone()
         };
-        let text = kit.text(
-            people,
-            name,
-            13.0,
-            if host { theme::GOLD } else { theme::INK_1 },
-        );
+        let text = kit.typed(people, name, theme::SMALL_BODY, if host { theme::GOLD } else { theme::INK_1 });
         kit.commands
             .entity(text)
             .insert(Name::new(format!("lobby chat member {}", person.account.0)));
@@ -565,6 +558,7 @@ fn chat_line(kit: &mut Kit, parent: Entity, line: &Line, chat: &ChatView) {
         parent,
         Node {
             column_gap: px(8),
+            flex_shrink: 0.0,
             align_items: AlignItems::FlexStart,
             ..default()
         },
@@ -572,10 +566,7 @@ fn chat_line(kit: &mut Kit, parent: Entity, line: &Line, chat: &ChatView) {
     kit.typed(
         row,
         format!("{:02}:{:02}", line.minute / 60, line.minute % 60),
-        theme::Type {
-            size: 12.0,
-            ..theme::NUMBER
-        },
+        theme::lobby::CHAT_TIME,
         theme::lobby::CLOCK,
     );
     let words = kit.node(
@@ -589,22 +580,17 @@ fn chat_line(kit: &mut Kit, parent: Entity, line: &Line, chat: &ChatView) {
         },
     );
     if let Some(account) = line.account {
-        let name = kit.bold(
-            words,
-            format!("{}: ", line.name),
-            14.0,
-            if Some(account) == chat.owner {
+        let name = kit.typed(words, format!("{}: ", line.name), theme::lobby::CHAT_SPEAKER, if Some(account) == chat.owner {
                 theme::GOLD
             } else {
                 theme::INK_1
-            },
-        );
+            });
         kit.commands
             .entity(name)
             .insert(Name::new(format!("lobby chat speaker {}", account.0)));
-        kit.text(words, &line.message, 14.0, theme::INK_1);
+        kit.typed(words, &line.message, theme::BODY, theme::INK_1);
     } else {
-        let text = kit.text(words, &line.message, 14.0, theme::INK_4);
+        let text = kit.typed(words, &line.message, theme::BODY, theme::INK_4);
         kit.commands
             .entity(text)
             .entry::<TextFont>()
@@ -613,64 +599,17 @@ fn chat_line(kit: &mut Kit, parent: Entity, line: &Line, chat: &ChatView) {
 }
 
 fn chat_input(kit: &mut Kit, parent: Entity, chat: &ChatView) {
-    let row = kit.node(
-        parent,
-        Node {
-            height: px(50),
-            flex_shrink: 0.0,
-            padding: UiRect::axes(px(8), px(6)),
-            column_gap: px(8),
-            align_items: AlignItems::Center,
-            border: UiRect::top(px(1)),
-            ..default()
-        },
-    );
-    kit.commands
-        .entity(row)
-        .insert(BorderColor::all(theme::lobby::CHAT_EDGE));
-    kit.text(row, "To lobby:", 13.0, theme::SELECT);
-    let space = kit.node(
-        row,
-        Node {
-            flex_grow: 1.0,
-            flex_basis: px(0),
-            min_width: px(0),
-            ..default()
-        },
-    );
-    let input = w::input(
-        kit,
-        space,
-        "lobby message",
-        Some(w::action(Action::FocusChat)),
-        if chat.focused {
-            theme::FOCUS
-        } else {
-            theme::SECONDARY_EDGE
-        },
-    );
-    kit.commands
-        .entity(input)
-        .entry::<Node>()
-        .and_modify(|mut node| node.height = px(38));
-    kit.text(
-        input,
-        if chat.input.is_empty() {
-            if chat.available {
-                "Message"
-            } else {
-                "Lobby chat is unavailable"
-            }
-        } else {
-            &chat.input
-        },
-        14.0,
-        if chat.input.is_empty() {
-            theme::INK_4
-        } else {
-            theme::INK_1
-        },
-    );
+    let row = kit.node(parent, Node {
+        height: px(50), flex_shrink: 0.0, padding: UiRect::axes(px(8), px(6)),
+        column_gap: px(8), align_items: AlignItems::Center,
+        border: UiRect::top(px(1)), ..default()
+    });
+    kit.commands.entity(row).insert(BorderColor::all(theme::lobby::CHAT_EDGE));
+    kit.typed(row, "To lobby:", theme::SMALL_BODY, theme::SELECT);
+    let space = kit.node(row, Node {
+        flex_grow: 1.0, flex_basis: px(0), min_width: px(0), ..default()
+    });
+    chat_entry(kit, space, chat);
     if chat.available {
         kit.button(row, "➤", w::action(Action::SendChat), Tone::Secondary, 38.0);
     } else {
@@ -680,6 +619,18 @@ fn chat_input(kit: &mut Kit, parent: Entity, chat: &ChatView) {
         kit.commands.entity(button).insert(accessible);
     }
     if let Some(error) = &chat.error {
-        kit.text(parent, error, 13.0, theme::ERROR_TEXT);
+        kit.typed(parent, error, theme::SMALL_BODY, theme::ERROR_TEXT);
     }
+}
+
+fn chat_entry(kit: &mut Kit, space: Entity, chat: &ChatView) {
+    let input = w::input(kit, space, "lobby message",
+        chat.available.then(|| w::action(Action::FocusChat)),
+        if chat.focused { theme::FOCUS } else { theme::SECONDARY_EDGE });
+    kit.commands.entity(input).entry::<Node>().and_modify(|mut node| node.height = px(38));
+    let text = if chat.input.is_empty() {
+        if chat.available { "Message" } else { "Lobby chat is unavailable" }
+    } else { &chat.input };
+    let ink = if chat.input.is_empty() { theme::INK_4 } else { theme::INK_1 };
+    kit.typed(input, text, theme::BODY, ink);
 }

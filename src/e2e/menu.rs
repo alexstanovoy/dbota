@@ -589,7 +589,7 @@ fn refused_password_join_keeps_content_still(
                 .non_send::<MenuCore>()
                 .view()
                 .password
-                .is_some_and(|p| p.error.as_deref() == Some("Wrong password: try again"))
+                .is_some_and(|p| p.error.as_deref() == Some("Wrong password."))
         },
     );
     assert_eq!(

@@ -492,6 +492,7 @@ pub(super) enum Asked {
     Watch(MatchId),
     Lobby,
     LobbyUi(super::lobby_controls::SaveRequest),
+    RestoreLobby(LobbyId),
     /// A join of a listed lobby.
     Join(LobbyId),
     /// The start of a Demo Hero.
@@ -1334,6 +1335,10 @@ impl MenuCore {
         self.credentials = None;
         self.outbox.clear();
         self.lobby = None;
+        self.lobby_ui.editor = None;
+        self.lobby_ui.open = None;
+        self.lobby_ui.chat = Default::default();
+        self.lobby_secret = None;
         self.demo_asked = None;
         self.drop_link();
         if !self.account && !matches!(self.page, Page::Game | Page::LocalLobby) {
@@ -1378,6 +1383,8 @@ impl MenuCore {
                             self.connect();
                         }
                     }
+                    (Ok(reply), Some(Asked::RestoreLobby(lobby))) => self.lobby_resumed(lobby, reply),
+                    (Err(error), Some(Asked::RestoreLobby(lobby))) => self.lobby_resume_failed(lobby, error_text(&error)),
                     (Ok(reply), Some(Asked::LobbyUi(request))) => self.lobby_save_replied(reply, request),
                     (Ok(Reply::Welcome { .. }), _) => self.welcomed(),
                     (Ok(reply), asked) => self.replied(reply, asked.unwrap_or(Asked::Other)),
@@ -1460,10 +1467,8 @@ impl MenuCore {
                 data,
             } => self.meta_chunk(match_id, &name, offset, total, &data),
             Reply::Lobbies { list } => self.lobbies = list,
-            Reply::Lobby { state } => {
-                if matches!(asked, Asked::Join(_)) {
-                    self.join_prompt = None;
-                }
+            Reply::Lobby { state } if matches!(asked, Asked::Join(id) if id == state.id) => {
+                self.join_prompt = None;
                 self.sit(state);
             }
             Reply::Queued { .. } | Reply::QueuesJoined { .. } => self.status = None,
@@ -1510,6 +1515,7 @@ impl MenuCore {
         if let Err(err) = self.store.write(Entry::Session, &saved.render()) {
             bevy::log::warn!("login not kept for the next run: {err}");
         }
+        self.restore_lobby_membership(&activities.lobbies);
         self.games = activities
             .matches
             .iter()
@@ -1623,7 +1629,11 @@ impl MenuCore {
                 }
             }
             Event::MatchResult { result } => self.finished(result),
-            Event::LobbyState { state } => self.sit(state),
+            Event::LobbyState { state } => {
+                if self.lobby_ui.active == Some(state.id) {
+                    self.update_lobby_state(state);
+                }
+            }
             Event::LobbyStarting { lobby, in_ms } => {
                 if let Some((state, at)) = &mut self.lobby
                     && state.id == lobby
@@ -1745,17 +1755,26 @@ impl MenuCore {
     }
 
     fn sit(&mut self, state: LobbyState) {
-        self.invalidate_lobby_password(state.locked);
-        self.lobby = Some((state, Instant::now()));
+        self.lobby_ui.active = Some(state.id);
+        self.lobby_ui.selected = Some(state.id);
+        self.update_lobby_state(state);
         if self.page == Page::Lobbies {
             self.go_form(Page::Lobby);
         }
+    }
+
+    fn update_lobby_state(&mut self, state: LobbyState) {
+        self.lobby_ui.server = super::lobby_controls::Server::Service;
+        let locked = state.locked;
+        self.lobby = Some((state, Instant::now()));
+        self.invalidate_lobby_password(locked);
     }
 
     fn unseat(&mut self, lobby: LobbyId, why: &str) {
         if self.lobby.as_ref().is_some_and(|(s, _)| s.id == lobby) {
             self.lobby = None;
             self.lobby_secret = None;
+            self.lobby_ui.active = None;
             self.lobby_ui.editor = None;
             if self.page == Page::Lobby {
                 self.go(Page::Lobbies);
@@ -2087,8 +2106,8 @@ impl MenuCore {
                 self.lobby_type(None);
                 self.edit_leaderboard();
             }
-            Act::NextField => self.keyboard().next(),
-            Act::PreviousField => self.keyboard().previous(),
+            Act::NextField => { self.keyboard().next(); self.follow_lobby_choice_focus(); }
+            Act::PreviousField => { self.keyboard().previous(); self.follow_lobby_choice_focus(); }
             Act::Submit => self.press(),
             Act::Logout => self.logout(),
             other => return Some(other),
@@ -2237,7 +2256,7 @@ impl MenuCore {
     /// back to the top one, then the game under the dashboard, and on the
     /// top page with nothing under it, whether to quit.
     fn back(&mut self) {
-        if self.lobby_ui.dismiss() {
+        if self.dismiss_lobby_ui() {
             return;
         }
         if self.play.info.take().is_some() {

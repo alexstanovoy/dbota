@@ -472,7 +472,22 @@ pub const RESULT_GRID_HORIZONTAL: Color = Color::srgb_u8(0x2c, 0x36, 0x40);
 pub const RESULT_GRID_ZERO: Color = Color::srgb_u8(0x6b, 0x74, 0x7d);
 /// Lobby boards: room, browser, conversation and settings popup.
 pub mod lobby {
-    use super::{Color, hex};
+    use super::{Color, Face, Type, hex, role};
+    pub const TITLE: Type = role(Face::Semibold, 26.0, 2.0);
+    pub const TEAM_NAME: Type = role(Face::Bold, 24.0, 3.0);
+    pub const SLOT_ACTION: Type = role(Face::Bold, 12.0, 1.5);
+    pub const READY: Type = role(Face::Bold, 12.0, 1.0);
+    pub const SETTING_LABEL: Type = role(Face::Semibold, 13.0, 1.0);
+    pub const SETTING_VALUE: Type = role(Face::Semibold, 13.0, 1.0);
+    pub const CHAT_TIME: Type = Type { size: 12.0, ..super::NUMBER };
+    pub const CHAT_SPEAKER: Type = role(Face::Bold, 14.0, 0.0);
+    pub const CHECK_MARK: Type = role(Face::Bold, 18.0, 0.0);
+    pub const ROOM_ACTION: Type = role(Face::Bold, 22.0, 3.0);
+    pub const DIRECT_ACTION: Type = role(Face::Bold, 14.0, 1.0);
+    pub const MEMBER: Type = role(Face::Semibold, 13.0, 0.0);
+    pub const CHOICE_ROW_HEIGHT: f32 = 44.0;
+    pub const CHOICE_HEIGHT: f32 = 264.0;
+    pub const CHOICE_RENDER_ROWS: usize = 32;
     pub const WIDTH: f32 = 620.0;
     pub const RIGHT: f32 = 38.0;
     pub const CHAT_WIDTH: f32 = 640.0;

@@ -2,13 +2,12 @@
 use super::{
     core::Act,
     kit::Kit,
-    lobby_controls::{Action, Choice, ControlsView, EditorView},
-    lobby_widgets::{self as w, OptionRow},
+    lobby_controls::{Action, Choice, ControlsView, EditorView, audience_name},
+    lobby_widgets::{self as w},
     view::PasswordView,
 };
 use crate::theme;
 use bevy::prelude::*;
-use bota_radovid::proto::Audience;
 
 pub fn draw(kit: &mut Kit, root: Entity, controls: &ControlsView) {
     let Some(editor) = &controls.editor else {
@@ -22,10 +21,7 @@ pub fn draw(kit: &mut Kit, root: Entity, controls: &ControlsView) {
         } else {
             "LOBBY SETTINGS"
         },
-        theme::Type {
-            size: 26.0,
-            ..theme::HEADING
-        },
+        theme::lobby::TITLE,
         theme::INK_1,
     );
     let general = w::column(kit, card, 2.0);
@@ -118,17 +114,7 @@ fn fields(kit: &mut Kit, parent: Entity, controls: &ControlsView, editor: &Edito
     if let Some(field) = editor.fields.first() {
         w::field(kit, name, 0, field, !editor.creating, false);
     }
-    let modes = (controls.open == Some(Choice::EditMode)).then(|| {
-        controls
-            .modes
-            .iter()
-            .map(|mode| OptionRow {
-                name: mode.name.clone(),
-                selected: mode.id == editor.mode,
-                act: w::action(Action::EditMode(mode.id.clone())),
-            })
-            .collect()
-    });
+    let modes = (controls.open == Some(Choice::EditMode)).then(|| controls.choice_list(Choice::EditMode));
     w::select(
         kit,
         mode,
@@ -154,16 +140,7 @@ fn fields(kit: &mut Kit, parent: Entity, controls: &ControlsView, editor: &Edito
         true,
     );
     let [audience, _] = row(kit, grid);
-    let options = (controls.open == Some(Choice::Audience)).then(|| {
-        [Audience::Everyone, Audience::HumansOnly, Audience::BotsOnly]
-            .into_iter()
-            .map(|audience| OptionRow {
-                name: audience_name(audience).into(),
-                selected: audience == editor.audience,
-                act: w::action(Action::Audience(audience)),
-            })
-            .collect()
-    });
+    let options = (controls.open == Some(Choice::Audience)).then(|| controls.choice_list(Choice::Audience));
     w::select(
         kit,
         audience,
@@ -176,13 +153,6 @@ fn fields(kit: &mut Kit, parent: Entity, controls: &ControlsView, editor: &Edito
     );
 }
 
-pub fn audience_name(audience: Audience) -> &'static str {
-    match audience {
-        Audience::Everyone => "Humans and bots",
-        Audience::HumansOnly => "Humans",
-        Audience::BotsOnly => "Bots",
-    }
-}
 
 fn toggles(kit: &mut Kit, parent: Entity, editor: &EditorView) {
     let panel = kit.node(
@@ -258,18 +228,10 @@ pub fn password(kit: &mut Kit, root: Entity, password: &PasswordView, hidden: bo
     kit.typed(
         card,
         "LOBBY PASSWORD",
-        theme::Type {
-            size: 26.0,
-            ..theme::HEADING
-        },
+        theme::lobby::TITLE,
         theme::INK_1,
     );
-    kit.text(
-        card,
-        format!("{} needs a password.", password.lobby),
-        15.0,
-        theme::INK_2,
-    );
+    kit.typed(card, format!("{} needs a password.", password.lobby), theme::LABEL, theme::INK_2);
     let field = super::view::FieldView {
         label: "Password",
         ..password.field.clone()
@@ -283,12 +245,7 @@ pub fn password(kit: &mut Kit, root: Entity, password: &PasswordView, hidden: bo
             ..default()
         },
     );
-    kit.text(
-        error_row,
-        password.error.as_deref().unwrap_or(""),
-        14.0,
-        theme::ERROR_TEXT,
-    );
+    kit.typed(error_row, password.error.as_deref().unwrap_or(""), theme::BODY, theme::ERROR_TEXT);
     w::check(
         kit,
         card,
