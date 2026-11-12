@@ -843,6 +843,31 @@ fn unfinished_match_details_only_draw_the_owner_while_finished_details_draw_both
             },
             finished,
         );
+        // Pin graph facts independently of the curve builder: both recorded seats are Radiant.
+        let file = directory.join("owned.meta");
+        let mut metadata = bota_replay::meta::decode(&std::fs::read(&file).expect("fixture bytes"))
+            .expect("fixture");
+        for record in &mut metadata.records {
+            if let bota_replay::meta::MetaRecord::Sample { slot, stats, .. } = record {
+                for (id, value) in stats {
+                    if *id == bota_replay::meta::stat::NET_WORTH {
+                        *value = if *slot == 0 { 1500 } else { 500 };
+                    }
+                    if *id == bota_replay::meta::stat::XP {
+                        *value = if *slot == 0 { 900 } else { 300 };
+                    }
+                }
+            }
+        }
+        let mut writer = bota_replay::meta::Writer::default();
+        assert!(writer.push(
+            &bota_replay::meta::MetaRecord::Header(metadata.header),
+            false
+        ));
+        for record in metadata.records {
+            assert!(writer.push(&record, true));
+        }
+        std::fs::write(&file, writer.into_bytes()).expect("pinned fixture");
         let mut client = local_menu();
         crate::main_menu::tests::install_local_library(
             &mut client.world_mut().non_send_mut::<MenuCore>(),
@@ -889,6 +914,13 @@ fn unfinished_match_details_only_draw_the_owner_while_finished_details_draw_both
             .iter(world)
             .any(|name| name.as_str() == "results graphs");
         assert_eq!(graphs, finished, "team graphs require End");
+        assert!(
+            !client
+                .shown_texts()
+                .iter()
+                .any(|text| text == "Team advantage"),
+            "a scoreboard never leaks a hidden team graph"
+        );
         if finished {
             client.click_named("results graphs");
             assert!(
@@ -896,6 +928,15 @@ fn unfinished_match_details_only_draw_the_owner_while_finished_details_draw_both
                     .shown_texts()
                     .iter()
                     .any(|text| text == "Team advantage")
+            );
+            let shown = client.shown_texts();
+            assert!(
+                shown.iter().any(|text| text == "+2.0k"),
+                "1500 + 500 recorded net worth is visibly graphed"
+            );
+            assert!(
+                shown.iter().any(|text| text == "+1.2k"),
+                "900 + 300 recorded experience is visibly graphed"
             );
         }
     }

@@ -3,7 +3,9 @@ use super::super::{
     summary::{Detail, Row},
     view::{Action, View},
 };
-use super::{Cell, SeatRow, primitives::*};
+#[cfg(test)]
+use super::SeatRow;
+use super::{Cell, primitives::*};
 use crate::{main_menu::kit::Kit, theme};
 use bevy::prelude::*;
 use bota_proto::Team;
@@ -54,7 +56,7 @@ pub fn value(view: &View, row: &Row, cell: Cell) -> Option<i64> {
         Cell::Assists => Some(i64::from(row.assists)),
         Cell::LastHits => row.last_hits.map(i64::from),
         Cell::Denies => row.denies.map(i64::from),
-        Cell::Gpm => Some(i64::from(row.gpm)),
+        Cell::Gpm => row.gpm.map(i64::from),
         Cell::Xpm => Some(i64::from(row.xpm)),
         Cell::HeroDamage => row.hero_damage.map(i64::from),
         Cell::TowerDamage => row.tower_damage.map(i64::from),
@@ -251,6 +253,7 @@ fn row_line(kit: &mut Kit, parent: Entity, view: &View, row: &Row, y: f32) {
     } else {
         rect(kit, parent, node, bg)
     };
+    #[cfg(test)]
     kit.commands.entity(line).insert(SeatRow(row.slot));
     if row.left_at.is_some() {
         kit.commands.entity(line).insert(super::Dim);

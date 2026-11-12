@@ -171,7 +171,7 @@ fn check(summary: &MatchSummary, stats: &bota_proto::MatchStats) {
     assert_eq!(me.tower_damage, Some(own.structure_damage));
     assert_eq!(
         me.gpm,
-        (i64::from(own.net_worth) * 60 / i64::from(summary.seconds.max(1))) as i32
+        Some((i64::from(own.net_worth) * 60 / i64::from(summary.seconds.max(1))) as i32)
     );
     // One point for the start and one for every whole minute of game time.
     assert_eq!(summary.points.len() as u32, summary.seconds / 60 + 1);
@@ -353,7 +353,7 @@ fn a_short_match_uses_its_elapsed_seconds_for_gold_per_minute() {
         }
     }
     let summary = MatchSummary::from_meta(&meta).expect("a summary");
-    assert_eq!(summary.rows[0].gpm, 1507 * 60 / 238);
+    assert_eq!(summary.rows[0].gpm, Some(1507 * 60 / 238));
 }
 
 #[test]
@@ -527,6 +527,8 @@ fn the_screen_at_the_end_shows_every_seat_and_a_point_a_minute() {
     use super::render::{Dot, ItemSlot, SeatRow, Segment};
     use crate::e2e::harness::Client;
     let played = play();
+    let metadata = bota_replay::meta::decode(&std::fs::read(&played.meta).expect("metadata bytes"))
+        .expect("metadata");
     let mut client = Client::run(&["--replay", played.replay.to_str().expect("UTF-8")]);
     client.until("the replay played to its end and read", |c| {
         if let bota_client_core::Source::Replay(player) = &mut c.core_mut().source {
@@ -578,25 +580,51 @@ fn the_screen_at_the_end_shows_every_seat_and_a_point_a_minute() {
             .iter(world)
             .filter(|line| line.0 == graph)
             .count();
-        let curves = super::graphs::curves(&summary, graph);
+        let stat = match graph {
+            Metric::NetWorth => bota_replay::meta::stat::NET_WORTH,
+            Metric::Experience => bota_replay::meta::stat::XP,
+            _ => unreachable!(),
+        };
+        let mut samples = std::collections::BTreeMap::<u8, std::collections::BTreeSet<u32>>::new();
+        for record in &metadata.records {
+            if let bota_replay::meta::MetaRecord::Sample { tick, slot, stats } = record
+                && stats.iter().any(|(id, _)| *id == stat)
+            {
+                samples.entry(*slot).or_default().insert(
+                    tick.saturating_sub(metadata.header.pregame_ticks)
+                        / u32::from(metadata.header.tick_rate),
+                );
+            }
+        }
+        assert!(
+            samples.values().all(|times| times.len() <= 12),
+            "the real fixture is short enough to draw sample dots"
+        );
+        let expected_dots: usize = samples.values().map(std::collections::BTreeSet::len).sum();
         assert_eq!(
-            dots,
-            curves.iter().map(|curve| curve.values.len()).sum::<usize>()
+            dots, expected_dots,
+            "one dot for each recorded sample, independently of curve generation"
         );
         assert_eq!(
             lines,
-            curves
-                .iter()
-                .flat_map(|curve| &curve.values)
-                .filter(|point| point.connected)
-                .count()
+            expected_dots - samples.len(),
+            "adjacent complete recorded samples are joined"
         );
+        let (place, node) = world
+            .query::<(&Name, &UiGlobalTransform, &ComputedNode)>()
+            .iter(world)
+            .find(|(name, _, _)| name.as_str() == "results graph plot")
+            .map(|(_, place, node)| (place.translation, node.size()))
+            .expect("plot");
+        let right = world
+            .query::<(&Dot, &UiGlobalTransform)>()
+            .iter(world)
+            .filter(|(dot, _)| dot.graph == graph)
+            .map(|(_, place)| place.translation.x)
+            .fold(f32::NEG_INFINITY, f32::max);
         assert!(
-            curves.iter().all(|curve| curve
-                .values
-                .last()
-                .is_some_and(|point| point.second == summary.seconds)),
-            "exact end sample retained"
+            (right - (place.x + node.x / 2.0)).abs() < 1.0,
+            "the final recorded point is drawn at the exact right edge"
         );
     }
 }
@@ -1270,4 +1298,46 @@ fn focusing_a_graph_player_dims_the_other_portraits() {
             "{name} respects the selected player"
         );
     }
+}
+
+#[test]
+fn metadata_without_earned_gold_keeps_gpm_unknown_even_without_timed_samples() {
+    use crate::e2e::harness::Client;
+    use bota_replay::meta::{MetaRecord, stat};
+    let mut meta =
+        bota_replay::meta::decode(&super::preview::metadata("match_details")).expect("fixture");
+    for record in &mut meta.records {
+        if let MetaRecord::Sample { stats, .. } = record {
+            stats.retain(|(id, _)| *id != stat::GOLD_EARNED);
+        }
+    }
+    let mut summary = MatchSummary::from_meta(&meta).expect("summary");
+    summary.recording = None;
+    let mut client = Client::run(&[]);
+    client.frames(3);
+    {
+        let mut post = client.world_mut().non_send_mut::<super::PostGame>();
+        post.overlay = Some(super::view::View::new(
+            std::sync::Arc::new(summary),
+            super::view::Context {
+                history: true,
+                ..Default::default()
+            },
+        ));
+        post.presented += 1;
+    }
+    client.frames(4);
+    client.click_named("results scoreboard");
+    let world = client.world_mut();
+    let rates: Vec<_> = world
+        .query::<(&super::render::Cell, &Text)>()
+        .iter(world)
+        .filter(|(cell, _)| **cell == super::render::Cell::Gpm)
+        .map(|(_, text)| text.0.clone())
+        .collect();
+    assert_eq!(
+        rates,
+        vec!["—"; 10],
+        "net worth never supplies missing earned gold"
+    );
 }

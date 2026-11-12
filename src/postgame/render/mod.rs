@@ -7,8 +7,10 @@ mod player;
 pub mod primitives;
 mod scoreboard;
 
+#[cfg(test)]
+use super::graphs::Metric;
 use super::{
-    graphs::{self, Metric},
+    graphs,
     view::{Action, Page, View},
 };
 use crate::{main_menu::kit::Kit, theme, ui};
@@ -22,14 +24,10 @@ pub const CONTENT_HEIGHT: f32 = 702.0;
 
 #[derive(Component)]
 pub struct Screen;
+// These markers expose the actual drawn geometry to headless UI contracts only.
+#[cfg(test)]
 #[derive(Component, Clone, Copy)]
-pub struct SeatRow(
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "identifies the rendered seat in UI contracts")
-    )]
-    pub bota_proto::SlotId,
-);
+pub struct SeatRow(pub bota_proto::SlotId);
 #[derive(Component)]
 pub struct ItemSlot;
 #[derive(Component)]
@@ -53,22 +51,14 @@ pub enum Cell {
 }
 #[derive(Component)]
 pub struct Portrait;
+#[cfg(test)]
 #[derive(Component)]
 pub struct Dot {
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "identifies the rendered graph in UI contracts")
-    )]
     pub graph: Metric,
 }
+#[cfg(test)]
 #[derive(Component)]
-pub struct Segment(
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "identifies the rendered graph in UI contracts")
-    )]
-    pub Metric,
-);
+pub struct Segment(pub Metric);
 
 pub fn spawn(kit: &mut Kit, root: Entity, view: &View) {
     let screen = kit.node(root, ui::fill());

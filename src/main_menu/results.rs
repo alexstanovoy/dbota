@@ -11,13 +11,16 @@ use bota_proto::{SlotId, Team};
 use bota_radovid::proto::{EndReason, MatchResult, Outcome};
 use std::sync::Arc;
 
+#[cfg(test)]
+thread_local! { pub(crate) static OUTCOME_PROJECTIONS: std::cell::Cell<u32> = const { std::cell::Cell::new(0) }; }
+
 impl MenuCore {
     pub(super) fn open_result(&mut self, key: &str) {
         let Some(entry) = self.local_history.find(key) else {
             self.tell("Match details are unavailable.".to_owned(), false);
             return;
         };
-        let Some(mut summary) = inspection(entry) else {
+        let Some(mut summary) = entry.details() else {
             self.tell("Match details are unavailable.".to_owned(), false);
             return;
         };
@@ -140,7 +143,16 @@ impl MenuCore {
         }
     }
 
+    pub fn outcome_revision(&self) -> Option<(bota_radovid::proto::MatchId, u64)> {
+        (self.page == Page::Result)
+            .then_some(self.shown)
+            .flatten()
+            .map(|id| (id, self.local_history.revision()))
+    }
+
     pub fn outcome_result(&self) -> Option<View> {
+        #[cfg(test)]
+        OUTCOME_PROJECTIONS.with(|count| count.set(count.get() + 1));
         if self.page != Page::Result {
             return None;
         }
@@ -151,15 +163,17 @@ impl MenuCore {
         let entry = self
             .local_history
             .find(&service_key(&self.prefs.service, result.match_id.0));
-        let mut summary = entry.and_then(inspection).unwrap_or_else(|| MatchSummary {
-            detail: Detail::Stats,
-            winner: winner(result.outcome),
-            seconds: result.duration_ms / 1000,
-            rows: Vec::new(),
-            points: Vec::new(),
-            structures: Vec::new(),
-            recording: None,
-        });
+        let mut summary = entry
+            .and_then(Saved::details)
+            .unwrap_or_else(|| MatchSummary {
+                detail: Detail::Stats,
+                winner: winner(result.outcome),
+                seconds: result.duration_ms / 1000,
+                rows: Vec::new(),
+                points: Vec::new(),
+                structures: Vec::new(),
+                recording: None,
+            });
         summary.winner = winner(result.outcome);
         let mut context = self.event_context(result, entry.and_then(|entry| entry.owner));
         context.replay = self.result_replay(result.match_id.0);
@@ -276,19 +290,6 @@ fn reason(reason: EndReason, winner: Option<Team>) -> &'static str {
 }
 pub(crate) fn shell(kit: &mut super::kit::Kit, root: bevy::prelude::Entity, core: &MenuCore) {
     super::top_bar::draw(kit, root, &core.view(), Default::default());
-}
-
-fn inspection(entry: &Saved) -> Option<MatchSummary> {
-    let mut summary = entry.details()?;
-    // Keep the archive's privacy projection for timed events as well as for the final rows.
-    if let Some(recording) = &summary.recording
-        && !recording.complete()
-    {
-        summary.recording = Some(Arc::new(
-            recording.restricted_to(summary.rows.iter().map(|row| row.slot)),
-        ));
-    }
-    Some(summary)
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

@@ -2938,6 +2938,91 @@ mod result_overlay_tests {
         client.frames(5);
     }
     #[test]
+    fn an_unchanged_result_does_not_rebuild_its_recording_each_frame() {
+        use crate::main_menu::{
+            local_matches::{Saved, service_key},
+            results::OUTCOME_PROJECTIONS,
+        };
+        use bota_replay::meta::{MetaRecord, Writer};
+        let mut client = Client::run(&[]);
+        client.frames(4);
+        let mut meta =
+            bota_replay::meta::decode(&crate::postgame::preview::metadata("match_details"))
+                .expect("fixture");
+        meta.header.match_id = 7;
+        let mut writer = Writer::default();
+        assert!(writer.push(&MetaRecord::Header(meta.header), false));
+        for record in meta.records {
+            if !matches!(record, MetaRecord::End { .. }) {
+                assert!(writer.push(&record, false));
+            }
+        }
+        let bytes = writer.into_bytes();
+        {
+            let mut core = client.world_mut().non_send_mut::<MenuCore>();
+            core.local_history = Default::default();
+            let key = service_key(&core.prefs.service, 7);
+            core.local_history.insert(
+                Saved {
+                    key,
+                    file: None,
+                    when: 0,
+                    mode: "solo_mid".into(),
+                    owner: Some(bota_proto::SlotId(0)),
+                    metadata: bytes,
+                    metadata_key: None,
+                    cached: None,
+                    result: None,
+                    summary: None,
+                    temporary: None,
+                },
+                50,
+            );
+        }
+        let before = OUTCOME_PROJECTIONS.with(std::cell::Cell::get);
+        deliver(&mut client, 7, 0);
+        client.frames(30);
+        assert!(client.world().non_send::<PostGame>().visible());
+        assert_eq!(
+            OUTCOME_PROJECTIONS.with(std::cell::Cell::get) - before,
+            1,
+            "one projection for an unchanged result/archive version"
+        );
+        let mut complete =
+            bota_replay::meta::decode(&crate::postgame::preview::metadata("match_details"))
+                .expect("complete fixture");
+        complete.header.match_id = 7;
+        let mut writer = Writer::default();
+        assert!(writer.push(&MetaRecord::Header(complete.header), false));
+        for record in complete.records {
+            assert!(writer.push(&record, true));
+        }
+        {
+            let mut core = client.world_mut().non_send_mut::<MenuCore>();
+            let key = service_key(&core.prefs.service, 7);
+            let mut entry = core.local_history.find(&key).expect("saved match").clone();
+            entry.metadata = writer.into_bytes();
+            entry.summary = None;
+            core.local_history.insert(entry, 50);
+        }
+        client.frames(5);
+        assert_eq!(
+            OUTCOME_PROJECTIONS.with(std::cell::Cell::get) - before,
+            2,
+            "changed metadata is projected once"
+        );
+        let world = client.world_mut();
+        let rows = world
+            .query::<&crate::postgame::render::SeatRow>()
+            .iter(world)
+            .count();
+        assert_eq!(
+            rows, 10,
+            "completed details replace the private projection on screen"
+        );
+    }
+
+    #[test]
     fn dismissing_a_background_result_does_not_dismiss_the_next_match() {
         let mut client = Client::run(&[]);
         client.frames(4);

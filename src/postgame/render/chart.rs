@@ -3,7 +3,9 @@ use super::super::{
     summary::MatchSummary,
     view::{Action, View},
 };
-use super::{Dot, Segment, primitives::*};
+use super::primitives::*;
+#[cfg(test)]
+use super::{Dot, Segment};
 use crate::{main_menu::kit::Kit, theme};
 use bevy::prelude::*;
 use bevy::ui::RelativeCursorPosition;
@@ -16,14 +18,8 @@ const AREA_HEIGHT: f32 = 536.0;
 #[derive(Component)]
 pub struct PickerRegion;
 
+#[cfg(test)]
 #[derive(Component)]
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "grid orientation and strength are asserted by UI contracts"
-    )
-)]
 pub struct Grid {
     pub vertical: bool,
     pub major: bool,
@@ -366,13 +362,14 @@ fn axes(kit: &mut Kit, parent: Entity, view: &View, axis: &Axis, height: f32) {
     for value in &axis.ticks {
         let y = 8.0 + axis.fraction(*value) * height;
         let strong = *value == 0;
-        let line = rect(
+        let _line = rect(
             kit,
             parent,
             area(56.0, y, PLOT_WIDTH, 1.0),
             if strong { GRID_ZERO } else { GRID_HORIZONTAL },
         );
-        kit.commands.entity(line).insert(Grid {
+        #[cfg(test)]
+        kit.commands.entity(_line).insert(Grid {
             vertical: false,
             major: strong,
         });
@@ -393,8 +390,9 @@ fn axes(kit: &mut Kit, parent: Entity, view: &View, axis: &Axis, height: f32) {
             .insert(TextLayout::justify(Justify::Right));
     }
     for x in [56.0, 56.0 + PLOT_WIDTH] {
-        let edge = rect(kit, parent, area(x, 8.0, 1.0, height), GRID_MAJOR);
-        kit.commands.entity(edge).insert(Grid {
+        let _edge = rect(kit, parent, area(x, 8.0, 1.0, height), GRID_MAJOR);
+        #[cfg(test)]
+        kit.commands.entity(_edge).insert(Grid {
             vertical: true,
             major: true,
         });
@@ -405,7 +403,7 @@ fn axes(kit: &mut Kit, parent: Entity, view: &View, axis: &Axis, height: f32) {
             break;
         }
         let major = ticks.contains(&second);
-        let line = rect(
+        let _line = rect(
             kit,
             parent,
             area(
@@ -416,7 +414,8 @@ fn axes(kit: &mut Kit, parent: Entity, view: &View, axis: &Axis, height: f32) {
             ),
             if major { GRID_MAJOR } else { GRID_MINOR },
         );
-        kit.commands.entity(line).insert(Grid {
+        #[cfg(test)]
+        kit.commands.entity(_line).insert(Grid {
             vertical: true,
             major,
         });
@@ -520,16 +519,16 @@ fn draw_curves(
         };
         for (index, pair) in points.windows(2).enumerate() {
             if curve.values[index + 1].connected {
-                let entity = line(kit, parent, pair[0], pair[1], stroke, colour(curve, view));
-                kit.commands.entity(entity).insert(Segment(view.metric));
+                let _segment = line(kit, parent, pair[0], pair[1], stroke, colour(curve, view));
+                #[cfg(test)]
+                kit.commands.entity(_segment).insert(Segment(view.metric));
             }
         }
         if curve.values.len() <= 12 {
             for point in points {
-                let entity = dot(kit, parent, point, 7.0, colour(curve, view));
-                kit.commands
-                    .entity(entity)
-                    .insert(Dot { graph: view.metric });
+                let _dot = dot(kit, parent, point, 7.0, colour(curve, view));
+                #[cfg(test)]
+                kit.commands.entity(_dot).insert(Dot { graph: view.metric });
             }
         }
     }

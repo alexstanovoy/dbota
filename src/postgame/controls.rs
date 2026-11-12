@@ -25,28 +25,36 @@ pub fn present(
         ) {
             if !view.context.history {
                 post.closed = false;
+                post.outcome_revision = core.outcome_revision();
                 post.active_version = post.version;
             }
             post.overlay = Some(view);
             post.presented += 1;
             return;
         }
+        let revision = core.outcome_revision();
         if post.shown.is_none()
             && !post.closed
-            && let Some(mut view) = core.outcome_result()
-            && (post.overlay.is_none()
-                || post.overlay.as_ref().is_some_and(|old| {
-                    !old.context.history
-                        && old.summary.recording.is_none()
-                        && view.summary.recording.is_some()
-                }))
+            && revision != post.outcome_revision
+            && !post
+                .overlay
+                .as_ref()
+                .is_some_and(|view| view.context.history)
         {
-            if let Some(old) = &post.overlay {
-                view.select(old.page);
+            post.outcome_revision = revision;
+            if let Some(mut view) = core.outcome_result() {
+                if let Some(old) = &post.overlay {
+                    view.select(old.page);
+                    view.metric = old.metric;
+                    view.player = old.player.filter(|slot| view.row(*slot).is_some());
+                    view.focus = old.focus.filter(|slot| view.row(*slot).is_some());
+                    view.picker = old.picker;
+                    view.notice = old.notice.clone();
+                }
+                post.overlay = Some(view);
+                post.presented += 1;
+                return;
             }
-            post.overlay = Some(view);
-            post.presented += 1;
-            return;
         }
         if let Some(view) = post.overlay.as_mut().filter(|view| !view.context.history) {
             let mut context = core.result_context(&view.summary, view.context.owner);

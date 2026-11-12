@@ -144,6 +144,11 @@ impl Saved {
             summary.rows.retain(|row| Some(row.slot) == self.owner);
             summary.points.clear();
             summary.structures.clear();
+            if let Some(recording) = &summary.recording {
+                summary.recording = Some(Arc::new(
+                    recording.restricted_to(summary.rows.iter().map(|row| row.slot)),
+                ));
+            }
         }
         Some(summary)
     }
@@ -367,6 +372,10 @@ impl Archive {
             cache.records = records.to_vec();
         }
         Arc::clone(&cache.cards)
+    }
+
+    pub(super) fn revision(&self) -> u64 {
+        self.revision
     }
 
     pub fn entries(&self) -> &[Saved] {
@@ -847,5 +856,74 @@ mod tests {
         assert_eq!(cards.len(), 1);
         assert!(cards[0].hero.is_none());
         assert!(super::super::history::heroes(&cards).is_empty());
+    }
+}
+
+#[cfg(test)]
+mod details_privacy_tests {
+    use super::*;
+    use bota_replay::meta::{MetaRecord, Writer};
+    #[test]
+    fn every_details_consumer_gets_only_the_unfinished_owners_timed_facts() {
+        let meta = bota_replay::meta::decode(&crate::postgame::preview::metadata("match_details"))
+            .expect("fixture");
+        let mut writer = Writer::default();
+        assert!(writer.push(&MetaRecord::Header(meta.header), false));
+        for record in meta.records {
+            if !matches!(record, MetaRecord::End { .. }) {
+                assert!(writer.push(&record, false));
+            }
+        }
+        let metadata = writer.into_bytes();
+        let summary = Arc::new(
+            MatchSummary::from_meta(&bota_replay::meta::decode(&metadata).expect("metadata"))
+                .expect("summary"),
+        );
+        for owner in [Some(SlotId(0)), None] {
+            let saved = Saved {
+                key: "unfinished".into(),
+                file: None,
+                when: 0,
+                mode: "all_pick".into(),
+                owner,
+                metadata: metadata.clone(),
+                metadata_key: None,
+                cached: None,
+                result: None,
+                summary: Some(summary.clone()),
+                temporary: None,
+            };
+            let details = saved.details().expect("details");
+            let recording = details.recording.expect("timed facts");
+            assert_eq!(
+                recording.samples.len(),
+                usize::from(owner.is_some()),
+                "the privacy boundary includes timed samples"
+            );
+            assert!(
+                recording
+                    .purchases
+                    .iter()
+                    .all(|event| Some(event.slot) == owner)
+            );
+            assert!(
+                recording
+                    .levels
+                    .iter()
+                    .all(|event| Some(event.slot) == owner)
+            );
+            assert!(
+                recording
+                    .kills
+                    .iter()
+                    .all(|event| event.killer == owner || event.victim == owner)
+            );
+            assert!(recording.restricted);
+        }
+        assert_eq!(
+            summary.recording.as_ref().expect("source").samples.len(),
+            10,
+            "stored metadata stays intact"
+        );
     }
 }

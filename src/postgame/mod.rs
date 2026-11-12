@@ -78,6 +78,7 @@ pub struct PostGame {
     presented: u32,
     active_version: u32,
     closed: bool,
+    outcome_revision: Option<(MatchId, u64)>,
 }
 
 impl Default for PostGame {
@@ -94,6 +95,7 @@ impl Default for PostGame {
             presented: 0,
             active_version: 0,
             closed: false,
+            outcome_revision: None,
         }
     }
 }
@@ -111,6 +113,7 @@ impl PostGame {
 
     /// The game expected opened: whatever was shown is gone.
     pub fn begin(&mut self) {
+        self.outcome_revision = None;
         self.origin = std::mem::take(&mut self.next);
         self.reset();
         self.overlay = None;

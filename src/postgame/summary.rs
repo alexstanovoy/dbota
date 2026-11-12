@@ -30,8 +30,8 @@ pub struct Row {
     /// Gold in hand plus the value of what is carried and stashed. Absent for a summary of the
     /// final numbers alone, which count the gold earned only.
     pub net_worth: Option<i32>,
-    /// Gold earned a minute of game time.
-    pub gpm: i32,
+    /// Gold earned a minute of game time, absent when earned gold was not recorded.
+    pub gpm: Option<i32>,
     /// Experience earned a minute of game time.
     pub xpm: i32,
     pub hero_damage: Option<i32>,
@@ -40,11 +40,8 @@ pub struct Row {
     /// The inventory then the backpack; empty for a summary of the final numbers alone.
     pub items: [Option<ItemId>; BAG],
     /// Optional recording facts retained for the match-results consumer. Old files omit them.
-    #[cfg_attr(not(test), allow(dead_code))]
     pub name: Option<String>,
-    #[cfg_attr(not(test), allow(dead_code))]
     pub bot: Option<bool>,
-    #[cfg_attr(not(test), allow(dead_code))]
     pub left_at: Option<u32>,
 }
 
@@ -88,7 +85,6 @@ pub struct MatchSummary {
     /// One for the start of the game and one for every whole game minute after, in order.
     pub points: Vec<Point>,
     /// Building falls, with optional location companions in newer recordings.
-    #[cfg_attr(not(test), allow(dead_code))]
     pub structures: Vec<StructureFall>,
     pub recording: Option<std::sync::Arc<super::data::Recording>>,
 }
@@ -263,7 +259,7 @@ impl MatchSummary {
                     last_hits: Some(seat.last_hits),
                     denies: Some(seat.denies),
                     net_worth: None,
-                    gpm: per_minute(i64::from(seat.net_worth), seconds),
+                    gpm: Some(per_minute(i64::from(seat.net_worth), seconds)),
                     xpm: per_minute(i64::from(player.xp), seconds),
                     hero_damage: Some(seat.hero_damage),
                     tower_damage: Some(seat.structure_damage),
@@ -297,9 +293,7 @@ fn row(seat: &Seat, seconds: u32) -> Option<Row> {
     let last = seat.samples.last()?.1;
     let get = |id| value(last, id);
     let count = |id| u16::try_from(get(id).unwrap_or(0)).unwrap_or(u16::MAX);
-    let earned = get(stat::GOLD_EARNED)
-        .or_else(|| get(stat::NET_WORTH))
-        .unwrap_or(0);
+    let earned = get(stat::GOLD_EARNED);
     let mut items = [None; BAG];
     for (to, held) in items.iter_mut().zip(seat.items.unwrap_or_default()) {
         *to = held.map(ItemId);
@@ -315,7 +309,7 @@ fn row(seat: &Seat, seconds: u32) -> Option<Row> {
         last_hits: get(stat::LAST_HITS).map(|_| count(stat::LAST_HITS)),
         denies: get(stat::DENIES).map(|_| count(stat::DENIES)),
         net_worth: get(stat::NET_WORTH).map(to_i32),
-        gpm: per_minute(earned, seconds),
+        gpm: earned.map(|earned| per_minute(earned, seconds)),
         xpm: per_minute(get(stat::XP).unwrap_or(0), seconds),
         hero_damage: get(stat::HERO_DAMAGE).map(to_i32),
         tower_damage: get(stat::STRUCTURE_DAMAGE).map(to_i32),
