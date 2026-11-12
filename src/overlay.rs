@@ -40,7 +40,7 @@ const ORDER_TICKS: u32 = 15;
 pub(crate) const GOOD: Color = Color::srgb(0.42, 0.95, 0.52);
 pub(crate) const BAD: Color = Color::srgb(1.0, 0.27, 0.22);
 const GOLDEN: Color = Color::srgb(1.0, 0.8, 0.3);
-const ARCANE: Color = Color::srgb(0.45, 0.85, 1.0);
+pub(crate) const ARCANE: Color = Color::srgb(0.45, 0.85, 1.0);
 /// How tall a queued order's flag stands, in world units.
 const FLAG_HEIGHT: f32 = 90.0;
 /// How far a queued order's pennant reaches out from its pole.

@@ -336,3 +336,46 @@ fn a_chasm_stone_widens_the_drawn_raze_spots_and_grenade_circle() {
         "one wider circle of the grenade's area"
     );
 }
+
+/// An Aether Lens lengthens the drawn reach of an aimed item as the server lengthens the cast:
+/// with one carried, the ring round a Healing Salve being aimed grows by its `cast_range_bonus`.
+#[test]
+fn an_aether_lens_lengthens_the_drawn_reach_of_an_aimed_salve() {
+    let server = Server::start(1, &[]);
+    let mut client = Client::join(&server, HeroId::SHADOW_FIEND, &[]);
+    client.stand_at(MID);
+    for item in [
+        bota_proto::ItemId::AETHER_LENS,
+        bota_proto::ItemId::HEALING_SALVE,
+    ] {
+        client.cheat(bota_proto::Cheat::Item { item });
+    }
+    let bonus = bota_core::item_def(bota_proto::ItemId::AETHER_LENS)
+        .expect("the lens's data")
+        .carried
+        .cast_range_bonus;
+    client.until("the lens shown carried", |c| {
+        bota_client_core::carried_of(c.me()).cast_range_bonus == bonus
+    });
+    let reach = bota_core::item_def(bota_proto::ItemId::HEALING_SALVE)
+        .expect("the salve's data")
+        .cast_range;
+    let slot = client
+        .slot_of(bota_proto::ItemId::HEALING_SALVE)
+        .expect("the salve in the bag");
+    client.follow_me();
+    client.core_mut().act(Intent::Press {
+        slot: bota_client_core::Slot::Item(slot),
+        ctrl: false,
+    });
+    client.frames(2);
+    assert_eq!(
+        rings_of(&client, crate::overlay::ARCANE, (reach + bonus) as f32).len(),
+        1,
+        "one ring at the lengthened reach"
+    );
+    assert!(
+        rings_of(&client, crate::overlay::ARCANE, reach as f32).is_empty(),
+        "none at the salve's own"
+    );
+}

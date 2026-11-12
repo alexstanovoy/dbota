@@ -103,6 +103,28 @@ item 87 orb_of_frost
 item 91 infused_raindrop
 item 92 ghost
 item 93 chasm_stone
+item 94 oblivion_staff
+item 95 pers
+item 96 soul_booster
+item 97 falcon_blade
+item 98 recipe
+item 99 yasha
+item 100 recipe
+item 101 sange
+item 102 recipe
+item 103 kaya
+item 104 recipe
+item 105 sange_and_yasha
+item 106 kaya_and_sange
+item 107 yasha_and_kaya
+item 108 aether_lens
+item 109 recipe
+item 110 octarine_core
+item 111 recipe
+item 112 dragon_lance
+item 113 recipe
+item 114 heart
+item 115 recipe
 ability 0 pudge_meat_hook
 ability 1 pudge_rot
 ability 2 pudge_innate_graft_flesh
@@ -112,6 +134,14 @@ text item 40 item_recipe_null_talisman
 text item 41 item_recipe_magic_wand
 text item 50 item_recipe_monkey_king_bar
 text item 55 item_tango_single
+text item 98 item_recipe_falcon_blade
+text item 100 item_recipe_yasha
+text item 102 item_recipe_sange
+text item 104 item_recipe_kaya
+text item 109 item_recipe_aether_lens
+text item 111 item_recipe_octarine_core
+text item 113 item_recipe_dragon_lance
+text item 115 item_recipe_heart
 ability 3 pudge_dismember
 ability 4 courier_burst
 ability 5 courier_return_to_base

@@ -150,6 +150,9 @@ fn item_value(def: &ItemDef, key: &str) -> Option<Levels> {
         "bonus_armor" => one(fixed(c.armor)),
         "bonus_health" => one(c.hp),
         "bonus_mana" => one(c.mana),
+        // Heart of Tarrasque's `hp_regen` is a percent of the maximum health; a Mango's is flat.
+        "hp_regen" if c.max_hp_regen_bp > 0 => one(of_bp(c.max_hp_regen_bp)),
+        "missing_health_regen" => one(of_bp(c.missing_hp_regen_bp)),
         "bonus_health_regen" | "bonus_regen" | "hp_regen" => one(per_second(c.hp_regen)),
         "bonus_mana_regen" => one(per_second(c.mana_regen)),
         "bonus_movement_speed" => one(c.move_speed),
@@ -161,6 +164,19 @@ fn item_value(def: &ItemDef, key: &str) -> Option<Levels> {
         "lifesteal_percent" => one(c.lifesteal_pct),
         "spell_lifesteal" => one(c.spell_lifesteal_pct),
         "aoe_bonus" => one(c.aoe_bonus),
+        "movement_speed_percent_bonus" => one(def.carried_by(true).move_speed_pct),
+        "movement_speed_percent_bonus_melee" => one(def.carried_by(false).move_speed_pct),
+        "slow_resistance" => one(of_bp(c.slow_resist_bp)),
+        "hp_regen_amp" => one(of_bp(c.restoration_amp_bp)),
+        "status_resistance" => one(of_bp(c.status_resist_bp)),
+        "manacost_reduction" => one(of_bp(c.mana_cost_cut_bp)),
+        "bonus_cooldown" => one(of_bp(c.cooldown_cut_bp)),
+        "spell_amp" => one(c.spell_amp_pct),
+        "mana_regen_multiplier" => one(c.mana_regen_amp_pct),
+        "cast_speed_pct" => one(c.cast_speed_pct),
+        "cast_range_bonus" => one(c.cast_range_bonus),
+        "base_attack_range" => one(c.ranged_range),
+        "base_attack_range_melee" => one(c.melee_range),
         "bonus_magical_armor" | "tooltip_resist" => {
             one(plain(f64::from(c.magic_resist_bp) / 100.0))
         }
@@ -178,6 +194,11 @@ fn item_value(def: &ItemDef, key: &str) -> Option<Levels> {
             .or_else(|| block_value(def, key))
             .or_else(|| use_value(def, key)),
     }
+}
+
+/// A share in basis points as the percent Dota's text prints.
+fn of_bp(bp: i32) -> String {
+    plain(f64::from(bp) / 100.0)
 }
 
 /// A value of what the item's passive lays on whatever its carrier's attacks strike.
@@ -362,6 +383,46 @@ mod tests {
     use bota_proto::ItemId;
 
     use super::*;
+
+    /// The tooltips of the stat upgrades of Dota 7.41f's first item batch print what the simulator
+    /// carries under each Dota key: percents of a share, ranges and amplifications.
+    #[test]
+    fn the_stat_upgrades_tooltips_read_their_stats_from_the_simulator() {
+        let shown = |item, key| value(Subject::Item(item_def(item).expect("an item")), key);
+        let one = |text: &str| Some(vec![text.to_owned()]);
+        assert_eq!(
+            shown(ItemId::YASHA, "movement_speed_percent_bonus"),
+            one("10")
+        );
+        assert_eq!(shown(ItemId::SANGE, "slow_resistance"), one("25"));
+        assert_eq!(shown(ItemId::SANGE, "hp_regen_amp"), one("12"));
+        assert_eq!(shown(ItemId::KAYA, "spell_amp"), one("10"));
+        assert_eq!(shown(ItemId::KAYA, "mana_regen_multiplier"), one("20"));
+        assert_eq!(
+            shown(ItemId::SANGE_AND_YASHA, "status_resistance"),
+            one("16")
+        );
+        assert_eq!(
+            shown(
+                ItemId::SANGE_AND_YASHA,
+                "movement_speed_percent_bonus_melee"
+            ),
+            one("12")
+        );
+        assert_eq!(
+            shown(ItemId::KAYA_AND_SANGE, "manacost_reduction"),
+            one("25")
+        );
+        assert_eq!(shown(ItemId::YASHA_AND_KAYA, "cast_speed_pct"), one("25"));
+        assert_eq!(shown(ItemId::AETHER_LENS, "cast_range_bonus"), one("225"));
+        assert_eq!(shown(ItemId::OCTARINE_CORE, "bonus_cooldown"), one("25"));
+        assert_eq!(shown(ItemId::DRAGON_LANCE, "base_attack_range"), one("130"));
+        assert_eq!(shown(ItemId::HEART, "hp_regen"), one("1"));
+        assert_eq!(shown(ItemId::HEART, "missing_health_regen"), one("1.5"));
+        let mango = shown(ItemId::MANGO, "hp_regen");
+        assert!(mango.is_some(), "a Mango's flat regeneration");
+        assert_eq!(mango, shown(ItemId::MANGO, "bonus_health_regen"));
+    }
 
     /// Orb of Venom's tooltip prints `damage`, `tick_interval` and `poison_duration` as the
     /// simulator holds them: 12 every 1 second for 3 seconds.
