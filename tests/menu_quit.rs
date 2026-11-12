@@ -1282,7 +1282,9 @@ fn three_friends_find_a_password_lobby_join_it_and_play_the_mode_the_host_chose(
          await:text:FULL RULES;await:text:bob;await:text:carol;click:edit  ✎;\
          click:lobby game mode;click:1x1 mid only;click:password;text:open sesame;click:ok;\
          await:nobutton:ok;await:text:1X1 MID ONLY;await:button:start game;\
-         click:start game;await:game;await:loaded;await:seats:2,1;exit", sign_up("alice"));
+         click:start game;await:game;await:loaded;await:seats:2,1;exit",
+        sign_up("alice")
+    );
     let mut alice = Running::start(&alice_dir, &args, &alice_script, common::client());
     alice.until_played("await:button:leave lobby  ×");
     let _decoy = open_lobby(&service, "dave", "Decoy Room");
@@ -1291,7 +1293,9 @@ fn three_friends_find_a_password_lobby_join_it_and_play_the_mode_the_host_chose(
          click:lobby or host name;text:FRIDAY;await:nobutton:join decoy room;\
          click:join friday night;await:popup;text:guess;click:ok;await:text:Wrong password;\
          await:popup;text:open sesame;click:ok;await:button:leave lobby  ×;\
-         await:text:1X1 MID ONLY;click:ready;await:game;await:loaded;await:seats:2,1;exit", sign_up("bob"));
+         await:text:1X1 MID ONLY;click:ready;await:game;await:loaded;await:seats:2,1;exit",
+        sign_up("bob")
+    );
     let bob = Running::start(&bob_dir, &args, &bob_script, common::client());
     let _carol = lobby_friend::join(&service);
     played("bob", bob.finish(), &bob_script);
@@ -1317,12 +1321,16 @@ fn a_lobby_owner_turns_cheats_on_and_everyone_sees_and_plays_with_them() {
          await:button:leave lobby  ×;await:text:OFF;click:edit  ✎;click:enable cheats;click:ok;\
          await:nobutton:ok;await:text:ON;await:text:bob;await:button:start game;click:start game;\
          await:game;await:loaded;click:pick shadow fiend;click:pick ready;await:level:1;\
-         say:-gold 20000;await:gold:20000;exit", sign_up("alice"));
+         say:-gold 20000;await:gold:20000;exit",
+        sign_up("alice")
+    );
     let mut alice = Running::start(&alice_dir, &args, &alice_script, common::client());
     alice.until_played("await:text:ON");
     let bob_script = format!(
         "{}click:lobbies;await:button:join sandbox;click:join sandbox;await:button:leave lobby  ×;\
-         await:text:ON;await:nobutton:edit  ✎;click:ready;await:game;await:loaded;exit", sign_up("bob"));
+         await:text:ON;await:nobutton:edit  ✎;click:ready;await:game;await:loaded;exit",
+        sign_up("bob")
+    );
     let bob = Running::start(&bob_dir, &args, &bob_script, common::client());
     played("bob", bob.finish(), &bob_script);
     played("alice", alice.finish(), &alice_script);

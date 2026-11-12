@@ -6,9 +6,8 @@ use bota_radovid::proto::{AccountId, LobbyId, MatchId, ProposalId, QueueEntryId,
 use super::core::{GameKind, LocalRules, Page, Status};
 use super::form::FormKind;
 use super::view::{
-    ConfirmView, Connection, FieldView, FinishedRow, GameRow, MemberRow,
-    MenuView, OfferBox, PageView, PasswordView, ResultView, RulesetRow, SearchRow,
-    SeatRow, Side, WaitRow,
+    ConfirmView, Connection, FieldView, FinishedRow, GameRow, MemberRow, MenuView, OfferBox,
+    PageView, PasswordView, ResultView, RulesetRow, SearchRow, SeatRow, Side, WaitRow,
 };
 
 #[path = "lobby_preview.rs"]
@@ -512,4 +511,3 @@ fn preview_dire() -> MenuView {
     view.side = Side::Dire;
     view
 }
-

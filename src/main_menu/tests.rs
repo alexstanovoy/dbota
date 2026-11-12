@@ -2376,11 +2376,17 @@ fn the_owner_changes_the_lobbys_settings_and_the_others_only_read_them() {
             && (!lobby_of(p).settings.editable || p.menu.view().lobby_ui.editor.is_none())
     });
     alice.menu.act(Act::LobbyUi(super::LobbyAction::Edit));
-    alice.menu.act(Act::LobbyUi(super::LobbyAction::RemovePassword));
+    alice
+        .menu
+        .act(Act::LobbyUi(super::LobbyAction::RemovePassword));
     alice.menu.act(Act::LobbyUi(super::LobbyAction::Save));
     settle(&mut [&mut alice, &mut bob], |p| {
         if let Some(editor) = p.menu.view().lobby_ui.editor {
-            assert!(editor.error.is_none(), "password removal refused: {:?}", editor.error);
+            assert!(
+                editor.error.is_none(),
+                "password removal refused: {:?}",
+                editor.error
+            );
         }
         !lobby_of(p).settings.locked
             && (!lobby_of(p).settings.editable || p.menu.view().lobby_ui.editor.is_none())

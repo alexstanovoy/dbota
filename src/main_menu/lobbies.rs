@@ -26,10 +26,20 @@ fn browser(
     fields: &[FieldView],
     controls: &ControlsView,
 ) {
-    let hero = kit.node(root, Node {
-        position_type: PositionType::Absolute, left: px(300), top: px(230), width: px(300), height: px(400), ..default()
-    });
-    kit.commands.entity(hero).insert(Name::new("lobby browser hero"));
+    let hero = kit.node(
+        root,
+        Node {
+            position_type: PositionType::Absolute,
+            left: px(300),
+            top: px(230),
+            width: px(300),
+            height: px(400),
+            ..default()
+        },
+    );
+    kit.commands
+        .entity(hero)
+        .insert(Name::new("lobby browser hero"));
     kit.art(hero, "portrait.hero.nevermore.tall", crate::ui::fill());
     let panel = w::panel(kit, root, "lobby browser");
     let visible: Vec<_> = rows
@@ -66,13 +76,13 @@ fn heading(kit: &mut Kit, parent: Entity, shown: usize, total: usize) {
         },
     );
     w::quiet(kit, row, "‹ BACK", Act::Go(Page::Home), theme::INK_2);
+    kit.typed(row, "LOBBIES", theme::lobby::TITLE, theme::INK_1);
     kit.typed(
         row,
-        "LOBBIES",
-        theme::lobby::TITLE,
-        theme::INK_1,
+        format!("{shown} of {total} open"),
+        theme::LABEL,
+        theme::INK_4,
     );
-    kit.typed(row, format!("{shown} of {total} open"), theme::LABEL, theme::INK_4);
     kit.node(
         row,
         Node {
@@ -92,9 +102,15 @@ fn table(kit: &mut Kit, parent: Entity, rows: &[&LobbyRow], controls: &ControlsV
         row_gap: px(2),
         ..default()
     });
-    kit.commands.entity(table).insert((super::lobby_scroll::Area::Browser, ScrollPosition::default()));
+    kit.commands.entity(table).insert((
+        super::lobby_scroll::Area::Browser,
+        ScrollPosition::default(),
+    ));
     let header = table_row(kit, table, 30.0);
-    kit.commands.entity(header).entry::<Node>().and_modify(|mut node| node.margin.bottom = px(5));
+    kit.commands
+        .entity(header)
+        .entry::<Node>()
+        .and_modify(|mut node| node.margin.bottom = px(5));
     for (index, label) in ["", "NAME", "HOST", "SLOTS", "MODE"]
         .into_iter()
         .enumerate()
@@ -160,8 +176,21 @@ fn lobby_row(kit: &mut Kit, parent: Entity, lobby: &LobbyRow, selected: bool) {
         kit.commands
             .entity(row)
             .insert(theme::rightward(theme::lobby::SELECTION));
-        let marker = kit.node(row, Node { position_type: PositionType::Absolute, left: px(0), top: px(0), bottom: px(0), width: px(3), ..default() });
-        kit.commands.entity(marker).insert((Name::new("selected lobby marker"), BackgroundColor(theme::SELECT)));
+        let marker = kit.node(
+            row,
+            Node {
+                position_type: PositionType::Absolute,
+                left: px(0),
+                top: px(0),
+                bottom: px(0),
+                width: px(3),
+                ..default()
+            },
+        );
+        kit.commands.entity(marker).insert((
+            Name::new("selected lobby marker"),
+            BackgroundColor(theme::SELECT),
+        ));
     } else {
         kit.commands
             .entity(row)
@@ -181,11 +210,16 @@ fn lobby_row(kit: &mut Kit, parent: Entity, lobby: &LobbyRow, selected: bool) {
     .enumerate()
     {
         let cell = cell(kit, row, index + 1);
-        kit.typed(cell, text, theme::BODY, if index == 0 {
+        kit.typed(
+            cell,
+            text,
+            theme::BODY,
+            if index == 0 {
                 theme::INK_1
             } else {
                 theme::INK_2
-            });
+            },
+        );
     }
 }
 
@@ -248,7 +282,8 @@ fn filter_mode(kit: &mut Kit, row: Entity, controls: &ControlsView) {
             ..default()
         },
     );
-    let options = (controls.open == Some(Choice::Filter)).then(|| controls.choice_list(Choice::Filter));
+    let options =
+        (controls.open == Some(Choice::Filter)).then(|| controls.choice_list(Choice::Filter));
     w::select(
         kit,
         mode,
@@ -282,7 +317,8 @@ fn creation(kit: &mut Kit, parent: Entity, controls: &ControlsView) {
             ..default()
         },
     );
-    let options = (controls.open == Some(Choice::Server)).then(|| controls.choice_list(Choice::Server));
+    let options =
+        (controls.open == Some(Choice::Server)).then(|| controls.choice_list(Choice::Server));
     w::select(
         kit,
         server,

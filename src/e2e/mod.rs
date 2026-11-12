@@ -106,6 +106,6 @@ mod window;
 mod wisdom_contest;
 
 mod dead_purchases;
+mod lobbies;
 mod mega_creeps;
 mod menu_pages;
-mod lobbies;

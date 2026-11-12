@@ -1383,9 +1383,15 @@ impl MenuCore {
                             self.connect();
                         }
                     }
-                    (Ok(reply), Some(Asked::RestoreLobby(lobby))) => self.lobby_resumed(lobby, reply),
-                    (Err(error), Some(Asked::RestoreLobby(lobby))) => self.lobby_resume_failed(lobby, error_text(&error)),
-                    (Ok(reply), Some(Asked::LobbyUi(request))) => self.lobby_save_replied(reply, request),
+                    (Ok(reply), Some(Asked::RestoreLobby(lobby))) => {
+                        self.lobby_resumed(lobby, reply)
+                    }
+                    (Err(error), Some(Asked::RestoreLobby(lobby))) => {
+                        self.lobby_resume_failed(lobby, error_text(&error))
+                    }
+                    (Ok(reply), Some(Asked::LobbyUi(request))) => {
+                        self.lobby_save_replied(reply, request)
+                    }
                     (Ok(Reply::Welcome { .. }), _) => self.welcomed(),
                     (Ok(reply), asked) => self.replied(reply, asked.unwrap_or(Asked::Other)),
                     (Err(error), asked) => {
@@ -1944,8 +1950,13 @@ impl MenuCore {
     pub fn act(&mut self, act: Act) {
         if self.lobby_editor_obscured() {
             match act {
-                Act::Submit | Act::Focus(_) | Act::Type(_) | Act::Erase
-                | Act::NextField | Act::PreviousField | Act::LobbyUi(_) => return,
+                Act::Submit
+                | Act::Focus(_)
+                | Act::Type(_)
+                | Act::Erase
+                | Act::NextField
+                | Act::PreviousField
+                | Act::LobbyUi(_) => return,
                 Act::Back => {
                     if self.confirm.take().is_none() {
                         self.join_prompt = None;
@@ -2009,8 +2020,7 @@ impl MenuCore {
             | Act::Rules(_)
             | Act::LobbySlot(_)
             | Act::MoveMember(_)
-            | Act::KickMember(_)
-            => self.act_lobby(act),
+            | Act::KickMember(_) => self.act_lobby(act),
             Act::OpenReplay(_)
             | Act::DeleteReplay(_)
             | Act::WatchReplay(_)
@@ -2106,8 +2116,14 @@ impl MenuCore {
                 self.lobby_type(None);
                 self.edit_leaderboard();
             }
-            Act::NextField => { self.keyboard().next(); self.follow_lobby_choice_focus(); }
-            Act::PreviousField => { self.keyboard().previous(); self.follow_lobby_choice_focus(); }
+            Act::NextField => {
+                self.keyboard().next();
+                self.follow_lobby_choice_focus();
+            }
+            Act::PreviousField => {
+                self.keyboard().previous();
+                self.follow_lobby_choice_focus();
+            }
             Act::Submit => self.press(),
             Act::Logout => self.logout(),
             other => return Some(other),

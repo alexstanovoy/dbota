@@ -7,9 +7,7 @@ use bevy::prelude::*;
 
 use super::core::Act;
 use super::kit::{Kit, Tone};
-use super::view::{
-    ConfirmView, FinishedRow, GameRow, MenuView, OfferBox, SearchRow, WaitRow,
-};
+use super::view::{ConfirmView, FinishedRow, GameRow, MenuView, OfferBox, SearchRow, WaitRow};
 use crate::theme;
 use crate::ui;
 

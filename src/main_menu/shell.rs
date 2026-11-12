@@ -119,7 +119,11 @@ pub fn plugin(app: &mut App) {
         .add_systems(Update, (super::top_bar::animate, hud_shown))
         .add_systems(
             PostUpdate,
-            (super::top_bar::fit_tabs, super::ladder_page::visible_range, super::lobby_scroll::scroll)
+            (
+                super::top_bar::fit_tabs,
+                super::ladder_page::visible_range,
+                super::lobby_scroll::scroll,
+            )
                 .after(bevy::ui::UiSystems::Layout),
         );
 }

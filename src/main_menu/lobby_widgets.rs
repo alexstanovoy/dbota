@@ -16,20 +16,24 @@ pub const FIELD_HEIGHT: f32 = 44.0;
 pub struct Control;
 
 pub fn focus_ring(
-    core: Option<NonSend<crate::main_menu::MenuCore>>, mut commands: Commands,
+    core: Option<NonSend<crate::main_menu::MenuCore>>,
+    mut commands: Commands,
     controls: Query<(Entity, &MenuButton, Has<Outline>), With<Control>>,
 ) {
     let focused = core.as_ref().and_then(|core| core.button_focus());
     for (entity, button, has_outline) in &controls {
         let wanted = focused == Some(&button.0);
         if wanted && !has_outline {
-            commands.entity(entity).insert(Outline { width: px(1), offset: px(-1), color: theme::FOCUS });
+            commands.entity(entity).insert(Outline {
+                width: px(1),
+                offset: px(-1),
+                color: theme::FOCUS,
+            });
         } else if !wanted && has_outline {
             commands.entity(entity).remove::<Outline>();
         }
     }
 }
-
 
 pub fn action(action: Action) -> Act {
     Act::LobbyUi(action)
@@ -84,13 +88,7 @@ pub fn panel(kit: &mut Kit, root: Entity, name: &str) -> Entity {
 }
 
 pub fn quiet(kit: &mut Kit, parent: Entity, label: &str, act: Act, ink: Color) -> Entity {
-    let button = kit.quiet(
-        parent,
-        label,
-        act,
-        theme::SMALL_BODY,
-        (ink, theme::INK_1),
-    );
+    let button = kit.quiet(parent, label, act, theme::SMALL_BODY, (ink, theme::INK_1));
     kit.commands
         .entity(button)
         .entry::<Node>()
@@ -156,9 +154,13 @@ pub fn check(kit: &mut Kit, parent: Entity, label: &str, checked: bool, act: Act
             ..default()
         },
     );
-    kit.commands
-        .entity(row)
-        .insert((Button, Control, Pickable::default(), MenuButton(act), Name::new(label.to_lowercase())));
+    kit.commands.entity(row).insert((
+        Button,
+        Control,
+        Pickable::default(),
+        MenuButton(act),
+        Name::new(label.to_lowercase()),
+    ));
     let square = kit.node(
         row,
         Node {
@@ -242,7 +244,9 @@ pub fn input(kit: &mut Kit, parent: Entity, label: &str, act: Option<Act>, edge:
         BorderColor::all(edge),
     ));
     if let Some(act) = act {
-        kit.commands.entity(node).insert((Button, Control, Pickable::default(), MenuButton(act)));
+        kit.commands
+            .entity(node)
+            .insert((Button, Control, Pickable::default(), MenuButton(act)));
     }
     node
 }
@@ -268,13 +272,16 @@ pub fn select(
         (!readonly).then(|| action(Action::Open(choice))),
         theme::SECONDARY_EDGE,
     );
-    kit.commands.entity(selector).insert((BackgroundColor(theme::FIELD), Name::new(match choice {
-        Choice::Filter => "filter game mode",
-        Choice::Mode => "new lobby game mode",
-        Choice::EditMode => "lobby game mode",
-        Choice::Server => "server",
-        Choice::Audience => "open to",
-    })));
+    kit.commands.entity(selector).insert((
+        BackgroundColor(theme::FIELD),
+        Name::new(match choice {
+            Choice::Filter => "filter game mode",
+            Choice::Mode => "new lobby game mode",
+            Choice::EditMode => "lobby game mode",
+            Choice::Server => "server",
+            Choice::Audience => "open to",
+        }),
+    ));
     let text = kit.typed(selector, value, theme::BODY, theme::INK_1);
     kit.commands.entity(text).insert(Node {
         flex_grow: 1.0,
@@ -319,7 +326,9 @@ fn choice_list(kit: &mut Kit, parent: Entity, options: Choices, above: bool) {
     let shown = theme::lobby::CHOICE_RENDER_ROWS.min(options.rows.len() - first);
     choice_space(kit, list, first);
     let remaining = options.rows.len() - first - shown;
-    for option in options.rows.into_iter().skip(first).take(shown) { choice_row(kit, list, option); }
+    for option in options.rows.into_iter().skip(first).take(shown) {
+        choice_row(kit, list, option);
+    }
     choice_space(kit, list, remaining);
 }
 
@@ -354,39 +363,46 @@ pub fn lock(kit: &mut Kit, parent: Entity) {
 }
 
 fn choice_row(kit: &mut Kit, list: Entity, option: super::lobby_controls::ChoiceRow) {
-        let row = kit.node(
-            list,
-            Node {
-                height: px(theme::lobby::CHOICE_ROW_HEIGHT),
-                flex_shrink: 0.0,
-                padding: UiRect::axes(px(10), px(0)),
-                align_items: AlignItems::Center,
-                border: UiRect::left(px(3)),
-                ..default()
-            },
-        );
-        kit.commands.entity(row).insert((
-            Button,
+    let row = kit.node(
+        list,
+        Node {
+            height: px(theme::lobby::CHOICE_ROW_HEIGHT),
+            flex_shrink: 0.0,
+            padding: UiRect::axes(px(10), px(0)),
+            align_items: AlignItems::Center,
+            border: UiRect::left(px(3)),
+            ..default()
+        },
+    );
+    kit.commands.entity(row).insert((
+        Button,
         Pickable::default(),
-            MenuButton(action(option.action)),
-            Control,
-            Name::new(option.name.to_lowercase()),
-            BorderColor::all(if option.selected {
-                theme::SELECT
-            } else {
-                Color::NONE
-            }),
-        ));
-        if option.selected {
-            kit.commands
-                .entity(row)
-                .insert(theme::rightward(theme::lobby::SELECTION));
-        }
-        kit.typed(row, option.name, theme::BODY, theme::INK_1);
+        MenuButton(action(option.action)),
+        Control,
+        Name::new(option.name.to_lowercase()),
+        BorderColor::all(if option.selected {
+            theme::SELECT
+        } else {
+            Color::NONE
+        }),
+    ));
+    if option.selected {
+        kit.commands
+            .entity(row)
+            .insert(theme::rightward(theme::lobby::SELECTION));
+    }
+    kit.typed(row, option.name, theme::BODY, theme::INK_1);
 }
 
 fn choice_space(kit: &mut Kit, parent: Entity, rows: usize) {
     if rows > 0 {
-        kit.node(parent, Node { height: px(rows as f32 * theme::lobby::CHOICE_ROW_HEIGHT), flex_shrink: 0.0, ..default() });
+        kit.node(
+            parent,
+            Node {
+                height: px(rows as f32 * theme::lobby::CHOICE_ROW_HEIGHT),
+                flex_shrink: 0.0,
+                ..default()
+            },
+        );
     }
 }

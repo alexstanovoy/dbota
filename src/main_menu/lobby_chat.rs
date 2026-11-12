@@ -129,7 +129,11 @@ impl Chat {
             if Some(incoming.lobby) != self.lobby {
                 continue;
             }
-            let Some(person) = self.people.iter().find(|person| person.account == incoming.account) else {
+            let Some(person) = self
+                .people
+                .iter()
+                .find(|person| person.account == incoming.account)
+            else {
                 continue;
             };
             let name = person.name.clone();

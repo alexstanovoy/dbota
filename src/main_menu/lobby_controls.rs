@@ -211,7 +211,10 @@ impl ControlsView {
 
 impl ControlsView {
     pub fn choice_list(&self, choice: Choice) -> Choices {
-        Choices { rows: self.choices(choice), first: self.choice_start }
+        Choices {
+            rows: self.choices(choice),
+            first: self.choice_start,
+        }
     }
 
     pub fn choices(&self, choice: Choice) -> Vec<ChoiceRow> {
@@ -223,40 +226,61 @@ impl ControlsView {
     }
 
     fn server_choices(&self) -> Vec<ChoiceRow> {
-        [Server::Local, Server::Service].into_iter()
-                .filter(|server| *server != Server::Local || self.can_host)
-                .map(|server| ChoiceRow {
-                    name: if server == Server::Local { "Local".into() } else { self.service.clone() },
-                    selected: self.server == server, action: Action::Server(server),
-                }).collect()
+        [Server::Local, Server::Service]
+            .into_iter()
+            .filter(|server| *server != Server::Local || self.can_host)
+            .map(|server| ChoiceRow {
+                name: if server == Server::Local {
+                    "Local".into()
+                } else {
+                    self.service.clone()
+                },
+                selected: self.server == server,
+                action: Action::Server(server),
+            })
+            .collect()
     }
 
     fn audience_choices(&self) -> Vec<ChoiceRow> {
-        [Audience::Everyone, Audience::HumansOnly, Audience::BotsOnly].into_iter()
-                .map(|audience| ChoiceRow {
-                    name: audience_name(audience).into(),
-                    selected: self.editor.as_ref().is_some_and(|editor| editor.audience == audience),
-                    action: Action::Audience(audience),
-                }).collect()
+        [Audience::Everyone, Audience::HumansOnly, Audience::BotsOnly]
+            .into_iter()
+            .map(|audience| ChoiceRow {
+                name: audience_name(audience).into(),
+                selected: self
+                    .editor
+                    .as_ref()
+                    .is_some_and(|editor| editor.audience == audience),
+                action: Action::Audience(audience),
+            })
+            .collect()
     }
 
     fn mode_choices(&self, choice: Choice) -> Vec<ChoiceRow> {
         let mut rows = Vec::new();
         if choice == Choice::Filter {
-            rows.push(ChoiceRow { name: "Any".into(), selected: self.filter.is_none(), action: Action::Filter(None) });
+            rows.push(ChoiceRow {
+                name: "Any".into(),
+                selected: self.filter.is_none(),
+                action: Action::Filter(None),
+            });
         }
-        rows.extend(self.modes.iter().map(|mode| ChoiceRow {
-            name: mode.name.clone(),
-            selected: match choice {
-                Choice::Filter => self.filter.as_ref() == Some(&mode.id),
-                Choice::EditMode => self.editor.as_ref().is_some_and(|editor| editor.mode == mode.id),
-                _ => self.mode.as_ref() == Some(&mode.id),
-            },
-            action: match choice {
-                Choice::Filter => Action::Filter(Some(mode.id.clone())),
-                Choice::EditMode => Action::EditMode(mode.id.clone()),
-                _ => Action::Mode(mode.id.clone()),
-            },
+        rows.extend(self.modes.iter().map(|mode| {
+            ChoiceRow {
+                name: mode.name.clone(),
+                selected: match choice {
+                    Choice::Filter => self.filter.as_ref() == Some(&mode.id),
+                    Choice::EditMode => self
+                        .editor
+                        .as_ref()
+                        .is_some_and(|editor| editor.mode == mode.id),
+                    _ => self.mode.as_ref() == Some(&mode.id),
+                },
+                action: match choice {
+                    Choice::Filter => Action::Filter(Some(mode.id.clone())),
+                    Choice::EditMode => Action::EditMode(mode.id.clone()),
+                    _ => Action::Mode(mode.id.clone()),
+                },
+            }
         }));
         rows
     }

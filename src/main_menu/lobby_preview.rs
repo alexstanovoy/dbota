@@ -1,9 +1,9 @@
 //! The lobby boards, using the approved example conversation and roster.
 use super::*;
 use crate::main_menu::{
-    view::{LobbyRow, LobbyView, ModeRow, SettingsView, SlotRow, TeamRow},
     lobby_chat::{ChatView, Line, Person},
     lobby_controls::{Choice, ControlsView, EditorView},
+    view::{LobbyRow, LobbyView, ModeRow, SettingsView, SlotRow, TeamRow},
 };
 use bota_radovid::proto::Audience;
 
@@ -193,7 +193,12 @@ pub(super) fn room(name: &str) -> MenuView {
         starting_in_secs: None,
     };
     let mut lobby = lobby;
-    for member in lobby.teams.iter_mut().flat_map(|team| &mut team.slots).filter_map(|slot| slot.who.as_mut()) {
+    for member in lobby
+        .teams
+        .iter_mut()
+        .flat_map(|team| &mut team.slots)
+        .filter_map(|slot| slot.who.as_mut())
+    {
         member.me = member.account == AccountId(if owner { 118 } else { 2207 });
     }
     let mut view = logged_in(Page::Lobby, PageView::Lobby(lobby));

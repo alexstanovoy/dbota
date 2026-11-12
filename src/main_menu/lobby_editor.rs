@@ -14,7 +14,8 @@ pub fn draw(kit: &mut Kit, root: Entity, controls: &ControlsView) {
         return;
     };
     let card = modal(kit, root, theme::lobby::EDITOR_WIDTH, 12.0);
-    centered_text(kit,
+    centered_text(
+        kit,
         card,
         if editor.creating {
             "CREATE LOBBY"
@@ -25,7 +26,12 @@ pub fn draw(kit: &mut Kit, root: Entity, controls: &ControlsView) {
         theme::INK_1,
     );
     let general = w::column(kit, card, 2.0);
-    kit.typed(general, "GENERAL", theme::lobby::SECTION_LABEL, theme::INK_2);
+    kit.typed(
+        general,
+        "GENERAL",
+        theme::lobby::SECTION_LABEL,
+        theme::INK_2,
+    );
     w::rule(kit, general);
     fields(kit, card, controls, editor);
     toggles(kit, card, editor);
@@ -52,9 +58,21 @@ pub fn draw(kit: &mut Kit, root: Entity, controls: &ControlsView) {
     }
 }
 
-fn centered_text(kit: &mut Kit, parent: Entity, value: impl Into<String>, role: theme::Type, ink: Color) {
+fn centered_text(
+    kit: &mut Kit,
+    parent: Entity,
+    value: impl Into<String>,
+    role: theme::Type,
+    ink: Color,
+) {
     let text = kit.typed(parent, value, role, ink);
-    kit.commands.entity(text).insert((Node { width: percent(100), ..default() }, TextLayout::justify(Justify::Center)));
+    kit.commands.entity(text).insert((
+        Node {
+            width: percent(100),
+            ..default()
+        },
+        TextLayout::justify(Justify::Center),
+    ));
 }
 
 fn modal(kit: &mut Kit, root: Entity, width: f32, gap: f32) -> Entity {
@@ -119,7 +137,8 @@ fn fields(kit: &mut Kit, parent: Entity, controls: &ControlsView, editor: &Edito
     if let Some(field) = editor.fields.first() {
         w::field(kit, name, 0, field, !editor.creating, false);
     }
-    let modes = (controls.open == Some(Choice::EditMode)).then(|| controls.choice_list(Choice::EditMode));
+    let modes =
+        (controls.open == Some(Choice::EditMode)).then(|| controls.choice_list(Choice::EditMode));
     w::select(
         kit,
         mode,
@@ -145,7 +164,8 @@ fn fields(kit: &mut Kit, parent: Entity, controls: &ControlsView, editor: &Edito
         true,
     );
     let [audience, _] = row(kit, grid);
-    let options = (controls.open == Some(Choice::Audience)).then(|| controls.choice_list(Choice::Audience));
+    let options =
+        (controls.open == Some(Choice::Audience)).then(|| controls.choice_list(Choice::Audience));
     w::select(
         kit,
         audience,
@@ -157,7 +177,6 @@ fn fields(kit: &mut Kit, parent: Entity, controls: &ControlsView, editor: &Edito
         false,
     );
 }
-
 
 fn toggles(kit: &mut Kit, parent: Entity, editor: &EditorView) {
     let panel = kit.node(
@@ -230,13 +249,20 @@ pub fn password(kit: &mut Kit, root: Entity, password: &PasswordView, hidden: bo
     kit.commands
         .entity(card)
         .insert(Name::new("lobby password popup"));
-    centered_text(kit,
+    centered_text(
+        kit,
         card,
         "LOBBY PASSWORD",
         theme::lobby::TITLE,
         theme::INK_1,
     );
-    centered_text(kit, card, format!("{} needs a password.", password.lobby), theme::LABEL, theme::INK_2);
+    centered_text(
+        kit,
+        card,
+        format!("{} needs a password.", password.lobby),
+        theme::LABEL,
+        theme::INK_2,
+    );
     let field = super::view::FieldView {
         label: "Password",
         ..password.field.clone()
@@ -250,7 +276,12 @@ pub fn password(kit: &mut Kit, root: Entity, password: &PasswordView, hidden: bo
             ..default()
         },
     );
-    kit.typed(error_row, password.error.as_deref().unwrap_or(""), theme::BODY, theme::ERROR_TEXT);
+    kit.typed(
+        error_row,
+        password.error.as_deref().unwrap_or(""),
+        theme::BODY,
+        theme::ERROR_TEXT,
+    );
     w::check(
         kit,
         card,

@@ -1020,70 +1020,153 @@ fn lobby_row(
 
 /// What a lobby page shows: the slot grid by team, those looking on, and the settings.
 fn lobby_view(
-    state: &bota_radovid::proto::LobbyState, at: Instant,
-    client: Option<&bota_radovid::Client>, moving: Option<AccountId>,
+    state: &bota_radovid::proto::LobbyState,
+    at: Instant,
+    client: Option<&bota_radovid::Client>,
+    moving: Option<AccountId>,
 ) -> LobbyView {
     let me = client.and_then(|c| c.me()).map(|me| me.id);
     let elapsed = u32::try_from(at.elapsed().as_millis()).unwrap_or(u32::MAX);
     let owner = Some(state.owner) == me;
     let teams = lobby_teams(state, me);
-    let spectators = state.members.iter().take(256)
+    let spectators = state
+        .members
+        .iter()
+        .take(256)
         .filter(|m| m.slot == bota_radovid::proto::LOBBY_NO_SLOT)
-        .map(|member| lobby_member(member, me)).collect();
-    let seated: Vec<_> = teams.iter().flat_map(|team| &team.slots).filter_map(|slot| slot.who.as_ref()).collect();
+        .map(|member| lobby_member(member, me))
+        .collect();
+    let seated: Vec<_> = teams
+        .iter()
+        .flat_map(|team| &team.slots)
+        .filter_map(|slot| slot.who.as_ref())
+        .collect();
     let seats: usize = teams.iter().map(|team| team.slots.len()).sum();
-    let waiting = owner.then(|| lobby_start_block(&seated, client.and_then(|c| c.rulesets().find(|rules| rules.id == state.ruleset)).map(|rules| usize::from(rules.lobby_min_players)))).flatten();
+    let waiting = owner
+        .then(|| {
+            lobby_start_block(
+                &seated,
+                client
+                    .and_then(|c| c.rulesets().find(|rules| rules.id == state.ruleset))
+                    .map(|rules| usize::from(rules.lobby_min_players)),
+            )
+        })
+        .flatten();
     LobbyView {
-        name: text::line(&state.name, text::NAME), locked: state.locked,
+        name: text::line(&state.name, text::NAME),
+        locked: state.locked,
         starts_short: owner && waiting.is_none() && seated.len() < seats,
         me_ready: seated.iter().any(|member| member.me && member.ready),
-        waiting, owner,
+        waiting,
+        owner,
         settings: lobby_settings(state, client, owner),
-        moving: moving.and_then(|id| state.members.iter().take(256).find(|m| m.account == id)).map(|m| text::line(&m.nickname, text::NAME)),
-        spectators, teams,
-        starting_in_secs: state.starting_in_ms.map(|ms| ms.saturating_sub(elapsed).div_ceil(1000)),
+        moving: moving
+            .and_then(|id| state.members.iter().take(256).find(|m| m.account == id))
+            .map(|m| text::line(&m.nickname, text::NAME)),
+        spectators,
+        teams,
+        starting_in_secs: state
+            .starting_in_ms
+            .map(|ms| ms.saturating_sub(elapsed).div_ceil(1000)),
     }
 }
 
 fn lobby_member(member: &bota_radovid::proto::LobbyMember, me: Option<AccountId>) -> MemberRow {
-    MemberRow { account: member.account, bot: member.kind == bota_radovid::proto::AccountKind::Bot,
-        name: text::line(&member.nickname, text::NAME), ready: member.ready, me: Some(member.account) == me }
+    MemberRow {
+        account: member.account,
+        bot: member.kind == bota_radovid::proto::AccountKind::Bot,
+        name: text::line(&member.nickname, text::NAME),
+        ready: member.ready,
+        me: Some(member.account) == me,
+    }
 }
 
 fn lobby_teams(state: &bota_radovid::proto::LobbyState, me: Option<AccountId>) -> Vec<TeamRow> {
     let mut first = 0u8;
-    state.teams.iter().take(2).enumerate().map(|(team, size)| {
-        let slots = (first..first.saturating_add(*size)).map(|slot| SlotRow {
-            slot, who: state.members.iter().take(256).find(|member| member.slot == slot).map(|member| lobby_member(member, me)),
-        }).collect();
-        first = first.saturating_add(*size);
-        TeamRow { name: if team == 0 { "RADIANT" } else { "DIRE" }.into(), slots }
-    }).collect()
+    state
+        .teams
+        .iter()
+        .take(2)
+        .enumerate()
+        .map(|(team, size)| {
+            let slots = (first..first.saturating_add(*size))
+                .map(|slot| SlotRow {
+                    slot,
+                    who: state
+                        .members
+                        .iter()
+                        .take(256)
+                        .find(|member| member.slot == slot)
+                        .map(|member| lobby_member(member, me)),
+                })
+                .collect();
+            first = first.saturating_add(*size);
+            TeamRow {
+                name: if team == 0 { "RADIANT" } else { "DIRE" }.into(),
+                slots,
+            }
+        })
+        .collect()
 }
 
 fn lobby_start_block(seated: &[&MemberRow], needed: Option<usize>) -> Option<LobbyBlock> {
-    if !seated.iter().any(|member| member.me) { return Some(LobbyBlock::Slot); }
-    let Some(needed) = needed else { return Some(LobbyBlock::Mode); };
-    if seated.len() < needed { return Some(LobbyBlock::Players(needed - seated.len())); }
-    let unready = seated.iter().filter(|member| !member.me && !member.ready).count();
+    if !seated.iter().any(|member| member.me) {
+        return Some(LobbyBlock::Slot);
+    }
+    let Some(needed) = needed else {
+        return Some(LobbyBlock::Mode);
+    };
+    if seated.len() < needed {
+        return Some(LobbyBlock::Players(needed - seated.len()));
+    }
+    let unready = seated
+        .iter()
+        .filter(|member| !member.me && !member.ready)
+        .count();
     (unready > 0).then_some(LobbyBlock::Ready(unready))
 }
 
-fn lobby_settings(state: &bota_radovid::proto::LobbyState, client: Option<&bota_radovid::Client>, owner: bool) -> SettingsView {
+fn lobby_settings(
+    state: &bota_radovid::proto::LobbyState,
+    client: Option<&bota_radovid::Client>,
+    owner: bool,
+) -> SettingsView {
     use bota_radovid::proto::Audience;
     let rules = client.and_then(|c| c.rulesets().find(|rules| rules.id == state.ruleset));
     SettingsView {
-        mode: rules.map_or_else(|| text::line(&state.ruleset.0, text::NAME), |rules| text::line(&rules.name, text::NAME)),
-        audience: super::lobby_controls::audience_name(state.audience), locked: state.locked,
-        modes: if owner { client.map_or_else(Vec::new, |client| {
-            super::core::lobby_rulesets(client).map(|rules| ModeRow {
-                id: rules.id.clone(), name: text::line(&rules.name, text::NAME), chosen: rules.id == state.ruleset,
-            }).collect()
-        }) } else { Vec::new() },
-        audiences: if owner { [Audience::Everyone, Audience::HumansOnly, Audience::BotsOnly].into_iter().map(|audience| AudienceRow {
-            audience, name: super::lobby_controls::audience_name(audience), chosen: audience == state.audience,
-        }).collect() } else { Vec::new() },
-        cheats: state.cheats, editable: owner,
+        mode: rules.map_or_else(
+            || text::line(&state.ruleset.0, text::NAME),
+            |rules| text::line(&rules.name, text::NAME),
+        ),
+        audience: super::lobby_controls::audience_name(state.audience),
+        locked: state.locked,
+        modes: if owner {
+            client.map_or_else(Vec::new, |client| {
+                super::core::lobby_rulesets(client)
+                    .map(|rules| ModeRow {
+                        id: rules.id.clone(),
+                        name: text::line(&rules.name, text::NAME),
+                        chosen: rules.id == state.ruleset,
+                    })
+                    .collect()
+            })
+        } else {
+            Vec::new()
+        },
+        audiences: if owner {
+            [Audience::Everyone, Audience::HumansOnly, Audience::BotsOnly]
+                .into_iter()
+                .map(|audience| AudienceRow {
+                    audience,
+                    name: super::lobby_controls::audience_name(audience),
+                    chosen: audience == state.audience,
+                })
+                .collect()
+        } else {
+            Vec::new()
+        },
+        cheats: state.cheats,
+        editable: owner,
     }
 }
 

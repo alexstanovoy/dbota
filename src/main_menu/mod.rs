@@ -31,14 +31,14 @@ mod leaderboard;
 #[cfg(not(target_arch = "wasm32"))]
 mod leave;
 mod lobbies;
-mod local_matches;
-mod local_meta;
 mod lobby_chat;
 mod lobby_controls;
 mod lobby_editor;
 mod lobby_room;
 mod lobby_scroll;
 mod lobby_widgets;
+mod local_matches;
+mod local_meta;
 mod meta_fetch;
 mod overlay;
 mod page_previews;
@@ -70,11 +70,11 @@ pub use kit::{Disabled, Wash};
 #[cfg(test)]
 pub(crate) use kit::{MenuButton, Shade};
 pub use launch::Trust;
-pub use play::{PlayAction, PlayInfo};
 pub use lobby_chat::Incoming as LobbyChatMessage;
 #[cfg(test)]
 pub(crate) use lobby_chat::Port as LobbyChatPort;
 pub use lobby_controls::Action as LobbyAction;
+pub use play::{PlayAction, PlayInfo};
 pub use prefs::page_service;
 pub(crate) use preview::loading_chat;
 pub use preview::{NAMES as PREVIEWS, view as preview};
