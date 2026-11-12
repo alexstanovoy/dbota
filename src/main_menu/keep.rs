@@ -136,6 +136,13 @@ impl MenuCore {
         let _ = owner;
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn recording_is_kept(&self, path: &std::path::Path) -> bool {
+        self.keeper.recording.as_ref().is_none_or(|recording| {
+            recording.path != path || (!recording.metadata_only && self.library.keeping())
+        })
+    }
+
     /// A local recording location. Metadata is recorded even when replay retention is off.
     pub(super) fn recording_path(&self, mode: &str) -> Option<std::path::PathBuf> {
         #[cfg(not(target_arch = "wasm32"))]
@@ -160,8 +167,11 @@ impl MenuCore {
                 self.local_meta
                     .request_temporary(recording.path, recording.mode, recording.owner);
             } else {
-                self.library
-                    .adopt(recording.path, recording.mode, recording.owner);
+                let path = recording.path;
+                let name = self
+                    .library
+                    .adopt(path.clone(), recording.mode, recording.owner);
+                self.adopted_result_replay(&path, name);
             }
         }
         #[cfg(target_arch = "wasm32")]

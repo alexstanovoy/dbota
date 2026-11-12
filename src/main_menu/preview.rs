@@ -187,6 +187,13 @@ fn offer(answered: bool) -> OfferBox {
 
 /// The view named `name`, if it is one.
 pub fn view(name: &str) -> Option<MenuView> {
+    if crate::postgame::preview::NAMES.contains(&name) {
+        return Some(logged_in(
+            Page::MatchHistory,
+            PageView::MatchHistory(super::history_page::preview()),
+        ));
+    }
+
     if let Some(view) = super::page_previews::view(name) {
         return Some(view);
     }

@@ -5,6 +5,7 @@ use std::path::PathBuf;
 use std::sync::OnceLock;
 
 use bevy::prelude::*;
+use bevy::ui_widgets::Button;
 use bota_client_core::{IssuedOrder, Link};
 use bota_proto::{Cheat, HeroId, ItemId, Order, Target, Team, UnitKind, Vec2};
 
@@ -168,8 +169,10 @@ fn check(summary: &MatchSummary, stats: &bota_proto::MatchStats) {
     assert_eq!(me.hero_damage, Some(own.hero_damage));
     assert!(own.hero_damage > 0, "the kill dealt damage");
     assert_eq!(me.tower_damage, Some(own.structure_damage));
-    let minutes = i64::from(summary.seconds) / 60;
-    assert_eq!(me.gpm, own.net_worth / minutes.max(1) as i32);
+    assert_eq!(
+        me.gpm,
+        (i64::from(own.net_worth) * 60 / i64::from(summary.seconds.max(1))) as i32
+    );
     // One point for the start and one for every whole minute of game time.
     assert_eq!(summary.points.len() as u32, summary.seconds / 60 + 1);
 }
@@ -336,6 +339,128 @@ fn a_standalone_replay_summary_identifies_the_leaver_and_leave_tick() {
 }
 
 #[test]
+fn a_short_match_uses_its_elapsed_seconds_for_gold_per_minute() {
+    use bota_replay::meta::{MetaRecord, stat};
+    let mut meta = bota_replay::meta::decode(&recording_extensions()).expect("metadata");
+    for record in &mut meta.records {
+        match record {
+            MetaRecord::Sample { tick, stats, .. } => {
+                *tick = 238 * 30;
+                stats.push((stat::GOLD_EARNED, 1507));
+            }
+            MetaRecord::End { tick, .. } => *tick = 238 * 30,
+            _ => {}
+        }
+    }
+    let summary = MatchSummary::from_meta(&meta).expect("a summary");
+    assert_eq!(summary.rows[0].gpm, 1507 * 60 / 238);
+}
+
+#[test]
+fn team_graphs_leave_missing_samples_as_gaps_instead_of_zero() {
+    use bota_replay::meta::{MetaRecord, stat};
+    let mut meta = bota_replay::meta::decode(&recording_extensions()).expect("metadata");
+    for record in &mut meta.records {
+        if let MetaRecord::End { tick, .. } = record {
+            *tick = 4500;
+        }
+    }
+    meta.records.extend([
+        MetaRecord::Seat {
+            slot: 1,
+            team: 1,
+            hero: HeroId::PUDGE.0,
+        },
+        MetaRecord::Sample {
+            tick: 2700,
+            slot: 1,
+            stats: vec![(stat::NET_WORTH, 500)],
+        },
+        MetaRecord::Sample {
+            tick: 3600,
+            slot: 0,
+            stats: vec![(stat::XP, 50)],
+        },
+        MetaRecord::Sample {
+            tick: 3600,
+            slot: 1,
+            stats: vec![(stat::NET_WORTH, 550)],
+        },
+        MetaRecord::Sample {
+            tick: 4500,
+            slot: 0,
+            stats: vec![(stat::NET_WORTH, 1200)],
+        },
+        MetaRecord::Sample {
+            tick: 4500,
+            slot: 1,
+            stats: vec![(stat::NET_WORTH, 600)],
+        },
+    ]);
+    let summary = MatchSummary::from_meta(&meta).expect("summary");
+    let curves = super::graphs::curves(&summary, super::graphs::Metric::Advantage);
+    assert_eq!(
+        curves.len(),
+        1,
+        "there is no recorded experience for both seats"
+    );
+    let points: Vec<_> = curves[0]
+        .values
+        .iter()
+        .map(|point| (point.second, point.value, point.connected))
+        .collect();
+    assert_eq!(points, [(150, 600, false)]);
+}
+
+#[test]
+fn known_graph_stats_survive_unknown_ids_and_pregame_purchases_keep_their_sign() {
+    use bota_replay::meta::{MetaRecord, stat};
+    let mut meta = bota_replay::meta::decode(&recording_extensions()).expect("metadata");
+    meta.header.pregame_ticks = 900;
+    for record in &mut meta.records {
+        if let MetaRecord::Sample { stats, .. } = record {
+            *stats = (1000..1100).map(|id| (id, 123)).collect();
+            stats.push((stat::NET_WORTH, 42));
+        }
+    }
+    meta.records.push(MetaRecord::Purchase {
+        tick: 899,
+        slot: 0,
+        item: ItemId::BOTTLE.0,
+    });
+    let summary = MatchSummary::from_meta(&meta).expect("summary");
+    let recording = summary.recording.as_ref().expect("timed recording");
+    assert_eq!(
+        recording.value(bota_proto::SlotId(0), stat::NET_WORTH, 30),
+        Some(42)
+    );
+    assert_eq!(recording.purchases[0].second, -1);
+}
+
+#[test]
+fn graph_axes_have_round_steps_and_keep_the_exact_end_label() {
+    use super::graphs::{Axis, Curve, Point, label_positions, time_ticks};
+    let curve = Curve {
+        name: "recorded".to_owned(),
+        slot: None,
+        colour: [0; 3],
+        values: vec![Point {
+            second: 0,
+            value: 130,
+            connected: false,
+        }],
+    };
+    let axis = Axis::of(&[curve], false);
+    assert_eq!(axis.ticks, [150, 125, 100, 75, 50, 25, 0]);
+    assert_eq!(time_ticks(38 * 60 + 12), [0, 600, 1200, 1800, 2292]);
+    let labels = label_positions(&[0.5; 10], 50.0);
+    assert!(
+        labels.windows(2).all(|pair| pair[1] - pair[0] >= 16.99),
+        "the label container can scroll, but labels never collide"
+    );
+}
+
+#[test]
 fn a_standalone_replay_summary_keeps_the_towers_lane_and_tier() {
     let summary = summary_of(&recording_extensions());
     assert_eq!(summary.structures.len(), 1);
@@ -398,7 +523,8 @@ fn old_metadata_keeps_optional_identity_and_departure_fields_unknown() {
 /// items as icons, and a point a game minute on each graph.
 #[test]
 fn the_screen_at_the_end_shows_every_seat_and_a_point_a_minute() {
-    use super::draw::{Dot, Graph, ItemSlot, SeatRow, Segment};
+    use super::graphs::Metric;
+    use super::render::{Dot, ItemSlot, SeatRow, Segment};
     use crate::e2e::harness::Client;
     let played = play();
     let mut client = Client::run(&["--replay", played.replay.to_str().expect("UTF-8")]);
@@ -416,29 +542,95 @@ fn the_screen_at_the_end_shows_every_seat_and_a_point_a_minute() {
         .cloned()
         .expect("a summary");
     check(&summary, &played.stats);
+    result_click(&mut client, "results scoreboard");
     let world = client.world_mut();
-    let rows = world.query::<&SeatRow>().iter(world).count();
-    assert_eq!(rows, summary.rows.len(), "a row for every seat");
-    for graph in [Graph::NetWorth, Graph::Xp] {
-        let dots = world
-            .query::<&Dot>()
-            .iter(world)
-            .filter(|d| d.graph == graph)
-            .count();
-        let lines = world
-            .query::<&Segment>()
-            .iter(world)
-            .filter(|s| s.0 == graph)
-            .count();
-        assert_eq!(dots, summary.points.len(), "{graph:?}: a point a minute");
-        assert_eq!(lines, summary.points.len() - 1, "{graph:?}: joined");
-    }
+    let rows: Vec<_> = world
+        .query::<&SeatRow>()
+        .iter(world)
+        .map(|row| row.0)
+        .collect();
+    assert_eq!(
+        rows,
+        summary.rows.iter().map(|row| row.slot).collect::<Vec<_>>(),
+        "a row for every seat"
+    );
     let icons = world
         .query::<(&ItemSlot, &ImageNode)>()
         .iter(world)
         .filter(|(_, image)| image.color != Color::NONE)
         .count();
     assert_eq!(icons, PURCHASES.len(), "the three items bought are drawn");
+    for graph in [Metric::NetWorth, Metric::Experience] {
+        result_click(&mut client, "results graphs");
+        result_click(&mut client, "results graph picker");
+        result_click(
+            &mut client,
+            &format!("results graph {}", graph.label().to_lowercase()),
+        );
+        let world = client.world_mut();
+        let dots = world
+            .query::<&Dot>()
+            .iter(world)
+            .filter(|dot| dot.graph == graph)
+            .count();
+        let lines = world
+            .query::<&Segment>()
+            .iter(world)
+            .filter(|line| line.0 == graph)
+            .count();
+        let curves = super::graphs::curves(&summary, graph);
+        assert_eq!(
+            dots,
+            curves.iter().map(|curve| curve.values.len()).sum::<usize>()
+        );
+        assert_eq!(
+            lines,
+            curves
+                .iter()
+                .flat_map(|curve| &curve.values)
+                .filter(|point| point.connected)
+                .count()
+        );
+        assert!(
+            curves.iter().all(|curve| curve
+                .values
+                .last()
+                .is_some_and(|point| point.second == summary.seconds)),
+            "exact end sample retained"
+        );
+    }
+}
+
+#[test]
+fn recorded_results_offer_the_graph_picker_and_no_timeline_page() {
+    use crate::e2e::harness::Client;
+    let played = play();
+    let mut client = Client::run(&["--replay", played.replay.to_str().expect("UTF-8")]);
+    client.until("the replay ended", |client| {
+        if let bota_client_core::Source::Replay(player) = &mut client.core_mut().source {
+            player.advance_ticks(1.0e7);
+        }
+        client
+            .world()
+            .non_send::<super::PostGame>()
+            .summary()
+            .is_some()
+    });
+    client.frames(4);
+    let world = client.world_mut();
+    let buttons: Vec<String> = world
+        .query_filtered::<&Name, With<Button>>()
+        .iter(world)
+        .map(ToString::to_string)
+        .collect();
+    assert!(
+        buttons.iter().any(|name| name == "results graphs"),
+        "graph pager missing: {buttons:?}"
+    );
+    assert!(
+        !buttons.iter().any(|name| name.contains("timeline")),
+        "Timeline is no results page"
+    );
 }
 
 /// A game of the service has its metadata fetched by the menu: when the file comes the screen
@@ -468,8 +660,12 @@ fn a_game_of_the_service_shows_the_fetched_file_or_the_final_numbers_when_there_
         });
         client.frames(3);
         assert!(
-            client.world().non_send::<PostGame>().summary().is_none(),
-            "nothing is shown before the file comes"
+            client
+                .world()
+                .non_send::<PostGame>()
+                .summary()
+                .is_some_and(|summary| summary.detail == Detail::Stats),
+            "final numbers are shown immediately while metadata is unavailable"
         );
         client
             .world_mut()
@@ -478,8 +674,11 @@ fn a_game_of_the_service_shows_the_fetched_file_or_the_final_numbers_when_there_
                 match_id: id,
                 bytes,
             });
-        client.until("the screen shown", |c| {
-            c.world().non_send::<PostGame>().summary().is_some()
+        client.until("the requested detail shown", |c| {
+            c.world()
+                .non_send::<PostGame>()
+                .summary()
+                .is_some_and(|summary| summary.detail == detail)
         });
         let summary = client
             .world()
@@ -491,6 +690,39 @@ fn a_game_of_the_service_shows_the_fetched_file_or_the_final_numbers_when_there_
         assert_eq!(summary.winner, Some(Team::Radiant));
         if detail == Detail::Meta {
             check(&summary, &played.stats);
+        } else {
+            client
+                .world_mut()
+                .non_send_mut::<PostGame>()
+                .provide(Fetched {
+                    match_id: MatchId(8),
+                    bytes: Some(std::fs::read(&played.meta).expect("local metadata")),
+                });
+            client.frames(3);
+            assert_eq!(
+                client
+                    .world()
+                    .non_send::<PostGame>()
+                    .summary()
+                    .expect("summary")
+                    .detail,
+                Detail::Stats,
+                "a different match cannot replace this result"
+            );
+            client
+                .world_mut()
+                .non_send_mut::<PostGame>()
+                .provide(Fetched {
+                    match_id: id,
+                    bytes: Some(std::fs::read(&played.meta).expect("local metadata")),
+                });
+            client.until("late local metadata upgrades the open result", |client| {
+                client
+                    .world()
+                    .non_send::<PostGame>()
+                    .summary()
+                    .is_some_and(|summary| summary.detail == Detail::Meta)
+            });
         }
     }
 }
@@ -544,7 +776,498 @@ fn a_file_of_more_seats_and_samples_than_a_match_has_is_cut_to_a_match() {
     );
 }
 
-/// Reuse the real recorded match for menu-history contracts instead of fabricating statistics.
+fn result_click(client: &mut crate::e2e::harness::Client, name: &str) {
+    client.click_named(name);
+}
+
+#[test]
+fn recorded_graphs_and_player_pages_use_the_recorded_match_without_changing_the_session() {
+    use super::{graphs::Metric, view::Page};
+    use crate::e2e::harness::Client;
+    let played = play();
+    let mut client = Client::run(&["--replay", played.replay.to_str().expect("UTF-8")]);
+    if let bota_client_core::Source::Replay(player) = &mut client.core_mut().source {
+        player.advance_ticks(1.0e7);
+    }
+    client.until("recorded results", |client| {
+        client
+            .world()
+            .non_send::<super::PostGame>()
+            .summary()
+            .is_some()
+    });
+    client.frames(4);
+    let tick = client.tick();
+    result_click(&mut client, "results graphs");
+    for metric in Metric::ALL {
+        result_click(&mut client, "results graph picker");
+        result_click(
+            &mut client,
+            &format!("results graph {}", metric.label().to_lowercase()),
+        );
+        let view = client
+            .world()
+            .non_send::<super::PostGame>()
+            .overlay
+            .as_ref()
+            .expect("modal");
+        assert_eq!(view.page, Page::Graphs);
+        assert_eq!(view.metric, metric);
+        let world = client.world_mut();
+        let grids: Vec<_> = world
+            .query::<&super::render::chart::Grid>()
+            .iter(world)
+            .collect();
+        assert!(grids.iter().any(|line| line.vertical), "minute grid");
+        assert!(
+            grids.iter().any(|line| !line.vertical && line.major),
+            "zero line"
+        );
+        assert!(
+            client
+                .shown_texts()
+                .iter()
+                .any(|text| text == metric.label())
+        );
+    }
+    let seconds = client
+        .world()
+        .non_send::<super::PostGame>()
+        .summary()
+        .expect("summary")
+        .seconds;
+    let world = client.world_mut();
+    let (centre, size) = world
+        .query::<(&Name, &UiGlobalTransform, &ComputedNode)>()
+        .iter(world)
+        .find(|(name, _, _)| name.as_str() == "results graph plot")
+        .map(|(_, place, node)| (place.translation, node.size()))
+        .expect("plot");
+    client.mouse(centre + bevy::prelude::Vec2::new(size.x / 2.0 - 2.0, 0.0));
+    client.frames(3);
+    let expected = format!("{} · HEALING", super::graphs::clock(seconds));
+    assert!(
+        client.shown_texts().contains(&expected),
+        "the right edge hovers the exact end: {expected}"
+    );
+    result_click(&mut client, "results graph picker");
+    client.key(KeyCode::Escape, bevy::input::ButtonState::Pressed);
+    client.key(KeyCode::Escape, bevy::input::ButtonState::Released);
+    client.frames(3);
+    assert!(
+        client.world().non_send::<super::PostGame>().visible(),
+        "Escape dismisses the picker first"
+    );
+    assert!(
+        !client
+            .world()
+            .non_send::<super::PostGame>()
+            .overlay
+            .as_ref()
+            .expect("modal")
+            .picker
+    );
+    result_click(&mut client, "results graph picker");
+    client.mouse(centre);
+    client.click(MouseButton::Left);
+    client.frames(3);
+    assert!(
+        !client
+            .world()
+            .non_send::<super::PostGame>()
+            .overlay
+            .as_ref()
+            .expect("modal")
+            .picker,
+        "outside click dismisses the picker"
+    );
+    let focus_slot = client
+        .world()
+        .non_send::<super::PostGame>()
+        .summary()
+        .expect("summary")
+        .rows[0]
+        .slot;
+    result_click(&mut client, "results graph picker");
+    result_click(&mut client, "results graph team advantage");
+    result_click(&mut client, &format!("results focus {}", focus_slot.0));
+    let focused = {
+        let post = client.world().non_send::<super::PostGame>();
+        let view = post.overlay.as_ref().expect("modal");
+        (view.metric, view.focus)
+    };
+    result_click(&mut client, "results graph picker");
+    result_click(&mut client, "results graph team advantage");
+    let cleared = client
+        .world()
+        .non_send::<super::PostGame>()
+        .overlay
+        .as_ref()
+        .expect("modal")
+        .focus;
+    assert_eq!(
+        (focused, cleared),
+        ((Metric::NetWorth, Some(focus_slot)), None),
+        "player focus opens net worth from advantage; returning to advantage clears it"
+    );
+    result_click(&mut client, "results scoreboard");
+    let slot = client
+        .world()
+        .non_send::<super::PostGame>()
+        .summary()
+        .expect("summary")
+        .rows[0]
+        .slot;
+    result_click(&mut client, &format!("results player {}", slot.0));
+    assert_eq!(
+        client
+            .world()
+            .non_send::<super::PostGame>()
+            .overlay
+            .as_ref()
+            .expect("modal")
+            .player,
+        Some(slot)
+    );
+    let texts = client.shown_texts();
+    assert!(texts.iter().any(|text| text == "OVER THE MATCH"));
+    result_click(&mut client, "results ← scoreboard");
+    assert!(
+        client
+            .world()
+            .non_send::<super::PostGame>()
+            .overlay
+            .as_ref()
+            .expect("modal")
+            .player
+            .is_none()
+    );
+    assert_eq!(
+        client.tick(),
+        tick,
+        "inspection never seeks or restarts the game"
+    );
+}
+
+#[test]
+fn the_approved_draw_and_player_pages_keep_the_name_prominent_and_timeline_absent() {
+    use crate::e2e::harness::Client;
+    use bevy::text::{FontSize, TextLayoutInfo};
+    for name in [
+        "match_details_solo_draw",
+        "match_player",
+        "match_details_player_bot",
+    ] {
+        let mut client = Client::run(&["--menu-preview", name, "--window", "1440x900"]);
+        client.until("result name shaped", |client| {
+            let world = client.world_mut();
+            world
+                .query::<(&Text, &TextLayoutInfo)>()
+                .iter(world)
+                .any(|(text, layout)| {
+                    matches!(text.0.as_str(), "mira#2207" | "Thistle") && !layout.glyphs.is_empty()
+                })
+        });
+        client.frames(4);
+        let post = client.world().non_send::<super::PostGame>();
+        let view = post.overlay.as_ref().expect("result modal");
+        if name.ends_with("draw") {
+            assert_eq!(view.page, super::view::Page::Mvp);
+            assert_eq!(view.summary.winner, Some(Team::Neutral));
+        }
+        let expected = if name.contains("bot") {
+            "Thistle"
+        } else {
+            "mira#2207"
+        };
+        let world = client.world_mut();
+        let (font, node, layout, place) = world
+            .query::<(
+                &Text,
+                &TextFont,
+                &ComputedNode,
+                &TextLayoutInfo,
+                &UiGlobalTransform,
+            )>()
+            .iter(world)
+            .find(|(text, font, _, _, _)| {
+                text.0 == expected && matches!(font.font_size,FontSize::Px(size)if size>=28.0)
+            })
+            .map(|(_, font, node, layout, place)| (font, node, layout, place))
+            .expect("large player name");
+        let FontSize::Px(size) = font.font_size else {
+            panic!("pixel role");
+        };
+        assert!(size >= 28.0);
+        if name.ends_with("draw") {
+            assert!(
+                (place.translation.x - 720.0).abs() < 24.0,
+                "MVP name is centered on the window"
+            );
+            let left = layout
+                .glyphs
+                .iter()
+                .map(|glyph| glyph.position.x)
+                .fold(f32::INFINITY, f32::min);
+            let right = layout
+                .glyphs
+                .iter()
+                .map(|glyph| glyph.position.x)
+                .fold(f32::NEG_INFINITY, f32::max);
+            assert!(
+                ((left + right) / 2.0 - node.size().x / 2.0).abs() < 24.0,
+                "MVP name is visibly centered"
+            );
+        }
+        assert!(!client.shown_texts().iter().any(|text| text == "TIMELINE"));
+    }
+}
+
+#[test]
+fn a_replay_viewer_without_a_dashboard_keeps_the_game_hud_scale() {
+    let played = play();
+    let mut client = crate::e2e::harness::Client::run(&[
+        "--replay",
+        played.replay.to_str().expect("UTF-8"),
+        "--window",
+        "1440x900",
+    ]);
+    client
+        .world_mut()
+        .remove_non_send::<crate::main_menu::MenuCore>();
+    client.until(
+        "the replay finishes loading without a dashboard",
+        |client| client.world().resource::<crate::loading::Loading>().done(),
+    );
+    client.frames(3);
+    assert!(!client.world().non_send::<super::PostGame>().visible());
+    assert!(
+        client.world().resource::<crate::ui::HudShown>().0,
+        "the browser replay page has no dashboard"
+    );
+    assert!(
+        client.world().resource::<UiScale>().0 < 0.99,
+        "game HUD fit is preserved without a menu core"
+    );
+}
+
+/// The same real recording drives history contracts.
 pub(crate) fn recorded_match_for_menu() -> (PathBuf, PathBuf) {
     (play().replay.clone(), play().meta.clone())
+}
+
+fn incomplete_roster_client() -> crate::e2e::harness::Client {
+    let mut client = crate::e2e::harness::Client::run(&["--menu-preview", "match_scoreboard"]);
+    client.frames(4);
+    let mut meta =
+        bota_replay::meta::decode(&super::preview::metadata("match_details")).expect("fixture");
+    meta.records.retain(|record| {
+        !matches!(
+            record,
+            bota_replay::meta::MetaRecord::Sample { slot: 5, .. }
+        )
+    });
+    let summary = std::sync::Arc::new(MatchSummary::from_meta(&meta).expect("remaining seats"));
+    {
+        let mut post = client.world_mut().non_send_mut::<super::PostGame>();
+        post.overlay = Some(super::view::View::new(summary, Default::default()));
+        post.presented += 1;
+    }
+    client.frames(4);
+    client
+}
+#[test]
+fn an_incomplete_roster_selects_the_available_scoreboard_page() {
+    let mut client = incomplete_roster_client();
+    let world = client.world_mut();
+    let border = world
+        .query::<(&Name, &BorderColor)>()
+        .iter(world)
+        .find(|(name, _)| name.as_str() == "results scoreboard")
+        .map(|(_, border)| border.top)
+        .expect("scoreboard pager");
+    assert_eq!(
+        border,
+        crate::theme::INK_3,
+        "the displayed scoreboard is the selected page"
+    );
+    assert!(
+        !world
+            .query::<&Name>()
+            .iter(world)
+            .any(|name| name.as_str() == "results mvp")
+    );
+}
+#[test]
+fn an_incomplete_roster_never_presents_a_partial_score_as_the_team_total() {
+    let mut client = incomplete_roster_client();
+    let world = client.world_mut();
+    let score = world
+        .query::<(&Name, &Text)>()
+        .iter(world)
+        .find(|(name, _)| name.as_str() == "results radiant score")
+        .map(|(_, text)| text.0.as_str())
+        .expect("score");
+    assert_eq!(score, "—", "a missing seat makes the aggregate unknown");
+}
+
+fn team_card(client: &mut crate::e2e::harness::Client, slot: u8) -> (Entity, Entity, Rect) {
+    let world = client.world_mut();
+    let name = format!("results card {slot}");
+    let card = world
+        .query::<(Entity, &Name)>()
+        .iter(world)
+        .find(|(_, label)| label.as_str() == name)
+        .map(|(entity, _)| entity)
+        .expect("team card");
+    let frame = world
+        .query_filtered::<Entity, With<super::render::Portrait>>()
+        .iter(world)
+        .find(|entity| crate::e2e::harness::descends_from(world, *entity, card))
+        .expect("portrait");
+    let place = world
+        .get::<UiGlobalTransform>(frame)
+        .expect("placed")
+        .translation;
+    let size = world.get::<ComputedNode>(frame).expect("laid out").size();
+    (card, frame, Rect::from_center_size(place, size))
+}
+#[test]
+fn hovering_a_team_card_highlights_the_portrait_and_shows_details() {
+    let mut client = crate::e2e::harness::Client::run(&["--menu-preview", "match_dire"]);
+    client.frames(5);
+    let (card, frame, _) = team_card(&mut client, 7);
+    let original = client.world().get::<BorderColor>(frame).expect("edge").top;
+    client.hover_ui(card, std::time::Duration::from_secs(20));
+    client.frames(3);
+    assert_eq!(
+        client.world().get::<BorderColor>(frame).expect("edge").top,
+        crate::theme::INK_2,
+        "the actual hover highlights the frame"
+    );
+    let world = client.world_mut();
+    assert!(
+        world
+            .query::<(&super::render::hover::DetailsHint, &InheritedVisibility)>()
+            .iter(world)
+            .any(|(hint, visible)| hint.button == card && visible.get()),
+        "the card's hint is visible"
+    );
+    client.mouse(bevy::prelude::Vec2::new(10.0, 10.0));
+    client.frames(3);
+    assert_eq!(
+        client.world().get::<BorderColor>(frame).expect("edge").top,
+        original
+    );
+}
+#[test]
+fn team_card_statistics_do_not_paint_into_the_player_name_below_the_portrait() {
+    use bevy::ui::CalculatedClip;
+    let mut client = crate::e2e::harness::Client::run(&["--menu-preview", "match_radiant"]);
+    client.until("wrapped card label laid out", |client| {
+        let world = client.world_mut();
+        world
+            .query::<(&Text, &ComputedNode)>()
+            .iter(world)
+            .any(|(text, node)| text.0 == "THIRD MOST BUILDING DAMAGE" && node.size().y > 0.0)
+    });
+    client.frames(3);
+    let (_, _, frame) = team_card(&mut client, 4);
+    let world = client.world_mut();
+    let (place, node, clip) = world
+        .query::<(
+            &Text,
+            &UiGlobalTransform,
+            &ComputedNode,
+            Option<&CalculatedClip>,
+        )>()
+        .iter(world)
+        .find(|(text, _, _, _)| text.0 == "THIRD MOST BUILDING DAMAGE")
+        .map(|(_, place, node, clip)| (place, node, clip))
+        .expect("label");
+    let label = Rect::from_center_size(place.translation, node.size());
+    if label.max.y > frame.max.y + 1.0 {
+        let outside = bevy::prelude::Vec2::new(label.center().x, frame.max.y + 1.0);
+        assert!(
+            clip.is_some_and(|clip| !clip.contains_point(outside)),
+            "text below the portrait is clipped rather than covering the name"
+        );
+    }
+}
+
+#[test]
+fn graph_strokes_distinguish_team_totals_and_a_focused_player() {
+    use crate::e2e::harness::Client;
+    let mut mismatches = Vec::new();
+    for preview in [
+        "match_graph_team_net_worth",
+        "match_graph_team_kills",
+        "match_details_graphs_focus_hover",
+    ] {
+        let mut client = Client::run(&["--menu-preview", preview]);
+        client.until("recorded curves are drawn", |client| {
+            let world = client.world_mut();
+            world
+                .query::<&super::render::Segment>()
+                .iter(world)
+                .next()
+                .is_some()
+        });
+        let world = client.world_mut();
+        let widths: Vec<_> = world
+            .query::<(&super::render::Segment, &Node)>()
+            .iter(world)
+            .filter_map(|(_, node)| match node.height {
+                Val::Px(width) => Some(width),
+                _ => None,
+            })
+            .collect();
+        let correct = if preview.contains("focus") {
+            widths.contains(&1.4)
+                && widths.contains(&3.5)
+                && widths.iter().all(|width| [1.4, 3.5].contains(width))
+        } else {
+            widths.iter().all(|width| *width == 3.0)
+        };
+        if !correct {
+            mismatches.push(preview);
+        }
+    }
+    assert!(
+        mismatches.is_empty(),
+        "graph strokes differ from their roles: {mismatches:?}"
+    );
+}
+
+#[test]
+fn focusing_a_graph_player_dims_the_other_portraits() {
+    use crate::e2e::harness::Client;
+    let mut client = Client::run(&["--menu-preview", "match_details_graphs_focus_hover"]);
+    client.until("the graph portraits are drawn", |client| {
+        let world = client.world_mut();
+        world
+            .query::<&super::render::Segment>()
+            .iter(world)
+            .next()
+            .is_some()
+    });
+    let world = client.world_mut();
+    let portraits: Vec<_> = world
+        .query::<(&ChildOf, &ImageNode)>()
+        .iter(world)
+        .filter_map(|(parent, image)| {
+            let name = world.get::<Name>(parent.parent())?;
+            name.as_str()
+                .starts_with("results focus ")
+                .then_some((name.as_str().to_owned(), image.color.alpha()))
+        })
+        .collect();
+    assert_eq!(portraits.len(), 10, "all recorded players have a portrait");
+    for (name, alpha) in portraits {
+        assert_eq!(
+            alpha,
+            if name == "results focus 5" { 1.0 } else { 0.55 },
+            "{name} respects the selected player"
+        );
+    }
 }

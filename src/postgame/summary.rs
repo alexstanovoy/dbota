@@ -48,6 +48,18 @@ pub struct Row {
     pub left_at: Option<u32>,
 }
 
+impl Row {
+    pub fn display_name(&self) -> String {
+        self.name
+            .clone()
+            .unwrap_or_else(|| format!("Player {}", usize::from(self.slot.0) + 1))
+    }
+
+    pub fn hero_name(&self) -> &'static str {
+        bota_core::hero_def(self.hero).map_or("Unknown hero", |hero| hero.name)
+    }
+}
+
 /// What a side was ahead by at one game minute: the Radiant's total less the Dire's.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Point {
@@ -78,6 +90,7 @@ pub struct MatchSummary {
     /// Building falls, with optional location companions in newer recordings.
     #[cfg_attr(not(test), allow(dead_code))]
     pub structures: Vec<StructureFall>,
+    pub recording: Option<std::sync::Arc<super::data::Recording>>,
 }
 
 fn team_of(side: u8) -> Team {
@@ -88,8 +101,8 @@ fn to_i32(value: i64) -> i32 {
     i32::try_from(value).unwrap_or(if value < 0 { i32::MIN } else { i32::MAX })
 }
 
-fn per_minute(total: i64, minutes: i64) -> i32 {
-    to_i32(total / minutes)
+fn per_minute(total: i64, seconds: u32) -> i32 {
+    to_i32(total.saturating_mul(60) / i64::from(seconds.max(1)))
 }
 
 fn value(stats: &[(u16, i64)], id: u16) -> Option<i64> {
@@ -101,7 +114,7 @@ struct Seat<'a> {
     slot: u8,
     team: u8,
     hero: u16,
-    samples: Vec<&'a [(u16, i64)]>,
+    samples: Vec<(u32, &'a [(u16, i64)])>,
     items: Option<&'a [Option<u16>]>,
 }
 
@@ -111,6 +124,10 @@ struct Seat<'a> {
 fn seats(meta: &Meta) -> Vec<Seat<'_>> {
     let most_samples = bota_replay::limits::MAX_MINUTES as usize + 2;
     let mut seats: Vec<Seat> = Vec::new();
+    let end_tick = meta.records.iter().find_map(|record| match record {
+        MetaRecord::End { tick, .. } => Some(*tick),
+        _ => None,
+    });
     for record in &meta.records {
         match record {
             MetaRecord::Seat { slot, team, hero }
@@ -125,14 +142,16 @@ fn seats(meta: &Meta) -> Vec<Seat<'_>> {
                     items: None,
                 });
             }
-            MetaRecord::Sample { slot, stats, .. } => {
+            MetaRecord::Sample { tick, slot, stats } if end_tick.is_none_or(|end| *tick <= end) => {
                 if let Some(seat) = seats.iter_mut().find(|s| s.slot == *slot)
                     && seat.samples.len() < most_samples
                 {
-                    seat.samples.push(stats);
+                    seat.samples.push((*tick, stats));
                 }
             }
-            MetaRecord::Inventory { slot, items, .. } => {
+            MetaRecord::Inventory { tick, slot, items }
+                if end_tick.is_none_or(|end| *tick <= end) =>
+            {
                 if let Some(seat) = seats.iter_mut().find(|s| s.slot == *slot) {
                     seat.items = Some(items);
                 }
@@ -140,10 +159,44 @@ fn seats(meta: &Meta) -> Vec<Seat<'_>> {
             _ => {}
         }
     }
+    for seat in &mut seats {
+        seat.samples.sort_by_key(|(tick, _)| *tick);
+        seat.samples.reverse();
+        seat.samples.dedup_by_key(|(tick, _)| *tick);
+        seat.samples.reverse();
+    }
     seats
 }
 
 impl MatchSummary {
+    pub fn comparisons_known(&self) -> bool {
+        !self.rows.is_empty()
+            && (self.detail == Detail::Stats
+                || self.recording.as_ref().is_some_and(|recording| {
+                    recording.roster_complete && recording.samples.len() == self.rows.len()
+                }))
+    }
+    pub fn team_total(&self, team: Team, id: u16) -> Option<i64> {
+        if !self.comparisons_known() {
+            return None;
+        }
+        self.rows
+            .iter()
+            .filter(|row| row.team == team)
+            .try_fold(0_i64, |total, row| {
+                let value = if let Some(recording) = &self.recording {
+                    recording.value(row.slot, id, self.seconds)?
+                } else {
+                    match id {
+                        stat::KILLS => i64::from(row.kills),
+                        stat::NET_WORTH => i64::from(row.net_worth?),
+                        _ => return None,
+                    }
+                };
+                Some(total.saturating_add(value))
+            })
+    }
+
     /// What a metadata file tells. None when it names no seat or holds no sample of one.
     pub fn from_meta(meta: &Meta) -> Option<MatchSummary> {
         let seats = seats(meta);
@@ -164,11 +217,13 @@ impl MatchSummary {
             .max()
             .unwrap_or(0);
         let tick_rate = u32::from(meta.header.tick_rate.max(1));
-        let seconds = last_tick.saturating_sub(meta.header.pregame_ticks) / tick_rate;
-        let minutes = (i64::from(seconds) / 60).max(1);
-        let mut rows: Vec<Row> = seats.iter().filter_map(|seat| row(seat, minutes)).collect();
+        let last_tick = end.map_or(last_tick, |(tick, _)| tick);
+        let seconds = (last_tick.saturating_sub(meta.header.pregame_ticks) / tick_rate)
+            .min(super::data::MAX_SECONDS);
+        let mut rows: Vec<Row> = seats.iter().filter_map(|seat| row(seat, seconds)).collect();
         rows.sort_by_key(|row| (row.team == Team::Dire, row.slot));
         super::recording::enrich_rows(meta, &mut rows);
+        let recording = super::data::Recording::from_meta(meta, rows.iter().map(|row| row.slot));
         Some(MatchSummary {
             detail: Detail::Meta,
             winner: end.map(|(_, winner)| winner.map_or(Team::Neutral, team_of)),
@@ -176,6 +231,7 @@ impl MatchSummary {
             rows,
             points: points(&seats),
             structures: super::recording::structures(meta),
+            recording: Some(std::sync::Arc::new(recording)),
         })
     }
 
@@ -188,7 +244,6 @@ impl MatchSummary {
         pregame_ticks: u32,
     ) -> MatchSummary {
         let seconds = stats.duration.saturating_sub(pregame_ticks) / TICKS_PER_SECOND;
-        let minutes = (i64::from(seconds) / 60).max(1);
         let mut rows: Vec<Row> = stats
             .slots
             .iter()
@@ -208,8 +263,8 @@ impl MatchSummary {
                     last_hits: Some(seat.last_hits),
                     denies: Some(seat.denies),
                     net_worth: None,
-                    gpm: per_minute(i64::from(seat.net_worth), minutes),
-                    xpm: per_minute(i64::from(player.xp), minutes),
+                    gpm: per_minute(i64::from(seat.net_worth), seconds),
+                    xpm: per_minute(i64::from(player.xp), seconds),
                     hero_damage: Some(seat.hero_damage),
                     tower_damage: Some(seat.structure_damage),
                     healing: None,
@@ -233,12 +288,13 @@ impl MatchSummary {
             rows,
             points: Vec::new(),
             structures: Vec::new(),
+            recording: None,
         }
     }
 }
 
-fn row(seat: &Seat, minutes: i64) -> Option<Row> {
-    let last = *seat.samples.last()?;
+fn row(seat: &Seat, seconds: u32) -> Option<Row> {
+    let last = seat.samples.last()?.1;
     let get = |id| value(last, id);
     let count = |id| u16::try_from(get(id).unwrap_or(0)).unwrap_or(u16::MAX);
     let earned = get(stat::GOLD_EARNED)
@@ -259,8 +315,8 @@ fn row(seat: &Seat, minutes: i64) -> Option<Row> {
         last_hits: get(stat::LAST_HITS).map(|_| count(stat::LAST_HITS)),
         denies: get(stat::DENIES).map(|_| count(stat::DENIES)),
         net_worth: get(stat::NET_WORTH).map(to_i32),
-        gpm: per_minute(earned, minutes),
-        xpm: per_minute(get(stat::XP).unwrap_or(0), minutes),
+        gpm: per_minute(earned, seconds),
+        xpm: per_minute(get(stat::XP).unwrap_or(0), seconds),
         hero_damage: get(stat::HERO_DAMAGE).map(to_i32),
         tower_damage: get(stat::STRUCTURE_DAMAGE).map(to_i32),
         healing: get(stat::HEALING).map(to_i32),
@@ -286,7 +342,7 @@ fn points(seats: &[Seat]) -> Vec<Point> {
                 xp: 0,
             };
             for seat in seats {
-                let Some(stats) = seat.samples.get(minute) else {
+                let Some((_, stats)) = seat.samples.get(minute) else {
                     continue;
                 };
                 let sign = if seat.team == 0 { 1 } else { -1 };

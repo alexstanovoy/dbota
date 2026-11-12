@@ -45,6 +45,10 @@ pub fn draw(
     }
     page_background(kit, root, view);
     super::top_bar::draw(kit, root, view, fold);
+    if let PageView::MatchHistory(history) = &view.body {
+        super::history_page::draw(kit, root, history);
+        return;
+    }
     let body = page_body(kit, root);
     if !draw_account_page(kit, root, body, view, texts, clock) {
         draw_body(kit, body, view);
@@ -213,9 +217,6 @@ fn draw_account_page(
             if view.offer.is_none() {
                 super::avatar_draw::dialog(kit, root, avatar);
             }
-        }
-        PageView::LocalResult(summary) => {
-            super::account_page::details(kit, root, summary);
         }
         _ => return false,
     }

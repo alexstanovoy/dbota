@@ -255,7 +255,7 @@ pub struct Args {
     pub trace_feel: bool,
     /// Debug: draw a screen of the main menu with made-up contents, no
     /// service needed (for screenshots: `--frames N --screenshot FILE`).
-    #[arg(long, value_name = "NAME", value_parser = clap::builder::PossibleValuesParser::new(main_menu::PREVIEWS))]
+    #[arg(long, value_name = "NAME", value_parser = clap::builder::PossibleValuesParser::new(main_menu::PREVIEWS.iter().copied().chain(postgame::preview::NAMES.iter().copied())))]
     pub menu_preview: Option<String>,
     /// Debug: keep a tooltip open: `item:ID` (id of the item), `shop:ID`, `buff:ID` (an effect with ten seconds left),
     /// `ability:ID:LEVEL`, `stats` (the stats tooltip) or `talents` (the

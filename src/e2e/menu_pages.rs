@@ -753,6 +753,14 @@ fn two_seat_library(name: &str, finished: bool) -> std::path::PathBuf {
     let meta = bota_replay::meta::decode(&std::fs::read(source).unwrap()).unwrap();
     let mut writer = bota_replay::meta::Writer::default();
     assert!(writer.push(&MetaRecord::Header(meta.header), false));
+    let mut meta = meta;
+    if !finished {
+        for record in &mut meta.records {
+            if let MetaRecord::Sample { stats, .. } = record {
+                stats.retain(|(id, _)| *id != bota_replay::meta::stat::GOLD_EARNED);
+            }
+        }
+    }
     for record in meta.records {
         let other = match &record {
             MetaRecord::Seat { team, .. } => Some(MetaRecord::Seat {
@@ -849,9 +857,10 @@ fn unfinished_match_details_only_draw_the_owner_while_finished_details_draw_both
                 .is_some()
         });
         act(&mut client, Act::MatchDetails("owned.brp".to_owned()));
+        client.click_named("results scoreboard");
         let world = client.world_mut();
         let rows: Vec<_> = world
-            .query::<&crate::postgame::draw::SeatRow>()
+            .query::<&crate::postgame::render::SeatRow>()
             .iter(world)
             .map(|row| row.0.0)
             .collect();
@@ -861,14 +870,34 @@ fn unfinished_match_details_only_draw_the_owner_while_finished_details_draw_both
             finished,
             "another drawn seat requires End: {rows:?}"
         );
-        let words = crate::main_menu::tests::page_words(client.world_mut());
-        assert_eq!(
-            words
-                .iter()
-                .any(|word| word.starts_with("NET WORTH ADVANTAGE")),
-            finished,
-            "team graphs require End"
-        );
+        if !finished {
+            let world = client.world_mut();
+            let rate = world
+                .query::<(&crate::postgame::render::Cell, &bevy::prelude::Text)>()
+                .iter(world)
+                .find(|(cell, _)| **cell == crate::postgame::render::Cell::Gpm)
+                .map(|(_, text)| text.0.as_str())
+                .expect("owner's GPM cell");
+            assert_eq!(
+                rate, "—",
+                "missing earned gold never becomes a net-worth estimate"
+            );
+        }
+        let world = client.world_mut();
+        let graphs = world
+            .query::<&bevy::prelude::Name>()
+            .iter(world)
+            .any(|name| name.as_str() == "results graphs");
+        assert_eq!(graphs, finished, "team graphs require End");
+        if finished {
+            client.click_named("results graphs");
+            assert!(
+                client
+                    .shown_texts()
+                    .iter()
+                    .any(|text| text == "Team advantage")
+            );
+        }
     }
 }
 

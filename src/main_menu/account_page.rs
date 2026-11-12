@@ -315,7 +315,7 @@ fn recent_matches(kit: &mut Kit, left: Entity, matches: &[Match], clock: super::
     let all = kit.quiet(
         title,
         "All matches",
-        Act::Go(Page::Replays),
+        Act::Go(Page::MatchHistory),
         theme::BODY,
         theme::LINK,
     );
@@ -594,40 +594,6 @@ fn cell(kit: &mut Kit, parent: Entity, text: &str, width: f32, color: Color) {
         },
     );
     kit.text(cell, text, 13.0, color);
-}
-
-/// The existing results renderer consumes the local metadata without opening a replay.
-pub fn details(kit: &mut Kit, root: Entity, summary: &crate::postgame::summary::MatchSummary) {
-    let mut renderer = crate::postgame::draw::Kit {
-        commands: &mut kit.commands,
-        fonts: kit.fonts,
-        manifest: kit.manifest,
-        server: kit.server,
-    };
-    let screen = crate::postgame::draw::spawn(&mut renderer, root, summary);
-    // The menu owns this instance; an update of the game HUD's result must not despawn it.
-    kit.commands
-        .entity(screen)
-        .remove::<crate::postgame::draw::Screen>()
-        .insert(GlobalZIndex(62));
-    kit.commands
-        .entity(screen)
-        .entry::<Node>()
-        .and_modify(|mut node| {
-            node.top = px(54);
-            node.height = auto();
-            node.bottom = px(0);
-        });
-    let close = kit.button(root, "CLOSE", Act::Go(Page::Replays), Tone::Secondary, 40.0);
-    kit.commands
-        .entity(close)
-        .entry::<Node>()
-        .and_modify(|mut node| {
-            node.position_type = PositionType::Absolute;
-            node.right = px(24);
-            node.top = px(64);
-        });
-    kit.commands.entity(close).insert(GlobalZIndex(63));
 }
 
 fn caption(kit: &mut Kit, parent: Entity, label: &str) {

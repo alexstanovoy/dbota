@@ -239,7 +239,7 @@ pub struct ReplayShelf {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum PageView {
     Heroes,
-    LocalResult(Box<crate::postgame::summary::MatchSummary>),
+    MatchHistory(super::history_page::View),
     Hero {
         hero: bota_proto::HeroId,
         record: String,
@@ -571,7 +571,6 @@ impl MenuCore {
                 cooldown: self.cooldown(),
             },
             Page::Profile => self.profile_view(),
-            Page::LocalResult => self.local_result_view(),
             Page::Heroes => PageView::Heroes,
             Page::Hero(hero) => self.hero_page(hero),
             Page::Leaderboard => self.leaderboard_view(),
@@ -597,6 +596,7 @@ impl MenuCore {
                 .and_then(|id| self.results.iter().find(|r| r.match_id == id))
                 .map_or(PageView::Joining, |r| PageView::Result(self.result_view(r))),
             Page::Replays => self.replay_page(),
+            Page::MatchHistory => PageView::MatchHistory(self.history_view()),
             #[cfg(not(target_arch = "wasm32"))]
             Page::DemoHero => PageView::DemoHero {
                 offered: self
@@ -620,16 +620,6 @@ impl MenuCore {
             },
             Page::Game => PageView::Hidden,
         }
-    }
-
-    fn local_result_view(&self) -> PageView {
-        self.local_result
-            .as_ref()
-            .and_then(|key| self.local_history.find(key))
-            .and_then(|entry| entry.details())
-            .map_or(PageView::Joining, |summary| {
-                PageView::LocalResult(Box::new(summary))
-            })
     }
 
     fn hero_page(&self, hero: bota_proto::HeroId) -> PageView {

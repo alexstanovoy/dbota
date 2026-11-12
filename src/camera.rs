@@ -119,6 +119,7 @@ fn edge_pan(cursor: Option<Vec2>, last: Option<Vec2>, size: Vec2) -> Vec2 {
 
 #[allow(clippy::too_many_arguments)]
 fn pan_and_zoom(
+    post: NonSend<crate::postgame::PostGame>,
     time: Res<Time>,
     fired: Res<Fired>,
     scroll: Res<AccumulatedMouseScroll>,
@@ -132,6 +133,9 @@ fn pan_and_zoom(
     settings: Res<crate::config::Settings>,
     mut last_cursor: Local<Option<Vec2>>,
 ) {
+    if post.visible() {
+        return;
+    }
     let lens = settings.camera;
     grip(
         &fired,

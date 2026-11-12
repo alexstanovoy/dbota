@@ -1443,10 +1443,29 @@ fn a_local_game_left_for_good_leaves_its_replay() {
     game.leave_game();
     wait_for_recording(&recording, &mut game);
     drop(server);
+    menu.set_game_unsafe(false);
+    menu.watch_result(crate::postgame::view::Replay::File(recording.clone()))
+        .expect("WATCH is allowed after the game ended");
+    assert!(menu.take_leave(), "WATCH first closes the ended session");
     menu.left_game(None, true);
-    settle_menu(&mut menu, |m| m.library.records().len() == 1);
+    settle_menu(&mut menu, |m| {
+        m.library.records().len() == 1 && m.pending_result_replay.is_none()
+    });
     let record = menu.library.records()[0].clone();
     assert_eq!(record.mode, "local");
+    let Some(Launch::Replay(launched)) = menu.take_launch() else {
+        panic!("post-game WATCH opens the kept recording");
+    };
+    assert_eq!(
+        launched,
+        menu.library.path(&record.name).expect("kept replay path")
+    );
+    assert!(
+        launched.is_file(),
+        "WATCH follows adoption instead of the removed temporary path"
+    );
+    menu.game_started();
+    menu.left_game(None, true);
     assert_eq!(record.owner, game.my_slot);
     let mut file = std::fs::File::open(menu.library.path(&record.name).unwrap()).unwrap();
     assert!(

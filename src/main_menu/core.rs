@@ -56,12 +56,12 @@ pub enum Page {
     LocalLobby,
     /// The replays on this machine.
     Replays,
+    MatchHistory,
     /// The account's rating per ruleset and the ladder.
     Profile,
     Heroes,
     Hero(bota_proto::HeroId),
     Leaderboard,
-    LocalResult,
     /// Dota's Demo Hero: a hero to try out alone, with every cheat.
     #[cfg(not(target_arch = "wasm32"))]
     DemoHero,
@@ -95,6 +95,11 @@ pub enum Act {
     InspectHero(bota_proto::HeroId),
     MatchDetails(String),
     WatchHistory(String),
+    HistoryMode(Option<String>),
+    HistoryResult(Option<super::history::ResultKind>),
+    HistoryHero(Option<bota_proto::HeroId>),
+    HistoryFilter(super::history_page::Filter),
+    HistoryPage(i8),
     LeaderboardMode(String),
     LeaderboardPlayers(super::leaderboard::Players),
     /// Puts the keyboard in a field of the page's form.
@@ -632,7 +637,13 @@ pub struct MenuCore {
     pub(super) avatar: super::avatar::Editor,
     pub(super) local_history: super::local_matches::Archive,
     pub(super) local_meta: super::local_meta::Reader,
-    pub(super) local_result: Option<String>,
+    pub(super) history_filter: super::history_page::Selection,
+    pub(super) history_picker: Option<super::history_page::Filter>,
+    pub(super) history_page: usize,
+    pub(super) result_request: Option<crate::postgame::view::View>,
+    pub(super) pending_result_replay: Option<crate::postgame::view::Replay>,
+    pub(super) pending_result_replay_since: Option<Instant>,
+    after_results: Option<Page>,
     /// The replays this client keeps.
     pub(super) library: Library,
     /// What a kept replay holds, as read, where the library knows no more.
@@ -728,7 +739,13 @@ impl MenuCore {
         MenuCore {
             local_history,
             local_meta: Default::default(),
-            local_result: None,
+            history_filter: Default::default(),
+            history_picker: None,
+            history_page: 0,
+            result_request: None,
+            pending_result_replay: None,
+            pending_result_replay_since: None,
+            after_results: None,
             store,
             form: Form::new(FormKind::Service, &prefs),
             prefs,
@@ -1063,7 +1080,25 @@ impl MenuCore {
             }
             left => self.page = self.rest_page(left),
         }
+        if let Some(page) = self.after_results.take() {
+            self.page = page;
+        }
         self.form = Form::new(self.form_kind(), &self.prefs);
+    }
+
+    pub fn return_from_results(&mut self) {
+        let page = if self.logged_in() {
+            Page::Home
+        } else {
+            self.rest_page(self.on_screen)
+        };
+        self.shown = None;
+        if self.in_game() {
+            self.leave = true;
+            self.after_results = Some(page);
+        } else {
+            self.go_form(page);
+        }
     }
 
     /// The page to fall back to: the page a game left was opened from
@@ -1265,6 +1300,7 @@ impl MenuCore {
         }
         self.keep_update();
         self.update_local_history();
+        self.resume_result_replay();
         self.update_avatar();
         self.drive_leaderboard();
         if self.page == Page::Replays {
@@ -1639,6 +1675,7 @@ impl MenuCore {
         if self.on_screen.is_none() && !self.launching {
             self.shown = Some(id);
             self.page = Page::Result;
+            self.result_request = self.outcome_result();
         }
     }
 
@@ -1888,6 +1925,11 @@ impl MenuCore {
             | Act::InspectHero(_)
             | Act::MatchDetails(_)
             | Act::WatchHistory(_)
+            | Act::HistoryMode(_)
+            | Act::HistoryResult(_)
+            | Act::HistoryHero(_)
+            | Act::HistoryFilter(_)
+            | Act::HistoryPage(_)
             | Act::LeaderboardMode(_)
             | Act::LeaderboardPlayers(_) => self.act_pages(act),
             Act::Focus(_)
@@ -1954,26 +1996,33 @@ impl MenuCore {
             }
             Act::Go(page) => self.go(page),
             Act::Play(action) => self.play_action(action),
-            Act::MatchDetails(key) => {
-                if self
-                    .local_history
-                    .find(&key)
-                    .is_some_and(|entry| entry.summary.is_some())
-                {
-                    self.local_result = Some(key);
-                    self.go(Page::LocalResult);
-                } else {
-                    self.tell("Match details are unavailable.".to_owned(), false);
-                }
-            }
+            Act::MatchDetails(key) => self.open_result(&key),
             Act::WatchHistory(key) => {
                 if let Some(file) = self
                     .local_history
                     .find(&key)
                     .and_then(|entry| entry.file.clone())
                 {
-                    self.open_listed(&file);
+                    let _ = self.watch_result(crate::postgame::view::Replay::Saved(file));
                 }
+            }
+            Act::HistoryMode(mode) => {
+                self.history_filter.mode = mode;
+                self.reset_history_filter();
+            }
+            Act::HistoryResult(result) => {
+                self.history_filter.result = result;
+                self.reset_history_filter();
+            }
+            Act::HistoryHero(hero) => {
+                self.history_filter.hero = hero;
+                self.reset_history_filter();
+            }
+            Act::HistoryFilter(filter) => {
+                self.history_picker = (self.history_picker != Some(filter)).then_some(filter);
+            }
+            Act::HistoryPage(delta) => {
+                self.history_page = self.history_page.saturating_add_signed(isize::from(delta));
             }
             Act::Avatar(action) => self.avatar.act(action),
             Act::InspectHero(hero) => {
@@ -2862,5 +2911,90 @@ mod admission_tests {
         assert!(player.menu.status.is_none());
         player.menu.queue_full_until = Some(Instant::now() - std::time::Duration::from_secs(1));
         assert!(!player.menu.view().queue_full);
+    }
+}
+
+#[cfg(test)]
+mod result_overlay_tests {
+    use super::*;
+    use crate::{e2e::harness::Client, postgame::PostGame};
+    use bota_radovid::proto::{EndReason, Outcome, UnixMs};
+
+    fn deliver(client: &mut Client, id: u64, team: u8) {
+        client
+            .world_mut()
+            .non_send_mut::<MenuCore>()
+            .finished(MatchResult {
+                match_id: MatchId(id),
+                ruleset: RulesetId("solo_mid".into()),
+                rated: false,
+                outcome: Outcome::Winner { team },
+                reason: EndReason::Decided,
+                duration_ms: 1000,
+                game_report: Vec::new(),
+                seats: Vec::new(),
+                finished_at: UnixMs(0),
+            });
+        client.frames(5);
+    }
+    #[test]
+    fn dismissing_a_background_result_does_not_dismiss_the_next_match() {
+        let mut client = Client::run(&[]);
+        client.frames(4);
+        deliver(&mut client, 1, 0);
+        assert!(client.world().non_send::<PostGame>().visible());
+        client.click_named("results close");
+        assert!(!client.world().non_send::<PostGame>().visible());
+        deliver(&mut client, 2, 1);
+        assert!(
+            client.world().non_send::<PostGame>().visible(),
+            "a new match needs its own dismissal"
+        );
+        assert!(
+            client
+                .shown_texts()
+                .iter()
+                .any(|text| text == "DIRE VICTORY")
+        );
+    }
+    #[test]
+    fn a_background_result_waits_for_the_inspected_history_match_to_close() {
+        use crate::postgame::{
+            summary::MatchSummary,
+            view::{Context, View},
+        };
+        let mut client = Client::run(&[]);
+        client.frames(4);
+        deliver(&mut client, 1, 0);
+        client.click_named("results close");
+        let meta = bota_replay::meta::decode(&crate::postgame::preview::metadata("match_details"))
+            .expect("fixture");
+        let summary = std::sync::Arc::new(MatchSummary::from_meta(&meta).expect("summary"));
+        client.world_mut().non_send_mut::<MenuCore>().result_request = Some(View::new(
+            summary,
+            Context {
+                history: true,
+                match_id: Some(99),
+                ..Default::default()
+            },
+        ));
+        client.frames(4);
+        deliver(&mut client, 2, 1);
+        assert!(
+            client
+                .shown_texts()
+                .iter()
+                .any(|text| text.contains("Match 99")),
+            "the inspected recording stays on screen"
+        );
+        client.click_named("results close");
+        client.frames(4);
+        assert!(client.world().non_send::<PostGame>().visible());
+        assert!(
+            client
+                .shown_texts()
+                .iter()
+                .any(|text| text == "DIRE VICTORY")
+        );
     }
 }

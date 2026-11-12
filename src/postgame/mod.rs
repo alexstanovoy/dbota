@@ -1,20 +1,17 @@
-//! The screen a match ends on: Dota's post-game scoreboard, with a row for every seat and two
-//! graphs, worked out by [`summary`] from the match's metadata file.
-//!
-//! Where the file comes from depends on the match: a local game's server writes it beside its
-//! replay; a replay file carries it at its end, or the recorder works it out from the replay's
-//! records; a replay held in memory likewise; a game of the matchmaking service has it fetched
-//! by the menu as an artifact of the service (`meta`). A match with none of these (a direct
-//! game, a watched one) tells what every client is sent, the final numbers. Demo Hero, a
-//! sandbox with no end, shows nothing.
+//! Match results from local recording metadata, shared by post-game and local history.
 
-pub(crate) mod draw;
+mod controls;
+pub mod data;
+pub mod graphs;
+pub(crate) mod preview;
 mod recording;
+pub(crate) mod render;
 pub mod summary;
 #[cfg(test)]
 mod tests;
 #[cfg(test)]
 pub(crate) use tests::recorded_match_for_menu;
+pub(crate) mod view;
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -40,11 +37,11 @@ pub enum Origin {
     File(std::path::PathBuf),
     /// A replay held in memory.
     Blob(Arc<[u8]>),
-    /// The service's artifact of this match, which the menu fetches.
+    /// An online match with a known handoff: only matching local metadata can enrich it.
     Service(MatchId),
 }
 
-/// What the menu fetched of a match's metadata.
+/// A local metadata lookup for a known online match.
 pub struct Fetched {
     pub match_id: MatchId,
     /// The file; none when the service had none to give.
@@ -58,8 +55,6 @@ enum Stage {
     Idle,
     /// The file is being had, off the frame.
     Loading(Loading),
-    /// Waiting for the menu's fetch to come.
-    Waiting(Instant),
     /// A file that was not finished when the match ended is had again soon.
     Retry(Instant),
     /// Settled: shown, or nothing to show.
@@ -79,6 +74,10 @@ pub struct PostGame {
     /// What is to be shown, and how many times it was set.
     shown: Option<MatchSummary>,
     version: u32,
+    overlay: Option<view::View>,
+    presented: u32,
+    active_version: u32,
+    closed: bool,
 }
 
 impl Default for PostGame {
@@ -91,14 +90,16 @@ impl Default for PostGame {
             tries: 0,
             shown: None,
             version: 0,
+            overlay: None,
+            presented: 0,
+            active_version: 0,
+            closed: false,
         }
     }
 }
 
 /// How often and how many times a local game's files are looked at again while the server
 /// finishes them.
-/// How long a game of the service waits for its file before the final numbers are shown.
-const SERVICE_PATIENCE: Duration = Duration::from_secs(8);
 const RETRY_EVERY: Duration = Duration::from_millis(500);
 const RETRIES: u8 = 20;
 
@@ -112,6 +113,9 @@ impl PostGame {
     pub fn begin(&mut self) {
         self.origin = std::mem::take(&mut self.next);
         self.reset();
+        self.overlay = None;
+        self.closed = false;
+        self.presented += 1;
     }
 
     fn reset(&mut self) {
@@ -136,7 +140,12 @@ impl PostGame {
         self.stage = Stage::Done;
     }
 
+    pub fn visible(&self) -> bool {
+        self.overlay.is_some()
+    }
+
     /// What is on screen.
+    #[cfg(test)]
     pub fn summary(&self) -> Option<&MatchSummary> {
         self.shown.as_ref()
     }
@@ -145,11 +154,39 @@ impl PostGame {
 pub fn plugin(app: &mut App) {
     app.insert_non_send(PostGame::default())
         .add_systems(Startup, from_args)
-        .add_systems(Update, (drive, redraw).chain());
+        .add_systems(
+            Update,
+            (
+                drive,
+                controls::present,
+                controls::clicks,
+                controls::redraw,
+                controls::dim,
+                controls::hover,
+                render::chart::hover,
+                controls::scroll,
+                render::hover::items,
+                render::hover::details,
+            )
+                .chain(),
+        )
+        .add_systems(
+            PreUpdate,
+            controls::keyboard
+                .after(crate::keys::fire)
+                .before(crate::main_menu::shell::escape),
+        );
 }
 
 /// A replay the command line named has its own summary read from the file.
 fn from_args(args: Res<crate::Args>, mut post: NonSendMut<PostGame>) {
+    if let Some(name) = args.menu_preview.as_deref() {
+        post.overlay = preview::view(name);
+        if post.overlay.is_some() {
+            post.presented = 1;
+            post.active_version = post.version;
+        }
+    }
     if let Some(path) = args.replay.clone() {
         post.expect(Origin::File(path));
         post.begin();
@@ -177,7 +214,17 @@ fn from_stats(session: &Session) -> Option<MatchSummary> {
 /// recorder works out of the replay's records.
 #[cfg(not(target_arch = "wasm32"))]
 fn meta_of_file(path: &std::path::Path) -> Option<Vec<u8>> {
-    if let Ok(bytes) = std::fs::read(path.with_extension("meta"))
+    use std::io::Read;
+    let limit =
+        (bota_replay::limits::MAX_META_BYTES + bota_replay::limits::END_RESERVE_BYTES) as u64;
+    let sidecar = std::fs::File::open(path.with_extension("meta"))
+        .ok()
+        .and_then(|file| {
+            let mut bytes = Vec::new();
+            file.take(limit + 1).read_to_end(&mut bytes).ok()?;
+            (bytes.len() as u64 <= limit).then_some(bytes)
+        });
+    if let Some(bytes) = sidecar
         && bota_replay::meta::decode(&bytes).is_ok()
     {
         return Some(bytes);
@@ -224,11 +271,27 @@ fn drive(session: NonSend<Session>, mut post: NonSendMut<PostGame>) {
         return;
     }
     let post = &mut *post;
+    if matches!(post.stage, Stage::Done)
+        && matches!(post.origin, Origin::Service(_))
+        && let Some(Fetched {
+            bytes: Some(bytes), ..
+        }) = post.fetched.take()
+    {
+        settle(post, &session, Some(bytes), false);
+        return;
+    }
+    if matches!(post.stage, Stage::Idle) && matches!(post.origin, Origin::Service(_)) {
+        if let Some(Fetched { bytes, .. }) = post.fetched.take() {
+            settle(post, &session, bytes, false);
+        } else if let Some(summary) = from_stats(&session) {
+            post.show(summary);
+        }
+        return;
+    }
     match &mut post.stage {
         Stage::Idle => {
             post.stage = match &post.origin {
                 Origin::Hidden => Stage::Done,
-                Origin::Service(_) => Stage::Waiting(Instant::now()),
                 origin => match load(origin) {
                     Some(loading) => Stage::Loading(loading),
                     None => {
@@ -239,20 +302,6 @@ fn drive(session: NonSend<Session>, mut post: NonSendMut<PostGame>) {
                     }
                 },
             };
-        }
-        Stage::Waiting(since) => {
-            let waited = since.elapsed();
-            match post.fetched.take() {
-                Some(Fetched { bytes, .. }) => settle(post, &session, bytes, false),
-                // The file may still come and replace the numbers shown meanwhile.
-                None if waited >= SERVICE_PATIENCE && post.shown.is_none() => {
-                    if let Some(stats) = from_stats(&session) {
-                        post.shown = Some(stats);
-                        post.version += 1;
-                    }
-                }
-                None => {}
-            }
         }
         Stage::Retry(at) if Instant::now() >= *at => {
             post.stage = match load(&post.origin) {
@@ -297,35 +346,5 @@ fn settle(post: &mut PostGame, session: &Session, bytes: Option<Vec<u8>>, live: 
                 post.show(stats);
             }
         }
-    }
-}
-
-/// Draws the screen anew whenever the summary on show changed.
-#[allow(clippy::too_many_arguments)]
-fn redraw(
-    mut commands: Commands,
-    post: NonSend<PostGame>,
-    fonts: Res<crate::ui::Fonts>,
-    manifest: Res<crate::manifest::Manifest>,
-    server: Res<AssetServer>,
-    root: Single<Entity, With<crate::hud::HudRoot>>,
-    screens: Query<Entity, With<draw::Screen>>,
-    mut drawn: Local<u32>,
-) {
-    if *drawn == post.version {
-        return;
-    }
-    *drawn = post.version;
-    for screen in &screens {
-        commands.entity(screen).despawn();
-    }
-    if let Some(summary) = post.summary() {
-        let mut kit = draw::Kit {
-            commands: &mut commands,
-            fonts: &fonts,
-            manifest: &manifest,
-            server: &server,
-        };
-        draw::spawn(&mut kit, *root, summary);
     }
 }

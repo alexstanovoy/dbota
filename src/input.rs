@@ -117,13 +117,16 @@ pub fn plugin(app: &mut App) {
 /// Keeps the bindings quiet while a line or a box has the keyboard, or the
 /// settings screen or the main menu does.
 fn mute(
+    post: NonSend<crate::postgame::PostGame>,
     typing: Res<Typing>,
     screen: Res<crate::settings::Screen>,
     menu: Option<NonSend<crate::main_menu::MenuCore>>,
     mut muted: ResMut<crate::keys::Muted>,
 ) {
     let menu_covers = menu.is_some_and(|m| !m.shows_game());
-    let now = if *typing != Typing::No
+    let now = if post.visible() {
+        crate::keys::Muted::Game
+    } else if *typing != Typing::No
         || screen.capturing.is_some()
         || screen.naming.is_some()
         || screen.searching
@@ -141,10 +144,11 @@ fn mute(
 
 /// Notes whether the cursor is over any part of the HUD that swallows clicks.
 fn over_hud(
+    post: NonSend<crate::postgame::PostGame>,
     blockers: Query<&Hovered, Or<(With<Blocker>, With<Button>)>>,
     mut over: ResMut<OverHud>,
 ) {
-    let now = blockers.iter().any(|i| i.get());
+    let now = post.visible() || blockers.iter().any(|i| i.get());
     if over.0 != now {
         over.0 = now;
     }

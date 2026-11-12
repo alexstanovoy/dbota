@@ -222,17 +222,19 @@ impl Library {
         from: std::path::PathBuf,
         mode: &str,
         owner: Option<bota_proto::SlotId>,
-    ) {
+    ) -> Option<String> {
         let len = std::fs::metadata(&from).map_or(0, |m| m.len());
         if !self.keeping() || len < MIN_BYTES {
             // Nothing worth keeping: the file is a game that never began.
             let _ = std::fs::remove_file(&from);
-            return;
+            return None;
         }
         let mut record = self.record(mode, None, name::now(), len, "", "");
         record.owner = owner;
+        let name = record.name.clone();
         self.backend
             .run(Op::Adopt { record, from }, self.reply.clone());
+        Some(name)
     }
 
     fn record(

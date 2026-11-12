@@ -938,6 +938,8 @@ texture menu.quit panorama/images/control_icons/quit_png.vtex_c menu/quit_png.pn
 texture menu.window_close panorama/images/control_icons/x_close_png.vtex_c menu/x_close_png.png
 texture menu.background.radiant panorama/images/loadingscreens/radiantancient_loadingscreen/loadingscreen_tga.vtex_c menu/radiantancient_loadingscreen.png
 texture menu.background.dire panorama/images/loadingscreens/direancient_loadingscreen/loadingscreen_tga.vtex_c menu/direancient_loadingscreen.png
+texture menu.postgame.radiant panorama/images/backgrounds/postgameherobackground_psd.vtex_c menu/postgame_radiant.png
+texture menu.postgame.dire panorama/images/backgrounds/postgameherobackground_dire_psd.vtex_c menu/postgame_dire.png
 # The interface's typefaces, loose files beside the packages: Reaver for titles, Radiance for the
 # rest (its tabular figures for numbers).
 font font.display panorama/fonts/reaver-bold.otf fonts/reaver-bold.otf

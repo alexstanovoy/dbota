@@ -840,6 +840,20 @@ impl Client {
         }
     }
 
+    /// Waits for a named button to be hoverable, then presses it.
+    pub fn click_named(&mut self, name: &str) {
+        self.hover_ui_with(Duration::from_secs(20), |client| {
+            let world = client.world_mut();
+            world
+                .query_filtered::<(Entity, &Name), With<bevy::ui_widgets::Button>>()
+                .iter(world)
+                .find(|(_, label)| label.as_str() == name)
+                .map(|(entity, _)| entity)
+        });
+        self.click(MouseButton::Left);
+        self.frames(3);
+    }
+
     /// Presses and lets go of a mouse button where the pointer is, a frame apart.
     pub fn click(&mut self, button: MouseButton) {
         self.button(button, ButtonState::Pressed);

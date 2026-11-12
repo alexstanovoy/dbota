@@ -488,3 +488,66 @@ pub fn hover(
         }
     }
 }
+
+/// Absolute menu geometry and type roles shared by dashboard pages and result windows.
+pub use crate::ui::absolute as area;
+
+pub fn at(left: f32, top: f32) -> Node {
+    Node {
+        position_type: PositionType::Absolute,
+        left: px(left),
+        top: px(top),
+        ..default()
+    }
+}
+
+pub fn rect(kit: &mut Kit, parent: Entity, node: Node, colour: Color) -> Entity {
+    let entity = kit.node(parent, node);
+    kit.commands.entity(entity).insert(BackgroundColor(colour));
+    entity
+}
+
+pub fn words(
+    kit: &mut Kit,
+    parent: Entity,
+    text: impl Into<String>,
+    node: Node,
+    role: Type,
+    colour: Color,
+) -> Entity {
+    let entity = kit.typed(parent, text, role, colour);
+    kit.commands
+        .entity(entity)
+        .insert((node, TextLayout::no_wrap()));
+    entity
+}
+
+pub fn number(size: f32) -> Type {
+    Type {
+        size,
+        tracking: 0.0,
+        face: Face::Regular,
+        ..theme::NUMBER
+    }
+}
+pub fn body(size: f32) -> Type {
+    Type {
+        size,
+        tracking: 0.0,
+        ..theme::BODY
+    }
+}
+pub fn bold(size: f32) -> Type {
+    Type {
+        size,
+        tracking: 0.0,
+        ..theme::HEADING
+    }
+}
+pub fn caption(size: f32) -> Type {
+    Type {
+        size,
+        tracking: 1.0,
+        ..theme::CAPTION
+    }
+}

@@ -174,7 +174,7 @@ fn recent_matches(kit: &mut Kit, cards: Entity, matches: &[Match]) {
     let all = kit.quiet(
         title,
         "All matches",
-        Act::Go(Page::Replays),
+        Act::Go(Page::MatchHistory),
         theme::SMALL_BODY,
         theme::LINK,
     );

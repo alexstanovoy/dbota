@@ -126,6 +126,7 @@ pub fn plugin(app: &mut App) {
 /// drawn anew (a page is respawned whenever what it shows changes), and
 /// another page starts at its top.
 fn scroll(
+    post: NonSend<crate::postgame::PostGame>,
     core: Option<NonSend<MenuCore>>,
     wheel: Res<bevy::input::mouse::AccumulatedMouseScroll>,
     mut bodies: Query<(&mut ScrollPosition, &ComputedNode), With<super::pages::MenuBody>>,
@@ -135,6 +136,9 @@ fn scroll(
     let Some(core) = core else {
         return;
     };
+    if post.visible() {
+        return;
+    }
     let page = core.page();
     if at.1 != Some(page) {
         *at = (0.0, Some(page));
@@ -171,10 +175,17 @@ pub fn idle() -> Session {
 
 /// Escape over the menu backs out of it, through its binding; the menu
 /// takes every Escape while it covers the game, so none reaches the game.
-fn escape(core: Option<NonSendMut<MenuCore>>, mut fired: ResMut<crate::keys::Fired>) {
+pub(crate) fn escape(
+    core: Option<NonSendMut<MenuCore>>,
+    post: NonSend<crate::postgame::PostGame>,
+    mut fired: ResMut<crate::keys::Fired>,
+) {
     let Some(mut core) = core else {
         return;
     };
+    if post.visible() {
+        return;
+    }
     let escape = crate::keys::Action::Escape;
     if core.shows_game() || !fired.pressed(escape) {
         return;
@@ -361,6 +372,7 @@ fn open_blob(blob: &super::core::Blob) -> std::io::Result<Session> {
 /// (Escape in a game that is over, DISCONNECT on the dashboard).
 #[allow(clippy::too_many_arguments)]
 fn guard(
+    post: NonSend<crate::postgame::PostGame>,
     core: Option<NonSendMut<MenuCore>>,
     mut session: NonSendMut<Session>,
     mut fired: ResMut<crate::keys::Fired>,
@@ -406,8 +418,13 @@ fn guard(
     let over = game.over.is_some();
     let done = lost || over;
     let escape = crate::keys::Action::Escape;
-    let leave =
-        disconnect || (shown && fired.pressed(escape) && done && !screen.open && !panels.shop);
+    let leave = disconnect
+        || (shown
+            && !post.visible()
+            && fired.pressed(escape)
+            && done
+            && !screen.open
+            && !panels.shop);
     if leave || (lost && !over) {
         // Escape leaves the game here, not the client too.
         fired.pressed.retain(|action| *action != escape);
@@ -420,6 +437,7 @@ fn guard(
 
 /// Tells the interface's scale whether the game's HUD is on screen or the menu covers it.
 fn hud_shown(
+    post: NonSend<crate::postgame::PostGame>,
     core: Option<NonSend<MenuCore>>,
     preview: Option<Res<Preview>>,
     loading: Res<crate::loading::Loading>,
@@ -429,7 +447,7 @@ fn hud_shown(
         || core.is_none_or(|c| c.shows_game()) && !loading.shown,
         |p| !p.0.covers(),
     );
-    hud.set_if_neq(crate::ui::HudShown(shown));
+    hud.set_if_neq(crate::ui::HudShown(shown && !post.visible()));
 }
 
 /// Opens the settings screen when the menu goes to its page, and goes back

@@ -475,3 +475,7 @@ mod tests {
         assert!(cover_rect(Vec2::ZERO, Vec2::ONE).is_none());
     }
 }
+
+/// A pointer-scrolled region shared by history and match inspection.
+#[derive(Component)]
+pub struct ScrollArea;

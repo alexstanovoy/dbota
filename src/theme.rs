@@ -455,3 +455,18 @@ pub fn hero_field(warm: bool) -> BackgroundGradient {
         ],
     ))
 }
+
+/// Results use opaque row colours so their tint stays stable over the window gradient.
+pub const RESULT_RADIANT_ROW: Color = hex(0x172019);
+pub const RESULT_DIRE_ROW: Color = hex(0x211719);
+pub const RESULT_SELF_ROW: Color = hex(0x142B44);
+pub const RESULT_HOVER_ROW: Color = hex(0x252C32);
+
+/// Results panel and graph grid colours, in interface sRGB.
+pub const RESULT_PANEL: Color = Color::srgb_u8(0x13, 0x18, 0x1d);
+pub const RESULT_PANEL_DARK: Color = Color::srgb_u8(0x0b, 0x0e, 0x11);
+pub const RESULT_EDGE: Color = Color::srgb_u8(0x2e, 0x3b, 0x47);
+pub const RESULT_GRID_MINOR: Color = Color::srgb_u8(0x22, 0x2b, 0x34);
+pub const RESULT_GRID_MAJOR: Color = Color::srgb_u8(0x3a, 0x46, 0x51);
+pub const RESULT_GRID_HORIZONTAL: Color = Color::srgb_u8(0x2c, 0x36, 0x40);
+pub const RESULT_GRID_ZERO: Color = Color::srgb_u8(0x6b, 0x74, 0x7d);
