@@ -1312,6 +1312,7 @@ fn metadata_without_earned_gold_keeps_gpm_unknown_even_without_timed_samples() {
         }
     }
     let mut summary = MatchSummary::from_meta(&meta).expect("summary");
+    // from_meta always retains timed samples: this deliberately pins the legacy/unreachable-state guard.
     summary.recording = None;
     let mut client = Client::run(&[]);
     client.frames(3);
@@ -1340,4 +1341,62 @@ fn metadata_without_earned_gold_keeps_gpm_unknown_even_without_timed_samples() {
         vec!["—"; 10],
         "net worth never supplies missing earned gold"
     );
+}
+
+#[test]
+fn missing_and_known_experience_render_distinct_xpm_with_and_without_timed_samples() {
+    use crate::e2e::harness::Client;
+    use bota_replay::meta::{MetaRecord, stat};
+    for (xp, expected) in [(None, "—"), (Some(0), "0"), (Some(1200), "1200")] {
+        let mut meta =
+            bota_replay::meta::decode(&super::preview::metadata("match_details")).expect("fixture");
+        meta.header.pregame_ticks = 0;
+        for record in &mut meta.records {
+            match record {
+                MetaRecord::Sample { tick, stats, .. } => {
+                    *tick = 60 * u32::from(meta.header.tick_rate);
+                    stats.retain(|(id, _)| *id != stat::XP);
+                    if let Some(xp) = xp {
+                        stats.push((stat::XP, xp));
+                    }
+                }
+                MetaRecord::End { tick, .. } => *tick = 60 * u32::from(meta.header.tick_rate),
+                _ => {}
+            }
+        }
+        for timed in [true, false] {
+            let mut summary = MatchSummary::from_meta(&meta).expect("summary");
+            // The false case is an explicit guard: from_meta itself never drops this data.
+            if !timed {
+                summary.recording = None;
+            }
+            let mut client = Client::run(&[]);
+            client.frames(3);
+            {
+                let mut post = client.world_mut().non_send_mut::<super::PostGame>();
+                post.overlay = Some(super::view::View::new(
+                    std::sync::Arc::new(summary),
+                    super::view::Context {
+                        history: true,
+                        ..Default::default()
+                    },
+                ));
+                post.presented += 1;
+            }
+            client.frames(4);
+            client.click_named("results scoreboard");
+            let world = client.world_mut();
+            let rates: Vec<_> = world
+                .query::<(&super::render::Cell, &Text)>()
+                .iter(world)
+                .filter(|(cell, _)| **cell == super::render::Cell::Xpm)
+                .map(|(_, text)| text.0.clone())
+                .collect();
+            assert_eq!(
+                rates,
+                vec![expected; 10],
+                "XP={xp:?}, timed={timed}: missing is distinct from a recorded zero or a known one-minute total"
+            );
+        }
+    }
 }

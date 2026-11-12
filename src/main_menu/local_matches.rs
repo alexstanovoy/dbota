@@ -874,12 +874,24 @@ mod details_privacy_tests {
                 assert!(writer.push(&record, false));
             }
         }
+        assert!(
+            writer.push(
+                &MetaRecord::Kill {
+                    tick: 1200,
+                    victim: bota_replay::meta::Who::Hero(1),
+                    killer: None,
+                    gold: 42,
+                },
+                false
+            ),
+            "the fixture includes a killer-less kill unrelated to any owner"
+        );
         let metadata = writer.into_bytes();
         let summary = Arc::new(
             MatchSummary::from_meta(&bota_replay::meta::decode(&metadata).expect("metadata"))
                 .expect("summary"),
         );
-        for owner in [Some(SlotId(0)), None] {
+        for owner in [None, Some(SlotId(0))] {
             let saved = Saved {
                 key: "unfinished".into(),
                 file: None,
@@ -912,12 +924,19 @@ mod details_privacy_tests {
                     .iter()
                     .all(|event| Some(event.slot) == owner)
             );
-            assert!(
-                recording
-                    .kills
-                    .iter()
-                    .all(|event| event.killer == owner || event.victim == owner)
-            );
+            if let Some(owner) = owner {
+                assert!(
+                    recording
+                        .kills
+                        .iter()
+                        .all(|event| event.killer == Some(owner) || event.victim == Some(owner))
+                );
+            } else {
+                assert!(
+                    recording.kills.is_empty(),
+                    "an unknown owner gets no kills, including killer-less kills"
+                );
+            }
             assert!(recording.restricted);
         }
         assert_eq!(

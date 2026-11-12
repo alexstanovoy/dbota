@@ -32,8 +32,8 @@ pub struct Row {
     pub net_worth: Option<i32>,
     /// Gold earned a minute of game time, absent when earned gold was not recorded.
     pub gpm: Option<i32>,
-    /// Experience earned a minute of game time.
-    pub xpm: i32,
+    /// Experience earned a minute, absent when total experience was not recorded.
+    pub xpm: Option<i32>,
     pub hero_damage: Option<i32>,
     pub tower_damage: Option<i32>,
     pub healing: Option<i32>,
@@ -260,7 +260,7 @@ impl MatchSummary {
                     denies: Some(seat.denies),
                     net_worth: None,
                     gpm: Some(per_minute(i64::from(seat.net_worth), seconds)),
-                    xpm: per_minute(i64::from(player.xp), seconds),
+                    xpm: Some(per_minute(i64::from(player.xp), seconds)),
                     hero_damage: Some(seat.hero_damage),
                     tower_damage: Some(seat.structure_damage),
                     healing: None,
@@ -310,7 +310,7 @@ fn row(seat: &Seat, seconds: u32) -> Option<Row> {
         denies: get(stat::DENIES).map(|_| count(stat::DENIES)),
         net_worth: get(stat::NET_WORTH).map(to_i32),
         gpm: earned.map(|earned| per_minute(earned, seconds)),
-        xpm: per_minute(get(stat::XP).unwrap_or(0), seconds),
+        xpm: get(stat::XP).map(|xp| per_minute(xp, seconds)),
         hero_damage: get(stat::HERO_DAMAGE).map(to_i32),
         tower_damage: get(stat::STRUCTURE_DAMAGE).map(to_i32),
         healing: get(stat::HEALING).map(to_i32),

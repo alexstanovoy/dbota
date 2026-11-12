@@ -151,6 +151,7 @@ impl MenuCore {
     }
 
     pub fn outcome_result(&self) -> Option<View> {
+        // Count this projection boundary in headless tests; no counter is compiled into the product.
         #[cfg(test)]
         OUTCOME_PROJECTIONS.with(|count| count.set(count.get() + 1));
         if self.page != Page::Result {

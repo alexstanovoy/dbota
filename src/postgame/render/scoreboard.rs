@@ -57,7 +57,7 @@ pub fn value(view: &View, row: &Row, cell: Cell) -> Option<i64> {
         Cell::LastHits => row.last_hits.map(i64::from),
         Cell::Denies => row.denies.map(i64::from),
         Cell::Gpm => row.gpm.map(i64::from),
-        Cell::Xpm => Some(i64::from(row.xpm)),
+        Cell::Xpm => row.xpm.map(i64::from),
         Cell::HeroDamage => row.hero_damage.map(i64::from),
         Cell::TowerDamage => row.tower_damage.map(i64::from),
         Cell::Healing => row.healing.map(i64::from),
