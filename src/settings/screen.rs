@@ -134,7 +134,7 @@ pub fn plugin(app: &mut App) {
                 scroll,
                 scroll_marks,
                 save,
-                super::draw::layout,
+                super::draw::layout.in_set(crate::ui::WidgetBuild),
             )
                 .chain(),
         )
@@ -152,7 +152,6 @@ pub fn plugin(app: &mut App) {
                 super::look::clash_bar,
                 super::look::names,
                 super::look::nav,
-                super::look::help,
                 super::screen::focus_ring,
             )
                 .after(super::draw::layout),
@@ -735,6 +734,8 @@ fn save(
 /// The controls the keyboard can stand on, in reading order (top to bottom, then left to right).
 #[derive(bevy::ecs::system::SystemParam)]
 pub struct Focusable<'w, 's> {
+    roots: Query<'w, 's, Entity, With<Root>>,
+    parents: Query<'w, 's, &'static ChildOf>,
     nodes: Query<
         'w,
         's,
@@ -750,6 +751,7 @@ pub struct Focusable<'w, 's> {
             With<RowKey>,
             With<NameField>,
             With<SliderTrack>,
+            With<crate::ui::help::Hint>,
         )>,
     >,
 }
@@ -757,10 +759,19 @@ pub struct Focusable<'w, 's> {
 impl Focusable<'_, '_> {
     /// The controls that show, in reading order.
     pub fn in_order(&self) -> Vec<Entity> {
+        let Ok(root) = self.roots.single() else {
+            return Vec::new();
+        };
         let mut found: Vec<(Entity, Vec2)> = self
             .nodes
             .iter()
             .filter(|(_, node, _, seen)| seen.get() && node.size() != Vec2::ZERO)
+            .filter(|(entity, ..)| {
+                self.parents
+                    .iter_ancestors(*entity)
+                    .take(64)
+                    .any(|ancestor| ancestor == root)
+            })
             .map(|(entity, _, at, _)| (entity, at.translation))
             .collect();
         found.sort_by(|a, b| {
@@ -832,6 +843,7 @@ fn focus(
     mut screen: ResMut<Screen>,
     mut settings: ResMut<Settings>,
     mut at: ResMut<Focus>,
+    mut native: ResMut<bevy::input_focus::InputFocus>,
     displays: Res<Displays>,
     mut keyboard: MessageReader<KeyboardInput>,
     held: Res<ButtonInput<KeyCode>>,
@@ -895,6 +907,11 @@ fn focus(
             (Key::ArrowRight, Some(control)) => on.nudge(control, &mut settings, 1.0),
             _ => {}
         }
+    }
+    if let Some(control) = at.control.and_then(|index| controls.get(index)).copied()
+        && native.get() != Some(control)
+    {
+        native.set(control, bevy::input_focus::FocusCause::Navigated);
     }
 }
 

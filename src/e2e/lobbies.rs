@@ -7,13 +7,13 @@ fn lobby_browser_draws_the_four_column_list_in_the_right_drawer() {
     let mut client = Client::run(&["--menu-preview", "lobbies"]);
     client.frames(8);
     let world = client.world_mut();
-    let size = world
+    let node = world
         .query::<(&Name, &ComputedNode)>()
         .iter(world)
         .find(|(name, _)| name.as_str() == "lobby browser")
-        .map(|(_, node)| node.size() * node.inverse_scale_factor)
+        .map(|(_, node)| *node)
         .expect("lobby browser drawer");
-    assert_eq!(size.x, 620.0);
+    super::harness::assert_physical_width(&node, 620.0);
     let art = world
         .query::<(Entity, &Name, &ComputedNode)>()
         .iter(world)
@@ -32,10 +32,7 @@ fn lobby_browser_draws_the_four_column_list_in_the_right_drawer() {
                 .get::<ImageNode>(child)
                 .is_some_and(|image| image.image != Handle::default()))
     );
-    assert_eq!(
-        node.size() * node.inverse_scale_factor(),
-        Vec2::new(300.0, 400.0)
-    );
+    super::harness::assert_physical_size(node, Vec2::new(300.0, 400.0));
     let texts = client.shown_texts();
     for text in [
         "NAME",

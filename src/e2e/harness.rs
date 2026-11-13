@@ -1211,6 +1211,39 @@ pub fn subtree(world: &World, root: Entity) -> Vec<Entity> {
     found
 }
 
+/// Layout rounds the two physical edges independently; a length therefore has two exact
+/// possible raster sizes. Its unrounded physical size still protects the requested geometry.
+pub fn assert_physical_size(node: &ComputedNode, logical: Vec2) {
+    let expected = logical / node.inverse_scale_factor();
+    let error = (node.unrounded_size() - expected).abs();
+    let arithmetic = expected.abs().max(Vec2::ONE) * (4.0 * f32::EPSILON);
+    assert!(
+        error.cmple(arithmetic).all(),
+        "requested physical size {expected:?}, layout {:?}",
+        node.unrounded_size()
+    );
+    assert_pixel_rounding(node.size().x, node.unrounded_size().x);
+    assert_pixel_rounding(node.size().y, node.unrounded_size().y);
+}
+
+pub fn assert_physical_width(node: &ComputedNode, logical: f32) {
+    let expected = logical / node.inverse_scale_factor();
+    assert!(
+        (node.unrounded_size().x - expected).abs()
+            <= expected.abs().max(1.0) * (4.0 * f32::EPSILON),
+        "requested physical width {expected}, layout {}",
+        node.unrounded_size().x
+    );
+    assert_pixel_rounding(node.size().x, node.unrounded_size().x);
+}
+
+pub fn assert_pixel_rounding(actual: f32, ideal: f32) {
+    assert!(
+        actual == ideal.floor() || actual == ideal.ceil(),
+        "physical length/edge {actual} must be exactly floor/ceil of {ideal}"
+    );
+}
+
 /// Every transform under `root`: the pose its model is in.
 pub fn pose_of(client: &Client, root: Entity) -> Vec<(Entity, Transform)> {
     let world = client.world();

@@ -1,6 +1,6 @@
 //! The menu's design tokens: its colours, sizes and type roles, in one place. Sizes are interface
-//! pixels, which are the mockups' pixels (a 1440 by 900 frame; see `ui::REFERENCE_HEIGHT`).
-//! Dota's interface is square and flat: no glow, no rounded panels.
+//! pixels, scaled from the menu's compact height-based design space (`ui::MENU_DESIGN_HEIGHT`).
+//! Surfaces share their edge, gradient and interaction roles across menu pages.
 
 use bevy::prelude::*;
 use bevy::text::{FontFeatureTag, FontFeatures, LetterSpacing};

@@ -300,12 +300,21 @@ fn the_address_shortcut_focuses_the_address_field() {
 }
 
 #[test]
-fn play_preview_keeps_the_380_pixel_drawer_and_accept_window_at_the_design_scale() {
+fn play_preview_keeps_the_drawer_proportions_at_the_compact_menu_scale() {
     let mut client = Client::run(&["--menu-preview", "play"]);
     super::menu::resize_menu_window(&mut client, UVec2::new(1440, 900));
     client.frames(8);
+    let height = {
+        let world = client.world_mut();
+        world
+            .query_filtered::<&Window, With<bevy::window::PrimaryWindow>>()
+            .single(world)
+            .expect("window")
+            .height()
+    };
     assert!(
-        (client.world().resource::<UiScale>().0 - 1.0).abs() < 0.001,
+        (client.world().resource::<UiScale>().0 - height / crate::ui::MENU_DESIGN_HEIGHT).abs()
+            < 0.001,
         "menu previews use menu scaling"
     );
     let world = client.world_mut();
@@ -315,7 +324,12 @@ fn play_preview_keeps_the_380_pixel_drawer_and_accept_window_at_the_design_scale
         .find(|(name, _)| name.as_str() == "play drawer")
         .map(|(_, node)| *node)
         .expect("drawer");
-    assert!((node.size().x - 380.0).abs() < 0.5);
+    let expected = crate::theme::PLAY_DRAWER_WIDTH * height / crate::ui::MENU_DESIGN_HEIGHT;
+    assert_eq!(
+        node.size().x,
+        expected.round(),
+        "the right edge is the integer viewport edge"
+    );
 }
 
 #[test]
@@ -563,6 +577,13 @@ fn unknown_limits_show_neither_an_invented_timeline_nor_a_decline_penalty() {
         offer.decline_cooldown_ms = None;
     }
     client.frames(8);
+    hover_decline_help(&mut client);
+    assert!(
+        client
+            .shown_texts()
+            .iter()
+            .any(|text| text == "Declining stops this search.")
+    );
     assert!(named(&mut client, "accept time").is_empty());
     assert!(
         !client
@@ -579,12 +600,25 @@ fn unknown_limits_show_neither_an_invented_timeline_nor_a_decline_penalty() {
         .expect("offer")
         .decline_cooldown_ms = Some(0);
     client.frames(3);
+    hover_decline_help(&mut client);
     assert!(
         !client
             .shown_texts()
             .iter()
             .any(|text| text.contains("bans you"))
     );
+}
+
+fn hover_decline_help(client: &mut Client) {
+    client.hover_ui_with(std::time::Duration::from_secs(30), |client| {
+        let world = client.world_mut();
+        world
+            .query::<(Entity, &Name)>()
+            .iter(world)
+            .find(|(_, name)| name.as_str() == "about declining")
+            .map(|(entity, _)| entity)
+    });
+    client.frames(3);
 }
 
 #[test]

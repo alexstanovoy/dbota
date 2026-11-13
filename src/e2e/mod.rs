@@ -42,6 +42,7 @@ mod gathering;
 mod ground_items;
 mod ground_targets;
 pub(crate) mod harness;
+mod help_widgets;
 mod hero_fx;
 mod hero_voice;
 mod hero_walk;
@@ -57,6 +58,7 @@ mod lotus;
 #[cfg(all(target_os = "linux", target_env = "gnu"))]
 mod memory;
 mod menu;
+mod menu_effects;
 mod minimap;
 mod outposts;
 mod play;

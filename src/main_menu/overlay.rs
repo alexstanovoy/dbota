@@ -63,12 +63,7 @@ pub fn draw(kit: &mut Kit, root: Entity, view: &MenuView) {
         }
     }
     if let Some(offer) = &view.offer {
-        match_found(
-            kit,
-            root,
-            offer,
-            view.play.info == Some(super::PlayInfo::Decline),
-        );
+        match_found(kit, root, offer);
     }
     if let Some(confirm) = view.confirm.as_ref().filter(|_| view.covers()) {
         popup(kit, root, confirm);
@@ -257,7 +252,7 @@ fn wait_row(kit: &mut Kit, parent: Entity, wait: &WaitRow) {
 
 /// Dota's prompt: YOUR GAME IS READY, the time to answer running down, how
 /// many accepted, and Accept / Decline.
-fn match_found(kit: &mut Kit, root: Entity, offer: &OfferBox, tip: bool) {
+fn match_found(kit: &mut Kit, root: Entity, offer: &OfferBox) {
     let card = offer_card(kit, root);
     offer_time(kit, card, offer);
     offer_title(kit, card, offer);
@@ -286,7 +281,7 @@ fn match_found(kit: &mut Kit, root: Entity, offer: &OfferBox, tip: bool) {
             .entity(button)
             .entry::<Node>()
             .and_modify(|mut n| n.width = px(320));
-        decline(kit, card, offer, tip);
+        decline(kit, card, offer);
     }
 }
 
@@ -514,7 +509,7 @@ fn offer_title(kit: &mut Kit, card: Entity, offer: &OfferBox) {
     });
 }
 
-fn decline(kit: &mut Kit, card: Entity, offer: &OfferBox, tip: bool) {
+fn decline(kit: &mut Kit, card: Entity, offer: &OfferBox) {
     let decline = kit.node(
         card,
         Node {
@@ -537,23 +532,19 @@ fn decline(kit: &mut Kit, card: Entity, offer: &OfferBox, tip: bool) {
         .entity(link)
         .entry::<Node>()
         .and_modify(|mut node| node.min_height = px(32));
-    super::play::info(kit, decline, super::PlayInfo::Decline, "About declining");
-    if let Some(cooldown) = offer
+    let text = offer
         .decline_cooldown_ms
-        .filter(|cooldown| tip && *cooldown > 0)
-    {
-        let duration = if cooldown >= 60_000 {
-            format!("{} min", cooldown.div_ceil(60_000))
-        } else {
-            format!("{} sec", cooldown.div_ceil(1000))
-        };
-        super::play::tooltip(
-            kit,
-            decline,
-            &format!("Declining bans you from matchmaking for {duration}."),
-            true,
-        );
-    }
+        .filter(|cooldown| *cooldown > 0)
+        .map(|cooldown| {
+            let duration = if cooldown >= 60_000 {
+                format!("{} min", cooldown.div_ceil(60_000))
+            } else {
+                format!("{} sec", cooldown.div_ceil(1000))
+            };
+            format!("Declining bans you from matchmaking for {duration}.")
+        })
+        .unwrap_or_else(|| "Declining stops this search.".into());
+    super::play::info(kit, decline, "About declining", &text, true);
 }
 
 fn accept_squares(kit: &mut Kit, row: Entity, offer: &OfferBox) {

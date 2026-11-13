@@ -1945,7 +1945,6 @@ impl MenuCore {
     fn go_form(&mut self, page: Page) {
         if page != Page::Home && page != Page::Settings {
             self.play.open = false;
-            self.play.info = None;
         }
         self.lobby_ui.controls_dirty = true;
         self.lobby_ui.search_due = None;
@@ -2137,7 +2136,6 @@ impl MenuCore {
         match act {
             Act::Go(Page::Home) => {
                 self.play.open = false;
-                self.play.info = None;
                 self.go(Page::Home);
             }
             Act::Go(page) => self.go(page),
@@ -2368,9 +2366,6 @@ impl MenuCore {
     /// top page with nothing under it, whether to quit.
     fn back(&mut self) {
         if self.dismiss_lobby_ui() {
-            return;
-        }
-        if self.play.info.take().is_some() {
             return;
         }
         if self.play.open {
@@ -2879,7 +2874,6 @@ impl MenuCore {
         match action {
             PlayAction::Open(open) => {
                 self.play.open = open;
-                self.play.info = None;
                 if open {
                     self.go(Page::Home);
                 }
@@ -2887,7 +2881,6 @@ impl MenuCore {
             PlayAction::Ranked(ranked) => {
                 self.play.ranked = ranked;
                 self.play.selected = None;
-                self.play.info = None;
             }
             PlayAction::Bots => {
                 self.play.bots = !self.play.bots;
@@ -2895,9 +2888,6 @@ impl MenuCore {
                 self.save_prefs();
             }
             PlayAction::Lobbies(lobbies) => self.play.lobbies = lobbies,
-            PlayAction::Info(info) => {
-                self.play.info = (self.play.info.as_ref() != Some(&info)).then_some(info)
-            }
             PlayAction::Select(id) => self.select_queue(id),
             PlayAction::Find => self.find_selected(),
             PlayAction::LobbyLink(create) => {
@@ -2985,7 +2975,6 @@ impl MenuCore {
             self.queue(ruleset);
         }
         self.play.open = false;
-        self.play.info = None;
     }
 }
 

@@ -17,12 +17,13 @@ pub struct Control;
 
 pub fn focus_ring(
     core: Option<NonSend<crate::main_menu::MenuCore>>,
+    visible: Res<bevy::input_focus::InputFocusVisible>,
     mut commands: Commands,
     controls: Query<(Entity, &MenuButton, Has<Outline>), With<Control>>,
 ) {
     let focused = core.as_ref().and_then(|core| core.button_focus());
     for (entity, button, has_outline) in &controls {
-        let wanted = focused == Some(&button.0);
+        let wanted = visible.0 && focused == Some(&button.0);
         if wanted && !has_outline {
             commands.entity(entity).insert(Outline {
                 width: px(1),

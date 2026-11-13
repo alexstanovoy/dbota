@@ -12,8 +12,7 @@ use crate::theme::{self, Face, Type};
 use crate::ui::Fonts;
 
 /// A button that cannot be pressed now.
-#[derive(Component)]
-pub struct Disabled;
+pub use crate::ui::Disabled;
 
 /// A button and what it does.
 #[derive(Component, Clone)]
@@ -21,7 +20,8 @@ pub struct Disabled;
     bevy::input_focus::tab_navigation::TabIndex,
     Button,
     Hovered,
-    DirectlyHovered
+    DirectlyHovered,
+    crate::ui::effects::Motion
 )]
 pub struct MenuButton(pub Act);
 
@@ -38,11 +38,13 @@ pub enum Tone {
 
 /// A button's ground at rest, under the cursor and pressed (each top to bottom), and its edge.
 #[derive(Component, Clone, Copy)]
+#[require(crate::ui::effects::Motion)]
 pub struct Shade {
     rest: (Color, Color),
     hover: (Color, Color),
     pressed: (Color, Color),
     pub edge: BorderColor,
+    horizontal: bool,
 }
 
 impl Shade {
@@ -63,6 +65,24 @@ impl Shade {
             hover: (lighter(rest.0), lighter(rest.1)),
             pressed: (darker(rest.0), darker(rest.1)),
             edge,
+            horizontal: false,
+        }
+    }
+
+    fn row(rest: (Color, Color), edge: BorderColor) -> Self {
+        Self {
+            rest,
+            hover: (lighter(rest.0), lighter(rest.1)),
+            pressed: (darker(rest.0), darker(rest.1)),
+            edge,
+            horizontal: true,
+        }
+    }
+    fn gradient(&self, colors: (Color, Color)) -> BackgroundGradient {
+        if self.horizontal {
+            theme::rightward(colors)
+        } else {
+            theme::downward(colors)
         }
     }
 }
@@ -83,6 +103,7 @@ fn darker(color: Color) -> Color {
 
 /// A part of a button tinted at rest and brighter under the cursor: its icon or its words.
 #[derive(Component, Clone, Copy)]
+#[require(crate::ui::effects::Motion)]
 pub struct Wash {
     pub target: Entity,
     pub rest: Color,
@@ -114,6 +135,12 @@ fn button_width(label: &str, height: f32) -> f32 {
 pub(super) const POPUP_ANSWER_WIDTH: f32 = 160.0;
 
 impl Kit<'_, '_, '_> {
+    pub fn visual(&mut self) -> crate::ui::Draw<'_, '_, '_> {
+        crate::ui::Draw {
+            commands: self.commands.reborrow(),
+            fonts: self.fonts,
+        }
+    }
     /// Text of a role.
     pub fn typed(
         &mut self,
@@ -122,13 +149,7 @@ impl Kit<'_, '_, '_> {
         role: Type,
         color: Color,
     ) -> Entity {
-        self.commands
-            .spawn((
-                theme::text(s, self.fonts, role, color),
-                Pickable::IGNORE,
-                ChildOf(parent),
-            ))
-            .id()
+        self.visual().typed(parent, s, role, color)
     }
 
     /// Running text of a size, for today's pages until their screens are redesigned; new screens
@@ -167,9 +188,15 @@ impl Kit<'_, '_, '_> {
 
     /// A box laid out by `node`.
     pub fn node(&mut self, parent: Entity, node: Node) -> Entity {
+        self.visual().node(parent, node)
+    }
+
+    /// A selectable row uses the same response curve and selected edge as other menu controls.
+    pub fn row_effect(&mut self, entity: Entity, colors: (Color, Color), edge: BorderColor) {
+        let shade = Shade::row(colors, edge);
         self.commands
-            .spawn((node, Pickable::IGNORE, ChildOf(parent)))
-            .id()
+            .entity(entity)
+            .insert((shade, shade.gradient(colors)));
     }
 
     /// A panel over the menu's background: square, its edge lit along the top.
@@ -436,6 +463,7 @@ impl Kit<'_, '_, '_> {
 pub fn focus_ring(
     core: Option<NonSend<super::MenuCore>>,
     native: Res<bevy::input_focus::InputFocus>,
+    visible: Res<bevy::input_focus::InputFocusVisible>,
     mut buttons: Query<(
         Entity,
         &MenuButton,
@@ -447,11 +475,12 @@ pub fn focus_ring(
     let focus = core.as_ref().and_then(|core| core.button_focus());
     let ring = BorderColor::all(theme::FOCUS);
     for (entity, button, shade, mut border, outline) in &mut buttons {
-        let focused = if let Some(native) = native.get() {
-            native == entity
-        } else {
-            focus == Some(&button.0)
-        };
+        let focused = visible.0
+            && if let Some(native) = native.get() {
+                native == entity
+            } else {
+                focus == Some(&button.0)
+            };
         if let Some(mut outline) = outline {
             let want = if focused { theme::FOCUS } else { Color::NONE };
             if outline.color != want {
@@ -465,40 +494,52 @@ pub fn focus_ring(
     }
 }
 
-/// Buttons brighten under the cursor and darken pressed; washed icons and words brighten.
+/// Controls share hover transitions and pressed feedback, regardless of the activating device.
 pub fn hover(
     mut shaded: Query<(
-        &Hovered,
-        Has<bevy::ui::Pressed>,
-        &Shade,
+        Ref<crate::ui::effects::Motion>,
+        Ref<Shade>,
         &mut BackgroundGradient,
     )>,
-    washed: Query<(&Hovered, Has<bevy::ui::Pressed>, &Wash)>,
-    mouse: Res<ButtonInput<MouseButton>>,
+    washed: Query<(Ref<crate::ui::effects::Motion>, Ref<Wash>)>,
     mut images: Query<&mut ImageNode>,
     mut words: Query<&mut TextColor>,
 ) {
-    for (hovered, pressed, shade, mut gradient) in &mut shaded {
-        let colors = if pressed && mouse.pressed(MouseButton::Left) {
-            shade.pressed
-        } else if hovered.get() {
-            shade.hover
-        } else {
-            shade.rest
+    use crate::ui::effects::{amount, tint};
+    for (motion, shade, mut gradient) in &mut shaded {
+        if !motion.is_changed() && !shade.is_changed() {
+            continue;
+        }
+        let color = |index: bool| {
+            let (rest, hover, pressed) = if index {
+                (shade.rest.1, shade.hover.1, shade.pressed.1)
+            } else {
+                (shade.rest.0, shade.hover.0, shade.pressed.0)
+            };
+            tint(
+                tint(rest, hover, amount(motion.hover)),
+                pressed,
+                amount(motion.pressed),
+            )
         };
-        *gradient = theme::downward(colors);
+        gradient.set_if_neq(shade.gradient((color(false), color(true))));
     }
-    for (hovered, pressed, wash) in &washed {
-        let color = if hovered.get() || (pressed && mouse.pressed(MouseButton::Left)) {
-            wash.hover
-        } else {
-            wash.rest
-        };
-        if let Ok(mut image) = images.get_mut(wash.target) {
+    for (motion, wash) in &washed {
+        if !motion.is_changed() && !wash.is_changed() {
+            continue;
+        }
+        let color = tint(
+            wash.rest,
+            wash.hover,
+            amount(motion.hover.max(motion.pressed)),
+        );
+        if let Ok(mut image) = images.get_mut(wash.target)
+            && image.color != color
+        {
             image.color = color;
         }
         if let Ok(mut ink) = words.get_mut(wash.target) {
-            ink.0 = color;
+            ink.set_if_neq(TextColor(color));
         }
     }
 }

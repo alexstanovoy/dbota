@@ -70,6 +70,7 @@ pub struct Trusted(pub Trust);
 
 pub fn plugin(app: &mut App) {
     super::hero_stage::plugin(app);
+    super::preview::plugin(app);
     app.init_resource::<super::lobby_scroll::Positions>()
         .init_resource::<GameEpoch>()
         .init_resource::<super::availability::FocusKey>()
@@ -107,17 +108,23 @@ pub fn plugin(app: &mut App) {
                 super::screens::clicks,
                 drive,
                 demo_start,
-                super::screens::draw,
+                super::screens::draw.in_set(crate::ui::WidgetBuild),
                 super::kit::focus_ring,
                 super::lobby_widgets::focus_ring,
-                super::kit::hover,
+                super::kit::hover.in_set(crate::ui::WidgetPaint),
                 super::availability::navigate,
                 super::availability::tips,
                 scroll,
             )
                 .chain(),
         )
-        .add_systems(Update, (super::top_bar::animate, hud_shown))
+        .add_systems(
+            Update,
+            (
+                super::top_bar::animate,
+                hud_shown.after(drive).in_set(crate::ui::Mode),
+            ),
+        )
         .add_systems(
             PostUpdate,
             (

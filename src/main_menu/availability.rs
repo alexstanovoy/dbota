@@ -248,9 +248,14 @@ pub fn navigate(
     groups: Query<(Entity, &bevy::input_focus::tab_navigation::TabGroup)>,
     parents: Query<&ChildOf>,
     mut press: ResMut<crate::ui::PrimaryPress>,
+    mut feedback: ResMut<crate::ui::effects::Activations>,
+    settings: Res<crate::settings::Screen>,
     result_buttons: Query<(), With<crate::postgame::view::Button>>,
     mut core: Option<NonSendMut<super::core::MenuCore>>,
 ) {
+    if settings.open {
+        return;
+    }
     if groups.is_empty() {
         // Lobby forms and dialogs keep menu F's existing ownership and focus reducer.
         if keys.controller
@@ -335,6 +340,7 @@ pub fn navigate(
     } else if keys.activate
         && let Some(entity) = focus.get()
     {
+        feedback.record(entity);
         if result_buttons.contains(entity) {
             press.0 = Some(entity);
         } else if let Ok((_, _, Some(button))) = nodes.get(entity)

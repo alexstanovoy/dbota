@@ -308,26 +308,37 @@ fn uniform_buttons(client: &mut Client, page: Page) {
 fn assert_uniform_buttons(client: &mut Client, page: Page) {
     let shown = buttons(client);
     assert!(!shown.is_empty(), "{page:?}: buttons");
-    let mut widths: BTreeMap<i32, Vec<(String, f32)>> = BTreeMap::new();
-    for (name, w, h, one_line) in &shown {
+    let mut widths: BTreeMap<u32, Vec<(String, f32)>> = BTreeMap::new();
+    for (name, _, _, one_line) in &shown {
         assert!(one_line, "{page:?}: '{name}' may wrap");
+        let world = client.world_mut();
+        let node = world
+            .query::<(&Name, &ComputedNode, &InheritedVisibility)>()
+            .iter(world)
+            .find(|(label, _, seen)| seen.get() && label.as_str() == name)
+            .map(|(_, node, _)| *node)
+            .expect("drawn button");
+        super::harness::assert_pixel_rounding(node.size().x, node.unrounded_size().x);
+        super::harness::assert_pixel_rounding(node.size().y, node.unrounded_size().y);
         // A lone glyph (the close cross) is a square of its own; words share their height's width.
         if name.chars().count() <= 2 {
-            assert!(
-                (w - h).abs() < 0.5,
-                "{page:?}: '{name}' {w} by {h}, not square"
+            assert_eq!(
+                node.unrounded_size().x,
+                node.unrounded_size().y,
+                "{page:?}: '{name}' has square physical layout geometry"
             );
         } else if !matches!(name.as_str(), "create lobby" | "join by address") {
             widths
-                .entry(h.round() as i32)
+                .entry(node.unrounded_size().y.to_bits())
                 .or_default()
-                .push((name.clone(), *w));
+                .push((name.clone(), node.unrounded_size().x));
         }
     }
     for (height, row) in widths {
+        let height = f32::from_bits(height);
         let first = row[0].1;
         assert!(
-            row.iter().all(|(_, w)| (w - first).abs() < 0.5),
+            row.iter().all(|(_, w)| *w == first),
             "{page:?}: buttons {height} high of several widths: {row:?}"
         );
     }
@@ -971,6 +982,11 @@ fn a_right_hold_does_not_keep_a_menu_button_lit_after_the_pointer_leaves() {
     use bevy::input::ButtonState;
 
     let mut client = local_menu();
+    client
+        .world_mut()
+        .insert_resource(bevy::time::TimeUpdateStrategy::ManualDuration(
+            Duration::from_millis(10),
+        ));
     act(&mut client, Act::Go(Page::LocalLobby));
     let world = client.world_mut();
     let button = world
@@ -994,6 +1010,7 @@ fn a_right_hold_does_not_keep_a_menu_button_lit_after_the_pointer_leaves() {
     );
     client.button(MouseButton::Right, ButtonState::Pressed);
     client.mouse(Vec2::ZERO);
+    client.frames(30);
     assert!(
         client.world().get::<bevy::ui::Pressed>(button).is_some(),
         "the native widget still records the held secondary press"

@@ -637,7 +637,7 @@ fn leaderboard_footer_describes_loaded_rows_and_changes_with_the_visible_range()
             .expect("range footer for 100 loaded rows")
     };
     let first = footer(&mut client);
-    assert_eq!(first, "1–13 of 100");
+    assert_eq!(first, "1–16 of 100");
     let window = client
         .world_mut()
         .query_filtered::<Entity, With<bevy::window::PrimaryWindow>>()

@@ -1,6 +1,11 @@
 //! Debug: every screen of the menu with made-up contents, drawn without a
 //! service (`--menu-preview NAME`), for screenshots of how it looks.
 
+use bevy::{
+    ecs::system::SystemParam,
+    prelude::*,
+    window::{CursorMoved, PrimaryWindow, WindowEvent},
+};
 use bota_radovid::proto::{AccountId, LobbyId, MatchId, ProposalId, QueueEntryId, RulesetId};
 
 use super::core::{GameKind, LocalRules, Page, Status};
@@ -12,6 +17,92 @@ use super::view::{
 
 #[path = "lobby_preview.rs"]
 mod lobby;
+
+#[derive(SystemParam)]
+struct Pointer<'w, 's> {
+    nodes: Query<
+        'w,
+        's,
+        (
+            &'static Name,
+            &'static ComputedNode,
+            &'static UiGlobalTransform,
+        ),
+    >,
+    window: Single<'w, 's, (Entity, &'static mut Window), With<PrimaryWindow>>,
+    moved: MessageWriter<'w, CursorMoved>,
+    events: MessageWriter<'w, WindowEvent>,
+}
+
+#[derive(Default)]
+struct HoverState {
+    previous: Option<Vec2>,
+    done: bool,
+}
+
+pub(super) fn plugin(app: &mut App) {
+    app.add_systems(Update, hover_preview.after(super::screens::draw));
+}
+
+/// Tooltip scenes use actual pointer input once their anchor has settled.
+fn hover_preview(
+    args: Res<crate::Args>,
+    preview: Option<Res<super::Preview>>,
+    fonts: Res<crate::ui::Fonts>,
+    server: Res<AssetServer>,
+    mut pointer: Pointer,
+    mut state: Local<HoverState>,
+) {
+    if state.done {
+        return;
+    }
+    let Some(preview) = preview else {
+        return;
+    };
+    let target = match args.menu_preview.as_deref() {
+        Some("play-tooltip") => {
+            let PageView::Home { rulesets, .. } = &preview.0.body else {
+                return;
+            };
+            let Some(mode) = rulesets.iter().find(|mode| mode.rated) else {
+                return;
+            };
+            format!("about {}", mode.name.to_lowercase())
+        }
+        Some("match-decline") => "about declining".to_owned(),
+        _ => return,
+    };
+    if !fonts
+        .all()
+        .all(|font| server.is_loaded_with_dependencies(font))
+    {
+        return;
+    }
+    let Some((_, _, at)) = pointer
+        .nodes
+        .iter()
+        .find(|(name, node, _)| name.as_str() == target && node.size().min_element() > 0.0)
+    else {
+        return;
+    };
+    let point = at.translation / pointer.window.1.scale_factor();
+    if state
+        .previous
+        .is_none_or(|last| last.distance(point) > 0.01)
+    {
+        state.previous = Some(point);
+        return;
+    }
+    pointer.window.1.set_cursor_position(Some(point));
+    let event = CursorMoved {
+        window: pointer.window.0,
+        position: point,
+        delta: None,
+    };
+    pointer.moved.write(event.clone());
+    pointer.events.write(WindowEvent::CursorMoved(event));
+    state.done = true;
+}
 
 /// The names `--menu-preview` takes.
 pub const NAMES: [&str; 53] = [
@@ -344,9 +435,6 @@ fn preview_match_found(name: &str) -> MenuView {
         ruleset: "All Pick · Ranked".to_owned(),
         ..offer(name == "accepted")
     });
-    if name == "match-decline" {
-        view.play.info = Some(super::play::PlayInfo::Decline);
-    }
     view
 }
 
@@ -363,9 +451,6 @@ fn preview_play(name: &str) -> MenuView {
             },
             ..search(name == "play-searching-bots-overloaded")
         }];
-    }
-    if name == "play-tooltip" {
-        view.play.info = Some(super::play::PlayInfo::Queue(RulesetId("solo_mid".into())));
     }
     if name == "play-offline" {
         view.account = None;

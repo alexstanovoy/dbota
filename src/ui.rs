@@ -1,6 +1,23 @@
 //! What every part of the interface shares: the fonts, the palette, the
 //! interface scale, and small builders for text and boxes.
 
+mod draw;
+pub(crate) mod effects;
+pub(crate) mod help;
+pub(crate) use draw::Draw;
+
+#[derive(Component)]
+pub struct Disabled;
+
+#[derive(bevy::prelude::SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
+pub(crate) struct Mode;
+
+#[derive(bevy::prelude::SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
+pub(crate) struct WidgetBuild;
+
+#[derive(bevy::prelude::SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
+pub(crate) struct WidgetPaint;
+
 use bevy::{prelude::*, text::FontCx, window::PrimaryWindow};
 use fontique::{FallbackKey, Script};
 
@@ -9,10 +26,11 @@ use crate::manifest::Manifest;
 use crate::theme::Face;
 
 /// Logical window height at which the interface scale is one.
-const REFERENCE_HEIGHT: f32 = 900.0;
-/// The width of the menu's design frame (1440 by 900, 16:10): the menu is never laid out
-/// narrower, so a window of 5:4 or 4:3 shrinks it to fit its width instead.
-const MENU_WIDTH: f32 = 1440.0;
+pub(crate) const HUD_DESIGN_HEIGHT: f32 = 900.0;
+/// Menu controls use a compact height-based design space, independent of HUD fitting.
+pub(crate) const MENU_DESIGN_HEIGHT: f32 = 1024.0;
+/// The minimum logical menu width; narrow windows shrink the interface to fit it.
+pub(crate) const MENU_WIDTH: f32 = 1440.0;
 /// The smallest scale a window may force.
 const MIN_SCALE: f32 = 0.25;
 
@@ -50,7 +68,6 @@ impl Fonts {
     }
 
     /// Every font the interface draws with.
-    #[cfg(test)]
     pub fn all(&self) -> impl Iterator<Item = &Handle<Font>> {
         let faces = &self.faces;
         [
@@ -119,6 +136,8 @@ fn primary_press(
 }
 
 pub fn plugin(app: &mut App) {
+    help::plugin(app);
+    effects::plugin(app);
     app.init_resource::<HudShown>()
         .init_resource::<PrimaryPress>()
         .add_observer(primary_press)
@@ -130,7 +149,7 @@ pub fn plugin(app: &mut App) {
                 .after(crate::session::pump),
         )
         .add_systems(PreStartup, load_fonts)
-        .add_systems(Update, (scale_ui, register_fallback))
+        .add_systems(Update, (scale_ui.after(Mode), register_fallback))
         .add_systems(
             PostUpdate,
             (cover, shrink).after(bevy::ui::UiSystems::Layout),
@@ -386,8 +405,8 @@ pub enum Extent {
 }
 
 /// Interface pixels to one of Dota's: Dota lays its HUD out for a 1080-line
-/// screen, dbota for a [`REFERENCE_HEIGHT`] one.
-pub const DOTA: f32 = REFERENCE_HEIGHT / 1080.0;
+/// screen, dbota for a [`HUD_DESIGN_HEIGHT`] one.
+pub const DOTA: f32 = HUD_DESIGN_HEIGHT / 1080.0;
 
 /// Dota's pixels as interface pixels.
 pub fn dota(v: f32) -> Val {
@@ -438,7 +457,12 @@ fn scale_ui(
     parts: Query<(&Extent, &ComputedNode)>,
     mut ui_scale: ResMut<UiScale>,
 ) {
-    let wanted = (window.height() / REFERENCE_HEIGHT).clamp(0.6, 2.5) * settings.ui_scale;
+    let height = if hud.0 {
+        HUD_DESIGN_HEIGHT
+    } else {
+        MENU_DESIGN_HEIGHT
+    };
+    let wanted = (window.height() / height).clamp(0.6, 2.5) * settings.ui_scale;
     let size = |which: Extent| {
         parts
             .iter()

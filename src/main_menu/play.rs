@@ -16,7 +16,6 @@ pub struct PlayState {
     pub bots: bool,
     pub lobbies: bool,
     pub selected: Option<Vec<RulesetId>>,
-    pub info: Option<PlayInfo>,
 }
 
 impl Default for PlayState {
@@ -27,16 +26,8 @@ impl Default for PlayState {
             bots: false,
             lobbies: false,
             selected: None,
-            info: None,
         }
     }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum PlayInfo {
-    Rank,
-    Queue(RulesetId),
-    Decline,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -46,7 +37,6 @@ pub enum PlayAction {
     Bots,
     Lobbies(bool),
     Select(RulesetId),
-    Info(PlayInfo),
     Find,
     LobbyLink(bool),
 }
@@ -217,8 +207,13 @@ fn queue_row(
         theme::QUEUE_NAME,
         theme::INK_1,
     );
-    let tip = PlayInfo::Queue(row.id.clone());
-    info(kit, line, tip.clone(), &format!("About {}", row.name));
+    info(
+        kit,
+        line,
+        &format!("About {}", row.name),
+        &row.description,
+        false,
+    );
     kit.node(
         line,
         Node {
@@ -232,9 +227,6 @@ fn queue_row(
         theme::SMALL_NUMBER,
         theme::INK_3,
     );
-    if view.play.info.as_ref() == Some(&tip) {
-        tooltip(kit, line, &row.description, false);
-    }
 }
 
 fn bots(kit: &mut Kit, parent: Entity, on: bool) {
@@ -334,73 +326,34 @@ fn lobby_links(kit: &mut Kit, parent: Entity, online: bool, can_host: bool) {
     }
 }
 
-pub fn info(kit: &mut Kit, parent: Entity, tip: PlayInfo, label: &str) {
-    let button = kit.node(
+pub fn info(kit: &mut Kit, parent: Entity, label: &str, text: &str, right: bool) {
+    crate::ui::help::draw(
+        &mut kit.visual(),
         parent,
-        Node {
-            width: px(22),
-            height: px(22),
-            flex_shrink: 0.0,
-            justify_content: JustifyContent::Center,
-            align_items: AlignItems::Center,
-            ..default()
+        label,
+        text,
+        crate::ui::help::Style {
+            side: if right {
+                crate::ui::help::Side::Right
+            } else {
+                crate::ui::help::Side::Left
+            },
+            ..crate::ui::help::Style::COMPACT
         },
     );
-    kit.commands.entity(button).insert((
-        Button,
-        Pickable::default(),
-        MenuButton(Act::Play(PlayAction::Info(tip))),
-        Name::new(label.to_lowercase()),
-    ));
-    let circle = kit.node(
-        button,
-        Node {
-            width: px(15),
-            height: px(15),
-            border: UiRect::all(px(1)),
-            border_radius: BorderRadius::all(px(8)),
-            align_items: AlignItems::Center,
-            justify_content: JustifyContent::Center,
-            ..default()
-        },
-    );
-    kit.commands
-        .entity(circle)
-        .insert(BorderColor::all(theme::INK_4));
-    kit.typed(circle, "?", theme::HELP_GLYPH, theme::INK_3);
 }
 
 pub fn tooltip(kit: &mut Kit, parent: Entity, text: &str, right: bool) -> Entity {
-    let tip = kit.node(
+    crate::ui::help::tooltip(
+        &mut kit.visual(),
         parent,
-        Node {
-            position_type: PositionType::Absolute,
-            left: if right { percent(100) } else { Val::Auto },
-            right: if right { Val::Auto } else { percent(100) },
-            top: if right { Val::Auto } else { px(4) },
-            bottom: if right { px(0) } else { Val::Auto },
-            width: px(if right { 266 } else { 286 }),
-            padding: UiRect::axes(px(12), px(10)),
-            margin: if right {
-                UiRect::left(px(12))
-            } else {
-                UiRect::right(px(14))
-            },
-            border: UiRect::all(px(1)),
-            ..default()
+        text,
+        if right {
+            crate::ui::help::Side::Right
+        } else {
+            crate::ui::help::Side::Left
         },
-    );
-    kit.commands.entity(tip).insert((
-        Name::new("play tooltip"),
-        BackgroundColor(theme::TOOLTIP),
-        BorderColor::all(theme::TOOLTIP_EDGE),
-        GlobalZIndex(95),
-    ));
-    let words = kit.typed(tip, text, theme::SMALL_BODY, theme::INK_2);
-    kit.commands
-        .entity(words)
-        .insert(bevy::text::LineHeight::RelativeToFont(1.45));
-    tip
+    )
 }
 
 /// The service's info bytes are game metadata, not display text. Descriptions are keyed by id.
@@ -609,15 +562,13 @@ fn ranked_choice(kit: &mut Kit, body: Entity, view: &MenuView) {
             ));
         }
     }
-    info(kit, rank, PlayInfo::Rank, "About ranked and unranked");
-    if view.play.info == Some(PlayInfo::Rank) {
-        tooltip(
-            kit,
-            rank,
-            "Ranked changes your rating for the mode. Unranked also matches by rating, more loosely, and never changes it.",
-            false,
-        );
-    }
+    info(
+        kit,
+        rank,
+        "About ranked and unranked",
+        "Ranked changes your rating for the mode. Unranked also matches by rating, more loosely, and never changes it.",
+        false,
+    );
 }
 
 fn queue_frame(kit: &mut Kit, parent: Entity, row: &RulesetRow, chosen: bool) -> Entity {
@@ -639,10 +590,16 @@ fn queue_frame(kit: &mut Kit, parent: Entity, row: &RulesetRow, chosen: bool) ->
         Name::new(format!("queue {}", row.id.0)),
         BorderColor::all(if chosen { theme::SELECT } else { Color::NONE }),
     ));
+    kit.row_effect(
+        line,
+        if chosen {
+            theme::PLAY_SELECTION
+        } else {
+            (theme::PLAY_ROW, theme::PLAY_ROW)
+        },
+        BorderColor::all(if chosen { theme::SELECT } else { Color::NONE }),
+    );
     if chosen {
-        kit.commands
-            .entity(line)
-            .insert(theme::rightward(theme::PLAY_SELECTION));
         let outline = kit.node(
             line,
             Node {

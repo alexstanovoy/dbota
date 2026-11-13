@@ -7,10 +7,10 @@ use bevy::picking::hover::Hovered;
 use bevy::prelude::*;
 
 use super::draw::{
-    ChoiceButton, ChoiceOption, ChoiceValue, ClashBar, ClashText, HelpButton, HelpTip, KeyField,
-    KeyText, LabelPart, NameCaret, NameCount, NameField, NameText, NavLink, NavText, RowBar,
-    RowKey, RowReset, SliderFill, SliderThumb, SliderTrack, SliderValue, SlotBadge, SlotKey, THUMB,
-    THUMB_HELD, ToggleBox, ToggleMark,
+    ChoiceButton, ChoiceOption, ChoiceValue, ClashBar, ClashText, KeyField, KeyText, LabelPart,
+    NameCaret, NameCount, NameField, NameText, NavLink, NavText, RowBar, RowKey, RowReset,
+    SliderFill, SliderThumb, SliderTrack, SliderValue, SlotBadge, SlotKey, THUMB, THUMB_HELD,
+    ToggleBox, ToggleMark,
 };
 use super::model::{Row, Toggle};
 use super::screen::{Focus, InView, Screen};
@@ -472,17 +472,6 @@ pub fn names(
             String::new()
         };
         text.set_if_neq(Text(words));
-    }
-}
-
-/// The help circle's tip, shown while the cursor is on the circle.
-pub fn help(circle: Query<&Hovered, With<HelpButton>>, mut tip: Query<&mut Node, With<HelpTip>>) {
-    let shown = circle.iter().any(|i| i.get());
-    for mut node in &mut tip {
-        let display = if shown { Display::Flex } else { Display::None };
-        if node.display != display {
-            node.display = display;
-        }
     }
 }
 

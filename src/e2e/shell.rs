@@ -75,31 +75,56 @@ fn the_quit_button_stands_at_one_point_on_every_screen() {
     let mut seen = Vec::new();
     for page in [Page::LocalLobby, Page::Replays] {
         act(&mut client, Act::Go(page));
-        seen.push((format!("{page:?}"), interface_rect(&mut client, "quit")));
+        seen.push((format!("{page:?}"), physical_quit(&mut client)));
     }
     click(&mut client, "settings");
     client.until("the settings window open", |c| settings_open(c));
     client.frames(5);
-    seen.push(("settings".to_owned(), interface_rect(&mut client, "quit")));
+    seen.push(("settings".to_owned(), physical_quit(&mut client)));
     click(&mut client, "close");
     client.until("the settings window closed", |c| !settings_open(c));
     act(&mut client, Act::Go(Page::Service));
-    seen.push(("the way in".to_owned(), interface_rect(&mut client, "quit")));
-    let width = interface_size(&mut client).x;
-    for (screen, quit) in &seen {
-        let at = (width - quit.max.x, quit.min.y, quit.width(), quit.height());
-        assert!(
-            (at.0 - 12.0).abs() < 0.5
-                && (at.1 - 5.0).abs() < 0.5
-                && (at.2 - 44.0).abs() < 0.5
-                && (at.3 - 44.0).abs() < 0.5,
-            "{screen}: quit at right {}, top {}, {} by {} (not 12, 5, 44 by 44)",
-            at.0,
-            at.1,
-            at.2,
-            at.3
+    seen.push(("the way in".to_owned(), physical_quit(&mut client)));
+    let first = seen[0].1.0;
+    for (screen, (quit, node, width)) in &seen {
+        assert_eq!(
+            *quit, first,
+            "{screen}: the physical quit rectangle is identical on every screen"
+        );
+        let scale = 1.0 / node.inverse_scale_factor();
+        super::harness::assert_physical_size(node, Vec2::splat(44.0));
+        super::harness::assert_pixel_rounding(width - quit.max.x, 12.0 * scale);
+        super::harness::assert_pixel_rounding(quit.min.y, 5.0 * scale);
+        println!(
+            "{screen}: quit physical {quit:?}, unrounded {:?}, scale {scale}",
+            node.unrounded_size()
         );
     }
+}
+
+fn physical_quit(client: &mut Client) -> (Rect, ComputedNode, f32) {
+    let world = client.world_mut();
+    let (node, placed) = world
+        .query::<(
+            &Name,
+            &ComputedNode,
+            &UiGlobalTransform,
+            &InheritedVisibility,
+        )>()
+        .iter(world)
+        .find(|(name, _, _, seen)| seen.get() && name.as_str() == "quit")
+        .map(|(_, node, placed, _)| (*node, *placed))
+        .expect("quit");
+    let width = world
+        .query_filtered::<&Window, With<PrimaryWindow>>()
+        .single(world)
+        .expect("window")
+        .physical_width() as f32;
+    (
+        Rect::from_center_size(placed.translation, node.size()),
+        node,
+        width,
+    )
 }
 
 /// The cog opens the settings as a window over the menu (the top bar still drawn under the dim,
@@ -355,23 +380,31 @@ fn ui_scale(client: &Client) -> f32 {
     client.world().resource::<UiScale>().0
 }
 
-/// The menu is laid out at the window's own scale (one mockup pixel to one pixel at 900 lines,
-/// 16:10 and 16:9 alike), not shrunk to make room for the HUD, which it covers; a 5:4 window
-/// shrinks it to the 1440 pixels of its frame; a game on screen is still shrunk until its HUD
-/// fits a 16:10 window.
+/// Menu density follows a1024-line design space, capped by its frame in narrow windows.
+/// A game retains its independent HUD fitting instead of inheriting menu density.
 #[test]
 fn the_menu_keeps_the_windows_scale_and_a_game_shrinks_to_fit_its_hud() {
-    for (window, scale) in [
-        ("1440x900", 1.0),
-        ("1280x800", 800.0 / 900.0),
-        ("1920x1080", 1.2),
-        ("1280x1024", 1280.0 / 1440.0),
+    for (window, width_limited) in [
+        ("1440x900", false),
+        ("1280x800", false),
+        ("1920x1080", false),
+        ("1280x1024", true),
     ] {
         let mut client = Client::run(&["--window", window]);
         client.within(Duration::from_secs(30), "the menu laid out", |c| {
-            (ui_scale(c) - scale).abs() < 1e-3
+            c.world().contains_resource::<crate::ui::Fonts>()
         });
         client.frames(10);
+        let world = client.world_mut();
+        let measured = world
+            .query_filtered::<&Window, With<PrimaryWindow>>()
+            .single(world)
+            .expect("window");
+        let scale = if width_limited {
+            measured.width() / crate::ui::MENU_WIDTH
+        } else {
+            measured.height() / crate::ui::MENU_DESIGN_HEIGHT
+        };
         assert!(
             (ui_scale(&client) - scale).abs() < 1e-3,
             "the menu at {window}: scale {} (not {scale})",
@@ -460,4 +493,40 @@ fn the_fullest_bar_folds_its_last_tabs_under_more_and_stays_whole() {
     client.until("every tab back in the bar", |c| {
         shown(c, "replays") && !shown(c, "more")
     });
+}
+
+#[test]
+fn play_drawer_keeps_its_compact_share_of_the_window_height() {
+    for size in ["1440x900", "1920x1080", "2877x1642"] {
+        let mut client = Client::run(&["--menu-preview", "play", "--window", size]);
+        client.frames(1);
+        let first = play_width_fraction(&mut client).expect("first laid-out panel");
+        assert!(
+            (0.36..=0.38).contains(&first),
+            "the first menu frame already uses its compact scale at {size}: {first}"
+        );
+        client.within(Duration::from_secs(30), "Play panel laid out", |c| {
+            play_width_fraction(c).is_some()
+        });
+        client.frames(4);
+        let width = play_width_fraction(&mut client).expect("drawn panel");
+        assert!(
+            (0.36..=0.38).contains(&width),
+            "at {size}, Play occupies {width:.4} of the screen height; it must retain the compact side-panel proportion"
+        );
+    }
+}
+
+fn play_width_fraction(client: &mut Client) -> Option<f32> {
+    let world = client.world_mut();
+    let height = world
+        .query_filtered::<&bevy::window::Window, With<bevy::window::PrimaryWindow>>()
+        .single(world)
+        .ok()?
+        .physical_height() as f32;
+    world
+        .query::<(&Name, &ComputedNode)>()
+        .iter(world)
+        .find(|(name, node)| name.as_str() == "play drawer" && node.size().x > 0.0)
+        .map(|(_, node)| node.size().x / height)
 }

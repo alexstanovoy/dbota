@@ -209,6 +209,13 @@ fn assert_actor(client: &mut Client, logical: &str) {
 }
 
 fn assert_framing(world: &mut World, pivot: Entity, resting: bool) {
+    // At 1440×900 the compact menu's logical frame is wider than the stage's 1440-unit anchor.
+    let window = world
+        .query_filtered::<&Window, With<bevy::window::PrimaryWindow>>()
+        .single(world)
+        .expect("window");
+    let wanted_scale = window.height() / crate::ui::MENU_DESIGN_HEIGHT;
+    let stage_left = (window.width() / wanted_scale - crate::ui::MENU_WIDTH) / 2.0;
     let (node, transform) = world.query_filtered::<(&ComputedNode, &UiGlobalTransform), With<crate::main_menu::hero_stage::HeroImage>>()
         .single(world).expect("Home viewport");
     let rect = Rect::from_center_size(
@@ -216,7 +223,7 @@ fn assert_framing(world: &mut World, pivot: Entity, resting: bool) {
         node.size() * node.inverse_scale_factor(),
     );
     assert!(
-        (rect.min - Vec2::new(0.0, 100.0)).length() < 0.5,
+        (rect.min - Vec2::new(stage_left, 100.0)).length() < 0.5,
         "{rect:?}"
     );
     assert!(
@@ -261,7 +268,7 @@ fn assert_framing(world: &mut World, pivot: Entity, resting: bool) {
             "about 520 pixels tall: {lo:?}..{hi:?}"
         );
         assert!(
-            ((lo.x + hi.x) / 2.0 - 520.0).abs() < 25.0,
+            ((lo.x + hi.x) / 2.0 - (stage_left + 520.0)).abs() < 25.0,
             "centred in the free space: {lo:?}..{hi:?}"
         );
         println!(
@@ -277,7 +284,7 @@ fn assert_framing(world: &mut World, pivot: Entity, resting: bool) {
         .expect("contact shadow");
     let center = transform.translation * node.inverse_scale_factor();
     assert!(
-        (center - Vec2::new(520.0, 770.0)).length() < 0.5,
+        (center - Vec2::new(stage_left + 520.0, 770.0)).length() < 0.5,
         "fixed ground line: {center:?}"
     );
 }

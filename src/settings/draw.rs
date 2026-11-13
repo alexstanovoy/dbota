@@ -128,13 +128,6 @@ pub struct NameCaret(pub TextSetting);
 #[derive(Component)]
 pub struct NameCount(pub TextSetting);
 
-/// The hotkeys' help circle and the tip it shows under the cursor.
-#[derive(Component)]
-#[require(bevy::ui_widgets::Button, DirectlyHovered, Hovered)]
-pub struct HelpButton;
-#[derive(Component)]
-pub struct HelpTip;
-
 /// The bar telling which bindings clash, and its text.
 #[derive(Component)]
 pub struct ClashBar;
@@ -241,20 +234,18 @@ struct Kit<'a, 'w, 's> {
 }
 
 impl Kit<'_, '_, '_> {
+    fn visual(&mut self) -> crate::ui::Draw<'_, '_, '_> {
+        crate::ui::Draw {
+            commands: self.commands.reborrow(),
+            fonts: self.fonts,
+        }
+    }
     fn typed(&mut self, parent: Entity, s: impl Into<String>, role: Type, color: Color) -> Entity {
-        self.commands
-            .spawn((
-                theme::text(s, self.fonts, role, color),
-                Pickable::IGNORE,
-                ChildOf(parent),
-            ))
-            .id()
+        self.visual().typed(parent, s, role, color)
     }
 
     fn node(&mut self, parent: Entity, node: Node) -> Entity {
-        self.commands
-            .spawn((node, Pickable::IGNORE, ChildOf(parent)))
-            .id()
+        self.visual().node(parent, node)
     }
 
     /// Dota's icon `logical` tinted `color`, `size` across; none where the cache has none.
@@ -791,63 +782,21 @@ fn header(kit: &mut Kit, content: Entity, screen: &Screen, title: &str) {
 
 /// The circled question mark by HOTKEYS: under the cursor it says how a key is changed.
 fn help_circle(kit: &mut Kit, bar: Entity) {
-    let circle = kit
-        .commands
-        .spawn((
-            HelpButton,
-            Button,
-            Node {
-                width: px(22),
-                height: px(22),
-                justify_content: JustifyContent::Center,
-                align_items: AlignItems::Center,
-                border: UiRect::all(px(1.5)),
-                border_radius: BorderRadius::MAX,
-                ..default()
-            },
-            BorderColor::all(theme::INK_5),
-            Name::new("hotkey help"),
-            ChildOf(bar),
-        ))
-        .id();
-    let mark = Type {
-        face: Face::Bold,
-        size: 13.0,
-        tracking: 0.0,
-        figures: false,
-    };
-    kit.typed(circle, "?", mark, theme::INK_3);
-    let tip = kit
-        .commands
-        .spawn((
-            HelpTip,
-            Node {
-                display: Display::None,
-                position_type: PositionType::Absolute,
-                left: px(-10),
-                top: px(32),
-                width: px(300),
-                padding: UiRect::axes(px(12), px(10)),
-                border: UiRect::all(px(1)),
-                ..default()
-            },
-            BackgroundColor(theme::TOOLTIP),
-            BorderColor::all(theme::TOOLTIP_EDGE),
-            BoxShadow::new(Color::BLACK, px(0), px(8), px(0), px(24)),
-            GlobalZIndex(70),
-            Pickable::IGNORE,
-            ChildOf(circle),
-        ))
-        .id();
-    let role = Type {
-        size: 14.0,
-        ..theme::BODY
-    };
-    kit.typed(
-        tip,
+    crate::ui::help::draw(
+        &mut kit.visual(),
+        bar,
+        "hotkey help",
         "Click a key, then press the new one. Backspace unbinds, Escape keeps it.",
-        role,
-        theme::INK_2,
+        crate::ui::help::Style {
+            diameter: 22.0,
+            glyph: Type {
+                face: Face::Bold,
+                size: 13.0,
+                tracking: 0.0,
+                figures: false,
+            },
+            side: crate::ui::help::Side::Below,
+        },
     );
 }
 
