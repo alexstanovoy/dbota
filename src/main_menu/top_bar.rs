@@ -20,20 +20,18 @@ use crate::theme;
 /// A browser cannot start a game server, so the local lobby is not in its bar, nor is Demo Hero
 /// (the native client opens it; the browser may one day).
 #[cfg(not(target_arch = "wasm32"))]
-const TABS: [(Page, &str); 7] = [
+const TABS: [(Page, &str); 6] = [
     (Page::Home, "PLAY"),
     (Page::MyGames, "MY GAMES"),
-    (Page::Lobbies, "LOBBIES"),
     (Page::Leaderboard, "LEADERBOARD"),
     (Page::LocalLobby, "LOCAL LOBBY"),
     (Page::Heroes, "HEROES"),
     (Page::Replays, "REPLAYS"),
 ];
 #[cfg(target_arch = "wasm32")]
-const TABS: [(Page, &str); 6] = [
+const TABS: [(Page, &str); 5] = [
     (Page::Home, "PLAY"),
     (Page::MyGames, "MY GAMES"),
-    (Page::Lobbies, "LOBBIES"),
     (Page::Leaderboard, "LEADERBOARD"),
     (Page::Replays, "REPLAYS"),
     (Page::Heroes, "HEROES"),

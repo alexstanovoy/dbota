@@ -59,6 +59,66 @@ fn the_lobby_browser_floats_no_picture_in_the_scene_beside_its_drawer() {
     );
 }
 
+fn open_lobby_browser_from_play(client: &mut Client) {
+    click(client, "play tab");
+    click(client, "custom lobbies");
+    click(client, "browse lobbies");
+    client.until("the lobby browser open", |client| {
+        client.world().non_send::<MenuCore>().page() == Page::Lobbies
+    });
+}
+
+#[test]
+fn the_top_bar_has_no_lobbies_tab_because_lobbies_open_from_play() {
+    let service = crate::main_menu::tests::service();
+    let mut client = signed_up(&service, "bob");
+    assert!(
+        !named(&mut client, "lobbies"),
+        "Play's Custom Lobbies section is the way in"
+    );
+    open_lobby_browser_from_play(&mut client);
+    assert!(
+        !named(&mut client, "lobbies"),
+        "the browser opened from Play brings no tab of its own"
+    );
+}
+
+#[test]
+fn the_lobby_browser_has_no_back_button() {
+    let service = crate::main_menu::tests::service();
+    let mut client = signed_up(&service, "bob");
+    open_lobby_browser_from_play(&mut client);
+    let texts = client.shown_texts();
+    assert!(
+        !texts.iter().any(|text| text.contains("BACK")),
+        "a click beside the browser and Escape leave it: {texts:?}"
+    );
+}
+
+#[test]
+fn a_click_beside_the_lobby_browser_returns_to_play_with_custom_lobbies_open() {
+    let service = crate::main_menu::tests::service();
+    let mut client = signed_up(&service, "bob");
+    open_lobby_browser_from_play(&mut client);
+    client.hover_ui_with(std::time::Duration::from_secs(30), |client| {
+        let world = client.world_mut();
+        world
+            .query::<(Entity, &Name)>()
+            .iter(world)
+            .find(|(_, name)| name.as_str() == "lobby browser backdrop")
+            .map(|(entity, _)| entity)
+    });
+    client.click(MouseButton::Left);
+    client.frames(3);
+    let view = client.world().non_send::<MenuCore>().view();
+    assert_eq!(view.page, Page::Home, "back on Play's page");
+    assert!(view.play.open, "with the drawer open");
+    assert_eq!(
+        view.play.section,
+        crate::main_menu::PlaySection::CustomLobbies
+    );
+}
+
 #[test]
 fn lobby_room_draws_two_team_columns_and_only_highlights_the_host_in_chat() {
     let mut client = Client::run(&["--menu-preview", "lobby-owner"]);

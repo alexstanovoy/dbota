@@ -477,7 +477,7 @@ fn the_fullest_bar_folds_its_last_tabs_under_more_and_stays_whole() {
     assert!(shown(&mut client, "more"), "MORE holds the tabs folded");
     assert!(!shown(&mut client, "replays"), "REPLAYS, the last, folded");
     let more = interface_rect(&mut client, "more");
-    let kept: Vec<String> = ["play", "my games", "lobbies", "profile"]
+    let kept: Vec<String> = ["play", "my games", "profile"]
         .into_iter()
         .filter(|tab| shown(&mut client, tab))
         .map(str::to_owned)

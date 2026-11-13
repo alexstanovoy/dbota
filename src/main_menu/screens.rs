@@ -119,10 +119,10 @@ pub fn clicks(
     }
 }
 
-/// The page a tab belongs to, for drawing it lit: the lobby is under LOBBIES.
+/// The page a tab belongs to, for drawing it lit: the lobbies open from Play.
 pub fn tab_of(page: Page) -> Page {
     match page {
-        Page::Lobby => Page::Lobbies,
+        Page::Lobby | Page::Lobbies => Page::Home,
         Page::Hero(_) => Page::Heroes,
         Page::Result => Page::Home,
         other => other,

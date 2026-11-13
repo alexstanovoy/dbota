@@ -4,6 +4,7 @@ use super::{
     kit::{Kit, MenuButton, Tone},
     lobby_controls::{Action, Choice, ControlsView},
     lobby_widgets::{self as w},
+    play::PlayAction,
     view::{FieldView, LobbyRow, MenuView, PageView},
 };
 use crate::theme;
@@ -26,6 +27,12 @@ fn browser(
     fields: &[FieldView],
     controls: &ControlsView,
 ) {
+    w::backdrop(
+        kit,
+        root,
+        "lobby browser backdrop",
+        Act::Play(PlayAction::Open(true)),
+    );
     let panel = w::panel(kit, root, "lobby browser");
     let visible: Vec<_> = rows
         .iter()
@@ -61,7 +68,6 @@ fn heading(kit: &mut Kit, parent: Entity, shown: usize, total: usize) {
             ..default()
         },
     );
-    w::quiet(kit, row, "‹ BACK", Act::Go(Page::Home), theme::INK_2);
     kit.typed(row, "LOBBIES", theme::lobby::TITLE, theme::INK_1);
     kit.typed(
         row,

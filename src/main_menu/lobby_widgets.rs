@@ -88,6 +88,30 @@ pub fn panel(kit: &mut Kit, root: Entity, name: &str) -> Entity {
     panel
 }
 
+/// The dimmed scene beside a side panel: a click on it does `act`, which leaves the panel.
+pub fn backdrop(kit: &mut Kit, root: Entity, name: &str, act: Act) {
+    let shade = kit.node(
+        root,
+        Node {
+            position_type: PositionType::Absolute,
+            left: px(0),
+            right: px(RIGHT + WIDTH),
+            top: px(theme::BAR_HEIGHT),
+            bottom: px(0),
+            ..default()
+        },
+    );
+    kit.commands.entity(shade).insert((
+        Name::new(name.to_owned()),
+        BackgroundColor(Color::BLACK.with_alpha(theme::dim(0.35))),
+        crate::hud::Blocker,
+        bevy::picking::hover::Hovered::default(),
+        Pickable::default(),
+        Button,
+        MenuButton(act),
+    ));
+}
+
 pub fn quiet(kit: &mut Kit, parent: Entity, label: &str, act: Act, ink: Color) -> Entity {
     let button = kit.quiet(parent, label, act, theme::SMALL_BODY, (ink, theme::INK_1));
     kit.commands
