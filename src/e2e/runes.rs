@@ -63,7 +63,7 @@ pub(super) fn take_rune(client: &mut Client, kind: RuneKind, at: (i32, i32)) {
     let at = Spot::from_ints(at.0, at.1);
     let mut rune = None;
     client.within(SOON, "the rune to take in view", |c| {
-        rune = rune_in(&c.view(), kind, at);
+        rune = rune_in(c.view(), kind, at);
         rune.is_some()
     });
     let target = Target::Unit(rune.expect("seen"));
