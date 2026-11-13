@@ -2363,16 +2363,20 @@ fn a_served_profile_match_row_opens_match_details_without_leaving_the_profile() 
 fn a_players_profile_presents_one_uniform_scrollable_match_table() {
     use bevy::prelude::*;
     let mut client = design_preview("profile");
+    super::menu::resize_menu_window(&mut client, UVec2::new(1600, 900));
     let headings = ["HERO PLAYED", "RESULT", "DATE / TIME", "DURATION", "TYPE"];
     let world = client.world_mut();
     let mut positions = Vec::new();
     for label in headings {
-        let (_, placed) = world
-            .query::<(&Text, &UiGlobalTransform)>()
+        let column = world
+            .query::<(&Text, &ChildOf)>()
             .iter(world)
             .find(|(text, _)| text.as_str() == label)
-            .unwrap_or_else(|| panic!("missing match table heading {label}"));
-        positions.push(placed.translation.x);
+            .unwrap_or_else(|| panic!("missing match table heading {label}"))
+            .1.parent();
+        let node=world.get::<ComputedNode>(column).expect("column layout");
+        let centre=world.get::<UiGlobalTransform>(column).expect("column position").translation.x;
+        positions.push(centre-node.size().x/2.0);
     }
     assert!(
         positions.windows(2).all(|pair| pair[0] < pair[1]),
@@ -2414,6 +2418,16 @@ fn a_players_profile_presents_one_uniform_scrollable_match_table() {
             .any(|text| text.as_str() == "MOST PLAYED"),
         "the match table uses the profile width"
     );
+    let mut fonts=world.query::<(&Text,&TextFont,&ComputedNode)>();
+    let mut em=|label:&str| {
+        let (_,font,node)=fonts.iter(world).find(|(text,_,_)|text.as_str()==label).expect("measured text");
+        let viewport=Vec2::new(1600.0,900.0)*node.inverse_scale_factor();
+        let size=font.font_size.eval(viewport,*world.resource::<bevy::text::RemSize>());
+        size/node.inverse_scale_factor()/900.0
+    };
+    eprintln!("profile_reference_metrics viewport=1600x900 row_h={:.6} columns_x={:?} body_em={:.6} name_em={:.6}",
+        rows[0].1/900.0,positions.iter().map(|x|x/900.0).collect::<Vec<_>>(),em("Shadow Fiend"),em("mira#2207"));
+
 }
 
 #[test]
@@ -2573,7 +2587,10 @@ fn check_list_cache(kind: CachedList) {
     } else {
         None
     };
-    let mut client = super::menu::signed_up(&service, "cache_viewer");
+    let start = Instant::now();
+    let mut client = super::menu::signed_up_with(&service, "cache_viewer", |client| {
+        client.world_mut().non_send_mut::<MenuCore>().list_clock_for_test(start);
+    });
     client.within(
         std::time::Duration::from_secs(10),
         "login reads completed",
@@ -2592,11 +2609,6 @@ fn check_list_cache(kind: CachedList) {
         CachedList::OwnMatches | CachedList::PlayerMatches => Read::Matches,
         CachedList::Lobbies => Read::Lobbies,
     };
-    let start = Instant::now();
-    client
-        .world_mut()
-        .non_send_mut::<MenuCore>()
-        .list_clock_for_test(start);
     let open = |client: &mut super::harness::Client| {
         if let Some(account) = target {
             client

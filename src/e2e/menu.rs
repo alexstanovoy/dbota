@@ -346,6 +346,14 @@ fn assert_uniform_buttons(client: &mut Client, page: Page) {
 
 /// The menu of a client signed up to a matchmaking service as `login`, on Play.
 pub(super) fn signed_up(service: &crate::main_menu::tests::Service, login: &str) -> Client {
+    signed_up_with(service, login, |_| {})
+}
+
+pub(super) fn signed_up_with(
+    service: &crate::main_menu::tests::Service,
+    login: &str,
+    configure: impl FnOnce(&mut Client),
+) -> Client {
     // One file for each client: the tests of a process run side by side, each with a service
     // (and a certificate) of its own.
     static NEXT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
@@ -357,6 +365,7 @@ pub(super) fn signed_up(service: &crate::main_menu::tests::Service, login: &str)
     std::fs::write(&pem, &service.pem).expect("the service's certificate");
     let pem_arg = pem.to_str().expect("a UTF-8 path").to_owned();
     let mut client = Client::run(&["--service", &service.url, "--trust-cert", &pem_arg]);
+    configure(&mut client);
     let page = |c: &Client| c.world().non_send::<MenuCore>().page();
     // A hang guard: the machine may run many other jobs.
     let patience = Duration::from_secs(240);
