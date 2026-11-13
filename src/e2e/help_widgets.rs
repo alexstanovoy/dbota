@@ -488,27 +488,29 @@ fn fonts_ready(client: &mut Client) {
 
 #[test]
 fn every_help_anchor_in_play_lobbies_and_settings_keeps_its_own_row_uncovered() {
-    let mut checked = 0;
-    for scene in [
-        "play",
-        "play-bots",
-        "play-full",
-        "play-cooldown",
-        "match-found",
-        "lobbies",
-        "lobby-password",
-        "lobby-owner",
-        "lobby-edit",
-        "lobby-start",
-    ] {
-        let mut client = Client::run(&["--menu-preview", scene]);
-        checked += check_all_help_rows(&mut client, scene);
+    for size in ["1920x1080", "1280x720"] {
+        let mut checked = 0;
+        for scene in [
+            "play",
+            "play-bots",
+            "play-full",
+            "play-cooldown",
+            "match-found",
+            "lobbies",
+            "lobby-password",
+            "lobby-owner",
+            "lobby-edit",
+            "lobby-start",
+        ] {
+            let mut client = Client::run(&["--menu-preview", scene, "--window", size]);
+            checked += check_all_help_rows(&mut client, scene, size);
+        }
+        for tab in ["hotkeys", "options", "video", "audio"] {
+            let mut client = Client::run(&["--settings", tab, "--window", size]);
+            checked += check_all_help_rows(&mut client, tab, size);
+        }
+        assert!(checked >= 5, "the audit must exercise actual help anchors");
     }
-    for tab in ["hotkeys", "options", "video", "audio"] {
-        let mut client = Client::run(&["--settings", tab]);
-        checked += check_all_help_rows(&mut client, tab);
-    }
-    assert!(checked >= 5, "the audit must exercise actual help anchors");
 }
 
 fn help_controls(client: &mut Client) -> Vec<String> {
@@ -526,7 +528,7 @@ fn help_controls(client: &mut Client) -> Vec<String> {
         .collect()
 }
 
-fn check_all_help_rows(client: &mut Client, scene: &str) -> usize {
+fn check_all_help_rows(client: &mut Client, scene: &str, size: &str) -> usize {
     client
         .world_mut()
         .insert_resource(bevy::time::TimeUpdateStrategy::ManualDuration(
@@ -534,8 +536,22 @@ fn check_all_help_rows(client: &mut Client, scene: &str) -> usize {
         ));
     fonts_ready(client);
     client.frames(4);
+    let (width, height) = size.split_once('x').expect("test viewport");
+    let world = client.world_mut();
+    let window = world
+        .query_filtered::<&Window, With<bevy::window::PrimaryWindow>>()
+        .single(world)
+        .expect("primary window");
+    assert_eq!(
+        window.physical_size(),
+        UVec2::new(
+            width.parse().expect("width"),
+            height.parse().expect("height")
+        ),
+        "the audit must use its requested viewport"
+    );
     let names = help_controls(client);
-    println!("help anchor audit {scene}: {}", names.len());
+    println!("help anchor audit {scene} at {size}: {}", names.len());
     for name in &names {
         check_help_row(client, name);
     }
