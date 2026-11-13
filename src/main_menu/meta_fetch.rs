@@ -29,6 +29,8 @@ pub(super) struct MetaFetch {
     /// The match of the service this client last sat down in: the one whose file it wants.
     played: Option<MatchId>,
     ready: Option<Fetched>,
+    profiles: Option<(MatchId, bota_replay::meta::Profiles)>,
+    service: Option<String>,
     /// Attribution captured when the participant receives its outcome, before a later sign-out.
     history: Option<(MatchId, super::local_matches::Saved)>,
 }
@@ -56,6 +58,9 @@ impl MenuCore {
         if self.meta.played != Some(result.match_id) {
             return;
         }
+        self.meta.service = Some(self.prefs.service.clone());
+        self.meta.profiles = super::profile_metadata::from_result(&self.prefs.service, result)
+            .map(|profiles| (result.match_id, profiles));
         let owner = self.owner_in_result(result);
         self.meta.history = owner.map(|owner| {
             (
@@ -113,6 +118,12 @@ impl MenuCore {
         if name != NAME {
             return;
         }
+        if self.meta.service.as_ref().is_some_and(|service| {
+            !super::profile_metadata::same_service(service, &self.prefs.service)
+        }) {
+            self.meta_none(match_id);
+            return;
+        }
         let mut fetch = match self.meta.current.take() {
             Some(fetch) if fetch.match_id == match_id => fetch,
             None if self.meta.asked.take() == Some(match_id) => Fetch {
@@ -139,6 +150,12 @@ impl MenuCore {
             self.ask_meta(match_id, end);
             return;
         }
+        if let Some((id, profiles)) = self.meta.profiles.take()
+            && id == match_id
+            && let Some(bytes) = super::profile_metadata::stamp_meta(&fetch.bytes, id.0, &profiles)
+        {
+            fetch.bytes = bytes;
+        }
         if let Some((id, mut entry)) = self.meta.history.take()
             && id == match_id
         {
@@ -157,6 +174,8 @@ impl MenuCore {
         self.meta.current = None;
         self.meta.asked = None;
         self.meta.history = None;
+        self.meta.profiles = None;
+        self.meta.service = None;
         self.meta.ready = Some(Fetched {
             match_id,
             bytes: None,
@@ -184,6 +203,70 @@ impl MenuCore {
             .or(self.meta.asked)
         {
             self.meta_none(id);
+        }
+    }
+}
+
+#[cfg(test)]
+mod profile_tests {
+    use super::*;
+    use bota_radovid::proto::{
+        AccountId, AccountKind, EndReason, Outcome, RulesetId, SeatResult, UnixMs,
+    };
+    #[test]
+    fn metadata_profile_capture_refuses_chunks_after_the_configured_matchmaker_changes() {
+        let (_, file) = crate::postgame::recorded_match_for_menu();
+        let bytes = std::fs::read(file).expect("real metadata");
+        let match_id = MatchId(
+            bota_replay::meta::decode(&bytes)
+                .expect("metadata")
+                .header
+                .match_id,
+        );
+        for changed in [false, true] {
+            let mut player = super::super::tests::Player::new(None);
+            player.menu.prefs.service = "wss://match.example/control".into();
+            player.menu.meta.played = Some(match_id);
+            let result = MatchResult {
+                match_id,
+                ruleset: RulesetId("solo_mid".into()),
+                rated: false,
+                outcome: Outcome::Winner { team: 0 },
+                reason: EndReason::Decided,
+                duration_ms: 1000,
+                game_report: Vec::new(),
+                finished_at: UnixMs(1000),
+                seats: vec![SeatResult {
+                    slot: 0,
+                    team: 0,
+                    account: AccountId(42),
+                    nickname: "public_player".into(),
+                    kind: AccountKind::Human,
+                    before: None,
+                    after: None,
+                }],
+            };
+            player.menu.meta_finished(&result);
+            if changed {
+                player.menu.prefs.service = "wss://other.example/control".into();
+            }
+            player
+                .menu
+                .meta_chunk(match_id, "meta", 0, bytes.len() as u64, &bytes);
+            let fetched = player.menu.take_meta().expect("settled metadata delivery");
+            if changed {
+                assert!(
+                    fetched.bytes.is_none(),
+                    "an old request must not adopt the newly selected service's identity"
+                );
+            } else {
+                let profiles = bota_replay::meta::decode(&fetched.bytes.expect("metadata"))
+                    .expect("read")
+                    .profiles()
+                    .expect("public context");
+                assert_eq!(profiles.matchmaker(), Some("wss://match.example/control"));
+                assert_eq!(profiles.account(0), Some(42));
+            }
         }
     }
 }

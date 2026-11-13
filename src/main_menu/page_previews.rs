@@ -182,6 +182,7 @@ pub fn view(name: &str) -> Option<MenuView> {
 fn page_of(name: &str) -> Option<Page> {
     let page = match name {
         "home-local" | "home-offline" | "home-defeat" | "home-empty" => Page::Home,
+        "profile_other" | "profile_other_unavailable" => Page::PlayerProfile(42),
         "profile"
         | "profile-offline"
         | "profile-avatar"
@@ -210,7 +211,7 @@ fn body(page: Page, name: &str) -> PageView {
             in_flight: (0, None),
             cooldown: None,
         },
-        Page::Profile => profile_fixture(name),
+        Page::Profile | Page::PlayerProfile(_) => profile_fixture(name),
         Page::Heroes => PageView::Heroes,
         Page::Hero(hero) => PageView::Hero {
             hero,
@@ -238,8 +239,24 @@ fn profile_fixture(name: &str) -> PageView {
         avatar.notice = Some("Avatar changes are not available on this service yet.".to_owned());
     }
     PageView::Profile {
-        name: "mira#2207".to_owned(),
-        ratings: if name == "profile-empty" {
+        read_only: name.starts_with("profile_other"),
+        notice: (name == "profile_other_unavailable")
+            .then(|| "This player's profile is unavailable".into()),
+        public_page: name.starts_with("profile_other").then_some((
+            0,
+            if name == "profile_other_unavailable" {
+                0
+            } else {
+                6
+            },
+        )),
+        name: if name == "profile_other_unavailable" {
+            "Player #42"
+        } else {
+            "mira#2207"
+        }
+        .to_owned(),
+        ratings: if name == "profile-empty" || name == "profile_other_unavailable" {
             Vec::new()
         } else {
             vec![
@@ -257,8 +274,21 @@ fn profile_fixture(name: &str) -> PageView {
                 },
             ]
         },
-        matches: if name == "profile-empty" {
+        matches: if name == "profile-empty" || name == "profile_other_unavailable" {
             Vec::new()
+        } else if name == "profile_other" {
+            matches(false)
+                .into_iter()
+                .take(6)
+                .map(|mut row| {
+                    row.hero = None;
+                    row.kda = None;
+                    row.net_worth = None;
+                    row.watchable = false;
+                    row.details_available = false;
+                    row
+                })
+                .collect()
         } else {
             matches(name == "profile-offline")
         }
@@ -278,7 +308,7 @@ fn ladder_fixture(name: &str) -> PageView {
         board.disconnected();
     }
     PageView::Leaderboard {
-        board,
+        board: Box::new(board),
         field: FieldView {
             label: "Find a nickname",
             shown: String::new(),

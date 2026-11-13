@@ -272,7 +272,7 @@ pub enum PageView {
         demo: bool,
     },
     Leaderboard {
-        board: super::leaderboard::Board,
+        board: Box<super::leaderboard::Board>,
         field: FieldView,
     },
     /// A page of fields: the service, login, registration, direct connect.
@@ -306,6 +306,9 @@ pub enum PageView {
     Profile {
         name: String,
         ratings: Vec<super::account_page::Rating>,
+        read_only: bool,
+        notice: Option<String>,
+        public_page: Option<(usize, usize)>,
         avatar: super::avatar::View,
         matches: std::sync::Arc<Vec<super::history::Match>>,
     },
@@ -608,6 +611,7 @@ impl MenuCore {
                 cooldown: self.cooldown(),
             },
             Page::Profile => self.profile_view(),
+            Page::PlayerProfile(_) => self.visitor_view(),
             Page::Heroes => PageView::Heroes,
             Page::Hero(hero) => self.hero_page(hero),
             Page::Leaderboard => self.leaderboard_view(),
@@ -667,7 +671,7 @@ impl MenuCore {
 
     fn leaderboard_view(&self) -> PageView {
         PageView::Leaderboard {
-            board: self.board.clone(),
+            board: Box::new(self.board.clone()),
             field: FieldView {
                 label: "Find a nickname",
                 shown: self.form.value(0).to_owned(),
@@ -808,6 +812,9 @@ impl MenuCore {
             name,
             ratings,
             avatar: self.avatar.view.clone(),
+            read_only: false,
+            notice: None,
+            public_page: None,
             matches: self.local_history.cards(self.library.records()),
         }
     }

@@ -80,19 +80,43 @@ pub fn tabs(kit: &mut Kit, root: Entity, matches: bool, player: &str) {
     }
 }
 
-pub fn profile(
-    kit: &mut Kit,
-    root: Entity,
-    name: &str,
-    connected: bool,
-    ratings: &[Rating],
-    matches: &[Match],
-    avatar: &super::avatar::View,
-    clock: super::page_time::Clock,
-) {
+pub struct Profile<'a> {
+    pub name: &'a str,
+    pub connected: bool,
+    pub read_only: bool,
+    pub ratings: &'a [Rating],
+    pub matches: &'a [Match],
+    pub avatar: &'a super::avatar::View,
+    pub notice: Option<&'a str>,
+    pub public_page: Option<(usize, usize)>,
+}
+
+pub fn profile(kit: &mut Kit, root: Entity, data: Profile<'_>, clock: super::page_time::Clock) {
     let page = profile_page(kit, root);
-    tabs(kit, page, false, name);
-    profile_header(kit, page, name, connected, avatar);
+    if data.read_only {
+        let tabs = kit.node(
+            page,
+            Node {
+                height: px(46),
+                align_items: AlignItems::Center,
+                ..default()
+            },
+        );
+        kit.typed(tabs, "PROFILE", theme::LABEL, theme::INK_1);
+    } else {
+        tabs(kit, page, false, data.name);
+    }
+    profile_header(
+        kit,
+        page,
+        data.name,
+        data.connected && !data.read_only,
+        data.avatar,
+        data.read_only,
+    );
+    if let Some(notice) = data.notice {
+        kit.text(page, notice, 14.0, theme::INK_3);
+    }
     let body = kit.node(
         page,
         Node {
@@ -111,11 +135,11 @@ pub fn profile(
             ..default()
         },
     );
-    if connected && ratings.iter().any(|rating| rating.games > 0) {
-        rating_cards(kit, left, ratings);
+    if data.connected && data.ratings.iter().any(|rating| rating.games > 0) {
+        rating_cards(kit, left, data.ratings);
     }
-    recent_matches(kit, left, matches, clock);
-    most_played_column(kit, body, matches);
+    recent_matches(kit, left, data.matches, clock, data.public_page);
+    most_played_column(kit, body, data.matches);
 }
 
 fn profile_page(kit: &mut Kit, root: Entity) -> Entity {
@@ -155,6 +179,7 @@ fn profile_header(
     name: &str,
     connected: bool,
     avatar: &super::avatar::View,
+    read_only: bool,
 ) {
     let header = kit.node(
         page,
@@ -179,7 +204,16 @@ fn profile_header(
             ..default()
         },
     );
-    if connected {
+    if read_only {
+        kit.button_role(
+            header,
+            "BACK",
+            Act::Back,
+            Tone::Secondary,
+            46.0,
+            theme::TABLE_ACTION,
+        );
+    } else if connected {
         let sign_out = kit.button_role(
             header,
             "SIGN OUT",
@@ -301,7 +335,13 @@ fn rating_badge(kit: &mut Kit, card: Entity, rating: &Rating) {
     );
 }
 
-fn recent_matches(kit: &mut Kit, left: Entity, matches: &[Match], clock: super::page_time::Clock) {
+fn recent_matches(
+    kit: &mut Kit,
+    left: Entity,
+    matches: &[Match],
+    clock: super::page_time::Clock,
+    public_page: Option<(usize, usize)>,
+) {
     let title = kit.node(
         left,
         Node {
@@ -312,21 +352,55 @@ fn recent_matches(kit: &mut Kit, left: Entity, matches: &[Match], clock: super::
         },
     );
     caption(kit, title, "RECENT MATCHES");
-    let all = kit.quiet(
-        title,
-        "All matches",
-        Act::Go(Page::MatchHistory),
-        theme::BODY,
-        theme::LINK,
-    );
-    kit.commands
-        .entity(all)
-        .entry::<Node>()
-        .and_modify(|mut node| {
-            node.min_height = px(20);
-            node.height = px(20);
-        });
-    rows(kit, left, &matches[..matches.len().min(6)], false, clock);
+    if let Some((page, total)) = public_page {
+        if page > 0 {
+            kit.quiet(
+                title,
+                "NEWER MATCHES",
+                Act::ProfileMatchesPage(-1),
+                theme::BODY,
+                theme::LINK,
+            );
+        }
+        if (page + 1) * super::player_profile::PAGE_SIZE < total {
+            kit.quiet(
+                title,
+                "OLDER MATCHES",
+                Act::ProfileMatchesPage(1),
+                theme::BODY,
+                theme::LINK,
+            );
+        }
+    } else {
+        let all = kit.quiet(
+            title,
+            "All matches",
+            Act::Go(Page::MatchHistory),
+            theme::BODY,
+            theme::LINK,
+        );
+        kit.commands
+            .entity(all)
+            .entry::<Node>()
+            .and_modify(|mut node| {
+                node.min_height = px(20);
+                node.height = px(20);
+            });
+    }
+    if public_page.is_some() && matches.is_empty() {
+        kit.text(
+            left,
+            "No public matches reported by this matchmaker",
+            14.0,
+            theme::INK_3,
+        );
+    } else if public_page.is_some() {
+        for game in matches.iter().take(6) {
+            match_row(kit, left, game, false, clock, true);
+        }
+    } else {
+        rows(kit, left, &matches[..matches.len().min(6)], false, clock);
+    }
 }
 
 fn most_played_column(kit: &mut Kit, body: Entity, matches: &[Match]) {
@@ -449,7 +523,7 @@ pub fn rows(
         );
     }
     for game in matches {
-        match_row(kit, parent, game, full, clock);
+        match_row(kit, parent, game, full, clock, false);
     }
 }
 
@@ -459,6 +533,7 @@ fn match_row(
     game: &Match,
     full: bool,
     clock: super::page_time::Clock,
+    public: bool,
 ) {
     let color = match game.result {
         ResultKind::Won => theme::RADIANT_TEXT,
@@ -484,7 +559,7 @@ fn match_row(
             ..BorderColor::all(Color::NONE)
         },
     ));
-    match_numbers(kit, row, game, full, clock);
+    match_numbers(kit, row, game, full, clock, public);
     kit.node(
         row,
         Node {
@@ -492,7 +567,9 @@ fn match_row(
             ..default()
         },
     );
-    match_actions(kit, row, game);
+    if !public {
+        match_actions(kit, row, game);
+    }
 }
 
 fn match_numbers(
@@ -501,6 +578,7 @@ fn match_numbers(
     game: &Match,
     full: bool,
     clock: super::page_time::Clock,
+    public: bool,
 ) {
     let color = match game.result {
         ResultKind::Won => theme::RADIANT_TEXT,
@@ -512,7 +590,12 @@ fn match_numbers(
     if let Some(hero) = game.hero {
         kit.hero_icon(row, hero.0, 50.0);
     }
-    cell(kit, row, game.hero_name(), 136.0, theme::INK_1);
+    let hero = if public && game.hero.is_none() {
+        "—"
+    } else {
+        game.hero_name()
+    };
+    cell(kit, row, hero, 136.0, theme::INK_1);
     cell(
         kit,
         row,

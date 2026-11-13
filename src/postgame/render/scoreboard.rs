@@ -276,10 +276,11 @@ fn row_line(kit: &mut Kit, parent: Entity, view: &View, row: &Row, y: f32) {
             ..default()
         },
     );
-    words(
+    profile_name(
         kit,
         name_line,
-        row.display_name(),
+        view,
+        row,
         Node::default(),
         bold(14.0),
         if selected {

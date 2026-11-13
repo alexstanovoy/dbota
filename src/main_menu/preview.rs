@@ -105,7 +105,7 @@ fn hover_preview(
 }
 
 /// The names `--menu-preview` takes.
-pub const NAMES: [&str; 53] = [
+pub const NAMES: [&str; 55] = [
     "service",
     "login",
     "register",
@@ -142,6 +142,8 @@ pub const NAMES: [&str; 53] = [
     "play-cooldown",
     "play-searching-bots-overloaded",
     "profile",
+    "profile_other",
+    "profile_other_unavailable",
     "profile-offline",
     "profile-details-unavailable",
     "profile-avatar",

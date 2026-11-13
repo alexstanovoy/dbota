@@ -60,6 +60,7 @@ pub struct Level {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Recording {
     pub match_id: u64,
+    pub profiles: Option<std::sync::Arc<bota_replay::meta::Profiles>>,
     pub map: u16,
     pub tick_rate: u32,
     pub pregame_ticks: u32,
@@ -84,6 +85,7 @@ impl Recording {
     pub fn from_meta(meta: &Meta, slots: impl Iterator<Item = SlotId>) -> Self {
         let mut recording = Self {
             match_id: meta.header.match_id,
+            profiles: meta.profiles().map(std::sync::Arc::new),
             map: meta.header.map,
             tick_rate: u32::from(meta.header.tick_rate.max(1)),
             pregame_ticks: meta.header.pregame_ticks,
@@ -97,7 +99,7 @@ impl Recording {
             kills: Vec::new(),
             purchases: Vec::new(),
             levels: Vec::new(),
-            limited: !meta.complete || meta.skipped > 0,
+            limited: !meta.complete || meta.damaged,
             roster_complete: true,
             restricted: false,
             end_tick: meta.records.iter().find_map(|record| match record {

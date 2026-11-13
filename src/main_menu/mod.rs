@@ -46,8 +46,10 @@ mod page_previews;
 mod page_time;
 mod pages;
 mod play;
+pub(crate) mod player_profile;
 mod prefs;
 mod preview;
+mod profile_metadata;
 mod replay_info;
 pub(crate) mod results;
 mod screens;
@@ -64,8 +66,7 @@ pub(crate) mod tests;
 
 #[cfg(not(target_arch = "wasm32"))]
 pub use core::Claim;
-#[cfg(test)]
-pub use core::Page;
+pub(crate) use core::Page;
 pub use core::{Act, DEFAULT_NAME, GameKind, MenuCore};
 pub use kit::{Disabled, Wash};
 #[cfg(test)]

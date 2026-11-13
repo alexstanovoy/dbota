@@ -224,6 +224,7 @@ fn player_rows(kit: &mut Kit, page: Entity, list: Entity, board: &Board) {
             list,
             row,
             board.query.players,
+            &board.origin,
             board
                 .own
                 .as_ref()
@@ -234,7 +235,7 @@ fn player_rows(kit: &mut Kit, page: Entity, list: Entity, board: &Board) {
     if let Some(own) = &board.own
         && !board.rows.iter().any(|row| row.account == own.account)
     {
-        player(kit, page, own, board.query.players, true);
+        player(kit, page, own, board.query.players, &board.origin, true);
     }
     if board.status == Status::Ready {
         let footer = kit.text(page, "", 12.0, theme::INK_4);
@@ -304,8 +305,32 @@ fn segment(kit: &mut Kit, parent: Entity, name: &str, act: Act, selected: bool, 
     }
 }
 
-fn player(kit: &mut Kit, parent: Entity, row: &Row, kind: Players, own: bool) -> Entity {
+fn player(
+    kit: &mut Kit,
+    parent: Entity,
+    row: &Row,
+    kind: Players,
+    service: &str,
+    own: bool,
+) -> Entity {
     let (line, medal) = player_frame(kit, parent, row, own);
+    if row.account != 0 && bota_radovid::matchmaker_identity(service).is_some() {
+        kit.row_action(
+            line,
+            &format!("leaderboard profile {}", row.account),
+            Act::InspectPlayer(super::player_profile::Target {
+                service: service.to_owned(),
+                account: row.account,
+            }),
+            if own {
+                theme::LADDER_OWN
+            } else if row.rank <= 3 {
+                theme::LADDER_TOP
+            } else {
+                theme::LADDER_ROW
+            },
+        );
+    }
     let rank = cell(kit, line, 56.0, false, JustifyContent::FlexEnd);
     kit.typed(
         rank,

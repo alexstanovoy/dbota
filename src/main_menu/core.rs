@@ -72,13 +72,18 @@ pub enum Page {
     /// The settings screen, Dota's dashboard's: hotkeys, options, video and
     /// audio (drawn by [`crate::settings`]).
     Settings,
+    PlayerProfile(u64),
 }
 
 impl Page {
     /// Whether the page is the service's, shown only with an account.
     pub fn needs_account(self) -> bool {
         match self {
-            Page::MyGames | Page::Lobbies | Page::Lobby | Page::Leaderboard => true,
+            Page::MyGames
+            | Page::Lobbies
+            | Page::Lobby
+            | Page::Leaderboard
+            | Page::PlayerProfile(_) => true,
             #[cfg(not(target_arch = "wasm32"))]
             Page::DemoHero => true,
             _ => false,
@@ -97,6 +102,8 @@ pub enum Act {
     Play(super::PlayAction),
     Avatar(super::avatar::Action),
     InspectHero(bota_proto::HeroId),
+    InspectPlayer(super::player_profile::Target),
+    ProfileMatchesPage(i8),
     MatchDetails(String),
     WatchHistory(String),
     HistoryMode(Option<String>),
@@ -502,6 +509,7 @@ pub(super) enum Asked {
     Demo,
     History,
     Profile,
+    Visitor(u64, super::player_profile::Part),
     Leaderboard(u64),
     Artifact(MatchId),
     Meta(MatchId),
@@ -659,6 +667,7 @@ pub struct MenuCore {
     /// The account's latest finished matches, from the service.
     pub(super) history: Vec<MatchResult>,
     pub(super) account_profile: Option<PublicAccount>,
+    pub(super) profiles: super::player_profile::Reader,
     /// The game server a local lobby starts, when not looked for.
     pub(super) server_binary: Option<std::path::PathBuf>,
     /// Whether the server is also looked for in `$BOTA_SERVER` and on the `PATH`.
@@ -704,7 +713,7 @@ impl MenuCore {
         self.store
             .read(Entry::Session)
             .and_then(|t| Saved::parse(&t))
-            .filter(|s| s.service == self.prefs.service)
+            .filter(|s| bota_radovid::same_matchmaker(&s.service, &self.prefs.service))
     }
 
     /// A menu over `store` that has not tried the service yet.
@@ -806,6 +815,7 @@ impl MenuCore {
             meta: Default::default(),
             history: Vec::new(),
             account_profile: None,
+            profiles: Default::default(),
             server_binary: None,
             server_environment: false,
             hosted_at: None,
@@ -1349,6 +1359,7 @@ impl MenuCore {
         self.resume_result_replay();
         self.update_avatar();
         self.drive_leaderboard();
+        self.drive_profile();
         if self.page == Page::Replays {
             self.read_summaries();
         }
@@ -1377,6 +1388,7 @@ impl MenuCore {
         let was_signed_in = self.conn == Conn::LoggedIn;
         self.keep_link_lost();
         self.board.disconnected();
+        self.profiles.disconnected();
         self.meta_link_lost();
         let live = was_signed_in && !self.idle();
         self.link_lost = self.account;
@@ -1492,6 +1504,10 @@ impl MenuCore {
     }
 
     fn replied(&mut self, reply: Reply, asked: Asked) {
+        if let Asked::Visitor(generation, part) = asked {
+            self.profile_reply(generation, part, reply);
+            return;
+        }
         match reply {
             Reply::Done if matches!(asked, Asked::LeaveLobby(_)) => {
                 if let Asked::LeaveLobby(id) = asked {
@@ -1525,10 +1541,14 @@ impl MenuCore {
                     _ => {}
                 }
             }
-            Reply::Matches { list } => {
+            Reply::Matches { list } if matches!(asked, Asked::History) => {
                 self.history = list.into_iter().take(usize::from(HISTORY_LEN)).collect();
             }
-            Reply::Account { account } => self.account_profile = Some(account),
+            Reply::Account { account }
+                if matches!(asked, Asked::Profile) && self.my_id() == Some(account.id) =>
+            {
+                self.account_profile = Some(account)
+            }
             Reply::LeaderboardPage { page } => {
                 if let Asked::Leaderboard(generation) = asked {
                     self.leaderboard_page(generation, page);
@@ -1632,6 +1652,10 @@ impl MenuCore {
     }
 
     fn refused(&mut self, error: &Error, asked: Asked) {
+        if let Asked::Visitor(generation, part) = asked {
+            self.profile_refused(generation, part, error);
+            return;
+        }
         // A join refused for whatever reason may be a list out of date (the lobby full, locked,
         // started or gone since): the list is asked again, as the search typed asks it.
         if matches!(asked, Asked::Join(_)) && self.page == Page::Lobbies {
@@ -1970,7 +1994,7 @@ impl MenuCore {
     }
 
     /// Moves to `page` with its form fresh.
-    fn go_form(&mut self, page: Page) {
+    pub(super) fn go_form(&mut self, page: Page) {
         if page != Page::Home && page != Page::Settings {
             self.play.open = false;
         }
@@ -1990,7 +2014,7 @@ impl MenuCore {
         self.lobby_browser_controls();
     }
 
-    fn go(&mut self, page: Page) {
+    pub(super) fn go(&mut self, page: Page) {
         // The settings come back to where they were opened from.
         if page == Page::Settings {
             if self.page != Page::Settings && self.page != Page::Game {
@@ -2100,6 +2124,8 @@ impl MenuCore {
             | Act::Play(_)
             | Act::Avatar(_)
             | Act::InspectHero(_)
+            | Act::InspectPlayer(_)
+            | Act::ProfileMatchesPage(_)
             | Act::MatchDetails(_)
             | Act::WatchHistory(_)
             | Act::HistoryMode(_)
@@ -2198,6 +2224,12 @@ impl MenuCore {
                 self.history_page = self.history_page.saturating_add_signed(isize::from(delta));
             }
             Act::Avatar(action) => self.avatar.act(action),
+            Act::InspectPlayer(target) => {
+                if let Err(message) = self.inspect_player(target) {
+                    self.tell(message, true);
+                }
+            }
+            Act::ProfileMatchesPage(delta) => self.profile_matches_page(delta),
             Act::InspectHero(hero) => {
                 if bota_core::hero_def(hero).is_some() {
                     self.go(Page::Hero(hero));
@@ -2409,6 +2441,7 @@ impl MenuCore {
             // The game and the settings take their own Escape; a game being
             // opened is waited for.
             Page::Game | Page::Settings => {}
+            Page::PlayerProfile(_) => self.back_profile(),
             Page::Register => self.go_form(Page::Login),
             Page::Lobby => self.go(Page::Lobbies),
             page if page != top => self.go(top),
@@ -2455,6 +2488,16 @@ impl MenuCore {
                 if let Err(why) = service_address(&service) {
                     self.tell(why, true);
                     return;
+                }
+                if !bota_radovid::same_matchmaker(&self.prefs.service, &service) {
+                    self.keep_link_lost();
+                    self.meta_link_lost();
+                    self.logout();
+                    self.drop_link();
+                    self.results.clear();
+                    self.history.clear();
+                    self.shown = None;
+                    self.result_request = None;
                 }
                 self.prefs.service = service;
                 self.save_prefs();
@@ -2542,6 +2585,7 @@ impl MenuCore {
         self.account = false;
         self.account_profile = None;
         self.board.disconnected();
+        self.profiles.clear();
         self.avatar.backend(None, false);
         self.games.clear();
         self.lobby = None;
@@ -3251,6 +3295,53 @@ mod result_overlay_tests {
                 .shown_texts()
                 .iter()
                 .any(|text| text == "DIRE VICTORY")
+        );
+    }
+}
+
+#[cfg(test)]
+mod identity_alias_tests {
+    use super::*;
+    #[test]
+    fn an_uncorrelated_public_reply_cannot_overwrite_the_signed_in_account() {
+        let service = crate::main_menu::tests::service();
+        let mut player = crate::main_menu::tests::Player::new(Some(&service));
+        player.register("reply_viewer");
+        let original = player.menu.account_profile.clone();
+        let stranger = bota_radovid::proto::PublicAccount {
+            id: AccountId(player.menu.my_id().expect("logged in").0 + 1000),
+            nickname: "stranger".into(),
+            kind: bota_radovid::proto::AccountKind::Human,
+            online: false,
+            bot_version: None,
+            ratings: Vec::new(),
+            avatar: None,
+        };
+        player
+            .menu
+            .take_reply(u32::MAX, Ok(Reply::Account { account: stranger }));
+        assert_eq!(
+            player.menu.account_profile, original,
+            "unsolicited visitor data never becomes the own profile"
+        );
+    }
+    #[test]
+    fn a_canonical_service_alias_keeps_the_login_and_its_resumable_session() {
+        let service = crate::main_menu::tests::service();
+        let mut player = crate::main_menu::tests::Player::new(Some(&service));
+        player.register("alias_viewer");
+        let id = player.menu.my_id();
+        player.menu.act(Act::Go(Page::Service));
+        player.fill(&[&format!("{}/control/", service.url)]);
+        player.menu.act(Act::Submit);
+        assert!(
+            player.menu.logged_in(),
+            "an endpoint spelling change is not a service switch"
+        );
+        assert_eq!(player.menu.my_id(), id);
+        assert!(
+            player.menu.saved_session().is_some(),
+            "the existing credential remains scoped to the same canonical service"
         );
     }
 }

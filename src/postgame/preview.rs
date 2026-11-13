@@ -15,6 +15,7 @@ use std::{
 
 pub const NAMES: &[&str] = &[
     "match_details",
+    "match_details_foreign_profile",
     "match_details_abandoned",
     "match_details_board_hover",
     "match_details_dire_hover",
@@ -353,8 +354,17 @@ pub fn view(name: &str) -> Option<View> {
         history: !name.contains("postgame"),
         replay: (!stats_only && !name.contains("noreplay"))
             .then(|| Replay::Saved("preview.brp".to_owned())),
+        ..Default::default()
     };
     let mut view = View::new(Arc::new(summary), context);
+    if name == "match_details_foreign_profile" {
+        view.page = Page::Scoreboard;
+        view.notice = Some(format!(
+            "The file claims this profile is at wss://match.example/{}. This claim is not verified. Select that matchmaker explicitly to view it.",
+            "public_namespace/".repeat(20)
+        ));
+    }
+
     if !stats_only {
         view.illustrated_items = template
             .players

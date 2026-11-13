@@ -210,18 +210,26 @@ fn draw_account_page(
             ratings,
             matches,
             avatar,
+            read_only,
+            notice,
+            public_page,
         } => {
             super::account_page::profile(
                 kit,
                 root,
-                name,
-                matches!(view.connection, super::view::Connection::Online(_)),
-                ratings,
-                matches,
-                avatar,
+                super::account_page::Profile {
+                    name,
+                    ratings,
+                    matches,
+                    avatar,
+                    read_only: *read_only,
+                    connected: matches!(view.connection, super::view::Connection::Online(_)),
+                    notice: notice.as_deref(),
+                    public_page: *public_page,
+                },
                 clock,
             );
-            if view.offer.is_none() {
+            if !*read_only && view.offer.is_none() {
                 super::avatar_draw::dialog(kit, root, avatar);
             }
         }

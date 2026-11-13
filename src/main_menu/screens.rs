@@ -76,11 +76,14 @@ pub fn draw(
         server: &server,
     };
     kit.commands.entity(page).despawn_children();
-    // Tab and a controller's pad walk the buttons of Play's open panel and of the heroes' pages.
+    // Tab and a controller's pad walk the buttons of Play's open panel, the heroes' pages and the player lists.
     let walkable = (view.play.open && view.page == super::core::Page::Home)
         || matches!(
             view.page,
-            super::core::Page::Heroes | super::core::Page::Hero(_)
+            super::core::Page::Heroes
+                | super::core::Page::Hero(_)
+                | super::core::Page::Leaderboard
+                | super::core::Page::PlayerProfile(_)
         );
     if walkable && view.offer.is_none() && view.confirm.is_none() {
         kit.commands

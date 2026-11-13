@@ -49,6 +49,48 @@ pub fn button(
         .id()
 }
 
+pub fn profile_name(
+    kit: &mut Kit,
+    parent: Entity,
+    view: &super::super::view::View,
+    row: &Row,
+    node: Node,
+    role: theme::Type,
+    colour: Color,
+) -> Entity {
+    let Some(target) = view.profile_target(row.slot) else {
+        return words(kit, parent, row.display_name(), node, role, colour);
+    };
+    let link = button(
+        kit,
+        parent,
+        &format!("results profile {}", row.slot.0),
+        node,
+        Action::Profile(target),
+        Color::NONE,
+    );
+    kit.commands.entity(link).insert((
+        Outline {
+            width: px(1),
+            offset: px(1),
+            color: Color::NONE,
+        },
+        Hover {
+            rest: Color::NONE,
+            over: theme::RESULT_HOVER_ROW,
+        },
+    ));
+    words(
+        kit,
+        link,
+        row.display_name(),
+        Node::default(),
+        role,
+        theme::LINK.1,
+    );
+    link
+}
+
 pub fn word_button(
     kit: &mut Kit,
     parent: Entity,

@@ -40,6 +40,9 @@ pub struct Context {
     pub owner: Option<SlotId>,
     pub history: bool,
     pub replay: Option<Replay>,
+    /// Runtime account mapping received from the authenticated service, never from a file.
+    pub live_service: Option<String>,
+    pub live_accounts: Vec<(SlotId, u64)>,
 }
 
 impl Context {
@@ -51,6 +54,8 @@ impl Context {
             && self.rating == other.rating
             && self.reason == other.reason
             && self.owner == other.owner
+            && self.live_service == other.live_service
+            && self.live_accounts == other.live_accounts
     }
 }
 
@@ -110,6 +115,28 @@ pub struct View {
 }
 
 impl View {
+    pub fn profile_target(&self, slot: SlotId) -> Option<crate::main_menu::player_profile::Target> {
+        self.row(slot)?;
+        if !self.context.history
+            && let Some(service) = &self.context.live_service
+            && let Some((_, account)) = self
+                .context
+                .live_accounts
+                .iter()
+                .find(|(seat, _)| *seat == slot)
+        {
+            return Some(crate::main_menu::player_profile::Target {
+                service: service.clone(),
+                account: *account,
+            });
+        }
+        let profiles = self.summary.recording.as_ref()?.profiles.as_ref()?;
+        Some(crate::main_menu::player_profile::Target {
+            service: bota_radovid::shareable_matchmaker_identity(profiles.matchmaker()?)?,
+            account: profiles.account(slot.0)?,
+        })
+    }
+
     pub fn new(summary: Arc<MatchSummary>, context: Context) -> Self {
         let mut view = Self {
             illustrated_items: Vec::new(),
@@ -260,6 +287,7 @@ pub enum Action {
     Next,
     Page(Page),
     Player(SlotId),
+    Profile(crate::main_menu::player_profile::Target),
     Back,
     Picker,
     Metric(Metric),

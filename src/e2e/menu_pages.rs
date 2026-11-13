@@ -1124,3 +1124,781 @@ fn recent_match_cards_receive_the_pointer() {
         "the match row is the actual pointer target"
     );
 }
+
+#[test]
+fn leaderboard_player_click_and_keyboard_open_the_served_read_only_profile() {
+    use bevy::input::ButtonState;
+    use bevy::prelude::*;
+    use bevy::text::FontSize;
+    let service = crate::main_menu::tests::service();
+    let (account, expected) = crate::main_menu::tests::registered_public_profile(&service);
+    let mut client = super::menu::signed_up(&service, "profile_viewer");
+    client
+        .world_mut()
+        .non_send_mut::<MenuCore>()
+        .avatar_backend(true);
+    act(&mut client, Act::Go(Page::Leaderboard));
+    client.until("empty service board received", |client| {
+        client
+            .shown_texts()
+            .iter()
+            .any(|text| text == "No matching players.")
+    });
+    crate::main_menu::tests::pin_profile_leaderboard_row(
+        &mut client.world_mut().non_send_mut::<MenuCore>(),
+        account,
+    );
+    client.frames(4);
+    let name = format!("leaderboard profile {account}");
+    let world = client.world_mut();
+    let row = world
+        .query_filtered::<(Entity, &Name), With<NativeButton>>()
+        .iter(world)
+        .find(|(_, label)| label.as_str() == name)
+        .map(|(entity, _)| entity);
+    assert!(
+        row.is_some(),
+        "a public leaderboard account is a clickable row"
+    );
+    assert!(
+        world
+            .get::<bevy::input_focus::tab_navigation::TabIndex>(row.expect("row"))
+            .is_some(),
+        "the row participates in native focus"
+    );
+    let original_cache =
+        crate::main_menu::tests::own_cached_profile_id(client.world().non_send::<MenuCore>());
+    client.click_named(&name);
+    let profile_ready = |client: &mut super::harness::Client| {
+        let world = client.world_mut();
+        world
+            .query::<(&Text, &TextFont)>()
+            .iter(world)
+            .any(|(text, font)| {
+                text.0 == expected && matches!(font.font_size,FontSize::Px(size)if size>=28.0)
+            })
+    };
+    client.within(
+        std::time::Duration::from_secs(20),
+        "target profile loaded from the service",
+        profile_ready,
+    );
+    client.until(
+        "the served public avatar is drawn without an editor",
+        |client| {
+            crate::main_menu::tests::drawn_profile_avatar(client.world_mut())
+                == Some([60, 130, 210, 255])
+        },
+    );
+    assert_eq!(
+        crate::main_menu::tests::own_cached_profile_id(client.world().non_send::<MenuCore>()),
+        original_cache,
+        "visitor replies never overwrite the owner profile cache"
+    );
+    let world = client.world_mut();
+    let controls: Vec<_> = world
+        .query_filtered::<&Name, With<NativeButton>>()
+        .iter(world)
+        .map(ToString::to_string)
+        .collect();
+    for forbidden in ["edit avatar", "SIGN OUT", "CHANGE SERVICE"] {
+        assert!(
+            !controls
+                .iter()
+                .any(|name| name.eq_ignore_ascii_case(forbidden)),
+            "another account is read-only: {forbidden}"
+        );
+    }
+    assert!(
+        !client.shown_texts().iter().any(|text| text == "1750"),
+        "profile ratings never come from a stale board label/value"
+    );
+    client.click_named("back");
+    assert_eq!(
+        client.world().non_send::<MenuCore>().page(),
+        Page::Leaderboard
+    );
+    let focused_name = |client: &super::harness::Client| {
+        client
+            .world()
+            .resource::<bevy::input_focus::InputFocus>()
+            .get()
+            .and_then(|entity| client.world().get::<Name>(entity))
+            .map(|name| name.as_str().to_owned())
+    };
+    for _ in 0..32 {
+        if focused_name(&client).as_deref() == Some(name.as_str()) {
+            break;
+        }
+        client.key(KeyCode::Tab, ButtonState::Pressed);
+        client.key(KeyCode::Tab, ButtonState::Released);
+        client.frames(2);
+    }
+    assert_eq!(
+        focused_name(&client).as_deref(),
+        Some(name.as_str()),
+        "Tab reaches the same player row across redraws"
+    );
+    client.key(KeyCode::Enter, ButtonState::Pressed);
+    client.key(KeyCode::Enter, ButtonState::Released);
+    client.frames(3);
+    client.within(
+        std::time::Duration::from_secs(20),
+        "keyboard opens the same served profile",
+        profile_ready,
+    );
+    client.click_named("back");
+    let gamepad = client
+        .world_mut()
+        .spawn((
+            bevy::input::gamepad::Gamepad::default(),
+            bevy::input::gamepad::GamepadSettings::default(),
+        ))
+        .id();
+    let pad = |client: &mut super::harness::Client, button, value| {
+        client
+            .world_mut()
+            .write_message(bevy::input::gamepad::RawGamepadEvent::Button(
+                bevy::input::gamepad::RawGamepadButtonChangedEvent::new(gamepad, button, value),
+            ));
+        client.frames(1);
+    };
+    for _ in 0..32 {
+        if focused_name(&client).as_deref() == Some(name.as_str()) {
+            break;
+        }
+        pad(
+            &mut client,
+            bevy::input::gamepad::GamepadButton::DPadDown,
+            1.0,
+        );
+        pad(
+            &mut client,
+            bevy::input::gamepad::GamepadButton::DPadDown,
+            0.0,
+        );
+        client.frames(2);
+    }
+    assert_eq!(
+        focused_name(&client).as_deref(),
+        Some(name.as_str()),
+        "a gamepad reaches the same player row"
+    );
+    pad(&mut client, bevy::input::gamepad::GamepadButton::South, 1.0);
+    pad(&mut client, bevy::input::gamepad::GamepadButton::South, 0.0);
+    client.within(
+        std::time::Duration::from_secs(20),
+        "gamepad opens the same served profile",
+        profile_ready,
+    );
+    act(&mut client, Act::Go(Page::Profile));
+    client.frames(4);
+    let world = client.world_mut();
+    assert!(
+        world
+            .query_filtered::<&Name, With<NativeButton>>()
+            .iter(world)
+            .any(|name| name.as_str() == "sign out"),
+        "the own profile still has account controls"
+    );
+    assert!(
+        world
+            .query_filtered::<&Name, With<NativeButton>>()
+            .iter(world)
+            .any(|name| name.as_str() == "edit avatar"),
+        "visiting somebody else never disables the owner's editor"
+    );
+}
+
+#[test]
+fn a_history_results_player_opens_the_public_profile_and_back_restores_the_match() {
+    let service = crate::main_menu::tests::portable_service();
+    let (account, expected) = crate::main_menu::tests::registered_public_profile(&service);
+    let mut client = super::menu::signed_up(&service, "history_viewer");
+    crate::main_menu::tests::use_declared_public_fixture_identity(
+        &mut client.world_mut().non_send_mut::<MenuCore>(),
+        &service,
+    );
+    let mut metadata = crate::postgame::preview::metadata("match_details");
+    metadata.extend(
+        bota_proto::encode_frame_to_vec(&(
+            13_u8,
+            service.public_identity.as_deref(),
+            vec![(0_u8, Some(account))],
+        ))
+        .expect("appended provenance"),
+    );
+    crate::main_menu::tests::install_profile_history(
+        &mut client.world_mut().non_send_mut::<MenuCore>(),
+        metadata,
+    );
+    act(&mut client, Act::Go(Page::MatchHistory));
+    client.frames(5);
+    client.click_named("history DETAILS");
+    client.click_named("results scoreboard");
+    client.click_named("results profile 0");
+    client.within(
+        std::time::Duration::from_secs(20),
+        "the history player's served profile",
+        |client| client.shown_texts().iter().any(|text| text == &expected),
+    );
+    assert!(
+        !client
+            .world()
+            .non_send::<crate::postgame::PostGame>()
+            .visible()
+    );
+    client.click_named("back");
+    assert!(
+        client
+            .world()
+            .non_send::<crate::postgame::PostGame>()
+            .visible(),
+        "Back restores the inspected match"
+    );
+    assert!(client.shown_texts().iter().any(|text| text == "NET WORTH"));
+    client
+        .world_mut()
+        .resource_mut::<bevy::input_focus::InputFocus>()
+        .clear();
+    let focused_name = |client: &super::harness::Client| {
+        client
+            .world()
+            .resource::<bevy::input_focus::InputFocus>()
+            .get()
+            .and_then(|entity| client.world().get::<bevy::prelude::Name>(entity))
+            .map(|name| name.as_str().to_owned())
+    };
+    for _ in 0..64 {
+        if focused_name(&client).as_deref() == Some("results profile 0") {
+            break;
+        }
+        client.key(
+            bevy::prelude::KeyCode::Tab,
+            bevy::input::ButtonState::Pressed,
+        );
+        client.key(
+            bevy::prelude::KeyCode::Tab,
+            bevy::input::ButtonState::Released,
+        );
+        client.frames(2);
+    }
+    assert_eq!(
+        focused_name(&client).as_deref(),
+        Some("results profile 0"),
+        "keyboard focus stays in the result modal and reaches its profile name"
+    );
+    client.key(
+        bevy::prelude::KeyCode::Enter,
+        bevy::input::ButtonState::Pressed,
+    );
+    client.key(
+        bevy::prelude::KeyCode::Enter,
+        bevy::input::ButtonState::Released,
+    );
+    client.within(
+        std::time::Duration::from_secs(20),
+        "keyboard opens the same public account",
+        |client| client.shown_texts().iter().any(|text| text == &expected),
+    );
+    client.click_named("back");
+    client.click_named("results close");
+    assert_eq!(
+        client.world().non_send::<MenuCore>().page(),
+        Page::MatchHistory
+    );
+}
+
+#[test]
+fn foreign_and_corrupt_replay_profiles_never_supply_connection_instructions() {
+    use bevy::prelude::*;
+    let service = crate::main_menu::tests::service();
+    let mut client = super::menu::signed_up(&service, "replay_viewer");
+    let foreign = std::net::TcpListener::bind("127.0.0.1:0").expect("foreign destination trap");
+    foreign.set_nonblocking(true).expect("nonblocking");
+    let prefix = "wss://foreign.example/";
+    let uri = format!(
+        "{prefix}{}",
+        "x".repeat(512 - prefix.len() - "/control".len()) + "/control"
+    );
+    let original =
+        crate::main_menu::tests::own_cached_profile_id(client.world().non_send::<MenuCore>());
+    let good =
+        bota_proto::encode_frame_to_vec(&(13_u8, Some(uri.as_str()), vec![(0_u8, Some(42_u64))]))
+            .expect("foreign provenance");
+    for (tail, foreign_valid) in [
+        (Vec::new(), false),
+        (
+            bota_proto::encode_frame_to_vec(&(
+                13_u8,
+                Some(format!(
+                    "ws://{}",
+                    foreign.local_addr().expect("trap address")
+                )),
+                vec![(0_u8, Some(42_u64))],
+            ))
+            .expect("private claim"),
+            false,
+        ),
+        (
+            bota_proto::encode_frame_to_vec(&(13_u8, None::<&str>, vec![(0_u8, None::<u64>)]))
+                .expect("local"),
+            false,
+        ),
+        ([good.clone(), vec![4, 0]].concat(), false),
+        (
+            bota_proto::encode_frame_to_vec(&(
+                13_u8,
+                Some("wss://ex\u{202e}ample.org"),
+                vec![(0_u8, Some(42_u64))],
+            ))
+            .expect("corrupt"),
+            false,
+        ),
+        (good, true),
+    ] {
+        let mut metadata = crate::postgame::preview::metadata("match_details");
+        metadata.extend(tail);
+        crate::main_menu::tests::install_profile_history(
+            &mut client.world_mut().non_send_mut::<MenuCore>(),
+            metadata,
+        );
+        act(&mut client, Act::Go(Page::MatchHistory));
+        client.frames(5);
+        client.click_named("history DETAILS");
+        client.click_named("results scoreboard");
+        let world = client.world_mut();
+        let links = world
+            .query_filtered::<&Name, With<NativeButton>>()
+            .iter(world)
+            .filter(|name| name.as_str().starts_with("results profile "))
+            .count();
+        assert_eq!(
+            crate::main_menu::tests::public_profile_request_count(
+                client.world().non_send::<MenuCore>()
+            ),
+            0,
+            "listing and rendering metadata never requests profiles"
+        );
+        if foreign_valid {
+            assert_eq!(links, 1);
+            client.click_named("results profile 0");
+            assert!(
+                client.shown_texts().iter().any(|text| text.contains(&uri)),
+                "foreign matchmaker identity is visible as plain text"
+            );
+            assert!(
+                client
+                    .shown_texts()
+                    .iter()
+                    .any(|text| text.contains("The file claims") && text.contains("not verified"))
+            );
+            let world = client.world_mut();
+            let (_, node, layout) = world
+                .query::<(&Text, &ComputedNode, &bevy::text::TextLayoutInfo)>()
+                .iter(world)
+                .find(|(text, _, _)| text.contains(&uri))
+                .expect("drawn foreign notice");
+            assert!(
+                layout.size.x <= node.size().x + 1.0,
+                "a maximum-length identity fits the notice width"
+            );
+            assert!(
+                layout.size.y <= node.size().y + 1.0,
+                "the complete identity fits the notice height"
+            );
+            assert!(
+                client
+                    .world()
+                    .non_send::<crate::postgame::PostGame>()
+                    .visible()
+            );
+            let world = client.world_mut();
+            assert!(
+                world
+                    .query_filtered::<&Name, With<NativeButton>>()
+                    .iter(world)
+                    .any(|name| name.as_str() == "results dismiss"),
+                "the readable notice can be dismissed without closing the result"
+            );
+            let focus = client
+                .world()
+                .resource::<bevy::input_focus::InputFocus>()
+                .get()
+                .and_then(|entity| client.world().get::<Name>(entity))
+                .map(|name| name.as_str());
+            assert_eq!(
+                focus,
+                Some("results dismiss"),
+                "the notice takes keyboard focus from the covered result controls"
+            );
+            client.key(KeyCode::Enter, bevy::input::ButtonState::Pressed);
+            client.key(KeyCode::Enter, bevy::input::ButtonState::Released);
+            client.frames(3);
+            assert!(
+                client
+                    .world()
+                    .non_send::<crate::postgame::PostGame>()
+                    .visible()
+            );
+            assert!(!client.shown_texts().iter().any(|text| text.contains(&uri)));
+        } else {
+            assert_eq!(
+                links, 0,
+                "old, local, or corrupt metadata supplies no profile buttons"
+            );
+        }
+        client.frames(8);
+        assert!(
+            matches!(foreign.accept(), Err(error) if error.kind() == std::io::ErrorKind::WouldBlock),
+            "replay identity must never be dialled"
+        );
+        assert_eq!(
+            crate::main_menu::tests::public_profile_request_count(
+                client.world().non_send::<MenuCore>()
+            ),
+            0,
+            "a foreign click never queries the configured service either"
+        );
+        assert_eq!(
+            crate::main_menu::tests::own_cached_profile_id(client.world().non_send::<MenuCore>()),
+            original
+        );
+        client.click_named("results close");
+    }
+}
+
+#[test]
+fn public_profile_layout_shows_public_ratings_without_account_edits_or_invented_heroes() {
+    use bevy::prelude::*;
+    for name in ["profile_other", "profile_other_unavailable"] {
+        let mut client = super::harness::Client::run(&["--menu-preview", name]);
+        client.until("the public profile fixture is drawn", |client| {
+            client.shown_texts().iter().any(|text| {
+                text == if name == "profile_other" {
+                    "mira#2207"
+                } else {
+                    "Player #42"
+                }
+            })
+        });
+        let world = client.world_mut();
+        let controls: Vec<_> = world
+            .query_filtered::<&Name, With<NativeButton>>()
+            .iter(world)
+            .map(ToString::to_string)
+            .collect();
+        for forbidden in ["edit avatar", "sign out", "change service"] {
+            assert!(
+                !controls
+                    .iter()
+                    .any(|name| name.eq_ignore_ascii_case(forbidden))
+            );
+        }
+        assert!(controls.iter().any(|name| name == "back"));
+        if name == "profile_other" {
+            assert!(client.shown_texts().iter().any(|text| text == "1,524"));
+            assert!(client.shown_texts().iter().any(|text| text == "1,302"));
+            let words = crate::main_menu::tests::page_words(client.world_mut());
+            assert!(
+                !words
+                    .iter()
+                    .any(|text| matches!(text.as_str(), "Unknown player" | "WATCH" | "DETAILS")),
+                "public rows leave missing hero facts unknown and offer no unavailable artifact actions"
+            );
+            assert!(
+                !words
+                    .iter()
+                    .any(|text| matches!(text.as_str(), "Pudge" | "Shadow Fiend")),
+                "public match lists contain no hero identity to invent: {words:?}"
+            );
+        } else {
+            assert!(
+                client
+                    .shown_texts()
+                    .iter()
+                    .any(|text| text == "This player's profile is unavailable")
+            );
+        }
+    }
+}
+
+#[test]
+fn a_served_live_postmatch_profile_and_real_public_match_list_preserve_the_live_session() {
+    use bevy::prelude::*;
+    let service = crate::main_menu::tests::service_with(|config| {
+        config.replace(
+            "BOTA_SEATS = \"{seats}\"",
+            "BOTA_SEATS = \"{seats}\", BOTA_PROFILE_ACCOUNTS = \"{accounts}\"",
+        )
+    });
+    let played = crate::main_menu::tests::served_postmatch(&service);
+    let id = played.id;
+    let account = played.other;
+    let slot = played.other_slot;
+    let expected = played.other_name;
+    let mut client = super::harness::Client::run_with_core(&[], played.game);
+    client.world_mut().insert_non_send(played.menu);
+    {
+        let mut post = client
+            .world_mut()
+            .non_send_mut::<crate::postgame::PostGame>();
+        post.expect(crate::postgame::Origin::Service(
+            bota_radovid::proto::MatchId(id),
+        ));
+        post.begin();
+    }
+    client.until(
+        "the actual live postgame has its recorded player names",
+        |client| {
+            client
+                .world()
+                .non_send::<crate::postgame::PostGame>()
+                .visible()
+                && client
+                    .world()
+                    .non_send::<crate::postgame::PostGame>()
+                    .summary()
+                    .is_some_and(|summary| summary.rows.len() == 2)
+        },
+    );
+    client.click_named("results scoreboard");
+    let tick = client.core().view().expect("final view").tick;
+    let owner = client.core().my_slot;
+    let orders = client.core().shown_orders.len();
+    let typing = *client.world().resource::<crate::input::Typing>();
+    assert_eq!(client.world().non_send::<MenuCore>().page(), Page::Game);
+    assert!(client.world().non_send::<MenuCore>().in_game());
+    assert!(matches!(
+        client.core().source,
+        bota_client_core::Source::Live(_)
+    ));
+    client.click_named(&format!("results profile {slot}"));
+    client.within(
+        std::time::Duration::from_secs(20),
+        "the service supplies the opponent profile and its real match",
+        |client| {
+            client.shown_texts().iter().any(|text| text == &expected)
+                && crate::main_menu::tests::visitor_public_matches(
+                    client.world().non_send::<MenuCore>(),
+                )
+                .is_some_and(|matches| matches.len() == 1)
+        },
+    );
+    let rows =
+        crate::main_menu::tests::visitor_public_matches(client.world().non_send::<MenuCore>())
+            .expect("served matches");
+    assert_eq!(rows[0].file, format!("public-{id}"));
+    assert_eq!(rows[0].mode, "solo_mid");
+    assert!(rows[0].hero.is_none());
+    assert!(rows[0].kda.is_none());
+    assert!(rows[0].net_worth.is_none());
+    assert!(!rows[0].watchable);
+    assert!(!rows[0].details_available);
+    assert_eq!(
+        client.world().non_send::<MenuCore>().page(),
+        Page::PlayerProfile(account)
+    );
+    client.key(KeyCode::KeyS, bevy::input::ButtonState::Pressed);
+    client.key(KeyCode::KeyS, bevy::input::ButtonState::Released);
+    client.click(MouseButton::Right);
+    client.frames(3);
+    client.click_named("back");
+    assert_eq!(client.world().non_send::<MenuCore>().page(), Page::Game);
+    assert!(client.world().non_send::<MenuCore>().in_game());
+    assert!(
+        client
+            .world()
+            .non_send::<crate::postgame::PostGame>()
+            .visible()
+    );
+    assert!(matches!(
+        client.core().source,
+        bota_client_core::Source::Live(_)
+    ));
+    assert!(
+        client.shown_texts().iter().any(|text| text == "NET WORTH"),
+        "Back restores the selected scoreboard page"
+    );
+    assert_eq!(client.core().my_slot, owner);
+    assert_eq!(
+        client.core().view().expect("same completed match").tick,
+        tick
+    );
+    assert_eq!(client.core().shown_orders.len(), orders);
+    assert!(
+        *client.world().resource::<crate::input::Typing>() == typing,
+        "profile navigation preserves the game input mode"
+    );
+}
+
+#[test]
+fn launcher_public_identity_reaches_the_real_replay_and_its_profile_link() {
+    use bota_replay::meta::decode;
+    let service = crate::main_menu::tests::portable_service();
+    let played = crate::main_menu::tests::served_postmatch(&service);
+    let raw = bota_client_core::meta_in_replay(&mut std::io::Cursor::new(&played.replay))
+        .expect("read raw server replay")
+        .expect("explicitly enabled trailer");
+    let provenance = decode(&raw)
+        .expect("raw server metadata")
+        .profiles()
+        .expect("the launcher supplied public provenance");
+    assert_eq!(provenance.matchmaker(), Some("wss://match.example/control"));
+    assert_eq!(provenance.account(played.other_slot), Some(played.other));
+    assert_eq!(
+        decode(&played.metadata).expect("server sidecar").profiles(),
+        Some(provenance)
+    );
+    let mut viewer = super::menu::signed_up(&service, "replay_viewer");
+    crate::main_menu::tests::use_declared_public_fixture_identity(
+        &mut viewer.world_mut().non_send_mut::<MenuCore>(),
+        &service,
+    );
+    crate::main_menu::tests::install_profile_history(
+        &mut viewer.world_mut().non_send_mut::<MenuCore>(),
+        raw,
+    );
+    act(&mut viewer, Act::Go(Page::MatchHistory));
+    viewer.frames(4);
+    viewer.click_named("history DETAILS");
+    viewer.click_named("results scoreboard");
+    viewer.click_named(&format!("results profile {}", played.other_slot));
+    viewer.within(
+        std::time::Duration::from_secs(20),
+        "the replay profile is served by that same authenticated matchmaker",
+        |viewer| {
+            viewer
+                .shown_texts()
+                .iter()
+                .any(|text| text == &played.other_name)
+        },
+    );
+}
+
+#[test]
+fn profile_timeout_throttle_malformed_and_late_replies_keep_the_visitor_isolated() {
+    use bota_radovid::proto::{AccountId, AccountKind, PublicAccount, Reply};
+    let service = crate::main_menu::tests::service();
+    let (account, expected) = crate::main_menu::tests::registered_public_profile(&service);
+    let mut client = super::menu::signed_up(&service, "lifecycle_viewer");
+    let original =
+        crate::main_menu::tests::own_cached_profile_id(client.world().non_send::<MenuCore>());
+    let begin = |client: &mut super::harness::Client| {
+        let mut core = client.world_mut().non_send_mut::<MenuCore>();
+        core.inspect_player(crate::main_menu::tests::profile_target(&service, account))
+            .expect("same service");
+        core.hold_profile_account_request()
+    };
+    let _generation = begin(&mut client);
+    client
+        .world_mut()
+        .non_send_mut::<MenuCore>()
+        .expire_profile_account_request();
+    client.frames(3);
+    assert!(
+        client
+            .shown_texts()
+            .iter()
+            .any(|text| text == "Profile request timed out. Go back and retry.")
+    );
+    assert_eq!(
+        crate::main_menu::tests::public_profile_request_count(
+            client.world().non_send::<MenuCore>()
+        ),
+        1
+    );
+    client.click_named("back");
+
+    let generation = begin(&mut client);
+    {
+        let mut core = client.world_mut().non_send_mut::<MenuCore>();
+        core.throttle_profile_account_request(generation);
+        core.retry_profile_account_request(false);
+    }
+    client.frames(3);
+    assert_eq!(
+        crate::main_menu::tests::public_profile_request_count(
+            client.world().non_send::<MenuCore>()
+        ),
+        2,
+        "not retried before its deadline"
+    );
+    client
+        .world_mut()
+        .non_send_mut::<MenuCore>()
+        .retry_profile_account_request(true);
+    client.within(
+        std::time::Duration::from_secs(20),
+        "a due retry reads the real public profile",
+        |client| client.shown_texts().iter().any(|text| text == &expected),
+    );
+    assert!(
+        crate::main_menu::tests::public_profile_request_count(
+            client.world().non_send::<MenuCore>()
+        ) >= 3
+    );
+    client.click_named("back");
+
+    let generation = begin(&mut client);
+    client
+        .world_mut()
+        .non_send_mut::<MenuCore>()
+        .inject_profile_account_reply(generation, Reply::Matches { list: Vec::new() });
+    client.frames(3);
+    assert!(
+        client
+            .shown_texts()
+            .iter()
+            .any(|text| text == "The service returned an invalid profile response")
+    );
+    client.click_named("back");
+
+    let old = begin(&mut client);
+    client.frames(2);
+    client.click_named("back");
+    let current = begin(&mut client);
+    let reply = |nickname: &str| Reply::Account {
+        account: PublicAccount {
+            id: AccountId(account),
+            nickname: nickname.into(),
+            kind: AccountKind::Human,
+            online: false,
+            bot_version: None,
+            ratings: Vec::new(),
+            avatar: None,
+        },
+    };
+    client
+        .world_mut()
+        .non_send_mut::<MenuCore>()
+        .inject_profile_account_reply(old, reply("stale reply"));
+    client.frames(3);
+    assert!(
+        client
+            .shown_texts()
+            .iter()
+            .any(|text| text == "Loading profile…")
+    );
+    assert!(
+        !client
+            .shown_texts()
+            .iter()
+            .any(|text| text == &format!("stale reply#{account}"))
+    );
+    client
+        .world_mut()
+        .non_send_mut::<MenuCore>()
+        .inject_profile_account_reply(current, reply("current reply"));
+    client.frames(3);
+    assert!(
+        client
+            .shown_texts()
+            .iter()
+            .any(|text| text == &format!("current reply#{account}"))
+    );
+    assert_eq!(
+        crate::main_menu::tests::own_cached_profile_id(client.world().non_send::<MenuCore>()),
+        original
+    );
+}

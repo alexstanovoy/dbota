@@ -29,6 +29,9 @@ const MAX_QUEUE: usize = 16;
 /// A replay to fetch from the service.
 struct Want {
     match_id: MatchId,
+    service: String,
+    profiles: Option<bota_replay::meta::Profiles>,
+    owner: Option<bota_proto::SlotId>,
     /// The ruleset of the match.
     mode: String,
     /// How it ended, once the service said so.
@@ -227,14 +230,25 @@ impl MenuCore {
             }
             return;
         }
+        let profiles = result
+            .as_ref()
+            .and_then(|result| super::profile_metadata::from_result(&self.prefs.service, result));
+        let owner = result
+            .as_ref()
+            .and_then(|result| self.owner_in_result(result));
+        let service = self.prefs.service.clone();
         let keeper = &mut self.keeper;
-        let known = |w: &Want| w.match_id == match_id;
+        let known = |w: &Want| {
+            w.match_id == match_id && super::profile_metadata::same_service(&w.service, &service)
+        };
         if keeper.current.as_ref().is_some_and(|f| known(&f.want)) {
             return;
         }
         if let Some(queued) = keeper.queue.iter_mut().find(|w| known(w)) {
             queued.open |= open;
             queued.result = queued.result.take().or(result);
+            queued.profiles = queued.profiles.take().or(profiles);
+            queued.owner = queued.owner.or(owner);
             return;
         }
         if keeper.queue.len() >= MAX_QUEUE {
@@ -250,6 +264,9 @@ impl MenuCore {
             .unwrap_or_default();
         keeper.queue.push_back(Want {
             match_id,
+            service,
+            profiles,
+            owner,
             mode,
             result,
             open,
@@ -267,11 +284,10 @@ impl MenuCore {
         // Signed out, nothing is fetched; the matches stay wanted for the next sign-in.
         if self.account
             && self.keeper.current.is_none()
-            && let Some(at) = self
-                .keeper
-                .queue
-                .iter()
-                .position(|w| w.due <= Instant::now())
+            && let Some(at) = self.keeper.queue.iter().position(|w| {
+                w.due <= Instant::now()
+                    && super::profile_metadata::same_service(&w.service, &self.prefs.service)
+            })
             && let Some(want) = self.keeper.queue.remove(at)
         {
             let match_id = want.match_id;
@@ -347,6 +363,10 @@ impl MenuCore {
         let Some(mut fetch) = self.keeper.current.take_if(|f| f.want.match_id == match_id) else {
             return;
         };
+        if !super::profile_metadata::same_service(&fetch.want.service, &self.prefs.service) {
+            self.fetch_failed(fetch.want, "the configured service changed");
+            return;
+        }
         let end = offset + data.len() as u64;
         let sound = total <= MAX_BYTES
             && offset == fetch.bytes.len() as u64
@@ -376,15 +396,15 @@ impl MenuCore {
         if fetch.want.open {
             self.status = None;
         }
-        let Fetch { want, bytes } = fetch;
+        let Fetch { want, mut bytes } = fetch;
+        if let Some(profiles) = &want.profiles {
+            super::profile_metadata::stamp_replay(&mut bytes, match_id.0, profiles);
+        }
         let (players, outcome) = want.result.as_ref().map(sum_up).unwrap_or_default();
         if want.open {
             self.keeper.open_match = Some(match_id.0);
         }
-        let owner = want
-            .result
-            .as_ref()
-            .and_then(|result| self.owner_in_result(result));
+        let owner = want.owner;
         let metadata = bota_client_core::meta_in_replay(&mut std::io::Cursor::new(&bytes))
             .ok()
             .flatten();
@@ -402,7 +422,7 @@ impl MenuCore {
         if let Some(metadata) = metadata {
             self.local_history.insert(
                 super::local_matches::Saved {
-                    key: super::local_matches::service_key(&self.prefs.service, match_id.0),
+                    key: super::local_matches::service_key(&want.service, match_id.0),
                     file: saved.as_ref().map(|record| record.name.clone()),
                     when: saved
                         .as_ref()
@@ -599,6 +619,9 @@ pub(crate) fn deliver_replay_for_menu(core: &mut MenuCore, bytes: &[u8]) {
     core.keeper.current = Some(Fetch {
         want: Want {
             match_id,
+            service: core.prefs.service.clone(),
+            profiles: None,
+            owner: None,
             mode: "solo_mid".to_owned(),
             result: None,
             open: false,
@@ -608,4 +631,87 @@ pub(crate) fn deliver_replay_for_menu(core: &mut MenuCore, bytes: &[u8]) {
         bytes: Vec::new(),
     });
     core.keep_chunk(match_id, 0, bytes.len() as u64, bytes);
+}
+
+#[cfg(test)]
+mod profile_capture_tests {
+    use super::*;
+    use bota_radovid::proto::{AccountId, AccountKind, EndReason, RulesetId, SeatResult, UnixMs};
+
+    #[test]
+    fn authenticated_replay_delivery_records_its_matchmaker_and_public_slot_accounts() {
+        let (replay, _) = crate::postgame::recorded_match_for_menu();
+        let bytes = std::fs::read(replay).expect("real recording");
+        let meta = bota_client_core::meta_in_replay(&mut std::io::Cursor::new(&bytes))
+            .expect("read")
+            .expect("metadata");
+        let match_id = MatchId(
+            bota_replay::meta::decode(&meta)
+                .expect("metadata")
+                .header
+                .match_id,
+        );
+        let source = "wss://match.example/control";
+        let mut player = super::super::tests::Player::new(None);
+        player.menu.prefs.service = source.into();
+        let result = MatchResult {
+            match_id,
+            ruleset: RulesetId("solo_mid".into()),
+            rated: false,
+            outcome: Outcome::Winner { team: 0 },
+            reason: EndReason::Decided,
+            duration_ms: 1000,
+            game_report: Vec::new(),
+            finished_at: UnixMs(1000),
+            seats: vec![SeatResult {
+                slot: 0,
+                team: 0,
+                account: AccountId(42),
+                nickname: "public_player".into(),
+                kind: AccountKind::Human,
+                before: None,
+                after: None,
+            }],
+        };
+        let profiles = super::super::profile_metadata::from_result(source, &result);
+        // A completed old connection's delivery retains its captured public identity.
+        player.menu.prefs.service = "wss://other.example/control".into();
+        player.menu.keep_complete(Fetch {
+            want: Want {
+                match_id,
+                service: source.into(),
+                profiles,
+                owner: None,
+                mode: "solo_mid".into(),
+                result: Some(result),
+                open: false,
+                tries: 0,
+                due: Instant::now(),
+            },
+            bytes,
+        });
+        let saved = player
+            .menu
+            .local_history
+            .find(&super::super::local_matches::service_key(
+                source, match_id.0,
+            ))
+            .expect("authenticated local record");
+        let profiles = saved
+            .summary
+            .as_ref()
+            .and_then(|summary| summary.recording.as_ref())
+            .and_then(|recording| recording.profiles.as_ref())
+            .expect("recorded public context");
+        assert_eq!(
+            profiles.matchmaker(),
+            Some(source),
+            "the local copy knows the service that delivered the match"
+        );
+        assert_eq!(
+            profiles.account(0),
+            Some(42),
+            "slot identity comes from the authenticated result, not a name guess"
+        );
+    }
 }

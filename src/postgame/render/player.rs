@@ -85,10 +85,11 @@ fn identity(kit: &mut Kit, parent: Entity, view: &View, row: &Row) {
             ..area(14.0, 336.0, 252.0, 36.0)
         },
     );
-    words(
+    profile_name(
         kit,
         identity,
-        row.display_name(),
+        view,
+        row,
         Node::default(),
         bold(28.0),
         if own { theme::LINK.1 } else { theme::INK_1 },

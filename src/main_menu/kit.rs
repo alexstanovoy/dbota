@@ -141,6 +141,24 @@ impl Kit<'_, '_, '_> {
             fonts: self.fonts,
         }
     }
+    pub fn row_action(&mut self, entity: Entity, name: &str, act: Act, rest: Color) {
+        self.row_effect(entity, (rest, rest), BorderColor::all(Color::NONE));
+        self.commands
+            .entity(entity)
+            .remove::<BackgroundColor>()
+            .insert((
+                Name::new(name.to_owned()),
+                MenuButton(act),
+                Pickable::default(),
+                BorderColor::all(Color::NONE),
+                Outline {
+                    width: px(1),
+                    offset: px(0),
+                    color: Color::NONE,
+                },
+            ));
+    }
+
     /// Text of a role.
     pub fn typed(
         &mut self,

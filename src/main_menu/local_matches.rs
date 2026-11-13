@@ -446,12 +446,29 @@ impl super::core::MenuCore {
 
 /// Match ids belong to a service, so two services' match #1 cannot overwrite each other.
 pub(super) fn service_key(service: &str, match_id: u64) -> String {
+    let service = bota_radovid::matchmaker_identity(service).unwrap_or_else(|| service.to_owned());
     format!("service:{}:{service}:{match_id}", service.len())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn canonical_service_aliases_share_one_local_history_entry() {
+        assert_eq!(
+            service_key("WSS://MATCH.example:443/", 7),
+            "service:27:wss://match.example/control:7"
+        );
+        assert_eq!(
+            service_key("wss://match.example/control/", 7),
+            service_key("wss://match.example", 7)
+        );
+        assert_ne!(
+            service_key("wss://match.example/other", 7),
+            service_key("wss://match.example", 7)
+        );
+    }
+
     fn wait_loaded(archive: &mut Archive) {
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
         while archive.loading.is_some() {

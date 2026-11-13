@@ -18,6 +18,18 @@ pub fn present(
     session: NonSend<Session>,
 ) {
     if let Some(core) = core.as_mut() {
+        if let Some((back, _)) = &post.profile_return {
+            if matches!(core.page(), crate::main_menu::Page::PlayerProfile(_)) {
+                return;
+            }
+            if core.page() == *back {
+                post.overlay = post.profile_return.take().map(|(_, view)| view);
+                post.presented += 1;
+                return;
+            }
+            post.profile_return = None;
+            post.closed = true;
+        }
         if let Some(view) = core.take_result_request(
             post.overlay
                 .as_ref()
@@ -156,6 +168,17 @@ fn apply(post: &mut PostGame, core: Option<&mut MenuCore>, action: Action) {
                         post.closed = true;
                     }
                     Err(failure) => view.notice = Some(failure.message().to_owned()),
+                }
+            }
+        }
+        Action::Profile(target) => {
+            if let Some(core) = core {
+                let back = core.page();
+                match core.inspect_player(target) {
+                    Ok(()) => {
+                        post.profile_return = post.overlay.take().map(|view| (back, view));
+                    }
+                    Err(notice) => view.notice = Some(notice),
                 }
             }
         }

@@ -64,6 +64,7 @@ struct Flight {
 }
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Board {
+    pub origin: String,
     pub query: Query,
     pub modes: Vec<Mode>,
     pub rows: Vec<Row>,
@@ -81,6 +82,7 @@ pub struct Board {
 impl Default for Board {
     fn default() -> Self {
         Self {
+            origin: String::new(),
             query: Query {
                 mode: "solo_mid".to_owned(),
                 ..Default::default()
@@ -319,6 +321,7 @@ pub fn rating(value: f64) -> Option<String> {
 
 impl super::core::MenuCore {
     pub(super) fn open_leaderboard(&mut self) {
+        self.board.origin = self.prefs.service.clone();
         self.board.refresh();
     }
     pub(super) fn edit_leaderboard(&mut self) {

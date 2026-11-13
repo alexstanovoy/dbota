@@ -146,10 +146,11 @@ pub fn mvp(kit: &mut Kit, parent: Entity, view: &View) {
             ..area(20.0, 578.0, width - 40.0, 60.0)
         },
     );
-    words(
+    profile_name(
         kit,
         identity,
-        mvp.display_name(),
+        view,
+        mvp,
         Node::default(),
         bold(48.0),
         theme::INK_1,
@@ -428,10 +429,11 @@ fn card(
             ..area(-8.0, height + 12.0, width + 16.0, 24.0)
         },
     );
-    words(
+    profile_name(
         kit,
         identity,
-        row.display_name(),
+        view,
+        row,
         Node::default(),
         bold(16.0),
         if own { theme::LINK.1 } else { theme::INK_1 },

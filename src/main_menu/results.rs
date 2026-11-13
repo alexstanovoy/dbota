@@ -75,6 +75,7 @@ impl MenuCore {
     pub fn result_context(&self, summary: &MatchSummary, owner: Option<SlotId>) -> Context {
         let service = match self.on_screen {
             Some(OnScreen::Match(id)) => Some(id),
+            Some(OnScreen::Replay) => None,
             _ if self.page == Page::Result => self.shown,
             _ => None,
         };
@@ -128,6 +129,14 @@ impl MenuCore {
         let rating =
             seat.and_then(|seat| Some((rating(seat.before?.rating)?, rating(seat.after?.rating)?)));
         Context {
+            live_service: bota_radovid::matchmaker_identity(&self.prefs.service),
+            live_accounts: result
+                .seats
+                .iter()
+                .take(bota_proto::limits::MAX_SEATS)
+                .filter(|seat| seat.account.0 != 0)
+                .map(|seat| (SlotId(seat.slot), seat.account.0))
+                .collect(),
             match_id: Some(result.match_id.0),
             mode: super::history::mode_name(&result.ruleset.0).to_owned(),
             when: when(result.finished_at.0 / 1000),

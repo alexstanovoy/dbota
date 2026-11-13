@@ -200,7 +200,31 @@ fn the_server_file_the_trailer_and_the_recorder_agree() {
     let worked = bota_client_core::meta_of_replay(std::fs::File::open(&played.replay).unwrap())
         .expect("the records");
     assert_eq!(carried, written);
-    assert_eq!(worked, written);
+    let written_meta = bota_replay::meta::decode(&written).expect("metadata");
+    assert_eq!(
+        written_meta
+            .profiles()
+            .expect("explicit local launch")
+            .matchmaker(),
+        None
+    );
+    let mut raw_facts = bota_replay::meta::Writer::default();
+    assert!(raw_facts.push(
+        &bota_replay::meta::MetaRecord::Header(written_meta.header),
+        true
+    ));
+    for record in written_meta
+        .records
+        .iter()
+        .filter(|record| !matches!(record, bota_replay::meta::MetaRecord::Profiles { .. }))
+    {
+        assert!(raw_facts.push(record, true));
+    }
+    assert_eq!(
+        worked,
+        raw_facts.into_bytes(),
+        "only launch provenance is outside the pure replay recorder"
+    );
     assert_eq!(rebuilt, written);
 }
 
@@ -787,6 +811,7 @@ fn a_file_of_more_seats_and_samples_than_a_match_has_is_cut_to_a_match() {
     records.extend((0..=255).map(|slot| sample(slot, 0)));
     records.extend((1..100_000).map(|minute| sample(0, minute)));
     let meta = Meta {
+        damaged: false,
         header,
         records,
         skipped: 0,
@@ -1398,5 +1423,96 @@ fn missing_and_known_experience_render_distinct_xpm_with_and_without_timed_sampl
                 "XP={xp:?}, timed={timed}: missing is distinct from a recorded zero or a known one-minute total"
             );
         }
+    }
+}
+
+#[test]
+fn old_and_hostile_replay_provenance_keeps_playback_without_automatic_profile_connections() {
+    use crate::e2e::harness::Client;
+    use bevy::prelude::*;
+    let played = play();
+    let original = std::fs::read(&played.replay).expect("recorded replay");
+    let carried = bota_client_core::meta_in_replay(&mut std::io::Cursor::new(&original))
+        .expect("read")
+        .expect("trailer");
+    let meta = bota_replay::meta::decode(&carried).expect("metadata");
+    let mut writer = bota_replay::meta::Writer::default();
+    assert!(writer.push(&bota_replay::meta::MetaRecord::Header(meta.header), false));
+    for record in meta
+        .records
+        .iter()
+        .filter(|record| !matches!(record, bota_replay::meta::MetaRecord::Profiles { .. }))
+    {
+        assert!(writer.push(record, true));
+    }
+    let legacy = writer.into_bytes();
+    let stream = &original[..original.len() - carried.len() - bota_replay::trailer::OVERHEAD];
+    let trap = std::net::TcpListener::bind("127.0.0.1:0").expect("foreign service trap");
+    trap.set_nonblocking(true).expect("nonblocking");
+    let private_uri = format!("ws://{}/control", trap.local_addr().expect("address"));
+    let uri = "wss://foreign.example/control";
+    let claim = |uri: &str| {
+        bota_proto::encode_frame_to_vec(&(13_u8, Some(uri), vec![(0_u8, Some(42_u64))]))
+            .expect("provenance frame")
+    };
+    for (label, tail, link) in [
+        ("old", None, false),
+        (
+            "corrupt",
+            Some(claim("wss://user:secret@example.org")),
+            false,
+        ),
+        ("private", Some(claim(&private_uri)), false),
+        ("foreign", Some(claim(uri)), true),
+    ] {
+        let file = scratch(&format!("profile-{label}.brp"));
+        let mut bytes = stream.to_vec();
+        if let Some(tail) = tail {
+            bytes.extend(
+                bota_replay::trailer::frame(&[legacy.clone(), tail].concat())
+                    .expect("metadata trailer"),
+            );
+        }
+        std::fs::write(&file, bytes).expect("replay fixture");
+        let mut client = Client::run(&["--replay", file.to_str().expect("UTF-8")]);
+        client.until(
+            "the legacy replay ends and its statistics are readable",
+            |client| {
+                if let bota_client_core::Source::Replay(player) = &mut client.core_mut().source {
+                    player.advance_ticks(1.0e7);
+                }
+                client.world().non_send::<super::PostGame>().visible()
+            },
+        );
+        client.click_named("results scoreboard");
+        let world = client.world_mut();
+        let links = world
+            .query_filtered::<&Name, With<bevy::ui_widgets::Button>>()
+            .iter(world)
+            .filter(|name| name.as_str().starts_with("results profile "))
+            .count();
+        assert_eq!(
+            links,
+            usize::from(link),
+            "old and corrupt files have no profile link"
+        );
+        if link {
+            client.click_named("results profile 0");
+            assert!(
+                client.shown_texts().iter().any(|text| text.contains(uri)),
+                "the foreign identity is plainly visible"
+            );
+        }
+        client.frames(5);
+        assert!(
+            matches!(client.core().source, bota_client_core::Source::Replay(_)),
+            "profile inspection never switches the game source"
+        );
+        assert!(
+            matches!(trap.accept(), Err(error) if error.kind() == std::io::ErrorKind::WouldBlock),
+            "untrusted replay metadata never opens a connection"
+        );
+        drop(client);
+        std::fs::remove_file(file).expect("remove replay fixture");
     }
 }

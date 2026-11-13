@@ -132,6 +132,7 @@ fn build_server() -> PathBuf {
 
 /// The service, running until dropped.
 pub(crate) struct Service {
+    pub(crate) public_identity: Option<String>,
     runtime: tokio::runtime::Runtime,
     service: Option<radovid::service::Service>,
     pub(crate) url: String,
@@ -342,6 +343,7 @@ fn start_service(save_replays: bool, change: impl FnOnce(String) -> String) -> S
     let path = dir.0.join("radovid.toml");
     std::fs::write(&path, change(config(&dir.0, &binary, save_replays))).expect("config");
     let config = radovid::config::Config::load(&path).expect("a valid configuration");
+    let public_identity = config.public_identity.clone();
     let names = vec!["127.0.0.1".to_owned(), "localhost".to_owned()];
     let identity = radovid::tls::self_signed(names).expect("certificate");
     let runtime = tokio::runtime::Builder::new_multi_thread()
@@ -353,6 +355,7 @@ fn start_service(save_replays: bool, change: impl FnOnce(String) -> String) -> S
         .block_on(radovid::service::Service::start(config, &identity))
         .expect("the service starts");
     Service {
+        public_identity,
         url: format!("wss://127.0.0.1:{}", service.addr.port()),
         pem: identity.cert_pem.clone(),
         runtime,
@@ -3243,4 +3246,302 @@ fn an_unanswered_create_warns_without_covering_the_running_game_when_its_link_dr
             .text,
         "Lobby creation was not confirmed. It may still exist; refresh Lobbies before trying again."
     );
+}
+
+pub(crate) fn registered_public_profile(service: &Service) -> (u64, String) {
+    let mut player = Player::new(Some(service));
+    player.register("profile_target");
+    let me = player
+        .menu
+        .client
+        .as_ref()
+        .expect("client")
+        .me()
+        .expect("account");
+    let identity = (me.id.0, format!("{}#{}", me.nickname, me.id.0));
+    // A solid PNG is protocol input for a user-uploaded avatar.
+    let png = vec![
+        137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82, 0, 0, 0, 32, 0, 0, 0, 32, 8,
+        6, 0, 0, 0, 115, 122, 122, 244, 0, 0, 0, 47, 73, 68, 65, 84, 120, 218, 237, 206, 33, 1, 0,
+        0, 8, 3, 48, 130, 145, 142, 136, 20, 130, 24, 55, 19, 243, 171, 158, 189, 164, 18, 16, 16,
+        16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 72, 7, 30, 115, 205, 60, 151, 190, 23, 53,
+        16, 0, 0, 0, 0, 73, 69, 78, 68, 174, 66, 96, 130,
+    ];
+    let client = player.menu.client.as_mut().expect("client");
+    let seq = client
+        .request(bota_radovid::proto::ClientMsg::SetAvatar { png })
+        .expect("upload request");
+    let mut uploaded = false;
+    for _ in 0..32 {
+        let incoming = client
+            .wait(Duration::from_secs(10))
+            .expect("upload response")
+            .expect("upload deadline");
+        if let bota_radovid::Incoming::Reply { seq: found, result } = incoming
+            && found == seq
+        {
+            assert!(
+                matches!(
+                    result,
+                    Ok(bota_radovid::proto::Reply::Avatar {
+                        avatar: Some(_),
+                        ..
+                    })
+                ),
+                "the fixture's avatar was accepted: {result:?}"
+            );
+            uploaded = true;
+            break;
+        }
+    }
+    assert!(
+        uploaded,
+        "the avatar upload completed within the bounded reply stream"
+    );
+    identity
+}
+
+pub(crate) fn pin_profile_leaderboard_row(core: &mut MenuCore, account: u64) {
+    core.board.rows = vec![super::leaderboard::Row {
+        account,
+        players: super::leaderboard::Players::Humans,
+        rank: 1,
+        nickname: "Stale board label".into(),
+        version: None,
+        games: 7,
+        rating: "1750".into(),
+    }];
+    core.board.status = super::leaderboard::Status::Ready;
+    core.board.total = 1;
+}
+
+pub(crate) fn own_cached_profile_id(core: &MenuCore) -> Option<u64> {
+    core.account_profile.as_ref().map(|account| account.id.0)
+}
+
+pub(crate) fn install_profile_history(menu: &mut MenuCore, metadata: Vec<u8>) {
+    menu.local_history = super::local_matches::Archive::default();
+    menu.local_history.insert(
+        super::local_matches::Saved {
+            key: "profile-history".into(),
+            file: None,
+            when: 1794062400,
+            mode: "all_pick".into(),
+            owner: None,
+            metadata,
+            metadata_key: None,
+            cached: None,
+            result: None,
+            summary: None,
+            temporary: None,
+        },
+        50,
+    );
+}
+
+pub(crate) fn public_profile_request_count(menu: &MenuCore) -> u64 {
+    menu.profiles.requests
+}
+
+pub(crate) fn drawn_profile_avatar(world: &mut bevy::prelude::World) -> Option<[u8; 4]> {
+    use bevy::prelude::*;
+    let handle = world
+        .query_filtered::<&ImageNode, With<super::avatar_draw::AvatarPicture>>()
+        .iter(world)
+        .next()?
+        .image
+        .clone();
+    let image = world.resource::<Assets<Image>>().get(&handle)?;
+    image.data.as_ref()?.get(..4)?.try_into().ok()
+}
+
+#[test]
+fn changing_matchmaker_clears_the_old_login_before_a_public_profile_can_be_queried() {
+    let service = service();
+    let mut player = Player::new(Some(&service));
+    player.register("scoped_viewer");
+    assert!(player.menu.logged_in());
+    let trap = std::net::TcpListener::bind("127.0.0.1:0").expect("new service trap");
+    trap.set_nonblocking(true).expect("nonblocking");
+    let next = format!("ws://{}/control", trap.local_addr().expect("address"));
+    player.menu.act(Act::Go(Page::Service));
+    player.fill(&[&next]);
+    player.menu.act(Act::Submit);
+    assert!(
+        !player.menu.logged_in(),
+        "a login is scoped to the matchmaker that authenticated it"
+    );
+    assert!(!player.menu.link_ready());
+    assert!(
+        player.store.read(Entry::Session).is_none(),
+        "the old credential is not resumed at another service"
+    );
+    assert!(
+        player
+            .menu
+            .inspect_player(super::player_profile::Target {
+                service: next,
+                account: 42
+            })
+            .is_err()
+    );
+    assert_eq!(player.menu.profiles.requests, 0);
+    assert!(matches!(trap.accept(), Err(error) if error.kind()==std::io::ErrorKind::WouldBlock));
+}
+
+#[test]
+fn a_profile_connection_loss_keeps_back_navigation_to_the_original_history() {
+    let service = service();
+    let mut player = Player::new(Some(&service));
+    player.register("return_viewer");
+    player.menu.act(Act::Go(Page::MatchHistory));
+    player
+        .menu
+        .inspect_player(super::player_profile::Target {
+            service: service.url.clone(),
+            account: 42,
+        })
+        .expect("open public profile");
+    player.menu.lost(bota_radovid::ClientError::Closed);
+    assert_eq!(player.menu.page(), Page::PlayerProfile(42));
+    player.menu.act(Act::Back);
+    assert_eq!(
+        player.menu.page(),
+        Page::MatchHistory,
+        "a failed lookup does not discard the inspected match's return page"
+    );
+}
+
+pub(crate) struct ServedPostmatch {
+    pub menu: MenuCore,
+    pub game: Core,
+    pub id: u64,
+    pub other: u64,
+    pub other_slot: u8,
+    pub other_name: String,
+    pub metadata: Vec<u8>,
+    pub replay: Vec<u8>,
+}
+
+/// Real registration, proposal, launcher, game sockets, permanent departure and served outcome.
+pub(crate) fn served_postmatch(service: &Service) -> ServedPostmatch {
+    let (mut left, mut right) = (Player::new(Some(service)), Player::new(Some(service)));
+    left.register("live_viewer");
+    right.register("served_opponent");
+    let me = right
+        .menu
+        .client
+        .as_ref()
+        .expect("client")
+        .me()
+        .expect("account");
+    let other = me.id.0;
+    let other_name = format!("{}#{}", me.nickname, other);
+    left.menu.act(Act::Find(solo()));
+    right.menu.act(Act::Find(solo()));
+    settle(&mut [&mut left, &mut right], |player| {
+        player.menu.view().offer.is_some()
+    });
+    for player in [&mut left, &mut right] {
+        let proposal = player.menu.view().offer.expect("offer").proposal;
+        player.menu.act(Act::Accept(proposal));
+    }
+    settle(&mut [&mut left, &mut right], |player| {
+        player.menu.page() == Page::Game
+    });
+    let launch = launch_of(&mut left);
+    let Launch::Seat(handoff) = &launch else {
+        panic!("seat")
+    };
+    let id = handoff.match_id.0;
+    let other_slot = handoff
+        .seats
+        .iter()
+        .find(|seat| seat.account.0 == other)
+        .expect("opponent slot")
+        .slot;
+    let mut game = open(launch, &left.trust);
+    let mut opponent = open(launch_of(&mut right), &right.trust);
+    let deadline = Instant::now() + Duration::from_secs(PATIENCE);
+    while game.view().is_none_or(|view| view.tick < 3)
+        || opponent.view().is_none_or(|view| view.tick < 3)
+    {
+        assert!(Instant::now() < deadline, "the real match starts");
+        for core in [&mut game, &mut opponent] {
+            core.pump(1.0 / 30.0);
+            if core.my_slot.is_some() && core.view().is_none() && !core.ready {
+                core.act(bota_client_core::Intent::PickHero(HeroId::SHADOW_FIEND.0));
+                core.act(bota_client_core::Intent::ToggleReady);
+            }
+        }
+        left.menu.update();
+        right.menu.update();
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    opponent.leave_game();
+    while game.over.is_none() || left.menu.results.is_empty() || !left.menu.meta_ready() {
+        assert!(
+            Instant::now() < deadline,
+            "the service delivers the actual result and metadata"
+        );
+        game.pump(1.0 / 30.0);
+        opponent.pump(1.0 / 30.0);
+        left.menu.update();
+        right.menu.update();
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    let artifacts = service._dir.0.join("artifacts");
+    ServedPostmatch {
+        menu: left.menu,
+        game,
+        id,
+        other,
+        other_slot,
+        other_name,
+        metadata: std::fs::read(artifacts.join(format!("meta-{id}.meta"))).expect("server sidecar"),
+        replay: std::fs::read(artifacts.join(format!("replay-{id}.brp"))).expect("server replay"),
+    }
+}
+
+pub(crate) fn visitor_public_matches(
+    menu: &MenuCore,
+) -> Option<std::sync::Arc<Vec<super::history::Match>>> {
+    match menu.visitor_view() {
+        PageView::Profile { matches, .. } => Some(matches),
+        _ => None,
+    }
+}
+
+/// The fixture's public name represents the very same authenticated loopback service.
+/// No resolver hook or file-provided address is used to establish the transport.
+pub(crate) fn use_declared_public_fixture_identity(menu: &mut MenuCore, service: &Service) {
+    assert!(menu.logged_in());
+    assert!(bota_radovid::same_matchmaker(
+        &menu.prefs.service,
+        &service.url
+    ));
+    menu.prefs.service = service
+        .public_identity
+        .clone()
+        .expect("configured public identity");
+}
+pub(crate) fn portable_service() -> Service {
+    service_with(|config| {
+        format!("public_identity = \"wss://match.example/control\"\n{config}")
+            .replace(
+                "BOTA_SEATS = \"{seats}\"",
+                "BOTA_SEATS = \"{seats}\", BOTA_PROFILE_ACCOUNTS = \"{accounts}\"",
+            )
+            .replace(
+                "artifact_args = [\"--replay\", \"{artifact}\"]",
+                "artifact_args = [\"--replay\", \"{artifact}\", \"--meta-trailer\"]",
+            )
+    })
+}
+
+pub(crate) fn profile_target(service: &Service, account: u64) -> super::player_profile::Target {
+    super::player_profile::Target {
+        service: service.url.clone(),
+        account,
+    }
 }

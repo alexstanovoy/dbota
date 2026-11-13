@@ -75,6 +75,7 @@ pub struct PostGame {
     shown: Option<MatchSummary>,
     version: u32,
     overlay: Option<view::View>,
+    profile_return: Option<(crate::main_menu::Page, view::View)>,
     presented: u32,
     active_version: u32,
     closed: bool,
@@ -92,6 +93,7 @@ impl Default for PostGame {
             shown: None,
             version: 0,
             overlay: None,
+            profile_return: None,
             presented: 0,
             active_version: 0,
             closed: false,
@@ -117,6 +119,7 @@ impl PostGame {
         self.origin = std::mem::take(&mut self.next);
         self.reset();
         self.overlay = None;
+        self.profile_return = None;
         self.closed = false;
         self.presented += 1;
     }
