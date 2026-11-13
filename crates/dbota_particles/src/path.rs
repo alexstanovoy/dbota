@@ -325,7 +325,13 @@ pub fn maintain_path(op: &Operator, scene: &Scene<'_>, parts: &mut Particles, ca
     } else {
         1.0 / (count - 1.0)
     };
-    let (max, keep) = (value(&m.max_distance), 1.0 - value(&m.cohesion));
+    let max = value(&m.max_distance).max(0.0).min(f32::MAX.sqrt() / 8.0);
+    let cohesion = value(&m.cohesion);
+    let keep = if cohesion.is_nan() {
+        1.0
+    } else {
+        1.0 - cohesion.clamp(0.0, 1.0)
+    };
     let curve = bezier(scene, &m.path, (start, end), scene.age, scene.seed);
     for i in 0..parts.len() {
         let mut slot = order.slot;

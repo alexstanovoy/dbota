@@ -676,6 +676,14 @@ impl Client {
     }
 
     /// Runs `n` frames.
+    /// Advances application frames without waiting for a wall-clock interval.
+    pub fn step_frames(&mut self, count: usize) {
+        for _ in 0..count {
+            self.app.update();
+            std::thread::yield_now();
+        }
+    }
+
     pub fn frames(&mut self, n: usize) {
         for _ in 0..n {
             self.app.update();

@@ -199,11 +199,19 @@ fn draw(
 
 /// Permanent map sight sources show their vision while ranges are held.
 fn base_blocker_ranges(gizmos: &mut Gizmos, ctx: &Ctx<'_, '_, '_>) {
-    let Some(session) = ctx.core.session() else { return; };
+    let Some(session) = ctx.core.session() else {
+        return;
+    };
     for gate in session.map().base_blockers {
         let (x, y) = (gate.at.x.to_f32(), gate.at.y.to_f32());
-        ring(gizmos, ctx, (x, y), bota_core::BASE_BLOCKER_VISION as f32,
-            team_color(gate.team).with_alpha(0.6), false);
+        ring(
+            gizmos,
+            ctx,
+            (x, y),
+            bota_core::BASE_BLOCKER_VISION as f32,
+            team_color(gate.team).with_alpha(0.6),
+            false,
+        );
     }
 }
 

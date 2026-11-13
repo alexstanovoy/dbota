@@ -387,6 +387,7 @@ pub fn float(
                 FloatInput::ParticleFloat { .. }
                 | FloatInput::ParticleAge(_)
                 | FloatInput::ParticleAgeNormalized(_)
+                | FloatInput::ParticleSpeed(_)
                     if !parts.is_empty() =>
                 {
                     particle_float(other, scene, parts, 0)
@@ -394,6 +395,8 @@ pub fn float(
                 FloatInput::ParticleNumber { reverse, mapping } => {
                     map(mapping, if *reverse { parts.len() as f32 } else { 0.0 })
                 }
+                FloatInput::ParticleNumberNormalized(mapping) => map(mapping, 0.0),
+                FloatInput::ParticleSpeed(mapping) => map(mapping, 0.0),
                 _ => 0.0,
             },
         },
@@ -487,11 +490,7 @@ fn particle_float(input: &FloatInput, scene: &Scene<'_>, parts: &Particles, i: u
                 parts.vectors[super::store::POSITION][i] - parts.vectors[super::store::PREVIOUS][i];
             map(
                 m,
-                if scene.dt > 0.0 {
-                    step.length() / scene.dt
-                } else {
-                    0.0
-                },
+                step.length() / if scene.dt == 0.0 { 0.1 } else { scene.dt },
             )
         }
         FloatInput::ParticleNumber { reverse, mapping } => {

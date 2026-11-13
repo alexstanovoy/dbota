@@ -11,7 +11,10 @@ struct BaseBlockers(Vec<(usize, Handle)>);
 
 pub fn plugin(app: &mut App) {
     app.init_resource::<BaseBlockers>()
-        .add_systems(First, crate::loading::reset::<BaseBlockers>.in_set(crate::loading::Begin))
+        .add_systems(
+            First,
+            crate::loading::reset::<BaseBlockers>.in_set(crate::loading::Begin),
+        )
         .add_systems(Update, stand.after(crate::particles::Loaded));
 }
 
@@ -30,24 +33,37 @@ fn stand(
     mut blockers: ResMut<BaseBlockers>,
 ) {
     let Some(view) = session.0.view() else {
-        for (_, handle) in blockers.0.drain(..) { playing.cancel(handle); }
+        for (_, handle) in blockers.0.drain(..) {
+            playing.cancel(handle);
+        }
         return;
     };
-    let Some(map) = session.0.session().map(|s| s.map()) else { return; };
-    let Some(library) = library else { return; };
+    let Some(map) = session.0.session().map(|s| s.map()) else {
+        return;
+    };
+    let Some(library) = library else {
+        return;
+    };
     // Installed game build 6975 starts the permanent field's ambient after 1.5 seconds.
-    if !known.0 || view.tick < bota_core::rules::TICKS_PER_SECOND * 3 / 2 { return; }
+    if !known.0 || view.tick < bota_core::rules::TICKS_PER_SECOND * 3 / 2 {
+        return;
+    }
     for (index, gate) in map.base_blockers.iter().enumerate() {
-        if blockers.0.iter().any(|(held, _)| *held == index) { continue; }
-        let Some(handle) = library.effect(effect(gate.team))
-            .and_then(|effect| playing.hold(effect, index as u32, EffectSight::Point)) else { continue; };
+        if blockers.0.iter().any(|(held, _)| *held == index) {
+            continue;
+        }
+        let Some(handle) = library
+            .effect(effect(gate.team))
+            .and_then(|effect| playing.hold(effect, index as u32, EffectSight::Point))
+        else {
+            continue;
+        };
         if let Some(instance) = playing.get_mut(handle) {
             place(instance, gate);
         }
         blockers.0.push((index, handle));
     }
 }
-
 
 fn place(instance: &mut dbota_particles::Instance, gate: &bota_core::BaseBlockerDef) {
     let angle = gate.facing.brads as f32 * std::f32::consts::TAU / 65536.0;

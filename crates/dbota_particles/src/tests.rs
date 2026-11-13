@@ -1821,30 +1821,52 @@ fn particle_collection_attribute_input_is_safe_before_any_particle_exists() {
 fn normal_rope_look() -> heatel::particle::Look {
     use heatel::particle::{Blend, Look, Orientation, TextureChannels};
     Look {
-        texture: None, texture_transform: [1.0, 0.0, 1.0, 0.0],
-        channels: TextureChannels::Rgba, layers: Vec::new(), blend: Blend::Add,
-        overbright: FloatInput::Literal(1.0), add_self: FloatInput::Literal(0.0),
-        saturate: false, gamma_vertex_colors: false,
-        alpha_scale: FloatInput::Literal(1.0), radius_scale: FloatInput::Literal(1.0),
-        color_scale: VectorInput::Literal([1.0; 3]), no_depth_test: false,
-        animation_rate: 0.0, animate_in_fps: false, blend_frames: false,
-        orientation: Orientation::ParticleNormal, refract: false,
+        texture: None,
+        texture_transform: [1.0, 0.0, 1.0, 0.0],
+        channels: TextureChannels::Rgba,
+        layers: Vec::new(),
+        blend: Blend::Add,
+        overbright: FloatInput::Literal(1.0),
+        add_self: FloatInput::Literal(0.0),
+        saturate: false,
+        gamma_vertex_colors: false,
+        alpha_scale: FloatInput::Literal(1.0),
+        radius_scale: FloatInput::Literal(1.0),
+        color_scale: VectorInput::Literal([1.0; 3]),
+        no_depth_test: false,
+        animation_rate: 0.0,
+        animate_in_fps: false,
+        blend_frames: false,
+        orientation: Orientation::ParticleNormal,
+        refract: false,
     }
 }
 
 #[test]
 fn a_normal_oriented_rope_interpolates_its_drawn_width_between_endpoint_normals() {
     use heatel::particle::{Blend, Renderer, Ropes};
-    let mut definition = bare(2.0, vec![lifetime_of(10.0)], Vec::new(), Vec::new(), Vec::new());
+    let mut definition = bare(
+        2.0,
+        vec![lifetime_of(10.0)],
+        Vec::new(),
+        Vec::new(),
+        Vec::new(),
+    );
     definition.renderers = vec![always(Renderer::Ropes(Box::new(Ropes {
-        look: normal_rope_look(), min_tessellation: 2, max_tessellation: 2,
+        look: normal_rope_look(),
+        min_tessellation: 2,
+        max_tessellation: 2,
         texture_v_world_size: FloatInput::Literal(1.0),
         texture_v_scroll_rate: FloatInput::Literal(0.0),
         texture_v_offset: FloatInput::Literal(0.0),
     })))];
     let mut effect = Effect::new(&[("normal_rope".to_owned(), definition)]);
     effect.defs[0].draws.push(super::library::Draw {
-        renderer: 0, look: 0, sheet: None, blend: Blend::Add, material: 0,
+        renderer: 0,
+        look: 0,
+        sheet: None,
+        blend: Blend::Add,
+        material: 0,
     });
     let mut instance = Instance::new(Arc::new(effect), 42);
     instance.advance(0.02, None);
@@ -1855,14 +1877,146 @@ fn a_normal_oriented_rope_interpolates_its_drawn_width_between_endpoint_normals(
     parts.vectors[store::NORMAL][0] = Vec3::Y;
     parts.vectors[store::NORMAL][1] = Vec3::Z;
     parts.scalars[store::RADIUS][..2].fill(1.0);
-    let eye = super::draw::Eye { position: Vec3::new(0.0, -10.0, 10.0), right: Vec3::X, up: Vec3::Z };
+    let eye = super::draw::Eye {
+        position: Vec3::new(0.0, -10.0, 10.0),
+        right: Vec3::X,
+        up: Vec3::Z,
+    };
     let mut cards = [Vec::new()];
     super::draw::draw(&instance, &eye, None, &mut cards);
     assert_eq!(cards[0].len(), 2, "two tessellated rope cards");
     // At the common midpoint N=(Y+Z)/sqrt(2), T=X. Source Z-up is converted to drawn Y-up.
-    let expected = Vec3::new(0.0, std::f32::consts::FRAC_1_SQRT_2, std::f32::consts::FRAC_1_SQRT_2);
-    assert!(Vec3::from(cards[0][0].tail_side).distance(expected) < 0.0001,
-        "midpoint width must interpolate: {:?}", cards[0][0].tail_side);
-    assert!(Vec3::from(cards[0][1].head_side).distance(expected) < 0.0001,
-        "adjacent cards share their interpolated midpoint width");
+    let expected = Vec3::new(
+        0.0,
+        std::f32::consts::FRAC_1_SQRT_2,
+        std::f32::consts::FRAC_1_SQRT_2,
+    );
+    assert!(
+        Vec3::from(cards[0][0].tail_side).distance(expected) < 0.0001,
+        "midpoint width must interpolate: {:?}",
+        cards[0][0].tail_side
+    );
+    assert!(
+        Vec3::from(cards[0][1].head_side).distance(expected) < 0.0001,
+        "adjacent cards share their interpolated midpoint width"
+    );
+}
+
+#[test]
+fn review_residual_maintenance_bounds_distance_and_cohesion() {
+    for distance in [f32::NAN, -1.0, f32::INFINITY, f32::MAX] {
+        for cohesion in [f32::NAN, -1.0, f32::INFINITY, f32::NEG_INFINITY, 0.5] {
+            let mut instance = maintained_path_instance(
+                FloatInput::Literal(4.0),
+                FloatInput::Literal(distance),
+                FloatInput::Literal(cohesion),
+                radius_from_particle_index(1.0, 1.0),
+                true,
+            );
+            instance.advance(0.02, None);
+            let parts = &instance.nodes[0].parts;
+            assert_eq!(parts.len(), 4);
+            for field in [store::POSITION, store::PREVIOUS] {
+                for position in &parts.vectors[field] {
+                    assert!(position.is_finite(), "{distance} {cohesion}: {position}");
+                    assert!((-0.001..=100.001).contains(&position.x));
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn review_residual_collection_speed_and_normalized_number_apply_mappings() {
+    let mapped = |input, output| Mapping::Remap {
+        input,
+        output,
+        looped: false,
+        bias: None,
+    };
+    for count in [
+        FloatInput::ParticleSpeed(mapped([0.0, 200.0], [2.0, 6.0])),
+        FloatInput::ParticleNumberNormalized(mapped([0.0, 1.0], [3.0, 7.0])),
+    ] {
+        let mut instance = maintained_path_instance(
+            count,
+            FloatInput::Literal(0.0),
+            FloatInput::Literal(1.0),
+            radius_from_particle_index(1.0, 1.0),
+            true,
+        );
+        instance.advance(0.02, None);
+        instance.nodes[0].parts.vectors[store::POSITION][0] = Vec3::X;
+        instance.nodes[0].parts.vectors[store::PREVIOUS][0] = Vec3::ZERO;
+        instance.advance(0.02, None);
+        assert_eq!(instance.nodes[0].parts.len(), 4);
+        assert!((instance.nodes[0].parts.vectors[store::POSITION][1].x - 50.0).abs() < 0.001);
+    }
+}
+
+fn review_random_input() -> FloatInput {
+    FloatInput::Random {
+        min: 4.0,
+        max: 64.0,
+        varying: false,
+        bias: None,
+        sign_flip: false,
+    }
+}
+
+#[test]
+fn review_residual_initializer_random_uses_system_seed() {
+    let template = sequential_path_instance(review_random_input(), FloatInput::Literal(0.0), false);
+    let mut results = Vec::new();
+    for seed in 1..=8 {
+        let run = || {
+            let mut instance = Instance::new(template.effect.clone(), seed);
+            instance.set_control_point(4, Vec3::X * 100.0, Vec3::X, true);
+            instance.advance(0.02, None);
+            assert_eq!(instance.nodes[0].parts.len(), 16);
+            instance.nodes[0].parts.vectors[store::POSITION][1].x
+        };
+        let value = run();
+        assert_eq!(value, run());
+        results.push(value);
+    }
+    assert!(results.iter().any(|value| *value != results[0]));
+}
+
+#[test]
+fn review_residual_constraint_random_uses_system_seed() {
+    use heatel::particle::{Constraint, Distance};
+    let mut definition = system(
+        4.0,
+        vec![always(Operator::BasicMovement {
+            gravity: VectorInput::Literal([0.0; 3]),
+            drag: FloatInput::Literal(0.0),
+            max_constraint_passes: 1,
+        })],
+        Vec::new(),
+        Vec::new(),
+    );
+    definition.constraints = vec![always(Constraint::Distance(Box::new(Distance {
+        min_distance: FloatInput::Literal(0.0),
+        max_distance: review_random_input(),
+        transform: Transform::Identity,
+        center_offset: VectorInput::Literal([0.0; 3]),
+        global_center: true,
+    })))];
+    let effect = Arc::new(Effect::new(&[("seeded_constraint".to_owned(), definition)]));
+    let mut results = Vec::new();
+    for seed in 1..=8 {
+        let run = || {
+            let mut instance = Instance::new(effect.clone(), seed);
+            instance.set_control_point(3, Vec3::X * 400.0, Vec3::X, true);
+            instance.advance(0.02, None);
+            assert_eq!(instance.nodes[0].parts.len(), 4);
+            instance.nodes[0].parts.vectors[store::POSITION][0].length()
+        };
+        let value = run();
+        assert!((4.0..=64.001).contains(&value));
+        assert_eq!(value, run());
+        results.push(value);
+    }
+    assert!(results.iter().any(|value| *value != results[0]));
 }
