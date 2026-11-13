@@ -272,10 +272,14 @@ impl Reader {
     }
 }
 
-/// What a refused part tells the player: a hidden profile is a choice of its owner, anything else is a failure.
+/// What a refused part tells the player. The service answers `UnknownAccount` alike for hidden,
+/// banned, deleted and missing accounts, so the text claims none of them.
 fn refusal_notice(part: Part, error: &Error) -> &'static str {
     match (part, error) {
-        (Part::Matches, Error::UnknownAccount) => "This player's match list is hidden",
+        (Part::Matches, Error::UnknownAccount) => "No match list is available for this player",
+        (Part::Matches, Error::Throttled { .. } | Error::RateLimited { .. }) => {
+            "Recent matches unavailable: too many requests, try again shortly"
+        }
         (Part::Matches, Error::Internal) => "Recent matches unavailable: the service failed",
         (Part::Matches, Error::LookupTooExpensive) => "Recent matches unavailable: try again later",
         (Part::Matches, _) => "Recent matches unavailable",
@@ -624,7 +628,7 @@ mod served_matches_tests {
         assert!(rows[0].kda.is_none());
         assert!(rows[0].net_worth.is_none());
     }
-    fn matches_notice_after(error: &Error) -> String {
+    fn matches_notice_after(error: &Error, earlier_tries: u8) -> String {
         let mut reader = Reader::default();
         reader.begin(
             Target {
@@ -637,6 +641,7 @@ mod served_matches_tests {
         let visit = reader.visit.as_mut().expect("visit");
         visit.stage = Part::Matches;
         visit.waiting = true;
+        visit.tries = earlier_tries;
         reader.refused(generation, Part::Matches, error);
         reader
             .visit
@@ -645,23 +650,30 @@ mod served_matches_tests {
             .expect("a refused match list explains itself")
     }
     #[test]
-    fn a_hidden_players_match_list_says_so_instead_of_reporting_a_failure() {
+    fn an_unknown_account_match_list_claims_neither_hidden_nor_missing() {
         assert_eq!(
-            matches_notice_after(&Error::UnknownAccount),
-            "This player's match list is hidden"
+            matches_notice_after(&Error::UnknownAccount, 0),
+            "No match list is available for this player"
+        );
+    }
+    #[test]
+    fn an_exhausted_throttle_on_the_match_list_asks_to_wait() {
+        assert_eq!(
+            matches_notice_after(&Error::Throttled { retry_after_ms: 0 }, 3),
+            "Recent matches unavailable: too many requests, try again shortly"
         );
     }
     #[test]
     fn a_service_failure_on_the_match_list_is_named_as_one() {
         assert_eq!(
-            matches_notice_after(&Error::Internal),
+            matches_notice_after(&Error::Internal, 0),
             "Recent matches unavailable: the service failed"
         );
     }
     #[test]
     fn a_refused_expensive_match_list_asks_for_a_later_retry() {
         assert_eq!(
-            matches_notice_after(&Error::LookupTooExpensive),
+            matches_notice_after(&Error::LookupTooExpensive, 0),
             "Recent matches unavailable: try again later"
         );
     }
