@@ -161,7 +161,7 @@ pub fn mvp(kit: &mut Kit, parent: Entity, view: &View) {
     let hero = words(
         kit,
         panel,
-        mvp.hero_name().to_uppercase(),
+        mvp.hero_name(kit.texts).to_uppercase(),
         area(20.0, 640.0, width - 40.0, 28.0),
         theme::Type {
             size: 18.0,
@@ -444,7 +444,7 @@ fn card(
     let hero = words(
         kit,
         shell,
-        row.hero_name(),
+        row.hero_name(kit.texts),
         area(0.0, height + 38.0, width, 20.0),
         body(13.0),
         theme::INK_5,

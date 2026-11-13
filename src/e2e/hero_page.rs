@@ -333,11 +333,13 @@ fn an_ability_under_the_pointer_shows_the_games_tooltip() {
         .find(|id| Some(*id) != def.innate)
         .and_then(bota_core::ability_def)
         .expect("an ability that is not the innate");
-    let tile = named(
-        &mut client,
-        &format!("ability {}", ability.name.to_lowercase()),
-    )
-    .unwrap_or_else(|| panic!("a tile for {}", ability.name));
+    let name = client
+        .world()
+        .resource::<crate::dota_text::Texts>()
+        .name(ability.key)
+        .to_lowercase();
+    let tile = named(&mut client, &format!("ability {name}"))
+        .unwrap_or_else(|| panic!("a tile for {name}"));
     let expected = expected_tooltip(&mut client, ability.id.0, ability.max_level);
     assert!(
         tooltip_words(&mut client).is_empty(),
@@ -358,11 +360,12 @@ fn the_innate_is_the_games_round_mark_and_shows_its_tooltip() {
         .innate
         .and_then(bota_core::ability_def)
         .expect("a hero with an innate");
-    let tile = named(
-        &mut client,
-        &format!("ability {}", innate.name.to_lowercase()),
-    )
-    .expect("the innate's tile");
+    let name = client
+        .world()
+        .resource::<crate::dota_text::Texts>()
+        .name(innate.key)
+        .to_lowercase();
+    let tile = named(&mut client, &format!("ability {name}")).expect("the innate's tile");
     let round = {
         let world = client.world();
         world

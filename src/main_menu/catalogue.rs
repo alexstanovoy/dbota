@@ -121,7 +121,7 @@ fn hero_group(
         .iter()
         .filter(|hero| hero.unit.primary == attribute)
         .collect();
-    heroes.sort_by_key(|hero| hero.name);
+    heroes.sort_by_key(|hero| kit.texts.name(hero.key));
     for hero in heroes {
         hero_card(kit, cards, hero);
     }
@@ -143,7 +143,7 @@ fn hero_card(kit: &mut Kit, cards: Entity, hero: &bota_core::HeroDef) {
         MenuButton(Act::InspectHero(hero.id)),
         HeroCard,
         super::highlight::Highlight { scale: RAISED },
-        Name::new(hero.name),
+        Name::new(kit.texts.name(hero.key).to_owned()),
     ));
     tall(
         kit,
@@ -244,11 +244,13 @@ fn neighbours(kit: &mut Kit, line: Entity, id: HeroId) {
     let before = &heroes[(at + heroes.len() - 1) % heroes.len()];
     let after = &heroes[(at + 1) % heroes.len()];
     // With two heroes the one before is the one after: it is offered once.
-    let mut offered = vec![(before, format!("‹ {}", before.name.to_uppercase()))];
+    let before_name = kit.texts.name(before.key).to_uppercase();
+    let after_name = kit.texts.name(after.key).to_uppercase();
+    let mut offered = vec![(before, format!("‹ {before_name}"))];
     if after.id == before.id {
-        offered[0].1 = format!("{} ›", after.name.to_uppercase());
+        offered[0].1 = format!("{after_name} ›");
     } else {
-        offered.push((after, format!("{} ›", after.name.to_uppercase())));
+        offered.push((after, format!("{after_name} ›")));
     }
     for (hero, label) in offered {
         if hero.id != id {
@@ -318,7 +320,7 @@ fn hero_identity(kit: &mut Kit, header: Entity, hero: &bota_core::HeroDef) -> &'
     );
     kit.typed(
         title,
-        hero.name.to_uppercase(),
+        kit.texts.name(hero.key).to_uppercase(),
         theme::HERO_NAME,
         theme::INK_1,
     );
@@ -371,7 +373,10 @@ fn skill(kit: &mut Kit, abilities: Entity, def: &bota_core::AbilityDef, innate: 
                 ..default()
             },
             BorderColor::all(theme::PANEL_EDGE),
-            Name::new(format!("ability {}", def.name.to_lowercase())),
+            Name::new(format!(
+                "ability {}",
+                kit.texts.name(def.key).to_lowercase()
+            )),
             ChildOf(abilities),
         ))
         .id();

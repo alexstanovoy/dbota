@@ -235,10 +235,16 @@ fn rows(
 
 /// Every number and name of the rows; empty where the seat is empty or the
 /// thing is not to be known.
-fn texts(lines: Res<Rows>, mut texts: Query<(&At, &Field, &mut Text, &mut TextColor)>) {
+fn texts(
+    labels: Res<crate::dota_text::Texts>,
+    lines: Res<Rows>,
+    mut texts: Query<(&At, &Field, &mut Text, &mut TextColor)>,
+) {
     for (at, field, mut text, mut color) in &mut texts {
         let line = line_at(&lines.0, at);
-        let s = line.map(|l| text_of(l, *field)).unwrap_or_default();
+        let s = line
+            .map(|l| text_of(l, *field, &labels))
+            .unwrap_or_default();
         text.set_if_neq(Text(s));
         if matches!(field, Field::Kills | Field::Deaths | Field::Assists) {
             let own = line.is_some_and(|l| l.local);
@@ -248,12 +254,12 @@ fn texts(lines: Res<Rows>, mut texts: Query<(&At, &Field, &mut Text, &mut TextCo
     }
 }
 
-fn text_of(l: &Line, field: Field) -> String {
+fn text_of(l: &Line, field: Field, labels: &crate::dota_text::Texts) -> String {
     let number = |n: Option<i32>| n.map(|n| n.to_string()).unwrap_or_default();
     match field {
         Field::Name => l.name.clone(),
         Field::HeroName => bota_core::hero_def(l.hero)
-            .map(|h| h.name.to_uppercase())
+            .map(|h| labels.name(h.key).to_uppercase())
             .unwrap_or_default(),
         Field::Respawn => l.respawn.map(|s| s.to_string()).unwrap_or_default(),
         Field::RingLevel => l.level.to_string(),
@@ -390,4 +396,16 @@ pub(crate) fn drawn_heroes(world: &mut World) -> Vec<(Team, u8, Option<String>)>
         .collect();
     out.sort_by_key(|(team, rank, _)| (*team == Team::Dire, *rank));
     out
+}
+
+#[cfg(test)]
+pub(crate) fn drawn_names(world: &mut World) -> Vec<String> {
+    world
+        .query::<(&Field, &Text, &InheritedVisibility, &ComputedNode)>()
+        .iter(world)
+        .filter(|(field, _, shown, node)| {
+            matches!(field, Field::HeroName) && shown.get() && node.size() != Vec2::ZERO
+        })
+        .map(|(_, text, _, _)| text.0.clone())
+        .collect()
 }

@@ -394,7 +394,7 @@ fn title(commands: &mut Commands, kit: &Kit, panel: Entity, hero: &HeroDef, fact
     commands.spawn((
         shot.text(
             kit,
-            hero.name.to_uppercase(),
+            kit.texts.name(hero.key).to_uppercase(),
             (NAME_FACE, 52.0, 1.0),
             theme::INK_1,
         ),

@@ -305,7 +305,7 @@ fn row_line(kit: &mut Kit, parent: Entity, view: &View, row: &Row, y: f32) {
     words(
         kit,
         identity,
-        row.hero_name(),
+        row.hero_name(kit.texts),
         at(0.0, 17.0),
         body(12.0),
         theme::INK_4,

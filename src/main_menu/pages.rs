@@ -814,7 +814,7 @@ fn result_page(kit: &mut Kit, body: Entity, result: &ResultView) {
             ("DIRE", Color::srgb(0.85, 0.3, 0.25))
         };
         kit.bold(row, side.0, 14.0, side.1);
-        let hero = HEROES.iter().position(|h| h.name == seat.hero);
+        let hero = HEROES.iter().position(|h| h.key == seat.hero_key);
         if let Some(hero) = hero {
             kit.portrait(row, hero as u16, 72.0);
         }
@@ -832,7 +832,12 @@ fn result_page(kit: &mut Kit, body: Entity, result: &ResultView) {
             17.0,
             if seat.mine { theme::GOLD } else { theme::INK_1 },
         );
-        kit.text(name, seat.hero.clone(), 14.0, theme::INK_4);
+        kit.text(
+            name,
+            kit.texts.name(&seat.hero_key).to_owned(),
+            14.0,
+            theme::INK_4,
+        );
         kit.text(row, seat.rating.clone(), 16.0, theme::INK_1);
     }
     kit.button(column, "CONTINUE", Act::Go(Page::Home), Tone::Primary, 46.0);
@@ -935,11 +940,13 @@ fn replay_row(kit: &mut Kit, column: Entity, replay: &ReplayRow) {
         }
     };
     let (headline, line, colour) = match &replay.summary {
-        Summary::Read { sides, outcome } if outcome.is_empty() => {
-            (known(sides), replay.when.clone(), theme::INK_4)
-        }
+        Summary::Read { sides, outcome } if outcome.is_empty() => (
+            known(&sides.text(kit.texts)),
+            replay.when.clone(),
+            theme::INK_4,
+        ),
         Summary::Read { sides, outcome } => (
-            known(sides),
+            known(&sides.text(kit.texts)),
             format!("{}  ·  {outcome}", replay.when),
             theme::INK_4,
         ),
@@ -1080,7 +1087,8 @@ fn demo_page(kit: &mut Kit, body: Entity, heroes: &[(u16, String)], offered: boo
             ..default()
         },
     );
-    for (id, name) in heroes {
+    for (id, key) in heroes {
+        let name = kit.texts.name(key).to_owned();
         let card = kit
             .commands
             .spawn((

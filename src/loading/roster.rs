@@ -20,9 +20,9 @@ pub struct Row {
 }
 
 impl Details {
-    pub fn with_connections(mut self, core: &Core) -> Self {
+    pub fn with_connections(mut self, core: &Core, texts: &crate::dota_text::Texts) -> Self {
         if self.seats.is_empty() {
-            self.seats = rows(core);
+            self.seats = rows(core, texts);
         } else {
             for row in &mut self.seats {
                 row.connected = core
@@ -36,10 +36,10 @@ impl Details {
     }
 }
 
-pub fn rows(core: &Core) -> Vec<Row> {
+pub fn rows(core: &Core, texts: &crate::dota_text::Texts) -> Vec<Row> {
     let row = |slot: SlotId, team: Team, given: &str, role: Option<Role>| {
         let name = if given.is_empty() {
-            crate::seat_name::seat_name(core, slot)
+            crate::seat_name::seat_name(core, slot, Some(texts))
         } else {
             given.to_owned()
         };

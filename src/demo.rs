@@ -610,7 +610,10 @@ fn contents(kit: &mut Kit, body: Entity, shown: &Shown) {
                 Button,
                 Hovered::default(),
                 Blocker,
-                Name::new(format!("demo hero {}", hero.name.to_lowercase())),
+                Name::new(format!(
+                    "demo hero {}",
+                    kit.texts.name(hero.key).to_lowercase()
+                )),
                 Node {
                     flex_direction: FlexDirection::Column,
                     align_items: AlignItems::Center,
@@ -638,7 +641,12 @@ fn contents(kit: &mut Kit, body: Entity, shown: &Shown) {
                 ChildOf(card),
             ));
         }
-        kit.text(card, hero.name.to_uppercase(), 12.0, BUTTON_INK);
+        kit.text(
+            card,
+            kit.texts.name(hero.key).to_uppercase(),
+            12.0,
+            BUTTON_INK,
+        );
     }
     let row = kit.row(body);
     let ally = kit.word("SpawnAllyHero_Button", "Ally");

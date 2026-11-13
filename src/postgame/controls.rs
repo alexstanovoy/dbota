@@ -281,6 +281,7 @@ pub fn redraw(
     core: Option<NonSend<MenuCore>>,
     fonts: Res<crate::ui::Fonts>,
     manifest: Res<crate::manifest::Manifest>,
+    texts: Res<crate::dota_text::Texts>,
     server: Res<AssetServer>,
     screens: Query<Entity, With<Root>>,
     mut drawn: Local<Option<u32>>,
@@ -293,6 +294,7 @@ pub fn redraw(
         commands,
         fonts: &fonts,
         manifest: &manifest,
+        texts: &texts,
         server: &server,
     };
     for screen in &screens {

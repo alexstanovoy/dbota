@@ -230,7 +230,7 @@ pub fn draw(kit: &mut Kit, root: Entity, view: &View) {
             view.filter
                 .hero
                 .and_then(bota_core::hero_def)
-                .map_or("Any", |hero| hero.name)
+                .map_or("Any", |hero| kit.texts.name(hero.key))
                 .to_owned(),
             Filter::Hero,
         ),
@@ -387,7 +387,7 @@ fn row(kit: &mut Kit, parent: Entity, game: &Match, y: f32, day: &str) {
     words(
         kit,
         row,
-        game.hero_name(),
+        game.hero_name(kit.texts),
         at(187.0, 20.0),
         bold(12.0),
         theme::INK_1,
@@ -482,11 +482,12 @@ fn dropdown(kit: &mut Kit, parent: Entity, view: &View, filter: Filter) {
                 )
             }),
         ),
-        Filter::Hero => options.extend(
-            bota_core::HEROES
-                .iter()
-                .map(|hero| (hero.name.to_owned(), Act::HistoryHero(Some(hero.id)))),
-        ),
+        Filter::Hero => options.extend(bota_core::HEROES.iter().map(|hero| {
+            (
+                kit.texts.name(hero.key).to_owned(),
+                Act::HistoryHero(Some(hero.id)),
+            )
+        })),
     }
     let dropdown = rect(
         kit,

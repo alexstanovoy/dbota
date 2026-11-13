@@ -126,3 +126,5 @@ mod dead_purchases;
 mod lobbies;
 mod mega_creeps;
 mod menu_pages;
+
+mod player_names;

@@ -8,118 +8,9 @@ use crate::dota_text::Texts;
 use crate::manifest::Manifest;
 use crate::tip_content::Lookup;
 
-/// dbota's own name of every live effect, by id: what shows without the
-/// asset cache, or where Dota has no tooltip for it.
-const OWN_NAMES: [(u16, &str); 100] = [
-    (1, "Healing Salve"),
-    (2, "Clarity"),
-    (3, "Fountain Rejuvenation"),
-    (4, "Stunned"),
-    (5, "Slowed"),
-    (6, "Burning"),
-    (7, "Speed Burst"),
-    (8, "Shield"),
-    (9, "Phase Boots"),
-    (10, "Flesh Heap"),
-    (11, "Necromastery"),
-    (12, "Presence of the Dark Lord"),
-    (13, "Tower Armor"),
-    (14, "Inspiration"),
-    (15, "Shadowraze"),
-    (16, "Rot"),
-    (17, "Requiem of Souls"),
-    (18, "Requiem of Souls"),
-    (19, "Feast of Souls"),
-    (20, "Feast of Souls"),
-    (21, "Blood Grenade"),
-    (22, "Rooted"),
-    (23, "Disarmed"),
-    (24, "Broken"),
-    (25, "Steal Weapon"),
-    (26, "Speed Aura"),
-    (27, "Envenomed Weapon"),
-    (28, "Frost Attack"),
-    (29, "Cloak Aura"),
-    (30, "Intimidate"),
-    (31, "Packleader's Aura"),
-    (32, "Mana Aura"),
-    (33, "Unholy Aura"),
-    (34, "Shard Split"),
-    (35, "Swiftness Aura"),
-    (36, "Death Throe: Rush"),
-    (37, "Thunder Clap"),
-    (38, "Death Throe: Power"),
-    (39, "Toughness Aura"),
-    (40, "Magic Amplification Aura"),
-    (41, "Dragonhide Aura"),
-    (42, "Weakening Aura"),
-    (43, "Granite Aura"),
-    (44, "War Drums Aura"),
-    (45, "Slam"),
-    (46, "Frenzy"),
-    (47, "Time Warp Aura"),
-    (48, "Prowler Aura"),
-    (49, "Desecrate"),
-    (50, "Petrify"),
-    (51, "Riverborn Aura"),
-    (52, "Rally"),
-    (53, "Tempest"),
-    (54, "Water Bubble"),
-    (55, "Purge"),
-    (56, "Glyph of Fortification"),
-    (57, "Meat Shield"),
-    (58, "Dismember"),
-    (59, "Backdoor Protection"),
-    (60, "Illusion"),
-    (61, "Time Left"),
-    (62, "Neutral Upgrade"),
-    (63, "Flying"),
-    (64, "Fountain Invulnerability"),
-    (65, "Fountain Aura"),
-    (66, "Fountain Damage"),
-    (67, "Granted Vision"),
-    (68, "Deactivated"),
-    (69, "Capturing"),
-    (70, "Shrine Ready"),
-    (71, "Haste"),
-    (72, "Amplify Damage"),
-    (73, "Arcane"),
-    (74, "Regeneration"),
-    (75, "Invisible"),
-    (76, "Shielded"),
-    (77, "Bottle Regeneration"),
-    (78, "Lesser Corruption"),
-    (79, "Poison Attack"),
-    (80, "Frost"),
-    (81, "Recovery"),
-    (82, "Roshan's Armor"),
-    (83, "Strength of the Immortal"),
-    (84, "Devotion Aura"),
-    (85, "Spell Block"),
-    (86, "Slam"),
-    (87, "Bashed"),
-    (88, "Roaring"),
-    (89, "Roar Protection"),
-    (90, "Disarmed"),
-    (91, "Roar of Retribution"),
-    (92, "Silenced"),
-    (93, "Grabbed"),
-    (94, "Thrown"),
-    (95, "On the Move"),
-    (96, "Knocked Back"),
-    (97, "Collision Cooldown"),
-    (98, "Ghost Form"),
-    // A Twin Gate a warp runs through: the warp it wears the icon of.
-    (99, "Warp"),
-    (100, "Meat Hook Followthrough"),
-];
-
-/// dbota's own name of an effect; none for an id it does not know.
+/// The fallback of the modifier's internal key.
 pub fn own_name(id: u16) -> Option<&'static str> {
-    OWN_NAMES
-        .iter()
-        .find(|(known, _)| *known == id)
-        .map(|(_, name)| *name)
+    crate::game_names::fallback(bota_core::effect_def(bota_proto::EffectId(id))?.key)
 }
 
 /// The Dota modifier's tooltip line `suffix` (empty: its name), when the
@@ -146,7 +37,10 @@ pub fn name(texts: &Texts, manifest: &Manifest, id: u16) -> String {
         })
         .filter(|name| !name.trim().is_empty())
         .or_else(|| own_name(id).map(str::to_owned))
-        .unwrap_or_default()
+        .unwrap_or_else(|| {
+            bota_core::effect_def(bota_proto::EffectId(id))
+                .map_or_else(|| format!("effect_{id}"), |def| def.key.to_owned())
+        })
 }
 
 /// What the tooltip says an effect does: Dota's modifier description where
@@ -188,7 +82,7 @@ fn source_description(look: &Lookup, id: u16) -> Option<String> {
 mod tests {
     use bota_proto::{EffectId, IdSpace, registered};
 
-    use super::{OWN_NAMES, name};
+    use super::{name, own_name};
     use crate::dota_text::Texts;
     use crate::manifest::Manifest;
 
@@ -322,6 +216,11 @@ mod tests {
                 );
             }
         }
-        assert!(OWN_NAMES.iter().all(|(_, n)| !reads_as_identifier(n)));
+        assert!(
+            bota_core::EFFECTS
+                .iter()
+                .filter(|def| !def.retired)
+                .all(|def| !reads_as_identifier(own_name(def.id.0).expect("live effect fallback")))
+        );
     }
 }

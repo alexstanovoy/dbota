@@ -10,7 +10,7 @@ use bevy::{
     world_serialization::WorldInstanceReady,
 };
 use bota_client_core::{ClientSession, bodies};
-use bota_core::{MapDef, NEUTRALS, NeutralKind, barracks_ranged_at, kind_def};
+use bota_core::{MapDef, NEUTRALS, NeutralKind, kind_def};
 use bota_proto::{
     CreepTier, EffectId, EntityId, LotusTier, ProjectileModel, Team, UnitKind, UnitView, WorldView,
 };
@@ -806,26 +806,42 @@ fn ward_unit(ward: &UnitView) -> &'static str {
 
 /// What a unit is called: a neutral creep by its own name, anything else by
 /// its kind's, a barracks by the one the map puts where it stands.
-pub fn unit_name(map: &MapDef, unit: &UnitView) -> &'static str {
-    match unit.neutral.and_then(NeutralKind::of) {
-        Some(kind) => kind.neutral().name,
-        None => kind_name(map, unit.kind, unit.team, unit.pos),
+pub fn unit_name(texts: &crate::dota_text::Texts, map: &MapDef, unit: &UnitView) -> String {
+    if let Some(hero) = unit.hero.and_then(bota_core::hero_def) {
+        return texts.name(hero.key).to_owned();
     }
+    if let Some(key) = npc_unit(unit) {
+        return texts.name(key).to_owned();
+    }
+    texts
+        .name(&building_key(map, unit.kind, unit.team, unit.pos))
+        .to_owned()
 }
 
-/// What the game calls one unit on a map, from its kind, its side and where
-/// it stands: the barracks that feeds the ranged creeps is the one the map
-/// puts there, and each Ancient is its side's own.
-fn kind_name(map: &MapDef, kind: UnitKind, team: Team, pos: bota_proto::Vec2) -> &'static str {
-    match (kind, team) {
-        (UnitKind::Ancient, Team::Radiant) => "Radiant's Ancient",
-        (UnitKind::Ancient, Team::Dire) => "Dire's Ancient",
-        (UnitKind::Barracks, _) if barracks_ranged_at(map, team, pos) == Some(true) => {
-            "Ranged Barracks"
+fn building_key(map: &MapDef, kind: UnitKind, team: Team, pos: bota_proto::Vec2) -> String {
+    let (lane, tier, ranged) = match kind {
+        UnitKind::Tower => {
+            let towers = if team == Team::Dire {
+                map.dire_towers
+            } else {
+                map.radiant_towers
+            };
+            towers
+                .iter()
+                .find(|(_, _, at)| *at == pos)
+                .map_or((None, None, None), |(lane, tier, _)| {
+                    (Some(*lane), Some(*tier), None)
+                })
         }
-        (UnitKind::Barracks, _) => "Melee Barracks",
-        _ => kind_def(kind).name,
-    }
+        UnitKind::Barracks => map.barracks[usize::from(team == Team::Dire)]
+            .iter()
+            .find(|(_, _, at)| *at == pos)
+            .map_or((None, None, None), |(lane, ranged, _)| {
+                (Some(*lane), None, Some(*ranged))
+            }),
+        _ => (None, None, None),
+    };
+    crate::game_names::structure_key(kind, team, lane, tier, ranged)
 }
 
 /// The ordinary model name, looked up once when a body appears. Manifest

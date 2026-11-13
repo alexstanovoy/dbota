@@ -49,6 +49,7 @@ mod fog;
 mod fortified;
 mod framestats;
 mod fx;
+mod game_names;
 mod gltf_file;
 mod glyph;
 mod ground_targets;

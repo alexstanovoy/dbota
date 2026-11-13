@@ -503,7 +503,7 @@ fn notice_text(core: &Core, texts: Option<&Texts>, event: &EventKind) -> Option<
         EventKind::ShrineActivated { team, by, .. } => {
             let who = by.and_then(seat).map_or_else(
                 || crate::feed::side_name(team).to_owned(),
-                |slot| crate::seat_name::seat_name(core, slot),
+                |slot| crate::seat_name::seat_name(core, slot, texts),
             );
             let own = format!("{who} activated a Shrine of Wisdom.");
             ("DOTA_Chat_Rune_XP".to_owned(), own, who)
@@ -513,7 +513,7 @@ fn notice_text(core: &Core, texts: Option<&Texts>, event: &EventKind) -> Option<
             if core.my_team().is_some_and(|mine| mine != hero.team) {
                 return None;
             }
-            let who = crate::seat_name::seat_name(core, hero.owner?);
+            let who = crate::seat_name::seat_name(core, hero.owner?, texts);
             let name = crate::runes::text_name(kind);
             match event {
                 EventKind::RuneBottled { .. } => (
@@ -557,6 +557,7 @@ impl Shown<'_> {
 /// The log's lines, newest at the foot. While a line is being typed nothing
 /// fades.
 fn show_log(
+    texts: Res<Texts>,
     sight: crate::fog::EventSight,
     typing: Res<Typing>,
     notices: Res<Notices>,
@@ -583,7 +584,7 @@ fn show_log(
         let Some(line) = line.filter(|_| alpha > 0.0) else {
             continue;
         };
-        let (tag, name, name_tint, words) = chat_words(core, line);
+        let (tag, name, name_tint, words) = chat_words(core, line, &texts);
         text.set_if_neq(Text(tag));
         color.set_if_neq(TextColor(ui::INK_DIM.with_alpha(alpha)));
         for child in children {
@@ -824,13 +825,17 @@ fn loading_prompt(
     }
 }
 
-fn chat_words<'a>(core: &Core, line: &'a Shown<'a>) -> (String, String, Color, &'a str) {
+fn chat_words<'a>(
+    core: &Core,
+    line: &'a Shown<'a>,
+    texts: &Texts,
+) -> (String, String, Color, &'a str) {
     match line {
         Shown::Heard(line, words) => (
             tag(line),
             format!(
                 "{}: ",
-                crate::seat_name::speaker_name(core, &line.heard.from)
+                crate::seat_name::speaker_name(core, &line.heard.from, Some(texts))
             ),
             name_color(core, line),
             *words,

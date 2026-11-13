@@ -133,7 +133,7 @@ fn last_words(kit: &mut Kit, row: Entity, game: &Match, clock: super::page_time:
     kit.typed(text, result(game), theme::MATCH_RESULT, color(game));
     kit.text(
         text,
-        format!("{} · {}", game.hero_name(), game.kda_text()),
+        format!("{} · {}", game.hero_name(kit.texts), game.kda_text()),
         14.0,
         theme::INK_2,
     );
@@ -232,7 +232,7 @@ fn recent_row(kit: &mut Kit, recent: Entity, game: &Match) {
             ..default()
         },
     );
-    kit.bold(words, game.hero_name(), 14.0, theme::INK_1);
+    kit.bold(words, game.hero_name(kit.texts), 14.0, theme::INK_1);
     kit.text(
         words,
         format!(

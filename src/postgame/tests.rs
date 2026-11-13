@@ -1500,3 +1500,59 @@ fn old_and_hostile_replay_provenance_keeps_playback_without_automatic_profile_co
         std::fs::remove_file(file).expect("remove replay fixture");
     }
 }
+
+#[test]
+fn the_result_scoreboard_draws_installed_hero_names() {
+    let root = crate::test_support::scratch_path("postgame_installed_names");
+    std::fs::create_dir_all(root.join("text")).expect("fixture directory");
+    std::fs::write(root.join("text/labels.json"),
+        r#"{"npc_dota_hero_nevermore:n":"Installed Result Hero","npc_dota_hero_pudge:n":"Installed Result Hero"}"#)
+        .expect("fixture labels");
+    let mut client = crate::e2e::harness::Client::run(&["--menu-preview", "match_scoreboard"]);
+    client
+        .world_mut()
+        .insert_resource(crate::dota_text::Texts::load(&root));
+    client
+        .world_mut()
+        .non_send_mut::<super::PostGame>()
+        .presented += 1;
+    client.frames(4);
+    let words = client.shown_texts();
+    assert!(
+        words
+            .iter()
+            .any(|word| word.eq_ignore_ascii_case("Installed Result Hero")),
+        "the result scoreboard names heroes from installed text: {words:?}"
+    );
+}
+
+#[test]
+fn the_replay_hud_draws_installed_hero_names() {
+    let (replay, _) = recorded_match_for_menu();
+    let root = crate::test_support::scratch_path("replay_installed_names");
+    std::fs::create_dir_all(root.join("text")).expect("fixture directory");
+    std::fs::write(root.join("text/labels.json"),
+        r#"{"npc_dota_hero_nevermore:n":"Installed Replay Hero","npc_dota_hero_pudge:n":"Installed Replay Hero"}"#)
+        .expect("fixture labels");
+    let mut client = crate::e2e::harness::Client::run(&[
+        "--replay",
+        replay.to_str().expect("replay path"),
+        "--pov",
+        "0",
+    ]);
+    client.until("replay first snapshot", |client| {
+        client.core().view().is_some()
+    });
+    if let bota_client_core::Source::Replay(player) = &mut client.core_mut().source {
+        player.paused = true;
+    }
+    client
+        .world_mut()
+        .insert_resource(crate::dota_text::Texts::load(&root));
+    client.until("installed hero name in the replay HUD", |client| {
+        client
+            .shown_texts()
+            .iter()
+            .any(|text| text == "INSTALLED REPLAY HERO")
+    });
+}

@@ -117,6 +117,7 @@ pub fn items(
         commands,
         fonts: &fonts,
         manifest: &manifest,
+        texts: &texts,
         server: &server,
     };
     for tip in &tips {

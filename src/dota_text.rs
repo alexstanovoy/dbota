@@ -3,7 +3,7 @@
 //! They come from the asset cache (`text/tooltips.json`, which
 //! `dbota import` builds out of the player's own Dota install) and
 //! are never part of this repository. An entry the cache has no text of falls back to the
-//! simulator's own plain names and numbers.
+//! client's own names and the simulator's numbers.
 
 use std::{collections::HashMap, path::Path};
 
@@ -19,7 +19,7 @@ const MAX_ENTRIES: usize = 4096;
 /// Most aliases kept of one entry.
 const MAX_ALIASES: usize = 16;
 /// An upper bound on the labels, on the same grounds.
-const MAX_LABELS: usize = 512;
+const MAX_LABELS: usize = 4096;
 /// Where Dota's style colours lie in the cache.
 const STYLES: &str = "text/styles.json";
 /// An upper bound on the colours.
@@ -90,6 +90,31 @@ impl Texts {
     /// in its own words, with them only in Dota's.
     pub fn has_labels(&self) -> bool {
         !self.labels.is_empty()
+    }
+
+    /// Installed text, then the client's fallback, then the internal key visibly.
+    pub fn name<'a>(&'a self, key: &'a str) -> &'a str {
+        self.entries
+            .get(key)
+            .map(|entry| entry.name.as_str())
+            .filter(|name| !name.trim().is_empty())
+            .or_else(|| {
+                self.labels
+                    .get(key)
+                    .map(String::as_str)
+                    .filter(|name| !name.trim().is_empty())
+            })
+            .or_else(|| {
+                self.labels
+                    .get(&format!("{key}:n"))
+                    .map(String::as_str)
+                    .filter(|name| !name.trim().is_empty())
+            })
+            .unwrap_or_else(|| crate::game_names::plain(key))
+    }
+
+    pub fn hero_name(&self, id: bota_proto::HeroId) -> &str {
+        bota_core::hero_def(id).map_or("Unknown hero", |hero| self.name(hero.key))
     }
 
     pub fn get(&self, key: &str) -> Option<&Entry> {

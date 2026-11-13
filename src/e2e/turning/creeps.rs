@@ -147,7 +147,7 @@ fn released(client: &Client, creep: EntityId) -> bool {
 
 fn assert_release(client: &Client, creep: EntityId, waited: bool, due: Option<u32>) {
     let unit = client.view().unit(creep).expect("creep");
-    let scenario = bota_core::kind_def(unit.kind).name;
+    let scenario = format!("{:?}", unit.kind);
     assert!(
         waited,
         "{scenario}: presentation lag must exercise the gate"
@@ -179,8 +179,8 @@ fn check(kind: UnitKind) {
         }
     }
     panic!(
-        "{}: creep never released its attack",
-        bota_core::kind_def(kind).name
+        "{:?}: creep never released its attack",
+        bota_core::kind_def(kind).kind
     );
 }
 

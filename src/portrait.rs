@@ -1310,7 +1310,12 @@ pub(crate) fn model_bounds(
 }
 
 /// Debug: selects the first unit shown that `--select` names, until one is.
-fn select_named(args: Res<crate::Args>, mut session: NonSendMut<Session>, units: Query<&Unit>) {
+fn select_named(
+    args: Res<crate::Args>,
+    labels: Res<crate::dota_text::Texts>,
+    mut session: NonSendMut<Session>,
+    units: Query<&Unit>,
+) {
     let Some(want) = args.select.as_deref() else {
         return;
     };
@@ -1322,7 +1327,7 @@ fn select_named(args: Res<crate::Args>, mut session: NonSendMut<Session>, units:
     let found = units.iter().find_map(|u| {
         let live = view.unit(u.id)?;
         let side_ok = side.is_empty() || format!("{:?}", u.team).eq_ignore_ascii_case(side);
-        let named = crate::units::unit_name(map, live).eq_ignore_ascii_case(name);
+        let named = crate::units::unit_name(&labels, map, live).eq_ignore_ascii_case(name);
         (side_ok && named).then_some(u.id)
     });
     if found.is_some() && core.selected != found {

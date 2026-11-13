@@ -94,6 +94,7 @@ fn tooltip_entry(t: &Tooltip) -> Json {
 /// Longest label text kept: an interface line, not a document.
 const LABEL_LIMIT: usize = 1024;
 
+/// NPC and registered definition names are discovered from localization, without manifest rows.
 /// `text/labels.json`: the text of each `(file, key)` of `keys` out of its localization file
 /// among `files` (install path and bytes), by the key lower-cased. A key a file lacks, or whose
 /// text is longer than [`LABEL_LIMIT`], is left out: the client says it in its own words.
@@ -112,6 +113,43 @@ pub fn labels_json(keys: &[(String, String)], files: &[(&str, &[u8])]) -> Result
             .filter(|text| text.len() <= LABEL_LIMIT);
         if let Some(text) = found {
             out.insert(key, text.clone());
+        }
+    }
+    for (_, table) in &tables {
+        for (key, name) in table {
+            let npc = key.strip_suffix(":n").unwrap_or(key);
+            if npc.starts_with("npc_dota_")
+                && !npc.contains(':')
+                && !name.trim().is_empty()
+                && name.len() <= LABEL_LIMIT
+            {
+                if key.ends_with(":n") {
+                    out.insert(npc.to_owned(), name.clone());
+                } else {
+                    out.entry(npc.to_owned()).or_insert_with(|| name.clone());
+                }
+            }
+        }
+        for space in [
+            bota_proto::IdSpace::Item,
+            bota_proto::IdSpace::Ability,
+            bota_proto::IdSpace::Effect,
+        ] {
+            for entry in bota_proto::registered(space).filter(|entry| !entry.retired) {
+                let token = match space {
+                    bota_proto::IdSpace::Item | bota_proto::IdSpace::Ability => {
+                        format!("dota_tooltip_ability_{}", entry.name)
+                    }
+                    _ => format!("dota_tooltip_{}", entry.name),
+                };
+                if let Some(name) = table
+                    .get(&format!("{token}:n"))
+                    .or_else(|| table.get(&token))
+                    .filter(|name| !name.trim().is_empty() && name.len() <= LABEL_LIMIT)
+                {
+                    out.insert(entry.name.to_owned(), name.clone());
+                }
+            }
         }
     }
     let out: Map<String, Json> = out.into_iter().map(|(k, v)| (k, json!(v))).collect();
@@ -1725,5 +1763,38 @@ mod mixer_tests {
             text.contains("\nlayerlevel Announcer Weapons 0.700 1.000 0.000\n"),
             "{text}"
         );
+    }
+}
+
+#[cfg(test)]
+mod name_tests {
+    #[test]
+    fn localization_names_are_exported_by_internal_key_without_manifest_rows() {
+        let source = br#""lang" { "Tokens" {
+            "npc_dota_hero_pudge:n" "Installed Butcher"
+            "npc_dota_hero_pudge" "Wrong grammatical form"
+            "npc_dota_neutral_kobold" "Installed Kobold"
+            "DOTA_Tooltip_ability_pudge_rot" "Installed Rot"
+            "DOTA_Tooltip_modifier_stunned" "Installed Stun"
+            "DOTA_Tooltip_ability_pudge_rot_description" "Not a name"
+            "npc_dota_neutral_empty" "   "
+        }}"#;
+        let bytes = super::labels_json(
+            &[],
+            &[("resource/localization/abilities_english.txt", source)],
+        )
+        .expect("export labels");
+        let names: serde_json::Value = serde_json::from_slice(&bytes).expect("valid labels");
+        for (key, expected) in [
+            ("npc_dota_hero_pudge", "Installed Butcher"),
+            ("npc_dota_neutral_kobold", "Installed Kobold"),
+            ("pudge_rot", "Installed Rot"),
+            ("modifier_stunned", "Installed Stun"),
+        ] {
+            assert_eq!(names[key], expected, "{key}");
+        }
+        assert!(names.get("pudge_rot_description").is_none());
+        assert!(names.get("npc_dota_hero_pudge:n").is_none());
+        assert!(names.get("npc_dota_neutral_empty").is_none());
     }
 }

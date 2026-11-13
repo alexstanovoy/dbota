@@ -529,14 +529,14 @@ fn preview_result() -> MenuView {
                 SeatRow {
                     name: "alice#12".to_owned(),
                     team: 0,
-                    hero: "Shadow Fiend".to_owned(),
+                    hero_key: "npc_dota_hero_nevermore".to_owned(),
                     rating: "1512 (+12)".to_owned(),
                     mine: true,
                 },
                 SeatRow {
                     name: "bob#7".to_owned(),
                     team: 1,
-                    hero: "Pudge".to_owned(),
+                    hero_key: "npc_dota_hero_pudge".to_owned(),
                     rating: "1488 (-12)".to_owned(),
                     mine: false,
                 },

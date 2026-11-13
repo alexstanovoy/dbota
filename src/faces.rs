@@ -277,8 +277,8 @@ mod tests {
             .enumerate()
             .filter(|(_, def)| !def.retired)
         {
-            let face = effect(id as u16).unwrap_or_else(|| panic!("{} is found", def.name));
-            assert_eq!(usize::from(face.id), id, "{} is found by its id", def.name);
+            let face = effect(id as u16).unwrap_or_else(|| panic!("{} is found", def.key));
+            assert_eq!(usize::from(face.id), id, "{} is found by its id", def.key);
         }
     }
 
@@ -295,12 +295,12 @@ mod tests {
             assert!(!face.blurb().contains('{'), "effect {}", face.id);
         }
         for (id, hero) in bota_core::HEROES.iter().enumerate() {
-            let tree = talents(id as u16).unwrap_or_else(|| panic!("{} has a tree", hero.name));
+            let tree = talents(id as u16).unwrap_or_else(|| panic!("{} has a tree", hero.key));
             assert!(
                 tree.iter()
                     .all(|t| !t.name.contains('{') && !t.blurb.contains('{')),
                 "{}",
-                hero.name
+                hero.key
             );
         }
         assert!(talents(u16::MAX).is_none());

@@ -73,6 +73,7 @@ pub fn draw(
         commands,
         fonts: &fonts,
         manifest: &manifest,
+        texts: &texts,
         server: &server,
     };
     kit.commands.entity(page).despawn_children();

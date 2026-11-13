@@ -1594,12 +1594,19 @@ fn unlearned(id: AbilityId) -> AbilityView {
 
 /// Every text of the HUD: the panel's whatever it is about, the rest once
 /// the match has a view.
-fn readouts(session: NonSend<Session>, mut texts: Query<(&Readout, &mut Text)>) {
+fn readouts(
+    session: NonSend<Session>,
+    labels: Res<crate::dota_text::Texts>,
+    mut texts: Query<(&Readout, &mut Text)>,
+) {
     let core = &session.0;
     let (p, unit, _) = subject(core);
     let hero = subject_hero(core);
     for (readout, mut text) in &mut texts {
-        let s = match (panel_text(core, p, unit, hero, *readout), core.view()) {
+        let s = match (
+            panel_text(&labels, core, p, unit, hero, *readout),
+            core.view(),
+        ) {
             (Some(s), _) => s,
             (None, Some(view)) => match_text(core, view, *readout),
             (None, None) => continue,
@@ -1611,6 +1618,7 @@ fn readouts(session: NonSend<Session>, mut texts: Query<(&Readout, &mut Text)>) 
 /// A text of the bottom panel, or none for a readout that is not the
 /// panel's.
 fn panel_text(
+    labels: &crate::dota_text::Texts,
     core: &Core,
     p: Option<&PlayerView>,
     unit: Option<&UnitView>,
@@ -1621,10 +1629,10 @@ fn panel_text(
         // In capitals, as Dota's banner writes it.
         Readout::PanelName => hero
             .and_then(bota_core::hero_def)
-            .map(|hero| hero.name.to_string())
+            .map(|hero| labels.name(hero.key).to_owned())
             .or(unit
                 .zip(core.session().map(ClientSession::map))
-                .map(|(u, map)| crate::units::unit_name(map, u).to_string()))
+                .map(|(u, map)| crate::units::unit_name(labels, map, u)))
             .unwrap_or_default()
             .to_uppercase(),
         Readout::PanelLevel => unit

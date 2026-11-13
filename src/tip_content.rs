@@ -236,7 +236,7 @@ impl Lookup<'_> {
         let subject = Subject::Ability(AbilityId(id), def);
         let entry = self.entry("ability", id);
         let mut content = Content {
-            title: entry.map_or_else(|| def.name.to_string(), |e| e.name.clone()),
+            title: self.texts.name(def.key).to_owned(),
             icon: self.manifest.ability_icon(id),
             level: (max_level > 1).then(|| format!("Level {level}")),
             ..Content::default()

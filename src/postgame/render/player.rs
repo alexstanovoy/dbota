@@ -100,7 +100,7 @@ fn identity(kit: &mut Kit, parent: Entity, view: &View, row: &Row) {
     words(
         kit,
         card,
-        row.hero_name().to_uppercase(),
+        row.hero_name(kit.texts).to_uppercase(),
         at(14.0, 372.0),
         caption(15.0),
         theme::INK_3,
@@ -434,7 +434,7 @@ fn kills(kit: &mut Kit, parent: Entity, view: &View, row: &Row) {
             if killed { event.victim } else { event.killer }.and_then(|slot| view.row(slot));
         let who = other.map_or_else(
             || "Other unit".to_owned(),
-            |other| format!("{} · {}", other.hero_name(), other.display_name()),
+            |other| format!("{} · {}", other.hero_name(kit.texts), other.display_name()),
         );
         let text = words(
             kit,

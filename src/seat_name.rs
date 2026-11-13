@@ -7,7 +7,7 @@ use bota_proto::{SlotId, Speaker};
 ///
 /// A seat that sent no name, as in a replay, is called by its hero and its
 /// side, and by its number before the match tells either.
-pub fn seat_name(core: &Core, slot: SlotId) -> String {
+pub fn seat_name(core: &Core, slot: SlotId, texts: Option<&crate::dota_text::Texts>) -> String {
     if let Some(name) = core.player_name(slot) {
         return name.to_string();
     }
@@ -19,15 +19,19 @@ pub fn seat_name(core: &Core, slot: SlotId) -> String {
             Some((hero, p.team))
         });
     match known {
-        Some((hero, team)) => format!("{} ({team:?})", hero.name),
+        Some((hero, team)) => format!("{} ({team:?})", crate::game_names::resolve(texts, hero.key)),
         None => format!("seat {}", slot.0),
     }
 }
 
 /// What a speaker is called: a seat by its name, a spectator by its own.
-pub fn speaker_name(core: &Core, from: &Speaker) -> String {
+pub fn speaker_name(
+    core: &Core,
+    from: &Speaker,
+    texts: Option<&crate::dota_text::Texts>,
+) -> String {
     match from {
-        Speaker::Seat(slot) => seat_name(core, *slot),
+        Speaker::Seat(slot) => seat_name(core, *slot, texts),
         Speaker::Spectator(name) => name.clone(),
     }
 }

@@ -865,7 +865,11 @@ fn a_rune_clicked_is_taken_with_its_sound_line_buff_and_chat() {
                 seen.get() && chip.shown.is_some_and(|s| s.id == EffectId::RUNE_HASTE.0)
             })
     });
-    let name = crate::seat_name::seat_name(client.core(), client.core().my_slot.expect("a seat"));
+    let name = crate::seat_name::seat_name(
+        client.core(),
+        client.core().my_slot.expect("a seat"),
+        Some(client.world().resource::<crate::dota_text::Texts>()),
+    );
     let line = label(&client, "DOTA_Chat_Rune_Haste", &[]).replace("%s1", &name);
     client.within(SOON, "the chat line", |c| shown_spans(c).contains(&line));
 }

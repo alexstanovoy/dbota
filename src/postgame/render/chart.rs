@@ -701,6 +701,7 @@ pub fn hover(
     commands: Commands,
     fonts: Res<crate::ui::Fonts>,
     manifest: Res<crate::manifest::Manifest>,
+    texts: Res<crate::dota_text::Texts>,
     server: Res<AssetServer>,
     mut plots: Query<(Entity, &RelativeCursorPosition, &mut Plot)>,
 ) {
@@ -708,6 +709,7 @@ pub fn hover(
         commands,
         fonts: &fonts,
         manifest: &manifest,
+        texts: &texts,
         server: &server,
     };
     for (entity, cursor, mut plot) in &mut plots {

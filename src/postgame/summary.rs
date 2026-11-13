@@ -52,8 +52,8 @@ impl Row {
             .unwrap_or_else(|| format!("Player {}", usize::from(self.slot.0) + 1))
     }
 
-    pub fn hero_name(&self) -> &'static str {
-        bota_core::hero_def(self.hero).map_or("Unknown hero", |hero| hero.name)
+    pub fn hero_name<'a>(&self, texts: &'a crate::dota_text::Texts) -> &'a str {
+        bota_core::hero_def(self.hero).map_or("Unknown hero", |hero| texts.name(hero.key))
     }
 }
 

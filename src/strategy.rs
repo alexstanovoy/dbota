@@ -270,7 +270,7 @@ fn details(commands: &mut Commands, kit: &Kit, hero: u16, root: Entity) {
     commands.spawn((
         shot.text(
             kit,
-            def.name.to_uppercase(),
+            kit.texts.name(def.key).to_uppercase(),
             (NAME_FACE, r::ENTERING[3], 1.0),
             Color::WHITE,
         ),

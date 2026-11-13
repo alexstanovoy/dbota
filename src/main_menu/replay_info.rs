@@ -23,7 +23,7 @@ pub enum Summary {
     /// Who played what, and how it ended.
     Read {
         /// `Player (Shadow Fiend) vs Bot (Shadow Fiend)`.
-        sides: String,
+        sides: Sides,
         /// `Dire victory, 1:43`, or `unfinished, 0:52`.
         outcome: String,
     },
@@ -120,56 +120,76 @@ pub fn read(path: &Path) -> Summary {
     // The lobby's names where the replay has them; the match's picks else.
     let named = seats.iter().any(|s| !s.name.is_empty());
     Summary::Read {
-        sides: if named { sides(&seats) } else { heroes(&picks) },
+        sides: Sides {
+            players: String::new(),
+            heroes: if named {
+                seats
+                    .iter()
+                    .map(|seat| {
+                        (
+                            seat.team,
+                            (!seat.name.is_empty())
+                                .then(|| super::text::line(&seat.name, super::text::NAME)),
+                            seat.hero,
+                        )
+                    })
+                    .collect()
+            } else {
+                picks
+                    .iter()
+                    .map(|pick| (pick.team, None, Some(pick.hero)))
+                    .collect()
+            },
+        },
         outcome,
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
-/// `Radiant names vs Dire names`, each with its hero.
-fn sides(seats: &[bota_proto::LobbySlot]) -> String {
-    let side = |team: Team| {
-        let names: Vec<String> = seats
-            .iter()
-            .filter(|s| s.team == team)
-            .map(|s| {
-                let name = if s.name.is_empty() {
-                    "open"
-                } else {
-                    s.name.as_str()
-                };
-                let name = super::text::line(name, super::text::NAME);
-                match s.hero.and_then(bota_core::hero_def) {
-                    Some(hero) => format!("{name} ({})", hero.name),
-                    None => name,
-                }
-            })
-            .collect();
-        if names.is_empty() {
-            "nobody".to_owned()
-        } else {
-            names.join(", ")
-        }
-    };
-    format!("{} vs {}", side(Team::Radiant), side(Team::Dire))
+/// Replay names stay structured until rendering, so the current installed language wins.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Sides {
+    players: String,
+    heroes: Vec<(bota_proto::Team, Option<String>, Option<bota_proto::HeroId>)>,
 }
 
-/// `Radiant heroes vs Dire heroes`.
-#[cfg(not(target_arch = "wasm32"))]
-fn heroes(picks: &[bota_proto::Pick]) -> String {
-    let side = |team: Team| {
-        let names: Vec<&str> = picks
-            .iter()
-            .filter(|p| p.team == team)
-            .map(|p| bota_core::hero_def(p.hero).map_or("a hero", |h| h.name))
-            .collect();
-        if names.is_empty() {
-            "nobody".to_owned()
-        } else {
-            names.join(", ")
+impl From<String> for Sides {
+    fn from(players: String) -> Self {
+        Self {
+            players,
+            heroes: Vec::new(),
         }
-    };
-    format!("{} vs {}", side(Team::Radiant), side(Team::Dire))
+    }
+}
+
+impl Sides {
+    pub fn text(&self, texts: &crate::dota_text::Texts) -> String {
+        if self.heroes.is_empty() {
+            return self.players.clone();
+        }
+        let side = |team| {
+            let names: Vec<_> = self
+                .heroes
+                .iter()
+                .filter(|(t, _, _)| *t == team)
+                .map(|(_, name, hero)| match (name, hero) {
+                    (Some(name), Some(hero)) => format!("{name} ({})", texts.hero_name(*hero)),
+                    (Some(name), None) => name.clone(),
+                    (None, Some(hero)) => texts.hero_name(*hero).to_owned(),
+                    (None, None) => "open".to_owned(),
+                })
+                .collect();
+            if names.is_empty() {
+                "nobody".to_owned()
+            } else {
+                names.join(", ")
+            }
+        };
+        format!(
+            "{} vs {}",
+            side(bota_proto::Team::Radiant),
+            side(bota_proto::Team::Dire)
+        )
+    }
 }
 
 /// Replays read so far, by path and stamp; the reading thread's answers.
@@ -297,4 +317,40 @@ pub fn when(time: std::time::SystemTime) -> String {
         at.get_hours(),
         at.get_minutes()
     )
+}
+
+#[cfg(test)]
+mod name_tests {
+    #[test]
+    fn replay_hero_identities_are_named_by_the_current_install() {
+        let root = crate::test_support::scratch_path("replay_list_names");
+        std::fs::create_dir_all(root.join("text")).expect("fixture directory");
+        std::fs::write(
+            root.join("text/labels.json"),
+            r#"{"npc_dota_hero_nevermore:n":"Installed Fiend"}"#,
+        )
+        .expect("fixture names");
+        let texts = crate::dota_text::Texts::load(&root);
+        let sides = super::Sides {
+            players: String::new(),
+            heroes: vec![
+                (
+                    bota_proto::Team::Radiant,
+                    Some("Reader".to_owned()),
+                    Some(bota_proto::HeroId::SHADOW_FIEND),
+                ),
+                (
+                    bota_proto::Team::Dire,
+                    None,
+                    Some(bota_proto::HeroId::PUDGE),
+                ),
+            ],
+        };
+        assert_eq!(sides.text(&texts), "Reader (Installed Fiend) vs Pudge");
+        assert_eq!(
+            sides.text(&crate::dota_text::Texts::default()),
+            "Reader (Shadow Fiend) vs Pudge"
+        );
+        std::fs::remove_dir_all(root).expect("remove fixture");
+    }
 }

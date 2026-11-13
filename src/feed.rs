@@ -573,7 +573,7 @@ fn lay(core: &Core, texts: Option<&Texts>, manifest: &Manifest, line: &FeedLine)
     let mut laid: Laid = Default::default();
     let dota = texts.and_then(|texts| dota_parts(core, texts, &line.kind));
     let Some(parts) = dota else {
-        laid[0].1 = text(core, &line.kind);
+        laid[0].1 = localized_text(core, &line.kind, texts);
         return laid;
     };
     // Icons and texts alternate, an icon first; a text with no icon before
@@ -718,7 +718,7 @@ fn dota_parts(core: &Core, texts: &Texts, kind: &FeedKind) -> Option<Vec<Part>> 
             let labels = crate::faces::loot_labels(item)?;
             texts.label_parts(
                 labels[usize::from(destroyed)],
-                &[("player_name", activator(core, by, team))],
+                &[("player_name", activator(core, by, team, Some(texts)))],
             )
         }
         FeedKind::BossRoared {
@@ -762,11 +762,11 @@ fn dota_parts(core: &Core, texts: &Texts, kind: &FeedKind) -> Option<Vec<Part>> 
         }
         FeedKind::BoughtBack { slot, .. } => texts.label_parts(
             "DOTA_HUD_BoughtBack",
-            &[("player_name", seat_name(core, slot))],
+            &[("player_name", seat_name(core, slot, Some(texts)))],
         ),
         FeedKind::ShrineActivated { by, team, xp } => {
             let rune = texts.label("DOTA_HUD_Rune_XP", &[("xp", xp.to_string())])?;
-            let who = activator(core, by, team);
+            let who = activator(core, by, team, Some(texts));
             texts.label_parts(
                 "DOTA_HUD_ActivatedRune",
                 &[
@@ -781,7 +781,7 @@ fn dota_parts(core: &Core, texts: &Texts, kind: &FeedKind) -> Option<Vec<Part>> 
             kind,
             act,
         } => {
-            let who = format!("{} ", activator(core, by, team));
+            let who = format!("{} ", activator(core, by, team, Some(texts)));
             let name = crate::runes::text_name(kind);
             let (key, rune) = match act {
                 RuneAct::Activated { gold } => {
@@ -811,8 +811,16 @@ fn dota_parts(core: &Core, texts: &Texts, kind: &FeedKind) -> Option<Vec<Part>> 
 }
 
 /// The seat that gathered a Shrine, else its side.
-fn activator(core: &Core, by: Option<bota_proto::SlotId>, team: Team) -> String {
-    by.map_or_else(|| side_name(team).to_owned(), |slot| seat_name(core, slot))
+fn activator(
+    core: &Core,
+    by: Option<bota_proto::SlotId>,
+    team: Team,
+    texts: Option<&Texts>,
+) -> String {
+    by.map_or_else(
+        || side_name(team).to_owned(),
+        |slot| seat_name(core, slot, texts),
+    )
 }
 
 /// What an Outpost is called: Dota's name for the one on the Radiant or the
@@ -844,8 +852,14 @@ fn outpost_name(
 /// The line of a feed entry in the client's own words, for a game without
 /// the install's labels.
 pub fn text(core: &Core, kind: &FeedKind) -> String {
+    localized_text(core, kind, None)
+}
+
+fn localized_text(core: &Core, kind: &FeedKind, texts: Option<&Texts>) -> String {
     match *kind {
-        FeedKind::BoughtBack { slot, .. } => format!("{} bought back", seat_name(core, slot)),
+        FeedKind::BoughtBack { slot, .. } => {
+            format!("{} bought back", seat_name(core, slot, texts))
+        }
         FeedKind::ItemPlaced { item, team } => format!(
             "{} placed {}",
             side_name(team),
@@ -858,7 +872,7 @@ pub fn text(core: &Core, kind: &FeedKind) -> String {
             destroyed,
         } => format!(
             "{} {} {}",
-            activator(core, by, team),
+            activator(core, by, team, texts),
             if destroyed { "denied" } else { "picked up" },
             bota_core::item_def(item).map_or("the item", |_| crate::item_names::plain(item))
         ),
@@ -881,7 +895,7 @@ pub fn text(core: &Core, kind: &FeedKind) -> String {
             killer,
             gold,
             assists,
-        } => death(core, victim, killer, gold, assists),
+        } => death(core, victim, killer, gold, assists, texts),
         FeedKind::StructureFell {
             team,
             kind,
@@ -889,12 +903,12 @@ pub fn text(core: &Core, kind: &FeedKind) -> String {
             tier,
             ranged,
             killer: _,
-        } => structure(team, kind, lane, tier, ranged),
-        FeedKind::Disconnected { seat } => format!("{} disconnected", seat_name(core, seat)),
+        } => structure(team, kind, lane, tier, ranged, texts),
+        FeedKind::Disconnected { seat } => format!("{} disconnected", seat_name(core, seat, texts)),
         FeedKind::ProtocolBroken { ref why } => format!("the server broke the protocol: {why}"),
         FeedKind::ConnectionLost => "connection to the server lost".to_string(),
         FeedKind::Captured { building, by } => {
-            let name = outpost_name(core, None, building);
+            let name = outpost_name(core, texts, building);
             match core.my_team() {
                 Some(mine) if mine == by => format!("Your team captured {name}"),
                 Some(_) => format!("The enemy team captured {name}"),
@@ -904,7 +918,7 @@ pub fn text(core: &Core, kind: &FeedKind) -> String {
         FeedKind::ShrineActivated { by, team, xp } => {
             format!(
                 "{} activated Shrine of Wisdom ({xp} XP)",
-                activator(core, by, team)
+                activator(core, by, team, texts)
             )
         }
         FeedKind::Rune {
@@ -913,7 +927,7 @@ pub fn text(core: &Core, kind: &FeedKind) -> String {
             kind,
             act,
         } => {
-            let who = activator(core, by, team);
+            let who = activator(core, by, team, texts);
             let rune = crate::runes::text_name(kind);
             match act {
                 RuneAct::Activated { gold: Some(gold) } => {
@@ -934,33 +948,40 @@ fn structure(
     lane: Option<u8>,
     tier: Option<u8>,
     ranged: Option<bool>,
+    texts: Option<&Texts>,
 ) -> String {
+    let key = crate::game_names::structure_key(kind, team, lane, tier, ranged);
+    if kind == UnitKind::Ancient {
+        return format!("{} has fallen", crate::game_names::resolve(texts, &key));
+    }
     let lane = lane.map_or("", |lane| match lane {
         0 => " mid",
         1 => " top",
         _ => " bottom",
     });
     let tier = tier.map_or_else(String::new, |tier| format!(" tier {tier}"));
-    let ranged = match ranged {
-        Some(true) => " ranged",
-        Some(false) => " melee",
-        None => "",
-    };
     format!(
-        "a {team:?}{lane}{tier}{ranged} {} has fallen",
-        bota_core::kind_def(kind).name
+        "a {team:?}{lane}{tier} {} has fallen",
+        crate::game_names::resolve(texts, &key)
     )
 }
 
 /// A hero's death, with its killer, the gold it paid and the seats that assisted when they are
 /// known.
-fn death(core: &Core, victim: Victim, killer: Option<Killer>, gold: i32, assists: u16) -> String {
+fn death(
+    core: &Core,
+    victim: Victim,
+    killer: Option<Killer>,
+    gold: i32,
+    assists: u16,
+    texts: Option<&Texts>,
+) -> String {
     let victim = match victim {
-        Victim::Seat(slot) => seat_name(core, slot),
+        Victim::Seat(slot) => seat_name(core, slot, texts),
         Victim::Hero(team) => format!("a {team:?} hero"),
     };
     let by = killer.map(|killer| match killer {
-        Killer::Seat(slot) => seat_name(core, slot),
+        Killer::Seat(slot) => seat_name(core, slot, texts),
         Killer::Unit {
             kind: UnitKind::Tower,
             team,
@@ -969,10 +990,13 @@ fn death(core: &Core, victim: Victim, killer: Option<Killer>, gold: i32, assists
             kind: UnitKind::Fountain,
             team,
         } => format!("the {team:?} fountain"),
-        Killer::Unit { kind, team } => format!("a {team:?} {}", bota_core::kind_def(kind).name),
+        Killer::Unit { kind, team } => format!(
+            "a {team:?} {}",
+            crate::game_names::resolve(texts, crate::game_names::kind_key(kind))
+        ),
     });
     let helpers: Vec<String> = bota_proto::assisting_seats(assists)
-        .map(|slot| seat_name(core, slot))
+        .map(|slot| seat_name(core, slot, texts))
         .collect();
     let with = if helpers.is_empty() {
         String::new()
@@ -1182,4 +1206,90 @@ pub fn looks(world: &mut World) -> Vec<Look> {
 #[cfg(test)]
 pub(crate) fn root(world: &World) -> Option<Entity> {
     world.get_resource::<Column>().map(|column| column.entity)
+}
+
+#[cfg(test)]
+mod name_tests {
+    use super::*;
+
+    #[test]
+    fn a_neutral_killer_is_named_as_a_creep_in_the_death_line() {
+        let core = crate::main_menu::idle().0;
+        assert_eq!(
+            death(
+                &core,
+                Victim::Hero(Team::Radiant),
+                Some(Killer::Unit {
+                    kind: UnitKind::CreepNeutral,
+                    team: Team::Neutral
+                }),
+                0,
+                0,
+                None
+            ),
+            "a Radiant hero was slain by a Neutral Neutral Creep"
+        );
+    }
+
+    fn fallen(kind: UnitKind, ranged: Option<bool>) -> FeedKind {
+        FeedKind::StructureFell {
+            team: Team::Dire,
+            kind,
+            lane: Some(bota_core::rules::LANE_TOP),
+            tier: None,
+            ranged,
+            killer: None,
+        }
+    }
+
+    #[test]
+    fn a_ranged_barracks_fall_never_names_the_melee_building() {
+        let core = crate::main_menu::idle().0;
+        assert_eq!(
+            text(&core, &fallen(UnitKind::Barracks, Some(true))),
+            "a Dire top Ranged Barracks has fallen"
+        );
+    }
+
+    #[test]
+    fn a_dire_ancient_fall_never_names_the_radiant_ancient() {
+        let core = crate::main_menu::idle().0;
+        assert_eq!(
+            text(&core, &fallen(UnitKind::Ancient, None)),
+            "Dire's Ancient has fallen"
+        );
+    }
+
+    #[test]
+    fn a_building_fall_uses_its_faction_lane_and_subtype_localization_key() {
+        let root = crate::test_support::scratch_path("structure_feed_names");
+        std::fs::create_dir_all(root.join("text")).expect("fixture directory");
+        std::fs::write(
+            root.join("text/labels.json"),
+            r#"{"npc_dota_badguys_range_rax_top":"Installed Ranged Building"}"#,
+        )
+        .expect("fixture name");
+        let texts = Texts::load(&root);
+        let core = crate::main_menu::idle().0;
+        assert_eq!(
+            localized_text(&core, &fallen(UnitKind::Barracks, Some(true)), Some(&texts)),
+            "a Dire top Installed Ranged Building has fallen"
+        );
+    }
+    #[test]
+    fn an_ancient_name_already_identifies_its_side_without_a_duplicate_prefix() {
+        let root = crate::test_support::scratch_path("ancient_feed_names");
+        std::fs::create_dir_all(root.join("text")).expect("fixture directory");
+        std::fs::write(
+            root.join("text/labels.json"),
+            r#"{"npc_dota_badguys_fort":"Installed Dire Core"}"#,
+        )
+        .expect("fixture name");
+        let texts = Texts::load(&root);
+        let core = crate::main_menu::idle().0;
+        assert_eq!(
+            localized_text(&core, &fallen(UnitKind::Ancient, None), Some(&texts)),
+            "Installed Dire Core has fallen"
+        );
+    }
 }

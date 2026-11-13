@@ -52,7 +52,7 @@ pub const LAST_USE_TEXT: &str = "dbota last use 1\n";
 pub const MAX_STAMP: u64 = 4096;
 
 /// Bumped when the importer's output changes for the same install; part of a cache's stamp.
-pub const IMPORT_REV: u32 = 47;
+pub const IMPORT_REV: u32 = 48;
 
 /// The manifest this build imports and draws, and its ids.
 pub const MANIFEST: &str = include_str!("../../../assets-manifest/manifest.txt");
@@ -1233,8 +1233,10 @@ fn make(
             // An addon's file may be missing (an install without it, a browser's): its
             // labels are left out, the rest kept.
             let mut files: Vec<(&str, Vec<u8>)> = Vec::new();
-            for (path, _) in keys {
-                if files.iter().any(|(read, _)| read == path) {
+            for path in
+                std::iter::once(MODIFIER_TEXTS).chain(keys.iter().map(|(path, _)| path.as_str()))
+            {
+                if files.iter().any(|(read, _)| *read == path) {
                     continue;
                 }
                 match read_any(src, pak, path) {

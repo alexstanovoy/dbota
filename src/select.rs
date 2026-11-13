@@ -432,7 +432,7 @@ fn group_header(
 /// A hero's card: its tall portrait in a frame that lights under the pointer.
 fn card(commands: &mut Commands, kit: &Kit, id: u16, first: bool, cards: Entity) {
     let shot = PICK;
-    let name = bota_core::hero_def(bota_proto::HeroId(id)).map_or("", |d| d.name);
+    let name = bota_core::hero_def(bota_proto::HeroId(id)).map_or("", |d| kit.texts.name(d.key));
     let card = commands
         .spawn((
             Card(id),
@@ -722,7 +722,7 @@ fn my_pick(core: &bota_client_core::App) -> Option<u16> {
 /// The cards' frames, the buttons' states and which hero the panel is to show.
 #[allow(clippy::type_complexity)]
 fn looks(
-    session: NonSend<Session>,
+    (session, texts): (NonSend<Session>, Res<Texts>),
     mut choice: ResMut<Choice>,
     mut cards: Query<(&Card, &Hovered, &mut BorderColor)>,
     mut veils: Query<(&Veil, &mut BackgroundColor), (Without<LockIn>, Without<RandomButton>)>,
@@ -783,7 +783,7 @@ fn looks(
     let name = choice
         .chosen
         .and_then(|hero| bota_core::hero_def(bota_proto::HeroId(hero)))
-        .map_or(String::new(), |hero| hero.name.to_uppercase());
+        .map_or(String::new(), |hero| texts.name(hero.key).to_uppercase());
     for mut text in &mut lock_name {
         text.set_if_neq(Text(name.clone()));
     }

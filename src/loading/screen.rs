@@ -44,6 +44,7 @@ fn show(
     core: Option<NonSend<crate::main_menu::MenuCore>>,
     fonts: Res<Fonts>,
     manifest: Res<Manifest>,
+    texts: Res<crate::dota_text::Texts>,
     server: Res<AssetServer>,
     mut root: Single<(Entity, &mut Visibility), With<Root>>,
     mut drawn: Local<Option<Details>>,
@@ -54,7 +55,7 @@ fn show(
     }
     let details = core
         .map_or_else(Details::default, |c| c.loading_details())
-        .with_connections(&session.0);
+        .with_connections(&session.0, &texts);
     if drawn.as_ref() == Some(&details) {
         return;
     }
@@ -62,6 +63,7 @@ fn show(
         commands,
         fonts: &fonts,
         manifest: &manifest,
+        texts: &texts,
         server: &server,
     };
     kit.commands.entity(root.0).despawn_children();

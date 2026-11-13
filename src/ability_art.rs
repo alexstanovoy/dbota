@@ -268,11 +268,14 @@ mod tests {
                     ["clip", m, c, ..] if *m == model && *c == clip)
                 });
                 if !has {
-                    missing.push((neutral.unit, ability.entry().def.name, clip));
+                    missing.push((neutral.unit, ability.entry().def.key, clip));
                 }
             }
         }
-        assert_eq!(missing, [("npc_dota_neutral_fel_beast", "Vex", "cast2")]);
+        assert_eq!(
+            missing,
+            [("npc_dota_neutral_fel_beast", "fel_beast_haunt", "cast2")]
+        );
     }
 
     /// A neutral's cast clip reaches its pose at the ability's own cast
@@ -318,14 +321,14 @@ mod tests {
                 assert!(
                     (point * 1000.0 - effect_point as f32).abs() < 1.0,
                     "{} on {}: clip point {point} s, effect point {} ms",
-                    def.name,
+                    def.key,
                     neutral.unit,
                     effect_point
                 );
-                checked.push(def.name);
+                checked.push(def.key);
             }
         }
-        assert!(checked.contains(&"Ice Armor"), "{checked:?}");
-        assert!(checked.contains(&"Ogre Smash!"), "{checked:?}");
+        assert!(checked.contains(&"ogre_magi_frost_armor"), "{checked:?}");
+        assert!(checked.contains(&"ogre_bruiser_ogre_smash"), "{checked:?}");
     }
 }

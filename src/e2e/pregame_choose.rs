@@ -331,3 +331,88 @@ fn the_strategy_screens_hero_stage_is_released_when_the_match_begins() {
         .count();
     assert_eq!(cameras, 0, "no stage camera or light in the match");
 }
+
+fn named_area_says(client: &mut Client, area: &str, text: &str) -> bool {
+    let Some(root) = named(client, area) else {
+        return false;
+    };
+    area_says(client.world(), root, text)
+}
+
+fn area_says(world: &World, root: Entity, text: &str) -> bool {
+    subtree(world, root).into_iter().any(|entity| {
+        world
+            .get::<Text>(entity)
+            .is_some_and(|value| value.0 == text)
+            && world
+                .get::<InheritedVisibility>(entity)
+                .is_some_and(|seen| seen.get())
+            && world
+                .get::<ComputedNode>(entity)
+                .is_some_and(|node| node.size() != Vec2::ZERO)
+    })
+}
+
+#[test]
+fn installed_names_follow_the_hero_from_pick_panel_and_lock_in_to_strategy() {
+    let root = crate::test_support::scratch_path("pregame_installed_names");
+    std::fs::create_dir_all(root.join("text")).expect("fixture directory");
+    std::fs::write(
+        root.join("text/labels.json"),
+        r#"{"npc_dota_hero_nevermore:n":"Installed Fiend"}"#,
+    )
+    .expect("hero name");
+    std::fs::write(
+        root.join("text/tooltips.json"),
+        r#"{"nevermore_shadowraze1":{"name":"Installed Raze"}}"#,
+    )
+    .expect("ability name");
+    let server = Server::start(2, &["--pick-secs", "600", "--tactical-secs", "600"]);
+    quiet_seat(&server, HeroId::PUDGE);
+    let mut client = Client::run(&["--addr", &server.address]);
+    client
+        .world_mut()
+        .insert_resource(crate::dota_text::Texts::load(&root));
+    client.until("the pick screen", |c| {
+        c.core().lobby.pick != PickPhase::Waiting
+    });
+    wait_for_loading(&mut client);
+    hover(&mut client, "pick installed fiend");
+    client.within(PATIENCE, "installed name in shared hero panel", |c| {
+        named_area_says(c, "pick panel", "INSTALLED FIEND")
+    });
+    client.click(MouseButton::Left);
+    client.within(PATIENCE, "installed name on lock in", |c| {
+        named_area_says(c, "pick ready", "INSTALLED FIEND")
+    });
+    hover(&mut client, "hero ability 0");
+    client.within(PATIENCE, "installed ability in pick tooltip", |c| {
+        said(c, "INSTALLED RAZE")
+    });
+    client.click_named("pick ready");
+    client.within(PATIENCE, "the tactical screen", |c| {
+        c.core().in_tactical_phase()
+    });
+    client.within(PATIENCE, "installed name on strategy screen", |c| {
+        let world = c.world_mut();
+        let Ok(screen) = world
+            .query_filtered::<Entity, With<crate::strategy::Screen>>()
+            .single(world)
+        else {
+            return false;
+        };
+        area_says(world, screen, "INSTALLED FIEND")
+    });
+    client.hover_ui_with(PATIENCE, |client| {
+        let world = client.world_mut();
+        world
+            .query::<(Entity, &Name, &InheritedVisibility)>()
+            .iter(world)
+            .find(|(_, name, seen)| name.as_str() == "hero ability 0" && seen.get())
+            .map(|(entity, ..)| entity)
+    });
+    client.within(PATIENCE, "installed ability in strategy tooltip", |c| {
+        said(c, "INSTALLED RAZE")
+    });
+    std::fs::remove_dir_all(root).expect("remove fixture");
+}

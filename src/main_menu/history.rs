@@ -34,10 +34,10 @@ impl Match {
         self.kda
             .map_or_else(|| "—".to_owned(), |(k, d, a)| format!("{k} / {d} / {a}"))
     }
-    pub fn hero_name(&self) -> &'static str {
+    pub fn hero_name<'a>(&self, texts: &'a crate::dota_text::Texts) -> &'a str {
         self.hero
             .and_then(bota_core::hero_def)
-            .map_or("Unknown player", |hero| hero.name)
+            .map_or("Unknown player", |hero| texts.name(hero.key))
     }
 }
 

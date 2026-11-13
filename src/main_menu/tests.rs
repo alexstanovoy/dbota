@@ -620,7 +620,7 @@ fn two_players_register_find_accept_play_and_see_their_result() {
             PageView::Result(result) => {
                 assert_eq!(result.seats.len(), 2);
                 assert!(result.seats.iter().all(|s| !s.rating.is_empty()), "rated");
-                assert_eq!(result.seats[0].hero, "Shadow Fiend");
+                assert_eq!(result.seats[0].hero_key, "npc_dota_hero_nevermore");
                 result.headline
             }
             other => panic!("{other:?}"),
@@ -684,6 +684,7 @@ fn both_keep_the_replay(alice: &mut Player, bob: &mut Player) {
         let super::replay_info::Summary::Read { sides, outcome } = &list[0].summary else {
             panic!("{:?}", list[0].summary);
         };
+        let sides = sides.text(&crate::dota_text::Texts::default());
         assert!(sides.contains("alice") && sides.contains("bob"), "{sides}");
         assert!(outcome.contains("won"), "{outcome}");
         player.menu.act(Act::OpenReplay(record.name.clone()));

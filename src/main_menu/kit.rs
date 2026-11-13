@@ -115,6 +115,7 @@ pub struct Kit<'w, 's, 'a> {
     pub commands: Commands<'w, 's>,
     pub fonts: &'a Fonts,
     pub manifest: &'a Manifest,
+    pub texts: &'a crate::dota_text::Texts,
     pub server: &'a AssetServer,
 }
 

@@ -236,11 +236,10 @@ fn hero(kit: &mut Kit, parent: Entity, data: &Profile<'_>, game: &Match) {
     if let Some(id) = game.hero {
         kit.hero_icon(column, id.0, 44.0);
     }
-    let name = game.hero.and_then(bota_core::hero_def).map_or("—", |hero| {
-        data.texts
-            .get(hero.key)
-            .map_or(hero.name, |entry| entry.name.as_str())
-    });
+    let name = game
+        .hero
+        .and_then(bota_core::hero_def)
+        .map_or("—", |hero| data.texts.name(hero.key));
     kit.typed(column, name, theme::BODY, theme::INK_1);
 }
 

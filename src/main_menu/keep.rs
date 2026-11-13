@@ -549,7 +549,7 @@ impl MenuCore {
         use super::replay_info::Summary;
         if !record.players.is_empty() {
             return Summary::Read {
-                sides: record.players.clone(),
+                sides: record.players.clone().into(),
                 outcome: record.outcome.clone(),
             };
         }
@@ -558,7 +558,7 @@ impl MenuCore {
             return self.shelf.peek(&path, stamp_of(record));
         }
         Summary::Read {
-            sides: String::new(),
+            sides: String::new().into(),
             outcome: record.outcome.clone(),
         }
     }

@@ -218,7 +218,7 @@ pub struct LobbyView {
 pub struct SeatRow {
     pub name: String,
     pub team: u8,
-    pub hero: String,
+    pub hero_key: String,
     /// `1512 (+12)` for a rated match.
     pub rating: String,
     pub mine: bool,
@@ -639,7 +639,7 @@ impl MenuCore {
                 heroes: bota_core::HEROES
                     .iter()
                     .enumerate()
-                    .filter_map(|(id, hero)| Some((u16::try_from(id).ok()?, hero.name.to_owned())))
+                    .filter_map(|(id, hero)| Some((u16::try_from(id).ok()?, hero.key.to_owned())))
                     .collect(),
             },
             // Never beneath: the settings open over another page.
@@ -874,7 +874,7 @@ impl MenuCore {
                 .as_ref()
                 .and_then(|r| r.picks.iter().find(|p| p.slot.0 == slot))
                 .and_then(|p| bota_core::HEROES.get(usize::from(p.hero.0)))
-                .map_or("—", |h| h.name)
+                .map_or("—", |h| h.key)
                 .to_owned()
         };
         let seats = result
@@ -883,7 +883,7 @@ impl MenuCore {
             .map(|s| SeatRow {
                 name: text::who(&s.nickname, s.account.0),
                 team: s.team,
-                hero: hero(s.slot),
+                hero_key: hero(s.slot),
                 rating: rating_change(s.before, s.after),
                 mine: Some(s.account) == me,
             })
