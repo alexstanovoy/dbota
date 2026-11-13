@@ -43,6 +43,15 @@ pub struct Reader {
     #[cfg(test)]
     pub(crate) requests: u64,
 }
+#[derive(Clone)]
+pub(super) struct Snapshot {
+    name:String,
+    ratings:Vec<Rating>,
+    matches:Arc<Vec<Match>>,
+    results:Arc<Vec<MatchResult>>,
+    avatar:avatar::View,
+    avatar_version:Option<AvatarVersion>,
+}
 struct Visit {
     target: Target,
     generation: u64,
@@ -55,7 +64,8 @@ struct Visit {
     name: String,
     ratings: Vec<Rating>,
     matches: Arc<Vec<Match>>,
-    results: Vec<MatchResult>,
+    results: Arc<Vec<MatchResult>>,
+    cached:bool,
     avatar: avatar::View,
     avatar_version: Option<AvatarVersion>,
     decoding: Option<Task<Result<dbota_import::thumbnail::Pixels, String>>>,
@@ -92,12 +102,35 @@ impl Reader {
             tries: 0,
             ratings: Vec::new(),
             matches: Arc::new(Vec::new()),
-            results: Vec::new(),
+            results: Arc::new(Vec::new()),
+            cached:false,
             avatar: Default::default(),
             avatar_version: None,
             decoding: None,
             notice: Some("Loading profile…".into()),
         });
+    }
+    fn restore(&mut self,snapshot:&Snapshot) {
+        if let Some(visit)=&mut self.visit {
+            visit.name=snapshot.name.clone();
+            visit.ratings=snapshot.ratings.clone();
+            visit.matches=Arc::clone(&snapshot.matches);
+            visit.results=Arc::clone(&snapshot.results);
+            visit.avatar=snapshot.avatar.clone();
+            visit.avatar_version=snapshot.avatar_version;
+            visit.stage=Part::Done;
+            visit.notice=None;
+            visit.cached=true;
+        }
+    }
+    pub(super) fn take_snapshot(&mut self)->Option<(u64,Snapshot)> {
+        let visit=self.visit.as_mut()?;
+        if visit.cached || visit.stage!=Part::Done || visit.waiting || visit.decoding.is_some() || visit.notice.is_some() {return None;}
+        visit.cached=true;
+        Some((visit.target.account,Snapshot {
+            name:visit.name.clone(),ratings:visit.ratings.clone(),matches:Arc::clone(&visit.matches),
+            results:Arc::clone(&visit.results),avatar:visit.avatar.clone(),avatar_version:visit.avatar_version,
+        }))
     }
     fn request(&mut self) -> Option<(Asked, ClientMsg)> {
         let visit = self.visit.as_mut()?;
@@ -157,24 +190,11 @@ impl Reader {
                 visit.stage = Part::Matches;
             }
             (Part::Matches, Reply::Matches { list }) => {
-                visit.results = list
-                    .into_iter()
-                    .take(MAX_MATCHES)
-                    .filter(|result| {
-                        result
-                            .seats
-                            .iter()
-                            .any(|seat| seat.account.0 == visit.target.account)
-                    })
-                    .collect();
-                visit.matches = Arc::new(
-                    visit
-                        .results
-                        .iter()
-                        .cloned()
-                        .map(|result| public_match(result, visit.target.account))
-                        .collect(),
-                );
+                visit.results = Arc::new(list.into_iter().take(MAX_MATCHES)
+                    .filter(|result| result.seats.iter().any(|seat|seat.account.0 == visit.target.account))
+                    .collect());
+                visit.matches = Arc::new(visit.results.iter().cloned()
+                    .map(|result| public_match(result,visit.target.account)).collect());
                 visit.stage = if visit.avatar_version.is_some() {
                     Part::Avatar
                 } else {
@@ -307,7 +327,9 @@ impl MenuCore {
             .filter(|_| matches!(self.page, Page::PlayerProfile(_)))
             .map_or(self.page, |visit| visit.back);
         let account = target.account;
+        let snapshot=self.cached_profile(account);
         self.profiles.begin(target, back);
+        if let Some(snapshot)=snapshot {self.profiles.restore(&snapshot);}
         self.go_form(Page::PlayerProfile(account));
         Ok(())
     }
@@ -323,9 +345,9 @@ impl MenuCore {
             self.profiles.clear();
             return;
         }
-        if let Some((asked, msg)) = self.profiles.request() {
-            self.ask(msg, asked);
-        }
+        let request=self.profiles.request();
+        self.cache_completed_profile();
+        if let Some((asked,msg))=request {self.ask(msg,asked);}
     }
     pub(super) fn profile_reply(&mut self, generation: u64, part: Part, reply: Reply) {
         let modes = self.client.as_ref().map_or_else(Vec::new, |client| {
@@ -336,6 +358,7 @@ impl MenuCore {
                 .collect()
         });
         self.profiles.receive(generation, part, reply, &modes);
+        self.cache_completed_profile();
     }
     pub(super) fn profile_refused(&mut self, generation: u64, part: Part, error: &Error) {
         self.profiles.refused(generation, part, error);
@@ -349,19 +372,13 @@ impl MenuCore {
         self.profiles.clear();
         self.go_form(back);
         if back == Page::Leaderboard {
-            self.form.focus(0);
-            self.form.type_in(&self.board.query.nickname);
+            self.open_leaderboard();
         }
     }
     pub(super) fn public_profile_result(&self, key: &str) -> Option<&MatchResult> {
         let id = key.strip_prefix("public-")?.parse::<u64>().ok()?;
-        self.profiles
-            .visit
-            .as_ref()
-            .into_iter()
-            .flat_map(|visit| &visit.results)
-            .chain(&self.history)
-            .find(|result| result.match_id.0 == id)
+        self.profiles.visit.as_ref().into_iter().flat_map(|visit|visit.results.iter())
+            .chain(&self.history).find(|result|result.match_id.0 == id)
     }
     pub(super) fn visitor_view(&self) -> PageView {
         let visit = self.profiles.visit.as_ref();

@@ -639,6 +639,7 @@ pub struct MenuCore {
     /// settings' profile name.
     pub(super) profile: String,
     pub(super) board: super::leaderboard::Board,
+    pub(super) list_cache: super::list_cache::Cache,
     pub(super) avatar: super::avatar::Editor,
     pub(super) local_history: super::local_matches::Archive,
     pub(super) local_meta: super::local_meta::Reader,
@@ -801,6 +802,7 @@ impl MenuCore {
             leave_at: None,
             profile: String::new(),
             board: Default::default(),
+            list_cache: Default::default(),
             avatar: Default::default(),
             library,
             shelf: Default::default(),
@@ -1184,6 +1186,10 @@ impl MenuCore {
     /// Sends a request, noting what it was for its answer. With no link open it waits for one
     /// that is opened now and signed in again with the kept session.
     pub(super) fn ask(&mut self, msg: ClientMsg, asked: Asked) {
+        if let Some(read)=self.cached_read(&msg,asked) {
+            if let super::list_cache::Read::Reply(reply)=read {self.replied((*reply).clone(),asked);}
+            return;
+        }
         if self.link_ready() {
             self.send(msg, asked);
         } else if !self.account {
@@ -1243,6 +1249,7 @@ impl MenuCore {
             }
             return;
         }
+        let list_key=self.list_request_key(&msg,asked);
         let Some(client) = &mut self.client else {
             self.tell("Not connected to the service".to_owned(), true);
             return;
@@ -1258,6 +1265,7 @@ impl MenuCore {
         }
         match client.request(msg) {
             Ok(seq) => {
+                if let Some(key)=list_key {self.list_cache.sent(seq,key);}
                 self.track_request(seq, asked);
                 if is_lobby {
                     self.lobby_request_sent(seq, asked);
@@ -1269,6 +1277,7 @@ impl MenuCore {
 
     /// Closes the link, keeping what the view shows of a signed-in account.
     fn drop_link(&mut self) {
+        self.list_cache.disconnected();
         match (&mut self.client, self.account) {
             (Some(client), true) => client.hang_up(),
             _ => self.client = None,
@@ -1441,6 +1450,7 @@ impl MenuCore {
     }
 
     fn take_reply(&mut self, seq: u32, result: Result<Reply, Error>) {
+        self.remember_list_reply(seq,&result);
         let remembered = self
             .lobby_ui
             .deadlines
@@ -2228,12 +2238,12 @@ impl MenuCore {
             Act::LeaderboardMode(mode) => {
                 let mut query = self.board.query.clone();
                 query.mode = mode;
-                self.board.select(query);
+                self.select_leaderboard(query);
             }
             Act::LeaderboardPlayers(players) => {
                 let mut query = self.board.query.clone();
                 query.players = players;
-                self.board.select(query);
+                self.select_leaderboard(query);
             }
             other => return Some(other),
         }
@@ -2550,6 +2560,7 @@ impl MenuCore {
     }
 
     fn logout(&mut self) {
+        self.list_cache.clear();
         self.accepted.clear();
         self.lobby_ui = Default::default();
         self.catalogue.clear();
@@ -3320,5 +3331,16 @@ mod identity_alias_tests {
             player.menu.saved_session().is_some(),
             "the existing credential remains scoped to the same canonical service"
         );
+    }
+}
+
+
+#[cfg(test)]
+impl MenuCore {
+    pub(crate) fn list_requests_finished_for_test(&self) -> bool {
+        self.asked.is_empty() && self.outbox.is_empty()
+    }
+    pub(crate) fn list_clock_for_test(&mut self, now: Instant) {
+        self.list_cache.now=Some(now);
     }
 }

@@ -112,7 +112,7 @@ fn filters(kit: &mut Kit, page: Entity, board: &Board, field: &FieldView) {
             ..default()
         },
     );
-    let modes = section(kit, controls, "Mode", 214.0);
+    let modes = section(kit, controls, "Mode", None);
     for mode in &board.modes {
         segment(
             kit,
@@ -120,10 +120,10 @@ fn filters(kit: &mut Kit, page: Entity, board: &Board, field: &FieldView) {
             &mode.name.to_uppercase(),
             Act::LeaderboardMode(mode.id.clone()),
             board.query.mode == mode.id,
-            103.0,
+            None,
         );
     }
-    let kinds = section(kit, controls, "Players", 178.0);
+    let kinds = section(kit, controls, "Players", Some(178.0));
     for (kind, name) in [(Players::Humans, "HUMANS"), (Players::Bots, "BOTS")] {
         segment(
             kit,
@@ -131,7 +131,7 @@ fn filters(kit: &mut Kit, page: Entity, board: &Board, field: &FieldView) {
             name,
             Act::LeaderboardPlayers(kind),
             board.query.players == kind,
-            if kind == Players::Humans { 96.0 } else { 74.0 },
+            Some(if kind == Players::Humans { 96.0 } else { 74.0 }),
         );
     }
     let search = kit.node(
@@ -246,7 +246,7 @@ fn player_rows(kit: &mut Kit, page: Entity, list: Entity, board: &Board) {
     }
 }
 
-fn section(kit: &mut Kit, parent: Entity, name: &str, width: f32) -> Entity {
+fn section(kit: &mut Kit, parent: Entity, name: &str, width: Option<f32>) -> Entity {
     let column = kit.node(
         parent,
         Node {
@@ -259,7 +259,7 @@ fn section(kit: &mut Kit, parent: Entity, name: &str, width: f32) -> Entity {
     let row = kit.node(
         column,
         Node {
-            width: px(width),
+            width: width.map_or(Val::Auto,px),
             height: px(44),
             border: UiRect::all(px(1)),
             padding: UiRect::all(px(3)),
@@ -273,7 +273,7 @@ fn section(kit: &mut Kit, parent: Entity, name: &str, width: f32) -> Entity {
     row
 }
 
-fn segment(kit: &mut Kit, parent: Entity, name: &str, act: Act, selected: bool, width: f32) {
+fn segment(kit: &mut Kit, parent: Entity, name: &str, act: Act, selected: bool, width: Option<f32>) {
     let button = kit.quiet(
         parent,
         name,
@@ -288,7 +288,7 @@ fn segment(kit: &mut Kit, parent: Entity, name: &str, act: Act, selected: bool, 
         .entity(button)
         .entry::<Node>()
         .and_modify(move |mut node| {
-            node.width = px(width);
+            node.width = width.map_or(Val::Auto,px);
             node.height = px(36);
             node.min_height = px(36);
             node.justify_content = JustifyContent::Center;

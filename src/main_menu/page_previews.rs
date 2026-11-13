@@ -193,6 +193,7 @@ fn page_of(name: &str) -> Option<Page> {
         "hero" => Page::Hero(HeroId::SHADOW_FIEND),
         "hero-pudge" => Page::Hero(HeroId::PUDGE),
         "leaderboard"
+        | "leaderboard_solo"
         | "leaderboard-bots"
         | "leaderboard-allpick"
         | "leaderboard-empty"
@@ -287,6 +288,10 @@ fn profile_fixture(name: &str) -> PageView {
 
 fn ladder_fixture(name: &str) -> PageView {
     let mut board = board(name);
+    if name == "leaderboard_solo" {
+        board.modes.retain(|mode|mode.id=="solo_mid");
+        for mode in &mut board.modes { mode.name="1x1 Mid Only".into(); }
+    }
     if name == "leaderboard-empty" {
         board.rows.clear();
         board.total = 0;

@@ -29,6 +29,7 @@ pub(crate) mod kit;
 mod ladder_page;
 mod launch;
 mod leaderboard;
+mod list_cache;
 #[cfg(not(target_arch = "wasm32"))]
 mod leave;
 mod lobbies;

@@ -134,7 +134,7 @@ rodio = { version = "=0.22.2", default-features = false, features = ["playback",
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
 # The menu's end-to-end tests run the real matchmaking service in-process; its
 # launcher starts the real bota_server.
-radovid = { path = "../radovid/crates/radovid" }
+radovid = { path = "../radovid/crates/radovid", default-features = false, features = ["test_support"] }
 tokio = { version = "1", features = ["rt-multi-thread"] }
 # The menu's typeface test lays out a word from the font file's own advances (the reader parley
 # draws with) to tell the install's face from the shipped one.

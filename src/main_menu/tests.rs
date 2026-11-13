@@ -3582,6 +3582,42 @@ pub(crate) fn rank_in_served_board(menu: &MenuCore, account: u64) -> u64 {
     )
 }
 
+
+pub(crate) fn observed_reads(service: &Service, kind: radovid::test_support::Read) -> u64 {
+    service.service.as_ref().expect("running real service").request_count(kind)
+}
+pub(crate) fn menu_requests_finished(menu: &MenuCore) -> bool {
+    menu.list_requests_finished_for_test()
+}
+pub(crate) fn board_loaded(menu: &MenuCore) -> bool {
+    menu.board.status == super::leaderboard::Status::Ready
+}
+
+pub(crate) fn menu_page_entities(world: &mut bevy::prelude::World) -> Vec<bevy::prelude::Entity> {
+    use bevy::prelude::*;
+    let root=world.query_filtered::<Entity,With<super::screens::PageRoot>>()
+        .single(world).expect("one drawn menu root");
+    crate::e2e::harness::subtree(world,root)
+}
+
+pub(crate) fn rename_cache_profile(service: &Service) {
+    let mut player=Player::new(Some(service));
+    settle(&mut [&mut player],|player|player.menu.page()==Page::Login);
+    player.fill(&["profile_target",PASSWORD]);
+    player.menu.act(Act::Submit);
+    settle(&mut [&mut player],|player|player.menu.page()==Page::Home && menu_requests_finished(&player.menu));
+    let client=player.menu.client.as_mut().expect("authenticated peer");
+    let sequence=client.request(bota_radovid::proto::ClientMsg::ChangeNickname {nickname:"cache_updated".into()}).expect("rename request");
+    for _ in 0..32 {
+        let incoming=client.wait(Duration::from_secs(10)).expect("real service response").expect("response deadline");
+        if let bota_radovid::Incoming::Reply {seq,result}=incoming && seq==sequence {
+            assert_eq!(result,Ok(bota_radovid::proto::Reply::Done));
+            return;
+        }
+    }
+    panic!("the real nickname change was not acknowledged");
+}
+
 pub(crate) fn probe_public_deviation(service:&Service,account:u64)->f64 {
     let mut player=Player::new(Some(service));
     player.register("confidence_probe");
