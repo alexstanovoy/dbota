@@ -307,11 +307,27 @@ fn reason(reason: EndReason, winner: Option<Team>) -> &'static str {
         EndReason::Abandoned => "ABANDONED",
         EndReason::Crashed => "NO RESULT",
         EndReason::Stopped => "STOPPED",
+        EndReason::TimeLimit => ended_by_word(bota_proto::AbortReason::TimeLimit),
         EndReason::Left => match winner {
             Some(Team::Radiant) => "DIRE PLAYER LEFT",
             Some(Team::Dire) => "RADIANT PLAYER LEFT",
             _ => "PLAYER LEFT",
         },
+    }
+}
+/// What the post-game header says of a match that was ended from outside: that it was, and by
+/// whom. It is the one place the reason is read live, the post-game screen covering the match.
+pub(crate) fn ended_by_phrase(reason: bota_proto::AbortReason) -> &'static str {
+    match reason {
+        bota_proto::AbortReason::TimeLimit => "TIME LIMIT REACHED",
+        bota_proto::AbortReason::Stopped => "ENDED BY THE SERVICE",
+    }
+}
+/// The badge of a match that was ended from outside, by who ended it.
+pub(crate) fn ended_by_word(reason: bota_proto::AbortReason) -> &'static str {
+    match reason {
+        bota_proto::AbortReason::TimeLimit => "TIME LIMIT",
+        bota_proto::AbortReason::Stopped => "STOPPED",
     }
 }
 pub(crate) fn shell(kit: &mut super::kit::Kit, root: bevy::prelude::Entity, core: &MenuCore) {

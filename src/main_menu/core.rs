@@ -605,6 +605,8 @@ pub struct MenuCore {
     /// Whether leaving the game now may ruin it for the others: a seat in a
     /// game under way (the shell tells).
     pub(super) game_unsafe: bool,
+    /// Whether the live match on screen is over: there is nothing to return to (the shell tells).
+    pub(super) game_over: bool,
     /// The seat left, to take again.
     pub(super) reconnect: Option<Launch>,
     /// The seat of the game on screen, for [`Self::reconnect`] once left.
@@ -794,6 +796,7 @@ impl MenuCore {
             kind: GameKind::Play,
             confirm: None,
             game_unsafe: false,
+            game_over: false,
             reconnect: None,
             last_seat: None,
             quit: false,
@@ -974,6 +977,16 @@ impl MenuCore {
         self.game_unsafe = game_unsafe;
     }
 
+    /// Whether the live match on screen is over, so that there is nothing to return to.
+    pub fn game_is_over(&self) -> bool {
+        self.in_game() && self.game_over
+    }
+
+    /// Tells whether the live match on screen is over.
+    pub fn set_game_over(&mut self, game_over: bool) {
+        self.game_over = game_over;
+    }
+
     pub fn page(&self) -> Page {
         self.page
     }
@@ -1076,6 +1089,7 @@ impl MenuCore {
         self.status = None;
         self.confirm = None;
         self.game_unsafe = false;
+        self.game_over = false;
         self.reconnect = self.last_seat.take().filter(|_| !over);
         self.left_in_picks = self.game_in_picks;
         // A menu that came up under a game reaches the service now.

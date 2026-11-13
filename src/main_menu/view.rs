@@ -439,6 +439,8 @@ pub struct MenuView {
     pub offer: Option<OfferBox>,
     /// The game under the dashboard, and how it is had.
     pub game: Option<GameKind>,
+    /// The live match under the dashboard is over (won, or ended from outside).
+    pub game_over: bool,
     /// A seat left that can be taken again (Dota's RECONNECT).
     pub reconnect: bool,
     /// A match under way is played from this seat: LEAVE GAME leaves it for good.
@@ -533,6 +535,7 @@ impl MenuCore {
             waits,
             offer,
             game: self.in_game().then_some(self.kind),
+            game_over: self.game_is_over(),
             can_leave_game: self.in_game() && self.kind == GameKind::Play && self.game_unsafe,
             reconnect: self.reconnect.is_some() && !self.in_game() && !self.launching,
             confirm: self.confirm.map(|choice| self.confirm_view(choice)),
@@ -883,6 +886,7 @@ impl MenuCore {
             (_, Some(false)) => "DEFEAT",
             (Outcome::Draw, _) => "DRAW",
             (Outcome::Winner { .. }, None) => "MATCH OVER",
+            (Outcome::Null, _) if result.reason == EndReason::TimeLimit => "MATCH ENDED",
             (Outcome::Null, _) => "NO RESULT",
         };
         let reason = match result.reason {
@@ -890,6 +894,7 @@ impl MenuCore {
             EndReason::Abandoned => " · nobody played",
             EndReason::Crashed => " · the game server failed",
             EndReason::Stopped => " · stopped by the service",
+            EndReason::TimeLimit => " · the time limit was reached",
             EndReason::Left => " · a player left",
         };
         let (report, report_note) = match bota_radovid::decode_report(result) {

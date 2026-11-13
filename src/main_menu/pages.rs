@@ -400,7 +400,18 @@ fn game_corner(kit: &mut Kit, root: Entity, view: &MenuView) {
             .entry::<Node>()
             .and_modify(|mut node| node.width = percent(100));
     };
-    if view.game.is_some() {
+    if view.game_over {
+        // A match that is over has nothing to return to: the post-game screen is the way out,
+        // and this is the other, leaving it from the dashboard.
+        wide(
+            kit,
+            "DISCONNECT",
+            Act::Disconnect,
+            Tone::Primary,
+            theme::ACTION_HEIGHT,
+            "disconnect",
+        );
+    } else if view.game.is_some() {
         // A replay is left as a game watched is (Dota's popup_confirm_close_replay).
         if view.can_leave_game {
             wide(
@@ -1118,7 +1129,9 @@ fn demo_page(kit: &mut Kit, body: Entity, heroes: &[(u16, String)], offered: boo
 }
 
 pub(super) fn corner_height(view: &MenuView) -> f32 {
-    let secondary = if view.game.is_some() && view.can_leave_game {
+    let secondary = if view.game_over {
+        0
+    } else if view.game.is_some() && view.can_leave_game {
         2
     } else if view.game.is_some() || view.reconnect {
         1

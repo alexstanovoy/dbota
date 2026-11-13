@@ -188,7 +188,7 @@ fn one_try(
                 return Try::Done(Outcome::Refused("another wire".to_owned()));
             }
             // A server says no more than Welcome or Refused first: anything else is tried again.
-            Ok(Some(ServerMsg::MatchOver { .. })) => {
+            Ok(Some(ServerMsg::MatchOver { .. } | ServerMsg::MatchAborted { .. })) => {
                 return Try::Again("a match over before the welcome".to_owned());
             }
             Ok(Some(_)) => {}

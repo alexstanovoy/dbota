@@ -1835,12 +1835,18 @@ pub(crate) fn seat_of(view: &bota_proto::WorldView, place: Place) -> Option<&Pla
 }
 
 /// The word of the moment in the middle of the screen.
-fn notice(core: &Core) -> String {
+pub(crate) fn notice(core: &Core) -> String {
     if core.lost {
         return "CONNECTION LOST".to_string();
     }
     if core.over.is_none() && core.source.is_redialing() {
         return "RECONNECTING...".to_string();
+    }
+    // Ended from outside: the post-game screen opens over this one in the same frame, says that
+    // nobody won and who ended the match, and is the way out; a word here would sit under it
+    // unread. A connection that merely broke is `lost`, above.
+    if core.aborted.is_some() {
+        return String::new();
     }
     if let Some((winner, _)) = &core.over {
         let result = match winner {

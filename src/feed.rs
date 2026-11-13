@@ -1054,6 +1054,10 @@ fn localized_text(core: &Core, kind: &FeedKind, texts: Option<&Texts>) -> String
         FeedKind::Disconnected { seat } => format!("{} disconnected", seat_name(core, seat, texts)),
         FeedKind::ProtocolBroken { ref why } => format!("the server broke the protocol: {why}"),
         FeedKind::ConnectionLost => "connection to the server lost".to_string(),
+        FeedKind::TimeLimitNear { remaining_secs } => format!(
+            "The match ends in {} (time limit)",
+            time_left(remaining_secs)
+        ),
         FeedKind::Captured { building, by } => {
             let name = outpost_name(core, texts, building);
             match core.my_team() {
@@ -1431,6 +1435,17 @@ pub fn toasts(world: &mut World) -> Vec<(Rect, Vec<Segment>)> {
 #[cfg(test)]
 pub(crate) fn root(world: &World) -> Option<Entity> {
     world.get_resource::<Column>().map(|column| column.entity)
+}
+
+/// Seconds left, as a person says them: whole minutes from a minute on.
+fn time_left(seconds: u32) -> String {
+    if seconds >= 90 {
+        format!("{} minutes", seconds.div_ceil(60))
+    } else if seconds >= 60 {
+        "1 minute".to_owned()
+    } else {
+        format!("{seconds} seconds")
+    }
 }
 
 #[cfg(test)]

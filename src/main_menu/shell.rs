@@ -420,6 +420,7 @@ fn guard(
         core.set_local_recording_owner(slot);
     }
     core.set_game_unsafe(seated && game.over.is_none() && !game.lost);
+    core.set_game_over(seated && game.over.is_some());
     core.set_game_in_picks(seated && game.phase == bota_client_core::Phase::Lobby);
     let disconnect = core.take_leave();
     let shown = core.shows_game();

@@ -3744,5 +3744,165 @@ fn a_cached_service_catalogue_keeps_supported_modes_after_foreign_modes_on_recon
             .iter()
             .any(|mode| mode.id.0 == "solo_mid"),
         "cached replies must not spend the supported-mode budget on another game's modes"
+);
+}
+
+/// A match the service stops ends for its players as a match, not as a lost connection: the end
+/// names its reason and nobody won, the result is recorded as stopped and rates nobody, and the
+/// replay the service serves plays to that end. The end is an event the test causes once both
+/// clients are in the match (an admin's stop; the ruleset's limit is far beyond anything the test
+/// reaches), so no machine load can end the match before they have joined or after they have gone.
+/// The limit's own warning and reason are shown by the client tests that tell them
+/// (`e2e::match_end`) and the server tests that move the limit's clock (`time_limit.rs`).
+#[test]
+fn a_match_the_service_stops_ends_as_a_match_and_is_recorded_unrated() {
+    let service = service_with(|config| {
+        // Nothing the heroes standing still suffer ends the match before the stop.
+        config.replace(
+            "\"--map\", \"2\", \"--heroes\", \"1\",",
+            "\"--map\", \"2\", \"--heroes\", \"1\", \"--immortal-structures\", \"--immortal-heroes\",",
+        )
+    });
+    let (mut alice, mut bob) = (Player::new(Some(&service)), Player::new(Some(&service)));
+    alice.register("alice");
+    bob.register("bob");
+    // The admin: an account the service's database says may stop a match, logged in after that
+    // (a session knows what its account was when it logged in).
+    {
+        let mut root = Player::new(Some(&service));
+        root.register("root");
+    }
+    let database = service._dir.0.join("radovid.db");
+    service.runtime.block_on(async {
+        let db = radovid::db::Db::open(&database).expect("the database opens");
+        assert!(db.grant_admin("root".to_owned()).await.expect("granted"));
+    });
+    let mut admin = Player::new(Some(&service));
+    admin.menu.act(Act::Go(Page::Login));
+    type_login(&mut admin, "root", PASSWORD);
+    admin.menu.act(Act::Submit);
+    settle(&mut [&mut admin], |p| p.menu.page() == Page::Home);
+    alice.menu.act(Act::Find(solo()));
+    settle(&mut [&mut alice], |p| p.menu.view().searches.len() == 1);
+    bob.menu.act(Act::Find(solo()));
+    settle(&mut [&mut alice, &mut bob], |p| {
+        p.menu.view().offer.is_some()
+    });
+    for player in [&mut alice, &mut bob] {
+        let offer = player.menu.view().offer.expect("MATCH FOUND");
+        player.menu.act(Act::Accept(offer.proposal));
+    }
+    settle(&mut [&mut alice, &mut bob], |p| p.menu.page() == Page::Game);
+    let alice_launch = launch_of(&mut alice);
+    let Launch::Seat(handoff) = &alice_launch else {
+        panic!("a seat in a found match");
+    };
+    let match_id = handoff.match_id;
+    let mut games = [
+        open(alice_launch, &alice.trust),
+        open(launch_of(&mut bob), &bob.trust),
+    ];
+    // The players only stand there. Once both are in the match (a world to see), the admin
+    // stops it.
+    let deadline = Instant::now() + Duration::from_secs(PATIENCE);
+    let mut stopped = false;
+    while games.iter().any(|core| core.aborted.is_none()) {
+        assert!(Instant::now() < deadline, "the stop never ended the match");
+        for core in &mut games {
+            core.pump(1.0 / 30.0);
+            if core.phase == Phase::Lobby && core.my_slot.is_some() && !core.ready {
+                core.act(bota_client_core::Intent::PickHero(HeroId::SHADOW_FIEND.0));
+                core.act(bota_client_core::Intent::ToggleReady);
+            }
+            assert!(
+                !core.lost,
+                "the match was lost, not ended: a stop is no failure"
+            );
+        }
+        if !stopped && games.iter().all(|core| core.view().is_some()) {
+            admin
+                .menu
+                .client
+                .as_mut()
+                .expect("the admin's connection")
+                .request(bota_radovid::proto::ClientMsg::AdminStopMatch { match_id })
+                .expect("the stop is sent");
+            stopped = true;
+        }
+        alice.menu.update();
+        bob.menu.update();
+        admin.menu.update();
+    }
+    for core in &games {
+        assert_eq!(core.aborted, Some(bota_proto::AbortReason::Stopped));
+        assert!(!core.lost);
+        let notice = crate::hud::notice(core);
+        assert!(
+            !notice.contains("LOST"),
+            "the ending does not look like a network failure: {notice:?}"
+        );
+    }
+    alice.menu.left_game(None, false);
+    bob.menu.left_game(None, false);
+    settle(&mut [&mut alice, &mut bob], |p| {
+        p.menu.page() == Page::Result
+    });
+    for player in [&alice, &bob] {
+        let PageView::Result(result) = player.menu.view().body else {
+            panic!("the result page");
+        };
+        assert_eq!(result.headline, "NO RESULT");
+        assert!(
+            result.detail.contains("stopped by the service"),
+            "{}",
+            result.detail
+        );
+        assert!(
+            result.seats.iter().all(|seat| seat.rating.is_empty()),
+            "an ended match rates nobody: {:?}",
+            result.seats
+        );
+    }
+    // The service serves the replay, and it plays to the ending.
+    settle(&mut [&mut alice, &mut bob], |p| {
+        p.menu.library.records().len() == 1
+    });
+    let record = alice.menu.library.records()[0].clone();
+    let file = alice._dir.0.join("replays").join(&record.name);
+    let super::replay_info::Summary::Read { outcome, .. } = super::replay_info::read(&file) else {
+        panic!("the replay reads");
+    };
+    assert!(
+        outcome.contains("ended before its end") && outcome.contains("STOPPED"),
+        "{outcome}"
+    );
+}
+
+/// A live match that ended is not returned to from the menu bar: its post-game screen is the way
+/// out, and a button that only turned the page to it would be a dead end.
+#[test]
+fn the_menu_bar_over_a_match_that_ended_does_not_offer_to_return_to_it() {
+    let dir = Scratch::new("ended");
+    let store = SettingsStore::new(Some(dir.0.join(crate::config::FILE_NAME)));
+    let trust = Trust::new(None).expect("trust");
+    let mut menu = MenuCore::over_given(
+        store,
+        trust.radovid.clone(),
+        None,
+        super::core::GameKind::Play,
+        kept_in(&dir),
+    );
+    assert_eq!(
+        super::availability::return_action(&menu.view()),
+        Some(Act::ReturnToGame),
+        "a match under way is returned to"
+    );
+    menu.set_game_over(true);
+    let view = menu.view();
+    assert!(view.game_over);
+    assert_eq!(
+        super::availability::return_action(&view),
+        None,
+        "an ended one is not"
     );
 }

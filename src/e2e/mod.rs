@@ -128,6 +128,7 @@ mod wisdom_contest;
 
 mod dead_purchases;
 mod lobbies;
+mod match_end;
 mod mega_creeps;
 mod menu_pages;
 

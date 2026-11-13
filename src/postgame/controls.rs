@@ -109,6 +109,10 @@ pub fn present(
                 },
             )
         });
+        // The match was ended from outside: the header says so, whatever the service has said yet.
+        if let Some(reason) = session.0.aborted {
+            context.reason = crate::main_menu::results::ended_by_phrase(reason).to_owned();
+        }
         if summary.recording.is_none()
             && context.kind == super::view::Kind::Direct
             && let Some(map) = session.0.session().map(|session| session.map().id)
@@ -284,12 +288,15 @@ pub fn redraw(
     texts: Res<crate::dota_text::Texts>,
     server: Res<AssetServer>,
     screens: Query<Entity, With<Root>>,
-    mut drawn: Local<Option<u32>>,
+    mut drawn: Local<Option<(u32, bool)>>,
 ) {
-    if *drawn == Some(post.presented) {
+    // The menu's bar on this screen offers no way back into a match that is over, and the match
+    // is over a frame after the screen opens: the screen is drawn again then.
+    let over = core.as_ref().is_some_and(|core| core.game_is_over());
+    if *drawn == Some((post.presented, over)) {
         return;
     }
-    *drawn = Some(post.presented);
+    *drawn = Some((post.presented, over));
     let mut kit = Kit {
         commands,
         fonts: &fonts,

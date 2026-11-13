@@ -74,7 +74,8 @@ pub fn reason(view: &MenuView) -> Option<Reason> {
 }
 
 pub fn return_action(view: &MenuView) -> Option<Act> {
-    if view.game.is_some() {
+    // A match that is over is not returned to: its post-game screen is the way out.
+    if view.game.is_some() && !view.game_over {
         return Some(Act::ReturnToGame);
     }
     (reason(view) == Some(Reason::Games)).then_some(if view.reconnect {

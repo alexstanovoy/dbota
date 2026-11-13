@@ -65,6 +65,7 @@ pub fn read(path: &Path) -> Summary {
     let mut pregame = 0u32;
     let mut last_tick = None;
     let mut over = None;
+    let mut aborted = None;
     for _ in 0..MAX_BATCHES {
         let batch = player.poll(0.0);
         if batch.is_empty() && (player.finished() || player.error().is_some()) {
@@ -80,6 +81,7 @@ pub fn read(path: &Path) -> Summary {
                 }
                 ServerMsg::Snapshot { view } => last_tick = Some(view.tick),
                 ServerMsg::MatchOver { winner, stats } => over = Some((winner, stats.duration)),
+                ServerMsg::MatchAborted { reason, .. } => aborted = Some(reason),
                 _ => {}
             }
         }
@@ -112,6 +114,13 @@ pub fn read(path: &Path) -> Summary {
         format!("{}:{:02}", secs / 60, secs % 60)
     };
     let outcome = match over {
+        _ if aborted.is_some() => format!(
+            "ended before its end ({}), {}",
+            aborted.map_or("", |reason| crate::main_menu::results::ended_by_word(
+                reason
+            )),
+            clock(last_tick)
+        ),
         Some((Team::Radiant, ticks)) => format!("Radiant victory, {}", clock(ticks)),
         Some((Team::Dire, ticks)) => format!("Dire victory, {}", clock(ticks)),
         Some((Team::Neutral, ticks)) => format!("draw, {}", clock(ticks)),

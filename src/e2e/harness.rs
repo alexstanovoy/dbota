@@ -160,6 +160,21 @@ impl Server {
         result.unwrap_or_else(|panic| std::panic::resume_unwind(panic))
     }
 
+    /// Asks the server to end the match, as a service that runs it does (SIGTERM).
+    pub fn ask_to_finish(&self) {
+        let status = Command::new("kill")
+            .args(["-TERM", &self.child.id().to_string()])
+            .status()
+            .expect("kill runs");
+        assert!(status.success(), "SIGTERM sent to the server");
+    }
+
+    /// Takes the server down without a word, as a crash or a cut line does (SIGKILL).
+    pub fn crash(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
+
     /// Waits for the server to end by itself, as it does once its match is over.
     pub fn wait(&mut self) {
         let _ = self.child.wait();
