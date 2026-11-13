@@ -2264,7 +2264,8 @@ fn replay_library_and_match_history_offer_no_file_import_controls() {
             !words.iter().any(|text| text.contains("Replay file")
                 || text.contains("OPEN A REPLAY FILE")
                 || text == "OPEN"
-                || text == "OPEN A .BRP FILE" || text == "DOWNLOAD .BRP"),
+                || text == "OPEN A .BRP FILE"
+                || text == "DOWNLOAD .BRP"),
             "file import is absent from {page:?}"
         );
         let world = client.world_mut();
