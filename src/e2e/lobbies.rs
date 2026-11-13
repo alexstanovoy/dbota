@@ -14,25 +14,6 @@ fn lobby_browser_draws_the_four_column_list_in_the_right_drawer() {
         .map(|(_, node)| *node)
         .expect("lobby browser drawer");
     super::harness::assert_physical_width(&node, 620.0);
-    let art = world
-        .query::<(Entity, &Name, &ComputedNode)>()
-        .iter(world)
-        .find(|(_, name, _)| name.as_str() == "lobby browser hero");
-    assert!(
-        art.is_some(),
-        "the browser shows the installed tall hero art from the mockup"
-    );
-    let (entity, _, node) = art.expect("hero art");
-    assert!(
-        world
-            .get::<Children>(entity)
-            .expect("installed art")
-            .iter()
-            .any(|child| world
-                .get::<ImageNode>(child)
-                .is_some_and(|image| image.image != Handle::default()))
-    );
-    super::harness::assert_physical_size(node, Vec2::new(300.0, 400.0));
     let texts = client.shown_texts();
     for text in [
         "NAME",
@@ -44,6 +25,38 @@ fn lobby_browser_draws_the_four_column_list_in_the_right_drawer() {
     ] {
         assert!(texts.iter().any(|shown| shown == text), "{text}");
     }
+}
+
+#[test]
+fn the_lobby_browser_floats_no_picture_in_the_scene_beside_its_drawer() {
+    let mut client = Client::run(&["--menu-preview", "lobbies"]);
+    client.frames(8);
+    let world = client.world_mut();
+    let (drawer, laid) = world
+        .query::<(&Name, &UiGlobalTransform, &ComputedNode)>()
+        .iter(world)
+        .find(|(name, ..)| name.as_str() == "lobby browser")
+        .map(|(_, at, node)| (*at, *node))
+        .expect("lobby browser drawer");
+    let edge = drawer.translation.x - laid.size().x / 2.0;
+    let pictures: Vec<_> = world
+        .query::<(
+            &ImageNode,
+            &UiGlobalTransform,
+            &ComputedNode,
+            &InheritedVisibility,
+        )>()
+        .iter(world)
+        .filter(|(image, _, node, shown)| {
+            shown.get() && node.size().min_element() > 0.0 && image.image != Handle::default()
+        })
+        .map(|(_, at, node, _)| (at.translation, node.size()))
+        .filter(|(at, size)| size.min_element() >= 100.0 && at.x + size.x / 2.0 <= edge)
+        .collect();
+    assert!(
+        pictures.is_empty(),
+        "large pictures drawn left of the drawer (x < {edge}): {pictures:?}"
+    );
 }
 
 #[test]

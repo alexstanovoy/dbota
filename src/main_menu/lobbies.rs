@@ -26,21 +26,6 @@ fn browser(
     fields: &[FieldView],
     controls: &ControlsView,
 ) {
-    let hero = kit.node(
-        root,
-        Node {
-            position_type: PositionType::Absolute,
-            left: px(300),
-            top: px(230),
-            width: px(300),
-            height: px(400),
-            ..default()
-        },
-    );
-    kit.commands
-        .entity(hero)
-        .insert(Name::new("lobby browser hero"));
-    kit.art(hero, "portrait.hero.nevermore.tall", crate::ui::fill());
     let panel = w::panel(kit, root, "lobby browser");
     let visible: Vec<_> = rows
         .iter()
