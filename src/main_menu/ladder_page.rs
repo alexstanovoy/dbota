@@ -273,6 +273,8 @@ fn section(kit: &mut Kit, parent: Entity, name: &str, width: Option<f32>) -> Ent
     row
 }
 
+const SEGMENT_INSET: f32 = 14.0;
+
 fn segment(
     kit: &mut Kit,
     parent: Entity,
@@ -296,6 +298,10 @@ fn segment(
         .entry::<Node>()
         .and_modify(move |mut node| {
             node.width = width.map_or(Val::Auto, px);
+            // A label-sized square gets the breathing room the fixed-width ones have.
+            if width.is_none() {
+                node.padding = UiRect::axes(px(SEGMENT_INSET), px(0));
+            }
             node.height = px(36);
             node.min_height = px(36);
             node.justify_content = JustifyContent::Center;

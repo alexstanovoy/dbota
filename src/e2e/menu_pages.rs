@@ -2652,7 +2652,7 @@ fn check_list_cache(kind: CachedList) {
                     || client
                         .shown_texts()
                         .iter()
-                        .any(|text| text == "No public matches reported by this matchmaker"))
+                        .any(|text| text == "No public matches yet"))
         },
     );
     if target.is_some() {
@@ -2839,8 +2839,8 @@ fn a_single_served_leaderboard_mode_strip_has_no_empty_second_square() {
 fn the_served_long_mode_name_fits_with_visible_horizontal_padding() {
     let (_, _, button, text) = served_mode_geometry();
     assert!(
-        button - text >= 16.0,
-        "the whole served mode label fits with at least eight pixels on each side: button={button}, text={text}"
+        button - text >= 28.0,
+        "the whole served mode label fits with at least fourteen pixels on each side, as the player segments do: button={button}, text={text}"
     );
 }
 

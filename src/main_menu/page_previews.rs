@@ -478,14 +478,16 @@ fn pad_rows(rows: &mut Vec<Row>, bots: bool, allpick: bool, kind: Players) {
             nickname: format!("player{rank}"),
             version: bots.then(|| "v1".to_owned()),
             games: 20,
-            rating: (if bots {
-                1670
-            } else if allpick {
-                1650
-            } else {
-                1500
-            } - 2 * rank as i32)
-                .to_string(),
+            rating: super::leaderboard::rating(f64::from(
+                (if bots {
+                    1670
+                } else if allpick {
+                    1650
+                } else {
+                    1500
+                }) - 2 * rank as i32,
+            ))
+            .expect("a finite fixture rating"),
         });
     }
 }
