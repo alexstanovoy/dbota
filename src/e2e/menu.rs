@@ -543,6 +543,9 @@ fn open_password_dialog(
         host.menu.page() == Page::Lobby
     });
     act(client, Act::Go(Page::Lobbies));
+    act(client, Act::Focus(0));
+    act(client, Act::Type(name.to_owned()));
+    act(client, Act::SearchLobbies);
     let join = format!("join {name}");
     client.within(Duration::from_secs(30), "the locked lobby listed", |c| {
         visible_menu_button(c, &join)

@@ -1448,6 +1448,9 @@ fn foreign_and_corrupt_replay_profiles_never_supply_connection_instructions() {
     use bevy::prelude::*;
     let service = crate::main_menu::tests::service();
     let mut client = super::menu::signed_up(&service, "replay_viewer");
+    act(&mut client, Act::Go(Page::Profile));
+    client.until("authenticated own profile loaded before reading replay claims",|client|
+        crate::main_menu::tests::own_cached_profile_id(client.world().non_send::<MenuCore>()).is_some());
     let foreign = std::net::TcpListener::bind("127.0.0.1:0").expect("foreign destination trap");
     foreign.set_nonblocking(true).expect("nonblocking");
     let prefix = "wss://foreign.example/";
@@ -2685,4 +2688,38 @@ fn a_single_served_leaderboard_mode_strip_has_no_empty_second_square() {
 fn the_served_long_mode_name_fits_with_visible_horizontal_padding() {
     let (_,_,button,text)=served_mode_geometry();
     assert!(button-text>=16.0,"the whole served mode label fits with at least eight pixels on each side: button={button}, text={text}");
+}
+
+#[test]
+fn own_and_public_profile_headers_keep_the_player_identity_inside_the_header() {
+    use bevy::prelude::*;
+    for preview in ["profile","profile_other"] {
+        let mut client=design_preview(preview);
+        let world=client.world_mut();
+        let header=world.query::<(Entity,&Name)>().iter(world)
+            .find(|(_,name)|name.as_str()=="profile player header").expect("player header").0;
+        let children=world.get::<Children>(header).expect("header children");
+        let avatar=children[0];
+        let name=children[1];
+        let rectangle=|world:&World,entity| {
+            let node=world.get::<ComputedNode>(entity).expect("drawn node");
+            let centre=world.get::<UiGlobalTransform>(entity).expect("drawn position").translation;
+            Rect::from_center_size(centre,node.size())
+        };
+        let frame=rectangle(world,header);
+        for (entity,label) in [(avatar,"avatar"),(name,"name")] {
+            let bounds=rectangle(world,entity);
+            assert!(bounds.width()>40.0 && bounds.height()>40.0,
+                "{preview}: {label} has real drawn space: {bounds:?}");
+            assert!(frame.contains(bounds.min) && frame.contains(bounds.max),
+                "{preview}: {label} stays in the player header: {bounds:?} versus {frame:?}");
+        }
+        let title=world.query::<(Entity,&Text,&bevy::text::TextLayoutInfo)>().iter(world)
+            .find(|(entity,text,_)|text.as_str()=="mira#2207" && super::harness::descends_from(world,*entity,name))
+            .expect("drawn player name");
+        assert!(title.2.size.x>0.0 && title.2.size.y>0.0,"{preview}: name glyphs are ready");
+        let title_bounds=rectangle(world,title.0);
+        assert!(rectangle(world,name).contains(title_bounds.min) && rectangle(world,name).contains(title_bounds.max),
+            "{preview}: the name is not clipped out of its identity block: {title_bounds:?}");
+    }
 }
