@@ -6,7 +6,7 @@
 //! own number by the caller.
 
 use bota_core::{
-    AbilityDef, Carried, ItemDef, Odds, UseSpec,
+    AbilityDef, Carried, ItemDef, Odds, Strike, UseSpec,
     rules::{self, TICKS_PER_SECOND},
 };
 use bota_proto::{AbilityId, Fixed};
@@ -183,17 +183,100 @@ fn item_value(def: &ItemDef, key: &str) -> Option<Levels> {
         "melee_attack_range" => one(c.melee_range),
         "bonus_stat" => one(def.mode_bonus),
         "bonus_chance" => one(percent(c.pierce)),
-        "bonus_chance_damage" => one(c.pierce_damage),
-        "damage_bonus" => one(c.damage_to_creeps),
-        "damage_bonus_ranged" => one(def.carried_by(true).damage_to_creeps),
+        // A pierce's damage (Javelin's); a bash's is its strike's.
+        "bonus_chance_damage" if c.pierce != Odds::NEVER => one(c.pierce_damage),
+        "damage_bonus" | "quelling_bonus" => one(def.carried_by(false).damage_to_creeps),
+        "damage_bonus_ranged" | "quelling_bonus_ranged" => {
+            one(def.carried_by(true).damage_to_creeps)
+        }
+        "agility" => one(a.agility.to_int()),
         "abilitycastrange" | "quelling_range_tooltip" => one(def.cast_range),
         "tooltip_charges" => one(def.charges),
         "max_charges" => one(def.cast_charges),
         "charge_radius" => one(def.charge_radius()?),
         _ => attack_value(def, key)
             .or_else(|| block_value(def, key))
-            .or_else(|| use_value(def, key)),
+            .or_else(|| use_value(def, key))
+            .or_else(|| strike_value(def, key))
+            .or_else(|| damage_block_value(def, key))
+            // A plain `damage` (Specialist's Array's) is the attack damage it adds, where no
+            // passive of its attacks names a damage of its own (Orb of Venom's).
+            .or_else(|| (key == "damage").then(|| vec![c.damage.to_string()])),
     }
+}
+
+/// A value of the procs the item's passive gives its carrier's attacks, read off the carrier the
+/// key is about: a bash's chance is a melee or a ranged carrier's, every other key the first
+/// carrier's whose strikes have it (Cleave a melee one's, Splitshot a ranged one's).
+fn strike_value(def: &ItemDef, key: &str) -> Option<Levels> {
+    let carriers: &[bool] = match key {
+        "bash_chance_melee" => &[false],
+        "bash_chance_ranged" => &[true],
+        _ => &[false, true],
+    };
+    let mut strikes = carriers
+        .iter()
+        .flat_map(|ranged| def.carried_by(*ranged).strikes);
+    if key == "bash_cooldown" {
+        // A bash waits out the item's own cooldown.
+        return strikes
+            .any(|strike| matches!(strike, Strike::Bash { .. }))
+            .then(|| vec![secs(def.cooldown)]);
+    }
+    strikes.find_map(|strike| strike_number(*strike, key))
+}
+
+fn strike_number(strike: Strike, key: &str) -> Option<Levels> {
+    match (strike, key) {
+        (Strike::Crit { chance_pct, .. }, "crit_chance") => one(chance_pct),
+        (Strike::Crit { mult_pct, .. }, "crit_multiplier") => many(&mult_pct),
+        // What a critical strike deals beyond the swing (Crystalys's): its multiplier past 100.
+        (Strike::Crit { mult_pct, .. }, "tooltip_crit_damage") => many(&mult_pct.map(|m| m - 100)),
+        (Strike::Bash { chance_pct, .. }, "bash_chance_melee" | "bash_chance_ranged") => {
+            one(chance_pct)
+        }
+        (Strike::Bash { damage, .. }, "bonus_chance_damage") => many(&damage),
+        (Strike::Bash { stun_ms, .. }, "bash_duration") => Some(collapse(&stun_ms.map(of_ms))),
+        (Strike::Cleave { hero_pct, .. }, "cleave_damage_percent") => one(hero_pct),
+        (Strike::Cleave { creep_pct, .. }, "cleave_damage_percent_creep") => one(creep_pct),
+        (Strike::Cleave { start_width, .. }, "cleave_starting_width") => one(start_width),
+        (Strike::Cleave { end_width, .. }, "cleave_ending_width") => one(end_width),
+        (Strike::Cleave { distance, .. }, "cleave_distance") => one(distance),
+        (Strike::Chain { chance_pct, .. }, "chain_chance") => one(chance_pct),
+        (Strike::Chain { damage, .. }, "chain_damage") => one(damage),
+        (Strike::Chain { strikes, .. }, "chain_strikes") => one(strikes),
+        (Strike::Chain { radius, .. }, "chain_radius") => one(radius),
+        (Strike::Chain { delay_ms, .. }, "chain_delay") => one(of_ms(delay_ms)),
+        (Strike::Chain { wait_ms, .. }, "chain_cooldown") => one(of_ms(wait_ms)),
+        (Strike::Split { chance_pct, .. }, "proc_chance") => one(chance_pct),
+        (Strike::Split { count, .. }, "count") => one(count),
+        (Strike::Split { range_bonus, .. }, "secondary_target_range_bonus") => one(range_bonus),
+        (Strike::Split { angle, .. }, "secondary_target_angle") => one(angle),
+        (Strike::Split { base_damage, .. }, "base_proc_dmg") => one(base_damage),
+        (Strike::Split { pct, .. }, "proc_dmg_pct") => one(pct),
+        _ => None,
+    }
+}
+
+/// A value of the damage the item's passive blocks off an attack on its carrier, of a melee or a
+/// ranged carrier as the key says.
+fn damage_block_value(def: &ItemDef, key: &str) -> Option<Levels> {
+    let amount = |ranged| {
+        def.carried_by(ranged)
+            .damage_block
+            .map(|block| block.amount)
+    };
+    match key {
+        "block_chance" => one(percent(def.carried.damage_block?.chance)),
+        "block_damage_melee" => one(amount(false)?),
+        "block_damage_ranged" => one(amount(true)?),
+        _ => None,
+    }
+}
+
+/// Milliseconds as the seconds Dota's text prints.
+fn of_ms(ms: i32) -> String {
+    plain(f64::from(ms) / 1000.0)
 }
 
 /// A share in basis points as the percent Dota's text prints.
@@ -422,6 +505,115 @@ mod tests {
         let mango = shown(ItemId::MANGO, "hp_regen");
         assert!(mango.is_some(), "a Mango's flat regeneration");
         assert_eq!(mango, shown(ItemId::MANGO, "bonus_health_regen"));
+    }
+
+    /// The tooltips of the attack procs of Dota 7.41f's second item batch print what the simulator
+    /// strikes with under each Dota key: critical strikes, the bash, Cleave and Quell, Chain
+    /// Lightning, Splitshot and Damage Block, each of the carrier (melee or ranged) its key names.
+    #[test]
+    fn the_attack_procs_tooltips_read_their_strikes_from_the_simulator() {
+        let expect = |item: ItemId, pairs: &[(&str, &str)]| {
+            let def = item_def(item).expect("an item");
+            for (key, number) in pairs {
+                assert_eq!(
+                    value(Subject::Item(def), key),
+                    Some(vec![(*number).to_owned()]),
+                    "{item:?} {key}"
+                );
+            }
+        };
+        expect(
+            ItemId::CRYSTALYS,
+            &[
+                ("crit_chance", "30"),
+                ("crit_multiplier", "160"),
+                ("tooltip_crit_damage", "60"),
+                ("bonus_damage", "32"),
+            ],
+        );
+        expect(
+            ItemId::DAEDALUS,
+            &[
+                ("crit_chance", "30"),
+                ("crit_multiplier", "225"),
+                ("bonus_damage", "88"),
+            ],
+        );
+        expect(
+            ItemId::REVENANTS_BROOCH,
+            &[
+                ("crit_chance", "30"),
+                ("crit_multiplier", "80"),
+                ("bonus_damage", "35"),
+                ("spell_lifesteal", "15"),
+            ],
+        );
+        expect(
+            ItemId::SKULL_BASHER,
+            &[
+                ("bash_chance_melee", "25"),
+                ("bash_chance_ranged", "10"),
+                ("bonus_chance_damage", "100"),
+                ("bash_duration", "1.2"),
+                ("bash_cooldown", "2.3"),
+                ("bonus_strength", "10"),
+                ("bonus_damage", "30"),
+            ],
+        );
+        expect(
+            ItemId::BATTLE_FURY,
+            &[
+                ("cleave_damage_percent", "60"),
+                ("cleave_damage_percent_creep", "40"),
+                ("cleave_starting_width", "150"),
+                ("cleave_ending_width", "360"),
+                ("cleave_distance", "650"),
+                ("quelling_bonus", "10"),
+                ("quelling_bonus_ranged", "5"),
+                ("bonus_damage", "50"),
+                ("bonus_health_regen", "7.5"),
+                ("bonus_mana_regen", "2.75"),
+            ],
+        );
+        expect(
+            ItemId::MAELSTROM,
+            &[
+                ("chain_chance", "25"),
+                ("chain_damage", "110"),
+                ("chain_strikes", "4"),
+                ("chain_radius", "650"),
+                ("chain_delay", "0.25"),
+                ("chain_cooldown", "0.2"),
+                ("bonus_damage", "25"),
+                ("bonus_attack_speed", "25"),
+            ],
+        );
+        expect(
+            ItemId::SPECIALISTS_ARRAY,
+            &[
+                ("proc_chance", "30"),
+                ("count", "2"),
+                ("secondary_target_range_bonus", "150"),
+                ("secondary_target_angle", "120"),
+                ("base_proc_dmg", "20"),
+                ("proc_dmg_pct", "75"),
+                ("agility", "15"),
+                ("damage", "20"),
+            ],
+        );
+        expect(
+            ItemId::VANGUARD,
+            &[
+                ("block_chance", "60"),
+                ("block_damage_melee", "50"),
+                ("block_damage_ranged", "25"),
+                ("bonus_health", "250"),
+                ("bonus_health_regen", "4.5"),
+            ],
+        );
+        // A pierce's damage stays its own, and Orb of Venom's `damage` its poison's.
+        expect(ItemId::JAVELIN, &[("bonus_chance_damage", "60")]);
+        expect(ItemId::ORB_OF_VENOM, &[("damage", "12")]);
     }
 
     /// Orb of Venom's tooltip prints `damage`, `tick_interval` and `poison_duration` as the

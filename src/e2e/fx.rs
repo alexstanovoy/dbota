@@ -163,6 +163,43 @@ fn items_used_and_carried_show_the_effects_and_sounds_dota_gives_them() {
     });
 }
 
+/// Pudge carrying a Maelstrom and a Skull Basher strikes a sturdy enemy hero: each unit a Chain
+/// Lightning bolt strikes flashes and crackles as a Maelstrom's does in Dota, and a bash sounds as
+/// a Skull Basher's on the one it stuns, under the stun's own mark.
+#[test]
+fn a_maelstroms_lightning_and_a_skull_bashers_bash_show_as_dota_shows_them() {
+    let server = Server::start(1, &[]);
+    let mut client = Client::join(&server, HeroId::PUDGE, &[]);
+    client.stand_at(MID);
+    for item in [ItemId::MAELSTROM, ItemId::SKULL_BASHER] {
+        client.cheat(Cheat::Item { item });
+    }
+    client.cheat(Cheat::CreateHero {
+        hero: HeroId::PUDGE,
+        enemy: true,
+        at: bota_proto::Vec2::from_ints(MID.0 + 150, MID.1),
+    });
+    let (victim, _) = enemy(&client);
+    // Many blows land before it falls.
+    client.cheat(Cheat::ApplyModifier {
+        target: Target::Unit(victim),
+        spec: ModifierSpec {
+            max_hp: ModifierSpec::MAX_SCALE,
+            ..ModifierSpec::NOMINAL
+        },
+        ticks: 3000,
+    });
+    client.core_mut().send_order(bota_proto::Order::Attack {
+        target: Target::Unit(victim),
+    });
+    client.until("a Chain Lightning bolt's flash and crackle", |c| {
+        started(c, "item.maelstrom.hit") > 0 && heard(c, "sound.item.maelstrom") > 0
+    });
+    client.until("a bash sounded under the stun's mark", |c| {
+        heard(c, "sound.item.skull_basher") > 0 && started(c, "status.stunned") > 0
+    });
+}
+
 /// A Blink Dagger used by a client run with `--mute` (as the visual checks run it): its start and
 /// end effects, and the dagger's sound, which the mixer takes though the master volume is nil.
 #[test]

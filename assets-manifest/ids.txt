@@ -125,6 +125,20 @@ item 112 dragon_lance
 item 113 recipe
 item 114 heart
 item 115 recipe
+item 116 recipe
+item 117 lesser_crit
+item 118 recipe
+item 119 greater_crit
+item 120 recipe
+item 121 revenants_brooch
+item 122 recipe
+item 123 basher
+item 124 recipe
+item 125 bfury
+item 126 maelstrom
+item 127 recipe
+item 128 specialists_array
+item 129 vanguard
 ability 0 pudge_meat_hook
 ability 1 pudge_rot
 ability 2 pudge_innate_graft_flesh
@@ -142,6 +156,12 @@ text item 109 item_recipe_aether_lens
 text item 111 item_recipe_octarine_core
 text item 113 item_recipe_dragon_lance
 text item 115 item_recipe_heart
+text item 116 item_recipe_lesser_crit
+text item 118 item_recipe_greater_crit
+text item 120 item_recipe_revenants_brooch
+text item 122 item_recipe_basher
+text item 124 item_recipe_bfury
+text item 127 item_recipe_specialists_array
 ability 3 pudge_dismember
 ability 4 courier_burst
 ability 5 courier_return_to_base

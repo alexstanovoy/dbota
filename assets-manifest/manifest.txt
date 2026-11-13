@@ -428,6 +428,8 @@ particle item.phase_boots particles/items2_fx/phase_boots.vpcf_c particles/phase
 particle item.power_treads.swap particles/items_fx/power_treads_swap_attributes_effect.vpcf_c particles/power_treads_swap_attributes_effect.json
 particle item.power_treads.buff particles/items_fx/power_treads_buff.vpcf_c particles/power_treads_buff.json
 particle item.branches.tree particles/items3_fx/ggbranch_tree.vpcf_c particles/ggbranch_tree.json
+# Maelstrom: the flash on each unit a Chain Lightning bolt strikes (its bolt's impact child, as the harpy's is drawn)
+particle item.maelstrom.hit particles/items_fx/chain_lightning_impact.vpcf_c particles/chain_lightning_impact.json
 # Shadow Fiend: eyes and mouth, Feast of Souls, the head of a Requiem, the debuff of a Shadowraze
 particle hero.nevermore.ambient_eyes particles/units/heroes/hero_nevermore/shadow_fiend_ambient_eyes.vpcf_c particles/shadow_fiend_ambient_eyes.json
 particle hero.nevermore.frenzy particles/units/heroes/hero_nevermore/nevermore_souls.vpcf_c particles/nevermore_souls.json
@@ -563,6 +565,11 @@ fx item.power_treads.held at=unit particle=item.power_treads.buff cp1=mode
 # Iron Branch plants a tree where it is aimed; the Ward Dispenser plants a ward
 fx item.branches.use at=point particle=item.branches.tree
 fx item.ward_dispenser.use at=point sound=sound.ward.activate
+# Maelstrom: each unit a Chain Lightning bolt strikes flashes and crackles (told as the item's blows, as a harpy's
+# Chain Lightning is told as its ability's); Skull Basher: its bash sounds on the one it stuns (the stun's mark is
+# modifier_bashed's, as Roshan's bash)
+fx item.maelstrom.hit at=unit attach=attach_hitloc particle=item.maelstrom.hit sound=sound.item.maelstrom
+fx item.basher.worn at=unit sound=sound.item.skull_basher
 # Shadow Fiend: eyes and mouth that burn, the Requiem's head swirl while it is cast and its cast
 # sound, Feast of Souls, the mark of a Shadowraze
 fx unit.npc_dota_hero_nevermore.worn at=unit particle=hero.nevermore.ambient_eyes cp1=attach_eyeL cp2=attach_eyeR cp3=attach_head
@@ -1041,6 +1048,8 @@ sound sound.item.blink sounds/weapons/hero/antimage/blink_out.vsnd_c sounds/weap
 sound sound.item.mango sounds/items/mango.vsnd_c sounds/items/mango.wav event=DOTA_Item.Mango.Activate
 sound sound.item.faerie_fire sounds/items/faerie_spark.vsnd_c sounds/items/faerie_spark.wav event=DOTA_Item.FaerieSpark.Activate
 sound sound.item.ghost sounds/items/item_ghost_sceptre.vsnd_c sounds/items/item_ghost_sceptre.wav event=DOTA_Item.GhostScepter.Activate
+sound sound.item.maelstrom sounds/items/item_mael_lightning_chain.vsnd_c sounds/items/item_mael_lightning_chain.wav event=Item.Maelstrom.Chain_Lightning.Jump
+sound sound.item.skull_basher sounds/items/skull_basher.vsnd_c sounds/items/skull_basher.wav event=DOTA_Item.SkullBasher
 sound sound.pudge.hook_throw sounds/weapons/hero/pudge/hook_throw.vsnd_c sounds/weapons/hero/pudge/hook_throw.wav event=Hero_Pudge.AttackHookExtend
 sound sound.pudge.hook_impact sounds/weapons/hero/pudge/hook_impact.vsnd_c sounds/weapons/hero/pudge/hook_impact.wav event=Hero_Pudge.AttackHookImpact
 sound sound.pudge.rot sounds/weapons/hero/pudge/rot.vsnd_c sounds/weapons/hero/pudge/rot.wav event=Hero_Pudge.Rot

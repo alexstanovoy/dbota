@@ -121,6 +121,23 @@ pub const FALLBACK: &[(&str, &str)] = &[
     ("item_recipe_dragon_lance", "Recipe: Dragon Lance"),
     ("item_heart", "Heart of Tarrasque"),
     ("item_recipe_heart", "Recipe: Heart of Tarrasque"),
+    ("item_recipe_lesser_crit", "Recipe: Crystalys"),
+    ("item_lesser_crit", "Crystalys"),
+    ("item_recipe_greater_crit", "Recipe: Daedalus"),
+    ("item_greater_crit", "Daedalus"),
+    ("item_recipe_revenants_brooch", "Recipe: Revenant's Brooch"),
+    ("item_revenants_brooch", "Revenant's Brooch"),
+    ("item_recipe_basher", "Recipe: Skull Basher"),
+    ("item_basher", "Skull Basher"),
+    ("item_recipe_bfury", "Recipe: Battle Fury"),
+    ("item_bfury", "Battle Fury"),
+    ("item_maelstrom", "Maelstrom"),
+    (
+        "item_recipe_specialists_array",
+        "Recipe: Specialist's Array",
+    ),
+    ("item_specialists_array", "Specialist's Array"),
+    ("item_vanguard", "Vanguard"),
 ];
 
 /// The English name of the item whose Dota key is `key`, if the table has one.

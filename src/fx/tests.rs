@@ -88,6 +88,8 @@ fn carries_stats_alone(id: u16) -> bool {
                 && carried.pierce == bota_core::Odds::NEVER
                 && carried.lifesteal_pct == 0
                 && carried.spell_lifesteal_pct == 0
+                && carried.strikes.is_empty()
+                && carried.damage_block.is_none()
         };
         def.aim.is_none()
             && def.on_attack.is_none()
@@ -125,8 +127,17 @@ const NO_LINE: &[(&str, &str)] = &[
     ),
     // Items
     (
+        "bfury",
+        "its Cleave's ring plays once a swing at the attacker, which the server tells only as a blow on each unit \
+         cleaved; its Chop Tree shows the tree falling and no particle",
+    ),
+    (
         "butterfly",
         "Dota draws no effect for the passive; the evasion is a floating word, not a particle",
+    ),
+    (
+        "greater_crit",
+        "Dota sounds a critical strike and floats its damage; the server does not tell one",
     ),
     (
         "infused_raindrop",
@@ -135,6 +146,10 @@ const NO_LINE: &[(&str, &str)] = &[
     (
         "javelin",
         "Dota draws no effect for the passive; the server does not tell a proc",
+    ),
+    (
+        "lesser_crit",
+        "Dota sounds a critical strike and floats its damage; the server does not tell one",
     ),
     (
         "lifesteal",
@@ -149,14 +164,24 @@ const NO_LINE: &[(&str, &str)] = &[
         "Dota shows the tree falling and no particle",
     ),
     (
+        "revenants_brooch",
+        "Phantom Critical is told as a blow of the item, but which of the install's brooch effects Dota plays for \
+         it is not established",
+    ),
+    (
         "royale_with_cheese",
         "its Savory Shield is not simulated, and the game's code names no particle or sound for it",
+    ),
+    (
+        "specialists_array",
+        "the server does not tell which missiles a Splitshot threw: they fly as the carrier's attack",
     ),
     (
         "talisman_of_evasion",
         "Dota draws no effect for the passive; the evasion is a floating word, not a particle",
     ),
     ("tpscroll", "its channel is drawn by teleport.rs"),
+    ("vanguard", "a passive whose block the server does not tell"),
     (
         "voodoo_mask",
         "Dota bursts on a spell lifesteal heal; the server does not tell one",
