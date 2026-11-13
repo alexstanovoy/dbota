@@ -829,6 +829,10 @@ impl MenuCore {
 
 #[cfg(test)]
 impl MenuCore {
+    /// Pause network delivery while a client-state test injects explicit service events.
+    pub(crate) fn test_pause_service_events(&mut self) {
+        self.pause_service_events = true;
+    }
     pub(crate) fn test_hold_lobby_requests(&mut self) {
         self.lobby_ui.held = Some(Vec::new());
     }

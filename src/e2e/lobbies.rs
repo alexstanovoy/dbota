@@ -2370,3 +2370,106 @@ fn a_controller_uses_the_existing_lobby_dropdown_keyboard_route() {
         "solo_mid"
     );
 }
+
+/// Client-state delivery through MenuCore, not initiation of cancellation at the service.
+/// The service's request-path tests cover who may cancel and the timer's lifetime.
+#[test]
+fn client_lobby_states_without_deadlines_restore_host_and_guest_actions() {
+    let service = crate::main_menu::tests::service();
+    let mut alice = signed_up(&service, "alice");
+    let mut bob = signed_up(&service, "bob");
+    create(&mut alice, "Cancelled start", "key");
+    join(&mut bob, "Cancelled start", "key");
+    alice.until("both members in the host snapshot", |client| {
+        client
+            .world()
+            .non_send::<MenuCore>()
+            .test_lobby_state()
+            .members
+            .len()
+            == 2
+    });
+    for client in [&mut alice, &mut bob] {
+        client
+            .world_mut()
+            .non_send_mut::<MenuCore>()
+            .test_pause_service_events();
+        client
+            .world_mut()
+            .non_send_mut::<MenuCore>()
+            .test_hold_lobby_requests();
+    }
+    let mut state = alice.world().non_send::<MenuCore>().test_lobby_state();
+    let room_id = state.id;
+    state.starting_in_ms = Some(5000);
+    for member in &mut state.members {
+        member.ready = true;
+    }
+    for client in [&mut alice, &mut bob] {
+        client
+            .world_mut()
+            .non_send_mut::<MenuCore>()
+            .test_lobby_event(state.clone());
+        client.frames(3);
+        assert!(room(client).starting_in_secs.is_some());
+        assert!(
+            client
+                .shown_texts()
+                .iter()
+                .any(|line| line.starts_with("Starting in "))
+        );
+    }
+    state.starting_in_ms = None;
+    for member in &mut state.members {
+        if member.account == state.owner {
+            member.ready = false;
+        }
+    }
+    for client in [&mut alice, &mut bob] {
+        client
+            .world_mut()
+            .non_send_mut::<MenuCore>()
+            .test_lobby_event(state.clone());
+        client.frames(3);
+        assert_eq!(
+            client.world().non_send::<MenuCore>().test_lobby_state().id,
+            room_id
+        );
+        assert!(
+            room(client).starting_in_secs.is_none(),
+            "every recipient clears the countdown"
+        );
+        assert!(
+            !client
+                .shown_texts()
+                .iter()
+                .any(|line| line.starts_with("Starting in "))
+        );
+    }
+    assert!(room(&alice).owner);
+    assert!(!room(&alice).me_ready, "the host can start again");
+    assert!(!room(&bob).owner);
+    assert!(
+        room(&bob).me_ready,
+        "cancellation preserves the guest's readiness"
+    );
+    for (client, name) in [(&mut alice, "start game"), (&mut bob, "not ready")] {
+        let world = client.world_mut();
+        let button = world
+            .query::<(Entity, &Name)>()
+            .iter(world)
+            .find(|(_, label)| label.as_str() == name)
+            .map(|(entity, _)| entity)
+            .expect("normal room action");
+        assert!(
+            world.get::<crate::main_menu::MenuButton>(button).is_some(),
+            "{name} is a working action after cancellation"
+        );
+    }
+    click(&mut bob, "not ready");
+    assert!(
+        matches!(bob.world().non_send::<MenuCore>().test_lobby_requests().last(),
+        Some(bota_radovid::proto::ClientMsg::LobbyReady { lobby,ready:false }) if *lobby==room_id),
+        "the guest can use the restored action"
+    );
+}

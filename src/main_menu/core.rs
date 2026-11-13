@@ -546,6 +546,8 @@ pub struct MenuCore {
     pub(super) prefs: Prefs,
     tls: Tls,
     pub(super) client: Option<Client>,
+    #[cfg(test)]
+    pause_service_events: bool,
     conn: Conn,
     /// Whether an account is signed in: its session is kept, the link to the service is not
     /// (it is open only while something live is on it, and a request opens it again).
@@ -753,6 +755,8 @@ impl MenuCore {
             prefs,
             tls,
             client: None,
+            #[cfg(test)]
+            pause_service_events: false,
             conn: Conn::Offline,
             account: false,
             credentials: None,
@@ -1349,6 +1353,10 @@ impl MenuCore {
             self.read_summaries();
         }
         self.keep_link();
+        #[cfg(test)]
+        if self.pause_service_events {
+            return;
+        }
         for _ in 0..MAX_PER_FRAME {
             let Some(client) = &mut self.client else {
                 return;
