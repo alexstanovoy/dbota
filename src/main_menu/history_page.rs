@@ -16,6 +16,7 @@ pub enum Filter {
 }
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct View {
+    pub ratings:Vec<super::account_page::Rating>,
     pub matches: std::sync::Arc<Vec<Match>>,
     pub filter: Selection,
     pub picker: Option<Filter>,
@@ -36,6 +37,7 @@ impl MenuCore {
             .map(|account| account.nickname.clone())
             .unwrap_or_else(|| self.name());
         View {
+            ratings:self.profile_ratings(),
             matches: self.local_history.cards(self.library.records()),
             filter: self.history_filter.clone(),
             picker: self.history_picker,
@@ -206,6 +208,7 @@ pub fn draw(kit: &mut Kit, root: Entity, view: &View) {
         theme::INK_1,
     );
     rect(kit, pane, area(159.0, 44.0, 99.0, 2.0), theme::INK_1);
+    history_confidence(kit,pane,&view.ratings);
     let labels = [
         (
             "Mode",
@@ -450,6 +453,21 @@ fn row(kit: &mut Kit, parent: Entity, game: &Match, y: f32, day: &str) {
         game.details_available,
     );
 }
+fn history_confidence(kit:&mut Kit,parent:Entity,ratings:&[super::account_page::Rating]) {
+    let group=kit.node(parent,Node {
+        position_type:PositionType::Absolute,left:px(460),top:px(3),width:px(700),height:px(40),
+        column_gap:px(20),overflow:Overflow::clip(),..default()
+    });
+    for rating in ratings {
+        let Some(confidence)=rating.confidence else {continue};
+        let column=kit.node(group,Node {width:px(210),flex_shrink:0.0,flex_direction:FlexDirection::Column,row_gap:px(1),..default()});
+        kit.commands.entity(column).insert(Name::new(format!("rank confidence {}",rating.mode_id)));
+        let value=if confidence.calibrated {rating.rating.as_deref().unwrap_or("—")} else {"Uncalibrated"};
+        kit.typed(column,format!("{} · {value}",rating.mode),theme::CAPTION,theme::INK_3);
+        super::account_page::confidence_bar(kit,column,rating,confidence);
+    }
+}
+
 fn dropdown(kit: &mut Kit, parent: Entity, view: &View, filter: Filter) {
     let (x, mut options) = match filter {
         Filter::Mode => (0.0, vec![("Any".to_owned(), Act::HistoryMode(None))]),
@@ -550,6 +568,7 @@ pub fn preview() -> View {
         (9, 5, 13),
     ];
     View {
+        ratings:Vec::new(),
         matches: std::sync::Arc::new(
             (0..10)
                 .map(|index| Match {

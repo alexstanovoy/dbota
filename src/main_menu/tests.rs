@@ -3581,3 +3581,23 @@ pub(crate) fn rank_in_served_board(menu: &MenuCore, account: u64) -> u64 {
             .rank,
     )
 }
+
+pub(crate) fn probe_public_deviation(service:&Service,account:u64)->f64 {
+    let mut player=Player::new(Some(service));
+    player.register("confidence_probe");
+    let client=player.menu.client.as_mut().expect("client");
+    let sequence=client.request(bota_radovid::proto::ClientMsg::Account{account:bota_radovid::proto::AccountId(account)}).expect("public profile request");
+    for _ in 0..32 {
+        let incoming=client.wait(Duration::from_secs(10)).expect("real reply").expect("reply deadline");
+        if let bota_radovid::Incoming::Reply{seq,result}=incoming &&seq==sequence {
+            let bota_radovid::proto::Reply::Account{account}=result.expect("visible profile") else {panic!("profile response")};
+            return account.ratings.iter().find(|(mode,_)|mode.0=="solo_mid").expect("played mode").1.rating.deviation;
+        }
+    }
+    panic!("public profile reply missing");
+}
+pub(crate) fn withhold_confidence_profile(service:&Service,account:u64,banned:bool) {
+    let script="import sqlite3,sys; c=sqlite3.connect(sys.argv[1]); q='UPDATE accounts SET banned=1,ban_until=NULL,ban_reason=\"test restriction\" WHERE id=?' if sys.argv[3]=='ban' else 'UPDATE ratings SET hidden=1 WHERE account=?'; cur=c.execute(q,(int(sys.argv[2]),)); assert cur.rowcount>0; c.commit()";
+    assert!(std::process::Command::new("python3").args(["-c",script]).arg(service._dir.0.join("radovid.db"))
+        .arg(account.to_string()).arg(if banned {"ban"}else{"hide"}).status().expect("private fixture visibility").success());
+}

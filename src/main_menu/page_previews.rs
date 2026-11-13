@@ -245,12 +245,16 @@ fn profile_fixture(name: &str) -> PageView {
         } else {
             vec![
                 Rating {
+                    mode_id:"solo_mid".into(),
+                    confidence:super::rank_confidence::from_deviation(80.0,41),
                     mode: "Solo Mid".to_owned(),
                     rating: Some("1,524".to_owned()),
                     rank: Some(12),
                     games: 41,
                 },
                 Rating {
+                    mode_id:"all_pick".into(),
+                    confidence:super::rank_confidence::from_deviation(120.0,9),
                     mode: "All Pick".to_owned(),
                     rating: Some("1,302".to_owned()),
                     rank: Some(412),

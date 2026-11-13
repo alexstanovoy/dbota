@@ -2036,7 +2036,7 @@ impl MenuCore {
                 self.ask(ClientMsg::MyMatches, Asked::Other);
                 self.ask_history();
             }
-            Page::Profile => {
+            Page::Profile | Page::MatchHistory => {
                 self.ask_profile();
                 self.ask_history();
             }

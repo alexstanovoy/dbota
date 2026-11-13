@@ -51,6 +51,7 @@ pub(crate) mod player_profile;
 mod prefs;
 mod preview;
 mod profile_metadata;
+mod rank_confidence;
 mod replay_info;
 pub(crate) mod results;
 mod screens;

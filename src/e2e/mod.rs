@@ -78,6 +78,7 @@ mod purchase_destination;
 mod quickbuy;
 mod refusals;
 mod regame;
+mod rank_confidence;
 mod rings;
 mod roshan;
 mod rune_lifecycle;

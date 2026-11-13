@@ -242,6 +242,8 @@ fn public_ratings(account: &PublicAccount, modes: &[(String, String)]) -> Vec<Ra
         .iter()
         .take(bota_radovid::proto::MAX_RATED_MODES)
         .map(|(mode, rating)| Rating {
+            mode_id:mode.0.clone(),
+            confidence:super::rank_confidence::from_deviation(rating.rating.deviation,rating.games),
             mode: modes
                 .iter()
                 .find(|(id, _)| id == &mode.0)
