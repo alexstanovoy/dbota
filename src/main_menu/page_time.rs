@@ -1,4 +1,6 @@
 //! A render clock: live local time in the app, fixed UTC only for explicit screenshot fixtures.
+use super::view::PageView;
+
 #[derive(Clone, Copy)]
 pub struct Clock {
     pub now: u64,
@@ -14,6 +16,14 @@ impl Clock {
             } else {
                 crate::replays::now()
             },
+        }
+    }
+    /// The minute a page is drawn for. Only the pages that write a date or "min ago" change with
+    /// it; redrawing any other would drop the hover, focus and animation of what the player is on.
+    pub fn minute_shown(self, body: &PageView) -> u64 {
+        match body {
+            PageView::Home { .. } | PageView::Profile { .. } => self.now / 60,
+            _ => 0,
         }
     }
     fn full_date(self, when: u64) -> String {

@@ -2,18 +2,29 @@
 
 use super::index::mode_name;
 
+#[cfg(test)]
+thread_local! {
+    /// Seconds this test's thread sees the wall clock ahead, so a test passes a minute without waiting.
+    static LATER: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+/// Moves this test thread's [`now`] on by `seconds`.
+#[cfg(test)]
+pub(crate) fn pass_time(seconds: u64) {
+    LATER.set(LATER.get() + seconds);
+}
+
 /// Seconds since 1970 now. A browser has no `SystemTime`; its page clock stands in.
 pub fn now() -> u64 {
     #[cfg(not(target_arch = "wasm32"))]
-    {
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map_or(0, |d| d.as_secs())
-    }
+    let seconds = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs());
     #[cfg(target_arch = "wasm32")]
-    {
-        (js_sys::Date::now() / 1000.0) as u64
-    }
+    let seconds = (js_sys::Date::now() / 1000.0) as u64;
+    #[cfg(test)]
+    let seconds = seconds + LATER.get();
+    seconds
 }
 
 /// `(year, month, day, hour, minute, second)` of `secs` since 1970, in UTC.

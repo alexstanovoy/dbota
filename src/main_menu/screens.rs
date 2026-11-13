@@ -60,7 +60,7 @@ pub fn draw(
     };
     let clock = super::page_time::Clock::new(preview.is_some());
     if drawn.as_ref().is_some_and(|(shown, folded, minute)| {
-        *shown == view && folded == &*fold && *minute == clock.now / 60
+        *shown == view && folded == &*fold && *minute == clock.minute_shown(&view.body)
     }) {
         return;
     }
@@ -96,7 +96,8 @@ pub fn draw(
         super::pages::draw(&mut kit, page, &view, *fold, &texts, clock);
     }
     super::overlay::draw(&mut kit, overlay, &view);
-    *drawn = Some((view, *fold, clock.now / 60));
+    let minute = clock.minute_shown(&view.body);
+    *drawn = Some((view, *fold, minute));
 }
 
 /// A click on a menu button does what it says.

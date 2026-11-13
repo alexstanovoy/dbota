@@ -1728,3 +1728,31 @@ fn the_width_invariant_rejects_an_unrelated_percent_width_button() {
         "the intended width assertion failed: {reason}"
     );
 }
+
+#[test]
+fn a_page_without_dates_keeps_its_widgets_when_the_wall_clock_passes_a_minute() {
+    let mut client = local_menu();
+    act(&mut client, Act::Go(Page::LocalLobby));
+    let mut named = None;
+    client.within(Duration::from_secs(30), "the lobby page drawn", |client| {
+        named = buttons(client).first().map(|button| button.0.clone());
+        named.is_some()
+    });
+    let name = named.expect("a drawn button");
+    let find = |client: &mut Client| {
+        let world = client.world_mut();
+        world
+            .query_filtered::<(Entity, &Name), With<MenuButton>>()
+            .iter(world)
+            .find(|(_, button)| button.as_str() == name)
+            .map(|(entity, _)| entity)
+    };
+    let drawn = find(&mut client).expect("the drawn button");
+    crate::replays::pass_time(61);
+    client.frames(3);
+    assert_eq!(
+        find(&mut client),
+        Some(drawn),
+        "a minute on the wall clock redraws no page that shows no time"
+    );
+}
