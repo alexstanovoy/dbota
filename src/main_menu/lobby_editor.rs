@@ -210,7 +210,7 @@ fn toggles(kit: &mut Kit, parent: Entity, editor: &EditorView) {
         editor.hidden,
         w::action(Action::HidePassword),
     );
-    if editor.password_unknown {
+    if editor.locked {
         w::check(
             kit,
             panel,
@@ -231,17 +231,10 @@ fn answers(kit: &mut Kit, parent: Entity, ok: Act, cancel: Act, saving: bool) {
         },
     );
     if saving {
-        for label in ["SAVING…", "CANCEL"] {
-            let button = kit.disabled_button(row, label, 44.0);
-            kit.commands
-                .entity(button)
-                .entry::<Node>()
-                .and_modify(|mut node| node.width = px(super::kit::POPUP_ANSWER_WIDTH));
-        }
-    } else {
-        kit.popup_button(row, "OK", ok);
-        kit.popup_button(row, "CANCEL", cancel);
-    }
+        let button = kit.disabled_button(row, "SAVING…", 44.0);
+        kit.commands.entity(button).entry::<Node>().and_modify(|mut node| node.width = px(super::kit::POPUP_ANSWER_WIDTH));
+    } else { kit.popup_button(row, "OK", ok); }
+    kit.popup_button(row, "CANCEL", cancel);
 }
 
 pub fn password(kit: &mut Kit, root: Entity, password: &PasswordView, hidden: bool) {

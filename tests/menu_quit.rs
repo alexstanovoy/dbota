@@ -1318,20 +1318,58 @@ fn a_lobby_owner_turns_cheats_on_and_everyone_sees_and_plays_with_them() {
     let (alice_dir, bob_dir) = (Scratch::new("cheats-alice"), Scratch::new("cheats-bob"));
     let alice_script = format!(
         "{}click:lobbies;await:button:create lobby;click:create lobby;click:lobby name;text:Sandbox;click:ok;\
-         await:button:leave lobby  ×;await:text:OFF;click:edit  ✎;click:enable cheats;click:ok;\
-         await:nobutton:ok;await:text:ON;await:text:bob;await:button:start game;click:start game;\
+         await:button:leave lobby  ×;await:named-text:lobby setting cheats:OFF;click:edit  ✎;click:enable cheats;click:ok;\
+         await:nobutton:ok;await:named-text:lobby setting cheats:ON;await:text:bob;await:button:start game;click:start game;\
          await:game;await:loaded;click:pick shadow fiend;click:pick ready;await:level:1;\
          say:-gold 20000;await:gold:20000;exit",
         sign_up("alice")
     );
     let mut alice = Running::start(&alice_dir, &args, &alice_script, common::client());
-    alice.until_played("await:text:ON");
+    alice.until_played("await:named-text:lobby setting cheats:ON");
     let bob_script = format!(
         "{}click:lobbies;await:button:join sandbox;click:join sandbox;await:button:leave lobby  ×;\
-         await:text:ON;await:nobutton:edit  ✎;click:ready;await:game;await:loaded;exit",
+         await:named-text:lobby setting cheats:ON;await:nobutton:edit  ✎;click:ready;await:game;await:loaded;exit",
         sign_up("bob")
     );
     let bob = Running::start(&bob_dir, &args, &bob_script, common::client());
     played("bob", bob.finish(), &bob_script);
     played("alice", alice.finish(), &alice_script);
+}
+
+
+#[test]
+#[ignore = "draws on the GPU in a headless compositor: tools/visual_check.sh runs it"]
+fn a_rendered_second_guest_searches_by_host_and_plays_with_both_existing_friends() {
+    let scratch = Scratch::new("second-guest");
+    let service = Service::start(&scratch, LOBBY_SETTINGS, LOBBY_RULESETS);
+    let args = service.args();
+    let args: Vec<&str> = args.iter().map(String::as_str).collect();
+    let mut friends = lobby_friend::Friends::new(&service);
+    let _decoy = open_lobby(&service, "dave", "Decoy Room");
+    let carol_dir = Scratch::new("rendered-carol");
+    let carol_script = format!(
+        "{}click:lobbies;await:button:join decoy room;await:button:join friday night;\
+         click:lobby or host name;text:ali;await:nobutton:join decoy room;\
+         click:join friday night;await:popup;text:open sesame;click:ok;\
+         await:button:leave lobby  ×;await:text:bob;await:text:1X1 MID ONLY;\
+         click:ready;await:game;await:loaded;await:seats:2,1;exit", sign_up("carol"));
+    let mut carol = Running::start(&carol_dir, &args, &carol_script, common::client());
+    carol.until_played("await:text:bob");
+    let _games = friends.start();
+    played("carol", carol.finish(), &carol_script);
+}
+
+#[test]
+#[ignore = "draws on the GPU in a headless compositor: tools/visual_check.sh runs it"]
+fn the_script_rejects_cheats_on_when_only_password_none_is_visible() {
+    let scratch = Scratch::new("cheats-negative");
+    let rulesets = format!("{LOBBY_RULESETS}cheats_args = [\"--lobby-cheats\"]\n");
+    let service = Service::start(&scratch, LOBBY_SETTINGS, &rulesets);
+    let args = service.args();
+    let args: Vec<&str> = args.iter().map(String::as_str).collect();
+    let client_dir = Scratch::new("cheats-off");
+    let script = format!("{}click:lobbies;await:button:create lobby;click:create lobby;click:lobby name;text:No Cheats;click:ok;await:button:leave lobby  ×;await:named-text:lobby setting cheats:OFF;expect:named-text:lobby setting cheats:ON;exit", sign_up("alice"));
+    let result = Running::start(&client_dir, &args, &script, common::client()).finish();
+    assert_eq!(result.0, Some(2), "a wrong drawn cheats value must fail the script");
+    assert!(result.1.contains("expect:named-text:lobby setting cheats:ON does not hold"), "the intended cheats assertion rejected OFF: {}", result.1);
 }

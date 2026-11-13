@@ -1,6 +1,7 @@
 //! Local lobby controls and settings drafts. They never change the service until saved.
 use super::{
-    form::Form,
+    form::{Form, FormKind},
+    prefs::Prefs,
     lobby_chat::Chat,
     view::{FieldView, ModeRow},
 };
@@ -71,6 +72,7 @@ pub struct SaveRequest {
 
 // No Debug: the form holds the owner's password.
 pub struct Editor {
+    pub saving_until: Option<bevy::platform::time::Instant>,
     pub id: u64,
     pub lobby: Option<LobbyId>,
     pub form: Form,
@@ -86,7 +88,22 @@ pub struct Editor {
     pub saving: Option<Saving>,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum Dialog { Confirm, Offer(bota_radovid::proto::ProposalId, bool) }
+
 pub struct Controls {
+    pub controls_dirty: bool,
+    pub state_dirty: bool,
+    pub creation_unconfirmed: bool,
+    pub search_due: Option<bevy::platform::time::Instant>,
+    #[cfg(test)]
+    pub view_builds: std::cell::Cell<usize>,
+    pub(super) deadlines: Vec<(u32, bevy::platform::time::Instant, crate::main_menu::core::Asked)>,
+    pub queued_until: Option<bevy::platform::time::Instant>,
+    pub dialog: Option<Dialog>,
+    pub dialog_form: Form,
+    #[cfg(test)]
+    pub held: Option<Vec<bota_radovid::proto::ClientMsg>>,
     pub choice_start: usize,
     pub active: Option<LobbyId>,
     pub next_editor: u64,
@@ -104,6 +121,15 @@ pub struct Controls {
 impl Default for Controls {
     fn default() -> Self {
         Self {
+            #[cfg(test)]
+            view_builds: Default::default(),
+            controls_dirty: true, state_dirty: true, creation_unconfirmed: false, search_due: None,
+            deadlines: Vec::new(),
+            queued_until: None,
+            dialog: None,
+            dialog_form: Form::new(FormKind::None, &Prefs::default()),
+            #[cfg(test)]
+            held: None,
             choice_start: 0,
             next_editor: 0,
             active: None,
@@ -125,13 +151,6 @@ impl Controls {
         if self.open.take().is_some() {
             return true;
         }
-        if self
-            .editor
-            .as_ref()
-            .is_some_and(|editor| editor.saving.is_some())
-        {
-            return true;
-        }
         if self.editor.take().is_some() {
             return true;
         }
@@ -145,6 +164,7 @@ impl Controls {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct EditorView {
+    pub locked: bool,
     pub fields: Vec<FieldView>,
     pub creating: bool,
     pub mode: RulesetId,
@@ -292,4 +312,9 @@ pub fn audience_name(audience: Audience) -> &'static str {
         Audience::HumansOnly => "Humans only",
         Audience::BotsOnly => "Bots only",
     }
+}
+
+/// One filter shared by the drawn rows and their keyboard controls.
+pub fn includes_lobby(filter: Option<&RulesetId>, no_password: bool, mode: &RulesetId, locked: bool) -> bool {
+    (!no_password || !locked) && filter.is_none_or(|id| id == mode)
 }

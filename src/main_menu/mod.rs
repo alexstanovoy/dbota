@@ -107,3 +107,6 @@ pub(crate) use view::LobbyView;
 
 #[cfg(test)]
 pub(crate) use lobby_controls::Choice as LobbyChoice;
+
+#[cfg(test)]
+pub(crate) use lobby_scroll::scroll as test_lobby_scroll;

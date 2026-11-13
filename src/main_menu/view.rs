@@ -459,16 +459,18 @@ impl MenuView {
 impl MenuCore {
     /// What the screens draw now.
     pub fn view(&self) -> MenuView {
+        #[cfg(test)]
+        self.lobby_ui.view_builds.set(self.lobby_ui.view_builds.get() + 1);
         let client = self.client.as_ref().filter(|_| self.logged_in());
         let account = client
             .and_then(|c| c.me())
             .map(|me| text::line(&me.nickname, text::NAME));
         let (searches, waits, offer) = client.map_or_else(Default::default, |c| {
-            let names = |id: &RulesetId| ruleset_name(c, id);
+            let names = |id: &RulesetId| ruleset_name(&self.catalogue, id);
             (
-                search_rows(c, &names),
+                search_rows(c, &names, &self.catalogue),
                 wait_rows(c),
-                offer_box(c, &names, &self.accepted),
+                offer_box(c, &names, &self.accepted, &self.catalogue),
             )
         });
         let service = text::line(service_name(&self.prefs.service), text::NAME);
@@ -478,7 +480,7 @@ impl MenuCore {
             (Some(_), true) => Connection::Lost(service),
         };
         MenuView {
-            lobby_ui: self.lobby_menu_view(&connection),
+            lobby_ui: if matches!(self.page_beneath(), Page::Lobbies | Page::Lobby) { self.lobby_menu_view(&connection) } else { Default::default() },
             page: self.page,
             beneath: self.page_beneath(),
             body: self.body_at(Instant::now()),
@@ -606,7 +608,7 @@ impl MenuCore {
                     .lobbies
                     .iter()
                     .take(bota_radovid::proto::MAX_LOBBY_LIST)
-                    .map(|row| lobby_row(row, self.client.as_ref()))
+                    .map(|row| lobby_row(row, &self.catalogue))
                     .collect(),
                 fields: self.fields(),
             },
@@ -614,7 +616,7 @@ impl MenuCore {
                 .lobby
                 .as_ref()
                 .map_or(PageView::Joining, |(state, at)| {
-                    PageView::Lobby(lobby_view(state, *at, self.client.as_ref(), self.moving))
+                    PageView::Lobby(lobby_view(state, *at, self.client.as_ref(), self.moving, &self.catalogue))
                 }),
             Page::Result => self
                 .shown
@@ -624,10 +626,7 @@ impl MenuCore {
             Page::MatchHistory => PageView::MatchHistory(self.history_view()),
             #[cfg(not(target_arch = "wasm32"))]
             Page::DemoHero => PageView::DemoHero {
-                offered: self
-                    .client
-                    .as_ref()
-                    .is_some_and(|c| c.rulesets().any(bota_radovid::is_demo)),
+                offered: self.menu_rulesets().any(bota_radovid::is_demo),
                 heroes: bota_core::HEROES
                     .iter()
                     .enumerate()
@@ -702,6 +701,10 @@ impl MenuCore {
         }
     }
 
+    pub(super) fn lobby_projection(&self) -> Option<LobbyView> {
+        self.lobby.as_ref().map(|(state, at)| lobby_view(state, *at, self.client.as_ref(), self.moving, &self.catalogue))
+    }
+
     fn home(&self) -> PageView {
         let Some(client) = &self.client else {
             return PageView::Home {
@@ -717,8 +720,7 @@ impl MenuCore {
         PageView::Home {
             matches: self.local_history.cards(self.library.records()),
             hero: self.last_played_hero(),
-            rulesets: client
-                .rulesets()
+            rulesets: self.menu_rulesets()
                 // Lobbies and solo starts without a queue have no matchmaking policy.
                 .filter(|r| r.rating_window.is_some())
                 .map(|r| RulesetRow {
@@ -766,9 +768,8 @@ impl MenuCore {
             .account_profile
             .as_ref()
             .map_or_else(|| self.name(), |p| text::who(&p.nickname, p.id.0));
-        let ratings = self.client.as_ref().map_or_else(Vec::new, |client| {
-            client
-                .rulesets()
+        let ratings = self.client.as_ref().map_or_else(Vec::new, |_| {
+            self.menu_rulesets()
                 .filter(|mode| mode.rated)
                 .filter_map(|mode| {
                     let rated = self
@@ -777,7 +778,7 @@ impl MenuCore {
                         .and_then(|profile| profile.ratings.iter().find(|(id, _)| *id == mode.id))
                         .map(|(_, rating)| rating)?;
                     Some(super::account_page::Rating {
-                        mode: ruleset_name(client, &mode.id),
+                        mode: ruleset_name(&self.catalogue, &mode.id),
                         rating: super::leaderboard::rating(rated.rating.rating),
                         games: rated.games,
                         rank: rated.rank,
@@ -866,8 +867,8 @@ fn service_name(address: &str) -> &str {
     }
 }
 
-fn ruleset_name(client: &bota_radovid::Client, id: &RulesetId) -> String {
-    client.rulesets().find(|r| &r.id == id).map_or_else(
+fn ruleset_name(catalogue: &[bota_radovid::proto::RulesetInfo], id: &RulesetId) -> String {
+    catalogue.iter().find(|r| &r.id == id).map_or_else(
         || text::line(&id.0, text::NAME),
         |r| text::line(&r.name, text::NAME),
     )
@@ -876,6 +877,7 @@ fn ruleset_name(client: &bota_radovid::Client, id: &RulesetId) -> String {
 fn search_rows(
     client: &bota_radovid::Client,
     names: &dyn Fn(&RulesetId) -> String,
+    catalogue: &[bota_radovid::proto::RulesetInfo],
 ) -> Vec<SearchRow> {
     client
         .searches()
@@ -883,7 +885,7 @@ fn search_rows(
         .into_iter()
         .map(|s| SearchRow {
             entry: s.entry,
-            ruleset: client.rulesets().find(|r| r.id == s.ruleset).map_or_else(
+            ruleset: catalogue.iter().find(|r| r.id == s.ruleset).map_or_else(
                 || names(&s.ruleset),
                 |r| {
                     format!(
@@ -905,10 +907,9 @@ fn search_rows(
             overloaded: s.overloaded,
             games_waiting: s.games_waiting,
             hint: (s.window_capped
-                && client
-                    .rulesets()
+                && catalogue.iter()
                     .any(|rule| rule.id == s.ruleset && rule.rated)
-                && client.rulesets().any(|rule| {
+                && catalogue.iter().any(|rule| {
                     !rule.rated
                         && rule.rating_window.is_some()
                         && rule.rating_ruleset.as_ref() == Some(&s.ruleset)
@@ -937,11 +938,12 @@ fn offer_box(
     client: &bota_radovid::Client,
     names: &dyn Fn(&RulesetId) -> String,
     accepted: &super::accepted::Accepted,
+    catalogue: &[bota_radovid::proto::RulesetInfo],
 ) -> Option<OfferBox> {
     let searches = client.searches();
     choose_offer(searches.entries().iter().filter_map(|search| {
         let offer = search.offer.as_ref()?;
-        let mut projected = project_offer(client, names, search, offer);
+        let mut projected = project_offer(client, names, search, offer, catalogue);
         projected.answered |= accepted.contains(search.entry, offer.proposal);
         Some(projected)
     }))
@@ -958,6 +960,7 @@ fn project_offer(
     names: &dyn Fn(&RulesetId) -> String,
     search: &bota_radovid::Search,
     offer: &bota_radovid::Offer,
+    catalogue: &[bota_radovid::proto::RulesetInfo],
 ) -> OfferBox {
     let total = client
         .limits(None)
@@ -969,8 +972,7 @@ fn project_offer(
         ruleset: format!(
             "{} · {}",
             names(&search.ruleset),
-            if client
-                .rulesets()
+            if catalogue.iter()
                 .find(|r| r.id == search.ruleset)
                 .is_some_and(|r| r.rated)
             {
@@ -999,15 +1001,14 @@ fn game_row(match_id: MatchId, ready: bool) -> GameRow {
 
 fn lobby_row(
     l: &bota_radovid::proto::LobbySummary,
-    client: Option<&bota_radovid::Client>,
+    catalogue: &[bota_radovid::proto::RulesetInfo],
 ) -> LobbyRow {
     LobbyRow {
         id: l.id,
         name: text::line(&l.name, text::NAME),
         owner: text::line(&l.owner_nickname, text::NAME),
         ruleset: l.ruleset.clone(),
-        mode: client
-            .and_then(|client| client.rulesets().find(|rules| rules.id == l.ruleset))
+        mode: catalogue.iter().find(|rules| rules.id == l.ruleset)
             .map_or_else(
                 || text::line(&l.ruleset.0, text::NAME),
                 |rules| text::line(&rules.name, text::NAME),
@@ -1024,6 +1025,7 @@ fn lobby_view(
     at: Instant,
     client: Option<&bota_radovid::Client>,
     moving: Option<AccountId>,
+    catalogue: &[bota_radovid::proto::RulesetInfo],
 ) -> LobbyView {
     let me = client.and_then(|c| c.me()).map(|me| me.id);
     let elapsed = u32::try_from(at.elapsed().as_millis()).unwrap_or(u32::MAX);
@@ -1046,8 +1048,7 @@ fn lobby_view(
         .then(|| {
             lobby_start_block(
                 &seated,
-                client
-                    .and_then(|c| c.rulesets().find(|rules| rules.id == state.ruleset))
+                catalogue.iter().find(|rules| rules.id == state.ruleset)
                     .map(|rules| usize::from(rules.lobby_min_players)),
             )
         })
@@ -1059,7 +1060,7 @@ fn lobby_view(
         me_ready: seated.iter().any(|member| member.me && member.ready),
         waiting,
         owner,
-        settings: lobby_settings(state, client, owner),
+        settings: lobby_settings(state, catalogue, owner),
         moving: moving
             .and_then(|id| state.members.iter().take(256).find(|m| m.account == id))
             .map(|m| text::line(&m.nickname, text::NAME)),
@@ -1128,11 +1129,11 @@ fn lobby_start_block(seated: &[&MemberRow], needed: Option<usize>) -> Option<Lob
 
 fn lobby_settings(
     state: &bota_radovid::proto::LobbyState,
-    client: Option<&bota_radovid::Client>,
+    catalogue: &[bota_radovid::proto::RulesetInfo],
     owner: bool,
 ) -> SettingsView {
     use bota_radovid::proto::Audience;
-    let rules = client.and_then(|c| c.rulesets().find(|rules| rules.id == state.ruleset));
+    let rules = catalogue.iter().find(|rules| rules.id == state.ruleset);
     SettingsView {
         mode: rules.map_or_else(
             || text::line(&state.ruleset.0, text::NAME),
@@ -1140,19 +1141,7 @@ fn lobby_settings(
         ),
         audience: super::lobby_controls::audience_name(state.audience),
         locked: state.locked,
-        modes: if owner {
-            client.map_or_else(Vec::new, |client| {
-                super::core::lobby_rulesets(client)
-                    .map(|rules| ModeRow {
-                        id: rules.id.clone(),
-                        name: text::line(&rules.name, text::NAME),
-                        chosen: rules.id == state.ruleset,
-                    })
-                    .collect()
-            })
-        } else {
-            Vec::new()
-        },
+        modes: if owner { catalogue.iter().filter(|r| !bota_radovid::is_demo(r)).map(|r| ModeRow { id: r.id.clone(), name: r.name.clone(), chosen: r.id == state.ruleset }).collect() } else { Vec::new() },
         audiences: if owner {
             [Audience::Everyone, Audience::HumansOnly, Audience::BotsOnly]
                 .into_iter()

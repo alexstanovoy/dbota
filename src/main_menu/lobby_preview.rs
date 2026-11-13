@@ -217,6 +217,7 @@ pub(super) fn room(name: &str) -> MenuView {
 fn edit_preview(name: &str, view: &mut MenuView) {
     if name == "lobby-edit" {
         view.lobby_ui.editor = Some(EditorView {
+            locked: true,
             fields: vec![
                 field("Lobby name", "Friday stack", false),
                 field("Password", "••••••", false),

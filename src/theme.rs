@@ -496,6 +496,7 @@ pub mod lobby {
     pub const MEMBER: Type = role(Face::Semibold, 13.0, 0.0);
     pub const CHOICE_ROW_HEIGHT: f32 = 44.0;
     pub const CHOICE_HEIGHT: f32 = 264.0;
+    pub const CHOICE_VISIBLE_ROWS: usize = ((CHOICE_HEIGHT - 2.0) / CHOICE_ROW_HEIGHT) as usize;
     pub const CHOICE_RENDER_ROWS: usize = 32;
     pub const WIDTH: f32 = 620.0;
     pub const RIGHT: f32 = 38.0;

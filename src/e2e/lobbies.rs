@@ -319,17 +319,8 @@ fn saved_settings(alice: &mut Client, bob: &mut Client) {
         "existing name is fixed"
     );
     select_mode(alice, "1x1 Mid Only");
-    if alice
-        .world()
-        .non_send::<MenuCore>()
-        .view()
-        .lobby_ui
-        .editor
-        .as_ref()
-        .is_some_and(|editor| editor.password_unknown)
-    {
-        replace_password(alice, "open sesame");
-    }
+    assert!(alice.world().non_send::<MenuCore>().view().lobby_ui.editor.expect("draft").password_unknown, "a guest update invalidates the cached password");
+    replace_password(alice, "open sesame");
     click(alice, "ok");
     alice.until("settings saved", |client| {
         bob.frames(1);
@@ -563,12 +554,11 @@ fn saving_freezes_the_draft_and_password_edits_survive_another_settings_save() {
         core.act(Act::LobbyUi(LobbyAction::Save));
         assert!(core.view().lobby_ui.editor.expect("saving editor").saving);
         core.act(Act::Type("corrupt".into()));
-        core.act(Act::LobbyUi(LobbyAction::Cancel));
         let editor = core
             .view()
             .lobby_ui
             .editor
-            .expect("an in-flight save cannot be cancelled");
+            .expect("the draft stays frozen until acknowledged");
         assert_eq!(
             editor.fields[1].shown.chars().count(),
             "new password".chars().count()
@@ -731,23 +721,18 @@ fn a_confirmation_owns_enter_and_escape_above_a_lobby_draft() {
             .confirm
             .is_some()
     );
-    alice.tap_named(KeyCode::Enter, bevy::input::keyboard::Key::Enter);
-    let view = alice.world().non_send::<MenuCore>().view();
-    assert!(
-        !view
-            .lobby_ui
-            .editor
-            .expect("the hidden draft remains")
-            .saving,
-        "Enter cannot save a draft beneath confirmation"
-    );
     alice.tap_named(KeyCode::Escape, bevy::input::keyboard::Key::Escape);
     let view = alice.world().non_send::<MenuCore>().view();
     assert!(view.confirm.is_none(), "Escape closes the top confirmation");
-    assert!(
-        view.lobby_ui.editor.is_some(),
-        "Escape preserves the lower editor"
-    );
+    assert!(view.lobby_ui.editor.is_some(), "Escape preserves the lower editor");
+    act(&mut alice, Act::Quit);
+    alice.tap_named(KeyCode::Enter, bevy::input::keyboard::Key::Enter);
+    let view = alice.world().non_send::<MenuCore>().view();
+    assert!(view.confirm.is_none(), "Enter answers the top confirmation");
+    assert!(!view.lobby_ui.editor.expect("the hidden draft remains").saving);
+    let exits = alice.world().resource::<bevy::ecs::message::Messages<bevy::app::AppExit>>();
+    assert!(exits.get_cursor().read(exits).any(|exit| matches!(exit, bevy::app::AppExit::Success)), "Enter confirmed Quit rather than cancelling it");
+
 }
 
 #[test]
@@ -1015,6 +1000,7 @@ fn an_accept_prompt_owns_input_above_a_lobby_settings_draft() {
     });
     alice.tap_named(KeyCode::Enter, bevy::input::keyboard::Key::Enter);
     alice.tap_named(KeyCode::Escape, bevy::input::keyboard::Key::Escape);
+    assert!(alice.world().non_send::<MenuCore>().test_offer_requested(), "Enter answers the top offer");
     let view = alice.world().non_send::<MenuCore>().view();
     let draft = view.lobby_ui.editor.expect("the lower draft survives");
     assert!(!draft.saving);
@@ -1274,4 +1260,358 @@ fn scroll_at(client: &mut Client, at: Vec2, lines: f32, frames: usize) {
         window,
     });
     client.frames(frames);
+}
+
+
+#[test]
+fn touching_an_unknown_password_never_unlocks_the_lobby() {
+    let service = crate::main_menu::tests::service();
+    let mut alice = signed_up(&service, "alice");
+    create(&mut alice, "Protected touch", "stay locked");
+    let mut bob = signed_up(&service, "bob");
+    join(&mut bob, "Protected touch", "stay locked");
+    alice.until("guest arrived", |c| room(c).teams.iter().flat_map(|t| &t.slots).any(|s| s.who.as_ref().is_some_and(|p| p.name == "bob")));
+    for edit in [None, Some(""), Some("\u{7}"), Some("remove twice")] {
+        click(&mut alice, "edit  ✎");
+        assert!(alice.world().non_send::<MenuCore>().view().lobby_ui.editor.expect("draft").password_unknown);
+        act(&mut alice, Act::Focus(1));
+        match edit {
+            Some("remove twice") => { act(&mut alice, Act::LobbyUi(LobbyAction::RemovePassword)); act(&mut alice, Act::LobbyUi(LobbyAction::RemovePassword)); }
+            Some(text) => act(&mut alice, Act::Type(text.into())),
+            None => act(&mut alice, Act::Erase),
+        }
+        act(&mut alice, Act::LobbyUi(LobbyAction::Save));
+        let view = alice.world().non_send::<MenuCore>().view();
+        assert!(view.lobby_ui.editor.is_some_and(|e| e.error.as_deref() == Some("Set or remove the lobby password before saving.")), "no empty-field gesture authorises unlocking");
+        assert!(room(&alice).locked);
+        act(&mut alice, Act::LobbyUi(LobbyAction::Cancel));
+    }
+}
+
+#[test]
+fn a_guest_leave_acknowledgement_closes_the_room_and_clears_its_controls() {
+    let service = crate::main_menu::tests::service();
+    let mut alice = signed_up(&service, "alice");
+    create(&mut alice, "Guest leave", "guest secret");
+    let mut bob = signed_up(&service, "bob");
+    join(&mut bob, "Guest leave", "guest secret");
+    click(&mut bob, "leave lobby  ×");
+    // A later request on Bob's same link is the barrier for LobbyLeave's Done.
+    act(&mut bob, Act::SearchLobbies);
+    bob.until("requests acknowledged", |c| c.world().non_send::<MenuCore>().lobby_sync_settled());
+    assert!(matches!(bob.world().non_send::<MenuCore>().view().body, PageView::Lobbies { .. }));
+    assert!(!named(&mut bob, "ready"));
+    assert!(!named(&mut bob, "leave lobby  ×"));
+}
+
+#[test]
+fn a_departed_move_target_cannot_swallow_the_owners_next_slot_click() {
+    let service = crate::main_menu::tests::service();
+    let mut alice = signed_up(&service, "alice");
+    create(&mut alice, "Move target", "guest secret");
+    let mut bob = signed_up(&service, "bob");
+    join(&mut bob, "Move target", "guest secret");
+    alice.until("guest arrived", |c| room(c).teams.iter().flat_map(|t| &t.slots).any(|s| s.who.as_ref().is_some_and(|p| p.name == "bob")));
+    click(&mut alice, "move bob");
+    assert!(room(&alice).moving.is_some());
+    act(&mut bob, Act::LeaveLobby);
+    alice.until("guest departed", |c| !room(c).teams.iter().flat_map(|t| &t.slots).any(|s| s.who.as_ref().is_some_and(|p| p.name == "bob")));
+    assert!(room(&alice).moving.is_none(), "a removed member is no longer a move target");
+    click(&mut alice, "join slot 2");
+    act(&mut alice, Act::SearchLobbies);
+    alice.until("slot request acknowledged", |c| c.world().non_send::<MenuCore>().lobby_sync_settled());
+    assert!(room(&alice).teams.iter().flat_map(|t| &t.slots).any(|s| s.slot == 2 && s.who.as_ref().is_some_and(|p| p.me)));
+}
+
+#[test]
+fn an_unanswered_save_expires_with_a_drawn_failure_and_a_working_cancel() {
+    let service = crate::main_menu::tests::service();
+    let mut alice = signed_up(&service, "alice");
+    create(&mut alice, "Save deadline", "");
+    click(&mut alice, "edit  ✎");
+    select_mode(&mut alice, "1x1 Mid Only");
+    alice.world_mut().non_send_mut::<MenuCore>().test_hold_lobby_requests();
+    click(&mut alice, "ok");
+    assert!(alice.world().non_send::<MenuCore>().view().lobby_ui.editor.expect("saving").saving);
+    alice.world_mut().non_send_mut::<MenuCore>().test_lobby_elapsed(std::time::Duration::from_secs(60));
+    alice.frames(2);
+    let editor = alice.world().non_send::<MenuCore>().view().lobby_ui.editor.expect("retryable draft");
+    assert!(!editor.saving, "deadline releases the saving state");
+    assert_eq!(editor.error.as_deref(), Some("The lobby request timed out. Try again."));
+    assert!(alice.shown_texts().iter().any(|text| text == "The lobby request timed out. Try again."));
+    click(&mut alice, "cancel");
+    assert!(alice.world().non_send::<MenuCore>().view().lobby_ui.editor.is_none());
+    assert_eq!(room(&alice).settings.mode, "Full rules");
+}
+
+
+#[test]
+fn hostile_lobby_lists_are_bounded_before_storage_keyboard_or_drawing() {
+    use bota_radovid::proto::{Audience, LobbySummary, Reply, RulesetId, MAX_LOBBY_LIST};
+    let service = crate::main_menu::tests::service();
+    let mut alice = signed_up(&service, "alice");
+    alice.world_mut().non_send_mut::<MenuCore>().test_hold_lobby_requests();
+    act(&mut alice, Act::Go(Page::Lobbies));
+    let mut list: Vec<_> = (0..1000).map(|id| LobbySummary { id: LobbyId(id), name: format!("Room {id}"), ruleset: RulesetId("full".into()), owner: bota_radovid::AccountId(1), owner_nickname: "host".into(), audience: Audience::Everyone, locked: false, members: 1, seats: 10 }).collect();
+    list[0].name = "\u{7}".repeat(2 * 1024 * 1024) + "FORBIDDEN";
+    alice.world_mut().non_send_mut::<MenuCore>().test_lobby_reply(Reply::Lobbies { list });
+    alice.frames(2);
+    let core = alice.world().non_send::<MenuCore>();
+    assert_eq!(core.test_lobby_list_len(), MAX_LOBBY_LIST);
+    let PageView::Lobbies { list, .. } = core.view().body else { panic!("browser") };
+    assert_eq!(core.test_lobby_join_buttons(), list.iter().map(|r| r.id).collect::<Vec<_>>());
+    assert!(!list.iter().any(|r| r.name.contains("FORBIDDEN")));
+    assert!(!alice.shown_texts().iter().any(|t| t.contains("FORBIDDEN")));
+}
+
+#[test]
+fn hostile_team_sizes_are_rejected_before_replacing_the_actual_room() {
+    let service = crate::main_menu::tests::service();
+    let mut alice = signed_up(&service, "alice");
+    create(&mut alice, "Stable room", "");
+    let mut state = alice.world().non_send::<MenuCore>().test_lobby_state();
+    state.teams = vec![255, 255];
+    alice.world_mut().non_send_mut::<MenuCore>().test_lobby_event(state);
+    let state = alice.world().non_send::<MenuCore>().test_lobby_state();
+    assert_eq!(state.teams.iter().map(|n| usize::from(*n)).sum::<usize>(), bota_radovid::proto::MAX_SEATS);
+    alice.frames(2);
+    assert!(alice.shown_texts().iter().any(|t| t == "Invalid lobby information from the service."));
+}
+
+#[test]
+fn hostile_member_counts_and_names_are_bounded_once_on_receipt() {
+    let service = crate::main_menu::tests::service();
+    let mut alice = signed_up(&service, "alice");
+    create(&mut alice, "Bounded roster", "");
+    let mut state = alice.world().non_send::<MenuCore>().test_lobby_state();
+    let template = state.members[0].clone();
+    for index in 0..1000 { let mut member = template.clone(); member.account = bota_radovid::AccountId(1000 + index); member.slot = bota_radovid::proto::LOBBY_NO_SLOT; state.members.push(member); }
+    state.members[1].nickname = "\u{7}".repeat(2 * 1024 * 1024) + "FORBIDDEN";
+    alice.world_mut().non_send_mut::<MenuCore>().test_lobby_event(state);
+    let core = alice.world().non_send::<MenuCore>();
+    let state = core.test_lobby_state();
+    assert_eq!(state.members.len(), usize::from(u8::MAX));
+    assert!(state.members.iter().all(|m| m.nickname.len() <= bota_radovid::proto::MAX_NICKNAME_LEN));
+    assert!(!format!("{:?}", core.view()).contains("FORBIDDEN"));
+}
+
+#[test]
+fn hostile_ruleset_replies_replace_the_lobby_catalogue_with_bounded_safe_rows() {
+    use bota_radovid::proto::{Reply, RulesetId, MAX_RATED_MODES};
+    let service = crate::main_menu::tests::service();
+    let mut alice = signed_up(&service, "alice");
+    alice.world_mut().non_send_mut::<MenuCore>().test_hold_lobby_requests();
+    act(&mut alice, Act::Go(Page::Lobbies));
+    let template = alice.world().non_send::<MenuCore>().test_lobby_rule();
+    let mut list: Vec<_> = (0..1000).map(|i| { let mut rule = template.clone(); rule.id = RulesetId(format!("remote_{i}")); rule.name = format!("Remote {i}"); rule }).collect();
+    list[0].name = "\u{7}".repeat(2 * 1024 * 1024) + "FORBIDDEN";
+    alice.world_mut().non_send_mut::<MenuCore>().test_lobby_reply(Reply::Rulesets { list });
+    let view = alice.world().non_send::<MenuCore>().view();
+    assert_eq!(view.lobby_ui.modes.len(), MAX_RATED_MODES);
+    assert_eq!(view.lobby_ui.modes[0].id.0, "remote_0");
+    assert!(!view.lobby_ui.modes.iter().any(|m| m.name.contains("FORBIDDEN")));
+    act(&mut alice, Act::Go(Page::Home));
+    let PageView::Home { rulesets, .. } = alice.world().non_send::<MenuCore>().view().body else { panic!("Play") };
+    assert_eq!(rulesets.len(), MAX_RATED_MODES);
+    assert!(!rulesets.iter().any(|r| r.name.contains("FORBIDDEN")));
+}
+
+#[test]
+fn typing_search_debounces_actual_queries_and_no_op_edits_send_nothing() {
+    let service = crate::main_menu::tests::service();
+    let mut alice = signed_up(&service, "alice");
+    act(&mut alice, Act::Go(Page::Lobbies));
+    alice.until("initial list settled", |c| c.world().non_send::<MenuCore>().lobby_sync_settled());
+    alice.world_mut().non_send_mut::<MenuCore>().test_hold_lobby_requests();
+    act(&mut alice, Act::Focus(0));
+    act(&mut alice, Act::Erase);
+    act(&mut alice, Act::Type("".into()));
+    assert!(alice.world().non_send::<MenuCore>().test_lobby_requests().is_empty());
+    for letter in ["f", "r", "i"] { act(&mut alice, Act::Type(letter.into())); }
+    assert!(alice.world().non_send::<MenuCore>().test_lobby_requests().is_empty());
+    alice.world_mut().non_send_mut::<MenuCore>().test_lobby_elapsed(std::time::Duration::from_secs(1));
+    let core = alice.world().non_send::<MenuCore>();
+    assert!(matches!(core.test_lobby_requests(), [bota_radovid::proto::ClientMsg::LobbySearch { query }] if query == "fri"));
+}
+
+#[test]
+fn lobby_housekeeping_and_non_lobby_scroll_do_not_build_full_menu_views() {
+    use bevy::ecs::system::RunSystemOnce;
+    let service = crate::main_menu::tests::service();
+    let mut alice = signed_up(&service, "alice");
+    alice.world().non_send::<MenuCore>().test_reset_view_builds();
+    alice.world_mut().run_system_once(crate::main_menu::test_lobby_scroll).expect("scroll system");
+    assert_eq!(alice.world().non_send::<MenuCore>().test_view_builds(), 0);
+    create(&mut alice, "Housekeeping", "");
+    assert_eq!(alice.world_mut().non_send_mut::<MenuCore>().test_lobby_poll_views(), 0);
+    assert_eq!(alice.world_mut().non_send_mut::<MenuCore>().test_lobby_poll_views(), 0);
+}
+
+#[test]
+fn a_late_password_refusal_cannot_close_a_different_lobby_dialog() {
+    use bota_radovid::proto::{Audience, LobbySummary, Reply, RulesetId};
+    let service = crate::main_menu::tests::service();
+    let mut alice = signed_up(&service, "alice");
+    let list = (1..=2).map(|id| LobbySummary { id: LobbyId(id), name: format!("Locked {id}"), ruleset: RulesetId("full".into()), owner: bota_radovid::AccountId(999), owner_nickname: "host".into(), audience: Audience::Everyone, locked: true, members: 1, seats: 10 }).collect();
+    alice.world_mut().non_send_mut::<MenuCore>().test_lobby_reply(Reply::Lobbies { list });
+    act(&mut alice, Act::JoinLobby(LobbyId(1)));
+    act(&mut alice, Act::LobbyPassword(false));
+    act(&mut alice, Act::JoinLobby(LobbyId(2)));
+    alice.world_mut().non_send_mut::<MenuCore>().test_late_join_refusal(LobbyId(1));
+    assert_eq!(alice.world().non_send::<MenuCore>().view().password.expect("newer dialog survives").lobby, "Locked 2");
+}
+
+#[test]
+fn losing_lobby_membership_on_resume_has_a_visible_explanation() {
+    let service = crate::main_menu::tests::service();
+    let mut alice = signed_up(&service, "alice");
+    create(&mut alice, "Gone room", "");
+    alice.world_mut().non_send_mut::<MenuCore>().test_restore_missing();
+    alice.frames(2);
+    assert!(matches!(alice.world().non_send::<MenuCore>().view().body, PageView::Lobbies { .. }));
+    assert!(alice.shown_texts().iter().any(|t| t == "The lobby is no longer available."));
+}
+
+
+fn drawn_setting(client: &mut Client, name: &str) -> Option<String> {
+    let world = client.world_mut();
+    world.query::<(&Name, &Text, &InheritedVisibility)>().iter(world)
+        .find(|(label, _, visible)| visible.get() && label.as_str() == name)
+        .map(|(_, text, _)| text.0.clone())
+}
+
+#[test]
+fn cheats_off_cannot_satisfy_the_drawn_cheats_on_check_when_password_is_none() {
+    let service = crate::main_menu::tests::service_with(|config| config.replace("[ruleset.launcher]", "[ruleset.launcher]\ncheats_args = [\"--lobby-cheats\"]"));
+    let mut alice = signed_up(&service, "alice");
+    create(&mut alice, "Cheats value", "");
+    assert!(!room(&alice).locked);
+    assert_eq!(drawn_setting(&mut alice, "lobby setting cheats").as_deref(), Some("OFF"));
+    assert_ne!(drawn_setting(&mut alice, "lobby setting cheats").as_deref(), Some("ON"));
+    click(&mut alice, "edit  ✎");
+    click(&mut alice, "enable cheats");
+    click(&mut alice, "ok");
+    alice.until("cheats acknowledged", |c| room(c).settings.cheats == Some(true) && c.world().non_send::<MenuCore>().view().lobby_ui.editor.is_none());
+    assert_eq!(drawn_setting(&mut alice, "lobby setting cheats").as_deref(), Some("ON"));
+}
+
+#[test]
+fn a_known_locked_password_can_only_be_removed_by_the_explicit_control() {
+    let service = crate::main_menu::tests::service();
+    let mut alice = signed_up(&service, "alice");
+    create(&mut alice, "Explicit removal", "known secret");
+    click(&mut alice, "edit  ✎");
+    assert!(!alice.world().non_send::<MenuCore>().view().lobby_ui.editor.expect("draft").password_unknown, "a Create reply gives this draft a known password");
+    assert!(named(&mut alice, "remove password"), "locked state offers an explicit remove operation");
+    click(&mut alice, "remove password");
+    click(&mut alice, "ok");
+    alice.until("explicitly unlocked", |c| !room(c).locked && c.world().non_send::<MenuCore>().view().lobby_ui.editor.is_none());
+}
+
+#[test]
+fn an_unconfirmed_create_is_explained_and_recovered_without_creating_another_lobby() {
+    use bota_radovid::proto::{ClientMsg, Reply};
+    let service = crate::main_menu::tests::service();
+    let mut alice = signed_up(&service, "alice");
+    let mut peer = crate::main_menu::tests::keep_menu_session_alive(alice.world().non_send::<MenuCore>(), &service);
+    act(&mut alice, Act::Go(Page::Lobbies));
+    click(&mut alice, "create lobby");
+    act(&mut alice, Act::Focus(0));
+    act(&mut alice, Act::Type("Unconfirmed room".into()));
+    act(&mut alice, Act::Focus(1));
+    act(&mut alice, Act::Type("creation secret".into()));
+    alice.world_mut().non_send_mut::<MenuCore>().act(Act::LobbyUi(LobbyAction::Save));
+    // Observe commit from another session without letting Alice consume the Create reply.
+    let until = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    loop {
+        let sequence = peer.request(ClientMsg::LobbyList).expect("list");
+        let Reply::Lobbies { list } = control_reply(&mut peer, sequence) else { panic!("list") };
+        if list.iter().any(|row| row.name == "Unconfirmed room") { break; }
+        assert!(std::time::Instant::now() < until, "Create reached the service");
+        peer.wait(std::time::Duration::from_millis(50)).expect("control link");
+    }
+    crate::main_menu::tests::lose_menu_control(&mut alice.world_mut().non_send_mut::<MenuCore>());
+    alice.frames(2);
+    assert!(alice.shown_texts().iter().any(|text| text == "Lobby creation was not confirmed. It may still exist; refresh Lobbies before trying again."));
+    act(&mut alice, Act::RetryService);
+    alice.until("resumed", |c| c.world().non_send::<MenuCore>().lobby_sync_settled());
+    act(&mut alice, Act::SearchLobbies);
+    alice.until("existing lobby listed", |c| named(c, "join unconfirmed room"));
+    click(&mut alice, "join unconfirmed room");
+    alice.until("owned membership recovered", |c| matches!(c.world().non_send::<MenuCore>().view().body, PageView::Lobby(_)));
+    assert!(alice.world().non_send::<MenuCore>().view().password.is_none());
+    let sequence = peer.request(ClientMsg::LobbyList).expect("list");
+    let Reply::Lobbies { list } = control_reply(&mut peer, sequence) else { panic!("list") };
+    assert_eq!(list.iter().filter(|row| row.name == "Unconfirmed room").count(), 1);
+}
+
+
+#[test]
+fn an_invalid_create_reply_cannot_complete_against_an_older_owned_room() {
+    let service = crate::main_menu::tests::service();
+    let mut alice = signed_up(&service, "alice");
+    create(&mut alice, "Existing room", "existing secret");
+    let mut invalid = alice.world().non_send::<MenuCore>().test_lobby_state();
+    invalid.teams = vec![255, 255];
+    act(&mut alice, Act::Go(Page::Lobbies));
+    click(&mut alice, "create lobby");
+    act(&mut alice, Act::Focus(0)); act(&mut alice, Act::Type("Another room".into()));
+    act(&mut alice, Act::Focus(1)); act(&mut alice, Act::Type("another secret".into()));
+    alice.world_mut().non_send_mut::<MenuCore>().test_hold_lobby_requests();
+    act(&mut alice, Act::LobbyUi(LobbyAction::Save));
+    alice.world_mut().non_send_mut::<MenuCore>().test_answer_held_lobby_request(bota_radovid::proto::Reply::Lobby { state: invalid });
+    let core = alice.world().non_send::<MenuCore>();
+    assert_eq!(core.test_lobby_state().name, "Existing room");
+    let editor = core.view().lobby_ui.editor.expect("the invalid reply is not successful creation");
+    assert!(!editor.saving);
+    assert!(editor.error.as_ref().is_some_and(|e| e.contains("Invalid lobby information")));
+}
+
+#[test]
+fn cancelling_a_pending_save_closes_its_dialog_and_ignores_a_late_done() {
+    let service = crate::main_menu::tests::service();
+    let mut alice = signed_up(&service, "alice");
+    create(&mut alice, "Cancel save", "");
+    click(&mut alice, "edit  ✎"); select_mode(&mut alice, "1x1 Mid Only");
+    alice.world_mut().non_send_mut::<MenuCore>().test_hold_lobby_requests();
+    click(&mut alice, "ok"); click(&mut alice, "cancel");
+    assert!(alice.world().non_send::<MenuCore>().view().lobby_ui.editor.is_none());
+    alice.world_mut().non_send_mut::<MenuCore>().test_answer_held_lobby_request(bota_radovid::proto::Reply::Done);
+    alice.frames(2);
+    assert!(alice.world().non_send::<MenuCore>().view().lobby_ui.editor.is_none());
+    assert_eq!(room(&alice).settings.mode, "Full rules");
+}
+
+
+#[test]
+fn a_join_deadline_survives_background_request_tracking_pressure() {
+    let service = crate::main_menu::tests::service();
+    let mut alice = signed_up(&service, "alice");
+    create(&mut alice, "Bounded join", "secret");
+    let mut bob = signed_up(&service, "bob");
+    act(&mut bob, Act::Go(Page::Lobbies));
+    bob.until("listed", |c| named(c, "join bounded join"));
+    click(&mut bob, "join bounded join");
+    bob.world_mut().non_send_mut::<MenuCore>().test_hold_lobby_requests();
+    act(&mut bob, Act::Type("secret".into())); click(&mut bob, "ok");
+    bob.world_mut().non_send_mut::<MenuCore>().test_background_requests();
+    bob.world_mut().non_send_mut::<MenuCore>().test_lobby_elapsed(std::time::Duration::from_secs(60));
+    bob.frames(2);
+    let prompt = bob.world().non_send::<MenuCore>().view().password.expect("retryable password dialog");
+    assert_eq!(prompt.error.as_deref(), Some("The lobby request timed out. Try again."));
+    click(&mut bob, "cancel");
+    assert!(bob.world().non_send::<MenuCore>().view().password.is_none());
+}
+
+#[test]
+fn a_full_lobby_request_tracker_refuses_new_work_without_forgetting_old_requests() {
+    let service = crate::main_menu::tests::service();
+    let mut alice = signed_up(&service, "alice");
+    act(&mut alice, Act::Go(Page::Lobbies));
+    alice.until("initial requests settled", |c| c.world().non_send::<MenuCore>().lobby_sync_settled());
+    alice.world_mut().non_send_mut::<MenuCore>().test_hold_lobby_requests();
+    { let mut core = alice.world_mut().non_send_mut::<MenuCore>(); for _ in 0..70 { core.act(Act::SearchLobbies); } }
+    assert_eq!(alice.world().non_send::<MenuCore>().test_lobby_requests().len(), 64, "the client request budget is enforced before sending");
+    alice.frames(2);
+    assert!(alice.shown_texts().iter().any(|t| t == "Too many lobby requests. Wait for the current requests to finish."));
 }

@@ -129,6 +129,7 @@ enum Awaited {
     NoButton(String),
     /// A text shown on the screen holds this.
     Text(String),
+    NamedText(String, String),
     /// This file exists: a barrier the test lifts.
     File(std::path::PathBuf),
     /// The top bar holds this many places of Radiant and of Dire.
@@ -226,6 +227,10 @@ fn awaited(arg: &str) -> Result<Awaited, String> {
                 }
                 "nobutton" => Awaited::NoButton(value.to_owned()),
                 "text" => Awaited::Text(value.to_owned()),
+                "named-text" => {
+                    let (name, expected) = value.split_once(':').ok_or_else(|| "named-text needs NAME:VALUE".to_owned())?;
+                    Awaited::NamedText(name.into(), expected.into())
+                }
                 "file" => Awaited::File(value.into()),
                 "model" => Awaited::Model(value.to_owned()),
                 "loot" => Awaited::Loot(value.to_owned()),
@@ -348,6 +353,7 @@ struct Screen<'w, 's> {
         Query<'w, 's, (&'static Name, &'static Node, &'static InheritedVisibility), With<Button>>,
     columns: Query<'w, 's, (&'static crate::hud::SeatColumn, &'static Node)>,
     texts: Query<'w, 's, (&'static Text, &'static InheritedVisibility)>,
+    named_texts: Query<'w, 's, (&'static Name, &'static Text, &'static InheritedVisibility)>,
 }
 
 /// What the screen shows now, for the awaited steps.
@@ -379,6 +385,7 @@ fn holds(
             n.as_str() == name && node.display != Display::None && seen.get()
         }),
         Awaited::File(path) => path.exists(),
+        Awaited::NamedText(name, expected) => screen.named_texts.iter().any(|(label, text, visible)| visible.get() && label.as_str() == name && text.0 == *expected),
         Awaited::Text(text) => screen
             .texts
             .iter()

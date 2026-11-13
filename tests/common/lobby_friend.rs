@@ -90,10 +90,15 @@ pub fn join(service: &super::Service) -> (Client, App) {
     let mut control = Client::open(&service.url, &tls).expect("control connection");
     let lobby = enter_lobby(&mut control);
     let handoff = await_game(&mut control, lobby);
-    let mut link = bota_radovid::connect_net(&handoff, &tls).expect("direct game connection");
+    let game = open_game(&handoff, &tls);
+    (control, game)
+}
+
+fn open_game(handoff: &Handoff, tls: &bota_radovid::Tls) -> App {
+    let mut link = bota_radovid::connect_net(handoff, tls).expect("direct game connection");
     Transport::send(
         &mut link,
-        &bota_radovid::seat_hello(&handoff, Role::Player).expect("seat greeting"),
+        &bota_radovid::seat_hello(handoff, Role::Player).expect("seat greeting"),
     )
     .expect("hello");
     Transport::send(&mut link, &bota_client_core::catalogue()).expect("catalogue");
@@ -120,5 +125,72 @@ pub fn join(service: &super::Service) -> (Client, App) {
         .filter(|slot| slot.team == Team::Dire)
         .count();
     assert_eq!((radiant, dire), (2, 1));
-    (control, game)
+    game
+}
+
+/// Two existing members for Carol's independently rendered search-by-host path.
+pub struct Friends {
+    host: Client,
+    guest: Client,
+    lobby: bota_radovid::proto::LobbyId,
+    tls: bota_radovid::Tls,
+}
+
+impl Friends {
+    pub fn new(service: &super::Service) -> Self {
+        let pem = std::fs::read_to_string(&service.pem).expect("certificate");
+        let tls = bota_radovid::Tls::trust_pem(&pem).expect("trust");
+        let mut host = Client::open(&service.url, &tls).expect("host control");
+        let seq = host.register("alice", "correct horse battery", AccountKind::Human, None).expect("register host");
+        assert!(matches!(answer(&mut host, seq), Reply::LoggedIn { .. }));
+        let seq = host.request(ClientMsg::LobbyCreate { ruleset: RulesetId("full".into()), name: "Friday Night".into(), audience: bota_radovid::proto::Audience::Everyone, password: Some(Secret("open sesame".into())) }).expect("create");
+        let Reply::Lobby { state } = answer(&mut host, seq) else { panic!("created lobby") };
+        assert_eq!(state.teams, vec![5, 5]);
+        let lobby = state.id;
+        let mut guest = Client::open(&service.url, &tls).expect("guest control");
+        let seq = guest.register("bob", "correct horse battery", AccountKind::Human, None).expect("register guest");
+        assert!(matches!(answer(&mut guest, seq), Reply::LoggedIn { .. }));
+        let seq = guest.request(ClientMsg::LobbyJoin { lobby, password: Some(Secret("open sesame".into())) }).expect("join guest");
+        let Reply::Lobby { state } = answer(&mut guest, seq) else { panic!("guest joined") };
+        assert_eq!(state.members.len(), 2);
+        Self { host, guest, lobby, tls }
+    }
+
+    pub fn start(&mut self) -> (App, App) {
+        wait_state(&mut self.host, self.lobby, |state| state.members.len() == 3);
+        let seq = self.host.request(ClientMsg::LobbyConfigure { lobby: self.lobby, ruleset: RulesetId("solo_mid".into()), audience: bota_radovid::proto::Audience::Everyone, password: Some(Secret("open sesame".into())) }).expect("mode change");
+        assert!(matches!(answer(&mut self.host, seq), Reply::Done));
+        let seq = self.guest.request(ClientMsg::LobbyReady { lobby: self.lobby, ready: true }).expect("guest ready");
+        assert!(matches!(answer(&mut self.guest, seq), Reply::Done));
+        wait_state(&mut self.host, self.lobby, |state| state.ruleset.0 == "solo_mid" && state.members.iter().filter(|m| m.account != state.owner).all(|m| m.ready));
+        let seq = self.host.request(ClientMsg::LobbyReady { lobby: self.lobby, ready: true }).expect("start");
+        assert!(matches!(answer(&mut self.host, seq), Reply::Done));
+        let host = match_handoff(&mut self.host);
+        let guest = match_handoff(&mut self.guest);
+        (open_game(&host, &self.tls), open_game(&guest, &self.tls))
+    }
+}
+
+fn wait_state(client: &mut Client, lobby: bota_radovid::proto::LobbyId, ready: impl Fn(&bota_radovid::proto::LobbyState) -> bool) {
+    let until = Instant::now() + super::PATIENCE;
+    while Instant::now() < until {
+        if let Some(Incoming::Event(Event::LobbyState { state })) = client.wait(Duration::from_millis(50)).expect("control link")
+            && state.id == lobby && ready(&state) {
+            assert_eq!(state.teams, vec![5, 5]);
+            return;
+        }
+    }
+    panic!("the friends did not reach the expected lobby state");
+}
+
+fn match_handoff(client: &mut Client) -> Handoff {
+    let until = Instant::now() + super::PATIENCE;
+    while Instant::now() < until {
+        if let Some(Incoming::Event(Event::MatchFound { handoff })) = client.wait(Duration::from_millis(50)).expect("control link") {
+            assert_eq!(handoff.ruleset.0, "solo_mid");
+            assert_eq!(handoff.seats.len(), 3);
+            return handoff;
+        }
+    }
+    panic!("the friends did not receive their game");
 }

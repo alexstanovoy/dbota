@@ -432,12 +432,13 @@ fn setting(kit: &mut Kit, parent: Entity, label: &str, value: &str) {
         },
     );
     kit.typed(row, label, theme::lobby::SETTING_LABEL, theme::INK_5);
-    kit.typed(
+    let text = kit.typed(
         row,
         value.to_uppercase(),
         theme::lobby::SETTING_VALUE,
         theme::INK_1,
     );
+    kit.commands.entity(text).insert(Name::new(format!("lobby setting {}", label.trim_end_matches(':').to_ascii_lowercase())));
 }
 
 fn footer_status(kit: &mut Kit, parent: Entity, lobby: &LobbyView, seated: &[&MemberRow]) {

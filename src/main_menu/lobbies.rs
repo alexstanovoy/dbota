@@ -44,13 +44,7 @@ fn browser(
     let panel = w::panel(kit, root, "lobby browser");
     let visible: Vec<_> = rows
         .iter()
-        .filter(|row| {
-            (!controls.no_password || !row.locked)
-                && controls
-                    .filter
-                    .as_ref()
-                    .is_none_or(|mode| &row.ruleset == mode)
-        })
+        .filter(|row| super::lobby_controls::includes_lobby(controls.filter.as_ref(), controls.no_password, &row.ruleset, row.locked))
         .collect();
     heading(kit, panel, visible.len(), rows.len());
     table(kit, panel, &visible, controls);
@@ -122,7 +116,7 @@ fn table(kit: &mut Kit, parent: Entity, rows: &[&LobbyRow], controls: &ControlsV
     if rows.is_empty() {
         kit.typed(table, "No open lobbies", theme::LABEL, theme::INK_4);
     }
-    for lobby in rows.iter().take(128) {
+    for lobby in rows.iter().take(bota_radovid::proto::MAX_LOBBY_LIST) {
         lobby_row(kit, table, lobby, controls.selected == Some(lobby.id));
     }
 }

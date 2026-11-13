@@ -1,10 +1,16 @@
 //! Independent lobby panes retain their positions when their nodes are redrawn.
-use super::{MenuCore, core::Page, lobby_controls::Choice, shell::Preview, view::MenuView};
+use super::{MenuCore, core::Page, lobby_controls::Choice, shell::Preview};
 use bevy::{
     input::mouse::{AccumulatedMouseScroll, MouseScrollUnit},
     prelude::*,
     window::PrimaryWindow,
 };
+
+#[derive(Clone, Copy)]
+pub(in crate::main_menu) struct ScrollState {
+    pub page: Page, pub lobby: Option<bota_radovid::proto::LobbyId>, pub open: Option<Choice>,
+    pub start: usize, pub editor: bool, pub blocked: bool,
+}
 
 #[derive(Component, Clone, Copy, PartialEq, Eq)]
 pub enum Area {
@@ -38,25 +44,25 @@ impl Default for Positions {
 }
 
 impl Positions {
-    fn prepare(&mut self, view: &MenuView, lobby: Option<bota_radovid::proto::LobbyId>) -> bool {
-        if !matches!(view.beneath, Page::Lobbies | Page::Lobby) {
+    fn prepare(&mut self, view: &ScrollState) -> bool {
+        if !matches!(view.page, Page::Lobbies | Page::Lobby) {
             *self = Self::default();
             return false;
         }
-        let context = (view.beneath, lobby);
+        let context = (view.page, view.lobby);
         if self.context != Some(context) {
             *self = Self {
                 context: Some(context),
                 ..Default::default()
             };
         }
-        if self.choice != view.lobby_ui.open {
-            self.choice = view.lobby_ui.open;
+        if self.choice != view.open {
+            self.choice = view.open;
             self.offsets[Area::Choices as usize] = 0.0;
             self.choice_start = 0;
         }
-        if self.choice_start != view.lobby_ui.choice_start {
-            self.choice_start = view.lobby_ui.choice_start;
+        if self.choice_start != view.start {
+            self.choice_start = view.start;
             self.offsets[Area::Choices as usize] =
                 self.choice_start as f32 * crate::theme::lobby::CHOICE_ROW_HEIGHT;
         }
@@ -87,11 +93,11 @@ type Panes<'w, 's> = Query<
     ),
 >;
 
-fn pointer_pane(view: &MenuView, cursor: Option<Vec2>, panes: &mut Panes) -> Option<Area> {
+fn pointer_pane(editor: bool, cursor: Option<Vec2>, panes: &mut Panes) -> Option<Area> {
     let cursor = cursor?;
     let mut target = None;
     for (area, _, node, at) in panes {
-        if view.lobby_ui.editor.is_some() && *area != Area::Choices {
+        if editor && *area != Area::Choices {
             continue;
         }
         if Rect::from_center_size(at.translation, node.size()).contains(cursor) {
@@ -123,19 +129,20 @@ pub fn scroll(
     mut positions: ResMut<Positions>,
     mut panes: Panes,
 ) {
-    let view = match (&preview, &core) {
-        (Some(preview), _) => preview.0.clone(),
-        (None, Some(core)) => core.view(),
-        _ => return,
+    let state = match (&preview, &core) {
+        (Some(preview), _) => {
+            let view = &preview.0;
+            matches!(view.beneath, Page::Lobbies | Page::Lobby).then_some(ScrollState {
+                page: view.beneath, lobby: None, open: view.lobby_ui.open, start: view.lobby_ui.choice_start,
+                editor: view.lobby_ui.editor.is_some(), blocked: view.offer.is_some() || view.confirm.is_some() || view.password.is_some(),
+            })
+        }
+        (None, Some(core)) => core.lobby_scroll_state(),
+        _ => None,
     };
-    let lobby = core
-        .as_ref()
-        .and_then(|core| core.lobby.as_ref().map(|(state, _)| state.id));
-    if !positions.prepare(&view, lobby) {
-        return;
-    }
-    let blocked =
-        settings.open || view.offer.is_some() || view.confirm.is_some() || view.password.is_some();
+    let Some(state) = state else { *positions = Positions::default(); return; };
+    if !positions.prepare(&state) { return; }
+    let blocked = settings.open || state.blocked;
     let cursor = windows.single().ok().and_then(|window| {
         window
             .cursor_position()
@@ -144,7 +151,7 @@ pub fn scroll(
     let target = if blocked {
         None
     } else {
-        pointer_pane(&view, cursor, &mut panes)
+        pointer_pane(state.editor, cursor, &mut panes)
     };
     let step = wheel.delta.y
         * if wheel.unit == MouseScrollUnit::Line {

@@ -31,7 +31,7 @@ pub fn line(text: &str, max: usize) -> String {
     let mut out = String::with_capacity(text.len().min(max * 4));
     let mut count = 0;
     let mut space = false;
-    for c in text.chars() {
+    for c in text.chars().take(max.saturating_mul(4)) {
         if c.is_control() || hidden(c) {
             if c.is_whitespace() {
                 space = !out.is_empty();

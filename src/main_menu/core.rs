@@ -87,6 +87,8 @@ impl Page {
 }
 
 mod lobby_ui;
+mod lobby_requests;
+mod lobby_data;
 
 /// What the player does in the menu.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -491,6 +493,8 @@ pub(super) enum Asked {
     Rejoin(MatchId),
     Watch(MatchId),
     Lobby,
+    LeaveLobby(LobbyId),
+    LobbyCatalogue,
     LobbyUi(super::lobby_controls::SaveRequest),
     RestoreLobby(LobbyId),
     /// A join of a listed lobby.
@@ -568,6 +572,7 @@ pub struct MenuCore {
     pub(super) status: Option<Status>,
     asked: Vec<(u32, Asked)>,
     pub(super) lobbies: Vec<LobbySummary>,
+    pub(super) catalogue: Vec<bota_radovid::proto::RulesetInfo>,
     pub(super) lobby_ui: super::lobby_controls::Controls,
     /// The password dialog of a locked lobby being joined; it has the keyboard while it is up.
     pub(super) join_prompt: Option<JoinPrompt>,
@@ -765,6 +770,7 @@ impl MenuCore {
             status: None,
             asked: Vec::new(),
             lobbies: Vec::new(),
+            catalogue: Vec::new(),
             lobby_ui: Default::default(),
             join_prompt: None,
             moving: None,
@@ -1178,7 +1184,10 @@ impl MenuCore {
             self.tell("Sign in first".to_owned(), true);
         } else {
             if self.outbox.len() < MAX_OUTBOX {
+                if lobby_requests::is_lobby_request(&msg) { self.lobby_ui.queued_until.get_or_insert_with(|| Instant::now() + lobby_requests::REQUEST_REACH); }
                 self.outbox.push((msg, asked));
+            } else if lobby_requests::is_lobby_request(&msg) {
+                self.fail_lobby_request(asked, "Could not queue the lobby request. Try again after reconnecting.");
             }
             if self.conn == Conn::Offline {
                 self.connect();
@@ -1198,6 +1207,21 @@ impl MenuCore {
     }
 
     fn send(&mut self, mut msg: ClientMsg, asked: Asked) {
+        let is_lobby = lobby_requests::is_lobby_request(&msg);
+        if is_lobby && self.lobby_ui.deadlines.len() == MAX_ASKED {
+            if matches!(asked, Asked::LobbyUi(request) if request.step == super::lobby_controls::Saving::Create) { self.lobby_ui.creation_unconfirmed = false; }
+            self.fail_lobby_request(asked, "Too many lobby requests. Wait for the current requests to finish.");
+            return;
+        }
+        #[cfg(test)]
+        if let Some(held) = &mut self.lobby_ui.held {
+            let seq = u32::MAX - held.len() as u32;
+            assert!(held.len() < MAX_ASKED * 2, "bounded test transport");
+            held.push(msg);
+            self.track_request(seq, asked);
+            if is_lobby { self.lobby_request_sent(seq, asked); }
+            return;
+        }
         let Some(client) = &mut self.client else {
             self.tell("Not connected to the service".to_owned(), true);
             return;
@@ -1213,10 +1237,8 @@ impl MenuCore {
         }
         match client.request(msg) {
             Ok(seq) => {
-                if self.asked.len() >= MAX_ASKED {
-                    self.asked.remove(0);
-                }
-                self.asked.push((seq, asked));
+                self.track_request(seq, asked);
+                if is_lobby { self.lobby_request_sent(seq, asked); }
             }
             Err(err) => self.lost(err),
         }
@@ -1242,6 +1264,7 @@ impl MenuCore {
         quiet
             && !self.avatar.view.busy
             && self.asked.is_empty()
+            && self.lobby_ui.deadlines.is_empty()
             && self.outbox.is_empty()
             && self.credentials.is_none()
             && self.lobby.is_none()
@@ -1326,6 +1349,7 @@ impl MenuCore {
     }
 
     pub(super) fn lost(&mut self, err: ClientError) {
+        let creation_unconfirmed = self.lobby_ui.creation_unconfirmed;
         let was_signed_in = self.conn == Conn::LoggedIn;
         self.keep_link_lost();
         self.board.disconnected();
@@ -1335,6 +1359,9 @@ impl MenuCore {
         self.credentials = None;
         self.outbox.clear();
         self.lobby = None;
+        self.moving = None;
+        self.lobby_ui.deadlines.clear();
+        self.lobby_ui.dialog = None;
         self.lobby_ui.editor = None;
         self.lobby_ui.open = None;
         self.lobby_ui.chat = Default::default();
@@ -1350,6 +1377,11 @@ impl MenuCore {
         }
         // Something live on the link is picked up again at once, once; the rest waits for the
         // next request.
+        if creation_unconfirmed {
+            self.lobby_ui.creation_unconfirmed = false;
+            self.go_form(Page::Lobbies);
+            self.tell(lobby_requests::CREATE_UNCONFIRMED.into(), true);
+        }
         if live && self.retry {
             self.retry = false;
             self.retry_at = Some(Instant::now() + RECONNECT_AFTER);
@@ -1364,17 +1396,19 @@ impl MenuCore {
         } else {
             "Cannot reach the service"
         };
-        self.tell(format!("{what}: {why}"), true);
+        if !creation_unconfirmed { self.tell(format!("{what}: {why}"), true); }
     }
 
     fn take(&mut self, incoming: Incoming) {
         match incoming {
             Incoming::Reply { seq, result } => {
+                let remembered = self.lobby_ui.deadlines.iter().find(|(known, _, _)| *known == seq).map(|(_, _, asked)| *asked);
+                self.lobby_ui.deadlines.retain(|(known, _, _)| *known != seq);
                 let asked = self
                     .asked
                     .iter()
                     .position(|(s, _)| *s == seq)
-                    .map(|at| self.asked.swap_remove(at).1);
+                    .map(|at| self.asked.swap_remove(at).1).or(remembered);
                 match (result, asked) {
                     (_, Some(Asked::Logout)) => {
                         self.drop_link();
@@ -1392,7 +1426,7 @@ impl MenuCore {
                     (Ok(reply), Some(Asked::LobbyUi(request))) => {
                         self.lobby_save_replied(reply, request)
                     }
-                    (Ok(Reply::Welcome { .. }), _) => self.welcomed(),
+                    (Ok(Reply::Welcome { rulesets, .. }), _) => { self.receive_lobby_catalogue(&rulesets); self.welcomed(); },
                     (Ok(reply), asked) => self.replied(reply, asked.unwrap_or(Asked::Other)),
                     (Err(error), asked) => {
                         self.refused_request(&error, asked.unwrap_or(Asked::Other))
@@ -1423,6 +1457,9 @@ impl MenuCore {
 
     fn replied(&mut self, reply: Reply, asked: Asked) {
         match reply {
+            Reply::Done if matches!(asked, Asked::LeaveLobby(_)) => {
+                if let Asked::LeaveLobby(id) = asked { self.lobby_left(id); }
+            }
             Reply::Done if matches!(asked, Asked::Accept(_)) => {
                 if let Asked::Accept(proposal) = asked
                     && let Some(client) = &self.client
@@ -1472,7 +1509,8 @@ impl MenuCore {
                 total,
                 data,
             } => self.meta_chunk(match_id, &name, offset, total, &data),
-            Reply::Lobbies { list } => self.lobbies = list,
+            Reply::Lobbies { list } => self.receive_lobby_list(list),
+            Reply::Rulesets { list } => self.receive_lobby_catalogue(&list),
             Reply::Lobby { state } if matches!(asked, Asked::Join(id) if id == state.id) => {
                 self.join_prompt = None;
                 self.sit(state);
@@ -1483,6 +1521,7 @@ impl MenuCore {
     }
 
     fn refused_request(&mut self, error: &Error, asked: Asked) {
+        if let Asked::Join(lobby) = asked && self.join_prompt.as_ref().is_some_and(|p| p.lobby != lobby) { return; }
         if let Asked::LobbyUi(request) = asked {
             self.lobby_save_refused(request, error);
             return;
@@ -1521,6 +1560,7 @@ impl MenuCore {
         if let Err(err) = self.store.write(Entry::Session, &saved.render()) {
             bevy::log::warn!("login not kept for the next run: {err}");
         }
+        self.ask(ClientMsg::Rulesets, Asked::LobbyCatalogue);
         self.restore_lobby_membership(&activities.lobbies);
         self.games = activities
             .matches
@@ -1536,6 +1576,7 @@ impl MenuCore {
         for (msg, asked) in std::mem::take(&mut self.outbox) {
             self.send(msg, asked);
         }
+        self.lobby_ui.queued_until = None;
         if first {
             self.status = None;
             if !matches!(self.page, Page::Game) {
@@ -1726,11 +1767,7 @@ impl MenuCore {
 
     /// Whether the service lists `ruleset` as a Demo Hero.
     pub(super) fn is_demo_ruleset(&self, ruleset: &RulesetId) -> bool {
-        self.client.as_ref().is_some_and(|client| {
-            client
-                .rulesets()
-                .any(|r| &r.id == ruleset && bota_radovid::is_demo(r))
-        })
+        self.menu_rulesets().any(|r| &r.id == ruleset && bota_radovid::is_demo(r))
     }
 
     /// Dota's Demo Hero with `hero`: the service's Demo ruleset started for this account alone, at
@@ -1740,12 +1777,8 @@ impl MenuCore {
         if bota_core::hero_def(hero).is_none() || self.demo_asked.is_some() {
             return;
         }
-        let Some(ruleset) = self.client.as_ref().and_then(|client| {
-            client
-                .rulesets()
-                .find(|r| bota_radovid::is_demo(r))
-                .map(|r| r.id.clone())
-        }) else {
+        let ruleset = self.menu_rulesets().find(|r| bota_radovid::is_demo(r)).map(|r| r.id.clone());
+        let Some(ruleset) = ruleset else {
             self.start(Launch::LocalDemo {
                 hero,
                 name: self.name(),
@@ -1760,26 +1793,40 @@ impl MenuCore {
         self.ask(ClientMsg::StartSolo { ruleset }, Asked::Demo);
     }
 
-    fn sit(&mut self, state: LobbyState) {
-        self.lobby_ui.active = Some(state.id);
-        self.lobby_ui.selected = Some(state.id);
-        self.update_lobby_state(state);
+    fn sit(&mut self, state: LobbyState) -> bool {
+        let id = state.id;
+        if !self.update_lobby_state(state) { return false; }
+        self.lobby_ui.active = Some(id);
+        self.lobby_ui.selected = Some(id);
         if self.page == Page::Lobbies {
             self.go_form(Page::Lobby);
         }
+        true
     }
 
-    fn update_lobby_state(&mut self, state: LobbyState) {
+    fn update_lobby_state(&mut self, state: LobbyState) -> bool {
+        let Some(state) = lobby_data::sanitise_state(state) else {
+            self.tell("Invalid lobby information from the service.".into(), true);
+            return false;
+        };
+        self.lobby_ui.controls_dirty = true;
+        self.lobby_ui.state_dirty = true;
+        if self.lobby.as_ref().is_none_or(|(old, _)| old.id != state.id)
+            || self.moving.is_some_and(|id| !state.members.iter().any(|member| member.account == id)) {
+            self.moving = None;
+        }
         self.lobby_ui.server = super::lobby_controls::Server::Service;
         let locked = state.locked;
         self.lobby = Some((state, Instant::now()));
         self.invalidate_lobby_password(locked);
+        true
     }
 
     fn unseat(&mut self, lobby: LobbyId, why: &str) {
         if self.lobby.as_ref().is_some_and(|(s, _)| s.id == lobby) {
             self.lobby = None;
             self.lobby_secret = None;
+            self.moving = None;
             self.lobby_ui.active = None;
             self.lobby_ui.editor = None;
             if self.page == Page::Lobby {
@@ -1846,13 +1893,15 @@ impl MenuCore {
             self.play.open = false;
             self.play.info = None;
         }
+        self.lobby_ui.controls_dirty = true;
+        self.lobby_ui.search_due = None;
         if self
             .lobby_ui
             .editor
             .as_ref()
-            .is_some_and(|editor| editor.saving != Some(super::lobby_controls::Saving::Create))
+            .is_some_and(|editor| page != Page::Lobby || editor.saving != Some(super::lobby_controls::Saving::Create))
         {
-            self.lobby_ui.editor = None;
+            self.cancel_lobby_editor();
         }
         self.lobby_ui.open = None;
         self.lobby_ui.chat.focused = false;
@@ -1948,24 +1997,7 @@ impl MenuCore {
 
     /// Acts on what the player did.
     pub fn act(&mut self, act: Act) {
-        if self.lobby_editor_obscured() {
-            match act {
-                Act::Submit
-                | Act::Focus(_)
-                | Act::Type(_)
-                | Act::Erase
-                | Act::NextField
-                | Act::PreviousField
-                | Act::LobbyUi(_) => return,
-                Act::Back => {
-                    if self.confirm.take().is_none() {
-                        self.join_prompt = None;
-                    }
-                    return;
-                }
-                _ => {}
-            }
-        }
+        if self.route_lobby_overlay(&act) { return; }
         // A match offer takes priority over this editor. Otherwise its modal owns menu input,
         // including keyboard navigation, until cancelled or its save completes.
         if self.avatar.view.open && self.view().offer.is_none() {
@@ -2150,7 +2182,12 @@ impl MenuCore {
             Act::ReadyLobby(ready) => {
                 self.lobby_ask(|lobby| ClientMsg::LobbyReady { lobby, ready })
             }
-            Act::LeaveLobby => self.lobby_ask(|lobby| ClientMsg::LobbyLeave { lobby }),
+            Act::LeaveLobby => {
+                if let Some((state, _)) = &self.lobby {
+                    let lobby = state.id;
+                    self.ask(ClientMsg::LobbyLeave { lobby }, Asked::LeaveLobby(lobby));
+                }
+            }
             Act::Direct(spectate) => self.direct(spectate, false),
             // The client does not know who plays in the lobby it hosts: it says what ending its
             // server means, and ends it only when told to.
@@ -2313,6 +2350,7 @@ impl MenuCore {
     }
 
     fn submit(&mut self) {
+        if self.join_prompt.is_some() { self.send_lobby_password(); return; }
         if self.lobby_ui.editor.is_some() {
             self.save_lobby_editor();
             return;
@@ -2408,6 +2446,8 @@ impl MenuCore {
     fn logout(&mut self) {
         self.accepted.clear();
         self.lobby_ui = Default::default();
+        self.catalogue.clear();
+        self.moving = None;
         self.lobby_secret = None;
         // The session is forgotten here at once; the service is told when a link is open (one
         // is not opened for it: a session left there expires by itself).
@@ -2447,6 +2487,7 @@ impl MenuCore {
 
     /// The form with the keyboard: the password dialog's while it is up, else the page's.
     pub(super) fn keyboard(&mut self) -> &mut Form {
+        if self.lobby_ui.dialog.is_some() { return &mut self.lobby_ui.dialog_form; }
         if let Some(prompt) = &mut self.join_prompt {
             return &mut prompt.form;
         }
@@ -2462,8 +2503,9 @@ impl MenuCore {
     /// Joins a listed lobby: an open one at once, a locked one once its password is typed into
     /// the dialog.
     fn join_lobby(&mut self, lobby: LobbyId) {
+        self.lobby_ui.selected = Some(lobby);
         match self.lobbies.iter().find(|l| l.id == lobby) {
-            Some(listed) if listed.locked => self.ask_password(lobby, listed.name.clone()),
+            Some(listed) if listed.locked && Some(listed.owner) != self.my_id() => self.ask_password(lobby, listed.name.clone()),
             _ => self.ask(
                 ClientMsg::LobbyJoin {
                     lobby,
@@ -2504,6 +2546,7 @@ impl MenuCore {
 
     /// Lists the open lobbies whose name or owner holds the search typed.
     fn search_lobbies(&mut self) {
+        self.lobby_ui.search_due = None;
         let query = self.form.value(SEARCH_FIELD).trim().to_owned();
         self.ask(ClientMsg::LobbySearch { query }, Asked::Other);
     }
@@ -2644,23 +2687,6 @@ impl MenuCore {
 /// The search field of the LOBBIES page's form.
 const SEARCH_FIELD: usize = 0;
 
-/// The ruleset a new lobby is made for: the one the service names (its standard rules), else the
-/// first it offers. The host changes it in the lobby.
-fn default_lobby_mode(client: &Client) -> Option<RulesetId> {
-    lobby_rulesets(client)
-        .find(|r| r.lobby_default)
-        .or_else(|| lobby_rulesets(client).next())
-        .map(|r| r.id.clone())
-}
-
-/// The rulesets a lobby may be made for: what the service offers but the Demo Hero, which has an
-/// entry of its own.
-pub(super) fn lobby_rulesets(
-    client: &Client,
-) -> impl Iterator<Item = &bota_radovid::proto::RulesetInfo> {
-    client.rulesets().filter(|r| !bota_radovid::is_demo(r))
-}
-
 /// What a refusal means to the player.
 pub fn error_text(error: &Error) -> String {
     let secs = |ms: &u32| ms.div_ceil(1000);
@@ -2792,11 +2818,8 @@ impl MenuCore {
     }
 
     fn select_queue(&mut self, id: RulesetId) {
-        let Some(client) = &self.client else {
-            return;
-        };
-        let available: Vec<_> = client
-            .rulesets()
+        if self.client.is_none() { return; }
+        let available: Vec<_> = self.menu_rulesets()
             .filter(|r| r.rated == self.play.ranked && r.rating_window.is_some())
             .map(|r| r.id.clone())
             .collect();
@@ -2818,8 +2841,7 @@ impl MenuCore {
         let Some(client) = &self.client else {
             return;
         };
-        let available: Vec<_> = client
-            .rulesets()
+        let available: Vec<_> = self.menu_rulesets()
             .filter(|r| r.rated == self.play.ranked && r.rating_window.is_some())
             .collect();
         let chosen: Vec<_> = available
@@ -2878,10 +2900,7 @@ impl MenuCore {
             Launch::Seat(h) | Launch::Watch(h) | Launch::Demo { handoff: h, .. } => h,
             _ => return crate::loading::Details::default(),
         };
-        let name = self
-            .client
-            .as_ref()
-            .and_then(|c| c.rulesets().find(|r| r.id == handoff.ruleset))
+        let name = self.menu_rulesets().find(|r| r.id == handoff.ruleset)
             .map_or(&handoff.ruleset.0, |r| &r.name);
         crate::loading::Details {
             match_id: Some(handoff.match_id.0),

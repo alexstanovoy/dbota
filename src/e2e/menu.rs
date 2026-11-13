@@ -302,18 +302,13 @@ fn a_replays_long_name_leaves_the_buttons_of_its_row_their_width() {
 /// The buttons of `page` that show are one width by height and their words stay on one line.
 fn uniform_buttons(client: &mut Client, page: Page) {
     act(client, Act::Go(page));
+    assert_uniform_buttons(client, page);
+}
+
+fn assert_uniform_buttons(client: &mut Client, page: Page) {
     let shown = buttons(client);
     assert!(!shown.is_empty(), "{page:?}: buttons");
     let mut widths: BTreeMap<i32, Vec<(String, f32)>> = BTreeMap::new();
-    let columns = {
-        let world = client.world_mut();
-        world
-            .query::<(&Name, &Node)>()
-            .iter(world)
-            .filter(|(_, node)| matches!(node.width, Val::Percent(_)))
-            .map(|(name, _)| name.to_string())
-            .collect::<Vec<_>>()
-    };
     for (name, w, h, one_line) in &shown {
         assert!(one_line, "{page:?}: '{name}' may wrap");
         // A lone glyph (the close cross) is a square of its own; words share their height's width.
@@ -322,7 +317,7 @@ fn uniform_buttons(client: &mut Client, page: Page) {
                 (w - h).abs() < 0.5,
                 "{page:?}: '{name}' {w} by {h}, not square"
             );
-        } else if !columns.contains(name) {
+        } else if !matches!(name.as_str(), "create lobby" | "join by address") {
             widths
                 .entry(h.round() as i32)
                 .or_default()
@@ -1677,4 +1672,19 @@ fn menu_panels_take_the_pointer_at_their_empty_edges() {
             "{name} prevents world input"
         );
     }
+}
+
+#[test]
+fn the_width_invariant_rejects_an_unrelated_percent_width_button() {
+    let mut client = local_menu();
+    act(&mut client, Act::Go(Page::LocalLobby));
+    let shown = buttons(&mut client);
+    let first = shown.iter().find(|(name, _, height, _)| name.chars().count() > 2 && shown.iter().filter(|(_, _, h, _)| (h - height).abs() < 0.5).count() > 1).expect("ordinary buttons sharing a height").0.clone();
+    let world = client.world_mut();
+    let entity = world.query::<(Entity, &Name)>().iter(world).find(|(_, name)| name.as_str() == first).expect("button").0;
+    world.get_mut::<Node>(entity).expect("button node").width = percent(80);
+    client.frames(2);
+    let failure = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| assert_uniform_buttons(&mut client, Page::LocalLobby))).expect_err("the invariant must catch a non-lobby width defect");
+    let reason = failure.downcast_ref::<String>().expect("assertion message");
+    assert!(reason.contains("several widths"), "the intended width assertion failed: {reason}");
 }
