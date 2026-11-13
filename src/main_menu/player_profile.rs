@@ -16,7 +16,6 @@ use bota_radovid::proto::{
 };
 use std::{sync::Arc, time::Duration};
 
-pub const PAGE_SIZE: usize = 6;
 const MAX_MATCHES: usize = bota_radovid::proto::MAX_RECENT_MATCHES as usize;
 const TIMEOUT: Duration = Duration::from_secs(20);
 
@@ -57,7 +56,6 @@ struct Visit {
     ratings: Vec<Rating>,
     matches: Arc<Vec<Match>>,
     results: Vec<MatchResult>,
-    page: usize,
     avatar: avatar::View,
     avatar_version: Option<AvatarVersion>,
     decoding: Option<Task<Result<dbota_import::thumbnail::Pixels, String>>>,
@@ -95,7 +93,6 @@ impl Reader {
             ratings: Vec::new(),
             matches: Arc::new(Vec::new()),
             results: Vec::new(),
-            page: 0,
             avatar: Default::default(),
             avatar_version: None,
             decoding: None,
@@ -336,14 +333,6 @@ impl MenuCore {
             self.form.type_in(&self.board.query.nickname);
         }
     }
-    pub(super) fn profile_matches_page(&mut self, delta: i8) {
-        if let Some(visit) = self.profiles.visit.as_mut() {
-            visit.page = visit
-                .page
-                .saturating_add_signed(isize::from(delta))
-                .min(visit.matches.len().div_ceil(PAGE_SIZE).saturating_sub(1));
-        }
-    }
     pub(super) fn public_profile_result(&self, key: &str) -> Option<&MatchResult> {
         let id = key.strip_prefix("public-")?.parse::<u64>().ok()?;
         self.profiles.visit.as_ref().into_iter().flat_map(|visit|&visit.results)
@@ -351,28 +340,15 @@ impl MenuCore {
     }
     pub(super) fn visitor_view(&self) -> PageView {
         let visit = self.profiles.visit.as_ref();
-        let matches = visit.map_or_else(
-            || Arc::new(Vec::new()),
-            |visit| {
-                Arc::new(
-                    visit
-                        .matches
-                        .iter()
-                        .skip(visit.page * PAGE_SIZE)
-                        .take(PAGE_SIZE)
-                        .cloned()
-                        .collect(),
-                )
-            },
-        );
+        let matches=visit.map_or_else(||Arc::new(Vec::new()),|visit|Arc::clone(&visit.matches));
         PageView::Profile {
+            mode_names:self.profile_mode_names(),
             name: visit.map_or_else(|| "Profile unavailable".into(), |visit| visit.name.clone()),
             ratings: visit.map_or_else(Vec::new, |visit| visit.ratings.clone()),
             avatar: visit.map_or_else(Default::default, |visit| visit.avatar.clone()),
             matches,
             read_only: true,
             notice: visit.and_then(|visit| visit.notice.clone()),
-            public_page: visit.map(|visit| (visit.page, visit.matches.len())),
         }
     }
 }

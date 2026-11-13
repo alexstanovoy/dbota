@@ -308,8 +308,8 @@ pub enum PageView {
         ratings: Vec<super::account_page::Rating>,
         read_only: bool,
         notice: Option<String>,
-        public_page: Option<(usize, usize)>,
         avatar: super::avatar::View,
+        mode_names: Vec<(String,String)>,
         matches: std::sync::Arc<Vec<super::history::Match>>,
     },
     /// The open lobbies (all, or those the search found), and the fields to make one and to
@@ -826,9 +826,13 @@ impl MenuCore {
             avatar: self.avatar.view.clone(),
             read_only: false,
             notice: None,
-            public_page: None,
+            mode_names: self.profile_mode_names(),
             matches: matches.into(),
         }
+    }
+
+    pub(super) fn profile_mode_names(&self)->Vec<(String,String)> {
+        self.menu_rulesets().take(64).map(|mode|(mode.id.0.clone(),text::line(&mode.name,text::NAME))).collect()
     }
 
     fn result_view(&self, result: &MatchResult) -> ResultView {

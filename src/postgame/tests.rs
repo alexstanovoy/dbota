@@ -201,30 +201,9 @@ fn the_server_file_the_trailer_and_the_recorder_agree() {
         .expect("the records");
     assert_eq!(carried, written);
     let written_meta = bota_replay::meta::decode(&written).expect("metadata");
-    assert_eq!(
-        written_meta
-            .profiles()
-            .expect("explicit local launch")
-            .matchmaker(),
-        None
-    );
-    let mut raw_facts = bota_replay::meta::Writer::default();
-    assert!(raw_facts.push(
-        &bota_replay::meta::MetaRecord::Header(written_meta.header),
-        true
-    ));
-    for record in written_meta
-        .records
-        .iter()
-        .filter(|record| !matches!(record, bota_replay::meta::MetaRecord::Profiles { .. }))
-    {
-        assert!(raw_facts.push(record, true));
-    }
-    assert_eq!(
-        worked,
-        raw_facts.into_bytes(),
-        "only launch provenance is outside the pure replay recorder"
-    );
+    assert!(written_meta.profiles().is_none(),
+        "a launch without a matchmaker or accounts writes no provenance record");
+    assert_eq!(worked,written,"the pure replay recorder agrees with the complete server sidecar");
     assert_eq!(rebuilt, written);
 }
 

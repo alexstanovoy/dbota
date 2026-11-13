@@ -82,6 +82,7 @@ pub fn draw(
             view.page,
             super::core::Page::Heroes
                 | super::core::Page::Hero(_)
+                | super::core::Page::Profile
                 | super::core::Page::Leaderboard
                 | super::core::Page::PlayerProfile(_)
         );

@@ -173,12 +173,17 @@ fn local_profile_details_survive_a_restart_after_the_replay_is_pruned() {
             .any(|name| name.as_str() == "watch")
     );
     act(&mut client, Act::MatchDetails("retained.brp".to_owned()));
-    assert!(
-        crate::main_menu::tests::page_words(client.world_mut())
-            .iter()
-            .any(|text| text.contains("VICTORY")),
-        "details do not require replay bytes"
-    );
+    assert!(client.world().non_send::<crate::postgame::PostGame>().visible(),
+        "retained details open without replay bytes");
+    assert!(client.shown_texts().iter().any(|text|text == "RADIANT VICTORY"),
+        "the drawn result retains the independently expected outcome");
+    client.click_named("results scoreboard");
+    assert!(client.shown_texts().iter().any(|text|text == "Shadow Fiend"),
+        "the retained scoreboard still identifies the recorded hero after restart and pruning");
+    assert!(client.shown_texts().iter().any(|text|text == "NET WORTH"));
+    client.click_named("results close");
+    assert!(!client.world().non_send::<crate::postgame::PostGame>().visible());
+    assert_eq!(client.world().non_send::<MenuCore>().page(),Page::Profile);
 }
 
 #[test]
@@ -414,40 +419,6 @@ fn homes_background_uses_the_local_replays_owned_team_without_a_service() {
             .is_some_and(|path| path.path().ends_with("menu/direancient_loadingscreen.png"))),
         "Home draws the locally recorded Dire background"
     );
-}
-
-#[test]
-fn most_played_statistics_fit_inside_their_profile_rows() {
-    use bevy::prelude::*;
-    let mut client = local_menu();
-    client
-        .world_mut()
-        .insert_resource(crate::main_menu::Preview(
-            crate::main_menu::preview("profile").unwrap(),
-        ));
-    client.frames(8);
-    let world = client.world_mut();
-    let nodes: Vec<_> = world
-        .query::<(Entity, &Name, &ChildOf)>()
-        .iter(world)
-        .filter(|(_, name, _)| name.as_str() == "most played stats")
-        .map(|(entity, _, parent)| (entity, parent.parent()))
-        .collect();
-    assert_eq!(nodes.len(), 2);
-    for (stats, row) in nodes {
-        let stats_center = client.centre_of(stats).unwrap();
-        let row_center = client.centre_of(row).unwrap();
-        let width = |entity| {
-            let node = client.world().get::<ComputedNode>(entity).unwrap();
-            node.size().x
-        };
-        assert!(
-            stats_center.x + width(stats) / 2.0 <= row_center.x + width(row) / 2.0 + 1.0,
-            "the stats must not spill outside the row: stats center={stats_center:?} width={}, row center={row_center:?} width={}",
-            width(stats),
-            width(row)
-        );
-    }
 }
 
 #[test]
@@ -1006,11 +977,15 @@ fn turning_replay_saving_off_keeps_local_match_history_without_a_replay_file() {
         crate::main_menu::deliver_replay_for_menu(&mut core, &bytes);
     }
     act(&mut client, Act::Go(Page::Profile));
-    let words = crate::main_menu::tests::page_words(client.world_mut());
-    assert!(
-        words.iter().any(|word| word == "Unknown player"),
-        "the retained match has a drawn history row: {words:?}"
-    );
+    use bevy::prelude::*;
+    let world=client.world_mut();
+    let rows:Vec<_>=world.query::<(Entity,&Name)>().iter(world)
+        .filter(|(_,name)|name.as_str().starts_with("profile match ")).map(|(entity,_)|entity).collect();
+    assert_eq!(rows.len(),1,"the retained match is drawn without a replay file");
+    let hero_column=world.get::<Children>(rows[0]).expect("match columns").iter().next().expect("hero column");
+    assert!(super::harness::subtree(world,hero_column).iter().any(|entity|
+        world.get::<Text>(*entity).is_some_and(|text|text.as_str()=="—")),
+        "the hero column does not guess an owner from an unattributed recording");
     assert!(!std::fs::read_dir(&directory).unwrap().any(|file| {
         file.unwrap()
             .path()
@@ -1061,16 +1036,16 @@ fn a_browser_history_card_survives_blob_failure_with_details_unavailable() {
         client.world().non_send::<MenuCore>().last_played_hero(),
         Some(bota_proto::HeroId::SHADOW_FIEND)
     );
-    let world = client.world_mut();
-    assert!(
-        world
-            .query_filtered::<&Name, With<crate::main_menu::Disabled>>()
-            .iter(world)
-            .any(|name| name.as_str() == "details"),
-        "the unavailable details action is visibly disabled"
-    );
+    let world=client.world_mut();
+    let row=world.query::<(Entity,&Name)>().iter(world).find(|(_,name)|name.as_str()=="profile match quota-history")
+        .expect("the cached match remains drawn").0;
+    assert!(world.get::<crate::main_menu::MenuButton>(row).is_none(),
+        "a row without retained metadata offers no details link");
     act(&mut client, Act::MatchDetails("quota-history".to_owned()));
     assert_eq!(client.world().non_send::<MenuCore>().page(), Page::Profile);
+    assert!(!client.world().non_send::<crate::postgame::PostGame>().visible());
+    assert!(client.shown_texts().iter().any(|text|text=="Match details are unavailable."),
+        "an explicit details request reports the missing metadata");
 }
 
 #[test]
@@ -2060,4 +2035,83 @@ fn a_served_profile_match_row_opens_match_details_without_leaving_the_profile() 
     client.click_named("results close");
     assert_eq!(client.world().non_send::<MenuCore>().page(),Page::PlayerProfile(account));
     assert!(!client.world().non_send::<crate::postgame::PostGame>().visible());
+}
+
+#[test]
+fn a_players_profile_presents_one_uniform_scrollable_match_table() {
+    use bevy::prelude::*;
+    let mut client=design_preview("profile");
+    let headings=["HERO PLAYED","RESULT","DATE / TIME","DURATION","TYPE"];
+    let world=client.world_mut();
+    let mut positions=Vec::new();
+    for label in headings {
+        let (_,placed)=world.query::<(&Text,&UiGlobalTransform)>().iter(world)
+            .find(|(text,_)|text.as_str()==label).unwrap_or_else(||panic!("missing match table heading {label}"));
+        positions.push(placed.translation.x);
+    }
+    assert!(positions.windows(2).all(|pair|pair[0]<pair[1]),"the table columns follow the requested reading order");
+    let viewport=world.query::<(Entity,&Name)>().iter(world).find(|(_,name)|name.as_str()=="player matches scroll")
+        .expect("the match list owns its scroll viewport").0;
+    assert!(world.get::<ScrollPosition>(viewport).is_some());
+    assert!(world.query::<&Name>().iter(world).any(|name|name.as_str()=="player matches scroll thumb"),"the scrollbar is visible on the right");
+    let rows:Vec<_>=world.query::<(Entity,&Name,&ComputedNode)>().iter(world)
+        .filter(|(_,name,_)|name.as_str().starts_with("profile match ")).map(|(entity,_,node)|(entity,node.unrounded_size().y)).collect();
+    assert!(rows.len()>6,"the list is not restricted to the old six-card preview");
+    assert!(rows.iter().all(|(_,height)|(*height-rows[0].1).abs()<0.5),"every match row has the same height");
+    assert!(!world.query::<&Text>().iter(world).any(|text|text.as_str()=="MOST PLAYED"),"the match table uses the profile width");
+}
+
+#[test]
+fn profile_match_table_headings_align_with_their_data_columns() {
+    use bevy::prelude::*;
+    let mut client=design_preview("profile");
+    let world=client.world_mut();
+    let row=world.query::<(Entity,&Name)>().iter(world).find(|(_,name)|name.as_str()=="profile match preview-0.brp").expect("first row").0;
+    let columns:Vec<_>=world.get::<Children>(row).expect("row columns").iter().collect();
+    for (index,label) in ["HERO PLAYED","RESULT","DATE / TIME","DURATION","TYPE"].into_iter().enumerate() {
+        let header=world.query::<(&Text,&ChildOf)>().iter(world).find(|(text,_)|text.as_str()==label).expect("column header").1.parent();
+        let left=|entity| {
+            let node=world.get::<ComputedNode>(entity).expect("laid out column");
+            world.get::<UiGlobalTransform>(entity).expect("column position").translation.x-node.size().x/2.0
+        };
+        assert!((left(header)-left(columns[index])).abs()<=1.0,"{label} heading and cells share a column: heading={}, cell={}",left(header),left(columns[index]));
+    }
+}
+
+#[test]
+fn a_profile_match_row_uses_the_shared_hover_feedback() {
+    use bevy::prelude::*;
+    let mut client=design_preview("profile");
+    client.mouse(Vec2::new(4.0,4.0));client.frames(3);
+    let world=client.world_mut();
+    let row=world.query::<(Entity,&Name)>().iter(world).find(|(_,name)|name.as_str()=="profile match preview-0.brp").expect("first row").0;
+    let fill=|client:&super::harness::Client|(
+        client.world().get::<BackgroundColor>(row).cloned(),
+        client.world().get::<BackgroundGradient>(row).cloned());
+    let before=fill(&client);
+    client.hover_ui(row,std::time::Duration::from_secs(10));client.frames(3);
+    assert_ne!(fill(&client),before,"the same palette feedback as other clickable rows is visible");
+}
+
+#[test]
+fn the_profile_match_list_scrolls_by_wheel_and_by_dragging_its_thumb() {
+    use bevy::{prelude::*,input::{ButtonState,mouse::{MouseScrollUnit,MouseWheel}},window::PrimaryWindow};
+    let mut client=design_preview("profile");
+    let world=client.world_mut();
+    let viewport=world.query::<(Entity,&Name)>().iter(world).find(|(_,name)|name.as_str()=="player matches scroll").expect("viewport").0;
+    let thumb=world.query::<(Entity,&Name)>().iter(world).find(|(_,name)|name.as_str()=="player matches scroll thumb").expect("thumb").0;
+    let window=world.query_filtered::<Entity,With<PrimaryWindow>>().single(world).expect("window");
+    let centre=client.centre_of(viewport).expect("viewport position");
+    client.mouse(centre);client.frames(3);
+    let wheel=MouseWheel {phase:bevy::input::touch::TouchPhase::Moved,unit:MouseScrollUnit::Line,x:0.0,y:-4.0,window};
+    client.world_mut().write_message(bevy::window::WindowEvent::MouseWheel(wheel));
+    client.world_mut().write_message(wheel);
+    client.frames(4);
+    let before=client.world().get::<ScrollPosition>(viewport).expect("scroll").y;
+    assert!(before>0.0,"wheel input scrolls the actual match list");
+    let start=client.centre_of(thumb).expect("thumb position");
+    client.mouse(start);client.button(MouseButton::Left,ButtonState::Pressed);
+    client.mouse(start+Vec2::new(0.0,90.0));client.frames(3);
+    client.button(MouseButton::Left,ButtonState::Released);client.frames(3);
+    assert!(client.world().get::<ScrollPosition>(viewport).expect("scroll").y>before,"dragging the real scrollbar moves farther down the table");
 }

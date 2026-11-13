@@ -209,10 +209,10 @@ fn draw_account_page(
             name,
             ratings,
             matches,
+            mode_names,
             avatar,
             read_only,
             notice,
-            public_page,
         } => {
             super::account_page::profile(
                 kit,
@@ -221,11 +221,12 @@ fn draw_account_page(
                     name,
                     ratings,
                     matches,
+                    mode_names,
+                    texts,
                     avatar,
                     read_only: *read_only,
                     connected: matches!(view.connection, super::view::Connection::Online(_)),
                     notice: notice.as_deref(),
-                    public_page: *public_page,
                 },
                 clock,
             );

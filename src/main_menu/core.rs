@@ -103,7 +103,6 @@ pub enum Act {
     Avatar(super::avatar::Action),
     InspectHero(bota_proto::HeroId),
     InspectPlayer(super::player_profile::Target),
-    ProfileMatchesPage(i8),
     MatchDetails(String),
     WatchHistory(String),
     HistoryMode(Option<String>),
@@ -2125,7 +2124,6 @@ impl MenuCore {
             | Act::Avatar(_)
             | Act::InspectHero(_)
             | Act::InspectPlayer(_)
-            | Act::ProfileMatchesPage(_)
             | Act::MatchDetails(_)
             | Act::WatchHistory(_)
             | Act::HistoryMode(_)
@@ -2229,7 +2227,6 @@ impl MenuCore {
                     self.tell(message, true);
                 }
             }
-            Act::ProfileMatchesPage(delta) => self.profile_matches_page(delta),
             Act::InspectHero(hero) => {
                 if bota_core::hero_def(hero).is_some() {
                     self.go(Page::Hero(hero));

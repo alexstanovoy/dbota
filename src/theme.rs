@@ -129,8 +129,6 @@ pub const AVATAR_EDGE: Color = hex(0x4A6A86);
 /// Account navigation, retained history rows, and unavailable replay actions.
 pub const ACCOUNT_BAND: Color = hex(0x070B0E);
 pub const HISTORY_ROW: Color = hex(0x090E12);
-pub const REPLAY_ACTION_OFF: Color = hex(0x12181C);
-pub const RANK_BADGE: Color = hex(0x76ABED);
 /// Leaderboard selection and placement colours.
 pub const SEGMENT_SELECTED: Color = hex(0x414D53);
 pub const MEDAL_BRONZE: Color = hex(0xCD7F32);

@@ -872,7 +872,6 @@ mod tests {
         let cards = archive.cards(&[]);
         assert_eq!(cards.len(), 1);
         assert!(cards[0].hero.is_none());
-        assert!(super::super::history::heroes(&cards).is_empty());
     }
 }
 

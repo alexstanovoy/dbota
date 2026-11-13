@@ -141,6 +141,8 @@ pub fn plugin(app: &mut App) {
                 super::top_bar::fit_tabs,
                 super::ladder_page::visible_range,
                 super::lobby_scroll::scroll,
+                super::player_matches::reveal_focus,
+                super::player_matches::scrollbar_visibility,
             )
                 .after(bevy::ui::UiSystems::Layout),
         );

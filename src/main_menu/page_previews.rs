@@ -239,17 +239,10 @@ fn profile_fixture(name: &str) -> PageView {
         avatar.notice = Some("Avatar changes are not available on this service yet.".to_owned());
     }
     PageView::Profile {
+        mode_names: Vec::new(),
         read_only: name.starts_with("profile_other"),
         notice: (name == "profile_other_unavailable")
             .then(|| "This player's profile is unavailable".into()),
-        public_page: name.starts_with("profile_other").then_some((
-            0,
-            if name == "profile_other_unavailable" {
-                0
-            } else {
-                6
-            },
-        )),
         name: if name == "profile_other_unavailable" {
             "Player #42"
         } else {

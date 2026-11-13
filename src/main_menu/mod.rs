@@ -47,6 +47,7 @@ mod page_time;
 mod pages;
 mod play;
 pub(crate) mod player_profile;
+mod player_matches;
 mod prefs;
 mod preview;
 mod profile_metadata;
