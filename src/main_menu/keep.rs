@@ -652,9 +652,12 @@ mod profile_capture_tests {
                 .match_id,
         );
         let source = "wss://match.example/control";
-        let mut snapshot=meta.clone();
-        snapshot.extend(bota_proto::encode_frame_to_vec(&(13_u8,Some(source),vec![(0_u8,Some(42_u64))])).expect("publisher snapshot"));
-        bytes.truncate(bytes.len()-meta.len()-bota_replay::trailer::OVERHEAD);
+        let mut snapshot = meta.clone();
+        snapshot.extend(
+            bota_proto::encode_frame_to_vec(&(13_u8, Some(source), vec![(0_u8, Some(42_u64))]))
+                .expect("publisher snapshot"),
+        );
+        bytes.truncate(bytes.len() - meta.len() - bota_replay::trailer::OVERHEAD);
         bytes.extend(bota_replay::trailer::frame(&snapshot).expect("publisher trailer"));
 
         let mut player = super::super::tests::Player::new(None);

@@ -173,17 +173,37 @@ fn local_profile_details_survive_a_restart_after_the_replay_is_pruned() {
             .any(|name| name.as_str() == "watch")
     );
     act(&mut client, Act::MatchDetails("retained.brp".to_owned()));
-    assert!(client.world().non_send::<crate::postgame::PostGame>().visible(),
-        "retained details open without replay bytes");
-    assert!(client.shown_texts().iter().any(|text|text == "RADIANT VICTORY"),
-        "the drawn result retains the independently expected outcome");
+    assert!(
+        client
+            .world()
+            .non_send::<crate::postgame::PostGame>()
+            .visible(),
+        "retained details open without replay bytes"
+    );
+    assert!(
+        client
+            .shown_texts()
+            .iter()
+            .any(|text| text == "RADIANT VICTORY"),
+        "the drawn result retains the independently expected outcome"
+    );
     client.click_named("results scoreboard");
-    assert!(client.shown_texts().iter().any(|text|text == "Shadow Fiend"),
-        "the retained scoreboard still identifies the recorded hero after restart and pruning");
-    assert!(client.shown_texts().iter().any(|text|text == "NET WORTH"));
+    assert!(
+        client
+            .shown_texts()
+            .iter()
+            .any(|text| text == "Shadow Fiend"),
+        "the retained scoreboard still identifies the recorded hero after restart and pruning"
+    );
+    assert!(client.shown_texts().iter().any(|text| text == "NET WORTH"));
     client.click_named("results close");
-    assert!(!client.world().non_send::<crate::postgame::PostGame>().visible());
-    assert_eq!(client.world().non_send::<MenuCore>().page(),Page::Profile);
+    assert!(
+        !client
+            .world()
+            .non_send::<crate::postgame::PostGame>()
+            .visible()
+    );
+    assert_eq!(client.world().non_send::<MenuCore>().page(), Page::Profile);
 }
 
 #[test]
@@ -978,14 +998,32 @@ fn turning_replay_saving_off_keeps_local_match_history_without_a_replay_file() {
     }
     act(&mut client, Act::Go(Page::Profile));
     use bevy::prelude::*;
-    let world=client.world_mut();
-    let rows:Vec<_>=world.query::<(Entity,&Name)>().iter(world)
-        .filter(|(_,name)|name.as_str().starts_with("profile match ")).map(|(entity,_)|entity).collect();
-    assert_eq!(rows.len(),1,"the retained match is drawn without a replay file");
-    let hero_column=world.get::<Children>(rows[0]).expect("match columns").iter().next().expect("hero column");
-    assert!(super::harness::subtree(world,hero_column).iter().any(|entity|
-        world.get::<Text>(*entity).is_some_and(|text|text.as_str()=="—")),
-        "the hero column does not guess an owner from an unattributed recording");
+    let world = client.world_mut();
+    let rows: Vec<_> = world
+        .query::<(Entity, &Name)>()
+        .iter(world)
+        .filter(|(_, name)| name.as_str().starts_with("profile match "))
+        .map(|(entity, _)| entity)
+        .collect();
+    assert_eq!(
+        rows.len(),
+        1,
+        "the retained match is drawn without a replay file"
+    );
+    let hero_column = world
+        .get::<Children>(rows[0])
+        .expect("match columns")
+        .iter()
+        .next()
+        .expect("hero column");
+    assert!(
+        super::harness::subtree(world, hero_column)
+            .iter()
+            .any(|entity| world
+                .get::<Text>(*entity)
+                .is_some_and(|text| text.as_str() == "—")),
+        "the hero column does not guess an owner from an unattributed recording"
+    );
     assert!(!std::fs::read_dir(&directory).unwrap().any(|file| {
         file.unwrap()
             .path()
@@ -1036,16 +1074,32 @@ fn a_browser_history_card_survives_blob_failure_with_details_unavailable() {
         client.world().non_send::<MenuCore>().last_played_hero(),
         Some(bota_proto::HeroId::SHADOW_FIEND)
     );
-    let world=client.world_mut();
-    let row=world.query::<(Entity,&Name)>().iter(world).find(|(_,name)|name.as_str()=="profile match quota-history")
-        .expect("the cached match remains drawn").0;
-    assert!(world.get::<crate::main_menu::MenuButton>(row).is_none(),
-        "a row without retained metadata offers no details link");
+    let world = client.world_mut();
+    let row = world
+        .query::<(Entity, &Name)>()
+        .iter(world)
+        .find(|(_, name)| name.as_str() == "profile match quota-history")
+        .expect("the cached match remains drawn")
+        .0;
+    assert!(
+        world.get::<crate::main_menu::MenuButton>(row).is_none(),
+        "a row without retained metadata offers no details link"
+    );
     act(&mut client, Act::MatchDetails("quota-history".to_owned()));
     assert_eq!(client.world().non_send::<MenuCore>().page(), Page::Profile);
-    assert!(!client.world().non_send::<crate::postgame::PostGame>().visible());
-    assert!(client.shown_texts().iter().any(|text|text=="Match details are unavailable."),
-        "an explicit details request reports the missing metadata");
+    assert!(
+        !client
+            .world()
+            .non_send::<crate::postgame::PostGame>()
+            .visible()
+    );
+    assert!(
+        client
+            .shown_texts()
+            .iter()
+            .any(|text| text == "Match details are unavailable."),
+        "an explicit details request reports the missing metadata"
+    );
 }
 
 #[test]
@@ -1113,13 +1167,22 @@ fn leaderboard_player_click_and_keyboard_open_the_served_read_only_profile() {
         .non_send_mut::<MenuCore>()
         .avatar_backend(true);
     act(&mut client, Act::Go(Page::Leaderboard));
-    let wanted=format!("leaderboard profile {account}");
+    let wanted = format!("leaderboard profile {account}");
     client.until("the service supplies the ranked player row", |client| {
-        let world=client.world_mut();
-        world.query_filtered::<&Name,With<NativeButton>>().iter(world).any(|name|name.as_str()==wanted)
+        let world = client.world_mut();
+        world
+            .query_filtered::<&Name, With<NativeButton>>()
+            .iter(world)
+            .any(|name| name.as_str() == wanted)
     });
-    let rank=crate::main_menu::tests::rank_in_served_board(client.world().non_send::<MenuCore>(),account);
-    assert_ne!(account,rank,"the served account id must differ from its actual rank");
+    let rank = crate::main_menu::tests::rank_in_served_board(
+        client.world().non_send::<MenuCore>(),
+        account,
+    );
+    assert_ne!(
+        account, rank,
+        "the served account id must differ from its actual rank"
+    );
     let name = format!("leaderboard profile {account}");
     let world = client.world_mut();
     let row = world
@@ -1140,7 +1203,10 @@ fn leaderboard_player_click_and_keyboard_open_the_served_read_only_profile() {
     let original_cache =
         crate::main_menu::tests::own_cached_profile_id(client.world().non_send::<MenuCore>());
     client.click_named(&name);
-    assert_eq!(client.world().non_send::<MenuCore>().page(),Page::PlayerProfile(account));
+    assert_eq!(
+        client.world().non_send::<MenuCore>().page(),
+        Page::PlayerProfile(account)
+    );
     let profile_ready = |client: &mut super::harness::Client| {
         let world = client.world_mut();
         world
@@ -1662,14 +1728,30 @@ fn a_served_live_postmatch_profile_and_real_public_match_list_preserve_the_live_
     assert!(rows[0].kda.is_none());
     assert!(rows[0].net_worth.is_none());
     assert!(!rows[0].watchable);
-    assert!(rows[0].details_available, "served match facts can be inspected without a game report");
+    assert!(
+        rows[0].details_available,
+        "served match facts can be inspected without a game report"
+    );
     client.frames(3);
     client.click_named(&format!("profile match public-{id}"));
-    assert!(client.world().non_send::<crate::postgame::PostGame>().visible(),
-        "a profile reached from a live result can inspect its served match too");
-    assert_eq!(client.world().non_send::<MenuCore>().page(),Page::PlayerProfile(account));
+    assert!(
+        client
+            .world()
+            .non_send::<crate::postgame::PostGame>()
+            .visible(),
+        "a profile reached from a live result can inspect its served match too"
+    );
+    assert_eq!(
+        client.world().non_send::<MenuCore>().page(),
+        Page::PlayerProfile(account)
+    );
     client.click_named("results close");
-    assert!(!client.world().non_send::<crate::postgame::PostGame>().visible());
+    assert!(
+        !client
+            .world()
+            .non_send::<crate::postgame::PostGame>()
+            .visible()
+    );
     assert_eq!(
         client.world().non_send::<MenuCore>().page(),
         Page::PlayerProfile(account)
@@ -1880,99 +1962,274 @@ fn profile_timeout_throttle_malformed_and_late_replies_keep_the_visitor_isolated
 
 #[test]
 fn a_profile_reply_with_a_different_account_id_is_rejected() {
-    use bota_radovid::proto::{AccountId,AccountKind,PublicAccount,Reply};
-    let service=crate::main_menu::tests::service();
-    let (account,_)=crate::main_menu::tests::registered_public_profile(&service);
-    let mut client=super::menu::signed_up(&service,"wrong_id_viewer");
-    let generation={
-        let mut core=client.world_mut().non_send_mut::<MenuCore>();
-        core.inspect_player(crate::main_menu::tests::profile_target(&service,account)).expect("same service");
+    use bota_radovid::proto::{AccountId, AccountKind, PublicAccount, Reply};
+    let service = crate::main_menu::tests::service();
+    let (account, _) = crate::main_menu::tests::registered_public_profile(&service);
+    let mut client = super::menu::signed_up(&service, "wrong_id_viewer");
+    let generation = {
+        let mut core = client.world_mut().non_send_mut::<MenuCore>();
+        core.inspect_player(crate::main_menu::tests::profile_target(&service, account))
+            .expect("same service");
         core.hold_profile_account_request()
     };
-    client.world_mut().non_send_mut::<MenuCore>().inject_profile_account_reply(generation,
-        Reply::Account{account:PublicAccount{id:AccountId(account+1000),nickname:"wrong_player".into(),kind:AccountKind::Human,online:false,bot_version:None,ratings:Vec::new(),avatar:None}});
+    client
+        .world_mut()
+        .non_send_mut::<MenuCore>()
+        .inject_profile_account_reply(
+            generation,
+            Reply::Account {
+                account: PublicAccount {
+                    id: AccountId(account + 1000),
+                    nickname: "wrong_player".into(),
+                    kind: AccountKind::Human,
+                    online: false,
+                    bot_version: None,
+                    ratings: Vec::new(),
+                    avatar: None,
+                },
+            },
+        );
     client.frames(4);
-    assert!(client.shown_texts().iter().any(|text|text=="The service returned an invalid profile response"));
-    assert!(!client.shown_texts().iter().any(|text|text.contains("wrong_player")));
-    assert_eq!(crate::main_menu::tests::public_profile_request_count(client.world().non_send::<MenuCore>()),1);
+    assert!(
+        client
+            .shown_texts()
+            .iter()
+            .any(|text| text == "The service returned an invalid profile response")
+    );
+    assert!(
+        !client
+            .shown_texts()
+            .iter()
+            .any(|text| text.contains("wrong_player"))
+    );
+    assert_eq!(
+        crate::main_menu::tests::public_profile_request_count(
+            client.world().non_send::<MenuCore>()
+        ),
+        1
+    );
 }
 
-fn dismiss_notice_without_closing_results(input:u8) {
-    use bevy::{input::ButtonState,prelude::*};
-    let mut client=super::harness::Client::run(&["--menu-preview","match_details_foreign_profile"]);
-    client.until("the notice is drawn",|client|client.shown_texts().iter().any(|text|text.contains("The file claims")));
-    assert!(client.shown_texts().iter().any(|text|text.contains("The file claims")));
+fn dismiss_notice_without_closing_results(input: u8) {
+    use bevy::{input::ButtonState, prelude::*};
+    let mut client =
+        super::harness::Client::run(&["--menu-preview", "match_details_foreign_profile"]);
+    client.until("the notice is drawn", |client| {
+        client
+            .shown_texts()
+            .iter()
+            .any(|text| text.contains("The file claims"))
+    });
+    assert!(
+        client
+            .shown_texts()
+            .iter()
+            .any(|text| text.contains("The file claims"))
+    );
     match input {
-        0=>{client.key(KeyCode::Escape,ButtonState::Pressed);client.key(KeyCode::Escape,ButtonState::Released);}
-        1=>{client.key(KeyCode::Enter,ButtonState::Pressed);client.key(KeyCode::Enter,ButtonState::Released);}
-        _=>{
-            let gamepad=client.world_mut().spawn((bevy::input::gamepad::Gamepad::default(),bevy::input::gamepad::GamepadSettings::default())).id();
-            for value in [1.0,0.0] {
-                client.world_mut().write_message(bevy::input::gamepad::RawGamepadEvent::Button(
-                    bevy::input::gamepad::RawGamepadButtonChangedEvent::new(gamepad,bevy::input::gamepad::GamepadButton::South,value)));
+        0 => {
+            client.key(KeyCode::Escape, ButtonState::Pressed);
+            client.key(KeyCode::Escape, ButtonState::Released);
+        }
+        1 => {
+            client.key(KeyCode::Enter, ButtonState::Pressed);
+            client.key(KeyCode::Enter, ButtonState::Released);
+        }
+        _ => {
+            let gamepad = client
+                .world_mut()
+                .spawn((
+                    bevy::input::gamepad::Gamepad::default(),
+                    bevy::input::gamepad::GamepadSettings::default(),
+                ))
+                .id();
+            for value in [1.0, 0.0] {
+                client
+                    .world_mut()
+                    .write_message(bevy::input::gamepad::RawGamepadEvent::Button(
+                        bevy::input::gamepad::RawGamepadButtonChangedEvent::new(
+                            gamepad,
+                            bevy::input::gamepad::GamepadButton::South,
+                            value,
+                        ),
+                    ));
                 client.frames(2);
             }
         }
     }
     client.frames(4);
-    assert!(!client.shown_texts().iter().any(|text|text.contains("The file claims")));
-    assert!(client.world().non_send::<crate::postgame::PostGame>().visible());
-    assert!(client.shown_texts().iter().any(|text|text=="NET WORTH"));
+    assert!(
+        !client
+            .shown_texts()
+            .iter()
+            .any(|text| text.contains("The file claims"))
+    );
+    assert!(
+        client
+            .world()
+            .non_send::<crate::postgame::PostGame>()
+            .visible()
+    );
+    assert!(client.shown_texts().iter().any(|text| text == "NET WORTH"));
 }
 #[test]
-fn escape_dismisses_the_notice_without_closing_results() {dismiss_notice_without_closing_results(0);}
+fn escape_dismisses_the_notice_without_closing_results() {
+    dismiss_notice_without_closing_results(0);
+}
 #[test]
-fn enter_dismisses_the_notice_without_closing_results() {dismiss_notice_without_closing_results(1);}
+fn enter_dismisses_the_notice_without_closing_results() {
+    dismiss_notice_without_closing_results(1);
+}
 #[test]
-fn gamepad_activation_dismisses_the_notice_without_closing_results() {dismiss_notice_without_closing_results(2);}
+fn gamepad_activation_dismisses_the_notice_without_closing_results() {
+    dismiss_notice_without_closing_results(2);
+}
 
 #[test]
 fn an_unavailable_profile_notice_is_spaced_below_its_header() {
     use bevy::prelude::*;
-    let mut client=design_preview("profile_other_unavailable");
-    let world=client.world_mut();
-    let back=world.query::<(Entity,&Name)>().iter(world).find(|(_,name)|name.as_str()=="back").expect("back").0;
-    let header=world.get::<ChildOf>(back).expect("header").parent();
-    let header_bottom=world.get::<bevy::ui::UiGlobalTransform>(header).expect("header position").translation.y+
-        world.get::<ComputedNode>(header).expect("header box").size().y/2.0;
-    let notice=world.query::<(Entity,&Text)>().iter(world).find(|(_,text)|text.as_str()=="This player's profile is unavailable").expect("notice").0;
-    let notice_top=world.get::<bevy::ui::UiGlobalTransform>(notice).expect("notice position").translation.y-
-        world.get::<ComputedNode>(notice).expect("notice box").size().y/2.0;
-    assert!(notice_top-header_bottom>=12.0,"notice gap is {}",notice_top-header_bottom);
+    let mut client = design_preview("profile_other_unavailable");
+    let world = client.world_mut();
+    let back = world
+        .query::<(Entity, &Name)>()
+        .iter(world)
+        .find(|(_, name)| name.as_str() == "back")
+        .expect("back")
+        .0;
+    let header = world.get::<ChildOf>(back).expect("header").parent();
+    let header_bottom = world
+        .get::<bevy::ui::UiGlobalTransform>(header)
+        .expect("header position")
+        .translation
+        .y
+        + world
+            .get::<ComputedNode>(header)
+            .expect("header box")
+            .size()
+            .y
+            / 2.0;
+    let notice = world
+        .query::<(Entity, &Text)>()
+        .iter(world)
+        .find(|(_, text)| text.as_str() == "This player's profile is unavailable")
+        .expect("notice")
+        .0;
+    let notice_top = world
+        .get::<bevy::ui::UiGlobalTransform>(notice)
+        .expect("notice position")
+        .translation
+        .y
+        - world
+            .get::<ComputedNode>(notice)
+            .expect("notice box")
+            .size()
+            .y
+            / 2.0;
+    assert!(
+        notice_top - header_bottom >= 12.0,
+        "notice gap is {}",
+        notice_top - header_bottom
+    );
 }
 #[test]
 fn the_foreign_claim_notice_panel_fits_its_text_and_dismiss_button() {
     use bevy::prelude::*;
-    let mut client=super::harness::Client::run(&["--menu-preview","match_details_foreign_profile"]);
-    client.until("the notice is drawn",|client|client.shown_texts().iter().any(|text|text.contains("The file claims")));
-    let world=client.world_mut();
-    let panel=world.query::<(&bevy::input_focus::tab_navigation::TabGroup,&ComputedNode)>().iter(world)
-        .find(|(group,_)|group.modal&&group.order==1).expect("notice modal").1.size().y;
-    let text=world.query::<(&Text,&bevy::text::TextLayoutInfo)>().iter(world).find(|(text,_)|text.contains("The file claims")).expect("notice text").1.size.y;
-    let button=world.query::<(&Name,&ComputedNode)>().iter(world).find(|(name,_)|name.as_str()=="results dismiss").expect("dismiss").1.size().y;
-    let overhead=panel-text-button;
-    assert!((24.0..=96.0).contains(&overhead),"notice chrome should fit its content; extra height is {overhead}");
+    let mut client =
+        super::harness::Client::run(&["--menu-preview", "match_details_foreign_profile"]);
+    client.until("the notice is drawn", |client| {
+        client
+            .shown_texts()
+            .iter()
+            .any(|text| text.contains("The file claims"))
+    });
+    let world = client.world_mut();
+    let panel = world
+        .query::<(&bevy::input_focus::tab_navigation::TabGroup, &ComputedNode)>()
+        .iter(world)
+        .find(|(group, _)| group.modal && group.order == 1)
+        .expect("notice modal")
+        .1
+        .size()
+        .y;
+    let text = world
+        .query::<(&Text, &bevy::text::TextLayoutInfo)>()
+        .iter(world)
+        .find(|(text, _)| text.contains("The file claims"))
+        .expect("notice text")
+        .1
+        .size
+        .y;
+    let button = world
+        .query::<(&Name, &ComputedNode)>()
+        .iter(world)
+        .find(|(name, _)| name.as_str() == "results dismiss")
+        .expect("dismiss")
+        .1
+        .size()
+        .y;
+    let overhead = panel - text - button;
+    assert!(
+        (24.0..=96.0).contains(&overhead),
+        "notice chrome should fit its content; extra height is {overhead}"
+    );
 }
 
 #[test]
 fn a_hidden_profile_is_not_bound_in_the_server_replay_or_restamped_by_the_client() {
     use bevy::prelude::*;
-    let service=crate::main_menu::tests::portable_service();
-    let mut played=crate::main_menu::tests::served_postmatch_visibility(&service,true);
-    let raw=bota_replay::meta::decode(&played.metadata).expect("raw server metadata").profiles().expect("known matchmaker");
-    assert_eq!(raw.account(played.other_slot),None,"the game launch must not publish a hidden profile binding");
-    let replay=bota_client_core::meta_in_replay(&mut std::io::Cursor::new(&played.replay)).expect("replay").expect("explicit trailer");
-    assert_eq!(bota_replay::meta::decode(&replay).expect("trailer").profiles().expect("context").account(played.other_slot),None);
-    let fetched=played.menu.take_meta().expect("authenticated metadata delivery").bytes.expect("metadata");
-    assert_eq!(bota_replay::meta::decode(&fetched).expect("client metadata").profiles().expect("context").account(played.other_slot),None,
-        "private participant results must not restore a hidden public binding");
-    let mut viewer=super::menu::signed_up(&service,"hidden_replay_viewer");
-    crate::main_menu::tests::install_profile_history(&mut viewer.world_mut().non_send_mut::<MenuCore>(),fetched);
-    act(&mut viewer,Act::Go(Page::MatchHistory));viewer.frames(4);
-    viewer.click_named("history DETAILS");viewer.click_named("results scoreboard");
-    let world=viewer.world_mut();
-    assert!(!world.query_filtered::<&Name,With<NativeButton>>().iter(world)
-        .any(|name|name.as_str()==format!("results profile {}",played.other_slot)));
+    let service = crate::main_menu::tests::portable_service();
+    let mut played = crate::main_menu::tests::served_postmatch_visibility(&service, true);
+    let raw = bota_replay::meta::decode(&played.metadata)
+        .expect("raw server metadata")
+        .profiles()
+        .expect("known matchmaker");
+    assert_eq!(
+        raw.account(played.other_slot),
+        None,
+        "the game launch must not publish a hidden profile binding"
+    );
+    let replay = bota_client_core::meta_in_replay(&mut std::io::Cursor::new(&played.replay))
+        .expect("replay")
+        .expect("explicit trailer");
+    assert_eq!(
+        bota_replay::meta::decode(&replay)
+            .expect("trailer")
+            .profiles()
+            .expect("context")
+            .account(played.other_slot),
+        None
+    );
+    let fetched = played
+        .menu
+        .take_meta()
+        .expect("authenticated metadata delivery")
+        .bytes
+        .expect("metadata");
+    assert_eq!(
+        bota_replay::meta::decode(&fetched)
+            .expect("client metadata")
+            .profiles()
+            .expect("context")
+            .account(played.other_slot),
+        None,
+        "private participant results must not restore a hidden public binding"
+    );
+    let mut viewer = super::menu::signed_up(&service, "hidden_replay_viewer");
+    crate::main_menu::tests::install_profile_history(
+        &mut viewer.world_mut().non_send_mut::<MenuCore>(),
+        fetched,
+    );
+    act(&mut viewer, Act::Go(Page::MatchHistory));
+    viewer.frames(4);
+    viewer.click_named("history DETAILS");
+    viewer.click_named("results scoreboard");
+    let world = viewer.world_mut();
+    assert!(
+        !world
+            .query_filtered::<&Name, With<NativeButton>>()
+            .iter(world)
+            .any(|name| name.as_str() == format!("results profile {}", played.other_slot))
+    );
 }
 
 #[test]
@@ -1981,10 +2238,17 @@ fn a_profile_keeps_its_match_list_in_the_profile_instead_of_linking_to_replay_im
     let mut client = local_menu();
     act(&mut client, Act::Go(Page::Profile));
     let world = client.world_mut();
-    let navigation: Vec<_> = world.query_filtered::<&Name, With<NativeButton>>()
-        .iter(world).map(ToString::to_string).collect();
-    assert!(!navigation.iter().any(|name| name == "matches" || name == "all matches"),
-        "the profile's matches belong to this profile, not another page");
+    let navigation: Vec<_> = world
+        .query_filtered::<&Name, With<NativeButton>>()
+        .iter(world)
+        .map(ToString::to_string)
+        .collect();
+    assert!(
+        !navigation
+            .iter()
+            .any(|name| name == "matches" || name == "all matches"),
+        "the profile's matches belong to this profile, not another page"
+    );
     assert!(client.shown_texts().iter().any(|text| text == "MATCHES"));
     assert_eq!(client.world().non_send::<MenuCore>().page(), Page::Profile);
 }
@@ -1996,122 +2260,290 @@ fn replay_library_and_match_history_offer_no_file_import_controls() {
     for page in [Page::Replays, Page::MatchHistory] {
         act(&mut client, Act::Go(page));
         let words = client.shown_texts();
-        assert!(!words.iter().any(|text| text.contains("Replay file") || text.contains("OPEN A REPLAY FILE") || text == "OPEN" || text == "OPEN A .BRP FILE"),
-            "file import is absent from {page:?}");
-        let world=client.world_mut();
-        assert!(!world.query_filtered::<&Name,With<NativeButton>>().iter(world)
-            .any(|name|name.as_str()=="open replay file"));
+        assert!(
+            !words.iter().any(|text| text.contains("Replay file")
+                || text.contains("OPEN A REPLAY FILE")
+                || text == "OPEN"
+                || text == "OPEN A .BRP FILE"),
+            "file import is absent from {page:?}"
+        );
+        let world = client.world_mut();
+        assert!(
+            !world
+                .query_filtered::<&Name, With<NativeButton>>()
+                .iter(world)
+                .any(|name| name.as_str() == "open replay file")
+        );
     }
 }
 
 #[test]
 fn a_hero_page_has_no_machine_attribution_message_or_match_record() {
-    let mut client=local_menu();
-    act(&mut client, Act::Go(Page::Hero(bota_proto::HeroId::SHADOW_FIEND)));
-    assert!(!client.shown_texts().iter().any(|text|text.contains("attributed matches") || text.contains("Your matches:")),
-        "hero pages do not compute machine-local match attribution");
+    let mut client = local_menu();
+    act(
+        &mut client,
+        Act::Go(Page::Hero(bota_proto::HeroId::SHADOW_FIEND)),
+    );
+    assert!(
+        !client
+            .shown_texts()
+            .iter()
+            .any(|text| text.contains("attributed matches") || text.contains("Your matches:")),
+        "hero pages do not compute machine-local match attribution"
+    );
 }
 
 #[test]
 fn a_served_profile_match_row_opens_match_details_without_leaving_the_profile() {
     use bevy::prelude::*;
-    let service=crate::main_menu::tests::service();
-    let played=crate::main_menu::tests::served_postmatch(&service);
-    let id=played.id;
-    let account=played.other;
-    let mut client=super::menu::signed_up(&service,"profile_match_reader");
-    client.world_mut().non_send_mut::<MenuCore>().inspect_player(
-        crate::main_menu::tests::profile_target(&service,account)).expect("configured matchmaker");
-    client.until("served match list",|client|crate::main_menu::tests::visitor_public_matches(client.world().non_send::<MenuCore>())
-        .is_some_and(|rows|rows.len()==1));
-    let name=format!("profile match public-{id}");
-    let world=client.world_mut();
-    assert!(world.query_filtered::<&Name,With<NativeButton>>().iter(world).any(|label|label.as_str()==name),
-        "a real public match is a clickable row");
+    let service = crate::main_menu::tests::service();
+    let played = crate::main_menu::tests::served_postmatch(&service);
+    let id = played.id;
+    let account = played.other;
+    let mut client = super::menu::signed_up(&service, "profile_match_reader");
+    client
+        .world_mut()
+        .non_send_mut::<MenuCore>()
+        .inspect_player(crate::main_menu::tests::profile_target(&service, account))
+        .expect("configured matchmaker");
+    client.until("served match list", |client| {
+        crate::main_menu::tests::visitor_public_matches(client.world().non_send::<MenuCore>())
+            .is_some_and(|rows| rows.len() == 1)
+    });
+    let name = format!("profile match public-{id}");
+    let world = client.world_mut();
+    assert!(
+        world
+            .query_filtered::<&Name, With<NativeButton>>()
+            .iter(world)
+            .any(|label| label.as_str() == name),
+        "a real public match is a clickable row"
+    );
     client.click_named(&name);
-    client.until("match details visible",|client|client.world().non_send::<crate::postgame::PostGame>().visible());
-    assert_eq!(client.world().non_send::<MenuCore>().page(),Page::PlayerProfile(account));
-    assert!(client.shown_texts().iter().any(|text|text.contains(&format!("Match {id}"))), "details identify the selected served match");
+    client.until("match details visible", |client| {
+        client
+            .world()
+            .non_send::<crate::postgame::PostGame>()
+            .visible()
+    });
+    assert_eq!(
+        client.world().non_send::<MenuCore>().page(),
+        Page::PlayerProfile(account)
+    );
+    assert!(
+        client
+            .shown_texts()
+            .iter()
+            .any(|text| text.contains(&format!("Match {id}"))),
+        "details identify the selected served match"
+    );
     client.click_named("results close");
-    assert_eq!(client.world().non_send::<MenuCore>().page(),Page::PlayerProfile(account));
-    assert!(!client.world().non_send::<crate::postgame::PostGame>().visible());
+    assert_eq!(
+        client.world().non_send::<MenuCore>().page(),
+        Page::PlayerProfile(account)
+    );
+    assert!(
+        !client
+            .world()
+            .non_send::<crate::postgame::PostGame>()
+            .visible()
+    );
 }
 
 #[test]
 fn a_players_profile_presents_one_uniform_scrollable_match_table() {
     use bevy::prelude::*;
-    let mut client=design_preview("profile");
-    let headings=["HERO PLAYED","RESULT","DATE / TIME","DURATION","TYPE"];
-    let world=client.world_mut();
-    let mut positions=Vec::new();
+    let mut client = design_preview("profile");
+    let headings = ["HERO PLAYED", "RESULT", "DATE / TIME", "DURATION", "TYPE"];
+    let world = client.world_mut();
+    let mut positions = Vec::new();
     for label in headings {
-        let (_,placed)=world.query::<(&Text,&UiGlobalTransform)>().iter(world)
-            .find(|(text,_)|text.as_str()==label).unwrap_or_else(||panic!("missing match table heading {label}"));
+        let (_, placed) = world
+            .query::<(&Text, &UiGlobalTransform)>()
+            .iter(world)
+            .find(|(text, _)| text.as_str() == label)
+            .unwrap_or_else(|| panic!("missing match table heading {label}"));
         positions.push(placed.translation.x);
     }
-    assert!(positions.windows(2).all(|pair|pair[0]<pair[1]),"the table columns follow the requested reading order");
-    let viewport=world.query::<(Entity,&Name)>().iter(world).find(|(_,name)|name.as_str()=="player matches scroll")
-        .expect("the match list owns its scroll viewport").0;
+    assert!(
+        positions.windows(2).all(|pair| pair[0] < pair[1]),
+        "the table columns follow the requested reading order"
+    );
+    let viewport = world
+        .query::<(Entity, &Name)>()
+        .iter(world)
+        .find(|(_, name)| name.as_str() == "player matches scroll")
+        .expect("the match list owns its scroll viewport")
+        .0;
     assert!(world.get::<ScrollPosition>(viewport).is_some());
-    assert!(world.query::<&Name>().iter(world).any(|name|name.as_str()=="player matches scroll thumb"),"the scrollbar is visible on the right");
-    let rows:Vec<_>=world.query::<(Entity,&Name,&ComputedNode)>().iter(world)
-        .filter(|(_,name,_)|name.as_str().starts_with("profile match ")).map(|(entity,_,node)|(entity,node.unrounded_size().y)).collect();
-    assert!(rows.len()>6,"the list is not restricted to the old six-card preview");
-    assert!(rows.iter().all(|(_,height)|(*height-rows[0].1).abs()<0.5),"every match row has the same height");
-    assert!(!world.query::<&Text>().iter(world).any(|text|text.as_str()=="MOST PLAYED"),"the match table uses the profile width");
+    assert!(
+        world
+            .query::<&Name>()
+            .iter(world)
+            .any(|name| name.as_str() == "player matches scroll thumb"),
+        "the scrollbar is visible on the right"
+    );
+    let rows: Vec<_> = world
+        .query::<(Entity, &Name, &ComputedNode)>()
+        .iter(world)
+        .filter(|(_, name, _)| name.as_str().starts_with("profile match "))
+        .map(|(entity, _, node)| (entity, node.unrounded_size().y))
+        .collect();
+    assert!(
+        rows.len() > 6,
+        "the list is not restricted to the old six-card preview"
+    );
+    assert!(
+        rows.iter()
+            .all(|(_, height)| (*height - rows[0].1).abs() < 0.5),
+        "every match row has the same height"
+    );
+    assert!(
+        !world
+            .query::<&Text>()
+            .iter(world)
+            .any(|text| text.as_str() == "MOST PLAYED"),
+        "the match table uses the profile width"
+    );
 }
 
 #[test]
 fn profile_match_table_headings_align_with_their_data_columns() {
     use bevy::prelude::*;
-    let mut client=design_preview("profile");
-    let world=client.world_mut();
-    let row=world.query::<(Entity,&Name)>().iter(world).find(|(_,name)|name.as_str()=="profile match preview-0.brp").expect("first row").0;
-    let columns:Vec<_>=world.get::<Children>(row).expect("row columns").iter().collect();
-    for (index,label) in ["HERO PLAYED","RESULT","DATE / TIME","DURATION","TYPE"].into_iter().enumerate() {
-        let header=world.query::<(&Text,&ChildOf)>().iter(world).find(|(text,_)|text.as_str()==label).expect("column header").1.parent();
-        let left=|entity| {
-            let node=world.get::<ComputedNode>(entity).expect("laid out column");
-            world.get::<UiGlobalTransform>(entity).expect("column position").translation.x-node.size().x/2.0
+    let mut client = design_preview("profile");
+    let world = client.world_mut();
+    let row = world
+        .query::<(Entity, &Name)>()
+        .iter(world)
+        .find(|(_, name)| name.as_str() == "profile match preview-0.brp")
+        .expect("first row")
+        .0;
+    let columns: Vec<_> = world
+        .get::<Children>(row)
+        .expect("row columns")
+        .iter()
+        .collect();
+    for (index, label) in ["HERO PLAYED", "RESULT", "DATE / TIME", "DURATION", "TYPE"]
+        .into_iter()
+        .enumerate()
+    {
+        let header = world
+            .query::<(&Text, &ChildOf)>()
+            .iter(world)
+            .find(|(text, _)| text.as_str() == label)
+            .expect("column header")
+            .1
+            .parent();
+        let left = |entity| {
+            let node = world.get::<ComputedNode>(entity).expect("laid out column");
+            world
+                .get::<UiGlobalTransform>(entity)
+                .expect("column position")
+                .translation
+                .x
+                - node.size().x / 2.0
         };
-        assert!((left(header)-left(columns[index])).abs()<=1.0,"{label} heading and cells share a column: heading={}, cell={}",left(header),left(columns[index]));
+        assert!(
+            (left(header) - left(columns[index])).abs() <= 1.0,
+            "{label} heading and cells share a column: heading={}, cell={}",
+            left(header),
+            left(columns[index])
+        );
     }
 }
 
 #[test]
 fn a_profile_match_row_uses_the_shared_hover_feedback() {
     use bevy::prelude::*;
-    let mut client=design_preview("profile");
-    client.mouse(Vec2::new(4.0,4.0));client.frames(3);
-    let world=client.world_mut();
-    let row=world.query::<(Entity,&Name)>().iter(world).find(|(_,name)|name.as_str()=="profile match preview-0.brp").expect("first row").0;
-    let fill=|client:&super::harness::Client|(
-        client.world().get::<BackgroundColor>(row).cloned(),
-        client.world().get::<BackgroundGradient>(row).cloned());
-    let before=fill(&client);
-    client.hover_ui(row,std::time::Duration::from_secs(10));client.frames(3);
-    assert_ne!(fill(&client),before,"the same palette feedback as other clickable rows is visible");
+    let mut client = design_preview("profile");
+    client.mouse(Vec2::new(4.0, 4.0));
+    client.frames(3);
+    let world = client.world_mut();
+    let row = world
+        .query::<(Entity, &Name)>()
+        .iter(world)
+        .find(|(_, name)| name.as_str() == "profile match preview-0.brp")
+        .expect("first row")
+        .0;
+    let fill = |client: &super::harness::Client| {
+        (
+            client.world().get::<BackgroundColor>(row).cloned(),
+            client.world().get::<BackgroundGradient>(row).cloned(),
+        )
+    };
+    let before = fill(&client);
+    client.hover_ui(row, std::time::Duration::from_secs(10));
+    client.frames(3);
+    assert_ne!(
+        fill(&client),
+        before,
+        "the same palette feedback as other clickable rows is visible"
+    );
 }
 
 #[test]
 fn the_profile_match_list_scrolls_by_wheel_and_by_dragging_its_thumb() {
-    use bevy::{prelude::*,input::{ButtonState,mouse::{MouseScrollUnit,MouseWheel}},window::PrimaryWindow};
-    let mut client=design_preview("profile");
-    let world=client.world_mut();
-    let viewport=world.query::<(Entity,&Name)>().iter(world).find(|(_,name)|name.as_str()=="player matches scroll").expect("viewport").0;
-    let thumb=world.query::<(Entity,&Name)>().iter(world).find(|(_,name)|name.as_str()=="player matches scroll thumb").expect("thumb").0;
-    let window=world.query_filtered::<Entity,With<PrimaryWindow>>().single(world).expect("window");
-    let centre=client.centre_of(viewport).expect("viewport position");
-    client.mouse(centre);client.frames(3);
-    let wheel=MouseWheel {phase:bevy::input::touch::TouchPhase::Moved,unit:MouseScrollUnit::Line,x:0.0,y:-4.0,window};
-    client.world_mut().write_message(bevy::window::WindowEvent::MouseWheel(wheel));
+    use bevy::{
+        input::{
+            ButtonState,
+            mouse::{MouseScrollUnit, MouseWheel},
+        },
+        prelude::*,
+        window::PrimaryWindow,
+    };
+    let mut client = design_preview("profile");
+    let world = client.world_mut();
+    let viewport = world
+        .query::<(Entity, &Name)>()
+        .iter(world)
+        .find(|(_, name)| name.as_str() == "player matches scroll")
+        .expect("viewport")
+        .0;
+    let thumb = world
+        .query::<(Entity, &Name)>()
+        .iter(world)
+        .find(|(_, name)| name.as_str() == "player matches scroll thumb")
+        .expect("thumb")
+        .0;
+    let window = world
+        .query_filtered::<Entity, With<PrimaryWindow>>()
+        .single(world)
+        .expect("window");
+    let centre = client.centre_of(viewport).expect("viewport position");
+    client.mouse(centre);
+    client.frames(3);
+    let wheel = MouseWheel {
+        phase: bevy::input::touch::TouchPhase::Moved,
+        unit: MouseScrollUnit::Line,
+        x: 0.0,
+        y: -4.0,
+        window,
+    };
+    client
+        .world_mut()
+        .write_message(bevy::window::WindowEvent::MouseWheel(wheel));
     client.world_mut().write_message(wheel);
     client.frames(4);
-    let before=client.world().get::<ScrollPosition>(viewport).expect("scroll").y;
-    assert!(before>0.0,"wheel input scrolls the actual match list");
-    let start=client.centre_of(thumb).expect("thumb position");
-    client.mouse(start);client.button(MouseButton::Left,ButtonState::Pressed);
-    client.mouse(start+Vec2::new(0.0,90.0));client.frames(3);
-    client.button(MouseButton::Left,ButtonState::Released);client.frames(3);
-    assert!(client.world().get::<ScrollPosition>(viewport).expect("scroll").y>before,"dragging the real scrollbar moves farther down the table");
+    let before = client
+        .world()
+        .get::<ScrollPosition>(viewport)
+        .expect("scroll")
+        .y;
+    assert!(before > 0.0, "wheel input scrolls the actual match list");
+    let start = client.centre_of(thumb).expect("thumb position");
+    client.mouse(start);
+    client.button(MouseButton::Left, ButtonState::Pressed);
+    client.mouse(start + Vec2::new(0.0, 90.0));
+    client.frames(3);
+    client.button(MouseButton::Left, ButtonState::Released);
+    client.frames(3);
+    assert!(
+        client
+            .world()
+            .get::<ScrollPosition>(viewport)
+            .expect("scroll")
+            .y
+            > before,
+        "dragging the real scrollbar moves farther down the table"
+    );
 }

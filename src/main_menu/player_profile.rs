@@ -157,11 +157,24 @@ impl Reader {
                 visit.stage = Part::Matches;
             }
             (Part::Matches, Reply::Matches { list }) => {
-                visit.results = list.into_iter().take(MAX_MATCHES)
-                    .filter(|result| result.seats.iter().any(|seat|seat.account.0 == visit.target.account))
+                visit.results = list
+                    .into_iter()
+                    .take(MAX_MATCHES)
+                    .filter(|result| {
+                        result
+                            .seats
+                            .iter()
+                            .any(|seat| seat.account.0 == visit.target.account)
+                    })
                     .collect();
-                visit.matches = Arc::new(visit.results.iter().cloned()
-                    .map(|result| public_match(result,visit.target.account)).collect());
+                visit.matches = Arc::new(
+                    visit
+                        .results
+                        .iter()
+                        .cloned()
+                        .map(|result| public_match(result, visit.target.account))
+                        .collect(),
+                );
                 visit.stage = if visit.avatar_version.is_some() {
                     Part::Avatar
                 } else {
@@ -335,14 +348,20 @@ impl MenuCore {
     }
     pub(super) fn public_profile_result(&self, key: &str) -> Option<&MatchResult> {
         let id = key.strip_prefix("public-")?.parse::<u64>().ok()?;
-        self.profiles.visit.as_ref().into_iter().flat_map(|visit|&visit.results)
-            .chain(&self.history).find(|result|result.match_id.0 == id)
+        self.profiles
+            .visit
+            .as_ref()
+            .into_iter()
+            .flat_map(|visit| &visit.results)
+            .chain(&self.history)
+            .find(|result| result.match_id.0 == id)
     }
     pub(super) fn visitor_view(&self) -> PageView {
         let visit = self.profiles.visit.as_ref();
-        let matches=visit.map_or_else(||Arc::new(Vec::new()),|visit|Arc::clone(&visit.matches));
+        let matches =
+            visit.map_or_else(|| Arc::new(Vec::new()), |visit| Arc::clone(&visit.matches));
         PageView::Profile {
-            mode_names:self.profile_mode_names(),
+            mode_names: self.profile_mode_names(),
             name: visit.map_or_else(|| "Profile unavailable".into(), |visit| visit.name.clone()),
             ratings: visit.map_or_else(Vec::new, |visit| visit.ratings.clone()),
             avatar: visit.map_or_else(Default::default, |visit| visit.avatar.clone()),

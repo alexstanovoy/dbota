@@ -21,8 +21,13 @@ impl MenuCore {
             context.history = true;
             context.replay = self.result_replay(result.match_id.0);
             let summary = MatchSummary {
-                detail: Detail::Stats, winner: winner(result.outcome), seconds: result.duration_ms / 1000,
-                rows: Vec::new(), points: Vec::new(), structures: Vec::new(), recording: None,
+                detail: Detail::Stats,
+                winner: winner(result.outcome),
+                seconds: result.duration_ms / 1000,
+                rows: Vec::new(),
+                points: Vec::new(),
+                structures: Vec::new(),
+                recording: None,
             };
             self.result_request = Some(View::new(Arc::new(summary), context));
             return;

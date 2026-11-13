@@ -19,7 +19,10 @@ pub fn present(
 ) {
     if let Some(core) = core.as_mut() {
         let inspecting = matches!(core.page(), crate::main_menu::Page::PlayerProfile(_))
-            || post.overlay.as_ref().is_some_and(|view| view.context.history);
+            || post
+                .overlay
+                .as_ref()
+                .is_some_and(|view| view.context.history);
         if let Some(view) = core.take_result_request(inspecting) {
             if !view.context.history {
                 post.closed = false;

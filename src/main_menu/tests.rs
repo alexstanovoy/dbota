@@ -3263,7 +3263,7 @@ pub(crate) fn registered_public_profile(service: &Service) -> (u64, String) {
     identity
 }
 
-fn upload_profile_avatar(menu:&mut MenuCore) {
+fn upload_profile_avatar(menu: &mut MenuCore) {
     // A solid PNG is protocol input for a user-uploaded avatar.
     let png = vec![
         137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82, 0, 0, 0, 32, 0, 0, 0, 32, 8,
@@ -3305,14 +3305,21 @@ fn upload_profile_avatar(menu:&mut MenuCore) {
     );
 }
 
-pub(crate) fn served_leaderboard_profile(service:&Service)->(u64,String) {
-    for name in ["unranked_one","unranked_two"] {
-        let mut player=Player::new(Some(service));player.register(name);
+pub(crate) fn served_leaderboard_profile(service: &Service) -> (u64, String) {
+    for name in ["unranked_one", "unranked_two"] {
+        let mut player = Player::new(Some(service));
+        player.register(name);
     }
-    let mut played=served_postmatch(service);
+    let mut played = served_postmatch(service);
     upload_profile_avatar(&mut played.menu);
-    let me=played.menu.client.as_ref().expect("client").me().expect("account");
-    (me.id.0,format!("{}#{}",me.nickname,me.id.0))
+    let me = played
+        .menu
+        .client
+        .as_ref()
+        .expect("client")
+        .me()
+        .expect("account");
+    (me.id.0, format!("{}#{}", me.nickname, me.id.0))
 }
 
 pub(crate) fn own_cached_profile_id(core: &MenuCore) -> Option<u64> {
@@ -3425,9 +3432,12 @@ pub(crate) struct ServedPostmatch {
 
 /// Real registration, proposal, launcher, game sockets, permanent departure and served outcome.
 pub(crate) fn served_postmatch(service: &Service) -> ServedPostmatch {
-    served_postmatch_visibility(service,false)
+    served_postmatch_visibility(service, false)
 }
-pub(crate) fn served_postmatch_visibility(service:&Service, hidden_opponent:bool)->ServedPostmatch {
+pub(crate) fn served_postmatch_visibility(
+    service: &Service,
+    hidden_opponent: bool,
+) -> ServedPostmatch {
     let (mut left, mut right) = (Player::new(Some(service)), Player::new(Some(service)));
     left.register("live_viewer");
     right.register("served_opponent");
@@ -3441,11 +3451,15 @@ pub(crate) fn served_postmatch_visibility(service:&Service, hidden_opponent:bool
     let other = me.id.0;
     let other_name = format!("{}#{}", me.nickname, other);
     if hidden_opponent {
-        let script="import sqlite3,sys; c=sqlite3.connect(sys.argv[1]); c.execute(\"INSERT INTO ratings(account,ruleset,rating,deviation,volatility,games,wins,draws,losses,last_played,kind,hidden) VALUES(?,'solo_mid',1500,350,0.06,1,0,0,1,1,0,1) ON CONFLICT(account,ruleset) DO UPDATE SET hidden=1\",(int(sys.argv[2]),)); c.execute(\"UPDATE ratings SET hidden=1 WHERE account=?\",(int(sys.argv[2]),)); assert c.execute(\"SELECT COUNT(*) FROM ratings WHERE account=? AND hidden=1 AND games>0\",(int(sys.argv[2]),)).fetchone()[0]==1; c.commit()";
-        let status=std::process::Command::new("python3").args(["-c",script])
-            .arg(service._dir.0.join("radovid.db")).arg(other.to_string()).status().expect("fixture visibility");
+        let script = "import sqlite3,sys; c=sqlite3.connect(sys.argv[1]); c.execute(\"INSERT INTO ratings(account,ruleset,rating,deviation,volatility,games,wins,draws,losses,last_played,kind,hidden) VALUES(?,'solo_mid',1500,350,0.06,1,0,0,1,1,0,1) ON CONFLICT(account,ruleset) DO UPDATE SET hidden=1\",(int(sys.argv[2]),)); c.execute(\"UPDATE ratings SET hidden=1 WHERE account=?\",(int(sys.argv[2]),)); assert c.execute(\"SELECT COUNT(*) FROM ratings WHERE account=? AND hidden=1 AND games>0\",(int(sys.argv[2]),)).fetchone()[0]==1; c.commit()";
+        let status = std::process::Command::new("python3")
+            .args(["-c", script])
+            .arg(service._dir.0.join("radovid.db"))
+            .arg(other.to_string())
+            .status()
+            .expect("fixture visibility");
         assert!(status.success());
-        use_declared_public_fixture_identity(&mut left.menu,service);
+        use_declared_public_fixture_identity(&mut left.menu, service);
     }
     left.menu.act(Act::Find(solo()));
     right.menu.act(Act::Find(solo()));
@@ -3556,6 +3570,13 @@ pub(crate) fn profile_target(service: &Service, account: u64) -> super::player_p
     }
 }
 
-pub(crate) fn rank_in_served_board(menu:&MenuCore,account:u64)->u64 {
-    u64::from(menu.board.rows.iter().find(|row|row.account==account).expect("served row").rank)
+pub(crate) fn rank_in_served_board(menu: &MenuCore, account: u64) -> u64 {
+    u64::from(
+        menu.board
+            .rows
+            .iter()
+            .find(|row| row.account == account)
+            .expect("served row")
+            .rank,
+    )
 }

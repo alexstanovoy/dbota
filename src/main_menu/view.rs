@@ -309,7 +309,7 @@ pub enum PageView {
         read_only: bool,
         notice: Option<String>,
         avatar: super::avatar::View,
-        mode_names: Vec<(String,String)>,
+        mode_names: Vec<(String, String)>,
         matches: std::sync::Arc<Vec<super::history::Match>>,
     },
     /// The open lobbies (all, or those the search found), and the fields to make one and to
@@ -814,7 +814,10 @@ impl MenuCore {
             for result in &self.history {
                 let key = super::local_matches::service_key(&self.prefs.service, result.match_id.0);
                 if !matches.iter().any(|row| row.file == key) {
-                    matches.push(super::player_profile::public_match(result.clone(), account.0));
+                    matches.push(super::player_profile::public_match(
+                        result.clone(),
+                        account.0,
+                    ));
                 }
             }
         }
@@ -831,8 +834,11 @@ impl MenuCore {
         }
     }
 
-    pub(super) fn profile_mode_names(&self)->Vec<(String,String)> {
-        self.menu_rulesets().take(64).map(|mode|(mode.id.0.clone(),text::line(&mode.name,text::NAME))).collect()
+    pub(super) fn profile_mode_names(&self) -> Vec<(String, String)> {
+        self.menu_rulesets()
+            .take(64)
+            .map(|mode| (mode.id.0.clone(), text::line(&mode.name, text::NAME)))
+            .collect()
     }
 
     fn result_view(&self, result: &MatchResult) -> ResultView {

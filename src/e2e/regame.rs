@@ -411,7 +411,9 @@ fn pick(client: &mut Client) {
 }
 
 fn open_replay_file(client: &mut Client, path: &std::path::Path) {
-    client.world_mut().non_send_mut::<MenuCore>()
+    client
+        .world_mut()
+        .non_send_mut::<MenuCore>()
         .watch_result(crate::postgame::view::Replay::File(path.to_owned()))
         .expect("open replay through the player");
     client.frames(3);

@@ -858,8 +858,7 @@ fn replays_page(
     kit.bold(column, "REPLAYS", 30.0, theme::INK_1);
     let (note, colour) = if !shelf.store {
         (
-            "This browser keeps no replays for the page."
-                .to_owned(),
+            "This browser keeps no replays for the page.".to_owned(),
             theme::GOLD,
         )
     } else if !shelf.keeping {
@@ -897,7 +896,6 @@ fn replays_page(
     for replay in list {
         replay_row(kit, column, replay);
     }
-
 }
 
 /// What a replay's row says of where it was played.

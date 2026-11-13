@@ -201,9 +201,14 @@ fn the_server_file_the_trailer_and_the_recorder_agree() {
         .expect("the records");
     assert_eq!(carried, written);
     let written_meta = bota_replay::meta::decode(&written).expect("metadata");
-    assert!(written_meta.profiles().is_none(),
-        "a launch without a matchmaker or accounts writes no provenance record");
-    assert_eq!(worked,written,"the pure replay recorder agrees with the complete server sidecar");
+    assert!(
+        written_meta.profiles().is_none(),
+        "a launch without a matchmaker or accounts writes no provenance record"
+    );
+    assert_eq!(
+        worked, written,
+        "the pure replay recorder agrees with the complete server sidecar"
+    );
     assert_eq!(rebuilt, written);
 }
 

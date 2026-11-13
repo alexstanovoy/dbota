@@ -157,27 +157,71 @@ fn notice_panel(kit: &mut Kit, parent: Entity, notice: &str) {
     kit.commands
         .entity(shade)
         .insert((Pickable::default(), crate::hud::Blocker, ZIndex(20)));
-    kit.commands.entity(shade).entry::<Node>().and_modify(|mut node| {
-        node.align_items=AlignItems::Center;
-        node.justify_content=JustifyContent::Center;
-    });
+    kit.commands
+        .entity(shade)
+        .entry::<Node>()
+        .and_modify(|mut node| {
+            node.align_items = AlignItems::Center;
+            node.justify_content = JustifyContent::Center;
+        });
     let panel = rect(
-        kit,shade,
+        kit,
+        shade,
         Node {
-            width:px(1100),max_width:percent(95),
-            padding:UiRect::axes(px(22),px(20)),
-            flex_direction:FlexDirection::Column,row_gap:px(20),
-            border:UiRect::all(px(1)),..default()
-        },PANEL_DARK,
+            width: px(1100),
+            max_width: percent(95),
+            padding: UiRect::axes(px(22), px(20)),
+            flex_direction: FlexDirection::Column,
+            row_gap: px(20),
+            border: UiRect::all(px(1)),
+            ..default()
+        },
+        PANEL_DARK,
     );
     kit.commands.entity(panel).insert((
         BorderColor::all(EDGE),
-        bevy::input_focus::tab_navigation::TabGroup{order:1,modal:true},
+        bevy::input_focus::tab_navigation::TabGroup {
+            order: 1,
+            modal: true,
+        },
     ));
-    let text=words(kit,panel,notice,Node{width:percent(100),flex_shrink:0.0,..default()},body(13.0),theme::INK_1);
-    kit.commands.entity(text).insert(TextLayout::new(Justify::Left,bevy::text::LineBreak::AnyCharacter));
-    let row=kit.node(panel,Node{width:percent(100),height:px(40),justify_content:JustifyContent::End,..default()});
-    let dismiss=word_button(kit,row,"DISMISS",Node{width:px(148),height:px(40),..default()},Action::Dismiss,false);
+    let text = words(
+        kit,
+        panel,
+        notice,
+        Node {
+            width: percent(100),
+            flex_shrink: 0.0,
+            ..default()
+        },
+        body(13.0),
+        theme::INK_1,
+    );
+    kit.commands.entity(text).insert(TextLayout::new(
+        Justify::Left,
+        bevy::text::LineBreak::AnyCharacter,
+    ));
+    let row = kit.node(
+        panel,
+        Node {
+            width: percent(100),
+            height: px(40),
+            justify_content: JustifyContent::End,
+            ..default()
+        },
+    );
+    let dismiss = word_button(
+        kit,
+        row,
+        "DISMISS",
+        Node {
+            width: px(148),
+            height: px(40),
+            ..default()
+        },
+        Action::Dismiss,
+        false,
+    );
     kit.commands.entity(dismiss).insert((
         Name::new("results dismiss"),
         Outline {

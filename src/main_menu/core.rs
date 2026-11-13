@@ -2042,7 +2042,10 @@ impl MenuCore {
                 self.ask(ClientMsg::MyMatches, Asked::Other);
                 self.ask_history();
             }
-            Page::Profile => { self.ask_profile(); self.ask_history(); },
+            Page::Profile => {
+                self.ask_profile();
+                self.ask_history();
+            }
             Page::Leaderboard => self.open_leaderboard(),
             Page::Lobbies => self.ask(ClientMsg::LobbyList, Asked::Other),
             Page::Replays => self.read_summaries(),
