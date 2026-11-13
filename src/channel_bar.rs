@@ -1,16 +1,20 @@
 //! Dota's channel bar (`dota_hud_channelbar`): while one's hero channels an ability that runs a
-//! known time (a Watcher lit or put out, an Outpost captured), the ability's round icon and a
-//! bar that fills with the channel, above the hero's panel at the bottom of the screen. A
+//! known time (a Watcher lit or put out, an Outpost captured, a Twin Gate), the ability's round icon
+//! and a bar that fills with the channel, above the hero's panel at the bottom of the screen, with
+//! the time left written in it (`DOTA_Hud_ChannelBar`: "Channeling {s:seconds_left}", centred in the
+//! well, white with a shadow). The time is the simulation's: the ticks the channel has run (the
+//! unit's [`bota_proto::ChannelView`]) and the client's interpolated clock between two snapshots, so
+//! a channel cancelled is gone at once, and a replay at any speed counts as its snapshots come. A
 //! teleport has its own bar over the hero (see `bars`).
 
 use bevy::prelude::*;
 use bota_client_core::App as Core;
 use bota_proto::AbilityId;
 
-use crate::anim::Channels;
+use crate::dota_text::Texts;
 use crate::manifest::Manifest;
 use crate::session::{MatchKnown, Session};
-use crate::ui::dota;
+use crate::ui::{self, Fonts, dota};
 
 /// The sizes of the bar in Dota's pixels: the icon's disc and where it stands, and the well of
 /// the bar, its border and where it starts (Dota's `#ChannelbarContainer` is 380 wide with a
@@ -26,24 +30,16 @@ const WELL_LEFT: f32 = 70.0;
 const BOTTOM: f32 = 250.0;
 const WELL_BORDER: f32 = 2.0;
 const WELL_COLOUR: Color = Color::srgba(0.0, 0.0, 0.0, 0.933);
-
-/// The channel in the bar: the ability and the tick it began on.
-#[derive(Resource, Default)]
-struct Running(Option<(AbilityId, u32)>);
+/// The label's size, Dota's default label size (`#ChannelBarLabel` sets none).
+const LABEL_SIZE: f32 = 18.0;
 
 pub fn plugin(app: &mut App) {
-    app.init_resource::<Running>()
-        .add_systems(First, reset.in_set(crate::loading::Begin))
+    app.add_systems(First, reset.in_set(crate::loading::Begin))
         .add_systems(Startup, spawn)
-        .add_systems(
-            PostUpdate,
-            show.after(crate::anim::NoteChannels)
-                .run_if(|known: Res<MatchKnown>| known.0),
-        );
+        .add_systems(PostUpdate, show.run_if(|known: Res<MatchKnown>| known.0));
 }
 
-fn reset(mut running: ResMut<Running>, mut bars: Query<&mut Visibility, With<ChannelBar>>) {
-    *running = Running::default();
+fn reset(mut bars: Query<&mut Visibility, With<ChannelBar>>) {
     for mut bar in &mut bars {
         *bar = Visibility::Hidden;
     }
@@ -61,7 +57,11 @@ struct ChannelIcon;
 #[derive(Component)]
 pub struct ChannelFill;
 
-fn spawn(mut commands: Commands) {
+/// The words in the bar's well: "Channeling" and the seconds left.
+#[derive(Component)]
+pub struct ChannelLabel;
+
+fn spawn(mut commands: Commands, fonts: Res<Fonts>) {
     let bar = commands
         .spawn((
             ChannelBar,
@@ -122,6 +122,22 @@ fn spawn(mut commands: Commands) {
         ChildOf(well),
     ));
     commands.spawn((
+        ChannelLabel,
+        Node {
+            position_type: PositionType::Absolute,
+            width: percent(100),
+            height: percent(100),
+            justify_content: JustifyContent::Center,
+            align_items: AlignItems::Center,
+            ..default()
+        },
+        ui::text("", &fonts.bold, LABEL_SIZE * ui::DOTA, Color::WHITE),
+        ui::shadow(),
+        TextLayout::justify(Justify::Center),
+        Pickable::IGNORE,
+        ChildOf(well),
+    ));
+    commands.spawn((
         ChannelIcon,
         Node {
             position_type: PositionType::Absolute,
@@ -140,42 +156,48 @@ fn spawn(mut commands: Commands) {
     ));
 }
 
-/// The channel of one's hero that the bar shows, with how far it has run (0 to 1).
-fn channel(core: &Core, channels: &Channels, running: &mut Running) -> Option<(AbilityId, f32)> {
-    let view = core.view()?;
+/// The channel of one's hero that the bar shows: its ability and how far it has run, in ticks and
+/// in all (the simulation's count of ticks run, and the clock's share of the tick under way).
+fn channel(core: &Core) -> Option<(AbilityId, f32, u32)> {
     let hero = core.my_hero()?;
-    let ability = channels.of(hero);
-    // The bar is of the ability channelled, from the tick it was first seen under way.
-    running.0 = match (ability, running.0) {
-        (Some(id), Some((was, began))) if was == id => Some((id, began)),
-        (Some(id), _) => Some((id, view.tick)),
-        (None, _) => None,
-    };
-    let (id, began) = running.0?;
-    let ticks = bota_core::ability_def(id)?.duration;
+    let (unit, _) = core.known(hero)?;
+    let channel = unit.channel?;
+    let ticks = bota_core::ability_def(channel.ability)?.duration;
     (ticks > 0).then(|| {
-        let ran = view.tick.saturating_sub(began) as f32 + core.smooth.alpha();
-        (id, (ran / ticks as f32).clamp(0.0, 1.0))
+        let ran = channel.elapsed as f32 + core.smooth.alpha();
+        (channel.ability, ran.min(ticks as f32), ticks)
     })
+}
+
+/// The label's words: Dota's `DOTA_Hud_ChannelBar` where the cache has it, its English otherwise,
+/// the seconds left to a tenth.
+fn words(texts: Option<&Texts>, seconds_left: f32) -> String {
+    let left = format!("{:.1}", seconds_left.max(0.0));
+    texts
+        .and_then(|texts| texts.label("DOTA_Hud_ChannelBar", &[("seconds_left", left.clone())]))
+        .unwrap_or_else(|| format!("Channeling {left}"))
 }
 
 fn show(
     session: NonSend<Session>,
-    channels: Res<Channels>,
     manifest: Res<Manifest>,
     server: Res<AssetServer>,
-    mut running: ResMut<Running>,
+    texts: Option<Res<Texts>>,
     mut icon_of: Local<Option<AbilityId>>,
     mut bar: Single<&mut Visibility, With<ChannelBar>>,
     mut fill: Single<&mut Node, With<ChannelFill>>,
     mut icon: Single<&mut ImageNode, With<ChannelIcon>>,
+    mut label: Single<&mut Text, With<ChannelLabel>>,
 ) {
-    let shown = channel(&session.0, &channels, &mut running);
+    let core = &session.0;
+    let shown = channel(core);
     bar.set_if_neq(crate::ui::visible(shown.is_some()));
-    let Some((ability, share)) = shown else {
+    let Some((ability, ran, ticks)) = shown else {
         return;
     };
-    fill.width = percent(share * 100.0);
+    fill.width = percent(ran / ticks as f32 * 100.0);
+    let seconds_left = (ticks as f32 - ran) / f32::from(core.tick_rate().max(1));
+    label.set_if_neq(Text(words(texts.as_deref(), seconds_left)));
     if *icon_of != Some(ability) {
         *icon_of = Some(ability);
         if let Some(path) = manifest.ability_icon(ability.0) {

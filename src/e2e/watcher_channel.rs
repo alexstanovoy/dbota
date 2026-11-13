@@ -51,6 +51,7 @@ fn bar(client: &mut Client) -> (bool, f32) {
 fn a_watcher_channels_in_its_animation_and_the_bar_shows_the_channel_near_the_bottom() {
     let server = Server::start(1, &["--map", "0", "--objectives", "watchers"]);
     let mut client = Client::join(&server, HeroId::SHADOW_FIEND, &[]);
+    super::hud_layout::on_screen(&mut client);
     client.cheat(Cheat::StartGame);
     let at = bota_core::DOTA_WATCHERS[4];
     client.stand_at((at.x.to_int() + 100, at.y.to_int()));
@@ -256,4 +257,123 @@ fn a_teleport_keeps_its_own_bar_and_shows_none_in_the_middle_of_the_screen() {
     );
     client.frames(3);
     assert!(!bar(&mut client).0, "the teleport has no bar in the middle");
+}
+
+/// The bar's label: its text and its box in the window's pixels, and the bar's box.
+fn label(client: &mut Client) -> (String, Rect, Rect) {
+    use crate::channel_bar::ChannelLabel;
+    let world = client.world_mut();
+    let (text, node, at) = world
+        .query_filtered::<(&Text, &bevy::ui::ComputedNode, &bevy::ui::UiGlobalTransform), With<ChannelLabel>>()
+        .single(world)
+        .map(|(text, node, at)| (text.0.clone(), *node, *at))
+        .expect("the channel bar's label");
+    let (bar_node, bar_at) = world
+        .query_filtered::<(&bevy::ui::ComputedNode, &bevy::ui::UiGlobalTransform), With<ChannelBar>>()
+        .single(world)
+        .map(|(node, at)| (*node, *at))
+        .expect("the channel bar");
+    (
+        text,
+        Rect::from_center_size(at.translation, node.size()),
+        Rect::from_center_size(bar_at.translation, bar_node.size()),
+    )
+}
+
+/// One's hero channelling at the Watcher with the bar drawn.
+fn channelling_at_a_watcher() -> (Server, Client) {
+    let server = Server::start(1, &["--map", "0", "--objectives", "watchers"]);
+    let mut client = Client::join(&server, HeroId::SHADOW_FIEND, &[]);
+    super::hud_layout::on_screen(&mut client);
+    client.cheat(Cheat::StartGame);
+    let at = bota_core::DOTA_WATCHERS[4];
+    client.stand_at((at.x.to_int() + 100, at.y.to_int()));
+    let watcher = client
+        .view()
+        .units
+        .iter()
+        .find(|u| u.kind == UnitKind::Watcher && u.pos == at)
+        .expect("the watcher")
+        .id;
+    client.core_mut().act(Intent::Smart {
+        at: (at.x.to_f32(), at.y.to_f32()),
+        unit: Some(watcher),
+    });
+    client.within(
+        std::time::Duration::from_secs(30),
+        "the channel under way, drawn",
+        |c| channelling(c) && bar(c).0,
+    );
+    (server, client)
+}
+
+/// The seconds the simulation says are left of one's channel now, as the bar's clock has it.
+fn seconds_left(client: &Client) -> Option<f32> {
+    let core = client.core();
+    let hero = core.my_hero()?;
+    let channel = core.known(hero)?.0.channel?;
+    let ticks = bota_core::ability_def(channel.ability)?.duration;
+    let ran = channel.elapsed as f32 + core.smooth.alpha();
+    Some((ticks as f32 - ran) / f32::from(core.tick_rate()))
+}
+
+#[test]
+fn the_channel_bar_says_channeling_inside_its_well() {
+    let (_server, mut client) = channelling_at_a_watcher();
+    client.frames(2);
+    let (text, label, bar) = label(&mut client);
+    assert!(text.starts_with("Channeling "), "the words: {text:?}");
+    assert!(
+        label.min.x >= bar.min.x && label.max.x <= bar.max.x,
+        "the label {label:?} lies within the bar {bar:?} across"
+    );
+    assert!(
+        label.min.y >= bar.min.y && label.max.y <= bar.max.y,
+        "the label {label:?} lies within the bar {bar:?} down"
+    );
+    assert!(
+        (label.center().y - bar.center().y).abs() < 1.5,
+        "the label is in the middle of the well's height"
+    );
+}
+
+#[test]
+fn the_label_tells_the_time_the_simulation_leaves_at_three_moments_of_the_channel() {
+    let (_server, mut client) = channelling_at_a_watcher();
+    let mut seen = Vec::new();
+    for _ in 0..3 {
+        client.frames(5);
+        let Some(left) = seconds_left(&client) else {
+            break;
+        };
+        let (text, ..) = label(&mut client);
+        let shown: f32 = text
+            .strip_prefix("Channeling ")
+            .and_then(|figure| figure.parse().ok())
+            .unwrap_or_else(|| panic!("a figure after the words: {text:?}"));
+        // The figure is rounded to a tenth; a frame may take the clock on by a tick.
+        let tick = 1.0 / f32::from(client.core().tick_rate());
+        assert!(
+            (shown - left).abs() <= 0.05 + tick,
+            "the label says {shown} s, the simulation leaves {left} s"
+        );
+        seen.push(shown);
+    }
+    assert_eq!(seen.len(), 3, "three moments of the channel were sampled");
+    assert!(
+        seen.windows(2).all(|pair| pair[0] > pair[1]),
+        "the time left counts down: {seen:?}"
+    );
+}
+
+#[test]
+fn a_cancelled_channel_takes_its_label_with_it() {
+    let (_server, mut client) = channelling_at_a_watcher();
+    client.core_mut().act(Intent::Stop);
+    client.until("the bar gone", |c| !bar(c).0);
+    let (text, ..) = label(&mut client);
+    assert!(
+        !bar(&mut client).0 && !channelling(&client),
+        "the channel is over and the bar hidden, whatever its last words {text:?}"
+    );
 }

@@ -116,11 +116,6 @@ impl Pose {
 pub struct Channels(HashMap<EntityId, AbilityId>);
 
 impl Channels {
-    /// The ability a unit is channelling.
-    pub fn of(&self, unit: EntityId) -> Option<AbilityId> {
-        self.0.get(&unit).copied()
-    }
-
     /// The map objectives heroes channel at (an Outpost captured, a Watcher lit): the wire
     /// tells a cast's caster but not its target, so each hero channelling the ability an
     /// objective's kind is worked with is taken to be at the nearest objective of that kind
