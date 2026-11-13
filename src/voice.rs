@@ -298,7 +298,13 @@ fn announce(
     }
     let core = &session.0;
     let silent = settings.muted || args.mute;
-    if core.phase == Phase::Lobby && core.my_slot.is_some() && !heard.asked {
+    // "Choose your hero" is the selection's own: it sounds as the selection clock starts, not as a
+    // seat is taken (which happens while the match still loads).
+    if core.phase == Phase::Lobby
+        && core.my_slot.is_some()
+        && matches!(core.lobby.pick, bota_proto::PickPhase::Selecting { .. })
+        && !heard.asked
+    {
         heard.asked = true;
         if !silent {
             let source = voices.choose.take();

@@ -36,6 +36,10 @@ const HOVER: &[(bota_proto::HeroId, f32)] = &[(bota_proto::HeroId::SHADOW_FIEND,
 
 #[derive(Component)]
 pub(crate) struct HeroImage(bota_proto::HeroId);
+/// Marks the hero's picture a screen in front of the menu shows (the strategy screen's): the
+/// stage renders its hero, not the hidden menu page's.
+#[derive(Component)]
+pub(crate) struct Front;
 #[derive(Component)]
 pub(crate) struct ContactShadow;
 #[derive(Component)]
@@ -146,14 +150,18 @@ fn select(
     mut commands: Commands,
     mut stage: ResMut<HeroStage>,
     mut images: ResMut<Assets<Image>>,
-    mut nodes: Query<(&HeroImage, &mut ImageNode, &mut Visibility)>,
+    mut nodes: Query<(&HeroImage, &mut ImageNode, &mut Visibility, Has<Front>)>,
     mut shadows: Query<&mut Visibility, (With<ContactShadow>, Without<HeroImage>)>,
     mut bank: ResMut<ModelBank>,
     manifest: Res<Manifest>,
     server: Res<AssetServer>,
     cameras: Query<Entity, With<StageEntity>>,
 ) {
-    let hero = nodes.iter().next().map(|(hero, ..)| hero.0);
+    let hero = nodes
+        .iter()
+        .find(|(.., front)| *front)
+        .or_else(|| nodes.iter().next())
+        .map(|(hero, ..)| hero.0);
     if hero != stage.hero || hero.is_none() {
         if let Some(actor) = stage.actor.take() {
             commands.entity(actor.pivot).despawn();
@@ -174,7 +182,7 @@ fn select(
             bank.request(&format!("hero.{name}.model"), &server, &manifest)
         });
     }
-    for (_, mut node, mut shown) in &mut nodes {
+    for (_, mut node, mut shown, _) in &mut nodes {
         shown.set_if_neq(crate::ui::visible(stage.ready()));
         if node.image != stage.image {
             node.image = stage.image.clone();
@@ -661,4 +669,65 @@ impl ModelGeometry<'_, '_> {
         }
         (point_bounds(&points).1.y > 1e-3).then_some(points)
     }
+}
+
+/// Where a hero stands on a screen: the middle of its feet across the screen as a share of its
+/// width, the line its feet stand on and its height, in interface pixels.
+pub(crate) struct Stand {
+    pub middle: f32,
+    pub feet: f32,
+    pub height: f32,
+}
+
+/// Puts the stage's hero on a screen of its own, standing as `stand` says, in front of the
+/// menu's pages: the picture the stage renders, and the shadow under it. The picture's frame is
+/// the stage's ([`SIZE`]) scaled so that the hero is as tall as asked.
+pub(crate) fn stand(
+    commands: &mut Commands,
+    root: Entity,
+    hero: bota_proto::HeroId,
+    stand: &Stand,
+) {
+    let scale = stand.height / HEIGHT;
+    let hover = HOVER
+        .iter()
+        .find(|(h, _)| *h == hero)
+        .map_or(0.0, |(_, hover)| *hover);
+    let top = stand.feet - (GROUND - TOP - hover) * scale;
+    let (width, height) = (SIZE.0 as f32 * scale, SIZE.1 as f32 * scale);
+    let left = |across: f32| Node {
+        position_type: PositionType::Absolute,
+        left: percent(stand.middle * 100.0),
+        margin: UiRect::left(px(-across / 2.0)),
+        ..default()
+    };
+    commands.spawn((
+        ContactShadow,
+        Node {
+            top: px(top + (GROUND - 24.0 - TOP - hover) * scale),
+            width: px(220.0 * scale),
+            height: px(48.0 * scale),
+            ..left(220.0 * scale)
+        },
+        crate::theme::hero_contact_shadow(),
+        Pickable::IGNORE,
+        Visibility::Hidden,
+        Name::new("strategy hero shadow"),
+        ChildOf(root),
+    ));
+    commands.spawn((
+        HeroImage(hero),
+        Front,
+        ImageNode::default(),
+        Node {
+            top: px(top),
+            width: px(width),
+            height: px(height),
+            ..left(width)
+        },
+        Pickable::IGNORE,
+        Visibility::Hidden,
+        Name::new("strategy hero"),
+        ChildOf(root),
+    ));
 }

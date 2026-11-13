@@ -414,6 +414,22 @@ tests = [
 ]
 
 [[group]]
+name = "client_pregame"
+about = "the hero pick and strategy screens: the layout measured from the reference screenshots, hovering, choosing, LOCK IN and RANDOM against a real server, the countdown, the seats, the forced pick and the announcer's line"
+paths = [
+    "src/select.rs",
+    "src/pregame/**",
+    "src/e2e/pregame_choose.rs",
+    "src/e2e/pregame_layout.rs",
+]
+tests = [
+    { package = "dbota", target = "bin:dbota", filters = [
+        "e2e::pregame_choose::",
+        "e2e::pregame_layout::",
+    ] },
+]
+
+[[group]]
 name = "client_world"
 about = "units, animation, the camera, picking, runes and the watchers of the match"
 paths = [
@@ -437,7 +453,6 @@ paths = [
     "src/map_props.rs",
     "src/coords.rs",
     "src/capture.rs",
-    "src/select.rs",
     "src/heap.rs",
     "src/layers.rs",
     "src/overlay.rs",

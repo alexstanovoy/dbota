@@ -1,40 +1,44 @@
-//! The tactical phase as Dota's strategy screen (`#StrategyScreen` of the
-//! install's `dota_hud_pregame` layout, at its sizes for a 1080-line
-//! screen): along the top every seat's hero and the clock over STRATEGY
-//! TIME; at the left the hero one enters battle as, its name and abilities;
-//! at the right STARTING ITEMS, the gold that remains, the inventory as the
-//! choices fill it, and the shop's basic items to buy. What is bought here is
-//! bought when the match begins, in the slots they are put in. The inventory
-//! uses the bottom panel's slots: drag moves an item and a right click
+//! The tactical phase as Dota's strategy screen, drawn at the sizes measured in a
+//! reference screenshot ([`crate::pregame::reference`]): along the top every seat's hero and the
+//! clock over STRATEGY TIME; at the left the hero one enters battle as, its name, its talents,
+//! innate and abilities (each with its popup) and the hero's model on a dark stage; at the right
+//! STARTING ITEMS, the gold that remains, the inventory as the choices fill it, and the shop's
+//! basic items to buy. What is bought here is bought when the match begins, in the slots they are
+//! put in. The inventory uses the bottom panel's slots: drag moves an item and a right click
 //! takes its pending purchase back at full price.
+//!
+//! Not drawn, as bota has nothing behind them: the strategy map (lane choices, enemy lane
+//! predictions, ward placement), friends and foes, the tabs but this one, the guide's
+//! recommendations, team items, the way back to the heroes (the pick is final) and "skip ahead"
+//! (the server ends the phase by its clock alone).
 
 use bevy::picking::hover::Hovered;
 use bevy::prelude::*;
-use bota_proto::Team;
 
 use crate::dota_text::Texts;
 use crate::manifest::Manifest;
 use crate::player_colour::PlayerColours;
+use crate::pregame::reference as r;
+use crate::pregame::{Kit, NAME_FACE, STRATEGY, Spot, bar, panel};
 use crate::select::{ClockSeen, TacticalPhase, clock};
 use crate::session::Session;
 use crate::shop::Catalog;
 use crate::shop::{Place, spawn_cell};
+use crate::theme::Face;
 use crate::ui::{self, Fonts, dota};
 
-/// Dota's strategy screen sizes (dota_hud_pregame.vcss), in its pixels.
-/// Both columns start at one top and stand at one margin from the screen's sides.
-const MARGIN: f32 = 180.0;
-const TOP: f32 = 130.0;
-const DETAILS_WIDTH: f32 = 630.0;
+/// The starting items' panel sizes (the install's dota_hud_pregame.vcss, in its pixels of a
+/// 1080-line screen), which the reference screenshot shows unchanged.
 const RIGHT_WIDTH: f32 = 883.0;
 /// The gap between inventory slots, and the box's padding round them.
 const SLOT_GAP: f32 = 6.0;
 const BOX_PADDING: f32 = 12.0;
-/// The portrait's width; its height follows the picture's proportions.
-const PORTRAIT_WIDTH: f32 = 330.0;
 const INVENTORY: (f32, f32) = (62.0, 46.0);
 const BACKPACK: (f32, f32) = (40.0, 30.0);
 const LIST_ITEM: (f32, f32) = (41.0, 30.0);
+/// Items in a row of a shop section's grid, and the gap between two sections.
+const LIST_COLUMNS: f32 = 4.0;
+const SECTIONS_GAP: f32 = 20.0;
 /// Its colours: the panels' #0009, their headers' black, the controls'
 /// titles #8e9795, the gold #ffcc33, ENTERING BATTLE AS #ffffff90.
 const PANEL: Color = Color::srgba(0.0, 0.0, 0.0, 0.6);
@@ -54,12 +58,6 @@ const SECTIONS: [(&str, &str); 3] = [
 /// The screen.
 #[derive(Component)]
 pub(crate) struct Screen;
-
-/// The ability of the hero one enters battle as, by id: hovered, it opens
-/// the ability's tooltip as in the game.
-#[derive(Component)]
-#[require(bevy::picking::hover::DirectlyHovered)]
-pub struct StrategyAbility(pub u16);
 
 /// The clock.
 #[derive(Component)]
@@ -94,6 +92,12 @@ fn build(
 ) {
     let core = &session.0;
     if !phase.0 {
+        // The screen goes with the phase: its hero's model must not stay on a stage (a camera, a
+        // light, an animated actor) through the match.
+        for screen in &screens {
+            commands.entity(screen).despawn();
+        }
+        *built = Built::default();
         return;
     }
     let now = Built(
@@ -155,33 +159,7 @@ fn build(
     starting_items(&mut commands, &kit, &catalog, root);
 }
 
-/// What the parts of the screen are drawn with.
-struct Kit<'a> {
-    fonts: &'a Fonts,
-    manifest: &'a Manifest,
-    server: &'a AssetServer,
-    texts: &'a Texts,
-}
-
-impl Kit<'_> {
-    /// Dota's line of `key` from the cache, else `plain`, in capitals.
-    fn word(&self, key: &str, plain: &str) -> String {
-        self.texts
-            .label(key, &[])
-            .unwrap_or_else(|| plain.to_owned())
-            .to_uppercase()
-    }
-
-    fn image(&self, path: Option<String>) -> ImageNode {
-        path.map_or_else(
-            || ImageNode::default().with_color(Color::NONE),
-            |path| ImageNode::new(self.server.load(path)),
-        )
-    }
-}
-
-/// Along the top: Radiant's seats, the clock over STRATEGY TIME, Dire's
-/// seats, each seat's hero under its player's colour (Dota's `#Header`).
+/// Along the top: the seats, the clock over STRATEGY TIME in the middle (Dota's `#Header`).
 fn header(
     commands: &mut Commands,
     kit: &Kit,
@@ -189,131 +167,63 @@ fn header(
     colours: &PlayerColours,
     root: Entity,
 ) {
-    let row = commands
+    bar::spawn(commands, kit, bar::Style::Strategy, core, colours, root);
+    let shot = STRATEGY;
+    let centre = commands
         .spawn((
             Node {
                 position_type: PositionType::Absolute,
-                top: px(0),
-                width: percent(100),
-                justify_content: JustifyContent::Center,
+                left: percent(50),
+                margin: UiRect::left(shot.val(-r::CLOCK_WIDTH / 2.0)),
+                top: shot.val(r::STRATEGY_CLOCK[0]),
+                width: shot.val(r::CLOCK_WIDTH),
+                flex_direction: FlexDirection::Column,
+                align_items: AlignItems::Center,
                 ..default()
             },
             Pickable::IGNORE,
             ChildOf(root),
         ))
         .id();
-    side(commands, kit, (core, colours), Team::Radiant, row);
-    let centre = commands
-        .spawn((
-            Node {
-                width: dota(250.0),
-                flex_direction: FlexDirection::Column,
-                align_items: AlignItems::Center,
-                ..default()
-            },
-            ChildOf(row),
-        ))
-        .id();
     commands.spawn((
         Clock,
-        ui::text("", &kit.fonts.regular, 64.0 * ui::DOTA, Color::WHITE),
+        shot.text(
+            kit,
+            "",
+            (Face::Regular, r::STRATEGY_CLOCK[2], 0.0),
+            Color::WHITE,
+        ),
         Node {
-            height: dota(88.0),
+            height: shot.val(r::STRATEGY_CLOCK[1]),
             ..default()
         },
         ChildOf(centre),
     ));
     commands.spawn((
-        ui::text(
+        shot.text(
+            kit,
             kit.word("DOTA_Hero_Selection_StrategyTime", "Strategy Time"),
-            &kit.fonts.bold,
-            18.0 * ui::DOTA,
-            TITLE_INK,
+            (Face::Semibold, r::CLOCK_CAPTION, 1.0),
+            Color::WHITE,
         ),
         ChildOf(centre),
     ));
-    side(commands, kit, (core, colours), Team::Dire, row);
 }
 
-/// One side's seats in the header, towards the clock: each its hero under
-/// its player's colour.
-fn side(
-    commands: &mut Commands,
-    kit: &Kit,
-    (core, colours): (&bota_client_core::App, &PlayerColours),
-    team: Team,
-    row: Entity,
-) {
-    let seats = commands
-        .spawn((
-            Node {
-                column_gap: dota(4.0),
-                justify_content: if team == Team::Radiant {
-                    JustifyContent::FlexEnd
-                } else {
-                    JustifyContent::FlexStart
-                },
-                width: dota(5.0 * 70.0),
-                padding: UiRect::horizontal(dota(8.0)),
-                ..default()
-            },
-            ChildOf(row),
-        ))
-        .id();
-    for (rank, seat) in core
-        .lobby
-        .slots
-        .iter()
-        .filter(|s| s.team == team)
-        .enumerate()
-    {
-        let card = commands
-            .spawn((
-                Node {
-                    width: dota(66.0),
-                    height: dota(100.0),
-                    flex_direction: FlexDirection::Column,
-                    ..default()
-                },
-                BackgroundColor(Color::srgb(0.05, 0.05, 0.06)),
-                ChildOf(seats),
-            ))
-            .id();
-        let strip = Node {
-            height: dota(4.0),
-            width: percent(100),
-            ..default()
-        };
-        commands.spawn((
-            strip,
-            BackgroundColor(colours.at(team, rank)),
-            ChildOf(card),
-        ));
-        let picture = seat.hero.and_then(|h| kit.manifest.portrait(h.0));
-        let fill = Node {
-            flex_grow: 1.0,
-            width: percent(100),
-            ..default()
-        };
-        commands.spawn((fill, kit.image(picture), ChildOf(card)));
-    }
-}
-
-/// At the left: ENTERING BATTLE AS, the hero's name, its abilities and its
-/// picture (Dota's `#SelectedHeroDetails`).
+/// At the left: ENTERING BATTLE AS, the hero's name, its skills, and its model on the dark stage
+/// (Dota's `#SelectedHeroDetails`).
 fn details(commands: &mut Commands, kit: &Kit, hero: u16, root: Entity) {
     let Some(def) = bota_core::hero_def(bota_proto::HeroId(hero)) else {
         return;
     };
+    let shot = STRATEGY;
     let column = commands
         .spawn((
             Node {
                 position_type: PositionType::Absolute,
-                left: dota(MARGIN),
-                top: dota(TOP),
-                width: dota(DETAILS_WIDTH),
+                left: shot.val(r::ABILITY_ROW_LEFT),
+                top: shot.val(r::ENTERING[1]),
                 flex_direction: FlexDirection::Column,
-                row_gap: dota(8.0),
                 ..default()
             },
             Pickable::IGNORE,
@@ -321,60 +231,72 @@ fn details(commands: &mut Commands, kit: &Kit, hero: u16, root: Entity) {
         ))
         .id();
     commands.spawn((
-        ui::text(
+        shot.text(
+            kit,
             kit.word("DOTA_Hero_Selection_EnteringBattleAs", "Entering Battle As"),
-            &kit.fonts.regular,
-            18.0 * ui::DOTA,
+            (Face::Regular, r::ENTERING[2], 2.0),
             BATTLE_INK,
         ),
+        Node {
+            margin: UiRect::left(shot.val(r::ENTERING[0] - r::ABILITY_ROW_LEFT)),
+            ..default()
+        },
         ChildOf(column),
     ));
+    let name = commands
+        .spawn((
+            Node {
+                height: shot.val(80.0),
+                align_items: AlignItems::Center,
+                column_gap: shot.val(12.0),
+                margin: UiRect::left(shot.val(r::ENTERING[0] - r::ABILITY_ROW_LEFT)),
+                ..default()
+            },
+            ChildOf(column),
+        ))
+        .id();
+    if let Some(mark) = panel::Facts::of(def).primary_mark() {
+        commands.spawn((
+            Node {
+                width: shot.val(r::ENTERING_ATTRIBUTE),
+                height: shot.val(r::ENTERING_ATTRIBUTE),
+                ..default()
+            },
+            kit.art(mark),
+            ChildOf(name),
+        ));
+    }
     commands.spawn((
-        ui::text(
+        shot.text(
+            kit,
             def.name.to_uppercase(),
-            &kit.fonts.bold,
-            60.0 * ui::DOTA,
+            (NAME_FACE, r::ENTERING[3], 1.0),
             Color::WHITE,
         ),
         TextShadow {
             offset: Vec2::new(0.0, 2.0),
             color: Color::BLACK,
         },
-        ChildOf(column),
+        ChildOf(name),
     ));
-    let abilities = commands
-        .spawn((
-            Node {
-                column_gap: dota(8.0),
-                ..default()
-            },
-            ChildOf(column),
-        ))
-        .id();
-    for id in def.abilities {
-        let icon = Node {
-            width: dota(64.0),
-            height: dota(64.0),
-            ..default()
-        };
-        let art = kit.image(kit.manifest.ability_icon(id.0));
-        commands.spawn((
-            StrategyAbility(id.0),
-            Hovered::default(),
-            icon,
-            art,
-            ChildOf(abilities),
-        ));
-    }
-    commands.spawn((
-        Node {
-            width: dota(PORTRAIT_WIDTH),
-            margin: UiRect::top(dota(16.0)),
-            ..default()
+    let skills = panel::skills(commands, kit, shot, panel::DETAIL_SKILLS, def, column);
+    commands
+        .entity(skills)
+        .entry::<Node>()
+        .and_modify(move |mut node| {
+            node.margin = UiRect::top(shot.val(3.0));
+        });
+    let [height, feet, middle] = r::MODEL;
+    crate::main_menu::hero_stage::stand(
+        commands,
+        root,
+        bota_proto::HeroId(hero),
+        &crate::main_menu::hero_stage::Stand {
+            middle,
+            feet: shot.size(feet * r::STRATEGY_HEIGHT),
+            height: shot.size(height * r::STRATEGY_HEIGHT),
         },
-        kit.image(kit.manifest.portrait(hero)),
-        ChildOf(column),
-    ));
+    );
 }
 
 /// At the right: STARTING ITEMS (Dota's `#StartingItems`), the gold that
@@ -384,13 +306,15 @@ fn starting_items(commands: &mut Commands, kit: &Kit, catalog: &Catalog, root: E
         .spawn((
             Node {
                 position_type: PositionType::Absolute,
-                right: dota(MARGIN),
-                top: dota(TOP),
+                right: STRATEGY
+                    .val(r::STRATEGY_WIDTH - r::STARTING_ITEMS[0] - r::STARTING_ITEMS[2]),
+                top: STRATEGY.val(r::STARTING_ITEMS[1]),
                 width: dota(RIGHT_WIDTH),
                 min_height: dota(340.0),
                 flex_direction: FlexDirection::Column,
                 ..default()
             },
+            Spot("strategy starting items"),
             BackgroundColor(PANEL),
             ChildOf(root),
         ))
@@ -536,32 +460,36 @@ fn inventory_slot(commands: &mut Commands, kit: &Kit, row: Entity, at: usize, si
     );
 }
 
-/// The shop's basic items, under each category's title.
+/// The shop's basic items: each category a column of its own, its title over a grid four items
+/// wide, side by side as the reference shows them.
 fn item_lists(commands: &mut Commands, kit: &Kit, catalog: &Catalog, contents: Entity) {
-    let column = commands
+    let row = commands
         .spawn((
             Node {
                 flex_grow: 1.0,
-                flex_direction: FlexDirection::Column,
-                row_gap: dota(4.0),
+                column_gap: dota(SECTIONS_GAP),
+                align_items: AlignItems::FlexStart,
                 ..default()
             },
             ChildOf(contents),
         ))
         .id();
-    title(
-        commands,
-        kit,
-        column,
-        "dota_item_build_common_starting_items",
-        "Common Items",
-    );
     let art = (kit.fonts, kit.manifest, kit.server);
     for (key, plain) in SECTIONS {
         let items: Vec<_> = catalog.category(key).collect();
         if items.is_empty() {
             continue;
         }
+        let column = commands
+            .spawn((
+                Node {
+                    flex_direction: FlexDirection::Column,
+                    row_gap: dota(4.0),
+                    ..default()
+                },
+                ChildOf(row),
+            ))
+            .id();
         commands.spawn((
             ui::text(
                 kit.word(&format!("dota_pregame_shop_{key}"), plain)
@@ -575,6 +503,7 @@ fn item_lists(commands: &mut Commands, kit: &Kit, catalog: &Catalog, contents: E
         let list = commands
             .spawn((
                 Node {
+                    width: dota(LIST_COLUMNS * LIST_ITEM.0 + (LIST_COLUMNS - 1.0) * 4.0),
                     flex_wrap: FlexWrap::Wrap,
                     column_gap: dota(4.0),
                     row_gap: dota(4.0),

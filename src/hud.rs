@@ -671,40 +671,60 @@ fn spawn_abilities(kit: &mut Spawner, bar: Entity) {
 /// The innate ability's round mark between the talent tree and the
 /// abilities, as Dota shows it; hovered, its tooltip.
 fn spawn_innate(kit: &mut Spawner, row: Entity) {
-    let button = kit
-        .commands
+    let button = innate_badge(kit.commands, kit.manifest, kit.server, row, INNATE);
+    kit.commands.entity(button).insert((
+        InnateButton,
+        Button,
+        Hovered::default(),
+        Visibility::Hidden,
+    ));
+    kit.commands
+        .entity(button)
+        .entry::<Node>()
+        .and_modify(|mut node| {
+            node.align_self = AlignSelf::Center;
+            node.margin = UiRect::bottom(px(PIPS));
+        });
+}
+
+/// The innate ability's mark: a ring of the HUD's dark ground round Dota's arrows, `size` across.
+/// The HUD and the hero page draw it alike.
+pub fn innate_badge(
+    commands: &mut Commands,
+    manifest: &Manifest,
+    server: &AssetServer,
+    parent: Entity,
+    size: f32,
+) -> Entity {
+    let badge = commands
         .spawn((
-            InnateButton,
-            Button,
-            Hovered::default(),
             Node {
-                width: px(INNATE),
-                height: px(INNATE),
-                align_self: AlignSelf::Center,
-                margin: UiRect::bottom(px(PIPS)),
+                width: px(size),
+                height: px(size),
                 border: UiRect::all(px(2)),
                 border_radius: BorderRadius::MAX,
                 justify_content: JustifyContent::Center,
                 align_items: AlignItems::Center,
+                flex_shrink: 0.0,
                 ..default()
             },
             BorderColor::all(Color::srgb(0.32, 0.33, 0.36)),
             BackgroundColor(ui::PANEL_DEEP),
-            Visibility::Hidden,
-            ChildOf(row),
+            ChildOf(parent),
         ))
         .id();
-    kit.commands.spawn((
+    commands.spawn((
         Node {
             width: percent(70),
             height: percent(70),
             border_radius: BorderRadius::MAX,
             ..default()
         },
-        ui::art(kit.manifest, kit.server, "hud.innate"),
+        ui::art(manifest, server, "hud.innate"),
         Pickable::IGNORE,
-        ChildOf(button),
+        ChildOf(badge),
     ));
+    badge
 }
 
 /// One ability: its box, its level pips under it, and Dota's level-up plate

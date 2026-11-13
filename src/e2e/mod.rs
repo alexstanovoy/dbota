@@ -62,6 +62,8 @@ mod outposts;
 mod play;
 mod portraits;
 mod pregame;
+mod pregame_choose;
+mod pregame_layout;
 mod preparation_shop;
 mod pudge_attack_sounds;
 mod purchase_destination;

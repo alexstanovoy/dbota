@@ -61,11 +61,7 @@ fn the_strategy_screens_abilities_show_their_tooltips() {
     let shown = |c: &mut Client| {
         let world = c.world_mut();
         world
-            .query::<(
-                Entity,
-                &crate::strategy::StrategyAbility,
-                &InheritedVisibility,
-            )>()
+            .query::<(Entity, &crate::tips::AbilityTile, &InheritedVisibility)>()
             .iter(world)
             .find(|(.., seen)| seen.get())
             .map(|(e, ability, _)| (e, ability.0))

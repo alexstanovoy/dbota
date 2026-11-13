@@ -2,7 +2,8 @@
 //! price, the stats an item adds, each section under its bar, the cooldown
 //! and mana, the lore at the foot.
 
-use bevy::picking::hover::DirectlyHovered;
+use bevy::ecs::schedule::common_conditions::not;
+use bevy::picking::hover::{DirectlyHovered, Hovered};
 use bevy::{prelude::*, window::PrimaryWindow};
 use bota_core::item_def;
 use bota_proto::TalentSlot;
@@ -18,6 +19,18 @@ use crate::ui::{self, Fonts};
 /// The popup box.
 #[derive(Component)]
 struct Tip;
+
+/// An ability's icon on the hero page of the menu: under the cursor, the popup the game shows
+/// for the ability (its first level, as the strategy phase shows it).
+#[derive(Component)]
+#[require(Hovered, DirectlyHovered)]
+pub struct AbilityTile(pub u16);
+
+/// The talent tree's mark on a hero's row of skills (the pick panel, the strategy screen): under
+/// the cursor, the popup that lists the hero's talents by the level that opens each.
+#[derive(Component)]
+#[require(Hovered, DirectlyHovered)]
+pub struct TalentTile(pub u16);
 
 /// What the popup holds below its edge; rebuilt when the content changes.
 #[derive(Component)]
@@ -114,6 +127,7 @@ pub fn plugin(app: &mut App) {
             Update,
             (
                 pick.run_if(crate::select::match_or_tactical),
+                pick_pregame.run_if(not(crate::select::match_or_tactical)),
                 rebuild,
                 place,
             )
@@ -160,7 +174,8 @@ fn pick(
     abilities: Query<(&DirectlyHovered, &AbilityBox)>,
     items: Query<(&DirectlyHovered, &ItemBox)>,
     bag: Res<crate::bag::TacticalBag>,
-    entering: Query<(&DirectlyHovered, &crate::strategy::StrategyAbility)>,
+    tiles: Query<(&DirectlyHovered, &AbilityTile)>,
+    talent_tiles: Query<(&DirectlyHovered, &TalentTile)>,
     cells: Query<(&DirectlyHovered, &ShopCell)>,
     buffs: Query<(&DirectlyHovered, &crate::buffs::BuffChip)>,
     talent_cells: Query<(&DirectlyHovered, &crate::talents::TalentCell)>,
@@ -196,8 +211,10 @@ fn pick(
         talent_tip(core, cell.0).map(note_tip)
     } else if let Some(slot) = hovered(&abilities) {
         ability_tip(&look, core, slot.0, rate)
-    } else if let Some(ability) = hovered(&entering) {
+    } else if let Some(ability) = hovered(&tiles) {
         entering_tip(&look, ability.0)
+    } else if let Some(hero) = hovered(&talent_tiles) {
+        talents_tip(hero.0)
     } else if let Some(slot) = hovered(&items) {
         item_tip(&look, core, &bag, slot.0, rate)
     } else if let Some(cell) = hovered(&cells) {
@@ -208,6 +225,44 @@ fn pick(
     if shown.0 != content {
         shown.0 = content;
     }
+}
+
+/// What the cursor is over on the pick screen, before any hero is one's own: an ability or the
+/// talent tree of the hero shown. The popup stays up exactly while the cursor is over one, so it
+/// leaves alone what the menu's own pages show.
+fn pick_pregame(
+    texts: Res<Texts>,
+    manifest: Res<Manifest>,
+    tiles: Query<(&DirectlyHovered, &AbilityTile)>,
+    talent_tiles: Query<(&DirectlyHovered, &TalentTile)>,
+    mut shown: ResMut<Shown>,
+    mut was_up: Local<bool>,
+) {
+    let look = Lookup {
+        texts: &texts,
+        manifest: &manifest,
+        rates: Default::default(),
+    };
+    let content = hovered(&tiles)
+        .and_then(|tile| entering_tip(&look, tile.0))
+        .or_else(|| hovered(&talent_tiles).and_then(|tile| talents_tip(tile.0)));
+    if content.is_some() || *was_up {
+        *was_up = content.is_some();
+        if shown.0 != content {
+            shown.0 = content;
+        }
+    }
+}
+
+/// A hero's talents, a line for each level that opens a pair.
+fn talents_tip(hero: u16) -> Option<Content> {
+    let tree = crate::faces::talents(hero)?;
+    let mut lines = vec!["Talent Tree".to_string()];
+    for (tier, level) in bota_core::rules::TALENT_LEVELS.iter().enumerate().rev() {
+        let (first, second) = (tree.get(2 * tier)?, tree.get(2 * tier + 1)?);
+        lines.push(format!("Level {level}: {} / {}", first.name, second.name));
+    }
+    Some(note_tip(lines.join("\n")))
 }
 
 /// An ability of the hero one enters battle as, in the strategy phase: Dota's

@@ -448,6 +448,9 @@ fn home_uses_the_last_local_games_hero_and_releases_the_stage_when_a_match_opens
     client.until("the next match on screen", |client| {
         client.world().non_send::<MenuCore>().shows_game()
     });
+    // The strategy screen stands its own hero on the same stage until the match begins.
+    client.until("the match begun", |client| client.core().view().is_some());
+    client.frames(5);
     assert!(
         client.world().resource::<HeroStage>().actor.is_none(),
         "entering a match removes the actor"

@@ -83,6 +83,7 @@ mod pings;
 mod player_colour;
 mod portrait;
 mod postgame;
+mod pregame;
 mod preload;
 mod quality;
 mod replay_controls;
@@ -730,6 +731,7 @@ fn client_plugins(app: &mut App, read_environment: bool) {
             quality::plugin,
             heap::plugin,
         ))
+        .add_plugins(pregame::plugin)
         .add_plugins((
             bag::plugin,
             cursor::plugin,

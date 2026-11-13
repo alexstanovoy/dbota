@@ -22,9 +22,9 @@ fn selling_in_the_strategy_phase_takes_the_choice_back() {
     // The shop's two first consumables are right clicked (each is chosen),
     // the first slot of the inventory is right clicked, with no menu action.
     let script = "await:game;click:pick shadow fiend;click:pick ready;await:text:STRATEGY TIME;await:loaded;\
-                  mouse:0.6516,0.2157;wait:0.7;rclick;wait:0.7;\
-                  mouse:0.6276,0.2157;wait:0.7;rclick;wait:0.7;\
-                  mouse:0.4766,0.275;wait:0.7;rclick;wait:0.7;\
+                  mouse:0.6,0.2306;wait:0.7;rclick;wait:0.7;\
+                  mouse:0.577,0.2306;wait:0.7;rclick;wait:0.7;\
+                  mouse:0.4625,0.309;wait:0.7;rclick;wait:0.7;\
                   await:horn;await:items:1;exit";
     common::play_script(&server.address, script, "sell");
 }
