@@ -1316,6 +1316,11 @@ fn sequential_path_count_inputs_use_whole_points_within_the_particle_limit() {
         let mut instance =
             sequential_path_instance(FloatInput::Literal(input), FloatInput::Literal(0.0), false);
         instance.advance(0.02, None);
+        assert_eq!(
+            instance.nodes[0].parts.len(),
+            16,
+            "layout count does not control emission"
+        );
         let position = instance.nodes[0].parts.vectors[store::POSITION][1];
         assert!(
             (position.x - expected_second).abs() < 1e-5,
@@ -1333,6 +1338,11 @@ fn sequential_path_negative_distance_places_points_on_the_path() {
             false,
         );
         instance.advance(0.02, None);
+        assert_eq!(
+            instance.nodes[0].parts.len(),
+            16,
+            "negative distance keeps the burst"
+        );
         assert!(
             instance.nodes[0].parts.vectors[store::POSITION]
                 .iter()
@@ -1346,6 +1356,11 @@ fn sequential_path_fractional_distance_keeps_subunit_jitter() {
     let mut instance =
         sequential_path_instance(FloatInput::Literal(1.0), FloatInput::Literal(0.25), false);
     instance.advance(0.02, None);
+    assert_eq!(
+        instance.nodes[0].parts.len(),
+        16,
+        "fractional distance keeps the burst"
+    );
     let positions = &instance.nodes[0].parts.vectors[store::POSITION];
     assert!(positions.iter().all(|p| p.abs().max_element() <= 0.25));
     assert!(positions.iter().any(|p| p.length_squared() > 0.01));
@@ -1360,6 +1375,11 @@ fn sequential_path_huge_distance_keeps_positions_and_squared_lengths_finite() {
             false,
         );
         instance.advance(0.02, None);
+        assert_eq!(
+            instance.nodes[0].parts.len(),
+            16,
+            "huge distance keeps the burst"
+        );
         for position in &instance.nodes[0].parts.vectors[store::POSITION] {
             assert!(position.is_finite(), "finite position: {position}");
             assert!(
