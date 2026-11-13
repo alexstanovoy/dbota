@@ -314,6 +314,25 @@ fn selection_survives_the_minimap(client: &mut Client, mine: Team) {
         .single(world)
         .expect("the window")
         .scale_factor();
+    client.until(
+        "the loaded minimap's layout is ready for pointer input",
+        |c| {
+            let world = c.world();
+            let fonts = world.resource::<crate::ui::Fonts>();
+            let assets = world.resource::<AssetServer>();
+            let effective_scale = scale * world.resource::<bevy::ui::UiScale>().0;
+            world.resource::<crate::loading::Loading>().done()
+                && assets.is_loaded_with_dependencies(&fonts.bold)
+                && assets.is_loaded_with_dependencies(&fonts.regular)
+                && world
+                    .get::<InheritedVisibility>(frame)
+                    .is_some_and(|shown| shown.get())
+                && world.get::<ComputedNode>(frame).is_some_and(|node| {
+                    node.size().min_element() > 0.0
+                        && (node.inverse_scale_factor() * effective_scale - 1.0).abs() < 1e-4
+                })
+        },
+    );
     let centre = client.centre_of(frame).expect("laid out") / scale;
     let half = client
         .world()
@@ -336,7 +355,10 @@ fn selection_survives_the_minimap(client: &mut Client, mine: Team) {
                         .world()
                         .get::<bevy::picking::hover::DirectlyHovered>(frame)
                         .is_some_and(|hover| hover.get()),
-                    "the click must reach the minimap itself"
+                    "the click must reach the minimap itself: {what}, {button:?}, at={at}, saved centre={centre}, current centre={:?}, scale={scale}, loading={}, lost={}",
+                    client.centre_of(frame),
+                    client.world().resource::<crate::loading::Loading>().shown,
+                    client.core().lost
                 );
                 assert_eq!(
                     client.core().selected,
