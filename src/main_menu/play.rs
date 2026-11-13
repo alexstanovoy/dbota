@@ -447,6 +447,9 @@ fn drawer(kit: &mut Kit, root: Entity) -> Entity {
         crate::hud::Blocker,
         bevy::picking::hover::Hovered::default(),
         Pickable::default(),
+        // A click on the dimmed scene beside the drawer closes it.
+        Button,
+        MenuButton(Act::Play(PlayAction::Open(false))),
     ));
     let drawer = kit.node(
         root,
@@ -476,13 +479,6 @@ fn drawer(kit: &mut Kit, root: Entity) -> Entity {
         theme::downward(theme::PLAY_PANEL),
         BorderColor::all(theme::PANEL_GLINT),
     ));
-    kit.quiet(
-        drawer,
-        "‹ BACK",
-        Act::Play(PlayAction::Open(false)),
-        theme::button(44.0),
-        (theme::INK_3, theme::INK_1),
-    );
     kit.node(
         drawer,
         Node {

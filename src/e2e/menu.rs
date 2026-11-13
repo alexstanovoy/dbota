@@ -1822,3 +1822,36 @@ fn play_stacks_custom_lobbies_ranked_and_unranked_with_one_section_open() {
         "Custom Lobbies opens its two buttons and closes the queues: {shown:?}"
     );
 }
+
+#[test]
+fn the_play_drawer_has_no_back_button() {
+    let service = crate::main_menu::tests::service();
+    let mut client = signed_up(&service, "bob");
+    click_menu_button(&mut client, "play");
+    let shown = drawer_texts(&mut client);
+    assert!(
+        !shown.iter().any(|text| text.contains("BACK")),
+        "outside clicks and Escape close the drawer, a back button does not: {shown:?}"
+    );
+}
+
+#[test]
+fn a_click_outside_the_play_drawer_closes_it() {
+    let service = crate::main_menu::tests::service();
+    let mut client = signed_up(&service, "bob");
+    click_menu_button(&mut client, "play");
+    client.hover_ui_with(Duration::from_secs(30), |client| {
+        let world = client.world_mut();
+        world
+            .query::<(Entity, &Name)>()
+            .iter(world)
+            .find(|(_, name)| name.as_str() == "play backdrop")
+            .map(|(entity, _)| entity)
+    });
+    client.click(MouseButton::Left);
+    client.frames(3);
+    assert!(
+        !client.world().non_send::<MenuCore>().view().play.open,
+        "a click on the dimmed scene beside the drawer closes it"
+    );
+}
