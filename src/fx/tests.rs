@@ -129,7 +129,8 @@ const NO_LINE: &[(&str, &str)] = &[
     (
         "bfury",
         "its Cleave's ring plays once a swing at the attacker, which the server tells only as a blow on each unit \
-         cleaved; its Chop Tree shows the tree falling and no particle",
+         cleaved (follow-up: typed attack-proc facts from the server, after item batch 2); its Chop Tree shows \
+         the tree falling and no particle",
     ),
     (
         "butterfly",
@@ -137,7 +138,7 @@ const NO_LINE: &[(&str, &str)] = &[
     ),
     (
         "greater_crit",
-        "Dota sounds a critical strike and floats its damage; the server does not tell one",
+        "Dota sounds a critical strike and floats its damage; the server does not tell one (follow-up: typed attack-proc facts from the server, after item batch 2)",
     ),
     (
         "infused_raindrop",
@@ -149,7 +150,7 @@ const NO_LINE: &[(&str, &str)] = &[
     ),
     (
         "lesser_crit",
-        "Dota sounds a critical strike and floats its damage; the server does not tell one",
+        "Dota sounds a critical strike and floats its damage; the server does not tell one (follow-up: typed attack-proc facts from the server, after item batch 2)",
     ),
     (
         "lifesteal",
@@ -166,7 +167,7 @@ const NO_LINE: &[(&str, &str)] = &[
     (
         "revenants_brooch",
         "Phantom Critical is told as a blow of the item, but which of the install's brooch effects Dota plays for \
-         it is not established",
+         it is not established (follow-up: typed attack-proc facts from the server, after item batch 2)",
     ),
     (
         "royale_with_cheese",
@@ -174,14 +175,18 @@ const NO_LINE: &[(&str, &str)] = &[
     ),
     (
         "specialists_array",
-        "the server does not tell which missiles a Splitshot threw: they fly as the carrier's attack",
+        "the server does not tell which missiles a Splitshot threw: they fly as the carrier's attack (follow-up: typed attack-proc facts from the server, after item batch 2)",
     ),
     (
         "talisman_of_evasion",
         "Dota draws no effect for the passive; the evasion is a floating word, not a particle",
     ),
     ("tpscroll", "its channel is drawn by teleport.rs"),
-    ("vanguard", "a passive whose block the server does not tell"),
+    (
+        "vanguard",
+        "a passive whose block the server does not tell (follow-up: typed attack-proc facts from the server, after \
+         item batch 2)",
+    ),
     (
         "voodoo_mask",
         "Dota bursts on a spell lifesteal heal; the server does not tell one",
