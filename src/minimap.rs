@@ -235,6 +235,7 @@ fn spawn(
     ));
     let frame = commands
         .spawn((
+            Name::new("hud minimap"),
             Node {
                 width: px(SIDE),
                 height: px(SIDE),

@@ -502,6 +502,7 @@ fn spawn_bottom(kit: &mut Spawner, row: Entity) {
         .commands
         .spawn((
             Extent::Bar,
+            Name::new("hud panel"),
             panel(Node {
                 grid_column: GridPlacement::start(2),
                 grid_row: GridPlacement::start(1),
@@ -529,6 +530,7 @@ fn spawn_level(kit: &mut Spawner, bar: Entity) {
         .commands
         .spawn((
             XpRing,
+            Name::new("hud level"),
             Node {
                 width: px(LEVEL_RING),
                 height: px(LEVEL_RING),
@@ -571,6 +573,7 @@ fn spawn_portrait(kit: &mut Spawner, bar: Entity) {
         .commands
         .spawn((
             Portrait,
+            Name::new("hud portrait"),
             Node {
                 width: px(PORTRAIT.0),
                 height: px(PORTRAIT.1),
@@ -595,6 +598,7 @@ fn spawn_portrait(kit: &mut Spawner, bar: Entity) {
     let banner = kit
         .commands
         .spawn((
+            Name::new("hud name"),
             Node {
                 position_type: PositionType::Absolute,
                 bottom: percent(100),
@@ -675,6 +679,7 @@ fn spawn_innate(kit: &mut Spawner, row: Entity) {
     let button = innate_badge(kit.commands, kit.manifest, kit.server, row, INNATE);
     kit.commands.entity(button).insert((
         InnateButton,
+        Name::new("hud innate"),
         Button,
         Hovered::default(),
         Visibility::Hidden,
@@ -788,6 +793,7 @@ fn spawn_level_up(kit: &mut Spawner, cell: Entity, slot: u8) {
         .commands
         .spawn((
             LevelUp(slot),
+            Name::new(format!("hud level up {slot}")),
             Button,
             Hovered::default(),
             Blocker,
@@ -845,13 +851,26 @@ fn spawn_pools(kit: &mut Spawner, column: Entity) {
             ChildOf(column),
         ))
         .id();
-    for (gauge, readout, regen, color) in [
-        (Gauge::Hp, Readout::Hp, Readout::HpRegen, ui::HP_FRIEND),
-        (Gauge::Mana, Readout::Mana, Readout::ManaRegen, ui::MANA),
+    for (gauge, readout, regen, color, name) in [
+        (
+            Gauge::Hp,
+            Readout::Hp,
+            Readout::HpRegen,
+            ui::HP_FRIEND,
+            "hud health",
+        ),
+        (
+            Gauge::Mana,
+            Readout::Mana,
+            Readout::ManaRegen,
+            ui::MANA,
+            "hud mana",
+        ),
     ] {
         let well = kit
             .commands
             .spawn((
+                Name::new(name),
                 Node {
                     height: px(POOL),
                     justify_content: JustifyContent::Center,
@@ -901,6 +920,7 @@ fn spawn_items(kit: &mut Spawner, bar: Entity) {
     let grid = kit
         .commands
         .spawn((
+            Name::new("hud items"),
             Node {
                 display: Display::Grid,
                 grid_template_columns: RepeatedGridTrack::px(3, ITEM.0),
@@ -950,6 +970,7 @@ fn spawn_round_slots(kit: &mut Spawner, bar: Entity) {
         .commands
         .spawn((
             NeutralSlot,
+            Name::new("hud neutral"),
             Hovered::default(),
             Blocker,
             Node {
@@ -1172,6 +1193,7 @@ fn spawn_top(kit: &mut Spawner, root: Entity) {
     let top = commands
         .spawn((
             Extent::TopCentre,
+            Name::new("hud top bar"),
             Node {
                 align_items: AlignItems::FlexStart,
                 column_gap: px(6),
@@ -1209,6 +1231,7 @@ fn spawn_top(kit: &mut Spawner, root: Entity) {
 fn spawn_clock(commands: &mut Commands, fonts: &Fonts, top: Entity) {
     let clock = commands
         .spawn((
+            Name::new("hud clock"),
             panel(Node {
                 width: px(178),
                 height: px(54),
@@ -1280,6 +1303,7 @@ fn spawn_seat(kit: &mut Spawner, parent: Entity, seat: Place) {
     let column = commands
         .spawn((
             SeatColumn(seat),
+            Name::new(format!("hud seat {:?} {}", seat.team, seat.n)),
             Node {
                 flex_direction: FlexDirection::Column,
                 align_items: AlignItems::Center,
@@ -1433,6 +1457,10 @@ fn spawn_menu(commands: &mut Commands, manifest: &Manifest, server: &AssetServer
     ] {
         let spawned = commands.spawn((
             button,
+            Name::new(match button {
+                MenuButton::Dashboard => "hud menu dashboard",
+                MenuButton::Scoreboard => "hud menu scoreboard",
+            }),
             Button,
             Hovered::default(),
             Blocker,
@@ -1464,6 +1492,7 @@ fn spawn_corner(kit: &mut Spawner, root: Entity) {
     let corner = commands
         .spawn((
             Extent::Corner,
+            Name::new("hud menu"),
             Node {
                 position_type: PositionType::Absolute,
                 left: px(MENU_INSET - MENU_BUTTON_MARGIN),

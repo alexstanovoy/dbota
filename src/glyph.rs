@@ -78,6 +78,7 @@ fn spawn(
     let button = commands
         .spawn((
             GlyphButton,
+            Name::new("hud glyph"),
             Button,
             Hovered::default(),
             Node {
