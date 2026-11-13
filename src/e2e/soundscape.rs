@@ -214,3 +214,42 @@ fn an_occupied_roshan_pit_sounds_and_the_empty_one_does_not() {
         0.0
     );
 }
+
+/// A loop of the ambience that is already sounding takes the master volume once and the ambience's
+/// level and mute as they move, and a second loop of the day's scape sounds as the first.
+#[test]
+fn the_ambience_loops_follow_the_balance_with_the_master_applied_once() {
+    let server = Server::start(1, &[]);
+    let mut client = Client::join(&server, HeroId::SHADOW_FIEND, &[]);
+    super::channels::listen(&mut client);
+    client.cheat(Cheat::TimeOfDay { night: false });
+    look_at(&mut client, (-7350.0, -6825.0));
+    client.within(Duration::from_secs(60), "day ambience", |c| {
+        heard(c) == Some(("default_day".to_owned(), 1.0))
+    });
+    client.frames(3);
+    let world = client.world_mut();
+    let sound = world
+        .query::<(Entity, &bevy::audio::AudioPlayer, &crate::channels::Tuned)>()
+        .iter(world)
+        .find(|(_, player, tuned)| {
+            tuned.channel == crate::channels::Channel::Ambience
+                && player
+                    .0
+                    .path()
+                    .is_some_and(|path| path.to_string().ends_with("default_day_lp.wav"))
+        })
+        .map(|(entity, ..)| entity)
+        .expect("the day's ambience loop");
+    let raw = gain(&client, "default_day", "default_day_lp.wav", true);
+    let tuned = client
+        .world()
+        .get::<crate::channels::Tuned>(sound)
+        .expect("tuned")
+        .base;
+    assert!(
+        raw > 0.0 && (tuned - raw).abs() < 1e-3,
+        "the loop's own loudness, before the balance, is the scape's: {tuned} against {raw}"
+    );
+    super::channels::follows_the_balance(&mut client, sound, crate::channels::Channel::Ambience);
+}

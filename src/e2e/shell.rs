@@ -128,8 +128,8 @@ fn physical_quit(client: &mut Client) -> (Rect, ComputedNode, f32) {
 }
 
 /// The cog opens the settings as a window over the menu (the top bar still drawn under the dim,
-/// the window under the bar's height), and the window's cross closes it back to the page it was
-/// opened from.
+/// the window as the original game's, 0.02 of the screen's height from the top, 1.2 of it wide), and
+/// the window's cross closes it back to the page it was opened from.
 #[test]
 fn the_settings_window_opens_from_the_cog_over_the_dimmed_menu_and_its_cross_closes_it() {
     let mut client = local_menu();
@@ -140,12 +140,13 @@ fn the_settings_window_opens_from_the_cog_over_the_dimmed_menu_and_its_cross_clo
     let window = interface_rect(&mut client, "settings window");
     let size = interface_size(&mut client);
     assert!(
-        (window.min.y - 64.0).abs() < 0.5,
-        "under the bar: {window:?}"
+        (window.min.y - 0.022 * size.y).abs() < 1.0,
+        "near the top, over the bar: {window:?} in {size:?}"
     );
     assert!(
-        (window.width() - 1100.0).abs() < 0.5 && (window.center().x - size.x / 2.0).abs() < 0.5,
-        "1100 wide, in the middle of {size:?}: {window:?}"
+        (window.width() - 1.205 * size.y).abs() < 2.0
+            && (window.center().x - size.x / 2.0).abs() < 0.5,
+        "1.2 of the height wide, in the middle of {size:?}: {window:?}"
     );
     // The menu stays drawn under the dim: its bar, and the page the settings were opened from.
     interface_rect(&mut client, "dbota");

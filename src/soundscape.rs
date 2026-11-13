@@ -6,13 +6,11 @@
 //! fades over the soundscape's fade time. Its loops play while they are heard, quieter with
 //! distance by their sound level; its random sounds play one of their waves now and then.
 
-use bevy::{
-    audio::{AudioSink, AudioSinkPlayback, GlobalVolume, Volume},
-    prelude::*,
-};
+use bevy::{audio::Volume, prelude::*};
 
 use crate::cache_text::{ScapeLine, ScapeSound};
 use crate::camera::RtsCamera;
+use crate::channels::{Channel, Tuned, live_gain};
 use crate::config::Settings;
 use crate::daylight::Daylight;
 use crate::mixer::{Mixer, Owner, Request};
@@ -221,8 +219,7 @@ fn play(
     camera: Query<&RtsCamera>,
     settings: Res<Settings>,
     args: Res<crate::Args>,
-    global: Res<GlobalVolume>,
-    mut sinks: Query<&mut AudioSink>,
+    mut tuned: Query<&mut Tuned>,
     mut scapes: ResMut<Scapes>,
     mut ambience: ResMut<Ambience>,
     mut mixer: ResMut<Mixer>,
@@ -245,12 +242,9 @@ fn play(
         bota_client_core::Source::Replay(player) => player.speed,
         _ => 1.0,
     };
-    let master = if settings.muted || args.mute {
-        0.0
-    } else {
-        settings.volume
-    } * global.volume.to_linear();
-    loops(&mut commands, scapes, ear, master, &mut sinks);
+    // The ambience sounds while it is not silenced; how loud is the sink's ([`follow_levels`]).
+    let audible = live_gain(&settings, args.mute, Channel::Ambience) > 0.0;
+    loops(&mut commands, scapes, ear, audible, &mut tuned);
     randoms(
         &mut commands,
         &mut mixer,
@@ -258,7 +252,7 @@ fn play(
         ear,
         time.elapsed(),
         time.delta_secs() * pace,
-        master,
+        audible,
     );
     tell(scapes, heard, ear, &mut ambience);
 }
@@ -310,14 +304,13 @@ fn loops(
     commands: &mut Commands,
     scapes: &mut Scapes,
     ear: Vec2,
-    master: f32,
-    sinks: &mut Query<&mut AudioSink>,
+    audible: bool,
+    tuned: &mut Query<&mut Tuned>,
 ) {
     let (floor, mut ties) = loop_floor(scapes, ear);
     for p in scapes.sounds.iter_mut().filter(|p| p.line.looped) {
         let gain = loop_gain(p, &scapes.weights, ear);
-        let on =
-            master > 0.0 && gain > QUIETEST_LOOP && (gain > floor || (gain == floor && ties > 0));
+        let on = audible && gain > QUIETEST_LOOP && (gain > floor || (gain == floor && ties > 0));
         if on && gain == floor {
             ties -= 1;
         }
@@ -327,19 +320,27 @@ fn loops(
                 p.playing = None;
             }
             (Some(entity), true) => {
-                if let Ok(mut sink) = sinks.get_mut(entity) {
-                    sink.set_volume(Volume::Linear(gain * master));
+                if let Ok(mut sound) = tuned.get_mut(entity) {
+                    sound.base = gain;
                 }
             }
             (None, true) => {
                 let speed = p.line.pitch[0] / 100.0;
                 let settings = PlaybackSettings::LOOP
-                    .with_volume(Volume::Linear(gain * master))
+                    .with_volume(Volume::Linear(gain))
                     .with_speed(speed);
                 let player = AudioPlayer::new(p.waves[0].clone());
                 p.playing = Some(
                     commands
-                        .spawn((crate::mixer::GameAudio, player, settings))
+                        .spawn((
+                            crate::mixer::GameAudio,
+                            Tuned {
+                                channel: Channel::Ambience,
+                                base: gain,
+                            },
+                            player,
+                            settings,
+                        ))
                         .id(),
                 );
             }
@@ -381,7 +382,7 @@ fn randoms(
     ear: Vec2,
     now: std::time::Duration,
     dt: f32,
-    master: f32,
+    audible: bool,
 ) {
     let Scapes {
         sounds,
@@ -404,7 +405,7 @@ fn randoms(
         let pick = (draw(rng, [0.0, 1.0]) * p.waves.len() as f32) as usize;
         let wave = p.waves[pick.min(p.waves.len() - 1)].clone();
         p.scheduled = p.scheduled.saturating_add(1);
-        if master <= 0.0 {
+        if !audible {
             continue;
         }
         let speed = draw(rng, p.line.pitch) / 100.0;
@@ -417,7 +418,7 @@ fn randoms(
                 .line
                 .at
                 .map(|[x, y, _]| crate::coords::dota_to_sim(x, y).into()),
-            gain: gain * master,
+            gain,
             speed,
             ..Request::default()
         };
@@ -507,7 +508,7 @@ mod tests {
                 Vec2::ZERO,
                 std::time::Duration::from_millis(frame * 50),
                 0.05,
-                1.0,
+                true,
             );
             world.flush();
             let alive = world.query::<&AudioPlayer>().iter(&world).count();
@@ -532,8 +533,8 @@ mod tests {
             .run_system_once(
                 |mut commands: Commands,
                  mut scapes: ResMut<Scapes>,
-                 mut sinks: Query<&mut AudioSink>| {
-                    loops(&mut commands, &mut scapes, Vec2::ZERO, 1.0, &mut sinks);
+                 mut tuned: Query<&mut Tuned>| {
+                    loops(&mut commands, &mut scapes, Vec2::ZERO, true, &mut tuned);
                 },
             )
             .expect("loop system runs");

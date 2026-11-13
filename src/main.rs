@@ -25,6 +25,7 @@ mod cachefs;
 mod camera;
 mod capture;
 mod channel_bar;
+mod channels;
 mod chat;
 mod cheats;
 mod clarity;
@@ -717,6 +718,7 @@ fn client_plugins(app: &mut App, read_environment: bool) {
         ))
         .add_plugins((
             sound::plugin,
+            channels::plugin,
             effects::plugin,
             teleport::plugin,
             shop::plugin,

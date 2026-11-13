@@ -107,12 +107,32 @@ fn settings_context_help_can_be_read_with_the_keyboard() {
         ));
     fonts_ready(&mut client);
     client.mouse(Vec2::ZERO);
-    tab_to(&mut client, "hotkey help");
+    // The first Tab stands in the body, where the keys are; the help is in the header, which is
+    // the other way round from there (and gone once the walk has moved into another tab).
+    shift_tab_to(&mut client, "hotkey help");
     client.frames(30);
     assert!(
         client.shown_texts().iter().any(|line| line
             == "Click a key, then press the new one. Backspace unbinds, Escape keeps it.")
     );
+}
+
+fn shift_tab_to(client: &mut Client, name: &str) {
+    for _ in 0..64 {
+        if button(client, name).is_some_and(|control| {
+            client
+                .world()
+                .resource::<bevy::input_focus::InputFocus>()
+                .get()
+                == Some(control)
+        }) {
+            return;
+        }
+        client.key(KeyCode::ShiftLeft, bevy::input::ButtonState::Pressed);
+        client.tap_named(KeyCode::Tab, bevy::input::keyboard::Key::Tab);
+        client.key(KeyCode::ShiftLeft, bevy::input::ButtonState::Released);
+    }
+    panic!("context help {name} must be reachable through real Shift+Tab navigation");
 }
 
 fn tab_to(client: &mut Client, name: &str) {
@@ -299,13 +319,26 @@ fn settings_tab_navigation_reaches_every_existing_content_control_over_play() {
         fonts_ready(&mut client);
         client.frames(5);
         let world = client.world_mut();
-        let root = world
+        let window = world
             .query::<(Entity, &Name)>()
             .iter(world)
             .find(|(_, name)| name.as_str() == "settings window")
             .map(|(entity, _)| entity)
             .expect("settings window");
-        let expected: HashSet<Entity> = super::harness::subtree(world, root)
+        // The content controls are those of the body. They are known by their names: the list and
+        // the header, which follow the tab in view, are built again when the walk moves into
+        // another tab (the settings' own tests walk all of them).
+        let name_of = |world: &World, entity: Entity| -> String {
+            world
+                .get::<Name>(entity)
+                .expect("a named settings control")
+                .to_string()
+        };
+        let body = world
+            .query_filtered::<Entity, With<crate::settings::Body>>()
+            .single(world)
+            .expect("the settings' body");
+        let expected: HashSet<String> = super::harness::subtree(world, body)
             .into_iter()
             .filter(|entity| {
                 world.get::<Outline>(*entity).is_some()
@@ -316,28 +349,37 @@ fn settings_tab_navigation_reaches_every_existing_content_control_over_play() {
                         .get::<InheritedVisibility>(*entity)
                         .is_some_and(|seen| seen.get())
             })
+            .map(|entity| name_of(world, entity))
             .collect();
         assert!(
             !expected.is_empty() && expected.len() <= 512,
             "bounded real settings controls"
         );
         let mut reached = HashSet::new();
-        for _ in 0..=expected.len() {
+        // The links under a tab in view join the walk as the walk moves into the tab.
+        for _ in 0..=2 * expected.len() {
             client.tap_named(KeyCode::Tab, bevy::input::keyboard::Key::Tab);
             let entity = client
                 .world()
                 .resource::<bevy::input_focus::InputFocus>()
                 .get()
                 .expect("settings keyboard focus");
+            let name = name_of(client.world(), entity);
+            let in_window = std::iter::successors(Some(entity), |entity| {
+                client.world().get::<ChildOf>(*entity).map(ChildOf::parent)
+            })
+            .take(64)
+            .any(|ancestor| ancestor == window);
             assert!(
-                expected.contains(&entity),
-                "{tab}: underlying Play cannot take Settings focus"
+                in_window,
+                "{tab}: underlying Play cannot take Settings focus ({name})"
             );
-            reached.insert(entity);
+            reached.insert(name);
         }
-        assert_eq!(
-            reached, expected,
-            "{tab}: every existing outlined content control remains Tab-reachable"
+        assert!(
+            expected.is_subset(&reached),
+            "{tab}: every existing outlined content control remains Tab-reachable, not {:?}",
+            expected.difference(&reached).collect::<Vec<_>>()
         );
     }
 }

@@ -24,8 +24,8 @@ use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 use bevy::audio::{
-    AudioLoader, AudioPlayer, AudioSink, AudioSinkPlayback, AudioSource, GlobalVolume,
-    PlaybackMode, PlaybackSettings, Source,
+    AudioLoader, AudioPlayer, AudioSink, AudioSinkPlayback, AudioSource, PlaybackMode,
+    PlaybackSettings, Source,
 };
 use bevy::prelude::*;
 use rodio::cpal::StreamError;
@@ -289,13 +289,18 @@ pub fn plugin(app: &mut App) {
     let device = Device::new(|_| None);
     #[cfg(not(test))]
     let device = Device::new(open);
-    app.init_resource::<GlobalVolume>()
-        .init_asset::<AudioSource>()
+    app.init_asset::<AudioSource>()
         .init_asset_loader::<AudioLoader>()
         .insert_resource(Output(device))
         .add_systems(
             PostUpdate,
-            (supervise, play_queued, cleanup_finished).chain(),
+            (
+                supervise,
+                play_queued,
+                crate::channels::follow_levels,
+                cleanup_finished,
+            )
+                .chain(),
         );
 }
 
@@ -328,7 +333,6 @@ fn supervise(
 fn play_queued(
     output: Res<Output>,
     sources: Res<Assets<AudioSource>>,
-    global: Res<GlobalVolume>,
     queued: Query<(Entity, &AudioPlayer, &PlaybackSettings), Without<AudioSink>>,
     mut commands: Commands,
 ) {
@@ -364,7 +368,8 @@ fn play_queued(
             sink.mute();
         }
         sink.set_speed(settings.speed);
-        sink.set_volume(settings.volume * global.volume);
+        // The balance of the channels and the master are [`crate::channels::follow_levels`]'s.
+        sink.set_volume(settings.volume);
         if settings.paused {
             sink.pause();
         }

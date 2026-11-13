@@ -378,7 +378,7 @@ mod tests {
             memory::{Dir, MemoryAssetReader},
         },
     };
-    use bevy::audio::{AudioLoader, AudioSink, PlaybackMode, Source};
+    use bevy::audio::{AudioLoader, PlaybackMode, Source};
     use bevy::ecs::system::RunSystemOnce;
     use clap::Parser;
     use std::time::Duration;
@@ -558,8 +558,8 @@ mod tests {
                 |mut commands: Commands,
                  mut mixer: ResMut<crate::mixer::Mixer>,
                  time: Res<Time>,
-                 mut sinks: Query<&mut AudioSink>| {
-                    mixer.tick(&mut commands, time.elapsed(), &mut sinks, None);
+                 mut tuned: Query<&mut crate::channels::Tuned>| {
+                    mixer.tick(&mut commands, time.elapsed(), &mut tuned, None);
                 },
             )
             .expect("the playback deadline is applied");

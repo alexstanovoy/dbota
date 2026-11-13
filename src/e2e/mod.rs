@@ -17,6 +17,7 @@ mod building_fall;
 mod camera;
 mod captions;
 mod catalogue;
+mod channels;
 mod chasm;
 mod controls;
 mod courier;

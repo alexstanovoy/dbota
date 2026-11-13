@@ -13,6 +13,7 @@ use bevy::{
 use bota_client_core::Phase;
 use bota_proto::{EventKind, Team, UnitKind};
 
+use crate::channels::{Channel, Tuned};
 use crate::config::Settings;
 use crate::manifest::{Manifest, cache_path};
 use crate::session::Session;
@@ -256,18 +257,28 @@ fn load(mut voices: ResMut<Voices>, manifest: Res<Manifest>, server: Res<AssetSe
 fn say_in_game(
     commands: &mut Commands,
     source: Option<Handle<AudioSource>>,
+    channel: Channel,
     gain: f32,
 ) -> Option<Entity> {
-    let line = say(commands, source, gain)?;
+    let line = say(commands, source, channel, gain)?;
     commands.entity(line).insert(crate::mixer::GameAudio);
     Some(line)
 }
 
-/// Plays a sound once; the entity playing it.
-fn say(commands: &mut Commands, source: Option<Handle<AudioSource>>, gain: f32) -> Option<Entity> {
+/// Plays a sound once in `channel`; the entity playing it.
+fn say(
+    commands: &mut Commands,
+    source: Option<Handle<AudioSource>>,
+    channel: Channel,
+    gain: f32,
+) -> Option<Entity> {
     source.map(|source| {
         commands
             .spawn((
+                Tuned {
+                    channel,
+                    base: gain,
+                },
                 AudioPlayer::new(source),
                 PlaybackSettings::DESPAWN.with_volume(Volume::Linear(gain)),
             ))
@@ -342,7 +353,7 @@ fn announce(
                 // The horn of one's own side's ancient.
                 let dire = core.my_team() == Some(bota_proto::Team::Dire);
                 let horn = voices.horns[usize::from(dire)].take();
-                say_in_game(&mut commands, horn, 0.8);
+                say_in_game(&mut commands, horn, Channel::Announcer, 0.8);
             }
             PregameCue::BattleBegins => {
                 let line = voices.begins.take();
@@ -528,6 +539,10 @@ fn speak(
             .spawn((
                 crate::mixer::GameAudio,
                 AnnouncerLine,
+                Tuned {
+                    channel: Channel::Announcer,
+                    base: gain,
+                },
                 AudioPlayer::new(source),
                 PlaybackSettings::DESPAWN.with_volume(Volume::Linear(gain)),
             ))
@@ -560,7 +575,7 @@ fn herald(
     } else {
         voices.day.take()
     };
-    say_in_game(&mut commands, source, 0.5);
+    say_in_game(&mut commands, source, Channel::Announcer, 0.5);
 }
 
 /// A button that sounds as Dota's quit button does.
@@ -587,7 +602,7 @@ fn click(
     } else {
         voices.click.take()
     };
-    say(&mut commands, source, 0.5);
+    say(&mut commands, source, Channel::Interface, 0.5);
 }
 
 /// The menu's own sounds, there from the start: the clicks of its buttons.

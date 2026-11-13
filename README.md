@@ -27,7 +27,7 @@ affiliated with or endorsed by Valve.
 - **Feel at home:** Dota's default hotkeys (all rebindable), the shop with its build trees and quick-buy, talents,
   the courier, control groups, pings, chat, Dota's chat cheats in practice games.
 - **In a browser:** the same client compiled to WebAssembly, on WebGPU or WebGL2 (Chromium and Firefox).
-- **On a slow machine:** quality presets down to `potato`, and Mesa's software renderer as a last resort.
+- **On a slow machine:** quality presets down to `low`, and Mesa's software renderer as a last resort.
 
 What is missing: dbota can show only what bota simulates (two heroes, Shadow Fiend and Pudge; see bota's README).
 Illusions, box selection and the secret shop are not there yet, some effects and animations are missing, and you will
@@ -81,7 +81,7 @@ The VIDEO tab, `settings.conf` or `--set NAME=VALUE` set what the picture may co
 
 | Setting | Values | Default |
 |---|---|---|
-| `quality` | `high`, `medium`, `low`, `potato`: sets all of the below at once | `high` |
+| `quality` | `high`, `medium`, `low`: sets all of the below at once | `high` |
 | `shadows` | `off`, `low`, `high` | `high` |
 | `anti_aliasing` | `off`, `fxaa`, `smaa_low`, `smaa_medium`, `smaa_high`, `msaa_2x`, `msaa_4x` | `fxaa` |
 | `render_scale` | 3D resolution against the window's, `0.25` to `1`; the interface stays sharp | `1` |
@@ -99,8 +99,12 @@ The VIDEO tab, `settings.conf` or `--set NAME=VALUE` set what the picture may co
 
 Visual readability (terrain/unit contrast, contact discs and hero rings) is always enabled at full strength.
 
+The VIDEO tab names `texture_size` as Texture quality (Low 1024, Medium 2048, High 4096, Ultra 16384). The AUDIO tab's
+mixer sets `volume` (the master) and, per channel, `volume_effects`, `volume_voices`, `volume_announcer`,
+`volume_ambience` and `volume_interface` (each `0` to `1`) and their `mute_*` flags.
+
 `texture_size`, `props` and `gpu_batching` apply on the next start, the rest at once. Without a GPU, Mesa's lavapipe
-(`VK_ICD_FILENAMES=.../lvp_icd.json`) draws it at `--set quality=potato`. Hotkeys are `key.<action> = <chord>` lines in
+(`VK_ICD_FILENAMES=.../lvp_icd.json`) draws it at `--set quality=low`. Hotkeys are `key.<action> = <chord>` lines in
 the same file, which also holds every other setting (sound, interface, controls, replays) by name; it holds only
 what was changed from the defaults, so a default changed later reaches it. An older client's `client.conf` is ignored
 and left as it is: its settings are dropped.

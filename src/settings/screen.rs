@@ -13,19 +13,20 @@ use bevy::{
 };
 
 use super::draw::{
-    Body, CardAnchor, ChoiceButton, ChoiceOption, CloseButton, KeyField, NameField, NavLink,
-    ResetButton, Root, RowKey, RowReset, ScrollRail, ScrollThumb, SearchClear, SearchField,
-    SliderTrack, TabButton, ToggleBox, ToggleRow,
+    Body, CardAnchor, CardTab, ChoiceButton, ChoiceOption, CloseButton, KeyField, MuteBox,
+    NameField, NavLink, ResetButton, Root, RowReset, ScrollRail, ScrollThumb, SearchClear,
+    SearchField, SliderTrack, TabAnchor, TabButton, ToggleBox, ToggleRow, Vertical,
 };
-use super::model::{Choice, Row, Tab, TextSetting};
+use super::model::{Choice, Row, Slider, Tab, TextSetting};
+use crate::channels::{Channel, Preview};
 use crate::config::Settings;
 use crate::keys::{self, Chord, Input};
 use crate::theme;
 use crate::window::Displays;
 
-/// The screen: whether it is open, its tab, the key field taking the next
-/// key, and the list opened from a choice.
-#[derive(Resource, Debug, PartialEq)]
+/// The screen: whether it is open, the tab in view (the tabs' sections follow one another down a
+/// single scrolling body), the key field taking the next key, and the list opened from a choice.
+#[derive(Resource, Clone, Debug, PartialEq)]
 pub struct Screen {
     pub open: bool,
     pub tab: Tab,
@@ -70,7 +71,7 @@ impl Screen {
         self.searching || self.naming.is_some()
     }
 
-    /// Opens `tab`, leaving a search and whatever was half done.
+    /// Goes to `tab`, leaving a search and whatever was half done.
     fn show(&mut self, tab: Tab) {
         self.tab = tab;
         self.query.clear();
@@ -80,19 +81,38 @@ impl Screen {
     }
 }
 
-/// How far the body is scrolled, in interface pixels, and the card the navigation asked to scroll
+/// Where the navigation asks the body to scroll to.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Jump {
+    /// The start of a tab: its heading, and the slots above its first section.
+    Tab(Tab),
+    /// A card, by its place in the open view.
+    Card(usize),
+}
+
+/// How far the body is scrolled, in interface pixels, and where the navigation asked to scroll
 /// to. Kept apart from the screen, whose every change builds the layout again.
 #[derive(Resource, Default)]
 pub struct Scroll {
     pub y: f32,
-    pub jump: Option<usize>,
+    pub jump: Option<Jump>,
+    /// A control the keyboard moved to, to be brought into view.
+    reveal: Option<Entity>,
+    /// What the last jump asked for: it counts as in view when the content ended before it
+    /// could be carried out, until the wheel moves the body.
+    pinned: Option<Jump>,
+    /// Frames a jump has waited for its target to be laid out.
+    waited: u8,
+    /// The scroll the last layout drew the body at: what the places of its nodes are relative to,
+    /// while `y` may already be somewhere else.
+    laid: f32,
 }
 
-/// The control the keyboard stands on, by its place in the reading order of the window's controls;
-/// none until Tab is pressed, and none again after a click.
+/// The control the keyboard stands on, by its name (the controls that show change as the window
+/// is used); none until Tab is pressed, and none again after a click.
 #[derive(Resource, Default)]
 pub struct Focus {
-    pub control: Option<usize>,
+    pub control: Option<String>,
     /// The option of an open list the keyboard stands on.
     pub option: Option<usize>,
 }
@@ -103,6 +123,11 @@ pub struct InView(pub usize);
 
 /// The space over a card the body keeps when it scrolls to the card.
 const CARD_MARGIN: f32 = 24.0;
+/// Frames a jump waits for the layout of its target, which a search ended by it builds again.
+const JUMP_PATIENCE: u8 = 30;
+/// How much a slider moves before another try of its sound: a try per step of a drag would
+/// stack the sounds.
+const TRY_STEP: f32 = 0.05;
 /// The most characters a search holds.
 const MAX_QUERY: usize = 40;
 
@@ -145,8 +170,12 @@ pub fn plugin(app: &mut App) {
                 super::look::toggles,
                 super::look::slider_fills,
                 super::look::slider_thumbs,
+                super::look::fader_fills,
+                super::look::fader_caps,
+                super::look::mutes,
                 super::look::slider_values,
                 super::look::choices,
+                super::look::lists_open_upward,
                 super::look::key_fields,
                 super::look::key_texts,
                 super::look::clash_bar,
@@ -159,7 +188,7 @@ pub fn plugin(app: &mut App) {
 }
 
 /// `--settings TAB` opens the screen at that tab.
-fn open_at_start(args: Res<crate::Args>, mut screen: ResMut<Screen>) {
+fn open_at_start(args: Res<crate::Args>, mut screen: ResMut<Screen>, mut scroll: ResMut<Scroll>) {
     let Some(name) = args.settings.as_deref() else {
         return;
     };
@@ -170,6 +199,7 @@ fn open_at_start(args: Res<crate::Args>, mut screen: ResMut<Screen>) {
         Some(tab) => {
             screen.tab = tab;
             screen.open = true;
+            scroll.jump = Some(Jump::Tab(tab));
         }
         None => warn!("--settings {name}: no such tab"),
     }
@@ -250,10 +280,10 @@ fn click_navigation(
 ) {
     if let Ok(tab) = on.tabs.get(target) {
         screen.show(tab.0);
-        scroll.y = 0.0;
+        scroll.jump = Some(Jump::Tab(tab.0));
     }
     if let Ok(link) = on.links.get(target) {
-        scroll.jump = Some(link.0);
+        scroll.jump = Some(link.jump);
     }
     if on.close.contains(target) {
         screen.open = false;
@@ -306,7 +336,8 @@ fn click_controls(
     }
 }
 
-/// A slider held down follows the cursor along its track.
+/// A slider held down follows the cursor along its track; the sound of the channel a slider
+/// sets is tried as it moves, so that the level is tuned by ear.
 fn drag(
     screen: Res<Screen>,
     mut settings: ResMut<Settings>,
@@ -314,27 +345,83 @@ fn drag(
         Has<bevy::ui::Pressed>,
         &SliderTrack,
         &RelativeCursorPosition,
+        Has<Vertical>,
     )>,
     mouse: Res<ButtonInput<MouseButton>>,
+    mut tries: Local<Tries>,
+    mut sounds: MessageWriter<Preview>,
 ) {
     if !screen.open {
         return;
     }
-    for (interaction, track, at) in &tracks {
+    let mut held = None;
+    for (interaction, track, at, vertical) in &tracks {
         if !interaction || !mouse.pressed(MouseButton::Left) {
             continue;
         }
         let Some(at) = at.normalized else {
             continue;
         };
-        // The cursor's place is about the track's middle.
-        let share = at.x + 0.5;
+        held = Some(track.0);
+        // The cursor's place is about the track's middle; a fader's top is its most.
+        let share = if vertical { 0.5 - at.y } else { at.x + 0.5 };
         let before = track.0.get(&settings);
         let mut changed = settings.clone();
         track.0.set_share(&mut changed, share);
         if track.0.get(&changed) != before {
             track.0.set_share(&mut settings, share);
         }
+    }
+    tries.follow(held, &settings, &mut sounds);
+}
+
+/// The slider being dragged and the value its sound was last tried at.
+#[derive(Default)]
+struct Tries {
+    last: Option<(Slider, f32)>,
+}
+
+impl Tries {
+    /// Tries the sound at every step of a drag and where it ends.
+    fn follow(
+        &mut self,
+        held: Option<Slider>,
+        settings: &Settings,
+        sounds: &mut MessageWriter<Preview>,
+    ) {
+        let Some(slider) = held else {
+            if let Some((slider, tried)) = self.last.take()
+                && slider.get(settings) != tried
+            {
+                try_sound(slider, settings, sounds);
+            }
+            return;
+        };
+        let value = slider.get(settings);
+        let moved = match self.last {
+            Some((was, tried)) if was == slider => (value - tried).abs() >= TRY_STEP,
+            _ => true,
+        };
+        if moved {
+            try_sound(slider, settings, sounds);
+            self.last = Some((slider, value));
+        }
+    }
+}
+
+/// Asks for the sound of the channel the slider sets, if it sets one: the master volume is heard
+/// through the first channel that is not muted.
+pub fn try_sound(slider: Slider, settings: &Settings, sounds: &mut MessageWriter<Preview>) {
+    let channel = match slider {
+        Slider::Level(channel) => Some(channel),
+        // A channel that has its sound to hand: the hero's voice is read for its own fader.
+        Slider::Volume => Channel::ALL
+            .into_iter()
+            .find(|channel| *channel != Channel::Voices && !settings.mix.muted(*channel)),
+        Slider::InterfaceScale | Slider::RenderScale => None,
+    };
+    if let Some(channel) = channel {
+        sounds.write(Preview(channel));
     }
 }
 
@@ -581,21 +668,139 @@ impl Geometry {
         self.view > 0.0
     }
 
+    /// Where a node's top stands in the content.
+    fn content_top(&self, node: &ComputedNode, at: &UiGlobalTransform) -> f32 {
+        let node_top = at.translation.y - node.size().y / 2.0;
+        (node_top - self.top) * self.scale + self.applied
+    }
+
     /// Where a card's top stands in the content: what to scroll to to put it at the top.
     fn place_of(&self, card: &ComputedNode, at: &UiGlobalTransform) -> f32 {
-        let card_top = at.translation.y - card.size().y / 2.0;
-        (card_top - self.top) * self.scale + self.applied - CARD_MARGIN
+        self.content_top(card, at) - CARD_MARGIN
     }
 }
 
-/// The wheel scrolls the screen's body, and the navigation's links scroll it to a card.
+/// The nodes the navigation scrolls to: the tabs' starts and the cards.
+#[derive(bevy::ecs::system::SystemParam)]
+struct Anchors<'w, 's> {
+    tabs: Query<
+        'w,
+        's,
+        (
+            &'static TabAnchor,
+            &'static ComputedNode,
+            &'static UiGlobalTransform,
+        ),
+    >,
+    cards: Query<
+        'w,
+        's,
+        (
+            &'static CardAnchor,
+            &'static CardTab,
+            &'static ComputedNode,
+            &'static UiGlobalTransform,
+        ),
+    >,
+}
+
+impl Anchors<'_, '_> {
+    /// What to scroll to to put the jump's target at the top, once it is laid out.
+    fn place_of(&self, jump: Jump, geometry: &Geometry) -> Option<f32> {
+        match jump {
+            Jump::Tab(tab) => {
+                self.tabs
+                    .iter()
+                    .find(|(anchor, ..)| anchor.0 == tab)
+                    .map(|(_, node, at)| {
+                        // The first tab starts at the body's top; the others have their heading's
+                        // own space over it.
+                        if tab == Tab::ALL[0] {
+                            geometry.place_of(node, at)
+                        } else {
+                            geometry.content_top(node, at)
+                        }
+                    })
+            }
+            Jump::Card(card) => self
+                .cards
+                .iter()
+                .find(|(anchor, ..)| anchor.0 == card)
+                .map(|(_, _, node, at)| geometry.place_of(node, at)),
+        }
+    }
+
+    /// The tab in view and the card in it: the last of each that has reached the top. At the end
+    /// of the content, a jump the content was too short to carry out counts as made.
+    fn in_view(&self, geometry: &Geometry, scrolled: &Scroll) -> Option<(Tab, usize)> {
+        let reached = |node: &ComputedNode, at: &UiGlobalTransform| {
+            geometry.place_of(node, at) <= scrolled.y + 1.0
+        };
+        let at_end = geometry.reach > 0.0 && scrolled.y >= geometry.reach - 1.0;
+        let first_card = |tab: Tab| {
+            self.cards
+                .iter()
+                .filter(|(_, of, ..)| of.0 == tab)
+                .map(|(anchor, ..)| anchor.0)
+                .min()
+        };
+        let last_card = || {
+            self.cards
+                .iter()
+                .max_by_key(|(anchor, ..)| anchor.0)
+                .map(|(anchor, of, ..)| (of.0, anchor.0))
+        };
+        match scrolled.pinned.filter(|_| at_end) {
+            Some(Jump::Tab(tab)) => return first_card(tab).map(|card| (tab, card)),
+            Some(Jump::Card(card)) => {
+                return self
+                    .cards
+                    .iter()
+                    .find(|(anchor, ..)| anchor.0 == card)
+                    .map(|(_, of, ..)| (of.0, card));
+            }
+            None => {}
+        }
+        if at_end {
+            return last_card();
+        }
+        // A search lists cards of every tab and no tab's start: the cards alone decide.
+        let tab = if self.tabs.is_empty() {
+            None
+        } else {
+            self.tabs
+                .iter()
+                .filter(|(_, node, at)| geometry.content_top(node, at) <= scrolled.y + 1.0)
+                .map(|(anchor, ..)| anchor.0)
+                .max_by_key(|tab| Tab::ALL.iter().position(|t| t == tab))
+                .or(Some(Tab::ALL[0]))
+        };
+        let card = self
+            .cards
+            .iter()
+            .filter(|(_, of, node, at)| tab.is_none_or(|tab| of.0 == tab) && reached(node, at))
+            .map(|(anchor, ..)| anchor.0)
+            .max()
+            .or_else(|| tab.and_then(first_card).or(Some(0)))?;
+        let of = self
+            .cards
+            .iter()
+            .find(|(anchor, ..)| anchor.0 == card)
+            .map(|(_, of, ..)| of.0)?;
+        Some((tab.unwrap_or(of), card))
+    }
+}
+
+/// The wheel scrolls the screen's body, the navigation's links scroll it to a tab or a card, and
+/// the keyboard's control is brought into view.
 #[allow(clippy::type_complexity)]
 fn scroll(
     screen: Res<Screen>,
     wheel: Res<AccumulatedMouseScroll>,
     mut scrolled: ResMut<Scroll>,
     mut body: Query<(&mut ScrollPosition, &ComputedNode, &UiGlobalTransform), With<Body>>,
-    anchors: Query<(&CardAnchor, &ComputedNode, &UiGlobalTransform)>,
+    anchors: Anchors,
+    controls: Query<(&ComputedNode, &UiGlobalTransform), Without<Body>>,
 ) {
     if !screen.open {
         return;
@@ -604,24 +809,28 @@ fn scroll(
         return;
     };
     let geometry = Geometry::of(node, place, at.y);
+    scrolled.laid = at.y;
     if wheel.delta.y != 0.0 {
         let step = match wheel.unit {
             MouseScrollUnit::Line => wheel.delta.y * 40.0,
             MouseScrollUnit::Pixel => wheel.delta.y,
         };
         scrolled.y -= step;
+        scrolled.pinned = None;
     }
-    if let Some(card) = scrolled.jump.take() {
-        let wanted = anchors
-            .iter()
-            .find(|(anchor, ..)| anchor.0 == card)
-            .map(|(_, anchor, at_anchor)| geometry.place_of(anchor, at_anchor));
-        // The first section of a tab is the top of it, the slots above it included.
-        scrolled.y = if card == 0 && !screen.is_searching() {
-            0.0
-        } else {
-            wanted.unwrap_or(scrolled.y)
-        };
+    follow_jump(&mut scrolled, &geometry, &anchors);
+    if let Some(control) = scrolled.reveal.take()
+        && geometry.laid_out()
+        && let Ok((node, place)) = controls.get(control)
+    {
+        let top = geometry.content_top(node, place);
+        let height = node.size().y * geometry.scale;
+        let room = geometry.view - CARD_MARGIN;
+        if top < scrolled.y + CARD_MARGIN {
+            scrolled.y = top - CARD_MARGIN;
+        } else if top + height > scrolled.y + room {
+            scrolled.y = top + height - room;
+        }
     }
     scrolled.y = scrolled.y.clamp(0.0, geometry.reach);
     if at.y != scrolled.y {
@@ -629,46 +838,59 @@ fn scroll(
     }
 }
 
-/// The card in view, whose link the navigation marks, and the scroll bar: shown while the body
-/// scrolls, its thumb as long and as far along as the body shows and has scrolled.
+/// Carries out the jump the navigation asked for once its target is laid out; a target a search
+/// just made way for is waited for a while.
+fn follow_jump(scrolled: &mut Scroll, geometry: &Geometry, anchors: &Anchors) {
+    let Some(jump) = scrolled.jump else {
+        return;
+    };
+    let place = anchors
+        .place_of(jump, geometry)
+        .filter(|_| geometry.laid_out());
+    if let Some(y) = place {
+        scrolled.y = y.max(0.0);
+        scrolled.pinned = Some(jump);
+        scrolled.jump = None;
+        scrolled.waited = 0;
+    } else if scrolled.waited < JUMP_PATIENCE {
+        scrolled.waited += 1;
+    } else {
+        scrolled.jump = None;
+        scrolled.waited = 0;
+    }
+}
+
+/// The tab and the card in view, whose links the navigation marks, and the scroll bar: shown
+/// while the body scrolls, its thumb as long and as far along as the body shows and has scrolled.
 #[allow(clippy::type_complexity)]
 fn scroll_marks(
-    screen: Res<Screen>,
+    mut screen: ResMut<Screen>,
     scrolled: Res<Scroll>,
     mut in_view: ResMut<InView>,
-    body: Query<(&ScrollPosition, &ComputedNode, &UiGlobalTransform), With<Body>>,
-    anchors: Query<(&CardAnchor, &ComputedNode, &UiGlobalTransform)>,
+    body: Query<(&ComputedNode, &UiGlobalTransform), With<Body>>,
+    anchors: Anchors,
     mut rail: Query<&mut Node, (With<ScrollRail>, Without<ScrollThumb>)>,
     mut thumb: Query<&mut Node, (With<ScrollThumb>, Without<ScrollRail>)>,
 ) {
     if !screen.open {
         return;
     }
-    let Ok((at, node, place)) = body.single() else {
+    let Ok((node, place)) = body.single() else {
         return;
     };
-    let geometry = Geometry::of(node, place, at.y);
+    // The nodes stand where the last layout put them, which is not where the body is scrolled to now.
+    let geometry = Geometry::of(node, place, scrolled.laid);
     if !geometry.laid_out() {
         return;
     }
-    let seen = if scrolled.y >= geometry.reach - 1.0 && geometry.reach > 0.0 {
-        anchors
-            .iter()
-            .map(|(anchor, ..)| anchor.0)
-            .max()
-            .unwrap_or(0)
-    } else {
-        anchors
-            .iter()
-            .filter(|(_, anchor, at_anchor)| {
-                geometry.place_of(anchor, at_anchor) <= scrolled.y + 1.0
-            })
-            .map(|(anchor, ..)| anchor.0)
-            .max()
-            .unwrap_or(0)
-    };
-    if in_view.0 != seen {
-        in_view.0 = seen;
+    if let Some((tab, card)) = anchors.in_view(&geometry, &scrolled) {
+        if in_view.0 != card {
+            in_view.0 = card;
+        }
+        // A tab the navigation is on its way to is the open one already.
+        if !screen.is_searching() && scrolled.jump.is_none() && screen.tab != tab {
+            screen.tab = tab;
+        }
     }
     let scrolls = geometry.reach > 0.0;
     for mut node in &mut rail {
@@ -731,6 +953,9 @@ fn save(
     }
 }
 
+/// How far apart, down the window, two controls of one row can stand.
+const ROW_TOLERANCE: f32 = 8.0;
+
 /// The controls the keyboard can stand on, in reading order (top to bottom, then left to right).
 #[derive(bevy::ecs::system::SystemParam)]
 pub struct Focusable<'w, 's> {
@@ -745,24 +970,103 @@ pub struct Focusable<'w, 's> {
             &'static UiGlobalTransform,
             &'static InheritedVisibility,
         ),
+        AnyControl,
+    >,
+    nav: Query<
+        'w,
+        's,
+        (),
         Or<(
-            With<ToggleBox>,
-            With<ChoiceButton>,
-            With<RowKey>,
-            With<NameField>,
-            With<SliderTrack>,
-            With<crate::ui::help::Hint>,
+            With<TabButton>,
+            With<NavLink>,
+            With<SearchField>,
+            With<SearchClear>,
         )>,
     >,
+    header: Query<'w, 's, (), Or<(With<CloseButton>, With<ResetButton>)>>,
+    names: Query<'w, 's, &'static Name>,
 }
 
+/// The names of every control that shows, for the tests: the set the keyboard has to reach.
+#[cfg(test)]
+pub fn shown_controls(world: &mut World) -> std::collections::BTreeSet<String> {
+    world
+        .query_filtered::<(&Name, &ComputedNode, &InheritedVisibility), AnyControl>()
+        .iter(world)
+        .filter(|(_, node, seen)| seen.get() && node.size() != Vec2::ZERO)
+        .map(|(name, ..)| name.to_string())
+        .collect()
+}
+
+/// Every control the keyboard can stand on: the body's rows (their fields, boxes, sliders, mutes,
+/// slots and reset arrows), the list at the left (the search, the tabs, the section links) and the
+/// header's buttons.
+type AnyControl = Or<(
+    With<ToggleBox>,
+    With<MuteBox>,
+    With<ChoiceButton>,
+    With<KeyField>,
+    With<NameField>,
+    With<SliderTrack>,
+    With<RowReset>,
+    With<ResetButton>,
+    With<SearchField>,
+    With<SearchClear>,
+    With<TabButton>,
+    With<NavLink>,
+    With<CloseButton>,
+    With<crate::ui::help::Hint>,
+)>;
+
 impl Focusable<'_, '_> {
-    /// The controls that show, in reading order.
+    /// Where a control's middle stands down the window.
+    fn height_of(&self, control: Entity) -> Option<f32> {
+        self.nodes
+            .get(control)
+            .ok()
+            .map(|(_, _, at, _)| at.translation.y)
+    }
+
+    /// Where a control stands in the window, in the order the keyboard walks them: the header,
+    /// then the list at the left, then the body. The header comes first because what it holds
+    /// follows the tab in view, which the walk through the body changes: the help of HOTKEYS
+    /// would be gone by the time the walk came round to it.
+    fn region(&self, control: Entity) -> u8 {
+        if self.header.contains(control) {
+            0
+        } else if self.nav.contains(control) {
+            1
+        } else {
+            2
+        }
+    }
+
+    /// The name of a control, which is how the keyboard knows the one it stands on: the controls
+    /// that show change (a reset arrow appears with a change, the window is built again) while
+    /// the one the keyboard stands on stays.
+    fn name_of(&self, control: Entity) -> Option<String> {
+        self.names.get(control).ok().map(|name| name.to_string())
+    }
+
+    /// Where the control called `name` stands among `controls`.
+    fn position_of(&self, controls: &[Entity], name: &str) -> Option<usize> {
+        controls
+            .iter()
+            .position(|control| self.names.get(*control).is_ok_and(|n| n.as_str() == name))
+    }
+
+    /// Whether a control is one of the body's.
+    fn in_body(&self, control: Entity) -> bool {
+        self.region(control) == 2
+    }
+
+    /// The controls that show: the header's, then the list's, then the body's, each in reading
+    /// order (top to bottom, then left to right).
     pub fn in_order(&self) -> Vec<Entity> {
         let Ok(root) = self.roots.single() else {
             return Vec::new();
         };
-        let mut found: Vec<(Entity, Vec2)> = self
+        let mut found: Vec<(u8, Entity, Vec2)> = self
             .nodes
             .iter()
             .filter(|(_, node, _, seen)| seen.get() && node.size() != Vec2::ZERO)
@@ -772,14 +1076,24 @@ impl Focusable<'_, '_> {
                     .take(64)
                     .any(|ancestor| ancestor == root)
             })
-            .map(|(entity, _, at, _)| (entity, at.translation))
+            .map(|(entity, _, at, _)| (self.region(entity), entity, at.translation))
             .collect();
-        found.sort_by(|a, b| {
-            // A row's controls share a line to within a pixel or two.
-            let (ay, by) = ((a.1.y / 8.0).round(), (b.1.y / 8.0).round());
-            ay.total_cmp(&by).then(a.1.x.total_cmp(&b.1.x))
-        });
-        found.into_iter().map(|(entity, _)| entity).collect()
+        // A row's controls share a line to within a few pixels. The rows are cut from the first
+        // control of each, not from a grid, so that scrolling the body (which moves every control
+        // by one amount) never moves a control from one row to another and so changes the order.
+        found.sort_by(|a, b| a.0.cmp(&b.0).then(a.2.y.total_cmp(&b.2.y)));
+        let mut row = 0_u32;
+        let mut row_start: Option<(u8, f32)> = None;
+        let mut rows: Vec<(u8, u32, f32, Entity)> = Vec::with_capacity(found.len());
+        for (region, entity, at) in found {
+            if row_start.is_none_or(|(first, y)| first != region || at.y - y > ROW_TOLERANCE) {
+                row += 1;
+                row_start = Some((region, at.y));
+            }
+            rows.push((region, row, at.x, entity));
+        }
+        rows.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)).then(a.2.total_cmp(&b.2)));
+        rows.into_iter().map(|(.., entity)| entity).collect()
     }
 }
 
@@ -787,14 +1101,16 @@ impl Focusable<'_, '_> {
 #[derive(bevy::ecs::system::SystemParam)]
 struct Controls<'w, 's> {
     toggles: Query<'w, 's, &'static ToggleBox>,
+    mutes: Query<'w, 's, &'static MuteBox>,
     choices: Query<'w, 's, &'static ChoiceButton>,
-    keyfields: Query<'w, 's, &'static KeyField, With<RowKey>>,
+    keyfields: Query<'w, 's, &'static KeyField>,
     names: Query<'w, 's, &'static NameField>,
     sliders: Query<'w, 's, &'static SliderTrack>,
 }
 
 impl Controls<'_, '_> {
-    /// What a click on `control` does: turns a toggle, opens a list, takes the next key, types.
+    /// What a click on `control` does: turns a toggle, opens a list, takes the next key, types;
+    /// false for a control that is a button, which the press it makes is for.
     fn activate(
         &self,
         control: Entity,
@@ -802,12 +1118,17 @@ impl Controls<'_, '_> {
         settings: &mut ResMut<Settings>,
         at: &mut Focus,
         displays: &Displays,
-    ) {
-        if let Ok(tick) = self.toggles.get(control)
-            && Row::Toggle(tick.0).enabled(settings)
+    ) -> bool {
+        if let Some(toggle) = self
+            .toggles
+            .get(control)
+            .map(|tick| tick.0)
+            .ok()
+            .or_else(|| self.mutes.get(control).map(|mute| mute.0).ok())
+            && Row::Toggle(toggle).enabled(settings)
         {
-            let state = tick.0.get(settings);
-            tick.0.set(settings, !state);
+            let state = toggle.get(settings);
+            toggle.set(settings, !state);
         } else if let Ok(choice) = self.choices.get(control)
             && Row::Choice(choice.0).enabled(settings)
         {
@@ -819,23 +1140,37 @@ impl Controls<'_, '_> {
             screen.held_modifier = None;
         } else if let Ok(field) = self.names.get(control) {
             screen.naming = Some(field.0);
+        } else if !self.toggles.contains(control)
+            && !self.mutes.contains(control)
+            && !self.choices.contains(control)
+            && !self.sliders.contains(control)
+        {
+            return false;
         }
+        true
     }
 
-    /// Moves a slider one step, left (`-1.0`) or right (`1.0`).
-    fn nudge(&self, control: Entity, settings: &mut ResMut<Settings>, sign: f32) {
+    /// Moves a slider one step, towards less (`-1.0`) or more (`1.0`), and tries its sound.
+    fn nudge(
+        &self,
+        control: Entity,
+        settings: &mut ResMut<Settings>,
+        sign: f32,
+        sounds: &mut MessageWriter<Preview>,
+    ) {
         if let Ok(track) = self.sliders.get(control)
             && Row::Slider(track.0).enabled(settings)
         {
             let (lo, hi, step) = track.0.range();
             let share = track.0.share(settings) + sign * step / (hi - lo);
             track.0.set_share(settings, share);
+            try_sound(track.0, settings, sounds);
         }
     }
 }
 
-/// Tab and Shift+Tab move the keyboard along the controls; Space or Enter does what a click
-/// does; Left and Right move a slider; while a list is open, Up and Down move along its options
+/// Tab and Shift+Tab move the keyboard along the controls, scrolling the body to the one it
+/// stands on; Space or Enter does what a click does; Left and Down, Right and Up move a slider; while a list is open, Up and Down move along its options
 /// and Space or Enter picks one. A click gives the focus up; a field edited (or a key set) hands
 /// the focus on from where it was.
 #[allow(clippy::too_many_arguments)]
@@ -850,6 +1185,11 @@ fn focus(
     mouse: Res<ButtonInput<MouseButton>>,
     order: Focusable,
     on: Controls,
+    body: Query<(&ComputedNode, &UiGlobalTransform), With<Body>>,
+    tab_starts: Query<(&TabAnchor, &ComputedNode, &UiGlobalTransform), Without<Body>>,
+    mut scroll: ResMut<Scroll>,
+    mut sounds: MessageWriter<Preview>,
+    mut press: ResMut<crate::ui::PrimaryPress>,
     mut was_editing: Local<bool>,
 ) {
     use bevy::input::keyboard::Key;
@@ -873,6 +1213,26 @@ fn focus(
     // The key that ended an edit already did its work there: only Tab goes on from the field.
     let after_edit = std::mem::take(&mut *was_editing);
     let controls = order.in_order();
+    // Tab, from no control yet, begins at the first control of the tab in view that the body
+    // shows, not at the top of the settings' long list.
+    let tab_top = tab_starts
+        .iter()
+        .find(|(start, ..)| start.0 == screen.tab && !screen.is_searching())
+        .map(|(_, node, at)| at.translation.y - node.size().y / 2.0);
+    let shown = body.single().ok().map(|(node, at)| {
+        let half = node.size().y / 2.0;
+        let top = at.translation.y - half;
+        tab_top.map_or(top, |start| start.max(top))..=(at.translation.y + half)
+    });
+    let in_view = |control: &&Entity| {
+        shown
+            .as_ref()
+            .zip(order.height_of(**control))
+            .is_some_and(|(shown, y)| shown.contains(&y))
+    };
+    let seen_in_body = |control: &&Entity| order.in_body(**control) && in_view(control);
+    let first_seen = controls.iter().position(|c| seen_in_body(&c));
+    let last_seen = controls.iter().rposition(|c| seen_in_body(&c));
     let shift = held.any_pressed([KeyCode::ShiftLeft, KeyCode::ShiftRight]);
     for event in keyboard.read().filter(|e| e.state == ButtonState::Pressed) {
         if let Some(choice) = screen.dropdown {
@@ -890,25 +1250,50 @@ fn focus(
             return;
         }
         let last = controls.len() - 1;
-        let here = at.control.map(|i| i.min(last));
+        let here = at
+            .control
+            .as_deref()
+            .and_then(|name| order.position_of(&controls, name));
         let control = here.map(|i| controls[i]);
         match (&event.logical_key, control) {
             (Key::Tab, _) if shift => {
-                at.control = Some(here.map_or(last, |i| i.checked_sub(1).unwrap_or(last)));
+                let to = here.map_or(last_seen.unwrap_or(last), |i| {
+                    i.checked_sub(1).unwrap_or(last)
+                });
+                at.control = order.name_of(controls[to]);
+                scroll.reveal = Some(controls[to]).filter(|control| order.in_body(*control));
             }
             (Key::Tab, _) => {
-                at.control = Some(here.map_or(0, |i| if i == last { 0 } else { i + 1 }));
+                let to = here.map_or(
+                    first_seen.unwrap_or(0),
+                    |i| {
+                        if i == last { 0 } else { i + 1 }
+                    },
+                );
+                at.control = order.name_of(controls[to]);
+                scroll.reveal = Some(controls[to]).filter(|control| order.in_body(*control));
             }
             _ if after_edit => {}
             (Key::Enter | Key::Space, Some(control)) => {
-                on.activate(control, &mut screen, &mut settings, &mut at, &displays);
+                if !on.activate(control, &mut screen, &mut settings, &mut at, &displays) {
+                    // The rest are buttons: the press a click on them would be.
+                    press.0 = Some(control);
+                }
             }
-            (Key::ArrowLeft, Some(control)) => on.nudge(control, &mut settings, -1.0),
-            (Key::ArrowRight, Some(control)) => on.nudge(control, &mut settings, 1.0),
+            (Key::ArrowLeft | Key::ArrowDown, Some(control)) => {
+                on.nudge(control, &mut settings, -1.0, &mut sounds);
+            }
+            (Key::ArrowRight | Key::ArrowUp, Some(control)) => {
+                on.nudge(control, &mut settings, 1.0, &mut sounds);
+            }
             _ => {}
         }
     }
-    if let Some(control) = at.control.and_then(|index| controls.get(index)).copied()
+    if let Some(control) = at
+        .control
+        .as_deref()
+        .and_then(|name| order.position_of(&controls, name))
+        .map(|index| controls[index])
         && native.get() != Some(control)
     {
         native.set(control, bevy::input_focus::FocusCause::Navigated);
@@ -957,18 +1342,14 @@ pub fn focus_ring(
     mut rings: Query<
         (Entity, &mut Outline),
         // Only the window's own controls: other outlines (the health bars' frames) are not ours.
-        Or<(
-            With<ToggleBox>,
-            With<ChoiceButton>,
-            With<RowKey>,
-            With<NameField>,
-            With<SliderTrack>,
-        )>,
+        AnyControl,
     >,
 ) {
     let focused = at
         .control
+        .as_deref()
         .filter(|_| screen.open)
+        .and_then(|name| order.position_of(&order.in_order(), name))
         .and_then(|i| order.in_order().get(i).copied());
     for (entity, mut outline) in &mut rings {
         let color = if Some(entity) == focused {

@@ -298,7 +298,7 @@ pub fn plugin(app: &mut App) {
         )
         .add_systems(Update, load.run_if(crate::loading::requested))
         .add_systems(PostUpdate, report.in_set(crate::loading::Report))
-        .add_systems(Update, (volume, (collect_cues, play).chain(), portals));
+        .add_systems(Update, ((collect_cues, play).chain(), portals));
 }
 
 #[derive(Resource, Default)]
@@ -513,19 +513,6 @@ fn load(mut bindings: ResMut<Bindings>, manifest: Res<Manifest>, server: Res<Ass
     }
 }
 
-/// The master volume from the settings, applied to sounds started after.
-fn volume(settings: Res<Settings>, args: Res<crate::Args>, mut global: ResMut<GlobalVolume>) {
-    if !settings.is_changed() {
-        return;
-    }
-    let v = if settings.muted || args.mute {
-        0.0
-    } else {
-        settings.volume
-    };
-    global.volume = Volume::Linear(v);
-}
-
 /// The bindings that choose sources, the mixer that owns active playback, and the listener.
 struct Sounder<'a, 'w, 's> {
     commands: &'a mut Commands<'w, 's>,
@@ -616,6 +603,7 @@ impl Sounder<'_, '_, '_> {
                 speed: speed_of(kind),
                 on_player: sounds_from_the_players_entity(kind, self.own, factor_source),
                 fog: Some(self.fog),
+                ..Request::default()
             };
             if self.mixer.start(
                 self.commands,
@@ -783,6 +771,10 @@ impl PortalAudio<'_> {
             commands
                 .spawn((
                     crate::mixer::GameAudio,
+                    crate::channels::Tuned {
+                        channel: crate::channels::Channel::Effects,
+                        base: gain,
+                    },
                     AudioPlayer::new(source),
                     PlaybackSettings::LOOP.with_volume(Volume::Linear(gain)),
                 ))

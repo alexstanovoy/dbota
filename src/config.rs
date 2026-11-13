@@ -3,6 +3,7 @@
 
 use std::path::PathBuf;
 
+use crate::channels::{Channel, Mix};
 use crate::keys::{self, Action, Chord};
 
 /// The aids drawn over the world, each of which may be turned off.
@@ -176,13 +177,23 @@ pub struct Quality {
 }
 
 /// The quality presets by name, best first.
-pub const PRESETS: [&str; 4] = ["high", "medium", "low", "potato"];
+pub const PRESETS: [&str; 3] = ["high", "medium", "low"];
+
+/// Names of presets no client offers any more: a settings file or a command line that still names
+/// one gets the lowest preset left, not a complaint.
+const RETIRED_PRESETS: [&str; 1] = ["potato"];
 
 impl Quality {
     /// A preset by name.
     pub fn preset(name: &str) -> Option<Quality> {
         let high = Quality::default();
-        Some(match name.to_ascii_lowercase().as_str() {
+        let name = name.to_ascii_lowercase();
+        let name = if RETIRED_PRESETS.contains(&name.as_str()) {
+            PRESETS[PRESETS.len() - 1]
+        } else {
+            name.as_str()
+        };
+        Some(match name {
             "high" => high,
             "medium" => Quality {
                 shadows: 1,
@@ -195,16 +206,6 @@ impl Quality {
                 anti_alias: AntiAlias::Off,
                 render_scale: 0.75,
                 texture_size: 1024,
-                ..high
-            },
-            "potato" => Quality {
-                shadows: 0,
-                anti_alias: AntiAlias::Off,
-                render_scale: 0.5,
-                texture_size: 512,
-                props: false,
-                fps_cap: 30,
-                gpu_batching: false,
                 ..high
             },
             _ => return None,
@@ -317,6 +318,8 @@ pub struct Settings {
     pub volume: f32,
     /// Whether all sound is off.
     pub muted: bool,
+    /// The level and mute of every channel of sound, under the master volume.
+    pub mix: Mix,
     /// Whether one's hero answers orders in its own voice.
     pub voice: bool,
     /// The interface size against the one chosen for the window, 0.5 to 2.
@@ -381,6 +384,7 @@ impl Default for Settings {
         Settings {
             volume: 0.7,
             muted: false,
+            mix: Mix::default(),
             voice: true,
             ui_scale: 1.0,
             aids: Aids {
@@ -465,6 +469,14 @@ impl Settings {
             return Ok(());
         }
         let flag = || parse_flag(value).ok_or_else(|| format!("'{value}' is not true or false"));
+        if let Some((channel, level)) = Channel::of_key(name) {
+            if level {
+                self.mix.set_level(channel, parse_unit(value, 0.0, 1.0)?);
+            } else {
+                self.mix.set_muted(channel, flag()?);
+            }
+            return Ok(());
+        }
         match name {
             "volume" => self.volume = parse_unit(value, 0.0, 1.0)?,
             "ui_scale" => self.ui_scale = parse_unit(value, 0.5, 2.0)?,
@@ -592,6 +604,18 @@ impl Settings {
             ("name".into(), self.name.clone()),
             ("volume".into(), format!("{:.2}", self.volume)),
             ("muted".into(), flag(self.muted)),
+        ];
+        for channel in Channel::ALL {
+            out.push((
+                format!("volume_{}", channel.key()),
+                format!("{:.2}", self.mix.level(channel)),
+            ));
+            out.push((
+                format!("mute_{}", channel.key()),
+                flag(self.mix.muted(channel)),
+            ));
+        }
+        out.extend([
             ("voice_responses".into(), flag(self.voice)),
             ("ui_scale".into(), format!("{:.2}", self.ui_scale)),
             ("damage_numbers".into(), flag(self.aids.numbers)),
@@ -636,7 +660,7 @@ impl Settings {
             ("fps_cap".into(), q.fps_cap.to_string()),
             ("gpu_batching".into(), flag(q.gpu_batching)),
             ("auto_quality".into(), flag(q.auto)),
-        ];
+        ]);
         for (name, value) in [
             ("camera_pitch", c.pitch),
             ("camera_fov", c.fov),
@@ -845,9 +869,15 @@ mod tests {
     #[test]
     fn every_setting_survives_the_file() {
         let default = Settings::default();
+        let mut mix = Mix::default();
+        for (channel, level) in Channel::ALL.into_iter().zip([0.1, 0.25, 0.4, 0.55, 0.7]) {
+            mix.set_level(channel, level);
+            mix.set_muted(channel, true);
+        }
         let settings = Settings {
             volume: 0.31,
             muted: !default.muted,
+            mix,
             voice: !default.voice,
             ui_scale: 1.5,
             aids: Aids {
@@ -977,6 +1007,54 @@ mod tests {
             assert_eq!(read, settings, "{name}");
             assert_eq!(read.quality.preset_name(), Some(name));
         }
+    }
+
+    /// The presets are High, Medium and Low; a file or command line that still names Potato gets
+    /// the lowest one left, with no complaint and no panic.
+    #[test]
+    fn a_stored_potato_preset_is_read_as_the_lowest_preset_left() {
+        assert!(!PRESETS.contains(&"potato"));
+        let lowest = Quality::preset(PRESETS[PRESETS.len() - 1]).expect("a preset");
+        for stored in ["potato", "Potato"] {
+            let (read, complaints) = Settings::parse(&format!("quality = {stored}\n"));
+            assert!(complaints.is_empty(), "{stored}: {complaints:?}");
+            assert_eq!(read.quality, lowest, "{stored}");
+        }
+        let (_, complaints) = Settings::parse("quality = turnip");
+        assert!(
+            complaints[0].contains("high, medium, low") && !complaints[0].contains("potato"),
+            "an unknown name lists the presets there are: {complaints:?}"
+        );
+    }
+
+    /// The mixer's levels and mutes are written under their channel's name and read back; a level
+    /// outside 0 to 1 is refused with what is expected.
+    #[test]
+    fn the_mixer_survives_the_file_by_channel_names() {
+        let mut mix = Mix::default();
+        mix.set_level(Channel::Voices, 0.4);
+        mix.set_muted(Channel::Interface, true);
+        let settings = Settings {
+            mix,
+            ..Settings::default()
+        };
+        let written = settings.render();
+        assert!(written.contains("volume_voices = 0.40"), "{written}");
+        assert!(written.contains("mute_interface = true"), "{written}");
+        assert!(
+            !written.contains("volume_effects"),
+            "defaults stay out: {written}"
+        );
+        let (read, complaints) = Settings::parse(&written);
+        assert!(complaints.is_empty(), "{complaints:?}");
+        assert_eq!(read.mix, mix);
+        let (_, complaints) = Settings::parse("volume_effects = 1.5");
+        assert!(complaints[0].contains("outside"), "{complaints:?}");
+        let (_, complaints) = Settings::parse("mute_music = true");
+        assert!(
+            complaints[0].contains("no setting called"),
+            "{complaints:?}"
+        );
     }
 
     /// A file an older version wrote keeps its multisampling choice, and is

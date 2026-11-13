@@ -226,7 +226,7 @@ fn animate(
     // frame there.
     let (camera, projection) = *camera;
     let frustum = projection.compute_frustum(&GlobalTransform::from(*camera));
-    // Without shadow maps (the Low and Potato presets) no unit's shadow is drawn.
+    // Without shadow maps (the Low preset) no unit's shadow is drawn.
     let shadow = sun
         .single()
         .ok()

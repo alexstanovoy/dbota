@@ -8,7 +8,7 @@ use bevy::ui_widgets::Button;
 use bevy::{prelude::*, ui::RelativeCursorPosition};
 
 use super::model::{self, Choice, Row, Section, Slider, Tab, TextSetting, Toggle};
-use super::screen::{Screen, Scroll};
+use super::screen::{InView, Jump, Screen, Scroll};
 use crate::config::Settings;
 use crate::hud::Blocker;
 use crate::keys;
@@ -20,6 +20,13 @@ use crate::window::Displays;
 /// The screen's layer.
 #[derive(Component)]
 pub struct Root;
+
+/// The list at the left and the header, which follow the tab in view and are built again when it
+/// changes; the body, which does not depend on it, is kept.
+#[derive(Component)]
+pub struct NavRoot;
+#[derive(Component)]
+pub struct HeaderRoot;
 
 /// The scrolling part under the header.
 #[derive(Component)]
@@ -35,14 +42,34 @@ pub struct ScrollThumb;
 #[require(bevy::ui_widgets::Button, DirectlyHovered, Hovered)]
 pub struct TabButton(pub Tab);
 
-/// A link of the navigation to the card at this place of the open view.
+/// A link of the navigation to the card at this place of the open view, and where a click on it
+/// scrolls to: the card, or the start of its tab when it is the tab's first.
 #[derive(Component)]
 #[require(bevy::ui_widgets::Button, DirectlyHovered, Hovered)]
-pub struct NavLink(pub usize);
+pub struct NavLink {
+    pub card: usize,
+    pub jump: Jump,
+}
 
 /// A card of the open view, by its place; the navigation scrolls to it.
 #[derive(Component)]
 pub struct CardAnchor(pub usize);
+
+/// The tab a card belongs to.
+#[derive(Component)]
+pub struct CardTab(pub Tab);
+
+/// Where a tab starts in the body, which a click on the tab scrolls to.
+#[derive(Component)]
+pub struct TabAnchor(pub Tab);
+
+/// A slider drawn upright, as a mixer's fader: its top is its most.
+#[derive(Component)]
+pub struct Vertical;
+
+/// A mixer strip's mute button, over the toggle it turns.
+#[derive(Component)]
+pub struct MuteBox(pub Toggle);
 
 #[derive(Component)]
 #[require(bevy::ui_widgets::Button, DirectlyHovered, Hovered)]
@@ -101,6 +128,9 @@ pub struct ChoiceValue(pub Choice);
 #[derive(Component)]
 #[require(bevy::ui_widgets::Button, DirectlyHovered, Hovered)]
 pub struct ChoiceOption(pub Choice, pub usize);
+/// The open list of a choice: below its button, or above it where the window has no room below.
+#[derive(Component)]
+pub struct OptionsList;
 
 /// A binding's key field or HUD slot, by its place in [`keys::BINDINGS`]; a click captures its key.
 #[derive(Component)]
@@ -136,10 +166,14 @@ pub struct ClashText;
 
 /// The window over the dimmed screen, as Dota's: under the top bar, the side navigation at its
 /// left and the tab's cards at its right.
-const WINDOW_WIDTH: f32 = 1100.0;
-const WINDOW_TOP: f32 = 64.0;
-const WINDOW_FOOT: f32 = 10.0;
-const NAV_WIDTH: f32 = 260.0;
+/// The window's proportions, measured on the original game's settings window as shares of the
+/// screen's height (it is 1.205 high wide and 0.942 high, from 0.022 below the top, its list 0.30
+/// wide): shares of the window's height, so they hold whatever the interface's scale is, in a
+/// menu or over a game.
+const WINDOW_WIDTH: f32 = 120.5;
+const WINDOW_TOP: f32 = 2.2;
+const WINDOW_FOOT: f32 = 3.6;
+const NAV_WIDTH: f32 = 30.0;
 const HEADER_HEIGHT: f32 = 76.0;
 const NAV_TAB_HEIGHT: f32 = 48.0;
 const NAV_LINK_HEIGHT: f32 = 30.0;
@@ -147,17 +181,25 @@ const NAV_LINK_HEIGHT: f32 = 30.0;
 const CLOSE_ICON: f32 = 20.0;
 /// How wide the cards are at most.
 const CARD_WIDTH: f32 = 700.0;
-const CARD_TITLE_HEIGHT: f32 = 40.0;
 const ROW_HEIGHT: f32 = 48.0;
 const KEY_ROW_HEIGHT: f32 = 40.0;
 const FIELD_WIDTH: f32 = 220.0;
 const FIELD_HEIGHT: f32 = 38.0;
 const SLIDER_WIDTH: f32 = 200.0;
+/// The mixer's strips: how wide each is, and its fader's height, width and cap.
+const STRIP_WIDTH: f32 = 92.0;
+const FADER_HEIGHT: f32 = 150.0;
+pub const FADER_WIDTH: f32 = 40.0;
+const FADER_CAP: (f32, f32) = (32.0, 14.0);
+const MUTE_SIZE: (f32, f32) = (56.0, 28.0);
 const CLASH_BAR_HEIGHT: f32 = 44.0;
 /// The scroll bar's room at the body's right.
 const SCROLL_GUTTER: f32 = 14.0;
 pub const THUMB: f32 = 16.0;
 pub const THUMB_HELD: f32 = 22.0;
+/// A fader's cap while held: larger, as a slider's thumb.
+pub const CAP_HELD: (f32, f32) = (36.0, 18.0);
+pub const CAP: (f32, f32) = FADER_CAP;
 
 /// Slots of the HUD at the top of the hotkeys: ability squares, item squares, the town portal
 /// and the neutral item's round one.
@@ -195,7 +237,8 @@ pub struct Card {
     pub section: Section,
 }
 
-/// The cards the screen shows now: a search's matches, or the open tab's sections.
+/// The cards the screen shows now: a search's matches, or the sections of every tab one after
+/// the other, the tab in view named in the title.
 pub fn cards(screen: &Screen) -> Cards {
     if screen.is_searching() {
         let cards = model::search(&screen.query)
@@ -211,12 +254,16 @@ pub fn cards(screen: &Screen) -> Cards {
             cards,
         };
     }
-    let cards = model::sections(screen.tab, false)
+    let cards = Tab::ALL
         .into_iter()
-        .map(|section| Card {
-            title: section.title.to_owned(),
-            tab: screen.tab,
-            section,
+        .flat_map(|tab| {
+            model::sections(tab, false)
+                .into_iter()
+                .map(move |section| Card {
+                    title: section.title.to_owned(),
+                    tab,
+                    section,
+                })
         })
         .collect();
     Cards {
@@ -310,6 +357,7 @@ pub fn layout(
     mut commands: Commands,
     screen: Res<Screen>,
     scroll: Res<Scroll>,
+    in_view: Res<InView>,
     fonts: Res<Fonts>,
     manifest: Res<Manifest>,
     server: Res<AssetServer>,
@@ -318,12 +366,40 @@ pub fn layout(
     session: NonSend<crate::session::Session>,
     bag: Res<crate::bag::TacticalBag>,
     root: Single<Entity, With<Root>>,
+    chrome: Query<(Entity, Has<NavRoot>), Or<(With<NavRoot>, With<HeaderRoot>)>>,
+    mut before: Local<Option<Screen>>,
 ) {
     if !screen.is_changed() || !screen.open {
         return;
     }
+    // Scrolling into another tab changes only what the list and the header say of it: they are
+    // built again and the body's thousands of nodes stay.
+    let only_the_tab = before.as_ref().is_some_and(|was| {
+        let mut was = was.clone();
+        was.tab = screen.tab;
+        was == *screen
+    }) && chrome.iter().count() == 2;
+    *before = Some((*screen).clone());
+    if only_the_tab {
+        let view = cards(&screen);
+        let mut kit = Kit {
+            commands: &mut commands,
+            fonts: &fonts,
+            manifest: &manifest,
+            server: &server,
+        };
+        for (entity, is_nav) in &chrome {
+            kit.commands.entity(entity).despawn_children();
+            if is_nav {
+                nav_contents(&mut kit, entity, &screen, &view, in_view.0);
+            } else {
+                header_contents(&mut kit, entity, &screen, view.title);
+            }
+        }
+        return;
+    }
     commands.entity(*root).despawn_children();
-    let icons = if screen.tab == Tab::Hotkeys && !screen.is_searching() {
+    let icons = if !screen.is_searching() {
         crate::hud::slot_icons(&session.0, &bag, &manifest)
     } else {
         Vec::new()
@@ -336,7 +412,7 @@ pub fn layout(
     };
     let view = cards(&screen);
     let window = window_frame(&mut kit, *root);
-    navigation(&mut kit, window, &screen, &view);
+    navigation(&mut kit, window, &screen, &view, in_view.0);
     let content = kit.node(
         window,
         Node {
@@ -356,9 +432,7 @@ pub fn layout(
         icons: &icons,
     };
     fill_body(&mut kit, body, &view, &on);
-    if screen.tab == Tab::Hotkeys || screen.is_searching() {
-        clash_bar(&mut kit, content);
-    }
+    clash_bar(&mut kit, content);
 }
 
 /// The window itself: its frame and ground over the dimmed screen.
@@ -366,9 +440,9 @@ fn window_frame(kit: &mut Kit, root: Entity) -> Entity {
     kit.commands
         .spawn((
             Node {
-                width: px(WINDOW_WIDTH),
+                width: vh(WINDOW_WIDTH),
                 max_width: percent(100),
-                margin: UiRect::new(px(0), px(0), px(WINDOW_TOP), px(WINDOW_FOOT)),
+                margin: UiRect::new(px(0), px(0), vh(WINDOW_TOP), vh(WINDOW_FOOT)),
                 border: UiRect::all(px(1)),
                 ..default()
             },
@@ -423,27 +497,66 @@ struct Shown<'a> {
     icons: &'a [(keys::Action, String)],
 }
 
-/// The body: the hotkeys' slots, the cards (or why a search found none) and the hotkeys' reset.
+/// The body: the cards of every tab one after the other, each tab started by its heading (the
+/// hotkeys by their slots and ended by their reset), or why a search found none.
 fn fill_body(kit: &mut Kit, body: Entity, view: &Cards, on: &Shown) {
-    let hotkeys = on.screen.tab == Tab::Hotkeys && !on.screen.is_searching();
-    if hotkeys {
-        hud_panel(kit, body, on.icons);
-    }
-    if on.screen.is_searching() && view.cards.is_empty() {
+    let searching = on.screen.is_searching();
+    if searching && view.cards.is_empty() {
         let line = format!("No setting is called “{}”", on.screen.query.trim());
         kit.typed(body, line, theme::BODY, theme::INK_4);
     }
+    let mut tab = None;
     for (at, card) in view.cards.iter().enumerate() {
+        if !searching && tab != Some(card.tab) {
+            tab_start(kit, body, card.tab, tab.is_none(), on.icons);
+            tab = Some(card.tab);
+        }
         let ctx = RowCtx {
             screen: on.screen,
             settings: on.settings,
             displays: on.displays,
-            dense: on.screen.tab == Tab::Hotkeys || card.tab == Tab::Hotkeys,
+            dense: card.tab == Tab::Hotkeys,
         };
         card_view(kit, body, at, card, &ctx);
     }
-    if hotkeys {
-        reset_all(kit, body);
+}
+
+/// Where a tab starts: its heading (the first tab's is the window's header) and, for the
+/// hotkeys, the slots of the HUD. The navigation scrolls to it.
+fn tab_start(kit: &mut Kit, body: Entity, tab: Tab, first: bool, icons: &[(keys::Action, String)]) {
+    let start = kit.node(
+        body,
+        Node {
+            flex_shrink: 0.0,
+            flex_direction: FlexDirection::Column,
+            row_gap: px(16),
+            ..default()
+        },
+    );
+    kit.commands.entity(start).insert(TabAnchor(tab));
+    if !first {
+        let heading = kit.node(
+            start,
+            Node {
+                max_width: px(CARD_WIDTH),
+                margin: UiRect::top(px(28)),
+                padding: UiRect::bottom(px(10)),
+                border: UiRect::bottom(px(1)),
+                ..default()
+            },
+        );
+        kit.commands
+            .entity(heading)
+            .insert(BorderColor::all(theme::DIVIDER));
+        let name = Type {
+            size: 15.0,
+            tracking: 3.0,
+            ..theme::HEADING
+        };
+        kit.typed(heading, tab.title(), name, theme::INK_4);
+    }
+    if tab == Tab::Hotkeys {
+        hud_panel(kit, start, icons);
     }
 }
 
@@ -458,12 +571,12 @@ struct RowCtx<'a> {
 
 /// The window's left column: SETTINGS, the search, a tab per row (the open one lit, with its
 /// sections under it), the version line.
-fn navigation(kit: &mut Kit, window: Entity, screen: &Screen, view: &Cards) {
+fn navigation(kit: &mut Kit, window: Entity, screen: &Screen, view: &Cards, in_view: usize) {
     let nav = kit
         .commands
         .spawn((
             Node {
-                width: px(NAV_WIDTH),
+                width: vh(NAV_WIDTH),
                 flex_shrink: 0.0,
                 flex_direction: FlexDirection::Column,
                 row_gap: px(4),
@@ -472,9 +585,15 @@ fn navigation(kit: &mut Kit, window: Entity, screen: &Screen, view: &Cards) {
             },
             theme::downward(theme::WINDOW_NAV),
             Pickable::IGNORE,
+            NavRoot,
             ChildOf(window),
         ))
         .id();
+    nav_contents(kit, nav, screen, view, in_view);
+}
+
+/// What the list at the left holds: SETTINGS, the search, a tab per row and the version line.
+fn nav_contents(kit: &mut Kit, nav: Entity, screen: &Screen, view: &Cards, in_view: usize) {
     let title_role = Type {
         size: 26.0,
         tracking: 3.0,
@@ -487,7 +606,7 @@ fn navigation(kit: &mut Kit, window: Entity, screen: &Screen, view: &Cards) {
     });
     search_field(kit, nav, screen);
     for tab in Tab::ALL {
-        nav_section(kit, nav, tab, screen, view);
+        nav_section(kit, nav, tab, screen, view, in_view);
     }
     kit.node(
         nav,
@@ -501,7 +620,14 @@ fn navigation(kit: &mut Kit, window: Entity, screen: &Screen, view: &Cards) {
 
 /// A tab of the navigation and the links under it: its sections when it is open, its hits (with
 /// their counts) while a search runs, none otherwise.
-fn nav_section(kit: &mut Kit, nav: Entity, tab: Tab, screen: &Screen, view: &Cards) {
+fn nav_section(
+    kit: &mut Kit,
+    nav: Entity,
+    tab: Tab,
+    screen: &Screen,
+    view: &Cards,
+    in_view: usize,
+) {
     let searching = screen.is_searching();
     let hits: Vec<(usize, &Card)> = view
         .cards
@@ -526,10 +652,8 @@ fn nav_section(kit: &mut Kit, nav: Entity, tab: Tab, screen: &Screen, view: &Car
             })
             .collect()
     } else if lit {
-        view.cards
-            .iter()
-            .enumerate()
-            .map(|(at, card)| (at, card.section.link.to_owned()))
+        hits.iter()
+            .map(|(at, card)| (*at, card.section.link.to_owned()))
             .collect()
     } else {
         Vec::new()
@@ -545,8 +669,15 @@ fn nav_section(kit: &mut Kit, nav: Entity, tab: Tab, screen: &Screen, view: &Car
             ..default()
         },
     );
+    let first = hits.first().map(|(at, _)| *at);
     for (at, label) in links {
-        nav_link(kit, list, at, &label, searching);
+        // The first section of a tab is its start: the slots above it count.
+        let jump = if !searching && Some(at) == first {
+            Jump::Tab(tab)
+        } else {
+            Jump::Card(at)
+        };
+        nav_link(kit, list, (at, jump), &label, searching || at == in_view);
     }
 }
 
@@ -578,6 +709,7 @@ fn search_field(kit: &mut Kit, nav: Entity, screen: &Screen) {
         .spawn((
             SearchField,
             Button,
+            Outline::new(px(2), px(2), Color::NONE),
             Node {
                 margin: UiRect::new(px(16), px(16), px(0), px(12)),
                 height: px(44.0),
@@ -618,6 +750,7 @@ fn search_field(kit: &mut Kit, nav: Entity, screen: &Screen) {
         .spawn((
             SearchClear,
             Button,
+            Outline::new(px(2), px(2), Color::NONE),
             Node {
                 position_type: PositionType::Absolute,
                 right: px(3),
@@ -649,6 +782,7 @@ fn nav_tab(kit: &mut Kit, parent: Entity, tab: Tab, lit: bool, empty: bool) {
         .spawn((
             TabButton(tab),
             Button,
+            Outline::new(px(2), px(2), Color::NONE),
             Node {
                 height: px(NAV_TAB_HEIGHT),
                 padding: UiRect::left(px(20)),
@@ -682,14 +816,15 @@ fn nav_tab(kit: &mut Kit, parent: Entity, tab: Tab, lit: bool, empty: bool) {
     kit.typed(button, tab.title(), role, ink);
 }
 
-/// A section of the open tab (or a card of a search) under its tab; `lit` while it is the one in
-/// view, or while a search lists it.
-fn nav_link(kit: &mut Kit, list: Entity, at: usize, label: &str, searching: bool) {
+/// A section of the tab in view (or a card of a search) under its tab; `lit` while it is the one
+/// in view, or while a search lists it.
+fn nav_link(kit: &mut Kit, list: Entity, (at, jump): (usize, Jump), label: &str, lit: bool) {
     let link = kit
         .commands
         .spawn((
-            NavLink(at),
+            NavLink { card: at, jump },
             Button,
+            Outline::new(px(2), px(2), Color::NONE),
             Node {
                 height: px(NAV_LINK_HEIGHT),
                 padding: UiRect::left(px(14)),
@@ -697,11 +832,7 @@ fn nav_link(kit: &mut Kit, list: Entity, at: usize, label: &str, searching: bool
                 border: UiRect::left(px(2)),
                 ..default()
             },
-            BorderColor::all(if searching || at == 0 {
-                theme::SELECT
-            } else {
-                theme::NAV_RULE
-            }),
+            BorderColor::all(if lit { theme::SELECT } else { theme::NAV_RULE }),
             Name::new(format!("{} link", label.to_lowercase())),
             ChildOf(list),
         ))
@@ -712,11 +843,7 @@ fn nav_link(kit: &mut Kit, list: Entity, at: usize, label: &str, searching: bool
         tracking: 0.5,
         figures: false,
     };
-    let ink = if searching || at == 0 {
-        theme::INK_1
-    } else {
-        theme::NAV_INK
-    };
+    let ink = if lit { theme::INK_1 } else { theme::NAV_INK };
     let text = kit.typed(link, label, role, ink);
     kit.commands.entity(text).insert(NavText(at));
 }
@@ -740,9 +867,15 @@ fn header(kit: &mut Kit, content: Entity, screen: &Screen, title: &str) {
                 ..default()
             },
             BorderColor::all(theme::DIVIDER),
+            HeaderRoot,
             ChildOf(content),
         ))
         .id();
+    header_contents(kit, bar, screen, title);
+}
+
+/// What the header holds: the open tab's title, the hotkeys' help and reset, the close cross.
+fn header_contents(kit: &mut Kit, bar: Entity, screen: &Screen, title: &str) {
     kit.typed(bar, title, theme::TITLE, theme::INK_1);
     if screen.tab == Tab::Hotkeys && !screen.is_searching() {
         help_circle(kit, bar);
@@ -754,11 +887,15 @@ fn header(kit: &mut Kit, content: Entity, screen: &Screen, title: &str) {
             ..default()
         },
     );
+    if screen.tab == Tab::Hotkeys && !screen.is_searching() {
+        reset_all(kit, bar);
+    }
     let close = kit
         .commands
         .spawn((
             CloseButton,
             Button,
+            Outline::new(px(2), px(2), Color::NONE),
             Node {
                 width: px(theme::HIT),
                 height: px(theme::HIT),
@@ -837,39 +974,48 @@ fn scroll_bar(kit: &mut Kit, area: Entity) {
 
 /// A card: its title over its rows.
 fn card_view(kit: &mut Kit, body: Entity, at: usize, card: &Card, ctx: &RowCtx) {
-    let frame = kit
+    // As the original game's page has it: the section's title over a panel of its rows.
+    let section = kit
         .commands
         .spawn((
             CardAnchor(at),
+            CardTab(card.tab),
             Node {
                 flex_direction: FlexDirection::Column,
                 flex_shrink: 0.0,
                 max_width: px(CARD_WIDTH),
+                row_gap: px(10),
+                ..default()
+            },
+            Pickable::IGNORE,
+            Name::new(format!("{} card", card.title.to_lowercase())),
+            ChildOf(body),
+        ))
+        .id();
+    let heading = Type {
+        size: 20.0,
+        face: Face::Regular,
+        tracking: 1.0,
+        ..theme::HEADING
+    };
+    kit.typed(section, card.title.as_str(), heading, theme::INK_2);
+    let frame = kit
+        .commands
+        .spawn((
+            Node {
+                flex_direction: FlexDirection::Column,
+                flex_shrink: 0.0,
+                row_gap: px(3),
+                padding: UiRect::all(px(8)),
                 border: UiRect::all(px(1)),
                 ..default()
             },
             BackgroundColor(theme::CARD),
             BorderColor::all(theme::CARD_EDGE),
             Pickable::IGNORE,
-            Name::new(format!("{} card", card.title.to_lowercase())),
-            ChildOf(body),
+            ChildOf(section),
         ))
         .id();
-    let bar = kit.node(
-        frame,
-        Node {
-            height: px(CARD_TITLE_HEIGHT),
-            flex_shrink: 0.0,
-            padding: UiRect::horizontal(px(14)),
-            align_items: AlignItems::Center,
-            border: UiRect::bottom(px(1)),
-            ..default()
-        },
-    );
-    kit.commands
-        .entity(bar)
-        .insert(BorderColor::all(theme::CARD_RULE));
-    kit.typed(bar, card.title.as_str(), theme::HEADING, theme::INK_3);
     for row in &card.section.rows {
         row_view(kit, frame, *row, ctx);
     }
@@ -882,6 +1028,10 @@ fn row_view(kit: &mut Kit, card: Entity, row: Row, ctx: &RowCtx) {
         census_line(kit, root);
         return;
     }
+    if row == Row::Mixer {
+        mixer_view(kit, root, row);
+        return;
+    }
     let role = Type {
         size: if ctx.dense { 14.0 } else { 15.0 },
         ..theme::LABEL
@@ -892,14 +1042,14 @@ fn row_view(kit: &mut Kit, card: Entity, row: Row, ctx: &RowCtx) {
         min_width: px(0),
         ..default()
     });
-    reset_arrow(kit, root, row);
+    reset_arrow(kit, root, row, false);
     match row {
         Row::Text(setting) => name_field(kit, root, setting),
         Row::Toggle(toggle) => tick_box(kit, root, toggle),
         Row::Slider(slider) => slider_view(kit, root, slider),
         Row::Choice(choice) => choice_view(kit, root, choice, ctx),
         Row::Key(at) => key_field(kit, root, at),
-        Row::Census => {}
+        Row::Census | Row::Mixer => {}
     }
 }
 
@@ -911,7 +1061,11 @@ fn row_frame(kit: &mut Kit, card: Entity, row: Row, ctx: &RowCtx) -> Entity {
     } else {
         ROW_HEIGHT
     };
-    let vertical = if row == Row::Census { 14 } else { 2 };
+    let vertical = match row {
+        Row::Census => 14,
+        Row::Mixer => 18,
+        _ => 2,
+    };
     let node = Node {
         position_type: PositionType::Relative,
         min_height: px(height),
@@ -919,7 +1073,6 @@ fn row_frame(kit: &mut Kit, card: Entity, row: Row, ctx: &RowCtx) -> Entity {
         column_gap: px(10),
         padding: UiRect::axes(px(14), px(vertical)),
         align_items: AlignItems::Center,
-        border: UiRect::bottom(px(1)),
         ..default()
     };
     let name = Name::new(row.label().to_lowercase());
@@ -935,7 +1088,7 @@ fn row_frame(kit: &mut Kit, card: Entity, row: Row, ctx: &RowCtx) -> Entity {
     };
     kit.commands
         .entity(root)
-        .insert((node, BorderColor::all(theme::ROW_RULE)));
+        .insert((node, BackgroundColor(theme::FIELD_SUNKEN)));
     kit.commands.spawn((
         RowBar(row),
         Node {
@@ -967,13 +1120,25 @@ fn census_line(kit: &mut Kit, root: Entity) {
     });
 }
 
-/// The arrow that puts a changed row back to its default.
-fn reset_arrow(kit: &mut Kit, row_entity: Entity, row: Row) {
+/// The arrow that puts a changed row back to its default; in the row's top corner when the row
+/// has no label line to stand beside.
+fn reset_arrow(kit: &mut Kit, row_entity: Entity, row: Row, corner: bool) {
+    let place = if corner {
+        Node {
+            position_type: PositionType::Absolute,
+            right: px(8),
+            top: px(6),
+            ..default()
+        }
+    } else {
+        Node::default()
+    };
     let button = kit
         .commands
         .spawn((
             RowReset(row),
             Button,
+            Outline::new(px(2), px(2), Color::NONE),
             Node {
                 display: Display::None,
                 width: px(28),
@@ -981,7 +1146,7 @@ fn reset_arrow(kit: &mut Kit, row_entity: Entity, row: Row) {
                 flex_shrink: 0.0,
                 justify_content: JustifyContent::Center,
                 align_items: AlignItems::Center,
-                ..default()
+                ..place
             },
             Name::new(format!("reset {}", row.label().to_lowercase())),
             ChildOf(row_entity),
@@ -1059,6 +1224,8 @@ fn tick_box(kit: &mut Kit, root: Entity, toggle: Toggle) {
         .commands
         .spawn((
             ToggleBox(toggle),
+            // Named, as the keyboard knows the control it stands on by its name.
+            Name::new(format!("{} box", toggle.label().to_lowercase())),
             Outline::new(px(2), px(3), Color::NONE),
             Node {
                 width: px(24),
@@ -1160,6 +1327,179 @@ fn slider_rail(kit: &mut Kit, track: Entity, slider: Slider) {
     ));
 }
 
+/// The mixer: a strip for each channel of sound and, at the right, the master.
+fn mixer_view(kit: &mut Kit, root: Entity, row: Row) {
+    let strips = kit.node(
+        root,
+        Node {
+            flex_grow: 1.0,
+            justify_content: JustifyContent::SpaceAround,
+            align_items: AlignItems::FlexStart,
+            ..default()
+        },
+    );
+    for (slider, mute) in model::strips() {
+        if slider == Slider::Volume {
+            let rule = kit.node(
+                strips,
+                Node {
+                    width: px(1),
+                    align_self: AlignSelf::Stretch,
+                    ..default()
+                },
+            );
+            kit.commands
+                .entity(rule)
+                .insert(BackgroundColor(theme::CARD_RULE));
+        }
+        strip(kit, strips, slider, mute);
+    }
+    reset_arrow(kit, root, row, true);
+}
+
+/// A strip of the mixer from top to foot: the level, the fader, the mute and the name.
+fn strip(kit: &mut Kit, parent: Entity, slider: Slider, mute: Toggle) {
+    let column = kit.node(
+        parent,
+        Node {
+            width: px(STRIP_WIDTH),
+            flex_direction: FlexDirection::Column,
+            align_items: AlignItems::Center,
+            row_gap: px(10),
+            ..default()
+        },
+    );
+    let figures = Type {
+        figures: true,
+        ..theme::BODY
+    };
+    let level = kit.typed(column, "", figures, theme::INK_1);
+    kit.commands.entity(level).insert(SliderValue(slider));
+    fader(kit, column, slider);
+    mute_button(kit, column, mute);
+    let name = match slider {
+        Slider::Volume => "MASTER".to_owned(),
+        other => other.label().to_uppercase(),
+    };
+    let caption = Type {
+        size: 11.0,
+        tracking: 1.5,
+        ..theme::CAPTION
+    };
+    kit.typed(column, name, caption, theme::INK_3);
+}
+
+/// An upright slider: the rail with its scale, filled to the level, and the cap on it.
+fn fader(kit: &mut Kit, parent: Entity, slider: Slider) {
+    let track = kit
+        .commands
+        .spawn((
+            SliderTrack(slider),
+            Vertical,
+            Button,
+            Outline::new(px(2), px(2), Color::NONE),
+            RelativeCursorPosition::default(),
+            Node {
+                width: px(FADER_WIDTH),
+                height: px(FADER_HEIGHT),
+                flex_shrink: 0.0,
+                ..default()
+            },
+            Name::new(format!("{} slider", slider.label().to_lowercase())),
+            ChildOf(parent),
+        ))
+        .id();
+    let rail = |height: Val| Node {
+        position_type: PositionType::Absolute,
+        left: px(FADER_WIDTH / 2.0 - 2.0),
+        bottom: px(0),
+        width: px(4),
+        height,
+        border_radius: BorderRadius::all(px(2)),
+        ..default()
+    };
+    kit.commands.spawn((
+        rail(percent(100)),
+        BackgroundColor(theme::RAIL),
+        Pickable::IGNORE,
+        ChildOf(track),
+    ));
+    kit.commands.spawn((
+        SliderFill(slider),
+        Vertical,
+        rail(percent(0)),
+        BackgroundColor(theme::FOCUS),
+        Pickable::IGNORE,
+        ChildOf(track),
+    ));
+    for step in 0..=4 {
+        kit.commands.spawn((
+            Node {
+                position_type: PositionType::Absolute,
+                left: px(FADER_WIDTH / 2.0 + 7.0),
+                bottom: percent(step as f32 * 25.0),
+                width: px(6),
+                height: px(1),
+                ..default()
+            },
+            BackgroundColor(theme::INK_6),
+            Pickable::IGNORE,
+            ChildOf(track),
+        ));
+    }
+    kit.commands.spawn((
+        SliderThumb(slider),
+        Vertical,
+        Node {
+            position_type: PositionType::Absolute,
+            left: px((FADER_WIDTH - FADER_CAP.0) / 2.0),
+            bottom: percent(0),
+            margin: UiRect::bottom(px(-FADER_CAP.1 / 2.0)),
+            width: px(FADER_CAP.0),
+            height: px(FADER_CAP.1),
+            border_radius: BorderRadius::all(px(3)),
+            border: UiRect::all(px(0)),
+            ..default()
+        },
+        BackgroundColor(theme::INK_1),
+        BorderColor::all(theme::FOCUS),
+        Pickable::IGNORE,
+        ChildOf(track),
+    ));
+}
+
+/// A strip's mute: a button that lights red while its channel is silenced.
+fn mute_button(kit: &mut Kit, parent: Entity, mute: Toggle) {
+    let button = kit
+        .commands
+        .spawn((
+            MuteBox(mute),
+            ToggleRow(mute),
+            Button,
+            Outline::new(px(2), px(2), Color::NONE),
+            Node {
+                width: px(MUTE_SIZE.0),
+                height: px(MUTE_SIZE.1),
+                justify_content: JustifyContent::Center,
+                align_items: AlignItems::Center,
+                border: UiRect::all(px(1)),
+                ..default()
+            },
+            BackgroundColor(theme::FIELD),
+            BorderColor::all(theme::FIELD_EDGE),
+            Name::new(mute.label().to_lowercase()),
+            ChildOf(parent),
+        ))
+        .id();
+    let caption = Type {
+        face: Face::Bold,
+        size: 11.0,
+        tracking: 1.5,
+        figures: false,
+    };
+    kit.typed(button, "MUTE", caption, theme::INK_1);
+}
+
 /// A choice: its value on a button that opens the list under it.
 fn choice_view(kit: &mut Kit, root: Entity, choice: Choice, ctx: &RowCtx) {
     let anchor = kit.node(
@@ -1205,6 +1545,7 @@ fn options_list(kit: &mut Kit, anchor: Entity, choice: Choice, ctx: &RowCtx) {
     let list = kit
         .commands
         .spawn((
+            OptionsList,
             Node {
                 position_type: PositionType::Absolute,
                 right: px(0),
@@ -1503,7 +1844,11 @@ fn slot(kit: &mut Kit, parent: Entity, slot: Slot) {
         .map_or("neutral item", |at| keys::BINDINGS[at].label);
     square.insert(Name::new(format!("slot {}", label.to_lowercase())));
     if let Some(at) = slot.at {
-        square.insert((KeyField(at), Button));
+        square.insert((
+            KeyField(at),
+            Button,
+            Outline::new(px(2), px(2), Color::NONE),
+        ));
     } else {
         square.insert(Pickable::IGNORE);
     }
@@ -1594,23 +1939,16 @@ fn key_badge(kit: &mut Kit, square: Entity, at: Option<usize>, round: bool) {
     }
 }
 
-/// RESET TO DEFAULTS under the hotkeys.
-fn reset_all(kit: &mut Kit, body: Entity) {
-    let row = kit.node(
-        body,
-        Node {
-            flex_shrink: 0.0,
-            padding: UiRect::new(px(0), px(0), px(4), px(8)),
-            ..default()
-        },
-    );
+/// RESET TO DEFAULTS at the right of the header while the hotkeys are in view.
+fn reset_all(kit: &mut Kit, bar: Entity) {
     let button = kit
         .commands
         .spawn((
             ResetButton,
             Button,
+            Outline::new(px(2), px(2), Color::NONE),
             Node {
-                height: px(44),
+                height: px(36),
                 padding: UiRect::horizontal(px(20)),
                 justify_content: JustifyContent::Center,
                 align_items: AlignItems::Center,
@@ -1620,13 +1958,13 @@ fn reset_all(kit: &mut Kit, body: Entity) {
             BackgroundColor(theme::FIELD),
             BorderColor::all(theme::FIELD_EDGE),
             Name::new("reset to defaults"),
-            ChildOf(row),
+            ChildOf(bar),
         ))
         .id();
     kit.typed(
         button,
         "RESET TO DEFAULTS",
-        theme::button(44.0),
+        theme::button(36.0),
         theme::INK_2,
     );
 }

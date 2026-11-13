@@ -18,13 +18,14 @@ use std::collections::{HashMap, HashSet};
 use std::time::Duration;
 
 use bevy::{
-    audio::{AudioSink, AudioSinkPlayback, PlaybackSettings, Volume},
+    audio::{PlaybackSettings, Volume},
     prelude::*,
 };
 use bota_proto::EntityId;
 
 use crate::attenuation::falloff;
 use crate::cache_text::{EventLine, GroupLine, LayerLine};
+use crate::channels::{Channel, Tuned};
 use crate::fog::FogGrid;
 use crate::manifest::Manifest;
 
@@ -81,6 +82,8 @@ pub struct Request<'a> {
     pub on_player: bool,
     /// The fog of war, for an event that is heard only where its source is in sight.
     pub fog: Option<&'a FogGrid>,
+    /// The channel of the player's mixer it sounds in.
+    pub channel: Channel,
 }
 
 impl Default for Request<'_> {
@@ -96,6 +99,7 @@ impl Default for Request<'_> {
             speed: 1.0,
             on_player: false,
             fog: None,
+            channel: Channel::Effects,
         }
     }
 }
@@ -132,9 +136,6 @@ pub struct Mixer {
     warned: HashSet<String>,
     /// No match is on to sound: nothing starts.
     closed: bool,
-    /// The player has muted the game: voices are taken and kept, at no volume, so that the
-    /// decisions about them do not depend on the volume knob and unmuting finds them sounding.
-    muted: bool,
     /// How many times the game's sounds were ended, for what queues outside the mixer.
     ends: u32,
     /// The mix groups and the levels of the default mix.
@@ -313,13 +314,11 @@ impl Mixer {
         falloff(distance, level, max, self.group_factors(group).1)
     }
 
-    /// What the loudness of a sound of the event is at the sink: its gain times its group's mix
-    /// level times [`MIX_MAKEUP_GAIN`], at most 1. A sound of no group is the interface's, which
+    /// What the loudness of a sound of the event is of its own: its gain times its group's mix
+    /// level times [`MIX_MAKEUP_GAIN`], at most 1; the player's balance of the channels and the
+    /// master volume come after it, at the sink ([`crate::channels::follow_levels`]). A sound of no group is the interface's, which
     /// the makeup gain is calibrated to: it sounds at its own level.
     fn sink_gain(&self, event_gain: f32, group: Option<&str>) -> f32 {
-        if self.muted {
-            return 0.0;
-        }
         let makeup = if group.is_some() {
             MIX_MAKEUP_GAIN
         } else {
@@ -475,6 +474,12 @@ impl Mixer {
         mix: InitialMix,
     ) -> Started {
         let ends = lifetime(rules, kept);
+        // Random ambience is the ambience's, whatever the request names.
+        let channel = if class == VoiceClass::Ambience {
+            Channel::Ambience
+        } else {
+            request.channel
+        };
         let playback = if kept {
             PlaybackSettings::LOOP
         } else {
@@ -483,6 +488,10 @@ impl Mixer {
         let entity = commands
             .spawn((
                 GameAudio,
+                Tuned {
+                    channel,
+                    base: self.sink_gain(mix.gain, mix.group.as_deref()),
+                },
                 AudioPlayer::new(source),
                 playback
                     .with_volume(Volume::Linear(
@@ -718,28 +727,33 @@ impl Mixer {
         }
     }
 
-    /// Takes the voices that ended out, sets the loops' volumes and fades those being stopped.
+    /// Takes the voices that ended out, works out every voice's loudness of its own (a loop's
+    /// carrying, the fog's share, a fade-out) and tells it to the voice's sound, whose sink the
+    /// balance of the channels and the master then reach ([`crate::channels::follow_levels`]).
     pub fn tick(
         &mut self,
         commands: &mut Commands,
         now: Duration,
-        sinks: &mut Query<&mut AudioSink>,
+        tuned: &mut Query<&mut Tuned>,
         fog: Option<&FogGrid>,
     ) {
         self.drop_ended(commands, now);
         self.update_voices(now, fog);
-        for voice in self.voices.iter().filter(|v| v.looping || !v.sounding()) {
-            let Ok(mut sink) = sinks.get_mut(voice.entity) else {
+        for voice in &self.voices {
+            let Ok(mut sound) = tuned.get_mut(voice.entity) else {
                 continue;
             };
             let left = voice.stopped.map_or(1.0, |(since, fade)| {
                 1.0 - (now.saturating_sub(since).as_secs_f32() / fade.as_secs_f32()).clamp(0.0, 1.0)
             });
-            sink.set_volume(Volume::Linear(self.voice_sink_gain(voice) * left));
+            let base = self.voice_sink_gain(voice) * left;
+            if sound.base != base {
+                sound.base = base;
+            }
         }
     }
 
-    /// What a voice sounds at the sink now, before its fade-out.
+    /// What a voice sounds at, of its own, now, before its fade-out.
     fn voice_sink_gain(&self, voice: &Voice) -> f32 {
         self.sink_gain(voice.gain, voice.group.as_deref()) * voice.fog_share
     }
@@ -941,20 +955,12 @@ pub fn plugin(app: &mut App) {
             |mut commands: Commands,
              mut mixer: ResMut<Mixer>,
              time: Res<Time>,
-             mut sinks: Query<&mut AudioSink>,
+             mut tuned: Query<&mut Tuned>,
              fog: Option<Res<FogGrid>>| {
-                mixer.tick(&mut commands, time.elapsed(), &mut sinks, fog.as_deref());
+                mixer.tick(&mut commands, time.elapsed(), &mut tuned, fog.as_deref());
             },
         )
-        .add_systems(Update, end_with_the_match)
-        .add_systems(
-            Update,
-            |mut mixer: ResMut<Mixer>,
-             settings: Res<crate::config::Settings>,
-             args: Res<crate::Args>| {
-                mixer.muted = settings.muted || args.mute;
-            },
-        );
+        .add_systems(Update, end_with_the_match);
 }
 
 /// Silences the game when its match is gone: the player left it (the menu's idle session took

@@ -10,7 +10,9 @@ mod model;
 mod screen;
 
 #[cfg(test)]
-pub use model::Choice;
+pub use draw::Body;
 #[cfg(test)]
-pub use screen::{InView, Scroll};
+pub use model::{Choice, Tab};
+#[cfg(test)]
+pub use screen::{InView, Scroll, shown_controls};
 pub use screen::{Screen, escape, plugin};

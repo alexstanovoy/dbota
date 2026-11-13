@@ -7,12 +7,12 @@ use bevy::picking::hover::Hovered;
 use bevy::prelude::*;
 
 use super::draw::{
-    ChoiceButton, ChoiceOption, ChoiceValue, ClashBar, ClashText, KeyField, KeyText, LabelPart,
-    NameCaret, NameCount, NameField, NameText, NavLink, NavText, RowBar, RowKey, RowReset,
-    SliderFill, SliderThumb, SliderTrack, SliderValue, SlotBadge, SlotKey, THUMB, THUMB_HELD,
-    ToggleBox, ToggleMark,
+    CAP, CAP_HELD, ChoiceButton, ChoiceOption, ChoiceValue, ClashBar, ClashText, KeyField, KeyText,
+    LabelPart, MuteBox, NameCaret, NameCount, NameField, NameText, NavLink, NavText, OptionsList,
+    RowBar, RowKey, RowReset, SliderFill, SliderThumb, SliderTrack, SliderValue, SlotBadge,
+    SlotKey, THUMB, THUMB_HELD, ToggleBox, ToggleMark, Vertical,
 };
-use super::model::{Row, Toggle};
+use super::model::{Row, Tab, Toggle};
 use super::screen::{Focus, InView, Screen};
 use crate::config::Settings;
 use crate::keys;
@@ -160,7 +160,7 @@ pub fn toggles(
 pub fn slider_fills(
     screen: Res<Screen>,
     settings: Res<Settings>,
-    mut fills: Query<(&SliderFill, &mut Node, &mut BackgroundColor)>,
+    mut fills: Query<(&SliderFill, &mut Node, &mut BackgroundColor), Without<Vertical>>,
 ) {
     if !screen.open {
         return;
@@ -182,12 +182,15 @@ pub fn slider_thumbs(
     settings: Res<Settings>,
     tracks: Query<(&SliderTrack, Has<bevy::ui::Pressed>)>,
     mouse: Res<ButtonInput<MouseButton>>,
-    mut thumbs: Query<(
-        &SliderThumb,
-        &mut Node,
-        &mut BackgroundColor,
-        &mut BorderColor,
-    )>,
+    mut thumbs: Query<
+        (
+            &SliderThumb,
+            &mut Node,
+            &mut BackgroundColor,
+            &mut BorderColor,
+        ),
+        Without<Vertical>,
+    >,
 ) {
     if !screen.open {
         return;
@@ -225,6 +228,107 @@ pub fn slider_thumbs(
         let ink = if enabled { theme::INK_1 } else { theme::INK_5 };
         ground.set_if_neq(BackgroundColor(dimmed(ink, enabled)));
         edge.set_if_neq(BorderColor::all(theme::FOCUS));
+    }
+}
+
+/// Fader fills: to the level, grey when the fader is disabled.
+pub fn fader_fills(
+    screen: Res<Screen>,
+    settings: Res<Settings>,
+    mut fills: Query<(&SliderFill, &mut Node, &mut BackgroundColor), With<Vertical>>,
+) {
+    if !screen.open {
+        return;
+    }
+    for (fill, mut node, mut ground) in &mut fills {
+        let height = percent(fill.0.share(&settings) * 100.0);
+        if node.height != height {
+            node.height = height;
+        }
+        let color = if Row::Slider(fill.0).enabled(&settings) {
+            theme::FOCUS
+        } else {
+            theme::INK_6
+        };
+        ground.set_if_neq(BackgroundColor(color));
+    }
+}
+
+/// Fader caps: on the level, larger and ringed while held.
+#[allow(clippy::type_complexity)]
+pub fn fader_caps(
+    screen: Res<Screen>,
+    settings: Res<Settings>,
+    tracks: Query<(&SliderTrack, Has<bevy::ui::Pressed>)>,
+    mouse: Res<ButtonInput<MouseButton>>,
+    mut caps: Query<
+        (
+            &SliderThumb,
+            &mut Node,
+            &mut BackgroundColor,
+            &mut BorderColor,
+        ),
+        With<Vertical>,
+    >,
+) {
+    if !screen.open {
+        return;
+    }
+    for (cap, mut node, mut ground, mut edge) in &mut caps {
+        let enabled = Row::Slider(cap.0).enabled(&settings);
+        let held = enabled
+            && mouse.pressed(MouseButton::Left)
+            && tracks
+                .iter()
+                .any(|(track, pressed)| track.0 == cap.0 && pressed);
+        let (width, height) = if held { CAP_HELD } else { CAP };
+        let ring = if held { 2.0 } else { 0.0 };
+        let wanted = (
+            percent(cap.0.share(&settings) * 100.0),
+            px(width),
+            px(height),
+            px(ring),
+            px(-height / 2.0),
+        );
+        if (
+            node.bottom,
+            node.width,
+            node.height,
+            node.border.left,
+            node.margin.bottom,
+        ) != wanted
+        {
+            node.bottom = wanted.0;
+            node.width = wanted.1;
+            node.height = wanted.2;
+            node.border = UiRect::all(wanted.3);
+            node.margin = UiRect::bottom(wanted.4);
+            // The cap stays centred on its rail however wide it is.
+            node.left = px((super::draw::FADER_WIDTH - width) / 2.0);
+        }
+        let ink = if enabled { theme::INK_1 } else { theme::INK_5 };
+        ground.set_if_neq(BackgroundColor(dimmed(ink, enabled)));
+        edge.set_if_neq(BorderColor::all(theme::FOCUS));
+    }
+}
+
+/// Mute buttons: red while their channel is silenced.
+pub fn mutes(
+    screen: Res<Screen>,
+    settings: Res<Settings>,
+    mut buttons: Query<(&MuteBox, &mut BackgroundColor, &mut BorderColor)>,
+) {
+    if !screen.open {
+        return;
+    }
+    for (mute, mut ground, mut edge) in &mut buttons {
+        let (fill, line) = if mute.0.get(&settings) {
+            theme::STOP
+        } else {
+            (theme::FIELD, theme::FIELD_EDGE)
+        };
+        ground.set_if_neq(BackgroundColor(fill));
+        edge.set_if_neq(BorderColor::all(line));
     }
 }
 
@@ -300,6 +404,31 @@ pub fn choices(
             _ => theme::LIST_HOVER,
         };
         ground.set_if_neq(BackgroundColor(color));
+    }
+}
+
+/// An open list stands above its button when the window has no room for it below, so that every
+/// option can be reached.
+pub fn lists_open_upward(
+    window: Single<&Window, With<bevy::window::PrimaryWindow>>,
+    mut lists: Query<(&ChildOf, &mut Node, &ComputedNode), With<OptionsList>>,
+    anchors: Query<(&ComputedNode, &UiGlobalTransform), Without<OptionsList>>,
+) {
+    for (parent, mut node, list) in &mut lists {
+        let Ok((anchor, at)) = anchors.get(parent.parent()) else {
+            continue;
+        };
+        let below = at.translation.y + anchor.size().y / 2.0 + list.size().y;
+        let upward = below > window.physical_height() as f32;
+        let (top, bottom) = if upward {
+            (Val::Auto, px(42))
+        } else {
+            (px(42), Val::Auto)
+        };
+        if node.top != top || node.bottom != bottom {
+            node.top = top;
+            node.bottom = bottom;
+        }
     }
 }
 
@@ -401,7 +530,12 @@ pub fn clash_bar(
     if !screen.open {
         return;
     }
-    let line = clash_line(&settings);
+    // Told where the bindings are in view, not under the video options.
+    let line = if screen.is_searching() || screen.tab == Tab::Hotkeys {
+        clash_line(&settings)
+    } else {
+        String::new()
+    };
     for mut node in &mut bar {
         let display = if line.is_empty() {
             Display::None
@@ -487,7 +621,7 @@ pub fn nav(
     }
     let lit = |at: usize| screen.is_searching() || in_view.0 == at;
     for (link, mut edge) in &mut links {
-        let color = if lit(link.0) {
+        let color = if lit(link.card) {
             theme::SELECT
         } else {
             theme::NAV_RULE

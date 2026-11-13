@@ -30,6 +30,7 @@ use dbota_import::voice::concept::{Concept, Fact, Query};
 use dbota_import::voice::rules::HeroRules;
 use dbota_import::voice::speaker::{Choice, History, Silence};
 
+use crate::channels::Channel;
 use crate::manifest::Manifest;
 use crate::mixer::{Mixer, Request};
 use crate::session::Session;
@@ -105,6 +106,9 @@ pub enum Pack {
 #[derive(Resource, Default)]
 pub struct HeroVoice {
     pub pack: Pack,
+    /// The settings' mixer asked to hear the voice with no match to speak in: a hero's pack is
+    /// read for it, until a seat has a hero of its own.
+    pub preview: bool,
 }
 
 impl Resident {
@@ -203,7 +207,13 @@ fn follow_seat(
     mut voice: ResMut<HeroVoice>,
     mut mixer: ResMut<Mixer>,
 ) {
-    let wanted = seat_hero(&session.0, &manifest);
+    let wanted = seat_hero(&session.0, &manifest).or_else(|| {
+        voice
+            .preview
+            .then(|| manifest.dota_name("hero", bota_proto::HeroId::SHADOW_FIEND.0))
+            .flatten()
+            .map(str::to_owned)
+    });
     if wanted.as_deref() == voice.hero() {
         return;
     }
@@ -364,6 +374,7 @@ fn play(
     let request = Request {
         event,
         on_player: true,
+        channel: Channel::Voices,
         ..Request::default()
     };
     let source = resident.sounds[choice.sound].clone();

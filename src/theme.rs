@@ -59,7 +59,6 @@ pub const FIELD_EDGE: Color = hex(0x495255);
 pub const CARD: Color = hex(0x15181B);
 pub const CARD_EDGE: Color = hex(0x2A2E32);
 pub const CARD_RULE: Color = hex(0x2D3236);
-pub const ROW_RULE: Color = Color::srgba(45.0 / 255.0, 50.0 / 255.0, 54.0 / 255.0, 0.6);
 /// A field under the cursor: its ground and edge.
 pub const FIELD_HOVER: (Color, Color) = (hex(0x2A2F33), hex(0x6B747D));
 /// A field that cannot be used now: its ground and edge.

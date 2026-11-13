@@ -79,11 +79,10 @@ echo "$dire" | sed 's/^visual check: /visual check (Dire): /'
 [ "$dire_status" -eq 0 ] || { echo "visual check: FAIL the Dire seat's client ended with $dire_status"; exit 1; }
 held "$dire" || { echo "visual check: FAIL the Dire seat's checks did not all pass"; exit 1; }
 
-# The cheapest presets are measured as the full one is: their scene drawn below the window's
-# resolution and (Potato) its batches built on the CPU, without the map's props, must still pass
-# the fog, hero and interface checks. A client that ends or draws a black scene fails them; one
+# The cheapest preset is measured as the full one is: its scene drawn below the window's
+# resolution, without shadows or edge smoothing, must still pass the fog, hero and interface checks. A client that ends or draws a black scene fails them; one
 # that says no check at all fails too.
-for preset in low potato; do
+for preset in low; do
     shown=$("$here/tools/test_client.sh" --replay "$replay" --pov 0 --screenshot-at "$tick" \
         --screenshot-dir "$out" --screenshot-prefix "check-$preset-" --distance 6500 --set quality="$preset" \
         --visual-check --mute --no-vsync --display-mode windowed 2>> "$out/dbota.log" || echo "visual check: FAIL the client ended")

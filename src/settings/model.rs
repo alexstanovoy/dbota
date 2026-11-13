@@ -2,6 +2,7 @@
 //! every option on them as a toggle, a slider or a choice from a list,
 //! each reading and writing one field of [`Settings`].
 
+use crate::channels::Channel;
 use crate::config::{
     AntiAlias, DISPLAY_MODES, DisplayMode, PRESETS, Quality, RightClickAllies, Settings,
 };
@@ -41,6 +42,8 @@ pub enum Toggle {
     ChannelsRequireStop,
     VoiceResponses,
     Muted,
+    /// One channel of the mixer silenced.
+    ChannelMuted(Channel),
     SaveReplays,
     AutoQuality,
     Props,
@@ -58,10 +61,15 @@ impl Toggle {
             Toggle::ChannelsRequireStop => "Abilities Require Hold/Cancel to Stop",
             Toggle::VoiceResponses => "Hero voice responses",
             Toggle::Muted => "Mute all sound",
+            Toggle::ChannelMuted(Channel::Effects) => "Mute effects",
+            Toggle::ChannelMuted(Channel::Voices) => "Mute hero voices",
+            Toggle::ChannelMuted(Channel::Announcer) => "Mute the announcer",
+            Toggle::ChannelMuted(Channel::Ambience) => "Mute ambience",
+            Toggle::ChannelMuted(Channel::Interface) => "Mute the interface",
             Toggle::SaveReplays => "Save the replays of my matches",
-            Toggle::AutoQuality => "Lower quality while frames run slow",
-            Toggle::Props => "Map props",
-            Toggle::GpuBatching => "GPU culling and batching",
+            Toggle::AutoQuality => "Lower quality when the game runs slowly",
+            Toggle::Props => "Map decorations",
+            Toggle::GpuBatching => "Speed up drawing with the graphics card",
         }
     }
 
@@ -75,6 +83,7 @@ impl Toggle {
             Toggle::ChannelsRequireStop => s.channels_require_stop,
             Toggle::VoiceResponses => s.voice,
             Toggle::Muted => s.muted,
+            Toggle::ChannelMuted(channel) => s.mix.muted(channel),
             Toggle::SaveReplays => s.replays.keep,
             Toggle::AutoQuality => s.quality.auto,
             Toggle::Props => s.quality.props,
@@ -83,6 +92,10 @@ impl Toggle {
     }
 
     pub fn set(self, s: &mut Settings, on: bool) {
+        if let Toggle::ChannelMuted(channel) = self {
+            s.mix.set_muted(channel, on);
+            return;
+        }
         let field = match self {
             Toggle::DamageNumbers => &mut s.aids.numbers,
             Toggle::EdgePan => &mut s.aids.edge_pan,
@@ -92,6 +105,7 @@ impl Toggle {
             Toggle::ChannelsRequireStop => &mut s.channels_require_stop,
             Toggle::VoiceResponses => &mut s.voice,
             Toggle::Muted => &mut s.muted,
+            Toggle::ChannelMuted(_) => unreachable!("set above"),
             Toggle::SaveReplays => &mut s.replays.keep,
             Toggle::AutoQuality => &mut s.quality.auto,
             Toggle::Props => &mut s.quality.props,
@@ -104,7 +118,10 @@ impl Toggle {
 /// An option within a range.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Slider {
+    /// The master volume.
     Volume,
+    /// The level of one channel of the mixer.
+    Level(Channel),
     InterfaceScale,
     RenderScale,
 }
@@ -113,15 +130,16 @@ impl Slider {
     pub fn label(self) -> &'static str {
         match self {
             Slider::Volume => "Master volume",
+            Slider::Level(channel) => channel.label(),
             Slider::InterfaceScale => "Interface size",
-            Slider::RenderScale => "Render resolution",
+            Slider::RenderScale => "Picture sharpness",
         }
     }
 
     /// The least value, the most, and the step between.
     pub fn range(self) -> (f32, f32, f32) {
         match self {
-            Slider::Volume => (0.0, 1.0, 0.01),
+            Slider::Volume | Slider::Level(_) => (0.0, 1.0, 0.01),
             Slider::InterfaceScale => (0.5, 2.0, 0.05),
             Slider::RenderScale => (0.25, 1.0, 0.05),
         }
@@ -130,6 +148,7 @@ impl Slider {
     pub fn get(self, s: &Settings) -> f32 {
         match self {
             Slider::Volume => s.volume,
+            Slider::Level(channel) => s.mix.level(channel),
             Slider::InterfaceScale => s.ui_scale,
             Slider::RenderScale => s.quality.render_scale,
         }
@@ -142,6 +161,7 @@ impl Slider {
         let value = (lo + ((raw - lo) / step).round() * step).clamp(lo, hi);
         match self {
             Slider::Volume => s.volume = value,
+            Slider::Level(channel) => s.mix.set_level(channel, value),
             Slider::InterfaceScale => s.ui_scale = value,
             Slider::RenderScale => s.quality.render_scale = value,
         }
@@ -168,7 +188,7 @@ pub enum Choice {
     Shadows,
     AntiAliasing,
     FrameCap,
-    TextureSize,
+    TextureQuality,
     RightClickAllies,
     ReplayCount,
     ReplaySize,
@@ -176,8 +196,14 @@ pub enum Choice {
 
 /// The frame caps offered; 0 for none.
 const FRAME_CAPS: [u32; 6] = [0, 30, 60, 120, 144, 240];
-/// The texture sizes offered.
-const TEXTURE_SIZES: [u32; 6] = [512, 1024, 2048, 4096, 8192, 16_384];
+/// The texture qualities offered, worst first, and the largest texture side (in texels) each
+/// allows: the one place the names the player reads meet the sizes the client works in.
+const TEXTURE_QUALITIES: [(&str, u32); 4] = [
+    ("Low", 1024),
+    ("Medium", 2048),
+    ("High", 4096),
+    ("Ultra", 16_384),
+];
 /// The numbers of replays offered to keep.
 const REPLAY_COUNTS: [usize; 6] = [10, 25, 50, 100, 250, 500];
 /// The sizes, in MiB, all the replays kept may take.
@@ -190,9 +216,9 @@ impl Choice {
             Choice::Resolution => "Resolution",
             Choice::Quality => "Quality preset",
             Choice::Shadows => "Shadows",
-            Choice::AntiAliasing => "Anti-aliasing",
+            Choice::AntiAliasing => "Edge smoothing",
             Choice::FrameCap => "Frame rate cap",
-            Choice::TextureSize => "Largest texture size",
+            Choice::TextureQuality => "Texture quality",
             Choice::RightClickAllies => "Right-Click Allies",
             Choice::ReplayCount => "Replays kept, at most",
             Choice::ReplaySize => "Replays may take, at most",
@@ -231,7 +257,10 @@ impl Choice {
                     }
                 })
                 .collect(),
-            Choice::TextureSize => TEXTURE_SIZES.iter().map(u32::to_string).collect(),
+            Choice::TextureQuality => TEXTURE_QUALITIES
+                .iter()
+                .map(|(name, _)| (*name).to_owned())
+                .collect(),
             Choice::RightClickAllies => ["To Follow", "To Attack", "To Deny"]
                 .map(String::from)
                 .to_vec(),
@@ -259,7 +288,9 @@ impl Choice {
             Choice::Shadows => Some(usize::from(q.shadows.min(2))),
             Choice::AntiAliasing => AntiAlias::ALL.iter().position(|a| *a == q.anti_alias),
             Choice::FrameCap => FRAME_CAPS.iter().position(|c| *c == q.fps_cap),
-            Choice::TextureSize => TEXTURE_SIZES.iter().position(|t| *t == q.texture_size),
+            Choice::TextureQuality => TEXTURE_QUALITIES
+                .iter()
+                .position(|(_, size)| *size == q.texture_size),
             Choice::RightClickAllies => RightClickAllies::ALL
                 .iter()
                 .position(|c| *c == s.right_click_allies),
@@ -300,8 +331,10 @@ impl Choice {
                 q.anti_alias = AntiAlias::ALL.get(at).copied().unwrap_or(q.anti_alias)
             }
             Choice::FrameCap => q.fps_cap = FRAME_CAPS.get(at).copied().unwrap_or(q.fps_cap),
-            Choice::TextureSize => {
-                q.texture_size = TEXTURE_SIZES.get(at).copied().unwrap_or(q.texture_size);
+            Choice::TextureQuality => {
+                q.texture_size = TEXTURE_QUALITIES
+                    .get(at)
+                    .map_or(q.texture_size, |(_, size)| *size);
             }
             Choice::RightClickAllies => {
                 s.right_click_allies = RightClickAllies::ALL
@@ -434,6 +467,17 @@ pub enum Row {
     Key(usize),
     /// The line telling where the art and the sound come from.
     Census,
+    /// The mixer: a fader and a mute for the master and for each channel of sound.
+    Mixer,
+}
+
+/// The strips of the mixer, left to right: the channels, then the master, whose fader and mute
+/// are the settings' own volume and mute-all.
+pub fn strips() -> impl Iterator<Item = (Slider, Toggle)> {
+    Channel::ALL
+        .into_iter()
+        .map(|channel| (Slider::Level(channel), Toggle::ChannelMuted(channel)))
+        .chain([(Slider::Volume, Toggle::Muted)])
 }
 
 impl Row {
@@ -446,6 +490,7 @@ impl Row {
             Row::Choice(choice) => choice.label(),
             Row::Key(at) => keys::BINDINGS[at].label,
             Row::Census => "",
+            Row::Mixer => "Mixer: volume and mute of every kind of sound",
         }
     }
 
@@ -471,6 +516,9 @@ impl Row {
             Row::Choice(choice) => choice.current(s, displays) != choice.current(&fresh, displays),
             Row::Key(at) => s.keys[at] != fresh.keys[at],
             Row::Census => false,
+            Row::Mixer => strips().any(|(slider, mute)| {
+                Row::Slider(slider).changed(s, displays) || Row::Toggle(mute).changed(s, displays)
+            }),
         }
     }
 
@@ -489,6 +537,12 @@ impl Row {
             }
             Row::Key(at) => s.keys[at] = fresh.keys[at],
             Row::Census => {}
+            Row::Mixer => {
+                for (slider, mute) in strips() {
+                    Row::Slider(slider).reset(s, displays);
+                    Row::Toggle(mute).reset(s, displays);
+                }
+            }
         }
     }
 }
@@ -596,7 +650,7 @@ fn option_sections() -> Vec<Section> {
                 C(Choice::ReplaySize),
             ],
         ),
-        section("ASSETS", "Assets", vec![Row::Census]),
+        section("GAME FILES", "Game files", vec![Row::Census]),
     ]
 }
 
@@ -624,7 +678,7 @@ fn video_sections() -> Vec<Section> {
             "ON THE NEXT START",
             "On the next start",
             vec![
-                C(Choice::TextureSize),
+                C(Choice::TextureQuality),
                 T(Toggle::Props),
                 T(Toggle::GpuBatching),
             ],
@@ -633,15 +687,10 @@ fn video_sections() -> Vec<Section> {
 }
 
 fn audio_sections() -> Vec<Section> {
-    use Row::{Slider as S, Toggle as T};
     vec![section(
         "SOUND",
         "Sound",
-        vec![
-            S(Slider::Volume),
-            T(Toggle::Muted),
-            T(Toggle::VoiceResponses),
-        ],
+        vec![Row::Mixer, Row::Toggle(Toggle::VoiceResponses)],
     )]
 }
 
@@ -761,13 +810,38 @@ mod tests {
             .copied()
             .filter(|row| row.changed(&s, &displays))
             .collect();
-        assert!(changed.contains(&Row::Slider(Slider::Volume)));
+        // The master volume and its mute are the mixer's strip: one row of the audio tab.
+        assert!(changed.contains(&Row::Mixer));
         assert!(changed.contains(&Row::Choice(Choice::Resolution)));
         assert!(changed.contains(&Row::Key(0)));
         assert!(!changed.contains(&Row::Toggle(Toggle::EdgePan)));
         for row in changed {
             row.reset(&mut s, &displays);
             assert!(!row.changed(&s, &displays), "{row:?} still changed");
+        }
+    }
+
+    /// Texture quality is four names over four growing sizes; every size a preset sets is a level
+    /// the list shows, so no preset reads as Custom.
+    #[test]
+    fn the_texture_qualities_grow_and_every_preset_lands_on_one() {
+        let displays = Displays::default();
+        let names = Choice::TextureQuality.options(&Settings::default(), &displays);
+        assert_eq!(names, ["Low", "Medium", "High", "Ultra"]);
+        assert!(
+            TEXTURE_QUALITIES
+                .windows(2)
+                .all(|pair| pair[0].1 < pair[1].1)
+        );
+        for preset in PRESETS {
+            let s = Settings {
+                quality: Quality::preset(preset).expect("a preset"),
+                ..Settings::default()
+            };
+            assert!(
+                Choice::TextureQuality.current(&s, &displays).is_some(),
+                "{preset} sets a texture size the list lacks"
+            );
         }
     }
 

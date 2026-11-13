@@ -964,3 +964,14 @@ fn a_listener_begun_after_a_shared_kill_keeps_first_blood_spent() {
     assert_eq!(first_blood(&heard_through), Some("0".to_owned()));
     assert_eq!(first_blood(&begun_after), Some("0".to_owned()));
 }
+
+/// A line the hero is saying sounds in the hero voices' channel, whatever the effects' level is, and
+/// its sink follows that channel's balance while the line plays.
+#[test]
+fn a_line_the_hero_says_follows_the_hero_voices_balance() {
+    let (_server, mut client, _players) = alone(HeroId::PUDGE);
+    super::channels::listen(&mut client);
+    let line = first_line(&mut client, Concept::Move, walk);
+    let sound = line.player.expect("the mixer gave the line a voice");
+    super::channels::follows_the_balance(&mut client, sound, crate::channels::Channel::Voices);
+}
