@@ -9,7 +9,8 @@ use crate::keys::{self, Action, Chord};
 /// The aids drawn over the world, each of which may be turned off.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Aids {
-    /// Damage, gold and deny numbers rising off units.
+    /// Damage numbers rising off units (the gold, the deny mark and the miss
+    /// notice, Dota's overhead alerts, rise either way).
     pub numbers: bool,
     /// Whether the cursor at the window edge pans the camera.
     pub edge_pan: bool,

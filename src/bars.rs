@@ -8,7 +8,7 @@
 use std::collections::HashMap;
 
 use bevy::prelude::*;
-use bota_client_core::{FLOATER_LIFE, Floater, FloaterKind};
+use bota_client_core::{Floater, FloaterKind};
 use bota_proto::{Team, UnitKind, UnitView};
 
 use crate::config::Settings;
@@ -734,7 +734,15 @@ fn floaters(
         // A level gained floats no words: Dota marks it with its glow and
         // sound, and the panel's level.
         .filter(|f| f.kind != FloaterKind::Level)
-        .filter(|f| numbers || matches!(f.kind, FloaterKind::Gold | FloaterKind::Deny))
+        // Damage numbers are an aid to turn off; the gold, the deny mark and the miss notice are
+        // Dota's own overhead alerts, always shown.
+        .filter(|f| {
+            numbers
+                || matches!(
+                    f.kind,
+                    FloaterKind::Gold | FloaterKind::Deny | FloaterKind::Miss
+                )
+        })
         // Nothing over what the watched side does not see.
         .filter(|f| !fog.on || fog.lit(f.world.0, f.world.1))
         .rev()
@@ -767,7 +775,7 @@ fn floaters(
                     && Vec2::from(g.world).distance(Vec2::from(f.world)) < 120.0
             })
             .count();
-        let k = (f.age / FLOATER_LIFE).clamp(0.0, 1.0);
+        let k = (f.age / f.kind.life()).clamp(0.0, 1.0);
         let (size, tint) = look(f.kind);
         let pop = 1.0 + 0.35 * (1.0 - (k * 6.0).min(1.0));
         let rise = (1.0 - (1.0 - k) * (1.0 - k)) * 110.0;
@@ -817,17 +825,64 @@ fn floater_words(floater: &Floater) -> String {
     }
 }
 
+/// The font size of a damage number.
+const DAMAGE_SIZE: f32 = 15.0;
+/// The miss notice's: at its largest Dota draws it 25/16 the size of a damage digit.
+const MISS_SIZE: f32 = DAMAGE_SIZE * 25.0 / 16.0;
+
 /// The size and colour of a floater by what it tells of.
 fn look(kind: FloaterKind) -> (f32, Color) {
     match kind {
-        FloaterKind::Damage => (15.0, Color::srgb(1.0, 0.94, 0.84)),
+        FloaterKind::Damage => (DAMAGE_SIZE, Color::srgb(1.0, 0.94, 0.84)),
         FloaterKind::Magic => (16.0, Color::srgb(0.72, 0.62, 1.0)),
-        FloaterKind::Miss => (13.0, Color::srgb(0.75, 0.77, 0.82)),
+        // Dota's colour for the miss notice, and as large beside a damage number as Dota draws
+        // it at its largest: both established from the installed game (build 6975).
+        FloaterKind::Miss => (MISS_SIZE, Color::srgb_u8(163, 38, 38)),
         FloaterKind::Heal => (16.0, Color::srgb(0.45, 1.0, 0.5)),
         FloaterKind::Level => (18.0, ui::GOLDEN),
         FloaterKind::Gold => (18.0, ui::GOLDEN),
         FloaterKind::Deny => (28.0, Color::srgb(0.6, 0.85, 1.0)),
     }
+}
+
+/// A floating caption as drawn: what it tells of, its words, its font size and colour.
+#[cfg(test)]
+pub(crate) struct DrawnFloater {
+    pub entity: Entity,
+    pub kind: FloaterKind,
+    pub words: String,
+    pub size: f32,
+    pub color: Color,
+}
+
+/// The floating captions drawn this frame.
+#[cfg(test)]
+pub(crate) fn drawn_floaters(world: &mut World) -> Vec<DrawnFloater> {
+    world
+        .query::<(
+            Entity,
+            &FloaterText,
+            &Text,
+            &TextFont,
+            &TextColor,
+            &Visibility,
+            &InheritedVisibility,
+        )>()
+        .iter(world)
+        .filter(|(_, _, _, _, _, own, inherited)| **own != Visibility::Hidden && inherited.get())
+        .filter_map(|(entity, caption, text, font, color, ..)| {
+            let FontSize::Px(size) = font.font_size else {
+                return None;
+            };
+            Some(DrawnFloater {
+                entity,
+                kind: caption.0?,
+                words: text.0.clone(),
+                size,
+                color: color.0,
+            })
+        })
+        .collect()
 }
 
 #[cfg(test)]

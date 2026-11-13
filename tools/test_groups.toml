@@ -590,11 +590,13 @@ paths = [
     "src/scoreboard/**",
     "src/visual.rs",
     "src/e2e/bars.rs",
+    "src/e2e/miss_notice.rs",
     "src/e2e/feed.rs",
     "src/e2e/rings.rs",
     "src/e2e/ground_targets.rs",
     "src/ground_targets.rs",
     "tests/tower_line.rs",
+    "tests/miss_notice.rs",
 ]
 tests = [
     { package = "dbota", target = "bin:dbota", filters = [
@@ -604,11 +606,13 @@ tests = [
         "ui::tests::",
         "visual::",
         "e2e::bars::",
+        "e2e::miss_notice::",
         "e2e::feed::",
         "e2e::rings::",
         "e2e::ground_targets::",
     ] },
     { package = "dbota", target = "test:tower_line" },
+    { package = "dbota", target = "test:miss_notice" },
 ]
 
 [[route]]

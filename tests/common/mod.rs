@@ -400,7 +400,14 @@ const PATIENCE: Duration = Duration::from_secs(240);
 /// Plays `script` in the real client against the server at `address`, drawing in a headless
 /// compositor, and asserts it ran to its end: exit code 0 and every step done.
 pub fn play_script(address: &str, script: &str, tag: &str) {
-    run_script(address, script, tag, None);
+    run_script(address, script, tag, None, &[]);
+}
+
+/// [`play_script`] with the client's `shot:` steps saved to `shots` and `extra` arguments given
+/// to it.
+#[allow(dead_code)] // each test file uses the helpers it needs
+pub fn play_script_with(address: &str, script: &str, tag: &str, shots: &Path, extra: &[&str]) {
+    run_script(address, script, tag, Some(shots), extra);
 }
 
 /// Plays `script` (the client's `--script`) in a match on a cheats-honouring server of one seat
@@ -416,10 +423,10 @@ pub fn play(name: &str, script: &str, shots: Option<&Path>) {
         "--tactical-secs",
         "5",
     ]);
-    run_script(&server.address, script, name, shots);
+    run_script(&server.address, script, name, shots, &[]);
 }
 
-fn run_script(address: &str, script: &str, tag: &str, shots: Option<&Path>) {
+fn run_script(address: &str, script: &str, tag: &str, shots: Option<&Path>, extra: &[&str]) {
     let scratch =
         PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join(format!("{tag}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&scratch);
@@ -437,7 +444,8 @@ fn run_script(address: &str, script: &str, tag: &str, shots: Option<&Path>) {
             "--no-vsync",
             "--display-mode",
             "windowed",
-        ]);
+        ])
+        .args(extra);
     if let Some(shots) = shots {
         std::fs::create_dir_all(shots).expect("the screenshot folder");
         command.arg("--screenshot-dir").arg(shots);

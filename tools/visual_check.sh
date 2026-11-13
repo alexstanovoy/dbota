@@ -230,12 +230,13 @@ fi
 # What a match draws of the items and effects owners reported missing, asked of the running client
 # (one test at a time, each in a window of its own): a placed ward in Dota's ward model with its
 # ambient effect, a dropped item on the ground with its model, a Blink Dagger's two effects and a
-# Blood Grenade's throw, landing and splatter, and a tower's line to a hero in its reach.
+# Blood Grenade's throw, landing and splatter, a tower's line to a hero in its reach, and the red
+# miss notice over a hero struck uphill.
 if in_private_environment cargo test --profile test-release --quiet --manifest-path "$here/Cargo.toml" --test wards --test ground_items \
-    --test blink --test blood_grenade --test tower_line -- --ignored --test-threads 1 > "$out/effects.log" 2>&1 && ran "$out/effects.log"; then
-    echo "visual check: PASS wards, items on the ground, a blink, a grenade and a tower's line are drawn and sounded"
+    --test blink --test blood_grenade --test tower_line --test miss_notice -- --ignored --test-threads 1 > "$out/effects.log" 2>&1 && ran "$out/effects.log"; then
+    echo "visual check: PASS wards, items on the ground, a blink, a grenade, a tower's line and a miss notice are drawn and sounded"
 else
-    echo "visual check: FAIL wards, ground items, a blink or a grenade (see $out/effects.log)"
+    echo "visual check: FAIL wards, ground items, a blink, a grenade, a tower's line or a miss notice (see $out/effects.log)"
     exit 1
 fi
 
