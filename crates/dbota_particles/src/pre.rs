@@ -31,6 +31,45 @@ pub struct PreCall<'a> {
 /// Runs `op`; the stop it asks for, if any.
 pub fn pre_emit(op: &PreEmission, scene: &Scene<'_>, call: &mut PreCall<'_>) -> Option<Stop> {
     match op {
+        PreEmission::RemapControlPoint(remap) => {
+            let input = scene.control_points[remap.input.index()];
+            let component = remap.input_component.index();
+            if !input.position[component].is_finite() {
+                return None;
+            }
+            let mut value = f64::from(input.position[component]);
+            if remap.derivative {
+                if !(scene.dt > 0.0 && scene.dt.is_finite())
+                    || !input.previous[component].is_finite()
+                {
+                    return None;
+                }
+                value = (value - f64::from(input.previous[component])) / f64::from(scene.dt);
+            }
+            let [a, b] = remap.input_range.map(f64::from);
+            let fraction = if a == b {
+                if value >= b { 1.0 } else { 0.0 }
+            } else {
+                ((value - a) / (b - a)).clamp(0.0, 1.0)
+            };
+            let [low, high] = remap.output_range.map(f64::from);
+            let mapped = low * (1.0 - fraction) + high * fraction;
+            let mut output = scene.control_points[remap.output.index()];
+            // Established from installed game build 6975: smoothing reads the input component
+            // of the output point, even when the written component differs.
+            let current = if output.position[component].is_finite() {
+                f64::from(output.position[component])
+            } else {
+                mapped
+            };
+            let amount = f64::from(remap.interpolation.clamp(0.0, 1.0));
+            output.position[remap.output_component.index()] =
+                (current * (1.0 - amount) + mapped * amount)
+                    .clamp(f64::from(f32::MIN), f64::from(f32::MAX)) as f32;
+            call.writes
+                .push((Target::Own, remap.output.index(), output));
+            None
+        }
         PreEmission::SetControlPointPositions(positions) => {
             set_positions(positions, scene, call);
             None

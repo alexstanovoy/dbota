@@ -617,6 +617,7 @@ about = "the in-game interface: bars, the feed, the scoreboard, pings and rings"
 paths = [
     "src/e2e/scoreboard.rs",
     "src/e2e/gathering.rs",
+    "src/e2e/ground_effect_pixels.rs",
     "src/roshan_status.rs",
     "src/hud.rs",
     "src/ui.rs",
@@ -643,6 +644,7 @@ tests = [
     { package = "dbota", target = "bin:dbota", filters = [
         "e2e::scoreboard::",
         "e2e::gathering::",
+        "e2e::ground_effect_pixels::",
         "hud::",
         "ui::tests::",
         "visual::",

@@ -962,6 +962,10 @@ impl Node {
                 written,
                 salt: 0x1000 + (index as u32) * 64,
                 memory: &mut inits[index],
+                snapshot: system
+                    .snapshot
+                    .as_ref()
+                    .map(|s| (s, system.snapshot_control_point)),
             };
             initialize(&init.class, &scene, &mut batch);
             written |= fields;

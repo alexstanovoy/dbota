@@ -514,7 +514,7 @@ particle watcher.controlled particles/econ/items/items_fx/lantern_of_sight_contr
 particle watcher.channel particles/econ/items/items_fx/lantern_of_sight_channeling.vpcf_c particles/lantern_of_sight_channeling.json
 particle shrine.ambient particles/base_static/experience_shrine_ambient.vpcf_c particles/experience_shrine_ambient.json
 particle shrine.active particles/base_static/experience_shrine_active.vpcf_c particles/experience_shrine_active.json
-particle lotus_pool.gathering particles/econ/generic/generic_progress_meter/generic_progress_circle.vpcf_c particles/generic_progress_circle.json
+particle lotus_pool.gathering particles/generic_gameplay/launchpad_progress_ring.vpcf_c particles/launchpad_progress_ring.json
 particle lotus_pool.pluck particles/world_fountain_of_life/fol_active.vpcf_c particles/fol_active.json
 # Team-only base fields are particle effects the game creates itself (established from the installed game); the map entity has no model.
 particle base_gate.radiant_ambient particles/base_static/base_gate_ambient_radiant.vpcf_c particles/base_gate_ambient_radiant.json
@@ -755,11 +755,11 @@ fx modifier.modifier_lamp_off.worn at=unit sound=sound.watcher.off
 fx unit.npc_dota_lantern.channelled at=unit particle=watcher.channel sound=sound.watcher.channel
 # A Shrine of Wisdom (the game's code, the XP fountain building): its glow while it stands; ready, the ring on the ground at
 # its radius (control point 1) that fills with the share a side has gathered (control point 4's y).
-fx unit.npc_dota_xp_fountain.worn at=unit particle=shrine.ambient cp2=attach_fx
-fx effect.bota_shrine_ready.worn at=unit particle=shrine.active cp1=300,0,0 cp2=attach_fx cp4=gathered:0,1,0
+fx effect.bota_shrine_ready.worn at=unit particle=shrine.ambient cp1=300,1,0 cp2=attach_fx
+fx unit.npc_dota_xp_fountain.gathering at=unit particle=shrine.active cp1=gathered:0,300,0+300,0,0 cp2=attach_fx
 # A Lotus Pool (the game's code, the lotus pool building): while a hero plucks, Dota's progress circle runs out from the
 # middle to the pool's 350 as the pluck's countdown runs (control point 1: radius, thickness and count scale, speed).
-fx unit.npc_dota_lotus_pool.gathering at=unit particle=lotus_pool.gathering cp1=gathered:350,0,0+0,1,0
+fx unit.npc_dota_lotus_pool.gathering at=unit particle=lotus_pool.gathering cp1=gathered:0,350,0+350,0,0
 fx item.famango.use at=caster particle=item.mango.active sound=sound.item.mango
 fx item.great_famango.use at=caster particle=item.mango.active sound=sound.item.mango
 fx item.greater_famango.use at=caster particle=item.mango.active sound=sound.item.mango

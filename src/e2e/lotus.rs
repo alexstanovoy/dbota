@@ -273,6 +273,24 @@ fn lotus_pools_and_wisdom_shrines_draw_their_ground_effects() {
             .find(|u| u.kind == kind)
             .expect("objective")
             .clone();
+        if kind == UnitKind::Shrine
+            && !unit
+                .effects
+                .iter()
+                .any(|e| e.id == bota_proto::EffectId::SHRINE_READY)
+        {
+            let world = client.world();
+            let library = world.resource::<crate::particles::Library>();
+            let effect = library.effect(logical).expect("shrine ambient");
+            assert!(
+                !world
+                    .resource::<crate::particles::Playing>()
+                    .instances_of(effect)
+                    .any(|instance| !instance.ending()),
+                "an unready shrine has no ambient"
+            );
+            continue;
+        }
         client.stand_at((unit.pos.x.to_int() + 250, unit.pos.y.to_int()));
         // Move the camera by the real minimap click, rather than editing its transform.
         let frame = crate::minimap::frame(client.world());

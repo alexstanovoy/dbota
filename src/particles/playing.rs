@@ -35,12 +35,16 @@ struct Presentation {
 pub struct Playing {
     simulation: dbota_particles::Simulation,
     presentation: HashMap<Handle, Presentation>,
+    #[cfg(test)]
+    hidden_effects: Vec<Arc<Effect>>,
 }
 
 impl Playing {
     pub(super) fn reset(&mut self) {
         self.simulation.reset();
         self.presentation.clear();
+        #[cfg(test)]
+        self.hidden_effects.clear();
     }
 
     pub fn start(&mut self, effect: &Arc<Effect>, seed: u32, sight: EffectSight) -> Option<Handle> {
@@ -161,6 +165,8 @@ impl Playing {
         let Self {
             simulation,
             presentation,
+            #[cfg(test)]
+            hidden_effects,
         } = self;
         simulation.step(
             dt,
@@ -171,12 +177,26 @@ impl Playing {
             frame,
             units_per_metre,
             &|handle, instance| {
+                #[cfg(test)]
+                if hidden_effects
+                    .iter()
+                    .any(|effect| Arc::ptr_eq(effect, &instance.effect))
+                {
+                    return false;
+                }
                 presentation
                     .get(&handle)
                     .is_some_and(|permission| permitted(permission.sight, instance, sight))
             },
         );
         presentation.retain(|handle, _| simulation.contains(*handle));
+    }
+
+    /// Masks presentation only: simulation, game state and all nonselected effects stay intact.
+    #[cfg(test)]
+    pub fn hide_effects(&mut self, effects: Vec<Arc<Effect>>) {
+        assert!(effects.len() <= 16, "a bounded render comparison");
+        self.hidden_effects = effects;
     }
 
     #[cfg(test)]

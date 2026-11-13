@@ -546,6 +546,20 @@ impl Client {
     }
 
     fn build(extra: &[&str], core: Option<Core>, files: &[(&str, &str)]) -> Client {
+        Self::build_configured(extra, core, files, None)
+    }
+
+    /// The production renderer, directed to the test's own offscreen target.
+    pub fn run_rendered(extra: &[&str], prepare: fn(&mut App)) -> Client {
+        Self::build_configured(extra, None, &[], Some(prepare))
+    }
+
+    fn build_configured(
+        extra: &[&str],
+        core: Option<Core>,
+        files: &[(&str, &str)],
+        render: Option<fn(&mut App)>,
+    ) -> Client {
         let turn = turn();
         let scratch = Scratch::new();
         let config = scratch.0.join(crate::config::FILE_NAME);
@@ -620,15 +634,38 @@ impl Client {
                 Box::new(ServerEndReader(std::sync::Arc::clone(&end)))
             }),
         );
-        app.add_plugins(headless(&args, &settings));
+        if render.is_some() {
+            app.add_plugins(
+                crate::default_plugins(&args, &settings)
+                    .build()
+                    .disable::<bevy::winit::WinitPlugin>()
+                    .disable::<bevy::log::LogPlugin>()
+                    .disable::<bevy::render::pipelined_rendering::PipelinedRenderingPlugin>()
+                    .set(bevy::render::RenderPlugin {
+                        synchronous_pipeline_compilation: true,
+                        ..default()
+                    }),
+            );
+        } else {
+            app.add_plugins(headless(&args, &settings));
+        }
         crate::client_plugins(&mut app, args.read_environment);
         crate::menu(&mut app, &args, store, menu_first).expect("the menu");
         // What the renderer would take of the entities drawn: kept, as no render world takes it.
-        app.add_plugins(bevy::extract::sync_world::SyncWorldPlugin::<
-            bevy::render::RenderApp,
-        >::default());
+        if let Some(prepare) = render {
+            prepare(&mut app);
+        } else {
+            app.add_plugins(bevy::extract::sync_world::SyncWorldPlugin::<
+                bevy::render::RenderApp,
+            >::default());
+        }
+        let mut renderer_wait = render.map(|_| Patience::of(PATIENCE));
         while app.plugins_state() == PluginsState::Adding {
+            if let Some(wait) = &mut renderer_wait {
+                wait.pass("the offscreen render device");
+            }
             bevy::tasks::tick_global_task_pools_on_main_thread();
+            std::thread::yield_now();
         }
         app.finish();
         app.cleanup();

@@ -1424,7 +1424,7 @@ fn particle(src: &impl Source, pak: &Vpk, path: &str, dest: &str, out: &mut Out<
         }
         let read = read_from(src, &[pak], &format!("{next}_c"))
             .and_then(|bytes| System::read(&Resource::parse(&bytes)?));
-        let system = match read {
+        let mut system = match read {
             Ok(system) => system,
             Err(err) if next != root => {
                 out.report.failed.push((next, err.to_string()));
@@ -1432,6 +1432,10 @@ fn particle(src: &impl Source, pak: &Vpk, path: &str, dest: &str, out: &mut Out<
             }
             Err(err) => return Err(err),
         };
+        if let Some(path) = &system.snapshot_file {
+            let bytes = read_from(src, &[pak], &format!("{path}_c"))?;
+            system.snapshot = Some(heatel::particle::Snapshot::read(&Resource::parse(&bytes)?)?);
+        }
         queue.extend(system.children.iter().map(|c| c.path.clone()));
         systems.push((next, system));
     }

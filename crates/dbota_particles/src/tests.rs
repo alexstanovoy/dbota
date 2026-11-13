@@ -234,6 +234,9 @@ fn bare(
 ) -> System {
     System {
         behavior_version: 12,
+        snapshot_file: None,
+        snapshot: None,
+        snapshot_control_point: point(0),
         first_multiple_override: -1,
         max_particles: 16,
         initial_particles: 0,
@@ -1839,6 +1842,7 @@ fn normal_rope_look() -> heatel::particle::Look {
         blend_frames: false,
         orientation: Orientation::ParticleNormal,
         refract: false,
+        depth_bias: FloatInput::Literal(0.0),
     }
 }
 
@@ -2019,4 +2023,101 @@ fn review_residual_constraint_random_uses_system_seed() {
         results.push(value);
     }
     assert!(results.iter().any(|value| *value != results[0]));
+}
+
+#[test]
+fn imported_control_point_remap_uses_the_input_component_for_smoothing() {
+    use heatel::particle::{ControlPointRemap, VectorComponent};
+    let mut definition = bare(0.0, vec![], vec![], vec![], vec![]);
+    definition.pre_emission = vec![always(PreEmission::RemapControlPoint(Box::new(
+        ControlPointRemap {
+            input: point(3),
+            output: point(9),
+            input_component: VectorComponent::Z,
+            output_component: VectorComponent::X,
+            input_range: [-4.0, 12.0],
+            output_range: [20.0, 100.0],
+            interpolation: 0.25,
+            derivative: false,
+        },
+    )))];
+    let mut instance = Instance::new(Arc::new(Effect::new(&[("remap".into(), definition)])), 1);
+    instance.set_control_point(3, Vec3::new(0.0, 0.0, 4.0), Vec3::ZERO, false);
+    instance.set_control_point(9, Vec3::new(0.0, 77.0, 40.0), Vec3::ZERO, false);
+    instance.advance(0.0, None);
+    assert_eq!(
+        instance.nodes[0].control_points[9].position,
+        Vec3::new(45.0, 77.0, 40.0)
+    );
+}
+
+#[test]
+fn imported_particle_noise_retains_nonzero_authored_radius_bounds() {
+    use heatel::particle::ParticleNoise;
+    for (output, scale) in [([12.0, 24.0], 0.5), ([-f32::MAX, f32::MAX], f32::MAX)] {
+        let definition = bare(
+            1.0,
+            vec![Initializer::InitFloat {
+                field: Field::RADIUS,
+                value: FloatInput::ParticleNoise(Box::new(ParticleNoise {
+                    field: Field::POSITION,
+                    output,
+                    scale,
+                    offset_rate: [1.0, 1.0, 4.0],
+                    offset: 0.0,
+                    octaves: 1,
+                    mapping: Mapping::Direct,
+                })),
+                set_method: SetMethod::Replace,
+                strength: FloatInput::Literal(1.0),
+            }],
+            vec![],
+            vec![],
+            vec![],
+        );
+        let mut instance = Instance::new(Arc::new(Effect::new(&[("noise".into(), definition)])), 1);
+        instance.advance(0.01, None);
+        let radii = &instance.nodes[0].parts.scalars[store::RADIUS];
+        assert_eq!(radii.len(), 1);
+        assert!(
+            radii[0].is_finite(),
+            "non-finite radius from finite inputs: {}",
+            radii[0]
+        );
+        assert!(
+            (output[0]..=output[1]).contains(&radii[0]),
+            "radius: {}",
+            radii[0]
+        );
+    }
+}
+
+#[test]
+fn imported_snapshot_positions_use_the_spatial_frame_and_authored_start_index() {
+    use heatel::particle::Snapshot;
+    let mut definition = bare(
+        2.0,
+        vec![Initializer::SkinnedSnapshot {
+            control_point: point(0),
+            snapshot_control_point: point(6),
+            start: 1,
+            random: false,
+            set_normal: true,
+        }],
+        vec![],
+        vec![],
+        vec![],
+    );
+    definition.snapshot_control_point = point(6);
+    definition.snapshot = Some(Snapshot::Points {
+        positions: vec![[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]],
+        normals: Some(vec![[0.0, 0.0, 1.0]; 2]),
+    });
+    let mut instance = Instance::new(Arc::new(Effect::new(&[("snapshot".into(), definition)])), 1);
+    instance.set_control_point(0, Vec3::new(10.0, 20.0, 30.0), Vec3::ZERO, false);
+    instance.advance(0.01, None);
+    assert_eq!(
+        instance.nodes[0].parts.vectors[store::POSITION],
+        vec![Vec3::new(14.0, 25.0, 36.0), Vec3::new(11.0, 22.0, 33.0)]
+    );
 }

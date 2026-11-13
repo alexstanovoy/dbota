@@ -470,6 +470,40 @@ fn random(input: &FloatInput, scene: &Scene<'_>, seed: u32, salt: u32) -> f32 {
 /// An input that reads particle `i`'s age or attributes.
 fn particle_float(input: &FloatInput, scene: &Scene<'_>, parts: &Particles, i: usize) -> f32 {
     match input {
+        FloatInput::ParticleNoise(n) => {
+            let mut at = parts.vector(slot(n.field), i) * n.scale
+                + Vec3::from(n.offset_rate) * scene.age
+                + Vec3::splat(n.offset);
+            at = if at.is_finite() {
+                at.clamp(Vec3::splat(-1_000_000.0), Vec3::splat(1_000_000.0))
+            } else {
+                Vec3::ZERO
+            };
+            let (mut value, mut weight, mut total) = (0.0, 1.0, 0.0);
+            for _ in 0..n.octaves.min(8) {
+                value += noise(at) * weight;
+                total += weight;
+                weight *= 0.5;
+                at *= 2.0;
+            }
+            let fraction = if total > 0.0 {
+                (value / total * 0.5 + 0.5).clamp(0.0, 1.0)
+            } else {
+                0.5
+            };
+            let span = n.output[1] - n.output[0];
+            let output = if span.is_finite() {
+                n.output[0] + span * fraction
+            } else {
+                n.output[0] * (1.0 - fraction) + n.output[1] * fraction
+            };
+            let output = map(&n.mapping, output);
+            if output.is_nan() {
+                0.0
+            } else {
+                output.clamp(f32::MIN, f32::MAX)
+            }
+        }
         FloatInput::ParticleAge(m) => map(m, scene.age - parts.scalars[super::store::CREATION][i]),
         FloatInput::ParticleAgeNormalized(m) => map(m, normalized_age(scene, parts, i)),
         FloatInput::ParticleFloat {

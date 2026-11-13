@@ -30,6 +30,11 @@ pub fn writes(init: &Initializer) -> u64 {
             };
             position | bit(s.velocity)
         }
+        Initializer::SkinnedSnapshot { set_normal, .. } => {
+            bit(Field::POSITION)
+                | bit(Field::POSITION_PREVIOUS)
+                | if *set_normal { bit(Field::NORMAL) } else { 0 }
+        }
         Initializer::PositionOffset { .. } | Initializer::RingWave(_) => {
             bit(Field::POSITION) | bit(Field::POSITION_PREVIOUS)
         }
@@ -133,12 +138,51 @@ pub struct Batch<'a> {
     pub written: u64,
     pub salt: u32,
     pub memory: &'a mut InitMemory,
+    pub snapshot: Option<(
+        &'a heatel::particle::Snapshot,
+        heatel::particle::ControlPoint,
+    )>,
 }
 
 /// Runs `init` on the batch.
 pub fn initialize(init: &Initializer, scene: &Scene<'_>, batch: &mut Batch<'_>) {
     let (first, len) = (batch.first, batch.parts.len());
     match init {
+        Initializer::SkinnedSnapshot {
+            control_point,
+            snapshot_control_point,
+            start,
+            random,
+            set_normal,
+        } => {
+            let Some((heatel::particle::Snapshot::Points { positions, normals }, bound)) =
+                batch.snapshot
+            else {
+                return;
+            };
+            if bound != *snapshot_control_point || positions.is_empty() {
+                return;
+            }
+            let frame = scene.control_point_at(control_point.index(), scene.age);
+            for i in first..len {
+                let index = if *random {
+                    (draw(batch.parts.seed[i], batch.salt) * positions.len() as f32) as usize
+                } else {
+                    (batch.parts.number[i] as usize).wrapping_add(*start as usize)
+                } % positions.len();
+                let position = frame.position
+                    + frame.rotate(Vec3::from(positions[index]) * frame.object_scale);
+                batch.parts.vectors[super::store::POSITION][i] = position;
+                batch.parts.vectors[super::store::PREVIOUS][i] = position;
+                if *set_normal && let Some(normal) = normals.as_ref().and_then(|n| n.get(index)) {
+                    batch.parts.set_vector(
+                        super::store::slot(Field::NORMAL),
+                        i,
+                        frame.rotate(Vec3::from(*normal)),
+                    );
+                }
+            }
+        }
         Initializer::InitFloat {
             field,
             value,

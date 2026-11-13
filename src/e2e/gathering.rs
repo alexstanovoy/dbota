@@ -147,8 +147,8 @@ fn assert_ground_ring(server: &Server, client: &mut Client, logical: &str, at: S
 }
 
 /// A Shrine of Wisdom: the mouse picks nothing on it; a hero sent to its middle stands there;
-/// once ready it lights its ring on the ground (`experience_shrine_active`), and the ring fills
-/// (control point 4's y, the share gathered) when the hero comes back to gather it.
+/// once ready it lights its ambient effect; while gathering the ground ring fills
+/// (control point 1 feeds the authored countdown remap) when the hero comes back to gather it.
 #[test]
 fn a_shrine_is_walked_onto_never_picked_and_shows_its_ring_filling() {
     let (server, mut client) = objective_match("shrines", "realtime");
@@ -176,9 +176,12 @@ fn a_shrine_is_walked_onto_never_picked_and_shows_its_ring_filling() {
         c.view()
             .unit(shrine)
             .is_some_and(|u| u.effects.iter().any(|e| e.id == EffectId::SHRINE_READY))
-            && !playing(c, "shrine.active", 4).is_empty()
+            && !playing(c, "shrine.ambient", 1).is_empty()
     });
-    assert_ground_ring(&server, &mut client, "shrine.active", at);
+    assert!(
+        playing(&client, "shrine.active", 1).is_empty(),
+        "the countdown starts only during gathering"
+    );
     client
         .core_mut()
         .act(Intent::MoveTo((at.x.to_f32(), at.y.to_f32())));
@@ -189,10 +192,11 @@ fn a_shrine_is_walked_onto_never_picked_and_shows_its_ring_filling() {
             .iter()
             .any(|share| share.y > 0.0)
     });
+    assert_ground_ring(&server, &mut client, "shrine.active", at);
 }
 
 /// A Lotus Pool: the mouse picks nothing on it, and a hero standing in it plays the ring that
-/// runs out from the middle (control point 1's x, its radius, grows with the pluck's countdown).
+/// runs out from the middle (control point 1's y grows while its x keeps the outer radius).
 #[test]
 fn a_lotus_pool_is_never_picked_and_plays_its_ring_while_a_hero_plucks() {
     let (server, mut client) = objective_match("lotus_pools", "lockstep");
@@ -216,7 +220,8 @@ fn a_lotus_pool_is_never_picked_and_plays_its_ring_while_a_hero_plucks() {
     let mut radii = Vec::new();
     client.within(SOON, "the ring running out from the middle", |c| {
         if let Some(ring) = playing(c, "lotus_pool.gathering", 1).first() {
-            radii.push(ring.x);
+            assert_eq!(ring.x, 350.0, "the outer radius stays fixed");
+            radii.push(ring.y);
         }
         radii.windows(2).any(|w| w[1] > w[0] && w[0] > 0.0)
     });

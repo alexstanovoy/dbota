@@ -42,6 +42,8 @@ mod frog_shield;
 mod fx;
 mod game_audio_end;
 mod gathering;
+#[cfg(not(target_arch = "wasm32"))]
+mod ground_effect_pixels;
 mod ground_items;
 mod ground_targets;
 pub(crate) mod harness;

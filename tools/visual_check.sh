@@ -54,6 +54,16 @@ else
     echo "visual check: FAIL minimap stroke pixels (see $out/minimap_strokes.log)"
     exit 1
 fi
+# The objective effects contribute visible pixels in each actual recorded state.
+if in_private_environment cargo test --profile test-release --quiet --manifest-path "$here/Cargo.toml" \
+    --bin dbota e2e::ground_effect_pixels::four_objective_states_have_visible_authored_effects \
+    -- --ignored --exact --nocapture > "$out/objective_pixels.log" 2>&1 \
+    && grep -Fq 'test result: ok. 1 passed; 0 failed; 0 ignored;' "$out/objective_pixels.log"; then
+    echo "visual check: PASS objective effect pixels"
+else
+    echo "visual check: FAIL objective effect pixels (see $out/objective_pixels.log)"
+    exit 1
+fi
 # Full readability is baked into the production material, including with its retired uniform at zero.
 if in_private_environment cargo test --profile test-release --quiet --manifest-path "$here/Cargo.toml" \
     --bin dbota fog::clarity_render::full_visual_clarity_reaches_the_ground_and_figure_pixels \
