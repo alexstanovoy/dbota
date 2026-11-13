@@ -24,7 +24,7 @@ pub enum FormKind {
     /// The local lobby page: a lobby hosted on this machine (port, players) and a game joined by
     /// address.
     Host,
-    /// A replay file to open.
+    /// Keyboard actions for recordings already kept by the client.
     Replay,
 }
 
@@ -115,10 +115,7 @@ fn items_of(kind: FormKind, fields: usize) -> Vec<Item> {
             Item::Button(Act::Direct(false)),
             Item::Button(Act::Direct(true)),
         ],
-        #[cfg(target_arch = "wasm32")]
-        FormKind::Replay => vec![Item::Button(Act::OpenReplayFile)],
-        #[cfg(not(target_arch = "wasm32"))]
-        FormKind::Replay => buttons(vec![Act::Submit]),
+        FormKind::Replay => Vec::new(),
     }
 }
 
@@ -183,9 +180,7 @@ impl Form {
                     Field::new("Address", &prefs.direct, false, 200),
                 ]
             }
-            // A browser picks a replay file with its own chooser.
-            FormKind::Replay if cfg!(target_arch = "wasm32") => Vec::new(),
-            FormKind::Replay => vec![Field::new("Replay file", "", false, 1024)],
+            FormKind::Replay => Vec::new(),
         };
         // The keyboard starts in the first empty field, the local lobby's in its first.
         let first = match kind {

@@ -613,7 +613,7 @@ impl MenuCore {
             Page::Profile => self.profile_view(),
             Page::PlayerProfile(_) => self.visitor_view(),
             Page::Heroes => PageView::Heroes,
-            Page::Hero(hero) => self.hero_page(hero),
+            Page::Hero(hero) => PageView::Hero { hero },
             Page::Leaderboard => self.leaderboard_view(),
             Page::Lobbies => PageView::Lobbies {
                 list: self
@@ -808,6 +808,18 @@ impl MenuCore {
                 })
                 .collect()
         });
+        let local = self.local_history.cards(self.library.records());
+        let mut matches = local.as_ref().clone();
+        if let Some(account) = self.my_id() {
+            for result in &self.history {
+                let key = super::local_matches::service_key(&self.prefs.service, result.match_id.0);
+                if !matches.iter().any(|row| row.file == key) {
+                    matches.push(super::player_profile::public_match(result.clone(), account.0));
+                }
+            }
+        }
+        matches.sort_by_key(|row| std::cmp::Reverse(row.when));
+        matches.truncate(50);
         PageView::Profile {
             name,
             ratings,
@@ -815,7 +827,7 @@ impl MenuCore {
             read_only: false,
             notice: None,
             public_page: None,
-            matches: self.local_history.cards(self.library.records()),
+            matches: matches.into(),
         }
     }
 

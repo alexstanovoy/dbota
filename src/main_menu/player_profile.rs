@@ -56,6 +56,7 @@ struct Visit {
     name: String,
     ratings: Vec<Rating>,
     matches: Arc<Vec<Match>>,
+    results: Vec<MatchResult>,
     page: usize,
     avatar: avatar::View,
     avatar_version: Option<AvatarVersion>,
@@ -93,6 +94,7 @@ impl Reader {
             tries: 0,
             ratings: Vec::new(),
             matches: Arc::new(Vec::new()),
+            results: Vec::new(),
             page: 0,
             avatar: Default::default(),
             avatar_version: None,
@@ -158,18 +160,11 @@ impl Reader {
                 visit.stage = Part::Matches;
             }
             (Part::Matches, Reply::Matches { list }) => {
-                visit.matches = Arc::new(
-                    list.into_iter()
-                        .take(MAX_MATCHES)
-                        .filter(|result| {
-                            result
-                                .seats
-                                .iter()
-                                .any(|seat| seat.account.0 == visit.target.account)
-                        })
-                        .map(|result| public_match(result, visit.target.account))
-                        .collect(),
-                );
+                visit.results = list.into_iter().take(MAX_MATCHES)
+                    .filter(|result| result.seats.iter().any(|seat|seat.account.0 == visit.target.account))
+                    .collect();
+                visit.matches = Arc::new(visit.results.iter().cloned()
+                    .map(|result| public_match(result,visit.target.account)).collect());
                 visit.stage = if visit.avatar_version.is_some() {
                     Part::Avatar
                 } else {
@@ -242,7 +237,7 @@ fn public_ratings(account: &PublicAccount, modes: &[(String, String)]) -> Vec<Ra
         })
         .collect()
 }
-fn public_match(result: MatchResult, account: u64) -> Match {
+pub(super) fn public_match(result: MatchResult, account: u64) -> Match {
     let seat = result.seats.iter().find(|seat| seat.account.0 == account);
     let outcome = match (result.outcome, seat) {
         (Outcome::Winner { team }, Some(seat)) if team == seat.team => ResultKind::Won,
@@ -260,7 +255,7 @@ fn public_match(result: MatchResult, account: u64) -> Match {
         kda: None,
         net_worth: None,
         watchable: false,
-        details_available: false,
+        details_available: true,
     }
 }
 
@@ -348,6 +343,11 @@ impl MenuCore {
                 .saturating_add_signed(isize::from(delta))
                 .min(visit.matches.len().div_ceil(PAGE_SIZE).saturating_sub(1));
         }
+    }
+    pub(super) fn public_profile_result(&self, key: &str) -> Option<&MatchResult> {
+        let id = key.strip_prefix("public-")?.parse::<u64>().ok()?;
+        self.profiles.visit.as_ref().into_iter().flat_map(|visit|&visit.results)
+            .chain(&self.history).find(|result|result.match_id.0 == id)
     }
     pub(super) fn visitor_view(&self) -> PageView {
         let visit = self.profiles.visit.as_ref();

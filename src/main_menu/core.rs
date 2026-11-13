@@ -1816,7 +1816,7 @@ impl MenuCore {
         }
     }
 
-    fn my_id(&self) -> Option<AccountId> {
+    pub(super) fn my_id(&self) -> Option<AccountId> {
         self.client.as_ref().and_then(|c| c.me()).map(|me| me.id)
     }
 
@@ -2043,7 +2043,7 @@ impl MenuCore {
                 self.ask(ClientMsg::MyMatches, Asked::Other);
                 self.ask_history();
             }
-            Page::Profile => self.ask_profile(),
+            Page::Profile => { self.ask_profile(); self.ask_history(); },
             Page::Leaderboard => self.open_leaderboard(),
             Page::Lobbies => self.ask(ClientMsg::LobbyList, Asked::Other),
             Page::Replays => self.read_summaries(),
@@ -2508,15 +2508,6 @@ impl MenuCore {
             Page::Register => self.register(),
             Page::LocalLobby if self.form.focused_field() == Some(2) => self.direct(false, false),
             Page::LocalLobby => self.host(false),
-            #[cfg(not(target_arch = "wasm32"))]
-            Page::Replays => {
-                let path = self.form.value(0).trim().to_owned();
-                if path.is_empty() {
-                    self.tell("Type the path of a replay file".to_owned(), true);
-                } else {
-                    self.start(Launch::Replay(path.into()));
-                }
-            }
             Page::Lobbies if self.form.focused_field() == Some(SEARCH_FIELD) => {
                 self.search_lobbies();
             }

@@ -837,14 +837,12 @@ fn result_page(kit: &mut Kit, body: Entity, result: &ResultView) {
     kit.button(column, "CONTINUE", Act::Go(Page::Home), Tone::Primary, 46.0);
 }
 
-/// REPLAYS: the replays this client keeps, the newest first, each to watch or delete (and in a
-/// browser to download); and any replay file, by its path on a desktop, from the file chooser in
-/// a browser.
+/// Recordings kept by this client, each available to watch or delete.
 fn replays_page(
     kit: &mut Kit,
     body: Entity,
     list: &[ReplayRow],
-    fields: &[FieldView],
+    _fields: &[FieldView],
     shelf: &ReplayShelf,
 ) {
     let column = kit.node(
@@ -859,7 +857,7 @@ fn replays_page(
     kit.bold(column, "REPLAYS", 30.0, theme::INK_1);
     let (note, colour) = if !shelf.store {
         (
-            "This browser keeps no replays for the page. A replay file can still be opened below."
+            "This browser keeps no replays for the page."
                 .to_owned(),
             theme::GOLD,
         )
@@ -898,37 +896,7 @@ fn replays_page(
     for replay in list {
         replay_row(kit, column, replay);
     }
-    let card = kit.panel(
-        column,
-        Node {
-            flex_direction: FlexDirection::Column,
-            padding: UiRect::all(px(16)),
-            row_gap: px(10),
-            margin: UiRect::top(px(10)),
-            ..default()
-        },
-    );
-    #[cfg(not(target_arch = "wasm32"))]
-    {
-        for (at, field) in fields.iter().enumerate() {
-            field_box(kit, card, at, field);
-        }
-        kit.button(card, "OPEN", Act::Submit, Tone::Primary, 40.0);
-    }
-    #[cfg(target_arch = "wasm32")]
-    {
-        let _ = fields;
-        let open = kit.button(
-            card,
-            "OPEN A .BRP FILE",
-            Act::OpenReplayFile,
-            Tone::Primary,
-            40.0,
-        );
-        kit.commands
-            .entity(open)
-            .insert(Name::new("open replay file"));
-    }
+
 }
 
 /// What a replay's row says of where it was played.

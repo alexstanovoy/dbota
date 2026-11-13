@@ -18,6 +18,18 @@ pub fn present(
     session: NonSend<Session>,
 ) {
     if let Some(core) = core.as_mut() {
+        let inspecting = matches!(core.page(), crate::main_menu::Page::PlayerProfile(_))
+            || post.overlay.as_ref().is_some_and(|view| view.context.history);
+        if let Some(view) = core.take_result_request(inspecting) {
+            if !view.context.history {
+                post.closed = false;
+                post.outcome_revision = core.outcome_revision();
+                post.active_version = post.version;
+            }
+            post.overlay = Some(view);
+            post.presented += 1;
+            return;
+        }
         if let Some((back, _)) = &post.profile_return {
             if matches!(core.page(), crate::main_menu::Page::PlayerProfile(_)) {
                 return;
@@ -29,20 +41,6 @@ pub fn present(
             }
             post.profile_return = None;
             post.closed = true;
-        }
-        if let Some(view) = core.take_result_request(
-            post.overlay
-                .as_ref()
-                .is_some_and(|view| view.context.history),
-        ) {
-            if !view.context.history {
-                post.closed = false;
-                post.outcome_revision = core.outcome_revision();
-                post.active_version = post.version;
-            }
-            post.overlay = Some(view);
-            post.presented += 1;
-            return;
         }
         let revision = core.outcome_revision();
         if post.shown.is_none()

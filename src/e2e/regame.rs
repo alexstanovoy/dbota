@@ -209,9 +209,7 @@ fn consecutive_replays_resize_the_veil_through_the_maximum_terrain_axis() {
         };
         std::fs::create_dir_all(client.replay_dir()).expect("the replay folder");
         std::fs::write(&path, replay(axis, trees.clone())).expect("the replay");
-        act(&mut client, Act::Go(Page::Replays));
-        replace(&mut client, 0, path.display().to_string());
-        act(&mut client, Act::Submit);
+        open_replay_file(&mut client, &path);
         client.until("the replay opened", |c| {
             c.core().terrain_cells() == axis as usize
         });
@@ -413,9 +411,10 @@ fn pick(client: &mut Client) {
 }
 
 fn open_replay_file(client: &mut Client, path: &std::path::Path) {
-    act(client, Act::Go(Page::Replays));
-    replace(client, 0, path.display().to_string());
-    act(client, Act::Submit);
+    client.world_mut().non_send_mut::<MenuCore>()
+        .watch_result(crate::postgame::view::Replay::File(path.to_owned()))
+        .expect("open replay through the player");
+    client.frames(3);
 }
 
 fn replay_paused(client: &Client) -> Option<bool> {

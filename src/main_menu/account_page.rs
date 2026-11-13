@@ -50,34 +50,8 @@ pub fn tabs(kit: &mut Kit, root: Entity, matches: bool, player: &str) {
         12.0,
         theme::INK_1,
     );
-    for (name, page, selected) in [
-        ("PROFILE", Page::Profile, !matches),
-        ("MATCHES", Page::Replays, matches),
-    ] {
-        if name == "MATCHES" {
-            kit.text(tabs, "/", 14.0, theme::INK_4);
-        }
-        let button = kit.quiet(
-            tabs,
-            name,
-            Act::Go(page),
-            theme::LABEL,
-            (
-                if selected { theme::INK_1 } else { theme::INK_4 },
-                theme::INK_1,
-            ),
-        );
-        if selected {
-            kit.commands
-                .entity(button)
-                .entry::<Node>()
-                .and_modify(|mut node| node.border.bottom = px(2));
-            kit.commands.entity(button).insert(BorderColor {
-                bottom: theme::INK_1,
-                ..BorderColor::all(Color::NONE)
-            });
-        }
-    }
+    let _ = matches;
+    kit.typed(tabs, "PROFILE", theme::LABEL, theme::INK_1);
 }
 
 pub struct Profile<'a> {
@@ -93,19 +67,7 @@ pub struct Profile<'a> {
 
 pub fn profile(kit: &mut Kit, root: Entity, data: Profile<'_>, clock: super::page_time::Clock) {
     let page = profile_page(kit, root);
-    if data.read_only {
-        let tabs = kit.node(
-            page,
-            Node {
-                height: px(46),
-                align_items: AlignItems::Center,
-                ..default()
-            },
-        );
-        kit.typed(tabs, "PROFILE", theme::LABEL, theme::INK_1);
-    } else {
-        tabs(kit, page, false, data.name);
-    }
+    tabs(kit, page, false, data.name);
     profile_header(
         kit,
         page,
@@ -133,9 +95,12 @@ pub fn profile(kit: &mut Kit, root: Entity, data: Profile<'_>, clock: super::pag
             width: px(840),
             flex_direction: FlexDirection::Column,
             row_gap: px(8),
+            max_height: vh(70),
+            overflow: Overflow::scroll_y(),
             ..default()
         },
     );
+    kit.commands.entity(left).insert(ScrollPosition::default());
     if data.connected && data.ratings.iter().any(|rating| rating.games > 0) {
         rating_cards(kit, left, data.ratings);
     }
@@ -352,7 +317,7 @@ fn recent_matches(
             ..default()
         },
     );
-    caption(kit, title, "RECENT MATCHES");
+    caption(kit, title, "MATCHES");
     if let Some((page, total)) = public_page {
         if page > 0 {
             kit.quiet(
@@ -372,21 +337,6 @@ fn recent_matches(
                 theme::LINK,
             );
         }
-    } else {
-        let all = kit.quiet(
-            title,
-            "All matches",
-            Act::Go(Page::MatchHistory),
-            theme::BODY,
-            theme::LINK,
-        );
-        kit.commands
-            .entity(all)
-            .entry::<Node>()
-            .and_modify(|mut node| {
-                node.min_height = px(20);
-                node.height = px(20);
-            });
     }
     if public_page.is_some() && matches.is_empty() {
         kit.text(
@@ -396,11 +346,11 @@ fn recent_matches(
             theme::INK_3,
         );
     } else if public_page.is_some() {
-        for game in matches.iter().take(6) {
+        for game in matches {
             match_row(kit, left, game, false, clock, true);
         }
     } else {
-        rows(kit, left, &matches[..matches.len().min(6)], false, clock);
+        rows(kit, left, matches, false, clock);
     }
 }
 
@@ -560,6 +510,17 @@ fn match_row(
             ..BorderColor::all(Color::NONE)
         },
     ));
+    if game.details_available {
+        use bevy::ui_widgets::Button;
+        kit.commands.entity(row).insert((
+            Button,
+            Pickable::default(),
+            super::kit::MenuButton(Act::MatchDetails(game.file.clone())),
+            Name::new(format!("profile match {}", game.file)),
+            super::kit::Wash { target: row, rest: theme::HISTORY_ROW, hover: theme::SECONDARY.1 },
+            bevy::input_focus::tab_navigation::TabIndex::default(),
+        ));
+    }
     match_numbers(kit, row, game, full, clock, public);
     kit.node(
         row,

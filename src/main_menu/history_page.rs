@@ -247,14 +247,6 @@ pub fn draw(kit: &mut Kit, root: Entity, view: &View) {
             true,
         );
     }
-    act(
-        kit,
-        pane,
-        "OPEN A REPLAY FILE",
-        area(978.0, 82.0, 182.0, 44.0),
-        Act::Go(Page::Replays),
-        true,
-    );
     rect(kit, pane, area(0.0, 134.0, 1160.0, 30.0), theme::GROUND);
     for (text, x) in [
         ("DATE", 8.0),

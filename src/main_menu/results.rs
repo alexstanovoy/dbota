@@ -16,6 +16,17 @@ thread_local! { pub(crate) static OUTCOME_PROJECTIONS: std::cell::Cell<u32> = co
 
 impl MenuCore {
     pub(super) fn open_result(&mut self, key: &str) {
+        if let Some(result) = self.public_profile_result(key) {
+            let mut context = self.event_context(result, None);
+            context.history = true;
+            context.replay = self.result_replay(result.match_id.0);
+            let summary = MatchSummary {
+                detail: Detail::Stats, winner: winner(result.outcome), seconds: result.duration_ms / 1000,
+                rows: Vec::new(), points: Vec::new(), structures: Vec::new(), recording: None,
+            };
+            self.result_request = Some(View::new(Arc::new(summary), context));
+            return;
+        }
         let Some(entry) = self.local_history.find(key) else {
             self.tell("Match details are unavailable.".to_owned(), false);
             return;

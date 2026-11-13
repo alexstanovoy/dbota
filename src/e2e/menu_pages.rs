@@ -1687,7 +1687,14 @@ fn a_served_live_postmatch_profile_and_real_public_match_list_preserve_the_live_
     assert!(rows[0].kda.is_none());
     assert!(rows[0].net_worth.is_none());
     assert!(!rows[0].watchable);
-    assert!(!rows[0].details_available);
+    assert!(rows[0].details_available, "served match facts can be inspected without a game report");
+    client.frames(3);
+    client.click_named(&format!("profile match public-{id}"));
+    assert!(client.world().non_send::<crate::postgame::PostGame>().visible(),
+        "a profile reached from a live result can inspect its served match too");
+    assert_eq!(client.world().non_send::<MenuCore>().page(),Page::PlayerProfile(account));
+    client.click_named("results close");
+    assert!(!client.world().non_send::<crate::postgame::PostGame>().visible());
     assert_eq!(
         client.world().non_send::<MenuCore>().page(),
         Page::PlayerProfile(account)
@@ -1991,4 +1998,66 @@ fn a_hidden_profile_is_not_bound_in_the_server_replay_or_restamped_by_the_client
     let world=viewer.world_mut();
     assert!(!world.query_filtered::<&Name,With<NativeButton>>().iter(world)
         .any(|name|name.as_str()==format!("results profile {}",played.other_slot)));
+}
+
+#[test]
+fn a_profile_keeps_its_match_list_in_the_profile_instead_of_linking_to_replay_import() {
+    use bevy::prelude::*;
+    let mut client = local_menu();
+    act(&mut client, Act::Go(Page::Profile));
+    let world = client.world_mut();
+    let navigation: Vec<_> = world.query_filtered::<&Name, With<NativeButton>>()
+        .iter(world).map(ToString::to_string).collect();
+    assert!(!navigation.iter().any(|name| name == "matches" || name == "all matches"),
+        "the profile's matches belong to this profile, not another page");
+    assert!(client.shown_texts().iter().any(|text| text == "MATCHES"));
+    assert_eq!(client.world().non_send::<MenuCore>().page(), Page::Profile);
+}
+
+#[test]
+fn replay_library_and_match_history_offer_no_file_import_controls() {
+    use bevy::prelude::*;
+    let mut client = local_menu();
+    for page in [Page::Replays, Page::MatchHistory] {
+        act(&mut client, Act::Go(page));
+        let words = client.shown_texts();
+        assert!(!words.iter().any(|text| text.contains("Replay file") || text.contains("OPEN A REPLAY FILE") || text == "OPEN" || text == "OPEN A .BRP FILE"),
+            "file import is absent from {page:?}");
+        let world=client.world_mut();
+        assert!(!world.query_filtered::<&Name,With<NativeButton>>().iter(world)
+            .any(|name|name.as_str()=="open replay file"));
+    }
+}
+
+#[test]
+fn a_hero_page_has_no_machine_attribution_message_or_match_record() {
+    let mut client=local_menu();
+    act(&mut client, Act::Go(Page::Hero(bota_proto::HeroId::SHADOW_FIEND)));
+    assert!(!client.shown_texts().iter().any(|text|text.contains("attributed matches") || text.contains("Your matches:")),
+        "hero pages do not compute machine-local match attribution");
+}
+
+#[test]
+fn a_served_profile_match_row_opens_match_details_without_leaving_the_profile() {
+    use bevy::prelude::*;
+    let service=crate::main_menu::tests::service();
+    let played=crate::main_menu::tests::served_postmatch(&service);
+    let id=played.id;
+    let account=played.other;
+    let mut client=super::menu::signed_up(&service,"profile_match_reader");
+    client.world_mut().non_send_mut::<MenuCore>().inspect_player(
+        crate::main_menu::tests::profile_target(&service,account)).expect("configured matchmaker");
+    client.until("served match list",|client|crate::main_menu::tests::visitor_public_matches(client.world().non_send::<MenuCore>())
+        .is_some_and(|rows|rows.len()==1));
+    let name=format!("profile match public-{id}");
+    let world=client.world_mut();
+    assert!(world.query_filtered::<&Name,With<NativeButton>>().iter(world).any(|label|label.as_str()==name),
+        "a real public match is a clickable row");
+    client.click_named(&name);
+    client.until("match details visible",|client|client.world().non_send::<crate::postgame::PostGame>().visible());
+    assert_eq!(client.world().non_send::<MenuCore>().page(),Page::PlayerProfile(account));
+    assert!(client.shown_texts().iter().any(|text|text.contains(&format!("Match {id}"))), "details identify the selected served match");
+    client.click_named("results close");
+    assert_eq!(client.world().non_send::<MenuCore>().page(),Page::PlayerProfile(account));
+    assert!(!client.world().non_send::<crate::postgame::PostGame>().visible());
 }
