@@ -128,7 +128,7 @@ wss:// where the host has a certificate",
     }
     let mut net = Net::connect(&addr)?;
     net.send(&hello)?;
-    net.send(&bota_client_core::catalogue())?;
+    net.send(&bota_client_core::catalogue_after(&hello))?;
     net.send(&ClientMsg::Compress(Codec::Deflate))?;
     Ok(Session(Core::new(Source::Live(Box::new(net)))))
 }

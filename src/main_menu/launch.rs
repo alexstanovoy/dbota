@@ -477,7 +477,7 @@ impl Opening {
                         }
                     };
                     Transport::send(&mut net, &greeting)?;
-                    Transport::send(&mut net, &bota_client_core::catalogue())?;
+                    Transport::send(&mut net, &bota_client_core::catalogue_after(&greeting))?;
                     Transport::send(&mut net, &ClientMsg::Compress(Codec::Deflate))?;
                     Ok((net, server))
                 })();
@@ -527,7 +527,7 @@ impl Opening {
                 Launch::Replay(_) | Launch::Blob(_) | Launch::Given => return Err(not_here()),
             };
             link.send(&greeting)?;
-            link.send(&bota_client_core::catalogue())?;
+            link.send(&bota_client_core::catalogue_after(&greeting))?;
             link.send(&ClientMsg::Compress(Codec::Deflate))?;
             Ok(Box::new(link) as Box<dyn LiveLink>)
         })();
