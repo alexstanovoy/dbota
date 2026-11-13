@@ -965,6 +965,38 @@ impl Client {
         strips
     }
 
+    /// The shown texts below the entities carrying `Marker`, so a check names the surface it means and
+    /// not a page drawn under it.
+    pub fn shown_texts_within<Marker: Component>(&mut self) -> Vec<String> {
+        let world = self.world_mut();
+        let roots: Vec<Entity> = world
+            .query_filtered::<Entity, With<Marker>>()
+            .iter(world)
+            .collect();
+        let mut texts = Vec::new();
+        let mut texts_query = world.query::<(&Text, &InheritedVisibility, &ComputedNode)>();
+        for root in roots {
+            let mut below = Vec::new();
+            let mut stack = vec![root];
+            while let Some(entity) = stack.pop() {
+                below.push(entity);
+                if let Some(children) = world.entity(entity).get::<Children>() {
+                    stack.extend(children.iter());
+                }
+            }
+            for entity in below {
+                if let Ok((text, shown, laid)) = texts_query.get(world, entity)
+                    && shown.get()
+                    && laid.size() != Vec2::ZERO
+                    && !text.0.is_empty()
+                {
+                    texts.push(text.0.clone());
+                }
+            }
+        }
+        texts
+    }
+
     /// Every text of the interface that shows: visible and laid out (a node of `Display::None`,
     /// or under one, is laid out as nothing).
     pub fn shown_texts(&mut self) -> Vec<String> {

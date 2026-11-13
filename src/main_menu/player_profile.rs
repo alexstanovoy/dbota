@@ -215,19 +215,24 @@ impl Reader {
             );
             return;
         }
-        visit.notice = Some(
-            match part {
-                Part::Matches => "Recent matches unavailable",
-                Part::Avatar => "Avatar unavailable",
-                _ => "This player's profile is unavailable",
-            }
-            .into(),
-        );
+        visit.notice = Some(refusal_notice(part, error).into());
         visit.stage = if part == Part::Matches && visit.avatar_version.is_some() {
             Part::Avatar
         } else {
             Part::Done
         };
+    }
+}
+
+/// What a refused part tells the player: a hidden profile is a choice of its owner, anything else is a failure.
+fn refusal_notice(part: Part, error: &Error) -> &'static str {
+    match (part, error) {
+        (Part::Matches, Error::UnknownAccount) => "This player's match list is hidden",
+        (Part::Matches, Error::Internal) => "Recent matches unavailable: the service failed",
+        (Part::Matches, Error::LookupTooExpensive) => "Recent matches unavailable: try again later",
+        (Part::Matches, _) => "Recent matches unavailable",
+        (Part::Avatar, _) => "Avatar unavailable",
+        _ => "This player's profile is unavailable",
     }
 }
 
@@ -559,5 +564,46 @@ mod served_matches_tests {
         assert!(rows[0].hero.is_none());
         assert!(rows[0].kda.is_none());
         assert!(rows[0].net_worth.is_none());
+    }
+    fn matches_notice_after(error: &Error) -> String {
+        let mut reader = Reader::default();
+        reader.begin(
+            Target {
+                service: "ws://example.test".into(),
+                account: 2,
+            },
+            Page::Leaderboard,
+        );
+        let generation = reader.generation;
+        let visit = reader.visit.as_mut().expect("visit");
+        visit.stage = Part::Matches;
+        visit.waiting = true;
+        reader.refused(generation, Part::Matches, error);
+        reader
+            .visit
+            .as_ref()
+            .and_then(|visit| visit.notice.clone())
+            .expect("a refused match list explains itself")
+    }
+    #[test]
+    fn a_hidden_players_match_list_says_so_instead_of_reporting_a_failure() {
+        assert_eq!(
+            matches_notice_after(&Error::UnknownAccount),
+            "This player's match list is hidden"
+        );
+    }
+    #[test]
+    fn a_service_failure_on_the_match_list_is_named_as_one() {
+        assert_eq!(
+            matches_notice_after(&Error::Internal),
+            "Recent matches unavailable: the service failed"
+        );
+    }
+    #[test]
+    fn a_refused_expensive_match_list_asks_for_a_later_retry() {
+        assert_eq!(
+            matches_notice_after(&Error::LookupTooExpensive),
+            "Recent matches unavailable: try again later"
+        );
     }
 }

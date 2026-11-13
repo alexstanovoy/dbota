@@ -190,10 +190,10 @@ fn local_profile_details_survive_a_restart_after_the_replay_is_pruned() {
     client.click_named("results scoreboard");
     assert!(
         client
-            .shown_texts()
+            .shown_texts_within::<crate::postgame::render::SeatRow>()
             .iter()
             .any(|text| text == "Shadow Fiend"),
-        "the retained scoreboard still identifies the recorded hero after restart and pruning"
+        "the retained scoreboard rows still identify the recorded hero after restart and pruning"
     );
     assert!(client.shown_texts().iter().any(|text| text == "NET WORTH"));
     client.click_named("results close");

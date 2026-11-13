@@ -123,7 +123,7 @@ fn empty(kit: &mut Kit, parent: Entity, public: bool) {
     let text = kit.typed(
         parent,
         if public {
-            "No public matches reported by this matchmaker"
+            "No public matches yet"
         } else {
             "No matches on this machine yet."
         },
