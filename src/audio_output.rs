@@ -11,9 +11,17 @@
 //!
 //! It plays what the game starts as Bevy would, minus what dbota never uses:
 //! no spatial sound, no start offsets or clip durations.
+//!
+//! A client that tests, checks or measures run never reaches a real device: the wrappers that
+//! isolate those clients (`tools/client_env.sh`, `tests/common`) set [`SILENT_VARIABLE`], and
+//! such a client plays to a [`Silent`] output instead, which takes the sounds in at the pace a
+//! device would and plays them to nobody. The mixer, the players and their timing stay real.
 
+use std::num::NonZero;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::thread::JoinHandle;
+use std::time::{Duration, Instant};
 
 use bevy::audio::{
     AudioLoader, AudioPlayer, AudioSink, AudioSinkPlayback, AudioSource, GlobalVolume,
@@ -21,7 +29,114 @@ use bevy::audio::{
 };
 use bevy::prelude::*;
 use rodio::cpal::StreamError;
+use rodio::mixer::Mixer;
 use rodio::{DeviceSinkBuilder, MixerDeviceSink, Player};
+
+/// The variable that makes the client play to no device. Anything but empty or `0` asks for it.
+pub const SILENT_VARIABLE: &str = "DBOTA_NULL_AUDIO";
+
+/// Which output the client plays to.
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+pub enum Kind {
+    /// The machine's default device.
+    Device,
+    /// Nobody: [`Silent`].
+    Silent,
+}
+
+impl Kind {
+    /// The output a value of [`SILENT_VARIABLE`] asks for.
+    fn of(value: Option<&str>) -> Kind {
+        match value {
+            Some(value) if !value.is_empty() && value != "0" => Kind::Silent,
+            _ => Kind::Device,
+        }
+    }
+
+    /// What `dbota audio-output` says of it (a browser has no such command).
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+    pub fn name(self) -> &'static str {
+        match self {
+            Kind::Device => "device",
+            Kind::Silent => "silent",
+        }
+    }
+
+    /// The output this process was asked for.
+    pub fn requested() -> Kind {
+        Kind::of(std::env::var(SILENT_VARIABLE).ok().as_deref())
+    }
+}
+
+/// Channels and rate of the silent output's mixer, those of a common device.
+const SILENT_CHANNELS: u16 = 2;
+const SILENT_RATE: u32 = 44_100;
+/// How much of the sound the silent output takes in at a time, which is also how often it wakes.
+const SILENT_STEP: Duration = Duration::from_millis(20);
+
+/// An output with no device behind it. A worker takes the mixer's samples at the pace of the
+/// sample rate, a step at a time, sleeping between steps, so that a sound ends when it would on a
+/// device and the thread is idle in between.
+struct Silent {
+    mixer: Mixer,
+    stop: Arc<AtomicBool>,
+    worker: Option<JoinHandle<()>>,
+}
+
+impl Silent {
+    fn open() -> Silent {
+        let channels = NonZero::new(SILENT_CHANNELS).expect("some channels");
+        let rate = NonZero::new(SILENT_RATE).expect("some rate");
+        let (mixer, mut source) = rodio::mixer::mixer(channels, rate);
+        let stop = Arc::new(AtomicBool::new(false));
+        let ending = Arc::clone(&stop);
+        let per_step = (u128::from(SILENT_RATE)
+            * u128::from(SILENT_CHANNELS)
+            * SILENT_STEP.as_millis()
+            / 1000) as usize;
+        let worker = std::thread::spawn(move || {
+            let mut due = Instant::now();
+            while !ending.load(Ordering::Acquire) {
+                for _ in 0..per_step {
+                    if source.next().is_none() {
+                        break;
+                    }
+                }
+                due += SILENT_STEP;
+                std::thread::sleep(due.saturating_duration_since(Instant::now()));
+            }
+        });
+        Silent {
+            mixer,
+            stop,
+            worker: Some(worker),
+        }
+    }
+}
+
+impl Drop for Silent {
+    fn drop(&mut self) {
+        self.stop.store(true, Ordering::Release);
+        if let Some(worker) = self.worker.take() {
+            let _ = worker.join();
+        }
+    }
+}
+
+/// What the client plays to.
+enum Stream {
+    Device(MixerDeviceSink),
+    Silent(Silent),
+}
+
+impl Stream {
+    fn mixer(&self) -> &Mixer {
+        match self {
+            Stream::Device(device) => device.mixer(),
+            Stream::Silent(silent) => &silent.mixer,
+        }
+    }
+}
 
 /// Seconds between attempts to open the device again after it was lost.
 const RETRY: f64 = 5.0;
@@ -81,8 +196,18 @@ impl<S> Device<S> {
     }
 }
 
+/// The stream the client was asked for: the silent output, or the default device's stream, which
+/// raises `failed` when it breaks.
+fn open(failed: Arc<AtomicBool>) -> Option<Stream> {
+    if Kind::requested() == Kind::Silent {
+        info!("audio output: silent ({SILENT_VARIABLE})");
+        return Some(Stream::Silent(Silent::open()));
+    }
+    open_device(failed).map(Stream::Device)
+}
+
 /// The default device's stream, which raises `failed` when it breaks.
-fn open(failed: Arc<AtomicBool>) -> Option<MixerDeviceSink> {
+fn open_device(failed: Arc<AtomicBool>) -> Option<MixerDeviceSink> {
     let mut stream = DeviceSinkBuilder::from_default_device()
         .and_then(|builder| {
             builder
@@ -108,7 +233,7 @@ struct Despawn;
 struct Remove;
 
 #[derive(Resource)]
-struct Output(Device<MixerDeviceSink>);
+struct Output(Device<Stream>);
 
 pub fn plugin(app: &mut App) {
     // A test plays no sound on the machine it runs on: its client opens no device, and what it
@@ -160,7 +285,7 @@ fn play_queued(
     queued: Query<(Entity, &AudioPlayer, &PlaybackSettings), Without<AudioSink>>,
     mut commands: Commands,
 ) {
-    let mixer = output.0.stream.as_ref().map(MixerDeviceSink::mixer);
+    let mixer = output.0.stream.as_ref().map(Stream::mixer);
     for (entity, player, settings) in &queued {
         let Some(mixer) = mixer else {
             if !matches!(settings.mode, PlaybackMode::Loop) {
@@ -278,6 +403,43 @@ mod tests {
         assert_eq!(device.supervise(2.0 + 2.0 * RETRY), Some(Change::Reopen));
         device.reopen(2.0 + 2.0 * RETRY, |_| Some(Stream(Arc::default())));
         assert_eq!(device.supervise(100.0), None);
+    }
+
+    #[test]
+    fn only_a_set_variable_asks_for_the_silent_output() {
+        assert_eq!(Kind::of(None), Kind::Device);
+        assert_eq!(Kind::of(Some("")), Kind::Device);
+        assert_eq!(Kind::of(Some("0")), Kind::Device);
+        assert_eq!(Kind::of(Some("1")), Kind::Silent);
+    }
+
+    /// The silent output keeps the pace of a device: a sound of a third of a second is not over
+    /// when it is started, and is not over before a quarter of a second has passed, but it ends.
+    #[test]
+    fn a_silent_output_plays_a_sound_out_at_the_pace_of_a_device() {
+        let silent = Silent::open();
+        let samples = vec![0.0; (SILENT_RATE * u32::from(SILENT_CHANNELS) / 3) as usize];
+        let sound = rodio::buffer::SamplesBuffer::new(
+            NonZero::new(SILENT_CHANNELS).expect("channels"),
+            NonZero::new(SILENT_RATE).expect("rate"),
+            samples,
+        );
+        let player = Player::connect_new(&silent.mixer);
+        let started = Instant::now();
+        player.append(sound);
+        assert!(!player.empty(), "a sound just started is playing");
+        while !player.empty() {
+            assert!(
+                started.elapsed() < Duration::from_secs(10),
+                "the sound never ended"
+            );
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert!(
+            started.elapsed() >= Duration::from_millis(250),
+            "a third of a second of sound ended after {:?}",
+            started.elapsed()
+        );
     }
 
     /// With no device at the start there is none to lose and none to wait for.

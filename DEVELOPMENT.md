@@ -68,7 +68,7 @@ captures:
 tools/headless.sh target/release/dbota --replay match.brp --screenshot-at 4000 --display-mode windowed
 ```
 
-`DBOTA_SHOW=1` shows the windows instead; `DBOTA_HEADLESS_SIZE=WxH` (default 1920x1080) and `DBOTA_HEADLESS_SCALE=N`
+Nothing a wrapper starts plays to a real sound device: `tools/client_env.sh` sets `DBOTA_NULL_AUDIO=1`, and such a client plays to a silent output that keeps a device's pace (`dbota audio-output` says which a process would use). `DBOTA_SHOW=1` shows the windows instead; `DBOTA_HEADLESS_SIZE=WxH` (default 1920x1080) and `DBOTA_HEADLESS_SCALE=N`
 set the virtual output. Headless frame times are steadier than a window on a busy desktop: compare benches made the
 same way.
 

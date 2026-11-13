@@ -95,6 +95,66 @@ fn shell_test_client_uses_and_cleans_a_private_home() {
     assert!(!home.exists(), "private home remains");
 }
 
+/// What the client says it would play to, run as the harness runs it (`unset` and `set` give the
+/// variable that asks for the silent output).
+fn audio_output_of(client: &mut common::ClientCommand) -> String {
+    let output = client
+        .arg("audio-output")
+        .output()
+        .expect("the client starts");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    String::from_utf8(output.stdout)
+        .expect("its answer")
+        .trim()
+        .to_owned()
+}
+
+/// A client a test starts through the harness plays to no device: with the harness's variable it
+/// says `silent`, and without it, as a person's client, `device`.
+#[test]
+fn a_client_of_the_test_harness_plays_to_no_device() {
+    let mut client = common::binary(Path::new("unused"));
+    assert_eq!(audio_output_of(&mut client), "silent");
+    let mut a_persons = common::binary(Path::new("unused"));
+    a_persons.env_remove("DBOTA_NULL_AUDIO");
+    assert_eq!(
+        audio_output_of(&mut a_persons),
+        "device",
+        "the variable is what silences the client"
+    );
+}
+
+/// Every shell wrapper that runs a client or a test (headless.sh, test_client.sh, the gate, the
+/// checks and the measurements) goes through `private_home_environment`: what it starts plays to
+/// no device, on any machine.
+#[cfg(unix)]
+#[test]
+fn the_private_environment_of_the_shell_wrappers_silences_the_audio_output() {
+    let scratch = common::prepared::Scratch::new("shell-silent");
+    let tools = copy_tools(&scratch, &[]);
+    let target = scratch.path("target");
+    let output = std::process::Command::new("bash")
+        .arg("-c")
+        .arg(". \"$1\"; in_private_environment bash -c 'echo \"${DBOTA_NULL_AUDIO-unset}\"'")
+        .arg("probe")
+        .arg(tools.join("client_env.sh"))
+        .env("HOME", scratch.path("real-home"))
+        .env("CARGO_TARGET_DIR", &target)
+        .env_remove("DBOTA_NULL_AUDIO")
+        .output()
+        .expect("the wrapper starts");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "1");
+}
+
 #[cfg(unix)]
 #[test]
 fn shell_test_client_runs_the_binary_of_the_cargo_target_dir() {
@@ -931,6 +991,10 @@ const KNOWN_VARIABLES: &[(&str, &str)] = &[
         "a test names a folder for screenshots to keep",
     ),
     ("DBOTA_HEADLESS_SIZE", "the size of the private compositor"),
+    (
+        "DBOTA_NULL_AUDIO",
+        "set by every isolation wrapper: the client plays its sounds to no device",
+    ),
     (
         "DBOTA_WEB_REPLAY",
         "read when the browser build is compiled",

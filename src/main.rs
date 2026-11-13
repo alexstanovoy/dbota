@@ -388,6 +388,9 @@ pub enum Command {
     /// Print the folder this build keeps its asset cache in (`$DBOTA_ASSETS`, else the folder
     /// named by this build's fingerprint under `~/.cache/dbota`).
     CacheDir,
+    /// Print where this process would play its sounds, opening nothing: `device` (the machine's
+    /// default) or `silent` (a client of a test, a check or a measurement, `DBOTA_NULL_AUDIO`).
+    AudioOutput,
 }
 
 impl Args {
@@ -464,6 +467,10 @@ fn run_command(command: &Command, cache: &std::path::Path) -> AppExit {
         Command::ExportCache { to } => ("export-cache", import::export_cache(cache, to)),
         Command::CacheDir => {
             println!("{}", cache.display());
+            return AppExit::Success;
+        }
+        Command::AudioOutput => {
+            println!("{}", audio_output::Kind::requested().name());
             return AppExit::Success;
         }
     };

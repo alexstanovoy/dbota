@@ -50,6 +50,8 @@ private_home_environment() {
             fi
         done
     fi
+    # A client of a test, a check or a measurement plays its sounds to no device (src/audio_output.rs).
+    export DBOTA_NULL_AUDIO=1
     export HOME="$home" XDG_CONFIG_HOME="$home/config" XDG_DATA_HOME="$home/data" \
         XDG_STATE_HOME="$home/state" LOCALAPPDATA="$home/data" APPDATA="$home/data" \
         XDG_CACHE_HOME="$gpu_cache"

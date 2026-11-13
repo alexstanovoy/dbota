@@ -234,7 +234,9 @@ fn isolated_client(cache: &Path, prefix: Option<Command>, headless: bool) -> Cli
         .env("XDG_STATE_HOME", scratch.join("state"))
         .env("LOCALAPPDATA", scratch.join("data"))
         .env("APPDATA", scratch.join("data"))
-        .env("DBOTA_ASSETS", cache);
+        .env("DBOTA_ASSETS", cache)
+        // Its sounds go to no device.
+        .env("DBOTA_NULL_AUDIO", "1");
     for name in client_environment() {
         command.env_remove(name);
     }
