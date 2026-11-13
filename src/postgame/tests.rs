@@ -169,9 +169,11 @@ fn check(summary: &MatchSummary, stats: &bota_proto::MatchStats) {
     assert_eq!(me.hero_damage, Some(own.hero_damage));
     assert!(own.hero_damage > 0, "the kill dealt damage");
     assert_eq!(me.tower_damage, Some(own.structure_damage));
+    // A pace is told once a minute has been played (see `a_match_stopped_before_a_minute_of_play_shows_no_rates`).
     assert_eq!(
         me.gpm,
-        Some((i64::from(own.net_worth) * 60 / i64::from(summary.seconds.max(1))) as i32)
+        (summary.seconds >= 60)
+            .then(|| (i64::from(own.net_worth) * 60 / i64::from(summary.seconds)) as i32)
     );
     // One point for the start and one for every whole minute of game time.
     assert_eq!(summary.points.len() as u32, summary.seconds / 60 + 1);
@@ -362,6 +364,80 @@ fn a_short_match_uses_its_elapsed_seconds_for_gold_per_minute() {
     }
     let summary = MatchSummary::from_meta(&meta).expect("a summary");
     assert_eq!(summary.rows[0].gpm, Some(1507 * 60 / 238));
+}
+
+/// The final numbers of a match the service stopped before it was played for a minute carry no
+/// pace: a dash, not the gold the seat started with divided by one second.
+#[test]
+fn a_match_stopped_before_a_minute_of_play_shows_no_rates() {
+    use bota_proto::{MatchStats, PlayerView, SlotId, SlotStats};
+    let player = PlayerView {
+        slot: SlotId(0),
+        team: Team::Radiant,
+        hero: HeroId::SHADOW_FIEND,
+        unit: None,
+        level: 1,
+        xp: 0,
+        gold: None,
+        stash: None,
+        kit: None,
+        kills: 0,
+        deaths: 0,
+        assists: 0,
+        last_hits: 0,
+        denies: 0,
+        respawn_left: 0,
+        creep_score: None,
+        seen_at: None,
+        backpack: None,
+        bought_back_at: None,
+        buyback: None,
+    };
+    let stats = |seconds: u32| MatchStats {
+        duration: (90 + seconds) * 30,
+        slots: vec![SlotStats {
+            slot: SlotId(0),
+            kills: 0,
+            deaths: 0,
+            assists: 0,
+            last_hits: 0,
+            denies: 0,
+            net_worth: 609,
+            hero_damage: 0,
+            structure_damage: 0,
+        }],
+        leaves: Vec::new(),
+    };
+    let players = [player];
+    for seconds in [0, 59] {
+        let summary = MatchSummary::from_stats(Team::Neutral, &stats(seconds), &players, 90 * 30);
+        assert_eq!(
+            (summary.rows[0].gpm, summary.rows[0].xpm),
+            (None, None),
+            "{seconds} s played"
+        );
+    }
+    let summary = MatchSummary::from_stats(Team::Neutral, &stats(120), &players, 90 * 30);
+    assert_eq!(summary.rows[0].gpm, Some(609 * 60 / 120));
+    assert_eq!(summary.rows[0].xpm, Some(0));
+}
+
+#[test]
+fn a_replay_of_a_match_stopped_before_a_minute_shows_no_rates_either() {
+    use bota_replay::meta::{MetaRecord, stat};
+    let mut meta = bota_replay::meta::decode(&recording_extensions()).expect("metadata");
+    for record in &mut meta.records {
+        match record {
+            MetaRecord::Sample { tick, stats, .. } => {
+                *tick = 20 * 30;
+                stats.push((stat::GOLD_EARNED, 609));
+            }
+            MetaRecord::End { tick, .. } => *tick = 20 * 30,
+            _ => {}
+        }
+    }
+    let summary = MatchSummary::from_meta(&meta).expect("a summary");
+    assert_eq!((summary.rows[0].gpm, summary.rows[0].xpm), (None, None));
 }
 
 #[test]

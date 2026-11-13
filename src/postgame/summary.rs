@@ -97,8 +97,19 @@ fn to_i32(value: i64) -> i32 {
     i32::try_from(value).unwrap_or(if value < 0 { i32::MIN } else { i32::MAX })
 }
 
-fn per_minute(total: i64, seconds: u32) -> i32 {
-    to_i32(total.saturating_mul(60) / i64::from(seconds.max(1)))
+/// The least played time that gold and experience per minute are told for: before it a rate
+/// says nothing (the gold the seat started with over a few seconds is not a pace), and a match
+/// stopped before it began has no time to divide by.
+const MIN_RATE_SECONDS: u32 = 60;
+
+/// A seat's gold per minute and experience per minute, from the gold it earned (the same
+/// quantity live and in a replay) and its experience over `seconds` of play; none of either
+/// before [`MIN_RATE_SECONDS`].
+fn rates(earned: Option<i64>, experience: Option<i64>, seconds: u32) -> (Option<i32>, Option<i32>) {
+    let per_minute = |total: i64| {
+        (seconds >= MIN_RATE_SECONDS).then(|| to_i32(total.saturating_mul(60) / i64::from(seconds)))
+    };
+    (earned.and_then(per_minute), experience.and_then(per_minute))
 }
 
 fn value(stats: &[(u16, i64)], id: u16) -> Option<i64> {
@@ -248,6 +259,11 @@ impl MatchSummary {
                 if player.team == Team::Neutral {
                     return None;
                 }
+                let (gpm, xpm) = rates(
+                    Some(i64::from(seat.net_worth)),
+                    Some(i64::from(player.xp)),
+                    seconds,
+                );
                 Some(Row {
                     slot: seat.slot,
                     team: player.team,
@@ -259,8 +275,8 @@ impl MatchSummary {
                     last_hits: Some(seat.last_hits),
                     denies: Some(seat.denies),
                     net_worth: None,
-                    gpm: Some(per_minute(i64::from(seat.net_worth), seconds)),
-                    xpm: Some(per_minute(i64::from(player.xp), seconds)),
+                    gpm,
+                    xpm,
                     hero_damage: Some(seat.hero_damage),
                     tower_damage: Some(seat.structure_damage),
                     healing: None,
@@ -293,7 +309,7 @@ fn row(seat: &Seat, seconds: u32) -> Option<Row> {
     let last = seat.samples.last()?.1;
     let get = |id| value(last, id);
     let count = |id| u16::try_from(get(id).unwrap_or(0)).unwrap_or(u16::MAX);
-    let earned = get(stat::GOLD_EARNED);
+    let (gpm, xpm) = rates(get(stat::GOLD_EARNED), get(stat::XP), seconds);
     let mut items = [None; BAG];
     for (to, held) in items.iter_mut().zip(seat.items.unwrap_or_default()) {
         *to = held.map(ItemId);
@@ -309,8 +325,8 @@ fn row(seat: &Seat, seconds: u32) -> Option<Row> {
         last_hits: get(stat::LAST_HITS).map(|_| count(stat::LAST_HITS)),
         denies: get(stat::DENIES).map(|_| count(stat::DENIES)),
         net_worth: get(stat::NET_WORTH).map(to_i32),
-        gpm: earned.map(|earned| per_minute(earned, seconds)),
-        xpm: get(stat::XP).map(|xp| per_minute(xp, seconds)),
+        gpm,
+        xpm,
         hero_damage: get(stat::HERO_DAMAGE).map(to_i32),
         tower_damage: get(stat::STRUCTURE_DAMAGE).map(to_i32),
         healing: get(stat::HEALING).map(to_i32),
