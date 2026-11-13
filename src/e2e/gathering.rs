@@ -9,7 +9,7 @@ use bevy::prelude::*;
 use bota_client_core::Intent;
 use bota_proto::{Cheat, EffectId, EntityId, HeroId, UnitKind, Vec2 as Spot};
 
-use super::harness::{Client, Patience, Server};
+use super::harness::{Client, Server};
 use crate::particles::{Library, Playing};
 
 /// Patience for what follows at once from what the test did.
@@ -205,19 +205,13 @@ fn a_lotus_pool_is_never_picked_and_plays_its_ring_while_a_hero_plucks() {
             .all(|picked| *picked != Some(pool)),
         "the pool is never picked"
     );
-    // This quiet interval needs server ticks, not thousands of drawn UI frames.
-    let mut waiting = Patience::of(LATER);
-    while !client
-        .view()
-        .pools
-        .iter()
-        .any(|p| p.id == pool && p.lotuses > 0)
-    {
-        waiting.pass("the pool's first lotus");
-        client.core_mut().pump(0.0);
-        std::thread::yield_now();
-    }
-    client.frames(3);
+    client.within(LATER, "the pool's first lotus", |client| {
+        client
+            .view()
+            .pools
+            .iter()
+            .any(|held| held.id == pool && held.lotuses > 0)
+    });
     client.stand_at((at.x.to_int() - 200, at.y.to_int()));
     let mut radii = Vec::new();
     client.within(SOON, "the ring running out from the middle", |c| {

@@ -543,6 +543,7 @@ tests = [
 name = "client_fog"
 about = "the fog of war and what is visible through it, with the minimap"
 paths = [
+    "src/minimap/**",
     "src/e2e/watcher_colours.rs",
     "src/fog.rs",
     "src/fog/**",
@@ -562,6 +563,7 @@ tests = [
         "e2e::fog_producers::",
         "e2e::event_visibility::",
         "e2e::minimap::",
+        "minimap::render_tests::",
     ] },
 ]
 

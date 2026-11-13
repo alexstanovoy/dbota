@@ -450,7 +450,7 @@ impl Default for HudShown {
 /// Scales the whole interface with the window's logical height and the
 /// player's own factor, down to what fits the window: with the HUD on screen,
 /// down to what leaves room for its parts, else to the menu's frame.
-fn scale_ui(
+pub(crate) fn scale_ui(
     window: Single<&Window, With<PrimaryWindow>>,
     settings: Res<Settings>,
     hud: Res<HudShown>,

@@ -183,6 +183,10 @@ impl Spectated {
         Self::start_with(map, HeroId::SHADOW_FIEND, true, false, &[])
     }
 
+    pub(super) fn pair_with_options(map: &str, extra: &[&str]) -> Self {
+        Self::start_with(map, HeroId::SHADOW_FIEND, true, false, extra)
+    }
+
     pub(super) fn hero(map: &str, hero: HeroId) -> Self {
         Self::start_with(map, hero, false, false, &[])
     }

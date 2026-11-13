@@ -4,7 +4,7 @@
 use std::time::Duration;
 
 use bevy::prelude::*;
-use bota_client_core::{Intent, Slot, TOWN_PORTAL_SLOT};
+use bota_client_core::{Intent, Slot, TOWN_PORTAL_SLOT, Transport};
 use bota_proto::{Cheat, HeroId, Team, UnitKind};
 
 use super::harness::{Client, MID, Server, quiet_seat};
@@ -54,11 +54,11 @@ fn a_seen_hero_is_the_filled_arrow_whichever_side() {
 fn rings_in(client: &mut Client, colour: Color) -> usize {
     let world = client.world_mut();
     world
-        .query::<(&BorderColor, &Visibility, &Node)>()
+        .query::<(&crate::minimap::outline::Indicator, &Visibility, &Node)>()
         .iter(world)
         .filter(|(border, shown, node)| {
             **shown != Visibility::Hidden
-                && border.top == colour
+                && border.color == colour
                 && node.border_radius == BorderRadius::MAX
         })
         .count()
@@ -250,10 +250,17 @@ fn ones_courier_keeps_the_original_icon_colours_for_the_blue_player() {
         .find(|u| u.kind == UnitKind::Courier && u.owner == client.core().my_slot)
         .map(|u| (u.pos, u.owner.expect("owned")))
         .expect("one's courier");
+    assert_eq!(owner, bota_proto::SlotId(0), "the blue Radiant seat");
+    assert_eq!(client.me().team, Team::Radiant);
     let own = client
         .world()
         .resource::<crate::player_colour::PlayerColours>()
         .of(client.view(), owner);
+    let blue = own.to_srgba();
+    assert!(
+        blue.blue > 0.8 && blue.blue > blue.green + 0.2 && blue.blue > blue.red + 0.2,
+        "this fixture is the blue player: {blue:?}"
+    );
     assert_ne!(
         own,
         crate::overlay::team_color(Team::Radiant),
@@ -320,17 +327,15 @@ fn selection_survives_the_minimap(client: &mut Client, mine: Team) {
             let world = c.world();
             let fonts = world.resource::<crate::ui::Fonts>();
             let assets = world.resource::<AssetServer>();
-            let effective_scale = scale * world.resource::<bevy::ui::UiScale>().0;
             world.resource::<crate::loading::Loading>().done()
                 && assets.is_loaded_with_dependencies(&fonts.bold)
                 && assets.is_loaded_with_dependencies(&fonts.regular)
                 && world
                     .get::<InheritedVisibility>(frame)
                     .is_some_and(|shown| shown.get())
-                && world.get::<ComputedNode>(frame).is_some_and(|node| {
-                    node.size().min_element() > 0.0
-                        && (node.inverse_scale_factor() * effective_scale - 1.0).abs() < 1e-4
-                })
+                && world
+                    .get::<ComputedNode>(frame)
+                    .is_some_and(|node| node.size().min_element() > 0.0)
         },
     );
     let centre = client.centre_of(frame).expect("laid out") / scale;
@@ -562,7 +567,7 @@ impl Drop for ReplayDirectory {
 fn a_steady_wave_keeps_every_creep_dot_between_snapshots() {
     let replay =
         crate::test_support::scratch_path(&format!("minimap_dense_{}.brp", std::process::id()));
-    let (mut server, mut client) = dense_wave_scene(&replay);
+    let (mut server, mut client) = dense_wave_scene(&replay, 50);
     // Remove the network as a source of changes: no marker may vanish while its unit remains.
     let tick = server.frozen(|| {
         client.frames(4);
@@ -579,7 +584,7 @@ fn a_steady_wave_keeps_every_creep_dot_between_snapshots() {
     println!("dense minimap replay: {} at {tick}", replay.display());
 }
 
-fn dense_wave_scene(replay: &std::path::Path) -> (Server, Client) {
+fn dense_wave_scene(replay: &std::path::Path, waves: i32) -> (Server, Client) {
     let server = Server::start(
         1,
         &[
@@ -599,7 +604,7 @@ fn dense_wave_scene(replay: &std::path::Path) -> (Server, Client) {
     });
     client.cheat(Cheat::AllVision { on: true });
     client.cheat(Cheat::StartGame);
-    for row in 0..50 {
+    for row in 0..waves {
         client.cheat(Cheat::CreateCreeps {
             enemy: false,
             at: bota_proto::Vec2::from_ints(4500 + row % 8 * 180, 4500 + row / 8 * 180),
@@ -737,5 +742,322 @@ fn roshans_red_minimap_icon_remembers_only_what_the_player_saw() {
             .iter()
             .any(|text| text.contains("Roshan is") || text.contains("Roshan may")),
         "no Roshan status message above the minimap"
+    );
+}
+
+/// A large wave does not leave hundreds of hidden layout nodes after it is gone.
+#[test]
+fn the_marker_pool_shrinks_after_quiet_frames_and_regrows_without_missing_creeps() {
+    let replay =
+        crate::test_support::scratch_path(&format!("minimap_pool_{}.brp", std::process::id()));
+    let (server, mut client) = dense_wave_scene(&replay, 100);
+    client.until("four hundred fixture creeps", |client| {
+        client
+            .view()
+            .units
+            .iter()
+            .filter(|unit| minimap_creep(unit.kind))
+            .count()
+            >= 380
+    });
+    client.frames(4);
+    let large = crate::minimap::marker_pool_counts(client.world());
+    assert!(
+        large.0 > 400,
+        "the fixture grows beyond the retained floor: {large:?}"
+    );
+    assert_eq!(large.0, large.1);
+    client.cheat(Cheat::KillCreeps {
+        which: bota_proto::CreepSide::All,
+    });
+    client.until("all fixture creeps gone", |client| {
+        !client
+            .view()
+            .units
+            .iter()
+            .any(|unit| minimap_creep(unit.kind))
+    });
+    server.frozen(|| client.frames(240));
+    let small = crate::minimap::marker_pool_counts(client.world());
+    assert!(
+        small.0 <= 160,
+        "quiet frames release the high-water pool: {small:?}, was {large:?}"
+    );
+    assert_eq!(
+        small.0, small.1,
+        "trimming ids must also remove their layout entities"
+    );
+    for row in 0..100 {
+        client.cheat(Cheat::CreateCreeps {
+            enemy: false,
+            at: bota_proto::Vec2::from_ints(4500 + row % 8 * 180, 4500 + row / 8 * 180),
+        });
+    }
+    client.until("the replacement wave present", |client| {
+        client
+            .view()
+            .units
+            .iter()
+            .filter(|unit| minimap_creep(unit.kind))
+            .count()
+            >= 380
+    });
+    server.frozen(|| {
+        client.frames(4);
+        assert_steady_creep_dots(&mut client);
+        let regrown = crate::minimap::marker_pool_counts(client.world());
+        assert!(regrown.0 > 400);
+        assert_eq!(regrown.0, regrown.1);
+    });
+}
+
+fn roshan_icon_count(client: &mut Client) -> usize {
+    let icon = client
+        .world()
+        .resource::<crate::manifest::Manifest>()
+        .file("icon.minimap.roshan")
+        .expect("Roshan icon");
+    crate::minimap::shown_unit_marks(client.world_mut())
+        .iter()
+        .filter(|(path, _)| path.as_deref() == Some(icon.as_str()))
+        .count()
+}
+
+fn remembered_roshan_match() -> super::fog_pov::Spectated {
+    let mut game = super::fog_pov::Spectated::pair_with_options(
+        "0",
+        &["--objectives", "roshan", "--immortal-heroes"],
+    );
+    game.next_side(Team::Radiant);
+    game.cheat(Cheat::CreepSpawning { on: false });
+    let pit = bota_core::ROSHAN_DAY_PIT;
+    game.cheat(Cheat::Teleport {
+        at: pit + bota_proto::Vec2::from_ints(200, 0),
+    });
+    game.wait("Roshan actually seen and marked", |_, client| {
+        roshan_icon_count(client) == 1
+    });
+    game.cheat(Cheat::Teleport {
+        at: bota_core::fountain_pos(game.driver.session().expect("match").map(), Team::Radiant),
+    });
+    game.wait("the sighting remembered outside vision", |_, client| {
+        !client
+            .view()
+            .units
+            .iter()
+            .any(|unit| unit.kind == UnitKind::Roshan)
+            && roshan_icon_count(client) == 1
+    });
+    assert!(game.client.world().resource::<crate::fog::FogGrid>().on);
+    game
+}
+
+#[test]
+fn an_announced_roshan_death_removes_the_remembered_icon_outside_vision() {
+    use bota_proto::{EventKind, ModifierSpec, ObjectiveKind, Target};
+    let mut game = remembered_roshan_match();
+    let boss = game
+        .client
+        .world()
+        .resource::<crate::roshan_status::Sighting>()
+        .unit
+        .as_ref()
+        .expect("remembered")
+        .clone();
+    // The other team kills him; the watched team has no sight of the pit.
+    std::mem::swap(
+        &mut game.driver,
+        game.other.as_mut().expect("the other player"),
+    );
+    game.cheat(Cheat::Teleport {
+        at: boss.pos + bota_proto::Vec2::from_ints(200, 0),
+    });
+    game.cheat(Cheat::ApplyModifier {
+        target: Target::Unit(boss.id),
+        spec: ModifierSpec {
+            max_hp: ModifierSpec::MIN_SCALE,
+            ..ModifierSpec::NOMINAL
+        },
+        ticks: 3000,
+    });
+    game.cheat(Cheat::ApplyModifier {
+        target: Target::None,
+        spec: ModifierSpec {
+            physical_damage: ModifierSpec::MAX_SCALE,
+            ..ModifierSpec::NOMINAL
+        },
+        ticks: 3000,
+    });
+    game.driver.act(Intent::AttackAt {
+        at: (boss.pos.x.to_f32(), boss.pos.y.to_f32()),
+        unit: Some(boss.id),
+    });
+    game.wait("the public kill announcement received", |_, client| {
+        client.core().session().is_some_and(|session| {
+            session.recent_events().iter().any(|event| {
+                matches!(
+                    event.kind,
+                    EventKind::BossFell {
+                        objective: ObjectiveKind::Roshan,
+                        ..
+                    }
+                )
+            })
+        })
+    });
+    assert!(
+        !game
+            .client
+            .view()
+            .units
+            .iter()
+            .any(|unit| unit.kind == UnitKind::Roshan),
+        "death is announced without exposing the hidden body"
+    );
+    game.client.frames(2);
+    assert_eq!(
+        roshan_icon_count(&mut game.client),
+        0,
+        "a public announcement retires an alive sighting"
+    );
+}
+
+#[test]
+fn switching_replay_viewer_does_not_reuse_another_teams_roshan_sighting() {
+    let game = remembered_roshan_match();
+    let file = game.save();
+    let mut client = super::fog_pov::replay_from_side(&file, 0);
+    client.until("Radiant's recorded sighting", |client| {
+        roshan_icon_count(client) == 1
+    });
+    assert_eq!(client.core().my_slot, Some(bota_proto::SlotId(0)));
+    client.key(KeyCode::Tab, bevy::input::ButtonState::Pressed);
+    client.key(KeyCode::Tab, bevy::input::ButtonState::Released);
+    client.until("the replay watches Dire", |client| {
+        client.core().my_slot == Some(bota_proto::SlotId(1))
+            && client.world().resource::<crate::fog::FogGrid>().team == Some(Team::Dire)
+    });
+    assert!(
+        !client
+            .view()
+            .units
+            .iter()
+            .any(|unit| unit.kind == UnitKind::Roshan
+                && !client
+                    .world()
+                    .resource::<crate::fog::FogGrid>()
+                    .hides(unit.seen_by)),
+        "Dire did not see Roshan"
+    );
+    client.frames(2);
+    assert_eq!(
+        roshan_icon_count(&mut client),
+        0,
+        "a new viewer has no borrowed sighting"
+    );
+}
+
+#[test]
+fn lighting_an_empty_last_seen_spot_removes_the_roshan_icon() {
+    use bota_client_core::{App as Core, Net, Source};
+    use bota_proto::{ClientMsg, Role};
+    let server = Server::start(
+        1,
+        &[
+            "--map",
+            "0",
+            "--objectives",
+            "roshan",
+            "--mode",
+            "realtime",
+            "--tick-rate",
+            "2400",
+            "--spectators",
+            "open",
+            "--immortal-heroes",
+        ],
+    );
+    let mut client = Client::join(&server, HeroId::SHADOW_FIEND, &[]);
+    client.cheat(Cheat::CreepSpawning { on: false });
+    client.cheat(Cheat::StartGame);
+    let pit = bota_core::ROSHAN_DAY_PIT;
+    client.stand_at((pit.x.to_int() + 200, pit.y.to_int()));
+    client.until("the original pit sighting", |client| {
+        roshan_icon_count(client) == 1
+    });
+    let home = bota_core::fountain_pos(
+        client.core().session().expect("match").map(),
+        client.me().team,
+    );
+    client.stand_at((home.x.to_int(), home.y.to_int()));
+    client.until("Roshan hidden and remembered", |client| {
+        !client
+            .view()
+            .units
+            .iter()
+            .any(|unit| unit.kind == UnitKind::Roshan)
+            && roshan_icon_count(client) == 1
+    });
+    let mut net = Net::connect(&server.address).expect("fixture observer");
+    net.send(&ClientMsg::hello(
+        Role::Spectator,
+        "observer",
+        None,
+        bota_core::WIRE_FINGERPRINT,
+    ))
+    .expect("observer hello");
+    net.send(&bota_client_core::catalogue()).expect("catalogue");
+    let mut observer = Core::new(Source::Live(Box::new(net)));
+    client.within(
+        Duration::from_secs(240),
+        "Roshan actually reaches the other pit",
+        |_| {
+            observer.pump(0.0);
+            observer.view().is_some_and(|view| {
+                view.units.iter().any(|unit| {
+                    unit.kind == UnitKind::Roshan
+                        && unit.hp > 0
+                        && unit
+                            .pos
+                            .within(bota_core::ROSHAN_NIGHT_PIT, bota_core::rules::units(200))
+                })
+            })
+        },
+    );
+    client.until(
+        "Roshan's destination is outside the watched vision",
+        |client| {
+            !client
+                .view()
+                .units
+                .iter()
+                .any(|unit| unit.kind == UnitKind::Roshan)
+        },
+    );
+    let remembered = client
+        .world()
+        .resource::<crate::roshan_status::Sighting>()
+        .unit
+        .as_ref()
+        .expect("a last sighting")
+        .pos;
+    assert_eq!(roshan_icon_count(&mut client), 1);
+    client.stand_at((remembered.x.to_int() + 150, remembered.y.to_int()));
+    client.until("the empty remembered location is newly lit", |client| {
+        client
+            .world()
+            .resource::<crate::fog::FogGrid>()
+            .lit(remembered.x.to_f32(), remembered.y.to_f32())
+            && !client
+                .view()
+                .units
+                .iter()
+                .any(|unit| unit.kind == UnitKind::Roshan)
+    });
+    client.frames(2);
+    assert_eq!(
+        roshan_icon_count(&mut client),
+        0,
+        "an actually lit empty spot is forgotten without a death"
     );
 }

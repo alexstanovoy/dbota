@@ -44,6 +44,16 @@ else
     echo "visual check: FAIL indicator stroke pixels (see $out/indicator_strokes.log)"
     exit 1
 fi
+# Minimap borders are measured after UI scaling and rasterization, including odd widths.
+if in_private_environment cargo test --profile test-release --quiet --manifest-path "$here/Cargo.toml" \
+    --bin dbota minimap::render_tests::minimap_camera_ping_and_teleport_strokes_halve_physical_widths_above_one_pixel \
+    -- --ignored --exact --nocapture > "$out/minimap_strokes.log" 2>&1 \
+    && grep -Fq 'test result: ok. 1 passed; 0 failed; 0 ignored;' "$out/minimap_strokes.log"; then
+    echo "visual check: PASS minimap stroke pixels"
+else
+    echo "visual check: FAIL minimap stroke pixels (see $out/minimap_strokes.log)"
+    exit 1
+fi
 # Full readability is baked into the production material, including with its retired uniform at zero.
 if in_private_environment cargo test --profile test-release --quiet --manifest-path "$here/Cargo.toml" \
     --bin dbota fog::clarity_render::full_visual_clarity_reaches_the_ground_and_figure_pixels \

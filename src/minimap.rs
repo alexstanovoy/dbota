@@ -22,6 +22,8 @@ use crate::hud::{Blocker, Docks};
 use crate::map::Ground;
 use crate::session::Session;
 
+pub(crate) mod outline;
+
 /// World units of the map along each axis.
 const MAP_SIZE: f32 = bota_core::rules::MAP_SIZE as f32;
 /// Interface pixels of the minimap's side.
@@ -106,6 +108,18 @@ pub(crate) fn shown_unit_marks(world: &mut World) -> Vec<(Option<String>, Vec2)>
         .collect()
 }
 
+/// Retained marker ids and actual layout children must agree after trimming.
+#[cfg(test)]
+pub(crate) fn marker_pool_counts(world: &World) -> (usize, usize) {
+    let map = world.resource::<Minimap>();
+    (
+        map.marks.len(),
+        world
+            .get::<Children>(map.unit_layer)
+            .map_or(0, |children| children.len()),
+    )
+}
+
 /// The tint of each unit mark showing with its middle on the minimap, for the end-to-end tests.
 #[cfg(test)]
 pub(crate) fn shown_unit_tints(world: &mut World) -> Vec<(Color, Vec2)> {
@@ -138,6 +152,7 @@ struct Minimap {
     photo: Handle<Image>,
     fog: Entity,
     marks: Vec<Entity>,
+    quiet_frames: u16,
     unit_layer: Entity,
     shops: Vec<Entity>,
     /// The layer of the map's objectives' icons, under the units' marks, and
@@ -186,6 +201,7 @@ pub struct PhotoTaken(pub bool);
 pub(crate) struct PingRing;
 
 pub fn plugin(app: &mut App) {
+    outline::plugin(app);
     app.init_resource::<PhotoTaken>()
         .add_systems(Startup, spawn)
         .add_systems(First, reset.in_set(crate::loading::Begin))
@@ -204,7 +220,12 @@ pub fn plugin(app: &mut App) {
         );
 }
 
-fn spawn(mut commands: Commands, mut images: ResMut<Assets<Image>>, docks: Res<Docks>) {
+fn spawn(
+    mut commands: Commands,
+    mut images: ResMut<Assets<Image>>,
+    mut outlines: ResMut<Assets<outline::Outline>>,
+    docks: Res<Docks>,
+) {
     // RGBA: WebGL2 takes no BGRA pixels, and a target starts as uploaded zeros.
     let photo = images.add(Image::new_target_texture(
         PHOTO,
@@ -329,13 +350,7 @@ fn spawn(mut commands: Commands, mut images: ResMut<Assets<Image>>, docks: Res<D
         .map(|_| {
             let id = commands
                 .spawn((
-                    Node {
-                        position_type: PositionType::Absolute,
-                        border: UiRect::all(px(2.0 * crate::overlay::INDICATOR_SCALE)),
-                        border_radius: BorderRadius::MAX,
-                        ..default()
-                    },
-                    BorderColor::all(Color::WHITE),
+                    outline::bundle(true, &mut outlines),
                     Visibility::Hidden,
                     Pickable::IGNORE,
                     ChildOf(frame),
@@ -348,12 +363,7 @@ fn spawn(mut commands: Commands, mut images: ResMut<Assets<Image>>, docks: Res<D
         .collect();
     let view = commands
         .spawn((
-            Node {
-                position_type: PositionType::Absolute,
-                border: UiRect::all(px(crate::overlay::INDICATOR_SCALE)),
-                ..default()
-            },
-            BorderColor::all(Color::WHITE),
+            outline::bundle(false, &mut outlines),
             Pickable::IGNORE,
             ChildOf(frame),
         ))
@@ -364,6 +374,7 @@ fn spawn(mut commands: Commands, mut images: ResMut<Assets<Image>>, docks: Res<D
         fog,
         marks,
         unit_layer,
+        quiet_frames: 0,
         shops,
         objectives: (objectives, Vec::new()),
         runes: (runes, Vec::new()),
@@ -584,6 +595,19 @@ fn marks(
         {
             *vis = Visibility::Hidden;
         }
+    }
+    // Hold spare nodes across short fog changes, then release the high-water allocation.
+    if minimap.marks.len() > MARKS && used * 3 < minimap.marks.len() {
+        minimap.quiet_frames += 1;
+        if minimap.quiet_frames == 120 {
+            let retained = used.next_power_of_two().max(MARKS);
+            for mark in minimap.marks.drain(retained..) {
+                commands.entity(mark).despawn();
+            }
+            minimap.quiet_frames = 0;
+        }
+    } else {
+        minimap.quiet_frames = 0;
     }
     let (camera, cam_gt) = *camera;
     let size = window.size();
@@ -975,7 +999,7 @@ fn pings(
     sight: crate::fog::EventSight,
     minimap: Res<Minimap>,
     colours: Res<crate::player_colour::PlayerColours>,
-    mut nodes: Query<(&mut Node, &mut BorderColor, &mut Visibility)>,
+    mut nodes: Query<(&mut Node, &mut outline::Indicator, &mut Visibility)>,
 ) {
     let core = sight.core();
     let Some(view) = core.view() else {
@@ -1010,7 +1034,9 @@ fn pings(
             height: px(size),
             ..node.clone()
         });
-        border.set_if_neq(BorderColor::all(color));
+        if border.color != color {
+            border.color = color;
+        }
         visibility.set_if_neq(Visibility::Inherited);
     }
 }
@@ -1121,3 +1147,20 @@ mod tests {
         assert_eq!(landing[0].0, bevy::math::Vec2::new(4000.0, 9000.0));
     }
 }
+
+/// Minimap camera, ping and teleport indicators share the same stroke scale.
+pub(crate) fn indicator_node(round: bool) -> Node {
+    Node {
+        position_type: PositionType::Absolute,
+        border: UiRect::all(px(if round { 2.0 } else { 1.0 })),
+        border_radius: if round {
+            BorderRadius::MAX
+        } else {
+            BorderRadius::ZERO
+        },
+        ..default()
+    }
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod render_tests;

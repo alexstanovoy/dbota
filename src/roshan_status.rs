@@ -42,6 +42,8 @@ pub fn remember(sight: crate::fog::EventSight, mut memory: ResMut<Sighting>) {
             .then_some(event.tick)
         })
     });
+    // Established from installed game build 6975: a Roshan death is announced to both teams,
+    // including players without vision of the pit. Receipt retires the alive sighting.
     if death.is_some_and(|tick| tick >= memory.tick) {
         memory.unit = None;
     }

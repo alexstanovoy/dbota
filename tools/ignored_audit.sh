@@ -13,10 +13,11 @@ while IFS= read -r file; do
         crates/dbota_import/tests/* | crates/dbota_import/src/*) ;; # gate step install-tests: cargo test -p dbota_import -- --ignored
         src/tip_content.rs) ;;          # gate step tip-content
         src/e2e/memory.rs) ;;           # run in a process of its own by its test clients_one_after_another_leave_no_memory_behind
-        src/fog/clarity_render.rs | src/overlay/render_tests.rs)
+        src/fog/clarity_render.rs | src/overlay/render_tests.rs | src/minimap/render_tests.rs)
             case "$file" in
                 src/fog/clarity_render.rs) test_name=fog::clarity_render::full_visual_clarity_reaches_the_ground_and_figure_pixels ;;
                 src/overlay/render_tests.rs) test_name=overlay::render_tests::indicator_strokes_are_two_pixels_at_a_fixed_camera ;;
+                src/minimap/render_tests.rs) test_name=minimap::render_tests::minimap_camera_ping_and_teleport_strokes_halve_physical_widths_above_one_pixel ;;
             esac
             ignored=$(awk '
                 /^[[:space:]]*#\[ignore/ { count++; pending=1 }
