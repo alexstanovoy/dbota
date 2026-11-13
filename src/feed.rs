@@ -842,7 +842,7 @@ pub fn text(core: &Core, kind: &FeedKind) -> String {
         FeedKind::ItemPlaced { item, team } => format!(
             "{} placed {}",
             side_name(team),
-            bota_core::item_def(item).map_or("an item", |def| def.name)
+            crate::item_names::plain(item)
         ),
         FeedKind::Loot {
             item,
@@ -853,7 +853,7 @@ pub fn text(core: &Core, kind: &FeedKind) -> String {
             "{} {} {}",
             activator(core, by, team),
             if destroyed { "denied" } else { "picked up" },
-            bota_core::item_def(item).map_or("the item", |def| def.name)
+            bota_core::item_def(item).map_or("the item", |_| crate::item_names::plain(item))
         ),
         FeedKind::BossRoared { objective: _, team } => {
             format!("Roshan roars at {}", side_name(team))

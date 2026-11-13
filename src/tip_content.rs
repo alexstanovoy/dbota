@@ -141,13 +141,13 @@ pub struct Lookup<'a> {
 }
 
 impl Lookup<'_> {
-    /// The name of an item: Dota's, or the simulator's.
+    /// The name of an item: the install's, or the client's own ([`crate::item_names`]).
     pub fn item_name(&self, id: u16) -> Option<String> {
-        let def = item_def(ItemId(id))?;
-        Some(
-            self.entry("item", id)
-                .map_or_else(|| def.name.to_string(), |e| e.name.clone()),
-        )
+        item_def(ItemId(id))?;
+        Some(self.entry("item", id).map_or_else(
+            || crate::item_names::plain(ItemId(id)).to_string(),
+            |e| e.name.clone(),
+        ))
     }
 
     /// What an item is built from, in names: "Built from: A, 2x B".
@@ -177,9 +177,9 @@ impl Lookup<'_> {
     /// Dota's does: by its name or one of its aliases. A name that starts
     /// with the search finds it best; nothing when none holds it.
     pub fn search_rank(&self, id: u16, query: &str) -> Option<Rank> {
-        let def = item_def(ItemId(id))?;
+        item_def(ItemId(id))?;
         let entry = self.entry("item", id);
-        let names = std::iter::once(def.name)
+        let names = std::iter::once(crate::item_names::plain(ItemId(id)))
             .chain(entry.map(|e| e.name.as_str()))
             .chain(
                 entry
@@ -213,7 +213,10 @@ impl Lookup<'_> {
         let subject = Subject::Item(def);
         let entry = self.entry("item", id);
         let mut content = Content {
-            title: entry.map_or_else(|| def.name.to_string(), |e| e.name.clone()),
+            title: entry.map_or_else(
+                || crate::item_names::plain(ItemId(id)).to_string(),
+                |e| e.name.clone(),
+            ),
             icon: self.manifest.item_icon(id),
             is_item: true,
             price: (def.cost > 0 || price.is_some()).then(|| price.unwrap_or(def.cost).to_string()),
@@ -596,6 +599,23 @@ mod tests {
                 (Some(x), Some(y)) => (x - y).abs() < 0.006,
                 _ => x == y,
             })
+    }
+
+    /// With no text in the install for an item, its name, its title and what a shop search finds it
+    /// by are the client's own (bota holds no player text): Yasha is "Yasha".
+    #[test]
+    fn an_item_with_no_install_text_is_named_by_the_clients_table() {
+        let manifest = Manifest::load(std::path::Path::new("/nonexistent"));
+        let texts = Texts::load(&manifest.root);
+        let look = Lookup {
+            texts: &texts,
+            manifest: &manifest,
+            rates: tip_numbers::Rates::default(),
+        };
+        let yasha = ItemId::YASHA.0;
+        assert_eq!(look.item_name(yasha).as_deref(), Some("Yasha"));
+        assert_eq!(look.item(yasha, None).expect("a tooltip").title, "Yasha");
+        assert!(look.search_rank(yasha, "yas").is_some());
     }
 
     /// Dota's numbers against the simulator's, for every item and ability
