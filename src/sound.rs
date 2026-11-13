@@ -411,6 +411,10 @@ fn sources_of(kind: Kind, manifest: &Manifest) -> Vec<Vec<String>> {
             CueKind::MegaCreepsHorn(Team::Radiant) => named(&["sound.global.mega_horn.radiant"]),
             CueKind::MegaCreepsHorn(Team::Dire) => named(&["sound.global.mega_horn.dire"]),
             CueKind::MegaCreeps(Team::Neutral) | CueKind::MegaCreepsHorn(Team::Neutral) => vec![],
+            // Dota's music stinger: one event for the player who bought back, another for
+            // everyone else.
+            CueKind::BoughtBack { own: true } => named(&["sound.global.buyback.own"]),
+            CueKind::BoughtBack { own: false } => named(&["sound.global.buyback"]),
             CueKind::BossRoar => layered(&[
                 "sound.neutral.roshan_roar",
                 "sound.neutral.roshan_roar_layer",
@@ -453,6 +457,8 @@ fn load(mut bindings: ResMut<Bindings>, manifest: Res<Manifest>, server: Res<Ass
         CueKind::MegaCreeps(Team::Dire),
         CueKind::MegaCreepsHorn(Team::Radiant),
         CueKind::MegaCreepsHorn(Team::Dire),
+        CueKind::BoughtBack { own: true },
+        CueKind::BoughtBack { own: false },
         CueKind::BossDeath(bota_proto::ObjectiveKind::Roshan),
         CueKind::LastHit,
         CueKind::Deny,

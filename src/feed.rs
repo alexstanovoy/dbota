@@ -128,6 +128,7 @@ impl Place {
             FeedKind::StructureFell { .. }
             | FeedKind::Rune { .. }
             | FeedKind::ShrineActivated { .. }
+            | FeedKind::BoughtBack { .. }
             | FeedKind::Captured { .. } => Place::Left,
             _ => Place::Corner,
         }
@@ -322,6 +323,7 @@ fn side_of(core: &Core, kind: &FeedKind) -> Option<Side> {
         },
         FeedKind::StructureFell { team, .. } => Some(good_for(team).flip()),
         FeedKind::Captured { by, .. } => Some(good_for(by)),
+        FeedKind::BoughtBack { team, .. } => Some(good_for(team)),
         _ => None,
     }
 }
@@ -758,6 +760,10 @@ fn dota_parts(core: &Core, texts: &Texts, kind: &FeedKind) -> Option<Vec<Part>> 
             };
             texts.label_parts(key, &values)
         }
+        FeedKind::BoughtBack { slot, .. } => texts.label_parts(
+            "DOTA_HUD_BoughtBack",
+            &[("player_name", seat_name(core, slot))],
+        ),
         FeedKind::ShrineActivated { by, team, xp } => {
             let rune = texts.label("DOTA_HUD_Rune_XP", &[("xp", xp.to_string())])?;
             let who = activator(core, by, team);
@@ -839,6 +845,7 @@ fn outpost_name(
 /// the install's labels.
 pub fn text(core: &Core, kind: &FeedKind) -> String {
     match *kind {
+        FeedKind::BoughtBack { slot, .. } => format!("{} bought back", seat_name(core, slot)),
         FeedKind::ItemPlaced { item, team } => format!(
             "{} placed {}",
             side_name(team),

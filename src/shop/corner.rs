@@ -486,6 +486,7 @@ fn spawn_shop_button(
         Pickable::IGNORE,
         ChildOf(button),
     ));
+    crate::buyback::spawn_shop_marks(commands, fonts, button);
 }
 
 /// One's own gold when playing; in a replay or as a spectator, that of the

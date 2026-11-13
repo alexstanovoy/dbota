@@ -1771,6 +1771,8 @@ pub(crate) mod tests {
                 creep_score: None,
                 seen_at: Some(900),
                 backpack: None,
+                bought_back_at: None,
+                buyback: None,
             }],
             projectiles: Vec::new(),
             loot: Vec::new(),

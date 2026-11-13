@@ -14,6 +14,7 @@ mod buffs;
 mod building_announcement;
 mod building_clicks;
 mod building_fall;
+mod buyback;
 mod camera;
 mod captions;
 mod catalogue;

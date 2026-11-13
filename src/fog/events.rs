@@ -341,6 +341,8 @@ impl EventSight<'_> {
             EventKind::StructureDestroyed { .. }
             | EventKind::Captured { .. }
             | EventKind::ShrineActivated { .. }
+            // A buyback is told to everyone, wherever the hero is.
+            | EventKind::BoughtBack { .. }
             | EventKind::Teleported { .. } => shown(true),
         }
     }

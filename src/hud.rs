@@ -591,6 +591,7 @@ fn spawn_portrait(kit: &mut Spawner, bar: Entity) {
         ChildOf(portrait),
     ));
     crate::death::spawn(kit.commands, kit.fonts, kit.washes, portrait);
+    crate::buyback::spawn_button(kit.commands, kit.fonts, portrait);
     let banner = kit
         .commands
         .spawn((

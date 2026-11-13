@@ -98,7 +98,10 @@ pub fn told(reason: RejectReason) -> Option<Told> {
         | Why::NotYourUnit
         | Why::UnknownItem
         | Why::NotInBag
-        | Why::CannotLearn => None,
+        | Why::CannotLearn
+        // The buyback button is there only for a dead hero of one's own.
+        | Why::HeroAlive
+        | Why::NotAHero => None,
     }
 }
 
@@ -229,6 +232,8 @@ fn plain_words(reason: RejectReason) -> &'static str {
         Why::HoldsRune => "a Bottle keeping a rune stays in hand",
         Why::ItemRestricted => "this item must stay in the inventory",
         Why::NothingToBuy => "every component has already been purchased",
+        Why::HeroAlive => "the hero is not dead",
+        Why::NotAHero => "only a hero is bought back",
     }
 }
 

@@ -19,6 +19,7 @@ mod bag;
 mod bars;
 mod buff_words;
 mod buffs;
+mod buyback;
 mod cache_path;
 mod cache_text;
 mod cachefs;
@@ -763,7 +764,12 @@ fn client_plugins(app: &mut App, read_environment: bool) {
             death::plugin,
             replay_controls::plugin,
         ))
-        .add_plugins((demo::plugin, error_msg::plugin, main_menu::plugin));
+        .add_plugins((
+            demo::plugin,
+            error_msg::plugin,
+            main_menu::plugin,
+            buyback::plugin,
+        ));
     if read_environment {
         app.add_plugins(drill::plugin);
     }

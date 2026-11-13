@@ -2322,6 +2322,15 @@ sound sound.announcer.mega.enemy sounds/vo/announcer/announcer_mega_now_enm.vsnd
 sound sound.announcer.mega.radiant sounds/vo/announcer/announcer_mega_now_rad.vsnd_c sounds/vo/announcer/announcer_mega_now_rad.mp3 event=announcer_announcer_mega_now_rad
 sound sound.announcer.mega.dire sounds/vo/announcer/announcer_mega_now_dire.vsnd_c sounds/vo/announcer/announcer_mega_now_dire.mp3 event=announcer_announcer_mega_now_dire
 
+# A buyback: the default music pack's stinger, one event for the player who bought back and one for everyone else
+# (both play the pack's one file), the line of the event message and the button's word.
+sound sound.global.buyback sounds/music/valve_dota_001/stingers/buy_back.vsnd_c sounds/music/valve_dota_001/stingers/buy_back.mp3 event=valve_dota_001.stinger.buy_back
+sound sound.global.buyback.own sounds/music/valve_dota_001/stingers/buy_back.vsnd_c sounds/music/valve_dota_001/stingers/buy_back_player.mp3 event=valve_dota_001.stinger.buy_back_player
+label resource/localization/dota_english.txt DOTA_HUD_BoughtBack
+label resource/localization/dota_english.txt DOTA_Buyback
+label resource/localization/dota_english.txt DOTA_Hud_BuybackLabel
+label resource/localization/dota_english.txt DOTA_Hud_NoBuybackLabel
+
 # Valve 7.20's mega-creep stinger and its layer at the fallen side's public Ancient.
 sound sound.global.mega.radiant sounds/ambient/mega_horn_dire_2d.vsnd_c sounds/mega/radiant.wav event=MegaCreeps.Radiant
 sound sound.global.mega.dire sounds/ambient/mega_horn_radiant_2d.vsnd_c sounds/mega/dire.wav event=MegaCreeps.Dire
